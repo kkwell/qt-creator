@@ -164,14 +164,14 @@ if (UNIX)
 endif()
 
 add_subdirectory(src)
-add_subdirectory(share)
-add_subdirectory(dist)
+# add_subdirectory(share)
+# add_subdirectory(dist)
 
 if (WITH_TESTS)
   add_subdirectory(tests)
 endif()
 
-add_subdirectory(doc)
+# add_subdirectory(doc)
 
 setup_dependencies_component()
 
