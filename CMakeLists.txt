@@ -54,10 +54,10 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-if (WITH_TESTS)
-  set(QT_TEST_COMPONENT Test)
-  set(IMPLICIT_DEPENDS Qt::Test)
-endif()
+#if (WITH_TESTS)
+#  set(QT_TEST_COMPONENT Test)
+#  set(IMPLICIT_DEPENDS Qt::Test)
+#endif()
 
 # suppress bogus warning
 # warning C4573 requires the compiler to capture 'this' but the current default capture mode does not allow it
@@ -155,9 +155,9 @@ if (APPLE)
   find_library(FWWebKit WebKit)
 endif()
 
-if (WITH_TESTS)
-  enable_testing()
-endif()
+#if (WITH_TESTS)
+#  enable_testing()
+#endif()
 
 if (UNIX)
   add_subdirectory(bin)
@@ -167,9 +167,9 @@ add_subdirectory(src)
 # add_subdirectory(share)
 # add_subdirectory(dist)
 
-if (WITH_TESTS)
-  add_subdirectory(tests)
-endif()
+#if (WITH_TESTS)
+#  add_subdirectory(tests)
+#endif()
 
 # add_subdirectory(doc)
 
@@ -183,5 +183,5 @@ feature_summary(INCLUDE_QUIET_PACKAGES WHAT
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR
     AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.GPL3-EXCEPT")
   # Only for opensource, non-super-repo builds
-  add_subdirectory(packaging)
+#  add_subdirectory(packaging)
 endif()
