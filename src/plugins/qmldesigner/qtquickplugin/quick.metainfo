@@ -374,7 +374,6 @@ MetaInfo {
             name: "Keyframe"
             category: "none"
             version: "1.0"
-            requiredImport: "none"
         }
     }
 
@@ -386,7 +385,6 @@ MetaInfo {
             name: "KeyframeGroup"
             category: "none"
             version: "1.0"
-            requiredImport: "none"
         }
     }
 
@@ -547,6 +545,26 @@ MetaInfo {
             Property { name: "to"; type: "int"; value: 0; }
             Property { name: "from"; type: "int"; value: 0; }
             toolTip: qsTr("Animates a numerical property of an item.")
+        }
+    }
+
+    Type {
+        name: "QtQuick.FrameAnimation"
+        icon: ":/qtquickplugin/images/frame-animation-16px.png"
+
+        Hints {
+            visibleInNavigator: true
+            canBeDroppedInNavigator: true
+            canBeDroppedInFormEditor: false
+            canBeContainer: false
+        }
+
+        ItemLibraryEntry {
+            name: "Frame Animation"
+            category: "d.Qt Quick - Animation"
+            libraryIcon: ":/qtquickplugin/images/frame-animation-24px.png"
+            version: "2.0"
+            toolTip: qsTr("Triggers a handler at every animation frame update.")
         }
     }
 
@@ -853,12 +871,12 @@ MetaInfo {
 
     Type {
         name: "QtQuick3D.View3D"
-        icon: ":/qtquickplugin/images/default3d16.png"
+        icon: ":/qtquickplugin/images/extended-view3d-16px.png"
 
         ItemLibraryEntry {
             name: "Extended View3D"
             category: "Items"
-            libraryIcon: ":/qtquickplugin/images/default3d.png"
+            libraryIcon: ":/qtquickplugin/images/extended-view3d-24px.png"
             version: "6.5"
             requiredImport: "QtQuick3D"
             QmlSource { source: ":/qtquickplugin/source/extendedview3D_template.qml" }

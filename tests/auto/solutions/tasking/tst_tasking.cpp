@@ -3,6 +3,7 @@
 
 #include <tasking/barrier.h>
 #include <tasking/concurrentcall.h>
+#include <tasking/conditional.h>
 
 #include <QtTest>
 #include <QHash>
@@ -117,8 +118,11 @@ private slots:
     void storageIO();
     void storageOperators();
     void storageDestructor();
+    void storageZeroInitialization();
+    void nestedBrokenStorage();
     void restart();
     void destructorOfTaskEmittingDone();
+    void validConditionalConstructs();
 };
 
 void tst_Tasking::validConstructs()
@@ -415,7 +419,7 @@ static Handler toTweakDoneHandler(DoneResult result)
 
 static TestData storageShadowingData()
 {
-    // This test check if storage shadowing works OK.
+    // This test checks if storage shadowing works OK.
 
     const Storage<CustomStorage> storage;
     // This helper storage collect the pointers to storages created by shadowedStorage.
@@ -506,8 +510,7 @@ static TestData parallelData()
             const Handler handler = doneWith == DoneWith::Cancel ? Handler::Canceled
                                     : result == DoneResult::Success ? Handler::Success : Handler::Error;
             storage->m_log.append({taskId, handler});
-            return doneWith == DoneWith::Cancel ? DoneResult::Error
-                   : result == DoneResult::Success ? DoneResult::Success : DoneResult::Error;
+            return doneWith != DoneWith::Cancel && result == DoneResult::Success;
         };
     };
 
@@ -580,8 +583,7 @@ void tst_Tasking::testTree_data()
             const Handler handler = doneWith == DoneWith::Cancel ? Handler::Canceled
                                     : result == DoneResult::Success ? Handler::Success : Handler::Error;
             storage->m_log.append({taskId, handler});
-            return doneWith == DoneWith::Cancel ? DoneResult::Error
-                   : result == DoneResult::Success ? DoneResult::Success : DoneResult::Error;
+            return doneWith != DoneWith::Cancel && result == DoneResult::Success;
         };
     };
 
@@ -708,6 +710,60 @@ void tst_Tasking::testTree_data()
         QTest::newRow("ErrorAndStopOnSuccessOrError") << errorData(WorkflowPolicy::StopOnSuccessOrError);
         QTest::newRow("ErrorAndFinishAllAndSuccess") << errorData(WorkflowPolicy::FinishAllAndSuccess);
         QTest::newRow("ErrorAndFinishAllAndError") << errorData(WorkflowPolicy::FinishAllAndError);
+    }
+
+    {
+        // These tests ensure that tweaking the done result in group's done handler takes priority
+        // over the group's workflow policy. In this case the group's workflow policy is ignored.
+        const auto setupGroup = [=](DoneResult doneResult, WorkflowPolicy policy) {
+            return Group {
+                storage,
+                Group {
+                    workflowPolicy(policy),
+                    onGroupDone([doneResult] { return doneResult; })
+                },
+                groupDone(0)
+            };
+        };
+
+        const auto doneData = [storage, setupGroup](WorkflowPolicy policy) {
+            return TestData{storage, setupGroup(DoneResult::Success, policy),
+                            Log{{0, Handler::GroupSuccess}}, 0, DoneWith::Success, 0};
+        };
+        const auto errorData = [storage, setupGroup](WorkflowPolicy policy) {
+            return TestData{storage, setupGroup(DoneResult::Error, policy),
+                            Log{{0, Handler::GroupError}}, 0, DoneWith::Error, 0};
+        };
+
+        QTest::newRow("GroupDoneTweakSuccessWithStopOnError")
+            << doneData(WorkflowPolicy::StopOnError);
+        QTest::newRow("GroupDoneTweakSuccessWithContinueOnError")
+            << doneData(WorkflowPolicy::ContinueOnError);
+        QTest::newRow("GroupDoneTweakSuccessWithStopOnSuccess")
+            << doneData(WorkflowPolicy::StopOnSuccess);
+        QTest::newRow("GroupDoneTweakSuccessWithContinueOnSuccess")
+            << doneData(WorkflowPolicy::ContinueOnSuccess);
+        QTest::newRow("GroupDoneTweakSuccessWithStopOnSuccessOrError")
+            << doneData(WorkflowPolicy::StopOnSuccessOrError);
+        QTest::newRow("GroupDoneTweakSuccessWithFinishAllAndSuccess")
+            << doneData(WorkflowPolicy::FinishAllAndSuccess);
+        QTest::newRow("GroupDoneTweakSuccessWithFinishAllAndError")
+            << doneData(WorkflowPolicy::FinishAllAndError);
+
+        QTest::newRow("GroupDoneTweakErrorWithStopOnError")
+            << errorData(WorkflowPolicy::StopOnError);
+        QTest::newRow("GroupDoneTweakErrorWithContinueOnError")
+            << errorData(WorkflowPolicy::ContinueOnError);
+        QTest::newRow("GroupDoneTweakErrorWithStopOnSuccess")
+            << errorData(WorkflowPolicy::StopOnSuccess);
+        QTest::newRow("GroupDoneTweakErrorWithContinueOnSuccess")
+            << errorData(WorkflowPolicy::ContinueOnSuccess);
+        QTest::newRow("GroupDoneTweakErrorWithStopOnSuccessOrError")
+            << errorData(WorkflowPolicy::StopOnSuccessOrError);
+        QTest::newRow("GroupDoneTweakErrorWithFinishAllAndSuccess")
+            << errorData(WorkflowPolicy::FinishAllAndSuccess);
+        QTest::newRow("GroupDoneTweakErrorWithFinishAllAndError")
+            << errorData(WorkflowPolicy::FinishAllAndError);
     }
 
     {
@@ -2954,7 +3010,7 @@ void tst_Tasking::testTree_data()
     }
 
     {
-        // These tests confirms the expected message log
+        // These tests confirm the expected message log.
 
         const TestData testSuccess {
             storage,
@@ -3083,10 +3139,627 @@ void tst_Tasking::testTree_data()
                         logErrorLong, 1, DoneWith::Error, 1};
     }
 
+    {
+        // This test ensures the task done handlers are invoked in a different order
+        // than the corresponding setup handlers.
+
+        const QList<milliseconds> tasks { 1000000ms, 0ms };
+        const LoopList iterator(tasks);
+
+        const auto onSetup = [storage, iterator](TaskObject &taskObject) {
+            taskObject = *iterator;
+            storage->m_log.append({iterator.iteration(), Handler::Setup});
+        };
+
+        const auto onDone = [storage, iterator](DoneWith result) {
+            const Handler handler = result == DoneWith::Cancel ? Handler::Canceled : Handler::Error;
+            storage->m_log.append({iterator.iteration(), handler});
+            return DoneResult::Error;
+        };
+
+        const Group root {
+            storage,
+            parallel,
+            iterator,
+            TestTask(onSetup, onDone)
+        };
+
+        const Log log {
+            {0, Handler::Setup},
+            {1, Handler::Setup},
+            {1, Handler::Error},
+            {0, Handler::Canceled}
+        };
+
+        QTest::newRow("ParallelDisorder") << TestData{storage, root, log, 2, DoneWith::Error, 1};
+    }
+
+    {
+        // This test ensures the task done handler or onGroupDone accepts the DoneResult as an
+        // argument.
+
+        const Group groupSuccess {
+            storage,
+            Group {
+                onGroupDone(DoneResult::Success)
+            },
+            groupDone(0)
+        };
+        const Group groupError {
+            storage,
+            Group {
+                onGroupDone(DoneResult::Error)
+            },
+            groupDone(0)
+        };
+        const Group taskSuccess {
+            storage,
+            TestTask({}, DoneResult::Success),
+            groupDone(0)
+        };
+        const Group taskError {
+            storage,
+            TestTask({}, DoneResult::Error),
+            groupDone(0)
+        };
+
+        QTest::newRow("DoneResultGroupSuccess")
+            << TestData{storage, groupSuccess, {{0, Handler::GroupSuccess}}, 0, DoneWith::Success, 0};
+        QTest::newRow("DoneResultGroupError")
+            << TestData{storage, groupError, {{0, Handler::GroupError}}, 0, DoneWith::Error, 0};
+        QTest::newRow("DoneResultTaskSuccess")
+            << TestData{storage, taskSuccess, {{0, Handler::GroupSuccess}}, 1, DoneWith::Success, 1};
+        QTest::newRow("DoneResultTaskError")
+            << TestData{storage, taskError, {{0, Handler::GroupError}}, 1, DoneWith::Error, 1};
+    }
+
+    {
+        // These tests ensure the task done handler or onGroupDone accepts the DoneResult as an
+        // argument.
+
+        const Group groupSuccess {
+            storage,
+            Group { createFailingTask(0) } || DoneResult::Success,
+            groupDone(0)
+        };
+
+        const Group groupError {
+            storage,
+            Group { createSuccessTask(0) } && DoneResult::Error,
+            groupDone(0)
+        };
+
+        const Group taskSuccess {
+            storage,
+            createFailingTask(0) || DoneResult::Success,
+            groupDone(0)
+        };
+
+        const Group taskError {
+            storage,
+            createSuccessTask(0) && DoneResult::Error,
+            groupDone(0)
+        };
+
+        const Log successLog {{0, Handler::Setup}, {0, Handler::Error}, {0, Handler::GroupSuccess}};
+        const Log errorLog {{0, Handler::Setup}, {0, Handler::Success}, {0, Handler::GroupError}};
+
+        QTest::newRow("LogicGroupSuccess")
+            << TestData{storage, groupSuccess, successLog, 1, DoneWith::Success, 1};
+        QTest::newRow("LogicGroupError")
+            << TestData{storage, groupError, errorLog, 1, DoneWith::Error, 1};
+        QTest::newRow("LogicTaskSuccess")
+            << TestData{storage, taskSuccess, successLog, 1, DoneWith::Success, 1};
+        QTest::newRow("LogicTaskError")
+            << TestData{storage, taskError, errorLog, 1, DoneWith::Error, 1};
+    }
+
+    {
+        // This test checks if ExecutableItem's negation works OK.
+
+        const Group negateSuccessTask {
+            storage,
+            !createSuccessTask(0)
+        };
+
+        const Group negateErrorTask {
+            storage,
+            !createFailingTask(0)
+        };
+
+        const Group negateSuccessGroup {
+            storage,
+            !Group {
+                createSuccessTask(0)
+            }
+        };
+
+        const Group negateErrorGroup {
+            storage,
+            !Group {
+                createFailingTask(0)
+            }
+        };
+
+        const Group doubleNegation {
+            storage,
+            !!createSuccessTask(0)
+        };
+
+        const Log successLog {{0, Handler::Setup}, {0, Handler::Success}};
+        const Log errorLog {{0, Handler::Setup}, {0, Handler::Error}};
+
+        QTest::newRow("NegateSuccessTask")
+            << TestData{storage, negateSuccessTask, successLog, 1, DoneWith::Error, 1};
+        QTest::newRow("NegateErrorTask")
+            << TestData{storage, negateErrorTask, errorLog, 1, DoneWith::Success, 1};
+        QTest::newRow("NegateSuccessGroup")
+            << TestData{storage, negateSuccessGroup, successLog, 1, DoneWith::Error, 1};
+        QTest::newRow("NegateErrorGroup")
+            << TestData{storage, negateErrorGroup, errorLog, 1, DoneWith::Success, 1};
+        QTest::newRow("DoubleNegation")
+            << TestData{storage, doubleNegation, successLog, 1, DoneWith::Success, 1};
+    }
+
+    {
+        // This test checks if ExecutableItem's AND and OR works OK.
+
+        const Group successAndSuccessTask {
+            storage,
+            createSuccessTask(0) && createSuccessTask(1)
+        };
+        const Group successAndErrorTask {
+            storage,
+            createSuccessTask(0) && createFailingTask(1)
+        };
+        const Group errorAndSuccessTask {
+            storage,
+            createFailingTask(0) && createSuccessTask(1)
+        };
+        const Group errorAndErrorTask {
+            storage,
+            createFailingTask(0) && createFailingTask(1)
+        };
+
+        const Group successOrSuccessTask {
+            storage,
+            createSuccessTask(0) || createSuccessTask(1)
+        };
+        const Group successOrErrorTask {
+            storage,
+            createSuccessTask(0) || createFailingTask(1)
+        };
+        const Group errorOrSuccessTask {
+            storage,
+            createFailingTask(0) || createSuccessTask(1)
+        };
+        const Group errorOrErrorTask {
+            storage,
+            createFailingTask(0) || createFailingTask(1)
+        };
+
+        const Log successLog {{0, Handler::Setup}, {0, Handler::Success}};
+        const Log errorLog {{0, Handler::Setup}, {0, Handler::Error}};
+
+        const Log successSuccessLog {
+            {0, Handler::Setup},
+            {0, Handler::Success},
+            {1, Handler::Setup},
+            {1, Handler::Success},
+        };
+        const Log successErrorLog {
+            {0, Handler::Setup},
+            {0, Handler::Success},
+            {1, Handler::Setup},
+            {1, Handler::Error},
+        };
+        const Log errorSuccessLog {
+            {0, Handler::Setup},
+            {0, Handler::Error},
+            {1, Handler::Setup},
+            {1, Handler::Success},
+        };
+        const Log errorErrorLog {
+            {0, Handler::Setup},
+            {0, Handler::Error},
+            {1, Handler::Setup},
+            {1, Handler::Error},
+        };
+
+        QTest::newRow("SuccessAndSuccessTask")
+            << TestData{storage, successAndSuccessTask, successSuccessLog, 2, DoneWith::Success, 2};
+        QTest::newRow("SuccessAndErrorTask")
+            << TestData{storage, successAndErrorTask, successErrorLog, 2, DoneWith::Error, 2};
+        QTest::newRow("ErrorAndSuccessTask")
+            << TestData{storage, errorAndSuccessTask, errorLog, 2, DoneWith::Error, 1};
+        QTest::newRow("ErrorAndErrorTask")
+            << TestData{storage, errorAndErrorTask, errorLog, 2, DoneWith::Error, 1};
+
+        QTest::newRow("SuccessOrSuccessTask")
+            << TestData{storage, successOrSuccessTask, successLog, 2, DoneWith::Success, 1};
+        QTest::newRow("SuccessOrErrorTask")
+            << TestData{storage, successOrErrorTask, successLog, 2, DoneWith::Success, 1};
+        QTest::newRow("ErrorOrSuccessTask")
+            << TestData{storage, errorOrSuccessTask, errorSuccessLog, 2, DoneWith::Success, 2};
+        QTest::newRow("ErrorOrErrorTask")
+            << TestData{storage, errorOrErrorTask, errorErrorLog, 2, DoneWith::Error, 2};
+    }
+
+    {
+        // This test ensures the nullItem in conditional expression works OK.
+
+        const auto recipe = [storage, createSuccessTask](bool condition) {
+            return Group {
+                storage,
+                condition ? createSuccessTask(0) : nullItem
+            };
+        };
+
+        const Log trueLog {{0, Handler::Setup}, {0, Handler::Success}};
+        const Log falseLog {};
+
+        QTest::newRow("NullItemTrue")
+            << TestData{storage, recipe(true), trueLog, 1, DoneWith::Success, 1};
+        QTest::newRow("NullItemFalse")
+            << TestData{storage, recipe(false), falseLog, 0, DoneWith::Success, 0};
+    }
+
+    {
+        // These tests ensure the successItem and errorItem work OK.
+
+        const auto recipe = [storage, createSuccessTask](bool success) {
+            return Group {
+                storage,
+                success ? successItem : errorItem
+            };
+        };
+
+        QTest::newRow("SuccessItem")
+            << TestData{storage, recipe(true), {}, 0, DoneWith::Success, 0};
+        QTest::newRow("ErrorItem")
+            << TestData{storage, recipe(false), {}, 0, DoneWith::Error, 0};
+    }
+
     // This test checks if storage shadowing works OK.
     QTest::newRow("StorageShadowing") << storageShadowingData();
-}
 
+    // CONDITIONAL API
+
+    {
+        const Group root {
+            storage,
+            If (createSuccessTask(0)) >>
+                Then { createSuccessTask(1) }
+        };
+
+        const Log log {
+            {0, Handler::Setup},
+            {0, Handler::Success},
+            {1, Handler::Setup},
+            {1, Handler::Success}
+        };
+
+        QTest::newRow("CondIfSuccessThenSuccess")
+            << TestData{storage, root, log, 2, DoneWith::Success, 2};
+    }
+
+    {
+        const Group root {
+            storage,
+            If (createSuccessTask(0)) >>
+                Then { createFailingTask(1) }
+        };
+
+        const Log log {
+            {0, Handler::Setup},
+            {0, Handler::Success},
+            {1, Handler::Setup},
+            {1, Handler::Error}
+        };
+
+        QTest::newRow("CondIfSuccessThenError")
+            << TestData{storage, root, log, 2, DoneWith::Error, 2};
+    }
+
+    {
+        const Group root {
+            storage,
+            If (createFailingTask(0)) >>
+                Then { createSuccessTask(1) }
+        };
+
+        const Log log {
+            {0, Handler::Setup},
+            {0, Handler::Error}
+        };
+
+        QTest::newRow("CondIfErrorThenSuccess")
+            << TestData{storage, root, log, 2, DoneWith::Success, 1};
+    }
+
+    {
+        const Group root {
+            storage,
+            If (createSuccessTask(0)) >>
+                Then { createSuccessTask(1) } >>
+            Else { createSuccessTask(2) }
+        };
+
+        const Log log {
+            {0, Handler::Setup},
+            {0, Handler::Success},
+            {1, Handler::Setup},
+            {1, Handler::Success}
+        };
+
+        QTest::newRow("CondIfSuccessThenSuccessElseSuccess")
+            << TestData{storage, root, log, 3, DoneWith::Success, 2};
+    }
+
+    {
+        const Group root {
+            storage,
+            If (createFailingTask(0)) >>
+                Then { createSuccessTask(1) } >>
+            Else { createSuccessTask(2) }
+        };
+
+        const Log log {
+            {0, Handler::Setup},
+            {0, Handler::Error},
+            {2, Handler::Setup},
+            {2, Handler::Success}
+        };
+
+        QTest::newRow("CondIfErrorThenSuccessElseSuccess")
+            << TestData{storage, root, log, 3, DoneWith::Success, 2};
+    }
+
+    {
+        const Group root {
+            storage,
+            If (createFailingTask(0)) >>
+                Then { createSuccessTask(1) } >>
+            Else { createFailingTask(2) }
+        };
+
+        const Log log {
+            {0, Handler::Setup},
+            {0, Handler::Error},
+            {2, Handler::Setup},
+            {2, Handler::Error}
+        };
+
+        QTest::newRow("CondIfErrorThenSuccessElseError")
+            << TestData{storage, root, log, 3, DoneWith::Error, 2};
+    }
+
+    {
+        const Group root {
+            storage,
+            If (createFailingTask(0)) >>
+                Then { createSuccessTask(1) } >>
+            ElseIf (createFailingTask(2)) >>
+                Then { createSuccessTask(3) }
+        };
+
+        const Log log {
+            {0, Handler::Setup},
+            {0, Handler::Error},
+            {2, Handler::Setup},
+            {2, Handler::Error}
+        };
+
+        QTest::newRow("CondIfErrorThenSuccessElseIfErrorThenSuccess")
+            << TestData{storage, root, log, 4, DoneWith::Success, 2};
+    }
+
+    {
+        const Group root {
+            storage,
+            If (createFailingTask(0)) >>
+                Then { createSuccessTask(1) } >>
+            ElseIf (createSuccessTask(2)) >>
+                Then { createSuccessTask(3) }
+        };
+
+        const Log log {
+            {0, Handler::Setup},
+            {0, Handler::Error},
+            {2, Handler::Setup},
+            {2, Handler::Success},
+            {3, Handler::Setup},
+            {3, Handler::Success}
+        };
+
+        QTest::newRow("CondIfErrorThenSuccessElseIfSuccessThenSuccess")
+            << TestData{storage, root, log, 4, DoneWith::Success, 3};
+    }
+
+    {
+        const Group root {
+            storage,
+            If (createFailingTask(0)) >>
+                Then { createSuccessTask(1) } >>
+            ElseIf (createSuccessTask(2)) >>
+                Then { createFailingTask(3) }
+        };
+
+        const Log log {
+            {0, Handler::Setup},
+            {0, Handler::Error},
+            {2, Handler::Setup},
+            {2, Handler::Success},
+            {3, Handler::Setup},
+            {3, Handler::Error}
+        };
+
+        QTest::newRow("CondIfErrorThenSuccessElseIfSuccessThenError")
+            << TestData{storage, root, log, 4, DoneWith::Error, 3};
+    }
+
+    {
+        const Group root {
+            storage,
+            If (createSuccessTask(0)) >>
+                Then { createSuccessTask(1) } >>
+            ElseIf (createSuccessTask(2)) >>
+                Then { createSuccessTask(3) } >>
+            Else { createSuccessTask(4) }
+        };
+
+        const Log log {
+            {0, Handler::Setup},
+            {0, Handler::Success},
+            {1, Handler::Setup},
+            {1, Handler::Success}
+        };
+
+        QTest::newRow("CondIfSuccessThenSuccessElseIfSuccessThenSuccessElseSuccess")
+            << TestData{storage, root, log, 5, DoneWith::Success, 2};
+    }
+
+    {
+        const Group root {
+            storage,
+            If (createFailingTask(0)) >>
+                Then { createSuccessTask(1) } >>
+            ElseIf (createSuccessTask(2)) >>
+                Then { createSuccessTask(3) } >>
+            Else { createSuccessTask(4) }
+        };
+
+        const Log log {
+            {0, Handler::Setup},
+            {0, Handler::Error},
+            {2, Handler::Setup},
+            {2, Handler::Success},
+            {3, Handler::Setup},
+            {3, Handler::Success}
+        };
+
+        QTest::newRow("CondIfErrorThenSuccessElseIfSuccessThenSuccessElseSuccess")
+            << TestData{storage, root, log, 5, DoneWith::Success, 3};
+    }
+
+    {
+        const Group root {
+            storage,
+            If (createSuccessTask(0)) >>
+                Then { createSuccessTask(1) },
+            createSuccessTask(2)
+        };
+
+        const Log log {
+            {0, Handler::Setup},
+            {0, Handler::Success},
+            {1, Handler::Setup},
+            {1, Handler::Success},
+            {2, Handler::Setup},
+            {2, Handler::Success}
+        };
+
+        QTest::newRow("CondIfSuccessThenSuccessWithContinuation")
+            << TestData{storage, root, log, 3, DoneWith::Success, 3};
+    }
+
+    {
+        const Group root {
+            storage,
+            If (createSuccessTask(0)) >>
+                Then { createFailingTask(1) },
+            createSuccessTask(2)
+        };
+
+        const Log log {
+            {0, Handler::Setup},
+            {0, Handler::Success},
+            {1, Handler::Setup},
+            {1, Handler::Error}
+        };
+
+        QTest::newRow("CondIfSuccessThenErrorWithContinuation")
+            << TestData{storage, root, log, 3, DoneWith::Error, 2};
+    }
+
+    {
+        const Group root {
+            storage,
+            If (createFailingTask(0)) >>
+                Then { createFailingTask(1) },
+            createSuccessTask(2)
+        };
+
+        const Log log {
+            {0, Handler::Setup},
+            {0, Handler::Error},
+            {2, Handler::Setup},
+            {2, Handler::Success}
+        };
+
+        QTest::newRow("CondIfErrorThenErrorWithContinuation")
+            << TestData{storage, root, log, 3, DoneWith::Success, 2};
+    }
+
+    {
+        // These tests ensure the successItem and errorItem work OK in if-statement.
+
+        const auto recipe = [storage, createSuccessTask, createFailingTask](
+                                bool ifCondition, bool bodyResult, bool elseResult) {
+            return Group {
+                storage,
+                If (ifCondition ? createSuccessTask(0) : createFailingTask(0)) >> Then {
+                    bodyResult ? successItem : errorItem
+                } >> Else {
+                    elseResult ? successItem : errorItem
+                },
+                createSuccessTask(1)
+            };
+        };
+
+        const Log trueTrueTrue {
+            {0, Handler::Setup},
+            {0, Handler::Success},
+            {1, Handler::Setup},
+            {1, Handler::Success}
+        };
+        const Log trueTrueFalse = trueTrueTrue; // Else branch skipped.
+        const Log trueFalseTrue {
+            {0, Handler::Setup},
+            {0, Handler::Success}
+        };
+        const Log trueFalseFalse = trueFalseTrue; // Else branch skipped.
+        const Log falseTrueTrue {
+            {0, Handler::Setup},
+            {0, Handler::Error},
+            {1, Handler::Setup}, // Else branch returns successItem -> continue after If.
+            {1, Handler::Success}
+        };
+        const Log falseTrueFalse {
+            {0, Handler::Setup},
+            {0, Handler::Error}
+        }; // Else branch returns errorItem -> main group skips task 2 and stops with error.
+        const Log falseFalseTrue = falseTrueTrue; // Then branch skipped.
+        const Log falseFalseFalse = falseTrueFalse; // Then branch skipped
+
+        QTest::newRow("BoolItemTrueTrueTrue")
+            << TestData{storage, recipe(true, true, true), trueTrueTrue, 2, DoneWith::Success, 2};
+        QTest::newRow("BoolItemTrueTrueFalse")
+            << TestData{storage, recipe(true, true, false), trueTrueFalse, 2, DoneWith::Success, 2};
+        QTest::newRow("BoolItemTrueFalseTrue")
+            << TestData{storage, recipe(true, false, true), trueFalseTrue, 2, DoneWith::Error, 1};
+        QTest::newRow("BoolItemTrueFalseFalse")
+            << TestData{storage, recipe(true, false, false), trueFalseFalse, 2, DoneWith::Error, 1};
+        QTest::newRow("BoolItemFalseTrueTrue")
+            << TestData{storage, recipe(false, true, true), falseTrueTrue, 2, DoneWith::Success, 2};
+        QTest::newRow("BoolItemFalseTrueFalse")
+            << TestData{storage, recipe(false, true, false), falseTrueFalse, 2, DoneWith::Error, 1};
+        QTest::newRow("BoolItemFalseFalseTrue")
+            << TestData{storage, recipe(false, false, true), falseFalseTrue, 2, DoneWith::Success, 2};
+        QTest::newRow("BoolItemFalseFalseFalse")
+            << TestData{storage, recipe(false, false, false), falseFalseFalse, 2, DoneWith::Error, 1};
+    }
+}
 
 static QtMessageHandler s_oldMessageHandler = nullptr;
 static QStringList s_messages;
@@ -3380,7 +4053,7 @@ void tst_Tasking::storageDestructor()
     };
     QCOMPARE(CustomStorage::instanceCount(), 0);
     {
-        Storage<CustomStorage> storage;
+        const Storage<CustomStorage> storage;
         const auto setupSleepingTask = [](TaskObject &taskObject) {
             taskObject = 1000ms;
         };
@@ -3399,6 +4072,70 @@ void tst_Tasking::storageDestructor()
     QCOMPARE(CustomStorage::instanceCount(), 0);
     QVERIFY(setupCalled);
     QVERIFY(!doneCalled);
+}
+
+// This test ensures that the storage data is zero-initialized.
+void tst_Tasking::storageZeroInitialization()
+{
+    const Storage<int> storage;
+    std::optional<int> defaultValue;
+
+    const auto onSetup = [storage, &defaultValue] { defaultValue = *storage; };
+
+    TaskTree taskTree({ storage, onGroupSetup(onSetup) });
+    taskTree.runBlocking();
+
+    QVERIFY(defaultValue);
+    QCOMPARE(defaultValue, 0);
+}
+
+// This test ensures that when a missing storage object inside the nested task tree is accessed
+// directly from the outer task tree's handler, containing the same storage object, then we
+// detect this misconfigured recipe, issue a warning, and return nullptr for the storage
+// being accessed (instead of returning parent's task tree's storage instance).
+// This test should also trigger a runtime assert that we are accessing the nullptr storage.
+void tst_Tasking::nestedBrokenStorage()
+{
+    int *outerStorage = nullptr;
+    int *innerStorage1 = nullptr;
+    int *innerStorage2 = nullptr;
+    const Storage<int> storage;
+
+    const auto onOuterSync = [storage, &outerStorage, &innerStorage1, &innerStorage2] {
+        outerStorage = &*storage;
+
+        const auto onInnerSync1 = [storage, &innerStorage1] {
+            innerStorage1 = &*storage; // Triggers the runtime assert on purpose.
+        };
+        const auto onInnerSync2 = [storage, &innerStorage2] {
+            innerStorage2 = &*storage; // Storage is accessible in currently running tree - all OK.
+        };
+
+        const Group innerRecipe {
+            Group {
+                // Broken subrecipe, the storage wasn't placed inside the recipe.
+                // storage,
+                Sync(onInnerSync1)
+            },
+            Group {
+                storage, // Subrecipe OK, another instance for the nested storage will be created.
+                Sync(onInnerSync2)
+            }
+        };
+
+        TaskTree::runBlocking(innerRecipe);
+    };
+
+    const Group outerRecipe {
+        storage,
+        Sync(onOuterSync)
+    };
+
+    TaskTree::runBlocking(outerRecipe);
+    QVERIFY(outerStorage != nullptr);
+    QCOMPARE(innerStorage1, nullptr);
+    QVERIFY(innerStorage2 != nullptr);
+    QVERIFY(innerStorage2 != outerStorage);
 }
 
 void tst_Tasking::restart()
@@ -3426,6 +4163,127 @@ void tst_Tasking::destructorOfTaskEmittingDone()
 {
     TaskTree taskTree({BrokenTask()});
     taskTree.start();
+}
+
+void tst_Tasking::validConditionalConstructs()
+{
+    const TestTask condition;
+    const TestTask continuation;
+
+    If (condition) >>
+        Then {continuation} >>
+    ElseIf (condition) >>
+        Then {continuation} >>
+    ElseIf (condition) >>
+        Then {continuation} >>
+    Else {continuation};
+
+    Group {
+        parallel,
+        TestTask(),
+        If (condition) >>
+            Then { continuation },
+        If (condition) >>
+            Then { continuation } >>
+        Else { continuation }
+    };
+
+    Group {
+        If (condition) >>
+            Then { continuation }
+    };
+
+    Group {
+        If (condition) >>
+            Then { continuation } >>
+        Else { continuation }
+    };
+
+    Group {
+        If (condition) >>
+            Then { continuation } >>
+        ElseIf (condition) >>
+            Then { continuation }
+    };
+
+    Group {
+        If (condition) >>
+            Then { continuation } >>
+        ElseIf (condition) >>
+            Then { continuation } >>
+        ElseIf (condition) >>
+            Then { continuation } >>
+        Else { continuation }
+    };
+
+    Group {
+        If (condition) >>
+            Then { continuation } >>
+        ElseIf (condition) >>
+            Then { continuation } >>
+        ElseIf (condition) >>
+            Then { continuation } >>
+        ElseIf (condition) >>
+            Then { continuation }
+    };
+
+    Group {
+        If (condition) >>
+            Then { continuation } >>
+        ElseIf (condition) >>
+            Then { continuation } >>
+        Else { continuation }
+    };
+
+    Group {
+        If (condition && condition) >>
+            Then { continuation } >>
+        ElseIf (!condition) >>
+            Then { } >>
+        Else { }
+    };
+
+    // The following constucts are invalid and won't compile:
+#if 0
+
+    // Lack of "Then" body.
+    Group {
+        If (condition)
+    };
+
+    // Can't start with "ElseIf".
+    Group {
+        ElseIf (condition)
+    };
+
+    // Can't start with "Else".
+    Group {
+        Else { continuation }
+    };
+
+    // Can't start with "Then".
+    Group {
+        Then { continuation }
+    };
+
+    // "Then" can't be followed by "If".
+    // Replace ">>" after the first "Then" to construct 2 independent if conditions.
+    Group {
+        If (condition) >>
+            Then { continuation } >>
+        If (condition) >>
+            Then { continuation }
+    };
+
+    // "Else" can't be followed by anything, it must be the final statement.
+    Group {
+        If (condition) >>
+            Then { continuation } >>
+        Else { continuation } >>
+        Else { continuation }
+    };
+
+#endif
 }
 
 QTEST_GUILESS_MAIN(tst_Tasking)

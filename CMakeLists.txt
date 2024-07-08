@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 
+option(BUILD_DESIGNSTUDIO "Build and install design studio plugins, examples and settings." OFF)
+if (BUILD_DESIGNSTUDIO)
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/dist/branding/qtdesignstudio")
+endif()
+
 ## Add paths to check for cmake modules:
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Utils)
@@ -25,7 +30,7 @@ mark_as_advanced(IDE_REVISION IDE_REVISION_STR IDE_REVISION_URL)
 project(QtCreator VERSION ${IDE_VERSION})
 
 # Force C++ standard, do not fall back, do not use compiler extensions
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -73,12 +78,12 @@ find_package(Qt6
   REQUIRED
 )
 
-if (Qt6_VERSION VERSION_GREATER_EQUAL 6.4.3)
+if (Qt6_VERSION VERSION_GREATER_EQUAL 6.5.4)
     option(WITH_QMLDESIGNER "Build QmlDesigner" ${ENV_QTC_WITH_QMLDESIGNER})
 else()
     option(WITH_QMLDESIGNER "Build QmlDesigner" OFF)
 endif()
-add_feature_info("Build QmlDesigner and related code (only if Qt is 6.4.3 or newer)" ${WITH_QMLDESIGNER} "")
+add_feature_info("Build QmlDesigner and related code (only if Qt is 6.5.4 or newer)" ${WITH_QMLDESIGNER} "")
 
 # hack for Qbs which still supports Qt5 and Qt6
 if (TARGET Qt6::Core5CompatPrivate)
@@ -165,7 +170,9 @@ endif()
 
 add_subdirectory(src)
 add_subdirectory(share)
-add_subdirectory(dist)
+if (NOT BUILD_DESIGNSTUDIO)
+    add_subdirectory(dist)
+endif()
 
 if (WITH_TESTS)
  add_subdirectory(tests)

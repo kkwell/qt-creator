@@ -79,18 +79,18 @@ public:
 };
 
 MaterialEditorQmlBackend::MaterialEditorQmlBackend(MaterialEditorView *materialEditor)
-    : m_view(new QQuickWidget)
-    , m_materialEditorTransaction(new MaterialEditorTransaction(materialEditor))
-    , m_contextObject(new MaterialEditorContextObject(m_view->rootContext()))
+    : m_quickWidget(Utils::makeUniqueObjectPtr<QQuickWidget>())
+    , m_materialEditorTransaction(std::make_unique<MaterialEditorTransaction>(materialEditor))
+    , m_contextObject(std::make_unique<MaterialEditorContextObject>(m_quickWidget.get()))
     , m_materialEditorImageProvider(new MaterialEditorImageProvider())
 {
-    m_view->setObjectName(Constants::OBJECT_NAME_MATERIAL_EDITOR);
-    m_view->setResizeMode(QQuickWidget::SizeRootObjectToView);
-    m_view->engine()->addImportPath(propertyEditorResourcesPath() + "/imports");
-    m_view->engine()->addImageProvider("materialEditor", m_materialEditorImageProvider);
+    m_quickWidget->setObjectName(Constants::OBJECT_NAME_MATERIAL_EDITOR);
+    m_quickWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    m_quickWidget->engine()->addImportPath(propertyEditorResourcesPath() + "/imports");
+    m_quickWidget->engine()->addImageProvider("materialEditor", m_materialEditorImageProvider);
     m_contextObject->setBackendValues(&m_backendValuesPropertyMap);
     m_contextObject->setModel(materialEditor->model());
-    context()->setContextObject(m_contextObject.data());
+    context()->setContextObject(m_contextObject.get());
 
     QObject::connect(&m_backendValuesPropertyMap, &DesignerPropertyMap::valueChanged,
                      materialEditor, &MaterialEditorView::changeValue);
@@ -188,22 +188,22 @@ void MaterialEditorQmlBackend::setValue(const QmlObjectNode &, const PropertyNam
 
 QQmlContext *MaterialEditorQmlBackend::context() const
 {
-    return m_view->rootContext();
+    return m_quickWidget->rootContext();
 }
 
 MaterialEditorContextObject *MaterialEditorQmlBackend::contextObject() const
 {
-    return m_contextObject.data();
+    return m_contextObject.get();
 }
 
 QQuickWidget *MaterialEditorQmlBackend::widget() const
 {
-    return m_view;
+    return m_quickWidget.get();
 }
 
 void MaterialEditorQmlBackend::setSource(const QUrl &url)
 {
-    m_view->setSource(url);
+    m_quickWidget->setSource(url);
 }
 
 QmlAnchorBindingProxy &MaterialEditorQmlBackend::backendAnchorBinding()
@@ -214,7 +214,7 @@ QmlAnchorBindingProxy &MaterialEditorQmlBackend::backendAnchorBinding()
 void MaterialEditorQmlBackend::updateMaterialPreview(const QPixmap &pixmap)
 {
     m_materialEditorImageProvider->setPixmap(pixmap);
-    QMetaObject::invokeMethod(m_view->rootObject(), "refreshPreview");
+    QMetaObject::invokeMethod(m_quickWidget->rootObject(), "refreshPreview");
 }
 
 DesignerPropertyMap &MaterialEditorQmlBackend::backendValuesPropertyMap()
@@ -224,7 +224,7 @@ DesignerPropertyMap &MaterialEditorQmlBackend::backendValuesPropertyMap()
 
 MaterialEditorTransaction *MaterialEditorQmlBackend::materialEditorTransaction() const
 {
-    return m_materialEditorTransaction.data();
+    return m_materialEditorTransaction.get();
 }
 
 PropertyEditorValue *MaterialEditorQmlBackend::propertyValueForName(const QString &propertyName)
@@ -267,12 +267,9 @@ void MaterialEditorQmlBackend::setup(const QmlObjectNode &selectedMaterialNode, 
 
         // anchors
         m_backendAnchorBinding.setup(selectedMaterialNode.modelNode());
-        context()->setContextProperties(
-            QVector<QQmlContext::PropertyPair>{
-                {{"anchorBackend"}, QVariant::fromValue(&m_backendAnchorBinding)},
-                {{"transaction"}, QVariant::fromValue(m_materialEditorTransaction.data())}
-            }
-        );
+        context()->setContextProperties(QVector<QQmlContext::PropertyPair>{
+            {{"anchorBackend"}, QVariant::fromValue(&m_backendAnchorBinding)},
+            {{"transaction"}, QVariant::fromValue(m_materialEditorTransaction.get())}});
 
         contextObject()->setSpecificsUrl(qmlSpecificsFile);
         contextObject()->setStateName(stateName);
@@ -287,8 +284,10 @@ void MaterialEditorQmlBackend::setup(const QmlObjectNode &selectedMaterialNode, 
 
         contextObject()->setSelectionChanged(false);
 
+#ifndef QDS_USE_PROJECTSTORAGE
         NodeMetaInfo metaInfo = selectedMaterialNode.modelNode().metaInfo();
         contextObject()->setMajorVersion(metaInfo.isValid() ? metaInfo.majorVersion() : -1);
+#endif
     } else {
         context()->setContextProperty("hasMaterial", QVariant(false));
     }

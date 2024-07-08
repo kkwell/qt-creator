@@ -6,13 +6,13 @@
 #include "qmljseditordocument_p.h"
 #include "qmljseditorplugin.h"
 #include "qmljseditortr.h"
+#include "qmljseditorsettings.h"
 #include "qmljshighlighter.h"
 #include "qmljsquickfixassist.h"
 #include "qmljssemantichighlighter.h"
 #include "qmljssemanticinfoupdater.h"
 #include "qmljstextmark.h"
 #include "qmllsclient.h"
-#include "qmllssettings.h"
 #include "qmloutlinemodel.h"
 
 #include <coreplugin/coreconstants.h>
@@ -37,6 +37,7 @@ using namespace QmlJSEditor;
 using namespace QmlJS;
 using namespace QmlJS::AST;
 using namespace QmlJSTools;
+using namespace Utils;
 
 namespace {
 
@@ -477,10 +478,8 @@ QmlJSEditorDocumentPrivate::QmlJSEditorDocumentPrivate(QmlJSEditorDocument *pare
             this, &QmlJSEditorDocumentPrivate::reparseDocument);
     connect(modelManager, &ModelManagerInterface::documentUpdated,
             this, &QmlJSEditorDocumentPrivate::onDocumentUpdated);
-    connect(QmllsSettingsManager::instance(),
-            &QmllsSettingsManager::settingsChanged,
-            this,
-            &Internal::QmlJSEditorDocumentPrivate::settingsChanged);
+    connect(QmllsSettingsManager::instance(), &QmllsSettingsManager::settingsChanged,
+            this, &QmlJSEditorDocumentPrivate::settingsChanged);
 
     // semantic info
     m_semanticInfoUpdater = new SemanticInfoUpdater();
@@ -504,7 +503,7 @@ QmlJSEditorDocumentPrivate::QmlJSEditorDocumentPrivate(QmlJSEditorDocument *pare
     connect(&m_updateOutlineModelTimer, &QTimer::timeout,
             this, &QmlJSEditorDocumentPrivate::updateOutlineModel);
 
-    modelManager->updateSourceFiles(Utils::FilePaths({parent->filePath()}), false);
+    modelManager->updateSourceFiles({parent->filePath()}, false);
 }
 
 QmlJSEditorDocumentPrivate::~QmlJSEditorDocumentPrivate()
@@ -524,7 +523,7 @@ void QmlJSEditorDocumentPrivate::invalidateFormatterCache()
 
 void QmlJSEditorDocumentPrivate::reparseDocument()
 {
-    ModelManagerInterface::instance()->updateSourceFiles(Utils::FilePaths({q->filePath()}), false);
+    ModelManagerInterface::instance()->updateSourceFiles({q->filePath()}, false);
 }
 
 void QmlJSEditorDocumentPrivate::onDocumentUpdated(Document::Ptr doc)
@@ -728,23 +727,28 @@ void QmlJSEditorDocumentPrivate::setSourcesWithCapabilities(
         setSemanticWarningSource(QmllsStatus::Source::Qmlls);
     else
         setSemanticWarningSource(QmllsStatus::Source::EmbeddedCodeModel);
-    if (cap.semanticTokensProvider())
-        setSemanticHighlightSource(QmllsStatus::Source::Qmlls);
-    else
-        setSemanticHighlightSource(QmllsStatus::Source::EmbeddedCodeModel);
+    // TODO: uncomment when qmlls semantic tokens reach a stable state
+    // if (cap.semanticTokensProvider())
+    //     setSemanticHighlightSource(QmllsStatus::Source::Qmlls);
+    // else
+    setSemanticHighlightSource(QmllsStatus::Source::EmbeddedCodeModel);
 }
 
-static Utils::FilePath qmllsForFile(const Utils::FilePath &file,
-                                    QmlJS::ModelManagerInterface *modelManager)
+static FilePath qmllsForFile(const FilePath &file, QmlJS::ModelManagerInterface *modelManager)
 {
     QmllsSettingsManager *settingsManager = QmllsSettingsManager::instance();
-    QmllsSettings settings = settingsManager->lastSettings();
-    bool enabled = settings.useQmlls;
+    bool enabled = settingsManager->useQmlls();
     if (!enabled)
         return {};
-    if (settings.useLatestQmlls)
+    if (settingsManager->useLatestQmlls())
         return settingsManager->latestQmlls();
     QmlJS::ModelManagerInterface::ProjectInfo pInfo = modelManager->projectInfoForPath(file);
+
+    if (!settings().ignoreMinimumQmllsVersion()
+        && QVersionNumber::fromString(pInfo.qtVersionString)
+               < QmlJsEditingSettings::mininumQmllsVersion) {
+        return {};
+    }
     return pInfo.qmllsPath;
 }
 
@@ -753,14 +757,15 @@ void QmlJSEditorDocumentPrivate::settingsChanged()
     if (q->isTemporary())
         return;
 
-    Utils::FilePath newQmlls = qmllsForFile(q->filePath(), ModelManagerInterface::instance());
+    FilePath newQmlls = qmllsForFile(q->filePath(), ModelManagerInterface::instance());
     if (m_qmllsStatus.qmllsPath == newQmlls)
         return;
+
+    using namespace LanguageClient;
     m_qmllsStatus.qmllsPath = newQmlls;
-    auto lspClientManager = LanguageClient::LanguageClientManager::instance();
     if (newQmlls.isEmpty()) {
         qCDebug(qmllsLog) << "disabling qmlls for" << q->filePath();
-        if (LanguageClient::Client *client = lspClientManager->clientForDocument(q)) {
+        if (Client *client = LanguageClientManager::clientForDocument(q)) {
             qCDebug(qmllsLog) << "deactivating " << q->filePath() << "in qmlls" << newQmlls;
             client->deactivateDocument(q);
         } else
@@ -771,32 +776,32 @@ void QmlJSEditorDocumentPrivate::settingsChanged()
         setSemanticHighlightSource(QmllsStatus::Source::EmbeddedCodeModel);
     } else if (QmllsClient *client = QmllsClient::clientForQmlls(newQmlls)) {
         bool shouldActivate = false;
-        if (auto oldClient = lspClientManager->clientForDocument(q)) {
+        if (auto oldClient = LanguageClientManager::clientForDocument(q)) {
             // check if it was disabled
             if (client == oldClient)
                 shouldActivate = true;
         }
         switch (client->state()) {
-        case LanguageClient::Client::State::Uninitialized:
-        case LanguageClient::Client::State::InitializeRequested:
+        case Client::State::Uninitialized:
+        case Client::State::InitializeRequested:
             connect(client,
-                    &LanguageClient::Client::initialized,
+                    &Client::initialized,
                     this,
                     &QmlJSEditorDocumentPrivate::setSourcesWithCapabilities);
             break;
-        case LanguageClient::Client::State::Initialized:
+        case Client::State::Initialized:
             setSourcesWithCapabilities(client->capabilities());
             break;
-        case LanguageClient::Client::State::FailedToInitialize:
-        case LanguageClient::Client::State::Error:
+        case Client::State::FailedToInitialize:
+        case Client::State::Error:
             qCWarning(qmllsLog) << "qmlls" << newQmlls << "requested for document" << q->filePath()
                                 << "had errors, skipping setSourcesWithCababilities";
             break;
-        case LanguageClient::Client::State::Shutdown:
+        case Client::State::Shutdown:
             qCWarning(qmllsLog) << "qmlls" << newQmlls << "requested for document" << q->filePath()
                                 << "did stop, skipping setSourcesWithCababilities";
             break;
-        case LanguageClient::Client::State::ShutdownRequested:
+        case Client::State::ShutdownRequested:
             qCWarning(qmllsLog) << "qmlls" << newQmlls << "requested for document" << q->filePath()
                                 << "is stopping, skipping setSourcesWithCababilities";
             break;
@@ -806,7 +811,7 @@ void QmlJSEditorDocumentPrivate::settingsChanged()
             client->activateDocument(q);
         } else {
             qCDebug(qmllsLog) << "opening " << q->filePath() << "in qmlls" << newQmlls;
-            lspClientManager->openDocumentWithClient(q, client);
+            LanguageClientManager::openDocumentWithClient(q, client);
         }
     } else {
         qCWarning(qmllsLog) << "could not start qmlls " << newQmlls << "for" << q->filePath();
@@ -870,8 +875,8 @@ void QmlJSEditorDocument::setIsDesignModePreferred(bool value)
     d->m_isDesignModePreferred = value;
     if (value) {
         if (infoBar()->canInfoBeAdded(QML_UI_FILE_WARNING)) {
-            Utils::InfoBarEntry info(QML_UI_FILE_WARNING,
-                                     Tr::tr("This file should only be edited in <b>Design</b> mode."));
+            InfoBarEntry info(QML_UI_FILE_WARNING,
+                              Tr::tr("This file should only be edited in <b>Design</b> mode."));
             info.addCustomButton(Tr::tr("Switch Mode"), []() {
                 Core::ModeManager::activateMode(Core::Constants::MODE_DESIGN);
             });

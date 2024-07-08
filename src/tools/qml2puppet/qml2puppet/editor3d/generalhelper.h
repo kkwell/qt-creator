@@ -10,6 +10,7 @@
 #include <QMatrix4x4>
 #include <QObject>
 #include <QPointer>
+#include <QPointF>
 #include <QQuaternion>
 #include <QTimer>
 #include <QUrl>
@@ -37,6 +38,7 @@ class GeneralHelper : public QObject
     Q_PROPERTY(bool isMacOS READ isMacOS CONSTANT)
     Q_PROPERTY(QVariant bgColor READ bgColor NOTIFY bgColorChanged FINAL)
     Q_PROPERTY(double minGridStep READ minGridStep NOTIFY minGridStepChanged FINAL)
+    Q_PROPERTY(double cameraSpeed READ cameraSpeed NOTIFY cameraSpeedChanged FINAL)
 
 public:
     GeneralHelper();
@@ -52,6 +54,15 @@ public:
                                     const QVector3D &startPosition, const QVector3D &startLookAt,
                                     const QVector3D &pressPos, const QVector3D &currentPos,
                                     float zoomFactor);
+    Q_INVOKABLE QVector3D moveCamera(QQuick3DCamera *camera,const QVector3D &startLookAt,
+                                     const QVector3D &moveVector);
+    Q_INVOKABLE QVector3D rotateCamera(QQuick3DCamera *camera, const QPointF &angles,
+                                       const QVector3D &lookAtPoint);
+
+    Q_INVOKABLE void startCameraMove(QQuick3DCamera *camera, const QVector3D moveVector);
+    Q_INVOKABLE void stopCameraMove(const QVector3D moveVector);
+    Q_INVOKABLE void stopAllCameraMoves();
+
     Q_INVOKABLE float zoomCamera(QQuick3DViewport *viewPort, QQuick3DCamera *camera, float distance,
                                  float defaultLookAtDistance, const QVector3D &lookAt,
                                  float zoomFactor, bool relative);
@@ -59,12 +70,17 @@ public:
                                              const QVariant &nodes, QQuick3DViewport *viewPort,
                                              float oldZoom, bool updateZoom = true,
                                              bool closeUp = false);
+    Q_INVOKABLE QVector4D approachNode(QQuick3DCamera *camera, float defaultLookAtDistance,
+                                       QObject *node, QQuick3DViewport *viewPort);
+    void calculateBoundsAndFocusCamera(QQuick3DCamera *camera, QQuick3DNode *node,
+                                       QQuick3DViewport *viewPort, float defaultLookAtDistance,
+                                       bool closeUp, QVector3D &lookAt, QVector3D &extents);
     Q_INVOKABLE void calculateNodeBoundsAndFocusCamera(QQuick3DCamera *camera, QQuick3DNode *node,
                                                        QQuick3DViewport *viewPort,
                                                        float defaultLookAtDistance, bool closeUp);
     Q_INVOKABLE void alignCameras(QQuick3DCamera *camera, const QVariant &nodes);
-    Q_INVOKABLE QVector3D alignView(QQuick3DCamera *camera, const QVariant &nodes,
-                                    const QVector3D &lookAtPoint);
+    Q_INVOKABLE QVector4D alignView(QQuick3DCamera *camera, const QVariant &nodes,
+                                    const QVector3D &lookAtPoint, float defaultLookAtDistance);
     Q_INVOKABLE bool fuzzyCompare(double a, double b);
     Q_INVOKABLE void delayedPropertySet(QObject *obj, int delay, const QString &property,
                                         const QVariant& value);
@@ -83,7 +99,9 @@ public:
     Q_INVOKABLE void enableItemUpdate(QQuickItem *item, bool enable);
     Q_INVOKABLE QVariantMap getToolStates(const QString &sceneId);
     QString globalStateId() const;
+    QString projectStateId() const;
     QString lastSceneIdKey() const;
+    QString lastSceneEnvKey() const;
     QString rootSizeKey() const;
 
     Q_INVOKABLE void setMultiSelectionTargets(QQuick3DNode *multiSelectRootNode,
@@ -96,12 +114,18 @@ public:
     Q_INVOKABLE void rotateMultiSelection(bool commit);
 
     void setSceneEnvironmentData(const QString &sceneId, QQuick3DSceneEnvironment *env);
+    Q_INVOKABLE bool hasSceneEnvironmentData(const QString &sceneId) const;
     Q_INVOKABLE QQuick3DSceneEnvironment::QQuick3DEnvironmentBackgroundTypes sceneEnvironmentBgMode(
         const QString &sceneId) const;
     Q_INVOKABLE QColor sceneEnvironmentColor(const QString &sceneId) const;
     Q_INVOKABLE QQuick3DTexture *sceneEnvironmentLightProbe(const QString &sceneId) const;
     Q_INVOKABLE QQuick3DCubeMapTexture *sceneEnvironmentSkyBoxCubeMap(const QString &sceneId) const;
+    Q_INVOKABLE void updateSceneEnvToLast(QQuick3DSceneEnvironment *env, QQuick3DTexture *lightProbe,
+                                          QQuick3DCubeMapTexture *cubeMap);
+    Q_INVOKABLE bool sceneHasLightProbe(const QString &sceneId);
+
     void clearSceneEnvironmentData();
+    void setLastSceneEnvironmentData(const QVariantMap &data);
 
     bool isMacOS() const;
 
@@ -125,12 +149,15 @@ public:
     void setSnapPositionInterval(double interval);
     void setSnapRotationInterval(double interval) { m_snapRotationInterval = interval; }
     void setSnapScaleInterval(double interval) { m_snapScaleInterval = interval / 100.; }
+    void setCameraSpeed(double speed);
+    Q_INVOKABLE void setCameraSpeedModifier(double modifier);
 
     Q_INVOKABLE QString snapPositionDragTooltip(const QVector3D &pos) const;
     Q_INVOKABLE QString snapRotationDragTooltip(double angle) const;
     Q_INVOKABLE QString snapScaleDragTooltip(const QVector3D &scale) const;
 
     double minGridStep() const;
+    double cameraSpeed() const { return m_cameraSpeed; }
 
     void setBgColor(const QVariant &colors);
     QVariant bgColor() const { return m_bgColor; }
@@ -138,6 +165,8 @@ public:
     Q_INVOKABLE QVector3D dirForRotation(const QQuaternion &rotation) const;
     Q_INVOKABLE bool compareVectors(const QVector3D &v1, const QVector3D &v2) const;
     Q_INVOKABLE bool compareQuaternions(const QQuaternion &q1, const QQuaternion &q2) const;
+
+    Q_INVOKABLE void requestTimerEvent(const QString &timerId, qint64 delay);
 
 signals:
     void overlayUpdateNeeded();
@@ -149,6 +178,10 @@ signals:
     void minGridStepChanged();
     void updateDragTooltip();
     void sceneEnvDataChanged();
+    void requestCameraMove(QQuick3DCamera *camera, const QVector3D &moveVector);
+    void requestRender();
+    void cameraSpeedChanged();
+    void requestedTimerEvent(const QString &timerId);
 
 private:
     void handlePendingToolStateUpdate();
@@ -163,6 +196,15 @@ private:
     QHash<QString, QVariantMap> m_toolStates;
     QHash<QString, QVariantMap> m_toolStatesPending;
     QSet<QQuick3DNode *> m_rotationBlockedNodes;
+    void updateCombinedCameraMoveVector();
+
+    struct CameraMoveKeyData {
+        QQuick3DCamera *camera;
+        QList<QVector3D> moveVectors;
+        QVector3D combinedMoveVector;
+        QTimer timer;
+    };
+    CameraMoveKeyData m_camMoveData;
 
     struct SceneEnvData {
         QQuick3DSceneEnvironment::QQuick3DEnvironmentBackgroundTypes backgroundMode;
@@ -171,6 +213,7 @@ private:
         QPointer<QQuick3DCubeMapTexture> skyBoxCubeMap;
     };
     QHash<QString, SceneEnvData> m_sceneEnvironmentData;
+    QVariantMap m_lastSceneEnvData;
 
     struct MultiSelData {
         QVector3D startScenePos;
@@ -193,8 +236,11 @@ private:
     double m_snapPositionInterval = 50.;
     double m_snapRotationInterval = 5.;
     double m_snapScaleInterval = .1;
+    double m_cameraSpeed = 10.;
+    double m_cameraSpeedModifier = 1.;
 
     QVariant m_bgColor;
+    QHash<QString, QTimer *> m_eventTimers;
 };
 
 }

@@ -4,6 +4,7 @@
 #pragma once
 
 #include "nonlockingmutex.h"
+#include "projectstoragefwd.h"
 #include "qmltypesparserinterface.h"
 
 namespace Sqlite {
@@ -12,17 +13,13 @@ class Database;
 
 namespace QmlDesigner {
 
-template<typename Database>
-class ProjectStorage;
-
 template<typename ProjectStorage, typename Mutex>
 class SourcePathCache;
 
 class QmlTypesParser final : public QmlTypesParserInterface
 {
 public:
-    using ProjectStorage = QmlDesigner::ProjectStorage<Sqlite::Database>;
-
+    using ProjectStorage = QmlDesigner::ProjectStorage;
 #ifdef QDS_BUILD_QMLPARSER
     QmlTypesParser(ProjectStorage &storage)
         : m_storage{storage}
@@ -34,7 +31,7 @@ public:
     void parse(const QString &sourceContent,
                Storage::Imports &imports,
                Storage::Synchronization::Types &types,
-               const Storage::Synchronization::ProjectData &projectData) override;
+               const Storage::Synchronization::DirectoryInfo &directoryInfo) override;
 
 private:
 #ifdef QDS_BUILD_QMLPARSER

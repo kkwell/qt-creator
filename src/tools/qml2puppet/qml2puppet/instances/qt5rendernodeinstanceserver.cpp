@@ -36,6 +36,8 @@
 
 #include "dummycontextobject.h"
 
+#include <qmlprivategate.h>
+
 #include <private/qquickdesignersupport_p.h>
 
 namespace QmlDesigner {
@@ -144,7 +146,9 @@ void Qt5RenderNodeInstanceServer::collectItemChangesAndSendChangeCommands()
             && !changedPropertyList().isEmpty()
             && nodeInstanceClient()->bytesToWrite() < 10000) {
 
-            Internal::QuickItemNodeInstance::updateDirtyNode(rootNodeInstance().contentItem());
+            QQuickItem *rootItem = rootNodeInstance().contentItem();
+            QQuickDesignerSupport::addDirty(rootItem, QQuickDesignerSupport::Content);
+            QQuickDesignerSupport::updateDirtyNode(rootItem);
             nodeInstanceClient()->pixmapChanged(createPixmapChangedCommand({rootNodeInstance()}));
         }
 
@@ -215,6 +219,57 @@ void QmlDesigner::Qt5RenderNodeInstanceServer::removeSharedMemory(const QmlDesig
 {
     if (command.typeName() == "Image")
         ImageContainer::removeSharedMemorys(command.keyNumbers());
+}
+
+void Qt5RenderNodeInstanceServer::changePropertyValues(const ChangeValuesCommand &command)
+{
+    Qt5NodeInstanceServer::changePropertyValues(command);
+
+    const QVector<PropertyValueContainer> values = command.valueChanges();
+    for (const PropertyValueContainer &container : values) {
+        // In case an effect item visibility changed to false, make sure all children are rendered
+        // again as they might not have valid pixmaps yet
+        if (container.name() == "visible" && !container.value().toBool()
+            && hasInstanceForId(container.instanceId())) {
+            ServerNodeInstance instance = instanceForId(container.instanceId());
+            if (instance.isSubclassOf("QtQuick/PropertyChanges")) {
+                QObject *targetObject = Internal::QmlPrivateGate::PropertyChanges::targetObject(
+                    instance.internalInstance()->object());
+                if (hasInstanceForObject(targetObject))
+                    instance = instanceForObject(targetObject);
+            }
+
+            if (instance.hasParent() && instance.propertyNames().contains("_isEffectItem"))
+                makeDirtyRecursive(instance.parent());
+        } else if (container.isDynamic() && hasInstanceForId(container.instanceId())) {
+            // Changes to dynamic properties are not always noticed by normal signal spy mechanism
+            addChangedProperty(InstancePropertyPair(instanceForId(container.instanceId()),
+                                                    container.name()));
+        }
+    }
+}
+
+void Qt5RenderNodeInstanceServer::changePropertyBindings(const ChangeBindingsCommand &command)
+{
+    Qt5NodeInstanceServer::changePropertyBindings(command);
+
+    const QVector<PropertyBindingContainer> changes = command.bindingChanges;
+    for (const PropertyBindingContainer &container : changes) {
+        if (container.isDynamic() && hasInstanceForId(container.instanceId())) {
+            // Changes to dynamic properties are not always noticed by normal signal spy mechanism
+            addChangedProperty(InstancePropertyPair(instanceForId(container.instanceId()),
+                                                    container.name()));
+        }
+    }
+}
+
+void Qt5RenderNodeInstanceServer::makeDirtyRecursive(const ServerNodeInstance &instance)
+{
+    const QList<ServerNodeInstance> children = instance.childItems();
+    for (const auto &child : children) {
+        m_dirtyInstanceSet.insert(child);
+        makeDirtyRecursive(child);
+    }
 }
 
 } // namespace QmlDesigner

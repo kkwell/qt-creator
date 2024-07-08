@@ -18,6 +18,7 @@
 #include <utils/elidinglabel.h>
 #include <utils/link.h>
 #include <utils/multitextcursor.h>
+#include <utils/textutils.h>
 #include <utils/uncommentselection.h>
 
 #include <QPlainTextEdit>
@@ -85,6 +86,22 @@ enum TextMarkRequestKind
     TaskMarkRequest
 };
 
+namespace OptionalActions {
+enum Mask {
+    None = 0,
+    Format = 1,
+    UnCommentSelection = 2,
+    UnCollapseAll = 4,
+    FollowSymbolUnderCursor = 8,
+    FollowTypeUnderCursor = 16,
+    JumpToFileUnderCursor = 32,
+    RenameSymbol = 64,
+    FindUsage = 128,
+    CallHierarchy = 256,
+    TypeHierarchy = 512,
+};
+} // namespace OptionalActions
+
 class TEXTEDITOR_EXPORT BaseTextEditor : public Core::IEditor
 {
     Q_OBJECT
@@ -119,7 +136,6 @@ public:
     QWidget *toolBar() override;
 
     void contextHelp(const HelpCallback &callback) const override; // from IContext
-    void setContextHelp(const Core::HelpItem &item) override;
 
     int currentLine() const override;
     int currentColumn() const override;
@@ -153,6 +169,11 @@ public:
 private:
     friend class TextEditorFactory;
     friend class Internal::TextEditorFactoryPrivate;
+
+    void saveCurrentStateForNavigationHistory();
+    void addSavedStateToNavigationHistory();
+    void addCurrentStateToNavigationHistory();
+
     Internal::BaseTextEditorPrivate *d;
 };
 
@@ -175,6 +196,8 @@ public:
     void gotoLine(int line, int column = 0, bool centerLine = true, bool animate = false);
     int position(TextPositionOperation posOp = CurrentPosition,
          int at = -1) const;
+    QTextCursor textCursorAt(int position) const;
+    Utils::Text::Position lineColumn() const;
     void convertPosition(int pos, int *line, int *column) const;
     using QPlainTextEdit::cursorRect;
     QRect cursorRect(int pos) const;
@@ -245,9 +268,9 @@ public:
     int columnCount() const;
     int rowCount() const;
 
-    void setReadOnly(bool b);
-
-    void insertCodeSnippet(const QTextCursor &cursor,
+    // replaces the text from the current cursor position to the base position with the snippet
+    // and starts the snippet replacement mode
+    void insertCodeSnippet(int basePosition,
                            const QString &snippet,
                            const SnippetParser &parse);
 
@@ -441,6 +464,9 @@ public:
     virtual void undo();
     virtual void redo();
 
+    virtual bool isUndoAvailable() const;
+    virtual bool isRedoAvailable() const;
+
     void openLinkUnderCursor();
     void openLinkUnderCursorInNextSplit();
     void openTypeUnderCursor();
@@ -494,13 +520,14 @@ public:
     // Returns an object that blocks suggestions until it is destroyed.
     SuggestionBlocker blockSuggestions();
 
+    QList<QTextCursor> autoCompleteHighlightPositions() const;
+
 #ifdef WITH_TESTS
     void processTooltipRequest(const QTextCursor &c);
 #endif
 
 signals:
     void assistFinished(); // Used in tests.
-    void readOnlyChanged();
 
     void requestBlockUpdate(const QTextBlock &);
 
@@ -511,8 +538,12 @@ signals:
     void requestUsages(const QTextCursor &cursor);
     void requestRename(const QTextCursor &cursor);
     void requestCallHierarchy(const QTextCursor &cursor);
-    void optionalActionMaskChanged();
     void toolbarOutlineChanged(QWidget *newOutline);
+
+    // used by the IEditor
+    void saveCurrentStateForNavigationHistory();
+    void addSavedStateToNavigationHistory();
+    void addCurrentStateToNavigationHistory();
 
 protected:
     QTextBlock blockForVisibleRow(int row) const;
@@ -569,6 +600,8 @@ protected:
 
     void setVisualIndentOffset(int offset);
 
+    void updateUndoRedoActions();
+
 public:
     QString selectedText() const;
 
@@ -577,6 +610,7 @@ public:
 
     void remove(int length);
     void replace(int length, const QString &string);
+    void replace(int pos, int length, const QString &string);
     QChar characterAt(int pos) const;
     QString textAt(int from, int to) const;
 
@@ -637,8 +671,7 @@ protected:
     virtual void slotCodeStyleSettingsChanged(const QVariant &); // Used in CppEditor
 
 private:
-    Internal::TextEditorWidgetPrivate *d;
-    friend class BaseTextEditor;
+    std::unique_ptr<Internal::TextEditorWidgetPrivate> d;
     friend class TextEditorFactory;
     friend class Internal::TextEditorFactoryPrivate;
     friend class Internal::TextEditorWidgetPrivate;
@@ -689,7 +722,7 @@ public:
     void setSyntaxHighlighterCreator(const SyntaxHighLighterCreator &creator);
     void setUseGenericHighlighter(bool enabled);
     void setAutoCompleterCreator(const AutoCompleterCreator &creator);
-    void setEditorActionHandlers(uint optionalActions);
+    void setOptionalActionMask(int optionalActions);
 
     void addHoverHandler(BaseHoverHandler *handler);
     void setCompletionAssistProvider(CompletionAssistProvider *provider);

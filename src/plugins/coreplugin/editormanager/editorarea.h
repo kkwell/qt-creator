@@ -7,11 +7,7 @@
 
 #include <QPointer>
 
-namespace Core {
-
-class IContext;
-
-namespace Internal {
+namespace Core::Internal {
 
 class EditorArea : public SplitterOrView
 {
@@ -22,20 +18,21 @@ public:
     ~EditorArea() override;
 
     IDocument *currentDocument() const;
+    EditorView *currentView() const;
 
 signals:
     void windowTitleNeedsUpdate();
+    void hidden();
 
 private:
     void focusChanged(QWidget *old, QWidget *now);
     void setCurrentView(EditorView *view);
     void updateCurrentEditor(IEditor *editor);
     void updateCloseSplitButton();
+    void hideEvent(QHideEvent *) override;
 
-    IContext *m_context;
     QPointer<EditorView> m_currentView;
     QPointer<IDocument> m_currentDocument;
 };
 
-} // Internal
-} // Core
+} // Core::Internal

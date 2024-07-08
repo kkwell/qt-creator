@@ -36,7 +36,7 @@
 #include <qtsupport/qtkitaspect.h>
 #include <qtsupport/qtversionmanager.h>
 
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/mimeconstants.h>
 #include <utils/qtcassert.h>
 
@@ -73,7 +73,7 @@ FilePath QmakeBuildConfiguration::shadowBuildDirectory(const FilePath &proFilePa
         return {};
 
     const QString projectName = proFilePath.completeBaseName();
-    return buildDirectoryFromTemplate(Project::projectDirectory(proFilePath), proFilePath,
+    return buildDirectoryFromTemplate(proFilePath.absolutePath(), proFilePath,
                                       projectName, k, suffix, buildType, "qmake");
 }
 

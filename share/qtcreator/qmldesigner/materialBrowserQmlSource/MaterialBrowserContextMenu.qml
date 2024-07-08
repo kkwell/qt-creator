@@ -127,4 +127,11 @@ StudioControls.Menu {
 
         onTriggered: materialBrowserModel.addNewMaterial()
     }
+
+    StudioControls.MenuItem {
+        text: qsTr("Add to Content Library")
+        enabled: !materialBrowserModel.selectedMaterialIsComponent
+
+        onTriggered: MaterialBrowserBackend.rootView.addMaterialToContentLibrary()
+    }
 }

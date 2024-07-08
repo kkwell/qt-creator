@@ -25,12 +25,13 @@
         \row
         \li \b {\l{Getting Started}}
             \list
-                \li \l{Installation}
+                \li \l{Installing \QDS}
                 \li \l{Tutorials}
                 \li \l{User Interface}
                 \li \l{Creating Projects}
                 \li \l{Use Cases}
                 \li \l{Concepts and Terms}
+                \li \l{Best Practices}
                 \li \l{Examples}
             \endlist
         \li \b {\l{Wireframing}}
@@ -86,7 +87,6 @@
         \li \b {\l Help}
             \list
                 \li \l{Get help}{Getting Help}
-                \li \l{Frequently Asked Questions}
                 \li \l{Supported Platforms}
             \endlist
         \row

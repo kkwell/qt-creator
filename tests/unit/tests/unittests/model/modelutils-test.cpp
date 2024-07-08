@@ -13,6 +13,7 @@
 namespace {
 using QmlDesigner::ModelNode;
 using QmlDesigner::ModelNodes;
+using QmlDesigner::Storage::ModuleKind;
 
 class ModelUtils : public ::testing::Test
 {
@@ -20,7 +21,7 @@ protected:
     NiceMock<SourcePathCacheMockWithPaths> pathCacheMock{"/path/model.qml"};
     QmlDesigner::SourceId sourceId = pathCacheMock.createSourceId("/path/foo.qml");
     NiceMock<ProjectStorageMockWithQtQtuick> projectStorageMock{pathCacheMock.sourceId};
-    QmlDesigner::ModuleId moduleId = projectStorageMock.moduleId("QtQuick");
+    QmlDesigner::ModuleId moduleId = projectStorageMock.moduleId("QtQuick", ModuleKind::QmlLibrary);
     QmlDesigner::Model model{{projectStorageMock, pathCacheMock},
                              "Item",
                              {QmlDesigner::Import::createLibraryImport("QML"),
@@ -141,7 +142,7 @@ TEST_F(ModelUtils, find_lowest_common_ancestor_when_one_of_the_nodes_is_parent)
     ASSERT_THAT(commonAncestor, parentNode);
 }
 
-TEST_F(ModelUtils, lowest_common_ancestor_for_uncle_and_nephew_should_return_the_grandFather)
+TEST_F(ModelUtils, lowest_common_ancestor_for_uncle_and_nephew_should_return_the_grandfather)
 {
     auto grandFatherNode = model.createModelNode("Item");
     auto fatherNode = model.createModelNode("Item");

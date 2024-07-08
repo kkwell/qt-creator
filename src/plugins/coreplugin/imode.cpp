@@ -5,9 +5,12 @@
 
 #include "modemanager.h"
 
+#include <utils/aspects.h>
 #include <utils/fancymainwindow.h>
 
 #include <aggregation/aggregate.h>
+
+using namespace Utils;
 
 namespace Core {
 
@@ -22,7 +25,10 @@ public:
     Utils::FancyMainWindow *m_mainWindow = nullptr;
     int m_priority = -1;
     Utils::Id m_id;
+    Context m_context;
+    QPointer<QWidget> m_widget;
     bool m_isEnabled = true;
+    BoolAspect m_isVisible;
 };
 
 } // namespace Internal
@@ -119,9 +125,14 @@ public:
     Registers the mode in \QC.
 */
 IMode::IMode(QObject *parent)
-    : IContext(parent)
+    : QObject(parent)
     , m_d(new Internal::IModePrivate)
 {
+    m_d->m_isVisible.setDefaultValue(true);
+    connect(&m_d->m_isVisible, &BoolAspect::changed, this, [this] {
+        emit visibleChanged(m_d->m_isVisible.value());
+        m_d->m_isVisible.writeSettings();
+    });
     ModeManager::addMode(this);
 }
 
@@ -155,6 +166,11 @@ void IMode::setEnabled(bool enabled)
     emit enabledStateChanged(m_d->m_isEnabled);
 }
 
+void IMode::setVisible(bool visible)
+{
+    m_d->m_isVisible.setValue(visible);
+}
+
 void IMode::setDisplayName(const QString &displayName)
 {
     m_d->m_displayName = displayName;
@@ -173,11 +189,24 @@ void IMode::setPriority(int priority)
 void IMode::setId(Utils::Id id)
 {
     m_d->m_id = id;
+    m_d->m_isVisible
+        .setSettingsKey("MainWindow", id.withPrefix("Mode.").withSuffix(".Visible").toKey());
+    m_d->m_isVisible.readSettings();
 }
 
 void IMode::setMenu(QMenu *menu)
 {
     m_d->m_menu = menu;
+}
+
+void IMode::setContext(const Context &context)
+{
+    m_d->m_context = context;
+}
+
+void IMode::setWidget(QWidget *widget)
+{
+    m_d->m_widget = widget;
 }
 
 Utils::FancyMainWindow *IMode::mainWindow()
@@ -198,9 +227,24 @@ bool IMode::isEnabled() const
     return m_d->m_isEnabled;
 }
 
+bool IMode::isVisible() const
+{
+    return m_d->m_isVisible.value();
+}
+
 QMenu *IMode::menu() const
 {
     return m_d->m_menu;
+}
+
+Context IMode::context() const
+{
+    return m_d->m_context;
+}
+
+QWidget *IMode::widget() const
+{
+    return m_d->m_widget;
 }
 
 } // namespace Core

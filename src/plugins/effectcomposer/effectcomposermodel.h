@@ -11,7 +11,9 @@
 #include <QFileSystemWatcher>
 #include <QMap>
 #include <QRegularExpression>
-#include <QTemporaryFile>
+#include <QSet>
+#include <QTemporaryDir>
+#include <QTimer>
 
 namespace ProjectExplorer {
 class Target;
@@ -47,7 +49,7 @@ class EffectComposerModel : public QAbstractListModel
     Q_PROPERTY(bool hasUnsavedChanges MEMBER m_hasUnsavedChanges WRITE setHasUnsavedChanges NOTIFY hasUnsavedChangesChanged)
     Q_PROPERTY(bool shadersUpToDate READ shadersUpToDate WRITE setShadersUpToDate NOTIFY shadersUpToDateChanged)
     Q_PROPERTY(bool isEnabled READ isEnabled WRITE setIsEnabled NOTIFY isEnabledChanged)
-    Q_PROPERTY(QString qmlComponentString READ qmlComponentString)
+    Q_PROPERTY(bool hasValidTarget READ hasValidTarget WRITE setHasValidTarget NOTIFY hasValidTargetChanged)
     Q_PROPERTY(QString currentComposition READ currentComposition WRITE setCurrentComposition NOTIFY currentCompositionChanged)
 
 public:
@@ -57,6 +59,8 @@ public:
     int rowCount(const QModelIndex & parent = QModelIndex()) const override;
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
     bool setData(const QModelIndex &index, const QVariant &value, int role) override;
+
+    void setEffectsTypePrefix(const QString &prefix);
 
     bool isEmpty() const { return m_isEmpty; }
     void setIsEmpty(bool val);
@@ -70,6 +74,7 @@ public:
     Q_INVOKABLE void clear(bool clearName = false);
     Q_INVOKABLE void assignToSelected();
     Q_INVOKABLE QString getUniqueEffectName() const;
+    Q_INVOKABLE bool nameExists(const QString &name) const;
 
     bool shadersUpToDate() const;
     void setShadersUpToDate(bool newShadersUpToDate);
@@ -77,13 +82,16 @@ public:
     bool isEnabled() const;
     void setIsEnabled(bool enabled);
 
+    bool hasValidTarget() const;
+    void setHasValidTarget(bool validTarget);
+
     QString fragmentShader() const;
     void setFragmentShader(const QString &newFragmentShader);
 
     QString vertexShader() const;
     void setVertexShader(const QString &newVertexShader);
 
-    const QString &qmlComponentString() const;
+    Q_INVOKABLE QString qmlComponentString() const;
 
     Q_INVOKABLE void updateQmlComponent();
 
@@ -110,12 +118,14 @@ signals:
     void effectErrorChanged();
     void shadersUpToDateChanged();
     void isEnabledChanged();
+    void hasValidTargetChanged();
     void shadersBaked();
     void currentCompositionChanged();
     void nodesChanged();
     void resourcesSaved(const QByteArray &type, const Utils::FilePath &path);
     void hasUnsavedChangesChanged();
     void assignToSelectedTriggered(const QString &effectPath);
+    void removePropertiesFromScene(QSet<QByteArray> props, const QString &typeName);
 
 private:
     enum Roles {
@@ -166,18 +176,23 @@ private:
     QString getQmlEffectString();
 
     void updateCustomUniforms();
-    void createFiles();
+    void initShaderDir();
     void bakeShaders();
     void saveResources(const QString &name);
 
-    QString mipmapPropertyName(const QString &name) const;
     QString getQmlImagesString(bool localFiles);
     QString getQmlComponentString(bool localFiles);
+    QString getGeneratedMessage() const;
+    QString getDesignerSpecifics() const;
+
+    void connectCompositionNode(CompositionNode *node);
+    void updateExtraMargin();
+    QSet<QByteArray> getExposedProperties(const QByteArray &qmlContent);
 
     QList<CompositionNode *> m_nodes;
 
     int m_selectedIndex = -1;
-    bool m_isEmpty = true;
+    bool m_isEmpty = false;  // Init to false to force initial bake after setup
     bool m_hasUnsavedChanges = false;
     // True when shaders haven't changed since last baking
     bool m_shadersUpToDate = true;
@@ -190,8 +205,7 @@ private:
     QStringList m_defaultRootVertexShader;
     QStringList m_defaultRootFragmentShader;
     // Temp files to store shaders sources and binary data
-    QTemporaryFile m_fragmentSourceFile;
-    QTemporaryFile m_vertexSourceFile;
+    QTemporaryDir m_shaderDir;
     QString m_fragmentSourceFilename;
     QString m_vertexSourceFilename;
     QString m_fragmentShaderFilename;
@@ -207,7 +221,11 @@ private:
     QString m_qmlComponentString;
     bool m_loadComponentImages = true;
     bool m_isEnabled = true;
+    bool m_hasValidTarget = false;
     QString m_currentComposition;
+    QTimer m_rebakeTimer;
+    int m_extraMargin = 0;
+    QString m_effectTypePrefix;
 
     const QRegularExpression m_spaceReg = QRegularExpression("\\s+");
 };

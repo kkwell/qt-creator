@@ -20,6 +20,7 @@ MATCHER_P2(IsTypeHint,
 
 template<typename PropertiesMatcher, typename ExtraFilePathsMatcher>
 auto IsItemLibraryEntry(QmlDesigner::TypeId typeId,
+                        Utils::SmallStringView typeName,
                         Utils::SmallStringView name,
                         Utils::SmallStringView iconPath,
                         Utils::SmallStringView category,
@@ -31,6 +32,7 @@ auto IsItemLibraryEntry(QmlDesigner::TypeId typeId,
 {
     using QmlDesigner::Storage::Info::ItemLibraryEntry;
     return AllOf(Field("typeId", &ItemLibraryEntry::typeId, typeId),
+                 Field("typeName", &ItemLibraryEntry::typeName, typeName),
                  Field("name", &ItemLibraryEntry::name, name),
                  Field("iconPath", &ItemLibraryEntry::iconPath, iconPath),
                  Field("category", &ItemLibraryEntry::category, category),
@@ -52,4 +54,25 @@ MATCHER_P3(IsItemLibraryProperty,
     const QmlDesigner::Storage::Info::ItemLibraryProperty &property = arg;
 
     return property.name == name && property.type == type && property.value == value;
+}
+
+template<typename IconPathMatcher, typename TypeTraitsMatcher, typename HintsJsonMatcher, typename ItemLibraryJsonMatcher>
+auto IsTypeAnnotation(QmlDesigner::SourceId sourceId,
+                      QmlDesigner::SourceId directorySourceId,
+                      Utils::SmallStringView typeName,
+                      QmlDesigner::ModuleId moduleId,
+                      IconPathMatcher iconPath,
+                      TypeTraitsMatcher traits,
+                      HintsJsonMatcher hintsJsonMatcher,
+                      ItemLibraryJsonMatcher itemLibraryJsonMatcher)
+{
+    using QmlDesigner::Storage::Synchronization::TypeAnnotation;
+    return AllOf(Field("sourceId", &TypeAnnotation::sourceId, sourceId),
+                 Field("directory sourceId", &TypeAnnotation::directorySourceId, directorySourceId),
+                 Field("typeName", &TypeAnnotation::typeName, typeName),
+                 Field("moduleId", &TypeAnnotation::moduleId, moduleId),
+                 Field("iconPath", &TypeAnnotation::iconPath, iconPath),
+                 Field("traits", &TypeAnnotation::traits, traits),
+                 Field("hintsJson", &TypeAnnotation::hintsJson, hintsJsonMatcher),
+                 Field("itemLibraryJson", &TypeAnnotation::itemLibraryJson, itemLibraryJsonMatcher));
 }

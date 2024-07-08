@@ -111,6 +111,7 @@ public:
     QSizeF instanceSize() const;
     int instancePenWidth() const;
     bool instanceIsRenderPixmapNull() const;
+    bool instanceIsVisible() const;
 
     QPixmap instanceRenderPixmap() const;
     QPixmap instanceBlurredRenderPixmap() const;
@@ -173,6 +174,7 @@ public:
     ModelNode targetTransition() const;
     void assignTargetFlowItem(const QmlFlowTargetNode &flowItem);
     QmlFlowItemNode flowItemParent() const;
+private:
     void destroyTarget();
 };
 

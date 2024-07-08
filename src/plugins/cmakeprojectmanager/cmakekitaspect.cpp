@@ -97,6 +97,7 @@ public:
 
 private:
     QVariant defaultValue(const Kit *k) const;
+    bool isNinjaPresent(const Kit *k, const CMakeTool *tool) const;
 };
 
 class CMakeConfigurationKitAspectFactory : public KitAspectFactory
@@ -148,7 +149,7 @@ private:
     // KitAspectWidget interface
     void makeReadOnly() override { m_comboBox->setEnabled(false); }
 
-    void addToLayoutImpl(Layouting::LayoutItem &builder) override
+    void addToLayoutImpl(Layouting::Layout &builder) override
     {
         addMutableAction(m_comboBox);
         builder.addItem(m_comboBox);
@@ -376,7 +377,7 @@ private:
     // KitAspectWidget interface
     void makeReadOnly() override { m_changeButton->setEnabled(false); }
 
-    void addToLayoutImpl(Layouting::LayoutItem &parent) override
+    void addToLayoutImpl(Layouting::Layout &parent) override
     {
         addMutableAction(m_label);
         parent.addItem(m_label);
@@ -556,6 +557,17 @@ CMakeGeneratorKitAspectFactory::CMakeGeneratorKitAspectFactory()
     setDescription(Tr::tr("CMake generator defines how a project is built when using CMake.<br>"
                       "This setting is ignored when using other build systems."));
     setPriority(19000);
+
+    auto updateKits = [this] {
+        if (KitManager::isLoaded()) {
+            for (Kit *k : KitManager::kits())
+                fix(k);
+        }
+    };
+
+    //make sure the default value is set if a new default CMake is set
+    connect(CMakeToolManager::instance(), &CMakeToolManager::defaultCMakeChanged,
+            this, updateKits);
 }
 
 QString CMakeGeneratorKitAspect::generator(const Kit *k)
@@ -664,18 +676,7 @@ QVariant CMakeGeneratorKitAspectFactory::defaultValue(const Kit *k) const
         return g.matches("Ninja");
     });
     if (it != known.constEnd()) {
-        const bool hasNinja = [k, tool] {
-            if (Internal::settings().ninjaPath().isEmpty()) {
-                auto findNinja = [](const Environment &env) -> bool {
-                    return !env.searchInPath("ninja").isEmpty();
-                };
-                if (!findNinja(tool->filePath().deviceEnvironment()))
-                    return findNinja(k->buildEnvironment());
-            }
-            return true;
-        }();
-
-        if (hasNinja)
+        if (isNinjaPresent(k, tool))
             return GeneratorInfo("Ninja").toVariant();
     }
 
@@ -695,7 +696,7 @@ QVariant CMakeGeneratorKitAspectFactory::defaultValue(const Kit *k) const
                                   return g.matches("NMake Makefiles")
                                          || g.matches("NMake Makefiles JOM");
                               });
-            if (ProjectExplorerPlugin::projectExplorerSettings().useJom) {
+            if (projectExplorerSettings().useJom) {
                 it = std::find_if(known.constBegin(),
                                   known.constEnd(),
                                   [](const CMakeTool::Generator &g) {
@@ -723,6 +724,18 @@ QVariant CMakeGeneratorKitAspectFactory::defaultValue(const Kit *k) const
         return QVariant();
 
     return GeneratorInfo(it->name).toVariant();
+}
+
+bool CMakeGeneratorKitAspectFactory::isNinjaPresent(const Kit *k, const CMakeTool *tool) const
+{
+    if (Internal::settings(nullptr).ninjaPath().isEmpty()) {
+        auto findNinja = [](const Environment &env) -> bool {
+            return !env.searchInPath("ninja").isEmpty();
+        };
+        if (!findNinja(tool->filePath().deviceEnvironment()))
+            return findNinja(k->buildEnvironment());
+    }
+    return true;
 }
 
 Tasks CMakeGeneratorKitAspectFactory::validate(const Kit *k) const
@@ -783,7 +796,7 @@ void CMakeGeneratorKitAspectFactory::fix(Kit *k)
                            [info](const CMakeTool::Generator &g) {
         return g.matches(info.generator);
     });
-    if (it == known.constEnd()) {
+    if (it == known.constEnd() || (info.generator == "Ninja" && !isNinjaPresent(k, tool))) {
         GeneratorInfo dv;
         dv.fromVariant(defaultValue(k));
         setGeneratorInfo(k, dv);
@@ -800,7 +813,7 @@ void CMakeGeneratorKitAspectFactory::upgrade(Kit *k)
     QTC_ASSERT(k, return);
 
     const QVariant value = k->value(GENERATOR_ID);
-    if (value.type() != QVariant::Map) {
+    if (value.typeId() != QMetaType::QVariantMap) {
         GeneratorInfo info;
         const QString fullName = value.toString();
         const int pos = fullName.indexOf(" - ");
@@ -859,10 +872,10 @@ const char CMAKE_QMAKE_KEY[] = "QT_QMAKE_EXECUTABLE";
 const char CMAKE_PREFIX_PATH_KEY[] = "CMAKE_PREFIX_PATH";
 const char QTC_CMAKE_PRESET_KEY[] = "QTC_CMAKE_PRESET";
 
-class CMakeConfigurationKitAspectWidget final : public KitAspect
+class CMakeConfigurationKitAspectImpl final : public KitAspect
 {
 public:
-    CMakeConfigurationKitAspectWidget(Kit *kit, const KitAspectFactory *factory)
+    CMakeConfigurationKitAspectImpl(Kit *kit, const KitAspectFactory *factory)
         : KitAspect(kit, factory),
           m_summaryLabel(createSubWidget<ElidingLabel>()),
           m_manageButton(createSubWidget<QPushButton>())
@@ -870,12 +883,12 @@ public:
         refresh();
         m_manageButton->setText(Tr::tr("Change..."));
         connect(m_manageButton, &QAbstractButton::clicked,
-                this, &CMakeConfigurationKitAspectWidget::editConfigurationChanges);
+                this, &CMakeConfigurationKitAspectImpl::editConfigurationChanges);
     }
 
 private:
     // KitAspectWidget interface
-    void addToLayoutImpl(Layouting::LayoutItem &parent) override
+    void addToLayoutImpl(Layouting::Layout &parent) override
     {
         addMutableAction(m_summaryLabel);
         parent.addItem(m_summaryLabel);
@@ -969,10 +982,10 @@ private:
                                                           CMakeConfigurationKitAspect::defaultConfiguration(kit()));
             CMakeConfigurationKitAspect::setAdditionalConfiguration(kit(), QString());
         });
-        connect(m_dialog, &QDialog::accepted, this, &CMakeConfigurationKitAspectWidget::acceptChangesDialog);
-        connect(m_dialog, &QDialog::rejected, this, &CMakeConfigurationKitAspectWidget::closeChangesDialog);
+        connect(m_dialog, &QDialog::accepted, this, &CMakeConfigurationKitAspectImpl::acceptChangesDialog);
+        connect(m_dialog, &QDialog::rejected, this, &CMakeConfigurationKitAspectImpl::closeChangesDialog);
         connect(buttons->button(QDialogButtonBox::Apply), &QAbstractButton::clicked,
-                this, &CMakeConfigurationKitAspectWidget::applyChanges);
+                this, &CMakeConfigurationKitAspectImpl::applyChanges);
 
         refresh();
         m_dialog->show();
@@ -1241,7 +1254,7 @@ KitAspect *CMakeConfigurationKitAspectFactory::createKitAspect(Kit *k) const
 {
     if (!k)
         return nullptr;
-    return new CMakeConfigurationKitAspectWidget(k, this);
+    return new CMakeConfigurationKitAspectImpl(k, this);
 }
 
 // Factory instances;

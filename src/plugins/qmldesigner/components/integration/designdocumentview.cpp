@@ -23,6 +23,8 @@
 #include <utils/algorithm.h>
 #include <utils/qtcassert.h>
 
+#include <memory>
+
 namespace QmlDesigner {
 
 DesignDocumentView::DesignDocumentView(ExternalDependenciesInterface &externalDependencies)
@@ -97,8 +99,12 @@ static bool hasOnly3DNodes(const ModelNode &node)
 
 QString DesignDocumentView::toText() const
 {
+#ifdef QDS_USE_PROJECTSTORAGE
+    auto outputModel = model()->createModel("Rectangle");
+#else
     auto outputModel = Model::create("QtQuick.Rectangle", 1, 0, model());
     outputModel->setFileUrl(model()->fileUrl());
+#endif
     QPlainTextEdit textEdit;
 
     QString imports;
@@ -112,14 +118,14 @@ QString DesignDocumentView::toText() const
     textEdit.setPlainText(imports +  QStringLiteral("Item {\n}\n"));
     NotIndentingTextEditModifier modifier(&textEdit);
 
-    QScopedPointer<RewriterView> rewriterView(
-        new RewriterView(externalDependencies(), RewriterView::Amend));
+    std::unique_ptr<RewriterView> rewriterView = std::make_unique<RewriterView>(externalDependencies(),
+                                                                                RewriterView::Amend);
     rewriterView->setCheckSemanticErrors(false);
     rewriterView->setPossibleImportsEnabled(false);
     rewriterView->setTextModifier(&modifier);
-    outputModel->setRewriterView(rewriterView.data());
+    outputModel->setRewriterView(rewriterView.get());
 
-    ModelMerger merger(rewriterView.data());
+    ModelMerger merger(rewriterView.get());
 
     merger.replaceModel(rootModelNode());
 
@@ -136,8 +142,12 @@ QString DesignDocumentView::toText() const
 
 void DesignDocumentView::fromText(const QString &text)
 {
+#ifdef QDS_USE_PROJECTSTORAGE
+    auto inputModel = model()->createModel("Rectangle");
+#else
     auto inputModel = Model::create("QtQuick.Rectangle", 1, 0, model());
     inputModel->setFileUrl(model()->fileUrl());
+#endif
     QPlainTextEdit textEdit;
     QString imports;
     const auto modelImports = model()->imports();
@@ -179,12 +189,16 @@ ModelPointer DesignDocumentView::pasteToModel(ExternalDependenciesInterface &ext
 
     QTC_ASSERT(parentModel, return nullptr);
 
+#ifdef QDS_USE_PROJECTSTORAGE
+    auto pasteModel = parentModel->createModel("Item");
+#else
     auto pasteModel = Model::create("empty", 1, 0, parentModel);
 
     Q_ASSERT(pasteModel);
 
     if (!pasteModel)
         return nullptr;
+#endif
 
     pasteModel->setFileUrl(parentModel->fileUrl());
     pasteModel->changeImports(parentModel->imports(), {});
@@ -204,12 +218,16 @@ void DesignDocumentView::copyModelNodes(const QList<ModelNode> &nodesToCopy,
 
     QTC_ASSERT(parentModel, return);
 
+#ifdef QDS_USE_PROJECTSTORAGE
+    auto copyModel = parentModel->createModel("Rectangle");
+#else
     auto copyModel = Model::create("QtQuick.Rectangle", 1, 0, parentModel);
 
     copyModel->setFileUrl(parentModel->fileUrl());
     copyModel->changeImports(parentModel->imports(), {});
 
     Q_ASSERT(copyModel);
+#endif
 
     QList<ModelNode> selectedNodes = nodesToCopy;
 

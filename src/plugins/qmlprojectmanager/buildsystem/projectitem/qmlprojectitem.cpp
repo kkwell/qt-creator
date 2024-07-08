@@ -79,7 +79,7 @@ void QmlProjectItem::setupFileFilters()
             connect(fileFilterItem.get(),
                     &FileFilterItem::filesChanged,
                     this,
-                    &QmlProjectItem::qmlFilesChanged);
+                    &QmlProjectItem::filesChanged);
 #endif
             m_content.push_back(std::move(fileFilterItem));
         };
@@ -105,10 +105,7 @@ void QmlProjectItem::setupFileFilters()
         fileFilterItem->setDefaultDirectory(m_projectFile.parentDir().toString());
         fileFilterItem->setDirectory(groupDir.toString());
 #ifndef TESTS_ENABLED_QMLPROJECTITEM
-        connect(fileFilterItem.get(),
-                &FileFilterItem::filesChanged,
-                this,
-                &QmlProjectItem::qmlFilesChanged);
+        connect(fileFilterItem.get(), &FileFilterItem::filesChanged, this, &QmlProjectItem::filesChanged);
 #endif
         m_content.push_back(std::move(fileFilterItem));
     };
@@ -420,6 +417,18 @@ void QmlProjectItem::insertAndUpdateProjectFile(const QString &key, const QJsonV
     m_project[key] = value;
     if (!m_skipRewrite)
         m_projectFile.writeFileContents(Converters::jsonToQmlProject(m_project).toUtf8());
+}
+
+bool QmlProjectItem::enableCMakeGeneration() const
+{
+    return m_project["deployment"].toObject()["enableCMakeGeneration"].toBool();
+}
+
+void QmlProjectItem::setEnableCMakeGeneration(bool enable)
+{
+    QJsonObject obj = m_project["deployment"].toObject();
+    obj["enableCMakeGeneration"] = enable;
+    insertAndUpdateProjectFile("deployment", obj);
 }
 
 } // namespace QmlProjectManager

@@ -171,6 +171,8 @@ public:
             bool configureAsExampleProject = false,
             ProjectExplorer::Kit *kit = nullptr);
 
+    QList<ProjectExplorer::Project *> projects() const { return m_openProjects; };
+
 private:
     QList<ProjectExplorer::Project *> m_openProjects;
 };
@@ -201,6 +203,18 @@ public:
 
 private:
     TemporaryCopiedDir();
+};
+
+class SourceFilesRefreshGuard : public QObject
+{
+public:
+    SourceFilesRefreshGuard();
+
+    void reset() { m_refreshed = false; }
+    bool wait();
+
+private:
+    bool m_refreshed = false;
 };
 
 } // namespace Tests

@@ -3,12 +3,9 @@
 
 #include "vcsbasediffeditorcontroller.h"
 
-#include <extensionsystem/pluginmanager.h>
-
 #include <utils/async.h>
 #include <utils/environment.h>
-#include <utils/futuresynchronizer.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 
 using namespace DiffEditor;
 using namespace Tasking;
@@ -41,7 +38,6 @@ VcsBaseDiffEditorController::~VcsBaseDiffEditorController()
 GroupItem VcsBaseDiffEditorController::postProcessTask(const Storage<QString> &inputStorage)
 {
     const auto onSetup = [inputStorage](Async<QList<FileData>> &async) {
-        async.setFutureSynchronizer(ExtensionSystem::PluginManager::futureSynchronizer());
         async.setConcurrentCallData(&DiffUtils::readPatchWithPromise, *inputStorage);
     };
     const auto onDone = [this](const Async<QList<FileData>> &async, DoneWith result) {

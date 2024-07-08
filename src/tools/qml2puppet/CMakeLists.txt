@@ -1,7 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 
+# standalone build
 if (NOT QT_CREATOR_API_DEFINED)
-  # standalone build
+    option(BUILD_DESIGNSTUDIO "Build puppet with Qt Design Studio version in the binary name." OFF)
+    if (BUILD_DESIGNSTUDIO)
+        list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../dist/branding/qtdesignstudio")
+    endif()
   list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake")
 
   project(qml2puppet)
@@ -9,7 +13,7 @@ if (NOT QT_CREATOR_API_DEFINED)
   set(CMAKE_AUTOMOC ON)
   set(CMAKE_AUTORCC ON)
   set(CMAKE_AUTOUIC ON)
-  set(CMAKE_CXX_STANDARD 17)
+  set(CMAKE_CXX_STANDARD 20)
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
   set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -22,10 +26,7 @@ if (NOT QT_CREATOR_API_DEFINED)
     COMPONENTS Concurrent Core Gui Network PrintSupport Qml Quick Sql Widgets Xml
     REQUIRED
   )
-endif()
-
-if (NOT TARGET QmlPuppetCommunication)
-  include(../../libs/qmlpuppetcommunication/QmlPuppetCommunication.cmake)
+  set(IS_STAND_ALONE_PUPPET_BUILD ON)
 endif()
 
 add_qtc_executable(qml2puppet
@@ -40,31 +41,20 @@ add_qtc_executable(qml2puppet
   SOURCES
     qml2puppet/qml2puppetmain.cpp
     qml2puppet/qmlbase.h
-    qml2puppet/appmetadata.cpp qml2puppet/appmetadata.h
-    qml2puppet/qmlpuppet.h qml2puppet/qmlpuppet.cpp qml2puppet/configcrashpad.h
+    qml2puppet/qmlpuppet.h qml2puppet/qmlpuppet.cpp
+    qml2puppet/configcrashpad.h
     qmlpuppet.qrc
   PROPERTIES
     OUTPUT_NAME qml2puppet-${IDE_VERSION}
 )
 
-if (TARGET qml2puppet)
-  execute_process(
-      COMMAND git describe --tags --always --dirty=+
-      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-      RESULT_VARIABLE GIT_SHA_RESULT
-      OUTPUT_VARIABLE GIT_SHA
-      ERROR_VARIABLE GIT_SHA_ERROR
-      OUTPUT_STRIP_TRAILING_WHITESPACE
-  )
-
-  #if we are not a git repository use the .tag file
-  if(NOT GIT_SHA)
-      file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/../../../.tag GIT_SHA LIMIT_COUNT 1)
-  endif()
-
-  set(IDE_REVISION_STR ${GIT_SHA})
-
-  configure_file(../../app/app_version.h.cmakein app/app_version.h ESCAPE_QUOTES)
+if (IS_STAND_ALONE_PUPPET_BUILD)
+    include(../../libs/qmlpuppetcommunication/QmlPuppetCommunication.cmake)
+    configure_file(../../app/app_version.h.cmakein app/app_version.h ESCAPE_QUOTES)
+else()
+    extend_qtc_executable(qml2puppet
+      DEPENDS app_version
+    )
 endif()
 
 extend_qtc_executable(qml2puppet
@@ -102,6 +92,8 @@ extend_qtc_executable(qml2puppet
     selectionboxgeometry.cpp selectionboxgeometry.h
     linegeometry.cpp linegeometry.h
     icongizmoimageprovider.cpp icongizmoimageprovider.h
+    boxgeometry.cpp boxgeometry.h
+    lookatgeometry.cpp lookatgeometry.h
 )
 
 find_package(Qt6 COMPONENTS Quick3DAssetImport QUIET)
@@ -154,6 +146,7 @@ extend_qtc_executable(qml2puppet
     qmltransitionnodeinstance.cpp qmltransitionnodeinstance.h
     qt3dpresentationnodeinstance.cpp qt3dpresentationnodeinstance.h
     qt5bakelightsnodeinstanceserver.cpp qt5bakelightsnodeinstanceserver.h
+    qt5import3dnodeinstanceserver.cpp qt5import3dnodeinstanceserver.h
     qt5informationnodeinstanceserver.cpp qt5informationnodeinstanceserver.h
     qt5nodeinstanceclientproxy.cpp qt5nodeinstanceclientproxy.h
     qt5nodeinstanceserver.cpp qt5nodeinstanceserver.h

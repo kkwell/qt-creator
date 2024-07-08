@@ -3,7 +3,7 @@
 
 #include "client.h"
 
-#include "callhierarchy.h"
+#include "callandtypehierarchy.h"
 #include "diagnosticmanager.h"
 #include "documentsymbolcache.h"
 #include "languageclientcompletionassist.h"
@@ -49,12 +49,11 @@
 #include <texteditor/tabsettings.h>
 #include <texteditor/textdocument.h>
 #include <texteditor/texteditor.h>
-#include <texteditor/texteditoractionhandler.h>
 #include <texteditor/texteditorsettings.h>
 
 #include <utils/appinfo.h>
 #include <utils/mimeutils.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 
 #include <QDebug>
 #include <QGuiApplication>
@@ -437,6 +436,9 @@ static ClientCapabilities generateClientCapabilities()
          SymbolKind::EnumMember, SymbolKind::Struct,       SymbolKind::Event,
          SymbolKind::Operator,   SymbolKind::TypeParameter});
     symbolCapabilities.setSymbolKind(symbolKindCapabilities);
+    SymbolCapabilities::SymbolTagCapabilities symbolTagCapabilities;
+    symbolTagCapabilities.setValueSet({SymbolTag::Deprecated});
+    symbolCapabilities.setSymbolTag(symbolTagCapabilities);
     symbolCapabilities.setHierarchicalDocumentSymbolSupport(true);
     documentCapabilities.setDocumentSymbol(symbolCapabilities);
 
@@ -524,6 +526,7 @@ static ClientCapabilities generateClientCapabilities()
     tokens.setFormats({"relative"});
     documentCapabilities.setSemanticTokens(tokens);
     documentCapabilities.setCallHierarchy(allowDynamicRegistration);
+    documentCapabilities.setTypeHierarchy(allowDynamicRegistration);
     capabilities.setTextDocument(documentCapabilities);
 
     WindowClientClientCapabilities window;
@@ -732,7 +735,7 @@ void Client::openDocument(TextEditor::TextDocument *document)
 void Client::sendMessage(const JsonRpcMessage &message, SendDocUpdates sendUpdates,
                          Schedule semanticTokensSchedule)
 {
-    QScopeGuard guard([responseHandler = message.responseHandler()](){
+    QScopeGuard guard([this, responseHandler = message.responseHandler()](){
         if (responseHandler) {
             static ResponseError<std::nullptr_t> error;
             if (!error.isValid()) {
@@ -742,7 +745,9 @@ void Client::sendMessage(const JsonRpcMessage &message, SendDocUpdates sendUpdat
             QJsonObject response;
             response[idKey] = responseHandler->id;
             response[errorKey] = QJsonObject(error);
-            responseHandler->callback(JsonRpcMessage(response));
+            QMetaObject::invokeMethod(this, [callback = responseHandler->callback, response](){
+                callback(JsonRpcMessage(response));
+            }, Qt::QueuedConnection);
         }
     });
 
@@ -900,7 +905,8 @@ void ClientPrivate::requestDocumentHighlightsNow(TextEditor::TextEditorWidget *w
             = m_serverCapabilities.documentHighlightProvider();
         if (!provider.has_value())
             return;
-        if (std::holds_alternative<bool>(*provider) && !std::get<bool>(*provider))
+        const auto boolvalue = std::get_if<bool>(&*provider);
+        if (boolvalue && !*boolvalue)
             return;
     }
 
@@ -932,7 +938,8 @@ void ClientPrivate::requestDocumentHighlightsNow(TextEditor::TextEditorWidget *w
             const QTextCharFormat &format =
                 widget->textDocument()->fontSettings().toTextCharFormat(TextEditor::C_OCCURRENCES);
             QTextDocument *document = widget->document();
-            for (const auto &highlight : std::get<QList<DocumentHighlight>>(*result)) {
+            const auto highlights = std::get_if<QList<DocumentHighlight>>(&*result);
+            for (const auto &highlight : *highlights) {
                 QTextEdit::ExtraSelection selection{widget->textCursor(), format};
                 const int &start = highlight.range().start().toPositionInDocument(document);
                 const int &end = highlight.range().end().toPositionInDocument(document);
@@ -1001,15 +1008,17 @@ void Client::activateEditor(Core::IEditor *editor)
         d->requestDocumentHighlights(widget);
         uint optionalActions = widget->optionalActions();
         if (symbolSupport().supportsFindUsages(widget->textDocument()))
-            optionalActions |= TextEditor::TextEditorActionHandler::FindUsage;
+            optionalActions |= TextEditor::OptionalActions::FindUsage;
         if (symbolSupport().supportsRename(widget->textDocument()))
-            optionalActions |= TextEditor::TextEditorActionHandler::RenameSymbol;
+            optionalActions |= TextEditor::OptionalActions::RenameSymbol;
         if (symbolSupport().supportsFindLink(widget->textDocument(), LinkTarget::SymbolDef))
-            optionalActions |= TextEditor::TextEditorActionHandler::FollowSymbolUnderCursor;
+            optionalActions |= TextEditor::OptionalActions::FollowSymbolUnderCursor;
         if (symbolSupport().supportsFindLink(widget->textDocument(), LinkTarget::SymbolTypeDef))
-            optionalActions |= TextEditor::TextEditorActionHandler::FollowTypeUnderCursor;
+            optionalActions |= TextEditor::OptionalActions::FollowTypeUnderCursor;
         if (supportsCallHierarchy(this, textEditor->document()))
-            optionalActions |= TextEditor::TextEditorActionHandler::CallHierarchy;
+            optionalActions |= TextEditor::OptionalActions::CallHierarchy;
+        if (supportsTypeHierarchy(this, textEditor->document()))
+            optionalActions |= TextEditor::OptionalActions::TypeHierarchy;
         widget->setOptionalActions(optionalActions);
     }
 }
@@ -1166,7 +1175,7 @@ void Client::documentContentsSaved(TextEditor::TextDocument *document)
                 includeText = saveOptions->includeText().value_or(includeText);
         }
     }
-    if (!send)
+    if (!send || !shouldSendDidSave(document))
         return;
     DidSaveTextDocumentParams params(
                 TextDocumentIdentifier(hostPathToServerUri(document->filePath())));
@@ -1430,7 +1439,8 @@ void Client::requestCodeActions(const CodeActionRequest &request)
     } else {
         std::variant<bool, CodeActionOptions> provider
             = d->m_serverCapabilities.codeActionProvider().value_or(false);
-        if (!(std::holds_alternative<CodeActionOptions>(provider) || std::get<bool>(provider)))
+        const auto boolvalue = std::get_if<bool>(&provider);
+        if (boolvalue && !*boolvalue)
             return;
     }
 
@@ -1656,8 +1666,8 @@ bool Client::supportsDocumentSymbols(const TextEditor::TextDocument *doc) const
         = capabilities().documentSymbolProvider();
     if (!provider.has_value())
         return false;
-    if (std::holds_alternative<bool>(*provider))
-        return std::get<bool>(*provider);
+    if (const auto boolvalue = std::get_if<bool>(&*provider))
+        return *boolvalue;
     return true;
 }
 
@@ -1775,6 +1785,11 @@ QString Client::serverVersion() const
 }
 
 const DynamicCapabilities &Client::dynamicCapabilities() const
+{
+    return d->m_dynamicCapabilities;
+}
+
+DynamicCapabilities &Client::dynamicCapabilities()
 {
     return d->m_dynamicCapabilities;
 }
@@ -2228,10 +2243,10 @@ bool ClientPrivate::sendWorkspceFolderChanges() const
         if (auto folder = workspace->workspaceFolders()) {
             if (folder->supported().value_or(false)) {
                 // holds either the Id for deregistration or whether it is registered
-                auto notification = folder->changeNotifications().value_or(false);
-                return std::holds_alternative<QString>(notification)
-                       || (std::holds_alternative<bool>(notification)
-                           && std::get<bool>(notification));
+                const std::variant<QString, bool> notification
+                    = folder->changeNotifications().value_or(false);
+                const auto boolvalue = std::get_if<bool>(&notification);
+                return !boolvalue || *boolvalue;
             }
         }
     }

@@ -13,6 +13,7 @@
 #include <variantproperty.h>
 #include <qmlitemnode.h>
 #include <qmlobjectnode.h>
+#include <dialogutils.h>
 
 #include <coreplugin/messagebox.h>
 
@@ -96,10 +97,10 @@ TimelineAnimationForm::TimelineAnimationForm(QWidget *parent)
     using namespace Layouting;
     Grid {
         Span(4, mainL), br,
-        empty(), br,
+        empty, br,
         idL, Span(2, m_idLineEdit), Span(2, Row{ runningL, m_running }), br,
-        empty(), startFrameL, m_startFrame, endFrameL, m_endFrame, durationL, m_duration, br,
-        empty(), continuousL, m_continuous, loopsL, m_loops, pingPongL, m_pingPong, str, br,
+        empty, startFrameL, m_startFrame, endFrameL, m_endFrame, durationL, m_duration, br,
+        empty, continuousL, m_continuous, loopsL, m_loops, pingPongL, m_pingPong, str, br,
         tr("Transition to state:"), transitionToStateL, m_transitionToState, br,
     }.attachTo(this);
 
@@ -141,8 +142,7 @@ TimelineAnimationForm::TimelineAnimationForm(QWidget *parent)
         bool error = false;
 
         if (!ModelNode::isValidId(newId)) {
-            Core::AsynchronousMessageBox::warning(tr("Invalid Id"),
-                                                  tr("%1 is an invalid id.").arg(newId));
+            DialogUtils::showWarningForInvalidId(newId);
             error = true;
         } else if (animation().view()->hasId(newId)) {
             Core::AsynchronousMessageBox::warning(tr("Invalid Id"),

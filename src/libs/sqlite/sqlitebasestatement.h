@@ -9,6 +9,7 @@
 #include "sqliteblob.h"
 #include "sqliteexception.h"
 #include "sqliteids.h"
+#include "sqlitetracing.h"
 #include "sqlitetransaction.h"
 #include "sqlitevalue.h"
 
@@ -30,30 +31,10 @@ using std::int64_t;
 
 namespace Sqlite {
 
-using namespace NanotraceHR::Literals;
-
 class Database;
 class DatabaseBackend;
 
 enum class Type : char { Invalid, Integer, Float, Text, Blob, Null };
-
-template<typename Enumeration>
-constexpr static std::underlying_type_t<Enumeration> to_underlying(Enumeration enumeration) noexcept
-{
-    static_assert(std::is_enum_v<Enumeration>, "to_underlying expect an enumeration");
-    return static_cast<std::underlying_type_t<Enumeration>>(enumeration);
-}
-
-constexpr NanotraceHR::Tracing sqliteTracingStatus()
-{
-#ifdef ENABLE_SQLITE_TRACING
-    return NanotraceHR::tracingStatus();
-#else
-    return NanotraceHR::Tracing::IsDisabled;
-#endif
-}
-
-SQLITE_EXPORT NanotraceHR::StringViewCategory<sqliteTracingStatus()> &sqliteHighLevelCategory();
 
 class SQLITE_EXPORT BaseStatement
 {
@@ -99,7 +80,7 @@ public:
     template<typename Type, typename = std::enable_if_t<Type::IsBasicId::value>>
     void bind(int index, Type id)
     {
-        if (id)
+        if (!id.isNull())
             bind(index, id.internalId());
         else
             bindNull(index);
@@ -108,7 +89,7 @@ public:
     template<typename Enumeration, std::enable_if_t<std::is_enum_v<Enumeration>, bool> = true>
     void bind(int index, Enumeration enumeration)
     {
-        bind(index, to_underlying(enumeration));
+        bind(index, Utils::to_underlying(enumeration));
     }
 
     void bind(int index, uint value) { bind(index, static_cast<long long>(value)); }
@@ -135,6 +116,11 @@ public:
 
 protected:
     ~BaseStatement() = default;
+
+    std::uintptr_t handle() const
+    {
+        return reinterpret_cast<std::uintptr_t>(m_compiledStatement.get());
+    }
 
 private:
     struct Deleter
@@ -166,7 +152,12 @@ public:
 
     void execute()
     {
-        NanotraceHR::Tracer tracer{"execute"_t, sqliteHighLevelCategory()};
+        using NanotraceHR::keyValue;
+        NanotraceHR::Tracer tracer{
+            "execute"_t,
+            sqliteHighLevelCategory(),
+            keyValue("sqlite statement", BaseStatement::handle()),
+        };
 
         Resetter resetter{this};
         BaseStatement::next();
@@ -175,7 +166,10 @@ public:
     template<typename... ValueType>
     void bindValues(const ValueType &...values)
     {
-        NanotraceHR::Tracer tracer{"bind"_t, sqliteHighLevelCategory()};
+        using NanotraceHR::keyValue;
+        NanotraceHR::Tracer tracer{"bind"_t,
+                                   sqliteHighLevelCategory(),
+                                   keyValue("sqlite statement", BaseStatement::handle())};
 
         static_assert(BindParameterCount == sizeof...(values), "Wrong binding parameter count!");
 
@@ -186,7 +180,10 @@ public:
     template<typename... ValueType>
     void write(const ValueType&... values)
     {
-        NanotraceHR::Tracer tracer{"write"_t, sqliteHighLevelCategory()};
+        using NanotraceHR::keyValue;
+        NanotraceHR::Tracer tracer{"write"_t,
+                                   sqliteHighLevelCategory(),
+                                   keyValue("sqlite statement", BaseStatement::handle())};
 
         Resetter resetter{this};
         bindValues(values...);
@@ -206,24 +203,37 @@ public:
     struct is_container<QVarLengthArray<T, Prealloc>> : std::true_type
     {};
 
+    template<typename T>
+    struct is_small_container : std::false_type
+    {};
+
+    template<typename T, qsizetype Prealloc>
+    struct is_small_container<QVarLengthArray<T, Prealloc>> : std::true_type
+    {};
+
     template<typename Container,
              std::size_t capacity = 32,
              typename = std::enable_if_t<is_container<Container>::value>,
              typename... QueryTypes>
     auto values(const QueryTypes &...queryValues)
     {
-        NanotraceHR::Tracer tracer{"values"_t, sqliteHighLevelCategory()};
+        using NanotraceHR::keyValue;
+        NanotraceHR::Tracer tracer{"values"_t,
+                                   sqliteHighLevelCategory(),
+                                   keyValue("sqlite statement", BaseStatement::handle())};
 
         Resetter resetter{this};
         Container resultValues;
-        resultValues.reserve(std::max(capacity, m_maximumResultCount));
+        using size_tupe = typename Container::size_type;
+        if constexpr (!is_small_container<Container>::value)
+            resultValues.reserve(static_cast<size_tupe>(std::max(capacity, m_maximumResultCount)));
 
         bindValues(queryValues...);
 
         while (BaseStatement::next())
             emplaceBackValues(resultValues);
 
-        setMaximumResultCount(resultValues.size());
+        setMaximumResultCount(static_cast<std::size_t>(resultValues.size()));
 
         return resultValues;
     }
@@ -241,7 +251,10 @@ public:
     template<typename ResultType, typename... QueryTypes>
     auto value(const QueryTypes &...queryValues)
     {
-        NanotraceHR::Tracer tracer{"value"_t, sqliteHighLevelCategory()};
+        using NanotraceHR::keyValue;
+        NanotraceHR::Tracer tracer{"value"_t,
+                                   sqliteHighLevelCategory(),
+                                   keyValue("sqlite statement", BaseStatement::handle())};
 
         Resetter resetter{this};
         ResultType resultValue{};
@@ -257,7 +270,10 @@ public:
     template<typename ResultType, typename... QueryTypes>
     auto optionalValue(const QueryTypes &...queryValues)
     {
-        NanotraceHR::Tracer tracer{"optionalValue"_t, sqliteHighLevelCategory()};
+        using NanotraceHR::keyValue;
+        NanotraceHR::Tracer tracer{"optionalValue"_t,
+                                   sqliteHighLevelCategory(),
+                                   keyValue("sqlite statement", BaseStatement::handle())};
 
         Resetter resetter{this};
         std::optional<ResultType> resultValue;
@@ -273,6 +289,7 @@ public:
     template<typename Type>
     static auto toValue(Utils::SmallStringView sqlStatement, Database &database)
     {
+        using NanotraceHR::keyValue;
         NanotraceHR::Tracer tracer{"toValue"_t, sqliteHighLevelCategory()};
 
         StatementImplementation statement(sqlStatement, database);
@@ -287,7 +304,10 @@ public:
     template<typename Callable, typename... QueryTypes>
     void readCallback(Callable &&callable, const QueryTypes &...queryValues)
     {
-        NanotraceHR::Tracer tracer{"readCallback"_t, sqliteHighLevelCategory()};
+        using NanotraceHR::keyValue;
+        NanotraceHR::Tracer tracer{"readCallback"_t,
+                                   sqliteHighLevelCategory(),
+                                   keyValue("sqlite statement", BaseStatement::handle())};
 
         Resetter resetter{this};
 
@@ -304,7 +324,10 @@ public:
     template<typename Container, typename... QueryTypes>
     void readTo(Container &container, const QueryTypes &...queryValues)
     {
-        NanotraceHR::Tracer tracer{"readTo"_t, sqliteHighLevelCategory()};
+        using NanotraceHR::keyValue;
+        NanotraceHR::Tracer tracer{"readTo"_t,
+                                   sqliteHighLevelCategory(),
+                                   keyValue("sqlite statement", BaseStatement::handle())};
 
         Resetter resetter{this};
 
@@ -402,9 +425,11 @@ public:
 
     private:
         using TracerCategory = std::decay_t<decltype(sqliteHighLevelCategory())>;
-        NanotraceHR::Tracer<TracerCategory, typename TracerCategory::IsActive> tracer{
-            "range"_t, sqliteHighLevelCategory()};
         StatementImplementation &m_statement;
+        NanotraceHR::Tracer<TracerCategory, typename TracerCategory::IsActive> tracer{
+            "range"_t,
+            sqliteHighLevelCategory(),
+            NanotraceHR::keyValue("sqlite statement", m_statement.handle())};
     };
 
     template<typename ResultType>

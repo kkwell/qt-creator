@@ -4,7 +4,9 @@
 #pragma once
 
 #include <utils/span.h>
+#include <utils/utility.h>
 
+#include <nanotrace/nanotracehr.h>
 #include <type_traits>
 #include <vector>
 
@@ -26,7 +28,15 @@ public:
         return id;
     }
 
-    constexpr friend bool compareInvalidAreTrue(BasicId first, BasicId second)
+    template<typename Enumeration>
+    static constexpr BasicId createSpecialState(Enumeration specialState)
+    {
+        BasicId id;
+        id.id = ::Utils::to_underlying(specialState);
+        return id;
+    }
+
+    friend constexpr bool compareInvalidAreTrue(BasicId first, BasicId second)
     {
         return first.id == second.id;
     }
@@ -56,6 +66,14 @@ public:
 
     constexpr bool isValid() const { return id > 0; }
 
+    constexpr bool isNull() const { return id == 0; }
+
+    template<typename Enumeration>
+    constexpr bool hasSpecialState(Enumeration specialState) const
+    {
+        return id == ::Utils::to_underlying(specialState);
+    }
+
     explicit operator bool() const { return isValid(); }
 
     explicit operator std::size_t() const { return static_cast<std::size_t>(id); }
@@ -64,7 +82,16 @@ public:
 
     [[noreturn, deprecated]] InternalIntegerType operator&() const { throw std::exception{}; }
 
-private:
+    template<typename String>
+    friend void convertToString(String &string, BasicId id)
+    {
+        if (id.isNull())
+            NanotraceHR::convertToString(string, "invalid null");
+        else
+            NanotraceHR::convertToString(string, id.internalId());
+    }
+
+protected:
     InternalIntegerType id = 0;
 };
 
@@ -88,4 +115,5 @@ struct hash<Sqlite::BasicId<Type, InternalIntegerType>>
         return std::hash<InternalIntegerType>{}(id.internalId());
     }
 };
+
 } // namespace std

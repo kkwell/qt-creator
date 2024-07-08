@@ -12,7 +12,7 @@
 #include <utils/environment.h>
 #include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <vcsbase/vcsbasediffeditorcontroller.h>
@@ -347,8 +347,9 @@ void MercurialClient::revertAll(const FilePath &workingDir, const QString &revis
 
 bool MercurialClient::isVcsDirectory(const FilePath &filePath) const
 {
-    return filePath.isDir()
-            && !filePath.fileName().compare(Constants::MERCURIALREPO, HostOsInfo::fileNameCaseSensitivity());
+    return !filePath.fileName()
+                .compare(Constants::MERCURIALREPO, HostOsInfo::fileNameCaseSensitivity())
+           && filePath.isDir();
 }
 
 void MercurialClient::view(const FilePath &source, const QString &id,

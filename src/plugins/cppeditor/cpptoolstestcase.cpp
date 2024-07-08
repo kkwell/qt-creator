@@ -26,7 +26,7 @@
 #include <texteditor/codeassist/iassistproposal.h>
 #include <texteditor/codeassist/iassistproposalmodel.h>
 #include <texteditor/storagesettings.h>
-#include <texteditor/syntaxhighlighterrunner.h>
+#include <texteditor/syntaxhighlighter.h>
 #include <texteditor/texteditor.h>
 
 #include <utils/environment.h>
@@ -238,8 +238,8 @@ bool TestCase::openCppEditor(const FilePath &filePath, TextEditor::BaseTextEdito
                 [e] {
                     return e->editorWidget()
                         ->textDocument()
-                        ->syntaxHighlighterRunner()
-                        ->syntaxInfoUpdated();
+                        ->syntaxHighlighter()
+                        ->syntaxHighlighterUpToDate();
                 },
                 5000))
             return false;
@@ -510,4 +510,19 @@ int clangdIndexingTimeout()
     return intervalAsInt;
 }
 
+SourceFilesRefreshGuard::SourceFilesRefreshGuard()
+{
+    connect(CppModelManager::instance(), &CppModelManager::sourceFilesRefreshed, this, [this] {
+        m_refreshed = true;
+    });
+}
+
+bool SourceFilesRefreshGuard::wait()
+{
+    for (int i = 0; i < 10 && !m_refreshed; ++i) {
+        CppEditor::Tests::waitForSignalOrTimeout(
+            CppModelManager::instance(), &CppModelManager::sourceFilesRefreshed, 1000);
+    }
+    return m_refreshed;
+}
 } // namespace CppEditor::Tests

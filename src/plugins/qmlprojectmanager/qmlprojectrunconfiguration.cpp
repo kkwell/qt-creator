@@ -36,7 +36,7 @@
 #include <utils/aspects.h>
 #include <utils/environment.h>
 #include <utils/fileutils.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/processinterface.h>
 #include <utils/winutils.h>
 
@@ -97,12 +97,12 @@ QmlProjectRunConfiguration::QmlProjectRunConfiguration(Target *target, Id id)
 
         // arguments from .qmlproject file
         const QmlBuildSystem *bs = qobject_cast<QmlBuildSystem *>(target->buildSystem());
-        for (const QString &importPath : bs->customImportPaths()) {
+        for (const QString &importPath : bs->absoluteImportPaths()) {
             cmd.addArg("-I");
-            cmd.addArg(bs->targetDirectory().pathAppended(importPath).path());
+            cmd.addArg(importPath);
         }
 
-        for (const QString &fileSelector : bs->customFileSelectors()) {
+        for (const QString &fileSelector : bs->fileSelectors()) {
             cmd.addArg("-S");
             cmd.addArg(fileSelector);
         }

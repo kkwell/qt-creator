@@ -5,6 +5,8 @@
 #include "nodemetainfo.h"
 #include "ui_choosefrompropertylistdialog.h"
 
+#include <qmldesignerplugin.h>
+
 namespace QmlDesigner {
 
 // This will filter and return possible properties that the given type can be bound to
@@ -97,9 +99,15 @@ ChooseFromPropertyListFilter::ChooseFromPropertyListFilter(const NodeMetaInfo &i
     } else if (insertInfo.isQtQuick3DMaterial()) {
         if (parentInfo.isQtQuick3DModel())
             propertyList.append("materials");
-    } else if (insertInfo.typeName().startsWith("ComponentBundles.MaterialBundle")) {
+#ifdef QDS_USE_PROJECTSTORAGE
+// TODO add the types here or use the module
+#else
+    } else if (insertInfo.typeName().startsWith(
+               QmlDesignerPlugin::instance()->documentManager()
+                   .generatedComponentUtils().materialsBundleType().toUtf8())) {
         if (parentInfo.isQtQuick3DModel())
             propertyList.append("materials");
+#endif
     } else if (insertInfo.isQtQuick3DBakedLightmap()) {
         if (parentInfo.isQtQuick3DModel())
             propertyList.append("bakedLightmap");

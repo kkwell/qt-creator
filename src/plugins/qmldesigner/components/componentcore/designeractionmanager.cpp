@@ -61,11 +61,6 @@ inline static QString captionForModelNode(const ModelNode &modelNode)
     return modelNode.id();
 }
 
-inline static bool contains(const QmlItemNode &node, const QPointF &position)
-{
-    return node.isValid() && node.instanceSceneTransform().mapRect(node.instanceBoundingRect()).contains(position);
-}
-
 DesignerActionManagerView *DesignerActionManager::view()
 {
     return m_designerActionManagerView;
@@ -436,8 +431,8 @@ public:
             }
             for (const ModelNode &node : selectionContext().view()->allModelNodes()) {
                 if (node != selectionContext().currentSingleSelectedNode() && node != parentNode
-                    && contains(node, selectionContext().scenePosition()) && !node.isRootNode()
-                    && !ModelUtils::isThisOrAncestorLocked(node)) {
+                    && SelectionContextHelpers::contains(node, selectionContext().scenePosition())
+                    && !node.isRootNode() && !ModelUtils::isThisOrAncestorLocked(node)) {
                     selectionContext().setTargetNode(node);
                     QString what = QString(QT_TRANSLATE_NOOP("QmlDesignerContextMenu", "Select: %1")).arg(captionForModelNode(node));
                     ActionTemplate *selectionAction = new ActionTemplate("SELECT", what, &ModelNodeOperations::select);
@@ -577,10 +572,14 @@ QList<SlotList> getSlotsLists(const ModelNode &node)
 //creates connection without signalHandlerProperty
 ModelNode createNewConnection(ModelNode targetNode)
 {
-    NodeMetaInfo connectionsMetaInfo = targetNode.view()->model()->qtQuickConnectionsMetaInfo();
+#ifdef QDS_USE_PROJECTSTORAGE
+    ModelNode newConnectionNode = targetNode.view()->createModelNode("Connections");
+#else
+    NodeMetaInfo connectionsMetaInfo = targetNode.view()->model()->qtQmlConnectionsMetaInfo();
     const auto typeName = useProjectStorage() ? "Connections" : "QtQuick.Connections";
     ModelNode newConnectionNode = targetNode.view()->createModelNode(
         typeName, connectionsMetaInfo.majorVersion(), connectionsMetaInfo.minorVersion());
+#endif
     if (QmlItemNode::isValidQmlItemNode(targetNode)) {
         targetNode.nodeAbstractProperty("data").reparentHere(newConnectionNode);
     } else {
@@ -840,16 +839,22 @@ public:
                                      {},
                                      ComponentCoreConstants::rootCategory,
                                      QKeySequence("Alt+e"),
-                                     1001,
+                                     ComponentCoreConstants::Priorities::EditListModel,
                                      &openDialog,
-                                     &isListViewInBaseState,
-                                     &isListViewInBaseState)
+                                     &isListViewInBaseStateAndHasListModel,
+                                     &isListViewInBaseStateAndHasListModel)
     {}
 
-    static bool isListViewInBaseState(const SelectionContext &selectionState)
+    static bool isListViewInBaseStateAndHasListModel(const SelectionContext &selectionState)
     {
-        return selectionState.isInBaseState() && selectionState.singleNodeIsSelected()
-               && selectionState.currentSingleSelectedNode().metaInfo().isListOrGridView();
+        if (!selectionState.isInBaseState() || !selectionState.singleNodeIsSelected())
+            return false;
+
+        const ModelNode singleSelectedNode = selectionState.currentSingleSelectedNode();
+
+        return singleSelectedNode.metaInfo().isListOrGridView()
+               && singleSelectedNode.property("model").toNodeProperty().modelNode().type()
+                      == "QtQml.Models.ListModel";
     }
 
     bool isEnabled(const SelectionContext &) const override { return true; }
@@ -866,20 +871,9 @@ public:
         NodeMetaInfo modelMetaInfo = view->model()->metaInfo("ListModel");
         NodeMetaInfo elementMetaInfo = view->model()->metaInfo("ListElement");
 
-        ListModelEditorModel model{[&] {
-                                       return view->createModelNode(useProjectStorage()
-                                                                        ? "ListModel"
-                                                                        : "QtQml.Models.ListModel",
-                                                                    modelMetaInfo.majorVersion(),
-                                                                    modelMetaInfo.minorVersion());
-                                   },
-                                   [&] {
-                                       return view->createModelNode(
-                                           useProjectStorage() ? "ListElement"
-                                                               : "QtQml.Models.ListElement",
-                                           elementMetaInfo.majorVersion(),
-                                           elementMetaInfo.minorVersion());
-                                   },
+#ifdef QDS_USE_PROJECTSTORAGE
+        ListModelEditorModel model{[&] { return view->createModelNode("ListModel"); },
+                                   [&] { return view->createModelNode("ListElement"); },
                                    [&](const ModelNode &node) {
                                        bool isNowInComponent = ModelNodeOperations::goIntoComponent(
                                            node);
@@ -898,6 +892,33 @@ public:
 
                                        return node;
                                    }};
+#else
+        ListModelEditorModel model{
+            [&] {
+                return view->createModelNode("QtQml.Models.ListModel",
+                                             modelMetaInfo.majorVersion(),
+                                             modelMetaInfo.minorVersion());
+            },
+            [&] {
+                return view->createModelNode("QtQml.Models.ListElement",
+                                             elementMetaInfo.majorVersion(),
+                                             elementMetaInfo.minorVersion());
+            },
+            [&](const ModelNode &node) {
+                bool isNowInComponent = ModelNodeOperations::goIntoComponent(node);
+
+                Model *currentModel = QmlDesignerPlugin::instance()->currentDesignDocument()->currentModel();
+
+                if (currentModel->rewriterView() && !currentModel->rewriterView()->errors().isEmpty()) {
+                    throw DocumentError{};
+                }
+
+                if (isNowInComponent)
+                    return view->rootModelNode();
+
+                return node;
+            }};
+#endif
 
         model.setListView(targetNode);
 
@@ -1888,9 +1909,9 @@ void DesignerActionManager::createDefaultDesignerActions()
                                                      contextIcon(DesignerIcons::EnterComponentIcon),
                                                      rootCategory,
                                                      QKeySequence(Qt::Key_F2),
-                                                     Priorities::ComponentActions + 2,
+                                                     Priorities::ComponentActions + 3,
                                                      &goIntoComponentOperation,
-                                                     &selectionIsComponent));
+                                                     &selectionIsEditableComponent));
 
     addDesignerAction(new ModelNodeContextMenuAction(jumpToCodeCommandId,
                                                      JumpToCodeDisplayName,
@@ -1936,12 +1957,23 @@ void DesignerActionManager::createDefaultDesignerActions()
     }
 
     addDesignerAction(new ModelNodeContextMenuAction(
+                          editIn3dViewCommandId,
+                          editIn3dViewDisplayName,
+                          contextIcon(DesignerIcons::EditIcon),
+                          rootCategory,
+                          QKeySequence(),
+                          Priorities::ComponentActions + 1,
+                          &editIn3dView,
+                          &SelectionContextFunctors::always, // If action is visible, it is usable
+                          &singleSelectionView3D));
+
+    addDesignerAction(new ModelNodeContextMenuAction(
                           makeComponentCommandId,
                           makeComponentDisplayName,
                           contextIcon(DesignerIcons::MakeComponentIcon),
                           rootCategory,
                           QKeySequence(),
-                          Priorities::ComponentActions + 1,
+                          Priorities::ComponentActions + 2,
                           &moveToComponent,
                           &singleSelection,
                           &singleSelection));
@@ -1954,8 +1986,8 @@ void DesignerActionManager::createDefaultDesignerActions()
                           QKeySequence(),
                           44,
                           &editMaterial,
-                          &modelHasMaterial,
-                          &isModel));
+                          &hasEditableMaterial,
+                          &isModelOrMaterial));
 
     addDesignerAction(new ModelNodeContextMenuAction(
                           mergeTemplateCommandId,
@@ -2149,7 +2181,8 @@ void DesignerActionManager::addCustomTransitionEffectAction()
 
 void DesignerActionManager::setupIcons()
 {
-    m_designerIcons.reset(new DesignerIcons("qtds_propertyIconFont.ttf", designerIconResourcesPath()));
+    m_designerIcons = std::make_unique<DesignerIcons>("qtds_propertyIconFont.ttf",
+                                                      designerIconResourcesPath());
 }
 
 QString DesignerActionManager::designerIconResourcesPath() const

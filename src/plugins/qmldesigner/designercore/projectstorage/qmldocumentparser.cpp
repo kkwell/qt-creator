@@ -10,6 +10,8 @@
 
 #include <sqlitedatabase.h>
 
+#include <tracing/qmldesignertracing.h>
+
 #ifdef QDS_BUILD_QMLPARSER
 #include <private/qqmldomtop_p.h>
 #endif
@@ -20,6 +22,10 @@
 namespace QmlDesigner {
 
 #ifdef QDS_BUILD_QMLPARSER
+
+constexpr auto category = ProjectStorageTracing::projectStorageUpdaterCategory;
+using NanotraceHR::keyValue;
+using Tracer = ProjectStorageTracing::Category::TracerType;
 
 namespace QmlDom = QQmlJS::Dom;
 namespace Synchronization = Storage::Synchronization;
@@ -60,23 +66,32 @@ Storage::Import createImport(const QmlDom::Import &qmlImport,
                              Utils::SmallStringView directoryPath,
                              QmlDocumentParser::ProjectStorage &storage)
 {
+    using Storage::ModuleKind;
     using QmlUriKind = QQmlJS::Dom::QmlUri::Kind;
 
     auto &&uri = qmlImport.uri;
 
-    if (uri.kind() == QmlUriKind::RelativePath) {
-        auto path = createNormalizedPath(directoryPath, uri.localPath());
-        auto moduleId = storage.moduleId(createNormalizedPath(directoryPath, uri.localPath()));
-        return Storage::Import(moduleId, Storage::Version{}, sourceId);
-    }
-
-    if (uri.kind() == QmlUriKind::ModuleUri) {
-        auto moduleId = storage.moduleId(Utils::PathString{uri.moduleUri()});
+    switch (uri.kind()) {
+    case QmlUriKind::AbsolutePath:
+    case QmlUriKind::DirectoryUrl: {
+        auto moduleId = storage.moduleId(Utils::PathString{uri.toString()}, ModuleKind::PathLibrary);
         return Storage::Import(moduleId, convertVersion(qmlImport.version), sourceId);
     }
+    case QmlUriKind::RelativePath: {
+        auto path = createNormalizedPath(directoryPath, uri.localPath());
+        auto moduleId = storage.moduleId(createNormalizedPath(directoryPath, uri.localPath()),
+                                         ModuleKind::PathLibrary);
+        return Storage::Import(moduleId, Storage::Version{}, sourceId);
+    }
+    case QmlUriKind::ModuleUri: {
+        auto moduleId = storage.moduleId(Utils::PathString{uri.moduleUri()}, ModuleKind::QmlLibrary);
+        return Storage::Import(moduleId, convertVersion(qmlImport.version), sourceId);
+    }
+    case QmlUriKind::Invalid:
+        return Storage::Import{};
+    }
 
-    auto moduleId = storage.moduleId(Utils::PathString{uri.toString()});
-    return Storage::Import(moduleId, convertVersion(qmlImport.version), sourceId);
+    return Storage::Import{};
 }
 
 QualifiedImports createQualifiedImports(const QList<QmlDom::Import> &qmlImports,
@@ -84,6 +99,11 @@ QualifiedImports createQualifiedImports(const QList<QmlDom::Import> &qmlImports,
                                         Utils::SmallStringView directoryPath,
                                         QmlDocumentParser::ProjectStorage &storage)
 {
+    NanotraceHR::Tracer tracer{"create qualified imports"_t,
+                               category(),
+                               keyValue("sourceId", sourceId),
+                               keyValue("directoryPath", directoryPath)};
+
     QualifiedImports qualifiedImports;
 
     for (const QmlDom::Import &qmlImport : qmlImports) {
@@ -91,6 +111,8 @@ QualifiedImports createQualifiedImports(const QList<QmlDom::Import> &qmlImports,
             qualifiedImports.try_emplace(qmlImport.importId,
                                          createImport(qmlImport, sourceId, directoryPath, storage));
     }
+
+    tracer.end(keyValue("qualified imports", qualifiedImports));
 
     return qualifiedImports;
 }
@@ -109,11 +131,13 @@ void addImports(Storage::Imports &imports,
         }
     }
 
-    auto localDirectoryModuleId = storage.moduleId(directoryPath);
+    using Storage::ModuleKind;
+
+    auto localDirectoryModuleId = storage.moduleId(directoryPath, ModuleKind::PathLibrary);
     imports.emplace_back(localDirectoryModuleId, Storage::Version{}, sourceId);
     ++importCount;
 
-    auto qmlModuleId = storage.moduleId("QML");
+    auto qmlModuleId = storage.moduleId("QML", ModuleKind::QmlLibrary);
     imports.emplace_back(qmlModuleId, Storage::Version{}, sourceId);
     ++importCount;
 
@@ -280,6 +304,11 @@ Storage::Synchronization::Type QmlDocumentParser::parse(const QString &sourceCon
                                                         SourceId sourceId,
                                                         Utils::SmallStringView directoryPath)
 {
+    NanotraceHR::Tracer tracer{"qml document parser parse"_t,
+                               category(),
+                               keyValue("sourceId", sourceId),
+                               keyValue("directoryPath", directoryPath)};
+
     Storage::Synchronization::Type type;
 
     using Option = QmlDom::DomEnvironment::Option;
@@ -335,7 +364,7 @@ Storage::Synchronization::Type QmlDocumentParser::parse(const QString &sourceCon
                                                          m_storage);
 
     type.prototype = createImportedTypeName(qmlObject.name(), qualifiedImports);
-
+    type.defaultPropertyName = qmlObject.localDefaultPropertyName();
     addImports(imports, qmlFile->imports(), sourceId, directoryPath, m_storage);
 
     addPropertyDeclarations(type, qmlObject, qualifiedImports, file);

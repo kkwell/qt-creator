@@ -21,7 +21,7 @@
 
 #include <utils/algorithm.h>
 #include <utils/environment.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <coreplugin/idocument.h>
@@ -143,7 +143,7 @@ void PdbEngine::handlePdbStarted()
 void PdbEngine::interruptInferior()
 {
     QString error;
-    interruptProcess(m_proc.processId(), GdbEngineType, &error);
+    interruptProcess(m_proc.processId(), &error);
 }
 
 void PdbEngine::executeStepIn(bool)

@@ -18,7 +18,7 @@
 #include <debugger/debuggerruncontrol.h>
 
 #include <utils/algorithm.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/url.h>
 
 using namespace Debugger;
@@ -298,6 +298,7 @@ public:
         setProduct<QdbDevicePerfProfilerSupport>();
         addSupportedRunMode("PerfRecorder");
         addSupportedDeviceType(Qdb::Constants::QdbLinuxOsType);
+        addSupportedRunConfig(Constants::QdbRunConfigurationId);
     }
 };
 

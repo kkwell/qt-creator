@@ -76,6 +76,11 @@ void ImageCacheCollector::start(Utils::SmallStringView name,
                                 AbortCallback abortCallback,
                                 ImageCache::TraceToken traceToken)
 {
+#ifdef QDS_USE_PROJECTSTORAGE
+    if (!m_projectStorage || !m_pathCache)
+        return;
+#endif
+
     using namespace NanotraceHR::Literals;
     auto [collectorTraceToken, flowtoken] = traceToken.beginDurationWithFlow(
         "generate image in standard collector"_t);
@@ -86,8 +91,15 @@ void ImageCacheCollector::start(Utils::SmallStringView name,
                                                           captureImageMaximumSize);
 
     const QString filePath{name};
+#ifdef QDS_USE_PROJECTSTORAGE
+    auto model = QmlDesigner::Model::create({*m_projectStorage, *m_pathCache},
+                                            "Item",
+                                            {},
+                                            QUrl::fromLocalFile(filePath));
+#else
     auto model = QmlDesigner::Model::create("QtQuick/Item", 2, 1);
     model->setFileUrl(QUrl::fromLocalFile(filePath));
+#endif
 
     auto textDocument = std::make_unique<QTextDocument>(fileToString(filePath));
 

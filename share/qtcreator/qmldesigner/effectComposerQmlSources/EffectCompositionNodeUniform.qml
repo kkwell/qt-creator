@@ -13,38 +13,49 @@ Item {
     id: root
 
     height: layout.implicitHeight
-
     visible: !uniformUseCustomValue
 
+    signal reset()
+
     Component.onCompleted: {
-        if (uniformType === "int")
-            valueLoader.source = "ValueInt.qml"
-        else if (uniformType === "vec2")
+        if (uniformType === "int") {
+            if (uniformControlType === "channel")
+                valueLoader.source = "ValueChannel.qml"
+            else
+                valueLoader.source = "ValueInt.qml"
+        } else if (uniformType === "vec2") {
             valueLoader.source = "ValueVec2.qml"
-        else if (uniformType === "vec3")
+        } else if (uniformType === "vec3") {
             valueLoader.source = "ValueVec3.qml"
-        else if (uniformType === "vec4")
+        } else if (uniformType === "vec4") {
             valueLoader.source = "ValueVec4.qml"
-        else if (uniformType === "bool")
+        } else if (uniformType === "bool") {
             valueLoader.source = "ValueBool.qml"
-        else if (uniformType === "color")
+        } else if (uniformType === "color") {
             valueLoader.source = "ValueColor.qml"
-        else if (uniformType === "sampler2D")
+        } else if (uniformType === "sampler2D") {
             valueLoader.source = "ValueImage.qml"
-        else if (uniformType === "define")
-            valueLoader.source = "ValueDefine.qml"
-        else
+        } else if (uniformType === "define") {
+            if (uniformControlType === "int")
+                valueLoader.source = "ValueInt.qml"
+            else if (uniformControlType === "bool")
+                valueLoader.source = "ValueBool.qml"
+            else
+                valueLoader.source = "ValueDefine.qml"
+        } else {
             valueLoader.source = "ValueFloat.qml"
+        }
     }
 
     RowLayout {
         id: layout
 
-        spacing: 20
         anchors.fill: parent
 
         Text {
-            text: uniformName
+            id: textName
+
+            text: uniformDisplayName
             color: StudioTheme.Values.themeTextColor
             font.pixelSize: StudioTheme.Values.baseFontSize
             horizontalAlignment: Text.AlignRight
@@ -54,9 +65,36 @@ Item {
             elide: Text.ElideRight
 
             HelperWidgets.ToolTipArea {
+                id: tooltipArea
+
                 anchors.fill: parent
                 tooltip: uniformDescription
             }
+        }
+
+        Item {
+            Layout.preferredHeight: 30
+            Layout.preferredWidth: 30
+
+            MouseArea {
+                id: mouseArea
+
+                anchors.fill: parent
+                hoverEnabled: true
+            }
+
+            HelperWidgets.IconButton {
+                id: iconButton
+
+                buttonSize: 24
+                icon: StudioTheme.Constants.reload_medium
+                iconSize: 16
+                anchors.centerIn: parent
+                visible: mouseArea.containsMouse || iconButton.containsMouse
+                tooltip: qsTr("Reset value")
+                onClicked: root.reset()
+            }
+
         }
 
         Loader {

@@ -5,7 +5,7 @@
 
 #include <debugger/debuggerengine.h>
 
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 
 #include <QLoggingCategory>
 
@@ -54,6 +54,8 @@ enum class DapResponseType
     Evaluate,
     SetBreakpoints,
     SetFunctionBreakpoints,
+    Attach,
+    Launch,
     Unknown
 };
 

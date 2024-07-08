@@ -2,6 +2,7 @@
 add_subdirectory(coreplugin)
 
 # Level 1: (only depends of Level 0)
+add_subdirectory(lua)
 add_subdirectory(texteditor)
 # add_subdirectory(serialterminal)
 add_subdirectory(extensionmanager)
@@ -44,11 +45,12 @@ add_subdirectory(qtsupport)
 
 # Level 5:
 add_subdirectory(autotoolsprojectmanager)
+
 # add_subdirectory(bazaar)
 # add_subdirectory(beautifier)
 # add_subdirectory(clearcase)
-add_subdirectory(cmakeprojectmanager)
 # add_subdirectory(cvs)
+
 add_subdirectory(designer)
 add_subdirectory(docker)
 # add_subdirectory(fakevim)
@@ -77,8 +79,10 @@ add_subdirectory(debugger)
 # if (WITH_QMLDESIGNER)
 #   add_subdirectory(qmlprojectmanager)
 # endif()
- add_subdirectory(python)
+add_subdirectory(python)
 # add_subdirectory(clangformat)
+add_subdirectory(cmakeprojectmanager)
+
 
 # Level 7:
 # add_subdirectory(android)
@@ -98,7 +102,9 @@ add_subdirectory(remotelinux)
 # add_subdirectory(qbsprojectmanager)
 # add_subdirectory(ctfvisualizer)
 # add_subdirectory(squish)
+# add_subdirectory(appstatisticsmonitor)
 add_subdirectory(easyboard)
+
 
 # Level 8:
 # add_subdirectory(boot2qt)
@@ -107,14 +113,15 @@ add_subdirectory(easyboard)
 #   if (WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # Workaround for @CMakeFiles\QmlDesigner.rsp ld.lld.exe: The filename or extension is too long.
     # Clang on Windows is having problems with QmlDesigner.rsp which is bigger than 32KiB
-  #   set(qmldesigner_builddir ${PROJECT_BINARY_DIR}/qmldsgnr)
-  # endif()
-  # add_subdirectory(qmldesigner ${qmldesigner_builddir})
-  # add_subdirectory(effectcomposer)
-  # add_subdirectory(studiowelcome)
-  # add_subdirectory(insight)
+#     set(qmldesigner_builddir ${PROJECT_BINARY_DIR}/qmldsgnr)
+#   endif()
+#   add_subdirectory(qmldesigner ${qmldesigner_builddir})
+#   add_subdirectory(qmldesignerlite)
+#   add_subdirectory(effectcomposer)
+#   add_subdirectory(studiowelcome)
+#   add_subdirectory(insight)
 # endif()
 # add_subdirectory(qnx)
 # add_subdirectory(mcusupport)
- # add_subdirectory(qtapplicationmanager)
+# add_subdirectory(qtapplicationmanager)
 

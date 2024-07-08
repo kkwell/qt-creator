@@ -8,12 +8,12 @@ if (APPLE)
   set(QmlDesignerPluginInstallPrefix "${IDE_PLUGIN_PATH}/QmlDesigner")
 endif()
 
-add_compile_options("$<$<COMPILE_LANG_AND_ID:CXX,Clang>:-Wno-error=maybe-uninitialized>")
-add_compile_options("$<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-error=maybe-uninitialized>")
 
-env_with_default("QDS_USE_PROJECTSTORAGE" ENV_QDS_USE_PROJECTSTORAGE OFF)
-option(USE_PROJECTSTORAGE "Use ProjectStorage" ${ENV_QDS_USE_PROJECTSTORAGE})
-add_feature_info("ProjectStorage" ${USE_PROJECTSTORAGE} "")
+set(BUILD_NOT_DESIGNSTUDIO NOT ${BUILD_NOT_DESIGNSTUDIO})
+option(QTC_USE_QML_DESIGNER_LITE "Use Qml Designer Lite" ${BUILD_NOT_DESIGNSTUDIO})
+add_feature_info("Qml Designer Lite" ${QTC_USE_QML_DESIGNER_LITE} "")
+
+option(USE_PROJECTSTORAGE "Use ProjectStorage" ${QTC_USE_QML_DESIGNER_LITE})
 
 env_with_default("QTC_ENABLE_PROJECT_STORAGE_TRACING" ENV_QTC_ENABLE_PROJECT_STORAGE_TRACING OFF)
 option(ENABLE_PROJECT_STORAGE_TRACING "Enable sqlite tracing" ${ENV_QTC_ENABLE_PROJECT_STORAGE_TRACING})
@@ -27,11 +27,13 @@ env_with_default("QTC_ENABLE_MODEL_TRACING" ENV_QTC_ENABLE_MODEL_TRACING OFF)
 option(ENABLE_MODEL_TRACING "Enable model tracing" ${ENV_QTC_ENABLE_MODEL_TRACING})
 add_feature_info("Model tracing" ${ENABLE_MODEL_TRACING} "")
 
-
+env_with_default("QTC_ENABLE_METAINFO_TRACING" ENV_QTC_ENABLE_METAINFO_TRACING OFF)
+option(ENABLE_METAINFO_TRACING "Enable meta info tracing" ${ENV_QTC_ENABLE_METAINFO_TRACING})
+add_feature_info("Meta info tracing" ${ENABLE_METAINFO_TRACING} "")
 
 add_qtc_library(QmlDesignerUtils STATIC
   DEPENDS
-    Qt::Gui Utils Qt::QmlPrivate Core
+    Qt::Gui Utils Qt::QmlPrivate
 
   PUBLIC_INCLUDES ${CMAKE_CURRENT_LIST_DIR}/utils
   SOURCES_PREFIX ${CMAKE_CURRENT_LIST_DIR}/utils
@@ -46,6 +48,11 @@ add_qtc_library(QmlDesignerUtils STATIC
     imageutils.cpp imageutils.h
     qmldesignerutils_global.h
 )
+
+if (TARGET QmlDesignerUtils)
+    target_compile_options(QmlDesignerUtils PUBLIC $<$<COMPILE_LANG_AND_ID:CXX,Clang,GNU>:-Wno-error=maybe-uninitialized>)
+    target_compile_options(QmlDesignerUtils PUBLIC $<$<COMPILE_LANG_AND_ID:CXX,Clang>:-Wno-unneeded-internal-declaration>)
+endif()
 
 extend_qtc_library(QmlDesignerUtils
     CONDITION ENABLE_COMPILE_WARNING_AS_ERROR
@@ -82,6 +89,7 @@ add_qtc_library(QmlDesignerCore STATIC
     Sqlite
   DEFINES
      $<$<BOOL:${USE_PROJECTSTORAGE}>:QDS_USE_PROJECTSTORAGE>
+     $<$<BOOL:${QTC_USE_QML_DESIGNER_LITE}>:QTC_USE_QML_DESIGNER_LITE>
   INCLUDES
     ${CMAKE_CURRENT_LIST_DIR}
   PUBLIC_INCLUDES
@@ -89,12 +97,13 @@ add_qtc_library(QmlDesignerCore STATIC
     ${CMAKE_CURRENT_LIST_DIR}/designercore/include
   SOURCES_PREFIX ${CMAKE_CURRENT_LIST_DIR}/designercore
   SOURCES
-    rewritertransaction.cpp
-    rewritertransaction.h
+    rewritertransaction.cpp rewritertransaction.h
+    generatedcomponentutils.cpp generatedcomponentutils.h
+    uniquename.cpp uniquename.h
 )
 
 extend_qtc_library(QmlDesignerCore
-  CONDITION TARGET Nanotrace
+  CONDITION ENABLE_PROJECT_STORAGE_TRACING OR ENABLE_IMAGE_CACHE_TRACING OR ENABLE_MODEL_TRACING OR ENABLE_METAINFO_TRACING
   PUBLIC_DEPENDS Nanotrace
   PUBLIC_DEFINES
     ENABLE_QMLDESIGNER_TRACING
@@ -102,6 +111,7 @@ extend_qtc_library(QmlDesignerCore
     $<$<BOOL:${ENABLE_PROJECT_STORAGE_TRACING}>:ENABLE_PROJECT_STORAGE_TRACING>
     $<$<BOOL:${ENABLE_IMAGE_CACHE_TRACING}>:ENABLE_IMAGE_CACHE_TRACING>
     $<$<BOOL:${ENABLE_MODEL_TRACING}>:ENABLE_MODEL_TRACING>
+    $<$<BOOL:${ENABLE_METAINFO_TRACING}>:ENABLE_METAINFO_TRACING>
 )
 
 extend_qtc_library(QmlDesignerCore
@@ -457,6 +467,8 @@ extend_qtc_library(QmlDesignerCore
     projectstoragetypes.h
     projectstorageupdater.cpp projectstorageupdater.h
     projectstorage.cpp projectstorage.h
+    projectstorageerrornotifierinterface.h
+    projectstorageerrornotifier.cpp projectstorageerrornotifier.h
     sourcepath.h
     sourcepathcache.h
     sourcepathcacheinterface.h
@@ -488,10 +500,10 @@ add_qtc_plugin(QmlDesigner
     IDE_LIBRARY_BASENAME=\"${IDE_LIBRARY_BASE_PATH}\"
     SHARE_QML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../../share/qtcreator/qmldesigner"
     $<$<BOOL:${USE_PROJECTSTORAGE}>:QDS_USE_PROJECTSTORAGE>
+    $<$<BOOL:${QTC_USE_QML_DESIGNER_LITE}>:QTC_USE_QML_DESIGNER_LITE>
   INCLUDES
     ${CMAKE_CURRENT_LIST_DIR}/components
     ${CMAKE_CURRENT_LIST_DIR}/components/assetslibrary
-    ${CMAKE_CURRENT_LIST_DIR}/components/collectioneditor
     ${CMAKE_CURRENT_LIST_DIR}/components/debugview
     ${CMAKE_CURRENT_LIST_DIR}/components/edit3d
     ${CMAKE_CURRENT_LIST_DIR}/components/formeditor
@@ -514,7 +526,6 @@ add_qtc_plugin(QmlDesigner
     documentmanager.cpp documentmanager.h
     documentwarningwidget.cpp documentwarningwidget.h
     dynamiclicensecheck.h
-    generateresource.cpp generateresource.h
     openuiqmlfiledialog.cpp openuiqmlfiledialog.h
     puppetenvironmentbuilder.cpp puppetenvironmentbuilder.h
     qmldesigner_global.h
@@ -623,12 +634,15 @@ extend_qtc_plugin(QmlDesigner
     propertycomponentgeneratorinterface.h
     qmldesignericonprovider.cpp qmldesignericonprovider.h
     qmleditormenu.cpp qmleditormenu.h
+    resourcegenerator.cpp resourcegenerator.h
     selectioncontext.cpp selectioncontext.h
     theme.cpp theme.h
     zoomaction.cpp zoomaction.h
     anchoraction.cpp anchoraction.h
     svgpasteaction.cpp svgpasteaction.h
     viewmanager.cpp viewmanager.h
+    utils3d.cpp utils3d.h
+    dialogutils.cpp dialogutils.h
 )
 
 extend_qtc_plugin(QmlDesigner
@@ -650,6 +664,7 @@ extend_qtc_plugin(QmlDesigner
   backgroundcolorselection.cpp backgroundcolorselection.h
   bakelights.cpp bakelights.h
   snapconfiguration.cpp snapconfiguration.h
+  cameraspeedconfiguration.cpp cameraspeedconfiguration.h
   bakelightsdatamodel.cpp bakelightsdatamodel.h
   bakelightsconnectionmanager.cpp bakelightsconnectionmanager.h
   edit3d.qrc
@@ -666,7 +681,6 @@ extend_qtc_plugin(QmlDesigner
     backgroundaction.cpp backgroundaction.h
     bindingindicator.cpp bindingindicator.h
     bindingindicatorgraphicsitem.cpp bindingindicatorgraphicsitem.h
-    contentnoteditableindicator.cpp contentnoteditableindicator.h
     controlelement.cpp controlelement.h
     dragtool.cpp dragtool.h
     formeditor.qrc
@@ -706,6 +720,7 @@ extend_qtc_plugin(QmlDesigner
     snappinglinecreator.cpp snappinglinecreator.h
     toolbox.cpp toolbox.h
     transitiontool.cpp transitiontool.h
+    view3dtool.cpp view3dtool.h
 )
 
 extend_qtc_plugin(QmlDesigner
@@ -729,6 +744,8 @@ extend_qtc_plugin(QmlDesigner
     assetimportupdatetreeitemdelegate.cpp assetimportupdatetreeitemdelegate.h
     assetimportupdatetreemodel.cpp assetimportupdatetreemodel.h
     assetimportupdatetreeview.cpp assetimportupdatetreeview.h
+    import3dcanvas.cpp import3dcanvas.h
+    import3dconnectionmanager.cpp import3dconnectionmanager.h
     itemlibrary.qrc
     itemlibraryconstants.h
     itemlibraryimageprovider.cpp itemlibraryimageprovider.h
@@ -816,9 +833,10 @@ extend_qtc_plugin(QmlDesigner
     contentlibrarymaterialscategory.cpp contentlibrarymaterialscategory.h
     contentlibrarymaterial.cpp contentlibrarymaterial.h
     contentlibraryiconprovider.cpp contentlibraryiconprovider.h
-    contentlibraryeffect.cpp contentlibraryeffect.h
+    contentlibraryitem.cpp contentlibraryitem.h
     contentlibraryeffectscategory.cpp contentlibraryeffectscategory.h
     contentlibraryeffectsmodel.cpp contentlibraryeffectsmodel.h
+    contentlibraryusermodel.cpp contentlibraryusermodel.h
 )
 
 extend_qtc_plugin(QmlDesigner
@@ -830,21 +848,6 @@ extend_qtc_plugin(QmlDesigner
     materialeditortransaction.cpp materialeditortransaction.h
     materialeditorview.cpp materialeditorview.h
     materialeditor.qrc
-)
-
-extend_qtc_plugin(QmlDesigner
-  SOURCES_PREFIX components/collectioneditor
-  SOURCES
-    collectiondetails.cpp collectiondetails.h
-    collectiondetailsmodel.cpp collectiondetailsmodel.h
-    collectiondetailssortfiltermodel.cpp collectiondetailssortfiltermodel.h
-    collectioneditorconstants.h
-    collectioneditorutils.cpp collectioneditorutils.h
-    collectionlistmodel.cpp collectionlistmodel.h
-    collectionsourcemodel.cpp collectionsourcemodel.h
-    collectionview.cpp collectionview.h
-    collectionwidget.cpp collectionwidget.h
-    datastoremodelnode.cpp datastoremodelnode.h
 )
 
 extend_qtc_plugin(QmlDesigner
@@ -914,7 +917,6 @@ extend_qtc_plugin(QmlDesigner
     include/propertybinding.h
     include/qml3dnode.h
     include/qmlvisualnode.h
-
 )
 
 extend_qtc_plugin(QmlDesigner
@@ -1245,3 +1247,16 @@ extend_qtc_plugin(qtquickplugin
       qtquickplugin.cpp qtquickplugin.h
       qtquickplugin.qrc
 )
+
+if (BUILD_DESIGNSTUDIO)
+    configure_file(
+        "${QtCreator_SOURCE_DIR}/dist/branding/qtdesignstudio/QtProject/QtDesignStudio.ini"
+        "${PROJECT_BINARY_DIR}/${IDE_DATA_PATH}/QtProject/${IDE_CASED_ID}.ini"
+        COPYONLY
+    )
+    install(FILES
+        ${QtCreator_SOURCE_DIR}/dist/branding/qtdesignstudio/QtProject/QtDesignStudio.ini
+        DESTINATION ${IDE_DATA_PATH}/QtProject
+        RENAME ${IDE_CASED_ID}.ini
+    )
+endif ()

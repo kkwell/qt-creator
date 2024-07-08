@@ -20,6 +20,7 @@ public:
     int rowCount(const QModelIndex & parent = QModelIndex()) const override;
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
     bool setData(const QModelIndex &index, const QVariant &value, int role) override;
+    Q_INVOKABLE bool resetData(int row);
 
     void resetModel();
 
@@ -30,6 +31,7 @@ public:
 private:
     enum Roles {
         NameRole = Qt::UserRole + 1,
+        DisplayNameRole,
         DescriptionRole,
         ValueRole,
         BackendValueRole,
@@ -37,6 +39,7 @@ private:
         MaxValueRole,
         MinValueRole,
         TypeRole,
+        ControlTypeRole,
         UseCustomValueRole
     };
 

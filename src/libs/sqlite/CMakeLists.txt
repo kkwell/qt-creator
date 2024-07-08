@@ -31,7 +31,7 @@ endif()
 
 add_qtc_library(Sqlite
   PROPERTIES AUTOMOC OFF AUTOUIC OFF
-  DEPENDS Qt::Core Threads::Threads ${CMAKE_DL_LIBS} SqliteInternal
+  DEPENDS Qt::Core Threads::Threads ${CMAKE_DL_LIBS} SqliteInternal Nanotrace
   INCLUDES
     ../3rdparty/sqlite
   PUBLIC_INCLUDES
@@ -58,7 +58,7 @@ add_qtc_library(Sqlite
     sqlitesessionchangeset.cpp sqlitesessionchangeset.h
     sqlitesessions.cpp sqlitesessions.h
     sqlitetable.h
-    sqlitetransaction.h
+    sqlitetracing.cpp sqlitetracing.h
     sqlitetransaction.h
     sqlitevalue.h
     sqlitewritestatement.h
@@ -80,5 +80,7 @@ extend_qtc_library(Sqlite
 
 extend_qtc_library(Sqlite
   CONDITION QTC_STATIC_BUILD
-  PROPERTIES COMPILE_OPTIONS $<IF:$<CXX_COMPILER_ID:MSVC>,/FIsqlite_static_config.h,-includesqlite_static_config.h>
+  PROPERTIES
+    COMPILE_OPTIONS $<IF:$<CXX_COMPILER_ID:MSVC>,/FIsqlite_static_config.h,-includesqlite_static_config.h>
+    INTERFACE_COMPILE_OPTIONS $<IF:$<CXX_COMPILER_ID:MSVC>,/FI../3rdparty/sqlite/sqlite_static_config.h,-include../3rdparty/sqlite/sqlite_static_config.h>
 )

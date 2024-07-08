@@ -3,6 +3,7 @@
 
 #include "projectintropage.h"
 
+#include "algorithm.h"
 #include "fancylineedit.h"
 #include "filenamevalidatinglineedit.h"
 #include "fileutils.h"
@@ -52,7 +53,7 @@ public:
     QRegularExpressionValidator m_projectNameValidator;
     QString m_projectNameValidatorUserMessage;
     bool m_forceSubProject = false;
-    FilePaths m_projectDirectories;
+    QList<ProjectIntroPage::ProjectInfo> m_projectInfos;
 
     QLabel *m_descriptionLabel;
     FancyLineEdit *m_nameLineEdit;
@@ -81,12 +82,10 @@ ProjectIntroPage::ProjectIntroPage(QWidget *parent) :
     d->m_pathChooser = new Utils::PathChooser(frame);
     d->m_pathChooser->setObjectName("baseFolder"); // used by Squish
     d->m_pathChooser->setExpectedKind(PathChooser::Directory);
-    d->m_pathChooser->setDisabled(d->m_forceSubProject);
     d->m_pathChooser->setAllowPathFromDevice(true);
 
     d->m_projectsDirectoryCheckBox = new QCheckBox(Tr::tr("Use as default project location"));
     d->m_projectsDirectoryCheckBox->setObjectName("projectsDirectoryCheckBox");
-    d->m_projectsDirectoryCheckBox->setDisabled(d->m_forceSubProject);
 
     d->m_projectComboBox = new QComboBox;
     d->m_projectComboBox->setVisible(d->m_forceSubProject);
@@ -104,13 +103,14 @@ ProjectIntroPage::ProjectIntroPage(QWidget *parent) :
         return validateProjectName(edit->text(), errorString);
     });
 
-    d->m_projectLabel = new QLabel("Project:");
+    d->m_projectLabel = new QLabel(Tr::tr("Add to project:"));
     d->m_projectLabel->setVisible(d->m_forceSubProject);
 
     using namespace Layouting;
 
     Form {
-        Tr::tr("Name:"), d->m_nameLineEdit, br,
+        Tr::tr("Name:"), d->m_nameLineEdit,
+                br,
         d->m_projectLabel, d->m_projectComboBox, br,
         Column { Space(12) }, br,
         Tr::tr("Create in:"), d->m_pathChooser, br,
@@ -135,7 +135,7 @@ ProjectIntroPage::ProjectIntroPage(QWidget *parent) :
     connect(d->m_nameLineEdit, &FancyLineEdit::validReturnPressed,
             this, &ProjectIntroPage::slotActivated);
     connect(d->m_projectComboBox, &QComboBox::currentIndexChanged,
-            this, &ProjectIntroPage::slotChanged);
+            this, &ProjectIntroPage::onCurrentProjectIndexChanged);
 
     setProperty(SHORT_TITLE_PROPERTY, Tr::tr("Location"));
     registerFieldWithName(QLatin1String("Path"), d->m_pathChooser, "path", SIGNAL(textChanged(QString)));
@@ -192,16 +192,26 @@ bool ProjectIntroPage::isComplete() const
 
 bool ProjectIntroPage::validate()
 {
-    if (d->m_forceSubProject) {
-        int index = d->m_projectComboBox->currentIndex();
-        if (index == 0)
-            return false;
-        d->m_pathChooser->setFilePath(d->m_projectDirectories.at(index));
-    }
     // Validate and display status
     if (!d->m_pathChooser->isValid()) {
-        displayStatusMessage(InfoLabel::Error, d->m_pathChooser->errorMessage());
+        if (const QString msg = d->m_pathChooser->errorMessage(); !msg.isEmpty())
+            displayStatusMessage(InfoLabel::Error, msg);
         return false;
+    }
+
+    // build system valid?
+    const QVariant bsVariant = property("BuildSystem");
+    if (bsVariant.isValid()) {
+        const QStringList supportedProjectTypes = wizard()->property("SupportedProjectTypes").toStringList();
+        if (!supportedProjectTypes.isEmpty()) {
+            const QVariant currentProjectsId = wizard()->property("NodeProjectId");
+            if (currentProjectsId.isValid()
+                    && !supportedProjectTypes.contains(currentProjectsId.toString())) {
+                displayStatusMessage(InfoLabel::Error, Tr::tr("Chosen project wizard does not "
+                                                              "support the build system."));
+                return false;
+            }
+        }
     }
 
     // Name valid?
@@ -259,6 +269,33 @@ void ProjectIntroPage::slotActivated()
         emit activated();
 }
 
+void ProjectIntroPage::onCurrentProjectIndexChanged(int index)
+{
+    const int available = d->m_projectInfos.size();
+    if (available == 0)
+        return;
+    QTC_ASSERT(index < available, return);
+    if (index < 0)
+        return;
+
+    d->m_forceSubProject = (index > 0);
+    const ProjectInfo info = d->m_projectInfos.at(index);
+    const FilePath current = info.projectDirectory;
+    const FilePath visible = d->m_pathChooser->filePath();
+    if (visible != current && !visible.isChildOf(current))
+        d->m_pathChooser->setFilePath(current);
+
+    if (info.buildSystem.isEmpty())
+        setProperty("BuildSystem", QVariant());
+    else
+        setProperty("BuildSystem", info.buildSystem);
+    if (info.projectId.isValid())
+        setProperty("NodeProjectId", info.projectId.toString());
+    else
+        setProperty("NodeProjectId", QVariant());
+    fieldsUpdated();
+}
+
 bool ProjectIntroPage::forceSubProject() const
 {
     return d->m_forceSubProject;
@@ -269,24 +306,28 @@ void ProjectIntroPage::setForceSubProject(bool force)
     d->m_forceSubProject = force;
     d->m_projectLabel->setVisible(d->m_forceSubProject);
     d->m_projectComboBox->setVisible(d->m_forceSubProject);
-    d->m_pathChooser->setDisabled(d->m_forceSubProject);
-    d->m_projectsDirectoryCheckBox->setDisabled(d->m_forceSubProject);
 }
 
-void ProjectIntroPage::setProjectList(const QStringList &projectList)
+void ProjectIntroPage::setProjectInfos(const QList<ProjectInfo> &projectInfos)
 {
+    // FIXME the current impl assumes a None item as first project info
+    d->m_projectInfos = projectInfos;
     d->m_projectComboBox->clear();
-    d->m_projectComboBox->addItems(projectList);
+    d->m_projectComboBox->addItems(Utils::transform(projectInfos, &ProjectInfo::display));
 }
 
-void ProjectIntroPage::setProjectDirectories(const FilePaths &directoryList)
+void ProjectIntroPage::setProjectIndex(int index)
 {
-    d->m_projectDirectories = directoryList;
+    d->m_projectComboBox->setCurrentIndex(
+                (index > d->m_projectComboBox->count() || index < 0) ? -1 : index);
 }
 
-int ProjectIntroPage::projectIndex() const
+ProjectIntroPage::ProjectInfo ProjectIntroPage::currentProjectInfo() const
 {
-    return d->m_projectComboBox->currentIndex();
+    const int index = d->m_projectComboBox->currentIndex();
+    if (index < 0 || index > d->m_projectInfos.size())
+        return {};
+    return d->m_projectInfos.at(index);
 }
 
 bool ProjectIntroPage::validateProjectName(const QString &name, QString *errorMessage)

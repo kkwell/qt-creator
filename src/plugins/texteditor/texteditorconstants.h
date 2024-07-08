@@ -5,7 +5,7 @@
 
 #include "texteditor_global.h"
 
-#include <QtGlobal>
+#include <QLoggingCategory>
 
 namespace TextEditor {
 
@@ -212,6 +212,8 @@ const char FIND_USAGES[] = "TextEditor.FindUsages";
 // moved from CppEditor to TextEditor avoid breaking the setting by using the old key
 const char RENAME_SYMBOL[] = "CppEditor.RenameSymbolUnderCursor";
 const char OPEN_CALL_HIERARCHY[] = "TextEditor.OpenCallHierarchy";
+const char OPEN_TYPE_HIERARCHY[] = "TextEditor.OpenTypeHierarchy";
+const char TYPE_HIERARCHY_FACTORY_ID[] = "TextEditor.TypeHierarchy";
 const char JUMP_TO_FILE_UNDER_CURSOR[] = "TextEditor.JumpToFileUnderCursor";
 const char JUMP_TO_FILE_UNDER_CURSOR_IN_NEXT_SPLIT[] = "TextEditor.JumpToFileUnderCursorInNextSplit";
 
@@ -248,4 +250,7 @@ const char BOOKMARKS_NEXT_ACTION[]        = "Bookmarks.Next";
 const unsigned COMPLETION_ASSIST_TOOLTIP_DELAY = 100;
 
 } // namespace Constants
+
+namespace Internal { Q_DECLARE_LOGGING_CATEGORY(foldingLog) }
+
 } // namespace TextEditor

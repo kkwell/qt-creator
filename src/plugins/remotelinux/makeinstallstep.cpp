@@ -21,7 +21,7 @@
 
 #include <utils/algorithm.h>
 #include <utils/fileutils.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <QSet>
@@ -245,7 +245,7 @@ void MakeInstallStep::updateArgsFromAspect()
 
 void MakeInstallStep::updateFullCommandLine()
 {
-    CommandLine cmd{makeExecutable(), userArguments(), CommandLine::Raw};
+    const CommandLine cmd{makeExecutable(), userArguments(), CommandLine::Raw};
     m_fullCommand.setValue(cmd.toUserOutput());
 }
 

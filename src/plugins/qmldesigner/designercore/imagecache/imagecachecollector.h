@@ -5,6 +5,8 @@
 
 #include "imagecachecollectorinterface.h"
 
+#include <modelfwd.h>
+
 #include <QPointer>
 
 QT_BEGIN_NAMESPACE
@@ -62,6 +64,10 @@ private:
     QSize captureImageMaximumSize;
     ExternalDependenciesInterface &m_externalDependencies;
     ImageCacheCollectorNullImageHandling nullImageHandling{};
+#ifdef QDS_USE_PROJECTSTORAGE
+    ProjectStorageType *m_projectStorage = nullptr;
+    PathCacheType *m_pathCache = nullptr;
+#endif
 };
 
 } // namespace QmlDesigner

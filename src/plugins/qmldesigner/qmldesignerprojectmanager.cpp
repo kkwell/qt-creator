@@ -12,15 +12,16 @@
 #include <projectstorage/filesystem.h>
 #include <projectstorage/nonlockingmutex.h>
 #include <projectstorage/projectstorage.h>
+#include <projectstorage/projectstorageerrornotifier.h>
 #include <projectstorage/projectstoragepathwatcher.h>
 #include <projectstorage/projectstorageupdater.h>
 #include <projectstorage/qmldocumentparser.h>
 #include <projectstorage/qmltypesparser.h>
 #include <projectstorage/sourcepathcache.h>
-#include <sqlitedatabase.h>
 #include <qmlprojectmanager/qmlproject.h>
 #include <qtsupport/baseqtversion.h>
 #include <qtsupport/qtkitaspect.h>
+#include <sqlitedatabase.h>
 
 #include <asynchronousexplicitimagecache.h>
 #include <asynchronousimagecache.h>
@@ -41,6 +42,7 @@
 
 #include <QDirIterator>
 #include <QFileSystemWatcher>
+#include <QLibraryInfo>
 #include <QQmlEngine>
 
 using namespace std::chrono;
@@ -180,7 +182,8 @@ public:
               pathCache.sourceId(SourcePath{project->projectDirectory().toString() + "/."}).internalId())}
     {}
     Sqlite::Database database;
-    ProjectStorage<Sqlite::Database> storage{database, database.isInitialized()};
+    ProjectStorageErrorNotifier errorNotifier{pathCache};
+    ProjectStorage storage{database, errorNotifier, database.isInitialized()};
     PathCacheType pathCache{storage};
     FileSystem fileSystem{pathCache};
     FileStatusCache fileStatusCache{fileSystem};
@@ -237,30 +240,34 @@ QmlDesignerProjectManager::QmlDesignerProjectManager(ExternalDependenciesInterfa
     , m_externalDependencies{externalDependencies}
 {
     auto editorManager = ::Core::EditorManager::instance();
-    QObject::connect(editorManager, &::Core::EditorManager::editorOpened, [&](auto *editor) {
+    QObject::connect(editorManager, &::Core::EditorManager::editorOpened, &dummy, [&](auto *editor) {
         editorOpened(editor);
     });
-    QObject::connect(editorManager, &::Core::EditorManager::currentEditorChanged, [&](auto *editor) {
-        currentEditorChanged(editor);
-    });
-    QObject::connect(editorManager, &::Core::EditorManager::editorsClosed, [&](const auto &editors) {
-        editorsClosed(editors);
-    });
+    QObject::connect(editorManager,
+                     &::Core::EditorManager::currentEditorChanged,
+                     &dummy,
+                     [&](auto *editor) { currentEditorChanged(editor); });
+    QObject::connect(editorManager,
+                     &::Core::EditorManager::editorsClosed,
+                     &dummy,
+                     [&](const auto &editors) { editorsClosed(editors); });
     auto sessionManager = ::ProjectExplorer::ProjectManager::instance();
     QObject::connect(sessionManager,
                      &::ProjectExplorer::ProjectManager::projectAdded,
+                     &dummy,
                      [&](auto *project) { projectAdded(project); });
     QObject::connect(sessionManager,
                      &::ProjectExplorer::ProjectManager::aboutToRemoveProject,
+                     &dummy,
                      [&](auto *project) { aboutToRemoveProject(project); });
     QObject::connect(sessionManager,
                      &::ProjectExplorer::ProjectManager::projectRemoved,
+                     &dummy,
                      [&](auto *project) { projectRemoved(project); });
 
-    QObject::connect(&m_previewImageCacheData->timer,
-                     &QTimer::timeout,
-                     this,
-                     &QmlDesignerProjectManager::generatePreview);
+    QObject::connect(&m_previewImageCacheData->timer, &QTimer::timeout, &dummy, [&]() {
+        generatePreview();
+    });
 }
 
 QmlDesignerProjectManager::~QmlDesignerProjectManager() = default;
@@ -281,12 +288,12 @@ AsynchronousImageCache &QmlDesignerProjectManager::asynchronousImageCache()
 }
 
 namespace {
-ProjectStorage<Sqlite::Database> *dummyProjectStorage()
+[[maybe_unused]] ProjectStorage *dummyProjectStorage()
 {
     return nullptr;
 }
 
-ProjectStorageUpdater::PathCache *dummyPathCache()
+[[maybe_unused]] ProjectStorageUpdater::PathCache *dummyPathCache()
 {
     return nullptr;
 }
@@ -336,72 +343,36 @@ Utils::FilePath qmlPath(::ProjectExplorer::Target *target)
     return {};
 }
 
-template<typename... Path>
-bool skipDirectoriesWith(const QStringView directoryPath, const Path &...paths)
-{
-    return (directoryPath.contains(paths) || ...);
-}
-
-template<typename... Path>
-bool skipDirectoriesEndsWith(const QStringView directoryPath, const Path &...paths)
-{
-    return (directoryPath.endsWith(paths) || ...);
-}
-
-bool skipPath(const QString &directoryPath)
-{
-    return skipDirectoriesWith(directoryPath,
-                               u"QtApplicationManager",
-                               u"QtInterfaceFramework",
-                               u"QtOpcUa",
-                               u"Qt3D",
-                               u"Scene2D",
-                               u"Scene3D",
-                               u"QtWayland",
-                               u"Qt5Compat",
-                               u"QtCharts",
-                               u"QtLocation",
-                               u"QtPositioning",
-                               u"MaterialEditor",
-                               u"QtTextToSpeech",
-                               u"QtWebEngine",
-                               u"Qt/labs",
-                               u"QtDataVisualization")
-           || skipDirectoriesEndsWith(directoryPath, u"designer");
-}
-
-void collectQmldirPaths(const QString &path, QStringList &qmldirPaths)
-{
-    QDirIterator dirIterator{path, QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories};
-
-    while (dirIterator.hasNext()) {
-        auto directoryPath = dirIterator.next();
-
-        QString qmldirPath = directoryPath + "/qmldir";
-        if (!skipPath(directoryPath) && QFileInfo::exists(qmldirPath))
-            qmldirPaths.push_back(directoryPath);
-    }
-}
-
-void projectQmldirPaths(::ProjectExplorer::Target *target, QStringList &qmldirPaths)
+[[maybe_unused]] void projectQmldirPaths(::ProjectExplorer::Target *target, QStringList &qmldirPaths)
 {
     ::QmlProjectManager::QmlBuildSystem *buildSystem = getQmlBuildSystem(target);
 
     const Utils::FilePath projectDirectoryPath = buildSystem->canonicalProjectDir();
-    const QStringList importPaths = buildSystem->importPaths();
-    const QDir projectDirectory(projectDirectoryPath.toString());
 
-    for (const QString &importPath : importPaths)
-        collectQmldirPaths(importPath, qmldirPaths);
+    qmldirPaths.push_back(projectDirectoryPath.path());
 }
 
-void qtQmldirPaths(::ProjectExplorer::Target *target, QStringList &qmldirPaths)
+[[maybe_unused]] void qtQmldirPaths(::ProjectExplorer::Target *target, QStringList &qmldirPaths)
 {
-    if constexpr (useProjectStorage())
-        collectQmldirPaths(qmlPath(target).toString(), qmldirPaths);
+    if constexpr (useProjectStorage()) {
+        auto qmlRootPath = qmlPath(target).toString();
+        qmldirPaths.push_back(qmlRootPath + "/QtQml");
+        qmldirPaths.push_back(qmlRootPath + "/QtQuick");
+        qmldirPaths.push_back(qmlRootPath + "/QtQuick3D");
+        qmldirPaths.push_back(qmlRootPath + "/Qt5Compat");
+    }
 }
 
-QStringList directories(::ProjectExplorer::Target *target)
+[[maybe_unused]] void qtQmldirPathsForLiteDesigner(QStringList &qmldirPaths)
+{
+    if constexpr (useProjectStorage()) {
+        auto qmlRootPath = QLibraryInfo::path(QLibraryInfo::QmlImportsPath);
+        qmldirPaths.push_back(qmlRootPath + "/QtQml");
+        qmldirPaths.push_back(qmlRootPath + "/QtQuick");
+    }
+}
+
+[[maybe_unused]] QStringList directories(::ProjectExplorer::Target *target)
 {
     if (!target)
         return {};
@@ -418,7 +389,20 @@ QStringList directories(::ProjectExplorer::Target *target)
     return qmldirPaths;
 }
 
-QStringList qmlTypes(::ProjectExplorer::Target *target)
+[[maybe_unused]] QStringList directoriesForLiteDesigner()
+{
+    QStringList qmldirPaths;
+    qmldirPaths.reserve(100);
+
+    qtQmldirPathsForLiteDesigner(qmldirPaths);
+
+    std::sort(qmldirPaths.begin(), qmldirPaths.end());
+    qmldirPaths.erase(std::unique(qmldirPaths.begin(), qmldirPaths.end()), qmldirPaths.end());
+
+    return qmldirPaths;
+}
+
+[[maybe_unused]] QStringList qmlTypes(::ProjectExplorer::Target *target)
 {
     if (!target)
         return {};
@@ -426,10 +410,26 @@ QStringList qmlTypes(::ProjectExplorer::Target *target)
     QStringList qmldirPaths;
     qmldirPaths.reserve(2);
 
-    const QString installDirectory = qmlPath(target).toString();
+    const QString qmlRootPath = qmlPath(target).toString();
 
-    qmldirPaths.append(installDirectory + "/builtins.qmltypes");
-    qmldirPaths.append(installDirectory + "/jsroot.qmltypes");
+    qmldirPaths.append(qmlRootPath + "/builtins.qmltypes");
+    qmldirPaths.append(qmlRootPath + "/jsroot.qmltypes");
+
+    qmldirPaths.append(
+        Core::ICore::resourcePath("qmldesigner/projectstorage/fake.qmltypes").toString());
+
+    return qmldirPaths;
+}
+
+[[maybe_unused]] QStringList qmlTypesForLiteDesigner()
+{
+    QStringList qmldirPaths;
+    qmldirPaths.reserve(2);
+
+    const auto qmlRootPath = QLibraryInfo::path(QLibraryInfo::QmlImportsPath);
+
+    qmldirPaths.append(qmlRootPath + "/builtins.qmltypes");
+    qmldirPaths.append(qmlRootPath + "/jsroot.qmltypes");
 
     qmldirPaths.append(
         Core::ICore::resourcePath("qmldesigner/projectstorage/fake.qmltypes").toString());
@@ -445,6 +445,11 @@ QString propertyEditorResourcesPath()
     }
 #endif
     return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toString();
+}
+
+QString qtCreatorItemLibraryPath()
+{
+    return Core::ICore::resourcePath("qmldesigner/itemLibrary").toString();
 }
 
 } // namespace
@@ -519,12 +524,12 @@ QmlDesignerProjectManager::ImageCacheData *QmlDesignerProjectManager::imageCache
             m_imageCacheData->nodeInstanceCollector.setTarget(project->activeTarget());
             QObject::connect(project,
                              &ProjectExplorer::Project::activeTargetChanged,
-                             this,
+                             &dummy,
                              setTargetInImageCache);
         }
         QObject::connect(ProjectExplorer::ProjectManager::instance(),
                          &ProjectExplorer::ProjectManager::startupProjectChanged,
-                         this,
+                         &dummy,
                          [=](ProjectExplorer::Project *project) {
                              setTargetInImageCache(activeTarget(project));
                          });
@@ -580,9 +585,17 @@ void QmlDesignerProjectManager::update()
     if (!m_projectData || !m_projectData->projectStorageData)
         return;
 
-    m_projectData->projectStorageData->updater.update(directories(m_projectData->activeTarget),
-                                                      qmlTypes(m_projectData->activeTarget),
-                                                      propertyEditorResourcesPath());
+    if constexpr (isUsingQmlDesignerLite()) {
+        m_projectData->projectStorageData->updater.update(directoriesForLiteDesigner(),
+                                                          qmlTypesForLiteDesigner(),
+                                                          propertyEditorResourcesPath(),
+                                                          {qtCreatorItemLibraryPath()});
+    } else {
+        m_projectData->projectStorageData->updater.update(directories(m_projectData->activeTarget),
+                                                          qmlTypes(m_projectData->activeTarget),
+                                                          propertyEditorResourcesPath(),
+                                                          {qtCreatorItemLibraryPath()});
+    }
 }
 
 } // namespace QmlDesigner

@@ -12,7 +12,7 @@
 #include <utils/commandline.h>
 #include <utils/environment.h>
 #include <utils/hostosinfo.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 
 #include <vcsbase/vcsbaseconstants.h>
 #include <vcsbase/vcsbasediffeditorcontroller.h>
@@ -115,6 +115,7 @@ CommandLine &operator<<(Utils::CommandLine &command, SubversionClient::AddAuthOp
 
 QString SubversionClient::synchronousTopic(const FilePath &repository) const
 {
+    // TODO: Looks unused
     QStringList args;
 
     QString svnVersionBinary = vcsBinary(repository).toString();

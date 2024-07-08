@@ -4,7 +4,7 @@
 #include "clangutils.h"
 
 #include "filepath.h"
-#include "process.h"
+#include "qtcprocess.h"
 #include "utilstr.h"
 
 #include <QVersionNumber>
@@ -65,7 +65,7 @@ bool checkClangdVersion(const FilePath &clangd, QString *error)
 
 QVersionNumber minimumClangdVersion()
 {
-    return QVersionNumber(14);
+    return QVersionNumber(17);
 }
 
 } // namespace Utils

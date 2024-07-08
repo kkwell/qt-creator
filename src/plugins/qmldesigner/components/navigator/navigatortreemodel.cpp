@@ -23,10 +23,11 @@
 #include <nodehints.h>
 #include <nodelistproperty.h>
 #include <nodeproperty.h>
-#include <rewritingexception.h>
-#include <variantproperty.h>
 #include <qmldesignerconstants.h>
 #include <qmlitemnode.h>
+#include <rewritingexception.h>
+#include <utils3d.h>
+#include <variantproperty.h>
 
 #include <qmlprojectmanager/qmlproject.h>
 
@@ -454,7 +455,7 @@ QStringList NavigatorTreeModel::mimeTypes() const
                                     Constants::MIME_TYPE_MATERIAL,
                                     Constants::MIME_TYPE_BUNDLE_TEXTURE,
                                     Constants::MIME_TYPE_BUNDLE_MATERIAL,
-                                    Constants::MIME_TYPE_BUNDLE_EFFECT,
+                                    Constants::MIME_TYPE_BUNDLE_ITEM,
                                     Constants::MIME_TYPE_ASSETS});
 
     return types;
@@ -569,9 +570,9 @@ bool NavigatorTreeModel::dropMimeData(const QMimeData *mimeData,
         } else if (mimeData->hasFormat(Constants::MIME_TYPE_BUNDLE_MATERIAL)) {
             if (targetNode.isValid())
                 m_view->emitCustomNotification("drop_bundle_material", {targetNode}); // To ContentLibraryView
-        } else if (mimeData->hasFormat(Constants::MIME_TYPE_BUNDLE_EFFECT)) {
+        } else if (mimeData->hasFormat(Constants::MIME_TYPE_BUNDLE_ITEM)) {
             if (targetNode.isValid())
-                m_view->emitCustomNotification("drop_bundle_effect", {targetNode}); // To ContentLibraryView
+                m_view->emitCustomNotification("drop_bundle_item", {targetNode}); // To ContentLibraryView
         } else if (mimeData->hasFormat(Constants::MIME_TYPE_ASSETS)) {
             const QStringList assetsPaths = QString::fromUtf8(mimeData->data(Constants::MIME_TYPE_ASSETS)).split(',');
             NodeAbstractProperty targetProperty;
@@ -704,7 +705,7 @@ void NavigatorTreeModel::handleItemLibraryItemDrop(const QMimeData *mimeData, in
     const ItemLibraryEntry itemLibraryEntry =
         createItemLibraryEntryFromMimeData(mimeData->data(Constants::MIME_TYPE_ITEM_LIBRARY_INFO));
 
-    const NodeHints hints = NodeHints::fromItemLibraryEntry(itemLibraryEntry);
+    const NodeHints hints = NodeHints::fromItemLibraryEntry(itemLibraryEntry, m_view->model());
 
     const QString targetPropertyName = hints.forceNonDefaultProperty();
 
@@ -796,8 +797,10 @@ void NavigatorTreeModel::handleItemLibraryItemDrop(const QMimeData *mimeData, in
                 moveNodesInteractive(targetProperty, newModelNodeList, targetRowNumber);
             }
 
-            if (newQmlObjectNode.isValid())
+            if (newQmlObjectNode.isValid()) {
                 m_view->setSelectedModelNode(newQmlObjectNode.modelNode());
+                m_view->emitCustomNotification("item_library_created_by_drop", {newQmlObjectNode});
+            }
         }
     }
 }
@@ -933,11 +936,11 @@ bool NavigatorTreeModel::setData(const QModelIndex &index, const QVariant &value
     if (index.column() == ColumnType::Alias && role == Qt::CheckStateRole) {
         m_view->handleChangedExport(modelNode, value.toInt() != 0);
     } else if (index.column() == ColumnType::Visibility && role == Qt::CheckStateRole) {
-        if (m_view->isPartOfMaterialLibrary(modelNode))
+        if (Utils3D::isPartOfMaterialLibrary(modelNode) || QmlItemNode(modelNode).isEffectItem())
             return false;
         QmlVisualNode(modelNode).setVisibilityOverride(value.toInt() == 0);
     } else if (index.column() == ColumnType::Lock && role == Qt::CheckStateRole) {
-        if (m_view->isPartOfMaterialLibrary(modelNode))
+        if (Utils3D::isPartOfMaterialLibrary(modelNode))
             return false;
         modelNode.setLocked(value.toInt() != 0);
     }

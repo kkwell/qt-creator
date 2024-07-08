@@ -37,7 +37,7 @@ Type getProperty(const QmlJS::SimpleReaderNode *node, const QString &name)
 {
     if (auto property = node->property(name)) {
         const auto &value = property.value;
-        if (value.type() == QVariant::List) {
+        if (value.typeId() == QMetaType::QVariantList) {
             auto list = value.toList();
             if (list.size())
                 return list.front().value<Type>();
@@ -179,7 +179,7 @@ std::optional<PropertyComponentGenerator::Entry> createEntry(QmlJS::SimpleReader
     if (moduleName.isEmpty())
         return {};
 
-    auto module = model->module(moduleName);
+    auto module = model->module(moduleName, Storage::ModuleKind::QmlLibrary);
 
     auto typeName = getProperty<QByteArray>(node, "typeNames");
 

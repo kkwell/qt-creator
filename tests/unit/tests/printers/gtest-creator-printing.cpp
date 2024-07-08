@@ -675,7 +675,7 @@ std::ostream &operator<<(std::ostream &out, const PropertyDeclaration &propertyD
 
 std::ostream &operator<<(std::ostream &out, const Type &type)
 {
-    return out << "(" << type.defaultPropertyId << ")";
+    return out << "(" << type.sourceId << ")";
 }
 
 std::ostream &operator<<(std::ostream &out, const ExportedTypeName &name)
@@ -695,10 +695,10 @@ std::ostream &operator<<(std::ostream &out, const ItemLibraryProperty &property)
 
 std::ostream &operator<<(std::ostream &out, const ItemLibraryEntry &entry)
 {
-    return out << R"((")" << entry.name << R"(", ")" << entry.iconPath << R"(", ")"
-               << entry.category << R"(", ")" << entry.import << R"(", ")" << entry.toolTip
-               << R"(", ")" << entry.templatePath << R"(", )" << entry.properties << ", "
-               << entry.extraFilePaths << ")";
+    return out << R"((")" << entry.typeName << R"(", ")" << entry.name << R"(", ")"
+               << entry.iconPath << R"(", ")" << entry.category << R"(", ")" << entry.import
+               << R"(", ")" << entry.toolTip << R"(", ")" << entry.templatePath << R"(", )"
+               << entry.properties << ", " << entry.extraFilePaths << ")";
 }
 
 } // namespace Storage::Info
@@ -754,6 +754,8 @@ const char *fileTypeToText(FileType fileType)
         return "QmlDocument";
     case FileType::QmlTypes:
         return "QmlTypes";
+    case FileType::Directory:
+        return "Directory";
     }
 
     return "";
@@ -791,16 +793,19 @@ std::ostream &operator<<(std::ostream &out, const SynchronizationPackage &packag
                << ", updatedSourceIds: " << package.updatedSourceIds
                << ", fileStatuses: " << package.fileStatuses
                << ", updatedFileStatusSourceIds: " << package.updatedFileStatusSourceIds
-               << ", updatedProjectSourceIds: " << package.updatedProjectSourceIds
-               << ", projectDatas: " << package.projectDatas
+               << ", updatedDirectoryInfoSourceIds: " << package.updatedDirectoryInfoSourceIds
+               << ", directoryInfos: " << package.directoryInfos
                << ", propertyEditorQmlPaths: " << package.propertyEditorQmlPaths
                << ", updatedPropertyEditorQmlPathSourceIds: "
-               << package.updatedPropertyEditorQmlPathSourceIds << ")";
+               << package.updatedPropertyEditorQmlPathSourceIds
+               << ", typeAnnotations: " << package.typeAnnotations
+               << ", updatedTypeAnnotationSourceIds: " << package.updatedTypeAnnotationSourceIds
+               << ")";
 }
 
-std::ostream &operator<<(std::ostream &out, const ProjectData &data)
+std::ostream &operator<<(std::ostream &out, const DirectoryInfo &data)
 {
-    return out << "(" << data.projectSourceId << ", " << data.sourceId << ", " << data.moduleId
+    return out << "(" << data.directorySourceId << ", " << data.sourceId << ", " << data.moduleId
                << ", " << data.fileType << ")";
 }
 
@@ -828,8 +833,9 @@ std::ostream &operator<<(std::ostream &out, const Type &type)
 {
     using std::operator<<;
     using Utils::operator<<;
-    return out << "( typename: \"" << type.typeName << "\", prototype: " << type.prototype << ", "
-               << type.prototypeId << ", " << type.traits << ", source: " << type.sourceId
+    return out << "( typename: \"" << type.typeName << "\", prototype: {\"" << type.prototype
+               << "\", " << type.prototypeId << "}, " << "\", extension: {\"" << type.extension
+               << "\", " << type.extensionId << "}, " << type.traits << ", source: " << type.sourceId
                << ", exports: " << type.exportedTypes << ", properties: " << type.propertyDeclarations
                << ", functions: " << type.functionDeclarations
                << ", signals: " << type.signalDeclarations << ", changeLevel: " << type.changeLevel

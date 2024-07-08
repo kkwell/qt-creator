@@ -10,8 +10,6 @@
 #include <coreplugin/icore.h>
 #include <coreplugin/progressmanager/progressmanager.h>
 
-#include <extensionsystem/pluginmanager.h>
-
 #include <texteditor/fontsettings.h>
 #include <texteditor/textdocument.h>
 #include <texteditor/texteditorsettings.h>
@@ -45,10 +43,7 @@ UnifiedDiffEditorWidget::UnifiedDiffEditorWidget(QWidget *parent)
     connect(this, &QPlainTextEdit::cursorPositionChanged,
             this, &UnifiedDiffEditorWidget::slotCursorPositionChangedInEditor);
 
-    auto context = new IContext(this);
-    context->setWidget(this);
-    context->setContext(Context(Constants::UNIFIED_VIEW_ID));
-    ICore::addContextObject(context);
+    IContext::attach(this, Context(Constants::UNIFIED_VIEW_ID));
 }
 
 UnifiedDiffEditorWidget::~UnifiedDiffEditorWidget() = default;
@@ -451,7 +446,6 @@ void UnifiedDiffEditorWidget::showDiff()
     }
 
     m_asyncTask.reset(new Async<UnifiedShowResult>());
-    m_asyncTask->setFutureSynchronizer(ExtensionSystem::PluginManager::futureSynchronizer());
     m_controller.setBusyShowing(true);
     connect(m_asyncTask.get(), &AsyncBase::done, this, [this] {
         if (m_asyncTask->isCanceled() || !m_asyncTask->isResultAvailable()) {

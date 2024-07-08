@@ -12,7 +12,7 @@
 #include <projectexplorer/target.h>
 
 #include <utils/layoutbuilder.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <QComboBox>
@@ -101,7 +101,7 @@ void PerfTracePointDialog::runScript()
     if (elevate != QLatin1String(ELEVATE_METHOD_NA))
         m_process->setCommand({m_device->filePath(elevate), {"sh"}});
     else
-        m_process->setCommand({m_device->filePath("sh"), {}});
+        m_process->setCommand(CommandLine{m_device->filePath("sh")});
 
     connect(m_process.get(), &Process::done, this, &PerfTracePointDialog::handleProcessDone);
     m_process->start();

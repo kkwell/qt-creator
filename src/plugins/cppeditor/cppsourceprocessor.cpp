@@ -56,11 +56,11 @@ inline QByteArray generateFingerPrint(const QList<CPlusPlus::Macro> &definedMacr
         } else {
             static const QByteArray def("#define ");
             hash.addData(macro.name());
-            hash.addData(" ", 1);
+            hash.addData(QByteArrayView(" ", 1));
             hash.addData(def);
             hash.addData(macro.definitionText());
         }
-        hash.addData("\n", 1);
+        hash.addData(QByteArrayView("\n", 1));
     }
     return hash.result();
 }
@@ -296,6 +296,13 @@ void CppSourceProcessor::macroAdded(const CPlusPlus::Macro &macro)
         return;
 
     m_currentDoc->appendMacro(macro);
+}
+
+void CppSourceProcessor::pragmaAdded(const CPlusPlus::Pragma &pragma)
+{
+    if (!m_currentDoc)
+        return;
+    m_currentDoc->appendPragma(pragma);
 }
 
 void CppSourceProcessor::passedMacroDefinitionCheck(int bytesOffset, int utf16charsOffset,

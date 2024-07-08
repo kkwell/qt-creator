@@ -7,7 +7,11 @@
 #include "qmlanchorbindingproxy.h"
 #include "qmlmodelnodeproxy.h"
 
+#include <utils/uniqueobjectptr.h>
+
 #include <nodemetainfo.h>
+
+#include <memory>
 
 class PropertyEditorValue;
 
@@ -58,12 +62,15 @@ private:
                                    TextureEditorView *textureEditor);
     PropertyName auxNamePostFix(const PropertyName &propertyName);
 
-    QQuickWidget *m_view = nullptr;
+    // to avoid a crash while destructing DesignerPropertyMap in the QQmlData
+    // this needs be destructed after m_quickWidget->engine() is destructed
+    DesignerPropertyMap m_backendValuesPropertyMap;
+
+    Utils::UniqueObjectPtr<QQuickWidget> m_quickWidget;
     QmlAnchorBindingProxy m_backendAnchorBinding;
     QmlModelNodeProxy m_backendModelNode;
-    DesignerPropertyMap m_backendValuesPropertyMap;
-    QScopedPointer<TextureEditorTransaction> m_textureEditorTransaction;
-    QScopedPointer<TextureEditorContextObject> m_contextObject;
+    std::unique_ptr<TextureEditorTransaction> m_textureEditorTransaction;
+    std::unique_ptr<TextureEditorContextObject> m_contextObject;
     AssetImageProvider *m_textureEditorImageProvider = nullptr;
 };
 

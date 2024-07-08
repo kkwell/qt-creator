@@ -12,7 +12,7 @@
 
 #include <utils/guard.h>
 #include <utils/layoutbuilder.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 
 #include <QComboBox>
 
@@ -73,7 +73,7 @@ public:
     }
 
 protected:
-    void addToLayoutImpl(Layouting::LayoutItem &parent) override
+    void addToLayoutImpl(Layouting::Layout &parent) override
     {
         addMutableAction(m_comboBox);
         parent.addItem(m_comboBox);

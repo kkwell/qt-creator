@@ -7,6 +7,8 @@
 
 #include <utils/span.h>
 
+#include <QVarLengthArray>
+
 namespace QmlDesigner {
 
 enum class BasicIdType {
@@ -29,6 +31,8 @@ enum class BasicIdType {
 
 using TypeId = Sqlite::BasicId<BasicIdType::Type>;
 using TypeIds = std::vector<TypeId>;
+template<std::size_t size>
+using SmallTypeIds = QVarLengthArray<TypeId, size>;
 
 using PropertyDeclarationId = Sqlite::BasicId<BasicIdType::PropertyDeclaration>;
 using PropertyDeclarationIds = std::vector<PropertyDeclarationId>;
@@ -44,9 +48,13 @@ using EnumerationDeclarationIds = std::vector<EnumerationDeclarationId>;
 
 using SourceContextId = Sqlite::BasicId<BasicIdType::SourceContext, int>;
 using SourceContextIds = std::vector<SourceContextId>;
+template<std::size_t size>
+using SmallSourceContextIds = QVarLengthArray<SourceContextId, size>;
 
 using SourceId = Sqlite::BasicId<BasicIdType::Source, int>;
 using SourceIds = std::vector<SourceId>;
+template<std::size_t size>
+using SmallSourceIds = QVarLengthArray<SourceId, size>;
 
 using ModuleId = Sqlite::BasicId<BasicIdType::Module, int>;
 using ModuleIds = std::vector<ModuleId>;

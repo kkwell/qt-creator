@@ -56,6 +56,13 @@ public:
         m_pixmaps.insert(node.internalId(), pixmap);
     }
 
+    QPixmap getPixmap(const ModelNode &node)
+    {
+        QTC_ASSERT(node, return {});
+
+        return m_pixmaps.value(node.internalId());
+    }
+
     void clearPixmapCache()
     {
         m_pixmaps.clear();
@@ -143,7 +150,7 @@ MaterialBrowserWidget::MaterialBrowserWidget(AsynchronousImageCache &imageCache,
     : m_materialBrowserView(view)
     , m_materialBrowserModel(new MaterialBrowserModel(view, this))
     , m_materialBrowserTexturesModel(new MaterialBrowserTexturesModel(view, this))
-    , m_quickWidget(new StudioQuickWidget(this))
+    , m_quickWidget(Utils::makeUniqueObjectPtr<StudioQuickWidget>(this))
     , m_previewImageProvider(new PreviewImageProvider())
 {
     QImage defaultImage;
@@ -172,7 +179,7 @@ MaterialBrowserWidget::MaterialBrowserWidget(AsynchronousImageCache &imageCache,
     auto layout = new QVBoxLayout(this);
     layout->setContentsMargins({});
     layout->setSpacing(0);
-    layout->addWidget(m_quickWidget.data());
+    layout->addWidget(m_quickWidget.get());
 
     updateSearch();
 
@@ -357,6 +364,13 @@ void MaterialBrowserWidget::focusMaterialSection(bool focusMatSec)
     }
 }
 
+void MaterialBrowserWidget::addMaterialToContentLibrary()
+{
+    ModelNode mat = m_materialBrowserModel->selectedMaterial();
+    m_materialBrowserView->emitCustomNotification("add_material_to_content_lib", {mat},
+                                                  {m_previewImageProvider->getPixmap(mat)});
+}
+
 QString MaterialBrowserWidget::qmlSourcesPath()
 {
 #ifdef SHARE_QML_PATH
@@ -397,7 +411,7 @@ void MaterialBrowserWidget::setIsDragging(bool val)
 
 StudioQuickWidget *MaterialBrowserWidget::quickWidget() const
 {
-    return m_quickWidget.data();
+    return m_quickWidget.get();
 }
 
 void MaterialBrowserWidget::clearPreviewCache()

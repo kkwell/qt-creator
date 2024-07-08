@@ -10,6 +10,7 @@
 #include <nodemetainfo.h>
 #include <rewritertransaction.h>
 #include <variantproperty.h>
+#include <dialogutils.h>
 
 #include <coreplugin/messagebox.h>
 
@@ -77,8 +78,8 @@ TimelineForm::TimelineForm(QWidget *parent)
     Grid {
         Span(2, mainL), br,
         idL, m_idLineEdit, br,
-        empty(), Row { startFrameL, m_startFrame, st(), endFrameL, m_endFrame }, str, br,
-        empty(), Row { m_expressionBinding, m_animation, st() }, br,
+        empty, Row { startFrameL, m_startFrame, st, endFrameL, m_endFrame }, str, br,
+        empty, Row { m_expressionBinding, m_animation, st }, br,
         expressionBindingL, m_expressionBindingLineEdit, br,
     }.attachTo(this);
 
@@ -125,8 +126,7 @@ TimelineForm::TimelineForm(QWidget *parent)
         bool error = false;
 
         if (!ModelNode::isValidId(newId)) {
-            Core::AsynchronousMessageBox::warning(tr("Invalid Id"),
-                                                  tr("%1 is an invalid id.").arg(newId));
+            DialogUtils::showWarningForInvalidId(newId);
             error = true;
         } else if (m_timeline.view()->hasId(newId)) {
             Core::AsynchronousMessageBox::warning(tr("Invalid Id"),

@@ -1,5 +1,6 @@
 {
     "deployment": {
+        "enableCMakeGeneration": false,
         "targetDirectory": "/opt/fileSelectors"
     },
     "environment": {
@@ -44,7 +45,12 @@
                 "*.png",
                 "*.svg",
                 "*.hdr",
-                "*.ktx"
+                "*.ktx",
+                "*.bmp",
+                "*.ttf",
+                "*.tiff",
+                "*.webp",
+                "*.gif"
             ],
             "mcuProperties": {
             },

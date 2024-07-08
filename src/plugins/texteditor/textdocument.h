@@ -34,7 +34,6 @@ class FontSettings;
 class IAssistProvider;
 class StorageSettings;
 class SyntaxHighlighter;
-class SyntaxHighlighterRunner;
 class TabSettings;
 class TextDocumentPrivate;
 class TextMark;
@@ -60,6 +59,7 @@ public:
     virtual QString plainText() const;
     virtual QString textAt(int pos, int length) const;
     virtual QChar characterAt(int pos) const;
+    QString blockText(int blockNumber) const;
 
     void setTypingSettings(const TypingSettings &typingSettings);
     void setStorageSettings(const StorageSettings &storageSettings);
@@ -84,9 +84,6 @@ public:
     void setFormatter(Formatter *indenter); // transfers ownership
     void autoFormat(const QTextCursor &cursor);
     bool applyChangeSet(const Utils::ChangeSet &changeSet);
-
-    // the blocks list must be sorted
-    void setIfdefedOutBlocks(const QList<BlockRange> &blocks);
 
     TextMarks marks() const;
     bool addMark(TextMark *mark);
@@ -127,8 +124,8 @@ public:
     QTextDocument *document() const;
 
     using SyntaxHighLighterCreator = std::function<SyntaxHighlighter *()>;
-    void resetSyntaxHighlighter(const SyntaxHighLighterCreator &creator, bool threaded = false);
-    SyntaxHighlighterRunner *syntaxHighlighterRunner() const;
+    void resetSyntaxHighlighter(const SyntaxHighLighterCreator &creator);
+    SyntaxHighlighter *syntaxHighlighter() const;
 
     bool reload(QString *errorString, QTextCodec *codec);
     void cleanWhitespace(const QTextCursor &cursor);
@@ -162,10 +159,6 @@ signals:
     void tabSettingsChanged();
     void fontSettingsChanged();
     void markRemoved(TextMark *mark);
-
-#ifdef WITH_TESTS
-    void ifdefedOutBlocksChanged(const QList<BlockRange> &blocks);
-#endif
 
 protected:
     virtual void applyFontSettings();

@@ -52,10 +52,13 @@ public:
     int decRefCount();
     void setRefCount(int count);
 
+    int extraMargin() const { return m_extraMargin; }
+
 signals:
     void uniformsModelChanged();
     void isEnabledChanged();
     void isDepencyChanged();
+    void rebakeRequested();
 
 private:
     void parse(const QString &effectName, const QString &qenPath, const QJsonObject &json);
@@ -69,6 +72,7 @@ private:
     QString m_id;
     bool m_isEnabled = true;
     int m_refCount = 0;
+    int m_extraMargin = 0;
 
     QList<Uniform *> m_uniforms;
 

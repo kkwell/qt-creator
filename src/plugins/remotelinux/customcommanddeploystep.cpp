@@ -11,7 +11,7 @@
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/runconfigurationaspects.h>
 
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 
 using namespace ProjectExplorer;
 using namespace Tasking;
@@ -31,8 +31,6 @@ public:
         commandLine.setHistoryCompleter("RemoteLinuxCustomCommandDeploymentStep.History");
 
         setInternalInitializer([this] { return isDeploymentPossible(); });
-
-        addMacroExpander();
     }
 
     expected_str<void> isDeploymentPossible() const final;

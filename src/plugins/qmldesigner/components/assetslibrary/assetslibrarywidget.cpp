@@ -3,25 +3,29 @@
 
 #include "assetslibrarywidget.h"
 
-#include "asset.h"
 #include "assetslibraryiconprovider.h"
 #include "assetslibrarymodel.h"
 #include "assetslibraryview.h"
-#include "designeractionmanager.h"
-#include "import.h"
-#include "nodemetainfo.h"
-#include "modelnodeoperations.h"
-#include "qmldesignerconstants.h"
-#include "qmldesignerplugin.h"
-#include "theme.h"
 
+#include <designeractionmanager.h>
+#include <designerpaths.h>
+#include <hdrimage.h>
+#include <import.h>
+#include <modelnodeoperations.h>
+#include <nodemetainfo.h>
+#include <qmldesignerconstants.h>
+#include <qmldesignerplugin.h>
 #include <studioquickwidget.h>
+#include <theme.h>
+#include <uniquename.h>
+#include <utils3d.h>
 
 #include <coreplugin/fileutils.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/messagebox.h>
 
 #include <utils/algorithm.h>
+#include <utils/asset.h>
 #include <utils/environment.h>
 #include <utils/filepath.h>
 #include <utils/qtcassert.h>
@@ -91,7 +95,7 @@ AssetsLibraryWidget::AssetsLibraryWidget(AsynchronousImageCache &asynchronousFon
     , m_assetsModel{new AssetsLibraryModel(this)}
     , m_assetsView{view}
     , m_createTextures{view}
-    , m_assetsWidget{new StudioQuickWidget(this)}
+    , m_assetsWidget{Utils::makeUniqueObjectPtr<StudioQuickWidget>(this)}
 {
     setWindowTitle(tr("Assets Library", "Title of assets library widget"));
     setMinimumWidth(250);
@@ -127,7 +131,7 @@ AssetsLibraryWidget::AssetsLibraryWidget(AsynchronousImageCache &asynchronousFon
     auto layout = new QVBoxLayout(this);
     layout->setContentsMargins({});
     layout->setSpacing(0);
-    layout->addWidget(m_assetsWidget.data());
+    layout->addWidget(m_assetsWidget.get());
 
     updateSearch();
 
@@ -171,23 +175,10 @@ void AssetsLibraryWidget::deleteSelectedAssets()
 
 QString AssetsLibraryWidget::getUniqueEffectPath(const QString &parentFolder, const QString &effectName)
 {
-    auto genEffectPath = [&parentFolder](const QString &name) {
-        QString effectsDir = ModelNodeOperations::getEffectsDefaultDirectory(parentFolder);
-        return QLatin1String("%1/%2.qep").arg(effectsDir, name);
-    };
+    QString effectsDir = ModelNodeOperations::getEffectsDefaultDirectory(parentFolder);
+    QString effectPath = QLatin1String("%1/%2.qep").arg(effectsDir, effectName);
 
-    QString uniqueName = effectName;
-    QString path = genEffectPath(uniqueName);
-    QFileInfo file{path};
-
-    while (file.exists()) {
-        uniqueName = m_assetsModel->getUniqueName(uniqueName);
-
-        path = genEffectPath(uniqueName);
-        file.setFile(path);
-    }
-
-    return path;
+    return UniqueName::generatePath(effectPath);
 }
 
 bool AssetsLibraryWidget::createNewEffect(const QString &effectPath, bool openInEffectComposer)
@@ -229,25 +220,28 @@ int AssetsLibraryWidget::qtVersion() const
 void AssetsLibraryWidget::addTextures(const QStringList &filePaths)
 {
     m_assetsView->executeInTransaction(__FUNCTION__, [&] {
-        m_createTextures.execute(filePaths, AddTextureMode::Texture,
-                                 m_assetsView->model()->active3DSceneId());
+        m_createTextures.execute(filePaths,
+                                 AddTextureMode::Texture,
+                                 Utils3D::active3DSceneId(m_assetsView->model()));
     });
 }
 
 void AssetsLibraryWidget::addLightProbe(const QString &filePath)
 {
     m_assetsView->executeInTransaction(__FUNCTION__, [&] {
-        m_createTextures.execute({filePath}, AddTextureMode::LightProbe,
-                                 m_assetsView->model()->active3DSceneId());
+        m_createTextures.execute({filePath},
+                                 AddTextureMode::LightProbe,
+                                 Utils3D::active3DSceneId(m_assetsView->model()));
     });
 }
 
 void AssetsLibraryWidget::updateContextMenuActionsEnableState()
 {
-    setHasMaterialLibrary(m_assetsView->materialLibraryNode().isValid()
+    setHasMaterialLibrary(Utils3D::materialLibraryNode(m_assetsView).isValid()
                           && m_assetsView->model()->hasImport("QtQuick3D"));
 
-    ModelNode activeSceneEnv = m_createTextures.resolveSceneEnv(m_assetsView->model()->active3DSceneId());
+    ModelNode activeSceneEnv = m_createTextures.resolveSceneEnv(
+        Utils3D::active3DSceneId(m_assetsView->model()));
     setHasSceneEnv(activeSceneEnv.isValid());
 }
 
@@ -269,8 +263,11 @@ void AssetsLibraryWidget::setHasSceneEnv(bool b)
     emit hasSceneEnvChanged();
 }
 
-void AssetsLibraryWidget::handleDeleteEffects(const QStringList &effectNames)
+void AssetsLibraryWidget::handleDeleteEffects([[maybe_unused]] const QStringList &effectNames)
 {
+#ifdef QDS_USE_PROJECTSTORAGE
+// That code has to rewritten with modules. Seem try to find all effects nodes.
+#else
     DesignDocument *document = QmlDesignerPlugin::instance()->currentDesignDocument();
     if (!document)
         return;
@@ -280,14 +277,16 @@ void AssetsLibraryWidget::handleDeleteEffects(const QStringList &effectNames)
     // Remove usages of deleted effects from the current document
     m_assetsView->executeInTransaction(__FUNCTION__, [&]() {
         QList<ModelNode> allNodes = m_assetsView->allModelNodes();
-        const QString typeTemplate = "Effects.%1.%1";
-        const QString importUrlTemplate = "Effects.%1";
+        const QString typeTemplate = "%1.%2.%2";
+        const QString importUrlTemplate = "%1.%2";
         const Imports imports = m_assetsView->model()->imports();
         Imports removedImports;
+        const QString typePrefix = QmlDesignerPlugin::instance()->documentManager()
+                                       .generatedComponentUtils().composedEffectsTypePrefix();
         for (const QString &effectName : effectNames) {
             if (effectName.isEmpty())
                 continue;
-            const TypeName type = typeTemplate.arg(effectName).toUtf8();
+            const TypeName type = typeTemplate.arg(typePrefix, effectName).toUtf8();
             for (ModelNode &node : allNodes) {
                 if (node.metaInfo().typeName() == type) {
                     clearStacks = true;
@@ -295,7 +294,7 @@ void AssetsLibraryWidget::handleDeleteEffects(const QStringList &effectNames)
                 }
             }
 
-            const QString importPath = importUrlTemplate.arg(effectName);
+            const QString importPath = importUrlTemplate.arg(typePrefix, effectName);
             Import removedImport = Utils::findOrDefault(imports, [&importPath](const Import &import) {
                 return import.url() == importPath;
             });
@@ -334,6 +333,9 @@ void AssetsLibraryWidget::handleDeleteEffects(const QStringList &effectNames)
     // contain only unworkable states.
     if (clearStacks)
         document->clearUndoRedoStacks();
+
+    m_assetsView->emitCustomNotification("effectcomposer_effects_deleted", {}, {effectNames});
+#endif
 }
 
 void AssetsLibraryWidget::invalidateThumbnail(const QString &id)
@@ -364,7 +366,7 @@ QList<QToolButton *> AssetsLibraryWidget::createToolBarWidgets()
 
 void AssetsLibraryWidget::handleSearchFilterChanged(const QString &filterText)
 {
-    if (filterText == m_filterText || (!m_assetsModel->haveFiles()
+    if (filterText == m_filterText || (!m_assetsModel->hasFiles()
                                        && filterText.contains(m_filterText, Qt::CaseInsensitive)))
         return;
 
@@ -631,6 +633,11 @@ void AssetsLibraryWidget::addResources(const QStringList &files, bool showDialog
                                                       .arg(fileNames.join(' ')));
         }
     }
+}
+
+void AssetsLibraryWidget::addAssetsToContentLibrary(const QStringList &assetPaths)
+{
+    m_assetsView->emitCustomNotification("add_assets_to_content_lib", {}, {assetPaths});
 }
 
 } // namespace QmlDesigner

@@ -15,14 +15,13 @@
 #include <coreplugin/messagemanager.h>
 #include <coreplugin/progressmanager/progressmanager.h>
 
-#include <texteditor/codeassist/textdocumentmanipulatorinterface.h>
 #include <texteditor/refactoringchanges.h>
 #include <texteditor/textdocument.h>
 #include <texteditor/texteditor.h>
 
 #include <utils/environment.h>
 #include <utils/infobar.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/textutils.h>
 #include <utils/treeviewcombobox.h>
 #include <utils/utilsicons.h>
@@ -97,23 +96,20 @@ bool applyTextEdits(const Client *client,
     if (edits.isEmpty())
         return true;
     const RefactoringFilePtr file = client->createRefactoringFile(filePath);
-    file->setChangeSet(editsToChangeSet(edits, file->document()));
-    return file->apply();
+    return file->apply(editsToChangeSet(edits, file->document()));
 }
 
-void applyTextEdit(TextDocumentManipulatorInterface &manipulator,
-                   const TextEdit &edit,
-                   bool newTextIsSnippet)
+void applyTextEdit(TextEditorWidget *editorWidget, const TextEdit &edit, bool newTextIsSnippet)
 {
     const Range range = edit.range();
-    const QTextDocument *doc = manipulator.textCursorAt(manipulator.currentPosition()).document();
+    const QTextDocument *doc = editorWidget->document();
     const int start = Text::positionInText(doc, range.start().line() + 1, range.start().character() + 1);
     const int end = Text::positionInText(doc, range.end().line() + 1, range.end().character() + 1);
     if (newTextIsSnippet) {
-        manipulator.replace(start, end - start, {});
-        manipulator.insertCodeSnippet(start, edit.newText(), &parseSnippet);
+        editorWidget->replace(start, end - start, {});
+        editorWidget->insertCodeSnippet(start, edit.newText(), &parseSnippet);
     } else {
-        manipulator.replace(start, end - start, edit.newText());
+        editorWidget->replace(start, end - start, edit.newText());
     }
 }
 
@@ -349,13 +345,12 @@ bool applyDocumentChange(const Client *client, const DocumentChange &change)
     if (!client)
         return false;
 
-    if (std::holds_alternative<TextDocumentEdit>(change)) {
-        return applyTextDocumentEdit(client, std::get<TextDocumentEdit>(change));
-    } else if (std::holds_alternative<CreateFileOperation>(change)) {
-        const auto createOperation = std::get<CreateFileOperation>(change);
-        const FilePath filePath = createOperation.uri().toFilePath(client->hostPathMapper());
+    if (const auto e = std::get_if<TextDocumentEdit>(&change)) {
+        return applyTextDocumentEdit(client, *e);
+    } else if (const auto createOperation = std::get_if<CreateFileOperation>(&change)) {
+        const FilePath filePath = createOperation->uri().toFilePath(client->hostPathMapper());
         if (filePath.exists()) {
-            if (const std::optional<CreateFileOptions> options = createOperation.options()) {
+            if (const std::optional<CreateFileOptions> options = createOperation->options()) {
                 if (options->overwrite().value_or(false)) {
                     if (!filePath.removeFile())
                         return false;
@@ -365,16 +360,15 @@ bool applyDocumentChange(const Client *client, const DocumentChange &change)
             }
         }
         return filePath.ensureExistingFile();
-    } else if (std::holds_alternative<RenameFileOperation>(change)) {
-        const RenameFileOperation renameOperation = std::get<RenameFileOperation>(change);
-        const FilePath oldPath = renameOperation.oldUri().toFilePath(client->hostPathMapper());
+    } else if (const auto renameOperation = std::get_if<RenameFileOperation>(&change)) {
+        const FilePath oldPath = renameOperation->oldUri().toFilePath(client->hostPathMapper());
         if (!oldPath.exists())
             return false;
-        const FilePath newPath = renameOperation.newUri().toFilePath(client->hostPathMapper());
+        const FilePath newPath = renameOperation->newUri().toFilePath(client->hostPathMapper());
         if (oldPath == newPath)
             return true;
         if (newPath.exists()) {
-            if (const std::optional<CreateFileOptions> options = renameOperation.options()) {
+            if (const std::optional<CreateFileOptions> options = renameOperation->options()) {
                 if (options->overwrite().value_or(false)) {
                     if (!newPath.removeFile())
                         return false;
@@ -384,10 +378,9 @@ bool applyDocumentChange(const Client *client, const DocumentChange &change)
             }
         }
         return oldPath.renameFile(newPath);
-    } else if (std::holds_alternative<DeleteFileOperation>(change)) {
-        const auto deleteOperation = std::get<DeleteFileOperation>(change);
-        const FilePath filePath = deleteOperation.uri().toFilePath(client->hostPathMapper());
-        if (const std::optional<DeleteFileOptions> options = deleteOperation.options()) {
+    } else if (const auto deleteOperation = std::get_if<DeleteFileOperation>(&change)) {
+        const FilePath filePath = deleteOperation->uri().toFilePath(client->hostPathMapper());
+        if (const std::optional<DeleteFileOptions> options = deleteOperation->options()) {
             if (!filePath.exists())
                 return options->ignoreIfNotExists().value_or(false);
             if (filePath.isDir() && options->recursive().value_or(false))

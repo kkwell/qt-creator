@@ -144,7 +144,8 @@ void ShortCutManager::registerActions(const Core::Context &qmlDesignerMainContex
     Core::ActionContainer *exportMenu = Core::ActionManager::actionContainer(
         QmlProjectManager::Constants::EXPORT_MENU);
 
-    exportMenu->addAction(command, QmlProjectManager::Constants::G_EXPORT_CONVERT);
+    if (exportMenu)
+        exportMenu->addAction(command, QmlProjectManager::Constants::G_EXPORT_CONVERT);
 
     //Close Editor
     Core::ActionManager::registerAction(&m_closeCurrentEditorAction, Core::Constants::CLOSE, qmlDesignerMainContext);
@@ -286,15 +287,13 @@ void ShortCutManager::redo()
 
 void ShortCutManager::deleteSelected()
 {
-   if (isMatBrowserActive) {
-       DesignerActionManager &designerActionManager = QmlDesignerPlugin::instance()->viewManager().designerActionManager();
-       designerActionManager.view()->emitCustomNotification("delete_selected_material");
-   } else if (isAssetsLibraryActive) {
-       DesignerActionManager &designerActionManager = QmlDesignerPlugin::instance()->viewManager().designerActionManager();
-       designerActionManager.view()->emitCustomNotification("delete_selected_assets");
-   } else if (currentDesignDocument()) {
+    auto &actionManager = QmlDesignerPlugin::instance()->viewManager().designerActionManager();
+    if (isMatBrowserActive)
+        actionManager.view()->emitCustomNotification("delete_selected_material");
+    else if (isAssetsLibraryActive)
+        actionManager.view()->emitCustomNotification("delete_selected_assets");
+    else if (currentDesignDocument())
         currentDesignDocument()->deleteSelected();
-   }
 }
 
 void ShortCutManager::cutSelected()

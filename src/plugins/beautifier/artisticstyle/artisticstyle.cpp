@@ -29,7 +29,7 @@
 #include <utils/hostosinfo.h>
 #include <utils/layoutbuilder.h>
 #include <utils/pathchooser.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/stringutils.h>
 
 #include <QAction>
@@ -221,9 +221,10 @@ public:
 
         setOnApply([&s, configurations] {
             s.customStyle.setValue(configurations->currentConfiguration());
-            settings().apply();
+            s.apply();
             s.save();
         });
+        setOnCancel([&s] { s.cancel(); });
 
         s.read();
 

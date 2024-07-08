@@ -17,7 +17,7 @@
 #include <utils/commandline.h>
 #include <utils/environment.h>
 #include <utils/hostosinfo.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/terminalcommand.h>
 #include <utils/terminalhooks.h>
 #include <utils/textfileformat.h>
@@ -174,7 +174,7 @@ void FileUtils::removeFiles(const FilePaths &filePaths, bool deleteFromFS)
 bool FileUtils::renameFile(const FilePath &orgFilePath, const FilePath &newFilePath,
                            HandleIncludeGuards handleGuards)
 {
-    if (orgFilePath == newFilePath)
+    if (orgFilePath.equalsCaseSensitive(newFilePath))
         return false;
 
     const FilePath dir = orgFilePath.absolutePath();

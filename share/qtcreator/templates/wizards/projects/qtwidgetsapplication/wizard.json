@@ -3,7 +3,7 @@
     "supportedProjectTypes": [ "MesonProjectManager.MesonProject","CMakeProjectManager.CMakeProject", "Qt4ProjectManager.Qt4Project", "Qbs.QbsProject" ],
     "id": "C.QtWidgets",
     "category": "D.ApplicationQt",
-    "trDescription": "Creates a widget-based Qt application that contains a Qt Designer-based main window and C++ source and header files to implement the application logic.\n\nPreselects a desktop Qt for building the application if available.",
+    "trDescription": "Creates a widget-based Qt application that contains a Qt Widgets Designer-based main window and C++ source and header files to implement the application logic.\n\nPreselects a desktop Qt for building the application if available.",
     "trDisplayName": "Qt Widgets Application",
     "trDisplayCategory": "Application (Qt)",
     "icon": "../../global/guiapplication.png",
@@ -37,7 +37,7 @@
             "trDisplayName": "Define Build System",
             "trShortTitle": "Build System",
             "typeId": "Fields",
-            "enabled": "%{JS: !value('IsSubproject')}",
+            "skipForSubprojects": true,
             "data":
             [
                 {
@@ -157,7 +157,6 @@
             "trDisplayName": "Kit Selection",
             "trShortTitle": "Kits",
             "typeId": "Kits",
-            "enabled": "%{JS: !value('IsSubproject')}",
             "data": { "projectFilePath": "%{ProjectFile}" }
         },
         {

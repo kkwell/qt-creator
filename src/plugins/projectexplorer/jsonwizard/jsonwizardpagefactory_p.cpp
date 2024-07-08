@@ -114,7 +114,7 @@ WizardPage *FilePageFactory::create(JsonWizard *wizard, Id typeId, const QVarian
 bool FilePageFactory::validateData(Id typeId, const QVariant &data, QString *errorMessage)
 {
     QTC_ASSERT(canCreate(typeId), return false);
-    if (!data.isNull() && (data.typeId() != QVariant::Map || !data.toMap().isEmpty())) {
+    if (!data.isNull() && (data.typeId() != QMetaType::QVariantMap || !data.toMap().isEmpty())) {
         *errorMessage = Tr::tr("\"data\" for a \"File\" page needs to be unset or an empty object.");
         return false;
     }
@@ -137,6 +137,7 @@ public:
 
     WizardPage *create(JsonWizard *wizard, Id typeId, const QVariant &data) override;
     bool validateData(Id typeId, const QVariant &data, QString *errorMessage) override;
+    bool defaultSkipForSubprojects() const override { return true; }
 };
 
 KitsPageFactory::KitsPageFactory()
@@ -174,7 +175,7 @@ bool KitsPageFactory::validateData(Id typeId, const QVariant &data, QString *err
 {
     QTC_ASSERT(canCreate(typeId), return false);
 
-    if (data.isNull() || data.typeId() != QVariant::Map) {
+    if (data.isNull() || data.typeId() != QMetaType::QVariantMap) {
         *errorMessage = Tr::tr("\"data\" must be a JSON object for \"Kits\" pages.");
         return false;
     }
@@ -242,7 +243,7 @@ bool ProjectPageFactory::validateData(Id typeId, const QVariant &data, QString *
     Q_UNUSED(errorMessage)
 
     QTC_ASSERT(canCreate(typeId), return false);
-    if (!data.isNull() && data.typeId() != QVariant::Map) {
+    if (!data.isNull() && data.typeId() != QMetaType::QVariantMap) {
         *errorMessage = Tr::tr("\"data\" must be empty or a JSON object for \"Project\" pages.");
         return false;
     }
@@ -297,7 +298,7 @@ WizardPage *SummaryPageFactory::create(JsonWizard *wizard, Id typeId, const QVar
 bool SummaryPageFactory::validateData(Id typeId, const QVariant &data, QString *errorMessage)
 {
     QTC_ASSERT(canCreate(typeId), return false);
-    if (!data.isNull() && (data.typeId() != QVariant::Map)) {
+    if (!data.isNull() && (data.typeId() != QMetaType::QVariantMap)) {
         *errorMessage = Tr::tr("\"data\" for a \"Summary\" page can be unset or needs to be an object.");
         return false;
     }

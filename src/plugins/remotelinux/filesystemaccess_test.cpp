@@ -11,7 +11,7 @@
 #include <utils/filepath.h>
 #include <utils/filestreamer.h>
 #include <utils/filestreamermanager.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/processinterface.h>
 #include <utils/scopedtimer.h>
 
@@ -188,7 +188,7 @@ void FileSystemAccessTest::testWorkingDirectory()
     const FilePath dir = baseFilePath() / "testdir with space and 'various' \"quotes\" here";
     QVERIFY(dir.ensureWritableDir());
     Process proc;
-    proc.setCommand({"pwd", {}});
+    proc.setCommand(CommandLine{"pwd"});
     proc.setWorkingDirectory(dir);
     proc.start();
     QVERIFY(proc.waitForFinished());

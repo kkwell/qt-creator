@@ -66,6 +66,7 @@
 #include <algorithm>
 #include <memory>
 
+using namespace Core;
 using namespace ProjectExplorer;
 using namespace Utils;
 
@@ -333,6 +334,34 @@ public:
         Core::EditorManager::openEditor(qmlFile);
     }
 
+    Q_INVOKABLE bool exampleVersionOk(const QString &exampleVersion)
+    {
+        if (exampleVersion.isEmpty())
+            return true;
+
+        // Split versions into parts (major, minor, patch)
+        QStringList qdsVersionParts = QCoreApplication::applicationVersion().split('.');
+        QStringList exampleVersionParts = exampleVersion.split('.');
+
+        // Fill missing parts with zeros
+        while (qdsVersionParts.size() < 3)
+            qdsVersionParts.append("0");
+
+        while (exampleVersionParts.size() < 3)
+            exampleVersionParts.append("0");
+
+        int qdsMajor = qdsVersionParts.at(0).toInt();
+        int qdsMinor = qdsVersionParts.at(1).toInt();
+        int qdsPatch = qdsVersionParts.at(2).toInt();
+
+        int exMajor = exampleVersionParts.at(0).toInt();
+        int exMinor = exampleVersionParts.at(1).toInt();
+        int exPatch = exampleVersionParts.at(2).toInt();
+
+        return QT_VERSION_CHECK(exMajor, exMinor, exPatch)
+               <= QT_VERSION_CHECK(qdsMajor, qdsMinor, qdsPatch);
+    }
+
 public slots:
     void resetProjects();
     void delayedResetProjects();
@@ -455,20 +484,20 @@ QVariant ProjectModel::data(const QModelIndex &index, int role) const
             ProjectExplorer::ProjectExplorerPlugin::recentProjects().at(index.row());
     switch (role) {
     case Qt::DisplayRole:
-        return data.second;
+        return data.displayName;
         break;
     case FilePathRole:
-        return data.first.toVariant();
+        return data.filePath.toVariant();
     case PrettyFilePathRole:
-        return data.first.absolutePath().withTildeHomePath();
+        return data.filePath.absolutePath().withTildeHomePath();
     case PreviewUrl:
-        return QVariant(QStringLiteral("image://project_preview/") +
-                        QmlProjectManager::ProjectFileContentTools::appQmlFile(
-                            data.first));
+        return QVariant(
+            QStringLiteral("image://project_preview/")
+            + QmlProjectManager::ProjectFileContentTools::appQmlFile(data.filePath));
     case TagData:
-        return tags(data.first);
+        return tags(data.filePath);
     case Description:
-        return description(data.first);
+        return description(data.filePath);
     default:
         return QVariant();
     }
@@ -556,6 +585,9 @@ static bool forceDownLoad()
 
 static bool showSplashScreen()
 {
+    // some error dialog is maybe open, be silent to avoid focus problems (macOS had some)
+    if (Core::ICore::mainWindow() != Core::ICore::dialogParent())
+        return false;
     const Key lastQDSVersionEntry = "QML/Designer/lastQDSVersion";
 
     QtcSettings *settings = Core::ICore::settings();
@@ -578,8 +610,7 @@ void StudioWelcomePlugin::extensionsInitialized()
 
     // Enable QDS new project dialog and QDS wizards
     if (Core::ICore::isQtDesignStudio()) {
-        ProjectExplorer::JsonWizardFactory::clearWizardPaths();
-        ProjectExplorer::JsonWizardFactory::addWizardPath(
+        ProjectExplorer::JsonWizardFactory::setInstalledWizardsPath(
             Core::ICore::resourcePath("qmldesigner/studio_templates"));
 
         Core::ICore::setNewDialogFactory([](QWidget *parent) { return new QdsNewDialog(parent); });
@@ -734,7 +765,6 @@ WelcomeMode::WelcomeMode()
 
     setPriority(Core::Constants::P_MODE_WELCOME);
     setId(Core::Constants::MODE_WELCOME);
-    setContextHelp("Qt Design Studio Manual");
     setContext(Core::Context(Core::Constants::C_WELCOME_MODE));
 
     QFontDatabase::addApplicationFont(":/studiofonts/TitilliumWeb-Regular.ttf");
@@ -779,6 +809,7 @@ WelcomeMode::WelcomeMode()
     m_modeWidget = new QWidget;
     m_modeWidget->setLayout(boxLayout);
     boxLayout->addWidget(m_quickWidget);
+    IContext::attach(m_modeWidget, {}, "Qt Design Studio Manual");
     setWidget(m_modeWidget);
 
     QStringList designStudioQchPathes

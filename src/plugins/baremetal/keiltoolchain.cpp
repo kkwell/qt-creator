@@ -16,7 +16,7 @@
 #include <utils/algorithm.h>
 #include <utils/environment.h>
 #include <utils/pathchooser.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <QDebug>
@@ -246,11 +246,7 @@ static Macros dumpArmPredefinedMacros(const FilePath &compiler, const QStringLis
 {
     Process cpp;
     cpp.setEnvironment(env);
-
-    QStringList args = extraArgs;
-    args.push_back("-E");
-    args.push_back("--list-macros");
-    cpp.setCommand({compiler, args});
+    cpp.setCommand({compiler, {extraArgs, "-E", "--list-macros"}});
 
     cpp.runBlocking();
     if (cpp.result() != ProcessResult::FinishedWithSuccess) {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 import QtQuick
+import HelperWidgets as HelperWidgets
 import StudioControls as StudioControls
 import StudioTheme as StudioTheme
 import EffectComposerBackend
@@ -10,17 +11,22 @@ Row {
     width: parent.width
     spacing: 5
 
-    StudioControls.SpinBox {
+    HelperWidgets.DoubleSpinBox {
         id: spinBox
 
+        // value: uniformValue binding can get overwritten by normal operation of the control
+        property double resetValue: uniformValue
+        onResetValueChanged: value = resetValue
+
         width: 60
-        actionIndicatorVisible: false
         spinBoxIndicatorVisible: false
         inputHAlignment: Qt.AlignHCenter
-        from: uniformMinValue
-        to: uniformMaxValue
+        minimumValue: uniformMinValue
+        maximumValue: uniformMaxValue
         value: uniformValue
-        onValueModified: uniformValue = value
+        stepSize: 1
+        decimals: 0
+        onValueModified: uniformValue = Math.round(value)
     }
 
     StudioControls.Slider {

@@ -15,6 +15,7 @@
 #include <nodeinstanceview.h>
 #include <nodelistproperty.h>
 #include <rewritingexception.h>
+#include <utils3d.h>
 #include <variantproperty.h>
 #include <viewmanager.h>
 #include <qmldesignerplugin.h>
@@ -63,13 +64,14 @@ namespace QmlDesigner {
   DesignDocument acts as a facade to a model representing a qml document,
   and the different views/widgets accessing it.
   */
-DesignDocument::DesignDocument(ProjectStorageDependencies projectStorageDependencies,
+DesignDocument::DesignDocument([[maybe_unused]] const QUrl &filePath,
+                               ProjectStorageDependencies projectStorageDependencies,
                                ExternalDependenciesInterface &externalDependencies)
 #ifdef QDS_USE_PROJECTSTORAGE
     : m_documentModel(Model::create(projectStorageDependencies,
                                     "Item",
                                     {Import::createLibraryImport("QtQuick")},
-                                    {},
+                                    filePath,
                                     std::make_unique<ModelResourceManagement>()))
 #else
     : m_documentModel(
@@ -148,7 +150,10 @@ bool DesignDocument::loadInFileComponent(const ModelNode &componentNode)
 
     if (!componentNode.isRootNode()) {
         //change to subcomponent model
-        changeToInFileComponentModel(createComponentTextModifier(m_documentTextModifier.data(), rewriterView(), componentText, componentNode));
+        changeToInFileComponentModel(createComponentTextModifier(m_documentTextModifier.get(),
+                                                                 rewriterView(),
+                                                                 componentText,
+                                                                 componentNode));
     }
 
     return true;
@@ -161,13 +166,15 @@ const AbstractView *DesignDocument::view() const
 
 ModelPointer DesignDocument::createInFileComponentModel()
 {
+#ifdef QDS_USE_PROJECTSTORAGE
+    auto model = m_documentModel->createModel("Item", std::make_unique<ModelResourceManagement>());
+#else
     auto model = Model::create("QtQuick.Item",
                                1,
                                0,
                                nullptr,
                                std::make_unique<ModelResourceManagement>());
     model->setFileUrl(m_documentModel->fileUrl());
-#ifndef QDS_USE_PROJECTSTORAGE
     model->setMetaInfo(m_documentModel->metaInfo());
 #endif
 
@@ -232,13 +239,12 @@ void DesignDocument::moveNodesToPosition(const QList<ModelNode> &nodes, const st
         });
 
         if (all3DNodes) {
-            auto data = rootModelNode().auxiliaryData(active3dSceneProperty);
-            if (data) {
-                if (int activeSceneId = data->toInt(); activeSceneId != -1) {
-                    NodeListProperty sceneNodeProperty = QmlVisualNode::findSceneNodeProperty(
-                                rootModelNode().view(), activeSceneId);
-                    targetNode = sceneNodeProperty.parentModelNode();
-                }
+            int activeSceneId = Utils3D::active3DSceneId(m_documentModel.get());
+
+            if (activeSceneId != -1) {
+                NodeListProperty sceneNodeProperty = QmlVisualNode::findSceneNodeProperty(
+                    rootModelNode().view(), activeSceneId);
+                targetNode = sceneNodeProperty.parentModelNode();
             }
         }
     }
@@ -278,11 +284,10 @@ void DesignDocument::moveNodesToPosition(const QList<ModelNode> &nodes, const st
         parentProperty.reparentHere(pastedNode);
 
         QmlVisualNode visualNode(pastedNode);
-        if (!firstVisualNode.has_value() && visualNode.isValid()){
+        if (!firstVisualNode && visualNode) {
             firstVisualNode = visualNode;
-            translationVect = (position.has_value() && firstVisualNode.has_value())
-                    ? position.value() - firstVisualNode->position()
-                    : QVector3D();
+            translationVect = (position && firstVisualNode) ? *position - firstVisualNode->position()
+                                                            : QVector3D();
         }
         visualNode.translate(translationVect);
     }
@@ -374,9 +379,12 @@ void DesignDocument::loadDocument(QPlainTextEdit *edit)
 
     m_documentTextModifier.reset(new BaseTextEditModifier(qobject_cast<TextEditor::TextEditorWidget *>(plainTextEdit())));
 
-    connect(m_documentTextModifier.data(), &TextModifier::textChanged, this, &DesignDocument::updateQrcFiles);
+    connect(m_documentTextModifier.get(),
+            &TextModifier::textChanged,
+            this,
+            &DesignDocument::updateQrcFiles);
 
-    m_rewriterView->setTextModifier(m_documentTextModifier.data());
+    m_rewriterView->setTextModifier(m_documentTextModifier.get());
 
     m_inFileComponentTextModifier.reset();
 
@@ -396,7 +404,7 @@ void DesignDocument::changeToDocumentModel()
     if (edit)
         edit->document()->clearUndoRedoStacks();
 
-    m_rewriterView->setTextModifier(m_documentTextModifier.data());
+    m_rewriterView->setTextModifier(m_documentTextModifier.get());
 
     m_inFileComponentModel.reset();
     m_inFileComponentTextModifier.reset();
@@ -429,7 +437,7 @@ bool DesignDocument::hasProject() const
 
 void DesignDocument::setModified()
 {
-    if (!m_documentTextModifier.isNull())
+    if (m_documentTextModifier)
         m_documentTextModifier->textDocument()->setModified(true);
 }
 
@@ -445,7 +453,7 @@ void DesignDocument::changeToInFileComponentModel(ComponentTextModifier *textMod
 
     m_inFileComponentModel = createInFileComponentModel();
 
-    m_rewriterView->setTextModifier(m_inFileComponentTextModifier.data());
+    m_rewriterView->setTextModifier(m_inFileComponentTextModifier.get());
 
     viewManager().attachRewriterView();
     viewManager().attachViewsExceptRewriterAndComponetView();
@@ -672,7 +680,7 @@ void DesignDocument::selectAll()
 
 RewriterView *DesignDocument::rewriterView() const
 {
-    return m_rewriterView.data();
+    return m_rewriterView.get();
 }
 
 void DesignDocument::setEditor(Core::IEditor *editor)

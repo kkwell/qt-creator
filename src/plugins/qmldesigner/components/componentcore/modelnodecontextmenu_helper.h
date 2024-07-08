@@ -25,6 +25,16 @@ namespace QmlDesigner {
 using SelectionContextPredicate = std::function<bool (const SelectionContext&)>;
 using SelectionContextOperation = std::function<void (const SelectionContext&)>;
 
+namespace SelectionContextHelpers {
+
+inline bool contains(const QmlItemNode &node, const QPointF &position)
+{
+    return node.isValid()
+           && node.instanceSceneTransform().mapRect(node.instanceBoundingRect()).contains(position);
+}
+
+} // namespace SelectionContextHelpers
+
 namespace SelectionContextFunctors {
 
 inline bool always(const SelectionContext &)
@@ -54,15 +64,18 @@ inline bool addMouseAreaFillCheck(const SelectionContext &selectionContext)
     return false;
 }
 
-inline bool isModel(const SelectionContext &selectionState)
+inline bool isModelOrMaterial(const SelectionContext &selectionState)
 {
     ModelNode node = selectionState.currentSingleSelectedNode();
-    return node.metaInfo().isQtQuick3DModel();
+    return node.metaInfo().isQtQuick3DModel() || node.metaInfo().isQtQuick3DMaterial();
 }
 
-inline bool modelHasMaterial(const SelectionContext &selectionState)
+inline bool hasEditableMaterial(const SelectionContext &selectionState)
 {
     ModelNode node = selectionState.currentSingleSelectedNode();
+
+    if (node.metaInfo().isQtQuick3DMaterial())
+        return true;
 
     BindingProperty prop = node.bindingProperty("materials");
 
@@ -83,6 +96,26 @@ inline bool singleSelectionNotRoot(const SelectionContext &selectionState)
 {
     return selectionState.singleNodeIsSelected()
         && !selectionState.currentSingleSelectedNode().isRootNode();
+}
+
+inline bool singleSelectionView3D(const SelectionContext &selectionState)
+{
+    if (selectionState.singleNodeIsSelected()
+        && selectionState.currentSingleSelectedNode().metaInfo().isQtQuick3DView3D()) {
+        return true;
+    }
+
+    // If currently selected node is not View3D, check if there is a View3D under the cursor.
+    if (!selectionState.scenePosition().isNull()) {
+        // Assumption is that last match in allModelNodes() list is the topmost one.
+        const QList<ModelNode> allNodes = selectionState.view()->allModelNodes();
+        for (int i = allNodes.size() - 1; i >= 0; --i) {
+            if (SelectionContextHelpers::contains(allNodes[i], selectionState.scenePosition()))
+                return allNodes[i].metaInfo().isQtQuick3DView3D();
+        }
+    }
+
+    return false;
 }
 
 inline bool selectionHasProperty(const SelectionContext &selectionState, const char *property)
@@ -112,7 +145,7 @@ inline bool singleSelectedItem(const SelectionContext &selectionState)
 }
 
 bool selectionHasSameParent(const SelectionContext &selectionState);
-bool selectionIsComponent(const SelectionContext &selectionState);
+bool selectionIsEditableComponent(const SelectionContext &selectionState);
 bool singleSelectionItemIsAnchored(const SelectionContext &selectionState);
 bool singleSelectionItemIsNotAnchored(const SelectionContext &selectionState);
 bool selectionIsImported3DAsset(const SelectionContext &selectionState);

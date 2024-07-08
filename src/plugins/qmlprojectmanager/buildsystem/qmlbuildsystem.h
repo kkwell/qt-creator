@@ -6,7 +6,11 @@
 #pragma once
 
 #include "../qmlprojectmanager_global.h"
+
 #include <projectexplorer/buildsystem.h>
+#include <utils/filesystemwatcher.h>
+
+#include "qmlprojectmanager/cmakegen/cmakegenerator.h"
 
 namespace QmlProjectManager {
 
@@ -70,9 +74,8 @@ public:
     Utils::EnvironmentItems environment() const;
 
     QStringList importPaths() const;
-    QStringList absoluteImportPaths();
-    QStringList customImportPaths() const;
-    QStringList customFileSelectors() const;
+    QStringList absoluteImportPaths() const;
+    QStringList fileSelectors() const;
 
     bool multilanguageSupport() const;
     QStringList supportedLanguages() const;
@@ -81,12 +84,14 @@ public:
     QString primaryLanguage() const;
     void setPrimaryLanguage(QString language);
 
+    bool enableCMakeGeneration() const;
+    void setEnableCMakeGeneration(bool enable);
+
     bool forceFreeType() const;
     bool widgetApp() const;
 
     QStringList shaderToolArgs() const;
     QStringList shaderToolFiles() const;
-    Utils::FilePaths files() const;
 
     QString versionQt() const;
     QString versionQtQuick() const;
@@ -102,6 +107,8 @@ public:
 
     Utils::FilePath getStartupQmlFileWithFallback() const;
 
+    static QmlBuildSystem *getStartupBuildSystem();
+
 signals:
     void projectChanged();
 
@@ -110,16 +117,23 @@ private:
                                      const Utils::FilePath &mainFilePath,
                                      const QString &oldFile);
 
+    // this is the main project item
     QSharedPointer<QmlProjectItem> m_projectItem;
+    // these are the mcu project items which can be found in the project tree
+    QList<QSharedPointer<QmlProjectItem>> m_mcuProjectItems;
+    Utils::FileSystemWatcher m_mcuProjectFilesWatcher;
     bool m_blockFilesUpdate = false;
 
     void initProjectItem();
+    void initMcuProjectItems();
     void parseProjectFiles();
     void generateProjectTree();
 
     void registerMenuButtons();
     void updateDeploymentData();
     friend class FilesUpdateBlocker;
+
+    GenerateCmake::CMakeGenerator* m_cmakeGen;
 };
 
 } // namespace QmlProjectManager

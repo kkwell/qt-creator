@@ -3,11 +3,33 @@
 
 #include "projectstorageexceptions.h"
 
+#include <tracing/qmldesignertracing.h>
+
 namespace QmlDesigner {
+
+using namespace NanotraceHR::Literals;
+using NanotraceHR::keyValue;
+
+namespace {
+auto &category()
+{
+    return ProjectStorageTracing::projectStorageCategory();
+}
+} // namespace
+
+NoSourcePathForInvalidSourceId::NoSourcePathForInvalidSourceId()
+{
+    category().threadEvent("NoSourcePathForInvalidSourceId"_t);
+}
 
 const char *NoSourcePathForInvalidSourceId::what() const noexcept
 {
     return "You cannot get a file path for an invalid file path id!";
+}
+
+NoSourceContextPathForInvalidSourceContextId::NoSourceContextPathForInvalidSourceContextId()
+{
+    category().threadEvent("NoSourceContextPathForInvalidSourceContextId"_t);
 }
 
 const char *NoSourceContextPathForInvalidSourceContextId::what() const noexcept
@@ -15,9 +37,19 @@ const char *NoSourceContextPathForInvalidSourceContextId::what() const noexcept
     return "You cannot get a directory path for an invalid directory path id!";
 }
 
+SourceContextIdDoesNotExists::SourceContextIdDoesNotExists()
+{
+    category().threadEvent("SourceContextIdDoesNotExists"_t);
+}
+
 const char *SourceContextIdDoesNotExists::what() const noexcept
 {
     return "The source context id does not exist in the database!";
+}
+
+SourceIdDoesNotExists::SourceIdDoesNotExists()
+{
+    category().threadEvent("SourceIdDoesNotExists"_t);
 }
 
 const char *SourceIdDoesNotExists::what() const noexcept
@@ -25,9 +57,19 @@ const char *SourceIdDoesNotExists::what() const noexcept
     return "The source id does not exist in the database!";
 }
 
+TypeHasInvalidSourceId::TypeHasInvalidSourceId()
+{
+    category().threadEvent("TypeHasInvalidSourceId"_t);
+}
+
 const char *TypeHasInvalidSourceId::what() const noexcept
 {
     return "The source id is invalid!";
+}
+
+ModuleDoesNotExists::ModuleDoesNotExists()
+{
+    category().threadEvent("ModuleDoesNotExists"_t);
 }
 
 const char *ModuleDoesNotExists::what() const noexcept
@@ -35,18 +77,40 @@ const char *ModuleDoesNotExists::what() const noexcept
     return "The module does not exist!";
 }
 
+ModuleAlreadyExists::ModuleAlreadyExists()
+{
+    category().threadEvent("ModuleAlreadyExists"_t);
+}
+
 const char *ModuleAlreadyExists::what() const noexcept
 {
     return "The module does already exist!";
 }
 
-TypeNameDoesNotExists::TypeNameDoesNotExists(std::string_view errorMessage)
-    : ProjectStorageErrorWithMessage{"TypeNameDoesNotExists"sv, errorMessage}
-{}
+TypeNameDoesNotExists::TypeNameDoesNotExists(std::string_view typeName, SourceId sourceId)
+    : ProjectStorageErrorWithMessage{
+        "TypeNameDoesNotExists"sv,
+        Utils::SmallString::join(
+            {"type: ", typeName, ", source id: ", Utils::SmallString::number(sourceId.internalId())})}
+{
+    category().threadEvent("TypeNameDoesNotExists"_t,
+                           keyValue("type name", typeName),
+                           keyValue("source id", sourceId));
+}
+
+PropertyNameDoesNotExists::PropertyNameDoesNotExists()
+{
+    category().threadEvent("PropertyNameDoesNotExists"_t);
+}
 
 const char *PropertyNameDoesNotExists::what() const noexcept
 {
     return "The property name does not exist!";
+}
+
+PrototypeChainCycle::PrototypeChainCycle()
+{
+    category().threadEvent("PrototypeChainCycle"_t);
 }
 
 const char *PrototypeChainCycle::what() const noexcept
@@ -54,9 +118,19 @@ const char *PrototypeChainCycle::what() const noexcept
     return "There is a prototype chain cycle!";
 }
 
+AliasChainCycle::AliasChainCycle()
+{
+    category().threadEvent("AliasChainCycle"_t);
+}
+
 const char *AliasChainCycle::what() const noexcept
 {
     return "There is a prototype chain cycle!";
+}
+
+CannotParseQmlTypesFile::CannotParseQmlTypesFile()
+{
+    category().threadEvent("CannotParseQmlTypesFile"_t);
 }
 
 const char *CannotParseQmlTypesFile::what() const noexcept
@@ -64,24 +138,49 @@ const char *CannotParseQmlTypesFile::what() const noexcept
     return "Cannot parse qml types file!";
 }
 
+CannotParseQmlDocumentFile::CannotParseQmlDocumentFile()
+{
+    category().threadEvent("CannotParseQmlDocumentFile"_t);
+}
+
 const char *CannotParseQmlDocumentFile::what() const noexcept
 {
     return "Cannot parse qml types file!";
 }
 
-const char *ProjectDataHasInvalidProjectSourceId::what() const noexcept
+DirectoryInfoHasInvalidProjectSourceId::DirectoryInfoHasInvalidProjectSourceId()
+{
+    category().threadEvent("DirectoryInfoHasInvalidProjectSourceId"_t);
+}
+
+const char *DirectoryInfoHasInvalidProjectSourceId::what() const noexcept
 {
     return "The project source id is invalid!";
 }
 
-const char *ProjectDataHasInvalidSourceId::what() const noexcept
+DirectoryInfoHasInvalidSourceId::DirectoryInfoHasInvalidSourceId()
+{
+    category().threadEvent("DirectoryInfoHasInvalidSourceId"_t);
+}
+
+const char *DirectoryInfoHasInvalidSourceId::what() const noexcept
 {
     return "The source id is invalid!";
 }
 
-const char *ProjectDataHasInvalidModuleId::what() const noexcept
+DirectoryInfoHasInvalidModuleId::DirectoryInfoHasInvalidModuleId()
+{
+    category().threadEvent("DirectoryInfoHasInvalidModuleId"_t);
+}
+
+const char *DirectoryInfoHasInvalidModuleId::what() const noexcept
 {
     return "The module id is invalid!";
+}
+
+FileStatusHasInvalidSourceId::FileStatusHasInvalidSourceId()
+{
+    category().threadEvent("FileStatusHasInvalidSourceId"_t);
 }
 
 const char *FileStatusHasInvalidSourceId::what() const noexcept
@@ -110,7 +209,14 @@ const char *ProjectStorageErrorWithMessage::what() const noexcept
 
 ExportedTypeCannotBeInserted::ExportedTypeCannotBeInserted(std::string_view errorMessage)
     : ProjectStorageErrorWithMessage{"ExportedTypeCannotBeInserted"sv, errorMessage}
-{}
+{
+    category().threadEvent("ExportedTypeCannotBeInserted"_t, keyValue("error message", errorMessage));
+}
+
+TypeAnnotationHasInvalidSourceId::TypeAnnotationHasInvalidSourceId()
+{
+    category().threadEvent("TypeAnnotationHasInvalidSourceId"_t);
+}
 
 const char *TypeAnnotationHasInvalidSourceId::what() const noexcept
 {

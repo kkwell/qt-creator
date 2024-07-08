@@ -20,6 +20,7 @@
 #include <QCursor>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QMenu>
 #include <QMimeData>
 #include <QPair>
 #include <QPointer>
@@ -72,6 +73,8 @@ public:
     QTimer scrollTimer;
     QElapsedTimer lastMessage;
     QHash<unsigned int, QPair<int, int>> taskPositions;
+    //: default file name suggested for saving text from output views
+    QString outputFileNameHint{::Core::Tr::tr("output.txt")};
 };
 
 } // namespace Internal
@@ -95,10 +98,7 @@ OutputWindow::OutputWindow(Context context, const Key &settingsKey, QWidget *par
 
     d->settingsKey = settingsKey;
 
-    auto outputWindowContext = new IContext(this);
-    outputWindowContext->setContext(context);
-    outputWindowContext->setWidget(this);
-    ICore::addContextObject(outputWindowContext);
+    IContext::attach(this, context);
 
     auto undoAction = new QAction(this);
     auto redoAction = new QAction(this);
@@ -195,6 +195,8 @@ void OutputWindow::handleLink(const QPoint &pos)
         d->formatter.handleLink(href);
 }
 
+void OutputWindow::adaptContextMenu(QMenu *, const QPoint &) {}
+
 void OutputWindow::mouseReleaseEvent(QMouseEvent *e)
 {
     if (d->linksActive && d->mouseButtonPressed == Qt::LeftButton)
@@ -279,6 +281,28 @@ void OutputWindow::wheelEvent(QWheelEvent *e)
     updateMicroFocus();
 }
 
+void OutputWindow::contextMenuEvent(QContextMenuEvent *event)
+{
+    QMenu *menu = createStandardContextMenu(event->pos());
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+
+    adaptContextMenu(menu, event->pos());
+
+    menu->addSeparator();
+    QAction *saveAction = menu->addAction(Tr::tr("Save Contents..."));
+    connect(saveAction, &QAction::triggered, this, [this] {
+        QFileDialog::saveFileContent(toPlainText().toUtf8(), d->outputFileNameHint);
+    });
+    saveAction->setEnabled(!document()->isEmpty());
+
+    menu->addSeparator();
+    QAction *clearAction = menu->addAction(Tr::tr("Clear"));
+    connect(clearAction, &QAction::triggered, this, [this] { clear(); });
+    clearAction->setEnabled(!document()->isEmpty());
+
+    menu->popup(event->globalPos());
+}
+
 void OutputWindow::setBaseFont(const QFont &newFont)
 {
     float zoom = fontZoom();
@@ -350,6 +374,11 @@ void OutputWindow::updateFilterProperties(
     filterNewContent();
 }
 
+void OutputWindow::setOutputFileNameHint(const QString &fileName)
+{
+    d->outputFileNameHint = fileName;
+}
+
 void OutputWindow::filterNewContent()
 {
     QTextBlock lastBlock = document()->findBlockByNumber(d->lastFilteredBlockNumber);
@@ -366,16 +395,12 @@ void OutputWindow::filterNewContent()
             lastBlock.setVisible(d->filterText.isEmpty()
                                  || regExp.match(lastBlock.text()).hasMatch() != invert);
     } else {
-        if (d->filterMode.testFlag(OutputWindow::FilterModeFlag::CaseSensitive)) {
-            for (; lastBlock != document()->end(); lastBlock = lastBlock.next())
-                lastBlock.setVisible(d->filterText.isEmpty()
-                                     || lastBlock.text().contains(d->filterText) != invert);
-        } else {
-            for (; lastBlock != document()->end(); lastBlock = lastBlock.next()) {
-                lastBlock.setVisible(d->filterText.isEmpty() || lastBlock.text().toLower()
-                                     .contains(d->filterText.toLower()) != invert);
-            }
-        }
+        const auto cs = d->filterMode.testFlag(OutputWindow::FilterModeFlag::CaseSensitive)
+                            ? Qt::CaseSensitive : Qt::CaseInsensitive;
+
+        for (; lastBlock != document()->end(); lastBlock = lastBlock.next())
+            lastBlock.setVisible(d->filterText.isEmpty()
+                                 || lastBlock.text().contains(d->filterText, cs) != invert);
     }
 
     d->lastFilteredBlockNumber = document()->lastBlock().blockNumber();
@@ -391,12 +416,24 @@ void OutputWindow::handleNextOutputChunk()
 {
     QTC_ASSERT(!d->queuedOutput.isEmpty(), return);
     auto &chunk = d->queuedOutput.first();
-    if (chunk.first.size() <= chunkSize) {
+
+    // We want to break off the chunks along line breaks, if possible.
+    // Otherwise we can get ugly temporary artifacts e.g. for ANSI escape codes.
+    int actualChunkSize = std::min(chunkSize, int(chunk.first.size()));
+    const int minEndPos = std::max(0, actualChunkSize - 1000);
+    for (int i = actualChunkSize - 1; i >= minEndPos; --i) {
+        if (chunk.first.at(i) == '\n') {
+            actualChunkSize = i + 1;
+            break;
+        }
+    }
+
+    if (actualChunkSize == chunk.first.size()) {
         handleOutputChunk(chunk.first, chunk.second);
         d->queuedOutput.removeFirst();
     } else {
-        handleOutputChunk(chunk.first.left(chunkSize), chunk.second);
-        chunk.first.remove(0, chunkSize);
+        handleOutputChunk(chunk.first.left(actualChunkSize), chunk.second);
+        chunk.first.remove(0, actualChunkSize);
     }
     if (!d->queuedOutput.isEmpty())
         d->queueTimer.start();

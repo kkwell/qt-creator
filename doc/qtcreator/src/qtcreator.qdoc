@@ -21,7 +21,7 @@
     operating systems. For more information, see \l{Supported Platforms}.
 
     In addition, you can use the experimental
-    \l{Building Applications for the Web}{WebAssembly plugin}
+    \l{Build applications for the web}{WebAssembly plugin}
     to build applications in web format and run them in web
     browsers.
 
@@ -39,12 +39,8 @@
                     \li \l{Getting Started}
                     \li \l{Creating Projects}
                     \li \l{Configuring Projects}
-                    \li \l{Validating with Target Hardware}
-                    \li \l{Connecting Devices}
-                    \li \l{Deploying to Devices}
                     \li \l{Debugging}
                     \li \l{Analyzing Code}
-                    \li \l{Using Squish}
                 \endlist
             \li \b {\l{Tutorials}}
                 \generatelist creator-tutorials
@@ -54,6 +50,7 @@
                     \li \l{Build and Run}
                     \li \l{Debug}
                     \li \l{Design UIs}
+                    \li \l{Develop for Devices}
                     \li \l{Edit Code}
                     \li \l{Manage Projects}
                     \li \l{Read Documentation}
@@ -65,6 +62,7 @@
                 \list
                     \li \l {Acknowledgements}
                     \li \l {Build Systems}
+                    \li \l {Devices}
                     \li \l {Command-Line Options}
                     \li \l {Custom Wizards}
                     \li \l {Keyboard Shortcuts}

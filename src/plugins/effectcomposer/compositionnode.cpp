@@ -113,6 +113,9 @@ void CompositionNode::parse(const QString &effectName, const QString &qenPath, c
     m_fragmentCode = EffectUtils::codeFromJsonArray(json.value("fragmentCode").toArray());
     m_vertexCode = EffectUtils::codeFromJsonArray(json.value("vertexCode").toArray());
 
+    if (json.contains("extraMargin"))
+        m_extraMargin = json.value("extraMargin").toInt();
+
     if (json.contains("enabled"))
         m_isEnabled = json["enabled"].toBool();
 
@@ -125,11 +128,15 @@ void CompositionNode::parse(const QString &effectName, const QString &qenPath, c
 
     // parse properties
     QJsonArray jsonProps = json.value("properties").toArray();
-    for (const auto /*QJsonValueRef*/ &prop : jsonProps) {
+    for (const QJsonValueConstRef &prop : jsonProps) {
         const auto uniform = new Uniform(effectName, prop.toObject(), qenPath);
         m_unifomrsModel.addUniform(uniform);
         m_uniforms.append(uniform);
         g_propertyData.insert(uniform->name(), uniform->value());
+        if (uniform->type() == Uniform::Type::Define) {
+            // Changing defines requires rebaking the shaders
+            connect(uniform, &Uniform::uniformValueChanged, this, &CompositionNode::rebakeRequested);
+        }
     }
 
     // Seek through code to get tags

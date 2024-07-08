@@ -88,6 +88,7 @@ const char BUILD_AND_RUN_SETTINGS_CATEGORY[]  = "K.BuildAndRun";
 
 // Build and Run page
 const char BUILD_AND_RUN_SETTINGS_PAGE_ID[] = "A.ProjectExplorer.BuildAndRunOptions";
+const char SHOW_ALL_KITS_SETTINGS_KEY[] = "ProjectExplorer/Settings/ShowAllKits";
 
 // Device settings page
 const char DEVICE_SETTINGS_CATEGORY[] = "AM.Devices";
@@ -114,6 +115,8 @@ const char PREFERRED_PROJECT_NODE_PATH[] = "ProjectExplorer.PreferredProjectPath
 const char PROJECT_POINTER[] = "ProjectExplorer.Project";
 const char PROJECT_KIT_IDS[] = "ProjectExplorer.Profile.Ids";
 const char QT_KEYWORDS_ENABLED[] = "ProjectExplorer.QtKeywordsEnabled";
+const char PROJECT_ISSUBPROJECT[] = "IsSubproject"; // Used inside wizard, no prefix!
+const char PROJECT_ENABLESUBPROJECT[] = "ProjectExplorer.EnableSubproject";
 
 // Build step lists ids:
 const char BUILDSTEPS_CLEAN[] = "ProjectExplorer.BuildSteps.Clean";
@@ -170,6 +173,7 @@ const char NORMAL_RUN_MODE[]="RunConfiguration.NormalRunMode";
 const char DEBUG_RUN_MODE[]="RunConfiguration.DebugRunMode";
 const char DAP_CMAKE_DEBUG_RUN_MODE[]="RunConfiguration.CmakeDebugRunMode";
 const char DAP_GDB_DEBUG_RUN_MODE[]="RunConfiguration.DapGdbDebugRunMode";
+const char DAP_LLDB_DEBUG_RUN_MODE[]="RunConfiguration.DapLldbDebugRunMode";
 const char DAP_PY_DEBUG_RUN_MODE[]="RunConfiguration.DapPyDebugRunMode";
 const char QML_PROFILER_RUN_MODE[]="RunConfiguration.QmlProfilerRunMode";
 const char QML_PROFILER_RUNNER[]="RunConfiguration.QmlProfilerRunner";

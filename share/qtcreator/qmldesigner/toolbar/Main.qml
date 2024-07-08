@@ -190,6 +190,26 @@ Rectangle {
             onActivated: backend.openFileByIndex(index)
         }
 
+        Text {
+            parent:currentFile.contentItem
+            visible: backend.isDocumentDirty
+
+            anchors.right: parent.right
+            anchors.rightMargin: parent.width - metric.textWidth - 18
+            color: StudioTheme.Values.themeTextColor
+            text: StudioTheme.Constants.wildcard
+            font.family: StudioTheme.Constants.iconFont.family
+            font.pixelSize: StudioTheme.Values.smallIconFont
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.verticalCenterOffset: -4
+
+            FontMetrics {
+                id: metric
+                font: currentFile.font
+                property int textWidth: metric.boundingRect(currentFile.currentText).width
+            }
+        }
+
         ToolbarButton {
             id: backButton
             anchors.verticalCenter: parent.verticalCenter
@@ -336,7 +356,9 @@ Rectangle {
             anchors.rightMargin: 8
             iconFont: StudioTheme.Constants.font
             buttonIcon: qsTr("Share")
-            visible: !root.flyoutEnabled
+            visible: !root.flyoutEnabled && backend.isSharingEnabled
+            enabled: backend.isSharingEnabled
+            tooltip: shareButton.enabled ? qsTr("Share your project online.") : qsTr("Sharing your project online is disabled in the Community Version.")
 
             onClicked: backend.shareApplicationOnline()
         }
@@ -458,6 +480,8 @@ Rectangle {
                             width: shareButton.width
                             iconFont: StudioTheme.Constants.font
                             buttonIcon: qsTr("Share")
+                            enabled: backend.isSharingEnabled
+                            tooltip: shareButton.enabled ? qsTr("Share your project online.") : qsTr("Sharing your project online is disabled in the Community Version.")
 
                             onClicked: backend.shareApplicationOnline()
                         }

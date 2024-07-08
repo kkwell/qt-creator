@@ -1,21 +1,22 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include <QCheckBox>
-#include <QFileInfo>
-#include <QFileSystemModel>
-#include <QMessageBox>
-#include <QSortFilterProxyModel>
-
-#include "asset.h"
 #include "assetslibrarymodel.h"
 
 #include <modelnodeoperations.h>
 #include <qmldesignerplugin.h>
+#include <uniquename.h>
 
 #include <coreplugin/icore.h>
+
 #include <utils/algorithm.h>
-#include <utils/qtcassert.h>
+#include <utils/asset.h>
+#include <utils/filepath.h>
+#include <utils/filesystemwatcher.h>
+
+#include <QFileInfo>
+#include <QFileSystemModel>
+#include <QMessageBox>
 
 namespace QmlDesigner {
 
@@ -38,7 +39,7 @@ void AssetsLibraryModel::createBackendModel()
 
     QObject::connect(m_sourceFsModel, &QFileSystemModel::directoryLoaded, this,
                      [this]([[maybe_unused]] const QString &dir) {
-        syncHaveFiles();
+        syncHasFiles();
     });
 
     m_fileWatcher = new Utils::FileSystemWatcher(parent());
@@ -153,16 +154,15 @@ bool AssetsLibraryModel::renameFolder(const QString &folderPath, const QString &
 
 QString AssetsLibraryModel::addNewFolder(const QString &folderPath)
 {
-    QString iterPath = folderPath;
-    QDir dir{folderPath};
+    Utils::FilePath uniqueDirPath = Utils::FilePath::fromString(UniqueName::generatePath(folderPath));
 
-    while (dir.exists()) {
-        iterPath = getUniqueName(iterPath);
-
-        dir.setPath(iterPath);
+    auto res = uniqueDirPath.ensureWritableDir();
+    if (!res.has_value()) {
+        qWarning() << __FUNCTION__ << res.error();
+        return {};
     }
 
-    return dir.mkpath(iterPath) ? iterPath : "";
+    return uniqueDirPath.path();
 }
 
 bool AssetsLibraryModel::urlPathExistsInModel(const QUrl &url) const
@@ -207,7 +207,7 @@ bool AssetsLibraryModel::filterAcceptsRow(int sourceRow, const QModelIndex &sour
     }
 }
 
-bool AssetsLibraryModel::checkHaveFiles(const QModelIndex &parentIdx) const
+bool AssetsLibraryModel::checkHasFiles(const QModelIndex &parentIdx) const
 {
     if (!parentIdx.isValid())
         return false;
@@ -218,60 +218,30 @@ bool AssetsLibraryModel::checkHaveFiles(const QModelIndex &parentIdx) const
         if (!isDirectory(newIdx))
             return true;
 
-        if (checkHaveFiles(newIdx))
+        if (checkHasFiles(newIdx))
             return true;
     }
 
     return false;
 }
 
-void AssetsLibraryModel::setHaveFiles(bool value)
+void AssetsLibraryModel::setHasFiles(bool value)
 {
-    if (m_haveFiles != value) {
-        m_haveFiles = value;
-        emit haveFilesChanged();
+    if (m_hasFiles != value) {
+        m_hasFiles = value;
+        emit hasFilesChanged();
     }
 }
 
-bool AssetsLibraryModel::checkHaveFiles() const
+bool AssetsLibraryModel::checkHasFiles() const
 {
     auto rootIdx = indexForPath(m_rootPath);
-    return checkHaveFiles(rootIdx);
+    return checkHasFiles(rootIdx);
 }
 
-void AssetsLibraryModel::syncHaveFiles()
+void AssetsLibraryModel::syncHasFiles()
 {
-    setHaveFiles(checkHaveFiles());
-}
-
-QString AssetsLibraryModel::getUniqueName(const QString &oldName) {
-    static QRegularExpression rgx("\\d+$"); // matches a number at the end of a string
-
-    QString uniqueName = oldName;
-    // if the folder name ends with a number, increment it
-    QRegularExpressionMatch match = rgx.match(uniqueName);
-    if (match.hasMatch()) { // ends with a number
-        QString numStr = match.captured(0);
-        int num = match.captured(0).toInt();
-
-        // get number of padding zeros, ex: for "005" = 2
-        int nPaddingZeros = 0;
-        for (; nPaddingZeros < numStr.size() && numStr[nPaddingZeros] == '0'; ++nPaddingZeros);
-
-        ++num;
-
-        // if the incremented number's digits increased, decrease the padding zeros
-        if (std::fmod(std::log10(num), 1.0) == 0)
-            --nPaddingZeros;
-
-        uniqueName = oldName.mid(0, match.capturedStart())
-                   + QString('0').repeated(nPaddingZeros)
-                   + QString::number(num);
-    } else {
-        uniqueName = oldName + '1';
-    }
-
-    return uniqueName;
+    setHasFiles(checkHasFiles());
 }
 
 void AssetsLibraryModel::setRootPath(const QString &newPath)

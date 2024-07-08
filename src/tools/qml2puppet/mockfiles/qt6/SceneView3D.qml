@@ -1,8 +1,8 @@
 // Copyright (C) 2020 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-import QtQuick 6.0
-import QtQuick3D 6.0
+import QtQuick
+import QtQuick3D
 
 View3D {
     id: sceneView
@@ -15,8 +15,11 @@ View3D {
     property alias perspectiveCamera: scenePerspectiveCamera
     property alias orthoCamera: sceneOrthoCamera
     property alias sceneEnv: sceneEnv
+    property alias defaultLightProbe: defaultLightProbe
+    property alias defaultCubeMap: defaultCubeMap
     property vector3d cameraLookAt
     property var selectionBoxes: []
+    property Node selectedNode
 
     // Measuring the distance from camera to lookAt plus the distance of lookAt from grid plane
     // gives a reasonable grid spacing in most cases while keeping spacing constant when
@@ -60,6 +63,14 @@ View3D {
         id: sceneEnv
         antialiasingMode: SceneEnvironment.MSAA
         antialiasingQuality: SceneEnvironment.High
+
+        Texture {
+            id: defaultLightProbe
+        }
+
+        CubeMapTexture {
+            id: defaultCubeMap
+        }
     }
 
     Node {
@@ -77,6 +88,11 @@ View3D {
                                                : sceneOrthoCamera.position
             quadraticFade: 0
             linearFade: 0
+        }
+
+        ReflectionProbeBox {
+            id: reflectionProbeBox
+            selectedNode: sceneView.selectedNode
         }
 
         // Initial camera position and rotation should be such that they look at origin.

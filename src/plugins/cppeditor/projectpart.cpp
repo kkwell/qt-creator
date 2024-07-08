@@ -4,6 +4,7 @@
 #include "projectpart.h"
 
 #include <projectexplorer/project.h>
+#include <projectexplorer/projectmanager.h>
 
 #include <utils/algorithm.h>
 
@@ -12,6 +13,7 @@
 #include <QTextStream>
 
 using namespace ProjectExplorer;
+using namespace Utils;
 
 namespace CppEditor {
 
@@ -41,6 +43,11 @@ bool ProjectPart::belongsToProject(const ProjectExplorer::Project *project) cons
 bool ProjectPart::belongsToProject(const Utils::FilePath &project) const
 {
     return topLevelProject == project;
+}
+
+Project *ProjectPart::project() const
+{
+    return ProjectManager::projectWithProjectFilePath(topLevelProject);
 }
 
 QByteArray ProjectPart::readProjectConfigFile(const QString &projectConfigFile)
@@ -115,6 +122,32 @@ static QStringList getIncludedFiles(const RawProjectPart &rpp, const RawProjectP
     return !rpp.includedFiles.isEmpty() ? rpp.includedFiles : flags.includedFiles;
 }
 
+static QStringList getExtraCodeModelFlags(const RawProjectPart &rpp, const ProjectFiles &files)
+{
+    if (!Utils::anyOf(files, [](const ProjectFile &f) { return f.kind == ProjectFile::CudaSource; }))
+        return {};
+
+    Utils::FilePath cudaPath;
+    for (const HeaderPath &hp : rpp.headerPaths) {
+        if (hp.type == HeaderPathType::BuiltIn)
+            continue;
+        if (!hp.path.endsWith("/include"))
+            continue;
+        const Utils::FilePath includeDir = Utils::FilePath::fromString(hp.path);
+        if (!includeDir.pathAppended("cuda.h").exists())
+            continue;
+        for (FilePath dir = includeDir.parentDir(); cudaPath.isEmpty() && !dir.isRootPath();
+             dir = dir.parentDir()) {
+            if (dir.pathAppended("nvvm").exists())
+                cudaPath = dir;
+        }
+        break;
+    }
+    if (!cudaPath.isEmpty())
+        return {"--cuda-path=" + cudaPath.toUserOutput()};
+    return {};
+}
+
 ProjectPart::ProjectPart(const Utils::FilePath &topLevelProject,
                          const RawProjectPart &rpp,
                          const QString &displayName,
@@ -149,7 +182,7 @@ ProjectPart::ProjectPart(const Utils::FilePath &topLevelProject,
       toolchainInstallDir(tcInfo.installDir),
       compilerFilePath(tcInfo.compilerFilePath),
       warningFlags(flags.warningFlags),
-      extraCodeModelFlags(tcInfo.extraCodeModelFlags),
+      extraCodeModelFlags(tcInfo.extraCodeModelFlags + getExtraCodeModelFlags(rpp, files)),
       compilerFlags(flags.commandLineFlags),
       m_macroReport(getToolchainMacros(flags, tcInfo, language)),
       languageFeatures(deriveLanguageFeatures())

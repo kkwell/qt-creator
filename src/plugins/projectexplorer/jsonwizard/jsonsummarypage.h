@@ -14,7 +14,7 @@ class FolderNode;
 class Node;
 
 // Documentation inside.
-class JsonSummaryPage : public Internal::ProjectWizardPage
+class JsonSummaryPage : public ProjectWizardPage
 {
     Q_OBJECT
 
@@ -38,6 +38,7 @@ private:
     JsonWizard *m_wizard;
     JsonWizard::GeneratorFiles m_fileList;
     QVariant m_hideProjectUiValue;
+    QMetaObject::Connection m_bsConnection;
 };
 
 } // namespace ProjectExplorer

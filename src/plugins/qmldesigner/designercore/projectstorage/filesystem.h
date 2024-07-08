@@ -6,6 +6,7 @@
 #include "filestatuscache.h"
 #include "filesysteminterface.h"
 #include "nonlockingmutex.h"
+#include "projectstoragefwd.h"
 
 namespace Sqlite {
 class Database;
@@ -16,12 +17,9 @@ namespace QmlDesigner {
 template<typename ProjectStorage, typename Mutex>
 class SourcePathCache;
 
-template<typename Database>
-class ProjectStorage;
-
 class FileSystem : public FileSystemInterface
 {
-    using PathCache = SourcePathCache<ProjectStorage<Sqlite::Database>, NonLockingMutex>;
+    using PathCache = SourcePathCache<ProjectStorage, NonLockingMutex>;
 
 public:
     FileSystem(PathCache &sourcePathCache)
@@ -33,6 +31,7 @@ public:
     long long lastModified(SourceId sourceId) const override;
     FileStatus fileStatus(SourceId sourceId) const override;
     QString contentAsQString(const QString &filePath) const override;
+    QStringList subdirectories(const QString &directoryPath) const override;
 
     void remove(const SourceIds &sourceIds) override;
 

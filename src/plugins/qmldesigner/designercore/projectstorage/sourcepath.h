@@ -7,6 +7,8 @@
 
 #include <utils/smallstring.h>
 
+#include <QVarLengthArray>
+
 namespace QmlDesigner {
 
 class SourcePath : public Utils::PathString
@@ -117,10 +119,17 @@ public:
 
     std::ptrdiff_t slashIndex() const { return m_slashIndex; }
 
+    template<typename String>
+    friend void convertToString(String &string, const SourcePath &path)
+    {
+        convertToString(string, path.toStringView());
+    }
+
 private:
     std::ptrdiff_t m_slashIndex = -1;
 };
 
 using SourcePaths = std::vector<SourcePath>;
-
+template<std::size_t size>
+using SmallSourcePaths = QVarLengthArray<SourcePath, size>;
 } // namespace QmlDesigner

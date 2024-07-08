@@ -7,6 +7,7 @@
 #include <qmlprivategate.h>
 
 #include <QDebug>
+#include <QDir>
 #include <QEvent>
 #include <QQmlContext>
 #include <QQmlError>
@@ -291,7 +292,7 @@ static void removeObjectFromList(const QQmlProperty &property,
 
     int count = listReference.count();
 
-    QObjectList objectList;
+    QList<QPointer<QObject>> objectList;
 
     for (int i = 0; i < count; i ++) {
         QObject *listItem = listReference.at(i);
@@ -301,8 +302,10 @@ static void removeObjectFromList(const QQmlProperty &property,
 
     listReference.clear();
 
-    for (QObject *object : std::as_const(objectList))
-        listReference.append(object);
+    for (QObject *object : std::as_const(objectList)) {
+        if (object)
+            listReference.append(object);
+    }
 }
 
 void ObjectNodeInstance::removeFromOldProperty(QObject *object, QObject *oldParent, const PropertyName &oldParentProperty)
@@ -370,7 +373,7 @@ void ObjectNodeInstance::reparent(const ObjectNodeInstance::Pointer &oldParentIn
 QVariant ObjectNodeInstance::convertSpecialCharacter(const QVariant& value) const
 {
     QVariant specialCharacterConvertedValue = value;
-    if (value.typeId() == QVariant::String) {
+    if (value.typeId() == QMetaType::QString) {
         QString string = value.toString();
         string.replace(QLatin1String("\\n"), QLatin1String("\n"));
         string.replace(QLatin1String("\\t"), QLatin1String("\t"));
@@ -468,7 +471,7 @@ void ObjectNodeInstance::setPropertyVariant(const PropertyName &name, const QVar
 
 
     QVariant oldValue = property.read();
-    if (oldValue.typeId() == QVariant::Url) {
+    if (oldValue.typeId() == QMetaType::QUrl) {
         QUrl url = oldValue.toUrl();
         QString path = url.toLocalFile();
         if (QFileInfo::exists(path) && nodeInstanceServer() && !path.isEmpty())
@@ -485,7 +488,7 @@ void ObjectNodeInstance::setPropertyVariant(const PropertyName &name, const QVar
         qDebug() << "ObjectNodeInstance.setPropertyVariant: Cannot be written: " << object() << name << adjustedValue;
 
     QVariant newValue = property.read();
-    if (newValue.typeId() == QVariant::Url) {
+    if (newValue.typeId() == QMetaType::QUrl) {
         QUrl url = newValue.toUrl();
         QString path = url.toLocalFile();
         if (QFileInfo::exists(path) && nodeInstanceServer() && !path.isEmpty())
@@ -575,7 +578,7 @@ void ObjectNodeInstance::refreshProperty(const PropertyName &name)
     else
         property.write(resetValue(name));
 
-    if (oldValue.typeId() == QVariant::Url) {
+    if (oldValue.typeId() == QMetaType::QUrl) {
         QByteArray key = oldValue.toUrl().toEncoded(QUrl::UrlFormattingOption(0x100));
         QString pixmapKey = QString::fromUtf8(key.constData(), key.size());
         QPixmapCache::remove(pixmapKey);
@@ -616,17 +619,18 @@ QVariant ObjectNodeInstance::property(const PropertyName &name) const
     QQmlProperty property(object(), QString::fromUtf8(name), context());
     if (property.property().isEnumType()) {
         QVariant value = property.read();
-        return property.property().enumerator().valueToKey(value.toInt());
+        QMetaEnum me = property.property().enumerator();
+        return QVariant::fromValue<Enumeration>(Enumeration(me.scope(), me.valueToKey(value.toInt())));
     }
 
-    if (property.propertyType() == QVariant::Url) {
+    if (property.propertyType() == QMetaType::QUrl) {
         QUrl url = property.read().toUrl();
         if (url.isEmpty())
             return QVariant();
 
         if (url.scheme() == "file") {
-            int basePathLength = nodeInstanceServer()->fileUrl().toLocalFile().lastIndexOf('/');
-            return QUrl(url.toLocalFile().mid(basePathLength + 1));
+            QFileInfo fi{nodeInstanceServer()->fileUrl().toLocalFile()};
+            return QUrl{fi.absoluteDir().relativeFilePath(url.toLocalFile())};
         }
     }
 

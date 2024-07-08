@@ -16,7 +16,7 @@
 #include <utils/environment.h>
 #include <utils/fileutils.h>
 #include <utils/pathchooser.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <QFormLayout>
@@ -141,7 +141,7 @@ public:
 
         // Connect
         connect(m_compilerCommand, &PathChooser::validChanged, this, [this] {
-            const FilePath path = m_compilerCommand->rawFilePath();
+            const FilePath path = m_compilerCommand->unexpandedFilePath();
             auto tc = static_cast<NimToolchain *>(toolchain());
             QTC_ASSERT(tc, return);
             tc->setCompilerCommand(path);

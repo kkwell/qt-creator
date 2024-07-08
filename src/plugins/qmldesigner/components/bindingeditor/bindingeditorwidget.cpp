@@ -7,7 +7,6 @@
 
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/coreplugintr.h>
-#include <coreplugin/icore.h>
 
 #include <projectexplorer/projectexplorerconstants.h>
 
@@ -30,14 +29,11 @@
 namespace QmlDesigner {
 
 BindingEditorWidget::BindingEditorWidget()
-    : m_context(new Core::IContext(this))
 {
     Core::Context context(BINDINGEDITOR_CONTEXT_ID,
                           ProjectExplorer::Constants::QMLJS_LANGUAGE_ID);
 
-    m_context->setWidget(this);
-    m_context->setContext(context);
-    Core::ICore::addContextObject(m_context);
+    Core::IContext::attach(this, context);
 
     Utils::TransientScrollAreaSupport::support(this);
 
@@ -132,14 +128,14 @@ void BindingDocument::applyFontSettings()
 {
     TextDocument::applyFontSettings();
     m_semanticHighlighter->updateFontSettings(fontSettings());
-    if (!isSemanticInfoOutdated())
+    if (!isSemanticInfoOutdated() && semanticInfo().isValid())
         m_semanticHighlighter->rerun(semanticInfo());
 }
 
 void BindingDocument::triggerPendingUpdates()
 {
     TextDocument::triggerPendingUpdates(); // calls applyFontSettings if necessary
-    if (!isSemanticInfoOutdated())
+    if (!isSemanticInfoOutdated() && semanticInfo().isValid())
         m_semanticHighlighter->rerun(semanticInfo());
 }
 
@@ -147,7 +143,6 @@ BindingEditorFactory::BindingEditorFactory()
 {
     setId(BINDINGEDITOR_CONTEXT_ID);
     setDisplayName(::Core::Tr::tr("Binding Editor"));
-    setEditorActionHandlers(0);
     addMimeType(BINDINGEDITOR_CONTEXT_ID);
     addMimeType(Utils::Constants::QML_MIMETYPE);
     addMimeType(Utils::Constants::QMLTYPES_MIMETYPE);

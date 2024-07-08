@@ -7,7 +7,11 @@
 #include "qmlanchorbindingproxy.h"
 #include "qmlmodelnodeproxy.h"
 
+#include <utils/uniqueobjectptr.h>
+
 #include <nodemetainfo.h>
+
+#include <memory>
 
 class PropertyEditorValue;
 
@@ -58,13 +62,16 @@ private:
                                    MaterialEditorView *materialEditor);
     PropertyName auxNamePostFix(const PropertyName &propertyName);
 
-    QQuickWidget *m_view = nullptr;
+    // to avoid a crash while destructing DesignerPropertyMap in the QQmlData
+    // this needs be destructed after m_quickWidget->engine() is destructed
+    DesignerPropertyMap m_backendValuesPropertyMap;
+
+    Utils::UniqueObjectPtr<QQuickWidget> m_quickWidget = nullptr;
     QmlAnchorBindingProxy m_backendAnchorBinding;
     QmlModelNodeProxy m_backendModelNode;
-    DesignerPropertyMap m_backendValuesPropertyMap;
-    QScopedPointer<MaterialEditorTransaction> m_materialEditorTransaction;
-    QScopedPointer<MaterialEditorContextObject> m_contextObject;
-    MaterialEditorImageProvider *m_materialEditorImageProvider = nullptr;
+    std::unique_ptr<MaterialEditorTransaction> m_materialEditorTransaction;
+    std::unique_ptr<MaterialEditorContextObject> m_contextObject;
+    QPointer<MaterialEditorImageProvider> m_materialEditorImageProvider;
 };
 
 } // namespace QmlDesigner

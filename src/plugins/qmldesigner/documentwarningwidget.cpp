@@ -39,8 +39,7 @@ DocumentWarningWidget::DocumentWarningWidget(QWidget *parent)
     m_messageLabel->setWordWrap(true);
     m_messageLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
-    m_ignoreWarningsCheckBox->setText(tr("Always ignore these warnings about features "
-                                         "not supported by Qt Quick Designer."));
+    m_ignoreWarningsCheckBox->setText(tr("Turn off warnings about unsupported Qt Design Studio features."));
 
     connect(m_navigateLabel, &QLabel::linkActivated, this, [this](const QString &link) {
         if (link == QLatin1String("goToCode")) {
@@ -93,7 +92,7 @@ void DocumentWarningWidget::refreshContent()
         m_ignoreWarningsCheckBox->hide();
         m_continueButton->setText(tr("OK"));
     } else {
-        m_headerLabel->setText(tr("This QML file contains features which are not supported by Qt Quick Designer at:"));
+        m_headerLabel->setText(tr("This QML file contains features which are not supported by Qt Design Studio at:"));
         {
             QSignalBlocker blocker(m_ignoreWarningsCheckBox);
             m_ignoreWarningsCheckBox->setChecked(!warningsEnabled());
@@ -150,8 +149,8 @@ bool DocumentWarningWidget::eventFilter(QObject *object, QEvent *event)
 
 void DocumentWarningWidget::showEvent(QShowEvent *event)
 {
-    const QColor backgroundColor = Utils::creatorTheme()->color(Utils::Theme::DScontrolBackground);
-    const QColor outlineColor = Utils::creatorTheme()->color(Utils::Theme::DScontrolOutline);
+    const QColor backgroundColor = Utils::creatorColor(Utils::Theme::DScontrolBackground);
+    const QColor outlineColor = Utils::creatorColor(Utils::Theme::DScontrolOutline);
     QPalette pal = palette();
     pal.setColor(QPalette::ToolTipBase, backgroundColor);
     pal.setColor(QPalette::ToolTipText, outlineColor);

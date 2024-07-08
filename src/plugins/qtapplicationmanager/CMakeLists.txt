@@ -5,7 +5,7 @@ add_qtc_plugin(QtApplicationManagerIntegration
     Core Debugger ProjectExplorer
     QtSupport RemoteLinux
   PLUGIN_CLASS AppManagerPlugin
-  INCLUDES ../../libs/3rdparty/yaml-cpp/include/
+
   DEPENDS Qt::Network Qt::Widgets ExtensionSystem Utils yaml-cpp
   SOURCES
     appmanagerconstants.h

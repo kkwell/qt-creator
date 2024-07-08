@@ -19,6 +19,7 @@ add_qtc_library(Utils
     basetreeview.cpp basetreeview.h
     benchmarker.cpp benchmarker.h
     buildablehelperlibrary.cpp buildablehelperlibrary.h
+    builderutils.h
     camelcasecursor.cpp camelcasecursor.h
     categorysortfiltermodel.cpp categorysortfiltermodel.h
     changeset.cpp changeset.h
@@ -31,6 +32,7 @@ add_qtc_library(Utils
     completingtextedit.cpp completingtextedit.h
     cpplanguage_details.h
     crumblepath.cpp crumblepath.h
+    datafromprocess.h
     delegates.cpp delegates.h
     detailsbutton.cpp detailsbutton.h
     detailswidget.cpp detailswidget.h
@@ -93,6 +95,7 @@ add_qtc_library(Utils
     link.cpp link.h
     listmodel.h
     listutils.h
+    lua.cpp lua.h
     macroexpander.cpp macroexpander.h
     mathutils.cpp mathutils.h
     mimeconstants.h
@@ -122,7 +125,6 @@ add_qtc_library(Utils
     port.cpp port.h
     portlist.cpp portlist.h
     predicates.h
-    process.cpp process.h
     processenums.h
     processhandle.cpp processhandle.h
     processhelper.cpp processhelper.h
@@ -135,6 +137,7 @@ add_qtc_library(Utils
     qrcparser.cpp qrcparser.h
     qtcassert.cpp qtcassert.h
     qtcolorbutton.cpp qtcolorbutton.h
+    qtcprocess.cpp qtcprocess.h
     qtcsettings.cpp qtcsettings.h
     ranges.h
     reloadpromptutils.cpp reloadpromptutils.h
@@ -197,6 +200,7 @@ add_qtc_library(Utils
     utilstr.h
     utilsicons.cpp utilsicons.h
     utiltypes.h
+    utility.h
     variablechooser.cpp variablechooser.h
     winutils.cpp winutils.h
     wizard.cpp wizard.h
@@ -269,7 +273,6 @@ extend_qtc_library(Utils
           fsengine/fsengine_impl.h
           fsengine/diriterator.h
           fsengine/fileiteratordevicesappender.h
-          fsengine/rootinjectfsengine.h
           fsengine/fixedlistfsengine.h
           fsengine/fsenginehandler.cpp
           fsengine/fsenginehandler.h

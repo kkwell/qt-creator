@@ -12,10 +12,12 @@
 #include "nodemetainfo.h"
 #include "qmlobjectnode.h"
 #include "variantproperty.h"
+#include <utils3d.h>
 
 #include <coreplugin/messagebox.h>
 
 #include <QTimer>
+#include <QUrl>
 
 namespace QmlDesigner {
 
@@ -73,7 +75,7 @@ ModelNode CreateTexture::createTextureFromImage(const  Utils::FilePath &assetPat
     if (mode != AddTextureMode::Texture && mode != AddTextureMode::LightProbe)
         return {};
 
-    ModelNode matLib = m_view->materialLibraryNode();
+    ModelNode matLib = Utils3D::materialLibraryNode(m_view);
     if (!matLib.isValid())
         return {};
 
@@ -81,16 +83,19 @@ ModelNode CreateTexture::createTextureFromImage(const  Utils::FilePath &assetPat
 
     QString textureSource = assetPath.relativePathFrom(DocumentManager::currentFilePath()).toString();
 
-    ModelNode newTexNode = m_view->getTextureDefaultInstance(textureSource);
+    ModelNode newTexNode = Utils3D::getTextureDefaultInstance(textureSource, m_view);
     if (!newTexNode.isValid()) {
+#ifdef QDS_USE_PROJECTSTORAGE
+        newTexNode = m_view->createModelNode("Texture");
+#else
         newTexNode = m_view->createModelNode("QtQuick3D.Texture",
                                              metaInfo.majorVersion(),
                                              metaInfo.minorVersion());
-
+#endif
         newTexNode.setIdWithoutRefactoring(m_view->model()->generateNewId(assetPath.baseName()));
 
         VariantProperty sourceProp = newTexNode.variantProperty("source");
-        sourceProp.setValue(textureSource);
+        sourceProp.setValue(QUrl(textureSource));
         matLib.defaultNodeListProperty().reparentHere(newTexNode);
     }
 
@@ -117,7 +122,7 @@ ModelNode CreateTexture::resolveSceneEnv(int sceneId)
     if (selectedNode.metaInfo().isQtQuick3DSceneEnvironment()) {
         activeSceneEnv = selectedNode;
     } else if (sceneId != -1) {
-        ModelNode activeScene = m_view->active3DSceneNode();
+        ModelNode activeScene = Utils3D::active3DSceneNode(m_view);
         if (activeScene.isValid()) {
             QmlObjectNode view3D;
             if (activeScene.metaInfo().isQtQuick3DView3D()) {

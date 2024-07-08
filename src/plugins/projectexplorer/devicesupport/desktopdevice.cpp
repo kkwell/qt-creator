@@ -6,7 +6,6 @@
 #include "../projectexplorerconstants.h"
 #include "../projectexplorertr.h"
 #include "desktopprocesssignaloperation.h"
-#include "processlist.h"
 
 #include <coreplugin/fileutils.h>
 
@@ -14,14 +13,13 @@
 #include <utils/environment.h>
 #include <utils/hostosinfo.h>
 #include <utils/portlist.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 #include <utils/terminalcommand.h>
 #include <utils/terminalhooks.h>
 #include <utils/url.h>
 
 #include <QCoreApplication>
-#include <QDateTime>
 
 #ifdef Q_OS_WIN
 #include <cstring>
@@ -65,7 +63,7 @@ DesktopDevice::DesktopDevice()
         Process process;
         process.setTerminalMode(TerminalMode::Detached);
         process.setEnvironment(realEnv);
-        process.setCommand({*shell, {}});
+        process.setCommand(CommandLine{*shell});
         process.setWorkingDirectory(path);
         process.start();
 

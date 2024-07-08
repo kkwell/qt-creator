@@ -31,7 +31,7 @@
 #include <utils/layoutbuilder.h>
 #include <utils/listmodel.h>
 #include <utils/pathchooser.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 #include <utils/treemodel.h>
 #include <utils/utilsicons.h>
@@ -751,11 +751,9 @@ PythonSettings::PythonSettings()
     initFromSettings(Core::ICore::settings());
 
     const auto onRegistrySetup = [](Async<QList<Interpreter>> &task) {
-        task.setFutureSynchronizer(ExtensionSystem::PluginManager::futureSynchronizer());
         task.setConcurrentCallData(pythonsFromRegistry);
     };
     const auto onPathSetup = [](Async<QList<Interpreter>> &task) {
-        task.setFutureSynchronizer(ExtensionSystem::PluginManager::futureSynchronizer());
         task.setConcurrentCallData(pythonsFromPath);
     };
     const auto onTaskDone = [](const Async<QList<Interpreter>> &task) {

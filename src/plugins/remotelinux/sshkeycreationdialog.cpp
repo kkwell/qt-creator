@@ -10,7 +10,7 @@
 #include <utils/fileutils.h>
 #include <utils/layoutbuilder.h>
 #include <utils/pathchooser.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 
 #include <QApplication>
 #include <QComboBox>
@@ -110,11 +110,11 @@ void SshKeyCreationDialog::generateKeys()
     const QString keyTypeString = QLatin1String(m_rsa->isChecked() ? "rsa": "ecdsa");
     QApplication::setOverrideCursor(Qt::BusyCursor);
     Process keygen;
-    const QStringList args{"-t", keyTypeString, "-b", m_comboBox->currentText(),
-                "-N", QString(), "-f", privateKeyFilePath().path()};
-    QString errorMsg;
-    keygen.setCommand({SshSettings::keygenFilePath(), args});
+    keygen.setCommand({SshSettings::keygenFilePath(),
+        {"-t", keyTypeString, "-b", m_comboBox->currentText(), "-N", QString(), "-f",
+         privateKeyFilePath().path()}});
     keygen.start();
+    QString errorMsg;
     if (!keygen.waitForFinished())
         errorMsg = keygen.errorString();
     else if (keygen.exitCode() != 0)

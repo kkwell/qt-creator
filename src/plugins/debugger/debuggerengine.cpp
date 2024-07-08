@@ -54,7 +54,7 @@
 #include <utils/basetreeview.h>
 #include <utils/checkablemessagebox.h>
 #include <utils/macroexpander.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/processhandle.h>
 #include <utils/processinterface.h>
 #include <utils/qtcassert.h>
@@ -553,8 +553,10 @@ void DebuggerEnginePrivate::setupViews()
         = new Perspective(perspectiveId, m_engine->displayName(), parentPerspectiveId, settingsId);
 
     m_progress.setProgressRange(0, 1000);
-    FutureProgress *fp = ProgressManager::addTask(m_progress.future(),
-        Tr::tr("Launching Debugger"), "Debugger.Launcher");
+    const QString msg = m_companionEngines.isEmpty()
+            ? Tr::tr("Launching Debugger")
+            : Tr::tr("Launching %1 Debugger").arg(m_debuggerName);
+    FutureProgress *fp = ProgressManager::addTask(m_progress.future(), msg, "Debugger.Launcher");
     connect(fp, &FutureProgress::canceled, m_engine, &DebuggerEngine::quitDebugger);
     m_progress.reportStarted();
 
@@ -2623,6 +2625,8 @@ bool DebuggerRunParameters::isCppDebugging() const
     return cppEngineType == GdbEngineType
         || cppEngineType == LldbEngineType
         || cppEngineType == CdbEngineType
+        || cppEngineType == GdbDapEngineType
+        || cppEngineType == LldbDapEngineType
         || cppEngineType == UvscEngineType;
 }
 

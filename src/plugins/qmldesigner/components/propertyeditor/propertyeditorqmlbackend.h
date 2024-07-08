@@ -3,16 +3,20 @@
 
 #pragma once
 
-#include "qmlanchorbindingproxy.h"
 #include "designerpropertymap.h"
-#include "propertyeditorvalue.h"
 #include "propertyeditorcontextobject.h"
+#include "propertyeditorvalue.h"
+#include "qmlanchorbindingproxy.h"
 #include "qmlmodelnodeproxy.h"
 #include "quick2propertyeditorview.h"
+
+#include <utils/uniqueobjectptr.h>
 
 #include <nodemetainfo.h>
 
 #include <QQmlPropertyMap>
+
+#include <memory>
 
 class PropertyEditorValue;
 
@@ -48,10 +52,13 @@ public:
     PropertyEditorValue *propertyValueForName(const QString &propertyName);
 
     static QString propertyEditorResourcesPath();
-    static QString templateGeneration(const NodeMetaInfo &type, const NodeMetaInfo &superType, const QmlObjectNode &node);
-
+#ifndef QDS_USE_PROJECTSTORAGE
+    static QString templateGeneration(const NodeMetaInfo &type,
+                                      const NodeMetaInfo &superType,
+                                      const QmlObjectNode &node);
     static QUrl getQmlFileUrl(const TypeName &relativeTypeName, const NodeMetaInfo &info);
     static std::tuple<QUrl, NodeMetaInfo> getQmlUrlForMetaInfo(const NodeMetaInfo &modelNode);
+#endif
 
     static bool checkIfUrlExists(const QUrl &url);
 
@@ -68,7 +75,15 @@ public:
                                        PropertyEditorView *propertyEditor);
     void setupInsightAttachedProperties(const QmlObjectNode &qmlObjectNode,
                                         PropertyEditorView *propertyEditor);
-    void setupAuxiliaryProperties(const QmlObjectNode &qmlObjectNode, PropertyEditorView *propertyEditor);
+    void setupAuxiliaryProperties(const QmlObjectNode &qmlObjectNode,
+                                  PropertyEditorView *propertyEditor);
+
+    void handleInstancePropertyChangedInModelNodeProxy(const ModelNode &modelNode,
+                                                       const PropertyName &propertyName);
+
+    void handleVariantPropertyChangedInModelNodeProxy(const VariantProperty &property);
+    void handleBindingPropertyChangedInModelNodeProxy(const BindingProperty &property);
+    void handlePropertiesRemovedInModelNodeProxy(const AbstractProperty &property);
 
     static NodeMetaInfo findCommonAncestor(const ModelNode &node);
 
@@ -80,20 +95,25 @@ private:
                                   PropertyEditorView *propertyEditor,
                                   const NodeMetaInfo &type);
 
-    static TypeName qmlFileName(const NodeMetaInfo &nodeInfo);
     static QUrl fileToUrl(const QString &filePath);
     static QString fileFromUrl(const QUrl &url);
+#ifndef QDS_USE_PROJECTSTORAGE
+    static TypeName qmlFileName(const NodeMetaInfo &nodeInfo);
     static QString locateQmlFile(const NodeMetaInfo &info, const QString &relativePath);
+#endif
     static TypeName fixTypeNameForPanes(const TypeName &typeName);
 
 private:
-    Quick2PropertyEditorView *m_view;
+    // to avoid a crash while destructing DesignerPropertyMap in the QQmlData
+    // this needs be destructed after m_quickWidget->engine() is destructed
+    DesignerPropertyMap m_backendValuesPropertyMap;
+
+    Utils::UniqueObjectPtr<Quick2PropertyEditorView> m_view = nullptr;
     QmlAnchorBindingProxy m_backendAnchorBinding;
     QmlModelNodeProxy m_backendModelNode;
-    DesignerPropertyMap m_backendValuesPropertyMap;
-    QScopedPointer<PropertyEditorTransaction> m_propertyEditorTransaction;
-    QScopedPointer<PropertyEditorValue> m_dummyPropertyEditorValue;
-    QScopedPointer<PropertyEditorContextObject> m_contextObject;
+    std::unique_ptr<PropertyEditorTransaction> m_propertyEditorTransaction;
+    std::unique_ptr<PropertyEditorValue> m_dummyPropertyEditorValue;
+    std::unique_ptr<PropertyEditorContextObject> m_contextObject;
 };
 
 } //QmlDesigner

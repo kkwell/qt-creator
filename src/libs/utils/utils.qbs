@@ -54,6 +54,7 @@ QtcLibrary {
         "benchmarker.h",
         "buildablehelperlibrary.cpp",
         "buildablehelperlibrary.h",
+        "builderutils.h",
         "camelcasecursor.cpp",
         "camelcasecursor.h",
         "categorysortfiltermodel.cpp",
@@ -77,6 +78,7 @@ QtcLibrary {
         "cpplanguage_details.h",
         "crumblepath.cpp",
         "crumblepath.h",
+        "datafromprocess.h",
         "delegates.cpp",
         "delegates.h",
         "detailsbutton.cpp",
@@ -184,6 +186,8 @@ QtcLibrary {
         "link.h",
         "listmodel.h",
         "listutils.h",
+        "lua.cpp",
+        "lua.h",
         "macroexpander.cpp",
         "macroexpander.h",
         "mathutils.cpp",
@@ -230,8 +234,8 @@ QtcLibrary {
         "portlist.cpp",
         "portlist.h",
         "predicates.h",
-        "process.cpp",
-        "process.h",
+        "qtcprocess.cpp",
+        "qtcprocess.h",
         "processenums.h",
         "processhandle.cpp",
         "processhandle.h",
@@ -257,6 +261,7 @@ QtcLibrary {
         "qtcolorbutton.h",
         "qtcsettings.cpp",
         "qtcsettings.h",
+        "ranges.h",
         "reloadpromptutils.cpp",
         "reloadpromptutils.h",
         "removefiledialog.cpp",
@@ -372,8 +377,7 @@ QtcLibrary {
             "fsenginehandler.cpp",
             "fsenginehandler.h",
             "fsengine_impl.cpp",
-            "fsengine_impl.h",
-            "rootinjectfsengine.h",
+            "fsengine_impl.h"
         ]
     }
 

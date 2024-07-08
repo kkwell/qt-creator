@@ -33,7 +33,7 @@
     \row
         \li \inlineimage numbers/02.png
         \li Kit selector
-        \li Select the appropriate \l{glossary-buildandrun-kit}{kit} for building
+        \li Select the appropriate \l{Kits}{kit} for building
             the project and running it on particular hardware.
         \li \l{Activate kits for a project}
     \row
@@ -95,7 +95,7 @@
     \endif
 
     \if defined(qtdesignstudio)
-    \section1 Customizing the Menu
+    \section1 Customizing the Menu Bar
 
     By default, top-level menu items \uicontrol Build, \uicontrol Debug, and
     \uicontrol Analyze are not visible. These menu items have options for
@@ -112,6 +112,9 @@
     \image studio-menu-item-visibility.png
 
     You need to restart \QDS to apply changes made to these settings.
+
+    \note To show or hide the \uicontrol {Menu Bar}, select \uicontrol View >
+    \uicontrol {Show Menu Bar}, or use \key {Ctrl+Alt+M}.
 
     \section1 Customizing the UI
 

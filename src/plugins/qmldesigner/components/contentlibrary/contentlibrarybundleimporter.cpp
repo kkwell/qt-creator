@@ -3,83 +3,67 @@
 
 #include "contentlibrarybundleimporter.h"
 
-#include "documentmanager.h"
-#include "import.h"
-#include "model.h"
-#include "qmldesignerconstants.h"
-#include "qmldesignerplugin.h"
-#include "rewritingexception.h"
+#include <documentmanager.h>
+#include <import.h>
+#include <model.h>
+#include <nodemetainfo.h>
+#include <qmldesignerconstants.h>
+#include <qmldesignerplugin.h>
+#include <rewritingexception.h>
 
 #include <qmljs/qmljsmodelmanagerinterface.h>
 
-#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStringList>
 
 using namespace Utils;
 
-namespace QmlDesigner::Internal {
+namespace QmlDesigner {
 
-ContentLibraryBundleImporter::ContentLibraryBundleImporter(const QString &bundleDir,
-                                                           const QString &bundleId,
-                                                           const QStringList &sharedFiles,
-                                                           QObject *parent)
+ContentLibraryBundleImporter::ContentLibraryBundleImporter(QObject *parent)
     : QObject(parent)
-    , m_bundleDir(FilePath::fromString(bundleDir))
-    , m_bundleId(bundleId)
-    , m_sharedFiles(sharedFiles)
 {
     m_importTimer.setInterval(200);
     connect(&m_importTimer, &QTimer::timeout, this, &ContentLibraryBundleImporter::handleImportTimer);
-    m_moduleName = QStringLiteral("%1.%2").arg(
-                QLatin1String(Constants::COMPONENT_BUNDLES_FOLDER),
-                m_bundleId).mid(1); // Chop leading slash
 }
 
 // Returns empty string on success or an error message on failure.
 // Note that there is also an asynchronous portion to the import, which will only
 // be done if this method returns success. Once the asynchronous portion of the
 // import is completed, importFinished signal will be emitted.
-QString ContentLibraryBundleImporter::importComponent(const QString &qmlFile,
+QString ContentLibraryBundleImporter::importComponent(const QString &bundleDir,
+                                                      const TypeName &type,
+                                                      const QString &qmlFile,
                                                       const QStringList &files)
 {
-    FilePath bundleImportPath = resolveBundleImportPath();
+    QString module = QString::fromLatin1(type.left(type.lastIndexOf('.')));
+    m_bundleId = module.mid(module.lastIndexOf('.') + 1);
+
+    FilePath bundleDirPath = FilePath::fromString(bundleDir); // source dir
+    FilePath bundleImportPath = resolveBundleImportPath(m_bundleId); // target dir
+
     if (bundleImportPath.isEmpty())
         return "Failed to resolve bundle import folder";
 
-    bool bundleImportPathExists = bundleImportPath.exists();
-
-    if (!bundleImportPathExists && !bundleImportPath.createDir())
+    if (!bundleImportPath.exists() && !bundleImportPath.createDir())
         return QStringLiteral("Failed to create bundle import folder: '%1'").arg(bundleImportPath.toString());
 
-    for (const QString &file : std::as_const(m_sharedFiles)) {
-        FilePath target = bundleImportPath.resolvePath(file);
-        if (!target.exists()) {
-            FilePath parentDir = target.parentDir();
-            if (!parentDir.exists() && !parentDir.createDir())
-                return QStringLiteral("Failed to create folder for: '%1'").arg(target.toString());
-            FilePath source = m_bundleDir.resolvePath(file);
-            if (!source.copyFile(target))
-                return QStringLiteral("Failed to copy shared file: '%1'").arg(source.toString());
-        }
-    }
-
-    FilePath qmldirPath = bundleImportPath.resolvePath(QStringLiteral("qmldir"));
+    FilePath qmldirPath = bundleImportPath.pathAppended("qmldir");
     QString qmldirContent = QString::fromUtf8(qmldirPath.fileContents().value_or(QByteArray()));
     if (qmldirContent.isEmpty()) {
         qmldirContent.append("module ");
-        qmldirContent.append(m_moduleName);
+        qmldirContent.append(module);
         qmldirContent.append('\n');
     }
 
-    FilePath qmlSourceFile = bundleImportPath.resolvePath(FilePath::fromString(qmlFile));
+    FilePath qmlSourceFile = bundleImportPath.pathAppended(qmlFile);
     const bool qmlFileExists = qmlSourceFile.exists();
     const QString qmlType = qmlSourceFile.baseName();
-    const QString fullTypeName = QStringLiteral("%1.%2.%3")
-            .arg(QLatin1String(Constants::COMPONENT_BUNDLES_FOLDER).mid(1), m_bundleId, qmlType);
-    if (m_pendingTypes.contains(fullTypeName) && !m_pendingTypes[fullTypeName])
-        return QStringLiteral("Unable to import while unimporting the same type: '%1'").arg(fullTypeName);
+
+    if (m_pendingTypes.contains(type) && !m_pendingTypes.value(type))
+        return QStringLiteral("Unable to import while unimporting the same type: '%1'").arg(QLatin1String(type));
+
     if (!qmldirContent.contains(qmlFile)) {
         qmldirContent.append(qmlType);
         qmldirContent.append(" 1.0 ");
@@ -92,12 +76,12 @@ QString ContentLibraryBundleImporter::importComponent(const QString &qmlFile,
     allFiles.append(files);
     allFiles.append(qmlFile);
     for (const QString &file : std::as_const(allFiles)) {
-        FilePath target = bundleImportPath.resolvePath(file);
+        FilePath target = bundleImportPath.pathAppended(file);
         FilePath parentDir = target.parentDir();
         if (!parentDir.exists() && !parentDir.createDir())
             return QStringLiteral("Failed to create folder for: '%1'").arg(target.toString());
 
-        FilePath source = m_bundleDir.resolvePath(file);
+        FilePath source = bundleDirPath.pathAppended(file);
         if (target.exists()) {
             if (source.lastModified() == target.lastModified())
                 continue;
@@ -126,23 +110,23 @@ QString ContentLibraryBundleImporter::importComponent(const QString &qmlFile,
     if (!model)
         return "Model not available, cannot add import statement or update code model";
 
-    Import import = Import::createLibraryImport(m_moduleName, "1.0");
+    Import import = Import::createLibraryImport(module, "1.0");
     if (!model->hasImport(import)) {
         if (model->possibleImports().contains(import)) {
-            m_importAddPending = false;
+            m_pendingImport.clear();
             try {
                 model->changeImports({import}, {});
             } catch (const RewritingException &) {
                 // No point in trying to add import asynchronously either, so just fail out
-                return QStringLiteral("Failed to add import statement for: '%1'").arg(m_moduleName);
+                return QStringLiteral("Failed to add import statement for: '%1'").arg(module);
             }
         } else {
             // If import is not yet possible, import statement needs to be added asynchronously to
             // avoid errors, as code model update takes a while.
-            m_importAddPending = true;
+            m_pendingImport = module;
         }
     }
-    m_pendingTypes.insert(fullTypeName, true);
+    m_pendingTypes.insert(type, true);
     m_importTimerCount = 0;
     m_importTimer.start();
 
@@ -154,17 +138,19 @@ void ContentLibraryBundleImporter::handleImportTimer()
     auto handleFailure = [this] {
         m_importTimer.stop();
         m_fullReset = false;
-        m_importAddPending = false;
+        m_pendingImport.clear();
         m_importTimerCount = 0;
 
         // Emit dummy finished signals for all pending types
-        const QStringList pendingTypes = m_pendingTypes.keys();
-        for (const QString &pendingType : pendingTypes) {
+        const QList<TypeName> pendingTypes = m_pendingTypes.keys();
+        for (const TypeName &pendingType : pendingTypes) {
             m_pendingTypes.remove(pendingType);
-            if (m_pendingTypes[pendingType])
-                emit importFinished({});
+            if (m_pendingTypes.value(pendingType))
+                emit importFinished({}, m_bundleId);
             else
-                emit unimportFinished({});
+                emit unimportFinished({}, m_bundleId);
+
+            m_bundleId.clear();
         }
     };
 
@@ -186,12 +172,12 @@ void ContentLibraryBundleImporter::handleImportTimer()
 
     QmlDesignerPlugin::instance()->documentManager().resetPossibleImports();
 
-    if (m_importAddPending) {
+    if (!m_pendingImport.isEmpty()) {
         try {
-            Import import = Import::createLibraryImport(m_moduleName, "1.0");
+            Import import = Import::createLibraryImport(m_pendingImport, "1.0");
             if (model->possibleImports().contains(import)) {
                 model->changeImports({import}, {});
-                m_importAddPending = false;
+                m_pendingImport.clear();
             }
         } catch (const RewritingException &) {
             // Import adding is unlikely to succeed later, either, so just bail out
@@ -201,21 +187,23 @@ void ContentLibraryBundleImporter::handleImportTimer()
     }
 
     // Detect when the code model has the new material(s) fully available
-    const QStringList pendingTypes = m_pendingTypes.keys();
-    for (const QString &pendingType : pendingTypes) {
-        NodeMetaInfo metaInfo = model->metaInfo(pendingType.toUtf8());
-        const bool isImport = m_pendingTypes[pendingType];
+    const QList<TypeName> pendingTypes = m_pendingTypes.keys();
+    for (const TypeName &pendingType : pendingTypes) {
+        NodeMetaInfo metaInfo = model->metaInfo(pendingType);
+        const bool isImport = m_pendingTypes.value(pendingType);
         const bool typeComplete = metaInfo.isValid() && !metaInfo.prototypes().empty();
         if (isImport == typeComplete) {
             m_pendingTypes.remove(pendingType);
             if (isImport)
 #ifdef QDS_USE_PROJECTSTORAGE
-                emit importFinished(pendingType.toUtf8());
+                emit importFinished(pendingType, m_bundleId);
 #else
-                emit importFinished(metaInfo);
+                emit importFinished(metaInfo, m_bundleId);
 #endif
             else
-                emit unimportFinished(metaInfo);
+                emit unimportFinished(metaInfo, m_bundleId);
+
+            m_bundleId.clear();
         }
     }
 
@@ -225,10 +213,10 @@ void ContentLibraryBundleImporter::handleImportTimer()
     }
 }
 
-QVariantHash ContentLibraryBundleImporter::loadAssetRefMap(const Utils::FilePath &bundlePath)
+QVariantHash ContentLibraryBundleImporter::loadAssetRefMap(const FilePath &bundlePath)
 {
     FilePath assetRefPath = bundlePath.resolvePath(QLatin1String(Constants::COMPONENT_BUNDLES_ASSET_REF_FILE));
-    const Utils::expected_str<QByteArray> content = assetRefPath.fileContents();
+    const expected_str<QByteArray> content = assetRefPath.fileContents();
     if (content) {
         QJsonParseError error;
         QJsonDocument bundleDataJsonDoc = QJsonDocument::fromJson(*content, &error);
@@ -242,7 +230,7 @@ QVariantHash ContentLibraryBundleImporter::loadAssetRefMap(const Utils::FilePath
     return {};
 }
 
-void ContentLibraryBundleImporter::writeAssetRefMap(const Utils::FilePath &bundlePath,
+void ContentLibraryBundleImporter::writeAssetRefMap(const FilePath &bundlePath,
                                                     const QVariantHash &assetRefMap)
 {
     FilePath assetRefPath = bundlePath.resolvePath(QLatin1String(Constants::COMPONENT_BUNDLES_ASSET_REF_FILE));
@@ -253,9 +241,14 @@ void ContentLibraryBundleImporter::writeAssetRefMap(const Utils::FilePath &bundl
     }
 }
 
-QString ContentLibraryBundleImporter::unimportComponent(const QString &qmlFile)
+QString ContentLibraryBundleImporter::unimportComponent(const TypeName &type, const QString &qmlFile)
 {
-    FilePath bundleImportPath = resolveBundleImportPath();
+    QString module = QString::fromLatin1(type.left(type.lastIndexOf('.')));
+    m_bundleId = module.mid(module.lastIndexOf('.') + 1);
+
+    emit aboutToUnimport(type, m_bundleId);
+
+    FilePath bundleImportPath = resolveBundleImportPath(m_bundleId);
     if (bundleImportPath.isEmpty())
         return QStringLiteral("Failed to resolve bundle import folder for: '%1'").arg(qmlFile);
 
@@ -274,10 +267,10 @@ QString ContentLibraryBundleImporter::unimportComponent(const QString &qmlFile)
     QByteArray newContent;
 
     QString qmlType = qmlFilePath.baseName();
-    const QString fullTypeName = QStringLiteral("%1.%2.%3")
-            .arg(QLatin1String(Constants::COMPONENT_BUNDLES_FOLDER).mid(1), m_bundleId, qmlType);
-    if (m_pendingTypes.contains(fullTypeName) && m_pendingTypes[fullTypeName])
-        return QStringLiteral("Unable to unimport while importing the same type: '%1'").arg(fullTypeName);
+    if (m_pendingTypes.contains(type) && m_pendingTypes.value(type)) {
+        return QStringLiteral("Unable to unimport while importing the same type: '%1'")
+            .arg(QString::fromLatin1(type));
+    }
 
     if (qmldirContent) {
         int typeIndex = qmldirContent->indexOf(qmlType.toUtf8());
@@ -293,7 +286,7 @@ QString ContentLibraryBundleImporter::unimportComponent(const QString &qmlFile)
         }
     }
 
-    m_pendingTypes.insert(fullTypeName, false);
+    m_pendingTypes.insert(type, false);
 
     QVariantHash assetRefMap = loadAssetRefMap(bundleImportPath);
     bool writeAssetRefs = false;
@@ -327,7 +320,7 @@ QString ContentLibraryBundleImporter::unimportComponent(const QString &qmlFile)
         auto doc = QmlDesignerPlugin::instance()->currentDesignDocument();
         Model *model = doc ? doc->currentModel() : nullptr;
         if (model) {
-            Import import = Import::createLibraryImport(m_moduleName, "1.0");
+            Import import = Import::createLibraryImport(module, "1.0");
             if (model->imports().contains(import))
                 model->changeImports({}, {import});
         }
@@ -340,18 +333,14 @@ QString ContentLibraryBundleImporter::unimportComponent(const QString &qmlFile)
     return {};
 }
 
-FilePath ContentLibraryBundleImporter::resolveBundleImportPath()
+FilePath ContentLibraryBundleImporter::resolveBundleImportPath(const QString &bundleId)
 {
-    FilePath bundleImportPath = QmlDesignerPlugin::instance()->documentManager().currentProjectDirPath();
+    FilePath bundleImportPath = QmlDesignerPlugin::instance()->documentManager()
+                                    .generatedComponentUtils().componentBundlesBasePath();
     if (bundleImportPath.isEmpty())
-        return bundleImportPath;
+        return {};
 
-    const QString projectBundlePath = QStringLiteral("%1%2/%3").arg(
-                QLatin1String(Constants::DEFAULT_ASSET_IMPORT_FOLDER),
-                QLatin1String(Constants::COMPONENT_BUNDLES_FOLDER),
-                m_bundleId).mid(1); // Chop leading slash
-
-    return bundleImportPath.resolvePath(projectBundlePath);
+    return bundleImportPath.resolvePath(bundleId);
 }
 
-} // namespace QmlDesigner::Internal
+} // namespace QmlDesigner

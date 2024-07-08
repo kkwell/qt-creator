@@ -149,6 +149,7 @@ public:
     QString defaultPuppetToplevelBuildDirectory() const override { return {}; }
     QString qmlPuppetFallbackDirectory() const override { return {}; }
     QUrl projectUrl() const override { return {}; }
+    QString projectName() const override { return {}; }
     void parseItemLibraryDescriptions() override {}
     const QmlDesigner::DesignerSettings &designerSettings() const override { return settings; }
     void undoOnCurrentDesignDocument() override {}
@@ -182,8 +183,11 @@ ModelPointer createModel(const QString &typeName,
 {
     QApplication::processEvents();
 
+#ifdef QDS_USE_PROJECTSTORAGE
+    auto model = metaInfoPropxyModel->createModel(typeName.toUtf8());
+#else
     auto model = QmlDesigner::Model::create(typeName.toUtf8(), major, minor, metaInfoPropxyModel);
-
+#endif
     QPlainTextEdit *textEdit = new QPlainTextEdit;
     QObject::connect(model.get(), &QObject::destroyed, textEdit, &QObject::deleteLater);
     textEdit->setPlainText(QString("import %1 %3.%4; %2{}")
@@ -695,17 +699,17 @@ void tst_TestCore::testRewriterDynamicProperties()
     QCOMPARE(rootModelNode.properties().count(), 18);
     QVERIFY(rootModelNode.hasVariantProperty("i"));
     QCOMPARE(rootModelNode.variantProperty("i").dynamicTypeName(), QmlDesigner::TypeName("int"));
-    QCOMPARE(rootModelNode.variantProperty("i").value().type(), QVariant::Int);
+    QCOMPARE(rootModelNode.variantProperty("i").value().typeId(), QMetaType::Int);
     QCOMPARE(testRewriterView1->rootModelNode().variantProperty("i").value().toInt(), 0);
 
     QVERIFY(rootModelNode.hasVariantProperty("ii"));
     QCOMPARE(rootModelNode.variantProperty("ii").dynamicTypeName(), QmlDesigner::TypeName("int"));
-    QCOMPARE(rootModelNode.variantProperty("ii").value().type(), QVariant::Int);
+    QCOMPARE(rootModelNode.variantProperty("ii").value().typeId(), QMetaType::Int);
     QCOMPARE(testRewriterView1->rootModelNode().variantProperty("ii").value().toInt(), 1);
 
     QVERIFY(rootModelNode.hasVariantProperty("b"));
     QCOMPARE(rootModelNode.variantProperty("b").dynamicTypeName(), QmlDesigner::TypeName("bool"));
-    QCOMPARE(rootModelNode.variantProperty("b").value().type(), QVariant::Bool);
+    QCOMPARE(rootModelNode.variantProperty("b").value().typeId(), QMetaType::Bool);
     QCOMPARE(testRewriterView1->rootModelNode().variantProperty("b").value().toBool(), false);
 
     QVERIFY(rootModelNode.hasVariantProperty("bb"));
@@ -713,7 +717,7 @@ void tst_TestCore::testRewriterDynamicProperties()
 
     QVERIFY(rootModelNode.hasVariantProperty("d"));
     QCOMPARE(rootModelNode.variantProperty("d").dynamicTypeName(), QmlDesigner::TypeName("double"));
-    QCOMPARE(rootModelNode.variantProperty("d").value().type(), QVariant::Double);
+    QCOMPARE(rootModelNode.variantProperty("d").value().typeId(), QMetaType::Double);
     QCOMPARE(testRewriterView1->rootModelNode().variantProperty("d").value().toDouble(), 0.0);
 
     QVERIFY(rootModelNode.hasVariantProperty("dd"));
@@ -721,7 +725,7 @@ void tst_TestCore::testRewriterDynamicProperties()
 
     QVERIFY(rootModelNode.hasVariantProperty("r"));
     QCOMPARE(rootModelNode.variantProperty("r").dynamicTypeName(), QmlDesigner::TypeName("real"));
-    QCOMPARE(rootModelNode.variantProperty("r").value().type(), QVariant::Double);
+    QCOMPARE(rootModelNode.variantProperty("r").value().typeId(), QMetaType::Double);
     QCOMPARE(testRewriterView1->rootModelNode().variantProperty("r").value().toDouble(), 0.0);
 
     QVERIFY(rootModelNode.hasVariantProperty("rr"));
@@ -729,7 +733,7 @@ void tst_TestCore::testRewriterDynamicProperties()
 
     QVERIFY(rootModelNode.hasVariantProperty("s"));
     QCOMPARE(rootModelNode.variantProperty("s").dynamicTypeName(), QmlDesigner::TypeName("string"));
-    QCOMPARE(rootModelNode.variantProperty("s").value().type(), QVariant::String);
+    QCOMPARE(rootModelNode.variantProperty("s").value().typeId(), QMetaType::QString);
     QCOMPARE(testRewriterView1->rootModelNode().variantProperty("s").value().toString(), QString());
 
     QVERIFY(rootModelNode.hasVariantProperty("ss"));
@@ -737,7 +741,7 @@ void tst_TestCore::testRewriterDynamicProperties()
 
     QVERIFY(rootModelNode.hasVariantProperty("u"));
     QCOMPARE(rootModelNode.variantProperty("u").dynamicTypeName(), QmlDesigner::TypeName("url"));
-    QCOMPARE(rootModelNode.variantProperty("u").value().type(), QVariant::Url);
+    QCOMPARE(rootModelNode.variantProperty("u").value().typeId(), QMetaType::QUrl);
     QCOMPARE(testRewriterView1->rootModelNode().variantProperty("u").value().toUrl(), QUrl());
 
     QVERIFY(rootModelNode.hasVariantProperty("uu"));
@@ -745,7 +749,7 @@ void tst_TestCore::testRewriterDynamicProperties()
 
     QVERIFY(rootModelNode.hasVariantProperty("c"));
     QCOMPARE(rootModelNode.variantProperty("c").dynamicTypeName(), QmlDesigner::TypeName("color"));
-    QCOMPARE(rootModelNode.variantProperty("c").value().type(), QVariant::Color);
+    QCOMPARE(rootModelNode.variantProperty("c").value().typeId(), QMetaType::QColor);
     QCOMPARE(testRewriterView1->rootModelNode().variantProperty("c").value().value<QColor>(), QColor());
 
     QVERIFY(rootModelNode.hasVariantProperty("cc"));
@@ -753,7 +757,7 @@ void tst_TestCore::testRewriterDynamicProperties()
 
     QVERIFY(rootModelNode.hasVariantProperty("t"));
     QCOMPARE(rootModelNode.variantProperty("t").dynamicTypeName(), QmlDesigner::TypeName("date"));
-    QCOMPARE(rootModelNode.variantProperty("t").value().type(), QVariant::Date);
+    QCOMPARE(rootModelNode.variantProperty("t").value().typeId(), QMetaType::QDate);
     QCOMPARE(testRewriterView1->rootModelNode().variantProperty("t").value().value<QDate>(), QDate());
 
     QVERIFY(rootModelNode.hasVariantProperty("tt"));
@@ -761,8 +765,8 @@ void tst_TestCore::testRewriterDynamicProperties()
 
     QVERIFY(rootModelNode.hasVariantProperty("v"));
     QCOMPARE(rootModelNode.variantProperty("v").dynamicTypeName(), QmlDesigner::TypeName("variant"));
-    const int type = rootModelNode.variantProperty("v").value().type();
-    QCOMPARE(type, QMetaType::type("QVariant"));
+    const int type = rootModelNode.variantProperty("v").value().typeId();
+    QCOMPARE(type, QMetaType::fromName("QVariant").id());
 
     QVERIFY(rootModelNode.hasVariantProperty("vv"));
     const QString inThere = testRewriterView1->rootModelNode().variantProperty("vv").value().value<QString>();
@@ -1365,6 +1369,14 @@ void tst_TestCore::testRewriterBehaivours()
 
     QVERIFY(metaInfo.isValid());
 
+#ifdef QDS_USE_PROJECTSTORAGE
+    ModelNode newBehavior = testRewriterView->createModelNode("Behavior",
+                                                              {},
+                                                              {},
+                                                              {},
+                                                              ModelNode::NodeWithoutSource,
+                                                              "height");
+#else
     ModelNode newBehavior = testRewriterView->createModelNode("QtQuick.Behavior",
                                                               metaInfo.majorVersion(),
                                                               metaInfo.minorVersion(),
@@ -1373,17 +1385,20 @@ void tst_TestCore::testRewriterBehaivours()
                                                               {},
                                                               ModelNode::NodeWithoutSource,
                                                               "height");
-
+#endif
     rootModelNode.defaultNodeListProperty().reparentHere(newBehavior);
 
     QCOMPARE(newBehavior.behaviorPropertyName(), "height");
 
     metaInfo = animation.metaInfo();
     QVERIFY(metaInfo.isValid());
+#ifdef QDS_USE_PROJECTSTORAGE
+    ModelNode newAnimation = testRewriterView->createModelNode(model->exportedTypeNameForMetaInfo(metaInfo).name.toQByteArray());
+#else
     ModelNode newAnimation = testRewriterView->createModelNode(metaInfo.typeName(),
                                                                metaInfo.majorVersion(),
                                                                metaInfo.minorVersion());
-
+#endif
     newBehavior.defaultNodeListProperty().reparentHere(newAnimation);
 
     newAnimation.variantProperty("duration").setValue(500);
@@ -1666,8 +1681,10 @@ void tst_TestCore::testStatesVersionFailing()
 
     QCOMPARE(QmlItemNode(rootModelNode).states().state("state2"), newState);
 
+#ifndef QDS_USE_PROJECTSTORAGE
     QCOMPARE(stateInfo.majorVersion(), newState.modelNode().majorVersion());
     QCOMPARE(stateInfo.minorVersion(), newState.modelNode().minorVersion());
+#endif
 
     ModelNode rect1Node = view->modelNodeForId("rect1");
     QVERIFY(rect1Node.isValid());
@@ -1708,8 +1725,10 @@ void tst_TestCore::testStatesVersionFailing()
     QVERIFY(changes2.modelNode().hasProperty("x"));
     QVERIFY(oldText != textEdit.toPlainText());
 
+#ifndef QDS_USE_PROJECTSTORAGE
     QCOMPARE(changeInfo.majorVersion(), changes2.modelNode().majorVersion());
     QCOMPARE(changeInfo.minorVersion(), changes2.modelNode().minorVersion());
+#endif
 }
 
 void tst_TestCore::loadSubItems()
@@ -1987,8 +2006,10 @@ void tst_TestCore::testBasicStatesQtQuick20()
     QCOMPARE(rootModelNode.majorVersion(), 2);
     //QCOMPARE(rootModelNode.majorQtQuickVersion(), 2);
 
+#ifndef QDS_USE_PROJECTSTORAGE
     qDebug() << rootModelNode.nodeListProperty("states").toModelNodeList().first().metaInfo().majorVersion();
     qDebug() << rootModelNode.nodeListProperty("states").toModelNodeList().first().metaInfo().typeName();
+#endif
 
     QSKIP("No qml2puppet");
 
@@ -3852,8 +3873,8 @@ void tst_TestCore::testRewriterPreserveType()
     QCOMPARE(rootNode.type(), QmlDesigner::TypeName("QtQuick.Rectangle"));
 
     ModelNode textNode = rootNode.directSubModelNodes().first();
-    QCOMPARE(QVariant::Bool, textNode.variantProperty("font.bold").value().type());
-    QCOMPARE(QVariant::Double, textNode.variantProperty("font.pointSize").value().type());
+    QCOMPARE(QMetaType::Bool, textNode.variantProperty("font.bold").value().typeId());
+    QCOMPARE(QMetaType::Double, textNode.variantProperty("font.pointSize").value().typeId());
     textNode.variantProperty("font.bold").setValue(QVariant(false));
     textNode.variantProperty("font.bold").setValue(QVariant(true));
     textNode.variantProperty("font.pointSize").setValue(QVariant(13.0));
@@ -3863,8 +3884,8 @@ void tst_TestCore::testRewriterPreserveType()
     newTextNode.variantProperty("font.bold").setValue(QVariant(true));
     newTextNode.variantProperty("font.pointSize").setValue(QVariant(13.0));
 
-    QCOMPARE(QVariant::Bool, newTextNode.variantProperty("font.bold").value().type());
-    QCOMPARE(QVariant::Double, newTextNode.variantProperty("font.pointSize").value().type());
+    QCOMPARE(QMetaType::Bool, newTextNode.variantProperty("font.bold").value().typeId());
+    QCOMPARE(QMetaType::Double, newTextNode.variantProperty("font.pointSize").value().typeId());
 }
 
 void tst_TestCore::testRewriterForArrayMagic()
@@ -4833,9 +4854,11 @@ void tst_TestCore::testMetaInfoSimpleType()
     NodeMetaInfo itemMetaInfo = model->metaInfo("QtQuick.Item", 2, 1);
 
     QVERIFY(itemMetaInfo.isValid());
+#ifndef QDS_USE_PROJECTSTORAGE
     QCOMPARE(itemMetaInfo.typeName(), QmlDesigner::TypeName("QtQuick.Item"));
     QCOMPARE(itemMetaInfo.majorVersion(), 2);
     QCOMPARE(itemMetaInfo.minorVersion(), 1);
+#endif
 
     // super classes
     NodeMetaInfo qobject = itemMetaInfo.prototypes()[1];
@@ -4857,13 +4880,17 @@ void tst_TestCore::testMetaInfoUncreatableType()
     QVERIFY(animationTypeInfo.isValid());
 
     QVERIFY(animationTypeInfo.isValid());
+#ifndef QDS_USE_PROJECTSTORAGE
     QCOMPARE(animationTypeInfo.typeName(), QmlDesigner::TypeName("QtQuick.Animation"));
     QCOMPARE(animationTypeInfo.majorVersion(), 2);
     QCOMPARE(animationTypeInfo.minorVersion(), 1);
+#endif
 
     NodeMetaInfo qObjectTypeInfo = animationTypeInfo.prototypes()[1];
     QVERIFY(qObjectTypeInfo.isValid());
+#ifndef QDS_USE_PROJECTSTORAGE
     QCOMPARE(qObjectTypeInfo.simplifiedTypeName(), QmlDesigner::TypeName("QtObject"));
+#endif
 
     QCOMPARE(animationTypeInfo.prototypes().size(), 2);
 }
@@ -4903,9 +4930,11 @@ void tst_TestCore::testMetaInfoCustomType()
 
     NodeMetaInfo stateOperationInfo = propertyChangesInfo.prototypes()[1];
     QVERIFY(stateOperationInfo.isValid());
+#ifndef QDS_USE_PROJECTSTORAGE
     QCOMPARE(stateOperationInfo.typeName(), QmlDesigner::TypeName("QtQuick.QQuickStateOperation"));
     QCOMPARE(stateOperationInfo.majorVersion(), -1);
     QCOMPARE(stateOperationInfo.minorVersion(), -1);
+#endif
     QCOMPARE(propertyChangesInfo.prototypes().size(), 3);
 
     // DeclarativePropertyChanges just has 3 properties
@@ -4923,25 +4952,31 @@ void tst_TestCore::testMetaInfoEnums()
     QVERIFY(view.data());
     model->attachView(view.data());
 
+#ifndef QDS_USE_PROJECTSTORAGE
     QCOMPARE(view->rootModelNode().metaInfo().typeName(), QmlDesigner::TypeName("QtQuick.Text"));
+#endif
 
     QVERIFY(view->rootModelNode().metaInfo().hasProperty("transformOrigin"));
 
     QVERIFY(view->rootModelNode().metaInfo().property("transformOrigin").isEnumType());
+#ifndef QDS_USE_PROJECTSTORAGE
     QCOMPARE(view->rootModelNode()
                  .metaInfo()
                  .property("transformOrigin")
                  .propertyType()
                  .simplifiedTypeName(),
              QmlDesigner::TypeName("TransformOrigin"));
+#endif
 
     QVERIFY(view->rootModelNode().metaInfo().property("horizontalAlignment").isEnumType());
+#ifndef QDS_USE_PROJECTSTORAGE
     QCOMPARE(view->rootModelNode()
                  .metaInfo()
                  .property("horizontalAlignment")
                  .propertyType()
                  .simplifiedTypeName(),
              QmlDesigner::TypeName("HAlignment"));
+#endif
 
     QApplication::processEvents();
 }
@@ -5038,10 +5073,12 @@ void tst_TestCore::testMetaInfoDotProperties()
     QVERIFY(model->hasNodeMetaInfo("QtQuick.Text"));
 
     QVERIFY(model->metaInfo("QtQuick.Rectangle").hasProperty("border"));
+#ifndef QDS_USE_PROJECTSTORAGE
     QCOMPARE(model->metaInfo("QtQuick.Rectangle").property("border").propertyType().typeName(),
              QmlDesigner::TypeName("<cpp>.QQuickPen"));
 
     QCOMPARE(view->rootModelNode().metaInfo().typeName(), QmlDesigner::TypeName("QtQuick.Text"));
+#endif
     QVERIFY(view->rootModelNode().metaInfo().hasProperty("font"));
 
     QVERIFY(view->rootModelNode().metaInfo().hasProperty("font.bold"));
@@ -5071,7 +5108,9 @@ void tst_TestCore::testMetaInfoListProperties()
     model->attachView(view.data());
 
     QVERIFY(model->hasNodeMetaInfo("QtQuick.Item"));
+#ifndef QDS_USE_PROJECTSTORAGE
     QCOMPARE(view->rootModelNode().metaInfo().typeName(), QmlDesigner::TypeName("QtQuick.Item"));
+#endif
 
     QVERIFY(view->rootModelNode().metaInfo().hasProperty("states"));
     QVERIFY(view->rootModelNode().metaInfo().property("states").isListProperty());
@@ -5108,10 +5147,12 @@ void tst_TestCore::testQtQuick20Basic()
     QVERIFY(testRewriterView->errors().isEmpty());
     ModelNode rootModelNode(testRewriterView->rootModelNode());
     QVERIFY(rootModelNode.isValid());
+#ifndef QDS_USE_PROJECTSTORAGE
     QCOMPARE(rootModelNode.metaInfo().majorVersion(), 2);
     QCOMPARE(rootModelNode.metaInfo().minorVersion(), 0);
     //QCOMPARE(rootModelNode.majorQtQuickVersion(), 2);
     QCOMPARE(rootModelNode.majorVersion(), 2);
+#endif
 }
 
 void tst_TestCore::testQtQuick20BasicRectangle()
@@ -5133,11 +5174,13 @@ void tst_TestCore::testQtQuick20BasicRectangle()
     QVERIFY(testRewriterView->errors().isEmpty());
     ModelNode rootModelNode(testRewriterView->rootModelNode());
     QVERIFY(rootModelNode.isValid());
+#ifndef QDS_USE_PROJECTSTORAGE
     QCOMPARE(rootModelNode.type(), QmlDesigner::TypeName("QtQuick.Rectangle"));
     QCOMPARE(rootModelNode.metaInfo().majorVersion(), 2);
     QCOMPARE(rootModelNode.metaInfo().minorVersion(), 0);
     //QCOMPARE(rootModelNode.majorQtQuickVersion(), 2);
     QCOMPARE(rootModelNode.majorVersion(), 2);
+#endif
 }
 
 void tst_TestCore::testQtQuickControls2()
@@ -6915,9 +6958,9 @@ void tst_TestCore::testModelPropertyValueTypes()
     ModelNode rootModelNode(testRewriterView1->rootModelNode());
     QVERIFY(rootModelNode.isValid());
 
-    QCOMPARE(rootModelNode.variantProperty("width").value().type(), QVariant::Double);
-    QCOMPARE(rootModelNode.variantProperty("radius").value().type(), QVariant::Double);
-    QCOMPARE(rootModelNode.variantProperty("color").value().type(), QVariant::Color);
+    QCOMPARE(rootModelNode.variantProperty("width").value().typeId(), QMetaType::Double);
+    QCOMPARE(rootModelNode.variantProperty("radius").value().typeId(), QMetaType::Double);
+    QCOMPARE(rootModelNode.variantProperty("color").value().typeId(), QMetaType::QColor);
 }
 
 void tst_TestCore::testModelNodeInHierarchy()
@@ -8921,18 +8964,18 @@ void tst_TestCore::loadGradient()
         QCOMPARE(pOne.id(), QString("pOne"));
         QCOMPARE(pOne.directSubModelNodes().size(), 0);
         QCOMPARE(pOne.propertyNames().size(), 2);
-        QCOMPARE(pOne.variantProperty("position").value().type(), QVariant::Double);
+        QCOMPARE(pOne.variantProperty("position").value().typeId(), QMetaType::Double);
         QCOMPARE(pOne.variantProperty("position").value().toDouble(), 0.0);
-        QCOMPARE(pOne.variantProperty("color").value().type(), QVariant::Color);
+        QCOMPARE(pOne.variantProperty("color").value().typeId(), QMetaType::QColor);
         QCOMPARE(pOne.variantProperty("color").value().value<QColor>(), QColor("lightsteelblue"));
 
         QCOMPARE(pTwo.type(), QmlDesigner::TypeName("QtQuick.GradientStop"));
         QCOMPARE(pTwo.id(), QString("pTwo"));
         QCOMPARE(pTwo.directSubModelNodes().size(), 0);
         QCOMPARE(pTwo.propertyNames().size(), 2);
-        QCOMPARE(pTwo.variantProperty("position").value().type(), QVariant::Double);
+        QCOMPARE(pTwo.variantProperty("position").value().typeId(), QMetaType::Double);
         QCOMPARE(pTwo.variantProperty("position").value().toDouble(), 1.0);
-        QCOMPARE(pTwo.variantProperty("color").value().type(), QVariant::Color);
+        QCOMPARE(pTwo.variantProperty("color").value().typeId(), QMetaType::QColor);
         QCOMPARE(pTwo.variantProperty("color").value().value<QColor>(), QColor("blue"));
     }
 
@@ -8961,18 +9004,18 @@ void tst_TestCore::loadGradient()
         QCOMPARE(nOne.id(), QString("nOne"));
         QCOMPARE(nOne.directSubModelNodes().size(), 0);
         QCOMPARE(nOne.propertyNames().size(), 2);
-        QCOMPARE(nOne.variantProperty("position").value().type(), QVariant::Double);
+        QCOMPARE(nOne.variantProperty("position").value().typeId(), QMetaType::Double);
         QCOMPARE(nOne.variantProperty("position").value().toDouble(), 0.0);
-        QCOMPARE(nOne.variantProperty("color").value().type(), QVariant::Color);
+        QCOMPARE(nOne.variantProperty("color").value().typeId(), QMetaType::QColor);
         QCOMPARE(nOne.variantProperty("color").value().value<QColor>(), QColor("blue"));
 
         QCOMPARE(nTwo.type(), QmlDesigner::TypeName("QtQuick.GradientStop"));
         QCOMPARE(nTwo.id(), QString("nTwo"));
         QCOMPARE(nTwo.directSubModelNodes().size(), 0);
         QCOMPARE(nTwo.propertyNames().size(), 2);
-        QCOMPARE(nTwo.variantProperty("position").value().type(), QVariant::Double);
+        QCOMPARE(nTwo.variantProperty("position").value().typeId(), QMetaType::Double);
         QCOMPARE(nTwo.variantProperty("position").value().toDouble(), 1.0);
-        QCOMPARE(nTwo.variantProperty("color").value().type(), QVariant::Color);
+        QCOMPARE(nTwo.variantProperty("color").value().typeId(), QMetaType::QColor);
         QCOMPARE(nTwo.variantProperty("color").value().value<QColor>(), QColor("lightsteelblue"));
     }
 }

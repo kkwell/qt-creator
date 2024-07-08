@@ -14,11 +14,11 @@
 #include "cpplocalrenaming.h"
 #include "cppmodelmanager.h"
 #include "cpppreprocessordialog.h"
-#include "cppquickfixassistant.h"
 #include "cppselectionchanger.h"
 #include "cppsemanticinfo.h"
 #include "cppuseselectionsupdater.h"
 #include "doxygengenerator.h"
+#include "quickfixes/cppquickfixassistant.h"
 
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
@@ -44,6 +44,7 @@
 #include <texteditor/completionsettings.h>
 #include <texteditor/fontsettings.h>
 #include <texteditor/refactoroverlay.h>
+#include <texteditor/syntaxhighlighter.h>
 #include <texteditor/textdocument.h>
 #include <texteditor/textdocumentlayout.h>
 #include <texteditor/texteditorsettings.h>
@@ -419,6 +420,17 @@ CppEditorWidget::CppEditorWidget()
     qRegisterMetaType<SemanticInfo>("SemanticInfo");
 }
 
+CppEditorWidget *CppEditorWidget::fromTextDocument(TextEditor::TextDocument *doc)
+{
+    const QVector<BaseTextEditor *> editors = BaseTextEditor::textEditorsForDocument(doc);
+    for (BaseTextEditor * const editor : editors) {
+        if (const auto editorWidget = qobject_cast<CppEditor::CppEditorWidget *>(
+                editor->editorWidget()))
+            return editorWidget;
+    }
+    return nullptr;
+}
+
 void CppEditorWidget::finalizeInitialization()
 {
     d->m_cppEditorDocument = qobject_cast<CppEditorDocument *>(textDocument());
@@ -594,7 +606,7 @@ void CppEditorWidget::onIfdefedOutBlocksUpdated(unsigned revision,
 {
     if (revision != documentRevision())
         return;
-    textDocument()->setIfdefedOutBlocks(ifdefedOutBlocks);
+    setIfdefedOutBlocks(ifdefedOutBlocks);
 }
 
 void CppEditorWidget::findUsages()
@@ -623,6 +635,7 @@ void CppEditorWidget::renameUsages(const QString &replacement, QTextCursor curso
         const CursorInEditor cursorInEditor{cursor, textDocument()->filePath(), this, textDocument()};
         CppModelManager::globalRename(cursorInEditor, replacement);
     };
+    NonInteractiveFollowSymbolMarker niMarker;
     CppModelManager::followSymbol(CursorInEditor{cursor,
                                                  textDocument()->filePath(),
                                                  this,
@@ -1481,6 +1494,14 @@ const QList<QTextEdit::ExtraSelection> CppEditorWidget::unselectLeadingWhitespac
         filtered << splitSelections;
     }
     return filtered;
+}
+
+void CppEditorWidget::setIfdefedOutBlocks(const QList<TextEditor::BlockRange> &blocks)
+{
+    cppEditorDocument()->setIfdefedOutBlocks(blocks);
+#ifdef WITH_TESTS
+    emit ifdefedOutBlocksChanged(blocks);
+#endif
 }
 
 bool CppEditorWidget::isInTestMode() const { return d->inTestMode; }

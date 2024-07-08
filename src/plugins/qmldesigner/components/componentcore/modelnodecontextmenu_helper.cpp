@@ -89,10 +89,10 @@ bool fileComponentExists(const ModelNode &modelNode)
     return QFileInfo::exists(fileName);
 }
 
-bool selectionIsComponent(const SelectionContext &selectionState)
+bool selectionIsEditableComponent(const SelectionContext &selectionState)
 {
-    return selectionState.currentSingleSelectedNode().isComponent()
-           && fileComponentExists(selectionState.currentSingleSelectedNode());
+    ModelNode node = selectionState.currentSingleSelectedNode();
+    return node.isComponent() && !QmlItemNode(node).isEffectItem() && fileComponentExists(node);
 }
 
 bool selectionIsImported3DAsset(const SelectionContext &selectionState)
@@ -105,8 +105,10 @@ bool selectionIsImported3DAsset(const SelectionContext &selectionState)
             // Node is not a file component, so we have to check if the current doc itself is
             fileName = node.model()->fileUrl().toLocalFile();
         }
-        if (fileName.contains(Constants::QUICK_3D_ASSETS_FOLDER))
+        if (QmlDesignerPlugin::instance()->documentManager()
+                .generatedComponentUtils().isImport3dPath(fileName)) {
             return true;
+        }
     }
     return false;
 }

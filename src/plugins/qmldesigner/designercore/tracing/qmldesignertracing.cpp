@@ -3,41 +3,59 @@
 
 #include "qmldesignertracing.h"
 
+#include <sqlitebasestatement.h>
+
 namespace QmlDesigner {
+
+using namespace NanotraceHR::Literals;
+
 namespace Tracing {
 
 namespace {
+
 using TraceFile = NanotraceHR::TraceFile<tracingStatus()>;
 
-TraceFile traceFile{"qml_designer.json"};
-
-thread_local NanotraceHR::EventQueueData<NanotraceHR::StringViewTraceEvent, 10000, tracingStatus()>
-    strinViewEventQueueData(traceFile);
-thread_local NanotraceHR::EventQueue stringViewEventQueue_ = strinViewEventQueueData.createEventQueue();
-
-thread_local NanotraceHR::EventQueueData<NanotraceHR::StringViewWithStringArgumentsTraceEvent, 1000, tracingStatus()>
-    stringViewWithStringArgumentsEventQueueData(traceFile);
-thread_local NanotraceHR::EventQueue stringViewEventWithStringArgumentsQueue_ = stringViewWithStringArgumentsEventQueueData
-                                                                                    .createEventQueue();
+auto &traceFile()
+{
+    if constexpr (std::is_same_v<Sqlite::TraceFile, TraceFile>) {
+        return Sqlite::traceFile();
+    } else {
+        static TraceFile traceFile{"tracing.json"};
+        return traceFile;
+    }
+}
 } // namespace
 
 EventQueue &eventQueue()
 {
-    return stringViewEventQueue_;
+    thread_local NanotraceHR::EventQueue<NanotraceHR::StringViewTraceEvent, tracingStatus()>
+        stringViewEventQueue(traceFile());
+
+    return stringViewEventQueue;
 }
 
 EventQueueWithStringArguments &eventQueueWithStringArguments()
 {
-    return stringViewEventWithStringArgumentsQueue_;
+    thread_local NanotraceHR::EventQueue<NanotraceHR::StringViewWithStringArgumentsTraceEvent, tracingStatus()>
+        stringViewWithStringArgumentsEventQueue(traceFile());
+
+    return stringViewWithStringArgumentsEventQueue;
+}
+
+StringEventQueue &stringEventQueue()
+{
+    thread_local NanotraceHR::EventQueue<NanotraceHR::StringTraceEvent, tracingStatus()> eventQueue(
+        traceFile());
+
+    return eventQueue;
 }
 
 } // namespace Tracing
 
 namespace ModelTracing {
 namespace {
-using namespace NanotraceHR::Literals;
 
-thread_local Category category_{"model"_t, Tracing::stringViewEventWithStringArgumentsQueue_, category};
+thread_local Category category_{"model"_t, Tracing::stringEventQueue(), category};
 
 } // namespace
 
@@ -47,4 +65,36 @@ Category &category()
 }
 
 } // namespace ModelTracing
+
+namespace ProjectStorageTracing {
+
+Category &projectStorageCategory()
+{
+    thread_local Category category{"project storage"_t,
+                                   Tracing::eventQueueWithStringArguments(),
+                                   projectStorageCategory};
+
+    return category;
+}
+
+Category &projectStorageUpdaterCategory()
+{
+    thread_local Category category{"project storage updater"_t,
+                                   Tracing::eventQueueWithStringArguments(),
+                                   projectStorageCategory};
+
+    return category;
+}
+
+} // namespace ProjectStorageTracing
+
+namespace MetaInfoTracing {
+Category &category()
+{
+    thread_local Category category_{"meta info"_t, Tracing::eventQueueWithStringArguments(), category};
+
+    return category_;
+}
+} // namespace MetaInfoTracing
+
 } // namespace QmlDesigner

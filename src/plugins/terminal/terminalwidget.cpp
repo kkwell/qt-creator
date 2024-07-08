@@ -52,15 +52,13 @@ using namespace Utils::Terminal;
 using namespace Core;
 
 namespace Terminal {
+
 TerminalWidget::TerminalWidget(QWidget *parent, const OpenTerminalParameters &openParameters)
     : Core::SearchableTerminal(parent)
     , m_context(Utils::Id("TerminalWidget_").withSuffix(QString::number((uintptr_t) this)))
     , m_openParameters(openParameters)
 {
-    auto contextObj = new IContext(this);
-    contextObj->setWidget(this);
-    contextObj->setContext(m_context);
-    ICore::addContextObject(contextObj);
+    IContext::attach(this, m_context);
 
     setupFont();
     setupColors();
@@ -83,7 +81,7 @@ void TerminalWidget::setupPty()
 {
     m_process = std::make_unique<Process>();
 
-    CommandLine shellCommand = m_openParameters.shellCommand.value_or(
+    const CommandLine shellCommand = m_openParameters.shellCommand.value_or(
         CommandLine{settings().shell(), settings().shellArguments(), CommandLine::Raw});
 
     if (shellCommand.executable().isRootPath()) {
@@ -160,7 +158,7 @@ void TerminalWidget::setupPty()
         const int exitCode = QTC_GUARD(m_process) ? m_process->exitCode() : -1;
         if (m_process) {
             if (exitCode != 0) {
-                errorMessage = Tr::tr("Terminal process exited with code %1").arg(exitCode);
+                errorMessage = Tr::tr("Terminal process exited with code %1.").arg(exitCode);
 
                 if (!m_process->errorString().isEmpty())
                     errorMessage += QString(" (%1)").arg(m_process->errorString());
@@ -187,7 +185,7 @@ void TerminalWidget::setupPty()
 
                 writeToTerminal(msg, true);
             } else {
-                QString exitMsg = Tr::tr("Process exited with code: %1").arg(exitCode);
+                QString exitMsg = Tr::tr("Process exited with code: %1.").arg(exitCode);
                 QByteArray msg = QString("\r\n%1").arg(exitMsg).toUtf8();
                 writeToTerminal(msg, true);
             }

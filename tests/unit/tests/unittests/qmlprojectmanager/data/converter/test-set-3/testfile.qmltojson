@@ -1,5 +1,6 @@
 {
     "deployment": {
+        "enableCMakeGeneration": false,
         "targetDirectory": "/opt/UntitledProject13"
     },
     "environment": {
@@ -74,7 +75,12 @@
                 "*.png",
                 "*.svg",
                 "*.hdr",
-                "*.ktx"
+                "*.ktx",
+                "*.bmp",
+                "*.ttf",
+                "*.tiff",
+                "*.webp",
+                "*.gif"
             ],
             "mcuProperties": {
             },
@@ -92,7 +98,12 @@
                 "*.png",
                 "*.svg",
                 "*.hdr",
-                "*.ktx"
+                "*.ktx",
+                "*.bmp",
+                "*.ttf",
+                "*.tiff",
+                "*.webp",
+                "*.gif"
             ],
             "mcuProperties": {
             },

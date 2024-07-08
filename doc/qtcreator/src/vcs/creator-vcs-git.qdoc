@@ -10,7 +10,7 @@
 /*!
     \page creator-vcs-git.html
     \if defined(qtdesignstudio)
-    \previouspage studio-developer-topics.html
+    \previouspage studio-finding-the-qt-runtime-version.html
     \nextpage studio-porting-projects.html
 
     \title Using Git
@@ -29,10 +29,6 @@
 
     You can use the \l{http://code.google.com/p/gerrit/}{Gerrit} code review
     tool for projects that use Git.
-
-    \if defined(qtdesignstudio)
-    \include creator-vcs-options.qdocinc vcs options
-    \endif
 
     \if defined(qtcreator)
     \section1 Using Git for Windows

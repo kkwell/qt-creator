@@ -20,6 +20,13 @@
 
 #include <import.h>
 
+#ifdef QDS_USE_PROJECTSTORAGE
+#  define DEPRECATED_OLD_CREATE_MODELNODE \
+      [[deprecated("Use unqualified type names and no versions!")]]
+#else
+#  define DEPRECATED_OLD_CREATE_MODELNODE
+#endif
+
 QT_BEGIN_NAMESPACE
 class QPixmap;
 class QUrl;
@@ -87,11 +94,12 @@ public:
 
     ~Model();
 
-    static ModelPointer create(const TypeName &typeName,
-                               int major = 1,
-                               int minor = 1,
-                               Model *metaInfoProxyModel = nullptr,
-                               std::unique_ptr<ModelResourceManagementInterface> resourceManagement = {})
+    DEPRECATED_OLD_CREATE_MODELNODE static ModelPointer create(
+        const TypeName &typeName,
+        int major = 1,
+        int minor = 1,
+        Model *metaInfoProxyModel = nullptr,
+        std::unique_ptr<ModelResourceManagementInterface> resourceManagement = {})
     {
         return ModelPointer(
             new Model(typeName, major, minor, metaInfoProxyModel, std::move(resourceManagement)));
@@ -110,13 +118,15 @@ public:
                                       fileUrl,
                                       std::move(resourceManagement)));
     }
-    static ModelPointer create(ProjectStorageDependencies m_projectStorageDependencies,
-                               const TypeName &typeName,
-                               int major = 1,
-                               int minor = 1,
-                               std::unique_ptr<ModelResourceManagementInterface> resourceManagement = {})
+
+    DEPRECATED_OLD_CREATE_MODELNODE static ModelPointer create(
+        ProjectStorageDependencies projectStorageDependencies,
+        const TypeName &typeName,
+        int major = 1,
+        int minor = 1,
+        std::unique_ptr<ModelResourceManagementInterface> resourceManagement = {})
     {
-        return ModelPointer(new Model(m_projectStorageDependencies,
+        return ModelPointer(new Model(projectStorageDependencies,
                                       typeName,
                                       major,
                                       minor,
@@ -124,7 +134,10 @@ public:
                                       std::move(resourceManagement)));
     }
 
-    QUrl fileUrl() const;
+    ModelPointer createModel(const TypeName &typeName,
+                             std::unique_ptr<ModelResourceManagementInterface> resourceManagement = {});
+
+    const QUrl &fileUrl() const;
     SourceId fileUrlSourceId() const;
     void setFileUrl(const QUrl &url);
 
@@ -134,7 +147,7 @@ public:
     void setMetaInfo(const MetaInfo &metaInfo);
 #endif
 
-    Module module(Utils::SmallStringView moduleName);
+    Module module(Utils::SmallStringView moduleName, Storage::ModuleKind moduleKind);
     NodeMetaInfo metaInfo(const TypeName &typeName, int majorVersion = -1, int minorVersion = -1) const;
     NodeMetaInfo metaInfo(Module module,
                           Utils::SmallStringView typeName,
@@ -150,8 +163,10 @@ public:
     NodeMetaInfo flowViewFlowWildcardMetaInfo() const;
     NodeMetaInfo fontMetaInfo() const;
     NodeMetaInfo qmlQtObjectMetaInfo() const;
+    NodeMetaInfo qtQmlConnectionsMetaInfo() const;
     NodeMetaInfo qtQmlModelsListModelMetaInfo() const;
     NodeMetaInfo qtQmlModelsListElementMetaInfo() const;
+    NodeMetaInfo qtQmlXmlListModelXmlListModelRoleMetaInfo() const;
     NodeMetaInfo qtQuick3DBakedLightmapMetaInfo() const;
     NodeMetaInfo qtQuick3DDefaultMaterialMetaInfo() const;
     NodeMetaInfo qtQuick3DDirectionalLightMetaInfo() const;
@@ -164,7 +179,6 @@ public:
     NodeMetaInfo qtQuick3DPrincipledMaterialMetaInfo() const;
     NodeMetaInfo qtQuick3DSpotLightMetaInfo() const;
     NodeMetaInfo qtQuick3DTextureMetaInfo() const;
-    NodeMetaInfo qtQuickConnectionsMetaInfo() const;
     NodeMetaInfo qtQuickControlsTextAreaMetaInfo() const;
     NodeMetaInfo qtQuickImageMetaInfo() const;
     NodeMetaInfo qtQuickItemMetaInfo() const;
@@ -205,16 +219,23 @@ public:
 
     // Imports:
     const Imports &imports() const;
-    const Imports &possibleImports() const;
-    const Imports &usedImports() const;
+    Imports possibleImports() const;
+    Imports usedImports() const;
     void changeImports(Imports importsToBeAdded, Imports importsToBeRemoved);
+#ifndef QDS_USE_PROJECTSTORAGE
     void setPossibleImports(Imports possibleImports);
+#endif
+#ifndef QDS_USE_PROJECTSTORAGE
     void setUsedImports(Imports usedImports);
+#endif
     bool hasImport(const Import &import, bool ignoreAlias = true, bool allowHigherVersion = false) const;
     bool isImportPossible(const Import &import, bool ignoreAlias = true, bool allowHigherVersion = false) const;
-    QString pathForImport(const Import &import);
     QStringList importPaths() const;
     Import highestPossibleImport(const QString &importPath);
+
+    ModuleIds moduleIds() const;
+
+    Storage::Info::ExportedTypeName exportedTypeNameForMetaInfo(const NodeMetaInfo &metaInfo) const;
 
     RewriterView *rewriterView() const;
     void setRewriterView(RewriterView *rewriterView);
@@ -234,16 +255,15 @@ public:
     bool hasId(const QString &id) const;
     bool hasImport(const QString &importUrl) const;
 
-    QString generateNewId(const QString &prefixName,
-                          const QString &fallbackPrefix = "element",
-                          std::optional<std::function<bool(const QString &)>> isDuplicate = {}) const;
-    QString generateIdFromName(const QString &name, const QString &fallbackId = "element") const;
-
-    void setActive3DSceneId(qint32 sceneId);
-    qint32 active3DSceneId() const;
+    QString generateNewId(const QString &prefixName, const QString &fallbackPrefix = "element") const;
 
     void startDrag(QMimeData *mimeData, const QPixmap &icon);
     void endDrag();
+
+    void setCurrentStateNode(const ModelNode &node);
+    ModelNode currentStateNode(AbstractView *view = nullptr);
+
+    void setCurrentTimeline(const ModelNode &timeline);
 
     NotNullPointer<const ProjectStorageType> projectStorage() const;
     const PathCacheType &pathCache() const;

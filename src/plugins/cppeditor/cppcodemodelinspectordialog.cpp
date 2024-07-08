@@ -1445,11 +1445,11 @@ CppCodeModelInspectorDialog::CppCodeModelInspectorDialog(QWidget *parent)
         Tab("&Defines",
             Column {
                 Group {
-                    title("Toolchain Defines"),
+                    title(QString("Toolchain Defines")),
                     Column { m_partToolchainDefinesEdit },
                 },
                 Group {
-                    title("Project Defines"),
+                    title(QString("Project Defines")),
                     Column { m_partProjectDefinesEdit },
                 }
             }
@@ -1913,7 +1913,7 @@ void CppCodeModelInspectorDialog::updateProjectPartData(const ProjectPart::Const
     QString projectFilePath = QLatin1String("<None>");
     if (part->hasProject()) {
         projectFilePath = part->topLevelProject.toUserOutput();
-        if (const ProjectExplorer::Project * const project = projectForProjectPart(*part))
+        if (const ProjectExplorer::Project * const project = part->project())
             projectName = project->displayName();
     }
     const QString callGroupId = part->callGroupId.isEmpty() ? QString::fromLatin1("<None>")

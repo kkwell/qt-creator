@@ -12,7 +12,7 @@
 #endif // WITH_TESTS
 
 #include <utils/layoutbuilder.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/utilsicons.h>
 
 #include <coreplugin/messagemanager.h>
@@ -152,7 +152,7 @@ static QVersionNumber parseVersionNumber(const QByteArray &toolOutput)
 QVersionNumber toolVersion()
 {
     Process proc;
-    const CommandLine cl = {
+    const CommandLine cl{
         Internal::settings().ffprobeTool(),
         {
             "-v", "quiet",
@@ -201,7 +201,7 @@ static ClipInfo parseClipInfo(const QByteArray &toolOutput)
 ClipInfo clipInfo(const FilePath &path)
 {
     Process proc;
-    const CommandLine cl = {
+    const CommandLine cl{
         Internal::settings().ffprobeTool(),
         {
             "-v", "quiet",

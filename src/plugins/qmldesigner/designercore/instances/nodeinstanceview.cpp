@@ -64,6 +64,8 @@
 #include <qmlitemnode.h>
 #include <rewriterview.h>
 
+#include <projectstorage/projectstorage.h>
+
 #include <utils/hdrimage.h>
 
 #include <coreplugin/messagemanager.h>
@@ -75,7 +77,7 @@
 #include <qmlprojectmanager/qmlproject.h>
 
 #include <utils/algorithm.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 #include <utils/theme/theme.h>
 #include <utils/threadutils.h>
@@ -89,7 +91,6 @@
 #include <QMultiHash>
 #include <QPainter>
 #include <QPicture>
-#include <QScopedPointer>
 #include <QTimerEvent>
 #include <QUrl>
 
@@ -205,22 +206,17 @@ NodeInstanceView::~NodeInstanceView()
 
 static bool isSkippedRootNode(const ModelNode &node)
 {
-    static const PropertyNameList skipList({"Qt.ListModel", "QtQuick.ListModel", "Qt.ListModel", "QtQuick.ListModel"});
-
-    if (skipList.contains(node.type()))
-        return true;
-
-    return false;
+    return node.metaInfo().isQtQuickListModel();
 }
 
 static bool isSkippedNode(const ModelNode &node)
 {
-    static const PropertyNameList skipList({"QtQuick.XmlRole", "Qt.XmlRole", "QtQuick.ListElement", "Qt.ListElement"});
+    auto model = node.model();
 
-    if (skipList.contains(node.type()))
-        return true;
+    auto listElement = model->qtQmlModelsListElementMetaInfo();
+    auto xmlRole = model->qtQmlXmlListModelXmlListModelRoleMetaInfo();
 
-    return false;
+    return node.metaInfo().isBasedOn(listElement, xmlRole);
 }
 
 static bool parentTakesOverRendering(const ModelNode &modelNode)
@@ -644,7 +640,7 @@ void NodeInstanceView::auxiliaryDataChanged(const ModelNode &node,
                                              TypeName(),
                                              key.type};
             m_nodeInstanceServer->changeAuxiliaryValues({{container}});
-        };
+        }
         break;
 
     case AuxiliaryDataType::NodeInstanceAuxiliary:
@@ -656,7 +652,7 @@ void NodeInstanceView::auxiliaryDataChanged(const ModelNode &node,
                                              TypeName(),
                                              key.type};
             m_nodeInstanceServer->changeAuxiliaryValues({{container}});
-        };
+        }
         break;
 
     case AuxiliaryDataType::NodeInstancePropertyOverwrite:
@@ -848,6 +844,7 @@ void NodeInstanceView::removeInstanceNodeRelationship(const ModelNode &node)
     Q_ASSERT(m_nodeInstanceHash.contains(node));
     NodeInstance instance = instanceForModelNode(node);
     m_nodeInstanceHash.remove(node);
+    m_statePreviewImage.remove(node);
     instance.makeInvalid();
 }
 
@@ -990,6 +987,8 @@ QRectF NodeInstanceView::sceneRect() const
     return {};
 }
 
+namespace {
+
 QList<ModelNode> filterNodesForSkipItems(const QList<ModelNode> &nodeList)
 {
     QList<ModelNode> filteredNodeList;
@@ -1002,14 +1001,12 @@ QList<ModelNode> filterNodesForSkipItems(const QList<ModelNode> &nodeList)
 
     return filteredNodeList;
 }
-namespace {
 bool shouldSendAuxiliary(const AuxiliaryDataKey &key)
 {
     return key.type == AuxiliaryDataType::NodeInstancePropertyOverwrite
            || key.type == AuxiliaryDataType::NodeInstanceAuxiliary || key == invisibleProperty
            || key == lockedProperty;
 }
-} // namespace
 
 bool parentIsBehavior(ModelNode node)
 {
@@ -1022,6 +1019,43 @@ bool parentIsBehavior(ModelNode node)
 
     return false;
 }
+
+TypeName createQualifiedTypeName(const ModelNode &node)
+{
+    if (!node)
+        return {};
+
+#ifdef QDS_USE_PROJECTSTORAGE
+    auto model = node.model();
+    auto exportedTypes = node.metaInfo().exportedTypeNamesForSourceId(model->fileUrlSourceId());
+    if (exportedTypes.size()) {
+        const auto &exportedType = exportedTypes.front();
+        using Storage::ModuleKind;
+        auto module = model->projectStorage()->module(exportedType.moduleId);
+        Utils::PathString typeName;
+        switch (module.kind) {
+        case ModuleKind::QmlLibrary:
+            typeName += module.name;
+            typeName += '/';
+            break;
+        case ModuleKind::PathLibrary:
+            break;
+        case ModuleKind::CppLibrary:
+            break;
+        }
+
+        typeName += exportedType.name;
+
+        return typeName.toQByteArray();
+    }
+
+    return {};
+#else
+    return node.type();
+#endif
+}
+
+} // namespace
 
 CreateSceneCommand NodeInstanceView::createCreateSceneCommand()
 {
@@ -1078,8 +1112,9 @@ CreateSceneCommand NodeInstanceView::createCreateSceneCommand()
             nodeFlags |= InstanceContainer::ParentTakesOverRendering;
 
         const auto modelNode = instance.modelNode();
+
         InstanceContainer container(instance.instanceId(),
-                                    modelNode.type(),
+                                    createQualifiedTypeName(modelNode),
                                     modelNode.majorVersion(),
                                     modelNode.minorVersion(),
                                     ModelUtils::componentFilePath(modelNode),
@@ -1181,6 +1216,13 @@ CreateSceneCommand NodeInstanceView::createCreateSceneCommand()
     if (stateNode.isValid() && stateNode.metaInfo().isQtQuickState())
         stateInstanceId = stateNode.internalId();
 
+    QHash<QString, QVariantMap> sceneStates = m_edit3DToolStates[model()->fileUrl()];
+    QHash<QString, QVariantMap> projectStates = m_edit3DToolStates[
+        QUrl::fromLocalFile(m_externalDependencies.currentProjectDirPath())];
+    const QString ptsId = "@PTS";
+    if (projectStates.contains(ptsId))
+        sceneStates.insert(ptsId, projectStates[ptsId]);
+
     return CreateSceneCommand(instanceContainerList,
                               reparentContainerList,
                               idContainerList,
@@ -1191,7 +1233,7 @@ CreateSceneCommand NodeInstanceView::createCreateSceneCommand()
                               mockupTypesVector,
                               model()->fileUrl(),
                               m_externalDependencies.currentResourcePath(),
-                              m_edit3DToolStates[model()->fileUrl()],
+                              sceneStates,
                               lastUsedLanguage,
                               m_captureImageMinimumSize,
                               m_captureImageMaximumSize,
@@ -1242,7 +1284,7 @@ CreateInstancesCommand NodeInstanceView::createCreateInstancesCommand(const QLis
 
         const auto modelNode = instance.modelNode();
         InstanceContainer container(instance.instanceId(),
-                                    modelNode.type(),
+                                    createQualifiedTypeName(modelNode),
                                     modelNode.majorVersion(),
                                     modelNode.minorVersion(),
                                     ModelUtils::componentFilePath(modelNode),
@@ -1709,7 +1751,12 @@ void NodeInstanceView::handlePuppetToCreatorCommand(const PuppetToCreatorCommand
             auto data = qvariant_cast<QVariantList>(command.data());
             if (data.size() == 3) {
                 QString qmlId = data[0].toString();
-                m_edit3DToolStates[model()->fileUrl()][qmlId].insert(data[1].toString(), data[2]);
+                QUrl mainKey;
+                if (qmlId == "@PTS") // Project tool state
+                    mainKey = QUrl::fromLocalFile(m_externalDependencies.currentProjectDirPath());
+                else
+                    mainKey = model()->fileUrl();
+                m_edit3DToolStates[mainKey][qmlId].insert(data[1].toString(), data[2]);
             }
         }
     } else if (command.type() == PuppetToCreatorCommand::Render3DView) {
@@ -1823,7 +1870,7 @@ QVariant NodeInstanceView::modelNodePreviewImageDataToVariant(const ModelNodePre
         placeHolder = {150, 150};
         // Placeholder has transparency, but we don't want to show the checkerboard, so
         // paint in the correct background color
-        placeHolder.fill(Utils::creatorTheme()->color(Utils::Theme::BackgroundColorNormal));
+        placeHolder.fill(Utils::creatorColor(Utils::Theme::BackgroundColorNormal));
         QPainter painter(&placeHolder);
         painter.drawPixmap(0, 0, 150, 150, placeHolderSrc);
     }
@@ -1849,7 +1896,7 @@ QVariant NodeInstanceView::previewImageDataForImageNode(const ModelNode &modelNo
 
     ModelNodePreviewImageData imageData;
     imageData.id = modelNode.id();
-    imageData.type = QString::fromLatin1(modelNode.type());
+    imageData.type = QString::fromUtf8(createQualifiedTypeName(modelNode));
     const double ratio = m_externalDependencies.formEditorDevicePixelRatio();
 
     if (imageSource.isEmpty() && modelNode.metaInfo().isQtQuick3DTexture()) {
@@ -1922,7 +1969,7 @@ QVariant NodeInstanceView::previewImageDataForImageNode(const ModelNode &modelNo
                 imageData.pixmap = originalPixmap.scaled(dim, dim, Qt::KeepAspectRatio);
                 imageData.pixmap.setDevicePixelRatio(ratio);
                 imageData.time = modified;
-                imageData.info = ImageUtils::imageInfo(imageSource);
+                imageData.info = ImageUtils::imageInfoString(imageSource);
                 m_imageDataMap.insert(imageData.id, imageData);
             }
         }
@@ -1957,7 +2004,7 @@ QVariant NodeInstanceView::previewImageDataForGenericNode(const ModelNode &model
     if (m_imageDataMap.contains(id)) {
         imageData = m_imageDataMap[id];
     } else {
-        imageData.type = QString::fromLatin1(modelNode.type());
+        imageData.type = QString::fromLatin1(createQualifiedTypeName(modelNode));
         imageData.id = id;
         m_imageDataMap.insert(id, imageData);
     }

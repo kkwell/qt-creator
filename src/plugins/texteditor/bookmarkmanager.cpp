@@ -192,19 +192,14 @@ protected:
     void keyPressEvent(QKeyEvent *event) final;
 
 private:
-    Core::IContext *m_bookmarkContext;
     QModelIndex m_contextMenuIndex;
 };
 
 BookmarkView::BookmarkView()
-    : m_bookmarkContext(new IContext(this))
 {
     setWindowTitle(Tr::tr("Bookmarks"));
 
-    m_bookmarkContext->setWidget(this);
-    m_bookmarkContext->setContext(Context(BOOKMARKS_CONTEXT));
-
-    ICore::addContextObject(m_bookmarkContext);
+    IContext::attach(this, Context(BOOKMARKS_CONTEXT));
 
     ListView::setModel(&bookmarkManager());
 
@@ -218,7 +213,6 @@ BookmarkView::BookmarkView()
     setDragEnabled(true);
     setDragDropMode(QAbstractItemView::DragDrop);
 
-    connect(this, &QAbstractItemView::doubleClicked, this, &BookmarkView::gotoBookmark);
     connect(this, &QAbstractItemView::activated, this, &BookmarkView::gotoBookmark);
 }
 
@@ -876,6 +870,7 @@ void BookmarkManager::edit()
     auto layout = new QFormLayout(&dlg);
     auto noteEdit = new QLineEdit(b->note());
     noteEdit->setMinimumWidth(300);
+    noteEdit->setFocus();
     auto lineNumberSpinbox = new QSpinBox;
     lineNumberSpinbox->setRange(1, INT_MAX);
     lineNumberSpinbox->setValue(b->lineNumber());

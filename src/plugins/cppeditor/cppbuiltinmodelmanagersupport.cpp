@@ -29,6 +29,7 @@ using namespace Utils;
 
 namespace CppEditor::Internal {
 namespace {
+
 class CppHoverHandler : public TextEditor::BaseHoverHandler
 {
 private:
@@ -111,7 +112,8 @@ void BuiltinModelManagerSupport::followSymbol(const CursorInEditor &data,
     SymbolFinder finder;
     m_followSymbol->findLink(data, processLinkCallback,
             resolveTarget, CppModelManager::snapshot(),
-            data.editorWidget()->semanticInfo().doc, &finder, inNextSplit);
+            data.editorWidget() ? data.editorWidget()->semanticInfo().doc : data.cppDocument(),
+            &finder, inNextSplit);
 }
 
 void BuiltinModelManagerSupport::followSymbolToType(const CursorInEditor &data,

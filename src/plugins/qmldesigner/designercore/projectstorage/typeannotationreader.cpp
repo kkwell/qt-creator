@@ -27,11 +27,11 @@ constexpr auto propertyElementName = "Property"_L1;
 constexpr auto extraFileElementName = "ExtraFile"_L1;
 } // namespace
 
-Synchronization::TypeAnnotations TypeAnnotationReader::parseTypeAnnotation(const QString &content,
-                                                                           const QString &directoryPath,
-                                                                           SourceId sourceId)
+Synchronization::TypeAnnotations TypeAnnotationReader::parseTypeAnnotation(
+    const QString &content, const QString &directoryPath, SourceId sourceId, SourceId directorySourceId)
 {
     m_sourceId = sourceId;
+    m_directorySourceId = directorySourceId;
     m_directoryPath = directoryPath;
     m_parserState = ParsingDocument;
     if (!SimpleAbstractStreamReader::readFromSource(content)) {
@@ -178,8 +178,15 @@ TypeAnnotationReader::ParserSate TypeAnnotationReader::readDocument(const QStrin
 TypeAnnotationReader::ParserSate TypeAnnotationReader::readMetaInfoRootElement(const QString &name)
 {
     if (name == typeElementName) {
-        m_typeAnnotations.emplace_back(m_sourceId);
+        auto &annotation = m_typeAnnotations.emplace_back(m_sourceId, m_directorySourceId);
+        annotation.traits.canBeDroppedInFormEditor = FlagIs::True;
+        annotation.traits.canBeDroppedInNavigator = FlagIs::True;
+        annotation.traits.isMovable = FlagIs::True;
+        annotation.traits.isResizable = FlagIs::True;
+        annotation.traits.hasFormEditorItem = FlagIs::True;
+        annotation.traits.visibleInLibrary = FlagIs::True;
         m_itemLibraryEntries = json::array();
+
         return ParsingType;
     } else {
         addErrorInvalidType(name);
@@ -258,7 +265,8 @@ void TypeAnnotationReader::readTypeProperty(QStringView name, const QVariant &va
         auto [moduleName, typeName] = decomposeTypePath(fullTypeName);
 
         m_typeAnnotations.back().typeName = typeName;
-        m_typeAnnotations.back().moduleId = m_projectStorage.moduleId(moduleName);
+        m_typeAnnotations.back().moduleId = m_projectStorage.moduleId(moduleName,
+                                                                      ModuleKind::QmlLibrary);
 
     } else if (name == "icon"_L1) {
         m_typeAnnotations.back().iconPath = absoluteFilePathForDocument(value.toString());
@@ -277,7 +285,7 @@ void TypeAnnotationReader::readItemLibraryEntryProperty(QStringView name, const 
     } else if (name == "category"_L1) {
         m_itemLibraryEntries.back()["category"] = value;
     } else if (name == "libraryIcon"_L1) {
-        m_itemLibraryEntries.back()["iconPath"] = value;
+        m_itemLibraryEntries.back()["iconPath"] = absoluteFilePathForDocument(variant.toString());
     } else if (name == "version"_L1) {
         //   setVersion(value.toString());
     } else if (name == "requiredImport"_L1) {
@@ -304,7 +312,7 @@ QString deEscape(const QString &value)
 
 QVariant deEscapeVariant(const QVariant &value)
 {
-    if (value.typeId() == QVariant::String)
+    if (value.typeId() == QMetaType::QString)
         return deEscape(value.toString());
     return value;
 }
@@ -427,8 +435,8 @@ void TypeAnnotationReader::setVersion(const QString &versionNumber)
     int minor = 0;
 
     if (!versionNumber.isEmpty()) {
-        int val;
-        bool ok;
+        int val = -1;
+        bool ok = false;
         if (versionNumber.contains('.'_L1)) {
             val = versionNumber.split('.'_L1).constFirst().toInt(&ok);
             major = ok ? val : major;
@@ -459,9 +467,9 @@ using json = nlohmann::json;
     out = json::array({});
     out.push_back(property.name);
     out.push_back(property.type);
-    if (property.value.type() == QVariant::String)
+    if (property.value.typeId() == QMetaType::QString)
         out.push_back(Utils::PathString{property.value.toString()});
-    else if (property.value.type() == QVariant::Int || property.value.type() == QVariant::LongLong)
+    else if (property.value.typeId() == QMetaType::Int || property.value.typeId() == QMetaType::LongLong)
         out.push_back(property.value.toLongLong());
     else
         out.push_back(property.value.toDouble());

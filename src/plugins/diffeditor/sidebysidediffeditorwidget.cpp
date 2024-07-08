@@ -12,8 +12,6 @@
 #include <coreplugin/minisplitter.h>
 #include <coreplugin/progressmanager/progressmanager.h>
 
-#include <extensionsystem/pluginmanager.h>
-
 #include <texteditor/displaysettings.h>
 #include <texteditor/fontsettings.h>
 #include <texteditor/textdocument.h>
@@ -718,10 +716,8 @@ SideBySideDiffEditorWidget::SideBySideDiffEditorWidget(QWidget *parent)
         connect(m_editor[side]->horizontalScrollBar(), &QAbstractSlider::rangeChanged,
                 this, &SideBySideDiffEditorWidget::syncHorizontalScrollBarPolicy);
 
-        auto context = new IContext(this);
-        context->setWidget(m_editor[side]);
-        context->setContext(Context(Id(Constants::SIDE_BY_SIDE_VIEW_ID).withSuffix(side + 1)));
-        ICore::addContextObject(context);
+        IContext::attach(m_editor[side],
+                         Context(Id(Constants::SIDE_BY_SIDE_VIEW_ID).withSuffix(side + 1)));
     };
     setupEditor(LeftSide);
     setupEditor(RightSide);
@@ -868,7 +864,6 @@ void SideBySideDiffEditorWidget::restoreState()
 void SideBySideDiffEditorWidget::showDiff()
 {
     m_asyncTask.reset(new Async<SideBySideShowResults>());
-    m_asyncTask->setFutureSynchronizer(ExtensionSystem::PluginManager::futureSynchronizer());
     m_controller.setBusyShowing(true);
 
     connect(m_asyncTask.get(), &AsyncBase::done, this, [this] {

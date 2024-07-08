@@ -454,6 +454,19 @@
         "Copyright": "Copyright (c) 2019 Vitaly Petrov"
     },
     {
+        "Id": "ptyqt-conpty",
+        "Name": "Pty-Qt/ConPty",
+        "QDocModule": "qtcreator",
+        "QtParts": ["tools"],
+        "QtUsage": "Used for the integrated terminal.",
+        "Path": "src/libs/3rdparty/libptyqt",
+        "Description": "Major parts of conptyprocess.cpp have been ported from microsofts terminal source code and integrated into ptyqt's class.",
+        "Homepage": "https://github.com/microsoft/terminal",
+        "License": "MIT License",
+        "LicenseFile": "src/libs/3rdparty/libptyqt/LICENSE-CONPTY",
+        "Copyright": "Copyright (c) Microsoft Corporation"
+    },
+    {
         "Id": "libvterm",
         "Name": "libvterm",
         "QDocModule": "qtcreator",
@@ -543,5 +556,73 @@
         "License": "BSD 3-Clause \"New\" or \"Revised\" License",
         "LicenseFile": "src/libs/3rdparty/qtkeychain/COPYING",
         "Copyright": "Copyright (C) 2011-2015 Frank Osterfeld, Copyright (C) 2016 Mathias Hasselmann"
+    },
+    {
+        "Id": "pyprof2calltree",
+        "Name": "pyprof2calltree",
+        "QDocModule": "qtcreator",
+        "QtParts": ["tools"],
+        "QtUsage": "Used for converting profile data of debugger dumper execution to kcachegrind-compatible input in visualize.py",
+        "Path": "share/qtcreator/debugger",
+        "Description": "Creates python profiling output which is readable by kcachegrind",
+        "Homepage": "https://github.com/pwaller/pyprof2calltree",
+        "License": "MIT License",
+        "LicenseId": "MIT",
+        "LicenseFile": "share/qtcreator/debugger/LICENSE.MIT",
+        "Copyright": "Copyright(C) 2006-2008, David Allouche, Jp Calderone, Itamar Shtull-Trauring, Copyright(C) 2006-2017, Johan Dahlin, Copyright(C) 2008, Olivier Grisel <olivier.grisel@ensta.org>, Copyright(C) 2008, David Glick, Copyright(C) 2013, Steven Maude, Copyright(C) 2013-2018, Peter Waller <p@pwaller.net>, Copyright(C) 2013, Lukas Graf <lukas.graf@4teamwork.ch>, Copyright(C) 2013, Jamie Wong <http://jamie-wong.com>, Copyright(C) 2013, Yury V. Zaytsev <yury@shurup.com>, Copyright(C) 2014, Michael Droettboom <mdroe@stsci.edu>, Copyright(C) 2015, Zev Benjamin <zev@mit.edu>, Copyright(C) 2018, Jon Dufresne <jon.dufresne@gmail.com>"
+    },
+    {
+        "Id": "lua",
+        "Name": "Lua",
+        "QDocModule": "qtcreator",
+        "QtParts": ["tools"],
+        "QtUsage": "Used for scripting plugins.",
+        "Path": "src/libs/3rdparty/lua",
+        "Description": "Lua is a powerful, efficient, lightweight, embeddable scripting language.",
+        "Homepage": "https://www.lua.org/",
+        "License": "MIT License",
+        "LicenseFile": "src/libs/3rdparty/lua/LICENSE",
+        "Copyright": "Copyright © 1994-2023 Lua.org, PUC-Rio.",
+        "Version": "5.4.6"
+    },
+    {
+        "Id": "sol2",
+        "Name": "sol2",
+        "QDocModule": "qtcreator",
+        "QtParts": ["tools"],
+        "QtUsage": "Used for binding C++ and Lua.",
+        "Path": "src/libs/3rdparty/sol2",
+        "Description": "sol2 is a C++ library binding to Lua.",
+        "Homepage": "https://github.com/ThePhD/sol2",
+        "License": "MIT License",
+        "LicenseFile": "src/libs/3rdparty/sol2/LICENSE.txt",
+        "Copyright": "Copyright (c) 2008 Paul Evans",
+        "Version": "3.3.1 (revision 9c882a28)"
+    },
+    {
+        "Id": "ms-jpq-lua-async-await",
+        "Name": "ms-jpq/lua-async-await",
+        "QDocModule": "qtcreator",
+        "QtParts": ["tools"],
+        "QtUsage": "Used for async/await support in Lua modules.",
+        "Path": "src/plugins/lua/bindings",
+        "Description": "lua-async-await implements the async/await pattern in Lua.",
+        "Homepage": "https://github.com/ms-jpq/lua-async-await",
+        "License": "MIT License",
+        "LicenseFile": "src/plugins/lua/bindings/ASYNC-LICENSE.txt",
+        "Copyright": "Copyright (c) 2008 Paul Evans"
+    },
+    {
+        "Id": "kikito/inspect.lua",
+        "Name": "kikito/inspect.lua",
+        "QDocModule": "qtcreator",
+        "QtParts": ["tools"],
+        "QtUsage": "Used for pretty printing from Lua scripts.",
+        "Path": "share/qtcreator/lua-plugins/luatests",
+        "Description": "inspect.lua is a library for pretty printing complex objects in Lua.",
+        "Homepage": "https://github.com/kikito/inspect.lua",
+        "License": "MIT License",
+        "LicenseFile": "share/qtcreator/lua-plugins/luatests/INSPECT-LICENSE.txt",
+        "Copyright": "Copyright (c) 2022 Enrique García Cota"
     }
 ]

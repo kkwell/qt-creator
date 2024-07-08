@@ -4,6 +4,7 @@
 #include "projectwizardpage.h"
 
 #include "project.h"
+#include "projectexplorerconstants.h"
 #include "projectexplorertr.h"
 #include "projectmanager.h"
 #include "projectmodels.h"
@@ -32,7 +33,7 @@
 #include <QTextStream>
 
 /*!
-    \class ProjectExplorer::Internal::ProjectWizardPage
+    \class ProjectExplorer::ProjectWizardPage
 
     \brief The ProjectWizardPage class provides a wizard page showing projects
     and version control to add new files to.
@@ -261,6 +262,8 @@ static AddNewTree *buildAddFilesTree(FolderNode *root, const FilePaths &files,
     return new AddNewTree(root, children, root->displayName());
 }
 
+} // namespace Internal
+
 // --------------------------------------------------------------------
 // ProjectWizardPage:
 // --------------------------------------------------------------------
@@ -272,6 +275,8 @@ ProjectWizardPage::ProjectWizardPage(QWidget *parent)
     m_projectLabel->setObjectName("projectLabel");
     m_projectComboBox = new Utils::TreeViewComboBox;
     m_projectComboBox->setObjectName("projectComboBox");
+    m_infoLabel = new Utils::InfoLabel;
+    m_infoLabel->setVisible(false);
     m_additionalInfo = new QLabel;
     m_addToVersionControlLabel = new QLabel(Tr::tr("Add to &version control:"));
     m_addToVersionControlComboBox = new QComboBox;
@@ -292,6 +297,7 @@ ProjectWizardPage::ProjectWizardPage(QWidget *parent)
     Column {
         Form {
             m_projectLabel, m_projectComboBox, br,
+            m_infoLabel, br,
             empty, m_additionalInfo, br,
             m_addToVersionControlLabel, m_addToVersionControlComboBox, m_vcsManageButton, br,
         },
@@ -302,7 +308,7 @@ ProjectWizardPage::ProjectWizardPage(QWidget *parent)
     setProperty(SHORT_TITLE_PROPERTY, Tr::tr("Summary"));
 
     connect(VcsManager::instance(), &VcsManager::configurationChanged,
-            this, &ProjectExplorer::Internal::ProjectWizardPage::initializeVersionControls);
+            this, &ProjectExplorer::ProjectWizardPage::initializeVersionControls);
 
     m_projectComboBox->setModel(&m_model);
 }
@@ -333,14 +339,14 @@ bool ProjectWizardPage::expandTree(const QModelIndex &root)
         m_projectComboBox->view()->collapse(root);
 
     // if we are a high priority node, our *parent* needs to be expanded
-    auto tree = static_cast<AddNewTree *>(root.internalPointer());
+    auto tree = static_cast<Internal::AddNewTree *>(root.internalPointer());
     if (tree && tree->priority() >= 100)
         expand = true;
 
     return expand;
 }
 
-void ProjectWizardPage::setBestNode(AddNewTree *tree)
+void ProjectWizardPage::setBestNode(Internal::AddNewTree *tree)
 {
     QModelIndex index = tree ? m_model.indexForItem(tree) : QModelIndex();
     m_projectComboBox->setCurrentIndex(index);
@@ -375,7 +381,7 @@ void ProjectWizardPage::initializeVersionControls()
     m_addToVersionControlComboBox->disconnect();
     QList<IVersionControl *> versionControls = VcsManager::versionControls();
     if (versionControls.isEmpty())
-        hideVersionControlUiElements();
+        setVersionControlUiElementsVisible(false);
 
     IVersionControl *currentSelection = nullptr;
     int currentIdx = versionControlIndex() - 1;
@@ -455,32 +461,37 @@ bool ProjectWizardPage::runVersionControl(const QList<GeneratedFile> &files, QSt
 
 void ProjectWizardPage::initializeProjectTree(Node *context, const FilePaths &paths,
                                               IWizardFactory::WizardKind kind,
-                                              ProjectAction action)
+                                              ProjectAction action, bool limitToSubproject)
 {
     m_projectComboBox->disconnect();
-    BestNodeSelector selector(m_commonDirectory, paths);
+    Internal::BestNodeSelector selector(m_commonDirectory, paths);
+    Project *parentProject = static_cast<Project *>(
+                wizard()->property(Constants::PROJECT_POINTER).value<void *>());
 
     TreeItem *root = m_model.rootItem();
     root->removeChildren();
     for (Project *project : ProjectManager::projects()) {
+        if (limitToSubproject && project != parentProject)
+            continue;
         if (ProjectNode *pn = project->rootProjectNode()) {
             if (kind == IWizardFactory::ProjectWizard) {
-                if (AddNewTree *child = buildAddProjectTree(pn, paths.first(), context, &selector))
+                if (Internal::AddNewTree *child = buildAddProjectTree(pn, paths.first(), context, &selector))
                     root->appendChild(child);
             } else {
-                if (AddNewTree *child = buildAddFilesTree(pn, paths, context, &selector))
+                if (Internal::AddNewTree *child = buildAddFilesTree(pn, paths, context, &selector))
                     root->appendChild(child);
             }
         }
     }
     root->sortChildren([](const TreeItem *ti1, const TreeItem *ti2) {
-        return compareNodes(static_cast<const AddNewTree *>(ti1)->node(),
-                            static_cast<const AddNewTree *>(ti2)->node());
+        return Internal::compareNodes(static_cast<const Internal::AddNewTree *>(ti1)->node(),
+                            static_cast<const Internal::AddNewTree *>(ti2)->node());
     });
-    root->prependChild(createNoneNode(&selector));
+    if (!limitToSubproject)
+        root->prependChild(createNoneNode(&selector));
 
     // Set combobox to context node if that appears in the tree:
-    auto predicate = [context](TreeItem *ti) { return static_cast<AddNewTree*>(ti)->node() == context; };
+    auto predicate = [context](TreeItem *ti) { return static_cast<Internal::AddNewTree*>(ti)->node() == context; };
     TreeItem *contextItem = root->findAnyChild(predicate);
     if (contextItem)
         m_projectComboBox->setCurrentIndex(m_model.indexForItem(contextItem));
@@ -489,7 +500,9 @@ void ProjectWizardPage::initializeProjectTree(Node *context, const FilePaths &pa
     setBestNode(selector.bestChoice());
     setAddingSubProject(action == AddSubProject);
 
-    m_projectComboBox->setEnabled(m_model.rowCount(QModelIndex()) > 1);
+    const bool enabled = m_model.rowCount(QModelIndex()) > 1
+            || m_model.findItemAtLevel<1>([](TreeItem *it){ return it->hasChildren(); });
+    m_projectComboBox->setEnabled(enabled);
     connect(m_projectComboBox, &QComboBox::currentIndexChanged,
             this, &ProjectWizardPage::projectChanged);
 }
@@ -587,11 +600,11 @@ void ProjectWizardPage::manageVcs()
     ICore::showOptionsDialog(VcsBase::Constants::VCS_COMMON_SETTINGS_ID, this);
 }
 
-void ProjectWizardPage::hideVersionControlUiElements()
+void ProjectWizardPage::setVersionControlUiElementsVisible(bool visible)
 {
-    m_addToVersionControlLabel->hide();
-    m_vcsManageButton->hide();
-    m_addToVersionControlComboBox->hide();
+    m_addToVersionControlLabel->setVisible(visible);
+    m_vcsManageButton->setVisible(visible);
+    m_addToVersionControlComboBox->setVisible(visible);
 }
 
 void ProjectWizardPage::setProjectUiVisible(bool visible)
@@ -600,5 +613,15 @@ void ProjectWizardPage::setProjectUiVisible(bool visible)
     m_projectComboBox->setVisible(visible);
 }
 
-} // namespace Internal
+void ProjectWizardPage::setStatus(const QString &text, InfoLabel::InfoType type)
+{
+    m_infoLabel->setText(text);
+    m_infoLabel->setType(type);
+}
+
+void ProjectWizardPage::setStatusVisible(bool visible)
+{
+    m_infoLabel->setVisible(visible);
+}
+
 } // namespace ProjectExplorer

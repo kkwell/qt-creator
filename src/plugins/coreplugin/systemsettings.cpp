@@ -129,7 +129,7 @@ SystemSettings::SystemSettings()
     reloadSetting.addOption(Tr::tr("Always Ask"));
     reloadSetting.addOption(Tr::tr("Reload All Unchanged Editors"));
     reloadSetting.addOption(Tr::tr("Ignore Modifications"));
-    reloadSetting.setDefaultValue(IDocument::AlwaysAsk);
+    reloadSetting.setDefaultValue(IDocument::ReloadUnmodified);
     reloadSetting.setLabelText(Tr::tr("When files are externally modified:"));
 
     askBeforeExit.setSettingsKey("AskBeforeExit");
@@ -276,13 +276,7 @@ public:
         connect(helpCrashReportingButton, &QAbstractButton::clicked, this, [this] {
             showHelpDialog(Tr::tr("Crash Reporting"), CorePlugin::msgCrashpadInformation());
         });
-        connect(&s.enableCrashReporting, &BaseAspect::changed, this, [this] {
-            const QString restartText = Tr::tr("The change will take effect after restart.");
-            Core::RestartDialog restartDialog(Core::ICore::dialogParent(), restartText);
-            restartDialog.exec();
-            if (restartDialog.result() == QDialog::Accepted)
-                apply();
-        });
+        connect(&s.enableCrashReporting, &BaseAspect::changed, this, &SystemSettingsWidget::apply);
 
         updateClearCrashWidgets();
         connect(m_clearCrashReportsButton, &QPushButton::clicked, this, [&] {

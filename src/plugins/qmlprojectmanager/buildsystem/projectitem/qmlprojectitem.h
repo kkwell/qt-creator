@@ -88,8 +88,11 @@ public:
 
     QJsonObject project() const;
 
+    bool enableCMakeGeneration() const;
+    void setEnableCMakeGeneration(bool enable);
+
 signals:
-    void qmlFilesChanged(const QSet<QString> &, const QSet<QString> &);
+    void filesChanged(const QSet<QString> &, const QSet<QString> &);
 
 private:
     typedef QSharedPointer<QmlProjectItem> ShrdPtrQPI;

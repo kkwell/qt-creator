@@ -20,7 +20,7 @@
 
 #include <utils/commandline.h>
 #include <utils/environment.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <QDebug>
@@ -125,7 +125,7 @@ QStringList VcsBaseClientImpl::splitLines(const QString &s)
 QString VcsBaseClientImpl::stripLastNewline(const QString &in)
 {
     if (in.endsWith('\n'))
-        return in.left(in.count() - 1);
+        return in.left(in.size() - 1);
     return in;
 }
 

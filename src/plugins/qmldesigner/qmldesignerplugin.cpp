@@ -4,18 +4,17 @@
 #include "qmldesignerplugin.h"
 #include "qmldesignertr.h"
 
-#include "collectioneditor/collectionview.h"
 #include "coreplugin/iwizardfactory.h"
 #include "designmodecontext.h"
 #include "designmodewidget.h"
 #include "dynamiclicensecheck.h"
 #include "exception.h"
-#include "generateresource.h"
 #include "openuiqmlfiledialog.h"
 #include "qmldesignerconstants.h"
 #include "qmldesignerexternaldependencies.h"
 #include "qmldesignerprojectmanager.h"
 #include "quick2propertyeditorview.h"
+#include "resourcegenerator.h"
 #include "settingspage.h"
 #include "shortcutmanager.h"
 #include "toolbar.h"
@@ -26,6 +25,7 @@
 #include <designeractionmanager.h>
 #include <eventlist/eventlistpluginview.h>
 #include <formeditor/transitiontool.h>
+#include <formeditor/view3dtool.h>
 #include <studioquickwidget.h>
 #include <windowmanager.h>
 #ifndef QDS_USE_PROJECTSTORAGE
@@ -73,10 +73,11 @@
 #include <utils/qtcassert.h>
 #include <utils/uniqueobjectptr.h>
 
+#include <qplugin.h>
 #include <QAction>
 #include <QApplication>
 #include <QDebug>
-#include <qplugin.h>
+#include <QMessageBox>
 #include <QProcessEnvironment>
 #include <QQuickItem>
 #include <QScreen>
@@ -259,6 +260,15 @@ QmlDesignerPlugin::~QmlDesignerPlugin()
 ////////////////////////////////////////////////////
 bool QmlDesignerPlugin::initialize(const QStringList & /*arguments*/, QString *errorMessage/* = 0*/)
 {
+    if constexpr (isUsingQmlDesignerLite()) {
+        if (!QmlDesignerBasePlugin::isLiteModeEnabled()) {
+            QMessageBox::warning(Core::ICore::dialogParent(),
+                                 tr("Qml Designer Lite"),
+                                 tr("The Qml Designer Lite plugin is not enabled."));
+            return false;
+        }
+    }
+
     Sqlite::LibraryInitializer::initialize();
     QDir{}.mkpath(Core::ICore::cacheResourcePath().toString());
 
@@ -276,7 +286,7 @@ bool QmlDesignerPlugin::initialize(const QStringList & /*arguments*/, QString *e
     d = new QmlDesignerPluginPrivate;
     d->timer.start();
     if (Core::ICore::isQtDesignStudio())
-        GenerateResource::generateMenuEntry(this);
+        ResourceGenerator::generateMenuEntry(this);
 
     const QString fontPath
         = Core::ICore::resourcePath(
@@ -287,7 +297,6 @@ bool QmlDesignerPlugin::initialize(const QStringList & /*arguments*/, QString *e
 
     //TODO Move registering those types out of the property editor, since they are used also in the states editor
     Quick2PropertyEditorView::registerQmlTypes();
-    CollectionView::registerDeclarativeType();
     StudioQuickWidget::registerDeclarativeType();
     QmlDesignerBase::WindowManager::registerDeclarativeType();
 
@@ -381,14 +390,6 @@ void QmlDesignerPlugin::integrateIntoQtCreator(QWidget *modeWidget)
     Core::Context qmlDesignerNavigatorContext(Constants::C_QMLNAVIGATOR);
     Core::Context qmlDesignerMaterialBrowserContext(Constants::C_QMLMATERIALBROWSER);
     Core::Context qmlDesignerAssetsLibraryContext(Constants::C_QMLASSETSLIBRARY);
-
-    context->context().add(qmlDesignerMainContext);
-    context->context().add(qmlDesignerFormEditorContext);
-    context->context().add(qmlDesignerEditor3dContext);
-    context->context().add(qmlDesignerNavigatorContext);
-    context->context().add(qmlDesignerMaterialBrowserContext);
-    context->context().add(qmlDesignerAssetsLibraryContext);
-    context->context().add(ProjectExplorer::Constants::QMLJS_LANGUAGE_ID);
 
     d->shortCutManager.registerActions(qmlDesignerMainContext, qmlDesignerFormEditorContext,
                                        qmlDesignerEditor3dContext, qmlDesignerNavigatorContext);
@@ -612,12 +613,14 @@ void QmlDesignerPlugin::enforceDelayedInitialize()
         return;
 
     // adding default path to item library plugins
-    const QString postfix = Utils::HostOsInfo::isMacHost() ? QString("/QmlDesigner")
-                                                           : QString("/qmldesigner");
-    const QStringList pluginPaths = Utils::transform(ExtensionSystem::PluginManager::pluginPaths(),
-                                                     [postfix](const QString &p) {
-                                                         return QString(p + postfix);
-                                                     });
+    const QString postfix = Utils::HostOsInfo::isMacHost()
+                                ? QString("QmlDesigner")
+                                : QString("qmldesigner");
+    const QStringList pluginPaths =
+        Utils::transform(ExtensionSystem::PluginManager::pluginPaths(),
+                         [postfix](const Utils::FilePath &p) {
+                           return (p / postfix).toFSPathString();
+                         });
 
 #ifndef QDS_USE_PROJECTSTORAGE
     MetaInfo::initializeGlobal(pluginPaths, d->externalDependencies);
@@ -644,6 +647,7 @@ void QmlDesignerPlugin::enforceDelayedInitialize()
     d->viewManager.registerFormEditorTool(std::make_unique<TextTool>());
     d->viewManager.registerFormEditorTool(std::make_unique<PathTool>(d->externalDependencies));
     d->viewManager.registerFormEditorTool(std::make_unique<TransitionTool>());
+    d->viewManager.registerFormEditorTool(std::make_unique<View3DTool>());
 
     if (Core::ICore::isQtDesignStudio()) {
         d->mainWidget.initialize();

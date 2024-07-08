@@ -12,11 +12,12 @@ import WebFetcher
 Item {
     id: root
 
-    signal showContextMenu()
-
     // Download states: "" (ie default, not downloaded), "unavailable", "downloading", "downloaded",
     //                  "failed"
     property string downloadState: modelData.isDownloaded() ? "downloaded" : ""
+
+    signal showContextMenu()
+    signal addToProject()
 
     visible: modelData.bundleMaterialVisible
 
@@ -29,7 +30,7 @@ Item {
         acceptedButtons: Qt.LeftButton | Qt.RightButton
 
         onPressed: (mouse) => {
-            if (mouse.button === Qt.LeftButton && !materialsModel.importerRunning) {
+            if (mouse.button === Qt.LeftButton && !ContentLibraryBackend.rootView.importerRunning) {
                 if (root.downloadState === "downloaded")
                     ContentLibraryBackend.rootView.startDragMaterial(modelData, mapToGlobal(mouse.x, mouse.y))
             } else if (mouse.button === Qt.RightButton && root.downloadState === "downloaded") {
@@ -71,7 +72,7 @@ Item {
                 color: "#00ff00"
                 border.color: "#555555"
                 border.width: 1
-                visible: modelData.bundleMaterialImported
+                visible: modelData.bundleItemImported
 
                 ToolTip {
                     visible: indicatorMouseArea.containsMouse
@@ -96,12 +97,12 @@ Item {
                 pressColor: Qt.hsla(c.hslHue, c.hslSaturation, c.hslLightness, .4)
                 anchors.right: img.right
                 anchors.bottom: img.bottom
-                enabled: !ContentLibraryBackend.materialsModel.importerRunning
+                enabled: !ContentLibraryBackend.rootView.importerRunning
                 visible: root.downloadState === "downloaded"
                          && (containsMouse || mouseArea.containsMouse)
 
                 onClicked: {
-                    ContentLibraryBackend.materialsModel.addToProject(modelData)
+                    root.addToProject()
                 }
             }
 
@@ -183,7 +184,7 @@ Item {
         baseUrl: modelData.bundleMaterialBaseWebUrl
         files: modelData.bundleMaterialFiles
 
-        targetDirPath: modelData.bundleMaterialParentPath
+        targetDirPath: modelData.bundleMaterialDirPath
 
         onDownloadStarting: {
             root.downloadState = "downloading"

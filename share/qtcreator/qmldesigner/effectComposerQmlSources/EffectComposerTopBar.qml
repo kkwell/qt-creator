@@ -28,7 +28,7 @@ Rectangle {
             style: StudioTheme.Values.viewBarButtonStyle
             buttonIcon: StudioTheme.Constants.add_medium
             tooltip: qsTr("Add new composition")
-            enabled: root.backendModel.isEnabled
+            enabled: root.backendModel ? root.backendModel.isEnabled : false
             onClicked: root.addClicked()
         }
 
@@ -36,8 +36,10 @@ Rectangle {
             style: StudioTheme.Values.viewBarButtonStyle
             buttonIcon: StudioTheme.Constants.save_medium
             tooltip: qsTr("Save current composition")
-            enabled: root.backendModel.isEnabled && (root.backendModel.hasUnsavedChanges
-                                                  || root.backendModel.currentComposition === "")
+            enabled: root.backendModel ? root.backendModel.isEnabled
+                                         && (root.backendModel.hasUnsavedChanges
+                                             || root.backendModel.currentComposition === "")
+                                       : false
 
             onClicked: root.saveClicked()
         }
@@ -46,7 +48,8 @@ Rectangle {
             style: StudioTheme.Values.viewBarButtonStyle
             buttonIcon: StudioTheme.Constants.saveAs_medium
             tooltip: qsTr("Save current composition with a new name")
-            enabled: root.backendModel.isEnabled && !root.backendModel.isEmpty
+            enabled: root.backendModel ? root.backendModel.isEnabled && root.backendModel.currentComposition !== ""
+                                       : false
 
             onClicked: root.saveAsClicked()
         }
@@ -55,7 +58,10 @@ Rectangle {
             style: StudioTheme.Values.viewBarButtonStyle
             buttonIcon: StudioTheme.Constants.assignTo_medium
             tooltip: qsTr("Assign current composition to selected item")
-            enabled: root.backendModel.isEnabled && root.backendModel.currentComposition !== ""
+            enabled: root.backendModel ? root.backendModel.hasValidTarget
+                                         && root.backendModel.isEnabled
+                                         && root.backendModel.currentComposition !== ""
+                                       : false
 
             onClicked: root.assignToSelectedClicked()
         }
@@ -63,7 +69,8 @@ Rectangle {
 
 
     Text {
-        readonly property string compName: root.backendModel.currentComposition
+        readonly property string compName: root.backendModel ? root.backendModel.currentComposition
+                                                             : ""
 
         text: compName !== "" ? compName : qsTr("Untitled")
         anchors.centerIn: parent
@@ -82,8 +89,8 @@ Rectangle {
 2. Adjust the effect nodes properties
 3. Change the order of the effects, if you like
 4. See the preview
-5. Save in the library, if you wish to reuse the effect later") // TODO: revise with doc engineer
+5. Save in the assets library, if you wish to reuse the effect later")
 
-        onClicked: Qt.openUrlExternally("https://doc.qt.io/qtdesignstudio/qt-using-effect-maker-effects.html")
+        onClicked: Qt.openUrlExternally("https://doc.qt.io/qtdesignstudio/qtquick-effect-composer-view.html")
     }
 }

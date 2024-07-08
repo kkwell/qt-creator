@@ -19,7 +19,7 @@
 #include <utils/hostosinfo.h>
 #include <utils/layoutbuilder.h>
 #include <utils/pathchooser.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/utilsicons.h>
 #include <utils/variablechooser.h>
 
@@ -313,7 +313,7 @@ QWidget *MakeStep::createConfigWidget()
     if (m_disablingForSubDirsSupported)
         builder.addRow({m_disabledForSubdirsAspect});
     builder.addRow({m_buildTargetsAspect});
-    builder.addItem(Layouting::noMargin);
+    builder.setNoMargins();
 
     auto widget = builder.emerge();
 

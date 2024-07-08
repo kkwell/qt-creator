@@ -16,6 +16,7 @@
 #include "qmldesignerconstants.h"
 #include "qmlobjectnode.h"
 #include "variantproperty.h"
+#include <utils3d.h>
 
 #include <coreplugin/icore.h>
 
@@ -240,7 +241,7 @@ void MaterialBrowserView::modelAttached(Model *model)
         loadPropertyGroups(); // Needs the delay because it uses metaInfo
     });
 
-    m_sceneId = model->active3DSceneId();
+    m_sceneId = Utils3D::active3DSceneId(model);
 }
 
 void MaterialBrowserView::refreshModel(bool updateImages)
@@ -445,8 +446,13 @@ void QmlDesigner::MaterialBrowserView::loadPropertyGroups()
     if (!m_hasQuick3DImport || m_propertyGroupsLoaded || !model())
         return;
 
+#ifdef QDS_USE_PROJECTSTORAGE
+    // TODO
+    QString matPropsPath;
+#else
     QString matPropsPath = model()->metaInfo("QtQuick3D.Material").importDirectoryPath()
                                + "/designer/propertyGroups.json";
+#endif
     m_propertyGroupsLoaded = m_widget->materialBrowserModel()->loadPropertyGroups(matPropsPath);
 }
 
@@ -583,6 +589,14 @@ void MaterialBrowserView::instancePropertyChanged(const QList<QPair<ModelNode, P
         // of delay to reduce unnecessary rendering
         m_previewTimer.start(500);
     }
+}
+
+void MaterialBrowserView::auxiliaryDataChanged(const ModelNode &,
+                                               AuxiliaryDataKeyView type,
+                                               const QVariant &data)
+{
+    if (type == Utils3D::active3dSceneProperty)
+        active3DSceneChanged(data.toInt());
 }
 
 void MaterialBrowserView::applyTextureToModel3D(const QmlObjectNode &model3D, const ModelNode &texture)

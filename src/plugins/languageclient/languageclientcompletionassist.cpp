@@ -15,6 +15,7 @@
 #include <texteditor/snippets/snippet.h>
 #include <texteditor/snippets/snippetassistcollector.h>
 #include <texteditor/textdocument.h>
+#include <texteditor/texteditor.h>
 #include <texteditor/texteditorsettings.h>
 #include <utils/algorithm.h>
 #include <utils/textutils.h>
@@ -53,23 +54,24 @@ bool LanguageClientCompletionItem::prematurelyApplies(const QChar &typedCharacte
     return false;
 }
 
-void LanguageClientCompletionItem::apply(TextDocumentManipulatorInterface &manipulator,
+void LanguageClientCompletionItem::apply(TextEditorWidget *editorWidget,
                                          int /*basePosition*/) const
 {
+    QTC_ASSERT(editorWidget, return);
     if (auto edit = m_item.textEdit()) {
-        applyTextEdit(manipulator, *edit, isSnippet());
+        applyTextEdit(editorWidget, *edit, isSnippet());
     } else {
-        const int pos = manipulator.currentPosition();
+        const int pos = editorWidget->position();
         const QString textToInsert(m_item.insertText().value_or(text()));
         int length = 0;
         for (auto it = textToInsert.crbegin(), end = textToInsert.crend(); it != end; ++it) {
-            if (it->toLower() != manipulator.characterAt(pos - length - 1).toLower()) {
+            if (it->toLower() != editorWidget->characterAt(pos - length - 1).toLower()) {
                 length = 0;
                 break;
             }
             ++length;
         }
-        QTextCursor cursor = manipulator.textCursorAt(pos);
+        QTextCursor cursor = editorWidget->textCursorAt(pos);
         cursor.movePosition(QTextCursor::StartOfLine, QTextCursor::KeepAnchor);
         const QString blockTextUntilPosition = cursor.selectedText();
         static QRegularExpression identifier("[a-zA-Z_][a-zA-Z0-9_]*$");
@@ -77,19 +79,19 @@ void LanguageClientCompletionItem::apply(TextDocumentManipulatorInterface &manip
         int matchLength = match.hasMatch() ? match.capturedLength(0) : 0;
         length = qMax(length, matchLength);
         if (isSnippet()) {
-            manipulator.replace(pos - length, length, {});
-            manipulator.insertCodeSnippet(pos - length, textToInsert, &parseSnippet);
+            editorWidget->replace(pos - length, length, {});
+            editorWidget->insertCodeSnippet(pos - length, textToInsert, &parseSnippet);
         } else {
-            manipulator.replace(pos - length, length, textToInsert);
+            editorWidget->replace(pos - length, length, textToInsert);
         }
     }
 
     if (auto additionalEdits = m_item.additionalTextEdits()) {
         for (const auto &edit : *additionalEdits)
-            applyTextEdit(manipulator, edit);
+            applyTextEdit(editorWidget, edit);
     }
     if (!m_triggeredCommitCharacter.isNull())
-        manipulator.insertCodeSnippet(manipulator.currentPosition(),
+        editorWidget->insertCodeSnippet(editorWidget->position(),
                                       m_triggeredCommitCharacter,
                                       &Snippet::parse);
 }
@@ -123,11 +125,11 @@ QString LanguageClientCompletionItem::detail() const
     if (auto _doc = m_item.documentation()) {
         auto doc = *_doc;
         QString detailDocText;
-        if (std::holds_alternative<QString>(doc)) {
-            detailDocText = std::get<QString>(doc);
-        } else if (std::holds_alternative<MarkupContent>(doc)) {
+        if (const auto s = std::get_if<QString>(&doc)) {
+            detailDocText = *s;
+        } else if (const auto m = std::get_if<MarkupContent>(&doc)) {
             // TODO markdown parser?
-            detailDocText = std::get<MarkupContent>(doc).content();
+            detailDocText = m->content();
         }
         if (!detailDocText.isEmpty())
             return detailDocText;
@@ -495,12 +497,10 @@ void LanguageClientCompletionAssistProcessor::handleCompletionResponse(
     }
 
     QList<CompletionItem> items;
-    if (std::holds_alternative<CompletionList>(*result)) {
-        const auto &list = std::get<CompletionList>(*result);
-        items = list.items().value_or(QList<CompletionItem>());
-    } else if (std::holds_alternative<QList<CompletionItem>>(*result)) {
-        items = std::get<QList<CompletionItem>>(*result);
-    }
+    if (const auto list = std::get_if<CompletionList>(&*result))
+        items = list->items().value_or(QList<CompletionItem>());
+    else if (const auto l = std::get_if<QList<CompletionItem>>(&*result))
+        items = *l;
     auto proposalItems = generateCompletionItems(items);
     if (!m_snippetsGroup.isEmpty()) {
         proposalItems << TextEditor::SnippetAssistCollector(m_snippetsGroup,

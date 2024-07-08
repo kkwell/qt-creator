@@ -87,7 +87,7 @@
                             { "trKey": "Qt 6.4", "value": "6.4" },
                             { "trKey": "Qt 6.5", "value": "6.5" }
                         ],
-                        "index": 1
+                        "index": 2
                     }
                 }
             ]
@@ -96,7 +96,6 @@
             "trDisplayName": "Kit Selection",
             "trShortTitle": "Kits",
             "typeId": "Kits",
-            "enabled": "%{JS: !value('IsSubproject')}",
             "data": {
                 "projectFilePath": "%{ProjectFile}",
                 "requiredFeatures": [ "QtSupport.Wizards.FeatureQtQmlCMakeApi", "%{FeatureQt}" ]

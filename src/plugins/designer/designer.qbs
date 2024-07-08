@@ -32,12 +32,12 @@ QtcPlugin {
         {\n\
             \"Name\" : \"-designer-qt-pluginpath\",\n\
             \"Parameter\" : \"path\",\n\
-            \"Description\" : \"Override the default search path for Qt Designer plugins\"\n\
+            \"Description\" : \"Override the default search path for Qt Widgets Designer plugins\"\n\
         },\n\
         {\n\
             \"Name\" : \"-designer-pluginpath\",\n\
             \"Parameter\" : \"path\",\n\
-            \"Description\" : \"Add a custom search path for Qt Designer plugins\"\n\
+            \"Description\" : \"Add a custom search path for Qt Widgets Designer plugins\"\n\
         }\n\
     ],"})
 
@@ -48,7 +48,6 @@ QtcPlugin {
             "codemodelhelpers.cpp", "codemodelhelpers.h",
             "designer_export.h",
             "designerconstants.h",
-            "designercontext.cpp", "designercontext.h",
             "designerplugin.cpp",
             "designertr.h",
             "editordata.h",

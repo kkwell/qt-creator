@@ -793,20 +793,7 @@ void Project::toMap(Store &map) const
 
 FilePath Project::projectDirectory() const
 {
-    return projectDirectory(projectFilePath());
-}
-
-/*!
-    Returns the directory that contains the file \a top.
-
-    This includes the absolute path.
-*/
-
-FilePath Project::projectDirectory(const FilePath &top)
-{
-    if (top.isEmpty())
-        return {};
-    return top.absolutePath();
+    return projectFilePath().absolutePath();
 }
 
 void Project::changeRootProjectDirectory()
@@ -945,6 +932,20 @@ const Node *Project::nodeForFilePath(const FilePath &filePath,
     for (auto it = range.first; it != range.second; ++it) {
         if ((*it)->filePath() == filePath && (!extraMatcher || extraMatcher(*it)))
             return *it;
+    }
+    return nullptr;
+}
+
+ProjectNode *Project::productNodeForFilePath(
+    const Utils::FilePath &filePath, const NodeMatcher &extraMatcher) const
+{
+    const Node * const fileNode = nodeForFilePath(filePath, extraMatcher);
+    if (!fileNode)
+        return nullptr;
+    for (ProjectNode *projectNode = fileNode->parentProjectNode(); projectNode;
+         projectNode = projectNode->parentProjectNode()) {
+        if (projectNode->isProduct())
+            return projectNode;
     }
     return nullptr;
 }
@@ -1265,6 +1266,14 @@ void Project::addVariablesToMacroExpander(const QByteArray &prefix,
                                             return project->projectFilePath();
                                         return {};
                                     });
+    expander->registerVariable(fullPrefix + "ProjectDirectory",
+                               //: %1 is something like "Active project"
+                               ::PE::Tr::tr("%1: Full path to Project Directory.").arg(descriptor),
+                               [projectGetter]() -> QString {
+                                   if (const Project *const project = projectGetter())
+                                       return project->projectDirectory().toUserOutput();
+                                   return {};
+                               });
     expander->registerVariable(fullPrefix + "Kit:Name",
                                //: %1 is something like "Active project"
                                ::PE::Tr::tr("%1: The name of the active kit.").arg(descriptor),

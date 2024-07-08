@@ -7,7 +7,6 @@
 #include <abstractview.h>
 #include <assetslibraryview.h>
 #include <capturingconnectionmanager.h>
-#include <collectionview.h>
 #include <componentaction.h>
 #include <componentview.h>
 #include <contentlibraryview.h>
@@ -42,14 +41,6 @@
 
 namespace QmlDesigner {
 
-static bool enableModelEditor()
-{
-    Utils::QtcSettings *settings = Core::ICore::settings();
-    const Utils::Key enableModelManagerKey = "QML/Designer/UseExperimentalFeatures44";
-
-    return settings->value(enableModelManagerKey, false).toBool();
-}
-
 static Q_LOGGING_CATEGORY(viewBenchmark, "qtc.viewmanager.attach", QtWarningMsg)
 
 class ViewManagerData
@@ -64,19 +55,22 @@ public:
                                : connectionManager,
                            externalDependencies,
                            true)
-        , collectionView{externalDependencies}
-        , contentLibraryView{externalDependencies}
+        , contentLibraryView{imageCache, externalDependencies}
         , componentView{externalDependencies}
+#ifndef QTC_USE_QML_DESIGNER_LITE
         , edit3DView{externalDependencies}
+#endif
         , formEditorView{externalDependencies}
         , textEditorView{externalDependencies}
         , assetsLibraryView{externalDependencies}
         , itemLibraryView(imageCache, externalDependencies)
         , navigatorView{externalDependencies}
         , propertyEditorView(imageCache, externalDependencies)
+#ifndef QTC_USE_QML_DESIGNER_LITE
         , materialEditorView{externalDependencies}
         , materialBrowserView{imageCache, externalDependencies}
         , textureEditorView{imageCache, externalDependencies}
+#endif
         , statesEditorView{externalDependencies}
     {}
 
@@ -86,19 +80,22 @@ public:
     Internal::DebugView debugView;
     DesignerActionManagerView designerActionManagerView;
     NodeInstanceView nodeInstanceView;
-    CollectionView collectionView;
     ContentLibraryView contentLibraryView;
     ComponentView componentView;
+#ifndef QTC_USE_QML_DESIGNER_LITE
     Edit3DView edit3DView;
+#endif
     FormEditorView formEditorView;
     TextEditorView textEditorView;
     AssetsLibraryView assetsLibraryView;
     ItemLibraryView itemLibraryView;
     NavigatorView navigatorView;
     PropertyEditorView propertyEditorView;
+#ifndef QTC_USE_QML_DESIGNER_LITE
     MaterialEditorView materialEditorView;
     MaterialBrowserView materialBrowserView;
     TextureEditorView textureEditorView;
+#endif
     StatesEditorView statesEditorView;
 
     std::vector<std::unique_ptr<AbstractView>> additionalViews;
@@ -203,6 +200,7 @@ QList<AbstractView *> ViewManager::views() const
 
 QList<AbstractView *> ViewManager::standardViews() const
 {
+#ifndef QTC_USE_QML_DESIGNER_LITE
     QList<AbstractView *> list = {&d->edit3DView,
                                   &d->formEditorView,
                                   &d->textEditorView,
@@ -215,9 +213,16 @@ QList<AbstractView *> ViewManager::standardViews() const
                                   &d->textureEditorView,
                                   &d->statesEditorView,
                                   &d->designerActionManagerView};
-
-    if (enableModelEditor())
-        list.append(&d->collectionView);
+#else
+    QList<AbstractView *> list = {&d->formEditorView,
+                                  &d->textEditorView,
+                                  &d->assetsLibraryView,
+                                  &d->itemLibraryView,
+                                  &d->navigatorView,
+                                  &d->propertyEditorView,
+                                  &d->statesEditorView,
+                                  &d->designerActionManagerView};
+#endif
 
     if (QmlDesignerPlugin::instance()
             ->settings()
@@ -384,19 +389,21 @@ QList<WidgetInfo> ViewManager::widgetInfos() const
 {
     QList<WidgetInfo> widgetInfoList;
 
+#ifndef QTC_USE_QML_DESIGNER_LITE
     widgetInfoList.append(d->edit3DView.widgetInfo());
+#endif
     widgetInfoList.append(d->formEditorView.widgetInfo());
     widgetInfoList.append(d->textEditorView.widgetInfo());
     widgetInfoList.append(d->assetsLibraryView.widgetInfo());
     widgetInfoList.append(d->itemLibraryView.widgetInfo());
     widgetInfoList.append(d->navigatorView.widgetInfo());
     widgetInfoList.append(d->propertyEditorView.widgetInfo());
+#ifndef QTC_USE_QML_DESIGNER_LITE
     widgetInfoList.append(d->materialEditorView.widgetInfo());
     widgetInfoList.append(d->materialBrowserView.widgetInfo());
     widgetInfoList.append(d->textureEditorView.widgetInfo());
+#endif
     widgetInfoList.append(d->statesEditorView.widgetInfo());
-    if (enableModelEditor())
-        widgetInfoList.append(d->collectionView.widgetInfo());
 
     if (checkEnterpriseLicense())
         widgetInfoList.append(d->contentLibraryView.widgetInfo());

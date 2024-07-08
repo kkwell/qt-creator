@@ -8,11 +8,11 @@
 #include "documentmessage.h"
 #include "rewritertransaction.h"
 
-#include <QScopedPointer>
 #include <QTimer>
 #include <QUrl>
 
 #include <functional>
+#include <memory>
 
 namespace QmlJS {
 class Document;
@@ -123,7 +123,10 @@ public:
     bool renameId(const QString& oldId, const QString& newId);
 
     const QmlJS::Document *document() const;
+
+#ifndef QDS_USE_PROJECTSTORAGE
     const QmlJS::ScopeChain *scopeChain() const;
+#endif
 
     QString convertTypeToImportAlias(const QString &type) const;
 
@@ -134,8 +137,6 @@ public:
     bool checkLinkErrors() const { return m_checkLinkErrors; }
 
     void setCheckLinkErrors(bool b) { m_checkLinkErrors = b; }
-
-    QString pathForImport(const Import &import);
 
     QStringList importDirectories() const;
 
@@ -202,9 +203,9 @@ private: //variables
     bool m_checkLinkErrors = true;
 
     DifferenceHandling m_differenceHandling;
-    QScopedPointer<Internal::ModelNodePositionStorage> m_positionStorage;
-    QScopedPointer<Internal::ModelToTextMerger> m_modelToTextMerger;
-    QScopedPointer<Internal::TextToModelMerger> m_textToModelMerger;
+    std::unique_ptr<Internal::ModelNodePositionStorage> m_positionStorage;
+    std::unique_ptr<Internal::ModelToTextMerger> m_modelToTextMerger;
+    std::unique_ptr<Internal::TextToModelMerger> m_textToModelMerger;
     QList<DocumentMessage> m_errors;
     QList<DocumentMessage> m_warnings;
     RewriterTransaction m_removeDefaultPropertyTransaction;

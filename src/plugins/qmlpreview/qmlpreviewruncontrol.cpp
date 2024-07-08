@@ -20,7 +20,7 @@
 #include <utils/async.h>
 #include <utils/filepath.h>
 #include <utils/port.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/url.h>
 
 #include <QFutureWatcher>
@@ -206,7 +206,7 @@ public:
         setStartModifier([this, runControl, serverUrl] {
             CommandLine cmd = commandLine();
 
-            if (const auto aspect = runControl->aspect<QmlProjectManager::QmlMainFileAspect>()) {
+            if (const auto aspect = runControl->aspectData<QmlProjectManager::QmlMainFileAspect>()) {
                 const auto qmlBuildSystem = qobject_cast<QmlProjectManager::QmlBuildSystem *>(
                     runControl->target()->buildSystem());
                 QTC_ASSERT(qmlBuildSystem, return);

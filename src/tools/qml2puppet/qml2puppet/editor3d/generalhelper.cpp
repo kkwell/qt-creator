@@ -6,6 +6,8 @@
 
 #include "selectionboxgeometry.h"
 
+#include <enumeration.h>
+
 #include <QGuiApplication>
 #include <QtQuick3D/qquick3dobject.h>
 #include <QtQuick3D/private/qquick3dorthographiccamera_p.h>
@@ -42,9 +44,17 @@
 namespace QmlDesigner {
 namespace Internal {
 
-const QString _globalStateId = QStringLiteral("@GTS"); // global tool state
+const QString _globalStateId = QStringLiteral("@GTS"); // global tool state (within document)
+const QString _projectStateId = QStringLiteral("@PTS"); // project wide tool state
 const QString _lastSceneIdKey = QStringLiteral("lastSceneId");
 const QString _rootSizeKey = QStringLiteral("rootSize");
+const QString _lastSceneEnvKey = QStringLiteral("lastSceneEnv");
+
+const QString _lightProbeProp = QStringLiteral("lightProbe");
+const QString _sourceProp = QStringLiteral("source");
+const QString _cubeProp = QStringLiteral("skyBoxCubeMap");
+const QString _bgProp = QStringLiteral("backgroundMode");
+const QString _colorProp = QStringLiteral("clearColor");
 
 static const float floatMin = std::numeric_limits<float>::lowest();
 static const float floatMax = std::numeric_limits<float>::max();
@@ -66,6 +76,11 @@ GeneralHelper::GeneralHelper()
     QList<QColor> defaultBg;
     defaultBg.append(QColor());
     m_bgColor = QVariant::fromValue(defaultBg);
+
+    m_camMoveData.timer.setInterval(16);
+    QObject::connect(&m_camMoveData.timer, &QTimer::timeout, this, [this]() {
+        emit requestCameraMove(m_camMoveData.camera, m_camMoveData.combinedMoveVector);
+    });
 }
 
 void GeneralHelper::requestOverlayUpdate()
@@ -142,12 +157,117 @@ QVector3D GeneralHelper::panCamera(QQuick3DCamera *camera, const QMatrix4x4 star
     const float *dataPtr(startTransform.data());
     const QVector3D xAxis = QVector3D(dataPtr[0], dataPtr[1], dataPtr[2]).normalized();
     const QVector3D yAxis = QVector3D(dataPtr[4], dataPtr[5], dataPtr[6]).normalized();
-    const QVector3D xDelta = -1.f * xAxis * dragVector.x();
+    const QVector3D xDelta = xAxis * dragVector.x();
     const QVector3D yDelta = yAxis * dragVector.y();
-    const QVector3D delta = (xDelta + yDelta) * zoomFactor;
+    const QVector3D delta = (yDelta - xDelta) * zoomFactor;
 
     camera->setPosition(startPosition + delta);
     return startLookAt + delta;
+}
+
+// Moves camera in 3D space and returns new look-at point
+QVector3D GeneralHelper::moveCamera(QQuick3DCamera *camera, const QVector3D &startLookAt,
+                                    const QVector3D &moveVector)
+{
+
+    if (moveVector.length() < 0.001f)
+        return startLookAt;
+
+    QVector3D speedVector = moveVector * m_cameraSpeed * m_cameraSpeedModifier;
+
+    QMatrix4x4 m = camera->sceneTransform(); // Works because edit camera is at scene root
+    const float *dataPtr(m.data());
+    const QVector3D xAxis = QVector3D(dataPtr[0], dataPtr[1], dataPtr[2]).normalized();
+    const QVector3D yAxis = QVector3D(dataPtr[4], dataPtr[5], dataPtr[6]).normalized();
+    const QVector3D zAxis = QVector3D(dataPtr[8], dataPtr[9], dataPtr[10]).normalized();
+    const QVector3D xDelta = xAxis * speedVector.x();
+    const QVector3D yDelta = yAxis * speedVector.y();
+    const QVector3D zDelta = zAxis * speedVector.z();
+    const QVector3D delta = (yDelta - xDelta - zDelta);
+
+    camera->setPosition(camera->position() + delta);
+
+    return startLookAt + delta;
+}
+
+// Rotates camera and returns the new look-at point
+QVector3D GeneralHelper::rotateCamera(QQuick3DCamera *camera, const QPointF &angles,
+                                      const QVector3D &lookAtPoint)
+{
+    float lookAtDist = (camera->scenePosition() - lookAtPoint).length();
+
+    if (qAbs(angles.y()) > 0.001f)
+        camera->rotate(angles.y(), QVector3D(1.f, 0.f, 0.f), QQuick3DNode::LocalSpace);
+    // Rotation around Y-axis is done in scene space to keep horizon level
+    if (qAbs(angles.x()) > 0.001f) {
+        // Since we are rotating in scene space, adjust direction according to camera up-vector
+        float angle = angles.x();
+        if (camera->up().y() <= 0)
+            angle = -angle;
+
+        camera->rotate(angle, QVector3D(0.f, 1.f, 0.f), QQuick3DNode::SceneSpace);
+    }
+
+    QMatrix4x4 m = camera->sceneTransform();
+    const float *dataPtr(m.data());
+    QVector3D newLookVector(dataPtr[8], dataPtr[9], dataPtr[10]);
+
+    newLookVector.normalize();
+    newLookVector *= lookAtDist;
+
+    return camera->scenePosition() - newLookVector;
+}
+
+void GeneralHelper::updateCombinedCameraMoveVector()
+{
+    QVector3D combinedVec;
+    for (const QVector3D &vec : std::as_const(m_camMoveData.moveVectors))
+        combinedVec += vec;
+    m_camMoveData.combinedMoveVector = combinedVec;
+}
+
+// Key events can be buffered and there are repeat delays imposed by OS, so to get smooth camera
+// movement in response to keys, register start/stop of moves along each axis and use timer to
+// trigger new moves along registered axes.
+void GeneralHelper::startCameraMove(QQuick3DCamera *camera, const QVector3D moveVector)
+{
+    if (moveVector.isNull())
+        return;
+
+    if (m_camMoveData.camera != camera) {
+        m_camMoveData.camera = camera;
+        m_camMoveData.moveVectors.clear();
+    }
+
+    if (!m_camMoveData.moveVectors.contains(moveVector)) {
+        m_camMoveData.moveVectors.append(moveVector);
+        updateCombinedCameraMoveVector();
+    }
+
+    if (!m_camMoveData.timer.isActive()) {
+        m_camMoveData.timer.start();
+        emit requestCameraMove(camera, m_camMoveData.combinedMoveVector);
+    }
+}
+
+void GeneralHelper::stopCameraMove(const QVector3D moveVector)
+{
+    if (moveVector.isNull())
+        return;
+
+    m_camMoveData.moveVectors.removeOne(moveVector);
+
+    updateCombinedCameraMoveVector();
+
+    if (m_camMoveData.moveVectors.isEmpty())
+        m_camMoveData.timer.stop();
+}
+
+void GeneralHelper::stopAllCameraMoves()
+{
+    m_camMoveData.moveVectors.clear();
+    m_camMoveData.combinedMoveVector = {};
+    m_camMoveData.timer.stop();
 }
 
 float GeneralHelper::zoomCamera([[maybe_unused]] QQuick3DViewport *viewPort,
@@ -289,21 +409,72 @@ QVector4D GeneralHelper::focusNodesToCamera(QQuick3DCamera *camera, float defaul
     return QVector4D(lookAt, cameraZoomFactor);
 }
 
+// Approaches the specified node without changing camera orientation
+QVector4D GeneralHelper::approachNode(
+    QQuick3DCamera *camera, float defaultLookAtDistance, QObject *node,
+    QQuick3DViewport *viewPort)
+{
+    auto node3d = qobject_cast<QQuick3DNode *>(node);
+    if (!camera || !node3d)
+        return QVector4D(0.f, 0.f, 0.f, 1.f);
+
+    QVector3D minBounds = maxVec;
+    QVector3D maxBounds = minVec;
+
+    getBounds(viewPort, node3d, minBounds, maxBounds); // Bounds are in node3d local coordinates
+
+    QVector3D extents = maxBounds - minBounds;
+    QVector3D focusLookAt = minBounds + (extents / 2.f);
+
+    if (node3d->parentNode()) {
+        QMatrix4x4 m = node3d->parentNode()->sceneTransform();
+        focusLookAt = m.map(focusLookAt);
+    }
+
+    float maxExtent = qSqrt(qreal(extents.x()) * qreal(extents.x())
+                            + qreal(extents.y()) * qreal(extents.y())
+                            + qreal(extents.z()) * qreal(extents.z()));
+
+    // Reset camera position to default zoom
+    QMatrix4x4 m = camera->sceneTransform();
+    const float *dataPtr(m.data());
+    QVector3D newLookVector(dataPtr[8], dataPtr[9], dataPtr[10]);
+    newLookVector.normalize();
+
+    // We don't want to change camera orientation, so calculate projection point on current
+    // camera look vector
+    QVector3D focusLookAtVector = focusLookAt - camera->position();
+    float dot = QVector3D::dotProduct(newLookVector, focusLookAtVector);
+    QVector3D newLookAt = camera->position() + dot * newLookVector;
+
+    newLookVector *= defaultLookAtDistance;
+    camera->setPosition(newLookAt + newLookVector);
+
+    float divisor = 1050.f;
+    float newZoomFactor = qBound(.01f, maxExtent / divisor, 100.f);
+    float cameraZoomFactor = zoomCamera(viewPort, camera, 0, defaultLookAtDistance, newLookAt,
+                                        newZoomFactor, false);
+
+    return QVector4D(newLookAt, cameraZoomFactor);
+}
+
 // This function can be used to synchronously focus camera on a node, which doesn't have to be
 // a selection box for bound calculations to work. This is used to focus the view for
 // various preview image generations, where doing things asynchronously is not good
 // and recalculating bounds for every frame is not a problem.
-void GeneralHelper::calculateNodeBoundsAndFocusCamera(
-        QQuick3DCamera *camera, QQuick3DNode *node, QQuick3DViewport *viewPort,
-        float defaultLookAtDistance, bool closeUp)
+void GeneralHelper::calculateBoundsAndFocusCamera(QQuick3DCamera *camera, QQuick3DNode *node,
+                                                  QQuick3DViewport *viewPort,
+                                                  float defaultLookAtDistance,
+                                                  bool closeUp, QVector3D &lookAt,
+                                                  QVector3D &extents)
 {
     QVector3D minBounds;
     QVector3D maxBounds;
 
     getBounds(viewPort, node, minBounds, maxBounds);
 
-    QVector3D extents = maxBounds - minBounds;
-    QVector3D lookAt = minBounds + (extents / 2.f);
+    extents = maxBounds - minBounds;
+    lookAt = minBounds + (extents / 2.f);
     float maxExtent = qSqrt(qreal(extents.x()) * qreal(extents.x())
                           + qreal(extents.y()) * qreal(extents.y())
                           + qreal(extents.z()) * qreal(extents.z()));
@@ -336,8 +507,18 @@ void GeneralHelper::calculateNodeBoundsAndFocusCamera(
             perspectiveCamera->setClipNear(minDist * 0.99);
             perspectiveCamera->setClipFar(maxDist * 1.01);
         }
-
     }
+}
+
+void GeneralHelper::calculateNodeBoundsAndFocusCamera(QQuick3DCamera *camera, QQuick3DNode *node,
+                                                      QQuick3DViewport *viewPort,
+                                                      float defaultLookAtDistance,
+                                                      bool closeUp)
+{
+    QVector3D extents;
+    QVector3D lookAt;
+    calculateBoundsAndFocusCamera(camera, node, viewPort, defaultLookAtDistance, closeUp,
+                                  lookAt, extents);
 }
 
 // Aligns any cameras found in nodes list to a camera.
@@ -385,12 +566,10 @@ void GeneralHelper::alignCameras(QQuick3DCamera *camera, const QVariant &nodes)
 // Aligns the camera to the first camera in nodes list.
 // Aligning means taking the position and XY rotation from the source camera. Rest of the properties
 // remain the same, as this is used to align edit cameras, which have fixed Z-rot, fov, and clips.
-// The new lookAt is set at same distance away as it was previously and scale isn't adjusted, so
-// the zoom factor of the edit camera stays the same.
-QVector3D GeneralHelper::alignView(QQuick3DCamera *camera, const QVariant &nodes,
-                                   const QVector3D &lookAtPoint)
+// The camera zoom is reset to default.
+QVector4D GeneralHelper::alignView(QQuick3DCamera *camera, const QVariant &nodes,
+                                   const QVector3D &lookAtPoint, float defaultLookAtDistance)
 {
-    float lastDistance = (lookAtPoint - camera->position()).length();
     const QVariantList varNodes = nodes.value<QVariantList>();
     QQuick3DCamera *cameraNode = nullptr;
     for (const auto &varNode : varNodes) {
@@ -400,15 +579,24 @@ QVector3D GeneralHelper::alignView(QQuick3DCamera *camera, const QVariant &nodes
     }
 
     if (cameraNode) {
+        if (auto orthoCamera = qobject_cast<QQuick3DOrthographicCamera *>(camera)) {
+            orthoCamera->setHorizontalMagnification(1.f);
+            orthoCamera->setVerticalMagnification(1.f);
+            // Force update on transform just in case position and rotation didn't change
+            float x = orthoCamera->x();
+            orthoCamera->setX(x + 1.f);
+            orthoCamera->setX(x);
+        }
         camera->setPosition(cameraNode->scenePosition());
         QVector3D newRotation = cameraNode->sceneRotation().toEulerAngles();
         newRotation.setZ(0.f);
         camera->setEulerRotation(newRotation);
+
     }
 
-    QVector3D lookAt = camera->position() + camera->forward() * lastDistance;
+    QVector3D lookAt = camera->position() + camera->forward() * defaultLookAtDistance;
 
-    return lookAt;
+    return QVector4D(lookAt, 1.f);
 }
 
 bool GeneralHelper::fuzzyCompare(double a, double b)
@@ -573,6 +761,11 @@ void GeneralHelper::setSceneEnvironmentData(const QString &sceneId,
     }
 }
 
+bool GeneralHelper::hasSceneEnvironmentData(const QString &sceneId) const
+{
+    return m_sceneEnvironmentData.contains(sceneId);
+}
+
 QQuick3DSceneEnvironment::QQuick3DEnvironmentBackgroundTypes GeneralHelper::sceneEnvironmentBgMode(
     const QString &sceneId) const
 {
@@ -594,6 +787,69 @@ QQuick3DCubeMapTexture *GeneralHelper::sceneEnvironmentSkyBoxCubeMap(const QStri
     return m_sceneEnvironmentData[sceneId].skyBoxCubeMap.data();
 }
 
+void GeneralHelper::updateSceneEnvToLast(QQuick3DSceneEnvironment *env, QQuick3DTexture *lightProbe,
+                                         QQuick3DCubeMapTexture *cubeMap)
+{
+    if (!env)
+        return;
+
+    if (m_lastSceneEnvData.contains(_bgProp)) {
+        Enumeration enumeration = m_lastSceneEnvData[_bgProp].value<Enumeration>();
+        QMetaEnum me = QMetaEnum::fromType<QQuick3DSceneEnvironment::QQuick3DEnvironmentBackgroundTypes>();
+        int intValue = me.keyToValue(enumeration.toName());
+        env->setBackgroundMode(QQuick3DSceneEnvironment::QQuick3DEnvironmentBackgroundTypes(intValue));
+    } else {
+        env->setBackgroundMode(QQuick3DSceneEnvironment::Transparent);
+    }
+
+    if (m_lastSceneEnvData.contains(_colorProp))
+        env->setClearColor(m_lastSceneEnvData[_colorProp].value<QColor>());
+    else
+        env->setClearColor(Qt::transparent);
+
+    if (lightProbe) {
+        if (m_lastSceneEnvData.contains(_lightProbeProp)) {
+            QVariantMap props = m_lastSceneEnvData[_lightProbeProp].toMap();
+            if (props.contains(_sourceProp))
+                lightProbe->setSource(props[_sourceProp].toUrl());
+            else
+                lightProbe->setSource({});
+            env->setLightProbe(lightProbe);
+        } else {
+            env->setLightProbe(nullptr);
+        }
+    }
+
+    if (cubeMap) {
+        if (m_lastSceneEnvData.contains(_cubeProp)) {
+            QVariantMap props = m_lastSceneEnvData[_cubeProp].toMap();
+            if (props.contains(_sourceProp))
+                cubeMap->setSource(props[_sourceProp].toUrl());
+            else
+                cubeMap->setSource({});
+            env->setSkyBoxCubeMap(cubeMap);
+        } else {
+            env->setSkyBoxCubeMap(nullptr);
+        }
+    }
+}
+
+bool GeneralHelper::sceneHasLightProbe(const QString &sceneId)
+{
+    // From editor perspective, a scene is considered to have a light probe if scene itself
+    // has a light probe or scene has no env data and last scene had a light probe
+    if (m_sceneEnvironmentData.contains(sceneId)) {
+        return bool(m_sceneEnvironmentData[sceneId].lightProbe);
+    } else {
+        if (m_lastSceneEnvData.contains(_lightProbeProp)) {
+            QVariantMap props = m_lastSceneEnvData[_sourceProp].toMap();
+            if (props.contains(_sourceProp))
+                return !props[_sourceProp].toUrl().isEmpty();
+        }
+    }
+    return false;
+}
+
 void GeneralHelper::clearSceneEnvironmentData()
 {
     for (const SceneEnvData &data : std::as_const(m_sceneEnvironmentData)) {
@@ -605,6 +861,12 @@ void GeneralHelper::clearSceneEnvironmentData()
 
     m_sceneEnvironmentData.clear();
     emit sceneEnvDataChanged();
+}
+
+void GeneralHelper::setLastSceneEnvironmentData(const QVariantMap &data)
+{
+    m_lastSceneEnvData = data;
+    storeToolState(_projectStateId, _lastSceneEnvKey, m_lastSceneEnvData);
 }
 
 void GeneralHelper::initToolStates(const QString &sceneId, const QVariantMap &toolStates)
@@ -631,9 +893,19 @@ QString GeneralHelper::globalStateId() const
     return _globalStateId;
 }
 
+QString GeneralHelper::projectStateId() const
+{
+    return _projectStateId;
+}
+
 QString GeneralHelper::lastSceneIdKey() const
 {
     return _lastSceneIdKey;
+}
+
+QString GeneralHelper::lastSceneEnvKey() const
+{
+    return _lastSceneEnvKey;
 }
 
 QString GeneralHelper::rootSizeKey() const
@@ -1014,6 +1286,19 @@ void GeneralHelper::setSnapPositionInterval(double interval)
     }
 }
 
+void GeneralHelper::setCameraSpeed(double speed)
+{
+    if (m_cameraSpeed != speed) {
+        m_cameraSpeed = speed;
+        emit cameraSpeedChanged();
+    }
+}
+
+void GeneralHelper::setCameraSpeedModifier(double modifier)
+{
+    m_cameraSpeedModifier = modifier;
+}
+
 QString GeneralHelper::formatVectorDragTooltip(const QVector3D &vec, const QString &suffix) const
 {
     return QObject::tr("x:%L1 y:%L2 z:%L3%L4")
@@ -1239,6 +1524,26 @@ bool GeneralHelper::compareQuaternions(const QQuaternion &q1, const QQuaternion 
 {
     return qFuzzyCompare(q1.x(), q2.x()) && qFuzzyCompare(q1.y(), q2.y())
            && qFuzzyCompare(q1.z(), q2.z()) && qFuzzyCompare(q1.scalar(), q2.scalar());
+}
+
+void GeneralHelper::requestTimerEvent(const QString &timerId, qint64 delay)
+{
+    if (m_eventTimers.contains(timerId)) {
+        m_eventTimers[timerId]->start(delay);
+    } else {
+        auto timer = new QTimer;
+        timer->setInterval(delay);
+        timer->setSingleShot(true);
+        connect(timer, &QTimer::timeout, this, [this, timerId]() {
+            if (m_eventTimers.contains(timerId)) {
+                QTimer *timer = m_eventTimers.take(timerId);
+                timer->deleteLater();
+            }
+            emit requestedTimerEvent(timerId);
+        });
+        m_eventTimers[timerId] = timer;
+        timer->start(delay);
+    }
 }
 
 }

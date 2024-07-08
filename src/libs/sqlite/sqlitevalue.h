@@ -6,6 +6,7 @@
 #include "sqliteblob.h"
 #include "sqliteexception.h"
 
+#include <nanotrace/nanotracehr.h>
 #include <utils/smallstring.h>
 
 #include <QVariant>
@@ -33,7 +34,7 @@ public:
     explicit ValueBase(NullValue) {}
 
     explicit ValueBase(VariantType &&value)
-        : value(value)
+        : value(std::move(value))
     {}
 
     explicit ValueBase(const char *value)
@@ -43,6 +44,7 @@ public:
     explicit ValueBase(long long value)
         : value(value)
     {}
+
     explicit ValueBase(int value)
         : value(static_cast<long long>(value))
     {}
@@ -57,11 +59,6 @@ public:
 
     explicit ValueBase(Utils::SmallStringView value)
         : value(value)
-
-    {}
-
-    explicit ValueBase(StringType &&value)
-        : value(std::move(value))
 
     {}
 
@@ -229,14 +226,42 @@ public:
 class ValueView : public ValueBase<Utils::SmallStringView, BlobView>
 {
 public:
+    ValueView() = default;
+
+    explicit ValueView(NullValue) {}
+
     explicit ValueView(ValueBase &&base)
         : ValueBase(std::move(base))
+    {}
+
+    explicit ValueView(Utils::SmallStringView value)
+        : ValueBase(value)
+    {}
+
+    explicit ValueView(BlobView value)
+        : ValueBase(value)
+    {}
+
+    explicit ValueView(long long value)
+        : ValueBase(value)
+    {}
+
+    explicit ValueView(int value)
+        : ValueBase(static_cast<long long>(value))
+    {}
+
+    explicit ValueView(uint value)
+        : ValueBase(static_cast<long long>(value))
+    {}
+
+    explicit ValueView(double value)
+        : ValueBase(value)
     {}
 
     template<typename Type>
     static ValueView create(Type &&value_)
     {
-        return ValueView{ValueBase{value_}};
+        return ValueView(std::forward<Type>(value_));
     }
 };
 
@@ -348,18 +373,18 @@ private:
         if (value.isNull())
             return VariantType{NullValue{}};
 
-        switch (value.userType()) {
-        case QVariant::Int:
+        switch (value.typeId()) {
+        case QMetaType::Int:
             return VariantType{static_cast<long long>(value.toInt())};
-        case QVariant::LongLong:
+        case QMetaType::LongLong:
             return VariantType{value.toLongLong()};
-        case QVariant::UInt:
+        case QMetaType::UInt:
             return VariantType{static_cast<long long>(value.toUInt())};
-        case QVariant::Double:
+        case QMetaType::Double:
             return VariantType{value.toFloat()};
-        case QVariant::String:
+        case QMetaType::QString:
             return VariantType{value.toString()};
-        case QVariant::ByteArray:
+        case QMetaType::QByteArray:
             return VariantType{Blob{value.toByteArray()}};
         default:
             throw CannotConvert();
@@ -386,4 +411,27 @@ private:
 };
 
 using Values = std::vector<Value>;
+
+template<typename String>
+void convertToString(String &string, const Value &value)
+{
+    switch (value.type()) {
+    case ValueType::Null:
+        convertToString(string, "null");
+        break;
+    case ValueType::Integer:
+        convertToString(string, value.toInteger());
+        break;
+    case ValueType::Float:
+        convertToString(string, value.toFloat());
+        break;
+    case ValueType::String:
+        convertToString(string, value.toStringView());
+        break;
+    case ValueType::Blob:
+        convertToString(string, "blob");
+        break;
+    }
+}
+
 } // namespace Sqlite

@@ -8,6 +8,8 @@
         <file>mockfiles/images/editor_camera@2x.png</file>
         <file>mockfiles/images/editor_particlesystem.png</file>
         <file>mockfiles/images/editor_particlesystem@2x.png</file>
+        <file>mockfiles/images/crosshair.png</file>
+        <file>mockfiles/images/crosshair@2x.png</file>
         <file>mockfiles/images/directional.png</file>
         <file>mockfiles/images/directional@2x.png</file>
         <file>mockfiles/images/point.png</file>
@@ -17,6 +19,8 @@
         <file>mockfiles/images/spot@2x.png</file>
         <file>mockfiles/images/preview_landscape.hdr</file>
         <file>mockfiles/images/preview_studio.hdr</file>
+        <file>mockfiles/images/reflectionprobe.png</file>
+        <file>mockfiles/images/reflectionprobe@2x.png</file>
         <file>mockfiles/qt6/AdjustableArrow.qml</file>
         <file>mockfiles/qt6/Arrow.qml</file>
         <file>mockfiles/qt6/AutoScaleHelper.qml</file>
@@ -33,6 +37,7 @@
         <file>mockfiles/qt6/LightIconGizmo.qml</file>
         <file>mockfiles/qt6/LightModel.qml</file>
         <file>mockfiles/qt6/Line3D.qml</file>
+        <file>mockfiles/qt6/LookAtGizmo.qml</file>
         <file>mockfiles/qt6/MaterialNodeView.qml</file>
         <file>mockfiles/qt6/ModelNode2DImageView.qml</file>
         <file>mockfiles/qt6/ModelNode3DImageView.qml</file>
@@ -47,6 +52,8 @@
         <file>mockfiles/qt6/PlanarDraggable.qml</file>
         <file>mockfiles/qt6/PlanarMoveHandle.qml</file>
         <file>mockfiles/qt6/PlanarScaleHandle.qml</file>
+        <file>mockfiles/qt6/ReflectionProbeBox.qml</file>
+        <file>mockfiles/qt6/ReflectionProbeGizmo.qml</file>
         <file>mockfiles/qt6/RotateGizmo.qml</file>
         <file>mockfiles/qt6/RotateRing.qml</file>
         <file>mockfiles/qt6/ScaleGizmo.qml</file>
