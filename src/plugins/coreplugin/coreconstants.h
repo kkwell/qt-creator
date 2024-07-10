@@ -10,11 +10,13 @@ namespace Constants {
 
 // Modes
 const char MODE_WELCOME[]          = "Welcome";
+const char MODE_EASYBOARD[]        = "EasyBoard";
 const char MODE_EDIT[]             = "Edit";
 const char MODE_DESIGN[]           = "Design";
 const int  P_MODE_WELCOME          = 100;
 const int  P_MODE_EDIT             = 90;
 const int  P_MODE_DESIGN           = 89;
+const char P_MODE_EASYBOARD        = 70;
 
 // TouchBar
 const char TOUCH_BAR[]             = "QtCreator.TouchBar";
@@ -40,6 +42,7 @@ const char M_HELP[]                = "QtCreator.Menu.Help";
 // Contexts
 const char C_GLOBAL[]              = "Global Context";
 const char C_WELCOME_MODE[]        = "Core.WelcomeMode";
+const char C_EASYBOARD_MODE[]      = "Core.EasyBoardMode";
 const char C_EDIT_MODE[]           = "Core.EditMode";
 const char C_DESIGN_MODE[]         = "Core.DesignMode";
 const char C_EDITORMANAGER[]       = "Core.EditorManager";

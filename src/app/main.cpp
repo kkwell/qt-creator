@@ -616,12 +616,14 @@ int main(int argc, char **argv)
 #endif
 
     QScopedPointer<Utils::TemporaryDirectory> temporaryCleanSettingsDir;
+
     if (options.settingsPath.isEmpty() && (options.hasTestOption || options.wantsCleanSettings)) {
         temporaryCleanSettingsDir.reset(new Utils::TemporaryDirectory("qtc-test-settings"));
         if (!temporaryCleanSettingsDir->isValid())
             return 1;
         options.settingsPath = temporaryCleanSettingsDir->path().path();
     }
+
     if (!options.settingsPath.isEmpty())
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, options.settingsPath);
 
@@ -661,12 +663,14 @@ int main(int argc, char **argv)
     const QStringList installPluginPaths = getInstallPluginPaths();
     // Re-setup install settings for real
     setupInstallSettings(options.installSettingsPath);
-    Utils::QtcSettings *settings = createUserSettings();
+    // Utils::QtcSettings *settings = createUserSettings();
     Utils::QtcSettings *installSettings
         = new Utils::QtcSettings(QSettings::IniFormat,
                                  QSettings::SystemScope,
                                  QLatin1String(Core::Constants::IDE_SETTINGSVARIANT_STR),
                                  QLatin1String(Core::Constants::IDE_CASED_ID));
+    Utils::QtcSettings *settings = installSettings;
+
     // warn if -installsettings points to a place where no install settings are located
     if (!options.installSettingsPath.isEmpty() && !QFileInfo::exists(installSettings->fileName())) {
         displayError(QLatin1String("The install settings \"%1\" do not exist. The %2 option must "

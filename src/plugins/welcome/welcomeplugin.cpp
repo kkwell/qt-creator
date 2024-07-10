@@ -101,11 +101,11 @@ public:
         if (QTC_GUARD(mhelp))
             mhelp->addAction(cmd, Core::Constants::G_HELP_HELP);
 
-        if (!arguments.contains("-notour")) {
-            connect(ICore::instance(), &ICore::coreOpened, this, []() {
-                IntroductionWidget::askUserAboutIntroduction(ICore::dialogParent());
-            }, Qt::QueuedConnection);
-        }
+        // if (!arguments.contains("-notour")) {
+        //     connect(ICore::instance(), &ICore::coreOpened, this, []() {
+        //         IntroductionWidget::askUserAboutIntroduction(ICore::dialogParent());
+        //     }, Qt::QueuedConnection);
+        // }
 
         return true;
     }
@@ -232,7 +232,7 @@ public:
         mainColumn.addItem(st);
 
         {
-            auto label = new Core::Label(Tr::tr("Explore more"), Core::Label::Secondary);
+            auto label = new Core::Label(Tr::tr("Qt Explore more"), Core::Label::Secondary);
             label->setContentsMargins(HPaddingXxs, 0, 0, 0); // Is indented in Figma design
 
             Column linksLayout {

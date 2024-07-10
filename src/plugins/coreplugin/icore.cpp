@@ -1291,6 +1291,8 @@ QString ICore::aboutInformationHtml()
                  "<br/>"
                  "Copyright 2008-%6 %7. All rights reserved.<br/>"
                  "<br/>"
+                 "Powered By KK<br/>"
+                 "<br/>"
                  "The program is provided AS IS with NO WARRANTY OF ANY KIND, "
                  "INCLUDING THE WARRANTY OF DESIGN, MERCHANTABILITY AND FITNESS FOR A "
                  "PARTICULAR PURPOSE.<br/>")
@@ -2671,7 +2673,10 @@ void ICorePrivate::contact()
               "<p>or the #qt-creator channel on Libera.Chat IRC:</p>"
               "%2"
               "<p>Our bug tracker is located at %3.</p>"
-              "<p>Please use %4 for bigger chunks of text.</p>")
+              "<p>Please use %4 for bigger chunks of text.</p>"
+              "<p>------------------------</p>"
+              "<p>Easy Board Author : KK</p>"
+              "<p>Email:kong_w@foxmail.com</p>")
                     .arg("<p>&nbsp;&nbsp;&nbsp;&nbsp;"
                             "<a href=\"https://lists.qt-project.org/listinfo/qt-creator\">"
                             "mailto:qt-creator@qt-project.org"

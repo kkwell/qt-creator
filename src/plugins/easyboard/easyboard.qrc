@@ -1,0 +1,8 @@
+<RCC>
+    <qresource prefix="/easyboard">
+        <file>images/mode_device.png</file>
+        <file>images/mode_device_mask.png</file>
+        <file>images/mode_device_mask@2x.png</file>
+        <file>images/mode_device@2x.png</file>
+    </qresource>
+</RCC>
