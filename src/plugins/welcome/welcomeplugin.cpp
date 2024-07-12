@@ -232,6 +232,42 @@ public:
         mainColumn.addItem(st);
 
         {
+            auto easylabel = new Core::Label(Tr::tr("EasyBoard more"), Core::Label::Secondary);
+            easylabel->setContentsMargins(HPaddingXxs, 0, 0, 0); // Is indented in Figma design
+
+            Column linksLayout {
+                easylabel,
+                spacing(VGapS),
+                customMargins(0, VGapL, 0, ExVPaddingGapXl),
+            };
+
+            const struct {
+                const QString label;
+                const QString url;
+            } links [] =
+                {
+                 { Tr::tr("Get Started"), "https://kvell.dscloud.me:70" },
+                 { Tr::tr("Get EasyBoard"), "https://kvell.dscloud.me:70" },
+                 { Tr::tr("IRC #easyboard"), "https://kvell.dscloud.me:5599" },
+                 };
+            for (auto &link : links) {
+                auto button = new Button(link.label, Button::SmallLink, this);
+                connect(button, &Button::clicked, this, [link]{
+                    QDesktopServices::openUrl(link.url);});
+                button->setToolTip(link.url);
+                static const QPixmap icon = Icon({{":/welcome/images/link.png",
+                                                   Theme::Token_Accent_Default}},
+                                                 Icon::Tint).pixmap();
+                button->setPixmap(icon);
+                linksLayout.addItem(button);
+            }
+
+            m_links = new QWidget;
+            linksLayout.attachTo(m_links);
+            mainColumn.addItem(m_links);
+        }
+
+        {
             auto label = new Core::Label(Tr::tr("Qt Explore more"), Core::Label::Secondary);
             label->setContentsMargins(HPaddingXxs, 0, 0, 0); // Is indented in Figma design
 
