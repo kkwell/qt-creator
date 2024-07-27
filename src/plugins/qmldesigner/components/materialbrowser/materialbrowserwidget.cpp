@@ -22,6 +22,7 @@
 
 #include <utils/algorithm.h>
 #include <utils/environment.h>
+#include <utils/fileutils.h>
 #include <utils/qtcassert.h>
 #include <utils/stylehelper.h>
 
@@ -31,6 +32,8 @@
 #include <QQuickItem>
 #include <QShortcut>
 #include <QVBoxLayout>
+
+using namespace Core;
 
 namespace QmlDesigner {
 
@@ -186,7 +189,7 @@ MaterialBrowserWidget::MaterialBrowserWidget(AsynchronousImageCache &imageCache,
     setStyleSheet(Theme::replaceCssColors(
         QString::fromUtf8(Utils::FileReader::fetchQrc(":/qmldesigner/stylesheet.css"))));
 
-    m_qmlSourceUpdateShortcut = new QShortcut(QKeySequence(Qt::CTRL + Qt::Key_F8), this);
+    m_qmlSourceUpdateShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F8), this);
     connect(m_qmlSourceUpdateShortcut, &QShortcut::activated, this, &MaterialBrowserWidget::reloadQmlSource);
 
     connect(m_materialBrowserModel, &MaterialBrowserModel::isEmptyChanged, this, [&] {
@@ -212,6 +215,10 @@ MaterialBrowserWidget::MaterialBrowserWidget(AsynchronousImageCache &imageCache,
     reloadQmlSource();
 
     setFocusProxy(m_quickWidget->quickWidget());
+
+    IContext::attach(this,
+                     Context(Constants::C_QMLMATERIALBROWSER, Constants::C_QT_QUICK_TOOLS_MENU),
+                     [this](const IContext::HelpCallback &callback) { contextHelp(callback); });
 }
 
 void MaterialBrowserWidget::updateMaterialPreview(const ModelNode &node, const QPixmap &pixmap)

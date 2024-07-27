@@ -16,6 +16,7 @@
 #include <coreplugin/icore.h>
 
 #include <projectexplorer/devicesupport/devicemanager.h>
+#include <projectexplorer/devicesupport/idevicefactory.h>
 #include <projectexplorer/devicesupport/idevicewidget.h>
 #include <projectexplorer/kitaspects.h>
 #include <projectexplorer/projectexplorerconstants.h>
@@ -23,13 +24,13 @@
 #include <projectexplorer/projectmanager.h>
 #include <projectexplorer/target.h>
 
-#include <solutions/tasking/tasktree.h>
-
-#include <utils/async.h>
-#include <utils/qtcprocess.h>
+#include <utils/fileutils.h>
+#include <utils/guard.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcprocess.h>
 #include <utils/url.h>
 
+#include <QFileSystemWatcher>
 #include <QFormLayout>
 #include <QInputDialog>
 #include <QLoggingCategory>
@@ -103,22 +104,6 @@ static void updateDeviceState(const IDevice::ConstPtr &device)
         devMgr->setDeviceState(id, getDeviceState(serial, dev->machineType()));
     else if (dev->machineType() == IDevice::Emulator)
         devMgr->setDeviceState(id, IDevice::DeviceConnected);
-}
-
-static void startAvd(const IDevice::Ptr &device, QWidget *parent)
-{
-    Q_UNUSED(parent)
-    const AndroidDevice *androidDev = static_cast<const AndroidDevice *>(device.get());
-    const QString name = androidDev->avdName();
-    qCDebug(androidDeviceLog, "Starting Android AVD id \"%s\".", qPrintable(name));
-    Utils::futureSynchronizer()->addFuture(Utils::asyncRun([name, device](QPromise<void> &promise) {
-        const QString serialNumber = AndroidAvdManager::startAvd(name, promise.future());
-        // Mark the AVD as ReadyToUse once we know it's started
-        if (!serialNumber.isEmpty()) {
-            DeviceManager *const devMgr = DeviceManager::instance();
-            devMgr->setDeviceState(device->id(), IDevice::DeviceReadyToUse);
-        }
-    }));
 }
 
 static void setEmulatorArguments(QWidget *parent)
@@ -401,8 +386,8 @@ void AndroidDevice::addActionsIfNotFound()
 
     if (machineType() == Emulator) {
         if (!hasStartAction) {
-            addDeviceAction({startAvdAction, [](const IDevice::Ptr &device, QWidget *parent) {
-                startAvd(device, parent);
+            addDeviceAction({startAvdAction, [](const IDevice::Ptr &device, QWidget *) {
+                static_cast<AndroidDevice *>(device.get())->startAvd();
             }});
         }
 
@@ -457,12 +442,12 @@ AndroidDeviceInfo AndroidDevice::androidDeviceInfoFromIDevice(const IDevice *dev
 Id AndroidDevice::idFromDeviceInfo(const AndroidDeviceInfo &info)
 {
     const QString id = (info.type == IDevice::Hardware ? info.serialNumber : info.avdName);
-    return  Id(Constants::ANDROID_DEVICE_ID).withSuffix(':' + id);
+    return  Id(Constants::ANDROID_DEVICE_ID).withSuffix(':').withSuffix(id);
 }
 
 Id AndroidDevice::idFromAvdInfo(const CreateAvdInfo &info)
 {
-    return Id(Constants::ANDROID_DEVICE_ID).withSuffix(':' + info.name);
+    return Id(Constants::ANDROID_DEVICE_ID).withSuffix(':').withSuffix(info.name);
 }
 
 QStringList AndroidDevice::supportedAbis() const
@@ -581,6 +566,24 @@ QString AndroidDevice::openGLStatus() const
     return openGL.isEmpty() ? Tr::tr("Unknown") : openGL;
 }
 
+void AndroidDevice::startAvd()
+{
+    const Storage<QString> serialNumberStorage;
+
+    const auto onDone = [this, serialNumberStorage] {
+        if (!serialNumberStorage->isEmpty())
+            DeviceManager::instance()->setDeviceState(id(), IDevice::DeviceReadyToUse);
+    };
+
+    const Group root {
+        serialNumberStorage,
+        AndroidAvdManager::startAvdRecipe(avdName(), serialNumberStorage),
+        onGroupDone(onDone, CallDoneIf::Success)
+    };
+
+    m_taskTreeRunner.start(root);
+}
+
 IDevice::DeviceInfo AndroidDevice::deviceInformation() const
 {
     return IDevice::DeviceInfo();
@@ -648,10 +651,10 @@ static void handleDevicesListChange(const QString &serialNumber)
 
     if (isEmulator) {
         const QString avdName = emulatorName(serial);
-        const Id avdId = Id(Constants::ANDROID_DEVICE_ID).withSuffix(':' + avdName);
+        const Id avdId = Id(Constants::ANDROID_DEVICE_ID).withSuffix(':').withSuffix(avdName);
         devMgr->setDeviceState(avdId, state);
     } else {
-        const Id id = Id(Constants::ANDROID_DEVICE_ID).withSuffix(':' + serial);
+        const Id id = Id(Constants::ANDROID_DEVICE_ID).withSuffix(':').withSuffix(serial);
         QString displayName = AndroidConfig::getProductModel(serial);
         // Check if the device is connected via WiFi. A sample serial of such devices can be
         // like: "192.168.1.190:5555"
@@ -830,9 +833,9 @@ AndroidDeviceManagerInstance::AndroidDeviceManagerInstance(QObject *parent)
     // otherwise, Android Studio would give an error during parsing also. So this fix
     // aim to keep support for Qt Creator and Android Studio.
 
-    m_avdListRecipe = Group {
-        storage,
+    m_avdListRecipe = For {
         iterator,
+        storage,
         ProcessTask(onProcessSetup, onProcessDone)
     };
 }

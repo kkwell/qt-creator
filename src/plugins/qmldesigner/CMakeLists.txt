@@ -521,7 +521,6 @@ add_qtc_plugin(QmlDesigner
     ${CMAKE_CURRENT_LIST_DIR}/designercore #can not be a public dependency -> EXCLUDE_FROM_INSTALL in QmlDesignerCore
     ${CMAKE_CURRENT_LIST_DIR}/designercore/include #iwidgetplugin.h is used by other plugins
   SOURCES
-    designmodecontext.cpp designmodecontext.h
     designmodewidget.cpp designmodewidget.h
     documentmanager.cpp documentmanager.h
     documentwarningwidget.cpp documentwarningwidget.h
@@ -1050,7 +1049,6 @@ extend_qtc_plugin(QmlDesigner
     timelineactions.cpp timelineactions.h
     timelineanimationform.cpp timelineanimationform.h
     timelineconstants.h
-    timelinecontext.cpp timelinecontext.h
     timelinecontrols.cpp timelinecontrols.h
     timelineform.cpp timelineform.h
     timelinegraphicslayout.cpp timelinegraphicslayout.h

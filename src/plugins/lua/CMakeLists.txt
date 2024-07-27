@@ -1,10 +1,8 @@
-
 add_qtc_plugin(Lua
   PLUGIN_DEPENDS Core
-  PUBLIC_DEPENDS lua546 sol2
+  PUBLIC_DEPENDS lua546 sol2 TextEditor
   PUBLIC_DEFINES LUA_AVAILABLE
   SOURCES
-    wizards/wizards.qrc
     bindings/action.cpp
     bindings/async.cpp
     bindings/core.cpp
@@ -13,9 +11,13 @@ add_qtc_plugin(Lua
     bindings/hook.cpp
     bindings/inheritance.h
     bindings/install.cpp
+    bindings/json.cpp
+    bindings/localsocket.cpp
     bindings/messagemanager.cpp
     bindings/qtcprocess.cpp
     bindings/settings.cpp
+    bindings/texteditor.cpp
+    bindings/translate.cpp
     bindings/utils.cpp
     luaengine.cpp
     luaengine.h
@@ -25,21 +27,7 @@ add_qtc_plugin(Lua
     luaqttypes.cpp
     luaqttypes.h
     luatr.h
-    meta/action.lua
-    meta/async.lua
-    meta/core.lua
-    meta/fetch.lua
-    meta/gui.lua
-    meta/install.lua
-    meta/lsp.lua
-    meta/messagemanager.lua
-    meta/process.lua
-    meta/qt.lua
-    meta/qtc.lua
-    meta/settings.lua
-    meta/simpletypes.lua
-    meta/utils.lua
-    meta/widgets.lua
+    wizards/wizards.qrc
     # generateqtbindings.cpp # Use this if you need to generate some code.
 )
 
@@ -63,29 +51,7 @@ if (MSVC)
     set_property(SOURCE bindings/settings.cpp PROPERTY COMPILE_FLAGS /bigobj)
 endif()
 
-set(META_FILES
-  meta/action.lua
-  meta/async.lua
-  meta/core.lua
-  meta/fetch.lua
-  meta/gui.lua
-  meta/lsp.lua
-  meta/messagemanager.lua
-  meta/process.lua
-  meta/qt.lua
-  meta/qtc.lua
-  meta/settings.lua
-  meta/simpletypes.lua
-  meta/utils.lua
-  meta/widgets.lua
-)
-
 qtc_copy_to_builddir(copy_lua_meta_files
-  DESTINATION ${IDE_DATA_PATH}/lua
-  FILES ${META_FILES}
-)
-
-install(
-  FILES ${META_FILES}
+  DIRECTORIES meta
   DESTINATION ${IDE_DATA_PATH}/lua/meta
 )

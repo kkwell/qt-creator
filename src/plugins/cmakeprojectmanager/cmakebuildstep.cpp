@@ -226,7 +226,8 @@ CMakeBuildStep::CMakeBuildStep(BuildStepList *bsl, Id id) :
 
     useStaging.setSettingsKey(USE_STAGING_KEY);
     useStaging.setLabel(Tr::tr("Stage for installation"), BoolAspect::LabelPlacement::AtCheckBox);
-    useStaging.setDefaultValue(supportsStageForInstallation(kit()));
+    useStaging.setDefaultValue(supportsStageForInstallation(kit()) && !isCleanStep());
+    useStaging.setEnabled(!isCleanStep());
 
     stagingDir.setSettingsKey(STAGING_DIR_KEY);
     stagingDir.setLabelText(Tr::tr("Staging directory:"));
@@ -522,6 +523,11 @@ void CMakeBuildStep::setBuildPreset(const QString &preset)
 QWidget *CMakeBuildStep::createConfigWidget()
 {
     auto updateDetails = [this] {
+        const bool haveCleanTarget = m_buildTargets.contains(cleanTarget());
+        useStaging.setEnabled(!haveCleanTarget);
+        if (useStaging() && haveCleanTarget)
+            useStaging.setValue(false);
+
         ProcessParameters param;
         setupProcessParameters(&param);
         param.setCommandLine(cmakeCommand());
@@ -610,11 +616,11 @@ QWidget *CMakeBuildStep::createConfigWidget()
 
     updateDetails();
 
-    connect(&cmakeArguments, &BaseAspect::changed, this, updateDetails);
-    connect(&toolArguments, &BaseAspect::changed, this, updateDetails);
-    connect(&useStaging, &BaseAspect::changed, this, updateDetails);
-    connect(&stagingDir, &BaseAspect::changed, this, updateDetails);
-    connect(&useiOSAutomaticProvisioningUpdates, &BaseAspect::changed, this, updateDetails);
+    cmakeArguments.addOnChanged(this, updateDetails);
+    toolArguments.addOnChanged(this, updateDetails);
+    useStaging.addOnChanged(this, updateDetails);
+    stagingDir.addOnChanged(this, updateDetails);
+    useiOSAutomaticProvisioningUpdates.addOnChanged(this, updateDetails);
 
     connect(ProjectExplorerPlugin::instance(), &ProjectExplorerPlugin::settingsChanged,
             this, updateDetails);

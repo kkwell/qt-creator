@@ -25,9 +25,11 @@ public:
     Id(const char *name); // Good to use.
     Id(const QLatin1String &) = delete;
 
+    static Id generate();
+
     Id withSuffix(int suffix) const;
     Id withSuffix(const char *suffix) const;
-    Id withSuffix(const QString &suffix) const;
+    Id withSuffix(const QStringView suffix) const;
     Id withPrefix(const char *prefix) const;
 
     QByteArray name() const;
@@ -44,17 +46,14 @@ public:
     bool operator>(Id id) const { return m_id > id.m_id; }
     bool alphabeticallyBefore(Id other) const;
 
-    quintptr uniqueIdentifier() const { return m_id; } // Avoid.
-    static Id fromString(const QString &str); // FIXME: avoid.
-    static Id fromName(const QByteArray &ba); // FIXME: avoid.
+    static Id fromString(const QStringView str); // FIXME: avoid.
+    static Id fromName(const QByteArrayView ba); // FIXME: avoid.
     static Id fromSetting(const QVariant &variant); // Good to use.
-
-    static Id versionedId(const QByteArray &prefix, int major, int minor = -1);
 
     static QSet<Id> fromStringList(const QStringList &list);
     static QStringList toStringList(const QSet<Id> &ids);
 
-    friend size_t qHash(Id id) { return static_cast<size_t>(id.uniqueIdentifier()); }
+    friend size_t qHash(Id id) { return static_cast<size_t>(id.m_id); }
     friend QTCREATOR_UTILS_EXPORT QDataStream &operator<<(QDataStream &ds, Id id);
     friend QTCREATOR_UTILS_EXPORT QDataStream &operator>>(QDataStream &ds, Id &id);
     friend QTCREATOR_UTILS_EXPORT QDebug operator<<(QDebug dbg, const Id &id);

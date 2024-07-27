@@ -9,14 +9,15 @@
 #include <utils/hostosinfo.h>
 
 #include <QTimer>
+#include <QUuid>
 
 using namespace Utils;
 
 namespace Lua::Internal {
 
-void addUtilsModule()
+void setupUtilsModule()
 {
-    LuaEngine::registerProvider(
+    registerProvider(
         "Utils",
         [futureSync = Utils::FutureSynchronizer()](sol::state_view lua) mutable -> sol::object {
             const ScriptPluginSpec *pluginSpec = lua.get<ScriptPluginSpec *>("PluginSpec");
@@ -25,41 +26,43 @@ void addUtilsModule()
 
             sol::table utils = lua.create_table();
 
-            utils.set_function("waitms_cb", [guard = pluginSpec->connectionGuard.get()](int ms, const sol::function &cb) {
-                QTimer::singleShot(ms, guard, [cb]() { cb(); });
-            });
+            utils.set_function(
+                "waitms_cb",
+                [guard = pluginSpec->connectionGuard.get()](int ms, const sol::function &cb) {
+                    QTimer::singleShot(ms, guard, [cb]() { cb(); });
+                });
 
-            auto dirEntries_cb =
-                [&futureSync, guard = pluginSpec->connectionGuard.get()](
-                    const FilePath &p, const sol::table &options, const sol::function &cb) {
-                    const QStringList nameFilters = options.get_or<QStringList>("nameFilters", {});
-                    QDir::Filters fileFilters
-                        = (QDir::Filters) options.get_or<int>("fileFilters", QDir::NoFilter);
-                    QDirIterator::IteratorFlags flags
-                        = (QDirIterator::IteratorFlags)
-                              options.get_or<int>("flags", QDirIterator::NoIteratorFlags);
+            auto dirEntries_cb = [&futureSync, guard = pluginSpec->connectionGuard.get()](
+                                     const FilePath &p,
+                                     const sol::table &options,
+                                     const sol::function &cb) {
+                const QStringList nameFilters = options.get_or<QStringList>("nameFilters", {});
+                QDir::Filters fileFilters
+                    = (QDir::Filters) options.get_or<int>("fileFilters", QDir::NoFilter);
+                QDirIterator::IteratorFlags flags
+                    = (QDirIterator::IteratorFlags)
+                          options.get_or<int>("flags", QDirIterator::NoIteratorFlags);
 
-                    FileFilter filter(nameFilters, fileFilters, flags);
+                FileFilter filter(nameFilters, fileFilters, flags);
 
-                    QFuture<FilePath> future = Utils::asyncRun(
-                        [p, filter](QPromise<FilePath> &promise) {
-                            p.iterateDirectory(
-                                [&promise](const FilePath &item) {
-                                    if (promise.isCanceled())
-                                        return IterationPolicy::Stop;
+                QFuture<FilePath> future = Utils::asyncRun([p, filter](QPromise<FilePath> &promise) {
+                    p.iterateDirectory(
+                        [&promise](const FilePath &item) {
+                            if (promise.isCanceled())
+                                return IterationPolicy::Stop;
 
-                                    promise.addResult(item);
-                                    return IterationPolicy::Continue;
-                                },
-                                filter);
-                        });
+                            promise.addResult(item);
+                            return IterationPolicy::Continue;
+                        },
+                        filter);
+                });
 
-                    futureSync.addFuture<FilePath>(future);
+                futureSync.addFuture<FilePath>(future);
 
-                    Utils::onFinished<FilePath>(future, guard, [cb](const QFuture<FilePath> &future) {
-                        cb(future.results());
-                    });
-                };
+                Utils::onFinished<FilePath>(future, guard, [cb](const QFuture<FilePath> &future) {
+                    cb(future.results());
+                });
+            };
 
             auto searchInPath_cb = [&futureSync,
                                     guard = pluginSpec->connectionGuard
@@ -77,9 +80,13 @@ void addUtilsModule()
             utils.set_function("__dirEntries_cb__", dirEntries_cb);
             utils.set_function("__searchInPath_cb__", searchInPath_cb);
 
+            utils.set_function("createUuid", []() { return QUuid::createUuid().toString(); });
+
             sol::function wrap = async["wrap"].get<sol::function>();
 
             utils["waitms"] = wrap(utils["waitms_cb"]);
+
+            utils["pid"] = QCoreApplication::applicationPid();
 
             auto hostOsInfoType = utils.new_usertype<HostOsInfo>("HostOsInfo");
             hostOsInfoType["isWindowsHost"] = &HostOsInfo::isWindowsHost;
@@ -156,6 +163,26 @@ void addUtilsModule()
 
             utils["FilePath"]["searchInPath_cb"] = utils["__searchInPath_cb__"];
             utils["FilePath"]["searchInPath"] = wrap(utils["__searchInPath_cb__"]);
+
+            utils.new_usertype<QTimer>(
+                "Timer",
+                "create",
+                [guard = pluginSpec](int timeout, bool singleShort, sol::function callback)
+                    -> std::unique_ptr<QTimer> {
+                    auto timer = std::make_unique<QTimer>();
+                    timer->setInterval(timeout);
+                    timer->setSingleShot(singleShort);
+                    QObject::connect(
+                        timer.get(), &QTimer::timeout, guard->connectionGuard.get(), [callback] {
+                            void_safe_call(callback);
+                        });
+
+                    return timer;
+                },
+                "start",
+                [](QTimer *timer) { timer->start(); },
+                "stop",
+                [](QTimer *timer) { timer->stop(); });
 
             return utils;
         });

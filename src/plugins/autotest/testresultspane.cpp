@@ -30,6 +30,7 @@
 #include <texteditor/texteditor.h>
 #include <texteditor/texteditorsettings.h>
 
+#include <utils/fileutils.h>
 #include <utils/proxyaction.h>
 #include <utils/qtcassert.h>
 #include <utils/stringutils.h>
@@ -404,7 +405,7 @@ void TestResultsPane::goToPrev()
 void TestResultsPane::updateFilter()
 {
     m_textOutput->updateFilterProperties(filterText(), filterCaseSensitivity(), filterUsesRegexp(),
-                                         filterIsInverted());
+                                         filterIsInverted(), beforeContext(), afterContext());
 }
 
 void TestResultsPane::onItemActivated(const QModelIndex &index)

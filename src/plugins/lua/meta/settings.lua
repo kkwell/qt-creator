@@ -41,8 +41,10 @@ settings.AspectContainer = {}
 ---Options for creating an AspectContainer.
 ---@class AspectContainerCreate
 ---@field autoApply? boolean Whether the aspects should be applied automatically or not.
+---@field onApplied? function Called when the aspects are applied.
+---@field layouter? function The layouter of the aspect container.
+---@field settingsGroup? string The settings group of the aspect container.
 AspectContainerCreate = {}
-
 
 ---Create a new AspectContainer.
 ---@param options AspectContainerCreate
@@ -71,9 +73,34 @@ function settings.BoolAspect.create(options) end
 settings.ColorAspect = {}
 function settings.ColorAspect.create(options) end
 
+---@class SelectionAspect : TypedAspect<int>
+---@field stringValue string The string value of the aspect.
 settings.SelectionAspect = {}
+---@enum SelectionDisplayStyle
+settings.SelectionDisplayStyle = {
+    RadioButtons = 0,
+    ComboBox = 0
+};
+
+---@class SelectionOption
+---@field name string The name of the option.
+---@field tooltip? string The tooltip of the option.
+---@field data? any The data of the option.
+SelectionOption = {}
+
+---@class SelectionAspectCreate : TypedAspectCreate<int>
+---@field displayStyle? SelectionDisplayStyle The display type of the aspect.
+---@field options? string[]|SelectionOption[] The available options.
+SelectionAspectCreate = {}
+
+---Creates a new SelectionAspect
+---@param options SelectionAspectCreate
+---@return SelectionAspect aspect The Aspect
 function settings.SelectionAspect.create(options) end
 
+function settings.SelectionAspect:addOption(option) end
+
+function settings.SelectionAspect:addOption(option, tooltip) end
 settings.MultiSelectionAspect = {}
 function settings.MultiSelectionAspect.create(options) end
 
@@ -175,7 +202,7 @@ settings.OptionsPage = {}
 ---@field displayName string
 ---@field categoryId string
 ---@field displayCategory string
----@field categoryIconPath string
+---@field categoryIconPath string|FilePath
 ---@field aspectContainer AspectContainer
 OptionsPageCreate = {}
 

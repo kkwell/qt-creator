@@ -48,14 +48,17 @@ public:
 
     static LanguageClientManager *instance();
 
-    static QList<Client *> clientsSupportingDocument(const TextEditor::TextDocument *doc);
+    static QList<Client *> clientsSupportingDocument(
+        const TextEditor::TextDocument *doc, bool onlyReachable = true);
 
     static void applySettings();
     static QList<BaseSettings *> currentSettings();
     static void registerClientSettings(BaseSettings *settings);
     static void enableClientSettings(const QString &settingsId, bool enable = true);
     static QList<Client *> clientsForSetting(const BaseSettings *setting);
+    static QList<Client *> clientsForSettingId(const QString &settingsId);
     static const BaseSettings *settingForClient(Client *setting);
+    static QList<Client *> clientsByName(const QString &name);
     static void updateWorkspaceConfiguration(const ProjectExplorer::Project *project,
                                              const QJsonValue &json);
 

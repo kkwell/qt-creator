@@ -8,6 +8,12 @@ QtcPlugin {
 
     Depends { name: "lua546" }
     Depends { name: "sol2" }
+    Depends { name: "TextEditor" }
+
+    Properties {
+        condition: qbs.toolchain.contains("mingw")
+        cpp.optimization: "fast"
+    }
 
     files: [
         // "generateqtbindings.cpp", // use this if you need to generate some code
@@ -37,9 +43,13 @@ QtcPlugin {
             "hook.cpp",
             "inheritance.h",
             "install.cpp",
+            "json.cpp",
+            "localsocket.cpp",
             "messagemanager.cpp",
             "qtcprocess.cpp",
             "settings.cpp",
+            "texteditor.cpp",
+            "translate.cpp",
             "utils.cpp",
         ]
 
@@ -47,29 +57,17 @@ QtcPlugin {
             condition: qbs.toolchain.contains("msvc")
             cpp.cxxFlags: "/bigobj"
         }
+
+        Properties {
+            condition: qbs.toolchain.contains("mingw")
+            cpp.cxxFlags: "-Wa,-mbig-obj"
+        }
     }
 
     Group {
         name: "Meta"
         prefix: "meta/"
-
-        files: [
-            "action.lua",
-            "async.lua",
-            "core.lua",
-            "fetch.lua",
-            "gui.lua",
-            "install.lua",
-            "lsp.lua",
-            "messagemanager.lua",
-            "process.lua",
-            "qt.lua",
-            "qtc.lua",
-            "settings.lua",
-            "simpletypes.lua",
-            "utils.lua",
-            "widgets.lua",
-        ]
+        files: "*.lua"
         qbs.install: true
         qbs.installDir: qtc.ide_data_path + "/lua/meta/"
     }

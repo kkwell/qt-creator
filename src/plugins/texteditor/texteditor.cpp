@@ -1068,17 +1068,15 @@ TextEditorWidgetPrivate::TextEditorWidgetPrivate(TextEditorWidget *parent)
     , m_codeAssistant(parent)
     , m_hoverHandlerRunner(parent, m_hoverHandlers)
     , m_autoCompleter(new AutoCompleter)
-    , m_editorContext(Id::fromString(QUuid::createUuid().toString()))
+    , m_editorContext(Id::generate())
 {
     m_selectionHighlightOverlay->show();
-    auto aggregate = new Aggregation::Aggregate;
     m_find = new TextEditorWidgetFind(q);
     connect(m_find, &BaseTextFind::highlightAllRequested,
             this, &TextEditorWidgetPrivate::highlightSearchResultsSlot);
     connect(m_find, &BaseTextFind::findScopeChanged,
             this, &TextEditorWidgetPrivate::setFindScope);
-    aggregate->add(m_find);
-    aggregate->add(q);
+    Aggregation::aggregate({q, m_find});
 
     m_extraArea = new TextEditExtraArea(q);
     m_extraArea->setMouseTracking(true);
@@ -2341,11 +2339,19 @@ void TextEditorWidget::selectWordUnderCursor()
     setMultiTextCursor(cursor);
 }
 
+void TextEditorWidget::clearSelection()
+{
+    MultiTextCursor cursor = multiTextCursor();
+    cursor.clearSelection();
+    setMultiTextCursor(cursor);
+}
+
 void TextEditorWidget::showContextMenu()
 {
     QTextCursor tc = textCursor();
     const QPoint cursorPos = mapToGlobal(cursorRect(tc).bottomRight() + QPoint(1,1));
-    qGuiApp->postEvent(this, new QContextMenuEvent(QContextMenuEvent::Keyboard, cursorPos));
+    qGuiApp->postEvent(
+        this, new QContextMenuEvent(QContextMenuEvent::Keyboard, cursorPos, QCursor::pos()));
 }
 
 void TextEditorWidget::copyLineUp()
@@ -4142,6 +4148,7 @@ void TextEditorWidgetPrivate::registerActions()
                               .contextAction();
     m_visualizeWhitespaceAction = ActionBuilder(this, VISUALIZE_WHITESPACE)
                                       .setContext(m_editorContext)
+                                      .setCheckable(true)
                                       .addOnToggled(
                                           this,
                                           [this](bool checked) {
@@ -4157,6 +4164,7 @@ void TextEditorWidgetPrivate::registerActions()
                               .contextAction();
     m_textWrappingAction = ActionBuilder(this, TEXT_WRAPPING)
                                .setContext(m_editorContext)
+                               .setCheckable(true)
                                .addOnToggled(
                                    this,
                                    [this](bool checked) {
@@ -4258,6 +4266,10 @@ void TextEditorWidgetPrivate::registerActions()
     ActionBuilder(this, SELECT_WORD_UNDER_CURSOR)
         .setContext(m_editorContext)
         .addOnTriggered([this] { q->selectWordUnderCursor(); })
+        .setScriptable(true);
+    ActionBuilder(this, CLEAR_SELECTION)
+        .setContext(m_editorContext)
+        .addOnTriggered([this] { q->clearSelection(); })
         .setScriptable(true);
 
     ActionBuilder(this, GOTO_DOCUMENT_START)
@@ -4769,8 +4781,11 @@ void TextEditorWidgetPrivate::highlightSearchResults(const QTextBlock &block, co
             break;
         if (m_findFlags & FindWholeWords) {
             auto posAtWordSeparator = [](const QString &text, int idx) {
-                if (idx < 0 || idx >= text.length())
-                    return false;
+                if (idx < 0)
+                    return QTC_GUARD(idx == -1);
+                int textLength = text.length();
+                if (idx >= textLength)
+                    return QTC_GUARD(idx == textLength);
                 const QChar c = text.at(idx);
                 return !c.isLetterOrNumber() && c != QLatin1Char('_');
             };
@@ -7078,7 +7093,7 @@ void TextEditorWidget::extraAreaLeaveEvent(QEvent *)
     ToolTip::hide();
 
     // fake missing mouse move event from Qt
-    QMouseEvent me(QEvent::MouseMove, QPoint(-1, -1), Qt::NoButton, {}, {});
+    QMouseEvent me(QEvent::MouseMove, QPoint(-1, -1), QCursor::pos(), Qt::NoButton, {}, {});
     extraAreaMouseEvent(&me);
 }
 
@@ -7103,8 +7118,6 @@ void TextEditorWidget::updateFoldingHighlight(const QPoint &pos)
     if (!d->m_codeFoldingVisible)
         return;
 
-    QTextCursor cursor = cursorForPosition(QPoint(0, pos.y()));
-
     // Update which folder marker is highlighted
     int boxWidth = 0;
     if (TextEditorSettings::fontSettings().relativeLineSpacing() == 100)
@@ -7112,14 +7125,13 @@ void TextEditorWidget::updateFoldingHighlight(const QPoint &pos)
     else
         boxWidth = foldBoxWidth();
 
-    if (pos.x() > extraArea()->width() - boxWidth) {
-        updateFoldingHighlight(cursor);
-    } else if (d->m_displaySettings.m_highlightBlocks) {
-        QTextCursor cursor = textCursor();
-        updateFoldingHighlight(cursor);
-    } else {
-        updateFoldingHighlight(QTextCursor());
-    }
+    QTextCursor cursor;
+    if (pos.x() > extraArea()->width() - boxWidth)
+        cursor = cursorForPosition(QPoint(0, pos.y()));
+    else if (d->m_displaySettings.m_highlightBlocks)
+        cursor = textCursor();
+
+    updateFoldingHighlight(cursor);
 }
 
 void TextEditorWidget::updateFoldingHighlight(const QTextCursor &cursor)
@@ -9437,6 +9449,9 @@ BaseTextEditor::BaseTextEditor()
     : d(new BaseTextEditorPrivate)
 {
     addContext(Constants::C_TEXTEDITOR);
+    setContextHelpProvider([this](const HelpCallback &callback) {
+        editorWidget()->contextHelpItem(callback);
+    });
 }
 
 BaseTextEditor::~BaseTextEditor()
@@ -9680,11 +9695,6 @@ void TextEditorWidgetPrivate::updateCursorPosition()
     m_contextHelpItem = HelpItem();
     if (!q->textCursor().block().isVisible())
         q->ensureCursorVisible();
-}
-
-void BaseTextEditor::contextHelp(const HelpCallback &callback) const
-{
-    editorWidget()->contextHelpItem(callback);
 }
 
 void TextEditorWidget::contextHelpItem(const IContext::HelpCallback &callback)

@@ -10,9 +10,6 @@
 #include "effectutils.h"
 #include "propertyhandler.h"
 
-//#include "qmldesigner/designercore/imagecache/midsizeimagecacheprovider.h"
-#include "theme.h"
-
 #include <coreplugin/icore.h>
 #include <coreplugin/idocument.h>
 #include <coreplugin/editormanager/editormanager.h>
@@ -20,6 +17,7 @@
 #include <qmldesigner/documentmanager.h>
 #include <qmldesigner/qmldesignerconstants.h>
 #include <qmldesigner/qmldesignerplugin.h>
+#include <qmldesigner/components/componentcore/theme.h>
 #include <studioquickwidget.h>
 
 #include <qmljs/qmljsmodelmanagerinterface.h>
@@ -27,6 +25,7 @@
 #include <utils/algorithm.h>
 #include <utils/async.h>
 #include <utils/environment.h>
+#include <utils/fileutils.h>
 #include <utils/qtcassert.h>
 
 #include <QHBoxLayout>
@@ -34,6 +33,8 @@
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QTimer>
+
+using namespace Core;
 
 namespace EffectComposer {
 
@@ -129,8 +130,12 @@ EffectComposerWidget::EffectComposerWidget(EffectComposerView *view)
                 m_effectComposerModel->saveComposition(compName);
         }
     });
-}
 
+    IContext::attach(this,
+                     Context(QmlDesigner::Constants::C_QMLEFFECTCOMPOSER,
+                             QmlDesigner::Constants::C_QT_QUICK_TOOLS_MENU),
+                     [this](const IContext::HelpCallback &callback) { contextHelp(callback); });
+}
 
 bool EffectComposerWidget::eventFilter(QObject *obj, QEvent *event)
 {

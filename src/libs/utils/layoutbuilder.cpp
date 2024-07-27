@@ -362,7 +362,7 @@ void Layout::setContentsMargins(int left, int top, int right, int bottom)
 }
 
 /*!
-    Attaches the constructed layout to the provided QWidget \a w.
+    Attaches the constructed layout to the provided QWidget \a widget.
 
     This operation can only be performed once per LayoutBuilder instance.
  */
@@ -373,7 +373,7 @@ void Layout::attachTo(QWidget *widget)
 }
 
 /*!
-    Adds the layout item \a item as sub items.
+    Adds the layout item \a item as a sub item.
  */
 void Layout::addItem(I item)
 {
@@ -887,6 +887,21 @@ Splitter::Splitter(std::initializer_list<I> ps)
     ptr = new Implementation;
     access(this)->setOrientation(Qt::Vertical);
     apply(this, ps);
+}
+
+void Splitter::setOrientation(Qt::Orientation orientation)
+{
+    access(this)->setOrientation(orientation);
+}
+
+void Splitter::setStretchFactor(int index, int stretch)
+{
+    access(this)->setStretchFactor(index, stretch);
+}
+
+void Splitter::setChildrenCollapsible(bool collapsible)
+{
+    access(this)->setChildrenCollapsible(collapsible);
 }
 
 void addToSplitter(Splitter *splitter, QWidget *inner)

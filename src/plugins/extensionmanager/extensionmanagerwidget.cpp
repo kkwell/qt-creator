@@ -29,6 +29,7 @@
 #include <utils/infolabel.h>
 #include <utils/layoutbuilder.h>
 #include <utils/networkaccessmanager.h>
+#include <utils/styledbar.h>
 #include <utils/stylehelper.h>
 #include <utils/temporarydirectory.h>
 #include <utils/utilsicons.h>
@@ -45,6 +46,8 @@
 #include <QProgressDialog>
 #include <QScrollArea>
 #include <QSignalMapper>
+#include <QTextDocument>
+#include <QTextBlock>
 
 using namespace Core;
 using namespace Utils;
@@ -279,6 +282,8 @@ public:
             }
         });
 
+        connect(ExtensionSystem::PluginManager::instance(),
+                &ExtensionSystem::PluginManager::pluginsChanged, this, &PluginStatusWidget::update);
         connect(m_restartButton, &QAbstractButton::clicked,
                 ICore::instance(), &ICore::restart, Qt::QueuedConnection);
 
@@ -420,11 +425,13 @@ ExtensionManagerWidget::ExtensionManagerWidget()
     m_secondaryDescriptionWidget = new CollapsingWidget;
 
     m_headingWidget = new HeadingWidget;
-    m_description = tfLabel(contentTF, false);
+    m_description = new QLabel;
     m_description->setWordWrap(true);
+    m_description->setTextInteractionFlags(Qt::TextBrowserInteraction);
     m_linksTitle = sectionTitle(h6CapitalTF, Tr::tr("More information"));
     m_links = tfLabel(contentTF, false);
     m_links->setOpenExternalLinks(true);
+    m_links->setTextInteractionFlags(Qt::TextBrowserInteraction);
     m_imageTitle = sectionTitle(h6CapitalTF, {});
     m_image = new QLabel;
     m_imageMovie.setDevice(&m_imageDataBuffer);
@@ -495,10 +502,14 @@ ExtensionManagerWidget::ExtensionManagerWidget()
         noMargin, spacing(0),
     }.attachTo(descriptionColumns);
 
-    Row {
-        Space(SpacingTokens::ExVPaddingGapXl),
-        m_extensionBrowser,
-        descriptionColumns,
+    Column {
+        new StyledBar,
+        Row {
+            Space(SpacingTokens::ExVPaddingGapXl),
+            m_extensionBrowser,
+            descriptionColumns,
+            noMargin, spacing(0),
+        },
         noMargin, spacing(0),
     }.attachTo(this);
 
@@ -521,6 +532,47 @@ ExtensionManagerWidget::ExtensionManagerWidget()
             m_extensionBrowser, &ExtensionsBrowser::setFilter);
 
     updateView({});
+}
+
+static QString markdownToHtml(const QString &markdown)
+{
+    QTextDocument doc;
+    doc.setMarkdown(markdown);
+    doc.setDefaultFont(contentTF.font());
+
+    for (QTextBlock block = doc.begin(); block != doc.end(); block = block.next()) {
+        QTextBlockFormat blockFormat = block.blockFormat();
+        if (blockFormat.hasProperty(QTextFormat::HeadingLevel))
+            blockFormat.setTopMargin(SpacingTokens::ExVPaddingGapXl);
+        else
+            blockFormat.setLineHeight(contentTF.lineHeight(), QTextBlockFormat::FixedHeight);
+        blockFormat.setBottomMargin(SpacingTokens::VGapL);
+        QTextCursor cursor(block);
+        cursor.mergeBlockFormat(blockFormat);
+        const TextFormat headingTf = blockFormat.headingLevel() == 1 ? h5TF : h6TF;
+        const QFont headingFont = headingTf.font();
+        for (auto it = block.begin(); !(it.atEnd()); ++it) {
+            QTextFragment fragment = it.fragment();
+            if (fragment.isValid()) {
+                QTextCharFormat charFormat = fragment.charFormat();
+                cursor.setPosition(fragment.position());
+                cursor.setPosition(fragment.position() + fragment.length(), QTextCursor::KeepAnchor);
+                if (blockFormat.hasProperty(QTextFormat::HeadingLevel)) {
+                    charFormat.setFontFamilies(headingFont.families());
+                    charFormat.setFontWeight(headingFont.weight());
+                    charFormat.setFontPointSize(headingFont.pointSizeF());
+                    charFormat.setForeground(headingTf.color());
+                } else if (charFormat.isAnchor()) {
+                    charFormat.setForeground(creatorColor(Theme::Token_Text_Accent));
+                } else {
+                    charFormat.setForeground(contentTF.color());
+                }
+                cursor.setCharFormat(charFormat);
+            }
+        }
+    }
+
+    return doc.toHtml();
 }
 
 void ExtensionManagerWidget::updateView(const QModelIndex &current)
@@ -551,28 +603,15 @@ void ExtensionManagerWidget::updateView(const QModelIndex &current)
         const TextData textData = current.data(RoleDescriptionText).value<TextData>();
         const bool hasDescription = !textData.isEmpty();
         if (hasDescription) {
-            const QString headerCssTemplate =
-                ";margin-top:%1;margin-bottom:%2;padding-top:0;padding-bottom:0;";
-            const QString h4Css = fontToCssProperties(uiFont(UiElementH4))
-                                  + headerCssTemplate.arg(0).arg(SpacingTokens::VGapL);
-            const QString h5Css = fontToCssProperties(uiFont(UiElementH5))
-                                  + headerCssTemplate.arg(SpacingTokens::ExVPaddingGapXl)
-                                        .arg(SpacingTokens::VGapL);
-            QString descriptionHtml;
+            QString descriptionMarkdown;
             for (const TextData::Type &text : textData) {
-                if (text.second.isEmpty())
-                    continue;
-                const QString paragraph =
-                    QString::fromLatin1("<div style=\"%1\">%2</div>%3")
-                        .arg(descriptionHtml.isEmpty() ? h4Css : h5Css)
-                        .arg(text.first)
-                        .arg(toContentParagraph(text.second.join("<br/>")));
-                descriptionHtml.append(paragraph);
+                if (!text.first.isEmpty()) {
+                    const QLatin1String headingMark(descriptionMarkdown.isEmpty() ? "#" : "\n\n##");
+                    descriptionMarkdown.append(headingMark + " " + text.first + "\n");
+                }
+                descriptionMarkdown.append(text.second.join("\n"));
             }
-            descriptionHtml.prepend(QString::fromLatin1("<body style=\"color:%1;\">")
-                                        .arg(creatorColor(Theme::Token_Text_Default).name()));
-            descriptionHtml.append("</body>");
-            m_description->setText(descriptionHtml);
+            m_description->setText(markdownToHtml(descriptionMarkdown));
         }
         m_description->setVisible(hasDescription);
 

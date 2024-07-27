@@ -9,7 +9,6 @@
 #include "designeractionmanager.h"
 #include "designericons.h"
 #include "designersettings.h"
-#include "designmodecontext.h"
 #include "edit3dcanvas.h"
 #include "edit3dviewconfig.h"
 #include "edit3dwidget.h"
@@ -72,9 +71,6 @@ void Edit3DView::createEdit3DWidget()
 {
     createEdit3DActions();
     m_edit3DWidget = new Edit3DWidget(this);
-
-    auto editor3DContext = new Internal::Editor3DContext(m_edit3DWidget.data());
-    Core::ICore::addContextObject(editor3DContext);
 }
 
 void Edit3DView::checkImports()
@@ -697,7 +693,7 @@ void Edit3DView::createSeekerSliderAction()
 QPoint Edit3DView::resolveToolbarPopupPos(Edit3DAction *action) const
 {
     QPoint pos;
-    const QList<QObject *> &objects = action->action()->associatedObjects();
+    const QObjectList &objects = action->action()->associatedObjects();
     for (QObject *obj : objects) {
         if (auto button = qobject_cast<QToolButton *>(obj)) {
             if (auto toolBar = qobject_cast<QWidget *>(button->parent())) {

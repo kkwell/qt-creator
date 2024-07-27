@@ -218,8 +218,8 @@ static Extension extensionFromPluginSpec(const PluginSpec *pluginSpec)
         .version = pluginSpec->version(),
     };
 
-    const QStringList lines = pluginSpec->description().split('\n', Qt::SkipEmptyParts)
-                              + pluginSpec->longDescription().split('\n', Qt::SkipEmptyParts);
+    const QStringList lines = pluginSpec->description().split('\n')
+                              + pluginSpec->longDescription().split('\n');
     const TextData text = {{ pluginSpec->name(), lines }};
     LinksData links;
     if (const QString url = pluginSpec->url(); !url.isEmpty())
@@ -375,7 +375,10 @@ static QString searchText(const QModelIndex &index)
     QStringList searchTexts;
     searchTexts.append(index.data(RoleName).toString());
     searchTexts.append(index.data(RoleTags).toStringList());
-    searchTexts.append(index.data(RoleDescriptionText).toStringList());
+    for (const auto &data : index.data(RoleDescriptionText).value<TextData>()) {
+        searchTexts.append(data.first);
+        searchTexts.append(data.second);
+    }
     searchTexts.append(index.data(RoleVendor).toString());
     return searchTexts.join(" ");
 }

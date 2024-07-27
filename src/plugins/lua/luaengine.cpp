@@ -15,6 +15,7 @@
 #include <utils/theme/theme.h>
 
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
 
@@ -22,57 +23,30 @@ using namespace Utils;
 
 namespace Lua {
 
-class LuaInterfaceImpl : public Utils::LuaInterface
-{
-    LuaEngine *m_engine;
+Utils::expected_str<void> connectHooks(
+        sol::state_view lua, const sol::table &table, const QString &path, QObject *guard);
 
+static Q_LOGGING_CATEGORY(logLuaEngine, "qtc.lua.engine", QtWarningMsg);
+
+class LuaInterfaceImpl final : public QObject, public LuaInterface
+{
 public:
-    LuaInterfaceImpl(LuaEngine *engine)
-        : m_engine(engine)
-    {
-        Utils::setLuaInterface(this);
-    }
-    ~LuaInterfaceImpl() override { Utils::setLuaInterface(nullptr); }
+    LuaInterfaceImpl(QObject *guard) : QObject(guard) { Utils::setLuaInterface(this); }
+    ~LuaInterfaceImpl() final { Utils::setLuaInterface(nullptr); }
 
     expected_str<std::unique_ptr<LuaState>> runScript(
-        const QString &script, const QString &name) override
+        const QString &script, const QString &name) final
     {
-        return m_engine->runScript(script, name);
+        return Lua::runScript(script, name);
     }
-};
 
-class LuaEnginePrivate
-{
-public:
-    LuaEnginePrivate() {}
-
-    QHash<QString, LuaEngine::PackageProvider> m_providers;
+    QHash<QString, PackageProvider> m_providers;
     QList<std::function<void(sol::state_view)>> m_autoProviders;
 
-    QMap<QString, std::function<void(sol::function)>> m_hooks;
-
-    std::unique_ptr<LuaInterfaceImpl> m_luaInterface;
+    QMap<QString, std::function<void(sol::function, QObject *)>> m_hooks;
 };
 
-static LuaEngine *s_instance = nullptr;
-
-LuaEngine &LuaEngine::instance()
-{
-    Q_ASSERT(s_instance);
-    return *s_instance;
-}
-
-LuaEngine::LuaEngine()
-    : d(new LuaEnginePrivate())
-{
-    s_instance = this;
-    d->m_luaInterface.reset(new LuaInterfaceImpl(this));
-}
-
-LuaEngine::~LuaEngine()
-{
-    s_instance = nullptr;
-}
+static LuaInterfaceImpl *d = nullptr;
 
 class LuaStateImpl : public Utils::LuaState
 {
@@ -81,7 +55,7 @@ public:
 };
 
 // Runs the gives script in a new Lua state. The returned Object manages the lifetime of the state.
-std::unique_ptr<Utils::LuaState> LuaEngine::runScript(
+std::unique_ptr<Utils::LuaState> runScript(
     const QString &script, const QString &name, std::function<void(sol::state &)> customizeState)
 {
     std::unique_ptr<LuaStateImpl> opaque = std::make_unique<LuaStateImpl>();
@@ -142,50 +116,56 @@ std::unique_ptr<Utils::LuaState> LuaEngine::runScript(
     return opaque;
 }
 
-void LuaEngine::registerProvider(const QString &packageName, const PackageProvider &provider)
+void registerProvider(const QString &packageName, const PackageProvider &provider)
 {
-    QTC_ASSERT(!instance().d->m_providers.contains(packageName), return);
-    instance().d->m_providers[packageName] = provider;
+    QTC_ASSERT(!d->m_providers.contains(packageName), return);
+    d->m_providers[packageName] = provider;
 }
 
-void LuaEngine::autoRegister(const std::function<void(sol::state_view)> &registerFunction)
+void autoRegister(const std::function<void(sol::state_view)> &registerFunction)
 {
-    instance().d->m_autoProviders.append(registerFunction);
+    d->m_autoProviders.append(registerFunction);
 }
 
-void LuaEngine::registerHook(QString name, const std::function<void(sol::function)> &hook)
+void registerHook(QString name, const std::function<void(sol::function, QObject *guard)> &hook)
 {
-    instance().d->m_hooks.insert("." + name, hook);
+    d->m_hooks.insert("." + name, hook);
 }
 
-expected_str<void> LuaEngine::connectHooks(
-    sol::state_view lua, const sol::table &table, const QString &path)
+expected_str<void> connectHooks(
+    sol::state_view lua, const sol::table &table, const QString &path, QObject *guard)
 {
+    qCDebug(logLuaEngine) << "connectHooks called with path: " << path;
+
     for (const auto &[k, v] : table) {
+        qCDebug(logLuaEngine) << "Processing key: " << k.as<QString>();
         if (v.get_type() == sol::type::table) {
-            return connectHooks(lua, v.as<sol::table>(), QStringList{path, k.as<QString>()}.join("."));
+            return connectHooks(
+                lua, v.as<sol::table>(), QStringList{path, k.as<QString>()}.join("."), guard);
         } else if (v.get_type() == sol::type::function) {
             QString hookName = QStringList{path, k.as<QString>()}.join(".");
+            qCDebug(logLuaEngine) << "Connecting function to hook: " << hookName;
             auto it = d->m_hooks.find(hookName);
             if (it == d->m_hooks.end())
                 return make_unexpected(Tr::tr("No hook with the name \"%1\" found.").arg(hookName));
             else
-                it.value()(v.as<sol::function>());
+                it.value()(v.as<sol::function>(), guard);
         }
     }
 
     return {};
 }
 
-expected_str<LuaPluginSpec *> LuaEngine::loadPlugin(const Utils::FilePath &path)
+expected_str<LuaPluginSpec *> loadPlugin(const FilePath &path)
 {
     auto contents = path.fileContents();
     if (!contents)
         return make_unexpected(contents.error());
 
     sol::state lua;
+    lua["tr"] = [](const QString &str) { return str; };
 
-    auto result = lua.safe_script(
+    sol::protected_function_result result = lua.safe_script(
         std::string_view(contents->data(), contents->size()),
         sol::script_pass_on_error,
         path.fileName().toUtf8().constData());
@@ -204,7 +184,7 @@ expected_str<LuaPluginSpec *> LuaEngine::loadPlugin(const Utils::FilePath &path)
     return LuaPluginSpec::create(path, pluginInfo);
 }
 
-expected_str<sol::protected_function> LuaEngine::prepareSetup(
+expected_str<sol::protected_function> prepareSetup(
     sol::state_view lua, const LuaPluginSpec &pluginSpec)
 {
     auto contents = pluginSpec.filePath().fileContents();
@@ -245,12 +225,17 @@ expected_str<sol::protected_function> LuaEngine::prepareSetup(
                                  / pluginSpec.location().fileName();
 
     lua.new_usertype<ScriptPluginSpec>(
-        "PluginSpec", sol::no_constructor, "name", sol::property([](ScriptPluginSpec &self) {
-            return self.name;
-        }));
+        "PluginSpec",
+        sol::no_constructor,
+        "name",
+        sol::property([](ScriptPluginSpec &self) { return self.name; }),
+        "pluginDirectory",
+        sol::property([p = pluginSpec.location()]() { return p; }));
 
-    lua["PluginSpec"]
-        = ScriptPluginSpec{pluginSpec.name(), appDataPath, std::make_unique<QObject>()};
+    auto guardObject = std::make_unique<QObject>();
+    auto guardObjectPtr = guardObject.get();
+
+    lua["PluginSpec"] = ScriptPluginSpec{pluginSpec.name(), appDataPath, std::move(guardObject)};
 
     // TODO: only register what the plugin requested
     for (const auto &[name, func] : d->m_providers.asKeyValueRange()) {
@@ -271,10 +256,19 @@ expected_str<sol::protected_function> LuaEngine::prepareSetup(
     if (!pluginTable)
         return make_unexpected(Tr::tr("Script did not return a table."));
 
+    if (logLuaEngine().isDebugEnabled()) {
+        qCDebug(logLuaEngine) << "Script returned table with keys:";
+        for (const auto &[key, value] : *pluginTable) {
+            qCDebug(logLuaEngine) << "Key:" << key.as<QString>();
+            qCDebug(logLuaEngine) << "Value:" << value.as<QString>();
+        }
+    }
+
     auto hookTable = pluginTable->get<sol::optional<sol::table>>("hooks");
 
+    qCDebug(logLuaEngine) << "Hooks table found: " << hookTable.has_value();
     if (hookTable) {
-        auto connectResult = connectHooks(lua, *hookTable, {});
+        auto connectResult = connectHooks(lua, *hookTable, {}, guardObjectPtr);
         if (!connectResult)
             return make_unexpected(connectResult.error());
     }
@@ -287,7 +281,7 @@ expected_str<sol::protected_function> LuaEngine::prepareSetup(
     return setupFunction;
 }
 
-bool LuaEngine::isCoroutine(lua_State *state)
+bool isCoroutine(lua_State *state)
 {
     bool ismain = lua_pushthread(state) == 1;
     return !ismain;
@@ -303,12 +297,12 @@ static void setFromJson(sol::table &t, KeyType k, const QJsonValue &v)
     else if (v.isString())
         t[k] = v.toString();
     else if (v.isObject())
-        t[k] = LuaEngine::toTable(t.lua_state(), v);
+        t[k] = toTable(t.lua_state(), v);
     else if (v.isArray())
-        t[k] = LuaEngine::toTable(t.lua_state(), v);
+        t[k] = toTable(t.lua_state(), v);
 }
 
-sol::table LuaEngine::toTable(const sol::state_view &lua, const QJsonValue &v)
+sol::table toTable(const sol::state_view &lua, const QJsonValue &v)
 {
     sol::table table(lua, sol::create);
 
@@ -323,6 +317,15 @@ sol::table LuaEngine::toTable(const sol::state_view &lua, const QJsonValue &v)
     }
 
     return table;
+}
+
+sol::table toTable(const sol::state_view &lua, const QJsonDocument &doc)
+{
+    if (doc.isArray())
+        return toTable(lua, doc.array());
+    else if (doc.isObject())
+        return toTable(lua, doc.object());
+    return sol::table();
 }
 
 QJsonValue toJsonValue(const sol::object &object);
@@ -369,22 +372,38 @@ QJsonValue toJsonValue(const sol::object &object)
     }
 }
 
-QJsonValue LuaEngine::toJson(const sol::table &table)
+QJsonValue toJson(const sol::table &table)
 {
     return toJsonValue(table);
 }
 
-QStringList LuaEngine::variadicToStringList(const sol::variadic_args &vargs)
+QString toJsonString(const sol::table &t)
+{
+    QJsonValue v = toJson(t);
+    if (v.isArray())
+        return QString::fromUtf8(QJsonDocument(v.toArray()).toJson(QJsonDocument::Compact));
+    else if (v.isObject())
+        return QString::fromUtf8(QJsonDocument(v.toObject()).toJson(QJsonDocument::Compact));
+    return {};
+}
+
+QStringList variadicToStringList(const sol::variadic_args &vargs)
 {
     QStringList strings;
     for (size_t i = 1, n = vargs.size(); i <= n; i++) {
         size_t l;
         const char *s = luaL_tolstring(vargs.lua_state(), int(i), &l);
         if (s != nullptr)
-            strings.append(QString::fromUtf8(s, l));
+            strings.append(QString::fromUtf8(s, l).replace('\0', "\\0"));
     }
 
     return strings;
+}
+
+void setupLuaEngine(QObject *guard)
+{
+    QTC_ASSERT(!d, return);
+    d = new LuaInterfaceImpl(guard);
 }
 
 } // namespace Lua

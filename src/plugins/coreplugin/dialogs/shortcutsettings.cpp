@@ -10,6 +10,8 @@
 #include "../actionmanager/actionmanager.h"
 #include "../actionmanager/command.h"
 #include "../actionmanager/commandsfile.h"
+#include "../actionmanager/commandmappings.h"
+#include "ioptionspage.h"
 
 #include <utils/algorithm.h>
 #include <utils/fancylineedit.h>
@@ -121,11 +123,10 @@ static bool isTextKeySequence(const QKeySequence &sequence)
 {
     if (sequence.isEmpty())
         return false;
-    int key = sequence[0];
-    key &= ~(Qt::ShiftModifier | Qt::KeypadModifier);
-    if (key < Qt::Key_Escape)
-        return true;
-    return false;
+    const QKeyCombination keyCombination = sequence[0];
+    if (keyCombination.keyboardModifiers() & ~(Qt::ShiftModifier | Qt::KeypadModifier))
+        return false;
+    return keyCombination.key() < Qt::Key_Escape;
 }
 
 static FilePath schemesPath()
@@ -763,12 +764,21 @@ public:
 
 // ShortcutSettings
 
-ShortcutSettings::ShortcutSettings()
+class ShortcutSettings final : public IOptionsPage
 {
-    setId(Constants::SETTINGS_ID_SHORTCUTS);
-    setDisplayName(Tr::tr("Keyboard"));
-    setCategory(Constants::SETTINGS_CATEGORY_CORE);
-    setWidgetCreator([] { return new ShortcutSettingsPageWidget; });
+public:
+    ShortcutSettings()
+    {
+        setId(Constants::SETTINGS_ID_SHORTCUTS);
+        setDisplayName(Tr::tr("Keyboard"));
+        setCategory(Constants::SETTINGS_CATEGORY_CORE);
+        setWidgetCreator([] { return new ShortcutSettingsPageWidget; });
+    }
+};
+
+void setupShortcutSettings()
+{
+    static ShortcutSettings theShortcutSettings;
 }
 
 } // namespace Core::Internal

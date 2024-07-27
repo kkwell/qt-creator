@@ -18,6 +18,7 @@
 
 #include <qtsupport/qtkitaspect.h>
 
+#include <utils/fileutils.h>
 #include <utils/infolabel.h>
 #include <utils/pathchooser.h>
 #include <utils/qtcassert.h>
@@ -25,7 +26,6 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
-#include <QFileInfo>
 #include <QFormLayout>
 #include <QLabel>
 #include <QMessageBox>
@@ -281,17 +281,17 @@ void CreateAndroidManifestWizard::createAndroidTemplateFiles()
         FileUtils::copyRecursively(version->prefix() / "src/android/java/AndroidManifest.xml",
                                    m_directory / "AndroidManifest.xml",
                                    nullptr,
-                                   copy);
+                                   copy());
     } else {
         FileUtils::copyRecursively(version->prefix() / "src/android/templates",
                                    m_directory,
                                    nullptr,
-                                   copy);
+                                   copy());
 
         if (m_copyGradle) {
             FilePath gradlePath = version->prefix() / "src/3rdparty/gradle";
             QTC_ASSERT(gradlePath.exists(), return);
-            FileUtils::copyRecursively(gradlePath, m_directory, nullptr, copy);
+            FileUtils::copyRecursively(gradlePath, m_directory, nullptr, copy());
         }
     }
 

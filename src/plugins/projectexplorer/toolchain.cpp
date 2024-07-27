@@ -167,6 +167,11 @@ QString Toolchain::detectionSource() const
     return d->m_detectionSource;
 }
 
+ToolchainFactory *Toolchain::factory() const
+{
+    return ToolchainFactory::factoryForType(typeId());
+}
+
 QByteArray Toolchain::id() const
 {
     return d->m_id;
@@ -220,17 +225,15 @@ bool Toolchain::operator == (const Toolchain &tc) const
 
 Toolchain *Toolchain::clone() const
 {
-    for (ToolchainFactory *f : std::as_const(toolchainFactories())) {
-        if (f->supportedToolchainType() == d->m_typeId) {
-            Toolchain *tc = f->create();
-            QTC_ASSERT(tc, return nullptr);
-            Store data;
-            toMap(data);
-            tc->fromMap(data);
-            // New ID for the clone. It's different.
-            tc->d->m_id = QUuid::createUuid().toByteArray();
-            return tc;
-        }
+    if (ToolchainFactory * const f = factory()) {
+        Toolchain *tc = f->create();
+        QTC_ASSERT(tc, return nullptr);
+        Store data;
+        toMap(data);
+        tc->fromMap(data);
+        // New ID for the clone. It's different.
+        tc->d->m_id = QUuid::createUuid().toByteArray();
+        return tc;
     }
     QTC_CHECK(false);
     return nullptr;
@@ -573,6 +576,13 @@ const QList<ToolchainFactory *> ToolchainFactory::allToolchainFactories()
     return toolchainFactories();
 }
 
+ToolchainFactory *ToolchainFactory::factoryForType(Id typeId)
+{
+    return Utils::findOrDefault(allToolchainFactories(), [typeId](ToolchainFactory *factory) {
+        return factory->supportedToolchainType() == typeId;
+    });
+}
+
 Toolchains ToolchainFactory::autoDetect(const ToolchainDetector &detector) const
 {
     Q_UNUSED(detector)
@@ -777,14 +787,16 @@ void AsyncToolchainDetector::run()
                      [watcher,
                       alreadyRegistered = m_alreadyRegistered]() {
                          Toolchains existingTcs = ToolchainManager::toolchains();
+                         Toolchains toRegister;
                          for (Toolchain *tc : watcher->result()) {
                              if (tc->isValid() && !alreadyRegistered(tc, existingTcs)) {
-                                 ToolchainManager::registerToolchain(tc);
+                                 toRegister << tc;
                                  existingTcs << tc;
                              } else {
                                  delete tc;
                              }
                          }
+                         ToolchainManager::registerToolchains(toRegister);
                          watcher->deleteLater();
                      });
     watcher->setFuture(Utils::asyncRun(m_func, m_detector));

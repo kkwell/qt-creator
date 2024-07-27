@@ -61,7 +61,7 @@ public:
 private:
     void makeReadOnly() override { m_chooser->setReadOnly(true); }
 
-    void addToLayoutImpl(Layouting::Layout &builder) override
+    void addToInnerLayout(Layouting::Layout &builder) override
     {
         addMutableAction(m_chooser);
         builder.addItem(Layouting::Span(2, m_chooser));
@@ -238,7 +238,7 @@ public:
     }
 
 private:
-    void addToLayoutImpl(Layouting::Layout &builder) override
+    void addToInnerLayout(Layouting::Layout &builder) override
     {
         addMutableAction(m_mainWidget);
         builder.addItem(m_mainWidget);
@@ -343,7 +343,7 @@ private:
     void onKitsLoaded() override;
 
     void toolChainUpdated(Toolchain *tc);
-    void toolChainRemoved(Toolchain *tc);
+    void toolChainsDeregistered();
 };
 
 ToolchainKitAspectFactory::ToolchainKitAspectFactory()
@@ -695,8 +695,8 @@ void ToolchainKitAspectFactory::onKitsLoaded()
     for (Kit *k : KitManager::kits())
         fix(k);
 
-    connect(ToolchainManager::instance(), &ToolchainManager::toolchainRemoved,
-            this, &ToolchainKitAspectFactory::toolChainRemoved);
+    connect(ToolchainManager::instance(), &ToolchainManager::toolchainsDeregistered,
+            this, &ToolchainKitAspectFactory::toolChainsDeregistered);
     connect(ToolchainManager::instance(), &ToolchainManager::toolchainUpdated,
             this, &ToolchainKitAspectFactory::toolChainUpdated);
 }
@@ -709,9 +709,8 @@ void ToolchainKitAspectFactory::toolChainUpdated(Toolchain *tc)
     }
 }
 
-void ToolchainKitAspectFactory::toolChainRemoved(Toolchain *tc)
+void ToolchainKitAspectFactory::toolChainsDeregistered()
 {
-    Q_UNUSED(tc)
     for (Kit *k : KitManager::kits())
         fix(k);
 }
@@ -739,7 +738,7 @@ public:
     ~DeviceTypeKitAspectImpl() override { delete m_comboBox; }
 
 private:
-    void addToLayoutImpl(Layouting::Layout &builder) override
+    void addToInnerLayout(Layouting::Layout &builder) override
     {
         addMutableAction(m_comboBox);
         builder.addItem(m_comboBox);
@@ -889,7 +888,7 @@ public:
     }
 
 private:
-    void addToLayoutImpl(Layouting::Layout &builder) override
+    void addToInnerLayout(Layouting::Layout &builder) override
     {
         addMutableAction(m_comboBox);
         builder.addItem(m_comboBox);
@@ -1170,7 +1169,7 @@ public:
     }
 
 private:
-    void addToLayoutImpl(Layouting::Layout &builder) override
+    void addToInnerLayout(Layouting::Layout &builder) override
     {
         addMutableAction(m_comboBox);
         builder.addItem(m_comboBox);
@@ -1433,7 +1432,7 @@ public:
     }
 
 private:
-    void addToLayoutImpl(Layouting::Layout &builder) override
+    void addToInnerLayout(Layouting::Layout &builder) override
     {
         addMutableAction(m_mainWidget);
         builder.addItem(m_mainWidget);

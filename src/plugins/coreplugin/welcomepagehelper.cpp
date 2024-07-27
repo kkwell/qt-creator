@@ -298,7 +298,7 @@ constexpr TextFormat searchBoxPlaceholderTF
 
 static const QPixmap &searchBoxIcon()
 {
-    static const QPixmap icon = Icon({{FilePath::fromString(":/core/images/search"),
+    static const QPixmap icon = Icon({{FilePath::fromString(":/core/images/search.png"),
                                        Theme::Token_Text_Muted}}, Icon::Tint).pixmap();
     return icon;
 }
@@ -383,7 +383,7 @@ constexpr TextFormat ComboBoxTf
 
 static const QPixmap &comboBoxIcon()
 {
-    static const QPixmap icon = Icon({{FilePath::fromString(":/core/images/expandarrow"),
+    static const QPixmap icon = Icon({{FilePath::fromString(":/core/images/expandarrow.png"),
                                        ComboBoxTf.themeColor}}, Icon::Tint).pixmap();
     return icon;
 }
@@ -463,7 +463,7 @@ GridView::GridView(QWidget *parent)
 
 void GridView::leaveEvent(QEvent *)
 {
-    QHoverEvent hev(QEvent::HoverLeave, QPointF(), QPointF());
+    QHoverEvent hev(QEvent::HoverLeave, QPointF(), QPointF(), QPointF());
     viewportEvent(&hev); // Seemingly needed to kill the hover paint.
 }
 
@@ -851,7 +851,6 @@ void ListItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opti
     const QFont tagsLabelFont = tagsLabelTF.font();
     const QFontMetrics tagsLabelFM(tagsLabelFont);
     const QFont descriptionFont = descriptionTF.font();
-    const QFontMetrics descriptionFM(descriptionFont);
 
     const QRect bgRGlobal = option.rect.adjusted(0, 0, -ExVPaddingGapXl, -ExVPaddingGapXl);
     const QRect bgR = bgRGlobal.translated(-option.rect.topLeft());

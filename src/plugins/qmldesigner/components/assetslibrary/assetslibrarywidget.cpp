@@ -27,7 +27,7 @@
 #include <utils/algorithm.h>
 #include <utils/asset.h>
 #include <utils/environment.h>
-#include <utils/filepath.h>
+#include <utils/fileutils.h>
 #include <utils/qtcassert.h>
 
 #include <QFileDialog>
@@ -42,6 +42,8 @@
 #include <QShortcut>
 #include <QToolButton>
 #include <QVBoxLayout>
+
+using namespace Core;
 
 namespace QmlDesigner {
 
@@ -158,6 +160,10 @@ AssetsLibraryWidget::AssetsLibraryWidget(AsynchronousImageCache &asynchronousFon
     reloadQmlSource();
 
     setFocusProxy(m_assetsWidget->quickWidget());
+
+    IContext::attach(this,
+                     Context(Constants::C_QMLASSETSLIBRARY, Constants::C_QT_QUICK_TOOLS_MENU),
+                     [this](const IContext::HelpCallback &callback) { contextHelp(callback); });
 }
 
 void AssetsLibraryWidget::contextHelp(const Core::IContext::HelpCallback &callback) const

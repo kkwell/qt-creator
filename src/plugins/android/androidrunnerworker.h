@@ -37,7 +37,6 @@ public:
     void setAndroidDeviceInfo(const AndroidDeviceInfo &info);
     void asyncStart();
     void asyncStop();
-    void setIsPreNougat(bool isPreNougat) { m_isPreNougat = isPreNougat; }
     void setIntentName(const QString &intentName) { m_intentName = intentName; }
 
 signals:
@@ -48,8 +47,7 @@ signals:
     void remoteErrorOutput(const QString &output);
 
 private:
-    bool runAdb(const QStringList &args, QString *stdOut = nullptr, QString *stdErr = nullptr,
-                const QByteArray &writeData = {});
+    bool runAdb(const QStringList &args, QString *stdOut = nullptr, QString *stdErr = nullptr);
     QStringList selector() const;
     void forceStop();
     void logcatReadStandardError();
@@ -59,11 +57,11 @@ private:
     void handleJdbWaiting();
     void handleJdbSettled();
 
-    void removeForwardPort(const QString &port);
+    bool removeForwardPort(const QString &port, const QString &adbArg, const QString &portType);
 
     void asyncStartHelper();
     void startNativeDebugging();
-    bool startDebuggerServer(const QString &packageDir, const QString &debugServerFile, QString *errorStr = nullptr);
+    void startDebuggerServer(const QString &packageDir, const QString &debugServerFile);
     bool deviceFileExists(const QString &filePath);
     bool packageFileExists(const QString& filePath);
     bool uploadDebugServer(const QString &debugServerFileName);
@@ -75,9 +73,9 @@ private:
         Settled
     };
     void onProcessIdChanged(const PidUserPair &pidUser);
+    bool isPreNougat() const { return m_apiLevel > 0 && m_apiLevel <= 23; }
 
     // Create the processes and timer in the worker thread, for correct thread affinity
-    bool m_isPreNougat = false;
     QString m_packageName;
     QString m_intentName;
     QStringList m_beforeStartAdbCommands;

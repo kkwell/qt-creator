@@ -1388,7 +1388,7 @@ const QString TEST_PROJECT_MIMETYPE = "application/vnd.test.qmakeprofile";
 const QString TEST_PROJECT_DISPLAYNAME = "testProjectFoo";
 const char TEST_PROJECT_ID[] = "Test.Project.Id";
 
-class TestBuildSystem : public BuildSystem
+class TestBuildSystem final : public BuildSystem
 {
 public:
     using BuildSystem::BuildSystem;
@@ -1404,7 +1404,7 @@ public:
     {
         setId(TEST_PROJECT_ID);
         setDisplayName(TEST_PROJECT_DISPLAYNAME);
-        setBuildSystemCreator([](Target *t) { return new TestBuildSystem(t); });
+        setBuildSystemCreator<TestBuildSystem>();
         setNeedsBuildConfigurations(false);
         setNeedsDeployConfigurations(false);
 

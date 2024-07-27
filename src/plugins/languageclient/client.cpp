@@ -128,7 +128,7 @@ class ClientPrivate : public QObject
 public:
     ClientPrivate(Client *client, BaseClientInterface *clientInterface, const Utils::Id &id)
         : q(client)
-        , m_id(id.isValid() ? id : Utils::Id::fromString(QUuid::createUuid().toString()))
+        , m_id(id.isValid() ? id : Id::generate())
         , m_clientCapabilities(q->defaultClientCapabilities())
         , m_clientInterface(new InterfaceController(clientInterface))
         , m_documentSymbolCache(q)
@@ -298,6 +298,12 @@ public:
     void closeShadowDocument(ShadowDocIterator docIt);
 
     bool reset();
+
+    void setState(Client::State state)
+    {
+        m_state = state;
+        emit q->stateChanged(state);
+    }
 
     Client::State m_state = Client::Uninitialized;
     QHash<LanguageServerProtocol::MessageId,
@@ -569,7 +575,7 @@ void Client::initialize()
 
     // directly send content now otherwise the state check of sendContent would fail
     d->sendMessageNow(initRequest);
-    d->m_state = InitializeRequested;
+    d->setState(InitializeRequested);
 }
 
 void Client::shutdown()
@@ -581,7 +587,7 @@ void Client::shutdown()
         d->shutDownCallback(shutdownResponse);
     });
     sendMessage(shutdown);
-    d->m_state = ShutdownRequested;
+    d->setState(ShutdownRequested);
     d->m_shutdownTimer.start();
 }
 
@@ -1526,7 +1532,7 @@ void Client::projectClosed(ProjectExplorer::Project *project)
         if (d->m_state == Initialized) {
             LanguageClientManager::shutdownClient(this);
         } else {
-            d->m_state = Shutdown; // otherwise the manager would try to restart this server
+            d->setState(Shutdown); // otherwise the manager would try to restart this server
             emit finished();
         }
         d->m_project = nullptr;
@@ -1696,7 +1702,7 @@ bool ClientPrivate::reset()
     }
     m_restartCountResetTimer.start();
     --m_restartsLeft;
-    m_state = Client::Uninitialized;
+    setState(Client::Uninitialized);
     m_responseHandlers.clear();
     m_clientInterface->resetBuffer();
     updateOpenedEditorToolBars();
@@ -1723,7 +1729,7 @@ bool ClientPrivate::reset()
 void Client::setError(const QString &message)
 {
     log(message);
-    d->m_state = d->m_state < Initialized ? FailedToInitialize : Error;
+    d->setState(d->m_state < Initialized ? FailedToInitialize : Error);
 }
 
 ProgressManager *Client::progressManager()
@@ -2152,7 +2158,7 @@ void ClientPrivate::initializeCallback(const InitializeRequest::Response &initRe
                                                    QMessageBox::Retry | QMessageBox::Cancel,
                                                    QMessageBox::Retry);
                 if (result == QMessageBox::Retry) {
-                    m_state = Client::Uninitialized;
+                    setState(Client::Uninitialized);
                     q->initialize();
                     return;
                 }
@@ -2204,7 +2210,7 @@ void ClientPrivate::initializeCallback(const InitializeRequest::Response &initRe
         m_tokenSupport.setLegend(tokenProvider.legend());
 
     qCDebug(LOGLSPCLIENT) << "language server " << m_displayName << " initialized";
-    m_state = Client::Initialized;
+    setState(Client::Initialized);
     q->sendMessage(InitializeNotification(InitializedParams()));
 
     q->updateConfiguration(m_configuration);
@@ -2227,7 +2233,7 @@ void ClientPrivate::shutDownCallback(const ShutdownRequest::Response &shutdownRe
     // directly send content now otherwise the state check of sendContent would fail
     sendMessageNow(ExitNotification());
     qCDebug(LOGLSPCLIENT) << "language server " << m_displayName << " shutdown";
-    m_state = Client::Shutdown;
+    setState(Client::Shutdown);
     m_shutdownTimer.start();
 }
 

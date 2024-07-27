@@ -60,6 +60,10 @@ GeneralSettings::GeneralSettings()
     showShortcutsInContextMenus.setLabelText(
         Tr::tr("Show keyboard shortcuts in context menus (default: %1)")
             .arg(defaultShowShortcutsInContextMenu() ? Tr::tr("on") : Tr::tr("off")));
+    showShortcutsInContextMenus.addOnChanged(this, [this] {
+        QCoreApplication::setAttribute(Qt::AA_DontShowShortcutsInContextMenus,
+                                       !showShortcutsInContextMenus());
+    });
 
     provideSplitterCursors.setSettingsKey("General/OverrideSplitterCursors");
     provideSplitterCursors.setDefaultValue(false);
@@ -68,11 +72,6 @@ GeneralSettings::GeneralSettings()
         Tr::tr("Provide cursors for resizing views.\nIf the system cursors for resizing views are "
                "not displayed properly, you can use the cursors provided by %1.")
             .arg(QGuiApplication::applicationDisplayName()));
-
-    connect(&showShortcutsInContextMenus, &BaseAspect::changed, this, [this] {
-        QCoreApplication::setAttribute(Qt::AA_DontShowShortcutsInContextMenus,
-                                       !showShortcutsInContextMenus());
-    });
 
     readSettings();
 }
@@ -219,18 +218,25 @@ static bool hasQmFilesForLocale(const QString &locale, const QString &creatorTrP
 
 void GeneralSettingsWidget::fillLanguageBox() const
 {
-    const QString currentLocale = language();
+    const QString currentLocale = Core::ICore::isQtDesignStudio() ? QString("C") : language();
 
     m_languageBox->addItem(Tr::tr("<System Language>"), QString());
+
+    struct Item
+    {
+        QString display;
+        QString locale;
+        QString comparisonId;
+    };
+
+    QList<Item> items;
     // need to add this explicitly, since there is no qm file for English
-    m_languageBox->addItem(QLatin1String("English"), QLatin1String("C"));
-    if (currentLocale == QLatin1String("C") || Core::ICore::isQtDesignStudio())
-        m_languageBox->setCurrentIndex(m_languageBox->count() - 1);
+    const QString english = QLocale::languageToString(QLocale::English);
+    items.append({english, QString("C"), english});
 
     const FilePath creatorTrPath = ICore::resourcePath("translations");
     const FilePaths languageFiles = creatorTrPath.dirEntries(
         QStringList(QLatin1String("qtcreator*.qm")));
-
     for (const FilePath &languageFile : languageFiles) {
         const QString name = languageFile.fileName();
         int start = name.indexOf('_') + 1;
@@ -239,12 +245,40 @@ void GeneralSettingsWidget::fillLanguageBox() const
         // no need to show a language that creator will not load anyway
         if (hasQmFilesForLocale(locale, creatorTrPath.toString())) {
             QLocale tmpLocale(locale);
-            QString languageItem = QLocale::languageToString(tmpLocale.language()) + QLatin1String(" (")
-                                   + QLocale::territoryToString(tmpLocale.territory()) + QLatin1Char(')');
-            m_languageBox->addItem(languageItem, locale);
-            if (locale == currentLocale)
-                m_languageBox->setCurrentIndex(m_languageBox->count() - 1);
+            const auto languageItem = QString("%1 (%2) - %3 (%4)")
+                                          .arg(
+                                              tmpLocale.nativeLanguageName(),
+                                              tmpLocale.nativeTerritoryName(),
+                                              QLocale::languageToString(tmpLocale.language()),
+                                              QLocale::territoryToString(tmpLocale.territory()));
+            // Create a fancy comparison string.
+            // We cannot use a "locale aware comparison" because we are comparing different locales.
+            // The probably "optimal solution" would be to compare by "latinized native name",
+            // but that's hard. Instead
+            // - for non-Latin-script locales use the english name, otherwise the native name
+            // - get rid of fancy characters like 'č' by decomposing them (e.g. to 'c')
+            QString comparisonId = tmpLocale.script() == QLocale::LatinScript
+                                       ? (tmpLocale.nativeLanguageName() + " "
+                                          + tmpLocale.nativeTerritoryName())
+                                       : (QLocale::languageToString(tmpLocale.language()) + " "
+                                          + QLocale::territoryToString(tmpLocale.territory()));
+            for (int i = 0; i < comparisonId.size(); ++i) {
+                QChar &c = comparisonId[i];
+                if (c.decomposition().isEmpty())
+                    continue;
+                c = c.decomposition().at(0);
+            }
+            items.append({languageItem, locale, comparisonId});
         }
+    }
+
+    Utils::sort(items, [](const Item &a, const Item &b) {
+        return a.comparisonId.compare(b.comparisonId, Qt::CaseInsensitive) < 0;
+    });
+    for (const Item &i : std::as_const(items)) {
+        m_languageBox->addItem(i.display, i.locale);
+        if (i.locale == currentLocale)
+            m_languageBox->setCurrentIndex(m_languageBox->count() - 1);
     }
 }
 

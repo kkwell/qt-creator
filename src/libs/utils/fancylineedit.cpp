@@ -89,7 +89,7 @@ signals:
     void keyChanged(const QKeySequence &key);
 
 private:
-    QKeySequence m_key = Qt::Key_Space + HostOsInfo::controlModifier();
+    QKeySequence m_key = Qt::Key_Space | HostOsInfo::controlModifier();
 };
 Q_GLOBAL_STATIC(CompletionShortcut, completionShortcut)
 
@@ -689,8 +689,7 @@ void FancyIconButton::animateShow(bool visible)
 
 QSize FancyIconButton::sizeHint() const
 {
-    QWindow *window = this->window()->windowHandle();
-    return icon().actualSize(window, QSize(32, 16)); // Find flags icon can be wider than 16px
+    return icon().actualSize(QSize(32, 16)); // Find flags icon can be wider than 16px
 }
 
 void FancyIconButton::keyPressEvent(QKeyEvent *ke)

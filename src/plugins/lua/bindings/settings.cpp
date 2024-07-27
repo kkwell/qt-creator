@@ -63,14 +63,24 @@ std::unique_ptr<LuaAspectContainer> aspectContainerCreate(const sol::table &opti
                 if (v.is<sol::function>())
                     container->setLayouter(
                         [func = v.as<sol::function>()]() -> Layouting::Layout {
-                            auto res = Lua::LuaEngine::safe_call<Layouting::Layout>(func);
+                            auto res = safe_call<Layouting::Layout>(func);
                             QTC_ASSERT_EXPECTED(res, return {});
                             return *res;
                         });
+            } else if (key == "onApplied") {
+                QObject::connect(
+                    container.get(),
+                    &AspectContainer::applied,
+                    container.get(),
+                    [func = v.as<sol::function>()] { void_safe_call(func); });
+            } else if (key == "settingsGroup") {
+                container->setSettingsGroup(v.as<QString>());
             } else {
                 container->m_entries[key] = v;
                 if (v.is<BaseAspect>()) {
                     container->registerAspect(v.as<BaseAspect *>());
+                } else {
+                    qWarning() << "Unknown key:" << key.c_str();
                 }
             }
         }
@@ -93,15 +103,13 @@ void baseAspectCreate(BaseAspect *aspect, const std::string &key, const sol::obj
         aspect->setToolTip(value.as<QString>());
     else if (key == "onValueChanged") {
         QObject::connect(aspect, &BaseAspect::changed, aspect, [func = value.as<sol::function>()]() {
-            Lua::LuaEngine::void_safe_call(func);
+            void_safe_call(func);
         });
     } else if (key == "onVolatileValueChanged") {
         QObject::connect(aspect,
                          &BaseAspect::volatileValueChanged,
                          aspect,
-                         [func = value.as<sol::function>()]() {
-                             Lua::LuaEngine::void_safe_call(func);
-                         });
+                         [func = value.as<sol::function>()] { void_safe_call(func); });
     } else if (key == "enabler")
         aspect->setEnabler(value.as<BoolAspect *>());
     else
@@ -130,7 +138,7 @@ void typedAspectCreate(StringAspect *aspect, const std::string &key, const sol::
         aspect->setValueAcceptor([func = value.as<sol::function>()](const QString &oldValue,
                                                                     const QString &newValue)
                                      -> std::optional<QString> {
-            auto res = Lua::LuaEngine::safe_call<std::optional<QString>>(func, oldValue, newValue);
+            auto res = safe_call<std::optional<QString>>(func, oldValue, newValue);
             QTC_ASSERT_EXPECTED(res, return std::nullopt);
             return *res;
         });
@@ -138,7 +146,7 @@ void typedAspectCreate(StringAspect *aspect, const std::string &key, const sol::
         aspect->setShowToolTipOnLabel(value.as<bool>());
     else if (key == "displayFilter")
         aspect->setDisplayFilter([func = value.as<sol::function>()](const QString &value) {
-            auto res = Lua::LuaEngine::safe_call<QString>(func, value);
+            auto res = safe_call<QString>(func, value);
             QTC_ASSERT_EXPECTED(res, return value);
             return *res;
         });
@@ -173,7 +181,7 @@ void typedAspectCreate(FilePathAspect *aspect, const std::string &key, const sol
         aspect->setValidatePlaceHolder(value.as<bool>());
     else if (key == "openTerminalHandler")
         aspect->setOpenTerminalHandler([func = value.as<sol::function>()]() {
-            auto res = Lua::LuaEngine::void_safe_call(func);
+            auto res = void_safe_call(func);
             QTC_CHECK_EXPECTED(res);
         });
     else if (key == "expectedKind")
@@ -186,7 +194,7 @@ void typedAspectCreate(FilePathAspect *aspect, const std::string &key, const sol
         aspect->setValueAcceptor([func = value.as<sol::function>()](const QString &oldValue,
                                                                     const QString &newValue)
                                      -> std::optional<QString> {
-            auto res = Lua::LuaEngine::safe_call<std::optional<QString>>(func, oldValue, newValue);
+            auto res = safe_call<std::optional<QString>>(func, oldValue, newValue);
             QTC_ASSERT_EXPECTED(res, return std::nullopt);
             return *res;
         });
@@ -202,7 +210,7 @@ void typedAspectCreate(FilePathAspect *aspect, const std::string &key, const sol
     */
     else if (key == "displayFilter")
         aspect->setDisplayFilter([func = value.as<sol::function>()](const QString &path) {
-            auto res = Lua::LuaEngine::safe_call<QString>(func, path);
+            auto res = safe_call<QString>(func, path);
             QTC_ASSERT_EXPECTED(res, return path);
             return *res;
         });
@@ -272,9 +280,9 @@ sol::usertype<T> addTypedAspect(sol::table &lua, const QString &name)
         sol::bases<TypedAspect<typename T::valueType>, BaseAspect>());
 }
 
-void addSettingsModule()
+void setupSettingsModule()
 {
-    LuaEngine::registerProvider("Settings", [](sol::state_view l) -> sol::object {
+    registerProvider("Settings", [](sol::state_view l) -> sol::object {
         sol::table settings = l.create_table();
 
         settings.new_usertype<BaseAspect>("Aspect", "apply", &BaseAspect::apply);
@@ -295,9 +303,57 @@ void addSettingsModule()
 
         addTypedAspect<BoolAspect>(settings, "BoolAspect");
         addTypedAspect<ColorAspect>(settings, "ColorAspect");
-        addTypedAspect<SelectionAspect>(settings, "SelectionAspect");
         addTypedAspect<MultiSelectionAspect>(settings, "MultiSelectionAspect");
         addTypedAspect<StringAspect>(settings, "StringAspect");
+
+        settings.new_usertype<SelectionAspect>(
+            "SelectionAspect",
+            "create",
+            [](const sol::table &options) {
+                return createAspectFromTable<SelectionAspect>(
+                    options,
+                    [](SelectionAspect *aspect, const std::string &key, const sol::object &value) {
+                        if (key == "options") {
+                            sol::table options = value.as<sol::table>();
+                            for (size_t i = 1; i <= options.size(); ++i) {
+                                sol::optional<sol::table> optiontable
+                                    = options[i].get<sol::optional<sol::table>>();
+                                if (optiontable) {
+                                    sol::table option = *optiontable;
+                                    sol::optional<QString> data = option["data"];
+                                    if (data) {
+                                        aspect->addOption(
+                                            {option["name"],
+                                             option["tooltip"].get_or(QString()),
+                                             *data});
+                                    } else {
+                                        aspect->addOption(
+                                            option["name"], option["tooltip"].get_or(QString()));
+                                    }
+                                } else if (
+                                    sol::optional<QString> name
+                                    = options[i].get<sol::optional<QString>>()) {
+                                    aspect->addOption(*name);
+                                } else {
+                                    throw sol::error("Invalid option type");
+                                }
+                            }
+                        } else if (key == "displayStyle") {
+                            aspect->setDisplayStyle((SelectionAspect::DisplayStyle) value.as<int>());
+                        } else
+                            typedAspectCreate(aspect, key, value);
+                    });
+            },
+            "stringValue",
+            sol::property(&SelectionAspect::stringValue, &SelectionAspect::setStringValue),
+            "addOption",
+            sol::overload(
+                [](SelectionAspect &self, const QString &name) { self.addOption(name); },
+                [](SelectionAspect &self, const QString &name, const QString &tooltip) {
+                    self.addOption(name, tooltip);
+                }),
+            sol::base_classes,
+            sol::bases<TypedAspect<int>, BaseAspect>());
 
         auto filePathAspectType = addTypedAspect<FilePathAspect>(settings, "FilePathAspect");
         filePathAspectType.set(
@@ -414,19 +470,19 @@ void addSettingsModule()
                             const QString type = value.as<QString>().toLower();
 
                             if (type.isEmpty() || type == "None")
-                                aspect->setIconType(Utils::InfoLabel::InfoType::None);
+                                aspect->setIconType(InfoLabel::InfoType::None);
                             else if (type == "information")
-                                aspect->setIconType(Utils::InfoLabel::InfoType::Information);
+                                aspect->setIconType(InfoLabel::InfoType::Information);
                             else if (type == "warning")
-                                aspect->setIconType(Utils::InfoLabel::InfoType::Warning);
+                                aspect->setIconType(InfoLabel::InfoType::Warning);
                             else if (type == "error")
-                                aspect->setIconType(Utils::InfoLabel::InfoType::Error);
+                                aspect->setIconType(InfoLabel::InfoType::Error);
                             else if (type == "ok")
-                                aspect->setIconType(Utils::InfoLabel::InfoType::Ok);
+                                aspect->setIconType(InfoLabel::InfoType::Ok);
                             else if (type == "notok")
-                                aspect->setIconType(Utils::InfoLabel::InfoType::NotOk);
+                                aspect->setIconType(InfoLabel::InfoType::NotOk);
                             else
-                                aspect->setIconType(Utils::InfoLabel::InfoType::None);
+                                aspect->setIconType(InfoLabel::InfoType::None);
                         } else {
                             baseAspectCreate(aspect, key, value);
                         }
@@ -445,7 +501,7 @@ void addSettingsModule()
                         if (key == "createItemFunction") {
                             aspect->setCreateItemFunction([func = value.as<sol::function>()]()
                                                               -> std::shared_ptr<BaseAspect> {
-                                auto res = Lua::LuaEngine::safe_call<std::shared_ptr<BaseAspect>>(
+                                auto res = safe_call<std::shared_ptr<BaseAspect>>(
                                     func);
                                 QTC_ASSERT_EXPECTED(res, return nullptr);
                                 return *res;
@@ -453,13 +509,13 @@ void addSettingsModule()
                         } else if (key == "onItemAdded") {
                             aspect->setItemAddedCallback([func = value.as<sol::function>()](
                                                              std::shared_ptr<BaseAspect> item) {
-                                auto res = Lua::LuaEngine::void_safe_call(func, item);
+                                auto res = void_safe_call(func, item);
                                 QTC_CHECK_EXPECTED(res);
                             });
                         } else if (key == "onItemRemoved") {
                             aspect->setItemRemovedCallback([func = value.as<sol::function>()](
                                                                std::shared_ptr<BaseAspect> item) {
-                                auto res = Lua::LuaEngine::void_safe_call(func, item);
+                                auto res = void_safe_call(func, item);
                                 QTC_CHECK_EXPECTED(res);
                             });
                         } else {
@@ -472,14 +528,14 @@ void addSettingsModule()
             "foreach",
             [](AspectList *a, const sol::function &clbk) {
                 a->forEachItem<BaseAspect>([clbk](std::shared_ptr<BaseAspect> item) {
-                    auto res = Lua::LuaEngine::void_safe_call(clbk, item);
+                    auto res = void_safe_call(clbk, item);
                     QTC_CHECK_EXPECTED(res);
                 });
             },
             "enumerate",
             [](AspectList *a, const sol::function &clbk) {
                 a->forEachItem<BaseAspect>([clbk](std::shared_ptr<BaseAspect> item, int idx) {
-                    auto res = Lua::LuaEngine::void_safe_call(clbk, item, idx);
+                    auto res = void_safe_call(clbk, item, idx);
                     QTC_CHECK_EXPECTED(res);
                 });
             },
@@ -495,8 +551,10 @@ void addSettingsModule()
                 setDisplayName(options.get<QString>("displayName"));
                 setCategory(Id::fromString(options.get<QString>("categoryId")));
                 setDisplayCategory(options.get<QString>("displayCategory"));
-                setCategoryIconPath(
-                    FilePath::fromUserInput(options.get<QString>("categoryIconPath")));
+                const FilePath catIcon = options.get<std::optional<FilePath>>("categoryIconPath")
+                                             .value_or(FilePath::fromUserInput(
+                                                 options.get_or<QString>("categoryIconPath", {})));
+                setCategoryIconPath(catIcon);
                 AspectContainer *container = options.get<AspectContainer *>("aspectContainer");
                 setSettingsProvider([container]() { return container; });
             }
@@ -512,6 +570,11 @@ void addSettingsModule()
             "LineEdit", StringAspect::DisplayStyle::LineEditDisplay,
             "TextEdit", StringAspect::DisplayStyle::TextEditDisplay,
             "PasswordLineEdit", StringAspect::DisplayStyle::PasswordLineEditDisplay
+        );
+
+        settings["SelectionDisplayStyle"] = l.create_table_with(
+            "RadioButtons", SelectionAspect::DisplayStyle::RadioButtons,
+            "ComboBox", SelectionAspect::DisplayStyle::ComboBox
         );
 
         settings["CheckBoxPlacement"] = l.create_table_with(

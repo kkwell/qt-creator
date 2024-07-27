@@ -20,11 +20,16 @@ QtcLibrary {
         "tasktree.h",
         "tasktreerunner.cpp",
         "tasktreerunner.h",
+        "tcpsocket.cpp",
+        "tcpsocket.h",
     ]
 
     Export {
         Depends { name: "cpp" }
-        cpp.includePaths: ["..", "../.."]
+        cpp.includePaths: [
+            exportingProduct.sourceDirectory + "/..",
+            exportingProduct.sourceDirectory + "/../.."
+        ]
     }
 }
 

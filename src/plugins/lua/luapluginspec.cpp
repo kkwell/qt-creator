@@ -6,6 +6,8 @@
 #include "luaengine.h"
 #include "luatr.h"
 
+#include <coreplugin/icore.h>
+
 #include <extensionsystem/extensionsystemtr.h>
 
 #include <utils/algorithm.h>
@@ -14,6 +16,7 @@
 
 #include <QJsonDocument>
 #include <QLoggingCategory>
+#include <QTranslator>
 
 Q_LOGGING_CATEGORY(luaPluginSpecLog, "qtc.lua.pluginspec", QtWarningMsg)
 
@@ -45,12 +48,13 @@ LuaPluginSpec::LuaPluginSpec()
 
 expected_str<LuaPluginSpec *> LuaPluginSpec::create(const FilePath &filePath, sol::table pluginTable)
 {
+    const FilePath directory = filePath.parentDir();
     std::unique_ptr<LuaPluginSpec> pluginSpec(new LuaPluginSpec());
 
     if (!pluginTable.get_or<sol::function>("setup", {}))
         return make_unexpected(QString("Plugin info table did not contain a setup function"));
 
-    QJsonValue v = LuaEngine::toJson(pluginTable);
+    QJsonValue v = toJson(pluginTable);
     if (luaPluginSpecLog().isDebugEnabled()) {
         qCDebug(luaPluginSpecLog).noquote()
             << "Plugin info table:" << QJsonDocument(v.toObject()).toJson(QJsonDocument::Indented);
@@ -63,8 +67,20 @@ expected_str<LuaPluginSpec *> LuaPluginSpec::create(const FilePath &filePath, so
     if (!r)
         return make_unexpected(r.error());
 
+    const QString langId = Core::ICore::userInterfaceLanguage();
+    FilePath path = directory / "ts" / QString("%1_%2.qm").arg(directory.fileName()).arg(langId);
+
+    QTranslator *translator = new QTranslator(qApp);
+    bool success = translator->load(path.toFSPathString(), directory.toFSPathString());
+    if (success)
+        qApp->installTranslator(translator);
+    else {
+        delete translator;
+        qCInfo(luaPluginSpecLog) << "No translation found";
+    }
+
     pluginSpec->setFilePath(filePath);
-    pluginSpec->setLocation(filePath.parentDir());
+    pluginSpec->setLocation(directory);
 
     pluginSpec->d->pluginScriptPath = filePath;
     pluginSpec->d->printToOutputPane = pluginTable.get_or("printToOutputPane", false);
@@ -104,8 +120,7 @@ bool LuaPluginSpec::initializePlugin()
 
     std::unique_ptr<sol::state> activeLuaState = std::make_unique<sol::state>();
 
-    expected_str<sol::protected_function> setupResult
-        = LuaEngine::instance().prepareSetup(*activeLuaState, *this);
+    expected_str<sol::protected_function> setupResult = prepareSetup(*activeLuaState, *this);
 
     if (!setupResult) {
         setError(Lua::Tr::tr("Cannot prepare extension setup: %1").arg(setupResult.error()));

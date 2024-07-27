@@ -32,18 +32,22 @@ using namespace ExtensionSystem;
 
 namespace Lua::Internal {
 
-void addAsyncModule();
-void addFetchModule();
-void addActionModule();
-void addUtilsModule();
-void addMessageManagerModule();
-void addProcessModule();
-void addSettingsModule();
-void addGuiModule();
-void addQtModule();
-void addCoreModule();
-void addHookModule();
-void addInstallModule();
+void setupActionModule();
+void setupAsyncModule();
+void setupCoreModule();
+void setupFetchModule();
+void setupGuiModule();
+void setupHookModule();
+void setupInstallModule();
+void setupJsonModule();
+void setupLocalSocketModule();
+void setupMessageManagerModule();
+void setupProcessModule();
+void setupQtModule();
+void setupSettingsModule();
+void setupTextEditorModule();
+void setupTranslateModule();
+void setupUtilsModule();
 
 class LuaJsExtension : public QObject
 {
@@ -121,10 +125,9 @@ public:
         QFile f(":/lua/scripts/ilua.lua");
         f.open(QIODevice::ReadOnly);
         const auto ilua = QString::fromUtf8(f.readAll());
-        m_luaState = LuaEngine::instance().runScript(ilua, "ilua.lua", [this](sol::state &lua) {
+        m_luaState = runScript(ilua, "ilua.lua", [this](sol::state &lua) {
             lua["print"] = [this](sol::variadic_args va) {
-                const QString msgs
-                    = LuaEngine::variadicToStringList(va).join("\t").replace("\r\n", "\n");
+                const QString msgs = variadicToStringList(va).join("\t").replace("\r\n", "\n");
                 m_model.setStringList(m_model.stringList() << msgs);
                 scrollToBottom();
             };
@@ -168,7 +171,7 @@ public:
     {
         setId("LuaPane");
         setDisplayName(Tr::tr("Lua"));
-        setPriorityInStatusBar(20);
+        setPriorityInStatusBar(-20);
     }
 
     QWidget *outputWidget(QWidget *parent) override
@@ -235,7 +238,6 @@ class LuaPlugin : public IPlugin
     Q_PLUGIN_METADATA(IID "org.qt-project.Qt.QtCreatorPlugin" FILE "Lua.json")
 
 private:
-    std::unique_ptr<LuaEngine> m_luaEngine;
     LuaPane *m_pane = nullptr;
 
 public:
@@ -243,20 +245,24 @@ public:
 
     void initialize() final
     {
-        m_luaEngine.reset(new LuaEngine());
+        setupLuaEngine(this);
 
-        addAsyncModule();
-        addFetchModule();
-        addActionModule();
-        addUtilsModule();
-        addMessageManagerModule();
-        addProcessModule();
-        addSettingsModule();
-        addGuiModule();
-        addQtModule();
-        addCoreModule();
-        addHookModule();
-        addInstallModule();
+        setupActionModule();
+        setupAsyncModule();
+        setupCoreModule();
+        setupFetchModule();
+        setupGuiModule();
+        setupHookModule();
+        setupInstallModule();
+        setupJsonModule();
+        setupLocalSocketModule();
+        setupMessageManagerModule();
+        setupProcessModule();
+        setupQtModule();
+        setupSettingsModule();
+        setupTextEditorModule();
+        setupTranslateModule();
+        setupUtilsModule();
 
         Core::JsExpander::registerGlobalObject("Lua", [] { return new LuaJsExtension(); });
 
@@ -280,11 +286,11 @@ public:
                 if (!script.exists())
                     continue;
 
-                const expected_str<LuaPluginSpec *> result = m_luaEngine->loadPlugin(script);
+                const expected_str<LuaPluginSpec *> result = loadPlugin(script);
 
                 if (!result) {
                     qWarning() << "Failed to load plugin" << script << ":" << result.error();
-                    MessageManager::writeFlashing(tr("Failed to load plugin %1: %2")
+                    MessageManager::writeFlashing(Tr::tr("Failed to load plugin %1: %2")
                                                       .arg(script.toUserOutput())
                                                       .arg(result.error()));
                     continue;

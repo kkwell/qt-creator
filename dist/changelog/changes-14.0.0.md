@@ -7,7 +7,7 @@ The most important changes are listed in this document. For a complete list of
 changes, see the Git log for the Qt Creator sources that you can check out from
 the public Git repository or view online at
 
-https://code.qt.io/cgit/qt-creator/qt-creator.git/log/?id=13.0..v14.0.0
+<https://code.qt.io/cgit/qt-creator/qt-creator.git/log/?id=13.0..v14.0.0>
 
 General
 -------
@@ -17,6 +17,8 @@ General
   ([Documentation](https://doc-snapshots.qt.io/qtcreator-extending/lua-extensions.html))
 * Added a mode for managing extensions
 * Added `Clear` and `Save Contents` to context menus of all output views
+* Fixed the tab focus order in the search toolbar
+  ([QTCREATORBUG-30791](https://bugreports.qt.io/browse/QTCREATORBUG-30791))
 * Locator
     * Added the option to show results relative to project root
       ([QTCREATORBUG-29462](https://bugreports.qt.io/browse/QTCREATORBUG-29462))
@@ -33,6 +35,8 @@ Editing
 * Added a highlight for the current view in case of multiple views
   ([QTCREATORBUG-23654](https://bugreports.qt.io/browse/QTCREATORBUG-23654))
 * Added `Window > Reopen Last Closed Document`
+* Added the option to open files in a text editor that were detected as binary
+  ([QTCREATORBUG-31116](https://bugreports.qt.io/browse/QTCREATORBUG-31116))
 * Fixed that changing a document's MIME type by renaming did not re-open it in
   the new editor type when needed
   ([QTCREATORBUG-30317](https://bugreports.qt.io/browse/QTCREATORBUG-30317))
@@ -42,6 +46,16 @@ Editing
 * Fixed that it wasn't possible to open a file in the text editor if it was
   classified as a binary file format by the MIME database
   ([QTCREATORBUG-31116](https://bugreports.qt.io/browse/QTCREATORBUG-31116))
+* Fixed the unindenting with backspace when multiple cursors are active
+  ([QTCREATORBUG-31158](https://bugreports.qt.io/browse/QTCREATORBUG-31158))
+* Fixed the `Save` shortcut after closing a document while the document's
+  drop-down menu is shown
+  ([QTCREATORBUG-31205](https://bugreports.qt.io/browse/QTCREATORBUG-31205))
+* Fixed the highlighting of matches for `Whole Words Only` searches
+  ([QTCREATORBUG-31020](https://bugreports.qt.io/browse/QTCREATORBUG-31020))
+* Fixed that the documents chooser did not close when releasing `Ctrl` in
+  some setups
+  ([QTCREATORBUG-31228](https://bugreports.qt.io/browse/QTCREATORBUG-31228))
 
 ### C++
 
@@ -75,6 +89,9 @@ Editing
       ([QTCREATORBUG-29943](https://bugreports.qt.io/browse/QTCREATORBUG-29943))
     * Fixed the handling of system headers
       ([QTCREATORBUG-30474](https://bugreports.qt.io/browse/QTCREATORBUG-30474))
+    * Fixed a warning when adding an empty session to the list of sessions with
+      a single Clangd instance
+      ([QTCREATORBUG-31186](https://bugreports.qt.io/browse/QTCREATORBUG-31186))
 * Built-in
     * Added the `Enable indexing` option in `Preferences` > `C++` > `Code Model`
       to turn off the built-in indexer
@@ -97,6 +114,8 @@ Editing
   ([Documentation](https://doc.qt.io/qtcreator/creator-quick-ui-forms.html))
 * Fixed that the color preview did not work on named colors
   ([QTCREATORBUG-30594](https://bugreports.qt.io/browse/QTCREATORBUG-30594))
+* Fixed the default path to `qmlformat` on Windows
+  ([QTCREATORBUG-31257](https://bugreports.qt.io/browse/QTCREATORBUG-31257))
 * Language Server
     * Switched on by default for Qt 6.8 and later
     * Added an option for generating `qmlls.ini` files for CMake projects in
@@ -162,6 +181,8 @@ Projects
 * Fixed that Qt Creator variables were not expanded for the `Copy File`
   deploy step
   ([QTCREATORBUG-30821](https://bugreports.qt.io/browse/QTCREATORBUG-30821))
+* Fixed duplicate entries in the variable chooser for the build directory
+  ([QTCREATORBUG-31183](https://bugreports.qt.io/browse/QTCREATORBUG-31183))
 
 ### CMake
 
@@ -187,6 +208,10 @@ Projects
 * Fixed an issue with adding new files when file globs are used in the CMake
   files
   ([QTCREATORBUG-30445](https://bugreports.qt.io/browse/QTCREATORBUG-30445))
+* Fixed the default CMake generator for kits if Ninja is not installed
+  ([QTCREATORBUG-31129](https://bugreports.qt.io/browse/QTCREATORBUG-31129))
+* Fixed that duplicate `CMAKE_CXX_COMPILER` entries could be used
+  ([QTCREATORBUG-27005](https://bugreports.qt.io/browse/QTCREATORBUG-27005))
 * Presets
     * Made CMake settings configurable
       ([QTCREATORBUG-25972](https://bugreports.qt.io/browse/QTCREATORBUG-25972),
@@ -196,6 +221,8 @@ Projects
       ([QTCREATORBUG-30836](https://bugreports.qt.io/browse/QTCREATORBUG-30836))
     * Added support for custom build types
       ([QTCREATORBUG-30014](https://bugreports.qt.io/browse/QTCREATORBUG-30014))
+    * Fixed issues with cross-compilation setups
+      ([QTCREATORBUG-31249](https://bugreports.qt.io/browse/QTCREATORBUG-31249))
 
     ([Documentation](https://doc-snapshots.qt.io/qtcreator-14.0/creator-build-settings-cmake-presets.html))
 
@@ -286,7 +313,8 @@ Platforms
 
 ### Android
 
-* Added support for creating `android-desktop` devices
+* Added support for creating `android-desktop` devices in `Preferences` >
+  `Devices` > `Add` > `Android Device` > `Device definition`
 * Added support for `namespace` in `build.gradle`
   ([QTBUG-106907](https://bugreports.qt.io/browse/QTBUG-106907))
 * Fixed that errors when creating AVDs were not visible to the user
@@ -306,6 +334,9 @@ Platforms
 * Improved the performance of the generic deployment method
 * Fixed that the file size check that is performed before parsing C++ files
   could freeze Qt Creator until finished for remote projects
+* Fixed that the deployment of a directory deployed only its contents instead
+  of the directory itself
+  ([QTCREATORBUG-31136](https://bugreports.qt.io/browse/QTCREATORBUG-31136))
 
 ### Qt Application Manager
 
@@ -322,8 +353,9 @@ Ahmad Samir
 Aleksei German  
 Alessandro Portale  
 Alexander Drozdov  
+Alexandre Laurent  
 Ali Kianian  
-Andre Hartmann  
+André Hartmann  
 André Pönitz  
 Artem Sokolovskii  
 Assam Boudjelthia  
@@ -353,6 +385,7 @@ Mats Honkamaa
 Michael Weghorn  
 Miikka Heikkinen  
 Orgad Shaneh  
+Pino Toscano  
 Pranta Dastider  
 Ralf Habacker  
 Robert Löhning  

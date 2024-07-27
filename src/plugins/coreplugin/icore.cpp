@@ -10,6 +10,7 @@
 #include "coreplugintr.h"
 #include "coreplugintr.h"
 #include "dialogs/externaltoolconfig.h"
+#include "dialogs/ioptionspage.h"
 #include "dialogs/settingsdialog.h"
 #include "dialogs/shortcutsettings.h"
 #include "documentmanager.h"
@@ -59,6 +60,7 @@
 #include <utils/guiutils.h>
 #include <utils/historycompleter.h>
 #include <utils/hostosinfo.h>
+#include <utils/layoutbuilder.h>
 #include <utils/mimeutils.h>
 #include <utils/proxyaction.h>
 #include <utils/qtcassert.h>
@@ -79,6 +81,7 @@
 #include <QDebug>
 #include <QDialogButtonBox>
 #include <QLibraryInfo>
+#include <QLoggingCategory>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -95,6 +98,8 @@
 #ifdef Q_OS_LINUX
 #include <malloc.h>
 #endif
+
+Q_LOGGING_CATEGORY(coreLog, "qtc.core", QtWarningMsg)
 
 /*!
     \namespace Core
@@ -285,19 +290,15 @@ public:
 
     void registerDefaultContainers();
     void registerDefaultActions();
-    void registerModeSelectorStyleActions();
 
     void readSettings();
     void saveWindowSettings();
-
-    void updateModeSelectorStyleMenu();
 
     MainWindow *m_mainwindow = nullptr;
     QTimer m_trimTimer;
     QStringList m_aboutInformation;
     Context m_highPrioAdditionalContexts;
     Context m_lowPrioAdditionalContexts{Constants::C_GLOBAL};
-    mutable QPrinter *m_printer = nullptr;
     WindowSupport *m_windowSupport = nullptr;
     EditorManager *m_editorManager = nullptr;
     ExternalToolManager *m_externalToolManager = nullptr;
@@ -315,18 +316,10 @@ public:
 
     std::unordered_map<QWidget *, QList<IContext *>> m_contextWidgets;
 
-    ShortcutSettings *m_shortcutSettings = nullptr;
-    ToolSettings *m_toolSettings = nullptr;
-    MimeTypeSettings *m_mimeTypeSettings = nullptr;
-    SystemEditor *m_systemEditor = nullptr;
-
     // actions
     QAction *m_toggleLeftSideBarAction = nullptr;
     QAction *m_toggleRightSideBarAction = nullptr;
     QAction *m_toggleMenubarAction = nullptr;
-    QAction *m_setModeSelectorStyleIconsAndTextAction = nullptr;
-    QAction *m_setModeSelectorStyleHiddenAction = nullptr;
-    QAction *m_setModeSelectorStyleIconsOnlyAction = nullptr;
 
     QToolButton *m_toggleLeftSideBarButton = nullptr;
     QToolButton *m_toggleRightSideBarButton = nullptr;
@@ -586,9 +579,8 @@ QtcSettings *ICore::settings(QSettings::Scope scope)
 */
 QPrinter *ICore::printer()
 {
-    if (!d->m_printer)
-        d->m_printer = new QPrinter(QPrinter::HighResolution);
-    return d->m_printer;
+    static QPrinter thePrinter(QPrinter::HighResolution);
+    return &thePrinter;
 }
 
 /*!
@@ -851,7 +843,7 @@ QList<IContext *> ICore::currentContextObjects()
     Returns the widget of the top level IContext of the current context, or \c
     nullptr if there is none.
 
-    \sa currentContextObject()
+    \sa currentContextObjects()
 */
 QWidget *ICore::currentContextWidget()
 {
@@ -1050,7 +1042,8 @@ QString uiConfigInformation()
     info.append(QString("Language: %1\n").arg(userInterfaceLanguage));
     info.append(QString("Device pixel ratio: %1, Qt::HighDpiScaleFactorRoundingPolicy::%2\n")
                     .arg(qApp->devicePixelRatio()).arg(policy));
-    info.append(QString("Font DPI: %1\n").arg(qApp->fontMetrics().fontDpi()));
+    const QFontMetricsF fm(qApp->font());
+    info.append(QString("Font DPI: %1\n").arg(fm.fontDpi()));
 
     info.append(QString("Utils::StyleHelper::UiElement:\n"));
 #define QTC_ADD_UIELEMENT_FONT(uiElement) (                                              \
@@ -1335,8 +1328,6 @@ static bool hideToolsMenu()
     return Core::ICore::settings()->value(Constants::SETTINGS_MENU_HIDE_TOOLS, false).toBool();
 }
 
-enum { debugMainWindow = 0 };
-
 namespace Internal {
 
 void ICorePrivate::init()
@@ -1347,10 +1338,11 @@ void ICorePrivate::init()
     m_jsExpander = JsExpander::createGlobalJsExpander();
     m_vcsManager = new VcsManager;
     m_modeStack = new FancyTabWidget(m_mainwindow);
-    m_shortcutSettings = new ShortcutSettings;
-    m_toolSettings = new ToolSettings;
-    m_mimeTypeSettings = new MimeTypeSettings;
-    m_systemEditor = new SystemEditor;
+
+    setupShortcutSettings();
+    setupExternalToolSettings();
+    setupSystemEditor();
+
     m_toggleLeftSideBarButton = new QToolButton;
     m_toggleRightSideBarButton = new QToolButton;
 
@@ -1381,8 +1373,8 @@ void ICorePrivate::init()
     QApplication::setStyle(new ManhattanStyle(baseName));
 
     m_modeManager = new ModeManager(m_modeStack);
-    connect(m_modeStack, &FancyTabWidget::topAreaClicked, this, [](Qt::MouseButton, Qt::KeyboardModifiers modifiers) {
-        if (modifiers & Qt::ShiftModifier) {
+    connect(m_modeStack, &FancyTabWidget::topAreaClicked, this, [](QMouseEvent *event) {
+        if (event->modifiers() & Qt::ShiftModifier) {
             QColor color = QColorDialog::getColor(StyleHelper::requestedBaseColor(), ICore::dialogParent());
             if (color.isValid())
                 StyleHelper::setBaseColor(color);
@@ -1457,16 +1449,6 @@ ICorePrivate::~ICorePrivate()
     delete m_externalToolManager;
     m_externalToolManager = nullptr;
     MessageManager::destroy();
-    delete m_shortcutSettings;
-    m_shortcutSettings = nullptr;
-    delete m_toolSettings;
-    m_toolSettings = nullptr;
-    delete m_mimeTypeSettings;
-    m_mimeTypeSettings = nullptr;
-    delete m_systemEditor;
-    m_systemEditor = nullptr;
-    delete m_printer;
-    m_printer = nullptr;
     delete m_vcsManager;
     m_vcsManager = nullptr;
     //we need to delete editormanager and statusbarmanager explicitly before the end of the destructor,
@@ -1503,7 +1485,7 @@ ICorePrivate::~ICorePrivate()
 void ICore::extensionsInitialized()
 {
     EditorManagerPrivate::extensionsInitialized();
-    MimeTypeSettings::restoreSettings();
+    setupMimeTypeSettings();
     d->m_windowSupport = new WindowSupport(d->m_mainwindow, Context("Core.MainWindow"));
     d->m_windowSupport->setCloseActionEnabled(false);
     OutputPaneManager::initialize();
@@ -1656,6 +1638,8 @@ void ICorePrivate::registerDefaultContainers()
     ActionContainer *mview = ActionManager::createMenu(Constants::M_VIEW);
     menubar->addMenu(mview, Constants::G_VIEW);
     mview->menu()->setTitle(Tr::tr("&View"));
+    mview->appendGroup(Constants::G_VIEW_SIDEBAR);
+    mview->appendGroup(Constants::G_VIEW_MODES);
     mview->appendGroup(Constants::G_VIEW_VIEWS);
     mview->appendGroup(Constants::G_VIEW_PANES);
 
@@ -1982,7 +1966,7 @@ void ICorePrivate::registerDefaultActions()
     toggleLeftSideBarAction.setCheckable(true);
     toggleLeftSideBarAction.setCommandAttribute(Command::CA_UpdateText);
     toggleLeftSideBarAction.setDefaultKeySequence(Tr::tr("Ctrl+0"), Tr::tr("Alt+0"));
-    toggleLeftSideBarAction.addToContainer(Constants::M_VIEW, Constants::G_VIEW_VIEWS);
+    toggleLeftSideBarAction.addToContainer(Constants::M_VIEW, Constants::G_VIEW_SIDEBAR);
     toggleLeftSideBarAction.addOnTriggered(this,
         [this](bool visible) { setSidebarVisible(visible, Side::Left); });
 
@@ -1998,7 +1982,7 @@ void ICorePrivate::registerDefaultActions()
     toggleRightSideBarAction.setCheckable(true);
     toggleRightSideBarAction.setCommandAttribute(Command::CA_UpdateText);
     toggleRightSideBarAction.setDefaultKeySequence(Tr::tr("Ctrl+Shift+0"), Tr::tr("Alt+Shift+0"));
-    toggleRightSideBarAction.addToContainer(Constants::M_VIEW, Constants::G_VIEW_VIEWS);
+    toggleRightSideBarAction.addToContainer(Constants::M_VIEW, Constants::G_VIEW_SIDEBAR);
     toggleRightSideBarAction.setEnabled(false);
     toggleRightSideBarAction.addOnTriggered(this,
         [this](bool visible) { setSidebarVisible(visible, Side::Right); });
@@ -2014,7 +1998,7 @@ void ICorePrivate::registerDefaultActions()
         toggleMenubarAction.bindContextAction(&m_toggleMenubarAction);
         toggleMenubarAction.setCheckable(true);
         toggleMenubarAction.setDefaultKeySequence(Tr::tr("Ctrl+Alt+M"));
-        toggleMenubarAction.addToContainer(Constants::M_VIEW, Constants::G_VIEW_VIEWS);
+        toggleMenubarAction.addToContainer(Constants::M_VIEW, Constants::G_VIEW_SIDEBAR);
         toggleMenubarAction.addOnToggled(this, [](bool visible) {
             if (!visible) {
                 auto keySequenceAndText = [](const Utils::Id &actionName) {
@@ -2047,8 +2031,6 @@ void ICorePrivate::registerDefaultActions()
             globalMenuBar()->setVisible(visible);
         });
     }
-
-    registerModeSelectorStyleActions();
 
     // Window->Views
     ActionContainer *mviews = ActionManager::createMenu(Constants::M_VIEW_VIEWS);
@@ -2100,53 +2082,6 @@ void ICorePrivate::registerDefaultActions()
         tmpAction.setSeperator(true);
         tmpAction.addToContainer(Constants::M_HELP, Constants::G_HELP_ABOUT);
     }
-}
-
-void ICorePrivate::registerModeSelectorStyleActions()
-{
-    ActionContainer *mview = ActionManager::actionContainer(Constants::M_VIEW);
-
-    // Cycle Mode Selector Styles
-    ActionBuilder(this, Constants::CYCLE_MODE_SELECTOR_STYLE)
-        .setText(Tr::tr("Cycle Mode Selector Styles"))
-        .addOnTriggered(this, [this] {
-            ModeManager::cycleModeStyle();
-            updateModeSelectorStyleMenu();
-        });
-
-    // Mode Selector Styles
-    ActionContainer *mmodeLayouts = ActionManager::createMenu(Constants::M_VIEW_MODESTYLES);
-    mview->addMenu(mmodeLayouts, Constants::G_VIEW_VIEWS);
-    QMenu *styleMenu = mmodeLayouts->menu();
-    styleMenu->setTitle(Tr::tr("Modes"));
-    auto *stylesGroup = new QActionGroup(styleMenu);
-    stylesGroup->setExclusive(true);
-
-    mmodeLayouts->addSeparator(Constants::G_DEFAULT_THREE);
-
-    ActionBuilder(this, "QtCreator.Modes.IconsAndText")
-        .setText(Tr::tr("Icons and Text"))
-        .setCheckable(true)
-        .addOnTriggered([] { ModeManager::setModeStyle(ModeManager::Style::IconsAndText); })
-        .addToContainer(Constants::M_VIEW_MODESTYLES, Constants::G_DEFAULT_THREE)
-        .bindContextAction(&m_setModeSelectorStyleIconsAndTextAction);
-    stylesGroup->addAction(m_setModeSelectorStyleIconsAndTextAction);
-
-    ActionBuilder(this, "QtCreator.Modes.IconsOnly")
-        .setText(Tr::tr("Icons Only"))
-        .setCheckable(true)
-        .addOnTriggered([] { ModeManager::setModeStyle(ModeManager::Style::IconsOnly); })
-        .addToContainer(Constants::M_VIEW_MODESTYLES, Constants::G_DEFAULT_THREE)
-        .bindContextAction(&m_setModeSelectorStyleIconsOnlyAction);
-    stylesGroup->addAction(m_setModeSelectorStyleIconsOnlyAction);
-
-    ActionBuilder(this, "QtCreator.Modes.Hidden")
-        .setText(Tr::tr("Hidden"))
-        .setCheckable(true)
-        .addOnTriggered([] { ModeManager::setModeStyle(ModeManager::Style::Hidden); })
-        .addToContainer(Constants::M_VIEW_MODESTYLES, Constants::G_DEFAULT_THREE)
-        .bindContextAction(&m_setModeSelectorStyleHiddenAction);
-    stylesGroup->addAction(m_setModeSelectorStyleHiddenAction);
 }
 
 void ICorePrivate::openFile()
@@ -2313,7 +2248,7 @@ QList<IContext *> ICore::contextObjects(QWidget *widget)
 
     \sa removeContextObject()
     \sa updateAdditionalContexts()
-    \sa currentContextObject()
+    \sa currentContextObjects()
     \sa {The Action Manager and Commands}
 */
 
@@ -2332,7 +2267,7 @@ void ICore::addContextObject(IContext *context)
 
     \sa addContextObject()
     \sa updateAdditionalContexts()
-    \sa currentContextObject()
+    \sa currentContextObjects()
 */
 
 void ICore::removeContextObject(IContext *context)
@@ -2383,11 +2318,6 @@ void ICorePrivate::updateContextObject(const QList<IContext *> &context)
     emit m_core->contextAboutToChange(context);
     m_activeContext = context;
     updateContext();
-    if (debugMainWindow) {
-        qDebug() << "new context objects =" << context;
-        for (const IContext *c : context)
-            qDebug() << (c ? c->widget() : nullptr) << (c ? c->widget()->metaObject()->className() : nullptr);
-    }
 }
 
 void ICorePrivate::readSettings()
@@ -2416,7 +2346,6 @@ void ICorePrivate::readSettings()
         }
 
         ModeManager::setModeStyle(modeStyle);
-        updateModeSelectorStyleMenu();
     }
 
     if (globalMenuBar() && !globalMenuBar()->isNativeMenuBar()) {
@@ -2453,21 +2382,6 @@ void ICorePrivate::saveWindowSettings()
     settings->endGroup();
 }
 
-void ICorePrivate::updateModeSelectorStyleMenu()
-{
-    switch (ModeManager::modeStyle()) {
-    case ModeManager::Style::IconsAndText:
-        m_setModeSelectorStyleIconsAndTextAction->setChecked(true);
-        break;
-    case ModeManager::Style::IconsOnly:
-        m_setModeSelectorStyleIconsOnlyAction->setChecked(true);
-        break;
-    case ModeManager::Style::Hidden:
-        m_setModeSelectorStyleHiddenAction->setChecked(true);
-        break;
-    }
-}
-
 void ICorePrivate::updateContext()
 {
     Context contexts = m_highPrioAdditionalContexts;
@@ -2483,6 +2397,19 @@ void ICorePrivate::updateContext()
             uniquecontexts.add(id);
     }
 
+    if (coreLog().isDebugEnabled()) {
+        qCDebug(coreLog) << "Context changed:";
+        qCDebug(coreLog) << "    "
+                         << Utils::transform<QList<QString>>(uniquecontexts, &Id::toString);
+        qCDebug(coreLog) << "    "
+                         << Utils::transform<QList<QString>>(m_activeContext, [](IContext *c) {
+                                return QString("%1: %2").arg(
+                                    QString::fromUtf8(c->metaObject()->className()),
+                                    c->widget()
+                                        ? QString::fromUtf8(c->widget()->metaObject()->className())
+                                        : QString("<no widget>"));
+                            });
+    }
     ActionManager::setContext(uniquecontexts);
     emit m_core->contextChanged(uniquecontexts);
 }
@@ -2590,41 +2517,32 @@ void ICorePrivate::changeLog()
     for (const VersionFilePair &f : versionedFiles)
         versionCombo->addItem(f.first.toString());
     dialog = new LogDialog(ICore::dialogParent());
-    auto versionLayout = new QHBoxLayout;
-    versionLayout->addWidget(new QLabel(Tr::tr("Version:")));
-    versionLayout->addWidget(versionCombo);
-    versionLayout->addStretch(1);
     auto showInExplorer = new QPushButton(FileUtils::msgGraphicalShellAction());
-    versionLayout->addWidget(showInExplorer);
     auto textEdit = new QTextBrowser;
     textEdit->setOpenExternalLinks(true);
 
-    auto aggregate = new Aggregation::Aggregate;
-    aggregate->add(textEdit);
-    aggregate->add(new Core::BaseTextFind(textEdit));
+    Aggregation::aggregate({textEdit, new BaseTextFind(textEdit)});
 
     new MarkdownHighlighter(textEdit->document());
 
-    auto textEditWidget = new QFrame;
-    textEditWidget->setFrameStyle(QFrame::NoFrame);
     auto findToolBar = new FindToolBarPlaceHolder(dialog);
     findToolBar->setLightColored(true);
-    auto textEditLayout = new QVBoxLayout;
-    textEditLayout->setContentsMargins(0, 0, 0, 0);
-    textEditLayout->setSpacing(0);
-    textEditLayout->addWidget(textEdit);
-    textEditLayout->addWidget(findToolBar);
-    textEditWidget->setLayout(textEditLayout);
     auto buttonBox = new QDialogButtonBox(QDialogButtonBox::Close);
-    auto dialogLayout = new QVBoxLayout;
-    dialogLayout->addLayout(versionLayout);
-    dialogLayout->addWidget(textEditWidget);
-    dialogLayout->addWidget(buttonBox);
-    dialog->setLayout(dialogLayout);
     dialog->resize(700, 600);
     dialog->setWindowTitle(Tr::tr("Change Log"));
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     ICore::registerWindow(dialog, Context("CorePlugin.VersionDialog"));
+
+    using namespace Layouting;
+    Column {
+        Row { Tr::tr("Version:"), versionCombo, st, showInExplorer },
+        Column {
+            textEdit,
+            findToolBar,
+            spacing(0),
+        },
+        buttonBox,
+    }.attachTo(dialog);
 
     connect(buttonBox, &QDialogButtonBox::rejected, dialog, &QDialog::close);
     QPushButton *closeButton = buttonBox->button(QDialogButtonBox::Close);

@@ -30,6 +30,7 @@
 
 #include <utils/action.h>
 #include <utils/commandline.h>
+#include <utils/fileutils.h>
 #include <utils/layoutbuilder.h>
 #include <utils/qtcassert.h>
 
@@ -138,7 +139,7 @@ public:
         Constants::FILELOG_ID,
         VcsBase::Tr::tr("Fossil File Log Editor"),
         Constants::LOGAPP,
-        [] { return new FossilEditorWidget; },
+        &createFossilEditorWidget,
         std::bind(&FossilPluginPrivate::vcsDescribe, this, _1, _2)
     }};
 
@@ -147,7 +148,7 @@ public:
         Constants::ANNOTATELOG_ID,
         VcsBase::Tr::tr("Fossil Annotation Editor"),
         Constants::ANNOTATEAPP,
-        [] { return new FossilEditorWidget; },
+        &createFossilEditorWidget,
         std::bind(&FossilPluginPrivate::vcsDescribe, this, _1, _2)
     }};
 
@@ -156,7 +157,7 @@ public:
         Constants::DIFFLOG_ID,
         VcsBase::Tr::tr("Fossil Diff Editor"),
         Constants::DIFFAPP,
-        [] { return new FossilEditorWidget; },
+        &createFossilEditorWidget,
         std::bind(&FossilPluginPrivate::vcsDescribe, this, _1, _2)
     }};
 

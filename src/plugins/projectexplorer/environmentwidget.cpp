@@ -13,6 +13,7 @@
 #include <utils/environment.h>
 #include <utils/environmentdialog.h>
 #include <utils/environmentmodel.h>
+#include <utils/fileutils.h>
 #include <utils/headerviewstretcher.h>
 #include <utils/hostosinfo.h>
 #include <utils/itemviews.h>
@@ -237,6 +238,7 @@ EnvironmentWidget::EnvironmentWidget(QWidget *parent, Type type, QWidget *additi
     buttonLayout->addWidget(d->m_toggleButton);
     connect(d->m_toggleButton, &QPushButton::clicked, this, [this] {
         d->m_model->toggleVariable(d->m_environmentView->currentIndex());
+        d->m_editor.setEnvironmentItems(d->m_model->userChanges());
         updateButtons();
     });
 

@@ -65,7 +65,9 @@ public:
             const QString &filterText,
             Qt::CaseSensitivity caseSensitivity,
             bool regexp,
-            bool isInverted);
+            bool isInverted,
+            int beforeContext,
+            int afterContext);
 
     void setOutputFileNameHint(const QString &fileName);
 
@@ -96,6 +98,9 @@ private:
     void handleNextOutputChunk();
     void handleOutputChunk(const QString &output, Utils::OutputFormat format);
     void updateAutoScroll();
+
+    using TextMatchingFunction = std::function<bool(const QString &text)>;
+    TextMatchingFunction makeMatchingFunction() const;
 
     Internal::OutputWindowPrivate *d = nullptr;
 };

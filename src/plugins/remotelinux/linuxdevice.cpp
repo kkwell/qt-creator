@@ -1337,7 +1337,7 @@ static FilePaths dirsToCreate(const FilesToTransfer &files)
 
 static QByteArray transferCommand(bool link)
 {
-    return link ? "ln -s" : "put";
+    return link ? "ln -s" : "put -R";
 }
 
 class SshTransferInterface : public FileTransferInterface
@@ -1558,7 +1558,7 @@ private:
             const auto batchIt = m_batches.begin();
             for (auto filesIt = batchIt->cbegin(); filesIt != batchIt->cend(); ++filesIt) {
                 const FileToTransfer fixedFile = fixLocalFileOnWindows(*filesIt, options);
-                options << fixedLocalPath(fixedFile.m_source);
+                options << fixedFile.m_source.path();
             }
             options << fixedRemotePath(batchIt.key(), userAtHost());
             m_batches.erase(batchIt);
@@ -1586,11 +1586,6 @@ private:
         FileToTransfer fixedFile = file;
         fixedFile.m_source = fixedFile.m_source.withNewPath(localFilePath);
         return fixedFile;
-    }
-
-    QString fixedLocalPath(const FilePath &file) const
-    {
-        return file.isDir() && file.path().back() != '/' ? file.path() + '/' : file.path();
     }
 
     QString fixedRemotePath(const FilePath &file, const QString &remoteHost) const
@@ -1679,21 +1674,21 @@ private:
             }
         };
 
-        const Group group{
-            Group{
-                parallelIdealThreadCountLimit,
+        const Group recipe {
+            For {
                 iteratorParentDirs,
+                parallelIdealThreadCountLimit,
                 AsyncTask<expected_str<void>>(onCreateDirSetup, onCreateDirDone),
             },
-            Group{
-                parallelLimit(2),
+            For {
                 iterator,
+                parallelLimit(2),
                 counterStorage,
                 AsyncTask<expected_str<void>>(onCopySetup, onCopyDone),
             },
         };
 
-        m_taskTree.start(group, {}, [this](DoneWith result) {
+        m_taskTree.start(recipe, {}, [this](DoneWith result) {
             ProcessResultData resultData;
             if (result != DoneWith::Success) {
                 resultData.m_exitCode = -1;

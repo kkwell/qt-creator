@@ -243,9 +243,10 @@ int sol_lua_push(sol::types<QStringList>, lua_State *L, const QStringList &value
 }
 
 namespace Lua::Internal {
-void addQtModule()
+
+void setupQtModule()
 {
-    LuaEngine::registerProvider("Qt", [](sol::state_view lua) {
+    registerProvider("Qt", [](sol::state_view lua) {
         sol::table qt(lua, sol::create);
 
         // clang-format off

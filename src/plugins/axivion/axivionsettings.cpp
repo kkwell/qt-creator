@@ -22,7 +22,6 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QRegularExpression>
-#include <QUuid>
 #include <QVBoxLayout>
 
 using namespace Core;
@@ -251,8 +250,8 @@ DashboardSettingsWidget::DashboardSettingsWidget(QWidget *parent, QPushButton *o
         m_valid.setValue(isValid());
         ok->setEnabled(m_valid());
     };
-    connect(&m_dashboardUrl, &BaseAspect::changed, this, checkValidity);
-    connect(&m_username, &BaseAspect::changed, this, checkValidity);
+    m_dashboardUrl.addOnChanged(this, checkValidity);
+    m_username.addOnChanged(this, checkValidity);
 }
 
 AxivionServer DashboardSettingsWidget::dashboardServer() const
@@ -261,7 +260,7 @@ AxivionServer DashboardSettingsWidget::dashboardServer() const
     if (m_id.isValid())
         result.id = m_id;
     else
-        result.id = Id::fromName(QUuid::createUuid().toByteArray());
+        result.id = Id::generate();
     result.dashboard = fixUrl(m_dashboardUrl());
     result.username = m_username();
     return result;

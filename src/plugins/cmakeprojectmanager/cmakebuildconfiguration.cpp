@@ -201,11 +201,9 @@ CMakeBuildSettingsWidget::CMakeBuildSettingsWidget(CMakeBuildConfiguration *bc) 
 
     auto buildDirAspect = bc->buildDirectoryAspect();
     buildDirAspect->setAutoApplyOnEditingFinished(true);
-    connect(buildDirAspect, &BaseAspect::changed, this, [this] {
-        m_configModel->flush(); // clear out config cache...;
-    });
+    buildDirAspect->addOnChanged(this, [this] { m_configModel->flush(); }); // clear config cache
 
-    connect(&m_buildConfig->buildTypeAspect, &BaseAspect::changed, this, [this] {
+    m_buildConfig->buildTypeAspect.addOnChanged(this, [this] {
         if (!m_buildConfig->cmakeBuildSystem()->isMultiConfig()) {
             CMakeConfig config;
             config << CMakeConfigItem("CMAKE_BUILD_TYPE",
@@ -216,9 +214,7 @@ CMakeBuildSettingsWidget::CMakeBuildSettingsWidget(CMakeBuildConfiguration *bc) 
     });
 
     auto qmlDebugAspect = bc->aspect<QtSupport::QmlDebuggingAspect>();
-    connect(qmlDebugAspect, &QtSupport::QmlDebuggingAspect::changed, this, [this] {
-        updateButtonState();
-    });
+    qmlDebugAspect->addOnChanged(this, [this] { updateButtonState(); });
 
     m_warningMessageLabel = new InfoLabel({}, InfoLabel::Warning);
     m_warningMessageLabel->setVisible(false);
@@ -704,27 +700,19 @@ void CMakeBuildSettingsWidget::kitCMakeConfiguration()
         m_buildConfig->kit()->unblockNotification();
     });
 
-    Layouting::Grid grid;
-    KitAspect *widget = CMakeKitAspect::createKitAspect(m_buildConfig->kit());
-    widget->setParent(dialog);
-    widget->addToLayout(grid);
-    widget = CMakeGeneratorKitAspect::createKitAspect(m_buildConfig->kit());
-    widget->setParent(dialog);
-    widget->addToLayout(grid);
-    widget = CMakeConfigurationKitAspect::createKitAspect(m_buildConfig->kit());
-    widget->setParent(dialog);
-    widget->addToLayout(grid);
-    grid.attachTo(dialog);
-
-    auto layout = qobject_cast<QGridLayout *>(dialog->layout());
-
-    layout->setColumnStretch(1, 1);
+    Kit *kit = m_buildConfig->kit();
 
     auto buttons = new QDialogButtonBox(QDialogButtonBox::Close);
     connect(buttons, &QDialogButtonBox::clicked, dialog, &QDialog::close);
-    layout->addItem(new QSpacerItem(0, 0, QSizePolicy::Maximum, QSizePolicy::MinimumExpanding),
-                    4, 0);
-    layout->addWidget(buttons, 5, 0, 1, -1);
+
+    using namespace Layouting;
+    Grid {
+        CMakeKitAspect::createKitAspect(kit),
+        CMakeGeneratorKitAspect::createKitAspect(kit),
+        CMakeConfigurationKitAspect::createKitAspect(kit),
+        empty, empty, buttons,
+        columnStretch(1, 1)
+    }.attachTo(dialog);
 
     dialog->setMinimumWidth(400);
     dialog->resize(800, 1);

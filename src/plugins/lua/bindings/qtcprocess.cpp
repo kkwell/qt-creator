@@ -10,9 +10,9 @@ using namespace Utils;
 
 namespace Lua::Internal {
 
-void addProcessModule()
+void setupProcessModule()
 {
-    LuaEngine::registerProvider("Process", [](sol::state_view lua) -> sol::object {
+    registerProvider("Process", [](sol::state_view lua) -> sol::object {
         const ScriptPluginSpec *pluginSpec = lua.get<ScriptPluginSpec *>("PluginSpec");
 
         sol::table async = lua.script("return require('async')", "_process_").get<sol::table>();

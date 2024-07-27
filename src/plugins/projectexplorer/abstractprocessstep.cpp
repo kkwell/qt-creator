@@ -4,18 +4,16 @@
 #include "abstractprocessstep.h"
 
 #include "processparameters.h"
-#include "projectexplorer.h"
 #include "projectexplorersettings.h"
 #include "projectexplorertr.h"
+#include "runconfigurationaspects.h"
+#include "runcontrol.h"
 
 #include <utils/outputformatter.h>
 #include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <QTextDecoder>
-
-#include <algorithm>
-#include <memory>
 
 using namespace Tasking;
 using namespace Utils;
@@ -186,6 +184,10 @@ bool AbstractProcessStep::setupProcess(Process &process)
     Environment envWithPwd = d->m_param.environment();
     envWithPwd.set("PWD", workingDir.path());
     process.setProcessMode(d->m_param.processMode());
+    if (const auto runAsRoot = aspect<RunAsRootAspect>(); runAsRoot && runAsRoot->value()) {
+        RunControl::provideAskPassEntry(envWithPwd);
+        process.setRunAsRoot(true);
+    }
     process.setEnvironment(envWithPwd);
     process.setCommand({d->m_param.effectiveCommand(), d->m_param.effectiveArguments(),
                         CommandLine::Raw});
@@ -196,11 +198,11 @@ bool AbstractProcessStep::setupProcess(Process &process)
                                ? QTextCodec::codecForName("UTF-8") : QTextCodec::codecForLocale());
     process.setStdErrCodec(QTextCodec::codecForLocale());
 
-    process.setStdOutLineCallback([this](const QString &s){
+    process.setStdOutCallback([this](const QString &s){
         emit addOutput(s, OutputFormat::Stdout, DontAppendNewline);
     });
 
-    process.setStdErrLineCallback([this](const QString &s){
+    process.setStdErrCallback([this](const QString &s){
         emit addOutput(s, OutputFormat::Stderr, DontAppendNewline);
     });
 

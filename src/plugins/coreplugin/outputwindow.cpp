@@ -10,9 +10,11 @@
 #include "editormanager/editormanager.h"
 #include "find/basetextfind.h"
 #include "icore.h"
+#include "messagemanager.h"
 
 #include <aggregation/aggregate.h>
 
+#include <utils/fileutils.h>
 #include <utils/outputformatter.h>
 #include <utils/qtcassert.h>
 
@@ -70,6 +72,8 @@ public:
     int lastFilteredBlockNumber = -1;
     QPalette originalPalette;
     OutputWindow::FilterModeFlags filterMode = OutputWindow::FilterModeFlag::Default;
+    int beforeContext = 0;
+    int afterContext = 0;
     QTimer scrollTimer;
     QElapsedTimer lastMessage;
     QHash<unsigned int, QPair<int, int>> taskPositions;
@@ -172,9 +176,7 @@ OutputWindow::OutputWindow(Context context, const Key &settingsKey, QWidget *par
     p.setColor(QPalette::HighlightedText, activeHighlightedText);
     setPalette(p);
 
-    auto agg = new Aggregation::Aggregate;
-    agg->add(this);
-    agg->add(new BaseTextFind(this));
+    Aggregation::aggregate({this, new BaseTextFind(this)});
 }
 
 OutputWindow::~OutputWindow()
@@ -291,9 +293,39 @@ void OutputWindow::contextMenuEvent(QContextMenuEvent *event)
     menu->addSeparator();
     QAction *saveAction = menu->addAction(Tr::tr("Save Contents..."));
     connect(saveAction, &QAction::triggered, this, [this] {
-        QFileDialog::saveFileContent(toPlainText().toUtf8(), d->outputFileNameHint);
+        const FilePath file = FileUtils::getSaveFilePath(
+            ICore::dialogParent(), {}, FileUtils::homePath() / d->outputFileNameHint);
+        if (!file.isEmpty()) {
+            QString error;
+            Utils::TextFileFormat format;
+            format.codec = EditorManager::defaultTextCodec();
+            format.lineTerminationMode = EditorManager::defaultLineEnding();
+            if (!format.writeFile(file, toPlainText(), &error))
+                MessageManager::writeDisrupting(error);
+        }
     });
     saveAction->setEnabled(!document()->isEmpty());
+    QAction *openAction = menu->addAction(Tr::tr("Copy Contents to Scratch Buffer"));
+    connect(openAction, &QAction::triggered, this, [this] {
+        QString scratchBufferPrefix = FilePath::fromString(d->outputFileNameHint).baseName();
+        if (scratchBufferPrefix.isEmpty())
+            scratchBufferPrefix = "scratch";
+        const auto tempPath = FileUtils::scratchBufferFilePath(
+            QString::fromUtf8("%1-XXXXXX.txt").arg(scratchBufferPrefix));
+        if (!tempPath) {
+            MessageManager::writeDisrupting(tempPath.error());
+            return;
+        }
+        IEditor * const editor = EditorManager::openEditor(*tempPath);
+        if (!editor) {
+            MessageManager::writeDisrupting(
+                Tr::tr("Failed to open editor for \"%1\".").arg(tempPath->toUserOutput()));
+            return;
+        }
+        editor->document()->setTemporary(true);
+        editor->document()->setContents(toPlainText().toUtf8());
+    });
+    openAction->setEnabled(!document()->isEmpty());
 
     menu->addSeparator();
     QAction *clearAction = menu->addAction(Tr::tr("Clear"));
@@ -337,14 +369,19 @@ void OutputWindow::updateFilterProperties(
         const QString &filterText,
         Qt::CaseSensitivity caseSensitivity,
         bool isRegexp,
-        bool isInverted
+        bool isInverted,
+        int beforeContext,
+        int afterContext
         )
 {
     FilterModeFlags flags;
     flags.setFlag(FilterModeFlag::CaseSensitive, caseSensitivity == Qt::CaseSensitive)
             .setFlag(FilterModeFlag::RegExp, isRegexp)
             .setFlag(FilterModeFlag::Inverted, isInverted);
-    if (d->filterMode == flags && d->filterText == filterText)
+    if (d->filterMode == flags
+        && d->filterText == filterText
+        && d->beforeContext == beforeContext
+        && d->afterContext == afterContext)
         return;
     d->lastFilteredBlockNumber = -1;
     if (d->filterText != filterText) {
@@ -371,6 +408,8 @@ void OutputWindow::updateFilterProperties(
         }
     }
     d->filterMode = flags;
+    d->beforeContext = beforeContext;
+    d->afterContext = afterContext;
     filterNewContent();
 }
 
@@ -379,28 +418,62 @@ void OutputWindow::setOutputFileNameHint(const QString &fileName)
     d->outputFileNameHint = fileName;
 }
 
-void OutputWindow::filterNewContent()
+OutputWindow::TextMatchingFunction OutputWindow::makeMatchingFunction() const
 {
-    QTextBlock lastBlock = document()->findBlockByNumber(d->lastFilteredBlockNumber);
-    if (!lastBlock.isValid())
-        lastBlock = document()->begin();
-
-    const bool invert = d->filterMode.testFlag(FilterModeFlag::Inverted);
-    if (d->filterMode.testFlag(OutputWindow::FilterModeFlag::RegExp)) {
+    if (d->filterText.isEmpty()) {
+        return [](const QString &) { return true; };
+    } else if (d->filterMode.testFlag(OutputWindow::FilterModeFlag::RegExp)) {
         QRegularExpression regExp(d->filterText);
         if (!d->filterMode.testFlag(OutputWindow::FilterModeFlag::CaseSensitive))
             regExp.setPatternOptions(QRegularExpression::CaseInsensitiveOption);
+        if (!regExp.isValid())
+            return [](const QString &) { return false; };
 
-        for (; lastBlock != document()->end(); lastBlock = lastBlock.next())
-            lastBlock.setVisible(d->filterText.isEmpty()
-                                 || regExp.match(lastBlock.text()).hasMatch() != invert);
+        return [regExp](const QString &text) { return regExp.match(text).hasMatch(); };
     } else {
         const auto cs = d->filterMode.testFlag(OutputWindow::FilterModeFlag::CaseSensitive)
                             ? Qt::CaseSensitive : Qt::CaseInsensitive;
 
-        for (; lastBlock != document()->end(); lastBlock = lastBlock.next())
-            lastBlock.setVisible(d->filterText.isEmpty()
-                                 || lastBlock.text().contains(d->filterText, cs) != invert);
+        return [cs, filterText = d->filterText](const QString &text) {
+            return text.contains(filterText, cs);
+        };
+    }
+
+    return {};
+}
+
+void OutputWindow::filterNewContent()
+{
+    const auto findNextMatch = makeMatchingFunction();
+    QTC_ASSERT(findNextMatch, return);
+    const bool invert = d->filterMode.testFlag(FilterModeFlag::Inverted)
+                        && !d->filterText.isEmpty();
+    const int requiredBacklog = std::max(d->beforeContext, d->afterContext);
+    const int firstBlockIndex = d->lastFilteredBlockNumber - requiredBacklog;
+
+    std::vector<int> matchedBlocks;
+    QTextBlock lastBlock = document()->findBlockByNumber(firstBlockIndex);
+    if (!lastBlock.isValid())
+        lastBlock = document()->begin();
+
+    // Find matching text blocks for the current filter.
+    for (; lastBlock != document()->end(); lastBlock = lastBlock.next()) {
+        const bool isMatch = findNextMatch(lastBlock.text()) != invert;
+
+        if (isMatch)
+            matchedBlocks.emplace_back(lastBlock.blockNumber());
+
+        lastBlock.setVisible(isMatch);
+    }
+
+    // Reveal the context lines before and after the match.
+    if (!d->filterText.isEmpty()) {
+        for (int blockNumber : matchedBlocks) {
+            for (auto i = 1; i <= d->beforeContext; ++i)
+                document()->findBlockByNumber(blockNumber - i).setVisible(true);
+            for (auto i = 1; i <= d->afterContext; ++i)
+                document()->findBlockByNumber(blockNumber + i).setVisible(true);
+        }
     }
 
     d->lastFilteredBlockNumber = document()->lastBlock().blockNumber();

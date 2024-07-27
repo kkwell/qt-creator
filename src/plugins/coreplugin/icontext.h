@@ -53,23 +53,30 @@ class CORE_EXPORT IContext : public QObject
 public:
     IContext(QObject *parent = nullptr) : QObject(parent) {}
 
-    virtual Context context() const { return m_context; }
-    virtual QWidget *widget() const { return m_widget; }
-    using HelpCallback = std::function<void(const HelpItem &item)>;
-    virtual void contextHelp(const HelpCallback &callback) const { callback(m_contextHelp); }
+    QWidget *widget() const { return m_widget; }
+    void setWidget(QWidget *widget) { m_widget = widget; }
 
-    virtual void setContext(const Context &context) { m_context = context; }
-    virtual void setWidget(QWidget *widget) { m_widget = widget; }
-    virtual void setContextHelp(const HelpItem &id) { m_contextHelp = id; }
+    Context context() const { return m_context; }
+    void setContext(const Context &context) { m_context = context; }
+
+    using HelpCallback = std::function<void(const HelpItem &item)>;
+    using HelpProvider = std::function<void(const HelpCallback &item)>;
+
+    void contextHelp(const HelpCallback &callback) const;
+    void setContextHelp(const HelpItem &id);
+    void setContextHelpProvider(const HelpProvider &provider);
 
     static void attach(QWidget *widget,
                        const Context &context,
                        const HelpItem &contextHelp = {});
+    static void attach(QWidget *widget,
+                       const Context &context,
+                       const HelpProvider &helpProvider);
 
 protected:
     Context m_context;
     QPointer<QWidget> m_widget;
-    HelpItem m_contextHelp;
+    HelpProvider m_contextHelpProvider;
 };
 
 } // namespace Core

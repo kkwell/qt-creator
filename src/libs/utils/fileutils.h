@@ -5,6 +5,7 @@
 
 #include "utils_global.h"
 
+#include "expected.h"
 #include "filepath.h"
 
 #include <QCoreApplication>
@@ -33,23 +34,17 @@ namespace Utils {
 
 class CommandLine;
 
-struct QTCREATOR_UTILS_EXPORT RunResult
-{
-    int exitCode = -1;
-    QByteArray stdOut;
-    QByteArray stdErr;
-};
-
 class QTCREATOR_UTILS_EXPORT FileUtils
 {
 public:
+    using CopyHelper = std::function<bool(const FilePath &, const FilePath &, QString *)>;
 #ifdef QT_GUI_LIB
     class QTCREATOR_UTILS_EXPORT CopyAskingForOverwrite
     {
     public:
         CopyAskingForOverwrite(QWidget *dialogParent,
                                const std::function<void(FilePath)> &postOperation = {});
-        bool operator()(const FilePath &src, const FilePath &dest, QString *error);
+        CopyHelper operator()();
         FilePaths files() const;
 
     private:
@@ -65,7 +60,7 @@ public:
         const FilePath &srcFilePath,
         const FilePath &tgtFilePath,
         QString *error,
-        std::function<bool(const FilePath &, const FilePath &, QString *)> helper);
+        CopyHelper helper);
 
     static bool copyIfDifferent(const FilePath &srcFilePath,
                                 const FilePath &tgtFilePath);
@@ -78,6 +73,7 @@ public:
     static FilePath commonPath(const FilePath &oldCommonPath, const FilePath &fileName);
     static FilePath commonPath(const FilePaths &paths);
     static FilePath homePath();
+    static expected_str<FilePath> scratchBufferFilePath(const QString &pattern);
 
     static FilePaths toFilePathList(const QStringList &paths);
 

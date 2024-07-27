@@ -372,7 +372,6 @@ ShowController::ShowController(IDocument *document, const QString &id)
     };
 
     const Storage<ReloadStorage> storage;
-    const Storage<QString> diffInputStorage;
 
     const auto updateDescription = [this](const ReloadStorage &storage) {
         QString desc = storage.m_header;
@@ -493,27 +492,28 @@ ShowController::ShowController(IDocument *document, const QString &id)
         data->m_follows = {busyMessage};
         data->m_follows.resize(parents.size());
 
-        const auto onFollowsError = [data, updateDescription] {
+        const LoopList iterator(parents);
+        const auto onFollowSetup = [this, iterator](Process &process) {
+            setupCommand(process, {"describe", "--tags", "--abbrev=0", *iterator});
+        };
+        const auto onFollowDone = [data, updateDescription, iterator](const Process &process) {
+            data->m_follows[iterator.iteration()] = process.cleanedStdOut().trimmed();
+            updateDescription(*data);
+        };
+
+        const auto onDone = [data, updateDescription] {
             data->m_follows.clear();
             updateDescription(*data);
         };
 
-        QList<GroupItem> tasks {
+        const For recipe {
+            iterator,
             parallel,
             continueOnSuccess,
-            onGroupDone(onFollowsError, CallDoneIf::Error)
+            ProcessTask(onFollowSetup, onFollowDone, CallDoneIf::Success),
+            onGroupDone(onDone, CallDoneIf::Error)
         };
-        for (int i = 0, total = parents.size(); i < total; ++i) {
-            const auto onFollowSetup = [this, parent = parents.at(i)](Process &process) {
-                setupCommand(process, {"describe", "--tags", "--abbrev=0", parent});
-            };
-            const auto onFollowDone = [data, updateDescription, i](const Process &process) {
-                data->m_follows[i] = process.cleanedStdOut().trimmed();
-                updateDescription(*data);
-            };
-            tasks.append(ProcessTask(onFollowSetup, onFollowDone, CallDoneIf::Success));
-        }
-        taskTree.setRecipe(tasks);
+        taskTree.setRecipe(recipe);
     };
 
     const auto onDiffSetup = [this, id](Process &process) {
@@ -522,13 +522,13 @@ ShowController::ShowController(IDocument *document, const QString &id)
                                    noColorOption, decorateOption, id}));
         VcsOutputWindow::appendCommand(process.workingDirectory(), process.commandLine());
     };
+    const Storage<QString> diffInputStorage;
     const auto onDiffDone = [diffInputStorage](const Process &process) {
         *diffInputStorage = process.cleanedStdOut();
     };
 
     const Group root {
         storage,
-        diffInputStorage,
         parallel,
         onGroupSetup([this] { setStartupFile(VcsBase::source(this->document()).toString()); }),
         Group {
@@ -538,12 +538,13 @@ ShowController::ShowController(IDocument *document, const QString &id)
                 parallel,
                 finishAllAndSuccess,
                 onGroupSetup(desciptionDetailsSetup),
-                ProcessTask(onBranchesSetup, onBranchesDone, CallDoneIf::Success),
-                ProcessTask(onPrecedesSetup, onPrecedesDone, CallDoneIf::Success),
+                ProcessTask(onBranchesSetup, onBranchesDone),
+                ProcessTask(onPrecedesSetup, onPrecedesDone),
                 TaskTreeTask(onFollowsSetup)
             }
         },
         Group {
+            diffInputStorage,
             ProcessTask(onDiffSetup, onDiffDone, CallDoneIf::Success),
             postProcessTask(diffInputStorage)
         }

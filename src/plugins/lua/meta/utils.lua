@@ -2,6 +2,9 @@
 
 local utils = {}
 
+---The Process ID of Qt Creator.
+utils.pid = 0
+
 ---Suspends the current coroutine for the given amount of milliseconds. Call `a.wait` on the returned value to get the result.
 ---@param ms number The amount of milliseconds to wait.
 function utils.waitms(ms) end
@@ -10,6 +13,10 @@ function utils.waitms(ms) end
 ---@param ms number The amount of milliseconds to wait.
 ---@param callback function The callback to call.
 function utils.waitms_cb(ms, callback) end
+
+---Creates a UUID.
+---@return QString Arbitrary UUID string.
+function utils.createUuid() end
 
 ---@class FilePath
 utils.FilePath = {}
@@ -99,5 +106,20 @@ function utils.HostOsInfo.isMacHost() end
 ---@return boolean
 function utils.HostOsInfo.isLinuxHost() end
 
+
+---@class Timer
+utils.Timer = {}
+
+---@param timeoutMs integer The timeout in milliseconds.
+---@param singleShot boolean Whether the timer should only fire once.
+---@param callback function The callback to call when the timeout is reached.
+---@return Timer timer The created timer.
+function utils.Timer.create(timeoutMs, singleShot, callback) end
+
+--- Starts the timer. Calling start on a running timer restarts the timer.
+function utils.Timer:start() end
+
+--- Stops the timer.
+function utils.Timer:stop() end
 
 return utils

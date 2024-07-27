@@ -31,6 +31,7 @@
 
 #include <utils/algorithm.h>
 #include <utils/environment.h>
+#include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
 #include <utils/persistentsettings.h>
 #include <utils/qtcprocess.h>
@@ -41,7 +42,6 @@
 #include <QApplication>
 #include <QDirIterator>
 #include <QFileInfo>
-#include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -49,8 +49,6 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
-#include <QStringList>
-#include <QTcpSocket>
 
 #include <functional>
 #include <memory>
@@ -61,6 +59,7 @@
 
 using namespace ProjectExplorer;
 using namespace QtSupport;
+using namespace Tasking;
 using namespace Utils;
 
 namespace {
@@ -283,33 +282,6 @@ static FilePath ndkSubPathFromQtVersion(const QtVersion &version)
 //////////////////////////////////
 // AndroidConfig
 //////////////////////////////////
-
-QString getAvdName(const QString &serialnumber)
-{
-    const int index = serialnumber.indexOf(QLatin1String("-"));
-    if (index == -1)
-        return {};
-    bool ok;
-    const int port = serialnumber.mid(index + 1).toInt(&ok);
-    if (!ok)
-        return {};
-
-    QTcpSocket tcpSocket;
-    tcpSocket.connectToHost(QHostAddress(QHostAddress::LocalHost), port);
-    if (!tcpSocket.waitForConnected(100)) // Don't wait more than 100ms for a local connection
-        return {};
-
-    tcpSocket.write("avd name\nexit\n");
-    tcpSocket.waitForDisconnected(500);
-
-    const QByteArrayList response = tcpSocket.readAll().split('\n');
-    // The input "avd name" might not be echoed as-is, but contain ASCII control sequences.
-    for (int i = response.size() - 1; i > 1; --i) {
-        if (response.at(i).startsWith("OK"))
-            return QString::fromLatin1(response.at(i - 1)).trimmed();
-    }
-    return {};
-}
 
 QLatin1String displayName(const Abi &abi)
 {
@@ -687,15 +659,15 @@ QStringList devicesCommandOutput()
     return adbProcess.allOutput().split('\n', Qt::SkipEmptyParts).mid(1);
 }
 
-bool isConnected(const QString &serialNumber)
+ExecutableItem devicesCommandOutputRecipe(const Storage<QStringList> &outputStorage)
 {
-    const QStringList lines = devicesCommandOutput();
-    for (const QString &line : lines) {
-        // skip the daemon logs
-        if (!line.startsWith("* daemon") && line.left(line.indexOf('\t')).trimmed() == serialNumber)
-            return true;
-    }
-    return false;
+    const auto onSetup = [](Process &process) { process.setCommand({adbToolPath(), {"devices"}}); };
+    const auto onDone = [outputStorage](const Process &process) {
+        // mid(1) - remove "List of devices attached" header line.
+        // Example output: "List of devices attached\nemulator-5554\tdevice\n\n".
+        *outputStorage = process.allOutput().split('\n', Qt::SkipEmptyParts).mid(1);
+    };
+    return ProcessTask(onSetup, onDone);
 }
 
 bool sdkFullyConfigured() { return config().m_sdkFullyConfigured; }
@@ -1236,23 +1208,17 @@ void AndroidConfigurations::registerNewToolchains()
 {
     const Toolchains existingAndroidToolchains
             = ToolchainManager::toolchains(Utils::equal(&Toolchain::typeId, Id(Constants::ANDROID_TOOLCHAIN_TYPEID)));
-
-    const Toolchains newToolchains = autodetectToolchains(existingAndroidToolchains);
-
-    for (Toolchain *tc : newToolchains)
-        ToolchainManager::registerToolchain(tc);
-
+    ToolchainManager::registerToolchains(autodetectToolchains(existingAndroidToolchains));
     registerCustomToolchainsAndDebuggers();
 }
 
 void AndroidConfigurations::removeOldToolchains()
 {
-    const auto tcs = ToolchainManager::toolchains(Utils::equal(&Toolchain::typeId,
-                                                               Id(Constants::ANDROID_TOOLCHAIN_TYPEID)));
-    for (Toolchain *tc : tcs) {
-        if (!tc->isValid())
-            ToolchainManager::deregisterToolchain(tc);
-    }
+    const auto tcs = Utils::filtered(
+        ToolchainManager::toolchains(
+            Utils::equal(&Toolchain::typeId, Id(Constants::ANDROID_TOOLCHAIN_TYPEID))),
+        &Toolchain::isValid);
+    ToolchainManager::deregisterToolchains(tcs);
 }
 
 void AndroidConfigurations::removeUnusedDebuggers()
@@ -1399,8 +1365,8 @@ void AndroidConfigurations::registerCustomToolchainsAndDebuggers()
     const Toolchains customToolchains
         = autodetectToolchainsFromNdks(existingAndroidToolchains, customNdks, true);
 
+    ToolchainManager::registerToolchains(customToolchains);
     for (Toolchain *tc : customToolchains) {
-        ToolchainManager::registerToolchain(tc);
         const auto androidToolchain = static_cast<AndroidToolchain *>(tc);
         QString abiStr;
         if (androidToolchain)

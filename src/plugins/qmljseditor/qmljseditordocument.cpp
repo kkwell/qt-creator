@@ -480,6 +480,11 @@ QmlJSEditorDocumentPrivate::QmlJSEditorDocumentPrivate(QmlJSEditorDocument *pare
             this, &QmlJSEditorDocumentPrivate::onDocumentUpdated);
     connect(QmllsSettingsManager::instance(), &QmllsSettingsManager::settingsChanged,
             this, &QmlJSEditorDocumentPrivate::settingsChanged);
+    connect(
+        modelManager,
+        &ModelManagerInterface::projectInfoUpdated,
+        this,
+        &QmlJSEditorDocumentPrivate::settingsChanged);
 
     // semantic info
     m_semanticInfoUpdater = new SemanticInfoUpdater();
@@ -749,7 +754,7 @@ static FilePath qmllsForFile(const FilePath &file, QmlJS::ModelManagerInterface 
                < QmlJsEditingSettings::mininumQmllsVersion) {
         return {};
     }
-    return pInfo.qmllsPath;
+    return pInfo.qmllsPath.exists() ? pInfo.qmllsPath : Utils::FilePath();
 }
 
 void QmlJSEditorDocumentPrivate::settingsChanged()
@@ -765,9 +770,9 @@ void QmlJSEditorDocumentPrivate::settingsChanged()
     m_qmllsStatus.qmllsPath = newQmlls;
     if (newQmlls.isEmpty()) {
         qCDebug(qmllsLog) << "disabling qmlls for" << q->filePath();
-        if (Client *client = LanguageClientManager::clientForDocument(q)) {
+        if (LanguageClientManager::clientForDocument(q) != nullptr) {
             qCDebug(qmllsLog) << "deactivating " << q->filePath() << "in qmlls" << newQmlls;
-            client->deactivateDocument(q);
+            LanguageClientManager::openDocumentWithClient(q, nullptr);
         } else
             qCWarning(qmllsLog) << "Could not find client to disable for document " << q->filePath()
                                 << " in LanguageClient::LanguageClientManager";

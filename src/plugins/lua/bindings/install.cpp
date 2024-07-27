@@ -124,10 +124,10 @@ static Group installRecipe(
 
     const auto emitResult = [callback](const QString &error = QString()) {
         if (error.isEmpty()) {
-            LuaEngine::void_safe_call(callback, true);
+            void_safe_call(callback, true);
             return DoneResult::Success;
         }
-        LuaEngine::void_safe_call(callback, false, error);
+        void_safe_call(callback, false, error);
         return DoneResult::Error;
     };
 
@@ -196,10 +196,10 @@ static Group installRecipe(
         return DoneResult::Success;
     };
 
-    return Group{
+    return For {
+        installOptionsIt,
         storage,
         parallelIdealThreadCountLimit,
-        installOptionsIt,
         Group{
             onGroupSetup([emitResult, storage, installOptionsIt] {
                 const QString fileName = installOptionsIt->url.fileName();
@@ -230,7 +230,7 @@ static Group installRecipe(
     };
 }
 
-void addInstallModule()
+void setupInstallModule()
 {
     class State
     {
@@ -255,7 +255,7 @@ void addInstallModule()
         QList<QPointer<TaskTree>> m_trees;
     };
 
-    LuaEngine::registerProvider(
+    registerProvider(
         "Install", [state = State()](sol::state_view lua) mutable -> sol::object {
             sol::table async
                 = lua.script("return require('async')", "_install_async_").get<sol::table>();
@@ -351,8 +351,9 @@ void addInstallModule()
                         return;
                     }
 
-                    const Utils::Id infoBarId = Utils::Id::fromString(
-                        "Install" + pluginSpec->name + QString::number(qHash(installOptionsList)));
+                    const Utils::Id infoBarId = Utils::Id("Install")
+                            .withSuffix(pluginSpec->name)
+                            .withSuffix(QString::number(qHash(installOptionsList)));
 
                     InfoBarEntry entry(infoBarId, msg, InfoBarEntry::GlobalSuppression::Enabled);
 

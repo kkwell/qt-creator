@@ -12,10 +12,10 @@
 
 #include <qtsupport/qtversionmanager.h>
 
+#include <solutions/tasking/tasktree.h>
+
 #include <utils/filepath.h>
 
-#include <QHash>
-#include <QMap>
 #include <QStringList>
 #include <QVersionNumber>
 
@@ -38,7 +38,6 @@ public:
 
 namespace AndroidConfig {
 
-QString getAvdName(const QString &serialnumber);
 QStringList apiLevelNamesFor(const SdkPlatformList &platforms);
 QString apiLevelNameFor(const SdkPlatform *platform);
 
@@ -90,13 +89,13 @@ Utils::FilePath makePathFromNdk(const Utils::FilePath &ndkLocation);
 Utils::FilePath keytoolPath();
 
 QStringList devicesCommandOutput();
+Tasking::ExecutableItem devicesCommandOutputRecipe(const Tasking::Storage<QStringList> &outputStorage);
 
 QString bestNdkPlatformMatch(int target, const QtSupport::QtVersion *qtVersion);
 
 QLatin1String displayName(const ProjectExplorer::Abi &abi);
 
 QString getProductModel(const QString &device);
-bool isConnected(const QString &serialNumber);
 
 bool sdkFullyConfigured();
 void setSdkFullyConfigured(bool allEssentialsInstalled);
