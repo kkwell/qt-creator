@@ -5,5 +5,13 @@ add_qtc_plugin(EasyBoard
     easyboard.qrc
     easyboardplugin.cpp
     easyboardtr.h
+    easyboardwidget.h
+    easyboardwidget.cpp
+    easyboardmodel.h
+    easyboardmodel.cpp
+    easyboardbrowser.h
+    easyboardbrowser.cpp
+    easyboardsettings.h
+    easyboardsettings.cpp
 )
 
