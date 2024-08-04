@@ -54,13 +54,13 @@ constexpr int gapSize = HGapL;
 constexpr int itemWidth = 330;
 constexpr int cellWidth = itemWidth + gapSize;
 
-static QString extensionStateDisplayString(ExtensionState state)
+static QString boardStateDisplayString(BoardState state)
 {
     switch (state) {
-    case InstalledEnabled:
-        return Tr::tr("Loaded");
-    case InstalledDisabled:
-        return Tr::tr("Installed");
+    case Online:
+        return Tr::tr("Online");
+    case Offline:
+        return Tr::tr("Offline");
     default:
         return {};
     }
@@ -129,9 +129,9 @@ public:
         const QSize checkmarkS(12, 12);
         const QRect checkmarkR(x + middleColumnW - checkmarkS.width(), y,
                                checkmarkS.width(), checkmarkS.height());
-        const ExtensionState state = index.data(RoleExtensionState).value<ExtensionState>();
-        const QString stateString = extensionStateDisplayString(state);
-        const bool showState = (state == InstalledEnabled || state == InstalledDisabled)
+        const BoardState state = index.data(RoleBoardState).value<BoardState>();
+        const QString stateString = boardStateDisplayString(state);
+        const bool showState = (state == Online || state == Offline)
                 && !stateString.isEmpty();
         const QFont stateFont = stateTF.font();
         const QFontMetrics stateFM(stateFont);
@@ -454,7 +454,12 @@ void EasyBoardBrowser::fetchExtensions()
         query.setNetworkAccessManager(NetworkAccessManager::instance());
         qCDebug(browserLog).noquote() << "Sending JSON request:" << request;
         d->m_spinner->show();
+        qDebug()<<"kong:"<<request;
     };
+
+    qDebug()<<"kong:"<<settings().externalRepoUrl();
+
+
     const auto onQueryDone = [this](const NetworkQuery &query, DoneWith result) {
         const QByteArray response = query.reply()->readAll();
         qCDebug(browserLog).noquote() << "Got JSON QNetworkReply:" << query.reply()->error();

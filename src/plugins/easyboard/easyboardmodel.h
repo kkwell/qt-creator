@@ -23,11 +23,10 @@ enum ItemType {
     ItemTypeExtension,
 };
 
-enum ExtensionState {
-    None, // Not a plugin
-    InstalledEnabled,
-    InstalledDisabled,
-    NotInstalled,
+enum BoardState {
+    None, // Not a board
+    Online,
+    Offline,
 };
 
 enum Role {
@@ -39,7 +38,7 @@ enum Role {
     RoleDescriptionLinks,
     RoleDescriptionText,
     RoleDownloadCount,
-    RoleExtensionState,
+    RoleBoardState,
     RoleId,
     RoleItemType,
     RoleLicense,
@@ -68,7 +67,7 @@ private:
     class EasyBoardModelPrivate *d = nullptr;
 };
 
-ExtensionSystem::PluginSpec *pluginSpecForName(const QString &pluginName);
+// ExtensionSystem::PluginSpec *pluginSpecForName(const QString &pluginName);
 
 #ifdef WITH_TESTS
 QObject *createExtensionsModelTest();

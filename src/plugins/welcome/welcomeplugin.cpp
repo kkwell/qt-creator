@@ -51,69 +51,6 @@ namespace Welcome::Internal {
 
 const char currentPageSettingsKeyC[] = "Welcome2Tab";
 
-class TopArea final : public QWidget
-{
-    Q_OBJECT
-
-public:
-    WelcomeMode();
-    ~WelcomeMode();
-
-    void initPlugins();
-
-private:
-    void addPage(IWelcomePage *page);
-
-    ResizeSignallingWidget *m_modeWidget;
-    QStackedWidget *m_pageStack;
-    TopArea *m_topArea;
-    SideArea *m_sideArea;
-    QList<IWelcomePage *> m_pluginList;
-    QList<QAbstractButton *> m_pageButtons;
-    QButtonGroup *m_buttonGroup;
-    Id m_activePage;
-    Id m_defaultPage;
-};
-
-class WelcomePlugin final : public ExtensionSystem::IPlugin
-{
-    Q_OBJECT
-    Q_PLUGIN_METADATA(IID "org.qt-project.Qt.QtCreatorPlugin" FILE "Welcome.json")
-
-public:
-    ~WelcomePlugin() final { delete m_welcomeMode; }
-
-    bool initialize(const QStringList &arguments, QString *) final
-    {
-        m_welcomeMode = new WelcomeMode;
-
-        auto introAction = new QAction(Tr::tr("UI Tour"), this);
-        connect(introAction, &QAction::triggered, this, []() {
-            auto intro = new IntroductionWidget(ICore::dialogParent());
-            intro->show();
-        });
-        Command *cmd = ActionManager::registerAction(introAction, "Welcome.UITour");
-        ActionContainer *mhelp = ActionManager::actionContainer(Core::Constants::M_HELP);
-        if (QTC_GUARD(mhelp))
-            mhelp->addAction(cmd, Core::Constants::G_HELP_HELP);
-
-        // if (!arguments.contains("-notour")) {
-        //     connect(ICore::instance(), &ICore::coreOpened, this, []() {
-        //         IntroductionWidget::askUserAboutIntroduction(ICore::dialogParent());
-        //     }, Qt::QueuedConnection);
-        // }
-
-        return true;
-    }
-
-    void extensionsInitialized() final
-    {
-        m_welcomeMode->initPlugins();
-        ModeManager::activateMode(m_welcomeMode->id());
-    }
-
-    WelcomeMode *m_welcomeMode = nullptr;
-};
 
 class TopArea : public QWidget
 {

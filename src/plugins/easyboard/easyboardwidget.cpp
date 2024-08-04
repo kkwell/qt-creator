@@ -223,7 +223,7 @@ public:
 
         const ItemType itemType = current.data(RoleItemType).value<ItemType>();
         const bool isPack = itemType == ItemTypePack;
-        const bool isRemotePlugin = !(isPack || pluginSpecForName(name));
+        const bool isRemotePlugin = false;//!(isPack || pluginSpecForName(name));
         installButton->setVisible(isRemotePlugin && !pluginData.empty());
         if (installButton->isVisible())
             installButton->setToolTip(pluginData.constFirst().second);
@@ -266,16 +266,17 @@ public:
         }.attachTo(this);
 
         connect(m_checkBox, &QCheckBox::clicked, this, [this](bool checked) {
-            ExtensionSystem::PluginSpec *spec = pluginSpecForName(m_pluginName);
-            if (spec == nullptr)
-                return;
-            const bool doIt = m_pluginView.data().setPluginsEnabled({spec}, checked);
-            if (doIt) {
-                m_restartButton->show();
-                ExtensionSystem::PluginManager::writeSettings();
-            } else {
-                m_checkBox->setChecked(!checked);
-            }
+            qDebug()<<"kong:"<<"m_checkBox is clicked";
+            // ExtensionSystem::PluginSpec *spec = pluginSpecForName(m_pluginName);
+            // if (spec == nullptr)
+            //     return;
+            // const bool doIt = m_pluginView.data().setPluginsEnabled({spec}, checked);
+            // if (doIt) {
+            //     m_restartButton->show();
+            //     ExtensionSystem::PluginManager::writeSettings();
+            // } else {
+            //     m_checkBox->setChecked(!checked);
+            // }
         });
 
         connect(m_restartButton, &QAbstractButton::clicked,
@@ -293,7 +294,7 @@ public:
 private:
     void update()
     {
-        const ExtensionSystem::PluginSpec *spec = pluginSpecForName(m_pluginName);
+        // const ExtensionSystem::PluginSpec *spec = pluginSpecForName(m_pluginName);
         setVisible(spec != nullptr);
         if (spec == nullptr)
             return;
