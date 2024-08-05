@@ -246,81 +246,6 @@ private:
     QString m_currentVendor;
 };
 
-class PluginStatusWidget : public QWidget
-{
-public:
-    explicit PluginStatusWidget(QWidget *parent = nullptr)
-        : QWidget(parent)
-    {
-        m_label = new InfoLabel;
-        m_checkBox = new QCheckBox(Tr::tr("Load on start"));
-        m_restartButton = new Button(Tr::tr("Restart Now"), Button::MediumPrimary);
-        m_restartButton->setVisible(false);
-        m_pluginView.hide();
-
-        using namespace Layouting;
-        Column {
-            m_label,
-            m_checkBox,
-            m_restartButton,
-        }.attachTo(this);
-
-        connect(m_checkBox, &QCheckBox::clicked, this, [this](bool checked) {
-            qDebug()<<"kong:"<<"m_checkBox is clicked";
-            // ExtensionSystem::PluginSpec *spec = pluginSpecForName(m_pluginName);
-            // if (spec == nullptr)
-            //     return;
-            // const bool doIt = m_pluginView.data().setPluginsEnabled({spec}, checked);
-            // if (doIt) {
-            //     m_restartButton->show();
-            //     ExtensionSystem::PluginManager::writeSettings();
-            // } else {
-            //     m_checkBox->setChecked(!checked);
-            // }
-        });
-
-        connect(m_restartButton, &QAbstractButton::clicked,
-                ICore::instance(), &ICore::restart, Qt::QueuedConnection);
-
-        update();
-    }
-
-    void setPluginName(const QString &name)
-    {
-        m_pluginName = name;
-        update();
-    }
-
-private:
-    void update()
-    {
-        // const ExtensionSystem::PluginSpec *spec = pluginSpecForName(m_pluginName);
-        setVisible(spec != nullptr);
-        if (spec == nullptr)
-            return;
-
-        if (spec->hasError()) {
-            m_label->setType(InfoLabel::Error);
-            m_label->setText(Tr::tr("Error"));
-        } else if (spec->state() == ExtensionSystem::PluginSpec::Running) {
-            m_label->setType(InfoLabel::Ok);
-            m_label->setText(Tr::tr("Loaded"));
-        } else {
-            m_label->setType(InfoLabel::NotOk);
-            m_label->setText(Tr::tr("Not loaded"));
-        }
-
-        m_checkBox->setChecked(spec->isRequired() || spec->isEnabledBySettings());
-        m_checkBox->setEnabled(!spec->isRequired());
-    }
-
-    InfoLabel *m_label;
-    QCheckBox *m_checkBox;
-    QAbstractButton *m_restartButton;
-    QString m_pluginName;
-    ExtensionSystem::PluginView m_pluginView{this};
-};
-
 class TagList : public QWidget
 {
     Q_OBJECT
@@ -407,7 +332,7 @@ private:
     QLabel *m_dependencies;
     QLabel *m_packExtensionsTitle;
     QLabel *m_packExtensions;
-    PluginStatusWidget *m_pluginStatus;
+    // PluginStatusWidget *m_pluginStatus;
     // PluginsData m_currentItemPlugins;
     Tasking::TaskTreeRunner m_dlTaskTreeRunner;
     Tasking::TaskTreeRunner m_imgTaskTreeRunner;
@@ -451,7 +376,7 @@ EasyBoardWidget::EasyBoardWidget()
     m_dependencies = tfLabel(contentTF, false);
     m_packExtensionsTitle = sectionTitle(h6TF, Tr::tr("Extensions in pack"));
     m_packExtensions = tfLabel(contentTF, false);
-    m_pluginStatus = new PluginStatusWidget;
+    // m_pluginStatus = new PluginStatusWidget;
 
     auto secondary = new QWidget;
     const auto spXxs = spacing(SpacingTokens::VPaddingXxs);
@@ -474,7 +399,7 @@ EasyBoardWidget::EasyBoardWidget()
         // WelcomePageHelpers::createRule(Qt::Vertical),
         Column {
             m_secondaryContent,
-            m_pluginStatus,
+            // m_pluginStatus,
         },
         noMargin, spacing(0),
     }.attachTo(m_secondaryDescriptionWidget);
@@ -499,7 +424,7 @@ EasyBoardWidget::EasyBoardWidget()
         Space(SpacingTokens::ExVPaddingGapXl),
         m_easyboardBrowser,
         WelcomePageHelpers::createRule(Qt::Vertical),
-        descriptionColumns,
+        // descriptionColumns,
         noMargin, spacing(0),
     }.attachTo(this);
 
@@ -533,7 +458,7 @@ void EasyBoardWidget::updateView(const QModelIndex &current)
     m_primaryContent->setVisible(showContent);
     m_secondaryContent->setVisible(showContent);
     m_headingWidget->setVisible(showContent);
-    m_pluginStatus->setVisible(showContent);
+    // m_pluginStatus->setVisible(showContent);
     if (!showContent)
         return;
 
