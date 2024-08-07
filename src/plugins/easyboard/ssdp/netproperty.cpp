@@ -62,6 +62,7 @@ void netproperty::findEasyBoard()
     // int r = rand()%msg_length;
 
     QJsonObject jsonObject;
+
     for(int i=0;i<msg_length;i++){
         jsonObject.insert(temp_msg[i].first(),temp_msg[i].last());
     }
@@ -73,19 +74,19 @@ void netproperty::findEasyBoard()
 int netproperty::bindAllNet()
 {
     QList<QNetworkInterface> networkinterfaces = QNetworkInterface::allInterfaces();
-    for(int i=0;i<networkinterfaces.size();i++){
+    for (const QNetworkInterface &network : networkinterfaces){
         // qDebug()<<"name:"<<networkinterfaces[i].name();
         // qDebug()<<FlagsToQString(networkinterfaces[i].flags());// 返回与此网络接口关联的标志
 
         // qDebug()<<TypeToQString(networkinterfaces[i].type()); // 获取网络类型说明
         // qDebug()<<networkinterfaces[i].hardwareAddress();
 
-        if(NetInterfaceIsUseful(networkinterfaces[i].flags())){
-            QList<QNetworkAddressEntry> addresses = networkinterfaces[i].addressEntries();
-            for(int n=0;n<addresses.size();n++)
+        if(NetInterfaceIsUseful(network.flags())){
+            QList<QNetworkAddressEntry> addresses = network.addressEntries();
+            for (const QNetworkAddressEntry &address : addresses)
             {
                 QString strType;
-                switch (addresses[n].ip().protocol())       // 判断IP地址类型
+                switch (address.ip().protocol())       // 判断IP地址类型
                 {
                 case QAbstractSocket::IPv4Protocol:
                     strType = "--------IPv4地址--------";
@@ -100,43 +101,43 @@ int netproperty::bindAllNet()
                     strType = "--------未知地址--------";
                     break;
                 }
-                QString ipInfo = QString("IP地址：%1，子网掩码：%2，广播地址：%3").arg(addresses[n].ip().toString())
-                                     .arg(addresses[n].netmask().toString())
-                                     .arg(addresses[n].broadcast().toString());
+                QString ipInfo = QString("IP地址：%1，子网掩码：%2，广播地址：%3").arg(address.ip().toString())
+                                     .arg(address.netmask().toString())
+                                     .arg(address.broadcast().toString());
 
                 // qDebug()<<strType;// 显示IP地址类型
                 // qDebug()<<ipInfo; // 显示IP地址信息
 
-                QHostAddress broadcastAddress = addresses[n].broadcast();
+                QHostAddress broadcastAddress = address.broadcast();
                 if (broadcastAddress != QHostAddress::Null
-                    && addresses[n].ip() != QHostAddress::LocalHost
-                    && addresses[n].ip().protocol() == QAbstractSocket::IPv4Protocol
+                    && address.ip() != QHostAddress::LocalHost
+                    && address.ip().protocol() == QAbstractSocket::IPv4Protocol
                     )
                 {
 
                     QUdpSocket *sock = new QUdpSocket();
                     if(sock->bind(QHostAddress::AnyIPv4, groupPort, QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint))
                     {
-                        qDebug() << "bind ok" << addresses[n].ip();
+                        qDebug() << "bind ok" << address.ip();
                         // Multicast路由层次，1表示只在同一局域网内
                         // 组播TTL: 生存时间，每跨1个路由会减1，多播无法跨过大多数路由所以为1
                         // 默认值是1，表示数据包只能在本地的子网中传送。
                         sock->setSocketOption(QAbstractSocket::MulticastTtlOption,1);
                         sock->setSocketOption(QAbstractSocket::MulticastLoopbackOption,true);
                         connect(sock,SIGNAL(readyRead()),this,SLOT(onSocketReadyRead()));
-                        sock->setMulticastInterface(networkinterfaces[i]);//设置组播网卡
+                        sock->setMulticastInterface(network);//设置组播网卡
                         // sock->setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption,1024*1024*8);//设置缓冲区
-                        if(sock->joinMulticastGroup(QHostAddress(groupIp),networkinterfaces[i])){//加入组播
+                        if(sock->joinMulticastGroup(QHostAddress(groupIp),network)){//加入组播
                             m_udpSocketlist.append(sock);
-                            m_localIpList.append(addresses[n].ip().toString());
+                            m_localIpList.append(address.ip().toString());
                         }
                         else{
-                            qDebug()<<QString("加入组播失败:ip[%1],port[%2]").arg(addresses[n].ip().toString()).arg(groupPort);
+                            qDebug()<<QString("加入组播失败:ip[%1],port[%2]").arg(address.ip().toString()).arg(groupPort);
                             delete sock;
                         }
                     }
                     else{
-                        qDebug()<<QString("绑定端口失败:ip[%1],port[%2]").arg(addresses[n].ip().toString()).arg(groupPort);
+                        qDebug()<<QString("绑定端口失败:ip[%1],port[%2]").arg(address.ip().toString()).arg(groupPort);
                         delete sock;
                     }
                 }
@@ -144,6 +145,7 @@ int netproperty::bindAllNet()
             }
         }
     }
+
     return m_udpSocketlist.size();
 }
 
@@ -151,6 +153,7 @@ void netproperty::exitAllNet()
 {
     if(m_udpSocketlist.isEmpty())
         return;
+
     for (int i=0;i< m_udpSocketlist.size();i++) {
         m_udpSocketlist[i]->leaveMulticastGroup(QHostAddress(groupIp));// 退出组播
         m_udpSocketlist[i]->abort();// 中止当前连接并重置套接字。与disconnectFromHost()不同，此函数会立即关闭套接字，丢弃写入缓冲区中的所有挂起数据。
