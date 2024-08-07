@@ -406,16 +406,16 @@ EasyBoardWidget::EasyBoardWidget()
 
     Row {
         // WelcomePageHelpers::createRule(Qt::Vertical),
-        Row {
-            Column {
-                Column {
-                    m_headingWidget,
-                    customMargins(SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl,
-                                  SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl),
-                },
-                m_primaryContent,
-            },
-        },
+        // Row {
+        //     Column {
+        //         Column {
+        //             m_headingWidget,
+        //             customMargins(SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl,
+        //                           SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl),
+        //         },
+        //         m_primaryContent,
+        //     },
+        // },
         m_secondaryDescriptionWidget,
         noMargin, spacing(0),
     }.attachTo(descriptionColumns);
@@ -424,7 +424,7 @@ EasyBoardWidget::EasyBoardWidget()
         Space(SpacingTokens::ExVPaddingGapXl),
         m_easyboardBrowser,
         WelcomePageHelpers::createRule(Qt::Vertical),
-        // descriptionColumns,
+        descriptionColumns,
         noMargin, spacing(0),
     }.attachTo(this);
 

@@ -4,5 +4,13 @@
         <file>images/mode_device_mask.png</file>
         <file>images/mode_device_mask@2x.png</file>
         <file>images/mode_device@2x.png</file>
+        <file>images/checkmark.png</file>
+        <file>images/checkmark@2x.png</file>
+        <file>images/filter.png</file>
+        <file>images/filter@2x.png</file>
+        <file>images/sort.png</file>
+        <file>images/sort@2x.png</file>
+        <file>images/common-board.png</file>
+        <file>images/common-board@2x.png</file>
     </qresource>
 </RCC>

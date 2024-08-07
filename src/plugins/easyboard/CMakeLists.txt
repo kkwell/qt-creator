@@ -1,5 +1,5 @@
 add_qtc_plugin(EasyBoard
-  DEPENDS QmlDebug
+  DEPENDS Utils QmlDebug CmdBridgeClient
   PLUGIN_DEPENDS Core Debugger ProjectExplorer RemoteLinux
   SOURCES
     easyboard.qrc
@@ -13,5 +13,8 @@ add_qtc_plugin(EasyBoard
     easyboardbrowser.cpp
     easyboardsettings.h
     easyboardsettings.cpp
+    ssdp/netproperty.h
+    ssdp/netproperty.cpp
+    ssdp/qaesencryption.h
+    ssdp/qaesencryption.cpp
 )
-

@@ -6,6 +6,7 @@
 #include "easyboardtr.h"
 #include "easyboardmodel.h"
 #include "easyboardsettings.h"
+#include "ssdp/netproperty.h"
 
 #ifdef WITH_TESTS
 #include "extensionmanager_test.h"
@@ -21,6 +22,7 @@
 #include <solutions/tasking/tasktree.h>
 #include <solutions/tasking/tasktreerunner.h>
 
+#include <utils/algorithm.h>
 #include <utils/elidinglabel.h>
 #include <utils/fancylineedit.h>
 #include <utils/hostosinfo.h>
@@ -40,7 +42,7 @@
 #include <QLoggingCategory>
 
 using namespace Core;
-// using namespace ExtensionSystem;
+using namespace ExtensionSystem;
 using namespace Utils;
 using namespace StyleHelper;
 using namespace SpacingTokens;
@@ -53,6 +55,96 @@ Q_LOGGING_CATEGORY(browserLog, "qtc.easyboard.browser", QtWarningMsg)
 constexpr int gapSize = HGapL;
 constexpr int itemWidth = 330;
 constexpr int cellWidth = itemWidth + gapSize;
+
+class OptionChooser : public QComboBox
+{
+public:
+    OptionChooser(const FilePath &iconMask, const QString &textTemplate, QWidget *parent = nullptr)
+        : QComboBox(parent)
+        , m_iconDefault(Icon({{iconMask, m_colorDefault}}, Icon::Tint).icon())
+        , m_iconActive(Icon({{iconMask, m_colorActive}}, Icon::Tint).icon())
+        , m_textTemplate(textTemplate)
+    {
+        setMouseTracking(true);
+        connect(this, &QComboBox::currentIndexChanged, this, &QWidget::updateGeometry);
+    }
+
+protected:
+    void paintEvent([[maybe_unused]] QPaintEvent *event) override
+    {
+        // +------------+------+---------+---------------+------------+
+        // |            |      |         |  (VPaddingXs) |            |
+        // |            |      |         +---------------+            |
+        // |(HPaddingXs)|(icon)|(HGapXxs)|<template%item>|(HPaddingXs)|
+        // |            |      |         +---------------+            |
+        // |            |      |         |  (VPaddingXs) |            |
+        // +------------+------+---------+---------------+------------+
+
+        const bool active = currentIndex() > 0;
+        const bool hover = underMouse();
+        const TextFormat &tF = (active || hover) ? m_itemActiveTf : m_itemDefaultTf;
+
+        const QRect iconRect(HPaddingXs, 0, m_iconSize.width(), height());
+        const int textX = iconRect.right() + 1 + HGapXxs;
+        const QRect textRect(textX, VPaddingXs,
+                             width() - HPaddingXs - textX, tF.lineHeight());
+
+        QPainter p(this);
+        (active ? m_iconActive : m_iconDefault).paint(&p, iconRect);
+        p.setPen(tF.color());
+        p.setFont(tF.font());
+        const QString elidedText = p.fontMetrics().elidedText(currentFormattedText(),
+                                                              Qt::ElideRight,
+                                                              textRect.width() + HPaddingXs);
+        p.drawText(textRect, tF.drawTextFlags, elidedText);
+    }
+
+    void enterEvent(QEnterEvent *event) override
+    {
+        QComboBox::enterEvent(event);
+        update();
+    }
+
+    void leaveEvent(QEvent *event) override
+    {
+        QComboBox::leaveEvent(event);
+        update();
+    }
+
+private:
+    QSize sizeHint() const override
+    {
+        const QFontMetrics fm(m_itemDefaultTf.font());
+        const int textWidth = fm.horizontalAdvance(currentFormattedText());
+        const int width =
+            HPaddingXs
+            + m_iconSize.width()
+            + HGapXxs
+            + textWidth
+            + HPaddingXs;
+        const int height =
+            VPaddingXs
+            + m_itemDefaultTf.lineHeight()
+            + VPaddingXs;
+        return {width, height};
+    }
+
+    QString currentFormattedText() const
+    {
+        return m_textTemplate.arg(currentText());
+    }
+
+    constexpr static Theme::Color m_colorDefault = Theme::Token_Text_Muted;
+    constexpr static Theme::Color m_colorActive = Theme::Token_Text_Default;
+    constexpr static QSize m_iconSize{16, 16};
+    constexpr static TextFormat m_itemDefaultTf
+        {m_colorDefault, UiElement::UiElementLabelMedium};
+    constexpr static TextFormat m_itemActiveTf
+        {m_colorActive, m_itemDefaultTf.uiElement};
+    const QIcon m_iconDefault;
+    const QIcon m_iconActive;
+    const QString m_textTemplate;
+};
 
 static QString boardStateDisplayString(BoardState state)
 {
@@ -67,7 +159,7 @@ static QString boardStateDisplayString(BoardState state)
     return {};
 }
 
-class ExtensionItemDelegate : public QItemDelegate
+class BoardItemDelegate : public QItemDelegate
 {
 public:
     constexpr static QSize dividerS{1, 16};
@@ -84,7 +176,7 @@ public:
     constexpr static TextFormat tagsTF
         {Theme::Token_Text_Default, UiElement::UiElementCaption};
 
-    explicit ExtensionItemDelegate(QObject *parent = nullptr)
+    explicit BoardItemDelegate(QObject *parent = nullptr)
         : QItemDelegate(parent)
     {
     }
@@ -195,7 +287,7 @@ public:
             painter->drawText(effectiveR, itemNameTF.drawTextFlags, titleElided);
         }
         if (showState) {
-            static const QIcon checkmark = Icon({{":/extensionmanager/images/checkmark.png",
+            static const QIcon checkmark = Icon({{":/easyboard/images/checkmark.png",
                                                   stateTF.themeColor}}, Icon::Tint).icon();
             checkmark.paint(painter, checkmarkR);
             painter->setPen(stateTF.color());
@@ -225,7 +317,7 @@ public:
                 QRect dlIconR = vendorRowR;
                 dlIconR.setLeft(dividerR.right() + HGapXs);
                 dlIconR.setWidth(dlIconS.width());
-                static const QIcon dlIcon = Icon({{":/extensionmanager/images/download.png",
+                static const QIcon dlIcon = Icon({{":/easyboard/images/download.png",
                                                    vendorTF.themeColor}}, Icon::Tint).icon();
                 dlIcon.paint(painter, dlIconR);
 
@@ -275,28 +367,104 @@ public:
 class SortFilterProxyModel : public QSortFilterProxyModel
 {
 public:
-    SortFilterProxyModel(QObject *parent = nullptr);
+    struct SortOption {
+        const QString displayName;
+        const Role role;
+        const Qt::SortOrder order = Qt::AscendingOrder;
+    };
+
+    struct FilterOption {
+        const QString displayName;
+        const std::function<bool(const QModelIndex &)> indexAcceptedFunc;
+    };
+
+    SortFilterProxyModel(QObject *parent = nullptr)
+        : QSortFilterProxyModel(parent)
+    {
+        setSortCaseSensitivity(Qt::CaseInsensitive);
+    }
+
+    static const QList<SortOption> &sortOptions()
+    {
+        static const QList<SortOption> options = {
+                                                  {Tr::tr("Name"), RoleName},
+                                                  {Tr::tr("Vendor"), RoleVendor},
+                                                  {Tr::tr("Popularity"), RoleDownloadCount, Qt::DescendingOrder},
+                                                  };
+        return options;
+    }
+
+    void setSortOption(int index)
+    {
+        QTC_ASSERT(index < sortOptions().count(), index = 0);
+        m_sortOptionIndex = index;
+        const SortOption &option = sortOptions().at(index);
+
+        // Ensure some order for cases with insufficient data, e.g. RoleDownloadCount
+        setSortRole(RoleName);
+        sort(0);
+        if (option.role == RoleName)
+            return; // Already sorted.
+
+        setSortRole(option.role);
+        sort(0, option.order);
+    }
+
+    static const QList<FilterOption> &filterOptions()
+    {
+        static const QList<FilterOption> options = {
+            {
+                Tr::tr("All"),
+                []([[maybe_unused]] const QModelIndex &index) {
+                    return true;
+                },
+            },
+            {
+                Tr::tr("Extension packs"),
+                [](const QModelIndex &index) {
+                    return index.data(RoleItemType).value<ItemType>() == ItemTypePack;
+                },
+            },
+            {
+                Tr::tr("Individual extensions"),
+                [](const QModelIndex &index) {
+                    return index.data(RoleItemType).value<ItemType>() == ItemTypeExtension;
+                },
+            },
+        };
+        return options;
+    }
+
+    void setFilterOption(int index)
+    {
+        QTC_ASSERT(index < filterOptions().count(), index = 0);
+        beginResetModel();
+        m_filterOptionIndex = index;
+        endResetModel();
+    }
 
 protected:
-    bool lessThan(const QModelIndex &left, const QModelIndex &right) const override;
+    bool lessThan(const QModelIndex &left, const QModelIndex &right) const override
+    {
+        const SortOption &option = sortOptions().at(m_sortOptionIndex);
+        const ItemType leftType = left.data(RoleItemType).value<ItemType>();
+        const ItemType rightType = right.data(RoleItemType).value<ItemType>();
+        if (leftType != rightType)
+            return option.order == Qt::AscendingOrder ? leftType < rightType
+                                                      : leftType > rightType;
+
+        return QSortFilterProxyModel::lessThan(left, right);
+    }
+
+    bool filterAcceptsRow(int source_row, const QModelIndex &source_parent) const override
+    {
+        const QModelIndex index = sourceModel()->index(source_row, 0, source_parent);
+        return filterOptions().at(m_filterOptionIndex).indexAcceptedFunc(index);
+    }
+
+    int m_filterOptionIndex = 0;
+    int m_sortOptionIndex = 0;
 };
-
-SortFilterProxyModel::SortFilterProxyModel(QObject *parent)
-    : QSortFilterProxyModel(parent)
-{
-}
-
-bool SortFilterProxyModel::lessThan(const QModelIndex &left, const QModelIndex &right) const
-{
-    const ItemType leftType = left.data(RoleItemType).value<ItemType>();
-    const ItemType rightType = right.data(RoleItemType).value<ItemType>();
-    if (leftType != rightType)
-        return leftType < rightType;
-
-    const QString leftName = left.data(RoleName).toString();
-    const QString rightName = right.data(RoleName).toString();
-    return leftName < rightName;
-}
 
 class EasyBoardBrowserPrivate
 {
@@ -304,12 +472,18 @@ public:
     bool dataFetched = false;
     EasyBoardModel *model;
     QLineEdit *searchBox;
-    QListView *extensionsView;
+    OptionChooser *filterChooser;
+    OptionChooser *sortChooser;
+    QListView *boardsView;
     QItemSelectionModel *selectionModel = nullptr;
-    SortFilterProxyModel *filterProxyModel;
+    QSortFilterProxyModel *searchProxyModel;
+    SortFilterProxyModel *sortFilterProxyModel;
     int columnsCount = 2;
     Tasking::TaskTreeRunner taskTreeRunner;
     SpinnerSolution::Spinner *m_spinner;
+    QAbstractButton *addButton;
+    QAbstractButton *updateButton;
+    netproperty *pNetManage = nullptr;
 };
 
 EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
@@ -317,6 +491,8 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
     , d(new EasyBoardBrowserPrivate)
 {
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+
+    d->pNetManage = new netproperty(this);
 
     static const TextFormat titleTF
         {Theme::Token_Text_Default, UiElementH2};
@@ -328,21 +504,41 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
 
     d->model = new EasyBoardModel(this);
 
-    d->filterProxyModel = new SortFilterProxyModel(this);
-    d->filterProxyModel->setFilterCaseSensitivity(Qt::CaseInsensitive);
-    d->filterProxyModel->setFilterRole(RoleSearchText);
-    d->filterProxyModel->setSortRole(RoleItemType);
-    d->filterProxyModel->setSourceModel(d->model);
+    d->searchProxyModel = new QSortFilterProxyModel(this);
+    d->searchProxyModel->setFilterCaseSensitivity(Qt::CaseInsensitive);
+    d->searchProxyModel->setFilterRole(RoleSearchText);
+    d->searchProxyModel->setSourceModel(d->model);
 
-    d->extensionsView = new QListView;
-    d->extensionsView->setFrameStyle(QFrame::NoFrame);
-    d->extensionsView->setItemDelegate(new ExtensionItemDelegate(this));
-    d->extensionsView->setResizeMode(QListView::Adjust);
-    d->extensionsView->setSelectionMode(QListView::SingleSelection);
-    d->extensionsView->setUniformItemSizes(true);
-    d->extensionsView->setViewMode(QListView::IconMode);
-    d->extensionsView->setModel(d->filterProxyModel);
-    d->extensionsView->setMouseTracking(true);
+    d->sortFilterProxyModel = new SortFilterProxyModel(this);
+    d->sortFilterProxyModel->setSourceModel(d->searchProxyModel);
+
+    d->filterChooser = new OptionChooser(":/easyboard/images/filter.png",
+                                         Tr::tr("Filter by: %1"));
+    d->filterChooser->addItems(Utils::transform(SortFilterProxyModel::filterOptions(),
+                                                &SortFilterProxyModel::FilterOption::displayName));
+
+    d->sortChooser = new OptionChooser(":/easyboard/images/sort.png", Tr::tr("Sort by: %1"));
+    d->sortChooser->addItems(Utils::transform(SortFilterProxyModel::sortOptions(),
+                                              &SortFilterProxyModel::SortOption::displayName));
+
+
+    d->addButton = new Button(Tr::tr("Add New"), Button::SmallPrimary);
+    d->addButton->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    d->addButton->setToolTip(Tr::tr("Add remote board"));
+
+    d->updateButton = new Button(Tr::tr("Auto Search"), Button::SmallPrimary);
+    d->updateButton->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    d->updateButton->setToolTip(Tr::tr("Auto search local network board"));
+
+    d->boardsView = new QListView;
+    d->boardsView->setFrameStyle(QFrame::NoFrame);
+    d->boardsView->setItemDelegate(new BoardItemDelegate(this));
+    d->boardsView->setResizeMode(QListView::Adjust);
+    d->boardsView->setSelectionMode(QListView::SingleSelection);
+    d->boardsView->setUniformItemSizes(true);
+    d->boardsView->setViewMode(QListView::IconMode);
+    d->boardsView->setModel(d->sortFilterProxyModel);
+    d->boardsView->setMouseTracking(true);
 
     using namespace Layouting;
     Column {
@@ -355,34 +551,58 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
             spacing(gapSize),
             customMargins(0, VPaddingM, extraListViewWidth() + gapSize, VPaddingM),
         },
-        Space(ExPaddingGapL),
-        d->extensionsView,
+        Row {
+            d->addButton,
+            spacing(gapSize),
+            d->updateButton,
+            spacing(gapSize),
+            customMargins(0, VPaddingM, extraListViewWidth() + gapSize, VPaddingM),
+        },
+        Row {
+            d->filterChooser,
+            Space(HGapS),
+            d->sortChooser,
+            st,
+            customMargins(0, 0, extraListViewWidth() + gapSize, 0),
+        },
+
+        d->boardsView,
         noMargin, spacing(0),
     }.attachTo(this);
 
     WelcomePageHelpers::setBackgroundColor(this, Theme::Token_Background_Default);
-    WelcomePageHelpers::setBackgroundColor(d->extensionsView, Theme::Token_Background_Default);
-    WelcomePageHelpers::setBackgroundColor(d->extensionsView->viewport(),
+    WelcomePageHelpers::setBackgroundColor(d->boardsView, Theme::Token_Background_Default);
+    WelcomePageHelpers::setBackgroundColor(d->boardsView->viewport(),
                                            Theme::Token_Background_Default);
 
     d->m_spinner = new SpinnerSolution::Spinner(SpinnerSolution::SpinnerSize::Large, this);
     d->m_spinner->hide();
 
     auto updateModel = [this] {
-        d->filterProxyModel->sort(0);
+        d->sortFilterProxyModel->sort(0);
 
         if (d->selectionModel == nullptr) {
-            d->selectionModel = new QItemSelectionModel(d->filterProxyModel,
-                                                          d->extensionsView);
-            d->extensionsView->setSelectionModel(d->selectionModel);
-            connect(d->extensionsView->selectionModel(), &QItemSelectionModel::currentChanged,
+            d->selectionModel = new QItemSelectionModel(d->sortFilterProxyModel,
+                                                          d->boardsView);
+            d->boardsView->setSelectionModel(d->selectionModel);
+            connect(d->boardsView->selectionModel(), &QItemSelectionModel::currentChanged,
                     this, &EasyBoardBrowser::itemSelected);
         }
     };
 
+    // connect(d->addButton, &QAbstractButton::pressed,
+    //         this, &HeadingWidget::pluginInstallationRequested);
+    connect(d->updateButton, &QAbstractButton::pressed,
+            d->pNetManage, &netproperty::findEasyBoard);
+    connect(d->pNetManage,&netproperty::getSocketData,
+            d->model,&EasyBoardModel::onSocketData);
     // connect(PluginManager::instance(), &PluginManager::pluginsChanged, this, updateModel);
     connect(d->searchBox, &QLineEdit::textChanged,
-            d->filterProxyModel, &QSortFilterProxyModel::setFilterWildcard);
+            d->searchProxyModel, &QSortFilterProxyModel::setFilterWildcard);
+    connect(d->sortChooser, &OptionChooser::currentIndexChanged,
+            d->sortFilterProxyModel, &SortFilterProxyModel::setSortOption);
+    connect(d->filterChooser, &OptionChooser::currentIndexChanged,
+            d->sortFilterProxyModel, &SortFilterProxyModel::setFilterOption);
 }
 
 EasyBoardBrowser::~EasyBoardBrowser()
@@ -412,7 +632,7 @@ int EasyBoardBrowser::extraListViewWidth() const
 {
     // TODO: Investigate "transient" scrollbar, just for this list view.
     constexpr int extraPadding = qMax(0, ExVPaddingGapXl - gapSize);
-    return d->extensionsView->style()->pixelMetric(QStyle::PM_ScrollBarExtent)
+    return d->boardsView->style()->pixelMetric(QStyle::PM_ScrollBarExtent)
            + extraPadding
            + 1; // Needed
 }
@@ -426,6 +646,23 @@ void EasyBoardBrowser::showEvent(QShowEvent *event)
     QWidget::showEvent(event);
 }
 
+static QString customOsTypeToString(OsType osType)
+{
+    switch (osType) {
+    case OsTypeWindows:
+        return "Windows";
+    case OsTypeLinux:
+        return "Linux";
+    case OsTypeMac:
+        return "macOS";
+    case OsTypeOtherUnix:
+        return "Other Unix";
+    case OsTypeOther:
+    default:
+        return "Other";
+    }
+}
+
 void EasyBoardBrowser::fetchExtensions()
 {
 #ifdef WITH_TESTS
@@ -435,7 +672,7 @@ void EasyBoardBrowser::fetchExtensions()
 #endif // WITH_TESTS
 
     if (!settings().useExternalRepo()) {
-        d->model->setExtensionsJson({});
+        d->model->setBoards({});
         return;
     }
 
@@ -444,20 +681,20 @@ void EasyBoardBrowser::fetchExtensions()
     const auto onQuerySetup = [this](NetworkQuery &query) {
         const QString url = "%1/api/v1/search?request=";
         const QString requestTemplate
-            = R"({"version":"%1","host_os":"%2","host_os_version":"%3","host_architecture":"%4","page_size":200})";
+            = R"({"qtc_version":"%1","host_os":"%2","host_os_version":"%3","host_architecture":"%4","page_size":200})";
         const QString request = url.arg(settings().externalRepoUrl()) + requestTemplate
-                                                    .arg(QCoreApplication::applicationVersion())
-                                                    .arg(osTypeToString(HostOsInfo::hostOs()))
-                                                    .arg(QSysInfo::productVersion())
-                                                    .arg(QSysInfo::currentCpuArchitecture());
+                                                                            .arg(QCoreApplication::applicationVersion())
+                                                                            .arg(customOsTypeToString(HostOsInfo::hostOs()))
+                                                                            .arg(QSysInfo::productVersion())
+                                                                            .arg(QSysInfo::currentCpuArchitecture());
         query.setRequest(QNetworkRequest(QUrl::fromUserInput(request)));
         query.setNetworkAccessManager(NetworkAccessManager::instance());
         qCDebug(browserLog).noquote() << "Sending JSON request:" << request;
         d->m_spinner->show();
-        qDebug()<<"kong:"<<request;
     };
 
     qDebug()<<"kong:"<<settings().externalRepoUrl();
+    d->model->setBoards({});
 
 
     const auto onQueryDone = [this](const NetworkQuery &query, DoneWith result) {
@@ -466,17 +703,17 @@ void EasyBoardBrowser::fetchExtensions()
         if (result == DoneWith::Success) {
             qCDebug(browserLog).noquote() << "JSON response size:"
                                           << QLocale::system().formattedDataSize(response.size());
-            d->model->setExtensionsJson(response);
+            d->model->setBoards(response);
         } else {
-            qCDebug(browserLog).noquote() << response;
-            d->model->setExtensionsJson({});
+            qCWarning(browserLog).noquote() << response;
+            d->model->setBoards({});
         }
         d->m_spinner->hide();
     };
 
     Group group {
-        NetworkQueryTask{onQuerySetup, onQueryDone},
-    };
+                NetworkQueryTask{onQuerySetup, onQueryDone},
+                };
 
     d->taskTreeRunner.start(group);
 }
@@ -509,24 +746,19 @@ QPixmap itemIcon(const QModelIndex &index, Size size)
     // const PluginSpec *ps = pluginSpecForName(index.data(RoleName).toString());
     const bool isEnabled = true;//= ps == nullptr || ps->isEffectivelyEnabled();
     const QGradientStops gradientStops = {
-        {0, creatorColor(isEnabled ? Theme::Token_Gradient01_Start
-                                   : Theme::Token_Gradient02_Start)},
-        {1, creatorColor(isEnabled ? Theme::Token_Gradient01_End
-                                   : Theme::Token_Gradient02_End)},
-    };
+                                          {0, creatorColor(isEnabled ? Theme::Token_Gradient01_Start
+                                                                     : Theme::Token_Gradient02_Start)},
+                                          {1, creatorColor(isEnabled ? Theme::Token_Gradient01_End
+                                                                     : Theme::Token_Gradient02_End)},
+                                          };
 
     const Theme::Color color = Theme::Token_Basic_White;
-    static const QIcon packS = Icon({{":/extensionmanager/images/packsmall.png", color}},
-                                    Icon::Tint).icon();
-    static const QIcon packB = Icon({{":/extensionmanager/images/packbig.png", color}},
-                                    Icon::Tint).icon();
-    static const QIcon extensionS = Icon({{":/extensionmanager/images/extensionsmall.png",
+
+    static const QIcon board = Icon({{":/easyboard/images/common-board.png",
                                            color}}, Icon::Tint).icon();
-    static const QIcon extensionB = Icon({{":/extensionmanager/images/extensionbig.png",
-                                           color}}, Icon::Tint).icon();
-    const ItemType itemType = index.data(RoleItemType).value<ItemType>();
-    const QIcon &icon = (itemType == ItemTypePack) ? (size == SizeSmall ? packS : packB)
-                                                   : (size == SizeSmall ? extensionS : extensionB);
+    // const ItemType itemType = index.data(RoleItemType).value<ItemType>();
+    const QIcon &icon = (size == SizeSmall ? board : board);
+
     const int iconRectRounding = 4;
     const qreal iconOpacityDisabled = 0.6;
 

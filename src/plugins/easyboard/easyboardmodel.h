@@ -61,7 +61,9 @@ public:
     int rowCount(const QModelIndex &parent = {}) const;
     QVariant data(const QModelIndex &index, int role) const;
 
-    void setExtensionsJson(const QByteArray &json);
+    void setBoards(const QByteArray &json);
+slots
+    void onSocketData(QJsonObject str);
 
 private:
     class EasyBoardModelPrivate *d = nullptr;
