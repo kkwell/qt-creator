@@ -42,7 +42,6 @@
 #include <QLoggingCategory>
 
 using namespace Core;
-using namespace ExtensionSystem;
 using namespace Utils;
 using namespace StyleHelper;
 using namespace SpacingTokens;
@@ -244,7 +243,7 @@ public:
         painter->setRenderHint(QPainter::Antialiasing);
         painter->translate(bgRGlobal.topLeft());
 
-        const bool isPack = index.data(RoleItemType) == ItemTypePack;
+        const bool isPack = index.data(RoleItemType) == ItemTypeLocal;
         {
             const bool selected = option.state & QStyle::State_Selected;
             const bool hovered = option.state & QStyle::State_MouseOver;
@@ -261,21 +260,21 @@ public:
             const QPixmap icon = itemIcon(index, SizeSmall);
             painter->drawPixmap(iconBgR.topLeft(), icon);
         }
-        if (isPack) {
-            constexpr int circleSize = 18;
-            constexpr int circleOverlap = 3; // Protrusion from lower right corner of iconRect
-            const QRect smallCircle(iconBgR.right() + 1 + circleOverlap - circleSize,
-                                    iconBgR.bottom() + 1 + circleOverlap - circleSize,
-                                    circleSize, circleSize);
-            const QColor fillColor = creatorColor(Theme::Token_Foreground_Muted);
-            const QColor strokeColor = creatorColor(Theme::Token_Stroke_Subtle);
-            drawCardBackground(painter, smallCircle, fillColor, strokeColor, circleSize / 2);
+        // if (isPack) {
+        //     constexpr int circleSize = 18;
+        //     constexpr int circleOverlap = 3; // Protrusion from lower right corner of iconRect
+        //     const QRect smallCircle(iconBgR.right() + 1 + circleOverlap - circleSize,
+        //                             iconBgR.bottom() + 1 + circleOverlap - circleSize,
+        //                             circleSize, circleSize);
+        //     const QColor fillColor = creatorColor(Theme::Token_Foreground_Muted);
+        //     const QColor strokeColor = creatorColor(Theme::Token_Stroke_Subtle);
+        //     drawCardBackground(painter, smallCircle, fillColor, strokeColor, circleSize / 2);
 
-            painter->setFont(countTF.font());
-            painter->setPen(countTF.color());
-            const PluginsData plugins = index.data(RolePlugins).value<PluginsData>();
-            painter->drawText(smallCircle, countTF.drawTextFlags, QString::number(plugins.count()));
-        }
+        //     painter->setFont(countTF.font());
+        //     painter->setPen(countTF.color());
+        //     const PluginsData plugins = index.data(RolePlugins).value<PluginsData>();
+        //     painter->drawText(smallCircle, countTF.drawTextFlags, QString::number(plugins.count()));
+        // }
         {
             QRect effectiveR = itemNameR;
             if (showState)
@@ -295,42 +294,42 @@ public:
             painter->drawText(stateR, stateTF.drawTextFlags, stateString);
         }
         {
-            const QString vendor = index.data(RoleVendor).toString();
+            const QString vendor = index.data(RoleDate).toString();
             const QFontMetrics fm(vendorTF.font());
             painter->setPen(vendorTF.color());
             painter->setFont(vendorTF.font());
 
-            if (const int dlCount = index.data(RoleDownloadCount).toInt(); dlCount > 0) {
-                constexpr QSize dlIconS(16, 16);
-                const QString dlCountString = QString::number(dlCount);
-                const int dlCountW = fm.horizontalAdvance(dlCountString);
-                const int dlItemsW = HGapXs + dividerS.width() + HGapXs + dlIconS.width()
-                                     + HGapXxs + dlCountW;
-                const int vendorW = fm.horizontalAdvance(vendor);
-                vendorR.setWidth(qMin(middleColumnW - dlItemsW, vendorW));
+            // if (const int dlCount = index.data(RoleDownloadCount).toInt(); dlCount > 0) {
+            //     constexpr QSize dlIconS(16, 16);
+            //     const QString dlCountString = QString::number(dlCount);
+            //     const int dlCountW = fm.horizontalAdvance(dlCountString);
+            //     const int dlItemsW = HGapXs + dividerS.width() + HGapXs + dlIconS.width()
+            //                          + HGapXxs + dlCountW;
+            //     const int vendorW = fm.horizontalAdvance(vendor);
+            //     vendorR.setWidth(qMin(middleColumnW - dlItemsW, vendorW));
 
-                QRect dividerR = vendorRowR;
-                dividerR.setLeft(vendorR.right() + HGapXs);
-                dividerR.setWidth(dividerS.width());
-                painter->fillRect(dividerR, vendorTF.color());
+            //     QRect dividerR = vendorRowR;
+            //     dividerR.setLeft(vendorR.right() + HGapXs);
+            //     dividerR.setWidth(dividerS.width());
+            //     painter->fillRect(dividerR, vendorTF.color());
 
-                QRect dlIconR = vendorRowR;
-                dlIconR.setLeft(dividerR.right() + HGapXs);
-                dlIconR.setWidth(dlIconS.width());
-                static const QIcon dlIcon = Icon({{":/easyboard/images/download.png",
-                                                   vendorTF.themeColor}}, Icon::Tint).icon();
-                dlIcon.paint(painter, dlIconR);
+            //     QRect dlIconR = vendorRowR;
+            //     dlIconR.setLeft(dividerR.right() + HGapXs);
+            //     dlIconR.setWidth(dlIconS.width());
+            //     static const QIcon dlIcon = Icon({{":/easyboard/images/download.png",
+            //                                        vendorTF.themeColor}}, Icon::Tint).icon();
+            //     dlIcon.paint(painter, dlIconR);
 
-                QRect dlCountR = vendorRowR;
-                dlCountR.setLeft(dlIconR.right() + HGapXxs);
-                painter->drawText(dlCountR, vendorTF.drawTextFlags, dlCountString);
-            }
+            //     QRect dlCountR = vendorRowR;
+            //     dlCountR.setLeft(dlIconR.right() + HGapXxs);
+            //     painter->drawText(dlCountR, vendorTF.drawTextFlags, dlCountString);
+            // }
 
             const QString vendorElided = fm.elidedText(vendor, Qt::ElideRight, vendorR.width());
             painter->drawText(vendorR, vendorTF.drawTextFlags, vendorElided);
         }
         {
-            const QStringList tagList = index.data(RoleTags).toStringList();
+            const QStringList tagList = index.data(RoleIp).toStringList();
             const QString tags = tagList.join(", ");
             painter->setPen(tagsTF.color());
             painter->setFont(tagsTF.font());
@@ -387,10 +386,10 @@ public:
     static const QList<SortOption> &sortOptions()
     {
         static const QList<SortOption> options = {
-                                                  {Tr::tr("Name"), RoleName},
-                                                  {Tr::tr("Vendor"), RoleVendor},
-                                                  {Tr::tr("Popularity"), RoleDownloadCount, Qt::DescendingOrder},
-                                                  };
+            {Tr::tr("Name"), RoleName},
+            {Tr::tr("Address"), RoleIp},
+            {Tr::tr("Time Sorting"), RoleDate},//, Qt::DescendingOrder
+        };
         return options;
     }
 
@@ -399,6 +398,7 @@ public:
         QTC_ASSERT(index < sortOptions().count(), index = 0);
         m_sortOptionIndex = index;
         const SortOption &option = sortOptions().at(index);
+        qDebug()<<index<<option.role;
 
         // Ensure some order for cases with insufficient data, e.g. RoleDownloadCount
         setSortRole(RoleName);
@@ -420,15 +420,15 @@ public:
                 },
             },
             {
-                Tr::tr("Extension packs"),
+                Tr::tr("Loacl Item"),
                 [](const QModelIndex &index) {
-                    return index.data(RoleItemType).value<ItemType>() == ItemTypePack;
+                    return index.data(RoleItemType).value<ItemType>() == ItemTypeLocal;
                 },
             },
             {
-                Tr::tr("Individual extensions"),
+                Tr::tr("Network Item"),
                 [](const QModelIndex &index) {
-                    return index.data(RoleItemType).value<ItemType>() == ItemTypeExtension;
+                    return index.data(RoleItemType).value<ItemType>() == ItemTypeNetwork;
                 },
             },
         };
@@ -590,8 +590,8 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
         }
     };
 
-    // connect(d->addButton, &QAbstractButton::pressed,
-    //         this, &HeadingWidget::pluginInstallationRequested);
+    connect(d->addButton, &QAbstractButton::pressed,
+            this, updateModel);
     connect(d->updateButton, &QAbstractButton::pressed,
             d->pNetManage, &netproperty::findEasyBoard);
     connect(d->pNetManage,&netproperty::getSocketData,

@@ -1,13 +1,11 @@
-Qt Creator 14
+Easy Board 1.0.1
 =============
 
-Qt Creator version 14 contains bug fixes and new features.
+Easy Board version 1.0.1 contains bug fixes and new features.
 
-The most important changes are listed in this document. For a complete list of
-changes, see the Git log for the Qt Creator sources that you can check out from
-the public Git repository or view online at
+The most important changes are listed in this document. 
 
-<https://code.qt.io/cgit/qt-creator/qt-creator.git/log/?id=13.0..v14.0.0>
+<https://kvell.dscloud.me:70>
 
 General
 -------

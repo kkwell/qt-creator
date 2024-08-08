@@ -138,16 +138,11 @@ public:
         m_divider = new QLabel;
         m_divider->setFixedSize(1, dividerH);
         WelcomePageHelpers::setBackgroundColor(m_divider, dlTF.themeColor);
-        m_dlIcon = new QLabel;
-        const QPixmap dlIcon = Icon({{":/extensionmanager/images/download.png", dlTF.themeColor}},
-                                    Icon::Tint).pixmap();
-        m_dlIcon->setPixmap(dlIcon);
-        m_dlCount = tfLabel(dlTF);
-        m_dlCount->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Preferred);
+
         m_details = tfLabel(detailsTF);
-        installButton = new Button(Tr::tr("Install..."), Button::MediumPrimary);
+        installButton = new Button(Tr::tr("Default"), Button::MediumPrimary);
         installButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
-        installButton->hide();
+        // installButton->hide();
 
         using namespace Layouting;
         Row {
@@ -158,14 +153,14 @@ public:
                 Row {
                     m_vendor,
                     Widget {
-                        bindTo(&m_dlCountItems),
+                        // bindTo(&m_dlCountItems),
                         Row {
                             Space(SpacingTokens::HGapXs),
                             m_divider,
                             Space(SpacingTokens::HGapXs),
-                            m_dlIcon,
+                            // m_dlIcon,
                             Space(SpacingTokens::HGapXxs),
-                            m_dlCount,
+                            // m_dlCount,
                             noMargin, spacing(0),
                         },
                     },
@@ -182,7 +177,7 @@ public:
         }.attachTo(this);
 
         setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Maximum);
-        m_dlCountItems->setVisible(false);
+        // m_dlCountItems->setVisible(false);
 
         connect(installButton, &QAbstractButton::pressed,
                 this, &HeadingWidget::pluginInstallationRequested);
@@ -203,30 +198,17 @@ public:
         const QString name = current.data(RoleName).toString();
         m_title->setText(name);
 
-        m_currentVendor = current.data(RoleVendor).toString();
+        m_currentVendor = current.data(RoleDate).toString();
         m_vendor->setText(m_currentVendor);
 
-        const int dlCount = current.data(RoleDownloadCount).toInt();
-        const bool showDlCount = dlCount > 0;
-        if (showDlCount)
-            m_dlCount->setText(QString::number(dlCount));
-        m_dlCountItems->setVisible(showDlCount);
-
-        const auto pluginData = current.data(RolePlugins).value<PluginsData>();
-        if (current.data(RoleItemType).toInt() == ItemTypePack) {
-            const int pluginsCount = pluginData.count();
-            const QString details = Tr::tr("Pack contains %n plugins.", nullptr, pluginsCount);
-            m_details->setText(details);
-        } else {
-            m_details->setText({});
-        }
+        m_details->setText(current.data(RoleDescriptionText).toString());
 
         const ItemType itemType = current.data(RoleItemType).value<ItemType>();
-        const bool isPack = itemType == ItemTypePack;
+        const bool isPack = itemType == ItemTypeLocal;
         const bool isRemotePlugin = false;//!(isPack || pluginSpecForName(name));
-        installButton->setVisible(isRemotePlugin && !pluginData.empty());
+        installButton->setVisible(true);
         if (installButton->isVisible())
-            installButton->setToolTip(pluginData.constFirst().second);
+            installButton->setToolTip("Set As Default");
     }
 
 signals:
@@ -238,9 +220,7 @@ private:
     QLabel *m_title;
     Button *m_vendor;
     QLabel *m_divider;
-    QLabel *m_dlIcon;
-    QLabel *m_dlCount;
-    QWidget *m_dlCountItems;
+    // QWidget *m_dlCountItems;
     QLabel *m_details;
     QAbstractButton *installButton;
     QString m_currentVendor;

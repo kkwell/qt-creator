@@ -5,10 +5,6 @@
 
 #include <QAbstractListModel>
 
-namespace ExtensionSystem {
-class PluginSpec;
-}
-
 namespace EasyBoard::Internal {
 
 using QPairList = QList<QPair<QString, QString> >;
@@ -19,8 +15,8 @@ using PluginsData = QPairList; // { <name, url>, ... }
 using TextData = QList<QPair<QString, QStringList> >; // { <header, text>, ... }
 
 enum ItemType {
-    ItemTypePack,
-    ItemTypeExtension,
+    ItemTypeLocal,
+    ItemTypeNetwork,
 };
 
 enum BoardState {
@@ -37,18 +33,14 @@ enum Role {
     RoleDescriptionImages,
     RoleDescriptionLinks,
     RoleDescriptionText,
-    RoleDownloadCount,
     RoleBoardState,
-    RoleId,
+    RoleIp,
+    RoleState,
     RoleItemType,
     RoleLicense,
     RoleLocation,
-    RolePlatforms,
-    RolePlugins,
+    RoleDate,
     RoleSearchText,
-    RoleSize,
-    RoleTags,
-    RoleVendor,
     RoleVersion,
 };
 
