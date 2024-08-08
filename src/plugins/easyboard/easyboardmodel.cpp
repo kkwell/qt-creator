@@ -64,19 +64,32 @@ static Boards parseBoardsRepoReply(const QByteArray &jsonData)
         parsedBoards.append(board);
         board.name = QString("local config test3");
         board.ip = "1.0.0.2";
-        board.date = "2024-08-08 19:01:30:011";
+        board.date = "2000-08-08 19:01:30:011";
         parsedBoards.append(board);
         board.name = QString("local config test0");
         board.ip = "1.0.0.3";
-        board.date = "2024-08-08 19:01:10:911";
+        board.date = "1990-08-08 19:01:10:911";
         parsedBoards.append(board);
-    // const QJsonObject jsonObj = QJsonDocument::fromJson(jsonData).object();
-    // const QJsonArray items = jsonObj.value("items").toArray();
-    // for (const QJsonValueConstRef &itemVal : items) {
-    //     const QJsonObject itemObj = itemVal.toObject();
-    //     const Board extension;// = extensionFromJson(itemObj);
-    //     parsedBoards.append(extension);
-    // }
+
+
+        board.name = "T113-S3";
+        board.date = "2024-08-08 20:01:50:312";
+        board.id = "T012093109230";
+        board.ip = "192.168.3.98";
+        board.version = "V1.0.0";
+        board.type = ItemTypeNetwork;
+        board.online = true;
+        parsedBoards.append(board);
+
+        board.name = "T113-S3";
+        board.date = "1900-01-01 20:01:50:312";
+        board.id = "T012093109231";
+        board.ip = "192.168.3.99";
+        board.version = "V1.0.0";
+        board.type = ItemTypeNetwork;
+        board.online = true;
+        parsedBoards.append(board);
+
     return parsedBoards;
 }
 
@@ -86,30 +99,15 @@ public:
     void setBoards(const Boards &boards);
     void addUnlistedLocalBoards();
     void updateBoard(const Board &board);
-    void copyBoard(Board &b1,Board &b2);
     Boards boards;
 };
 
-void EasyBoardModelPrivate::copyBoard(Board &b1,Board &b2)
-{
-    b1.compatVersion = b2.compatVersion;
-    b1.copyright     = b2.copyright    ;
-    b1.description   = b2.description  ;
-    b1.id            = b2.id           ;
-    b1.license       = b2.license      ;
-    b1.name          = b2.name         ;
-    // b1.platforms     = b2.platforms    ;
-    // b1.tags          = b2.tags         ;
-    // b1.vendor        = b2.vendor       ;
-    b1.version       = b2.version      ;
-    b1.type          = b2.type         ;
-    b1.online        = b2.online       ;
-}
 
 void EasyBoardModelPrivate::updateBoard(const Board &board)
 {
     for (Board &board_temp:boards) {
-        if(board_temp.id==board.id){//update
+        if(board_temp.id==board.id){
+            //update
             board_temp = board;
             return;
         }

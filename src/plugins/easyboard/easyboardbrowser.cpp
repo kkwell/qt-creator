@@ -388,7 +388,7 @@ public:
         static const QList<SortOption> options = {
             {Tr::tr("Name"), RoleName},
             {Tr::tr("Address"), RoleIp},
-            {Tr::tr("Time Sorting"), RoleDate},//, Qt::DescendingOrder
+            {Tr::tr("Time Sorting"), RoleDate, Qt::DescendingOrder},
         };
         return options;
     }
@@ -398,7 +398,6 @@ public:
         QTC_ASSERT(index < sortOptions().count(), index = 0);
         m_sortOptionIndex = index;
         const SortOption &option = sortOptions().at(index);
-        qDebug()<<index<<option.role;
 
         // Ensure some order for cases with insufficient data, e.g. RoleDownloadCount
         setSortRole(RoleName);
@@ -417,6 +416,12 @@ public:
                 Tr::tr("All"),
                 []([[maybe_unused]] const QModelIndex &index) {
                     return true;
+                },
+            },
+            {
+                Tr::tr("Online Item"),
+                [](const QModelIndex &index) {
+                    return index.data(RoleState).value<BoardState>() == Online;
                 },
             },
             {
@@ -446,12 +451,12 @@ public:
 protected:
     bool lessThan(const QModelIndex &left, const QModelIndex &right) const override
     {
-        const SortOption &option = sortOptions().at(m_sortOptionIndex);
-        const ItemType leftType = left.data(RoleItemType).value<ItemType>();
-        const ItemType rightType = right.data(RoleItemType).value<ItemType>();
-        if (leftType != rightType)
-            return option.order == Qt::AscendingOrder ? leftType < rightType
-                                                      : leftType > rightType;
+        // const SortOption &option = sortOptions().at(m_sortOptionIndex);
+        // const ItemType leftType = left.data(RoleItemType).value<ItemType>();
+        // const ItemType rightType = right.data(RoleItemType).value<ItemType>();
+        // if (leftType != rightType)
+        //     return option.order == Qt::AscendingOrder ? leftType < rightType
+        //                                               : leftType > rightType;
 
         return QSortFilterProxyModel::lessThan(left, right);
     }
@@ -603,6 +608,8 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
             d->sortFilterProxyModel, &SortFilterProxyModel::setSortOption);
     connect(d->filterChooser, &OptionChooser::currentIndexChanged,
             d->sortFilterProxyModel, &SortFilterProxyModel::setFilterOption);
+
+    updateModel();
 }
 
 EasyBoardBrowser::~EasyBoardBrowser()
