@@ -41,11 +41,13 @@ struct Board {
     QString id;
     QString license;
     QString name;
+    QString displayName;
     QString ip;
     QString version;
     ItemType type;
     QString date;
-    bool online;
+    bool isDefault = false;
+    bool online = false;
 };
 using Boards = QList<Board>;
 
@@ -78,6 +80,7 @@ static Boards parseBoardsRepoReply(const QByteArray &jsonData)
         board.ip = "192.168.3.98";
         board.version = "V1.0.0";
         board.type = ItemTypeNetwork;
+        board.isDefault = true;
         board.online = true;
         parsedBoards.append(board);
 
@@ -99,10 +102,16 @@ public:
     void setBoards(const Boards &boards);
     void addUnlistedLocalBoards();
     void updateBoard(const Board &board);
+    void remove();
     Boards boards;
 };
 
-
+void EasyBoardModelPrivate::remove()
+{
+    for(Board temp:boards){
+        qDebug()<<temp.name;
+    }
+}
 void EasyBoardModelPrivate::updateBoard(const Board &board)
 {
     for (Board &board_temp:boards) {
@@ -166,32 +175,38 @@ static QVariant dataFromBoard(const Board &board, int role)
 {
     switch (role) {
     case Qt::DisplayRole:
-    case RoleName:
+    case EasyBoardModel::RoleName:
         return board.name;
-    case RoleCompatVersion:
+    case EasyBoardModel::RoleDisplayName:
+        return board.displayName;
+    case EasyBoardModel::RoleCompatVersion:
         return board.compatVersion;
-    case RoleCopyright:
+    case EasyBoardModel::RoleCopyright:
         return !board.copyright.isEmpty() ? board.copyright : QVariant();
-    case RoleDependencies:
+    case EasyBoardModel::RoleDependencies:
         return QVariant();//dependenciesFromExtension(board);
-    case RoleDescriptionImages:
+    case EasyBoardModel::RoleDescriptionImages:
         return QVariant::fromValue(board.description.images);
-    case RoleDescriptionLinks:
+    case EasyBoardModel::RoleDescriptionLinks:
         return QVariant::fromValue(board.description.links);
-    case RoleDescriptionText:
+    case EasyBoardModel::RoleDescriptionText:
         return QVariant::fromValue(board.description.text);
-    case RoleIp:
+    case EasyBoardModel::RoleIp:
         return board.ip;
-    case RoleItemType:
+    case EasyBoardModel::RoleId:
+        return board.id;
+    case EasyBoardModel::RoleItemType:
         return board.type;
-    case RoleLicense:
+    case EasyBoardModel::RoleLicense:
         return board.license;
-    case RoleState:
+    case EasyBoardModel::RoleState:
         return board.online;
-    case RoleDate:
+    case EasyBoardModel::RoleDate:
         return board.date;
+    case EasyBoardModel::RoleDefault:
+        return board.isDefault;
         break;
-    case RoleVersion:
+    case EasyBoardModel::RoleVersion:
         return !board.version.isEmpty() ? board.version : QVariant();
     default:
         break;
@@ -203,7 +218,7 @@ BoardState boardState(const QModelIndex &index)
 {
     // if (index.data(RoleItemType) != ItemTypeLocal)
     //     return None;
-    return index.data(RoleState).toBool()?Online:Offline;
+    return index.data(EasyBoardModel::RoleState).toBool()?Online:Offline;
 
     // const PluginSpec *ps = pluginSpecForName(index.data(RoleName).toString());
     // if (!ps)
@@ -216,10 +231,10 @@ BoardState boardState(const QModelIndex &index)
 static QString searchText(const QModelIndex &index)
 {
     QStringList searchTexts;
-    searchTexts.append(index.data(RoleName).toString());
-    searchTexts.append(index.data(RoleIp).toStringList());
-    searchTexts.append(index.data(RoleDescriptionText).toStringList());
-    searchTexts.append(index.data(RoleVersion).toString());
+    searchTexts.append(index.data(EasyBoardModel::RoleName).toString());
+    searchTexts.append(index.data(EasyBoardModel::RoleIp).toStringList());
+    searchTexts.append(index.data(EasyBoardModel::RoleDescriptionText).toStringList());
+    searchTexts.append(index.data(EasyBoardModel::RoleVersion).toString());
     return searchTexts.join(" ");
 }
 
@@ -231,7 +246,7 @@ QVariant EasyBoardModel::data(const QModelIndex &index, int role) const
         return searchText(index);
 
     const Board &board = d->boards.at(index.row());
-    const QVariant extensionData = dataFromBoard(board,role);// = dataFromExtension(extension, role);
+    const QVariant boardData = dataFromBoard(board,role);// = dataFromExtension(extension, role);
     // If data is unavailable, retrieve it from the first contained plugin
     // if (extensionData.isNull() && !extension.plugins.isEmpty()) {
     //     const QString firstPluginName = extension.plugins.constFirst().name;
@@ -241,7 +256,7 @@ QVariant EasyBoardModel::data(const QModelIndex &index, int role) const
     //         return {};
     //     return dataFromExtension(firstPluginExtension, role);
     // }
-    return extensionData;
+    return boardData;
 }
 
 void EasyBoardModel::onSocketData(QJsonObject str)
@@ -265,6 +280,31 @@ void EasyBoardModel::setBoards(const QByteArray &json)
     const Boards boards = parseBoardsRepoReply(json);
     beginResetModel();
     d->setBoards(boards);
+    endResetModel();
+}
+
+void EasyBoardModel::removeFromList(const QString &id,const ItemType &itemType)
+{
+    beginResetModel();
+    for (int i=0;i<d->boards.size();i++) {
+        if(itemType==d->boards.at(i).type && id==d->boards.at(i).id){
+            d->boards.removeAt(i);
+            break;
+        }
+    }
+    endResetModel();
+
+}
+
+void EasyBoardModel::setDefault(const QString &id,const ItemType &itemType)
+{
+    beginResetModel();
+    for (Board &b:d->boards) {
+        if(itemType==b.type && id==b.id)
+            b.isDefault = true;
+        else
+            b.isDefault = false;
+    }
     endResetModel();
 }
 

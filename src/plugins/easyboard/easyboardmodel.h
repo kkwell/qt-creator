@@ -25,28 +25,34 @@ enum BoardState {
     Offline,
 };
 
-enum Role {
-    RoleName = Qt::UserRole,
-    RoleCompatVersion,
-    RoleCopyright,
-    RoleDependencies,
-    RoleDescriptionImages,
-    RoleDescriptionLinks,
-    RoleDescriptionText,
-    RoleBoardState,
-    RoleIp,
-    RoleState,
-    RoleItemType,
-    RoleLicense,
-    RoleLocation,
-    RoleDate,
-    RoleSearchText,
-    RoleVersion,
-};
+
 
 class EasyBoardModel : public QAbstractListModel
 {
+    Q_OBJECT
 public:
+    enum Role{
+        RoleName = Qt::UserRole,
+        RoleDisplayName,
+        RoleCompatVersion,
+        RoleCopyright,
+        RoleDependencies,
+        RoleDescriptionImages,
+        RoleDescriptionLinks,
+        RoleDescriptionText,
+        RoleBoardState,
+        RoleIp,
+        RoleId,
+        RoleState,
+        RoleItemType,
+        RoleLicense,
+        RoleLocation,
+        RoleDate,
+        RoleSearchText,
+        RoleVersion,
+        RoleDefault,
+    };
+
     EasyBoardModel(QObject *parent = nullptr);
     ~EasyBoardModel();
 
@@ -54,8 +60,12 @@ public:
     QVariant data(const QModelIndex &index, int role) const;
 
     void setBoards(const QByteArray &json);
-slots
+
     void onSocketData(QJsonObject str);
+
+public slots:
+    void removeFromList(const QString &id,const ItemType &itemType);
+    void setDefault(const QString &id,const ItemType &itemType);
 
 private:
     class EasyBoardModelPrivate *d = nullptr;

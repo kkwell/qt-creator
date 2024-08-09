@@ -195,15 +195,15 @@ public:
 
         m_icon->setPixmap(itemIcon(current, SizeBig));
 
-        const QString name = current.data(RoleName).toString();
+        const QString name = current.data(EasyBoardModel::RoleName).toString();
         m_title->setText(name);
 
-        m_currentVendor = current.data(RoleDate).toString();
+        m_currentVendor = current.data(EasyBoardModel::RoleDate).toString();
         m_vendor->setText(m_currentVendor);
 
-        m_details->setText(current.data(RoleDescriptionText).toString());
+        m_details->setText(current.data(EasyBoardModel::RoleDescriptionText).toString());
 
-        const ItemType itemType = current.data(RoleItemType).value<ItemType>();
+        const ItemType itemType = current.data(EasyBoardModel::RoleItemType).value<ItemType>();
         const bool isPack = itemType == ItemTypeLocal;
         const bool isRemotePlugin = false;//!(isPack || pluginSpecForName(name));
         installButton->setVisible(true);
@@ -312,8 +312,6 @@ private:
     QLabel *m_dependencies;
     QLabel *m_packExtensionsTitle;
     QLabel *m_packExtensions;
-    // PluginStatusWidget *m_pluginStatus;
-    // PluginsData m_currentItemPlugins;
     Tasking::TaskTreeRunner m_dlTaskTreeRunner;
     Tasking::TaskTreeRunner m_imgTaskTreeRunner;
 };

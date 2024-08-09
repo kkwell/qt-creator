@@ -40,6 +40,8 @@
 #include <QPainterPath>
 #include <QStyle>
 #include <QLoggingCategory>
+#include <QHelpEvent>
+#include <QMenu>
 
 using namespace Core;
 using namespace Utils;
@@ -160,6 +162,7 @@ static QString boardStateDisplayString(BoardState state)
 
 class BoardItemDelegate : public QItemDelegate
 {
+    Q_OBJECT
 public:
     constexpr static QSize dividerS{1, 16};
     constexpr static TextFormat itemNameTF
@@ -215,15 +218,19 @@ public:
         x += iconBgSizeSmall.width() + ExPaddingGapL;
         y += ExPaddingGapL;
         const QRect itemNameR(x, y, middleColumnW, itemNameTF.lineHeight());
-        const QString itemName = index.data().toString();
+        const QString itemDisName = index.data(EasyBoardModel::RoleDisplayName).toString();
+
+        const QString itemName = itemDisName.isEmpty()?index.data().toString():itemDisName;
+
+        const QString itemVersion = index.data(EasyBoardModel::RoleVersion).toString();
 
         const QSize checkmarkS(12, 12);
         const QRect checkmarkR(x + middleColumnW - checkmarkS.width(), y,
                                checkmarkS.width(), checkmarkS.height());
-        const BoardState state = index.data(RoleBoardState).value<BoardState>();
+        const BoardState state = index.data(EasyBoardModel::RoleBoardState).value<BoardState>();
         const QString stateString = boardStateDisplayString(state);
-        const bool showState = (state == Online || state == Offline)
-                && !stateString.isEmpty();
+        const bool showState = (state == Online);
+                // && !stateString.isEmpty();
         const QFont stateFont = stateTF.font();
         const QFontMetrics stateFM(stateFont);
         const int stateStringWidth = stateFM.horizontalAdvance(stateString);
@@ -243,7 +250,7 @@ public:
         painter->setRenderHint(QPainter::Antialiasing);
         painter->translate(bgRGlobal.topLeft());
 
-        const bool isPack = index.data(RoleItemType) == ItemTypeLocal;
+        // const bool isPack = index.data(RoleItemType) == ItemTypeLocal;
         {
             const bool selected = option.state & QStyle::State_Selected;
             const bool hovered = option.state & QStyle::State_MouseOver;
@@ -255,26 +262,19 @@ public:
                                       : hovered ? WelcomePageHelpers::cardHoverStroke
                                                 : WelcomePageHelpers::cardDefaultStroke);
             WelcomePageHelpers::drawCardBackground(painter, bgR, fillColor, strokeColor);
+            // if(selected){
+            //     QAbstractButton *installButton = new Button(Tr::tr("Default"), Button::MediumPrimary);
+            //     installButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+            //     installButton->setVisible(true);
+            //     if (installButton->isVisible())
+            //         installButton->setToolTip(Tr::tr("Set As Default"));
+            // }
         }
         {
             const QPixmap icon = itemIcon(index, SizeSmall);
             painter->drawPixmap(iconBgR.topLeft(), icon);
         }
-        // if (isPack) {
-        //     constexpr int circleSize = 18;
-        //     constexpr int circleOverlap = 3; // Protrusion from lower right corner of iconRect
-        //     const QRect smallCircle(iconBgR.right() + 1 + circleOverlap - circleSize,
-        //                             iconBgR.bottom() + 1 + circleOverlap - circleSize,
-        //                             circleSize, circleSize);
-        //     const QColor fillColor = creatorColor(Theme::Token_Foreground_Muted);
-        //     const QColor strokeColor = creatorColor(Theme::Token_Stroke_Subtle);
-        //     drawCardBackground(painter, smallCircle, fillColor, strokeColor, circleSize / 2);
 
-        //     painter->setFont(countTF.font());
-        //     painter->setPen(countTF.color());
-        //     const PluginsData plugins = index.data(RolePlugins).value<PluginsData>();
-        //     painter->drawText(smallCircle, countTF.drawTextFlags, QString::number(plugins.count()));
-        // }
         {
             QRect effectiveR = itemNameR;
             if (showState)
@@ -285,57 +285,39 @@ public:
                 = painter->fontMetrics().elidedText(itemName, Qt::ElideRight, effectiveR.width());
             painter->drawText(effectiveR, itemNameTF.drawTextFlags, titleElided);
         }
-        if (showState) {
+
+        if (index.data(EasyBoardModel::RoleDefault).toBool()) {
             static const QIcon checkmark = Icon({{":/easyboard/images/checkmark.png",
                                                   stateTF.themeColor}}, Icon::Tint).icon();
             checkmark.paint(painter, checkmarkR);
-            painter->setPen(stateTF.color());
+        }
+
+        if(state == Online){
+            painter->setPen(qRgb(156, 219, 166));//qRgb(239, 90, 111),stateTF.color()
             painter->setFont(stateTF.font());
             painter->drawText(stateR, stateTF.drawTextFlags, stateString);
         }
         {
-            const QString vendor = index.data(RoleDate).toString();
+            const QString vendor = index.data(EasyBoardModel::RoleDate).toString();
             const QFontMetrics fm(vendorTF.font());
             painter->setPen(vendorTF.color());
             painter->setFont(vendorTF.font());
-
-            // if (const int dlCount = index.data(RoleDownloadCount).toInt(); dlCount > 0) {
-            //     constexpr QSize dlIconS(16, 16);
-            //     const QString dlCountString = QString::number(dlCount);
-            //     const int dlCountW = fm.horizontalAdvance(dlCountString);
-            //     const int dlItemsW = HGapXs + dividerS.width() + HGapXs + dlIconS.width()
-            //                          + HGapXxs + dlCountW;
-            //     const int vendorW = fm.horizontalAdvance(vendor);
-            //     vendorR.setWidth(qMin(middleColumnW - dlItemsW, vendorW));
-
-            //     QRect dividerR = vendorRowR;
-            //     dividerR.setLeft(vendorR.right() + HGapXs);
-            //     dividerR.setWidth(dividerS.width());
-            //     painter->fillRect(dividerR, vendorTF.color());
-
-            //     QRect dlIconR = vendorRowR;
-            //     dlIconR.setLeft(dividerR.right() + HGapXs);
-            //     dlIconR.setWidth(dlIconS.width());
-            //     static const QIcon dlIcon = Icon({{":/easyboard/images/download.png",
-            //                                        vendorTF.themeColor}}, Icon::Tint).icon();
-            //     dlIcon.paint(painter, dlIconR);
-
-            //     QRect dlCountR = vendorRowR;
-            //     dlCountR.setLeft(dlIconR.right() + HGapXxs);
-            //     painter->drawText(dlCountR, vendorTF.drawTextFlags, dlCountString);
-            // }
 
             const QString vendorElided = fm.elidedText(vendor, Qt::ElideRight, vendorR.width());
             painter->drawText(vendorR, vendorTF.drawTextFlags, vendorElided);
         }
         {
-            const QStringList tagList = index.data(RoleIp).toStringList();
-            const QString tags = tagList.join(", ");
+            const QString tags = index.data(EasyBoardModel::RoleIp).toString();
+
             painter->setPen(tagsTF.color());
             painter->setFont(tagsTF.font());
             const QString tagsElided
                 = painter->fontMetrics().elidedText(tags, Qt::ElideRight, tagsR.width());
             painter->drawText(tagsR, tagsTF.drawTextFlags, tagsElided);
+            const QString verElided
+                = painter->fontMetrics().elidedText(itemVersion, Qt::ElideRight, tagsR.width());
+            painter->drawText(tagsR, tagsTF.drawTextFlags|Qt::AlignRight, verElided);
+
         }
 
         painter->restore();
@@ -361,6 +343,45 @@ public:
             + ExPaddingGapL;
         return {cellWidth, height + gapSize};
     }
+
+    bool editorEvent(QEvent *ev, QAbstractItemModel *model,
+                     const QStyleOptionViewItem &, const QModelIndex &idx) final
+    {
+        if (ev->type() == QEvent::MouseButtonRelease) {
+            const QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(ev);
+            const Qt::MouseButtons button = mouseEvent->button();
+            if (button == Qt::LeftButton) {
+
+                return true;
+            }
+            if (button == Qt::RightButton) {
+                QMenu contextMenu;
+                QAction *action = new QAction(Tr::tr("Remove Board"));
+                // const auto boardModel = qobject_cast<EasyBoardModel *>(model);
+                contextMenu.addAction(action);
+                connect(action, &QAction::triggered, this, [idx,this] {
+                    const QVariant id = idx.data(EasyBoardModel::RoleId);
+                    const ItemType itemType = idx.data(EasyBoardModel::RoleItemType).value<ItemType>();
+                    // boardModel->removeFromList(id.toString(),itemType);
+                    emit this->removeFromListSig(id.toString(),itemType);
+                });
+                contextMenu.addSeparator();
+                action = new QAction(Tr::tr("Set As Default"));
+                connect(action, &QAction::triggered, this, [idx,this] {
+                    const QVariant id = idx.data(EasyBoardModel::RoleId);
+                    const ItemType itemType = idx.data(EasyBoardModel::RoleItemType).value<ItemType>();
+                    emit this->setDefaultSig(id.toString(),itemType);
+                });
+                contextMenu.addAction(action);
+                contextMenu.exec(mouseEvent->globalPosition().toPoint());
+                return true;
+            }
+        }
+        return false;
+    }
+signals:
+    void setDefaultSig(const QString &id,const ItemType &itemType);
+    void removeFromListSig(const QString &id,const ItemType &itemType);
 };
 
 class SortFilterProxyModel : public QSortFilterProxyModel
@@ -368,7 +389,7 @@ class SortFilterProxyModel : public QSortFilterProxyModel
 public:
     struct SortOption {
         const QString displayName;
-        const Role role;
+        const EasyBoardModel::Role role;
         const Qt::SortOrder order = Qt::AscendingOrder;
     };
 
@@ -386,9 +407,9 @@ public:
     static const QList<SortOption> &sortOptions()
     {
         static const QList<SortOption> options = {
-            {Tr::tr("Name"), RoleName},
-            {Tr::tr("Address"), RoleIp},
-            {Tr::tr("Time Sorting"), RoleDate, Qt::DescendingOrder},
+            {Tr::tr("Name"), EasyBoardModel::RoleName},
+            {Tr::tr("IP"), EasyBoardModel::RoleIp},
+            {Tr::tr("Time"), EasyBoardModel::RoleDate, Qt::DescendingOrder},
         };
         return options;
     }
@@ -400,9 +421,9 @@ public:
         const SortOption &option = sortOptions().at(index);
 
         // Ensure some order for cases with insufficient data, e.g. RoleDownloadCount
-        setSortRole(RoleName);
+        setSortRole(EasyBoardModel::RoleName);
         sort(0);
-        if (option.role == RoleName)
+        if (option.role == EasyBoardModel::RoleName)
             return; // Already sorted.
 
         setSortRole(option.role);
@@ -419,21 +440,21 @@ public:
                 },
             },
             {
-                Tr::tr("Online Item"),
+                Tr::tr("Online"),
                 [](const QModelIndex &index) {
-                    return index.data(RoleState).value<BoardState>() == Online;
+                    return index.data(EasyBoardModel::RoleState).value<BoardState>() == Online;
                 },
             },
             {
-                Tr::tr("Loacl Item"),
+                Tr::tr("Loacl"),
                 [](const QModelIndex &index) {
-                    return index.data(RoleItemType).value<ItemType>() == ItemTypeLocal;
+                    return index.data(EasyBoardModel::RoleItemType).value<ItemType>() == ItemTypeLocal;
                 },
             },
             {
-                Tr::tr("Network Item"),
+                Tr::tr("Network"),
                 [](const QModelIndex &index) {
-                    return index.data(RoleItemType).value<ItemType>() == ItemTypeNetwork;
+                    return index.data(EasyBoardModel::RoleItemType).value<ItemType>() == ItemTypeNetwork;
                 },
             },
         };
@@ -449,8 +470,8 @@ public:
     }
 
 protected:
-    bool lessThan(const QModelIndex &left, const QModelIndex &right) const override
-    {
+    // bool lessThan(const QModelIndex &left, const QModelIndex &right) const override
+    // {
         // const SortOption &option = sortOptions().at(m_sortOptionIndex);
         // const ItemType leftType = left.data(RoleItemType).value<ItemType>();
         // const ItemType rightType = right.data(RoleItemType).value<ItemType>();
@@ -458,8 +479,8 @@ protected:
         //     return option.order == Qt::AscendingOrder ? leftType < rightType
         //                                               : leftType > rightType;
 
-        return QSortFilterProxyModel::lessThan(left, right);
-    }
+    //     return QSortFilterProxyModel::lessThan(left, right);
+    // }
 
     bool filterAcceptsRow(int source_row, const QModelIndex &source_parent) const override
     {
@@ -511,7 +532,7 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
 
     d->searchProxyModel = new QSortFilterProxyModel(this);
     d->searchProxyModel->setFilterCaseSensitivity(Qt::CaseInsensitive);
-    d->searchProxyModel->setFilterRole(RoleSearchText);
+    d->searchProxyModel->setFilterRole(EasyBoardModel::RoleSearchText);
     d->searchProxyModel->setSourceModel(d->model);
 
     d->sortFilterProxyModel = new SortFilterProxyModel(this);
@@ -535,9 +556,14 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
     d->updateButton->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
     d->updateButton->setToolTip(Tr::tr("Auto search local network board"));
 
+
+    BoardItemDelegate *pDelegate = new BoardItemDelegate(this);
+    connect(pDelegate,&BoardItemDelegate::setDefaultSig,d->model,&EasyBoardModel::setDefault);
+    connect(pDelegate,&BoardItemDelegate::removeFromListSig,d->model,&EasyBoardModel::removeFromList);
+
     d->boardsView = new QListView;
     d->boardsView->setFrameStyle(QFrame::NoFrame);
-    d->boardsView->setItemDelegate(new BoardItemDelegate(this));
+    d->boardsView->setItemDelegate(pDelegate);
     d->boardsView->setResizeMode(QListView::Adjust);
     d->boardsView->setSelectionMode(QListView::SingleSelection);
     d->boardsView->setUniformItemSizes(true);
@@ -595,8 +621,12 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
         }
     };
 
+    auto testModel = [this] {
+        d->model->setDefault("",ItemTypeLocal);
+    };
+
     connect(d->addButton, &QAbstractButton::pressed,
-            this, updateModel);
+            this, testModel);
     connect(d->updateButton, &QAbstractButton::pressed,
             d->pNetManage, &netproperty::findEasyBoard);
     connect(d->pNetManage,&netproperty::getSocketData,
@@ -609,7 +639,7 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
     connect(d->filterChooser, &OptionChooser::currentIndexChanged,
             d->sortFilterProxyModel, &SortFilterProxyModel::setFilterOption);
 
-    updateModel();
+    // updateModel();
 }
 
 EasyBoardBrowser::~EasyBoardBrowser()
@@ -780,4 +810,5 @@ QPixmap itemIcon(const QModelIndex &index, Size size)
     return pixmap;
 }
 
+#include "easyboardbrowser.moc"
 } // ExtensionManager::Internal
