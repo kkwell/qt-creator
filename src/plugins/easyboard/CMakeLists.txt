@@ -5,6 +5,8 @@ add_qtc_plugin(EasyBoard
     easyboard.qrc
     easyboardplugin.cpp
     easyboardtr.h
+    easyboard_export.h
+    easyboardstruct.h
     easyboardwidget.h
     easyboardwidget.cpp
     easyboardmodel.h
@@ -13,6 +15,8 @@ add_qtc_plugin(EasyBoard
     easyboardbrowser.cpp
     easyboardsettings.h
     easyboardsettings.cpp
+    newboarddialog.h
+    newboarddialog.cpp
     ssdp/netproperty.h
     ssdp/netproperty.cpp
     ssdp/qaesencryption.h

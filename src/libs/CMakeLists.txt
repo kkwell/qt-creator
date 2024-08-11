@@ -1,6 +1,6 @@
 add_subdirectory(3rdparty)
 
-# add_subdirectory(nanotrace)
+add_subdirectory(nanotrace)
 add_subdirectory(advanceddockingsystem)
 add_subdirectory(aggregation)
  add_subdirectory(cplusplus)
@@ -18,7 +18,7 @@ add_subdirectory(solutions)
 # add_subdirectory(tracing)
 
 # if (WITH_QMLDESIGNER)
-#   add_subdirectory(sqlite)
+  add_subdirectory(sqlite)
 #   add_subdirectory(qmlpuppetcommunication)
 # endif()
 

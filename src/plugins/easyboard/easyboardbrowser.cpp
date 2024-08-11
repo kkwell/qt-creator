@@ -5,7 +5,7 @@
 
 #include "easyboardtr.h"
 #include "easyboardmodel.h"
-#include "easyboardsettings.h"
+#include "newboarddialog.h"
 #include "ssdp/netproperty.h"
 
 #ifdef WITH_TESTS
@@ -347,6 +347,9 @@ public:
     bool editorEvent(QEvent *ev, QAbstractItemModel *model,
                      const QStyleOptionViewItem &, const QModelIndex &idx) final
     {
+        if (ev->type() == QEvent::MouseButtonDblClick) {
+            qDebug()<<"MouseButtonDblClick";
+        }
         if (ev->type() == QEvent::MouseButtonRelease) {
             const QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(ev);
             const Qt::MouseButtons button = mouseEvent->button();
@@ -584,7 +587,7 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
         },
         Row {
             d->addButton,
-            spacing(gapSize),
+            spacing(gapSize*2),
             d->updateButton,
             spacing(gapSize),
             customMargins(0, VPaddingM, extraListViewWidth() + gapSize, VPaddingM),
@@ -611,7 +614,6 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
 
     auto updateModel = [this] {
         d->sortFilterProxyModel->sort(0);
-
         if (d->selectionModel == nullptr) {
             d->selectionModel = new QItemSelectionModel(d->sortFilterProxyModel,
                                                           d->boardsView);
@@ -622,8 +624,12 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
     };
 
     auto testModel = [this] {
-        d->model->setDefault("",ItemTypeLocal);
+        NewBoardDialog newDialog(ICore::dialogParent());
+        // newDialog.setAutoLoadSession(d->isAutoRestoreLastSession());
+        newDialog.exec();
     };
+
+    updateModel();
 
     connect(d->addButton, &QAbstractButton::pressed,
             this, testModel);
@@ -631,7 +637,7 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
             d->pNetManage, &netproperty::findEasyBoard);
     connect(d->pNetManage,&netproperty::getSocketData,
             d->model,&EasyBoardModel::onSocketData);
-    // connect(PluginManager::instance(), &PluginManager::pluginsChanged, this, updateModel);
+    connect(d->model, &EasyBoardModel::dataChange, this, updateModel);
     connect(d->searchBox, &QLineEdit::textChanged,
             d->searchProxyModel, &QSortFilterProxyModel::setFilterWildcard);
     connect(d->sortChooser, &OptionChooser::currentIndexChanged,
@@ -639,7 +645,6 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
     connect(d->filterChooser, &OptionChooser::currentIndexChanged,
             d->sortFilterProxyModel, &SortFilterProxyModel::setFilterOption);
 
-    // updateModel();
 }
 
 EasyBoardBrowser::~EasyBoardBrowser()
@@ -707,52 +712,52 @@ void EasyBoardBrowser::fetchExtensions()
     // Available: "augmentedplugindata", "defaultpacks", "varieddata", "thirdpartyplugins"
     // d->model->setExtensionsJson(testData("defaultpacks")); return;
 #endif // WITH_TESTS
+    // d->model->setBoards({});
+    // if (!settings().useExternalRepo()) {
+    //     d->model->setBoards({});
+    //     return;
+    // }
 
-    if (!settings().useExternalRepo()) {
-        d->model->setBoards({});
-        return;
-    }
+    // using namespace Tasking;
 
-    using namespace Tasking;
+    // const auto onQuerySetup = [this](NetworkQuery &query) {
+    //     const QString url = "%1/api/v1/search?request=";
+    //     const QString requestTemplate
+    //         = R"({"qtc_version":"%1","host_os":"%2","host_os_version":"%3","host_architecture":"%4","page_size":200})";
+    //     const QString request = url.arg(settings().externalRepoUrl()) + requestTemplate
+    //                                                                         .arg(QCoreApplication::applicationVersion())
+    //                                                                         .arg(customOsTypeToString(HostOsInfo::hostOs()))
+    //                                                                         .arg(QSysInfo::productVersion())
+    //                                                                         .arg(QSysInfo::currentCpuArchitecture());
+    //     query.setRequest(QNetworkRequest(QUrl::fromUserInput(request)));
+    //     query.setNetworkAccessManager(NetworkAccessManager::instance());
+    //     qCDebug(browserLog).noquote() << "Sending JSON request:" << request;
+    //     d->m_spinner->show();
+    // };
 
-    const auto onQuerySetup = [this](NetworkQuery &query) {
-        const QString url = "%1/api/v1/search?request=";
-        const QString requestTemplate
-            = R"({"qtc_version":"%1","host_os":"%2","host_os_version":"%3","host_architecture":"%4","page_size":200})";
-        const QString request = url.arg(settings().externalRepoUrl()) + requestTemplate
-                                                                            .arg(QCoreApplication::applicationVersion())
-                                                                            .arg(customOsTypeToString(HostOsInfo::hostOs()))
-                                                                            .arg(QSysInfo::productVersion())
-                                                                            .arg(QSysInfo::currentCpuArchitecture());
-        query.setRequest(QNetworkRequest(QUrl::fromUserInput(request)));
-        query.setNetworkAccessManager(NetworkAccessManager::instance());
-        qCDebug(browserLog).noquote() << "Sending JSON request:" << request;
-        d->m_spinner->show();
-    };
-
-    qDebug()<<"kong:"<<settings().externalRepoUrl();
-    d->model->setBoards({});
+    // qDebug()<<"kong:"<<settings().externalRepoUrl();
+    // d->model->setBoards({});
 
 
-    const auto onQueryDone = [this](const NetworkQuery &query, DoneWith result) {
-        const QByteArray response = query.reply()->readAll();
-        qCDebug(browserLog).noquote() << "Got JSON QNetworkReply:" << query.reply()->error();
-        if (result == DoneWith::Success) {
-            qCDebug(browserLog).noquote() << "JSON response size:"
-                                          << QLocale::system().formattedDataSize(response.size());
-            d->model->setBoards(response);
-        } else {
-            qCWarning(browserLog).noquote() << response;
-            d->model->setBoards({});
-        }
-        d->m_spinner->hide();
-    };
+    // const auto onQueryDone = [this](const NetworkQuery &query, DoneWith result) {
+    //     const QByteArray response = query.reply()->readAll();
+    //     qCDebug(browserLog).noquote() << "Got JSON QNetworkReply:" << query.reply()->error();
+    //     if (result == DoneWith::Success) {
+    //         qCDebug(browserLog).noquote() << "JSON response size:"
+    //                                       << QLocale::system().formattedDataSize(response.size());
+    //         d->model->setBoards(response);
+    //     } else {
+    //         qCWarning(browserLog).noquote() << response;
+    //         d->model->setBoards({});
+    //     }
+    //     d->m_spinner->hide();
+    // };
 
-    Group group {
-                NetworkQueryTask{onQuerySetup, onQueryDone},
-                };
+    // Group group {
+    //             NetworkQueryTask{onQuerySetup, onQueryDone},
+    //             };
 
-    d->taskTreeRunner.start(group);
+    // d->taskTreeRunner.start(group);
 }
 
 QLabel *tfLabel(const TextFormat &tf, bool singleLine)

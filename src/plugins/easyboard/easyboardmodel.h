@@ -4,6 +4,7 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <easyboardstruct.h>
 
 namespace EasyBoard::Internal {
 
@@ -13,17 +14,6 @@ using ImagesData = QPairList; // { <caption, url>, ... }
 using LinksData = QPairList; // { <name, url>, ... }
 using PluginsData = QPairList; // { <name, url>, ... }
 using TextData = QList<QPair<QString, QStringList> >; // { <header, text>, ... }
-
-enum ItemType {
-    ItemTypeLocal,
-    ItemTypeNetwork,
-};
-
-enum BoardState {
-    None, // Not a board
-    Online,
-    Offline,
-};
 
 
 
@@ -62,10 +52,16 @@ public:
     void setBoards(const QByteArray &json);
 
     void onSocketData(QJsonObject str);
+    void save();
+    void read();
 
 public slots:
     void removeFromList(const QString &id,const ItemType &itemType);
     void setDefault(const QString &id,const ItemType &itemType);
+    void devicesLoaded();
+
+signals:
+    void dataChange();
 
 private:
     class EasyBoardModelPrivate *d = nullptr;

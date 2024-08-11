@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "easyboardmodel.h"
+#include "easyboardsettings.h"
 
 #include "utils/algorithm.h"
 
@@ -28,28 +29,6 @@ namespace EasyBoard::Internal {
 
 Q_LOGGING_CATEGORY(modelLog, "qtc.easyboard.model", QtWarningMsg)
 
-struct Description {
-    ImagesData images;
-    LinksData links;
-    TextData text;
-};
-
-struct Board {
-    QString compatVersion;
-    QString copyright;
-    Description description;
-    QString id;
-    QString license;
-    QString name;
-    QString displayName;
-    QString ip;
-    QString version;
-    ItemType type;
-    QString date;
-    bool isDefault = false;
-    bool online = false;
-};
-using Boards = QList<Board>;
 
 static Boards parseBoardsRepoReply(const QByteArray &jsonData)
 {
@@ -63,14 +42,17 @@ static Boards parseBoardsRepoReply(const QByteArray &jsonData)
         board.date = "2024-08-08 19:01:50:012";
         board.online = false;
         board.type = ItemTypeLocal;
+        board.id = "x1";
         parsedBoards.append(board);
         board.name = QString("local config test3");
         board.ip = "1.0.0.2";
         board.date = "2000-08-08 19:01:30:011";
+        board.id = "x2";
         parsedBoards.append(board);
         board.name = QString("local config test0");
         board.ip = "1.0.0.3";
         board.date = "1990-08-08 19:01:10:911";
+        board.id = "x3";
         parsedBoards.append(board);
 
 
@@ -92,19 +74,51 @@ static Boards parseBoardsRepoReply(const QByteArray &jsonData)
         board.type = ItemTypeNetwork;
         board.online = true;
         parsedBoards.append(board);
-
+        qDebug()<<"kong:"<<parsedBoards.size();
     return parsedBoards;
 }
 
 class EasyBoardModelPrivate
 {
 public:
+    EasyBoardModelPrivate(){
+        // qDebug()<<"EasyBoardModelPrivate";
+        boardSettings.setBoards(&boards);
+        // qDebug()<<"start loading";
+        boardSettings.load();
+        // qDebug()<<"EasyBoardModelPrivate end";
+
+    };
+
     void setBoards(const Boards &boards);
     void addUnlistedLocalBoards();
     void updateBoard(const Board &board);
     void remove();
+
+    void getBoards();
+
+    EasyBoardSettings boardSettings;
+
     Boards boards;
 };
+
+void EasyBoardModelPrivate::getBoards()
+{
+    // QtcSettings *s = ICore::settings();
+    // const QStringList deviceIds = s->value(BOARDS_EXISTENCE_IDS).toStringList();
+    // qDebug()<<"deviceIds:"<<deviceIds;
+    // const QHash<QString, QVariant> boardsList
+    //     = s->value(BOARDS_EXISTENCE_KEY).toHash();
+    // if(deviceIds.isEmpty())
+    //     return;
+    // qDebug()<<deviceIds.size()<<boardsList.size();
+
+    // for (int i = 0; i < deviceIds.size(); ++i) {
+    //     const QJsonObject exists = boardsList.value(deviceIds.at(i), QJsonObject()).toJsonObject();
+    //     qDebug()<<deviceIds.at(i)<<exists;
+    // }
+}
+
 
 void EasyBoardModelPrivate::remove()
 {
@@ -144,11 +158,23 @@ EasyBoardModel::EasyBoardModel(QObject *parent)
     : QAbstractListModel(parent)
     , d(new EasyBoardModelPrivate)
 {
+    connect(&d->boardSettings,SIGNAL(devicesLoaded()),this,SLOT(devicesLoaded()));
 }
 
 EasyBoardModel::~EasyBoardModel()
 {
+    d->boardSettings.save();
     delete d;
+}
+
+void EasyBoardModel::save()
+{
+    // d->saveBoards();
+}
+
+void EasyBoardModel::read()
+{
+    d->getBoards();
 }
 
 int EasyBoardModel::rowCount([[maybe_unused]] const QModelIndex &parent) const
@@ -186,11 +212,11 @@ static QVariant dataFromBoard(const Board &board, int role)
     case EasyBoardModel::RoleDependencies:
         return QVariant();//dependenciesFromExtension(board);
     case EasyBoardModel::RoleDescriptionImages:
-        return QVariant::fromValue(board.description.images);
+        // return QVariant::fromValue(board.description.images);
     case EasyBoardModel::RoleDescriptionLinks:
-        return QVariant::fromValue(board.description.links);
+        // return QVariant::fromValue(board.description.links);
     case EasyBoardModel::RoleDescriptionText:
-        return QVariant::fromValue(board.description.text);
+        return QVariant();
     case EasyBoardModel::RoleIp:
         return board.ip;
     case EasyBoardModel::RoleId:
@@ -271,8 +297,16 @@ void EasyBoardModel::onSocketData(QJsonObject str)
     beginResetModel();
     d->updateBoard(board);
     endResetModel();
+    emit dataChange();
     // ui->plainTextEdit->appendPlainText("ip:"+str.value("IP").toString());
     // ui->plainTextEdit->appendPlainText("id:"+str.value("ID").toString());
+}
+
+void EasyBoardModel::devicesLoaded()
+{
+    beginResetModel();
+    endResetModel();
+    emit dataChange();
 }
 
 void EasyBoardModel::setBoards(const QByteArray &json)
@@ -281,6 +315,7 @@ void EasyBoardModel::setBoards(const QByteArray &json)
     beginResetModel();
     d->setBoards(boards);
     endResetModel();
+    emit dataChange();
 }
 
 void EasyBoardModel::removeFromList(const QString &id,const ItemType &itemType)
@@ -293,7 +328,7 @@ void EasyBoardModel::removeFromList(const QString &id,const ItemType &itemType)
         }
     }
     endResetModel();
-
+    emit dataChange();
 }
 
 void EasyBoardModel::setDefault(const QString &id,const ItemType &itemType)
@@ -306,6 +341,7 @@ void EasyBoardModel::setDefault(const QString &id,const ItemType &itemType)
             b.isDefault = false;
     }
     endResetModel();
+    emit dataChange();
 }
 
 } // BoardManager::Internal

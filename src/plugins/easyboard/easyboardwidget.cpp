@@ -291,10 +291,10 @@ private:
 
     QString m_currentItemName;
     EasyBoardBrowser *m_easyboardBrowser;
-    CollapsingWidget *m_secondaryDescriptionWidget;
+    // CollapsingWidget *m_secondaryDescriptionWidget;
     HeadingWidget *m_headingWidget;
     QWidget *m_primaryContent;
-    QWidget *m_secondaryContent;
+    // QWidget *m_secondaryContent;
     QLabel *m_description;
     QLabel *m_linksTitle;
     QLabel *m_links;
@@ -320,7 +320,7 @@ EasyBoardWidget::EasyBoardWidget()
 {
     m_easyboardBrowser = new EasyBoardBrowser;
     auto descriptionColumns = new QWidget;
-    m_secondaryDescriptionWidget = new CollapsingWidget;
+    // m_secondaryDescriptionWidget = new CollapsingWidget;
 
     m_headingWidget = new HeadingWidget;
     m_description = tfLabel(contentTF, false);
@@ -334,6 +334,8 @@ EasyBoardWidget::EasyBoardWidget()
 
     using namespace Layouting;
     auto primary = new QWidget;
+    primary->setStyleSheet("QWidget { background-color: #bb229d; }"); // 设置背景颜色为红色
+
     const auto spL = spacing(SpacingTokens::VPaddingL);
     Column {
         m_description,
@@ -356,45 +358,45 @@ EasyBoardWidget::EasyBoardWidget()
     m_packExtensions = tfLabel(contentTF, false);
     // m_pluginStatus = new PluginStatusWidget;
 
-    auto secondary = new QWidget;
-    const auto spXxs = spacing(SpacingTokens::VPaddingXxs);
-    Column {
-        sectionTitle(h6CapitalTF, Tr::tr("Extension details")),
-        Column {
-            Column { m_tagsTitle, m_tags, spXxs },
-            Column { m_compatVersionTitle, m_compatVersion, spXxs },
-            Column { m_platformsTitle, m_platforms, spXxs },
-            Column { m_dependenciesTitle, m_dependencies, spXxs },
-            Column { m_packExtensionsTitle, m_packExtensions, spXxs },
-            spacing(SpacingTokens::VPaddingL),
-        },
-        st,
-        noMargin, spacing(SpacingTokens::ExVPaddingGapXl),
-    }.attachTo(secondary);
-    m_secondaryContent = toScrollableColumn(secondary);
+    // auto secondary = new QWidget;
+    // const auto spXxs = spacing(SpacingTokens::VPaddingXxs);
+    // Column {
+    //     sectionTitle(h6CapitalTF, Tr::tr("Extension details")),
+    //     Column {
+    //         Column { m_tagsTitle, m_tags, spXxs },
+    //         Column { m_compatVersionTitle, m_compatVersion, spXxs },
+    //         Column { m_platformsTitle, m_platforms, spXxs },
+    //         Column { m_dependenciesTitle, m_dependencies, spXxs },
+    //         Column { m_packExtensionsTitle, m_packExtensions, spXxs },
+    //         spacing(SpacingTokens::VPaddingL),
+    //     },
+    //     st,
+    //     noMargin, spacing(SpacingTokens::ExVPaddingGapXl),
+    // }.attachTo(secondary);
+    // m_secondaryContent = toScrollableColumn(secondary);
+
+    // Row {
+    //     WelcomePageHelpers::createRule(Qt::Vertical),
+    //     Column {
+    //         m_secondaryContent,
+    //         m_pluginStatus,
+    //     },
+    //     noMargin, spacing(0),
+    // }.attachTo(m_secondaryDescriptionWidget);
 
     Row {
-        // WelcomePageHelpers::createRule(Qt::Vertical),
-        Column {
-            m_secondaryContent,
-            // m_pluginStatus,
+        WelcomePageHelpers::createRule(Qt::Vertical),
+        Row {
+            Column {
+                Column {
+                    m_headingWidget,
+                    customMargins(SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl,
+                                  SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl),
+                },
+                m_primaryContent,
+            },
         },
-        noMargin, spacing(0),
-    }.attachTo(m_secondaryDescriptionWidget);
-
-    Row {
-        // WelcomePageHelpers::createRule(Qt::Vertical),
-        // Row {
-        //     Column {
-        //         Column {
-        //             m_headingWidget,
-        //             customMargins(SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl,
-        //                           SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl),
-        //         },
-        //         m_primaryContent,
-        //     },
-        // },
-        m_secondaryDescriptionWidget,
+        // m_secondaryDescriptionWidget,
         noMargin, spacing(0),
     }.attachTo(descriptionColumns);
 
@@ -414,9 +416,9 @@ EasyBoardWidget::EasyBoardWidget()
     connect(m_easyboardBrowser, &EasyBoardBrowser::itemSelected,
             this, &EasyBoardWidget::updateView);
     connect(this, &ResizeSignallingWidget::resized, this, [this](const QSize &size) {
-        const bool secondaryDescriptionVisible = size.width() > 970;
-        const int secondaryDescriptionWidth = secondaryDescriptionVisible ? 264 : 0;
-        m_secondaryDescriptionWidget->setWidth(secondaryDescriptionWidth);
+        // const bool secondaryDescriptionVisible = size.width() > 970;
+        // const int secondaryDescriptionWidth = secondaryDescriptionVisible ? 264 : 0;
+        // m_secondaryDescriptionWidget->setWidth(secondaryDescriptionWidth);
     });
     // connect(m_headingWidget, &HeadingWidget::pluginInstallationRequested, this, [this](){
     //     fetchAndInstallPlugin(QUrl::fromUserInput(m_currentItemPlugins.constFirst().second));
@@ -434,7 +436,7 @@ void EasyBoardWidget::updateView(const QModelIndex &current)
 
     const bool showContent = current.isValid();
     m_primaryContent->setVisible(showContent);
-    m_secondaryContent->setVisible(showContent);
+    // m_secondaryContent->setVisible(showContent);
     m_headingWidget->setVisible(showContent);
     // m_pluginStatus->setVisible(showContent);
     if (!showContent)

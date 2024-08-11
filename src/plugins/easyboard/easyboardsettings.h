@@ -3,19 +3,55 @@
 
 #pragma once
 
-#include <utils/aspects.h>
+#include <easyboard_export.h>
+#include <easyboardstruct.h>
+#include <utils/store.h>
+#include <QObject>
+
+#include <memory>
+
+namespace Utils { class FilePath; }
 
 namespace EasyBoard::Internal {
 
-class EasyBoardSettings final : public Utils::AspectContainer
+// class EasyBoardSettingsPrivate;
+
+using namespace Utils;
+
+class EASYBOARD_EXPORT EasyBoardSettings : public QObject
 {
+    Q_OBJECT
+
 public:
     EasyBoardSettings();
+    ~EasyBoardSettings() override;
 
-    Utils::StringAspect externalRepoUrl{this};
-    Utils::BoolAspect useExternalRepo{this};
+    static EasyBoardSettings *instance();
+    static EasyBoardSettings *clonedInstance();
+
+    void setBoards(Boards *ptr);
+
+    void save();
+    void load();
+
+    void addDevice(const Board &device);
+    void removeDevice(const QString &id);
+
+signals:
+
+    void devicesLoaded(); // Emitted once load() is done
+
+private:
+    static void copy(const EasyBoardSettings *source, EasyBoardSettings *target);
+    Store toMap() const;
+    Store board2Map(const Board &board) const;
+
+    void fromMap(const Store &map, Boards *settingDevices);
+
+    class EasyBoardSettingsPrivate *d = nullptr;
+    // EasyBoardSettingsPrivate d;
+
+    static EasyBoardSettings *m_instance;
 };
-
-EasyBoardSettings &settings();
 
 } // ExtensionManager::Internal
