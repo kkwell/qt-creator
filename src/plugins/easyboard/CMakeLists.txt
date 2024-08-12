@@ -17,6 +17,8 @@ add_qtc_plugin(EasyBoard
     easyboardsettings.cpp
     newboarddialog.h
     newboarddialog.cpp
+    boardsWidget/t113s.h
+    boardsWidget/t113s.cpp
     ssdp/netproperty.h
     ssdp/netproperty.cpp
     ssdp/qaesencryption.h

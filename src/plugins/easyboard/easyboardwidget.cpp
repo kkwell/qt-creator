@@ -5,6 +5,7 @@
 #include "easyboardtr.h"
 #include "easyboardbrowser.h"
 #include "easyboardmodel.h"
+#include "boardsWidget/t113s.h"
 
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/icontext.h>
@@ -193,7 +194,7 @@ public:
         if (!current.isValid())
             return;
 
-        m_icon->setPixmap(itemIcon(current, SizeBig));
+        m_icon->setPixmap(boardIcon(current, SizeImge));//itemIcon SizeBig
 
         const QString name = current.data(EasyBoardModel::RoleName).toString();
         m_title->setText(name);
@@ -333,7 +334,8 @@ EasyBoardWidget::EasyBoardWidget()
     m_imageMovie.setDevice(&m_imageDataBuffer);
 
     using namespace Layouting;
-    auto primary = new QWidget;
+
+    auto primary = new t113s;
     primary->setStyleSheet("QWidget { background-color: #bb229d; }"); // 设置背景颜色为红色
 
     const auto spL = spacing(SpacingTokens::VPaddingL);
@@ -438,6 +440,7 @@ void EasyBoardWidget::updateView(const QModelIndex &current)
     m_primaryContent->setVisible(showContent);
     // m_secondaryContent->setVisible(showContent);
     m_headingWidget->setVisible(showContent);
+    m_primaryContent->setVisible(showContent);
     // m_pluginStatus->setVisible(showContent);
     if (!showContent)
         return;

@@ -815,5 +815,42 @@ QPixmap itemIcon(const QModelIndex &index, Size size)
     return pixmap;
 }
 
+QPixmap boardIcon(const QModelIndex &index, Size size)
+{
+    const QSize iconBgS = size == SizeImge ? imgBgSize : iconBgSizeBig;
+    const qreal dpr = qApp->devicePixelRatio();
+    QPixmap pixmap(iconBgS * dpr);
+    pixmap.fill(Qt::transparent);
+    pixmap.setDevicePixelRatio(dpr);
+    const QRect iconBgR(QPoint(), pixmap.deviceIndependentSize().toSize());
+
+    const bool isEnabled = true;
+    const QGradientStops gradientStops = {
+                                          {0, creatorColor(isEnabled ? Theme::Token_Gradient01_Start
+                                                                     : Theme::Token_Gradient02_Start)},
+                                          {1, creatorColor(isEnabled ? Theme::Token_Gradient01_End
+                                                                     : Theme::Token_Gradient02_End)},
+                                          };
+
+    const Theme::Color color = Theme::Token_Background_Default;
+
+    static const QIcon board = Icon(":/easyboard/images/t113-s3.png").icon();
+    // const ItemType itemType = index.data(RoleItemType).value<ItemType>();
+    const QIcon &icon = (size == SizeSmall ? board : board);
+
+    const int iconRectRounding = 4;
+    const qreal iconOpacityDisabled = 0.6;
+
+    QPainter p(&pixmap);
+    QLinearGradient gradient(iconBgR.topRight(), iconBgR.bottomLeft());
+    gradient.setStops(gradientStops);
+    // WelcomePageHelpers::drawCardBackground(&p, iconBgR, gradient, Qt::NoPen, iconRectRounding);
+    // if (!isEnabled)
+    //     p.setOpacity(iconOpacityDisabled);
+    icon.paint(&p, iconBgR);
+
+    return pixmap;
+}
+
 #include "easyboardbrowser.moc"
 } // ExtensionManager::Internal

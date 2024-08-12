@@ -12,5 +12,6 @@
         <file>images/sort@2x.png</file>
         <file>images/common-board.png</file>
         <file>images/common-board@2x.png</file>
+        <file>images/t113-s3.png</file>
     </qresource>
 </RCC>
