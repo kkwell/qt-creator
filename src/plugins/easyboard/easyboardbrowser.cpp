@@ -614,6 +614,8 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
 
     auto updateModel = [this] {
         d->sortFilterProxyModel->sort(0);
+        emit itemChanged(d->boardsView->selectionModel()->currentIndex(),d->boardsView->selectionModel()->currentIndex());
+
         if (d->selectionModel == nullptr) {
             d->selectionModel = new QItemSelectionModel(d->sortFilterProxyModel,
                                                           d->boardsView);

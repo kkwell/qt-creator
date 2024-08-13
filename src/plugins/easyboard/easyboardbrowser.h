@@ -32,6 +32,7 @@ public:
 
 signals:
     void itemSelected(const QModelIndex &current, const QModelIndex &previous);
+    void itemChanged(const QModelIndex &current, const QModelIndex &previous);
 
 private:
     void fetchExtensions();

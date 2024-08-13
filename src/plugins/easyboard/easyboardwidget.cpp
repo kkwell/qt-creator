@@ -113,7 +113,7 @@ private:
 
 class HeadingWidget : public QWidget
 {
-    static constexpr int dividerH = 16;
+    static constexpr int dividerH = 100;
 
     Q_OBJECT
 
@@ -122,7 +122,7 @@ public:
         : QWidget(parent)
     {
         m_icon = new QLabel;
-        m_icon->setFixedSize(iconBgSizeBig);
+        m_icon->setFixedSize(imgBgSize);
 
         static const TextFormat titleTF
             {Theme::Token_Text_Default, UiElementH4};
@@ -141,8 +141,17 @@ public:
         WelcomePageHelpers::setBackgroundColor(m_divider, dlTF.themeColor);
 
         m_details = tfLabel(detailsTF);
-        installButton = new Button(Tr::tr("Default"), Button::MediumPrimary);
-        installButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+        m_name = tfLabel(detailsTF);
+        m_displayName = tfLabel(detailsTF);
+        m_ip = tfLabel(detailsTF);
+        m_version = tfLabel(detailsTF);
+        m_date = tfLabel(detailsTF);
+        m_type = tfLabel(detailsTF);
+        m_isDefault = tfLabel(detailsTF);
+        m_online = tfLabel(detailsTF);
+
+        // installButton = new Button(Tr::tr("Default"), Button::MediumPrimary);
+        // installButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
         // installButton->hide();
 
         using namespace Layouting;
@@ -151,40 +160,31 @@ public:
             Column {
                 m_title,
                 st,
-                Row {
-                    m_vendor,
-                    Widget {
-                        // bindTo(&m_dlCountItems),
-                        Row {
-                            Space(SpacingTokens::HGapXs),
-                            m_divider,
-                            Space(SpacingTokens::HGapXs),
-                            // m_dlIcon,
-                            Space(SpacingTokens::HGapXxs),
-                            // m_dlCount,
-                            noMargin, spacing(0),
-                        },
-                    },
-                },
+                m_version,
+                m_ip,
                 st,
-                m_details,
+                m_date,
+                m_type,
+                m_isDefault,
+                m_online,
                 spacing(0),
             },
-            Column {
-                installButton,
-                st,
-            },
+            m_details,
+            // Column {
+            //     installButton,
+            //     st,
+            // },
             noMargin, spacing(SpacingTokens::ExPaddingGapL),
         }.attachTo(this);
 
         setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Maximum);
         // m_dlCountItems->setVisible(false);
 
-        connect(installButton, &QAbstractButton::pressed,
-                this, &HeadingWidget::pluginInstallationRequested);
-        connect(m_vendor, &QAbstractButton::pressed, this, [this]() {
-            emit vendorClicked(m_currentVendor);
-        });
+        // connect(installButton, &QAbstractButton::pressed,
+        //         this, &HeadingWidget::pluginInstallationRequested);
+        // connect(m_vendor, &QAbstractButton::pressed, this, [this]() {
+        //     emit vendorClicked(m_currentVendor);
+        // });
 
         update({});
     }
@@ -195,9 +195,17 @@ public:
             return;
 
         m_icon->setPixmap(boardIcon(current, SizeImge));//itemIcon SizeBig
-
+        const QString dispname = current.data(EasyBoardModel::RoleDisplayName).toString();
         const QString name = current.data(EasyBoardModel::RoleName).toString();
-        m_title->setText(name);
+
+        m_title->setText(dispname.isEmpty()?name:dispname+"("+name+")");
+
+        m_ip->setText(current.data(EasyBoardModel::RoleIp).toString());
+        m_version->setText(current.data(EasyBoardModel::RoleVersion).toString());
+        m_date->setText(current.data(EasyBoardModel::RoleDate).toString());
+        m_type->setText(current.data(EasyBoardModel::RoleItemType).value<ItemType>()==ItemTypeLocal?Tr::tr("Local"):Tr::tr("Network"));
+        m_isDefault->setText(current.data(EasyBoardModel::RoleDefault).toBool()?Tr::tr("Default"):Tr::tr(""));
+        m_online->setText(current.data(EasyBoardModel::RoleState).toBool()?Tr::tr("OnLine"):Tr::tr("OffLine"));
 
         m_currentVendor = current.data(EasyBoardModel::RoleDate).toString();
         m_vendor->setText(m_currentVendor);
@@ -207,9 +215,9 @@ public:
         const ItemType itemType = current.data(EasyBoardModel::RoleItemType).value<ItemType>();
         const bool isPack = itemType == ItemTypeLocal;
         const bool isRemotePlugin = false;//!(isPack || pluginSpecForName(name));
-        installButton->setVisible(true);
-        if (installButton->isVisible())
-            installButton->setToolTip("Set As Default");
+        // installButton->setVisible(true);
+        // if (installButton->isVisible())
+        //     installButton->setToolTip("Set As Default");
     }
 
 signals:
@@ -221,9 +229,21 @@ private:
     QLabel *m_title;
     Button *m_vendor;
     QLabel *m_divider;
-    // QWidget *m_dlCountItems;
+    QLabel *m_compatVersion;
+    QLabel *m_copyright;
+    QLabel *m_id;
+    QLabel *m_license;
+    QLabel *m_name;
+    QLabel *m_displayName;
+    QLabel *m_ip;
+    QLabel *m_version;
+    QLabel *m_date;
+    QLabel *m_type;
+    QLabel *m_isDefault;
+    QLabel *m_online;
+
     QLabel *m_details;
-    QAbstractButton *installButton;
+    // QAbstractButton *installButton;
     QString m_currentVendor;
 };
 
@@ -336,7 +356,7 @@ EasyBoardWidget::EasyBoardWidget()
     using namespace Layouting;
 
     auto primary = new t113s;
-    primary->setStyleSheet("QWidget { background-color: #bb229d; }"); // 设置背景颜色为红色
+    // primary->setStyleSheet("QWidget { background-color: #bb229d; }"); // 设置背景颜色为红色
 
     const auto spL = spacing(SpacingTokens::VPaddingL);
     Column {
@@ -415,6 +435,8 @@ EasyBoardWidget::EasyBoardWidget()
     // const int intendedBrowserColumnWidth = size.width() - 580;
     m_easyboardBrowser->adjustToWidth(300);
 
+    connect(m_easyboardBrowser, &EasyBoardBrowser::itemChanged,
+            this,&EasyBoardWidget::updateView);
     connect(m_easyboardBrowser, &EasyBoardBrowser::itemSelected,
             this, &EasyBoardWidget::updateView);
     connect(this, &ResizeSignallingWidget::resized, this, [this](const QSize &size) {
@@ -458,33 +480,40 @@ void EasyBoardWidget::updateView(const QModelIndex &current)
     };
 
     {
-        // const TextData textData = current.data(RoleDescriptionText).value<TextData>();
-        // const bool hasDescription = !textData.isEmpty();
-        // if (hasDescription) {
-        //     const QString headerCssTemplate =
-        //         ";margin-top:%1;margin-bottom:%2;padding-top:0;padding-bottom:0;";
-        //     const QString h4Css = fontToCssProperties(uiFont(UiElementH4))
-        //                           + headerCssTemplate.arg(0).arg(SpacingTokens::VGapL);
-        //     const QString h5Css = fontToCssProperties(uiFont(UiElementH5))
-        //                           + headerCssTemplate.arg(SpacingTokens::ExVPaddingGapXl)
-        //                                 .arg(SpacingTokens::VGapL);
-        //     QString descriptionHtml;
-        //     for (const TextData::Type &text : textData) {
-        //         if (text.second.isEmpty())
-        //             continue;
-        //         const QString paragraph =
-        //             QString::fromLatin1("<div style=\"%1\">%2</div>%3")
-        //                 .arg(descriptionHtml.isEmpty() ? h4Css : h5Css)
-        //                 .arg(text.first)
-        //                 .arg(toContentParagraph(text.second.join("<br/>")));
-        //         descriptionHtml.append(paragraph);
-        //     }
-        //     descriptionHtml.prepend(QString::fromLatin1("<body style=\"color:%1;\">")
-        //                                 .arg(creatorColor(Theme::Token_Text_Default).name()));
-        //     descriptionHtml.append("</body>");
-        //     m_description->setText(descriptionHtml);
-        // }
-        // m_description->setVisible(hasDescription);
+        const QString textData = "test value";//current.data(RoleDescriptionText).value<TextData>();
+        const bool hasDescription = !textData.isEmpty();
+        if (hasDescription) {
+            const QString headerCssTemplate =
+                ";margin-top:%1;margin-bottom:%2;padding-top:0;padding-bottom:0;";
+            const QString h4Css = fontToCssProperties(uiFont(UiElementH4))
+                                  + headerCssTemplate.arg(0).arg(SpacingTokens::VGapL);
+            const QString h5Css = fontToCssProperties(uiFont(UiElementH5))
+                                  + headerCssTemplate.arg(SpacingTokens::ExVPaddingGapXl)
+                                        .arg(SpacingTokens::VGapL);
+            QString descriptionHtml;
+
+            const QString paragraph =
+                QString::fromLatin1("<div style=\"%1\">%2</div>%3")
+                    .arg(h5Css)
+                    .arg(textData)
+                    .arg(toContentParagraph(textData+("<br/>")));
+            descriptionHtml.append(paragraph);
+            // for (const TextData::Type &text : textData) {
+            //     if (text.second.isEmpty())
+            //         continue;
+            //     const QString paragraph =
+            //         QString::fromLatin1("<div style=\"%1\">%2</div>%3")
+            //             .arg(descriptionHtml.isEmpty() ? h4Css : h5Css)
+            //             .arg(text.first)
+            //             .arg(toContentParagraph(text.second.join("<br/>")));
+            //     descriptionHtml.append(paragraph);
+            // }
+            descriptionHtml.prepend(QString::fromLatin1("<body style=\"color:%1;\">")
+                                        .arg(creatorColor(Theme::Token_Text_Default).name()));
+            descriptionHtml.append("</body>");
+            m_description->setText(descriptionHtml);
+        }
+        m_description->setVisible(hasDescription);
 
         // const LinksData linksData = current.data(RoleDescriptionLinks).value<LinksData>();
         // const bool hasLinks = !linksData.isEmpty();
