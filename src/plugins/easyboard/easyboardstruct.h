@@ -24,7 +24,7 @@ struct Board {
     QString ip;
     QString version;
     QString date;
-    ItemType type;
+    ItemType type = ItemTypeLocal;
     bool isDefault = false;
     bool online = false;
 };

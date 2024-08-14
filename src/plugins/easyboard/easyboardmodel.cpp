@@ -92,7 +92,7 @@ public:
 
     void setBoards(const Boards &boards);
     void addUnlistedLocalBoards();
-    void updateBoard(const Board &board);
+    void updateBoard(Board &board);
     void remove();
 
     void getBoards();
@@ -126,11 +126,16 @@ void EasyBoardModelPrivate::remove()
         qDebug()<<temp.name;
     }
 }
-void EasyBoardModelPrivate::updateBoard(const Board &board)
+
+
+void EasyBoardModelPrivate::updateBoard(Board &board)
 {
     for (Board &board_temp:boards) {
+        if(board_temp.type==ItemTypeLocal)
+            continue;
         if(board_temp.id==board.id){
             //update
+            board.isDefault = board_temp.isDefault;
             board_temp = board;
             return;
         }
@@ -165,6 +170,17 @@ EasyBoardModel::~EasyBoardModel()
 {
     d->boardSettings.save();
     delete d;
+}
+
+Board *EasyBoardModel::getIndexBoard(const QString &id,const ItemType &itemType)
+{
+    for (int i=0;i<d->boards.size();i++) {
+        if(d->boards.at(i).type==itemType){
+            if(d->boards.at(i).id==id){
+                return (Board *)&d->boards.at(i);
+            }
+        }
+    }
 }
 
 void EasyBoardModel::save()
@@ -294,9 +310,26 @@ void EasyBoardModel::onSocketData(QJsonObject str)
     board.ip = str.value("IP").toString();
     board.version = str.value("VERSION").toString();
     board.type = ItemTypeNetwork;
-    beginResetModel();
-    d->updateBoard(board);
-    endResetModel();
+    board.online = true;
+    // beginResetModel();
+    // d->updateBoard(board);
+
+    for (int i=0;i<d->boards.size();i++) {
+        if(d->boards.at(i).type==ItemTypeNetwork){
+            if(d->boards.at(i).id==board.id){
+                //update
+                board.isDefault = d->boards.at(i).isDefault;
+                d->boards[i] = board;
+                emit dataChanged(index(i), index(i));
+                emit dataChange();
+                return;
+            }
+        }
+    }
+
+    beginInsertRows(QModelIndex(),d->boards.size(),d->boards.size());
+    d->boards.append(board);
+    endInsertRows();
     emit dataChange();
     // ui->plainTextEdit->appendPlainText("ip:"+str.value("IP").toString());
     // ui->plainTextEdit->appendPlainText("id:"+str.value("ID").toString());
@@ -307,6 +340,15 @@ void EasyBoardModel::devicesLoaded()
     beginResetModel();
     endResetModel();
     emit dataChange();
+}
+
+bool EasyBoardModel::setData(const QModelIndex &index, const QVariant &value, int role) {
+    if (index.isValid() && role == Qt::EditRole) {
+
+        emit dataChanged(index, index, {role});
+        return true;
+    }
+    return false;
 }
 
 void EasyBoardModel::setBoards(const QByteArray &json)
@@ -320,27 +362,64 @@ void EasyBoardModel::setBoards(const QByteArray &json)
 
 void EasyBoardModel::removeFromList(const QString &id,const ItemType &itemType)
 {
-    beginResetModel();
+    const QModelIndex magicIndex = boardsView->currentIndex();
+    QTC_ASSERT(magicIndex.isValid(), return);
+
+    beginRemoveRows(QModelIndex(),magicIndex.row(),magicIndex.row());
+    // d->boards.removeAt(magicIndex.row());
     for (int i=0;i<d->boards.size();i++) {
         if(itemType==d->boards.at(i).type && id==d->boards.at(i).id){
             d->boards.removeAt(i);
             break;
         }
     }
-    endResetModel();
+    endRemoveRows();
     emit dataChange();
+}
+
+void EasyBoardModel::setListView(QListView *view)
+{
+    boardsView = view;
 }
 
 void EasyBoardModel::setDefault(const QString &id,const ItemType &itemType)
 {
-    beginResetModel();
-    for (Board &b:d->boards) {
-        if(itemType==b.type && id==b.id)
-            b.isDefault = true;
-        else
-            b.isDefault = false;
+    const QModelIndex magicIndex = boardsView->currentIndex();
+    QTC_ASSERT(magicIndex.isValid(), return);
+
+    for (int i=0;i<d->boards.size();i++) {
+        if(itemType==d->boards.at(i).type && id==d->boards.at(i).id){
+            d->boards[i].isDefault = true;
+            emit dataChanged(index(i), index(i));
+        }else{
+            if(d->boards[i].isDefault){
+                d->boards[i].isDefault = false;
+                emit dataChanged(index(i), index(i));
+            }
+        }
     }
-    endResetModel();
+
+    emit dataChange();
+}
+
+void EasyBoardModel::updateIndex(const QString &id)
+{
+    for (int i=0;i<d->boards.size();i++) {
+        if(id==d->boards.at(i).id){
+            emit dataChanged(index(i), index(i));
+            return;
+        }
+    }
+}
+
+void EasyBoardModel::addNewBoard(const Board &mBoard)
+{
+    Board temp;
+    temp.displayName = mBoard.displayName;
+    temp.ip = mBoard.ip;
+    beginInsertRows(QModelIndex(),d->boards.size(),d->boards.size());
+    d->boards.append(temp);
+    endInsertRows();
     emit dataChange();
 }
 

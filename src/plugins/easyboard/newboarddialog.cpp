@@ -11,82 +11,109 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QValidator>
+#include <qcombobox.h>
 
 namespace EasyBoard::Internal {
 
 
-NewBoardDialog::NewBoardDialog(QWidget *parent) : QDialog(parent)
+NewBoardDialog::NewBoardDialog(QWidget *parent,Board *board) : QDialog(parent)
 {
     setObjectName("EasyBoard.NewBoardDialog");
-    resize(550, 400);
+    resize(550, 160);
     setWindowTitle(Tr::tr("Board Manager"));
 
-    // auto sessionView = new SessionView(this);
-    // sessionView->setObjectName("sessionView");
-    // sessionView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    // sessionView->setActivationMode(Utils::DoubleClickActivation);
+    m_board = board;
 
-    auto createNewButton = new QPushButton(Tr::tr("&New..."));
-    createNewButton->setObjectName("btCreateNew");
+    m_nameLineEdit = new FancyLineEdit(this);
+    m_nameLineEdit->setHistoryCompleter("DeviceName");
 
-    m_openButton = new QPushButton(Tr::tr("&Open"));
-    m_openButton->setObjectName("btOpen");
-    m_renameButton = new QPushButton(Tr::tr("&Rename..."));
-    m_cloneButton = new QPushButton(Tr::tr("C&lone..."));
-    m_deleteButton = new QPushButton(Tr::tr("&Delete..."));
+    m_tip = new QLabel();
+    QPalette palette;
+    palette.setColor(QPalette::WindowText, Qt::red);
+    m_tip->setPalette(palette);
 
-    m_autoLoadCheckBox = new QCheckBox(Tr::tr("Restore last session on startup"));
+    m_hostNameLineEdit = new FancyLineEdit(this);
+    m_hostNameLineEdit->setHistoryCompleter("HostName");
+
+    m_typeBox = new QComboBox;
+    // m_sshPortSpinBox = new QSpinBox(this);
+    m_typeBox->setObjectName("languageBox");
+    m_typeBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_typeBox->setMinimumContentsLength(20);
+    m_typeBox->setToolTip("set this config to local or network(auto change throuth Auto Search)");
+    m_typeBox->addItem(Tr::tr("TypeLocal"));
+    m_typeBox->addItem(Tr::tr("TypeNetwork"));
 
     auto buttonBox = new QDialogButtonBox(this);
-    buttonBox->setStandardButtons(QDialogButtonBox::Close);
+    buttonBox->setStandardButtons(QDialogButtonBox::Save|QDialogButtonBox::Cancel);
 
-    m_openButton->setDefault(true);
-
-    auto whatsASessionLabel = new QLabel(QString("<a href=\"qthelp://org.qt-project.qtcreator/doc/"
-                                                 "creator-project-managing-sessions.html\">%1</a>")
-                                             .arg(Tr::tr("What is a Session?")));
-    whatsASessionLabel->setOpenExternalLinks(true);
+    // m_ok = new QPushButton(Tr::tr("&OK"));
+    // m_cancel = new QPushButton(Tr::tr("&CANCEL"));
 
     using namespace Layouting;
+    Form {
+        st, br,
+        Tr::tr("The name to identify this configuration:"), m_nameLineEdit, br,
+        Tr::tr("The device's host name or IP address:"), m_hostNameLineEdit, st, br,
+        Tr::tr("The ItemType:"), m_typeBox, st, br,br,
+        m_tip,
+        br,br,
+        buttonBox
+    }.attachTo(this);
+    initializePage();
 
-    Column {
-           Row {
-               // sessionView,
-               Column {
-                   createNewButton,
-                   m_openButton,
-                   m_renameButton,
-                   m_cloneButton,
-                   m_deleteButton,
-                   st
-               }
-           },
-           m_autoLoadCheckBox,
-           hr,
-           Row { whatsASessionLabel, buttonBox },
-           }.attachTo(this);
-
-    // connect(createNewButton, &QAbstractButton::clicked,
-    //         sessionView, &SessionView::createNewSession);
-    // connect(m_openButton, &QAbstractButton::clicked,
-    //         sessionView, &SessionView::switchToCurrentSession);
-    // connect(m_renameButton, &QAbstractButton::clicked,
-    //         sessionView, &SessionView::renameCurrentSession);
-    // connect(m_cloneButton, &QAbstractButton::clicked,
-    //         sessionView, &SessionView::cloneCurrentSession);
-    // connect(m_deleteButton, &QAbstractButton::clicked,
-    //         sessionView, &SessionView::deleteSelectedSessions);
-    // connect(sessionView, &SessionView::sessionActivated,
-    //         sessionView, &SessionView::switchToCurrentSession);
-
-    // connect(sessionView, &SessionView::sessionsSelected,
-    //         this, &SessionDialog::updateActions);
-    // connect(sessionView, &SessionView::sessionSwitched,
-    //         this, &QDialog::reject);
+    auto acceptModel = [this] {
+        if(isComplete()){
+            if(m_board->name!=getName())
+                m_board->displayName = getName();
+            m_board->ip = getIp();
+            if(m_typeBox->currentIndex()==0)
+                m_board->type = ItemTypeLocal;
+            else
+                m_board->type = ItemTypeNetwork;
+            QDialog::accept();
+        }else
+            m_tip->setText(Tr::tr("Please Complete Set parameters."));
+    };
 
     connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(buttonBox, &QDialogButtonBox::accepted, this, acceptModel);
 }
 
+QString NewBoardDialog::getIp()
+{
+    return m_hostNameLineEdit->text();
+}
+
+QString NewBoardDialog::getName()
+{
+    return m_nameLineEdit->text();
+}
+
+void NewBoardDialog::initializePage() {
+    QString displayName = m_board->displayName;
+    QString name = m_board->name;
+
+    m_nameLineEdit->setText(displayName.isEmpty()?name:displayName);
+    m_hostNameLineEdit->setText(m_board->ip);
+
+    if(name.isEmpty()){
+        m_typeBox->setCurrentIndex(0);
+        m_typeBox->setDisabled(true);
+    }
+    else{
+        if(m_board->type==ItemTypeLocal)
+            m_typeBox->setCurrentIndex(0);
+        else
+            m_typeBox->setCurrentIndex(1);
+    }
+    // m_sshPortSpinBox->setValue(22);
+    // m_sshPortSpinBox->setRange(1, 65535);
+}
+
+bool NewBoardDialog::isComplete() const {
+    return !m_nameLineEdit->text().trimmed().isEmpty()
+    && !m_hostNameLineEdit->text().trimmed().isEmpty();
+}
 
 }

@@ -29,6 +29,7 @@ public:
     int extraListViewWidth() const; // Space for scrollbar, etc.
 
     void showEvent(QShowEvent *event) override;
+    void editBoardValue(bool isEdit = false);
 
 signals:
     void itemSelected(const QModelIndex &current, const QModelIndex &previous);
@@ -36,7 +37,6 @@ signals:
 
 private:
     void fetchExtensions();
-
     class EasyBoardBrowserPrivate *d = nullptr;
 };
 

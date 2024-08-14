@@ -171,7 +171,7 @@ public:
             },
             m_details,
             // Column {
-            //     installButton,
+            //     m_details,
             //     st,
             // },
             noMargin, spacing(SpacingTokens::ExPaddingGapL),
@@ -207,10 +207,12 @@ public:
         m_isDefault->setText(current.data(EasyBoardModel::RoleDefault).toBool()?Tr::tr("Default"):Tr::tr(""));
         m_online->setText(current.data(EasyBoardModel::RoleState).toBool()?Tr::tr("OnLine"):Tr::tr("OffLine"));
 
-        m_currentVendor = current.data(EasyBoardModel::RoleDate).toString();
-        m_vendor->setText(m_currentVendor);
+        // m_currentVendor = current.data(EasyBoardModel::RoleDate).toString();
+        // m_vendor->setText(m_currentVendor);
+        if(name.contains("t113",Qt::CaseInsensitive)){
+            m_details->setText("T113 Test Value");
+        }
 
-        m_details->setText(current.data(EasyBoardModel::RoleDescriptionText).toString());
 
         const ItemType itemType = current.data(EasyBoardModel::RoleItemType).value<ItemType>();
         const bool isPack = itemType == ItemTypeLocal;
@@ -244,7 +246,7 @@ private:
 
     QLabel *m_details;
     // QAbstractButton *installButton;
-    QString m_currentVendor;
+    // QString m_currentVendor;
 };
 
 class TagList : public QWidget
@@ -356,7 +358,7 @@ EasyBoardWidget::EasyBoardWidget()
     using namespace Layouting;
 
     auto primary = new t113s;
-    // primary->setStyleSheet("QWidget { background-color: #bb229d; }"); // 设置背景颜色为红色
+    primary->setStyleSheet("QWidget { background-color: #bb229d; }"); // 设置背景颜色为红色
 
     const auto spL = spacing(SpacingTokens::VPaddingL);
     Column {
@@ -380,32 +382,6 @@ EasyBoardWidget::EasyBoardWidget()
     m_packExtensions = tfLabel(contentTF, false);
     // m_pluginStatus = new PluginStatusWidget;
 
-    // auto secondary = new QWidget;
-    // const auto spXxs = spacing(SpacingTokens::VPaddingXxs);
-    // Column {
-    //     sectionTitle(h6CapitalTF, Tr::tr("Extension details")),
-    //     Column {
-    //         Column { m_tagsTitle, m_tags, spXxs },
-    //         Column { m_compatVersionTitle, m_compatVersion, spXxs },
-    //         Column { m_platformsTitle, m_platforms, spXxs },
-    //         Column { m_dependenciesTitle, m_dependencies, spXxs },
-    //         Column { m_packExtensionsTitle, m_packExtensions, spXxs },
-    //         spacing(SpacingTokens::VPaddingL),
-    //     },
-    //     st,
-    //     noMargin, spacing(SpacingTokens::ExVPaddingGapXl),
-    // }.attachTo(secondary);
-    // m_secondaryContent = toScrollableColumn(secondary);
-
-    // Row {
-    //     WelcomePageHelpers::createRule(Qt::Vertical),
-    //     Column {
-    //         m_secondaryContent,
-    //         m_pluginStatus,
-    //     },
-    //     noMargin, spacing(0),
-    // }.attachTo(m_secondaryDescriptionWidget);
-
     Row {
         WelcomePageHelpers::createRule(Qt::Vertical),
         Row {
@@ -418,7 +394,6 @@ EasyBoardWidget::EasyBoardWidget()
                 m_primaryContent,
             },
         },
-        // m_secondaryDescriptionWidget,
         noMargin, spacing(0),
     }.attachTo(descriptionColumns);
 
@@ -459,11 +434,11 @@ void EasyBoardWidget::updateView(const QModelIndex &current)
     m_headingWidget->update(current);
 
     const bool showContent = current.isValid();
-    m_primaryContent->setVisible(showContent);
-    // m_secondaryContent->setVisible(showContent);
-    m_headingWidget->setVisible(showContent);
-    m_primaryContent->setVisible(showContent);
-    // m_pluginStatus->setVisible(showContent);
+
+    // m_primaryContent->setVisible(showContent);
+    // m_headingWidget->setVisible(showContent);
+
+
     if (!showContent)
         return;
 
@@ -472,118 +447,7 @@ void EasyBoardWidget::updateView(const QModelIndex &current)
     // m_pluginStatus->setPluginName(isPack ? QString() : m_currentItemName);
     // m_currentItemPlugins = current.data(RolePlugins).value<PluginsData>();
 
-    auto toContentParagraph = [](const QString &text) {
-        const QString pHtml = QString::fromLatin1("<p style=\"margin-top:0;margin-bottom:0;"
-                                                  "line-height:%1px\">%2</p>")
-                                  .arg(contentTF.lineHeight()).arg(text);
-        return pHtml;
-    };
 
-    {
-        const QString textData = "test value";//current.data(RoleDescriptionText).value<TextData>();
-        const bool hasDescription = !textData.isEmpty();
-        if (hasDescription) {
-            const QString headerCssTemplate =
-                ";margin-top:%1;margin-bottom:%2;padding-top:0;padding-bottom:0;";
-            const QString h4Css = fontToCssProperties(uiFont(UiElementH4))
-                                  + headerCssTemplate.arg(0).arg(SpacingTokens::VGapL);
-            const QString h5Css = fontToCssProperties(uiFont(UiElementH5))
-                                  + headerCssTemplate.arg(SpacingTokens::ExVPaddingGapXl)
-                                        .arg(SpacingTokens::VGapL);
-            QString descriptionHtml;
-
-            const QString paragraph =
-                QString::fromLatin1("<div style=\"%1\">%2</div>%3")
-                    .arg(h5Css)
-                    .arg(textData)
-                    .arg(toContentParagraph(textData+("<br/>")));
-            descriptionHtml.append(paragraph);
-            // for (const TextData::Type &text : textData) {
-            //     if (text.second.isEmpty())
-            //         continue;
-            //     const QString paragraph =
-            //         QString::fromLatin1("<div style=\"%1\">%2</div>%3")
-            //             .arg(descriptionHtml.isEmpty() ? h4Css : h5Css)
-            //             .arg(text.first)
-            //             .arg(toContentParagraph(text.second.join("<br/>")));
-            //     descriptionHtml.append(paragraph);
-            // }
-            descriptionHtml.prepend(QString::fromLatin1("<body style=\"color:%1;\">")
-                                        .arg(creatorColor(Theme::Token_Text_Default).name()));
-            descriptionHtml.append("</body>");
-            m_description->setText(descriptionHtml);
-        }
-        m_description->setVisible(hasDescription);
-
-        // const LinksData linksData = current.data(RoleDescriptionLinks).value<LinksData>();
-        // const bool hasLinks = !linksData.isEmpty();
-        // if (hasLinks) {
-        //     QString linksHtml;
-        //     const QStringList links = transform(linksData, [](const LinksData::Type &link) {
-        //         const QString anchor = link.first.isEmpty() ? link.second : link.first;
-        //         return QString::fromLatin1(R"(<a href="%1" style="color:%2">%3 &gt;</a>)")
-        //             .arg(link.second)
-        //             .arg(creatorColor(Theme::Token_Text_Accent).name())
-        //             .arg(anchor);
-        //     });
-        //     linksHtml = links.join("<br/>");
-        //     m_links->setText(toContentParagraph(linksHtml));
-        // }
-        // m_linksTitle->setVisible(hasLinks);
-        // m_links->setVisible(hasLinks);
-
-        // m_imgTaskTreeRunner.reset();
-        // m_imageMovie.stop();
-        // m_imageDataBuffer.close();
-        // m_image->clear();
-        // const ImagesData imagesData = current.data(RoleDescriptionImages).value<ImagesData>();
-        // const bool hasImages = !imagesData.isEmpty();
-        // if (hasImages) {
-        //     const ImagesData::Type &image = imagesData.constFirst(); // Only show one image
-        //     m_imageTitle->setText(image.first);
-        //     fetchAndDisplayImage(image.second);
-        // }
-        // m_imageTitle->setVisible(hasImages);
-        // m_image->setVisible(hasImages);
-    }
-
-    {
-        // const QStringList tags = current.data(RoleTags).toStringList();
-        // m_tags->setTags(tags);
-        // const bool hasTags = !tags.isEmpty();
-        // m_tagsTitle->setVisible(hasTags);
-        // m_tags->setVisible(hasTags);
-
-        // const QString compatVersion = current.data(RoleCompatVersion).toString();
-        // const bool hasCompatVersion = !compatVersion.isEmpty();
-        // if (hasCompatVersion)
-        //     m_compatVersion->setText(compatVersion);
-        // m_compatVersionTitle->setVisible(hasCompatVersion);
-        // m_compatVersion->setVisible(hasCompatVersion);
-
-        // const QStringList platforms = current.data(RolePlatforms).toStringList();
-        // const bool hasPlatforms = !platforms.isEmpty();
-        // if (hasPlatforms)
-        //     m_platforms->setText(toContentParagraph(platforms.join("<br/>")));
-        // m_platformsTitle->setVisible(hasPlatforms);
-        // m_platforms->setVisible(hasPlatforms);
-
-        // const QStringList dependencies = current.data(RoleDependencies).toStringList();
-        // const bool hasDependencies = !dependencies.isEmpty();
-        // if (hasDependencies)
-        //     m_dependencies->setText(toContentParagraph(dependencies.join("<br/>")));
-        // m_dependenciesTitle->setVisible(hasDependencies);
-        // m_dependencies->setVisible(hasDependencies);
-
-        // const PluginsData plugins = current.data(RolePlugins).value<PluginsData>();
-        // const bool hasExtensions = isPack && !plugins.isEmpty();
-        // if (hasExtensions) {
-        //     const QStringList extensions = transform(plugins, &QPair<QString, QString>::first);
-        //     m_packExtensions->setText(toContentParagraph(extensions.join("<br/>")));
-        // }
-        // m_packExtensionsTitle->setVisible(hasExtensions);
-        // m_packExtensions->setVisible(hasExtensions);
-    }
 }
 
 void EasyBoardWidget::fetchAndInstallPlugin(const QUrl &url)
