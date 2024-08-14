@@ -29,7 +29,12 @@ public:
     int extraListViewWidth() const; // Space for scrollbar, etc.
 
     void showEvent(QShowEvent *event) override;
-    void editBoardValue(bool isEdit = false);
+    void editBoardValue(const QModelIndex &idx);
+
+    void newBoard();
+
+    void removeFromList(const QModelIndex &idx);
+    void setDefault(const QModelIndex &idx);
 
 signals:
     void itemSelected(const QModelIndex &current, const QModelIndex &previous);

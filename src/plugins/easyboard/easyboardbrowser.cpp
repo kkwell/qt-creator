@@ -348,7 +348,7 @@ public:
                      const QStyleOptionViewItem &, const QModelIndex &idx) final
     {
         if (ev->type() == QEvent::MouseButtonDblClick) {
-            emit editSig(true);
+            ((EasyBoardBrowser *)parent())->editBoardValue(idx);
         }
         if (ev->type() == QEvent::MouseButtonRelease) {
             const QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(ev);
@@ -363,17 +363,13 @@ public:
                 // const auto boardModel = qobject_cast<EasyBoardModel *>(model);
                 contextMenu.addAction(action);
                 connect(action, &QAction::triggered, this, [idx,this] {
-                    const QVariant id = idx.data(EasyBoardModel::RoleId);
-                    const ItemType itemType = idx.data(EasyBoardModel::RoleItemType).value<ItemType>();
-                    // boardModel->removeFromList(id.toString(),itemType);
-                    emit this->removeFromListSig(id.toString(),itemType);
+                    // boardModel->removeFromList(idx);
+                    ((EasyBoardBrowser *)parent())->removeFromList(idx);
                 });
                 contextMenu.addSeparator();
                 action = new QAction(Tr::tr("Set As Default"));
                 connect(action, &QAction::triggered, this, [idx,this] {
-                    const QVariant id = idx.data(EasyBoardModel::RoleId);
-                    const ItemType itemType = idx.data(EasyBoardModel::RoleItemType).value<ItemType>();
-                    emit this->setDefaultSig(id.toString(),itemType);
+                    ((EasyBoardBrowser *)parent())->setDefault(idx);
                 });
                 contextMenu.addAction(action);
                 contextMenu.exec(mouseEvent->globalPosition().toPoint());
@@ -382,10 +378,7 @@ public:
         }
         return false;
     }
-signals:
-    void setDefaultSig(const QString &id,const ItemType &itemType);
-    void removeFromListSig(const QString &id,const ItemType &itemType);
-    void editSig(bool);
+
 };
 
 class SortFilterProxyModel : public QSortFilterProxyModel
@@ -562,9 +555,7 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
 
 
     BoardItemDelegate *pDelegate = new BoardItemDelegate(this);
-    connect(pDelegate,&BoardItemDelegate::setDefaultSig,d->model,&EasyBoardModel::setDefault);
-    connect(pDelegate,&BoardItemDelegate::removeFromListSig,d->model,&EasyBoardModel::removeFromList);
-    connect(pDelegate,&BoardItemDelegate::editSig,this, &EasyBoardBrowser::editBoardValue);
+    // connect(pDelegate,&BoardItemDelegate::editSig,this, &EasyBoardBrowser::editBoardValue);
 
     d->boardsView = new QListView;
     d->boardsView->setFrameStyle(QFrame::NoFrame);
@@ -576,7 +567,7 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
     d->boardsView->setModel(d->sortFilterProxyModel);
     d->boardsView->setMouseTracking(true);
 
-    d->model->setListView(d->boardsView);
+    // d->model->setListView(d->boardsView);
 
     using namespace Layouting;
     Column {
@@ -632,17 +623,20 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
 
     auto findEasyBoard = [this] {
         QModelIndex current = d->boardsView->currentIndex();
+
+        QModelIndex source = d->sortFilterProxyModel->mapToSource(current);
+
+        d->model->debugTest(source);
+        // debugTest
+        qDebug()<<"index:"<<current.row()<<source.row();
+
         this->d->pNetManage->findEasyBoard();
     };
 
     updateModel();
 
-    auto editBoard = [this] {
-        editBoardValue();
-    };
-
     connect(d->addButton, &QAbstractButton::pressed,
-            this, editBoard);
+            this, &EasyBoardBrowser::newBoard);
     connect(d->updateButton, &QAbstractButton::pressed,
             this, findEasyBoard);
     connect(d->pNetManage,&netproperty::getSocketData,
@@ -661,19 +655,32 @@ EasyBoardBrowser::~EasyBoardBrowser()
     delete d;
 }
 
-void EasyBoardBrowser::editBoardValue(bool isEdit)
+void EasyBoardBrowser::removeFromList(const QModelIndex &idx)
 {
-    QModelIndex current = d->boardsView->currentIndex();
-    const QVariant id = current.data(EasyBoardModel::RoleId);
-    const ItemType itemType = current.data(EasyBoardModel::RoleItemType).value<ItemType>();
-    if(isEdit){
+    d->model->removeFromList(d->sortFilterProxyModel->mapToSource(idx));
+}
+
+void EasyBoardBrowser::setDefault(const QModelIndex &idx)
+{
+    d->model->setDefault(d->sortFilterProxyModel->mapToSource(idx));
+}
+
+void EasyBoardBrowser::editBoardValue(const QModelIndex &idx)
+{
+    QTC_ASSERT(idx.isValid(), return);
+
+    QModelIndex current = d->sortFilterProxyModel->mapToSource(idx);
+    // const QVariant id = current.data(EasyBoardModel::RoleId);
+    // const ItemType itemType = current.data(EasyBoardModel::RoleItemType).value<ItemType>();
+
         if(current.isValid()){
-            Board *pBoard = d->model->getIndexBoard(id.toString(),itemType);
+            Board *pBoard = d->model->getIndexBoard(current);
             NewBoardDialog newDialog(ICore::dialogParent(),pBoard);
             // newDialog.setAutoLoadSession(d->isAutoRestoreLastSession());
 
             if (newDialog.exec() == QDialog::Accepted){
-                d->model->updateIndex(pBoard->id);
+                d->model->dataChanged(current,current);
+                emit itemChanged(d->boardsView->currentIndex(),d->boardsView->currentIndex());
             }
         }
         else{
@@ -682,17 +689,21 @@ void EasyBoardBrowser::editBoardValue(bool isEdit)
                                   QMessageBox::Yes,
                                   QMessageBox::Yes);
         }
-    }
-    else{
-        Board mBoard;
-        mBoard.type = ItemTypeLocal;
-        NewBoardDialog newDialog(ICore::dialogParent(),&mBoard);
 
-        if (newDialog.exec() == QDialog::Accepted){
-            d->model->addNewBoard(mBoard);
-        }
+
+}
+
+void EasyBoardBrowser::newBoard()
+{
+    Board mBoard;
+    mBoard.type = ItemTypeLocal;
+    NewBoardDialog newDialog(ICore::dialogParent(),&mBoard);
+
+    if (newDialog.exec() == QDialog::Accepted){
+        d->model->addNewBoard(mBoard);
     }
 }
+
 void EasyBoardBrowser::setFilter(const QString &filter)
 {
     d->searchBox->setText(filter);

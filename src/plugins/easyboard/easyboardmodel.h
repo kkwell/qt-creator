@@ -5,7 +5,6 @@
 
 #include <QAbstractListModel>
 #include <easyboardstruct.h>
-#include <QListView>
 
 namespace EasyBoard::Internal {
 
@@ -53,26 +52,27 @@ public:
     bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole) override;
 
     void setBoards(const QByteArray &json);
-    Board *getIndexBoard(const QString &id,const ItemType &itemType);
-    void updateIndex(const QString &id);
+    Board *getIndexBoard(const QModelIndex &index);
+    // void updateIndex(const QModelIndex &index);
 
     void addNewBoard(const Board &);
 
     void onSocketData(QJsonObject str);
     void save();
     void read();
-    void setListView(QListView *view);
 
+    void debugTest(const QModelIndex &index);
+
+    void removeFromList(const QModelIndex &idx);
+    void setDefault(const QModelIndex &idx);
 public slots:
-    void removeFromList(const QString &id,const ItemType &itemType);
-    void setDefault(const QString &id,const ItemType &itemType);
+
     void devicesLoaded();
 
 signals:
     void dataChange();
 
 private:
-    QListView *boardsView;
     class EasyBoardModelPrivate *d = nullptr;
 };
 

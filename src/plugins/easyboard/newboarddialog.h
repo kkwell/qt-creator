@@ -11,6 +11,7 @@
 #include <QLayout>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QComboBox>
 
 // QT_BEGIN_NAMESPACE
 // class QCheckBox;

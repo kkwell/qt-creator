@@ -172,15 +172,9 @@ EasyBoardModel::~EasyBoardModel()
     delete d;
 }
 
-Board *EasyBoardModel::getIndexBoard(const QString &id,const ItemType &itemType)
+Board *EasyBoardModel::getIndexBoard(const QModelIndex &index)
 {
-    for (int i=0;i<d->boards.size();i++) {
-        if(d->boards.at(i).type==itemType){
-            if(d->boards.at(i).id==id){
-                return (Board *)&d->boards.at(i);
-            }
-        }
-    }
+    return (Board *)&d->boards.at(index.row());
 }
 
 void EasyBoardModel::save()
@@ -360,15 +354,15 @@ void EasyBoardModel::setBoards(const QByteArray &json)
     emit dataChange();
 }
 
-void EasyBoardModel::removeFromList(const QString &id,const ItemType &itemType)
+void EasyBoardModel::removeFromList(const QModelIndex &idx)
 {
-    const QModelIndex magicIndex = boardsView->currentIndex();
-    QTC_ASSERT(magicIndex.isValid(), return);
+    // const QModelIndex magicIndex = boardsView->currentIndex();
+    QTC_ASSERT(idx.isValid(), return);
 
-    beginRemoveRows(QModelIndex(),magicIndex.row(),magicIndex.row());
+    beginRemoveRows(QModelIndex(),idx.row(),idx.row());
     // d->boards.removeAt(magicIndex.row());
     for (int i=0;i<d->boards.size();i++) {
-        if(itemType==d->boards.at(i).type && id==d->boards.at(i).id){
+        if(i==idx.row()){
             d->boards.removeAt(i);
             break;
         }
@@ -377,20 +371,13 @@ void EasyBoardModel::removeFromList(const QString &id,const ItemType &itemType)
     emit dataChange();
 }
 
-void EasyBoardModel::setListView(QListView *view)
+void EasyBoardModel::setDefault(const QModelIndex &idx)
 {
-    boardsView = view;
-}
-
-void EasyBoardModel::setDefault(const QString &id,const ItemType &itemType)
-{
-    const QModelIndex magicIndex = boardsView->currentIndex();
-    QTC_ASSERT(magicIndex.isValid(), return);
-
+    QTC_ASSERT(idx.isValid(), return);
     for (int i=0;i<d->boards.size();i++) {
-        if(itemType==d->boards.at(i).type && id==d->boards.at(i).id){
+        if(i==idx.row()){
             d->boards[i].isDefault = true;
-            emit dataChanged(index(i), index(i));
+            emit dataChanged(idx, idx);
         }else{
             if(d->boards[i].isDefault){
                 d->boards[i].isDefault = false;
@@ -402,15 +389,15 @@ void EasyBoardModel::setDefault(const QString &id,const ItemType &itemType)
     emit dataChange();
 }
 
-void EasyBoardModel::updateIndex(const QString &id)
-{
-    for (int i=0;i<d->boards.size();i++) {
-        if(id==d->boards.at(i).id){
-            emit dataChanged(index(i), index(i));
-            return;
-        }
-    }
-}
+// void EasyBoardModel::updateIndex(const QModelIndex &index)
+// {
+//     for (int i=0;i<d->boards.size();i++) {
+//         if(id==d->boards.at(i).id){
+//             emit dataChanged(index(i), index(i));
+//             return;
+//         }
+//     }
+// }
 
 void EasyBoardModel::addNewBoard(const Board &mBoard)
 {
@@ -421,6 +408,21 @@ void EasyBoardModel::addNewBoard(const Board &mBoard)
     d->boards.append(temp);
     endInsertRows();
     emit dataChange();
+}
+
+void EasyBoardModel::debugTest(const QModelIndex &index)
+{
+    if(index.isValid()){
+        qDebug()<<d->boards[index.row()].name
+                <<d->boards[index.row()].displayName
+                <<d->boards[index.row()].date
+                <<d->boards[index.row()].ip
+                 <<d->boards[index.row()].id;
+    }
+    else{
+        qDebug()<<"QModelIndex is not valid";
+    }
+
 }
 
 } // BoardManager::Internal
