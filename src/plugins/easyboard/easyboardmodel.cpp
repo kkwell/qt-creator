@@ -313,6 +313,7 @@ void EasyBoardModel::onSocketData(QJsonObject str)
             if(d->boards.at(i).id==board.id){
                 //update
                 board.isDefault = d->boards.at(i).isDefault;
+                board.displayName = d->boards.at(i).displayName;
                 d->boards[i] = board;
                 emit dataChanged(index(i), index(i));
                 emit dataChange();

@@ -37,15 +37,7 @@ signals:
 
 
 private:
-    // QImage *m_img;
-    QLabel *m_icon;
-    QLabel *m_title;
-    Button *m_vendor;
-    QLabel *m_divider;
-    // QWidget *m_dlCountItems;
-    QLabel *m_details;
-    QAbstractButton *installButton;
-    QString m_currentVendor;
+    QLabel *m_description;
 };
 
 } // namespace EasyBoard::Internal

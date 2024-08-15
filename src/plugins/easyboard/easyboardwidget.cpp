@@ -45,6 +45,8 @@
 #include <QProgressDialog>
 #include <QScrollArea>
 #include <QSignalMapper>
+#include <QDockWidget>
+#include <QSplitter>
 
 using namespace Core;
 using namespace Utils;
@@ -134,13 +136,12 @@ public:
             {Theme::Token_Text_Default, UiElementBody2};
 
         m_title = tfLabel(titleTF);
-        m_vendor = new Button({}, Button::SmallLink);
-        m_vendor->setContentsMargins({});
-        m_divider = new QLabel;
-        m_divider->setFixedSize(1, dividerH);
-        WelcomePageHelpers::setBackgroundColor(m_divider, dlTF.themeColor);
+        // m_divider = new QLabel;
+        // m_divider->setFixedSize(1, dividerH);
+        // WelcomePageHelpers::setBackgroundColor(m_divider, dlTF.themeColor);
 
-        m_details = tfLabel(detailsTF);
+        m_details = tfLabel(detailsTF,false);
+
         m_name = tfLabel(detailsTF);
         m_displayName = tfLabel(detailsTF);
         m_ip = tfLabel(detailsTF);
@@ -150,11 +151,30 @@ public:
         m_isDefault = tfLabel(detailsTF);
         m_online = tfLabel(detailsTF);
 
-        // installButton = new Button(Tr::tr("Default"), Button::MediumPrimary);
-        // installButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
-        // installButton->hide();
+        // m_details = tfLabel(contentTF, false);
+        m_details->setWordWrap(true);
 
         using namespace Layouting;
+
+        auto m_pStackedWidget = new QStackedWidget;
+        QWidget *scrollWidget = new QWidget;
+        QScrollArea *scrollArea = new QScrollArea;
+
+        scrollWidget->setStyleSheet("QWidget { background-color: #bb229d; }");
+
+        scrollArea->setWidget(m_details);  // 将内部部件设置为滚动区域的widget
+        // scrollArea->setWidgetResizable(false); // 允许滚动区域的widget根据内容调整大小
+        // scrollArea->resize(300,300);
+        // scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // 水平滚动条始终关闭
+        // scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);  // 垂直滚动条按需显示
+
+        Row {
+            scrollArea,
+        }.attachTo(scrollWidget);
+
+        m_pStackedWidget->addWidget(scrollArea);
+        m_pStackedWidget->addWidget(scrollWidget);
+
         Row {
             m_icon,
             Column {
@@ -169,11 +189,7 @@ public:
                 m_online,
                 spacing(0),
             },
-            m_details,
-            // Column {
-            //     m_details,
-            //     st,
-            // },
+            m_pStackedWidget,//scrollWidget,
             noMargin, spacing(SpacingTokens::ExPaddingGapL),
         }.attachTo(this);
 
@@ -209,8 +225,29 @@ public:
 
         // m_currentVendor = current.data(EasyBoardModel::RoleDate).toString();
         // m_vendor->setText(m_currentVendor);
-        if(name.contains("t113",Qt::CaseInsensitive)){
-            m_details->setText("T113 Test Value");
+        if(name.contains("t113",Qt::CaseInsensitive)){//color:#909090;center
+            const QString placeText = Tr::tr("<html><body style=\"font-size:12px\">"
+                                                   "<div align='left'>"
+                                                   "<div style=\"font-size:16px\">BingPi-M2开发板</div>"
+                                                   "<table><tr><td>"
+                                                   "<hr/>"
+                                                   "<div style=\"margin-top: 5px\">&bull; CPU：全志T113-S3,双核Cortex-A7,最高1.2GHz</div>"
+                                                   "<div style=\"margin-top: 5px\">&bull; 内存：集成128M DDR3</div>"
+                                                   "<div style=\"margin-top: 5px\">&bull; 存储：128MB Nand Flash</div>"
+                                                   "<div style=\"margin-top: 5px\">&bull; USB：一路USB OTG,3路USB HOST</div>"
+                                                   "<div style=\"margin-top: 5px\">&bull; 网络：百兆以太网&WIFI</div>"
+                                                   "<div style=\"margin-top: 5px\">&bull; 通信：CAN、RS232、RS485</div>"
+                                                   "<div style=\"margin-top: 5px\">&bull; 触摸：电容、电阻触摸</div>"
+                                                   "<div style=\"margin-top: 5px\">&bull; 其它：USB串口控制台、按键、LED</div>"
+                                                   "<div style=\"margin-top: 5px\">&bull; 音频：输入、输出</div>"
+                                                   "<div style=\"margin-top: 5px\">&bull; 显示：最高1920*1200（支持MIPI）</div>"
+                                                   "<div style=\"margin-left: 1em\">- 40p 4.3寸、5寸屏</div>"
+                                                   "<div style=\"margin-left: 1em\">- 50p 7寸屏</div>"
+                                                   "</td></tr></table>"
+                                                   "</div>"
+                                                   "</body></html>");
+
+            m_details->setText(placeText);
         }
 
 
@@ -229,8 +266,7 @@ signals:
 private:
     QLabel *m_icon;
     QLabel *m_title;
-    Button *m_vendor;
-    QLabel *m_divider;
+    // QLabel *m_divider;
     QLabel *m_compatVersion;
     QLabel *m_copyright;
     QLabel *m_id;
@@ -245,6 +281,7 @@ private:
     QLabel *m_online;
 
     QLabel *m_details;
+
     // QAbstractButton *installButton;
     // QString m_currentVendor;
 };
@@ -302,6 +339,49 @@ private:
     QSignalMapper *m_signalMapper;
 };
 
+class SplitterWidget final : public QSplitter
+{
+public:
+    SplitterWidget()
+    {
+        auto m_easyboardBrowser = new EasyBoardBrowser;
+
+        // QWidget *rightSplitWidget = new QWidget;
+        // auto rightSplitWidgetLayout = new QVBoxLayout(rightSplitWidget);
+        // rightSplitWidgetLayout->setSpacing(0);
+        // rightSplitWidgetLayout->setContentsMargins(0, 0, 0, 0);
+        // rightSplitWidgetLayout->insertWidget(0, m_easyboardBrowser);
+
+        auto rightPaneSplitter = new QSplitter;
+        rightPaneSplitter->insertWidget(0, m_easyboardBrowser);
+        rightPaneSplitter->insertWidget(1, new HeadingWidget);
+        // rightPaneSplitter->setStretchFactor(0, 1);
+        // rightPaneSplitter->setStretchFactor(1, 0);
+
+        auto splitter = new QSplitter;
+        splitter->setOrientation(Qt::Vertical);
+        splitter->insertWidget(0, rightPaneSplitter);
+        // QWidget *outputPane = new OutputPanePlaceHolder(Constants::MODE_EDIT, splitter);
+        // outputPane->setObjectName(QLatin1String("EditModeOutputPanePlaceHolder"));
+        splitter->insertWidget(1, new QWidget);
+        // splitter->setStretchFactor(0, 3);
+        // splitter->setStretchFactor(1, 0);
+        setOrientation(Qt::Horizontal);
+        addWidget(m_easyboardBrowser);
+        addWidget(new HeadingWidget);
+        // insertWidget(2, new QWidget);
+        setStretchFactor(0, 0);
+        // setStretchFactor(1, 1);
+        // setStretchFactor(2, 0);
+        setCollapsible(0, true);
+        // QSplitter *pHSplitter = new QSplitter(Qt::Horizontal, this);
+        setSizes(QList<int>() << 10 << 30); // 设置两个子控件的初始大小
+        setFocusProxy(m_easyboardBrowser);
+
+        // IContext::attach(this, Context(Constants::C_EDITORMANAGER));
+    }
+};
+
 class EasyBoardWidget final : public Core::ResizeSignallingWidget
 {
 public:
@@ -316,7 +396,9 @@ private:
     EasyBoardBrowser *m_easyboardBrowser;
     // CollapsingWidget *m_secondaryDescriptionWidget;
     HeadingWidget *m_headingWidget;
+    QStackedWidget *m_stackWidget;
     QWidget *m_primaryContent;
+    t113s *m_primary;
     // QWidget *m_secondaryContent;
     QLabel *m_description;
     QLabel *m_linksTitle;
@@ -355,20 +437,39 @@ EasyBoardWidget::EasyBoardWidget()
     m_image = new QLabel;
     m_imageMovie.setDevice(&m_imageDataBuffer);
 
+    const QString placeholderText = Tr::tr("<html><body style=\"color:#909090; font-size:14px\">"
+                                           "<div align='center'>"
+                                           "<div style=\"font-size:20px\">Select a board</div>"
+                                           "<table><tr><td>"
+                                           "<hr/>"
+                                           "<div style=\"margin-top: 5px\">&bull; Config > Set Peripheral Functions</div>"
+                                           "<div style=\"margin-top: 5px\">&bull; Config > View Peripheral Status</div>"
+                                           "<div style=\"margin-top: 5px\">&bull; Board > Manage Devices</div>"
+                                           "<div style=\"margin-left: 1em\">- view development board information</div>"
+                                           "<div style=\"margin-left: 1em\">- check the status of the development board</div>"
+                                           "<div style=\"margin-left: 1em\">- select one of the board and set relevant parameters</div>"
+                                           "<div style=\"margin-top: 5px\">&bull; Some other functions here</div>"
+                                           "</td></tr></table>"
+                                           "</div>"
+                                           "</body></html>");
+
+    m_description->setText(placeholderText);
+
     using namespace Layouting;
 
-    auto primary = new t113s;
-    primary->setStyleSheet("QWidget { background-color: #bb229d; }"); // 设置背景颜色为红色
-
+    m_primary = new t113s;
+    // primary->setStyleSheet("QWidget { background-color: #bb229d; }"); // 设置背景颜色为红色
+    auto temp = new QWidget;
     const auto spL = spacing(SpacingTokens::VPaddingL);
     Column {
+        st,
         m_description,
-        Column { m_linksTitle, m_links, spL },
-        Column { m_imageTitle, m_image, spL },
+        // Column { m_linksTitle, m_links, spL },
+        // Column { m_imageTitle, m_image, spL },
         st,
         noMargin, spacing(SpacingTokens::ExVPaddingGapXl),
-    }.attachTo(primary);
-    m_primaryContent = toScrollableColumn(primary);
+    }.attachTo(temp);
+    m_primaryContent = toScrollableColumn(temp);
 
     m_tagsTitle = sectionTitle(h6TF, Tr::tr("Tags"));
     m_tags = new TagList;
@@ -391,24 +492,32 @@ EasyBoardWidget::EasyBoardWidget()
                     customMargins(SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl,
                                   SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl),
                 },
-                m_primaryContent,
+                m_primary,//m_primaryContent,
             },
         },
         noMargin, spacing(0),
     }.attachTo(descriptionColumns);
 
+    m_stackWidget = new QStackedWidget;
+    m_stackWidget->addWidget(m_primaryContent);
+    m_stackWidget->addWidget(descriptionColumns);
+
     Row {
         Space(SpacingTokens::ExVPaddingGapXl),
         m_easyboardBrowser,
         WelcomePageHelpers::createRule(Qt::Vertical),
-        descriptionColumns,
+        m_stackWidget,//descriptionColumns,
         noMargin, spacing(0),
     }.attachTo(this);
+    // SplitterWidget *p = new SplitterWidget;
+    // QHBoxLayout layout;
+    // layout.addWidget(p);
+    // setLayout(&layout);
 
     WelcomePageHelpers::setBackgroundColor(this, Theme::Token_Background_Default);
 
     // const int intendedBrowserColumnWidth = size.width() - 580;
-    m_easyboardBrowser->adjustToWidth(300);
+    m_easyboardBrowser->adjustToWidth(280);
 
     connect(m_easyboardBrowser, &EasyBoardBrowser::itemChanged,
             this,&EasyBoardWidget::updateView);
@@ -432,15 +541,21 @@ EasyBoardWidget::EasyBoardWidget()
 void EasyBoardWidget::updateView(const QModelIndex &current)
 {
     m_headingWidget->update(current);
-
+    m_primary->update(current);
     const bool showContent = current.isValid();
 
     // m_primaryContent->setVisible(showContent);
     // m_headingWidget->setVisible(showContent);
 
-
     if (!showContent)
         return;
+    if(current.data(EasyBoardModel::RoleName).toString().contains("T113",Qt::CaseInsensitive)){
+        m_stackWidget->setCurrentIndex(1);
+    }
+    else{
+        m_stackWidget->setCurrentIndex(0);
+    }
+
 
     m_currentItemName = current.data().toString();
     // const bool isPack = current.data(RoleItemType) == ItemTypePack;
