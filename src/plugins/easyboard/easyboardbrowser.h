@@ -50,7 +50,7 @@ QLabel *tfLabel(const Core::WelcomePageHelpers::TextFormat &tf, bool singleLine 
 constexpr static QSize iconBgSizeSmall{50, 50};
 constexpr static QSize iconBgSizeBig{68, 68};
 
-constexpr static QSize imgBgSize{300, 200};
+constexpr static QSize imgBgSize{280, 180};
 
 enum Size {
     SizeSmall,

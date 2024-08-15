@@ -88,31 +88,6 @@ static QWidget *toScrollableColumn(QWidget *widget)
     return scrollArea;
 };
 
-class CollapsingWidget : public QWidget
-{
-public:
-    explicit CollapsingWidget(QWidget *parent = nullptr)
-        : QWidget(parent)
-    {
-        setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
-    }
-
-    void setWidth(int width)
-    {
-        m_width = width;
-        setVisible(width > 0);
-        updateGeometry();
-    }
-
-    QSize sizeHint() const override
-    {
-        return {m_width, 0};
-    }
-
-private:
-    int m_width = 100;
-};
-
 class HeadingWidget : public QWidget
 {
     static constexpr int dividerH = 100;
@@ -163,37 +138,87 @@ public:
         scrollWidget->setStyleSheet("QWidget { background-color: #bb229d; }");
 
         scrollArea->setWidget(m_details);  // 将内部部件设置为滚动区域的widget
-        // scrollArea->setWidgetResizable(false); // 允许滚动区域的widget根据内容调整大小
-        // scrollArea->resize(300,300);
-        // scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // 水平滚动条始终关闭
-        // scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);  // 垂直滚动条按需显示
+        scrollArea->setWidgetResizable(true); // 允许滚动区域的widget根据内容调整大小
+        scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // 水平滚动条始终关闭
+        scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);  // 垂直滚动条按需显示
+
 
         Row {
-            scrollArea,
+            m_details,
         }.attachTo(scrollWidget);
 
+        auto sc = toScrollableColumn(scrollWidget);
+        m_pStackedWidget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
         m_pStackedWidget->addWidget(scrollArea);
-        m_pStackedWidget->addWidget(scrollWidget);
+        // m_pStackedWidget->addWidget(scrollWidget);
 
+        auto *selectItem = new QWidget;
+
+        Column {
+            m_title,
+            st,
+            m_version,
+            m_ip,
+            st,
+            m_date,
+            m_type,
+            m_isDefault,
+            m_online,
+            spacing(0),
+        }.attachTo(selectItem);
+        auto sx = toScrollableColumn(selectItem);
+
+
+        scrollWidget->setFixedSize(imgBgSize);
+
+        QWidget * m_column;
         Row {
             m_icon,
-            Column {
-                m_title,
-                st,
-                m_version,
-                m_ip,
-                st,
-                m_date,
-                m_type,
-                m_isDefault,
-                m_online,
-                spacing(0),
+            Widget {
+                bindTo(&m_column),
+                Column {
+                    m_title,
+                    st,
+                    m_version,
+                    m_ip,
+                    st,
+                    m_date,
+                    m_type,
+                    m_isDefault,
+                    m_online,
+                    spacing(0),
+                },
             },
-            m_pStackedWidget,//scrollWidget,
+            Column {
+                scrollWidget,
+            },
             noMargin, spacing(SpacingTokens::ExPaddingGapL),
         }.attachTo(this);
 
+        m_column->setMinimumWidth(150);
+        // Row {
+        //     m_icon,
+        //     sx,
+        //     sc,
+
+        //     Column {
+        //         m_title,
+        //         st,
+        //         m_version,
+        //         m_ip,
+        //         st,
+        //         m_date,
+        //         m_type,
+        //         m_isDefault,
+        //         m_online,
+        //         spacing(0),
+        //     },
+        //     m_pStackedWidget,//scrollWidget,
+        //     noMargin, spacing(SpacingTokens::ExPaddingGapL),
+        // }.attachTo(this);
+
         setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Maximum);
+
         // m_dlCountItems->setVisible(false);
 
         // connect(installButton, &QAbstractButton::pressed,
@@ -286,59 +311,6 @@ private:
     // QString m_currentVendor;
 };
 
-class TagList : public QWidget
-{
-    Q_OBJECT
-
-public:
-    explicit TagList(QWidget *parent = nullptr)
-        : QWidget(parent)
-    {
-        QHBoxLayout *layout = new QHBoxLayout(this);
-        setLayout(layout);
-        layout->setContentsMargins({});
-        m_signalMapper = new QSignalMapper(this);
-        connect(m_signalMapper, &QSignalMapper::mappedString, this, &TagList::tagSelected);
-    }
-
-    void setTags(const QStringList &tags)
-    {
-        if (m_container) {
-            delete m_container;
-            m_container = nullptr;
-        }
-
-        if (!tags.empty()) {
-            m_container = new QWidget(this);
-            layout()->addWidget(m_container);
-
-            using namespace Layouting;
-            Flow flow {};
-            flow.setNoMargins();
-            flow.setSpacing(SpacingTokens::HGapXs);
-
-            for (const QString &tag : tags) {
-                QAbstractButton *tagButton = new Button(tag, Button::Tag);
-                connect(tagButton, &QAbstractButton::clicked,
-                        m_signalMapper, qOverload<>(&QSignalMapper::map));
-                m_signalMapper->setMapping(tagButton, tag);
-                flow.addItem(tagButton);
-            }
-
-            flow.attachTo(m_container);
-        }
-
-        updateGeometry();
-    }
-
-signals:
-    void tagSelected(const QString &tag);
-
-private:
-    QWidget *m_container = nullptr;
-    QSignalMapper *m_signalMapper;
-};
-
 class SplitterWidget final : public QSplitter
 {
 public:
@@ -394,7 +366,7 @@ private:
 
     QString m_currentItemName;
     EasyBoardBrowser *m_easyboardBrowser;
-    // CollapsingWidget *m_secondaryDescriptionWidget;
+    QWidget *m_descriptionColumns;
     HeadingWidget *m_headingWidget;
     QStackedWidget *m_stackWidget;
     QWidget *m_primaryContent;
@@ -403,12 +375,10 @@ private:
     QLabel *m_description;
     QLabel *m_linksTitle;
     QLabel *m_links;
-    QLabel *m_imageTitle;
-    QLabel *m_image;
+    // QLabel *m_imageTitle;
+    // QLabel *m_image;
     QBuffer m_imageDataBuffer;
     QMovie m_imageMovie;
-    QLabel *m_tagsTitle;
-    TagList *m_tags;
     QLabel *m_compatVersionTitle;
     QLabel *m_compatVersion;
     QLabel *m_platformsTitle;
@@ -424,7 +394,7 @@ private:
 EasyBoardWidget::EasyBoardWidget()
 {
     m_easyboardBrowser = new EasyBoardBrowser;
-    auto descriptionColumns = new QWidget;
+    m_descriptionColumns = new QWidget;//QWidget;
     // m_secondaryDescriptionWidget = new CollapsingWidget;
 
     m_headingWidget = new HeadingWidget;
@@ -433,8 +403,8 @@ EasyBoardWidget::EasyBoardWidget()
     m_linksTitle = sectionTitle(h6CapitalTF, Tr::tr("More information"));
     m_links = tfLabel(contentTF, false);
     m_links->setOpenExternalLinks(true);
-    m_imageTitle = sectionTitle(h6CapitalTF, {});
-    m_image = new QLabel;
+    // m_imageTitle = sectionTitle(h6CapitalTF, {});
+    // m_image = new QLabel;
     m_imageMovie.setDevice(&m_imageDataBuffer);
 
     const QString placeholderText = Tr::tr("<html><body style=\"color:#909090; font-size:14px\">"
@@ -459,7 +429,7 @@ EasyBoardWidget::EasyBoardWidget()
 
     m_primary = new t113s;
     // primary->setStyleSheet("QWidget { background-color: #bb229d; }"); // 设置背景颜色为红色
-    auto temp = new QWidget;
+    m_primaryContent = new QWidget;
     const auto spL = spacing(SpacingTokens::VPaddingL);
     Column {
         st,
@@ -468,11 +438,11 @@ EasyBoardWidget::EasyBoardWidget()
         // Column { m_imageTitle, m_image, spL },
         st,
         noMargin, spacing(SpacingTokens::ExVPaddingGapXl),
-    }.attachTo(temp);
-    m_primaryContent = toScrollableColumn(temp);
+    }.attachTo(m_primaryContent);
+    // m_primaryContent = toScrollableColumn(temp);
 
-    m_tagsTitle = sectionTitle(h6TF, Tr::tr("Tags"));
-    m_tags = new TagList;
+    // m_tagsTitle = sectionTitle(h6TF, Tr::tr("Tags"));
+    // m_tags = new TagList;
     m_compatVersionTitle = sectionTitle(h6TF, Tr::tr("Compatibility"));
     m_compatVersion = tfLabel(contentTF, false);
     m_platformsTitle = sectionTitle(h6TF, Tr::tr("Platforms"));
@@ -496,11 +466,11 @@ EasyBoardWidget::EasyBoardWidget()
             },
         },
         noMargin, spacing(0),
-    }.attachTo(descriptionColumns);
+    }.attachTo(m_descriptionColumns);
 
     m_stackWidget = new QStackedWidget;
     m_stackWidget->addWidget(m_primaryContent);
-    m_stackWidget->addWidget(descriptionColumns);
+    m_stackWidget->addWidget(m_descriptionColumns);
 
     Row {
         Space(SpacingTokens::ExVPaddingGapXl),
@@ -523,15 +493,15 @@ EasyBoardWidget::EasyBoardWidget()
             this,&EasyBoardWidget::updateView);
     connect(m_easyboardBrowser, &EasyBoardBrowser::itemSelected,
             this, &EasyBoardWidget::updateView);
-    connect(this, &ResizeSignallingWidget::resized, this, [this](const QSize &size) {
+    // connect(this, &ResizeSignallingWidget::resized, this, [this](const QSize &size) {
         // const bool secondaryDescriptionVisible = size.width() > 970;
         // const int secondaryDescriptionWidth = secondaryDescriptionVisible ? 264 : 0;
-        // m_secondaryDescriptionWidget->setWidth(secondaryDescriptionWidth);
-    });
+        // m_descriptionColumns->setWidth(size.width()-m_easyboardBrowser->size().width());
+    // });
     // connect(m_headingWidget, &HeadingWidget::pluginInstallationRequested, this, [this](){
     //     fetchAndInstallPlugin(QUrl::fromUserInput(m_currentItemPlugins.constFirst().second));
     // });
-    connect(m_tags, &TagList::tagSelected, m_easyboardBrowser, &EasyBoardBrowser::setFilter);
+    // connect(m_tags, &TagList::tagSelected, m_easyboardBrowser, &EasyBoardBrowser::setFilter);
     connect(m_headingWidget, &HeadingWidget::vendorClicked,
             m_easyboardBrowser, &EasyBoardBrowser::setFilter);
 
@@ -659,13 +629,13 @@ void EasyBoardWidget::fetchAndDisplayImage(const QUrl &url)
             return;
         QImageReader reader(&m_imageDataBuffer);
         const bool animated = reader.supportsAnimation();
-        if (animated) {
-            m_image->setMovie(&m_imageMovie);
-            m_imageMovie.start();
-        } else {
-            const QPixmap pixmap = QPixmap::fromImage(reader.read());
-            m_image->setPixmap(pixmap);
-        }
+        // if (animated) {
+        //     m_image->setMovie(&m_imageMovie);
+        //     m_imageMovie.start();
+        // } else {
+        //     const QPixmap pixmap = QPixmap::fromImage(reader.read());
+        //     m_image->setPixmap(pixmap);
+        // }
         qCDebug(widgetLog) << "Image dimensions:" << reader.size();
         qCDebug(widgetLog) << "Image is animated:" << animated;
     };
