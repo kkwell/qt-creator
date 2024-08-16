@@ -135,10 +135,10 @@ public:
         QWidget *scrollWidget = new QWidget;
         QScrollArea *scrollArea = new QScrollArea;
 
-        scrollWidget->setStyleSheet("QWidget { background-color: #bb229d; }");
+        // scrollWidget->setStyleSheet("QWidget { background-color: #bb229d; }");
 
         scrollArea->setWidget(m_details);  // 将内部部件设置为滚动区域的widget
-        scrollArea->setWidgetResizable(true); // 允许滚动区域的widget根据内容调整大小
+        // scrollArea->setWidgetResizable(true); // 允许滚动区域的widget根据内容调整大小
         scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // 水平滚动条始终关闭
         scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);  // 垂直滚动条按需显示
 
@@ -147,12 +147,16 @@ public:
             m_details,
         }.attachTo(scrollWidget);
 
-        auto sc = toScrollableColumn(scrollWidget);
+        // auto sc = toScrollableColumn(scrollWidget);
         m_pStackedWidget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
         m_pStackedWidget->addWidget(scrollArea);
-        // m_pStackedWidget->addWidget(scrollWidget);
+        m_pStackedWidget->addWidget(scrollWidget);
+        m_pStackedWidget->setMinimumWidth(0);
+        // m_pStackedWidget->setFixedSize(imgBgSize);
+        // scrollWidget->setFixedSize(imgBgSize);
 
-        auto *selectItem = new QWidget;
+
+        auto detileWidget = new QWidget;
 
         Column {
             m_title,
@@ -165,58 +169,45 @@ public:
             m_isDefault,
             m_online,
             spacing(0),
-        }.attachTo(selectItem);
-        auto sx = toScrollableColumn(selectItem);
+        }.attachTo(detileWidget);
+        detileWidget->setMinimumWidth(180);
 
+        auto paneSplitter = new QSplitter;
+        paneSplitter->insertWidget(0, detileWidget);
+        paneSplitter->insertWidget(1, m_pStackedWidget);
+        paneSplitter->setCollapsible(0, false);
 
-        scrollWidget->setFixedSize(imgBgSize);
-
-        QWidget * m_column;
+        paneSplitter->setStretchFactor(1, 1);
+        // QWidget * m_column;
         Row {
             m_icon,
-            Widget {
-                bindTo(&m_column),
-                Column {
-                    m_title,
-                    st,
-                    m_version,
-                    m_ip,
-                    st,
-                    m_date,
-                    m_type,
-                    m_isDefault,
-                    m_online,
-                    spacing(0),
-                },
-            },
-            Column {
-                scrollWidget,
-            },
+                // Widget {
+                //     bindTo(&m_column),
+                //     Column {
+                //         m_title,
+                //         st,
+                //         m_version,
+                //         m_ip,
+                //         st,
+                //         m_date,
+                //         m_type,
+                //         m_isDefault,
+                //         m_online,
+                //         spacing(0),
+                //     },
+                // },
+            noMargin,
+
+            paneSplitter,
+            // Column {
+            //     m_pStackedWidget,
+            // },
             noMargin, spacing(SpacingTokens::ExPaddingGapL),
         }.attachTo(this);
-
-        m_column->setMinimumWidth(150);
-        // Row {
-        //     m_icon,
-        //     sx,
-        //     sc,
-
-        //     Column {
-        //         m_title,
-        //         st,
-        //         m_version,
-        //         m_ip,
-        //         st,
-        //         m_date,
-        //         m_type,
-        //         m_isDefault,
-        //         m_online,
-        //         spacing(0),
-        //     },
-        //     m_pStackedWidget,//scrollWidget,
-        //     noMargin, spacing(SpacingTokens::ExPaddingGapL),
-        // }.attachTo(this);
-
+        m_pStackedWidget->setCurrentIndex(1);
+        setMaximumHeight(200);
+        // m_column->setMinimumWidth(180);
+        // m_column->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
         setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Maximum);
 
         // m_dlCountItems->setVisible(false);
@@ -251,7 +242,7 @@ public:
         // m_currentVendor = current.data(EasyBoardModel::RoleDate).toString();
         // m_vendor->setText(m_currentVendor);
         if(name.contains("t113",Qt::CaseInsensitive)){//color:#909090;center
-            const QString placeText = Tr::tr("<html><body style=\"font-size:12px\">"
+            const QString placeText = Tr::tr("<html><body style=\"color:#909090,font-size:12px\">"
                                                    "<div align='left'>"
                                                    "<div style=\"font-size:16px\">BingPi-M2开发板</div>"
                                                    "<table><tr><td>"
