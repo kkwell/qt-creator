@@ -519,8 +519,8 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
 
     static const TextFormat titleTF
         {Theme::Token_Text_Default, UiElementH2};
-    QLabel *titleLabel = tfLabel(titleTF);
-    titleLabel->setText(Tr::tr("Easy Board Configs"));
+    // QLabel *titleLabel = tfLabel(titleTF);
+    // titleLabel->setText(Tr::tr("Easy Board Configs"));
 
     d->searchBox = new SearchBox;
     d->searchBox->setPlaceholderText(Tr::tr("Search"));
@@ -571,10 +571,11 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
 
     using namespace Layouting;
     Column {
-        Column {
-            titleLabel,
-            customMargins(0, VPaddingM, 0, VPaddingM),
-        },
+        // Column {
+        //     titleLabel,
+        //     customMargins(0, VPaddingM, 0, VPaddingM),
+        // },
+        spacing(gapSize),
         Row {
             d->searchBox,
             spacing(gapSize),
@@ -628,7 +629,7 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
 
         d->model->debugTest(source);
         // debugTest
-        qDebug()<<"index:"<<current.row()<<source.row();
+        // qDebug()<<"index:"<<current.row()<<source.row();
 
         this->d->pNetManage->findEasyBoard();
     };

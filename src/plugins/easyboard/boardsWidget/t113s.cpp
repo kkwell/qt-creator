@@ -8,6 +8,7 @@
 #include <coreplugin/icontext.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/iwelcomepage.h>
+#include <coreplugin/minisplitter.h>
 
 
 #include <extensionsystem/pluginmanager.h>
@@ -29,10 +30,11 @@
 #include <utils/temporarydirectory.h>
 #include <utils/utilsicons.h>
 
-// using namespace Core;
-// using namespace Utils;
-// using namespace StyleHelper;
-// using namespace WelcomePageHelpers;
+
+using namespace Core;
+using namespace Utils;
+using namespace StyleHelper;
+using namespace WelcomePageHelpers;
 
 
 namespace EasyBoard::Internal {
@@ -46,14 +48,36 @@ t113s::t113s(QWidget *parent):QWidget(parent)
 {
 
     m_description = tfLabel(contentTF, false);
+    m_right = tfLabel(contentTF, false);
+
     m_description->setText("value test ..................");
 
+    auto leftWidget = new QWidget;
+    auto rightWidget = new QWidget;
+
     using namespace Layouting;
+
     Column {
-           m_description,
-           st,
-           noMargin, spacing(SpacingTokens::ExVPaddingGapXl),
-           }.attachTo(this);
+        m_description,
+        st,
+        noMargin, spacing(SpacingTokens::ExVPaddingGapXl),
+    }.attachTo(leftWidget);
+
+    Column {
+        m_right,
+        st,
+        noMargin, spacing(SpacingTokens::ExVPaddingGapXl),
+    }.attachTo(rightWidget);
+
+
+    auto splitter = new MiniSplitter(Qt::Horizontal);
+    splitter->addWidget(leftWidget);
+    splitter->addWidget(rightWidget);
+
+    Column{
+        splitter,
+    }.attachTo(this);
+
     update({});
 }
 
@@ -62,7 +86,7 @@ void t113s::update(const QModelIndex &current)
     if (!current.isValid())
         return;
     m_description->setText("xxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
-
+    m_right->setText("ksdflskdfslkdf");
 }
 
 }

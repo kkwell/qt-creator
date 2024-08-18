@@ -38,6 +38,7 @@ signals:
 
 private:
     QLabel *m_description;
+    QLabel *m_right;
 };
 
 } // namespace EasyBoard::Internal

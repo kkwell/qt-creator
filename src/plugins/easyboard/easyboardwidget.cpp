@@ -9,10 +9,12 @@
 
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/icontext.h>
+#include <coreplugin/coreicons.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/iwelcomepage.h>
 #include <coreplugin/plugininstallwizard.h>
 #include <coreplugin/welcomepagehelper.h>
+#include <coreplugin/minisplitter.h>
 
 #include <extensionsystem/pluginmanager.h>
 #include <extensionsystem/pluginspec.h>
@@ -32,6 +34,8 @@
 #include <utils/stylehelper.h>
 #include <utils/temporarydirectory.h>
 #include <utils/utilsicons.h>
+#include <utils/styledbar.h>
+// #include <utils/fancymainwindow.h>
 
 #include <QAction>
 #include <QApplication>
@@ -50,7 +54,7 @@
 
 using namespace Core;
 using namespace Utils;
-using namespace StyleHelper;
+using namespace StyleHelper::SpacingTokens;
 using namespace WelcomePageHelpers;
 
 namespace EasyBoard::Internal {
@@ -86,6 +90,57 @@ static QWidget *toScrollableColumn(QWidget *widget)
     scrollArea->setFrameStyle(QFrame::NoFrame);
 
     return scrollArea;
+};
+
+class TopArea : public QWidget
+{
+    Q_OBJECT
+
+public:
+    TopArea(QWidget *parent = nullptr)
+        : QWidget(parent)
+    {
+        setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+
+        constexpr TextFormat welcomeTF {Theme::Token_Text_Default, StyleHelper::UiElementH2};
+
+        auto ideIconLabel = new QLabel;
+        {
+            const QPixmap logo = Core::Icons::QTCREATORLOGO_BIG.pixmap();
+            const int size = logo.width();
+            const QRect cropR = size == 128 ? QRect(9, 22, 110, 84) : QRect(17, 45, 222, 166);
+            const QPixmap croppedLogo = logo.copy(cropR);
+            const int lineHeight = welcomeTF.lineHeight();
+            const QPixmap scaledCroppedLogo =
+                croppedLogo.scaledToHeight((lineHeight - 12) * croppedLogo.devicePixelRatioF(),
+                                           Qt::SmoothTransformation);
+            ideIconLabel->setPixmap(scaledCroppedLogo);
+            ideIconLabel->setFixedHeight(lineHeight);
+        }
+
+        auto welcomeLabel = new QLabel(Tr::tr("%1 Configs")
+                                           .arg(QGuiApplication::applicationDisplayName()));
+        {
+            welcomeLabel->setFont(welcomeTF.font());
+            QPalette pal = palette();
+            pal.setColor(QPalette::WindowText, welcomeTF.color());
+            welcomeLabel->setPalette(pal);
+        }
+
+        using namespace Layouting;
+
+        Column {
+            Row {
+                ideIconLabel,
+                welcomeLabel,
+                st,
+                spacing(ExVPaddingGapXl),
+                customMargins(HPaddingM, VPaddingM, HPaddingM, VPaddingM),
+            },
+            createRule(Qt::Horizontal),
+            noMargin, spacing(0),
+        }.attachTo(this);
+    }
 };
 
 class HeadingWidget : public QWidget
@@ -131,30 +186,38 @@ public:
 
         using namespace Layouting;
 
+        auto contain_details = new QWidget;
+
+        Column{
+            m_details,
+        }.attachTo(contain_details);
+
         auto m_pStackedWidget = new QStackedWidget;
-        QWidget *scrollWidget = new QWidget;
+        // QWidget *scrollWidget = new QWidget;
         QScrollArea *scrollArea = new QScrollArea;
 
+        // scrollArea->setStyleSheet("QWidget { background-color: #bb229d; }");
         // scrollWidget->setStyleSheet("QWidget { background-color: #bb229d; }");
 
-        scrollArea->setWidget(m_details);  // 将内部部件设置为滚动区域的widget
-        // scrollArea->setWidgetResizable(true); // 允许滚动区域的widget根据内容调整大小
+        scrollArea->setWidget(contain_details);  // 将内部部件设置为滚动区域的widget
+        scrollArea->setWidgetResizable(true); // 允许滚动区域的widget根据内容调整大小
         scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // 水平滚动条始终关闭
         scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);  // 垂直滚动条按需显示
+        scrollArea->setFrameStyle(QFrame::NoFrame);
 
-
-        Row {
-            m_details,
-        }.attachTo(scrollWidget);
+        // Row {
+        //     scrollArea,
+        // }.attachTo(scrollWidget);
 
         // auto sc = toScrollableColumn(scrollWidget);
         m_pStackedWidget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
         m_pStackedWidget->addWidget(scrollArea);
-        m_pStackedWidget->addWidget(scrollWidget);
-        m_pStackedWidget->setMinimumWidth(0);
+        // m_pStackedWidget->addWidget(scrollWidget);
+        m_pStackedWidget->setMinimumWidth(2);
         // m_pStackedWidget->setFixedSize(imgBgSize);
         // scrollWidget->setFixedSize(imgBgSize);
 
+        // m_pStackedWidget->setCurrentIndex(0);
 
         auto detileWidget = new QWidget;
 
@@ -170,45 +233,34 @@ public:
             m_online,
             spacing(0),
         }.attachTo(detileWidget);
+
         detileWidget->setMinimumWidth(180);
 
-        auto paneSplitter = new QSplitter;
+        auto paneSplitter = new MiniSplitter(Qt::Horizontal);
         paneSplitter->insertWidget(0, detileWidget);
         paneSplitter->insertWidget(1, m_pStackedWidget);
         paneSplitter->setCollapsible(0, false);
 
-        paneSplitter->setStretchFactor(1, 1);
-        // QWidget * m_column;
+        // paneSplitter->setStretchFactor(1, 1);
+
         Row {
             m_icon,
-                // Widget {
-                //     bindTo(&m_column),
-                //     Column {
-                //         m_title,
-                //         st,
-                //         m_version,
-                //         m_ip,
-                //         st,
-                //         m_date,
-                //         m_type,
-                //         m_isDefault,
-                //         m_online,
-                //         spacing(0),
-                //     },
-                // },
             noMargin,
-
             paneSplitter,
-            // Column {
-            //     m_pStackedWidget,
-            // },
             noMargin, spacing(SpacingTokens::ExPaddingGapL),
         }.attachTo(this);
-        m_pStackedWidget->setCurrentIndex(1);
+
         setMaximumHeight(200);
+
         // m_column->setMinimumWidth(180);
         // m_column->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
         setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Maximum);
+
+        // FancyMainWindow * test = new Utils::FancyMainWindow;
+        // test->addDockForWidget(detileWidget,true);
+        // test->addDockForWidget(paneSplitter,true);
+
+        // setFocusProxy(m_easyboardBrowser);
 
         // m_dlCountItems->setVisible(false);
 
@@ -217,6 +269,14 @@ public:
         // connect(m_vendor, &QAbstractButton::pressed, this, [this]() {
         //     emit vendorClicked(m_currentVendor);
         // });
+
+
+        // Row {
+        //     m_icon,
+        //     noMargin,
+        //     test,
+        //     noMargin, spacing(SpacingTokens::ExPaddingGapL),
+        // }.attachTo(this);
 
         update({});
     }
@@ -244,7 +304,7 @@ public:
         if(name.contains("t113",Qt::CaseInsensitive)){//color:#909090;center
             const QString placeText = Tr::tr("<html><body style=\"color:#909090,font-size:12px\">"
                                                    "<div align='left'>"
-                                                   "<div style=\"font-size:16px\">BingPi-M2开发板</div>"
+                                                   "<div style=\"font-size:14px\">BingPi-M2开发板</div>"
                                                    "<table><tr><td>"
                                                    "<hr/>"
                                                    "<div style=\"margin-top: 5px\">&bull; CPU：全志T113-S3,双核Cortex-A7,最高1.2GHz</div>"
@@ -302,49 +362,6 @@ private:
     // QString m_currentVendor;
 };
 
-class SplitterWidget final : public QSplitter
-{
-public:
-    SplitterWidget()
-    {
-        auto m_easyboardBrowser = new EasyBoardBrowser;
-
-        // QWidget *rightSplitWidget = new QWidget;
-        // auto rightSplitWidgetLayout = new QVBoxLayout(rightSplitWidget);
-        // rightSplitWidgetLayout->setSpacing(0);
-        // rightSplitWidgetLayout->setContentsMargins(0, 0, 0, 0);
-        // rightSplitWidgetLayout->insertWidget(0, m_easyboardBrowser);
-
-        auto rightPaneSplitter = new QSplitter;
-        rightPaneSplitter->insertWidget(0, m_easyboardBrowser);
-        rightPaneSplitter->insertWidget(1, new HeadingWidget);
-        // rightPaneSplitter->setStretchFactor(0, 1);
-        // rightPaneSplitter->setStretchFactor(1, 0);
-
-        auto splitter = new QSplitter;
-        splitter->setOrientation(Qt::Vertical);
-        splitter->insertWidget(0, rightPaneSplitter);
-        // QWidget *outputPane = new OutputPanePlaceHolder(Constants::MODE_EDIT, splitter);
-        // outputPane->setObjectName(QLatin1String("EditModeOutputPanePlaceHolder"));
-        splitter->insertWidget(1, new QWidget);
-        // splitter->setStretchFactor(0, 3);
-        // splitter->setStretchFactor(1, 0);
-        setOrientation(Qt::Horizontal);
-        addWidget(m_easyboardBrowser);
-        addWidget(new HeadingWidget);
-        // insertWidget(2, new QWidget);
-        setStretchFactor(0, 0);
-        // setStretchFactor(1, 1);
-        // setStretchFactor(2, 0);
-        setCollapsible(0, true);
-        // QSplitter *pHSplitter = new QSplitter(Qt::Horizontal, this);
-        setSizes(QList<int>() << 10 << 30); // 设置两个子控件的初始大小
-        setFocusProxy(m_easyboardBrowser);
-
-        // IContext::attach(this, Context(Constants::C_EDITORMANAGER));
-    }
-};
-
 class EasyBoardWidget final : public Core::ResizeSignallingWidget
 {
 public:
@@ -355,6 +372,7 @@ private:
     void fetchAndInstallPlugin(const QUrl &url);
     void fetchAndDisplayImage(const QUrl &url);
 
+    TopArea *m_topArea;
     QString m_currentItemName;
     EasyBoardBrowser *m_easyboardBrowser;
     QWidget *m_descriptionColumns;
@@ -463,14 +481,41 @@ EasyBoardWidget::EasyBoardWidget()
     m_stackWidget->addWidget(m_primaryContent);
     m_stackWidget->addWidget(m_descriptionColumns);
 
-    Row {
-        Space(SpacingTokens::ExVPaddingGapXl),
-        m_easyboardBrowser,
-        WelcomePageHelpers::createRule(Qt::Vertical),
-        m_stackWidget,//descriptionColumns,
-        noMargin, spacing(0),
+    // auto m_left = new QDockWidget;
+    // this->setWidget();
+
+    // auto paneSplitter = new MiniSplitter(Qt::Horizontal);
+    // paneSplitter->insertWidget(0, m_easyboardBrowser);
+    // paneSplitter->insertWidget(1, m_stackWidget);
+
+    // m_easyboardBrowser->setMinimumWidth(0);
+    // Row {
+    //     Space(SpacingTokens::ExVPaddingGapXl),
+    //     m_easyboardBrowser,
+    //     WelcomePageHelpers::createRule(Qt::Vertical),
+    //     m_stackWidget,//descriptionColumns,
+    //     noMargin, spacing(0),
+    // }.attachTo(this);
+
+    m_topArea = new TopArea;
+
+    Column {
+        // new StyledBar,
+        m_topArea,
+        Row {
+            Space(SpacingTokens::ExVPaddingGapXl),
+            m_easyboardBrowser,
+            WelcomePageHelpers::createRule(Qt::Vertical),
+            m_stackWidget,//descriptionColumns,
+            noMargin, spacing(0),
+        },
+        noMargin,
+        spacing(0),
     }.attachTo(this);
     // SplitterWidget *p = new SplitterWidget;
+
+
+
     // QHBoxLayout layout;
     // layout.addWidget(p);
     // setLayout(&layout);
@@ -495,6 +540,22 @@ EasyBoardWidget::EasyBoardWidget()
     // connect(m_tags, &TagList::tagSelected, m_easyboardBrowser, &EasyBoardBrowser::setFilter);
     connect(m_headingWidget, &HeadingWidget::vendorClicked,
             m_easyboardBrowser, &EasyBoardBrowser::setFilter);
+
+
+    connect(this, &ResizeSignallingWidget::resized,
+            this, [this](const QSize &size, const QSize &) {
+                // const QSize sideAreaS = m_sideArea->size();
+                const QSize topAreaS = m_topArea->size();
+                const QSize mainWindowS = ICore::mainWindow()->size();
+
+                // const bool showSideArea = sideAreaS.width() < size.width() / 4;
+                const bool showTopArea = topAreaS.height() < mainWindowS.height() / 8.85;
+                const bool showLinks = true;
+
+                // m_sideArea->m_links->setVisible(showLinks);
+                // m_sideArea->setVisible(showSideArea);
+                m_topArea->setVisible(showTopArea);
+            });
 
     updateView({});
 }
