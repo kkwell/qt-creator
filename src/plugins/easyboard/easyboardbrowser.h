@@ -36,6 +36,7 @@ public:
     void removeFromList(const QModelIndex &idx);
     void setDefault(const QModelIndex &idx);
 
+    void processPendingDatagrams(QJsonObject str);
 signals:
     void itemSelected(const QModelIndex &current, const QModelIndex &previous);
     void itemChanged(const QModelIndex &current, const QModelIndex &previous);
