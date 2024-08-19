@@ -68,7 +68,12 @@ void netproperty::findEasyBoard()
     }
     QJsonDocument jsonDocument;
     jsonDocument.setObject(jsonObject);
-    sendbroadcast(jsonDocument.toJson());
+    // sendbroadcast(jsonDocument.toJson());
+
+    QByteArray datagram = encodedText(jsonDocument.toJson());
+    for (int i=0;i< m_udpSocketlist.size();i++) {
+        m_udpSocketlist[i]->writeDatagram(datagram,QHostAddress("192.168.98.100"), groupPort);
+    }
 }
 
 int netproperty::bindAllNet()

@@ -36,12 +36,13 @@ public:
     void removeFromList(const QModelIndex &idx);
     void setDefault(const QModelIndex &idx);
 
+    void fetchBoards();
 signals:
     void itemSelected(const QModelIndex &current, const QModelIndex &previous);
     void itemChanged(const QModelIndex &current, const QModelIndex &previous);
 
 private:
-    void fetchExtensions();
+
     class EasyBoardBrowserPrivate *d = nullptr;
 };
 

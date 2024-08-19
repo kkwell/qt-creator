@@ -32,7 +32,7 @@ public:
 
     QString getIp();
     QString getName();
-
+    ItemType getType();
 
 private:
     void initializePage();

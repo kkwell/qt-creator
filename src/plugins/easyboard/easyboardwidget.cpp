@@ -188,7 +188,8 @@ public:
 
         auto contain_details = new QWidget;
 
-        Column{
+        Row{
+            Space(SpacingTokens::ExVPaddingGapXl),
             m_details,
         }.attachTo(contain_details);
 

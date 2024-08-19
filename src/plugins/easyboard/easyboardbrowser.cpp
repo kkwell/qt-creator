@@ -147,6 +147,19 @@ private:
     const QString m_textTemplate;
 };
 
+static QString boardTypeDisplayString(ItemType type)
+{
+    switch (type) {
+    case ItemTypeLocal:
+        return Tr::tr("Local");
+    case ItemTypeNetwork:
+        return Tr::tr("Network");
+    default:
+        return {};
+    }
+    return {};
+}
+
 static QString boardStateDisplayString(BoardState state)
 {
     switch (state) {
@@ -219,6 +232,8 @@ public:
         y += ExPaddingGapL;
         const QRect itemNameR(x, y, middleColumnW, itemNameTF.lineHeight());
         const QString itemDisName = index.data(EasyBoardModel::RoleDisplayName).toString();
+
+        const QString itemDisType = boardTypeDisplayString(index.data(EasyBoardModel::RoleItemType).value<ItemType>());
 
         const QString itemName = itemDisName.isEmpty()?index.data().toString():itemDisName;
 
@@ -315,7 +330,7 @@ public:
                 = painter->fontMetrics().elidedText(tags, Qt::ElideRight, tagsR.width());
             painter->drawText(tagsR, tagsTF.drawTextFlags, tagsElided);
             const QString verElided
-                = painter->fontMetrics().elidedText(itemVersion, Qt::ElideRight, tagsR.width());
+                = painter->fontMetrics().elidedText(itemDisType+"  "+itemVersion, Qt::ElideRight, tagsR.width());
             painter->drawText(tagsR, tagsTF.drawTextFlags|Qt::AlignRight, verElided);
 
         }
@@ -359,19 +374,27 @@ public:
             }
             if (button == Qt::RightButton) {
                 QMenu contextMenu;
-                QAction *action = new QAction(Tr::tr("Remove Board"));
+
+                QAction *action = new QAction(Tr::tr("Set As Default"));
+                connect(action, &QAction::triggered, this, [idx,this] {
+                    ((EasyBoardBrowser *)parent())->setDefault(idx);
+                });
+                contextMenu.addAction(action);
+                action = new QAction(Tr::tr("Connect to board"));
+                connect(action, &QAction::triggered, this, [idx,this] {
+                    ((EasyBoardBrowser *)parent())->fetchBoards();
+                });
+                contextMenu.addAction(action);
+                contextMenu.addSeparator();
                 // const auto boardModel = qobject_cast<EasyBoardModel *>(model);
+                action = new QAction(Tr::tr("Remove Board"));
                 contextMenu.addAction(action);
                 connect(action, &QAction::triggered, this, [idx,this] {
                     // boardModel->removeFromList(idx);
                     ((EasyBoardBrowser *)parent())->removeFromList(idx);
                 });
-                contextMenu.addSeparator();
-                action = new QAction(Tr::tr("Set As Default"));
-                connect(action, &QAction::triggered, this, [idx,this] {
-                    ((EasyBoardBrowser *)parent())->setDefault(idx);
-                });
-                contextMenu.addAction(action);
+
+
                 contextMenu.exec(mouseEvent->globalPosition().toPoint());
                 return true;
             }
@@ -610,7 +633,6 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
 
     auto updateModel = [this] {
         d->sortFilterProxyModel->sort(0);
-        // qDebug()<<"kong:"<<d->boardsView->currentIndex().isValid();
         emit itemChanged(d->boardsView->currentIndex(),d->boardsView->currentIndex());
 
         if (d->selectionModel == nullptr) {
@@ -680,7 +702,43 @@ void EasyBoardBrowser::editBoardValue(const QModelIndex &idx)
             // newDialog.setAutoLoadSession(d->isAutoRestoreLastSession());
 
             if (newDialog.exec() == QDialog::Accepted){
-                d->model->dataChanged(current,current);
+                if(pBoard->id.isEmpty()){
+                    pBoard->ip = newDialog.getIp();
+                    pBoard->displayName = newDialog.getName();
+                    pBoard->type = newDialog.getType();
+                }
+                else{
+                    if(pBoard->type != newDialog.getType() && newDialog.getType()==ItemTypeNetwork){
+                        if(d->model->haveSameConfig(pBoard->id)){
+                            int answer = QMessageBox::warning(nullptr, QApplication::translate("Application","Warning"),
+                                                              QCoreApplication::translate("Application", "The current configuration already exists, do you want to overwrite it?"),
+                                                              QMessageBox::Yes|QMessageBox::No,
+                                                              QMessageBox::No);
+                            if(answer == QMessageBox::Yes){
+                                d->model->removeFromList(d->model->getBoardModelIndex(pBoard->id));
+
+                                pBoard->ip = newDialog.getIp();
+                                pBoard->displayName = newDialog.getName();
+                                pBoard->type = newDialog.getType();
+                            }
+                            else{
+                                return;
+                            }
+                        }
+                        else{
+                            pBoard->ip = newDialog.getIp();
+                            pBoard->displayName = newDialog.getName();
+                            pBoard->type = newDialog.getType();
+                        }
+                    }
+                    else{
+                        pBoard->ip = newDialog.getIp();
+                        pBoard->displayName = newDialog.getName();
+                        pBoard->type = newDialog.getType();
+                    }
+                }
+
+                emit d->model->dataChanged(current,current);
                 emit itemChanged(d->boardsView->currentIndex(),d->boardsView->currentIndex());
             }
         }
@@ -701,6 +759,9 @@ void EasyBoardBrowser::newBoard()
     NewBoardDialog newDialog(ICore::dialogParent(),&mBoard);
 
     if (newDialog.exec() == QDialog::Accepted){
+        mBoard.ip = newDialog.getIp();
+        mBoard.displayName = newDialog.getName();
+        mBoard.type = newDialog.getType();
         d->model->addNewBoard(mBoard);
     }
 }
@@ -736,7 +797,7 @@ void EasyBoardBrowser::showEvent(QShowEvent *event)
 {
     if (!d->dataFetched) {
         d->dataFetched = true;
-        fetchExtensions();
+        // fetchExtensions();
     }
     QWidget::showEvent(event);
 }
@@ -758,7 +819,7 @@ static QString customOsTypeToString(OsType osType)
     }
 }
 
-void EasyBoardBrowser::fetchExtensions()
+void EasyBoardBrowser::fetchBoards()
 {
 #ifdef WITH_TESTS
     // Uncomment for testing with local json data.
@@ -788,17 +849,14 @@ void EasyBoardBrowser::fetchExtensions()
     //     d->m_spinner->show();
     // };
 
-    // qDebug()<<"kong:"<<settings().externalRepoUrl();
-    // d->model->setBoards({});
-
-
     // const auto onQueryDone = [this](const NetworkQuery &query, DoneWith result) {
     //     const QByteArray response = query.reply()->readAll();
     //     qCDebug(browserLog).noquote() << "Got JSON QNetworkReply:" << query.reply()->error();
     //     if (result == DoneWith::Success) {
     //         qCDebug(browserLog).noquote() << "JSON response size:"
     //                                       << QLocale::system().formattedDataSize(response.size());
-    //         d->model->setBoards(response);
+    //         qDebug()<<"DoneWith::Success:"<<response;
+    //         // d->model->setBoards(response);
     //     } else {
     //         qCWarning(browserLog).noquote() << response;
     //         d->model->setBoards({});
@@ -811,6 +869,14 @@ void EasyBoardBrowser::fetchExtensions()
     //             };
 
     // d->taskTreeRunner.start(group);
+
+    QUdpSocket *udpSocket = new QUdpSocket(this);
+    QByteArray datagram = "Hello, UDP!";
+
+    QString groupIp = "192.168.98.100";
+
+    udpSocket->writeDatagram(datagram, QHostAddress(groupIp), 1901);
+
 }
 
 QLabel *tfLabel(const TextFormat &tf, bool singleLine)

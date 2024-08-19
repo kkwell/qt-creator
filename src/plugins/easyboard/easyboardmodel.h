@@ -65,6 +65,13 @@ public:
 
     void removeFromList(const QModelIndex &idx);
     void setDefault(const QModelIndex &idx);
+
+    const QModelIndex getBoardModelIndex(const QString &idx,const ItemType &type = ItemTypeNetwork);
+
+    bool haveSameConfig(const QString &idx,const ItemType &type = ItemTypeNetwork);
+
+    bool isHaveDefault();
+
 public slots:
 
     void devicesLoaded();

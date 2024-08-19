@@ -74,7 +74,6 @@ static Boards parseBoardsRepoReply(const QByteArray &jsonData)
         board.type = ItemTypeNetwork;
         board.online = true;
         parsedBoards.append(board);
-        qDebug()<<"kong:"<<parsedBoards.size();
     return parsedBoards;
 }
 
@@ -390,6 +389,32 @@ void EasyBoardModel::setDefault(const QModelIndex &idx)
     emit dataChange();
 }
 
+const QModelIndex EasyBoardModel::getBoardModelIndex(const QString &idx,const ItemType &type)
+{
+    for (int i=0;i<d->boards.size();i++) {
+        if(d->boards[i].id==idx && d->boards[i].type==type)
+            return index(i);
+    }
+    return QModelIndex();
+}
+
+bool EasyBoardModel::haveSameConfig(const QString &idx,const ItemType &type)
+{
+    for (int i=0;i<d->boards.size();i++) {
+        if(d->boards[i].id==idx && d->boards[i].type==type)
+            return true;
+    }
+    return false;
+}
+
+bool EasyBoardModel::isHaveDefault()
+{
+    for (int i=0;i<d->boards.size();i++) {
+        if(d->boards[i].isDefault)
+            return true;
+    }
+    return false;
+}
 // void EasyBoardModel::updateIndex(const QModelIndex &index)
 // {
 //     for (int i=0;i<d->boards.size();i++) {

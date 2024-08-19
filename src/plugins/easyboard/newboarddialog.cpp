@@ -64,16 +64,17 @@ NewBoardDialog::NewBoardDialog(QWidget *parent,Board *board) : QDialog(parent)
 
     auto acceptModel = [this] {
         if(isComplete()){
-            if(m_board->name!=getName())
-                m_board->displayName = getName();
-            m_board->ip = getIp();
-            if(m_typeBox->currentIndex()==0)
-                m_board->type = ItemTypeLocal;
-            else
-                m_board->type = ItemTypeNetwork;
+            // if(m_board->name!=getName())
+            //     m_board->displayName = getName();
+            // m_board->ip = getIp();
+            // if(m_typeBox->currentIndex()==0)
+            //     m_board->type = ItemTypeLocal;
+            // else
+            //     m_board->type = ItemTypeNetwork;
             QDialog::accept();
-        }else
+        }else{
             m_tip->setText(Tr::tr("Please Complete Set parameters."));
+        }
     };
 
     connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -88,6 +89,11 @@ QString NewBoardDialog::getIp()
 QString NewBoardDialog::getName()
 {
     return m_nameLineEdit->text();
+}
+
+ItemType NewBoardDialog::getType()
+{
+    return m_typeBox->currentIndex()==0?ItemTypeLocal:ItemTypeNetwork;
 }
 
 void NewBoardDialog::initializePage() {
@@ -107,6 +113,7 @@ void NewBoardDialog::initializePage() {
         else
             m_typeBox->setCurrentIndex(1);
     }
+
     // m_sshPortSpinBox->setValue(22);
     // m_sshPortSpinBox->setRange(1, 65535);
 }
