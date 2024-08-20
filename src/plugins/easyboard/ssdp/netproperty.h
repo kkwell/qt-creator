@@ -16,25 +16,31 @@ public:
     explicit netproperty(QObject *parent = nullptr);
     ~netproperty();
 
-    int bindAllNet();
+    // void bindAllNet();
     void exitAllNet();
+
+    void findEasyBoard();//发送组播消息
+    void connectEasyBoard(const QString ip,const quint16 port);//连接开发板
+
+    int bindAllNet();
 
     QString TypeToQString(int type);
     QString FlagsToQString(int flags);
 
     bool NetInterfaceIsUseful(int flags);
     void sendbroadcast(QByteArray msg);
+    void sendUdp(const QString &ip,const quint16 &port,QByteArray msg);
 
     QByteArray encodedText(QByteArray data); //加密
     QByteArray decodedText(QByteArray data); //解密
 
-    void findEasyBoard();//发送组播消息
 signals:
     void getSocketData(QJsonObject str);
+    void getUdpData(QJsonObject str);
 
 private slots:
     void onSocketReadyRead(); // 读取socket传入的数据
-
+    void processPendingDatagrams();
 private:
     QString groupIp;
     quint16 groupPort;
@@ -45,6 +51,9 @@ private:
     QByteArray m_hashKey;
     QByteArray m_hashIV;
     QAESEncryption *p_AES;
+    QUdpSocket *udpSocket;
+    QHostAddress udpAddress;
+    quint16 udpPort;
 };
 
 #endif // NETPROPERTY_H

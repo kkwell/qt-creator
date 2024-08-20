@@ -16,12 +16,61 @@ netproperty::netproperty(QObject *parent)
 
     m_hashKey = QCryptographicHash::hash(m_key.toLocal8Bit(), QCryptographicHash::Sha256);
     m_hashIV = QCryptographicHash::hash(m_iv.toLocal8Bit(), QCryptographicHash::Md5);
+
+    udpSocket = new QUdpSocket(this);
+    udpSocket->bind(QHostAddress::Any, groupPort,QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint);
+    connect(udpSocket, &QUdpSocket::readyRead, this, &netproperty::processPendingDatagrams);
 }
 
 netproperty::~netproperty()
 {
+    delete udpSocket;
     exitAllNet();
     delete p_AES;
+}
+
+void netproperty::processPendingDatagrams()
+{
+    while (udpSocket->hasPendingDatagrams()) {
+        QByteArray datagram;
+        datagram.resize(udpSocket->pendingDatagramSize());
+        udpSocket->readDatagram(datagram.data(), datagram.size(), &udpAddress, &udpPort);
+
+        QJsonParseError json_error;
+
+        QJsonDocument jsonDoc(QJsonDocument::fromJson(decodedText(datagram), &json_error));
+        if(json_error.error != QJsonParseError::NoError){
+            qDebug() << "json error!" << json_error.errorString();
+            return;
+        }
+
+        QJsonObject rootObj = jsonDoc.object();
+        rootObj.insert("IP",udpAddress.toString());
+
+        emit getUdpData(rootObj);
+    }
+}
+
+void netproperty::connectEasyBoard(const QString ip,const quint16 port)
+{
+    QDateTime dateTime= QDateTime::currentDateTime();//获取系统当前的时间
+    QString str = dateTime.toString("yyyy-MM-dd hh:mm:ss:zzz");//格式化时间
+    const int msg_length = 4;
+    QStringList temp_msg[msg_length];
+    temp_msg[0] << "HOST" << "easyboard";
+    temp_msg[1] << "MAN"  << "ssdp:alive";
+    temp_msg[2] << "DATE" << str;
+    temp_msg[3] << "ID"   << "main";
+
+    QJsonObject jsonObject;
+
+    for(int i=0;i<msg_length;i++){
+        jsonObject.insert(temp_msg[i].first(),temp_msg[i].last());
+    }
+    QJsonDocument jsonDocument;
+    jsonDocument.setObject(jsonObject);
+
+    sendUdp(ip,port,jsonDocument.toJson());
 }
 
 void netproperty::findEasyBoard()
@@ -166,6 +215,12 @@ void netproperty::exitAllNet()
     qDeleteAll(m_udpSocketlist);
     m_udpSocketlist.clear();
     m_localIpList.clear();
+}
+
+void netproperty::sendUdp(const QString &ip,const quint16 &port,QByteArray msg)
+{
+    QByteArray datagram = encodedText(msg);
+    udpSocket->writeDatagram(datagram, QHostAddress(ip), port);
 }
 
 void netproperty::sendbroadcast(QByteArray msg)

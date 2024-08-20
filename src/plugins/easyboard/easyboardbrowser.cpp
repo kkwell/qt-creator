@@ -649,11 +649,12 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
 
         QModelIndex source = d->sortFilterProxyModel->mapToSource(current);
 
-        d->model->debugTest(source);
+        // d->model->debugTest(source);
         // debugTest
         // qDebug()<<"index:"<<current.row()<<source.row();
+        d->pNetManage->connectEasyBoard("192.168.98.133",1901);
 
-        this->d->pNetManage->findEasyBoard();
+        // this->d->pNetManage->findEasyBoard();
     };
 
     updateModel();
@@ -671,6 +672,18 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
             d->sortFilterProxyModel, &SortFilterProxyModel::setSortOption);
     connect(d->filterChooser, &OptionChooser::currentIndexChanged,
             d->sortFilterProxyModel, &SortFilterProxyModel::setFilterOption);
+
+
+    connect(d->pNetManage,&netproperty::getUdpData,
+            this,&EasyBoardBrowser::processPendingDatagrams);
+
+
+}
+
+void EasyBoardBrowser::processPendingDatagrams(QJsonObject str) {
+
+    qDebug()<<str;
+
 }
 
 EasyBoardBrowser::~EasyBoardBrowser()

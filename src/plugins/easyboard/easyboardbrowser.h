@@ -37,12 +37,14 @@ public:
     void setDefault(const QModelIndex &idx);
 
     void fetchBoards();
+
+    void processPendingDatagrams(QJsonObject str);
+
 signals:
     void itemSelected(const QModelIndex &current, const QModelIndex &previous);
     void itemChanged(const QModelIndex &current, const QModelIndex &previous);
 
 private:
-
     class EasyBoardBrowserPrivate *d = nullptr;
 };
 
@@ -60,4 +62,4 @@ enum Size {
 };
 QPixmap itemIcon(const QModelIndex &index, Size size);
 QPixmap boardIcon(const QModelIndex &index, Size size);
-} // ExtensionManager::Internal
+} // namespace EasyBoard::Internal
