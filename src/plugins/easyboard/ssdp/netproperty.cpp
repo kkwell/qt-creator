@@ -7,8 +7,8 @@
 netproperty::netproperty(QObject *parent)
     : QObject{parent}
 {
-    groupIp = "239.255.255.250";
-    groupPort = 1901;
+    groupIp = BROADCAST;
+    groupPort = BROADCASTPORT;
     m_key = "kvell-easyboard-key-for-ssdp!";
     m_iv  = "your-IV-vector";
     // bindAllNet();
@@ -17,9 +17,13 @@ netproperty::netproperty(QObject *parent)
     m_hashKey = QCryptographicHash::hash(m_key.toLocal8Bit(), QCryptographicHash::Sha256);
     m_hashIV = QCryptographicHash::hash(m_iv.toLocal8Bit(), QCryptographicHash::Md5);
 
-    udpSocket = new QUdpSocket(this);
+    udpSocket = new QUdpSocket;
     udpSocket->bind(QHostAddress::Any, groupPort,QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint);
-    connect(udpSocket, &QUdpSocket::readyRead, this, &netproperty::processPendingDatagrams);
+
+    // udpSocket->setSocketOption(QAbstractSocket::MulticastTtlOption,1);
+    // udpSocket->setSocketOption(QAbstractSocket::MulticastLoopbackOption,true);
+    // connect(udpSocket,SIGNAL(readyRead()),this,SLOT(processPendingDatagrams()));
+    // udpSocket->setMulticastInterface(network);//设置组播网卡
 }
 
 netproperty::~netproperty()
@@ -43,11 +47,11 @@ void netproperty::processPendingDatagrams()
             qDebug() << "json error!" << json_error.errorString();
             return;
         }
-
+        qDebug()<<"udp:"<<jsonDoc;
         QJsonObject rootObj = jsonDoc.object();
         rootObj.insert("IP",udpAddress.toString());
 
-        emit getUdpData(rootObj);
+        // emit getUdpData(rootObj);
     }
 }
 
@@ -55,12 +59,13 @@ void netproperty::connectEasyBoard(const QString ip,const quint16 port)
 {
     QDateTime dateTime= QDateTime::currentDateTime();//获取系统当前的时间
     QString str = dateTime.toString("yyyy-MM-dd hh:mm:ss:zzz");//格式化时间
-    const int msg_length = 4;
+    const int msg_length = 5;
     QStringList temp_msg[msg_length];
     temp_msg[0] << "HOST" << "easyboard";
     temp_msg[1] << "MAN"  << "ssdp:alive";
     temp_msg[2] << "DATE" << str;
     temp_msg[3] << "ID"   << "main";
+    temp_msg[4] << "TYPE" << "udp";
 
     QJsonObject jsonObject;
 
@@ -69,6 +74,12 @@ void netproperty::connectEasyBoard(const QString ip,const quint16 port)
     }
     QJsonDocument jsonDocument;
     jsonDocument.setObject(jsonObject);
+
+    exitAllNet();
+    if(bindAllNet()==0){
+        qDebug()<<"所有网络绑定失败";
+        return;
+    }
 
     sendUdp(ip,port,jsonDocument.toJson());
 }
@@ -83,12 +94,13 @@ void netproperty::findEasyBoard()
 
     QDateTime dateTime= QDateTime::currentDateTime();//获取系统当前的时间
     QString str = dateTime.toString("yyyy-MM-dd hh:mm:ss:zzz");//格式化时间
-    const int msg_length = 4;
+    const int msg_length = 5;
     QStringList temp_msg[msg_length];
     temp_msg[0] << "HOST" << "easyboard";
     temp_msg[1] << "MAN"  << "ssdp:alive";
     temp_msg[2] << "DATE" << str;
     temp_msg[3] << "ID"   << "main";
+    temp_msg[4] << "TYPE" << "broadcast";
     // QString temp_msg[msg_length];
     // QStringList msg;
     // temp_msg[0] = "HOST:easyboard";
@@ -117,12 +129,12 @@ void netproperty::findEasyBoard()
     }
     QJsonDocument jsonDocument;
     jsonDocument.setObject(jsonObject);
-    // sendbroadcast(jsonDocument.toJson());
+    sendbroadcast(jsonDocument.toJson());
 
-    QByteArray datagram = encodedText(jsonDocument.toJson());
-    for (int i=0;i< m_udpSocketlist.size();i++) {
-        m_udpSocketlist[i]->writeDatagram(datagram,QHostAddress("192.168.98.100"), groupPort);
-    }
+    // QByteArray datagram = encodedText(jsonDocument.toJson());
+    // for (int i=0;i< m_udpSocketlist.size();i++) {
+    //     m_udpSocketlist[i]->writeDatagram(datagram,QHostAddress("192.168.98.100"), groupPort);
+    // }
 }
 
 int netproperty::bindAllNet()
@@ -219,8 +231,13 @@ void netproperty::exitAllNet()
 
 void netproperty::sendUdp(const QString &ip,const quint16 &port,QByteArray msg)
 {
+    // QByteArray datagram = encodedText(msg);
+    // udpSocket->writeDatagram(datagram, QHostAddress(ip), port);
     QByteArray datagram = encodedText(msg);
-    udpSocket->writeDatagram(datagram, QHostAddress(ip), port);
+    for (int i=0;i< m_udpSocketlist.size();i++) {
+        qDebug()<<i<<ip<<port;
+        m_udpSocketlist[i]->writeDatagram(datagram,QHostAddress(ip), port);
+    }
 }
 
 void netproperty::sendbroadcast(QByteArray msg)
@@ -256,7 +273,7 @@ void netproperty::onSocketReadyRead()
 
             QJsonObject rootObj = jsonDoc.object();
             rootObj.insert("IP",targetaddr.toString());
-
+            qDebug()<<"broadbast:"<<jsonDoc;
             // QJsonObject temp;
             // temp.insert("IP",targetaddr.toString());
             // QStringList getdata = decodedText(data).split("|");

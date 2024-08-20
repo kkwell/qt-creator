@@ -78,6 +78,7 @@ public slots:
 
 signals:
     void dataChange();
+    void udpResult(QJsonObject);
 
 private:
     class EasyBoardModelPrivate *d = nullptr;

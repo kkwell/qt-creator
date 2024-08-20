@@ -296,6 +296,11 @@ QVariant EasyBoardModel::data(const QModelIndex &index, int role) const
 
 void EasyBoardModel::onSocketData(QJsonObject str)
 {
+    if(str.value("TYPE").toString().contains("udp",Qt::CaseInsensitive)){
+        emit udpResult(str);
+        return;
+    }
+
     Board board;
     board.name = str.value("HOST").toString();
     board.date = str.value("DATE").toString();

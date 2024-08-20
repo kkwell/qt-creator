@@ -9,6 +9,9 @@
 #include <QJsonObject>
 #include "qaesencryption.h"
 
+#define BROADCAST "239.255.255.250"
+#define BROADCASTPORT 1901
+
 class netproperty : public QObject
 {
     Q_OBJECT
@@ -36,7 +39,7 @@ public:
 
 signals:
     void getSocketData(QJsonObject str);
-    void getUdpData(QJsonObject str);
+    // void getUdpData(QJsonObject str);
 
 private slots:
     void onSocketReadyRead(); // 读取socket传入的数据

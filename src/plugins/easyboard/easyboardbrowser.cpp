@@ -382,7 +382,8 @@ public:
                 contextMenu.addAction(action);
                 action = new QAction(Tr::tr("Connect to board"));
                 connect(action, &QAction::triggered, this, [idx,this] {
-                    ((EasyBoardBrowser *)parent())->fetchBoards();
+                    // qDebug()<<idx.data(EasyBoardModel::RoleIp).toString();
+                    ((EasyBoardBrowser *)parent())->fetchBoards(idx);
                 });
                 contextMenu.addAction(action);
                 contextMenu.addSeparator();
@@ -652,9 +653,7 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
         // d->model->debugTest(source);
         // debugTest
         // qDebug()<<"index:"<<current.row()<<source.row();
-        d->pNetManage->connectEasyBoard("192.168.98.133",1901);
-
-        // this->d->pNetManage->findEasyBoard();
+        this->d->pNetManage->findEasyBoard();
     };
 
     updateModel();
@@ -673,9 +672,12 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
     connect(d->filterChooser, &OptionChooser::currentIndexChanged,
             d->sortFilterProxyModel, &SortFilterProxyModel::setFilterOption);
 
+    timer.setSingleShot(true);
+    connect(&timer, &QTimer::timeout, this, &EasyBoardBrowser::udpConnectOut);
 
-    connect(d->pNetManage,&netproperty::getUdpData,
-            this,&EasyBoardBrowser::processPendingDatagrams);
+    connect(d->model,&EasyBoardModel::udpResult,this,&EasyBoardBrowser::udpConnectUpdate);
+    // connect(d->pNetManage,&netproperty::getUdpData,
+    //         this,&EasyBoardBrowser::processPendingDatagrams);
 
 
 }
@@ -832,7 +834,7 @@ static QString customOsTypeToString(OsType osType)
     }
 }
 
-void EasyBoardBrowser::fetchBoards()
+void EasyBoardBrowser::fetchBoards(const QModelIndex &idx)
 {
 #ifdef WITH_TESTS
     // Uncomment for testing with local json data.
@@ -882,14 +884,37 @@ void EasyBoardBrowser::fetchBoards()
     //             };
 
     // d->taskTreeRunner.start(group);
+    d->m_spinner->show();
+    m_modelIndex = d->sortFilterProxyModel->mapToSource(idx);
+    // qDebug()<<m_modelIndex.data(EasyBoardModel::RoleIp).toString();
+    d->pNetManage->connectEasyBoard(m_modelIndex.data(EasyBoardModel::RoleIp).toString(),BROADCASTPORT);
+    timer.start(5000);
+}
 
-    QUdpSocket *udpSocket = new QUdpSocket(this);
-    QByteArray datagram = "Hello, UDP!";
+void EasyBoardBrowser::udpConnectUpdate(QJsonObject str)
+{
+    timer.stop();
+    d->m_spinner->hide();
+    Board *pBoard = d->model->getIndexBoard(m_modelIndex);
+    pBoard->name = str.value("HOST").toString();
+    pBoard->date = str.value("DATE").toString();
+    pBoard->id = str.value("ID").toString();
+    // pBoard->ip = str.value("IP").toString();
+    pBoard->version = str.value("VERSION").toString();
+    // pBoard->type = ItemTypeNetwork;
+    pBoard->online = true;
 
-    QString groupIp = "192.168.98.100";
+    emit d->model->dataChanged(m_modelIndex,m_modelIndex);
+    emit itemChanged(d->boardsView->currentIndex(),d->boardsView->currentIndex());
+}
 
-    udpSocket->writeDatagram(datagram, QHostAddress(groupIp), 1901);
-
+void EasyBoardBrowser::udpConnectOut()
+{
+    d->m_spinner->hide();
+    QMessageBox::warning(nullptr, QApplication::translate("Application","Warning"),
+                        QCoreApplication::translate("Application", QString("connection to [%1] timed out.").arg(m_modelIndex.data(EasyBoardModel::RoleIp).toString()).toLatin1()),
+                        QMessageBox::Ok,
+                        QMessageBox::Ok);
 }
 
 QLabel *tfLabel(const TextFormat &tf, bool singleLine)

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <QWidget>
+#include <qabstractitemmodel.h>
 
 QT_FORWARD_DECLARE_CLASS(QLabel)
 
@@ -36,16 +37,19 @@ public:
     void removeFromList(const QModelIndex &idx);
     void setDefault(const QModelIndex &idx);
 
-    void fetchBoards();
+    void fetchBoards(const QModelIndex &idx);
 
     void processPendingDatagrams(QJsonObject str);
-
+    void udpConnectOut();
+    void udpConnectUpdate(QJsonObject);
 signals:
     void itemSelected(const QModelIndex &current, const QModelIndex &previous);
     void itemChanged(const QModelIndex &current, const QModelIndex &previous);
 
 private:
     class EasyBoardBrowserPrivate *d = nullptr;
+    QTimer timer;
+    QModelIndex m_modelIndex;
 };
 
 QLabel *tfLabel(const Core::WelcomePageHelpers::TextFormat &tf, bool singleLine = true);

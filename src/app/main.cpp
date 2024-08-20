@@ -529,6 +529,10 @@ int main(int argc, char **argv)
 
     FSEngine fileSystemEngine;
 
+    QLoggingCategory::setFilterRules(QLatin1String("qtc.*.debug=false\n"
+                                                   "qtc.*.info=false\n"
+                                                   "qtc.easyboard.browser=true"));
+    qSetMessagePattern("%{time [yyyy-MM-dd hh:mm:ss.zzz]}:%{file}(%{function}):%{line}:%{message}");
     // Manually determine various command line options
     // We can't use the regular way of the plugin manager,
     // because settings can change the way plugin manager behaves
