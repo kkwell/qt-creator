@@ -123,6 +123,13 @@ ProjectExplorer, document, MIME, and wizard APIs. The qualified Release
 product profile now contains 12 plugins and still has no EtherCAT-specific
 change under Qt Creator Core, ProjectExplorer, or the application bootstrap.
 
+Stage 3 adds the product-owned `EtherCATDevices` plugin, bringing the qualified
+profile to 13 plugins. Stage 4 adds `EtherCATWorkbench`, bringing it to 14
+plugins. Both use product-owned public contracts and standard Qt Creator plugin
+registration; the direct upstream Core patch count remains unchanged. The
+stage-4 normal product build, `-version` plugin inventory, and enabled/disabled
+startup evidence are recorded in `docs/compatibility-matrix.md`.
+
 ## Worktree preservation
 
 `AGENTS.md` was untracked when the audit began. It is an authoritative user

@@ -149,6 +149,13 @@ state, wire protocol, or controller ABI. Later plugins contribute pages by
 subclassing this interface; they do not modify the Workbench tree or include
 Workbench private headers.
 
+The stage-4 Workbench implementation listens to property-provider addition,
+availability changes, and removal. It destroys provider-owned widgets before
+removal and identifies a hosted page by Provider ID plus page ID. It also
+observes the availability of Scan and Diagnostics capability providers: this
+controls only local placeholder visibility and tree status, and does not add a
+scan algorithm, diagnostic payload, transport, or serialization contract.
+
 Provider IDs are globally unique across all Provider kinds. If two live
 objects use the same ID, only the first one is published by the registry. Such
 a collision is a plugin defect, not a selection mechanism.
@@ -177,7 +184,7 @@ The plugin owns the `Z.EtherCAT` settings category and the
   100,000.
 
 `EtherCAT.Context`, `EtherCAT.Menu`, `Z.EtherCAT`, and `EtherCAT.General` are
-reserved public IDs. Workbench owns the future mode and visible menu actions;
+reserved public IDs. Workbench owns the EtherCAT mode and visible menu actions;
 Core does not create an empty product mode or an empty menu.
 
 ## Stage-1 verification

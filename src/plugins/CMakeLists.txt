@@ -25,6 +25,7 @@ add_subdirectory(silversearcher)
 
 # Level 3: (only depends on Level 2 and below)
 add_subdirectory(ethercatproject)
+add_subdirectory(ethercatworkbench)
 add_subdirectory(cargo)
 add_subdirectory(gradle)
 add_subdirectory(ant)

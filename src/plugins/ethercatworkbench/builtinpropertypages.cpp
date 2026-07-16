@@ -1,0 +1,376 @@
+// Copyright (C) 2026 Kvell
+
+#include "builtinpropertypages.h"
+
+#include "ethercatworkbenchconstants.h"
+#include "ethercatworkbenchtr.h"
+#include "workbenchcontroller.h"
+
+#include <utils/stylehelper.h>
+
+#include <QHeaderView>
+#include <QLabel>
+#include <QTreeWidget>
+#include <QVBoxLayout>
+
+namespace EtherCAT::Workbench::Internal {
+
+class BuiltinPageWidget final : public QWidget
+{
+public:
+    explicit BuiltinPageWidget(QWidget *parent = nullptr)
+        : QWidget(parent)
+        , summary(new QLabel(this))
+        , tree(new QTreeWidget(this))
+    {
+        setProperty("EtherCAT.Workbench.BuiltinPage", true);
+        summary->setObjectName("EtherCATWorkbenchPageSummary");
+        summary->setWordWrap(true);
+        summary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        tree->setObjectName("EtherCATWorkbenchPageTree");
+        tree->setAlternatingRowColors(true);
+        tree->setRootIsDecorated(false);
+        tree->setUniformRowHeights(true);
+        tree->header()->setStretchLastSection(true);
+
+        auto layout = new QVBoxLayout(this);
+        layout->setContentsMargins(
+            Utils::StyleHelper::SpacingTokens::PaddingHM,
+            Utils::StyleHelper::SpacingTokens::PaddingVM,
+            Utils::StyleHelper::SpacingTokens::PaddingHM,
+            Utils::StyleHelper::SpacingTokens::PaddingVM);
+        layout->addWidget(summary);
+        layout->addWidget(tree, 1);
+    }
+
+    void reset(const QString &text, const QStringList &headers)
+    {
+        summary->setText(text);
+        tree->clear();
+        tree->setColumnCount(qMax(1, headers.size()));
+        tree->setHeaderLabels(headers);
+        tree->setVisible(!headers.isEmpty());
+    }
+
+    void addRow(const QStringList &values)
+    {
+        tree->addTopLevelItem(new QTreeWidgetItem(values));
+    }
+
+    QLabel *summary;
+    QTreeWidget *tree;
+};
+
+static QString hexValue(quint64 value, int width)
+{
+    return QString("0x%1").arg(value, width, 16, QLatin1Char('0'));
+}
+
+static QString dataTypeName(Data::EtherCATDataType type, const QString &rawType)
+{
+    switch (type) {
+    case Data::EtherCATDataType::Boolean:
+        return "BOOL";
+    case Data::EtherCATDataType::Integer8:
+        return "INT8";
+    case Data::EtherCATDataType::UnsignedInteger8:
+        return "UINT8";
+    case Data::EtherCATDataType::Integer16:
+        return "INT16";
+    case Data::EtherCATDataType::UnsignedInteger16:
+        return "UINT16";
+    case Data::EtherCATDataType::Integer32:
+        return "INT32";
+    case Data::EtherCATDataType::UnsignedInteger32:
+        return "UINT32";
+    case Data::EtherCATDataType::Integer64:
+        return "INT64";
+    case Data::EtherCATDataType::UnsignedInteger64:
+        return "UINT64";
+    case Data::EtherCATDataType::Real32:
+        return "REAL32";
+    case Data::EtherCATDataType::Real64:
+        return "REAL64";
+    case Data::EtherCATDataType::VisibleString:
+        return "STRING";
+    case Data::EtherCATDataType::OctetString:
+        return "OCTET_STRING";
+    case Data::EtherCATDataType::Unknown:
+        return rawType.isEmpty() ? Tr::tr("Unknown") : rawType;
+    }
+    return rawType;
+}
+
+static BuiltinPageWidget *pageWidget(QWidget *page)
+{
+    return page && page->property("EtherCAT.Workbench.BuiltinPage").toBool()
+               ? static_cast<BuiltinPageWidget *>(page)
+               : nullptr;
+}
+
+BuiltinPropertyPageProvider::BuiltinPropertyPageProvider(
+    WorkbenchController *controller, QObject *parent)
+    : Core::PropertyPageProvider(
+          Constants::BUILTIN_PAGE_PROVIDER_ID, Tr::tr("Built-in EtherCAT pages"), parent)
+    , m_controller(controller)
+{
+    setAvailable(true);
+}
+
+QList<Core::PropertyPageDescriptor> BuiltinPropertyPageProvider::pages(
+    const Core::PropertyPageContext &context) const
+{
+    using Kind = Core::WorkbenchNodeKind;
+    switch (context.nodeKind) {
+    case Kind::Project:
+    case Kind::Target:
+    case Kind::DeviceRepository:
+        return {{Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100}};
+    case Kind::Master:
+    {
+        QList<Core::PropertyPageDescriptor> result = {
+            {Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100},
+            {Utils::Id(Constants::ETHERCAT_PAGE_ID), Tr::tr("EtherCAT"), 200}};
+        if (!m_controller || !m_controller->diagnosticsAvailable()) {
+            result.append(
+                {Utils::Id(Constants::ONLINE_PAGE_ID), Tr::tr("Online"), 800});
+            result.append(
+                {Utils::Id(Constants::DIAGNOSTICS_PAGE_ID), Tr::tr("Diagnostics"), 900});
+        }
+        return result;
+    }
+    case Kind::Device:
+    {
+        QList<Core::PropertyPageDescriptor> result = {
+            {Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100},
+            {Utils::Id(Constants::ETHERCAT_PAGE_ID), Tr::tr("EtherCAT"), 200},
+            {Utils::Id(Constants::PROCESS_DATA_PAGE_ID), Tr::tr("Process Data"), 300},
+            {Utils::Id(Constants::STARTUP_PAGE_ID), Tr::tr("Startup"), 400},
+            {Utils::Id(Constants::DC_PAGE_ID), Tr::tr("DC"), 500}};
+        if (!m_controller || !m_controller->diagnosticsAvailable())
+            result.append({Utils::Id(Constants::ONLINE_PAGE_ID), Tr::tr("Online"), 800});
+        return result;
+    }
+    case Kind::Diagnostics:
+        if (m_controller && m_controller->diagnosticsAvailable())
+            return {};
+        return {{Utils::Id(Constants::DIAGNOSTICS_PAGE_ID), Tr::tr("Diagnostics"), 900}};
+    default:
+        return {};
+    }
+}
+
+QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *parent)
+{
+    const QList<Utils::Id> knownPages = {
+        Constants::GENERAL_PAGE_ID,
+        Constants::ETHERCAT_PAGE_ID,
+        Constants::PROCESS_DATA_PAGE_ID,
+        Constants::STARTUP_PAGE_ID,
+        Constants::DC_PAGE_ID,
+        Constants::ONLINE_PAGE_ID,
+        Constants::DIAGNOSTICS_PAGE_ID,
+    };
+    if (!knownPages.contains(pageId))
+        return nullptr;
+    auto widget = new BuiltinPageWidget(parent);
+    widget->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
+    return widget;
+}
+
+void BuiltinPropertyPageProvider::updatePage(
+    Utils::Id pageId, QWidget *page, const Core::PropertyPageContext &context)
+{
+    BuiltinPageWidget *widget = pageWidget(page);
+    if (!widget || !m_controller)
+        return;
+
+    const std::optional<Data::DeviceDescription> device
+        = context.nodeKind == Core::WorkbenchNodeKind::Device
+              && m_controller->deviceRepository()
+              ? m_controller->deviceRepository()->device(context.nodeId)
+              : std::optional<Data::DeviceDescription>();
+
+    if (pageId == Utils::Id(Constants::GENERAL_PAGE_ID)) {
+        widget->reset(
+            Tr::tr("Offline properties for %1").arg(context.displayName),
+            {Tr::tr("Property"), Tr::tr("Value")});
+        widget->addRow({Tr::tr("Name"), context.displayName});
+        widget->addRow({Tr::tr("Node ID"), context.nodeId.toString()});
+        if (device) {
+            widget->addRow({Tr::tr("Vendor ID"), hexValue(device->summary.identity.vendorId, 8)});
+            widget->addRow(
+                {Tr::tr("Product Code"), hexValue(device->summary.identity.productCode, 8)});
+            widget->addRow(
+                {Tr::tr("Revision"), hexValue(device->summary.identity.revisionNumber, 8)});
+            widget->addRow({Tr::tr("Type"), device->summary.typeName});
+            widget->addRow({Tr::tr("Group"), device->summary.group});
+            widget->addRow(
+                {Tr::tr("Support"),
+                 device->summary.supported ? Tr::tr("Supported") : Tr::tr("Limited")});
+            widget->addRow({Tr::tr("Source"), device->sourcePath});
+            widget->addRow(
+                {Tr::tr("Imported"), device->importedAt.toLocalTime().toString(Qt::ISODate)});
+        } else if (context.nodeKind == Core::WorkbenchNodeKind::DeviceRepository
+                   && m_controller->deviceRepository()) {
+            widget->addRow(
+                {Tr::tr("Indexed devices"),
+                 QString::number(m_controller->deviceRepository()->devices().size())});
+            widget->addRow(
+                {Tr::tr("Index state"),
+                 m_controller->deviceRepository()->isIndexing() ? Tr::tr("Indexing")
+                                                                : Tr::tr("Ready")});
+        } else if (!context.projectId.isNull() && m_controller->projectService()) {
+            const std::optional<Data::ProjectSnapshot> project
+                = m_controller->projectService()->project(context.projectId);
+            if (project) {
+                widget->addRow(
+                    {Tr::tr("Format version"), QString::number(project->formatVersion)});
+                widget->addRow({Tr::tr("Created by"), project->createdBy});
+                widget->addRow(
+                    {Tr::tr("Modified"), project->modified ? Tr::tr("Yes") : Tr::tr("No")});
+                if (context.nodeKind == Core::WorkbenchNodeKind::Master) {
+                    widget->addRow({Tr::tr("Configured slaves"), QString::number(0)});
+                    widget->addRow({Tr::tr("Stage"), Tr::tr("Offline configuration")});
+                } else if (context.nodeKind == Core::WorkbenchNodeKind::Target) {
+                    widget->addRow({Tr::tr("Target type"), Tr::tr("Offline / Mock")});
+                }
+            }
+        }
+        return;
+    }
+
+    if (pageId == Utils::Id(Constants::ETHERCAT_PAGE_ID)) {
+        widget->reset(
+            device ? Tr::tr("SyncManager defaults from the imported ESI file")
+                   : Tr::tr("No slaves are configured on this offline master."),
+            device ? QStringList{Tr::tr("SM"),
+                                 Tr::tr("Name"),
+                                 Tr::tr("Direction"),
+                                 Tr::tr("Address"),
+                                 Tr::tr("Size"),
+                                 Tr::tr("Control"),
+                                 Tr::tr("Enabled")}
+                   : QStringList());
+        if (device) {
+            for (const Data::SyncManagerDescription &syncManager : device->syncManagers) {
+                QString direction = Tr::tr("Unknown");
+                if (syncManager.direction == Data::SyncManagerDirection::MasterToSlave)
+                    direction = Tr::tr("Master to slave");
+                else if (syncManager.direction == Data::SyncManagerDirection::SlaveToMaster)
+                    direction = Tr::tr("Slave to master");
+                widget->addRow({QString::number(syncManager.index),
+                                syncManager.name,
+                                direction,
+                                hexValue(syncManager.startAddress, 4),
+                                QString::number(syncManager.defaultSize),
+                                hexValue(syncManager.controlByte, 2),
+                                syncManager.enabled ? Tr::tr("Yes") : Tr::tr("No")});
+            }
+        }
+        return;
+    }
+
+    if (pageId == Utils::Id(Constants::PROCESS_DATA_PAGE_ID)) {
+        widget->reset(
+            device ? Tr::tr("PDO mappings are read-only in the current Workbench stage.")
+                   : Tr::tr("The selected device is not available in the ESI repository."),
+            {Tr::tr("Mapping"),
+             Tr::tr("Index"),
+             Tr::tr("Subindex"),
+             Tr::tr("Bits"),
+             Tr::tr("Type"),
+             Tr::tr("SM")});
+        if (!device)
+            return;
+        const auto appendPdos = [widget](
+                                    const QList<Data::PdoDescription> &pdos,
+                                    const QString &direction) {
+            for (const Data::PdoDescription &pdo : pdos) {
+                auto pdoItem = new QTreeWidgetItem(
+                    {direction + " - " + pdo.name,
+                     hexValue(pdo.index, 4),
+                     {},
+                     {},
+                     {},
+                     QString::number(pdo.syncManager)});
+                widget->tree->addTopLevelItem(pdoItem);
+                for (const Data::PdoEntryDescription &entry : pdo.entries) {
+                    pdoItem->addChild(new QTreeWidgetItem(
+                        {entry.name,
+                         hexValue(entry.index, 4),
+                         QString::number(entry.subIndex),
+                         QString::number(entry.bitLength),
+                         dataTypeName(entry.dataType, entry.rawDataType),
+                         {}}));
+                }
+                pdoItem->setExpanded(true);
+            }
+        };
+        appendPdos(device->rxPdos, Tr::tr("RxPDO"));
+        appendPdos(device->txPdos, Tr::tr("TxPDO"));
+        widget->tree->setRootIsDecorated(true);
+        return;
+    }
+
+    if (pageId == Utils::Id(Constants::STARTUP_PAGE_ID)) {
+        widget->reset(
+            device ? Tr::tr("Offline CoE startup parameters from the ESI file")
+                   : Tr::tr("No startup data is available."),
+            {Tr::tr("Transition"),
+             Tr::tr("Index"),
+             Tr::tr("Subindex"),
+             Tr::tr("Data"),
+             Tr::tr("Comment")});
+        if (device) {
+            for (const Data::StartupParameterDescription &parameter : device->startupParameters) {
+                widget->addRow({parameter.transition,
+                                hexValue(parameter.index, 4),
+                                QString::number(parameter.subIndex),
+                                QString::fromLatin1(parameter.data.toHex(' ')),
+                                parameter.comment});
+            }
+        }
+        return;
+    }
+
+    if (pageId == Utils::Id(Constants::DC_PAGE_ID)) {
+        widget->reset(
+            device ? Tr::tr("Distributed Clocks defaults from the ESI file")
+                   : Tr::tr("No DC data is available."),
+            {Tr::tr("Mode"),
+             Tr::tr("AssignActivate"),
+             Tr::tr("Sync0 cycle"),
+             Tr::tr("Sync0 shift"),
+             Tr::tr("Sync1 cycle"),
+             Tr::tr("Sync1 shift")});
+        if (device) {
+            for (const Data::DcModeDescription &mode : device->dcModes) {
+                widget->addRow({mode.name,
+                                hexValue(mode.assignActivate, 4),
+                                QString::number(mode.cycleTimeSync0Ns),
+                                QString::number(mode.shiftTimeSync0Ns),
+                                QString::number(mode.cycleTimeSync1Ns),
+                                QString::number(mode.shiftTimeSync1Ns)});
+            }
+        }
+        return;
+    }
+
+    if (pageId == Utils::Id(Constants::ONLINE_PAGE_ID)) {
+        widget->reset(
+            Tr::tr("Online data is unavailable. The Scan and Diagnostics plugins are not "
+                   "installed, and this stage contains no controller protocol."),
+            {});
+        return;
+    }
+
+    if (pageId == Utils::Id(Constants::DIAGNOSTICS_PAGE_ID)) {
+        widget->reset(
+            Tr::tr("Diagnostics plugin not installed. No WKC, DC, link, alarm, or live state data "
+                   "is produced by Workbench."),
+            {});
+    }
+}
+
+} // namespace EtherCAT::Workbench::Internal

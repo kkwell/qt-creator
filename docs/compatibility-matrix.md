@@ -43,14 +43,14 @@ local decisions and easier maintenance.
 | EtherCATCore | EtherCAT services and extension points | Stage 1 verified |
 | EtherCATProject | Offline project lifecycle and persistence | Stage 2 verified |
 | EtherCATDevices | Offline ESI repository and immutable device data | Stage 3 verified |
+| EtherCATWorkbench | EtherCAT mode, device tree, selection, and offline property pages | Stage 4 verified |
 
 ### Planned EtherCAT additions
 
 Plugins enter the profile only after their preceding serial gate passes:
 
-1. `EtherCATWorkbenchPlugin`
-2. `EtherCATScanPlugin`
-3. `EtherCATDiagnosticsPlugin`
+1. `EtherCATScanPlugin`
+2. `EtherCATDiagnosticsPlugin`
 
 ### Hidden or excluded plugins
 
@@ -66,7 +66,8 @@ function is outside the product target and records migration or recovery.
 
 | Feature | Phase-1 status |
 |---|---|
-| TwinCAT-inspired device tree | Planned in Workbench plugin |
+| TwinCAT-inspired device tree | Stage 4 verified |
+| Extensible offline property pages | Stage 4 verified |
 | Offline EtherCAT project | Stage 2 verified |
 | ESI repository | Stage 3 verified |
 | Scan UI and topology comparison | Planned with Mock provider only |
@@ -136,6 +137,33 @@ transport, or controller type. The repository implementation is documented in
 
 The value-object, import-job, and property-page contracts remain covered by
 the focused EtherCATCore suite.
+
+## EtherCATWorkbench stage-4 qualification
+
+The Workbench uses Qt Creator's public mode, navigation, output-pane, context,
+and ActionManager APIs. It consumes public Project and Devices services and
+uses stable IDs across the selection boundary. Its implementation and current
+limits are documented in `docs/ethercat-workbench.md`.
+
+| Check | Result |
+|---|---|
+| Focused EtherCATWorkbench plugin tests | 8 passed, 0 failed |
+| Metadata, hard dependencies, mode, and actions | Passed |
+| 500-device incremental model with model tester | Passed |
+| Filter, context, and bidirectional stable selection | Passed |
+| Process Data, Startup, and DC pages from imported ESI | Passed |
+| Dynamic property-page provider removal | Passed |
+| Dynamic Scan/Diagnostics availability and removal | Passed |
+| EtherCATCore regression tests | 11 passed, 0 failed |
+| EtherCATProject regression tests | 7 passed, 0 failed |
+| EtherCATDevices regression tests | 8 passed, 0 failed |
+| Normal Release product build | Passed with 14-plugin allow-list |
+| Enabled GUI startup | Passed; stable for 5 seconds until intentional interrupt |
+| Explicitly disabled startup | Passed with `-noload EtherCATWorkbench`; one shared-memory warning, then stable for 5 seconds until intentional interrupt |
+| Visual desktop inspection | Blocked by locked Mac session; not claimed as passed |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
+| qbs build | Not run; qbs executable is unavailable |
 
 ## Verification states
 

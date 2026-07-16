@@ -1,0 +1,146 @@
+// Copyright (C) 2026 Kvell
+
+#include "builtinpropertypages.h"
+#include "ethercatworkbenchconstants.h"
+#include "ethercatworkbenchtr.h"
+#ifdef WITH_TESTS
+#include "ethercatworkbenchtests.h"
+#endif
+#include "workbenchcontroller.h"
+#include "workbenchmode.h"
+#include "workbenchnavigation.h"
+
+#include <coreplugin/actionmanager/actioncontainer.h>
+#include <coreplugin/actionmanager/actionmanager.h>
+#include <coreplugin/actionmanager/command.h>
+#include <coreplugin/coreconstants.h>
+#include <coreplugin/modemanager.h>
+
+#include <extensionsystem/iplugin.h>
+#include <extensionsystem/pluginmanager.h>
+
+#include <utils/utilsicons.h>
+
+#include <QAction>
+#include <QMenu>
+
+#include <memory>
+
+namespace EtherCAT::Workbench::Internal {
+
+class EtherCATWorkbenchPlugin final : public ExtensionSystem::IPlugin
+{
+    Q_OBJECT
+    Q_PLUGIN_METADATA(IID "org.qt-project.Qt.QtCreatorPlugin" FILE "EtherCATWorkbench.json")
+
+public:
+    ~EtherCATWorkbenchPlugin() final;
+
+    void initialize() final;
+    ShutdownFlag aboutToShutdown() final;
+
+private:
+    void setupActions();
+    void shutdown();
+
+    std::unique_ptr<WorkbenchController> m_controller;
+    std::unique_ptr<BuiltinPropertyPageProvider> m_builtinPages;
+    std::unique_ptr<WorkbenchNavigationFactory> m_navigationFactory;
+    std::unique_ptr<WorkbenchMode> m_mode;
+    bool m_providerRegistered = false;
+    bool m_shuttingDown = false;
+};
+
+EtherCATWorkbenchPlugin::~EtherCATWorkbenchPlugin()
+{
+    shutdown();
+}
+
+void EtherCATWorkbenchPlugin::initialize()
+{
+    m_controller = std::make_unique<WorkbenchController>();
+    m_builtinPages = std::make_unique<BuiltinPropertyPageProvider>(m_controller.get());
+    ExtensionSystem::PluginManager::addObject(m_builtinPages.get());
+    m_providerRegistered = true;
+
+    m_navigationFactory = std::make_unique<WorkbenchNavigationFactory>(m_controller.get());
+    m_mode = std::make_unique<WorkbenchMode>(m_controller.get());
+    setupActions();
+
+#ifdef WITH_TESTS
+    addTest<EtherCATWorkbenchTests>();
+#endif
+}
+
+ExtensionSystem::IPlugin::ShutdownFlag EtherCATWorkbenchPlugin::aboutToShutdown()
+{
+    shutdown();
+    return SynchronousShutdown;
+}
+
+void EtherCATWorkbenchPlugin::setupActions()
+{
+    ::Core::ActionContainer *menu = ::Core::ActionManager::actionContainer(Constants::MENU_ID);
+    if (!menu) {
+        menu = ::Core::ActionManager::createMenu(Constants::MENU_ID);
+        menu->menu()->setTitle(Tr::tr("EtherCAT"));
+        ::Core::ActionManager::actionContainer(::Core::Constants::M_TOOLS)->addMenu(menu);
+    }
+
+    auto openAction = new QAction(Utils::Icons::SETTINGS.icon(), Tr::tr("Open Workbench"), this);
+    ::Core::Command *openCommand = ::Core::ActionManager::registerAction(
+        openAction, Constants::OPEN_ACTION_ID);
+    menu->addAction(openCommand);
+    connect(openAction, &QAction::triggered, this, [] {
+        ::Core::ModeManager::activateMode(Constants::MODE_ID);
+    });
+
+    auto refreshAction = new QAction(Utils::Icons::RELOAD.icon(), Tr::tr("Refresh"), this);
+    ::Core::Command *refreshCommand = ::Core::ActionManager::registerAction(
+        refreshAction,
+        Constants::REFRESH_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    menu->addAction(refreshCommand);
+    connect(refreshAction, &QAction::triggered, m_controller.get(), &WorkbenchController::refresh);
+
+    auto expandAction = new QAction(Tr::tr("Expand Device Tree"), this);
+    ::Core::Command *expandCommand = ::Core::ActionManager::registerAction(
+        expandAction,
+        Constants::EXPAND_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    menu->addAction(expandCommand);
+    connect(expandAction, &QAction::triggered, m_controller.get(), [this] {
+        emit m_controller->expandAllRequested();
+    });
+
+    auto collapseAction = new QAction(Tr::tr("Collapse Device Tree"), this);
+    ::Core::Command *collapseCommand = ::Core::ActionManager::registerAction(
+        collapseAction,
+        Constants::COLLAPSE_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    menu->addAction(collapseCommand);
+    connect(collapseAction, &QAction::triggered, m_controller.get(), [this] {
+        emit m_controller->collapseAllRequested();
+    });
+}
+
+void EtherCATWorkbenchPlugin::shutdown()
+{
+    if (m_shuttingDown)
+        return;
+    m_shuttingDown = true;
+    m_mode.reset();
+    m_navigationFactory.reset();
+    if (m_providerRegistered) {
+        ExtensionSystem::PluginManager::removeObject(m_builtinPages.get());
+        m_providerRegistered = false;
+    }
+    m_builtinPages.reset();
+    if (m_controller)
+        m_controller->shutdown();
+    m_controller.reset();
+}
+
+} // namespace EtherCAT::Workbench::Internal
+
+#include "ethercatworkbenchplugin.moc"

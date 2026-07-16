@@ -23,7 +23,7 @@ documentation, review, and local-commit gates.
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Complete | ProjectExplorer lifecycle, persistence, undo/redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
-| 4 | `EtherCATWorkbenchPlugin` | Pending | EtherCAT mode, device tree, details container, selection UI |
+| 4 | `EtherCATWorkbenchPlugin` | Complete | EtherCAT mode, device tree, details container, selection UI |
 | 5 | `EtherCATScanPlugin` | Pending | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Pending | Mock WKC/DC/link/event diagnostics and trends |
 
@@ -39,10 +39,12 @@ Qt Creator Core / ExtensionSystem / Utils / ProjectExplorer
                          EtherCATData
                               ^
                     EtherCATCorePlugin
-                     ^       ^       ^
-          ProjectPlugin  DevicesPlugin  WorkbenchPlugin
-                                         ^          ^
-                                  ScanPlugin  DiagnosticsPlugin
+                         ^       ^
+              ProjectPlugin  DevicesPlugin
+                         ^       ^
+                         WorkbenchPlugin
+                          ^          ^
+                   ScanPlugin  DiagnosticsPlugin
 ```
 
 Dependencies are one-way and explicit. Core cannot depend on Project,
@@ -99,9 +101,10 @@ added only by a dedicated Core/API change in the owning serial plugin stage.
 
 ## TwinCAT-inspired UI ownership
 
-The Workbench plugin will eventually own the EtherCAT mode and its left device
-tree. Project and Devices supply public data. Scan and Diagnostics contribute
-commands, pages, and providers through Workbench/Core extension points.
+The completed Workbench plugin owns the EtherCAT mode, its left device tree,
+selection linkage, and the details-page host. Project and Devices supply public
+data. Scan and Diagnostics will contribute commands, pages, and providers
+through Workbench/Core extension points.
 
 The completed Project implementation and versioned file contract are recorded
 in `docs/ethercat-project-format.md`. ProjectExplorer owns open/close and
@@ -109,6 +112,9 @@ startup-project state; EtherCATProject owns persistence and its undo stack.
 The completed Devices repository and its parsing, storage, identity, and
 asynchronous-lifecycle boundaries are recorded in
 `docs/ethercat-devices-repository.md`.
+The completed Workbench layout, model, property-page hosting, optional-provider
+lifecycle, and explicit stage limits are recorded in
+`docs/ethercat-workbench.md`.
 
 The intended information structure is:
 
