@@ -46,15 +46,19 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_proxyModel->setAutoAcceptChildRows(true);
 
     m_treeView->setObjectName("EtherCATWorkbenchTree");
+    m_treeView->setAccessibleName(Tr::tr("EtherCAT device tree"));
+    m_treeView->setAccessibleDescription(
+        Tr::tr("Browse offline projects, masters, slaves, process data, and ESI devices."));
     m_treeView->setModel(m_proxyModel);
     m_treeView->setAlternatingRowColors(true);
     m_treeView->setUniformRowHeights(true);
+    m_treeView->setTextElideMode(Qt::ElideNone);
     m_treeView->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_treeView->setSelectionMode(QAbstractItemView::SingleSelection);
     m_treeView->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_treeView->setHeaderHidden(false);
     m_treeView->header()->setStretchLastSection(false);
-    m_treeView->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_treeView->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    m_treeView->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
 
     auto layout = new QVBoxLayout(this);
     layout->setContentsMargins(QMargins());

@@ -53,7 +53,8 @@ All six planned EtherCAT feature and infrastructure plugins have entered the
 local profile. This proves the plugin profile is assembled, not that every
 Phase-1 requirement is complete. Editable Process Data, Startup, and DC are
 now verified, and the public derived-node kinds are reserved. The visible
-TwinCAT-inspired tree workflow, additional UI coverage, and the
+TwinCAT-inspired process-data tree is now verified with stable selection and
+details routing. Real modular-profile data, additional UI coverage, and the
 user-policy-deferred upstream rehearsal remain open.
 
 ### Hidden or excluded plugins
@@ -71,7 +72,8 @@ function is outside the product target and records migration or recovery.
 | Feature | Phase-1 status |
 |---|---|
 | TwinCAT-inspired device tree shell | Stage 4 verified |
-| Inputs/Outputs/RxPDO/TxPDO/Modules tree branches | Pending Workbench issue |
+| Inputs/Outputs/RxPDO/TxPDO tree branches | Verified in current Workbench issue |
+| Modules/Channels tree branch | Explicit empty state verified; real modular data pending Devices/data-contract issue |
 | Public process/PDO/module/channel node kinds | Core/API contract verified |
 | Extensible offline property pages | Stage 4 verified |
 | Offline Process Data/Startup/DC domain model | Verified in EtherCATData |
@@ -212,8 +214,10 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 12 passed, 0 failed |
-| Six-plugin EtherCAT regression | 61 passed, 0 failed |
+| Focused EtherCATWorkbench plugin tests | 13 passed, 0 failed |
+| Six-plugin EtherCAT regression | 63 passed, 0 failed in isolated processes |
+| Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
+| Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Metadata, hard dependencies, mode, and actions | Passed |
 | 500-device incremental model with model tester | Passed |
 | Filter, context, and bidirectional stable selection | Passed |
@@ -235,17 +239,29 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Manual no-ESI mode, AssignActivate, cycle/shift, and dependency validation | Passed |
 | DC field, mode, defaults, dependent disable, and reference-clock Undo/Redo | Passed |
 | Configured-slave tree, empty-placeholder removal, and ESI page reuse | Passed |
+| Exact Inputs, Outputs, RxPDO, TxPDO, Modules/Channels branch order | Passed |
+| Inputs from active TxPDO and Outputs from active RxPDO | Passed |
+| Active-PDO projection with PDO and Entry descendants | Passed |
+| Unique stable view IDs and retained source-domain IDs | Passed |
+| Recursive derived-node filtering and stable Selection Service linkage | Passed |
+| Derived Process Data focus and read-only mutation boundary | Passed |
+| Explicit unsupported Modules/Channels empty state | Passed |
+| 128 configured slaves under `QAbstractItemModelTester` | Passed |
+| Non-elided content-sized tree columns in a narrow navigation area | Passed in widget test and desktop inspection |
+| Accessible tree name, description, and five process-data branches | Passed in widget test and macOS accessibility inspection |
+| macOS accessibility lock-transition observation | One Qt 6.11 accessibility crash was captured during a lock transition; a second RxPDO-selection run remained alive until the Mac locked, so the event is not reproduced and remains a qualification risk |
 | Dynamic property-page provider removal | Passed |
 | Dynamic Scan/Diagnostics availability and removal | Passed |
-| EtherCATCore regression tests | 16 passed, 0 failed |
+| EtherCATCore regression tests | 17 passed, 0 failed |
 | EtherCATProject regression tests | 11 passed, 0 failed |
 | EtherCATDevices regression tests | 8 passed, 0 failed |
 | EtherCATScan regression tests | 7 passed, 0 failed |
 | EtherCATDiagnostics regression tests | 7 passed, 0 failed |
+| Product version inventory | All 16 allow-listed plugins present and recognized |
 | Normal Release product build | Passed with 16-plugin allow-list |
-| Enabled GUI startup | Passed for 5 seconds until intentional interrupt; empty output |
-| Explicitly disabled startup | Passed with `-noload EtherCATWorkbench`; one shared-memory warning, then stable for 5 seconds until intentional interrupt |
-| Visual desktop inspection | Passed for populated DC Cyclic Mode, SYNC0, SYNC1, and reference-clock controls without clipping |
+| Enabled GUI startup | Passed with clean temporary settings for 5 seconds until intentional interrupt; empty output |
+| Explicitly disabled startup | Passed with `-noload EtherCATWorkbench` and clean temporary settings; stable for 5 seconds with empty output until intentional interrupt |
+| Visual desktop inspection | Passed with all five process-data branches, PDO/Entry descendants, explicit modular empty state, normal Creator icon scale, and readable narrow-sidebar names |
 | Direct upstream Core, ProjectExplorer, or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |

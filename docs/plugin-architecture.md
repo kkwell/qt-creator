@@ -23,7 +23,7 @@ documentation, review, and local-commit gates.
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Configuration persistence complete | Version-2 project lifecycle, migration, validation, and Undo/Redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
-| 4 | `EtherCATWorkbenchPlugin` | In progress | Process Data, Startup, and DC are editable; full tree remains |
+| 4 | `EtherCATWorkbenchPlugin` | In progress | Editable pages and the visible process-data tree are complete; modular data remains |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
 
@@ -112,8 +112,12 @@ Workbench/Core extension points. Process Data, ordered Startup requests, and
 Distributed Clocks are now editable for configured slaves through the public
 Project service; their repository views stay read-only. EtherCATCore now
 reserves stable, append-only node kinds for Inputs, Outputs, RxPDO, TxPDO, PDO,
-PDO Entry, Modules, Module, and Channel selections. The Workbench tree does not
-yet render those branches, so the Workbench completion gate remains open.
+PDO Entry, Modules, Module, and Channel selections. The Workbench now projects
+validated active Process Data into Inputs, Outputs, RxPDO, TxPDO, PDO, and PDO
+Entry branches with stable view and source identities. Modules / Channels has
+an explicit empty state until the Devices and Project contracts contain real
+modular data; no module or channel is fabricated. That data-contract work and
+the remaining UI qualification keep the Workbench completion gate open.
 
 The completed Project implementation and versioned file contract are recorded
 in `docs/ethercat-project-format.md`. ProjectExplorer owns open/close and

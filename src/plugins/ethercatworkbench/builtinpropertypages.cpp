@@ -120,6 +120,17 @@ QList<Core::PropertyPageDescriptor> BuiltinPropertyPageProvider::pages(
             result.append({Utils::Id(Constants::ONLINE_PAGE_ID), Tr::tr("Online"), 800});
         return result;
     }
+    case Kind::ProcessInputs:
+    case Kind::ProcessOutputs:
+    case Kind::RxPdoGroup:
+    case Kind::TxPdoGroup:
+    case Kind::Pdo:
+    case Kind::PdoEntry:
+        return {{Utils::Id(Constants::PROCESS_DATA_PAGE_ID), Tr::tr("Process Data"), 300}};
+    case Kind::Modules:
+    case Kind::Module:
+    case Kind::Channel:
+        return {{Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100}};
     case Kind::Diagnostics:
         if (m_controller && m_controller->diagnosticsAvailable())
             return {};
@@ -184,24 +195,18 @@ void BuiltinPropertyPageProvider::updatePage(
     if (!widget || !m_controller)
         return;
 
+    const std::optional<Data::OfflineSlaveConfiguration> offlineSlave
+        = m_controller->treeModel()->offlineSlave(context.nodeId);
     const std::optional<Data::DeviceDescription> device
-        = [this, &context]() -> std::optional<Data::DeviceDescription> {
+        = [this, &context, &offlineSlave]() -> std::optional<Data::DeviceDescription> {
         if (!m_controller->deviceRepository())
             return std::nullopt;
         if (context.nodeKind == Core::WorkbenchNodeKind::Device)
             return m_controller->deviceRepository()->device(context.nodeId);
-        if (context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave) {
-            const std::optional<Data::OfflineSlaveConfiguration> slave
-                = m_controller->treeModel()->offlineSlave(context.nodeId);
-            if (slave && !slave->deviceDescriptionId.isNull())
-                return m_controller->deviceRepository()->device(slave->deviceDescriptionId);
-        }
+        if (offlineSlave && !offlineSlave->deviceDescriptionId.isNull())
+            return m_controller->deviceRepository()->device(offlineSlave->deviceDescriptionId);
         return std::nullopt;
     }();
-    const std::optional<Data::OfflineSlaveConfiguration> offlineSlave
-        = context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave
-              ? m_controller->treeModel()->offlineSlave(context.nodeId)
-              : std::nullopt;
 
     if (pageId == Utils::Id(Constants::GENERAL_PAGE_ID)) {
         widget->reset(
@@ -210,6 +215,8 @@ void BuiltinPropertyPageProvider::updatePage(
         widget->addRow({Tr::tr("Name"), context.displayName});
         widget->addRow({Tr::tr("Node ID"), context.nodeId.toString()});
         if (offlineSlave) {
+            if (context.nodeKind != Core::WorkbenchNodeKind::ConfiguredSlave)
+                widget->addRow({Tr::tr("Owner slave"), offlineSlave->name});
             widget->addRow({Tr::tr("Position"), QString::number(offlineSlave->position)});
             widget->addRow({Tr::tr("Vendor ID"), hexValue(offlineSlave->identity.vendorId, 8)});
             widget->addRow(

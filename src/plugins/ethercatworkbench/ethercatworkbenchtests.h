@@ -16,6 +16,7 @@ private slots:
     void testNavigationSelectionAndFiltering();
     void testBuiltInDevicePages();
     void testConfiguredSlaveTreeAndPages();
+    void testTwinCatProcessDataTree();
     void testEditableProcessDataWorkflow();
     void testEditableStartupWorkflow();
     void testEditableDcWorkflow();

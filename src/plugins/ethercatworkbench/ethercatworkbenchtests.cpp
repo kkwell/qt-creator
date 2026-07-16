@@ -32,6 +32,7 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QHeaderView>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -39,6 +40,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSet>
 #include <QSignalSpy>
 #include <QTabWidget>
 #include <QTableView>
@@ -79,6 +81,128 @@ static Data::NodeId masterId(const Data::ProjectSnapshot &project)
             return node.id;
     }
     return {};
+}
+
+struct ProcessTreeFixture
+{
+    Data::ProjectSnapshot project;
+    Data::NodeId slaveId;
+    Data::NodeId rxPdoId;
+    Data::NodeId txPdoId;
+    Data::NodeId rxEntryId;
+    Data::NodeId txEntryId;
+    Data::NodeId unselectedEntryId;
+};
+
+static ProcessTreeFixture processTreeFixture()
+{
+    ProcessTreeFixture result;
+    result.project = projectSnapshot("Process Tree");
+    result.slaveId = Data::NodeId::create();
+    result.rxPdoId = Data::NodeId::create();
+    result.txPdoId = Data::NodeId::create();
+    result.rxEntryId = Data::NodeId::create();
+    result.txEntryId = Data::NodeId::create();
+    result.unselectedEntryId = Data::NodeId::create();
+
+    Data::ProcessDataConfiguration processData;
+    processData.syncManagers = {
+        {Data::NodeId::create(),
+         2,
+         "Outputs",
+         Data::SyncManagerDirection::MasterToSlave,
+         true,
+         32},
+        {Data::NodeId::create(),
+         3,
+         "Inputs",
+         Data::SyncManagerDirection::SlaveToMaster,
+         true,
+         32},
+    };
+    processData.pdos = {
+        {result.rxPdoId,
+         0x1600,
+         "Drive Command",
+         Data::PdoDirection::Rx,
+         2,
+         true,
+         false,
+         false,
+         true,
+         true,
+         "CSP",
+         {{result.rxEntryId,
+           0x6040,
+           0,
+           "Controlword",
+           16,
+           Data::EtherCATDataType::UnsignedInteger16,
+           "UINT",
+           -1,
+           true,
+           false}}},
+        {result.txPdoId,
+         0x1a00,
+         "Drive Status",
+         Data::PdoDirection::Tx,
+         3,
+         true,
+         true,
+         true,
+         true,
+         true,
+         "CSP",
+         {{result.txEntryId,
+           0x6041,
+           0,
+           "Statusword",
+           16,
+           Data::EtherCATDataType::UnsignedInteger16,
+           "UINT",
+           -1,
+           true,
+           false}}},
+        {Data::NodeId::create(),
+         0x1601,
+         "Optional Command",
+         Data::PdoDirection::Rx,
+         2,
+         false,
+         false,
+         false,
+         false,
+         true,
+         {},
+         {{result.unselectedEntryId,
+           0x6071,
+           0,
+           "Target torque",
+           16,
+           Data::EtherCATDataType::Integer16,
+           "INT",
+           -1,
+           true,
+           false}}},
+    };
+
+    const Data::NodeId master = masterId(result.project);
+    result.project.slaves = {
+        {result.slaveId,
+         master,
+         0,
+         {2, 0x5678, 0x11},
+         17,
+         3,
+         "Configured Servo",
+         {},
+         processData,
+         {},
+         {}},
+    };
+    result.project.nodes.append(
+        {result.slaveId, master, Data::ProjectNodeKind::Slave, "Configured Servo"});
+    return result;
 }
 
 struct TestProjectFile
@@ -182,6 +306,19 @@ static QModelIndex findByKind(
     return {};
 }
 
+static QModelIndex directChildByKind(
+    const QAbstractItemModel *model,
+    Core::WorkbenchNodeKind kind,
+    const QModelIndex &parent)
+{
+    for (int row = 0; row < model->rowCount(parent); ++row) {
+        const QModelIndex index = model->index(row, 0, parent);
+        if (index.data(WorkbenchTreeModel::NodeKindRole).value<Core::WorkbenchNodeKind>() == kind)
+            return index;
+    }
+    return {};
+}
+
 static QModelIndex findById(
     const QAbstractItemModel *model, const Data::NodeId &nodeId, const QModelIndex &parent = {})
 {
@@ -190,6 +327,22 @@ static QModelIndex findById(
         if (index.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>() == nodeId)
             return index;
         const QModelIndex child = findById(model, nodeId, index);
+        if (child.isValid())
+            return child;
+    }
+    return {};
+}
+
+static QModelIndex findBySourceId(
+    const WorkbenchTreeModel *model,
+    const Data::NodeId &sourceId,
+    const QModelIndex &parent = {})
+{
+    for (int row = 0; row < model->rowCount(parent); ++row) {
+        const QModelIndex index = model->index(row, 0, parent);
+        if (model->sourceNodeId(index) == sourceId)
+            return index;
+        const QModelIndex child = findBySourceId(model, sourceId, index);
         if (child.isValid())
             return child;
     }
@@ -573,7 +726,8 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
     const QModelIndex masterIndex
         = findByKind(controller.treeModel(), Core::WorkbenchNodeKind::Master);
     QCOMPARE(controller.treeModel()->rowCount(masterIndex), 2);
-    QVERIFY(!findByKind(controller.treeModel(), Core::WorkbenchNodeKind::Placeholder, masterIndex)
+    QVERIFY(!directChildByKind(
+                 controller.treeModel(), Core::WorkbenchNodeKind::Placeholder, masterIndex)
                  .isValid());
 
     BuiltinPropertyPageProvider pages(&controller);
@@ -605,6 +759,201 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
                 ->text()
                 .contains("No Process Data", Qt::CaseInsensitive));
     QVERIFY(processPage->findChild<QPushButton *>("EtherCATProcessDataRestoreDefaults")->isHidden());
+}
+
+void EtherCATWorkbenchTests::testTwinCatProcessDataTree()
+{
+    const ProcessTreeFixture fixture = processTreeFixture();
+    WorkbenchController controller;
+    QAbstractItemModelTester modelTester(
+        controller.treeModel(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+    controller.treeModel()->setProjects({fixture.project});
+
+    const QModelIndex slave = findById(controller.treeModel(), fixture.slaveId);
+    QVERIFY(slave.isValid());
+    QCOMPARE(controller.treeModel()->rowCount(slave), 5);
+
+    const QList<Core::WorkbenchNodeKind> expectedKinds = {
+        Core::WorkbenchNodeKind::ProcessInputs,
+        Core::WorkbenchNodeKind::ProcessOutputs,
+        Core::WorkbenchNodeKind::RxPdoGroup,
+        Core::WorkbenchNodeKind::TxPdoGroup,
+        Core::WorkbenchNodeKind::Modules,
+    };
+    for (int row = 0; row < expectedKinds.size(); ++row) {
+        const QModelIndex branch = controller.treeModel()->index(row, 0, slave);
+        QCOMPARE(
+            branch.data(WorkbenchTreeModel::NodeKindRole).value<Core::WorkbenchNodeKind>(),
+            expectedKinds.at(row));
+        QVERIFY(!branch.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>().isNull());
+        QVERIFY(!branch.data(Qt::DecorationRole).value<QIcon>().isNull());
+    }
+
+    const QModelIndex inputs = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::ProcessInputs, slave);
+    const QModelIndex outputs = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::ProcessOutputs, slave);
+    const QModelIndex rxPdos = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::RxPdoGroup, slave);
+    const QModelIndex txPdos = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::TxPdoGroup, slave);
+    const QModelIndex modules = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::Modules, slave);
+    QVERIFY(inputs.isValid());
+    QVERIFY(outputs.isValid());
+    QVERIFY(rxPdos.isValid());
+    QVERIFY(txPdos.isValid());
+    QVERIFY(modules.isValid());
+    QCOMPARE(inputs.data().toString(), QString("Inputs"));
+    QCOMPARE(outputs.data().toString(), QString("Outputs"));
+    QCOMPARE(rxPdos.data().toString(), QString("RxPDO"));
+    QCOMPARE(txPdos.data().toString(), QString("TxPDO"));
+    QCOMPARE(modules.data().toString(), QString("Modules / Channels"));
+
+    QCOMPARE(controller.treeModel()->rowCount(inputs), 1);
+    QCOMPARE(controller.treeModel()->rowCount(outputs), 1);
+    QCOMPARE(controller.treeModel()->rowCount(rxPdos), 1);
+    QCOMPARE(controller.treeModel()->rowCount(txPdos), 1);
+    QCOMPARE(controller.treeModel()->rowCount(modules), 1);
+
+    const QModelIndex inputEntry = controller.treeModel()->index(0, 0, inputs);
+    const QModelIndex outputEntry = controller.treeModel()->index(0, 0, outputs);
+    QCOMPARE(inputEntry.data().toString(), QString("Statusword"));
+    QCOMPARE(outputEntry.data().toString(), QString("Controlword"));
+    QCOMPARE(
+        inputEntry.data(WorkbenchTreeModel::NodeKindRole).value<Core::WorkbenchNodeKind>(),
+        Core::WorkbenchNodeKind::PdoEntry);
+    QCOMPARE(controller.treeModel()->sourceNodeId(inputEntry), fixture.txEntryId);
+    QCOMPARE(controller.treeModel()->sourceNodeId(outputEntry), fixture.rxEntryId);
+
+    const QModelIndex rxPdo = controller.treeModel()->index(0, 0, rxPdos);
+    const QModelIndex txPdo = controller.treeModel()->index(0, 0, txPdos);
+    QCOMPARE(rxPdo.data().toString(), QString("Drive Command"));
+    QCOMPARE(txPdo.data().toString(), QString("Drive Status"));
+    QCOMPARE(
+        rxPdo.data(WorkbenchTreeModel::NodeKindRole).value<Core::WorkbenchNodeKind>(),
+        Core::WorkbenchNodeKind::Pdo);
+    QCOMPARE(controller.treeModel()->sourceNodeId(rxPdo), fixture.rxPdoId);
+    QCOMPARE(controller.treeModel()->sourceNodeId(txPdo), fixture.txPdoId);
+    QCOMPARE(controller.treeModel()->rowCount(rxPdo), 1);
+    QCOMPARE(controller.treeModel()->rowCount(txPdo), 1);
+    QCOMPARE(controller.treeModel()->sourceNodeId(controller.treeModel()->index(0, 0, rxPdo)),
+             fixture.rxEntryId);
+    QCOMPARE(controller.treeModel()->sourceNodeId(controller.treeModel()->index(0, 0, txPdo)),
+             fixture.txEntryId);
+
+    const QModelIndex modulePlaceholder = controller.treeModel()->index(0, 0, modules);
+    QCOMPARE(
+        modulePlaceholder.data(WorkbenchTreeModel::NodeKindRole).value<Core::WorkbenchNodeKind>(),
+        Core::WorkbenchNodeKind::Placeholder);
+    QVERIFY(!(controller.treeModel()->flags(modulePlaceholder) & Qt::ItemIsSelectable));
+    QVERIFY(!findBySourceId(controller.treeModel(), fixture.unselectedEntryId).isValid());
+
+    const Data::NodeId rxPdoViewId
+        = rxPdo.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    const Data::NodeId outputEntryViewId
+        = outputEntry.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    QVERIFY(rxPdoViewId != outputEntryViewId);
+    QCOMPARE(controller.treeModel()->offlineSlave(rxPdoViewId)->id, fixture.slaveId);
+    QCOMPARE(controller.treeModel()->offlineSlave(outputEntryViewId)->id, fixture.slaveId);
+    QCOMPARE(controller.treeModel()->contextForIndex(rxPdo).projectId, fixture.project.id);
+
+    BuiltinPropertyPageProvider pages(&controller);
+    const Core::PropertyPageContext rxContext = controller.treeModel()->contextForIndex(rxPdo);
+    QCOMPARE(
+        pages.pages(rxContext),
+        QList<Core::PropertyPageDescriptor>(
+            {{Utils::Id(Constants::PROCESS_DATA_PAGE_ID), "Process Data", 300}}));
+    std::unique_ptr<QWidget> processPage(
+        pages.createPage(Constants::PROCESS_DATA_PAGE_ID, nullptr));
+    pages.updatePage(Constants::PROCESS_DATA_PAGE_ID, processPage.get(), rxContext);
+    QTableView *pdoList = processPage->findChild<QTableView *>("EtherCATProcessDataPdoList");
+    QTableView *pdoContent = processPage->findChild<QTableView *>("EtherCATProcessDataPdoContent");
+    QTableView *pdoAssignments = processPage->findChild<QTableView *>(
+        "EtherCATProcessDataAssignments");
+    QVERIFY(pdoList);
+    QVERIFY(pdoContent);
+    QVERIFY(pdoAssignments);
+    QCOMPARE(pdoList->currentIndex().siblingAtColumn(2).data().toString(), QString("Drive Command"));
+    QCOMPARE(pdoContent->model()->index(0, 4).data().toString(), QString("Controlword"));
+    QVERIFY(!(
+        pdoAssignments->model()->flags(pdoAssignments->model()->index(0, 0))
+        & Qt::ItemIsUserCheckable));
+
+    const Core::PropertyPageContext inputContext = controller.treeModel()->contextForIndex(inputEntry);
+    pages.updatePage(Constants::PROCESS_DATA_PAGE_ID, processPage.get(), inputContext);
+    QCOMPARE(pdoList->currentIndex().siblingAtColumn(2).data().toString(), QString("Drive Status"));
+    QCOMPARE(pdoContent->model()->index(0, 4).data().toString(), QString("Statusword"));
+
+    const Core::PropertyPageContext modulesContext = controller.treeModel()->contextForIndex(modules);
+    QCOMPARE(
+        pages.pages(modulesContext),
+        QList<Core::PropertyPageDescriptor>(
+            {{Utils::Id(Constants::GENERAL_PAGE_ID), "General", 100}}));
+
+    WorkbenchNavigationWidget navigation(&controller);
+    QCOMPARE(navigation.treeView()->textElideMode(), Qt::ElideNone);
+    QCOMPARE(
+        navigation.treeView()->header()->sectionResizeMode(0),
+        QHeaderView::ResizeToContents);
+    QCOMPARE(
+        navigation.treeView()->header()->sectionResizeMode(1),
+        QHeaderView::ResizeToContents);
+    QVERIFY(!navigation.treeView()->accessibleName().isEmpty());
+    QVERIFY(!navigation.treeView()->accessibleDescription().isEmpty());
+    navigation.filterEdit()->setText("Controlword");
+    QTRY_VERIFY(findById(navigation.treeView()->model(), outputEntryViewId).isValid());
+    controller.selectionService()->setCurrentNodeId(outputEntryViewId);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        outputEntryViewId);
+
+    Data::ProjectSnapshot renamed = fixture.project;
+    renamed.slaves.first().processData.pdos.first().name = "Renamed Command";
+    controller.treeModel()->setProjects({renamed});
+    QCOMPARE(controller.treeModel()->indexForNodeId(rxPdoViewId).data().toString(),
+             QString("Renamed Command"));
+
+    Data::ProjectSnapshot large = projectSnapshot("Large Process Tree");
+    const Data::NodeId largeMaster = masterId(large);
+    for (int position = 0; position < 128; ++position) {
+        Data::OfflineSlaveConfiguration slaveConfiguration = fixture.project.slaves.first();
+        slaveConfiguration.id = Data::NodeId::create();
+        slaveConfiguration.masterId = largeMaster;
+        slaveConfiguration.position = position;
+        slaveConfiguration.name = QString("Servo %1").arg(position, 3, 10, QLatin1Char('0'));
+        large.slaves.append(slaveConfiguration);
+        large.nodes.append(
+            {slaveConfiguration.id,
+             largeMaster,
+             Data::ProjectNodeKind::Slave,
+             slaveConfiguration.name});
+    }
+    controller.treeModel()->setProjects({large});
+    const QModelIndex largeMasterIndex = controller.treeModel()->indexForNodeId(largeMaster);
+    QCOMPARE(controller.treeModel()->rowCount(largeMasterIndex), 129);
+    for (const Data::OfflineSlaveConfiguration &slaveConfiguration : std::as_const(large.slaves)) {
+        const QModelIndex configured = controller.treeModel()->indexForNodeId(slaveConfiguration.id);
+        QVERIFY(configured.isValid());
+        QCOMPARE(controller.treeModel()->rowCount(configured), 5);
+    }
+    QList<Data::NodeId> nodeIds;
+    const auto collectIds
+        = [&nodeIds, &controller](const auto &self, const QModelIndex &parent) -> void {
+        for (int row = 0; row < controller.treeModel()->rowCount(parent); ++row) {
+            const QModelIndex index = controller.treeModel()->index(row, 0, parent);
+            nodeIds.append(index.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>());
+            self(self, index);
+        }
+    };
+    collectIds(collectIds, {});
+    QSet<Data::NodeId> uniqueNodeIds;
+    for (const Data::NodeId &nodeId : std::as_const(nodeIds))
+        uniqueNodeIds.insert(nodeId);
+    QCOMPARE(uniqueNodeIds.size(), nodeIds.size());
 }
 
 void EtherCATWorkbenchTests::testEditableProcessDataWorkflow()
@@ -787,6 +1136,36 @@ void EtherCATWorkbenchTests::testEditableProcessDataWorkflow()
     QVERIFY_RESULT(redoType);
 
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const QModelIndex configuredSlave = controller.treeModel()->indexForNodeId(file.slaveId);
+    const QModelIndex rxPdoBranch = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::RxPdoGroup, configuredSlave);
+    QVERIFY(rxPdoBranch.isValid());
+    const QModelIndex configuredRxPdo = controller.treeModel()->index(0, 0, rxPdoBranch);
+    QCOMPARE(
+        configuredRxPdo.data(WorkbenchTreeModel::NodeKindRole).value<Core::WorkbenchNodeKind>(),
+        Core::WorkbenchNodeKind::Pdo);
+    const Data::NodeId configuredRxPdoId
+        = configuredRxPdo.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    controller.selectionService()->setCurrentNodeId(configuredRxPdoId);
+    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::Pdo);
+    QWidget *derivedPage = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::PROCESS_DATA_PAGE_ID).toString());
+    QVERIFY(derivedPage);
+    QTableView *derivedAssignments = derivedPage->findChild<QTableView *>(
+        "EtherCATProcessDataAssignments");
+    QTableView *derivedPdoList = derivedPage->findChild<QTableView *>(
+        "EtherCATProcessDataPdoList");
+    QLabel *derivedSummary = derivedPage->findChild<QLabel *>("EtherCATProcessDataSummary");
+    QVERIFY(derivedAssignments);
+    QVERIFY(derivedPdoList);
+    QVERIFY(derivedSummary);
+    QVERIFY(derivedSummary->text().contains("Read-only", Qt::CaseInsensitive));
+    QCOMPARE(derivedPdoList->currentIndex().siblingAtColumn(2).data().toString(),
+             QString("Command"));
+    QVERIFY(!(
+        derivedAssignments->model()->flags(derivedAssignments->model()->index(0, 0))
+        & Qt::ItemIsUserCheckable));
+
     controller.selectionService()->clear();
     ProjectExplorer::ProjectManager::removeProject(opened.project());
     QTRY_VERIFY(!projectService->project(file.projectId).has_value());

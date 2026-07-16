@@ -158,6 +158,21 @@ static bool isEmpty(const Data::ProcessDataConfiguration &configuration)
     return configuration.syncManagers.isEmpty() && configuration.pdos.isEmpty();
 }
 
+static std::optional<Data::PdoDirection> directionForNodeKind(Core::WorkbenchNodeKind kind)
+{
+    using Kind = Core::WorkbenchNodeKind;
+    switch (kind) {
+    case Kind::ProcessInputs:
+    case Kind::TxPdoGroup:
+        return Data::PdoDirection::Tx;
+    case Kind::ProcessOutputs:
+    case Kind::RxPdoGroup:
+        return Data::PdoDirection::Rx;
+    default:
+        return std::nullopt;
+    }
+}
+
 static Data::NodeId derivedId(const Data::NodeId &ownerId, const QString &key)
 {
     static const QUuid namespaceId("{fb23a9ad-4932-57e0-b301-9c581ad7a953}");
@@ -1133,19 +1148,23 @@ void ProcessDataPage::setContext(const Core::PropertyPageContext &context)
         = m_controller && m_controller->projectService()
               ? m_controller->projectService()->project(context.projectId)
               : std::nullopt;
-    m_editable = context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave && project
-                 && project->valid;
+    m_editable = false;
     m_esiDefaults = {};
     m_configuration = {};
+    m_ownerSlaveId = {};
+    m_selectedSyncManagerId = {};
+    m_selectedPdoId = {};
     m_showingEsiDefaults = false;
 
     std::optional<Data::OfflineSlaveConfiguration> slave;
     std::optional<Data::DeviceDescription> device;
     if (m_controller) {
-        if (context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave) {
-            slave = m_controller->treeModel()->offlineSlave(context.nodeId);
-            if (slave)
-                m_configuration = slave->processData;
+        slave = m_controller->treeModel()->offlineSlave(context.nodeId);
+        if (slave) {
+            m_ownerSlaveId = slave->id;
+            m_configuration = slave->processData;
+            m_editable = context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave && project
+                         && project->valid;
         }
         if (m_controller->deviceRepository()) {
             if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
@@ -1156,10 +1175,40 @@ void ProcessDataPage::setContext(const Core::PropertyPageContext &context)
         }
     }
     if (device)
-        m_esiDefaults = configurationFromDevice(*device, context.nodeId);
+        m_esiDefaults = configurationFromDevice(
+            *device, slave ? slave->id : context.nodeId);
     if (isEmpty(m_configuration) && !isEmpty(m_esiDefaults)) {
         m_configuration = m_esiDefaults;
         m_showingEsiDefaults = true;
+    }
+
+    const Data::NodeId sourceId
+        = m_controller ? m_controller->treeModel()->sourceNodeId(context.nodeId) : Data::NodeId();
+    const std::optional<Data::PdoDirection> direction = directionForNodeKind(context.nodeKind);
+    const auto selectedPdo = std::find_if(
+        m_configuration.pdos.cbegin(),
+        m_configuration.pdos.cend(),
+        [&sourceId, direction, &context](const Data::PdoConfiguration &pdo) {
+            if (direction)
+                return pdo.selected && pdo.direction == *direction;
+            if (context.nodeKind == Core::WorkbenchNodeKind::Pdo)
+                return pdo.id == sourceId;
+            if (context.nodeKind == Core::WorkbenchNodeKind::PdoEntry) {
+                return std::any_of(
+                    pdo.entries.cbegin(), pdo.entries.cend(), [&sourceId](const auto &entry) {
+                        return entry.id == sourceId;
+                    });
+            }
+            return false;
+        });
+    if (selectedPdo != m_configuration.pdos.cend()) {
+        m_selectedPdoId = selectedPdo->id;
+        const auto syncManager = std::find_if(
+            m_configuration.syncManagers.cbegin(),
+            m_configuration.syncManagers.cend(),
+            [selectedPdo](const auto &entry) { return entry.index == selectedPdo->syncManager; });
+        if (syncManager != m_configuration.syncManagers.cend())
+            m_selectedSyncManagerId = syncManager->id;
     }
 
     if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
@@ -1167,6 +1216,11 @@ void ProcessDataPage::setContext(const Core::PropertyPageContext &context)
             Tr::tr(
                 "ESI Process Data catalogue. Select a Sync Manager and PDO to inspect its "
                 "mapping. Add the device to an offline project before editing."));
+    } else if (context.nodeKind != Core::WorkbenchNodeKind::ConfiguredSlave && slave) {
+        m_summary->setText(
+            Tr::tr(
+                "Read-only tree selection. The owning slave and PDO are focused here; edit "
+                "assignments on the configured-slave Process Data page."));
     } else if (m_showingEsiDefaults) {
         m_summary->setText(
             Tr::tr(
@@ -1205,12 +1259,12 @@ bool ProcessDataPage::submitConfiguration(const Data::ProcessDataConfiguration &
     }
     if (!m_editable || !m_controller || !m_controller->projectService()) {
         showValidation(
-            validation, Tr::tr("Change not applied: this ESI catalogue page is read-only."));
+            validation, Tr::tr("Change not applied: this Process Data selection is read-only."));
         return false;
     }
     const Utils::Result<> result
         = m_controller->projectService()
-              ->setProcessDataConfiguration(m_context.projectId, m_context.nodeId, configuration);
+              ->setProcessDataConfiguration(m_context.projectId, m_ownerSlaveId, configuration);
     if (!result) {
         showValidation(validation, Tr::tr("Change not applied: %1").arg(result.error()));
         return false;

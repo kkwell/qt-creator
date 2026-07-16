@@ -24,7 +24,8 @@ struct WorkbenchTreeModel::Node
     QString name;
     QString status;
     Data::DeviceSummary device;
-    std::optional<Data::OfflineSlaveConfiguration> offlineSlave;
+    Data::NodeId ownerSlaveId;
+    Data::NodeId sourceId;
     Node *parent = nullptr;
     std::vector<std::unique_ptr<Node>> children;
 };
@@ -83,6 +84,300 @@ static std::unique_ptr<WorkbenchTreeModel::Node> makeNode(
     node->name = name;
     node->status = status;
     return node;
+}
+
+static QString hexValue(quint64 value, int width)
+{
+    return QString("0x%1").arg(value, width, 16, QLatin1Char('0'));
+}
+
+static QString dataTypeName(Data::EtherCATDataType type)
+{
+    switch (type) {
+    case Data::EtherCATDataType::Boolean:
+        return "BOOL";
+    case Data::EtherCATDataType::Integer8:
+        return "INT8";
+    case Data::EtherCATDataType::UnsignedInteger8:
+        return "UINT8";
+    case Data::EtherCATDataType::Integer16:
+        return "INT16";
+    case Data::EtherCATDataType::UnsignedInteger16:
+        return "UINT16";
+    case Data::EtherCATDataType::Integer32:
+        return "INT32";
+    case Data::EtherCATDataType::UnsignedInteger32:
+        return "UINT32";
+    case Data::EtherCATDataType::Integer64:
+        return "INT64";
+    case Data::EtherCATDataType::UnsignedInteger64:
+        return "UINT64";
+    case Data::EtherCATDataType::Real32:
+        return "REAL32";
+    case Data::EtherCATDataType::Real64:
+        return "REAL64";
+    case Data::EtherCATDataType::VisibleString:
+        return "STRING";
+    case Data::EtherCATDataType::OctetString:
+        return "OCTET_STRING";
+    case Data::EtherCATDataType::Unknown:
+        return Tr::tr("Unknown");
+    }
+    return Tr::tr("Unknown");
+}
+
+static qint64 pdoBitSize(const Data::PdoConfiguration &pdo)
+{
+    qint64 result = 0;
+    for (const Data::PdoEntryConfiguration &entry : pdo.entries)
+        result += qMax(0, entry.bitLength);
+    return result;
+}
+
+static QString pdoName(const Data::PdoConfiguration &pdo)
+{
+    return pdo.name.isEmpty() ? Tr::tr("PDO %1").arg(hexValue(pdo.index, 4)) : pdo.name;
+}
+
+static QString entryName(const Data::PdoEntryConfiguration &entry)
+{
+    if (!entry.name.isEmpty())
+        return entry.name;
+    if (entry.padding)
+        return Tr::tr("Padding");
+    return Tr::tr("Entry %1:%2")
+        .arg(hexValue(entry.index, 4))
+        .arg(entry.subIndex, 2, 16, QLatin1Char('0'));
+}
+
+static QString sourceKey(const Data::NodeId &sourceId, const QString &fallback)
+{
+    return sourceId.isNull() ? fallback : sourceId.toString();
+}
+
+static std::unique_ptr<WorkbenchTreeModel::Node> makeSlaveChild(
+    WorkbenchTreeModel::Node *parent,
+    const Data::OfflineSlaveConfiguration &slave,
+    Core::WorkbenchNodeKind kind,
+    const QString &key,
+    const QString &name,
+    const QString &status,
+    const Data::NodeId &sourceId = {})
+{
+    auto node = makeNode(
+        parent,
+        derivedNodeId(slave.id.toString() + ':' + key),
+        parent->projectId,
+        kind,
+        name,
+        status);
+    node->ownerSlaveId = slave.id;
+    node->sourceId = sourceId;
+    return node;
+}
+
+static void appendEmptyState(
+    WorkbenchTreeModel::Node *parent,
+    const Data::OfflineSlaveConfiguration &slave,
+    const QString &key,
+    const QString &name,
+    const QString &status)
+{
+    parent->children.push_back(makeSlaveChild(
+        parent, slave, Core::WorkbenchNodeKind::Placeholder, key, name, status));
+}
+
+static void appendProcessImageBranch(
+    WorkbenchTreeModel::Node *slaveNode,
+    const Data::OfflineSlaveConfiguration &slave,
+    Core::WorkbenchNodeKind kind,
+    const QString &key,
+    const QString &name,
+    const Data::ProcessImageDirection &image,
+    const QString &emptyName,
+    const QString &emptyStatus)
+{
+    const QString status = image.entries.isEmpty()
+                               ? Tr::tr("No mapped variables")
+                               : Tr::tr("%n variable(s), %1 byte(s)", nullptr, image.entries.size())
+                                     .arg(image.byteSize);
+    auto branch = makeSlaveChild(slaveNode, slave, kind, key, name, status);
+    WorkbenchTreeModel::Node *branchPointer = branch.get();
+    slaveNode->children.push_back(std::move(branch));
+
+    QList<Data::ProcessImageEntry> entries = image.entries;
+    std::sort(entries.begin(), entries.end(), [](const auto &left, const auto &right) {
+        if (left.bitOffset != right.bitOffset)
+            return left.bitOffset < right.bitOffset;
+        return left.entryId.toString() < right.entryId.toString();
+    });
+    for (const Data::ProcessImageEntry &entry : std::as_const(entries)) {
+        const QString pdoKey = sourceKey(
+            entry.pdoId, QString("%1:%2").arg(entry.syncManager).arg(entry.pdoIndex));
+        const QString entryKey = sourceKey(
+            entry.entryId,
+            QString("%1:%2:%3")
+                .arg(entry.pdoIndex)
+                .arg(entry.index)
+                .arg(entry.subIndex));
+        const QString statusText
+            = Tr::tr("@%1.%2, %3, %4 bit(s)")
+                  .arg(entry.byteOffset)
+                  .arg(entry.bitOffsetInByte)
+                  .arg(dataTypeName(entry.dataType))
+                  .arg(entry.bitLength);
+        branchPointer->children.push_back(makeSlaveChild(
+            branchPointer,
+            slave,
+            Core::WorkbenchNodeKind::PdoEntry,
+            key + ":pdo:" + pdoKey + ":entry:" + entryKey,
+            entry.name.isEmpty()
+                ? Tr::tr("Entry %1:%2")
+                      .arg(hexValue(entry.index, 4))
+                      .arg(entry.subIndex, 2, 16, QLatin1Char('0'))
+                : entry.name,
+            statusText,
+            entry.entryId));
+    }
+    if (branchPointer->children.empty())
+        appendEmptyState(branchPointer, slave, key + ":empty", emptyName, emptyStatus);
+}
+
+static void appendPdoBranch(
+    WorkbenchTreeModel::Node *slaveNode,
+    const Data::OfflineSlaveConfiguration &slave,
+    Data::PdoDirection direction,
+    Core::WorkbenchNodeKind kind,
+    const QString &key,
+    const QString &name)
+{
+    QList<Data::PdoConfiguration> pdos;
+    for (const Data::PdoConfiguration &pdo : slave.processData.pdos) {
+        if (pdo.selected && pdo.direction == direction)
+            pdos.append(pdo);
+    }
+    std::sort(pdos.begin(), pdos.end(), [](const auto &left, const auto &right) {
+        if (left.syncManager != right.syncManager)
+            return left.syncManager < right.syncManager;
+        if (left.index != right.index)
+            return left.index < right.index;
+        return left.id.toString() < right.id.toString();
+    });
+
+    const QString status = pdos.isEmpty()
+                               ? Tr::tr("No assigned PDOs")
+                               : Tr::tr("%n assigned PDO(s)", nullptr, pdos.size());
+    auto branch = makeSlaveChild(slaveNode, slave, kind, key, name, status);
+    WorkbenchTreeModel::Node *branchPointer = branch.get();
+    slaveNode->children.push_back(std::move(branch));
+
+    for (const Data::PdoConfiguration &pdo : std::as_const(pdos)) {
+        const QString pdoKey = sourceKey(
+            pdo.id, QString("%1:%2").arg(pdo.syncManager).arg(pdo.index));
+        auto pdoNode = makeSlaveChild(
+            branchPointer,
+            slave,
+            Core::WorkbenchNodeKind::Pdo,
+            key + ":pdo:" + pdoKey,
+            pdoName(pdo),
+            Tr::tr("%1, SM%2, %3 bit(s)")
+                .arg(hexValue(pdo.index, 4))
+                .arg(pdo.syncManager)
+                .arg(pdoBitSize(pdo)),
+            pdo.id);
+        WorkbenchTreeModel::Node *pdoPointer = pdoNode.get();
+        branchPointer->children.push_back(std::move(pdoNode));
+        for (int row = 0; row < pdo.entries.size(); ++row) {
+            const Data::PdoEntryConfiguration &entry = pdo.entries.at(row);
+            const QString entryKey = sourceKey(
+                entry.id,
+                QString("%1:%2:%3").arg(entry.index).arg(entry.subIndex).arg(row));
+            pdoPointer->children.push_back(makeSlaveChild(
+                pdoPointer,
+                slave,
+                Core::WorkbenchNodeKind::PdoEntry,
+                key + ":pdo:" + pdoKey + ":entry:" + entryKey,
+                entryName(entry),
+                Tr::tr("%1:%2, %3, %4 bit(s)")
+                    .arg(hexValue(entry.index, 4))
+                    .arg(entry.subIndex, 2, 16, QLatin1Char('0'))
+                    .arg(dataTypeName(entry.dataType))
+                    .arg(entry.bitLength),
+                entry.id));
+        }
+        if (pdoPointer->children.empty()) {
+            appendEmptyState(
+                pdoPointer,
+                slave,
+                key + ":pdo:" + pdoKey + ":empty",
+                Tr::tr("No PDO entries"),
+                Tr::tr("The assigned PDO has no mapped entries"));
+        }
+    }
+    if (branchPointer->children.empty()) {
+        appendEmptyState(
+            branchPointer,
+            slave,
+            key + ":empty",
+            direction == Data::PdoDirection::Rx ? Tr::tr("No assigned RxPDOs")
+                                                : Tr::tr("No assigned TxPDOs"),
+            Tr::tr("Select mappings on the Process Data page"));
+    }
+}
+
+static void appendConfiguredSlaveChildren(
+    WorkbenchTreeModel::Node *slaveNode, const Data::OfflineSlaveConfiguration &slave)
+{
+    const Data::ConfigurationValidation validation = Data::validateProcessDataConfiguration(
+        slave.processData);
+    appendProcessImageBranch(
+        slaveNode,
+        slave,
+        Core::WorkbenchNodeKind::ProcessInputs,
+        "inputs",
+        Tr::tr("Inputs"),
+        validation.processImage.inputs,
+        Tr::tr("No input variables"),
+        Tr::tr("No selected TxPDO entries"));
+    appendProcessImageBranch(
+        slaveNode,
+        slave,
+        Core::WorkbenchNodeKind::ProcessOutputs,
+        "outputs",
+        Tr::tr("Outputs"),
+        validation.processImage.outputs,
+        Tr::tr("No output variables"),
+        Tr::tr("No selected RxPDO entries"));
+    appendPdoBranch(
+        slaveNode,
+        slave,
+        Data::PdoDirection::Rx,
+        Core::WorkbenchNodeKind::RxPdoGroup,
+        "rxpdo",
+        Tr::tr("RxPDO"));
+    appendPdoBranch(
+        slaveNode,
+        slave,
+        Data::PdoDirection::Tx,
+        Core::WorkbenchNodeKind::TxPdoGroup,
+        "txpdo",
+        Tr::tr("TxPDO"));
+
+    auto modules = makeSlaveChild(
+        slaveNode,
+        slave,
+        Core::WorkbenchNodeKind::Modules,
+        "modules",
+        Tr::tr("Modules / Channels"),
+        Tr::tr("No configured modules"));
+    WorkbenchTreeModel::Node *modulesPointer = modules.get();
+    slaveNode->children.push_back(std::move(modules));
+    appendEmptyState(
+        modulesPointer,
+        slave,
+        "modules:empty",
+        Tr::tr("No module or channel data"),
+        Tr::tr("No modular profile is stored in this project"));
 }
 
 WorkbenchTreeModel::WorkbenchTreeModel(QObject *parent)
@@ -179,6 +474,20 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
                                           : Utils::Icons::BROKEN.icon();
         case Core::WorkbenchNodeKind::Diagnostics:
             return Utils::Icons::INFO.icon();
+        case Core::WorkbenchNodeKind::ProcessInputs:
+        case Core::WorkbenchNodeKind::ProcessOutputs:
+            return Utils::Icons::SNAPSHOT.icon();
+        case Core::WorkbenchNodeKind::RxPdoGroup:
+        case Core::WorkbenchNodeKind::TxPdoGroup:
+        case Core::WorkbenchNodeKind::Pdo:
+            return Utils::Icons::SETTINGS.icon();
+        case Core::WorkbenchNodeKind::PdoEntry:
+        case Core::WorkbenchNodeKind::Channel:
+            return Utils::Icons::LINK.icon();
+        case Core::WorkbenchNodeKind::Modules:
+            return Utils::Icons::DIR.icon();
+        case Core::WorkbenchNodeKind::Module:
+            return ::Core::Icons::DESKTOP_DEVICE_SMALL.icon();
         case Core::WorkbenchNodeKind::Placeholder:
             return Utils::Icons::NOTLOADED.icon();
         default:
@@ -393,11 +702,33 @@ Core::PropertyPageContext WorkbenchTreeModel::contextForNodeId(
     return contextForIndex(indexForNodeId(nodeId));
 }
 
+Data::NodeId WorkbenchTreeModel::sourceNodeId(const QModelIndex &index) const
+{
+    const Node *node = nodeForIndex(index);
+    return node && node != m_root.get() ? node->sourceId : Data::NodeId();
+}
+
+Data::NodeId WorkbenchTreeModel::sourceNodeId(const Data::NodeId &nodeId) const
+{
+    const Node *node = findNode(nodeId);
+    return node ? node->sourceId : Data::NodeId();
+}
+
 std::optional<Data::OfflineSlaveConfiguration> WorkbenchTreeModel::offlineSlave(
     const Data::NodeId &nodeId) const
 {
     const Node *node = findNode(nodeId);
-    return node ? node->offlineSlave : std::nullopt;
+    if (!node || node->ownerSlaveId.isNull())
+        return std::nullopt;
+    for (const Data::ProjectSnapshot &project : m_projects) {
+        const auto slave = std::find_if(
+            project.slaves.cbegin(), project.slaves.cend(), [node](const auto &candidate) {
+                return candidate.id == node->ownerSlaveId;
+            });
+        if (slave != project.slaves.cend())
+            return *slave;
+    }
+    return std::nullopt;
 }
 
 QList<Data::OfflineSlaveConfiguration> WorkbenchTreeModel::offlineSlavesForMaster(
@@ -531,10 +862,18 @@ void WorkbenchTreeModel::rebuild()
                         project.slaves.cend(),
                         [snapshot](const auto &slave) { return slave.id == snapshot->id; });
                     if (offlineSlave != project.slaves.cend())
-                        node->offlineSlave = *offlineSlave;
+                        node->ownerSlaveId = offlineSlave->id;
                 }
                 parent->children.push_back(std::move(node));
                 self(self, nodePointer, snapshot->id);
+                if (kind == Core::WorkbenchNodeKind::ConfiguredSlave) {
+                    const auto offlineSlave = std::find_if(
+                        project.slaves.cbegin(),
+                        project.slaves.cend(),
+                        [snapshot](const auto &slave) { return slave.id == snapshot->id; });
+                    if (offlineSlave != project.slaves.cend())
+                        appendConfiguredSlaveChildren(nodePointer, *offlineSlave);
+                }
                 if (kind == Core::WorkbenchNodeKind::Master) {
                     const int slaveCount = int(std::count_if(
                         nodePointer->children.cbegin(),

@@ -47,6 +47,8 @@ public:
     QModelIndex firstUnsupportedDevice() const;
     Core::PropertyPageContext contextForIndex(const QModelIndex &index) const;
     Core::PropertyPageContext contextForNodeId(const Data::NodeId &nodeId) const;
+    Data::NodeId sourceNodeId(const QModelIndex &index) const;
+    Data::NodeId sourceNodeId(const Data::NodeId &nodeId) const;
     std::optional<Data::OfflineSlaveConfiguration> offlineSlave(
         const Data::NodeId &nodeId) const;
     QList<Data::OfflineSlaveConfiguration> offlineSlavesForMaster(

@@ -183,6 +183,14 @@ numeric values are frozen and the new process-image, PDO, module, and channel
 kinds are appended. No upstream Core, ProjectExplorer, or application path
 changes, so the direct Core patch count remains five.
 
+The Workbench process-data tree issue changes only the product-owned
+`EtherCATWorkbench` plugin and documentation. It projects validated Project
+snapshots into stable Inputs, Outputs, RxPDO, TxPDO, PDO, PDO Entry, and
+Modules / Channels navigation nodes, and routes them through the existing
+selection and property-page extension points. No upstream Core,
+ProjectExplorer, or application path changes, so the direct Core patch count
+remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

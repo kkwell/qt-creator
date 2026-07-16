@@ -42,7 +42,19 @@ The two-column tree displays name and an explicit textual status. It contains:
 open EtherCAT projects
 └── offline target
     └── EtherCAT master
-        ├── configured offline slaves
+        ├── configured offline slave
+        │   ├── Inputs
+        │   │   └── active TxPDO process-image entries
+        │   ├── Outputs
+        │   │   └── active RxPDO process-image entries
+        │   ├── RxPDO
+        │   │   └── active PDO
+        │   │       └── PDO entries
+        │   ├── TxPDO
+        │   │   └── active PDO
+        │   │       └── PDO entries
+        │   └── Modules / Channels
+        │       └── explicit empty state when no modular data exists
         ├── diagnostics capability
         └── no configured slaves / scan capability (only when empty)
 
@@ -62,11 +74,38 @@ identity. The context menu supports expand, collapse, locating the first
 unsupported ESI device, and copying the stable node ID. Keyboard navigation is
 provided by `QTreeView`.
 
+Both columns resize to their visible contents and node text is not elided.
+This gives the hierarchical name priority in Qt Creator's narrow navigation
+area while retaining the explicit status column through standard horizontal
+scrolling. The tree also publishes a translated accessible name and
+description; macOS accessibility exposes the tree and all five process-data
+branches.
+
 Project topology changes use a bounded model reset. Accepted offline slaves are
 read from immutable Project snapshots, appear below their master with stable
 IDs and position-independent selection, and replace the empty scan placeholder.
 Device repository changes use row insert, remove, move, and data-change
 notifications; a 500-device test guards against unnecessary repository resets.
+
+The slave subtree follows the process-data hierarchy described by Beckhoff for
+TwinCAT 3 I/O devices and process data:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html>,
+<https://infosys.beckhoff.com/content/1033/b110_ethercat_optioninterface/2335733771.html>,
+and
+<https://infosys.beckhoff.com/content/1033/epp3356-0022/1652713483.html>.
+Only selected PDOs are projected into the tree. From the controller's point of
+view, Inputs are active TxPDO entries received from a slave and Outputs are
+active RxPDO entries transmitted to a slave. The status column exposes counts,
+sizes, addresses, Sync Manager assignment, types, and bit widths without
+requiring the details pane to identify a row.
+
+Every projected group, PDO, and entry has a deterministic view `NodeId`. It
+also retains the stable source-domain ID of its slave, PDO, or entry. This keeps
+selection unambiguous when the same source PDO IDs occur on multiple slaves,
+and it lets Details resolve the owning slave without copying complete slave
+configurations into every tree node. Renaming a slave does not change any child
+view ID. Empty groups have explicit, non-selectable placeholder rows. The model
+is covered with 128 configured slaves as well as the 500-device repository.
 
 ## Details and property pages
 
@@ -84,6 +123,9 @@ The built-in provider supplies these stage-4 pages:
 - EtherCAT/SyncManager data for imported devices and the offline master;
 - an editable Process Data page for configured slaves, with a read-only ESI
   catalogue view for repository devices;
+- a read-only, automatically focused Process Data view for Inputs, Outputs,
+  RxPDO, TxPDO, PDO, and PDO Entry tree selections;
+- General information for Modules / Channels, Module, and Channel selections;
 - an editable Startup request list for configured slaves, with a read-only ESI
   catalogue view for repository devices;
 - an editable Distributed Clocks page for configured slaves, with a read-only
@@ -139,6 +181,13 @@ read-only. Every candidate is passed to
 shows the first error and preserves the current project and undo history. An
 accepted candidate is one project Undo/Redo command. Store/Restore ESI
 Defaults uses the same checked command path.
+
+Selecting a process-data group, PDO, or entry in the navigation tree opens the
+same Process Data representation and focuses its owning SM/PDO. These derived
+views are intentionally read-only: assignment and entry editing remains on the
+configured-slave Process Data page. This prevents an edit from removing the
+currently selected derived node while its details page is handling the action,
+while preserving one checked Project command path for all mutations.
 
 ### Startup workflow
 
@@ -226,11 +275,13 @@ project state remains owned by `EtherCATProject`.
 The Workbench itself deliberately provides no real bus scan, interface
 discovery, online controller state, controller connection, network protocol,
 configuration package, PLC language, or code generation. Scan and Diagnostics
-remain optional Mock Provider plugins. The full
-Inputs/Outputs/RxPDO/TxPDO/Modules tree branches and advanced Sync Unit timing
-semantics remain pending independent issues. EtherCATCore already reserves
-stable public node kinds for those branches; this plugin must consume that
-contract in its tree issue without inventing missing ESI module/channel data.
+remain optional Mock Provider plugins. Inputs, Outputs, RxPDO, TxPDO, and their
+PDO/entry branches now render persisted, validated active process data. Actual
+modular ESI profile parsing and project-side module/channel values remain a
+separate Devices/data-contract issue; until such source data exists, Modules /
+Channels shows an explicit empty state instead of fabricated rows. Advanced
+Sync Unit timing semantics also remain pending an independent data-contract
+issue.
 
 ## Verification
 
@@ -239,7 +290,12 @@ registration, a 500-device incremental model under
 `QAbstractItemModelTester`, filtering and two-way stable selection, real ESI
 data in Process Data/Startup/DC pages, configured-slave topology and ESI-page
 reuse, dynamic property-page removal, and dynamic Scan/Diagnostics availability
-and removal. The Process Data workflow additionally covers RxPDO/TxPDO SM
+and removal. The process-data tree coverage verifies the exact five-branch
+order, input/output direction, active-PDO projection, unique deterministic view
+IDs, retained source IDs, empty modular state, recursive filtering, derived
+Details routing, non-elided content-sized navigation columns, accessible tree
+metadata, and 128 configured slaves. The Process Data workflow
+additionally covers RxPDO/TxPDO SM
 selection, read-only repository and fixed/mandatory mappings, an empty
 no-ESI state, ESI-derived initial mapping, assignment and entry edits,
 validation rejection, process-image refresh, and real DetailsView plus Project
@@ -250,10 +306,14 @@ ProjectService Undo/Redo reentrancy. The DC workflow covers two ESI operation
 modes, explicit Store/Restore, manual no-ESI configuration, AssignActivate,
 SYNC0/SYNC1 enable and nanosecond timing, reference-clock selection, validation
 rejection, dependent disable actions, and ProjectService Undo/Redo reentrancy.
-It passes 12 tests on the qualified Qt 6.11.0 Release test build.
+It passes 13 tests on the qualified Qt 6.11.0 Release test build.
 
 The normal 16-plugin product build and enabled/disabled startup smoke are
-recorded in `docs/compatibility-matrix.md`. The current DC issue was also
-inspected with populated values in a real EtherCAT Mode desktop session:
-Cyclic Mode, SYNC0, SYNC1, validation, units, and reference-clock controls
-rendered without clipping or layout defects.
+recorded in `docs/compatibility-matrix.md`. A populated real EtherCAT Mode
+desktop session was inspected with Inputs/Statusword, Outputs/Controlword,
+RxPDO/Drive Command, TxPDO/Drive Status, their entries, and the explicit empty
+Modules / Channels state expanded simultaneously. Node names remained readable
+in the narrow Qt Creator navigation area, icons used the normal Creator visual
+scale, and the complete tree remained visible to macOS accessibility. The
+previous DC desktop inspection also confirmed Cyclic Mode, SYNC0, SYNC1,
+validation, units, and reference-clock controls without clipping.

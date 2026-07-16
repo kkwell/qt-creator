@@ -48,6 +48,7 @@ private:
     Core::PropertyPageContext m_context;
     Data::ProcessDataConfiguration m_configuration;
     Data::ProcessDataConfiguration m_esiDefaults;
+    Data::NodeId m_ownerSlaveId;
     Data::NodeId m_selectedSyncManagerId;
     Data::NodeId m_selectedPdoId;
     bool m_editable = false;
