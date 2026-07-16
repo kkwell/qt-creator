@@ -11,6 +11,7 @@ Project {
         "aggregation/aggregation.qbs",
         "cplusplus/cplusplus.qbs",
         "devcontainer/devcontainer.qbs",
+        "ethercatdata/ethercatdata.qbs",
         "extensionsystem/extensionsystem.qbs",
         "glsl/glsl.qbs",
         "gocmdbridge/gocmdbridge.qbs",

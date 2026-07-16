@@ -44,6 +44,7 @@ Project {
         "docker/docker.qbs",
         "dotnet/dotnet.qbs",
         "easyboard/easyboard.qbs",
+        "ethercatcore/ethercatcore.qbs",
         "effectcomposer/effectcomposer.qbs",
         "extensionmanager/extensionmanager.qbs",
         "fakevim/fakevim.qbs",

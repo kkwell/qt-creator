@@ -40,17 +40,17 @@ local decisions and easier maintenance.
 | RemoteLinux | EasyBoard deployment dependency | Retain while EasyBoard is enabled |
 | QmakeProjectManager | Required by current Debugger plugin metadata | Required by baseline dependency |
 | EasyBoard | Existing board discovery/deployment mode | Preserve; visibility review pending |
+| EtherCATCore | EtherCAT services and extension points | Stage 1 verified |
 
 ### Planned EtherCAT additions
 
 Plugins enter the profile only after their preceding serial gate passes:
 
-1. `EtherCATCorePlugin`
-2. `EtherCATProjectPlugin`
-3. `EtherCATDevicesPlugin`
-4. `EtherCATWorkbenchPlugin`
-5. `EtherCATScanPlugin`
-6. `EtherCATDiagnosticsPlugin`
+1. `EtherCATProjectPlugin`
+2. `EtherCATDevicesPlugin`
+3. `EtherCATWorkbenchPlugin`
+4. `EtherCATScanPlugin`
+5. `EtherCATDiagnosticsPlugin`
 
 ### Hidden or excluded plugins
 
@@ -75,6 +75,19 @@ function is outside the product target and records migration or recovery.
 | Real EtherCAT scan | Explicitly out of scope |
 | ECPKG/ECFG/ETIR | Explicitly out of scope |
 | ST/LD/FBD | Explicitly out of scope |
+
+## EtherCATCore stage-1 qualification
+
+| Check | Result |
+|---|---|
+| Focused Qt Creator plugin tests | 8 passed, 0 failed |
+| Normal Release product build | Passed with 11-plugin allow-list |
+| Enabled clean-settings startup | Passed; stable until intentional `SIGTERM` |
+| Explicitly disabled startup | Passed with `-noload EtherCATCore` |
+| Normal plugin shutdown | Passed through automatic plugin-test exit |
+| Repeated process startup | Passed across focused test and two smoke runs |
+| Direct upstream Core or app changes | None |
+| Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 
 ## Verification states
 

@@ -24,6 +24,8 @@ relative to that recorded comparison point.
 | Plugin top-level CMake/qbs | 2 | Required to register EasyBoard |
 | Branding/qbs support | 2 | Product identity support |
 | `.gitignore` | 1 | Product repository policy |
+| `src/libs/ethercatdata` | 5 | Product-owned stable identity library |
+| `src/plugins/ethercatcore` | 19 | Product-owned Core services and extension points |
 
 ## Direct Core intrusion
 
@@ -79,6 +81,10 @@ check.
 
 The stage-0 baseline contains five changed or added Core paths associated with
 EasyBoard. The EtherCAT program has a zero-new-Core-path budget.
+
+Stage 1 adds no path under `src/plugins/coreplugin` or `src/app`. It registers
+one product library and one product plugin through the standard top-level
+CMake and qbs lists. The direct Core patch count therefore remains five.
 
 Each completed EtherCAT issue must report:
 

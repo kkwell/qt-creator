@@ -113,6 +113,11 @@ the expected test-harness termination result.
 plugin metadata requires it. It is a baseline dependency, not an EtherCAT
 feature.
 
+After stage 1, the normal product profile adds `EtherCATCore` as the eleventh
+plugin and `EtherCATData` as its product-owned library. The same Qt 6.11.0
+Release build completes successfully. Stage-0 evidence above remains the
+pre-EtherCAT reference point.
+
 ## Worktree preservation
 
 `AGENTS.md` was untracked when the audit began. It is an authoritative user

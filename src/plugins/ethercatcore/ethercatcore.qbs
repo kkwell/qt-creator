@@ -1,0 +1,34 @@
+import qbs 1.0
+
+QtcPlugin {
+    name: "EtherCATCore"
+
+    Depends { name: "Qt"; submodules: ["widgets"] }
+    Depends { name: "EtherCATData" }
+    Depends { name: "Utils" }
+    Depends { name: "Core" }
+
+    files: [
+        "ethercatcore_global.h",
+        "ethercatcoreconstants.h",
+        "ethercatcoreplugin.cpp",
+        "ethercatcoresettings.cpp",
+        "ethercatcoresettings.h",
+        "ethercatcoretr.h",
+        "providerregistry.cpp",
+        "providerregistry.h",
+        "providers.cpp",
+        "providers.h",
+        "selectionservice.cpp",
+        "selectionservice.h",
+        "stateservice.cpp",
+        "stateservice.h",
+    ]
+
+    QtcTestFiles {
+        files: [
+            "ethercatcoretests.cpp",
+            "ethercatcoretests.h",
+        ]
+    }
+}

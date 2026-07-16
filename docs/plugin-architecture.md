@@ -19,8 +19,8 @@ documentation, review, and local-commit gates.
 | Order | Component | Current state | Exclusive responsibility |
 |---:|---|---|---|
 | 0 | Stage-0 governance | Complete | Baseline, policy, build, and architecture evidence |
-| 1 | `EtherCATData` | Pending | UI-independent value types and bounded algorithms |
-| 1 | `EtherCATCorePlugin` | Pending | IDs, public services, selection, extension points, settings |
+| 1 | `EtherCATData` | Complete | UI-independent stable `NodeId` value type |
+| 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Pending | ProjectExplorer lifecycle, persistence, undo/redo |
 | 3 | `EtherCATDevicesPlugin` | Pending | ESI repository and offline device/PDO/DC models |
 | 4 | `EtherCATWorkbenchPlugin` | Pending | EtherCAT mode, device tree, details container, selection UI |
@@ -68,7 +68,7 @@ Hard dependencies may use exported product-owned C++ interfaces. Optional
 providers must be published through the Qt Creator object pool and discovered
 through `ExtensionSystem::PluginManager`.
 
-The initial Core design may expose narrowly scoped interfaces such as:
+The Core API exposes narrowly scoped services and extension points:
 
 - project service
 - selection service
@@ -77,9 +77,10 @@ The initial Core design may expose narrowly scoped interfaces such as:
 - diagnostics provider
 - property-page provider
 
-The exact names and methods are frozen only during the
-`EtherCATCorePlugin` issue. They are in-process interfaces only and must not
-contain network transport, message IDs, serialization, or Zynq ABI concepts.
+The exact stage-1 discovery and lifecycle contract is frozen in
+`docs/ethercat-core-api.md`. It contains no network transport, message IDs,
+serialization, or Zynq ABI concepts. Feature-specific typed methods are added
+only by a dedicated Core/API change in the owning serial plugin stage.
 
 ## Cross-plugin data rules
 
