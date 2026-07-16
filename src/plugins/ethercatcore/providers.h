@@ -99,6 +99,10 @@ public:
     virtual Utils::Result<> saveProject(const Data::NodeId &projectId) = 0;
     virtual Utils::Result<> undoProject(const Data::NodeId &projectId) = 0;
     virtual Utils::Result<> redoProject(const Data::NodeId &projectId) = 0;
+    virtual Utils::Result<> replaceOfflineSlaves(
+        const Data::NodeId &projectId,
+        const Data::NodeId &masterId,
+        const QList<Data::OfflineSlaveConfiguration> &slaves) = 0;
     virtual bool canUndoProject(const Data::NodeId &projectId) const = 0;
     virtual bool canRedoProject(const Data::NodeId &projectId) const = 0;
 

@@ -110,6 +110,11 @@ typed in-process `ScanProvider` contract. Compatibility adjustments remain in
 existing EtherCAT plugin files; no Qt Creator upstream Core or application
 path is added, so the direct Core patch count remains five.
 
+The stage-5 Project support issue adds the checked offline-slave command and a
+compatible version-1 project extension entirely inside product-owned Core/Data
+contracts and `EtherCATProject`. It changes no upstream ProjectExplorer or Core
+path, so the direct Core patch count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

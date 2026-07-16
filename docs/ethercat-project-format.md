@@ -5,7 +5,9 @@
 `EtherCATProject` owns the offline engineering-project lifecycle for phase 1.
 It integrates the `*.ecatproject` MIME type with Qt Creator's public
 ProjectExplorer, document, wizard, and Save All APIs. It does not parse ESI,
-store PDO/DC/Startup models, scan a controller, or produce diagnostics.
+store PDO/DC/Startup models, scan a controller, or produce diagnostics. The
+stage-5 Project revision can persist a checked list of offline slaves accepted
+by another plugin; it still owns no scan state or comparison result.
 
 The plugin has required plugin dependencies on `Core`, `ProjectExplorer`, and
 `EtherCATCore`, and ordinary target dependencies on `EtherCATData`, `Utils`,
@@ -37,8 +39,10 @@ signals are disconnected before the undo stack and document are released.
 ## Version 1 format
 
 The project is UTF-8 JSON with MIME type
-`application/x-ethercat-project`. Version 1 contains only the structural
-project skeleton owned by this stage:
+`application/x-ethercat-project`. The original version-1 skeleton contains the
+project, target, and master. Stage 5 adds an optional compatible `slaves`
+array under the master; an older version-1 file without it loads as an empty
+offline topology.
 
 ```json
 {
@@ -55,25 +59,42 @@ project skeleton owned by this stage:
     },
     "master": {
         "id": "lowercase-uuid-without-braces",
-        "name": "EtherCAT Master"
+        "name": "EtherCAT Master",
+        "slaves": [
+            {
+                "id": "lowercase-uuid-without-braces",
+                "name": "Mock Drive",
+                "position": 0,
+                "vendorId": 2,
+                "productCode": 4096,
+                "revisionNumber": 1,
+                "serialNumber": 101,
+                "alias": 0,
+                "deviceDescriptionId": "optional-esi-device-node-id"
+            }
+        ]
     }
 }
 ```
 
-Project, target, and master IDs are required, non-null, and unique. Names are
-required and cannot be empty after trimming. Unknown or future format versions
-are rejected instead of being guessed. Invalid JSON opens as an invalid,
-non-saveable project snapshot and adds a ProjectExplorer error task; the
-damaged bytes are never overwritten.
+All project node IDs are required, non-null, and unique. Names are required and
+cannot be empty after trimming. Slave positions must be non-negative and
+unique within the master. Vendor ID and Product Code must be non-zero;
+Revision, Serial Number, and Alias are explicit bounded unsigned values. The
+optional device-description ID links to an immutable ESI repository entry but
+does not embed ESI XML in the project.
+
+Unknown or future format versions are rejected instead of being guessed.
+Invalid JSON opens as an invalid, non-saveable project snapshot and adds a
+ProjectExplorer error task; the damaged bytes are never overwritten.
 
 Once a valid project is open, reload rejects a different project ID and keeps
 the last valid in-memory snapshot. This prevents an external file replacement
 from silently invalidating cross-plugin stable references.
 
-Device Identity, PDO, Startup, DC, scan, online state, and diagnostics are
-intentionally absent. Their owning serial plugin stages must add typed models
-and an explicit format revision or compatible extension before persisting
-them.
+PDO, Startup, DC, scan execution state, online state, and diagnostics remain
+absent. Their owning serial plugin stages must add typed models and an explicit
+format revision or compatible extension before persisting them.
 
 ## Migration and recovery
 
@@ -96,10 +117,12 @@ remain atomic and are the supported persistence paths.
 ## Undo, save, and modified state
 
 All configuration edits owned by this plugin use its single QUndoStack.
-Project rename is the first command. Pushing, undoing, and redoing update the
-immutable snapshot and ProjectExplorer display name. Navigation, project-tree
-refresh, startup-project switching, and snapshot reads do not modify the
-document.
+Project rename and replacement of one master's entire offline-slave list are
+commands. The replacement is validated and normalized before it reaches the
+stack, so a rejected, cancelled, or failed scan cannot partially mutate the
+document. Pushing, undoing, and redoing update the immutable snapshot and
+ProjectExplorer display name. Navigation, project-tree refresh, startup-project
+switching, and snapshot reads do not modify the document.
 
 The QUndoStack clean index and pending migration state are the only modified
 sources. A successful atomic save marks the current stack index clean. Failed
@@ -112,7 +135,7 @@ wizard creates one version-1 `*.ecatproject` file and opens it through
 ProjectExplorer. The wizard uses current Qt Creator factory registration and
 GeneratedFile attributes; it does not introduce a custom dialog framework.
 
-## Stage-2 verification
+## Project verification
 
 The focused plugin test covers:
 
@@ -121,6 +144,8 @@ The focused plugin test covers:
   document behavior;
 - rename, modified state, Undo/Redo, Save All registration, Save As rejection,
   atomic write failure, and successful save;
+- offline-slave validation, deterministic position ordering, version-1
+  persistence, service application, Undo/Redo, and malformed-array rejection;
 - version-0 migration, exact recovery backup, and current-version rewrite;
 - two real ProjectExplorer projects, active-project switching, service
   snapshots, modified-project close-save, close order, and cleanup.

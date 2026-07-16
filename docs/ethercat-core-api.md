@@ -92,11 +92,16 @@ project; that remains a checked ProjectService command in the owning stage.
 `ProjectService` is an abstract, GUI-thread service implemented by the
 EtherCATProject plugin. It exposes immutable `ProjectSnapshot` values for all
 open EtherCAT projects and one active project ID. A snapshot contains project
-metadata plus the stable Project, Target, and Master node identities; it does
-not contain ESI, PDO, scan, or diagnostic data.
+metadata, stable Project/Target/Master/Slave node identities, and checked
+offline-slave Identity, position, Alias, Serial Number, and optional ESI
+description links. It does not contain ESI XML, scan execution state, PDO,
+online state, or diagnostic data.
 
 The service owns the cross-plugin commands for project activation, rename,
-save, undo, and redo. Commands return `Utils::Result` so a consumer cannot
+offline-slave replacement, save, undo, and redo. Replacement is scoped to a
+known master, validates all stable IDs, positions, names, and required Identity
+values, and enters the same project Undo/Redo stack. Commands return
+`Utils::Result` so a consumer cannot
 mistake a rejected command for success. `projectAdded`,
 `projectAboutToBeRemoved`, `projectChanged`, and `activeProjectChanged` are the
 only cross-plugin lifecycle notifications. Consumers must re-query a snapshot

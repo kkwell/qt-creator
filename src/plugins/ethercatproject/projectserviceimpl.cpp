@@ -108,6 +108,18 @@ Utils::Result<> ProjectServiceImpl::redoProject(const Data::NodeId &projectId)
     return Utils::ResultOk;
 }
 
+Utils::Result<> ProjectServiceImpl::replaceOfflineSlaves(
+    const Data::NodeId &projectId,
+    const Data::NodeId &masterId,
+    const QList<Data::OfflineSlaveConfiguration> &slaves)
+{
+    QTC_ASSERT(isGuiThread(), return Utils::ResultError(Tr::tr("Project service thread error.")));
+    EtherCATProject *project = findProject(projectId);
+    if (!project)
+        return Utils::ResultError(Tr::tr("The requested EtherCAT project is not open."));
+    return project->document()->replaceOfflineSlaves(masterId, slaves);
+}
+
 bool ProjectServiceImpl::canUndoProject(const Data::NodeId &projectId) const
 {
     QTC_ASSERT(isGuiThread(), return false);

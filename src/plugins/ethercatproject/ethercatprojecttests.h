@@ -14,6 +14,7 @@ private slots:
     void testMetadataAndService();
     void testFormatRoundTripAndCorruption();
     void testDocumentUndoRedoAndAtomicFailure();
+    void testOfflineSlavePersistenceAndUndo();
     void testMigrationCreatesRecoveryBackup();
     void testProjectExplorerMultiProjectLifecycle();
 };

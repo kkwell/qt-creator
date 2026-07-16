@@ -23,6 +23,9 @@ public:
     Utils::FilePath migrationBackupPath() const;
 
     Utils::Result<> renameProject(const QString &name);
+    Utils::Result<> replaceOfflineSlaves(
+        const Data::NodeId &masterId,
+        const QList<Data::OfflineSlaveConfiguration> &slaves);
 
     QByteArray contents() const final;
     bool isModified() const final;
@@ -39,6 +42,9 @@ protected:
 
 private:
     void applyProjectName(const QString &name);
+    void applyOfflineSlaves(
+        const Data::NodeId &masterId,
+        const QList<Data::OfflineSlaveConfiguration> &slaves);
     void publishSnapshot();
     void setInvalidSnapshot(const QString &fallbackName, const QString &error);
     Utils::Result<> createMigrationBackup(const Utils::FilePath &sourcePath);
@@ -49,6 +55,7 @@ private:
     Utils::FilePath m_migrationBackupPath;
 
     friend class RenameProjectCommand;
+    friend class ReplaceOfflineSlavesCommand;
 };
 
 } // namespace EtherCAT::Project::Internal

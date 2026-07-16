@@ -9,7 +9,11 @@
 #include <utils/fileutils.h>
 
 #include <QSignalBlocker>
+#include <QSet>
 #include <QUndoCommand>
+
+#include <algorithm>
+#include <utility>
 
 namespace EtherCAT::Project::Internal {
 
@@ -33,6 +37,46 @@ private:
     QString m_oldName;
     QString m_newName;
 };
+
+class ReplaceOfflineSlavesCommand final : public QUndoCommand
+{
+public:
+    ReplaceOfflineSlavesCommand(
+        EtherCATProjectDocument *document,
+        const Data::NodeId &masterId,
+        const QList<Data::OfflineSlaveConfiguration> &oldSlaves,
+        const QList<Data::OfflineSlaveConfiguration> &newSlaves)
+        : m_document(document)
+        , m_masterId(masterId)
+        , m_oldSlaves(oldSlaves)
+        , m_newSlaves(newSlaves)
+    {
+        setText(Tr::tr("Replace offline EtherCAT slaves"));
+    }
+
+    void undo() final { m_document->applyOfflineSlaves(m_masterId, m_oldSlaves); }
+    void redo() final { m_document->applyOfflineSlaves(m_masterId, m_newSlaves); }
+
+private:
+    EtherCATProjectDocument *m_document;
+    Data::NodeId m_masterId;
+    QList<Data::OfflineSlaveConfiguration> m_oldSlaves;
+    QList<Data::OfflineSlaveConfiguration> m_newSlaves;
+};
+
+static QList<Data::OfflineSlaveConfiguration> slavesForMaster(
+    const Data::ProjectSnapshot &snapshot, const Data::NodeId &masterId)
+{
+    QList<Data::OfflineSlaveConfiguration> result;
+    for (const Data::OfflineSlaveConfiguration &slave : snapshot.slaves) {
+        if (slave.masterId == masterId)
+            result.append(slave);
+    }
+    std::sort(result.begin(), result.end(), [](const auto &left, const auto &right) {
+        return left.position < right.position;
+    });
+    return result;
+}
 
 EtherCATProjectDocument::EtherCATProjectDocument(QObject *parent)
     : ::Core::IDocument(parent)
@@ -106,6 +150,66 @@ Utils::Result<> EtherCATProjectDocument::renameProject(const QString &name)
         return Utils::ResultOk;
 
     m_undoStack.push(new RenameProjectCommand(this, m_snapshot.name, trimmedName));
+    return Utils::ResultOk;
+}
+
+Utils::Result<> EtherCATProjectDocument::replaceOfflineSlaves(
+    const Data::NodeId &masterId, const QList<Data::OfflineSlaveConfiguration> &slaves)
+{
+    if (!m_snapshot.valid)
+        return Utils::ResultError(Tr::tr("Cannot edit an invalid EtherCAT project."));
+
+    const auto master = std::find_if(
+        m_snapshot.nodes.cbegin(), m_snapshot.nodes.cend(), [&masterId](const auto &node) {
+            return node.id == masterId && node.kind == Data::ProjectNodeKind::Master;
+        });
+    if (master == m_snapshot.nodes.cend())
+        return Utils::ResultError(Tr::tr("The requested EtherCAT master does not exist."));
+
+    QSet<Data::NodeId> structuralIds;
+    for (const Data::ProjectNodeSnapshot &node : std::as_const(m_snapshot.nodes)) {
+        if (node.kind != Data::ProjectNodeKind::Slave)
+            structuralIds.insert(node.id);
+    }
+    for (const Data::OfflineSlaveConfiguration &existing : std::as_const(m_snapshot.slaves)) {
+        if (existing.masterId != masterId)
+            structuralIds.insert(existing.id);
+    }
+
+    QList<Data::OfflineSlaveConfiguration> normalized = slaves;
+    QSet<Data::NodeId> ids;
+    QSet<int> positions;
+    for (Data::OfflineSlaveConfiguration &slave : normalized) {
+        slave.name = slave.name.trimmed();
+        if (slave.id.isNull())
+            return Utils::ResultError(Tr::tr("An offline slave has an invalid node ID."));
+        if (slave.masterId != masterId) {
+            return Utils::ResultError(
+                Tr::tr("An offline slave belongs to a different EtherCAT master."));
+        }
+        if (ids.contains(slave.id) || structuralIds.contains(slave.id))
+            return Utils::ResultError(Tr::tr("Offline slave node IDs must be unique."));
+        if (slave.position < 0 || positions.contains(slave.position))
+            return Utils::ResultError(Tr::tr("Offline slave positions must be unique and valid."));
+        if (slave.name.isEmpty())
+            return Utils::ResultError(Tr::tr("Offline slave names cannot be empty."));
+        if (slave.identity.vendorId == 0 || slave.identity.productCode == 0) {
+            return Utils::ResultError(
+                Tr::tr("Offline slaves require non-zero Vendor ID and Product Code values."));
+        }
+        ids.insert(slave.id);
+        positions.insert(slave.position);
+    }
+    std::sort(normalized.begin(), normalized.end(), [](const auto &left, const auto &right) {
+        return left.position < right.position;
+    });
+
+    const QList<Data::OfflineSlaveConfiguration> oldSlaves
+        = slavesForMaster(m_snapshot, masterId);
+    if (oldSlaves == normalized)
+        return Utils::ResultOk;
+    m_undoStack.push(
+        new ReplaceOfflineSlavesCommand(this, masterId, oldSlaves, normalized));
     return Utils::ResultOk;
 }
 
@@ -187,6 +291,28 @@ void EtherCATProjectDocument::applyProjectName(const QString &name)
             node.name = name;
             break;
         }
+    }
+}
+
+void EtherCATProjectDocument::applyOfflineSlaves(
+    const Data::NodeId &masterId, const QList<Data::OfflineSlaveConfiguration> &slaves)
+{
+    m_snapshot.slaves.removeIf([&masterId](const auto &slave) {
+        return slave.masterId == masterId;
+    });
+    m_snapshot.slaves.append(slaves);
+    std::sort(m_snapshot.slaves.begin(), m_snapshot.slaves.end(), [](const auto &left,
+                                                                    const auto &right) {
+        const int masterOrder = left.masterId.toString().compare(right.masterId.toString());
+        return masterOrder == 0 ? left.position < right.position : masterOrder < 0;
+    });
+
+    m_snapshot.nodes.removeIf([](const auto &node) {
+        return node.kind == Data::ProjectNodeKind::Slave;
+    });
+    for (const Data::OfflineSlaveConfiguration &slave : std::as_const(m_snapshot.slaves)) {
+        m_snapshot.nodes.append(
+            {slave.id, slave.masterId, Data::ProjectNodeKind::Slave, slave.name});
     }
 }
 

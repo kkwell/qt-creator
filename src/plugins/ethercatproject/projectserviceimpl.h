@@ -31,6 +31,10 @@ public:
     Utils::Result<> saveProject(const Data::NodeId &projectId) final;
     Utils::Result<> undoProject(const Data::NodeId &projectId) final;
     Utils::Result<> redoProject(const Data::NodeId &projectId) final;
+    Utils::Result<> replaceOfflineSlaves(
+        const Data::NodeId &projectId,
+        const Data::NodeId &masterId,
+        const QList<Data::OfflineSlaveConfiguration> &slaves) final;
     bool canUndoProject(const Data::NodeId &projectId) const final;
     bool canRedoProject(const Data::NodeId &projectId) const final;
 

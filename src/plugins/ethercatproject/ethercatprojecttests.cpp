@@ -22,6 +22,7 @@
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSignalSpy>
@@ -41,6 +42,35 @@ static void writeProject(const Utils::FilePath &filePath, const Data::ProjectSna
 {
     const Utils::Result<qint64> writeResult = filePath.writeFileContents(serializeProject(snapshot));
     QVERIFY_RESULT(writeResult);
+}
+
+static Data::NodeId masterId(const Data::ProjectSnapshot &snapshot)
+{
+    for (const Data::ProjectNodeSnapshot &node : snapshot.nodes) {
+        if (node.kind == Data::ProjectNodeKind::Master)
+            return node.id;
+    }
+    return {};
+}
+
+static QList<Data::OfflineSlaveConfiguration> offlineSlaves(const Data::NodeId &master)
+{
+    return {{Data::NodeId::create(),
+             master,
+             1,
+             {2, 0x2000, 2},
+             102,
+             0,
+             "Mock Drive B",
+             Data::NodeId::create()},
+            {Data::NodeId::create(),
+             master,
+             0,
+             {2, 0x1000, 1},
+             101,
+             7,
+             "Mock I/O A",
+             {}}};
 }
 
 void EtherCATProjectTests::testMetadataAndService()
@@ -169,6 +199,59 @@ void EtherCATProjectTests::testDocumentUndoRedoAndAtomicFailure()
     QCOMPARE(saved->snapshot.name, QString("Renamed"));
 }
 
+void EtherCATProjectTests::testOfflineSlavePersistenceAndUndo()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath projectFile = temporaryFilePath(directory, "slaves.ecatproject");
+    const Data::ProjectSnapshot source = createProjectSnapshot("Scan Target", "Test");
+    QVERIFY_RESULT(projectFile.writeFileContents(serializeProject(source)));
+
+    EtherCATProjectDocument document;
+    QVERIFY_RESULT(document.load(projectFile));
+    const Data::NodeId master = masterId(document.snapshot());
+    QVERIFY(!master.isNull());
+    const QList<Data::OfflineSlaveConfiguration> slaves = offlineSlaves(master);
+    QVERIFY_RESULT(document.replaceOfflineSlaves(master, slaves));
+    QVERIFY(document.isModified());
+    QCOMPARE(document.snapshot().slaves.size(), 2);
+    QCOMPARE(document.snapshot().slaves.at(0).position, 0);
+    QCOMPARE(document.snapshot().nodes.size(), 5);
+
+    QList<Data::OfflineSlaveConfiguration> duplicatePositions = slaves;
+    duplicatePositions[0].position = 0;
+    QVERIFY(!document.replaceOfflineSlaves(master, duplicatePositions));
+    QCOMPARE(document.snapshot().slaves.size(), 2);
+
+    document.undoStack()->undo();
+    QVERIFY(document.snapshot().slaves.isEmpty());
+    QCOMPARE(document.snapshot().nodes.size(), 3);
+    QVERIFY(!document.isModified());
+    document.undoStack()->redo();
+    QCOMPARE(document.snapshot().slaves.size(), 2);
+    QVERIFY(document.isModified());
+
+    QVERIFY_RESULT(document.save());
+    QVERIFY(!document.isModified());
+    const Utils::Result<QByteArray> savedContents = projectFile.fileContents();
+    QVERIFY_RESULT(savedContents);
+    const Utils::Result<LoadedProject> loaded = parseProject(*savedContents, "Fallback");
+    QVERIFY_RESULT(loaded);
+    QCOMPARE(loaded->snapshot.slaves, document.snapshot().slaves);
+    QCOMPARE(loaded->snapshot.nodes, document.snapshot().nodes);
+
+    QJsonDocument malformed = QJsonDocument::fromJson(*savedContents);
+    QJsonObject malformedRoot = malformed.object();
+    QJsonObject malformedMaster = malformedRoot.value("master").toObject();
+    QJsonArray malformedSlaves = malformedMaster.value("slaves").toArray();
+    QJsonObject duplicate = malformedSlaves.at(1).toObject();
+    duplicate.insert("position", 0);
+    malformedSlaves[1] = duplicate;
+    malformedMaster.insert("slaves", malformedSlaves);
+    malformedRoot.insert("master", malformedMaster);
+    QVERIFY(!parseProject(QJsonDocument(malformedRoot).toJson(), "Fallback"));
+}
+
 void EtherCATProjectTests::testMigrationCreatesRecoveryBackup()
 {
     QTemporaryDir directory;
@@ -255,6 +338,14 @@ void EtherCATProjectTests::testProjectExplorerMultiProjectLifecycle()
     QVERIFY_RESULT(service->undoProject(secondProject->snapshot().id));
     QCOMPARE(service->project(secondProject->snapshot().id)->name, QString("Second"));
     QVERIFY(!::Core::DocumentManager::modifiedDocuments().contains(secondProject->document()));
+
+    const Data::NodeId secondMaster = masterId(secondProject->snapshot());
+    QVERIFY_RESULT(service->replaceOfflineSlaves(
+        secondProject->snapshot().id, secondMaster, offlineSlaves(secondMaster)));
+    QCOMPARE(service->project(secondProject->snapshot().id)->slaves.size(), 2);
+    QVERIFY(service->canUndoProject(secondProject->snapshot().id));
+    QVERIFY_RESULT(service->undoProject(secondProject->snapshot().id));
+    QVERIFY(service->project(secondProject->snapshot().id)->slaves.isEmpty());
 
     // File watch registration is delivered back from Qt Creator's watcher thread.
     // Drain it before deleting the just-opened projects in this accelerated test.

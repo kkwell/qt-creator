@@ -98,12 +98,13 @@ documents, models, and indexes never cross the plugin boundary.
 
 | Check | Result |
 |---|---|
-| Focused Qt Creator plugin tests | 7 passed, 0 failed |
+| Focused Qt Creator plugin tests | 8 passed, 0 failed |
 | Format round trip and corruption | Passed |
 | Version-0 migration and exact backup | Passed |
 | Undo/Redo and Save All modified state | Passed |
 | Atomic save failure preserves source | Passed |
 | Two-project open/switch/close lifecycle | Passed |
+| Offline slave validation, persistence, service command, and Undo/Redo | Passed |
 | Normal Release product build | Passed with 12-plugin allow-list |
 | Enabled and disabled GUI startup | Passed; stable until intentional interrupt |
 | Direct upstream Core, ProjectExplorer, or app changes | None |
@@ -128,7 +129,7 @@ transport, or controller type. The repository implementation is documented in
 | 300-device ESI library | Passed |
 | Pending-job cancellation and deferred cleanup | Passed |
 | EtherCATCore regression tests | 12 passed, 0 failed |
-| EtherCATProject regression tests | 7 passed, 0 failed |
+| EtherCATProject regression tests | 8 passed, 0 failed |
 | Normal Release product build | Passed with 13-plugin allow-list |
 | Enabled and disabled GUI startup | Passed; stable until intentional interrupt |
 | Direct upstream Core, ProjectExplorer, or app changes | None |
@@ -155,7 +156,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Dynamic property-page provider removal | Passed |
 | Dynamic Scan/Diagnostics availability and removal | Passed |
 | EtherCATCore regression tests | 12 passed, 0 failed |
-| EtherCATProject regression tests | 7 passed, 0 failed |
+| EtherCATProject regression tests | 8 passed, 0 failed |
 | EtherCATDevices regression tests | 8 passed, 0 failed |
 | Normal Release product build | Passed with 14-plugin allow-list |
 | Enabled GUI startup | Passed; stable for 5 seconds until intentional interrupt |
