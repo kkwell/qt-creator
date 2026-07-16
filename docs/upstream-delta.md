@@ -170,6 +170,13 @@ validator, and public Project service. No upstream Core, ProjectExplorer, or
 application bootstrap path changes, so the direct Core patch count remains
 five.
 
+The editable Distributed Clocks page issue also changes only the product-owned
+`EtherCATWorkbench` plugin and documentation. It reuses existing immutable DC
+values and ESI modes, the property-page extension point, the domain validator,
+and the public Project service. No upstream Core, ProjectExplorer, or
+application bootstrap path changes, so the direct Core patch count remains
+five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

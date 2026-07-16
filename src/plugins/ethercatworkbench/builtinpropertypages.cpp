@@ -2,6 +2,7 @@
 
 #include "builtinpropertypages.h"
 
+#include "dcpage.h"
 #include "ethercatworkbenchconstants.h"
 #include "ethercatworkbenchtr.h"
 #include "processdatapage.h"
@@ -151,6 +152,11 @@ QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *pare
         page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
         return page;
     }
+    if (pageId == Utils::Id(Constants::DC_PAGE_ID)) {
+        auto page = new DcPage(m_controller, parent);
+        page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
+        return page;
+    }
     auto widget = new BuiltinPageWidget(parent);
     widget->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
     return widget;
@@ -167,6 +173,11 @@ void BuiltinPropertyPageProvider::updatePage(
     if (pageId == Utils::Id(Constants::STARTUP_PAGE_ID)) {
         if (auto startupPage = qobject_cast<StartupPage *>(page))
             startupPage->setContext(context);
+        return;
+    }
+    if (pageId == Utils::Id(Constants::DC_PAGE_ID)) {
+        if (auto dcPage = qobject_cast<DcPage *>(page))
+            dcPage->setContext(context);
         return;
     }
     BuiltinPageWidget *widget = pageWidget(page);
@@ -250,8 +261,8 @@ void BuiltinPropertyPageProvider::updatePage(
                         {Tr::tr("Configured slaves"),
                          QString::number(
                              m_controller->treeModel()
-                                 ->offlineSlavesForMaster(context.nodeId)
-                                 .size())});
+                                             ->offlineSlavesForMaster(context.nodeId)
+                                             .size())});
                     widget->addRow({Tr::tr("Stage"), Tr::tr("Offline configuration")});
                 } else if (context.nodeKind == Core::WorkbenchNodeKind::Target) {
                     widget->addRow({Tr::tr("Target type"), Tr::tr("Offline / Mock")});
@@ -311,29 +322,6 @@ void BuiltinPropertyPageProvider::updatePage(
                                 QString::number(syncManager.defaultSize),
                                 hexValue(syncManager.controlByte, 2),
                                 syncManager.enabled ? Tr::tr("Yes") : Tr::tr("No")});
-            }
-        }
-        return;
-    }
-
-    if (pageId == Utils::Id(Constants::DC_PAGE_ID)) {
-        widget->reset(
-            device ? Tr::tr("Distributed Clocks defaults from the ESI file")
-                   : Tr::tr("No DC data is available."),
-            {Tr::tr("Mode"),
-             Tr::tr("AssignActivate"),
-             Tr::tr("Sync0 cycle"),
-             Tr::tr("Sync0 shift"),
-             Tr::tr("Sync1 cycle"),
-             Tr::tr("Sync1 shift")});
-        if (device) {
-            for (const Data::DcModeDescription &mode : device->dcModes) {
-                widget->addRow({mode.name,
-                                hexValue(mode.assignActivate, 4),
-                                QString::number(mode.cycleTimeSync0Ns),
-                                QString::number(mode.shiftTimeSync0Ns),
-                                QString::number(mode.cycleTimeSync1Ns),
-                                QString::number(mode.shiftTimeSync1Ns)});
             }
         }
         return;

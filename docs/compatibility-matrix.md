@@ -51,9 +51,9 @@ local decisions and easier maintenance.
 
 All six planned EtherCAT feature and infrastructure plugins have entered the
 local profile. This proves the plugin profile is assembled, not that every
-Phase-1 requirement is complete. Editable Process Data and Startup are now
-verified; editable DC, the full TwinCAT-inspired tree workflow, additional UI
-coverage, and the user-policy-deferred upstream rehearsal remain open.
+Phase-1 requirement is complete. Editable Process Data, Startup, and DC are
+now verified; the full TwinCAT-inspired tree workflow, additional UI coverage,
+and the user-policy-deferred upstream rehearsal remain open.
 
 ### Hidden or excluded plugins
 
@@ -76,7 +76,7 @@ function is outside the product target and records migration or recovery.
 | Project persistence and Undo/Redo for those models | Verified in format version 2 |
 | Editable Process Data page | Verified in current Workbench issue |
 | Editable Startup page | Verified in current Workbench issue |
-| Editable DC page | Pending Workbench issue |
+| Editable DC page | Verified in current Workbench issue |
 | Offline EtherCAT project | Stage 2 verified |
 | ESI repository | Stage 3 verified |
 | Scan UI and topology comparison | Stage 5 verified with Mock provider only |
@@ -186,8 +186,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 11 passed, 0 failed |
-| Six-plugin EtherCAT regression | 60 passed, 0 failed |
+| Focused EtherCATWorkbench plugin tests | 12 passed, 0 failed |
+| Six-plugin EtherCAT regression | 61 passed, 0 failed |
 | Metadata, hard dependencies, mode, and actions | Passed |
 | 500-device incremental model with model tester | Passed |
 | Filter, context, and bidirectional stable selection | Passed |
@@ -204,16 +204,22 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Startup New/Edit/Delete, enable, Move Up/Down, and fixed request constraints | Passed |
 | Startup type/raw-value/order rejection and Undo/Redo | Passed |
 | Startup manual no-ESI empty state | Passed |
+| TwinCAT-inspired DC Cyclic Mode, SYNC0, SYNC1, and reference-clock layout | Passed in widget/model flow test |
+| Two ESI DC modes, explicit Store/Restore, and read-only catalogue | Passed |
+| Manual no-ESI mode, AssignActivate, cycle/shift, and dependency validation | Passed |
+| DC field, mode, defaults, dependent disable, and reference-clock Undo/Redo | Passed |
 | Configured-slave tree, empty-placeholder removal, and ESI page reuse | Passed |
 | Dynamic property-page provider removal | Passed |
 | Dynamic Scan/Diagnostics availability and removal | Passed |
-| EtherCATCore regression tests | 12 passed, 0 failed |
-| EtherCATProject regression tests | 8 passed, 0 failed |
+| EtherCATCore regression tests | 16 passed, 0 failed |
+| EtherCATProject regression tests | 11 passed, 0 failed |
 | EtherCATDevices regression tests | 8 passed, 0 failed |
+| EtherCATScan regression tests | 7 passed, 0 failed |
+| EtherCATDiagnostics regression tests | 7 passed, 0 failed |
 | Normal Release product build | Passed with 16-plugin allow-list |
-| Enabled GUI startup | Passed for 5 seconds until intentional timeout; empty log |
+| Enabled GUI startup | Passed for 5 seconds until intentional interrupt; empty output |
 | Explicitly disabled startup | Passed with `-noload EtherCATWorkbench`; one shared-memory warning, then stable for 5 seconds until intentional interrupt |
-| Visual desktop inspection | Passed for the Startup table, action column, fixed row, and New dialog |
+| Visual desktop inspection | Passed for populated DC Cyclic Mode, SYNC0, SYNC1, and reference-clock controls without clipping |
 | Direct upstream Core, ProjectExplorer, or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |

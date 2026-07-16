@@ -83,8 +83,9 @@ nanoseconds.
 - enabled cycle times are in the range 1 to 4294967295 ns;
 - a shift stays within one positive or negative cycle.
 
-The domain model does not convert display units. A later page may display ns,
-us, or ms, but it must convert explicitly at its boundary and preserve the
+The domain model does not convert display units. The Workbench DC page uses
+nanoseconds directly for every cycle and shift field. Any later page that
+displays us or ms must convert explicitly at its boundary and preserve the
 nanosecond value.
 
 ## Ownership and next integration steps
@@ -102,9 +103,10 @@ project's unified Undo/Redo stack.
 The Workbench Process Data page consumes this API for SM/PDO selection, entry
 editing, validation feedback, and process-image preview. The Startup page uses
 the corresponding API for ordered CoE requests, ESI defaults, raw values, and
-type validation. Neither page duplicates domain validation in table widgets.
-DC still requires a later independent Workbench issue and must reuse its
-existing domain validator in the same way.
+type validation. The DC page uses it for ESI/manual operation modes,
+AssignActivate, SYNC0/SYNC1 timing, and the potential-reference-clock flag.
+All three pages submit candidates through their domain validator and the
+public Project service; widgets do not replace domain validation.
 
 ## Verification
 
@@ -119,5 +121,5 @@ The focused `EtherCATCore` contract suite covers:
 
 The domain suite passes 16 tests on the qualified Qt 6.11.0 Release test build.
 The Project integration has separate format, migration, service, and Undo/Redo
-coverage. The editable Process Data and Startup pages have Workbench
-integration coverage; the editable DC page remains pending.
+coverage. The editable Process Data, Startup, and DC pages have Workbench
+integration coverage.

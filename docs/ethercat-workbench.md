@@ -86,15 +86,17 @@ The built-in provider supplies these stage-4 pages:
   catalogue view for repository devices;
 - an editable Startup request list for configured slaves, with a read-only ESI
   catalogue view for repository devices;
-- read-only DC with mode and nanosecond timing defaults;
+- an editable Distributed Clocks page for configured slaves, with a read-only
+  ESI operation-mode catalogue for repository devices;
 - explicit Online and Diagnostics unavailable pages while the Diagnostics
   capability is absent.
 
 A configured slave retains its scanned Identity, position, Serial Number,
 Alias, and optional stable ESI description ID in the Project snapshot. When
-that ESI entry is available, the same SyncManager, Process Data, Startup, and
-DC read-only pages used by the repository device are reused. A missing ESI
-match is reported explicitly and does not invent PDO, Startup, or DC data.
+that ESI entry is available, the configured slave reuses its SyncManager,
+Process Data, Startup, and DC descriptions as editable offline proposals. The
+repository-device views remain read-only. A missing ESI match is reported
+explicitly and does not invent PDO, Startup, or DC data.
 
 ### Process Data workflow
 
@@ -169,6 +171,37 @@ the project or its history. Each accepted add, edit, delete, enable, reorder,
 or defaults action is one Project Undo/Redo command. No request is transmitted
 and no Mock or online value is copied automatically.
 
+### Distributed Clocks workflow
+
+The DC page follows the structure documented for the TwinCAT 3 Distributed
+Clocks page without copying Beckhoff assets or project formats. The reference
+page is:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>.
+It groups Operation Mode, Enable, and AssignActivate under Cyclic Mode; gives
+SYNC0 and SYNC1 separate enable, cycle, and shift controls; and exposes the
+potential-reference-clock choice. Every cycle and shift value is displayed,
+edited, and stored explicitly in nanoseconds.
+
+Repository-device pages list all parsed ESI operation modes but stay
+read-only. An empty configured-slave DC value proposes the first ESI mode
+without marking the project modified. Store/Restore ESI Defaults is explicit,
+and choosing another ESI operation mode applies that mode's AssignActivate and
+complete SYNC0/SYNC1 timing as one checked command. A configured slave without
+an ESI match can enter a manual operation-mode name and timing.
+
+Every candidate is passed to `validateDcConfiguration()` and then to the
+public `ProjectService::setDcConfiguration()` command. Invalid numeric input,
+an empty enabled mode, an out-of-range AssignActivate or cycle, a shift outside
+one cycle, SYNC without DC, and SYNC1 without SYNC0 are rejected without
+changing the Project or Undo history. Disabling DC disables both signals in
+one command; disabling SYNC0 also disables SYNC1. Each accepted mode, enable,
+timing, reference-clock, or defaults change is one Project Undo/Redo command.
+
+TwinCAT's advanced Sync Unit cycle-source/multiplier fields and calculated
+input-reference timing are not represented by the current Phase-1 domain
+model. They are deliberately not simulated by the UI and require a separate
+data-contract issue before they can be added.
+
 When an available Diagnostics provider appears, the built-in Online and
 Diagnostics placeholders are withdrawn so the Diagnostics plugin can
 contribute its live Mock pages through the public extension point. If the
@@ -193,9 +226,9 @@ project state remains owned by `EtherCATProject`.
 The Workbench itself deliberately provides no real bus scan, interface
 discovery, online controller state, controller connection, network protocol,
 configuration package, PLC language, or code generation. Scan and Diagnostics
-remain optional Mock Provider plugins. DC is still read-only in Workbench, and
-the full Inputs/Outputs/RxPDO/TxPDO/Modules tree branches remain pending
-independent issues.
+remain optional Mock Provider plugins. The full
+Inputs/Outputs/RxPDO/TxPDO/Modules tree branches and advanced Sync Unit timing
+semantics remain pending independent issues.
 
 ## Verification
 
@@ -211,10 +244,14 @@ validation rejection, process-image refresh, and real DetailsView plus Project
 Undo/Redo reentrancy. The Startup workflow covers the ESI catalogue, explicit
 defaults storage, fixed requests, New/Edit/Delete dialogs, enable state,
 ordering, type/value validation, manual no-ESI empty state, and real
-ProjectService Undo/Redo reentrancy. It passes 11 tests on the qualified Qt
-6.11.0 Release test build.
+ProjectService Undo/Redo reentrancy. The DC workflow covers two ESI operation
+modes, explicit Store/Restore, manual no-ESI configuration, AssignActivate,
+SYNC0/SYNC1 enable and nanosecond timing, reference-clock selection, validation
+rejection, dependent disable actions, and ProjectService Undo/Redo reentrancy.
+It passes 12 tests on the qualified Qt 6.11.0 Release test build.
 
 The normal 16-plugin product build and enabled/disabled startup smoke are
-recorded in `docs/compatibility-matrix.md`. The current Startup issue was also
-inspected in a real EtherCAT Mode desktop session: the table, action column,
-fixed request, and New dialog rendered without clipping or layout defects.
+recorded in `docs/compatibility-matrix.md`. The current DC issue was also
+inspected with populated values in a real EtherCAT Mode desktop session:
+Cyclic Mode, SYNC0, SYNC1, validation, units, and reference-clock controls
+rendered without clipping or layout defects.

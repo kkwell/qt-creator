@@ -23,7 +23,7 @@ documentation, review, and local-commit gates.
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Configuration persistence complete | Version-2 project lifecycle, migration, validation, and Undo/Redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
-| 4 | `EtherCATWorkbenchPlugin` | In progress | Process Data and Startup are editable; DC and full tree remain |
+| 4 | `EtherCATWorkbenchPlugin` | In progress | Process Data, Startup, and DC are editable; full tree remains |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
 
@@ -108,10 +108,10 @@ Mock Diagnostics plugin.
 The Workbench plugin owns the existing EtherCAT mode, left device tree,
 selection linkage, and details-page host. Project and Devices supply public
 data. Scan and Diagnostics contribute commands, pages, and Providers through
-Workbench/Core extension points. Process Data and ordered Startup requests are
-now editable for configured slaves through the public Project service; their
-repository views stay read-only. DC is still read-only, and the tree does not
-yet contain the required Inputs, Outputs, RxPDO, TxPDO, and Modules/Channels
+Workbench/Core extension points. Process Data, ordered Startup requests, and
+Distributed Clocks are now editable for configured slaves through the public
+Project service; their repository views stay read-only. The tree does not yet
+contain the required Inputs, Outputs, RxPDO, TxPDO, and Modules/Channels
 branches, so the Workbench completion gate remains open.
 
 The completed Project implementation and versioned file contract are recorded

@@ -57,18 +57,19 @@ static Data::ProjectSnapshot projectSnapshot(const QString &name = "Packaging Li
     const Data::NodeId projectId = Data::NodeId::create();
     const Data::NodeId targetId = Data::NodeId::create();
     const Data::NodeId masterId = Data::NodeId::create();
-    return {projectId,
-            name,
-            1,
-            "Workbench Test",
-            {{projectId, {}, Data::ProjectNodeKind::Project, name},
-             {targetId, projectId, Data::ProjectNodeKind::Target, "Offline Controller"},
-             {masterId, targetId, Data::ProjectNodeKind::Master, "EtherCAT Master"}},
-            false,
-            true,
-            false,
-            {},
-            {}};
+    return {
+        projectId,
+        name,
+        1,
+        "Workbench Test",
+        {{projectId, {}, Data::ProjectNodeKind::Project, name},
+         {targetId, projectId, Data::ProjectNodeKind::Target, "Offline Controller"},
+         {masterId, targetId, Data::ProjectNodeKind::Master, "EtherCAT Master"}},
+        false,
+        true,
+        false,
+        {},
+        {}};
 }
 
 static Data::NodeId masterId(const Data::ProjectSnapshot &project)
@@ -156,20 +157,19 @@ static QList<Data::DeviceSummary> deviceSummaries(int count)
     QList<Data::DeviceSummary> devices;
     devices.reserve(count);
     for (int index = 0; index < count; ++index) {
-        devices.append({Data::NodeId::create(),
-                        {2, quint32(0x1000 + index), 1},
-                        QString("Device %1").arg(index, 4, 10, QLatin1Char('0')),
-                        QString("T%1").arg(index),
-                        "I/O",
-                        index != 123});
+        devices.append(
+            {Data::NodeId::create(),
+             {2, quint32(0x1000 + index), 1},
+             QString("Device %1").arg(index, 4, 10, QLatin1Char('0')),
+             QString("T%1").arg(index),
+             "I/O",
+             index != 123});
     }
     return devices;
 }
 
 static QModelIndex findByKind(
-    const QAbstractItemModel *model,
-    Core::WorkbenchNodeKind kind,
-    const QModelIndex &parent = {})
+    const QAbstractItemModel *model, Core::WorkbenchNodeKind kind, const QModelIndex &parent = {})
 {
     for (int row = 0; row < model->rowCount(parent); ++row) {
         const QModelIndex index = model->index(row, 0, parent);
@@ -183,9 +183,7 @@ static QModelIndex findByKind(
 }
 
 static QModelIndex findById(
-    const QAbstractItemModel *model,
-    const Data::NodeId &nodeId,
-    const QModelIndex &parent = {})
+    const QAbstractItemModel *model, const Data::NodeId &nodeId, const QModelIndex &parent = {})
 {
     for (int row = 0; row < model->rowCount(parent); ++row) {
         const QModelIndex index = model->index(row, 0, parent);
@@ -228,6 +226,9 @@ static QByteArray deviceEsi()
 <Data>00</Data><Comment>Fixed ESI request</Comment></InitCmd></InitCmds></CoE></Mailbox>
 <Dc><OpMode><Name>Sync0</Name>
 <AssignActivate>#x0300</AssignActivate><CycleTimeSync0>125000</CycleTimeSync0>
+</OpMode><OpMode><Name>Sync0 + Sync1</Name><AssignActivate>#x0700</AssignActivate>
+<CycleTimeSync0>250000</CycleTimeSync0><ShiftTimeSync0>-1000</ShiftTimeSync0>
+<CycleTimeSync1>500000</CycleTimeSync1><ShiftTimeSync1>1000</ShiftTimeSync1>
 </OpMode></Dc></Device></Devices></Descriptions></EtherCATInfo>)";
 }
 
@@ -240,8 +241,7 @@ public:
         setAvailable(true);
     }
 
-    QList<Core::PropertyPageDescriptor> pages(
-        const Core::PropertyPageContext &context) const final
+    QList<Core::PropertyPageDescriptor> pages(const Core::PropertyPageContext &context) const final
     {
         if (context.nodeKind != Core::WorkbenchNodeKind::Project)
             return {};
@@ -281,8 +281,7 @@ class AvailableDiagnosticsProvider final : public Core::DiagnosticsProvider
 {
 public:
     AvailableDiagnosticsProvider()
-        : DiagnosticsProvider(
-              "EtherCAT.Workbench.TestDiagnostics", "Test diagnostics provider")
+        : DiagnosticsProvider("EtherCAT.Workbench.TestDiagnostics", "Test diagnostics provider")
     {}
 
     Data::DiagnosticsStreamState streamState() const final
@@ -290,10 +289,7 @@ public:
         return Data::DiagnosticsStreamState::Stopped;
     }
     Data::DiagnosticsRequest activeRequest() const final { return {}; }
-    std::optional<Data::DiagnosticsSnapshot> latestSnapshot() const final
-    {
-        return std::nullopt;
-    }
+    std::optional<Data::DiagnosticsSnapshot> latestSnapshot() const final { return std::nullopt; }
     QList<Data::DiagnosticEvent> events() const final { return {}; }
     QList<Data::DiagnosticTrendSample> trendSamples() const final { return {}; }
     Data::DiagnosticsLimits limits() const final { return {}; }
@@ -303,14 +299,8 @@ public:
         return Utils::ResultOk;
     }
     void stopMonitoring() final {}
-    Utils::Result<> requestRunMode(Data::DiagnosticsRunMode) final
-    {
-        return Utils::ResultOk;
-    }
-    Utils::Result<> acknowledgeAlarm(const Data::NodeId &) final
-    {
-        return Utils::ResultOk;
-    }
+    Utils::Result<> requestRunMode(Data::DiagnosticsRunMode) final { return Utils::ResultOk; }
+    Utils::Result<> acknowledgeAlarm(const Data::NodeId &) final { return Utils::ResultOk; }
     Utils::Result<> clearRecoveredEvents() final { return Utils::ResultOk; }
 };
 
@@ -324,11 +314,10 @@ void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
 
     const QList<ExtensionSystem::PluginDependency> dependencies = spec->dependencies();
     const auto hasDependency = [&dependencies](const QString &id) {
-        return std::any_of(
-            dependencies.cbegin(), dependencies.cend(), [&id](const auto &dependency) {
-                return dependency.id == id
-                       && dependency.type == ExtensionSystem::PluginDependency::Required;
-            });
+        return std::any_of(dependencies.cbegin(), dependencies.cend(), [&id](const auto &dependency) {
+            return dependency.id == id
+                   && dependency.type == ExtensionSystem::PluginDependency::Required;
+        });
     };
     QVERIFY(hasDependency("core"));
     QVERIFY(hasDependency("ethercatcore"));
@@ -357,8 +346,7 @@ void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
 void EtherCATWorkbenchTests::testTreeModelLargeIncrementalUpdate()
 {
     WorkbenchTreeModel model;
-    QAbstractItemModelTester tester(
-        &model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::QtTest);
     QSignalSpy reset(&model, &QAbstractItemModel::modelReset);
     model.setProjects({projectSnapshot()});
     QCOMPARE(reset.count(), 1);
@@ -405,7 +393,9 @@ void EtherCATWorkbenchTests::testNavigationSelectionAndFiltering()
     WorkbenchNavigationWidget navigation(&controller);
     controller.selectionService()->setCurrentNodeId(devices.at(42).id);
     QTRY_COMPARE(
-        navigation.treeView()->currentIndex().data(WorkbenchTreeModel::NodeIdRole)
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
             .value<Data::NodeId>(),
         devices.at(42).id);
 
@@ -416,7 +406,9 @@ void EtherCATWorkbenchTests::testNavigationSelectionAndFiltering()
     controller.selectionService()->setCurrentNodeId(devices.at(7).id);
     QTRY_VERIFY(navigation.filterEdit()->text().isEmpty());
     QTRY_COMPARE(
-        navigation.treeView()->currentIndex().data(WorkbenchTreeModel::NodeIdRole)
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
             .value<Data::NodeId>(),
         devices.at(7).id);
 
@@ -443,13 +435,13 @@ void EtherCATWorkbenchTests::testBuiltInDevicePages()
     QCOMPARE(importResult.failedFiles, 0);
 
     const QList<Data::DeviceSummary> repositoryDevices = repository->devices();
-    const auto found = std::find_if(
-        repositoryDevices.cbegin(), repositoryDevices.cend(), [](const auto &device) {
-            return device.identity.productCode == 0x5678;
-        });
+    const auto found
+        = std::find_if(repositoryDevices.cbegin(), repositoryDevices.cend(), [](const auto &device) {
+              return device.identity.productCode == 0x5678;
+          });
     QVERIFY(found != repositoryDevices.cend());
-    const Core::PropertyPageContext context{
-        {}, found->id, Core::WorkbenchNodeKind::Device, found->name};
+    const Core::PropertyPageContext
+        context{{}, found->id, Core::WorkbenchNodeKind::Device, found->name};
 
     BuiltinPropertyPageProvider provider(&controller);
     QCOMPARE(provider.pages(context).size(), 6);
@@ -498,7 +490,43 @@ void EtherCATWorkbenchTests::testBuiltInDevicePages()
 
     std::unique_ptr<QWidget> dcPage(provider.createPage(Constants::DC_PAGE_ID, nullptr));
     provider.updatePage(Constants::DC_PAGE_ID, dcPage.get(), context);
-    QCOMPARE(dcPage->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree")->topLevelItemCount(), 1);
+    QComboBox *dcMode = dcPage->findChild<QComboBox *>("EtherCATDcOperationMode");
+    QCheckBox *dcEnabled = dcPage->findChild<QCheckBox *>("EtherCATDcEnabled");
+    QLineEdit *dcAssignActivate = dcPage->findChild<QLineEdit *>("EtherCATDcAssignActivate");
+    QCheckBox *dcSync0Enabled = dcPage->findChild<QCheckBox *>("EtherCATDcSync0Enabled");
+    QLineEdit *dcSync0Cycle = dcPage->findChild<QLineEdit *>("EtherCATDcSync0CycleNs");
+    QLineEdit *dcSync0Shift = dcPage->findChild<QLineEdit *>("EtherCATDcSync0ShiftNs");
+    QCheckBox *dcSync1Enabled = dcPage->findChild<QCheckBox *>("EtherCATDcSync1Enabled");
+    QLineEdit *dcSync1Cycle = dcPage->findChild<QLineEdit *>("EtherCATDcSync1CycleNs");
+    QLineEdit *dcSync1Shift = dcPage->findChild<QLineEdit *>("EtherCATDcSync1ShiftNs");
+    QCheckBox *dcReferenceClock = dcPage->findChild<QCheckBox *>(
+        "EtherCATDcPotentialReferenceClock");
+    QVERIFY(dcMode);
+    QVERIFY(dcEnabled);
+    QVERIFY(dcAssignActivate);
+    QVERIFY(dcSync0Enabled);
+    QVERIFY(dcSync0Cycle);
+    QVERIFY(dcSync0Shift);
+    QVERIFY(dcSync1Enabled);
+    QVERIFY(dcSync1Cycle);
+    QVERIFY(dcSync1Shift);
+    QVERIFY(dcReferenceClock);
+    QCOMPARE(dcMode->count(), 2);
+    QCOMPARE(dcMode->currentText(), QString("Sync0"));
+    QVERIFY(dcEnabled->isChecked());
+    QCOMPARE(dcAssignActivate->text(), QString("0x0300"));
+    QVERIFY(dcSync0Enabled->isChecked());
+    QCOMPARE(dcSync0Cycle->text(), QString("125000"));
+    QCOMPARE(dcSync0Shift->text(), QString("0"));
+    QVERIFY(!dcSync1Enabled->isChecked());
+    QVERIFY(!dcMode->isEnabled());
+    QVERIFY(!dcEnabled->isEnabled());
+    QVERIFY(dcAssignActivate->isReadOnly());
+    QVERIFY(dcSync0Cycle->isReadOnly());
+    QVERIFY(dcSync0Shift->isReadOnly());
+    QVERIFY(dcSync1Cycle->isReadOnly());
+    QVERIFY(dcSync1Shift->isReadOnly());
+    QVERIFY(!dcReferenceClock->isEnabled());
 
     std::unique_ptr<QWidget> onlinePage(provider.createPage(Constants::ONLINE_PAGE_ID, nullptr));
     provider.updatePage(Constants::ONLINE_PAGE_ID, onlinePage.get(), context);
@@ -510,8 +538,8 @@ void EtherCATWorkbenchTests::testBuiltInDevicePages()
 void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
 {
     WorkbenchController controller;
-    QAbstractItemModelTester modelTester(
-        controller.treeModel(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+    QAbstractItemModelTester
+        modelTester(controller.treeModel(), QAbstractItemModelTester::FailureReportingMode::QtTest);
     Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
     QVERIFY(repository);
 
@@ -523,58 +551,44 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
     QVERIFY_RESULT(sourcePath.writeFileContents(deviceEsi()));
     QCOMPARE(waitForJob(repository->importFiles({sourcePath})).failedFiles, 0);
     const QList<Data::DeviceSummary> repositoryDevices = repository->devices();
-    const auto found = std::find_if(
-        repositoryDevices.cbegin(), repositoryDevices.cend(), [](const auto &device) {
-            return device.identity.productCode == 0x5678;
-        });
+    const auto found
+        = std::find_if(repositoryDevices.cbegin(), repositoryDevices.cend(), [](const auto &device) {
+              return device.identity.productCode == 0x5678;
+          });
     QVERIFY(found != repositoryDevices.cend());
 
     Data::ProjectSnapshot project = projectSnapshot("Configured Topology");
     const Data::NodeId master = masterId(project);
     const Data::NodeId slaveId = Data::NodeId::create();
-    project.slaves = {{slaveId,
-                       master,
-                       0,
-                       found->identity,
-                       17,
-                       3,
-                       "Configured Servo",
-                       found->id,
-                       {},
-                       {},
-                       {}}};
-    project.nodes.append(
-        {slaveId, master, Data::ProjectNodeKind::Slave, "Configured Servo"});
+    project.slaves = {
+        {slaveId, master, 0, found->identity, 17, 3, "Configured Servo", found->id, {}, {}, {}}};
+    project.nodes.append({slaveId, master, Data::ProjectNodeKind::Slave, "Configured Servo"});
     controller.treeModel()->setProjects({project});
 
-    const QModelIndex slave = findByKind(
-        controller.treeModel(), Core::WorkbenchNodeKind::ConfiguredSlave);
+    const QModelIndex slave
+        = findByKind(controller.treeModel(), Core::WorkbenchNodeKind::ConfiguredSlave);
     QVERIFY(slave.isValid());
     QCOMPARE(slave.data().toString(), QString("Configured Servo"));
     QCOMPARE(slave.siblingAtColumn(1).data().toString(), QString("Offline configured"));
-    const QModelIndex masterIndex = findByKind(
-        controller.treeModel(), Core::WorkbenchNodeKind::Master);
+    const QModelIndex masterIndex
+        = findByKind(controller.treeModel(), Core::WorkbenchNodeKind::Master);
     QCOMPARE(controller.treeModel()->rowCount(masterIndex), 2);
-    QVERIFY(!findByKind(
-                 controller.treeModel(), Core::WorkbenchNodeKind::Placeholder, masterIndex)
+    QVERIFY(!findByKind(controller.treeModel(), Core::WorkbenchNodeKind::Placeholder, masterIndex)
                  .isValid());
 
     BuiltinPropertyPageProvider pages(&controller);
     const Core::PropertyPageContext context = controller.treeModel()->contextForIndex(slave);
     QCOMPARE(pages.pages(context).size(), 6);
-    std::unique_ptr<QWidget> processPage(
-        pages.createPage(Constants::PROCESS_DATA_PAGE_ID, nullptr));
+    std::unique_ptr<QWidget> processPage(pages.createPage(Constants::PROCESS_DATA_PAGE_ID, nullptr));
     pages.updatePage(Constants::PROCESS_DATA_PAGE_ID, processPage.get(), context);
     QTableView *syncManagers = processPage->findChild<QTableView *>(
         "EtherCATProcessDataSyncManagers");
     QVERIFY(syncManagers);
     QCOMPARE(syncManagers->model()->rowCount(), 2);
 
-    std::unique_ptr<QWidget> generalPage(
-        pages.createPage(Constants::GENERAL_PAGE_ID, nullptr));
+    std::unique_ptr<QWidget> generalPage(pages.createPage(Constants::GENERAL_PAGE_ID, nullptr));
     pages.updatePage(Constants::GENERAL_PAGE_ID, generalPage.get(), context);
-    QTreeWidget *generalTree = generalPage->findChild<QTreeWidget *>(
-        "EtherCATWorkbenchPageTree");
+    QTreeWidget *generalTree = generalPage->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
     QVERIFY(generalTree);
     QVERIFY(generalTree->topLevelItemCount() >= 8);
 
@@ -993,6 +1007,256 @@ void EtherCATWorkbenchTests::testEditableStartupWorkflow()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
+void EtherCATWorkbenchTests::testEditableDcWorkflow()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("editable-dc.xml");
+    const Utils::Result<qint64> esiWritten = esiPath.writeFileContents(deviceEsi());
+    QVERIFY_RESULT(esiWritten);
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0x5678;
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(directory, *device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    DetailsView details(&controller);
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::DC_PAGE_ID).toString());
+    QVERIFY(page);
+
+    QLabel *summary = page->findChild<QLabel *>("EtherCATDcSummary");
+    QLabel *validation = page->findChild<QLabel *>("EtherCATDcValidation");
+    QLabel *units = page->findChild<QLabel *>("EtherCATDcUnits");
+    QPushButton *defaults = page->findChild<QPushButton *>("EtherCATDcRestoreDefaults");
+    QComboBox *mode = page->findChild<QComboBox *>("EtherCATDcOperationMode");
+    QCheckBox *enabled = page->findChild<QCheckBox *>("EtherCATDcEnabled");
+    QLineEdit *assignActivate = page->findChild<QLineEdit *>("EtherCATDcAssignActivate");
+    QCheckBox *sync0Enabled = page->findChild<QCheckBox *>("EtherCATDcSync0Enabled");
+    QLineEdit *sync0Cycle = page->findChild<QLineEdit *>("EtherCATDcSync0CycleNs");
+    QLineEdit *sync0Shift = page->findChild<QLineEdit *>("EtherCATDcSync0ShiftNs");
+    QCheckBox *sync1Enabled = page->findChild<QCheckBox *>("EtherCATDcSync1Enabled");
+    QLineEdit *sync1Cycle = page->findChild<QLineEdit *>("EtherCATDcSync1CycleNs");
+    QLineEdit *sync1Shift = page->findChild<QLineEdit *>("EtherCATDcSync1ShiftNs");
+    QCheckBox *referenceClock = page->findChild<QCheckBox *>("EtherCATDcPotentialReferenceClock");
+    QVERIFY(summary);
+    QVERIFY(validation);
+    QVERIFY(units);
+    QVERIFY(defaults);
+    QVERIFY(mode);
+    QVERIFY(enabled);
+    QVERIFY(assignActivate);
+    QVERIFY(sync0Enabled);
+    QVERIFY(sync0Cycle);
+    QVERIFY(sync0Shift);
+    QVERIFY(sync1Enabled);
+    QVERIFY(sync1Cycle);
+    QVERIFY(sync1Shift);
+    QVERIFY(referenceClock);
+    QVERIFY(units->text().contains("nanoseconds", Qt::CaseInsensitive));
+    QVERIFY(units->text().contains("ns", Qt::CaseInsensitive));
+
+    QCOMPARE(mode->count(), 2);
+    QCOMPARE(mode->currentText(), QString("Sync0"));
+    QVERIFY(enabled->isChecked());
+    QCOMPARE(assignActivate->text(), QString("0x0300"));
+    QVERIFY(sync0Enabled->isChecked());
+    QCOMPARE(sync0Cycle->text(), QString("125000"));
+    QCOMPARE(sync0Shift->text(), QString("0"));
+    QVERIFY(!sync1Enabled->isChecked());
+    QCOMPARE(sync1Cycle->text(), QString("0"));
+    QCOMPARE(sync1Shift->text(), QString("0"));
+    QVERIFY(!referenceClock->isChecked());
+    QVERIFY(!projectService->project(file.projectId)->modified);
+    QCOMPARE(defaults->text(), QString("Store ESI Defaults"));
+
+    defaults->click();
+    QTRY_VERIFY(projectService->project(file.projectId)->slaves.first().dc.enabled);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().dc.modeName, QString("Sync0"));
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.assignActivate, quint16(0x0300));
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.sync0.cycleTimeNs,
+        qint64(125000));
+    QVERIFY(projectService->canUndoProject(file.projectId));
+    const Utils::Result<> undoDefaults = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoDefaults);
+    QVERIFY(!projectService->project(file.projectId)->slaves.first().dc.enabled);
+    const Utils::Result<> redoDefaults = projectService->redoProject(file.projectId);
+    QVERIFY_RESULT(redoDefaults);
+    QVERIFY(projectService->project(file.projectId)->slaves.first().dc.enabled);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().dc.modeName, QString("Sync0"));
+
+    mode->setCurrentIndex(1);
+    QMetaObject::invokeMethod(mode, "activated", Qt::DirectConnection, Q_ARG(int, 1));
+    const Data::DcConfiguration selectedMode
+        = projectService->project(file.projectId)->slaves.first().dc;
+    QCOMPARE(selectedMode.modeName, QString("Sync0 + Sync1"));
+    QCOMPARE(selectedMode.assignActivate, quint16(0x0700));
+    QVERIFY(selectedMode.sync0.enabled);
+    QCOMPARE(selectedMode.sync0.cycleTimeNs, qint64(250000));
+    QCOMPARE(selectedMode.sync0.shiftTimeNs, qint64(-1000));
+    QVERIFY(selectedMode.sync1.enabled);
+    QCOMPARE(selectedMode.sync1.cycleTimeNs, qint64(500000));
+    QCOMPARE(selectedMode.sync1.shiftTimeNs, qint64(1000));
+    const Utils::Result<> undoSelectedMode = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoSelectedMode);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().dc.modeName, QString("Sync0"));
+    const Utils::Result<> redoSelectedMode = projectService->redoProject(file.projectId);
+    QVERIFY_RESULT(redoSelectedMode);
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.modeName,
+        QString("Sync0 + Sync1"));
+    const Utils::Result<> undoSelectedModeAgain = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoSelectedModeAgain);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().dc.modeName, QString("Sync0"));
+
+    const auto finishEditing = [](QLineEdit *editor) {
+        editor->setModified(true);
+        QMetaObject::invokeMethod(editor, "editingFinished", Qt::DirectConnection);
+    };
+
+    mode->setEditText("Custom DC");
+    finishEditing(mode->lineEdit());
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.modeName, QString("Custom DC"));
+    const Utils::Result<> undoMode = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoMode);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().dc.modeName, QString("Sync0"));
+    const Utils::Result<> redoMode = projectService->redoProject(file.projectId);
+    QVERIFY_RESULT(redoMode);
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.modeName, QString("Custom DC"));
+    const Utils::Result<> undoModeAgain = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoModeAgain);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().dc.modeName, QString("Sync0"));
+
+    assignActivate->setText("0x0700");
+    finishEditing(assignActivate);
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.assignActivate, quint16(0x0700));
+    assignActivate->setText("0x10000");
+    finishEditing(assignActivate);
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.assignActivate, quint16(0x0700));
+    QVERIFY(validation->text().contains("not applied", Qt::CaseInsensitive));
+
+    sync0Cycle->setText("250000");
+    finishEditing(sync0Cycle);
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.sync0.cycleTimeNs,
+        qint64(250000));
+    sync0Shift->setText("-25000");
+    finishEditing(sync0Shift);
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.sync0.shiftTimeNs,
+        qint64(-25000));
+    sync0Shift->setText("250001");
+    finishEditing(sync0Shift);
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.sync0.shiftTimeNs,
+        qint64(-25000));
+    QVERIFY(validation->text().contains("not applied", Qt::CaseInsensitive));
+    sync0Cycle->setText("0");
+    finishEditing(sync0Cycle);
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.sync0.cycleTimeNs,
+        qint64(250000));
+
+    sync1Cycle->setText("500000");
+    finishEditing(sync1Cycle);
+    sync1Shift->setText("1000");
+    finishEditing(sync1Shift);
+    sync1Enabled->click();
+    QVERIFY(projectService->project(file.projectId)->slaves.first().dc.sync1.enabled);
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.sync1.cycleTimeNs,
+        qint64(500000));
+    const Utils::Result<> undoSync1 = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoSync1);
+    QVERIFY(!projectService->project(file.projectId)->slaves.first().dc.sync1.enabled);
+    const Utils::Result<> redoSync1 = projectService->redoProject(file.projectId);
+    QVERIFY_RESULT(redoSync1);
+    QVERIFY(projectService->project(file.projectId)->slaves.first().dc.sync1.enabled);
+    sync0Enabled->click();
+    QVERIFY(!projectService->project(file.projectId)->slaves.first().dc.sync0.enabled);
+    QVERIFY(!projectService->project(file.projectId)->slaves.first().dc.sync1.enabled);
+    const Utils::Result<> undoSync0 = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoSync0);
+    QVERIFY(projectService->project(file.projectId)->slaves.first().dc.sync0.enabled);
+    QVERIFY(projectService->project(file.projectId)->slaves.first().dc.sync1.enabled);
+
+    referenceClock->click();
+    QVERIFY(projectService->project(file.projectId)->slaves.first().dc.potentialReferenceClock);
+    const Utils::Result<> undoReferenceClock = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoReferenceClock);
+    QVERIFY(!projectService->project(file.projectId)->slaves.first().dc.potentialReferenceClock);
+
+    enabled->click();
+    QVERIFY(!projectService->project(file.projectId)->slaves.first().dc.enabled);
+    QVERIFY(!projectService->project(file.projectId)->slaves.first().dc.sync0.enabled);
+    QVERIFY(!projectService->project(file.projectId)->slaves.first().dc.sync1.enabled);
+    const Utils::Result<> undoDcEnabled = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoDcEnabled);
+    QVERIFY(projectService->project(file.projectId)->slaves.first().dc.enabled);
+
+    defaults->click();
+    const Data::DcConfiguration restored
+        = projectService->project(file.projectId)->slaves.first().dc;
+    QVERIFY(restored.enabled);
+    QCOMPARE(restored.modeName, QString("Sync0"));
+    QCOMPARE(restored.assignActivate, quint16(0x0300));
+    QVERIFY(restored.sync0.enabled);
+    QCOMPARE(restored.sync0.cycleTimeNs, qint64(125000));
+    QCOMPARE(restored.sync0.shiftTimeNs, qint64(0));
+    QVERIFY(!restored.sync1.enabled);
+    QVERIFY(!restored.potentialReferenceClock);
+
+    const Utils::Result<> clearDc
+        = projectService->setDcConfiguration(file.projectId, file.slaveId, {});
+    QVERIFY_RESULT(clearDc);
+    Data::OfflineSlaveConfiguration withoutEsi
+        = projectService->project(file.projectId)->slaves.first();
+    withoutEsi.deviceDescriptionId = {};
+    const Utils::Result<> removeEsiReference
+        = projectService->replaceOfflineSlaves(file.projectId, file.masterId, {withoutEsi});
+    QVERIFY_RESULT(removeEsiReference);
+    QTRY_VERIFY(defaults->isHidden());
+    QVERIFY(summary->text().contains("No ESI", Qt::CaseInsensitive));
+    QVERIFY(mode->isEditable());
+    mode->setEditText("Manual DC");
+    finishEditing(mode->lineEdit());
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.modeName, QString("Manual DC"));
+    enabled->click();
+    QVERIFY(projectService->project(file.projectId)->slaves.first().dc.enabled);
+
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
 void EtherCATWorkbenchTests::testDynamicPropertyProviderRemoval()
 {
     WorkbenchController controller;
@@ -1021,10 +1285,9 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
     const Data::ProjectSnapshot project = projectSnapshot("Optional Providers");
     controller.treeModel()->setProjects({project});
 
-    const QModelIndex master = findByKind(
-        controller.treeModel(), Core::WorkbenchNodeKind::Master);
-    const QModelIndex diagnostics = findByKind(
-        controller.treeModel(), Core::WorkbenchNodeKind::Diagnostics);
+    const QModelIndex master = findByKind(controller.treeModel(), Core::WorkbenchNodeKind::Master);
+    const QModelIndex diagnostics
+        = findByKind(controller.treeModel(), Core::WorkbenchNodeKind::Diagnostics);
     QVERIFY(master.isValid());
     QVERIFY(diagnostics.isValid());
     QCOMPARE(diagnostics.siblingAtColumn(1).data().toString(), QString("Plugin not installed"));
@@ -1033,8 +1296,7 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
         QString("Scan plugin not installed"));
 
     BuiltinPropertyPageProvider pages(&controller);
-    const Core::PropertyPageContext masterContext
-        = controller.treeModel()->contextForIndex(master);
+    const Core::PropertyPageContext masterContext = controller.treeModel()->contextForIndex(master);
     QCOMPARE(pages.pages(masterContext).size(), 4);
 
     AvailableScanProvider scan;
@@ -1047,9 +1309,7 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
     QTRY_VERIFY(controller.scanAvailable());
     QTRY_VERIFY(controller.diagnosticsAvailable());
     QCOMPARE(diagnostics.siblingAtColumn(1).data().toString(), QString("Provider available"));
-    QCOMPARE(
-        controller.treeModel()->index(1, 1, master).data().toString(),
-        QString("Ready to scan"));
+    QCOMPARE(controller.treeModel()->index(1, 1, master).data().toString(), QString("Ready to scan"));
     QCOMPARE(pages.pages(masterContext).size(), 2);
 
     diagnosticsProvider.setAvailable(false);

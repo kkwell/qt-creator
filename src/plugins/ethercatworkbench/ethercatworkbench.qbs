@@ -14,6 +14,8 @@ QtcPlugin {
     files: [
         "builtinpropertypages.cpp",
         "builtinpropertypages.h",
+        "dcpage.cpp",
+        "dcpage.h",
         "detailsview.cpp",
         "detailsview.h",
         "ethercatworkbenchconstants.h",
