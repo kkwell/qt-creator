@@ -127,6 +127,28 @@ listen to `ProviderRegistry::providerAdded` and
 `providerAboutToBeRemoved`; they do not retain a Provider pointer after the
 removal signal.
 
+## Workbench property-page contract
+
+`PropertyPageProvider` is the public, optional extension point used by the
+Workbench details container. It receives an immutable `PropertyPageContext`
+with a stable project ID, node ID, `WorkbenchNodeKind`, and display name. It
+returns ordered `PropertyPageDescriptor` values and creates a `QWidget` only
+when the host asks for that page.
+
+The Workbench owns created page widgets. The Provider refreshes a page only
+through `updatePage()` and must not retain the context, a tree index, or a
+pointer to Workbench-private UI. The host destroys all widgets from a Provider
+before that Provider leaves the object pool. Page IDs must be stable and
+unique within one Provider; the effective host key is Provider ID plus page
+ID.
+
+`WorkbenchNodeKind` is deliberately limited to UI-neutral selections used by
+the first-phase workbench: project, target, master, device repository, device,
+diagnostics, and explicit placeholder. It carries no scan result, online
+state, wire protocol, or controller ABI. Later plugins contribute pages by
+subclassing this interface; they do not modify the Workbench tree or include
+Workbench private headers.
+
 Provider IDs are globally unique across all Provider kinds. If two live
 objects use the same ID, only the first one is published by the registry. Such
 a collision is a plugin defect, not a selection mechanism.

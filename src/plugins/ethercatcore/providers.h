@@ -15,10 +15,43 @@
 
 #include <optional>
 
+QT_BEGIN_NAMESPACE
+class QWidget;
+QT_END_NAMESPACE
+
 namespace EtherCAT::Core {
 
 enum class ProviderKind { Project, DeviceRepository, PropertyPage, Scan, Diagnostics };
 enum class DeviceImportState { Pending, Running, Canceling, Finished };
+enum class WorkbenchNodeKind {
+    None,
+    Project,
+    Target,
+    Master,
+    DeviceRepository,
+    Device,
+    Diagnostics,
+    Placeholder,
+};
+
+struct ETHERCATCORE_EXPORT PropertyPageContext
+{
+    Data::NodeId projectId;
+    Data::NodeId nodeId;
+    WorkbenchNodeKind nodeKind = WorkbenchNodeKind::None;
+    QString displayName;
+
+    friend bool operator==(const PropertyPageContext &, const PropertyPageContext &) = default;
+};
+
+struct ETHERCATCORE_EXPORT PropertyPageDescriptor
+{
+    Utils::Id id;
+    QString displayName;
+    int priority = 0;
+
+    friend bool operator==(const PropertyPageDescriptor &, const PropertyPageDescriptor &) = default;
+};
 
 class DeviceImportJob;
 
@@ -132,6 +165,11 @@ class ETHERCATCORE_EXPORT PropertyPageProvider : public Provider
 
 public:
     PropertyPageProvider(Utils::Id id, const QString &displayName, QObject *parent = nullptr);
+
+    virtual QList<PropertyPageDescriptor> pages(const PropertyPageContext &context) const = 0;
+    virtual QWidget *createPage(Utils::Id pageId, QWidget *parent) = 0;
+    virtual void updatePage(
+        Utils::Id pageId, QWidget *page, const PropertyPageContext &context) = 0;
 };
 
 class ETHERCATCORE_EXPORT ScanProvider : public Provider
@@ -154,3 +192,6 @@ public:
 
 Q_DECLARE_METATYPE(EtherCAT::Core::ProviderKind)
 Q_DECLARE_METATYPE(EtherCAT::Core::DeviceImportState)
+Q_DECLARE_METATYPE(EtherCAT::Core::WorkbenchNodeKind)
+Q_DECLARE_METATYPE(EtherCAT::Core::PropertyPageContext)
+Q_DECLARE_METATYPE(EtherCAT::Core::PropertyPageDescriptor)

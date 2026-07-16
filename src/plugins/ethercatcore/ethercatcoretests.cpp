@@ -19,6 +19,7 @@
 
 #include <QSignalSpy>
 #include <QTest>
+#include <QWidget>
 
 #include <algorithm>
 
@@ -42,6 +43,35 @@ public:
         result.requestedFiles = 2;
         result.canceled = true;
         finish(result);
+    }
+};
+
+class TestPropertyPageProvider final : public PropertyPageProvider
+{
+public:
+    TestPropertyPageProvider()
+        : PropertyPageProvider("EtherCAT.Test.Pages", "Test pages")
+    {}
+
+    QList<PropertyPageDescriptor> pages(const PropertyPageContext &context) const final
+    {
+        if (context.nodeKind != WorkbenchNodeKind::Device)
+            return {};
+        return {{Utils::Id("EtherCAT.Test.General"), "General", 10}};
+    }
+
+    QWidget *createPage(Utils::Id pageId, QWidget *parent) final
+    {
+        if (pageId != Utils::Id("EtherCAT.Test.General"))
+            return nullptr;
+        return new QWidget(parent);
+    }
+
+    void updatePage(
+        Utils::Id pageId, QWidget *page, const PropertyPageContext &context) final
+    {
+        if (pageId == Utils::Id("EtherCAT.Test.General") && page)
+            page->setObjectName(context.nodeId.toString());
     }
 };
 
@@ -146,6 +176,29 @@ void EtherCATCoreTests::testDeviceDescriptionAndImportJobContract()
 
     job.cancel();
     QCOMPARE(finishedSpy.count(), 1);
+}
+
+void EtherCATCoreTests::testPropertyPageProviderContract()
+{
+    const PropertyPageContext context{
+        Data::NodeId::create(), Data::NodeId::create(), WorkbenchNodeKind::Device, "Drive"};
+    const PropertyPageContext copy = context;
+    QCOMPARE(copy, context);
+
+    TestPropertyPageProvider provider;
+    QCOMPARE(provider.kind(), ProviderKind::PropertyPage);
+    const QList<PropertyPageDescriptor> pages = provider.pages(context);
+    QCOMPARE(pages, QList<PropertyPageDescriptor>(
+                        {{Utils::Id("EtherCAT.Test.General"), "General", 10}}));
+
+    std::unique_ptr<QWidget> page(provider.createPage(pages.first().id, nullptr));
+    QVERIFY(page);
+    provider.updatePage(pages.first().id, page.get(), context);
+    QCOMPARE(page->objectName(), context.nodeId.toString());
+
+    PropertyPageContext projectContext = context;
+    projectContext.nodeKind = WorkbenchNodeKind::Project;
+    QVERIFY(provider.pages(projectContext).isEmpty());
 }
 
 void EtherCATCoreTests::testSelectionServicePublishesStableIds()

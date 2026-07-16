@@ -80,7 +80,7 @@ function is outside the product target and records migration or recovery.
 
 | Check | Result |
 |---|---|
-| Focused Qt Creator plugin tests | 10 passed, 0 failed |
+| Focused Qt Creator plugin tests | 11 passed, 0 failed |
 | Normal Release product build | Passed with 11-plugin allow-list |
 | Enabled clean-settings startup | Passed; stable until intentional `SIGTERM` |
 | Explicitly disabled startup | Passed with `-noload EtherCATCore` |
@@ -126,7 +126,7 @@ transport, or controller type. The repository implementation is documented in
 | Search/vendor filters and asynchronous persisted rebuild | Passed |
 | 300-device ESI library | Passed |
 | Pending-job cancellation and deferred cleanup | Passed |
-| EtherCATCore regression tests | 10 passed, 0 failed |
+| EtherCATCore regression tests | 11 passed, 0 failed |
 | EtherCATProject regression tests | 7 passed, 0 failed |
 | Normal Release product build | Passed with 13-plugin allow-list |
 | Enabled and disabled GUI startup | Passed; stable until intentional interrupt |
@@ -134,8 +134,8 @@ transport, or controller type. The repository implementation is documented in
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |
 
-The value-object and import-job lifecycle contract remains covered by the
-tenth focused EtherCATCore test.
+The value-object, import-job, and property-page contracts remain covered by
+the focused EtherCATCore suite.
 
 ## Verification states
 
