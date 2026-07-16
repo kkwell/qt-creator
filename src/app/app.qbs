@@ -87,8 +87,16 @@ QtcProduct {
     Group {
         name: "main_macos"
         condition: qbs.targetOS.contains("macos")
+        files: ["main_mac.mm"]
+    }
+
+    Group {
+        name: "macOS application resources"
+        condition: qbs.targetOS.contains("macos")
         files: [
-            "main_mac.mm"
+            "macos/legacy/qtcreator.icns",
+            "macos/qtcreator.icon/Assets/icon.png"
         ]
+        fileTags: ["bundle.input.resources"]
     }
 }

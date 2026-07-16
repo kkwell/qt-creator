@@ -196,20 +196,16 @@ if (APPLE)
       ${QTCREATOR_PROJECT_ICONSET_FILES}
     VERBATIM
   )
-  target_sources(qtcreator
-    PRIVATE
-      "${CMAKE_CURRENT_BINARY_DIR}/Assets.car"
-      ${QTCREATOR_APP_ICON}
-      "${CMAKE_CURRENT_BINARY_DIR}/qtcreator-project.icns"
+  set(QTCREATOR_BUNDLE_RESOURCES
+    "${CMAKE_CURRENT_BINARY_DIR}/Assets.car"
+    "${QTCREATOR_APP_ICON}"
+    "${IDE_ICON_PATH}/macos/qtcreator.icon/Assets/icon.png"
+    "${CMAKE_CURRENT_BINARY_DIR}/qtcreator-project.icns"
   )
-  qtc_copy_to_builddir(copy_icns
-    DESTINATION ${IDE_DATA_PATH}
-    FILES
-      ${CMAKE_CURRENT_BINARY_DIR}/Assets.car
-      "${QTCREATOR_APP_ICON}"
-      ${IDE_ICON_PATH}/macos/qtcreator.icon/Assets/icon.png
-      ${CMAKE_CURRENT_BINARY_DIR}/qtcreator-project.icns
+  set_source_files_properties(${QTCREATOR_BUNDLE_RESOURCES}
+    PROPERTIES MACOSX_PACKAGE_LOCATION Resources
   )
+  target_sources(qtcreator PRIVATE ${QTCREATOR_BUNDLE_RESOURCES})
   install(
     FILES
       ${CMAKE_CURRENT_BINARY_DIR}/Assets.car
