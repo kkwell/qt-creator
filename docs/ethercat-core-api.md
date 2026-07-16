@@ -29,6 +29,11 @@ topology snapshots, comparison records, offline-slave values, and the
 cancellable `ScanProvider` contract. It still defines no transport, controller
 address, message, byte layout, or serialization format.
 
+The Diagnostics API revision adds immutable online snapshots, bounded event
+and trend records, explicit stream and EtherCAT states, alarm lifecycle, and a
+checked `DiagnosticsProvider` contract. It remains an in-process capability and
+defines no controller session, network command, packet, or private ABI.
+
 ## Stable identity
 
 `EtherCAT::Data::NodeId` is the only stage-1 cross-plugin node identity.
@@ -89,6 +94,52 @@ ID, which keeps compare and accept scopes identical. Interface discovery has no
 slave topology and cannot be accepted as one. The Provider contract does not
 itself accept a result into a project; that remains a checked ProjectService
 command in the owning stage.
+
+## Diagnostics provider contract
+
+`DiagnosticsProvider` is the public, GUI-thread interface between diagnostic
+pages and either the phase-1 Mock source or a future controller Provider. It
+supports one active `{projectId, masterId}` request and exposes:
+
+- `Stopped`, `Starting`, `Running`, `Stopping`, and `Failed` stream states;
+- the latest immutable `DiagnosticsSnapshot`, or no value before publication;
+- bounded event/alarm history and bounded performance trend history;
+- effective event/trend capacities and source/publish periods;
+- a checked run-mode request, alarm acknowledgement, and recovered-event clear;
+- an explicit last error and idempotent stop operation.
+
+The normal transition is `Stopped -> Starting -> Running -> Stopping ->
+Stopped`. A source failure enters `Failed` and emits the single completion
+notification for that monitoring session. `stopMonitoring()` then performs
+cleanup and returns the Provider to `Stopped`. A second start while not stopped,
+an invalid stable ID, a state request while not running, or acknowledgement of
+a non-active alarm must return an error instead of silently succeeding.
+
+The snapshot contains the current Mock/real marker, Config/FreeRun/Run mode,
+master and slave INIT/PREOP/SAFEOP/OP state, AL Status, expected/actual WKC,
+WcState, master/slave ports, link state and interruptions, frame/error counters,
+DC synchronization, cycle timing, jitter, deadline margin, and aggregate alarm
+counts. Error state is a separate flag from the EtherCAT state so an OP slave
+with an AL error cannot be represented as healthy by accident.
+
+`DiagnosticEvent` covers state, WKC, link, frame, DC, cycle, and alarm entries.
+Alarm lifecycle is Active, Acknowledged, then Recovered; timestamps and repeat
+count remain available after recovery until explicitly cleared. Events and
+trend samples are ordered oldest to newest. When a configured capacity is
+reached, a Provider discards the oldest record and increments the matching
+dropped counter in its next snapshot.
+
+All cycle, jitter, deadline, DC offset, and deviation values use nanoseconds.
+Only source and publish periods use milliseconds. Counters are monotonically
+nondecreasing within one monitoring session unless a future Provider documents
+an explicit source reset.
+
+Snapshot, event, and trend signals are invalidation notifications without large
+payloads; consumers re-query the immutable value they need. This permits a
+source to sample faster than it publishes UI snapshots. A background producer
+may not mutate Provider values or widgets directly: it must aggregate privately
+and publish on the GUI thread. The later Diagnostics plugin owns the concrete
+rate limiting, bounded buffers, Mock scenarios, and property pages.
 
 ## Project service contract
 
@@ -220,6 +271,8 @@ The focused plugin test covers:
 - state contribution validation and severity aggregation;
 - dynamic Provider addition, availability, and removal;
 - typed scan request, state, progress, cancellation, and reset behavior;
+- typed diagnostics snapshots, stream transitions, mode request, bounded-data
+  metadata, alarm acknowledgement/recovery, and stop/failure behavior;
 - settings-page registration.
 
 The focused build target and test execution are limited to Core and

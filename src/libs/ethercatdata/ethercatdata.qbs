@@ -8,6 +8,7 @@ QtcLibrary {
     cpp.defines: base.concat("ETHERCATDATA_LIBRARY")
 
     files: [
+        "diagnosticssnapshot.h",
         "devicedescription.h",
         "ethercatdata_global.h",
         "nodeid.cpp",

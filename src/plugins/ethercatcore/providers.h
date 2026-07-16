@@ -5,6 +5,7 @@
 #include "ethercatcore_global.h"
 
 #include <ethercatdata/devicedescription.h>
+#include <ethercatdata/diagnosticssnapshot.h>
 #include <ethercatdata/projectsnapshot.h>
 #include <ethercatdata/scansnapshot.h>
 
@@ -207,6 +208,27 @@ class ETHERCATCORE_EXPORT DiagnosticsProvider : public Provider
 
 public:
     DiagnosticsProvider(Utils::Id id, const QString &displayName, QObject *parent = nullptr);
+
+    virtual Data::DiagnosticsStreamState streamState() const = 0;
+    virtual Data::DiagnosticsRequest activeRequest() const = 0;
+    virtual std::optional<Data::DiagnosticsSnapshot> latestSnapshot() const = 0;
+    virtual QList<Data::DiagnosticEvent> events() const = 0;
+    virtual QList<Data::DiagnosticTrendSample> trendSamples() const = 0;
+    virtual Data::DiagnosticsLimits limits() const = 0;
+    virtual QString lastDiagnosticsError() const = 0;
+
+    virtual Utils::Result<> startMonitoring(const Data::DiagnosticsRequest &request) = 0;
+    virtual void stopMonitoring() = 0;
+    virtual Utils::Result<> requestRunMode(Data::DiagnosticsRunMode mode) = 0;
+    virtual Utils::Result<> acknowledgeAlarm(const Data::NodeId &eventId) = 0;
+    virtual Utils::Result<> clearRecoveredEvents() = 0;
+
+signals:
+    void streamStateChanged(EtherCAT::Data::DiagnosticsStreamState state);
+    void diagnosticsSnapshotChanged();
+    void diagnosticEventsChanged();
+    void diagnosticTrendChanged();
+    void monitoringStopped();
 };
 
 } // namespace EtherCAT::Core

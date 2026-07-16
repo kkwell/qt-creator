@@ -83,6 +83,9 @@ The exact discovery, lifecycle, and typed Project contract is frozen in
 `docs/ethercat-core-api.md`. It contains no network transport, message IDs,
 serialization, or Zynq ABI concepts. Later feature-specific typed methods are
 added only by a dedicated Core/API change in the owning serial plugin stage.
+The typed Diagnostics contract is now frozen there; the Diagnostics feature
+plugin remains pending until it implements that contract and its completion
+gate.
 
 ## Cross-plugin data rules
 

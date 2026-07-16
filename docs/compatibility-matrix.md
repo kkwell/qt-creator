@@ -195,6 +195,26 @@ hardware result. Its behavior and phase limits are documented in
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |
 
+## Diagnostics API pre-stage-6 qualification
+
+This issue freezes only the public Diagnostics data and Provider contract. The
+Mock Diagnostics plugin, sampling implementation, and live UI remain pending.
+
+| Check | Result |
+|---|---|
+| EtherCATCore contract tests | 13 passed, 0 failed |
+| EtherCATProject regression tests | 8 passed, 0 failed |
+| EtherCATDevices regression tests | 8 passed, 0 failed |
+| EtherCATWorkbench regression tests | 9 passed, 0 failed |
+| EtherCATScan regression tests | 7 passed, 0 failed |
+| Normal Release product targets | Application and current EtherCAT dependency set passed |
+| Enabled clean-settings startup | Passed for 5 seconds; one shared-memory warning, then intentional `SIGTERM` |
+| Explicitly disabled startup | Passed for 5 seconds with `-noload EtherCATCore` |
+| Diagnostics values and commands | Snapshot, WKC, link, counters, DC, cycle, events, alarms, trends, mode, stop, and failure covered |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
+| qbs build | Not run; qbs executable is unavailable |
+
 ## Verification states
 
 Use only these evidence labels:

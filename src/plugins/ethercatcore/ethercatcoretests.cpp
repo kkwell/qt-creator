@@ -160,6 +160,170 @@ private:
     QString m_error;
 };
 
+class TestDiagnosticsProvider final : public DiagnosticsProvider
+{
+public:
+    TestDiagnosticsProvider()
+        : DiagnosticsProvider("EtherCAT.Diagnostics.Test", "Test diagnostics")
+    {
+        m_limits = {4, 5, 10, 100};
+    }
+
+    Data::DiagnosticsStreamState streamState() const final { return m_state; }
+    Data::DiagnosticsRequest activeRequest() const final { return m_request; }
+    std::optional<Data::DiagnosticsSnapshot> latestSnapshot() const final
+    {
+        return m_snapshot;
+    }
+    QList<Data::DiagnosticEvent> events() const final { return m_events; }
+    QList<Data::DiagnosticTrendSample> trendSamples() const final { return m_trend; }
+    Data::DiagnosticsLimits limits() const final { return m_limits; }
+    QString lastDiagnosticsError() const final { return m_error; }
+
+    Utils::Result<> startMonitoring(const Data::DiagnosticsRequest &request) final
+    {
+        if (request.projectId.isNull() || request.masterId.isNull())
+            return Utils::ResultError("Invalid diagnostics request");
+        if (m_state != Data::DiagnosticsStreamState::Stopped)
+            return Utils::ResultError("Diagnostics provider is busy");
+        m_request = request;
+        m_state = Data::DiagnosticsStreamState::Starting;
+        emit streamStateChanged(m_state);
+        m_state = Data::DiagnosticsStreamState::Running;
+        emit streamStateChanged(m_state);
+        return Utils::ResultOk;
+    }
+
+    void stopMonitoring() final
+    {
+        if (m_state == Data::DiagnosticsStreamState::Stopped)
+            return;
+        const bool alreadyFinished = m_state == Data::DiagnosticsStreamState::Failed;
+        m_state = Data::DiagnosticsStreamState::Stopping;
+        emit streamStateChanged(m_state);
+        m_state = Data::DiagnosticsStreamState::Stopped;
+        m_request = {};
+        emit streamStateChanged(m_state);
+        if (!alreadyFinished)
+            emit monitoringStopped();
+    }
+
+    Utils::Result<> requestRunMode(Data::DiagnosticsRunMode mode) final
+    {
+        if (m_state != Data::DiagnosticsStreamState::Running || !m_snapshot)
+            return Utils::ResultError("Diagnostics provider is not running");
+        m_snapshot->runMode = mode;
+        emit diagnosticsSnapshotChanged();
+        return Utils::ResultOk;
+    }
+
+    Utils::Result<> acknowledgeAlarm(const Data::NodeId &eventId) final
+    {
+        const auto alarm = std::find_if(
+            m_events.begin(), m_events.end(), [&eventId](const Data::DiagnosticEvent &event) {
+                return event.id == eventId
+                       && event.lifecycle == Data::AlarmLifecycle::Active;
+            });
+        if (alarm == m_events.end())
+            return Utils::ResultError("Active alarm not found");
+        alarm->lifecycle = Data::AlarmLifecycle::Acknowledged;
+        alarm->acknowledgedAt = QDateTime::currentDateTimeUtc();
+        emit diagnosticEventsChanged();
+        return Utils::ResultOk;
+    }
+
+    Utils::Result<> clearRecoveredEvents() final
+    {
+        m_events.erase(
+            std::remove_if(
+                m_events.begin(),
+                m_events.end(),
+                [](const Data::DiagnosticEvent &event) {
+                    return event.lifecycle == Data::AlarmLifecycle::Recovered;
+                }),
+            m_events.end());
+        emit diagnosticEventsChanged();
+        return Utils::ResultOk;
+    }
+
+    void publish()
+    {
+        const Data::NodeId slaveId = Data::NodeId::create();
+        Data::DiagnosticsSnapshot snapshot;
+        snapshot.projectId = m_request.projectId;
+        snapshot.masterId = m_request.masterId;
+        snapshot.generation = 7;
+        snapshot.capturedAt = QDateTime::currentDateTimeUtc();
+        snapshot.mock = true;
+        snapshot.runMode = Data::DiagnosticsRunMode::Run;
+        snapshot.masterState = Data::EtherCATState::Operational;
+        snapshot.masterAlStatusText = "No error";
+        snapshot.workingCounter = {4, 3, Data::WorkingCounterState::Incomplete, 2};
+        snapshot.masterPorts = {{0, Data::LinkState::Up, true, 1, 0, 0}};
+        snapshot.frameErrors = {1, 2, 3, 4, 5, 6};
+        snapshot.distributedClock = {Data::DcSyncState::Synchronized, 17, 30, 4, 1};
+        snapshot.cycle = {125000, 125010, 124990, 125020, 10, 20000, 8, 0};
+        snapshot.slaves = {{slaveId,
+                            0,
+                            "Mock Slave",
+                            Data::EtherCATState::Operational,
+                            false,
+                            0,
+                            "No error",
+                            Data::WorkingCounterState::Valid,
+                            {{0, Data::LinkState::Up, true, 0, 0, 0}},
+                            {},
+                            {Data::DcSyncState::Synchronized, 5, 12, 2, 0},
+                            snapshot.capturedAt}};
+        snapshot.activeAlarmCount = 1;
+        snapshot.unacknowledgedAlarmCount = 1;
+        snapshot.sourceSampleCount = 10;
+        snapshot.coalescedSampleCount = 9;
+        m_snapshot = snapshot;
+
+        Data::DiagnosticEvent alarm;
+        alarm.id = Data::NodeId::create();
+        alarm.sequence = 11;
+        alarm.occurredAt = snapshot.capturedAt;
+        alarm.nodeId = slaveId;
+        alarm.kind = Data::DiagnosticEventKind::Alarm;
+        alarm.severity = Data::DiagnosticSeverity::Error;
+        alarm.lifecycle = Data::AlarmLifecycle::Active;
+        alarm.code = "MOCK-WKC";
+        alarm.summary = "Working Counter mismatch";
+        alarm.repeatCount = 2;
+        m_events = {alarm};
+        m_trend = {{12, snapshot.capturedAt, 3, 125010, 10, 20000, 17}};
+        emit diagnosticsSnapshotChanged();
+        emit diagnosticEventsChanged();
+        emit diagnosticTrendChanged();
+    }
+
+    void recoverAlarm()
+    {
+        m_events[0].lifecycle = Data::AlarmLifecycle::Recovered;
+        m_events[0].recoveredAt = QDateTime::currentDateTimeUtc();
+        emit diagnosticEventsChanged();
+    }
+
+    void fail(const QString &error)
+    {
+        m_error = error;
+        m_state = Data::DiagnosticsStreamState::Failed;
+        emit streamStateChanged(m_state);
+        emit monitoringStopped();
+    }
+
+private:
+    Data::DiagnosticsStreamState m_state = Data::DiagnosticsStreamState::Stopped;
+    Data::DiagnosticsRequest m_request;
+    std::optional<Data::DiagnosticsSnapshot> m_snapshot;
+    QList<Data::DiagnosticEvent> m_events;
+    QList<Data::DiagnosticTrendSample> m_trend;
+    Data::DiagnosticsLimits m_limits;
+    QString m_error;
+};
+
 void EtherCATCoreTests::testMetadataAndServices()
 {
     const ExtensionSystem::PluginSpec *spec = ExtensionSystem::PluginManager::specById(
@@ -331,6 +495,89 @@ void EtherCATCoreTests::testScanProviderContract()
     QCOMPARE(finishedSpy.count(), 2);
     provider.clearScanResult();
     QCOMPARE(provider.scanState(), Data::ScanState::Idle);
+}
+
+void EtherCATCoreTests::testDiagnosticsProviderContract()
+{
+    TestDiagnosticsProvider provider;
+    QCOMPARE(provider.kind(), ProviderKind::Diagnostics);
+    QCOMPARE(provider.streamState(), Data::DiagnosticsStreamState::Stopped);
+    QCOMPARE(provider.limits(), Data::DiagnosticsLimits(4, 5, 10, 100));
+    QVERIFY(!provider.latestSnapshot());
+    QVERIFY(provider.events().isEmpty());
+    QVERIFY(provider.trendSamples().isEmpty());
+
+    QSignalSpy stateSpy(&provider, &DiagnosticsProvider::streamStateChanged);
+    QSignalSpy snapshotSpy(&provider, &DiagnosticsProvider::diagnosticsSnapshotChanged);
+    QSignalSpy eventSpy(&provider, &DiagnosticsProvider::diagnosticEventsChanged);
+    QSignalSpy trendSpy(&provider, &DiagnosticsProvider::diagnosticTrendChanged);
+    QSignalSpy stoppedSpy(&provider, &DiagnosticsProvider::monitoringStopped);
+    QVERIFY(!provider.startMonitoring({}));
+
+    const Data::DiagnosticsRequest request{
+        Data::NodeId::create(), Data::NodeId::create()};
+    const Utils::Result<> startResult = provider.startMonitoring(request);
+    QVERIFY_RESULT(startResult);
+    QCOMPARE(provider.activeRequest(), request);
+    QCOMPARE(provider.streamState(), Data::DiagnosticsStreamState::Running);
+    QCOMPARE(stateSpy.count(), 2);
+    QVERIFY(!provider.startMonitoring(request));
+
+    provider.publish();
+    QVERIFY(provider.latestSnapshot());
+    const Data::DiagnosticsSnapshot snapshot = *provider.latestSnapshot();
+    const Data::DiagnosticsSnapshot snapshotCopy = snapshot;
+    QCOMPARE(snapshotCopy, snapshot);
+    QVERIFY(snapshot.mock);
+    QCOMPARE(snapshot.masterState, Data::EtherCATState::Operational);
+    QCOMPARE(snapshot.workingCounter.expected, quint32(4));
+    QCOMPARE(snapshot.workingCounter.actual, quint32(3));
+    QCOMPARE(snapshot.frameErrors.overflows, quint64(6));
+    QCOMPARE(snapshot.distributedClock.offsetNs, qint64(17));
+    QCOMPARE(snapshot.cycle.nominalCycleNs, qint64(125000));
+    QCOMPARE(snapshot.slaves.size(), 1);
+    QCOMPARE(provider.events().size(), 1);
+    QCOMPARE(provider.events().first().repeatCount, quint32(2));
+    QCOMPARE(provider.trendSamples().size(), 1);
+    QCOMPARE(snapshotSpy.count(), 1);
+    QCOMPARE(eventSpy.count(), 1);
+    QCOMPARE(trendSpy.count(), 1);
+
+    const Utils::Result<> modeResult
+        = provider.requestRunMode(Data::DiagnosticsRunMode::Config);
+    QVERIFY_RESULT(modeResult);
+    QCOMPARE(provider.latestSnapshot()->runMode, Data::DiagnosticsRunMode::Config);
+    QCOMPARE(snapshotSpy.count(), 2);
+
+    const Data::NodeId alarmId = provider.events().first().id;
+    const Utils::Result<> acknowledgeResult = provider.acknowledgeAlarm(alarmId);
+    QVERIFY_RESULT(acknowledgeResult);
+    QCOMPARE(provider.events().first().lifecycle, Data::AlarmLifecycle::Acknowledged);
+    QVERIFY(!provider.acknowledgeAlarm(alarmId));
+    provider.recoverAlarm();
+    const Utils::Result<> clearResult = provider.clearRecoveredEvents();
+    QVERIFY_RESULT(clearResult);
+    QVERIFY(provider.events().isEmpty());
+    QCOMPARE(eventSpy.count(), 4);
+
+    provider.stopMonitoring();
+    QCOMPARE(provider.streamState(), Data::DiagnosticsStreamState::Stopped);
+    QCOMPARE(provider.activeRequest(), Data::DiagnosticsRequest());
+    QCOMPARE(stateSpy.count(), 4);
+    QCOMPARE(stoppedSpy.count(), 1);
+    provider.stopMonitoring();
+    QCOMPARE(stoppedSpy.count(), 1);
+    QVERIFY(!provider.requestRunMode(Data::DiagnosticsRunMode::Run));
+
+    const Utils::Result<> restartResult = provider.startMonitoring(request);
+    QVERIFY_RESULT(restartResult);
+    provider.fail("Mock diagnostics source failed");
+    QCOMPARE(provider.streamState(), Data::DiagnosticsStreamState::Failed);
+    QCOMPARE(provider.lastDiagnosticsError(), QString("Mock diagnostics source failed"));
+    QCOMPARE(stoppedSpy.count(), 2);
+    provider.stopMonitoring();
+    QCOMPARE(provider.streamState(), Data::DiagnosticsStreamState::Stopped);
+    QCOMPARE(stoppedSpy.count(), 2);
 }
 
 void EtherCATCoreTests::testSelectionServicePublishesStableIds()

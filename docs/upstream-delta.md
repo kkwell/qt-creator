@@ -24,7 +24,7 @@ relative to that recorded comparison point.
 | Plugin top-level CMake/qbs | 2 | Required to register EasyBoard |
 | Branding/qbs support | 2 | Product identity support |
 | `.gitignore` | 1 | Product repository policy |
-| `src/libs/ethercatdata` | 8 | Product-owned stable identity, project, device, and scan value library |
+| `src/libs/ethercatdata` | 9 | Product-owned stable identity, project, device, scan, and diagnostics values |
 | `src/plugins/ethercatcore` | 19 | Product-owned Core services and extension points |
 | `src/plugins/ethercatproject` | 18 | Product-owned offline project plugin |
 | `src/plugins/ethercatdevices` | 12 | Product-owned offline ESI repository plugin |
@@ -127,6 +127,12 @@ uses ActionManager, object-pool Providers, ProjectService commands, and the
 Workbench property-page extension point. It changes no Qt Creator upstream
 Core, ProjectExplorer, or application path, so the direct Core patch count
 remains five.
+
+The stage-6 Diagnostics API issue adds only product-owned immutable diagnostic
+values and typed methods/signals to the existing `DiagnosticsProvider`. The
+Workbench compatibility test uses the public abstract contract. No Qt Creator
+upstream Core, ProjectExplorer, or application path changes, so the direct Core
+patch count remains five.
 
 Each completed EtherCAT issue must report:
 

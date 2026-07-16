@@ -182,6 +182,43 @@ public:
     void clearScanResult() final {}
 };
 
+class AvailableDiagnosticsProvider final : public Core::DiagnosticsProvider
+{
+public:
+    AvailableDiagnosticsProvider()
+        : DiagnosticsProvider(
+              "EtherCAT.Workbench.TestDiagnostics", "Test diagnostics provider")
+    {}
+
+    Data::DiagnosticsStreamState streamState() const final
+    {
+        return Data::DiagnosticsStreamState::Stopped;
+    }
+    Data::DiagnosticsRequest activeRequest() const final { return {}; }
+    std::optional<Data::DiagnosticsSnapshot> latestSnapshot() const final
+    {
+        return std::nullopt;
+    }
+    QList<Data::DiagnosticEvent> events() const final { return {}; }
+    QList<Data::DiagnosticTrendSample> trendSamples() const final { return {}; }
+    Data::DiagnosticsLimits limits() const final { return {}; }
+    QString lastDiagnosticsError() const final { return {}; }
+    Utils::Result<> startMonitoring(const Data::DiagnosticsRequest &) final
+    {
+        return Utils::ResultOk;
+    }
+    void stopMonitoring() final {}
+    Utils::Result<> requestRunMode(Data::DiagnosticsRunMode) final
+    {
+        return Utils::ResultOk;
+    }
+    Utils::Result<> acknowledgeAlarm(const Data::NodeId &) final
+    {
+        return Utils::ResultOk;
+    }
+    Utils::Result<> clearRecoveredEvents() final { return Utils::ResultOk; }
+};
+
 void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
 {
     const ExtensionSystem::PluginSpec *spec = ExtensionSystem::PluginManager::specById(
@@ -462,8 +499,7 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
     QCOMPARE(pages.pages(masterContext).size(), 4);
 
     AvailableScanProvider scan;
-    Core::DiagnosticsProvider diagnosticsProvider(
-        "EtherCAT.Workbench.TestDiagnostics", "Test diagnostics provider");
+    AvailableDiagnosticsProvider diagnosticsProvider;
     scan.setAvailable(true);
     diagnosticsProvider.setAvailable(true);
     ExtensionSystem::PluginManager::addObject(&scan);

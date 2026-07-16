@@ -17,6 +17,7 @@ private slots:
     void testDeviceDescriptionAndImportJobContract();
     void testPropertyPageProviderContract();
     void testScanProviderContract();
+    void testDiagnosticsProviderContract();
     void testSelectionServicePublishesStableIds();
     void testStateServiceAggregatesContributions();
     void testProviderRegistryTracksObjectPool();
