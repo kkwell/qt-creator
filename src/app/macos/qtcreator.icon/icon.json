@@ -9,7 +9,7 @@
           "image-name" : "icon.png",
           "name" : "Icon",
           "position" : {
-            "scale" : 1,
+            "scale" : 1.125,
             "translation-in-points" : [
               0,
               0
