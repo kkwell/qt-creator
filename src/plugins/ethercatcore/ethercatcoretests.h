@@ -13,6 +13,7 @@ class EtherCATCoreTests final : public QObject
 private slots:
     void testMetadataAndServices();
     void testNodeIdRoundTrip();
+    void testProjectSnapshotValueSemantics();
     void testSelectionServicePublishesStableIds();
     void testStateServiceAggregatesContributions();
     void testProviderRegistryTracksObjectPool();

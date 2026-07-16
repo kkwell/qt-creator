@@ -4,4 +4,5 @@ add_qtc_library(EtherCATData
     ethercatdata_global.h
     nodeid.cpp
     nodeid.h
+    projectsnapshot.h
 )

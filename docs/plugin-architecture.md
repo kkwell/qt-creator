@@ -21,7 +21,7 @@ documentation, review, and local-commit gates.
 | 0 | Stage-0 governance | Complete | Baseline, policy, build, and architecture evidence |
 | 1 | `EtherCATData` | Complete | UI-independent stable `NodeId` value type |
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
-| 2 | `EtherCATProjectPlugin` | Pending | ProjectExplorer lifecycle, persistence, undo/redo |
+| 2 | `EtherCATProjectPlugin` | In progress | ProjectExplorer lifecycle, persistence, undo/redo |
 | 3 | `EtherCATDevicesPlugin` | Pending | ESI repository and offline device/PDO/DC models |
 | 4 | `EtherCATWorkbenchPlugin` | Pending | EtherCAT mode, device tree, details container, selection UI |
 | 5 | `EtherCATScanPlugin` | Pending | Mock scan state machine, snapshots, and configuration diff |
@@ -77,10 +77,10 @@ The Core API exposes narrowly scoped services and extension points:
 - diagnostics provider
 - property-page provider
 
-The exact stage-1 discovery and lifecycle contract is frozen in
+The exact discovery, lifecycle, and typed Project contract is frozen in
 `docs/ethercat-core-api.md`. It contains no network transport, message IDs,
-serialization, or Zynq ABI concepts. Feature-specific typed methods are added
-only by a dedicated Core/API change in the owning serial plugin stage.
+serialization, or Zynq ABI concepts. Later feature-specific typed methods are
+added only by a dedicated Core/API change in the owning serial plugin stage.
 
 ## Cross-plugin data rules
 

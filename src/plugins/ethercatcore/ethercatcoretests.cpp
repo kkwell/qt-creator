@@ -15,6 +15,7 @@
 #include <extensionsystem/pluginspec.h>
 
 #include <ethercatdata/nodeid.h>
+#include <ethercatdata/projectsnapshot.h>
 
 #include <QSignalSpy>
 #include <QTest>
@@ -54,6 +55,30 @@ void EtherCATCoreTests::testNodeIdRoundTrip()
     QCOMPARE(Data::NodeId::fromString(created.toString()), created);
     QCOMPARE(qHash(Data::NodeId::fromString(created.toString())), qHash(created));
     QVERIFY(Data::NodeId::fromString("not-a-node-id").isNull());
+}
+
+void EtherCATCoreTests::testProjectSnapshotValueSemantics()
+{
+    const Data::NodeId projectId = Data::NodeId::create();
+    const Data::NodeId targetId = Data::NodeId::create();
+    Data::ProjectSnapshot snapshot{
+        projectId,
+        "Line 1",
+        1,
+        "Embed Labs 20.0.1",
+        {{projectId, {}, Data::ProjectNodeKind::Project, "Line 1"},
+         {targetId, projectId, Data::ProjectNodeKind::Target, "Target Controller"}},
+        true,
+        true,
+        false,
+        {},
+    };
+
+    const Data::ProjectSnapshot copy = snapshot;
+    QCOMPARE(copy, snapshot);
+    snapshot.nodes[1].name = "Offline Target";
+    QVERIFY(copy != snapshot);
+    QCOMPARE(copy.nodes[1].parentId, projectId);
 }
 
 void EtherCATCoreTests::testSelectionServicePublishesStableIds()

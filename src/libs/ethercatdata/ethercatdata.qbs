@@ -11,5 +11,6 @@ QtcLibrary {
         "ethercatdata_global.h",
         "nodeid.cpp",
         "nodeid.h",
+        "projectsnapshot.h",
     ]
 }

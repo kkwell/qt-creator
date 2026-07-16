@@ -13,10 +13,11 @@ The API is implemented by:
 - `EtherCATCore`, a Qt Creator plugin that depends only on Core, Utils,
   EtherCATData, and Qt Widgets.
 
-Feature-specific project persistence, ESI queries, scan operations, diagnostic
-samples, and property widgets are intentionally absent. They may only be added
-by the owning serial plugin issue, with a dedicated Core/API change if the
-public contract must grow.
+Feature-specific ESI queries, scan operations, diagnostic samples, and property
+widgets are intentionally absent. They may only be added by the owning serial
+plugin issue, with a dedicated Core/API change if the public contract must
+grow. The Project stage adds the first such typed extension: immutable project
+snapshots and the project lifecycle service contract described below.
 
 ## Stable identity
 
@@ -61,10 +62,30 @@ unique `Utils::Id`, user-visible name, type, and availability flag.
 | `ScanProvider` | EtherCATScan or a future real-controller provider |
 | `DiagnosticsProvider` | EtherCATDiagnostics or a future real-controller provider |
 
-Stage 1 freezes discovery and lifecycle only. It deliberately does not expose
-generic `QVariant`, byte arrays, network messages, or placeholder methods for
-feature data that has not yet been designed. The owning plugin stage must add
-typed value objects and methods before implementing that feature.
+Stage 1 froze discovery and lifecycle only. The Project API revision adds typed
+project methods before the Project implementation. It deliberately does not
+expose generic `QVariant`, byte arrays, network messages, or placeholder methods
+for later feature data.
+
+## Project service contract
+
+`ProjectService` is an abstract, GUI-thread service implemented by the
+EtherCATProject plugin. It exposes immutable `ProjectSnapshot` values for all
+open EtherCAT projects and one active project ID. A snapshot contains project
+metadata plus the stable Project, Target, and Master node identities; it does
+not contain ESI, PDO, scan, or diagnostic data.
+
+The service owns the cross-plugin commands for project activation, rename,
+save, undo, and redo. Commands return `Utils::Result` so a consumer cannot
+mistake a rejected command for success. `projectAdded`,
+`projectAboutToBeRemoved`, `projectChanged`, and `activeProjectChanged` are the
+only cross-plugin lifecycle notifications. Consumers must re-query a snapshot
+after a notification and must not retain ProjectExplorer or document pointers.
+
+ProjectExplorer remains the owner of open/close and startup-project lifecycle.
+The service mirrors that state; it does not create a second project registry.
+The project file format, atomic save, migration, and undo stack belong to the
+Project plugin and are not part of this Core API.
 
 Providers register themselves with `PluginManager::addObject()` only after
 they are initialized and remove themselves before destruction. Consumers

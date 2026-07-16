@@ -4,9 +4,14 @@
 
 #include "ethercatcore_global.h"
 
+#include <ethercatdata/projectsnapshot.h>
+
 #include <utils/id.h>
+#include <utils/result.h>
 
 #include <QObject>
+
+#include <optional>
 
 namespace EtherCAT::Core {
 
@@ -44,6 +49,25 @@ class ETHERCATCORE_EXPORT ProjectService : public Provider
 
 public:
     ProjectService(Utils::Id id, const QString &displayName, QObject *parent = nullptr);
+
+    virtual QList<Data::ProjectSnapshot> projects() const = 0;
+    virtual std::optional<Data::ProjectSnapshot> project(const Data::NodeId &projectId) const = 0;
+    virtual Data::NodeId activeProjectId() const = 0;
+
+    virtual Utils::Result<> activateProject(const Data::NodeId &projectId) = 0;
+    virtual Utils::Result<> renameProject(const Data::NodeId &projectId, const QString &name) = 0;
+    virtual Utils::Result<> saveProject(const Data::NodeId &projectId) = 0;
+    virtual Utils::Result<> undoProject(const Data::NodeId &projectId) = 0;
+    virtual Utils::Result<> redoProject(const Data::NodeId &projectId) = 0;
+    virtual bool canUndoProject(const Data::NodeId &projectId) const = 0;
+    virtual bool canRedoProject(const Data::NodeId &projectId) const = 0;
+
+signals:
+    void projectAdded(const EtherCAT::Data::ProjectSnapshot &project);
+    void projectAboutToBeRemoved(const EtherCAT::Data::NodeId &projectId);
+    void projectChanged(const EtherCAT::Data::ProjectSnapshot &project);
+    void activeProjectChanged(
+        const EtherCAT::Data::NodeId &oldProjectId, const EtherCAT::Data::NodeId &newProjectId);
 };
 
 class ETHERCATCORE_EXPORT DeviceRepositoryProvider : public Provider

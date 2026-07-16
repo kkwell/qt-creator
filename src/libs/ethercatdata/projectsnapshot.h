@@ -1,0 +1,45 @@
+// Copyright (C) 2026 Kvell
+
+#pragma once
+
+#include "ethercatdata_global.h"
+#include "nodeid.h"
+
+#include <QList>
+#include <QMetaType>
+#include <QString>
+
+namespace EtherCAT::Data {
+
+enum class ProjectNodeKind { Project, Target, Master };
+
+struct ETHERCATDATA_EXPORT ProjectNodeSnapshot
+{
+    NodeId id;
+    NodeId parentId;
+    ProjectNodeKind kind = ProjectNodeKind::Project;
+    QString name;
+
+    friend bool operator==(const ProjectNodeSnapshot &, const ProjectNodeSnapshot &) = default;
+};
+
+struct ETHERCATDATA_EXPORT ProjectSnapshot
+{
+    NodeId id;
+    QString name;
+    int formatVersion = 0;
+    QString createdBy;
+    QList<ProjectNodeSnapshot> nodes;
+    bool modified = false;
+    bool valid = false;
+    bool migrated = false;
+    QString error;
+
+    friend bool operator==(const ProjectSnapshot &, const ProjectSnapshot &) = default;
+};
+
+} // namespace EtherCAT::Data
+
+Q_DECLARE_METATYPE(EtherCAT::Data::ProjectNodeKind)
+Q_DECLARE_METATYPE(EtherCAT::Data::ProjectNodeSnapshot)
+Q_DECLARE_METATYPE(EtherCAT::Data::ProjectSnapshot)

@@ -89,6 +89,13 @@ function is outside the product target and records migration or recovery.
 | Direct upstream Core or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 
+## EtherCATProject API qualification
+
+The public Project contract uses immutable `EtherCATData` snapshots and
+`ProjectExplorer::ProjectManager` lifecycle signals. ProjectExplorer objects,
+documents, models, and indexes never cross the plugin boundary. Build and
+behavior evidence is added when the Project implementation completes.
+
 ## Verification states
 
 Use only these evidence labels:
