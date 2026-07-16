@@ -15,6 +15,7 @@
 #include <extensionsystem/pluginspec.h>
 
 #include <ethercatdata/nodeid.h>
+#include <ethercatdata/offlineconfiguration.h>
 #include <ethercatdata/projectsnapshot.h>
 
 #include <QSignalSpy>
@@ -67,8 +68,7 @@ public:
         return new QWidget(parent);
     }
 
-    void updatePage(
-        Utils::Id pageId, QWidget *page, const PropertyPageContext &context) final
+    void updatePage(Utils::Id pageId, QWidget *page, const PropertyPageContext &context) final
     {
         if (pageId == Utils::Id("EtherCAT.Test.General") && page)
             page->setObjectName(context.nodeId.toString());
@@ -118,14 +118,15 @@ public:
         result.snapshot.mock = true;
         result.comparison.projectId = m_request.projectId;
         result.comparison.masterId = m_request.masterId;
-        result.comparison.differences = {{Data::TopologyDifferenceKind::Added,
-                                          Data::DifferenceSeverity::Information,
-                                          {},
-                                          slave.id,
-                                          -1,
-                                          0,
-                                          "Added slave",
-                                          "Mock Slave"}};
+        result.comparison.differences = {
+            {Data::TopologyDifferenceKind::Added,
+             Data::DifferenceSeverity::Information,
+             {},
+             slave.id,
+             -1,
+             0,
+             "Added slave",
+             "Mock Slave"}};
         result.comparison.acceptAllowed = true;
         m_result = result;
         m_progress = {Data::ScanState::Completed, 4, 4, 1, "Completed"};
@@ -171,10 +172,7 @@ public:
 
     Data::DiagnosticsStreamState streamState() const final { return m_state; }
     Data::DiagnosticsRequest activeRequest() const final { return m_request; }
-    std::optional<Data::DiagnosticsSnapshot> latestSnapshot() const final
-    {
-        return m_snapshot;
-    }
+    std::optional<Data::DiagnosticsSnapshot> latestSnapshot() const final { return m_snapshot; }
     QList<Data::DiagnosticEvent> events() const final { return m_events; }
     QList<Data::DiagnosticTrendSample> trendSamples() const final { return m_trend; }
     Data::DiagnosticsLimits limits() const final { return m_limits; }
@@ -221,8 +219,7 @@ public:
     {
         const auto alarm = std::find_if(
             m_events.begin(), m_events.end(), [&eventId](const Data::DiagnosticEvent &event) {
-                return event.id == eventId
-                       && event.lifecycle == Data::AlarmLifecycle::Active;
+                return event.id == eventId && event.lifecycle == Data::AlarmLifecycle::Active;
             });
         if (alarm == m_events.end())
             return Utils::ResultError("Active alarm not found");
@@ -263,18 +260,19 @@ public:
         snapshot.frameErrors = {1, 2, 3, 4, 5, 6};
         snapshot.distributedClock = {Data::DcSyncState::Synchronized, 17, 30, 4, 1};
         snapshot.cycle = {125000, 125010, 124990, 125020, 10, 20000, 8, 0};
-        snapshot.slaves = {{slaveId,
-                            0,
-                            "Mock Slave",
-                            Data::EtherCATState::Operational,
-                            false,
-                            0,
-                            "No error",
-                            Data::WorkingCounterState::Valid,
-                            {{0, Data::LinkState::Up, true, 0, 0, 0}},
-                            {},
-                            {Data::DcSyncState::Synchronized, 5, 12, 2, 0},
-                            snapshot.capturedAt}};
+        snapshot.slaves = {
+            {slaveId,
+             0,
+             "Mock Slave",
+             Data::EtherCATState::Operational,
+             false,
+             0,
+             "No error",
+             Data::WorkingCounterState::Valid,
+             {{0, Data::LinkState::Up, true, 0, 0, 0}},
+             {},
+             {Data::DcSyncState::Synchronized, 5, 12, 2, 0},
+             snapshot.capturedAt}};
         snapshot.activeAlarmCount = 1;
         snapshot.unacknowledgedAlarmCount = 1;
         snapshot.sourceSampleCount = 10;
@@ -391,6 +389,189 @@ void EtherCATCoreTests::testProjectSnapshotValueSemantics()
     QVERIFY(copy != snapshot);
 }
 
+void EtherCATCoreTests::testProcessDataConfigurationPreview()
+{
+    Data::ProcessDataConfiguration configuration;
+    configuration.syncManagers = {
+        {Data::NodeId::create(), 2, "Outputs", Data::SyncManagerDirection::MasterToSlave, true, 3},
+        {Data::NodeId::create(), 3, "Inputs", Data::SyncManagerDirection::SlaveToMaster, true, 3},
+    };
+
+    Data::PdoConfiguration outputs;
+    outputs.id = Data::NodeId::create();
+    outputs.index = 0x1600;
+    outputs.name = "Outputs";
+    outputs.direction = Data::PdoDirection::Rx;
+    outputs.syncManager = 2;
+    outputs.selected = true;
+    outputs.mandatory = true;
+    outputs.defaultSelected = true;
+    outputs.entries = {
+        {Data::NodeId::create(), 0x7000, 1, "Enable", 1, Data::EtherCATDataType::Boolean, "BOOL"},
+        {Data::NodeId::create(),
+         0x7000,
+         2,
+         "Target",
+         16,
+         Data::EtherCATDataType::UnsignedInteger16,
+         "UINT"},
+    };
+
+    Data::PdoConfiguration inputs;
+    inputs.id = Data::NodeId::create();
+    inputs.index = 0x1a00;
+    inputs.name = "Inputs";
+    inputs.direction = Data::PdoDirection::Tx;
+    inputs.syncManager = 3;
+    inputs.selected = true;
+    inputs.entries = {
+        {Data::NodeId::create(),
+         0x6000,
+         1,
+         "Status",
+         16,
+         Data::EtherCATDataType::UnsignedInteger16,
+         "UINT",
+         8}};
+    configuration.pdos = {outputs, inputs};
+
+    const Data::ConfigurationValidation validation = Data::validateProcessDataConfiguration(
+        configuration);
+    QVERIFY(!validation.hasErrors());
+    QVERIFY(validation.issues.isEmpty());
+    QCOMPARE(validation.processImage.outputs.bitSize, 17);
+    QCOMPARE(validation.processImage.outputs.byteSize, 3);
+    QCOMPARE(validation.processImage.outputs.entries.size(), 2);
+    QCOMPARE(validation.processImage.outputs.entries.at(0).bitOffset, 0);
+    QCOMPARE(validation.processImage.outputs.entries.at(1).bitOffset, 1);
+    QCOMPARE(validation.processImage.inputs.bitSize, 24);
+    QCOMPARE(validation.processImage.inputs.byteSize, 3);
+    QCOMPARE(validation.processImage.inputs.entries.first().bitOffset, 8);
+}
+
+void EtherCATCoreTests::testProcessDataConfigurationValidation()
+{
+    Data::ProcessDataConfiguration configuration;
+    configuration.syncManagers = {
+        {Data::NodeId::create(), 2, "Outputs", Data::SyncManagerDirection::SlaveToMaster, true, 1},
+    };
+
+    Data::PdoConfiguration first;
+    first.id = Data::NodeId::create();
+    first.index = 0x1600;
+    first.name = "First";
+    first.direction = Data::PdoDirection::Rx;
+    first.syncManager = 2;
+    first.selected = true;
+    first.mappingSupported = false;
+    first.entries = {
+        {Data::NodeId::create(),
+         0x7000,
+         1,
+         "Invalid width",
+         12,
+         Data::EtherCATDataType::UnsignedInteger16,
+         "UINT",
+         0}};
+
+    Data::PdoConfiguration duplicate = first;
+    duplicate.id = Data::NodeId::create();
+    duplicate.name = "Duplicate";
+    duplicate.mappingSupported = true;
+    duplicate.entries.first().id = Data::NodeId::create();
+    duplicate.entries.first().bitLength = 16;
+    duplicate.entries.first().requestedBitOffset = 8;
+
+    Data::PdoConfiguration mandatory;
+    mandatory.id = Data::NodeId::create();
+    mandatory.index = 0x1601;
+    mandatory.direction = Data::PdoDirection::Rx;
+    mandatory.syncManager = 4;
+    mandatory.mandatory = true;
+    mandatory.selected = false;
+    configuration.pdos = {first, duplicate, mandatory};
+
+    const Data::ConfigurationValidation validation = Data::validateProcessDataConfiguration(
+        configuration);
+    QVERIFY(validation.hasErrors());
+    const auto hasIssue = [&validation](Data::ConfigurationIssueCode code) {
+        return std::any_of(
+            validation.issues.cbegin(),
+            validation.issues.cend(),
+            [code](const Data::ConfigurationIssue &issue) { return issue.code == code; });
+    };
+    QVERIFY(hasIssue(Data::ConfigurationIssueCode::SyncManagerDirectionMismatch));
+    QVERIFY(hasIssue(Data::ConfigurationIssueCode::UnsupportedPdoMapping));
+    QVERIFY(hasIssue(Data::ConfigurationIssueCode::DataTypeBitLengthMismatch));
+    QVERIFY(hasIssue(Data::ConfigurationIssueCode::DuplicatePdoAssignment));
+    QVERIFY(hasIssue(Data::ConfigurationIssueCode::DuplicatePdoEntry));
+    QVERIFY(hasIssue(Data::ConfigurationIssueCode::ProcessImageOverlap));
+    QVERIFY(hasIssue(Data::ConfigurationIssueCode::SyncManagerSizeExceeded));
+    QVERIFY(hasIssue(Data::ConfigurationIssueCode::MandatoryPdoNotSelected));
+    QVERIFY(hasIssue(Data::ConfigurationIssueCode::MissingSyncManager));
+}
+
+void EtherCATCoreTests::testStartupAndDcConfigurationValidation()
+{
+    Data::StartupConfiguration startup;
+    startup.parameters = {
+        {Data::NodeId::create(),
+         true,
+         0,
+         "IP",
+         0x8000,
+         1,
+         Data::EtherCATDataType::UnsignedInteger16,
+         "UINT",
+         QByteArray::fromHex("0100"),
+         "Mode"},
+        {Data::NodeId::create(),
+         true,
+         1,
+         "PS",
+         0x8000,
+         2,
+         Data::EtherCATDataType::Boolean,
+         "BOOL",
+         QByteArray::fromHex("01"),
+         "Enable"},
+    };
+    QVERIFY(Data::validateStartupConfiguration(startup).isEmpty());
+
+    startup.parameters[1].order = 0;
+    startup.parameters[1].rawValue.clear();
+    const QList<Data::ConfigurationIssue> startupIssues = Data::validateStartupConfiguration(
+        startup);
+    const auto hasStartupIssue = [&startupIssues](Data::ConfigurationIssueCode code) {
+        return std::any_of(
+            startupIssues.cbegin(),
+            startupIssues.cend(),
+            [code](const Data::ConfigurationIssue &issue) { return issue.code == code; });
+    };
+    QVERIFY(hasStartupIssue(Data::ConfigurationIssueCode::DuplicateStartupOrder));
+    QVERIFY(hasStartupIssue(Data::ConfigurationIssueCode::InvalidStartupValueSize));
+
+    Data::DcConfiguration dc;
+    dc.enabled = true;
+    dc.modeName = "DC-Synchronous";
+    dc.assignActivate = 0x0300;
+    dc.sync0 = {true, 125000, -1000};
+    dc.sync1 = {true, 125000, 1000};
+    QVERIFY(Data::validateDcConfiguration(dc).isEmpty());
+
+    dc.sync0.shiftTimeNs = 126000;
+    dc.sync1.cycleTimeNs = 0;
+    const QList<Data::ConfigurationIssue> dcIssues = Data::validateDcConfiguration(dc);
+    const auto hasDcIssue = [&dcIssues](Data::ConfigurationIssueCode code) {
+        return std::any_of(
+            dcIssues.cbegin(), dcIssues.cend(), [code](const Data::ConfigurationIssue &issue) {
+                return issue.code == code;
+            });
+    };
+    QVERIFY(hasDcIssue(Data::ConfigurationIssueCode::DcShiftOutOfRange));
+    QVERIFY(hasDcIssue(Data::ConfigurationIssueCode::InvalidDcCycle));
+}
+
 void EtherCATCoreTests::testDeviceDescriptionAndImportJobContract()
 {
     Data::DeviceDescription description;
@@ -439,16 +620,16 @@ void EtherCATCoreTests::testDeviceDescriptionAndImportJobContract()
 
 void EtherCATCoreTests::testPropertyPageProviderContract()
 {
-    const PropertyPageContext context{
-        Data::NodeId::create(), Data::NodeId::create(), WorkbenchNodeKind::Device, "Drive"};
+    const PropertyPageContext
+        context{Data::NodeId::create(), Data::NodeId::create(), WorkbenchNodeKind::Device, "Drive"};
     const PropertyPageContext copy = context;
     QCOMPARE(copy, context);
 
     TestPropertyPageProvider provider;
     QCOMPARE(provider.kind(), ProviderKind::PropertyPage);
     const QList<PropertyPageDescriptor> pages = provider.pages(context);
-    QCOMPARE(pages, QList<PropertyPageDescriptor>(
-                        {{Utils::Id("EtherCAT.Test.General"), "General", 10}}));
+    QCOMPARE(
+        pages, QList<PropertyPageDescriptor>({{Utils::Id("EtherCAT.Test.General"), "General", 10}}));
 
     std::unique_ptr<QWidget> page(provider.createPage(pages.first().id, nullptr));
     QVERIFY(page);
@@ -470,8 +651,8 @@ void EtherCATCoreTests::testScanProviderContract()
     QSignalSpy stateSpy(&provider, &ScanProvider::scanStateChanged);
     QSignalSpy progressSpy(&provider, &ScanProvider::scanProgressChanged);
     QSignalSpy finishedSpy(&provider, &ScanProvider::scanFinished);
-    const Data::ScanRequest request{
-        Data::NodeId::create(), Data::NodeId::create(), Data::ScanOperation::Slaves, {}};
+    const Data::ScanRequest
+        request{Data::NodeId::create(), Data::NodeId::create(), Data::ScanOperation::Slaves, {}};
     QVERIFY_RESULT(provider.startScan(request));
     QCOMPARE(provider.scanState(), Data::ScanState::Preparing);
     QCOMPARE(provider.scanProgress().maximum, 4);
@@ -514,8 +695,7 @@ void EtherCATCoreTests::testDiagnosticsProviderContract()
     QSignalSpy stoppedSpy(&provider, &DiagnosticsProvider::monitoringStopped);
     QVERIFY(!provider.startMonitoring({}));
 
-    const Data::DiagnosticsRequest request{
-        Data::NodeId::create(), Data::NodeId::create()};
+    const Data::DiagnosticsRequest request{Data::NodeId::create(), Data::NodeId::create()};
     const Utils::Result<> startResult = provider.startMonitoring(request);
     QVERIFY_RESULT(startResult);
     QCOMPARE(provider.activeRequest(), request);
@@ -543,8 +723,7 @@ void EtherCATCoreTests::testDiagnosticsProviderContract()
     QCOMPARE(eventSpy.count(), 1);
     QCOMPARE(trendSpy.count(), 1);
 
-    const Utils::Result<> modeResult
-        = provider.requestRunMode(Data::DiagnosticsRunMode::Config);
+    const Utils::Result<> modeResult = provider.requestRunMode(Data::DiagnosticsRunMode::Config);
     QVERIFY_RESULT(modeResult);
     QCOMPARE(provider.latestSnapshot()->runMode, Data::DiagnosticsRunMode::Config);
     QCOMPARE(snapshotSpy.count(), 2);

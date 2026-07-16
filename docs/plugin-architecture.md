@@ -19,17 +19,18 @@ documentation, review, and local-commit gates.
 | Order | Component | Current state | Exclusive responsibility |
 |---:|---|---|---|
 | 0 | Stage-0 governance | Complete | Baseline, policy, build, and architecture evidence |
-| 1 | `EtherCATData` | Complete | UI-independent stable `NodeId` value type |
+| 1 | `EtherCATData` | Configuration API complete | Stable values, offline validation, and process-image preview |
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
-| 2 | `EtherCATProjectPlugin` | Complete | ProjectExplorer lifecycle, persistence, undo/redo |
+| 2 | `EtherCATProjectPlugin` | Reopened next | Lifecycle exists; PDO/Startup/DC persistence and Undo/Redo remain |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
-| 4 | `EtherCATWorkbenchPlugin` | Complete | EtherCAT mode, device tree, details container, selection UI |
+| 4 | `EtherCATWorkbenchPlugin` | Partial | Shell exists; editable configuration pages and full tree remain |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
 
-`EtherCATData` is an infrastructure library, not a feature container. It may
-only be changed with the plugin currently in progress and only for that
-plugin's accepted public data needs.
+`EtherCATData` is an infrastructure library, not a feature container. Its
+offline configuration contract is now ready for the next Project issue. The
+Phase-1 product is not Ready until persistence, editable pages, complete tree
+workflows, integration tests, and the policy-deferred upstream rehearsal pass.
 
 ## Dependency direction
 
@@ -103,10 +104,12 @@ Mock Diagnostics plugin.
 
 ## TwinCAT-inspired UI ownership
 
-The completed Workbench plugin owns the EtherCAT mode, its left device tree,
-selection linkage, and the details-page host. Project and Devices supply public
+The Workbench plugin owns the existing EtherCAT mode, left device tree,
+selection linkage, and details-page host. Project and Devices supply public
 data. Scan and Diagnostics contribute commands, pages, and Providers through
-Workbench/Core extension points.
+Workbench/Core extension points. Its current pages are still read-only and its
+tree does not yet contain the required Inputs, Outputs, RxPDO, TxPDO, and
+Modules/Channels branches, so the Workbench completion gate remains open.
 
 The completed Project implementation and versioned file contract are recorded
 in `docs/ethercat-project-format.md`. ProjectExplorer owns open/close and

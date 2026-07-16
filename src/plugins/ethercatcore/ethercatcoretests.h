@@ -14,6 +14,9 @@ private slots:
     void testMetadataAndServices();
     void testNodeIdRoundTrip();
     void testProjectSnapshotValueSemantics();
+    void testProcessDataConfigurationPreview();
+    void testProcessDataConfigurationValidation();
+    void testStartupAndDcConfigurationValidation();
     void testDeviceDescriptionAndImportJobContract();
     void testPropertyPageProviderContract();
     void testScanProviderContract();

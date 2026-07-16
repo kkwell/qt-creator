@@ -34,6 +34,11 @@ and trend records, explicit stream and EtherCAT states, alarm lifecycle, and a
 checked `DiagnosticsProvider` contract. It remains an in-process capability and
 defines no controller session, network command, packet, or private ABI.
 
+The offline-configuration revision adds typed Process Data, Startup, and DC
+values plus UI-independent validation and process-image preview algorithms.
+It does not yet add these values to the Project service or project file. That
+integration remains an explicit Project issue.
+
 ## Stable identity
 
 `EtherCAT::Data::NodeId` is the only stage-1 cross-plugin node identity.
@@ -44,6 +49,27 @@ defines no controller session, network command, packet, or private ABI.
 - Invalid text parses to a null ID.
 - Null means no selection or no identity.
 - Display names, tree rows, `QModelIndex`, and widget pointers are never IDs.
+
+## Offline configuration domain contract
+
+`ethercatdata/offlineconfiguration.h` defines the configuration contract used
+by the later Project and Workbench stages. It contains no QObject, widget,
+project document, XML parser, network type, or controller ABI.
+
+The Process Data model represents Sync Managers, selectable RxPDO/TxPDO
+assignments, ordered entries, fixed/mandatory/default/predefined metadata,
+explicit or automatic bit offsets, and mapping-support markers. Validation
+produces structured issue codes and one deterministic input/output process
+image. Duplicate assignment, missing or wrong-direction SM, invalid width,
+unsupported mapping, duplicate object, overlap, and capacity errors are
+calculated once in the domain library rather than in a table widget.
+
+Startup values retain enabled state, explicit order, transition,
+index/subindex, typed and raw data type, raw value, and comment. DC values use
+nanoseconds in every cycle and shift field and retain mode, AssignActivate,
+SYNC0, SYNC1, and potential reference-clock state. Their validators return the
+same structured issue type. The full field and validation contract is recorded
+in `docs/ethercat-offline-configuration.md`.
 
 ## Public services
 
@@ -273,6 +299,9 @@ The focused plugin test covers:
 - typed scan request, state, progress, cancellation, and reset behavior;
 - typed diagnostics snapshots, stream transitions, mode request, bounded-data
   metadata, alarm acknowledgement/recovery, and stop/failure behavior;
+- Process Data selection, automatic/explicit offset preview, duplicate,
+  overlap, width, direction, support, and capacity validation;
+- Startup order/raw-value validation and nanosecond DC cycle/shift validation;
 - settings-page registration.
 
 The focused build target and test execution are limited to Core and

@@ -143,6 +143,12 @@ no controller or network access. It changes no Qt Creator upstream Core,
 ProjectExplorer, or application path, so the direct Core patch count remains
 five.
 
+The offline-configuration Core/API issue adds two product-owned
+`EtherCATData` files, synchronized CMake/qbs source entries, Core contract
+tests, and documentation. It changes no Qt Creator upstream Core,
+ProjectExplorer, or application path, so the direct Core patch count remains
+five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

@@ -13,6 +13,8 @@ QtcLibrary {
         "ethercatdata_global.h",
         "nodeid.cpp",
         "nodeid.h",
+        "offlineconfiguration.cpp",
+        "offlineconfiguration.h",
         "projectsnapshot.h",
         "scansnapshot.h",
     ]

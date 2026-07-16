@@ -2,10 +2,10 @@
 
 ## Scope
 
-`EtherCATProject` owns the offline engineering-project lifecycle for phase 1.
+`EtherCATProject` owns the current offline engineering-project lifecycle.
 It integrates the `*.ecatproject` MIME type with Qt Creator's public
 ProjectExplorer, document, wizard, and Save All APIs. It does not parse ESI,
-store PDO/DC/Startup models, scan a controller, or produce diagnostics. The
+persist PDO/DC/Startup models, scan a controller, or produce diagnostics. The
 stage-5 Project revision can persist a checked list of offline slaves accepted
 by another plugin; it still owns no scan state or comparison result.
 
@@ -93,8 +93,10 @@ the last valid in-memory snapshot. This prevents an external file replacement
 from silently invalidating cross-plugin stable references.
 
 PDO, Startup, DC, scan execution state, online state, and diagnostics remain
-absent. Their owning serial plugin stages must add typed models and an explicit
-format revision or compatible extension before persisting them.
+absent from version 1. Typed Process Data, Startup, and DC values and their
+domain validators now exist in `EtherCATData`, but the next Project issue must
+add an explicit format revision or compatible extension, checked service
+commands, and Undo/Redo before they can be persisted.
 
 ## Migration and recovery
 

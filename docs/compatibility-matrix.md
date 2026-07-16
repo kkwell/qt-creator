@@ -47,11 +47,13 @@ local decisions and easier maintenance.
 | EtherCATScan | Local Mock scan, topology comparison, and checked acceptance | Stage 5 verified |
 | EtherCATDiagnostics | Local Mock state, WKC, DC, alarm, and performance views | Stage 6 verified |
 
-### Completed phase-1 EtherCAT additions
+### Phase-1 EtherCAT profile
 
 All six planned EtherCAT feature and infrastructure plugins have entered the
-local profile. Final cross-plugin integration acceptance remains a separate
-serial issue.
+local profile. This proves the plugin profile is assembled, not that every
+Phase-1 requirement is complete. Project persistence, editable Process Data,
+Startup and DC pages, the full TwinCAT-inspired tree workflow, additional UI
+coverage, and the user-policy-deferred upstream rehearsal remain open.
 
 ### Hidden or excluded plugins
 
@@ -67,8 +69,12 @@ function is outside the product target and records migration or recovery.
 
 | Feature | Phase-1 status |
 |---|---|
-| TwinCAT-inspired device tree | Stage 4 verified |
+| TwinCAT-inspired device tree shell | Stage 4 verified |
+| Inputs/Outputs/RxPDO/TxPDO/Modules tree branches | Pending Workbench issue |
 | Extensible offline property pages | Stage 4 verified |
+| Offline Process Data/Startup/DC domain model | Verified in EtherCATData |
+| Project persistence and Undo/Redo for those models | Pending Project issue |
+| Editable Process Data/Startup/DC pages | Pending Workbench issue |
 | Offline EtherCAT project | Stage 2 verified |
 | ESI repository | Stage 3 verified |
 | Scan UI and topology comparison | Stage 5 verified with Mock provider only |
@@ -90,6 +96,28 @@ function is outside the product target and records migration or recovery.
 | Repeated process startup | Passed across focused test and two smoke runs |
 | Direct upstream Core or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
+
+## Offline configuration data qualification
+
+This local Core/API issue adds only UI-independent `EtherCATData` values and
+algorithms. It does not claim project persistence or an editable UI.
+
+| Check | Result |
+|---|---|
+| Focused EtherCATCore contract tests | 16 passed, 0 failed |
+| Valid RxPDO/TxPDO direction and SM assignment | Passed |
+| Automatic and explicit bit-offset process-image preview | Passed |
+| Duplicate, overlap, width, unsupported, missing-SM errors | Passed |
+| Sync Manager capacity validation | Passed |
+| Startup order and raw-value validation | Passed |
+| DC cycle and shift validation in nanoseconds | Passed |
+| CMake and qbs source lists | Synchronized |
+| EtherCAT plugin regressions | Core 16, Project 8, Devices 8, Workbench 9, Scan 7, Diagnostics 7 passed |
+| Normal Release product build | Passed with 16-plugin allow-list |
+| Product version inventory | All 16 allow-listed plugins present and recognized |
+| Clean-settings GUI startup | Passed; stable for 5 seconds until intentional `SIGTERM` |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Project persistence and editable UI | Pending by issue boundary |
 
 ## EtherCATProject stage-2 qualification
 
