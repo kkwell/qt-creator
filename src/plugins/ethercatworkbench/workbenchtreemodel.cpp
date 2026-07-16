@@ -24,6 +24,7 @@ struct WorkbenchTreeModel::Node
     QString name;
     QString status;
     Data::DeviceSummary device;
+    std::optional<Data::OfflineSlaveConfiguration> offlineSlave;
     Node *parent = nullptr;
     std::vector<std::unique_ptr<Node>> children;
 };
@@ -173,6 +174,7 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
         case Core::WorkbenchNodeKind::DeviceRepository:
             return Utils::Icons::SETTINGS.icon();
         case Core::WorkbenchNodeKind::Device:
+        case Core::WorkbenchNodeKind::ConfiguredSlave:
             return node->device.supported ? ::Core::Icons::DESKTOP_DEVICE_SMALL.icon()
                                           : Utils::Icons::BROKEN.icon();
         case Core::WorkbenchNodeKind::Diagnostics:
@@ -391,6 +393,29 @@ Core::PropertyPageContext WorkbenchTreeModel::contextForNodeId(
     return contextForIndex(indexForNodeId(nodeId));
 }
 
+std::optional<Data::OfflineSlaveConfiguration> WorkbenchTreeModel::offlineSlave(
+    const Data::NodeId &nodeId) const
+{
+    const Node *node = findNode(nodeId);
+    return node ? node->offlineSlave : std::nullopt;
+}
+
+QList<Data::OfflineSlaveConfiguration> WorkbenchTreeModel::offlineSlavesForMaster(
+    const Data::NodeId &masterId) const
+{
+    QList<Data::OfflineSlaveConfiguration> result;
+    for (const Data::ProjectSnapshot &project : m_projects) {
+        for (const Data::OfflineSlaveConfiguration &slave : project.slaves) {
+            if (slave.masterId == masterId)
+                result.append(slave);
+        }
+    }
+    std::sort(result.begin(), result.end(), [](const auto &left, const auto &right) {
+        return left.position < right.position;
+    });
+    return result;
+}
+
 QModelIndex WorkbenchTreeModel::indexForNode(const Node *node, int column) const
 {
     if (!node || !node->parent || node == m_root.get())
@@ -500,9 +525,27 @@ void WorkbenchTreeModel::rebuild()
                     snapshot->name,
                     projectStatus(kind));
                 Node *nodePointer = node.get();
+                if (kind == Core::WorkbenchNodeKind::ConfiguredSlave) {
+                    const auto offlineSlave = std::find_if(
+                        project.slaves.cbegin(),
+                        project.slaves.cend(),
+                        [snapshot](const auto &slave) { return slave.id == snapshot->id; });
+                    if (offlineSlave != project.slaves.cend())
+                        node->offlineSlave = *offlineSlave;
+                }
                 parent->children.push_back(std::move(node));
                 self(self, nodePointer, snapshot->id);
                 if (kind == Core::WorkbenchNodeKind::Master) {
+                    const int slaveCount = int(std::count_if(
+                        nodePointer->children.cbegin(),
+                        nodePointer->children.cend(),
+                        [](const auto &child) {
+                            return child->kind == Core::WorkbenchNodeKind::ConfiguredSlave;
+                        }));
+                    if (slaveCount > 0) {
+                        nodePointer->status = Tr::tr(
+                            "%n configured slave(s)", nullptr, slaveCount);
+                    }
                     nodePointer->children.push_back(makeNode(
                         nodePointer,
                         derivedNodeId(snapshot->id.toString() + ":diagnostics"),
@@ -511,14 +554,16 @@ void WorkbenchTreeModel::rebuild()
                         Tr::tr("Diagnostics"),
                         m_diagnosticsAvailable ? Tr::tr("Provider available")
                                                : Tr::tr("Plugin not installed")));
-                    nodePointer->children.push_back(makeNode(
-                        nodePointer,
-                        derivedNodeId(snapshot->id.toString() + ":slaves-empty"),
-                        project.id,
-                        Core::WorkbenchNodeKind::Placeholder,
-                        Tr::tr("No configured slaves"),
-                        m_scanAvailable ? Tr::tr("Ready to scan")
-                                        : Tr::tr("Scan plugin not installed")));
+                    if (slaveCount == 0) {
+                        nodePointer->children.push_back(makeNode(
+                            nodePointer,
+                            derivedNodeId(snapshot->id.toString() + ":slaves-empty"),
+                            project.id,
+                            Core::WorkbenchNodeKind::Placeholder,
+                            Tr::tr("No configured slaves"),
+                            m_scanAvailable ? Tr::tr("Ready to scan")
+                                            : Tr::tr("Scan plugin not installed")));
+                    }
                 }
             }
         };

@@ -15,6 +15,7 @@ private slots:
     void testTreeModelLargeIncrementalUpdate();
     void testNavigationSelectionAndFiltering();
     void testBuiltInDevicePages();
+    void testConfiguredSlaveTreeAndPages();
     void testDynamicPropertyProviderRemoval();
     void testDynamicOptionalProviders();
 };

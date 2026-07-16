@@ -55,6 +55,15 @@ static Data::ProjectSnapshot projectSnapshot(const QString &name = "Packaging Li
             {}};
 }
 
+static Data::NodeId masterId(const Data::ProjectSnapshot &project)
+{
+    for (const Data::ProjectNodeSnapshot &node : project.nodes) {
+        if (node.kind == Data::ProjectNodeKind::Master)
+            return node.id;
+    }
+    return {};
+}
+
 static QList<Data::DeviceSummary> deviceSummaries(int count)
 {
     QList<Data::DeviceSummary> devices;
@@ -338,6 +347,74 @@ void EtherCATWorkbenchTests::testBuiltInDevicePages()
     QVERIFY(onlinePage->findChild<QLabel *>("EtherCATWorkbenchPageSummary")
                 ->text()
                 .contains("unavailable", Qt::CaseInsensitive));
+}
+
+void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
+{
+    WorkbenchController controller;
+    QAbstractItemModelTester modelTester(
+        controller.treeModel(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    QVERIFY(repository);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath sourcePath = Utils::FilePath::fromString(directory.path())
+                                           .canonicalPath()
+                                           .pathAppended("configured-slave.xml");
+    QVERIFY_RESULT(sourcePath.writeFileContents(deviceEsi()));
+    QCOMPARE(waitForJob(repository->importFiles({sourcePath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> repositoryDevices = repository->devices();
+    const auto found = std::find_if(
+        repositoryDevices.cbegin(), repositoryDevices.cend(), [](const auto &device) {
+            return device.identity.productCode == 0x5678;
+        });
+    QVERIFY(found != repositoryDevices.cend());
+
+    Data::ProjectSnapshot project = projectSnapshot("Configured Topology");
+    const Data::NodeId master = masterId(project);
+    const Data::NodeId slaveId = Data::NodeId::create();
+    project.slaves = {{slaveId,
+                       master,
+                       0,
+                       found->identity,
+                       17,
+                       3,
+                       "Configured Servo",
+                       found->id}};
+    project.nodes.append(
+        {slaveId, master, Data::ProjectNodeKind::Slave, "Configured Servo"});
+    controller.treeModel()->setProjects({project});
+
+    const QModelIndex slave = findByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::ConfiguredSlave);
+    QVERIFY(slave.isValid());
+    QCOMPARE(slave.data().toString(), QString("Configured Servo"));
+    QCOMPARE(slave.siblingAtColumn(1).data().toString(), QString("Offline configured"));
+    const QModelIndex masterIndex = findByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::Master);
+    QCOMPARE(controller.treeModel()->rowCount(masterIndex), 2);
+    QVERIFY(!findByKind(
+                 controller.treeModel(), Core::WorkbenchNodeKind::Placeholder, masterIndex)
+                 .isValid());
+
+    BuiltinPropertyPageProvider pages(&controller);
+    const Core::PropertyPageContext context = controller.treeModel()->contextForIndex(slave);
+    QCOMPARE(pages.pages(context).size(), 6);
+    std::unique_ptr<QWidget> processPage(
+        pages.createPage(Constants::PROCESS_DATA_PAGE_ID, nullptr));
+    pages.updatePage(Constants::PROCESS_DATA_PAGE_ID, processPage.get(), context);
+    QCOMPARE(
+        processPage->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree")->topLevelItemCount(),
+        1);
+
+    std::unique_ptr<QWidget> generalPage(
+        pages.createPage(Constants::GENERAL_PAGE_ID, nullptr));
+    pages.updatePage(Constants::GENERAL_PAGE_ID, generalPage.get(), context);
+    QTreeWidget *generalTree = generalPage->findChild<QTreeWidget *>(
+        "EtherCATWorkbenchPageTree");
+    QVERIFY(generalTree);
+    QVERIFY(generalTree->topLevelItemCount() >= 8);
 }
 
 void EtherCATWorkbenchTests::testDynamicPropertyProviderRemoval()

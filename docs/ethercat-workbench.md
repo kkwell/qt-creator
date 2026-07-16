@@ -42,8 +42,9 @@ The two-column tree displays name and an explicit textual status. It contains:
 open EtherCAT projects
 └── offline target
     └── EtherCAT master
+        ├── configured offline slaves
         ├── diagnostics capability
-        └── no configured slaves / scan capability
+        └── no configured slaves / scan capability (only when empty)
 
 device repository
 └── imported ESI device revisions
@@ -61,11 +62,11 @@ identity. The context menu supports expand, collapse, locating the first
 unsupported ESI device, and copying the stable node ID. Keyboard navigation is
 provided by `QTreeView`.
 
-Project topology changes use a bounded model reset because stage 2 currently
-publishes only Project, Target, and Master snapshots. Device repository changes
-use row insert, remove, move, and data-change notifications; a 500-device test
-guards against unnecessary repository resets. Configured slave persistence is
-intentionally absent until a later Project/API issue defines that model.
+Project topology changes use a bounded model reset. Accepted offline slaves are
+read from immutable Project snapshots, appear below their master with stable
+IDs and position-independent selection, and replace the empty scan placeholder.
+Device repository changes use row insert, remove, move, and data-change
+notifications; a 500-device test guards against unnecessary repository resets.
 
 ## Details and property pages
 
@@ -78,13 +79,20 @@ the page set without retaining removed pointers.
 
 The built-in provider supplies read-only stage-4 pages:
 
-- General for projects, targets, masters, the repository, and ESI devices;
+- General for projects, targets, masters, configured slaves, the repository,
+  and ESI devices;
 - EtherCAT/SyncManager data for imported devices and the offline master;
 - Process Data with RxPDO, TxPDO, entry, type, bit-width, and SM data;
 - Startup with ESI CoE initialization records;
 - DC with mode and nanosecond timing defaults;
 - explicit Online and Diagnostics unavailable pages while the Diagnostics
   capability is absent.
+
+A configured slave retains its scanned Identity, position, Serial Number,
+Alias, and optional stable ESI description ID in the Project snapshot. When
+that ESI entry is available, the same SyncManager, Process Data, Startup, and
+DC read-only pages used by the repository device are reused. A missing ESI
+match is reported explicitly and does not invent PDO or DC data.
 
 When an available Diagnostics provider appears, the built-in Online and
 Diagnostics placeholders are withdrawn so the later plugin can contribute the
@@ -119,9 +127,9 @@ diagnostics.
 The focused Workbench suite covers metadata and hard dependencies, mode/action
 registration, a 500-device incremental model under
 `QAbstractItemModelTester`, filtering and two-way stable selection, real ESI
-data in Process Data/Startup/DC pages, dynamic property-page removal, and
-dynamic Scan/Diagnostics availability and removal. It passes 8 tests on the
-qualified Qt 6.11.0 Release test build.
+data in Process Data/Startup/DC pages, configured-slave topology and ESI-page
+reuse, dynamic property-page removal, and dynamic Scan/Diagnostics availability
+and removal. It passes 9 tests on the qualified Qt 6.11.0 Release test build.
 
 The normal 14-plugin product build and enabled/disabled startup smoke are
 recorded in `docs/compatibility-matrix.md`. A visual desktop inspection was

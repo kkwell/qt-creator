@@ -140,6 +140,7 @@ QList<Core::PropertyPageDescriptor> BuiltinPropertyPageProvider::pages(
         return result;
     }
     case Kind::Device:
+    case Kind::ConfiguredSlave:
     {
         QList<Core::PropertyPageDescriptor> result = {
             {Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100},
@@ -186,10 +187,23 @@ void BuiltinPropertyPageProvider::updatePage(
         return;
 
     const std::optional<Data::DeviceDescription> device
-        = context.nodeKind == Core::WorkbenchNodeKind::Device
-              && m_controller->deviceRepository()
-              ? m_controller->deviceRepository()->device(context.nodeId)
-              : std::optional<Data::DeviceDescription>();
+        = [this, &context]() -> std::optional<Data::DeviceDescription> {
+        if (!m_controller->deviceRepository())
+            return std::nullopt;
+        if (context.nodeKind == Core::WorkbenchNodeKind::Device)
+            return m_controller->deviceRepository()->device(context.nodeId);
+        if (context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave) {
+            const std::optional<Data::OfflineSlaveConfiguration> slave
+                = m_controller->treeModel()->offlineSlave(context.nodeId);
+            if (slave && !slave->deviceDescriptionId.isNull())
+                return m_controller->deviceRepository()->device(slave->deviceDescriptionId);
+        }
+        return std::nullopt;
+    }();
+    const std::optional<Data::OfflineSlaveConfiguration> offlineSlave
+        = context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave
+              ? m_controller->treeModel()->offlineSlave(context.nodeId)
+              : std::nullopt;
 
     if (pageId == Utils::Id(Constants::GENERAL_PAGE_ID)) {
         widget->reset(
@@ -197,12 +211,27 @@ void BuiltinPropertyPageProvider::updatePage(
             {Tr::tr("Property"), Tr::tr("Value")});
         widget->addRow({Tr::tr("Name"), context.displayName});
         widget->addRow({Tr::tr("Node ID"), context.nodeId.toString()});
-        if (device) {
+        if (offlineSlave) {
+            widget->addRow({Tr::tr("Position"), QString::number(offlineSlave->position)});
+            widget->addRow({Tr::tr("Vendor ID"), hexValue(offlineSlave->identity.vendorId, 8)});
+            widget->addRow(
+                {Tr::tr("Product Code"), hexValue(offlineSlave->identity.productCode, 8)});
+            widget->addRow(
+                {Tr::tr("Revision"), hexValue(offlineSlave->identity.revisionNumber, 8)});
+            widget->addRow(
+                {Tr::tr("Serial Number"), QString::number(offlineSlave->serialNumber)});
+            widget->addRow({Tr::tr("Alias"), QString::number(offlineSlave->alias)});
+            widget->addRow(
+                {Tr::tr("ESI match"),
+                 device ? device->summary.name : Tr::tr("No matching ESI device")});
+        } else if (device) {
             widget->addRow({Tr::tr("Vendor ID"), hexValue(device->summary.identity.vendorId, 8)});
             widget->addRow(
                 {Tr::tr("Product Code"), hexValue(device->summary.identity.productCode, 8)});
             widget->addRow(
                 {Tr::tr("Revision"), hexValue(device->summary.identity.revisionNumber, 8)});
+        }
+        if (device) {
             widget->addRow({Tr::tr("Type"), device->summary.typeName});
             widget->addRow({Tr::tr("Group"), device->summary.group});
             widget->addRow(
@@ -230,7 +259,12 @@ void BuiltinPropertyPageProvider::updatePage(
                 widget->addRow(
                     {Tr::tr("Modified"), project->modified ? Tr::tr("Yes") : Tr::tr("No")});
                 if (context.nodeKind == Core::WorkbenchNodeKind::Master) {
-                    widget->addRow({Tr::tr("Configured slaves"), QString::number(0)});
+                    widget->addRow(
+                        {Tr::tr("Configured slaves"),
+                         QString::number(
+                             m_controller->treeModel()
+                                 ->offlineSlavesForMaster(context.nodeId)
+                                 .size())});
                     widget->addRow({Tr::tr("Stage"), Tr::tr("Offline configuration")});
                 } else if (context.nodeKind == Core::WorkbenchNodeKind::Target) {
                     widget->addRow({Tr::tr("Target type"), Tr::tr("Offline / Mock")});
@@ -241,9 +275,33 @@ void BuiltinPropertyPageProvider::updatePage(
     }
 
     if (pageId == Utils::Id(Constants::ETHERCAT_PAGE_ID)) {
+        if (context.nodeKind == Core::WorkbenchNodeKind::Master) {
+            const QList<Data::OfflineSlaveConfiguration> slaves
+                = m_controller->treeModel()->offlineSlavesForMaster(context.nodeId);
+            widget->reset(
+                slaves.isEmpty() ? Tr::tr("No slaves are configured on this offline master.")
+                                 : Tr::tr("Offline EtherCAT topology"),
+                slaves.isEmpty()
+                    ? QStringList()
+                    : QStringList{Tr::tr("Position"),
+                                  Tr::tr("Name"),
+                                  Tr::tr("Vendor"),
+                                  Tr::tr("Product"),
+                                  Tr::tr("Revision"),
+                                  Tr::tr("Alias")});
+            for (const Data::OfflineSlaveConfiguration &slave : slaves) {
+                widget->addRow({QString::number(slave.position),
+                                slave.name,
+                                hexValue(slave.identity.vendorId, 8),
+                                hexValue(slave.identity.productCode, 8),
+                                hexValue(slave.identity.revisionNumber, 8),
+                                QString::number(slave.alias)});
+            }
+            return;
+        }
         widget->reset(
             device ? Tr::tr("SyncManager defaults from the imported ESI file")
-                   : Tr::tr("No slaves are configured on this offline master."),
+                   : Tr::tr("No matching ESI SyncManager data is available."),
             device ? QStringList{Tr::tr("SM"),
                                  Tr::tr("Name"),
                                  Tr::tr("Direction"),

@@ -148,11 +148,12 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 8 passed, 0 failed |
+| Focused EtherCATWorkbench plugin tests | 9 passed, 0 failed |
 | Metadata, hard dependencies, mode, and actions | Passed |
 | 500-device incremental model with model tester | Passed |
 | Filter, context, and bidirectional stable selection | Passed |
 | Process Data, Startup, and DC pages from imported ESI | Passed |
+| Configured-slave tree, empty-placeholder removal, and ESI page reuse | Passed |
 | Dynamic property-page provider removal | Passed |
 | Dynamic Scan/Diagnostics availability and removal | Passed |
 | EtherCATCore regression tests | 12 passed, 0 failed |
