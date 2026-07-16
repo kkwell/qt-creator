@@ -245,12 +245,40 @@ before that Provider leaves the object pool. Page IDs must be stable and
 unique within one Provider; the effective host key is Provider ID plus page
 ID.
 
-`WorkbenchNodeKind` is deliberately limited to UI-neutral selections used by
-the first-phase workbench: project, target, master, device repository, device,
-diagnostics, and explicit placeholder. It carries no scan result, online
-state, wire protocol, or controller ABI. Later plugins contribute pages by
-subclassing this interface; they do not modify the Workbench tree or include
-Workbench private headers.
+`WorkbenchNodeKind` is limited to UI-neutral selections used by the Workbench.
+Its numeric values are a public compatibility contract for local plugins:
+existing values must never be reordered or reused, and later values may only
+be appended. Consumers must tolerate unknown future values and must not persist
+an enum value as domain data.
+
+| Value | Kind | Selection meaning |
+|---:|---|---|
+| 0 | `None` | No valid Workbench selection |
+| 1 | `Project` | Open EtherCAT project |
+| 2 | `Target` | Offline target/controller shell |
+| 3 | `Master` | EtherCAT master configuration |
+| 4 | `DeviceRepository` | Imported ESI repository root |
+| 5 | `Device` | Read-only imported ESI device revision |
+| 6 | `ConfiguredSlave` | Offline slave instance in a project |
+| 7 | `Diagnostics` | Diagnostics capability branch |
+| 8 | `Placeholder` | Explanatory row without a domain selection |
+| 9 | `ProcessInputs` | Slave-to-controller process-image branch |
+| 10 | `ProcessOutputs` | Controller-to-slave process-image branch |
+| 11 | `RxPdoGroup` | PDOs received by a slave |
+| 12 | `TxPdoGroup` | PDOs transmitted by a slave |
+| 13 | `Pdo` | One concrete PDO mapping |
+| 14 | `PdoEntry` | One mapped process-data entry |
+| 15 | `Modules` | Modular-device branch |
+| 16 | `Module` | One ESI-backed module instance |
+| 17 | `Channel` | One ESI-backed channel |
+
+The derived kinds reserve stable routing identities for the TwinCAT-inspired
+Inputs, Outputs, RxPDO, TxPDO, and Modules/Channels hierarchy. They do not add
+tree rows by themselves and do not authorize fabricated module or channel
+data: those nodes must be backed by project/ESI values. The enum carries no
+scan result, online state, wire protocol, or controller ABI. Later plugins
+contribute pages by subclassing the public interface; they do not modify the
+Workbench tree or include Workbench private headers.
 
 The stage-4 Workbench implementation listens to property-provider addition,
 availability changes, and removal. It destroys provider-owned widgets before
@@ -305,6 +333,7 @@ The focused plugin test covers:
 - Process Data selection, automatic/explicit offset preview, duplicate,
   overlap, width, direction, support, and capacity validation;
 - Startup order/raw-value validation and nanosecond DC cycle/shift validation;
+- frozen Workbench node-kind values and derived PDO/module selection contexts;
 - settings-page registration.
 
 The focused build target and test execution are limited to Core and

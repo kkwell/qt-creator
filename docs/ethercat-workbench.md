@@ -228,7 +228,9 @@ discovery, online controller state, controller connection, network protocol,
 configuration package, PLC language, or code generation. Scan and Diagnostics
 remain optional Mock Provider plugins. The full
 Inputs/Outputs/RxPDO/TxPDO/Modules tree branches and advanced Sync Unit timing
-semantics remain pending independent issues.
+semantics remain pending independent issues. EtherCATCore already reserves
+stable public node kinds for those branches; this plugin must consume that
+contract in its tree issue without inventing missing ESI module/channel data.
 
 ## Verification
 

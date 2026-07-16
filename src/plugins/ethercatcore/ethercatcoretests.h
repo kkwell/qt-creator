@@ -19,6 +19,7 @@ private slots:
     void testStartupAndDcConfigurationValidation();
     void testDeviceDescriptionAndImportJobContract();
     void testPropertyPageProviderContract();
+    void testWorkbenchDerivedNodeKinds();
     void testScanProviderContract();
     void testDiagnosticsProviderContract();
     void testSelectionServicePublishesStableIds();

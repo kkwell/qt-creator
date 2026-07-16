@@ -177,6 +177,12 @@ and the public Project service. No upstream Core, ProjectExplorer, or
 application bootstrap path changes, so the direct Core patch count remains
 five.
 
+The Workbench derived-node Core/API issue extends only the product-owned
+`EtherCATCore` public enum, its contract tests, and documentation. Existing
+numeric values are frozen and the new process-image, PDO, module, and channel
+kinds are appended. No upstream Core, ProjectExplorer, or application path
+changes, so the direct Core patch count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

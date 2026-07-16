@@ -110,9 +110,10 @@ selection linkage, and details-page host. Project and Devices supply public
 data. Scan and Diagnostics contribute commands, pages, and Providers through
 Workbench/Core extension points. Process Data, ordered Startup requests, and
 Distributed Clocks are now editable for configured slaves through the public
-Project service; their repository views stay read-only. The tree does not yet
-contain the required Inputs, Outputs, RxPDO, TxPDO, and Modules/Channels
-branches, so the Workbench completion gate remains open.
+Project service; their repository views stay read-only. EtherCATCore now
+reserves stable, append-only node kinds for Inputs, Outputs, RxPDO, TxPDO, PDO,
+PDO Entry, Modules, Module, and Channel selections. The Workbench tree does not
+yet render those branches, so the Workbench completion gate remains open.
 
 The completed Project implementation and versioned file contract are recorded
 in `docs/ethercat-project-format.md`. ProjectExplorer owns open/close and

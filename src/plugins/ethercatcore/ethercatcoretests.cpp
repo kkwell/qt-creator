@@ -641,6 +641,35 @@ void EtherCATCoreTests::testPropertyPageProviderContract()
     QVERIFY(provider.pages(projectContext).isEmpty());
 }
 
+void EtherCATCoreTests::testWorkbenchDerivedNodeKinds()
+{
+    QCOMPARE(int(WorkbenchNodeKind::None), 0);
+    QCOMPARE(int(WorkbenchNodeKind::Project), 1);
+    QCOMPARE(int(WorkbenchNodeKind::Target), 2);
+    QCOMPARE(int(WorkbenchNodeKind::Master), 3);
+    QCOMPARE(int(WorkbenchNodeKind::DeviceRepository), 4);
+    QCOMPARE(int(WorkbenchNodeKind::Device), 5);
+    QCOMPARE(int(WorkbenchNodeKind::ConfiguredSlave), 6);
+    QCOMPARE(int(WorkbenchNodeKind::Diagnostics), 7);
+    QCOMPARE(int(WorkbenchNodeKind::Placeholder), 8);
+
+    QCOMPARE(int(WorkbenchNodeKind::ProcessInputs), 9);
+    QCOMPARE(int(WorkbenchNodeKind::ProcessOutputs), 10);
+    QCOMPARE(int(WorkbenchNodeKind::RxPdoGroup), 11);
+    QCOMPARE(int(WorkbenchNodeKind::TxPdoGroup), 12);
+    QCOMPARE(int(WorkbenchNodeKind::Pdo), 13);
+    QCOMPARE(int(WorkbenchNodeKind::PdoEntry), 14);
+    QCOMPARE(int(WorkbenchNodeKind::Modules), 15);
+    QCOMPARE(int(WorkbenchNodeKind::Module), 16);
+    QCOMPARE(int(WorkbenchNodeKind::Channel), 17);
+
+    const PropertyPageContext context{Data::NodeId::create(),
+                                      Data::NodeId::create(),
+                                      WorkbenchNodeKind::PdoEntry,
+                                      "Controlword"};
+    QCOMPARE(PropertyPageContext(context), context);
+}
+
 void EtherCATCoreTests::testScanProviderContract()
 {
     TestScanProvider provider;

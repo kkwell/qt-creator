@@ -26,15 +26,24 @@ namespace EtherCAT::Core {
 enum class ProviderKind { Project, DeviceRepository, PropertyPage, Scan, Diagnostics };
 enum class DeviceImportState { Pending, Running, Canceling, Finished };
 enum class WorkbenchNodeKind {
-    None,
-    Project,
-    Target,
-    Master,
-    DeviceRepository,
-    Device,
-    ConfiguredSlave,
-    Diagnostics,
-    Placeholder,
+    None = 0,
+    Project = 1,
+    Target = 2,
+    Master = 3,
+    DeviceRepository = 4,
+    Device = 5,
+    ConfiguredSlave = 6,
+    Diagnostics = 7,
+    Placeholder = 8,
+    ProcessInputs = 9,
+    ProcessOutputs = 10,
+    RxPdoGroup = 11,
+    TxPdoGroup = 12,
+    Pdo = 13,
+    PdoEntry = 14,
+    Modules = 15,
+    Module = 16,
+    Channel = 17,
 };
 
 struct ETHERCATCORE_EXPORT PropertyPageContext

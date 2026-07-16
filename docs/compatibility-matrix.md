@@ -52,8 +52,9 @@ local decisions and easier maintenance.
 All six planned EtherCAT feature and infrastructure plugins have entered the
 local profile. This proves the plugin profile is assembled, not that every
 Phase-1 requirement is complete. Editable Process Data, Startup, and DC are
-now verified; the full TwinCAT-inspired tree workflow, additional UI coverage,
-and the user-policy-deferred upstream rehearsal remain open.
+now verified, and the public derived-node kinds are reserved. The visible
+TwinCAT-inspired tree workflow, additional UI coverage, and the
+user-policy-deferred upstream rehearsal remain open.
 
 ### Hidden or excluded plugins
 
@@ -71,6 +72,7 @@ function is outside the product target and records migration or recovery.
 |---|---|
 | TwinCAT-inspired device tree shell | Stage 4 verified |
 | Inputs/Outputs/RxPDO/TxPDO/Modules tree branches | Pending Workbench issue |
+| Public process/PDO/module/channel node kinds | Core/API contract verified |
 | Extensible offline property pages | Stage 4 verified |
 | Offline Process Data/Startup/DC domain model | Verified in EtherCATData |
 | Project persistence and Undo/Redo for those models | Verified in format version 2 |
@@ -98,6 +100,30 @@ function is outside the product target and records migration or recovery.
 | Repeated process startup | Passed across focused test and two smoke runs |
 | Direct upstream Core or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
+
+## Workbench derived-node Core/API qualification
+
+This issue reserves only stable selection and property-page routing identities.
+It does not claim that the Workbench renders the new tree branches, that the ESI
+parser supports modular profiles, or that module/channel values may be
+fabricated when source data is absent.
+
+| Check | Result |
+|---|---|
+| Failure-first contract build | Failed on all nine missing derived kinds as expected |
+| Focused EtherCATCore contract tests | 17 passed, 0 failed |
+| Existing `WorkbenchNodeKind` values 0 through 8 | Frozen and verified |
+| Appended process/PDO/module/channel values 9 through 17 | Verified |
+| Derived `PropertyPageContext` value semantics | Verified |
+| EtherCAT plugin regressions | Core 17, Project 11, Devices 8, Workbench 12, Scan 7, Diagnostics 7 passed |
+| Regression execution model | Each plugin suite passed in an isolated process; a combined process is not a valid Provider-isolation gate |
+| CMake and qbs source lists | No source-list change required |
+| Normal Release product build | Passed with 16-plugin allow-list |
+| Enabled GUI startup | Passed for 5 seconds until intentional interrupt |
+| User-visible tree or page change | None in this API prerequisite issue |
+| Direct upstream Core, ProjectExplorer, or app changes | None; direct Core patch count remains five |
+| Full product build with `WITH_TESTS=ON` | Not rerun; existing EasyBoard test include defect remains |
+| qbs build | Not run; qbs executable is unavailable |
 
 ## Offline configuration data qualification
 
