@@ -138,8 +138,8 @@ Snapshot, event, and trend signals are invalidation notifications without large
 payloads; consumers re-query the immutable value they need. This permits a
 source to sample faster than it publishes UI snapshots. A background producer
 may not mutate Provider values or widgets directly: it must aggregate privately
-and publish on the GUI thread. The later Diagnostics plugin owns the concrete
-rate limiting, bounded buffers, Mock scenarios, and property pages.
+and publish on the GUI thread. The Diagnostics plugin owns the concrete rate
+limiting, bounded buffers, Mock scenarios, and property pages.
 
 ## Project service contract
 

@@ -25,7 +25,7 @@ documentation, review, and local-commit gates.
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
 | 4 | `EtherCATWorkbenchPlugin` | Complete | EtherCAT mode, device tree, details container, selection UI |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
-| 6 | `EtherCATDiagnosticsPlugin` | Pending | Mock WKC/DC/link/event diagnostics and trends |
+| 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
 
 `EtherCATData` is an infrastructure library, not a feature container. It may
 only be changed with the plugin currently in progress and only for that
@@ -83,9 +83,8 @@ The exact discovery, lifecycle, and typed Project contract is frozen in
 `docs/ethercat-core-api.md`. It contains no network transport, message IDs,
 serialization, or Zynq ABI concepts. Later feature-specific typed methods are
 added only by a dedicated Core/API change in the owning serial plugin stage.
-The typed Diagnostics contract is now frozen there; the Diagnostics feature
-plugin remains pending until it implements that contract and its completion
-gate.
+The typed Diagnostics contract is frozen there and implemented by the local
+Mock Diagnostics plugin.
 
 ## Cross-plugin data rules
 
@@ -106,8 +105,8 @@ gate.
 
 The completed Workbench plugin owns the EtherCAT mode, its left device tree,
 selection linkage, and the details-page host. Project and Devices supply public
-data. Scan contributes commands, pages, and a Provider through Workbench/Core
-extension points; Diagnostics will follow the same boundary.
+data. Scan and Diagnostics contribute commands, pages, and Providers through
+Workbench/Core extension points.
 
 The completed Project implementation and versioned file contract are recorded
 in `docs/ethercat-project-format.md`. ProjectExplorer owns open/close and
@@ -120,6 +119,9 @@ lifecycle, and explicit stage limits are recorded in
 `docs/ethercat-workbench.md`. The completed local-only scan state machine,
 comparison, branch merge, stable-ID reconciliation, and Mock boundaries are
 recorded in `docs/ethercat-scan.md`.
+The completed local-only diagnostic sampling, bounded histories, alarm
+lifecycle, pages, actions, and cleanup rules are recorded in
+`docs/ethercat-diagnostics.md`.
 
 The intended information structure is:
 

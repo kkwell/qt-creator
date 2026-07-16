@@ -95,11 +95,11 @@ DC read-only pages used by the repository device are reused. A missing ESI
 match is reported explicitly and does not invent PDO or DC data.
 
 When an available Diagnostics provider appears, the built-in Online and
-Diagnostics placeholders are withdrawn so the later plugin can contribute the
-real Mock pages through the public extension point. If it becomes unavailable
-or is removed, the placeholders return. The tree similarly changes its
-Diagnostics status and its no-slaves scan hint when optional Diagnostics or
-Scan providers appear or disappear.
+Diagnostics placeholders are withdrawn so the Diagnostics plugin can
+contribute its live Mock pages through the public extension point. If the
+Provider becomes unavailable or is removed, the placeholders return. The tree
+similarly changes its Diagnostics status and its no-slaves scan hint when
+optional Diagnostics or Scan providers appear or disappear.
 
 ## Lifecycle
 

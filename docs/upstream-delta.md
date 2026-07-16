@@ -30,6 +30,7 @@ relative to that recorded comparison point.
 | `src/plugins/ethercatdevices` | 12 | Product-owned offline ESI repository plugin |
 | `src/plugins/ethercatworkbench` | 20 | Product-owned EtherCAT engineering-shell plugin |
 | `src/plugins/ethercatscan` | 16 | Product-owned local Mock scan workflow plugin |
+| `src/plugins/ethercatdiagnostics` | 16 | Product-owned local Mock diagnostics plugin |
 
 ## Direct Core intrusion
 
@@ -133,6 +134,14 @@ values and typed methods/signals to the existing `DiagnosticsProvider`. The
 Workbench compatibility test uses the public abstract contract. No Qt Creator
 upstream Core, ProjectExplorer, or application path changes, so the direct Core
 patch count remains five.
+
+The stage-6 Diagnostics implementation adds one product-owned plugin through
+the standard top-level CMake and qbs plugin lists. It uses the typed public
+Provider, Project, selection, status, property-page, menu, and context
+contracts. Its worker thread produces local numeric Mock samples and contains
+no controller or network access. It changes no Qt Creator upstream Core,
+ProjectExplorer, or application path, so the direct Core patch count remains
+five.
 
 Each completed EtherCAT issue must report:
 

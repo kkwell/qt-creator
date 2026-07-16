@@ -54,6 +54,7 @@ add_subdirectory(vcsbase)
 
 # Level 5:
 add_subdirectory(ethercatscan)
+add_subdirectory(ethercatdiagnostics)
 add_subdirectory(autotoolsprojectmanager)
 add_subdirectory(bazaar)
 add_subdirectory(beautifier)

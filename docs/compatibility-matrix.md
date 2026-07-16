@@ -45,12 +45,13 @@ local decisions and easier maintenance.
 | EtherCATDevices | Offline ESI repository and immutable device data | Stage 3 verified |
 | EtherCATWorkbench | EtherCAT mode, device tree, selection, and offline property pages | Stage 4 verified |
 | EtherCATScan | Local Mock scan, topology comparison, and checked acceptance | Stage 5 verified |
+| EtherCATDiagnostics | Local Mock state, WKC, DC, alarm, and performance views | Stage 6 verified |
 
-### Planned EtherCAT additions
+### Completed phase-1 EtherCAT additions
 
-Plugins enter the profile only after their preceding serial gate passes:
-
-1. `EtherCATDiagnosticsPlugin`
+All six planned EtherCAT feature and infrastructure plugins have entered the
+local profile. Final cross-plugin integration acceptance remains a separate
+serial issue.
 
 ### Hidden or excluded plugins
 
@@ -71,7 +72,7 @@ function is outside the product target and records migration or recovery.
 | Offline EtherCAT project | Stage 2 verified |
 | ESI repository | Stage 3 verified |
 | Scan UI and topology comparison | Stage 5 verified with Mock provider only |
-| WKC/DC/link diagnostics | Planned with Mock provider only |
+| WKC/DC/link diagnostics | Stage 6 verified with Mock provider only |
 | Zynq protocol | Explicitly out of scope |
 | Real EtherCAT scan | Explicitly out of scope |
 | ECPKG/ECFG/ETIR | Explicitly out of scope |
@@ -195,10 +196,11 @@ hardware result. Its behavior and phase limits are documented in
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |
 
-## Diagnostics API pre-stage-6 qualification
+## Diagnostics API pre-stage-6 qualification (historical gate)
 
-This issue freezes only the public Diagnostics data and Provider contract. The
-Mock Diagnostics plugin, sampling implementation, and live UI remain pending.
+This earlier issue froze only the public Diagnostics data and Provider
+contract. At that gate, the Mock plugin, sampling implementation, and live UI
+were still pending; their completed qualification is recorded below.
 
 | Check | Result |
 |---|---|
@@ -211,6 +213,39 @@ Mock Diagnostics plugin, sampling implementation, and live UI remain pending.
 | Enabled clean-settings startup | Passed for 5 seconds; one shared-memory warning, then intentional `SIGTERM` |
 | Explicitly disabled startup | Passed for 5 seconds with `-noload EtherCATCore` |
 | Diagnostics values and commands | Snapshot, WKC, link, counters, DC, cycle, events, alarms, trends, mode, stop, and failure covered |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
+| qbs build | Not run; qbs executable is unavailable |
+
+## EtherCATDiagnostics stage-6 qualification
+
+The Diagnostics plugin is a local simulation. None of this evidence represents
+controller communication, an EtherCAT frame, physical WKC, measured DC offset,
+or a Zynq result. Its boundaries and implementation are documented in
+`docs/ethercat-diagnostics.md`.
+
+| Check | Result |
+|---|---|
+| Focused EtherCATDiagnostics plugin tests | 7 passed, 0 failed |
+| Metadata, dependencies, Providers, commands, and pages | Passed |
+| Stream state, Config/FreeRun/Run modes, WKC, DC, link, counter, and cycle fields | Passed |
+| 10 ms source and 100 ms UI publication decoupling | Passed |
+| Bounded event/trend histories and oldest-first drop counters | Passed |
+| Active, Acknowledged, Recovered, repeat, and clear alarm lifecycle | Passed |
+| Source failure, final-consumer, project-change, project-close, and shutdown cleanup | Passed |
+| Live page tables, ActionManager commands, trend, and repeated publication | Passed |
+| EtherCATCore regression tests | 13 passed, 0 failed |
+| EtherCATProject regression tests | 8 passed, 0 failed |
+| EtherCATDevices regression tests | 8 passed, 0 failed |
+| EtherCATWorkbench regression tests | 9 passed, 0 failed |
+| EtherCATScan regression tests | 7 passed, 0 failed |
+| Normal Release product build | Passed with 16-plugin allow-list |
+| Product version inventory | EtherCATDiagnostics 20.0.1 present |
+| Enabled GUI startup | Passed; stable for 5 seconds until intentional `SIGTERM` |
+| Explicitly disabled startup | Passed with `-noload EtherCATDiagnostics` |
+| Core dependency disabled startup | Passed with `-noload EtherCATCore` |
+| Visual desktop inspection | Passed with two slaves, eight pages, live WKC 4/4, counters, trend, Start, and Stop |
+| Network or physical hardware access | Not performed by design; implementation contains no network API |
 | Direct upstream Core, ProjectExplorer, or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |
