@@ -36,8 +36,8 @@ defines no controller session, network command, packet, or private ABI.
 
 The offline-configuration revision adds typed Process Data, Startup, and DC
 values plus UI-independent validation and process-image preview algorithms.
-It does not yet add these values to the Project service or project file. That
-integration remains an explicit Project issue.
+The Project format-version-2 revision embeds those values in each offline slave
+snapshot and adds checked replacement commands to `ProjectService`.
 
 ## Stable identity
 
@@ -174,15 +174,18 @@ EtherCATProject plugin. It exposes immutable `ProjectSnapshot` values for all
 open EtherCAT projects and one active project ID. A snapshot contains project
 metadata, stable Project/Target/Master/Slave node identities, and checked
 offline-slave Identity, position, Alias, Serial Number, and optional ESI
-description links. It does not contain ESI XML, scan execution state, PDO,
-online state, or diagnostic data.
+description links. Each offline slave also owns immutable Process Data,
+Startup, and DC configuration values. It does not contain ESI XML, scan
+execution state, online state, or diagnostic data.
 
 The service owns the cross-plugin commands for project activation, rename,
-offline-slave replacement, save, undo, and redo. Replacement is scoped to a
-known master, validates all stable IDs, positions, names, and required Identity
-values, and enters the same project Undo/Redo stack. Commands return
-`Utils::Result` so a consumer cannot
-mistake a rejected command for success. `projectAdded`,
+offline-slave replacement, Process Data replacement, Startup replacement, DC
+replacement, save, undo, and redo. Topology replacement is scoped to a known
+master. Configuration replacement is scoped to a known slave. Both paths
+validate structural and configuration stable IDs plus the shared domain
+validators before entering the same project Undo/Redo stack. Commands return
+`Utils::Result` so a consumer cannot mistake a rejected command for success.
+`projectAdded`,
 `projectAboutToBeRemoved`, `projectChanged`, and `activeProjectChanged` are the
 only cross-plugin lifecycle notifications. Consumers must re-query a snapshot
 after a notification and must not retain ProjectExplorer or document pointers.

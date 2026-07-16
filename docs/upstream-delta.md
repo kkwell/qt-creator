@@ -149,6 +149,13 @@ tests, and documentation. It changes no Qt Creator upstream Core,
 ProjectExplorer, or application path, so the direct Core patch count remains
 five.
 
+The EtherCATProject format-version-2 issue extends only product-owned public
+data, Core service declarations, Project implementation/tests, and
+documentation. It persists Process Data, Startup, and DC values through the
+existing public ProjectExplorer and IDocument lifecycle. It changes no Qt
+Creator upstream Core, ProjectExplorer, or application path, so the direct
+Core patch count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

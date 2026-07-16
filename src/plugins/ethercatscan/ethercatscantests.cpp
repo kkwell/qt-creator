@@ -88,6 +88,9 @@ static Data::OfflineSlaveConfiguration offlineSlave(
             serialNumber,
             0,
             QString("Offline Slave %1").arg(position),
+            {},
+            {},
+            {},
             {}};
 }
 
@@ -226,22 +229,60 @@ void EtherCATScanTests::testTopologyComparison()
 {
     const Data::NodeId projectId = Data::NodeId::create();
     const Data::NodeId masterId = Data::NodeId::create();
-    const QList<Data::OfflineSlaveConfiguration> offline{
+    QList<Data::OfflineSlaveConfiguration> offline{
         offlineSlave(masterId, 0, 0x1000, 1, 101),
         offlineSlave(masterId, 1, 0x2000, 1, 102)};
+    offline[0].processData.syncManagers = {
+        {Data::NodeId::create(),
+         2,
+         "Outputs",
+         Data::SyncManagerDirection::MasterToSlave,
+         true,
+         1}};
+    Data::PdoConfiguration pdo;
+    pdo.id = Data::NodeId::create();
+    pdo.index = 0x1600;
+    pdo.name = "Outputs";
+    pdo.syncManager = 2;
+    pdo.selected = true;
+    pdo.entries = {
+        {Data::NodeId::create(),
+         0x7000,
+         1,
+         "Enable",
+         1,
+         Data::EtherCATDataType::Boolean,
+         "BOOL"}};
+    offline[0].processData.pdos = {pdo};
+    offline[0].startup.parameters = {
+        {Data::NodeId::create(),
+         true,
+         0,
+         "PS",
+         0x8000,
+         1,
+         Data::EtherCATDataType::UnsignedInteger8,
+         "USINT",
+         QByteArray::fromHex("01"),
+         "Enable"}};
+    offline[0].dc = {true, "DC-Synchronous", 0x0300, {true, 125000, 0}, {}, true};
     const Data::ProjectSnapshot project = projectSnapshot(projectId, masterId, offline);
 
-    Data::TopologyComparison exact = compareTopology(
-        project,
+    const Data::ScanSnapshot exactSnapshot = scanSnapshot(
+        projectId,
         masterId,
-        scanSnapshot(projectId,
-                     masterId,
-                     {scannedSlave(0, 0x1000, 1, 101),
-                      scannedSlave(1, 0x2000, 1, 102)}));
+        {scannedSlave(0, 0x1000, 1, 101),
+         scannedSlave(1, 0x2000, 1, 102)});
+    Data::TopologyComparison exact = compareTopology(project, masterId, exactSnapshot);
     QVERIFY(exact.exactMatch);
     QVERIFY(exact.acceptAllowed);
     QCOMPARE(differenceCount(exact, Data::TopologyDifferenceKind::PdoConfiguration), 1);
     QCOMPARE(differenceCount(exact, Data::TopologyDifferenceKind::DcConfiguration), 1);
+    const QList<Data::OfflineSlaveConfiguration> accepted
+        = offlineConfigurationFromScan(project, masterId, exactSnapshot);
+    QCOMPARE(accepted.first().processData, offline.first().processData);
+    QCOMPARE(accepted.first().startup, offline.first().startup);
+    QCOMPARE(accepted.first().dc, offline.first().dc);
 
     Data::TopologyComparison reordered = compareTopology(
         project,
@@ -457,6 +498,9 @@ void EtherCATScanTests::testWorkflowAcceptUndoAndRedo()
          101,
          0,
          "Blocking Offline Slave",
+         {},
+         {},
+         {},
          {}}};
     QVERIFY(service->replaceOfflineSlaves(projectId, masterId, blocker));
     QVERIFY(!workflow.acceptScan());

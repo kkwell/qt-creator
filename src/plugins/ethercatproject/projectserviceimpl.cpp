@@ -120,6 +120,42 @@ Utils::Result<> ProjectServiceImpl::replaceOfflineSlaves(
     return project->document()->replaceOfflineSlaves(masterId, slaves);
 }
 
+Utils::Result<> ProjectServiceImpl::setProcessDataConfiguration(
+    const Data::NodeId &projectId,
+    const Data::NodeId &slaveId,
+    const Data::ProcessDataConfiguration &configuration)
+{
+    QTC_ASSERT(isGuiThread(), return Utils::ResultError(Tr::tr("Project service thread error.")));
+    EtherCATProject *project = findProject(projectId);
+    if (!project)
+        return Utils::ResultError(Tr::tr("The requested EtherCAT project is not open."));
+    return project->document()->setProcessDataConfiguration(slaveId, configuration);
+}
+
+Utils::Result<> ProjectServiceImpl::setStartupConfiguration(
+    const Data::NodeId &projectId,
+    const Data::NodeId &slaveId,
+    const Data::StartupConfiguration &configuration)
+{
+    QTC_ASSERT(isGuiThread(), return Utils::ResultError(Tr::tr("Project service thread error.")));
+    EtherCATProject *project = findProject(projectId);
+    if (!project)
+        return Utils::ResultError(Tr::tr("The requested EtherCAT project is not open."));
+    return project->document()->setStartupConfiguration(slaveId, configuration);
+}
+
+Utils::Result<> ProjectServiceImpl::setDcConfiguration(
+    const Data::NodeId &projectId,
+    const Data::NodeId &slaveId,
+    const Data::DcConfiguration &configuration)
+{
+    QTC_ASSERT(isGuiThread(), return Utils::ResultError(Tr::tr("Project service thread error.")));
+    EtherCATProject *project = findProject(projectId);
+    if (!project)
+        return Utils::ResultError(Tr::tr("The requested EtherCAT project is not open."));
+    return project->document()->setDcConfiguration(slaveId, configuration);
+}
+
 bool ProjectServiceImpl::canUndoProject(const Data::NodeId &projectId) const
 {
     QTC_ASSERT(isGuiThread(), return false);
@@ -141,9 +177,10 @@ void ProjectServiceImpl::registerProject(ProjectExplorer::Project *project)
     if (!etherCATProject || m_projects.contains(etherCATProject))
         return;
     if (findProject(etherCATProject->snapshot().id)) {
-        etherCATProject->addTask(ProjectExplorer::Project::createTask(
-            ProjectExplorer::Task::TaskType::Error,
-            Tr::tr("Another open EtherCAT project has the same project ID.")));
+        etherCATProject->addTask(
+            ProjectExplorer::Project::createTask(
+                ProjectExplorer::Task::TaskType::Error,
+                Tr::tr("Another open EtherCAT project has the same project ID.")));
         return;
     }
 

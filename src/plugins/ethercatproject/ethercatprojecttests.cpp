@@ -14,6 +14,8 @@
 #include <extensionsystem/pluginmanager.h>
 #include <extensionsystem/pluginspec.h>
 
+#include <ethercatdata/offlineconfiguration.h>
+
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectmanager.h>
 
@@ -55,22 +57,94 @@ static Data::NodeId masterId(const Data::ProjectSnapshot &snapshot)
 
 static QList<Data::OfflineSlaveConfiguration> offlineSlaves(const Data::NodeId &master)
 {
-    return {{Data::NodeId::create(),
-             master,
-             1,
-             {2, 0x2000, 2},
-             102,
-             0,
-             "Mock Drive B",
-             Data::NodeId::create()},
-            {Data::NodeId::create(),
-             master,
-             0,
-             {2, 0x1000, 1},
-             101,
-             7,
-             "Mock I/O A",
-             {}}};
+    return {
+        {Data::NodeId::create(),
+         master,
+         1,
+         {2, 0x2000, 2},
+         102,
+         0,
+         "Mock Drive B",
+         Data::NodeId::create(),
+         {},
+         {},
+         {}},
+        {Data::NodeId::create(), master, 0, {2, 0x1000, 1}, 101, 7, "Mock I/O A", {}, {}, {}, {}}};
+}
+
+static Data::ProcessDataConfiguration processDataConfiguration()
+{
+    Data::ProcessDataConfiguration configuration;
+    configuration.syncManagers = {
+        {Data::NodeId::create(), 2, "Outputs", Data::SyncManagerDirection::MasterToSlave, true, 8},
+        {Data::NodeId::create(), 3, "Inputs", Data::SyncManagerDirection::SlaveToMaster, true, 4},
+    };
+
+    Data::PdoConfiguration outputs;
+    outputs.id = Data::NodeId::create();
+    outputs.index = 0x1600;
+    outputs.name = "Drive outputs";
+    outputs.direction = Data::PdoDirection::Rx;
+    outputs.syncManager = 2;
+    outputs.selected = true;
+    outputs.mandatory = true;
+    outputs.defaultSelected = true;
+    outputs.entries = {
+        {Data::NodeId::create(),
+         0x6040,
+         0,
+         "Controlword",
+         16,
+         Data::EtherCATDataType::UnsignedInteger16,
+         "UINT"},
+        {Data::NodeId::create(),
+         0x607a,
+         0,
+         "Target position",
+         32,
+         Data::EtherCATDataType::Integer32,
+         "DINT"},
+    };
+
+    Data::PdoConfiguration inputs;
+    inputs.id = Data::NodeId::create();
+    inputs.index = 0x1a00;
+    inputs.name = "Drive inputs";
+    inputs.direction = Data::PdoDirection::Tx;
+    inputs.syncManager = 3;
+    inputs.selected = true;
+    inputs.fixed = true;
+    inputs.entries = {
+        {Data::NodeId::create(),
+         0x6041,
+         0,
+         "Statusword",
+         16,
+         Data::EtherCATDataType::UnsignedInteger16,
+         "UINT"},
+    };
+    configuration.pdos = {outputs, inputs};
+    return configuration;
+}
+
+static Data::StartupConfiguration startupConfiguration()
+{
+    return {
+        {{Data::NodeId::create(),
+          true,
+          0,
+          "PS",
+          0x6060,
+          0,
+          Data::EtherCATDataType::Integer8,
+          "SINT",
+          QByteArray::fromHex("08"),
+          "Cyclic synchronous position mode"}}};
+}
+
+static Data::DcConfiguration dcConfiguration()
+{
+    return {true, "DC-Synchronous", 0x0300, {true, 125000, -1000}, {}, true};
 }
 
 void EtherCATProjectTests::testMetadataAndService()
@@ -118,6 +192,7 @@ void EtherCATProjectTests::testFormatRoundTripAndCorruption()
     QVERIFY_RESULT(loaded);
     QCOMPARE(loaded->snapshot, source);
     QVERIFY(!loaded->migrationRequired);
+    QCOMPARE(loaded->sourceFormatVersion, Constants::CURRENT_FORMAT_VERSION);
 
     const Utils::Result<LoadedProject> malformed = parseProject("{broken", "Fallback");
     QVERIFY(!malformed);
@@ -252,6 +327,217 @@ void EtherCATProjectTests::testOfflineSlavePersistenceAndUndo()
     QVERIFY(!parseProject(QJsonDocument(malformedRoot).toJson(), "Fallback"));
 }
 
+void EtherCATProjectTests::testOfflineConfigurationPersistenceAndUndo()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath projectFile = temporaryFilePath(directory, "configuration.ecatproject");
+    const Data::ProjectSnapshot source = createProjectSnapshot("Configured Line", "Test");
+    QVERIFY_RESULT(projectFile.writeFileContents(serializeProject(source)));
+
+    EtherCATProjectDocument document;
+    QVERIFY_RESULT(document.load(projectFile));
+    const Data::NodeId master = masterId(document.snapshot());
+    QList<Data::OfflineSlaveConfiguration> slaves = offlineSlaves(master);
+    slaves = {slaves.at(1)};
+    QVERIFY_RESULT(document.replaceOfflineSlaves(master, slaves));
+    const Data::NodeId slaveId = document.snapshot().slaves.first().id;
+
+    const Data::ProcessDataConfiguration processData = processDataConfiguration();
+    const Data::StartupConfiguration startup = startupConfiguration();
+    const Data::DcConfiguration dc = dcConfiguration();
+    QVERIFY_RESULT(document.setProcessDataConfiguration(slaveId, processData));
+    QVERIFY_RESULT(document.setStartupConfiguration(slaveId, startup));
+    QVERIFY_RESULT(document.setDcConfiguration(slaveId, dc));
+    QCOMPARE(document.snapshot().slaves.first().processData, processData);
+    QCOMPARE(document.snapshot().slaves.first().startup, startup);
+    QCOMPARE(document.snapshot().slaves.first().dc, dc);
+
+    Data::ProcessDataConfiguration invalidProcessData = processData;
+    invalidProcessData.pdos.first().syncManager = 99;
+    const int commandCount = document.undoStack()->count();
+    QVERIFY(!document.setProcessDataConfiguration(slaveId, invalidProcessData));
+    invalidProcessData = processData;
+    invalidProcessData.pdos.first().entries.first().requestedBitOffset = (qint64(1) << 53) + 1;
+    QVERIFY(!document.setProcessDataConfiguration(slaveId, invalidProcessData));
+    QCOMPARE(document.undoStack()->count(), commandCount);
+
+    Data::StartupConfiguration invalidStartup = startup;
+    invalidStartup.parameters.first().order = -1;
+    QVERIFY(!document.setStartupConfiguration(slaveId, invalidStartup));
+    Data::DcConfiguration invalidDc = dc;
+    invalidDc.sync0.shiftTimeNs = invalidDc.sync0.cycleTimeNs + 1;
+    QVERIFY(!document.setDcConfiguration(slaveId, invalidDc));
+    QCOMPARE(document.undoStack()->count(), commandCount);
+
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().slaves.first().dc, Data::DcConfiguration());
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().slaves.first().startup, Data::StartupConfiguration());
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().slaves.first().processData, Data::ProcessDataConfiguration());
+    document.undoStack()->redo();
+    document.undoStack()->redo();
+    document.undoStack()->redo();
+    QCOMPARE(document.snapshot().slaves.first().dc, dc);
+
+    QVERIFY_RESULT(document.save());
+    const Utils::Result<QByteArray> savedContents = projectFile.fileContents();
+    QVERIFY_RESULT(savedContents);
+    const QJsonObject root = QJsonDocument::fromJson(*savedContents).object();
+    QCOMPARE(root.value("formatVersion").toInt(), 2);
+    const QJsonArray savedSlaves = root.value("master").toObject().value("slaves").toArray();
+    QVERIFY(savedSlaves.first().toObject().value("configuration").isObject());
+
+    const Utils::Result<LoadedProject> loaded = parseProject(*savedContents, "Fallback");
+    QVERIFY_RESULT(loaded);
+    QCOMPARE(loaded->snapshot.slaves, document.snapshot().slaves);
+    QVERIFY(!loaded->migrationRequired);
+}
+
+void EtherCATProjectTests::testVersionOneConfigurationMigration()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath projectFile = temporaryFilePath(directory, "version-one.ecatproject");
+    Data::ProjectSnapshot source = createProjectSnapshot("Version One", "Test");
+    const Data::NodeId master = masterId(source);
+    source.slaves = offlineSlaves(master);
+    for (const Data::OfflineSlaveConfiguration &slave : std::as_const(source.slaves)) {
+        source.nodes.append({slave.id, slave.masterId, Data::ProjectNodeKind::Slave, slave.name});
+    }
+
+    QJsonObject root = QJsonDocument::fromJson(serializeProject(source)).object();
+    root.insert("formatVersion", 1);
+    QJsonObject masterObject = root.value("master").toObject();
+    QJsonArray slaves = masterObject.value("slaves").toArray();
+    for (qsizetype index = 0; index < slaves.size(); ++index) {
+        QJsonObject slave = slaves.at(index).toObject();
+        slave.remove("configuration");
+        slaves[index] = slave;
+    }
+    masterObject.insert("slaves", slaves);
+    root.insert("master", masterObject);
+    const QByteArray versionOneContents = QJsonDocument(root).toJson();
+    QVERIFY_RESULT(projectFile.writeFileContents(versionOneContents));
+
+    EtherCATProjectDocument document;
+    QVERIFY_RESULT(document.load(projectFile));
+    QVERIFY(document.snapshot().migrated);
+    QVERIFY(document.isModified());
+    QCOMPARE(document.snapshot().formatVersion, Constants::CURRENT_FORMAT_VERSION);
+    QCOMPARE(document.snapshot().slaves.size(), 2);
+    QCOMPARE(document.snapshot().slaves.first().processData, Data::ProcessDataConfiguration());
+
+    QVERIFY_RESULT(document.save());
+    QVERIFY(document.migrationBackupPath().toUrlishString().contains(".v1.bak"));
+    const Utils::Result<QByteArray> backup = document.migrationBackupPath().fileContents();
+    QVERIFY_RESULT(backup);
+    QCOMPARE(*backup, versionOneContents);
+}
+
+void EtherCATProjectTests::testOfflineConfigurationCorruption()
+{
+    Data::ProjectSnapshot source = createProjectSnapshot("Corruption", "Test");
+    const Data::NodeId master = masterId(source);
+    Data::OfflineSlaveConfiguration slave = offlineSlaves(master).first();
+    slave.processData = processDataConfiguration();
+    slave.startup = startupConfiguration();
+    slave.dc = dcConfiguration();
+    source.slaves = {slave};
+    source.nodes.append({slave.id, master, Data::ProjectNodeKind::Slave, slave.name});
+
+    const QJsonObject validRoot = QJsonDocument::fromJson(serializeProject(source)).object();
+
+    QJsonObject missingConfigurationRoot = validRoot;
+    QJsonObject missingConfigurationMaster = missingConfigurationRoot.value("master").toObject();
+    QJsonArray missingConfigurationSlaves = missingConfigurationMaster.value("slaves").toArray();
+    QJsonObject missingConfigurationSlave = missingConfigurationSlaves.first().toObject();
+    missingConfigurationSlave.remove("configuration");
+    missingConfigurationSlaves[0] = missingConfigurationSlave;
+    missingConfigurationMaster.insert("slaves", missingConfigurationSlaves);
+    missingConfigurationRoot.insert("master", missingConfigurationMaster);
+    QVERIFY(!parseProject(QJsonDocument(missingConfigurationRoot).toJson(), "Fallback"));
+
+    QJsonObject hugeNumberRoot = validRoot;
+    QJsonObject hugeNumberMaster = hugeNumberRoot.value("master").toObject();
+    QJsonArray hugeNumberSlaves = hugeNumberMaster.value("slaves").toArray();
+    QJsonObject hugeNumberSlave = hugeNumberSlaves.first().toObject();
+    hugeNumberSlave.insert("vendorId", 1e300);
+    hugeNumberSlaves[0] = hugeNumberSlave;
+    hugeNumberMaster.insert("slaves", hugeNumberSlaves);
+    hugeNumberRoot.insert("master", hugeNumberMaster);
+    const Utils::Result<LoadedProject> hugeNumber
+        = parseProject(QJsonDocument(hugeNumberRoot).toJson(), "Fallback");
+    QVERIFY(!hugeNumber);
+    QVERIFY(hugeNumber.error().contains("out-of-range"));
+
+    QJsonObject duplicateIdRoot = validRoot;
+    QJsonObject duplicateIdMaster = duplicateIdRoot.value("master").toObject();
+    QJsonArray duplicateIdSlaves = duplicateIdMaster.value("slaves").toArray();
+    QJsonObject duplicateIdSlave = duplicateIdSlaves.first().toObject();
+    QJsonObject duplicateIdConfiguration = duplicateIdSlave.value("configuration").toObject();
+    QJsonObject duplicateIdProcessData = duplicateIdConfiguration.value("processData").toObject();
+    QJsonArray duplicateIdSyncManagers = duplicateIdProcessData.value("syncManagers").toArray();
+    QJsonArray duplicateIdPdos = duplicateIdProcessData.value("pdos").toArray();
+    QJsonObject duplicateIdPdo = duplicateIdPdos.first().toObject();
+    duplicateIdPdo.insert("id", duplicateIdSyncManagers.first().toObject().value("id"));
+    duplicateIdPdos[0] = duplicateIdPdo;
+    duplicateIdProcessData.insert("pdos", duplicateIdPdos);
+    duplicateIdConfiguration.insert("processData", duplicateIdProcessData);
+    duplicateIdSlave.insert("configuration", duplicateIdConfiguration);
+    duplicateIdSlaves[0] = duplicateIdSlave;
+    duplicateIdMaster.insert("slaves", duplicateIdSlaves);
+    duplicateIdRoot.insert("master", duplicateIdMaster);
+    const Utils::Result<LoadedProject> duplicateId
+        = parseProject(QJsonDocument(duplicateIdRoot).toJson(), "Fallback");
+    QVERIFY(!duplicateId);
+    QVERIFY(duplicateId.error().contains("stable ID"));
+
+    QJsonObject invalidHexRoot = validRoot;
+    QJsonObject invalidHexMaster = invalidHexRoot.value("master").toObject();
+    QJsonArray invalidHexSlaves = invalidHexMaster.value("slaves").toArray();
+    QJsonObject invalidHexSlave = invalidHexSlaves.first().toObject();
+    QJsonObject invalidHexConfiguration = invalidHexSlave.value("configuration").toObject();
+    QJsonObject invalidHexStartup = invalidHexConfiguration.value("startup").toObject();
+    QJsonArray invalidHexParameters = invalidHexStartup.value("parameters").toArray();
+    QJsonObject invalidHexParameter = invalidHexParameters.first().toObject();
+    invalidHexParameter.insert("rawValueHex", "0g");
+    invalidHexParameters[0] = invalidHexParameter;
+    invalidHexStartup.insert("parameters", invalidHexParameters);
+    invalidHexConfiguration.insert("startup", invalidHexStartup);
+    invalidHexSlave.insert("configuration", invalidHexConfiguration);
+    invalidHexSlaves[0] = invalidHexSlave;
+    invalidHexMaster.insert("slaves", invalidHexSlaves);
+    invalidHexRoot.insert("master", invalidHexMaster);
+    const Utils::Result<LoadedProject> invalidHex
+        = parseProject(QJsonDocument(invalidHexRoot).toJson(), "Fallback");
+    QVERIFY(!invalidHex);
+    QVERIFY(invalidHex.error().contains("hexadecimal"));
+
+    QJsonObject root = validRoot;
+    QJsonObject masterObject = root.value("master").toObject();
+    QJsonArray slaves = masterObject.value("slaves").toArray();
+    QJsonObject slaveObject = slaves.first().toObject();
+    QJsonObject configuration = slaveObject.value("configuration").toObject();
+    QJsonObject processData = configuration.value("processData").toObject();
+    QJsonArray pdos = processData.value("pdos").toArray();
+    QJsonObject pdo = pdos.first().toObject();
+    pdo.insert("syncManager", 99);
+    pdos[0] = pdo;
+    processData.insert("pdos", pdos);
+    configuration.insert("processData", processData);
+    slaveObject.insert("configuration", configuration);
+    slaves[0] = slaveObject;
+    masterObject.insert("slaves", slaves);
+    root.insert("master", masterObject);
+
+    const Utils::Result<LoadedProject> loaded
+        = parseProject(QJsonDocument(root).toJson(), "Fallback");
+    QVERIFY(!loaded);
+    QVERIFY(loaded.error().contains("Sync Manager"));
+}
+
 void EtherCATProjectTests::testMigrationCreatesRecoveryBackup()
 {
     QTemporaryDir directory;
@@ -278,6 +564,7 @@ void EtherCATProjectTests::testMigrationCreatesRecoveryBackup()
     QVERIFY_RESULT(document.save());
     QVERIFY(!document.isModified());
     QVERIFY(!document.migrationBackupPath().isEmpty());
+    QVERIFY(document.migrationBackupPath().toUrlishString().contains(".v0.bak"));
     QVERIFY(document.migrationBackupPath().exists());
     const Utils::Result<QByteArray> backup = document.migrationBackupPath().fileContents();
     QVERIFY_RESULT(backup);
@@ -343,6 +630,15 @@ void EtherCATProjectTests::testProjectExplorerMultiProjectLifecycle()
     QVERIFY_RESULT(service->replaceOfflineSlaves(
         secondProject->snapshot().id, secondMaster, offlineSlaves(secondMaster)));
     QCOMPARE(service->project(secondProject->snapshot().id)->slaves.size(), 2);
+    const Data::NodeId configuredSlaveId
+        = service->project(secondProject->snapshot().id)->slaves.first().id;
+    QVERIFY_RESULT(service->setProcessDataConfiguration(
+        secondProject->snapshot().id, configuredSlaveId, processDataConfiguration()));
+    QCOMPARE(
+        service->project(secondProject->snapshot().id)->slaves.first().processData.pdos.size(), 2);
+    QVERIFY_RESULT(service->undoProject(secondProject->snapshot().id));
+    QVERIFY(
+        service->project(secondProject->snapshot().id)->slaves.first().processData.pdos.isEmpty());
     QVERIFY(service->canUndoProject(secondProject->snapshot().id));
     QVERIFY_RESULT(service->undoProject(secondProject->snapshot().id));
     QVERIFY(service->project(secondProject->snapshot().id)->slaves.isEmpty());

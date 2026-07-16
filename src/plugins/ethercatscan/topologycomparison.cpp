@@ -279,22 +279,29 @@ QList<Data::OfflineSlaveConfiguration> offlineConfigurationFromScan(
     QSet<int> matchedOffline;
     for (const Data::ScannedSlave &slave : snapshot.slaves) {
         Data::NodeId acceptedId = slave.id;
+        const Data::OfflineSlaveConfiguration *matchedConfiguration = nullptr;
         for (int index = 0; index < offline.size(); ++index) {
             if (!matchedOffline.contains(index)
                 && samePhysicalDevice(offline.at(index), slave)) {
                 acceptedId = offline.at(index).id;
+                matchedConfiguration = &offline.at(index);
                 matchedOffline.insert(index);
                 break;
             }
         }
-        result.append({acceptedId,
-                       snapshot.masterId,
-                       slave.position,
-                       slave.identity,
-                       slave.serialNumber,
-                       slave.alias,
-                       slave.name,
-                       slave.deviceDescriptionId});
+        result.append(
+            {acceptedId,
+             snapshot.masterId,
+             slave.position,
+             slave.identity,
+             slave.serialNumber,
+             slave.alias,
+             slave.name,
+             slave.deviceDescriptionId,
+             matchedConfiguration ? matchedConfiguration->processData
+                                  : Data::ProcessDataConfiguration{},
+             matchedConfiguration ? matchedConfiguration->startup : Data::StartupConfiguration{},
+             matchedConfiguration ? matchedConfiguration->dc : Data::DcConfiguration{}});
     }
     std::sort(result.begin(), result.end(), [](const auto &left, const auto &right) {
         return left.position < right.position;

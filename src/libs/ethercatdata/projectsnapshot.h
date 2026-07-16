@@ -5,6 +5,7 @@
 #include "devicedescription.h"
 #include "ethercatdata_global.h"
 #include "nodeid.h"
+#include "offlineconfiguration.h"
 
 #include <QList>
 #include <QMetaType>
@@ -24,6 +25,9 @@ struct ETHERCATDATA_EXPORT OfflineSlaveConfiguration
     quint16 alias = 0;
     QString name;
     NodeId deviceDescriptionId;
+    ProcessDataConfiguration processData;
+    StartupConfiguration startup;
+    DcConfiguration dc;
 
     friend bool operator==(const OfflineSlaveConfiguration &, const OfflineSlaveConfiguration &)
         = default;

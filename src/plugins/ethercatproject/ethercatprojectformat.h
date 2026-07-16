@@ -14,6 +14,7 @@ struct LoadedProject
 {
     Data::ProjectSnapshot snapshot;
     bool migrationRequired = false;
+    int sourceFormatVersion = 0;
 };
 
 Data::ProjectSnapshot createProjectSnapshot(const QString &name, const QString &createdBy);

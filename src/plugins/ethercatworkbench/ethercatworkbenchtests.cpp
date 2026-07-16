@@ -418,7 +418,10 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
                        17,
                        3,
                        "Configured Servo",
-                       found->id}};
+                       found->id,
+                       {},
+                       {},
+                       {}}};
     project.nodes.append(
         {slaveId, master, Data::ProjectNodeKind::Slave, "Configured Servo"});
     controller.treeModel()->setProjects({project});

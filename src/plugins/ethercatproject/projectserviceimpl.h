@@ -35,6 +35,18 @@ public:
         const Data::NodeId &projectId,
         const Data::NodeId &masterId,
         const QList<Data::OfflineSlaveConfiguration> &slaves) final;
+    Utils::Result<> setProcessDataConfiguration(
+        const Data::NodeId &projectId,
+        const Data::NodeId &slaveId,
+        const Data::ProcessDataConfiguration &configuration) final;
+    Utils::Result<> setStartupConfiguration(
+        const Data::NodeId &projectId,
+        const Data::NodeId &slaveId,
+        const Data::StartupConfiguration &configuration) final;
+    Utils::Result<> setDcConfiguration(
+        const Data::NodeId &projectId,
+        const Data::NodeId &slaveId,
+        const Data::DcConfiguration &configuration) final;
     bool canUndoProject(const Data::NodeId &projectId) const final;
     bool canRedoProject(const Data::NodeId &projectId) const final;
 

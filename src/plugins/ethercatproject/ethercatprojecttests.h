@@ -15,6 +15,9 @@ private slots:
     void testFormatRoundTripAndCorruption();
     void testDocumentUndoRedoAndAtomicFailure();
     void testOfflineSlavePersistenceAndUndo();
+    void testOfflineConfigurationPersistenceAndUndo();
+    void testVersionOneConfigurationMigration();
+    void testOfflineConfigurationCorruption();
     void testMigrationCreatesRecoveryBackup();
     void testProjectExplorerMultiProjectLifecycle();
 };

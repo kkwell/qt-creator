@@ -24,8 +24,13 @@ public:
 
     Utils::Result<> renameProject(const QString &name);
     Utils::Result<> replaceOfflineSlaves(
-        const Data::NodeId &masterId,
-        const QList<Data::OfflineSlaveConfiguration> &slaves);
+        const Data::NodeId &masterId, const QList<Data::OfflineSlaveConfiguration> &slaves);
+    Utils::Result<> setProcessDataConfiguration(
+        const Data::NodeId &slaveId, const Data::ProcessDataConfiguration &configuration);
+    Utils::Result<> setStartupConfiguration(
+        const Data::NodeId &slaveId, const Data::StartupConfiguration &configuration);
+    Utils::Result<> setDcConfiguration(
+        const Data::NodeId &slaveId, const Data::DcConfiguration &configuration);
 
     QByteArray contents() const final;
     bool isModified() const final;
@@ -43,8 +48,8 @@ protected:
 private:
     void applyProjectName(const QString &name);
     void applyOfflineSlaves(
-        const Data::NodeId &masterId,
-        const QList<Data::OfflineSlaveConfiguration> &slaves);
+        const Data::NodeId &masterId, const QList<Data::OfflineSlaveConfiguration> &slaves);
+    void applyOfflineSlave(const Data::OfflineSlaveConfiguration &slave);
     void publishSnapshot();
     void setInvalidSnapshot(const QString &fallbackName, const QString &error);
     Utils::Result<> createMigrationBackup(const Utils::FilePath &sourcePath);
@@ -52,10 +57,12 @@ private:
     Data::ProjectSnapshot m_snapshot;
     QUndoStack m_undoStack;
     bool m_migrationPending = false;
+    int m_migrationSourceVersion = -1;
     Utils::FilePath m_migrationBackupPath;
 
     friend class RenameProjectCommand;
     friend class ReplaceOfflineSlavesCommand;
+    friend class UpdateOfflineSlaveCommand;
 };
 
 } // namespace EtherCAT::Project::Internal

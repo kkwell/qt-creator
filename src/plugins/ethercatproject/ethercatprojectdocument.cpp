@@ -8,8 +8,8 @@
 
 #include <utils/fileutils.h>
 
-#include <QSignalBlocker>
 #include <QSet>
+#include <QSignalBlocker>
 #include <QUndoCommand>
 
 #include <algorithm>
@@ -64,6 +64,30 @@ private:
     QList<Data::OfflineSlaveConfiguration> m_newSlaves;
 };
 
+class UpdateOfflineSlaveCommand final : public QUndoCommand
+{
+public:
+    UpdateOfflineSlaveCommand(
+        EtherCATProjectDocument *document,
+        const Data::OfflineSlaveConfiguration &oldSlave,
+        const Data::OfflineSlaveConfiguration &newSlave,
+        const QString &text)
+        : m_document(document)
+        , m_oldSlave(oldSlave)
+        , m_newSlave(newSlave)
+    {
+        setText(text);
+    }
+
+    void undo() final { m_document->applyOfflineSlave(m_oldSlave); }
+    void redo() final { m_document->applyOfflineSlave(m_newSlave); }
+
+private:
+    EtherCATProjectDocument *m_document;
+    Data::OfflineSlaveConfiguration m_oldSlave;
+    Data::OfflineSlaveConfiguration m_newSlave;
+};
+
 static QList<Data::OfflineSlaveConfiguration> slavesForMaster(
     const Data::ProjectSnapshot &snapshot, const Data::NodeId &masterId)
 {
@@ -76,6 +100,126 @@ static QList<Data::OfflineSlaveConfiguration> slavesForMaster(
         return left.position < right.position;
     });
     return result;
+}
+
+static void applyOfflineSlavesToSnapshot(
+    Data::ProjectSnapshot &snapshot,
+    const Data::NodeId &masterId,
+    const QList<Data::OfflineSlaveConfiguration> &slaves)
+{
+    snapshot.slaves.removeIf([&masterId](const auto &slave) { return slave.masterId == masterId; });
+    snapshot.slaves.append(slaves);
+    std::sort(snapshot.slaves.begin(), snapshot.slaves.end(), [](const auto &left, const auto &right) {
+        const int masterOrder = left.masterId.toString().compare(right.masterId.toString());
+        return masterOrder == 0 ? left.position < right.position : masterOrder < 0;
+    });
+
+    snapshot.nodes.removeIf(
+        [](const auto &node) { return node.kind == Data::ProjectNodeKind::Slave; });
+    for (const Data::OfflineSlaveConfiguration &slave : std::as_const(snapshot.slaves)) {
+        snapshot.nodes.append({slave.id, slave.masterId, Data::ProjectNodeKind::Slave, slave.name});
+    }
+}
+
+static Utils::Result<> insertConfigurationId(
+    QSet<Data::NodeId> &ids, const Data::NodeId &id, const QString &objectName)
+{
+    if (id.isNull())
+        return Utils::ResultError(Tr::tr("%1 has an invalid stable ID.").arg(objectName));
+    if (ids.contains(id)) {
+        return Utils::ResultError(
+            Tr::tr("%1 reuses a stable ID that is already present in the project.").arg(objectName));
+    }
+    ids.insert(id);
+    return Utils::ResultOk;
+}
+
+static Utils::Result<> validateProjectConfigurations(const Data::ProjectSnapshot &snapshot)
+{
+    QSet<Data::NodeId> ids;
+    for (const Data::ProjectNodeSnapshot &node : snapshot.nodes)
+        ids.insert(node.id);
+
+    for (const Data::OfflineSlaveConfiguration &slave : snapshot.slaves) {
+        constexpr qint64 maximumExactJsonInteger = qint64(1) << 53;
+        for (const Data::SyncManagerConfiguration &syncManager : slave.processData.syncManagers) {
+            if (syncManager.index < 0 || syncManager.sizeLimitBytes < 0) {
+                return Utils::ResultError(
+                    Tr::tr("Sync Manager index and byte-size limit must be non-negative."));
+            }
+        }
+        for (const Data::PdoConfiguration &pdo : slave.processData.pdos) {
+            for (const Data::PdoEntryConfiguration &entry : pdo.entries) {
+                if (entry.requestedBitOffset > maximumExactJsonInteger) {
+                    return Utils::ResultError(
+                        Tr::tr("PDO entry offsets must fit the exact JSON integer range."));
+                }
+            }
+        }
+
+        const Data::ConfigurationValidation processValidation
+            = Data::validateProcessDataConfiguration(slave.processData);
+        if (processValidation.hasErrors()) {
+            const auto error = std::find_if(
+                processValidation.issues.cbegin(),
+                processValidation.issues.cend(),
+                [](const Data::ConfigurationIssue &issue) {
+                    return issue.severity == Data::ConfigurationIssueSeverity::Error;
+                });
+            return Utils::ResultError(
+                Tr::tr("Process Data for '%1' is invalid: %2").arg(slave.name, error->message));
+        }
+
+        const QList<Data::ConfigurationIssue> startupIssues = Data::validateStartupConfiguration(
+            slave.startup);
+        const auto startupError = std::find_if(
+            startupIssues.cbegin(), startupIssues.cend(), [](const Data::ConfigurationIssue &issue) {
+                return issue.severity == Data::ConfigurationIssueSeverity::Error;
+            });
+        if (startupError != startupIssues.cend()) {
+            return Utils::ResultError(
+                Tr::tr("Startup for '%1' is invalid: %2").arg(slave.name, startupError->message));
+        }
+
+        const QList<Data::ConfigurationIssue> dcIssues = Data::validateDcConfiguration(slave.dc);
+        const auto dcError = std::find_if(
+            dcIssues.cbegin(), dcIssues.cend(), [](const Data::ConfigurationIssue &issue) {
+                return issue.severity == Data::ConfigurationIssueSeverity::Error;
+            });
+        if (dcError != dcIssues.cend()) {
+            return Utils::ResultError(
+                Tr::tr("DC for '%1' is invalid: %2").arg(slave.name, dcError->message));
+        }
+
+        for (const Data::SyncManagerConfiguration &syncManager : slave.processData.syncManagers) {
+            if (const Utils::Result<> result
+                = insertConfigurationId(ids, syncManager.id, Tr::tr("Sync Manager"));
+                !result) {
+                return result;
+            }
+        }
+        for (const Data::PdoConfiguration &pdo : slave.processData.pdos) {
+            if (const Utils::Result<> result = insertConfigurationId(ids, pdo.id, Tr::tr("PDO"));
+                !result) {
+                return result;
+            }
+            for (const Data::PdoEntryConfiguration &entry : pdo.entries) {
+                if (const Utils::Result<> result
+                    = insertConfigurationId(ids, entry.id, Tr::tr("PDO entry"));
+                    !result) {
+                    return result;
+                }
+            }
+        }
+        for (const Data::StartupParameterConfiguration &parameter : slave.startup.parameters) {
+            if (const Utils::Result<> result
+                = insertConfigurationId(ids, parameter.id, Tr::tr("Startup parameter"));
+                !result) {
+                return result;
+            }
+        }
+    }
+    return Utils::ResultOk;
 }
 
 EtherCATProjectDocument::EtherCATProjectDocument(QObject *parent)
@@ -118,6 +262,7 @@ Utils::Result<> EtherCATProjectDocument::load(const Utils::FilePath &filePath)
         m_snapshot = loaded->snapshot;
     }
     m_migrationPending = loaded->migrationRequired;
+    m_migrationSourceVersion = loaded->migrationRequired ? loaded->sourceFormatVersion : -1;
     m_snapshot.modified = isModified();
     publishSnapshot();
     return Utils::ResultOk;
@@ -204,12 +349,99 @@ Utils::Result<> EtherCATProjectDocument::replaceOfflineSlaves(
         return left.position < right.position;
     });
 
-    const QList<Data::OfflineSlaveConfiguration> oldSlaves
-        = slavesForMaster(m_snapshot, masterId);
+    Data::ProjectSnapshot candidate = m_snapshot;
+    applyOfflineSlavesToSnapshot(candidate, masterId, normalized);
+    if (const Utils::Result<> validation = validateProjectConfigurations(candidate); !validation)
+        return validation;
+
+    const QList<Data::OfflineSlaveConfiguration> oldSlaves = slavesForMaster(m_snapshot, masterId);
     if (oldSlaves == normalized)
         return Utils::ResultOk;
+    m_undoStack.push(new ReplaceOfflineSlavesCommand(this, masterId, oldSlaves, normalized));
+    return Utils::ResultOk;
+}
+
+Utils::Result<> EtherCATProjectDocument::setProcessDataConfiguration(
+    const Data::NodeId &slaveId, const Data::ProcessDataConfiguration &configuration)
+{
+    if (!m_snapshot.valid)
+        return Utils::ResultError(Tr::tr("Cannot edit an invalid EtherCAT project."));
+    const auto slave = std::find_if(
+        m_snapshot.slaves.cbegin(), m_snapshot.slaves.cend(), [&slaveId](const auto &entry) {
+            return entry.id == slaveId;
+        });
+    if (slave == m_snapshot.slaves.cend())
+        return Utils::ResultError(Tr::tr("The requested offline slave does not exist."));
+    if (slave->processData == configuration)
+        return Utils::ResultOk;
+
+    Data::OfflineSlaveConfiguration updated = *slave;
+    updated.processData = configuration;
+    Data::ProjectSnapshot candidate = m_snapshot;
+    *std::find_if(candidate.slaves.begin(), candidate.slaves.end(), [&slaveId](const auto &entry) {
+        return entry.id == slaveId;
+    }) = updated;
+    if (const Utils::Result<> validation = validateProjectConfigurations(candidate); !validation)
+        return validation;
+
+    m_undoStack.push(new UpdateOfflineSlaveCommand(
+        this, *slave, updated, Tr::tr("Configure EtherCAT Process Data")));
+    return Utils::ResultOk;
+}
+
+Utils::Result<> EtherCATProjectDocument::setStartupConfiguration(
+    const Data::NodeId &slaveId, const Data::StartupConfiguration &configuration)
+{
+    if (!m_snapshot.valid)
+        return Utils::ResultError(Tr::tr("Cannot edit an invalid EtherCAT project."));
+    const auto slave = std::find_if(
+        m_snapshot.slaves.cbegin(), m_snapshot.slaves.cend(), [&slaveId](const auto &entry) {
+            return entry.id == slaveId;
+        });
+    if (slave == m_snapshot.slaves.cend())
+        return Utils::ResultError(Tr::tr("The requested offline slave does not exist."));
+    if (slave->startup == configuration)
+        return Utils::ResultOk;
+
+    Data::OfflineSlaveConfiguration updated = *slave;
+    updated.startup = configuration;
+    Data::ProjectSnapshot candidate = m_snapshot;
+    *std::find_if(candidate.slaves.begin(), candidate.slaves.end(), [&slaveId](const auto &entry) {
+        return entry.id == slaveId;
+    }) = updated;
+    if (const Utils::Result<> validation = validateProjectConfigurations(candidate); !validation)
+        return validation;
+
     m_undoStack.push(
-        new ReplaceOfflineSlavesCommand(this, masterId, oldSlaves, normalized));
+        new UpdateOfflineSlaveCommand(this, *slave, updated, Tr::tr("Configure EtherCAT Startup")));
+    return Utils::ResultOk;
+}
+
+Utils::Result<> EtherCATProjectDocument::setDcConfiguration(
+    const Data::NodeId &slaveId, const Data::DcConfiguration &configuration)
+{
+    if (!m_snapshot.valid)
+        return Utils::ResultError(Tr::tr("Cannot edit an invalid EtherCAT project."));
+    const auto slave = std::find_if(
+        m_snapshot.slaves.cbegin(), m_snapshot.slaves.cend(), [&slaveId](const auto &entry) {
+            return entry.id == slaveId;
+        });
+    if (slave == m_snapshot.slaves.cend())
+        return Utils::ResultError(Tr::tr("The requested offline slave does not exist."));
+    if (slave->dc == configuration)
+        return Utils::ResultOk;
+
+    Data::OfflineSlaveConfiguration updated = *slave;
+    updated.dc = configuration;
+    Data::ProjectSnapshot candidate = m_snapshot;
+    *std::find_if(candidate.slaves.begin(), candidate.slaves.end(), [&slaveId](const auto &entry) {
+        return entry.id == slaveId;
+    }) = updated;
+    if (const Utils::Result<> validation = validateProjectConfigurations(candidate); !validation)
+        return validation;
+
+    m_undoStack.push(new UpdateOfflineSlaveCommand(
+        this, *slave, updated, Tr::tr("Configure EtherCAT Distributed Clocks")));
     return Utils::ResultOk;
 }
 
@@ -277,6 +509,7 @@ Utils::Result<> EtherCATProjectDocument::saveImpl(const Utils::FilePath &filePat
         return saveResult;
 
     m_migrationPending = false;
+    m_migrationSourceVersion = -1;
     m_snapshot.migrated = false;
     m_undoStack.setClean();
     publishSnapshot();
@@ -297,23 +530,17 @@ void EtherCATProjectDocument::applyProjectName(const QString &name)
 void EtherCATProjectDocument::applyOfflineSlaves(
     const Data::NodeId &masterId, const QList<Data::OfflineSlaveConfiguration> &slaves)
 {
-    m_snapshot.slaves.removeIf([&masterId](const auto &slave) {
-        return slave.masterId == masterId;
-    });
-    m_snapshot.slaves.append(slaves);
-    std::sort(m_snapshot.slaves.begin(), m_snapshot.slaves.end(), [](const auto &left,
-                                                                    const auto &right) {
-        const int masterOrder = left.masterId.toString().compare(right.masterId.toString());
-        return masterOrder == 0 ? left.position < right.position : masterOrder < 0;
-    });
+    applyOfflineSlavesToSnapshot(m_snapshot, masterId, slaves);
+}
 
-    m_snapshot.nodes.removeIf([](const auto &node) {
-        return node.kind == Data::ProjectNodeKind::Slave;
-    });
-    for (const Data::OfflineSlaveConfiguration &slave : std::as_const(m_snapshot.slaves)) {
-        m_snapshot.nodes.append(
-            {slave.id, slave.masterId, Data::ProjectNodeKind::Slave, slave.name});
-    }
+void EtherCATProjectDocument::applyOfflineSlave(const Data::OfflineSlaveConfiguration &slave)
+{
+    const auto current = std::find_if(
+        m_snapshot.slaves.begin(), m_snapshot.slaves.end(), [&slave](const auto &entry) {
+            return entry.id == slave.id;
+        });
+    if (current != m_snapshot.slaves.end())
+        *current = slave;
 }
 
 void EtherCATProjectDocument::publishSnapshot()
@@ -334,6 +561,7 @@ void EtherCATProjectDocument::setInvalidSnapshot(const QString &fallbackName, co
     m_snapshot.valid = false;
     m_snapshot.error = error;
     m_migrationPending = false;
+    m_migrationSourceVersion = -1;
     publishSnapshot();
 }
 
@@ -342,14 +570,16 @@ Utils::Result<> EtherCATProjectDocument::createMigrationBackup(const Utils::File
     if (!m_migrationBackupPath.isEmpty())
         return Utils::ResultOk;
 
-    Utils::FilePath candidate = sourcePath.stringAppended(".v0.bak");
+    const QString suffix = QString(".v%1.bak").arg(m_migrationSourceVersion);
+    Utils::FilePath candidate = sourcePath.stringAppended(suffix);
     for (int index = 1; candidate.exists(); ++index)
-        candidate = sourcePath.stringAppended(QString(".v0.bak.%1").arg(index));
+        candidate = sourcePath.stringAppended(QString("%1.%2").arg(suffix).arg(index));
 
     const Utils::Result<> copyResult = sourcePath.copyFile(candidate);
     if (!copyResult) {
-        return Utils::ResultError(Tr::tr("Could not create migration backup '%1': %2")
-                                      .arg(candidate.toUserOutput(), copyResult.error()));
+        return Utils::ResultError(
+            Tr::tr("Could not create migration backup '%1': %2")
+                .arg(candidate.toUserOutput(), copyResult.error()));
     }
     m_migrationBackupPath = candidate;
     return Utils::ResultOk;

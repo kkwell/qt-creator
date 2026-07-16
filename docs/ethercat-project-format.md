@@ -1,53 +1,41 @@
 # EtherCAT Offline Project
 
-## Scope
+## Scope and ownership
 
-`EtherCATProject` owns the current offline engineering-project lifecycle.
-It integrates the `*.ecatproject` MIME type with Qt Creator's public
-ProjectExplorer, document, wizard, and Save All APIs. It does not parse ESI,
-persist PDO/DC/Startup models, scan a controller, or produce diagnostics. The
-stage-5 Project revision can persist a checked list of offline slaves accepted
-by another plugin; it still owns no scan state or comparison result.
+`EtherCATProject` owns the local `*.ecatproject` engineering-project lifecycle.
+It integrates Qt Creator's public ProjectExplorer, `IDocument`, wizard, Save
+All, and project-file watcher APIs. It does not parse ESI XML, scan a
+controller, produce diagnostics, or define a controller download format.
 
-The plugin has required plugin dependencies on `Core`, `ProjectExplorer`, and
+The plugin has required dependencies on `Core`, `ProjectExplorer`, and
 `EtherCATCore`, and ordinary target dependencies on `EtherCATData`, `Utils`,
-and Qt Widgets. It does not include an upstream plugin's Internal headers.
+and Qt Widgets. No other plugin's `Internal` header crosses this boundary.
 
-## ProjectExplorer and document ownership
+ProjectExplorer owns open projects, startup-project state, session integration,
+and close sequencing. Each `EtherCATProject` owns one
+`EtherCATProjectDocument`, one immutable `ProjectSnapshot`, and one
+`QUndoStack`. The public `ProjectService` exposes only value snapshots and
+checked commands; Project, document, stack, model, and index pointers remain
+private.
 
-ProjectExplorer owns the open-project list, startup project, close sequence,
-session integration, and the built-in project-file watcher. Each
-`EtherCATProject` owns one editable `EtherCATProjectDocument` registered with
-DocumentManager without a second file watcher. This makes modified documents
-participate in Save All while avoiding duplicate watches for the same project
-file.
+All Project objects are GUI-thread-owned. This plugin has no worker thread,
+timer, future, or cancellation path. Document signals are disconnected before
+the document and undo stack are destroyed.
 
-ProjectExplorer's public unload path does not save a custom document that has
-no editor window. EtherCATProject therefore uses the public
-`Project::aboutToSaveSettings` lifecycle signal to atomically save a modified
-project before unload or shutdown. It uses the same checked save path as Save
-All; no separate close-time serializer exists.
+## Version 2 format
 
-`ProjectService` mirrors ProjectManager add, remove, and startup-project
-signals as immutable snapshots. Other EtherCAT plugins never receive a
-Project, IDocument, QUndoStack, ProjectNode, or QModelIndex pointer.
+The current file is indented UTF-8 JSON with MIME type
+`application/x-ethercat-project`, format name `ethercat-project`, and
+`formatVersion` 2. Version 2 adds per-slave Process Data, Startup, and DC
+configuration. It is local editor data, not ECPKG, ECFG, ETIR, a network
+message, or a TwinCAT project file.
 
-All objects are GUI-thread-owned. There are no worker threads, timers,
-futures, or cancellation paths in this plugin. During destruction, document
-signals are disconnected before the undo stack and document are released.
-
-## Version 1 format
-
-The project is UTF-8 JSON with MIME type
-`application/x-ethercat-project`. The original version-1 skeleton contains the
-project, target, and master. Stage 5 adds an optional compatible `slaves`
-array under the master; an older version-1 file without it loads as an empty
-offline topology.
+The top-level shape is:
 
 ```json
 {
     "format": "ethercat-project",
-    "formatVersion": 1,
+    "formatVersion": 2,
     "project": {
         "id": "lowercase-uuid-without-braces",
         "name": "Packaging Line",
@@ -60,98 +48,201 @@ offline topology.
     "master": {
         "id": "lowercase-uuid-without-braces",
         "name": "EtherCAT Master",
-        "slaves": [
-            {
-                "id": "lowercase-uuid-without-braces",
-                "name": "Mock Drive",
-                "position": 0,
-                "vendorId": 2,
-                "productCode": 4096,
-                "revisionNumber": 1,
-                "serialNumber": 101,
-                "alias": 0,
-                "deviceDescriptionId": "optional-esi-device-node-id"
-            }
-        ]
+        "slaves": []
     }
 }
 ```
 
-All project node IDs are required, non-null, and unique. Names are required and
-cannot be empty after trimming. Slave positions must be non-negative and
-unique within the master. Vendor ID and Product Code must be non-zero;
-Revision, Serial Number, and Alias are explicit bounded unsigned values. The
-optional device-description ID links to an immutable ESI repository entry but
-does not embed ESI XML in the project.
+Every slave has this structural data plus one required `configuration` object:
 
-Unknown or future format versions are rejected instead of being guessed.
-Invalid JSON opens as an invalid, non-saveable project snapshot and adds a
-ProjectExplorer error task; the damaged bytes are never overwritten.
+```json
+{
+    "id": "lowercase-uuid-without-braces",
+    "name": "Drive",
+    "position": 0,
+    "vendorId": 2,
+    "productCode": 4096,
+    "revisionNumber": 1,
+    "serialNumber": 101,
+    "alias": 0,
+    "deviceDescriptionId": "optional-esi-device-node-id",
+    "configuration": {
+        "processData": {
+            "syncManagers": [],
+            "pdos": []
+        },
+        "startup": {
+            "parameters": []
+        },
+        "dc": {
+            "enabled": false,
+            "modeName": "",
+            "assignActivate": 0,
+            "sync0": {
+                "enabled": false,
+                "cycleTimeNs": 0,
+                "shiftTimeNs": 0
+            },
+            "sync1": {
+                "enabled": false,
+                "cycleTimeNs": 0,
+                "shiftTimeNs": 0
+            },
+            "potentialReferenceClock": false
+        }
+    }
+}
+```
 
-Once a valid project is open, reload rejects a different project ID and keeps
-the last valid in-memory snapshot. This prevents an external file replacement
-from silently invalidating cross-plugin stable references.
+Project, target, master, slave, Sync Manager, PDO, PDO entry, and Startup IDs
+are required, non-null, and unique across the project. Display names never act
+as identity. Slave positions are non-negative and unique. Vendor ID and
+Product Code are non-zero. Revision, Serial Number, Alias, indexes, subindexes,
+and sizes are range-checked before conversion to their C++ value types.
 
-PDO, Startup, DC, scan execution state, online state, and diagnostics remain
-absent from version 1. Typed Process Data, Startup, and DC values and their
-domain validators now exist in `EtherCATData`, but the next Project issue must
-add an explicit format revision or compatible extension, checked service
-commands, and Undo/Redo before they can be persisted.
+## Process Data records
 
-## Migration and recovery
+Each Sync Manager record contains:
 
-The first migration accepts the legacy version-0 shape with root-level `id`,
-`name`, and `createdBy`. It preserves the project ID, creates stable target and
-master IDs, marks the document modified, and requires an explicit save.
+| Field | Type and meaning |
+|---|---|
+| `id` | Required stable ID |
+| `index` | Non-negative integer |
+| `name` | String |
+| `direction` | `unknown`, `master-to-slave`, or `slave-to-master` |
+| `enabled` | Boolean |
+| `sizeLimitBytes` | Non-negative byte limit; zero means no declared limit |
 
-Before replacing a migrated source, the document copies the exact original
-bytes to `<project>.v0.bak`. Existing backups are not overwritten; a numeric
-suffix is selected. A backup failure aborts the save. The current file is
-written through `Utils::FileSaver`, so a write or finalize failure leaves the
-last valid project file intact.
+Each PDO record contains:
 
-Save As is disabled in this stage because Qt Creator's public Project API does
-not expose an atomic way to retarget the already-open ProjectExplorer project.
-Renaming the engineering project changes its display name, not its file path.
-Automatic temporary-file saves are also disabled; explicit Save and Save All
-remain atomic and are the supported persistence paths.
+| Field | Type and meaning |
+|---|---|
+| `id` | Required stable ID |
+| `index` | Unsigned 16-bit object index |
+| `name` | String |
+| `direction` | `rx` for master output or `tx` for master input |
+| `syncManager` | Assigned SM index; `-1` is unassigned |
+| `selected` | Current offline assignment state |
+| `fixed` | ESI marks the assignment fixed |
+| `mandatory` | ESI marks the assignment mandatory |
+| `defaultSelected` | ESI default assignment marker |
+| `mappingSupported` | Current implementation supports the mapping |
+| `predefinedGroup` | Optional ESI grouping string |
+| `entries` | Ordered PDO entry array |
 
-## Undo, save, and modified state
+Each PDO entry contains stable `id`, unsigned 16-bit `index`, unsigned 8-bit
+`subIndex`, `name`, positive `bitLength`, `dataType`, `rawDataType`,
+`requestedBitOffset`, `mappingSupported`, and `padding`. Offset `-1` means
+automatic layout; a non-negative number requests an exact bit offset. JSON
+integer values that exceed the exact IEEE-754 range are rejected.
 
-All configuration edits owned by this plugin use its single QUndoStack.
-Project rename and replacement of one master's entire offline-slave list are
-commands. The replacement is validated and normalized before it reaches the
-stack, so a rejected, cancelled, or failed scan cannot partially mutate the
-document. Pushing, undoing, and redoing update the immutable snapshot and
-ProjectExplorer display name. Navigation, project-tree refresh, startup-project
-switching, and snapshot reads do not modify the document.
+`dataType` uses one of:
+
+```text
+unknown
+boolean
+integer8            unsigned-integer8
+integer16           unsigned-integer16
+integer32           unsigned-integer32
+integer64           unsigned-integer64
+real32              real64
+visible-string      octet-string
+```
+
+The loader invokes `validateProcessDataConfiguration()`. Missing or
+wrong-direction SM assignments, duplicate mappings, invalid widths, overlap,
+unsupported mappings, mandatory deselection, and SM capacity overflow reject
+the whole file. Warnings such as an explicitly preserved unknown data type do
+not reject it. Process-image preview is derived and is not persisted.
+
+## Startup and DC records
+
+Each Startup parameter contains stable `id`, Boolean `enabled`, integer
+`order`, `transition`, unsigned 16-bit `index`, unsigned 8-bit `subIndex`,
+`dataType`, `rawDataType`, `rawValueHex`, and `comment`. `rawValueHex` is an
+even-length ASCII hexadecimal string; it preserves bytes without numeric or
+endianness reinterpretation. The domain validator enforces order, transition,
+object index, and fixed-width raw-value rules.
+
+The DC object contains `enabled`, `modeName`, unsigned 16-bit
+`assignActivate`, `sync0`, `sync1`, and `potentialReferenceClock`. Each signal
+contains `enabled`, `cycleTimeNs`, and `shiftTimeNs`. The `Ns` suffix is the
+unit contract. The loader validates mode presence, SYNC1/SYNC0 dependency,
+cycle range, and shift range.
+
+## Public editing and Undo/Redo
+
+`ProjectService` provides checked commands to replace:
+
+- one master's offline slave list;
+- one slave's complete Process Data configuration;
+- one slave's complete Startup configuration;
+- one slave's complete DC configuration.
+
+Commands reject unknown project/master/slave IDs, invalid domain data, and
+null or reused configuration IDs. No-op replacements return success without
+creating a command. Accepted changes enter the same project `QUndoStack`. Undo
+and redo publish a new immutable snapshot and update the document's modified
+state. Sorting, navigation, selection, refresh, and snapshot reads do not
+create undo commands or mark the document modified.
 
 The QUndoStack clean index and pending migration state are the only modified
-sources. A successful atomic save marks the current stack index clean. Failed
-saves leave both the undo history and modified state unchanged.
+sources. A successful atomic save marks the stack clean. Failed validation or
+save leaves the current snapshot, history, source file, and modified state
+unchanged.
 
-## New-project workflow
+## Migration, corruption, and recovery
 
-The `EtherCAT Engineering Project` platform-independent Qt Creator project
-wizard creates one version-1 `*.ecatproject` file and opens it through
-ProjectExplorer. The wizard uses current Qt Creator factory registration and
-GeneratedFile attributes; it does not introduce a custom dialog framework.
+Version 1 contains the same structural project and optional slave list but no
+per-slave `configuration`. It loads with empty Process Data and Startup values
+and disabled DC, is marked migrated/modified, and is rewritten as version 2
+only after explicit Save or Save All. Before replacement, the exact source
+bytes are copied to `<project>.v1.bak`; existing backups receive a numeric
+suffix and are never overwritten.
 
-## Project verification
+The legacy version-0 root shape with `id`, `name`, and `createdBy` remains
+supported. It preserves the project ID, creates stable target/master IDs, and
+uses the same explicit-save flow with `<project>.v0.bak` recovery.
 
-The focused plugin test covers:
+Invalid JSON, unsupported versions, missing version-2 configuration objects,
+invalid scalar types/ranges, invalid raw hex, duplicate stable IDs, and
+domain-invalid configuration are rejected. An initially damaged file opens as
+an invalid, non-saveable snapshot and adds a ProjectExplorer error task; its
+bytes are never overwritten. Reload of an already valid project also rejects a
+changed project ID and keeps the last valid in-memory snapshot.
 
-- metadata, required plugin dependencies, service registration, and wizard;
-- format round trip, malformed JSON, unsupported versions, and invalid
-  document behavior;
-- rename, modified state, Undo/Redo, Save All registration, Save As rejection,
-  atomic write failure, and successful save;
-- offline-slave validation, deterministic position ordering, version-1
-  persistence, service application, Undo/Redo, and malformed-array rejection;
-- version-0 migration, exact recovery backup, and current-version rewrite;
-- two real ProjectExplorer projects, active-project switching, service
-  snapshots, modified-project close-save, close order, and cleanup.
+The current file is written through `Utils::FileSaver`. A temporary-file or
+finalization failure leaves the last valid file intact. Save As remains
+disabled because the current public Project API cannot atomically retarget an
+already-open ProjectExplorer project. Automatic temporary saves are disabled;
+explicit Save and Save All are the supported persistence paths.
 
-macOS test runs use an isolated HOME because an earlier intentional crash-path
-test can cause AppKit's saved-state restorer to display an unrelated modal
-prompt on later headless runs. This changes no product behavior.
+## New-project and close behavior
+
+The `EtherCAT Engineering Project` wizard creates one version-2 file and opens
+it through ProjectExplorer. The wizard uses current Qt Creator factory and
+GeneratedFile APIs.
+
+ProjectExplorer's public unload path does not save a custom document without
+an editor. EtherCATProject therefore listens to public
+`Project::aboutToSaveSettings` and runs the same checked atomic save before
+unload or shutdown. There is no second close-time serializer.
+
+## Verification
+
+The focused Project suite covers:
+
+- metadata, dependencies, service registration, and wizard discovery;
+- version-2 structural and configuration round trips;
+- malformed JSON, unsupported versions, missing configuration, duplicate IDs,
+  invalid raw hex, and domain-invalid PDO mapping;
+- Project rename, topology replacement, Process Data, Startup, and DC command
+  validation plus Undo/Redo;
+- Save All registration, Save As rejection, atomic write failure, and success;
+- exact version-0 and version-1 migration backups;
+- two real ProjectExplorer projects, startup-project switching, close-save,
+  signal publication, close order, and cleanup.
+
+The qualified Qt 6.11.0 Release run passes 11 tests. macOS runs use an isolated
+HOME and settings path so prior AppKit saved state cannot introduce an
+unrelated modal prompt.

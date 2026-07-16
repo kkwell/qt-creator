@@ -104,6 +104,18 @@ public:
         const Data::NodeId &projectId,
         const Data::NodeId &masterId,
         const QList<Data::OfflineSlaveConfiguration> &slaves) = 0;
+    virtual Utils::Result<> setProcessDataConfiguration(
+        const Data::NodeId &projectId,
+        const Data::NodeId &slaveId,
+        const Data::ProcessDataConfiguration &configuration) = 0;
+    virtual Utils::Result<> setStartupConfiguration(
+        const Data::NodeId &projectId,
+        const Data::NodeId &slaveId,
+        const Data::StartupConfiguration &configuration) = 0;
+    virtual Utils::Result<> setDcConfiguration(
+        const Data::NodeId &projectId,
+        const Data::NodeId &slaveId,
+        const Data::DcConfiguration &configuration) = 0;
     virtual bool canUndoProject(const Data::NodeId &projectId) const = 0;
     virtual bool canRedoProject(const Data::NodeId &projectId) const = 0;
 
@@ -175,8 +187,7 @@ public:
 
     virtual QList<PropertyPageDescriptor> pages(const PropertyPageContext &context) const = 0;
     virtual QWidget *createPage(Utils::Id pageId, QWidget *parent) = 0;
-    virtual void updatePage(
-        Utils::Id pageId, QWidget *page, const PropertyPageContext &context) = 0;
+    virtual void updatePage(Utils::Id pageId, QWidget *page, const PropertyPageContext &context) = 0;
 };
 
 class ETHERCATCORE_EXPORT ScanProvider : public Provider

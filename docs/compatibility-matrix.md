@@ -51,9 +51,9 @@ local decisions and easier maintenance.
 
 All six planned EtherCAT feature and infrastructure plugins have entered the
 local profile. This proves the plugin profile is assembled, not that every
-Phase-1 requirement is complete. Project persistence, editable Process Data,
-Startup and DC pages, the full TwinCAT-inspired tree workflow, additional UI
-coverage, and the user-policy-deferred upstream rehearsal remain open.
+Phase-1 requirement is complete. Editable Process Data, Startup and DC pages,
+the full TwinCAT-inspired tree workflow, additional UI coverage, and the
+user-policy-deferred upstream rehearsal remain open.
 
 ### Hidden or excluded plugins
 
@@ -73,7 +73,7 @@ function is outside the product target and records migration or recovery.
 | Inputs/Outputs/RxPDO/TxPDO/Modules tree branches | Pending Workbench issue |
 | Extensible offline property pages | Stage 4 verified |
 | Offline Process Data/Startup/DC domain model | Verified in EtherCATData |
-| Project persistence and Undo/Redo for those models | Pending Project issue |
+| Project persistence and Undo/Redo for those models | Verified in format version 2 |
 | Editable Process Data/Startup/DC pages | Pending Workbench issue |
 | Offline EtherCAT project | Stage 2 verified |
 | ESI repository | Stage 3 verified |
@@ -117,9 +117,10 @@ algorithms. It does not claim project persistence or an editable UI.
 | Product version inventory | All 16 allow-listed plugins present and recognized |
 | Clean-settings GUI startup | Passed; stable for 5 seconds until intentional `SIGTERM` |
 | Direct upstream Core, ProjectExplorer, or app changes | None |
-| Project persistence and editable UI | Pending by issue boundary |
+| Project persistence | Verified by the later Project revision below |
+| Editable UI | Pending Workbench issue |
 
-## EtherCATProject stage-2 qualification
+## EtherCATProject current qualification
 
 The public Project contract uses immutable `EtherCATData` snapshots and
 `ProjectExplorer::ProjectManager` lifecycle signals. ProjectExplorer objects,
@@ -127,15 +128,21 @@ documents, models, and indexes never cross the plugin boundary.
 
 | Check | Result |
 |---|---|
-| Focused Qt Creator plugin tests | 8 passed, 0 failed |
+| Focused Qt Creator plugin tests | 11 passed, 0 failed |
 | Format round trip and corruption | Passed |
-| Version-0 migration and exact backup | Passed |
+| Version-0 and version-1 migration with exact backups | Passed |
+| Version-2 Process Data, Startup, and DC persistence | Passed |
+| Missing configuration, duplicate stable ID, invalid raw hex, and invalid mapping rejection | Passed |
 | Undo/Redo and Save All modified state | Passed |
 | Atomic save failure preserves source | Passed |
 | Two-project open/switch/close lifecycle | Passed |
 | Offline slave validation, persistence, service command, and Undo/Redo | Passed |
-| Normal Release product build | Passed with 12-plugin allow-list |
-| Enabled and disabled GUI startup | Passed; stable until intentional interrupt |
+| Process Data, Startup, and DC service commands and Undo/Redo | Passed |
+| Scan acceptance preserves matched offline configuration | Passed |
+| EtherCAT plugin regressions | Core 16, Project 11, Devices 8, Workbench 9, Scan 7, Diagnostics 7 passed |
+| Normal Release product build | Passed with 16-plugin allow-list |
+| Product version inventory | All 16 allow-listed plugins present and recognized |
+| Clean-settings GUI startup | Passed; stable for 5 seconds until intentional `SIGTERM`; empty log |
 | Direct upstream Core, ProjectExplorer, or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |

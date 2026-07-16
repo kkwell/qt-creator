@@ -21,16 +21,17 @@ documentation, review, and local-commit gates.
 | 0 | Stage-0 governance | Complete | Baseline, policy, build, and architecture evidence |
 | 1 | `EtherCATData` | Configuration API complete | Stable values, offline validation, and process-image preview |
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
-| 2 | `EtherCATProjectPlugin` | Reopened next | Lifecycle exists; PDO/Startup/DC persistence and Undo/Redo remain |
+| 2 | `EtherCATProjectPlugin` | Configuration persistence complete | Version-2 project lifecycle, migration, validation, and Undo/Redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
-| 4 | `EtherCATWorkbenchPlugin` | Partial | Shell exists; editable configuration pages and full tree remain |
+| 4 | `EtherCATWorkbenchPlugin` | Next | Shell exists; editable configuration pages and full tree remain |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
 
 `EtherCATData` is an infrastructure library, not a feature container. Its
-offline configuration contract is now ready for the next Project issue. The
-Phase-1 product is not Ready until persistence, editable pages, complete tree
-workflows, integration tests, and the policy-deferred upstream rehearsal pass.
+offline configuration contract is persisted by EtherCATProject format version
+2 and exposed through checked Project service commands. The Phase-1 product is
+not Ready until editable pages, complete tree workflows, integration tests,
+and the policy-deferred upstream rehearsal pass.
 
 ## Dependency direction
 

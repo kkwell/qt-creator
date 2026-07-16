@@ -91,10 +91,11 @@ The public header is `ethercatdata/offlineconfiguration.h`. It depends only on
 Qt Core and existing `EtherCATData` values. CMake and qbs list the same source
 files.
 
-This issue deliberately does not add the model to `ProjectSnapshot` or the
-version-1 project file. The next Project issue must add versioned persistence,
-corruption checks, migration behavior, checked service commands, and one
-Undo/Redo path before Workbench may edit these values.
+`OfflineSlaveConfiguration` now owns these three values. EtherCATProject format
+version 2 persists them, rejects corrupt or domain-invalid records, migrates
+version 1 with an exact recovery backup, and exposes checked replacement
+commands through `ProjectService`. Each accepted replacement enters the
+project's unified Undo/Redo stack.
 
 The later Workbench issue must consume this API for the TwinCAT-inspired
 Process Data, Startup, and DC pages. It must not duplicate offset, overlap,
@@ -111,6 +112,6 @@ The focused `EtherCATCore` contract suite covers:
 - valid and invalid Startup order/value records;
 - valid nanosecond DC configuration, invalid cycle, and shift range.
 
-The suite passes 16 tests on the qualified Qt 6.11.0 Release test build. This
-is domain-contract evidence only; editable pages and project-file persistence
-are not yet claimed.
+The domain suite passes 16 tests on the qualified Qt 6.11.0 Release test build.
+The Project integration has separate format, migration, service, and Undo/Redo
+coverage. Editable pages remain pending in Workbench.
