@@ -1,6 +1,7 @@
 <RCC>
     <qresource prefix="/core">
-        <file alias="images/qtcreatorlogo-big.png">images/logo/128/QtProject-easyboard.png</file>
-        <file alias="images/qtcreatorlogo-big@2x.png">images/logo/256/QtProject-easyboard.png</file>
+        <file alias="images/qtcreatorlogo-big.png">images/logo/128/QtProject-embedlabs.png</file>
+        <file alias="images/qtcreatorlogo-big@2x.png">images/logo/256/QtProject-embedlabs.png</file>
+        <file alias="images/app-splash.png">images/logo/512/QtProject-embedlabs.png</file>
     </qresource>
 </RCC>

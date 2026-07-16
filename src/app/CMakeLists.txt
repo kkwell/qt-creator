@@ -108,7 +108,7 @@ if (WIN32)
     RC_ICON_PATH=${IDE_ICON_PATH}
   )
 
-  target_sources(qtcreator PRIVATE qtcreator.rc easyboard.ico)
+  target_sources(qtcreator PRIVATE qtcreator.rc embedlabs.ico)
 endif()
 
 if (APPLE)
@@ -117,6 +117,7 @@ if (APPLE)
   endif()
   set_target_properties(qtcreator PROPERTIES
       MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/app-Info.plist"
+      MACOSX_BUNDLE_BUNDLE_NAME "${IDE_DISPLAY_NAME}"
   )
   # icon
   ## Roughly check for Xcode 26 tools for the default icon generation method

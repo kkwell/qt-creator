@@ -1,7 +1,7 @@
-Easy Board 1.0.1
+Embed Labs 1.0.1
 =============
 
-Easy Board version 1.0.1 contains bug fixes and new features.
+Embed Labs version 1.0.1 contains bug fixes and new features.
 
 The most important changes are listed in this document. 
 

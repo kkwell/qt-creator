@@ -248,6 +248,10 @@
 	<string>????</string>
 	<key>CFBundleExecutable</key>
 	<string>${IDE_APP_TARGET}</string>
+	<key>CFBundleDisplayName</key>
+	<string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+	<key>CFBundleName</key>
+	<string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
 	<key>CFBundleIdentifier</key>
 	<string>${IDE_BUNDLE_IDENTIFIER}</string>
 	<key>CFBundleVersion</key>

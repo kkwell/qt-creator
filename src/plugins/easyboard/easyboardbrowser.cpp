@@ -541,7 +541,7 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
     static const TextFormat titleTF
         {Theme::Token_Text_Default, UiElementH2};
     // QLabel *titleLabel = tfLabel(titleTF);
-    // titleLabel->setText(Tr::tr("Easy Board Configs"));
+    // titleLabel->setText(Tr::tr("Embed Labs Configs"));
 
     d->searchBox = new QtcSearchBox;
     d->searchBox->setPlaceholderText(Tr::tr("Search"));

@@ -23,11 +23,11 @@ Module {
     property string ide_author: "The Qt Company Ltd. and other contributors."
     property string ide_copyright_string: "Copyright (C) The Qt Company Ltd. and other contributors."
 
-    property string ide_settingsvariant: 'EasyBoardProject'
-    property string ide_display_name: 'Easy Board'
-    property string ide_id: 'easyboard'
-    property string ide_cased_id: 'EasyBoard'
-    property string ide_bundle_identifier: 'org.qt-project.easyboard'
+    property string ide_settingsvariant: 'EmbedLabsProject'
+    property string ide_display_name: 'Embed Labs'
+    property string ide_id: 'embedlabs'
+    property string ide_cased_id: 'EmbedLabs'
+    property string ide_bundle_identifier: 'org.qt-project.embedlabs'
     property string ide_user_file_extension: '.user'
 
     property string libDirName: "lib"

@@ -2,5 +2,6 @@
     <qresource prefix="/core">
     <file alias="images/qtcreatorlogo-big.png">${IDE_LOGO_PATH}/images/logo/128/QtProject-${IDE_ID}.png</file>
     <file alias="images/qtcreatorlogo-big@2x.png">${IDE_LOGO_PATH}/images/logo/256/QtProject-${IDE_ID}.png</file>
-    </qresource>
+    <file alias="images/app-splash.png">${IDE_LOGO_PATH}/images/logo/512/QtProject-${IDE_ID}.png</file>
+</qresource>
 </RCC>

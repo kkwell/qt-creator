@@ -59,7 +59,7 @@ using namespace Utils::StyleHelper::SpacingTokens;
 
 namespace EasyBoard::Internal {
 
-const char currentPageSettingsKeyC[] = "EasyBoard";
+const char currentPageSettingsKeyC[] = "EmbedLabs";
 
 class EasyBoardMode : public IMode
 {
