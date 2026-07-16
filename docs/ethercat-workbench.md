@@ -84,7 +84,8 @@ The built-in provider supplies these stage-4 pages:
 - EtherCAT/SyncManager data for imported devices and the offline master;
 - an editable Process Data page for configured slaves, with a read-only ESI
   catalogue view for repository devices;
-- read-only Startup with ESI CoE initialization records;
+- an editable Startup request list for configured slaves, with a read-only ESI
+  catalogue view for repository devices;
 - read-only DC with mode and nanosecond timing defaults;
 - explicit Online and Diagnostics unavailable pages while the Diagnostics
   capability is absent.
@@ -93,7 +94,7 @@ A configured slave retains its scanned Identity, position, Serial Number,
 Alias, and optional stable ESI description ID in the Project snapshot. When
 that ESI entry is available, the same SyncManager, Process Data, Startup, and
 DC read-only pages used by the repository device are reused. A missing ESI
-match is reported explicitly and does not invent PDO or DC data.
+match is reported explicitly and does not invent PDO, Startup, or DC data.
 
 ### Process Data workflow
 
@@ -137,6 +138,37 @@ shows the first error and preserves the current project and undo history. An
 accepted candidate is one project Undo/Redo command. Store/Restore ESI
 Defaults uses the same checked command path.
 
+### Startup workflow
+
+The Startup page follows Beckhoff's documented TwinCAT 3 request-list workflow
+without copying Beckhoff assets or formats. The reference page is:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.
+The central list shows enabled state, explicit order, transition, CoE protocol,
+index, subindex, data type, raw hexadecimal data, and comment. The adjacent
+actions provide Move Up, Move Down, New, Delete, and Edit operations. Inline
+editing remains available for individual non-fixed fields, and Delete requires
+an explicit confirmation before it creates the undoable removal command.
+
+Requests are displayed in configured execution order. Move actions produce a
+contiguous explicit order, while direct order edits are checked for duplicate
+enabled positions. An angle-bracketed ESI transition such as `<PS>` is shown
+as a fixed request and cannot be edited, deleted, enabled/disabled, or moved.
+Moving another row across a fixed request is also prohibited.
+
+Repository-device pages are always read-only. As with Process Data, an empty
+configured-slave Startup value first shows deterministic stable-ID ESI defaults
+without marking the project modified. Store/Restore ESI Defaults is explicit.
+A configured slave without an ESI match can still create fully manual offline
+CoE requests through the New dialog.
+
+Every table or dialog candidate is passed to
+`validateStartupConfiguration()` and then to the public
+`ProjectService::setStartupConfiguration()` command. Invalid transition,
+index, order, type/value width, or raw hex input is rejected without changing
+the project or its history. Each accepted add, edit, delete, enable, reorder,
+or defaults action is one Project Undo/Redo command. No request is transmitted
+and no Mock or online value is copied automatically.
+
 When an available Diagnostics provider appears, the built-in Online and
 Diagnostics placeholders are withdrawn so the Diagnostics plugin can
 contribute its live Mock pages through the public extension point. If the
@@ -161,9 +193,9 @@ project state remains owned by `EtherCATProject`.
 The Workbench itself deliberately provides no real bus scan, interface
 discovery, online controller state, controller connection, network protocol,
 configuration package, PLC language, or code generation. Scan and Diagnostics
-remain optional Mock Provider plugins. Startup and DC are still read-only in
-Workbench, and the full Inputs/Outputs/RxPDO/TxPDO/Modules tree branches remain
-pending independent issues.
+remain optional Mock Provider plugins. DC is still read-only in Workbench, and
+the full Inputs/Outputs/RxPDO/TxPDO/Modules tree branches remain pending
+independent issues.
 
 ## Verification
 
@@ -176,11 +208,13 @@ and removal. The Process Data workflow additionally covers RxPDO/TxPDO SM
 selection, read-only repository and fixed/mandatory mappings, an empty
 no-ESI state, ESI-derived initial mapping, assignment and entry edits,
 validation rejection, process-image refresh, and real DetailsView plus Project
-Undo/Redo reentrancy. It passes 10 tests on the qualified Qt 6.11.0 Release
-test build.
+Undo/Redo reentrancy. The Startup workflow covers the ESI catalogue, explicit
+defaults storage, fixed requests, New/Edit/Delete dialogs, enable state,
+ordering, type/value validation, manual no-ESI empty state, and real
+ProjectService Undo/Redo reentrancy. It passes 11 tests on the qualified Qt
+6.11.0 Release test build.
 
 The normal 16-plugin product build and enabled/disabled startup smoke are
-recorded in `docs/compatibility-matrix.md`. A visual desktop inspection was
-attempted again for this issue but could not run while the Mac session was
-locked; automated widget, model, DetailsView, and mode tests remain the UI
-evidence. No visual inspection is claimed.
+recorded in `docs/compatibility-matrix.md`. The current Startup issue was also
+inspected in a real EtherCAT Mode desktop session: the table, action column,
+fixed request, and New dialog rendered without clipping or layout defects.

@@ -63,8 +63,10 @@ for fixed-width common data types. Repeated writes to the same object remain
 possible when their order differs; the order is part of the engineering
 configuration.
 
-No Mock or online value overwrites Startup automatically. A future Workbench
-command must make any copy into Startup explicit and undoable.
+No Mock or online value overwrites Startup automatically. The Workbench page
+only changes Startup through explicit table, dialog, order, or ESI-default
+actions, and every accepted action is undoable. A later CoE Online Mock copy
+command must follow the same explicit path.
 
 ## Distributed Clocks values
 
@@ -97,11 +99,12 @@ version 1 with an exact recovery backup, and exposes checked replacement
 commands through `ProjectService`. Each accepted replacement enters the
 project's unified Undo/Redo stack.
 
-The Workbench Process Data page now consumes this API for SM/PDO selection,
-entry editing, validation feedback, and process-image preview. It does not
-duplicate offset, overlap, width, or capacity calculations in table widgets.
-Startup and DC still require later independent Workbench issues and must reuse
-their existing domain validators in the same way.
+The Workbench Process Data page consumes this API for SM/PDO selection, entry
+editing, validation feedback, and process-image preview. The Startup page uses
+the corresponding API for ordered CoE requests, ESI defaults, raw values, and
+type validation. Neither page duplicates domain validation in table widgets.
+DC still requires a later independent Workbench issue and must reuse its
+existing domain validator in the same way.
 
 ## Verification
 
@@ -116,5 +119,5 @@ The focused `EtherCATCore` contract suite covers:
 
 The domain suite passes 16 tests on the qualified Qt 6.11.0 Release test build.
 The Project integration has separate format, migration, service, and Undo/Redo
-coverage. The editable Process Data page has Workbench integration coverage;
-editable Startup and DC pages remain pending.
+coverage. The editable Process Data and Startup pages have Workbench
+integration coverage; the editable DC page remains pending.

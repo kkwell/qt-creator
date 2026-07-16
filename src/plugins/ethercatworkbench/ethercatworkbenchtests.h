@@ -17,6 +17,7 @@ private slots:
     void testBuiltInDevicePages();
     void testConfiguredSlaveTreeAndPages();
     void testEditableProcessDataWorkflow();
+    void testEditableStartupWorkflow();
     void testDynamicPropertyProviderRemoval();
     void testDynamicOptionalProviders();
 };

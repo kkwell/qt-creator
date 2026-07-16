@@ -25,18 +25,26 @@
 
 #include <utils/filepath.h>
 
+#include <QAbstractButton>
 #include <QAbstractItemModelTester>
+#include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QTabWidget>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 #include <QTreeView>
 #include <QTreeWidget>
 
@@ -214,7 +222,11 @@ static QByteArray deviceEsi()
 <Name>Statusword</Name><DataType>UINT</DataType></Entry></TxPdo>
 <Mailbox><CoE><InitCmds><InitCmd><Transition>PS</Transition>
 <Index>#x6060</Index><SubIndex>0</SubIndex><Data>08</Data><Comment>Mode</Comment>
-</InitCmd></InitCmds></CoE></Mailbox><Dc><OpMode><Name>Sync0</Name>
+</InitCmd><InitCmd><Transition>SO</Transition><Index>#x6072</Index><SubIndex>0</SubIndex>
+<Data>3412</Data><Comment>Maximum torque</Comment></InitCmd>
+<InitCmd><Transition>&lt;PS&gt;</Transition><Index>#x8000</Index><SubIndex>1</SubIndex>
+<Data>00</Data><Comment>Fixed ESI request</Comment></InitCmd></InitCmds></CoE></Mailbox>
+<Dc><OpMode><Name>Sync0</Name>
 <AssignActivate>#x0300</AssignActivate><CycleTimeSync0>125000</CycleTimeSync0>
 </OpMode></Dc></Device></Devices></Descriptions></EtherCATInfo>)";
 }
@@ -469,9 +481,20 @@ void EtherCATWorkbenchTests::testBuiltInDevicePages()
 
     std::unique_ptr<QWidget> startupPage(provider.createPage(Constants::STARTUP_PAGE_ID, nullptr));
     provider.updatePage(Constants::STARTUP_PAGE_ID, startupPage.get(), context);
-    QCOMPARE(
-        startupPage->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree")->topLevelItemCount(),
-        1);
+    QTableView *startupTable = startupPage->findChild<QTableView *>("EtherCATStartupTable");
+    QVERIFY(startupTable);
+    QCOMPARE(startupTable->model()->rowCount(), 3);
+    QVERIFY(columnWithHeader(startupTable->model(), "Enabled") >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), "Order") >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), "Transition") >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), "Protocol") >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), "Index") >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), "Subindex") >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), "Type") >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), "Data") >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), "Comment") >= 0);
+    QVERIFY(!(
+        startupTable->model()->flags(startupTable->model()->index(0, 0)) & Qt::ItemIsUserCheckable));
 
     std::unique_ptr<QWidget> dcPage(provider.createPage(Constants::DC_PAGE_ID, nullptr));
     provider.updatePage(Constants::DC_PAGE_ID, dcPage.get(), context);
@@ -748,6 +771,219 @@ void EtherCATWorkbenchTests::testEditableProcessDataWorkflow()
         Data::EtherCATDataType::UnsignedInteger16);
     const Utils::Result<> redoType = projectService->redoProject(file.projectId);
     QVERIFY_RESULT(redoType);
+
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+void EtherCATWorkbenchTests::testEditableStartupWorkflow()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("editable-startup.xml");
+    const Utils::Result<qint64> esiWritten = esiPath.writeFileContents(deviceEsi());
+    QVERIFY_RESULT(esiWritten);
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0x5678;
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(directory, *device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    DetailsView details(&controller);
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::STARTUP_PAGE_ID).toString());
+    QVERIFY(page);
+
+    QTableView *table = page->findChild<QTableView *>("EtherCATStartupTable");
+    QLabel *validation = page->findChild<QLabel *>("EtherCATStartupValidation");
+    QPushButton *defaults = page->findChild<QPushButton *>("EtherCATStartupRestoreDefaults");
+    QPushButton *moveUp = page->findChild<QPushButton *>("EtherCATStartupMoveUp");
+    QPushButton *moveDown = page->findChild<QPushButton *>("EtherCATStartupMoveDown");
+    QPushButton *add = page->findChild<QPushButton *>("EtherCATStartupNew");
+    QPushButton *remove = page->findChild<QPushButton *>("EtherCATStartupDelete");
+    QPushButton *edit = page->findChild<QPushButton *>("EtherCATStartupEdit");
+    QVERIFY(table);
+    QVERIFY(validation);
+    QVERIFY(defaults);
+    QVERIFY(moveUp);
+    QVERIFY(moveDown);
+    QVERIFY(add);
+    QVERIFY(remove);
+    QVERIFY(edit);
+    QCOMPARE(table->model()->rowCount(), 3);
+    QVERIFY(!projectService->project(file.projectId)->modified);
+    QCOMPARE(defaults->text(), QString("Store ESI Defaults"));
+
+    const int enabledColumn = columnWithHeader(table->model(), "Enabled");
+    const int orderColumn = columnWithHeader(table->model(), "Order");
+    const int transitionColumn = columnWithHeader(table->model(), "Transition");
+    const int protocolColumn = columnWithHeader(table->model(), "Protocol");
+    const int indexColumn = columnWithHeader(table->model(), "Index");
+    const int subindexColumn = columnWithHeader(table->model(), "Subindex");
+    const int typeColumn = columnWithHeader(table->model(), "Type");
+    const int dataColumn = columnWithHeader(table->model(), "Data");
+    const int commentColumn = columnWithHeader(table->model(), "Comment");
+    QVERIFY(enabledColumn >= 0);
+    QVERIFY(orderColumn >= 0);
+    QVERIFY(transitionColumn >= 0);
+    QVERIFY(protocolColumn >= 0);
+    QVERIFY(indexColumn >= 0);
+    QVERIFY(subindexColumn >= 0);
+    QVERIFY(typeColumn >= 0);
+    QVERIFY(dataColumn >= 0);
+    QVERIFY(commentColumn >= 0);
+    QCOMPARE(table->model()->index(0, transitionColumn).data().toString(), QString("PS"));
+    QCOMPARE(table->model()->index(0, protocolColumn).data().toString(), QString("CoE"));
+    QCOMPARE(table->model()->index(0, indexColumn).data().toString(), QString("0x6060"));
+    QCOMPARE(table->model()->index(0, subindexColumn).data().toString(), QString("0x00"));
+    QCOMPARE(table->model()->index(0, dataColumn).data().toString(), QString("08"));
+    QVERIFY(table->model()->flags(table->model()->index(0, commentColumn)) & Qt::ItemIsEditable);
+
+    defaults->click();
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 3);
+    QVERIFY(projectService->canUndoProject(file.projectId));
+    const Utils::Result<> undoDefaults = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoDefaults);
+    QVERIFY(projectService->project(file.projectId)->slaves.first().startup.parameters.isEmpty());
+    const Utils::Result<> redoDefaults = projectService->redoProject(file.projectId);
+    QVERIFY_RESULT(redoDefaults);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 3);
+
+    QVERIFY(table->model()->setData(
+        table->model()->index(0, typeColumn), int(Data::EtherCATDataType::UnsignedInteger8)));
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.first().dataType,
+        Data::EtherCATDataType::UnsignedInteger8);
+    const Utils::Result<> undoType = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoType);
+    QVERIFY(!table->model()->setData(
+        table->model()->index(0, typeColumn), int(Data::EtherCATDataType::UnsignedInteger16)));
+    QVERIFY(validation->text().contains("not applied", Qt::CaseInsensitive));
+    QVERIFY(!table->model()->setData(table->model()->index(0, dataColumn), QString()));
+    QVERIFY(validation->text().contains("not applied", Qt::CaseInsensitive));
+    QVERIFY(!table->model()->setData(table->model()->index(0, transitionColumn), QString("<PS>")));
+    QVERIFY(validation->text().contains("not applied", Qt::CaseInsensitive));
+
+    table->setCurrentIndex(table->model()->index(0, 0));
+    moveDown->click();
+    const Data::StartupConfiguration afterMove
+        = projectService->project(file.projectId)->slaves.first().startup;
+    QCOMPARE(afterMove.parameters.size(), 3);
+    QCOMPARE(afterMove.parameters.at(0).order, 1);
+    QCOMPARE(afterMove.parameters.at(1).order, 0);
+    const Utils::Result<> undoMove = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoMove);
+
+    QVERIFY(!table->model()->setData(table->model()->index(0, indexColumn), QString("0x0000")));
+    QVERIFY(validation->text().contains("not applied", Qt::CaseInsensitive));
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.first().index,
+        quint16(0x6060));
+    QVERIFY(
+        table->model()
+            ->setData(table->model()->index(0, enabledColumn), Qt::Unchecked, Qt::CheckStateRole));
+    QVERIFY(
+        !projectService->project(file.projectId)->slaves.first().startup.parameters.first().enabled);
+    const Utils::Result<> undoEnabled = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoEnabled);
+
+    table->setCurrentIndex(table->model()->index(2, 0));
+    QVERIFY(!(table->model()->flags(table->model()->index(2, commentColumn)) & Qt::ItemIsEditable));
+    QVERIFY(!remove->isEnabled());
+    QVERIFY(!edit->isEnabled());
+
+    bool addedFromDialog = false;
+    QTimer::singleShot(0, page, [&addedFromDialog] {
+        QDialog *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog)
+            return;
+        addedFromDialog = true;
+        dialog->findChild<QLineEdit *>("EtherCATStartupDialogIndex")->setText("0x6073");
+        dialog->findChild<QLineEdit *>("EtherCATStartupDialogSubindex")->setText("0");
+        dialog->findChild<QLineEdit *>("EtherCATStartupDialogData")->setText("01");
+        dialog->findChild<QLineEdit *>("EtherCATStartupDialogComment")->setText("Quick stop");
+        dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+    });
+    add->click();
+    QVERIFY(addedFromDialog);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 4);
+
+    table->setCurrentIndex(table->model()->index(3, 0));
+    bool deletionConfirmed = false;
+    QTimer::singleShot(0, page, [&deletionConfirmed] {
+        QMessageBox *messageBox = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!messageBox)
+            return;
+        deletionConfirmed = true;
+        messageBox->button(QMessageBox::Yes)->click();
+    });
+    remove->click();
+    QVERIFY(deletionConfirmed);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 3);
+    const Utils::Result<> undoDelete = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoDelete);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 4);
+
+    table->setCurrentIndex(table->model()->index(0, 0));
+    bool editedFromDialog = false;
+    QTimer::singleShot(0, page, [&editedFromDialog] {
+        QDialog *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog)
+            return;
+        editedFromDialog = true;
+        dialog->findChild<QLineEdit *>("EtherCATStartupDialogComment")
+            ->setText("Operation mode request");
+        dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+    });
+    edit->click();
+    QVERIFY(editedFromDialog);
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.first().comment,
+        QString("Operation mode request"));
+
+    defaults->click();
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 3);
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.first().comment,
+        QString("Mode"));
+
+    const Utils::Result<> clearStartup
+        = projectService->setStartupConfiguration(file.projectId, file.slaveId, {});
+    QVERIFY_RESULT(clearStartup);
+    Data::OfflineSlaveConfiguration withoutEsi
+        = projectService->project(file.projectId)->slaves.first();
+    withoutEsi.deviceDescriptionId = {};
+    const Utils::Result<> removeEsiReference
+        = projectService->replaceOfflineSlaves(file.projectId, file.masterId, {withoutEsi});
+    QVERIFY_RESULT(removeEsiReference);
+    QTRY_COMPARE(table->model()->rowCount(), 0);
+    QVERIFY(defaults->isHidden());
+    QVERIFY(add->isEnabled());
+    QVERIFY(page->findChild<QLabel *>("EtherCATStartupSummary")
+                ->text()
+                .contains("No Startup", Qt::CaseInsensitive));
 
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     controller.selectionService()->clear();

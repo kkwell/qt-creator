@@ -5,6 +5,7 @@
 #include "ethercatworkbenchconstants.h"
 #include "ethercatworkbenchtr.h"
 #include "processdatapage.h"
+#include "startuppage.h"
 #include "workbenchcontroller.h"
 
 #include <utils/stylehelper.h>
@@ -145,6 +146,11 @@ QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *pare
         page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
         return page;
     }
+    if (pageId == Utils::Id(Constants::STARTUP_PAGE_ID)) {
+        auto page = new StartupPage(m_controller, parent);
+        page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
+        return page;
+    }
     auto widget = new BuiltinPageWidget(parent);
     widget->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
     return widget;
@@ -156,6 +162,11 @@ void BuiltinPropertyPageProvider::updatePage(
     if (pageId == Utils::Id(Constants::PROCESS_DATA_PAGE_ID)) {
         if (auto processDataPage = qobject_cast<ProcessDataPage *>(page))
             processDataPage->setContext(context);
+        return;
+    }
+    if (pageId == Utils::Id(Constants::STARTUP_PAGE_ID)) {
+        if (auto startupPage = qobject_cast<StartupPage *>(page))
+            startupPage->setContext(context);
         return;
     }
     BuiltinPageWidget *widget = pageWidget(page);
@@ -300,27 +311,6 @@ void BuiltinPropertyPageProvider::updatePage(
                                 QString::number(syncManager.defaultSize),
                                 hexValue(syncManager.controlByte, 2),
                                 syncManager.enabled ? Tr::tr("Yes") : Tr::tr("No")});
-            }
-        }
-        return;
-    }
-
-    if (pageId == Utils::Id(Constants::STARTUP_PAGE_ID)) {
-        widget->reset(
-            device ? Tr::tr("Offline CoE startup parameters from the ESI file")
-                   : Tr::tr("No startup data is available."),
-            {Tr::tr("Transition"),
-             Tr::tr("Index"),
-             Tr::tr("Subindex"),
-             Tr::tr("Data"),
-             Tr::tr("Comment")});
-        if (device) {
-            for (const Data::StartupParameterDescription &parameter : device->startupParameters) {
-                widget->addRow({parameter.transition,
-                                hexValue(parameter.index, 4),
-                                QString::number(parameter.subIndex),
-                                QString::fromLatin1(parameter.data.toHex(' ')),
-                                parameter.comment});
             }
         }
         return;

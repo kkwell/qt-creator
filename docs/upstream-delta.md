@@ -163,6 +163,13 @@ Qt item models, and `Core::MiniSplitter`. It adds no path under upstream Core,
 ProjectExplorer, or the application bootstrap, so the direct Core patch count
 remains five.
 
+The editable Startup page issue also changes only the product-owned
+`EtherCATWorkbench` plugin and documentation. It reuses the existing immutable
+Startup values, ESI descriptions, property-page extension point, domain
+validator, and public Project service. No upstream Core, ProjectExplorer, or
+application bootstrap path changes, so the direct Core patch count remains
+five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

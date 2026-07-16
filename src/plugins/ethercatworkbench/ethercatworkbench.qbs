@@ -21,6 +21,8 @@ QtcPlugin {
         "ethercatworkbenchtr.h",
         "processdatapage.cpp",
         "processdatapage.h",
+        "startuppage.cpp",
+        "startuppage.h",
         "workbenchcontroller.cpp",
         "workbenchcontroller.h",
         "workbenchmode.cpp",
