@@ -41,6 +41,7 @@ McuPackage::McuPackage(const SettingsHandler::Ptr &settingsHandler,
                        const QStringList &versions,
                        const QString &downloadUrl,
                        const McuPackageVersionDetector *versionDetector,
+                       const bool optional,
                        const bool addToSystemPath,
                        const Utils::PathChooser::Kind &valueType,
                        const bool allowNewerVersionKey)
@@ -53,6 +54,7 @@ McuPackage::McuPackage(const SettingsHandler::Ptr &settingsHandler,
     , m_cmakeVariableName(cmakeVarName)
     , m_environmentVariableName(envVarName)
     , m_downloadUrl(downloadUrl)
+    , m_optional(optional)
     , m_addToSystemPath(addToSystemPath)
     , m_valueType(valueType)
 {
@@ -93,6 +95,11 @@ QString McuPackage::environmentVariableName() const
     return m_environmentVariableName;
 }
 
+bool McuPackage::isOptional() const
+{
+    return m_optional;
+}
+
 bool McuPackage::isAddToSystemPath() const
 {
     return m_addToSystemPath;
@@ -123,7 +130,7 @@ FilePath McuPackage::defaultPath() const
     return m_defaultPath.cleanPath();
 }
 
-QList<FilePath> McuPackage::detectionPaths() const
+FilePaths McuPackage::detectionPaths() const
 {
     return m_detectionPaths;
 }
@@ -190,25 +197,34 @@ McuPackage::Status McuPackage::status() const
     return m_status;
 }
 
+bool McuPackage::isOptionalAndEmpty() const
+{
+    return m_status == Status::EmptyPath && isOptional();
+}
+
 bool McuPackage::isValidStatus() const
 {
     return m_status == Status::ValidPackage || m_status == Status::ValidPackageMismatchedVersion
-           || m_status == Status::ValidPackageVersionNotDetected;
+           || m_status == Status::ValidPackageVersionNotDetected || isOptionalAndEmpty();
 }
 
 void McuPackage::updateStatusUi()
 {
-    switch (m_status) {
-    case Status::ValidPackage:
+    if (isOptionalAndEmpty()) {
         m_infoLabel->setType(InfoLabel::Ok);
-        break;
-    case Status::ValidPackageMismatchedVersion:
-    case Status::ValidPackageVersionNotDetected:
-        m_infoLabel->setType(InfoLabel::Warning);
-        break;
-    default:
-        m_infoLabel->setType(InfoLabel::NotOk);
-        break;
+    } else {
+        switch (m_status) {
+        case Status::ValidPackage:
+            m_infoLabel->setType(InfoLabel::Ok);
+            break;
+        case Status::ValidPackageMismatchedVersion:
+        case Status::ValidPackageVersionNotDetected:
+            m_infoLabel->setType(InfoLabel::Warning);
+            break;
+        default:
+                m_infoLabel->setType(InfoLabel::NotOk);
+            break;
+        }
     }
     m_infoLabel->setText(statusText());
 }
@@ -223,8 +239,8 @@ QString McuPackage::statusText() const
                                                            : QString("%1 %2").arg(outDetectionPath,
                                                                                   displayVersions);
     const QString displayDetectedPath = m_versions.empty()
-                                            ? m_usedDetectionPath.toString()
-                                            : QString("%1 %2").arg(m_usedDetectionPath.toString(),
+                                            ? m_usedDetectionPath.toUrlishString()
+                                            : QString("%1 %2").arg(m_usedDetectionPath.toUrlishString(),
                                                                    m_detectedVersion);
 
     QString response;
@@ -299,7 +315,7 @@ QWidget *McuPackage::widget()
     if (!m_downloadUrl.isEmpty()) {
         auto downLoadButton = new QToolButton(widget);
         downLoadButton->setIcon(Icons::ONLINE.icon());
-        downLoadButton->setToolTip(Tr::tr("Download from \"%1\"").arg(m_downloadUrl));
+        downLoadButton->setToolTip(Tr::tr("Download from \"%1\".").arg(m_downloadUrl));
         QObject::connect(downLoadButton, &QToolButton::pressed, this, [this] {
             QDesktopServices::openUrl(m_downloadUrl);
         });
@@ -366,7 +382,7 @@ const QMap<QString, QString> McuPackage::packageLabelTranslations {
 McuToolchainPackage::McuToolchainPackage(const SettingsHandler::Ptr &settingsHandler,
                                          const QString &label,
                                          const FilePath &defaultPath,
-                                         const QList<FilePath> &detectionPaths,
+                                         const FilePaths &detectionPaths,
                                          const Key &settingsKey,
                                          McuToolchainPackage::ToolchainType type,
                                          const QStringList &versions,
@@ -401,7 +417,7 @@ Toolchain *McuToolchainPackage::msvcToolchain(Id language)
 {
     Toolchain *toolChain = ToolchainManager::toolchain([language](const Toolchain *t) {
         const Abi abi = t->targetAbi();
-        return abi.osFlavor() == Abi::WindowsMsvc2019Flavor
+        return abi.osFlavor() == Abi::WindowsMsvc2022Flavor
                && abi.architecture() == Abi::X86Architecture && abi.wordWidth() == 64
                && t->typeId() == ProjectExplorer::Constants::MSVC_TOOLCHAIN_TYPEID
                && t->language() == language;
@@ -454,7 +470,7 @@ static Toolchain *armGccToolchain(const FilePath &path, Id language)
             if (!detected.isEmpty()) {
                 toolchain = detected.takeFirst();
                 ToolchainManager::registerToolchains({toolchain});
-                toolchain->setDetection(Toolchain::ManualDetection);
+                toolchain->setDetectionSource(DetectionSource::Manual);
                 toolchain->setDisplayName("Arm GCC");
                 qDeleteAll(detected);
             }
@@ -481,8 +497,8 @@ static Toolchain *iarToolchain(const FilePath &path, Id language)
             Toolchains toDelete;
             std::tie(toRegister, toDelete)
                 = Utils::partition(detected, Utils::equal(&Toolchain::language, language));
-            for (Toolchain * const tc : toRegister) {
-                tc->setDetection(Toolchain::ManualDetection);
+            for (Toolchain * const tc : std::as_const(toRegister)) {
+                tc->setDetectionSource(DetectionSource::Manual);
                 tc->setDisplayName("IAREW");
             }
             ToolchainManager::registerToolchains(toRegister);
@@ -588,9 +604,8 @@ QVariant McuToolchainPackage::debuggerId() const
     }
 
     const FilePath command = (path() / sub).withExecutableSuffix();
-    if (const DebuggerItem *debugger = DebuggerItemManager::findByCommand(command)) {
-        return debugger->id();
-    }
+    if (const DebuggerItem debugger = DebuggerItemManager::findByCommand(command))
+        return debugger.id();
 
     DebuggerItem newDebugger;
     newDebugger.setCommand(command);

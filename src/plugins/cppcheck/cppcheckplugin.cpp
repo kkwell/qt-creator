@@ -13,18 +13,17 @@
 
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
-
-#include <debugger/analyzer/analyzerconstants.h>
-#include <debugger/debuggermainwindow.h>
+#include <coreplugin/coreconstants.h>
+#include <coreplugin/perspective.h>
 
 #include <extensionsystem/iplugin.h>
 
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projectmanager.h>
 #include <projectexplorer/target.h>
+#include <projectexplorer/toolchainkitaspect.h>
 
 #include <utils/layoutbuilder.h>
 #include <utils/qtcassert.h>
@@ -47,7 +46,7 @@ public:
     CppcheckTrigger trigger{marks, tool};
     DiagnosticsModel manualRunModel;
     CppcheckTool manualRunTool{manualRunModel, Constants::MANUAL_CHECK_PROGRESS_ID};
-    Utils::Perspective perspective{Constants::PERSPECTIVE_ID, ::Cppcheck::Tr::tr("Cppcheck")};
+    Perspective perspective{Constants::PERSPECTIVE_ID, ::Cppcheck::Tr::tr("Cppcheck")};
 
     Action *manualRunAction = nullptr;
     QHash<Project *, CppcheckSettings *> projectSettings;
@@ -68,7 +67,7 @@ CppcheckPluginPrivate::CppcheckPluginPrivate()
 
     auto manualRunView = new DiagnosticView;
     manualRunView->setModel(&manualRunModel);
-    perspective.addWindow(manualRunView, Utils::Perspective::SplitVertical, nullptr);
+    perspective.addWindow(manualRunView, Perspective::SplitVertical, nullptr);
 
     {
         // Go to previous diagnostic
@@ -77,7 +76,7 @@ CppcheckPluginPrivate::CppcheckPluginPrivate()
         action->setIcon(Utils::Icons::PREV_TOOLBAR.icon());
         action->setToolTip(Tr::tr("Go to previous diagnostic."));
         connect(action, &QAction::triggered,
-                manualRunView, &Debugger::DetailedErrorView::goBack);
+                manualRunView, &ProjectExplorer::DetailedErrorView::goBack);
         connect (&manualRunModel, &DiagnosticsModel::hasDataChanged,
                 action, &QAction::setEnabled);
         perspective.addToolBarAction(action);
@@ -90,7 +89,7 @@ CppcheckPluginPrivate::CppcheckPluginPrivate()
         action->setIcon(Utils::Icons::NEXT_TOOLBAR.icon());
         action->setToolTip(Tr::tr("Go to next diagnostic."));
         connect(action, &QAction::triggered,
-                manualRunView, &Debugger::DetailedErrorView::goNext);
+                manualRunView, &ProjectExplorer::DetailedErrorView::goNext);
         connect (&manualRunModel, &DiagnosticsModel::hasDataChanged,
                 action, &QAction::setEnabled);
         perspective.addToolBarAction(action);
@@ -160,10 +159,10 @@ void CppcheckPluginPrivate::startManualRun()
 void CppcheckPluginPrivate::updateManualRunAction()
 {
     const Project *project = ProjectManager::startupProject();
-    const Target *target = ProjectManager::startupTarget();
+    const Kit *kit = activeKitForActiveProject();
     const Utils::Id cxx = ProjectExplorer::Constants::CXX_LANGUAGE_ID;
-    const bool canRun = target && project->projectLanguages().contains(cxx)
-                  && ToolchainKitAspect::cxxToolchain(target->kit());
+    const bool canRun = kit && project->projectLanguages().contains(cxx)
+                  && ToolchainKitAspect::cxxToolchain(kit);
     manualRunAction->setEnabled(canRun);
 }
 
@@ -203,8 +202,7 @@ class CppcheckPlugin final : public ExtensionSystem::IPlugin
         ActionBuilder(this, Constants::MANUAL_RUN_ACTION)
             .setText(Tr::tr("Cppcheck..."))
             .bindContextAction(&d->manualRunAction)
-            .addToContainer(Debugger::Constants::M_DEBUG_ANALYZER,
-                            Debugger::Constants::G_ANALYZER_TOOLS)
+            .addToContainer(Core::Constants::M_DEBUG_ANALYZER, Core::Constants::G_ANALYZER_TOOLS)
             .addOnTriggered(d.get(), &CppcheckPluginPrivate::startManualRun);
 
         connect(ProjectExplorerPlugin::instance(), &ProjectExplorerPlugin::runActionsUpdated,

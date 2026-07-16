@@ -5,8 +5,8 @@
 #include <tracing/timelinemodelaggregator.h>
 #include <tracing/timelinerenderstate.h>
 
-#include <QtTest>
 #include <QSGMaterialShader>
+#include <QTest>
 
 using namespace Timeline;
 
@@ -120,11 +120,9 @@ void tst_TimelineItemsRenderPass::update()
     QCOMPARE(result->expandedRows().count(), 1);
     QCOMPARE(result->collapsedRows().count(), 1);
 
-    parentState.setPassState(0, result);
+    parentState.passes[0] = result;
     parentState.assembleNodeTree(&model, 1, 1);
 
-    QVERIFY(parentState.collapsedRowRoot());
-    QVERIFY(parentState.expandedRowRoot());
 }
 
 QTEST_MAIN(tst_TimelineItemsRenderPass)

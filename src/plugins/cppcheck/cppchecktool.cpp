@@ -108,10 +108,9 @@ QStringList CppcheckTool::additionalArguments(const CppEditor::ProjectPart &part
 
     if (settings().addIncludePaths()) {
         for (const ProjectExplorer::HeaderPath &path : part.headerPaths) {
-            const QString projectDir = m_project->projectDirectory().toString();
             if (path.type == ProjectExplorer::HeaderPathType::User
-                && path.path.startsWith(projectDir))
-                result.push_back("-I " + path.path);
+                && path.path.isChildOf(m_project->projectDirectory()))
+                result.push_back("-I " + path.path.path());
         }
     }
 
@@ -144,7 +143,7 @@ QStringList CppcheckTool::additionalArguments(const CppEditor::ProjectPart &part
     case Version::CXX98:
     case Version::CXX17:
     case Version::CXX20:
-    case Version::CXX2b:
+    case Version::CXX23:
         result.push_back("--language=c++");
         break;
     case Version::None:
@@ -167,7 +166,7 @@ void CppcheckTool::check(const Utils::FilePaths &files)
     } else {
         std::copy_if(files.cbegin(), files.cend(), std::back_inserter(filtered),
                      [this](const Utils::FilePath &file) {
-            const QString stringed = file.toString();
+            const QString stringed = file.toUrlishString();
             const auto filter = [stringed](const QRegularExpression &re) {
                 return re.match(stringed).hasMatch();
             };
@@ -182,7 +181,7 @@ void CppcheckTool::check(const Utils::FilePaths &files)
             = CppEditor::CppModelManager::projectInfo(m_project);
     if (!info)
         return;
-    const QVector<CppEditor::ProjectPart::ConstPtr> parts = info->projectParts();
+    const QList<CppEditor::ProjectPart::ConstPtr> parts = info->projectParts();
     if (parts.size() == 1) {
         QTC_ASSERT(parts.first(), return);
         addToQueue(filtered, *parts.first());

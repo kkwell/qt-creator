@@ -6,7 +6,7 @@ source("../../shared/qtcreator.py")
 def main():
     global tmpSettingsDir, availableBuildSystems
     availableBuildSystems = ["qmake", "Qbs"]
-    if which("cmake"):
+    if shutil.which("cmake"):
         availableBuildSystems.append("CMake")
     else:
         test.warning("Could not find cmake in PATH - several tests won't run without.")
@@ -42,7 +42,8 @@ def main():
         for template in dumpItems(templatesView.model(), templatesView.rootIndex()):
             template = template.replace(".", "\\.")
             # skip non-configurable
-            if template not in ["Qt Quick UI Prototype", "Qt Creator Plugin"]:
+            if template not in ["Qt Quick UI Prototype", "Qt Creator C++ Plugin",
+                                "Qt Creator Lua Plugin"]:
                 availableProjectTypes.append({category:template})
     safeClickButton("Cancel")
     for current in availableProjectTypes:
@@ -51,9 +52,9 @@ def main():
         with TestSection("Testing project template %s -> %s" % (category, template)):
             displayedPlatforms = __createProject__(category, template)
             if template.startswith("Qt Quick Application"):
-                qtVersionsForQuick = ["6.2"]
+                qtVersionsForQuick = ["6.5"]
                 if "(compat)" in template:
-                    qtVersionsForQuick += ["5.14"]
+                    qtVersionsForQuick = ["6.2", "5.14"]
                 for counter, qtVersion in enumerate(qtVersionsForQuick):
 
                     def additionalFunc(displayedPlatforms, qtVersion):
@@ -65,18 +66,21 @@ def main():
                     # are there more Quick combinations - then recreate this project
                     if counter < len(qtVersionsForQuick) - 1:
                         displayedPlatforms = __createProject__(category, template)
-            elif template in ("Qt Widgets Application", "C++ Library", "Code Snippet"):
+            elif template in ("Qt Widgets Application", "C++ Library", "Code Snippet",
+                              "Qt Interface Framework Project"):
                 def skipDetails(_):
                     clickButton(waitForObject(":Next_QPushButton"))
                 handleBuildSystemVerifyKits(category, template, kits,
                                             displayedPlatforms, skipDetails)
             else:
+                if template == "XR Application":
+                    clickButton(waitForObject(":Next_QPushButton")) #  skip XR features
                 handleBuildSystemVerifyKits(category, template, kits, displayedPlatforms)
 
     invokeMenuItem("File", "Exit")
 
 def verifyKitCheckboxes(kits, displayedPlatforms):
-    waitForObject("{type='QLabel' unnamed='1' visible='1' text='Kit Selection'}")
+    waitForObject("{type='QLabel' unnamed='1' visible='1' text?='Kit Selection*'}")
     availableCheckboxes = frozenset(filter(enabledCheckBoxExists, kits))
     # verification whether expected, found and configured match
 
@@ -113,12 +117,18 @@ def handleBuildSystemVerifyKits(category, template, kits, displayedPlatforms,
         return
 
     fixedBuildSystems = list(availableBuildSystems)
+    displayedAvailableBS = dumpItems(waitForObject(combo, 2000).model())
+    if "CMake with Qt 5 Compatibility" in displayedAvailableBS:
+        fixedBuildSystems.append("CMake with Qt 5 Compatibility")
     if template == 'Qt Quick 2 Extension Plugin':
         fixedBuildSystems.remove('Qbs')
         test.log("Skipped Qbs (not supported).")
 
     for counter, buildSystem in enumerate(fixedBuildSystems):
         test.log("Using build system '%s'" % buildSystem)
+
+        if buildSystem == "CMake" and "CMake with Qt 5 Compatibility" in fixedBuildSystems:
+            Targets.removeTargetsBefore(displayedPlatforms, '6.5')
         selectFromCombo(combo, buildSystem)
         clickButton(waitForObject(":Next_QPushButton"))
         if specialHandlingFunc:
@@ -129,6 +139,7 @@ def handleBuildSystemVerifyKits(category, template, kits, displayedPlatforms,
         safeClickButton("Cancel")
         if counter < len(fixedBuildSystems) - 1:
             displayedPlatforms = __createProject__(category, template)
+
 
 def __createProject__(category, template):
     def safeGetTextBrowserText():

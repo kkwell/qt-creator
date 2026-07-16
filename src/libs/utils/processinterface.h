@@ -71,30 +71,36 @@ public:
 class QTCREATOR_UTILS_EXPORT ProcessSetupData
 {
 public:
-    ProcessImpl m_processImpl = ProcessImpl::Default;
+    void setWorkingDirectory(const FilePath &workingDir) { m_workingDirectory = workingDir; }
+    FilePath rawWorkingDirectory() const { return m_workingDirectory; }
+    FilePath fixedWorkingDirectory() const;
+
     ProcessMode m_processMode = ProcessMode::Reader;
     TerminalMode m_terminalMode = TerminalMode::Off;
 
     std::optional<Pty::Data> m_ptyData;
     CommandLine m_commandLine;
-    FilePath m_workingDirectory;
     Environment m_environment;
     Environment m_controlEnvironment;
     QByteArray m_writeData;
     QProcess::ProcessChannelMode m_processChannelMode = QProcess::SeparateChannels;
     QVariantHash m_extraData;
     QString m_standardInputFile;
+    QString m_runAsUser; // Empty means default
     QString m_nativeArguments; // internal, dependent on specific code path
 
     std::chrono::milliseconds m_reaperTimeout{500};
     bool m_abortOnMetaChars = true;
-    bool m_runAsRoot = false;
     bool m_lowPriority = false;
     bool m_unixTerminalDisabled = false;
     bool m_useCtrlCStub = false;
+    bool m_allowCoreDumps = true;
     bool m_belowNormalPriority = false; // internal, dependent on other fields and specific code path
     bool m_createConsoleOnWindows = false;
     bool m_forceDefaultErrorMode = false;
+
+private:
+    FilePath m_workingDirectory;
 };
 
 class QTCREATOR_UTILS_EXPORT ProcessResultData
@@ -103,7 +109,7 @@ public:
     int m_exitCode = 0;
     QProcess::ExitStatus m_exitStatus = QProcess::NormalExit;
     QProcess::ProcessError m_error = QProcess::UnknownError;
-    QString m_errorString;
+    QString m_errorString = {};
 };
 
 enum class ControlSignal {
@@ -120,18 +126,12 @@ enum class ProcessSignalType {
     Done
 };
 
-class QTCREATOR_UTILS_EXPORT ProcessBlockingInterface : public QObject
-{
-private:
-    // Wait for:
-    // - Started is being called only in Starting state.
-    // - ReadyRead is being called in Starting or Running state.
-    // - Done is being called in Starting or Running state.
-    virtual bool waitForSignal(ProcessSignalType signalType, QDeadlineTimer timeout) = 0;
-
-    friend class Internal::ProcessPrivate;
-};
-
+// *** NOTICE ***
+// The ProcessInterface might be moved between threads with moveToThread()
+// when blocking calls to the Process are performed, like waitForFinished().
+// Ensure that the ProcessInterface subclass respects it!
+// Take special note if possible internal QObjects are moved together within
+// QObject's parent-child hierarchy.
 class QTCREATOR_UTILS_EXPORT ProcessInterface : public QObject
 {
     Q_OBJECT
@@ -149,9 +149,10 @@ signals:
     // After emitting this signal the process enters NotRunning state.
     void done(const ProcessResultData &resultData);
 
-protected:
+public:
     static int controlSignalToInt(ControlSignal controlSignal);
 
+protected:
     ProcessSetupData m_setup;
 
 private:
@@ -165,10 +166,35 @@ private:
     // It's being called in Starting or Running state.
     virtual void sendControlSignal(ControlSignal controlSignal) = 0;
 
-    virtual ProcessBlockingInterface *processBlockingInterface() const { return nullptr; }
-
     friend class Process;
     friend class Internal::ProcessPrivate;
+};
+
+namespace Internal {
+class WrappedProcessInterfacePrivate;
+}
+
+class QTCREATOR_UTILS_EXPORT WrappedProcessInterface final : public ProcessInterface
+{
+public:
+    using WrapFunction = std::function<
+        Result<CommandLine>(const ProcessSetupData &setupData, const QString &markerTemplate)>;
+    using ControlSignalFunction = std::function<void(ControlSignal controlSignal, qint64 remotePid)>;
+
+public:
+    WrappedProcessInterface(
+        const WrapFunction &wrapFunction, const ControlSignalFunction &controlSignalFunction);
+    ~WrappedProcessInterface() override;
+
+    void emitDone(const ProcessResultData &resultData) { emit done(resultData); }
+
+public:
+    void start() final;
+    qint64 write(const QByteArray &data) final;
+    void sendControlSignal(ControlSignal controlSignal) final;
+
+private:
+    Internal::WrappedProcessInterfacePrivate *d;
 };
 
 } // namespace Utils

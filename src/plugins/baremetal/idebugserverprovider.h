@@ -8,6 +8,8 @@
 #include <projectexplorer/abi.h>
 
 #include <utils/filepath.h>
+#include <utils/qtcprocess.h>
+#include <utils/result.h>
 #include <utils/store.h>
 
 #include <QSet>
@@ -21,17 +23,11 @@ class QLineEdit;
 class QSpinBox;
 QT_END_NAMESPACE
 
-namespace Debugger {
-class DebuggerRunTool;
-}
+namespace Debugger { class DebuggerRunParameters; }
 
-namespace ProjectExplorer {
-class RunControl;
-class RunWorker;
-}
+namespace ProjectExplorer { class RunControl; }
 
-namespace BareMetal {
-namespace Internal {
+namespace BareMetal::Internal {
 
 class BareMetalDevice;
 class IDebugServerProviderConfigWidget;
@@ -40,10 +36,10 @@ class IDebugServerProviderConfigWidget;
 
 class IDebugServerProvider
 {
+    Q_DISABLE_COPY_MOVE(IDebugServerProvider)
+
 protected:
     explicit IDebugServerProvider(const QString &id);
-    IDebugServerProvider(const IDebugServerProvider &provider) = delete;
-    IDebugServerProvider &operator=(const IDebugServerProvider &provider) = delete;
 
 public:
     virtual ~IDebugServerProvider();
@@ -55,7 +51,7 @@ public:
     void setChannel(const QUrl &channel);
     void setChannel(const QString &host, int port);
 
-    virtual QString channelString() const;
+    virtual QString channelPipe() const;
 
     QString id() const;
     QString typeDisplayName() const;
@@ -70,16 +66,13 @@ public:
     virtual void toMap(Utils::Store &data) const;
     virtual void fromMap(const Utils::Store &data);
 
-    virtual bool aboutToRun(Debugger::DebuggerRunTool *runTool,
-                            QString &errorMessage) const = 0;
-    virtual ProjectExplorer::RunWorker *targetRunner(
+    virtual Utils::Result<> setupDebuggerRunParameters(Debugger::DebuggerRunParameters &rp,
+            ProjectExplorer::RunControl *runControl) const = 0;
+    virtual std::optional<Utils::ProcessTask> targetProcess(
             ProjectExplorer::RunControl *runControl) const = 0;
 
     virtual bool isValid() const = 0;
     virtual bool isSimulator() const { return false; }
-
-    void registerDevice(BareMetalDevice *device);
-    void unregisterDevice(BareMetalDevice *device);
 
 protected:
     void setTypeDisplayName(const QString &typeDisplayName);
@@ -93,7 +86,6 @@ protected:
     QString m_typeDisplayName;
     QUrl m_channel;
     Debugger::DebuggerEngineType m_engineType = Debugger::NoEngineType;
-    QSet<BareMetalDevice *> m_devices;
     std::function<IDebugServerProviderConfigWidget *()> m_configurationWidgetCreator;
 
     friend class DebugServerProvidersSettingsWidget;
@@ -106,6 +98,8 @@ protected:
 class IDebugServerProviderFactory
 {
 public:
+    ~IDebugServerProviderFactory();
+
     QString id() const;
     QString displayName() const;
 
@@ -117,8 +111,11 @@ public:
     static QString idFromMap(const Utils::Store &data);
     static void idToMap(Utils::Store &data, const QString &id);
 
+    static const QList<IDebugServerProviderFactory *> factories();
+
 protected:
     IDebugServerProviderFactory();
+
     void setId(const QString &id);
     void setDisplayName(const QString &name);
     void setCreator(const std::function<IDebugServerProvider *()> &creator);
@@ -179,5 +176,4 @@ protected:
     QSpinBox *m_portSpinBox = nullptr;
 };
 
-} // namespace Internal
-} // namespace BareMetal
+} // namespace BareMetal::Internal

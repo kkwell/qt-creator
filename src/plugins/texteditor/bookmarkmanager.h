@@ -75,6 +75,7 @@ public:
     void moveDown();
     void edit();
     void editByFileAndLine(const Utils::FilePath &fileName, int lineNumber);
+    void sortByFilenames();
     bool gotoBookmark(const Bookmark *bookmark) const;
 
     void requestContextMenu(const Utils::FilePath &filePath, int lineNumber, QMenu *menu);
@@ -93,7 +94,7 @@ private:
     static QString bookmarkToString(const Bookmark *b);
     void saveBookmarks();
 
-    QMap<Utils::FilePath, QVector<Bookmark *>> m_bookmarksMap;
+    QMap<Utils::FilePath, QList<Bookmark *>> m_bookmarksMap;
 
     QList<Bookmark *> m_bookmarksList;
     QItemSelectionModel *m_selectionModel;

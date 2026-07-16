@@ -8,14 +8,13 @@
 #include "commandline.h"
 #include "processenums.h"
 
-#include <solutions/tasking/tasktree.h>
+#include <QtTaskTree/QTaskTree>
 
 #include <QDeadlineTimer>
 #include <QProcess>
 
 QT_BEGIN_NAMESPACE
 class QDebug;
-class QTextCodec;
 QT_END_NAMESPACE
 
 namespace Utils {
@@ -28,6 +27,7 @@ class DeviceProcessHooks;
 class ProcessInterface;
 class ProcessResultData;
 class ProcessRunData;
+class TextEncoding;
 
 class QTCREATOR_UTILS_EXPORT Process final : public QObject
 {
@@ -91,8 +91,6 @@ public:
     void setControlEnvironment(const Environment &env); // Possible helper process (ssh on host etc)
     const Environment &controlEnvironment() const;
 
-    void setProcessImpl(ProcessImpl processImpl);
-
     void setPtyData(const std::optional<Pty::Data> &data);
     std::optional<Pty::Data> ptyData() const;
 
@@ -106,11 +104,14 @@ public:
     void setWriteData(const QByteArray &writeData);
 
     void setUseCtrlCStub(bool enabled); // release only
+    void setAllowCoreDumps(bool enabled);
     void setLowPriority();
     void setDisableUnixTerminal();
-    void setRunAsRoot(bool on);
-    bool isRunAsRoot() const;
+    void setRunAsUser(const QString &user);
     void setAbortOnMetaChars(bool abort);
+
+    using ProcessInterfaceCreator = std::function<ProcessInterface *()>;
+    void setProcessInterfaceCreator(const ProcessInterfaceCreator &creator);
 
     void setProcessChannelMode(QProcess::ProcessChannelMode mode);
     QProcess::ProcessChannelMode processChannelMode() const;
@@ -141,15 +142,11 @@ public:
                               qint64 *pid = nullptr);
 
     // Starts the command and waits for finish.
-    // User input processing is enabled when EventLoopMode::On was passed.
-    void runBlocking(std::chrono::seconds timeout = std::chrono::seconds(10),
-                     EventLoopMode eventLoopMode = EventLoopMode::Off);
+    void runBlocking(std::chrono::seconds timeout = std::chrono::seconds(10));
 
-    void setCodec(QTextCodec *c); // for stdOut and stdErr
-    void setStdOutCodec(QTextCodec *c);
-    void setStdErrCodec(QTextCodec *c);
-
-    void setTimeOutMessageBoxEnabled(bool);
+    void setEncoding(const TextEncoding &encoding); // for stdOut and stdErr
+    void setUtf8Codec(); // for stdOut and stdErr
+    void setUtf8StdOutCodec(); // for stdOut, stdErr uses executable.processStdErrCodec()
 
     void setStdOutCallback(const TextChannelCallback &callback);
     void setStdOutLineCallback(const TextChannelCallback &callback);
@@ -178,9 +175,11 @@ public:
     const QStringList stdOutLines() const; // split, CR removed
     const QStringList stdErrLines() const; // split, CR removed
 
+    enum class FailureMessageFormat { Plain, WithStdErr, WithStdOut, WithAllOutput };
     static QString exitMessage(const CommandLine &command, ProcessResult result, int exitCode,
                                std::chrono::milliseconds duration);
-    QString exitMessage() const;
+    QString exitMessage(FailureMessageFormat format = FailureMessageFormat::Plain) const;
+    QString verboseExitMessage() const { return exitMessage(FailureMessageFormat::WithAllOutput); }
     std::chrono::milliseconds processDuration() const;
 
     QString toStandaloneCommandLine() const;
@@ -191,6 +190,16 @@ public:
     void setForceDefaultErrorModeOnWindows(bool force);
     bool forceDefaultErrorModeOnWindows() const;
 
+    // Use it with care!
+    // That's useful only when process uses ExternalTerminalProcessImpl.
+    // In this case, after the process is finished, you may take the process interface
+    // to keep the external window open and delete the process afterwards, without
+    // closing the external window.
+    // You are responsible for deleting the interface at later point in time, otherwise you leak it.
+    // Deleting the interface will close the external window immediately.
+    // Call it only from slot connected to Process::done() signal.
+    ProcessInterface *takeProcessInterface();
+
 signals:
     void starting(); // On NotRunning -> Starting state transition
     void started();  // On Starting -> Running state transition
@@ -199,6 +208,7 @@ signals:
     void readyReadStandardError();
     void textOnStandardOutput(const QString &text);
     void textOnStandardError(const QString &text);
+    void stoppingForcefully();
 
 private:
     friend QTCREATOR_UTILS_EXPORT QDebug operator<<(QDebug str, const Process &r);
@@ -213,13 +223,12 @@ public:
     std::function<ProcessInterface *(const FilePath &)> processImplHook;
 };
 
-class QTCREATOR_UTILS_EXPORT ProcessTaskAdapter final : public Tasking::TaskAdapter<Process>
+class ProcessTaskAdapter final
 {
 public:
-    ProcessTaskAdapter();
-    void start() final;
+    QTCREATOR_UTILS_EXPORT void operator()(Process *task, QtTaskTree::QTaskInterface *iface);
 };
 
-using ProcessTask = Tasking::CustomTask<ProcessTaskAdapter>;
+using ProcessTask = QtTaskTree::QCustomTask<Process, ProcessTaskAdapter>;
 
 } // namespace Utils

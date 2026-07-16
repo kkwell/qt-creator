@@ -1,5 +1,5 @@
 add_qtc_plugin(EasyBoard
-  DEPENDS Utils QmlDebug CmdBridgeClient
+  DEPENDS Qt::Network Qt::Widgets QtTaskTree Utils QmlDebug CmdBridgeClient
   PLUGIN_DEPENDS Core Debugger ProjectExplorer RemoteLinux
   SOURCES
     easyboard.qrc

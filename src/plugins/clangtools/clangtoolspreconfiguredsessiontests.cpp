@@ -12,21 +12,21 @@
 #include <cppeditor/compileroptionsbuilder.h>
 #include <cppeditor/projectinfo.h>
 
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectmanager.h>
 #include <projectexplorer/target.h>
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/toolchainkitaspect.h>
 
 #include <utils/algorithm.h>
 #include <utils/filepath.h>
 #include <utils/qtcassert.h>
 
-#include <QSignalSpy>
 #include <QElapsedTimer>
-#include <QtTest>
+#include <QSignalSpy>
+#include <QTest>
 #include <QVariant>
 
 #include <functional>
@@ -151,7 +151,7 @@ static QList<Target *> validTargets(Project *project)
         const Toolchain * const toolchain = ToolchainKitAspect::cxxToolchain(kit);
         QTC_ASSERT(toolchain, return false);
 
-        if (Core::ICore::clangExecutable(CLANG_BINDIR).isEmpty()) {
+        if (!Core::ICore::clangExecutable(CLANG_BINDIR)) {
             qWarning("Project \"%s\": Skipping target \"%s\" since no suitable clang was found for the toolchain.",
                      qPrintable(projectFileName),
                      qPrintable(target->displayName()));

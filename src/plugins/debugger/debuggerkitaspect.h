@@ -5,9 +5,11 @@
 
 #include "debugger_global.h"
 #include "debuggerconstants.h"
+#include "debuggeritem.h"
 
-#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/task.h>
 
+namespace ProjectExplorer { class Kit; }
 namespace Utils { class ProcessRunData; }
 
 namespace Debugger {
@@ -28,7 +30,7 @@ public:
 
     static ProjectExplorer::Tasks validateDebugger(const ProjectExplorer::Kit *k);
     static ConfigurationErrors configurationErrors(const ProjectExplorer::Kit *k);
-    static const class DebuggerItem *debugger(const ProjectExplorer::Kit *kit);
+    static DebuggerItem debugger(const ProjectExplorer::Kit *kit);
     static Utils::ProcessRunData runnable(const ProjectExplorer::Kit *kit);
     static void setDebugger(ProjectExplorer::Kit *k, const QVariant &id);
     static DebuggerEngineType engineType(const ProjectExplorer::Kit *k);

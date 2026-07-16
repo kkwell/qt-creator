@@ -25,6 +25,7 @@
 #include <KSyntaxHighlighting/Repository>
 #include <KSyntaxHighlighting/SyntaxHighlighter>
 
+#include <QFutureWatcher>
 #include <QLoggingCategory>
 #include <QMetaEnum>
 
@@ -42,7 +43,7 @@ static KSyntaxHighlighting::Repository *highlightRepository()
     if (!repository) {
         repository = new KSyntaxHighlighting::Repository();
         repository->addCustomSearchPath(
-            TextEditorSettings::highlighterSettings().definitionFilesPath().toString());
+            highlighterSettings().definitionFilesPath().toFSPathString());
         const FilePath dir = Core::ICore::resourcePath("generic-highlighter/syntax");
         if (dir.exists())
             repository->addCustomSearchPath(dir.parentDir().path());
@@ -66,6 +67,8 @@ Definitions definitionsForDocument(const TextEditor::TextDocument *document)
     // never considered.
     // The KSyntaxHighlighting CLI also completely ignores MIME types.
     const FilePath &filePath = document->filePath();
+    if (highlighterSettings().skipHighlighting(filePath.fileName()))
+        return {};
     Definitions definitions = definitionsForFileName(filePath);
     if (definitions.isEmpty()) {
         // check for *.in filename since those are usually used for
@@ -105,27 +108,46 @@ static Definition definitionForSetting(const Key &settingsKey, const QString &ma
 
 Definitions definitionsForMimeType(const QString &mimeType)
 {
-    Definitions definitions = highlightRepository()->definitionsForMimeType(mimeType).toList();
-    if (definitions.size() > 1) {
-        const Definition &rememberedDefinition = definitionForSetting(kDefinitionForMimeType,
-                                                                      mimeType);
-        if (rememberedDefinition.isValid() && definitions.contains(rememberedDefinition))
-            definitions = {rememberedDefinition};
+    auto definitionsForMimeTypeName = [mimeType](const QString mimeTypeName) {
+        Definitions definitions
+            = highlightRepository()->definitionsForMimeType(mimeTypeName);
+        if (definitions.size() > 1) {
+            const Definition rememberedDefinition
+                = definitionForSetting(kDefinitionForMimeType, mimeType);
+            if (rememberedDefinition.isValid() && definitions.contains(rememberedDefinition))
+                definitions = {rememberedDefinition};
+        }
+        return definitions;
+    };
+
+    Definitions definitions = definitionsForMimeTypeName(mimeType);
+    if (definitions.isEmpty()) {
+        if (const MimeType mt = Utils::mimeTypeForName(mimeType); mt.isValid()) {
+            const QStringList aliases = mt.aliases();
+            for (const QString &alias : aliases) {
+                definitions = definitionsForMimeTypeName(alias);
+                if (!definitions.isEmpty())
+                    break;
+            }
+        }
     }
+
     return definitions;
 }
 
-Definitions definitionsForFileName(const FilePath &fileName)
+Definitions definitionsForFileName(const FilePath &filePath)
 {
-    Definitions definitions
-        = highlightRepository()->definitionsForFileName(fileName.fileName()).toList();
+    if (highlighterSettings().skipHighlighting(filePath.fileName()))
+        return {};
+
+    Definitions definitions = highlightRepository()->definitionsForFileName(filePath.fileName());
 
     if (definitions.size() > 1) {
-        const QString &fileExtension = fileName.completeSuffix();
+        const QString &fileExtension = filePath.completeSuffix();
         const Definition &rememberedDefinition
             = fileExtension.isEmpty()
                   ? definitionForSetting(kDefinitionForFilePath,
-                                         fileName.absoluteFilePath().toString())
+                                         filePath.absoluteFilePath().toUrlishString())
                   : definitionForSetting(kDefinitionForExtension, fileExtension);
         if (rememberedDefinition.isValid() && definitions.contains(rememberedDefinition))
             definitions = {rememberedDefinition};
@@ -155,7 +177,7 @@ void rememberDefinitionForDocument(const Definition &definition,
         } else if (!path.isEmpty()) {
             const Key id(kDefinitionForFilePath);
             QMap<QString, QVariant> map = settings->value(id).toMap();
-            map.insert(path.absoluteFilePath().toString(), definition.name());
+            map.insert(path.absoluteFilePath().toUrlishString(), definition.name());
             settings->setValue(id, map);
         }
     } else if (!mimeType.isEmpty()) {
@@ -179,28 +201,39 @@ void clearDefinitionForDocumentCache()
 
 void addCustomHighlighterPath(const FilePath &path)
 {
-    highlightRepository()->addCustomSearchPath(path.toString());
+    highlightRepository()->addCustomSearchPath(path.toUrlishString());
 }
 
-void downloadDefinitions(std::function<void()> callback)
+void downloadDefinitions(const QPointer<QLabel> &logger)
 {
-    auto downloader = new KSyntaxHighlighting::DefinitionDownloader(highlightRepository());
-    QObject::connect(downloader,
-                     &KSyntaxHighlighting::DefinitionDownloader::done,
-                     [downloader, callback]() {
-                         Core::MessageManager::writeFlashing(Tr::tr("Highlighter updates: done"));
-                         downloader->deleteLater();
-                         reload();
-                         if (callback)
-                             callback();
-                     });
-    QObject::connect(downloader,
-                     &KSyntaxHighlighting::DefinitionDownloader::informationMessage,
-                     [](const QString &message) {
-                         Core::MessageManager::writeSilently(Tr::tr("Highlighter updates:") + ' '
-                                                             + message);
-                     });
-    Core::MessageManager::writeDisrupting(Tr::tr("Highlighter updates: starting"));
+    using namespace KSyntaxHighlighting;
+
+    auto downloader = new DefinitionDownloader(highlightRepository());
+
+    QObject::connect(downloader, &DefinitionDownloader::done, [downloader, logger] {
+        const QString msg = Tr::tr("Highlighter updates: done");
+        if (logger)
+            logger->setText(msg);
+        else
+            Core::MessageManager::writeFlashing(msg);
+        downloader->deleteLater();
+        reload();
+    });
+
+    QObject::connect(downloader, &DefinitionDownloader::informationMessage, [logger](const QString &message) {
+        const QString msg = Tr::tr("Highlighter updates:") + ' ' + message;
+        if (logger)
+            logger->setText(msg);
+        else
+            Core::MessageManager::writeSilently(msg);
+    });
+
+    const QString msg = Tr::tr("Highlighter updates: starting");
+    if (logger)
+        logger->setText(msg);
+    else
+        Core::MessageManager::writeDisrupting(msg);
+
     downloader->start();
 }
 
@@ -220,6 +253,46 @@ void reload()
 void handleShutdown()
 {
     delete highlightRepository();
+}
+
+QFuture<QTextDocument *> highlightCode(const QString &code, const QString &mimeType)
+{
+    QTextDocument *document = new QTextDocument;
+    document->setPlainText(code);
+
+    const HighlighterHelper::Definitions definitions = HighlighterHelper::definitionsForMimeType(
+        mimeType);
+
+    std::shared_ptr<QPromise<QTextDocument *>> promise
+        = std::make_shared<QPromise<QTextDocument *>>();
+
+    promise->start();
+
+    if (definitions.isEmpty()) {
+        promise->addResult(document);
+        promise->finish();
+        return promise->future();
+    }
+
+    Highlighter *highlighter = new Highlighter;
+    QObject::connect(highlighter, &Highlighter::finished, document, [document, promise]() {
+        promise->addResult(document);
+        promise->finish();
+    });
+
+    QFutureWatcher<QTextDocument *> *watcher = new QFutureWatcher<QTextDocument *>(document);
+    QObject::connect(watcher, &QFutureWatcher<QTextDocument *>::canceled, document, [document]() {
+        document->deleteLater();
+    });
+    watcher->setFuture(promise->future());
+
+    highlighter->setDefinition(definitions.first());
+    highlighter->setParent(document);
+    highlighter->setFontSettings(TextEditorSettings::fontSettings());
+    highlighter->setMimeType(mimeType);
+    highlighter->setDocument(document);
+
+    return promise->future();
 }
 
 } // namespace TextEditor::HighlighterHelper

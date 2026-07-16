@@ -21,8 +21,10 @@
 #include <utils/utilsicons.h>
 
 #include <QLayout>
+#include <QMenu>
 #include <QToolButton>
 
+using namespace Core;
 using namespace Utils;
 using namespace TextEditor;
 using namespace LanguageServerProtocol;
@@ -36,6 +38,11 @@ enum {
 };
 }
 
+static bool sorter(const TreeItem *a, const TreeItem *b)
+{
+    return a->data(0, Qt::DisplayRole).toString() < b->data(0, Qt::DisplayRole).toString();
+}
+
 template<class Item, class Params, class Request, class Result>
 class HierarchyItem : public TreeItem
 {
@@ -43,7 +50,13 @@ public:
     HierarchyItem(const Item &item, Client *client)
         : m_item(item)
         , m_client(client)
-    {}
+    {
+        if (client) {
+            const Position start = m_item.selectionRange().start();
+            const FilePath path = client->serverUriToHostPath(m_item.uri());
+            m_link = Link(path, start.line() + 1, start.character());
+        }
+    }
 
 protected:
     QVariant data(int column, int role) const override
@@ -52,20 +65,16 @@ protected:
         case Qt::DecorationRole:
             if (hasTag(SymbolTag::Deprecated))
                 return Utils::Icons::WARNING.icon();
-            return symbolIcon(int(m_item.symbolKind()));
+            return symbolIcon(
+                int(m_item.symbolKind()), m_item.symbolTags().value_or(QList<SymbolTag>()));
         case Qt::DisplayRole:
             return m_item.name();
         case Qt::ToolTipRole:
             if (hasTag(SymbolTag::Deprecated))
                 return Tr::tr("Deprecated");
             return {};
-        case LinkRole: {
-            if (!m_client)
-                return QVariant();
-            const Position start = m_item.selectionRange().start();
-            return QVariant::fromValue(
-                Link(m_client->serverUriToHostPath(m_item.uri()), start.line() + 1, start.character()));
-        }
+        case LinkRole:
+            return QVariant::fromValue(m_link);
         case AnnotationRole: {
             QStringList result;
             if (const std::optional<QString> detail = m_item.detail())
@@ -102,7 +111,7 @@ private:
                 if (result && !result->isNull()) {
                     for (const Result &item : result->toList()) {
                         if (item.isValid())
-                            appendChild(new HierarchyItem(getSourceItem(item), m_client));
+                            insertOrderedChild(new HierarchyItem(getSourceItem(item), m_client), sorter);
                     }
                 }
             });
@@ -129,6 +138,7 @@ private:
     const Item m_item;
     bool m_fetchedChildren = false;
     QPointer<Client> m_client;
+    Link m_link;
 };
 
 class CallHierarchyIncomingItem : public HierarchyItem<CallHierarchyItem,
@@ -147,6 +157,8 @@ private:
         if (role == Qt::DisplayRole)
             return Tr::tr("Incoming");
         if (role == Qt::DecorationRole)
+            return {};
+        if (role == LinkRole)
             return {};
         return HierarchyItem::data(column, role);
     }
@@ -169,6 +181,8 @@ private:
             return Tr::tr("Outgoing");
         if (role == Qt::DecorationRole)
             return {};
+        if (role == LinkRole)
+            return {};
         return HierarchyItem::data(column, role);
     }
 };
@@ -176,9 +190,15 @@ private:
 template<class Item> class HierarchyRootItem : public TreeItem
 {
 public:
-    HierarchyRootItem(const Item &item)
+    HierarchyRootItem(const Item &item, Client *client)
         : m_item(item)
-    {}
+    {
+        if (QTC_GUARD(client)) {
+            const Position start = m_item.selectionRange().start();
+            const FilePath path = client->serverUriToHostPath(m_item.uri());
+            m_link = Link(path, start.line() + 1, start.character());
+        }
+    }
 
 private:
     QVariant data(int column, int role) const override
@@ -187,15 +207,19 @@ private:
         case Qt::DecorationRole:
             if (m_item.symbolTags().value_or(QList<SymbolTag>()).contains(SymbolTag::Deprecated))
                 return Utils::Icons::WARNING.icon();
-            return symbolIcon(int(m_item.symbolKind()));
+            return symbolIcon(
+                int(m_item.symbolKind()), m_item.symbolTags().value_or(QList<SymbolTag>()));
         case Qt::DisplayRole:
             return m_item.name();
+        case LinkRole:
+            return QVariant::fromValue(m_link);
         default:
             return TreeItem::data(column, role);
         }
     }
 
     const Item m_item;
+    Link m_link;
 };
 
 
@@ -203,7 +227,7 @@ class CallHierarchyRootItem : public HierarchyRootItem<LanguageServerProtocol::C
 {
 public:
     CallHierarchyRootItem(const LanguageServerProtocol::CallHierarchyItem &item, Client *client)
-        : HierarchyRootItem(item)
+        : HierarchyRootItem(item, client)
     {
         appendChild(new CallHierarchyIncomingItem(item, client));
         appendChild(new CallHierarchyOutgoingItem(item, client));
@@ -227,6 +251,8 @@ private:
             return Tr::tr("Bases");
         if (role == Qt::DecorationRole)
             return {};
+        if (role == LinkRole)
+            return {};
         return HierarchyItem::data(column, role);
     }
 };
@@ -248,6 +274,8 @@ private:
             return Tr::tr("Derived");
         if (role == Qt::DecorationRole)
             return {};
+        if (role == LinkRole)
+            return {};
         return HierarchyItem::data(column, role);
     }
 };
@@ -256,17 +284,57 @@ class TypeHierarchyRootItem : public HierarchyRootItem<LanguageServerProtocol::T
 {
 public:
     TypeHierarchyRootItem(const LanguageServerProtocol::TypeHierarchyItem &item, Client *client)
-        : HierarchyRootItem(item)
+        : HierarchyRootItem(item, client)
     {
         appendChild(new TypeHierarchyBasesItem(item, client));
         appendChild(new TypeHierarchyDerivedItem(item, client));
     }
 };
 
+class TreeView : public Utils::NavigationTreeView
+{
+public:
+    explicit TreeView(const QString &name, QWidget *parent = nullptr)
+        : Utils::NavigationTreeView(parent)
+        , m_name(name)
+    {}
+
+    void contextMenuEvent(QContextMenuEvent *event) override
+    {
+        if (!event)
+            return;
+
+        QMenu contextMenu;
+
+        QAction *action = contextMenu.addAction(Tr::tr("Open in Editor"));
+        connect(action, &QAction::triggered, this, [this] () {
+            emit activated(currentIndex());
+        });
+        action = contextMenu.addAction(Tr::tr("Open %1 Hierarchy").arg(m_name));
+        connect(action, &QAction::triggered, this, [this] () {
+            emit doubleClicked(currentIndex());
+        });
+
+        contextMenu.addSeparator();
+
+        action = contextMenu.addAction(Tr::tr("Expand All"));
+        connect(action, &QAction::triggered, this, &QTreeView::expandAll);
+        action = contextMenu.addAction(Tr::tr("Collapse All"));
+        connect(action, &QAction::triggered, this, &QTreeView::collapseAll);
+
+        contextMenu.exec(event->globalPos());
+
+        event->accept();
+    }
+
+private:
+    const QString m_name;
+};
+
 class HierarchyWidgetHelper
 {
 public:
-    HierarchyWidgetHelper(QWidget *theWidget) : m_view(new NavigationTreeView(theWidget))
+    HierarchyWidgetHelper(const QString &name, QWidget *theWidget) : m_view(new TreeView(name, theWidget))
     {
         m_delegate.setDelimiter(" ");
         m_delegate.setAnnotationRole(AnnotationRole);
@@ -287,6 +355,12 @@ public:
                          theWidget, [this](const QModelIndex &index) { onItemDoubleClicked(index); });
     }
 
+    ~HierarchyWidgetHelper()
+    {
+        if (m_runningRequest && m_runningRequest->first)
+            m_runningRequest->first->cancelRequest(m_runningRequest->second);
+    }
+
     void updateHierarchyAtCursorPosition()
     {
         m_model.clear();
@@ -295,7 +369,7 @@ public:
         if (!editor)
             return;
 
-        Core::IDocument *document = editor->document();
+        IDocument *document = editor->document();
 
         Client *client = LanguageClientManager::clientForFilePath(document->filePath());
         if (!client)
@@ -315,9 +389,22 @@ protected:
         item->forChildrenAtLevel(1, [&](const TreeItem *child) { m_view->expand(child->index()); });
     }
 
+    void send(Client *client, const JsonRpcMessage &request, const MessageId &requestId)
+    {
+        m_runningRequest = std::make_pair(QPointer<Client>(client), requestId);
+        client->sendMessage(request);
+    }
+
+    void resetRunningRequest()
+    {
+        m_runningRequest.reset();
+    }
+
 private:
-    virtual void sendRequest(Client *client, const TextDocumentPositionParams &params,
-                             const Core::IDocument *document) = 0;
+    virtual void sendRequest(
+        Client *client,
+        const TextDocumentPositionParams &params,
+        const IDocument *document) = 0;
 
     void onItemDoubleClicked(const QModelIndex &index)
     {
@@ -329,26 +416,27 @@ private:
     {
         const auto link = index.data(LinkRole).value<Utils::Link>();
         if (link.hasValidTarget())
-            Core::EditorManager::openEditorAt(link);
+            EditorManager::openEditorAt(link);
     }
 
     AnnotatedItemDelegate m_delegate;
     NavigationTreeView * const m_view;
+    std::optional<std::pair<QPointer<Client>, MessageId>> m_runningRequest;
     TreeModel<TreeItem> m_model;
 };
 
 class CallHierarchy : public QWidget, public HierarchyWidgetHelper
 {
 public:
-    CallHierarchy() : HierarchyWidgetHelper(this)
+    CallHierarchy() : HierarchyWidgetHelper(Tr::tr("Call"), this)
     {
         connect(LanguageClientManager::instance(), &LanguageClientManager::openCallHierarchy,
                 this, [this] { updateHierarchyAtCursorPosition(); });
     }
 
 private:
-    void sendRequest(Client *client, const TextDocumentPositionParams &params,
-                     const Core::IDocument *document) override
+    void sendRequest(
+        Client *client, const TextDocumentPositionParams &params, const IDocument *document) override
     {
         if (!supportsCallHierarchy(client, document))
             return;
@@ -358,12 +446,13 @@ private:
                                         const PrepareCallHierarchyRequest::Response &response) {
             handlePrepareResponse(client, response);
         });
-        client->sendMessage(request);
+        send(client, request, request.id());
     }
 
     void handlePrepareResponse(Client *client,
                                const PrepareCallHierarchyRequest::Response &response)
     {
+        resetRunningRequest();
         if (!client)
             return;
         const std::optional<PrepareCallHierarchyRequest::Response::Error> error = response.error();
@@ -382,7 +471,7 @@ private:
 class TypeHierarchy : public TypeHierarchyWidget, public HierarchyWidgetHelper
 {
 public:
-    TypeHierarchy() : HierarchyWidgetHelper(this) {}
+    TypeHierarchy() : HierarchyWidgetHelper(Tr::tr("Type"), this) {}
 
 private:
     void reload() override
@@ -390,8 +479,8 @@ private:
         updateHierarchyAtCursorPosition();
     }
 
-    void sendRequest(Client *client, const TextDocumentPositionParams &params,
-                     const Core::IDocument *document) override
+    void sendRequest(
+        Client *client, const TextDocumentPositionParams &params, const IDocument *document) override
     {
         if (!supportsTypeHierarchy(client, document))
             return;
@@ -401,12 +490,13 @@ private:
                                         const PrepareTypeHierarchyRequest::Response &response) {
             handlePrepareResponse(client, response);
         });
-        client->sendMessage(request);
+        send(client, request, request.id());
     }
 
     void handlePrepareResponse(Client *client,
                                const PrepareTypeHierarchyRequest::Response &response)
     {
+        resetRunningRequest();
         if (!client)
             return;
         const std::optional<PrepareTypeHierarchyRequest::Response::Error> error = response.error();
@@ -422,7 +512,7 @@ private:
     }
 };
 
-class CallHierarchyFactory : public Core::INavigationWidgetFactory
+class CallHierarchyFactory : public INavigationWidgetFactory
 {
 public:
     CallHierarchyFactory()
@@ -432,7 +522,7 @@ public:
         setId(Constants::CALL_HIERARCHY_FACTORY_ID);
     }
 
-    Core::NavigationView createWidget() final
+    NavigationView createWidget() final
     {
         auto h = new CallHierarchy;
         h->updateHierarchyAtCursorPosition();
@@ -449,7 +539,7 @@ public:
 
 class TypeHierarchyFactory final : public TypeHierarchyWidgetFactory
 {
-    TypeHierarchyWidget *createWidget(Core::IEditor *editor) final
+    TypeHierarchyWidget *createWidget(IEditor *editor) final
     {
         const auto textEditor = qobject_cast<BaseTextEditor *>(editor);
         if (!textEditor)
@@ -471,7 +561,7 @@ void setupCallHierarchyFactory()
 
 static bool supportsHierarchy(
     Client *client,
-    const Core::IDocument *document,
+    const IDocument *document,
     const QString &methodName,
     const std::optional<std::variant<bool, WorkDoneProgressOptions>> &provider)
 {
@@ -490,7 +580,7 @@ static bool supportsHierarchy(
     return supported;
 }
 
-bool supportsCallHierarchy(Client *client, const Core::IDocument *document)
+bool supportsCallHierarchy(Client *client, const IDocument *document)
 {
     return supportsHierarchy(client,
                              document,
@@ -503,7 +593,7 @@ void setupTypeHierarchyFactory()
     static TypeHierarchyFactory theTypeHierarchyFactory;
 }
 
-bool supportsTypeHierarchy(Client *client, const Core::IDocument *document)
+bool supportsTypeHierarchy(Client *client, const IDocument *document)
 {
     return supportsHierarchy(client,
                              document,

@@ -4,13 +4,12 @@
 #pragma once
 
 #include "qmlprofilernotesmodel.h"
-#include "qmlprofilereventtypes.h"
 
+#include <qmldebug/qmlprofilereventtypes.h>
 #include <utils/qtcassert.h>
 
 #include <QHash>
 #include <QStack>
-#include <QVector>
 #include <QPointer>
 #include <QAbstractTableModel>
 
@@ -60,6 +59,7 @@ enum RelativeField {
 class QmlProfilerStatisticsModel : public QAbstractTableModel
 {
     Q_OBJECT
+
 public:
     struct QmlEventStats {
         std::vector<qint64> durations;
@@ -111,7 +111,7 @@ public:
     bool isRestrictedToRange() const;
 
     QStringList details(int typeIndex) const;
-    QString summary(const QVector<int> &typeIds) const;
+    QString summary(const QList<int> &typeIds) const;
 
     void clear();
 
@@ -127,7 +127,7 @@ public:
     static const int s_invalidTypeId = -1;
 
 private:
-    void loadEvent(const QmlEvent &event, const QmlEventType &type);
+    void loadEvent(const QmlDebug::QmlEvent &event, const QmlDebug::QmlEventType &type);
     void finalize();
 
     void typeDetailsChanged(int typeIndex);
@@ -138,17 +138,17 @@ private:
     double durationPercent(int typeId) const;
     double durationSelfPercent(int typeId) const;
 
-    QVector<QmlEventStats> m_data;
+    QList<QmlEventStats> m_data;
 
     QPointer<QmlProfilerStatisticsRelativesModel> m_calleesModel;
     QPointer<QmlProfilerStatisticsRelativesModel> m_callersModel;
     QPointer<QmlProfilerModelManager> m_modelManager;
 
-    QList<RangeType> m_acceptedTypes;
+    QList<QmlDebug::RangeType> m_acceptedTypes;
     QHash<int, QString> m_notes;
 
-    QStack<QmlEvent> m_callStack;
-    QStack<QmlEvent> m_compileStack;
+    QStack<QmlDebug::QmlEvent> m_callStack;
+    QStack<QmlDebug::QmlEvent> m_compileStack;
 
     qint64 m_rootDuration = 0;
 };
@@ -156,8 +156,8 @@ private:
 class QmlProfilerStatisticsRelativesModel : public QAbstractTableModel
 {
     Q_OBJECT
-public:
 
+public:
     struct QmlStatisticsRelativesData {
         QmlStatisticsRelativesData(qint64 duration = 0, qint64 calls = 0,
                                    int typeIndex = QmlProfilerStatisticsModel::s_invalidTypeId,
@@ -174,7 +174,7 @@ public:
                                         QmlProfilerStatisticsRelation relation);
 
     void clear();
-    void loadEvent(RangeType type, const QmlEvent &event, bool isRecursive);
+    void loadEvent(QmlDebug::RangeType type, const QmlDebug::QmlEvent &event, bool isRecursive);
 
     int rowCount(const QModelIndex &parent) const override;
     int columnCount(const QModelIndex &parent) const override;
@@ -187,7 +187,7 @@ private:
     QVariant dataForMainEntry(qint64 totalDuration, int role, int column) const;
     void typeDetailsChanged(int typeId);
 
-    QHash<int, QVector<QmlStatisticsRelativesData>> m_data;
+    QHash<int, QList<QmlStatisticsRelativesData>> m_data;
     QPointer<QmlProfilerModelManager> m_modelManager;
 
     int m_relativeTypeIndex = QmlProfilerStatisticsModel::s_invalidTypeId;

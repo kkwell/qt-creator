@@ -3,131 +3,133 @@
 
 #include "dpastedotcomprotocol.h"
 
-#include "cpastertr.h"
-
 #include <coreplugin/messagemanager.h>
 
-#include <QNetworkReply>
-#include <QUrl>
+#include <utils/networkaccessmanager.h>
+
+#include <QtTaskTree/QNetworkReplyWrapper>
+
+using namespace QtTaskTree;
+using namespace Utils;
 
 namespace CodePaster {
 
 static QString baseUrl() { return QString("https://dpaste.com"); }
 static QString apiUrl() { return baseUrl() + "/api/v2/"; }
 
+DPasteDotComProtocol::DPasteDotComProtocol()
+    : Protocol({protocolName(), Capability::PostDescription | Capability::PostUserName})
+{}
+
 QString DPasteDotComProtocol::protocolName() { return QString("DPaste.Com"); }
 
-unsigned DPasteDotComProtocol::capabilities() const
+ExecutableItem DPasteDotComProtocol::fetchRecipe(const QString &id,
+                                                 const FetchHandler &handler) const
 {
-    return PostDescriptionCapability | PostUserNameCapability;
-}
+    const Storage<std::optional<QString>> storage;
 
-void DPasteDotComProtocol::fetch(const QString &id)
-{
-    QNetworkReply * const reply = httpGet(baseUrl() + '/' + id + ".txt");
-    connect(reply, &QNetworkReply::finished, this, [this, id, reply] {
-        fetchFinished(id, reply, false);
-    });
-}
-
-void DPasteDotComProtocol::fetchFinished(const QString &id, QNetworkReply * const reply,
-                                         bool alreadyRedirected)
-{
-    const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    if (status >= 300 && status <= 308 && status != 306) {
-        if (!alreadyRedirected) {
+    const auto onGetSetup = [id](QNetworkReplyWrapper &task) {
+        task.setNetworkAccessManager(NetworkAccessManager::instance());
+        const QUrl url(baseUrl() + '/' + id + ".txt");
+        task.setRequest(QNetworkRequest(url));
+    };
+    const auto onGetDone = [this, id, storage, handler](const QNetworkReplyWrapper &task, DoneWith result) {
+        QNetworkReply *reply = task.reply();
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (status >= 300 && status <= 308 && status != 306) {
             const QString location = QString::fromUtf8(reply->rawHeader("Location"));
+            *storage = location;
             if (status == 301 || status == 308) {
                 const QString m = QString("HTTP redirect (%1) to \"%2\"").arg(status).arg(location);
                 Core::MessageManager::writeSilently(m);
             }
-            QNetworkReply * const newRep = httpGet(location);
-            connect(newRep, &QNetworkReply::finished, this, [this, id, newRep] {
-                fetchFinished(id, newRep, true);
-            });
-            reply->deleteLater();
+            return true;
+        }
+        if (result == DoneWith::Error) {
+            reportError(reply->errorString());
+            return false;
+        }
+        if (handler)
+            handler(name() + ": " + id, QString::fromUtf8(reply->readAll()));
+        return true;
+    };
+
+    const auto onRedirectedGetSetup = [storage](QNetworkReplyWrapper &task) {
+        if (!*storage)
+            return SetupResult::StopWithSuccess;
+
+        task.setNetworkAccessManager(NetworkAccessManager::instance());
+        task.setRequest(QNetworkRequest(**storage));
+        return SetupResult::Continue;
+    };
+    const auto onRedirectedGetDone = [this, id, handler](const QNetworkReplyWrapper &task, DoneWith result) {
+        QNetworkReply *reply = task.reply();
+        if (result == DoneWith::Error) {
+            reportError(reply->errorString());
             return;
         }
-    }
-    QString title;
-    QString content;
-    const bool error = reply->error();
-    if (error) {
-        content = reply->errorString();
-    } else {
-        title = name() + ": " + id;
-        content = QString::fromUtf8(reply->readAll());
-    }
-    reply->deleteLater();
-    emit fetchDone(title, content, error);
+        if (handler)
+            handler(name() + ": " + id, QString::fromUtf8(reply->readAll()));
+    };
+
+    return Group {
+        storage,
+        QNetworkReplyWrapperTask(onGetSetup, onGetDone),
+        QNetworkReplyWrapperTask(onRedirectedGetSetup, onRedirectedGetDone)
+    };
 }
 
-static QByteArray typeToString(Protocol::ContentType type)
+static QByteArray typeToString(ContentType type)
 {
     switch (type) {
-    case Protocol::C:
-        return "c";
-    case Protocol::Cpp:
-        return "cpp";
-    case Protocol::Diff:
-        return "diff";
-    case Protocol::JavaScript:
-        return "js";
-    case Protocol::Text:
-        return "text";
-    case Protocol::Xml:
-        return "xml";
+    case C:          return "c";
+    case Cpp:        return "cpp";
+    case Diff:       return "diff";
+    case JavaScript: return "js";
+    case Text:       return "text";
+    case Xml:        return "xml";
     }
-    return {}; // For dumb compilers.
+    return {};
 }
 
-void DPasteDotComProtocol::paste(
-        const QString &text,
-        ContentType ct,
-        int expiryDays,
-        const QString &username,
-        const QString &comment,
-        const QString &description
-        )
+ExecutableItem DPasteDotComProtocol::pasteRecipe(const PasteInputData &inputData,
+                                                 const PasteHandler &handler) const
 {
-    Q_UNUSED(comment)
-
-    // See http://dpaste.com/api/v2/
-    QByteArray data;
-    data += "content=" + QUrl::toPercentEncoding(fixNewLines(text));
-    data += "&expiry_days=" + QByteArray::number(expiryDays);
-    data += "&syntax=" + typeToString(ct);
-    data += "&title=" + QUrl::toPercentEncoding(description);
-    data += "&poster=" + QUrl::toPercentEncoding(username);
-
-    QNetworkReply * const reply = httpPost(apiUrl(), data);
-    connect(reply, &QNetworkReply::finished, this, [this, reply] {
-        QString data;
-        if (reply->error()) {
-            reportError(reply->errorString()); // FIXME: Why can't we properly emit an error here?
+    const auto onSetup = [inputData](QNetworkReplyWrapper &task) {
+        task.setNetworkAccessManager(NetworkAccessManager::instance());
+        QByteArray data;
+        data += "content=" + QUrl::toPercentEncoding(fixNewLines(inputData.text));
+        data += "&expiry_days=" + QByteArray::number(inputData.expiryDays);
+        data += "&syntax=" + typeToString(inputData.ct);
+        data += "&title=" + QUrl::toPercentEncoding(inputData.description);
+        data += "&poster=" + QUrl::toPercentEncoding(inputData.username);
+        QNetworkRequest request{QUrl(apiUrl())};
+        request.setHeader(QNetworkRequest::ContentTypeHeader,
+                          QVariant(QByteArray("application/x-www-form-urlencoded")));
+        task.setRequest(request);
+        task.setOperation(QNetworkAccessManager::PostOperation);
+        task.setData(data);
+    };
+    const auto onDone = [this, handler](const QNetworkReplyWrapper &task, DoneWith result) {
+        QNetworkReply *reply = task.reply();
+        if (result == DoneWith::Error) {
+            reportError(reply->errorString());
             reportError(QString::fromUtf8(reply->readAll()));
-        } else {
-            data = QString::fromUtf8(reply->readAll());
-            if (!data.startsWith(baseUrl())) {
-                reportError(data);
-                data.clear();
-            }
+            return false;
         }
-        reply->deleteLater();
-        emit pasteDone(data);
-    });
-}
 
-bool DPasteDotComProtocol::checkConfiguration(QString * /*errorMessage*/)
-{
-    // we need a 1s gap between requests, so skip status check to avoid failing
-    return true;
-}
+        const QString data = QString::fromUtf8(reply->readAll());
+        if (!data.startsWith(baseUrl())) {
+            reportError(data);
+            return false;
+        }
 
-void DPasteDotComProtocol::reportError(const QString &message)
-{
-    const QString fullMessage = Tr::tr("%1: %2").arg(protocolName(), message);
-    Core::MessageManager::writeDisrupting(fullMessage);
+        if (handler)
+            handler(data);
+        return true;
+    };
+
+    return QNetworkReplyWrapperTask(onSetup, onDone);
 }
 
 } // CodePaster

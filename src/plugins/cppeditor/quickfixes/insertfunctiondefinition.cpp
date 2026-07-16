@@ -3,7 +3,6 @@
 
 #include "insertfunctiondefinition.h"
 
-#include "../cppcodestylepreferences.h"
 #include "../cppcodestylesettings.h"
 #include "../cppeditortr.h"
 #include "../cppeditorwidget.h"
@@ -23,10 +22,11 @@
 #include <QDialogButtonBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QScrollArea>
 
 #ifdef WITH_TESTS
 #include "cppquickfix_test.h"
-#include <QtTest>
+#include <QTest>
 #endif
 
 using namespace CPlusPlus;
@@ -54,23 +54,22 @@ class InsertDefOperation: public CppQuickFixOperation
 {
 public:
     // Make sure that either loc is valid or targetFileName is not empty.
-    InsertDefOperation(const CppQuickFixInterface &interface,
-                       Declaration *decl, DeclaratorAST *declAST, const InsertionLocation &loc,
+    InsertDefOperation(const CppQuickFixInterface &interface, SimpleDeclarationAST *declAST,
+                       const InsertionLocation &loc,
                        const DefPos defpos, const FilePath &targetFileName = {},
                        bool freeFunction = false)
         : CppQuickFixOperation(interface, 0)
-        , m_decl(decl)
         , m_declAST(declAST)
         , m_loc(loc)
         , m_defpos(defpos)
         , m_targetFilePath(targetFileName)
     {
         if (m_defpos == DefPosImplementationFile) {
-            const FilePath declFile = decl->filePath();
+            const FilePath declFile = interface.filePath();
             const FilePath targetFile =  m_loc.isValid() ? m_loc.filePath() : m_targetFilePath;
-            const FilePath resolved = targetFile.relativePathFrom(declFile.parentDir());
+            const QString resolved = targetFile.relativeNativePathFromDir(declFile.parentDir());
             setPriority(2);
-            setDescription(Tr::tr("Add Definition in %1").arg(resolved.displayName()));
+            setDescription(Tr::tr("Add Definition in %1").arg(resolved));
         } else if (freeFunction) {
             setDescription(Tr::tr("Add Definition Here"));
         } else if (m_defpos == DefPosInsideClass) {
@@ -85,11 +84,18 @@ public:
         const CppQuickFixOperation *op,
         InsertionLocation loc,
         DefPos defPos,
-        DeclaratorAST *declAST,
-        Declaration *decl,
+        SimpleDeclarationAST *declAST,
         const FilePath &targetFilePath,
         ChangeSet *changeSet = nullptr)
     {
+        QTC_ASSERT(declAST->symbols && declAST->symbols->value, return);
+        Symbol * const decl = declAST->symbols->value;
+
+        ForwardClassDeclaration * const forwardDecl = decl->asForwardClassDeclaration();
+
+        QTC_ASSERT(forwardDecl || (declAST->declarator_list && declAST->declarator_list->value),
+                   return);
+
         CppRefactoringChanges refactoring(op->snapshot());
         if (!loc.isValid())
             loc = insertLocationForMethodDefinition(decl, true, NamespaceHandling::Ignore,
@@ -102,18 +108,32 @@ public:
         oo.showReturnTypes = true;
         oo.showArgumentNames = true;
         oo.showEnclosingTemplate = true;
+        oo.showTemplateParameters = true;
+        if (!targetFile->cppDocument()->languageFeatures().cxxEnabled)
+            oo.language = Language::C;
 
-        // What we really want is to show template parameters for the class, but not for the
-        // function, but we cannot express that. This is an approximation that will work
-        // as long as either the surrounding class or the function is not a template.
-        oo.showTemplateParameters = decl->enclosingClass()
-                                    && decl->enclosingClass()->enclosingTemplate();
+        // TODO: Record this with the function instead? Then it would also work
+        // for e.g. function pointer parameters with different syntax.
+        oo.trailingReturnType = !forwardDecl
+                                && declAST->declarator_list->value->postfix_declarator_list
+                                && declAST->declarator_list->value->postfix_declarator_list->value
+                                && declAST->declarator_list->value->postfix_declarator_list
+                                       ->value->asFunctionDeclarator()
+                                && declAST->declarator_list->value->postfix_declarator_list
+                                       ->value->asFunctionDeclarator()->trailing_return_type;
 
         if (defPos == DefPosInsideClass) {
+            QTC_ASSERT(!forwardDecl, return);
             const int targetPos = targetFile->position(loc.line(), loc.column());
             ChangeSet localChangeSet;
             ChangeSet * const target = changeSet ? changeSet : &localChangeSet;
-            target->replace(targetPos - 1, targetPos, QLatin1String("\n {\n\n}")); // replace ';'
+            if (decl->type()->asFunctionType()) {
+                target->replace(targetPos - 1, targetPos, QLatin1String("\n {\n\n}")); // replace ';'
+            } else {
+                const int inlinePos = targetFile->endOf(declAST->decl_specifier_list->value);
+                target->insert(inlinePos, " inline");
+                target->insert(targetPos - 1, "{}");
+            }
 
             if (!changeSet) {
                 targetFile->setOpenEditor(true, targetPos);
@@ -147,7 +167,7 @@ public:
             // setup rewriting to get minimally qualified names
             SubstitutionEnvironment env;
             env.setContext(op->context());
-            env.switchScope(decl->enclosingScope());
+            env.switchScope(decl->isFriend() ? decl->enclosingNamespace() : decl->enclosingScope()); // TODO: Do this in enclosingScope()?
             UseMinimalNames q(targetCoN);
             env.enter(&q);
             Control *control = op->context().bindings()->control().get();
@@ -157,7 +177,8 @@ public:
 
             // rewrite the function name
             if (nameIncludesOperatorName(decl->name())) {
-                const QString operatorNameText = op->currentFile()->textOf(declAST->core_declarator);
+                const QString operatorNameText = op->currentFile()->textOf(
+                    declAST->declarator_list->value->core_declarator);
                 oo.includeWhiteSpaceInOperatorName = operatorNameText.contains(QLatin1Char(' '));
             }
             const QString name = oo.prettyName(LookupContext::minimalName(decl, targetCoN,
@@ -169,20 +190,36 @@ public:
 
             const QString prettyType = oo.prettyType(tn, name);
 
-            QString input = prettyType;
             int index = 0;
-            while (input.startsWith("template")) {
-                QRegularExpression templateRegex("template\\s*<[^>]*>");
-                QRegularExpressionMatch match = templateRegex.match(input);
-                if (match.hasMatch()) {
-                    index += match.captured().size() + 1;
-                    input = input.mid(match.captured().size() + 1);
-                }
-            }
+            if (prettyType.startsWith("template"))
+                index = prettyType.lastIndexOf(">\n") + 2;
 
             QString defText = prettyType;
             defText.insert(index, inlinePref);
-            defText += QLatin1String("\n{\n\n}");
+            if (decl->type()->asFunctionType() || forwardDecl)
+                defText += QLatin1String("\n{\n\n}");
+            else
+                defText += "{};";
+            if (forwardDecl) {
+                QTC_ASSERT(declAST->decl_specifier_list && declAST->decl_specifier_list->value, return);
+                const ElaboratedTypeSpecifierAST * const spec
+                    = declAST->decl_specifier_list->value->asElaboratedTypeSpecifier();
+                QTC_ASSERT(spec, return);
+                switch (op->currentFile()->tokenAt(spec->classkey_token).kind()) {
+                case T_CLASS:
+                    defText.prepend("class ");
+                    break;
+                case T_STRUCT:
+                    defText.prepend("struct ");
+                    break;
+                case T_UNION:
+                    defText.prepend("union ");
+                    break;
+                default:
+                    QTC_ASSERT(false, return);
+                }
+                defText.append(';');
+            }
 
             ChangeSet localChangeSet;
             ChangeSet * const target = changeSet ? changeSet : &localChangeSet;
@@ -212,11 +249,10 @@ public:
 private:
     void perform() override
     {
-        insertDefinition(this, m_loc, m_defpos, m_declAST, m_decl, m_targetFilePath);
+        insertDefinition(this, m_loc, m_defpos, m_declAST, m_targetFilePath);
     }
 
-    Declaration *m_decl;
-    DeclaratorAST *m_declAST;
+    SimpleDeclarationAST *m_declAST;
     InsertionLocation m_loc;
     const DefPos m_defpos;
     const FilePath m_targetFilePath;
@@ -239,7 +275,10 @@ public:
         setWindowTitle(Tr::tr("Member Function Implementations"));
 
         const auto defaultImplTargetComboBox = new QComboBox;
-        QStringList implTargetStrings{Tr::tr("None"), Tr::tr("Inline"), Tr::tr("Outside Class")};
+        QStringList implTargetStrings{
+            Tr::tr("None", "No default implementation location"),
+            Tr::tr("Inline"),
+            Tr::tr("Outside Class")};
         if (!implFile.isEmpty())
             implTargetStrings.append(implFile.fileName());
         defaultImplTargetComboBox->insertItems(0, implTargetStrings);
@@ -254,7 +293,8 @@ public:
         defaultImplTargetLayout->addWidget(new QLabel(Tr::tr("Default implementation location:")));
         defaultImplTargetLayout->addWidget(defaultImplTargetComboBox);
 
-        const auto candidatesLayout = new QGridLayout;
+        const auto candidatesWidget = new QWidget;
+        const auto candidatesLayout = new QGridLayout(candidatesWidget);
         Overview oo = CppCodeStyleSettings::currentProjectCodeStyleOverview();
         oo.showFunctionSignatures = true;
         oo.showReturnTypes = true;
@@ -270,6 +310,8 @@ public:
                                         i, 0);
             candidatesLayout->addWidget(implTargetComboBox, i, 1);
         }
+        const auto scrollArea = new QScrollArea;
+        scrollArea->setWidget(candidatesWidget);
 
         const auto buttonBox
             = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
@@ -280,7 +322,7 @@ public:
         const auto mainLayout = new QVBoxLayout(this);
         mainLayout->addLayout(defaultImplTargetLayout);
         mainLayout->addWidget(Layouting::createHr(this));
-        mainLayout->addLayout(candidatesLayout);
+        mainLayout->addWidget(scrollArea);
         mainLayout->addWidget(buttonBox);
     }
 
@@ -345,14 +387,14 @@ private:
         QList<Symbol *> unimplemented;
         SymbolFinder symbolFinder;
         for (Symbol * const s : std::as_const(m_declarations)) {
-            if (!symbolFinder.findMatchingDefinition(s, snapshot()))
+            if (!symbolFinder.findMatchingDefinition(s, snapshot(), true))
                 unimplemented << s;
         }
         if (unimplemented.isEmpty())
             return;
 
         CppRefactoringChanges refactoring(snapshot());
-        const bool isHeaderFile = ProjectFile::isHeader(ProjectFile::classify(filePath().toString()));
+        const bool isHeaderFile = ProjectFile::isHeader(ProjectFile::classify(filePath()));
         FilePath cppFile; // Only set if the class is defined in a header file.
         if (isHeaderFile) {
             InsertionPointLocator locator(refactoring);
@@ -361,7 +403,7 @@ private:
                 if (!location.isValid())
                     continue;
                 const FilePath filePath = location.filePath();
-                if (ProjectFile::isHeader(ProjectFile::classify(filePath.path()))) {
+                if (ProjectFile::isHeader(ProjectFile::classify(filePath))) {
                     const FilePath source = correspondingHeaderOrSource(filePath);
                     if (!source.isEmpty())
                         cppFile = source;
@@ -425,8 +467,10 @@ private:
             {
                 if (m_decl)
                     return false;
-                if (decl->symbols && decl->symbols->value == m_func)
+                if (decl->declarator_list && decl->declarator_list->value && decl->symbols
+                    && decl->symbols->value == m_func) {
                     m_decl = decl;
+                }
                 return !m_decl;
             }
 
@@ -450,8 +494,7 @@ private:
             }
             ChangeSet &changeSet = changeSets[targetFilePath];
             InsertDefOperation::insertDefinition(
-                this, loc, setting.defPos, finder.decl()->declarator_list->value,
-                setting.func->asDeclaration(),targetFilePath, &changeSet);
+                this, loc, setting.defPos, finder.decl(), targetFilePath, &changeSet);
         }
         for (auto it = changeSets.cbegin(); it != changeSets.cend(); ++it)
             refactoring.cppFile(it.key())->apply(it.value());
@@ -478,124 +521,154 @@ private:
 
         int idx = path.size() - 1;
         for (; idx >= 0; --idx) {
-            AST *node = path.at(idx);
-            if (SimpleDeclarationAST *simpleDecl = node->asSimpleDeclaration()) {
-                if (idx > 0 && path.at(idx - 1)->asStatement())
-                    return;
-                if (simpleDecl->symbols && !simpleDecl->symbols->next) {
-                    if (Symbol *symbol = simpleDecl->symbols->value) {
-                        if (Declaration *decl = symbol->asDeclaration()) {
-                            if (Function *func = decl->type()->asFunctionType()) {
-                                if (func->isSignal() || func->isPureVirtual() || func->isFriend())
-                                    return;
-
-                                const Project * const declProject
-                                    = ProjectManager::projectForFile(func->filePath());
-                                const ProjectNode * const declProduct
-                                    = declProject
-                                          ? declProject->productNodeForFilePath(func->filePath())
-                                          : nullptr;
-
-                                // Check if there is already a definition in this product.
-                                SymbolFinder symbolFinder;
-                                const QList<Function *> defs
-                                    = symbolFinder.findMatchingDefinitions(
-                                        decl, interface.snapshot(), true, false);
-                                for (const Function * const def : defs) {
-                                    const Project *const defProject
-                                        = ProjectManager::projectForFile(def->filePath());
-                                    if (declProject == defProject) {
-                                        if (!declProduct)
-                                            return;
-                                        const ProjectNode * const defProduct
-                                            = defProject ? defProject->productNodeForFilePath(
-                                                  def->filePath())
-                                                         : nullptr;
-                                        if (!defProduct || declProduct == defProduct)
-                                            return;
-                                    }
-                                }
-
-                                // Insert Position: Implementation File
-                                DeclaratorAST *declAST = simpleDecl->declarator_list->value;
-                                InsertDefOperation *op = nullptr;
-                                ProjectFile::Kind kind = ProjectFile::classify(interface.filePath().toString());
-                                const bool isHeaderFile = ProjectFile::isHeader(kind);
-                                if (isHeaderFile) {
-                                    CppRefactoringChanges refactoring(interface.snapshot());
-                                    InsertionPointLocator locator(refactoring);
-                                    // find appropriate implementation file, but do not use this
-                                    // location, because insertLocationForMethodDefinition() should
-                                    // be used in perform() to get consistent insert positions.
-                                    for (const InsertionLocation &location :
-                                         locator.methodDefinition(decl, false, {})) {
-                                        if (!location.isValid())
-                                            continue;
-
-                                        const FilePath filePath = location.filePath();
-                                        const Project * const defProject
-                                            = ProjectManager::projectForFile(filePath);
-                                        if (declProject != defProject)
-                                            continue;
-                                        if (declProduct) {
-                                            const ProjectNode * const defProduct = defProject
-                                                ? defProject->productNodeForFilePath(filePath)
-                                                : nullptr;
-                                            if (defProduct && declProduct != defProduct)
-                                                continue;
-                                        }
-
-                                        if (ProjectFile::isHeader(ProjectFile::classify(filePath.path()))) {
-                                            const FilePath source = correspondingHeaderOrSource(filePath);
-                                            if (!source.isEmpty()) {
-                                                op = new InsertDefOperation(interface, decl, declAST,
-                                                                            InsertionLocation(),
-                                                                            DefPosImplementationFile,
-                                                                            source);
-                                            }
-                                        } else {
-                                            op = new InsertDefOperation(interface, decl, declAST,
-                                                                        InsertionLocation(),
-                                                                        DefPosImplementationFile,
-                                                                        filePath);
-                                        }
-
-                                        if (op)
-                                            result << op;
-                                        break;
-                                    }
-                                }
-
-                                // Determine if we are dealing with a free function
-                                const bool isFreeFunction = func->enclosingClass() == nullptr;
-
-                                // Insert Position: Outside Class
-                                if (!isFreeFunction || m_defPosOutsideClass) {
-                                    result << new InsertDefOperation(interface, decl, declAST,
-                                                                     InsertionLocation(),
-                                                                     DefPosOutsideClass,
-                                                                     interface.filePath());
-                                }
-
-                                // Insert Position: Inside Class
-                                // Determine insert location direct after the declaration.
-                                int line, column;
-                                const CppRefactoringFilePtr file = interface.currentFile();
-                                file->lineAndColumn(file->endOf(simpleDecl), &line, &column);
-                                const InsertionLocation loc
-                                    = InsertionLocation(interface.filePath(), QString(),
-                                                        QString(), line, column);
-                                result << new InsertDefOperation(interface, decl, declAST, loc,
-                                                                 DefPosInsideClass, FilePath(),
-                                                                 isFreeFunction);
-
-                                return;
-                            }
-                        }
-                    }
-                }
-                break;
+            SimpleDeclarationAST * const simpleDecl = path.at(idx)->asSimpleDeclaration();
+            if (!simpleDecl)
+                continue;
+            if (idx > 0 && path.at(idx - 1)->asStatement())
+                return;
+            if (!simpleDecl->symbols || simpleDecl->symbols->next)
+                return;
+            Symbol * const symbol = simpleDecl->symbols->value;
+            if (!symbol)
+                return;
+            ForwardClassDeclaration * const forwardDecl = symbol->asForwardClassDeclaration();
+            if (!symbol->asDeclaration() && !forwardDecl)
+                return;
+            if (!forwardDecl
+                && (!simpleDecl->declarator_list || !simpleDecl->declarator_list->value)) {
+                return;
             }
+            const ProjectFile::Kind kind = ProjectFile::classify(interface.filePath());
+            const bool isHeaderFile = ProjectFile::isHeader(kind);
+            if (forwardDecl && !isHeaderFile)
+                return;
+            Function * const func = symbol->type()->asFunctionType();
+            if (func
+                && (func->isSignal() || func->isPureVirtual()
+                    || (func->isFriend() && (!func->name() || !func->name()->asNameId())))) {
+                return;
+            }
+            if (!func && !forwardDecl
+                && (!symbol->type().isStatic() || symbol->type().isInline()
+                    || simpleDecl->declarator_list->value->initializer)) {
+                return;
+            }
+
+            const Project * const declProject = ProjectManager::projectForFile(symbol->filePath());
+            const ProjectNode * const declProduct
+                = declProject ? declProject->productNodeForFilePath(symbol->filePath()) : nullptr;
+
+            // Check if there is already a definition in this product.
+            SymbolFinder symbolFinder;
+            QList<Symbol *> defs;
+            if (func) {
+                const QList<Function *> funcDefs
+                    = symbolFinder.findMatchingDefinitions(symbol, interface.snapshot(), true, false);
+                for (Function *const def : funcDefs)
+                    defs << def;
+            } else if (forwardDecl) {
+                for (int j = idx - 1; j >= 0; --j) {
+                    if (path.at(j)->asTemplateDeclaration())
+                        return;
+                }
+                if (Symbol *const classDef
+                    = symbolFinder.findMatchingClassDeclaration(forwardDecl, interface.snapshot())) {
+                    defs << classDef;
+                }
+            } else if (
+                Symbol *const varDef
+                = symbolFinder.findMatchingVarDefinition(symbol, interface.snapshot())) {
+                defs << varDef;
+            }
+            for (const Symbol * const def : defs) {
+                const Project * const defProject = ProjectManager::projectForFile(def->filePath());
+                if (declProject == defProject) {
+                    if (!declProduct)
+                        return;
+                    const ProjectNode *const defProduct = defProject
+                        ? defProject->productNodeForFilePath(def->filePath())
+                        : nullptr;
+                    if (!defProduct || declProduct == defProduct)
+                        return;
+                }
+            }
+
+            // Insert Position: Implementation File
+            InsertDefOperation *op = nullptr;
+            if (isHeaderFile) {
+                CppRefactoringChanges refactoring(interface.snapshot());
+                InsertionPointLocator locator(refactoring);
+                // find appropriate implementation file, but do not use this
+                // location, because insertLocationForMethodDefinition() should
+                // be used in perform() to get consistent insert positions.
+                for (const InsertionLocation &location : locator.methodDefinition(symbol, false, {})) {
+                    if (!location.isValid())
+                        continue;
+
+                    const FilePath filePath = location.filePath();
+                    const Project *const defProject = ProjectManager::projectForFile(filePath);
+                    if (declProject != defProject)
+                        continue;
+                    if (declProduct) {
+                        const ProjectNode *const defProduct
+                            = defProject ? defProject->productNodeForFilePath(filePath) : nullptr;
+                        if (defProduct && declProduct != defProduct)
+                            continue;
+                    }
+
+                    if (ProjectFile::isHeader(ProjectFile::classify(filePath))) {
+                        const FilePath source = correspondingHeaderOrSource(filePath);
+                        if (!source.isEmpty()) {
+                            op = new InsertDefOperation(
+                                interface,
+                                simpleDecl,
+                                InsertionLocation(),
+                                DefPosImplementationFile,
+                                source);
+                        } else if (forwardDecl) {
+                            continue;
+                        }
+                    } else {
+                        op = new InsertDefOperation(
+                            interface,
+                            simpleDecl,
+                            InsertionLocation(),
+                            DefPosImplementationFile,
+                            filePath);
+                    }
+
+                    if (op)
+                        result << op;
+                    break;
+                }
+            }
+
+            if (forwardDecl)
+                return;
+
+            // Determine if we are dealing with a free function
+            const bool isFreeFunction = func && (!func->enclosingClass() || func->isFriend());
+
+            // Insert Position: Outside Class
+            if ((func || !isHeaderFile) && (!isFreeFunction || m_defPosOutsideClass)) {
+                result << new InsertDefOperation(
+                    interface,
+                    simpleDecl,
+                    InsertionLocation(),
+                    DefPosOutsideClass,
+                    interface.filePath());
+            }
+
+            // Insert Position: Inside Class
+            // Determine insert location direct after the declaration.
+            int line, column;
+            const CppRefactoringFilePtr file = interface.currentFile();
+            file->lineAndColumn(file->endOf(simpleDecl), &line, &column);
+            const InsertionLocation loc
+                = InsertionLocation(interface.filePath(), QString(), QString(), line, column);
+            result << new InsertDefOperation(
+                interface, simpleDecl, loc, DefPosInsideClass, FilePath(), isFreeFunction);
+            return;
         }
     }
 
@@ -881,6 +954,40 @@ private slots:
         QuickFixOperationTest(singleDocument(original, ""), &factory, ProjectExplorer::HeaderPaths(), 1);
     }
 
+    void testNotTriggeringForDefaultedInline()
+    {
+        const QByteArray original =
+            "class Foo {\n"
+            "    Fo@o() = default;\n"
+            "};\n";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, ""), &factory, ProjectExplorer::HeaderPaths(), 1);
+    }
+
+    void testNotTriggeringForDefaulted()
+    {
+        const QByteArray original =
+            "class Foo {\n"
+            "    Fo@o() = default;\n"
+            "};\n"
+            "Foo::Foo() = default;";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, ""), &factory, ProjectExplorer::HeaderPaths(), 1);
+    }
+
+    void testNotTriggeringForDeleted()
+    {
+        const QByteArray original =
+            "class Foo {\n"
+            "    Fo@o() = delete;\n"
+            "};\n";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, ""), &factory, ProjectExplorer::HeaderPaths(), 1);
+    }
+
     /// Find right implementation file.
     void testFindRightImplementationFile()
     {
@@ -1081,14 +1188,12 @@ private slots:
             "#define MACRO(X) X x;\n"
             "int lala;\n"
             "\n"
-            "\n"
+            "MACRO(int)\n"
             "\n"
             "void f()\n"
             "{\n"
             "\n"
             "}\n"
-            "\n"
-            "MACRO(int)\n"
             ;
         testDocuments << CppTestDocument::create("file.cpp", original, expected);
 
@@ -1121,14 +1226,12 @@ private slots:
             "#include \"file.h\"\n"
             "#define MACRO(X) X x;\n"
             "\n"
-            "\n"
+            "MACRO(int)\n"
             "\n"
             "void f()\n"
             "{\n"
             "\n"
             "}\n"
-            "\n"
-            "MACRO(int)\n"
             ;
         testDocuments << CppTestDocument::create("file.cpp", original, expected);
 
@@ -1668,17 +1771,229 @@ signed int myclass::foo(signed int)
         QuickFixOperationTest(singleDocument(original, expected), &factory);
     }
 
-    void testNotTriggeredForFriendFunc()
+    void testFriendFuncSingleDocument()
     {
-        const QByteArray contents =
+        const QByteArray original =
             "class Foo\n"
             "{\n"
             "    friend void f@unc();\n"
             "};\n"
             "\n";
+        const QByteArray expected =
+            "class Foo\n"
+            "{\n"
+            "    friend void func()\n"
+            "    {\n\n"
+            "    }\n"
+            "};\n"
+            "\n";
 
         InsertDefFromDecl factory;
-        QuickFixOperationTest(singleDocument(contents, ""), &factory);
+        QuickFixOperationTest(singleDocument(original, expected), &factory);
+    }
+
+    void testFriendFuncWithDef()
+    {
+        QList<TestDocumentPtr> testDocuments;
+        const QByteArray header =
+            "namespace N {\n"
+            "class Foo\n"
+            "{\n"
+            "    friend void f@unc();\n"
+            "    void foo();\n"
+            "};\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.h", header, "");
+
+        const QByteArray source =
+            "#include \"file.h\"\n\n"
+            "namespace N {\n"
+            "void Foo::foo()\n"
+            "{\n\n"
+            "}\n\n"
+            "void func()\n"
+            "{\n\n"
+            "}\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.cpp", source, "");
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
+    }
+
+    void testFriendFuncWithDef2()
+    {
+        QList<TestDocumentPtr> testDocuments;
+        const QByteArray header =
+            "namespace N {\n"
+            "class Foo\n"
+            "{\n"
+            "    friend void f@unc();\n"
+            "    void foo();\n"
+            "};\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.h", header, "");
+
+        const QByteArray source =
+            "#include \"file.h\"\n\n"
+            "void N::Foo::foo()\n"
+            "{\n\n"
+            "}\n\n"
+            "void N::func()\n"
+            "{\n\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.cpp", source, "");
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
+    }
+
+    void testFriendFuncWithQualifiedName()
+    {
+        QList<TestDocumentPtr> testDocuments;
+        const QByteArray header =
+            "namespace N {\n"
+            "class Foo\n"
+            "{\n"
+            "    friend void ::N::f@unc();\n"
+            "    void foo();\n"
+            "};\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.h", header, "");
+
+        const QByteArray source =
+            "#include \"file.h\"\n\n"
+            "namespace N {\n"
+            "void Foo::foo()\n"
+            "{\n\n"
+            "}\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.cpp", source, "");
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
+    }
+
+    void testFriendFuncWithNonMatchingDef()
+    {
+        QList<TestDocumentPtr> testDocuments;
+        const QByteArray header =
+            "namespace N {\n"
+            "class Foo\n"
+            "{\n"
+            "    friend void f@unc();\n"
+            "    void foo();\n"
+            "};\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.h", header, header);
+
+        const QByteArray originalSource =
+            "#include \"file.h\"\n\n"
+            "namespace N {\n"
+            "void Foo::foo()\n"
+            "{\n\n"
+            "}\n\n"
+            "}\n\n"
+            "void func()\n"
+            "{\n\n"
+            "}\n";
+        const QByteArray expectedSource =
+            "#include \"file.h\"\n\n"
+            "namespace N {\n"
+            "void Foo::foo()\n"
+            "{\n\n"
+            "}\n\n"
+            "void func()\n"
+            "{\n\n"
+            "}\n\n"
+            "}\n\n"
+            "void func()\n"
+            "{\n\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.cpp", originalSource, expectedSource);
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
+    }
+
+    void testFriendFuncWithExplicitDecls()
+    {
+        QList<TestDocumentPtr> testDocuments;
+        const QByteArray header =
+            "namespace N {\n"
+            "void func();\n"
+            "class Foo\n"
+            "{\n"
+            "    friend void f@unc();\n"
+            "    void foo();\n"
+            "};\n"
+            "void func();\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.h", header, header);
+
+        const QByteArray originalSource =
+            "#include \"file.h\"\n\n"
+            "namespace N {\n"
+            "void Foo::foo()\n"
+            "{\n\n"
+            "}\n\n"
+            "}\n\n"
+            "void func()\n"
+            "{\n\n"
+            "}\n";
+        const QByteArray expectedSource =
+            "#include \"file.h\"\n\n"
+            "namespace N {\n"
+            "void Foo::foo()\n"
+            "{\n\n"
+            "}\n\n"
+            "void func()\n"
+            "{\n\n"
+            "}\n\n"
+            "}\n\n"
+            "void func()\n"
+            "{\n\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.cpp", originalSource, expectedSource);
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
+    }
+
+    void testFriendFuncInClassTemplate()
+    {
+        QList<TestDocumentPtr> testDocuments;
+        const QByteArray header =
+            "namespace N {\n"
+            "template<typename T> class Foo\n"
+            "{\n"
+            "    friend void f@unc();\n"
+            "    void foo();\n"
+            "};\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.h", header, header);
+
+        const QByteArray originalSource =
+            "#include \"file.h\"\n\n"
+            "namespace N {\n"
+            "template<typename T> void Foo<T>::foo()\n"
+            "{\n\n"
+            "}\n\n"
+            "}\n";
+        const QByteArray expectedSource =
+            "#include \"file.h\"\n\n"
+            "namespace N {\n"
+            "template<typename T> void Foo<T>::foo()\n"
+            "{\n\n"
+            "}\n\n"
+            "void N::func()\n" // No name minimization; see FIXME comment in Bind::visit(SimpleDeclarationAST*)
+            "{\n\n"
+            "}\n\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.cpp", originalSource, expectedSource);
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
     }
 
     void testMinimalFunctionParameterType()
@@ -1883,17 +2198,17 @@ foo::foo2::MyType<int> foo::foo2::bar()
         QByteArray original =
             "class Foo\n"
             "{\n"
-            "    template<class U>\n"
+            "    template<class U, auto N>\n"
             "    void fun@c();\n"
             "};\n";
         QByteArray expected =
             "class Foo\n"
             "{\n"
-            "    template<class U>\n"
+            "    template<class U, auto N>\n"
             "    void fun@c();\n"
             "};\n"
             "\n"
-            "template<class U>\n"
+            "template<class U, auto N>\n"
             "inline void Foo::func()\n"
             "{\n"
             "\n"
@@ -1925,9 +2240,636 @@ foo::foo2::MyType<int> foo::foo2::bar()
         InsertDefFromDecl factory;
         factory.setOutside();
         QuickFixOperationTest(singleHeader(original, expected), &factory);
-
     }
 
+    void testNotTriggeringWhenVarDefinitionExists()
+    {
+        const QByteArray original =
+            "class Foo {\n"
+            "    static int _@bar;\n"
+            "};\n"
+            "int Foo::_bar;\n";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, ""), &factory, ProjectExplorer::HeaderPaths());
+    }
+
+    void testNotTriggeringWhenVarDefinitionExists2()
+    {
+        const QByteArray original =
+            "class Foo {\n"
+            "    static inline int _@bar = 0;\n"
+            "};\n";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, ""), &factory, ProjectExplorer::HeaderPaths());
+    }
+
+    void testNotTriggeringWhenVarDefinitionExists3()
+    {
+        const QByteArray original =
+            "class Foo {\n"
+            "    static constexpr int _@bar = 0;\n"
+            "};\n";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, ""), &factory, ProjectExplorer::HeaderPaths());
+    }
+
+    void testNotTriggeringOnNonStaticVar()
+    {
+        const QByteArray original =
+            "class Foo {\n"
+            "    int _@bar;\n"
+            "};\n";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, ""), &factory, ProjectExplorer::HeaderPaths());
+    }
+
+    void testDefineVarForClassInHeaderFile()
+    {
+        const QByteArray original =
+            "class Foo {\n"
+            "    static int _@bar;\n"
+            "};\n";
+        const QByteArray expected =
+            "class Foo {\n"
+            "    static inline int _bar{};\n"
+            "};\n";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(
+            singleHeader(original, expected), &factory, ProjectExplorer::HeaderPaths());
+    }
+
+    void testDefineVarInSourceFile()
+    {
+        QList<TestDocumentPtr> testDocuments;
+
+        QByteArray original;
+        QByteArray expected;
+
+        // Header File
+        original =
+            "namespace N {\n"
+            "struct Foo\n"
+            "{\n"
+            "    static const int _bar@;\n"
+            "};\n"
+            "}\n";
+        expected = original;
+        testDocuments << CppTestDocument::create("file.h", original, expected);
+
+        // Source File
+        original =
+            "#include \"file.h\"\n"
+            "using namespace N;\n"
+            ;
+        expected = original +
+                   "\n"
+                   "const int Foo::_bar{};\n"
+            ;
+        testDocuments << CppTestDocument::create("file.cpp", original, expected);
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory, ProjectExplorer::HeaderPaths());
+    }
+
+    void testClassInTemplateAsReturnType()
+    {
+        QByteArray original =
+            "template<typename T> struct S { struct iterator{}; };"
+            "class Foo\n"
+            "{\n"
+            "    S<int>::iterator ge@t();\n"
+            "};\n";
+        QByteArray expected =
+            "template<typename T> struct S { struct iterator{}; };"
+            "class Foo\n"
+            "{\n"
+            "    S<int>::iterator get();\n"
+            "};\n"
+            "\n"
+            "S<int>::iterator Foo::get()\n"
+            "{\n"
+            "\n"
+            "}\n";
+
+        InsertDefFromDecl factory;
+        factory.setOutside();
+        QuickFixOperationTest(singleDocument(original, expected), &factory);
+    }
+
+    void testClassInTemplateAsArgument()
+    {
+        QByteArray original =
+            "template<typename T> struct S { struct iterator{}; };"
+            "class Foo\n"
+            "{\n"
+            "    void fu@nc(S<int>::iterator);\n"
+            "};\n";
+        QByteArray expected =
+            "template<typename T> struct S { struct iterator{}; };"
+            "class Foo\n"
+            "{\n"
+            "    void func(S<int>::iterator);\n"
+            "};\n"
+            "\n"
+            "void Foo::func(S<int>::iterator)\n"
+            "{\n"
+            "\n"
+            "}\n";
+
+        InsertDefFromDecl factory;
+        factory.setOutside();
+        QuickFixOperationTest(singleDocument(original, expected), &factory);
+    }
+
+    void testTemplateTemplateParameters()
+    {
+        QByteArray original =
+            "namespace N {\n"
+            "template <typename T, template <int, typename> class TT> struct S {\n"
+            "  void s@tart();\n"
+            "};\n"
+            "}\n";
+        QByteArray expected =
+            "namespace N {\n"
+            "template <typename T, template <int, typename> class TT> struct S {\n"
+            "  void start();\n"
+            "};\n\n"
+            "template<typename T, template<int, typename> class TT>\n"
+            "inline void S<T, TT>::start()\n"
+            "{\n\n"
+            "}\n\n"
+            "}\n";
+
+        InsertDefFromDecl factory;
+        factory.setOutside();
+        QuickFixOperationTest(singleHeader(original, expected), &factory);
+    }
+
+    void testInlineNamespace()
+    {
+        QByteArray original =
+            "namespace A { inline namespace X {}}\n"
+            "namespace A { namespace B { namespace X { class Bar{}; }}}\n"
+            "class Foo\n"
+            "{\n"
+            "    void fu@nc(A::B::Bar b);\n"
+            "};\n";
+        QByteArray expected =
+            "namespace A { inline namespace X {}}\n"
+            "namespace A { namespace B { namespace X { class Bar{}; }}}\n"
+            "class Foo\n"
+            "{\n"
+            "    void fu@nc(A::B::Bar b);\n"
+            "};\n\n"
+            "void Foo::func(A::B::Bar b)\n"
+            "{\n\n"
+            "}\n";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, expected), &factory);
+    }
+
+    void testFunctionWithSfinae()
+    {
+        const QByteArray original =
+            "namespace std {\n"
+            "template<bool B, class T = void> struct enable_if {};\n"
+            "template<class T> struct enable_if<true, T> { typedef T type; };\n"
+            "template<bool B, class T = void> using enable_if_t = typename enable_if<B,T>::type;\n"
+            "}\n"
+            "struct S {\n"
+            "    template<typename T, std::enable_if_t<true, T> = true> void f@unc();\n"
+            "};\n";
+        const QByteArray expected =
+            "namespace std {\n"
+            "template<bool B, class T = void> struct enable_if {};\n"
+            "template<class T> struct enable_if<true, T> { typedef T type; };\n"
+            "template<bool B, class T = void> using enable_if_t = typename enable_if<B,T>::type;\n"
+            "}\n"
+            "struct S {\n"
+            "    template<typename T, std::enable_if_t<true, T> = true> void func();\n"
+            "};\n\n"
+            "template<typename T, std::enable_if_t<true, T>>\n"
+            "void S::func()\n{\n\n"
+            "}\n";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, expected), &factory);
+    }
+
+    void testTrailingReturnType()
+    {
+        const QByteArray original =
+            "class Foo\n"
+            "{\n"
+            "    auto fu@nc() -> Foo *;\n"
+            "};\n";
+        const QByteArray expected =
+            "class Foo\n"
+            "{\n"
+            "    auto fu@nc() -> Foo *;\n"
+            "};\n\n"
+            "auto Foo::func() -> Foo *\n"
+            "{\n\n}\n";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, expected), &factory);
+    }
+
+    void testConstrainedFunctionParameter()
+    {
+        const QByteArray original =
+            "namespace N { template<typename T> concept C = true; }\n"
+            "struct S { S& @assign(N::C auto p); };\n";
+        const QByteArray expected =
+            "namespace N { template<typename T> concept C = true; }\n"
+            "struct S { S& @assign(N::C auto p); };\n\n"
+            "S &S::assign(N::C auto p)\n{\n\n}\n";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, expected), &factory);
+    }
+
+    void testConstrainedFunctionParameterMinimized()
+    {
+        const QByteArray original =
+            "namespace N {\n"
+            "template<typename T> concept C = true;\n"
+            "struct S { S& @assign(const N::C auto p); };\n"
+            "}\n";
+        const QByteArray expected =
+            "namespace N {\n"
+            "template<typename T> concept C = true;\n"
+            "struct S { S& @assign(const N::C auto p); };\n\n"
+            "S &S::assign(const C auto p)\n{\n\n}\n\n"
+            "}\n";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, expected), &factory);
+    }
+
+    void testConstrainedFunctionParameterWithTemplateArgs()
+    {
+        const QByteArray original =
+            "namespace N { template<typename T, typename U> concept C = true; }\n"
+            "struct S { S& @assign(const N::C<int> auto p); };\n";
+        const QByteArray expected =
+            "namespace N { template<typename T, typename U> concept C = true; }\n"
+            "struct S { S& @assign(const N::C<int> auto p); };\n\n"
+            "S &S::assign(const N::C<int> auto p)\n{\n\n}\n";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, expected), &factory);
+    }
+
+    void testParameterPack()
+    {
+        const QByteArray original =
+            "template<typename... Args> struct Foo {\n"
+            "    explicit @Foo(Args &&... args);\n"
+            "};\n";
+        const QByteArray expected =
+            "template<typename... Args> struct Foo {\n"
+            "    explicit Foo(Args &&... args);\n"
+            "};\n\n"
+            "template<typename... Args>\n"
+            "Foo<Args...>::Foo(Args &&... args)\n"
+            "{\n\n"
+            "}\n";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, expected), &factory);
+    }
+
+    void testConstantParameterPack()
+    {
+        const QByteArray original =
+            "template<int... Args> struct Foo {\n"
+            "    void @foo();\n"
+            "};\n";
+        const QByteArray expected =
+            "template<int... Args> struct Foo {\n"
+            "    void foo();\n"
+            "};\n\n"
+            "template<int... Args>\n"
+            "void Foo<Args...>::foo()\n"
+            "{\n\n"
+            "}\n";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, expected), &factory);
+    }
+
+    void testTemplateTemplateParameterPack()
+    {
+        const QByteArray original =
+            "template<template<typename...> class... C> struct Foo {\n"
+            "    void @foo(C<int>... c);\n"
+            "};\n";
+        const QByteArray expected =
+            "template<template<typename...> class... C> struct Foo {\n"
+            "    void foo(C<int>... c);\n"
+            "};\n\n"
+            "template<template<typename...> class... C>\n"
+            "void Foo<C...>::foo(C<int>... c)\n"
+            "{\n\n"
+            "}\n";
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, expected), &factory);
+    }
+
+    void testDefineClassAlreadyExisting()
+    {
+        QList<TestDocumentPtr> testDocuments;
+        QByteArray original;
+
+        // Header File
+        original = "class Fo@o;\n";
+        testDocuments << CppTestDocument::create("file.h", original, "");
+
+        // Source File
+        original =
+            "#include \"file.h\"\n"
+            "class Foo {}"
+            ;
+        testDocuments << CppTestDocument::create("file.cpp", original, "");
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
+    }
+
+    void testDefineClassOnClassDefinition()
+    {
+        QList<TestDocumentPtr> testDocuments;
+        QByteArray original;
+
+        // Header File
+        original = "class Fo@o {}\n";
+        testDocuments << CppTestDocument::create("file.h", original, "");
+
+        // Source File
+        original = "#include \"file.h\"\n";
+        testDocuments << CppTestDocument::create("file.cpp", original, "");
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
+    }
+
+    void testDefineClassWithOnlyHeaderFile()
+    {
+        const QByteArray original = "class Fo@o;\n";
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleHeader(original, ""), &factory);
+    }
+
+    void testDefineClassWithOnlySourceFile()
+    {
+        const QByteArray original = "class Fo@o;\n";
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(singleDocument(original, ""), &factory);
+    }
+
+    void testDefineClassFromSourceFile()
+    {
+        QList<TestDocumentPtr> testDocuments;
+
+        QByteArray original;
+
+        // Header File
+        original =
+            "class Bar { void foo(); }";
+        testDocuments << CppTestDocument::create("file.h", original, "");
+
+        // Source File
+        original =
+            "#include \"file.h\"\n\n"
+            "class Fo@o;\n"
+            "void Bar::foo() {}";
+        testDocuments << CppTestDocument::create("file.cpp", original, "");
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
+    }
+
+    void testDefinePlainClass()
+    {
+        QList<TestDocumentPtr> testDocuments;
+
+        QByteArray original;
+        QByteArray expected;
+
+        // Header File
+        original =
+            "class Fo@o;\n"
+            "class Bar { void foo(); }";
+        testDocuments << CppTestDocument::create("file.h", original, original);
+
+        // Source File
+        original =
+            "#include \"file.h\"\n\n"
+            "void Bar::foo() {}";
+        expected =
+            "#include \"file.h\"\n\n\n\n"
+            "class Foo\n{\n\n};\n\n"
+            "void Bar::foo() {}";
+        testDocuments << CppTestDocument::create("file.cpp", original, expected);
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
+    }
+
+    void testDefineClassTemplate()
+    {
+        QList<TestDocumentPtr> testDocuments;
+
+        QByteArray original;
+        QByteArray expected;
+
+        // Header File
+        original =
+            "template<typename T> class Fo@o;\n"
+            "class Bar { void foo(); }";
+        testDocuments << CppTestDocument::create("file.h", original, "");
+
+        // Source File
+        original =
+            "#include \"file.h\"\n\n"
+            "void Bar::foo() {}";
+        expected =
+            "#include \"file.h\"\n\n\n\n"
+            "template<typename T>\nclass Foo\n{\n\n};\n\n"
+            "void Bar::foo() {}";
+        testDocuments << CppTestDocument::create("file.cpp", original, ""); // TODO
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
+    }
+
+    void testDefineClassInNamespace()
+    {
+        QList<TestDocumentPtr> testDocuments;
+
+        QByteArray original;
+        QByteArray expected;
+
+        // Header File
+        original =
+            "namespace N {\n"
+            "class Fo@o;\n"
+            "class Bar { void foo(); }\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.h", original, original);
+
+        // Source File
+        original =
+            "#include \"file.h\"\n\n"
+            "namespace N {\n"
+            "void Bar::foo() {}\n"
+            "}\n";
+        expected =
+            "#include \"file.h\"\n\n"
+            "namespace N {\n\n"
+            "class Foo\n{\n\n};\n\n"
+            "void Bar::foo() {}\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.cpp", original, expected);
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
+    }
+
+    void testDefineNestedClass()
+    {
+        QList<TestDocumentPtr> testDocuments;
+
+        QByteArray original;
+        QByteArray expected;
+
+        // Header File
+        original =
+            "namespace N {\n"
+            "class Bar {\n"
+            "    struct Fo@o;\n"
+            "    void foo();\n"
+            "};\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.h", original, original);
+
+        // Source File
+        original =
+            "#include \"file.h\"\n\n"
+            "void N::Bar::foo() {}";
+        expected =
+            "#include \"file.h\"\n\n"
+            "struct N::Bar::Foo\n{\n\n};\n\n"
+            "void N::Bar::foo() {}";
+        testDocuments << CppTestDocument::create("file.cpp", original, expected);
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
+    }
+
+    void testDefineClassInTemplate()
+    {
+        QList<TestDocumentPtr> testDocuments;
+
+        QByteArray original;
+        QByteArray expected;
+
+        // Header File
+        original =
+            "namespace N {\n"
+            "template<typename T> class Bar {\n"
+            "    struct Fo@o;\n"
+            "    void foo();\n"
+            "};\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.h", original, "");
+
+        // Source File
+        original =
+            "#include \"file.h\"\n\n"
+            "template<typename T>\nvoid N::Bar<T>::foo() {}";
+        expected =
+            "#include \"file.h\"\n\n"
+            "template<typename T>\nstruct N::Bar<T>::Foo\n{\n\n};\n\n"
+            "template<typename T>\nvoid N::Bar<T>::foo() {}";
+        testDocuments << CppTestDocument::create("file.cpp", original, ""); // TODO
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
+    }
+
+    void testDefineClassTemplateInTemplate()
+    {
+        QList<TestDocumentPtr> testDocuments;
+
+        QByteArray original;
+        QByteArray expected;
+
+        // Header File
+        original =
+            "namespace N {\n"
+            "template<typename T> class Bar {\n"
+            "    template<typename U> struct Fo@o;\n"
+            "    void foo();\n"
+            "};\n"
+            "}\n";
+        testDocuments << CppTestDocument::create("file.h", original, "");
+
+        // Source File
+        original =
+            "#include \"file.h\"\n\n"
+            "template<typename T>\nvoid N::Bar<T>::foo() {}";
+        expected =
+            "#include \"file.h\"\n\n"
+            "template<typename T>\ntemplate<typename U>\nstruct N::Bar<T>::Foo\n{\n\n};\n\n"
+            "template<typename T>\nvoid N::Bar<T>::foo() {}";
+        testDocuments << CppTestDocument::create("file.cpp", original, ""); // TODO
+
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
+    }
+
+    void testRequiredStructKeyword()
+    {
+        const QByteArray header = "struct S {};\n"
+                                  "typedef struct S TheStruct;\n"
+                                  "typedef int MyInt;\n"
+                                  "TheStruct h@andle(struct S *s, MyInt i);\n";
+        const QByteArray originalSource = "#include \"s.h\"\n";
+        const QByteArray expectedSource = "#include \"s.h\"\n\n"
+                                          "TheStruct handle(struct S *s, MyInt i)\n"
+                                          "{\n\n"
+                                          "}\n";
+        const QList<TestDocumentPtr> testDocuments{
+            CppTestDocument::create("s.h", header, header),
+            CppTestDocument::create("s.c", originalSource, expectedSource)};
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
+    }
+
+    void testNonRequiredStructKeyword()
+    {
+        const QByteArray header = "struct S {};\n"
+                                  "void h@andle(struct S *s);\n";
+        const QByteArray originalSource = "#include \"s.h\"\n";
+        const QByteArray expectedSource = "#include \"s.h\"\n\n"
+                                          "void handle(S *s)\n"
+                                          "{\n\n"
+                                          "}\n";
+        const QList<TestDocumentPtr> testDocuments{
+                                                   CppTestDocument::create("s.h", header, header),
+                                                   CppTestDocument::create("s.cpp", originalSource, expectedSource)};
+        InsertDefFromDecl factory;
+        QuickFixOperationTest(testDocuments, &factory);
+    }
 };
 
 class InsertDefsFromDeclsTest : public QObject
@@ -2101,16 +3043,15 @@ public:
 
 void C::func1 (int const &i)
 {
-
 }
 
 void C::func2 (double const d)
 {
-
 }
 )";
 
         const QByteArray clangFormatSettings = R"(
+AllowShortFunctionsOnASingleLine: None
 BreakBeforeBraces: Allman
 QualifierAlignment: Right
 SpaceBeforeParens: Always

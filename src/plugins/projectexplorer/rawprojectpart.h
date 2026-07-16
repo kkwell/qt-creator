@@ -42,7 +42,7 @@ public:
     // The following are deduced from commandLineFlags.
     Utils::WarningFlags warningFlags = Utils::WarningFlags::Default;
     Utils::LanguageExtensions languageExtensions = Utils::LanguageExtension::None;
-    QStringList includedFiles;
+    Utils::FilePaths includedFiles;
 };
 
 class PROJECTEXPLORER_EXPORT RawProjectPart
@@ -50,21 +50,22 @@ class PROJECTEXPLORER_EXPORT RawProjectPart
 public:
     void setDisplayName(const QString &displayName);
 
-    void setProjectFileLocation(const QString &projectFile, int line = -1, int column = -1);
-    void setConfigFileName(const QString &configFileName);
+    void setProjectFileLocation(const Utils::FilePath &projectFile, int line = -1, int column = -1);
+    void setConfigFilePath(const Utils::FilePath &configFilePath);
     void setCallGroupId(const QString &id);
 
     // FileIsActive and GetMimeType must be thread-safe.
-    using FileIsActive = std::function<bool(const QString &filePath)>;
-    using GetMimeType = std::function<QString(const QString &filePath)>;
-    void setFiles(const QStringList &files,
-                  const FileIsActive &fileIsActive = {},
-                  const GetMimeType &getMimeType = {});
+    using FileIsActive = std::function<bool(const Utils::FilePath &filePath)>;
+    using GetMimeType = std::function<QString(const Utils::FilePath &filePath)>;
+    void setFiles(const Utils::FilePaths &files);
+    void setFileActiveChecker(const FileIsActive &fileIsActive);
+    void setMimeTypeGetter(const GetMimeType &getMimeType);
+
     static HeaderPath frameworkDetectionHeuristic(const HeaderPath &header);
     void setHeaderPaths(const HeaderPaths &headerPaths);
-    void setIncludePaths(const QStringList &includePaths);
-    void setPreCompiledHeaders(const QStringList &preCompiledHeaders);
-    void setIncludedFiles(const QStringList &files);
+    void setIncludePaths(const Utils::FilePaths &includePaths);
+    void setPreCompiledHeaders(const Utils::FilePaths &preCompiledHeaders);
+    void setIncludedFiles(const Utils::FilePaths &files);
 
     void setBuildSystemTarget(const QString &target);
     void setBuildTargetType(BuildTargetType type);
@@ -79,19 +80,19 @@ public:
 public:
     QString displayName;
 
-    QString projectFile;
+    Utils::FilePath projectFile;
     int projectFileLine = -1;
     int projectFileColumn = -1;
     QString callGroupId;
 
     // Files
-    QStringList files;
+    Utils::FilePaths files;
     FileIsActive fileIsActive;
     GetMimeType getMimeType;
-    QStringList precompiledHeaders;
-    QStringList includedFiles;
+    Utils::FilePaths precompiledHeaders;
+    Utils::FilePaths includedFiles;
     HeaderPaths headerPaths;
-    QString projectConfigFile; // Generic Project Manager only
+    Utils::FilePath projectConfigFile; // Generic Project Manager only
 
     // Build system
     QString buildSystemTarget;
@@ -107,7 +108,7 @@ public:
     Utils::QtMajorVersion qtVersion = Utils::QtMajorVersion::Unknown;
 };
 
-using RawProjectParts = QVector<RawProjectPart>;
+using RawProjectParts = QList<RawProjectPart>;
 
 class PROJECTEXPLORER_EXPORT KitInfo
 {
@@ -168,13 +169,13 @@ public:
     Utils::FilePath buildRoot;
     RawProjectParts rawProjectParts;
     RppGenerator rppGenerator;
-    Utils::Store cppSettings;
+    QVariant cppSettings;
 
     ToolchainInfo cToolchainInfo;
     ToolchainInfo cxxToolchainInfo;
 };
 
-using CppSettingsRetriever = std::function<Utils::Store(const Project *)>;
+using CppSettingsRetriever = std::function<QVariant(const Project *)>;
 void PROJECTEXPLORER_EXPORT provideCppSettingsRetriever(const CppSettingsRetriever &retriever);
 
 } // namespace ProjectExplorer

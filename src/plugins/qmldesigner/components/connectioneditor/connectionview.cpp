@@ -3,11 +3,9 @@
 
 #include "connectionview.h"
 
-#include "backendmodel.h"
 #include "bindingmodel.h"
 #include "connectionmodel.h"
 #include "dynamicpropertiesmodel.h"
-#include "propertytreemodel.h"
 #include "theme.h"
 
 #include <bindingproperty.h>
@@ -33,13 +31,28 @@
 
 namespace QmlDesigner {
 
-static QString propertyEditorResourcesPath()
+static QString resourcesPath(const QString &dir)
 {
 #ifdef SHARE_QML_PATH
     if (qEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
-        return QLatin1String(SHARE_QML_PATH) + "/propertyEditorQmlSources";
+        return QLatin1String(SHARE_QML_PATH) + "/" + dir;
 #endif
-    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toString();
+    return Core::ICore::resourcePath("qmldesigner/" + dir).toUrlishString();
+}
+
+static QString propertyEditorResourcesPath()
+{
+    return resourcesPath("propertyEditorQmlSources");
+}
+
+static QString scriptsEditorResourcesPath()
+{
+    return resourcesPath("scriptseditor");
+}
+
+static QString connectionsEditorResourcesPath()
+{
+    return resourcesPath("connectionseditor");
 }
 
 class ConnectionViewQuickWidget : public StudioQuickWidget
@@ -54,9 +67,10 @@ public:
         : m_connectionEditorView(connectionEditorView)
 
     {
-        engine()->addImportPath(qmlSourcesPath());
+        engine()->addImportPath(connectionsEditorResourcesPath());
         engine()->addImportPath(propertyEditorResourcesPath() + "/imports");
-        engine()->addImportPath(qmlSourcesPath() + "/imports");
+        engine()->addImportPath(scriptsEditorResourcesPath() + "/imports");
+        engine()->addImportPath(connectionsEditorResourcesPath() + "/imports");
 
         m_qmlSourceUpdateShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F12), this);
         connect(m_qmlSourceUpdateShortcut,
@@ -84,19 +98,6 @@ public:
                                                         0,
                                                         "DynamicPropertiesModelBackendDelegate");
 
-        qmlRegisterType<ConnectionModelStatementDelegate>("ConnectionsEditorEditorBackend",
-                                                          1,
-                                                          0,
-                                                          "ConnectionModelStatementDelegate");
-
-        qmlRegisterType<ConditionListModel>("ConnectionsEditorEditorBackend", 1, 0, "ConditionListModel");
-
-        qmlRegisterType<PropertyTreeModel>("ConnectionsEditorEditorBackend", 1, 0, "PropertyTreeModel");
-        qmlRegisterType<PropertyListProxyModel>("ConnectionsEditorEditorBackend",
-                                                1,
-                                                0,
-                                                "PropertyListProxyModel");
-
         Theme::setupTheme(engine());
 
         setMinimumSize(QSize(195, 195));
@@ -106,19 +107,11 @@ public:
     }
     ~ConnectionViewQuickWidget() = default;
 
-    static QString qmlSourcesPath()
-    {
-#ifdef SHARE_QML_PATH
-        if (qEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
-            return QLatin1String(SHARE_QML_PATH) + "/connectionseditor";
-#endif
-        return Core::ICore::resourcePath("qmldesigner/connectionseditor").toString();
-    }
-
 private:
     void reloadQmlSource()
     {
-        QString connectionEditorQmlFilePath = qmlSourcesPath() + QStringLiteral("/Main.qml");
+        QString connectionEditorQmlFilePath = connectionsEditorResourcesPath()
+                                              + QStringLiteral("/Main.qml");
         QTC_ASSERT(QFileInfo::exists(connectionEditorQmlFilePath), return );
         setSource(QUrl::fromLocalFile(connectionEditorQmlFilePath));
 
@@ -129,8 +122,8 @@ private:
 
             Core::AsynchronousMessageBox::warning(
                 Tr::tr("Cannot Create QtQuick View"),
-                Tr::tr("ConnectionsEditorWidget: %1 cannot be created.%2")
-                    .arg(qmlSourcesPath(), errorString));
+                Tr::tr("ConnectionsEditorWidget: %1 cannot be created: %2")
+                    .arg(connectionsEditorResourcesPath(), errorString));
             return;
         }
     }
@@ -146,8 +139,6 @@ struct ConnectionView::ConnectionViewData
         : connectionModel{view}
         , bindingModel{view}
         , dynamicPropertiesModel{false, view}
-        , backendModel{view}
-        , propertyTreeModel{view}
         , connectionViewQuickWidget{Utils::makeUniqueObjectPtr<ConnectionViewQuickWidget>(
               view, &connectionModel, &bindingModel, &dynamicPropertiesModel)}
     {}
@@ -155,8 +146,6 @@ struct ConnectionView::ConnectionViewData
     ConnectionModel connectionModel;
     BindingModel bindingModel;
     DynamicPropertiesModel dynamicPropertiesModel;
-    BackendModel backendModel;
-    PropertyTreeModel propertyTreeModel;
     int currentIndex = 0;
 
     // Ensure that QML is deleted first to avoid calling back to C++.
@@ -177,7 +166,6 @@ void ConnectionView::modelAttached(Model *model)
     d->bindingModel.reset();
     d->dynamicPropertiesModel.reset();
     d->connectionModel.resetModel();
-    d->backendModel.resetModel();
 }
 
 void ConnectionView::modelAboutToBeDetached(Model *model)
@@ -249,8 +237,6 @@ void ConnectionView::variantPropertiesChanged(const QList<VariantProperty> &prop
     for (const VariantProperty &variantProperty : propertyList) {
         if (variantProperty.isDynamic())
             d->dynamicPropertiesModel.updateItem(variantProperty);
-        if (variantProperty.isDynamic() && variantProperty.parentModelNode().isRootNode())
-            d->backendModel.resetModel();
 
         d->connectionModel.variantPropertyChanged(variantProperty);
 
@@ -265,13 +251,18 @@ void ConnectionView::bindingPropertiesChanged(const QList<BindingProperty> &prop
         d->bindingModel.updateItem(bindingProperty);
         if (bindingProperty.isDynamic())
             d->dynamicPropertiesModel.updateItem(bindingProperty);
-        if (bindingProperty.isDynamic() && bindingProperty.parentModelNode().isRootNode())
-            d->backendModel.resetModel();
 
         d->connectionModel.bindingPropertyChanged(bindingProperty);
 
         d->dynamicPropertiesModel.dispatchPropertyChanges(bindingProperty);
     }
+}
+
+void ConnectionView::signalDeclarationPropertiesChanged(
+    const QVector<SignalDeclarationProperty> &propertyList, PropertyChangeFlags /* propertyChange */)
+{
+    for (const SignalDeclarationProperty &property : propertyList)
+        d->dynamicPropertiesModel.updateItem(property);
 }
 
 void ConnectionView::signalHandlerPropertiesChanged(const QVector<SignalHandlerProperty> &propertyList,
@@ -288,11 +279,6 @@ void ConnectionView::selectedNodesChanged(const QList<ModelNode> & selectedNodeL
     d->dynamicPropertiesModel.reset();
 }
 
-void ConnectionView::importsChanged(const Imports & /*addedImports*/, const Imports & /*removedImports*/)
-{
-    d->backendModel.resetModel();
-}
-
 void ConnectionView::currentStateChanged(const ModelNode &)
 {
     d->dynamicPropertiesModel.reset();
@@ -303,7 +289,7 @@ WidgetInfo ConnectionView::widgetInfo()
     return createWidgetInfo(d->connectionViewQuickWidget.get(),
                             QLatin1String("ConnectionView"),
                             WidgetInfo::LeftPane,
-                            0,
+
                             tr("Connections"));
 }
 
@@ -330,11 +316,6 @@ BindingModel *ConnectionView::bindingModel() const
 DynamicPropertiesModel *ConnectionView::dynamicPropertiesModel() const
 {
     return &d->dynamicPropertiesModel;
-}
-
-BackendModel *ConnectionView::backendModel() const
-{
-    return &d->backendModel;
 }
 
 int ConnectionView::currentIndex() const

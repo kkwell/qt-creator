@@ -2,13 +2,9 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0+ OR GPL-3.0 WITH Qt-GPL-exception-1.0
 
 #include "cameraspeedconfiguration.h"
-
-#include "designersettings.h"
 #include "edit3dview.h"
-#include "edit3dviewconfig.h"
 
 #include <coreplugin/icore.h>
-
 #include <utils/environment.h>
 
 #include <QCursor>
@@ -27,7 +23,7 @@ static QString propertyEditorResourcesPath()
     if (Utils::qtcEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
         return QLatin1String(SHARE_QML_PATH) + "/propertyEditorQmlSources";
 #endif
-    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toString();
+    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toUrlishString();
 }
 
 static QString qmlSourcesPath()
@@ -36,7 +32,7 @@ static QString qmlSourcesPath()
     if (Utils::qtcEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
         return QLatin1String(SHARE_QML_PATH) + "/edit3dQmlSource";
 #endif
-    return Core::ICore::resourcePath("qmldesigner/edit3dQmlSource").toString();
+    return Core::ICore::resourcePath("qmldesigner/edit3dQmlSource").toUrlishString();
 }
 
 CameraSpeedConfiguration::CameraSpeedConfiguration(Edit3DView *view)
@@ -191,6 +187,11 @@ bool CameraSpeedConfiguration::eventFilter(QObject *obj, QEvent *event)
     }
 
     return QObject::eventFilter(obj, event);
+}
+
+bool CameraSpeedConfiguration::isQDSTrusted() const
+{
+    return Edit3DView::isQDSTrusted();
 }
 
 } // namespace QmlDesigner

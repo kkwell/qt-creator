@@ -31,7 +31,7 @@ public:
 
     AddNewInformation addNewInformation(const Utils::FilePaths &files, Node *context) const override;
 
-    bool deploysFolder(const QString &folder) const override;
+    bool deploysFolder(const Utils::FilePath &folder) const override;
 
     QmakeProFileNode *proFileNode() const;
 
@@ -57,7 +57,6 @@ public:
 
     bool isDebugAndRelease() const;
     bool isObjectParallelToSource() const;
-    bool isQtcRunnable() const;
     bool includedInExactParse() const;
 
     bool showInSimpleTree() const override;

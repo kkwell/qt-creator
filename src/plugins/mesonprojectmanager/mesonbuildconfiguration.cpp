@@ -7,7 +7,7 @@
 #include "mesonbuildsystem.h"
 #include "mesonpluginconstants.h"
 #include "mesonprojectmanagertr.h"
-#include "ninjabuildstep.h"
+#include "mesonbuildstep.h"
 
 #include <coreplugin/find/itemviewfind.h>
 
@@ -17,7 +17,6 @@
 #include <projectexplorer/buildstep.h>
 #include <projectexplorer/buildsteplist.h>
 #include <projectexplorer/kit.h>
-#include <projectexplorer/namedwidget.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectconfiguration.h>
 #include <projectexplorer/projectexplorer.h>
@@ -53,51 +52,20 @@ static MesonBuildType mesonBuildType(const QString &typeName)
     return buildTypesByName.value(typeName, MesonBuildType::custom);
 }
 
-static FilePath shadowBuildDirectory(const FilePath &projectFilePath,
-                                     const Kit *k,
-                                     const QString &bcName,
-                                     BuildConfiguration::BuildType buildType)
-{
-    if (projectFilePath.isEmpty())
-        return {};
-
-    const QString projectName = projectFilePath.parentDir().fileName();
-    return MesonBuildConfiguration::buildDirectoryFromTemplate(
-        projectFilePath.absolutePath(), projectFilePath,
-        projectName, k, bcName, buildType, "meson");
-}
-
 MesonBuildConfiguration::MesonBuildConfiguration(ProjectExplorer::Target *target, Id id)
     : BuildConfiguration(target, id)
 {
+    setConfigWidgetDisplayName(Tr::tr("Meson"));
     appendInitialBuildStep(Constants::MESON_BUILD_STEP_ID);
     appendInitialCleanStep(Constants::MESON_BUILD_STEP_ID);
-    setInitializer([this, target](const ProjectExplorer::BuildInfo &info) {
+    setInitializer([this](const ProjectExplorer::BuildInfo &info) {
         m_buildType = mesonBuildType(info.typeName);
-        auto k = target->kit();
-        if (info.buildDirectory.isEmpty()) {
-            setBuildDirectory(shadowBuildDirectory(target->project()->projectFilePath(),
-                                                   k,
-                                                   info.displayName,
-                                                   info.buildType));
-        }
-        m_buildSystem = new MesonBuildSystem{this};
     });
-}
-
-MesonBuildConfiguration::~MesonBuildConfiguration()
-{
-    delete m_buildSystem;
-}
-
-ProjectExplorer::BuildSystem *MesonBuildConfiguration::buildSystem() const
-{
-    return m_buildSystem;
 }
 
 void MesonBuildConfiguration::build(const QString &target)
 {
-    auto mesonBuildStep = qobject_cast<NinjaBuildStep *>(
+    auto mesonBuildStep = qobject_cast<MesonBuildStep *>(
         Utils::findOrDefault(buildSteps()->steps(), [](const ProjectExplorer::BuildStep *bs) {
             return bs->id() == Constants::MESON_BUILD_STEP_ID;
         }));
@@ -146,17 +114,16 @@ void MesonBuildConfiguration::toMap(Store &map) const
 void MesonBuildConfiguration::fromMap(const Store &map)
 {
     ProjectExplorer::BuildConfiguration::fromMap(map);
-    m_buildSystem = new MesonBuildSystem{this};
     m_buildType = mesonBuildType(
         map.value(Constants::BuildConfiguration::BUILD_TYPE_KEY).toString());
     m_parameters = map.value(Constants::BuildConfiguration::PARAMETERS_KEY).toString();
 }
 
-class MesonBuildSettingsWidget : public NamedWidget
+class MesonBuildSettingsWidget : public QWidget
 {
 public:
     explicit MesonBuildSettingsWidget(MesonBuildConfiguration *buildCfg)
-        : NamedWidget(Tr::tr("Meson")), m_progressIndicator(ProgressIndicatorSize::Large)
+        : m_progressIndicator(ProgressIndicatorSize::Large)
     {
         auto configureButton = new QPushButton(Tr::tr("Apply Configuration Changes"));
         configureButton->setEnabled(false);
@@ -232,7 +199,7 @@ public:
         optionsTreeView->setItemDelegate(new BuildOptionDelegate{optionsTreeView});
 
         MesonBuildSystem *bs = static_cast<MesonBuildSystem *>(buildCfg->buildSystem());
-        connect(buildCfg->target(), &ProjectExplorer::Target::parsingFinished,
+        connect(bs, &BuildSystem::parsingFinished,
                 this, [this, bs, optionsTreeView](bool success) {
             if (success) {
                 m_optionsModel.setConfiguration(bs->buildOptions());
@@ -300,7 +267,7 @@ private:
     QTimer m_showProgressTimer;
 };
 
-NamedWidget *MesonBuildConfiguration::createConfigWidget()
+QWidget *MesonBuildConfiguration::createConfigWidget()
 {
     return new MesonBuildSettingsWidget{this};
 }
@@ -344,6 +311,7 @@ static QString mesonBuildTypeDisplayName(MesonBuildType type)
 BuildInfo createBuildInfo(MesonBuildType type)
 {
     BuildInfo bInfo;
+    bInfo.buildSystemName = MesonBuildSystem::name();
     bInfo.typeName = mesonBuildTypeName(type);
     bInfo.displayName = mesonBuildTypeDisplayName(type);
     bInfo.buildType = buildType(type);
@@ -361,18 +329,17 @@ public:
         setSupportedProjectType(Constants::Project::ID);
         setSupportedProjectMimeTypeName(Constants::Project::MIMETYPE);
         setBuildGenerator(
-            [](const Kit *k, const FilePath &projectPath, bool forSetup) {
+            [](const Kit *, const FilePath &projectPath, bool forSetup) {
                 QList<BuildInfo> result;
                 for (const MesonBuildType bType : {MesonBuildType::debug,
                                                    MesonBuildType::release,
                                                    MesonBuildType::debugoptimized,
                                                    MesonBuildType::minsize}) {
                     BuildInfo bInfo = createBuildInfo(bType);
+
                     if (forSetup)
-                        bInfo.buildDirectory = shadowBuildDirectory(projectPath,
-                                                                    k,
-                                                                    bInfo.typeName,
-                                                                    bInfo.buildType);
+                        bInfo.projectName = projectPath.parentDir().fileName();
+                    bInfo.enabledByDefault = bType == MesonBuildType::debug;
                     result << bInfo;
                 }
                 return result;

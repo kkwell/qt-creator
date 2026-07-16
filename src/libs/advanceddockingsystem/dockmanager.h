@@ -30,7 +30,7 @@ namespace Utils { class QtcSettings; }
 namespace ADS {
 
 namespace Constants {
-const char DEFAULT_WORKSPACE[] = "Basic.wrk"; // Needs to align with a shipped preset
+const char DEFAULT_WORKSPACE[] = "Basic-2D.wrk"; // Needs to align with a shipped preset
 const char STARTUP_WORKSPACE_SETTINGS_KEY[] = "QML/Designer/StartupWorkspace";
 const char AUTO_RESTORE_WORKSPACE_SETTINGS_KEY[] = "QML/Designer/AutoRestoreLastWorkspace";
 const char LOCK_WORKSPACE_SETTINGS_KEY[] = "QML/Designer/LockWorkspace";
@@ -126,7 +126,7 @@ public:
         = 0x2000, ///< If this option is enabled, the tab of a dock widget is always displayed - even if it is the only visible dock widget in a floating widget.
         DockAreaHasUndockButton = 0x4000, //!< If the flag is set each dock area has an undock button
         DockAreaHasTabsMenuButton
-        = 0x8000,  //!< If the flag is set each dock area has a tabs menu button
+        = 0x8000, //!< If the flag is set each dock area has a tabs menu button
         DockAreaHideDisabledButtons
         = 0x10000, //!< If the flag is set disabled dock area buttons will not appear on the toolbar at all (enabling them will bring them back)
         DockAreaDynamicTabsMenuButtonVisibility
@@ -143,6 +143,8 @@ public:
         = 0x200000, //!< enables styling of focused dock widget tabs or floating widget titlebar
         EqualSplitOnInsertion
         = 0x400000, ///!< if enabled, the space is equally distributed to all widgets in a  splitter
+
+        HideContextMenuDockWidgetTab = 0x800000,
 
         MiddleMouseButtonClosesTab
         = 0x2000000, //! If the flag is set, the user can use the mouse middle button to close the tab under the mouse
@@ -182,15 +184,15 @@ public:
         AutoHideButtonCheckable
         = 0x08, //!< If the flag is set, the auto hide button will be checked and unchecked depending on the auto hide state. Mainly for styling purposes.
         AutoHideSideBarsIconOnly
-        = 0x10, ///< show only icons in auto hide side tab - if a tab has no icon, then the text will be shown
+        = 0x10, //!< show only icons in auto hide side tab - if a tab has no icon, then the text will be shown
         AutoHideShowOnMouseOver
-        = 0x20, ///< show the auto hide window on mouse over tab and hide it if mouse leaves auto hide container
+        = 0x20, //!< show the auto hide window on mouse over tab and hide it if mouse leaves auto hide container
         AutoHideCloseButtonCollapsesDock
-        = 0x40, ///< Close button of an auto hide container collapses the dock instead of hiding it completely
+        = 0x40, //!< Close button of an auto hide container collapses the dock instead of hiding it completely
         AutoHideHasCloseButton
-        = 0x80, //< If the flag is set an auto hide title bar has a close button
+        = 0x80, //!< If the flag is set an auto hide title bar has a close button
         AutoHideHasMinimizeButton
-        = 0x100, ///< if this flag is set, the auto hide title bar has a minimize button to collapse the dock widget
+        = 0x100, //!< if this flag is set, the auto hide title bar has a minimize button to collapse the dock widget
 
         DefaultAutoHideConfig = AutoHideFeatureEnabled | DockAreaHasAutoHideButton
                                 | AutoHideCloseButtonCollapsesDock | AutoHideHasCloseButton
@@ -705,10 +707,10 @@ public:
      * \param workspace display name of the workspace that will be created
      * \return file name of the created workspace or unexpected
      */
-    Utils::expected_str<QString> createWorkspace(const QString &workspace);
+    Utils::Result<QString> createWorkspace(const QString &workspace);
 
-    Utils::expected_str<void> openWorkspace(const QString &fileName);
-    Utils::expected_str<void> reloadActiveWorkspace();
+    Utils::Result<> openWorkspace(const QString &fileName);
+    Utils::Result<> reloadActiveWorkspace();
 
     /**
      * \brief Deletes a workspace from workspace list and the file from disk.
@@ -723,7 +725,7 @@ public:
      * \param cloneName display name of cloned workspace
      * \return file name of the cloned workspace or unexpected
      */
-    Utils::expected_str<QString> cloneWorkspace(const QString &originalFileName,
+    Utils::Result<QString> cloneWorkspace(const QString &originalFileName,
                                                 const QString &cloneName);
 
     /**
@@ -733,21 +735,21 @@ public:
      * \param newName new display name
      * \return file name of the renamed workspace or unexpected if rename failed
      */
-    Utils::expected_str<QString> renameWorkspace(const QString &originalFileName,
+    Utils::Result<QString> renameWorkspace(const QString &originalFileName,
                                                  const QString &newName);
 
-    Utils::expected_str<void> resetWorkspacePreset(const QString &fileName);
+    Utils::Result<> resetWorkspacePreset(const QString &fileName);
 
     /**
      * \brief Save the currently active workspace.
      */
-    Utils::expected_str<void> save();
+    Utils::Result<> save();
 
     void setModeChangeState(bool value);
     bool isModeChangeState() const;
 
-    Utils::expected_str<QString> importWorkspace(const QString &filePath);
-    Utils::expected_str<QString> exportWorkspace(const QString &targetFilePath,
+    Utils::Result<QString> importWorkspace(const QString &filePath);
+    Utils::Result<QString> exportWorkspace(const QString &targetFilePath,
                                                  const QString &sourceFileName);
 
     // Workspace convenience functions
@@ -786,9 +788,9 @@ private:
     static QString readAttribute(const Utils::FilePath &filePath, QStringView key);
     static bool writeAttribute(const Utils::FilePath &filePath, QStringView key,
                                const QString &value);
-    static Utils::expected_str<void> write(const Utils::FilePath &filePath, const QByteArray &data);
+    static Utils::Result<> write(const Utils::FilePath &filePath, const QByteArray &data);
 
-    Utils::expected_str<QByteArray> loadWorkspace(const Workspace &workspace) const;
+    Utils::Result<QByteArray> loadWorkspace(const Workspace &workspace) const;
 
     /**
      * \brief Copy all missing workspace presets over to the local workspace folder.
@@ -798,8 +800,6 @@ private:
 
     void saveStartupWorkspace();
     void saveLockWorkspace();
-
-    bool m_mcusProject = false;
 }; // class DockManager
 
 } // namespace ADS

@@ -6,6 +6,7 @@
 #include "autotestconstants.h"
 #include "autotesticons.h"
 #include "autotesttr.h"
+#include "mcptools.h"
 #include "projectsettingswidget.h"
 #include "testcodeparser.h"
 #include "testframeworkmanager.h"
@@ -13,7 +14,6 @@
 #include "testprojectsettings.h"
 #include "testresultspane.h"
 #include "testrunner.h"
-#include "testsettingspage.h"
 #include "testtreeitem.h"
 #include "testtreemodel.h"
 
@@ -28,6 +28,7 @@
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/coreconstants.h>
+#include <coreplugin/dialogs/ioptionspage.h>
 #include <coreplugin/icontext.h>
 #include <coreplugin/messagemanager.h>
 #include <coreplugin/progressmanager/progressmanager.h>
@@ -68,7 +69,6 @@
 
 #ifdef WITH_TESTS
 #include "autotestunittests.h"
-#include "loadprojectscenario.h"
 #endif
 
 using namespace Core;
@@ -99,9 +99,7 @@ public:
     TestTreeModel m_testTreeModel{&m_testCodeParser};
     TestRunner m_testRunner;
     DataTagLocatorFilter m_dataTagLocatorFilter;
-#ifdef WITH_TESTS
-    LoadProjectScenario m_loadProjectScenario{&m_testTreeModel};
-#endif
+    QMetaObject::Connection m_testTreeModelConnection;
 };
 
 static AutotestPluginPrivate *dd = nullptr;
@@ -131,7 +129,7 @@ AutotestPluginPrivate::AutotestPluginPrivate()
     connect(projectManager, &ProjectManager::startupProjectChanged,
             this, [this] { m_runconfigCache.clear(); });
 
-    connect(projectManager, &ProjectManager::aboutToRemoveProject, this, [](Project *project) {
+    connect(projectManager, &ProjectManager::projectRemoved, this, [](Project *project) {
         const auto it = s_projectSettings.constFind(project);
         if (it != s_projectSettings.constEnd()) {
             delete it.value();
@@ -247,8 +245,8 @@ void AutotestPluginPrivate::initializeMenuEntries()
             this, &updateMenuItemsEnabledState);
     connect(ProjectExplorerPlugin::instance(), &ProjectExplorerPlugin::runActionsUpdated,
             this, &updateMenuItemsEnabledState);
-    connect(&dd->m_testTreeModel, &TestTreeModel::testTreeModelChanged,
-            this, &updateMenuItemsEnabledState);
+    m_testTreeModelConnection = connect(&dd->m_testTreeModel, &TestTreeModel::testTreeModelChanged,
+                                        this, &updateMenuItemsEnabledState);
 }
 
 void AutotestPluginPrivate::onRunAllTriggered(TestRunMode mode)
@@ -316,22 +314,40 @@ void AutotestPluginPrivate::onRunUnderCursorTriggered(TestRunMode mode)
 
     while (scope && scope->asBlock())
         scope = scope->enclosingScope();
-    if (scope && scope->asFunction()) { // class, namespace for further stuff?
-        const QList<const CPlusPlus::Name *> fullName
-                = CPlusPlus::LookupContext::fullyQualifiedName(scope);
-        const QString funcName = CPlusPlus::Overview().prettyName(fullName);
-        const TestFrameworks active = activeTestFrameworks();
-        for (auto framework : active) {
-            const QStringList testName = framework->testNameForSymbolName(funcName);
-            if (!testName.size())
-                continue;
-            TestTreeItem *it = framework->rootNode()->findTestByNameAndFile(testName, filePath);
-            if (it) {
-                const QList<ITestConfiguration *> testsToRun
-                        = testItemsToTestConfigurations({ it }, mode);
-                if (!testsToRun.isEmpty()) {
-                    m_testRunner.runTests(mode, testsToRun);
-                    return;
+    if (scope) {
+        QList<const CPlusPlus::Name *> fullName;
+        if (scope->asFunction()) {
+            fullName = CPlusPlus::LookupContext::fullyQualifiedName(scope);
+        } else if (scope->asNamespace()) {
+            for (int count = scope->memberCount(), i = 0; i < count; ++i) {
+                CPlusPlus::Symbol *member = scope->memberAt(i);
+                if (member->line() != line)
+                    continue;
+                fullName = CPlusPlus::LookupContext::fullyQualifiedName(member);
+                if (fullName.size()) {
+                    const QString funcName = CPlusPlus::Overview().prettyName(fullName.last());
+                    if (funcName == text)
+                        break;
+                    else
+                        fullName.clear();
+                }
+            }
+        }
+        if (!fullName.isEmpty()) {
+            const QString funcName = CPlusPlus::Overview().prettyName(fullName);
+            const TestFrameworks active = activeTestFrameworks();
+            for (auto framework : active) {
+                const QStringList testName = framework->testNameForSymbolName(funcName);
+                if (!testName.size())
+                    continue;
+                TestTreeItem *it = framework->rootNode()->findTestByNameAndFile(testName, filePath);
+                if (it) {
+                    const QList<ITestConfiguration *> testsToRun
+                            = testItemsToTestConfigurations({ it }, mode);
+                    if (!testsToRun.isEmpty()) {
+                        m_testRunner.runTests(mode, testsToRun);
+                        return;
+                    }
                 }
             }
         }
@@ -418,15 +434,13 @@ TestFrameworks activeTestFrameworks()
 void updateMenuItemsEnabledState()
 {
     const Project *project = ProjectManager::startupProject();
-    const Target *target = project ? project->activeTarget() : nullptr;
     const bool disabled = dd->m_testCodeParser.state() == TestCodeParser::DisabledTemporarily;
     const bool canScan = disabled || (!dd->m_testRunner.isTestRunning()
                                       && dd->m_testCodeParser.state() == TestCodeParser::Idle);
     const bool hasTests = dd->m_testTreeModel.hasTests();
     // avoid expensive call to PE::canRunStartupProject() - limit to minimum necessary checks
     const bool canRun = !disabled && hasTests && canScan
-            && project && !project->needsConfiguration()
-            && target && target->activeRunConfiguration()
+            && project && !project->needsConfiguration() && project->activeRunConfiguration()
             && !BuildManager::isBuilding();
     const bool canRunFailed = canRun && dd->m_testTreeModel.hasFailedTests();
 
@@ -519,19 +533,23 @@ public:
 
     void initialize() final
     {
-        setupTestSettingsPage();
+        IOptionsPage::registerCategory(
+            Constants::AUTOTEST_SETTINGS_CATEGORY,
+            Tr::tr("Testing"),
+            ":/autotest/images/settingscategory_autotest.png");
+
+        setupTestSettings();
 
         dd = new AutotestPluginPrivate;
-    #ifdef WITH_TESTS
-        ExtensionSystem::PluginManager::registerScenario("TestModelManagerInterface",
-                       [] { return dd->m_loadProjectScenario(); });
-
+#ifdef WITH_TESTS
         addTestCreator(createAutotestUnitTests);
-    #endif
+#endif
     }
 
     void extensionsInitialized()
     {
+        registerMcpTools();
+
         ActionContainer *contextMenu = ActionManager::actionContainer(CppEditor::Constants::M_CONTEXT);
         if (!contextMenu) // if QC is started without CppEditor plugin
             return;
@@ -575,7 +593,8 @@ public:
     ShutdownFlag aboutToShutdown() final
     {
         dd->m_testCodeParser.aboutToShutdown(true);
-        dd->m_testTreeModel.disconnect();
+        dd->m_resultsPane->aboutToShutdown();
+        disconnect(dd->m_testTreeModelConnection);
         return SynchronousShutdown;
     }
 };

@@ -14,6 +14,7 @@
 #include <utils/algorithm.h>
 #include <utils/categorysortfiltermodel.h>
 #include <utils/fancylineedit.h>
+#include <utils/guiutils.h>
 #include <utils/headerviewstretcher.h>
 #include <utils/itemviews.h>
 #include <utils/layoutbuilder.h>
@@ -35,8 +36,7 @@ using namespace Utils;
 
 static const int SortRole = Qt::UserRole + 1;
 
-namespace Core {
-namespace Internal {
+namespace Core::Internal {
 
 enum FilterItemColumn
 {
@@ -125,6 +125,8 @@ bool FilterItem::setData(int column, const QVariant &data, int role)
         break;
     case FilterPrefix:
         if (role == Qt::EditRole && data.canConvert<QString>()) {
+            if (m_filter->shortcutString() == data.toString())
+                return false;
             m_filter->setShortcutString(data.toString());
             return true;
         }
@@ -166,6 +168,7 @@ public:
 
     QTextDocument &doc() { return m_doc; }
 
+    void setIndentation(int indentation);
     void setMaxWidth(int width);
     int maxWidth() const;
 
@@ -174,14 +177,25 @@ private:
                const QStyleOptionViewItem &option,
                const QModelIndex &index) const override;
     QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override;
+    void updateDocumentForIndex(const QModelIndex &index) const;
 
+    int m_indentation = 0;
     int m_maxWidth = -1;
     mutable QTextDocument m_doc;
 };
 
 RichTextDelegate::RichTextDelegate(QObject *parent)
     : QStyledItemDelegate(parent)
-{}
+{
+    QTextOption textOption;
+    textOption.setWrapMode(QTextOption::WordWrap);
+    m_doc.setDefaultTextOption(textOption);
+}
+
+void RichTextDelegate::setIndentation(int indentation)
+{
+    m_indentation = indentation;
+}
 
 void RichTextDelegate::setMaxWidth(int width)
 {
@@ -202,17 +216,9 @@ void RichTextDelegate::paint(QPainter *painter,
 {
     QStyleOptionViewItem options = option;
     initStyleOption(&options, index);
+    updateDocumentForIndex(index);
 
     painter->save();
-    QTextOption textOption;
-    if (m_maxWidth > 0) {
-        textOption.setWrapMode(QTextOption::WordWrap);
-        m_doc.setDefaultTextOption(textOption);
-        if (options.rect.width() > m_maxWidth)
-            options.rect.setWidth(m_maxWidth);
-    }
-    m_doc.setHtml(options.text);
-    m_doc.setTextWidth(options.rect.width());
     options.text = "";
     options.widget->style()->drawControl(QStyle::CE_ItemViewItem, &options, painter, options.widget);
     painter->translate(options.rect.left(), options.rect.top());
@@ -225,20 +231,23 @@ void RichTextDelegate::paint(QPainter *painter,
     painter->restore();
 }
 
-QSize RichTextDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const
+QSize RichTextDelegate::sizeHint([[maybe_unused]] const QStyleOptionViewItem &option,
+                                 const QModelIndex &index) const
 {
-    QStyleOptionViewItem options = option;
-    initStyleOption(&options, index);
-    QTextOption textOption;
-    if (m_maxWidth > 0) {
-        textOption.setWrapMode(QTextOption::WordWrap);
-        m_doc.setDefaultTextOption(textOption);
-        if (!options.rect.isValid() || options.rect.width() > m_maxWidth)
-            options.rect.setWidth(m_maxWidth);
+    updateDocumentForIndex(index);
+    return {qCeil(m_doc.idealWidth()), qCeil(m_doc.size().height())};
+}
+
+void RichTextDelegate::updateDocumentForIndex(const QModelIndex &index) const
+{
+    int level = 0;
+    QModelIndex parent = index;
+    while (parent.isValid()) {
+        ++level;
+        parent = parent.parent();
     }
-    m_doc.setHtml(options.text);
-    m_doc.setTextWidth(options.rect.width());
-    return QSize(m_doc.idealWidth(), m_doc.size().height());
+    m_doc.setTextWidth(m_maxWidth - level * m_indentation);
+    m_doc.setHtml(index.data(Qt::DisplayRole).toString());
 }
 
 class LocatorSettingsWidget : public IOptionsPageWidget
@@ -252,24 +261,6 @@ public:
 
         auto addButton = new QPushButton(Tr::tr("Add..."));
 
-        auto refreshIntervalLabel = new QLabel(Tr::tr("Refresh interval:"));
-        refreshIntervalLabel->setToolTip(
-            Tr::tr("Locator filters that do not update their cached data immediately, such as the "
-               "custom directory filters, update it after this time interval."));
-
-        m_refreshInterval = new QSpinBox;
-        m_refreshInterval->setToolTip(refreshIntervalLabel->toolTip());
-        m_refreshInterval->setSuffix(Tr::tr(" min"));
-        m_refreshInterval->setFrame(true);
-        m_refreshInterval->setButtonSymbols(QAbstractSpinBox::PlusMinus);
-        m_refreshInterval->setMaximum(320);
-        m_refreshInterval->setSingleStep(5);
-        m_refreshInterval->setValue(60);
-
-        m_relativePaths = new QCheckBox(Tr::tr("Show Paths in Relation to Active Project"));
-        m_relativePaths->setToolTip(
-            Tr::tr("Locator filters show relative paths to the active project when possible."));
-
         auto filterEdit = new FancyLineEdit;
         filterEdit->setFiltering(true);
 
@@ -281,6 +272,7 @@ public:
         m_filterList->setActivationMode(Utils::DoubleClickActivation);
         m_filterList->setAlternatingRowColors(true);
         auto nameDelegate = new RichTextDelegate(m_filterList);
+        nameDelegate->setIndentation(m_filterList->indentation());
         connect(m_filterList->header(),
                 &QHeaderView::sectionResized,
                 nameDelegate,
@@ -289,7 +281,6 @@ public:
                         nameDelegate->setMaxWidth(updated);
                 });
         m_filterList->setItemDelegateForColumn(0, nameDelegate);
-
         m_model = new TreeModel<>(m_filterList);
         initializeModel();
         m_proxyModel = new CategorySortFilterModel(m_filterList);
@@ -308,6 +299,8 @@ public:
         m_editButton = new QPushButton(Tr::tr("Edit..."));
         m_editButton->setEnabled(false);
 
+        const LocatorSettings &settings = locatorSettings();
+
         using namespace Layouting;
 
         Column buttons{addButton, m_removeButton, m_editButton, st};
@@ -316,8 +309,10 @@ public:
         Grid {
             filterEdit, br,
             m_filterList, buttons, br,
-            Span(2, Row{refreshIntervalLabel, m_refreshInterval, st}), br,
-            Span(2, Row{m_relativePaths, st})
+            Column {
+                Row {settings.refreshInterval, st},
+                settings.relativePaths
+            }
         }.attachTo(this);
         // clang-format on
 
@@ -330,6 +325,10 @@ public:
                 &Utils::TreeView::activated,
                 this,
                 &LocatorSettingsWidget::configureFilter);
+        connect(m_model,
+                &QAbstractItemModel::dataChanged,
+                this,
+                &markSettingsDirty);
         connect(m_editButton, &QPushButton::clicked, this, [this] {
             configureFilter(m_filterList->currentIndex());
         });
@@ -352,13 +351,13 @@ public:
         });
         addButton->setMenu(addMenu);
 
-        m_refreshInterval->setValue(m_plugin->refreshInterval());
-        m_relativePaths->setChecked(m_plugin->relativePaths());
         saveFilterStates();
+
+        connect(&settings, &BaseAspect::volatileValueChanged, &markSettingsDirty);
     }
 
     void apply() final;
-    void finish() final;
+    void cancel() final;
 
 private:
     void updateButtonStates();
@@ -374,8 +373,6 @@ private:
     Utils::TreeView *m_filterList;
     QPushButton *m_removeButton;
     QPushButton *m_editButton;
-    QSpinBox *m_refreshInterval;
-    QCheckBox *m_relativePaths;
     Locator *m_plugin = nullptr;
     Utils::TreeModel<> *m_model = nullptr;
     QSortFilterProxyModel *m_proxyModel = nullptr;
@@ -398,14 +395,13 @@ void LocatorSettingsWidget::apply()
     // Pass the new configuration on to the plugin
     m_plugin->setFilters(m_filters);
     m_plugin->setCustomFilters(m_customFilters);
-    m_plugin->setRefreshInterval(m_refreshInterval->value());
-    m_plugin->setRelativePaths(m_relativePaths->isChecked());
+    locatorSettings().apply();
     requestRefresh();
     m_plugin->saveSettings();
     saveFilterStates();
 }
 
-void LocatorSettingsWidget::finish()
+void LocatorSettingsWidget::cancel()
 {
     // If settings were applied, this shouldn't change anything. Otherwise it
     // makes sure the filter states aren't changed permanently.
@@ -497,8 +493,10 @@ void LocatorSettingsWidget::configureFilter(const QModelIndex &proxyIndex)
     QString shortcutString = filter->shortcutString();
     bool needsRefresh = false;
     filter->openConfigDialog(this, needsRefresh);
-    if (needsRefresh && !m_refreshFilters.contains(filter))
+    if (needsRefresh && !m_refreshFilters.contains(filter)) {
         m_refreshFilters.append(filter);
+        markSettingsDirty();
+    }
     if (filter->isIncludedByDefault() != includedByDefault)
         item->updateColumn(FilterIncludedByDefault);
     if (filter->shortcutString() != shortcutString)
@@ -514,6 +512,7 @@ void LocatorSettingsWidget::addCustomFilter(ILocatorFilter *filter)
         m_customFilters.append(filter);
         m_refreshFilters.append(filter);
         m_customFilterRoot->appendChild(new FilterItem(filter));
+        markSettingsDirty();
     }
 }
 
@@ -535,6 +534,7 @@ void LocatorSettingsWidget::removeCustomFilter()
     } else {
         m_removedFilters.append(filter);
     }
+    markSettingsDirty();
 }
 
 // LocatorSettingsPage
@@ -547,5 +547,4 @@ LocatorSettingsPage::LocatorSettingsPage()
     setWidgetCreator([] { return new LocatorSettingsWidget; });
 }
 
-} // Internal
-} // Core
+} // Core::Internal

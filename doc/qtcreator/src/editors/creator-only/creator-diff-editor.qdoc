@@ -53,13 +53,13 @@
 
     \endlist
 
-    If \QC cannot detect the encoding of the files to compare, an info bar
+    If \QC cannot detect the encoding of the files to compare, a message
     displays the option to reload the document using some other
     encoding. For more information, see \l {Change text encoding}.
 
     \section1 View changes
 
-    \image creator-diff-editor.png {Diff editor output in the Edit mode}
+    \image {creator-diff-editor.png} {Diff editor output in the Edit mode}
 
     View the changes in the \uicontrol Edit mode. Color coding is
     used to mark changed lines. By default, red indicates lines that contain
@@ -68,11 +68,12 @@
     in the right pane.
 
     To view the differences in a unified view where changed rows are placed
-    below each other, select \inlineimage icons/unifieddiff.png
+    below each other, select
+    \inlineimage {icons/unifieddiff.png} {Switch to Unified Diff Editor}
     (\uicontrol {Switch to Unified Diff Editor}).
 
     To switch back to the side-by-side view, select
-    \inlineimage icons/sidebysidediff.png
+    \inlineimage {icons/sidebysidediff.png} {Switch to Side by Side Diff Editor}
     (\uicontrol {Switch to Side by Side Diff Editor}).
 
     To only show text changes, select \uicontrol {Ignore Whitespace}.
@@ -82,7 +83,7 @@
 
     By default, the horizontal scroll bars in the left and right pane are
     synchronized. To use them independently of each other, select
-    \inlineimage icons/linkicon.png
+    \inlineimage {icons/linkicon.png} {Synchronize Horizontal Scroll Bars}
     (\uicontrol {Synchronize Horizontal Scroll Bars}).
 
     \section1 Revert and apply changes
@@ -95,16 +96,14 @@
 
     \section1 Reload files
 
-    If the files change outside \QC, select \inlineimage icons/reload_gray.png
-    (\uicontrol {Reload Editor}) to compare them again and to show the results.
+    If the files change outside \QC, select \imagereload
+    (\uicontrol {Reload Diff}) to compare them again and to show the results.
 
-    \if defined(qtcreator)
     \section1 Paste changes for review
 
     To send a chunk of changes to a \l{Paste and fetch code snippets}
     {code pasting service}, select \uicontrol {Send Chunk to CodePaster} in the
     context menu.
-    \endif
 
     \section1 Change colors
 

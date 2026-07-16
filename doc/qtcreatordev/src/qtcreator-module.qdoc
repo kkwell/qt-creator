@@ -4,19 +4,18 @@
 /*!
     \page qtcreator-api.html
 
-    \title Qt Creator API Reference
+    \title C++ API Reference
 
     The core of \QC is basically only a \l{ExtensionSystem}{plugin loader}. All
-    functionality is implemented in plugins. The basis of \QC is implemented in
-    the Core plugin. The plugin manager provides simple means for
-    plugin cooperation that allow plugins to provide hooks for other plugin's
-    extensions.
+    functionality is implemented in C++-based plugins or Lua-based extensions.
+    The basis of \QC is implemented in the Core plugin. The plugin manager lets
+    plugins cooperate by providing hooks for other plugins.
 
     \section1 Libraries
 
     \section2 Core Libraries
 
-    There are a few core libraries used by many parts of Qt Creator.
+    There are a few core libraries used by many parts of \QC.
 
     \table
         \header
@@ -35,13 +34,11 @@
                 object pool.
 
         \row
-            \li \l{Tasking}
-            \li A solution containing a TaskTree and other classes for writing
-                declarative trees of asynchronous task flows.
-
-        \row
             \li \l{Utils}
-            \li Useful classes that are reused in a lot of places in Qt Creator code.
+            \li Useful classes that are reused in a lot of places in \QC code.
+                The \l{Layouting} namespace contains classes that allow using a declarative style
+                for the construction of graphical user interfaces.
+
     \omit
         \row
             \li \l{QmlJS}
@@ -66,7 +63,8 @@
     \section1 Plugins
 
     As already mentioned, \QC is basically only a plugin loader framework
-    which gets its IDE functionality through plugins. The most important plugin
+    which gets its IDE functionality through C++-based plugins and Lua-based
+    extensions. The most important plugin
     is the Core plugin which provides all the basic functionality needed
     later to integrate e.g. editors or mode windows.
 
@@ -123,37 +121,32 @@
             \li \l{Spinner Solution}{Spinner}
             \li Renders a circular, endlessly animated progress indicator,
                 which may be attached to any widget as an overlay.
-
-        \row
-            \li \l{Tasking Solution}{Tasking}
-            \li Enables you to build extensible, declarative task tree structures
-                that contain possibly asynchronous tasks.
     \endtable
 
     \section1 Reference
 
     \list
-        \li \l {Qt Creator C++ Classes}
-        \li \l {Qt Creator Namespaces}
-        \li \l {Qt Creator Functions}
+        \li \l {\QC C++ Classes}
+        \li \l {\QC Namespaces}
+        \li \l {\QC Functions}
         \li \l {Solutions}
     \endlist
 */
 
 /*!
     \module QtCreator
-    \title Qt Creator C++ Classes
+    \title \QC C++ Classes
 
-    This topic lists the documented Qt Creator C++ classes. For information
+    This topic lists the documented \QC C++ classes. For information
     about the classes that have not been documented, please inspect the source
     code.
 */
 
 /*!
     \page namespaces.html
-    \title Qt Creator Namespaces
+    \title \QC Namespaces
 
-    This topic lists the documented Qt Creator namespaces. For information
+    This topic lists the documented \QC namespaces. For information
     about the namespaces that have not been documented, please inspect the
     source code.
 
@@ -162,18 +155,18 @@
 
 /*!
     \page mainclasses.html
-    \title Qt Creator Main Classes
+    \title \QC Main Classes
 
-    This topic lists the most important Qt Creator C++ classes.
+    This topic lists the most important \QC C++ classes.
 
     \generatelist mainclasses
 */
 
 /*!
     \page functions.html
-    \title Qt Creator Functions
+    \title \QC Functions
 
-    This topic lists the documented Qt Creator functions. For information
+    This topic lists the documented \QC functions. For information
     about the functions that have not been documented, please inspect the
     source code.
 

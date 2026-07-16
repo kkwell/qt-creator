@@ -347,9 +347,8 @@ void Bind::attribute(GnuAttributeAST *ast)
 
     // int lparen_token = ast->lparen_token;
     // int tag_token = ast->tag_token;
-    for (ExpressionListAST *it = ast->expression_list; it; it = it->next) {
-        ExpressionTy value = this->expression(it->value);
-    }
+    for (ExpressionListAST *it = ast->expression_list; it; it = it->next)
+        expression(it->value);
     // int rparen_token = ast->rparen_token;
 }
 
@@ -396,7 +395,8 @@ FullySpecifiedType Bind::declarator(DeclaratorAST *ast, const FullySpecifiedType
     if (!type->asFunctionType()) {
         ExpressionTy initializer = this->expression(ast->initializer);
         if (cxx11Enabled && isAuto) {
-            type = initializer;
+            if (ast->initializer)
+                type = initializer;
             type.setAuto(true);
         }
     }
@@ -447,7 +447,17 @@ void Bind::baseSpecifier(BaseSpecifierAST *ast, int colon_token, Class *klass)
     if (! sourceLocation)
         sourceLocation = std::max(colon_token, klass->sourceLocation());
 
-    const Name *baseClassName = this->name(ast->name);
+    const Name *baseClassName = nullptr;
+    if (ast->decltype_specifier) {
+        // Note that the type will usually be undefined, as we cannot properly analyze
+        // e.g. function calls here.
+        FullySpecifiedType t = expression(ast->decltype_specifier->expression);
+        if (auto namedType = t->asNamedType())
+            baseClassName = namedType->name();
+    } else {
+        baseClassName = this->name(ast->name);
+    }
+
     BaseClass *baseClass = control()->newBaseClass(sourceLocation, baseClassName);
     if (ast->virtual_token)
         baseClass->setVirtual(true);
@@ -677,9 +687,8 @@ void Bind::newPlacement(ExpressionListParenAST *ast)
         return;
 
     // int lparen_token = ast->lparen_token;
-    for (ExpressionListAST *it = ast->expression_list; it; it = it->next) {
-        ExpressionTy value = this->expression(it->value);
-    }
+    for (ExpressionListAST *it = ast->expression_list; it; it = it->next)
+        expression(it->value);
     // int rparen_token = ast->rparen_token;
 }
 
@@ -698,7 +707,7 @@ FullySpecifiedType Bind::newArrayDeclarator(NewArrayDeclaratorAST *ast, const Fu
         return type;
 
     // int lbracket_token = ast->lbracket_token;
-    ExpressionTy expression = this->expression(ast->expression);
+    expression(ast->expression);
     // int rbracket_token = ast->rbracket_token;
     return type;
 }
@@ -1024,7 +1033,7 @@ void Bind::objCMessageArgument(ObjCMessageArgumentAST *ast)
     if (! ast)
         return;
 
-    ExpressionTy parameter_value_expression = this->expression(ast->parameter_value_expression);
+    expression(ast->parameter_value_expression);
 }
 
 bool Bind::visit(ObjCTypeNameAST *ast)
@@ -1355,8 +1364,8 @@ bool Bind::visit(QtMemberDeclarationAST *ast)
 
 bool Bind::visit(CaseStatementAST *ast)
 {
-    ExpressionTy expression = this->expression(ast->expression);
-    this->statement(ast->statement);
+    expression(ast->expression);
+    statement(ast->statement);
     return false;
 }
 
@@ -1384,8 +1393,8 @@ bool Bind::visit(DeclarationStatementAST *ast)
 
 bool Bind::visit(DoStatementAST *ast)
 {
-    this->statement(ast->statement);
-    ExpressionTy expression = this->expression(ast->expression);
+    statement(ast->statement);
+    expression(ast->expression);
     return false;
 }
 
@@ -1398,7 +1407,7 @@ bool Bind::visit(ExpressionOrDeclarationStatementAST *ast)
 
 bool Bind::visit(ExpressionStatementAST *ast)
 {
-    ExpressionTy expression = this->expression(ast->expression);
+    expression(ast->expression);
     // int semicolon_token = ast->semicolon_token;
     return false;
 }
@@ -1461,6 +1470,11 @@ bool Bind::visit(RangeBasedForStatementAST *ast)
     ast->symbol = block;
 
     Scope *previousScope = switchScope(block);
+
+    if (ast->initDecl)
+        declaration(ast->initDecl);
+    else if (ast->initStmt)
+        statement(ast->initStmt);
 
     FullySpecifiedType type;
     for (SpecifierListAST *it = ast->type_specifier_list; it; it = it->next) {
@@ -1572,7 +1586,7 @@ bool Bind::visit(GotoStatementAST *ast)
 
 bool Bind::visit(ReturnStatementAST *ast)
 {
-    ExpressionTy expression = this->expression(ast->expression);
+    expression(ast->expression);
     return false;
 }
 
@@ -1670,9 +1684,9 @@ bool Bind::visit(ObjCSynchronizedStatementAST *ast)
 {
     // int synchronized_token = ast->synchronized_token;
     // int lparen_token = ast->lparen_token;
-    ExpressionTy synchronized_object = this->expression(ast->synchronized_object);
+    expression(ast->synchronized_object);
     // int rparen_token = ast->rparen_token;
-    this->statement(ast->statement);
+    statement(ast->statement);
     return false;
 }
 
@@ -1695,9 +1709,9 @@ bool Bind::visit(CompoundExpressionAST *ast)
 bool Bind::visit(CompoundLiteralAST *ast)
 {
     // int lparen_token = ast->lparen_token;
-    ExpressionTy type_id = this->expression(ast->type_id);
+    expression(ast->type_id);
     // int rparen_token = ast->rparen_token;
-    ExpressionTy initializer = this->expression(ast->initializer);
+    expression(ast->initializer);
     return false;
 }
 
@@ -1714,18 +1728,18 @@ bool Bind::visit(QtMethodAST *ast)
 
 bool Bind::visit(BinaryExpressionAST *ast)
 {
-    ExpressionTy left_expression = this->expression(ast->left_expression);
+    expression(ast->left_expression);
     // int binary_op_token = ast->binary_op_token;
-    ExpressionTy right_expression = this->expression(ast->right_expression);
+    expression(ast->right_expression);
     return false;
 }
 
 bool Bind::visit(CastExpressionAST *ast)
 {
     // int lparen_token = ast->lparen_token;
-    ExpressionTy type_id = this->expression(ast->type_id);
+    expression(ast->type_id);
     // int rparen_token = ast->rparen_token;
-    ExpressionTy expression = this->expression(ast->expression);
+    expression(ast->expression);
     return false;
 }
 
@@ -1754,11 +1768,11 @@ bool Bind::visit(ConditionAST *ast)
 
 bool Bind::visit(ConditionalExpressionAST *ast)
 {
-    ExpressionTy condition = this->expression(ast->condition);
+    expression(ast->condition);
     // int question_token = ast->question_token;
-    ExpressionTy left_expression = this->expression(ast->left_expression);
+    expression(ast->left_expression);
     // int colon_token = ast->colon_token;
-    ExpressionTy right_expression = this->expression(ast->right_expression);
+    expression(ast->right_expression);
     return false;
 }
 
@@ -1766,10 +1780,10 @@ bool Bind::visit(CppCastExpressionAST *ast)
 {
     // int cast_token = ast->cast_token;
     // int less_token = ast->less_token;
-    ExpressionTy type_id = this->expression(ast->type_id);
+    expression(ast->type_id);
     // int greater_token = ast->greater_token;
     // int lparen_token = ast->lparen_token;
-    ExpressionTy expression = this->expression(ast->expression);
+    expression(ast->expression);
     // int rparen_token = ast->rparen_token;
     return false;
 }
@@ -1780,16 +1794,15 @@ bool Bind::visit(DeleteExpressionAST *ast)
     // int delete_token = ast->delete_token;
     // int lbracket_token = ast->lbracket_token;
     // int rbracket_token = ast->rbracket_token;
-    ExpressionTy expression = this->expression(ast->expression);
+    expression(ast->expression);
     return false;
 }
 
 bool Bind::visit(ArrayInitializerAST *ast)
 {
     // int lbrace_token = ast->lbrace_token;
-    for (ExpressionListAST *it = ast->expression_list; it; it = it->next) {
-        ExpressionTy value = this->expression(it->value);
-    }
+    for (ExpressionListAST *it = ast->expression_list; it; it = it->next)
+        expression(it->value);
     // int rbrace_token = ast->rbrace_token;
     return false;
 }
@@ -1798,12 +1811,12 @@ bool Bind::visit(NewExpressionAST *ast)
 {
     // int scope_token = ast->scope_token;
     // int new_token = ast->new_token;
-    this->newPlacement(ast->new_placement);
+    newPlacement(ast->new_placement);
     // int lparen_token = ast->lparen_token;
-    ExpressionTy type_id = this->expression(ast->type_id);
+    expression(ast->type_id);
     // int rparen_token = ast->rparen_token;
-    this->newTypeId(ast->new_type_id);
-    this->expression(ast->new_initializer);
+    newTypeId(ast->new_type_id);
+    expression(ast->new_initializer);
     return false;
 }
 
@@ -1811,7 +1824,7 @@ bool Bind::visit(TypeidExpressionAST *ast)
 {
     // int typeid_token = ast->typeid_token;
     // int lparen_token = ast->lparen_token;
-    ExpressionTy expression = this->expression(ast->expression);
+    expression(ast->expression);
     // int rparen_token = ast->rparen_token;
     return false;
 }
@@ -1839,7 +1852,7 @@ bool Bind::visit(SizeofExpressionAST *ast)
     // int sizeof_token = ast->sizeof_token;
     // int dot_dot_dot_token = ast->dot_dot_dot_token;
     // int lparen_token = ast->lparen_token;
-    ExpressionTy expression = this->expression(ast->expression);
+    expression(ast->expression);
     // int rparen_token = ast->rparen_token;
     return false;
 }
@@ -1875,7 +1888,7 @@ bool Bind::visit(ThisExpressionAST *ast)
 bool Bind::visit(NestedExpressionAST *ast)
 {
     // int lparen_token = ast->lparen_token;
-    ExpressionTy expression = this->expression(ast->expression);
+    expression(ast->expression);
     // int rparen_token = ast->rparen_token;
     return false;
 }
@@ -1883,14 +1896,14 @@ bool Bind::visit(NestedExpressionAST *ast)
 bool Bind::visit(StringLiteralAST *ast)
 {
     // int literal_token = ast->literal_token;
-    ExpressionTy next = this->expression(ast->next);
+    expression(ast->next);
     return false;
 }
 
 bool Bind::visit(ThrowExpressionAST *ast)
 {
     // int throw_token = ast->throw_token;
-    ExpressionTy expression = this->expression(ast->expression);
+    expression(ast->expression);
     return false;
 }
 
@@ -1909,7 +1922,7 @@ bool Bind::visit(TypeIdAST *ast)
 bool Bind::visit(UnaryExpressionAST *ast)
 {
     // int unary_op_token = ast->unary_op_token;
-    ExpressionTy expression = this->expression(ast->expression);
+    expression(ast->expression);
     return false;
 }
 
@@ -1938,7 +1951,7 @@ bool Bind::visit(ObjCProtocolExpressionAST *ast)
 bool Bind::visit(ObjCEncodeExpressionAST *ast)
 {
     // int encode_token = ast->encode_token;
-    FullySpecifiedType type = this->objCTypeName(ast->type_name);
+    objCTypeName(ast->type_name);
     return false;
 }
 
@@ -2090,6 +2103,18 @@ bool Bind::visit(SimpleDeclarationAST *ast)
             }
 
             _scope->addMember(decl);
+            if (decl->isFriend() && _scope->asClass() && nameAndLoc.first->asNameId()) {
+
+                // FIXME: visit(TemplateDeclarationAST*) sets the scope too late.
+                // If we fix that, other things break (possibly because lots of code has
+                // worked around that issue over the years?).
+                if (_scope->enclosingNamespace()) {
+                    // No need for cloning, we just need this symbol here for name minimization
+                    // to work; see symbolIdentical() in LookupContext.cpp.
+                    _scope->enclosingNamespace()->addMember(
+                                control()->newDeclaration(sourceLocation, nameAndLoc.first));
+                }
+            }
 
             *symbolTail = new (translationUnit()->memoryPool()) List<Symbol *>(decl);
             symbolTail = &(*symbolTail)->next;
@@ -2297,6 +2322,18 @@ bool Bind::visit(AsmDefinitionAST *ast)
     return false;
 }
 
+bool Bind::visit(ConceptDeclarationAST *ast)
+{
+    if (!ast->name)
+        return false;
+
+    const Name *name = this->name(ast->name);
+    Declaration *decl = control()->newDeclaration(ast->name->firstToken(), name);
+    _scope->addMember(decl);
+
+    return false;
+}
+
 bool Bind::visit(ExceptionDeclarationAST *ast)
 {
     FullySpecifiedType type;
@@ -2447,7 +2484,7 @@ bool Bind::visit(ParameterDeclarationAST *ast)
     DeclaratorIdAST *declaratorId = nullptr;
     type = this->declarator(ast->declarator, type, &declaratorId);
     // int equal_token = ast->equal_token;
-    ExpressionTy expression = this->expression(ast->expression);
+    expression(ast->expression);
 
     const Name *argName = nullptr;
     if (declaratorId && declaratorId->name)
@@ -2455,6 +2492,8 @@ bool Bind::visit(ParameterDeclarationAST *ast)
 
     Argument *arg = control()->newArgument(location(declaratorId, ast->firstToken()), argName);
     arg->setType(type);
+    if (type && declaratorId && declaratorId->dot_dot_dot_token)
+        arg->setIsPack();
 
     if (ast->expression)
         arg->setInitializer(asStringLiteral(ast->expression));
@@ -2462,6 +2501,17 @@ bool Bind::visit(ParameterDeclarationAST *ast)
     _scope->addMember(arg);
 
     ast->symbol = arg;
+    return false;
+}
+
+bool Bind::visit(PlaceholderTypeSpecifierAST *ast)
+{
+    FullySpecifiedType type;
+    std::swap(_type, type);
+    accept(ast->typeConstraint);
+    _type.setFlags(type.flags());
+    if (ast->autoToken != 0)
+        _type.setAuto(true);
     return false;
 }
 
@@ -2492,8 +2542,6 @@ bool Bind::visit(TemplateDeclarationAST *ast)
 bool Bind::visit(TypenameTypeParameterAST *ast)
 {
     int sourceLocation = location(ast->name, ast->firstToken());
-    // int classkey_token = ast->classkey_token;
-    // int dot_dot_dot_token = ast->dot_dot_dot_token;
     const Name *name = this->name(ast->name);
     ExpressionTy type_id = this->expression(ast->type_id);
     CPlusPlus::Kind classKey = translationUnit()->tokenKind(ast->classkey_token);
@@ -2501,6 +2549,8 @@ bool Bind::visit(TypenameTypeParameterAST *ast)
     TypenameArgument *arg = control()->newTypenameArgument(sourceLocation, name);
     arg->setType(type_id);
     arg->setClassDeclarator(classKey == T_CLASS);
+    if (ast->dot_dot_dot_token)
+        arg->setIsPack();
     ast->symbol = arg;
     _scope->addMember(arg);
     return false;
@@ -2513,29 +2563,83 @@ bool Bind::visit(TemplateTypeParameterAST *ast)
     // int template_token = ast->template_token;
     // int less_token = ast->less_token;
     // ### process the template prototype
-#if 0
-    for (DeclarationListAST *it = ast->template_parameter_list; it; it = it->next) {
-        this->declaration(it->value);
-    }
-#endif
+
     // int greater_token = ast->greater_token;
-    // int class_token = ast->class_token;
-    // int dot_dot_dot_token = ast->dot_dot_dot_token;
 
     const Name *name = this->name(ast->name);
     ExpressionTy type_id = this->expression(ast->type_id);
 
-    // ### introduce TemplateTypeArgument
-    TypenameArgument *arg = control()->newTypenameArgument(sourceLocation, name);
+    TemplateTypeArgument *arg = control()->newTemplateTypeArgument(sourceLocation, name);
     arg->setType(type_id);
+    Scope *previousScope = switchScope(arg);
+    if (ast->typeConstraint && ast->typeConstraint->conceptName) {
+        arg->setConceptName(this->name(ast->typeConstraint->conceptName));
+        const std::vector<TemplateArgument> templateArgs = visitTemplateArgs(
+                    ast->typeConstraint->templateArgs);
+        for (const TemplateArgument &ta : templateArgs) {
+            const Identifier *id = nullptr;
+            if (const NumericLiteral * const l = ta.numericLiteral())
+                id = control()->identifier(l->chars(), l->size());
+            auto a = control()->newArgument(0, id);
+            a->setType(ta.type());
+            arg->addMember(a);
+        }
+    } else {
+        for (DeclarationListAST *it = ast->template_parameter_list; it; it = it->next)
+            declaration(it->value);
+    }
+    arg->setClassDeclarator(translationUnit()->tokenKind(ast->class_token) == T_CLASS);
+    if (ast->dot_dot_dot_token)
+        arg->setIsPack();
     ast->symbol = arg;
+
+    (void) switchScope(previousScope);
+
     _scope->addMember(arg);
 
     return false;
 }
 
-bool Bind::visit(TypeConstraintAST *)
+static void split(const Name *name, std::vector<const Identifier *> &names)
 {
+    if (const QualifiedNameId * const q = name->asQualifiedNameId()) {
+        split(q->base(), names);
+        split(q->name(), names);
+    } else {
+        const Identifier * const id = name->asNameId();
+        CPP_ASSERT(id, return);
+        names.push_back(id);
+    }
+}
+
+static const Name *join(const Name *name, std::vector<const Identifier *> &bases, Control *control)
+{
+    if (bases.empty())
+        return name;
+    const QualifiedNameId * const q = control->qualifiedNameId(bases.back(), name);
+    bases.pop_back();
+    return join(q, bases, control);
+}
+
+bool Bind::visit(TypeConstraintAST *ast)
+{
+    const Name *n = name(ast->conceptName);
+
+    if (ast->templateArgs) {
+        // Hack: Split up the possibly qualified name and exchange the leaf identifier
+        // with a TemplateNameId. Otherwise, we'd have to invent a new type that
+        // can carry the template arguments.
+        const std::vector<TemplateArgument> templateArgs = visitTemplateArgs(ast->templateArgs);
+        std::vector<const Identifier *> unqualifiedNames;
+        split(n, unqualifiedNames);
+        CPP_ASSERT(!unqualifiedNames.empty(), return false);
+        const TemplateNameId * const templId = control()->templateNameId(
+                    unqualifiedNames.back(), false, &templateArgs[0], int(templateArgs.size()));
+        unqualifiedNames.pop_back();
+        n = join(templId, unqualifiedNames, control());
+    }
+
+    _type = control()->namedType(n);
     return false;
 }
 
@@ -2880,29 +2984,8 @@ bool Bind::visit(DestructorNameAST *ast)
 bool Bind::visit(TemplateIdAST *ast)
 {
     // collect the template parameters
-    std::vector<TemplateArgument> templateArguments;
-    for (ExpressionListAST *it = ast->template_argument_list; it; it = it->next) {
-        ExpressionTy value = this->expression(it->value);
-        if (value.isValid()) {
-            templateArguments.emplace_back(value);
-        } else {
-            // special case for numeric values
-            if (it->value->asNumericLiteral()) {
-                templateArguments
-                    .emplace_back(value,
-                                  tokenAt(it->value->asNumericLiteral()->literal_token).number);
-            } else if (it->value->asBoolLiteral()) {
-                templateArguments
-                    .emplace_back(value, tokenAt(it->value->asBoolLiteral()->literal_token).number);
-            } else {
-                // fall back to non-valid type in templateArguments
-                // for ast->template_argument_list and templateArguments sizes match
-                // TODO support other literals/expressions as default arguments
-                templateArguments.emplace_back(value);
-            }
-        }
-    }
-
+    const std::vector<TemplateArgument> templateArguments = visitTemplateArgs(
+                ast->template_argument_list);
     const Identifier *id = identifier(ast->identifier_token);
     const int tokenKindBeforeIdentifier(translationUnit()->tokenKind(ast->identifier_token - 1));
     const bool isSpecialization = (tokenKindBeforeIdentifier == T_CLASS ||
@@ -3255,6 +3338,8 @@ bool Bind::visit(ElaboratedTypeSpecifierAST *ast)
         _type = this->specifier(it->value, _type);
     }
     _type.setType(control()->namedType(this->name(ast->name)));
+    if (tokenKind(ast->classkey_token) == T_STRUCT)
+        _type.setStruct(true);
     return false;
 }
 
@@ -3357,14 +3442,14 @@ bool Bind::visit(ArrayAccessAST *ast)
 
 bool Bind::visit(PostIncrDecrAST *ast)
 {
-    ExpressionTy base_expression = this->expression(ast->base_expression);
+    expression(ast->base_expression);
     // int incr_decr_token = ast->incr_decr_token;
     return false;
 }
 
 bool Bind::visit(MemberAccessAST *ast)
 {
-    ExpressionTy base_expression = this->expression(ast->base_expression);
+    expression(ast->base_expression);
     // int access_token = ast->access_token;
     // int template_token = ast->template_token;
     /*const Name *member_name =*/ this->name(ast->member_name);
@@ -3403,7 +3488,7 @@ bool Bind::visit(FunctionDeclaratorAST *ast)
     fun->setStartOffset(tokenAt(ast->firstToken()).utf16charsBegin());
     fun->setEndOffset(tokenAt(ast->lastToken() - 1).utf16charsEnd());
     if (ast->trailing_return_type)
-        _type = this->trailingReturnType(ast->trailing_return_type, _type);
+        _type = this->trailingReturnType(ast->trailing_return_type, {});
     fun->setReturnType(_type);
 
     // "static", "virtual" etc.
@@ -3454,9 +3539,8 @@ bool Bind::visit(FunctionDeclaratorAST *ast)
 
 bool Bind::visit(ArrayDeclaratorAST *ast)
 {
-    ExpressionTy expression = this->expression(ast->expression);
-    FullySpecifiedType type(control()->arrayType(_type));
-    _type = type;
+    expression(ast->expression);
+    _type = FullySpecifiedType(control()->arrayType(_type));;
     return false;
 }
 
@@ -3475,6 +3559,35 @@ void Bind::ensureValidClassName(const Name **name, int sourceLocation)
         if (qName)
             *name = control()->qualifiedNameId(qName->base(), *name);
     }
+}
+
+std::vector<TemplateArgument> Bind::visitTemplateArgs(ExpressionListAST *ast)
+{
+    std::vector<TemplateArgument> args;
+
+    for (ExpressionListAST *it = ast; it; it = it->next) {
+        ExpressionTy value = this->expression(it->value);
+        if (value.isValid()) {
+            args.emplace_back(value);
+        } else {
+            // special case for numeric values
+            if (it->value->asNumericLiteral()) {
+                args
+                    .emplace_back(value,
+                                  tokenAt(it->value->asNumericLiteral()->literal_token).number);
+            } else if (it->value->asBoolLiteral()) {
+                args
+                    .emplace_back(value, tokenAt(it->value->asBoolLiteral()->literal_token).number);
+            } else {
+                // fall back to non-valid type in templateArguments
+                // for ast->template_argument_list and templateArguments sizes match
+                // TODO support other literals/expressions as default arguments
+                args.emplace_back(value);
+            }
+        }
+    }
+
+    return args;
 }
 
 int Bind::visibilityForAccessSpecifier(int tokenKind)

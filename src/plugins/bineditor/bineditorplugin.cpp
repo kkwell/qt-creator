@@ -1,14 +1,12 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include "bineditorconstants.h"
 #include "bineditorservice.h"
 #include "bineditortr.h"
 #include "markup.h"
 
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/coreconstants.h>
-#include <coreplugin/coreplugintr.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/editormanager/ieditor.h>
 #include <coreplugin/editormanager/ieditorfactory.h>
@@ -29,10 +27,12 @@
 #include <utils/fadingindicator.h>
 #include <utils/filepath.h>
 #include <utils/fileutils.h>
+#include <utils/layoutbuilder.h>
 #include <utils/mimeconstants.h>
 #include <utils/qtcassert.h>
 #include <utils/reloadpromptutils.h>
 #include <utils/stringutils.h>
+#include <utils/temporaryfile.h>
 
 #include <QAbstractScrollArea>
 #include <QAction>
@@ -55,8 +55,6 @@
 #include <QSet>
 #include <QStack>
 #include <QString>
-#include <QTemporaryFile>
-#include <QTextCodec>
 #include <QTextDocument>
 #include <QTextFormat>
 #include <QToolBar>
@@ -73,6 +71,7 @@ using namespace Utils;
 namespace BinEditor::Internal {
 
 const int SearchStride = 1024 * 1024;
+const char C_ENCODING_SETTING[] = "BinEditor/TextEncoding";
 
 class BinEditorDocument : public IDocument
 {
@@ -90,28 +89,27 @@ public:
     void setSizes(quint64 startAddr, qint64 range, int blockSize = 4096);
 
     QByteArray contents() const final { return dataMid(0, m_size); }
-    bool setContents(const QByteArray &contents) final;
+    Utils::Result<> setContents(const QByteArray &contents) final;
 
     ReloadBehavior reloadBehavior(ChangeTrigger state, ChangeType type) const final
     {
         return type == TypeRemoved ? BehaviorSilent : IDocument::reloadBehavior(state, type);
     }
 
-    OpenResult open(QString *errorString, const FilePath &filePath,
-                    const FilePath &realFilePath) final
+    Result<> open(const FilePath &filePath, const FilePath &realFilePath) final
     {
         QTC_CHECK(filePath == realFilePath); // The bineditor can do no autosaving
-        return openImpl(errorString, filePath);
+        return openImpl(filePath);
     }
 
-    OpenResult openImpl(QString *errorString, const FilePath &filePath, quint64 offset = 0);
+    Result<> openImpl(const FilePath &filePath, quint64 offset = 0);
 
     void provideData(quint64 address);
 
     void provideNewRange(quint64 offset)
     {
         if (filePath().exists())
-            openImpl(nullptr, filePath(), offset);
+            openImpl(filePath(), offset);
     }
 
     bool isModified() const final;
@@ -119,14 +117,19 @@ public:
 
     bool isSaveAsAllowed() const final { return true; }
 
-    bool reload(QString *errorString, ReloadFlag flag, ChangeType type) final;
-    bool saveImpl(QString *errorString, const Utils::FilePath &filePath, bool autoSave) final;
+    Utils::Result<> reload(ReloadFlag flag, ChangeType type) final;
+    Utils::Result<> saveImpl(const Utils::FilePath &filePath, SaveOption option) final;
 
     void fetchData(quint64 address) const { if (m_fetchDataHandler) m_fetchDataHandler(address); }
     void requestNewWindow(quint64 address) { if (m_newWindowRequestHandler) m_newWindowRequestHandler(address); }
     void requestWatchPoint(quint64 address, int size) { if (m_watchPointRequestHandler) m_watchPointRequestHandler(address, size); }
     void requestNewRange(quint64 address) { if (m_newRangeRequestHandler) m_newRangeRequestHandler(address); }
-    void announceChangedData(quint64 address, const QByteArray &ba) { if (m_dataChangedHandler) m_dataChangedHandler(address, ba); }
+
+    void announceChangedData(quint64 address, const QByteArray &ba)
+    {
+        if (m_dataChangedHandler)
+            m_dataChangedHandler(address, ba);
+    }
 
     void setFinished()
     {
@@ -151,7 +154,7 @@ public:
     void addData(quint64 addr, const QByteArray &data);
     void updateContents();
 
-    bool save(QString *errorString, const FilePath &oldFilePath, const FilePath &newFilePath);
+    Result<> save(const FilePath &oldFilePath, const FilePath &newFilePath);
     void clear();
 
     void undo();
@@ -202,7 +205,7 @@ class BinEditorWidget final : public QAbstractScrollArea
     Q_OBJECT
 
 public:
-    explicit BinEditorWidget(BinEditorDocument *doc);
+    explicit BinEditorWidget(const std::shared_ptr<BinEditorDocument> &doc);
     void init();
 
     quint64 baseAddress() const { return m_doc->m_baseAddr; }
@@ -242,7 +245,8 @@ public:
     void copy(bool raw = false);
     void setMarkup(const QList<Markup> &markup);
     void setNewWindowRequestAllowed(bool c) { m_canRequestNewWindow = c; }
-    void setCodec(QTextCodec *codec);
+    void setEncoding(const Utils::TextEncoding &encoding);
+    QByteArray toByteArray(const QString &s) const;
 
     void clearMarkup() { m_markup.clear(); }
     void addMarkup(quint64 a, quint64 l, const QColor &c, const QString &t) { m_markup.append(Markup(a, l, c, t)); }
@@ -284,7 +288,7 @@ public:
     void asDouble(qint64 offset, double &value, bool old) const;
     QString toolTip(const QHelpEvent *helpEvent) const;
 
-    BinEditorDocument *m_doc = nullptr;
+    std::shared_ptr<BinEditorDocument> m_doc;
     int m_bytesPerLine = 16;
     int m_readOnly = false;
     int m_margin = 0;
@@ -334,7 +338,7 @@ public:
     QList<Markup> m_markup;
 
     QLineEdit *m_addressEdit = nullptr;
-    QTextCodec *m_codec = nullptr;
+    TextEncoding m_encoding;
 };
 
 const QChar MidpointChar(u'\u00B7');
@@ -356,33 +360,37 @@ static QByteArray calculateHexPattern(const QByteArray &pattern)
     return result;
 }
 
-BinEditorWidget::BinEditorWidget(BinEditorDocument *doc)
+BinEditorWidget::BinEditorWidget(const std::shared_ptr<BinEditorDocument> &doc)
 {
     m_doc = doc;
     setFocusPolicy(Qt::WheelFocus);
     setFrameStyle(QFrame::Plain);
 
-    connect(doc, &BinEditorDocument::dataAdded,
+    connect(doc.get(), &BinEditorDocument::dataAdded,
             this, &BinEditorWidget::onDataAdded);
-    connect(doc, &BinEditorDocument::sizesChanged,
+    connect(doc.get(), &BinEditorDocument::sizesChanged,
             this, &BinEditorWidget::onSizesChanged);
-    connect(doc, &BinEditorDocument::cursorWanted,
+    connect(doc.get(), &BinEditorDocument::cursorWanted,
             this, &BinEditorWidget::onCursorWanted);
-    connect(doc, &BinEditorDocument::cleared,
+    connect(doc.get(), &BinEditorDocument::cleared,
             this, &BinEditorWidget::clear);
-    connect(doc, &BinEditorDocument::aboutToReload,
+    connect(doc.get(), &BinEditorDocument::aboutToReload,
             this, &BinEditorWidget::aboutToReload);
-    connect(doc, &BinEditorDocument::reloadFinished,
+    connect(doc.get(), &BinEditorDocument::reloadFinished,
             this, &BinEditorWidget::reloadFinished);
+    connect(doc.get(), &BinEditorDocument::contentsChanged, this, [this] {
+        update();
+        viewport()->update();
+    });
 
     // Font settings
     setFontSettings(TextEditorSettings::fontSettings());
     connect(TextEditorSettings::instance(), &TextEditorSettings::fontSettingsChanged,
             this, &BinEditorWidget::setFontSettings);
 
-    const QByteArray setting = ICore::settings()->value(Constants::C_ENCODING_SETTING).toByteArray();
+    const QByteArray setting = ICore::settings()->value(C_ENCODING_SETTING).toByteArray();
     if (!setting.isEmpty())
-        setCodec(QTextCodec::codecForName(setting));
+        setEncoding(setting);
 
     m_addressEdit = new QLineEdit;
     auto addressValidator = new QRegularExpressionValidator(QRegularExpression("[0-9a-fA-F]{1,16}"), m_addressEdit);
@@ -503,6 +511,7 @@ void BinEditorDocument::changeDataAt(qint64 pos, char c)
         }
     }
 
+    emit contentsChanged();
     announceChangedData(m_baseAddr + pos, QByteArray(1, c));
 }
 
@@ -603,22 +612,29 @@ void BinEditorDocument::setModified(bool modified)
     emit changed();
 }
 
-bool BinEditorDocument::save(QString *errorString, const FilePath &oldFilePath, const FilePath &newFilePath)
+Result<> BinEditorDocument::save(const FilePath &oldFilePath, const FilePath &newFilePath)
 {
     if (oldFilePath != newFilePath) {
+        // Get a unique temporary file name
         FilePath tmpName;
         {
-            QTemporaryFile tmp(newFilePath.toString() + QLatin1String("_XXXXXX.new"));
-            if (!tmp.open())
-                return false;
-            tmpName = FilePath::fromString(tmp.fileName());
+            const auto result = TemporaryFilePath::create(
+                newFilePath.stringAppended("_XXXXXX.new"));
+            if (!result)
+                return ResultError(result.error());
+            tmpName = (*result)->filePath();
         }
-        if (!oldFilePath.copyFile(tmpName))
-            return false;
-        if (newFilePath.exists() && !newFilePath.removeFile())
-            return false;
-        if (!tmpName.renameFile(newFilePath))
-            return false;
+
+        if (Result<> res = oldFilePath.copyFile(tmpName); !res)
+            return res;
+
+        if (newFilePath.exists()) {
+            if (Result<> res = newFilePath.removeFile(); !res)
+                return res;
+        }
+
+        if (Result<> res = tmpName.renameFile(newFilePath); !res)
+            return res;
     }
 
     FileSaver saver(newFilePath, QIODevice::ReadWrite); // QtBug: WriteOnly truncates.
@@ -640,11 +656,12 @@ bool BinEditorDocument::save(QString *errorString, const FilePath &oldFilePath, 
         if (!saver.hasError())
             saver.setResult(output->resize(size));
     }
-    if (!saver.finalize(errorString))
-        return false;
+
+    if (const Result<> res = saver.finalize(); !res)
+        return res;
 
     setModified(false);
-    return true;
+    return ResultOk;
 }
 
 void BinEditorDocument::setSizes(quint64 startAddr, qint64 range, int blockSize)
@@ -715,7 +732,7 @@ void BinEditorWidget::changeEvent(QEvent *e)
 void BinEditorWidget::wheelEvent(QWheelEvent *e)
 {
     if (e->modifiers() & Qt::ControlModifier) {
-        if (!TextEditor::globalBehaviorSettings().m_scrollWheelZooming) {
+        if (!TextEditor::globalBehaviorSettings().scrollWheelZooming()) {
             // When the setting is disabled globally,
             // we have to skip calling QAbstractScrollArea::wheelEvent()
             // that changes zoom in it.
@@ -747,12 +764,13 @@ QRect BinEditorWidget::cursorRect() const
 
 QChar BinEditorWidget::displayChar(char ch) const
 {
+    // FIXME: We should perhaps handle more then plain 8bit encodings.
     const QChar qc = QLatin1Char(ch);
     if (qc.isPrint() && qc.unicode() < 128)
         return qc;
-    if (!m_codec || qc.unicode() < 32)
+    if (!m_encoding.isValid() || qc.unicode() < 32)
         return MidpointChar;
-    const QString uc = m_codec->toUnicode(&ch, 1);
+    const QString uc = m_encoding.decode(QByteArrayView(&ch, 1));
     if (uc.isEmpty() || !uc.at(0).isLetterOrNumber())
         return MidpointChar;
     return uc.at(0);
@@ -1250,8 +1268,11 @@ void BinEditorWidget::mousePressEvent(QMouseEvent *e)
 {
     if (e->button() != Qt::LeftButton)
         return;
+    const std::optional<qint64> pos = posAt(e->pos());
+    if (!pos)
+        return;
     MoveMode moveMode = e->modifiers() & Qt::ShiftModifier ? KeepAnchor : MoveAnchor;
-    setCursorPosition(posAt(e->pos()).value(), moveMode);
+    setCursorPosition(*pos, moveMode);
     setBlinkingCursorEnabled(true);
     if (m_hexCursor == inTextArea(e->pos())) {
         m_hexCursor = !m_hexCursor;
@@ -1263,7 +1284,10 @@ void BinEditorWidget::mouseMoveEvent(QMouseEvent *e)
 {
     if (!(e->buttons() & Qt::LeftButton))
         return;
-    setCursorPosition(posAt(e->pos()).value(), KeepAnchor);
+    const std::optional<qint64> pos = posAt(e->pos());
+    if (!pos)
+        return;
+    setCursorPosition(*pos, KeepAnchor);
     if (m_hexCursor == inTextArea(e->pos())) {
         m_hexCursor = !m_hexCursor;
         updateLines();
@@ -1385,7 +1409,7 @@ QString BinEditorWidget::toolTip(const QHelpEvent *helpEvent) const
         std::optional<qint64> pos = posAt(helpEvent->pos(), /*includeEmptyArea*/false);
         if (!pos)
             return QString();
-        selStart = pos.value();
+        selStart = *pos;
         byteCount = 1;
     }
 
@@ -1552,25 +1576,6 @@ QString BinEditorWidget::toolTip(const QHelpEvent *helpEvent) const
 
 void BinEditorWidget::keyPressEvent(QKeyEvent *e)
 {
-
-    if (e == QKeySequence::SelectAll) {
-            e->accept();
-            selectAll();
-            return;
-    } else if (e == QKeySequence::Copy) {
-        e->accept();
-        copy();
-        return;
-    } else if (e == QKeySequence::Undo) {
-        e->accept();
-        m_doc->undo();
-        return;
-    } else if (e == QKeySequence::Redo) {
-        e->accept();
-        m_doc->redo();
-        return;
-    }
-
     MoveMode moveMode = e->modifiers() & Qt::ShiftModifier ? KeepAnchor : MoveAnchor;
     bool ctrlPressed = e->modifiers() & Qt::ControlModifier;
     switch (e->key()) {
@@ -1620,10 +1625,10 @@ void BinEditorWidget::keyPressEvent(QKeyEvent *e)
         break;
     }
     default: {
-        if (m_readOnly)
+        if (m_readOnly || ctrlPressed)
             break;
         QString text = e->text();
-        for (int i = 0; i < text.length(); ++i) {
+        for (int i = 0; i < text.size(); ++i) {
             QChar c = text.at(i);
             if (m_hexCursor) {
                 c = c.toLower();
@@ -1686,8 +1691,8 @@ void BinEditorWidget::copy(bool raw)
     QByteArray data = m_doc->dataMid(selStart, selectionLength);
     if (raw) {
         data.replace(0, ' ');
-        QTextCodec *codec = m_codec ? m_codec : QTextCodec::codecForName("latin1");
-        setClipboardAndSelection(codec->toUnicode(data));
+        const TextEncoding encoding = m_encoding.isValid() ? m_encoding : TextEncoding(TextEncoding::Latin1);
+        setClipboardAndSelection(encoding.decode(data));
         return;
     }
     QString hexString;
@@ -1881,13 +1886,20 @@ void BinEditorWidget::jumpToAddress(quint64 address)
         m_doc->requestNewRange(address);
 }
 
-void BinEditorWidget::setCodec(QTextCodec *codec)
+void BinEditorWidget::setEncoding(const TextEncoding &encoding)
 {
-    if (codec == m_codec)
+    if (encoding == m_encoding)
         return;
-    m_codec = codec;
-    ICore::settings()->setValue(Constants::C_ENCODING_SETTING, codec ? codec->name() : QByteArray());
+    m_encoding = encoding;
+    ICore::settings()->setValue(C_ENCODING_SETTING, encoding.name());
     viewport()->update();
+}
+
+QByteArray BinEditorWidget::toByteArray(const QString &s) const
+{
+    if (m_encoding.isValid())
+        return m_encoding.encode(s);
+    return s.toLatin1();
 }
 
 void BinEditorDocument::updateContents()
@@ -1966,10 +1978,17 @@ public:
         m_incrementalWrappedState = false;
     }
 
+    void rehighlightAll()
+    {
+        findIncremental(m_lastText, m_lastFindFlags);
+    }
+
     void highlightAll(const QString &txt, FindFlags findFlags) final
     {
-        m_widget->highlightSearchResults(txt.toLatin1(),
-                                         Utils::textDocumentFlagsForFindFlags(findFlags));
+        m_lastText = txt;
+        m_lastFindFlags = findFlags;
+        m_widget->highlightSearchResults(
+            m_widget->toByteArray(txt), Utils::textDocumentFlagsForFindFlags(findFlags));
     }
 
     void clearHighlights() final
@@ -2000,10 +2019,11 @@ public:
 
     Result findIncremental(const QString &txt, FindFlags findFlags) final
     {
-        QByteArray pattern = txt.toLatin1();
-        if (pattern != m_lastPattern)
+        QByteArray pattern = m_widget->toByteArray(txt);
+        if (txt != m_lastText)
             resetIncrementalSearch(); // Because we don't search for nibbles.
-        m_lastPattern = pattern;
+        m_lastText = txt;
+        m_lastFindFlags = findFlags;
         if (m_incrementalStartPos < 0)
             m_incrementalStartPos = m_widget->selectionStart();
         if (m_contPos == -1)
@@ -2035,7 +2055,7 @@ public:
 
     Result findStep(const QString &txt, FindFlags findFlags) final
     {
-        QByteArray pattern = txt.toLatin1();
+        QByteArray pattern = m_widget->toByteArray(txt);
         bool wasReset = (m_incrementalStartPos < 0);
         if (m_contPos == -1) {
             m_contPos = m_widget->cursorPosition() + 1;
@@ -2071,7 +2091,8 @@ private:
     qint64 m_incrementalStartPos = -1;
     qint64 m_contPos = -1; // Only valid if last result was NotYetFound.
     bool m_incrementalWrappedState = false;
-    QByteArray m_lastPattern;
+    QString m_lastText;
+    FindFlags m_lastFindFlags;
 };
 
 
@@ -2083,57 +2104,39 @@ BinEditorDocument::BinEditorDocument()
     setMimeType(Utils::Constants::OCTET_STREAM_MIMETYPE);
     m_fetchDataHandler = [this](quint64 address) { provideData(address); };
     m_newRangeRequestHandler = [this](quint64 offset) { provideNewRange(offset); };
-    m_dataChangedHandler = [this](quint64, const QByteArray &) { contentsChanged(); };
 }
 
-bool BinEditorDocument::setContents(const QByteArray &contents)
+Result<> BinEditorDocument::setContents(const QByteArray &contents)
 {
     clear();
     if (!contents.isEmpty()) {
         setSizes(0, contents.length(), contents.length());
         addData(0, contents);
     }
-    return true;
+    return ResultOk;
 }
 
-IDocument::OpenResult BinEditorDocument::openImpl(QString *errorString, const FilePath &filePath, quint64 offset)
+Result<> BinEditorDocument::openImpl(const FilePath &filePath, quint64 offset)
 {
     const qint64 size = filePath.fileSize();
     if (size < 0) {
-        QString msg = Tr::tr("Cannot open %1: %2").arg(filePath.toUserOutput(), Tr::tr("File Error"));
         // FIXME: Was: file.errorString(), but we don't have a file anymore.
-        if (errorString)
-            *errorString = msg;
-        else
-            QMessageBox::critical(ICore::dialogParent(), Tr::tr("File Error"), msg);
-        return OpenResult::ReadError;
+        return ResultError(Tr::tr("Cannot open \"%1\".").arg(filePath.toUserOutput()));
     }
 
-    if (size == 0) {
-        QString msg = Tr::tr("The Binary Editor cannot open empty files.");
-        if (errorString)
-            *errorString = msg;
-        else
-            QMessageBox::critical(ICore::dialogParent(), Tr::tr("File Error"), msg);
-        return OpenResult::CannotHandle;
-    }
+    if (size == 0)
+        return ResultError(Tr::tr("The Binary Editor cannot open empty files."));
 
-    if (size / 16 >= qint64(1) << 31) {
-        // The limit is 2^31 lines (due to QText* interfaces) * 16 bytes per line.
-        QString msg = Tr::tr("The file is too big for the Binary Editor (max. 32GB).");
-        if (errorString)
-            *errorString = msg;
-        else
-            QMessageBox::critical(ICore::dialogParent(), Tr::tr("File Error"), msg);
-        return OpenResult::CannotHandle;
-    }
+    // The limit is 2^31 lines (due to QText* interfaces) * 16 bytes per line.
+    if (size / 16 >= qint64(1) << 31)
+        return ResultError(Tr::tr("The file is too big for the Binary Editor (max. 32GB)."));
 
     if (offset >= quint64(size))
-        return OpenResult::CannotHandle;
+        return ResultError(Tr::tr("File offset too large."));
 
     setFilePath(filePath);
     setSizes(offset, size);
-    return OpenResult::Success;
+    return ResultOk;
 }
 
 void BinEditorDocument::provideData(quint64 address)
@@ -2159,89 +2162,180 @@ bool BinEditorDocument::isModified() const
     return m_undoStack.size() != m_unmodifiedState;
 }
 
-bool BinEditorDocument::reload(QString *errorString, ReloadFlag flag, ChangeType type)
+Result<> BinEditorDocument::reload(ReloadFlag flag, ChangeType type)
 {
     Q_UNUSED(type)
     if (flag == FlagIgnore)
-        return true;
+        return ResultOk;
     emit aboutToReload();
     clear();
-    const bool success = (openImpl(errorString, filePath()) == OpenResult::Success);
-    emit reloadFinished(success);
-    return success;
+    const Result<> result = openImpl(filePath());
+    emit reloadFinished(result.has_value());
+    return result;
 }
 
-bool BinEditorDocument::saveImpl(QString *errorString, const FilePath &filePath, bool autoSave)
+Result<> BinEditorDocument::saveImpl(const FilePath &filePath, SaveOption option)
 {
-    QTC_ASSERT(!autoSave, return true); // bineditor does not support autosave - it would be a bit expensive
-    if (save(errorString, this->filePath(), filePath)) {
-        setFilePath(filePath);
-        return true;
-    }
-    return false;
+    QTC_ASSERT(
+        option != SaveOption::AutoSave,
+        return ResultOk); // bineditor does not support autosave - it would be a bit expensive
+    if (Result<> res = save(this->filePath(), filePath); !res)
+        return res;
+    setFilePath(filePath);
+    return ResultOk;
 }
 
-class BinEditorImpl final : public IEditor
+class BinEditorImpl final : public IEditor, public EditorService
 {
 public:
-    BinEditorImpl(BinEditorWidget *widget, BinEditorDocument *doc)
-        : m_document(doc)
+    BinEditorImpl(const std::shared_ptr<BinEditorDocument> &doc)
+        : m_document(doc), m_widget(new BinEditorWidget(doc))
     {
-        setWidget(widget);
-        auto codecChooser = new CodecChooser(CodecChooser::Filter::SingleByte);
-        codecChooser->prependNone();
+        setWidget(m_widget);
+        setDuplicateSupported(true);
 
-        auto l = new QHBoxLayout;
-        auto w = new QWidget;
-        l->setContentsMargins(0, 0, 5, 0);
-        l->addStretch(1);
-        l->addWidget(codecChooser);
-        l->addWidget(widget->addressEdit());
-        w->setLayout(l);
+        auto codecChooser = new CodecChooser;
+        codecChooser->prependNone();
+        connect(codecChooser, &CodecChooser::encodingChanged,
+                m_widget, &BinEditorWidget::setEncoding);
+        m_widget->setEncoding(codecChooser->currentEncoding());
+
+        const QVariant setting = ICore::settings()->value(C_ENCODING_SETTING);
+        if (!setting.isNull())
+            codecChooser->setAssignedEncoding(setting.toByteArray());
+
+        using namespace Layouting;
+        auto w = Row {
+            customMargins(0, 0, 5, 0),
+            st,
+            codecChooser,
+            m_widget->addressEdit()
+        }.emerge();
 
         m_toolBar = new QToolBar;
         m_toolBar->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Minimum);
         m_toolBar->addWidget(w);
 
-        connect(codecChooser, &CodecChooser::codecChanged,
-                widget, &BinEditorWidget::setCodec);
-        const QVariant setting = ICore::settings()->value(Constants::C_ENCODING_SETTING);
-        if (!setting.isNull())
-            codecChooser->setAssignedCodec(QTextCodec::codecForName(setting.toByteArray()));
+        const Context context(Id::generate());
+        setContext(context);
+
+        QAction *undoAction = nullptr;
+        ActionBuilder(this, Core::Constants::UNDO)
+            .bindContextAction(&undoAction)
+            .setContext(context)
+            .setEnabled(false)
+            .addOnTriggered(m_document.get(), &BinEditorDocument::undo);
+
+        QAction *redoAction = nullptr;
+        ActionBuilder(this, Core::Constants::REDO)
+            .bindContextAction(&redoAction)
+            .setContext(context)
+            .setEnabled(false)
+            .addOnTriggered(m_document.get(), &BinEditorDocument::redo);
+
+        ActionBuilder(this, Core::Constants::COPY)
+            .setContext(context)
+            .addOnTriggered(m_widget.data(), &BinEditorWidget::copy);
+
+        ActionBuilder(this, Core::Constants::SELECTALL)
+            .setContext(context)
+            .setEnabled(true)
+            .addOnTriggered(m_widget.data(), &BinEditorWidget::selectAll);
+
+        connect(m_document.get(), &BinEditorDocument::undoAvailable,
+                undoAction, [this, undoAction] {
+            undoAction->setEnabled(m_widget->isUndoAvailable());
+        });
+        connect(m_document.get(), &BinEditorDocument::redoAvailable,
+                redoAction, [this, redoAction] {
+            redoAction->setEnabled(m_widget->isRedoAvailable());
+        });
+
+        auto aggregate = new Aggregation::Aggregate;
+        auto binEditorFind = new BinEditorFind(m_widget);
+        connect(
+            codecChooser,
+            &CodecChooser::encodingChanged,
+            binEditorFind,
+            &BinEditorFind::rehighlightAll);
+
+        aggregate->add(binEditorFind);
+        aggregate->add(m_widget);
     }
 
-    ~BinEditorImpl() final { delete m_widget; delete m_document; }
-    IDocument *document() const final { return m_document; }
+    ~BinEditorImpl() final { delete m_widget; }
+
+    IDocument *document() const final { return m_document.get(); }
+
     QWidget *toolBar() final { return m_toolBar; }
 
-private:
-    BinEditorDocument *m_document;
-    QToolBar *m_toolBar;
-};
+    IEditor *duplicate() final
+    {
+        auto editor = new BinEditorImpl(m_document);
+        editor->m_widget->setCursorPosition(m_widget->cursorPosition());
+        emit editorDuplicated(editor);
+        return editor;
+    }
 
-///////////////////////////////// BinEditor Services //////////////////////////////////
-
-class BinEditorService final : public EditorService
-{
-public:
-    ~BinEditorService() = default;
-
-    QWidget *widget() { return m_widget; }
-    Core::IEditor *editor() { return m_editor; }
+    // Service interface
+    IEditor *editor() { return this; }
 
     // "Slots"
-    void setSizes(quint64 address, qint64 range, int blockSize) final { m_document->setSizes(address, range, blockSize); }
-    void setReadOnly(bool on) final { m_widget->setReadOnly(on); }
-    void setFinished() final { m_widget->setReadOnly(true); m_document->setFinished(); }
-    void setNewWindowRequestAllowed(bool on) final { m_widget->setNewWindowRequestAllowed(on); }
-    void setCursorPosition(qint64 pos, MoveMode moveMode = MoveAnchor) final { m_widget->setCursorPosition(pos, moveMode); }
-    void updateContents() final { m_document->updateContents(); }
-    void addData(quint64 address, const QByteArray &data) final { m_document->addData(address, data); }
+    void setSizes(quint64 address, qint64 range, int blockSize)
+    {
+        m_document->setSizes(address, range, blockSize);
+    }
 
-    void clearMarkup() final { m_widget->clearMarkup(); }
-    void addMarkup(quint64 address, quint64 len, const QColor &color, const QString &toolTip) final
-        { m_widget->addMarkup(address, len, color, toolTip); }
-    void commitMarkup() final { m_widget->commitMarkup(); }
+    void setReadOnly(bool on)
+    {
+        if (m_widget)
+            m_widget->setReadOnly(on);
+    }
+
+    void setFinished()
+    {
+        if (m_widget)
+            m_widget->setReadOnly(true);
+        m_document->setFinished();
+    }
+
+    void setNewWindowRequestAllowed(bool on)
+    {
+        if (m_widget)
+            m_widget->setNewWindowRequestAllowed(on);
+    }
+
+    void setCursorPosition(qint64 pos, MoveMode moveMode = MoveAnchor)
+    {
+        if (m_widget)
+            m_widget->setCursorPosition(pos, moveMode);
+    }
+
+    void updateContents()
+    {
+        m_document->updateContents();
+    }
+
+    void addData(quint64 address, const QByteArray &data)
+    {
+        m_document->addData(address, data);
+    }
+
+    void clearMarkup()
+    {
+        if (m_widget)
+            m_widget->clearMarkup();
+    }
+    void addMarkup(quint64 address, quint64 len, const QColor &color, const QString &toolTip)
+    {
+        if (m_widget)
+            m_widget->addMarkup(address, len, color, toolTip);
+    }
+    void commitMarkup()
+    {
+        if (m_widget)
+            m_widget->commitMarkup();
+    }
 
     // "Signals"
     void setFetchDataHandler(const std::function<void(quint64)> &cb) final { m_document->m_fetchDataHandler = cb; }
@@ -2251,9 +2345,11 @@ public:
     void setWatchPointRequestHandler(const std::function<void(quint64, uint)> &cb) final { m_document->m_watchPointRequestHandler = cb; }
     void setAboutToBeDestroyedHandler(const std::function<void()> & cb) final { m_document->m_aboutToBeDestroyedHandler = cb; }
 
-    IEditor *m_editor = nullptr;
-    BinEditorDocument *m_document = nullptr;
-    BinEditorWidget *m_widget = nullptr;
+private:
+    std::shared_ptr<BinEditorDocument> m_document;
+    QPointer<BinEditorWidget> m_widget;
+    QToolBar *m_toolBar;
+
 };
 
 class BinEditorFactoryService final : public QObject, public FactoryService
@@ -2262,29 +2358,14 @@ class BinEditorFactoryService final : public QObject, public FactoryService
     Q_INTERFACES(BinEditor::FactoryService)
 
 public:
-    EditorService *createEditorService(const QString &title0, bool wantsEditor) final
+    EditorService *createEditorService(const QString &title, bool wantsEditor) final
     {
-        if (!wantsEditor) {
-            auto document = new BinEditorDocument;
-            auto widget = new BinEditorWidget(document);
-            widget->setWindowTitle(title0);
-
-            auto service = new BinEditorService;
-            service->m_widget = widget;
-            service->m_document = document;
-            return service;
-        }
-
-        QString title = title0;
-        IEditor *editor = EditorManager::openEditorWithContents(
-                    Core::Constants::K_DEFAULT_BINARY_EDITOR_ID, &title);
-        if (!editor)
-            return nullptr;
-
-        auto service = new BinEditorService;
-        service->m_editor = editor;
-        service->m_widget = qobject_cast<BinEditorWidget *>(editor->widget());
-        service->m_document = qobject_cast<BinEditorDocument *>(editor->document());
+        auto document = std::make_shared<BinEditorDocument>();
+        auto service = new BinEditorImpl(document);
+        service->widget()->setWindowTitle(title);
+        service->document()->setPreferredDisplayName(title);
+        if (wantsEditor)
+            EditorManager::addEditor(service);
         return service;
     }
 };
@@ -2297,69 +2378,25 @@ static BinEditorFactoryService &binEditorService()
 
 ///////////////////////////////// BinEditorFactory //////////////////////////////////
 
-class BinEditorFactory final : public QObject, public IEditorFactory
+class BinEditorFactory final : public IEditorFactory
 {
 public:
     BinEditorFactory()
     {
         setId(Core::Constants::K_DEFAULT_BINARY_EDITOR_ID);
-        setDisplayName(::Core::Tr::tr("Binary Editor"));
+        setDisplayName(Tr::tr("Binary Editor"));
         addMimeType(Utils::Constants::OCTET_STREAM_MIMETYPE);
 
-        m_undoAction = new QAction(Tr::tr("&Undo"), this);
-        m_redoAction = new QAction(Tr::tr("&Redo"), this);
-        m_copyAction = new QAction(this);
-        m_selectAllAction = new QAction(this);
-
-        Context context;
-        context.add(Core::Constants::K_DEFAULT_BINARY_EDITOR_ID);
-        context.add(Constants::C_BINEDITOR);
-
-        ActionManager::registerAction(m_undoAction, Core::Constants::UNDO, context);
-        ActionManager::registerAction(m_redoAction, Core::Constants::REDO, context);
-        ActionManager::registerAction(m_copyAction, Core::Constants::COPY, context);
-        ActionManager::registerAction(m_selectAllAction, Core::Constants::SELECTALL, context);
-
-        setEditorCreator([this] {
-            auto doc = new BinEditorDocument;
-            auto widget = new BinEditorWidget(doc);
-            auto editor = new BinEditorImpl(widget, doc);
-
-            connect(m_undoAction, &QAction::triggered, doc, &BinEditorDocument::undo);
-            connect(m_redoAction, &QAction::triggered, doc, &BinEditorDocument::redo);
-            connect(m_copyAction, &QAction::triggered, widget, &BinEditorWidget::copy);
-            connect(m_selectAllAction, &QAction::triggered, widget, &BinEditorWidget::selectAll);
-
-            auto updateActions = [this, widget] {
-                m_selectAllAction->setEnabled(true);
-                m_undoAction->setEnabled(widget->isUndoAvailable());
-                m_redoAction->setEnabled(widget->isRedoAvailable());
-            };
-
-            connect(doc, &BinEditorDocument::undoAvailable, widget, updateActions);
-            connect(doc, &BinEditorDocument::redoAvailable, widget, updateActions);
-
-            auto aggregate = new Aggregation::Aggregate;
-            auto binEditorFind = new BinEditorFind(widget);
-            aggregate->add(binEditorFind);
-            aggregate->add(widget);
-
-            return editor;
+        setEditorCreator([] {
+            return new BinEditorImpl(std::make_shared<BinEditorDocument>());
         });
     }
-
-    QAction *m_undoAction = nullptr;
-    QAction *m_redoAction = nullptr;
-    QAction *m_copyAction = nullptr;
-    QAction *m_selectAllAction = nullptr;
 };
 
-static BinEditorFactory &binEditorFactory()
+void setupBinEditor()
 {
     static BinEditorFactory theBinEditorFactory;
-    return theBinEditorFactory;
 }
-
 
 ///////////////////////////////// BinEditorPlugin //////////////////////////////////
 
@@ -2371,13 +2408,12 @@ class BinEditorPlugin final : public ExtensionSystem::IPlugin
     ~BinEditorPlugin() final
     {
         ExtensionSystem::PluginManager::removeObject(&binEditorService());
-        ExtensionSystem::PluginManager::removeObject(&binEditorFactory());
     }
 
     void initialize() final
     {
+        setupBinEditor();
         ExtensionSystem::PluginManager::addObject(&binEditorService());
-        ExtensionSystem::PluginManager::addObject(&binEditorFactory());
     }
 };
 

@@ -58,7 +58,7 @@ ObjectItem::~ObjectItem()
 
 QRectF ObjectItem::boundingRect() const
 {
-    return childrenBoundingRect();
+    return childrenBoundingRect().marginsAdded({ 5.0, 5.0, 5.0, 5.0 });
 }
 
 void ObjectItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget)
@@ -347,7 +347,7 @@ void ObjectItem::relationDrawn(const QString &id, ObjectItem *targetItem, const 
                 DObject *relatedObject = targetItem->object();
                 if (relatedObject) {
                     // check if element is allowed as target
-                    QList<QString> endItems = customRelation.endB().endItems();
+                    QStringList endItems = customRelation.endB().endItems();
                     if (endItems.isEmpty())
                         endItems = customRelation.endItems();
                     QString elementType;
@@ -490,7 +490,7 @@ void ObjectItem::updateStereotypeIconDisplay()
 void ObjectItem::updateStereotypes(const QString &stereotypeIconId, StereotypeIcon::Display stereotypeDisplay,
                                    const Style *style)
 {
-    QList<QString> stereotypes = m_object->stereotypes();
+    QStringList stereotypes = m_object->stereotypes();
     if (!stereotypeIconId.isEmpty()
             && (stereotypeDisplay == StereotypeIcon::DisplayDecoration || stereotypeDisplay == StereotypeIcon::DisplayIcon)) {
         stereotypes = m_diagramSceneModel->stereotypeController()->filterStereotypesByIconId(stereotypeIconId, stereotypes);

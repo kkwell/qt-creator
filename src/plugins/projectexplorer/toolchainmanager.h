@@ -12,8 +12,6 @@
 #include <QSet>
 #include <QString>
 
-#include <functional>
-
 namespace Utils { class FilePath; }
 
 namespace ProjectExplorer {
@@ -25,6 +23,9 @@ class ToolchainDetectionSettings
 {
 public:
     bool detectX64AsX32 = false;
+
+    friend bool operator==(const ToolchainDetectionSettings &,
+                           const ToolchainDetectionSettings &) = default;
 };
 
 // --------------------------------------------------------------------------
@@ -53,7 +54,11 @@ public:
 
     static QList<Utils::Id> allLanguages();
     static bool registerLanguage(const Utils::Id &language, const QString &displayName);
+    static void registerLanguageCategory(
+        const LanguageCategory &languages, const QString &displayName);
     static QString displayNameOfLanguageId(const Utils::Id &id);
+    static QString displayNameOfLanguageCategory(const LanguageCategory &category);
+    static const QList<LanguageCategory> languageCategories();
     static bool isLanguageSupported(const Utils::Id &id);
 
     static void aboutToShutdown();
@@ -64,6 +69,8 @@ public:
     static void resetBadToolchains();
     static bool isBadToolchain(const Utils::FilePath &toolchain);
     static void addBadToolchain(const Utils::FilePath &toolchain);
+
+    static bool isBetterToolchain(const ToolchainBundle &bundle1, const ToolchainBundle &bundle2);
 
     void saveToolchains();
 

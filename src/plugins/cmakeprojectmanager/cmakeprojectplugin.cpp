@@ -1,6 +1,7 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
+#include "cmakeautogenparser.h"
 #include "cmakebuildconfiguration.h"
 #include "cmakebuildstep.h"
 #include "cmakebuildsystem.h"
@@ -9,7 +10,7 @@
 #include "cmakeinstallstep.h"
 #include "cmakelocatorfilter.h"
 #include "cmakekitaspect.h"
-#include "cmakeparser.h"
+#include "cmakeoutputparser.h"
 #include "cmakeproject.h"
 #include "cmakeprojectconstants.h"
 #include "cmakeprojectimporter.h"
@@ -21,14 +22,17 @@
 
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
+#include <coreplugin/dialogs/ioptionspage.h>
 
 #include <extensionsystem/iplugin.h>
 
+#include <projectexplorer/buildmanager.h>
+#include <projectexplorer/devicesupport/devicemanager.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projectmanager.h>
 #include <projectexplorer/projecttree.h>
+#include <projectexplorer/toolchainkitaspect.h>
 
-#include <texteditor/formattexteditor.h>
 #include <texteditor/snippets/snippetprovider.h>
 
 #include <utils/action.h>
@@ -51,6 +55,9 @@ class CMakeProjectPlugin final : public ExtensionSystem::IPlugin
 
     void initialize() final
     {
+        IOptionsPage::registerCategory(
+            Constants::Settings::CATEGORY, Tr::tr("CMake"), Constants::Icons::SETTINGS_CATEGORY);
+
         setupCMakeToolManager(this);
 
         setupCMakeSettingsPage();
@@ -69,8 +76,11 @@ class CMakeProjectPlugin final : public ExtensionSystem::IPlugin
 
 #ifdef WITH_TESTS
         addTestCreator(createCMakeConfigTest);
-        addTestCreator(createCMakeParserTest);
+        addTestCreator(createCMakeOutputParserTest);
+        addTestCreator(createCMakeAutogenParserTest);
         addTestCreator(createCMakeProjectImporterTest);
+        addTestCreator(createAddDependenciesTest);
+        addTestCreator(createTestPresetsInheritanceTest);
 #endif
 
         FileIconProvider::registerIconOverlayForSuffix(Constants::Icons::FILE_OVERLAY, "cmake");
@@ -79,7 +89,21 @@ class CMakeProjectPlugin final : public ExtensionSystem::IPlugin
 
         TextEditor::SnippetProvider::registerGroup(Constants::CMAKE_SNIPPETS_GROUP_ID,
                                                    Tr::tr("CMake", "SnippetProvider"));
-        ProjectManager::registerProjectType<CMakeProject>(Utils::Constants::CMAKE_PROJECT_MIMETYPE);
+        const auto issuesGenerator = [](const Kit *k) {
+            Tasks result;
+            if (CMakeKitAspect::cmakeExecutable(k).isEmpty()) {
+                result.append(
+                    Project::createTask(Task::TaskType::Error, Tr::tr("No cmake tool set.")));
+            }
+            if (ToolchainKitAspect::toolChains(k).isEmpty()) {
+                result.append(
+                    Project::createTask(
+                        Task::TaskType::Warning, Tr::tr("No compilers set in kit.")));
+            }
+            return result;
+        };
+        ProjectManager::registerProjectType<CMakeProject>(
+            Utils::Constants::CMAKE_PROJECT_MIMETYPE, issuesGenerator);
 
         ActionBuilder(this, Constants::BUILD_TARGET_CONTEXT_MENU)
             .setParameterText(Tr::tr("Build \"%1\""), Tr::tr("Build"), ActionBuilder::AlwaysEnabled)
@@ -91,7 +115,7 @@ class CMakeProjectPlugin final : public ExtensionSystem::IPlugin
             .addToContainer(ProjectExplorer::Constants::M_SUBPROJECTCONTEXT,
                             ProjectExplorer::Constants::G_PROJECT_BUILD)
             .addOnTriggered(this, [] {
-                if (auto bs = qobject_cast<CMakeBuildSystem *>(ProjectTree::currentBuildSystem())) {
+                if (auto bs = qobject_cast<CMakeBuildSystem *>(activeBuildSystemForCurrentProject())) {
                     auto targetNode = dynamic_cast<const CMakeTargetNode *>(ProjectTree::currentNode());
                     bs->buildCMakeTarget(targetNode ? targetNode->displayName() : QString());
                 }
@@ -104,20 +128,25 @@ class CMakeProjectPlugin final : public ExtensionSystem::IPlugin
     void extensionsInitialized() final
     {
         // Delay the restoration to allow the devices to load first.
-        QTimer::singleShot(0, this, [] { CMakeToolManager::restoreCMakeTools(); });
+        connect(DeviceManager::instance(), &DeviceManager::devicesLoaded, this, [] {
+            CMakeToolManager::restoreCMakeTools();
+        });
 
         setupOnlineHelpManager();
     }
 
     void updateContextActions(ProjectExplorer::Node *node)
     {
+        const Project *project = ProjectTree::projectForNode(node);
+
         auto targetNode = dynamic_cast<const CMakeTargetNode *>(node);
         const QString targetDisplayName = targetNode ? targetNode->displayName() : QString();
+        const bool isVisible = targetNode && !BuildManager::isBuilding(project);
 
         // Build Target:
         m_buildTargetContextAction->setParameter(targetDisplayName);
-        m_buildTargetContextAction->setEnabled(targetNode);
-        m_buildTargetContextAction->setVisible(targetNode);
+        m_buildTargetContextAction->setEnabled(isVisible);
+        m_buildTargetContextAction->setVisible(isVisible);
     }
 
     Action *m_buildTargetContextAction = nullptr;

@@ -14,7 +14,7 @@
     \list 1
         \li Go to \preferences > \uicontrol Devices > \uicontrol Devices.
         \li Select an embedded device.
-            \image qtcreator-preferences-devices-remote-linux.webp {Remote Linux Device in Devices}
+            \image {qtcreator-preferences-devices-remote-linux.webp} {Remote Linux device in the Devices tab in Devices preferences}
         \li Select \uicontrol {Show Running Processes}.
         \li Filter the processes by name or ID.
         \li To update the process list, select \uicontrol {Update List}.
@@ -22,5 +22,6 @@
             \uicontrol {Kill Process}.
     \endlist
 
-    \sa {Develop for Devices}{How To: Develop for Devices}, {Devices}
+    \sa {Develop for devices}{How to: Develop for devices},
+    {Developing for devices}
 */

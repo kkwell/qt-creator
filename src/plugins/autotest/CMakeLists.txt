@@ -1,15 +1,14 @@
 add_qtc_plugin(AutoTest
   PLUGIN_CLASS AutotestPlugin
   PLUGIN_DEPENDS Core CppEditor Debugger ProjectExplorer QmlJSTools TextEditor
+  DEPENDS McpServerLib
   PLUGIN_TEST_DEPENDS QmakeProjectManager QtSupport QbsProjectManager
   SOURCES
-    autotest.qrc
     autotest_global.h
     autotesttr.h
     autotestconstants.h
     autotesticons.h
     autotestplugin.cpp autotestplugin.h
-    autotestunittests.qrc
     boost/boostcodeparser.cpp boost/boostcodeparser.h
     boost/boosttestconfiguration.cpp boost/boosttestconfiguration.h
     boost/boosttestconstants.h
@@ -41,6 +40,7 @@ add_qtc_plugin(AutoTest
     itemdatacache.h
     itestframework.cpp itestframework.h
     itestparser.cpp itestparser.h
+    mcptools.cpp mcptools.h
     projectsettingswidget.cpp projectsettingswidget.h
     qtest/datataglocatorfilter.cpp qtest/datataglocatorfilter.h
     qtest/qttest_utils.cpp qtest/qttest_utils.h
@@ -69,10 +69,10 @@ add_qtc_plugin(AutoTest
     testresultdelegate.cpp testresultdelegate.h
     testresultmodel.cpp testresultmodel.h
     testresultspane.cpp testresultspane.h
+    testresultsmanager.cpp testresultsmanager.h
     testrunconfiguration.h
     testrunner.cpp testrunner.h
     testsettings.cpp testsettings.h
-    testsettingspage.cpp testsettingspage.h
     testtreeitem.cpp testtreeitem.h
     testtreeitemdelegate.cpp testtreeitemdelegate.h
     testtreemodel.cpp testtreemodel.h
@@ -83,5 +83,19 @@ extend_qtc_plugin(AutoTest
   CONDITION WITH_TESTS
   SOURCES
     autotestunittests.cpp autotestunittests.h
-    loadprojectscenario.cpp loadprojectscenario.h
+  DEFINES
+    QTCREATORDIR="${PROJECT_SOURCE_DIR}"
+)
+
+file(GLOB_RECURSE images RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} images/*)
+qtc_add_resources(AutoTest "images"
+  PREFIX "/autotest"
+  BASE "."
+  FILES ${images}
+)
+file(GLOB_RECURSE test_cases RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} unit_test/*)
+qtc_add_resources(AutoTest "testcases"
+  CONDITION WITH_TESTS
+  BASE "."
+  FILES ${test_cases}
 )

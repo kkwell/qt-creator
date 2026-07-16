@@ -8,6 +8,7 @@
 #include "abi.h"
 #include "devicesupport/idevicefwd.h"
 #include "headerpath.h"
+#include "kitaspect.h"
 #include "projectmacro.h"
 #include "task.h"
 #include "toolchaincache.h"
@@ -18,6 +19,8 @@
 #include <utils/store.h>
 
 #include <QDateTime>
+#include <QSet>
+#include <QVersionNumber>
 
 #include <functional>
 #include <memory>
@@ -54,6 +57,8 @@ public:
     Utils::Id language;
 };
 
+using LanguageCategory = QSet<Utils::Id>;
+
 // --------------------------------------------------------------------------
 // Toolchain (documentation inside)
 // --------------------------------------------------------------------------
@@ -61,13 +66,6 @@ public:
 class PROJECTEXPLORER_EXPORT Toolchain : public Utils::AspectContainer
 {
 public:
-    enum Detection {
-        ManualDetection,
-        AutoDetection,
-        AutoDetectionFromSdk,
-        UninitializedDetection,
-    };
-
     using Predicate = std::function<bool(const Toolchain *)>;
 
     virtual ~Toolchain();
@@ -75,13 +73,15 @@ public:
     QString displayName() const;
     void setDisplayName(const QString &name);
 
-    bool isAutoDetected() const;
-    bool isSdkProvided() const { return detection() == AutoDetectionFromSdk; }
-    Detection detection() const;
-    QString detectionSource() const;
+    DetectionSource detectionSource() const;
+    bool isDeviceDetected() const;
     ToolchainFactory *factory() const;
 
     QByteArray id() const;
+
+    Utils::Id bundleId() const;
+    void setBundleId(Utils::Id id);
+    bool canShareBundle(const Toolchain &other) const;
 
     virtual QStringList suggestedMkspecList() const;
 
@@ -90,6 +90,8 @@ public:
 
     Abi targetAbi() const;
     void setTargetAbi(const Abi &abi);
+
+    QVersionNumber version() const;
 
     virtual ProjectExplorer::Abis supportedAbis() const;
     virtual QString originalTargetTriple() const { return {}; }
@@ -132,14 +134,16 @@ public:
     Utils::Id language() const;
 
     virtual Utils::FilePath compilerCommand() const; // FIXME: De-virtualize.
-    void setCompilerCommand(const Utils::FilePath &command);
+    virtual void setCompilerCommand(const Utils::FilePath &command);
     virtual bool matchesCompilerCommand(const Utils::FilePath &command) const;
+
+    void setIsManuallyProvidedCxxCompiler(bool manuallyProvided);
+    bool isManuallyProvidedCxxCompiler() const;
 
     virtual QList<Utils::OutputLineParser *> createOutputParsers() const = 0;
 
     virtual bool operator ==(const Toolchain &) const;
 
-    virtual std::unique_ptr<ToolchainConfigWidget> createConfigurationWidget() = 0;
     Toolchain *clone() const;
 
     // Used by the toolchainmanager to save user-generated tool chains.
@@ -150,8 +154,7 @@ public:
     virtual bool isJobCountSupported() const { return true; }
 
     void setLanguage(Utils::Id language);
-    void setDetection(Detection d);
-    void setDetectionSource(const QString &source);
+    void setDetectionSource(const DetectionSource &source);
 
     static Utils::LanguageVersion cxxLanguageVersion(const QByteArray &cplusplusMacroValue);
     static Utils::LanguageVersion languageVersion(const Utils::Id &language, const Macros &macros);
@@ -165,10 +168,17 @@ public:
     virtual int priority() const { return PriorityNormal; }
     virtual GccToolchain *asGccToolchain() { return nullptr; }
 
+    Utils::FilePath correspondingCompilerCommand(Utils::Id otherLanguage) const;
+
 protected:
     explicit Toolchain(Utils::Id typeId);
 
     void setTypeDisplayName(const QString &typeName);
+
+    using VersionParser
+        = std::function<QVersionNumber(const QString & /* stdOut */, const QString & /* stdErr */)>;
+    void setVersionFlagsAndParser(const QStringList &flags, const VersionParser &parser);
+    void clearVersion();
 
     void setTargetAbiNoSignal(const Abi &abi);
     void setTargetAbiKey(const Utils::Key &abiKey);
@@ -196,13 +206,116 @@ private:
     Toolchain(const Toolchain &) = delete;
     Toolchain &operator=(const Toolchain &) = delete;
 
+    virtual bool canShareBundleImpl(const Toolchain &other) const;
+
     const std::unique_ptr<Internal::ToolchainPrivate> d;
 
     friend class Internal::ToolchainSettingsAccessor;
     friend class ToolchainFactory;
+    friend class Internal::ToolchainPrivate;
 };
 
 using Toolchains = QList<Toolchain *>;
+
+class PROJECTEXPLORER_EXPORT ToolchainBundle
+{
+public:
+    // Setting up a bundle may necessitate creating additional toolchains.
+    // Depending on the context, these should or should not be registered
+    // immediately with the ToolchainManager.
+    // In the case of NotApplicable, the caller promises that no toolchains
+    // will need to be created to ensure a complete bundle.
+    enum class HandleMissing { CreateAndRegister, CreateOnly, NotApplicable };
+
+    ToolchainBundle(const Toolchains &toolchains, HandleMissing handleMissing);
+
+    static QList<ToolchainBundle> collectBundles(HandleMissing handleMissing);
+    static QList<ToolchainBundle> collectBundles(
+        const Toolchains &toolchains, HandleMissing handleMissing);
+
+    template<typename R, class T = Toolchain, typename... A>
+    R get(R (T:: *getter)(A...) const, A&&... args) const
+    {
+        return std::invoke(getter, static_cast<T &>(*m_toolchains.first()), std::forward<A>(args)...);
+    }
+
+    template<class T = Toolchain, typename R> R& get(R T::*member) const
+    {
+        return static_cast<T &>(*m_toolchains.first()).*member;
+    }
+
+    template<class T = Toolchain, typename ...A> void set(void (T::*setter)(const A&...), const A& ...args)
+    {
+        for (Toolchain * const tc : std::as_const(m_toolchains))
+            std::invoke(setter, static_cast<T &>(*tc), args...);
+    }
+
+    template<class T = Toolchain, typename ...A> void set(void (T::*setter)(A...), const A ...args)
+    {
+        for (Toolchain * const tc : std::as_const(m_toolchains))
+            std::invoke(setter, static_cast<T &>(*tc), args...);
+    }
+
+    template<typename T> void forEach(const std::function<void(T &toolchain)> &modifier) const
+    {
+        for (Toolchain * const tc : std::as_const(m_toolchains))
+            modifier(static_cast<T &>(*tc));
+    }
+
+    template<typename T> void forEach(const std::function<void(const T &toolchain)> &func) const
+    {
+        for (const Toolchain * const tc : m_toolchains)
+            func(static_cast<const T &>(*tc));
+    }
+
+    int size() const { return m_toolchains.size(); }
+
+    const QList<Toolchain *> toolchains() const { return m_toolchains; }
+    ToolchainFactory *factory() const;
+    Utils::Id bundleId() const { return get(&Toolchain::bundleId); }
+    QString displayName() const;
+    Utils::Id type() const { return get(&Toolchain::typeId); }
+    QString typeDisplayName() const { return get(&Toolchain::typeDisplayName); }
+    QStringList extraCodeModelFlags() const { return get(&Toolchain::extraCodeModelFlags); }
+    DetectionSource detectionSource() const { return get(&Toolchain::detectionSource); }
+    Utils::FilePath compilerCommand(Utils::Id language) const;
+    Abi targetAbi() const { return get(&Toolchain::targetAbi); }
+    QList<Abi> supportedAbis() const { return get(&Toolchain::supportedAbis); }
+    Utils::FilePath makeCommand(const Utils::Environment &env) const
+    {
+        return get(&Toolchain::makeCommand, env);
+    }
+
+    enum class Valid { None, Some, All }; // Keep ordered from worst to best.
+    Valid validity() const;
+    bool isCompletelyValid() const { return validity() == Valid::All; }
+
+    void setDetectionSource(const DetectionSource &s) { set(&Toolchain::setDetectionSource, s); }
+    void setCompilerCommand(Utils::Id language, const Utils::FilePath &cmd);
+    void setCxxCompilerIsManuallyProvided(bool manuallyProvided);
+
+    void setDisplayName(const QString &name) { set(&Toolchain::setDisplayName, name); }
+    void setTargetAbi(const Abi &abi) { set(&Toolchain::setTargetAbi, abi); }
+
+    ToolchainBundle clone() const;
+
+    // Rampdown operations. No regular access to the bundle is allowed after calling these.
+    bool removeToolchain(Toolchain *tc) { return m_toolchains.removeOne(tc); }
+    void clearToolchains() { m_toolchains.clear(); }
+    void deleteToolchains();
+
+    friend bool operator==(const ToolchainBundle &b1, const ToolchainBundle &b2)
+    {
+        return b1.m_toolchains == b2.m_toolchains;
+    }
+
+private:
+    void addMissingToolchains(HandleMissing handleMissing);
+    static QList<ToolchainBundle> bundleUnbundledToolchains(
+        const Toolchains &unbundled, HandleMissing handleMissing);
+
+    Toolchains m_toolchains;
+};
 
 class PROJECTEXPLORER_EXPORT BadToolchain
 {
@@ -240,21 +353,7 @@ public:
 
     const Toolchains alreadyKnown;
     const IDeviceConstPtr device;
-    const Utils::FilePaths searchPaths; // If empty use device path and/or magic.
-};
-
-class PROJECTEXPLORER_EXPORT AsyncToolchainDetector
-{
-public:
-    AsyncToolchainDetector(
-        const ToolchainDetector &detector,
-        const std::function<Toolchains(const ToolchainDetector &)> &func,
-        const std::function<bool(const Toolchain *, const Toolchains &)> &alreadyRegistered);
-    void run();
-private:
-    ToolchainDetector m_detector;
-    std::function<Toolchains(const ToolchainDetector &)> m_func;
-    std::function<bool(Toolchain *, const Toolchains &)> m_alreadyRegistered;
+    const Utils::FilePaths searchPaths; // If empty use PATH.
 };
 
 class PROJECTEXPLORER_EXPORT ToolchainFactory
@@ -272,12 +371,14 @@ public:
     QString displayName() const { return m_displayName; }
     Utils::Id supportedToolchainType() const;
 
-    virtual std::optional<AsyncToolchainDetector> asyncAutoDetector(
-        const ToolchainDetector &detector) const;
     virtual Toolchains autoDetect(const ToolchainDetector &detector) const;
     virtual Toolchains detectForImport(const ToolchainDescription &tcd) const;
+    virtual std::unique_ptr<ToolchainConfigWidget> createConfigurationWidget(
+        const ToolchainBundle &bundle) const = 0;
+    virtual Utils::FilePath correspondingCompilerCommand(
+        const Utils::FilePath &srcPath, Utils::Id targetLang) const;
 
-    virtual bool canCreate() const;
+    bool canCreate() const;
     Toolchain *create() const;
 
     Toolchain *restore(const Utils::Store &data);
@@ -289,6 +390,7 @@ public:
     static Toolchain *createToolchain(Utils::Id toolchainType);
 
     QList<Utils::Id> supportedLanguages() const;
+    LanguageCategory languageCategory() const;
 
     void setUserCreatable(bool userCreatable);
 
@@ -296,7 +398,6 @@ protected:
     void setDisplayName(const QString &name) { m_displayName = name; }
     void setSupportedToolchainType(const Utils::Id &supportedToolchainType);
     void setSupportedLanguages(const QList<Utils::Id> &supportedLanguages);
-    void setSupportsAllLanguages(bool supportsAllLanguages);
     using ToolchainConstructor = std::function<Toolchain *()>;
     void setToolchainConstructor(const ToolchainConstructor &constructor);
     ToolchainConstructor toolchainConstructor() const;
@@ -312,13 +413,12 @@ protected:
         }
     };
 
-    using Candidates = QVector<Candidate>;
+    using Candidates = QList<Candidate>;
 
 private:
     QString m_displayName;
     Utils::Id m_supportedToolchainType;
     QList<Utils::Id> m_supportedLanguages;
-    bool m_supportsAllLanguages = false;
     bool m_userCreatable = false;
     ToolchainConstructor m_toolchainConstructor;
 };

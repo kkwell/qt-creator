@@ -20,8 +20,17 @@ def verifySaveBeforeBuildChecked(shouldBeChecked):
 
 def ensureSaveBeforeBuildChecked(shouldBeChecked):
     __openBuildAndRunSettings__()
+    origChecked = False
+    try:
+        checkbox = waitForObject(":Build and Run.Save all files before build_QCheckBox", 1000)
+        origChecked = checkbox.checkState() != Qt.Unchecked
+    except:
+        pass
     ensureChecked(":Build and Run.Save all files before build_QCheckBox", shouldBeChecked)
-    clickButton(waitForObject(":Options.OK_QPushButton"))
+    if origChecked != shouldBeChecked:
+        clickButton(waitForObject(":Options.Apply_QPushButton"))
+    else:
+        clickButton(waitForObject(":Options.Cancel_QPushButton"))
 
 
 def main():
@@ -29,15 +38,17 @@ def main():
     if not startedWithoutPluginError():
         return
     verifySaveBeforeBuildChecked(False)
-    projectName = "SampleApp-CMake"
+    projectName = "SampleApp_CMake"
     ensureSaveBeforeBuildChecked(False)
+    switchViewTo(ViewConstants.EDIT)
     # create qt quick application
     createNewQtQuickApplication(tempDir(), projectName)
     for expectDialog in [True, False]:
         verifySaveBeforeBuildChecked(not expectDialog)
+        switchViewTo(ViewConstants.EDIT)
         files = ["%s.CMakeLists\\.txt" % projectName,
                  "%s.app%s.Source Files.main\\.cpp" % (projectName, projectName),
-                 "%s.app%s.Main\\.qml" % (projectName, projectName)]
+                 "%s.app%s.Source Files.Main\\.qml" % (projectName, projectName)]
         for i, file in enumerate(files):
             if not openDocument(file):
                 test.fatal("Could not open file '%s'" % simpleFileName(file))

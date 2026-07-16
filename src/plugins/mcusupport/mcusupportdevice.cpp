@@ -16,17 +16,22 @@ McuSupportDevice::McuSupportDevice()
     setupId(IDevice::AutoDetected, Constants::DEVICE_ID);
     setType(Constants::DEVICE_TYPE);
     const QString displayNameAndType = Tr::tr("MCU Device");
-    settings()->displayName.setDefaultValue(displayNameAndType);
+    setDefaultDisplayName(displayNameAndType);
     setDisplayType(displayNameAndType);
-    setDeviceState(IDevice::DeviceStateUnknown);
     setMachineType(IDevice::Hardware);
     setOsType(Utils::OsTypeOther);
+    setDeviceState(IDevice::DeviceStateUnknown);
 }
 
 ProjectExplorer::IDevice::Ptr McuSupportDevice::create()
 {
     auto device = new McuSupportDevice;
     return ProjectExplorer::IDevice::Ptr(device);
+}
+
+Utils::Result<> McuSupportDevice::handlesFile(const Utils::FilePath &) const
+{
+    return Utils::ResultError(Tr::tr("File handling is not supported."));
 }
 
 McuSupportDeviceFactory::McuSupportDeviceFactory()

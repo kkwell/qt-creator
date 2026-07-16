@@ -106,7 +106,7 @@ int CtfTimelineModel::expandedRow(int index) const
 
 int CtfTimelineModel::collapsedRow(int index) const
 {
-    Q_UNUSED(index);
+    Q_UNUSED(index)
     return 0;
 }
 
@@ -362,14 +362,9 @@ void CtfTimelineModel::addCounterValue(const json &event, qint64 normalizedTime,
     }
 }
 
-const QString &CtfTimelineModel::reuse(const QString &value)
+QString CtfTimelineModel::reuse(const QString &value)
 {
-    auto it = m_reusableStrings.find(value);
-    if (it == m_reusableStrings.end()) {
-        m_reusableStrings.insert(value);
-        return value;
-    }
-    return *it;
+    return *m_reusableStrings.insert(value);
 }
 
 } // namespace CtfVisualizer::Internal

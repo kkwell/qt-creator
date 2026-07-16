@@ -12,7 +12,11 @@
     \previouspage creator-overview.html
     \nextpage creator-configuring-projects.html
 
-    \title Creating Projects
+    \title Creating projects
+
+    \quotation
+    \l {Create projects}{How to: Create projects}
+    \endquotation
 
     Create projects to:
 
@@ -38,21 +42,21 @@
     that you need for that particular type of project and create the necessary
     files for you.
 
-    \image qtcreator-project-qt-quick.webp {New Project dialog}
+    \image {qtcreator-project-qt-quick.webp} {New Project dialog}
 
     You can add your own custom wizards to standardize the way of adding
     subprojects and classes to a project. In the \uicontrol {New Project} and
     \uicontrol {New File} dialogs you can see an icon (1), a display name (2),
     and a description (3) of the wizard.
 
-    \image qtcreator-custom-wizard.webp {Wizard details in the New File dialog}
+    \image {qtcreator-custom-wizard.webp} {Wizard details in the New File dialog}
 
     In most project wizards, you can choose the build system to use for
     building the project: qmake, CMake, Qbs, and possibly others, depending on
     which plugins you have installed. If you do not get to choose,
     the project usually uses CMake as the build system.
 
-    \image qtcreator-new-project-build-system.webp {Define Build System dialog}
+    \image {qtcreator-new-project-build-system.webp} {Define Build System dialog}
 
     You can use wizards also to create plain C or C++ projects that use
     qmake, Qbs, or CMake, but do not use the Qt library.
@@ -63,12 +67,13 @@
 
     To test applications on \l{glossary-device}{devices}, you can install
     toolchains for mobile and embedded development as part of Qt distributions.
-    The installers create \l{Kits}{kits} and specify build
+    The installers create \l{Managing kits}{kits} and specify build
     and run settings for the installed device types. However, you might need to
     install and configure some additional software on the devices to be able to
     \l{Develop for Devices}{connect} to them from the computer.
 
-    \sa {Manage Projects}{How To: Manage Projects}, {Custom Wizards}
+    \sa {Create projects}{How to: Create projects}, {Add files}{How to: Add files},
+    {Custom wizards}
 */
 
 /*!
@@ -81,14 +86,14 @@
 
     To create a new project, select \uicontrol File > \uicontrol{New Project} and
     select the type of your project. The contents of the wizard dialogs depend
-    on the project type and the \l{Kits}{kits} that you
+    on the project type and the \l{Managing kits}{kits} that you
     select in the \uicontrol {Kit Selection} dialog. Follow the instructions of
     the wizard.
 
     In the first step, you select a template for the project. You can filter
     templates (1) to view only those that apply to a particular target platform.
 
-    \image qtcreator-new-project.webp {New Project dialog}
+    \image {qtcreator-new-project.webp} {New Project dialog}
 
     Next, you select a location for the project and specify settings for it.
 
@@ -117,15 +122,15 @@
                 many target platforms (desktop, mobile, and embedded).
         \row
             \li Library or plugin
-            \li Create a shared or static C++ library, a C++ plugin for Qt Quick
-                application extensions, or a \QC plugin.
+            \li Create a shared or static C++ library, C++ plugin for Qt Quick
+                application extensions, \l {Creating Plugins}{C++ plugin}, or
+                \l{Extending \QC with Lua}{Lua plugin}.
         \row
             \li Other project
             \li Create custom \l{\QD} widgets or widget collections,
                 \l{Create Qt Quick UI Prototypes}{Qt Quick UI projects},
-                \l{Add subprojects to projects}{subprojects},
-                empty qmake projects, or qmake projects for testing
-                code snippets.
+                \l{Add subprojects to projects}{subprojects}, or empty
+                qmake projects.
         \row
             \li Non-Qt project
             \li Create plain C or C++ applications or \l {Create Nimble projects}
@@ -137,7 +142,7 @@
                 Boost Test, or Catch2.
         \row
             \li Imported project
-            \li Import projects from a supported \l{Version Control Systems}
+            \li Import projects from a supported \l{Version control systems}
                 {version control system}, such as Bazaar, CVS, Git, Mercurial, or
                 Subversion.
 
@@ -150,9 +155,8 @@
 
     \endtable
 
-    The following video shows how to create a Qt Widgets application project:
-
-    \youtube FTSvDmcAgPI
+    To learn how to create a Qt Widgets application project, take the
+    \l{Qt Academy: Getting Started with \QC} course.
 
     For examples of creating different types of projects, see
     \l{Tutorials}.
@@ -169,8 +173,8 @@
     \uicontrol Impl there.
 
     \sa {Assign keyboard shortcuts}, {Activate kits for a project},
-    {Create files}, {Test}{How To: Test},
-    {Create Projects}{How To: Create Projects}, {Creating Projects}
+    {Adding files}, {Test}{How to: Test},
+    {Create projects}{How to: Create projects}, {Creating projects}
 */
 
 /*!
@@ -194,38 +198,46 @@
 
     The \l Projects view shows all files that you declare to be part of the
     project in the project files. It sorts the files into categories
-    by file type (.cpp, .h, .qrc, and so on). To display additional files, edit
-    the project file. Alternatively, you can see all the files in a project
-    directory in the \l {File System} view.
+    by file type (\c .cpp, \c .h, \c .qrc, and so on).
+
+    To display additional files:
+
+    \list
+        \li Edit the project file.
+        \li Select \uicontrol {Add to project} from a notification that tells
+            you a file is not part of any project.
+    \endlist
+
+    Go to the \l {File System} view to see all the files in a project directory.
 
     Declaring files as a part of the project also makes them visible to the
     \l{Navigate with locator}{locator} and
     \l{Search in projects or file systems}{project-wide search}.
 
-    \section1 CMake Projects
+    \section1 CMake projects
 
     When using CMake, you can specify additional files for a project by either
     adding them as sources or installing them.
 
-    In the CMakeLists.txt file, define the files as values of the
+    In the \c CMakeLists.txt file, define the files as values of the
     \l{CMake: target_sources command}{target_sources} command using
     the \c PRIVATE property, for example.
 
-    You can prevent CMake from handling some files, such as a .cpp
+    You can prevent CMake from handling some files, such as a \c .cpp
     file that should not be compiled. Use the \l{CMake: set_property command}
     {set_property} command and the \l{CMake: HEADER_FILE_ONLY}
     {HEADER_FILE_ONLY} property to specify such files. For example:
 
-    \badcode
+    \code [cmake]
     set_property(SOURCE "${files}" PROPERTY HEADER_FILE_ONLY ON)
     \endcode
 
     Alternatively, to install the files, use the \l {CMake: install command}
     {install} command with the \c FILES or \c DIRECTORY property.
 
-    \section1 qmake Projects
+    \section1 qmake projects
 
-    Use the following variables in the .pro file:
+    Use the following variables in the \c .pro file:
 
     \list
         \li \c SOURCES and \c HEADERS for files to compile
@@ -237,14 +249,13 @@
 
     For example, the following value includes text files in the source package:
 
-    \badcode
+    \code [text]
 
     DISTFILES += *.txt
 
     \endcode
 
-    \sa {Creating Projects}, {Use project wizards}, {Projects}
-
+    \sa {Create projects}{How to: Create projects}, {Creating projects}, {Projects}
 */
 
 /*!
@@ -259,17 +270,29 @@
     system libraries or your own libraries. Further, your own libraries might
     link to other libraries. To compile your project and benefit from services
     such as code completion and syntax highlighting, add the libraries to your
-    project. The process of adding a library to a project depends on the build
-    system that you use.
+    project.
 
-    \section1 CMake projects
+    \section1 Create subprojects
 
-    To add CMakeLists.txt files to any project, use the
-    \l{https://cmake.org/cmake/help/latest/command/add_subdirectory.html}
-    {add_subdirectory} command. The files can define complete projects that
-    you include into the top-level project or any other CMake commands.
+    To create subprojects and add them to a project:
 
-    \section1 qmake projects
+    \list 1
+        \li Right-click the project name in the \l Projects view to open the
+            context menu, and select \uicontrol {New Subproject}.
+        \li Follow the instructions of the wizard to create a subproject.
+            \image {qtcreator-project-qt-quick.webp} {New Project dialog}
+    \endlist
+
+    \section1 Add existing projects as subprojects
+
+    To add an existing project as a subproject:
+
+    \list 1
+        \li Select \uicontrol {Add Existing Projects} in the context menu.
+        \li In the file browser dialog, locate your subproject.
+    \endlist
+
+    \section1 Create SUBDIRS projects for qmake
 
     When you create a new project and select qmake as the build system,
     you can add it to another project as a subproject in the
@@ -289,32 +312,19 @@
             the root project and to add another project, such as a C++ library.
     \endlist
 
-    The wizard creates a project file (.pro) that defines a \c subdirs template
+    The wizard creates a project file (\c .pro) that defines a \c subdirs template
     and the subproject that you add as a value of the \l{Variables#subdirs}
     {SUBDIRS variable}. It also adds all the necessary files for the subproject.
 
-    \section2 Add subprojects to the root project
+    \section2 Specify dependencies
 
-    To create more subprojects, right-click the project name in the
-    \l Projects view to open the context menu, and select
-    \uicontrol {New Subproject}. Follow the steps in the
-     \uicontrol {New Subproject} wizard to create a subproject.
-
-    \image qtcreator-project-qt-quick.webp {New Project dialog}
-
-    To add an existing project as a subproject, select
-    \uicontrol {Add Existing Projects} in the context menu.
-    In the file browser dialog, locate your subproject.
+    To specify dependencies, use the \uicontrol{Add Library} wizard.
 
     \section2 Remove subprojects
 
     To remove subprojects, right-click the project name in the \uicontrol Projects
     view, and select \uicontrol {Remove Subproject} in the context menu.
 
-    \section2 Specify dependencies
-
-    To specify dependencies, use the \uicontrol{Add Library} wizard.
-
-    \sa {Creating Projects}, {Use project wizards},
-    {Add libraries to qmake projects}, {Add libraries to CMake projects}
+    \sa {Create projects}{How to: Create projects}, {Creating projects},
+    {Add libraries to CMake projects}
 */

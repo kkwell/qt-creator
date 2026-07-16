@@ -5,6 +5,8 @@
 
 #include <utils/aspects.h>
 
+#include <QTreeWidget>
+
 namespace Autotest::Internal {
 
 enum class RunAfterBuildMode
@@ -14,21 +16,46 @@ enum class RunAfterBuildMode
     Selected
 };
 
-class NonAspectSettings
+class FrameworksAspect : public Utils::BaseAspect
 {
 public:
-    QHash<Utils::Id, bool> frameworks;
-    QHash<Utils::Id, bool> frameworksGrouping;
-    QHash<Utils::Id, bool> tools;
+    explicit FrameworksAspect(Utils::AspectContainer *container);
+
+    bool framework(Utils::Id id) const;
+    bool frameworkGrouping(Utils::Id id) const;
+    bool tool(Utils::Id id) const;
+
+    struct Data
+    {
+        QHash<Utils::Id, bool> frameworks;
+        QHash<Utils::Id, bool> frameworksGrouping;
+        QHash<Utils::Id, bool> tools;
+    };
+
+private:
+    void apply() final;
+    void cancel() final;
+    bool isDirty() const final;
+
+    void writeSettings() const final;
+    void readSettings() final;
+
+    void addToLayoutImpl(Layouting::Layout &parent) final;
+
+    void populateTreeWidget();
+    void onFrameworkItemChanged();
+    void updateWarning(bool init);
+    bool showWarning();
+
+    QTreeWidget *m_frameworkTreeWidget = nullptr;
+    Utils::InfoLabel *m_frameworksWarn = nullptr;
+    Data m_data;
 };
 
-class TestSettings : public Utils::AspectContainer, public NonAspectSettings
+class TestSettings : public Utils::AspectContainer
 {
 public:
     TestSettings();
-
-    void toSettings() const;
-    void fromSettings();
 
     Utils::IntegerAspect scanThreadLimit{this};
     Utils::BoolAspect useTimeout{this};
@@ -44,11 +71,15 @@ public:
     Utils::BoolAspect popupOnStart{this};
     Utils::BoolAspect popupOnFinish{this};
     Utils::BoolAspect popupOnFail{this};
+    Utils::BoolAspect showTreeFilterTextInput{this};
     Utils::SelectionAspect runAfterBuild{this};
+    FrameworksAspect frameworks{this};
 
     RunAfterBuildMode runAfterBuildMode() const;
 };
 
 TestSettings &testSettings();
+
+void setupTestSettings();
 
 } // Autotest::Internal

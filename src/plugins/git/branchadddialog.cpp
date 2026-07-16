@@ -10,6 +10,7 @@
 #include <utils/fancylineedit.h>
 #include <utils/hostosinfo.h>
 #include <utils/layoutbuilder.h>
+#include <utils/theme/theme.h>
 
 #include <QApplication>
 #include <QCheckBox>
@@ -43,34 +44,55 @@ public:
     {
         Q_UNUSED(pos)
 
-        if (input.isEmpty())
+        if (input.isEmpty()) {
+            m_errorMessage.clear();
             return Intermediate;
+        }
 
         input.replace(m_invalidChars, "_");
 
         // "Intermediate" patterns, may change to Acceptable when user edits further:
 
-        if (input.endsWith(".lock")) //..may not end with ".lock"
+        if (input.endsWith(".lock")) { // may not end with ".lock"
+            m_errorMessage = Tr::tr("References must not end with \".lock\".");
             return Intermediate;
+        }
 
-        if (input.endsWith('.')) // no dot at the end (but allowed in the middle)
+        if (input.endsWith('.')) { // no dot at the end (but allowed in the middle)
+            m_errorMessage = Tr::tr("References must not end with \".\".");
             return Intermediate;
+        }
 
-        if (input.endsWith('/')) // no slash at the end (but allowed in the middle)
+        if (input.endsWith('/')) { // no slash at the end (but allowed in the middle)
+            m_errorMessage = Tr::tr("References must not end with \"/\".");
             return Intermediate;
+        }
 
-        if (m_localBranches.contains(input, Utils::HostOsInfo::isWindowsHost()
-                                     ? Qt::CaseInsensitive : Qt::CaseSensitive)) {
+        if (exists(input)) {
+            m_errorMessage = Tr::tr("Reference \"%1\" already exists.").arg(input);
             return Intermediate;
         }
 
         // is a valid branch name
+        m_errorMessage.clear();
         return Acceptable;
+    }
+
+    QString errorMessage() const
+    {
+        return m_errorMessage;
+    }
+
+    bool exists(const QString &input) const
+    {
+        const bool isWindows = Utils::HostOsInfo::isWindowsHost();
+        return m_localBranches.contains(input, isWindows ? Qt::CaseInsensitive : Qt::CaseSensitive);
     }
 
 private:
     const QRegularExpression m_invalidChars;
     QStringList m_localBranches;
+    mutable QString m_errorMessage;
 };
 
 BranchValidationDelegate::BranchValidationDelegate(QWidget *parent, BranchModel *model)
@@ -95,11 +117,17 @@ BranchAddDialog::BranchAddDialog(const QStringList &localBranches, Type type, QW
     resize(590, 138);
 
     auto branchNameLabel = new QLabel(Tr::tr("Branch Name:"));
+    auto annotateLabel = new QLabel(Tr::tr("Annotation:"));
+    annotateLabel->setVisible(false);
 
     m_branchNameEdit = new QLineEdit(this);
     m_branchNameEdit->setValidator(new BranchNameValidator(localBranches, this));
 
     m_checkoutCheckBox = new QCheckBox(Tr::tr("Checkout new branch"));
+
+    m_annotateEdit = new QLineEdit(this);
+    m_annotateEdit->setVisible(false);
+    m_annotateEdit->setPlaceholderText(Tr::tr("Annotation (Optional)"));
 
     m_trackingCheckBox = new QCheckBox(this);
     m_trackingCheckBox->setVisible(false);
@@ -118,6 +146,8 @@ BranchAddDialog::BranchAddDialog(const QStringList &localBranches, Type type, QW
     case BranchAddDialog::AddTag:
         setWindowTitle(Tr::tr("Add Tag"));
         branchNameLabel->setText(Tr::tr("Tag name:"));
+        annotateLabel->setVisible(true);
+        m_annotateEdit->setVisible(true);
         break;
     case BranchAddDialog::RenameTag:
         setWindowTitle(Tr::tr("Rename Tag"));
@@ -131,6 +161,7 @@ BranchAddDialog::BranchAddDialog(const QStringList &localBranches, Type type, QW
         Row { branchNameLabel, m_branchNameEdit },
         m_checkoutCheckBox,
         m_trackingCheckBox,
+        Row { annotateLabel, m_annotateEdit },
         st,
         m_buttonBox
     }.attachTo(this);
@@ -151,6 +182,11 @@ void BranchAddDialog::setBranchName(const QString &n)
 QString BranchAddDialog::branchName() const
 {
     return m_branchNameEdit->text();
+}
+
+QString BranchAddDialog::annotation() const
+{
+    return m_annotateEdit->text();
 }
 
 void BranchAddDialog::setTrackedBranchName(const QString &name, bool remote)
@@ -185,7 +221,18 @@ bool BranchAddDialog::checkout() const
 /*! Updates the ok button enabled state of the dialog according to the validity of the branch name. */
 void BranchAddDialog::updateButtonStatus()
 {
-    m_buttonBox->button(QDialogButtonBox::Ok)->setEnabled(m_branchNameEdit->hasAcceptableInput());
+    QPalette palette = m_branchNameEdit->palette();
+    if (!m_branchNameEdit->hasAcceptableInput()) {
+        auto validator = static_cast<const BranchNameValidator *>(m_branchNameEdit->validator());
+        m_branchNameEdit->setToolTip(validator->errorMessage());
+        m_buttonBox->button(QDialogButtonBox::Ok)->setEnabled(false);
+        palette.setColor(QPalette::Text, Utils::creatorColor(Utils::Theme::TextColorError));
+    } else {
+        m_branchNameEdit->setToolTip(QString());
+        m_buttonBox->button(QDialogButtonBox::Ok)->setEnabled(true);
+        palette.setColor(QPalette::Text, Utils::creatorColor(Utils::Theme::TextColorNormal));
+    }
+    m_branchNameEdit->setPalette(palette);
 }
 
 } // Git::Internal

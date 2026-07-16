@@ -21,7 +21,11 @@ public:
     GitSettings();
 
     Utils::BoolAspect pullRebase{this};
+    Utils::BoolAspect rebaseMerges{this};
+    Utils::BoolAspect updateRefs{this};
     Utils::BoolAspect showTags{this};
+    Utils::BoolAspect omitAnnotationPath{this};
+    Utils::BoolAspect omitAnnotationAuthor{this};
     Utils::BoolAspect omitAnnotationDate{this};
     Utils::BoolAspect ignoreSpaceChangesInDiff{this};
     Utils::BoolAspect ignoreSpaceChangesInBlame{this};
@@ -33,6 +37,7 @@ public:
     Utils::FilePathAspect repositoryBrowserCmd{this};
     Utils::BoolAspect graphLog{this};
     Utils::BoolAspect colorLog{this};
+    Utils::BoolAspect allBranches{this};
     Utils::BoolAspect firstParent{this};
     Utils::BoolAspect followRenames{this};
     Utils::IntegerAspect lastResetIndex{this};
@@ -40,11 +45,12 @@ public:
     Utils::BoolAspect instantBlame{this};
     Utils::BoolAspect instantBlameIgnoreSpaceChanges{this};
     Utils::BoolAspect instantBlameIgnoreLineMoves{this};
+    Utils::BoolAspect instantBlameShowSubject{this};
 
     mutable Utils::FilePath resolvedBinPath;
     mutable bool tryResolve = true;
 
-    Utils::expected_str<Utils::FilePath> gitExecutable() const;
+    Utils::Result<Utils::FilePath> gitExecutable() const;
 
     static QString trIgnoreWhitespaceChanges();
     static QString trIgnoreLineMoves();

@@ -66,7 +66,7 @@ DocksAndSizes DocksAndSizes::fromMap(const QVariantMap &store, const QList<QDock
     info.sizes = store.value(kDocksAndSizesSizes).value<QList<int>>();
 
     // clean up for docks that could not be found
-    for (int i = 0; i < info.docks.size(); ++i) {
+    for (int i = info.docks.size() - 1; i >= 0; --i) {
         if (!info.docks.at(i)) {
             info.docks.removeAt(i);
             if (i < info.sizes.size())
@@ -115,6 +115,31 @@ public:
 
 signals:
     void collapseChanged();
+
+protected:
+    bool event(QEvent *event) final
+    {
+        switch (event->type()) {
+        case QEvent::MouseButtonDblClick:
+        {
+            auto mouseEvent = static_cast<QMouseEvent *>(event);
+            if (mouseEvent->button() == Qt::LeftButton
+                && titleBarWidget()->geometry().contains(mouseEvent->position().toPoint())) {
+                if (!isFloating())
+                    setFloating(true);
+                else if (isMaximized())
+                    showNormal();
+                else
+                    showMaximized();
+                return true;
+            }
+            break;
+        }
+        default:
+            break;
+        }
+        return QDockWidget::event(event);
+    }
 
 private:
     QList<QDockWidget *> docksInArea();
@@ -319,8 +344,6 @@ DockWidget::DockWidget(QWidget *inner, FancyMainWindow *parent, bool immutable)
     title = stripAccelerator(title);
     setWindowTitle(title);
 
-    QStyleOptionDockWidget opt;
-    initStyleOption(&opt);
     m_titleBar = new TitleBarWidget(this);
     m_titleBar->m_titleLabel->setText(title);
     setTitleBarWidget(m_titleBar);
@@ -329,6 +352,10 @@ DockWidget::DockWidget(QWidget *inner, FancyMainWindow *parent, bool immutable)
         m_titleBar->setActive(false);
         return;
     }
+
+    QPalette p = palette();
+    p.setColor(QPalette::Window, creatorColor(Theme::Token_Stroke_Subtle));
+    setPalette(p);
 
     connect(toggleViewAction(), &QAction::triggered, this, [this] {
         if (isVisible())
@@ -354,6 +381,8 @@ DockWidget::DockWidget(QWidget *inner, FancyMainWindow *parent, bool immutable)
 DockWidget::~DockWidget()
 {
     delete m_hiddenInnerWidget;
+    // Workaround for QTBUG-136485.
+    disconnect(this, &QDockWidget::visibilityChanged, nullptr, nullptr);
 }
 
 QList<QDockWidget *> DockWidget::docksInArea()
@@ -561,6 +590,7 @@ FancyMainWindow::FancyMainWindow(QWidget *parent) :
 FancyMainWindow::~FancyMainWindow()
 {
     delete d;
+    d = nullptr;
 }
 
 QDockWidget *FancyMainWindow::addDockForWidget(QWidget *widget, bool immutable)
@@ -597,6 +627,18 @@ QDockWidget *FancyMainWindow::addDockForWidget(QWidget *widget, bool immutable)
         connect(dockWidget, &QDockWidget::dockLocationChanged, this, handleDockWidgetChanged);
         connect(dockWidget, &QDockWidget::topLevelChanged, this, handleDockWidgetChanged);
         connect(dockWidget, &QDockWidget::visibilityChanged, this, handleDockWidgetChanged);
+        connect(dockWidget, &QDockWidget::destroyed, this, [this](QObject *dock) {
+            if (!d)
+                return;
+            for (DocksAndSizes &hiddenDocks : d->m_hiddenAreas) {
+                const int i = hiddenDocks.docks.indexOf(static_cast<QDockWidget *>(dock));
+                if (i >= 0) {
+                    hiddenDocks.docks.removeAt(i);
+                    if (i < hiddenDocks.sizes.size())
+                        hiddenDocks.sizes.removeAt(i);
+                }
+            }
+        });
     }
 
     return dockWidget;
@@ -707,7 +749,7 @@ bool FancyMainWindow::restoreFancyState(const QByteArray &state, int version)
     return result;
 }
 
-static void findDockChildren(QWidget *parent, QList<QDockWidget *> &result)
+static void findDockChildren(const QWidget *parent, QList<QDockWidget *> &result)
 {
     for (QObject *child : parent->children()) {
         QWidget *childWidget = qobject_cast<QWidget *>(child);
@@ -724,7 +766,7 @@ static void findDockChildren(QWidget *parent, QList<QDockWidget *> &result)
 const QList<QDockWidget *> FancyMainWindow::dockWidgets() const
 {
     QList<QDockWidget *> result;
-    findDockChildren((QWidget *) this, result);
+    findDockChildren(this, result);
     return result;
 }
 
@@ -762,7 +804,13 @@ void FancyMainWindow::setDockAreaVisible(Qt::DockWidgetArea area, bool visible)
     } else {
         const QList<QDockWidget *> docks = docksInArea(area);
         if (!docks.isEmpty()) {
-            const QList<int> sizes = transform(docks, [](QDockWidget *w) { return w->height(); });
+            const Qt::Orientation orientation = orientationForArea(area);
+            const auto sizeForDock = [orientation](QDockWidget *w) {
+                if (orientation == Qt::Vertical)
+                    return w->height();
+                return w->width();
+            };
+            const QList<int> sizes = transform(docks, sizeForDock);
             d->m_hiddenAreas.insert(area, DocksAndSizes{docks, sizes});
             for (QDockWidget *w : docks)
                 w->setVisible(false);

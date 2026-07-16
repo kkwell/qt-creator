@@ -5,7 +5,6 @@
 
 #include "model.h"
 #include "modelnode.h"
-#include "quick2propertyeditorview.h"
 
 #include <QColor>
 #include <QObject>
@@ -14,6 +13,8 @@
 #include <QQmlComponent>
 #include <QQmlPropertyMap>
 #include <QUrl>
+
+QT_FORWARD_DECLARE_CLASS(QQuickWidget)
 
 namespace QmlDesigner {
 
@@ -34,6 +35,8 @@ class PropertyEditorContextObject : public QObject
     Q_PROPERTY(int minorVersion READ minorVersion WRITE setMinorVersion NOTIFY minorVersionChanged)
     Q_PROPERTY(int majorQtQuickVersion READ majorQtQuickVersion WRITE setMajorQtQuickVersion NOTIFY majorQtQuickVersionChanged)
     Q_PROPERTY(int minorQtQuickVersion READ minorQtQuickVersion WRITE setMinorQtQuickVersion NOTIFY minorQtQuickVersionChanged)
+    Q_PROPERTY(int editorInstancesCount READ editorInstancesCount NOTIFY editorInstancesCountChanged)
+    Q_PROPERTY(int maxEditorInstancesCount READ maxEditorInstancesCount CONSTANT)
 
     Q_PROPERTY(QString activeDragSuffix READ activeDragSuffix NOTIFY activeDragSuffixChanged)
 
@@ -48,11 +51,20 @@ class PropertyEditorContextObject : public QObject
     Q_PROPERTY(bool hasMultiSelection READ hasMultiSelection WRITE setHasMultiSelection NOTIFY
                    hasMultiSelectionChanged)
 
+    Q_PROPERTY(bool isSelectionLocked READ isSelectionLocked WRITE setIsSelectionLocked NOTIFY isSelectionLockedChanged)
+
+    Q_PROPERTY(bool isMultiPropertyEditorPluginEnabled READ isMultiPropertyEditorPluginEnabled
+                   NOTIFY isMultiPropertyEditorPluginEnabledChanged)
     Q_PROPERTY(bool insightEnabled MEMBER m_insightEnabled NOTIFY insightEnabledChanged)
     Q_PROPERTY(QStringList insightCategories MEMBER m_insightCategories NOTIFY insightCategoriesChanged)
 
+    Q_PROPERTY(bool hasQuick3DImport READ hasQuick3DImport NOTIFY hasQuick3DImportChanged)
+    Q_PROPERTY(bool hasMaterialLibrary READ hasMaterialLibrary NOTIFY hasMaterialLibraryChanged)
+    Q_PROPERTY(bool isQt6Project READ isQt6Project NOTIFY isQt6ProjectChanged)
+    Q_PROPERTY(bool has3DModelSelected READ has3DModelSelected NOTIFY has3DModelSelectedChanged)
+    Q_PROPERTY(bool has3DScene READ has3DScene NOTIFY has3DSceneChanged)
 public:
-    PropertyEditorContextObject(Quick2PropertyEditorView *widget, QObject *parent = nullptr);
+    PropertyEditorContextObject(QObject *parent = nullptr);
 
     QUrl specificsUrl() const {return m_specificsUrl; }
     QString specificQmlData() const {return m_specificQmlData; }
@@ -70,7 +82,7 @@ public:
 
     Q_INVOKABLE QStringList autoComplete(const QString &text, int pos, bool explicitComplete, bool filter);
 
-    Q_INVOKABLE void toogleExportAlias();
+    Q_INVOKABLE void toggleExportAlias();
 
     Q_INVOKABLE void goIntoComponent();
 
@@ -94,6 +106,14 @@ public:
     Q_INVOKABLE QRect screenRect() const;
     Q_INVOKABLE QPoint globalPos(const QPoint &point) const;
 
+    Q_INVOKABLE void handleToolBarAction(int action);
+
+    Q_INVOKABLE void saveExpandedState(const QString &sectionName, bool expanded);
+    Q_INVOKABLE bool loadExpandedState(const QString &sectionName, bool defaultValue) const;
+
+    enum ToolBarAction { SelectionLock, SelectionUnlock, AddExtraWidget };
+    Q_ENUM(ToolBarAction)
+
     QString activeDragSuffix() const;
     void setActiveDragSuffix(const QString &suffix);
 
@@ -105,6 +125,10 @@ public:
     void setMinorQtQuickVersion(int minorVersion);
     int minorVersion() const;
     void setMinorVersion(int minorVersion);
+    void setEditorInstancesCount(int n);
+    int editorInstancesCount() const;
+
+    int maxEditorInstancesCount() const { return 10; }
 
     bool hasActiveTimeline() const;
     void setHasActiveTimeline(bool b);
@@ -115,11 +139,33 @@ public:
     bool hasAliasExport() const { return m_aliasExport; }
 
     bool hasMultiSelection() const;
-
     void setHasMultiSelection(bool);
 
     void setInsightEnabled(bool value);
     void setInsightCategories(const QStringList &categories);
+
+    bool hasQuick3DImport() const;
+    void setHasQuick3DImport(bool value);
+
+    bool hasMaterialLibrary() const;
+    void setHasMaterialLibrary(bool value);
+
+    bool isQt6Project() const;
+    void setIsQt6Project(bool value);
+
+    bool has3DScene() const;
+    void setHas3DScene(bool value);
+
+    bool has3DModelSelected() const;
+    void setHas3DModelSelected(bool value);
+
+    void setEditorNodes(const ModelNodes &nodes);
+
+    void setIsSelectionLocked(bool lock);
+    bool isSelectionLocked() const;
+    bool isMultiPropertyEditorPluginEnabled() const;
+
+    void setQuickWidget(QQuickWidget *newQuickWidget);
 
 signals:
     void specificsUrlChanged();
@@ -133,14 +179,23 @@ signals:
     void minorVersionChanged();
     void majorQtQuickVersionChanged();
     void minorQtQuickVersionChanged();
+    void editorInstancesCountChanged();
     void specificQmlComponentChanged();
     void hasAliasExportChanged();
     void hasActiveTimelineChanged();
     void activeDragSuffixChanged();
     void hasMultiSelectionChanged();
+    void hasQuick3DImportChanged();
+    void hasMaterialLibraryChanged();
+    void has3DModelSelectedChanged();
+    void has3DSceneChanged();
+    void isQt6ProjectChanged();
+    void isSelectionLockedChanged();
+    void isMultiPropertyEditorPluginEnabledChanged();
 
     void insightEnabledChanged();
     void insightCategoriesChanged();
+    void toolBarAction(int action);
 
 public slots:
 
@@ -179,9 +234,18 @@ private:
     int m_minorVersion = 1;
     int m_majorQtQuickVersion = 1;
     int m_minorQtQuickVersion = -1;
+
+    int m_editorInstancesCount = 0;
+
+    bool m_hasQuick3DImport = false;
+    bool m_hasMaterialLibrary = false;
+    bool m_has3DModelSelected = false;
+    bool m_has3DScene = false;
+    bool m_isQt6Project = false;
+
     QQmlComponent *m_qmlComponent;
     QQmlContext *m_qmlContext;
-    Quick2PropertyEditorView *m_quickWidget = nullptr;
+    QPointer<QQuickWidget> m_quickWidget;
 
     QPoint m_lastPos;
 
@@ -194,9 +258,14 @@ private:
     QString m_activeDragSuffix;
 
     bool m_hasMultiSelection = false;
+    bool m_isSelectionLocked = false;
 
     bool m_insightEnabled = false;
     QStringList m_insightCategories;
+
+    ModelNodes m_editorNodes; // Nodes that are being edited by PropertyEditor
+
+    inline static QHash<QString, bool> s_expandedStateHash;
 };
 
 class EasingCurveEditor : public QObject

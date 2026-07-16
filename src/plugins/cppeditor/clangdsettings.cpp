@@ -14,9 +14,15 @@
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/session.h>
+
+#include <projectexplorer/buildconfiguration.h>
+#include <projectexplorer/devicesupport/devicekitaspects.h>
+#include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/project.h>
+#include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projectpanelfactory.h>
 #include <projectexplorer/projectsettingswidget.h>
+
 #include <utils/clangutils.h>
 #include <utils/itemviews.h>
 #include <utils/layoutbuilder.h>
@@ -64,18 +70,21 @@ static Key clangdSessionIndexPathKey() { return "ClangdSessionIndexPath"; }
 static Key clangdIndexingPriorityKey() { return "ClangdIndexingPriority"; }
 static Key clangdHeaderSourceSwitchModeKey() { return "ClangdHeaderSourceSwitchMode"; }
 static Key clangdCompletionRankingModelKey() { return "ClangdCompletionRankingModel"; }
+static Key clangdCompletionStyleKey() { return "ClangdCompletionStyle"; }
 static Key clangdHeaderInsertionKey() { return "ClangdHeaderInsertion"; }
 static Key clangdThreadLimitKey() { return "ClangdThreadLimit"; }
 static Key clangdDocumentThresholdKey() { return "ClangdDocumentThreshold"; }
 static Key clangdSizeThresholdEnabledKey() { return "ClangdSizeThresholdEnabled"; }
 static Key clangdSizeThresholdKey() { return "ClangdSizeThreshold"; }
 static Key useGlobalSettingsKey() { return "useGlobalSettings"; }
-static Key clangdblockIndexingSettingsKey() { return "blockIndexing"; }
 static Key sessionsWithOneClangdKey() { return "SessionsWithOneClangd"; }
 static Key diagnosticConfigIdKey() { return "diagnosticConfigId"; }
 static Key checkedHardwareKey() { return "checkedHardware"; }
 static Key completionResultsKey() { return "completionResults"; }
 static Key updateDependentSourcesKey() { return "updateDependentSources"; }
+static Key useExternalCompilationDbKey() { return "ClangdUseExternalCompilationDb"; }
+
+const char blockProjectIndexingProperty[] = "ClangBlockProjectIndexing";
 
 QString ClangdSettings::priorityToString(const IndexingPriority &priority)
 {
@@ -129,6 +138,26 @@ QString ClangdSettings::rankingModelToDisplayString(CompletionRankingModel model
     QTC_ASSERT(false, return {});
 }
 
+QString ClangdSettings::completionStyleToCmdLineString(CompletionStyle style)
+{
+    switch (style) {
+    case CompletionStyle::Default: break;
+    case CompletionStyle::Detailed: return "detailed";
+    case CompletionStyle::Bundled: return "bundled";
+    }
+    QTC_ASSERT(false, return {});
+}
+
+QString ClangdSettings::completionStyleToDisplayString(CompletionStyle style)
+{
+    switch (style) {
+    case CompletionStyle::Default: return Tr::tr("Default");
+    case CompletionStyle::Detailed: return Tr::tr("Detailed");
+    case CompletionStyle::Bundled: return Tr::tr("Bundled");
+    }
+    QTC_ASSERT(false, return {});
+}
+
 QString ClangdSettings::defaultProjectIndexPathTemplate()
 {
     return QDir::toNativeSeparators("%{BuildConfig:BuildDirectory:FilePath}/.qtc_clangd");
@@ -162,9 +191,9 @@ ClangdSettings::ClangdSettings()
             });
 }
 
-bool ClangdSettings::useClangd() const
+bool ClangdSettings::Data::useGoodClangd(const Kit *kit) const
 {
-    return m_data.useClangd && clangdVersion(clangdFilePath()) >= minimumClangdVersion();
+    return useClangd && clangdVersion(clangdFilePath(kit)) >= minimumClangdVersion();
 }
 
 void ClangdSettings::setUseClangd(bool use) { instance().m_data.useClangd = use; }
@@ -196,7 +225,7 @@ void ClangdSettings::setDefaultClangdPath(const FilePath &filePath)
 
 void ClangdSettings::setCustomDiagnosticConfigs(const ClangDiagnosticConfigs &configs)
 {
-    if (instance().customDiagnosticConfigs() == configs)
+    if (instance().m_data.customDiagnosticConfigs == configs)
         return;
     instance().m_data.customDiagnosticConfigs = configs;
     instance().saveSettings();
@@ -204,7 +233,7 @@ void ClangdSettings::setCustomDiagnosticConfigs(const ClangDiagnosticConfigs &co
 
 ClangDiagnosticConfigsModel ClangdSettings::diagnosticConfigsModel()
 {
-    const ClangDiagnosticConfigs &customConfigs = instance().customDiagnosticConfigs();
+    const ClangDiagnosticConfigs &customConfigs = instance().m_data.customDiagnosticConfigs;
     ClangDiagnosticConfigsModel model;
     model.addBuiltinConfigs();
     for (const ClangDiagnosticConfig &config : customConfigs)
@@ -212,48 +241,57 @@ ClangDiagnosticConfigsModel ClangdSettings::diagnosticConfigsModel()
     return model;
 }
 
-FilePath ClangdSettings::clangdFilePath() const
+FilePath ClangdSettings::Data::clangdFilePath(const Kit *kit) const
 {
-    if (!m_data.executableFilePath.isEmpty())
-        return m_data.executableFilePath;
+    if (kit && BuildDeviceTypeKitAspect::deviceTypeId(kit)
+                   != ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE) {
+        if (const IDeviceConstPtr buildDevice = BuildDeviceKitAspect::device(kit)) {
+            FilePath clangd = buildDevice->deviceToolPath(CppEditor::Constants::CLANGD_TOOL_ID);
+            if (!clangd.isEmpty())
+                return clangd;
+        }
+    }
+
+    if (!executableFilePath.isEmpty())
+        return executableFilePath;
     return fallbackClangdFilePath();
 }
 
-FilePath ClangdSettings::projectIndexPath(const MacroExpander &expander) const
+FilePath ClangdSettings::Data::projectIndexPath(const MacroExpander &expander) const
 {
-    return FilePath::fromUserInput(expander.expand(m_data.projectIndexPathTemplate));
+    return FilePath::fromUserInput(expander.expand(projectIndexPathTemplate));
 }
 
-FilePath ClangdSettings::sessionIndexPath(const MacroExpander &expander) const
+FilePath ClangdSettings::Data::sessionIndexPath(const MacroExpander &expander) const
 {
-    return FilePath::fromUserInput(expander.expand(m_data.sessionIndexPathTemplate));
+    return FilePath::fromUserInput(expander.expand(sessionIndexPathTemplate));
 }
 
-bool ClangdSettings::sizeIsOkay(const FilePath &fp) const
+bool ClangdSettings::Data::sizeIsOkay(const FilePath &fp) const
 {
-    return !sizeThresholdEnabled() || sizeThresholdInKb() * 1024 >= fp.fileSize();
+    return !sizeThresholdEnabled || sizeThresholdInKb * 1024 >= fp.fileSize();
 }
 
-ClangDiagnosticConfigs ClangdSettings::customDiagnosticConfigs() const
+Id ClangdSettings::Data::diagnosticConfigIdOrDefault() const
 {
-    return m_data.customDiagnosticConfigs;
+    if (diagnosticConfigsModel().hasConfigWithId(diagnosticConfigId))
+        return diagnosticConfigId;
+    return initialClangDiagnosticConfigId();
 }
 
-Id ClangdSettings::diagnosticConfigId() const
+ClangDiagnosticConfig ClangdSettings::Data::diagnosticConfig() const
 {
-    if (!diagnosticConfigsModel().hasConfigWithId(m_data.diagnosticConfigId))
-        return initialClangDiagnosticConfigId();
-    return m_data.diagnosticConfigId;
+    return diagnosticConfigsModel().configWithId(diagnosticConfigIdOrDefault());
 }
 
-ClangDiagnosticConfig ClangdSettings::diagnosticConfig() const
+bool ClangdSettings::Data::isSessionMode() const
 {
-    return diagnosticConfigsModel().configWithId(diagnosticConfigId());
+    return granularity() == Granularity::Session;
 }
 
-ClangdSettings::Granularity ClangdSettings::granularity() const
+ClangdSettings::Data::Granularity ClangdSettings::Data::granularity() const
 {
-    if (m_data.sessionsWithOneClangd.contains(Core::SessionManager::activeSession()))
+    if (sessionsWithOneClangd.contains(Core::SessionManager::activeSession()))
         return Granularity::Session;
     return Granularity::Project;
 }
@@ -313,10 +351,10 @@ static FilePath getClangHeadersPath(const FilePath &clangdFilePath)
     return {};
 }
 
-FilePath ClangdSettings::clangdIncludePath() const
+FilePath ClangdSettings::Data::clangdIncludePath(const Kit *kit) const
 {
-    QTC_ASSERT(useClangd(), return {});
-    FilePath clangdPath = clangdFilePath();
+    QTC_ASSERT(useGoodClangd(kit), return {});
+    FilePath clangdPath = clangdFilePath(kit);
     QTC_ASSERT(!clangdPath.isEmpty() && clangdPath.exists(), return {});
     static QHash<FilePath, FilePath> headersPathCache;
     const auto it = headersPathCache.constFind(clangdPath);
@@ -375,91 +413,6 @@ void ClangdSettings::setClangdFilePath(const FilePath &filePath)
 }
 #endif
 
-ClangdProjectSettings::ClangdProjectSettings(Project *project) : m_project(project)
-{
-    loadSettings();
-}
-
-ClangdSettings::Data ClangdProjectSettings::settings() const
-{
-    const ClangdSettings::Data globalData = ClangdSettings::instance().data();
-    ClangdSettings::Data data = globalData;
-    if (!m_useGlobalSettings) {
-        data = m_customSettings;
-        // This property is global by definition.
-        data.sessionsWithOneClangd = ClangdSettings::instance().data().sessionsWithOneClangd;
-
-        // This list exists only once.
-        data.customDiagnosticConfigs = ClangdSettings::instance().data().customDiagnosticConfigs;
-    }
-    if (m_blockIndexing)
-        data.indexingPriority = ClangdSettings::IndexingPriority::Off;
-    return data;
-}
-
-void ClangdProjectSettings::setSettings(const ClangdSettings::Data &data)
-{
-    m_customSettings = data;
-    saveSettings();
-    ClangdSettings::setCustomDiagnosticConfigs(data.customDiagnosticConfigs);
-    emit ClangdSettings::instance().changed();
-}
-
-void ClangdProjectSettings::setUseGlobalSettings(bool useGlobal)
-{
-    m_useGlobalSettings = useGlobal;
-    saveSettings();
-    emit ClangdSettings::instance().changed();
-}
-
-void ClangdProjectSettings::setDiagnosticConfigId(Utils::Id configId)
-{
-    m_customSettings.diagnosticConfigId = configId;
-    saveSettings();
-    emit ClangdSettings::instance().changed();
-}
-
-void ClangdProjectSettings::blockIndexing()
-{
-    if (m_blockIndexing)
-        return;
-    m_blockIndexing = true;
-    saveSettings();
-    emit ClangdSettings::instance().changed();
-}
-
-void ClangdProjectSettings::unblockIndexing()
-{
-    if (!m_blockIndexing)
-        return;
-    m_blockIndexing = false;
-    saveSettings();
-    // Do not emit changed here since that would restart clients with blocked indexing
-}
-
-void ClangdProjectSettings::loadSettings()
-{
-    if (!m_project)
-        return;
-    const Store data = storeFromVariant(m_project->namedSettings(clangdSettingsKey()));
-    m_useGlobalSettings = data.value(useGlobalSettingsKey(), true).toBool();
-    m_blockIndexing = data.value(clangdblockIndexingSettingsKey(), false).toBool();
-    if (!m_useGlobalSettings)
-        m_customSettings.fromMap(data);
-}
-
-void ClangdProjectSettings::saveSettings()
-{
-    if (!m_project)
-        return;
-    Store data;
-    if (!m_useGlobalSettings)
-        data = m_customSettings.toMap();
-    data.insert(useGlobalSettingsKey(), m_useGlobalSettings);
-    data.insert(clangdblockIndexingSettingsKey(), m_blockIndexing);
-    m_project->setNamedSettings(clangdSettingsKey(), variantFromStore(data));
-}
-
 Store ClangdSettings::Data::toMap() const
 {
     Store map;
@@ -467,8 +420,8 @@ Store ClangdSettings::Data::toMap() const
     map.insert(useClangdKey(), useClangd);
 
     map.insert(clangdPathKey(),
-               executableFilePath != fallbackClangdFilePath() ? executableFilePath.toString()
-                                                              : QString());
+               executableFilePath != fallbackClangdFilePath() ? executableFilePath.toSettings()
+                                                              : QVariant());
 
     map.insert(clangdIndexingKey(), indexingPriority != IndexingPriority::Off);
     map.insert(clangdIndexingPriorityKey(), int(indexingPriority));
@@ -476,6 +429,7 @@ Store ClangdSettings::Data::toMap() const
     map.insert(clangdSessionIndexPathKey(), sessionIndexPathTemplate);
     map.insert(clangdHeaderSourceSwitchModeKey(), int(headerSourceSwitchMode));
     map.insert(clangdCompletionRankingModelKey(), int(completionRankingModel));
+    map.insert(clangdCompletionStyleKey(), int(completionStyle));
     map.insert(clangdHeaderInsertionKey(), autoIncludeHeaders);
     map.insert(clangdThreadLimitKey(), workerThreadLimit);
     map.insert(clangdDocumentThresholdKey(), documentUpdateThreshold);
@@ -486,13 +440,14 @@ Store ClangdSettings::Data::toMap() const
     map.insert(checkedHardwareKey(), haveCheckedHardwareReqirements);
     map.insert(completionResultsKey(), completionResults);
     map.insert(updateDependentSourcesKey(), updateDependentSources);
+    map.insert(useExternalCompilationDbKey(), useExternalCompilationDb);
     return map;
 }
 
 void ClangdSettings::Data::fromMap(const Store &map)
 {
     useClangd = map.value(useClangdKey(), true).toBool();
-    executableFilePath = FilePath::fromString(map.value(clangdPathKey()).toString());
+    executableFilePath = FilePath::fromSettings(map.value(clangdPathKey()));
     indexingPriority = IndexingPriority(
         map.value(clangdIndexingPriorityKey(), int(this->indexingPriority)).toInt());
     const auto it = map.find(clangdIndexingKey());
@@ -506,7 +461,10 @@ void ClangdSettings::Data::fromMap(const Store &map)
                                                               int(headerSourceSwitchMode)).toInt());
     completionRankingModel = CompletionRankingModel(map.value(clangdCompletionRankingModelKey(),
                                                               int(completionRankingModel)).toInt());
+    completionStyle = CompletionStyle(
+        map.value(clangdCompletionStyleKey(), int(completionStyle)).toInt());
     autoIncludeHeaders = map.value(clangdHeaderInsertionKey(), false).toBool();
+    useExternalCompilationDb = map.value(useExternalCompilationDbKey(), false).toBool();
     workerThreadLimit = map.value(clangdThreadLimitKey(), 0).toInt();
     documentUpdateThreshold = map.value(clangdDocumentThresholdKey(), 500).toInt();
     sizeThresholdEnabled = map.value(clangdSizeThresholdEnabledKey(), false).toBool();
@@ -527,13 +485,83 @@ int ClangdSettings::Data::defaultCompletionResults()
     return ok ? userValue : 100;
 }
 
+ClangdSettings::Data clangdProjectSettings(Project *project)
+{
+    if (!project)
+        return ClangdSettings::instance().data();
+
+    const Store data0 = storeFromVariant(project->namedSettings(clangdSettingsKey()));
+    const bool useGlobalSettings = data0.value(useGlobalSettingsKey(), true).toBool();
+
+    ClangdSettings::Data data;
+
+    if (useGlobalSettings) {
+        data = ClangdSettings::instance().data();
+    } else {
+        data.fromMap(data0);
+
+        // This property is global by definition.
+        data.sessionsWithOneClangd = ClangdSettings::instance().data().sessionsWithOneClangd;
+
+        // This list exists only once.
+        data.customDiagnosticConfigs = ClangdSettings::instance().data().customDiagnosticConfigs;
+    }
+
+    if (project->property(blockProjectIndexingProperty).toBool())
+        data.indexingPriority = ClangdSettings::IndexingPriority::Off;
+
+    return data;
+}
+
+ClangdSettings::Data clangdProjectSettings(BuildConfiguration *bc)
+{
+    return clangdProjectSettings(bc ? bc->project() : nullptr);
+}
+
+void clangdBlockIndexingForProject(Project *project)
+{
+    QTC_ASSERT(project, return);
+    project->setProperty(blockProjectIndexingProperty, true);
+
+    emit ClangdSettings::instance().changed();
+}
+
+void clangdUnblockIndexingForProject(Project *project)
+{
+    QTC_ASSERT(project, return);
+    project->setProperty(blockProjectIndexingProperty, false);
+}
+
+void clangdSetDiagnosticConfigId(Project *project, Id id)
+{
+    QTC_ASSERT(project, return);
+    ClangdSettings::Data customSettings;
+
+    const Store data = storeFromVariant(project->namedSettings(clangdSettingsKey()));
+    bool useGlobalSettings = data.value(useGlobalSettingsKey(), true).toBool();
+    if (!useGlobalSettings)
+        customSettings.fromMap(data);
+
+    customSettings.diagnosticConfigId = id;
+
+    Store data2;
+    data2 = customSettings.toMap();
+    data2.insert(useGlobalSettingsKey(), false);
+    project->setNamedSettings(clangdSettingsKey(), variantFromStore(data2));
+
+    emit ClangdSettings::instance().changed();
+}
+
 namespace Internal {
+
 class ClangdSettingsWidget final : public QWidget
 {
     Q_OBJECT
 
 public:
-    ClangdSettingsWidget(const ClangdSettings::Data &settingsData, bool isForProject);
+    ClangdSettingsWidget() = default;
+
+    void setup(const ClangdSettings::Data &settingsData, bool isForProject);
 
     ClangdSettings::Data settingsData() const;
 
@@ -547,7 +575,9 @@ private:
     Utils::FancyLineEdit m_sessionIndexPathTemplateLineEdit;
     QComboBox m_headerSourceSwitchComboBox;
     QComboBox m_completionRankingModelComboBox;
+    QComboBox m_completionStyleComboBox;
     QCheckBox m_autoIncludeHeadersCheckBox;
+    QCheckBox m_useExternalCompilationDbCheckBox;
     QCheckBox m_updateDependentSourcesCheckBox;
     QCheckBox m_sizeThresholdCheckBox;
     QSpinBox m_threadLimitSpinBox;
@@ -561,10 +591,8 @@ private:
     QStringListModel m_sessionsModel;
 };
 
-ClangdSettingsWidget::ClangdSettingsWidget(const ClangdSettings::Data &settingsData,
-                                           bool isForProject)
+void ClangdSettingsWidget::setup(const ClangdSettings::Data &settingsData, bool isForProject)
 {
-    const ClangdSettings settings(settingsData);
     const QString indexingToolTip = Tr::tr(
         "<p>If background indexing is enabled, global symbol searches will yield more accurate "
         "results, at the cost of additional CPU load when the project is first opened. The "
@@ -597,6 +625,10 @@ ClangdSettingsWidget::ClangdSettingsWidget(const ClangdSettings::Data &settingsD
                                                       "code base, you can try switching to the hand-crafted \"%2\" model.</p>").arg(
                                                           ClangdSettings::rankingModelToDisplayString(RankingModel::DecisionForest),
                                                           ClangdSettings::rankingModelToDisplayString(RankingModel::Heuristics));
+    const QString completionStyleToolTip = Tr::tr(
+        "<p>Which granularity to use for completion items.</p>"
+        "<p>Determines whether to use one item per overload or bundle them "
+        "together.</p>");
     const QString workerThreadsToolTip = Tr::tr(
         "Number of worker threads used by clangd. Background indexing also uses this many "
         "worker threads.");
@@ -609,6 +641,12 @@ ClangdSettingsWidget::ClangdSettingsWidget(const ClangdSettings::Data &settingsD
         "included headers.</p>"
         "<p>If this option is disabled, the dependent source files are only re-parsed when the "
         "header file is saved.</p>");
+    const QString useExternalCompilationDbToolTip = Tr::tr(
+        "<p>Controls whether clangd will use an existing compile_commands.json file, rather than "
+        "one set up by Qt Creator, which is the default.</p>"
+        "<p>When enabling this option, the user is responsible for providing a suitable file at "
+        "the index location specified above, as well as for keeping that file in sync with the "
+        "project state.</p>");
     const QString documentUpdateToolTip
         //: %1 is the application name (Qt Creator)
         = Tr::tr("Defines the amount of time %1 waits before sending document changes to the "
@@ -622,26 +660,26 @@ ClangdSettingsWidget::ClangdSettingsWidget(const ClangdSettings::Data &settingsD
         "The maximum number of completion results returned by clangd.");
 
     m_useClangdCheckBox.setText(Tr::tr("Use clangd"));
-    m_useClangdCheckBox.setChecked(settings.useClangd());
+    m_useClangdCheckBox.setChecked(settingsData.useGoodClangd(nullptr));
     m_clangdChooser.setExpectedKind(Utils::PathChooser::ExistingCommand);
-    m_clangdChooser.setFilePath(settings.clangdFilePath());
+    m_clangdChooser.setFilePath(settingsData.clangdFilePath(nullptr));
     m_clangdChooser.setAllowPathFromDevice(true);
     m_clangdChooser.setEnabled(m_useClangdCheckBox.isChecked());
     m_clangdChooser.setCommandVersionArguments({"--version"});
     using Priority = ClangdSettings::IndexingPriority;
     for (Priority prio : {Priority::Off, Priority::Background, Priority::Low, Priority::Normal}) {
         m_indexingComboBox.addItem(ClangdSettings::priorityToDisplayString(prio), int(prio));
-        if (prio == settings.indexingPriority())
+        if (prio == settingsData.indexingPriority)
             m_indexingComboBox.setCurrentIndex(m_indexingComboBox.count() - 1);
     }
     m_indexingComboBox.setToolTip(indexingToolTip);
-    m_projectIndexPathTemplateLineEdit.setText(settings.data().projectIndexPathTemplate);
-    m_sessionIndexPathTemplateLineEdit.setText(settings.data().sessionIndexPathTemplate);
+    m_projectIndexPathTemplateLineEdit.setText(settingsData.projectIndexPathTemplate);
+    m_sessionIndexPathTemplateLineEdit.setText(settingsData.sessionIndexPathTemplate);
     using SwitchMode = ClangdSettings::HeaderSourceSwitchMode;
     for (SwitchMode mode : {SwitchMode::BuiltinOnly, SwitchMode::ClangdOnly, SwitchMode::Both}) {
         m_headerSourceSwitchComboBox.addItem(
             ClangdSettings::headerSourceSwitchModeToDisplayString(mode), int(mode));
-        if (mode == settings.headerSourceSwitchMode())
+        if (mode == settingsData.headerSourceSwitchMode)
             m_headerSourceSwitchComboBox.setCurrentIndex(
                 m_headerSourceSwitchComboBox.count() - 1);
     }
@@ -650,41 +688,55 @@ ClangdSettingsWidget::ClangdSettingsWidget(const ClangdSettings::Data &settingsD
                                RankingModel::Heuristics}) {
         m_completionRankingModelComboBox.addItem(
             ClangdSettings::rankingModelToDisplayString(model), int(model));
-        if (model == settings.completionRankingModel())
+        if (model == settingsData.completionRankingModel)
             m_completionRankingModelComboBox.setCurrentIndex(
                 m_completionRankingModelComboBox.count() - 1);
     }
     m_completionRankingModelComboBox.setToolTip(completionRankingModelToolTip);
+    using CompletionStyle = ClangdSettings::CompletionStyle;
+    for (CompletionStyle style : {CompletionStyle::Default, CompletionStyle::Detailed,
+                               CompletionStyle::Bundled}) {
+        m_completionStyleComboBox.addItem(
+            ClangdSettings::completionStyleToDisplayString(style), int(style));
+        if (style == settingsData.completionStyle)
+            m_completionStyleComboBox.setCurrentIndex(
+                m_completionStyleComboBox.count() - 1);
+    }
+    m_completionStyleComboBox.setToolTip(completionStyleToolTip);
 
     m_autoIncludeHeadersCheckBox.setText(Tr::tr("Insert header files on completion"));
-    m_autoIncludeHeadersCheckBox.setChecked(settings.autoIncludeHeaders());
+    m_autoIncludeHeadersCheckBox.setChecked(settingsData.autoIncludeHeaders);
     m_autoIncludeHeadersCheckBox.setToolTip(autoIncludeToolTip);
+    m_useExternalCompilationDbCheckBox.setText(
+        Tr::tr("Use externally provided compilation database"));
+    m_useExternalCompilationDbCheckBox.setChecked(settingsData.useExternalCompilationDb);
+    m_useExternalCompilationDbCheckBox.setToolTip(useExternalCompilationDbToolTip);
     m_updateDependentSourcesCheckBox.setText(Tr::tr("Update dependent sources"));
-    m_updateDependentSourcesCheckBox.setChecked(settings.updateDependentSources());
+    m_updateDependentSourcesCheckBox.setChecked(settingsData.updateDependentSources);
     m_updateDependentSourcesCheckBox.setToolTip(updateDependentSourcesToolTip);
-    m_threadLimitSpinBox.setValue(settings.workerThreadLimit());
+    m_threadLimitSpinBox.setValue(settingsData.workerThreadLimit);
     m_threadLimitSpinBox.setSpecialValueText(Tr::tr("Automatic"));
     m_threadLimitSpinBox.setToolTip(workerThreadsToolTip);
     m_documentUpdateThreshold.setMinimum(50);
     m_documentUpdateThreshold.setMaximum(10000);
-    m_documentUpdateThreshold.setValue(settings.documentUpdateThreshold());
+    m_documentUpdateThreshold.setValue(settingsData.documentUpdateThreshold);
     m_documentUpdateThreshold.setSingleStep(100);
     m_documentUpdateThreshold.setSuffix(" ms");
     m_documentUpdateThreshold.setToolTip(documentUpdateToolTip);
     m_sizeThresholdCheckBox.setText(Tr::tr("Ignore files greater than"));
-    m_sizeThresholdCheckBox.setChecked(settings.sizeThresholdEnabled());
+    m_sizeThresholdCheckBox.setChecked(settingsData.sizeThresholdEnabled);
     m_sizeThresholdCheckBox.setToolTip(sizeThresholdToolTip);
     m_sizeThresholdSpinBox.setMinimum(1);
     m_sizeThresholdSpinBox.setMaximum(std::numeric_limits<int>::max());
     m_sizeThresholdSpinBox.setSuffix(" KB");
-    m_sizeThresholdSpinBox.setValue(settings.sizeThresholdInKb());
+    m_sizeThresholdSpinBox.setValue(settingsData.sizeThresholdInKb);
     m_sizeThresholdSpinBox.setToolTip(sizeThresholdToolTip);
 
     const auto completionResultsLabel = new QLabel(Tr::tr("Completion results:"));
     completionResultsLabel->setToolTip(completionResultToolTip);
     m_completionResults.setMinimum(0);
     m_completionResults.setMaximum(std::numeric_limits<int>::max());
-    m_completionResults.setValue(settings.completionResults());
+    m_completionResults.setValue(settingsData.completionResults);
     m_completionResults.setToolTip(completionResultToolTip);
     m_completionResults.setSpecialValueText(Tr::tr("No limit"));
 
@@ -718,10 +770,10 @@ ClangdSettingsWidget::ClangdSettingsWidget(const ClangdSettings::Data &settingsD
 
         const auto chooser = new Utils::VariableChooser(edit);
         chooser->addSupportedWidget(edit);
-        chooser->addMacroExpanderProvider([] { return Utils::globalMacroExpander(); });
+        chooser->addMacroExpanderProvider({this, [] { return Utils::globalMacroExpander(); }});
 
         const auto resetButton = new QPushButton(Tr::tr("Reset"));
-        connect(resetButton, &QPushButton::clicked, [e = edit, v = defaultValue] { e->setText(v); });
+        connect(resetButton, &QPushButton::clicked, this, [e = edit, v = defaultValue] { e->setText(v); });
         const auto layout = new QHBoxLayout;
         const auto label = new QLabel(text);
         label->setToolTip(toolTip);
@@ -747,6 +799,7 @@ ClangdSettingsWidget::ClangdSettingsWidget(const ClangdSettings::Data &settingsD
 
     formLayout->addRow(QString(), &m_autoIncludeHeadersCheckBox);
     formLayout->addRow(QString(), &m_updateDependentSourcesCheckBox);
+    formLayout->addRow(QString(), &m_useExternalCompilationDbCheckBox);
     const auto limitResultsLayout = new QHBoxLayout;
     limitResultsLayout->addWidget(&m_completionResults);
     limitResultsLayout->addStretch(1);
@@ -758,6 +811,13 @@ ClangdSettingsWidget::ClangdSettingsWidget(const ClangdSettings::Data &settingsD
     const auto completionRankingModelLabel = new QLabel(Tr::tr("Completion ranking model:"));
     completionRankingModelLabel->setToolTip(completionRankingModelToolTip);
     formLayout->addRow(completionRankingModelLabel, completionRankingModelLayout);
+
+    const auto completionStyleLayout = new QHBoxLayout;
+    completionStyleLayout->addWidget(&m_completionStyleComboBox);
+    completionStyleLayout->addStretch(1);
+    const auto completionStyleLabel = new QLabel(Tr::tr("Completion style:"));
+    completionStyleLabel->setToolTip(completionStyleToolTip);
+    formLayout->addRow(completionStyleLabel, completionStyleLayout);
 
     const auto documentUpdateThresholdLayout = new QHBoxLayout;
     documentUpdateThresholdLayout->addWidget(&m_documentUpdateThreshold);
@@ -773,7 +833,7 @@ ClangdSettingsWidget::ClangdSettingsWidget(const ClangdSettings::Data &settingsD
     m_configSelectionWidget = new ClangDiagnosticConfigsSelectionWidget(formLayout);
     m_configSelectionWidget->refresh(
         ClangdSettings::diagnosticConfigsModel(),
-        settings.diagnosticConfigId(),
+        settingsData.diagnosticConfigIdOrDefault(),
         [](const ClangDiagnosticConfigs &configs, const Utils::Id &configToSelect) {
             return new CppEditor::ClangDiagnosticConfigsWidget(configs, configToSelect);
         });
@@ -817,6 +877,7 @@ ClangdSettingsWidget::ClangdSettingsWidget(const ClangdSettings::Data &settingsD
             const QItemSelection selection = sessionsView->selectionModel()->selection();
             QTC_ASSERT(!selection.isEmpty(), return);
             m_sessionsModel.removeRow(selection.indexes().first().row());
+            markSettingsDirty();
         });
 
         connect(addButton, &QPushButton::clicked, this, [this, sessionsView] {
@@ -834,6 +895,7 @@ ClangdSettingsWidget::ClangdSettingsWidget(const ClangdSettings::Data &settingsD
                 currentSessions << dlg.textValue();
                 m_sessionsModel.setStringList(currentSessions);
                 m_sessionsModel.sort(0);
+                markSettingsDirty();
             }
         });
     }
@@ -889,10 +951,9 @@ ClangdSettingsWidget::ClangdSettingsWidget(const ClangdSettings::Data &settingsD
 
         if (!m_clangdChooser.isValid())
             return;
-        const Utils::FilePath clangdPath = m_clangdChooser.filePath();
-        QString errorMessage;
-        if (!Utils::checkClangdVersion(clangdPath, &errorMessage))
-            labelSetter.setWarning(errorMessage);
+        const FilePath clangdPath = m_clangdChooser.filePath();
+        if (Result<> res = Utils::checkClangdVersion(clangdPath); !res)
+            labelSetter.setWarning(res.error());
     };
     connect(&m_clangdChooser, &Utils::PathChooser::textChanged, this, updateWarningLabel);
     connect(&m_clangdChooser, &Utils::PathChooser::validChanged, this, updateWarningLabel);
@@ -912,6 +973,8 @@ ClangdSettingsWidget::ClangdSettingsWidget(const ClangdSettings::Data &settingsD
             this, &ClangdSettingsWidget::settingsDataChanged);
     connect(&m_autoIncludeHeadersCheckBox, &QCheckBox::toggled,
             this, &ClangdSettingsWidget::settingsDataChanged);
+    connect(&m_useExternalCompilationDbCheckBox, &QCheckBox::toggled,
+            this, &ClangdSettingsWidget::settingsDataChanged);
     connect(&m_updateDependentSourcesCheckBox, &QCheckBox::toggled,
             this, &ClangdSettingsWidget::settingsDataChanged);
     connect(&m_threadLimitSpinBox, &QSpinBox::valueChanged,
@@ -928,6 +991,10 @@ ClangdSettingsWidget::ClangdSettingsWidget(const ClangdSettings::Data &settingsD
             this, &ClangdSettingsWidget::settingsDataChanged);
     connect(&m_completionResults, &QSpinBox::valueChanged,
             this, &ClangdSettingsWidget::settingsDataChanged);
+    connect(&m_completionRankingModelComboBox, &QComboBox::currentIndexChanged,
+            this, &ClangdSettingsWidget::settingsDataChanged);
+    connect(&m_completionStyleComboBox, &QComboBox::currentIndexChanged,
+            this, &ClangdSettingsWidget::settingsDataChanged);
 }
 
 ClangdSettings::Data ClangdSettingsWidget::settingsData() const
@@ -943,7 +1010,10 @@ ClangdSettings::Data ClangdSettingsWidget::settingsData() const
         m_headerSourceSwitchComboBox.currentData().toInt());
     data.completionRankingModel = ClangdSettings::CompletionRankingModel(
         m_completionRankingModelComboBox.currentData().toInt());
+    data.completionStyle = ClangdSettings::CompletionStyle(
+        m_completionStyleComboBox.currentData().toInt());
     data.autoIncludeHeaders = m_autoIncludeHeadersCheckBox.isChecked();
+    data.useExternalCompilationDb = m_useExternalCompilationDbCheckBox.isChecked();
     data.updateDependentSources = m_updateDependentSourcesCheckBox.isChecked();
     data.workerThreadLimit = m_threadLimitSpinBox.value();
     data.documentUpdateThreshold = m_documentUpdateThreshold.value();
@@ -959,10 +1029,13 @@ ClangdSettings::Data ClangdSettingsWidget::settingsData() const
 class ClangdSettingsPageWidget final : public Core::IOptionsPageWidget
 {
 public:
-    ClangdSettingsPageWidget() : m_widget(ClangdSettings::instance().data(), false)
+    ClangdSettingsPageWidget()
     {
+        m_widget.setup(ClangdSettings::instance().data(), false);
         const auto layout = new QVBoxLayout(this);
         layout->addWidget(&m_widget);
+
+        installMarkSettingsDirtyTriggerRecursively(this);
     }
 
 private:
@@ -991,23 +1064,27 @@ void setupClangdSettingsPage()
 class ClangdProjectSettingsWidget : public ProjectSettingsWidget
 {
 public:
-    ClangdProjectSettingsWidget(const ClangdProjectSettings &settings)
-        : m_settings(settings), m_widget(settings.settings(), true)
+    ClangdProjectSettingsWidget(Project *project)
+        : m_project(project)
     {
+        loadSettings();
+
+        m_widget.setup(settings(), true);
+
         setGlobalSettingsId(Constants::CPP_CLANGD_SETTINGS_ID);
         const auto layout = new QVBoxLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
         layout->addWidget(&m_widget);
 
         const auto updateGlobalSettingsCheckBox = [this] {
-            if (ClangdSettings::instance().granularity() == ClangdSettings::Granularity::Session) {
+            if (ClangdSettings::instance().data().isSessionMode()) {
                 setUseGlobalSettingsCheckBoxEnabled(false);
-                setUseGlobalSettings(true);
+                ProjectSettingsWidget::setUseGlobalSettings(true);
             } else {
                 setUseGlobalSettingsCheckBoxEnabled(true);
-                setUseGlobalSettings(m_settings.useGlobalSettings());
+                ProjectSettingsWidget::setUseGlobalSettings(m_useGlobalSettings);
             }
-            m_widget.setEnabled(!useGlobalSettings());
+            m_widget.setEnabled(!m_useGlobalSettings);
         };
 
         updateGlobalSettingsCheckBox();
@@ -1017,25 +1094,89 @@ public:
         connect(this, &ProjectSettingsWidget::useGlobalSettingsChanged, this,
                 [this](bool checked) {
                     m_widget.setEnabled(!checked);
-                    m_settings.setUseGlobalSettings(checked);
+                    setUseGlobalSettings(checked);
                     if (!checked)
-                        m_settings.setSettings(m_widget.settingsData());
+                        setSettings(m_widget.settingsData());
                 });
 
         const auto timer = new QTimer(this);
         timer->setSingleShot(true);
         timer->setInterval(5000);
         connect(timer, &QTimer::timeout, this, [this] {
-            m_settings.setSettings(m_widget.settingsData());
+            setSettings(m_widget.settingsData());
         });
         connect(&m_widget, &ClangdSettingsWidget::settingsDataChanged,
                 timer, qOverload<>(&QTimer::start));
     }
 
 private:
-    ClangdProjectSettings m_settings;
     ClangdSettingsWidget m_widget;
+
+    ClangdSettings::Data settings() const;
+
+    void setSettings(const ClangdSettings::Data &data);
+    void setUseGlobalSettings(bool useGlobal);
+
+    void loadSettings();
+    void saveSettings();
+
+    Project * const m_project;
+    ClangdSettings::Data m_customSettings;
+    bool m_useGlobalSettings = true;
 };
+
+ClangdSettings::Data ClangdProjectSettingsWidget::settings() const
+{
+    ClangdSettings::Data data = ClangdSettings::instance().data();
+    if (!m_useGlobalSettings) {
+        data = m_customSettings;
+        // This property is global by definition.
+        data.sessionsWithOneClangd = ClangdSettings::instance().data().sessionsWithOneClangd;
+
+        // This list exists only once.
+        data.customDiagnosticConfigs = ClangdSettings::instance().data().customDiagnosticConfigs;
+    }
+    if (m_project && m_project->property(blockProjectIndexingProperty).toBool())
+        data.indexingPriority = ClangdSettings::IndexingPriority::Off;
+    return data;
+}
+
+void ClangdProjectSettingsWidget::setSettings(const ClangdSettings::Data &data)
+{
+    m_customSettings = data;
+    saveSettings();
+    ClangdSettings::setCustomDiagnosticConfigs(data.customDiagnosticConfigs);
+    emit ClangdSettings::instance().changed();
+}
+
+void ClangdProjectSettingsWidget::setUseGlobalSettings(bool useGlobal)
+{
+    m_useGlobalSettings = useGlobal;
+    saveSettings();
+    emit ClangdSettings::instance().changed();
+}
+
+void ClangdProjectSettingsWidget::loadSettings()
+{
+    if (!m_project)
+        return;
+    const Store data = storeFromVariant(m_project->namedSettings(clangdSettingsKey()));
+    m_useGlobalSettings = data.value(useGlobalSettingsKey(), true).toBool();
+    if (!m_useGlobalSettings)
+        m_customSettings.fromMap(data);
+}
+
+void ClangdProjectSettingsWidget::saveSettings()
+{
+    if (!m_project)
+        return;
+    Store data;
+    if (!m_useGlobalSettings)
+        data = m_customSettings.toMap();
+    data.insert(useGlobalSettingsKey(), m_useGlobalSettings);
+    m_project->setNamedSettings(clangdSettingsKey(), variantFromStore(data));
+}
+
 
 class ClangdProjectSettingsPanelFactory final : public ProjectPanelFactory
 {

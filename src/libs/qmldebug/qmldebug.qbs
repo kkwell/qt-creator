@@ -5,6 +5,7 @@ QtcLibrary {
 
     Depends { name: "Qt"; submodules: ["gui", "network"] }
     Depends { name: "Utils" }
+    Depends { name: "Tracing" }
 
     files: [
         "baseenginedebugclient.cpp",
@@ -17,7 +18,6 @@ QtcLibrary {
         "qmldebugtr.h",
         "qmldebugclient.cpp",
         "qmldebugclient.h",
-        "qmldebugcommandlinearguments.h",
         "qmldebugconnection.cpp",
         "qmldebugconnection.h",
         "qmldebugconnectionmanager.cpp",
@@ -26,11 +26,22 @@ QtcLibrary {
         "qmlenginecontrolclient.cpp",
         "qmlenginecontrolclient.h",
         "qmlenginedebugclient.h",
-        "qmloutputparser.cpp",
-        "qmloutputparser.h",
+        "qmlevent.cpp",
+        "qmlevent.h",
+        "qmleventlocation.cpp",
+        "qmleventlocation.h",
+        "qmleventtype.cpp",
+        "qmleventtype.h",
+        "qmlprofilereventtypes.h",
+        "qmlprofilertraceclient.cpp",
+        "qmlprofilertraceclient.h",
         "qmltoolsclient.cpp",
         "qmltoolsclient.h",
+        "qmltypedevent.cpp",
+        "qmltypedevent.h",
         "qpacketprotocol.cpp",
         "qpacketprotocol.h",
+        "quickeventreplayclient.cpp",
+        "quickeventreplayclient.h",
     ]
 }

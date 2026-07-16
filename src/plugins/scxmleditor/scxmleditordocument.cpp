@@ -13,13 +13,13 @@
 
 #include <QFileInfo>
 #include <QGuiApplication>
-#include <QTextCodec>
 #include <QTextDocument>
 
 using namespace Utils;
 
 using namespace ScxmlEditor::Common;
-using namespace ScxmlEditor::Internal;
+
+namespace ScxmlEditor::Internal {
 
 ScxmlEditorDocument::ScxmlEditorDocument(MainWidget *designWidget, QObject *parent)
     : m_designWidget(designWidget)
@@ -29,52 +29,48 @@ ScxmlEditorDocument::ScxmlEditorDocument(MainWidget *designWidget, QObject *pare
     setId(Utils::Id(ScxmlEditor::Constants::K_SCXML_EDITOR_ID));
 
     // Designer needs UTF-8 regardless of settings.
-    setCodec(QTextCodec::codecForName("UTF-8"));
+    setEncoding(TextEncoding::Utf8);
     connect(m_designWidget.data(), &Common::MainWidget::dirtyChanged, this, [this]{
         emit changed();
     });
 }
 
-Core::IDocument::OpenResult ScxmlEditorDocument::open(QString *errorString,
-                                                      const Utils::FilePath &filePath,
-                                                      const Utils::FilePath &realFilePath)
+Result<> ScxmlEditorDocument::open(const FilePath &filePath, const FilePath &realFilePath)
 {
     Q_UNUSED(realFilePath)
 
     if (filePath.isEmpty())
-        return OpenResult::ReadError;
+        return ResultError("File path is empty"); // FIXME: Use something better
 
     if (!m_designWidget)
-        return OpenResult::ReadError;
+        return ResultError(ResultAssert);
 
     const FilePath &absoluteFilePath = filePath.absoluteFilePath();
-    if (!m_designWidget->load(absoluteFilePath.toString())) {
-        *errorString = m_designWidget->errorMessage();
-        return OpenResult::ReadError;
-    }
+    if (!m_designWidget->load(absoluteFilePath))
+        return ResultError(m_designWidget->errorMessage());
 
     setFilePath(absoluteFilePath);
 
-    return OpenResult::Success;
+    return ResultOk;
 }
 
-bool ScxmlEditorDocument::saveImpl(QString *errorString, const FilePath &filePath, bool autoSave)
+Result<> ScxmlEditorDocument::saveImpl(const FilePath &filePath, SaveOption option)
 {
     if (filePath.isEmpty())
-        return false;
+        return ResultError("ASSERT: ScxmlEditorDocument: filePath.isEmpty()");
+
     bool dirty = m_designWidget->isDirty();
 
-    m_designWidget->setFileName(filePath.toString());
+    m_designWidget->setFilePath(filePath);
     if (!m_designWidget->save()) {
-        *errorString = m_designWidget->errorMessage();
-        m_designWidget->setFileName(this->filePath().toString());
-        return false;
+        m_designWidget->setFilePath(this->filePath());
+        return ResultError(m_designWidget->errorMessage());
     }
 
-    if (autoSave) {
-        m_designWidget->setFileName(this->filePath().toString());
+    if (option == SaveOption::AutoSave) {
+        m_designWidget->setFilePath(this->filePath());
         m_designWidget->save();
-        return true;
+        return ResultOk;
     }
 
     setFilePath(filePath);
@@ -82,13 +78,13 @@ bool ScxmlEditorDocument::saveImpl(QString *errorString, const FilePath &filePat
     if (dirty != m_designWidget->isDirty())
         emit changed();
 
-    return true;
+    return ResultOk;
 }
 
-void ScxmlEditorDocument::setFilePath(const FilePath &newName)
+void ScxmlEditorDocument::setFilePath(const FilePath &filePath)
 {
-    m_designWidget->setFileName(newName.toString());
-    IDocument::setFilePath(newName);
+    m_designWidget->setFilePath(filePath);
+    IDocument::setFilePath(filePath);
 }
 
 bool ScxmlEditorDocument::shouldAutoSave() const
@@ -111,21 +107,22 @@ bool ScxmlEditorDocument::isModified() const
     return m_designWidget && m_designWidget->isDirty();
 }
 
-bool ScxmlEditorDocument::reload(QString *errorString, ReloadFlag flag, ChangeType type)
+Result<> ScxmlEditorDocument::reload(ReloadFlag flag, ChangeType type)
 {
     Q_UNUSED(type)
     if (flag == FlagIgnore)
-        return true;
+        return ResultOk;
     emit aboutToReload();
-    emit reloadRequested(errorString, filePath().toString());
-    const bool success = errorString->isEmpty();
+    QString errorString;
+    emit reloadRequested(&errorString, filePath());
+    const bool success = errorString.isEmpty();
     emit reloadFinished(success);
-    return success;
+    return makeResult(success, errorString);
 }
 
-bool ScxmlEditorDocument::supportsCodec(const QTextCodec *codec) const
+bool ScxmlEditorDocument::supportsEncoding(const TextEncoding &encoding) const
 {
-    return codec == QTextCodec::codecForName("UTF-8");
+    return encoding.isUtf8();
 }
 
 QString ScxmlEditorDocument::designWidgetContents() const
@@ -137,3 +134,5 @@ void ScxmlEditorDocument::syncXmlFromDesignWidget()
 {
     document()->setPlainText(designWidgetContents());
 }
+
+} // namespace ScxmlEditor::Internal

@@ -24,22 +24,16 @@ namespace BareMetal::Internal {
 class BareMetalRunConfiguration final : public RunConfiguration
 {
 public:
-    explicit BareMetalRunConfiguration(Target *target, Id id)
-        : RunConfiguration(target, id)
+    explicit BareMetalRunConfiguration(BuildConfiguration *bc, Id id)
+        : RunConfiguration(bc, id)
     {
-        executable.setDeviceSelector(target, ExecutableAspect::RunDevice);
+        executable.setDeviceSelector(kit(), ExecutableAspect::RunDevice);
         executable.setPlaceHolderText(Tr::tr("Unknown"));
-
-        arguments.setMacroExpander(macroExpander());
-
-        workingDir.setMacroExpander(macroExpander());
 
         setUpdater([this] {
             const BuildTargetInfo bti = buildTargetInfo();
             executable.setExecutable(bti.targetFilePath);
         });
-
-        connect(target, &Target::buildSystemUpdated, this, &RunConfiguration::update);
     }
 
     ExecutableAspect executable{this};
@@ -50,22 +44,19 @@ public:
 class BareMetalCustomRunConfiguration final : public RunConfiguration
 {
 public:
-    explicit BareMetalCustomRunConfiguration(Target *target, Id id)
-        : RunConfiguration(target, id)
+    explicit BareMetalCustomRunConfiguration(BuildConfiguration *bc, Id id)
+        : RunConfiguration(bc, id)
     {
-        executable.setDeviceSelector(target, ExecutableAspect::RunDevice);
+        executable.setDeviceSelector(kit(), ExecutableAspect::RunDevice);
         executable.setSettingsKey("BareMetal.CustomRunConfig.Executable");
         executable.setPlaceHolderText(Tr::tr("Unknown"));
         executable.setReadOnly(false);
         executable.setHistoryCompleter("BareMetal.CustomRunConfig.History");
         executable.setExpectedKind(PathChooser::Any);
 
-        arguments.setMacroExpander(macroExpander());
-
-        workingDir.setMacroExpander(macroExpander());
-
         setDefaultDisplayName(RunConfigurationFactory::decoratedTargetName(
-            Tr::tr("Custom Executable"), target));
+            Tr::tr("Custom Executable"), kit()));
+        setUsesEmptyBuildKeys();
     }
 
 public:

@@ -18,7 +18,7 @@
 #include <utils/hostosinfo.h>
 #include <utils/layoutbuilder.h>
 
-#include <QVBoxLayout>
+#include <QGuiApplication>
 
 using namespace ProjectExplorer;
 using namespace Utils;
@@ -38,6 +38,21 @@ CMakeSpecificSettings &settings(Project *project)
     return cmakeProject->settings();
 }
 
+QVariant NinjaPathAspect::fromSettingsValue(const QVariant &savedValue) const
+{
+   // Sometimes the installer appends the same ninja path to the qtcreator.ini file
+   const QString path = savedValue.canConvert<QStringList>()
+           ? savedValue.toStringList().last() : savedValue.toString();
+   return FilePath::fromUserInput(path).toVariant();
+}
+
+QVariant NinjaPathAspect::toSettingsValue(const QVariant &valueToSave) const
+{
+    // never save this to the settings:
+    Q_UNUSED(valueToSave);
+    return QVariant::fromValue(QString());
+}
+
 CMakeSpecificSettings::CMakeSpecificSettings(Project *p, bool autoApply)
     : project(p)
 {
@@ -45,7 +60,9 @@ CMakeSpecificSettings::CMakeSpecificSettings(Project *p, bool autoApply)
         using namespace Layouting;
         return Column {
             autorunCMake,
+            cleanOldOutput,
             packageManagerAutoSetup,
+            maintenanceToolDependencyProvider,
             askBeforeReConfigureInitialParams,
             askBeforePresetsReload,
             showSourceSubFolders,
@@ -68,22 +85,26 @@ CMakeSpecificSettings::CMakeSpecificSettings(Project *p, bool autoApply)
         "Automatically run CMake after changes to CMake project files."));
 
     ninjaPath.setSettingsKey("NinjaPath");
-    // never save this to the settings:
-    ninjaPath.setToSettingsTransformation(
-        [](const QVariant &) { return QVariant::fromValue(QString()); });
-    ninjaPath.setFromSettingsTransformation([](const QVariant &from) {
-        // Sometimes the installer appends the same ninja path to the qtcreator.ini file
-        const QString path = from.canConvert<QStringList>() ? from.toStringList().last()
-                                                            : from.toString();
-        return FilePath::fromUserInput(path).toVariant();
-    });
+
+    configureDetailsExpanded.setSettingsKey("ConfigureDetailsExpanded");
+    configureDetailsExpanded.setDefaultValue(true);
 
     packageManagerAutoSetup.setSettingsKey("PackageManagerAutoSetup");
     packageManagerAutoSetup.setDefaultValue(true);
     packageManagerAutoSetup.setLabelText(::CMakeProjectManager::Tr::tr("Package manager auto setup"));
-    packageManagerAutoSetup.setToolTip(::CMakeProjectManager::Tr::tr("Add the CMAKE_PROJECT_INCLUDE_BEFORE variable "
-        "pointing to a CMake script that will install dependencies from the conanfile.txt, "
-        "conanfile.py, or vcpkg.json file from the project source directory."));
+    packageManagerAutoSetup.setToolTip(
+        //: %1 = applicationDisplayName
+        ::CMakeProjectManager::Tr::tr(
+            "Enables %1 to install dependencies from the conanfile.txt, "
+            "conanfile.py, or vcpkg.json file from the project source directory.")
+            .arg(QGuiApplication::applicationDisplayName()));
+
+    maintenanceToolDependencyProvider.setSettingsKey("MaintenanceToolDependencyProvider");
+    maintenanceToolDependencyProvider.setDefaultValue(true);
+    maintenanceToolDependencyProvider.setLabelText(
+        ::CMakeProjectManager::Tr::tr("Qt Online Installer dependency provider"));
+    maintenanceToolDependencyProvider.setToolTip(
+        ::CMakeProjectManager::Tr::tr("Use Qt Online Installer to install missing Qt components."));
 
     askBeforeReConfigureInitialParams.setSettingsKey("AskReConfigureInitialParams");
     askBeforeReConfigureInitialParams.setDefaultValue(true);
@@ -109,7 +130,7 @@ CMakeSpecificSettings::CMakeSpecificSettings(Project *p, bool autoApply)
     useJunctionsForSourceAndBuildDirectories.setDefaultValue(false);
     useJunctionsForSourceAndBuildDirectories.setLabelText(::CMakeProjectManager::Tr::tr(
         "Use junctions for CMake configuration and build operations"));
-    useJunctionsForSourceAndBuildDirectories.setVisible(Utils::HostOsInfo().isWindowsHost());
+    useJunctionsForSourceAndBuildDirectories.setVisible(HostOsInfo::isWindowsHost());
     useJunctionsForSourceAndBuildDirectories.setToolTip(::CMakeProjectManager::Tr::tr(
         "Create and use junctions for the source and build directories to overcome "
         "issues with long paths on Windows.<br><br>"
@@ -119,19 +140,16 @@ CMakeSpecificSettings::CMakeSpecificSettings(Project *p, bool autoApply)
         "to a value smaller than the default length value of 32.<br><br>"
         "Junctions are used for CMake configure, build and install operations."));
 
+    cleanOldOutput.setSettingsKey("CleanOldOutput");
+    cleanOldOutput.setDefaultValue(true);
+    cleanOldOutput.setLabelText(
+        ::CMakeProjectManager::Tr::tr("Clear old CMake output on a new run"));
+
     readSettings();
 
     if (project) {
         // Re-read the settings. Reading in constructor is too early
         connect(project, &Project::settingsLoaded, this, [this] { readSettings(); });
-
-        connect(project->projectImporter(), &ProjectImporter::cmakePresetsUpdated, this, [this] {
-            // clear settings first
-            Store data;
-            project->setNamedSettings(Constants::Settings::GENERAL_ID, variantFromStore(data));
-
-            readSettings();
-        });
     }
 }
 
@@ -181,9 +199,7 @@ public:
     {
         setId(Constants::Settings::GENERAL_ID);
         setDisplayName(::CMakeProjectManager::Tr::tr("General"));
-        setDisplayCategory("CMake");
         setCategory(Constants::Settings::CATEGORY);
-        setCategoryIconPath(Constants::Icons::SETTINGS_CATEGORY);
         setSettingsProvider([] { return &settings(nullptr); });
     }
 };
@@ -194,26 +210,24 @@ class CMakeProjectSettingsWidget : public ProjectSettingsWidget
 {
 public:
     explicit CMakeProjectSettingsWidget(Project *project)
-        : m_widget(new QWidget)
-        , m_project(qobject_cast<CMakeProject *>(project))
+        : m_project(qobject_cast<CMakeProject *>(project))
         , m_displayedSettings(project, true)
     {
         setGlobalSettingsId(Constants::Settings::GENERAL_ID);
 
-        // Construct the widget layout from the aspect container
-        const auto layout = new QVBoxLayout(this);
-        layout->setContentsMargins(0, 0, 0, 0);
-        if (auto layouter = m_displayedSettings.layouter())
-            layouter().attachTo(m_widget);
-        layout->addWidget(m_widget);
+        using namespace Layouting;
+        Column {
+            m_displayedSettings,
+            noMargin
+        }.attachTo(this);
 
         setUseGlobalSettings(m_displayedSettings.useGlobalSettings);
-        m_widget->setEnabled(!useGlobalSettings());
+        setEnabled(!useGlobalSettings());
 
         if (m_project) {
             connect(
                 this, &ProjectSettingsWidget::useGlobalSettingsChanged, this, [this](bool useGlobal) {
-                    m_widget->setEnabled(!useGlobal);
+                    setEnabled(!useGlobal);
                     m_displayedSettings.useGlobalSettings = useGlobal;
                     m_displayedSettings.copyFrom(
                         useGlobal ? settings(nullptr) : m_project->settings());
@@ -245,9 +259,18 @@ public:
             // Only for CMake projects
             setUseGlobalSettingsCheckBoxEnabled(false);
         }
+
+        // "CMake" project settings needs to react on the UI changes
+        m_displayedSettings.packageManagerAutoSetup.addOnChanged(this, [this] {
+            if (m_project)
+                emit m_project->settings().packageManagerAutoSetup.changed();
+        });
+        m_displayedSettings.maintenanceToolDependencyProvider.addOnChanged(this, [this] {
+            if (m_project)
+                emit m_project->settings().maintenanceToolDependencyProvider.changed();
+        });
     }
 
-    QWidget *m_widget = nullptr;
     CMakeProject *m_project = nullptr;
     CMakeSpecificSettings m_displayedSettings;
 };

@@ -4,10 +4,13 @@
 #include "../luaengine.h"
 #include "../luatr.h"
 
+#include "utils.h"
+
 #include <coreplugin/dialogs/ioptionspage.h>
 #include <coreplugin/icore.h>
 
 #include <utils/aspects.h>
+#include <utils/guardedcallback.h>
 #include <utils/infobar.h>
 #include <utils/layoutbuilder.h>
 #include <utils/networkaccessmanager.h>
@@ -15,6 +18,7 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QDesktopServices>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QMessageBox>
@@ -23,6 +27,8 @@
 #include <QNetworkReply>
 
 using namespace Utils;
+using namespace Core;
+using namespace std::string_view_literals;
 
 namespace Lua::Internal {
 
@@ -54,7 +60,7 @@ void setupFetchModule()
         StringListAspect pluginsAllowedToFetch{this};
         StringListAspect pluginsNotAllowedToFetch{this};
 
-        class LuaOptionsPage : public Core::IOptionsPage
+        class LuaOptionsPage : public IOptionsPage
         {
         public:
             LuaOptionsPage(Module *module)
@@ -62,8 +68,6 @@ void setupFetchModule()
                 setId("BB.Lua.Fetch");
                 setDisplayName(Tr::tr("Network Access"));
                 setCategory("ZY.Lua");
-                setDisplayCategory("Lua");
-                setCategoryIconPath(":/lua/images/settingscategory_lua.png");
                 setSettingsProvider(
                     [module] { return static_cast<AspectContainer *>(module); });
             }
@@ -75,6 +79,7 @@ void setupFetchModule()
         Module()
         {
             setSettingsGroup("Lua.Fetch");
+            setAutoApply(false);
 
             pluginsAllowedToFetch.setSettingsKey("pluginsAllowedToFetch");
             pluginsAllowedToFetch.setLabelText("Plugins allowed to fetch data from the internet");
@@ -133,188 +138,210 @@ void setupFetchModule()
 
     std::shared_ptr<Module> module = std::make_shared<Module>();
 
-    registerProvider("Fetch", [mod = std::move(module)](sol::state_view lua) -> sol::object {
-        const ScriptPluginSpec *pluginSpec = lua.get<ScriptPluginSpec *>("PluginSpec");
+    registerProvider(
+        "Fetch",
+        [mod = std::move(module),
+         infoBarCleaner = InfoBarCleaner()](sol::state_view lua) mutable -> sol::object {
+            const ScriptPluginSpec *pluginSpec = lua.get<ScriptPluginSpec *>("PluginSpec"sv);
 
-        sol::table async = lua.script("return require('async')", "_fetch_").get<sol::table>();
-        sol::function wrap = async["wrap"];
+            sol::table async = lua.script("return require('async')", "_fetch_").get<sol::table>();
+            sol::function wrap = async["wrap"];
 
-        sol::table fetch = lua.create_table();
+            sol::table fetch = lua.create_table();
 
-        auto networkReplyType = lua.new_usertype<QNetworkReply>(
-            "QNetworkReply",
-            "error",
-            sol::property([](QNetworkReply *self) -> int { return self->error(); }),
-            "readAll",
-            [](QNetworkReply *r) { return r->readAll().toStdString(); },
-            "__tostring",
-            [](QNetworkReply *r) {
-                return QString("QNetworkReply(%1 \"%2\") => %3")
-                    .arg(opToString(r->operation()))
-                    .arg(r->url().toString())
-                    .arg(r->error());
-            });
+            auto networkReplyType = lua.new_usertype<QNetworkReply>(
+                "QNetworkReply",
+                "error",
+                sol::property([](QNetworkReply *self) -> int { return self->error(); }),
+                "readAll",
+                [](QNetworkReply *r) { return r->readAll().toStdString(); },
+                "__tostring",
+                [](QNetworkReply *r) {
+                    return QString("QNetworkReply(%1 \"%2\") => %3")
+                        .arg(opToString(r->operation()))
+                        .arg(r->url().toString())
+                        .arg(r->error());
+                });
 
-        auto checkPermission = [mod,
-                                pluginName = pluginSpec->name,
-                                guard = pluginSpec->connectionGuard.get()](
-                                   QString url,
-                                   std::function<void()> fetch,
-                                   std::function<void()> notAllowed) {
-            auto isAllowed = mod->isAllowedToFetch(pluginName);
-            if (isAllowed == Module::IsAllowed::Yes) {
-                fetch();
-                return;
-            }
-
-            if (isAllowed == Module::IsAllowed::No) {
-                notAllowed();
-                return;
-            }
-
-            if (QApplication::activeModalWidget()) {
-                // We are already showing a modal dialog,
-                // so we have to use a QMessageBox instead of the info bar
-                auto msgBox = new QMessageBox(
-                    QMessageBox::Question,
-                    Tr::tr("Allow Internet Access"),
-                    Tr::tr("Allow the extension \"%1\" to fetch from the following URL:\n%2")
-                        .arg(pluginName)
-                        .arg(url),
-                    QMessageBox::Yes | QMessageBox::No,
-                    Core::ICore::dialogParent());
-                msgBox->setCheckBox(new QCheckBox(Tr::tr("Remember choice")));
-
-                QObject::connect(
-                    msgBox, &QMessageBox::accepted, guard, [mod, fetch, pluginName, msgBox]() {
-                        if (msgBox->checkBox()->isChecked())
-                            mod->setAllowedToFetch(pluginName, Module::IsAllowed::Yes);
-                        fetch();
-                    });
-
-                QObject::connect(
-                    msgBox, &QMessageBox::rejected, guard, [mod, notAllowed, pluginName, msgBox]() {
-                        if (msgBox->checkBox()->isChecked())
-                            mod->setAllowedToFetch(pluginName, Module::IsAllowed::No);
-                        notAllowed();
-                    });
-
-                msgBox->show();
-
-                return;
-            }
-
-            InfoBarEntry entry{
-                Id("Fetch").withSuffix(pluginName),
-                Tr::tr("Allow the extension \"%1\" to fetch data from the internet?")
-                    .arg(pluginName)};
-            entry.setDetailsWidgetCreator([pluginName, url] {
-                const QString markdown = Tr::tr("Allow the extension \"%1\" to fetch data"
-                                                "from the following URL:\n\n")
-                                             .arg("**" + pluginName + "**")
-                                         + QString("* [%1](%1)").arg(url);
-
-                QLabel *list = new QLabel();
-                list->setTextFormat(Qt::TextFormat::MarkdownText);
-                list->setText(markdown);
-                list->setMargin(StyleHelper::SpacingTokens::ExPaddingGapS);
-                return list;
-            });
-            entry.addCustomButton(Tr::tr("Always Allow"), [mod, pluginName, fetch]() {
-                mod->setAllowedToFetch(pluginName, Module::IsAllowed::Yes);
-                Core::ICore::infoBar()->removeInfo(Id("Fetch").withSuffix(pluginName));
-                fetch();
-            });
-            entry.addCustomButton(Tr::tr("Allow Once"), [pluginName, fetch]() {
-                Core::ICore::infoBar()->removeInfo(Id("Fetch").withSuffix(pluginName));
-                fetch();
-            });
-
-            entry.setCancelButtonInfo(Tr::tr("Deny"), [mod, notAllowed, pluginName]() {
-                Core::ICore::infoBar()->removeInfo(Id("Fetch").withSuffix(pluginName));
-                mod->setAllowedToFetch(pluginName, Module::IsAllowed::No);
-                notAllowed();
-            });
-            Core::ICore::infoBar()->addInfo(entry);
-        };
-
-        fetch["fetch_cb"] = [checkPermission,
-                             pluginName = pluginSpec->name,
-                             guard = pluginSpec->connectionGuard.get(),
-                             mod](
-                                const sol::table &options,
-                                const sol::function &callback,
-                                const sol::this_state &thisState) {
-            auto url = options.get<QString>("url");
-            auto actualFetch = [guard, url, options, callback, thisState]() {
-                auto method = (options.get_or<QString>("method", "GET")).toLower();
-                auto headers = options.get_or<sol::table>("headers", {});
-                auto data = options.get_or<QString>("body", {});
-                bool convertToTable
-                    = options.get<std::optional<bool>>("convertToTable").value_or(false);
-
-                QNetworkRequest request((QUrl(url)));
-                if (headers && !headers.empty()) {
-                    for (const auto &[k, v] : headers)
-                        request.setRawHeader(k.as<QString>().toUtf8(), v.as<QString>().toUtf8());
+            auto checkPermission = [mod,
+                                    &infoBarCleaner,
+                                    pluginName = pluginSpec->name,
+                                    guard = pluginSpec->connectionGuard.get()](
+                                       QString url,
+                                       std::function<void()> fetch,
+                                       std::function<void()> notAllowed) {
+                auto isAllowed = mod->isAllowedToFetch(pluginName);
+                if (isAllowed == Module::IsAllowed::Yes) {
+                    fetch();
+                    return;
                 }
 
-                QNetworkReply *reply = nullptr;
-                if (method == "get")
-                    reply = NetworkAccessManager::instance()->get(request);
-                else if (method == "post")
-                    reply = NetworkAccessManager::instance()->post(request, data.toUtf8());
-                else
-                    throw std::runtime_error("Unknown method: " + method.toStdString());
+                if (isAllowed == Module::IsAllowed::No) {
+                    notAllowed();
+                    return;
+                }
 
-                if (convertToTable) {
+                if (QApplication::activeModalWidget()) {
+                    // We are already showing a modal dialog,
+                    // so we have to use a QMessageBox instead of the info bar
+                    auto msgBox = new QMessageBox(
+                        QMessageBox::Question,
+                        Tr::tr("Allow Internet Access"),
+                        Tr::tr("Allow the extension \"%1\" to fetch from the following URL:\n%2")
+                            .arg(pluginName)
+                            .arg(url),
+                        QMessageBox::Yes | QMessageBox::No,
+                        ICore::dialogParent());
+                    msgBox->setCheckBox(new QCheckBox(Tr::tr("Remember choice")));
+
                     QObject::connect(
-                        reply, &QNetworkReply::finished, guard, [reply, thisState, callback]() {
-                            reply->deleteLater();
-
-                            if (reply->error() != QNetworkReply::NoError) {
-                                callback(QString("%1 (%2):\n%3")
-                                             .arg(reply->errorString())
-                                             .arg(QString::fromLatin1(
-                                                 QMetaEnum::fromType<QNetworkReply::NetworkError>()
-                                                     .valueToKey(reply->error())))
-                                             .arg(QString::fromUtf8(reply->readAll())));
-                                return;
-                            }
-
-                            QByteArray data = reply->readAll();
-                            QJsonParseError error;
-                            QJsonDocument doc = QJsonDocument::fromJson(data, &error);
-                            if (error.error != QJsonParseError::NoError) {
-                                callback(error.errorString());
-                                return;
-                            }
-
-                            callback(toTable(thisState, doc));
+                        msgBox, &QMessageBox::accepted, guard, [mod, fetch, pluginName, msgBox]() {
+                            if (msgBox->checkBox()->isChecked())
+                                mod->setAllowedToFetch(pluginName, Module::IsAllowed::Yes);
+                            fetch();
                         });
 
-                } else {
                     QObject::connect(
-                        reply, &QNetworkReply::finished, guard, [reply, callback]() {
+                        msgBox,
+                        &QMessageBox::rejected,
+                        guard,
+                        [mod, notAllowed, pluginName, msgBox]() {
+                            if (msgBox->checkBox()->isChecked())
+                                mod->setAllowedToFetch(pluginName, Module::IsAllowed::No);
+                            notAllowed();
+                        });
+
+                    msgBox->show();
+
+                    return;
+                }
+
+                const Id infoBarId = Id("Fetch").withSuffix(pluginName);
+                infoBarCleaner.infoBarEntryAdded(infoBarId);
+
+                InfoBarEntry entry{
+                    infoBarId,
+                    Tr::tr("Allow the extension \"%1\" to fetch data from the internet?")
+                        .arg(pluginName)};
+                entry.setTitle(Tr::tr("Allow Fetching Data?"));
+                entry.setInfoType(InfoLabel::Warning);
+                entry.setDetailsWidgetCreator([pluginName, url] {
+                    const QString markdown = Tr::tr("Allow the extension \"%1\" to fetch data "
+                                                    "from the following URL:\n\n")
+                                                 .arg("**" + pluginName + "**")
+                                             + QString("* [%1](%1)").arg(url);
+
+                    QLabel *list = new QLabel();
+                    list->setTextFormat(Qt::TextFormat::MarkdownText);
+                    list->setText(markdown);
+                    list->setMargin(StyleHelper::SpacingTokens::PaddingVXxs);
+                    QObject::connect(list, &QLabel::linkActivated, list, [](const QString &url) {
+                        QDesktopServices::openUrl(url);
+                    });
+                    return list;
+                });
+                entry.addCustomButton(
+                    Tr::tr("Always Allow"),
+                    guardedCallback(
+                        guard,
+                        [mod, pluginName, fetch]() {
+                            mod->setAllowedToFetch(pluginName, Module::IsAllowed::Yes);
+                            fetch();
+                        }),
+                    {},
+                    InfoBarEntry::ButtonAction::Hide);
+                entry.addCustomButton(
+                    Tr::tr("Allow Once"),
+                    guardedCallback(guard, [pluginName, fetch]() { fetch(); }),
+                    {},
+                    InfoBarEntry::ButtonAction::Hide);
+
+                entry.setCancelButtonInfo(
+                    Tr::tr("Deny"), guardedCallback(guard, [mod, notAllowed, pluginName]() {
+                        mod->setAllowedToFetch(pluginName, Module::IsAllowed::No);
+                        notAllowed();
+                    }));
+                ICore::infoBar()->addInfo(entry);
+            };
+
+            fetch["fetch_cb"] = [checkPermission,
+                                 pluginName = pluginSpec->name,
+                                 guard = pluginSpec->connectionGuard.get(),
+                                 mod](
+                                    const sol::main_table &options,
+                                    const sol::main_function &callback,
+                                    const sol::this_state &thisState) {
+                auto url = options.get<QString>("url"sv);
+                auto actualFetch = [guard, url, options, callback, thisState]() {
+                    auto method = (options.get_or<QString>("method"sv, "GET")).toLower();
+                    auto headers = options.get_or<sol::table>("headers"sv, {});
+                    auto data = options.get_or<QString>("body"sv, {});
+                    bool convertToTable
+                        = options.get<std::optional<bool>>("convertToTable"sv).value_or(false);
+
+                    QNetworkRequest request((QUrl(url)));
+                    if (headers && !headers.empty()) {
+                        for (const auto &[k, v] : headers)
+                            request.setRawHeader(k.as<QString>().toUtf8(), v.as<QString>().toUtf8());
+                    }
+
+                    QNetworkReply *reply = nullptr;
+                    if (method == "get")
+                        reply = NetworkAccessManager::instance()->get(request);
+                    else if (method == "post")
+                        reply = NetworkAccessManager::instance()->post(request, data.toUtf8());
+                    else
+                        throw std::runtime_error("Unknown method: " + method.toStdString());
+
+                    if (convertToTable) {
+                        QObject::connect(
+                            reply, &QNetworkReply::finished, guard, [reply, thisState, callback]() {
+                                reply->deleteLater();
+
+                                if (reply->error() != QNetworkReply::NoError) {
+                                    callback(
+                                        QString("%1 (%2):\n%3")
+                                            .arg(reply->errorString())
+                                            .arg(QString::fromLatin1(
+                                                QMetaEnum::fromType<QNetworkReply::NetworkError>()
+                                                    .valueToKey(reply->error())))
+                                            .arg(QString::fromUtf8(reply->readAll())));
+                                    return;
+                                }
+
+                                QByteArray data = reply->readAll();
+                                QJsonParseError error;
+                                QJsonDocument doc = QJsonDocument::fromJson(data, &error);
+                                if (error.error != QJsonParseError::NoError) {
+                                    callback(error.errorString());
+                                    return;
+                                }
+
+                                callback(toTable(thisState, doc));
+                            });
+
+                    } else {
+                        QObject::connect(reply, &QNetworkReply::finished, guard, [reply, callback]() {
                             // We don't want the network reply to be deleted by the manager, but
                             // by the Lua GC
                             reply->setParent(nullptr);
                             callback(std::unique_ptr<QNetworkReply>(reply));
                         });
-                }
+                    }
+                };
+
+                checkPermission(url, actualFetch, [callback, pluginName]() {
+                    callback(
+                        Tr::tr("Fetching is not allowed for the extension \"%1\". (You can edit "
+                               "permissions in Preferences > Lua.)")
+                            .arg(pluginName));
+                });
             };
 
-            checkPermission(url, actualFetch, [callback, pluginName]() {
-                callback(Tr::tr("Fetching is not allowed for the extension \"%1\". (You can edit "
-                                "permissions in Preferences > Lua.)")
-                             .arg(pluginName));
-            });
-        };
+            fetch["fetch"] = wrap(fetch["fetch_cb"]);
 
-        fetch["fetch"] = wrap(fetch["fetch_cb"]);
-
-        return fetch;
-    });
+            return fetch;
+        });
 }
 
 } // namespace Lua::Internal

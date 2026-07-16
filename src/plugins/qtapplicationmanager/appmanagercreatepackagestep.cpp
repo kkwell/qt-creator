@@ -14,7 +14,7 @@
 #include <projectexplorer/abstractprocessstep.h>
 #include <projectexplorer/buildstep.h>
 #include <projectexplorer/deployconfiguration.h>
-#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/environmentkitaspect.h>
 #include <projectexplorer/processparameters.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorerconstants.h>
@@ -40,7 +40,8 @@ public:
         setDisplayName(Tr::tr("Create Application Manager package"));
 
         packager.setSettingsKey(SETTINGSPREFIX "Executable");
-        packager.setDefaultPathValue(getToolFilePath(Constants::APPMAN_PACKAGER, kit()));
+        // The {} indicates "Desktop". We always package there.
+        packager.setDefaultPathValue(getToolFilePath(Constants::APPMAN_PACKAGER, kit(), {}));
 
         arguments.setSettingsKey(SETTINGSPREFIX "Arguments");
         arguments.setResetter([] { return QLatin1String(ArgumentsDefault); });

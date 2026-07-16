@@ -5,7 +5,7 @@
     \page creator-reference-preferences-cpp-quick-fixes.html
     \previouspage creator-reference.html
 
-    \ingroup creator-reference-preferences-cpp
+    \ingroup creator-reference-editors
 
     \title Quick Fixes
 
@@ -14,16 +14,16 @@
     To set global preferences for C++ quick fixes, go to \preferences >
     \uicontrol C++ > \uicontrol {Quick Fixes}.
 
-    \section1 Function Locations
+    \section1 Function locations
 
     In the \uicontrol {Generated Function Locations} group, set
     whether quick fixes should generate getter and setter functions
     in the header file (inside or outside the class) or in the implementation
     file.
 
-    \image qtcreator-preferences-quick-fixes-function-locations.webp {Generated Function Locations group in Quick Fixes preferences}
+    \image {qtcreator-preferences-quick-fixes-function-locations.webp} {Generated Function Locations in the Quick Fixes tab in C++ preferences}
 
-    \section1 Function Names and Attributes
+    \section1 Function names and attributes
 
     In the \uicontrol {Getter Setter Generation Properties} group,
     specify additional settings for getter and setter names, attributes, and
@@ -31,17 +31,17 @@
     \e slots and that signals should be generated with the new value as a
     parameter.
 
-    \image qtcreator-refactoring-options-generation.png {Getter and Setter generation settings}
+    \image {qtcreator-refactoring-options-generation.png} {Getter and setter generation in the Quick Fixes tab in C++ preferences}
 
-    \section1 Namespace Handling
+    \section1 Namespace handling
 
     In the \uicontrol {Missing Namespace Handling} group, select whether to
     generate missing namespaces, add \c {using namespace} where necessary, or
     rewrite types to match the existing namespaces.
 
-    \image qtcreator-refactoring-options-namespaces.png "Namespace handling settings"
+    \image {qtcreator-refactoring-options-namespaces.png} {Namespace handling in the Quick Fixes tab in C++ preferences}
 
-    \section1 Custom Parameter Types
+    \section1 Custom parameter types
 
     In the \uicontrol {Custom Getter Setter Templates} group, specify how the
     code of a getter or setter function for a certain data type should look
@@ -58,7 +58,7 @@
     and \c <cur> to access the parameter and current value. Use \c <type> to
     access the type and \c <T> for the template parameter.
 
-    \image qtcreator-refactoring-options-templates.webp {Settings for handling custom parameter types}
+    \image {qtcreator-refactoring-options-templates.webp} {Handling custom parameter types in the Quick Fixes tab in C++ preferences}
 
     Usually, arguments are passed by using a \c const reference. To pass
     arguments of a particular type as values, list them in the
@@ -67,11 +67,11 @@
     matches \c int32_t but not \c vector<int>, and \c vector matches
     \c {std::pmr::vector<int>} but not \c {std::optional<vector<int>>}.
 
-    To return non-trivial objects by using a \c const reference, select the
-    \uicontrol {Return non-value types by const reference} check box.
+    To return non-trivial objects by using a \c const reference, select
+    \uicontrol {Return non-value types by const reference}.
 
     \sa {Apply quick fixes}, {Find symbols}, {Rename symbols},
-    {Specify settings for quick fixes}, {C++ Quick Fixes}, {QML Quick Fixes}
+    {Specify settings for quick fixes}, {C++ quick fixes}, {QML quick fixes}
 */
 
 /*!
@@ -80,12 +80,12 @@
 
     \ingroup creator-reference-editors
 
-    \title C++ Quick Fixes
+    \title C++ quick fixes
 
     \brief Summary of quick fixes for C++ code.
 
-    If you use the \l{Clang Code Model}{Clang code model} to parse the C++ files,
-    you get \l{http://clang.llvm.org/diagnostics.html}{Clang fix-it hints} in the
+    If you use the \l{Clang code model} to parse the C++ files,
+    you get \l{Expressive Diagnostics}{Clang fix-it hints} in the
     \uicontrol Edit mode. Use the standard ways of activating quick fixes, or
     select the fixes that are applicable on a line in the context menu in the
     left margin of the code editor.
@@ -106,7 +106,7 @@
     The following tables summarize the quick fixes available for C++ code,
     according to the cursor position.
 
-    \section1 Block of Code Selected
+    \section1 Block of code selected
 
     \table
         \header
@@ -169,6 +169,18 @@
         \header
             \li Quick Fix
             \li Description
+        \row
+            \li Add #include
+            \li Adds an \c {#include} directive to the project file to make a
+                class available.
+        \row
+            \li Add #include and Project Dependency
+            \li Adds an \c {#include} directive and package dependency to the
+                project file to make an unknown Qt class available.
+        \row
+            \li Add definition
+            \li Creates an empty class or struct definition from a forward
+                declaration.
         \row
             \li Create Implementations for Member Functions
             \li Creates implementations for all member functions in one go.
@@ -233,11 +245,11 @@
             information, see \l{Move classes to separate files}.
     \row
         \li Re-order Member Function Definitions According to Declaration Order
-        \li Re-orders method definitions in a .cpp file to follow the order of
-            method declarations in the corresponding .h file.
+        \li Re-orders method definitions in a \c .cpp file to follow the order of
+            method declarations in the corresponding \c .h file.
     \endtable
 
-    \section1 Class Member
+    \section1 Class member
 
     The following quick fixes are available when the cursor is on a member
     variable in a class definition.
@@ -273,7 +285,7 @@
             \li Creates a setter member function for a member variable.
     \endtable
 
-    \section1 Control Statement
+    \section1 Control statement
 
     \table
         \header
@@ -347,6 +359,10 @@
     }
     \endcode
         \row
+            \li Remove Curly Braces
+            \li Removes curly braces from a block that consists of a single
+                statement.
+        \row
             \li Complete Switch Statement
             \li Adds all possible cases to a switch statement of the type
                 \c enum.
@@ -384,7 +400,7 @@
     \endcode
     \endtable
 
-    \section1 Function Declaration or Definition
+    \section1 Function declaration or definition
 
     \table
         \header
@@ -458,10 +474,10 @@
                 matching code.
 
                 When this fix is available, a light bulb icon appears:
-                \inlineimage icons/refactormarker.png
+                \inlineimage {icons/refactormarker.png} {Light bulb icon}
         \row
             \li Convert Function Call to Qt Meta-Method Invocation
-            \li Converts an invokable function call into a meta method
+            \li Converts an invocable function call into a meta method
                 invocation. This applies to signals and slots in general,
                 as well as functions explicitly marked with \c Q_INVOKABLE.
                 For example, for the following class:
@@ -499,7 +515,7 @@
     }
     \endcode
 
-    The quick fix also works on invokable methods outside the class that are
+    The quick fix also works on invocable methods outside the class that are
     visible from the location where they are called from. For example, it
     rewrites
 
@@ -565,6 +581,9 @@
                 automatically detect the data type of the member, you
                 must add it.
         \row
+            \li Add Definition
+            \li Inserts a definition stub for a static data member.
+        \row
             \li Add Forward Declaration
             \li Adds a forward declaration for an undeclared identifier
                 operation.
@@ -577,7 +596,7 @@
                 \c AN_EXAMPLE_SYMBOL as \c AnExampleSymbol
     \endtable
 
-    \section1 Numeric Literal
+    \section1 Numeric literal
 
     \table
         \header
@@ -708,12 +727,37 @@
                 or \c {||}
     \endtable
 
-    \section1 String Literal
+    \section1 String literal
 
     \table
         \header
             \li Quick Fix
             \li Description
+        \row
+            \li Append Operator
+            \li Adds a string literal operator (\c {QByteArrayLiteral},
+                \c {QLatin1Char}, \c {QLatin1String}, or \c {QStringLiteral}),
+                such as \c {"_ba"} or \c {"_L1"} to a string literal.
+        \row
+            \li Convert to Character Literal
+            \li Converts a single-character string literal into a character
+                literal, with some special cases. For example,
+
+    \code
+    "a"
+    "'"
+    "\n"
+    "\""
+    \endcode
+
+                are converted to
+
+    \code
+    'a'
+    '\''
+    '\n'
+    '"'
+    \endcode
         \row
             \li Convert to Objective-C String Literal
             \li Converts a string literal to an Objective-C string literal if
@@ -730,6 +774,26 @@
 
     \code
     @"abcd"
+    \endcode
+        \row
+            \li Convert to String Literal
+            \li Converts a character literal into a string literal, with some
+                special cases. For example,
+
+    \code
+    'a'
+    '\''
+    '\n'
+    '"'
+    \endcode
+
+                are converted to
+
+    \code
+    "a"
+    "'"
+    "\n"
+    "\""
     \endcode
         \row
             \li Enclose in QByteArrayLiteral()
@@ -838,6 +902,11 @@
 
             \li Assignee
         \row
+            \li Add Project Dependency
+            \li Adds the missing package dependency for a missing included Qt
+                file to the project file.
+            \li #include statements for Qt classes
+        \row
             \li Convert connect() to Qt 5 Style
             \li Converts a Qt 4 QObject::connect() to Qt 5 style.
             \li QObject::connect() (Qt 4 style)
@@ -936,7 +1005,8 @@
     \endtable
 
     \sa {Apply quick fixes}, {Find symbols}, {Rename symbols},
-    {Specify settings for quick fixes}, {QML Quick Fixes}, {Quick Fixes}
+    {Specify settings for quick fixes}, {QML quick fixes},
+    {Quick Fixes}
 */
 
 /*!
@@ -954,12 +1024,13 @@
     \uicontrol Projects > \uicontrol {Project Settings} >
     \uicontrol {Quick Fixes} and clear \uicontrol {Use global settings}.
 
-    \image qtcreator-refactoring-options-locations.png {Quick Fixes preferences}
+    \image {qtcreator-refactoring-options-locations.png} {Quick Fixes preferences for a project}
 
     To revert to global settings, select \uicontrol {Reset to Global}. To
     delete the custom settings, select \uicontrol {Use global settings}, and
     then select \uicontrol {Delete Custom Settings File}.
 
     \sa {Apply quick fixes}, {Find symbols}, {Rename symbols},
-    {C++ Quick Fixes}, {QML Quick Fixes}, {Quick Fixes}, {Configuring Projects}
+    {C++ quick fixes}, {QML quick fixes}, {Quick Fixes},
+    {Building and running projects}
 */

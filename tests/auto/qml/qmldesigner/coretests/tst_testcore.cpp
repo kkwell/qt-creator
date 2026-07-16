@@ -5,8 +5,6 @@
 
 #include <designersettings.h>
 #include <externaldependenciesinterface.h>
-#include <invalididexception.h>
-#include <invalidmodelnodeexception.h>
 #include <model.h>
 #include <modelmerger.h>
 #include <modelnode.h>
@@ -101,7 +99,7 @@ public:
     {
         //loadQmlTypeDescriptions(resourcePath());
     }
-    void updateSourceFiles(const QList<Utils::FilePath> &files, bool emitDocumentOnDiskChanged)
+    void updateSourceFiles(const Utils::FilePaths &files, bool emitDocumentOnDiskChanged)
     {
         refreshSourceFiles(files, emitDocumentOnDiskChanged).waitForFinished();
     }
@@ -145,9 +143,6 @@ public:
         return QUrl::fromLocalFile(QFileInfo(model->fileUrl().toLocalFile()).absolutePath());
     }
 
-    QString defaultPuppetFallbackDirectory() const override { return {}; }
-    QString defaultPuppetToplevelBuildDirectory() const override { return {}; }
-    QString qmlPuppetFallbackDirectory() const override { return {}; }
     QUrl projectUrl() const override { return {}; }
     QString projectName() const override { return {}; }
     void parseItemLibraryDescriptions() override {}
@@ -166,7 +161,10 @@ public:
     bool isQt6Project() const override { return {}; }
     bool isQtForMcusProject() const override { return {}; }
     QString qtQuickVersion() const override { return {}; }
+
     Utils::FilePath resourcePath(const QString &) const override { return {}; }
+
+    QString userResourcePath(QStringView) const override { return {}; }
 
 public:
     Utils::QtcSettings qsettings;
@@ -237,7 +235,6 @@ tst_TestCore::~tst_TestCore() = default;
 
 void tst_TestCore::initTestCase()
 {
-    QmlModelNodeFacade::enableUglyWorkaroundForIsValidQmlModelNodeFacadeInTests();
 #ifndef QDS_USE_PROJECTSTORAGE
     MetaInfo::disableParseItemLibraryDescriptionsUgly();
 #endif
@@ -249,7 +246,7 @@ void tst_TestCore::initTestCase()
     initializeMetaTypeSystem(IDE_DATA_PATH);
 
     QStringList basePaths;
-    basePaths.append(QLibraryInfo::location(QLibraryInfo::Qml2ImportsPath));
+    basePaths.append(QLibraryInfo::path(QLibraryInfo::Qml2ImportsPath));
     QmlJS::PathsAndLanguages lPaths;
 
     lPaths.maybeInsert(Utils::FilePath::fromString(basePaths.first()), QmlJS::Dialect::Qml);
@@ -2011,7 +2008,7 @@ void tst_TestCore::testBasicStatesQtQuick20()
     qDebug() << rootModelNode.nodeListProperty("states").toModelNodeList().first().metaInfo().typeName();
 #endif
 
-    QSKIP("No qml2puppet");
+    QSKIP("No QML Puppet");
 
     QScopedPointer<TestView> view(new TestView);
     QVERIFY(view.data());
@@ -5223,7 +5220,7 @@ void tst_TestCore::testQtQuickControls2()
     QVERIFY(rootModelNode.isValid());
 
     QVERIFY(rootModelNode.metaInfo().isGraphicalItem());
-    QVERIFY(rootModelNode.metaInfo().isQtQuickWindowWindow());
+    QVERIFY(rootModelNode.metaInfo().isQtQuickWindow());
 
     QVERIFY(!contains(rootModelNode.metaInfo().localProperties(), "visible"));
     QVERIFY(contains(rootModelNode.metaInfo().properties(), "visible"));

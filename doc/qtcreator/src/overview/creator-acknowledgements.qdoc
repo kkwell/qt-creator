@@ -9,17 +9,19 @@
 
 /*!
     \page creator-acknowledgements.html
-    \if defined(qtdesignstudio)
-    \previouspage technical-support.html
-    \else
     \previouspage creator-reference.html
-    \endif
 
     \ingroup creator-reference
 
-    \title Acknowledgements
+    \title Licenses and acknowledgments
 
-    \brief Third-party components in \QC.
+    \brief Licenses and third-party components in \QC.
+
+    \section1 Licenses
+
+    \QC is available under commercial licenses from The Qt Company, and
+    under the GNU General Public License version 3, annotated with
+    The Qt Company GPL Exception 1.0.
 
     \section1 Credits
 
@@ -27,7 +29,7 @@
     logs for each release. To view the change logs, select \uicontrol Help >
     \uicontrol {Change Log}.
 
-    \section1 Third-party Components
+    \section1 Third-party components
 
     \QC contains the following third-party components:
 
@@ -51,16 +53,15 @@ Clazy is a Qt-oriented static code analyzer based on the Clang framework.
 
 Used to statically analyze code in the code editor and as a separate analyzer.
 
-The sources with integrated patches can be found at \l{https://code.qt.io/cgit/clang/clazy.git}
+The sources with integrated patches can be found at \l{Clazy sources}.
 
-\l{https://github.com/KDE/clazy}{Project Homepage}
+\l{Clazy project homepage}{Project Homepage}
 
-\badcode *
+\code [text]
 Copyright (C) 2015-2019 Clazy Team.
 \endcode
 
-Distributed under the \l {https://www.gnu.org/licenses/old-licenses/lgpl-2.0.html}
-{GNU Library General Public License, Version 2}.
+Distributed under the \l{GNU Library General Public License, Version 2}.
 */
 
 /*!
@@ -79,16 +80,15 @@ Clangd is used for enhanced C/C++ support. ClangFormat is used for enhanced inde
 formatting.
 
 The sources with backported/additional patches can be found at
-\l{https://code.qt.io/cgit/clang/llvm-project.git}
+\l{llvm-project sources}.
 
-\l{https://github.com/llvm/llvm-project}{Project Homepage}
+\l{llvm-project on GitHub}{Project Homepage}
 
-\badcode *
+\code [text]
 Copyright (C) 2003-2019 LLVM Team
 \endcode
 
-Distributed under the \l {https://github.com/llvm/llvm-project/blob/main/llvm/LICENSE.TXT}
-{Apache 2.0 License with LLVM exceptions}.
+Distributed under the \l{Apache 2.0 License with LLVM exceptions}.
 */
 
 /*!
@@ -104,18 +104,18 @@ Mesa is a 3D graphics library with an API which is very similar to that
 of OpenGL. The llvmpipe software renderer enables the running of OpenGL
 applications without any hardware or driver support.
 
-\l{https://docs.mesa3d.org/drivers/llvmpipe.html}{Project Homepage}
+\l{LLVMpipe introduction}{Project Homepage}
 
 Mesa is shipped as part of the binary packages for Windows
 (opengl32sw.dll).
 
-\badcode *
+\code [text]
 Copyright (C) 2003-2019 LLVM Team
 \endcode
 
 MIT License
 
-\badcode *
+\code [text]
 Copyright (C) 1999-2007  Brian Paul   All Rights Reserved.
 
 Permission is hereby granted, free of charge, to any person obtaining a
@@ -152,14 +152,13 @@ projects across multiple platforms.
 
 Qbs is shipped as part of the binary packages for Qbs project support.
 
-The sources can be found at https://code.qt.io/cgit/qbs/qbs.git
+The sources can be found at \l{Qbs sources}.
 
-\l{https://doc.qt.io/qbs/overview.html}{Project Homepage}
+\l{Qbs Overview}{Project Homepage}
 
-\badcode *
+\code [text]
 Copyright (C) 2012-2023 The Qt Company Ltd.
 \endcode
 
-Licensing and third party attributions are listed in the
-\l{https://doc.qt.io/qbs/attributions.html}{Qbs Manual}.
+Licensing and third party attributions are listed in the \l{Qbs Manual}.
 */

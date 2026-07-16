@@ -7,12 +7,12 @@
 #include "copilotconstants.h"
 #include "copilottr.h"
 
+#include <coreplugin/coreconstants.h>
 #include <coreplugin/dialogs/ioptionspage.h>
 
 #include <projectexplorer/project.h>
 
 #include <utils/algorithm.h>
-#include <utils/environment.h>
 #include <utils/layoutbuilder.h>
 #include <utils/pathchooser.h>
 
@@ -45,31 +45,34 @@ CopilotSettings::CopilotSettings()
 
     const FilePath nodeFromPath = FilePath("node").searchInPath();
 
-    // clang-format off
-
     // From: https://github.com/github/copilot.vim/blob/release/README.md#getting-started
-    const FilePaths searchDirs = {
+    const QStringList subLocations
+        = {"dist/agent.js",
+           "copilot/dist/agent.js",
+           "dist/language-server.js",
+           "copilot-language-server/dist/language-server.js"};
+
+    const QString baseDir = "pack/github/start/copilot.vim";
+
+    const FilePaths locations = {
         // Vim, Linux/macOS:
-        FilePath::fromUserInput("~/.vim/pack/github/start/copilot.vim/dist/agent.js"),
-        FilePath::fromUserInput("~/.vim/pack/github/start/copilot.vim/copilot/dist/agent.js"),
-        FilePath::fromUserInput("~/.vim/pack/github/start/copilot.vim/dist/language-server.js"),
+        FilePath::fromUserInput("~/.vim") / baseDir,
 
         // Neovim, Linux/macOS:
-        FilePath::fromUserInput("~/.config/nvim/pack/github/start/copilot.vim/dist/agent.js"),
-        FilePath::fromUserInput("~/.config/nvim/pack/github/start/copilot.vim/copilot/dist/agent.js"),
-        FilePath::fromUserInput("~/.config/nvim/pack/github/start/copilot.vim/dist/language-server.js"),
+        FilePath::fromUserInput("~/.config/nvim") / baseDir,
 
         // Vim, Windows (PowerShell command):
-        FilePath::fromUserInput("~/vimfiles/pack/github/start/copilot.vim/dist/agent.js"),
-        FilePath::fromUserInput("~/vimfiles/pack/github/start/copilot.vim/copilot/dist/agent.js"),
-        FilePath::fromUserInput("~/vimfiles/pack/github/start/copilot.vim/dist/language-server.js"),
+        FilePath::fromUserInput("~/vimfiles") / baseDir,
 
         // Neovim, Windows (PowerShell command):
-        FilePath::fromUserInput("~/AppData/Local/nvim/pack/github/start/copilot.vim/dist/agent.js"),
-        FilePath::fromUserInput("~/AppData/Local/nvim/pack/github/start/copilot.vim/copilot/dist/agent.js"),
-        FilePath::fromUserInput("~/AppData/Local/nvim/pack/github/start/copilot.vim/dist/language-server.js")
+        FilePath::fromUserInput("~/AppData/Local/nvim") / baseDir,
     };
-    // clang-format on
+
+    FilePaths searchDirs;
+    for (const auto &loc : locations) {
+        for (const auto &subLocation : subLocations)
+            searchDirs.append(loc / subLocation);
+    }
 
     const FilePath distFromVim = findOrDefault(searchDirs, &FilePath::exists);
 
@@ -91,7 +94,7 @@ CopilotSettings::CopilotSettings()
     distPath.setLabelText(Tr::tr("Path to %1:").arg(entryPointFileName));
     distPath.setHistoryCompleter("Copilot.DistPath.History");
     //: %1 is the filename of the copilot language server
-    distPath.setDisplayName(Tr::tr("%1 path").arg(entryPointFileName));
+    distPath.setDisplayName(Tr::tr("Path to %1").arg(entryPointFileName));
     //: %1 is the URL to copilot.vim getting started, %2 is the filename of the copilot language server
     distPath.setToolTip(Tr::tr("Select path to %2 in Copilot Neovim plugin. See "
                                "%1 for installation instructions.")
@@ -105,48 +108,13 @@ CopilotSettings::CopilotSettings()
     autoComplete.setToolTip(Tr::tr("Automatically request suggestions for the current text cursor "
                                    "position after changes to the document."));
 
-    useProxy.setDisplayName(Tr::tr("Use Proxy"));
-    useProxy.setSettingsKey("Copilot.UseProxy");
-    useProxy.setLabelText(Tr::tr("Use proxy"));
-    useProxy.setDefaultValue(false);
-    useProxy.setToolTip(Tr::tr("Use a proxy to connect to the Copilot servers."));
-
-    proxyHost.setDisplayName(Tr::tr("Proxy Host"));
-    proxyHost.setDisplayStyle(StringAspect::LineEditDisplay);
-    proxyHost.setSettingsKey("Copilot.ProxyHost");
-    proxyHost.setLabelText(Tr::tr("Proxy host:"));
-    proxyHost.setDefaultValue("");
-    proxyHost.setToolTip(Tr::tr("The host name of the proxy server."));
-    proxyHost.setHistoryCompleter("Copilot.ProxyHost.History");
-
-    proxyPort.setDisplayName(Tr::tr("Proxy Port"));
-    proxyPort.setSettingsKey("Copilot.ProxyPort");
-    proxyPort.setLabelText(Tr::tr("Proxy port:"));
-    proxyPort.setDefaultValue(3128);
-    proxyPort.setToolTip(Tr::tr("The port of the proxy server."));
-    proxyPort.setRange(1, 65535);
-
-    proxyUser.setDisplayName(Tr::tr("Proxy User"));
-    proxyUser.setDisplayStyle(StringAspect::LineEditDisplay);
-    proxyUser.setSettingsKey("Copilot.ProxyUser");
-    proxyUser.setLabelText(Tr::tr("Proxy user:"));
-    proxyUser.setDefaultValue("");
-    proxyUser.setToolTip(Tr::tr("The user name to access the proxy server."));
-    proxyUser.setHistoryCompleter("Copilot.ProxyUser.History");
-
-    saveProxyPassword.setDisplayName(Tr::tr("Save Proxy Password"));
-    saveProxyPassword.setSettingsKey("Copilot.SaveProxyPassword");
-    saveProxyPassword.setLabelText(Tr::tr("Save proxy password"));
-    saveProxyPassword.setDefaultValue(false);
-    saveProxyPassword.setToolTip(
-        Tr::tr("Save the password to access the proxy server. The password is stored insecurely."));
-
-    proxyPassword.setDisplayName(Tr::tr("Proxy Password"));
-    proxyPassword.setDisplayStyle(StringAspect::PasswordLineEditDisplay);
-    proxyPassword.setSettingsKey("Copilot.ProxyPassword");
-    proxyPassword.setLabelText(Tr::tr("Proxy password:"));
-    proxyPassword.setDefaultValue("");
-    proxyPassword.setToolTip(Tr::tr("The password for the proxy server."));
+    proxy.setDisplayName(Tr::tr("Proxy"));
+    proxy.setDisplayStyle(StringAspect::DisplayStyle::LineEditDisplay);
+    proxy.setSettingsKey("Copilot.Proxy");
+    proxy.setLabelText(Tr::tr("Proxy:"));
+    proxy.setDefaultValue("");
+    proxy.setPlaceHolderText("http://localhost:3128");
+    proxy.setToolTip(Tr::tr("The proxy server to use for connections."));
 
     proxyRejectUnauthorized.setDisplayName(Tr::tr("Reject Unauthorized"));
     proxyRejectUnauthorized.setSettingsKey("Copilot.ProxyRejectUnauthorized");
@@ -154,6 +122,13 @@ CopilotSettings::CopilotSettings()
     proxyRejectUnauthorized.setDefaultValue(true);
     proxyRejectUnauthorized.setToolTip(Tr::tr("Reject unauthorized certificates from the proxy "
                                               "server. Turning this off is a security risk."));
+
+    githubEnterpriseUrl.setDisplayName(Tr::tr("GitHub Enterprise URL"));
+    githubEnterpriseUrl.setDisplayStyle(StringAspect::DisplayStyle::LineEditDisplay);
+    githubEnterpriseUrl.setSettingsKey("Copilot.GithubEnterpriseUrl");
+    githubEnterpriseUrl.setLabelText(Tr::tr("GitHub Enterprise URL:"));
+    githubEnterpriseUrl.setDefaultValue("");
+    githubEnterpriseUrl.setToolTip(Tr::tr("The URL of your GitHub Enterprise server."));
 
     initEnableAspect(enableCopilot);
 
@@ -164,15 +139,10 @@ CopilotSettings::CopilotSettings()
     nodeJsPath.setEnabler(&enableCopilot);
     distPath.setEnabler(&enableCopilot);
     autoComplete.setEnabler(&enableCopilot);
-    useProxy.setEnabler(&enableCopilot);
+    githubEnterpriseUrl.setEnabler(&enableCopilot);
 
-    proxyHost.setEnabler(&useProxy);
-    proxyPort.setEnabler(&useProxy);
-    proxyUser.setEnabler(&useProxy);
-    saveProxyPassword.setEnabler(&useProxy);
-    proxyRejectUnauthorized.setEnabler(&useProxy);
-
-    proxyPassword.setEnabler(&saveProxyPassword);
+    proxy.setEnabler(&enableCopilot);
+    proxyRejectUnauthorized.setEnabler(&enableCopilot);
 
     setLayouter([this] {
         using namespace Layouting;
@@ -198,7 +168,7 @@ CopilotSettings::CopilotSettings()
             textInteractionFlags(
                 Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard | Qt::TextSelectableByMouse),
             openExternalLinks(true),
-            onLinkHovered([](const QString &link) { QToolTip::showText(QCursor::pos(), link); }, this),
+            onLinkHovered(this, [](const QString &link) { QToolTip::showText(QCursor::pos(), link); }),
             text(Tr::tr(
                 "The Copilot plugin requires node.js and the Copilot neovim plugin. "
                 "If you install the neovim plugin as described in %1, "
@@ -207,7 +177,7 @@ CopilotSettings::CopilotSettings()
                 "file from the Copilot neovim plugin.",
                 "Markdown text for the copilot instruction label")
                        .arg("[README.md](https://github.com/github/copilot.vim)")
-                       .arg("[language-server.js](https://github.com/github/copilot.vim/tree/release/dist)")
+                       .arg("[language-server.js](https://github.com/github/copilot.vim/tree/release/copilot-language-server/dist)")
                        .arg(entryPointFileName)),
         };
 
@@ -225,14 +195,10 @@ CopilotSettings::CopilotSettings()
                 nodeJsPath, br,
                 distPath, br,
                 autoComplete, br,
+                githubEnterpriseUrl, br,
                 hr, br,
-                useProxy, br,
-                proxyHost, br,
-                proxyPort, br,
+                proxy, br,
                 proxyRejectUnauthorized, br,
-                proxyUser, br,
-                saveProxyPassword, br,
-                proxyPassword, br,
             },
             st
         };
@@ -285,9 +251,7 @@ public:
     {
         setId(Constants::COPILOT_GENERAL_OPTIONS_ID);
         setDisplayName("Copilot");
-        setCategory(Constants::COPILOT_GENERAL_OPTIONS_CATEGORY);
-        setDisplayCategory(Constants::COPILOT_GENERAL_OPTIONS_DISPLAY_CATEGORY);
-        setCategoryIconPath(":/copilot/images/settingscategory_copilot.png");
+        setCategory(Core::Constants::SETTINGS_CATEGORY_AI);
         setSettingsProvider([] { return &settings(); });
     }
 };

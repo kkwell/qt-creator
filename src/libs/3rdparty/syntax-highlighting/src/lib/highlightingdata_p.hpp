@@ -8,7 +8,6 @@
 #define KSYNTAXHIGHLIGHTING_HIGHLIGHTING_DATA_P_H
 
 #include <QString>
-#include <QStringList>
 
 #include <vector>
 
@@ -18,7 +17,7 @@ QT_END_NAMESPACE
 
 namespace KSyntaxHighlighting
 {
-/**
+/*
  * Represents the raw xml data of a context and its rules.
  * After resolving contexts, members of this class are no longer
  * use and the instance can be freed to recover used memory.
@@ -27,26 +26,6 @@ class HighlightingContextData
 {
 public:
     void load(const QString &defName, QXmlStreamReader &reader);
-
-    struct ContextSwitch {
-        ContextSwitch() = default;
-        ContextSwitch(QStringView str);
-
-        QStringView contextName() const;
-        QStringView defName() const;
-
-        bool isStay() const;
-
-        int popCount() const
-        {
-            return m_popCount;
-        }
-
-    private:
-        int m_popCount = 0;
-        int m_defNameIndex = -1;
-        QString m_contextAndDefName;
-    };
 
     struct Rule {
         enum class Type : quint8 {
@@ -197,7 +176,7 @@ public:
 
     QString name;
 
-    /**
+    /*
      * attribute name, to lookup our format
      */
     QString attribute;

@@ -1,8 +1,9 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include "navigatorsearchwidget.h"
 #include "navigatorwidget.h"
+#include "navigatorsearchwidget.h"
+#include "navigatortracing.h"
 #include "navigatorview.h"
 
 #include <designeractionmanager.h>
@@ -29,10 +30,14 @@ using namespace Core;
 
 namespace QmlDesigner {
 
+using NavigatorTracing::category;
+
 NavigatorWidget::NavigatorWidget(NavigatorView *view)
     : m_treeView(new NavigatorTreeView)
     , m_navigatorView(view)
 {
+    NanotraceHR::Tracer tracer{"navigator widget constructor", category()};
+
     setAcceptDrops(true);
 
     m_treeView->setDragEnabled(true);
@@ -63,30 +68,36 @@ NavigatorWidget::NavigatorWidget(NavigatorView *view)
 
     setWindowTitle(tr("Navigator", "Title of navigator view"));
 
-    QByteArray sheet = Utils::FileReader::fetchQrc(":/qmldesigner/stylesheet.css");
-    setStyleSheet(Theme::replaceCssColors(QString::fromUtf8(sheet)));
+    QString sheet = Utils::FileUtils::fetchQrc(":/qmldesigner/stylesheet.css");
+    setStyleSheet(Theme::replaceCssColors(sheet));
 
     QmlDesignerPlugin::trackWidgetFocusTime(this, Constants::EVENT_NAVIGATORVIEW_TIME);
 
     setFocusProxy(m_treeView);
 
     IContext::attach(this,
-                     Core::Context(Constants::C_QMLNAVIGATOR, Constants::C_QT_QUICK_TOOLS_MENU),
+                     Core::Context(Constants::qmlNavigatorContextId, Constants::qtQuickToolsMenuContextId),
                      [this](const IContext::HelpCallback &callback) { contextHelp(callback); });
 }
 
 void NavigatorWidget::setTreeModel(QAbstractItemModel *model)
 {
+    NanotraceHR::Tracer tracer{"navigator widget set tree model", category()};
+
     m_treeView->setModel(model);
 }
 
 QTreeView *NavigatorWidget::treeView() const
 {
+    NanotraceHR::Tracer tracer{"navigator widget tree view", category()};
+
     return m_treeView;
 }
 
 QList<QWidget *> NavigatorWidget::createToolBarWidgets()
 {
+    NanotraceHR::Tracer tracer{"navigator widget create toolbar widgets", category()};
+
     QList<QWidget *> buttons;
 
     auto empty = new QWidget();
@@ -126,6 +137,40 @@ QList<QWidget *> NavigatorWidget::createToolBarWidgets()
     empty->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     buttons.append(empty);
 
+    // Colorize Component Icons
+    const QIcon colorizeOffIcon = Theme::iconFromName(Theme::Icon::colorSelection_medium);
+    const QIcon colorizeOnIcon = Theme::iconFromName(Theme::Icon::colorSelection_medium,
+                                             Theme::getColor(Theme::Color::DStextSelectedTextColor));
+    QIcon cIcon;
+    cIcon.addPixmap(colorizeOnIcon.pixmap({16, 16}), QIcon::Normal, QIcon::On);
+    cIcon.addPixmap(colorizeOffIcon.pixmap({16, 16}), QIcon::Normal, QIcon::Off);
+
+    button = new QToolButton();
+    button->setIcon(cIcon);
+    button->setCheckable(true);
+    bool colorizeFlag = designerSettings().navigatorColorizeIcons();
+    button->setChecked(colorizeFlag);
+    button->setToolTip(tr("Colorize Component Icons"));
+    connect(button, &QAbstractButton::toggled, this, &NavigatorWidget::colorizeToggled);
+    buttons.append(button);
+
+    // Show reference nodes
+    const QIcon referenceOffIcon = Theme::iconFromName(Theme::Icon::unLinked);
+    const QIcon referenceOnIcon = Theme::iconFromName(Theme::Icon::linked);
+
+    QIcon refIcon;
+    refIcon.addPixmap(referenceOnIcon.pixmap({16, 16}), QIcon::Normal, QIcon::On);
+    refIcon.addPixmap(referenceOffIcon.pixmap({16, 16}), QIcon::Normal, QIcon::Off);
+
+    button = new QToolButton();
+    button->setIcon(refIcon);
+    button->setCheckable(true);
+    bool referenceFlag = designerSettings().navigatorShowReferenceNodes();
+    button->setChecked(referenceFlag);
+    button->setToolTip(tr("Show reference nodes"));
+    connect(button, &QAbstractButton::toggled, this, &NavigatorWidget::referenceToggled);
+    buttons.append(button);
+
     // Show Only Visible Components
     auto visibleIcon = Theme::iconFromName(Theme::Icon::visible_medium);
     auto invisibleIcon = Theme::iconFromName(Theme::Icon::invisible_medium,
@@ -137,9 +182,7 @@ QList<QWidget *> NavigatorWidget::createToolBarWidgets()
     button = new QToolButton();
     button->setIcon(vIcon);
     button->setCheckable(true);
-    bool visibleFlag = QmlDesignerPlugin::settings()
-                           .value(DesignerSettingsKey::NAVIGATOR_SHOW_ONLY_VISIBLE_ITEMS)
-                           .toBool();
+    bool visibleFlag = designerSettings().navigatorShowOnlyVisibleItems();
     button->setChecked(visibleFlag);
     button->setToolTip(tr("Show Only Visible Components"));
     connect(button, &QAbstractButton::toggled, this, &NavigatorWidget::filterToggled);
@@ -156,9 +199,7 @@ QList<QWidget *> NavigatorWidget::createToolBarWidgets()
     button = new QToolButton();
     button->setIcon(rIcon);
     button->setCheckable(true);
-    bool reverseFlag = QmlDesignerPlugin::settings()
-                           .value(DesignerSettingsKey::NAVIGATOR_REVERSE_ITEM_ORDER)
-                           .toBool();
+    bool reverseFlag = designerSettings().navigatorReverseItemOrder();
     button->setChecked(reverseFlag);
     button->setToolTip(tr("Reverse Component Order"));
     connect(button, &QAbstractButton::toggled, this, &NavigatorWidget::reverseOrderToggled);
@@ -174,6 +215,8 @@ QList<QWidget *> NavigatorWidget::createToolBarWidgets()
 
 QToolBar *NavigatorWidget::createToolBar()
 {
+    NanotraceHR::Tracer tracer{"navigator widget create toolbar", category()};
+
     const QList<QWidget *> buttons = createToolBarWidgets();
 
     auto toolBar = new QToolBar();
@@ -186,37 +229,51 @@ QToolBar *NavigatorWidget::createToolBar()
 
 void NavigatorWidget::contextHelp(const Core::IContext::HelpCallback &callback) const
 {
-    if (auto view = navigatorView())
+    NanotraceHR::Tracer tracer{"navigator widget context help", category()};
+
+    if (auto view = navigatorView()) {
         QmlDesignerPlugin::contextHelp(callback, view->contextHelpId());
-    else
+    } else {
         callback({});
+    }
 }
 
 void NavigatorWidget::disableNavigator()
 {
+    NanotraceHR::Tracer tracer{"navigator widget disable navigator", category()};
+
     m_treeView->setEnabled(false);
 }
 
 void NavigatorWidget::enableNavigator()
 {
+    NanotraceHR::Tracer tracer{"navigator widget enable navigator", category()};
+
     m_treeView->setEnabled(true);
 }
 
 NavigatorView *NavigatorWidget::navigatorView() const
 {
+    NanotraceHR::Tracer tracer{"navigator widget navigator view", category()};
+
     return m_navigatorView.data();
 }
 
 void NavigatorWidget::dragEnterEvent(QDragEnterEvent *dragEnterEvent)
 {
+    NanotraceHR::Tracer tracer{"navigator widget drag enter event", category()};
+
     const DesignerActionManager &actionManager = QmlDesignerPlugin::instance()
-                                                     ->viewManager().designerActionManager();
+                                                     ->viewManager()
+                                                     .designerActionManager();
     if (actionManager.externalDragHasSupportedAssets(dragEnterEvent->mimeData()))
         dragEnterEvent->acceptProposedAction();
 }
 
 void NavigatorWidget::dropEvent(QDropEvent *dropEvent)
 {
+    NanotraceHR::Tracer tracer{"navigator widget drop event", category()};
+
     dropEvent->accept();
     const DesignerActionManager &actionManager = QmlDesignerPlugin::instance()
                                                      ->viewManager().designerActionManager();
@@ -225,16 +282,22 @@ void NavigatorWidget::dropEvent(QDropEvent *dropEvent)
 
 void NavigatorWidget::setDragType(const QByteArray &type)
 {
+    NanotraceHR::Tracer tracer{"navigator widget set drag type", category()};
+
     m_dragType = type;
 }
 
 QByteArray NavigatorWidget::dragType() const
 {
+    NanotraceHR::Tracer tracer{"navigator widget drag type", category()};
+
     return m_dragType;
 }
 
 void NavigatorWidget::clearSearch()
 {
+    NanotraceHR::Tracer tracer{"navigator widget clear search", category()};
+
     m_searchWidget->clear();
 }
 

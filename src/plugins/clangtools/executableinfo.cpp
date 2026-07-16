@@ -11,7 +11,6 @@
 #include <utils/qtcprocess.h>
 
 #include <QDir>
-#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -41,7 +40,8 @@ static QStringList queryClangTidyChecks(const FilePath &executable,
     //       abseil-duration-division
     //       abseil-duration-factory-float
     //       ...
-    static const auto parser = [](const QString &stdOut) -> std::optional<QStringList> {
+    static const auto parser = [](const QString &stdOut,
+                                  const QString &) -> std::optional<QStringList> {
         QString output = stdOut;
         QTextStream stream(&output);
         QString line = stream.readLine();
@@ -85,7 +85,8 @@ static ClazyChecks querySupportedClazyChecks(const FilePath &executablePath)
     //           ...
     //       ]
     //   }
-    static const auto parser = [](const QString &jsonOutput) -> std::optional<ClazyChecks> {
+    static const auto parser = [](const QString &jsonOutput,
+                                  const QString &) -> std::optional<ClazyChecks> {
         const QJsonDocument document = QJsonDocument::fromJson(jsonOutput.toUtf8());
         if (document.isNull())
             return {};
@@ -122,7 +123,7 @@ static ClazyChecks querySupportedClazyChecks(const FilePath &executablePath)
 }
 
 ClangTidyInfo::ClangTidyInfo(const FilePath &executablePath)
-    : defaultChecks(queryClangTidyChecks(executablePath, {}))
+    : defaultChecks(queryClangTidyChecks(executablePath, "-checks=clang-analyzer-*"))
     , supportedChecks(queryClangTidyChecks(executablePath, "-checks=*"))
 {}
 
@@ -130,7 +131,8 @@ ClazyStandaloneInfo::ClazyStandaloneInfo(const FilePath &executablePath)
     : defaultChecks(queryClangTidyChecks(executablePath, {})) // Yup, behaves as clang-tidy.
     , supportedChecks(querySupportedClazyChecks(executablePath))
 {
-    static const auto parser = [](const QString &stdOut) -> std::optional<QVersionNumber> {
+    static const auto parser = [](const QString &stdOut,
+                                  const QString &) -> std::optional<QVersionNumber> {
         QString output = stdOut;
         QTextStream stream(&output);
         while (!stream.atEnd()) {
@@ -140,7 +142,7 @@ ClazyStandaloneInfo::ClazyStandaloneInfo(const FilePath &executablePath)
             const QString line = stream.readLine().simplified();
             for (const QString &prefix : versionPrefixes) {
                 if (line.startsWith(prefix))
-                    return QVersionNumber::fromString(line.mid(prefix.length()));
+                    return QVersionNumber::fromString(line.mid(prefix.size()));
             }
         }
         return {};
@@ -157,12 +159,12 @@ static FilePath queryResourceDir(const FilePath &clangToolPath)
     //   lib/clang/10.0.1
     //   Error while trying to load a compilation database:
     //   ...
-    const auto parser = [&clangToolPath](const QString &stdOut) -> std::optional<FilePath> {
+    const auto parser =
+        [&clangToolPath](const QString &stdOut, const QString &) -> std::optional<FilePath> {
         QString output = stdOut;
         QTextStream stream(&output);
-        const QString path = clangToolPath.parentDir().parentDir()
-                                 .pathAppended(stream.readLine()).toString();
-        const auto filePath = FilePath::fromUserInput(QDir::cleanPath(path));
+        const FilePath filePath
+            = clangToolPath.parentDir().parentDir().pathAppended(stream.readLine()).cleanPath();
         if (filePath.exists())
             return filePath;
         return {};
@@ -173,6 +175,7 @@ static FilePath queryResourceDir(const FilePath &clangToolPath)
                                                  parser);
     params.environment.setupEnglishOutput();
     params.allowedResults << ProcessResult::FinishedWithError;
+    params.persistValue = false;
     if (const auto filePath = DataFromProcess<FilePath>::getData(params))
         return *filePath;
     return {};
@@ -180,7 +183,7 @@ static FilePath queryResourceDir(const FilePath &clangToolPath)
 
 QString queryVersion(const FilePath &clangToolPath, QueryFailMode failMode)
 {
-    static const auto parser = [](const QString &stdOut) -> std::optional<QString> {
+    static const auto parser = [](const QString &stdOut, const QString &) -> std::optional<QString> {
         QString output = stdOut;
         QTextStream stream(&output);
         while (!stream.atEnd()) {
@@ -189,12 +192,13 @@ QString queryVersion(const FilePath &clangToolPath, QueryFailMode failMode)
             for (const QString &prefix : versionPrefixes) {
                 auto idx = line.indexOf(prefix);
                 if (idx >= 0)
-                    return line.mid(idx + prefix.length());
+                    return line.mid(idx + prefix.size());
             }
         }
         return {};
     };
     DataFromProcess<QString>::Parameters params({clangToolPath, {"--version"}}, parser);
+    params.persistValue = true;
     params.environment.setupEnglishOutput();
     if (failMode == QueryFailMode::Noisy)
         params.errorHandler = handleProcessError;
@@ -214,12 +218,37 @@ static QPair<FilePath, QString> clangIncludeDirAndVersion(const FilePath &clangT
 
 QPair<FilePath, QString> getClangIncludeDirAndVersion(const FilePath &clangToolPath)
 {
-    QTC_CHECK(!clangToolPath.isEmpty());
+    if (clangToolPath.isEmpty())
+        return {};
     static QMap<FilePath, QPair<FilePath, QString>> cache;
     auto it = cache.find(clangToolPath);
     if (it == cache.end())
         it = cache.insert(clangToolPath, clangIncludeDirAndVersion(clangToolPath));
     return it.value();
+}
+
+bool operator==(const ClazyStandaloneInfo &c1, const ClazyStandaloneInfo &c2)
+{
+    return c1.version == c2.version
+           && c1.defaultChecks == c2.defaultChecks
+           && c1.supportedChecks == c2.supportedChecks;
+}
+
+bool operator!=(const ClazyStandaloneInfo &c1, const ClazyStandaloneInfo &c2)
+{
+    return !(c1 == c2);
+}
+
+bool operator==(const ClazyCheck &c1, const ClazyCheck &c2)
+{
+    return c1.name == c2.name
+           && c1.level == c2.level
+           && c1.topics == c2.topics;
+}
+
+bool operator!=(const ClazyCheck &c1, const ClazyCheck &c2)
+{
+    return !(c1 == c2);
 }
 
 } // namespace Internal

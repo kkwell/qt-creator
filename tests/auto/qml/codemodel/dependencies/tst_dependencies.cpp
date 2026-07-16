@@ -7,7 +7,7 @@
 #include <QTextStream>
 #include <QDateTime>
 #include <QLibraryInfo>
-#include <QtTest>
+#include <QTest>
 
 #include <QDebug>
 
@@ -25,6 +25,8 @@
 #include <qmljstools/qmljssemanticinfo.h>
 #include <extensionsystem/pluginmanager.h>
 #include <utils/filepath.h>
+
+#include <optional>
 
 using namespace QmlJS;
 using namespace QmlJS::AST;
@@ -49,9 +51,10 @@ struct TestData
     const int staticMessages;
 };
 
-static TestData testData(const QString &path) {
+static std::optional<TestData> testData(const QString &path) {
     QFile file(path);
-    file.open(QFile::ReadOnly | QFile::Text);
+    if (!file.open(QFile::ReadOnly | QFile::Text))
+        return {};
     const QString content = QString::fromUtf8(file.readAll());
     file.close();
 
@@ -92,7 +95,7 @@ void tst_Dependencies::initTestCase()
 {
     m_path = QLatin1String(TESTSRCDIR "/samples");
 
-    m_basePaths.append(QLibraryInfo::location(QLibraryInfo::Qml2ImportsPath));
+    m_basePaths.append(QLibraryInfo::path(QLibraryInfo::Qml2ImportsPath));
 
     if (!ModelManagerInterface::instance())
         new ModelManagerInterface;
@@ -124,15 +127,16 @@ void tst_Dependencies::test()
     PathsAndLanguages lPaths;
     QStringList paths(m_basePaths);
     paths << m_path;
-    for (auto p: paths)
+    for (auto p: std::as_const(paths))
         lPaths.maybeInsert(Utils::FilePath::fromString(p), Dialect::Qml);
     ModelManagerInterface::importScan(ModelManagerInterface::workingCopy(), lPaths,
                                       ModelManagerInterface::instance(), false);
     ModelManagerInterface::instance()->test_joinAllThreads();
-    TestData data = testData(filename);
-    Document::MutablePtr doc = data.doc;
-    int nExpectedSemanticMessages = data.semanticMessages;
-    int nExpectedStaticMessages = data.staticMessages;
+    const auto data = testData(filename);
+    QVERIFY(data);
+    Document::MutablePtr doc = data->doc;
+    int nExpectedSemanticMessages = data->semanticMessages;
+    int nExpectedStaticMessages = data->staticMessages;
     QVERIFY(!doc->source().isEmpty());
 
     Snapshot snapshot = modelManager->snapshot();

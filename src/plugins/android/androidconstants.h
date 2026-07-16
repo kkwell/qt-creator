@@ -27,11 +27,11 @@ const char ANDROID_KIT_NDK[] = "Android.NDK";
 const char ANDROID_KIT_SDK[] = "Android.SDK";
 
 const char ANDROID_BUILD_DIRECTORY[] = "android-build";
-const char ANDROID_APP_PROCESS_DIRECTORY[] = "android-app-process";
 const char JAVA_EDITOR_ID[] = "java.editor";
 const char JLS_SETTINGS_ID[] = "Java::JLSSettingsID";
 const char ANDROID_ARCHITECTURE[] = "Android.Architecture";
 const char ANDROID_PACKAGE_SOURCE_DIR[] = "ANDROID_PACKAGE_SOURCE_DIR";
+const char QT_ANDROID_PACKAGE_SOURCE_DIR[] = "QT_ANDROID_PACKAGE_SOURCE_DIR";
 const char ANDROID_EXTRA_LIBS[] = "ANDROID_EXTRA_LIBS";
 const char ANDROID_ABI[] = "ANDROID_ABI";
 const char ANDROID_TARGET_ARCH[] = "ANDROID_TARGET_ARCH";
@@ -45,6 +45,8 @@ const char ANDROID_RUNCONFIG_ID[] = "Qt4ProjectManager.AndroidRunConfiguration:"
 const char ANDROID_PACKAGE_INSTALL_STEP_ID[] = "Qt4ProjectManager.AndroidPackageInstallationStep";
 const char ANDROID_BUILD_APK_ID[] = "QmakeProjectManager.AndroidBuildApkStep";
 const char ANDROID_DEPLOY_QT_ID[] = "Qt4ProjectManager.AndroidDeployQtStep";
+
+const char ANDROID_EXECUTION_TYPE_ID[] = "AndroidExecutionType";
 
 const char AndroidPackageSourceDir[] = "AndroidPackageSourceDir"; // QString
 const char AndroidDeploySettingsFile[] = "AndroidDeploySettingsFile"; // QString
@@ -80,5 +82,6 @@ const char cmdlineToolsName[] = "cmdline-tools";
 const char ndkPackageName[] = "ndk";
 const char platformsPackageName[] = "platforms";
 const char buildToolsPackageName[] = "build-tools";
+const char systemImagesPackageName[] = "system-images";
 
 } // Android::Constants

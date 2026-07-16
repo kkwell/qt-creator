@@ -46,8 +46,10 @@ imagedirs = ../images \
             ../../../src/libs/solutions
 exampledirs = ../examples
 
-depends +=    qtwidgets \
+depends +=    qtconcurrent \
+              qtwidgets \
               qtcore \
+              qtcore5compat \
               qtqml \
               qtquick \
               qmake \

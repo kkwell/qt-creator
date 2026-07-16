@@ -11,13 +11,14 @@
 #include <projectexplorer/buildsteplist.h>
 #include <projectexplorer/gcctoolchain.h>
 #include <projectexplorer/gnumakeparser.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/processparameters.h>
 #include <projectexplorer/project.h>
-#include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/projectexplorersettings.h>
+#include <projectexplorer/sysrootkitaspect.h>
 #include <projectexplorer/target.h>
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/toolchainkitaspect.h>
 
 #include <utils/filepath.h>
 #include <utils/qtcprocess.h>
@@ -121,10 +122,7 @@ QWidget *IosBuildStep::createConfigWidget()
                                                  HostOsInfo::hostOs()));
     });
 
-    connect(ProjectExplorerPlugin::instance(), &ProjectExplorerPlugin::settingsChanged,
-            this, updateDetails);
-    connect(target(), &Target::kitChanged,
-            this, updateDetails);
+    connect(buildConfiguration(), &BuildConfiguration::kitChanged, this, updateDetails);
     connect(buildConfiguration(), &BuildConfiguration::environmentChanged,
             this, updateDetails);
 
@@ -197,8 +195,7 @@ QStringList IosBuildStep::allArguments() const
 QStringList IosBuildStep::defaultArguments() const
 {
     QStringList res;
-    Kit *kit = target()->kit();
-    Toolchain *tc = ToolchainKitAspect::cxxToolchain(kit);
+    Toolchain *tc = ToolchainKitAspect::cxxToolchain(kit());
     switch (buildConfiguration()->buildType()) {
     case BuildConfiguration::Debug :
         res << "-configuration" << "Debug";
@@ -217,9 +214,9 @@ QStringList IosBuildStep::defaultArguments() const
         auto gtc = static_cast<GccToolchain *>(tc);
         res << gtc->platformCodeGenFlags();
     }
-    if (!SysRootKitAspect::sysRoot(kit).isEmpty())
-        res << "-sdk" << SysRootKitAspect::sysRoot(kit).toString();
-    res << "SYMROOT=" + buildDirectory().toString();
+    if (!SysRootKitAspect::sysRoot(kit()).isEmpty())
+        res << "-sdk" << SysRootKitAspect::sysRoot(kit()).toUrlishString();
+    res << "SYMROOT=" + buildDirectory().toUrlishString();
     return res;
 }
 

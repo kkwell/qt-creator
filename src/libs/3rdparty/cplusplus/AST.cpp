@@ -91,6 +91,8 @@ int BaseSpecifierAST::firstToken() const
         return virtual_token;
     if (access_specifier_token)
         return access_specifier_token;
+    if (decltype_specifier)
+        return decltype_specifier->firstToken();
     if (name)
         return name->firstToken();
     // assert?
@@ -101,13 +103,15 @@ int BaseSpecifierAST::lastToken() const
 {
     if (ellipsis_token)
         return ellipsis_token;
-    else if (name)
+    if (name)
         return name->lastToken();
-    else if (virtual_token && access_specifier_token)
+    if (decltype_specifier)
+        return decltype_specifier->lastToken();
+    if (virtual_token && access_specifier_token)
         return std::max(virtual_token, access_specifier_token) + 1;
-    else if (virtual_token)
+    if (virtual_token)
         return virtual_token + 1;
-    else if (access_specifier_token)
+    if (access_specifier_token)
         return access_specifier_token + 1;
     // assert?
     return 0;
@@ -1469,6 +1473,8 @@ int FunctionDefinitionAST::firstToken() const
     if (declarator)
         if (int candidate = declarator->firstToken())
             return candidate;
+    if (semicolon_token)
+        return semicolon_token;
     if (ctor_initializer)
         if (int candidate = ctor_initializer->firstToken())
             return candidate;
@@ -1487,6 +1493,8 @@ int FunctionDefinitionAST::lastToken() const
     if (ctor_initializer)
         if (int candidate = ctor_initializer->lastToken())
             return candidate;
+    if (semicolon_token)
+        return semicolon_token + 1;
     if (declarator)
         if (int candidate = declarator->lastToken())
             return candidate;
@@ -4648,18 +4656,26 @@ int NoExceptOperatorExpressionAST::firstToken() const
 {
     if (noexcept_token)
         return noexcept_token;
+    if (lparen_token)
+        return lparen_token + 1;
     if (expression)
         if (int candidate = expression->firstToken())
             return candidate;
+    if (rparen_token)
+        return rparen_token + 1;
     return 0;
 }
 
 /** \generated */
 int NoExceptOperatorExpressionAST::lastToken() const
 {
+    if (rparen_token)
+        return rparen_token + 1;
     if (expression)
         if (int candidate = expression->lastToken())
             return candidate;
+    if (lparen_token)
+        return lparen_token + 1;
     if (noexcept_token)
         return noexcept_token + 1;
     return 1;
@@ -4667,8 +4683,6 @@ int NoExceptOperatorExpressionAST::lastToken() const
 
 int TypeConstraintAST::firstToken() const
 {
-    if (nestedName)
-        return nestedName->firstToken();
     return conceptName->firstToken();
 }
 
@@ -4694,3 +4708,21 @@ int PlaceholderTypeSpecifierAST::lastToken() const
         return rparenToken + 1;
     return autoToken + 1;
 }
+
+int DeductionGuideAST::firstToken() const
+{
+    if (explicit_token)
+        return explicit_token;
+    if (template_name)
+        return template_name->firstToken();
+    CPP_ASSERT(false, return 0);
+}
+
+int DeductionGuideAST::lastToken() const
+{
+    if (requires_clause)
+        return requires_clause->lastToken();
+    CPP_ASSERT(template_id, return 0);
+    return template_id->lastToken();
+}
+

@@ -60,12 +60,8 @@ public:
     QString synchronousTopic(const Utils::FilePath &workingDirectory);
     bool synchronousCreateRepository(const Utils::FilePath &workingDirectory,
                                      const QStringList &extraOptions = {}) final;
-    bool synchronousMove(const Utils::FilePath &workingDir, const QString &from, const QString &to,
-                         const QStringList &extraOptions = {}) final;
-    bool synchronousPull(const Utils::FilePath &workingDir, const QString &srcLocation,
-                         const QStringList &extraOptions = {}) final;
-    bool synchronousPush(const Utils::FilePath &workingDir, const QString &dstLocation,
-                         const QStringList &extraOptions = {}) final;
+    bool synchronousMove(const Utils::FilePath &workingDir, const Utils::FilePath &from,
+                         const Utils::FilePath &to, const QStringList &extraOptions = {}) final;
     void commit(const Utils::FilePath &repositoryRoot, const QStringList &files,
                 const QString &commitMessageFile, const QStringList &extraOptions = {}) final;
     void annotate(const Utils::FilePath &workingDir, const QString &file,
@@ -76,19 +72,16 @@ public:
              const std::function<void(Utils::CommandLine &)> &addAuthOptions = {}) final;
     void logCurrentFile(const Utils::FilePath &workingDir, const QStringList &files = {},
                         const QStringList &extraOptions = {},
-                        bool enableAnnotationContextMenu = false,
-                        const std::function<void(Utils::CommandLine &)> &addAuthOptions = {});
-    void revertFile(const Utils::FilePath &workingDir, const QString &file,
-                    const QString &revision = {}, const QStringList &extraOptions = {}) final;
+                        bool enableAnnotationContextMenu = false);
     void revertAll(const Utils::FilePath &workingDir, const QString &revision = {},
                    const QStringList &extraOptions = {}) final;
     bool isVcsFileOrDirectory(const Utils::FilePath &filePath) const;
-    Utils::FilePath findTopLevelForFile(const Utils::FilePath &file) const final;
     bool managesFile(const Utils::FilePath &workingDirectory, const QString &fileName) const;
     unsigned int binaryVersion() const;
-    QString binaryVersionString() const;
     SupportedFeatures supportedFeatures() const;
     void view(const Utils::FilePath &source, const QString &id, const QStringList &extraOptions = {}) final;
+    void update(const Utils::FilePath &repositoryRoot, const QString &revision = {},
+                const QStringList &extraOptions = {});
 
 private:
     static QList<BranchInfo> branchListFromOutput(const QString &output,

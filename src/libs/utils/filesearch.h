@@ -7,6 +7,7 @@
 
 #include "filepath.h"
 #include "searchresultitem.h"
+#include "textcodec.h"
 
 #include <QMap>
 #include <QPromise>
@@ -17,7 +18,6 @@
 QT_BEGIN_NAMESPACE
 template <typename T>
 class QFuture;
-class QTextCodec;
 QT_END_NAMESPACE
 
 namespace Utils {
@@ -29,6 +29,7 @@ enum FindFlag {
     FindRegularExpression = 0x08,
     FindPreserveCase = 0x10,
     DontFindBinaryFiles = 0x20,
+    DontFindGeneratedFiles = 0x40,
 };
 Q_DECLARE_FLAGS(FindFlags, FindFlag)
 
@@ -73,7 +74,7 @@ public:
     {
     public:
         FilePath filePath {};
-        QTextCodec *encoding = nullptr;
+        Utils::TextEncoding encoding {};
     };
 
     class Data;
@@ -149,17 +150,20 @@ private:
 class QTCREATOR_UTILS_EXPORT FileListContainer : public FileContainer
 {
 public:
-    FileListContainer(const FilePaths &fileList, const QList<QTextCodec *> &encodings);
+    FileListContainer(const FilePaths &fileList, const QList<TextEncoding> &encoding);
 };
 
 class QTCREATOR_UTILS_EXPORT SubDirFileContainer : public FileContainer
 {
 public:
-    SubDirFileContainer(const FilePaths &directories, const QStringList &filters,
-                        const QStringList &exclusionFilters, QTextCodec *encoding = nullptr);
+    SubDirFileContainer(const FilePaths &directories,
+                        const QStringList &filters,
+                        const QStringList &exclusionFilters,
+                        const TextEncoding &encoding = {});
+
     SubDirFileContainer(const FilePaths &directories,
                         const FilterFileFunction &filterFileFuntion = {},
-                        QTextCodec *encoding = nullptr);
+                        const TextEncoding &encoding = {});
 };
 
 QTCREATOR_UTILS_EXPORT QFuture<SearchResultItems> findInFiles(const QString &searchTerm,

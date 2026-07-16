@@ -7,8 +7,9 @@
 #include "../actionmanager/command.h"
 
 #include <extensionsystem/iplugin.h>
+#include <utils/aspects.h>
 
-#include <solutions/tasking/tasktreerunner.h>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <QObject>
 #include <QTimer>
@@ -18,6 +19,19 @@ namespace Internal {
 
 class LocatorData;
 class LocatorWidget;
+
+struct LocatorSettings : public Utils::AspectContainer
+{
+    LocatorSettings();
+
+    Utils::BoolAspect useCenteredPopup{this};
+    Utils::BoolAspect useTabCompletion{this};
+    Utils::BoolAspect relativePaths{this};
+    Utils::BoolAspect ignoreGeneratedFiles{this};
+    Utils::IntegerAspect refreshInterval{this}; // minutes
+};
+
+LocatorSettings &locatorSettings();
 
 class Locator : public QObject
 {
@@ -38,13 +52,6 @@ public:
     QList<ILocatorFilter *> customFilters();
     void setFilters(QList<ILocatorFilter *> f);
     void setCustomFilters(QList<ILocatorFilter *> f);
-    int refreshInterval() const;
-    void setRefreshInterval(int interval);
-    bool relativePaths() const;
-    void setRelativePaths(bool use);
-
-    static bool useCenteredPopupForShortcut();
-    static void setUseCenteredPopupForShortcut(bool center);
 
     static void showFilter(ILocatorFilter *filter, LocatorWidget *widget);
 
@@ -62,20 +69,14 @@ private:
 
     LocatorData *m_locatorData = nullptr;
 
-    struct Settings
-    {
-        bool useCenteredPopup = false;
-    };
-
     bool m_settingsInitialized = false;
-    Settings m_settings;
+    LocatorSettings m_settings;
     QList<ILocatorFilter *> m_filters;
     QList<ILocatorFilter *> m_customFilters;
     QMap<Utils::Id, QAction *> m_filterActionMap;
     QTimer m_refreshTimer;
-    Tasking::TaskTreeRunner m_taskTreeRunner;
+    QtTaskTree::QSingleTaskTreeRunner m_taskTreeRunner;
     QList<ILocatorFilter *> m_refreshingFilters;
-    bool m_relativePaths = false;
 };
 
 } // namespace Internal

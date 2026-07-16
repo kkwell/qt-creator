@@ -9,16 +9,14 @@
 #include <cplusplus/PreprocessorEnvironment.h>
 #include <cplusplus/pp-engine.h>
 
+#include <utils/textcodec.h>
+
 #include <QHash>
 #include <QPointer>
 #include <QSet>
 #include <QStringList>
 
 #include <functional>
-
-QT_BEGIN_NAMESPACE
-class QTextCodec;
-QT_END_NAMESPACE
 
 namespace CppEditor::Internal {
 
@@ -41,14 +39,14 @@ public:
     void setHeaderPaths(const ProjectExplorer::HeaderPaths &headerPaths);
     void setLanguageFeatures(CPlusPlus::LanguageFeatures languageFeatures);
     void setFileSizeLimitInMb(int fileSizeLimitInMb);
-    void setTodo(const QSet<QString> &files);
+    void setTodo(const QSet<Utils::FilePath> &files);
 
     void run(const Utils::FilePath &filePath, const Utils::FilePaths &initialIncludes = {});
     void removeFromCache(const Utils::FilePath &filePath);
     void resetEnvironment();
 
     CPlusPlus::Snapshot snapshot() const { return m_snapshot; }
-    const QSet<QString> &todo() const { return m_todo; }
+    const QSet<Utils::FilePath> &todo() const { return m_todo; }
 
     void setGlobalSnapshot(const CPlusPlus::Snapshot &snapshot) { m_globalSnapshot = snapshot; }
 
@@ -77,7 +75,7 @@ private:
                               int line, const CPlusPlus::Macro &macro) override;
     void startExpandingMacro(int bytesOffset, int utf16charOffset,
                              int line, const CPlusPlus::Macro &macro,
-                             const QVector<CPlusPlus::MacroArgumentReference> &actuals) override;
+                             const QList<CPlusPlus::MacroArgumentReference> &actuals) override;
     void stopExpandingMacro(int bytesOffset, const CPlusPlus::Macro &macro) override;
     void markAsIncludeGuard(const QByteArray &macroName) override;
     void startSkippingBlocks(int utf16charsOffset) override;
@@ -96,11 +94,11 @@ private:
     WorkingCopy m_workingCopy;
     QSet<Utils::FilePath> m_included;
     CPlusPlus::Document::Ptr m_currentDoc;
-    QSet<QString> m_todo;
+    QSet<Utils::FilePath> m_todo;
     QSet<Utils::FilePath> m_processed;
     QHash<Utils::FilePath, Utils::FilePath> m_fileNameCache;
     int m_fileSizeLimitInMb = -1;
-    QTextCodec *m_defaultCodec;
+    Utils::TextEncoding m_defaultEncoding;
 };
 
 } // CppEditor::Internal

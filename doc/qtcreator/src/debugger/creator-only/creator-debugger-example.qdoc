@@ -28,19 +28,19 @@
 
     \list 1
 
-        \li In textfinder.cpp, click between the line number and the window
+        \li In \c textfinder.cpp, click between the line number and the window
             border on the line where we change the cursor position to set a
             breakpoint.
 
-            \image qtcreator-setting-breakpoint1.png
+            \image {qtcreator-setting-breakpoint1.webp} {Setting a breakpoint in the editor}
 
         \li Go to \uicontrol Debug > \uicontrol {Start Debugging} >
-            \uicontrol {Start Debugging of Startup Project} or press \key F5.
+            \uicontrol {Start Debugging of Startup Project} or select \key F5.
 
         \li To view information about the breakpoint, go to the
             \uicontrol Breakpoints view.
 
-            \image qtcreator-setting-breakpoint2.png
+            \image {qtcreator-setting-breakpoint2.png} {Viewing breakpoint details in the Breakpoints view}
 
         \li To remove a breakpoint, right-click it and select
             \uicontrol {Delete Breakpoint}.
@@ -49,7 +49,7 @@
         \li To view the base classes and data members of the TextFinder class,
             go to the \uicontrol Locals view.
 
-            \image qtcreator-watcher.png
+            \image {qtcreator-watcher.png} {Viewing the base classes and data members of a class}
 
     \endlist
 
@@ -90,11 +90,14 @@
     If you compile and run the above code, however, the application does not
     work correctly due to a logic error. To locate this logic error, step
     through the code using the following buttons:
-    \inlineimage icons/qtcreator-debug-button-stop.png
-    (\uicontrol {Stop Debugger}), \inlineimage icons/debugger_stepover_small.png
-    (\uicontrol {Step Over}), \inlineimage icons/debugger_stepinto_small.png
-    (\uicontrol {Step Into}), and \inlineimage icons/debugger_stepout_small.png
+    \inlineimage {icons/qtcreator-debug-button-stop.png} {Stop Debugger}
+    (\uicontrol {Stop Debugger}),
+    \inlineimage {icons/debugger_stepover_small.png} {Step Over}
+    (\uicontrol {Step Over}),
+    \inlineimage {icons/debugger_stepinto_small.png} {Step Into}
+    (\uicontrol {Step Into}), and
+    \inlineimage {icons/debugger_stepout_small.png} {Step Out}
     (\uicontrol {Step Out}).
 
-    \sa {Tutorial: Qt Widgets application}, {Debugging}, {Debuggers}, {Debugger}
+    \sa {Tutorial: Qt Widgets application}, {Debugging}, {Debuggers}
 */

@@ -10,6 +10,7 @@ const char GenericLinuxOsType[] = "GenericLinuxOsType";
 
 const char DeployToGenericLinux[] = "DeployToGenericLinux";
 
+const char ConnectStepId[] = "RemoteLinux.ConnectStep";
 const char DirectUploadStepId[] = "RemoteLinux.DirectUploadStep";
 const char MakeInstallStepId[] = "RemoteLinux.MakeInstall";
 const char TarPackageCreationStepId[]  = "MaemoTarPackageCreationStep";
@@ -19,14 +20,13 @@ const char GenericDeployStepId[] = "RemoteLinux.RsyncDeployStep";
 const char CustomCommandDeployStepId[] = "RemoteLinux.GenericRemoteLinuxCustomCommandDeploymentStep";
 const char KillAppStepId[] = "RemoteLinux.KillAppStep";
 
-const char SourceProfile[] = "RemoteLinux.SourceProfile";
-const char LinkDevice[] = "RemoteLinux.LinkDevice";
-const char SshForwardDebugServerPort[] = "RemoteLinux.SshForwardDebugServerPort";
 const char SshForwardPort[] = "RemoteLinux.SshForwardPort";
 const char DisableSharing[] = "RemoteLinux.DisableSharing";
 
 const char RunConfigId[] = "RemoteLinuxRunConfiguration:";
 const char CustomRunConfigId[] = "RemoteLinux.CustomRunConfig";
+
+const char ExecutionType[] = "RemoteLinux.ExecutionType";
 
 } // Constants
 } // RemoteLinux

@@ -6,11 +6,12 @@
 #include "fontsettingspage.h"
 #include "texteditortr.h"
 
+#include <coreplugin/icore.h>
 #include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
+#include <utils/plaintextedit/plaintextedit.h>
 #include <utils/stringutils.h>
 #include <utils/theme/theme.h>
-#include <coreplugin/icore.h>
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -103,6 +104,7 @@ bool FontSettings::fromSettings(const FormatDescriptions &descriptions, const Qt
     m_fontSize = s->value(group + fontSizeKey, m_fontSize).toInt();
     m_fontZoom= s->value(group + fontZoomKey, m_fontZoom).toInt();
     m_lineSpacing = s->value(group + lineSpacingKey, m_lineSpacing).toInt();
+    QTC_ASSERT(m_lineSpacing >= 0, m_lineSpacing = 100);
     m_antialias = s->value(group + antialiasKey, DEFAULT_ANTIALIAS).toBool();
 
     if (s->contains(group + schemeFileNamesKey)) {
@@ -128,7 +130,7 @@ bool FontSettings::equals(const FontSettings &f) const
             && m_scheme == f.m_scheme;
 }
 
-auto qHash(const TextStyle &textStyle)
+size_t qHash(const TextStyle &textStyle)
 {
     return ::qHash(quint8(textStyle));
 }
@@ -184,7 +186,7 @@ QTextCharFormat FontSettings::toTextCharFormat(TextStyle category) const
     return tf;
 }
 
-auto qHash(TextStyles textStyles)
+size_t qHash(TextStyles textStyles)
 {
     return ::qHash(reinterpret_cast<quint64&>(textStyles));
 }
@@ -280,9 +282,9 @@ QTextCharFormat FontSettings::toTextCharFormat(TextStyles textStyles) const
  * Returns the list of QTextCharFormats that corresponds to the list of
  * requested format categories.
  */
-QVector<QTextCharFormat> FontSettings::toTextCharFormats(const QVector<TextStyle> &categories) const
+QList<QTextCharFormat> FontSettings::toTextCharFormats(const QList<TextStyle> &categories) const
 {
-    QVector<QTextCharFormat> rc;
+    QList<QTextCharFormat> rc;
     const int size = categories.size();
     rc.reserve(size);
     for (int i = 0; i < size; i++)
@@ -336,8 +338,8 @@ qreal FontSettings::lineSpacing() const
 {
     QFont currentFont = font();
     currentFont.setPointSize(std::max(m_fontSize * m_fontZoom / 100, 1));
-    qreal spacing = QFontMetricsF(currentFont).lineSpacing();
-    if (m_lineSpacing != 100)
+    qreal spacing = PlainTextDocumentLayout::lineSpacing(currentFont);
+    if (QTC_GUARD(m_lineSpacing > 0) && m_lineSpacing != 100)
         spacing *= qreal(m_lineSpacing) / 100;
     return spacing;
 }
@@ -463,9 +465,9 @@ bool FontSettings::loadColorScheme(const Utils::FilePath &filePath,
     return loaded;
 }
 
-bool FontSettings::saveColorScheme(const Utils::FilePath &fileName)
+bool FontSettings::saveColorScheme(const FilePath &fileName)
 {
-    const bool saved = m_scheme.save(fileName, Core::ICore::dialogParent());
+    const bool saved = m_scheme.save(fileName);
     if (saved)
         m_schemeFileName = fileName;
     return saved;

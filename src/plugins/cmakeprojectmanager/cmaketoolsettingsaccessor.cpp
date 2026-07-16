@@ -3,11 +3,12 @@
 
 #include "cmaketoolsettingsaccessor.h"
 
-#include "cmakeprojectmanagertr.h"
-#include "cmakespecificsettings.h"
 #include "cmaketool.h"
+#include "cmaketoolmanager.h"
 
 #include <coreplugin/icore.h>
+
+#include <projectexplorer/devicesupport/devicemanager.h>
 
 #include <utils/algorithm.h>
 #include <utils/environment.h>
@@ -16,6 +17,7 @@
 #include <QGuiApplication>
 
 using namespace Utils;
+using namespace ProjectExplorer;
 
 namespace CMakeProjectManager::Internal {
 
@@ -42,42 +44,6 @@ const char CMAKE_TOOL_DATA_KEY[] = "CMakeTools.";
 const char CMAKE_TOOL_DEFAULT_KEY[] = "CMakeTools.Default";
 const char CMAKE_TOOL_FILENAME[] = "cmaketools.xml";
 
-static std::vector<std::unique_ptr<CMakeTool>> autoDetectCMakeTools()
-{
-    FilePaths extraDirs;
-
-    if (HostOsInfo::isWindowsHost()) {
-        for (const auto &envVar : QStringList{"ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"}) {
-            if (qtcEnvironmentVariableIsSet(envVar)) {
-                const QString progFiles = qtcEnvironmentVariable(envVar);
-                extraDirs.append(FilePath::fromUserInput(progFiles + "/CMake"));
-                extraDirs.append(FilePath::fromUserInput(progFiles + "/CMake/bin"));
-            }
-        }
-    }
-
-    if (HostOsInfo::isMacHost()) {
-        extraDirs.append("/Applications/CMake.app/Contents/bin");
-        extraDirs.append("/usr/local/bin");    // homebrew intel
-        extraDirs.append("/opt/homebrew/bin"); // homebrew arm
-        extraDirs.append("/opt/local/bin");    // macports
-    }
-
-    const FilePaths suspects = FilePath("cmake").searchAllInPath(extraDirs);
-
-    std::vector<std::unique_ptr<CMakeTool>> found;
-    for (const FilePath &command : std::as_const(suspects)) {
-        auto item = std::make_unique<CMakeTool>(CMakeTool::AutoDetection, CMakeTool::createId());
-        item->setFilePath(command);
-        item->setDisplayName(Tr::tr("System CMake at %1").arg(command.toUserOutput()));
-
-        found.emplace_back(std::move(item));
-    }
-
-    return found;
-}
-
-
 static std::vector<std::unique_ptr<CMakeTool>>
 mergeTools(std::vector<std::unique_ptr<CMakeTool>> &sdkTools,
            std::vector<std::unique_ptr<CMakeTool>> &userTools,
@@ -94,16 +60,21 @@ mergeTools(std::vector<std::unique_ptr<CMakeTool>> &sdkTools,
             // also checking the actual executable.
             return userTool->id() == tool->id() && userTool->cmakeExecutable() == tool->cmakeExecutable();
         });
-        if (userToolIndex >= 0) {
-            // Replace the sdk tool with the user tool, so any user changes do not get lost
-            result[userToolIndex] = std::move(userTool);
-        } else {
-            if (userTool->isAutoDetected()
-                    && !Utils::contains(autoDetectedTools, Utils::equal(&CMakeTool::cmakeExecutable,
-                                                                        userTool->cmakeExecutable()))) {
+        if (userToolIndex == -1) {
+            const bool wasOriginallyAutoDetected = userTool->detectionSource().isAutoDetected();
+            const bool isAutoDetectedAgain = Utils::contains(
+                autoDetectedTools,
+                Utils::equal(&CMakeTool::cmakeExecutable, userTool->cmakeExecutable()));
+            const bool hasAutoDetectionSource = !userTool->detectionSource().id.isEmpty();
 
-                qWarning() << QString::fromLatin1("Previously SDK provided CMakeTool \"%1\" (%2) dropped.")
-                              .arg(userTool->cmakeExecutable().toUserOutput(), userTool->id().toString());
+            // Tools from the SDK are auto-detected, but don't have an auto-detection source set.
+            // Tools auto-detected from a device by the user have an auto-detection source set.
+            if (userTool->cmakeExecutable().isLocal() && wasOriginallyAutoDetected
+                && !isAutoDetectedAgain && !hasAutoDetectionSource) {
+                qWarning() << QString::fromLatin1(
+                                  "Previously SDK provided CMakeTool \"%1\" (%2) dropped.")
+                                  .arg(userTool->cmakeExecutable().toUserOutput())
+                                  .arg(userTool->id().toString());
                 continue;
             }
             result.emplace_back(std::move(userTool));
@@ -137,19 +108,25 @@ CMakeToolSettingsAccessor::CMakeToolSettingsAccessor()
     addVersionUpgrader(std::make_unique<CMakeToolSettingsUpgraderV0>());
 }
 
-CMakeToolSettingsAccessor::CMakeTools CMakeToolSettingsAccessor::restoreCMakeTools(QWidget *parent) const
+CMakeToolSettingsAccessor::CMakeTools CMakeToolSettingsAccessor::restoreCMakeTools() const
 {
     CMakeTools result;
 
     const FilePath sdkSettingsFile = Core::ICore::installerResourcePath(CMAKE_TOOL_FILENAME);
 
-    CMakeTools sdkTools = cmakeTools(restoreSettings(sdkSettingsFile, parent), true);
+    CMakeTools sdkTools = cmakeTools(restoreSettings(sdkSettingsFile), true);
 
     //read the tools from the user settings file
-    CMakeTools userTools = cmakeTools(restoreSettings(parent), false);
+    CMakeTools userTools = cmakeTools(restoreSettings(), false);
 
     //autodetect tools
-    std::vector<std::unique_ptr<CMakeTool>> autoDetectedTools = autoDetectCMakeTools();
+    const IDeviceConstPtr desktopDevice = DeviceManager::defaultDesktopDevice();
+    std::vector<std::unique_ptr<CMakeTool>> autoDetectedTools;
+    if (QTC_GUARD(desktopDevice)) {
+        const FilePath root = desktopDevice->rootPath();
+        autoDetectedTools = CMakeToolManager::autoDetectCMakeTools(
+            desktopDevice->systemEnvironment().mappedPath(root), root);
+    }
 
     //filter out the tools that were stored in SDK
     std::vector<std::unique_ptr<CMakeTool>> toRegister = mergeTools(sdkTools.cmakeTools,
@@ -167,16 +144,18 @@ CMakeToolSettingsAccessor::CMakeTools CMakeToolSettingsAccessor::restoreCMakeToo
 }
 
 void CMakeToolSettingsAccessor::saveCMakeTools(const QList<CMakeTool *> &cmakeTools,
-                                               const Id &defaultId,
-                                               QWidget *parent)
+                                               const Id &defaultId)
 {
     Store data;
     data.insert(CMAKE_TOOL_DEFAULT_KEY, defaultId.toSetting());
 
     int count = 0;
     for (CMakeTool *item : cmakeTools) {
+        if (item->detectionSource().isTemporary())
+            continue;
+
         Utils::FilePath fi = item->cmakeExecutable();
-        if (fi.needsDevice() || fi.isExecutableFile()) { // be graceful for device related stuff
+        if (!fi.isLocal() || fi.isExecutableFile()) { // be graceful for device related stuff
             Store tmp = item->toMap();
             if (tmp.isEmpty())
                 continue;
@@ -186,7 +165,7 @@ void CMakeToolSettingsAccessor::saveCMakeTools(const QList<CMakeTool *> &cmakeTo
     }
     data.insert(CMAKE_TOOL_COUNT_KEY, count);
 
-    saveSettings(data, parent);
+    saveSettings(data);
 }
 
 CMakeToolSettingsAccessor::CMakeTools
@@ -203,7 +182,8 @@ CMakeToolSettingsAccessor::cmakeTools(const Store &data, bool fromSdk) const
         const Store dbMap = storeFromVariant(data.value(key));
         auto item = std::make_unique<CMakeTool>(dbMap, fromSdk);
         const FilePath cmakeExecutable = item->cmakeExecutable();
-        if (item->isAutoDetected() && !cmakeExecutable.needsDevice() && !cmakeExecutable.isExecutableFile()) {
+        if (item->detectionSource().isAutoDetected() && cmakeExecutable.isLocal()
+            && !cmakeExecutable.isExecutableFile()) {
             qWarning() << QString("CMakeTool \"%1\" (%2) dropped since the command is not executable.")
                           .arg(cmakeExecutable.toUserOutput(), item->id().toString());
             continue;

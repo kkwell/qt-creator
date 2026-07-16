@@ -47,7 +47,7 @@ private:
 class File : public Node
 {
 public:
-    File(Prefix *prefix, const QString &_name, const QString &_alias = QString());
+    File(Prefix *prefix, const Utils::FilePath &_name, const QString &_alias = QString());
     void checkExistence();
     bool exists();
     void setExists(bool exists);
@@ -56,7 +56,7 @@ public:
     bool operator == (const File &other) const { return name == other.name; }
     bool operator != (const File &other) const { return name != other.name; }
 
-    QString name;
+    Utils::FilePath name;
     QString alias;
     QIcon icon;
 
@@ -107,7 +107,7 @@ public:
     void setFilePath(const Utils::FilePath &filePath) { m_filePath = filePath; }
     Utils::FilePath filePath() const { return m_filePath; }
 
-    Core::IDocument::OpenResult load();
+    Utils::Result<> load();
     bool save();
     QString contents() const;
     QString errorMessage() const { return m_error_message; }
@@ -119,7 +119,7 @@ public:
 
     int fileCount(int prefix_idx) const;
 
-    QString file(int prefix_idx, int file_idx) const;
+    Utils::FilePath file(int prefix_idx, int file_idx) const;
     QString alias(int prefix_idx, int file_idx) const;
 
     int addFile(int prefix_idx, const QString &file, int file_idx = -1);
@@ -133,17 +133,17 @@ public:
     bool replacePrefixAndLang(int prefix_idx, const QString &prefix, const QString &lang);
     void replaceAlias(int prefix_idx, int file_idx, const QString &alias);
 
-    bool renameFile(const QString &fileName, const QString &newFileName);
+    bool renameFile(const Utils::FilePath &fileName, const Utils::FilePath &newFileName);
 
-    void replaceFile(int pref_idx, int file_idx, const QString &file);
+    void replaceFile(int pref_idx, int file_idx, const Utils::FilePath &file);
     int indexOfPrefix(const QString &prefix, const QString &lang) const;
     int indexOfFile(int pref_idx, const QString &file) const;
 
     bool contains(const QString &prefix, const QString &lang, const QString &file = QString()) const;
     bool contains(int pref_idx, const QString &file) const;
 
-    QString relativePath(const QString &abs_path) const;
-    QString absolutePath(const QString &rel_path) const;
+    QString relativePath(const Utils::FilePath &abs_path) const;
+    Utils::FilePath absolutePath(const QString &rel_path) const;
 
     void orderList();
 
@@ -191,25 +191,21 @@ public:
 
     QList<QModelIndex> nonExistingFiles() const;
 
-protected:
-    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
-    bool setData(const QModelIndex &index, const QVariant &value, int role) override;
-
-public:
     Utils::FilePath filePath() const { return m_resource_file.filePath(); }
     void setFilePath(const Utils::FilePath &filePath) { m_resource_file.setFilePath(filePath); }
     void getItem(const QModelIndex &index, QString &prefix, QString &file) const;
 
     QString lang(const QModelIndex &index) const;
     QString alias(const QModelIndex &index) const;
-    QString file(const QModelIndex &index) const;
+    Utils::FilePath file(const QModelIndex &index) const;
 
     virtual QModelIndex addNewPrefix();
     virtual QModelIndex addFiles(const QModelIndex &idx, const QStringList &file_list);
     QStringList existingFilesSubtracted(int prefixIndex, const QStringList &fileNames) const;
     void addFiles(int prefixIndex, const QStringList &fileNames, int cursorFile, int &firstFile, int &lastFile);
     void insertPrefix(int prefixIndex, const QString &prefix, const QString &lang);
-    void insertFile(int prefixIndex, int fileIndex, const QString &fileName, const QString &alias);
+    void insertFile(
+        int prefixIndex, int fileIndex, const QString &fileName, const QString &alias);
     virtual void changePrefix(const QModelIndex &idx, const QString &prefix);
     virtual void changeLang(const QModelIndex &idx, const QString &lang);
     virtual void changeAlias(const QModelIndex &idx, const QString &alias);
@@ -217,17 +213,10 @@ public:
     QModelIndex getIndex(const QString &prefix, const QString &lang, const QString &file);
     QModelIndex prefixIndex(const QModelIndex &sel_idx) const;
 
-    QString absolutePath(const QString &path) const
-        { return m_resource_file.absolutePath(path); }
-    QString relativePath(const QString &path) const
+    QString relativePath(const Utils::FilePath &path) const
         { return m_resource_file.relativePath(path); }
 
-private:
-    QString lastResourceOpenDirectory() const;
-    bool renameFile(const QString &fileName, const QString &newFileName);
-
-public:
-    virtual Core::IDocument::OpenResult reload();
+    virtual Utils::Result<> reload();
     virtual bool save();
     QString contents() const { return m_resource_file.contents(); }
 
@@ -238,20 +227,24 @@ public:
 
     void orderList();
 
-private:
-    QMimeData *mimeData (const QModelIndexList & indexes) const override;
-
-    static bool iconFileExtension(const QString &path);
-    static QString resourcePath(const QString &prefix, const QString &file);
-
 signals:
     void dirtyChanged(bool b);
     void contentsChanged();
 
+protected:
+    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+    bool setData(const QModelIndex &index, const QVariant &value, int role) override;
+
 private:
+    QMimeData *mimeData (const QModelIndexList & indexes) const override;
+
+    bool renameFile(const Utils::FilePath &filePath, const Utils::FilePath &newFileName);
+
+    static bool hasIconFileExtension(const QString &path);
+    static QString resourcePath(const QString &prefix, const QString &file);
+
     ResourceFile m_resource_file;
     bool m_dirty = false;
-    QString m_lastResourceDir;
     QIcon m_prefixIcon;
 };
 

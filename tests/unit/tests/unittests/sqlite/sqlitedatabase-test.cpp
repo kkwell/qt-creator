@@ -13,7 +13,6 @@
 #include <utils/temporarydirectory.h>
 
 #include <QSignalSpy>
-#include <QTemporaryFile>
 #include <QVariant>
 
 #include <functional>
@@ -26,6 +25,8 @@ using Sqlite::ColumnType;
 using Sqlite::JournalMode;
 using Sqlite::OpenMode;
 using Sqlite::Table;
+
+constexpr auto sourceLocation = Sqlite::source_location::current();
 
 class SqliteDatabase : public ::testing::Test
 {
@@ -117,6 +118,29 @@ TEST_F(SqliteDatabase, normal_locked_database_can_be_reopened)
     ASSERT_NO_THROW((Sqlite::Database{path, JournalMode::Wal, Sqlite::LockingMode::Normal}));
 }
 
+TEST_F(SqliteDatabase, memory_database_is_always_uninitialized)
+{
+    Utils::PathString path{Utils::TemporaryDirectory::masterDirectoryPath()
+                           + "/database_exclusive_locked.db"};
+    Sqlite::Database database{path, JournalMode::Wal, Sqlite::LockingMode::Normal};
+
+    Sqlite::Database memoryDatabase{path, JournalMode::Memory, Sqlite::LockingMode::Normal};
+
+    ASSERT_FALSE(memoryDatabase.isInitialized());
+}
+
+TEST_F(SqliteDatabase, memory_database_does_not_checks_for_path)
+{
+    ASSERT_NO_THROW((Sqlite::Database{{}, JournalMode::Memory, Sqlite::LockingMode::Normal}));
+}
+
+TEST_F(SqliteDatabase, memory_database_has_memory_path)
+{
+    Sqlite::Database database{{}, JournalMode::Memory, Sqlite::LockingMode::Normal};
+
+    ASSERT_THAT(database.databaseFilePath(), ":memory:");
+}
+
 TEST_F(SqliteDatabase, set_openl_mode)
 {
     database.setOpenMode(OpenMode::ReadOnly);
@@ -200,37 +224,37 @@ TEST_F(SqliteDatabase, last_row_id)
 
 TEST_F(SqliteDatabase, deferred_begin)
 {
-    ASSERT_NO_THROW(transactionInterface.deferredBegin());
+    ASSERT_NO_THROW(transactionInterface.deferredBegin(sourceLocation));
 
-    transactionInterface.commit();
+    transactionInterface.commit(sourceLocation);
 }
 
 TEST_F(SqliteDatabase, immediate_begin)
 {
-    ASSERT_NO_THROW(transactionInterface.immediateBegin());
+    ASSERT_NO_THROW(transactionInterface.immediateBegin(sourceLocation));
 
-    transactionInterface.commit();
+    transactionInterface.commit(sourceLocation);
 }
 
 TEST_F(SqliteDatabase, exclusive_begin)
 {
-    ASSERT_NO_THROW(transactionInterface.exclusiveBegin());
+    ASSERT_NO_THROW(transactionInterface.exclusiveBegin(sourceLocation));
 
-    transactionInterface.commit();
+    transactionInterface.commit(sourceLocation);
 }
 
 TEST_F(SqliteDatabase, commit)
 {
-    transactionInterface.deferredBegin();
+    transactionInterface.deferredBegin(sourceLocation);
 
-    ASSERT_NO_THROW(transactionInterface.commit());
+    ASSERT_NO_THROW(transactionInterface.commit(sourceLocation));
 }
 
 TEST_F(SqliteDatabase, rollback)
 {
-    transactionInterface.deferredBegin();
+    transactionInterface.deferredBegin(sourceLocation);
 
-    ASSERT_NO_THROW(transactionInterface.rollback());
+    ASSERT_NO_THROW(transactionInterface.rollback(sourceLocation));
 }
 
 TEST_F(SqliteDatabase, set_update_hook_set)

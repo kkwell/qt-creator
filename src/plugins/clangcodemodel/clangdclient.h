@@ -46,10 +46,12 @@ class ClangdClient : public LanguageClient::Client
 {
     Q_OBJECT
 public:
-    ClangdClient(ProjectExplorer::Project *project,
+    ClangdClient(ProjectExplorer::BuildConfiguration *bc,
                  const Utils::FilePath &jsonDbDir,
                  const Utils::Id &id = {});
     ~ClangdClient() override;
+
+    static LanguageClient::LanguageFilter supportedLanguage();
 
     bool isFullyIndexed() const;
     QVersionNumber versionNumber() const;
@@ -127,7 +129,7 @@ signals:
     void indexingFinished();
     void foundReferences(const Utils::SearchResultItems &items);
     void findUsagesDone();
-    void helpItemGathered(const Core::HelpItem &helpItem);
+    void helpItemGathered(const Core::HelpItem &helpItem, const QString &toolTip);
     void highlightingResultsReady(const TextEditor::HighlightingResults &results,
                                   const Utils::FilePath &file);
     void proposalReady(TextEditor::IAssistProposal *proposal);

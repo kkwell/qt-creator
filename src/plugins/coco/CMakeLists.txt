@@ -1,7 +1,39 @@
 add_qtc_plugin(Coco
-  PLUGIN_DEPENDS Core LanguageClient
+  PLUGIN_DEPENDS
+    QtCreator::Core
+    QtCreator::LanguageClient
+    QtCreator::ProjectExplorer
+  DEPENDS
+    QtCreator::ExtensionSystem
   SOURCES
-    cocolanguageclient.cpp cocolanguageclient.h
+    Coco.json.in
+    buildsettings.cpp
+    buildsettings.h
+    cmakemodificationfile.cpp
+    cmakemodificationfile.h
+    cocobuildstep.cpp
+    cocobuildstep.h
+    cococommon.cpp
+    cococommon.h
+    cocolanguageclient.cpp
+    cocolanguageclient.h
     cocoplugin.cpp
+    cocoplugin.qrc
+    cocoplugin_global.h
+    cocopluginconstants.h
+    cocoprojectwidget.cpp
+    cocoprojectwidget.h
     cocotr.h
+    files/cocoplugin-clang.cmake
+    files/cocoplugin-gcc.cmake
+    files/cocoplugin-visualstudio.cmake
+    files/cocoplugin.cmake
+    files/cocoplugin.prf
+    globalsettings.cpp
+    globalsettings.h
+    images/SquishCoco_48x48.png
+    modificationfile.cpp
+    modificationfile.h
+    qmakefeaturefile.cpp
+    qmakefeaturefile.h
 )

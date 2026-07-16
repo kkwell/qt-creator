@@ -20,7 +20,6 @@
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
 #include <coreplugin/coreconstants.h>
-#include <coreplugin/coreplugintr.h>
 #include <coreplugin/findplaceholder.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/locator/locatormanager.h>
@@ -110,7 +109,7 @@ static bool isBookmarkable(const QUrl &url)
 
 static bool isTargetOfContextHelp(HelpWidget::WidgetStyle style)
 {
-    const Core::HelpManager::HelpViewerLocation option = LocalHelpManager::contextHelpOption();
+    const Core::HelpManager::HelpViewerLocation option = helpSettings().contextHelpOption();
     switch (style) {
     case HelpWidget::ModeWidget:
         return option == Core::HelpManager::HelpModeAlways;
@@ -166,15 +165,15 @@ static QMenu *createHelpTargetMenu(QWidget *parent)
     const auto addAction = [menu](Core::HelpManager::HelpViewerLocation option) {
         QAction *action = menu->addAction(helpTargetActionText(option));
         action->setCheckable(true);
-        action->setChecked(LocalHelpManager::contextHelpOption() == option);
+        action->setChecked(helpSettings().contextHelpOption() == option);
         QObject::connect(action, &QAction::triggered, menu, [option] {
-            LocalHelpManager::setContextHelpOption(option);
+            helpSettings().contextHelpOption.setValue(option);
         });
-        QObject::connect(LocalHelpManager::instance(),
-                         &LocalHelpManager::contextHelpOptionChanged,
+        QObject::connect(&helpSettings().contextHelpOption,
+                         &Utils::BaseAspect::changed,
                          menu,
-                         [action, option](Core::HelpManager::HelpViewerLocation newOption) {
-                             action->setChecked(newOption == option);
+                         [action, option] {
+                             action->setChecked(helpSettings().contextHelpOption() == option);
                          });
     };
     addAction(Core::HelpManager::SideBySideIfPossible);
@@ -240,21 +239,16 @@ HelpWidget::HelpWidget(const Core::Context &context, WidgetStyle style, QWidget 
         setAttribute(Qt::WA_QuitOnClose, false); // don't prevent Qt Creator from closing
     }
     if (style != SideBarWidget) {
-        m_toggleSideBarAction
-            = new QAction(Utils::Icons::TOGGLE_LEFT_SIDEBAR_TOOLBAR.icon(),
-                          Tr::tr(Core::Constants::TR_SHOW_LEFT_SIDEBAR), toolBar);
+        m_toggleSideBarAction = new QAction(
+            Utils::Icons::TOGGLE_LEFT_SIDEBAR_TOOLBAR.icon(), Core::msgShowLeftSideBar(), toolBar);
         m_toggleSideBarAction->setCheckable(true);
         m_toggleSideBarAction->setChecked(false);
         cmd = Core::ActionManager::registerAction(m_toggleSideBarAction,
                                                   Core::Constants::TOGGLE_LEFT_SIDEBAR, context);
-        connect(m_toggleSideBarAction,
-                &QAction::toggled,
-                m_toggleSideBarAction,
-                [this](bool checked) {
-                    m_toggleSideBarAction->setToolTip(
-                        ::Core::Tr::tr(checked ? Core::Constants::TR_HIDE_LEFT_SIDEBAR
-                                               : Core::Constants::TR_SHOW_LEFT_SIDEBAR));
-                });
+        connect(m_toggleSideBarAction, &QAction::toggled, m_toggleSideBarAction, [this](bool checked) {
+            m_toggleSideBarAction->setToolTip(
+                checked ? Core::msgHideLeftSideBar() : Core::msgShowLeftSideBar());
+        });
         addSideBar();
         m_toggleSideBarAction->setChecked(m_sideBar->isVisibleTo(this));
         connect(m_toggleSideBarAction, &QAction::triggered, m_sideBar, &Core::SideBar::setVisible);
@@ -348,14 +342,14 @@ HelpWidget::HelpWidget(const Core::Context &context, WidgetStyle style, QWidget 
     helpTargetButton->setProperty(Utils::StyleHelper::C_NO_ARROW, true);
     helpTargetButton->setPopupMode(QToolButton::DelayedPopup);
     helpTargetButton->setMenu(createHelpTargetMenu(helpTargetButton));
-    connect(LocalHelpManager::instance(), &LocalHelpManager::contextHelpOptionChanged, this,
+    connect(&helpSettings().contextHelpOption, &Utils::BaseAspect::changed, this,
             [this, helpTargetAction] {
                 helpTargetAction->setChecked(isTargetOfContextHelp(m_style));
             });
     connect(helpTargetAction, &QAction::triggered, this,
             [this, helpTargetAction, helpTargetButton](bool checked) {
                 if (checked) {
-                    LocalHelpManager::setContextHelpOption(optionForStyle(m_style));
+                    helpSettings().contextHelpOption.setValue(optionForStyle(m_style));
                 } else {
                     helpTargetAction->setChecked(true);
                     helpTargetButton->showMenu();
@@ -381,20 +375,16 @@ HelpWidget::HelpWidget(const Core::Context &context, WidgetStyle style, QWidget 
         if (QTC_GUARD(windowMenu)) {
             // reuse EditorManager constants to avoid a second pair of menu actions
             m_gotoPrevious = new QAction(this);
-            cmd = Core::ActionManager::registerAction(m_gotoPrevious,
-                                                      Core::Constants::GOTOPREVINHISTORY,
-                                                      context);
-            windowMenu->addAction(cmd, Core::Constants::G_WINDOW_NAVIGATE);
+            Core::ActionManager::registerAction(
+                m_gotoPrevious, Core::Constants::GOTOPREVINHISTORY, context);
             connect(m_gotoPrevious,
                     &QAction::triggered,
                     openPagesManager(),
                     &OpenPagesManager::gotoPreviousPage);
 
             m_gotoNext = new QAction(this);
-            cmd = Core::ActionManager::registerAction(m_gotoNext,
-                                                      Core::Constants::GOTONEXTINHISTORY,
-                                                      context);
-            windowMenu->addAction(cmd, Core::Constants::G_WINDOW_NAVIGATE);
+            Core::ActionManager::registerAction(
+                m_gotoNext, Core::Constants::GOTONEXTINHISTORY, context);
             connect(m_gotoNext,
                     &QAction::triggered,
                     openPagesManager(),
@@ -418,20 +408,17 @@ HelpWidget::HelpWidget(const Core::Context &context, WidgetStyle style, QWidget 
     if (QTC_GUARD(advancedMenu)) {
         // reuse TextEditor constants to avoid a second pair of menu actions
         m_scaleUp = new QAction(Tr::tr("Increase Font Size"), this);
-        cmd = Core::ActionManager::registerAction(m_scaleUp, TextEditor::Constants::INCREASE_FONT_SIZE,
-                                                  context);
+        cmd = Core::ActionManager::registerAction(m_scaleUp, Core::Constants::ZOOM_IN, context);
         connect(m_scaleUp, &QAction::triggered, this, &HelpWidget::scaleUp);
         advancedMenu->addAction(cmd, Core::Constants::G_EDIT_FONT);
 
         m_scaleDown = new QAction(Tr::tr("Decrease Font Size"), this);
-        cmd = Core::ActionManager::registerAction(m_scaleDown, TextEditor::Constants::DECREASE_FONT_SIZE,
-                                                  context);
+        cmd = Core::ActionManager::registerAction(m_scaleDown, Core::Constants::ZOOM_OUT, context);
         connect(m_scaleDown, &QAction::triggered, this, &HelpWidget::scaleDown);
         advancedMenu->addAction(cmd, Core::Constants::G_EDIT_FONT);
 
         m_resetScale = new QAction(Tr::tr("Reset Font Size"), this);
-        cmd = Core::ActionManager::registerAction(m_resetScale, TextEditor::Constants::RESET_FONT_SIZE,
-                                                  context);
+        cmd = Core::ActionManager::registerAction(m_resetScale, Core::Constants::ZOOM_RESET, context);
         connect(m_resetScale, &QAction::triggered, this, &HelpWidget::resetScale);
         advancedMenu->addAction(cmd, Core::Constants::G_EDIT_FONT);
     }
@@ -481,11 +468,7 @@ HelpWidget::HelpWidget(const Core::Context &context, WidgetStyle style, QWidget 
 
     QAction *reload = openMenu->addAction(Tr::tr("Reload"));
     connect(reload, &QAction::triggered, this, [this] {
-        const int index = m_viewerStack->currentIndex();
-        HelpViewer *previous = currentViewer();
-        insertViewer(index, previous->source());
-        removeViewerAt(index + 1);
-        setCurrentIndex(index);
+        reloadViewer(m_viewerStack->currentIndex());
     });
 
     if (style != ModeWidget) {
@@ -548,11 +531,11 @@ HelpWidget::~HelpWidget()
     Core::ActionManager::unregisterAction(m_backAction, Constants::HELP_PREVIOUS);
     Core::ActionManager::unregisterAction(m_addBookmarkAction, Constants::HELP_ADDBOOKMARK);
     if (m_scaleUp)
-        Core::ActionManager::unregisterAction(m_scaleUp, TextEditor::Constants::INCREASE_FONT_SIZE);
+        Core::ActionManager::unregisterAction(m_scaleUp, Core::Constants::ZOOM_IN);
     if (m_scaleDown)
-        Core::ActionManager::unregisterAction(m_scaleDown, TextEditor::Constants::DECREASE_FONT_SIZE);
+        Core::ActionManager::unregisterAction(m_scaleDown, Core::Constants::ZOOM_OUT);
     if (m_resetScale)
-        Core::ActionManager::unregisterAction(m_resetScale, TextEditor::Constants::RESET_FONT_SIZE);
+        Core::ActionManager::unregisterAction(m_resetScale, Core::Constants::ZOOM_RESET);
     delete m_openPagesManager;
 }
 
@@ -814,6 +797,12 @@ void HelpWidget::activateSideBarItem(const QString &id)
     m_sideBar->activateItem(id);
 }
 
+void HelpWidget::reloadAll()
+{
+    for (int i = 0; i < m_viewerStack->count(); ++i)
+        reloadViewer(i);
+}
+
 OpenPagesManager *HelpWidget::openPagesManager() const
 {
     return m_openPagesManager;
@@ -902,8 +891,10 @@ void HelpWidget::saveState() const
             }
         }
 
-        LocalHelpManager::setLastShownPages(currentPages);
-        LocalHelpManager::setLastSelectedTab(currentIndex());
+        helpSettings().lastShownPages.setValue(currentPages.join(Constants::ListSeparator),
+                                               Utils::BaseAspect::BeQuiet);
+        helpSettings().lastSelectedTab.setValue(currentIndex(), Utils::BaseAspect::BeQuiet);
+        helpSettings().writeSettings();
     }
 }
 
@@ -920,10 +911,20 @@ void HelpWidget::closeWindow()
         close();
 }
 
+void HelpWidget::reloadViewer(int index)
+{
+    const bool isCurrent = index == m_viewerStack->currentIndex();
+    HelpViewer *previous = viewerAt(index);
+    insertViewer(index, previous->source());
+    removeViewerAt(index + 1);
+    if (isCurrent)
+        setCurrentIndex(index);
+}
+
 void HelpWidget::updateCloseButton()
 {
     if (supportsPages()) {
-        const bool closeOnReturn = LocalHelpManager::returnOnClose() && m_style == ModeWidget;
+        const bool closeOnReturn = helpSettings().returnOnClose() && m_style == ModeWidget;
         const bool hasMultiplePages = m_viewerStack->count() > 1;
         m_closeAction->setEnabled(closeOnReturn || hasMultiplePages);
         m_gotoPrevious->setEnabled(hasMultiplePages);

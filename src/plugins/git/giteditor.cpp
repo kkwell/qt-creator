@@ -11,7 +11,10 @@
 #include "gittr.h"
 
 #include <coreplugin/icore.h>
+#include <coreplugin/vcsmanager.h>
+
 #include <texteditor/textdocument.h>
+
 #include <vcsbase/vcsbaseeditorconfig.h>
 #include <vcsbase/vcsoutputwindow.h>
 
@@ -19,14 +22,12 @@
 #include <utils/qtcassert.h>
 #include <utils/temporaryfile.h>
 
-#include <QDir>
-#include <QFileInfo>
 #include <QMenu>
 #include <QRegularExpression>
 #include <QSet>
 #include <QTextBlock>
-#include <QTextCodec>
 #include <QTextCursor>
+#include <QToolBar>
 
 #define CHANGE_PATTERN "\\b[a-f0-9]{7,40}\\b"
 
@@ -117,64 +118,58 @@ QString GitEditorWidget::changeUnderCursor(const QTextCursor &c) const
     return {};
 }
 
+int GitEditorWidget::originalLineUnderCursor(const QTextCursor &c) const
+{
+    const QTextBlock block = c.block();
+    const int currentLine = block.blockNumber() + 1;
+
+    if (currentLine < 1 || currentLine >= m_originalLines.size())
+        return currentLine;
+
+    const int originalLine = m_originalLines.at(currentLine);
+    return originalLine;
+};
+
 VcsBase::BaseAnnotationHighlighterCreator GitEditorWidget::annotationHighlighterCreator() const
 {
     return VcsBase::getAnnotationHighlighterCreator<GitAnnotationHighlighter>();
 }
 
-/* Remove the date specification from annotation, which is tabular:
-\code
-8ca887aa (author               YYYY-MM-DD HH:MM:SS <offset>  <line>)<content>
-\endcode */
-
-static QString sanitizeBlameOutput(const QString &b)
+/**
+ * Optionally remove path, author or date specification from annotation, which is tabular:
+ * \code
+ * 8ca887aa filepath <orig line> (author YYYY-MM-DD HH:MM:SS <offset> <line>) <content>
+ * \endcode
+ */
+static QString sanitizeBlameOutput(const QString &b, QVector<int> *lines)
 {
+    static const char pattern[] =
+        R"(^(\S+)\s(.+?)(\s+\d+)\s\((.*)\s+(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\s[+-]\d{4}).*?\)(.*)$)";
+    static const QRegularExpression re(pattern, QRegularExpression::MultilineOption);
+
     if (b.isEmpty())
         return b;
 
+    const bool omitPath = settings().omitAnnotationPath();
+    const bool omitAuthor = settings().omitAnnotationAuthor();
     const bool omitDate = settings().omitAnnotationDate();
-    const QChar space(' ');
-    const int parenPos = b.indexOf(')');
-    if (parenPos == -1)
-        return b;
 
-    int i = parenPos;
-    while (i >= 0 && b.at(i) != space)
-        --i;
-    while (i >= 0 && b.at(i) == space)
-        --i;
-    int stripPos = i + 1;
-    if (omitDate) {
-        int spaceCount = 0;
-        // i is now on timezone. Go back 3 spaces: That is where the date starts.
-        while (i >= 0) {
-            if (b.at(i) == space)
-                ++spaceCount;
-            if (spaceCount == 3) {
-                stripPos = i;
-                break;
-            }
-            --i;
-        }
-    }
+    lines->clear();
+    lines->append(0); // Editor lines are starting with one, so skip line with index zero
 
-    // Copy over the parts that have not changed into a new byte array
     QString result;
-    int prevPos = 0;
-    int pos = b.indexOf('\n', 0) + 1;
-    forever {
-        QTC_CHECK(prevPos < pos);
-        int afterParen = prevPos + parenPos;
-        result.append(b.mid(prevPos, stripPos));
-        result.append(b.mid(afterParen, pos - afterParen));
-        prevPos = pos;
-        QTC_CHECK(prevPos != 0);
-        if (pos == b.size())
-            break;
-
-        pos = b.indexOf('\n', pos) + 1;
-        if (pos == 0) // indexOf returned -1
-            pos = b.size();
+    QRegularExpressionMatchIterator i = re.globalMatch(b);
+    while (i.hasNext()) {
+        static const QString sep = "  ";
+        const QRegularExpressionMatch match = i.next();
+        const QString hash   = match.captured(1) + sep;
+        const QString line   = match.captured(3);
+        const QString path   = omitPath   ? QString() : match.captured(2) + line;
+        const QString author = omitAuthor ? QString() : match.captured(4) + sep;
+        const QString date   = omitDate   ? QString() : match.captured(5);
+        const QString code   = match.captured(6);
+        result.append(hash + path + "  (" + author + date + ")  " + code + "\n");
+        lines->append(line.trimmed().toInt());
     }
     return result;
 }
@@ -186,21 +181,11 @@ void GitEditorWidget::setPlainText(const QString &text)
     switch (contentType())
     {
     case LogOutput: {
-        AnsiEscapeCodeHandler handler;
-        const QList<FormattedText> formattedTextList = handler.parseText(FormattedText(text));
-
-        clear();
-        QTextCursor cursor = textCursor();
-        cursor.beginEditBlock();
-        for (const auto &formattedChunk : formattedTextList)
-            cursor.insertText(formattedChunk.text, formattedChunk.format);
-        cursor.endEditBlock();
-        document()->setModified(false);
-
+        AnsiEscapeCodeHandler::setTextInDocument(document(), text);
         return;
     }
     case AnnotateOutput:
-        modText = sanitizeBlameOutput(text);
+        modText = sanitizeBlameOutput(text, &m_originalLines);
         break;
     default:
         break;
@@ -224,15 +209,15 @@ void GitEditorWidget::applyDiffChunk(const DiffChunk& chunk, PatchAction patchAc
     if (patchAction == PatchAction::Revert)
         args << "--reverse";
     QString errorMessage;
-    if (gitClient().synchronousApplyPatch(baseDir, patchFile.fileName(), &errorMessage, args)) {
+    if (gitClient().synchronousApplyPatch(baseDir, patchFile.filePath().path(), &errorMessage, args)) {
         if (errorMessage.isEmpty())
-            VcsOutputWindow::append(Tr::tr("Chunk successfully staged"));
+            VcsOutputWindow::appendSilently(baseDir, Tr::tr("Chunk successfully staged"));
         else
-            VcsOutputWindow::append(errorMessage);
+            VcsOutputWindow::appendError(baseDir, errorMessage);
         if (patchAction == PatchAction::Revert)
             emit diffChunkReverted();
     } else {
-        VcsOutputWindow::appendError(errorMessage);
+        VcsOutputWindow::appendError(baseDir, errorMessage);
     }
 }
 
@@ -276,24 +261,24 @@ void GitEditorWidget::aboutToOpen(const FilePath &filePath, const FilePath &real
             || editorId == Git::Constants::GIT_REBASE_EDITOR_ID) {
         const FilePath gitPath = filePath.absolutePath();
         setSource(gitPath);
-        textDocument()->setCodec(gitClient().encoding(GitClient::EncodingCommit, gitPath));
+        textDocument()->setEncoding(gitClient().encoding(GitClient::EncodingCommit, gitPath));
     }
 }
 
 QString GitEditorWidget::decorateVersion(const QString &revision) const
 {
-    // Format verbose, SHA1 being first token
+    // Format verbose, hash being first token
     return gitClient().synchronousShortDescription(sourceWorkingDirectory(), revision);
 }
 
 QStringList GitEditorWidget::annotationPreviousVersions(const QString &revision) const
 {
+    const Utils::FilePath &repository = sourceWorkingDirectory();
     QStringList revisions;
     QString errorMessage;
-    // Get the SHA1's of the file.
-    if (!gitClient().synchronousParentRevisions(
-                sourceWorkingDirectory(), revision, &revisions, &errorMessage)) {
-        VcsOutputWindow::appendSilently(errorMessage);
+    // Get the hashes of the file.
+    if (!gitClient().synchronousParentRevisions(repository, revision, &revisions, &errorMessage)) {
+        VcsOutputWindow::appendSilently(repository, errorMessage);
         return {};
     }
     return revisions;
@@ -304,10 +289,10 @@ bool GitEditorWidget::isValidRevision(const QString &revision) const
     return gitClient().isValidRevision(revision);
 }
 
-void GitEditorWidget::addChangeActions(QMenu *menu, const QString &change)
+void GitEditorWidget::addChangeActions(QMenu *menu, const QString &change, int line)
 {
     if (contentType() != OtherContent)
-        GitClient::addChangeActions(menu, source(), change);
+        GitClient::addChangeActions(menu, source(), change, line);
 }
 
 QString GitEditorWidget::revisionSubject(const QTextBlock &inBlock) const
@@ -331,10 +316,11 @@ bool GitEditorWidget::supportChangeLinks() const
 
 FilePath GitEditorWidget::fileNameForLine(int line) const
 {
-    // 7971b6e7 share/qtcreator/dumper/dumper.py   (hjk
+    // 7971b6e7 share/qtcreator/dumper/dumper.py  228  (hjk
     QTextBlock block = document()->findBlockByLineNumber(line - 1);
     QTC_ASSERT(block.isValid(), return source());
-    static QRegularExpression renameExp("^" CHANGE_PATTERN "\\s+([^(]+)");
+    static const QRegularExpression renameExp(
+        "^" CHANGE_PATTERN "\\s+(.+?)(?:\\s+\\d+)?\\s{2,}\\(");
     const QRegularExpressionMatch match = renameExp.match(block.text());
     if (match.hasMatch()) {
         const QString fileName = match.captured(1).trimmed();
@@ -386,6 +372,36 @@ QString GitEditorWidget::authorValue() const
 bool GitEditorWidget::caseSensitive() const
 {
     return m_logFilterWidget && m_logFilterWidget->caseAction->isChecked();
+}
+
+void GitEditorWidget::jumpToDiffTarget(const FilePath &filePath,
+                                       int lineNumber,
+                                       const QTextBlock &contextBlock)
+{
+    const QString revision = revisionForLine(contextBlock.blockNumber());
+
+    const FilePath contextPath = !workingDirectory().isEmpty()
+            ? workingDirectory()
+            : sourceWorkingDirectory();
+    const FilePath topLevel = VcsManager::findTopLevelForDirectory(contextPath);
+    if (topLevel.isEmpty() || revision.isEmpty()) {
+        VcsBaseEditorWidget::jumpToDiffTarget(filePath, lineNumber, contextBlock);
+        return;
+    }
+
+    const FilePath relativePath = filePath.relativeChildPath(topLevel);
+    if (relativePath.isEmpty()) {
+        VcsBaseEditorWidget::jumpToDiffTarget(filePath, lineNumber, contextBlock);
+        return;
+    }
+
+    gitClient().resolveLine(topLevel,
+                            relativePath.toUrlishString(),
+                            lineNumber,
+                            revision,
+                            [this, filePath, lineNumber, contextBlock](int resolvedLine) {
+        VcsBaseEditorWidget::jumpToDiffTarget(filePath, resolvedLine > 0 ? resolvedLine : lineNumber, contextBlock);
+    });
 }
 
 } // Git::Internal

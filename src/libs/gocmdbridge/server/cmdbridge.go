@@ -10,9 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 )
@@ -22,9 +22,19 @@ var MagicPacketMarker = "-magic-packet-marker-"
 
 var globalWaitGroup sync.WaitGroup
 
+type issamefile struct {
+	Path1 string
+	Path2 string
+}
+
+type socketdatacmd struct {
+	Data []byte
+}
+
 type command struct {
-	Type string
-	Id   int
+	Type   string
+	Id     int
+	ConnId int // identifies a specific connection within a forward (socketdata, socketclose)
 
 	Stat stat
 	Exec execute
@@ -38,10 +48,15 @@ type command struct {
 	Error string
 
 	CopyFile copyfile
+	CreateSymLink createsymlink
 	RenameFile renamefile
 	SetPermissions setpermissions
 
 	Signal signal
+
+	IsSameFile issamefile
+
+	SocketData socketdatacmd
 }
 
 type errorresult struct {
@@ -49,6 +64,7 @@ type errorresult struct {
 	Id    int
 	Error string
 	ErrorType string
+	Errno int
 }
 
 type readlinkresult struct {
@@ -69,6 +85,30 @@ type freespaceresult struct {
 	FreeSpace uint64
 }
 
+type groupresult struct {
+	Type string
+	Id   int
+	Group string
+}
+
+type groupidresult struct {
+	Type string
+	Id   int
+	GroupId int
+}
+
+type ownerresult struct {
+	Type string
+	Id   int
+	Owner string
+}
+
+type owneridresult struct {
+	Type string
+	Id   int
+	OwnerId int
+}
+
 type voidresult struct {
 	Type string
 	Id   int
@@ -84,6 +124,11 @@ type environment struct {
 type copyfile struct {
 	Source string
 	Target string
+}
+
+type createsymlink struct {
+        Source string
+        SymLink string
 }
 
 type renamefile struct {
@@ -102,6 +147,12 @@ type createtempfileresult struct {
 	Path string
 }
 
+type createtempdirresult struct {
+	Type string
+	Id   int
+	Path string
+}
+
 type signal struct {
 	Type string
 	Id int
@@ -114,6 +165,12 @@ type signalsuccess struct {
 	Id int
 }
 
+type issamefileresult struct {
+	Type string
+	Id   int
+	Result bool
+}
+
 func readPacket(decoder *cbor.Decoder) (*command, error) {
 	cmd := new(command)
 	err := decoder.Decode(&cmd)
@@ -122,15 +179,14 @@ func readPacket(decoder *cbor.Decoder) (*command, error) {
 
 func sendError(out chan<- []byte, cmd command, err error) {
 	errMsg := err.Error()
-	errType := reflect.TypeOf(err).Elem().Name()
+	errType := reflect.TypeOf(err).Name()
+	errno := syscall.EINVAL
 	if e, ok := err.(*os.PathError); ok {
 		errMsg = e.Err.Error()
 		errType = reflect.TypeOf(e.Err).Name()
 
 		if erno, ok := e.Err.(syscall.Errno); ok {
-			if erno == syscall.ENOENT {
-				errType = "ENOENT"
-			}
+			errno = erno
 		}
 	}
 	result, _ := cbor.Marshal(errorresult{
@@ -138,6 +194,7 @@ func sendError(out chan<- []byte, cmd command, err error) {
 		Id:    cmd.Id,
 		Error: errMsg,
 		ErrorType: errType,
+		Errno: int(errno),
 	})
 	out <- result
 }
@@ -171,6 +228,42 @@ func processFreespace(cmd command, out chan<- []byte) {
 		Type:         "freespaceresult",
 		Id:           cmd.Id,
 		FreeSpace:    freeSpace(cmd.Path),
+	})
+	out <- result
+}
+
+func processGroup(cmd command, out chan<- []byte) {
+	result, _ := cbor.Marshal(groupresult{
+		Type:         "groupresult",
+		Id:           cmd.Id,
+		Group:        group(cmd.Path),
+	})
+	out <- result
+}
+
+func processGroupId(cmd command, out chan<- []byte) {
+	result, _ := cbor.Marshal(groupidresult{
+		Type:         "groupidresult",
+		Id:           cmd.Id,
+		GroupId:      groupId(cmd.Path),
+	})
+	out <- result
+}
+
+func processOwner(cmd command, out chan<- []byte) {
+	result, _ := cbor.Marshal(ownerresult{
+		Type:         "ownerresult",
+		Id:           cmd.Id,
+		Owner:        owner(cmd.Path),
+	})
+	out <- result
+}
+
+func processOwnerId(cmd command, out chan<- []byte) {
+	result, _ := cbor.Marshal(owneridresult{
+		Type:         "owneridresult",
+		Id:           cmd.Id,
+		OwnerId:      ownerId(cmd.Path),
 	})
 	out <- result
 }
@@ -256,11 +349,45 @@ func processCopyFile(cmd command, out chan<- []byte) {
 		return
 	}
 
+        // Copy over the execute permissions from the source.
+        // This emulates the behavior of CopyFS.
+        sourceStat, err := os.Stat(cmd.CopyFile.Source)
+        if err != nil {
+                sendError(out, cmd, err)
+                return
+        }
+        targetStat, err := os.Stat(cmd.CopyFile.Target)
+        if err != nil {
+                sendError(out, cmd, err)
+                return
+        }
+        const executeBits = os.FileMode(0111)
+        newMode := (targetStat.Mode() &^ executeBits) | (sourceStat.Mode() & executeBits)
+        err = os.Chmod(cmd.CopyFile.Target, newMode)
+        if err != nil {
+                sendError(out, cmd, err)
+                return
+        }
+
 	result, _ := cbor.Marshal(voidresult{
 		Type: "copyfileresult",
 		Id:   cmd.Id,
 	})
 	out <- result
+}
+
+func processCreateSymLink(cmd command, out chan<- []byte) {
+        err := os.Symlink(cmd.CreateSymLink.Source, cmd.CreateSymLink.SymLink)
+        if err != nil {
+                sendError(out, cmd, err)
+                return
+        }
+
+        result, _ := cbor.Marshal(voidresult{
+                Type: "createsymlinkresult",
+                Id:   cmd.Id,
+        })
+        out <- result
 }
 
 func processRenameFile(cmd command, out chan<- []byte) {
@@ -273,6 +400,29 @@ func processRenameFile(cmd command, out chan<- []byte) {
 	result, _ := cbor.Marshal(voidresult{
 		Type: "renamefileresult",
 		Id:   cmd.Id,
+	})
+	out <- result
+}
+
+func processCreateTempDir(cmd command, out chan<- []byte) {
+	dir := cmd.Path
+	template := ""
+
+	if _, err := os.Stat(cmd.Path); os.IsNotExist(err) {
+		dir = filepath.Dir(cmd.Path)
+		template = filepath.Base(cmd.Path)
+	}
+
+	tempDir, err := os.MkdirTemp(dir, template)
+	if err != nil {
+		sendError(out, cmd, err)
+		return
+	}
+
+	result, _ := cbor.Marshal(createtempdirresult{
+		Type: "createtempdirresult",
+		Id:   cmd.Id,
+		Path: tempDir,
 	})
 	out <- result
 }
@@ -343,17 +493,44 @@ func processSignal(cmd command, out chan<- []byte) {
 	out <- data
 }
 
+func processIsSameFile(cmd command, out chan<- []byte) {
+	fileInfo1, err1 := os.Stat(cmd.IsSameFile.Path1)
+	if err1 != nil {
+		sendError(out, cmd, err1)
+		return
+	}
 
-func processCommand(watcher *WatcherHandler, cmd command, out chan<- []byte) {
+	fileInfo2, err2 := os.Stat(cmd.IsSameFile.Path2)
+	if err2 != nil {
+		sendError(out, cmd, err2)
+		return
+	}
+	same := os.SameFile(fileInfo1, fileInfo2)
+
+	result, _ := cbor.Marshal(issamefileresult{
+		Type: "issamefileresult",
+		Id:   cmd.Id,
+		Result: same,
+	})
+	out <- result
+}
+
+func processCommand(watcher *WatcherHandler, socketHandler *SocketForwardHandler, cmd command, out chan<- []byte) {
 	defer globalWaitGroup.Done()
 
 	switch cmd.Type {
+	case "ping":
+		// just a keepalive
 	case "copyfile":
 		processCopyFile(cmd, out)
+        case "createsymlink":
+                processCreateSymLink(cmd, out)
 	case "createdir":
 		processCreateDir(cmd, out)
 	case "createtempfile":
 		processCreateTempFile(cmd, out)
+	case "createtempdir":
+		processCreateTempDir(cmd, out)
 	case "ensureexistingfile":
 		processEnsureExistingFile(cmd, out)
 	case "exec":
@@ -364,12 +541,20 @@ func processCommand(watcher *WatcherHandler, cmd command, out chan<- []byte) {
 		processFind(cmd, out)
 	case "freespace":
 		processFreespace(cmd, out)
+	case "group":
+		processGroup(cmd, out)
+	case "groupId":
+		processGroupId(cmd, out)
 	case "is":
 		processIs(cmd, out)
 	case "signal":
 		processSignal(cmd, out)
 	case "readfile":
 		processReadFile(cmd, out)
+	case "owner":
+		processOwner(cmd, out)
+	case "ownerid":
+		processOwnerId(cmd, out)
 	case "readlink":
 		processReadLink(cmd, out)
 	case "remove":
@@ -388,6 +573,16 @@ func processCommand(watcher *WatcherHandler, cmd command, out chan<- []byte) {
 		watcher.processAdd(cmd, out)
 	case "writefile":
 		processWriteFile(cmd, out)
+	case "issamefile":
+		processIsSameFile(cmd, out)
+	case "forwardlocalsocketserver":
+		socketHandler.processForward(cmd, out)
+	case "socketdata":
+		socketHandler.processData(cmd)
+	case "socketclose":
+		socketHandler.processClose(cmd)
+	case "stopforwardserver":
+		socketHandler.processStopForward(cmd, out)
 	case "error":
 		result, _ := cbor.Marshal(errorresult{
 			Type:  "error",
@@ -400,24 +595,10 @@ func processCommand(watcher *WatcherHandler, cmd command, out chan<- []byte) {
 	}
 }
 
-
-func sendEnvironment(out chan<- []byte) {
-	env := os.Environ()
-	result, _ := cbor.Marshal(environment{
-		Type: "environment",
-		Id: -1,
-		OsType: runtime.GOOS,
-		Env:  env,
-	})
-	out <- result
-}
-
-func executor(watcher *WatcherHandler, commands <-chan command, out chan<- []byte) {
-	sendEnvironment(out)
-
+func executor(watcher *WatcherHandler, socketHandler *SocketForwardHandler, commands <-chan command, out chan<- []byte) {
 	for cmd := range commands {
 		globalWaitGroup.Add(1)
-		go processCommand(watcher, cmd, out)
+		go processCommand(watcher, socketHandler, cmd, out)
 	}
 }
 
@@ -487,10 +668,35 @@ func writeMain(out *bufio.Writer) {
 	out.Flush()
 }
 
+func watchDogLoop(channel chan bool) {
+	watchDogTimeOut := 60 * time.Second
+	timer := time.NewTimer(watchDogTimeOut)
+
+	for {
+		select {
+		case turnOn := <-channel:
+		    if turnOn {
+				timer.Reset(watchDogTimeOut)
+			} else {
+				timer.Stop()
+			}
+		case <-timer.C:
+			// If we don't get a signal for one minute, we assume that the connection is dead.
+			fmt.Println("Watchdog timeout, exiting.")
+			os.Exit(100)
+		}
+	}
+}
+
 func readMain(test bool) {
 	commandChannel := make(chan command)
 	outputChannel := make(chan []byte)
+
+	watchDogChannel := make(chan bool)
+	go watchDogLoop(watchDogChannel)
+
 	watcher := NewWatcherHandler()
+	socketHandler := NewSocketForwardHandler()
 
 	var outputWG sync.WaitGroup
 	outputWG.Add(1)
@@ -506,7 +712,7 @@ func readMain(test bool) {
 	globalWaitGroup.Add(1)
 	go func() {
 		defer globalWaitGroup.Done()
-		executor(watcher, commandChannel, outputChannel)
+		executor(watcher, socketHandler, commandChannel, outputChannel)
 	}()
 
 	globalWaitGroup.Add(1)
@@ -528,8 +734,14 @@ func readMain(test bool) {
 	}
 	decoder := cbor.NewDecoder(in)
 	for {
+		_, err := in.Peek(1)
+		if err == io.EOF {
+		    time.Sleep(50*time.Millisecond)
+			continue
+		}
+		// disable watchdog while we are busy processing data
+		watchDogChannel <- false
 		cmd, err := readPacket(decoder)
-
 		if err == io.EOF {
 			close(commandChannel)
 			break
@@ -538,6 +750,8 @@ func readMain(test bool) {
 		} else {
 			commandChannel <- *cmd
 		}
+		// reset watchdog timer
+		watchDogChannel <- true
 	}
 
 	globalWaitGroup.Wait()
@@ -551,9 +765,23 @@ func readMain(test bool) {
 func main() {
 	test := flag.Bool("test", false, "test instead of read from stdin")
 	write := flag.Bool("write", false, "write instead of read data")
+	deleteOnStart := flag.Bool("deleteOnStart", false, "delete cmdbridge directly on startup")
+
 	flag.Parse()
 
-	if *write {
+	if *deleteOnStart {
+		executable, err := os.Executable()
+		if err == nil {
+			err := os.Remove(executable)
+			if (err != nil) {
+				fmt.Fprintln(os.Stderr, "deleteOnStart: Error deleting executable:", err)
+			}
+		} else {
+			fmt.Fprintln(os.Stderr, "deleteOnStart: Error getting executable path:", err)
+		}
+	}
+
+    if *write {
 		writeMain(bufio.NewWriter(os.Stdout))
 	} else {
 		readMain(*test)

@@ -16,7 +16,7 @@ def createFile(folder, filename):
     __createProjectOrFileSelectType__("  General", "Empty File", isProject = False)
     replaceEditorContent(waitForObject("{name='nameLineEdit' visible='1' "
                                        "type='Utils::FileNameValidatingLineEdit'}"), filename)
-    replaceEditorContent(waitForObject("{type='Utils::FancyLineEdit' unnamed='1' visible='1' "
+    replaceEditorContent(waitForObject("{type='Utils::FancyLineEdit' name='LineEdit' visible='1' "
                                        "window={type='ProjectExplorer::JsonWizard' unnamed='1' "
                                        "visible='1'}}"), folder)
     clickButton(waitForObject(":Next_QPushButton"))
@@ -32,6 +32,9 @@ def getOrModifyFilePatternsFor(mimeType, filter='', toBePresent=None):
     result = []
     invokeMenuItem("Edit", "Preferences...")
     mouseClick(waitForObjectItem(":Options_QListView", "Environment"))
+    # workaround preferences issue
+    if hasUnsavedSettings():
+        handleUnsavedSettings(SettingsAction.Abandon)
     clickOnTab(":Options.qt_tabwidget_tabbar_QTabBar", "MIME Types")
     replaceEditorContent(waitForObject("{name='filterLineEdit' type='Utils::FancyLineEdit' "
                                        "visible='1'}"), filter)
@@ -48,6 +51,7 @@ def getOrModifyFilePatternsFor(mimeType, filter='', toBePresent=None):
         return result
     waitFor('model.rowCount() == 1', 2000)
     if model.rowCount() == 1:
+        test.log("Checking %s" % dumpItems(model)[0])
         patternsLineEd = clickTableGetPatternLineEdit(mimeTypeTable, dumpItems(model)[0])
         patterns = str(patternsLineEd.text)
         if toBePresent:
@@ -56,7 +60,7 @@ def getOrModifyFilePatternsFor(mimeType, filter='', toBePresent=None):
             if toBeAddedSet:
                 patterns += ";*" + ";*".join(toBeAddedSet)
                 replaceEditorContent(patternsLineEd, patterns)
-                clickButton(":Options.OK_QPushButton")
+                clickButton(":Options.Apply_QPushButton")
                 try:
                     mBox = waitForObject("{type='QMessageBox' unnamed='1' visible='1' "
                                          "text?='Conflicting pattern*'}", 2000)
@@ -80,8 +84,8 @@ def getOrModifyFilePatternsFor(mimeType, filter='', toBePresent=None):
                 result = toSuffixArray(patterns)
         else:
             result = toSuffixArray(patterns)
-    elif model.rowCount() > 1:
-        test.warning("MIME type '%s' has ambiguous results." % mimeType)
+    elif model.rowCount() > 0:
+        test.warning("MIME type '%s' has unexpected results." % mimeType)
     else:
         test.log("MIME type '%s' seems to be unknown to the system." % mimeType)
     clickButton(":Options.Cancel_QPushButton")
@@ -97,9 +101,12 @@ def addHighlighterDefinition(*languages):
 
     test.log("Trying to download definitions...")
     clickButton("{text='Download Definitions' type='QPushButton' unnamed='1' visible='1'}")
-    updateStatus = "{name='updateStatus' type='QLabel' visible='1'}"
-    waitFor("object.exists(updateStatus)", 5000)
-    if waitFor('str(findObject(updateStatus).text) == "Download finished"', 20000):
+    # Download Definitions and wait for status label to update
+    groupBox = ("{container=':qt_tabwidget_stackedwidget_QScrollArea' "
+                "name='Syntax Highlight Definition Files' type='QGroupBox'}")
+    statusLabel = waitForObject("{name='updateStatus' type='QLabel' visible='1' container=%s}"
+                                 % groupBox)
+    if waitFor(lambda: str(statusLabel.text) == 'Highlighter updates: done', 20000):
         test.log("Received definitions")
         test.verify(os.path.exists(syntaxDirectory),
                     "Directory for syntax highlighter files exists.")
@@ -108,11 +115,9 @@ def addHighlighterDefinition(*languages):
                     "(Found %d)" % len(xmlFiles))
         # should we check output (General Messages) as well?
         test.passes("Updated definitions")
-        clickButton(":Options.OK_QPushButton")
         return map(os.path.exists, toBeChecked)
     else:
         test.fail("Could not update highlighter definitions")
-        clickButton(":Options.Cancel_QPushButton")
         return map(os.path.exists, toBeChecked)
 
 def hasSuffix(fileName, suffixPatterns):
@@ -121,13 +126,11 @@ def hasSuffix(fileName, suffixPatterns):
             return True
     return False
 
-def displayHintForHighlighterDefinition(fileName, patterns, lPatterns, added, addedLiterate):
+def displayHintForHighlighterDefinition(fileName, patterns, added):
     if hasSuffix(fileName, patterns):
         return not added
-    if hasSuffix(fileName, lPatterns):
-        return not addedLiterate
     test.warning("Got an unexpected suffix.", "Filename: %s, Patterns: %s"
-                 % (fileName, str(patterns + lPatterns)))
+                 % (fileName, str(patterns)))
     return False
 
 def main():
@@ -138,7 +141,6 @@ def main():
         return
 
     patterns = getOrModifyFilePatternsFor("text/x-haskell", "x-haskell")
-    lPatterns = getOrModifyFilePatternsFor("text/x-literate-haskell", "literate-haskell")
 
     folder = tempDir()
     filesToTest = ["Main.lhs", "Main.hs"]
@@ -150,7 +152,7 @@ def main():
         if editor == None:
             earlyExit("Something's really wrong! (did the UI change?)")
             return
-        expectHint = hasSuffix(current, patterns) or hasSuffix(current, lPatterns)
+        expectHint = hasSuffix(current, patterns)
         mssg = "Verifying whether hint for missing highlight definition is present. (expected: %s)"
         try:
             waitForObject("{text='%s' type='QLabel' unnamed='1' visible='1' "
@@ -166,9 +168,8 @@ def main():
 
     invokeMenuItem("File", "Save All")
     invokeMenuItem("File", "Close All")
-    addedHaskell, addedLiterateHaskell = addHighlighterDefinition("haskell", "literate-haskell")
-    patterns = getOrModifyFilePatternsFor('text/x-haskell', 'x-haskell', ['.hs'])
-    lPatterns = getOrModifyFilePatternsFor('text/x-literate-haskell', 'literate-haskell', ['.lhs'])
+    addedHaskell = addHighlighterDefinition("haskell")
+    patterns = getOrModifyFilePatternsFor('text/x-haskell', 'x-haskell', ['.hs', '.lhs'])
 
     home = os.path.expanduser("~")
     for current in filesToTest:
@@ -177,8 +178,7 @@ def main():
             recentFile = recentFile.replace(home, "~", 1)
         invokeMenuItem("File", "Recent Files", "%d | " + recentFile)
         editor = getEditorForFileSuffix(current)
-        display = displayHintForHighlighterDefinition(current, patterns, lPatterns,
-                                                      addedHaskell, addedLiterateHaskell)
+        display = displayHintForHighlighterDefinition(current, patterns, addedHaskell)
         try:
             waitForObject("{text='%s' type='QLabel' unnamed='1' visible='1' "
                           "window=':Qt Creator_Core::Internal::MainWindow'}" % miss, 2000)

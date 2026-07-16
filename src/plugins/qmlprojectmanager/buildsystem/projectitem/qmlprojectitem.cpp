@@ -5,8 +5,12 @@
 
 #include <QDir>
 #include <QJsonDocument>
+#include <QLoggingCategory>
 
 #include "converters.h"
+
+#include "../../qmlproject.h"
+#include "../../qmlprojectconstants.h"
 
 #include <utils/algorithm.h>
 #include <utils/qtcassert.h>
@@ -18,6 +22,8 @@ namespace QmlProjectManager {
 
 //#define REWRITE_PROJECT_FILE_IN_JSON_FORMAT
 
+Q_LOGGING_CATEGORY(log, "QmlProjectManager.QmlProjectItem", QtCriticalMsg)
+
 QmlProjectItem::QmlProjectItem(const Utils::FilePath &filePath, const bool skipRewrite)
     : m_projectFile(filePath)
     , m_skipRewrite(skipRewrite)
@@ -28,13 +34,24 @@ QmlProjectItem::QmlProjectItem(const Utils::FilePath &filePath, const bool skipR
 
 bool QmlProjectItem::initProjectObject()
 {
+    if (m_projectFile.endsWith(Constants::fakeProjectName)) {
+        auto uiFile = m_projectFile.toUrlishString();
+        uiFile.remove(Constants::fakeProjectName);
+
+        auto parentDir = Utils::FilePath::fromString(uiFile).parentDir();
+        m_projectFile = parentDir.pathAppended(Constants::fakeProjectName);
+        m_project = Converters::qmlProjectTojson({});
+
+        return true;
+    }
+
     auto contents = m_projectFile.fileContents();
     if (!contents) {
-        qWarning() << "Cannot open project file. Path:" << m_projectFile.fileName();
+        qCWarning(log) << "Cannot open project file. Path:" << m_projectFile.fileName();
         return false;
     }
 
-    QString fileContent{QString::fromUtf8(contents.value())};
+    QString fileContent{QString::fromUtf8(*contents)};
     QJsonObject rootObj;
     QJsonParseError parseError;
 
@@ -50,10 +67,10 @@ bool QmlProjectItem::initProjectObject()
 
     if (rootObj.isEmpty()) {
         if (parseError.error != QJsonParseError::NoError) {
-            qWarning() << "Cannot parse the json formatted project file. Error:"
-                       << parseError.errorString();
+            qCWarning(log) << "Cannot parse the json formatted project file. Error:"
+                           << parseError.errorString();
         } else {
-            qWarning() << "Cannot convert QmlProject to Json.";
+            qCWarning(log) << "Cannot convert QmlProject to Json.";
         }
         return false;
     }
@@ -80,6 +97,11 @@ void QmlProjectItem::setupFileFilters()
                     &FileFilterItem::filesChanged,
                     this,
                     &QmlProjectItem::filesChanged);
+
+            connect(fileFilterItem.get(),
+                    &FileFilterItem::fileModified,
+                    this,
+                    &QmlProjectItem::fileModified);
 #endif
             m_content.push_back(std::move(fileFilterItem));
         };
@@ -96,16 +118,17 @@ void QmlProjectItem::setupFileFilters()
                        [](const QJsonValue &value) { return value.toString(); });
 
         const QString directory = fileGroup["directory"].toString() == ""
-                                      ? m_projectFile.parentDir().toString()
+                                      ? m_projectFile.parentDir().toUrlishString()
                                       : fileGroup["directory"].toString();
         Utils::FilePath groupDir = Utils::FilePath::fromString(directory);
         std::unique_ptr<FileFilterItem> fileFilterItem{new FileFilterItem};
         fileFilterItem->setRecursive(false);
         fileFilterItem->setPathsProperty(filesArr);
-        fileFilterItem->setDefaultDirectory(m_projectFile.parentDir().toString());
-        fileFilterItem->setDirectory(groupDir.toString());
+        fileFilterItem->setDefaultDirectory(m_projectFile.parentDir().toUrlishString());
+        fileFilterItem->setDirectory(groupDir.toUrlishString());
 #ifndef TESTS_ENABLED_QMLPROJECTITEM
         connect(fileFilterItem.get(), &FileFilterItem::filesChanged, this, &QmlProjectItem::filesChanged);
+        connect(fileFilterItem.get(), &FileFilterItem::fileModified, this, &QmlProjectItem::fileModified);
 #endif
         m_content.push_back(std::move(fileFilterItem));
     };
@@ -198,6 +221,16 @@ void QmlProjectItem::setImportPaths(const QStringList &importPaths)
     insertAndUpdateProjectFile("importPaths", QJsonArray::fromStringList(importPaths));
 }
 
+QStringList QmlProjectItem::mockImports() const
+{
+    return m_project["mockImports"].toVariant().toStringList();
+}
+
+void QmlProjectItem::setMockImports(const QStringList &paths)
+{
+    insertAndUpdateProjectFile("mockImports", QJsonArray::fromStringList(paths));
+}
+
 void QmlProjectItem::addImportPath(const QString &importPath)
 {
     QJsonArray importPaths = m_project["importPaths"].toArray();
@@ -207,6 +240,50 @@ void QmlProjectItem::addImportPath(const QString &importPath)
 
     importPaths.append(importPath);
     insertAndUpdateProjectFile("importPaths", importPaths);
+}
+
+QStringList QmlProjectItem::qmlProjectModules() const
+{
+    return m_project["qmlprojectDependencies"].toVariant().toStringList();
+}
+
+void QmlProjectItem::setQmlProjectModules(const QStringList &paths)
+{
+    if (qmlProjectModules() == paths)
+        return;
+
+    auto jsonArray = QJsonArray::fromStringList(paths);
+    updateFileGroup("Module", "files", jsonArray);
+    insertAndUpdateProjectFile("qmlprojectDependencies", jsonArray);
+}
+
+void QmlProjectItem::addQmlProjectModule(const QString &modulePath)
+{
+    QJsonArray qmlModules = m_project["qmlprojectDependencies"].toArray();
+
+    if (qmlModules.contains(modulePath))
+        return;
+
+    qmlModules.append(modulePath);
+    updateFileGroup("Module", "files", qmlModules);
+    insertAndUpdateProjectFile("qmlprojectDependencies", qmlModules);
+}
+
+void QmlProjectItem::addFileFilter(const Utils::FilePath &path)
+{
+    QJsonArray filters = m_project["fileGroups"].toArray();
+    auto pathString = path.path();
+    auto iter = std::ranges::find_if(filters, [pathString](const QJsonValue &elem) {
+        return elem["directory"].toString() == pathString;
+    });
+
+    if (iter == filters.end()) {
+        QJsonObject newFilter;
+        newFilter["directory"] = pathString;
+        newFilter["type"] = "Qml";
+        filters.prepend(newFilter);
+        insertAndUpdateProjectFile("fileGroups", filters);
+    }
 }
 
 QStringList QmlProjectItem::fileSelectors() const
@@ -415,8 +492,33 @@ void QmlProjectItem::addShaderToolFile(const QString &file)
 void QmlProjectItem::insertAndUpdateProjectFile(const QString &key, const QJsonValue &value)
 {
     m_project[key] = value;
+
     if (!m_skipRewrite)
         m_projectFile.writeFileContents(Converters::jsonToQmlProject(m_project).toUtf8());
+}
+
+void QmlProjectItem::updateFileGroup(const QString &groupType,
+                                     const QString &property,
+                                     const QJsonValue &value)
+{
+    auto arr = m_project["fileGroups"].toArray();
+    auto found = std::find_if(arr.begin(), arr.end(), [groupType](const QJsonValue &elem) {
+        return elem["type"].toString() == groupType;
+    });
+    if (found == arr.end()) {
+        qCWarning(log) << "fileGroups - unable to find group:" << groupType;
+        return;
+    }
+
+    auto obj = found->toObject();
+    obj[property] = value;
+
+    arr.removeAt(std::distance(arr.begin(), found));
+    arr.append(obj);
+    m_project["fileGroups"] = arr;
+
+    m_content.clear();
+    setupFileFilters();
 }
 
 bool QmlProjectItem::enableCMakeGeneration() const
@@ -428,6 +530,30 @@ void QmlProjectItem::setEnableCMakeGeneration(bool enable)
 {
     QJsonObject obj = m_project["deployment"].toObject();
     obj["enableCMakeGeneration"] = enable;
+    insertAndUpdateProjectFile("deployment", obj);
+}
+
+bool QmlProjectItem::enablePythonGeneration() const
+{
+    return m_project["deployment"].toObject()["enablePythonGeneration"].toBool();
+}
+
+void QmlProjectItem::setEnablePythonGeneration(bool enable)
+{
+    QJsonObject obj = m_project["deployment"].toObject();
+    obj["enablePythonGeneration"] = enable;
+    insertAndUpdateProjectFile("deployment", obj);
+}
+
+bool QmlProjectItem::standaloneApp() const
+{
+    return m_project["deployment"].toObject()["standaloneApp"].toBool(true);
+}
+
+void QmlProjectItem::setStandaloneApp(bool value)
+{
+    QJsonObject obj = m_project["deployment"].toObject();
+    obj["standaloneApp"] = value;
     insertAndUpdateProjectFile("deployment", obj);
 }
 

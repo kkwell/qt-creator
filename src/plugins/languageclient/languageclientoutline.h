@@ -6,13 +6,9 @@
 #include "languageclient_global.h"
 
 #include <languageserverprotocol/lsptypes.h>
-#include <texteditor/ioutlinewidget.h>
 #include <utils/treemodel.h>
 
-namespace TextEditor {
-class TextDocument;
-class BaseTextEditor;
-} // namespace TextEditor
+namespace TextEditor { class BaseTextEditor; }
 namespace Utils { class TreeViewComboBox; }
 
 namespace LanguageClient {
@@ -22,6 +18,10 @@ class LANGUAGECLIENT_EXPORT LanguageClientOutlineItem
     : public Utils::TypedTreeItem<LanguageClientOutlineItem>
 {
 public:
+    enum ItemDataRoles {
+        AnnotationRole = Qt::UserRole + 1,
+    };
+
     LanguageClientOutlineItem() = default;
     LanguageClientOutlineItem(const LanguageServerProtocol::SymbolInformation &info);
     LanguageClientOutlineItem(Client *client, const LanguageServerProtocol::DocumentSymbol &info);
@@ -33,6 +33,8 @@ public:
         return m_range.contains(pos);
     }
 
+    bool valid() const { return m_range.isValid(); }
+
 protected:
     // TreeItem interface
     QVariant data(int column, int role) const override;
@@ -41,29 +43,19 @@ protected:
     QString name() const { return m_name; }
     QString detail() const { return m_detail; }
     int type() const { return m_type; }
+    QList<LanguageServerProtocol::SymbolTag> tags() const { return m_tags; }
 
 private:
-    Client * const m_client = nullptr;
     QString m_name;
     QString m_detail;
     LanguageServerProtocol::Range m_range;
     LanguageServerProtocol::Range m_selectionRange;
     int m_type = -1;
+    QList<LanguageServerProtocol::SymbolTag> m_tags;
 };
 
-class Client;
+Utils::TreeViewComboBox *createOutlineComboBox(Client *client, TextEditor::BaseTextEditor *editor);
 
-class LanguageClientOutlineWidgetFactory : public TextEditor::IOutlineWidgetFactory
-{
-public:
-    using IOutlineWidgetFactory::IOutlineWidgetFactory;
-
-    static Utils::TreeViewComboBox *createComboBox(Client *client, TextEditor::BaseTextEditor *editor);
-    // IOutlineWidgetFactory interface
-public:
-    bool supportsEditor(Core::IEditor *editor) const override;
-    TextEditor::IOutlineWidget *createWidget(Core::IEditor *editor) override;
-    bool supportsSorting() const override { return true; }
-};
+void setupLanguageClientOutline();
 
 } // namespace LanguageClient

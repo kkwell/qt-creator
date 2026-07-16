@@ -8,14 +8,13 @@
 #include "xmlprotocol/error.h"
 
 #include <coreplugin/dialogs/ioptionspage.h>
-
-#include <debugger/analyzer/analyzericons.h>
-#include <debugger/debuggertr.h>
+#include <coreplugin/documentmanager.h>
 
 #include <utils/algorithm.h>
 #include <utils/fileutils.h>
 #include <utils/layoutbuilder.h>
 #include <utils/qtcassert.h>
+#include <utils/shutdownguard.h>
 #include <utils/utilsicons.h>
 
 #include <QListView>
@@ -59,19 +58,22 @@ void SuppressionAspect::addSuppressionFile(const FilePath &suppression)
 
 void SuppressionAspectPrivate::slotAddSuppression()
 {
-    const FilePaths files =
-            FileUtils::getOpenFilePaths(nullptr,
-                      Tr::tr("Valgrind Suppression Files"),
-                      globalSettings().lastSuppressionDirectory(),
-                      Tr::tr("Valgrind Suppression File (*.supp);;All Files (*)"));
+    const FilePaths files = FileUtils::getOpenFilePaths(
+        Tr::tr("Valgrind Suppression Files"),
+        globalSettings().lastSuppressionDirectory(),
+        Tr::tr("Valgrind Suppression File (*.supp)") + ";;"
+            + Core::DocumentManager::allFilesFilterString());
     //dialog.setHistory(conf->lastSuppressionDialogHistory());
     if (!files.isEmpty()) {
         for (const FilePath &file : files)
-            m_model.appendRow(new QStandardItem(file.toString()));
+            m_model.appendRow(new QStandardItem(file.toUrlishString()));
+        q->guiToVolatileValue();
         globalSettings().lastSuppressionDirectory.setValue(files.at(0).absolutePath());
         //conf->setLastSuppressionDialogHistory(dialog.history());
         if (!isGlobal)
             q->apply();
+        else
+            markSettingsDirty();
     }
 }
 
@@ -91,9 +93,12 @@ void SuppressionAspectPrivate::slotRemoveSuppression()
 
     for (int row : std::as_const(rows))
         m_model.removeRow(row);
+    q->guiToVolatileValue();
 
     if (!isGlobal)
         q->apply();
+    else
+        markSettingsDirty();
 }
 
 void SuppressionAspectPrivate::slotSuppressionSelectionChanged()
@@ -157,20 +162,35 @@ void SuppressionAspect::toMap(Store &map) const
     BaseAspect::toMap(map);
 }
 
-bool SuppressionAspect::guiToBuffer()
+bool SuppressionAspect::guiToVolatileValue()
 {
-    const FilePaths old = m_buffer;
-    m_buffer.clear();
+    const FilePaths old = m_volatileValue;
+    m_volatileValue.clear();
     for (int i = 0; i < d->m_model.rowCount(); ++i)
-        m_buffer.append(FilePath::fromUserInput(d->m_model.item(i)->text()));
-    return m_buffer != old;
+        m_volatileValue.append(FilePath::fromUserInput(d->m_model.item(i)->text()));
+    return m_volatileValue != old;
 }
 
-void SuppressionAspect::bufferToGui()
+void SuppressionAspect::volatileValueToGui()
 {
     d->m_model.clear();
-    for (const FilePath &file : m_buffer)
+    for (const FilePath &file : std::as_const(m_volatileValue))
         d->m_model.appendRow(new QStandardItem(file.toUserOutput()));
+}
+
+QVariant SuppressionAspect::variantValue() const
+{
+    return m_value.toSettings();
+}
+
+void SuppressionAspect::setVariantValue(const QVariant &value, Announcement howToAnnounce)
+{
+    setValue(FilePaths::fromSettings(value), howToAnnounce);
+}
+
+QVariant SuppressionAspect::volatileVariantValue() const
+{
+    return m_volatileValue.toSettings();
 }
 
 //////////////////////////////////////////////////////////////////
@@ -397,9 +417,20 @@ ValgrindSettings::ValgrindSettings(bool global)
         readSettings();
 }
 
+QString ValgrindSettings::leakCheckOnFinishOptionString() const
+{
+    switch (leakCheckOnFinish()) {
+    case ValgrindSettings::LeakCheckOnFinishNo: return "no";
+    case ValgrindSettings::LeakCheckOnFinishYes: return "full";
+    case ValgrindSettings::LeakCheckOnFinishSummaryOnly:
+    default: return "summary";
+    }
+    return {};
+}
+
 ValgrindSettings &globalSettings()
 {
-    static ValgrindSettings theSettings{true};
+    static GuardedObject<ValgrindSettings> theSettings{true};
     return theSettings;
 }
 
@@ -413,8 +444,6 @@ public:
         setId(ANALYZER_VALGRIND_SETTINGS);
         setDisplayName(Tr::tr("Valgrind"));
         setCategory("T.Analyzer");
-        setDisplayCategory(::Debugger::Tr::tr("Analyzer"));
-        setCategoryIconPath(Analyzer::Icons::SETTINGSCATEGORY_ANALYZER);
         setSettingsProvider([] { return &globalSettings(); });
     }
 };

@@ -42,14 +42,14 @@
 #include <QPixmapCache>
 #include <QRawFont>
 #include <QRegularExpression>
-#include <QScrollBar>
 #include <QTextItem>
 #include <QTextLayout>
 #include <QToolTip>
 
+using namespace Core;
+using namespace QtTaskTree;
 using namespace Utils;
 using namespace Utils::Terminal;
-using namespace Core;
 
 namespace Terminal {
 
@@ -67,6 +67,8 @@ TerminalWidget::TerminalWidget(QWidget *parent, const OpenTerminalParameters &op
     surfaceChanged();
 
     setAllowBlinkingCursor(settings().allowBlinkingCursor());
+    enableMouseTracking(settings().enableMouseTracking());
+    surface()->enableLiveReflow(settings().enableLiveReflow());
 
     connect(&settings(), &AspectContainer::applied, this, [this] {
         // Setup colors first, as setupFont will redraw the screen.
@@ -74,6 +76,8 @@ TerminalWidget::TerminalWidget(QWidget *parent, const OpenTerminalParameters &op
         setupFont();
         configBlinkTimer();
         setAllowBlinkingCursor(settings().allowBlinkingCursor());
+        enableMouseTracking(settings().enableMouseTracking());
+        surface()->enableLiveReflow(settings().enableLiveReflow());
     });
 }
 
@@ -87,30 +91,30 @@ void TerminalWidget::setupPty()
     if (shellCommand.executable().isRootPath()) {
         writeToTerminal((Tr::tr("Connecting...") + "\r\n").toUtf8(), true);
         // We still have to find the shell to start ...
-        m_findShellWatcher.reset(new QFutureWatcher<expected_str<FilePath>>());
-        connect(m_findShellWatcher.get(), &QFutureWatcher<FilePath>::finished, this, [this] {
-            const expected_str<FilePath> result = m_findShellWatcher->result();
+        using ResultType = Result<FilePath>;
+        const auto onSetup = [exec = shellCommand.executable()](Async<ResultType> &task) {
+            task.setConcurrentCallData([exec]() -> Result<FilePath> {
+                const Result<FilePath> result = Utils::Terminal::defaultShellForDevice(exec);
+                if (result && !result->isExecutableFile())
+                    return make_unexpected(
+                        Tr::tr("\"%1\" is not executable.").arg(result->toUserOutput()));
+                return result;
+            });
+        };
+        const auto onDone = [this](const Async<ResultType> &task) {
+            const Result<FilePath> result = task.result();
             if (result) {
                 m_openParameters.shellCommand->setExecutable(*result);
-                restart(m_openParameters);
-                return;
+                return DoneResult::Success;
             }
-
             writeToTerminal(("\r\n\033[31m"
                              + Tr::tr("Failed to start shell: %1").arg(result.error()) + "\r\n")
-                                .toUtf8(),
-                            true);
-        });
-
-        m_findShellWatcher->setFuture(Utils::asyncRun([shellCommand]() -> expected_str<FilePath> {
-            const expected_str<FilePath> result = Utils::Terminal::defaultShellForDevice(
-                shellCommand.executable());
-            if (result && !result->isExecutableFile())
-                return make_unexpected(
-                    Tr::tr("\"%1\" is not executable.").arg(result->toUserOutput()));
-            return result;
-        }));
-
+                                .toUtf8(), true);
+            return DoneResult::Error;
+        };
+        const auto onTreeDone = [this] { restart(m_openParameters); };
+        m_taskTreeRunner.start({AsyncTask<ResultType>(onSetup, onDone)}, {},
+                               onTreeDone, CallDoneFlag::OnSuccess);
         return;
     }
 
@@ -128,8 +132,6 @@ void TerminalWidget::setupPty()
     env.setFallback("COMMAND_MODE", "unix2003");
     env.setFallback("INIT_CWD", QCoreApplication::applicationDirPath());
 
-    // For git bash on Windows
-    env.prependOrSetPath(shellCommand.executable().parentDir());
     if (env.hasKey("CLINK_NOAUTORUN"))
         env.unset("CLINK_NOAUTORUN");
 
@@ -212,7 +214,7 @@ void TerminalWidget::setupFont()
 {
     QFont f;
     f.setFixedPitch(true);
-    f.setFamily(settings().font());
+    f.setFamily(settings().fontFamily());
     f.setPointSize(settings().fontSize());
 
     setFont(f);
@@ -262,14 +264,16 @@ void TerminalWidget::registerShortcut(Command *cmd)
 
 void TerminalWidget::setupActions()
 {
-    auto make_registered = [this](ActionBuilder &actionBuilder) {
-        registerShortcut(actionBuilder.command());
+    auto make_registered = [this](ActionBuilder &actionBuilder, bool registerInShortcutMap = true) {
+        if (registerInShortcutMap)
+            registerShortcut(actionBuilder.command());
 
-        return RegisteredAction(actionBuilder.contextAction(),
-                                [cmdId = actionBuilder.command()->id()](QAction *a) {
-                                    ActionManager::unregisterAction(a, cmdId);
-                                    delete a;
-                                });
+        const auto unregister = [cmdId = actionBuilder.command()->id()](QAction *a) {
+            ActionManager::unregisterAction(a, cmdId);
+            delete a;
+        };
+
+        return RegisteredAction(actionBuilder.contextAction(), unregister);
     };
 
     ActionBuilder copyAction(this, Constants::COPY);
@@ -282,11 +286,11 @@ void TerminalWidget::setupActions()
     pasteAction.addOnTriggered(this, &TerminalWidget::pasteFromClipboard);
     m_paste = make_registered(pasteAction);
 
-    ActionBuilder(this, Core::Constants::CLOSE)
-        .setContext(m_context)
+    ActionBuilder closeTerminalAction(this, Core::Constants::CLOSE);
+    closeTerminalAction.setContext(m_context)
         .addOnTriggered(this, &TerminalWidget::closeTerminal)
         .setText(Tr::tr("Close Terminal"));
-    // We do not register the close action, as we want it to be blocked if the keyboard is locked.
+    m_closeTerminal = make_registered(closeTerminalAction, false);
 
     ActionBuilder clearTerminalAction(this, Constants::CLEAR_TERMINAL);
     clearTerminalAction.setContext(m_context);
@@ -313,6 +317,16 @@ void TerminalWidget::setupActions()
     selectAllAction.addOnTriggered(this, &TerminalWidget::selectAll);
     m_selectAll = make_registered(selectAllAction);
 
+    ActionBuilder deleteWordLeft(this, Constants::DELETE_WORD_LEFT);
+    deleteWordLeft.setContext(m_context);
+    deleteWordLeft.addOnTriggered(this, [this]() { writeToPty("\x17"); });
+    m_deleteWordLeft = make_registered(deleteWordLeft);
+
+    ActionBuilder deleteLineLeft(this, Constants::DELETE_LINE_LEFT);
+    deleteLineLeft.setContext(m_context);
+    deleteLineLeft.addOnTriggered(this, [this]() { writeToPty("\x15"); });
+    m_deleteLineLeft = make_registered(deleteLineLeft);
+
     // Ctrl+Q, the default "Quit" shortcut, is a useful key combination in a shell.
     // It can be used in combination with Ctrl+S to pause a program, and resume it with Ctrl+Q.
     // So we unlock the EXIT command only for macOS where the default is Cmd+Q to quit.
@@ -336,10 +350,13 @@ qint64 TerminalWidget::writeToPty(const QByteArray &data)
     return data.size();
 }
 
-void TerminalWidget::resizePty(QSize newSize)
+bool TerminalWidget::resizePty(QSize newSize)
 {
-    if (m_process && m_process->ptyData() && m_process->isRunning())
-        m_process->ptyData()->resize(newSize);
+    if (!m_process || !m_process->ptyData() || !m_process->isRunning())
+        return false;
+
+    m_process->ptyData()->resize(newSize);
+    return true;
 }
 
 void TerminalWidget::surfaceChanged()
@@ -372,8 +389,8 @@ void TerminalWidget::surfaceChanged()
     connect(m_shellIntegration.get(),
             &ShellIntegration::currentDirChanged,
             this,
-            [this](const QString &currentDir) {
-                m_cwd = FilePath::fromUserInput(currentDir);
+            [this](const FilePath &currentDir) {
+                m_cwd = currentDir;
                 emit cwdChanged(m_cwd);
             });
 }
@@ -381,12 +398,10 @@ void TerminalWidget::surfaceChanged()
 QString TerminalWidget::title() const
 {
     const FilePath dir = cwd();
-    QString title = m_title;
-    if (title.isEmpty())
-        title = currentCommand().isEmpty() ? shellName() : currentCommand().executable().fileName();
-    if (dir.isEmpty())
-        return title;
-    return title + " - " + dir.fileName();
+    QString currentExecutable = currentCommand().isEmpty()
+                                    ? shellName()
+                                    : currentCommand().executable().fileName();
+    return Utils::joinStrings({currentExecutable, cwd().fileName()}, " - ");
 }
 
 void TerminalWidget::updateCopyState()
@@ -419,7 +434,7 @@ std::optional<TerminalSolution::TerminalView::Link> TerminalWidget::toLink(const
             if (link.hasValidTarget()
                 && (link.targetFilePath.scheme().toString().startsWith("http")
                     || link.targetFilePath.exists())) {
-                return Link{link.targetFilePath.toString(), link.targetLine, link.targetColumn};
+                return Link{link.targetFilePath.toUrlishString(), link.target.line, link.target.column};
             }
         }
         if (!m_cwd.isEmpty() && Utils::allOf(text, [](QChar c) {
@@ -537,7 +552,7 @@ void TerminalWidget::contextMenuRequested(const QPoint &pos)
     QAction *configureAction = new QAction(contextMenu);
     configureAction->setText(Tr::tr("Configure..."));
     connect(configureAction, &QAction::triggered, this, [] {
-        ICore::showOptionsDialog("Terminal.General");
+        ICore::showSettings("Terminal.General");
     });
 
     contextMenu->addAction(ActionManager::command(Constants::COPY)->action());
@@ -548,6 +563,7 @@ void TerminalWidget::contextMenuRequested(const QPoint &pos)
     contextMenu->addSeparator();
     contextMenu->addAction(configureAction);
 
+    contextMenu->setAttribute(Qt::WA_DeleteOnClose);
     contextMenu->popup(mapToGlobal(pos));
 }
 
@@ -572,7 +588,7 @@ void TerminalWidget::dropEvent(QDropEvent *event)
 
 void TerminalWidget::showEvent(QShowEvent *event)
 {
-    Q_UNUSED(event);
+    Q_UNUSED(event)
 
     if (!m_process)
         setupPty();
@@ -692,6 +708,16 @@ void TerminalWidget::initActions(QObject *parent)
     moveCursorWordRightAction.setText(Tr::tr("Move Cursor Word Right"));
     moveCursorWordRightAction.setContext(context);
     moveCursorWordRightAction.setDefaultKeySequence({QKeySequence("Alt+Right")});
+
+    ActionBuilder deleteWordLeft(parent, Constants::DELETE_WORD_LEFT);
+    deleteWordLeft.setText(Tr::tr("Delete Word Left"));
+    deleteWordLeft.setContext(context);
+    deleteWordLeft.setDefaultKeySequence({QKeySequence("Alt+Backspace")});
+
+    ActionBuilder deleteLineLeft(parent, Constants::DELETE_LINE_LEFT);
+    deleteLineLeft.setText(Tr::tr("Delete Line Left"));
+    deleteLineLeft.setContext(context);
+    deleteLineLeft.setDefaultKeySequence({QKeySequence("Ctrl+Backspace")});
 }
 
 void TerminalWidget::unlockGlobalAction(const Utils::Id &commandId)

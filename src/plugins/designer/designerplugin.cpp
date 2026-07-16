@@ -1,24 +1,19 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
+#include "cpp/formclasswizard.h"
 #include "designerconstants.h"
 #include "designertr.h"
 #include "formeditorfactory.h"
 #include "formeditor.h"
 #include "formtemplatewizardpage.h"
-
-#ifdef CPP_ENABLED
-#  include "cpp/formclasswizard.h"
-#endif
-
-#include "settingspage.h"
 #include "qtdesignerformclasscodegenerator.h"
+#include "settingspage.h"
 
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
 #include <coreplugin/coreconstants.h>
-#include <coreplugin/coreplugintr.h>
 #include <coreplugin/designmode.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/icore.h>
@@ -36,7 +31,6 @@
 #include <QAction>
 #include <QCoreApplication>
 #include <QDebug>
-#include <QFileInfo>
 #include <QLibraryInfo>
 #include <QMenu>
 #include <QTranslator>
@@ -99,12 +93,10 @@ static void parseArguments(const QStringList &arguments)
     for (auto it = arguments.cbegin(); it != arguments.cend(); ++it) {
         if (*it == "-designer-qt-pluginpath")
             doWithNext(it, [](const QString &path) { setQtPluginPath(path); });
-#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
         // -designer-pluginpath is only supported when building with Qt >= 6.7.0, which added the
         // required API
         else if (*it == "-designer-pluginpath")
             doWithNext(it, [](const QString &path) { addPluginPath(path); });
-#endif
     }
 }
 
@@ -130,15 +122,14 @@ class DesignerPlugin final : public ExtensionSystem::IPlugin
         delete d;
     }
 
-    bool initialize(const QStringList &arguments, QString *) final
+    Result<> initialize(const QStringList &arguments) final
     {
         d = new FormEditorPluginPrivate;
 
-#ifdef CPP_ENABLED
         IWizardFactory::registerFactoryCreator([]() -> IWizardFactory * {
             IWizardFactory *wizard = new FormClassWizard;
             wizard->setCategory(Core::Constants::WIZARD_CATEGORY_QT);
-            wizard->setDisplayCategory(::Core::Tr::tr(Core::Constants::WIZARD_TR_CATEGORY_QT));
+            wizard->setDisplayCategory(msgWizardDisplayCategoryQt());
             wizard->setDisplayName(Tr::tr("Qt Widgets Designer Form Class"));
             wizard->setIcon({}, "ui/h");
             wizard->setId("C.FormClass");
@@ -149,13 +140,12 @@ class DesignerPlugin final : public ExtensionSystem::IPlugin
 
             return wizard;
         });
-#endif
 
         // Ensure that loading designer translations is done before FormEditorW is instantiated
         const QString locale = ICore::userInterfaceLanguage();
         if (!locale.isEmpty()) {
             auto qtr = new QTranslator(this);
-            const QString creatorTrPath = ICore::resourcePath("translations").toString();
+            const QString creatorTrPath = ICore::resourcePath("translations").toUrlishString();
             const QString qtTrPath = QLibraryInfo::path(QLibraryInfo::TranslationsPath);
             const QString trFile = "designer_" + locale;
             if (qtr->load(trFile, qtTrPath) || qtr->load(trFile, creatorTrPath))
@@ -167,7 +157,7 @@ class DesignerPlugin final : public ExtensionSystem::IPlugin
 #endif
 
         parseArguments(arguments);
-        return true;
+        return ResultOk;
     }
 
     void extensionsInitialized() final

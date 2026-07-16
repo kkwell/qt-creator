@@ -6,6 +6,8 @@
 #include <QAbstractListModel>
 #include <QObject>
 
+#include <memory>
+
 namespace QmlDesigner {
 
 class ActionInterface;
@@ -96,11 +98,10 @@ class ToolBarBackend : public QObject
     Q_PROPERTY(bool isQt6 READ isQt6 NOTIFY isQt6Changed)
     Q_PROPERTY(bool isMCUs READ isMCUs NOTIFY isMCUsChanged)
     Q_PROPERTY(bool projectOpened READ projectOpened NOTIFY projectOpenedChanged)
-    Q_PROPERTY(bool isSharingEnabled READ isSharingEnabled NOTIFY isSharingEnabledChanged)
     Q_PROPERTY(bool isDocumentDirty READ isDocumentDirty NOTIFY isDocumentDirtyChanged)
 
 public:
-    ToolBarBackend(QObject *parent  = nullptr);
+    ToolBarBackend();
     static void registerDeclarativeType();
 
     Q_INVOKABLE void triggerModeChange();
@@ -109,6 +110,7 @@ public:
     Q_INVOKABLE void goForward();
     Q_INVOKABLE void goBackward();
     Q_INVOKABLE void openFileByIndex(int i);
+    Q_INVOKABLE void closeDocument(int i);
     Q_INVOKABLE void closeCurrentDocument();
     Q_INVOKABLE void shareApplicationOnline();
     Q_INVOKABLE void setCurrentWorkspace(const QString &workspace);
@@ -146,8 +148,6 @@ public:
 
     bool projectOpened() const;
 
-    bool isSharingEnabled();
-
     bool isDocumentDirty() const;
 
     static void launchGlobalAnnotations();
@@ -169,7 +169,6 @@ signals:
     void isQt6Changed();
     void isMCUsChanged();
     void projectOpenedChanged();
-    void isSharingEnabledChanged();
     void isDocumentDirtyChanged();
 
 private:
@@ -179,6 +178,7 @@ private:
 
     QStringList m_openDocuments;
     QMetaObject::Connection m_kitConnection;
+    QMetaObject::Connection m_documentConnection;
 };
 
 } // namespace QmlDesigner

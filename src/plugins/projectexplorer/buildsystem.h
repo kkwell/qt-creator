@@ -19,7 +19,9 @@ namespace ProjectExplorer {
 
 class BuildConfiguration;
 class BuildStepList;
+class DeploymentData;
 class ExtraCompiler;
+class MakeInstallCommand;
 class Node;
 
 struct TestCaseInfo
@@ -28,6 +30,39 @@ struct TestCaseInfo
     int number = -1;
     Utils::FilePath path;
     int line = 0;
+};
+
+struct TestCaseEnvironment
+{
+    Utils::FilePath workingDirectory;
+    Utils::Environment environment;
+    std::function<void()> onTestsRunFinished;
+};
+
+// Extra infomation needed by QmlJS tools and editor.
+class QmlCodeModelInfo
+{
+public:
+    bool isValid() const { return !sourceFiles.isEmpty(); }
+
+    Utils::FilePaths sourceFiles;
+    Utils::FilePaths qmlImportPaths;
+    Utils::FilePaths activeResourceFiles;
+    Utils::FilePaths allResourceFiles;
+    Utils::FilePaths generatedQrcFiles;
+    QHash<Utils::FilePath, QString> resourceFileContents;
+    Utils::FilePaths applicationDirectories;
+    QHash<QString, QString> moduleMappings; // E.g.: QtQuick.Controls -> MyProject.MyControls
+
+    // whether trying to run qmldump makes sense
+    bool tryQmlDump = false;
+    bool qmlDumpHasRelocatableFlag = true;
+    Utils::FilePath qmlDumpPath;
+    Utils::Environment qmlDumpEnvironment;
+
+    Utils::FilePath qtQmlPath;
+    Utils::FilePath qmllsPath;
+    QString qtVersionString;
 };
 
 // --------------------------------------------------------------------
@@ -40,10 +75,10 @@ class PROJECTEXPLORER_EXPORT BuildSystem : public QObject
     Q_OBJECT
 
 public:
-    explicit BuildSystem(Target *target);
     explicit BuildSystem(BuildConfiguration *bc);
     ~BuildSystem() override;
 
+    QString name() const;
     Project *project() const;
     Target *target() const;
     Kit *kit() const;
@@ -56,10 +91,7 @@ public:
 
     void requestParse();
     void requestDelayedParse();
-    void requestParseWithCustomDelay(int delayInMs = 1000);
     void cancelDelayedParseRequest();
-    void setParseDelay(int delayInMs);
-    int parseDelay() const;
 
     bool isParsing() const;
     bool hasParsingData() const;
@@ -77,12 +109,11 @@ public:
     virtual bool canRenameFile(Node *context,
                                const Utils::FilePath &oldFilePath,
                                const Utils::FilePath &newFilePath);
-    virtual bool renameFile(Node *context,
-                            const Utils::FilePath &oldFilePath,
-                            const Utils::FilePath &newFilePath);
+    virtual bool renameFiles(
+        Node *context, const Utils::FilePairs &filesToRename, Utils::FilePaths *notRenamed);
     virtual bool addDependencies(Node *context, const QStringList &dependencies);
     virtual bool supportsAction(Node *context, ProjectAction action, const Node *node) const;
-    virtual QString name() const = 0;
+    virtual void buildNamedTarget(const QString &target) { Q_UNUSED(target) }
 
     // Owned by the build system. Use only in main thread. Can go away at any time.
     ExtraCompiler *extraCompilerForSource(const Utils::FilePath &source) const;
@@ -105,7 +136,7 @@ public:
     void setRootProjectNode(std::unique_ptr<ProjectNode> &&root);
 
     virtual const QList<TestCaseInfo> testcasesInfo() const { return {}; }
-    virtual Utils::CommandLine commandLineForTests(const QList<QString> &tests,
+    virtual Utils::CommandLine commandLineForTests(const QStringList &tests,
                                                    const QStringList &options) const;
 
     class PROJECTEXPLORER_EXPORT ParseGuard
@@ -149,11 +180,23 @@ public:
 
     virtual void triggerParsing() = 0;
 
+    void updateQmlCodeModel();
+    virtual void updateQmlCodeModelInfo(QmlCodeModelInfo &projectInfo);
+
+    virtual bool addTargetProperty(Node *context, const QString &property, const QString &value,
+                                   const std::string &condition);
+
 signals:
     void parsingStarted();
     void parsingFinished(bool success);
+    void updated(); // FIXME: Redundant with parsingFinished()?
     void testInformationUpdated();
+    void testRunRequested(const TestCaseInfo &testInfo, const QStringList &additionalOptions,
+                          const TestCaseEnvironment &env);
     void debuggingStarted();
+    void errorOccurred(const QString &message);
+    void warningOccurred(const QString &message);
+    void deploymentDataChanged();
 
 protected:
     // Helper methods to manage parsing state and signalling
@@ -163,6 +206,7 @@ protected:
     void emitParsingFinished(bool success);
 
     using ExtraCompilerFilter = std::function<bool(const ExtraCompiler *)>;
+
 private:
     void requestParseHelper(int delay); // request a (delayed!) parser run.
 
@@ -170,5 +214,9 @@ private:
 
     class BuildSystemPrivate *d = nullptr;
 };
+
+PROJECTEXPLORER_EXPORT BuildSystem *activeBuildSystem(const Project *project);
+PROJECTEXPLORER_EXPORT BuildSystem *activeBuildSystemForActiveProject();
+PROJECTEXPLORER_EXPORT BuildSystem *activeBuildSystemForCurrentProject();
 
 } // namespace ProjectExplorer

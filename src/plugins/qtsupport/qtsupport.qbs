@@ -2,6 +2,7 @@ QtcPlugin {
     name: "QtSupport"
 
     Depends { name: "Qt"; submodules: ["widgets", "xml"]; }
+    Depends { name: "McpServerLib" }
     Depends { name: "Utils" }
 
     Depends { name: "Core" }
@@ -60,6 +61,9 @@ QtcPlugin {
         "codegensettings.h",
         "externaleditors.cpp",
         "externaleditors.h",
+        "mcpsupport.cpp",
+        "qtabiextractor.cpp",
+        "qtabiextractor.h",
         "qtbuildaspects.cpp",
         "qtbuildaspects.h",
         "qtconfigwidget.cpp",
@@ -85,7 +89,8 @@ QtcPlugin {
         "qtoutputformatter.h",
         "qtparser.cpp",
         "qtparser.h",
-        "qtsupport_global.h", "qtsupporttr.h",
+        "qtsupport_global.h",
+        "qtsupporttr.h",
         "qtsupportconstants.h",
         "qtsupportplugin.cpp",
         "qttestparser.cpp",

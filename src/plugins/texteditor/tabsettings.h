@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "texteditor_global.h"
+#include "texteditorsupport_global.h"
 
 #include <utils/filepath.h>
 #include <utils/qtcsettings.h>
@@ -17,14 +17,12 @@ namespace TextEditor {
 
 // Tab settings: Data type the GeneralSettingsPage acts on
 // with some convenience functions for formatting.
-class TEXTEDITOR_EXPORT TabSettings
+class TEXTEDITORSUPPORT_EXPORT TabSettings
 {
 public:
-
     enum TabPolicy {
         SpacesOnlyTabPolicy = 0,
-        TabsOnlyTabPolicy = 1,
-        MixedTabPolicy = 2
+        TabsOnlyTabPolicy
     };
 
     // This enum must match the indexes of continuationAlignBehavior widget
@@ -38,17 +36,17 @@ public:
     TabSettings(TabPolicy tabPolicy, int tabSize,
                 int indentSize, ContinuationAlignBehavior continuationAlignBehavior);
 
-    Utils::Store toMap() const;
+    void toMap(Utils::Store &map) const;
     void fromMap(const Utils::Store &map);
 
-    int lineIndentPosition(const QString &text) const;
+    TabSettings autoDetect(const QTextDocument *document) const;
+
     int columnAt(const QString &text, int position) const;
     int columnAtCursorPosition(const QTextCursor &cursor) const;
     int positionAtColumn(const QString &text, int column, int *offset = nullptr, bool allowOverstep = false) const;
     int columnCountForText(const QString &text, int startColumn = 0) const;
     int indentedColumn(int column, bool doIndent = true) const;
-    QString indentationString(int startColumn, int targetColumn, int padding, const QTextBlock &currentBlock = QTextBlock()) const;
-    QString indentationString(const QString &text) const;
+    QString indentationString(int startColumn, int targetColumn, int padding) const;
     int indentationColumn(const QString &text) const;
     static int maximumPadding(const QString &text);
 
@@ -56,18 +54,19 @@ public:
     void reindentLine(QTextBlock block, int delta) const;
 
     bool isIndentationClean(const QTextBlock &block, const int indent) const;
-    bool guessSpacesForTabs(const QTextBlock &block) const;
 
     friend bool operator==(const TabSettings &t1, const TabSettings &t2) { return t1.equals(t2); }
     friend bool operator!=(const TabSettings &t1, const TabSettings &t2) { return !t1.equals(t2); }
 
     static int firstNonSpace(const QString &text);
-    static inline bool onlySpace(const QString &text) { return firstNonSpace(text) == text.length(); }
+    static QString indentationString(const QString &text);
+    static bool onlySpace(const QString &text) { return firstNonSpace(text) == text.size(); }
     static int spacesLeftFromPosition(const QString &text, int position);
     static bool cursorIsAtBeginningOfLine(const QTextCursor &cursor);
     static int trailingWhitespaces(const QString &text);
-    static void removeTrailingWhitespace(QTextCursor cursor, QTextBlock &block);
+    static void removeTrailingWhitespace(const QTextBlock &block);
 
+    bool m_autoDetect = true;
     TabPolicy m_tabPolicy = SpacesOnlyTabPolicy;
     int m_tabSize = 8;
     int m_indentSize = 4;

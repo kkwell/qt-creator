@@ -6,9 +6,9 @@
 #include "valgrindtr.h"
 #include "xmlprotocol/parser.h"
 
-#include <solutions/tasking/barrier.h>
-#include <solutions/tasking/conditional.h>
-#include <solutions/tasking/tasktreerunner.h>
+#include <QtTaskTree/QBarrier>
+#include <QtTaskTree/QConditional>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <utils/qtcprocess.h>
 #include <utils/processinterface.h>
@@ -19,11 +19,11 @@
 #include <QTcpSocket>
 #include <QTimer>
 
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 using namespace Valgrind::XmlProtocol;
 
-namespace Valgrind {
+namespace Valgrind::Internal {
 
 static CommandLine valgrindCommand(const CommandLine &command,
                                    const QTcpServer &xmlServer,
@@ -61,53 +61,10 @@ static CommandLine valgrindCommand(const CommandLine &command,
 
 class ValgrindProcessPrivate : public QObject
 {
+    Q_OBJECT
+
 public:
-    ValgrindProcessPrivate(ValgrindProcess *owner)
-        : q(owner)
-    {
-        connect(&m_taskTreeRunner, &TaskTreeRunner::done, this, [this](DoneWith result) {
-            emit q->done(toDoneResult(result == DoneWith::Success));
-        });
-    }
-
-    void setupValgrindProcess(Process *process, const CommandLine &command) const {
-        CommandLine cmd = command;
-        cmd.addArgs(m_valgrindCommand.arguments(), CommandLine::Raw);
-
-        // consider appending our options last so they override any interfering user-supplied
-        // options -q as suggested by valgrind manual
-
-        if (cmd.executable().osType() == OsTypeMac) {
-            // May be slower to start but without it we get no filenames for symbols.
-            cmd.addArg("--dsymutil=yes");
-        }
-
-        cmd.addCommandLineAsArgs(m_debuggee.command);
-
-        emit q->appendMessage(cmd.toUserOutput(), NormalMessageFormat);
-
-        process->setCommand(cmd);
-        process->setWorkingDirectory(m_debuggee.workingDirectory);
-        process->setEnvironment(m_debuggee.environment);
-        process->setProcessChannelMode(m_channelMode);
-        process->setTerminalMode(m_useTerminal ? TerminalMode::Run : TerminalMode::Off);
-
-        connect(process, &Process::started, this, [this, process] {
-            emit q->valgrindStarted(process->processId());
-        });
-        connect(process, &Process::done, this, [this, process] {
-            const bool success = process->result() == ProcessResult::FinishedWithSuccess;
-            if (!success)
-                emit q->processErrorReceived(process->errorString(), process->error());
-            emit q->done(toDoneResult(success));
-        });
-        connect(process, &Process::readyReadStandardOutput, this, [this, process] {
-            emit q->appendMessage(process->readAllStandardOutput(), StdOutFormat);
-        });
-        connect(process, &Process::readyReadStandardError, this, [this, process] {
-            emit q->appendMessage(process->readAllStandardError(), StdErrFormat);
-        });
-    }
+    ValgrindProcessPrivate(ValgrindProcess *owner) : q(owner) {}
 
     Group runRecipe() const;
 
@@ -121,7 +78,10 @@ public:
     QHostAddress m_localServerAddress;
     bool m_useTerminal = false;
 
-    TaskTreeRunner m_taskTreeRunner;
+    QSingleTaskTreeRunner m_taskTreeRunner;
+
+signals:
+    void stopRequested();
 };
 
 Group ValgrindProcessPrivate::runRecipe() const
@@ -134,13 +94,13 @@ Group ValgrindProcessPrivate::runRecipe() const
     };
 
     Storage<ValgrindStorage> storage;
-    SingleBarrier xmlBarrier;
+    QStoredBarrier xmlBarrier;
 
     const auto isSetupValid = [this, storage, xmlBarrier] {
         ValgrindStorage *storagePtr = storage.activeStorage();
         storagePtr->m_valgrindCommand.setExecutable(m_valgrindCommand.executable());
         if (!m_localServerAddress.isNull()) {
-            Barrier *barrier = xmlBarrier->barrier();
+            QBarrier *barrier = xmlBarrier.activeStorage();
             const QString ip = m_localServerAddress.toString();
 
             QTcpServer *xmlServer = new QTcpServer;
@@ -154,7 +114,7 @@ Group ValgrindProcessPrivate::runRecipe() const
             });
             if (!xmlServer->listen(m_localServerAddress)) {
                 emit q->processErrorReceived(Tr::tr("XmlServer on %1:").arg(ip) + ' '
-                                             + xmlServer->errorString(), QProcess::FailedToStart);
+                                             + xmlServer->errorString(), ProcessResult::StartFailed);
                 return false;
             }
             xmlServer->setMaxPendingConnections(1);
@@ -171,7 +131,7 @@ Group ValgrindProcessPrivate::runRecipe() const
             });
             if (!logServer->listen(m_localServerAddress)) {
                 emit q->processErrorReceived(Tr::tr("LogServer on %1:").arg(ip) + ' '
-                                             + logServer->errorString(), QProcess::FailedToStart);
+                                             + logServer->errorString(), ProcessResult::StartFailed);
                 return false;
             }
             logServer->setMaxPendingConnections(1);
@@ -183,7 +143,42 @@ Group ValgrindProcessPrivate::runRecipe() const
     };
 
     const auto onProcessSetup = [this, storage](Process &process) {
-        setupValgrindProcess(&process, storage->m_valgrindCommand);
+        CommandLine cmd = storage->m_valgrindCommand;
+        cmd.addArgs(m_valgrindCommand.arguments(), CommandLine::Raw);
+
+        // consider appending our options last so they override any interfering user-supplied
+        // options -q as suggested by valgrind manual
+
+        if (cmd.executable().osType() == OsTypeMac) {
+            // May be slower to start but without it we get no filenames for symbols.
+            cmd.addArg("--dsymutil=yes");
+        }
+
+        cmd.addCommandLineAsArgs(m_debuggee.command);
+
+        emit q->appendMessage(cmd.toUserOutput(), NormalMessageFormat);
+
+        process.setCommand(cmd);
+        process.setWorkingDirectory(m_debuggee.workingDirectory);
+        process.setEnvironment(m_debuggee.environment);
+        process.setProcessChannelMode(m_channelMode);
+        process.setTerminalMode(m_useTerminal ? TerminalMode::Run : TerminalMode::Off);
+
+        Process *processPtr = &process;
+        connect(processPtr, &Process::started, this, [this, processPtr] {
+            emit q->valgrindStarted(processPtr->processId());
+        });
+        connect(processPtr, &Process::readyReadStandardOutput, this, [this, processPtr] {
+            emit q->appendMessage(processPtr->readAllStandardOutput(), StdOutFormat);
+        });
+        connect(processPtr, &Process::readyReadStandardError, this, [this, processPtr] {
+            emit q->appendMessage(processPtr->readAllStandardError(), StdErrFormat);
+        });
+        connect(this, &ValgrindProcessPrivate::stopRequested, processPtr, &Process::stop);
+    };
+    const auto onProcessDone = [this, storage](const Process &process, DoneWith result) {
+        if (result == DoneWith::Error)
+            emit q->processErrorReceived(process.exitMessage(), process.result());
     };
 
     const auto isAddressValid = [this] { return !m_localServerAddress.isNull(); };
@@ -194,19 +189,20 @@ Group ValgrindProcessPrivate::runRecipe() const
         parser.setSocket(storage->m_xmlSocket.release());
     };
 
-    const auto onParserError = [this](const Parser &parser) {
-        emit q->internalError(parser.errorString());
+    const auto onParserDone = [this](const Parser &parser, DoneWith result) {
+        if (result == DoneWith::Error)
+            emit q->internalError(parser.errorString());
     };
 
     const Group root {
-        parallel,
         storage,
         xmlBarrier,
         If (isSetupValid) >> Then {
-            ProcessTask(onProcessSetup),
+            parallel,
+            ProcessTask(onProcessSetup, onProcessDone),
             If (isAddressValid) >> Then {
-                waitForBarrierTask(xmlBarrier),
-                ParserTask(onParserSetup, onParserError, CallDoneIf::Error)
+                barrierAwaiterTask(xmlBarrier),
+                ParserTask(onParserSetup, onParserDone)
             }
         } >> Else {
             errorItem
@@ -217,7 +213,9 @@ Group ValgrindProcessPrivate::runRecipe() const
 
 bool ValgrindProcessPrivate::run()
 {
-    m_taskTreeRunner.start(runRecipe());
+    m_taskTreeRunner.start(runRecipe(), {}, [this](DoneWith result) {
+        emit q->done(toDoneResult(result == DoneWith::Success));
+    });
     return m_taskTreeRunner.isRunning();
 }
 
@@ -260,7 +258,7 @@ bool ValgrindProcess::start()
 
 void ValgrindProcess::stop()
 {
-    d->m_taskTreeRunner.reset();
+    emit d->stopRequested();
 }
 
 bool ValgrindProcess::runBlocking()
@@ -280,4 +278,6 @@ bool ValgrindProcess::runBlocking()
     return ok;
 }
 
-} // namespace Valgrind
+} // namespace Valgrind::Internal
+
+#include "valgrindprocess.moc"

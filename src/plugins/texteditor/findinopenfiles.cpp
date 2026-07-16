@@ -10,6 +10,7 @@
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/editormanager/documentmodel.h>
 
+#include <utils/shutdownguard.h>
 #include <utils/qtcsettings.h>
 
 using namespace Utils;
@@ -59,21 +60,21 @@ QString FindInOpenFiles::displayName() const
 FileContainerProvider FindInOpenFiles::fileContainerProvider() const
 {
     return [] {
-        const QMap<FilePath, QTextCodec *> encodings = TextDocument::openedTextDocumentEncodings();
+        const QMap<FilePath, TextEncoding> docEncodings = TextDocument::openedTextDocumentEncodings();
         FilePaths fileNames;
-        QList<QTextCodec *> codecs;
+        QList<TextEncoding> encodings;
         const QList<Core::DocumentModel::Entry *> entries = Core::DocumentModel::entries();
         for (Core::DocumentModel::Entry *entry : entries) {
             const FilePath fileName = entry->filePath();
             if (!fileName.isEmpty()) {
                 fileNames.append(fileName);
-                QTextCodec *codec = encodings.value(fileName);
-                if (!codec)
-                    codec = Core::EditorManager::defaultTextCodec();
-                codecs.append(codec);
+                TextEncoding encoding = docEncodings.value(fileName);
+                if (!encoding.isValid())
+                    encoding = Core::EditorManager::defaultTextEncoding();
+                encodings.append(encoding);
             }
         }
-        return FileListContainer(fileNames, codecs);
+        return FileListContainer(fileNames, encodings);
     };
 }
 
@@ -115,7 +116,7 @@ QByteArray FindInOpenFiles::settingsKey() const
 
 void setupFindInOpenFiles()
 {
-    static FindInOpenFiles theFindInOpenFiles;
+    static GuardedObject<FindInOpenFiles> theFindInOpenFiles;
 }
 
 } // TextEditor::Internal

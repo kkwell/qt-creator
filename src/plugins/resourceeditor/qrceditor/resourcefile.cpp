@@ -6,34 +6,28 @@
 #include "../resourceeditortr.h"
 
 #include <coreplugin/fileutils.h>
-#include <coreplugin/icore.h>
 #include <coreplugin/vcsmanager.h>
 
 #include <projectexplorer/projectexplorerconstants.h>
 
 #include <utils/algorithm.h>
-#include <utils/fileutils.h>
 #include <utils/fsengine/fileiconprovider.h>
 #include <utils/removefiledialog.h>
 #include <utils/theme/theme.h>
 
-#include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
 #include <QDomDocument>
-#include <QFile>
 #include <QIcon>
 #include <QImageReader>
 #include <QMimeData>
-#include <QTextCodec>
 #include <QTextStream>
-#include <QtAlgorithms>
 
 using namespace Utils;
 
 namespace ResourceEditor::Internal {
 
-File::File(Prefix *prefix, const QString &_name, const QString &_alias)
+File::File(Prefix *prefix, const FilePath &_name, const QString &_alias)
     : Node(this, prefix)
     , name(_name)
     , alias(_alias)
@@ -50,7 +44,7 @@ void File::checkExistence()
 bool File::exists()
 {
     if (!m_checked) {
-        m_exists = QFileInfo::exists(name);
+        m_exists = name.exists();
         m_checked = true;
     }
 
@@ -80,7 +74,7 @@ static bool containsFile(const FileList &list, File *file)
 
 ResourceFile::ResourceFile(const FilePath &filePath, const QString &contents)
 {
-    setFilePath(filePath);
+    m_filePath = filePath;
     m_contents = contents;
 }
 
@@ -89,13 +83,13 @@ ResourceFile::~ResourceFile()
     clearPrefixList();
 }
 
-Core::IDocument::OpenResult ResourceFile::load()
+Result<> ResourceFile::load()
 {
     m_error_message.clear();
 
     if (m_filePath.isEmpty()) {
         m_error_message = Tr::tr("The file name is empty.");
-        return Core::IDocument::OpenResult::ReadError;
+        return ResultError(m_error_message);
     }
 
     clearPrefixList();
@@ -105,24 +99,23 @@ Core::IDocument::OpenResult ResourceFile::load()
     if (m_contents.isEmpty()) {
 
         // Regular file
-        QFile file(m_filePath.toString());
-        if (!file.open(QIODevice::ReadOnly)) {
-            m_error_message = file.errorString();
-            return Core::IDocument::OpenResult::ReadError;
+        auto readResult = m_filePath.fileContents();
+        if (!readResult){
+                m_error_message = readResult.error();
+                return ResultError(m_error_message);
         }
-        QByteArray data = file.readAll();
+        QByteArray data = *readResult;
         // Detect line ending style
-        m_textFileFormat = TextFileFormat::detect(data);
+        m_textFileFormat.detectFromData(data);
         // we always write UTF-8 when saving
-        m_textFileFormat.codec = QTextCodec::codecForName("UTF-8");
-        file.close();
+        m_textFileFormat.setEncoding(TextEncoding::Utf8);
 
         QString error_msg;
         int error_line, error_col;
         if (!doc.setContent(data, &error_msg, &error_line, &error_col)) {
             m_error_message = Tr::tr("XML error on line %1, col %2: %3")
                         .arg(error_line).arg(error_col).arg(error_msg);
-            return Core::IDocument::OpenResult::CannotHandle;
+            return ResultError(m_error_message);
         }
 
     } else {
@@ -133,7 +126,7 @@ Core::IDocument::OpenResult ResourceFile::load()
         if (!doc.setContent(m_contents, &error_msg, &error_line, &error_col)) {
             m_error_message = Tr::tr("XML error on line %1, col %2: %3")
                         .arg(error_line).arg(error_col).arg(error_msg);
-            return Core::IDocument::OpenResult::CannotHandle;
+            return ResultError(m_error_message);
         }
 
     }
@@ -141,7 +134,7 @@ Core::IDocument::OpenResult ResourceFile::load()
     QDomElement root = doc.firstChildElement(QLatin1String("RCC"));
     if (root.isNull()) {
         m_error_message = Tr::tr("The <RCC> root element is missing.");
-        return Core::IDocument::OpenResult::CannotHandle;
+        return ResultError(m_error_message);
     }
 
     QDomElement relt = root.firstChildElement(QLatin1String("qresource"));
@@ -164,7 +157,7 @@ Core::IDocument::OpenResult ResourceFile::load()
 
         QDomElement felt = relt.firstChildElement(QLatin1String("file"));
         for (; !felt.isNull(); felt = felt.nextSiblingElement(QLatin1String("file"))) {
-            const QString fileName = absolutePath(felt.text());
+            const FilePath fileName = absolutePath(felt.text());
             const QString alias = felt.attribute(QLatin1String("alias"));
             File * const file = new File(p, fileName, alias);
             file->compress = felt.attribute(QLatin1String("compress"));
@@ -174,7 +167,7 @@ Core::IDocument::OpenResult ResourceFile::load()
         }
     }
 
-    return Core::IDocument::OpenResult::Success;
+    return ResultOk;
 }
 
 QString ResourceFile::contents() const
@@ -198,7 +191,7 @@ QString ResourceFile::contents() const
             const File &file = *f;
             QDomElement felt = doc.createElement(QLatin1String("file"));
             relt.appendChild(felt);
-            const QString conv_file = QDir::fromNativeSeparators(relativePath(file.name));
+            const QString conv_file = relativePath(file.name);
             const QDomText text = doc.createTextNode(conv_file);
             felt.appendChild(text);
             if (!file.alias.isEmpty())
@@ -223,7 +216,10 @@ bool ResourceFile::save()
         return false;
     }
 
-    return m_textFileFormat.writeFile(m_filePath, contents(), &m_error_message);
+    const Result<> res = m_textFileFormat.writeFile(m_filePath, contents());
+    if (!res)
+        m_error_message = res.error();
+    return res.has_value();
 }
 
 void ResourceFile::refresh()
@@ -336,8 +332,11 @@ void ResourceFile::replaceAlias(int prefix_idx, int file_idx, const QString &ali
     fileList[file_idx]->alias = alias;
 }
 
-bool ResourceFile::renameFile(const QString &fileName, const QString &newFileName)
+bool ResourceFile::renameFile(const FilePath &fileName, const FilePath &newFileName)
 {
+    QTC_CHECK(fileName.isSameDevice(m_filePath));
+    QTC_CHECK(newFileName.isSameDevice(m_filePath));
+
     bool success = true;
 
     FileList entries;
@@ -357,12 +356,11 @@ bool ResourceFile::renameFile(const QString &fileName, const QString &newFileNam
     if (entries.at(0)->exists()) {
         for (File *file : std::as_const(entries))
             file->setExists(true);
-        success = Core::FileUtils::renameFile(FilePath::fromString(entries.at(0)->name),
-                                              FilePath::fromString(newFileName));
+        success = Core::FileUtils::renameFile(entries.at(0)->name, newFileName);
     }
 
     if (success) {
-        const bool exists = QFileInfo::exists(newFileName);
+        const bool exists = newFileName.exists();
         for (File *file : std::as_const(entries)) {
             file->name = newFileName;
             file->setExists(exists);
@@ -372,8 +370,7 @@ bool ResourceFile::renameFile(const QString &fileName, const QString &newFileNam
     return success;
 }
 
-
-void ResourceFile::replaceFile(int pref_idx, int file_idx, const QString &file)
+void ResourceFile::replaceFile(int pref_idx, int file_idx, const FilePath &file)
 {
     Q_ASSERT(pref_idx >= 0 && pref_idx < m_prefix_list.count());
     FileList &fileList = m_prefix_list.at(pref_idx)->file_list;
@@ -388,7 +385,6 @@ int ResourceFile::indexOfPrefix(const QString &prefix, const QString &lang) cons
 
 int ResourceFile::indexOfPrefix(const QString &prefix, const QString &lang, int skip) const
 {
-
     QString fixed_prefix = fixPrefix(prefix);
     for (int i = 0; i < m_prefix_list.size(); ++i) {
         if (i == skip)
@@ -408,25 +404,18 @@ int ResourceFile::indexOfFile(int pref_idx, const QString &file) const
     return p->file_list.indexOf(&equalFile);
 }
 
-QString ResourceFile::relativePath(const QString &abs_path) const
+QString ResourceFile::relativePath(const FilePath &abs_path) const
 {
-    if (m_filePath.isEmpty() || QFileInfo(abs_path).isRelative())
-         return abs_path;
+    QTC_ASSERT(!m_filePath.isEmpty(), return abs_path.path());
+    QTC_CHECK(abs_path.isSameDevice(m_filePath));
 
-    QFileInfo fileInfo = m_filePath.toFileInfo();
-    return fileInfo.absoluteDir().relativeFilePath(abs_path);
+    FilePath abs_path_on_device = m_filePath.withNewPath(abs_path.path());
+    return abs_path_on_device.relativePathFromDir(m_filePath.parentDir());
 }
 
-QString ResourceFile::absolutePath(const QString &rel_path) const
+FilePath ResourceFile::absolutePath(const QString &rel_path) const
 {
-    const QFileInfo fi(rel_path);
-    if (fi.isAbsolute())
-        return rel_path;
-
-    QString rc = m_filePath.toFileInfo().path();
-    rc +=  QLatin1Char('/');
-    rc += rel_path;
-    return QDir::cleanPath(rc);
+    return m_filePath.parentDir().resolvePath(rel_path);
 }
 
 void ResourceFile::orderList()
@@ -502,7 +491,7 @@ int ResourceFile::fileCount(int prefix_idx) const
     return m_prefix_list.at(prefix_idx)->file_list.size();
 }
 
-QString ResourceFile::file(int prefix_idx, int file_idx) const
+FilePath ResourceFile::file(int prefix_idx, int file_idx) const
 {
     Q_ASSERT(prefix_idx >= 0 && prefix_idx < m_prefix_list.count());
     FileList &fileList = m_prefix_list.at(prefix_idx)->file_list;
@@ -664,16 +653,14 @@ QString ResourceModel::errorMessage() const
 QList<QModelIndex> ResourceModel::nonExistingFiles() const
 {
     QList<QModelIndex> files;
-    QFileInfo fi;
     int prefixCount = rowCount(QModelIndex());
     for (int i = 0; i < prefixCount; ++i) {
         QModelIndex prefix = index(i, 0, QModelIndex());
         int fileCount = rowCount(prefix);
         for (int j = 0; j < fileCount; ++j) {
             QModelIndex fileIndex = index(j, 0, prefix);
-            QString fileName = file(fileIndex);
-            fi.setFile(fileName);
-            if (!fi.exists())
+            FilePath fileName = file(fileIndex);
+            if (!fileName.exists())
                 files << fileIndex;
         }
     }
@@ -701,7 +688,7 @@ Qt::ItemFlags ResourceModel::flags(const QModelIndex &index) const
     return f;
 }
 
-bool ResourceModel::iconFileExtension(const QString &path)
+bool ResourceModel::hasIconFileExtension(const QString &path)
 {
     static QStringList ext_list;
     if (ext_list.isEmpty()) {
@@ -767,11 +754,11 @@ QVariant ResourceModel::data(const QModelIndex &index, int role) const
         if (isFileNode) {
             // File node
             if (file->icon.isNull()) {
-                const QString path = m_resource_file.absolutePath(file->name);
-                if (iconFileExtension(path))
-                    file->icon = QIcon(path);
+                const FilePath path = file->name;
+                if (hasIconFileExtension(path.path()))
+                    file->icon = QIcon(path.toFSPathString());
                 else
-                    file->icon = FileIconProvider::icon(FilePath::fromString(path));
+                    file->icon = FileIconProvider::icon(path);
             }
             if (!file->icon.isNull())
                 result = file->icon;
@@ -781,10 +768,8 @@ QVariant ResourceModel::data(const QModelIndex &index, int role) const
         }
         break;
     case Qt::EditRole:
-        if (isFileNode) {
-            QString conv_file = m_resource_file.relativePath(file->name);
-            result = QDir::fromNativeSeparators(conv_file);
-        }
+        if (isFileNode)
+            result = m_resource_file.relativePath(file->name);
         break;
     case Qt::ForegroundRole:
         if (isFileNode) {
@@ -815,7 +800,7 @@ bool ResourceModel::setData(const QModelIndex &index, const QVariant &value, int
     if (!newFileName.isChildOf(filePath().absolutePath()))
         return false;
 
-    return renameFile(file(index), newFileName.toString());
+    return renameFile(file(index), newFileName);
 }
 
 void ResourceModel::getItem(const QModelIndex &index, QString &prefix, QString &file) const
@@ -837,7 +822,7 @@ void ResourceModel::getItem(const QModelIndex &index, QString &prefix, QString &
         if (!f->alias.isEmpty())
             file = f->alias;
         else
-            file = f->name;
+            file = f->name.path();
     } else {
         prefix = p->name;
     }
@@ -858,10 +843,10 @@ QString ResourceModel::alias(const QModelIndex &index) const
     return m_resource_file.alias(index.parent().row(), index.row());
 }
 
-QString ResourceModel::file(const QModelIndex &index) const
+FilePath ResourceModel::file(const QModelIndex &index) const
 {
     if (!index.isValid() || !index.parent().isValid())
-        return QString();
+        return {};
     return m_resource_file.file(index.parent().row(), index.row());
 }
 
@@ -958,17 +943,13 @@ void ResourceModel::addFiles(int prefixIndex, const QStringList &fileNames, int 
     for (const QString &file : unique_list)
         m_resource_file.addFile(prefixIndex, file);
 
-    const QFileInfo fi(unique_list.last());
-    m_lastResourceDir = fi.absolutePath();
-
     endInsertRows();
     setDirty(true);
 
     firstFile = cnt;
     lastFile = cnt + unique_list.count() - 1;
 
-    Core::VcsManager::promptToAdd(m_resource_file.filePath().absolutePath(),
-                                  FileUtils::toFilePathList(fileNames));
+    Core::VcsManager::promptToAdd(filePath(), FilePaths::fromStrings(fileNames));
 }
 
 
@@ -981,8 +962,8 @@ void ResourceModel::insertPrefix(int prefixIndex, const QString &prefix,
     setDirty(true);
 }
 
-void ResourceModel::insertFile(int prefixIndex, int fileIndex,
-        const QString &fileName, const QString &alias)
+void ResourceModel::insertFile(
+    int prefixIndex, int fileIndex, const QString &fileName, const QString &alias)
 {
     const QModelIndex parent = index(prefixIndex, 0, QModelIndex());
     beginInsertRows(parent, fileIndex, fileIndex);
@@ -992,9 +973,9 @@ void ResourceModel::insertFile(int prefixIndex, int fileIndex,
     setDirty(true);
 }
 
-bool ResourceModel::renameFile(const QString &fileName, const QString &newFileName)
+bool ResourceModel::renameFile(const FilePath &filePath, const FilePath &newFilePath)
 {
-    bool success = m_resource_file.renameFile(fileName, newFileName);
+    bool success = m_resource_file.renameFile(filePath, newFilePath);
     if (success)
         setDirty(true);
     return success;
@@ -1075,11 +1056,11 @@ QModelIndex ResourceModel::deleteItem(const QModelIndex &idx)
     return index(file_idx, 0, prefix_model_idx);
 }
 
-Core::IDocument::OpenResult ResourceModel::reload()
+Result<> ResourceModel::reload()
 {
     beginResetModel();
-    Core::IDocument::OpenResult result = m_resource_file.load();
-    if (result == Core::IDocument::OpenResult::Success)
+    Result<> result = m_resource_file.load();
+    if (result.has_value())
         setDirty(false);
     endResetModel();
     return result;
@@ -1091,13 +1072,6 @@ bool ResourceModel::save()
     if (result)
         setDirty(false);
     return result;
-}
-
-QString ResourceModel::lastResourceOpenDirectory() const
-{
-    if (m_lastResourceDir.isEmpty())
-        return absolutePath(QString());
-    return m_lastResourceDir;
 }
 
 // Create a resource path 'prefix:/file'
@@ -1147,8 +1121,9 @@ private:
 public:
     FileEntryBackup(ResourceModel &model, int prefixIndex, int fileIndex,
             const QString &fileName, const QString &alias)
-            : EntryBackup(model, prefixIndex, fileName), m_fileIndex(fileIndex),
-            m_alias(alias) { }
+        : EntryBackup(model, prefixIndex, fileName), m_fileIndex(fileIndex), m_alias(alias)
+    { }
+
     void restore() const override;
 };
 
@@ -1208,27 +1183,26 @@ EntryBackup * RelativeResourceModel::removeEntry(const QModelIndex &index)
         QList<FileEntryBackup> filesBackup;
         for (int i = 0; i < childCount; i++) {
             const QModelIndex childIndex = this->index(i, 0, index);
-            const QString fileNameBackup = file(childIndex);
+            const FilePath fileNameBackup = file(childIndex);
             const QString aliasBackup = alias(childIndex);
-            FileEntryBackup entry(*this, index.row(), i, fileNameBackup, aliasBackup);
+            FileEntryBackup entry(*this, index.row(), i, fileNameBackup.path(), aliasBackup);
             filesBackup << entry;
         }
         deleteItem(index);
         return new PrefixEntryBackup(*this, index.row(), prefixBackup, languageBackup, filesBackup);
     } else {
-        const QString fileNameBackup = file(index);
+        const FilePath fileNameBackup = file(index);
         const QString aliasBackup = alias(index);
-        if (!QFileInfo::exists(fileNameBackup)) {
+        if (!fileNameBackup.exists()) {
             deleteItem(index);
-            return new FileEntryBackup(*this, prefixIndex.row(), index.row(), fileNameBackup, aliasBackup);
+            return new FileEntryBackup(*this, prefixIndex.row(), index.row(), fileNameBackup.path(), aliasBackup);
         }
-        RemoveFileDialog removeFileDialog(FilePath::fromString(fileNameBackup),
-                                          Core::ICore::dialogParent());
+        RemoveFileDialog removeFileDialog(fileNameBackup);
         if (removeFileDialog.exec() == QDialog::Accepted) {
             deleteItem(index);
-            Core::FileUtils::removeFiles({FilePath::fromString(fileNameBackup)},
+            Core::FileUtils::removeFiles({fileNameBackup},
                                          removeFileDialog.isDeleteFileChecked());
-            return new FileEntryBackup(*this, prefixIndex.row(), index.row(), fileNameBackup, aliasBackup);
+            return new FileEntryBackup(*this, prefixIndex.row(), index.row(), fileNameBackup.path(), aliasBackup);
         }
         return nullptr;
     }

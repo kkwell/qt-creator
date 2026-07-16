@@ -6,8 +6,10 @@
 #include "qmakeprojectmanagerconstants.h"
 #include "qmakeprojectmanagertr.h"
 
+#include <projectexplorer/kitaspect.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/toolchainkitaspect.h>
 #include <projectexplorer/toolchainmanager.h>
 
 #include <qtsupport/qtkitaspect.h>
@@ -33,30 +35,33 @@ public:
     {
         refresh(); // set up everything according to kit
         m_lineEdit->setToolTip(ki->description());
+        QSizePolicy p = m_lineEdit->sizePolicy();
+        p.setHorizontalStretch(1);
+        m_lineEdit->setSizePolicy(p);
         connect(m_lineEdit, &QLineEdit::textEdited, this, &QmakeKitAspectImpl::mkspecWasChanged);
     }
 
     ~QmakeKitAspectImpl() override { delete m_lineEdit; }
 
 private:
-    void addToInnerLayout(Layouting::Layout &parent) override
+    void addToInnerLayout(Layouting::Layout &layout) override
     {
         addMutableAction(m_lineEdit);
-        parent.addItem(m_lineEdit);
+        layout.addItem(m_lineEdit);
     }
 
-    void makeReadOnly() override { m_lineEdit->setEnabled(false); }
+    void makeReadOnly(bool readOnly) override { m_lineEdit->setEnabled(!readOnly); }
 
     void refresh() override
     {
         if (!m_ignoreChanges.isLocked())
-            m_lineEdit->setText(QDir::toNativeSeparators(QmakeKitAspect::mkspec(m_kit)));
+            m_lineEdit->setText(QDir::toNativeSeparators(QmakeKitAspect::mkspec(kit())));
     }
 
     void mkspecWasChanged(const QString &text)
     {
         const GuardLocker locker(m_ignoreChanges);
-        QmakeKitAspect::setMkspec(m_kit, text, QmakeKitAspect::MkspecSource::User);
+        QmakeKitAspect::setMkspec(kit(), text, QmakeKitAspect::MkspecSource::User);
     }
 
     QLineEdit *m_lineEdit = nullptr;
@@ -125,6 +130,8 @@ public:
             result << BuildSystemTask(Task::Warning, Tr::tr("No Qt version set, so mkspec is ignored."));
         if (version && !version->hasMkspec(mkspec))
             result << BuildSystemTask(Task::Error, Tr::tr("Mkspec not found for Qt version."));
+        if (version && !version->qmakeFilePath().fileName().contains("qmake"))
+            result << BuildSystemTask(Task::Error, Tr::tr("qmake not found for Qt version."));
 
         return result;
     }

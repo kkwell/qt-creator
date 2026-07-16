@@ -13803,7 +13803,7 @@ The minimum API level required by the kit is %1.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>(SDK Version: %1, NDK Version: %2)</source>
+        <source>(SDK Version: %1)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -35843,18 +35843,6 @@ What do you want to do?</source>
     </message>
     <message>
         <source>&quot;%1&quot; in &quot;data&quot; section of &quot;VcsCommand&quot; page has unexpected type (unset or List).</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Job in &quot;VcsCommand&quot; page is empty.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Job in &quot;VcsCommand&quot; page is not an object.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Job in &quot;VcsCommand&quot; page has no &quot;%1&quot; set.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

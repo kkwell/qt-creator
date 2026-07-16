@@ -6,7 +6,7 @@
 #include <cplusplus/CppDocument.h>
 #include <cplusplus/SymbolVisitor.h>
 
-#include <QtTest>
+#include <QTest>
 #include <QTextDocument>
 
 using namespace CPlusPlus;
@@ -165,7 +165,7 @@ void TestDeclarationComments::commentsForDecl()
     const int firstCommentPos = m_cppDoc->translationUnit()->getTokenPositionInDocument(
         commentTokens.first(), &m_textDoc);
     const QString actualCommentPrefix = m_textDoc.toPlainText().mid(firstCommentPos,
-                                                                    expectedCommentPrefix.length());
+                                                                    expectedCommentPrefix.size());
     QCOMPARE(actualCommentPrefix, expectedCommentPrefix);
 }
 

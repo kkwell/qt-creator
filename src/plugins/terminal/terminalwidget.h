@@ -12,11 +12,11 @@
 #include <coreplugin/icontext.h>
 #include <coreplugin/terminal/searchableterminal.h>
 
+#include <QtTaskTree/QSingleTaskTreeRunner>
+
 #include <utils/link.h>
 #include <utils/qtcprocess.h>
 #include <utils/terminalhooks.h>
-
-#include <QFutureWatcher>
 
 #include <memory>
 
@@ -77,7 +77,7 @@ protected:
     void contextMenuRequested(const QPoint &pos) override;
 
     qint64 writeToPty(const QByteArray &data) override;
-    void resizePty(QSize newSize) override;
+    bool resizePty(QSize newSize) override;
     void setClipboard(const QString &text) override;
     std::optional<TerminalView::Link> toLink(const QString &text) override;
 
@@ -107,10 +107,13 @@ private:
     RegisteredAction m_selectAll;
     RegisteredAction m_moveCursorWordLeft;
     RegisteredAction m_moveCursorWordRight;
+    RegisteredAction m_deleteWordLeft;
+    RegisteredAction m_deleteLineLeft;
+    RegisteredAction m_closeTerminal;
 
     Internal::ShortcutMap m_shortcutMap;
 
-    std::unique_ptr<QFutureWatcher<Utils::expected_str<Utils::FilePath>>> m_findShellWatcher;
+    QtTaskTree::QSingleTaskTreeRunner m_taskTreeRunner;
 };
 
 } // namespace Terminal

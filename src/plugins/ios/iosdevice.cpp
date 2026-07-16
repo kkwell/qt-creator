@@ -16,13 +16,19 @@
 #include <projectexplorer/devicesupport/devicemanager.h>
 #include <projectexplorer/devicesupport/idevicefactory.h>
 #include <projectexplorer/devicesupport/idevicewidget.h>
-#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/environmentkitaspect.h>
 
+#include <utils/co_result.h>
+#include <utils/devicefileaccess.h>
 #include <utils/layoutbuilder.h>
 #include <utils/portlist.h>
 #include <utils/qtcprocess.h>
+#include <utils/shutdownguard.h>
+#include <utils/synchronizedvalue.h>
+#include <utils/temporaryfile.h>
+#include <utils/url.h>
 
-#include <solutions/tasking/tasktree.h>
+#include <QtTaskTree/QTaskTree>
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -47,6 +53,7 @@
 #include <exception>
 
 using namespace ProjectExplorer;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace {
@@ -80,6 +87,521 @@ namespace Ios::Internal {
 
 const char kHandler[] = "Handler";
 
+struct PathInfo
+{
+    QStringList pathComponents;
+    std::optional<QString> domain;
+    std::optional<QString> domainIdentifier;
+    std::optional<QString> subPath;
+};
+
+static PathInfo getPathInfo(const FilePath &path)
+{
+    PathInfo info;
+    // Get file list for corresponding domain and subdir
+    info.pathComponents
+        = Utils::transform(path.cleanPath().pathComponents(), [](const QStringView &v) {
+              return v.toString();
+          });
+    if (info.pathComponents.size() < 2)
+        return info;
+    if (info.pathComponents.at(1) == "systemCrashLogs") {
+        info.domain = "systemCrashLogs";
+    } else if (info.pathComponents.at(1) == "temporary") {
+        info.domain = "temporary";
+        info.domainIdentifier = "qtcreator"; // self-chosen
+    } else {
+        info.domain = "appDataContainer";
+        info.domainIdentifier = info.pathComponents.at(1);
+    }
+    info.subPath = "/" + info.pathComponents.mid(2).join('/');
+    return info;
+}
+
+static Result<QMap<FilePath, FilePathInfo>> getFileList(const QString &deviceId, const FilePath &path)
+{
+    const PathInfo info = getPathInfo(path);
+    QTC_ASSERT(info.domain && info.subPath, return make_unexpected(Tr::tr("Internal error.")));
+    QStringList args{
+        "devicectl",
+        "device",
+        "info",
+        "files",
+        "--device",
+        deviceId,
+        "--quiet",
+        "--json-output",
+        "-",
+        "--subdirectory",
+        *info.subPath,
+        "--domain-type",
+        *info.domain};
+    if (info.domainIdentifier)
+        args += QStringList({"--domain-identifier", *info.domainIdentifier});
+
+    Process p;
+    p.setCommand({FilePath::fromString("/usr/bin/xcrun"), args});
+    p.runBlocking();
+    const Result<QMap<Utils::FilePath, Utils::FilePathInfo>> files
+        = parseFileList(p.rawStdOut(), path);
+    return files;
+}
+
+class IosFileAccess : public DeviceFileAccess
+{
+public:
+    IosFileAccess(const QString &deviceId);
+
+    Result<Environment> deviceEnvironment() const final;
+
+protected:
+    Result<bool> isExecutableFile(const FilePath &filePath) const final;
+    Result<bool> isReadableFile(const FilePath &filePath) const final;
+    Result<bool> isWritableFile(const FilePath &filePath) const final;
+    Result<bool> isReadableDirectory(const FilePath &filePath) const final;
+    Result<bool> isWritableDirectory(const FilePath &filePath) const final;
+    Result<bool> isFile(const FilePath &filePath) const final;
+    Result<bool> isDirectory(const FilePath &filePath) const final;
+    Result<bool> isSymLink(const FilePath &filePath) const final;
+    Result<bool> hasHardLinks(const FilePath &filePath) const final;
+    // Result<> ensureExistingFile(const FilePath &filePath) const final;
+    // Result<> createDirectory(const FilePath &filePath) const final;
+    Result<bool> exists(const FilePath &filePath) const final;
+    // Result<> removeFile(const FilePath &filePath) const final;
+    // Result<> removeRecursively(const FilePath &filePath) const final;
+    // Result<> copyFile(const FilePath &filePath, const FilePath &target) const final;
+    // Result<> createSymLink(const FilePath &filePath, const FilePath &symLink) const final;
+    // Result<> renameFile(const FilePath &filePath, const FilePath &target) const final;
+    // Result<FilePath> symLinkTarget(const FilePath &filePath) const final;
+    Result<FilePathInfo> filePathInfo(const FilePath &filePath) const final;
+    Result<QDateTime> lastModified(const FilePath &filePath) const final;
+    Result<QFileDevice::Permissions> permissions(const FilePath &filePath) const final;
+    // Result<> setPermissions(const FilePath &filePath, QFileDevice::Permissions) const final;
+    Result<qint64> fileSize(const FilePath &filePath) const final;
+    // Result<QString> owner(const FilePath &filePath) const final;
+    // Result<uint> ownerId(const FilePath &filePath) const final;
+    // Result<QString> group(const FilePath &filePath) const final;
+    // Result<uint> groupId(const FilePath &filePath) const final;
+    // Result<qint64> bytesAvailable(const FilePath &filePath) const final;
+    // Result<QByteArray> fileId(const FilePath &filePath) const final;
+    Result<> iterateDirectory(
+        const FilePath &filePath,
+        const FilePath::IterateDirCallback &callBack,
+        const FileFilter &filter) const final;
+    Result<QByteArray> fileContents(
+        const FilePath &filePath, qint64 limit, qint64 offset) const final;
+    Result<qint64> writeFileContents(const FilePath &filePath, const QByteArray &data) const final;
+    // Result<FilePath> createTempFile(const FilePath &filePath) final;
+    // Result<FilePath> createTempDir(const FilePath &filePath) final;
+    std::vector<Result<std::unique_ptr<FilePathWatcher>>> watch(const FilePaths &paths) const final;
+    bool supportsAtomicSaveFile(const FilePath &filePath) const;
+    bool supportsRemovingFiles() const;
+
+private:
+    QString m_deviceId;
+    struct CacheItem
+    {
+        FilePathInfo info;
+        QDateTime time;
+    };
+
+    // TODO cache grows and is never really cleared
+    using InfoCache = QMap<FilePath, CacheItem>;
+    mutable SynchronizedValue<InfoCache> m_cache;
+    std::optional<FilePathInfo> cachedFilePathInfo(const FilePath &filePath) const;
+    void updateCache(const QMap<FilePath, FilePathInfo> &files) const;
+    void invalidateCache(const FilePath &filePath) const;
+};
+
+IosFileAccess::IosFileAccess(const QString &deviceId)
+    : m_deviceId(deviceId)
+{}
+
+Result<Environment> IosFileAccess::deviceEnvironment() const
+{
+    return Environment();
+}
+
+Result<bool> IosFileAccess::isExecutableFile(const FilePath &filePath) const
+{
+    const Result<FilePathInfo> info = filePathInfo(filePath);
+    if (!info)
+        return make_unexpected(info.error());
+    return info->fileFlags & FilePathInfo::FileType && info->fileFlags & FilePathInfo::ExeUserPerm;
+}
+
+Result<bool> IosFileAccess::isReadableFile(const FilePath &filePath) const
+{
+    const Result<FilePathInfo> info = filePathInfo(filePath);
+    if (!info)
+        return make_unexpected(info.error());
+    return info->fileFlags & FilePathInfo::FileType && info->fileFlags & FilePathInfo::ReadUserPerm;
+}
+
+Result<bool> IosFileAccess::isWritableFile(const FilePath &filePath) const
+{
+    const Result<FilePathInfo> info = filePathInfo(filePath);
+    if (!info)
+        return make_unexpected(info.error());
+    return info->fileFlags & FilePathInfo::FileType
+           && info->fileFlags & FilePathInfo::WriteUserPerm;
+}
+
+Result<bool> IosFileAccess::isReadableDirectory(const FilePath &filePath) const
+{
+    const Result<FilePathInfo> info = filePathInfo(filePath);
+    if (!info)
+        return make_unexpected(info.error());
+    return info->fileFlags & FilePathInfo::DirectoryType
+           && info->fileFlags & FilePathInfo::ReadUserPerm;
+}
+
+Result<bool> IosFileAccess::isWritableDirectory(const FilePath &filePath) const
+{
+    const Result<FilePathInfo> info = filePathInfo(filePath);
+    if (!info)
+        return make_unexpected(info.error());
+    return info->fileFlags & FilePathInfo::DirectoryType
+           && info->fileFlags & FilePathInfo::WriteUserPerm;
+}
+
+Result<bool> IosFileAccess::isFile(const FilePath &filePath) const
+{
+    const Result<FilePathInfo> info = filePathInfo(filePath);
+    if (!info)
+        return make_unexpected(info.error());
+    return info->fileFlags & FilePathInfo::FileType;
+}
+
+Result<bool> IosFileAccess::isDirectory(const FilePath &filePath) const
+{
+    const Result<FilePathInfo> info = filePathInfo(filePath);
+    if (!info)
+        return make_unexpected(info.error());
+    return info->fileFlags & FilePathInfo::DirectoryType;
+}
+
+Result<bool> IosFileAccess::isSymLink(const FilePath &) const
+{
+    return false;
+}
+
+Result<bool> IosFileAccess::hasHardLinks(const FilePath &) const
+{
+    return false;
+}
+
+Result<bool> IosFileAccess::exists(const FilePath &filePath) const
+{
+    const Result<FilePathInfo> info = filePathInfo(filePath);
+    if (!info)
+        return make_unexpected(info.error());
+    return info->fileFlags & FilePathInfo::ExistsFlag;
+}
+
+Result<FilePathInfo> IosFileAccess::filePathInfo(const FilePath &filePath) const
+{
+    const std::optional<FilePathInfo> cachedInfo = cachedFilePathInfo(filePath);
+    if (cachedInfo)
+        return *cachedInfo;
+    const PathInfo info = getPathInfo(filePath.parentDir());
+    if (!info.domain) {
+        // TODO: should be limited to actually existing root directories
+        return FilePathInfo(
+            {0,
+             FilePathInfo::FileFlags(
+                 FilePathInfo::PermsMask | FilePathInfo::DirectoryType | FilePathInfo::ExistsFlag),
+             {}});
+    }
+    const Result<QMap<FilePath, FilePathInfo>> files = getFileList(m_deviceId, filePath.parentDir());
+    if (!files) // TODO: should not return error if parent directory does not exist
+        return make_unexpected(files.error());
+    updateCache(*files);
+    return files->value(filePath);
+}
+
+Result<QDateTime> IosFileAccess::lastModified(const FilePath &filePath) const
+{
+    const Result<FilePathInfo> info = filePathInfo(filePath);
+    if (!info)
+        return make_unexpected(info.error());
+    return info->lastModified;
+}
+
+Result<QFileDevice::Permissions> IosFileAccess::permissions(const FilePath &filePath) const
+{
+    const Result<FilePathInfo> info = filePathInfo(filePath);
+    if (!info)
+        return make_unexpected(info.error());
+    return QFileDevice::Permissions(int(info->fileFlags));
+}
+
+Result<qint64> IosFileAccess::fileSize(const FilePath &filePath) const
+{
+    const Result<FilePathInfo> info = filePathInfo(filePath);
+    if (!info)
+        return make_unexpected(info.error());
+    return info->fileSize;
+}
+
+Result<> IosFileAccess::iterateDirectory(
+    const FilePath &filePath,
+    const FilePath::IterateDirCallback &callBack,
+    const FileFilter &filter) const
+{
+    const auto callCallback = [&callBack](const FilePath &f, const FilePathInfo &info) {
+        if (callBack.index() == 0)
+            return std::get<0>(callBack)(f) == IterationPolicy::Continue;
+        else
+            return std::get<1>(callBack)(f, info) == IterationPolicy::Continue;
+    };
+    const bool isRecursive = filter.iteratorFlags.testFlag(QDirIterator::Subdirectories);
+    QString nameFilterRegExStr = Utils::transform(filter.nameFilters, [](const QString &filter) {
+                                     return QRegularExpression::wildcardToRegularExpression(filter);
+                                 }).join(")|(");
+    if (!nameFilterRegExStr.isEmpty())
+        nameFilterRegExStr = "(" + nameFilterRegExStr + ")";
+    const QRegularExpression nameFilterRegEx(
+        nameFilterRegExStr,
+        filter.fileFilters.testFlag(QDir::CaseSensitive)
+            ? QRegularExpression::NoPatternOption
+            : QRegularExpression::CaseInsensitiveOption);
+    const auto passesFilter = [fileFilter = filter.fileFilters,
+                               nameFilterRegEx](const FilePath &filePath, const FilePathInfo &info) {
+        // check file patterns, but if AllDirs is set then only for files
+        const bool isDirectory = info.fileFlags.testFlag(FilePathInfo::DirectoryType);
+        if (!nameFilterRegEx.pattern().isEmpty()                    // we have patterns
+            && !(fileFilter.testFlag(QDir::AllDirs) && isDirectory) // directories are not excluded
+            && !nameFilterRegEx.match(filePath.fileName()).hasMatch()) { // it doesn't match
+            return false;
+        }
+        if (!fileFilter.testFlag(QDir::Dirs) && isDirectory)
+            return false;
+        if (!fileFilter.testFlag(QDir::Files) && info.fileFlags.testFlag(FilePathInfo::FileType))
+            return false;
+        if (!fileFilter.testFlag(QDir::Hidden) && info.fileFlags.testFlag(FilePathInfo::HiddenFlag))
+            return false;
+        if (fileFilter.testFlag(QDir::NoSymLinks) && info.fileFlags.testFlag(FilePathInfo::LinkType))
+            return false;
+        if (fileFilter.testFlag(QDir::Readable)
+            && !info.fileFlags.testFlag(FilePathInfo::ReadUserPerm))
+            return false;
+        if (fileFilter.testFlag(QDir::Writable)
+            && !info.fileFlags.testFlag(FilePathInfo::WriteUserPerm))
+            return false;
+        if (fileFilter.testFlag(QDir::Executable)
+            && !info.fileFlags.testFlag(FilePathInfo::ExeUserPerm))
+            return false;
+        return true;
+    };
+
+    FilePaths pathsToRecurse({filePath});
+
+    // Subitems of root path are systemCrashLogs and app IDs
+    if (filePath.isRootPath()) {
+        pathsToRecurse.clear();
+        if (!filter.fileFilters.testFlag(QDir::Dirs))
+            return ResultOk;
+        FilePathInfo info(
+            {0,
+             FilePathInfo::FileFlags(
+                 FilePathInfo::PermsMask | FilePathInfo::DirectoryType | FilePathInfo::ExistsFlag),
+             {}});
+        const FilePath crashLogPath = filePath.withNewPath("/systemCrashLogs");
+        if (passesFilter(crashLogPath, info)) {
+            if (!callCallback(crashLogPath, info))
+                return ResultOk;
+            pathsToRecurse.append(crashLogPath);
+        }
+        Process p;
+        p.setCommand(
+            {FilePath::fromString("/usr/bin/xcrun"),
+             {"devicectl",
+              "device",
+              "info",
+              "apps",
+              "--device",
+              m_deviceId,
+              "--quiet",
+              "--json-output",
+              "-"}});
+        p.runBlocking();
+        const Result<QSet<QString>> appIds = parseAppIdentifiers(p.rawStdOut());
+        if (!appIds)
+            return make_unexpected(appIds.error());
+        for (const QString &id : *appIds) {
+            const FilePath fp = filePath.withNewPath("/" + id);
+            if (passesFilter(fp, info)) {
+                if (!callCallback(fp, info))
+                    return ResultOk;
+                pathsToRecurse.append(fp);
+            }
+        }
+        if (!isRecursive)
+            return ResultOk;
+        // continue with pathsToRecurse if filter wants to iterate subdirs
+    }
+    while (!pathsToRecurse.isEmpty()) {
+        const FilePath current = pathsToRecurse.takeFirst();
+        const Result<QMap<FilePath, FilePathInfo>> files = getFileList(m_deviceId, current);
+        if (!files)
+            return make_unexpected(files.error());
+        updateCache(*files);
+        for (auto it = files->cbegin(); it != files->cend(); ++it) {
+            if (passesFilter(it.key(), it.value())) {
+                if (!callCallback(it.key(), it.value()))
+                    return ResultOk;
+                if (isRecursive && it.value().fileFlags.testFlag(FilePathInfo::DirectoryType))
+                    pathsToRecurse.append(it.key());
+            }
+        }
+    }
+    return ResultOk;
+}
+
+Result<QByteArray> IosFileAccess::fileContents(
+    const FilePath &filePath, qint64 limit, qint64 offset) const
+{
+    const PathInfo info = getPathInfo(filePath);
+    QTC_ASSERT(info.domain && info.subPath,
+               return make_unexpected(
+                   Tr::tr("Cannot retrieve file contents for \"%1\".")
+                       .arg(filePath.toUserOutput())););
+    const auto tempPath = []() -> Result<FilePath> {
+        TemporaryFile tempFile("ios-file-download");
+        if (tempFile.open())
+            return tempFile.filePath();
+        return make_unexpected(Tr::tr("Failed to create temporary file."));
+    }();
+    if (!tempPath)
+        return make_unexpected(tempPath.error());
+    QStringList args{
+        "devicectl",
+        "device",
+        "copy",
+        "from",
+        "--device",
+        m_deviceId,
+        "--quiet",
+        "--json-output",
+        "-",
+        "--source",
+        *info.subPath,
+        "--destination",
+        tempPath->nativePath(),
+        "--domain-type",
+        *info.domain};
+    if (info.domainIdentifier)
+        args += QStringList({"--domain-identifier", *info.domainIdentifier});
+
+    Process p;
+    p.setCommand({FilePath::fromString("/usr/bin/xcrun"), args});
+    p.runBlocking();
+    const Result<> success = checkDevicectlResult(p.rawStdOut());
+    if (!success)
+        return make_unexpected(success.error());
+    QScopeGuard remove([tempPath] { tempPath->removeFile(); });
+    return tempPath->fileContents(limit, offset);
+}
+
+Result<qint64> IosFileAccess::writeFileContents(const FilePath &filePath, const QByteArray &data) const
+{
+    const PathInfo info = getPathInfo(filePath);
+    QTC_ASSERT(info.domain && info.subPath,
+               return make_unexpected(
+                   Tr::tr("Cannot write file contents for \"%1\".").arg(filePath.toUserOutput())););
+    const auto tempPath = []() -> Result<FilePath> {
+        TemporaryFile tempFile("ios-file-download");
+        if (tempFile.open())
+            return tempFile.filePath();
+        return make_unexpected(Tr::tr("Failed to create temporary file."));
+    }();
+    if (!tempPath)
+        return make_unexpected(tempPath.error());
+    const Result<qint64> result = tempPath->writeFileContents(data);
+    QScopeGuard remove([tempPath] { tempPath->removeFile(); });
+    if (!result)
+        return result;
+    QStringList args{
+        "devicectl",
+        "device",
+        "copy",
+        "to",
+        "--device",
+        m_deviceId,
+        "--quiet",
+        "--json-output",
+        "-",
+        "--destination",
+        *info.subPath,
+        "--source",
+        tempPath->nativePath(),
+        "--domain-type",
+        *info.domain};
+    if (info.domainIdentifier)
+        args += QStringList({"--domain-identifier", *info.domainIdentifier});
+
+    Process p;
+    p.setCommand({FilePath::fromString("/usr/bin/xcrun"), args});
+    p.runBlocking();
+    const Result<> success = checkDevicectlResult(p.rawStdOut());
+    if (!success)
+        return make_unexpected(success.error());
+    invalidateCache(filePath);
+    return result;
+}
+
+std::vector<Result<std::unique_ptr<FilePathWatcher>>> IosFileAccess::watch(
+    const FilePaths &paths) const
+{
+    // not really implemented, but return dummies to avoid warnings
+    return Utils::transform<std::vector>(paths, [](const FilePath &) {
+        return Result<std::unique_ptr<FilePathWatcher>>(std::make_unique<FilePathWatcher>());
+    });
+}
+
+bool IosFileAccess::supportsAtomicSaveFile(const FilePath &filePath) const
+{
+    Q_UNUSED(filePath)
+    // we cannot move or remove files
+    return false;
+}
+
+bool IosFileAccess::supportsRemovingFiles() const
+{
+    return false;
+}
+
+std::optional<FilePathInfo> IosFileAccess::cachedFilePathInfo(const FilePath &filePath) const
+{
+    static const int kCacheSeconds = 5;
+    std::optional<FilePathInfo> result;
+    m_cache.write([filePath, &result](InfoCache &cache) {
+        const CacheItem item = cache.value(filePath);
+        if (item.time.isValid()) {
+            if (item.time.secsTo(QDateTime::currentDateTime()) < kCacheSeconds)
+                result = item.info;
+            else
+                cache.remove(filePath);
+        }
+    });
+    return result;
+}
+
+void IosFileAccess::updateCache(const QMap<FilePath, FilePathInfo> &files) const
+{
+    m_cache.write([files](InfoCache &cache) {
+        const auto now = QDateTime::currentDateTime();
+        for (auto it = files.cbegin(); it != files.cend(); ++it)
+            cache.insert(it.key(), {it.value(), now});
+    });
+}
+
+void IosFileAccess::invalidateCache(const FilePath &filePath) const
+{
+    m_cache.writeLocked()->remove(filePath);
+}
+
 class IosDeviceInfoWidget final : public IDeviceWidget
 {
 public:
@@ -98,20 +620,20 @@ public:
             noMargin
         }.attachTo(this);
         // clang-format on
+
+        installMarkSettingsDirtyTriggerRecursively(this);
     }
 
     void updateDeviceFromUi() final {}
 };
 
 IosDevice::IosDevice(CtorHelper)
-    : m_lastPort(Constants::IOS_DEVICE_PORT_START)
 {
     setType(Constants::IOS_DEVICE_TYPE);
-    settings()->displayName.setDefaultValue(IosDevice::name());
+    setDefaultDisplayName(IosDevice::name());
     setDisplayType(Tr::tr("iOS"));
     setMachineType(IDevice::Hardware);
     setOsType(Utils::OsTypeMac);
-    setDeviceState(DeviceDisconnected);
 }
 
 IosDevice::IosDevice()
@@ -156,17 +678,42 @@ void IosDevice::fromMap(const Store &map)
     for (auto i = vMap.cbegin(), end = vMap.cend(); i != end; ++i)
         m_extraInfo.insert(stringFromKey(i.key()), i.value().toString());
     m_handler = Handler(map.value(kHandler).toInt());
+    // TODO IDevice::fromMap overrides the port list that we set in the constructor
+    //      this shouldn't happen
+    Utils::PortList ports;
+    ports.addRange(
+        Utils::Port(Constants::IOS_DEVICE_PORT_START), Utils::Port(Constants::IOS_DEVICE_PORT_END));
+    setFreePorts(ports);
 }
 
-Store IosDevice::toMap() const
+void IosDevice::toMap(Store &map) const
 {
-    Store res = IDevice::toMap();
+    IDevice::toMap(map);
+
     Store vMap;
     for (auto i = m_extraInfo.cbegin(), end = m_extraInfo.cend(); i != end; ++i)
         vMap.insert(keyFromString(i.key()), i.value());
-    res.insert(Constants::EXTRA_INFO_KEY, variantFromStore(vMap));
-    res.insert(kHandler, int(m_handler));
-    return res;
+    map.insert(Constants::EXTRA_INFO_KEY, variantFromStore(vMap));
+    map.insert(kHandler, int(m_handler));
+}
+
+ExecutableItem IosDevice::portsGatheringRecipe(
+    [[maybe_unused]] const Storage<PortsOutputData> &output) const
+{
+    // We don't really know how to get all used ports on the device.
+    // The code in <= 15.0 cycled through the list (30001 for the first run,
+    // 30002 for the second run etc)
+    // I guess that would be needed if we could run/profile multiple applications on
+    // the device simultaneously, we cannot
+    return Group{nullItem};
+}
+
+QUrl IosDevice::toolControlChannel(const ControlChannelHint &) const
+{
+    QUrl url;
+    url.setScheme(Utils::urlTcpScheme());
+    url.setHost("localhost");
+    return url;
 }
 
 QString IosDevice::deviceName() const
@@ -204,14 +751,6 @@ QString IosDevice::cpuArchitecture() const
     return m_extraInfo.value(kCpuArchitecture);
 }
 
-Utils::Port IosDevice::nextPort() const
-{
-    // use qrand instead?
-    if (++m_lastPort >= Constants::IOS_DEVICE_PORT_END)
-        m_lastPort = Constants::IOS_DEVICE_PORT_START;
-    return Utils::Port(m_lastPort);
-}
-
 IosDevice::Handler IosDevice::handler() const
 {
     return m_handler;
@@ -240,24 +779,24 @@ IosDeviceManager::TranslationMap IosDeviceManager::translationMap()
 
 void IosDeviceManager::deviceConnected(const QString &uid, const QString &name)
 {
-    DeviceManager *devManager = DeviceManager::instance();
     Utils::Id baseDevId(Constants::IOS_DEVICE_ID);
     Utils::Id devType(Constants::IOS_DEVICE_TYPE);
     Utils::Id devId = baseDevId.withSuffix(uid);
-    IDevice::ConstPtr dev = devManager->find(devId);
+    IDevice::Ptr dev = DeviceManager::find(devId);
     if (!dev) {
-        auto newDev = new IosDevice(uid);
+        auto newDev = IosDevice::make(uid);
         if (!name.isNull())
-            newDev->settings()->displayName.setValue(name);
+            newDev->setDisplayName(name);
         qCDebug(detectLog) << "adding ios device " << uid;
-        devManager->addDevice(IDevice::ConstPtr(newDev));
+        DeviceManager::addDevice(newDev);
     } else if (dev->deviceState() != IDevice::DeviceConnected &&
                dev->deviceState() != IDevice::DeviceReadyToUse) {
         qCDebug(detectLog) << "updating ios device " << uid;
+
         if (dev->type() == devType) // FIXME: Should that be a QTC_ASSERT?
-            devManager->addDevice(dev->clone());
+            DeviceManager::addDevice(dev);
         else
-            devManager->addDevice(IDevice::ConstPtr(new IosDevice(uid)));
+            DeviceManager::addDevice(IosDevice::make(uid));
     }
     updateInfo(uid);
 }
@@ -267,29 +806,35 @@ void IosDeviceManager::deviceDisconnected(const QString &uid)
     qCDebug(detectLog) << "detected disconnection of ios device " << uid;
     // if an update is currently still running for the device being connected, cancel that
     // erasing deletes the unique_ptr which deletes the TaskTree which stops it
-    m_updateTasks.erase(uid);
-    DeviceManager *devManager = DeviceManager::instance();
+    m_updatesRunner.resetKey(uid);
     Utils::Id baseDevId(Constants::IOS_DEVICE_ID);
     Utils::Id devType(Constants::IOS_DEVICE_TYPE);
     Utils::Id devId = baseDevId.withSuffix(uid);
-    IDevice::ConstPtr dev = devManager->find(devId);
+    IDevice::ConstPtr dev = DeviceManager::find(devId);
     if (!dev || dev->type() != devType) {
         qCWarning(detectLog) << "ignoring disconnection of ios device " << uid; // should neve happen
     } else {
         auto iosDev = static_cast<const IosDevice *>(dev.get());
         if (iosDev->m_extraInfo.isEmpty()
             || iosDev->m_extraInfo.value(kDeviceName) == QLatin1String("*unknown*")) {
-            devManager->removeDevice(iosDev->id());
+            DeviceManager::removeDevice(iosDev->id());
         } else if (iosDev->deviceState() != IDevice::DeviceDisconnected) {
             qCDebug(detectLog) << "disconnecting device " << iosDev->uniqueDeviceID();
-            devManager->setDeviceState(iosDev->id(), IDevice::DeviceDisconnected);
+            DeviceManager::setDeviceState(iosDev->id(), IDevice::DeviceDisconnected);
         }
     }
 }
 
 void IosDeviceManager::updateInfo(const QString &devId)
 {
-    using namespace Tasking;
+    const auto getDeviceCtlVersion = ProcessTask(
+        [](Process &process) {
+            process.setCommand({FilePath::fromString("/usr/bin/xcrun"), {"devicectl", "--version"}});
+        },
+        [this](const Process &process) {
+            m_deviceCtlVersion = QVersionNumber::fromString(process.stdOut());
+            qCDebug(detectLog) << "devicectl version:" << *m_deviceCtlVersion;
+        });
 
     const auto infoFromDeviceCtl = ProcessTask(
         [](Process &process) {
@@ -297,7 +842,7 @@ void IosDeviceManager::updateInfo(const QString &devId)
                                 {"devicectl", "list", "devices", "--quiet", "--json-output", "-"}});
         },
         [this, devId](const Process &process) {
-            const expected_str<QMap<QString, QString>> result = parseDeviceInfo(process.rawStdOut(),
+            const Result<QMap<QString, QString>> result = parseDeviceInfo(process.rawStdOut(),
                                                                                 devId);
             if (!result) {
                 qCDebug(detectLog) << result.error();
@@ -306,7 +851,7 @@ void IosDeviceManager::updateInfo(const QString &devId)
             deviceInfo(devId, IosDevice::Handler::DeviceCtl, *result);
             return DoneResult::Success;
         },
-        CallDoneIf::Success);
+        CallDoneFlag::OnSuccess);
 
     const auto infoFromIosTool = IosToolTask([this, devId](IosToolRunner &runner) {
         runner.setDeviceType(IosDeviceType::IosDevice);
@@ -323,60 +868,63 @@ void IosDeviceManager::updateInfo(const QString &devId)
         });
     });
 
-    const Group root{sequential, stopOnSuccess, infoFromDeviceCtl, infoFromIosTool};
+    // clang-format off
+    const Group recipe {
+        parallel,
+        continueOnError,
+        m_deviceCtlVersion ? nullItem : getDeviceCtlVersion,
+        Group {
+            sequential, stopOnSuccess, infoFromDeviceCtl, infoFromIosTool
+        }
+    };
+    // clang-format on
 
-    TaskTree *task = new TaskTree(root);
-    m_updateTasks[devId].reset(task); // cancels any existing update, not calling done handlers
-    connect(task, &TaskTree::done, this, [this, task, devId] {
-        const auto taskIt = m_updateTasks.find(devId);
-        QTC_ASSERT(taskIt != m_updateTasks.end(), return);
-        QTC_ASSERT(taskIt->second.get() == task, return);
-        taskIt->second.release()->deleteLater();
-        m_updateTasks.erase(taskIt);
-    });
-    task->start();
+    m_updatesRunner.start(devId, recipe);
 }
 
 void IosDeviceManager::deviceInfo(const QString &uid,
                                   IosDevice::Handler handler,
                                   const Ios::IosToolHandler::Dict &info)
 {
-    DeviceManager *devManager = DeviceManager::instance();
+    qCDebug(detectLog) << "got device information:" << info;
     Utils::Id baseDevId(Constants::IOS_DEVICE_ID);
     Utils::Id devType(Constants::IOS_DEVICE_TYPE);
     Utils::Id devId = baseDevId.withSuffix(uid);
-    IDevice::ConstPtr dev = devManager->find(devId);
+    IDevice::Ptr dev = DeviceManager::find(devId);
     bool skipUpdate = false;
-    IosDevice *newDev = nullptr;
+    IosDevice::Ptr newDev;
     if (dev && dev->type() == devType) {
-        auto iosDev = static_cast<const IosDevice *>(dev.get());
+        IosDevice::Ptr iosDev = std::static_pointer_cast<IosDevice>(dev);
         if (iosDev->m_handler == handler && iosDev->m_extraInfo == info) {
             skipUpdate = true;
-            newDev = const_cast<IosDevice *>(iosDev);
+            newDev = iosDev;
         } else {
-            newDev = new IosDevice();
-            newDev->fromMap(iosDev->toMap());
+            Store store;
+            iosDev->toMap(store);
+            newDev = IosDevice::make();
+            newDev->fromMap(store);
         }
     } else {
-        newDev = new IosDevice(uid);
+        newDev = IosDevice::make(uid);
     }
     if (!skipUpdate) {
         if (info.contains(kDeviceName))
-            newDev->settings()->displayName.setValue(info.value(kDeviceName));
+            newDev->setDisplayName(info.value(kDeviceName));
         newDev->m_extraInfo = info;
         newDev->m_handler = handler;
         qCDebug(detectLog) << "updated info of ios device " << uid;
-        dev = IDevice::ConstPtr(newDev);
-        devManager->addDevice(dev);
+        dev = newDev;
+        DeviceManager::addDevice(dev);
     }
     QLatin1String devStatusKey = QLatin1String("developerStatus");
     if (info.contains(devStatusKey)) {
         QString devStatus = info.value(devStatusKey);
         if (devStatus == vDevelopment) {
-            devManager->setDeviceState(newDev->id(), IDevice::DeviceReadyToUse);
+            newDev->setFileAccess(std::make_shared<IosFileAccess>(newDev->uniqueInternalDeviceId()));
+            DeviceManager::setDeviceState(newDev->id(), IDevice::DeviceReadyToUse);
             m_userModeDeviceIds.removeOne(uid);
         } else {
-            devManager->setDeviceState(newDev->id(), IDevice::DeviceConnected);
+            DeviceManager::setDeviceState(newDev->id(), IDevice::DeviceConnected);
             bool shouldIgnore = newDev->m_ignoreDevice;
             newDev->m_ignoreDevice = true;
             if (devStatus == vOff) {
@@ -394,8 +942,8 @@ void IosDeviceManager::deviceInfo(const QString &uid,
                         switch (result) {
                         case QMessageBox::Yes:
                             Core::HelpManager::showHelpUrl(
-                                QLatin1String("qthelp://org.qt-project.qtcreator/doc/"
-                                              "creator-developing-ios.html"));
+                                "qthelp://org.qt-project.qtcreator/doc/"
+                                "creator-how-to-connect-ios-devices.html");
                             break;
                         case QMessageBox::No:
                             break;
@@ -570,6 +1118,30 @@ void IosDeviceManager::monitorAvailableDevices()
 #endif
 }
 
+bool IosDeviceManager::isDeviceCtlOutputSupported()
+{
+    if (qtcEnvironmentVariableIsSet("QTC_FORCE_POLLINGIOSRUNNER"))
+        return false;
+    // Theoretically the devicectl from Xcode 15.4 already has the required `--console` option,
+    // but that is broken for some (newer?) devices (QTCREATORBUG-32637).
+    return instance()->m_deviceCtlVersion
+           && instance()->m_deviceCtlVersion >= QVersionNumber(397, 21); // Xcode 16.0
+}
+
+bool IosDeviceManager::isDeviceCtlDebugSupported()
+{
+    if (qtcEnvironmentVariableIsSet("QTC_FORCE_POLLINGIOSRUNNER"))
+        return false;
+    // TODO this actually depends on a kit with LLDB >= lldb-1600.0.36.3 (Xcode 16.0)
+    // and devicectl >= 355.28 (Xcode 15.4) already has the devicectl requirements
+    // In principle users could install Xcode 16, and get devicectl >= 397.21 from that
+    // (it is globally installed in /Library/...)
+    // but then switch to an Xcode 15 installation with xcode-select, and use lldb-1500 which does
+    // not support the required commands.
+    return instance()->m_deviceCtlVersion
+           && instance()->m_deviceCtlVersion >= QVersionNumber(397, 21); // Xcode 16.0
+}
+
 IosDeviceManager::IosDeviceManager(QObject *parent) :
     QObject(parent)
 {
@@ -587,8 +1159,8 @@ void IosDeviceManager::updateUserModeDevices()
 
 IosDeviceManager *IosDeviceManager::instance()
 {
-    static IosDeviceManager obj;
-    return &obj;
+    static IosDeviceManager *theInstance = new IosDeviceManager(Utils::shutdownGuard());
+    return theInstance;
 }
 
 void IosDeviceManager::updateAvailableDevices(const QStringList &devices)
@@ -596,9 +1168,8 @@ void IosDeviceManager::updateAvailableDevices(const QStringList &devices)
     for (const QString &uid : devices)
         deviceConnected(uid);
 
-    DeviceManager *devManager = DeviceManager::instance();
-    for (int iDevice = 0; iDevice < devManager->deviceCount(); ++iDevice) {
-        IDevice::ConstPtr dev = devManager->deviceAt(iDevice);
+    for (int iDevice = 0; iDevice < DeviceManager::deviceCount(); ++iDevice) {
+        IDevice::ConstPtr dev = DeviceManager::deviceAt(iDevice);
         Utils::Id devType(Constants::IOS_DEVICE_TYPE);
         if (!dev || dev->type() != devType)
             continue;
@@ -607,7 +1178,7 @@ void IosDeviceManager::updateAvailableDevices(const QStringList &devices)
             continue;
         if (iosDev->deviceState() != IDevice::DeviceDisconnected) {
             qCDebug(detectLog) << "disconnecting device " << iosDev->uniqueDeviceID();
-            devManager->setDeviceState(iosDev->id(), IDevice::DeviceDisconnected);
+            DeviceManager::setDeviceState(iosDev->id(), IDevice::DeviceDisconnected);
         }
     }
 }
@@ -624,6 +1195,7 @@ public:
         setCombinedIcon(":/ios/images/iosdevicesmall.png",
                         ":/ios/images/iosdevice.png");
         setConstructionFunction([] { return IDevice::Ptr(new IosDevice); });
+        setExecutionTypeId(Constants::IOS_EXECUTION_TYPE_ID);
     }
 
     bool canRestore(const Utils::Store &map) const override

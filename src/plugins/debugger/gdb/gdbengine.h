@@ -16,9 +16,10 @@
 
 #include <utils/id.h>
 #include <utils/qtcprocess.h>
+#include <utils/textcodec.h>
 
-#include <QProcess>
-#include <QTextCodec>
+#include <QtTaskTree/QSingleTaskTreeRunner>
+
 #include <QTimer>
 
 namespace Debugger::Internal {
@@ -49,7 +50,6 @@ public:
 
 private: ////////// General Interface //////////
     void handleGdbStartFailed();
-    void prepareForRestart() final;
 
     bool hasCapability(unsigned) const final;
     void detachDebugger() final;
@@ -57,11 +57,11 @@ private: ////////// General Interface //////////
     void abortDebuggerProcess() final;
     void resetInferior() final;
 
-    bool acceptsDebuggerCommands() const final;
     void executeDebuggerCommand(const QString &command) final;
 
     ////////// General State //////////
 
+    void setState(DebuggerState state, bool forced = false) final;
     bool m_registerNamesListed = false;
 
     ////////// Gdb Process Management //////////
@@ -92,12 +92,10 @@ private: ////////// General Interface //////////
     void readGdbStandardError();
     void readDebuggeeOutput(const QByteArray &ba);
 
-    QTextCodec *m_gdbOutputCodec;
-    QTextCodec::ConverterState m_gdbOutputCodecState;
-    QTextCodec *m_inferiorOutputCodec;
-    QTextCodec::ConverterState m_inferiorOutputCodecState;
+    QStringDecoder m_inferiorOutputDecoder{Utils::TextEncoding::encodingForLocale().name()};
+    QStringDecoder m_gdbOutputDecoder{Utils::TextEncoding::encodingForLocale().name()};
 
-    QByteArray m_inbuffer;
+    QString m_inbuffer;
     bool m_busy = false;
 
     // Name of the convenience variable containing the last
@@ -106,17 +104,14 @@ private: ////////// General Interface //////////
 
     ////////// Gdb Command Management //////////
 
-    void runCommand(const DebuggerCommand &command) final;
+    void runCommand(const DebuggerCommand &command);
 
     void commandTimeout();
     void setTokenBarrier();
 
-    // Sets up an "unexpected result" for the following commeand.
-    void scheduleTestResponse(int testCase, const QString &response);
-
     QHash<int, DebuggerCommand> m_commandForToken;
-    QHash<int, int> m_flagsForToken;
     QTimer m_commandTimer;
+    bool m_commandTimeoutPending = false;
 
     QString m_pendingConsoleStreamOutput;
     QString m_pendingLogStreamOutput;
@@ -125,11 +120,11 @@ private: ////////// General Interface //////////
     // of evaluation. Responses with older tokens are considers
     // out of date and discarded.
     int m_oldestAcceptableToken = -1;
-    int m_nonDiscardableCount = 0;
 
     bool m_rerunPending = false;
     bool m_ignoreNextTrap = false;
     bool m_detectTargetIncompat = false;
+    bool m_lruFailure = false;
 
     ////////// Gdb Output, State & Capability Handling //////////
 
@@ -140,11 +135,11 @@ private: ////////// General Interface //////////
     void handleStop1(const GdbMi &data);
     void handleStop2(const GdbMi &data);
     void handleStop3();
-    void resetCommandQueue();
     void updateStateForStop();
 
     // Gdb initialization sequence
     void handleShowVersion(const DebuggerResponse &response);
+    void handleDumperSetup(const DebuggerResponse &response);
     void handlePythonSetup(const DebuggerResponse &response);
 
     int m_gdbVersion = 100;    // 7.6.1 is 70601
@@ -191,15 +186,12 @@ private: ////////// General Interface //////////
     //
     // Breakpoint specific stuff
     //
-    void handleBreakModifications(const GdbMi &bkpts);
     void handleBreakIgnore(const DebuggerResponse &response, const Breakpoint &bp);
     void handleBreakDisable(const DebuggerResponse &response, const Breakpoint &bp);
     void handleBreakEnable(const DebuggerResponse &response, const Breakpoint &bp);
     void handleBreakInsert1(const DebuggerResponse &response, const Breakpoint &bp);
     void handleBreakInsert2(const DebuggerResponse &response, const Breakpoint &bp);
     void handleBreakCondition(const DebuggerResponse &response, const Breakpoint &bp);
-    void handleBreakThreadSpec(const DebuggerResponse &response, const Breakpoint &bp);
-    void handleBreakLineNumber(const DebuggerResponse &response, const Breakpoint &bp);
     void handleTracepointInsert(const DebuggerResponse &response, const Breakpoint &bp);
     void handleTracepointHit(const GdbMi &data);
     void handleTracepointModified(const GdbMi &data);
@@ -222,7 +214,6 @@ private: ////////// General Interface //////////
     void requestModuleSymbols(const Utils::FilePath &moduleName) final;
     void requestModuleSections(const Utils::FilePath &moduleName) final;
     void reloadModules() final;
-    void examineModules() final;
 
     void reloadModulesInternal();
     void handleModulesList(const DebuggerResponse &response);
@@ -232,7 +223,7 @@ private: ////////// General Interface //////////
     // Snapshot specific stuff
     //
     void createSnapshot() final;
-    void handleMakeSnapshot(const DebuggerResponse &response, const QString &coreFile);
+    void handleMakeSnapshot(const DebuggerResponse &response, const Utils::FilePath &coreFile);
 
     //
     // Register specific stuff
@@ -241,7 +232,6 @@ private: ////////// General Interface //////////
     void reloadPeripheralRegisters() final;
     void setRegisterValue(const QString &name, const QString &value) final;
     void setPeripheralRegisterValue(quint64 address, quint64 value) final;
-    void handleRegisterListNames(const DebuggerResponse &response);
     void handleRegisterListing(const DebuggerResponse &response);
     void handleRegisterListValues(const DebuggerResponse &response);
     void handlePeripheralRegisterListValues(const DebuggerResponse &response);
@@ -262,10 +252,7 @@ private: ////////// General Interface //////////
     // Source file specific stuff
     //
     void reloadSourceFiles() final;
-    void reloadSourceFilesInternal();
-    void handleQuerySources(const DebuggerResponse &response);
 
-    Utils::FilePath fullName(const QString &fileName);
     Utils::FilePath cleanupFullName(const QString &fileName);
 
     // awful hack to keep track of used files
@@ -280,7 +267,6 @@ private: ////////// General Interface //////////
     //
     void updateAll() final;
     void handleStackListFrames(const DebuggerResponse &response, bool isFull);
-    void handleStackSelectThread(const DebuggerResponse &response);
     void handleThreadListIds(const DebuggerResponse &response);
     void handleThreadInfo(const DebuggerResponse &response);
     void handleThreadNames(const DebuggerResponse &response);
@@ -288,7 +274,6 @@ private: ////////// General Interface //////////
     void reloadStack();
     void reloadFullStack() final;
     void loadAdditionalQmlStack() final;
-    int currentFrame() const;
 
     //
     // Watch specific stuff
@@ -299,11 +284,8 @@ private: ////////// General Interface //////////
 
     void fetchMemory(MemoryAgent *agent, quint64 addr, quint64 length) final;
     void fetchMemoryHelper(const MemoryAgentCookie &cookie);
-    void handleChangeMemory(const DebuggerResponse &response);
     void changeMemory(MemoryAgent *agent, quint64 addr, const QByteArray &data) final;
     void handleFetchMemory(const DebuggerResponse &response, MemoryAgentCookie ac);
-
-    void showToolTip();
 
     void handleVarAssign(const DebuggerResponse &response);
     void handleThreadGroupCreated(const GdbMi &result);
@@ -314,18 +296,10 @@ private: ////////// General Interface //////////
     void doUpdateLocals(const UpdateParameters &parameters) final;
     void handleFetchVariables(const DebuggerResponse &response);
 
-    void setLocals(const QList<GdbMi> &locals);
-
     //
     // Dumper Management
     //
     void reloadDebuggingHelpers() final;
-
-    //
-    // Convenience Functions
-    //
-    void showExecutionError(const QString &message);
-    QString failedToStartMessage();
 
     // For short-circuiting stack and thread list evaluation.
     bool m_stackNeeded = false;
@@ -334,8 +308,6 @@ private: ////////// General Interface //////////
     // while updating locals.
     bool m_inUpdateLocals = false;
 
-    // HACK:
-    QString m_currentThread;
     QString m_lastWinException;
     bool m_expectTerminalTrap = false;
     bool usesExecInterrupt() const;
@@ -343,17 +315,7 @@ private: ////////// General Interface //////////
 
     DebuggerCommandSequence m_onStop;
 
-    QHash<int, QString> m_scheduledTestResponses;
-    QSet<int> m_testCases;
-
     bool m_systemDumpersLoaded = false;
-
-    static QString msgGdbStopFailed(const QString &why);
-    static QString msgInferiorStopFailed(const QString &why);
-    static QString msgAttachedToStoppedInferior();
-    static QString msgInferiorSetupOk();
-    static QString msgInferiorRunOk();
-    static QString msgConnectRemoteServerFailed(const QString &why);
 
     void debugLastCommand() final;
     DebuggerCommand m_lastDebuggableCommand;
@@ -362,7 +324,6 @@ private: ////////// General Interface //////////
     bool isPlainEngine() const;
     bool isCoreEngine() const;
     bool isRemoteEngine() const;
-    bool isLocalAttachEngine() const;
     bool isTermEngine() const;
 
     void setupEngine() final;
@@ -397,7 +358,6 @@ private: ////////// General Interface //////////
     // Core
     void handleTargetCore(const DebuggerResponse &response);
     void handleCoreRoundTrip(const DebuggerResponse &response);
-    QString coreFileName() const;
 
     QString mainFunction() const;
     void setupInferior();
@@ -407,7 +367,7 @@ private: ////////// General Interface //////////
 
     Utils::Process m_gdbProc;
     OutputCollector m_outputCollector;
-    QString m_errorString;
+    QtTaskTree::QSingleTaskTreeRunner m_signalOperationRunner;
 };
 
 } // Debugger::Internal

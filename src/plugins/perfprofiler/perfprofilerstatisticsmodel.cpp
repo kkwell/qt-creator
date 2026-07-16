@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "perfprofilerstatisticsmodel.h"
+#include "perfprofilertracemanager.h"
 #include "perfprofilertr.h"
 
 #include <utils/qtcassert.h>
 
 #include <QFileInfo>
 
-namespace PerfProfiler {
-namespace Internal {
+namespace PerfProfiler::Internal {
 
 static const char *headerLabels[] = {
     QT_TRANSLATE_NOOP("QtC::PerfProfiler", "Address"),
@@ -64,13 +64,13 @@ static inline bool operator<(const PerfProfilerStatisticsModel::Frame &a, int b)
 
 struct PerfProfilerStatisticsData
 {
-    QVector<PerfProfilerStatisticsMainModel::Data> mainData;
+    QList<PerfProfilerStatisticsMainModel::Data> mainData;
     QHash<int, PerfProfilerStatisticsRelativesModel::Data> parentsData;
     QHash<int, PerfProfilerStatisticsRelativesModel::Data> childrenData;
     uint totalSamples = 0;
 
     void loadEvent(const PerfEvent &event, const PerfEventType &type);
-    void updateRelative(PerfProfilerStatisticsModel::Relation relation, const QVector<int> &stack);
+    void updateRelative(PerfProfilerStatisticsModel::Relation relation, const QList<int> &stack);
     bool isEmpty() const;
     void clear();
 };
@@ -136,7 +136,7 @@ void PerfProfilerStatisticsMainModel::finalize(PerfProfilerStatisticsData *data)
     resort();
 
     QTC_ASSERT(data->isEmpty(), data->clear());
-    QTC_CHECK(m_offlineData.isNull());
+    QTC_CHECK(!m_offlineData);
     m_offlineData.reset(data);
 }
 
@@ -180,7 +180,7 @@ quint64 PerfProfilerStatisticsMainModel::address(int typeId) const
 void PerfProfilerStatisticsMainModel::initialize()
 {
     // Make offline data unaccessible while we're loading events
-    PerfProfilerStatisticsData *offline = m_offlineData.take();
+    PerfProfilerStatisticsData *offline = m_offlineData.release();
     QTC_ASSERT(offline, return);
     QTC_ASSERT(offline->isEmpty(), offline->clear());
 }
@@ -193,7 +193,7 @@ void PerfProfilerStatisticsData::loadEvent(const PerfEvent &event, const PerfEve
     Q_UNUSED(type)
     ++totalSamples;
     auto data = mainData.end();
-    const QVector<qint32> &stack = event.frames();
+    const QList<qint32> &stack = event.frames();
     for (auto typeId = stack.rbegin(), end = stack.rend(); typeId != end; ++typeId) {
         data = std::lower_bound(mainData.begin(), mainData.end(), *typeId);
         if (data == mainData.end() || data->typeId != *typeId)
@@ -290,12 +290,12 @@ void PerfProfilerStatisticsMainModel::sort(int column, Qt::SortOrder order)
 void PerfProfilerStatisticsMainModel::clear(PerfProfilerStatisticsData *data)
 {
     beginResetModel();
-    if (m_offlineData.isNull()) {
+    if (!m_offlineData) {
         // We didn't finalize
         data->clear();
         m_offlineData.reset(data);
     } else {
-        QTC_CHECK(data == m_offlineData.data());
+        QTC_CHECK(data == m_offlineData.get());
     }
     m_totalSamples = 0;
     m_data.clear();
@@ -335,7 +335,7 @@ PerfProfilerStatisticsMainModel::PerfProfilerStatisticsMainModel(QObject *parent
 PerfProfilerStatisticsMainModel::~PerfProfilerStatisticsMainModel()
 {
     // If the offline data isn't here, we're being deleted while loading something. That's unnice.
-    QTC_CHECK(!m_offlineData.isNull());
+    QTC_CHECK(m_offlineData);
 }
 
 PerfProfilerStatisticsRelativesModel::PerfProfilerStatisticsRelativesModel(
@@ -454,7 +454,7 @@ void PerfProfilerStatisticsRelativesModel::finalize(PerfProfilerStatisticsData *
 }
 
 void PerfProfilerStatisticsData::updateRelative(PerfProfilerStatisticsModel::Relation relation,
-                                                const QVector<int> &stack)
+                                                const QList<int> &stack)
 {
     int prevFrame = -1;
     const bool isParents = (relation == PerfProfilerStatisticsModel::Parents);
@@ -507,5 +507,4 @@ const PerfProfilerStatisticsMainModel *PerfProfilerStatisticsRelativesModel::mai
     return static_cast<const PerfProfilerStatisticsMainModel *>(parent());
 }
 
-} // namespace Internal
-} // namespace PerfProfiler
+} // namespace PerfProfiler::Internal

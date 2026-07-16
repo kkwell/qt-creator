@@ -9,17 +9,35 @@
 #include "headerpathfilter.h"
 #include "projectinfo.h"
 
+#include <projectexplorer/buildsystem.h>
 #include <projectexplorer/projectexplorerconstants.h>
-#include <projectexplorer/toolchainconfigwidget.h>
 #include <utils/algorithm.h>
 
-#include <QtTest>
+#include <QTest>
 
 using namespace ProjectExplorer;
+using namespace Utils;
 
 namespace CppEditor::Internal {
 
 namespace {
+class TestBuildSystem : public BuildSystem
+{
+public:
+    using BuildSystem::BuildSystem;
+    static QString name() { return "ProjectPartTest"; }
+private:
+    void triggerParsing() override {}
+};
+class TestProject : public Project
+{
+public:
+    TestProject(const Utils::FilePath &projectFilePath) : Project({}, projectFilePath)
+    {
+        setBuildSystemCreator<TestBuildSystem>();
+    }
+};
+
 class ProjectPartChooserTestHelper
 {
 public:
@@ -28,10 +46,10 @@ public:
         chooser.setFallbackProjectPart([&]() {
             return fallbackProjectPart;
         });
-        chooser.setProjectPartsForFile([&](const QString &) {
+        chooser.setProjectPartsForFile([&](const Utils::FilePath &) {
             return projectPartsForFile;
         });
-        chooser.setProjectPartsFromDependenciesForFile([&](const QString &) {
+        chooser.setProjectPartsFromDependenciesForFile([&](const Utils::FilePath &) {
             return projectPartsFromDependenciesForFile;
         });
     }
@@ -41,21 +59,23 @@ public:
         const Project * const project = projectMap.value(activeProject).get();
         const Utils::FilePath projectFilePath = project ? project->projectFilePath()
                                                         : Utils::FilePath();
-        return chooser.choose(filePath, currentProjectPartInfo, preferredProjectPartId,
-                              projectFilePath,
-                              languagePreference, projectsChanged);
+        return chooser.choose(
+            Utils::FilePath(),
+            currentProjectPartInfo,
+            preferredProjectPartId,
+            projectFilePath,
+            languagePreference,
+            projectsChanged);
     }
 
     static QList<ProjectPart::ConstPtr> createProjectPartsWithDifferentProjects()
     {
         QList<ProjectPart::ConstPtr> projectParts;
 
-        const auto p1 = std::make_shared<Project>(
-                    QString(), Utils::FilePath::fromString("p1.pro"));
+        const auto p1 = std::make_shared<TestProject>(Utils::FilePath::fromString("p1.pro"));
         projectMap.insert(p1->projectFilePath(), p1);
         projectParts.append(ProjectPart::create(p1->projectFilePath()));
-        const auto p2 = std::make_shared<Project>(
-                    QString(), Utils::FilePath::fromString("p2.pro"));
+        const auto p2 = std::make_shared<TestProject>(Utils::FilePath::fromString("p2.pro"));
         projectMap.insert(p2->projectFilePath(), p2);
         projectParts.append(ProjectPart::create(p2->projectFilePath()));
 
@@ -86,7 +106,6 @@ public:
         return projectParts;
     }
 
-    QString filePath;
     ProjectPart::ConstPtr currentProjectPart = ProjectPart::create({});
     ProjectPartInfo currentProjectPartInfo{currentProjectPart,
                                            {currentProjectPart},
@@ -115,7 +134,7 @@ void ProjectPartChooserTest::testChooseManuallySet()
     rpp2.setProjectFileLocation("someId");
     ProjectPart::ConstPtr p2 = ProjectPart::create({}, rpp2);
     ProjectPartChooserTestHelper t;
-    t.preferredProjectPartId = p2->projectFile;
+    t.preferredProjectPartId = p2->projectFile.toUrlishString();
     t.projectPartsForFile += {p1, p2};
 
     QCOMPARE(t.choose().projectPart, p2);
@@ -128,7 +147,7 @@ void ProjectPartChooserTest::testIndicateManuallySet()
     rpp2.setProjectFileLocation("someId");
     ProjectPart::ConstPtr p2 = ProjectPart::create({}, rpp2);
     ProjectPartChooserTestHelper t;
-    t.preferredProjectPartId = p2->projectFile;
+    t.preferredProjectPartId = p2->projectFile.toUrlishString();
     t.projectPartsForFile += {p1, p2};
 
     QVERIFY(t.choose().hints & ProjectPartInfo::IsPreferredMatch);
@@ -141,7 +160,7 @@ void ProjectPartChooserTest::testIndicateManuallySetForFallbackToProjectPartFrom
     rpp2.setProjectFileLocation("someId");
     ProjectPart::ConstPtr p2 = ProjectPart::create({}, rpp2);
     ProjectPartChooserTestHelper t;
-    t.preferredProjectPartId = p2->projectFile;
+    t.preferredProjectPartId = p2->projectFile.toUrlishString();
     t.projectPartsFromDependenciesForFile += {p1, p2};
 
     QVERIFY(t.choose().hints & ProjectPartInfo::IsPreferredMatch);
@@ -344,10 +363,7 @@ private:
     void addToEnvironment(Utils::Environment &) const override {}
     Utils::FilePath makeCommand(const Utils::Environment &) const override { return {}; }
     QList<Utils::OutputLineParser *> createOutputParsers() const override { return {}; }
-    std::unique_ptr<ToolchainConfigWidget> createConfigurationWidget() override
-    {
-        return {};
-    };
+    bool canShareBundleImpl(const Toolchain &) const override { return false; }
 };
 
 class ProjectInfoGeneratorTestHelper
@@ -386,7 +402,7 @@ void ProjectInfoGeneratorTest::testCreateNoProjectPartsForEmptyFileList()
 void ProjectInfoGeneratorTest::testCreateSingleProjectPart()
 {
     ProjectInfoGeneratorTestHelper t;
-    t.rawProjectPart.files = QStringList{ "foo.cpp", "foo.h"};
+    t.rawProjectPart.files = Utils::FilePaths{ "foo.cpp", "foo.h"};
     const ProjectInfo::ConstPtr projectInfo = t.generate();
 
     QCOMPARE(projectInfo->projectParts().size(), 1);
@@ -395,7 +411,7 @@ void ProjectInfoGeneratorTest::testCreateSingleProjectPart()
 void ProjectInfoGeneratorTest::testCreateMultipleProjectParts()
 {
     ProjectInfoGeneratorTestHelper t;
-    t.rawProjectPart.files = QStringList{ "foo.cpp", "foo.h", "bar.c", "bar.h" };
+    t.rawProjectPart.files = Utils::FilePaths{ "foo.cpp", "foo.h", "bar.c", "bar.h" };
     const ProjectInfo::ConstPtr projectInfo = t.generate();
 
     QCOMPARE(projectInfo->projectParts().size(), 2);
@@ -404,7 +420,7 @@ void ProjectInfoGeneratorTest::testCreateMultipleProjectParts()
 void ProjectInfoGeneratorTest::testProjectPartIndicatesObjectiveCExtensionsByDefault()
 {
     ProjectInfoGeneratorTestHelper t;
-    t.rawProjectPart.files = QStringList{ "foo.mm" };
+    t.rawProjectPart.files = Utils::FilePaths{ "foo.mm" };
     const ProjectInfo::ConstPtr projectInfo = t.generate();
     QCOMPARE(projectInfo->projectParts().size(), 1);
 
@@ -415,7 +431,7 @@ void ProjectInfoGeneratorTest::testProjectPartIndicatesObjectiveCExtensionsByDef
 void ProjectInfoGeneratorTest::testProjectPartHasLatestLanguageVersionByDefault()
 {
     ProjectInfoGeneratorTestHelper t;
-    t.rawProjectPart.files = QStringList{ "foo.cpp" };
+    t.rawProjectPart.files = Utils::FilePaths{ "foo.cpp" };
     const ProjectInfo::ConstPtr projectInfo = t.generate();
     QCOMPARE(projectInfo->projectParts().size(), 1);
 
@@ -429,7 +445,7 @@ void ProjectInfoGeneratorTest::testUseMacroInspectionReportForLanguageVersion()
     t.projectUpdateInfo.cxxToolchainInfo.macroInspectionRunner = [](const QStringList &) {
         return TestToolchain::MacroInspectionReport{Macros(), Utils::LanguageVersion::CXX17};
     };
-    t.rawProjectPart.files = QStringList{ "foo.cpp" };
+    t.rawProjectPart.files = Utils::FilePaths{ "foo.cpp" };
     const ProjectInfo::ConstPtr projectInfo = t.generate();
 
     QCOMPARE(projectInfo->projectParts().size(), 1);
@@ -441,7 +457,7 @@ void ProjectInfoGeneratorTest::testUseMacroInspectionReportForLanguageVersion()
 void ProjectInfoGeneratorTest::testUseCompilerFlagsForLanguageExtensions()
 {
     ProjectInfoGeneratorTestHelper t;
-    t.rawProjectPart.files = QStringList{ "foo.cpp" };
+    t.rawProjectPart.files = Utils::FilePaths{ "foo.cpp" };
     t.rawProjectPart.flagsForCxx.languageExtensions = Utils::LanguageExtension::Microsoft;
     const ProjectInfo::ConstPtr projectInfo = t.generate();
 
@@ -454,7 +470,7 @@ void ProjectInfoGeneratorTest::testUseCompilerFlagsForLanguageExtensions()
 void ProjectInfoGeneratorTest::testProjectFileKindsMatchProjectPartVersion()
 {
     ProjectInfoGeneratorTestHelper t;
-    t.rawProjectPart.files = QStringList{ "foo.h" };
+    t.rawProjectPart.files = Utils::FilePaths{ "foo.h" };
     const ProjectInfo::ConstPtr projectInfo = t.generate();
 
     QCOMPARE(projectInfo->projectParts().size(), 4);
@@ -494,10 +510,10 @@ public:
         return *projectPart;
     }
 
-    static HeaderPath user(const QString &path) { return HeaderPath::makeUser(path); }
-    static HeaderPath builtIn(const QString &path) { return HeaderPath::makeBuiltIn(path); }
-    static HeaderPath system(const QString &path) { return HeaderPath::makeSystem(path); }
-    static HeaderPath framework(const QString &path) { return HeaderPath::makeFramework(path); }
+    static HeaderPath user(const FilePath &path) { return HeaderPath::makeUser(path); }
+    static HeaderPath builtIn(const FilePath &path) { return HeaderPath::makeBuiltIn(path); }
+    static HeaderPath system(const FilePath &path) { return HeaderPath::makeSystem(path); }
+    static HeaderPath framework(const FilePath &path) { return HeaderPath::makeFramework(path); }
 
     QString targetTriple;
     Utils::Id toolchainType;

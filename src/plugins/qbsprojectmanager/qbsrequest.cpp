@@ -13,7 +13,7 @@
 #include <utils/qtcassert.h>
 
 using namespace ProjectExplorer;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace QbsProjectManager::Internal {
@@ -36,7 +36,8 @@ public:
     void setSession(QbsSession *session) { m_session = session; }
     QbsSession *session() const { return m_session; }
     void setRequestData(const QJsonObject &requestData) { m_requestData = requestData; }
-    void setParseData(const QPointer<QbsBuildSystem> &buildSystem) { m_parseData = buildSystem; }
+    void setParseData(const ParseData &parseData) { m_parseData = parseData; }
+
     void start();
     void cancel();
 
@@ -49,7 +50,7 @@ signals:
 private:
     QbsSession *m_session = nullptr;
     QJsonObject m_requestData;
-    QPointer<QbsBuildSystem> m_parseData;
+    ParseData m_parseData;
     QString m_description;
     int m_maxProgress = 100;
 };
@@ -112,13 +113,15 @@ static QbsRequestManager &manager()
 
 void QbsRequestObject::start()
 {
-    if (m_parseData) {
-        connect(m_parseData->target(), &Target::parsingFinished, this, [this](bool success) {
-            disconnect(m_parseData->target(), &Target::parsingFinished, this, nullptr);
+    if (m_parseData.first) {
+        connect(m_parseData.first, &BuildSystem::parsingFinished, this, [this](bool success) {
+            disconnect(m_parseData.first, &BuildSystem::parsingFinished, this, nullptr);
             emit done(toDoneResult(success));
         });
-        QMetaObject::invokeMethod(m_parseData.get(), &QbsBuildSystem::startParsing,
-                                  Qt::QueuedConnection);
+        QMetaObject::invokeMethod(
+            m_parseData.first.get(),
+            [parseData = m_parseData] { parseData.first->startParsing(parseData.second); },
+            Qt::QueuedConnection);
         return;
     }
 
@@ -133,8 +136,8 @@ void QbsRequestObject::start()
     connect(m_session, &QbsSession::projectBuilt, this, handleDone);
     connect(m_session, &QbsSession::projectCleaned, this, handleDone);
     connect(m_session, &QbsSession::projectInstalled, this, handleDone);
-    connect(m_session, &QbsSession::errorOccurred, this, [handleDone](QbsSession::Error error) {
-        handleDone(ErrorInfo(QbsSession::errorString(error)));
+    connect(m_session, &QbsSession::errorOccurred, this, [handleDone](const QString &error) {
+        handleDone(ErrorInfo(error));
     });
     connect(m_session, &QbsSession::taskStarted, this, [this](const QString &desciption, int max) {
         m_description = desciption;
@@ -156,7 +159,7 @@ void QbsRequestObject::start()
                                                                 const QStringList &stdOut,
                                                                 const QStringList &stdErr,
                                                                 bool success) {
-        Q_UNUSED(workingDir);
+        Q_UNUSED(workingDir)
         const bool hasOutput = !stdOut.isEmpty() || !stdErr.isEmpty();
         if (success && !hasOutput)
             return;
@@ -172,8 +175,8 @@ void QbsRequestObject::start()
 
 void QbsRequestObject::cancel()
 {
-    if (m_parseData)
-        m_parseData->cancelParsing();
+    if (m_parseData.first)
+        m_parseData.first->cancelParsing();
     else
         m_session->cancelCurrentJob();
 }
@@ -189,14 +192,15 @@ QbsRequest::~QbsRequest()
 void QbsRequest::start()
 {
     QTC_ASSERT(!m_requestObject, return);
-    QTC_ASSERT(m_parseData || (m_session && m_requestData), emit done(DoneResult::Error); return);
+    QTC_ASSERT(m_parseData.first || (m_session && m_requestData), emit done(DoneResult::Error);
+               return);
 
     m_requestObject = new QbsRequestObject;
     m_requestObject->setSession(m_session);
     if (m_requestData)
         m_requestObject->setRequestData(*m_requestData);
-    if (m_parseData) {
-        m_requestObject->setSession(m_parseData->session());
+    if (m_parseData.first) {
+        m_requestObject->setSession(m_parseData.first->session());
         m_requestObject->setParseData(m_parseData);
     }
 

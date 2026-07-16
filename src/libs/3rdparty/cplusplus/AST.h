@@ -187,6 +187,7 @@ public:
     virtual AwaitExpressionAST *asAwaitExpression() { return nullptr; }
     virtual BaseSpecifierAST *asBaseSpecifier() { return nullptr; }
     virtual BinaryExpressionAST *asBinaryExpression() { return nullptr; }
+    virtual BinaryFoldExpressionAST *asBinaryFoldExpression() { return nullptr; }
     virtual BoolLiteralAST *asBoolLiteral() { return nullptr; }
     virtual BracedInitializerAST *asBracedInitializer() { return nullptr; }
     virtual BracketDesignatorAST *asBracketDesignator() { return nullptr; }
@@ -213,6 +214,7 @@ public:
     virtual DeclaratorIdAST *asDeclaratorId() { return nullptr; }
     virtual DecompositionDeclaratorAST *asDecompositionDeclarator() { return nullptr; }
     virtual DecltypeSpecifierAST *asDecltypeSpecifier() { return nullptr; }
+    virtual DeductionGuideAST *asDeductionGuide() { return nullptr; }
     virtual DeleteExpressionAST *asDeleteExpression() { return nullptr; }
     virtual DesignatedInitializerAST *asDesignatedInitializer() { return nullptr; }
     virtual DesignatorAST *asDesignator() { return nullptr; }
@@ -339,6 +341,7 @@ public:
     virtual TypenameCallExpressionAST *asTypenameCallExpression() { return nullptr; }
     virtual TypenameTypeParameterAST *asTypenameTypeParameter() { return nullptr; }
     virtual TypeofSpecifierAST *asTypeofSpecifier() { return nullptr; }
+    virtual UnaryFoldExpressionAST *asUnaryFoldExpression() { return nullptr; }
     virtual UnaryExpressionAST *asUnaryExpression() { return nullptr; }
     virtual RequiresExpressionAST *asRequiresExpression() { return nullptr; }
     virtual RequiresClauseAST *asRequiresClause() { return nullptr; }
@@ -646,8 +649,7 @@ protected:
 class CPLUSPLUS_EXPORT TypeConstraintAST: public AST
 {
 public:
-    NestedNameSpecifierListAST *nestedName = nullptr;
-    NameAST *conceptName = nullptr;
+    QualifiedNameAST *conceptName = nullptr;
     int lessToken = 0;
     ExpressionListAST *templateArgs = nullptr;
     int greaterToken = 0;
@@ -973,6 +975,7 @@ public:
     int virtual_token = 0;
     int access_specifier_token = 0;
     NameAST *name = nullptr;
+    DecltypeSpecifierAST *decltype_specifier = nullptr;
     int ellipsis_token = 0;
 
 public: // annotations
@@ -1506,6 +1509,7 @@ class CPLUSPLUS_EXPORT EnumSpecifierAST: public SpecifierAST
 public:
     int enum_token = 0;
     int key_token = 0; // struct, class or 0
+    SpecifierListAST *attribute_list = nullptr;
     NameAST *name = nullptr;
     int colon_token = 0; // can be 0 if there is no enum-base
     SpecifierListAST *type_specifier_list = nullptr; // ditto
@@ -1665,6 +1669,7 @@ public:
     int qt_invokable_token = 0;
     SpecifierListAST *decl_specifier_list = nullptr;
     DeclaratorAST *declarator = nullptr;
+    int semicolon_token = 0; // For defaulted and deleted definitions.
     CtorInitializerAST *ctor_initializer = nullptr;
     StatementAST *function_body = nullptr;
 
@@ -1678,6 +1683,31 @@ public:
     int lastToken() const override;
 
     FunctionDefinitionAST *clone(MemoryPool *pool) const override;
+
+protected:
+    void accept0(ASTVisitor *visitor) override;
+    bool match0(AST *, ASTMatcher *) override;
+};
+
+class CPLUSPLUS_EXPORT DeductionGuideAST: public DeclarationAST
+{
+public:
+    int explicit_token = 0; // FIXME: Introduce ExplicitSpecifierAST
+    NameAST *template_name = nullptr;
+    int lparen_token = 0;
+    ParameterDeclarationListAST *parameter_list = nullptr;
+    int rparen_token = 0;
+    int arrow_token = 0;
+    TemplateIdAST *template_id = nullptr;
+    RequiresClauseAST *requires_clause = nullptr;
+    int semicolon_token = 0;
+
+    DeductionGuideAST *asDeductionGuide() override { return this; }
+
+    int firstToken() const override;
+    int lastToken() const override;
+
+    DeductionGuideAST *clone(MemoryPool *pool) const override;
 
 protected:
     void accept0(ASTVisitor *visitor) override;
@@ -1720,6 +1750,11 @@ class CPLUSPLUS_EXPORT RangeBasedForStatementAST : public StatementAST
 public:
     int for_token = 0;
     int lparen_token = 0;
+
+    // init-statement (C++20)
+    DeclarationAST *initDecl = nullptr;
+    StatementAST *initStmt = nullptr;
+
     // declaration
     SpecifierListAST *type_specifier_list = nullptr;
     DeclaratorAST *declarator = nullptr;
@@ -1777,6 +1812,8 @@ class CPLUSPLUS_EXPORT IfStatementAST: public StatementAST
 {
 public:
     int if_token = 0;
+    int exclam_token = 0;
+    int consteval_token = 0;
     int constexpr_token = 0;
     int lparen_token = 0;
     StatementAST *initStmt = nullptr;
@@ -2867,11 +2904,59 @@ protected:
     bool match0(AST *, ASTMatcher *) override;
 };
 
+class CPLUSPLUS_EXPORT UnaryFoldExpressionAST: public ExpressionAST
+{
+public:
+    int lparen_token = 0;
+    int pack_token = 0;
+    int fold_op_token = 0;
+    ExpressionAST *cast_expression = nullptr;
+    int rparen_token = 0;
+
+public:
+    UnaryFoldExpressionAST *asUnaryFoldExpression() override { return this; }
+
+    int firstToken() const override { return lparen_token; }
+    int lastToken() const override { return rparen_token; }
+
+    UnaryFoldExpressionAST *clone(MemoryPool *pool) const override;
+
+protected:
+    void accept0(ASTVisitor *visitor) override;
+    bool match0(AST *, ASTMatcher *) override;
+};
+
+class CPLUSPLUS_EXPORT BinaryFoldExpressionAST: public ExpressionAST
+{
+public:
+    int lparen_token = 0;
+    ExpressionAST *cast_expression1 = nullptr;
+    int fold_op_token1 = 0;
+    int pack_token = 0;
+    int fold_op_token2 = 0;
+    ExpressionAST *cast_expression2 = nullptr;
+    int rparen_token = 0;
+
+public:
+    BinaryFoldExpressionAST *asBinaryFoldExpression() override { return this; }
+
+    int firstToken() const override { return lparen_token; }
+    int lastToken() const override { return rparen_token; }
+
+    BinaryFoldExpressionAST *clone(MemoryPool *pool) const override;
+
+protected:
+    void accept0(ASTVisitor *visitor) override;
+    bool match0(AST *, ASTMatcher *) override;
+};
+
 class CPLUSPLUS_EXPORT NoExceptOperatorExpressionAST: public ExpressionAST
 {
 public:
     int noexcept_token = 0;
+    int lparen_token = 0;
     ExpressionAST *expression = nullptr;
+    int rparen_token = 0;
 
 public:
     NoExceptOperatorExpressionAST *asNoExceptOperatorExpression() override { return this; }
@@ -3008,7 +3093,7 @@ public:
     ExpressionAST *type_id = nullptr;
 
 public:
-    TypenameArgument *symbol = nullptr;
+    TemplateTypeArgument *symbol = nullptr;
 
 public:
     TemplateTypeParameterAST *asTemplateTypeParameter() override { return this; }

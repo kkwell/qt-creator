@@ -15,7 +15,6 @@
 #include "pythonutils.h"
 
 #include <coreplugin/actionmanager/actionmanager.h>
-#include <coreplugin/coreplugintr.h>
 #include <coreplugin/icore.h>
 
 #include <projectexplorer/buildconfiguration.h>
@@ -146,12 +145,12 @@ void PythonEditorWidget::updateInterpretersSelector()
     };
 
     const FilePath documentPath = textDocument()->filePath();
-    Project *project = Utils::findOrDefault(ProjectManager::projects(),
-                                            [documentPath](Project *project) {
-                                                return project->mimeType()
-                                                           == Constants::C_PY_PROJECT_MIME_TYPE
-                                                       && project->isKnownFile(documentPath);
-                                            });
+    const auto isPythonProject = [documentPath](Project *project) {
+        return project->isKnownFile(documentPath) && (
+            project->mimeType() == Constants::C_PY_PROJECT_MIME_TYPE ||
+            project->mimeType() == Constants::C_PY_PROJECT_MIME_TYPE_TOML);
+    };
+    Project *project = Utils::findOrDefault(ProjectManager::projects(), isPythonProject);
 
     if (project) {
         auto interpretersGroup = new QActionGroup(menu);
@@ -163,22 +162,16 @@ void PythonEditorWidget::updateInterpretersSelector()
                 const QString name = buildConfiguration->displayName();
                 QAction *action = interpretersGroup->addAction(buildConfiguration->displayName());
                 action->setCheckable(true);
-                if (target == project->activeTarget()
-                    && target->activeBuildConfiguration() == buildConfiguration) {
+                if (project->activeBuildConfiguration() == buildConfiguration) {
                     action->setChecked(true);
                     setButtonText(name);
                     if (auto pbc = qobject_cast<PythonBuildConfiguration *>(buildConfiguration))
                         m_interpreters->setToolTip(pbc->python().toUserOutput());
                 }
-                connect(action,
-                        &QAction::triggered,
-                        project,
-                        [project, target, buildConfiguration]() {
-                            target->setActiveBuildConfiguration(buildConfiguration,
-                                                                SetActive::NoCascade);
-                            if (target != project->activeTarget())
-                                project->setActiveTarget(target, SetActive::NoCascade);
-                        });
+                connect(action, &QAction::triggered, project, [buildConfiguration] {
+                    buildConfiguration->project()
+                        ->setActiveBuildConfiguration(buildConfiguration, SetActive::NoCascade);
+                });
             }
         }
 
@@ -199,10 +192,8 @@ void PythonEditorWidget::updateInterpretersSelector()
                         QAction *action = interpreterAddMenu->addAction(buildInfo.displayName);
                         connect(action, &QAction::triggered, project, [project, buildInfo]() {
                             if (BuildConfiguration *buildConfig = project->setup(buildInfo)) {
-                                buildConfig->target()
+                                buildConfig->project()
                                     ->setActiveBuildConfiguration(buildConfig, SetActive::NoCascade);
-                                project->setActiveTarget(buildConfig->target(),
-                                                         SetActive::NoCascade);
                             }
                         });
                     }
@@ -272,7 +263,7 @@ void PythonEditorWidget::updateInterpretersSelector()
     }
     auto settingsAction = menu->addAction(Tr::tr("Manage Python Interpreters"));
     connect(settingsAction, &QAction::triggered, this, []() {
-        Core::ICore::showOptionsDialog(Constants::C_PYTHONOPTIONS_PAGE_ID);
+        Core::ICore::showSettings(Constants::C_PYTHONOPTIONS_PAGE_ID);
     });
 }
 
@@ -297,11 +288,15 @@ PythonDocument::PythonDocument()
 
 void PythonDocument::updateCurrentPython()
 {
-    updatePython(detectPython(filePath()));
+    if (!isTemporary())
+        updatePython(detectPython(filePath()));
 }
 
 void PythonDocument::updatePython(const FilePath &python)
 {
+    if (m_python == python)
+        return;
+    m_python = python;
     openDocumentWithPython(python, this);
     PySideInstaller::instance().checkPySideInstallation(python, this);
     emit pythonUpdated(python);
@@ -313,7 +308,7 @@ public:
     PythonEditorFactory()
     {
         setId(Constants::C_PYTHONEDITOR_ID);
-        setDisplayName(::Core::Tr::tr(Constants::C_EDITOR_DISPLAY_NAME));
+        setDisplayName(Tr::tr("Python Editor"));
         addMimeType(Constants::C_PY_MIMETYPE);
 
         setOptionalActionMask(OptionalActions::Format

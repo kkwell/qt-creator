@@ -172,12 +172,16 @@ SettingsPageWidget::SettingsPageWidget()
     disableIndexerCheckBox->setChecked(s.disableIndexer);
     diffArgsEdit->setText(s.diffArgs);
     indexOnlyVOBsEdit->setText(s.indexOnlyVOBs);
+
+    installMarkSettingsDirtyTriggerRecursively(this);
+    installMarkSettingsDirtyTrigger(graphicalDiffRadioButton);
+    installMarkSettingsDirtyTrigger(externalDiffRadioButton);
 }
 
 void SettingsPageWidget::apply()
 {
     ClearCaseSettings rc;
-    rc.ccCommand = commandPathChooser->unexpandedFilePath().toString();
+    rc.ccCommand = commandPathChooser->unexpandedFilePath().toUserOutput();
     rc.ccBinaryPath = commandPathChooser->filePath();
     rc.timeOutS = timeOutSpinBox->value();
     rc.autoCheckOut = autoCheckOutCheckBox->isChecked();

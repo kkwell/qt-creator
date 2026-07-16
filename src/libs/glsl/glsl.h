@@ -36,6 +36,8 @@ class VectorType;
 class MatrixType;
 class ArrayType;
 class SamplerType;
+class ImageType;
+class SubroutineType;
 
 // symbols
 class Symbol;
@@ -47,6 +49,7 @@ class Block;
 class Variable;
 class OverloadSet;
 class Namespace;
+class InterfaceBlock;
 
 class AST;
 class TranslationUnitAST;

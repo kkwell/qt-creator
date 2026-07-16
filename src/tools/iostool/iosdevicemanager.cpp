@@ -7,6 +7,7 @@
 #include "mobiledevicelib.h"
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QHash>
 #include <QLibrary>
@@ -218,6 +219,7 @@ public:
     void startDeviceLookup(int timeout);
     bool connectToPort(quint16 port, ServiceSocket *fd) override;
     int qmljsDebugPort() const override;
+    void addMessage(const QString &msg);
     void addError(const QString &msg);
     bool writeAll(ServiceSocket fd, const char *cmd, qptrdiff len = -1);
     bool mountDeveloperDiskImage();
@@ -957,6 +959,11 @@ void CommandSession::startDeviceLookup(int timeout)
                                                       this);
 }
 
+void CommandSession::addMessage(const QString &msg)
+{
+    IosDeviceManager::instance()->message(msg);
+}
+
 void CommandSession::addError(const QString &msg)
 {
     qCCritical(loggingCategory) << "CommandSession ERROR:" << msg;
@@ -1303,7 +1310,7 @@ bool AppOpSession::installApp()
     bool success = false;
     if (device) {
         if (!installAppNew()) {
-            addError(QString::fromLatin1(
+            addMessage(QString::fromLatin1(
                 "Failed to transfer and install application, trying old way ..."));
 
             const CFUrl_t bundleUrl(QUrl::fromLocalFile(bundlePath).toCFURL());
@@ -1430,13 +1437,11 @@ bool AppOpSession::installAppNew()
                                                     &kCFTypeDictionaryKeyCallBacks,
                                                     &kCFTypeDictionaryValueCallBacks));
 
-    if (int error = mLib.deviceSecureInstallApplicationBundle(0,
-                                                              device,
-                                                              bundleUrl.get(),
-                                                              options.get(),
-                                                              &appSecureTransferSessionCallback))
+    if (int error = mLib.deviceSecureInstallApplicationBundle(
+            0, device, bundleUrl.get(), options.get(), &appSecureTransferSessionCallback)) {
+        addError(QString::fromLatin1("Failed to install application bundle with error code %1").arg(error));
         return false;
-
+    }
     return true;
 }
 

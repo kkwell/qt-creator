@@ -4,7 +4,7 @@
 #include <utils/algorithm.h>
 #include <utils/async.h>
 
-#include <QtTest>
+#include <QTest>
 
 using namespace Utils;
 
@@ -206,38 +206,38 @@ void tst_Async::runAsync()
     const QString cs = QLatin1String("c string");
 
     QCOMPARE(createAsyncTask(reportString1, s)->results(),
-             QList<QString>({s}));
+             QStringList({s}));
     QCOMPARE(Utils::asyncRun(reportString1, s).results(),
-             QList<QString>({s}));
+             QStringList({s}));
     QCOMPARE(createAsyncTask(reportString1, crs)->results(),
-             QList<QString>({crs}));
+             QStringList({crs}));
     QCOMPARE(Utils::asyncRun(reportString1, crs).results(),
-             QList<QString>({crs}));
+             QStringList({crs}));
     QCOMPARE(createAsyncTask(reportString1, cs)->results(),
-             QList<QString>({cs}));
+             QStringList({cs}));
     QCOMPARE(Utils::asyncRun(reportString1, cs).results(),
-             QList<QString>({cs}));
+             QStringList({cs}));
     QCOMPARE(createAsyncTask(reportString1, QString(QLatin1String("rvalue")))->results(),
-             QList<QString>({QString(QLatin1String("rvalue"))}));
+             QStringList({QString(QLatin1String("rvalue"))}));
     QCOMPARE(Utils::asyncRun(reportString1, QString(QLatin1String("rvalue"))).results(),
-             QList<QString>({QString(QLatin1String("rvalue"))}));
+             QStringList({QString(QLatin1String("rvalue"))}));
 
     QCOMPARE(createAsyncTask(reportString2, s)->results(),
-             QList<QString>({s}));
+             QStringList({s}));
     QCOMPARE(Utils::asyncRun(reportString2, s).results(),
-             QList<QString>({s}));
+             QStringList({s}));
     QCOMPARE(createAsyncTask(reportString2, crs)->results(),
-             QList<QString>({crs}));
+             QStringList({crs}));
     QCOMPARE(Utils::asyncRun(reportString2, crs).results(),
-             QList<QString>({crs}));
+             QStringList({crs}));
     QCOMPARE(createAsyncTask(reportString2, cs)->results(),
-             QList<QString>({cs}));
+             QStringList({cs}));
     QCOMPARE(Utils::asyncRun(reportString2, cs).results(),
-             QList<QString>({cs}));
+             QStringList({cs}));
     QCOMPARE(createAsyncTask(reportString2, QString(QLatin1String("rvalue")))->results(),
-             QList<QString>({QString(QLatin1String("rvalue"))}));
+             QStringList({QString(QLatin1String("rvalue"))}));
     QCOMPARE(Utils::asyncRun(reportString2, QString(QLatin1String("rvalue"))).results(),
-             QList<QString>({QString(QLatin1String("rvalue"))}));
+             QStringList({QString(QLatin1String("rvalue"))}));
 
     // lambda
     QCOMPARE(createAsyncTask([](QPromise<double> &promise, int n) {
@@ -293,37 +293,37 @@ void tst_Async::runAsync()
     QCOMPARE(Utils::asyncRun(&MyObject::member1, &obj, 4).results(),
              QList<double>({0, 0, 0, 0}));
     QCOMPARE(createAsyncTask(&MyObject::memberString1, &obj, s)->results(),
-             QList<QString>({s}));
+             QStringList({s}));
     QCOMPARE(Utils::asyncRun(&MyObject::memberString1, &obj, s).results(),
-             QList<QString>({s}));
+             QStringList({s}));
     QCOMPARE(createAsyncTask(&MyObject::memberString1, &obj, crs)->results(),
-             QList<QString>({crs}));
+             QStringList({crs}));
     QCOMPARE(Utils::asyncRun(&MyObject::memberString1, &obj, crs).results(),
-             QList<QString>({crs}));
+             QStringList({crs}));
     QCOMPARE(createAsyncTask(&MyObject::memberString1, &obj, cs)->results(),
-             QList<QString>({cs}));
+             QStringList({cs}));
     QCOMPARE(Utils::asyncRun(&MyObject::memberString1, &obj, cs).results(),
-             QList<QString>({cs}));
+             QStringList({cs}));
     QCOMPARE(createAsyncTask(&MyObject::memberString1, &obj, QString(QLatin1String("rvalue")))->results(),
-             QList<QString>({QString(QLatin1String("rvalue"))}));
+             QStringList({QString(QLatin1String("rvalue"))}));
     QCOMPARE(Utils::asyncRun(&MyObject::memberString1, &obj, QString(QLatin1String("rvalue"))).results(),
-             QList<QString>({QString(QLatin1String("rvalue"))}));
+             QStringList({QString(QLatin1String("rvalue"))}));
     QCOMPARE(createAsyncTask(&MyObject::memberString2, &obj, s)->results(),
-             QList<QString>({s}));
+             QStringList({s}));
     QCOMPARE(Utils::asyncRun(&MyObject::memberString2, &obj, s).results(),
-             QList<QString>({s}));
+             QStringList({s}));
     QCOMPARE(createAsyncTask(&MyObject::memberString2, &obj, crs)->results(),
-             QList<QString>({crs}));
+             QStringList({crs}));
     QCOMPARE(Utils::asyncRun(&MyObject::memberString2, &obj, crs).results(),
-             QList<QString>({crs}));
+             QStringList({crs}));
     QCOMPARE(createAsyncTask(&MyObject::memberString2, &obj, cs)->results(),
-             QList<QString>({cs}));
+             QStringList({cs}));
     QCOMPARE(Utils::asyncRun(&MyObject::memberString2, &obj, cs).results(),
-             QList<QString>({cs}));
+             QStringList({cs}));
     QCOMPARE(createAsyncTask(&MyObject::memberString2, &obj, QString(QLatin1String("rvalue")))->results(),
-             QList<QString>({QString(QLatin1String("rvalue"))}));
+             QStringList({QString(QLatin1String("rvalue"))}));
     QCOMPARE(Utils::asyncRun(&MyObject::memberString2, &obj, QString(QLatin1String("rvalue"))).results(),
-             QList<QString>({QString(QLatin1String("rvalue"))}));
+             QStringList({QString(QLatin1String("rvalue"))}));
     MyObject nonConstObj{};
     QCOMPARE(createAsyncTask(&MyObject::nonConstMember, &nonConstObj)->results(),
              QList<double>({0, 2, 1}));
@@ -392,7 +392,6 @@ public:
 
 void tst_Async::onResultReady()
 {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
     { // lambda
         QObject context;
         QFuture<QString> f = Utils::asyncRun([](QPromise<QString> &fi) {
@@ -425,15 +424,6 @@ void tst_Async::onResultReady()
         QCoreApplication::processEvents();
         QCOMPARE(count, 2);
         QCOMPARE(obj.value, QString("there"));
-    }
-#endif
-    { // member
-        QFuture<QString> f = Utils::asyncRun([] { return QString("Hi"); });
-        ObjWithProperty obj;
-        Utils::onResultReady(f, &obj, &ObjWithProperty::setValue);
-        f.waitForFinished();
-        QCoreApplication::processEvents();
-        QCOMPARE(obj.value, QString("Hi"));
     }
 }
 
@@ -471,7 +461,7 @@ void multiplyBy2(QPromise<int> &promise, int input) { promise.addResult(input * 
 
 void tst_Async::taskTree()
 {
-    using namespace Tasking;
+    using namespace QtTaskTree;
 
     int value = 1;
 
@@ -482,15 +472,14 @@ void tst_Async::taskTree()
         value = task.result();
     };
 
-    const Group root {
-        AsyncTask<int>(setupIntAsync, handleIntAsync, CallDoneIf::Success),
-        AsyncTask<int>(setupIntAsync, handleIntAsync, CallDoneIf::Success),
-        AsyncTask<int>(setupIntAsync, handleIntAsync, CallDoneIf::Success),
-        AsyncTask<int>(setupIntAsync, handleIntAsync, CallDoneIf::Success),
+    const Group recipe {
+        AsyncTask<int>(setupIntAsync, handleIntAsync, CallDoneFlag::OnSuccess),
+        AsyncTask<int>(setupIntAsync, handleIntAsync, CallDoneFlag::OnSuccess),
+        AsyncTask<int>(setupIntAsync, handleIntAsync, CallDoneFlag::OnSuccess),
+        AsyncTask<int>(setupIntAsync, handleIntAsync, CallDoneFlag::OnSuccess),
     };
 
-
-    QCOMPARE(TaskTree::runBlocking(root, 1000ms), DoneWith::Success);
+    QCOMPARE(QTaskTree::runBlocking(recipe.withTimeout(1000ms)), DoneWith::Success);
     QCOMPARE(value, 16);
 }
 
@@ -509,9 +498,9 @@ static QList<double> s_results;
 
 void tst_Async::mapReduce_data()
 {
-    using namespace Tasking;
+    using namespace QtTaskTree;
 
-    QTest::addColumn<Group>("root");
+    QTest::addColumn<Group>("recipe");
     QTest::addColumn<double>("sum");
     QTest::addColumn<QList<double>>("results");
 
@@ -543,7 +532,7 @@ void tst_Async::mapReduce_data()
         s_results.append(s_sum);
     };
 
-    using namespace Tasking;
+    using namespace QtTaskTree;
     using namespace std::placeholders;
 
     using SetupHandler = std::function<void(Async<int> &task, int input)>;
@@ -555,12 +544,12 @@ void tst_Async::mapReduce_data()
         return Group {
             executeMode,
             onGroupSetup(initTree),
-            AsyncTask<int>(std::bind(setupHandler, _1, 1), handleAsync, CallDoneIf::Success),
-            AsyncTask<int>(std::bind(setupHandler, _1, 2), handleAsync, CallDoneIf::Success),
-            AsyncTask<int>(std::bind(setupHandler, _1, 3), handleAsync, CallDoneIf::Success),
-            AsyncTask<int>(std::bind(setupHandler, _1, 4), handleAsync, CallDoneIf::Success),
-            AsyncTask<int>(std::bind(setupHandler, _1, 5), handleAsync, CallDoneIf::Success),
-            onGroupDone(doneHandler, CallDoneIf::Success)
+            AsyncTask<int>(std::bind(setupHandler, _1, 1), handleAsync, CallDoneFlag::OnSuccess),
+            AsyncTask<int>(std::bind(setupHandler, _1, 2), handleAsync, CallDoneFlag::OnSuccess),
+            AsyncTask<int>(std::bind(setupHandler, _1, 3), handleAsync, CallDoneFlag::OnSuccess),
+            AsyncTask<int>(std::bind(setupHandler, _1, 4), handleAsync, CallDoneFlag::OnSuccess),
+            AsyncTask<int>(std::bind(setupHandler, _1, 5), handleAsync, CallDoneFlag::OnSuccess),
+            onGroupDone(doneHandler, CallDoneFlag::OnSuccess)
         };
     };
 
@@ -591,9 +580,9 @@ void tst_Async::mapReduce_data()
     const Group simpleRoot = {
         sequential,
         onGroupSetup([] { s_sum = 0; }),
-        AsyncTask<int>(std::bind(setupSimpleAsync, _1, 1), handleSimpleAsync, CallDoneIf::Success),
-        AsyncTask<int>(std::bind(setupSimpleAsync, _1, 2), handleSimpleAsync, CallDoneIf::Success),
-        AsyncTask<int>(std::bind(setupSimpleAsync, _1, 3), handleSimpleAsync, CallDoneIf::Success)
+        AsyncTask<int>(std::bind(setupSimpleAsync, _1, 1), handleSimpleAsync, CallDoneFlag::OnSuccess),
+        AsyncTask<int>(std::bind(setupSimpleAsync, _1, 2), handleSimpleAsync, CallDoneFlag::OnSuccess),
+        AsyncTask<int>(std::bind(setupSimpleAsync, _1, 3), handleSimpleAsync, CallDoneFlag::OnSuccess)
     };
     QTest::newRow("Simple") << simpleRoot << 3.0 << QList<double>({.5, 1.5, 3.});
 
@@ -606,9 +595,9 @@ void tst_Async::mapReduce_data()
     const Group stringRoot = {
         parallel,
         onGroupSetup([] { s_sum = 90.0; }),
-        AsyncTask<int>(std::bind(setupStringAsync, _1, "blubb"), handleStringAsync, CallDoneIf::Success),
-        AsyncTask<int>(std::bind(setupStringAsync, _1, "foo"), handleStringAsync, CallDoneIf::Success),
-        AsyncTask<int>(std::bind(setupStringAsync, _1, "blah"), handleStringAsync, CallDoneIf::Success)
+        AsyncTask<int>(std::bind(setupStringAsync, _1, "blubb"), handleStringAsync, CallDoneFlag::OnSuccess),
+        AsyncTask<int>(std::bind(setupStringAsync, _1, "foo"), handleStringAsync, CallDoneFlag::OnSuccess),
+        AsyncTask<int>(std::bind(setupStringAsync, _1, "blah"), handleStringAsync, CallDoneFlag::OnSuccess)
     };
     QTest::newRow("String") << stringRoot << 1.5 << QList<double>({});
 }
@@ -620,13 +609,13 @@ void tst_Async::mapReduce()
     s_sum = 0;
     s_results.clear();
 
-    using namespace Tasking;
+    using namespace QtTaskTree;
 
-    QFETCH(Group, root);
+    QFETCH(Group, recipe);
     QFETCH(double, sum);
     QFETCH(QList<double>, results);
 
-    QCOMPARE(TaskTree::runBlocking(root, 1000ms), DoneWith::Success);
+    QCOMPARE(QTaskTree::runBlocking(recipe.withTimeout(1000ms)), DoneWith::Success);
     QCOMPARE(s_results, results);
     QCOMPARE(s_sum, sum);
 }

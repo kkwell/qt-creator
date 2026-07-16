@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "backgroundaction.h"
+#include "formeditortracing.h"
 
+#include <qmldesignertr.h>
 #include <theme.h>
 
 #include <utils/stylehelper.h>
@@ -10,18 +12,37 @@
 #include <QComboBox>
 #include <QPainter>
 
+#include <QStandardItemModel>
+
 namespace QmlDesigner {
+
+using FormEditorTracing::category;
 
 BackgroundAction::BackgroundAction(QObject *parent) :
     QWidgetAction(parent)
 {
+    NanotraceHR::Tracer tracer{"background action constructor", category()};
 }
 
 void BackgroundAction::setColor(const QColor &color)
 {
+    NanotraceHR::Tracer tracer{"background action set color", category()};
+
     if (m_comboBox)
         m_comboBox->setCurrentIndex(colors().indexOf(color));
+}
 
+void BackgroundAction::setColorEnabled(const QColor &color, bool enable)
+{
+    NanotraceHR::Tracer tracer{"background action set color enabled", category()};
+
+    if (!m_comboBox)
+        return;
+
+    QStandardItemModel *model = qobject_cast<QStandardItemModel *>(m_comboBox->model());
+    if (QStandardItem *item = model->item(colors().indexOf(color)))
+        item->setFlags(enable ? item->flags() | Qt::ItemIsEnabled
+                              : item->flags() & ~Qt::ItemIsEnabled);
 }
 
 QIcon iconForColor(const QColor &color) {
@@ -52,11 +73,13 @@ QIcon iconForColor(const QColor &color) {
 
 QWidget *BackgroundAction::createWidget(QWidget *parent)
 {
+    NanotraceHR::Tracer tracer{"background action create widget", category()};
+
     auto comboBox = new QComboBox(parent);
     comboBox->setFixedWidth(42);
 
     for (int i = 0; i < colors().size(); ++i) {
-        comboBox->addItem(tr(""));
+        comboBox->addItem("");
         comboBox->setItemIcon(i, iconForColor((colors().at(i))));
     }
 
@@ -66,19 +89,23 @@ QWidget *BackgroundAction::createWidget(QWidget *parent)
 
     comboBox->setProperty(Utils::StyleHelper::C_HIDE_BORDER, true);
     comboBox->setProperty(Utils::StyleHelper::C_TOOLBAR_ACTIONWIDGET, true);
-    comboBox->setToolTip(tr("Set the color of the canvas."));
+    comboBox->setToolTip(Tr::tr("Set the color of the canvas."));
     m_comboBox = comboBox;
     return comboBox;
 }
 
 void BackgroundAction::emitBackgroundChanged(int index)
 {
+    NanotraceHR::Tracer tracer{"background action emit background changed", category()};
+
     if (index < colors().size())
         emit backgroundChanged(colors().at(index));
 }
 
 QList<QColor> BackgroundAction::colors()
 {
+    NanotraceHR::Tracer tracer{"background action colors", category()};
+
     static QColor alphaZero(Qt::transparent);
     static QList<QColor> colorList = {alphaZero,
                                       QColor(BackgroundAction::ContextImage),

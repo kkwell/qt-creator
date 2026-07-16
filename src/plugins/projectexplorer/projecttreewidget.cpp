@@ -84,7 +84,14 @@ public:
             return;
         }
 
-        QStyledItemDelegate::paint(painter, option, index);
+        QStyleOptionViewItem opt = option;
+        const QVariant textColorVariant = index.data(Qt::ForegroundRole);
+        if (textColorVariant.canConvert<QColor>()) {
+            const QColor textColor = textColorVariant.value<QColor>();
+            opt.palette.setColor(QPalette::HighlightedText, textColor);
+        }
+
+        QStyledItemDelegate::paint(painter, opt, index);
         if (index.data(Project::isParsingRole).toBool()) {
             QStyleOptionViewItem opt = option;
             initStyleOption(&opt, index);
@@ -98,6 +105,19 @@ public:
             delete m_indicators.value(index);
             m_indicators.remove(index);
         }
+    }
+
+    void destroyEditor(QWidget *editor, const QModelIndex &index) const final
+    {
+        // QTCREATORBUG-30926
+        for (QWidget *p = editor->parentWidget(); p; p = p->parentWidget()) {
+            if (qobject_cast<ProjectTreeWidget *>(p)) {
+                p->setFocus();
+                break;
+            }
+        }
+
+        QStyledItemDelegate::destroyEditor(editor, index);
     }
 
 private:
@@ -342,7 +362,7 @@ void ProjectTreeWidget::rowsInserted(const QModelIndex &parent, int start, int e
     }
 }
 
-Node *ProjectTreeWidget::nodeForFile(const FilePath &fileName)
+Node *ProjectTreeWidget::nodeForFile(const FilePath &fileName, const Node *currentNode)
 {
     if (fileName.isEmpty())
         return nullptr;
@@ -353,8 +373,12 @@ Node *ProjectTreeWidget::nodeForFile(const FilePath &fileName)
     for (Project *project : ProjectManager::projects()) {
         if (ProjectNode *projectNode = project->rootProjectNode()) {
             projectNode->forEachGenericNode([&](Node *node) {
+                if (bestNode && bestNode == currentNode)
+                    return;
                 if (node->filePath() == fileName) {
-                    if (!bestNode || node->priority() < bestNode->priority()) {
+                    if (node == currentNode) {
+                        bestNode = node;
+                    } else if (!bestNode || node->priority() < bestNode->priority()) {
                         bestNode = node;
                         bestNodeExpandCount = ProjectTreeWidget::expandedCount(node);
                     } else if (node->priority() == bestNode->priority()) {
@@ -399,6 +423,8 @@ void ProjectTreeWidget::setAutoSynchronization(bool sync)
 
 void ProjectTreeWidget::expandNodeRecursively(const QModelIndex &index)
 {
+    if (!index.model())
+        return;
     const int rc = index.model()->rowCount(index);
     for (int i = 0; i < rc; ++i)
         expandNodeRecursively(index.model()->index(i, index.column(), index));
@@ -459,7 +485,7 @@ void ProjectTreeWidget::editCurrentItem()
     if (!editor)
         return;
 
-    const int dotIndex = FilePath::fromString(editor->text()).completeBaseName().length();
+    const int dotIndex = FilePath::fromString(editor->text()).completeBaseName().size();
     if (dotIndex > 0)
         editor->setSelection(0, dotIndex);
 }

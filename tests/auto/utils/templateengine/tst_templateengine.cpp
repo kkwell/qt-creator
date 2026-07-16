@@ -4,9 +4,11 @@
 #include <utils/macroexpander.h>
 #include <utils/templateengine.h>
 
-#include <QtTest>
+#include <QTest>
 
 //TESTED_COMPONENT=src/libs/utils
+
+using namespace Utils;
 
 class tst_TemplateEngine : public QObject
 {
@@ -70,11 +72,13 @@ void tst_TemplateEngine::testTemplateEngine()
     QFETCH(QString, expectedOutput);
     QFETCH(QString, expectedErrorMessage);
 
-    QString errorMessage;
-    QString output = Utils::TemplateEngine::processText(Utils::globalMacroExpander(), input, &errorMessage);
+    const Result<QString> res = TemplateEngine::processText(globalMacroExpander(), input);
 
-    QCOMPARE(output, expectedOutput);
-    QCOMPARE(errorMessage, expectedErrorMessage);
+    if (res.has_value()) {
+        QCOMPARE(res.value(), expectedOutput);
+    } else {
+        QCOMPARE(res.error(), expectedErrorMessage);
+    }
 }
 
 QTEST_GUILESS_MAIN(tst_TemplateEngine)

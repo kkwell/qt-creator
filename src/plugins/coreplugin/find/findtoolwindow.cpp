@@ -28,92 +28,120 @@ using namespace Utils;
 
 namespace Core::Internal {
 
-static FindToolWindow *m_instance = nullptr;
-
-static bool validateRegExp(Utils::FancyLineEdit *edit, QString *errorMessage)
+static Result<> validateRegExp(const QString &text)
 {
-    if (edit->text().isEmpty()) {
-        if (errorMessage)
-            *errorMessage = Tr::tr("Empty search term.");
-        return false;
-    }
+    if (text.isEmpty())
+        return ResultError(Tr::tr("Empty search term."));
+
     if (Find::hasFindFlag(FindRegularExpression)) {
-        QRegularExpression regexp(edit->text());
-        bool regexpValid = regexp.isValid();
-        if (!regexpValid && errorMessage)
-            *errorMessage = regexp.errorString();
-        return regexpValid;
+        QRegularExpression regexp(text);
+        if (!regexp.isValid())
+            return ResultError(regexp.errorString());
     }
-    return true;
+
+    return ResultOk;
+}
+
+static bool isChildOf(QWidget *parent, QWidget *child)
+{
+    QWidget *w = child;
+    while (w) {
+        if (w == parent)
+            return true;
+        w = w->parentWidget();
+    }
+    return false;
+}
+
+static QList<QWidget *> tabChain(QWidget *parent, QWidget *start, int limit = 50)
+{
+    int guard = 0;
+    QWidget *w = start;
+    QList<QWidget *> result;
+    QSet<QWidget *> seen;
+    while (w && isChildOf(parent, w) && guard < limit) {
+        if (!Utils::insert(seen, w))
+            break;
+        // setTabOrder does nothing if any widget has NoFocus, so filter out
+        if (w->focusPolicy() != Qt::NoFocus)
+            result.append(w);
+        w = w->nextInFocusChain();
+        ++guard;
+    }
+    return result;
+}
+
+static QWidget *lastInTabChain(QWidget *parent, int limit = 50)
+{
+    const QList<QWidget *> chain = tabChain(parent, parent, limit);
+    return chain.isEmpty() ? nullptr : chain.constLast();
 }
 
 FindToolWindow::FindToolWindow(QWidget *parent)
-    : QWidget(parent),
-    m_findCompleter(new QCompleter(this)),
-    m_currentFilter(nullptr),
-    m_configWidget(nullptr)
+    : QWidget(parent)
+    , m_findCompleter(new QCompleter(this))
+    , m_currentFilter(nullptr)
+    , m_configWidget(nullptr)
 {
-    m_instance = this;
-
-    m_searchButton = new QPushButton(this);
+    m_searchButton = new QPushButton;
     m_searchButton->setText(Tr::tr("&Search", nullptr));
     m_searchButton->setDefault(true);
 
-    m_replaceButton = new QPushButton(this);
+    m_replaceButton = new QPushButton;
     m_replaceButton->setText(Tr::tr("Search && &Replace", nullptr));
 
-    m_searchTerm = new FancyLineEdit(this);
+    m_searchTerm = new FancyLineEdit;
     m_searchTerm->setFiltering(true);
     m_searchTerm->setPlaceholderText({});
 
-    m_searchLabel = new QLabel(this);
+    m_searchLabel = new QLabel;
     m_searchLabel->setText(Tr::tr("Search f&or:", nullptr));
-    m_searchLabel->setAlignment(Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter);
+    m_searchLabel->setAlignment(Qt::AlignRight | Qt::AlignTrailing | Qt::AlignVCenter);
     m_searchLabel->setBuddy(m_searchTerm);
 
     m_filterList = new QComboBox;
     m_filterList->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     m_filterList->setSizeAdjustPolicy(QComboBox::AdjustToContents);
 
-    m_optionsWidget = new QWidget(this);
+    m_optionsWidget = new QWidget;
 
-    m_matchCase = new QCheckBox(m_optionsWidget);
+    m_matchCase = new QCheckBox;
     m_matchCase->setText(Tr::tr("&Case sensitive", nullptr));
 
-    m_wholeWords = new QCheckBox(m_optionsWidget);
+    m_wholeWords = new QCheckBox;
     m_wholeWords->setText(Tr::tr("Whole words o&nly", nullptr));
 
-    m_ignoreBinaryFiles = new QCheckBox(m_optionsWidget);
+    m_ignoreBinaryFiles = new QCheckBox;
     m_ignoreBinaryFiles->setText(Tr::tr("Ignore binary files", nullptr));
 
-    m_regExp = new QCheckBox(m_optionsWidget);
+    m_ignoreGeneratedFiles = new QCheckBox;
+    m_ignoreGeneratedFiles->setText(Tr::tr("Ignore generated files", nullptr));
+
+    m_regExp = new QCheckBox;
     m_regExp->setText(Tr::tr("Use re&gular expressions", nullptr));
 
-    auto label = new QLabel(this);
+    auto label = new QLabel;
     label->setText(Tr::tr("Sco&pe:", nullptr));
     label->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
     label->setMinimumSize(QSize(80, 0));
-    label->setAlignment(Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter);
+    label->setAlignment(Qt::AlignRight | Qt::AlignTrailing | Qt::AlignVCenter);
     label->setBuddy(m_filterList);
 
-    m_uiConfigWidget = new QWidget(this);
+    m_uiConfigWidget = new QWidget;
     QSizePolicy sizePolicy2(QSizePolicy::Preferred, QSizePolicy::Fixed);
     sizePolicy2.setHorizontalStretch(0);
     sizePolicy2.setVerticalStretch(10);
     m_uiConfigWidget->setSizePolicy(sizePolicy2);
-    m_uiConfigWidget->setMinimumSize(QSize(680, 0));
+    m_uiConfigWidget->setMinimumSize(QSize(800, 0));
 
     setFocusProxy(m_searchTerm);
 
     using namespace Layouting;
 
-    Row {
-        m_matchCase,
-        m_wholeWords,
-        m_regExp,
-        m_ignoreBinaryFiles,
-        st,
-        noMargin
+    Column {
+        Row { m_matchCase, m_wholeWords, m_regExp, st, },
+        Row { m_ignoreBinaryFiles, m_ignoreGeneratedFiles, st, },
+        noMargin,
     }.attachTo(m_optionsWidget);
 
     Grid {
@@ -131,6 +159,7 @@ FindToolWindow::FindToolWindow(QWidget *parent)
     connect(m_matchCase, &QAbstractButton::toggled, Find::instance(), &Find::setCaseSensitive);
     connect(m_wholeWords, &QAbstractButton::toggled, Find::instance(), &Find::setWholeWord);
     connect(m_ignoreBinaryFiles, &QAbstractButton::toggled, Find::instance(), &Find::setIgnoreBinaryFiles);
+    connect(m_ignoreGeneratedFiles, &QAbstractButton::toggled, Find::instance(), &Find::setIgnoreGeneratedFiles);
     connect(m_regExp, &QAbstractButton::toggled, Find::instance(), &Find::setRegularExpression);
     connect(m_filterList, &QComboBox::activated, this, &FindToolWindow::setCurrentFilterIndex);
 
@@ -158,11 +187,6 @@ FindToolWindow::FindToolWindow(QWidget *parent)
 FindToolWindow::~FindToolWindow()
 {
     qDeleteAll(m_configWidgets);
-}
-
-FindToolWindow *FindToolWindow::instance()
-{
-    return m_instance;
 }
 
 bool FindToolWindow::event(QEvent *event)
@@ -212,12 +236,14 @@ void FindToolWindow::updateButtonStates()
         m_searchLabel->setVisible(m_currentFilter->showSearchTermInput());
         m_optionsWidget->setVisible(
             supportedFlags
-            & (FindCaseSensitively | FindWholeWords | FindRegularExpression | DontFindBinaryFiles));
+            & (FindCaseSensitively | FindWholeWords | FindRegularExpression | DontFindBinaryFiles
+               | DontFindGeneratedFiles));
     }
 
     m_matchCase->setEnabled(filterEnabled && (supportedFlags & FindCaseSensitively));
     m_wholeWords->setEnabled(filterEnabled && (supportedFlags & FindWholeWords));
     m_ignoreBinaryFiles->setEnabled(filterEnabled && (supportedFlags & DontFindBinaryFiles));
+    m_ignoreGeneratedFiles->setEnabled(filterEnabled && (supportedFlags & DontFindGeneratedFiles));
 
     m_regExp->setEnabled(filterEnabled && (supportedFlags & FindRegularExpression));
     m_searchTerm->setEnabled(filterEnabled);
@@ -229,6 +255,7 @@ void FindToolWindow::updateFindFlags()
     m_wholeWords->setChecked(Find::hasFindFlag(FindWholeWords));
     m_regExp->setChecked(Find::hasFindFlag(FindRegularExpression));
     m_ignoreBinaryFiles->setChecked(Find::hasFindFlag(DontFindBinaryFiles));
+    m_ignoreGeneratedFiles->setChecked(Find::hasFindFlag(Utils::DontFindGeneratedFiles));
 }
 
 
@@ -324,6 +351,16 @@ void FindToolWindow::setCurrentFilterIndex(int index)
         if (w->layout())
             w->layout()->activate();
     }
+    // fix tab order
+    if (m_configWidget) {
+        const QList<QWidget *> configWidgetChain = tabChain(m_configWidget, m_configWidget);
+        if (!configWidgetChain.isEmpty()) {
+            QWidget::setTabOrder(lastInTabChain(m_optionsWidget), configWidgetChain.first());
+            for (int i = 0; i < configWidgetChain.size() - 1; ++i)
+                QWidget::setTabOrder(configWidgetChain.at(i), configWidgetChain.at(i + 1));
+            QWidget::setTabOrder(lastInTabChain(m_configWidget), m_searchButton);
+        }
+    }
 }
 
 void FindToolWindow::acceptAndGetParameters(QString *term, IFindFilter **filter)
@@ -373,7 +410,7 @@ void FindToolWindow::restore(const Utils::Store &s)
 Store FindToolWindow::save() const
 {
     Store s;
-    if (m_currentFilter && (m_filters.isEmpty() || m_filters.first() != m_currentFilter))
+    if (m_currentFilter)
         s.insert("CurrentFilter", m_currentFilter->id());
     for (IFindFilter *filter : std::as_const(m_filters)) {
         const Store store = filter->save();
@@ -381,31 +418,6 @@ Store FindToolWindow::save() const
             s.insert(filter->id().toUtf8(), variantFromStore(store));
     }
     return s;
-}
-
-void FindToolWindow::writeSettings()
-{
-    Utils::QtcSettings *settings = ICore::settings();
-    settings->beginGroup("Find");
-    settings->setValueWithDefault("CurrentFilter",
-                                  m_currentFilter ? m_currentFilter->id() : QString());
-    for (IFindFilter *filter : std::as_const(m_filters))
-        filter->writeSettings(settings);
-    settings->endGroup();
-}
-
-void FindToolWindow::readSettings()
-{
-    QtcSettings *settings = ICore::settings();
-    settings->beginGroup("Find");
-    const QString currentFilter = settings->value("CurrentFilter").toString();
-    for (int i = 0; i < m_filters.size(); ++i) {
-        IFindFilter *filter = m_filters.at(i);
-        filter->readSettings(settings);
-        if (filter->id() == currentFilter)
-            setCurrentFilterIndex(i);
-    }
-    settings->endGroup();
 }
 
 void FindToolWindow::findCompleterActivated(const QModelIndex &index)

@@ -7,6 +7,7 @@
 
 #include <QObject>
 #include <QPointer>
+#include <QTimer>
 
 QT_BEGIN_NAMESPACE
 class QQuickView;
@@ -27,7 +28,7 @@ class BakeLights : public QObject
     Q_PROPERTY(bool manualMode READ manualMode WRITE setManualMode NOTIFY manualModeChanged)
 
 public:
-    BakeLights(AbstractView *view);
+    BakeLights(AbstractView *view, ModulesStorage &modulesStorage);
     ~BakeLights();
 
     Q_INVOKABLE void cancel();
@@ -53,6 +54,8 @@ private:
     void showSetupDialog();
     void showProgressDialog();
     void cleanup();
+    void handlePendingRebakeTimeout();
+    void pendingRebakeCleanup();
 
     // Separate dialogs for setup and progress, as setup needs to be modal
     QPointer<QQuickView> m_setupDialog;
@@ -62,10 +65,14 @@ private:
     QPointer<NodeInstanceView> m_nodeInstanceView;
     QPointer<RewriterView> m_rewriterView;
     QPointer<AbstractView> m_view;
+    ModulesStorage &m_modulesStorage;
     QPointer<BakeLightsDataModel> m_dataModel;
     ModelPointer m_model;
     QString m_view3dId;
     bool m_manualMode = false;
+    QTimer m_pendingRebakeTimer;
+    ModelNode m_pendingRebakeCheckNode;
+    int m_pendingRebakeTimerCount = 0;
 };
 
 } // namespace QmlDesigner

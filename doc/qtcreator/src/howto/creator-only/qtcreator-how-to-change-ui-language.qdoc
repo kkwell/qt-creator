@@ -15,9 +15,9 @@
     To change the language:
 
     \list 1
-        \li Go to \preferences > \uicontrol Environment.
+        \li Go to \preferences > \uicontrol Environment \uicontrol Interface.
         \li In \uicontrol Language, select a language.
-        \li Select \uicontrol OK.
+        \li Select \uicontrol Apply.
         \li Select \uicontrol {Restart Now} to restart \QC and have the change
             take effect.
     \endlist
@@ -26,13 +26,13 @@
 
     To set the UI language when you start \QC from the command line, enter:
 
-    \badcode
+    \code [shell]
     qtcreator -language <locale>
     \endcode
 
-    Use a lowercase, two-letter
-    \l {https://www.iso.org/iso-639-language-codes.html}
-    {ISO 639 language code}, such as \e de, \e en, or \e fr.
+    Use a lowercase, two-letter \l{ISO 639 language code}, such as
+    \e de, \e en, or \e fr.
 
-    \sa {Run Qt Creator from the command line}
+    \sa {Adapt the UI}{How to: Adapt the UI}, {Adapting the UI},
+    {Run \QC from the command line}
 */

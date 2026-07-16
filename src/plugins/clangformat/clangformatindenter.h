@@ -43,7 +43,7 @@ public:
     Utils::EditOperations format(const TextEditor::RangesInLines &rangesInLines,
                                  FormattingMode mode) override;
     bool formatOnSave() const override;
-    TextEditor::IndentationForBlock indentationForBlocks(const QVector<QTextBlock> &blocks,
+    TextEditor::IndentationForBlock indentationForBlocks(const QList<QTextBlock> &blocks,
                                                          const TextEditor::TabSettings &tabSettings,
                                                          int cursorPositionInEditor = -1) override;
     std::optional<TextEditor::TabSettings> tabSettings() const override;
@@ -60,11 +60,14 @@ public:
                           int cursorPositionInEditor = -1) override;
     std::optional<int> margin() const override;
 
+    bool respectsTabSettings() const override;
+
 private:
     TextEditor::Indenter *currentIndenter() const;
 
     std::unique_ptr<TextEditor::Indenter> m_clangFormatIndenter;
     std::unique_ptr<TextEditor::Indenter> m_cppIndenter;
+    mutable std::optional<qint64> m_fileSize;
 };
 
 } // namespace ClangFormat

@@ -15,62 +15,45 @@
 
 namespace Utils { class SearchResultItem; }
 
-namespace CppEditor {
+namespace CppEditor::Internal {
 
-class CPPEDITOR_EXPORT SymbolSearcher: public QObject
-{
-    Q_OBJECT
+enum class SymbolType {
+    Classes      = 0x1,
+    Functions    = 0x2,
+    Enums        = 0x4,
+    Declarations = 0x8,
+    TypeAliases  = 0x16,
+    AllTypes     = Classes | Functions | Enums | Declarations
+};
+Q_DECLARE_FLAGS(SymbolTypes, SymbolType)
+Q_DECLARE_OPERATORS_FOR_FLAGS(SymbolTypes)
 
-public:
-    enum SymbolType {
-        Classes      = 0x1,
-        Functions    = 0x2,
-        Enums        = 0x4,
-        Declarations = 0x8,
-        TypeAliases  = 0x16,
-    };
-
-    Q_DECLARE_FLAGS(SymbolTypes, SymbolType)
-
-    enum SearchScope {
-        SearchProjectsOnly,
-        SearchGlobal
-    };
-
-    struct Parameters
-    {
-        QString text;
-        Utils::FindFlags flags;
-        SymbolTypes types;
-        SearchScope scope;
-    };
-
-    SymbolSearcher(const SymbolSearcher::Parameters &parameters,
-                   const QSet<Utils::FilePath> &filePaths);
-
-    void runSearch(QPromise<Utils::SearchResultItem> &promise);
-
-private:
-    const CPlusPlus::Snapshot m_snapshot;
-    const Parameters m_parameters;
-    const QSet<Utils::FilePath> m_filePaths;
+enum SearchScope {
+    SearchProjectsOnly,
+    SearchGlobal
 };
 
-class CPPEDITOR_EXPORT CppIndexingSupport
+struct SearchParameters
 {
-public:
-    static bool isFindErrorsIndexingActive();
-
-    QFuture<void> refreshSourceFiles(
-        const std::function<QSet<QString>()> &sourceFiles,
-        CppModelManager::ProgressNotificationMode mode);
-
-private:
-    Utils::FutureSynchronizer m_synchronizer;
+    QString text;
+    Utils::FindFlags flags;
+    SymbolTypes types;
+    SearchScope scope;
 };
 
-} // namespace CppEditor
+CPPEDITOR_EXPORT void searchForSymbols(QPromise<Utils::SearchResultItem> &promise,
+                                       const CPlusPlus::Snapshot &snapshot,
+                                       const SearchParameters &parameters,
+                                       const QSet<Utils::FilePath> &filePaths);
 
-Q_DECLARE_METATYPE(CppEditor::SymbolSearcher::SearchScope)
-Q_DECLARE_METATYPE(CppEditor::SymbolSearcher::Parameters)
-Q_DECLARE_METATYPE(CppEditor::SymbolSearcher::SymbolTypes)
+CPPEDITOR_EXPORT bool isFindErrorsIndexingActive();
+
+CPPEDITOR_EXPORT QFuture<void> refreshSourceFiles(
+    const std::function<QSet<Utils::FilePath>()> &sourceFiles,
+    CppModelManager::ProgressNotificationMode mode);
+
+} // namespace CppEditor::Internal
+
+Q_DECLARE_METATYPE(CppEditor::Internal::SearchScope)
+Q_DECLARE_METATYPE(CppEditor::Internal::SearchParameters)
+Q_DECLARE_METATYPE(CppEditor::Internal::SymbolTypes)

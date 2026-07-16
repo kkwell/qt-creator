@@ -25,9 +25,12 @@
 
 #include <texteditor/codeassist/iassistproposal.h>
 #include <texteditor/codeassist/iassistproposalmodel.h>
+#include <texteditor/icodestylepreferences.h>
 #include <texteditor/storagesettings.h>
 #include <texteditor/syntaxhighlighter.h>
+#include <texteditor/tabsettings.h>
 #include <texteditor/texteditor.h>
+#include <texteditor/texteditorsettings.h>
 
 #include <utils/environment.h>
 #include <utils/fileutils.h>
@@ -35,7 +38,8 @@
 #include <utils/qtcassert.h>
 #include <utils/temporarydirectory.h>
 
-#include <QtTest>
+#include <QElapsedTimer>
+#include <QTest>
 
 using namespace ProjectExplorer;
 using namespace Utils;
@@ -44,11 +48,8 @@ namespace CppEditor::Internal::Tests {
 
 bool isClangFormatPresent()
 {
-    using namespace ExtensionSystem;
-    return Utils::contains(PluginManager::plugins(), [](const PluginSpec *plugin) {
-        return plugin->name() == "ClangFormat" && plugin->isEffectivelyEnabled();
-    });
-};
+    return ExtensionSystem::PluginManager::specExistsAndIsEnabled("clangformat");
+}
 
 CppTestDocument::CppTestDocument(const QByteArray &fileName, const QByteArray &source,
                                          char cursorMarker)
@@ -192,7 +193,7 @@ static bool snapshotContains(const CPlusPlus::Snapshot &snapshot, const QSet<Fil
 {
     for (const FilePath &filePath : filePaths) {
         if (!snapshot.contains(filePath)) {
-            qWarning() << "Missing file in snapshot:" << qPrintable(filePath.toString());
+            qWarning() << "Missing file in snapshot:" << qPrintable(filePath.toUrlishString());
             return false;
         }
     }
@@ -229,9 +230,12 @@ bool TestCase::openCppEditor(const FilePath &filePath, TextEditor::BaseTextEdito
             Core::EditorManager::openEditor(filePath))) {
         if (editor) {
             *editor = e;
-            TextEditor::StorageSettings s = e->textDocument()->storageSettings();
+            TextEditor::StorageSettingsData s = e->textDocument()->storageSettings();
             s.m_addFinalNewLine = false;
             e->textDocument()->setStorageSettings(s);
+            TextEditor::TabSettings ts = TextEditor::TextEditorSettings::codeStyle()->tabSettings();
+            ts.m_autoDetect = false;
+            e->textDocument()->setTabSettings(ts);
         }
 
         if (!QTest::qWaitFor(
@@ -326,11 +330,6 @@ bool TestCase::parseFiles(const QSet<FilePath> &filePaths)
     return true;
 }
 
-bool TestCase::parseFiles(const QString &filePath)
-{
-    return parseFiles({FilePath::fromString(filePath)});
-}
-
 void TestCase::closeEditorAtEndOfTestCase(Core::IEditor *editor)
 {
     if (editor && !m_editorsToClose.contains(editor))
@@ -377,8 +376,8 @@ bool TestCase::waitUntilProjectIsFullyOpened(Project *project, int timeOutInMs)
 
     return QTest::qWaitFor(
         [project]() {
-            return ProjectManager::startupBuildSystem()
-                    && !ProjectManager::startupBuildSystem()->isParsing()
+            return activeBuildSystemForActiveProject()
+                    && !activeBuildSystemForActiveProject()->isParsing()
                     && CppModelManager::projectInfo(project);
         },
         timeOutInMs);
@@ -419,8 +418,7 @@ ProjectOpenerAndCloser::~ProjectOpenerAndCloser()
     QObject::disconnect(connection);
 }
 
-ProjectInfo::ConstPtr ProjectOpenerAndCloser::open(const FilePath &projectFile,
-        bool configureAsExampleProject, Kit *kit)
+ProjectInfo::ConstPtr ProjectOpenerAndCloser::open(const FilePath &projectFile, Kit *kit)
 {
     OpenProjectResult result = ProjectExplorerPlugin::openProject(projectFile);
     if (!result) {
@@ -429,8 +427,7 @@ ProjectInfo::ConstPtr ProjectOpenerAndCloser::open(const FilePath &projectFile,
     }
 
     Project *project = result.project();
-    if (configureAsExampleProject)
-        project->configureAsExampleProject(kit);
+    QTC_ASSERT(project->configureAsExampleProject(kit), return {});
 
     if (TestCase::waitUntilProjectIsFullyOpened(project)) {
         m_openProjects.append(project);
@@ -458,28 +455,21 @@ FilePath TemporaryDir::createFile(const QByteArray &relativePath, const QByteArr
     return filePath;
 }
 
-static bool copyRecursively(const QString &sourceDirPath,
-                            const QString &targetDirPath,
-                            QString *error)
+static Result<FileUtils::CopyResult> copyHelper(const FilePath &sourcePath,
+                                                const FilePath &targetPath)
 {
-    auto copyHelper = [](const FilePath &sourcePath, const FilePath &targetPath, QString *error) -> bool {
-        if (!sourcePath.copyFile(targetPath)) {
-            if (error) {
-                *error = QString::fromLatin1("copyRecursively() failed: \"%1\" to \"%2\".")
-                            .arg(sourcePath.toUserOutput(), targetPath.toUserOutput());
-            }
-            return false;
-        }
+    if (!sourcePath.copyFile(targetPath)) {
+        return ResultError(QString("copyRecursively() failed: \"%1\" to \"%2\".")
+                               .arg(sourcePath.toUserOutput(), targetPath.toUserOutput()));
+    }
 
-        // Copied files from Qt resources are read-only. Make them writable
-        // so that their parent directory can be removed without warnings.
-        return targetPath.setPermissions(targetPath.permissions() | QFile::WriteUser);
-    };
+    // Copied files from Qt resources are read-only. Make them writable
+    // so that their parent directory can be removed without warnings.
+    Result<> res = targetPath.setPermissions(targetPath.permissions() | QFile::WriteUser);
+    if (!res)
+        return ResultError(res.error());
 
-    return Utils::FileUtils::copyRecursively(Utils::FilePath::fromString(sourceDirPath),
-                                             Utils::FilePath::fromString(targetDirPath),
-                                             error,
-                                             copyHelper);
+    return FileUtils::CopyResult::Done;
 }
 
 TemporaryCopiedDir::TemporaryCopiedDir(const QString &sourceDirPath)
@@ -496,9 +486,11 @@ TemporaryCopiedDir::TemporaryCopiedDir(const QString &sourceDirPath)
         return;
     }
 
-    QString errorMessage;
-    if (!copyRecursively(sourceDirPath, path(), &errorMessage)) {
-        qWarning() << qPrintable(errorMessage);
+    const Result<FileUtils::CopyResult> res =
+        FileUtils::copyRecursively(FilePath::fromString(sourceDirPath), filePath(), copyHelper);
+
+    if (!res) {
+        qWarning() << qPrintable(res.error());
         m_isValid = false;
     }
 }
@@ -521,16 +513,17 @@ int clangdIndexingTimeout()
 SourceFilesRefreshGuard::SourceFilesRefreshGuard()
 {
     connect(CppModelManager::instance(), &CppModelManager::sourceFilesRefreshed, this, [this] {
-        m_refreshed = true;
+        --m_missing;
     });
 }
 
 bool SourceFilesRefreshGuard::wait()
 {
-    for (int i = 0; i < 10 && !m_refreshed; ++i) {
+    for (int i = 0; i < 10 && m_missing > 0; ++i) {
         CppEditor::Tests::waitForSignalOrTimeout(
             CppModelManager::instance(), &CppModelManager::sourceFilesRefreshed, 1000);
     }
-    return m_refreshed;
+    QTC_ASSERT(m_missing >= 0, return true);
+    return m_missing == 0;
 }
 } // namespace CppEditor::Tests

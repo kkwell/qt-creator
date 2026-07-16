@@ -5,7 +5,7 @@
 
 #include "pipsupport.h"
 #include "pyside.h"
-#include "pysideuicextracompiler.h"
+#include "pythonbuildsystem.h"
 #include "pythonconstants.h"
 #include "pythoneditor.h"
 #include "pythonkitaspect.h"
@@ -23,7 +23,6 @@
 #include <projectexplorer/buildsteplist.h>
 #include <projectexplorer/buildsystem.h>
 #include <projectexplorer/environmentaspect.h>
-#include <projectexplorer/namedwidget.h>
 #include <projectexplorer/processparameters.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectnodes.h>
@@ -34,12 +33,12 @@
 #include <utils/commandline.h>
 #include <utils/detailswidget.h>
 #include <utils/fileutils.h>
-#include <utils/futuresynchronizer.h>
 #include <utils/layoutbuilder.h>
 #include <utils/mimeconstants.h>
 #include <utils/qtcprocess.h>
 
 using namespace ProjectExplorer;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace Python::Internal {
@@ -69,14 +68,10 @@ PySideBuildStep::PySideBuildStep(BuildStepList *bsl, Id id)
         env.prependOrSetPath(m_pysideProject().parentDir());
     });
 
-    connect(target(), &Target::buildSystemUpdated, this, &PySideBuildStep::updateExtraCompilers);
+    connect(buildSystem(), &BuildSystem::updated, this, &PySideBuildStep::updateExtraCompilers);
     connect(&m_pysideUic, &BaseAspect::changed, this, &PySideBuildStep::updateExtraCompilers);
 }
 
-PySideBuildStep::~PySideBuildStep()
-{
-    qDeleteAll(m_extraCompilers);
-}
 
 void PySideBuildStep::checkForPySide(const FilePath &python)
 {
@@ -98,18 +93,36 @@ void PySideBuildStep::checkForPySide(const FilePath &python)
     }
 }
 
-void PySideBuildStep::checkForPySide(const FilePath &python, const QString &pySidePackageName)
+void PySideBuildStep::checkForPySide(const FilePath &pythonPath, const QString &pySidePackageName)
 {
-    const PipPackage package(pySidePackageName);
-    QObject::disconnect(m_watcherConnection);
-    m_watcher.reset(new QFutureWatcher<PipPackageInfo>());
-    m_watcherConnection = QObject::connect(m_watcher.get(), &QFutureWatcherBase::finished, this,
-                                           [this, python, pySidePackageName] {
-        handlePySidePackageInfo(m_watcher->result(), python, pySidePackageName);
-    });
-    const auto future = Pip::instance(python)->info(package);
-    m_watcher->setFuture(future);
-    Utils::futureSynchronizer()->addFuture(future);
+    const auto onSetup = [pythonPath, pySidePackageName](Process &process) {
+        process.setCommand({pythonPath, {"-m", "pip", "show", "-f", pySidePackageName}});
+    };
+    const auto onDone = [this, pythonPath, pySidePackageName](const Process &process) {
+        PipPackageInfo result;
+        QString fieldName;
+        QStringList data;
+        const QString pipOutput = process.allOutput();
+        for (const QString &line : pipOutput.split('\n')) {
+            if (line.isEmpty())
+                continue;
+            if (line.front().isSpace()) {
+                data.append(line.trimmed());
+            } else {
+                result.parseField(fieldName, data);
+                if (auto colonPos = line.indexOf(':'); colonPos >= 0) {
+                    fieldName = line.left(colonPos);
+                    data = QStringList(line.mid(colonPos + 1).trimmed());
+                } else {
+                    fieldName.clear();
+                    data.clear();
+                }
+            }
+        }
+        result.parseField(fieldName, data);
+        handlePySidePackageInfo(result, pythonPath, pySidePackageName);
+    };
+    m_taskTreeRunner.start({ProcessTask(onSetup, onDone, CallDoneFlag::OnSuccess)});
 }
 
 void PySideBuildStep::handlePySidePackageInfo(const PipPackageInfo &pySideInfo,
@@ -146,13 +159,13 @@ void PySideBuildStep::handlePySidePackageInfo(const PipPackageInfo &pySideInfo,
         return;
     }
 
-    m_pysideProject.setValue(tools.pySideProjectPath.toUserOutput());
-    m_pysideUic.setValue(tools.pySideUicPath.toUserOutput());
+    m_pysideProject.setValue(tools.pySideProjectPath);
+    m_pysideUic.setValue(tools.pySideUicPath);
 }
 
-Tasking::GroupItem PySideBuildStep::runRecipe()
+QtTaskTree::GroupItem PySideBuildStep::runRecipe()
 {
-    using namespace Tasking;
+    using namespace QtTaskTree;
 
     const auto onSetup = [this] {
         if (!processParameters()->effectiveCommand().isExecutableFile())
@@ -163,47 +176,32 @@ Tasking::GroupItem PySideBuildStep::runRecipe()
     return Group { onGroupSetup(onSetup), defaultProcessTask() };
 }
 
-void PySideBuildStep::updateExtraCompilers()
+FilePath PySideBuildStep::pySideUicPath() const
 {
-    QList<PySideUicExtraCompiler *> oldCompilers = m_extraCompilers;
-    m_extraCompilers.clear();
-
-    if (m_pysideUic().isExecutableFile()) {
-        auto uiMatcher = [](const Node *node) {
-            if (const FileNode *fileNode = node->asFileNode())
-                return fileNode->fileType() == FileType::Form;
-            return false;
-        };
-        const FilePaths uiFiles = project()->files(uiMatcher);
-        for (const FilePath &uiFile : uiFiles) {
-            FilePath generated = uiFile.parentDir();
-            generated = generated.pathAppended("/ui_" + uiFile.baseName() + ".py");
-            int index = Utils::indexOf(oldCompilers, [&](PySideUicExtraCompiler *oldCompiler) {
-                return oldCompiler->pySideUicPath() == m_pysideUic()
-                       && oldCompiler->project() == project() && oldCompiler->source() == uiFile
-                       && oldCompiler->targets() == FilePaths{generated};
-            });
-            if (index < 0) {
-                m_extraCompilers << new PySideUicExtraCompiler(m_pysideUic(),
-                                                               project(),
-                                                               uiFile,
-                                                               {generated},
-                                                               this);
-            } else {
-                m_extraCompilers << oldCompilers.takeAt(index);
-            }
-        }
-    }
-    for (LanguageClient::Client *client : LanguageClient::LanguageClientManager::clients()) {
-        if (auto pylsClient = qobject_cast<PyLSClient *>(client))
-            pylsClient->updateExtraCompilers(project(), m_extraCompilers);
-    }
-    qDeleteAll(oldCompilers);
+    return m_pysideUic();
 }
 
-QList<PySideUicExtraCompiler *> PySideBuildStep::extraCompilers() const
+FilePaths PySideBuildStep::uiFiles() const
 {
-    return m_extraCompilers;
+    if (!m_pysideUic().isExecutableFile())
+        return {};
+    const auto uiMatcher = [](const Node *node) {
+        if (const FileNode *fileNode = node->asFileNode())
+            return fileNode->fileType() == FileType::Form;
+        return false;
+    };
+    return project()->files(uiMatcher);
+}
+
+void PySideBuildStep::updateExtraCompilers()
+{
+    QTC_ASSERT(buildConfiguration(), return);
+    if (!buildConfiguration()->isActive())
+        return;
+    if (auto pythonBuildConfig = qobject_cast<PythonBuildConfiguration *>(buildConfiguration())) {
+        if (auto pylsClient = PyLSClient::clientForPython(pythonBuildConfig->python()))
+            pylsClient->updateExtraCompilers(project());
+    }
 }
 
 Id PySideBuildStep::id()
@@ -211,11 +209,10 @@ Id PySideBuildStep::id()
     return Id("Python.PysideBuildStep");
 }
 
-class PythonBuildSettingsWidget : public NamedWidget
+class PythonBuildSettingsWidget : public QWidget
 {
 public:
     PythonBuildSettingsWidget(PythonBuildConfiguration *bc)
-        : NamedWidget(Tr::tr("Python"))
     {
         using namespace Layouting;
         m_configureDetailsWidget = new DetailsWidget;
@@ -259,9 +256,9 @@ void setupPySideBuildStep()
 
 PythonBuildConfiguration::PythonBuildConfiguration(Target *target, const Id &id)
     : BuildConfiguration(target, id)
-    , m_buildSystem(std::make_unique<PythonBuildSystem>(this))
 {
     setInitializer([this](const BuildInfo &info) { initialize(info); });
+    setConfigWidgetDisplayName(Tr::tr("Python"));
 
     updateCacheAndEmitEnvironmentChanged();
 
@@ -272,7 +269,7 @@ PythonBuildConfiguration::PythonBuildConfiguration(Target *target, const Id &id)
 
     auto update = [this] {
         if (isActive()) {
-            m_buildSystem->emitBuildSystemUpdated();
+            buildSystem()->emitBuildSystemUpdated();
             updateDocuments();
         }
     };
@@ -288,7 +285,7 @@ PythonBuildConfiguration::PythonBuildConfiguration(Target *target, const Id &id)
             &PythonBuildConfiguration::handlePythonUpdated);
 }
 
-NamedWidget *PythonBuildConfiguration::createConfigWidget()
+QWidget *PythonBuildConfiguration::createConfigWidget()
 {
     return new PythonBuildSettingsWidget(this);
 }
@@ -312,11 +309,11 @@ void PythonBuildConfiguration::initialize(const BuildInfo &info)
 
         if (info.extraInfo.toMap().value("createVenv", false).toBool()
             && !info.buildDirectory.exists()) {
-            if (std::optional<Interpreter> python = PythonKitAspect::python(target()->kit()))
+            if (std::optional<Interpreter> python = PythonKitAspect::python(kit()))
                 PythonSettings::createVirtualEnvironment(python->command, info.buildDirectory);
         }
     } else {
-        updateInterpreter(PythonKitAspect::python(target()->kit()));
+        updateInterpreter(PythonKitAspect::python(kit()));
     }
 
     updateCacheAndEmitEnvironmentChanged();
@@ -333,7 +330,7 @@ void PythonBuildConfiguration::updatePython(const FilePath &python)
     if (auto buildStep = buildSteps()->firstOfType<PySideBuildStep>())
         buildStep->checkForPySide(python);
     updateDocuments();
-    m_buildSystem->requestParse();
+    buildSystem()->requestParse();
 }
 
 void PythonBuildConfiguration::updateDocuments()
@@ -376,11 +373,6 @@ void PythonBuildConfiguration::toMap(Store &map) const
         map[venvKey] = m_venv->toSettings();
 }
 
-BuildSystem *PythonBuildConfiguration::buildSystem() const
-{
-    return m_buildSystem.get();
-}
-
 FilePath PythonBuildConfiguration::python() const
 {
     return m_python;
@@ -398,10 +390,12 @@ public:
     {
         registerBuildConfiguration<PythonBuildConfiguration>("Python.PySideBuildConfiguration");
         setSupportedProjectType(PythonProjectId);
-        setSupportedProjectMimeTypeName(Constants::C_PY_PROJECT_MIME_TYPE);
+        setSupportedProjectMimeTypeNames(
+            {Constants::C_PY_PROJECT_MIME_TYPE, Constants::C_PY_PROJECT_MIME_TYPE_TOML});
         setBuildGenerator([](const Kit *k, const FilePath &projectPath, bool forSetup) {
             if (std::optional<Interpreter> python = PythonKitAspect::python(k)) {
                 BuildInfo base;
+                base.buildSystemName = PythonBuildSystem::name();
                 base.buildDirectory = projectPath.parentDir();
                 base.displayName = python->name;
                 base.typeName = Tr::tr("Global Python");
@@ -419,7 +413,8 @@ public:
                 int i = 2;
                 while (venv.buildDirectory.exists())
                     venv.buildDirectory = venvBase.stringAppended('_' + QString::number(i++));
-                venv.displayName = python->name + Tr::tr(" Virtual Environment");
+                //: %1 = name of this Python as registered in QtC
+                venv.displayName = Tr::tr("%1 Virtual Environment").arg(python->name);
                 venv.typeName = venvTypeName();
                 venv.extraInfo = QVariantMap{{"createVenv", forSetup}};
                 return QList<BuildInfo>{base, venv};

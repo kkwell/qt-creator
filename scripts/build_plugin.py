@@ -10,8 +10,10 @@ import collections
 import glob
 import os
 import shlex
+import sys
 
 import common
+from common import cmake_option
 
 def get_arguments():
     parser = argparse.ArgumentParser(description='Build Qt Creator for packaging')
@@ -40,6 +42,10 @@ def get_arguments():
                         action='store_true', default=False)
     parser.add_argument('--build-type', help='Build type to pass to CMake (defaults to RelWithDebInfo)',
                         default='RelWithDebInfo')
+    parser.add_argument('--no-sbom', help='Skip SBOM generation', action='store_true', default=False)
+    parser.add_argument('--python3', help='File path to python3 executable for generating SBOMs',
+                        default=sys.executable)
+
     # zipping
     parser.add_argument('--zip-threads', help='Sets number of threads to use for 7z. Use "+" for turning threads on '
                         'without a specific number of threads. This is directly passed to the "-mmt" option of 7z.',
@@ -60,6 +66,7 @@ def qtcreator_prefix_path(qt_creator_path):
     candidates = [qt_creator_path, os.path.join(qt_creator_path, 'Contents', 'Resources')]
     candidates += [os.path.join(path, 'Contents', 'Resources')
                    for path in glob.glob(os.path.join(qt_creator_path, '*.app'))]
+    candidates += glob.glob(os.path.join(qt_creator_path, '*.sdk'))
     for path in candidates:
         if os.path.exists(os.path.join(path, 'lib', 'cmake')):
             return [path]
@@ -79,7 +86,17 @@ def build(args, paths):
                   '-DCMAKE_BUILD_TYPE=' + args.build_type,
                   '-DQTC_SEPARATE_DEBUG_INFO=' + separate_debug_info_option,
                   '-DCMAKE_INSTALL_PREFIX=' + common.to_posix_path(paths.install),
+                  '-DQT_GENERATE_SBOM=' + cmake_option(not args.no_sbom),
+                  '-DQT_SBOM_GENERATE_SPDX_V2_JSON=' + cmake_option(not args.no_sbom),
+                  '-DQT_SBOM_REQUIRE_GENERATE_SPDX_V2_JSON=' + cmake_option(not args.no_sbom),
+                  '-DQT_SBOM_GENERATE_CYDX_V1_6=' + cmake_option(not args.no_sbom),
+                  '-DQT_SBOM_REQUIRE_GENERATE_CYDX_V1_6=' + cmake_option(not args.no_sbom),
                   '-G', 'Ninja']
+
+    if args.python3:
+        cmake_args += ['-DPython3_EXECUTABLE=' + args.python3]
+        # QT_SBOM_PYTHON_INTERP expects the dir that contains the python executable.
+        cmake_args += ['-DQT_SBOM_PYTHON_INTERP=' + os.path.dirname(args.python3)]
 
     if args.module_paths:
         module_paths = [common.to_posix_path(os.path.abspath(fp)) for fp in args.module_paths]
@@ -142,21 +159,24 @@ def build(args, paths):
                                  paths.build)
 
 def package(args, paths):
+    if not os.path.exists(paths.install):
+        os.makedirs(paths.install)
     if not os.path.exists(paths.result):
         os.makedirs(paths.result)
     if common.is_windows_platform() and args.sign_command:
         command = shlex.split(args.sign_command)
         common.check_print_call(command + [paths.install])
-    common.check_print_call(['7z', 'a', '-mmt' + args.zip_threads, os.path.join(paths.result, args.name + '.7z'), '*'],
+    zip = common.sevenzip_command(args.zip_threads)
+    common.check_print_call(zip + [os.path.join(paths.result, args.name + '.7z'), '*'],
                             paths.install)
     if os.path.exists(paths.dev_install):  # some plugins might not provide anything in Devel
-        common.check_print_call(['7z', 'a', '-mmt' + args.zip_threads,
-                                 os.path.join(paths.result, args.name + '_dev.7z'), '*'],
+        common.check_print_call(zip
+                                + [os.path.join(paths.result, args.name + '_dev.7z'), '*'],
                                 paths.dev_install)
     # check for existence - the DebugInfo install target doesn't work for telemetry plugin
     if args.with_debug_info and os.path.exists(paths.debug_install):
-        common.check_print_call(['7z', 'a', '-mmt' + args.zip_threads,
-                                 os.path.join(paths.result, args.name + '-debug.7z'), '*'],
+        common.check_print_call(zip
+                                + [os.path.join(paths.result, args.name + '-debug.7z'), '*'],
                                 paths.debug_install)
     if common.is_mac_platform() and common.codesign_call():
         if args.keychain_unlock_script:
@@ -164,15 +184,19 @@ def package(args, paths):
         if os.environ.get('SIGNING_IDENTITY'):
             signed_install_path = paths.install + '-signed'
             common.copytree(paths.install, signed_install_path, symlinks=True)
-            apps = [d for d in os.listdir(signed_install_path) if d.endswith('.app')]
-            if apps:
-                app = apps[0]
-                common.conditional_sign_recursive(os.path.join(signed_install_path, app),
-                                                  lambda ff: ff.endswith('.dylib'))
-                common.check_print_call(['7z', 'a', '-mmt' + args.zip_threads,
-                                         os.path.join(paths.result, args.name + '-signed.7z'),
-                                         app],
-                                        signed_install_path)
+            zippattern = None
+            if os.path.exists(signed_install_path):
+                apps = [d for d in os.listdir(signed_install_path) if d.endswith('.app')]
+                if apps:
+                    zippattern = apps[0]
+            if not zippattern:
+                os.makedirs(signed_install_path)  # if nothing was installed
+                zippattern = '*'
+            common.codesign(signed_install_path)
+            common.check_print_call(zip
+                                    + [os.path.join(paths.result, args.name + '-signed.7z'),
+                                       zippattern],
+                                    signed_install_path)
 
 def get_paths(args):
     Paths = collections.namedtuple('Paths',

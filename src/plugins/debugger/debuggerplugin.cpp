@@ -8,7 +8,6 @@
 #include "debuggerengine.h"
 #include "debuggericons.h"
 #include "debuggeritemmanager.h"
-#include "debuggermainwindow.h"
 #include "debuggerrunconfigurationaspect.h"
 #include "debuggerruncontrol.h"
 #include "debuggerkitaspect.h"
@@ -17,15 +16,15 @@
 #include "breakhandler.h"
 #include "enginemanager.h"
 #include "logwindow.h"
+#include "remotedebuggerconfiguration.h"
+#include "remotedebuggerdebugsupport.h"
 #include "stackframe.h"
 #include "unstartedappwatcherdialog.h"
 #include "loadcoredialog.h"
 #include "sourceutils.h"
+#include "shared/coredumputils.h"
 #include "shared/hostutils.h"
 #include "console/console.h"
-
-#include "analyzer/analyzerconstants.h"
-#include "analyzer/analyzermanager.h"
 
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
@@ -40,9 +39,9 @@
 #include <coreplugin/messagebox.h>
 #include <coreplugin/messagemanager.h>
 #include <coreplugin/modemanager.h>
-#include <coreplugin/modemanager.h>
 #include <coreplugin/navigationwidget.h>
 #include <coreplugin/outputpane.h>
+#include <coreplugin/perspective.h>
 #include <coreplugin/rightpane.h>
 #include <coreplugin/session.h>
 
@@ -55,11 +54,11 @@
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/buildmanager.h>
 #include <projectexplorer/buildsystem.h>
+#include <projectexplorer/devicesupport/devicekitaspects.h>
 #include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/devicesupport/deviceprocessesdialog.h>
-#include <projectexplorer/devicesupport/sshparameters.h>
-#include <projectexplorer/itaskhandler.h>
-#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/kitchooser.h>
+#include <projectexplorer/kitmanager.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorericons.h>
@@ -72,6 +71,7 @@
 #include <projectexplorer/target.h>
 #include <projectexplorer/taskhub.h>
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/toolchainkitaspect.h>
 
 #include <texteditor/texteditor.h>
 #include <texteditor/textdocument.h>
@@ -79,7 +79,6 @@
 #include <texteditor/texteditorsettings.h>
 
 #include <utils/algorithm.h>
-#include <utils/appmainwindow.h>
 #include <utils/basetreeview.h>
 #include <utils/checkablemessagebox.h>
 #include <utils/fancymainwindow.h>
@@ -89,9 +88,8 @@
 #include <utils/proxyaction.h>
 #include <utils/qtcassert.h>
 #include <utils/statuslabel.h>
-#include <utils/styledbar.h>
+#include <utils/stringutils.h>
 #include <utils/temporarydirectory.h>
-#include <utils/utilsicons.h>
 #include <utils/winutils.h>
 
 #include <QAction>
@@ -109,16 +107,14 @@
 #include <QJsonObject>
 #include <QMenu>
 #include <QMessageBox>
+#include <QOperatingSystemVersion>
 #include <QPointer>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QStackedWidget>
 #include <QTextBlock>
-#include <QToolButton>
 #include <QVBoxLayout>
 #include <QVariant>
-
-#include <climits>
 
 #define DEBUG_STATE 1
 #ifdef DEBUG_STATE
@@ -328,6 +324,7 @@ using namespace Debugger::Constants;
 using namespace Debugger::Internal;
 using namespace ExtensionSystem;
 using namespace ProjectExplorer;
+using namespace QtTaskTree;
 using namespace TextEditor;
 using namespace Utils;
 
@@ -336,10 +333,7 @@ namespace PE = ProjectExplorer::Constants;
 
 Q_DECLARE_METATYPE(QString *)
 
-namespace Debugger {
-namespace Internal {
-
-const char DEBUGGER_START[] = "Debugger.Start";
+namespace Debugger::Internal {
 
 // Menu Groups
 const char MENU_GROUP_GENERAL[]              = "Debugger.Group.General";
@@ -381,13 +375,6 @@ static QIcon interruptIcon(bool toolBarStyle)
     return toolBarStyle ? iconToolBar : icon;
 }
 
-static bool hideAnalyzeMenu()
-{
-    return Core::ICore::settings()
-        ->value(ProjectExplorer::Constants::SETTINGS_MENU_HIDE_ANALYZE, false)
-        .toBool();
-}
-
 static bool hideDebugMenu()
 {
     return Core::ICore::settings()
@@ -427,6 +414,31 @@ QAction *addCheckableAction(const QObject *parent, QMenu *menu, const QString &d
     return act;
 }
 
+void addStandardActions(QWidget *treeView, QMenu *menu)
+{
+    BaseTreeView *view = qobject_cast<BaseTreeView *>(treeView);
+    QTC_ASSERT(treeView, return);
+    QTC_ASSERT(menu, return);
+
+    menu->addSeparator();
+
+    addAction(view, menu, Tr::tr("Copy Content to Clipboard"), true, [view] {
+        setClipboardAndSelection(view->contentAsText());
+    });
+
+    addAction(view, menu, Tr::tr("Copy Selected Items to Clipboard"), true, [view] {
+        setClipboardAndSelection(view->selectionAsText());
+    });
+
+    addAction(view, menu, Tr::tr("Copy Selected Items to New Editor"), true, [view] {
+        openTextEditor("View", view->selectionAsText());
+    });
+
+    menu->addSeparator();
+
+    menu->addAction(settings().settingsDialog.action());
+}
+
 ///////////////////////////////////////////////////////////////////////
 //
 // DebugMode
@@ -438,15 +450,13 @@ class DebugModeWidget final : public MiniSplitter
 public:
     DebugModeWidget()
     {
-        DebuggerMainWindow *mainWindow = DebuggerMainWindow::instance();
-
         auto editorHolderLayout = new QVBoxLayout;
         editorHolderLayout->setContentsMargins(0, 0, 0, 0);
         editorHolderLayout->setSpacing(0);
 
         auto editorAndFindWidget = new QWidget;
         editorAndFindWidget->setLayout(editorHolderLayout);
-        editorHolderLayout->addWidget(DebuggerMainWindow::centralWidgetStack());
+        editorHolderLayout->addWidget(PerspectivesView::centralWidgetStack());
         editorHolderLayout->addWidget(new FindToolBarPlaceHolder(editorAndFindWidget));
 
         auto documentAndRightPane = new MiniSplitter;
@@ -455,7 +465,7 @@ public:
         documentAndRightPane->setStretchFactor(0, 1);
         documentAndRightPane->setStretchFactor(1, 0);
 
-        auto centralEditorWidget = mainWindow->centralWidget();
+        auto centralEditorWidget = PerspectivesView::mainWindow()->centralWidget();
         auto centralLayout = new QVBoxLayout(centralEditorWidget);
         centralEditorWidget->setLayout(centralLayout);
         centralLayout->setContentsMargins(0, 0, 0, 0);
@@ -466,7 +476,7 @@ public:
 
         // Right-side window with editor, output etc.
         auto mainWindowSplitter = new MiniSplitter;
-        mainWindowSplitter->addWidget(mainWindow);
+        mainWindowSplitter->addWidget(PerspectivesView::mainWindow());
         mainWindowSplitter->addWidget(new OutputPanePlaceHolder(MODE_DEBUG, mainWindowSplitter));
         auto outputPane = new OutputPanePlaceHolder(MODE_DEBUG, mainWindowSplitter);
         outputPane->setObjectName("DebuggerOutputPanePlaceHolder");
@@ -476,15 +486,15 @@ public:
         mainWindowSplitter->setOrientation(Qt::Vertical);
 
         // Navigation and right-side window.
-        setFocusProxy(DebuggerMainWindow::centralWidgetStack());
+        setFocusProxy(PerspectivesView::centralWidgetStack());
         addWidget(new NavigationWidgetPlaceHolder(MODE_DEBUG, Side::Left));
         addWidget(mainWindowSplitter);
         setStretchFactor(0, 0);
         setStretchFactor(1, 1);
         setObjectName("DebugModeWidget");
 
-        mainWindow->addSubPerspectiveSwitcher(EngineManager::engineChooser());
-        mainWindow->addSubPerspectiveSwitcher(EngineManager::dapEngineChooser());
+        PerspectivesView::addSubPerspectiveSwitcher(EngineManager::engineChooser());
+        PerspectivesView::addSubPerspectiveSwitcher(EngineManager::dapEngineChooser());
 
         IContext::attach(this, Context(CC::C_EDITORMANAGER));
     }
@@ -498,15 +508,14 @@ public:
         setObjectName("DebugMode");
         setContext(Context(C_DEBUGMODE, CC::C_NAVIGATION_PANE));
         setDisplayName(Tr::tr("Debug"));
-        setIcon(Utils::Icon::modeIcon(Icons::MODE_DEBUGGER_CLASSIC,
-                                      Icons::MODE_DEBUGGER_FLAT, Icons::MODE_DEBUGGER_FLAT_ACTIVE));
+        setIcon(Icon::sideBarIcon(Icons::MODE_DEBUGGER_CLASSIC, Icons::MODE_DEBUGGER_FLAT));
         setPriority(85);
         setId(MODE_DEBUG);
 
         setWidgetCreator([] { return new DebugModeWidget; });
-        setMainWindow(DebuggerMainWindow::instance());
+        setMainWindow(PerspectivesView::mainWindow());
 
-        setMenu(&DebuggerMainWindow::addPerspectiveMenu);
+        setMenu(&PerspectivesView::addPerspectiveMenu);
     }
 };
 
@@ -539,6 +548,19 @@ static Kit *findUniversalCdbKit()
     }
     return KitManager::kit(cdbPredicate());
 }
+
+class DebugServerToolFactory : public DeviceToolAspectFactory
+{
+public:
+    DebugServerToolFactory()
+    {
+        setToolId(Constants::DEBUGSERVER_TOOL_ID);
+        setToolType(DeviceToolAspect::RunTool);
+        setFilePattern({"gdbserver"});
+        setLabelText(Tr::tr("GDB server executable:"));
+        setToolTip(Tr::tr("The GDB server executable to use on the device."));
+    }
+};
 
 ///////////////////////////////////////////////////////////////////////
 //
@@ -626,14 +648,13 @@ public:
 
     void setOrRemoveBreakpoint();
     void enableOrDisableBreakpoint();
-    void updateDebugWithoutDeployMenu();
 
-    void startRemoteCdbSession();
     void attachToRunningApplication();
     void attachToUnstartedApplicationDialog();
     void attachToQmlPort();
     void runScheduled();
     void attachCore();
+    void attachToLastCore();
     void reloadDebuggingHelpers();
 
     void remoteCommand(const QStringList &options);
@@ -641,7 +662,7 @@ public:
     void dumpLog();
     void setInitialState();
 
-    void onStartupProjectChanged(Project *project);
+    void onStartupProjectChanged();
 
     bool parseArgument(QStringList::const_iterator &it,
         const QStringList::const_iterator &cend, QString *errorMessage);
@@ -654,15 +675,14 @@ public:
 public:
     QPointer<DebugMode> m_mode;
 
-    ActionContainer *m_menu = nullptr;
 
-    QVector<DebuggerRunTool *> m_scheduledStarts;
+    QList<RunControl *> m_scheduledStarts;
 
     ProxyAction m_visibleStartAction; // The fat debug button
     ProxyAction m_hiddenStopAction;
     QAction m_undisturbableAction;
-    OptionalAction m_startAction;
-    OptionalAction m_startDapAction;
+    QAction m_startAction;
+    QAction m_startDapAction;
     QAction m_debugWithoutDeployAction{Tr::tr("Start Debugging Without Deployment")};
     QAction m_startAndDebugApplicationAction{Tr::tr("Start and Debug External Application...")};
     QAction m_attachToRunningApplication{Tr::tr("Attach to Running Application...")};
@@ -671,6 +691,7 @@ public:
     QAction m_attachToRemoteServerAction{Tr::tr("Attach to Running Debug Server...")};
     QAction m_startRemoteCdbAction{Tr::tr("Attach to Remote CDB Session...")};
     QAction m_attachToCoreAction{Tr::tr("Load Core File...")};
+    QAction m_attachToLastCoreAction{Tr::tr("Load Last Core File")};
 
     // In the Debug menu.
     QAction m_startAndBreakOnMain{Tr::tr("Start and Break on Main")};
@@ -694,7 +715,9 @@ public:
     Perspective m_perspective{Constants::PRESET_PERSPECTIVE_ID, Tr::tr("Debugger")};
     Perspective m_perspectiveDap{Constants::DAP_PERSPECTIVE_ID, Tr::tr("DAP")};
 
-    DebuggerRunWorkerFactory debuggerWorkerFactory;
+    std::optional<QPoint> attachToUnstartedApplicationDialogLastPosition;
+
+    DebugServerToolFactory m_debugServerToolFactory;
 
     // FIXME: Needed?
 //            QString mainScript = runConfig->property("mainScript").toString();
@@ -704,17 +727,21 @@ public:
 
 void DebuggerPluginPrivate::addFontSizeAdaptation(QWidget *widget)
 {
+    auto adaptFont = [](QWidget *widget, const FontSettings &fs) {
+        if (!settings().fontSizeFollowsEditor())
+            return;
+        qreal size = fs.fontZoom() * fs.fontSize() / 100.;
+        QFont font = widget->font();
+        font.setPointSizeF(size);
+        widget->setFont(font);
+    };
+
     QObject::connect(TextEditorSettings::instance(),
                      &TextEditorSettings::fontSettingsChanged,
                      this,
-                     [widget](const FontSettings &fs) {
-                         if (!settings().fontSizeFollowsEditor())
-                             return;
-                         qreal size = fs.fontZoom() * fs.fontSize() / 100.;
-                         QFont font = widget->font();
-                         font.setPointSizeF(size);
-                         widget->setFont(font);
-                     });
+                     [widget, adaptFont](const FontSettings &fs) { adaptFont(widget, fs); });
+
+    adaptFont(widget, TextEditorSettings::fontSettings());
 };
 
 BaseTreeView *DebuggerPluginPrivate::createBreakpointManagerView(const QByteArray &settingsKey)
@@ -770,6 +797,8 @@ QWidget *DebuggerPluginPrivate::createEngineManagerWindow(BaseTreeView *engineMa
 
 DebuggerPluginPrivate::DebuggerPluginPrivate(const QStringList &arguments)
 {
+    setupDebuggerRunWorker();
+
     qRegisterMetaType<ContextData>("ContextData");
     qRegisterMetaType<DebuggerRunParameters>("DebuggerRunParameters");
     qRegisterMetaType<QString *>();
@@ -799,29 +828,10 @@ DebuggerPluginPrivate::DebuggerPluginPrivate(const QStringList &arguments)
                 this, &DebuggerPluginPrivate::parseCommandLineArguments);
     }
 
-    // Menus
-    m_menu = ActionManager::createMenu(M_DEBUG_ANALYZER);
-    m_menu->menu()->setTitle(Tr::tr("&Analyze"));
-    m_menu->menu()->setEnabled(true);
-
-    m_menu->appendGroup(G_ANALYZER_CONTROL);
-    m_menu->appendGroup(G_ANALYZER_TOOLS);
-    m_menu->appendGroup(G_ANALYZER_REMOTE_TOOLS);
-    m_menu->appendGroup(G_ANALYZER_OPTIONS);
-
     ActionContainer *touchBar = ActionManager::createTouchBar("Debugger.TouchBar",
                                                               Icons::MACOS_TOUCHBAR_DEBUG.icon());
     ActionManager::actionContainer(Core::Constants::TOUCH_BAR)
         ->addMenu(touchBar, Core::Constants::G_TOUCHBAR_OTHER);
-
-    ActionContainer *menubar = ActionManager::actionContainer(MENU_BAR);
-    ActionContainer *mtools = ActionManager::actionContainer(M_TOOLS);
-    if (!hideAnalyzeMenu())
-        menubar->addMenu(mtools, m_menu);
-
-    m_menu->addSeparator(G_ANALYZER_TOOLS);
-    m_menu->addSeparator(G_ANALYZER_REMOTE_TOOLS);
-    m_menu->addSeparator(G_ANALYZER_OPTIONS);
 
     QAction *act;
 
@@ -829,7 +839,7 @@ DebuggerPluginPrivate::DebuggerPluginPrivate(const QStringList &arguments)
     act = new QAction(Tr::tr("Memory..."), this);
     act->setVisible(false);
     act->setEnabled(false);
-    Command *cmd = ActionManager::registerAction(act, Constants::OPEN_MEMORY_EDITOR);
+    ActionManager::registerAction(act, Constants::OPEN_MEMORY_EDITOR);
 
     TaskHub::addCategory({TASK_CATEGORY_DEBUGGER_RUNTIME,
                           Tr::tr("Debugger Runtime"),
@@ -867,13 +877,16 @@ DebuggerPluginPrivate::DebuggerPluginPrivate(const QStringList &arguments)
     });
 
     connect(&m_startAndDebugApplicationAction, &QAction::triggered,
-            this, &StartApplicationDialog::startAndDebugApplication);
+            this, [] { runStartAndDebugApplicationDialog(); });
 
     connect(&m_attachToCoreAction, &QAction::triggered,
-            this, &DebuggerPluginPrivate::attachCore);
+            this, [] { runAttachToCoreDialog(); });
+
+    connect(&m_attachToLastCoreAction, &QAction::triggered,
+            this, &DebuggerPluginPrivate::attachToLastCore);
 
     connect(&m_attachToRemoteServerAction, &QAction::triggered,
-            this, &StartApplicationDialog::attachToRemoteServer);
+            this, [] { runAttachToRemoteServerDialog(); });
 
     connect(&m_attachToRunningApplication, &QAction::triggered,
             this, &DebuggerPluginPrivate::attachToRunningApplication);
@@ -882,10 +895,10 @@ DebuggerPluginPrivate::DebuggerPluginPrivate(const QStringList &arguments)
             this, &DebuggerPluginPrivate::attachToUnstartedApplicationDialog);
 
     connect(&m_attachToQmlPortAction, &QAction::triggered,
-            this, &DebuggerPluginPrivate::attachToQmlPort);
+            this, [] { runAttachToQmlPortDialog(); });
 
     connect(&m_startRemoteCdbAction, &QAction::triggered,
-            this, &DebuggerPluginPrivate::startRemoteCdbSession);
+            this, [] { runStartRemoteCdbSessionDialog(findUniversalCdbKit()); });
 
     // "Start Debugging" sub-menu
     // groups:
@@ -896,7 +909,7 @@ DebuggerPluginPrivate::DebuggerPluginPrivate(const QStringList &arguments)
 
     const QKeySequence startShortcut(useMacShortcuts ? Tr::tr("Ctrl+Y") : Tr::tr("F5"));
 
-    cmd = ActionManager::registerAction(&m_visibleStartAction, "Debugger.Debug");
+    Command *cmd = ActionManager::registerAction(&m_visibleStartAction, "Debugger.Debug");
 
     cmd->setDescription(Tr::tr("Start Debugging or Continue"));
     cmd->setAttribute(Command::CA_UpdateText);
@@ -904,7 +917,7 @@ DebuggerPluginPrivate::DebuggerPluginPrivate(const QStringList &arguments)
     //mstart->addAction(cmd, CC::G_DEFAULT_ONE);
 
     cmd = ActionManager::registerAction(&m_startAction, DEBUGGER_START);
-    cmd->setDescription(Tr::tr("Start Debugging"));
+    cmd->setDescription(Tr::tr("Start Debugging the Current Project"));
     cmd->setAttribute(Command::CA_UpdateText);
     cmd->setDefaultKeySequence(startShortcut);
     mstart->addAction(cmd, CC::G_DEFAULT_ONE);
@@ -944,6 +957,11 @@ DebuggerPluginPrivate::DebuggerPluginPrivate(const QStringList &arguments)
 
     cmd = ActionManager::registerAction(&m_attachToCoreAction,
          "Debugger.AttachCore");
+    cmd->setAttribute(Command::CA_Hide);
+    mstart->addAction(cmd, MENU_GROUP_GENERAL);
+
+    cmd = ActionManager::registerAction(&m_attachToLastCoreAction,
+                                        "Debugger.AttachLastCore");
     cmd->setAttribute(Command::CA_Hide);
     mstart->addAction(cmd, MENU_GROUP_GENERAL);
 
@@ -1026,7 +1044,7 @@ DebuggerPluginPrivate::DebuggerPluginPrivate(const QStringList &arguments)
     cmd->setAttribute(Command::CA_Hide);
     debugMenu->addAction(cmd);
     connect(&m_startAndBreakOnMain, &QAction::triggered, this, [] {
-        DebuggerRunTool::setBreakOnMainNextTime();
+        DebuggerRunParameters::setBreakOnMainNextTime();
         ProjectExplorerPlugin::runStartupProject(ProjectExplorer::Constants::DEBUG_RUN_MODE, false);
     });
 
@@ -1150,23 +1168,31 @@ DebuggerPluginPrivate::DebuggerPluginPrivate(const QStringList &arguments)
 
     addCdbOptionPages(&m_optionPages);
 
-    connect(ModeManager::instance(), &ModeManager::currentModeAboutToChange, this, [] {
-        if (ModeManager::currentModeId() == MODE_DEBUG)
-            DebuggerMainWindow::leaveDebugMode();
-    });
+    connect(
+        ModeManager::instance(),
+        &ModeManager::currentModeAboutToChange,
+        PerspectivesView::instance(),
+        [] {
+            if (ModeManager::currentModeId() == MODE_DEBUG)
+                PerspectivesView::leaveDebugMode();
+        });
 
-    connect(ModeManager::instance(), &ModeManager::currentModeChanged,
-            this, [](Id mode, Id oldMode) {
-        QTC_ASSERT(mode != oldMode, return);
-        if (mode == MODE_DEBUG) {
-            DebuggerMainWindow::enterDebugMode();
-            if (IEditor *editor = EditorManager::currentEditor())
-                editor->widget()->setFocus();
-        }
-    });
+    connect(
+        ModeManager::instance(),
+        &ModeManager::currentModeChanged,
+        PerspectivesView::instance(),
+        [](Id mode, Id oldMode) {
+            QTC_ASSERT(mode != oldMode, return);
+            if (mode == MODE_DEBUG) {
+                PerspectivesView::enterDebugMode();
+                if (IEditor *editor = EditorManager::currentEditor())
+                    editor->widget()->setFocus();
+            }
+        });
 
-    connect(ProjectExplorerPlugin::instance(), &ProjectExplorerPlugin::settingsChanged,
-        this, &DebuggerPluginPrivate::updateDebugWithoutDeployMenu);
+    globalProjectExplorerSettings().deployBeforeRun.addOnChanged(this, [this] {
+        m_debugWithoutDeployAction.setVisible(globalProjectExplorerSettings().deployBeforeRun());
+    });
 
     // Debug mode setup
     m_mode = new DebugMode;
@@ -1188,14 +1214,14 @@ DebuggerPluginPrivate::DebuggerPluginPrivate(const QStringList &arguments)
     // Application interaction
     // Use a queued connection so the dialog isn't triggered in the same event.
     connect(settings().settingsDialog.action(), &QAction::triggered, this,
-            [] { ICore::showOptionsDialog(DEBUGGER_COMMON_SETTINGS_ID); }, Qt::QueuedConnection);
+            [] { ICore::showSettings(DEBUGGER_COMMON_SETTINGS_ID); }, Qt::QueuedConnection);
 
     EngineManager::registerDefaultPerspective(Tr::tr("Debugger Preset"),
                                               {},
                                               Constants::PRESET_PERSPECTIVE_ID);
 
     m_perspective.useSubPerspectiveSwitcher(EngineManager::engineChooser());
-    m_perspective.addToolBarAction(&m_startAction);
+    m_perspective.addToolBarAction(&m_startAction, Qt::ToolButtonTextBesideIcon);
 
     m_perspective.addWindow(engineManagerWindow, Perspective::SplitVertical, nullptr);
     m_perspective.addWindow(breakpointManagerWindow, Perspective::SplitHorizontal, engineManagerWindow);
@@ -1217,16 +1243,15 @@ void DebuggerPluginPrivate::createDapDebuggerPerspective(QWidget *globalLogWindo
     struct DapPerspective
     {
         QString name;
-        char const *runMode;
+        Id runMode;
         bool forceSkipDeploy = false;
     };
 
     const QList<DapPerspective> perspectiveList = {
-        DapPerspective{Tr::tr("CMake Preset"),
-                       ProjectExplorer::Constants::DAP_CMAKE_DEBUG_RUN_MODE,
-                       /*forceSkipDeploy=*/true},
-        DapPerspective{Tr::tr("GDB Preset"), ProjectExplorer::Constants::DAP_GDB_DEBUG_RUN_MODE},
-        DapPerspective{Tr::tr("LLDB Preset"), ProjectExplorer::Constants::DAP_LLDB_DEBUG_RUN_MODE},
+        DapPerspective{
+            Tr::tr("CMake Preset"),
+            ProjectExplorer::Constants::DAP_CMAKE_DEBUG_RUN_MODE,
+            /*forceSkipDeploy=*/true},
         DapPerspective{Tr::tr("Python Preset"), ProjectExplorer::Constants::DAP_PY_DEBUG_RUN_MODE},
     };
 
@@ -1256,12 +1281,11 @@ void DebuggerPluginPrivate::createDapDebuggerPerspective(QWidget *globalLogWindo
                                                          Tr::tr("DAP Debugger Perspectives"),
                                                          "DAPDebugger.Docks.Snapshots");
 
-    m_perspectiveDap.addToolBarAction(&m_startDapAction);
+    m_perspectiveDap.addToolBarAction(&m_startDapAction, Qt::ToolButtonTextBesideIcon);
     m_startDapAction.setToolTip(Tr::tr("Start DAP Debugging"));
     m_startDapAction.setText(Tr::tr("Start DAP Debugging"));
     m_startDapAction.setEnabled(true);
     m_startDapAction.setIcon(startIcon(true));
-    m_startDapAction.setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_startDapAction.setVisible(true);
 
     m_perspectiveDap.useSubPerspectiveSwitcher(EngineManager::dapEngineChooser());
@@ -1378,35 +1402,36 @@ bool DebuggerPluginPrivate::parseArgument(QStringList::const_iterator &it,
 
         auto runControl = new RunControl(ProjectExplorer::Constants::DEBUG_RUN_MODE);
         runControl->setKit(kit);
-        auto debugger = new DebuggerRunTool(runControl);
-        debugger->setInferiorExecutable(executable);
+        DebuggerRunParameters rp = DebuggerRunParameters::fromRunControl(runControl);
+        rp.setInferiorExecutable(executable);
         if (!sysRoot.isEmpty())
-            debugger->setSysRoot(FilePath::fromUserInput(sysRoot));
+            rp.setSysRoot(FilePath::fromUserInput(sysRoot));
         if (pid) {
-            debugger->setStartMode(AttachToLocalProcess);
-            debugger->setCloseMode(DetachAtClose);
-            debugger->setAttachPid(pid);
-            debugger->setRunControlName(Tr::tr("Process %1").arg(pid));
-            debugger->setStartMessage(Tr::tr("Attaching to local process %1.").arg(pid));
+            rp.setStartMode(AttachToLocalProcess);
+            rp.setCloseMode(DetachAtClose);
+            runControl->setAttachPid(ProcessHandle(pid));
+            rp.setDisplayName(Tr::tr("Process %1").arg(pid));
+            rp.setStartMessage(Tr::tr("Attaching to local process %1.").arg(pid));
         } else if (startMode == AttachToRemoteServer) {
-            debugger->setStartMode(AttachToRemoteServer);
-            debugger->setRemoteChannel(remoteChannel);
-            debugger->setRunControlName(Tr::tr("Remote: \"%1\"").arg(remoteChannel));
-            debugger->setStartMessage(Tr::tr("Attaching to remote server %1.").arg(remoteChannel));
+            rp.setStartMode(AttachToRemoteServer);
+            rp.setRemoteChannel(remoteChannel);
+            rp.setDisplayName(Tr::tr("Remote: \"%1\"").arg(remoteChannel));
+            rp.setStartMessage(Tr::tr("Attaching to remote server %1.").arg(remoteChannel));
         } else if (startMode == AttachToCore) {
-            debugger->setStartMode(AttachToCore);
-            debugger->setCloseMode(DetachAtClose);
-            debugger->setCoreFilePath(coreFile);
-            debugger->setRunControlName(Tr::tr("Core file \"%1\"").arg(coreFile.toUserOutput()));
-            debugger->setStartMessage(Tr::tr("Attaching to core file %1.").arg(coreFile.toUserOutput()));
+            rp.setStartMode(AttachToCore);
+            rp.setCloseMode(DetachAtClose);
+            rp.setCoreFilePath(coreFile);
+            rp.setDisplayName(Tr::tr("Core file \"%1\"").arg(coreFile.toUserOutput()));
+            rp.setStartMessage(Tr::tr("Attaching to core file %1.").arg(coreFile.toUserOutput()));
         } else {
-            debugger->setStartMode(StartExternal);
-            debugger->setRunControlName(Tr::tr("Executable file \"%1\"").arg(executable.toUserOutput()));
-            debugger->setStartMessage(Tr::tr("Debugging file %1.").arg(executable.toUserOutput()));
+            rp.setStartMode(StartExternal);
+            rp.setDisplayName(Tr::tr("Executable file \"%1\"").arg(executable.toUserOutput()));
+            rp.setStartMessage(Tr::tr("Debugging file %1.").arg(executable.toUserOutput()));
         }
-        debugger->setUseTerminal(useTerminal);
+        rp.setUseTerminal(useTerminal);
 
-        m_scheduledStarts.append(debugger);
+        runControl->setRunRecipe(debuggerRecipe(runControl, rp));
+        m_scheduledStarts.append(runControl);
         return true;
     }
     // -wincrashevent <event-handle>:<pid>. A handle used for
@@ -1423,18 +1448,20 @@ bool DebuggerPluginPrivate::parseArgument(QStringList::const_iterator &it,
         qint64 pid = it->section(':', 1, 1).toLongLong();
         auto runControl = new RunControl(ProjectExplorer::Constants::DEBUG_RUN_MODE);
         runControl->setKit(findUniversalCdbKit());
-        auto debugger = new DebuggerRunTool(runControl);
-        debugger->setStartMode(AttachToCrashedProcess);
-        debugger->setCrashParameter(it->section(':', 0, 0));
-        debugger->setAttachPid(pid);
-        debugger->setRunControlName(Tr::tr("Crashed process %1").arg(pid));
-        debugger->setStartMessage(Tr::tr("Attaching to crashed process %1").arg(pid));
+        runControl->setAttachPid(ProcessHandle(pid));
+        DebuggerRunParameters rp = DebuggerRunParameters::fromRunControl(runControl);
+        rp.setStartMode(AttachToCrashedProcess);
+        rp.setCrashParameter(it->section(':', 0, 0));
+        rp.setDisplayName(Tr::tr("Crashed process %1").arg(pid));
+        rp.setStartMessage(Tr::tr("Attaching to crashed process %1").arg(pid));
         if (pid < 1) {
             *errorMessage = Tr::tr("The parameter \"%1\" of option \"%2\" "
                 "does not match the pattern <handle>:<pid>.").arg(*it, option);
             return false;
         }
-        m_scheduledStarts.append(debugger);
+
+        runControl->setRunRecipe(debuggerRecipe(runControl, rp));
+        m_scheduledStarts.append(runControl);
         return true;
     }
 
@@ -1465,33 +1492,15 @@ void DebuggerPluginPrivate::parseCommandLineArguments()
         QTimer::singleShot(0, this, &DebuggerPluginPrivate::runScheduled);
 }
 
-static void setConfigValue(const Key &name, const QVariant &value)
-{
-    ICore::settings()->setValue("DebugMode/" + name, value);
-}
-
-static QVariant configValue(const Key &name)
-{
-    return ICore::settings()->value("DebugMode/" + name);
-}
-
 void DebuggerPluginPrivate::updatePresetState()
 {
     if (PluginManager::isShuttingDown())
         return;
 
-    Project *startupProject = ProjectManager::startupProject();
-    RunConfiguration *startupRunConfig = ProjectManager::startupRunConfiguration();
     DebuggerEngine *currentEngine = EngineManager::currentEngine();
 
     const auto canRun = ProjectExplorerPlugin::canRunStartupProject(
         ProjectExplorer::Constants::DEBUG_RUN_MODE);
-
-    QString startupRunConfigName;
-    if (startupRunConfig)
-        startupRunConfigName = startupRunConfig->displayName();
-    if (startupRunConfigName.isEmpty() && startupProject)
-        startupRunConfigName = startupProject->displayName();
 
     // Restrict width, otherwise Creator gets too wide, see QTCREATORBUG-21885
     const QString startToolTip = canRun ? Tr::tr("Start debugging of startup project")
@@ -1503,11 +1512,10 @@ void DebuggerPluginPrivate::updatePresetState()
     if (!currentEngine) {
         // No engine running  -- or -- we have a running engine but it does not
         // correspond to the current start up project.
-        m_startAction.setEnabled(bool(canRun));
+        m_startAction.setEnabled(canRun.has_value());
         m_startAction.setIcon(startIcon(true));
-        m_startAction.setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         m_startAction.setVisible(true);
-        m_debugWithoutDeployAction.setEnabled(bool(canRun));
+        m_debugWithoutDeployAction.setEnabled(canRun.has_value());
         m_visibleStartAction.setAction(&m_startAction);
         m_hiddenStopAction.setAction(&m_undisturbableAction);
         return;
@@ -1521,7 +1529,7 @@ void DebuggerPluginPrivate::updatePresetState()
     m_startAction.setEnabled(false);
     m_startAction.setVisible(false);
 
-    m_debugWithoutDeployAction.setEnabled(bool(canRun));
+    m_debugWithoutDeployAction.setEnabled(canRun.has_value());
 
     const DebuggerState state = currentEngine->state();
 
@@ -1539,8 +1547,8 @@ void DebuggerPluginPrivate::updatePresetState()
         m_hiddenStopAction.setAction(ActionManager::command(Constants::INTERRUPT)->action());
     } else if (state == DebuggerFinished) {
         // We don't want to do anything anymore.
-        m_startAction.setEnabled(bool(canRun));
-        m_debugWithoutDeployAction.setEnabled(bool(canRun));
+        m_startAction.setEnabled(canRun.has_value());
+        m_debugWithoutDeployAction.setEnabled(canRun.has_value());
         m_visibleStartAction.setAction(ActionManager::command(DEBUGGER_START)->action());
         m_hiddenStopAction.setAction(&m_undisturbableAction);
     } else if (state == InferiorUnrunnable) {
@@ -1571,6 +1579,8 @@ void DebuggerPluginPrivate::updatePresetState()
     m_startAndDebugApplicationAction.setEnabled(true);
     m_attachToQmlPortAction.setEnabled(true);
     m_attachToCoreAction.setEnabled(true);
+    m_attachToLastCoreAction.setEnabled(Utils::HostOsInfo::isLinuxHost());
+
     m_attachToRemoteServerAction.setEnabled(true);
     m_attachToRunningApplication.setEnabled(true);
     m_attachToUnstartedApplication.setEnabled(true);
@@ -1580,59 +1590,48 @@ void DebuggerPluginPrivate::updatePresetState()
     m_enableOrDisableBreakpointAction.setEnabled(true);
 }
 
-void DebuggerPluginPrivate::onStartupProjectChanged(Project *project)
+void DebuggerPluginPrivate::onStartupProjectChanged()
 {
-    RunConfiguration *activeRc = nullptr;
-    if (project) {
-        Target *target = project->activeTarget();
-        if (target)
-            activeRc = target->activeRunConfiguration();
-        if (!activeRc)
-            return;
-    }
     for (DebuggerEngine *engine : EngineManager::engines()) {
-        // Run controls might be deleted during exit.
+        // Run controls might be deleted during exit. We disconnect
+        // in aboutToShutdown(). Nevertheless double-check.
+        QTC_ASSERT(engine, continue);
         engine->updateState();
     }
 
     updatePresetState();
 }
 
-void DebuggerPluginPrivate::attachCore()
+void DebuggerPluginPrivate::attachToLastCore()
 {
-    AttachCoreDialog dlg(ICore::dialogParent());
-
-    const QString lastExternalKit = configValue("LastExternalKit").toString();
-    if (!lastExternalKit.isEmpty())
-        dlg.setKitId(Id::fromString(lastExternalKit));
-    dlg.setSymbolFile(FilePath::fromSettings(configValue("LastExternalExecutableFile")));
-    dlg.setCoreFile(FilePath::fromSettings(configValue("LastLocalCoreFile")));
-    dlg.setOverrideStartScript(FilePath::fromSettings(configValue("LastExternalStartScript")));
-    dlg.setSysRoot(FilePath::fromSettings(configValue("LastSysRoot")));
-
-    if (dlg.exec() != QDialog::Accepted)
-        return;
-
-    setConfigValue("LastExternalExecutableFile", dlg.symbolFile().toSettings());
-    setConfigValue("LastLocalCoreFile", dlg.coreFile().toSettings());
-    setConfigValue("LastExternalKit", dlg.kit()->id().toSetting());
-    setConfigValue("LastExternalStartScript", dlg.overrideStartScript().toSettings());
-    setConfigValue("LastSysRoot", dlg.sysRoot().toSettings());
-
     auto runControl = new RunControl(ProjectExplorer::Constants::DEBUG_RUN_MODE);
-    runControl->setKit(dlg.kit());
-    runControl->setDisplayName(Tr::tr("Core file \"%1\"").arg(dlg.coreFile().toUserOutput()));
-    auto debugger = new DebuggerRunTool(runControl);
+    runControl->setKit(KitManager::defaultKit());
+    runControl->setDisplayName(Tr::tr("Searching last Core file..."));
 
-    debugger->setInferiorExecutable(dlg.symbolFileCopy());
-    debugger->setCoreFilePath(dlg.coreFileCopy());
-    debugger->setStartMode(AttachToCore);
-    debugger->setCloseMode(DetachAtClose);
-    debugger->setOverrideStartScript(dlg.overrideStartScript());
-    const FilePath sysRoot = dlg.sysRoot();
-    if (!sysRoot.isEmpty())
-        debugger->setSysRoot(sysRoot);
-    debugger->startRunControl();
+    DebuggerRunParameters rp = DebuggerRunParameters::fromRunControl(runControl);
+    rp.setStartMode(AttachToCore);
+    rp.setCloseMode(DetachAtClose);
+
+    const Storage<LastCore> storage;
+
+    const auto setDisplayName = [storage, runControl] {
+        runControl->setDisplayName(Tr::tr("Last Core file \"%1\"").arg(storage->coreFile.toUserOutput()));
+    };
+
+    const auto modifier = [storage](DebuggerRunParameters &rp) {
+        rp.setInferiorExecutable(storage->binary);
+        rp.setCoreFilePath(storage->coreFile);
+    };
+
+    const Group recipe {
+        storage,
+        lastCoreRecipe(storage).withCancel(runControl->canceler()),
+        QSyncTask(setDisplayName),
+        debuggerRecipe(runControl, rp, modifier)
+    };
+
+    runControl->setRunRecipe(recipe);
+    runControl->start();
 }
 
 void DebuggerPluginPrivate::reloadDebuggingHelpers()
@@ -1640,57 +1639,9 @@ void DebuggerPluginPrivate::reloadDebuggingHelpers()
     if (DebuggerEngine *engine = EngineManager::currentEngine())
         engine->reloadDebuggingHelpers();
     else
-        DebuggerMainWindow::showStatusMessage(
+        PerspectivesView::showStatusMessage(
             Tr::tr("Reload debugging helpers skipped as no engine is running."), 5000);
 }
-
-void DebuggerPluginPrivate::startRemoteCdbSession()
-{
-    const Key connectionKey = "CdbRemoteConnection";
-    Kit *kit = findUniversalCdbKit();
-    QTC_ASSERT(kit, return);
-
-    StartRemoteCdbDialog dlg(ICore::dialogParent());
-    QString previousConnection = configValue(connectionKey).toString();
-    if (previousConnection.isEmpty())
-        previousConnection = "localhost:1234";
-    dlg.setConnection(previousConnection);
-    if (dlg.exec() != QDialog::Accepted)
-        return;
-    setConfigValue(connectionKey, dlg.connection());
-
-    auto runControl = new RunControl(ProjectExplorer::Constants::DEBUG_RUN_MODE);
-    runControl->setKit(kit);
-    auto debugger = new DebuggerRunTool(runControl);
-    debugger->setStartMode(AttachToRemoteServer);
-    debugger->setCloseMode(KillAtClose);
-    debugger->setRemoteChannel(dlg.connection());
-    debugger->startRunControl();
-}
-
-class RemoteAttachRunner : public DebuggerRunTool
-{
-public:
-    RemoteAttachRunner(RunControl *runControl, ProcessHandle pid)
-        : DebuggerRunTool(runControl)
-    {
-        setId("AttachToRunningProcess");
-        setUsePortsGatherer(true, false);
-
-        auto gdbServer = new DebugServerRunner(runControl, portsGatherer());
-        gdbServer->setUseMulti(false);
-        gdbServer->setAttachPid(pid);
-
-        addStartDependency(gdbServer);
-
-        setStartMode(AttachToRemoteProcess);
-        setCloseMode(DetachAtClose);
-
-        //    setInferiorExecutable(localExecutable);
-        setUseContinueInsteadOfRun(true);
-        setContinueAfterAttach(false);
-    }
-};
 
 void DebuggerPluginPrivate::attachToRunningApplication()
 {
@@ -1698,7 +1649,7 @@ void DebuggerPluginPrivate::attachToRunningApplication()
     kitChooser->setShowIcons(true);
 
     auto dlg = new DeviceProcessesDialog(kitChooser, ICore::dialogParent());
-    dlg->addAcceptButton(Tr::tr("&Attach to Process"));
+    dlg->addAcceptButton(msgAttachToProcess());
     dlg->showAllDevices();
     if (dlg->exec() == QDialog::Rejected) {
         delete dlg;
@@ -1708,7 +1659,7 @@ void DebuggerPluginPrivate::attachToRunningApplication()
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     Kit *kit = kitChooser->currentKit();
     QTC_ASSERT(kit, return);
-    IDevice::ConstPtr device = DeviceKitAspect::device(kit);
+    IDevice::ConstPtr device = RunDeviceKitAspect::device(kit);
     QTC_ASSERT(device, return);
 
     const ProcessInfo processInfo = dlg->currentProcess();
@@ -1720,16 +1671,31 @@ void DebuggerPluginPrivate::attachToRunningApplication()
         runControl->setKit(kit);
         //: %1: PID
         runControl->setDisplayName(Tr::tr("Process %1").arg(processInfo.processId));
-        auto debugger = new RemoteAttachRunner(runControl, ProcessHandle(processInfo.processId));
-        debugger->startRunControl();
+        runControl->requestDebugChannel();
+
+        DebuggerRunParameters rp = DebuggerRunParameters::fromRunControl(runControl);
+        rp.setServerAttachPid(ProcessHandle(processInfo.processId));
+        rp.setServerUseMulti(false);
+        rp.setServerEssential(false);
+        rp.setStartMode(AttachToRemoteProcess);
+        rp.setCloseMode(DetachAtClose);
+        rp.setUseContinueInsteadOfRun(true);
+        rp.setContinueAfterAttach(false);
+
+        runControl->setRunRecipe(debuggerRecipe(runControl, rp));
+        runControl->start();
     }
 }
 
 void DebuggerPluginPrivate::attachToUnstartedApplicationDialog()
 {
-    auto dlg = new UnstartedAppWatcherDialog(ICore::dialogParent());
+    auto dlg = new UnstartedAppWatcherDialog(
+        attachToUnstartedApplicationDialogLastPosition, ICore::dialogParent());
 
-    connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
+    connect(dlg, &QDialog::finished, this, [this, dlg]() {
+        this->attachToUnstartedApplicationDialogLastPosition = dlg->pos();
+        dlg->deleteLater();
+    });
     connect(dlg, &UnstartedAppWatcherDialog::processFound, this, [this, dlg] {
         RunControl *rc = attachToRunningProcess(dlg->currentKit(),
                                                 dlg->currentProcess(),
@@ -1748,7 +1714,7 @@ RunControl *DebuggerPluginPrivate::attachToRunningProcess(Kit *kit,
     const ProcessInfo &processInfo, bool contAfterAttach)
 {
     QTC_ASSERT(kit, return nullptr);
-    IDevice::ConstPtr device = DeviceKitAspect::device(kit);
+    IDevice::ConstPtr device = RunDeviceKitAspect::device(kit);
     QTC_ASSERT(device, return nullptr);
     if (processInfo.processId == 0) {
         AsynchronousMessageBox::warning(Tr::tr("Warning"), Tr::tr("Cannot attach to process with PID 0"));
@@ -1777,62 +1743,23 @@ RunControl *DebuggerPluginPrivate::attachToRunningProcess(Kit *kit,
     runControl->setKit(kit);
     //: %1: PID
     runControl->setDisplayName(Tr::tr("Process %1").arg(processInfo.processId));
-    auto debugger = new DebuggerRunTool(runControl);
-    debugger->setAttachPid(ProcessHandle(processInfo.processId));
-    debugger->setInferiorExecutable(device->filePath(processInfo.executable));
-    debugger->setStartMode(AttachToLocalProcess);
-    debugger->setCloseMode(DetachAtClose);
-    debugger->setContinueAfterAttach(contAfterAttach);
+    runControl->setAttachPid(ProcessHandle(processInfo.processId));
 
-    debugger->startRunControl();
+    DebuggerRunParameters rp = DebuggerRunParameters::fromRunControl(runControl);
+    rp.setInferiorExecutable(device->filePath(processInfo.executable));
+    rp.setStartMode(AttachToLocalProcess);
+    rp.setCloseMode(DetachAtClose);
+    rp.setContinueAfterAttach(contAfterAttach);
 
-    return debugger->runControl();
-}
-
-void DebuggerPluginPrivate::attachToQmlPort()
-{
-    AttachToQmlPortDialog dlg(ICore::dialogParent());
-
-    const QVariant qmlServerPort = configValue("LastQmlServerPort");
-    if (qmlServerPort.isValid())
-        dlg.setPort(qmlServerPort.toInt());
-    else
-        dlg.setPort(-1);
-
-    const Id kitId = Id::fromSetting(configValue("LastProfile"));
-    if (kitId.isValid())
-        dlg.setKitId(kitId);
-
-    if (dlg.exec() != QDialog::Accepted)
-        return;
-
-    Kit *kit = dlg.kit();
-    QTC_ASSERT(kit, return);
-    setConfigValue("LastQmlServerPort", dlg.port());
-    setConfigValue("LastProfile", kit->id().toSetting());
-
-    IDevice::ConstPtr device = DeviceKitAspect::device(kit);
-    QTC_ASSERT(device, return);
-
-    auto runControl = new RunControl(ProjectExplorer::Constants::DEBUG_RUN_MODE);
-    runControl->setKit(kit);
-    auto debugger = new DebuggerRunTool(runControl);
-
-    QUrl qmlServer = device->toolControlChannel(IDevice::QmlControlChannel);
-    qmlServer.setPort(dlg.port());
-    debugger->setQmlServer(qmlServer);
-
-    SshParameters sshParameters = device->sshParameters();
-    debugger->setRemoteChannel(sshParameters.host(), sshParameters.port());
-    debugger->setStartMode(AttachToQmlServer);
-
-    debugger->startRunControl();
+    runControl->setRunRecipe(debuggerRecipe(runControl, rp));
+    runControl->start();
+    return runControl;
 }
 
 void DebuggerPluginPrivate::runScheduled()
 {
-    for (DebuggerRunTool *debugger : std::as_const(m_scheduledStarts))
-        debugger->startRunControl();
+    for (RunControl *runControl : std::as_const(m_scheduledStarts))
+        runControl->start();
 }
 
 void DebuggerPluginPrivate::editorOpened(IEditor *editor)
@@ -1994,12 +1921,6 @@ void DebuggerPluginPrivate::setInitialState()
     settings().expandStack.setEnabled(false);
 }
 
-void DebuggerPluginPrivate::updateDebugWithoutDeployMenu()
-{
-    const bool state = projectExplorerSettings().deployBeforeRun;
-    m_debugWithoutDeployAction.setVisible(state);
-}
-
 void DebuggerPluginPrivate::dumpLog()
 {
     DebuggerEngine *engine = EngineManager::currentEngine();
@@ -2008,7 +1929,7 @@ void DebuggerPluginPrivate::dumpLog()
     LogWindow *logWindow = engine->logWindow();
     QTC_ASSERT(logWindow, return);
 
-    const FilePath filePath = FileUtils::getSaveFilePath(nullptr, Tr::tr("Save Debugger Log"),
+    const FilePath filePath = FileUtils::getSaveFilePath(Tr::tr("Save Debugger Log"),
                               TemporaryDirectory::masterDirectoryFilePath());
     if (filePath.isEmpty())
         return;
@@ -2020,7 +1941,8 @@ void DebuggerPluginPrivate::dumpLog()
         ts << logWindow->combinedContents();
         saver.setResult(&ts);
     }
-    saver.finalize(ICore::dialogParent());
+    if (const Result<> res = saver.finalize(); !res)
+        FileUtils::showError(res.error());
 }
 
 void DebuggerPluginPrivate::remoteCommand(const QStringList &options)
@@ -2037,13 +1959,15 @@ void DebuggerPluginPrivate::remoteCommand(const QStringList &options)
     runScheduled();
 }
 
+void registerMcpTools();
+
 void DebuggerPluginPrivate::extensionsInitialized()
 {
     QTimer::singleShot(0, this, &DebuggerItemManager::restoreDebuggers);
 
     // If the CppEditor or QmlJS editor plugin is there, we want to add something to
     // the editor context menu.
-    for (Id menuId : { CppEditor::Constants::M_CONTEXT, QmlJSEditor::Constants::M_CONTEXT }) {
+    for (Id menuId : {Id(CppEditor::Constants::M_CONTEXT), Id(QmlJSEditor::Constants::M_CONTEXT)}) {
         if (ActionContainer *editorContextMenu = ActionManager::actionContainer(menuId)) {
             auto cmd = editorContextMenu->addSeparator(m_watchCommand->context());
             cmd->setAttribute(Command::CA_Hide);
@@ -2055,14 +1979,21 @@ void DebuggerPluginPrivate::extensionsInitialized()
         }
     }
 
-    DebuggerMainWindow::ensureMainWindowExists();
+    registerMcpTools();
+
+    PerspectivesView::ensureMainWindowExists();
+
+    connect(PerspectivesView::instance(), &PerspectivesView::perspectivesChanged,
+            &m_engineManager, &EngineManager::updatePerspectives);
+    connect(PerspectivesView::instance(), &PerspectivesView::debugModeRequested,
+            &m_engineManager, &EngineManager::activateDebugMode);
 }
 
 QWidget *DebuggerPluginPrivate::addSearch(BaseTreeView *treeView)
 {
     BoolAspect &act = settings().useAlternatingRowColors;
     treeView->setAlternatingRowColors(act());
-    treeView->setProperty(PerspectiveState::savesHeaderKey(), true);
+    treeView->setProperty(Perspective::savesHeaderKey(), true);
     connect(&act, &BaseAspect::changed, treeView, [treeView] {
         treeView->setAlternatingRowColors(settings().useAlternatingRowColors());
     });
@@ -2114,7 +2045,7 @@ public:
 
 private:
     // IPlugin implementation.
-    bool initialize(const QStringList &arguments, QString *errorMessage) final;
+    Utils::Result<> initialize(const QStringList &arguments) final;
     QObject *remoteCommand(const QStringList &options,
                            const QString &workingDirectory,
                            const QStringList &arguments) final;
@@ -2127,13 +2058,6 @@ private:
     // Called from GammaRayIntegration
     Q_SLOT void getEnginesState(QByteArray *json) const;
 
-    // Called from DockerDevice
-    Q_SLOT void autoDetectDebuggersForDevice(const Utils::FilePaths &searchPaths,
-                                             const QString &detectionId,
-                                             QString *logMessage);
-    Q_SLOT void removeDetectedDebuggers(const QString &detectionId, QString *logMessage);
-    Q_SLOT void listDetectedDebuggers(const QString &detectionId, QString *logMessage);
-
     Q_SLOT void attachToProcess(const qint64 processId, const Utils::FilePath &executable);
 };
 
@@ -2142,7 +2066,6 @@ DebuggerPlugin::DebuggerPlugin()
     setObjectName("DebuggerPlugin");
     m_instance = this;
 
-    qRegisterMetaType<PerspectiveState>("Utils::PerspectiveState");
 }
 
 DebuggerPlugin::~DebuggerPlugin()
@@ -2161,19 +2084,24 @@ IPlugin::ShutdownFlag DebuggerPlugin::aboutToShutdown()
     dd->m_shutdownTimer.setInterval(0);
     dd->m_shutdownTimer.setSingleShot(true);
 
-    connect(&dd->m_shutdownTimer, &QTimer::timeout, this, [this] {
-        DebuggerMainWindow::doShutdown();
+    const auto doShutdown = [this] {
+        PerspectivesView::doShutdown();
 
         dd->m_shutdownTimer.stop();
+        disconnect(EngineManager::instance(), &EngineManager::shutDownCompleted, this, nullptr);
 
         delete dd->m_mode;
         dd->m_mode = nullptr;
         emit asynchronousShutdownFinished();
-    });
+    };
+
+    connect(&dd->m_shutdownTimer, &QTimer::timeout, this, doShutdown);
 
     if (EngineManager::shutDown()) {
         // If any engine is aborting we give them extra three seconds.
         dd->m_shutdownTimer.setInterval(3000);
+        connect(EngineManager::instance(), &EngineManager::shutDownCompleted, this, doShutdown,
+                Qt::QueuedConnection);
     }
     dd->m_shutdownTimer.start();
 
@@ -2195,158 +2123,38 @@ void DebuggerPlugin::extensionsInitialized()
     dd->extensionsInitialized();
 }
 
-} // namespace Internal
-
-static bool buildTypeAccepted(QFlags<ToolMode> toolMode, BuildConfiguration::BuildType buildType)
+Result<> DebuggerPlugin::initialize(const QStringList &arguments)
 {
-    if (buildType == BuildConfiguration::Unknown)
-        return true;
-    if (buildType == BuildConfiguration::Debug && (toolMode & DebugMode))
-        return true;
-    if (buildType == BuildConfiguration::Release && (toolMode & ReleaseMode))
-        return true;
-    if (buildType == BuildConfiguration::Profile && (toolMode & ProfileMode))
-        return true;
-    return false;
-}
+    IOptionsPage::registerCategory(
+        DEBUGGER_SETTINGS_CATEGORY,
+        Tr::tr("Debugger"),
+        ":/debugger/images/settingscategory_debugger.png");
 
-static BuildConfiguration::BuildType startupBuildType()
-{
-    BuildConfiguration::BuildType buildType = BuildConfiguration::Unknown;
-    if (RunConfiguration *runConfig = ProjectManager::startupRunConfiguration()) {
-        if (const BuildConfiguration *buildConfig = runConfig->target()->activeBuildConfiguration())
-            buildType = buildConfig->buildType();
-    }
-    return buildType;
-}
-
-void showCannotStartDialog(const QString &text)
-{
-    auto errorDialog = new QMessageBox(ICore::dialogParent());
-    errorDialog->setAttribute(Qt::WA_DeleteOnClose);
-    errorDialog->setIcon(QMessageBox::Warning);
-    errorDialog->setWindowTitle(text);
-    errorDialog->setText(Tr::tr("Cannot start %1 without a project. Please open the project "
-                                               "and try again.").arg(text));
-    errorDialog->setStandardButtons(QMessageBox::Ok);
-    errorDialog->setDefaultButton(QMessageBox::Ok);
-    errorDialog->show();
-}
-
-bool wantRunTool(ToolMode toolMode, const QString &toolName)
-{
-    // Check the project for whether the build config is in the correct mode
-    // if not, notify the user and urge him to use the correct mode.
-    BuildConfiguration::BuildType buildType = startupBuildType();
-    if (!buildTypeAccepted(toolMode, buildType)) {
-        QString currentMode;
-        switch (buildType) {
-            case BuildConfiguration::Debug:
-                currentMode = Tr::tr("Debug");
-                break;
-            case BuildConfiguration::Profile:
-                currentMode = Tr::tr("Profile");
-                break;
-            case BuildConfiguration::Release:
-                currentMode = Tr::tr("Release");
-                break;
-            default:
-                QTC_CHECK(false);
-        }
-
-        QString toolModeString;
-        switch (toolMode) {
-            case DebugMode:
-                toolModeString = Tr::tr("in Debug mode");
-                break;
-            case ProfileMode:
-                toolModeString = Tr::tr("in Profile mode");
-                break;
-            case ReleaseMode:
-                toolModeString = Tr::tr("in Release mode");
-                break;
-            case SymbolsMode:
-                toolModeString = Tr::tr("with debug symbols (Debug or Profile mode)");
-                break;
-            case OptimizedMode:
-                toolModeString = Tr::tr("on optimized code (Profile or Release mode)");
-                break;
-            default:
-                QTC_CHECK(false);
-        }
-        const QString title = Tr::tr("Run %1 in %2 Mode?").arg(toolName).arg(currentMode);
-        const QString message = Tr::tr("<html><head/><body><p>You are trying "
-            "to run the tool \"%1\" on an application in %2 mode. "
-            "The tool is designed to be used %3.</p><p>"
-            "Run-time characteristics differ significantly between "
-            "optimized and non-optimized binaries. Analytical "
-            "findings for one mode may or may not be relevant for "
-            "the other.</p><p>"
-            "Running tools that need debug symbols on binaries that "
-            "don't provide any may lead to missing function names "
-            "or otherwise insufficient output.</p><p>"
-            "Do you want to continue and run the tool in %2 mode?</p></body></html>")
-                .arg(toolName).arg(currentMode).arg(toolModeString);
-        if (Utils::CheckableMessageBox::question(ICore::dialogParent(),
-                                                 title,
-                                                 message,
-                                                 Key("AnalyzerCorrectModeWarning"))
-            != QMessageBox::Yes)
-                return false;
-    }
-
-    return true;
-}
-
-QAction *createStartAction()
-{
-    auto action = new QAction(Tr::tr("Start"), m_instance);
-    action->setIcon(ProjectExplorer::Icons::ANALYZER_START_SMALL_TOOLBAR.icon());
-    action->setEnabled(true);
-    return action;
-}
-
-QAction *createStopAction()
-{
-    auto action = new QAction(Tr::tr("Stop"), m_instance);
-    action->setIcon(Utils::Icons::STOP_SMALL_TOOLBAR.icon());
-    action->setEnabled(true);
-    return action;
-}
-
-void enableMainWindow(bool on)
-{
-    DebuggerMainWindow::instance()->setEnabled(on);
-}
-
-void showPermanentStatusMessage(const QString &message)
-{
-    DebuggerMainWindow::showStatusMessage(message, -1);
-}
-
-namespace Internal {
-
-bool DebuggerPlugin::initialize(const QStringList &arguments, QString *errorMessage)
-{
-    Q_UNUSED(errorMessage)
+    IOptionsPage::registerCategory(
+        "T.Analyzer",
+        Tr::tr("Analyzer"),
+        ":/debugger/images/settingscategory_analyzer.png");
 
     // Needed for call from AppOutputPane::attachToRunControl() and GammarayIntegration.
     ExtensionSystem::PluginManager::addObject(this);
 
     dd = new DebuggerPluginPrivate(arguments);
 
+    setupRemoteDebuggerConfiguration();
+    setupRemoteDebuggerDebugSupport();
+
 #ifdef WITH_TESTS
     addTestCreator(createDebuggerTest);
 #endif
 
-    return true;
+    return ResultOk;
 }
 
 void DebuggerPlugin::attachToProcess(const qint64 processId, const Utils::FilePath &executable)
 {
     ProcessInfo processInfo;
     processInfo.processId = processId;
-    processInfo.executable = executable.toString();
+    processInfo.executable = executable.path();
 
     auto kitChooser = new KitChooser;
     kitChooser->setShowIcons(true);
@@ -2358,16 +2166,20 @@ void DebuggerPlugin::attachToProcess(const qint64 processId, const Utils::FilePa
 
 void DebuggerPlugin::attachExternalApplication(RunControl *rc)
 {
-    ProcessHandle pid = rc->applicationProcessHandle();
+    const ProcessHandle pid = rc->applicationProcessHandle();
+
     auto runControl = new RunControl(ProjectExplorer::Constants::DEBUG_RUN_MODE);
-    runControl->setTarget(rc->target());
+    runControl->setBuildConfiguration(rc->buildConfiguration());
     runControl->setDisplayName(Tr::tr("Process %1").arg(pid.pid()));
-    auto debugger = new DebuggerRunTool(runControl);
-    debugger->setInferiorExecutable(rc->targetFilePath());
-    debugger->setAttachPid(pid);
-    debugger->setStartMode(AttachToLocalProcess);
-    debugger->setCloseMode(DetachAtClose);
-    debugger->startRunControl();
+    runControl->setAttachPid(pid);
+
+    DebuggerRunParameters rp = DebuggerRunParameters::fromRunControl(runControl);
+    rp.setInferiorExecutable(rc->targetFilePath());
+    rp.setStartMode(AttachToLocalProcess);
+    rp.setCloseMode(DetachAtClose);
+
+    runControl->setRunRecipe(debuggerRecipe(runControl, rp));
+    runControl->start();
 }
 
 void DebuggerPlugin::getEnginesState(QByteArray *json) const
@@ -2395,24 +2207,6 @@ void DebuggerPlugin::getEnginesState(QByteArray *json) const
     *json = QJsonDocument(QJsonObject::fromVariantMap(result)).toJson();
 }
 
-void DebuggerPlugin::autoDetectDebuggersForDevice(const FilePaths &searchPaths,
-                                                  const QString &detectionSource,
-                                                  QString *logMessage)
-{
-    DebuggerItemManager::autoDetectDebuggersForDevice(searchPaths, detectionSource, logMessage);
-}
-
-void DebuggerPlugin::removeDetectedDebuggers(const QString &detectionSource, QString *logMessage)
-{
-    DebuggerItemManager::removeDetectedDebuggers(detectionSource, logMessage);
-}
-
-void DebuggerPlugin::listDetectedDebuggers(const QString &detectionSource, QString *logMessage)
-{
-    DebuggerItemManager::listDetectedDebuggers(detectionSource, logMessage);
-}
-
-} // Internal
-} // Debugger
+} // Debugger::Internal
 
 #include "debuggerplugin.moc"

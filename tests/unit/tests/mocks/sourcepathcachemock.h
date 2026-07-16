@@ -5,9 +5,9 @@
 
 #include "../utils/googletest.h"
 
-#include <projectstorage/sourcepath.h>
-#include <projectstorage/sourcepathcacheinterface.h>
-#include <projectstorageids.h>
+#include <sourcepathids.h>
+#include <sourcepathstorage/sourcepath.h>
+#include <sourcepathstorage/sourcepathcacheinterface.h>
 
 class SourcePathCacheMock : public QmlDesigner::SourcePathCacheInterface
 {
@@ -22,28 +22,27 @@ public:
                 (const, override));
     MOCK_METHOD(QmlDesigner::SourceId,
                 sourceId,
-                (QmlDesigner::SourceContextId sourceContextId, Utils::SmallStringView sourceName),
+                (QmlDesigner::DirectoryPathId directoryPathId, Utils::SmallStringView fileName),
+                (const, override));
+    MOCK_METHOD(QmlDesigner::FileNameId,
+                fileNameId,
+                (Utils::SmallStringView fileName),
                 (const, override));
     MOCK_METHOD(QmlDesigner::SourcePath,
                 sourcePath,
                 (QmlDesigner::SourceId sourceId),
                 (const, override));
-    MOCK_METHOD(QmlDesigner::SourceContextId,
-                sourceContextId,
+    MOCK_METHOD(QmlDesigner::DirectoryPathId,
+                directoryPathId,
                 (Utils::SmallStringView directoryPath),
                 (const, override));
-    using SourceContextAndSourceId = std::pair<QmlDesigner::SourceContextId, QmlDesigner::SourceId>;
-    MOCK_METHOD(SourceContextAndSourceId,
-                sourceContextAndSourceId,
-                (QmlDesigner::SourcePathView sourcePath),
-                (const, override));
     MOCK_METHOD(Utils::PathString,
-                sourceContextPath,
-                (QmlDesigner::SourceContextId directoryPathId),
+                directoryPath,
+                (QmlDesigner::DirectoryPathId directoryPathId),
                 (const, override));
-    MOCK_METHOD(QmlDesigner::SourceContextId,
-                sourceContextId,
-                (QmlDesigner::SourceId sourceId),
+    MOCK_METHOD(Utils::SmallString,
+                fileName,
+                (QmlDesigner::FileNameId fileName),
                 (const, override));
     MOCK_METHOD(void, populateIfEmpty, (), (override));
 };

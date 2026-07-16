@@ -32,12 +32,7 @@ Settings::Settings()
     protocols.setSettingsKey("DefaultProtocol");
     protocols.setDisplayStyle(SelectionAspect::DisplayStyle::ComboBox);
     protocols.setLabelText(Tr::tr("Default protocol:"));
-    protocols.setToSettingsTransformation([this](const QVariant &val) {
-        return protocols.displayForIndex(val.toInt());
-    });
-    protocols.setFromSettingsTransformation([this](const QVariant &val) {
-        return protocols.indexForDisplay(val.toString());
-    });
+    protocols.setUseDataAsSavedValue();
 
     expiryDays.setSettingsKey("ExpiryDays");
     expiryDays.setDefaultValue(1);
@@ -75,8 +70,6 @@ public:
         setId("A.CodePaster.General");
         setDisplayName(Tr::tr("General"));
         setCategory(Constants::CPASTER_SETTINGS_CATEGORY);
-        setDisplayCategory(Tr::tr("Code Pasting"));
-        setCategoryIconPath(":/cpaster/images/settingscategory_cpaster.png");
         setSettingsProvider([] { return &settings(); });
     }
 };

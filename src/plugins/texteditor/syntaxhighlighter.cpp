@@ -9,11 +9,14 @@
 #include <utils/algorithm.h>
 #include <utils/qtcassert.h>
 
+#include <QElapsedTimer>
 #include <QPointer>
 #include <QTextDocument>
 #include <QThread>
 
 #include <cmath>
+
+Q_LOGGING_CATEGORY(Log, "qtc.editor.syntaxhighlighter", QtWarningMsg)
 
 namespace TextEditor {
 
@@ -62,6 +65,8 @@ public:
     QTextCharFormat whitespaceFormat;
     QString mimeType;
     bool syntaxInfoUpToDate = false;
+    bool continueRehighlightScheduled = false;
+    bool ignoreFolding = false;
     int highlightStartBlock = 0;
     int highlightEndBlock = 0;
     QSet<int> forceRehighlightBlocks;
@@ -142,10 +147,10 @@ void SyntaxHighlighterPrivate::applyFormatChanges()
         if (!preeditText.isEmpty()) {
             const int preeditPosition = currentBlock.layout()->preeditAreaPosition();
             if (r.start >= preeditPosition) {
-                r.start += preeditText.length();
+                r.start += preeditText.size();
             } else if (r.start + r.length > preeditPosition) {
                 QTextLayout::FormatRange beforePreeditRange = r;
-                r.start = preeditPosition + preeditText.length();
+                r.start = preeditPosition + preeditText.size();
                 r.length = r.length - (r.start - preeditPosition);
                 beforePreeditRange.length = preeditPosition - beforePreeditRange.start;
                 newRanges << beforePreeditRange;
@@ -208,7 +213,10 @@ void SyntaxHighlighterPrivate::reformatBlocks(int from, int charsRemoved, int ch
     else if (block.blockNumber() > highlightEndBlock)
         highlightEndBlock = block.blockNumber();
 
-    reformatBlocks();
+    qCDebug(Log) << "reformat blocks from:" << from << "to:" << from + charsAdded - charsRemoved;
+
+    if (!continueRehighlightScheduled)
+        reformatBlocks();
 }
 
 void SyntaxHighlighterPrivate::reformatBlocks()
@@ -216,30 +224,37 @@ void SyntaxHighlighterPrivate::reformatBlocks()
     QElapsedTimer et;
     et.start();
 
+    continueRehighlightScheduled = false;
     syntaxInfoUpToDate = false;
     rehighlightPending = false;
 
     foldValidator.reset();
 
     bool forceHighlightOfNextBlock = false;
+    qCDebug(Log) << "continue reformat blocks start block:" << highlightStartBlock
+                 << "end block:" << highlightEndBlock << "blockCount:" << doc->blockCount();
     QTextBlock block = doc->findBlockByNumber(highlightStartBlock);
     QTC_ASSERT(block.isValid(), block = doc->firstBlock());
     QTextBlock endBlock = doc->findBlockByNumber(highlightEndBlock);
     QTC_ASSERT(endBlock.isValid(), endBlock = doc->lastBlock());
 
     while (block.isValid()) {
+        highlightStartBlock = block.blockNumber();
         if (et.elapsed() > 20)
             break;
 
         const int stateBeforeHighlight = block.userState();
+        const int braceDepthBeforeHighlight = TextBlockUserData::braceDepth(block);
 
         if (forceHighlightOfNextBlock || forceRehighlightBlocks.contains(block.blockNumber())
                 || block.blockNumber() <= highlightEndBlock) {
             reformatBlock(block);
             forceRehighlightBlocks.remove(block.blockNumber());
-            forceHighlightOfNextBlock = (block.userState() != stateBeforeHighlight);
+            forceHighlightOfNextBlock = (block.userState() != stateBeforeHighlight)
+                                        || (braceDepthBeforeHighlight
+                                            != TextBlockUserData::braceDepth(block))
+                                        || forceRehighlightBlocks.contains(block.blockNumber() + 1);
         }
-        highlightStartBlock = block.blockNumber();
 
         if (block == endBlock && !forceHighlightOfNextBlock)
             break;
@@ -250,11 +265,14 @@ void SyntaxHighlighterPrivate::reformatBlocks()
     foldValidator.finalize();
 
     if (endBlock.isValid() && block.isValid() && block.blockNumber() < endBlock.blockNumber()) {
+        continueRehighlightScheduled = true;
         QMetaObject::invokeMethod(q, &SyntaxHighlighter::continueRehighlight, Qt::QueuedConnection);
         if (forceHighlightOfNextBlock)
             forceRehighlightBlocks << block.blockNumber();
     } else {
         highlightEndBlock = 0;
+        highlightStartBlock = INT_MAX;
+        qCDebug(Log) << "reformat blocks done";
         syntaxInfoUpToDate = true;
         emit q->finished();
     }
@@ -551,7 +569,7 @@ void SyntaxHighlighter::setFormat(int start, int count, const QFont &font)
 void SyntaxHighlighter::formatSpaces(const QString &text, int start, int count)
 {
     int offset = start;
-    const int end = std::min(start + count, int(text.length()));
+    const int end = std::min(start + count, int(text.size()));
     while (offset < end) {
         if (text.at(offset).isSpace()) {
             int start = offset++;
@@ -577,7 +595,7 @@ void SyntaxHighlighter::setFormatWithSpaces(const QString &text, int start, int 
 {
     const QTextCharFormat visualSpaceFormat = whitespacified(format);
 
-    const int end = std::min(start + count, int(text.length()));
+    const int end = std::min(start + count, int(text.size()));
     int index = start;
 
     while (index != end) {
@@ -714,6 +732,30 @@ QTextBlock SyntaxHighlighter::currentBlock() const
     return d->currentBlock;
 }
 
+void SyntaxHighlighter::forceRehighlightBlock(const QTextBlock &block)
+{
+    QTC_ASSERT(block.isValid(), return);
+    d->forceRehighlightBlocks << block.blockNumber();
+}
+
+void SyntaxHighlighter::setFoldingIndent(const QTextBlock &block, int indent)
+{
+    if (!ignoresFolding())
+        TextBlockUserData::setFoldingIndent(block, indent);
+}
+
+void SyntaxHighlighter::setFoldingStartIncluded(const QTextBlock &block, bool included)
+{
+    if (!ignoresFolding())
+        TextBlockUserData::setFoldingStartIncluded(block, included);
+}
+
+void SyntaxHighlighter::setFoldingEndIncluded(const QTextBlock &block, bool included)
+{
+    if (!ignoresFolding())
+        TextBlockUserData::setFoldingEndIncluded(block, included);
+}
+
 static bool byStartOfRange(const QTextLayout::FormatRange &range, const QTextLayout::FormatRange &other)
 {
     return range.start < other.start;
@@ -734,10 +776,10 @@ void SyntaxHighlighter::setExtraFormats(const QTextBlock &block,
         const int preeditPosition = block.layout()->preeditAreaPosition();
         for (QTextLayout::FormatRange &r : formatsCopy) {
             if (r.start >= preeditPosition) {
-                r.start += preeditText.length();
+                r.start += preeditText.size();
             } else if (r.start + r.length > preeditPosition) {
                 QTextLayout::FormatRange afterPreeditRange = r;
-                afterPreeditRange.start = preeditPosition + preeditText.length();
+                afterPreeditRange.start = preeditPosition + preeditText.size();
                 afterPreeditRange.length = r.length - (preeditPosition - r.start);
                 additionalRanges << afterPreeditRange;
                 r.length = preeditPosition - r.start;
@@ -778,6 +820,19 @@ void SyntaxHighlighter::setExtraFormats(const QTextBlock &block,
 bool SyntaxHighlighter::syntaxHighlighterUpToDate() const
 {
     return d->syntaxInfoUpToDate;
+}
+
+void SyntaxHighlighter::setIgnoreFolding(bool ignore)
+{
+    if (d->ignoreFolding == ignore)
+        return;
+    d->ignoreFolding = ignore;
+    rehighlight();
+}
+
+bool SyntaxHighlighter::ignoresFolding() const
+{
+    return d->ignoreFolding;
 }
 
 void SyntaxHighlighter::clearExtraFormats(const QTextBlock &block)

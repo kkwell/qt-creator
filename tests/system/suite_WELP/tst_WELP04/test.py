@@ -15,11 +15,7 @@ def main():
     startQC()
     if not startedWithoutPluginError():
         return
-    if not test.verify(object.exists(getWelcomeScreenSideBarButton('Get Started')),
-                       "Verifying: Qt Creator displays Welcome Page with Getting Started."):
-        test.fatal("Something's wrong - leaving test.")
-        invokeMenuItem("File", "Exit")
-        return
+
     # select "Tutorials"
     if not switchToSubMode('Tutorials'):
         test.fatal("Could not find Tutorials button - leaving test")
@@ -33,7 +29,7 @@ def main():
     tutorial = findExampleOrTutorial(listView, ".*", True)
     test.verify(tutorial is None,
                 "Verifying: 'Tutorials' topic is opened and nothing is shown.")
-    bnr = "Building and Running an Example"
+    bnr = "Build and run"
     replaceEditorContent(searchTutorials, bnr.lower())
     listView = __waitForListView__()
     waitFor('findExampleOrTutorial(listView, "%s.*") is not None' % bnr, 3000)
@@ -50,8 +46,8 @@ def main():
     sendEvent("QCloseEvent", waitForObject(":Help Widget_Help::Internal::HelpWidget"))
     # check a demonstration video link
     mouseClick(searchTutorials)
-    replaceEditorContent(searchTutorials, "embedded device")
-    embeddedTutorial = "How to install and set up Qt for Device Creation.*"
+    replaceEditorContent(searchTutorials, "device")
+    embeddedTutorial = "^Qt Creator for Bare Metal Development"
     listView = __waitForListView__()
     waitFor('findExampleOrTutorial(listView, embeddedTutorial) is not None', 3000)
     tutorial = findExampleOrTutorial(listView, embeddedTutorial, True)

@@ -3,11 +3,13 @@
 
 #pragma once
 
+#include <projectexplorer/kitaspect.h>
 #include <projectexplorer/runconfigurationaspects.h>
 
-#include <solutions/tasking/tasktreerunner.h>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <utils/filepath.h>
+#include <utils/listmodel.h>
 
 namespace Python::Internal {
 
@@ -25,6 +27,12 @@ public:
     static Interpreter defaultInterpreter();
     static Interpreter interpreter(const QString &interpreterId);
     static void setInterpreter(const QList<Interpreter> &interpreters, const QString &defaultId);
+    static Interpreter createInterpreter(
+        const Utils::FilePath &python,
+        const QString &defaultName,
+        const QString &suffix = {},
+        const ProjectExplorer::DetectionSource &detectionSource = {});
+
     static void addInterpreter(const Interpreter &interpreter, bool isDefault = false);
     static Interpreter addInterpreter(const Utils::FilePath &interpreterPath,
                                       bool isDefault = false,
@@ -42,23 +50,29 @@ public:
         const Utils::FilePath &interpreter,
         const Utils::FilePath &directory,
         const std::function<void(const Utils::FilePath &)> &callback = {});
+    static bool isRunningVirtualEnvironmentSetup(const Utils::FilePath &python);
     static QList<Interpreter> detectPythonVenvs(const Utils::FilePath &path);
-    static void addKitsForInterpreter(const Interpreter &interpreter);
+    static void addKitsForInterpreter(const Interpreter &interpreter, bool force);
     static void removeKitsForInterpreter(const Interpreter &interpreter);
+    static bool interpreterIsValid(const Interpreter &interpreter);
+
+    static std::optional<QtTaskTree::ExecutableItem> autoDetect(
+        ProjectExplorer::Kit *kit,
+        const Utils::FilePaths &searchPaths,
+        const ProjectExplorer::DetectionSource &detectionSource,
+        const ProjectExplorer::LogCallback &logCallback);
+    static void removeDetectedPython(
+        const QString &detectionSource, const ProjectExplorer::LogCallback &logCallback);
+    static void listDetectedPython(
+        const QString &detectionSource, const ProjectExplorer::LogCallback &logCallback);
+
+    static QString defaultInterpreterId();
 
 signals:
     void interpretersChanged(const QList<Interpreter> &interpreters, const QString &defaultId);
     void pylsConfigurationChanged(const QString &configuration);
     void pylsEnabledChanged(const bool enabled);
     void virtualEnvironmentCreated(const Utils::FilePath &venvPython);
-
-public slots:
-    void detectPythonOnDevice(const Utils::FilePaths &searchPaths,
-                              const QString &deviceName,
-                              const QString &detectionSource,
-                              QString *logMessage);
-    void removeDetectedPython(const QString &detectionSource, QString *logMessage);
-    void listDetectedPython(const QString &detectionSource, QString *logMessage);
 
 private:
     void disableOutdatedPyls();
@@ -71,11 +85,23 @@ private:
     QString m_defaultInterpreterId;
     bool m_pylsEnabled = true;
     QString m_pylsConfiguration;
-    Tasking::TaskTreeRunner m_taskTreeRunner;
+    QtTaskTree::QSingleTaskTreeRunner m_taskTreeRunner;
 
     static void saveSettings();
 };
 
-void setupPythonSettings(QObject *guard);
+void setupPythonSettings();
+
+class InterpreterModel final : public Utils::ListModel<PythonSettings::Interpreter>
+{
+public:
+    explicit InterpreterModel(const std::function<bool(QString)> &isDefaultId);
+
+    void addInterpreter(const PythonSettings::Interpreter &interpreter);
+    void removeInterpreterFrom(const QString &detectionSource);
+    void setInterpreters(const QList<PythonSettings::Interpreter> &interpreters);
+    QList<PythonSettings::Interpreter> interpreters() const;
+    QList<PythonSettings::Interpreter> interpreterFrom(const QString &detectionSource) const;
+};
 
 } // Python::Internal

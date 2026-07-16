@@ -6,7 +6,6 @@
 #include "formtemplatewizardpage.h"
 
 #include <projectexplorer/jsonwizard/jsonwizardpagefactory.h>
-#include <projectexplorer/projectexplorertr.h>
 
 #include <utils/qtcassert.h>
 #include <utils/wizard.h>
@@ -22,6 +21,8 @@
 #include <QMessageBox>
 
 #include <QDomDocument>
+
+using namespace Utils;
 
 namespace Designer {
 namespace Internal {
@@ -42,16 +43,16 @@ Utils::WizardPage *FormPageFactory::create(ProjectExplorer::JsonWizard *wizard, 
     return new FormTemplateWizardPage;
 }
 
-bool FormPageFactory::validateData(Utils::Id typeId, const QVariant &data, QString *errorMessage)
+Result<> FormPageFactory::validateData(Id typeId, const QVariant &data)
 {
-    QTC_ASSERT(canCreate(typeId), return false);
+    QTC_ASSERT(canCreate(typeId), return ResultError(ResultAssert));
+
     if (!data.isNull() && (data.typeId() != QMetaType::QVariantMap || !data.toMap().isEmpty())) {
-        *errorMessage = ::ProjectExplorer::Tr::tr(
-                    "\"data\" for a \"Form\" page needs to be unset or an empty object.");
-        return false;
+        return ResultError(
+            Tr::tr("\"data\" for a \"Form\" page needs to be unset or an empty object."));
     }
 
-    return true;
+    return ResultOk;
 }
 
 // ----------------- FormTemplateWizardPage

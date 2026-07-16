@@ -7,15 +7,12 @@
 
 #include <extensionsystem/iplugin.h>
 
-#include <utils/expected.h>
 #include <utils/filepath.h>
 #include <utils/id.h>
-
-#include <QPair>
-
-#include <optional>
+#include <utils/result.h>
 
 QT_BEGIN_NAMESPACE
+class QMenu;
 class QPoint;
 class QThreadPool;
 QT_END_NAMESPACE
@@ -33,7 +30,6 @@ class RunControl;
 class RunConfiguration;
 
 namespace Internal {
-class AppOutputSettings;
 class MiniProjectTargetSelector;
 }
 
@@ -87,7 +83,7 @@ private:
     QString m_errorMessage;
 };
 
-class PROJECTEXPLORER_EXPORT ProjectExplorerPlugin : public ExtensionSystem::IPlugin
+class PROJECTEXPLORER_EXPORT ProjectExplorerPlugin final : public ExtensionSystem::IPlugin
 {
     Q_OBJECT
     Q_PLUGIN_METADATA(IID "org.qt-project.Qt.QtCreatorPlugin" FILE "ProjectExplorer.json")
@@ -96,12 +92,12 @@ class PROJECTEXPLORER_EXPORT ProjectExplorerPlugin : public ExtensionSystem::IPl
 
 public:
     ProjectExplorerPlugin();
-    ~ProjectExplorerPlugin() override;
+    ~ProjectExplorerPlugin() final;
 
     static ProjectExplorerPlugin *instance();
 
-    static OpenProjectResult openProject(const Utils::FilePath &filePath);
-    static OpenProjectResult openProjects(const Utils::FilePaths &filePaths);
+    static OpenProjectResult openProject(const Utils::FilePath &filePath, bool searchInDir = true);
+    static OpenProjectResult openProjects(const Utils::FilePaths &filePaths, bool searchInDir = true);
     static void showOpenProjectError(const OpenProjectResult &result);
     static void openProjectWelcomePage(const Utils::FilePath &filePath);
     static void unloadProject(Project *project);
@@ -111,24 +107,15 @@ public:
     static void showContextMenu(QWidget *view, const QPoint &globalPos, Node *node);
 
     //PluginInterface
-    bool initialize(const QStringList &arguments, QString *errorMessage) override;
-    void extensionsInitialized() override;
-    bool delayedInitialize() override;
-    ShutdownFlag aboutToShutdown() override;
-
-    static void setAppOutputSettings(const Internal::AppOutputSettings &settings);
-    static const Internal::AppOutputSettings &appOutputSettings();
-
-    static void setCustomParsers(const QList<CustomParserSettings> &settings);
-    static void addCustomParser(const CustomParserSettings &settings);
-    static void removeCustomParser(Utils::Id id);
-    static const QList<CustomParserSettings> customParsers();
+    Utils::Result<> initialize(const QStringList &arguments) final;
+    void extensionsInitialized() final;
+    bool delayedInitialize() final;
+    ShutdownFlag aboutToShutdown() final;
 
     static void startRunControl(RunControl *runControl);
-    static void showOutputPaneForRunControl(RunControl *runControl);
 
-    static QList<std::pair<Utils::FilePath, Utils::FilePath>>
-    renameFiles(const QList<std::pair<Node *, Utils::FilePath>> &nodesAndNewFilePaths);
+    static Utils::FilePairs renameFiles(
+        const QList<std::pair<Node *, Utils::FilePath>> &nodesAndNewFilePaths);
 
 #ifdef WITH_TESTS
     static bool renameFile(const Utils::FilePath &source, const Utils::FilePath &target,
@@ -142,7 +129,7 @@ public:
     static void renameFilesForSymbol(const QString &oldSymbolName, const QString &newSymbolName,
                                      const Utils::FilePaths &files, bool preferLowerCaseFileNames);
 
-    static Utils::expected_str<void> canRunStartupProject(Utils::Id runMode);
+    static Utils::Result<> canRunStartupProject(Utils::Id runMode);
     static void runProject(Project *pro, Utils::Id, const bool forceSkipDeploy = false);
     static void runStartupProject(Utils::Id runMode, bool forceSkipDeploy = false);
     static void runRunConfiguration(RunConfiguration *rc, Utils::Id runMode,
@@ -168,8 +155,14 @@ public:
     static void removeFromRecentProjects(const Utils::FilePath &filePath);
 
     static void updateRunActions();
+    static QMenu *vcsFileContextMenu();
+
+    static QWidget *createRecentProjectsView();
 
     static Core::OutputWindow *buildSystemOutput();
+
+public slots:
+    void handleLink(const QUrl &url) const;
 
 signals:
     // Is emitted when a project has been added/removed,
@@ -178,20 +171,15 @@ signals:
 
     void recentProjectsChanged();
 
-    void settingsChanged();
-    void customParsersChanged();
-
     void runActionsUpdated();
     void runControlStarted(ProjectExplorer::RunControl *runControl);
     void runControlStoped(ProjectExplorer::RunControl *runControl);
 
-    void filesRenamed(const QList<std::pair<Utils::FilePath, Utils::FilePath>> &oldAndNewPaths);
+    void filesRenamed(const Utils::FilePairs &oldAndNewPaths);
 
 private:
     static bool coreAboutToClose();
     void handleCommandLineArguments(const QStringList &arguments);
-    static std::optional<std::pair<Utils::FilePath, Utils::FilePath>>
-    renameFile(Node *node, const QString &newFilePath);
 };
 
 } // namespace ProjectExplorer

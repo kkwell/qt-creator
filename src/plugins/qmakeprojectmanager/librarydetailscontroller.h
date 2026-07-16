@@ -36,7 +36,6 @@ protected:
     Utils::OsType libraryPlatformType() const;
     QString libraryPlatformFilter() const;
     Utils::FilePath proFile() const;
-    bool isIncludePathChanged() const;
 
     void updateGui();
     virtual AddLibraryWizard::LinkageType suggestedLinkageType() const = 0;
@@ -177,7 +176,7 @@ private:
     void updateProFile();
 
     QString m_rootProjectPath;
-    QVector<QmakeProFile *> m_proFiles;
+    QList<QmakeProFile *> m_proFiles;
 };
 
 } // namespace Internal

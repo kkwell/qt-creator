@@ -3,15 +3,21 @@
 
 #pragma once
 
-#include <designercore/model/modelresourcemanagementfwd.h>
+#include <model/modelresourcemanagementfwd.h>
+#include <qmlpuppetcommunication/interfaces/nodeinstanceglobal.h>
 #include <utils/cpplanguage_details.h>
 #include <utils/smallstringio.h>
 
 #include <QtGlobal>
 
+#include <filesystem>
 #include <iosfwd>
 #include <optional>
 #include <variant>
+
+namespace std::filesystem {
+std::ostream &operator<<(std::ostream &out, const file_time_type &entry);
+}
 
 namespace Sqlite {
 class Value;
@@ -22,6 +28,8 @@ enum class LockingMode : char;
 class TimeStamp;
 template<auto Type, typename InternalIntegerType>
 class BasicId;
+template<auto Type, auto ContextType>
+class CompoundBasicId;
 
 std::ostream &operator<<(std::ostream &out, const Value &value);
 std::ostream &operator<<(std::ostream &out, const ValueView &value);
@@ -34,6 +42,12 @@ template<auto Type, typename InternalIntegerType>
 std::ostream &operator<<(std::ostream &out, const BasicId<Type, InternalIntegerType> &id)
 {
     return out << "id=" << id.internalId();
+}
+
+template<auto Type, auto ContextType>
+std::ostream &operator<<(std::ostream &out, const CompoundBasicId<Type, ContextType> &id)
+{
+    return out << "id=(" << id.mainId().internalId() << ", " << id.contextId().internalId() << ")";
 }
 
 namespace SessionChangeSetInternal {
@@ -93,7 +107,8 @@ void PrintTo(const std::optional<Type> &optional, ::std::ostream *os)
 
 void PrintTo(Utils::SmallStringView text, ::std::ostream *os);
 void PrintTo(const Utils::SmallString &text, ::std::ostream *os);
-void PrintTo(const Utils::BasicSmallString<94> &text, ::std::ostream *os);
+void PrintTo(const Utils::BasicSmallString<64> &text, ::std::ostream *os);
+void PrintTo(const Utils::BasicSmallString<96> &text, ::std::ostream *os);
 void PrintTo(const Utils::PathString &text, ::std::ostream *os);
 
 } // namespace Utils
@@ -124,9 +139,19 @@ class FileStatus;
 class Import;
 class NodeMetaInfo;
 class PropertyMetaInfo;
+class ThemeProperty;
+enum class GroupType;
 struct CompoundPropertyMetaInfo;
 enum class FlagIs : unsigned int;
+template<typename NameType>
+class BasicAuxiliaryDataKey;
+class SourceId;
+class ItemLibraryEntry;
 
+void PrintTo(const ThemeProperty &prop, std::ostream *os);
+std::ostream &operator<<(std::ostream &out, const ThemeProperty &prop);
+void PrintTo(const GroupType &group, std::ostream *os);
+std::ostream &operator<<(std::ostream &out, const GroupType &group);
 std::ostream &operator<<(std::ostream &out, const ModelNode &node);
 std::ostream &operator<<(std::ostream &out, const VariantProperty &property);
 std::ostream &operator<<(std::ostream &out, const AbstractProperty &property);
@@ -142,11 +167,16 @@ std::ostream &operator<<(std::ostream &out, const NodeMetaInfo &metaInfo);
 std::ostream &operator<<(std::ostream &out, const PropertyMetaInfo &metaInfo);
 std::ostream &operator<<(std::ostream &out, const CompoundPropertyMetaInfo &metaInfo);
 std::ostream &operator<<(std::ostream &out, FlagIs flagIs);
+std::ostream &operator<<(std::ostream &out, const BasicAuxiliaryDataKey<Utils::SmallStringView> &key);
+std::ostream &operator<<(std::ostream &out, const BasicAuxiliaryDataKey<Utils::SmallString> &key);
+std::ostream &operator<<(std::ostream &out, AuxiliaryDataType type);
+std::ostream &operator<<(std::ostream &out, SourceId sourceId);
+std::ostream &operator<<(std::ostream &out, const ItemLibraryEntry &entry);
 
 namespace Cache {
-class SourceContext;
+class DirectoryPath;
 
-std::ostream &operator<<(std::ostream &out, const SourceContext &sourceContext);
+std::ostream &operator<<(std::ostream &out, const DirectoryPath &directoryPath);
 } // namespace Cache
 
 namespace ImageCache {
@@ -155,13 +185,14 @@ class FontCollectorSizeAuxiliaryData;
 class FontCollectorSizesAuxiliaryData;
 
 std::ostream &operator<<(std::ostream &out, const LibraryIconAuxiliaryData &date);
-std::ostream &operator<<(std::ostream &out, const FontCollectorSizeAuxiliaryData &sourceContext);
-std::ostream &operator<<(std::ostream &out, const FontCollectorSizesAuxiliaryData &sourceContext);
+std::ostream &operator<<(std::ostream &out, const FontCollectorSizeAuxiliaryData &directoryPath);
+std::ostream &operator<<(std::ostream &out, const FontCollectorSizesAuxiliaryData &directoryPath);
 } // namespace ImageCache
 
 namespace Storage {
 enum class PropertyDeclarationTraits : int;
 enum class TypeTraitsKind : unsigned int;
+enum class IsInsideProject : char;
 struct TypeTraits;
 class Import;
 class Version;
@@ -170,6 +201,7 @@ class VersionNumber;
 std::ostream &operator<<(std::ostream &out, PropertyDeclarationTraits traits);
 std::ostream &operator<<(std::ostream &out, TypeTraitsKind kind);
 std::ostream &operator<<(std::ostream &out, TypeTraits traits);
+std::ostream &operator<<(std::ostream &out, IsInsideProject isInsideProject);
 std::ostream &operator<<(std::ostream &out, const Import &import);
 std::ostream &operator<<(std::ostream &out, VersionNumber versionNumber);
 std::ostream &operator<<(std::ostream &out, Version version);
@@ -177,14 +209,14 @@ std::ostream &operator<<(std::ostream &out, Version version);
 } // namespace Storage
 
 namespace Storage::Info {
-class ProjectDeclaration;
+class PropertyDeclaration;
 class Type;
 class ExportedTypeName;
 struct TypeHint;
 struct ItemLibraryProperty;
 struct ItemLibraryEntry;
 
-std::ostream &operator<<(std::ostream &out, const ProjectDeclaration &declaration);
+std::ostream &operator<<(std::ostream &out, const PropertyDeclaration &declaration);
 std::ostream &operator<<(std::ostream &out, const Type &type);
 std::ostream &operator<<(std::ostream &out, const ExportedTypeName &name);
 std::ostream &operator<<(std::ostream &out, const TypeHint &hint);
@@ -207,7 +239,7 @@ class EnumeratorDeclaration;
 enum class ImportKind : char;
 enum class IsAutoVersion : char;
 enum class IsQualified : int;
-class DirectoryInfo;
+class ProjectEntryInfo;
 class SynchronizationPackage;
 enum class FileType : char;
 enum class ChangeLevel : char;
@@ -227,7 +259,7 @@ std::ostream &operator<<(std::ostream &out, const EnumerationDeclaration &enumer
 std::ostream &operator<<(std::ostream &out, const EnumeratorDeclaration &enumeratorDeclaration);
 std::ostream &operator<<(std::ostream &out, const ImportKind &importKind);
 std::ostream &operator<<(std::ostream &out, IsQualified isQualified);
-std::ostream &operator<<(std::ostream &out, const DirectoryInfo &data);
+std::ostream &operator<<(std::ostream &out, const ProjectEntryInfo &data);
 std::ostream &operator<<(std::ostream &out, const SynchronizationPackage &package);
 std::ostream &operator<<(std::ostream &out, FileType fileType);
 std::ostream &operator<<(std::ostream &out, ChangeLevel changeLevel);

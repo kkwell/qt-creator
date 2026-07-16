@@ -20,7 +20,8 @@
 #include <coreplugin/actionmanager/command.h>
 #include <coreplugin/modemanager.h>
 #include <qmldesigner/qmldesignerconstants.h>
-#include <qmldesignerbase/qmldesignerbaseplugin.h>
+#include <qmldesigner/qmldesignerplugin.h>
+#include <qmldesigner/settings/designersettings.h>
 
 #include <coreplugin/outputpane.h>
 #include <coreplugin/modemanager.h>
@@ -53,6 +54,7 @@
 
 #include <advanceddockingsystem/dockareawidget.h>
 #include <advanceddockingsystem/docksplitter.h>
+#include <advanceddockingsystem/dockwidgettab.h>
 #include <advanceddockingsystem/iconprovider.h>
 
 using namespace Core;
@@ -117,11 +119,9 @@ DesignModeWidget::DesignModeWidget()
     , m_crumbleBar(new CrumbleBar(this))
 {
     setAcceptDrops(true);
-    if (Utils::StyleHelper::isQDSTheme() || Core::ICore::isQtDesignStudio())
-        qApp->setStyle(QmlDesignerBasePlugin::style());
 
     IContext::attach(this,
-                     Context(Constants::C_QMLDESIGNER, Constants::C_QT_QUICK_TOOLS_MENU),
+                     Context(Constants::qmlDesignerContextId, Constants::qtQuickToolsMenuContextId),
                      [this](const IContext::HelpCallback &callback) { contextHelp(callback); });
 }
 
@@ -133,31 +133,6 @@ DesignModeWidget::~DesignModeWidget()
     }
 
     delete m_dockManager;
-}
-
-QWidget *DesignModeWidget::createProjectExplorerWidget(QWidget *parent)
-{
-    const QList<Core::INavigationWidgetFactory *> factories =
-            Core::INavigationWidgetFactory::allNavigationFactories();
-
-    Core::NavigationView navigationView;
-    navigationView.widget = nullptr;
-
-    for (Core::INavigationWidgetFactory *factory : factories) {
-        if (factory->id() == "Project") {
-            navigationView = factory->createWidget();
-            hideToolButtons(navigationView.dockToolBarWidgets);
-        }
-    }
-
-    if (navigationView.widget) {
-        QByteArray sheet = Utils::FileReader::fetchQrc(":/qmldesigner/stylesheet.css");
-        sheet += "QLabel { background-color: #4f4f4f; }";
-        navigationView.widget->setStyleSheet(Theme::replaceCssColors(QString::fromUtf8(sheet)));
-        navigationView.widget->setParent(parent);
-    }
-
-    return navigationView.widget;
 }
 
 void DesignModeWidget::readSettings() // readPerspectives
@@ -207,19 +182,18 @@ void DesignModeWidget::setup()
     ADS::DockManager::setConfigFlag(ADS::DockManager::OpaqueSplitterResize, true);
     ADS::DockManager::setConfigFlag(ADS::DockManager::AllTabsHaveCloseButton, false);
     ADS::DockManager::setConfigFlag(ADS::DockManager::RetainTabSizeWhenCloseButtonHidden, true);
-
     //ADS::DockManager::setAutoHideConfigFlags(ADS::DockManager::DefaultAutoHideConfig);
 
-    auto designerSettings = DesignerSettings(settings);
-    if (designerSettings.value(DesignerSettingsKey::ENABLE_DOCKWIDGET_CONTENT_MIN_SIZE).toBool())
+    auto designerSettings = DesignerSettings();
+    if (designerSettings.enableDockWidgetContentMinSize())
         m_minimumSizeHintMode = ADS::DockWidget::MinimumSizeHintFromContentMinimumSize;
 
     m_dockManager = new ADS::DockManager(this);
     m_dockManager->setSettings(settings);
     m_dockManager->setWorkspacePresetsPath(
-        Core::ICore::resourcePath("qmldesigner/workspacePresets/").toString());
+        Core::ICore::resourcePath("qmldesigner/workspacePresets/").toUrlishString());
 
-    QString sheet = QString::fromUtf8(Utils::FileReader::fetchQrc(":/qmldesigner/dockwidgets.css"));
+    QString sheet = Utils::FileUtils::fetchQrc(":/qmldesigner/dockwidgets.css");
     m_dockManager->setStyleSheet(Theme::replaceCssColors(sheet));
 
     connect(ProjectExplorer::ProjectManager::instance(),
@@ -279,35 +253,6 @@ void DesignModeWidget::setup()
     ADS::DockManager::iconProvider().registerCustomIcon(ADS::FloatingWidgetNormalIcon,
                                                         floatingWidgetNormalIcon);
 
-    // Setup Actions and Menus
-    Core::ActionContainer *mview = Core::ActionManager::actionContainer(Core::Constants::M_VIEW);
-    // View > Views
-    Core::ActionContainer *mviews = Core::ActionManager::createMenu(Core::Constants::M_VIEW_VIEWS);
-    connect(mviews->menu(), &QMenu::aboutToShow, this, &DesignModeWidget::aboutToShowViews);
-    mviews->menu()->addSeparator();
-    // View > Workspaces
-    Core::ActionContainer *mworkspaces = Core::ActionManager::createMenu(QmlDesigner::Constants::M_VIEW_WORKSPACES);
-    mview->addMenu(mworkspaces, Core::Constants::G_VIEW_VIEWS);
-    mworkspaces->menu()->setTitle(tr("&Workspaces"));
-    mworkspaces->setOnAllDisabledBehavior(Core::ActionContainer::Show);
-    // Connect opening of the 'workspaces' menu with creation of the workspaces menu
-    connect(mworkspaces->menu(), &QMenu::aboutToShow, this, &DesignModeWidget::aboutToShowWorkspaces);
-
-    // Initially disable menus
-    mworkspaces->menu()->setEnabled(false);
-
-    // Enable/disable menus when mode is different to MODE_DESIGN
-    connect(Core::ModeManager::instance(),
-            &Core::ModeManager::currentModeChanged,
-            this,
-            [mworkspaces](Utils::Id mode, Utils::Id) {
-                if (mode == Core::Constants::MODE_DESIGN) {
-                    mworkspaces->menu()->setEnabled(true);
-                } else {
-                    mworkspaces->menu()->setEnabled(false);
-                }
-            });
-
     // Create a DockWidget for each QWidget and add them to the DockManager
     const Core::Context designContext(Core::Constants::C_DESIGN_MODE);
     static const Utils::Id actionToggle("QmlDesigner.Toggle");
@@ -329,16 +274,16 @@ void DesignModeWidget::setup()
             continue;
 
         hideToolButtons(navigationView.dockToolBarWidgets);
-        navigationView.widget->setWindowTitle(tr(factory->id().name()));
+        navigationView.widget->setWindowTitle(factory->displayName());
 
         QString idString = factory->id().toSetting().toString();
         const QString title = idString;
         const QString uniqueId = idString.remove(" "); // title without whitespaces
 
         // Apply stylesheet to QWidget
-        QByteArray sheet = Utils::FileReader::fetchQrc(":/qmldesigner/stylesheet.css");
+        QString sheet = Utils::FileUtils::fetchQrc(":/qmldesigner/stylesheet.css");
         sheet += "QLabel { background-color: creatorTheme.DSsectionHeadBackground; }";
-        navigationView.widget->setStyleSheet(Theme::replaceCssColors(QString::fromUtf8(sheet)));
+        navigationView.widget->setStyleSheet(Theme::replaceCssColors(sheet));
 
         ensureMinimumSize(navigationView.widget);
 
@@ -353,8 +298,15 @@ void DesignModeWidget::setup()
         viewCommands.append(command);
     }
 
+    viewManager().initializeWidgetInfos();
+
     // Afterwards get all the other widgets
-    for (const WidgetInfo &widgetInfo : viewManager().widgetInfos()) {
+    for (const auto &view : viewManager().views()) {
+        if (!view->hasWidget())
+            continue;
+
+        auto widgetInfo = view->widgetInfo();
+
         ensureMinimumSize(widgetInfo.widget);
 
         auto dockWidget = createDockWidget(widgetInfo.widget,
@@ -367,8 +319,21 @@ void DesignModeWidget::setup()
         m_viewWidgets.append(widgetInfo.widget);
 
         // Create menu action
-        auto command = Core::ActionManager::registerAction(dockWidget->toggleViewAction(),
+        auto viewAction = view->action();
+        viewAction->setText(widgetInfo.tabName);
+        dockWidget->setToggleViewAction(viewAction);
+        auto command = Core::ActionManager::registerAction(viewAction,
                                                            actionToggle.withSuffix(widgetInfo.uniqueId).withSuffix("Widget"),
+                                                           designContext);
+        command->setAttribute(Core::Command::CA_Hide);
+        viewCommands.append(command);
+    }
+
+    // PropertyEditor Unified action
+    if (auto propertyEditorAction = viewManager().propertyEditorUnifiedAction()) {
+        auto command = Core::ActionManager::registerAction(propertyEditorAction,
+                                                           actionToggle.withSuffix(
+                                                               "Property Editor Global"),
                                                            designContext);
         command->setAttribute(Core::Command::CA_Hide);
         viewCommands.append(command);
@@ -403,6 +368,36 @@ void DesignModeWidget::setup()
     std::sort(viewCommands.begin(), viewCommands.end(), [](Core::Command *first, Core::Command *second) {
         return first->description() < second->description();
     });
+
+    // Setup Actions and Menus
+    Core::ActionContainer *mview = Core::ActionManager::actionContainer(Core::Constants::M_VIEW);
+    // View > Views
+    Core::ActionContainer *mviews = Core::ActionManager::createMenu(Core::Constants::M_VIEW_VIEWS);
+    connect(mviews->menu(), &QMenu::aboutToShow, this, &DesignModeWidget::aboutToShowViews);
+    mviews->menu()->addSeparator();
+    // View > Workspaces
+    Core::ActionContainer *mworkspaces = Core::ActionManager::createMenu(
+        QmlDesigner::Constants::M_VIEW_WORKSPACES);
+    mview->addMenu(mworkspaces, Core::Constants::G_VIEW_VIEWS);
+    mworkspaces->menu()->setTitle(tr("&Workspaces"));
+    mworkspaces->setOnAllDisabledBehavior(Core::ActionContainer::Show);
+    // Connect opening of the 'workspaces' menu with creation of the workspaces menu
+    connect(mworkspaces->menu(), &QMenu::aboutToShow, this, &DesignModeWidget::aboutToShowWorkspaces);
+
+    // Initially disable menus
+    mworkspaces->menu()->setEnabled(false);
+
+    // Enable/disable menus when mode is different to MODE_DESIGN
+    connect(Core::ModeManager::instance(),
+            &Core::ModeManager::currentModeChanged,
+            this,
+            [mworkspaces](Utils::Id mode, Utils::Id) {
+                if (mode == Core::Constants::MODE_DESIGN) {
+                    mworkspaces->menu()->setEnabled(true);
+                } else {
+                    mworkspaces->menu()->setEnabled(false);
+                }
+            });
 
     for (Core::Command *command : viewCommands)
         mviews->addAction(command);
@@ -460,7 +455,7 @@ void DesignModeWidget::setup()
 
     m_dockManager->initialize();
     if (style()->styleHint(QStyle::SH_ScrollBar_Transient, nullptr, this))
-        Utils::GlobalTransientSupport::support(m_dockManager);
+        Utils::GlobalTransient::support(m_dockManager);
 
     // Hide all floating widgets if the initial mode isn't design mode
     if (Core::ModeManager::instance()->currentModeId() != Core::Constants::MODE_DESIGN) {
@@ -494,8 +489,11 @@ void DesignModeWidget::setup()
 
 static bool isMcuDisabledView(const QString viewId)
 {
-    static const QStringList mcuDisabledViews = {"Editor3D", "MaterialEditor", "MaterialBrowser",
-                                                 "TextureEditor", "EffectComposer"};
+    static const QStringList mcuDisabledViews = {
+        "Editor3D",
+        "MaterialBrowser",
+        "EffectComposer",
+    };
     return mcuDisabledViews.contains(viewId);
 }
 
@@ -504,7 +502,12 @@ void DesignModeWidget::aboutToShowViews()
     for (const WidgetInfo &widgetInfo : viewManager().widgetInfos()) {
         QString id = widgetInfo.uniqueId;
         ADS::DockWidget *dockWidget = m_dockManager->findDockWidget(id);
+        if (!dockWidget)
+            continue;
+
         QAction *action = dockWidget->toggleViewAction();
+        if (!action)
+            continue;
 
         bool isMcuProject = currentDesignDocument() && currentDesignDocument()->isQtForMCUsProject();
         if (isMcuProject && isMcuDisabledView(id) && action->isEnabled()) {
@@ -559,6 +562,89 @@ void DesignModeWidget::aboutToShowWorkspaces()
             action->setEnabled(workspace.isMcusEnabled());
     }
     menu->addActions(ag->actions());
+}
+
+void DesignModeWidget::showExtraWidget(WidgetInfo widgetInfo)
+{
+    ensureMinimumSize(widgetInfo.widget);
+    ADS::DockWidget *dockWidget = m_dockManager->findDockWidget(widgetInfo.uniqueId);
+    bool justCreated = false;
+    if (!dockWidget) {
+        dockWidget = createDockWidget(widgetInfo.widget,
+                                      widgetInfo.uniqueId,
+                                      widgetInfo.tabName,
+                                      m_minimumSizeHintMode);
+        if (dockWidget->tabWidget()) {
+            connect(dockWidget->tabWidget(),
+                    &ADS::DockWidgetTab::closeRequested,
+                    this,
+                    [widgetInfo, this]() { viewManager().removeExtraView(widgetInfo); });
+        }
+        justCreated = true;
+    }
+
+    if (justCreated) {
+        ADS::DockWidget *parentDockWidget = m_dockManager->findDockWidget(widgetInfo.parentId);
+        if (parentDockWidget) {
+            auto parentArea = parentDockWidget->dockAreaWidget();
+            m_dockManager->addDockWidgetTabToArea(dockWidget, parentArea);
+            parentArea->setDockAreaFlag(ADS::DockAreaWidget::HideSingleWidgetTitleBar, true);
+        } else {
+            m_dockManager->addDockWidget(ADS::NoDockWidgetArea, dockWidget);
+            dockWidget->setFloating();
+        }
+    } else {
+        dockWidget->toggleView(true);
+    }
+
+    dockWidget->setFeature(ADS::DockWidget::DockWidgetAlwaysCloseAndDelete, false);
+    if (auto dockArea = dockWidget->dockAreaWidget())
+        dockArea->setDockAreaFlag(ADS::DockAreaWidget::HideSingleWidgetTitleBar, true);
+
+    if (auto tabWidget = dockWidget->tabWidget(); tabWidget && tabWidget->dockAreaWidget()) {
+        tabWidget->dockAreaWidget()->setDockAreaFlag(ADS::DockAreaWidget::HideSingleWidgetTitleBar,
+                                                     true);
+    }
+
+    if (m_dockManager->isWorkspaceLocked()) {
+        dockWidget->setFeature(ADS::DockWidget::DockWidgetMovable, false);
+        dockWidget->setFeature(ADS::DockWidget::DockWidgetFloatable, false);
+    }
+}
+
+void DesignModeWidget::closeExtraWidget(WidgetInfo widgetInfo)
+{
+    ADS::DockWidget *dockWidget = m_dockManager->findDockWidget(widgetInfo.uniqueId);
+    if (dockWidget)
+        dockWidget->closeDockWidget();
+}
+
+void DesignModeWidget::removeExtraWidget(WidgetInfo widgetInfo)
+{
+    ADS::DockWidget *dockWidget = m_dockManager->findDockWidget(widgetInfo.uniqueId);
+    if (!dockWidget)
+        return;
+
+    m_dockManager->removeDockWidget(dockWidget);
+}
+
+void DesignModeWidget::hideSingleWidgetTitleBars(const QString &uniqueId)
+{
+    auto dockWidget = dockManager()->findDockWidget(uniqueId);
+
+    if (!dockWidget)
+        return;
+
+    if (auto dockArea = dockWidget->dockAreaWidget()) {
+        dockArea->setDockAreaFlag(ADS::DockAreaWidget::HideSingleWidgetTitleBar, false);
+        dockArea->setDockAreaFlag(ADS::DockAreaWidget::HideSingleWidgetTitleBar, true);
+    }
+
+    if (auto tabWidget = dockWidget->tabWidget(); tabWidget && tabWidget->dockAreaWidget()) {
+        auto dockArea = tabWidget->dockAreaWidget();
+        dockArea->setDockAreaFlag(ADS::DockAreaWidget::HideSingleWidgetTitleBar, false);
+        dockArea->setDockAreaFlag(ADS::DockAreaWidget::HideSingleWidgetTitleBar, true);
+    }
 }
 
 void DesignModeWidget::toolBarOnGoBackClicked()
@@ -633,6 +719,11 @@ void DesignModeWidget::setMinimumSizeHintFromContentMinimumSize(bool value)
         dockContainer->layout()->update();
 }
 
+bool DesignModeWidget::isInitialized() const
+{
+    return m_initStatus == Initialized;
+}
+
 void DesignModeWidget::dragEnterEvent(QDragEnterEvent *event)
 {
     event->accept();
@@ -667,9 +758,9 @@ void DesignModeWidget::setupNavigatorHistory(Core::IEditor *editor)
 void DesignModeWidget::addNavigatorHistoryEntry(const Utils::FilePath &fileName)
 {
     if (m_navigatorHistoryCounter > 0)
-        m_navigatorHistory.insert(m_navigatorHistoryCounter + 1, fileName.toString());
+        m_navigatorHistory.insert(m_navigatorHistoryCounter + 1, fileName.toUrlishString());
     else
-        m_navigatorHistory.append(fileName.toString());
+        m_navigatorHistory.append(fileName.toUrlishString());
 
     ++m_navigatorHistoryCounter;
 }

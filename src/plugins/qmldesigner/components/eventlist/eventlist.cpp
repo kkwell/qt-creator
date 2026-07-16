@@ -31,7 +31,7 @@ Utils::FilePath projectFilePath()
 
 static Utils::FilePath findFile(const Utils::FilePath &path, const QString &fileName)
 {
-    QDirIterator it(path.toString(), QDirIterator::Subdirectories);
+    QDirIterator it(path.toUrlishString(), QDirIterator::Subdirectories);
 
     while (it.hasNext()) {
         QFileInfo file(it.next());
@@ -170,12 +170,11 @@ QString EventList::read() const
     if (!m_path.exists())
         return QString();
 
-    Utils::FileReader reader;
-    QTC_ASSERT(reader.fetch(m_path), return QString());
+    const Utils::Result<QByteArray> res = m_path.fileContents();
+    QTC_ASSERT(res, return {});
 
-    return QString::fromUtf8(reader.data());
+    return QString::fromUtf8(*res);
 }
-
 
 void EventList::initialize(EventListPluginView *parent)
 {

@@ -7,9 +7,11 @@
 #include <qmldesigner/components/propertyeditor/qmlmodelnodeproxy.h>
 
 #include <coreplugin/icontext.h>
+#include <utils/uniqueobjectptr.h>
 
 #include <QFrame>
 #include <QFuture>
+#include <QUrl>
 
 class StudioQuickWidget;
 
@@ -22,6 +24,7 @@ namespace EffectComposer {
 class EffectComposerView;
 class EffectComposerModel;
 class EffectComposerNodesModel;
+class EffectShadersCodeEditor;
 
 class EffectComposerWidget : public QFrame
 {
@@ -46,6 +49,7 @@ public:
     QPointer<EffectComposerNodesModel> effectComposerNodesModel() const;
 
     Q_INVOKABLE void addEffectNode(const QString &nodeQenPath);
+    Q_INVOKABLE void removeEffectNodeFromLibrary(const QString &nodeName);
     Q_INVOKABLE void focusSection(int section);
     Q_INVOKABLE void doOpenComposition();
     Q_INVOKABLE QRect screenRect() const;
@@ -53,20 +57,29 @@ public:
     Q_INVOKABLE QString uniformDefaultImage(const QString &nodeName,
                                             const QString &uniformName) const;
     Q_INVOKABLE QString imagesPath() const;
+    Q_INVOKABLE bool isEffectAsset(const QUrl &url) const;
+    Q_INVOKABLE void dropAsset(const QUrl &url);
+    Q_INVOKABLE bool isEffectNode(const QByteArray &mimeData) const;
+    Q_INVOKABLE void dropNode(const QByteArray &mimeData);
+    Q_INVOKABLE void updateCanBeAdded();
+    Q_INVOKABLE bool isMCUProject() const;
+
+    Q_INVOKABLE void openCodeEditor(int idx);
+
+    void openNearestAvailableCodeEditor(int idx);
 
     QSize sizeHint() const override;
 
-protected:
-    bool eventFilter(QObject *obj, QEvent *event) override;
-
 private:
+    void setupCodeEditor();
     void reloadQmlSource();
     void handleImportScanTimer();
+    void updateCodeEditorIndex();
 
     QPointer<EffectComposerModel> m_effectComposerModel;
-    QPointer<EffectComposerNodesModel> m_effectComposerNodesModel;
     QPointer<EffectComposerView> m_effectComposerView;
     QPointer<StudioQuickWidget> m_quickWidget;
+    Utils::UniqueObjectLatePtr<EffectShadersCodeEditor> m_editor;
     QmlDesigner::QmlModelNodeProxy m_backendModelNode;
     QmlDesigner::QmlAnchorBindingProxy m_backendAnchorBinding;
 

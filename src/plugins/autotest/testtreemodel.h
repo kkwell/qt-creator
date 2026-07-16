@@ -13,7 +13,11 @@
 
 #include <QSortFilterProxyModel>
 
-namespace ProjectExplorer { class Target; }
+namespace ProjectExplorer {
+class BuildConfiguration;
+struct TestCaseEnvironment;
+struct TestCaseInfo;
+}
 
 namespace Autotest {
 namespace Internal {
@@ -79,7 +83,7 @@ signals:
 private:
     void onParseResultsReady(const QList<TestParseResultPtr> &results);
     void onDataChanged(const QModelIndex &topLeft, const QModelIndex &bottomRight,
-                       const QVector<int> &roles);
+                       const QList<int> &roles);
     void handleParseResult(const TestParseResult *result, TestTreeItem *rootNode);
     void removeAllTestItems();
     void removeAllTestToolItems();
@@ -88,8 +92,11 @@ private:
     void revalidateCheckState(ITestTreeItem *item);
     void setupParsingConnections();
     void filterAndInsert(TestTreeItem *item, TestTreeItem *root, bool groupingEnabled);
-    void onTargetChanged(ProjectExplorer::Target *target);
+    void onBuildConfigChanged(ProjectExplorer::BuildConfiguration *bc);
     void onBuildSystemTestsUpdated();
+    void onTestRunRequested(const ProjectExplorer::TestCaseInfo &testInfo,
+                            const QStringList &additionalOptions,
+                            const ProjectExplorer::TestCaseEnvironment &testEnvironment);
     const QList<TestTreeItem *> frameworkRootNodes() const;
     const QList<ITestTreeItem *> testToolRootNodes() const;
 
@@ -100,31 +107,33 @@ private:
 
 namespace Internal {
 
-class TestTreeSortFilterModel : public QSortFilterProxyModel
+class TestTreeSortFilterModel final : public QSortFilterProxyModel
 {
-    Q_OBJECT
 public:
     enum FilterMode {
         Basic,
         ShowInitAndCleanup = 0x01,
         ShowTestData       = 0x02,
-        ShowAll            = ShowInitAndCleanup | ShowTestData
+        ShowAll            = ShowInitAndCleanup | ShowTestData,
+        FilterByText       = 0x04
     };
 
-    explicit TestTreeSortFilterModel(TestTreeModel *sourceModel, QObject *parent = nullptr);
+    TestTreeSortFilterModel();
+
     void setSortMode(ITestTreeItem::SortMode sortMode);
+    void updateFilterString(const QString &filterText);
     void toggleFilter(FilterMode filterMode);
     static FilterMode toFilterMode(int f);
 
     QString report() const;
-protected:
+
+private:
     bool lessThan(const QModelIndex &left, const QModelIndex &right) const final;
     bool filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const final;
 
-private:
+    QString m_filterString;
     Autotest::TestTreeItem::SortMode m_sortMode = Autotest::TestTreeItem::Alphabetically;
     FilterMode m_filterMode = Basic;
-
 };
 
 } // namespace Internal

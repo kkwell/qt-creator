@@ -5,22 +5,45 @@
 
 #include "qmljstools_global.h"
 
+#include <coreplugin/dialogs/ioptionspage.h>
+
+#include <texteditor/icodestylepreferences.h>
+#include <texteditor/codestyleeditor.h>
+
+#include <utils/filepath.h>
 #include <utils/store.h>
 
-#include <optional>
+namespace TextEditor {
+class FontSettings;
+class TabSettings;
+}
 
-namespace TextEditor { class TabSettings; }
+QT_BEGIN_NAMESPACE
+class QStackedWidget;
+QT_END_NAMESPACE
 
 namespace QmlJSTools {
+
+class FormatterSelectionWidget;
 
 class QMLJSTOOLS_EXPORT QmlJSCodeStyleSettings
 {
 public:
     QmlJSCodeStyleSettings();
 
-    int lineLength = 80;
+    enum Formatter {
+        Builtin,
+        QmlFormat,
+        Custom
+    };
 
-    Utils::Store toMap() const;
+    int lineLength = 80;
+    QString qmlformatIniContent;
+    Formatter formatter = QmlFormat;
+    Utils::FilePath customFormatterPath;
+    QString customFormatterArguments;
+
+    void toMap(Utils::Store &map) const;
     void fromMap(const Utils::Store &map);
 
     bool equals(const QmlJSCodeStyleSettings &rhs) const;
@@ -29,8 +52,45 @@ public:
 
     static QmlJSCodeStyleSettings currentGlobalCodeStyle();
     static TextEditor::TabSettings currentGlobalTabSettings();
+    static Utils::Id settingsId();
 };
 
-} // namespace CppEditor
+using QmlJSCodeStylePreferences = TextEditor::TypedCodeStylePreferences<QmlJSCodeStyleSettings>;
+
+namespace Internal {
+
+class QmlJSCodeStylePreferencesWidget : public TextEditor::CodeStyleEditorWidget
+{
+    Q_OBJECT
+
+public:
+    explicit QmlJSCodeStylePreferencesWidget(const QString &previewText, QWidget *parent = nullptr);
+
+    void setPreferences(QmlJSCodeStylePreferences* preferences);
+
+private:
+    void decorateEditor(const TextEditor::FontSettings &fontSettings);
+    void setVisualizeWhitespace(bool on);
+    void slotSettingsChanged(const QmlJSCodeStyleSettings &);
+    void slotCurrentPreferencesChanged(TextEditor::ICodeStylePreferences *preferences);
+    void updatePreview();
+    void builtInFormatterPreview();
+    void qmlformatPreview();
+    void customFormatterPreview();
+
+    FormatterSelectionWidget *m_formatterSelectionWidget;
+    QStackedWidget *m_formatterSettingsStack;
+    TextEditor::SnippetEditorWidget *m_previewTextEdit;
+    QmlJSCodeStylePreferences *m_preferences = nullptr;
+};
+
+class QmlJSCodeStyleSettingsPage : public Core::IOptionsPage
+{
+public:
+    QmlJSCodeStyleSettingsPage();
+};
+
+} // namespace Internal
+} // namespace QmlJSTools
 
 Q_DECLARE_METATYPE(QmlJSTools::QmlJSCodeStyleSettings)

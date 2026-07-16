@@ -3,7 +3,6 @@ import qbs
 QtcPlugin {
     name: "PerfProfiler"
 
-    Depends { name: "Debugger" }
     Depends { name: "Core" }
     Depends { name: "ProjectExplorer" }
     Depends { name: "QtSupport" }
@@ -51,7 +50,6 @@ QtcPlugin {
         "perfprofilertracefile.h",
         "perfprofilertraceview.cpp",
         "perfprofilertraceview.h",
-        "perfresourcecounter.cpp",
         "perfresourcecounter.h",
         "perfrunconfigurationaspect.cpp",
         "perfrunconfigurationaspect.h",

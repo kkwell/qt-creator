@@ -14,11 +14,11 @@
 #include <cppeditor/cpptoolsreuse.h>
 #include <cppeditor/cpptoolstestcase.h>
 
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/toolchainkitaspect.h>
 
 #include <qtsupport/qtkitaspect.h>
 
@@ -26,8 +26,8 @@
 #include <utils/fileutils.h>
 
 #include <QSignalSpy>
+#include <QTest>
 #include <QTimer>
-#include <QtTest>
 
 using namespace CppEditor;
 using namespace ProjectExplorer;
@@ -40,21 +40,28 @@ namespace Internal {
 
 void ClangToolsUnitTests::initTestCase()
 {
-    const QList<Kit *> allKits = KitManager::kits();
-    if (allKits.count() == 0)
-        QSKIP("This test requires at least one kit to be present");
+    m_kit = findOr(KitManager::kits(), nullptr, [](Kit *k) {
+        if (!k->isValid())
+            return false;
+        if (!QtSupport::QtKitAspect::qtVersion(k))
+            return false;
+        const Toolchain * const toolchain = ToolchainKitAspect::cxxToolchain(k);
+        if (!toolchain)
+            return false;
 
-    m_kit = findOr(allKits, nullptr, [](Kit *k) {
-            return k->isValid() && QtSupport::QtKitAspect::qtVersion(k) != nullptr;
+        // Wo observe clazy failures with x86/32bit MSVC kits.
+        if (toolchain->typeId() == ProjectExplorer::Constants::MSVC_TOOLCHAIN_TYPEID
+            && toolchain->targetAbi().architecture() == Abi::X86Architecture
+            && toolchain->targetAbi().wordWidth() != Abi::hostAbi().wordWidth()) {
+            return false;
+        }
+
+        return true;
     });
     if (!m_kit)
-        QSKIP("This test requires at least one valid kit with a valid Qt");
+        QSKIP("This test requires at least one valid kit with a valid Qt and a suitable toolchain.");
 
-    const Toolchain * const toolchain = ToolchainKitAspect::cxxToolchain(m_kit);
-    if (!toolchain)
-        QSKIP("This test requires that there is a kit with a toolchain.");
-
-    if (Core::ICore::clangExecutable(CLANG_BINDIR).isEmpty())
+    if (!Core::ICore::clangExecutable(CLANG_BINDIR))
         QSKIP("No clang suitable for analyzing found");
 
     m_tmpDir = new Tests::TemporaryCopiedDir(":/clangtools/unit-tests");
@@ -74,7 +81,9 @@ static ClangDiagnosticConfig configFor(const QString &tidyChecks, const QString 
     config.setIsReadOnly(true);
     config.setClangOptions(QStringList{QStringLiteral("-Wno-everything")});
     config.setClangTidyMode(ClangDiagnosticConfig::TidyMode::UseCustomChecks);
-    const QString theTidyChecks = tidyChecks.isEmpty() ? tidyChecks : "-*," + tidyChecks;
+    QString theTidyChecks = "-*";
+    if (!tidyChecks.isEmpty())
+        theTidyChecks.append(',').append(tidyChecks);
     config.setChecks(ClangToolType::Tidy, theTidyChecks);
     config.setChecks(ClangToolType::Clazy, clazyChecks);
     return config;
@@ -94,12 +103,12 @@ void ClangToolsUnitTests::testProject()
 
     // Open project
     Tests::ProjectOpenerAndCloser projectManager;
-    QVERIFY(projectManager.open(projectFilePath, true, m_kit));
+    QVERIFY(projectManager.open(projectFilePath, m_kit));
 
     // Run tools
     for (ClangTool * const tool : {ClangTidyTool::instance(), ClazyTool::instance()}) {
         tool->startTool(ClangTool::FileSelectionType::AllFiles,
-                        ClangToolsSettings::instance()->runSettings(),
+                        ClangToolsSettings::instance()->runSettings.data(),
                         diagnosticConfig);
         QSignalSpy waitForFinishedTool(tool, &ClangTool::finished);
         QVERIFY(waitForFinishedTool.wait(m_timeout));

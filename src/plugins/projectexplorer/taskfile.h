@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "itaskhandler.h"
+#include "taskhandlers.h"
 
 #include <coreplugin/idocument.h>
 
@@ -13,9 +13,12 @@ namespace Internal {
 class StopMonitoringHandler : public ITaskHandler
 {
 public:
+    StopMonitoringHandler() : ITaskHandler(createAction()) {}
+
+private:
     bool canHandle(const ProjectExplorer::Task &) const override;
     void handle(const ProjectExplorer::Task &) override;
-    QAction *createAction(QObject *parent) const override;
+    QAction *createAction() const;
 };
 
 class TaskFile : public Core::IDocument
@@ -24,7 +27,7 @@ public:
     TaskFile(QObject *parent);
 
     ReloadBehavior reloadBehavior(ChangeTrigger state, ChangeType type) const override;
-    bool reload(QString *errorString, ReloadFlag flag, ChangeType type) override;
+    Utils::Result<> reload(ReloadFlag flag, ChangeType type) override;
 
     bool load(QString *errorString, const Utils::FilePath &fileName);
 

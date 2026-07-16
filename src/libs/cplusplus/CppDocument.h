@@ -9,10 +9,7 @@
 #include <cplusplus/PreprocessorClient.h>
 #include <cplusplus/DependencyTable.h>
 
-#include <utils/filepath.h>
-
 #include <QAtomicInt>
-#include <QByteArrayList>
 #include <QDateTime>
 #include <QFuture>
 #include <QHash>
@@ -24,8 +21,8 @@ class LookupContext;
 
 class CPLUSPLUS_EXPORT Document
 {
-    Document(const Document &other);
-    void operator =(const Document &other);
+    Document(const Document &other) = delete;
+    void operator =(const Document &other) = delete;
 
     Document(const Utils::FilePath &filePath);
 
@@ -50,7 +47,7 @@ public:
     void addMacroUse(const Macro &macro,
                      int bytesOffset, int bytesLength,
                      int utf16charsOffset, int utf16charLength,
-                     int beginLine, const QVector<MacroArgumentReference> &range);
+                     int beginLine, const QList<MacroArgumentReference> &range);
     void addUndefinedMacroUse(const QByteArray &name,
                               int bytesOffset, int utf16charsOffset);
 
@@ -90,7 +87,7 @@ public:
     void stopSkippingBlocks(int utf16charsOffset);
 
     enum ParseMode { // ### keep in sync with CPlusPlus::TranslationUnit
-        ParseTranlationUnit,
+        ParseTranslationUnit,
         ParseDeclaration,
         ParseExpression,
         ParseDeclarator,
@@ -101,7 +98,7 @@ public:
     void tokenize();
 
     bool isParsed() const;
-    bool parse(ParseMode mode = ParseTranlationUnit);
+    bool parse(ParseMode mode = ParseTranslationUnit);
 
     enum CheckMode {
         Unchecked,
@@ -245,7 +242,7 @@ public:
 
     class MacroUse: public Block {
         Macro _macro;
-        QVector<Block> _arguments;
+        QList<Block> _arguments;
         int _beginLine;
 
     public:
@@ -264,7 +261,7 @@ public:
         bool isFunctionLike() const
         { return _macro.isFunctionLike(); }
 
-        const QVector<Block> &arguments() const
+        const QList<Block> &arguments() const
         { return _arguments; }
 
         int beginLine() const
@@ -400,6 +397,7 @@ public:
 
     Document::Ptr preprocessedDocument(const QByteArray &source,
                                        const Utils::FilePath &filePath,
+                                       bool expandFunctionLikeMacros = true,
                                        int withDefinedMacrosFromDocumentUntilLine = -1) const;
 
     Document::Ptr documentFromSource(const QByteArray &preprocessedDocument,

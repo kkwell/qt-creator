@@ -9,6 +9,7 @@
 #include <QMutex>
 #include <QProcess>
 #include <QSocketNotifier>
+#include <QTextStream>
 #include <QThread>
 #include <QTimer>
 #include <QWinEventNotifier>
@@ -66,7 +67,7 @@ QThread processThread;
 // Helper to create the shared memory mapped segment
 void setupSharedPid();
 // Parses the command line, returns a status code in case of error
-std::optional<int> tryParseCommandLine(QCoreApplication &app);
+std::optional<int> tryParseCommandLine(const QStringList &args);
 // Sets the working directory, returns a status code in case of error
 std::optional<int> trySetWorkingDir();
 // Reads the environment variables from the env file, returns a status code in case of error
@@ -82,13 +83,18 @@ void resumeInferior();
 
 int main(int argc, char *argv[])
 {
+    // The QCoreApplication ctor removes "-qmljsdebugger=..." etc args. We need them.
+    QStringList origArgs;
+    for (int i = 0; i < argc; ++i)
+        origArgs.append(QString::fromLocal8Bit(argv[i]));
+
+    std::optional<int> error = tryParseCommandLine(origArgs);
+    if (error)
+        return error.value();
+
     QCoreApplication a(argc, argv);
 
     setupSharedPid();
-
-    auto error = tryParseCommandLine(a);
-    if (error)
-        return error.value();
 
     qCInfo(log) << "Debug helper started: ";
     qCInfo(log) << "Socket:" << commandLineParser.value("socket");
@@ -183,8 +189,10 @@ void doExit(int exitCode)
     if (controlSocket.state() == QLocalSocket::ConnectedState && controlSocket.bytesToWrite())
         controlSocket.waitForBytesWritten(1000);
 
-    if (!commandLineParser.value("wait").isEmpty()) {
-        std::cout << commandLineParser.value("wait").toStdString() << std::endl;
+    const QString wait = commandLineParser.value("wait");
+    if (!wait.isEmpty()) {
+        QTextStream cout(stdout);
+        cout << wait.arg(exitCode) << Qt::endl;
 
         waitingForExitKeyPress = true;
         onKeyPress([] { doExit(0); });
@@ -254,8 +262,7 @@ void onInferiorStarted()
     // In debug mode we use the poll timer to send the pid.
     if (!debugMode)
         sendPid(inferiorId);
-#else
-
+#elif defined(Q_OS_LINUX)
     if (debugMode) {
         qCInfo(log) << "Waiting for SIGTRAP from inferiors execve ...";
         if (!waitFor(SIGTRAP))
@@ -271,12 +278,14 @@ void onInferiorStarted()
 
     qCInfo(log) << "Sending pid:" << inferiorId;
     sendPid(inferiorId);
+#else
+    sendPid(inferiorId);
 #endif
 }
 
 void setupUnixInferior()
 {
-#ifndef Q_OS_WIN
+#ifdef Q_OS_UNIX
     if (debugMode) {
         qCInfo(log) << "Debug mode enabled";
 #ifdef Q_OS_DARWIN
@@ -287,7 +296,7 @@ void setupUnixInferior()
             // Suspend ourselves ...
             raise(SIGSTOP);
         });
-#else
+#elif defined(Q_OS_LINUX)
         // PTRACE_TRACEME will stop execution of the child process as soon as execve is called.
         inferiorProcess.setChildProcessModifier([] {
             ptrace(PTRACE_TRACEME, 0, 0, 0);
@@ -469,7 +478,7 @@ void setupSignalHandlers()
 #endif
 }
 
-std::optional<int> tryParseCommandLine(QCoreApplication &app)
+std::optional<int> tryParseCommandLine(const QStringList &args)
 {
     commandLineParser.setApplicationDescription("Debug helper for QtCreator");
     commandLineParser.addHelpOption();
@@ -487,7 +496,7 @@ std::optional<int> tryParseCommandLine(QCoreApplication &app)
                            "waitmessage",
                            "Press enter to continue ..."));
 
-    commandLineParser.process(app);
+    commandLineParser.process(args);
 
     inferiorCmdAndArguments = commandLineParser.positionalArguments();
     debugMode = commandLineParser.isSet("debug");
@@ -565,7 +574,7 @@ void killInferior()
 void onControlSocketReadyRead()
 {
     //k = kill, i = interrupt, c = continue, s = shutdown
-    QByteArray data = controlSocket.readAll();
+    const QByteArray data = controlSocket.readAll();
     for (auto ch : data) {
         qCDebug(log) << "Received:" << ch;
 

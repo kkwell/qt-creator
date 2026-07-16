@@ -3,115 +3,142 @@
 
 #include "codestyleeditor.h"
 
-#include "textdocument.h"
-#include "icodestylepreferencesfactory.h"
-#include "icodestylepreferences.h"
 #include "codestyleselectorwidget.h"
-#include "texteditortr.h"
 #include "displaysettings.h"
-#include "tabsettings.h"
+#include "icodestylepreferences.h"
+#include "icodestylepreferencesfactory.h"
 #include "indenter.h"
 #include "snippets/snippeteditor.h"
 #include "snippets/snippetprovider.h"
+#include "textdocument.h"
+#include "texteditortr.h"
 
-#include <QVBoxLayout>
-#include <QTextBlock>
+#include <coreplugin/icore.h>
+#include <utils/filepath.h>
+#include <utils/guiutils.h>
+#include <utils/infolabel.h>
+
+#include <QChar>
+#include <QFont>
 #include <QLabel>
+#include <QTextBlock>
+#include <QVBoxLayout>
+
+using namespace Utils;
 
 namespace TextEditor {
 
-CodeStyleEditor::CodeStyleEditor(ICodeStylePreferencesFactory *factory,
-                                 ICodeStylePreferences *codeStyle,
-                                 ProjectExplorer::Project *project,
-                                 QWidget *parent)
-    : CodeStyleEditorWidget(parent)
-    , m_factory(factory)
-    , m_codeStyle(codeStyle)
+void CodeStyleEditor::init(
+        const ICodeStylePreferencesFactory *factory,
+        const FilePath &projectFile,
+        ICodeStylePreferences *codeStyle)
 {
-    m_layout = new QVBoxLayout(this);
-    m_layout->setContentsMargins(0, 0, 0, 0);
-    auto selector = m_factory->createSelectorWidget(project, this);
-    selector->setCodeStyle(codeStyle);
-    m_additionalGlobalSettingsWidget = factory->createAdditionalGlobalSettings(codeStyle,
-                                                                               project,
-                                                                               parent);
-
-    if (m_additionalGlobalSettingsWidget)
-        m_layout->addWidget(m_additionalGlobalSettingsWidget);
-
-    m_layout->addWidget(selector);
-    if (!project) {
-        m_widget = factory->createEditor(codeStyle, project, parent);
-
-        if (m_widget)
-            m_layout->addWidget(m_widget);
+    m_selector = createCodeStyleSelectorWidget(codeStyle, projectFile);
+    m_layout->addWidget(m_selector);
+    Utils::installMarkSettingsDirtyTriggerRecursively(m_selector);
+    auto infoLabel = new Utils::InfoLabel(Tr::tr("All changes below take effect immediately."),
+                                          Utils::InfoLabel::Information);
+    infoLabel->setFilled(true);
+    m_layout->addWidget(infoLabel);
+    if (projectFile.isEmpty()) {
+        m_editor = createEditorWidget(projectFile, codeStyle);
+        if (m_editor)
+            m_layout->addWidget(m_editor);
         return;
     }
+
+    m_preview = createPreviewWidget(factory, projectFile, codeStyle, m_editor);
+    m_layout->addWidget(m_preview);
 
     QLabel *label = new QLabel(
         Tr::tr("Edit preview contents to see how the current settings "
                "are applied to custom code snippets. Changes in the preview "
-               "do not affect the current settings."), this);
+               "do not affect the current settings."),
+        m_editor);
     QFont font = label->font();
     font.setItalic(true);
     label->setFont(font);
     label->setWordWrap(true);
-
-    m_preview = new SnippetEditorWidget(this);
-    DisplaySettings displaySettings = m_preview->displaySettings();
-    displaySettings.m_visualizeWhitespace = true;
-    m_preview->setDisplaySettings(displaySettings);
-    QString groupId = factory->snippetProviderGroupId();
-    SnippetProvider::decorateEditor(m_preview, groupId);
-
-    m_layout->addWidget(m_preview);
     m_layout->addWidget(label);
-    connect(codeStyle, &ICodeStylePreferences::currentTabSettingsChanged,
-            this, &CodeStyleEditor::updatePreview);
-    connect(codeStyle, &ICodeStylePreferences::currentValueChanged,
-            this, &CodeStyleEditor::updatePreview);
-    connect(codeStyle, &ICodeStylePreferences::currentPreferencesChanged,
-            this, &CodeStyleEditor::updatePreview);
-    m_preview->setCodeStyle(m_codeStyle);
-    m_preview->setPlainText(factory->previewText());
-
-    updatePreview();
 }
 
-void CodeStyleEditor::updatePreview()
+CodeStyleSelectorWidget *CodeStyleEditor::createCodeStyleSelectorWidget(
+        ICodeStylePreferences *codeStyle, const Utils::FilePath &projectFile, QWidget *parent) const
 {
-    QTextDocument *doc = m_preview->document();
+    auto selector = new CodeStyleSelectorWidget{projectFile, parent};
+    selector->setCodeStyle(codeStyle);
+    return selector;
+}
 
-    m_preview->textDocument()->indenter()->invalidateCache();
+SnippetEditorWidget *CodeStyleEditor::createPreviewWidget(
+        const ICodeStylePreferencesFactory *factory,
+        const FilePath &projectFile,
+        ICodeStylePreferences *codeStyle,
+        QWidget *parent) const
+{
+    auto preview = new SnippetEditorWidget{parent};
+    DisplaySettingsData displaySettings = preview->displaySettings();
+    displaySettings.m_visualizeWhitespace = true;
+    preview->setDisplaySettings(displaySettings);
+    const QString groupId = snippetProviderGroupId();
+    SnippetProvider::decorateEditor(preview, groupId);
+    preview->setPlainText(previewText());
 
-    QTextBlock block = doc->firstBlock();
-    QTextCursor tc = m_preview->textCursor();
-    tc.beginEditBlock();
-    while (block.isValid()) {
-        m_preview->textDocument()->indenter()->indentBlock(block,
-                                                           QChar::Null,
-                                                           m_codeStyle->currentTabSettings());
-        block = block.next();
+    Indenter *indenter = factory->createIndenter(preview->document());
+    if (indenter) {
+        indenter->setOverriddenPreferences(codeStyle);
+        const FilePath fileName = !projectFile.isEmpty()
+            ? projectFile.pathAppended("snippet.cpp")
+            : Core::ICore::userResourcePath("snippet.cpp");
+        indenter->setFileName(fileName);
+        preview->textDocument()->setIndenter(indenter);
+    } else {
+        preview->textDocument()->setCodeStyle(codeStyle);
     }
-    tc.endEditBlock();
+
+    const auto updatePreview = [preview, codeStyle]() {
+        QTextDocument *doc = preview->document();
+
+        preview->textDocument()->indenter()->invalidateCache();
+
+        QTextBlock block = doc->firstBlock();
+        QTextCursor tc = preview->textCursor();
+        tc.beginEditBlock();
+        while (block.isValid()) {
+            preview->textDocument()
+                ->indenter()
+                ->indentBlock(block, QChar::Null, codeStyle->currentTabSettings());
+            block = block.next();
+        }
+        tc.endEditBlock();
+    };
+
+    connect(codeStyle, &ICodeStylePreferences::currentTabSettingsChanged, this, updatePreview);
+    connect(codeStyle, &ICodeStylePreferences::currentValueChanged, this, updatePreview);
+    connect(codeStyle, &ICodeStylePreferences::currentPreferencesChanged, this, updatePreview);
+
+    updatePreview();
+
+    return preview;
+}
+
+CodeStyleEditor::CodeStyleEditor(QWidget *parent)
+    : CodeStyleEditorWidget(parent)
+{
+    m_layout = new QVBoxLayout{this};
+    m_layout->setContentsMargins(0, 0, 0, 0);
 }
 
 void CodeStyleEditor::apply()
 {
-    if (m_widget)
-        m_widget->apply();
-
-    if (m_additionalGlobalSettingsWidget)
-        m_additionalGlobalSettingsWidget->apply();
+    if (m_editor != nullptr)
+        m_editor->apply();
 }
 
 void CodeStyleEditor::finish()
 {
-    if (m_widget)
-        m_widget->finish();
-
-    if (m_additionalGlobalSettingsWidget)
-        m_additionalGlobalSettingsWidget->finish();
+    if (m_editor != nullptr)
+        m_editor->finish();
 }
 
 } // TextEditor

@@ -7,10 +7,11 @@
 #include "languageserverprotocoltr.h"
 
 #include <QBuffer>
-#include <QTextCodec>
 
 #include <cstring>
 #include <utility>
+
+using namespace Utils;
 
 namespace LanguageServerProtocol {
 
@@ -28,30 +29,20 @@ BaseMessage::BaseMessage()
 { }
 
 BaseMessage::BaseMessage(const QByteArray &mimeType, const QByteArray &content,
-                         int expectedLength, QTextCodec *codec)
+                         int expectedLength, const TextEncoding &encoding)
     : mimeType(mimeType.isEmpty() ? JsonRpcMessage::jsonRpcMimeType() : mimeType)
     , content(content)
     , contentLength(expectedLength)
-    , codec(codec)
+    , encoding(encoding)
 { }
 
 BaseMessage::BaseMessage(const QByteArray &mimeType, const QByteArray &content)
-    : BaseMessage(mimeType, content, content.length(), defaultCodec())
+    : BaseMessage(mimeType, content, content.length(), defaultEncoding())
 { }
 
 bool BaseMessage::operator==(const BaseMessage &other) const
 {
-    if (mimeType != other.mimeType || content != other.content)
-        return false;
-    if (codec) {
-        if (other.codec)
-            return codec->mibEnum() == other.codec->mibEnum();
-        return codec->mibEnum() == defaultCodec()->mibEnum();
-    }
-    if (other.codec)
-        return other.codec->mibEnum() == defaultCodec()->mibEnum();
-
-    return true;
+    return mimeType == other.mimeType && content == other.content && encoding == other.encoding;
 }
 
 static QPair<QByteArray, QByteArray> splitHeaderFieldLine(const QByteArray &headerFieldLine)
@@ -72,15 +63,15 @@ static void parseContentType(BaseMessage &message, QByteArray contentType, QStri
         contentType = contentType.mid(1, contentType.length() - 2);
     QList<QByteArray> contentTypeElements = contentType.split(';');
     QByteArray mimeTypeName = contentTypeElements.takeFirst();
-    QTextCodec *codec = nullptr;
-    for (const QByteArray &_contentTypeElement : contentTypeElements) {
+    TextEncoding encoding;
+    for (const QByteArray &_contentTypeElement : std::as_const(contentTypeElements)) {
         const QByteArray &contentTypeElement = _contentTypeElement.trimmed();
         if (contentTypeElement.startsWith(contentCharsetName)) {
             const int equalindex = contentTypeElement.indexOf('=');
             const QByteArray charset = contentTypeElement.mid(equalindex + 1);
             if (equalindex > 0)
-                codec = QTextCodec::codecForName(charset);
-            if (!codec) {
+                encoding = TextEncoding(charset);
+            if (!encoding.isValid()) {
                 parseError = Tr::tr("Cannot decode content with \"%1\". Falling back to \"%2\".")
                                  .arg(QLatin1String(charset),
                                       QLatin1String(defaultCharset));
@@ -88,7 +79,7 @@ static void parseContentType(BaseMessage &message, QByteArray contentType, QStri
         }
     }
     message.mimeType = mimeTypeName;
-    message.codec = codec ? codec : BaseMessage::defaultCodec();
+    message.encoding = encoding.isValid() ? encoding : BaseMessage::defaultEncoding();
 }
 
 static void parseContentLength(BaseMessage &message, QByteArray contentLength, QString &parseError)
@@ -138,10 +129,10 @@ void BaseMessage::parse(QBuffer *data, QString &parseError, BaseMessage &message
     data->seek(startPos);
 }
 
-QTextCodec *BaseMessage::defaultCodec()
+TextEncoding BaseMessage::defaultEncoding()
 {
-    static QTextCodec *codec = QTextCodec::codecForName(defaultCharset);
-    return codec;
+    static const TextEncoding encoding(defaultCharset);
+    return encoding;
 }
 
 bool BaseMessage::isComplete() const
@@ -161,7 +152,7 @@ QByteArray BaseMessage::header() const
 {
     QByteArray header;
     header.append(lengthHeader());
-    if (codec != defaultCodec()
+    if (encoding != defaultEncoding()
             || (!mimeType.isEmpty() && mimeType != JsonRpcMessage::jsonRpcMimeType())) {
         header.append(typeHeader());
     }
@@ -181,7 +172,7 @@ QByteArray BaseMessage::typeHeader() const
 {
     return QByteArray(contentTypeFieldName)
             + QByteArray(headerFieldSeparator)
-            + mimeType + "; " + contentCharsetName + "=" + codec->name()
+            + mimeType + "; " + contentCharsetName + "=" + encoding.name()
             + QByteArray(headerSeparator);
 }
 

@@ -41,8 +41,22 @@ GitSettings::GitSettings()
     pullRebase.setSettingsKey("PullRebase");
     pullRebase.setLabelText(Tr::tr("Pull with rebase"));
 
+    rebaseMerges.setSettingsKey("RebaseMerges");
+    rebaseMerges.setDefaultValue(false);
+    rebaseMerges.setLabelText(Tr::tr("Allow rebasing merges"));
+    rebaseMerges.setToolTip(
+        Tr::tr("Allow rebasing merges in interactive rebase.\nRequires Git %1.").arg("2.18"));
+
+    updateRefs.setSettingsKey("UpdateRefs");
+    updateRefs.setDefaultValue(false);
+    updateRefs.setLabelText(Tr::tr("Allow updating references"));
+    updateRefs.setToolTip(
+        Tr::tr("Allow updating references in interactive rebase.\nRequires Git %1.").arg("2.38"));
+
     showTags.setSettingsKey("ShowTags");
 
+    omitAnnotationPath.setSettingsKey("OmitAnnotationPath");
+    omitAnnotationAuthor.setSettingsKey("OmitAnnotationAuthor");
     omitAnnotationDate.setSettingsKey("OmitAnnotationDate");
 
     ignoreSpaceChangesInDiff.setSettingsKey("SpaceIgnorantDiff");
@@ -102,12 +116,18 @@ GitSettings::GitSettings()
     instantBlameIgnoreLineMoves.setLabelText(trIgnoreLineMoves());
     instantBlameIgnoreLineMoves.setToolTip(
         Tr::tr("Finds the commit that introduced the line before it was moved."));
+    instantBlameShowSubject.setSettingsKey("GitInstantShowSubject");
+    instantBlameShowSubject.setDefaultValue(false);
+    instantBlameShowSubject.setLabelText(Tr::tr("Show commit subject"));
+    instantBlameShowSubject.setToolTip(
+        Tr::tr("Adds the commit subject directly to the annotation."));
 
     graphLog.setSettingsKey("GraphLog");
 
     colorLog.setSettingsKey("ColorLog");
     colorLog.setDefaultValue(true);
 
+    allBranches.setSettingsKey("AllBranches");
     firstParent.setSettingsKey("FirstParent");
 
     followRenames.setSettingsKey("FollowRenames");
@@ -135,7 +155,7 @@ GitSettings::GitSettings()
                 title(Tr::tr("Miscellaneous")),
                 Column {
                     Row { logCount, timeout, st },
-                    pullRebase
+                    Row { pullRebase, rebaseMerges, updateRefs, st },
                 }
             },
 
@@ -152,7 +172,12 @@ GitSettings::GitSettings()
             Group {
                 title(Tr::tr("Instant Blame")),
                 groupChecker(instantBlame.groupChecker()),
-                Row { instantBlameIgnoreSpaceChanges, instantBlameIgnoreLineMoves, st },
+                Row {
+                    instantBlameIgnoreSpaceChanges,
+                    instantBlameIgnoreLineMoves,
+                    instantBlameShowSubject,
+                    st
+                },
             },
 
             st
@@ -164,7 +189,7 @@ GitSettings::GitSettings()
     readSettings();
 }
 
-expected_str<FilePath> GitSettings::gitExecutable() const
+Result<FilePath> GitSettings::gitExecutable() const
 {
     if (tryResolve) {
         resolvedBinPath = binaryPath();

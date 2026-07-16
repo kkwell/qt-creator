@@ -9,6 +9,7 @@
 #include "../testtreeitem.h"
 
 #include <qtsupport/qtoutputformatter.h>
+#include <utils/hostosinfo.h>
 #include <utils/qtcassert.h>
 
 #include <QRegularExpression>
@@ -118,6 +119,9 @@ QtTestOutputReader::QtTestOutputReader(Process *testApplication,
     , m_testType(type)
 {
     m_parseMessages = theQtTestFramework().parseMessages();
+    // for UNIX we can rely on QLocale::system() - but Win just takes the language into account
+    m_locale = HostOsInfo::isWindowsHost() ? QLocale(QLocale::system().language())
+                                           : QLocale::system();
 }
 
 void QtTestOutputReader::processOutputLine(const QByteArray &outputLine)
@@ -220,7 +224,7 @@ void QtTestOutputReader::processXMLOutput(const QByteArray &outputLine)
             } else if (currentTag == QStringLiteral("BenchmarkResult")) {
                 const QXmlStreamAttributes &attributes = m_xmlReader.attributes();
                 const QString metric = attributes.value(QStringLiteral("metric")).toString();
-                const double value = attributes.value(QStringLiteral("value")).toDouble();
+                const double value = m_locale.toDouble(attributes.value(QStringLiteral("value")));
                 const int iterations = attributes.value(QStringLiteral("iterations")).toInt();
                 m_dataTag = attributes.value(QStringLiteral("tag")).toString();
                 m_description = constructBenchmarkInformation(metric, value, iterations);
@@ -279,11 +283,11 @@ void QtTestOutputReader::processXMLOutput(const QByteArray &outputLine)
             if (currentTag == QStringLiteral("TestFunction")) {
                 sendFinishMessage(true);
                 // TODO: bump progress?
-                m_dataTag.clear();
                 m_formerTestCase = m_testCase;
                 m_testCase.clear();
             } else if (currentTag == QStringLiteral("TestCase")) {
                 sendFinishMessage(false);
+                m_executionDuration = qRound(m_duration.toDouble());
             } else if (validEndTags.contains(currentTag.toString())) {
                 if (m_parseMessages && isTestMessage(m_result)) {
                     const QRegularExpressionMatch match = userFileLocation().match(m_description);
@@ -316,18 +320,18 @@ static QStringList extractFunctionInformation(const QString &testClassName,
                                               const QString &lineWithoutResultType,
                                               ResultType resultType)
 {
-    static QRegularExpression classInformation("^(.+?)\\((.*?)\\)(.*)$");
+    static const QRegularExpression classInformation("^(.+?)\\((.*?)\\)(.*)$");
     QStringList result;
     const QRegularExpressionMatch match = classInformation.match(lineWithoutResultType);
     if (match.hasMatch()) {
         QString fullQualifiedFunc = match.captured(1);
         QTC_ASSERT(fullQualifiedFunc.startsWith(testClassName + "::"), return result);
-        fullQualifiedFunc = fullQualifiedFunc.mid(testClassName.length() + 2);
+        fullQualifiedFunc = fullQualifiedFunc.mid(testClassName.size() + 2);
         result.append(fullQualifiedFunc);
         if (resultType == ResultType::Benchmark) { // tag is displayed differently
             QString possiblyTag = match.captured(3);
             if (!possiblyTag.isEmpty())
-                possiblyTag = possiblyTag.mid(2, possiblyTag.length() - 4);
+                possiblyTag = possiblyTag.mid(2, possiblyTag.size() - 4);
             result.append(possiblyTag);
             result.append(QString());
         } else {
@@ -340,14 +344,14 @@ static QStringList extractFunctionInformation(const QString &testClassName,
 
 void QtTestOutputReader::processPlainTextOutput(const QByteArray &outputLine)
 {
-    static const QRegularExpression start("^[*]{9} Start testing of (.*) [*]{9}$");
+    static const QRegularExpression start("^.*[*]{9} Start testing of (.*) [*]{9}$");
     static const QRegularExpression config("^Config: Using QtTest library (.*), "
                                            "(Qt (\\d+(\\.\\d+){2}) \\(.*\\))$");
     static const QRegularExpression summary("^Totals: (\\d+) passed, (\\d+) failed, "
-                                            "(\\d+) skipped(, (\\d+) blacklisted)?(, \\d+ms)?$");
+                                            "(\\d+) skipped(, (\\d+) blacklisted)?(, (\\d+)ms)?$");
     static const QRegularExpression finish("^[*]{9} Finished testing of (.*) [*]{9}$");
 
-    static const QRegularExpression result("^(PASS   |FAIL!  |XFAIL  |XPASS  |SKIP   |RESULT "
+    static const QRegularExpression result("^.*(PASS   |FAIL!  |XFAIL  |XPASS  |SKIP   |RESULT "
                                            "|BPASS  |BFAIL  |BXPASS |BXFAIL "
                                            "|INFO   |QWARN  |WARNING|QDEBUG |QSYSTEM|QCRITICAL): (.*)$");
 
@@ -390,6 +394,8 @@ void QtTestOutputReader::processPlainTextOutput(const QByteArray &outputLine)
         // BlacklistedXYZ is wrong here, but we use it for convenience (avoids another enum value)
         if (int blacklisted = match.captured(5).toInt())
             m_summary[ResultType::BlacklistedPass] = blacklisted;
+        if (match.hasCaptured(7))
+            m_executionDuration.emplace(match.captured(7).toInt());
         processSummaryFinishOutput();
     } else if (finish.match(line).hasMatch()) {
         processSummaryFinishOutput();
@@ -476,6 +482,8 @@ void QtTestOutputReader::sendCompleteInformation()
         }
     }
     testResult.setDescription(m_description);
+    if (!m_duration.isEmpty())
+        testResult.setDuration(m_duration);
     reportResult(testResult);
 }
 
@@ -503,11 +511,15 @@ void QtTestOutputReader::sendStartMessage(bool isFunction)
 
 void QtTestOutputReader::sendFinishMessage(bool isFunction)
 {
+    m_dataTag.clear();
+    if (!isFunction)
+        m_testCase.clear();
     TestResult result = createDefaultResult();
     result.setResult(ResultType::TestEnd);
     if (!m_duration.isEmpty()) {
         result.setDescription(isFunction ? Tr::tr("Execution took %1 ms.").arg(m_duration)
                                          : Tr::tr("Test execution took %1 ms.").arg(m_duration));
+        result.setDuration(m_duration);
     } else {
         result.setDescription(isFunction ? Tr::tr("Test function finished.")
                                          : Tr::tr("Test finished."));

@@ -11,8 +11,6 @@
 #include <qmldesignerconstants.h>
 #include <qmldesignerplugin.h>
 
-#include <invalidqmlsourceexception.h>
-
 #include <coreplugin/messagebox.h>
 #include <coreplugin/icore.h>
 
@@ -42,7 +40,7 @@ static QString propertyEditorResourcesPath()
     if (qEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
         return QLatin1String(SHARE_QML_PATH) + "/propertyEditorQmlSources";
 #endif
-    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toString();
+    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toUrlishString();
 }
 
 int StatesEditorWidget::currentStateInternalId() const
@@ -59,7 +57,7 @@ void StatesEditorWidget::setCurrentStateInternalId(int internalId)
     rootObject()->setProperty("currentStateInternalId", internalId);
 }
 
-void StatesEditorWidget::setNodeInstanceView(const NodeInstanceView *nodeInstanceView)
+void StatesEditorWidget::setNodeInstanceView(const AbstractView *nodeInstanceView)
 {
     m_imageProvider->setNodeInstanceView(nodeInstanceView);
 }
@@ -105,7 +103,7 @@ QString StatesEditorWidget::qmlSourcesPath()
     if (qEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
         return QLatin1String(SHARE_QML_PATH) + "/stateseditor";
 #endif
-    return Core::ICore::resourcePath("qmldesigner/stateseditor").toString();
+    return Core::ICore::resourcePath("qmldesigner/stateseditor").toUrlishString();
 }
 
 void StatesEditorWidget::showEvent(QShowEvent *event)

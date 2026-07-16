@@ -3,9 +3,10 @@
 
 #pragma once
 
-#include <solutions/tasking/tasktree.h>
+#include <QtTaskTree/QTaskTree>
 
 #include <utils/outputformat.h>
+#include <utils/processenums.h>
 
 #include <QProcess>
 
@@ -18,12 +19,12 @@ class CommandLine;
 class ProcessRunData;
 }
 
-namespace Valgrind {
-
-namespace XmlProtocol {
+namespace Valgrind::XmlProtocol {
 class Error;
 class Status;
 }
+
+namespace Valgrind::Internal {
 
 class ValgrindProcessPrivate;
 
@@ -48,9 +49,9 @@ public:
 signals:
     void appendMessage(const QString &, Utils::OutputFormat);
     void logMessageReceived(const QByteArray &);
-    void processErrorReceived(const QString &, QProcess::ProcessError);
+    void processErrorReceived(const QString &errorString, Utils::ProcessResult result);
     void valgrindStarted(qint64 pid);
-    void done(Tasking::DoneResult result);
+    void done(QtTaskTree::DoneResult result);
 
     // Parser's signals
     void status(const Valgrind::XmlProtocol::Status &status);
@@ -61,15 +62,6 @@ private:
     std::unique_ptr<ValgrindProcessPrivate> d;
 };
 
-class ValgrindProcessTaskAdapter final : public Tasking::TaskAdapter<ValgrindProcess>
-{
-public:
-    ValgrindProcessTaskAdapter() {
-        connect(task(), &ValgrindProcess::done, this, &Tasking::TaskInterface::done);
-    }
-    void start() final { task()->start(); }
-};
+using ValgrindProcessTask = QtTaskTree::QCustomTask<ValgrindProcess>;
 
-using ValgrindProcessTask = Tasking::CustomTask<ValgrindProcessTaskAdapter>;
-
-} // namespace Valgrind
+} // namespace Valgrind::Internal

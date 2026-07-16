@@ -10,10 +10,6 @@
 #include <utils/id.h>
 
 #include <QObject>
-#include <QTextCodec>
-#include <QMetaType>
-
-namespace Utils { class Process; }
 
 namespace Core {
 
@@ -47,7 +43,7 @@ public:
     Utils::FilePath workingDirectory() const;
     Utils::Id baseEnvironmentProviderId() const;
     Utils::Environment baseEnvironment() const;
-    Utils::EnvironmentItems environmentUserChanges() const;
+    Utils::EnvironmentChanges environmentUserChanges() const;
 
     void setFilePath(const Utils::FilePath &filePath);
     void setPreset(std::shared_ptr<ExternalTool> preset);
@@ -55,12 +51,12 @@ public:
     // all tools that are preset (changed or unchanged) have the original value here:
     std::shared_ptr<ExternalTool> preset() const;
 
-    static ExternalTool *createFromXml(const QByteArray &xml, QString *errorMessage = nullptr,
-                                       const QString &locale = {});
-    static ExternalTool *createFromFile(const Utils::FilePath &fileName, QString *errorMessage = nullptr,
-                                        const QString &locale = {});
+    static Utils::Result<ExternalTool *> createFromXml(const QByteArray &xml,
+                                                       const QString &locale = {});
+    static Utils::Result<ExternalTool *> createFromFile(const Utils::FilePath &filePath,
+                                                        const QString &locale = {});
 
-    bool save(QString *errorMessage = nullptr) const;
+    Utils::Result<> save() const;
 
     bool operator==(const ExternalTool &other) const;
     bool operator!=(const ExternalTool &other) const { return !((*this) == other); }
@@ -78,65 +74,33 @@ public:
     void setInput(const QString &input);
     void setWorkingDirectory(const Utils::FilePath &workingDirectory);
     void setBaseEnvironmentProviderId(Utils::Id id);
-    void setEnvironmentUserChanges(const Utils::EnvironmentItems &items);
+    void setEnvironmentUserChanges(const Utils::EnvironmentChanges &items);
+
+    void execute() const;
 
 private:
-    QString m_id;
-    QString m_description;
-    QString m_displayName;
-    QString m_displayCategory;
-    int m_order = -1;
-    Utils::FilePaths m_executables;
-    QString m_arguments;
-    QString m_input;
-    Utils::FilePath m_workingDirectory;
-    Utils::Id m_baseEnvironmentProviderId;
-    Utils::EnvironmentItems m_environment;
-    OutputHandling m_outputHandling = ShowInPane;
-    OutputHandling m_errorHandling = ShowInPane;
-    bool m_modifiesCurrentDocument = false;
 
-    Utils::FilePath m_filePath;
-    Utils::FilePath m_presetFileName;
-    std::shared_ptr<ExternalTool> m_presetTool;
-};
+    struct Data {
+        QString id;
+        QString description;
+        QString displayName;
+        QString displayCategory = ""; // difference between isNull and isEmpty
+        int order = -1;
+        Utils::FilePaths executables;
+        QString arguments;
+        QString input;
+        Utils::FilePath workingDirectory;
+        Utils::Id baseEnvironmentProviderId;
+        Utils::EnvironmentChanges environment;
+        OutputHandling outputHandling = ShowInPane;
+        OutputHandling errorHandling = ShowInPane;
+        bool modifiesCurrentDocument = false;
 
-class CORE_EXPORT ExternalToolRunner : public QObject
-{
-    Q_OBJECT
+        Utils::FilePath filePath;
+        std::shared_ptr<ExternalTool> presetTool;
+    };
 
-public:
-    ExternalToolRunner(const ExternalTool *tool);
-    ~ExternalToolRunner() override;
-
-    bool hasError() const;
-    QString errorString() const;
-
-private:
-    void done();
-    void readStandardOutput(const QString &output);
-    void readStandardError(const QString &output);
-
-    void run();
-    bool resolve();
-
-    const ExternalTool *m_tool; // is a copy of the tool that was passed in
-    Utils::FilePath m_resolvedExecutable;
-    QString m_resolvedArguments;
-    QString m_resolvedInput;
-    Utils::FilePath m_resolvedWorkingDirectory;
-    Utils::Environment m_resolvedEnvironment;
-    Utils::Process *m_process;
-    // TODO remove codec handling, that is done by Process now
-    QTextCodec *m_outputCodec;
-    QTextCodec::ConverterState m_outputCodecState;
-    QTextCodec::ConverterState m_errorCodecState;
-    QString m_processOutput;
-    Utils::FilePath m_expectedFilePath;
-    bool m_hasError;
-    QString m_errorString;
+    Data m_data;
 };
 
 } // Core
-
-Q_DECLARE_METATYPE(Core::ExternalTool *)

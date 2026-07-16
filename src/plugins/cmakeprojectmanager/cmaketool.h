@@ -5,13 +5,13 @@
 
 #include "cmake_global.h"
 
+#include <projectexplorer/kitaspect.h>
+
 #include <texteditor/codeassist/keywordscompletionassist.h>
 
 #include <utils/filepath.h>
 #include <utils/id.h>
 #include <utils/store.h>
-
-#include <optional>
 
 namespace Utils { class Process; }
 
@@ -19,8 +19,9 @@ namespace CMakeProjectManager {
 
 namespace Internal {  class IntrospectionData;  }
 
-struct CMAKE_EXPORT CMakeKeywords
+class CMAKE_EXPORT CMakeKeywords
 {
+public:
     QMap<QString, Utils::FilePath> variables;
     QMap<QString, Utils::FilePath> functions;
     QMap<QString, Utils::FilePath> properties;
@@ -39,16 +40,15 @@ struct CMAKE_EXPORT CMakeKeywords
 class CMAKE_EXPORT CMakeTool
 {
 public:
-    enum Detection { ManualDetection, AutoDetection };
-
-    enum ReaderType { FileApi };
-
     struct Version
     {
         int major = 0;
         int minor = 0;
         int patch = 0;
         QByteArray fullVersion;
+
+        friend bool operator==(const Version &v1, const Version &v2);
+        friend bool operator!=(const Version &v1, const Version &v2);
     };
 
     class Generator
@@ -64,12 +64,14 @@ public:
         bool supportsToolset = true;
 
         bool matches(const QString &n) const;
+
+        friend bool operator==(const CMakeTool::Generator &g1, const CMakeTool::Generator &g2);
+        friend bool operator!=(const CMakeTool::Generator &g1, const CMakeTool::Generator &g2);
     };
 
-    using PathMapper = std::function<Utils::FilePath (const Utils::FilePath &)>;
-
-    explicit CMakeTool(Detection d, const Utils::Id &id);
     explicit CMakeTool(const Utils::Store &map, bool fromSdk);
+    explicit CMakeTool(const ProjectExplorer::DetectionSource &d, const Utils::Id &id);
+
     ~CMakeTool();
 
     static Utils::Id createId();
@@ -93,33 +95,21 @@ public:
     Version version() const;
     QString versionDisplay() const;
 
-    bool isAutoDetected() const;
     QString displayName() const;
     void setDisplayName(const QString &displayName);
 
-    void setPathMapper(const PathMapper &includePathMapper);
-    PathMapper pathMapper() const;
-
-    std::optional<ReaderType> readerType() const;
-
     static Utils::FilePath searchQchFile(const Utils::FilePath &executable);
 
-    QString detectionSource() const { return m_detectionSource; }
-    void setDetectionSource(const QString &source) { m_detectionSource = source; }
-
-    static QString documentationUrl(const Version &version, bool online);
-    static void openCMakeHelpUrl(const CMakeTool *tool, const QString &linkUrl);
+    // Note: the earlier returned QString is the same as DetectionSource::id now
+    ProjectExplorer::DetectionSource detectionSource() const;
+    void setDetectionSource(const ProjectExplorer::DetectionSource &source);
 
 private:
     void readInformation() const;
 
-    void runCMake(Utils::Process &proc, const QStringList &args, int timeoutS = 1) const;
-    void parseFunctionDetailsOutput(const QString &output);
-    QStringList parseVariableOutput(const QString &output);
     QStringList parseSyntaxHighlightingXml();
 
     void fetchFromCapabilities() const;
-    void parseFromCapabilities(const QString &input) const;
 
     // Note: New items here need also be handled in CMakeToolItemModel::apply()
     // FIXME: Use a saner approach.
@@ -128,15 +118,10 @@ private:
     Utils::FilePath m_executable;
     Utils::FilePath m_qchFilePath;
 
-    bool m_isAutoDetected = false;
-    QString m_detectionSource;
+    ProjectExplorer::DetectionSource m_detectionSource;
     bool m_autoCreateBuildDirectory = false;
 
-    std::optional<ReaderType> m_readerType;
-
     std::unique_ptr<Internal::IntrospectionData> m_introspection;
-
-    PathMapper m_pathMapper;
 };
 
 } // namespace CMakeProjectManager

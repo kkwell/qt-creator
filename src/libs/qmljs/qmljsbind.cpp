@@ -89,7 +89,7 @@ bool Bind::usesQmlPrototype(ObjectValue *prototype,
     if (componentName.isEmpty())
         return false;
 
-    QList<const ObjectValue *> values = _qmlObjectsByPrototypeName.values(componentName);
+    const QList<const ObjectValue *> values = _qmlObjectsByPrototypeName.values(componentName);
     for (const ObjectValue *object : values) {
         // resolve and check the prototype
         const ObjectValue *resolvedPrototype = object->prototype(context);
@@ -145,7 +145,7 @@ ObjectValue *Bind::bindObject(UiQualifiedId *qualifiedTypeNameId, UiObjectInitia
                 nextRoot = _inlineComponents.value(parentComponentName);
             } else {
                 parentComponentName = "";
-                nextRoot = _rootObjectValue;
+                nextRoot = _inlineComponents.value(QString());
             }
             // we add the inline component inside its parent
             nextRoot->setMember(_currentComponentName.mid(_currentComponentName.lastIndexOf('.') + 1), objectValue);

@@ -9,16 +9,26 @@ if (NOT IS_ABSOLUTE ${IDE_LOGO_PATH})
 endif()
 configure_file(app_logo.qrc.cmakein app_logo_cmake.qrc)
 
+# This needs to be explicit like this, to avoid issues with the path
+# to the binary in generated SBOMs.
+set(qtcreator_props "")
+if(APPLE)
+  list(APPEND qtcreator_props MACOSX_BUNDLE ON)
+endif()
+if(WIN32)
+  list(APPEND qtcreator_props WIN32_EXECUTABLE ON)
+endif()
 add_qtc_executable(qtcreator
-  DEFINES IDE_LIBRARY_BASENAME=\"${IDE_LIBRARY_BASE_PATH}\"
+  DEFINES
+    IDE_LIBRARY_BASENAME=\"${IDE_LIBRARY_BASE_PATH}\"
+    IDE_APP_ID=\"${IDE_APP_ID}\"
   DEPENDS Aggregation ExtensionSystem Qt::Core Qt::Widgets Utils shared_qtsingleapplication app_version
   SOURCES
     main.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/app_logo_cmake.qrc
     ../tools/qtcreatorcrashhandler/crashhandlersetup.cpp ../tools/qtcreatorcrashhandler/crashhandlersetup.h
   PROPERTIES
-    WIN32_EXECUTABLE ON
-    MACOSX_BUNDLE ON
+    ${qtcreator_props}
     OUTPUT_NAME "${IDE_APP_TARGET}"
   DESTINATION "${IDE_APP_PATH}"
   QTC_RUNNABLE
@@ -29,6 +39,11 @@ extend_qtc_executable(qtcreator
   DEPENDS ${FWFoundation}
   SOURCES
     main_mac.mm
+)
+
+extend_qtc_executable(qtcreator
+  CONDITION SHOW_BUILD_DATE
+  DEFINES QTC_SHOW_BUILD_DATE
 )
 
 if (NOT TARGET qtcreator)
@@ -76,13 +91,16 @@ if (WIN32)
   set(RC_APPLICATION_NAME "${IDE_DISPLAY_NAME}")
   set(RC_VERSION "${IDE_VERSION}.0")
   set(RC_VERSION_STRING "${IDE_VERSION_DISPLAY}")
-  set(RC_COPYRIGHT "2008-${IDE_COPYRIGHT_YEAR} The Qt Company Ltd")
+  set(RC_COPYRIGHT "${IDE_COPYRIGHT}")
+  set(RC_PUBLISHER "${IDE_PUBLISHER}")
 
   string(REPLACE " " "\\x20" RC_APPLICATION_NAME "${RC_APPLICATION_NAME}")
+  string(REPLACE " " "\\x20" RC_PUBLISHER "${RC_PUBLISHER}")
   string(REPLACE " " "\\x20" RC_COPYRIGHT "${RC_COPYRIGHT}")
   string(REPLACE "." "," RC_VERSION "${RC_VERSION}")
 
   target_compile_definitions(qtcreator PRIVATE
+    RC_PUBLISHER=${RC_PUBLISHER}
     RC_APPLICATION_NAME=${RC_APPLICATION_NAME}
     RC_VERSION=${RC_VERSION}
     RC_VERSION_STRING=${RC_VERSION_STRING}
@@ -90,7 +108,7 @@ if (WIN32)
     RC_ICON_PATH=${IDE_ICON_PATH}
   )
 
-  target_sources(qtcreator PRIVATE qtcreator.rc)
+  target_sources(qtcreator PRIVATE qtcreator.rc easyboard.ico)
 endif()
 
 if (APPLE)
@@ -101,30 +119,101 @@ if (APPLE)
       MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/app-Info.plist"
   )
   # icon
+  ## Roughly check for Xcode 26 tools for the default icon generation method
+  if(${CMAKE_C_COMPILER_ID} STREQUAL "AppleClang"
+      AND ${CMAKE_C_COMPILER_VERSION} VERSION_GREATER_EQUAL 17.0.0.17000319)
+    set(QTC_USE_XCODE_26_FOR_APPICON_DEFAULT ON)
+  else()
+    set(QTC_USE_XCODE_26_FOR_APPICON_DEFAULT OFF)
+  endif()
+  option(QTC_USE_XCODE_26_FOR_APPICON
+    "Use Xcode 26 tools to generate the app icon from Icon Composer"
+    ${QTC_USE_XCODE_26_FOR_APPICON_DEFAULT}
+  ) # switch to ON to disable legacy mode
+  if(QTC_USE_XCODE_26_FOR_APPICON)
+    set(QTCREATOR_APP_ICON "${CMAKE_CURRENT_BINARY_DIR}/qtcreator.icns")
+    set(QTCREATOR_ACTOOL_APP_ICON_OUTPUT "${QTCREATOR_APP_ICON}")
+    set(QTCREATOR_APP_ICON_ASSET "${IDE_ICON_PATH}/macos/qtcreator.icon")
+    set(QTCREATOR_APP_ICON_FILES
+      macos/qtcreator.icon/icon.json
+      macos/qtcreator.icon/Assets/icon.png
+    )
+  else()
+    set(QTCREATOR_APP_ICON "${IDE_ICON_PATH}/macos/legacy/qtcreator.icns")
+    set(QTCREATOR_ACTOOL_APP_ICON_OUTPUT)
+    set(QTCREATOR_APP_ICON_ASSET "${CMAKE_CURRENT_BINARY_DIR}/qtcreator-appicon.xcassets")
+    set(QTCREATOR_APP_ICON_FILES
+      ${QTCREATOR_APP_ICON_ASSET}/qtcreator.iconset/icon_16x16.png
+      ${QTCREATOR_APP_ICON_ASSET}/qtcreator.iconset/icon_16x16@2x.png
+      ${QTCREATOR_APP_ICON_ASSET}/qtcreator.iconset/icon_128x128.png
+      ${QTCREATOR_APP_ICON_ASSET}/qtcreator.iconset/icon_128x128@2x.png
+    )
+    add_custom_command(
+      OUTPUT ${QTCREATOR_APP_ICON_FILES}
+      COMMAND
+        iconutil -c iconset
+        "${QTCREATOR_APP_ICON}"
+        -o "${QTCREATOR_APP_ICON_ASSET}/qtcreator.iconset"
+      DEPENDS
+        "${QTCREATOR_APP_ICON}"
+      VERBATIM
+    )
+  endif()
+  set(QTCREATOR_PROJECT_ICONSET_FILES
+    macos/qtcreator.xcassets/qtcreator-project.iconset/icon_128x128.png
+    macos/qtcreator.xcassets/qtcreator-project.iconset/icon_128x128@2x.png
+    macos/qtcreator.xcassets/qtcreator-project.iconset/icon_16x16.png
+    macos/qtcreator.xcassets/qtcreator-project.iconset/icon_16x16@2x.png
+    macos/qtcreator.xcassets/qtcreator-project.iconset/icon_256x256.png
+    macos/qtcreator.xcassets/qtcreator-project.iconset/icon_256x256@2x.png
+    macos/qtcreator.xcassets/qtcreator-project.iconset/icon_32x32.png
+    macos/qtcreator.xcassets/qtcreator-project.iconset/icon_32x32@2x.png
+    macos/qtcreator.xcassets/qtcreator-project.iconset/icon_512x512.png
+    macos/qtcreator.xcassets/qtcreator-project.iconset/icon_512x512@2x.png
+  )
   add_custom_command(
-    OUTPUT qtcreator.icns qtcreator-project.icns
+    OUTPUT Assets.car ${QTCREATOR_ACTOOL_APP_ICON_OUTPUT}
     COMMAND
       xcrun actool --app-icon qtcreator --output-partial-info-plist "${CMAKE_CURRENT_BINARY_DIR}/qtcreator.Info.plist"
-      --platform macosx --minimum-deployment-target 10.7 --compile "${CMAKE_CURRENT_BINARY_DIR}"
-      "${IDE_ICON_PATH}/qtcreator.xcassets"
+      --platform macosx --target-device mac --minimum-deployment-target 11.0 --compile "${CMAKE_CURRENT_BINARY_DIR}"
+      --bundle-identifier "${IDE_BUNDLE_IDENTIFIER}"
+      "${IDE_ICON_PATH}/macos/qtcreator.xcassets" "${QTCREATOR_APP_ICON_ASSET}"
       > /dev/null
     BYPRODUCTS qtcreator.Info.plist
+    DEPENDS
+      ${QTCREATOR_PROJECT_ICONSET_FILES}
+      ${QTCREATOR_APP_ICON_FILES}
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT qtcreator-project.icns
+    COMMAND
+      iconutil -c icns
+      "${IDE_ICON_PATH}/macos/qtcreator.xcassets/qtcreator-project.iconset"
+      -o "${CMAKE_CURRENT_BINARY_DIR}/qtcreator-project.icns"
+    DEPENDS
+      ${QTCREATOR_PROJECT_ICONSET_FILES}
     VERBATIM
   )
   target_sources(qtcreator
     PRIVATE
-      "${CMAKE_CURRENT_BINARY_DIR}/qtcreator.icns"
+      "${CMAKE_CURRENT_BINARY_DIR}/Assets.car"
+      ${QTCREATOR_APP_ICON}
       "${CMAKE_CURRENT_BINARY_DIR}/qtcreator-project.icns"
   )
   qtc_copy_to_builddir(copy_icns
     DESTINATION ${IDE_DATA_PATH}
     FILES
-      ${CMAKE_CURRENT_BINARY_DIR}/qtcreator.icns
+      ${CMAKE_CURRENT_BINARY_DIR}/Assets.car
+      "${QTCREATOR_APP_ICON}"
+      ${IDE_ICON_PATH}/macos/qtcreator.icon/Assets/icon.png
       ${CMAKE_CURRENT_BINARY_DIR}/qtcreator-project.icns
   )
   install(
     FILES
-      ${CMAKE_CURRENT_BINARY_DIR}/qtcreator.icns
+      ${CMAKE_CURRENT_BINARY_DIR}/Assets.car
+      "${QTCREATOR_APP_ICON}"
+      ${IDE_ICON_PATH}/macos/qtcreator.icon/Assets/icon.png
       ${CMAKE_CURRENT_BINARY_DIR}/qtcreator-project.icns
     DESTINATION ${IDE_DATA_PATH}
   )
@@ -137,26 +226,11 @@ extend_qtc_executable(qtcreator
     QTC_FORCE_XCB
 )
 
-extend_qtc_executable(qtcreator
-  CONDITION BUILD_WITH_CRASHPAD
-  DEFINES
-    CRASHPAD_BACKEND_URL="${CRASHPAD_BACKEND_URL}"
-    ENABLE_CRASHPAD
-    WIN32_LEAN_AND_MEAN # It comes usually with precompiled header, but at the installer they are disabled
-  DEPENDS Crashpad::Crashpad
-)
-if(BUILD_WITH_CRASHPAD)
-  install(
-    PROGRAMS ${CRASHPAD_BIN_DIR}/crashpad_handler${CMAKE_EXECUTABLE_SUFFIX}
-    DESTINATION "${IDE_LIBEXEC_PATH}"
-  )
-endif()
-
 if ((NOT WIN32) AND (NOT APPLE))
   # install logo
   foreach(size 16 24 32 48 64 128 256 512)
     install(
-      FILES ${IDE_LOGO_PATH}/images/logo/${size}/QtProject-qtcreator.png
+      FILES ${IDE_LOGO_PATH}/images/logo/${size}/QtProject-${IDE_ID}.png
       DESTINATION share/icons/hicolor/${size}x${size}/apps
     )
   endforeach()

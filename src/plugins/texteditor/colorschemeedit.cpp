@@ -264,6 +264,33 @@ ColorSchemeEdit::ColorSchemeEdit(QWidget *parent) :
     connect(m_underlineComboBox, &QComboBox::currentIndexChanged,
             this, &ColorSchemeEdit::changeUnderlineStyle);
     connect(m_builtinSchemeLabel, &QLabel::linkActivated, this, &ColorSchemeEdit::copyScheme);
+
+    connect(m_foregroundToolButton, &Utils::QtColorButton::colorChanged,
+            this, &ColorSchemeEdit::dirty);
+    connect(m_backgroundToolButton, &Utils::QtColorButton::colorChanged,
+            this, &ColorSchemeEdit::dirty);
+    connect(m_eraseBackgroundToolButton, &QAbstractButton::clicked,
+            this, &ColorSchemeEdit::dirty);
+    connect(m_eraseForegroundToolButton, &QAbstractButton::clicked,
+            this, &ColorSchemeEdit::dirty);
+    connect(m_foregroundSaturationSpinBox, &QDoubleSpinBox::valueChanged,
+            this, &ColorSchemeEdit::dirty);
+    connect(m_foregroundLightnessSpinBox, &QDoubleSpinBox::valueChanged,
+            this, &ColorSchemeEdit::dirty);
+    connect(m_backgroundSaturationSpinBox, &QDoubleSpinBox::valueChanged,
+            this, &ColorSchemeEdit::dirty);
+    connect(m_backgroundLightnessSpinBox, &QDoubleSpinBox::valueChanged,
+            this, &ColorSchemeEdit::dirty);
+    connect(m_boldCheckBox, &QAbstractButton::toggled,
+            this, &ColorSchemeEdit::dirty);
+    connect(m_italicCheckBox, &QAbstractButton::toggled,
+            this, &ColorSchemeEdit::dirty);
+    connect(m_underlineColorToolButton, &Utils::QtColorButton::colorChanged,
+            this, &ColorSchemeEdit::dirty);
+    connect(m_eraseUnderlineColorToolButton, &QToolButton::clicked,
+            this, &ColorSchemeEdit::dirty);
+    connect(m_underlineComboBox, &QComboBox::currentIndexChanged,
+            this, &ColorSchemeEdit::dirty);
 }
 
 ColorSchemeEdit::~ColorSchemeEdit() = default;
@@ -565,39 +592,6 @@ void ColorSchemeEdit::changeRelativeBackColor()
         const TextStyle category = m_descriptions[index.row()].id();
         m_scheme.formatFor(category).setRelativeBackgroundSaturation(saturation);
         m_scheme.formatFor(category).setRelativeBackgroundLightness(lightness);
-        m_formatsModel->emitDataChanged(index);
-    }
-}
-
-void ColorSchemeEdit::eraseRelativeForeColor()
-{
-    if (m_curItem == -1)
-        return;
-
-    m_foregroundSaturationSpinBox->setValue(0.0);
-    m_foregroundLightnessSpinBox->setValue(0.0);
-
-    for (const QModelIndex &index : m_itemList->selectionModel()->selectedRows()) {
-        const TextStyle category = m_descriptions[index.row()].id();
-        m_scheme.formatFor(category).setRelativeForegroundSaturation(0.0);
-        m_scheme.formatFor(category).setRelativeForegroundLightness(0.0);
-        m_formatsModel->emitDataChanged(index);
-    }
-}
-
-void ColorSchemeEdit::eraseRelativeBackColor()
-{
-    if (m_curItem == -1)
-        return;
-
-    m_backgroundSaturationSpinBox->setValue(0.0);
-    m_backgroundLightnessSpinBox->setValue(0.0);
-
-    const QList<QModelIndex> indexes = m_itemList->selectionModel()->selectedRows();
-    for (const QModelIndex &index : indexes) {
-        const TextStyle category = m_descriptions[index.row()].id();
-        m_scheme.formatFor(category).setRelativeBackgroundSaturation(0.0);
-        m_scheme.formatFor(category).setRelativeBackgroundLightness(0.0);
         m_formatsModel->emitDataChanged(index);
     }
 }

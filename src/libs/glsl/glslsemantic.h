@@ -85,6 +85,8 @@ protected:
     bool visit(ArrayTypeAST *ast) override;
     bool visit(StructTypeAST *ast) override;
     bool visit(QualifiedTypeAST *ast) override;
+    bool visit(InterfaceBlockAST *ast) override;
+    bool visit(SubroutineTypeAST *ast) override;
 
     // declarations
     bool visit(PrecisionDeclarationAST *ast) override;
@@ -97,6 +99,9 @@ protected:
     bool visit(FunctionDeclarationAST *ast) override;
 
 private:
+    void reportError(AST *ast, const QString &message);
+    void reportWarning(AST *ast, const QString &message);
+
     Engine *_engine;
     Scope *_scope;
     const Type *_type;

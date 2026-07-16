@@ -7,6 +7,7 @@
 
 QT_BEGIN_NAMESPACE
 class QAbstractItemModel;
+class QModelIndex;
 class QTableView;
 QT_END_NAMESPACE
 
@@ -32,17 +33,23 @@ protected:
     void keyPressEvent(QKeyEvent *) override;
 
 private:
-    void addRow();
+    void addRowAbove();
+    void addRowBelow();
     void openColumnDialog();
     void removeRows();
     void removeColumns();
     void changeHeader(int column);
     void moveRowsDown();
     void moveRowsUp();
+    void updateSelection();
+
+    void onRowsInserted(const QModelIndex &parent, int first, int last);
+    void onColumnsInserted(const QModelIndex &parent, int first, int last);
 
 private:
     ListModelEditorModel *m_model{};
-    QAction *m_addRowAction{};
+    QAction *m_addRowBelowAction{};
+    QAction *m_addRowAboveAction{};
     QAction *m_removeRowsAction{};
     QAction *m_addColumnAction{};
     QAction *m_removeColumnsAction{};

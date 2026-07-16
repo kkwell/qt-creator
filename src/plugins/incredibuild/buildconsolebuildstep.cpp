@@ -102,9 +102,9 @@ BuildConsoleBuildStep::BuildConsoleBuildStep(BuildStepList *buildStepList, Id id
                                  "IncrediBuild behavior is to set it to 200."));
 
     profileXml.setSettingsKey("IncrediBuild.BuildConsole.ProfileXml");
-    profileXml.setLabelText(Tr::tr("Profile.xml:"));
+    profileXml.setLabelText("Profile.xml:");
     profileXml.setExpectedKind(PathChooser::Kind::File);
-    profileXml.setBaseFileName(PathChooser::homePath());
+    profileXml.setBaseDirectory(PathChooser::homePath());
     profileXml.setHistoryCompleter("IncrediBuild.BuildConsole.ProfileXml.History");
     profileXml.setToolTip(Tr::tr("Defines how Automatic "
                                  "Interception Interface should handle the various processes "
@@ -132,7 +132,7 @@ BuildConsoleBuildStep::BuildConsoleBuildStep(BuildStepList *buildStepList, Id id
     maxCpu.setRange(0, 65536);
 
     maxWinVer.setSettingsKey("IncrediBuild.BuildConsole.MaxWinVer");
-    maxWinVer.setDisplayName(Tr::tr("Newest allowed helper machine OS:"));
+    maxWinVer.setLabelText(Tr::tr("Newest allowed helper machine OS:"));
     maxWinVer.setDisplayStyle(SelectionAspect::DisplayStyle::ComboBox);
     maxWinVer.setToolTip(Tr::tr("Specifies the newest operating system installed on a helper "
                                 "machine to be allowed to participate as helper in the build."));
@@ -140,7 +140,7 @@ BuildConsoleBuildStep::BuildConsoleBuildStep(BuildStepList *buildStepList, Id id
         maxWinVer.addOption(version);
 
     minWinVer.setSettingsKey("IncrediBuild.BuildConsole.MinWinVer");
-    minWinVer.setDisplayName(Tr::tr("Oldest allowed helper machine OS:"));
+    minWinVer.setLabelText(Tr::tr("Oldest allowed helper machine OS:"));
     minWinVer.setDisplayStyle(SelectionAspect::DisplayStyle::ComboBox);
     minWinVer.setToolTip(Tr::tr("Specifies the oldest operating system installed on a helper "
                                 "machine to be allowed to participate as helper in the build."));
@@ -157,7 +157,7 @@ BuildConsoleBuildStep::BuildConsoleBuildStep(BuildStepList *buildStepList, Id id
     monFile.setSettingsKey("IncrediBuild.BuildConsole.MonFile");
     monFile.setLabelText(Tr::tr("Save IncrediBuild monitor file:"));
     monFile.setExpectedKind(PathChooser::Kind::Any);
-    monFile.setBaseFileName(PathChooser::homePath());
+    monFile.setBaseDirectory(PathChooser::homePath());
     monFile.setHistoryCompleter("IncrediBuild.BuildConsole.MonFile.History");
     monFile.setToolTip(Tr::tr("Writes a copy of the build progress file (.ib_mon) to the specified "
                               "location. If only a folder name is given, a generated GUID will serve "
@@ -171,7 +171,7 @@ BuildConsoleBuildStep::BuildConsoleBuildStep(BuildStepList *buildStepList, Id id
     logFile.setSettingsKey("IncrediBuild.BuildConsole.LogFile");
     logFile.setLabelText(Tr::tr("Output Log file:"));
     logFile.setExpectedKind(PathChooser::Kind::SaveFile);
-    logFile.setBaseFileName(PathChooser::homePath());
+    logFile.setBaseDirectory(PathChooser::homePath());
     logFile.setHistoryCompleter("IncrediBuild.BuildConsole.LogFile.History");
     logFile.setToolTip(Tr::tr("Writes build output to a file."));
 
@@ -193,7 +193,7 @@ BuildConsoleBuildStep::BuildConsoleBuildStep(BuildStepList *buildStepList, Id id
     hideHeader.setToolTip(Tr::tr("Suppresses IncrediBuild's header in the build output."));
 
     logLevel.setSettingsKey("IncrediBuild.BuildConsole.LogLevel");
-    logLevel.setDisplayName(Tr::tr("Internal IncrediBuild logging level:"));
+    logLevel.setLabelText(Tr::tr("Internal IncrediBuild logging level:"));
     logLevel.setDisplayStyle(SelectionAspect::DisplayStyle::ComboBox);
     logLevel.addOption(QString());
     logLevel.addOption("Minimal");
@@ -298,12 +298,21 @@ void BuildConsoleBuildStep::setupOutputFormatter(OutputFormatter *formatter)
 
 // BuildConsoleStepFactory
 
-BuildConsoleStepFactory::BuildConsoleStepFactory()
+class BuildConsoleStepFactory final : public BuildStepFactory
 {
-    registerStep<BuildConsoleBuildStep>(IncrediBuild::Constants::BUILDCONSOLE_BUILDSTEP_ID);
-    setDisplayName(Tr::tr("IncrediBuild for Windows"));
-    setSupportedStepLists({ProjectExplorer::Constants::BUILDSTEPS_BUILD,
-                           ProjectExplorer::Constants::BUILDSTEPS_CLEAN});
+public:
+    BuildConsoleStepFactory()
+    {
+        registerStep<BuildConsoleBuildStep>(IncrediBuild::Constants::BUILDCONSOLE_BUILDSTEP_ID);
+        setDisplayName(Tr::tr("IncrediBuild for Windows"));
+        setSupportedStepLists({ProjectExplorer::Constants::BUILDSTEPS_BUILD,
+                               ProjectExplorer::Constants::BUILDSTEPS_CLEAN});
+    }
+};
+
+void setupBuildConsoleStep()
+{
+    static BuildConsoleStepFactory theBuildConsoleStepFactory;
 }
 
 } // IncrediBuild::Internal

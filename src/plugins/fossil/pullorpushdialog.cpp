@@ -17,10 +17,10 @@
 
 namespace Fossil::Internal {
 
-PullOrPushDialog::PullOrPushDialog(Mode mode, QWidget *parent)
+PullOrPushDialog::PullOrPushDialog(FossilCommand command, QWidget *parent)
     : QDialog(parent)
 {
-    setWindowTitle(mode == PullMode ? Tr::tr("Pull Source") : Tr::tr("Push Destination"));
+    setWindowTitle(command == FossilCommand::Pull ? Tr::tr("Pull Source") : Tr::tr("Push Destination"));
     resize(600, 0);
 
     m_defaultButton = new QRadioButton(Tr::tr("Default location"));
@@ -84,7 +84,7 @@ QString PullOrPushDialog::remoteLocation() const
     if (m_defaultButton->isChecked())
         return {};
     if (m_localButton->isChecked())
-        return m_localPathChooser->filePath().toString();
+        return m_localPathChooser->filePath().toUrlishString();
     return m_urlLineEdit->text();
 }
 

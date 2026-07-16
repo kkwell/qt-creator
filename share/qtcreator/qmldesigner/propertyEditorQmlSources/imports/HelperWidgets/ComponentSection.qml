@@ -36,7 +36,7 @@ Section {
                     anchors.fill: parent
                     anchors.leftMargin: StudioTheme.Values.inputHorizontalPadding
                     anchors.topMargin: StudioTheme.Values.typeLabelVerticalShift
-                    text: backendValues.__classNamePrivateInternal.value
+                    text: backendValues.__classNamePrivateInternal?.value ?? ""
                 }
 
                 ToolTipArea {
@@ -58,6 +58,9 @@ Section {
                     anchors.fill: parent
                     visible: false
                     fixedSize: true
+                    validator: RegularExpressionValidator {
+                        regularExpression: /^[\d\w]*$/
+                    }
 
                     property bool blockEditingFinished: false
 
@@ -164,7 +167,7 @@ Section {
                     id: toolTipArea
                     enabled: !modelNodeBackend.multiSelection && anchorBackend.hasParent
                     anchors.fill: parent
-                    onClicked: toogleExportAlias()
+                    onClicked: toggleExportAlias()
                     tooltip: qsTr("Exports this component as an alias property of the root component.")
                 }
             }
@@ -246,7 +249,7 @@ Section {
                 width: StudioTheme.Values.singleControlColumnWidth
                 visible: !annotationEditor.hasAuxData
                 buttonIcon: qsTr("Add Annotation")
-                iconFont: StudioTheme.Constants.font
+                iconFontFamily: StudioTheme.Constants.font.family
                 tooltip: qsTr("Adds a note with a title to explain the component.")
                 onClicked: annotationEditor.showWidget()
                 onHoveredChanged: annotationEditor.checkAux()

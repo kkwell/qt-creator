@@ -10,6 +10,8 @@
 
 #include <coreplugin/icore.h>
 
+#include <utils/guiutils.h>
+
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -75,8 +77,8 @@ void ClangDiagnosticConfigsSelectionWidget::setUpUi(bool withLabel)
 
 void ClangDiagnosticConfigsSelectionWidget::onButtonClicked()
 {
-    ClangDiagnosticConfigsWidget *widget = m_createEditWidget(m_diagnosticConfigsModel.allConfigs(),
-                                                              m_currentConfigId);
+    const ClangDiagnosticConfigs oldConfigs = m_diagnosticConfigsModel.allConfigs();
+    ClangDiagnosticConfigsWidget *widget = m_createEditWidget(oldConfigs, m_currentConfigId);
     widget->sync();
     widget->layout()->setContentsMargins(0, 0, 0, 0);
 
@@ -91,11 +93,17 @@ void ClangDiagnosticConfigsSelectionWidget::onButtonClicked()
     connect(buttonsBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
     if (dialog.exec() == QDialog::Accepted) {
+        const Utils::Id origId = m_currentConfigId;
         m_diagnosticConfigsModel = ClangDiagnosticConfigsModel(widget->configs());
         m_currentConfigId = widget->currentConfig().id();
+        const QString origDisplayName = m_button->text();
         m_button->setText(widget->currentConfig().displayName());
 
         emit changed();
+        if (origId != m_currentConfigId || origDisplayName != m_button->text()
+            || oldConfigs != widget->configs()) {
+            Utils::markSettingsDirty();
+        }
     }
 }
 

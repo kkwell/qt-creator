@@ -7,14 +7,17 @@
 #include <auxiliarydataproperties.h>
 #include <externaldependenciesinterface.h>
 #include <plaintexteditmodifier.h>
+#include <qmldesignerplugin.h>
+#include <qmldesignerprojectmanager.h>
 #include <rewriterview.h>
 #include <signalhandlerproperty.h>
-#include <qmldesignerplugin.h>
 
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectmanager.h>
 #include <projectexplorer/projecttree.h>
 #include <projectexplorer/target.h>
+
+#include <qmlprojectmanager/buildsystem/qmlbuildsystem.h>
 
 #include <qtsupport/qtkitaspect.h>
 
@@ -24,6 +27,8 @@
 #include <QAbstractListModel>
 #include <QApplication>
 #include <QDebug>
+
+using namespace Utils;
 
 namespace QmlDesigner {
 
@@ -98,12 +103,25 @@ void setNodeEnabled(const ModelNode &node, bool value)
     if (node.hasSignalHandlerProperty(signalHandler.toUtf8())) {
         SignalHandlerProperty property = node.signalHandlerProperty(signalHandler.toUtf8());
 
-        QString src = property.source();
+        QString src = property.source().trimmed();
+
         const QRegularExpression re(regExp.toString());
         QRegularExpressionMatch match = re.match(src);
 
-        if (match.hasMatch() && !match.capturedView(1).isEmpty())
+        if (match.hasMatch() && !match.capturedView(1).isEmpty()) {
+            // InsightTracker.enabled was found, replace the rhs with value.
             src.replace(match.capturedStart(1), match.capturedLength(1), valueAsStr);
+        } else {
+            // InsightTracker.enabled was NOT found, append it to the source.
+            if (!src.isEmpty()) {
+                if (src.endsWith("}")) {
+                    src.insert(src.length() - 1, "\nInsightTracker.enabled = " + valueAsStr + "\n}");
+                } else {
+                    src.prepend("{\n");
+                    src.append("\nInsightTracker.enabled = " + valueAsStr + "\n}");
+                }
+            }
+        }
 
         property.setSource(src);
     } else {
@@ -177,7 +195,9 @@ Qt::CheckState checkState(const std::vector<std::string> &a, const std::vector<s
 
 struct ModelBuilder
 {
-    ModelBuilder(const QString &filePath, ExternalDependenciesInterface &externalDependencies)
+    ModelBuilder(const QString &filePath,
+                 ExternalDependenciesInterface &externalDependencies,
+                 [[maybe_unused]] ProjectStorageDependencies projectStorageDependencies)
     {
         const QString fileContent = fileToString(filePath);
         if (fileContent.isEmpty()) {
@@ -186,15 +206,23 @@ struct ModelBuilder
         }
 
         document = std::make_unique<QTextDocument>(fileContent);
-        modifier = std::make_unique<NotIndentingTextEditModifier>(document.get(),
-                                                                  QTextCursor{document.get()});
+        modifier = std::make_unique<NotIndentingTextEditModifier>(document.get());
 
-        rewriter = std::make_unique<RewriterView>(externalDependencies, RewriterView::Amend);
+        rewriter = std::make_unique<RewriterView>(externalDependencies,
+                                                  projectStorageDependencies.modulesStorage,
+                                                  RewriterView::Amend);
         rewriter->setCheckSemanticErrors(false);
         rewriter->setCheckLinkErrors(false);
         rewriter->setTextModifier(modifier.get());
 
+#ifdef QDS_USE_PROJECTSTORAGE
+        model = QmlDesigner::Model::create(projectStorageDependencies,
+                                           "Item",
+                                           {Import::createLibraryImport("QtQuick")},
+                                           filePath);
+#else
         model = QmlDesigner::Model::create("QtQuick.Item", 2, 1);
+#endif
         model->setRewriterView(rewriter.get());
     }
 
@@ -206,9 +234,12 @@ struct ModelBuilder
 
 } // namespace
 
-InsightModel::InsightModel(InsightView *view, ExternalDependenciesInterface &externalDependencies)
+InsightModel::InsightModel(InsightView *view,
+                           ExternalDependenciesInterface &externalDependencies,
+                           QmlDesignerProjectManager &projectManager)
     : m_insightView(view)
     , m_externalDependencies(externalDependencies)
+    , m_projectManager(projectManager)
     , m_fileSystemWatcher(new Utils::FileSystemWatcher(this))
 {
     QObject::connect(ProjectExplorer::ProjectManager::instance(),
@@ -275,9 +306,28 @@ void InsightModel::setup()
     if (m_initialized)
         return;
 
-    const QString projectUrl = m_externalDependencies.projectUrl().toLocalFile();
+    auto project = ProjectExplorer::ProjectManager::startupProject();
+    if (!project) {
+        qWarning() << "Could not find a startup project.";
+        return;
+    }
 
-    m_mainQmlInfo = QFileInfo(projectUrl + "/main.qml");
+    if (!project->activeTarget()) {
+        qWarning() << "Could not find an active target.";
+        return;
+    }
+
+    auto qmlBuildSystem = qobject_cast<QmlProjectManager::QmlBuildSystem *>(
+        project->activeTarget()->buildSystem());
+
+    if (!qmlBuildSystem) {
+        qWarning() << "Could not find a build system.";
+        return;
+    }
+
+    const QString projectUrl = qmlBuildSystem->canonicalProjectDir().path();
+
+    m_mainQmlInfo = qmlBuildSystem->mainFilePath().toFileInfo();
     m_configInfo = QFileInfo(projectUrl + "/" + insightConfFile);
     m_qtdsConfigInfo = QFileInfo(projectUrl + "/" + qtdsConfFile);
 
@@ -303,12 +353,11 @@ void InsightModel::setup()
         writeJSON(m_qtdsConfigInfo.absoluteFilePath(), m_qtdsConfig);
     }
 
-    m_fileSystemWatcher->addFile(m_mainQmlInfo.absoluteFilePath(),
-                                 Utils::FileSystemWatcher::WatchModifiedDate);
-    m_fileSystemWatcher->addFile(m_configInfo.absoluteFilePath(),
-                                 Utils::FileSystemWatcher::WatchModifiedDate);
-    m_fileSystemWatcher->addFile(m_qtdsConfigInfo.absoluteFilePath(),
-                                 Utils::FileSystemWatcher::WatchModifiedDate);
+    m_fileSystemWatcher->addFiles(
+        {FilePath::fromString(m_mainQmlInfo.absoluteFilePath()),
+         FilePath::fromString(m_configInfo.absoluteFilePath()),
+         FilePath::fromString(m_qtdsConfigInfo.absoluteFilePath())},
+        FileSystemWatcher::WatchModifiedDate);
 
     m_initialized = true;
 }
@@ -413,7 +462,9 @@ void InsightModel::setEnabled(bool value)
         return;
     }
 
-    ModelBuilder builder(m_mainQmlInfo.absoluteFilePath(), m_externalDependencies);
+    ModelBuilder builder(m_mainQmlInfo.absoluteFilePath(),
+                         m_externalDependencies,
+                         m_projectManager.projectStorageDependencies());
 
     if (!builder.model) {
         qWarning() << "Could not create model" << m_mainQmlInfo.absoluteFilePath();
@@ -506,8 +557,9 @@ void InsightModel::selectAllCustom()
     selectAll(customCategories(), m_customCheckState);
 }
 
-void InsightModel::handleFileChange(const QString &path)
+void InsightModel::handleFileChange(const FilePath &filePath)
 {
+    const QString path = filePath.toFSPathString();
     if (m_mainQmlInfo.absoluteFilePath() == path)
         parseMainQml();
     else if (m_configInfo.absoluteFilePath() == path)
@@ -580,7 +632,9 @@ int InsightModel::devicePixelRatio()
 
 void InsightModel::parseMainQml()
 {
-    ModelBuilder builder(m_mainQmlInfo.absoluteFilePath(), m_externalDependencies);
+    ModelBuilder builder(m_mainQmlInfo.absoluteFilePath(),
+                         m_externalDependencies,
+                         m_projectManager.projectStorageDependencies());
 
     if (!builder.model)
         return;
@@ -602,12 +656,12 @@ void InsightModel::parseMainQml()
 void InsightModel::parseDefaultConfig()
 {
     // Load default insight config from plugin
-    const ProjectExplorer::Target *target = ProjectExplorer::ProjectTree::currentTarget();
-    if (target) {
-        const QtSupport::QtVersion *qtVersion = QtSupport::QtKitAspect::qtVersion(target->kit());
+    const ProjectExplorer::Kit *kit = ProjectExplorer::activeKitForCurrentProject();
+    if (kit) {
+        const QtSupport::QtVersion *qtVersion = QtSupport::QtKitAspect::qtVersion(kit);
 
         if (qtVersion) {
-            m_defaultConfig = readJSON(qtVersion->dataPath().toString() + "/" + dataFolder + "/"
+            m_defaultConfig = readJSON(qtVersion->dataPath().toUrlishString() + "/" + dataFolder + "/"
                                        + insightConfFile);
         }
     }

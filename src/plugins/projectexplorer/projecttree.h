@@ -9,6 +9,8 @@
 
 #include <functional>
 
+QT_FORWARD_DECLARE_CLASS(QAbstractItemModel)
+
 namespace Core { class IDocument; }
 namespace Utils { class FilePath; }
 
@@ -16,11 +18,11 @@ namespace ProjectExplorer {
 class BuildSystem;
 class FileNode;
 class FolderNode;
+class Kit;
 class Node;
 class Project;
 class ProjectNode;
 class SessionNode;
-class Target;
 
 namespace Internal { class ProjectTreeWidget; }
 
@@ -34,8 +36,6 @@ public:
     static ProjectTree *instance();
 
     static Project *currentProject();
-    static Target *currentTarget();
-    static BuildSystem *currentBuildSystem();
     static Node *currentNode();
     static Utils::FilePath currentFilePath();
 
@@ -86,6 +86,8 @@ public:
     // for nodes to emit signals, do not call unless you are a node
     static void emitSubtreeChanged(FolderNode *node);
 
+    static QAbstractItemModel *createProjectsModel(QObject *parent);
+
 signals:
     void currentProjectChanged(ProjectExplorer::Project *project);
     void currentNodeChanged(Node *node);
@@ -111,7 +113,7 @@ private:
 
     void updateFromFocus();
 
-    void updateFileWarning(Core::IDocument *document, const QString &text);
+    void updateFileWarning(Core::IDocument *document, bool generated);
     static bool hasFocus(Internal::ProjectTreeWidget *widget);
     Internal::ProjectTreeWidget *currentWidget() const;
     void hideContextMenu();
@@ -119,7 +121,7 @@ private:
 private:
     static ProjectTree *s_instance;
     QList<QPointer<Internal::ProjectTreeWidget>> m_projectTreeWidgets;
-    QVector<TreeManagerFunction> m_treeManagers;
+    QList<TreeManagerFunction> m_treeManagers;
     Node *m_currentNode = nullptr;
     Project *m_currentProject = nullptr;
     Internal::ProjectTreeWidget *m_focusForContextMenu = nullptr;

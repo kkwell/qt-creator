@@ -6,28 +6,25 @@
 #include "devicesupport/idevicefwd.h"
 #include "runconfiguration.h"
 
+#include <QtTaskTree/QTaskTree>
+
 #include <utils/commandline.h>
 #include <utils/environment.h>
 #include <utils/outputformatter.h>
 #include <utils/processhandle.h>
-#include <utils/processenums.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcprocess.h>
 
 #include <QHash>
-#include <QProcess> // FIXME: Remove
 #include <QVariant>
 
 #include <functional>
 #include <memory>
 
-namespace Tasking { class Group; }
-
 namespace Utils {
 class Icon;
 class MacroExpander;
 class OutputLineParser;
-class ProcessRunData;
-class Process;
 } // Utils
 
 namespace ProjectExplorer {
@@ -37,96 +34,56 @@ class Target;
 
 namespace Internal {
 class RunControlPrivate;
-class RunWorkerPrivate;
-class SimpleTargetRunnerPrivate;
+class RunWorkerConflictTest;
 } // Internal
-
-class PROJECTEXPLORER_EXPORT RunWorker : public QObject
-{
-    Q_OBJECT
-
-public:
-    explicit RunWorker(RunControl *runControl);
-    ~RunWorker() override;
-
-    RunControl *runControl() const;
-
-    void addStartDependency(RunWorker *dependency);
-    void addStopDependency(RunWorker *dependency);
-
-    void setId(const QString &id);
-
-    void recordData(const Utils::Key &channel, const QVariant &data);
-    QVariant recordedData(const Utils::Key &channel) const;
-
-    // Part of read-only interface of RunControl for convenience.
-    void appendMessage(const QString &msg, Utils::OutputFormat format, bool appendNewLine = true);
-    IDeviceConstPtr device() const;
-
-    // States
-    void initiateStart();
-    void reportStarted();
-
-    void initiateStop();
-    void reportStopped();
-
-    void reportDone();
-
-    void reportFailure(const QString &msg = QString());
-    void setSupportsReRunning(bool reRunningSupported);
-
-    static QString userMessageForProcessError(QProcess::ProcessError,
-                                              const Utils::FilePath &programName);
-
-    bool isEssential() const;
-    void setEssential(bool essential);
-
-signals:
-    void started();
-    void stopped();
-
-protected:
-    void virtual start();
-    void virtual stop();
-
-private:
-    friend class Internal::RunControlPrivate;
-    friend class Internal::RunWorkerPrivate;
-    const std::unique_ptr<Internal::RunWorkerPrivate> d;
-};
 
 class PROJECTEXPLORER_EXPORT RunWorkerFactory
 {
 public:
-    using WorkerCreator = std::function<RunWorker *(RunControl *)>;
+    using RecipeCreator = std::function<QtTaskTree::Group(RunControl *)>;
 
     RunWorkerFactory();
     ~RunWorkerFactory();
 
     static void dumpAll(); // For debugging only.
+    Utils::Id id() const { return m_id; }
 
 protected:
-    template <typename Worker>
-    void setProduct() { setProducer([](RunControl *rc) { return new Worker(rc); }); }
     void setId(Utils::Id id) { m_id = id; }
-    void setProducer(const WorkerCreator &producer);
+    void setRecipeProducer(const RecipeCreator &producer);
     void setSupportedRunConfigs(const QList<Utils::Id> &runConfigs);
+    void setExecutionType(Utils::Id executionType);
     void addSupportedRunMode(Utils::Id runMode);
     void addSupportedRunConfig(Utils::Id runConfig);
     void addSupportedDeviceType(Utils::Id deviceType);
     void addSupportForLocalRunConfigs();
-    void cloneProduct(Utils::Id exitstingStepId, Utils::Id overrideId = Utils::Id());
+    void cloneProduct(Utils::Id existingStepId);
 
 private:
     friend class RunControl;
-    bool canCreate(Utils::Id runMode, Utils::Id deviceType, const QString &runConfigId) const;
-    RunWorker *create(RunControl *runControl) const;
+    friend class Internal::RunWorkerConflictTest;
+    bool canCreate(
+        Utils::Id runMode,
+        Utils::Id deviceType,
+        Utils::Id runConfigId,
+        Utils::Id executionType) const;
+    QtTaskTree::Group createRecipe(RunControl *runControl) const;
 
-    WorkerCreator m_producer;
+    RecipeCreator m_recipeCreator;
     QList<Utils::Id> m_supportedRunModes;
     QList<Utils::Id> m_supportedRunConfigurations;
     QList<Utils::Id> m_supportedDeviceTypes;
+    Utils::Id m_executionType;
     Utils::Id m_id;
+};
+
+using Canceler = std::function<QtTaskTree::ObjectSignal<void (RunControl::*)()>()>;
+
+class ProcessSetupConfig
+{
+public:
+    bool suppressDefaultStdOutHandling = false;
+    bool setupCanceler = true;
 };
 
 /**
@@ -137,42 +94,73 @@ private:
  * RunControls are created by RunControlFactories.
  */
 
-class PROJECTEXPLORER_EXPORT RunControl : public QObject
+class PROJECTEXPLORER_EXPORT RunControl final : public QObject
 {
     Q_OBJECT
 
 public:
     explicit RunControl(Utils::Id mode);
-    ~RunControl() override;
+    ~RunControl() final;
 
-    void setTarget(Target *target);
+    QtTaskTree::Group noRecipeTask();
+    QtTaskTree::Group errorTask(const QString &message);
+
+    // The returned recipe sends RunControl::started() signal.
+    QtTaskTree::Group processRecipe(const Utils::ProcessTask &processTask);
+    template <typename Modifier>
+    QtTaskTree::Group processRecipe(const Modifier &startModifier = {},
+                                 const ProcessSetupConfig &config = {})
+    {
+        return processRecipe(processTaskWithModifier(startModifier, config));
+    }
+
+    template <typename Modifier>
+    Utils::ProcessTask processTaskWithModifier(const Modifier &startModifier,
+                                               const ProcessSetupConfig &config = {})
+    {
+        // R, V stands for: Setup[R]esult, [V]oid
+        static constexpr bool isR = isModifierInvocable<QtTaskTree::SetupResult, Modifier, Utils::Process &>();
+        static constexpr bool isV = isModifierInvocable<void, Modifier, Utils::Process &>();
+        static_assert(isR || isV,
+                      "Process modifier needs to take (Process &) as an argument and has to return void or "
+                      "SetupResult. The passed handler doesn't fulfill these requirements.");
+        if constexpr (isR) {
+            return processTask(startModifier, config);
+        } else {
+            const auto modifier = [startModifier](Utils::Process &process) {
+                startModifier(process);
+                return QtTaskTree::SetupResult::Continue;
+            };
+            return processTask(modifier, config);
+        }
+    }
+
+    Utils::ProcessTask processTask(
+        const std::function<QtTaskTree::SetupResult(Utils::Process &)> &startModifier = {},
+        const ProcessSetupConfig &config = {});
+
+    void start();
+    void reportStarted();
+
+    void setBuildConfiguration(BuildConfiguration *bc);
     void setKit(Kit *kit);
 
     void copyDataFromRunConfiguration(RunConfiguration *runConfig);
     void copyDataFromRunControl(RunControl *runControl);
-    void resetDataForAttachToCore();
 
-    void setAutoDeleteOnStop(bool autoDelete);
-
-    void setRunRecipe(const Tasking::Group &group);
+    void setRunRecipe(const QtTaskTree::Group &group);
 
     void initiateStart();
-    void initiateReStart();
     void initiateStop();
     void forceStop();
 
     bool promptToStop(bool *optionalPrompt = nullptr) const;
     void setPromptToStop(const std::function<bool(bool *)> &promptToStop);
 
-    // Note: Works only in the task tree mode
-    void setSupportsReRunning(bool reRunningSupported);
-    bool supportsReRunning() const;
-
     QString displayName() const;
     void setDisplayName(const QString &displayName);
 
     bool isRunning() const;
-    bool isStarting() const;
     bool isStopped() const;
 
     void setIcon(const Utils::Icon &icon);
@@ -183,7 +171,8 @@ public:
     IDeviceConstPtr device() const;
 
     // FIXME: Try to cut down to amount of functions.
-    Target *target() const;
+    BuildConfiguration *buildConfiguration() const;
+    Target *target() const; // FIXME: Eliminate callers and remove again.
     Project *project() const;
     Kit *kit() const;
     const Utils::MacroExpander *macroExpander() const;
@@ -201,7 +190,6 @@ public:
     Utils::Store settingsData(Utils::Id id) const;
 
     Utils::FilePath targetFilePath() const;
-    Utils::FilePath projectFilePath() const;
 
     void setupFormatter(Utils::OutputFormatter *formatter) const;
     Utils::Id runMode() const;
@@ -228,77 +216,87 @@ public:
 
     static void provideAskPassEntry(Utils::Environment &env);
 
-    RunWorker *createWorker(Utils::Id workerId);
+    QtTaskTree::Group createRecipe(Utils::Id runMode);
 
-    bool createMainWorker();
-    static bool canRun(Utils::Id runMode, Utils::Id deviceType, Utils::Id runConfigId);
+    bool createMainRecipe();
+    static bool canRun(
+        Utils::Id runMode, Utils::Id deviceType, Utils::Id runConfigId, Utils::Id executionType);
     void postMessage(const QString &msg, Utils::OutputFormat format, bool appendNewLine = true);
+
+    void requestDebugChannel();
+    bool usesDebugChannel() const;
+    QUrl debugChannel() const;
+    // FIXME: Don't use. Convert existing users to portsgatherer.
+    void setDebugChannel(const QUrl &channel);
+
+    void requestQmlChannel();
+    bool usesQmlChannel() const;
+    QUrl qmlChannel() const;
+    // FIXME: Don't use. Convert existing users to portsgatherer.
+    void setQmlChannel(const QUrl &channel);
+
+    void requestPerfChannel();
+    bool usesPerfChannel() const;
+    QUrl perfChannel() const;
+
+    void requestWorkerChannel();
+    QUrl workerChannel() const;
+
+    void setAttachPid(Utils::ProcessHandle pid);
+    Utils::ProcessHandle attachPid() const;
+
+    void showOutputPane();
+
+    Canceler canceler();
+    void handleProcessCancellation(Utils::Process *process);
+
+#ifdef WITH_TESTS
+    void setAspectDataForTest(Utils::AspectContainerData data);
+    void setDeviceForTest(const IDeviceConstPtr &device);
+    void setRunConfigIdForTest(Utils::Id id);
+#endif
 
 signals:
     void appendMessage(const QString &msg, Utils::OutputFormat format);
     void aboutToStart();
     void started();
+    void canceled();
     void stopped();
     void applicationProcessHandleChanged(QPrivateSignal);
+    void stdOutData(const QByteArray &data);
 
 private:
     void setDevice(const IDeviceConstPtr &device);
 
-    friend class RunWorker;
-    friend class Internal::RunWorkerPrivate;
+    // Just a helper
+    template <typename Result, typename Function, typename ...Args,
+             typename DecayedFunction = std::decay_t<Function>>
+    static constexpr bool isModifierInvocable()
+    {
+        // Note, that std::is_invocable_r_v doesn't check Result type properly.
+        if constexpr (std::is_invocable_r_v<Result, DecayedFunction, Args...>)
+            return std::is_same_v<Result, std::invoke_result_t<DecayedFunction, Args...>>;
+        return false;
+    }
 
     const std::unique_ptr<Internal::RunControlPrivate> d;
 };
 
-
-/**
- * A simple TargetRunner for cases where a plain ApplicationLauncher is
- * sufficient for running purposes.
- */
-
-class PROJECTEXPLORER_EXPORT SimpleTargetRunner : public RunWorker
-{
-    Q_OBJECT
-
-public:
-    explicit SimpleTargetRunner(RunControl *runControl);
-    ~SimpleTargetRunner() override;
-
-protected:
-    void setStartModifier(const std::function<void()> &startModifier);
-
-    Utils::CommandLine commandLine() const;
-    void setCommandLine(const Utils::CommandLine &commandLine);
-
-    void setEnvironment(const Utils::Environment &environment);
-    void setWorkingDirectory(const Utils::FilePath &workingDirectory);
-    void setProcessMode(Utils::ProcessMode processMode);
-    Utils::Process *process() const;
-
-    void suppressDefaultStdOutHandling();
-    void forceRunOnHost();
-    void addExtraData(const QString &key, const QVariant &value);
-
-private:
-    void start() final;
-    void stop() final;
-
-    const Utils::ProcessRunData &runnable() const = delete;
-    void setRunnable(const Utils::ProcessRunData &) = delete;
-
-    const std::unique_ptr<Internal::SimpleTargetRunnerPrivate> d;
-};
-
-class PROJECTEXPLORER_EXPORT SimpleTargetRunnerFactory : public RunWorkerFactory
+class PROJECTEXPLORER_EXPORT ProcessRunnerFactory : public RunWorkerFactory
 {
 public:
-    explicit SimpleTargetRunnerFactory(const QList<Utils::Id> &runConfig);
+    explicit ProcessRunnerFactory(const QList<Utils::Id> &runConfig);
 };
-
 
 PROJECTEXPLORER_EXPORT
 void addOutputParserFactory(const std::function<Utils::OutputLineParser *(Target *)> &);
+PROJECTEXPLORER_EXPORT
+void addOutputParserFactory(const std::function<Utils::OutputLineParser *(BuildConfiguration *)> &);
 
-PROJECTEXPLORER_EXPORT QList<Utils::OutputLineParser *> createOutputParsers(Target *target);
+PROJECTEXPLORER_EXPORT QList<Utils::OutputLineParser *> createOutputParsers(BuildConfiguration *bc);
+
+#ifdef WITH_TESTS
+namespace Internal { QObject *createRunWorkerConflictTest(); }
+#endif
 
 } // namespace ProjectExplorer

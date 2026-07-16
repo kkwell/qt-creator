@@ -14,6 +14,7 @@ add_qtc_plugin(CppEditor
     clangdiagnosticconfigsmodel.cpp clangdiagnosticconfigsmodel.h
     clangdiagnosticconfigsselectionwidget.cpp clangdiagnosticconfigsselectionwidget.h
     clangdiagnosticconfigswidget.cpp clangdiagnosticconfigswidget.h
+    compilationdb.cpp compilationdb.h
     compileroptionsbuilder.cpp compileroptionsbuilder.h
     cppautocompleter.cpp cppautocompleter.h
     cppbuiltinmodelmanagersupport.cpp cppbuiltinmodelmanagersupport.h
@@ -23,7 +24,6 @@ add_qtc_plugin(CppEditor
     cppcodemodelinspectordialog.cpp cppcodemodelinspectordialog.h
     cppcodemodelinspectordumper.cpp cppcodemodelinspectordumper.h
     cppcodemodelsettings.cpp cppcodemodelsettings.h
-    cppcodestylepreferences.cpp cppcodestylepreferences.h
     cppcodestylepreferencesfactory.cpp cppcodestylepreferencesfactory.h
     cppcodestylesettings.cpp cppcodestylesettings.h
     cppcodestylesettingspage.cpp cppcodestylesettingspage.h
@@ -33,7 +33,6 @@ add_qtc_plugin(CppEditor
     cppcompletionassistprovider.cpp cppcompletionassistprovider.h
     cppcursorinfo.h
     cppdoxygen.cpp cppdoxygen.h
-    cppeditor.qrc
     cppeditor_global.h
     cppeditortr.h
     cppeditorconstants.h
@@ -96,6 +95,7 @@ add_qtc_plugin(CppEditor
     insertionpointlocator.cpp insertionpointlocator.h
     projectinfo.cpp projectinfo.h
     projectpart.cpp projectpart.h
+    quickfixes/addmodulefrominclude.cpp quickfixes/addmodulefrominclude.h
     quickfixes/assigntolocalvariable.cpp quickfixes/assigntolocalvariable.h
     quickfixes/bringidentifierintoscope.cpp quickfixes/bringidentifierintoscope.h
     quickfixes/completeswitchstatement.cpp quickfixes/completeswitchstatement.h
@@ -109,16 +109,13 @@ add_qtc_plugin(CppEditor
     quickfixes/cppquickfix.cpp quickfixes/cppquickfix.h
     quickfixes/cppquickfixassistant.cpp quickfixes/cppquickfixassistant.h
     quickfixes/cppquickfixhelpers.h quickfixes/cppquickfixhelpers.cpp
-    quickfixes/cppquickfixprojectsettings.cpp quickfixes/cppquickfixprojectsettings.h
-    quickfixes/cppquickfixprojectsettingswidget.cpp quickfixes/cppquickfixprojectsettingswidget.h
     quickfixes/cppquickfixsettings.cpp quickfixes/cppquickfixsettings.h
-    quickfixes/cppquickfixsettingspage.cpp quickfixes/cppquickfixsettingspage.h
-    quickfixes/cppquickfixsettingswidget.cpp quickfixes/cppquickfixsettingswidget.h
     quickfixes/convertfromandtopointer.cpp quickfixes/convertfromandtopointer.h
     quickfixes/createdeclarationfromuse.cpp quickfixes/createdeclarationfromuse.h
     quickfixes/extractfunction.cpp quickfixes/extractfunction.h
     quickfixes/extractliteralasparameter.cpp quickfixes/extractliteralasparameter.h
     quickfixes/insertfunctiondefinition.cpp quickfixes/insertfunctiondefinition.h
+    quickfixes/layoutpreview.cpp quickfixes/layoutpreview.h
     quickfixes/logicaloperationquickfixes.cpp quickfixes/logicaloperationquickfixes.h
     quickfixes/moveclasstoownfile.cpp quickfixes/moveclasstoownfile.h
     quickfixes/movefunctiondefinition.cpp quickfixes/movefunctiondefinition.h
@@ -129,15 +126,12 @@ add_qtc_plugin(CppEditor
     quickfixes/rewritecontrolstatements.cpp quickfixes/rewritecontrolstatements.h
     quickfixes/splitsimpledeclaration.cpp quickfixes/splitsimpledeclaration.h
     quickfixes/synchronizememberfunctionorder.cpp quickfixes/synchronizememberfunctionorder.h
-    resourcepreviewhoverhandler.cpp resourcepreviewhoverhandler.h
     searchsymbols.cpp searchsymbols.h
     semantichighlighter.cpp semantichighlighter.h
     symbolfinder.cpp symbolfinder.h
     symbolsfindfilter.cpp symbolsfindfilter.h
     typehierarchybuilder.cpp typehierarchybuilder.h
     wrappablelineedit.cpp wrappablelineedit.h
-   EXPLICIT_MOC
-     quickfixes/cppquickfixsettingswidget.h
 )
 
 extend_qtc_plugin(CppEditor
@@ -167,4 +161,20 @@ extend_qtc_plugin(CppEditor
   EXPLICIT_MOC
     cppdoxygen_test.h
     quickfixes/cppquickfix_test.h
+)
+
+qtc_add_resources(CppEditor "images"
+  PREFIX "/cppeditor"
+  BASE "."
+  FILES
+    images/dark_qt_c.png
+    images/dark_qt_cpp.png
+    images/dark_qt_h.png
+)
+file(GLOB_RECURSE test_cases RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} testcases/*)
+qtc_add_resources(CppEditor "testcases"
+  CONDITION WITH_TESTS
+  PREFIX "/cppeditor"
+  BASE "."
+  FILES ${test_cases}
 )

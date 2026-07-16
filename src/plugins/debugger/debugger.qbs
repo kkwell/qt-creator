@@ -6,6 +6,7 @@ QtcPlugin {
     Depends { name: "Aggregation" }
     Depends { name: "CPlusPlus" }
     Depends { name: "LanguageUtils" }
+    Depends { name: "McpServerLib" }
     Depends { name: "QmlDebug" }
     Depends { name: "QmlJS" }
     Depends { name: "Utils" }
@@ -29,7 +30,6 @@ QtcPlugin {
             "breakhandler.cpp", "breakhandler.h",
             "breakpoint.cpp", "breakpoint.h",
             "commonoptionspage.cpp", "commonoptionspage.h",
-            "debugger.qrc",
             "debugger_global.h", "debuggertr.h",
             "debuggeractions.cpp", "debuggeractions.h",
             "debuggerconstants.h",
@@ -41,7 +41,6 @@ QtcPlugin {
             "debuggeritem.cpp", "debuggeritem.h",
             "debuggeritemmanager.cpp", "debuggeritemmanager.h",
             "debuggerkitaspect.cpp", "debuggerkitaspect.h",
-            "debuggermainwindow.cpp", "debuggermainwindow.h",
             "debuggerplugin.cpp",
             "debuggerprotocol.cpp", "debuggerprotocol.h",
             "debuggerrunconfigurationaspect.cpp", "debuggerrunconfigurationaspect.h",
@@ -57,10 +56,13 @@ QtcPlugin {
             "localsandexpressionswindow.cpp", "localsandexpressionswindow.h",
             "logwindow.cpp", "logwindow.h",
             "memoryagent.cpp", "memoryagent.h",
+            "mcpsupport.cpp",
             "moduleshandler.cpp", "moduleshandler.h",
             "outputcollector.cpp", "outputcollector.h",
             "peripheralregisterhandler.cpp", "peripheralregisterhandler.h",
             "procinterrupt.cpp", "procinterrupt.h",
+            "remotedebuggerconfiguration.cpp", "remotedebuggerconfiguration.h",
+            "remotedebuggerdebugsupport.cpp", "remotedebuggerdebugsupport.h",
             "registerhandler.cpp", "registerhandler.h",
             "sourceagent.cpp", "sourceagent.h",
             "sourcefileshandler.cpp", "sourcefileshandler.h",
@@ -172,28 +174,11 @@ QtcPlugin {
         files: [
             "cdbsymbolpathlisteditor.cpp",
             "cdbsymbolpathlisteditor.h",
+            "coredumputils.cpp", "coredumputils.h",
             "hostutils.cpp", "hostutils.h",
             "peutils.cpp", "peutils.h",
             "symbolpathsdialog.cpp", "symbolpathsdialog.h"
         ]
-    }
-
-    Group {
-        name: "Images"
-        prefix: "images/"
-        files: ["*.png"]
-    }
-
-    Group {
-        name: "Images/qml"
-        prefix: "images/qml/"
-        files: ["*.png"]
-    }
-
-    Group {
-        name: "Images/analyzer"
-        prefix: "analyzer/images/"
-        files: ["*.png"]
     }
 
     Group {
@@ -224,38 +209,15 @@ QtcPlugin {
         ]
     }
 
-    Group {
-        name: "Analyzer"
-        prefix: "analyzer/"
-        files: [
-            "analyzerbase.qrc",
-            "analyzerconstants.h",
-            "analyzericons.h",
-            "analyzermanager.h",
-            "analyzerrunconfigwidget.cpp",
-            "analyzerrunconfigwidget.h",
-            "analyzerutils.cpp",
-            "analyzerutils.h",
-            "detailederrorview.cpp",
-            "detailederrorview.h",
-            "diagnosticlocation.cpp",
-            "diagnosticlocation.h",
-            "startremotedialog.cpp",
-            "startremotedialog.h",
-        ]
-    }
-
-    QtcTestFiles {
-        files: [
-            "debuggerunittests.qrc",
-        ]
-    }
-
-    Group {
-        name: "Unit test resources"
+    QtcTestResources {
         prefix: "unit-tests/"
-        fileTags: []
         files: ["**/*"]
+    }
+
+    Group {
+        name: "images"
+        files: "images/*.png"
+        fileTags: "qt.core.resource_data"
     }
 
     Export {

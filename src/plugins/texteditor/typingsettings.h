@@ -5,7 +5,7 @@
 
 #include "texteditor_global.h"
 
-#include <utils/store.h>
+#include <utils/aspects.h>
 
 QT_BEGIN_NAMESPACE
 class QTextDocument;
@@ -14,7 +14,7 @@ QT_END_NAMESPACE
 
 namespace TextEditor {
 
-class TEXTEDITOR_EXPORT TypingSettings
+class TEXTEDITOR_EXPORT TypingSettingsData
 {
 public:
     // This enum must match the indexes of tabKeyBehavior widget
@@ -37,28 +37,37 @@ public:
         AfterWhitespace = 2,
     };
 
-    TypingSettings();
-
     bool tabShouldIndent(const QTextDocument *document, const QTextCursor &cursor, int *suggestedPosition) const;
 
-    Utils::Store toMap() const;
-    void fromMap(const Utils::Store &map);
+    bool m_autoIndent = true;
+    TabKeyBehavior m_tabKeyBehavior = TabNeverIndents;
+    SmartBackspaceBehavior m_smartBackspaceBehavior = BackspaceUnindents;
 
-    bool equals(const TypingSettings &ts) const;
-
-    bool m_autoIndent;
-    TabKeyBehavior m_tabKeyBehavior;
-    SmartBackspaceBehavior m_smartBackspaceBehavior;
-
-    bool m_preferSingleLineComments;
+    bool m_preferSingleLineComments = false;
     CommentPosition m_commentPosition = Automatic;
 };
 
+class TEXTEDITOR_EXPORT TypingSettings : public Utils::AspectContainer
+{
+public:
+    TypingSettings();
+
+    void apply() final;
+
+    Utils::BoolAspect autoIndent{this};
+    Utils::TypedSelectionAspect<TypingSettingsData::TabKeyBehavior> tabKeyBehavior{this};
+    Utils::BoolAspect preferSingleLineComments{this};
+    Utils::TypedSelectionAspect<TypingSettingsData::CommentPosition> commentPosition{this};
+    Utils::TypedSelectionAspect<TypingSettingsData::SmartBackspaceBehavior> smartBackspaceBehavior{this};
+
+    TypingSettingsData data() const;
+    void setData(const TypingSettingsData &data);
+};
+
 void setupTypingSettings();
-void updateGlobalTypingSettings(const TypingSettings &newTypingSettings);
 
 TEXTEDITOR_EXPORT TypingSettings &globalTypingSettings();
 
 } // namespace TextEditor
 
-Q_DECLARE_METATYPE(TextEditor::TypingSettings)
+Q_DECLARE_METATYPE(TextEditor::TypingSettingsData)

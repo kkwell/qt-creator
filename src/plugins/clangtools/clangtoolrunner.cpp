@@ -3,6 +3,7 @@
 
 #include "clangtoolrunner.h"
 
+#include "clangtoolscompilationdb.h"
 #include "clangtoolslogfilereader.h"
 #include "clangtoolstr.h"
 #include "clangtoolsutils.h"
@@ -22,42 +23,16 @@
 
 #include <QDebug>
 #include <QDir>
-#include <QFileInfo>
 #include <QLoggingCategory>
 
 static Q_LOGGING_CATEGORY(LOG, "qtc.clangtools.runner", QtWarningMsg)
 
 using namespace CppEditor;
 using namespace Utils;
-using namespace Tasking;
+using namespace QtTaskTree;
 
 namespace ClangTools {
 namespace Internal {
-
-AnalyzeUnit::AnalyzeUnit(const FileInfo &fileInfo,
-                         const FilePath &clangIncludeDir,
-                         const QString &clangVersion)
-{
-    const FilePath actualClangIncludeDir = Core::ICore::clangIncludeDirectory(
-        clangVersion, clangIncludeDir);
-    CompilerOptionsBuilder optionsBuilder(*fileInfo.projectPart,
-                                          UseSystemHeader::No,
-                                          UseTweakedHeaderPaths::Tools,
-                                          UseLanguageDefines::No,
-                                          UseBuildSystemWarnings::No,
-                                          actualClangIncludeDir);
-    file = fileInfo.file;
-    arguments = extraClangToolsPrependOptions();
-    arguments.append(
-        optionsBuilder.build(fileInfo.kind,
-                             CppCodeModelSettings(fileInfo.settings).usePrecompiledHeaders()));
-    arguments.append(extraClangToolsAppendOptions());
-}
-
-static bool isClMode(const QStringList &options)
-{
-    return options.contains("--driver-mode=cl");
-}
 
 static QStringList checksArguments(const AnalyzeUnit &unit, const AnalyzeInputData &input)
 {
@@ -67,7 +42,7 @@ static QStringList checksArguments(const AnalyzeUnit &unit, const AnalyzeInputDa
         switch (input.config.clangTidyMode()) {
         case ClangDiagnosticConfig::TidyMode::UseDefaultChecks:
             // The argument "-config={}" stops stating/evaluating the .clang-tidy file.
-            return {"-config={}", "-checks=-clang-diagnostic-*"};
+            return {"-config={}", "-checks=clang-analyzer-*,-clang-diagnostic-*"};
         case ClangDiagnosticConfig::TidyMode::UseCustomChecks:
             return {"-config=" + input.config.clangTidyChecksAsJson()};
         }
@@ -76,24 +51,6 @@ static QStringList checksArguments(const AnalyzeUnit &unit, const AnalyzeInputDa
     if (!clazyChecks.isEmpty())
         return {"-checks=" + input.config.checks(ClangToolType::Clazy)};
     return {};
-}
-
-static QStringList clangArguments(const AnalyzeUnit &unit, const AnalyzeInputData &input)
-{
-    QStringList arguments;
-    const ClangDiagnosticConfig &diagnosticConfig = input.config;
-    const QStringList &baseOptions = unit.arguments;
-    arguments << ClangDiagnosticConfigsModel::globalDiagnosticOptions()
-              << (isClMode(baseOptions) ? clangArgsForCl(diagnosticConfig.clangOptions())
-                                        : diagnosticConfig.clangOptions())
-              << baseOptions;
-    if (ProjectFile::isHeader(unit.file))
-        arguments << "-Wno-pragma-once-outside-header";
-
-    if (LOG().isDebugEnabled())
-        arguments << QLatin1String("-v");
-
-    return arguments;
 }
 
 static FilePath createOutputFilePath(const FilePath &dirPath, const FilePath &fileToAnalyze)
@@ -106,15 +63,49 @@ static FilePath createOutputFilePath(const FilePath &dirPath, const FilePath &fi
     temporaryFile.setFileTemplate(fileTemplate.path());
     if (temporaryFile.open()) {
         temporaryFile.close();
-        return FilePath::fromString(temporaryFile.fileName());
+        return temporaryFile.filePath();
     }
     return {};
 }
 
+static constexpr int s_yamlMessageLimit = 512;
+
+static QString truncatedStdErr(const Process &process)
+{
+    QString stdErr = process.cleanedStdErr();
+    if (stdErr.isEmpty())
+        return {};
+
+    // Truncate YAML issues, as the stdErr may have millions of characters.
+    if (stdErr.startsWith("YAML:") && stdErr.size() > s_yamlMessageLimit) {
+        stdErr.truncate(s_yamlMessageLimit);
+        stdErr += QString("... [%1]").arg(Tr::tr("output truncated"));
+    }
+    return stdErr;
+}
+
+static QString processDetails(const Process &process, const QString &stdErr)
+{
+    QString fullOutput = process.cleanedStdOut();
+    if (fullOutput.isEmpty()) {
+        fullOutput = stdErr;
+    } else if (!stdErr.isEmpty()) {
+        if (!fullOutput.endsWith('\n'))
+            fullOutput += '\n';
+        fullOutput += stdErr;
+    }
+    return Tr::tr("Command line: %1\nProcess Error: %2\nOutput:\n%3")
+        .arg(process.commandLine().toUserOutput())
+        .arg(process.error())
+        .arg(fullOutput);
+}
+
+
 GroupItem clangToolTask(const AnalyzeUnits &units,
                         const AnalyzeInputData &input,
                         const AnalyzeSetupHandler &setupHandler,
-                        const AnalyzeOutputHandler &outputHandler)
+                        const AnalyzeOutputHandler &outputHandler,
+                        const FilePath &compilationDbDir)
 {
     struct ClangToolStorage {
         QString name;
@@ -122,10 +113,11 @@ GroupItem clangToolTask(const AnalyzeUnits &units,
         FilePath outputFilePath;
     };
     const Storage<ClangToolStorage> storage;
-    const LoopList iterator(units);
+    const ListIterator iterator(units);
 
-    const auto mainToolArguments = [input, iterator](const ClangToolStorage &data) {
+    const auto mainToolArguments = [input, iterator, compilationDbDir](const ClangToolStorage &data) {
         QStringList result;
+        result << "-p" << compilationDbDir.nativePath();
         result << "-export-fixes=" + data.outputFilePath.nativePath();
         if (!input.overlayFilePath.isEmpty() && isVFSOverlaySupported(data.executable))
             result << "--vfsoverlay=" + input.overlayFilePath;
@@ -146,8 +138,6 @@ GroupItem clangToolTask(const AnalyzeUnits &units,
             return SetupResult::StopWithError;
         }
 
-        QTC_CHECK(!unit.arguments.contains(QLatin1String("-o")));
-        QTC_CHECK(!unit.arguments.contains(unit.file.nativePath()));
         QTC_ASSERT(unit.file.exists(), return SetupResult::StopWithError);
         data->outputFilePath = createOutputFilePath(input.outputDirPath, unit.file);
         QTC_ASSERT(!data->outputFilePath.isEmpty(), return SetupResult::StopWithError);
@@ -163,8 +153,7 @@ GroupItem clangToolTask(const AnalyzeUnits &units,
 
         const ClangToolStorage &data = *storage;
         const CommandLine commandLine{data.executable, {checksArguments(unit, input),
-                                                        mainToolArguments(data), "--",
-                                                        clangArguments(unit, input)}};
+                                                        mainToolArguments(data)}};
         qCDebug(LOG).noquote() << "Starting" << commandLine.toUserOutput();
         process.setCommand(commandLine);
     };
@@ -175,18 +164,15 @@ GroupItem clangToolTask(const AnalyzeUnits &units,
         if (!outputHandler)
             return;
         const AnalyzeUnit &unit = *iterator;
+        const QString stdErr = truncatedStdErr(process);
         if (result == DoneWith::Success) {
-            const QString stdErr = process.cleanedStdErr();
             if (stdErr.isEmpty())
                 return;
             outputHandler({true, unit.file, {}, {}, input.tool,
                            Tr::tr("%1 produced stderr output:").arg(storage->name), stdErr});
             return;
         }
-        const QString details = Tr::tr("Command line: %1\nProcess Error: %2\nOutput:\n%3")
-                                    .arg(process.commandLine().toUserOutput())
-                                    .arg(process.error())
-                                    .arg(process.cleanedStdOut());
+        const QString details = processDetails(process, stdErr);
         const ClangToolStorage &data = *storage;
         QString message;
         if (process.result() == ProcessResult::StartFailed)
@@ -199,16 +185,16 @@ GroupItem clangToolTask(const AnalyzeUnits &units,
             {false, unit.file, data.outputFilePath, {}, input.tool, message, details});
     };
 
-    const auto onReadSetup = [storage, input](Async<expected_str<Diagnostics>> &data) {
+    const auto onReadSetup = [storage, input](Async<Result<Diagnostics>> &data) {
         data.setConcurrentCallData(&parseDiagnostics,
                                    storage->outputFilePath,
                                    input.diagnosticsFilter);
     };
     const auto onReadDone = [storage, input, outputHandler, iterator](
-                                const Async<expected_str<Diagnostics>> &data, DoneWith result) {
+                                const Async<Result<Diagnostics>> &data, DoneWith result) {
         if (!outputHandler)
             return;
-        const expected_str<Diagnostics> diagnosticsResult = data.result();
+        const Result<Diagnostics> diagnosticsResult = data.result();
         const bool ok = result == DoneWith::Success && diagnosticsResult.has_value();
         Diagnostics diagnostics;
         QString error;
@@ -224,16 +210,15 @@ GroupItem clangToolTask(const AnalyzeUnits &units,
                        error});
     };
 
-    return For {
-        iterator,
-        parallelLimit(qMax(1, input.runSettings.parallelJobs())),
+    return For (iterator) >> Do {
+        ParallelLimit(qMax(1, input.runSettings.parallelJobs)),
         finishAllAndSuccess,
         Group {
             storage,
             onGroupSetup(onSetup),
             sequential,
             ProcessTask(onProcessSetup, onProcessDone),
-            AsyncTask<expected_str<Diagnostics>>(onReadSetup, onReadDone)
+            AsyncTask<Result<Diagnostics>>(onReadSetup, onReadDone)
         }
     };
 }

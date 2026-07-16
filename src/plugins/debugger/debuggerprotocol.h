@@ -4,12 +4,13 @@
 #pragma once
 
 #include <QByteArray>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QList>
 #include <QString>
-#include <QJsonValue>
-#include <QJsonObject>
+#include <QStringDecoder>
 #include <QVarLengthArray>
-#include <QVector>
 
 #include <utils/filepath.h>
 #include <utils/textutils.h>
@@ -17,6 +18,9 @@
 namespace Utils { class ProcessHandle; }
 
 namespace Debugger::Internal {
+
+QString fromHex(const QString &str);
+QString toHex(const QString &str);
 
 class DebuggerResponse;
 
@@ -33,16 +37,38 @@ public:
     DebuggerCommand(const QString &f, int fl, const Callback &cb) : function(f), callback(cb), flags(fl) {}
     DebuggerCommand(const QString &f, const Callback &cb) : function(f), callback(cb) {}
 
-    void arg(const char *value);
-    void arg(const char *name, bool value);
-    void arg(const char *name, int value);
-    void arg(const char *name, qlonglong value);
-    void arg(const char *name, qulonglong value);
-    void arg(const char *name, const QString &value);
-    void arg(const char *name, const char *value);
-    void arg(const char *name, const QList<int> &list);
-    void arg(const char *name, const QStringList &list); // Note: Hex-encodes.
-    void arg(const char *name, const QJsonValue &value);
+    template <typename Value>
+    void arg(const char *name, const Value &value)
+    {
+        if constexpr (std::is_same_v<Value, QList<int>>) {
+            QJsonArray numbers;
+            for (int item : value)
+                numbers.append(item);
+            addToJsonObject(name, numbers);
+        } else if constexpr (std::is_same_v<Value, QStringList>) {
+            QJsonArray arr;
+            for (const QString &item : value)
+                arr.append(toHex(item));
+            addToJsonObject(name, arr);
+        } else if constexpr (std::is_same_v<Value, QChar>) {
+            addToJsonObject(name, QString(value));
+        } else if constexpr (std::is_same_v<Value, qulonglong>) {
+            // gdb and lldb will correctly cast the value back to unsigned if needed,
+            // so this is no problem.
+            addToJsonObject(name, qint64(value));
+        } else {
+            addToJsonObject(name, value);
+        }
+    }
+
+    template<typename Value>
+    void addToJsonObject(const char *name, const Value &value)
+    {
+        QTC_ASSERT(args.isObject() || args.isNull(), return);
+        QJsonObject obj = args.toObject();
+        obj.insert(QLatin1String(name), value);
+        args = obj;
+    }
 
     QString argsToPython() const;
     QString argsToString() const;
@@ -80,9 +106,6 @@ public:
     Callback callback;
     uint postTime = 0; // msecsSinceStartOfDay
     int flags = 0;
-
-private:
-    void argHelper(const char *name, const QByteArray &value);
 };
 
 class DebuggerCommandSequence
@@ -105,7 +128,7 @@ public:
 class DebuggerOutputParser
 {
 public:
-    explicit DebuggerOutputParser(const QString &output);
+    explicit DebuggerOutputParser(const QString &output, QStringDecoder &decoder);
 
     using Buffer = QVarLengthArray<char, 30>;
 
@@ -120,7 +143,6 @@ public:
     int readInt();
     QChar readChar();
     QString readCString();
-    void readCStringData(Buffer &buffer);
 
     QStringView readString(const std::function<bool(char)> &isValidChar);
 
@@ -133,6 +155,7 @@ public:
 private:
     const QChar *from = nullptr;
     const QChar *to = nullptr;
+    QStringDecoder &decoder;
 };
 
 class GdbMi
@@ -143,7 +166,7 @@ public:
     QString m_name;
     QString m_data;
 
-    using Children = QVector<GdbMi>;
+    using Children = QList<GdbMi>;
     enum Type { Invalid, Const, Tuple, List };
     Type m_type = Invalid;
 
@@ -169,8 +192,8 @@ public:
     Utils::ProcessHandle toProcessHandle() const;
     int toInt() const { return m_data.toInt(); }
     qint64 toLongLong() const { return m_data.toLongLong(); }
-    void fromString(const QString &str);
-    void fromStringMultiple(const QString &str);
+    void fromString(const QString &str, QStringDecoder &decoder);
+    void fromStringMultiple(const QString &str, QStringDecoder &decoder);
 
     static QString escapeCString(const QString &ba);
     void parseResultOrValue(DebuggerOutputParser &state);
@@ -184,10 +207,6 @@ private:
     Children m_children;
 };
 
-QString fromHex(const QString &str);
-QString toHex(const QString &str);
-
-
 enum ResultClass
 {
     // "done" | "running" | "connected" | "error" | "exit"
@@ -195,7 +214,7 @@ enum ResultClass
     ResultDone,
     ResultRunning,
     ResultConnected,
-    ResultError,
+    ResultFail,
     ResultExit
 };
 
@@ -238,7 +257,7 @@ public:
     };
 
     DebuggerEncoding() = default;
-    explicit DebuggerEncoding(const QString &data);
+    explicit DebuggerEncoding(QStringView data);
     QString toString() const;
 
     EncodingType type = Unencoded;
@@ -247,7 +266,7 @@ public:
 };
 
 // Decode string data as returned by the dumper helpers.
-QString decodeData(const QString &baIn, const QString &encoding);
+QString decodeData(QStringView baIn, const QString &encoding);
 
 
 // These enum values correspond to possible value display format requests,
@@ -302,6 +321,18 @@ enum DisplayFormat
     HexFloatFormat              = 29, // Frontend internal only
     NormalizedTwoFloatFormat    = 30, // Frontend internal only
 };
+
+int formatToIntegerBase(int format);
+
+QString reformatSignedInteger(qint64 value, int format);
+QString reformatUnsignedInteger(quint64 value, int format);
+QString reformatInteger(quint64 value, int format, int size, bool isSigned);
+QString reformatCharacter(int code, int size, bool isSigned);
+QString reformatCharacterWithFormat(int code, int size, bool isSigned, int format);
+
+#if defined(__SIZEOF_INT128__)
+QString reformatUnsignedInteger128(unsigned __int128 value, int format);
+#endif
 
 
 // These values are passed from the dumper to the frontend,

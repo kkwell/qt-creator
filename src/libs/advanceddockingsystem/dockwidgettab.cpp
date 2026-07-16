@@ -324,6 +324,7 @@ DockWidgetTab::DockWidgetTab(DockWidget *dockWidget, QWidget *parent)
     , d(new DockWidgetTabPrivate(this))
 {
     setAttribute(Qt::WA_NoMousePropagation, true);
+    setObjectName(dockWidget->objectName());
     d->m_dockWidget = dockWidget;
     d->createLayout();
     setFocusPolicy(Qt::NoFocus);
@@ -461,6 +462,9 @@ void DockWidgetTab::mouseMoveEvent(QMouseEvent *event)
 
 void DockWidgetTab::contextMenuEvent(QContextMenuEvent *event)
 {
+    if (DockManager::testConfigFlag(DockManager::HideContextMenuDockWidgetTab))
+        return;
+
     event->accept();
     if (d->isDraggingState(DraggingFloatingWidget))
         return;

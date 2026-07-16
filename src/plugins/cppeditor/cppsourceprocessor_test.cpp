@@ -10,15 +10,11 @@
 #include "cpptoolstestcase.h"
 #include "editordocumenthandle.h"
 
-#include <coreplugin/testdatadir.h>
 #include <texteditor/texteditor.h>
 
 #include <cplusplus/CppDocument.h>
-#include <utils/fileutils.h>
 
-#include <QFile>
-#include <QFileInfo>
-#include <QtTest>
+#include <QTest>
 
 using namespace CPlusPlus;
 using namespace ProjectExplorer;
@@ -26,7 +22,7 @@ using namespace Utils;
 
 using Include = Document::Include;
 using CppEditor::Tests::TestCase;
-using CppEditor::Tests::Internal::TestIncludePaths;
+using namespace CppEditor::Tests::Internal;
 
 namespace CppEditor::Internal {
 
@@ -170,20 +166,18 @@ static bool isMacroDefinedInDocument(const QByteArray &macroName, const Document
     return false;
 }
 
-static inline QString _(const QByteArray &ba) { return QString::fromLatin1(ba, ba.size()); }
-
 void SourceProcessorTest::testIncludeNext()
 {
-    const Core::Tests::TestDataDir data(
-        _(SRCDIR "/../../../tests/auto/cplusplus/preprocessor/data/include_next-data/"));
-    const FilePath mainFilePath = data.filePath(QLatin1String("main.cpp"));
-    const QString customHeaderPath = data.directory(QLatin1String("customIncludePath"));
-    const QString systemHeaderPath = data.directory(QLatin1String("systemIncludePath"));
+    FilePath data = SRCDIR "/../../../tests/auto/cplusplus/preprocessor/data/include_next-data";
+    data = data.canonicalPath();
+    QVERIFY(data.isReadableDir());
+    const FilePath mainFilePath = data / "main.cpp";
+    const HeaderPath customHeaderPath(data / "customIncludePath", HeaderPathType::User);
+    const HeaderPath systemHeaderPath(data / "systemIncludePath", HeaderPathType::User);
 
     CppSourceProcessor::DocumentCallback documentCallback = [](const Document::Ptr &){};
     CppSourceProcessor sourceProcessor(Snapshot(), documentCallback);
-    sourceProcessor.setHeaderPaths(ProjectExplorer::toUserHeaderPaths(
-                                       QStringList{customHeaderPath, systemHeaderPath}));
+    sourceProcessor.setHeaderPaths({customHeaderPath, systemHeaderPath});
 
     sourceProcessor.run(mainFilePath);
     const Snapshot snapshot = sourceProcessor.snapshot();

@@ -3,11 +3,14 @@
 
 #include "eblinkgdbserverprovider.h"
 
+#include "gdbserverprovider.h"
+
 #include <baremetal/baremetalconstants.h>
 #include <baremetal/baremetaltr.h>
 #include <baremetal/debugserverprovidermanager.h>
 
 #include <utils/fileutils.h>
+#include <utils/guiutils.h>
 #include <utils/pathchooser.h>
 #include <utils/qtcassert.h>
 #include <utils/variablechooser.h>
@@ -79,7 +82,6 @@ public:
 
     bool operator==(const IDebugServerProvider &other) const final;
 
-    QString channelString() const final;
     Utils::CommandLine command() const final;
 
     QSet<StartupMode> supportedStartupModes() const final;
@@ -91,7 +93,6 @@ private:
     static QString defaultInitCommands();
     static QString defaultResetCommands();
 
-    Utils::FilePath m_executableFile = "eblink"; // server execute filename
     int  m_verboseLevel = 0;                // verbose <0..7>  Specify generally verbose logging
     InterfaceType m_interfaceType = SWD;    // -I stlink ;swd(default) jtag
     Utils::FilePath m_deviceScript = "stm32-auto.script";  // -D <script> ;Select the device script <>.script
@@ -112,6 +113,7 @@ private:
 EBlinkGdbServerProvider::EBlinkGdbServerProvider()
     : GdbServerProvider(Constants::GDBSERVER_EBLINK_PROVIDER_ID)
 {
+    m_executableFile = "eblink"; // server execute filename
     setInitCommands(defaultInitCommands());
     setResetCommands(defaultResetCommands());
     setChannel("127.0.0.1", 2331);
@@ -135,18 +137,7 @@ QString EBlinkGdbServerProvider::defaultResetCommands()
 QString EBlinkGdbServerProvider::scriptFileWoExt() const
 {
     // Server starts only without extension in scriptname
-    return m_deviceScript.absolutePath().pathAppended(m_deviceScript.baseName()).toString();
-}
-
-QString EBlinkGdbServerProvider::channelString() const
-{
-    switch (startupMode()) {
-    case StartupOnNetwork:
-        // Just return as "host:port" form.
-        return GdbServerProvider::channelString();
-    default:
-        return {};
-    }
+    return m_deviceScript.absolutePath().pathAppended(m_deviceScript.baseName()).path();
 }
 
 CommandLine EBlinkGdbServerProvider::command() const
@@ -267,17 +258,7 @@ bool EBlinkGdbServerProvider::operator==(const IDebugServerProvider &other) cons
             && m_gdbNotUseCache == p->m_gdbNotUseCache;
 }
 
-// EBlinkGdbServerProviderFactory
-
-EBlinkGdbServerProviderFactory::EBlinkGdbServerProviderFactory()
-{
-    setId(Constants::GDBSERVER_EBLINK_PROVIDER_ID);
-    setDisplayName(Tr::tr("EBlink"));
-    setCreator([] { return new EBlinkGdbServerProvider; });
-}
-
 // EBlinkGdbServerProviderConfigWidget
-
 
 EBlinkGdbServerProviderConfigWidget::EBlinkGdbServerProviderConfigWidget(
         EBlinkGdbServerProvider *p)
@@ -401,7 +382,6 @@ void EBlinkGdbServerProviderConfigWidget::setFromProvider()
     m_resetCommandsTextEdit->setPlainText(p->resetCommands());
 }
 
-
 void EBlinkGdbServerProviderConfigWidget::apply()
 {
     const auto p = static_cast<EBlinkGdbServerProvider *>(m_provider);
@@ -426,6 +406,24 @@ void EBlinkGdbServerProviderConfigWidget::discard()
 {
     setFromProvider();
     GdbServerProviderConfigWidget::discard();
+}
+
+// EBlinkGdbServerProviderFactory
+
+class EBlinkGdbServerProviderFactory final : public IDebugServerProviderFactory
+{
+public:
+    EBlinkGdbServerProviderFactory()
+    {
+        setId(Constants::GDBSERVER_EBLINK_PROVIDER_ID);
+        setDisplayName(Tr::tr("EBlink"));
+        setCreator([] { return new EBlinkGdbServerProvider; });
+    }
+};
+
+void setupEBlinkGdbServerProvider()
+{
+    static EBlinkGdbServerProviderFactory theEBlinkGdbServerProviderFactory;
 }
 
 } // BareMetal::Internal

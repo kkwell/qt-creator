@@ -12,7 +12,7 @@
 #include <cppeditor/cppeditorconstants.h>
 #include <cppeditor/cpptoolsreuse.h>
 
-#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/environmentkitaspect.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projecttree.h>
@@ -58,14 +58,13 @@ QString QtWizard::profileSuffix()
     return preferredSuffix(QLatin1String(Utils::Constants::PROFILE_MIMETYPE));
 }
 
-bool QtWizard::postGenerateFiles(const QWizard *w, const Core::GeneratedFiles &l, QString *errorMessage) const
+Result<> QtWizard::postGenerateFiles(const QWizard *w, const Core::GeneratedFiles &l) const
 {
-    return QtWizard::qt4ProjectPostGenerateFiles(w, l, errorMessage);
+    return QtWizard::qt4ProjectPostGenerateFiles(w, l);
 }
 
-bool QtWizard::qt4ProjectPostGenerateFiles(const QWizard *w,
-                                           const Core::GeneratedFiles &generatedFiles,
-                                           QString *errorMessage)
+Result<> QtWizard::qt4ProjectPostGenerateFiles(const QWizard *w,
+                                               const Core::GeneratedFiles &generatedFiles)
 {
     const auto *dialog = qobject_cast<const BaseQmakeProjectWizardDialog *>(w);
 
@@ -77,12 +76,12 @@ bool QtWizard::qt4ProjectPostGenerateFiles(const QWizard *w,
         }
 
     // Post-Generate: Open the projects/editors
-    return ProjectExplorer::CustomProjectWizard::postGenerateOpen(generatedFiles ,errorMessage);
+    return ProjectExplorer::CustomProjectWizard::postGenerateOpen(generatedFiles);
 }
 
 QString QtWizard::templateDir()
 {
-    return Core::ICore::resourcePath("templates/qt4project").toString();
+    return Core::ICore::resourcePath("templates/qt4project").toUrlishString();
 }
 
 bool QtWizard::lowerCaseFiles()
@@ -97,10 +96,9 @@ bool QtWizard::lowerCaseFiles()
 // ------------ CustomQmakeProjectWizard
 CustomQmakeProjectWizard::CustomQmakeProjectWizard() = default;
 
-Core::BaseFileWizard *CustomQmakeProjectWizard::create(QWidget *parent,
-                                          const Core::WizardDialogParameters &parameters) const
+Core::BaseFileWizard *CustomQmakeProjectWizard::create(const Core::WizardDialogParameters &parameters) const
 {
-    auto *wizard = new BaseQmakeProjectWizardDialog(this, parent, parameters);
+    auto *wizard = new BaseQmakeProjectWizardDialog(this, parameters);
 
     if (!parameters.extraValues().contains(QLatin1String(ProjectExplorer::Constants::PROJECT_KIT_IDS)))
         wizard->addTargetSetupPage(targetPageId);
@@ -109,40 +107,22 @@ Core::BaseFileWizard *CustomQmakeProjectWizard::create(QWidget *parent,
     return wizard;
 }
 
-bool CustomQmakeProjectWizard::postGenerateFiles(const QWizard *w, const Core::GeneratedFiles &l,
-                                                 QString *errorMessage) const
+Result<> CustomQmakeProjectWizard::postGenerateFiles(const QWizard *w, const Core::GeneratedFiles &l) const
 {
-    return QtWizard::qt4ProjectPostGenerateFiles(w, l, errorMessage);
+    return QtWizard::qt4ProjectPostGenerateFiles(w, l);
 }
 
 // ----------------- BaseQmakeProjectWizardDialog
 BaseQmakeProjectWizardDialog::BaseQmakeProjectWizardDialog(
     const Core::BaseFileWizardFactory *factory,
-    QWidget *parent,
     const Core::WizardDialogParameters &parameters)
-    : ProjectExplorer::BaseProjectWizardDialog(factory, parent, parameters)
+    : ProjectExplorer::BaseProjectWizardDialog(factory, parameters)
 {
     m_profileIds = Utils::transform(parameters.extraValues()
                                         .value(ProjectExplorer::Constants::PROJECT_KIT_IDS)
                                         .toStringList(),
                                     &Utils::Id::fromString);
 
-    connect(this, &BaseProjectWizardDialog::projectParametersChanged,
-            this, &BaseQmakeProjectWizardDialog::generateProfileName);
-}
-
-BaseQmakeProjectWizardDialog::BaseQmakeProjectWizardDialog(
-    const Core::BaseFileWizardFactory *factory,
-    Utils::ProjectIntroPage *introPage,
-    int introId,
-    QWidget *parent,
-    const Core::WizardDialogParameters &parameters)
-    : ProjectExplorer::BaseProjectWizardDialog(factory, introPage, introId, parent, parameters)
-{
-    m_profileIds = Utils::transform(parameters.extraValues()
-                                        .value(ProjectExplorer::Constants::PROJECT_KIT_IDS)
-                                        .toStringList(),
-                                    &Utils::Id::fromString);
     connect(this, &BaseProjectWizardDialog::projectParametersChanged,
             this, &BaseQmakeProjectWizardDialog::generateProfileName);
 }
@@ -189,11 +169,10 @@ bool BaseQmakeProjectWizardDialog::writeUserFile(const Utils::FilePath &proFile)
         return false;
 
     QmakeProject *pro = new QmakeProject(proFile);
-    bool success = m_targetSetupPage->setupProject(pro);
-    if (success)
-        pro->saveSettings();
+    m_targetSetupPage->setupProject(pro);
+    pro->saveSettings();
     delete pro;
-    return success;
+    return true;
 }
 
 QList<Utils::Id> BaseQmakeProjectWizardDialog::selectedKits() const
@@ -211,7 +190,7 @@ void BaseQmakeProjectWizardDialog::generateProfileName(const QString &name,
 
     const Utils::FilePath proFile = path / name / (name + ".pro");
 
-    m_targetSetupPage->setProjectPath(proFile);
+    m_targetSetupPage->setProjectAndPath(nullptr, proFile);
 }
 
 } // Internal

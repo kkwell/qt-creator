@@ -8,10 +8,11 @@
 #include <utils/fileutils.h>
 #include <utils/qtcassert.h>
 
-#include <QDebug>
 #include <QDir>
 #include <QImageReader>
 #include <QRegularExpression>
+
+using namespace Utils;
 
 namespace QmlProjectManager {
 
@@ -40,13 +41,15 @@ Utils::FileSystemWatcher *FileFilterItem::dirWatcher()
         m_dirWatcher->setObjectName(QLatin1String("FileFilterBaseItemWatcher"));
         connect(m_dirWatcher, &Utils::FileSystemWatcher::directoryChanged,
                 this, &FileFilterItem::updateFileList);
+        connect(m_dirWatcher, &Utils::FileSystemWatcher::fileChanged,
+                [this](const FilePath &path) { emit fileModified(path.toFSPathString()); });
     }
     return m_dirWatcher;
 }
 
-QStringList FileFilterItem::watchedDirectories() const
+FilePaths FileFilterItem::watchedDirectories() const
 {
-    return m_dirWatcher ? m_dirWatcher->directories() : QStringList();
+    return m_dirWatcher ? m_dirWatcher->directories() : FilePaths();
 }
 
 QString FileFilterItem::directory() const
@@ -169,8 +172,8 @@ bool FileFilterItem::matchesFile(const QString &filePath) const
         return false;
 
     const QDir fileDir = QFileInfo(filePath).absoluteDir();
-    for (const QString &watchedDirectory : watchedDirectories()) {
-        if (QDir(watchedDirectory) == fileDir)
+    for (const FilePath &watchedDirectory : watchedDirectories()) {
+        if (QDir(watchedDirectory.toFSPathString()) == fileDir)
             return true;
     }
 
@@ -203,6 +206,31 @@ void FileFilterItem::updateFileList()
 #endif
 }
 
+void FileFilterItem::watchFiles(QSet<QString> filters, const QSet<QString> &add, const QSet<QString> &remove)
+{
+    const QSet<QString> mFilterSet = QSet<QString>(m_filter.begin(), m_filter.end());
+    if (!filters.intersects(mFilterSet))
+        return;
+
+    filters = Utils::transform<QSet<QString>>(filters, [](QString filter) {
+        if (filter.startsWith("*."))
+            filter = filter.mid(2);
+        return filter;
+    });
+
+    for (const auto& fileString : add) {
+        Utils::FilePath filePath = Utils::FilePath::fromString(fileString);
+        bool hasName = filters.contains(filePath.fileName()) || filters.contains(filePath.suffix());
+        if (hasName && !dirWatcher()->watchesFile(filePath))
+            dirWatcher()->addFile(filePath, Utils::FileSystemWatcher::WatchModifiedDate);
+    }
+    for (const auto& fileString : remove) {
+        Utils::FilePath filePath = Utils::FilePath::fromString(fileString);
+        if (filters.contains(filePath.fileName()) || filters.contains(filePath.suffix()))
+            dirWatcher()->removeFile(filePath);
+    }
+}
+
 void FileFilterItem::updateFileListNow()
 {
     if (m_updateFileListTimer.isActive())
@@ -212,7 +240,7 @@ void FileFilterItem::updateFileListNow()
     if (projectDir.isEmpty())
         return;
 
-    QSet<QString> dirsToBeWatched;
+    QSet<FilePath> dirsToBeWatched;
     QSet<QString> newFiles;
     for (const QString &explicitPath : std::as_const(m_explicitFiles))
         newFiles << absolutePath(explicitPath);
@@ -228,14 +256,16 @@ void FileFilterItem::updateFileListNow()
         addedFiles.subtract(unchanged);
         removedFiles.subtract(unchanged);
 
+        watchFiles({"qmldir"}, addedFiles, removedFiles);
+
         m_files = newFiles;
         emit filesChanged(addedFiles, removedFiles);
     }
 
     // update watched directories
-    const QSet<QString> oldDirs = Utils::toSet(watchedDirectories());
-    const QSet<QString> unwatchDirs = oldDirs - dirsToBeWatched;
-    const QSet<QString> watchDirs = dirsToBeWatched - oldDirs;
+    const QSet<FilePath> oldDirs = Utils::toSet(watchedDirectories());
+    const QSet<FilePath> unwatchDirs = oldDirs - dirsToBeWatched;
+    const QSet<FilePath> watchDirs = dirsToBeWatched - oldDirs;
 
     if (!unwatchDirs.isEmpty()) {
         QTC_ASSERT(m_dirWatcher, return);
@@ -260,19 +290,32 @@ bool FileFilterItem::fileMatches(const QString &fileName) const
     return false;
 }
 
-QSet<QString> FileFilterItem::filesInSubTree(const QDir &rootDir, const QDir &dir, QSet<QString> *parsedDirs)
+bool FileFilterItem::ignoreDirectory(const QFileInfo &file) const
 {
+    static const QSet<QString> blackList = {
+        "CMakeCache.txt", "build.ninja", "ignore-in-qds", "pyvenv.cfg"
+    };
+    return blackList.contains(file.fileName());
+}
+
+QSet<QString> FileFilterItem::filesInSubTree(const QDir &rootDir, const QDir &dir, QSet<FilePath> *parsedDirs)
+{
+    QFileInfo dirInfo(dir.absolutePath());
+    if (dirInfo.isHidden())
+        return {};
+
     QSet<QString> fileSet;
-
-    if (parsedDirs)
-        parsedDirs->insert(dir.absolutePath());
-
     for (const QFileInfo &file : dir.entryInfoList(QDir::Files)) {
-        const QString fileName = file.fileName();
+        if (ignoreDirectory(file))
+            return {};
 
+        const QString fileName = file.fileName();
         if (fileMatches(fileName))
             fileSet.insert(file.absoluteFilePath());
     }
+
+    if (parsedDirs)
+        parsedDirs->insert(FilePath::fromString(dir.absolutePath()));
 
     if (recursive()) {
         for (const QFileInfo &subDir : dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {

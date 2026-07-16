@@ -3,6 +3,7 @@
 
 #include "corejsextensions.h"
 
+#include "icore.h"
 #include "messagemanager.h"
 
 #include <utils/appinfo.h>
@@ -10,10 +11,10 @@
 #include <utils/mimeutils.h>
 #include <utils/qtcassert.h>
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
 #include <QLibraryInfo>
-#include <QTemporaryFile>
 #include <QVariant>
 #include <QVersionNumber>
 
@@ -34,6 +35,11 @@ QString UtilsJsExtension::qtCreatorVersion() const
 QString UtilsJsExtension::qtCreatorIdeVersion() const
 {
     return QCoreApplication::applicationVersion();
+}
+
+QString UtilsJsExtension::qtCreatorSettingsPath() const
+{
+    return Core::ICore::userResourcePath().toUrlishString();
 }
 
 QString UtilsJsExtension::toNativeSeparators(const QString &in) const
@@ -92,7 +98,7 @@ QString UtilsJsExtension::relativeFilePath(const QString &path, const QString &b
 {
     const FilePath basePath = FilePath::fromString(base).cleanPath();
     const FilePath filePath = FilePath::fromString(path).cleanPath();
-    return FilePath::calcRelativePath(filePath.toFSPathString(), basePath.toFSPathString());
+    return filePath.relativePathFromDir(basePath);
 }
 
 bool UtilsJsExtension::exists(const QString &in) const
@@ -120,7 +126,7 @@ QString UtilsJsExtension::preferredSuffix(const QString &mimetype) const
 
 QString UtilsJsExtension::fileName(const QString &path, const QString &extension) const
 {
-    return Utils::FilePath::fromStringWithExtension(path, extension).toString();
+    return Utils::FilePath::fromStringWithExtension(path, extension).toUrlishString();
 }
 
 QString UtilsJsExtension::mktemp(const QString &pattern) const
@@ -141,20 +147,25 @@ QString UtilsJsExtension::asciify(const QString &input) const
     return Utils::asciify(input);
 }
 
+QString UtilsJsExtension::fileSystemFriendly(const QString &input) const
+{
+    return FileUtils::fileSystemFriendlyName(input);
+}
+
 QString UtilsJsExtension::qtQuickVersion(const QString &filePath) const
 {
-    QDirIterator dirIt(Utils::FilePath::fromString(filePath).parentDir().path(), {"*.qml"},
+    QDirIterator dirIt(FilePath::fromString(filePath).parentDir().path(), {"*.qml"},
                        QDir::Files, QDirIterator::Subdirectories);
     while (dirIt.hasNext()) {
-        Utils::FileReader reader;
-        if (!reader.fetch(Utils::FilePath::fromString(dirIt.next())))
+        const Result<QByteArray> result = FilePath::fromString(dirIt.next()).fileContents();
+        if (!result)
             continue;
-        const QString data = QString::fromUtf8(reader.data());
+        const QString data = QString::fromUtf8(*result);
         static const QString importString("import QtQuick");
         const int importIndex = data.indexOf(importString);
         if (importIndex == -1)
             continue;
-        const int versionIndex = importIndex + importString.length();
+        const int versionIndex = importIndex + importString.size();
         const int newLineIndex = data.indexOf('\n', versionIndex);
         if (newLineIndex == -1)
             continue;

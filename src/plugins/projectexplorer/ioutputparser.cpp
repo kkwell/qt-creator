@@ -60,6 +60,7 @@ public:
     QList<TaskInfo> scheduledTasks;
     Task currentTask;
     LinkSpecs linkSpecs;
+    QString origin;
     int lineCount = 0;
     bool targetLinkFixed = false;
 };
@@ -76,28 +77,35 @@ const QList<OutputTaskParser::TaskInfo> OutputTaskParser::taskInfo() const
 void OutputTaskParser::scheduleTask(const Task &task, int outputLines, int skippedLines)
 {
     TaskInfo ts(task, outputLines, skippedLines);
-    if (ts.task.type == Task::Error && demoteErrorsToWarnings())
-        ts.task.type = Task::Warning;
+    if (ts.task.isError() && demoteErrorsToWarnings())
+        ts.task.setType(Task::Warning);
     d->scheduledTasks << ts;
     QTC_CHECK(d->scheduledTasks.size() <= 2);
 }
 
 void OutputTaskParser::setDetailsFormat(Task &task, const LinkSpecs &linkSpecs)
 {
-    if (task.details.isEmpty())
+    task.setFormats({});
+    addDetailsFormat(task, linkSpecs);
+}
+
+void OutputTaskParser::addDetailsFormat(Task &task, const LinkSpecs &linkSpecs)
+{
+    if (!task.hasDetails())
         return;
 
-    Utils::FormattedText monospacedText(task.details.join('\n'));
+    Utils::FormattedText monospacedText(task.details().join('\n'));
     monospacedText.format.setFont(TextEditor::TextEditorSettings::fontSettings().font());
     monospacedText.format.setFontStyleHint(QFont::Monospace);
-    const QList<Utils::FormattedText> linkifiedText =
-            Utils::OutputFormatter::linkifiedText({monospacedText}, linkSpecs);
-    task.formats.clear();
-    int offset = task.summary.length() + 1;
+    const QList<Utils::FormattedText> linkifiedText
+        = Utils::OutputFormatter::linkifiedText({monospacedText}, linkSpecs);
+    QList<QTextLayout::FormatRange> formats;
+    int offset = task.summary().size() + 1;
     for (const Utils::FormattedText &ft : linkifiedText) {
-        task.formats << QTextLayout::FormatRange{offset, int(ft.text.length()), ft.format};
-        offset += ft.text.length();
+        formats << QTextLayout::FormatRange{offset, int(ft.text.size()), ft.format};
+        offset += ft.text.size();
     }
+    task.setFormats(task.formats() + formats);
 }
 
 void OutputTaskParser::fixTargetLink()
@@ -110,8 +118,13 @@ void OutputTaskParser::runPostPrintActions(QPlainTextEdit *edit)
     int offset = 0;
     if (const auto ow = qobject_cast<Core::OutputWindow *>(edit)) {
         Utils::reverseForeach(taskInfo(), [ow, &offset](const TaskInfo &ti) {
-            ow->registerPositionOf(ti.task.taskId, ti.linkedLines, ti.skippedLines, offset);
-                offset += ti.linkedLines;
+            ow->registerPositionOf(
+                ti.task.id(),
+                ti.linkedLines,
+                ti.skippedLines,
+                offset,
+                Core::OutputWindow::TaskSource::Parsed);
+            offset += ti.linkedLines;
         });
     }
 
@@ -134,7 +147,8 @@ void OutputTaskParser::createOrAmendTask(
     if (!amend) {
         flush();
         d->currentTask = CompileTask(type, description, file, line, column);
-        d->currentTask.details.append(originalLine);
+        d->currentTask.addToDetails(originalLine);
+        d->currentTask.setOrigin(d->origin);
         d->linkSpecs = linkSpecs;
         d->lineCount = 1;
         return;
@@ -142,24 +156,24 @@ void OutputTaskParser::createOrAmendTask(
 
     LinkSpecs adaptedLinkSpecs = linkSpecs;
     const int offset = std::accumulate(
-        d->currentTask.details.cbegin(),
-        d->currentTask.details.cend(),
+        d->currentTask.details().cbegin(),
+        d->currentTask.details().cend(),
         0,
-        [](int total, const QString &line) { return total + line.length() + 1; });
+        [](int total, const QString &line) { return total + line.size() + 1; });
     for (LinkSpec &ls : adaptedLinkSpecs)
         ls.startPos += offset;
     d->linkSpecs << adaptedLinkSpecs;
-    d->currentTask.details.append(originalLine);
+    d->currentTask.addToDetails(originalLine);
 
     // Check whether the new line is more relevant than the previous ones.
-    if ((d->currentTask.type != Task::Error && type == Task::Error)
-        || (d->currentTask.type == Task::Unknown && type != Task::Unknown)) {
-        d->currentTask.type = type;
-        d->currentTask.summary = description;
+    if ((!d->currentTask.isError() && type == Task::Error)
+        || (!d->currentTask.hasKnownType() && type != Task::Unknown)) {
+        d->currentTask.setType(type);
+        d->currentTask.setSummary(description);
         if (!file.isEmpty() && !d->targetLinkFixed) {
             d->currentTask.setFile(file);
-            d->currentTask.line = line;
-            d->currentTask.column = column;
+            d->currentTask.setLine(line);
+            d->currentTask.setColumn(column);
         }
     }
 
@@ -196,8 +210,8 @@ void OutputTaskParser::flush()
 
     // If there is only one line of details, then it is the line that we generated
     // the summary from. Remove it, because it does not add any information.
-    if (d->currentTask.details.count() == 1)
-        d->currentTask.details.clear();
+    if (d->currentTask.details().count() == 1)
+        d->currentTask.clearDetails();
 
     setDetailsFormat(d->currentTask, d->linkSpecs);
     Task t = d->currentTask;
@@ -207,4 +221,10 @@ void OutputTaskParser::flush()
     d->lineCount = 0;
     d->targetLinkFixed = false;
 }
+
+void OutputTaskParser::setOrigin(const QString &source)
+{
+    d->origin = source;
+}
+
 } // namespace ProjectExplorer

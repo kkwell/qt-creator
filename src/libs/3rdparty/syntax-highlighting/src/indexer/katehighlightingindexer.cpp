@@ -5,6 +5,7 @@
     SPDX-License-Identifier: MIT
 */
 
+#include <QBuffer>
 #include <QCborValue>
 #include <QCoreApplication>
 #include <QDebug>
@@ -13,11 +14,13 @@
 #include <QMutableMapIterator>
 #include <QRegularExpression>
 #include <QScopeGuard>
+#include <QString>
 #include <QVariant>
 #include <QXmlStreamReader>
 
 #ifdef HAS_XERCESC
 
+#include <xercesc/framework/MemBufInputSource.hpp>
 #include <xercesc/framework/XMLGrammarPoolImpl.hpp>
 
 #include <xercesc/parsers/SAX2XMLReaderImpl.hpp>
@@ -144,34 +147,44 @@ private:
     bool m_failed = false;
 };
 
-void init_parser(SAX2XMLReaderImpl &parser)
+class CustomXMLValidator : public SAX2XMLReaderImpl
 {
-    // Commonly useful configuration.
-    //
-    parser.setFeature(XMLUni::fgSAX2CoreNameSpaces, true);
-    parser.setFeature(XMLUni::fgSAX2CoreNameSpacePrefixes, true);
-    parser.setFeature(XMLUni::fgSAX2CoreValidation, true);
+public:
+    QString messages;
+    CustomErrorHandler eh{&messages};
 
-    // Enable validation.
-    //
-    parser.setFeature(XMLUni::fgXercesSchema, true);
-    parser.setFeature(XMLUni::fgXercesSchemaFullChecking, true);
-    parser.setFeature(XMLUni::fgXercesValidationErrorAsFatal, true);
+    CustomXMLValidator(XMLGrammarPool *xsd)
+        : SAX2XMLReaderImpl(XMLPlatformUtils::fgMemoryManager, xsd)
+    {
+        // Commonly useful configuration.
+        //
+        setFeature(XMLUni::fgSAX2CoreNameSpaces, true);
+        setFeature(XMLUni::fgSAX2CoreNameSpacePrefixes, true);
+        setFeature(XMLUni::fgSAX2CoreValidation, true);
 
-    // Use the loaded grammar during parsing.
-    //
-    parser.setFeature(XMLUni::fgXercesUseCachedGrammarInParse, true);
+        // Enable validation.
+        //
+        setFeature(XMLUni::fgXercesSchema, true);
+        setFeature(XMLUni::fgXercesSchemaFullChecking, true);
+        setFeature(XMLUni::fgXercesValidationErrorAsFatal, true);
 
-    // Don't load schemas from any other source (e.g., from XML document's
-    // xsi:schemaLocation attributes).
-    //
-    parser.setFeature(XMLUni::fgXercesLoadSchema, false);
+        // Use the loaded grammar during parsing.
+        //
+        setFeature(XMLUni::fgXercesUseCachedGrammarInParse, true);
 
-    // Xerces-C++ 3.1.0 is the first version with working multi import
-    // support.
-    //
-    parser.setFeature(XMLUni::fgXercesHandleMultipleImports, true);
-}
+        // Don't load schemas from any other source (e.g., from XML document's
+        // xsi:schemaLocation attributes).
+        //
+        setFeature(XMLUni::fgXercesLoadSchema, false);
+
+        // Xerces-C++ 3.1.0 is the first version with working multi import
+        // support.
+        //
+        setFeature(XMLUni::fgXercesHandleMultipleImports, true);
+
+        setErrorHandler(&eh);
+    }
+};
 
 #endif
 
@@ -183,55 +196,126 @@ void init_parser(SAX2XMLReaderImpl &parser)
 using KSyntaxHighlighting::WordDelimiters;
 using KSyntaxHighlighting::Xml::attrToBool;
 
+using namespace Qt::Literals::StringLiterals;
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 10, 0)
+static constexpr QStringView operator""_sv(const char16_t *s, std::size_t n)
+{
+    return QStringView(s, s + n);
+}
+#endif
+
+namespace
+{
+
+struct KateVersion {
+    uint majorRevision;
+    uint minorRevision;
+
+    KateVersion(uint majorRevision = 0, uint minorRevision = 0)
+        : majorRevision(majorRevision)
+        , minorRevision(minorRevision)
+    {
+    }
+
+    bool operator<(const KateVersion &version) const
+    {
+        return majorRevision < version.majorRevision || (majorRevision == version.majorRevision && minorRevision < version.minorRevision);
+    }
+};
+
 class HlFilesChecker
 {
 public:
-    template<typename T>
-    void setDefinition(const T &verStr, const QString &filename, const QString &name)
+    void setDefinition(QStringView verStr, const QString &filename, const QString &name, const QStringList &alternativeNames, bool generated)
     {
         m_currentDefinition = &*m_definitions.insert(name, Definition{});
         m_currentDefinition->languageName = name;
         m_currentDefinition->filename = filename;
         m_currentDefinition->kateVersionStr = verStr.toString();
+        m_currentDefinition->generated = generated;
         m_currentKeywords = nullptr;
         m_currentContext = nullptr;
 
-        const auto idx = verStr.indexOf(QLatin1Char('.'));
-        if (idx <= 0) {
-            qWarning() << filename << "invalid kateversion" << verStr;
+        const auto idx = verStr.indexOf(u'.');
+        bool okVersion = idx > 0;
+        if (okVersion) {
+            m_currentDefinition->kateVersion = {
+                verStr.sliced(0, idx).toUInt(&okVersion),
+                verStr.sliced(idx + 1).toUInt(&okVersion),
+            };
+        }
+        if (!okVersion) {
+            qWarning() << filename << "invalid kateversion. The expected format is 'major.minor' (e.g. \"5.79\")." << verStr;
             m_success = false;
-        } else {
-            m_currentDefinition->kateVersion = {verStr.left(idx).toInt(), verStr.mid(idx + 1).toInt()};
+            // continue with a recent version to avoid warning such as "available from XXX"
+            m_currentDefinition->kateVersion = {9999999, 0};
+        }
+
+        auto checkName = [this, &filename](char const *nameType, const QString &name) {
+            auto it = m_names.find(name);
+            if (it != m_names.end()) {
+                qWarning() << filename << "duplicate" << nameType << "with" << it.value();
+                m_success = false;
+            } else {
+                m_names.insert(name, filename);
+            }
+        };
+        checkName("name", name);
+        for (const auto &alternativeName : alternativeNames) {
+            checkName("alternative name", alternativeName);
         }
     }
 
-    void processElement(QXmlStreamReader &xml)
+    KateVersion currentVersion() const
     {
-        if (xml.isStartElement()) {
+        return m_currentDefinition->kateVersion;
+    }
+
+    void processElement(const QXmlStreamReader &xml)
+    {
+        switch (xml.tokenType()) {
+        case QXmlStreamReader::StartElement:
             if (m_currentContext) {
                 m_currentContext->rules.push_back(Context::Rule{});
                 auto &rule = m_currentContext->rules.back();
                 m_success = rule.parseElement(m_currentDefinition->filename, xml) && m_success;
                 m_currentContext->hasDynamicRule = m_currentContext->hasDynamicRule || rule.dynamic == XmlBool::True;
             } else if (m_currentKeywords) {
-                m_success = m_currentKeywords->items.parseElement(m_currentDefinition->filename, xml) && m_success;
-            } else if (xml.name() == QStringLiteral("context")) {
+                m_inKeywordItem = true;
+            } else if (xml.name() == u"context"_sv) {
                 processContextElement(xml);
-            } else if (xml.name() == QStringLiteral("list")) {
+            } else if (xml.name() == u"list"_sv) {
                 processListElement(xml);
-            } else if (xml.name() == QStringLiteral("keywords")) {
+            } else if (xml.name() == u"keywords"_sv) {
                 m_success = m_currentDefinition->parseKeywords(xml) && m_success;
-            } else if (xml.name() == QStringLiteral("emptyLine")) {
+            } else if (xml.name() == u"emptyLine"_sv) {
                 m_success = parseEmptyLine(m_currentDefinition->filename, xml) && m_success;
-            } else if (xml.name() == QStringLiteral("itemData")) {
+            } else if (xml.name() == u"itemData"_sv) {
                 m_success = m_currentDefinition->itemDatas.parseElement(m_currentDefinition->filename, xml) && m_success;
             }
-        } else if (xml.isEndElement()) {
-            if (m_currentContext && xml.name() == QStringLiteral("context")) {
+            break;
+
+        case QXmlStreamReader::EndElement:
+            if (m_currentContext && xml.name() == u"context"_sv) {
                 m_currentContext = nullptr;
-            } else if (m_currentKeywords && xml.name() == QStringLiteral("list")) {
+            } else if (m_currentKeywords && xml.name() == u"list"_sv) {
                 m_currentKeywords = nullptr;
+            } else if (m_currentKeywords) {
+                m_success = m_currentKeywords->items.parseElement(m_currentDefinition->filename, xml, m_textContent) && m_success;
+                m_textContent.clear();
+                m_inKeywordItem = false;
             }
+            break;
+
+        case QXmlStreamReader::EntityReference:
+        case QXmlStreamReader::Characters:
+            if (m_inKeywordItem) {
+                m_textContent += xml.text();
+            }
+            break;
+
+        default:;
         }
     }
 
@@ -251,8 +335,8 @@ public:
             }
 
             auto markAsUsedContext = [](ContextName &contextName) {
-                if (!contextName.stay && contextName.context) {
-                    contextName.context->isOnlyIncluded = false;
+                for (auto *ctx : contextName.contexts) {
+                    ctx->isOnlyIncluded = false;
                 }
             };
 
@@ -260,19 +344,25 @@ public:
             while (contextIt.hasNext()) {
                 contextIt.next();
                 auto &context = contextIt.value();
-                resolveContextName(definition, context, context.lineEndContext, context.line);
-                resolveContextName(definition, context, context.lineEmptyContext, context.line);
-                resolveContextName(definition, context, context.fallthroughContext, context.line);
+                resolveContextName(definition, context.lineEndContext, context.line, "lineEndContext");
+                resolveContextName(definition, context.lineEmptyContext, context.line, "lineEmptyContext");
+                resolveContextName(definition, context.fallthroughContext, context.line, "fallthroughContext");
                 markAsUsedContext(context.lineEndContext);
                 markAsUsedContext(context.lineEmptyContext);
                 markAsUsedContext(context.fallthroughContext);
                 for (auto &rule : context.rules) {
                     rule.parentContext = &context;
-                    resolveContextName(definition, context, rule.context, rule.line);
                     if (rule.type != Context::Rule::Type::IncludeRules) {
+                        resolveContextName(definition, rule.context, rule.line, "context");
                         markAsUsedContext(rule.context);
-                    } else if (rule.includeAttrib == XmlBool::True && rule.context.context) {
-                        rule.context.context->referencedWithIncludeAttrib = true;
+                    } else {
+                        auto *ctx = resolveContextPartName(definition, rule.context.name, rule.line, "context", rule.context.name);
+                        if (ctx) {
+                            rule.context.contexts.push_back(ctx);
+                            if (rule.includeAttrib == XmlBool::True) {
+                                ctx->referencedWithIncludeAttrib = true;
+                            }
+                        }
                     }
                 }
             }
@@ -319,20 +409,22 @@ public:
                 success = false;
             }
 
-            // search for existing itemDatas, but unusable.
-            const auto ignoredNames = ignoredAttributeNames - usedAttributeNames;
-            for (const auto &styleName : ignoredNames) {
-                qWarning() << filename << "line" << styleName.line << "attribute" << styleName.name
-                           << "is never used. All uses are with lookAhead=true or <IncludeRules/>";
-                success = false;
-            }
+            if (!definition.generated) {
+                // search for existing itemDatas, but unusable.
+                const auto ignoredNames = ignoredAttributeNames - usedAttributeNames;
+                for (const auto &styleName : ignoredNames) {
+                    qWarning() << filename << "line" << styleName.line << "attribute" << styleName.name
+                               << "is never used. All uses are with lookAhead=true or <IncludeRules/>";
+                    success = false;
+                }
 
-            // search for unused itemDatas.
-            auto unusedNames = definition.itemDatas.styleNames - usedAttributeNames;
-            unusedNames -= ignoredNames;
-            for (const auto &styleName : std::as_const(unusedNames)) {
-                qWarning() << filename << "line" << styleName.line << "unused itemData:" << styleName.name;
-                success = false;
+                // search for unused itemDatas.
+                auto unusedNames = definition.itemDatas.styleNames - usedAttributeNames;
+                unusedNames -= ignoredNames;
+                for (const auto &styleName : std::as_const(unusedNames)) {
+                    qWarning() << filename << "line" << styleName.line << "unused itemData:" << styleName.name;
+                    success = false;
+                }
             }
         }
 
@@ -364,20 +456,20 @@ public:
                 QString message;
                 message.reserve(128);
                 for (auto &ruleAndInclude : std::as_const(unreachableBy)) {
-                    message += QStringLiteral("line ");
+                    message += u"line "_sv;
                     message += QString::number(ruleAndInclude.rule->line);
-                    message += QStringLiteral(" [");
+                    message += u" ["_sv;
                     message += ruleAndInclude.rule->parentContext->name;
                     if (rule->filename != ruleAndInclude.rule->filename) {
-                        message += QStringLiteral(" (");
+                        message += u" ("_sv;
                         message += ruleAndInclude.rule->filename;
-                        message += QLatin1Char(')');
+                        message += u')';
                     }
                     if (ruleAndInclude.includeRules) {
-                        message += QStringLiteral(" via line ");
+                        message += u" via line "_sv;
                         message += QString::number(ruleAndInclude.includeRules->line);
                     }
-                    message += QStringLiteral("], ");
+                    message += u"], "_sv;
                 }
                 message.chop(2);
 
@@ -398,23 +490,25 @@ private:
 
     struct Context;
 
+    using ContextList = QVarLengthArray<Context *, 2>;
+
     struct ContextName {
         QString name;
         int popCount = 0;
         bool stay = false;
 
-        Context *context = nullptr;
+        ContextList contexts{};
     };
 
     struct Parser {
         const QString &filename;
-        QXmlStreamReader &xml;
-        QXmlStreamAttribute &attr;
+        const QXmlStreamReader &xml;
+        const QXmlStreamAttribute &attr;
         bool success;
 
         //! Read a string type attribute, \c success = \c false when \p str is not empty
         //! \return \c true when attr.name() == attrName, otherwise false
-        bool extractString(QString &str, const QString &attrName)
+        bool extractString(QString &str, QStringView attrName)
         {
             if (attr.name() != attrName) {
                 return false;
@@ -431,7 +525,7 @@ private:
 
         //! Read a bool type attribute, \c success = \c false when \p xmlBool is not \c XmlBool::Unspecified.
         //! \return \c true when attr.name() == attrName, otherwise false
-        bool extractXmlBool(XmlBool &xmlBool, const QString &attrName)
+        bool extractXmlBool(XmlBool &xmlBool, QStringView attrName)
         {
             if (attr.name() != attrName) {
                 return false;
@@ -444,7 +538,7 @@ private:
 
         //! Read a positive integer type attribute, \c success = \c false when \p positive is already greater than or equal to 0
         //! \return \c true when attr.name() == attrName, otherwise false
-        bool extractPositive(int &positive, const QString &attrName)
+        bool extractPositive(int &positive, QStringView attrName)
         {
             if (attr.name() != attrName) {
                 return false;
@@ -463,7 +557,7 @@ private:
 
         //! Read a color, \c success = \c false when \p color is already greater than or equal to 0
         //! \return \c true when attr.name() == attrName, otherwise false
-        bool checkColor(const QString &attrName)
+        bool checkColor(QStringView attrName)
         {
             if (attr.name() != attrName) {
                 return false;
@@ -480,7 +574,7 @@ private:
 
         //! Read a QChar, \c success = \c false when \p c is not \c '\0' or does not have one char
         //! \return \c true when attr.name() == attrName, otherwise false
-        bool extractChar(QChar &c, const QString &attrName)
+        bool extractChar(QChar &c, QStringView attrName)
         {
             if (attr.name() != attrName) {
                 return false;
@@ -489,7 +583,7 @@ private:
             if (attr.value().size() == 1) {
                 c = attr.value()[0];
             } else {
-                c = QLatin1Char('_');
+                c = u'_';
                 qWarning() << filename << "line" << xml.lineNumber() << attrName << "must contain exactly one char:" << attr.value();
                 success = false;
             }
@@ -529,21 +623,20 @@ private:
             QList<Item> keywords;
             QSet<Item> includes;
 
-            bool parseElement(const QString &filename, QXmlStreamReader &xml)
+            bool parseElement(const QString &filename, const QXmlStreamReader &xml, const QString &content)
             {
                 bool success = true;
 
                 const int line = xml.lineNumber();
-                QString content = xml.readElementText();
 
                 if (content.isEmpty()) {
                     qWarning() << filename << "line" << line << "is empty:" << xml.name();
                     success = false;
                 }
 
-                if (xml.name() == QStringLiteral("include")) {
+                if (xml.name() == u"include"_sv) {
                     includes.insert({content, line});
-                } else if (xml.name() == QStringLiteral("item")) {
+                } else if (xml.name() == u"item"_sv) {
                     keywords.append({content, line});
                 } else {
                     qWarning() << filename << "line" << line << "invalid element:" << xml.name();
@@ -558,15 +651,16 @@ private:
         Items items;
         int line;
 
-        bool parseElement(const QString &filename, QXmlStreamReader &xml)
+        bool parseElement(const QString &filename, const QXmlStreamReader &xml)
         {
             line = xml.lineNumber();
 
             bool success = true;
-            for (auto &attr : xml.attributes()) {
+            const auto attrs = xml.attributes();
+            for (const auto &attr : attrs) {
                 Parser parser{filename, xml, attr, success};
 
-                const bool isExtracted = parser.extractString(name, QStringLiteral("name"));
+                const bool isExtracted = parser.extractString(name, u"name"_sv);
 
                 success = parser.checkIfExtracted(isExtracted);
             }
@@ -629,7 +723,7 @@ private:
             // Detect2Chars, RangeDetect
             QChar char1;
 
-            // AnyChar, DetectChar, StringDetect, RegExpr, WordDetect, keyword
+            // AnyChar, StringDetect, RegExpr, WordDetect, keyword
             QString string;
             // RegExpr without .* as suffix
             QString sanitizedString;
@@ -648,31 +742,31 @@ private:
 
             QString filename;
 
-            bool parseElement(const QString &filename, QXmlStreamReader &xml)
+            bool parseElement(const QString &filename, const QXmlStreamReader &xml)
             {
                 this->filename = filename;
                 line = xml.lineNumber();
 
-                using Pair = QPair<QString, Type>;
+                using Pair = QPair<QStringView, Type>;
                 static const auto pairs = {
-                    Pair{QStringLiteral("AnyChar"), Type::AnyChar},
-                    Pair{QStringLiteral("Detect2Chars"), Type::Detect2Chars},
-                    Pair{QStringLiteral("DetectChar"), Type::DetectChar},
-                    Pair{QStringLiteral("DetectIdentifier"), Type::DetectIdentifier},
-                    Pair{QStringLiteral("DetectSpaces"), Type::DetectSpaces},
-                    Pair{QStringLiteral("Float"), Type::Float},
-                    Pair{QStringLiteral("HlCChar"), Type::HlCChar},
-                    Pair{QStringLiteral("HlCHex"), Type::HlCHex},
-                    Pair{QStringLiteral("HlCOct"), Type::HlCOct},
-                    Pair{QStringLiteral("HlCStringChar"), Type::HlCStringChar},
-                    Pair{QStringLiteral("IncludeRules"), Type::IncludeRules},
-                    Pair{QStringLiteral("Int"), Type::Int},
-                    Pair{QStringLiteral("LineContinue"), Type::LineContinue},
-                    Pair{QStringLiteral("RangeDetect"), Type::RangeDetect},
-                    Pair{QStringLiteral("RegExpr"), Type::RegExpr},
-                    Pair{QStringLiteral("StringDetect"), Type::StringDetect},
-                    Pair{QStringLiteral("WordDetect"), Type::WordDetect},
-                    Pair{QStringLiteral("keyword"), Type::keyword},
+                    Pair{u"AnyChar"_sv, Type::AnyChar},
+                    Pair{u"Detect2Chars"_sv, Type::Detect2Chars},
+                    Pair{u"DetectChar"_sv, Type::DetectChar},
+                    Pair{u"DetectIdentifier"_sv, Type::DetectIdentifier},
+                    Pair{u"DetectSpaces"_sv, Type::DetectSpaces},
+                    Pair{u"Float"_sv, Type::Float},
+                    Pair{u"HlCChar"_sv, Type::HlCChar},
+                    Pair{u"HlCHex"_sv, Type::HlCHex},
+                    Pair{u"HlCOct"_sv, Type::HlCOct},
+                    Pair{u"HlCStringChar"_sv, Type::HlCStringChar},
+                    Pair{u"IncludeRules"_sv, Type::IncludeRules},
+                    Pair{u"Int"_sv, Type::Int},
+                    Pair{u"LineContinue"_sv, Type::LineContinue},
+                    Pair{u"RangeDetect"_sv, Type::RangeDetect},
+                    Pair{u"RegExpr"_sv, Type::RegExpr},
+                    Pair{u"StringDetect"_sv, Type::StringDetect},
+                    Pair{u"WordDetect"_sv, Type::WordDetect},
+                    Pair{u"keyword", Type::keyword},
                 };
 
                 for (auto pair : pairs) {
@@ -694,7 +788,7 @@ private:
                             sanitizedString = string;
                             sanitizedString.replace(allSuffix, QString());
                             // string is a catch-all, do not sanitize
-                            if (sanitizedString.isEmpty() || sanitizedString == QStringLiteral("^")) {
+                            if (sanitizedString.isEmpty() || sanitizedString == u"^"_sv) {
                                 sanitizedString = string;
                             }
                         }
@@ -707,72 +801,73 @@ private:
             }
 
         private:
-            bool parseAttributes(const QString &filename, QXmlStreamReader &xml)
+            bool parseAttributes(const QString &filename, const QXmlStreamReader &xml)
             {
                 bool success = true;
 
-                for (auto &attr : xml.attributes()) {
+                const auto attrs = xml.attributes();
+                for (const auto &attr : attrs) {
                     Parser parser{filename, xml, attr, success};
 
                     // clang-format off
                     const bool isExtracted
-                        = parser.extractString(attribute, QStringLiteral("attribute"))
-                       || parser.extractString(context.name, QStringLiteral("context"))
-                       || parser.extractXmlBool(lookAhead, QStringLiteral("lookAhead"))
-                       || parser.extractXmlBool(firstNonSpace, QStringLiteral("firstNonSpace"))
-                       || parser.extractString(beginRegion, QStringLiteral("beginRegion"))
-                       || parser.extractString(endRegion, QStringLiteral("endRegion"))
-                       || parser.extractPositive(column, QStringLiteral("column"))
+                        = parser.extractString(attribute, u"attribute"_sv)
+                       || parser.extractString(context.name, u"context"_sv)
+                       || parser.extractXmlBool(lookAhead, u"lookAhead"_sv)
+                       || parser.extractXmlBool(firstNonSpace, u"firstNonSpace"_sv)
+                       || parser.extractString(beginRegion, u"beginRegion"_sv)
+                       || parser.extractString(endRegion, u"endRegion"_sv)
+                       || parser.extractPositive(column, u"column"_sv)
                        || ((type == Type::RegExpr
                          || type == Type::StringDetect
                          || type == Type::WordDetect
                          || type == Type::keyword
-                         ) && parser.extractXmlBool(insensitive, QStringLiteral("insensitive")))
+                         ) && parser.extractXmlBool(insensitive, u"insensitive"_sv))
                        || ((type == Type::DetectChar
                          || type == Type::RegExpr
                          || type == Type::StringDetect
                          || type == Type::keyword
-                         ) && parser.extractXmlBool(dynamic, QStringLiteral("dynamic")))
+                         ) && parser.extractXmlBool(dynamic, u"dynamic"_sv))
                        || ((type == Type::RegExpr)
-                           && parser.extractXmlBool(minimal, QStringLiteral("minimal")))
+                           && parser.extractXmlBool(minimal, u"minimal"_sv))
                        || ((type == Type::DetectChar
                          || type == Type::Detect2Chars
                          || type == Type::LineContinue
                          || type == Type::RangeDetect
-                         ) && parser.extractChar(char0, QStringLiteral("char")))
+                         ) && parser.extractChar(char0, u"char"_sv))
                        || ((type == Type::Detect2Chars
                          || type == Type::RangeDetect
-                         ) && parser.extractChar(char1, QStringLiteral("char1")))
+                         ) && parser.extractChar(char1, u"char1"_sv))
                        || ((type == Type::AnyChar
                          || type == Type::RegExpr
                          || type == Type::StringDetect
                          || type == Type::WordDetect
                          || type == Type::keyword
-                         ) && parser.extractString(string, QStringLiteral("String")))
+                         ) && parser.extractString(string, u"String"_sv))
                        || ((type == Type::IncludeRules)
-                           && parser.extractXmlBool(includeAttrib, QStringLiteral("includeAttrib")))
+                           && parser.extractXmlBool(includeAttrib, u"includeAttrib"_sv))
                        || ((type == Type::Float
                          || type == Type::HlCHex
                          || type == Type::HlCOct
                          || type == Type::Int
                          || type == Type::keyword
                          || type == Type::WordDetect
-                         ) && (parser.extractString(additionalDeliminator, QStringLiteral("additionalDeliminator"))
-                            || parser.extractString(weakDeliminator, QStringLiteral("weakDeliminator"))))
+                         ) && (parser.extractString(additionalDeliminator, u"additionalDeliminator"_sv)
+                            || parser.extractString(weakDeliminator, u"weakDeliminator"_sv)))
                     ;
                     // clang-format on
 
                     success = parser.checkIfExtracted(isExtracted);
+                }
 
-                    if (type == Type::LineContinue && char0 == QLatin1Char('\0')) {
-                        char0 = QLatin1Char('\\');
-                    }
+                if (type == Type::LineContinue && char0 == u'\0') {
+                    char0 = u'\\';
                 }
 
                 return success;
             }
 
-            bool checkMandoryAttributes(const QString &filename, QXmlStreamReader &xml)
+            bool checkMandoryAttributes(const QString &filename, const QXmlStreamReader &xml)
             {
                 QString missingAttr;
 
@@ -841,26 +936,27 @@ private:
         XmlBool fallthrough{};
         XmlBool stopEmptyLineContextSwitchLoop{};
 
-        bool parseElement(const QString &filename, QXmlStreamReader &xml)
+        bool parseElement(const QString &filename, const QXmlStreamReader &xml)
         {
             line = xml.lineNumber();
 
             bool success = true;
 
-            for (auto &attr : xml.attributes()) {
+            const auto attrs = xml.attributes();
+            for (const auto &attr : attrs) {
                 Parser parser{filename, xml, attr, success};
                 XmlBool noIndentationBasedFolding{};
 
                 // clang-format off
-                const bool isExtracted = parser.extractString(name, QStringLiteral("name"))
-                    || parser.extractString(attribute, QStringLiteral("attribute"))
-                    || parser.extractString(lineEndContext.name, QStringLiteral("lineEndContext"))
-                    || parser.extractString(lineEmptyContext.name, QStringLiteral("lineEmptyContext"))
-                    || parser.extractString(fallthroughContext.name, QStringLiteral("fallthroughContext"))
-                    || parser.extractXmlBool(dynamic, QStringLiteral("dynamic"))
-                    || parser.extractXmlBool(fallthrough, QStringLiteral("fallthrough"))
-                    || parser.extractXmlBool(stopEmptyLineContextSwitchLoop, QStringLiteral("stopEmptyLineContextSwitchLoop"))
-                    || parser.extractXmlBool(noIndentationBasedFolding, QStringLiteral("noIndentationBasedFolding"));
+                const bool isExtracted = parser.extractString(name, u"name"_sv)
+                    || parser.extractString(attribute, u"attribute"_sv)
+                    || parser.extractString(lineEndContext.name, u"lineEndContext"_sv)
+                    || parser.extractString(lineEmptyContext.name, u"lineEmptyContext"_sv)
+                    || parser.extractString(fallthroughContext.name, u"fallthroughContext"_sv)
+                    || parser.extractXmlBool(dynamic, u"dynamic"_sv)
+                    || parser.extractXmlBool(fallthrough, u"fallthrough"_sv)
+                    || parser.extractXmlBool(stopEmptyLineContextSwitchLoop, u"stopEmptyLineContextSwitchLoop"_sv)
+                    || parser.extractXmlBool(noIndentationBasedFolding, u"noIndentationBasedFolding"_sv);
                 // clang-format on
 
                 success = parser.checkIfExtracted(isExtracted);
@@ -868,6 +964,9 @@ private:
 
             if (name.isEmpty()) {
                 qWarning() << filename << "line" << xml.lineNumber() << "missing attribute: name";
+                success = false;
+            } else if (name.contains(u'!')) {
+                qWarning() << filename << "line" << xml.lineNumber() << "the name contains '!', which is a character used to refer to multiple contexts";
                 success = false;
             }
 
@@ -877,22 +976,6 @@ private:
             }
 
             return success;
-        }
-    };
-
-    struct Version {
-        int majorRevision;
-        int minorRevision;
-
-        Version(int majorRevision = 0, int minorRevision = 0)
-            : majorRevision(majorRevision)
-            , minorRevision(minorRevision)
-        {
-        }
-
-        bool operator<(const Version &version) const
-        {
-            return majorRevision < version.majorRevision || (majorRevision == version.majorRevision && minorRevision < version.minorRevision);
         }
     };
 
@@ -914,7 +997,7 @@ private:
 
         QSet<Style> styleNames;
 
-        bool parseElement(const QString &filename, QXmlStreamReader &xml)
+        bool parseElement(const QString &filename, const QXmlStreamReader &xml)
         {
             bool success = true;
 
@@ -922,15 +1005,24 @@ private:
             QString defStyleNum;
             XmlBool boolean;
 
-            for (auto &attr : xml.attributes()) {
+            const auto attrs = xml.attributes();
+            for (const auto &attr : attrs) {
                 Parser parser{filename, xml, attr, success};
 
-                const bool isExtracted = parser.extractString(name, QStringLiteral("name")) || parser.extractString(defStyleNum, QStringLiteral("defStyleNum"))
-                    || parser.extractXmlBool(boolean, QStringLiteral("bold")) || parser.extractXmlBool(boolean, QStringLiteral("italic"))
-                    || parser.extractXmlBool(boolean, QStringLiteral("underline")) || parser.extractXmlBool(boolean, QStringLiteral("strikeOut"))
-                    || parser.extractXmlBool(boolean, QStringLiteral("spellChecking")) || parser.checkColor(QStringLiteral("color"))
-                    || parser.checkColor(QStringLiteral("selColor")) || parser.checkColor(QStringLiteral("backgroundColor"))
-                    || parser.checkColor(QStringLiteral("selBackgroundColor"));
+                // clang-format off
+                const bool isExtracted
+                    = parser.extractString(name, u"name"_sv)
+                   || parser.extractString(defStyleNum, u"defStyleNum"_sv)
+                   || parser.extractXmlBool(boolean, u"bold"_sv)
+                   || parser.extractXmlBool(boolean, u"italic"_sv)
+                   || parser.extractXmlBool(boolean, u"underline"_sv)
+                   || parser.extractXmlBool(boolean, u"strikeOut"_sv)
+                   || parser.extractXmlBool(boolean, u"spellChecking"_sv)
+                   || parser.checkColor(u"color"_sv)
+                   || parser.checkColor(u"selColor"_sv)
+                   || parser.checkColor(u"backgroundColor"_sv)
+                   || parser.checkColor(u"selBackgroundColor"_sv);
+                // clang-format on
 
                 success = parser.checkIfExtracted(isExtracted);
             }
@@ -956,22 +1048,23 @@ private:
         const Context *firstContext = nullptr;
         QString filename;
         WordDelimiters wordDelimiters;
-        Version kateVersion{};
+        KateVersion kateVersion{};
         QString kateVersionStr;
         QString languageName;
         QSet<const Definition *> referencedDefinitions;
+        bool generated; // unreachability criteria should not be enforced with generated grammars
 
         // Parse <keywords ...>
-        bool parseKeywords(QXmlStreamReader &xml)
+        bool parseKeywords(const QXmlStreamReader &xml)
         {
-            wordDelimiters.append(xml.attributes().value(QStringLiteral("additionalDeliminator")));
-            wordDelimiters.remove(xml.attributes().value(QStringLiteral("weakDeliminator")));
+            wordDelimiters.append(xml.attributes().value(u"additionalDeliminator"_sv));
+            wordDelimiters.remove(xml.attributes().value(u"weakDeliminator"_sv));
             return true;
         }
     };
 
     // Parse <context>
-    void processContextElement(QXmlStreamReader &xml)
+    void processContextElement(const QXmlStreamReader &xml)
     {
         Context context;
         m_success = context.parseElement(m_currentDefinition->filename, xml) && m_success;
@@ -986,7 +1079,7 @@ private:
     }
 
     // Parse <list name="...">
-    void processListElement(QXmlStreamReader &xml)
+    void processListElement(const QXmlStreamReader &xml)
     {
         Keywords keywords;
         m_success = keywords.parseElement(m_currentDefinition->filename, xml) && m_success;
@@ -1033,28 +1126,16 @@ private:
                         continue;
                     }
 
-                    if (rule.context.stay) {
-                        qWarning() << definition.filename << "line" << rule.line << "IncludeRules refers to himself";
-                        m_success = false;
-                        continue;
-                    }
-
-                    if (rule.context.popCount) {
-                        qWarning() << definition.filename << "line" << rule.line << "IncludeRules with #pop prefix";
-                        m_success = false;
-                    }
-
-                    if (!rule.context.context) {
-                        m_success = false;
+                    if (rule.context.contexts.isEmpty()) {
                         continue;
                     }
 
                     // resolve includedRules and includedIncludeRules
 
                     usedContexts.clear();
-                    usedContexts.insert(rule.context.context);
+                    usedContexts.insert(rule.context.contexts.front());
                     contexts.clear();
-                    contexts.append(rule.context.context);
+                    contexts.append(rule.context.contexts.front());
 
                     for (int i = 0; i < contexts.size(); ++i) {
                         currentContext.hasDynamicRule = contexts[i]->hasDynamicRule;
@@ -1068,10 +1149,11 @@ private:
                                 rule.includedIncludeRules.insert(&includedRule);
 
                                 if (includedRule.includedRules.isEmpty()) {
-                                    const auto *context = includedRule.context.context;
-                                    if (context && !usedContexts.contains(context)) {
-                                        contexts.append(context);
-                                        usedContexts.insert(context);
+                                    for (const auto *context : includedRule.context.contexts) {
+                                        if (!usedContexts.contains(context)) {
+                                            contexts.append(context);
+                                            usedContexts.insert(context);
+                                        }
                                     }
                                 } else {
                                     rule.includedRules.append(includedRule.includedRules);
@@ -1102,20 +1184,22 @@ private:
                 contexts.append(definition.firstContext);
 
                 for (int i = 0; i < contexts.size(); ++i) {
-                    auto appendContext = [&](const Context *context) {
-                        if (context && !usedContexts.contains(context)) {
-                            contexts.append(context);
-                            usedContexts.insert(context);
+                    auto appendContext = [&](const ContextList &contextList) {
+                        for (auto *context : contextList) {
+                            if (!usedContexts.contains(context)) {
+                                contexts.append(context);
+                                usedContexts.insert(context);
+                            }
                         }
                     };
 
                     const auto *context = contexts[i];
-                    appendContext(context->lineEndContext.context);
-                    appendContext(context->lineEmptyContext.context);
-                    appendContext(context->fallthroughContext.context);
+                    appendContext(context->lineEndContext.contexts);
+                    appendContext(context->lineEmptyContext.contexts);
+                    appendContext(context->fallthroughContext.contexts);
 
                     for (auto &rule : context->rules) {
-                        appendContext(rule.context.context);
+                        appendContext(rule.context.contexts);
                     }
                 }
             }
@@ -1156,12 +1240,14 @@ private:
             const auto &filename = definition.filename;
 
             if (!usedContexts.contains(&context)) {
-                qWarning() << filename << "line" << context.line << "unused context:" << context.name;
-                success = false;
+                if (!definition.generated) {
+                    qWarning() << filename << "line" << context.line << "unused context:" << context.name;
+                    success = false;
+                }
                 continue;
             }
 
-            if (context.name.startsWith(QStringLiteral("#pop"))) {
+            if (context.name.startsWith(u"#pop"_sv)) {
                 qWarning() << filename << "line" << context.line << "the context name must not start with '#pop':" << context.name;
                 success = false;
             }
@@ -1171,7 +1257,8 @@ private:
             }
 
             success = checkContextAttribute(definition, context) && success;
-            success = checkUreachableRules(definition.filename, context, unreachableIncludedRules) && success;
+            if (!definition.generated)
+                success = checkUreachableRules(definition.filename, context, unreachableIncludedRules) && success;
             success = suggestRuleMerger(definition.filename, context) && success;
 
             for (const auto &rule : context.rules) {
@@ -1184,9 +1271,11 @@ private:
                 }
                 success = checkLookAhead(rule) && success;
                 success = checkStringDetect(rule) && success;
+                success = checkWordDetect(rule) && success;
                 success = checkKeyword(definition, rule) && success;
                 success = checkRegExpr(filename, rule, context) && success;
-                success = checkDelimiters(definition, rule) && success;
+                if (!definition.generated)
+                    success = checkDelimiters(definition, rule) && success;
             }
         }
 
@@ -1220,6 +1309,11 @@ private:
                 }
             }
 
+            if (rule.lookAhead == XmlBool::True && (rule.string.endsWith(u".*$"_sv) || rule.string.endsWith(u".*"_sv)) && -1 == rule.string.indexOf(u'|')) {
+                qWarning() << rule.filename << "line" << rule.line << "RegExpr with lookAhead=1 doesn't need to end with '.*' or '.*$':" << rule.string;
+                return false;
+            }
+
             auto reg = (rule.lookAhead == XmlBool::True) ? rule.sanitizedString : rule.string;
             if (rule.lookAhead == XmlBool::True) {
                 static const QRegularExpression removeAllSuffix(QStringLiteral(
@@ -1228,13 +1322,14 @@ private:
             }
 
             reg.replace(QStringLiteral("{1}"), QString());
+            reg.replace(QStringLiteral("{1,1}"), QString());
 
             // is DetectSpaces
             // optional ^ then \s, [\s], [\t ], [ \t] possibly in (...) or (?:...) followed by *, +
             static const QRegularExpression isDetectSpaces(
                 QStringLiteral(R"(^\^?(?:\((?:\?:)?)?\^?(?:\\s|\[(?:\\s| (?:\t|\\t)|(?:\t|\\t) )\])\)?(?:[*+][*+?]?|[*+])?\)?\)?$)"));
             if (rule.string.contains(isDetectSpaces)) {
-                char const *extraMsg = rule.string.contains(QLatin1Char('^')) ? "+ column=\"0\" or firstNonSpace=\"1\"" : "";
+                char const *extraMsg = rule.string.contains(u'^') ? "+ column=\"0\" or firstNonSpace=\"1\"" : "";
                 qWarning() << rule.filename << "line" << rule.line << "RegExpr should be replaced by DetectSpaces / DetectChar / AnyChar" << extraMsg << ":"
                            << rule.string;
                 return false;
@@ -1248,8 +1343,7 @@ private:
                                                                    "\\.\\*[?+]?" REG_CHAR "|"
                                                                    "\\[\\^(" REG_ESCAPE_CHAR "|.)\\]\\*[?+]?\\1"
                                                                    ")$"));
-            if ((rule.lookAhead == XmlBool::True || rule.minimal == XmlBool::True || rule.string.contains(QStringLiteral(".*?"))
-                 || rule.string.contains(QStringLiteral("[^")))
+            if ((rule.lookAhead == XmlBool::True || rule.minimal == XmlBool::True || rule.string.contains(u".*?"_sv) || rule.string.contains(u"[^"_sv))
                 && reg.contains(isRange)) {
                 qWarning() << rule.filename << "line" << rule.line << "RegExpr should be replaced by RangeDetect:" << rule.string;
                 return false;
@@ -1258,7 +1352,7 @@ private:
             // is AnyChar
             static const QRegularExpression isAnyChar(QStringLiteral(R"(^(\^|\((\?:)?)*\[(?!\^)[-\]]?(\\[^0BDPSWbdpswoux]|[^-\]\\])*\]\)*$)"));
             if (rule.string.contains(isAnyChar)) {
-                auto extra = (reg[0] == QLatin1Char('^') || reg[1] == QLatin1Char('^')) ? "with column=\"0\"" : "";
+                auto extra = (reg[0] == u'^' || reg[1] == u'^') ? "with column=\"0\"" : "";
                 qWarning() << rule.filename << "line" << rule.line << "RegExpr should be replaced by AnyChar:" << rule.string << extra;
                 return false;
             }
@@ -1266,10 +1360,32 @@ private:
             // is LineContinue
             static const QRegularExpression isLineContinue(QStringLiteral("^\\^?" REG_CHAR "\\$$"));
             if (reg.contains(isLineContinue)) {
-                auto extra = (reg[0] == QLatin1Char('^')) ? "with column=\"0\"" : "";
+                auto extra = (reg[0] == u'^') ? "with column=\"0\"" : "";
                 qWarning() << rule.filename << "line" << rule.line << "RegExpr should be replaced by LineContinue:" << rule.string << extra;
                 return false;
             }
+
+#define REG_DIGIT uR"((\[(0-9|\\d)\]|\\d))"
+#define REG_DIGITS REG_DIGIT u"([+]|" REG_DIGIT u"[*])"
+#define REG_DOT uR"((\\[.]|\[.\]))"
+            // is Int, check \b[0-9]+
+            static const QRegularExpression isInt(uR"(^(\((\?:)?)*\\b(\((\?:)?)*)" REG_DIGITS uR"(\)*$)"_s);
+            if (reg.contains(isInt)) {
+                qWarning() << rule.filename << "line" << rule.line << "RegExpr should be replaced by Int:" << rule.string;
+                return false;
+            }
+
+            // is Float, check (\b[0-9]+\.[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?
+            static const QRegularExpression isFloat(
+                uR"(^(\\b|\((\?:)?)*)" REG_DIGITS REG_DOT
+                    REG_DIGIT u"[*][|]" REG_DOT REG_DIGITS uR"(\)+\((\?:)?\[[eE]+\]\[(\\?-\\?\+|\\?\+\\?-)\]\?)" REG_DIGITS uR"(\)\?\)*$)"_s);
+            if (reg.contains(isFloat)) {
+                qWarning() << rule.filename << "line" << rule.line << "RegExpr should be replaced by Float:" << rule.string;
+                return false;
+            }
+#undef REG_DOT
+#undef REG_DIGIT
+#undef REG_DIGITS
 
             // replace \c, \xhhh, \x{hhh...}, \0dd, \o{ddd}, \uhhhh, with _
             static const QRegularExpression sanitize1(QStringLiteral(REG_ESCAPE_CHAR));
@@ -1282,9 +1398,17 @@ private:
             static const QRegularExpression isMinimal(QStringLiteral("(?![.][*+?][$]?[)]*$)[.][*+?][^?+]"));
             static const QRegularExpression hasNotGreedy(QStringLiteral("[*+?][?+]"));
 
+            auto hasDynamicRule = [](const ContextList &contexts) {
+                for (auto *context : contexts) {
+                    if (context->hasDynamicRule) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
             if (rule.lookAhead == XmlBool::True && rule.minimal != XmlBool::True && reg.contains(isMinimal) && !reg.contains(hasNotGreedy)
-                && (!rule.context.context || !rule.context.context->hasDynamicRule || regexp.captureCount() == 0)
-                && (reg.back() != QLatin1Char('$') || reg.contains(QLatin1Char('|')))) {
+                && (!hasDynamicRule(rule.context.contexts) || regexp.captureCount() == 0) && (reg.back() != u'$' || reg.contains(u'|'))) {
                 qWarning() << rule.filename << "line" << rule.line
                            << "RegExpr should be have minimal=\"1\" or use lazy operator (i.g, '.*' -> '.*?'):" << rule.string;
                 return false;
@@ -1312,7 +1436,7 @@ private:
             // ignore (?:, ) and {n}
             static const QRegularExpression isStringDetect(QStringLiteral(R"(^\^?(?:[^|\\?*+$^[{(.]|{(?!\d+,\d*}|,\d+})|\(\?:)+$)"));
             if (reg.contains(isStringDetect)) {
-                char const *extraMsg = rule.string.contains(QLatin1Char('^')) ? "+ column=\"0\" or firstNonSpace=\"1\"" : "";
+                char const *extraMsg = rule.string.contains(u'^') ? "+ column=\"0\" or firstNonSpace=\"1\"" : "";
                 qWarning() << rule.filename << "line" << rule.line << "RegExpr should be replaced by StringDetect / Detect2Chars / DetectChar" << extraMsg
                            << ":" << rule.string;
                 if (len != reg.size()) {
@@ -1331,31 +1455,31 @@ private:
                 auto last = std::as_const(reg).end();
                 int depth = 0;
 
-                while (QLatin1Char('(') == *first) {
+                while (u'(' == *first) {
                     ++depth;
                     ++first;
-                    if (QLatin1Char('?') == *first || QLatin1Char(':') == first[1]) {
+                    if (u'?' == *first || u':' == first[1]) {
                         first += 2;
                     }
                 }
 
-                if (QLatin1Char('^') == *first) {
+                if (u'^' == *first) {
                     const int bolDepth = depth;
                     bool replace = true;
 
                     while (++first != last) {
-                        if (QLatin1Char('(') == *first) {
+                        if (u'(' == *first) {
                             ++depth;
-                        } else if (QLatin1Char(')') == *first) {
+                        } else if (u')' == *first) {
                             --depth;
                             if (depth < bolDepth) {
                                 // (^a)? === (^a|) -> ko
-                                if (first + 1 != last && QStringLiteral("*?").contains(first[1])) {
+                                if (first + 1 != last && u"*?"_sv.contains(first[1])) {
                                     replace = false;
                                     break;
                                 }
                             }
-                        } else if (QLatin1Char('|') == *first) {
+                        } else if (u'|' == *first) {
                             // ignore '|' within subgroup
                             if (depth <= bolDepth) {
                                 replace = false;
@@ -1377,11 +1501,11 @@ private:
                 auto first = std::as_const(reg).begin();
                 auto last = std::as_const(reg).end();
                 for (; first != last; ++first) {
-                    if (*first == QLatin1Char('^')) {
+                    if (*first == u'^') {
                         hasStartOfLine = true;
                         break;
-                    } else if (*first == QLatin1Char('(')) {
-                        if (last - first >= 3 && first[1] == QLatin1Char('?') && first[2] == QLatin1Char(':')) {
+                    } else if (*first == u'(') {
+                        if (last - first >= 3 && first[1] == u'?' && first[2] == u':') {
                             first += 2;
                         }
                     } else {
@@ -1400,7 +1524,7 @@ private:
 
             // detection of unnecessary capture
             if (regexp.captureCount()) {
-                auto maximalCapture = [](const QString(&referenceNames)[9], const QString &s) {
+                auto maximalCapture = [](const QStringView(&referenceNames)[9], const QString &s) {
                     int maxCapture = 9;
                     while (maxCapture && !s.contains(referenceNames[maxCapture - 1])) {
                         --maxCapture;
@@ -1410,19 +1534,19 @@ private:
 
                 int maxCaptureUsed = 0;
                 // maximal dynamic reference
-                if (rule.context.context && !rule.context.stay) {
-                    for (const auto &nextRule : rule.context.context->rules) {
+                for (auto *context : rule.context.contexts) {
+                    for (const auto &nextRule : std::as_const(context->rules)) {
                         if (nextRule.dynamic == XmlBool::True) {
-                            static const QString cap[]{
-                                QStringLiteral("%1"),
-                                QStringLiteral("%2"),
-                                QStringLiteral("%3"),
-                                QStringLiteral("%4"),
-                                QStringLiteral("%5"),
-                                QStringLiteral("%6"),
-                                QStringLiteral("%7"),
-                                QStringLiteral("%8"),
-                                QStringLiteral("%9"),
+                            static const QStringView cap[]{
+                                u"%1"_sv,
+                                u"%2"_sv,
+                                u"%3"_sv,
+                                u"%4"_sv,
+                                u"%5"_sv,
+                                u"%6"_sv,
+                                u"%7"_sv,
+                                u"%8"_sv,
+                                u"%9"_sv,
                             };
                             int maxDynamicCapture = maximalCapture(cap, nextRule.string);
                             maxCaptureUsed = std::max(maxCaptureUsed, maxDynamicCapture);
@@ -1430,29 +1554,29 @@ private:
                     }
                 }
 
-                static const QString num1[]{
-                    QStringLiteral("\\1"),
-                    QStringLiteral("\\2"),
-                    QStringLiteral("\\3"),
-                    QStringLiteral("\\4"),
-                    QStringLiteral("\\5"),
-                    QStringLiteral("\\6"),
-                    QStringLiteral("\\7"),
-                    QStringLiteral("\\8"),
-                    QStringLiteral("\\9"),
+                static const QStringView num1[]{
+                    u"\\1"_sv,
+                    u"\\2"_sv,
+                    u"\\3"_sv,
+                    u"\\4"_sv,
+                    u"\\5"_sv,
+                    u"\\6"_sv,
+                    u"\\7"_sv,
+                    u"\\8"_sv,
+                    u"\\9"_sv,
                 };
-                static const QString num2[]{
-                    QStringLiteral("\\g1"),
-                    QStringLiteral("\\g2"),
-                    QStringLiteral("\\g3"),
-                    QStringLiteral("\\g4"),
-                    QStringLiteral("\\g5"),
-                    QStringLiteral("\\g6"),
-                    QStringLiteral("\\g7"),
-                    QStringLiteral("\\g8"),
-                    QStringLiteral("\\g9"),
+                static const QStringView num2[]{
+                    u"\\g1"_sv,
+                    u"\\g2"_sv,
+                    u"\\g3"_sv,
+                    u"\\g4"_sv,
+                    u"\\g5"_sv,
+                    u"\\g6"_sv,
+                    u"\\g7"_sv,
+                    u"\\g8"_sv,
+                    u"\\g9"_sv,
                 };
-                const int maxBackReference = std::max(maximalCapture(num1, rule.string), maximalCapture(num1, rule.string));
+                const int maxBackReference = std::max(maximalCapture(num1, rule.string), maximalCapture(num2, rule.string));
 
                 const int maxCapture = std::max(maxCaptureUsed, maxBackReference);
 
@@ -1496,7 +1620,7 @@ private:
                     }
                 }
 
-                auto ruleFilename = (filename == rule.filename) ? QString() : QStringLiteral("in ") + rule.filename;
+                auto ruleFilename = (filename == rule.filename) ? QString() : u"in "_sv + rule.filename;
                 if (i == context.rules.size()) {
                     if (rule.lookAhead == XmlBool::True && rule.firstNonSpace != XmlBool::True && rule.column == -1 && rule.beginRegion.isEmpty()
                         && rule.endRegion.isEmpty() && !useCapture) {
@@ -1505,7 +1629,7 @@ private:
                     }
                 } else {
                     auto &nextRule = context.rules[i];
-                    auto nextRuleFilename = (filename == nextRule.filename) ? QString() : QStringLiteral("in ") + nextRule.filename;
+                    auto nextRuleFilename = (filename == nextRule.filename) ? QString() : u"in "_sv + nextRule.filename;
                     qWarning() << filename << "context line" << context.line << "contains unreachable element line" << nextRule.line << nextRuleFilename
                                << "because a dot RegExpr is used line" << rule.line << ruleFilename;
                 }
@@ -1526,18 +1650,18 @@ private:
     }
 
     // Parse and check <emptyLine>
-    bool parseEmptyLine(const QString &filename, QXmlStreamReader &xml)
+    bool parseEmptyLine(const QString &filename, const QXmlStreamReader &xml)
     {
         bool success = true;
 
         QString pattern;
         XmlBool casesensitive{};
 
-        for (auto &attr : xml.attributes()) {
+        const auto attrs = xml.attributes();
+        for (auto &attr : attrs) {
             Parser parser{filename, xml, attr, success};
 
-            const bool isExtracted =
-                parser.extractString(pattern, QStringLiteral("regexpr")) || parser.extractXmlBool(casesensitive, QStringLiteral("casesensitive"));
+            const bool isExtracted = parser.extractString(pattern, u"regexpr"_sv) || parser.extractXmlBool(casesensitive, u"casesensitive"_sv);
 
             success = parser.checkIfExtracted(isExtracted);
         }
@@ -1567,7 +1691,7 @@ private:
         }
 
         // catch possible case typos: [A-z] or [a-Z]
-        const int azOffset = std::max(pattern.indexOf(QStringLiteral("A-z")), pattern.indexOf(QStringLiteral("a-Z")));
+        const int azOffset = std::max(pattern.indexOf(u"A-z"_sv), pattern.indexOf(u"a-Z"_sv));
         if (azOffset >= 0) {
             qWarning() << filename << "line" << line << "broken regex:" << pattern << "problem: [a-Z] or [A-z] at offset" << azOffset;
             return false;
@@ -1583,7 +1707,7 @@ private:
         bool success = true;
 
         if (!context.fallthroughContext.name.isEmpty()) {
-            const bool mandatoryFallthroughAttribute = definition.kateVersion < Version{5, 62};
+            const bool mandatoryFallthroughAttribute = definition.kateVersion < KateVersion{5, 62};
             if (context.fallthrough == XmlBool::True && !mandatoryFallthroughAttribute) {
                 qWarning() << definition.filename << "line" << context.line << "fallthrough attribute is unnecessary with kateversion >= 5.62 in context"
                            << context.name;
@@ -1596,7 +1720,7 @@ private:
             }
         }
 
-        if (context.stopEmptyLineContextSwitchLoop != XmlBool::Unspecified && definition.kateVersion < Version{5, 103}) {
+        if (context.stopEmptyLineContextSwitchLoop != XmlBool::Unspecified && definition.kateVersion < KateVersion{5, 103}) {
             qWarning() << definition.filename << "line" << context.line
                        << "stopEmptyLineContextSwitchLoop attribute is only valid with kateversion >= 5.103 in context" << context.name;
             success = false;
@@ -1614,7 +1738,7 @@ private:
 
         bool success = true;
 
-        if (definition.kateVersion < Version{5, 79}) {
+        if (definition.kateVersion < KateVersion{5, 79}) {
             qWarning() << definition.filename << "line" << rule.line
                        << "additionalDeliminator and weakDeliminator are only available since version \"5.79\". Please, increase kateversion.";
             success = false;
@@ -1675,12 +1799,24 @@ private:
         return true;
     }
 
+    //! Check that WordDetect does not contain spaces at the beginning and end of text.
+    bool checkWordDetect(const Context::Rule &rule) const
+    {
+        if (rule.type == Context::Rule::Type::WordDetect) {
+            if (!rule.string.isEmpty() && (rule.string.front().isSpace() || rule.string.back().isSpace())) {
+                qWarning() << rule.filename << "line" << rule.line << "contains a space at the beginning or end of the string:" << rule.string;
+                return false;
+            }
+        }
+        return true;
+    }
+
     //! Check \<include> and delimiter in a keyword list
     bool checkKeywordsList(const Definition &definition) const
     {
         bool success = true;
 
-        bool includeNotSupport = (definition.kateVersion < Version{5, 53});
+        bool includeNotSupport = (definition.kateVersion < KateVersion{5, 53});
         QMapIterator<QString, Keywords> keywordsIt(definition.keywordsList);
         while (keywordsIt.hasNext()) {
             keywordsIt.next();
@@ -1714,13 +1850,13 @@ private:
     bool checkKeywordInclude(const Definition &definition, const Keywords::Items::Item &include) const
     {
         bool containsKeywordName = true;
-        int const idx = include.content.indexOf(QStringLiteral("##"));
+        int const idx = include.content.indexOf(u"##"_sv);
         if (idx == -1) {
             auto it = definition.keywordsList.find(include.content);
             containsKeywordName = (it != definition.keywordsList.end());
         } else {
-            auto defName = include.content.mid(idx + 2);
-            auto listName = include.content.left(idx);
+            auto defName = include.content.sliced(idx + 2);
+            auto listName = include.content.sliced(0, idx);
             auto it = m_definitions.find(defName);
             if (it == m_definitions.end()) {
                 qWarning() << definition.filename << "line" << include.line << "unknown definition in" << include.content;
@@ -2065,9 +2201,8 @@ private:
         observedRules.reserve(context.rules.size());
         for (const Context::Rule &rule : context.rules) {
             const Context::Rule *includeRule = nullptr;
-            if (rule.type == Context::Rule::Type::IncludeRules) {
-                auto *context = rule.context.context;
-                if (context && context->isOnlyIncluded) {
+            if (rule.type == Context::Rule::Type::IncludeRules && !rule.context.contexts.isEmpty()) {
+                if (rule.context.contexts.front()->isOnlyIncluded) {
                     includeRule = &rule;
                 }
             }
@@ -2135,46 +2270,46 @@ private:
             // then add spaces characters to detectChars
             case Context::Rule::Type::DetectSpaces: {
                 auto tables = CharTableArray(detectChars, rule);
-                updateUnreachable2(tables.find(QStringLiteral(" \t")));
+                updateUnreachable2(tables.find(u" \t"_sv));
                 tables.removeNonSpecialWhenSpecial();
-                tables.append(QLatin1Char(' '), rule);
-                tables.append(QLatin1Char('\t'), rule);
+                tables.append(u' ', rule);
+                tables.append(u'\t', rule);
                 break;
             }
 
             // check if hidden by DetectChar/AnyChar
             case Context::Rule::Type::HlCChar:
-                updateUnreachable1(CharTableArray(detectChars, rule).find(QLatin1Char('\'')));
+                updateUnreachable1(CharTableArray(detectChars, rule).find(u'\''));
                 updateUnreachable1(hlCCharRule.setRule(rule));
                 break;
 
             // check if hidden by DetectChar/AnyChar
             case Context::Rule::Type::HlCHex:
-                updateUnreachable1(CharTableArray(detectChars, rule).find(QLatin1Char('0')));
+                updateUnreachable1(CharTableArray(detectChars, rule).find(u'0'));
                 updateUnreachable1(hlCHexRule.setRule(rule));
                 break;
 
             // check if hidden by DetectChar/AnyChar
             case Context::Rule::Type::HlCOct:
-                updateUnreachable1(CharTableArray(detectChars, rule).find(QLatin1Char('0')));
+                updateUnreachable1(CharTableArray(detectChars, rule).find(u'0'));
                 updateUnreachable1(hlCOctRule.setRule(rule));
                 break;
 
             // check if hidden by DetectChar/AnyChar
             case Context::Rule::Type::HlCStringChar:
-                updateUnreachable1(CharTableArray(detectChars, rule).find(QLatin1Char('\\')));
+                updateUnreachable1(CharTableArray(detectChars, rule).find(u'\\'));
                 updateUnreachable1(hlCStringCharRule.setRule(rule));
                 break;
 
             // check if hidden by DetectChar/AnyChar
             case Context::Rule::Type::Int:
-                updateUnreachable2(CharTableArray(detectChars, rule).find(QStringLiteral("0123456789")));
+                updateUnreachable2(CharTableArray(detectChars, rule).find(u"0123456789"_sv));
                 updateUnreachable1(intRule.setRule(rule));
                 break;
 
             // check if hidden by DetectChar/AnyChar
             case Context::Rule::Type::Float:
-                updateUnreachable2(CharTableArray(detectChars, rule).find(QStringLiteral("0123456789.")));
+                updateUnreachable2(CharTableArray(detectChars, rule).find(u"0123456789."_sv));
                 updateUnreachable1(floatRule.setRule(rule));
                 // check that Float is before Int
                 updateUnreachable1(Rule4(intRule).setRule(rule));
@@ -2283,7 +2418,12 @@ private:
                 if (rule.dynamic == XmlBool::True) {
                     static const QRegularExpression dynamicPosition(QStringLiteral(R"(^(?:[^%]*|%(?![1-9]))*)"));
                     auto result = dynamicPosition.match(rule.string);
-                    s = s.left(result.capturedLength());
+                    s = s.sliced(0, result.capturedLength());
+                    // check if hidden by DetectChar/AnyChar
+                    if (s.size() + 2 <= rule.string.size()) {
+                        auto tables = CharTableArray(dynamicDetectChars, rule);
+                        updateUnreachable1(tables.find(s.data()[s.size() + 2]));
+                    }
                 }
 
                 QString sanitizedRegex;
@@ -2294,8 +2434,8 @@ private:
                     static const QRegularExpression sanitizeChars(QStringLiteral(R"(\\([-.?*+^$[\]{}()\\|])|\[([^^\\])\])"));
                     const qsizetype result = regularChars.match(rule.string).capturedLength();
                     const qsizetype pos = qMin(result, s.size());
-                    if (rule.string.indexOf(QLatin1Char('|'), pos) < pos) {
-                        sanitizedRegex = rule.string.left(qMin(result, s.size()));
+                    if (rule.string.indexOf(u'|', pos) < pos) {
+                        sanitizedRegex = rule.string.sliced(0, qMin(result, s.size()));
                         sanitizedRegex.replace(sanitizeChars, QStringLiteral("\\1"));
                         s = sanitizedRegex;
                     } else {
@@ -2311,6 +2451,20 @@ private:
                     } else {
                         QChar c2[]{s[0].toLower(), s[0].toUpper()};
                         updateUnreachable2(t.find(QStringView(c2, 2)));
+                    }
+
+                    // StringDetect is a DetectChar
+                    if (rule.type == Context::Rule::Type::StringDetect && rule.string.size() == 1) {
+                        auto tables = CharTableArray(detectChars, rule);
+                        auto c = rule.string[0];
+                        if (rule.insensitive != XmlBool::True) {
+                            c = c.toLower();
+                            tables.removeNonSpecialWhenSpecial();
+                            tables.append(c, rule);
+                            c = c.toUpper();
+                        }
+                        tables.removeNonSpecialWhenSpecial();
+                        tables.append(c, rule);
                     }
                 }
 
@@ -2411,14 +2565,20 @@ private:
                     break;
                 }
 
-                if (auto &ruleAndInclude = includeContexts[rule.context.context]) {
+                if (rule.context.contexts.isEmpty()) {
+                    break;
+                }
+
+                if (auto &ruleAndInclude = includeContexts[rule.context.contexts.front()]) {
                     updateUnreachable1(ruleAndInclude);
                 } else {
                     ruleAndInclude.rule = &rule;
                 }
 
                 for (const auto *rulePtr : rule.includedIncludeRules) {
-                    includeContexts.insert(rulePtr->context.context, RuleAndInclude{rulePtr, &rule});
+                    for (auto *context : rulePtr->context.contexts) {
+                        includeContexts.insert(context, RuleAndInclude{rulePtr, &rule});
+                    }
                 }
 
                 if (observedRule.includeRules) {
@@ -2436,7 +2596,7 @@ private:
                     }
 
                     case Context::Rule::Type::DetectChar: {
-                        auto &chars4 = (rule.dynamic != XmlBool::True) ? detectChars : dynamicDetectChars;
+                        auto &chars4 = (rule2.dynamic != XmlBool::True) ? detectChars : dynamicDetectChars;
                         auto tables = CharTableArray(chars4, rule2);
                         tables.removeNonSpecialWhenSpecial();
                         tables.append(rule2.char0, rule2, &rule);
@@ -2446,8 +2606,8 @@ private:
                     case Context::Rule::Type::DetectSpaces: {
                         auto tables = CharTableArray(detectChars, rule2);
                         tables.removeNonSpecialWhenSpecial();
-                        tables.append(QLatin1Char(' '), rule2, &rule);
-                        tables.append(QLatin1Char('\t'), rule2, &rule);
+                        tables.append(u' ', rule2, &rule);
+                        tables.append(u'\t', rule2, &rule);
                         break;
                     }
 
@@ -2488,8 +2648,18 @@ private:
                         }
                         break;
 
+                    case Context::Rule::Type::StringDetect: {
+                        // StringDetect is a DetectChar
+                        if (rule2.string.size() == 1 || (rule2.string.size() == 2 && rule2.dynamic == XmlBool::True)) {
+                            auto &chars4 = (rule2.dynamic != XmlBool::True) ? detectChars : dynamicDetectChars;
+                            auto tables = CharTableArray(chars4, rule2);
+                            tables.removeNonSpecialWhenSpecial();
+                            tables.append(rule2.string.back(), rule2, &rule);
+                        }
+                        break;
+                    }
+
                     case Context::Rule::Type::WordDetect:
-                    case Context::Rule::Type::StringDetect:
                     case Context::Rule::Type::Detect2Chars:
                     case Context::Rule::Type::IncludeRules:
                     case Context::Rule::Type::DetectIdentifier:
@@ -2516,24 +2686,24 @@ private:
                 success = false;
                 QString message;
                 message.reserve(128);
-                for (auto &ruleAndInclude : unreachableBy) {
-                    message += QStringLiteral("line ");
+                for (auto &ruleAndInclude : std::as_const(unreachableBy)) {
+                    message += u"line "_sv;
                     if (ruleAndInclude.includeRules) {
                         message += QString::number(ruleAndInclude.includeRules->line);
-                        message += QStringLiteral(" [by '");
+                        message += u" [by '"_sv;
                         message += ruleAndInclude.includeRules->context.name;
-                        message += QStringLiteral("' line ");
+                        message += u"' line "_sv;
                         message += QString::number(ruleAndInclude.rule->line);
                         if (ruleAndInclude.includeRules->filename != ruleAndInclude.rule->filename) {
-                            message += QStringLiteral(" (");
+                            message += u" ("_sv;
                             message += ruleAndInclude.rule->filename;
-                            message += QLatin1Char(')');
+                            message += u')';
                         }
-                        message += QLatin1Char(']');
+                        message += u']';
                     } else {
                         message += QString::number(ruleAndInclude.rule->line);
                     }
-                    message += QStringLiteral(", ");
+                    message += u", "_sv;
                 }
                 message.chop(2);
                 qWarning() << filename << "line" << rule.line << "unreachable rule by" << message;
@@ -2558,8 +2728,8 @@ private:
         const auto end = context.rules.end() - 1;
 
         for (; it < end; ++it) {
-            auto &rule1 = *it;
-            auto &rule2 = it[1];
+            const auto &rule1 = *it;
+            const auto &rule2 = it[1];
 
             auto isCommonCompatible = [&] {
                 if (rule1.lookAhead != rule2.lookAhead) {
@@ -2573,17 +2743,24 @@ private:
                 return rule1.beginRegion == rule2.beginRegion
                     && rule1.endRegion == rule2.endRegion
                     && rule1.firstNonSpace == rule2.firstNonSpace
-                    && rule1.context.context == rule2.context.context
+                    && rule1.context.contexts == rule2.context.contexts
                     && rule1.context.popCount == rule2.context.popCount;
                 // clang-format on
             };
 
             switch (rule1.type) {
+            // request to merge StringDetect with AnyChar
+            case Context::Rule::Type::StringDetect:
+                if (rule1.string.size() != 1 || rule1.dynamic == XmlBool::True) {
+                    break;
+                }
+                Q_FALLTHROUGH();
             // request to merge AnyChar/DetectChar
             case Context::Rule::Type::AnyChar:
             case Context::Rule::Type::DetectChar:
-                if ((rule2.type == Context::Rule::Type::AnyChar || rule2.type == Context::Rule::Type::DetectChar) && isCommonCompatible()
-                    && rule1.column == rule2.column) {
+                if ((rule2.type == Context::Rule::Type::AnyChar || rule2.type == Context::Rule::Type::DetectChar
+                     || (rule2.type == Context::Rule::Type::StringDetect && rule2.dynamic != XmlBool::True && rule2.string.size() == 1))
+                    && isCommonCompatible() && rule1.column == rule2.column) {
                     qWarning() << filename << "line" << rule2.line << "can be merged as AnyChar with the previous rule";
                     success = false;
                 }
@@ -2607,7 +2784,6 @@ private:
             case Context::Rule::Type::Float:
             case Context::Rule::Type::LineContinue:
             case Context::Rule::Type::WordDetect:
-            case Context::Rule::Type::StringDetect:
             case Context::Rule::Type::Detect2Chars:
             case Context::Rule::Type::IncludeRules:
             case Context::Rule::Type::DetectIdentifier:
@@ -2629,78 +2805,463 @@ private:
     //! - "#pop!Comment"  -> "Comment"
     //! - "##ISO C++"     -> ""
     //! - "Comment##ISO C++"-> "Comment" in ISO C++
-    void resolveContextName(Definition &definition, Context &context, ContextName &contextName, int line)
+    void resolveContextName(Definition &definition, ContextName &contextName, int line, const char *attrName)
     {
         QStringView name = contextName.name;
         if (name.isEmpty()) {
             contextName.stay = true;
-        } else if (name.startsWith(QStringLiteral("#stay"))) {
-            name = name.mid(5);
+        } else if (name.startsWith(u"#stay"_sv)) {
             contextName.stay = true;
-            contextName.context = &context;
-            if (!name.isEmpty()) {
-                qWarning() << definition.filename << "line" << line << "invalid context in" << context.name;
+            if (name.size() > 5) {
+                qWarning() << definition.filename << "line" << line << "invalid context in " << attrName << "=" << contextName.name;
                 m_success = false;
             }
         } else {
-            while (name.startsWith(QStringLiteral("#pop"))) {
-                name = name.mid(4);
+            while (name.startsWith(u"#pop"_sv)) {
+                name = name.sliced(4);
                 ++contextName.popCount;
             }
 
             if (contextName.popCount && !name.isEmpty()) {
-                if (name.startsWith(QLatin1Char('!')) && name.size() > 1) {
-                    name = name.mid(1);
+                if (name.startsWith(u'!') && name.size() > 1) {
+                    name = name.sliced(1);
                 } else {
-                    qWarning() << definition.filename << "line" << line << "'!' missing between '#pop' and context name" << context.name;
+                    qWarning() << definition.filename << "line" << line << "'!' missing between '#pop' and context name in " << attrName << "="
+                               << contextName.name;
                     m_success = false;
                 }
             }
 
             if (!name.isEmpty()) {
-                const int idx = name.indexOf(QStringLiteral("##"));
-                if (idx == -1) {
-                    auto it = definition.contexts.find(name.toString());
-                    if (it != definition.contexts.end()) {
-                        contextName.context = &*it;
-                    }
-                } else {
-                    auto defName = name.mid(idx + 2);
-                    auto it = m_definitions.find(defName.toString());
-                    if (it != m_definitions.end()) {
-                        auto listName = name.left(idx).toString();
-                        definition.referencedDefinitions.insert(&*it);
-                        auto ctxIt = it->contexts.find(listName.isEmpty() ? it->firstContextName : listName);
-                        if (ctxIt != it->contexts.end()) {
-                            contextName.context = &*ctxIt;
-                        }
-                    } else {
-                        qWarning() << definition.filename << "line" << line << "unknown definition in" << context.name;
-                        m_success = false;
+                for (auto contextPart : QStringTokenizer{name, u'!'}) {
+                    auto *ctx = resolveContextPartName(definition, contextPart, line, attrName, contextName.name);
+                    if (ctx) {
+                        contextName.contexts.push_back(ctx);
                     }
                 }
 
-                if (!contextName.context) {
-                    qWarning() << definition.filename << "line" << line << "unknown context" << name << "in" << context.name;
+                if (contextName.contexts.size() > 1 && definition.kateVersion < KateVersion{6, 22}) {
+                    qWarning() << definition.filename << "line" << line
+                               << "multiple contexts are only available since version \"6.21\". Please, increase kateversion.";
                     m_success = false;
                 }
             }
         }
     }
 
+    Context *resolveContextPartName(Definition &definition, QStringView contextNamePart, int line, const char *attrName, QStringView originalContext)
+    {
+        auto originalContextNamePart = contextNamePart;
+        auto *contextMap = &definition.contexts;
+        const int idx = contextNamePart.indexOf(u"##"_sv);
+        if (idx != -1) {
+            auto defName = contextNamePart.sliced(idx + 2);
+            auto it = m_definitions.find(defName.toString());
+            if (it == m_definitions.end()) {
+                qWarning() << definition.filename << "line" << line << "unknown definition" << defName << "in" << attrName << "=" << originalContext;
+                m_success = false;
+                return nullptr;
+            }
+            contextMap = &it->contexts;
+            definition.referencedDefinitions.insert(&*it);
+            contextNamePart = contextNamePart.sliced(0, idx);
+            if (contextNamePart.isEmpty()) {
+                contextNamePart = it->firstContextName;
+            }
+        }
+
+        auto ctxIt = contextMap->find(contextNamePart.toString());
+        if (ctxIt != contextMap->end()) {
+            return &*ctxIt;
+        }
+
+        qWarning() << definition.filename << "line" << line << "unknown context" << originalContextNamePart << "in " << attrName << "=" << originalContext;
+        m_success = false;
+        return nullptr;
+    }
+
     QMap<QString, Definition> m_definitions;
+    QHash<QString, QString> m_names;
     Definition *m_currentDefinition = nullptr;
     Keywords *m_currentKeywords = nullptr;
     Context *m_currentContext = nullptr;
+    // xml reader variable
+    //@{
+    QString m_textContent;
+    bool m_inKeywordItem = false;
+    //@}
     bool m_success = true;
 };
 
-namespace
+class HlCompressor
 {
+public:
+    HlCompressor(const QString &kateVersion)
+        : m_kateVersion(kateVersion)
+    {
+        m_hasElems.push_back(true);
+    }
+
+    const QString &compressedXML() const
+    {
+        return m_data;
+    }
+
+    /**
+     * Reduce xml space by removing what is superfluous.
+     * - transforms boolean values into 0 or 1.
+     * - remove unused attributes.
+     * - remove spaces and comments.
+     * - remove context attributes referring to #stay (because this is the default).
+     * - replace Detect2Chars with StringDetect (String="xy" is shorter than char="x" char1="y").
+     * - sort contexts by frequency of use to accelerate their search during loading.
+     */
+    void processElement(const QXmlStreamReader &xml)
+    {
+        switch (xml.tokenType()) {
+        case QXmlStreamReader::StartElement: {
+            closePreviousOpenTag(m_inContexts && !m_contexts.empty() ? m_contexts.back().data : m_data);
+            m_hasElems.push_back(false);
+
+            const auto tagName = xml.name();
+            if (tagName == u"contexts"_sv) {
+                m_inContexts = true;
+                m_data += u"<contexts"_sv;
+            } else if (m_inContexts) {
+                Context &ctx = (m_contexts.empty() || tagName == u"context"_sv) ? m_contexts.emplace_back() : m_contexts.back();
+                QString &out = ctx.data;
+                const bool isDetect2Chars = tagName == u"Detect2Chars"_sv;
+                out += u'<' % (isDetect2Chars ? u"StringDetect"_sv : tagName);
+
+                auto attrs = xml.attributes();
+                sortAttributes(attrs);
+                for (const auto &attr : attrs) {
+                    const auto attrName = attr.name();
+                    auto value = attr.value();
+                    // transform Detect2Chars char and char1 attributes to StringDetect String attribute
+                    if (isDetect2Chars && (attrName == u"char"_sv || attrName == u"char1"_sv)) {
+                        if (attrName == u"char"_sv) {
+                            const auto ch0 = value;
+                            const auto ch1 = attrs.value(u"char1"_sv);
+                            QChar chars[]{ch0.isEmpty() ? u' ' : ch0[0], ch1.isEmpty() ? u' ' : ch1[0]};
+                            writeXmlAttribute(out, u"String"_sv, QStringView(chars, 2), tagName);
+                        }
+                    } else if (attrName == u"context"_sv || attrName == u"lineEndContext"_sv || attrName == u"fallthroughContext"_sv
+                               || attrName == u"lineEmptyContext"_sv) {
+                        // ignore #stay context because this is the default
+                        if (value != u"#stay"_sv) {
+                            writeXmlAttribute(out, attrName, value, tagName);
+
+                            /*
+                             * Extract context name and increment context counter
+                             */
+                            bool hasPop = false;
+                            while (value.startsWith(u"#pop"_sv)) {
+                                hasPop = true;
+                                value = value.sliced(4);
+                            }
+                            if (hasPop && !value.isEmpty()) {
+                                value = value.sliced(1);
+                            }
+                            if (!value.isEmpty() && -1 == value.indexOf(u"##"_sv)) {
+                                m_contextRefs[value.toString()]++;
+                            }
+                        }
+                    } else if (tagName == u"LineContinue"_sv && attrName == u"char"_sv && value == u"\\") {
+                        // ignore char="\\" with LineContinue
+                    } else {
+                        if (attrName == u"name"_sv) {
+                            ctx.name = value.toString();
+                        }
+                        writeXmlAttribute(out, attrName, value, tagName);
+                    }
+                }
+            } else if (m_inList) {
+                m_inItem = true;
+                m_isIncludeItem = (tagName == u"include"_sv);
+            } else {
+                if (tagName == u"list"_sv) {
+                    m_keywords.clear();
+                    m_inList = true;
+                }
+                m_data += u'<' % tagName;
+                const auto attrs = xml.attributes();
+                for (const auto &attr : attrs) {
+                    auto name = attr.name();
+                    auto value = (name == u"kateversion") ? QStringView(m_kateVersion) : attr.value();
+                    writeXmlAttribute(m_data, name, value, tagName);
+                }
+            }
+            break;
+        }
+
+        case QXmlStreamReader::EndElement: {
+            const auto tagName = xml.name();
+            if (m_inItem) {
+                m_inItem = false;
+                m_hasElems.pop_back();
+                break;
+            } else if (m_inList) {
+                m_inList = false;
+                std::sort(m_keywords.begin(), m_keywords.end());
+                m_keywords.erase(std::unique(m_keywords.begin(), m_keywords.end()), m_keywords.end());
+                for (const auto &item : m_keywords) {
+                    m_data += item.isIncludeTag ? u"<include>"_sv : u"<item>"_sv;
+                    writeXmlText(m_data, item.text);
+                    m_data += item.isIncludeTag ? u"</include>"_sv : u"</item>"_sv;
+                }
+            } else if (m_inContexts && !m_contexts.empty() && tagName == u"contexts"_sv) {
+                m_inContexts = false;
+                // sorting contexts by the most used (ignore first context)
+                std::sort(m_contexts.begin() + 1, m_contexts.end(), [&](auto &ctx1, auto &ctx2) {
+                    auto i1 = m_contextRefs.value(ctx1.name);
+                    auto i2 = m_contextRefs.value(ctx2.name);
+                    if (i1 != i2) {
+                        return i1 > i2;
+                    }
+                    // for a reproducible build, contexts with the same number of uses are sorted by name
+                    return ctx1.name < ctx2.name;
+                });
+                for (const auto &ctx : m_contexts) {
+                    m_data += ctx.data;
+                }
+            }
+
+            QString &out = m_inContexts && !m_contexts.empty() ? m_contexts.back().data : m_data;
+            if (m_hasElems.back()) {
+                out += u"</"_sv % tagName % u'>';
+            } else {
+                out += u"/>"_sv;
+            }
+            m_hasElems.pop_back();
+            break;
+        }
+
+        case QXmlStreamReader::EntityReference:
+        case QXmlStreamReader::Characters:
+            if (m_inItem) {
+                m_keywords.push_back({xml.text().toString(), m_isIncludeItem});
+            }
+            break;
+
+        default:;
+        }
+    }
+
+private:
+    void closePreviousOpenTag(QString &out)
+    {
+        if (!m_hasElems.back()) {
+            m_hasElems.back() = true;
+            out += u'>';
+        }
+    }
+
+    /**
+     * Write \p text escaping special characters.
+     */
+    static void writeXmlText(QString &out, QStringView text, bool escapeDQ = false)
+    {
+        for (const QChar &c : text) {
+            if (c == u'<') {
+                out += u"&lt;"_sv;
+            } else if (c == u'&') {
+                out += u"&amp;"_sv;
+            } else if (escapeDQ && c == u'"') {
+                out += u"&#34;"_sv;
+            } else if (c == u'\t') {
+                // non-space whitespace character in an attribute is remplaced with space...
+                out += u"&#9;"_sv;
+            } else {
+                out += c;
+            }
+        }
+    }
+
+    /**
+     * Write attribut in \p out.
+     * Booleans are converted to 0, 1 or ignored if this corresponds to the default value.
+     * Values will be written with either double quotes or single quotes,
+     * depending on which takes up the least space
+     */
+    static void writeXmlAttribute(QString &out, QStringView attrName, QStringView value, QStringView tagName)
+    {
+        enum class DefaultBool {
+            // default value is false
+            False,
+            // default value is true
+            True,
+            // manipulate as a tribool whose attribute absence is equivalent to None
+            None,
+            // not used
+            Ignored,
+            // default value is false, but None for <keyword>
+            FalseOrKeywordTag,
+            // default value is true, but depends on another value for <keywords>
+            TrueOrKeywordsTag,
+            // default is false, but ignored in <context>
+            DynamicAttr,
+        };
+        static const QHash<QStringView, DefaultBool> booleanAttrs({
+            {u"fallthrough"_sv, DefaultBool::Ignored},
+            {u"dynamic"_sv, DefaultBool::DynamicAttr},
+            {u"hidden"_sv, DefaultBool::False},
+            {u"indentationsensitive"_sv, DefaultBool::False},
+            {u"noIndentationBasedFolding"_sv, DefaultBool::False},
+            {u"lookAhead"_sv, DefaultBool::False},
+            {u"firstNonSpace"_sv, DefaultBool::False},
+            {u"insensitive"_sv, DefaultBool::FalseOrKeywordTag},
+            {u"minimal"_sv, DefaultBool::False},
+            {u"includeAttrib"_sv, DefaultBool::False},
+            {u"italic"_sv, DefaultBool::None},
+            {u"bold"_sv, DefaultBool::None},
+            {u"underline"_sv, DefaultBool::None},
+            {u"strikeOut"_sv, DefaultBool::None},
+            {u"spellChecking"_sv, DefaultBool::True},
+            {u"casesensitive"_sv, DefaultBool::TrueOrKeywordsTag},
+            {u"ignored"_sv, DefaultBool::Ignored},
+        });
+
+        auto it = booleanAttrs.find(attrName);
+        // convert boolean value
+        if (it != booleanAttrs.end()) {
+            bool b = KSyntaxHighlighting::Xml::attrToBool(value);
+            bool ignoreAttr = false;
+            switch (*it) {
+            case DefaultBool::Ignored:
+                ignoreAttr = true;
+                break;
+            case DefaultBool::TrueOrKeywordsTag:
+                ignoreAttr = (tagName == u"keywords"_sv) ? false : b;
+                break;
+            case DefaultBool::True:
+                ignoreAttr = b;
+                break;
+            case DefaultBool::FalseOrKeywordTag:
+                ignoreAttr = (tagName == u"keyword"_sv) ? false : !b;
+                break;
+            case DefaultBool::DynamicAttr:
+                ignoreAttr = (tagName == u"context"_sv) || !b;
+                break;
+            case DefaultBool::False:
+                ignoreAttr = !b;
+                break;
+            case DefaultBool::None:
+                ignoreAttr = false;
+                break;
+            }
+            if (!ignoreAttr) {
+                out += u' ' % attrName % u"=\""_sv % (b ? u'1' : u'0') % u'"';
+            }
+        } else {
+            const bool hasDQ = value.contains(u'"');
+            // attribute in double quotes when the value does not contain " or contains " and '
+            if (!hasDQ || value.contains(u'\'')) {
+                out += u' ' % attrName % u"=\""_sv;
+                writeXmlText(out, value, hasDQ);
+                out += u'"';
+                // attribute in single quotes because the value contains "
+            } else {
+                out += u' ' % attrName % u"='"_sv;
+                writeXmlText(out, value);
+                out += u'\'';
+            }
+        }
+    }
+
+    /**
+     * Sort attributes for better compression by rcc.
+     */
+    static void sortAttributes(QXmlStreamAttributes &attrs)
+    {
+        static const QHash<QStringView, int> priorityAttrs({
+            // context and rule
+            {u"attribute"_sv, 5},
+
+            // context and itemData
+            {u"name"_sv, 4},
+
+            // context
+            {u"noIndentationBasedFolding"_sv, 11},
+            {u"lineEndContext"_sv, 9},
+            {u"lineEmptyContext"_sv, 8},
+            {u"fallthroughContext"_sv, 7},
+
+            // rule
+            {u"lookAhead"_sv, 100},
+            {u"firstNonSpace"_sv, 99},
+            {u"dynamic"_sv, 98},
+            {u"minimal"_sv, 97},
+            {u"includeAttrib"_sv, 96},
+            {u"insensitive"_sv, 95},
+            {u"column"_sv, 50},
+            {u"beginRegion"_sv, 40},
+            {u"endRegion"_sv, 41},
+            {u"weakDeliminator"_sv, 31},
+            {u"additionalDeliminator"_sv, 30},
+            {u"context"_sv, 20},
+            {u"String"_sv, 2},
+            {u"char"_sv, 2},
+
+            // itemData
+            {u"strikeOut"_sv, 100},
+            {u"underline"_sv, 99},
+            {u"italic"_sv, 98},
+            {u"bold"_sv, 97},
+            {u"spellChecking"_sv, 96},
+            {u"defStyleNum"_sv, 95},
+            {u"color"_sv, 94},
+            {u"backgroundColor"_sv, 93},
+            {u"selBackgroundColor"_sv, 92},
+            {u"selColor"_sv, 91},
+        });
+        std::sort(attrs.begin(), attrs.end(), [](auto &attr1, auto &attr2) {
+            auto i1 = priorityAttrs.value(attr1.name());
+            auto i2 = priorityAttrs.value(attr2.name());
+            if (i1 != i2) {
+                return i1 < i2;
+            }
+            return attr1.name() < attr2.name();
+        });
+    }
+
+    struct Context {
+        QString name;
+        QString data;
+    };
+    struct Item {
+        QString text;
+        bool isIncludeTag;
+
+        std::strong_ordering operator<=>(const Item &other) const = default;
+    };
+    QString m_data = u"<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE language>"_s;
+    std::vector<Context> m_contexts;
+    QHash<QString, int> m_contextRefs;
+    std::vector<Item> m_keywords;
+    QVarLengthArray<bool, 8> m_hasElems;
+    QString m_kateVersion;
+    bool m_inContexts = false;
+    bool m_inList = false;
+    bool m_inItem = false;
+    bool m_isIncludeItem = false;
+};
+
+void printFileError(const QFile &file)
+{
+    qWarning() << "Failed to open" << file.fileName() << "-" << file.errorString();
+}
+
+void printXmlError(const QString &fileName, const QXmlStreamReader &xml)
+{
+    qWarning() << fileName << "-" << xml.errorString() << "@ offset" << xml.characterOffset();
+};
+
 QStringList readListing(const QString &fileName)
 {
     QFile file(fileName);
     if (!file.open(QIODevice::ReadOnly)) {
+        printFileError(file);
         return QStringList();
     }
 
@@ -2716,7 +3277,7 @@ QStringList readListing(const QString &fileName)
     }
 
     if (xml.hasError()) {
-        qWarning() << "XML error while reading" << fileName << " - " << qPrintable(xml.errorString()) << "@ offset" << xml.characterOffset();
+        printXmlError(fileName, xml);
         listing.clear();
     }
 
@@ -2731,7 +3292,7 @@ QStringList readListing(const QString &fileName)
 bool checkExtensions(QStringView extensions)
 {
     // get list of extensions
-    const QList<QStringView> extensionParts = extensions.split(QLatin1Char(';'), Qt::SkipEmptyParts);
+    const QList<QStringView> extensionParts = extensions.split(u';', Qt::SkipEmptyParts);
 
     // ok if empty
     if (extensionParts.isEmpty()) {
@@ -2747,12 +3308,12 @@ bool checkExtensions(QStringView extensions)
             }
 
             // allow some special characters
-            if (c == QLatin1Char('.') || c == QLatin1Char('-') || c == QLatin1Char('_') || c == QLatin1Char('+')) {
+            if (c == u'.' || c == u'-' || c == u'_' || c == u'+') {
                 continue;
             }
 
             // only allowed wildcard things: '?' and '*'
-            if (c == QLatin1Char('?') || c == QLatin1Char('*')) {
+            if (c == u'?' || c == u'*') {
                 continue;
             }
 
@@ -2765,6 +3326,12 @@ bool checkExtensions(QStringView extensions)
     return true;
 }
 
+struct CompressedFile {
+    QString fileName;
+    QString xmlData;
+    bool generated;
+};
+
 }
 
 int main(int argc, char *argv[])
@@ -2773,7 +3340,7 @@ int main(int argc, char *argv[])
     QCoreApplication app(argc, argv);
 
     // ensure enough arguments are passed
-    if (app.arguments().size() < 3) {
+    if (app.arguments().size() < 4) {
         return 1;
     }
 
@@ -2788,16 +3355,12 @@ int main(int argc, char *argv[])
     XMLGrammarPoolImpl xsd(XMLPlatformUtils::fgMemoryManager);
 
     // create parser for the XSD
-    SAX2XMLReaderImpl parser(XMLPlatformUtils::fgMemoryManager, &xsd);
-    init_parser(parser);
-    QString messages;
-    CustomErrorHandler eh(&messages);
-    parser.setErrorHandler(&eh);
+    CustomXMLValidator parser(&xsd);
 
     // load grammar into the pool, on error just abort
     const auto xsdFile = app.arguments().at(2);
-    if (!parser.loadGrammar((const char16_t *)xsdFile.utf16(), Grammar::SchemaGrammarType, true) || eh.failed()) {
-        qWarning("Failed to parse XSD %s: %s", qPrintable(xsdFile), qPrintable(messages));
+    if (!parser.loadGrammar((const char16_t *)xsdFile.utf16(), Grammar::SchemaGrammarType, true) || parser.eh.failed()) {
+        qWarning("Failed to parse XSD %s: %s", qPrintable(xsdFile), qPrintable(parser.messages));
         return 2;
     }
 
@@ -2817,36 +3380,33 @@ int main(int argc, char *argv[])
     }
 
     // text attributes
-    const QStringList textAttributes = QStringList() << QStringLiteral("name") << QStringLiteral("section") << QStringLiteral("mimetype")
-                                                     << QStringLiteral("extensions") << QStringLiteral("style") << QStringLiteral("author")
-                                                     << QStringLiteral("license") << QStringLiteral("indenter");
+    const QStringList textAttributes = QStringList() << QStringLiteral("name") << QStringLiteral("alternativeNames") << QStringLiteral("section")
+                                                     << QStringLiteral("mimetype") << QStringLiteral("extensions") << QStringLiteral("style")
+                                                     << QStringLiteral("author") << QStringLiteral("license") << QStringLiteral("indenter");
 
     // index all given highlightings
     HlFilesChecker filesChecker;
     QVariantMap hls;
     int anyError = 0;
+    std::vector<CompressedFile> compressedFiles;
     for (const QString &hlFilename : std::as_const(hlFilenames)) {
         QFile hlFile(hlFilename);
         if (!hlFile.open(QIODevice::ReadOnly)) {
-            qWarning("Failed to open %s", qPrintable(hlFilename));
+            printFileError(hlFile);
             anyError = 3;
             continue;
         }
 
 #ifdef HAS_XERCESC
         // create parser
-        SAX2XMLReaderImpl parser(XMLPlatformUtils::fgMemoryManager, &xsd);
-        init_parser(parser);
-        QString messages;
-        CustomErrorHandler eh(&messages);
-        parser.setErrorHandler(&eh);
+        CustomXMLValidator parser(&xsd);
 
         // parse the XML file
         parser.parse((const char16_t *)hlFile.fileName().utf16());
 
         // report issues
-        if (eh.failed()) {
-            qWarning("Failed to validate XML %s: %s", qPrintable(hlFile.fileName()), qPrintable(messages));
+        if (parser.eh.failed()) {
+            qWarning("Failed to validate XML %s: %s", qPrintable(hlFile.fileName()), qPrintable(parser.messages));
             anyError = 4;
             continue;
         }
@@ -2883,8 +3443,9 @@ int main(int argc, char *argv[])
         hl[QStringLiteral("version")] = xml.attributes().value(QLatin1String("version")).toInt();
         hl[QStringLiteral("priority")] = xml.attributes().value(QLatin1String("priority")).toInt();
 
-        // add boolean one
+        // boolean attributes
         hl[QStringLiteral("hidden")] = attrToBool(xml.attributes().value(QLatin1String("hidden")));
+        hl[QStringLiteral("generated")] = attrToBool(xml.attributes().value(QLatin1String("generated")));
 
         // keep some strings as UTF-8 for faster translations
         hl[QStringLiteral("nameUtf8")] = hl[QStringLiteral("name")].toString().toUtf8();
@@ -2893,20 +3454,35 @@ int main(int argc, char *argv[])
         // remember hl
         hls[QFileInfo(hlFile).fileName()] = hl;
 
+        const QStringView kateversion = xml.attributes().value(QStringLiteral("kateversion"));
         const QString hlName = hl[QStringLiteral("name")].toString();
+        const QString hlAlternativeNames = hl[QStringLiteral("alternativeNames")].toString();
 
-        filesChecker.setDefinition(xml.attributes().value(QStringLiteral("kateversion")), hlFilename, hlName);
+        filesChecker.setDefinition(kateversion,
+                                   hlFilename,
+                                   hlName,
+                                   hlAlternativeNames.split(u';', Qt::SkipEmptyParts),
+                                   hl[QStringLiteral("generated")].toBool());
+
+        // As the compressor removes "fallthrough" attribute which is required with
+        // "fallthroughContext" before the 5.62 version, the minimum version is
+        // automatically increased
+        HlCompressor compressor((filesChecker.currentVersion() < KateVersion{5, 62}) ? u"5.62"_s : kateversion.toString());
+        compressor.processElement(xml);
 
         // scan for broken regex or keywords with spaces
         while (!xml.atEnd()) {
             xml.readNext();
             filesChecker.processElement(xml);
+            compressor.processElement(xml);
         }
 
         if (xml.hasError()) {
             anyError = 33;
-            qWarning() << hlFilename << "-" << xml.errorString() << "@ offset" << xml.characterOffset();
+            printXmlError(hlFilename, xml);
         }
+
+        compressedFiles.emplace_back(CompressedFile{QFileInfo(hlFilename).fileName(), compressor.compressedXML(), hl[QStringLiteral("generated")].toBool()});
     }
 
     filesChecker.resolveContexts();
@@ -2920,10 +3496,68 @@ int main(int argc, char *argv[])
         return anyError;
     }
 
+    // check compressed file
+    HlFilesChecker filesChecker2;
+    const QString compressedDir = app.arguments().at(4) + u"/"_sv;
+    for (const auto &compressedFile : std::as_const(compressedFiles)) {
+        const auto outFileName = compressedDir + compressedFile.fileName;
+        auto utf8Data = compressedFile.xmlData.toUtf8();
+
+#ifdef HAS_XERCESC
+        // create parser
+        CustomXMLValidator parser(&xsd);
+
+        auto utf8Filename = outFileName.toUtf8();
+        utf8Filename.append('\0');
+        // parse the XML file
+        MemBufInputSource membuf(reinterpret_cast<const XMLByte *>(utf8Data.constData()), utf8Data.size(), utf8Filename.data());
+
+        // report issues
+        if (parser.eh.failed()) {
+            qWarning("Failed to validate XML %s: %s", qPrintable(outFileName), qPrintable(parser.messages));
+            return 8;
+        }
+#endif
+
+        QBuffer buffer(&utf8Data);
+        buffer.open(QBuffer::ReadOnly);
+        QXmlStreamReader xml(&buffer);
+        // scan for broken file
+        while (!xml.atEnd()) {
+            if (xml.readNext() == QXmlStreamReader::TokenType::StartElement && xml.name() == u"language"_sv) {
+                const auto attrs = xml.attributes();
+                const auto version = attrs.value(u"kateversion"_sv);
+                const QString hlName = attrs.value(u"name"_sv).toString();
+                const QString hlAlternativeNames = attrs.value(u"alternativeNames"_sv).toString();
+                filesChecker2.setDefinition(version, outFileName, hlName, hlAlternativeNames.split(u';', Qt::SkipEmptyParts), compressedFile.generated);
+            }
+            filesChecker2.processElement(xml);
+        }
+
+        if (xml.hasError()) {
+            printXmlError(outFileName, xml);
+            return 9;
+        }
+
+        // create outfile, after all has worked!
+        QFile outFile(outFileName);
+        if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            return 10;
+        }
+        outFile.write(utf8Data);
+    }
+
+    filesChecker2.resolveContexts();
+
+    // bail out if any problem was seen
+    if (!filesChecker2.check()) {
+        return 11;
+    }
+
     // create outfile, after all has worked!
     QFile outFile(app.arguments().at(1));
     if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        return 9;
+        return 12;
     }
 
     // write out json

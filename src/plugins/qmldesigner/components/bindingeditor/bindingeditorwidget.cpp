@@ -3,10 +3,10 @@
 
 #include "bindingeditorwidget.h"
 
-#include <plaintexteditmodifier.h>
+#include <indentingtexteditormodifier.h>
+#include <qmldesignertr.h>
 
 #include <coreplugin/actionmanager/actionmanager.h>
-#include <coreplugin/coreplugintr.h>
 
 #include <projectexplorer/projectexplorerconstants.h>
 
@@ -20,7 +20,6 @@
 
 #include <qmljstools/qmljsindenter.h>
 
-#include <utils/fancylineedit.h>
 #include <utils/mimeconstants.h>
 #include <utils/transientscroll.h>
 
@@ -35,7 +34,7 @@ BindingEditorWidget::BindingEditorWidget()
 
     Core::IContext::attach(this, context);
 
-    Utils::TransientScrollAreaSupport::support(this);
+    Utils::TransientScrollArea::support(this);
 
     /*
      * We have to register our own active auto completion shortcut, because the original short cut will
@@ -107,9 +106,8 @@ void BindingEditorWidget::setEditorTextWithIndentation(const QString &text)
     if (text.isEmpty())
         return;
 
-    auto modifier = std::make_unique<IndentingTextEditModifier>(
-        doc, QTextCursor{doc});
-    modifier->indent(0, text.length()-1);
+    auto modifier = std::make_unique<IndentingTextEditModifier>(doc);
+    modifier->indent(0, text.size()-1);
 }
 
 BindingDocument::BindingDocument()
@@ -142,7 +140,7 @@ void BindingDocument::triggerPendingUpdates()
 BindingEditorFactory::BindingEditorFactory()
 {
     setId(BINDINGEDITOR_CONTEXT_ID);
-    setDisplayName(::Core::Tr::tr("Binding Editor"));
+    setDisplayName(Tr::tr("Binding Editor"));
     addMimeType(BINDINGEDITOR_CONTEXT_ID);
     addMimeType(Utils::Constants::QML_MIMETYPE);
     addMimeType(Utils::Constants::QMLTYPES_MIMETYPE);
@@ -156,7 +154,7 @@ BindingEditorFactory::BindingEditorFactory()
     setParenthesesMatchingEnabled(true);
     setCodeFoldingSupported(true);
 
-    addHoverHandler(new QmlJSEditor::QmlJSHoverHandler);
+    addHoverHandler(&QmlJSEditor::qmlJSHoverHandler());
     setCompletionAssistProvider(new QmlJSEditor::QmlJSCompletionAssistProvider);
 }
 

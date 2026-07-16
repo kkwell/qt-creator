@@ -304,6 +304,41 @@ static CMakeConfigItem unsetItemFromString(const QString &input)
     return item;
 }
 
+CMakeConfig::CMakeConfig(const QList<CMakeConfigItem> &items)
+{
+    for (const auto &i : items)
+        insert(i.key, i);
+}
+
+CMakeConfig::CMakeConfig(std::initializer_list<CMakeConfigItem> items)
+{
+    for (const auto &i : items)
+        insert(i.key, i);
+}
+
+QList<CMakeConfigItem> CMakeConfig::toList() const
+{
+    return values();
+}
+
+void CMakeConfig::insert(const CMakeConfigItem &item)
+{
+    if (item.key.isEmpty())
+        return;
+
+    insert(item.key, item);
+}
+
+QStringList CMakeConfig::toArguments() const
+{
+    QStringList args;
+    for (const CMakeConfigItem &item : *this) {
+        args << item.toArgument();
+    }
+    return args;
+}
+
+
 CMakeConfig CMakeConfig::fromArguments(const QStringList &list, QStringList &unknownOptions)
 {
     CMakeConfig result;
@@ -312,12 +347,12 @@ CMakeConfig CMakeConfig::fromArguments(const QStringList &list, QStringList &unk
     for (const QString &i : list) {
         if (inSet) {
             inSet = false;
-            result.append(setItemFromString(i));
+            result.insert(setItemFromString(i));
             continue;
         }
         if (inUnset) {
             inUnset = false;
-            result.append(unsetItemFromString(i));
+            result.insert(unsetItemFromString(i));
             continue;
         }
         if (i == "-U") {
@@ -329,24 +364,24 @@ CMakeConfig CMakeConfig::fromArguments(const QStringList &list, QStringList &unk
             continue;
         }
         if (i.startsWith("-U")) {
-            result.append(unsetItemFromString(i.mid(2)));
+            result.insert(unsetItemFromString(i.mid(2)));
             continue;
         }
         if (i.startsWith("-D")) {
-            result.append(setItemFromString(i.mid(2)));
+            result.insert(setItemFromString(i.mid(2)));
             continue;
         }
 
         unknownOptions.append(i);
     }
 
-    return Utils::filtered(result, [](const CMakeConfigItem &item) { return !item.key.isEmpty(); });
+    return result;
 }
 
 CMakeConfig CMakeConfig::fromFile(const Utils::FilePath &cacheFile, QString *errorMessage)
 {
     CMakeConfig result;
-    QFile cache(cacheFile.toString());
+    QFile cache(cacheFile.toFSPathString());
     if (!cache.open(QIODevice::ReadOnly | QIODevice::Text)) {
         if (errorMessage)
             *errorMessage = Tr::tr("Failed to open %1 for reading.").arg(cacheFile.toUserOutput());
@@ -382,13 +417,12 @@ CMakeConfig CMakeConfig::fromFile(const Utils::FilePath &cacheFile, QString *err
             valuesMap[key.left(key.size() - 8) /* "-STRINGS" */] = value;
         } else {
             CMakeConfigItem::Type t = CMakeConfigItem::typeStringToType(type);
-            result << CMakeConfigItem(key, t, documentation, value);
+            result.insert(CMakeConfigItem(key, t, documentation, value));
         }
     }
 
     // Set advanced flags:
-    for (int i = 0; i < result.size(); ++i) {
-        CMakeConfigItem &item = result[i];
+    for (CMakeConfigItem &item : result) {
         item.isAdvanced = advancedSet.contains(item.key);
 
         if (valuesMap.contains(item.key)) {
@@ -399,7 +433,7 @@ CMakeConfig CMakeConfig::fromFile(const Utils::FilePath &cacheFile, QString *err
         }
     }
 
-    return Utils::sorted(std::move(result), &CMakeConfigItem::less);
+    return result;
 }
 
 QString CMakeConfigItem::toString(const Utils::MacroExpander *expander) const

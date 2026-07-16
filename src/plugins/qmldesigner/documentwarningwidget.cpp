@@ -8,6 +8,8 @@
 #include <utils/stylehelper.h>
 #include <utils/theme/theme.h>
 
+#include <qmldesigner/settings/designersettings.h>
+
 #include <QBoxLayout>
 #include <QCheckBox>
 #include <QEvent>
@@ -174,12 +176,12 @@ void DocumentWarningWidget::emitGotoCodeClicked(const DocumentMessage &message)
 
 bool DocumentWarningWidget::warningsEnabled() const
 {
-    return QmlDesignerPlugin::settings().value(DesignerSettingsKey::WARNING_FOR_FEATURES_IN_DESIGNER).toBool();
+    return designerSettings().warningForFeaturesInDesigner();
 }
 
 void DocumentWarningWidget::ignoreCheckBoxToggled(bool b)
 {
-    QmlDesignerPlugin::settings().value(DesignerSettingsKey::WARNING_FOR_FEATURES_IN_DESIGNER, !b);
+    designerSettings().warningForFeaturesInDesigner.setValue(!b);
 }
 
 void DocumentWarningWidget::setErrors(const QList<DocumentMessage> &errors)

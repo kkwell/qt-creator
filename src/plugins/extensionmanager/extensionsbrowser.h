@@ -7,18 +7,16 @@
 
 QT_FORWARD_DECLARE_CLASS(QLabel)
 
-namespace Core::WelcomePageHelpers {
-class TextFormat;
-}
-
 namespace ExtensionManager::Internal {
+
+class ExtensionsModel;
 
 class ExtensionsBrowser final : public QWidget
 {
     Q_OBJECT
 
 public:
-    ExtensionsBrowser(QWidget *parent = nullptr);
+    ExtensionsBrowser(ExtensionsModel *model, QWidget *parent = nullptr);
     ~ExtensionsBrowser();
 
     void setFilter(const QString &filter);
@@ -29,6 +27,10 @@ public:
     int extraListViewWidth() const; // Space for scrollbar, etc.
 
     void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
+
+    QModelIndex currentIndex() const;
+    void selectIndex(const QModelIndex &index);
 
 signals:
     void itemSelected(const QModelIndex &current, const QModelIndex &previous);
@@ -39,8 +41,6 @@ private:
     class ExtensionsBrowserPrivate *d = nullptr;
 };
 
-QLabel *tfLabel(const Core::WelcomePageHelpers::TextFormat &tf, bool singleLine = true);
-
 constexpr static QSize iconBgSizeSmall{50, 50};
 constexpr static QSize iconBgSizeBig{68, 68};
 enum Size {
@@ -48,5 +48,6 @@ enum Size {
     SizeBig,
 };
 QPixmap itemIcon(const QModelIndex &index, Size size);
+QPixmap itemBadge(const QModelIndex &index, Size size);
 
 } // ExtensionManager::Internal

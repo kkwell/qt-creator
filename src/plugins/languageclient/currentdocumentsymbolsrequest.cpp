@@ -10,7 +10,7 @@
 
 using namespace Core;
 using namespace LanguageServerProtocol;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace TextEditor;
 using namespace Utils;
 
@@ -69,16 +69,6 @@ void CurrentDocumentSymbolsRequest::clearConnections()
     for (const QMetaObject::Connection &connection : std::as_const(m_connections))
         disconnect(connection);
     m_connections.clear();
-}
-
-CurrentDocumentSymbolsRequestTaskAdapter::CurrentDocumentSymbolsRequestTaskAdapter()
-{
-    connect(task(), &CurrentDocumentSymbolsRequest::done, this, &TaskInterface::done);
-}
-
-void CurrentDocumentSymbolsRequestTaskAdapter::start()
-{
-    task()->start();
 }
 
 } // namespace LanguageClient

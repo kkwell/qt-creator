@@ -32,6 +32,7 @@ enum { debug = 0 };
 
 using namespace Core;
 using namespace Utils;
+using namespace Utils::TemplateEngine;
 
 static const char customWizardElementC[] = "wizard";
 static const char iconElementC[] = "icon";
@@ -170,14 +171,13 @@ bool CustomWizardValidationRule::validate(QJSEngine &engine, const QMap<QString,
     // Apply parameters and evaluate using JavaScript
     QString cond = condition;
     CustomWizardContext::replaceFields(replacementMap, &cond);
-    bool valid = false;
-    QString errorMessage;
-    if (!Utils::TemplateEngine::evaluateBooleanJavaScriptExpression(engine, cond, &valid, &errorMessage)) {
+    Result<bool> res = TemplateEngine::evaluateBooleanJavaScriptExpression(engine, cond);
+    if (!res) {
         qWarning("Error in custom wizard validation expression '%s': %s",
-                 qPrintable(cond), qPrintable(errorMessage));
+                 qPrintable(cond), qPrintable(res.error()));
         return false;
     }
-    return valid;
+    return *res;
 }
 
 void CustomWizardParameters::clear()
@@ -451,11 +451,12 @@ static inline IWizardFactory::WizardFlags wizardFlags(const QXmlStreamReader &re
 }
 
 static inline QString msgError(const QXmlStreamReader &reader,
-                               const QString &fileName,
+                               const FilePath &filePath,
                                const QString &what)
 {
-    return QString::fromLatin1("Error in %1 at line %2, column %3: %4").
-            arg(fileName).arg(reader.lineNumber()).arg(reader.columnNumber()).arg(what);
+    return QString::fromLatin1("Error in %1 at line %2, column %3: %4")
+            .arg(filePath.toUserOutput()).arg(reader.lineNumber())
+            .arg(reader.columnNumber()).arg(what);
 }
 
 static inline bool booleanAttributeValue(const QXmlStreamReader &r, const char *nameC,
@@ -517,7 +518,7 @@ GeneratorScriptArgument::GeneratorScriptArgument(const QString &v) :
 
 // Main parsing routine
 CustomWizardParameters::ParseResult
-CustomWizardParameters::parse(QIODevice &device, const QString &configFileFullPath,
+CustomWizardParameters::parse(QIODevice &device, const FilePath &configFileFullPath,
                               QString *errorMessage)
 {
     int comboEntryCount = 0;
@@ -537,7 +538,7 @@ CustomWizardParameters::parse(QIODevice &device, const QString &configFileFullPa
         case QXmlStreamReader::StartElement:
             do {
                 // Read out subelements applicable to current state
-                if (state == ParseWithinWizard && parseCustomProjectElement(reader, configFileFullPath, language, this))
+                if (state == ParseWithinWizard && parseCustomProjectElement(reader, configFileFullPath.path(), language, this))
                     break;
                 // switch to next state
                 state = nextOpeningState(state, reader.name());
@@ -607,7 +608,8 @@ CustomWizardParameters::parse(QIODevice &device, const QString &configFileFullPa
                     }
                     break;
                 case ParseWithinScript:
-                    filesGeneratorScript = fixGeneratorScript(configFileFullPath, attributeValue(reader, generatorScriptBinaryAttributeC));
+                    filesGeneratorScript = fixGeneratorScript(configFileFullPath.path(),
+                            attributeValue(reader, generatorScriptBinaryAttributeC));
                     if (filesGeneratorScript.isEmpty()) {
                         *errorMessage = QString::fromLatin1("No binary specified for generator script.");
                         return ParseFailed;
@@ -671,11 +673,12 @@ CustomWizardParameters::parse(QIODevice &device, const QString &configFileFullPa
 }
 
 CustomWizardParameters::ParseResult
-CustomWizardParameters::parse(const QString &configFileFullPath, QString *errorMessage)
+CustomWizardParameters::parse(const FilePath &configFileFullPath, QString *errorMessage)
 {
-    QFile configFile(configFileFullPath);
+    QFile configFile(configFileFullPath.toFSPathString());
     if (!configFile.open(QIODevice::ReadOnly|QIODevice::Text)) {
-        *errorMessage = QString::fromLatin1("Cannot open %1: %2").arg(configFileFullPath, configFile.errorString());
+        *errorMessage = QString::fromLatin1("Cannot open %1: %2")
+            .arg(configFileFullPath.toUserOutput(), configFile.errorString());
         return ParseFailed;
     }
     return parse(configFile, configFileFullPath, errorMessage);
@@ -815,7 +818,8 @@ bool CustomWizardContext::replaceFields(const FieldReplacementMap &fm, QString *
 // value to a text file and returns the file name to be inserted
 // instead of the expanded field in the parsed template,
 // used for the arguments of a generator script.
-class TemporaryFileTransform {
+class TemporaryFileTransform
+{
 public:
     using TemporaryFilePtr = CustomWizardContext::TemporaryFilePtr;
     using TemporaryFilePtrList = CustomWizardContext::TemporaryFilePtrList;
@@ -830,20 +834,20 @@ private:
 };
 
 TemporaryFileTransform::TemporaryFileTransform(TemporaryFilePtrList *f) :
-    m_files(f), m_pattern(Utils::TemporaryDirectory::masterDirectoryPath() + "/qtcreatorXXXXXX.txt")
+    m_files(f), m_pattern(TemporaryDirectory::masterDirectoryPath() + "/qtcreatorXXXXXX.txt")
 { }
 
 QString TemporaryFileTransform::operator()(const QString &value) const
 {
-    TemporaryFilePtr temporaryFile(new Utils::TemporaryFile(m_pattern));
+    TemporaryFilePtr temporaryFile(new TemporaryFile(m_pattern));
     QTC_ASSERT(temporaryFile->open(), return QString());
 
     temporaryFile->write(value.toLocal8Bit());
-    const QString name = temporaryFile->fileName();
+    const FilePath filePath = temporaryFile->filePath();
     temporaryFile->flush();
     temporaryFile->close();
     m_files->push_back(temporaryFile);
-    return name;
+    return filePath.path();
 }
 
 /*!
@@ -913,31 +917,27 @@ void CustomWizardContext::reset()
 
 QString CustomWizardContext::processFile(const FieldReplacementMap &fm, QString in)
 {
-
     if (in.isEmpty())
         return in;
 
     if (!fm.isEmpty())
         replaceFields(fm, &in);
 
-    QString out;
-
     // Expander needed to handle extra variable "Cpp:PragmaOnce"
-    QString errorMessage;
-    Utils::MacroExpander *expander = Utils::globalMacroExpander();
-    in = Utils::TemplateEngine::processText(expander, in, &errorMessage);
-    if (!errorMessage.isEmpty()) {
+    const Result<QString> processed = TemplateEngine::processText(globalMacroExpander(), in);
+    if (!processed) {
         qWarning("Error processing custom widget file: %s\nFile:\n%s",
-                 qPrintable(errorMessage), qPrintable(in));
+                 qPrintable(processed.error()), qPrintable(in));
         return {};
     }
 
-    if (!Utils::TemplateEngine::preprocessText(in, &out, &errorMessage)) {
+    const Result<QString> preprocessed = TemplateEngine::preprocessText(*processed);
+    if (!preprocessed) {
         qWarning("Error preprocessing custom widget file: %s\nFile:\n%s",
-                 qPrintable(errorMessage), qPrintable(in));
+                 qPrintable(preprocessed.error()), qPrintable(in));
         return {};
     }
-    return out;
+    return *preprocessed;
 }
 
 } // namespace Internal

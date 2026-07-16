@@ -117,19 +117,28 @@ void ProcessHelper::setLowPriority()
 
 void ProcessHelper::setUnixTerminalDisabled()
 {
-#if defined(Q_OS_UNIX)
-#  if QT_VERSION < QT_VERSION_CHECK(6, 7, 0)
     m_unixTerminalDisabled = true;
-    enableChildProcessModifier();
-#  else
-    setUnixProcessParameters(QProcess::UnixProcessFlag::CreateNewSession);
-#  endif
+#if defined(Q_OS_UNIX)
+    UnixProcessParameters params = unixProcessParameters();
+    params.flags |= UnixProcessFlag::CreateNewSession;
+    setUnixProcessParameters(params);
 #endif
 }
 
 void ProcessHelper::setUseCtrlCStub(bool enabled)
 {
     m_useCtrlCStub = enabled;
+}
+
+void Utils::ProcessHelper::setAllowCoreDumps(bool enabled)
+{
+#if defined(Q_OS_UNIX) && QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
+    UnixProcessParameters params = unixProcessParameters();
+    params.flags.setFlag(UnixProcessFlag::DisableCoreDumps, enabled);
+    setUnixProcessParameters(params);
+#else
+    Q_UNUSED(enabled)
+#endif
 }
 
 void ProcessHelper::enableChildProcessModifier()
@@ -142,12 +151,6 @@ void ProcessHelper::enableChildProcessModifier()
             if (::nice(5) == -1 && errno != 0)
                 perror("Failed to set nice value");
         }
-
-#  if QT_VERSION < QT_VERSION_CHECK(6, 7, 0)
-        // Disable terminal by becoming a session leader.
-        if (m_unixTerminalDisabled)
-            setsid();
-#  endif
     });
 #endif
 }
@@ -160,7 +163,14 @@ void ProcessHelper::terminateProcess()
     else
         terminate();
 #else
-    terminate();
+    if (m_unixTerminalDisabled) {
+        // We started a new session (see setUnixTerminalDisabled() above); when
+        // PID < 0, kill(2) will send the signal to all processes in a process
+        // group identified by -PID.
+        ::kill(-processId(), SIGTERM);
+    } else {
+        terminate();
+    }
 #endif
 }
 

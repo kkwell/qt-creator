@@ -38,16 +38,17 @@ const char QUICK_FIX_SETTING_GETTER_IN_CPP_FILE_FROM[] = "GettersInCppFileFrom";
 const char QUICK_FIX_SETTING_SETTER_OUTSIDE_CLASS_FROM[] = "SettersOutsideClassFrom";
 const char QUICK_FIX_SETTING_SETTER_IN_CPP_FILE_FROM[] = "SettersInCppFileFrom";
 const char QUICK_FIX_SETTING_GETTER_ATTRIBUTES[] = "GetterAttributes";
-const char QUICK_FIX_SETTING_GETTER_NAME_TEMPLATE[] = "GetterNameTemplate";
-const char QUICK_FIX_SETTING_SETTER_NAME_TEMPLATE[] = "SetterNameTemplate";
-const char QUICK_FIX_SETTING_SIGNAL_NAME_TEMPLATE[] = "SignalNameTemplate";
-const char QUICK_FIX_SETTING_RESET_NAME_TEMPLATE[] = "ResetNameTemplate";
+const char QUICK_FIX_SETTING_GETTER_NAME_TEMPLATE[] = "GetterNameTemplateV2";
+const char QUICK_FIX_SETTING_SETTER_NAME_TEMPLATE[] = "SetterNameTemplateV2";
+const char QUICK_FIX_SETTING_SIGNAL_NAME_TEMPLATE[] = "SignalNameTemplateV2";
+const char QUICK_FIX_SETTING_RESET_NAME_TEMPLATE[] = "ResetNameTemplateV2";
 const char QUICK_FIX_SETTING_SIGNAL_WITH_NEW_VALUE[] = "SignalWithNewValue";
 const char QUICK_FIX_SETTING_SETTER_AS_SLOT[] = "SetterAsSlot";
-const char QUICK_FIX_SETTING_SETTER_PARAMETER_NAME[] = "SetterParameterName";
+const char QUICK_FIX_SETTING_SETTER_PARAMETER_NAME[] = "SetterParameterNameV2";
 const char QUICK_FIX_SETTING_CPP_FILE_NAMESPACE_HANDLING[] = "CppFileNamespaceHandling";
 const char QUICK_FIX_SETTING_USE_AUTO[] = "UseAutoInAssignToVar";
-const char QUICK_FIX_SETTING_MEMBER_VARIABEL_NAME_TEMPLATE[] = "MemberVariableNameTemplate";
+const char QUICK_FIX_SETTING_MEMBER_VARIABLE_NAME_TEMPLATE[] = "MemberVariableNameTemplateV2";
+const char QUICK_FIX_SETTING_REVERSE_MEMBER_VARIABLE_NAME_TEMPLATE[] = "ReverseMemberVariableNameTemplate";
 const char QUICK_FIX_SETTING_VALUE_TYPES[] = "ValueTypes";
 const char QUICK_FIX_SETTING_RETURN_BY_CONST_REF[] = "ReturnNonValueTypesByConstRef";
 const char QUICK_FIX_SETTING_CUSTOM_TEMPLATES[] = "CustomTemplate";
@@ -96,36 +97,24 @@ const char CPP_SETTINGS_ID[] = "Cpp";
 const char CPP_SETTINGS_NAME[] = QT_TRANSLATE_NOOP("QtC::CppEditor", "C++");
 
 const char CURRENT_DOCUMENT_FILTER_ID[] = "Methods in current Document";
-const char CURRENT_DOCUMENT_FILTER_DISPLAY_NAME[]
-    = QT_TRANSLATE_NOOP("QtC::CppEditor", "C++ Symbols in Current Document");
-const char CURRENT_DOCUMENT_FILTER_DESCRIPTION[]
-    = QT_TRANSLATE_NOOP("QtC::CppEditor", "Locates C++ symbols in the current document.");
 
 const char CLASSES_FILTER_ID[] = "Classes";
-const char CLASSES_FILTER_DISPLAY_NAME[] = QT_TRANSLATE_NOOP("QtC::CppEditor", "C++ Classes");
-const char CLASSES_FILTER_DESCRIPTION[]
-    = QT_TRANSLATE_NOOP("QtC::CppEditor", "Locates C++ classes in any open project.");
 
 const char FUNCTIONS_FILTER_ID[] = "Methods";
-const char FUNCTIONS_FILTER_DISPLAY_NAME[] = QT_TRANSLATE_NOOP("QtC::CppEditor", "C++ Functions");
-const char FUNCTIONS_FILTER_DESCRIPTION[]
-    = QT_TRANSLATE_NOOP("QtC::CppEditor", "Locates C++ functions in any open project.");
 
 const char INCLUDES_FILTER_ID[] = "All Included C/C++ Files";
 const char INCLUDES_FILTER_DISPLAY_NAME[] = QT_TRANSLATE_NOOP("QtC::CppEditor",
                                                               "All Included C/C++ Files");
 
 const char LOCATOR_FILTER_ID[] = "Classes and Methods";
-const char LOCATOR_FILTER_DISPLAY_NAME[]
-    = QT_TRANSLATE_NOOP("QtC::CppEditor", "C++ Classes, Enums, Functions and Type Aliases");
-const char LOCATOR_FILTER_DESCRIPTION[] = QT_TRANSLATE_NOOP(
-    "QtC::CppEditor", "Locates C++ classes, enums, functions and type aliases in any open project.");
 
 const char SYMBOLS_FIND_FILTER_ID[] = "Symbols";
 const char SYMBOLS_FIND_FILTER_DISPLAY_NAME[] = QT_TRANSLATE_NOOP("QtC::CppEditor", "C++ Symbols");
 
 constexpr const char CLANG_STATIC_ANALYZER_DOCUMENTATION_URL[]
     = "https://clang-analyzer.llvm.org/available_checks.html";
+
+const char CLANGD_TOOL_ID[] = "DockerDeviceClangDExecutable";
 
 } // namespace Constants
 } // namespace CppEditor

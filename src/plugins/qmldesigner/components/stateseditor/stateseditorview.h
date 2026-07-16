@@ -42,6 +42,7 @@ public:
     QmlModelStateGroup activeStateGroup() const;
 
     void moveStates(int from, int to);
+    QmlModelState currentState() const;
 
     // AbstractView
     void modelAttached(Model *model) override;
@@ -64,19 +65,20 @@ public:
                                   PropertyChangeFlags propertyChange) override;
     void variantPropertiesChanged(const QList<VariantProperty> &propertyList,
                                   PropertyChangeFlags propertyChange) override;
-
+    void auxiliaryDataChanged(const ModelNode &node,
+                              AuxiliaryDataKeyView key,
+                              const QVariant &data) override;
     void customNotification(const AbstractView *view,
                             const QString &identifier,
                             const QList<ModelNode> &nodeList,
                             const QList<QVariant> &data) override;
     void rewriterBeginTransaction() override;
     void rewriterEndTransaction() override;
-
-    // AbstractView
     void currentStateChanged(const ModelNode &node) override;
 
     void instancesPreviewImageChanged(const QVector<ModelNode> &nodeList) override;
 
+    bool hasWidget() const override { return true; }
     WidgetInfo widgetInfo() override;
 
     void rootNodeTypeChanged(const QString &type, int majorVersion, int minorVersion) override;

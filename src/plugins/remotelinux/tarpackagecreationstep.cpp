@@ -8,6 +8,7 @@
 #include "remotelinuxtr.h"
 
 #include <projectexplorer/buildmanager.h>
+#include <projectexplorer/buildsystem.h>
 #include <projectexplorer/deploymentdata.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/project.h>
@@ -20,7 +21,6 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QFutureWatcher>
 
 #include <cstring>
 
@@ -60,7 +60,7 @@ public:
 
 private:
     bool init() final;
-    Tasking::GroupItem runRecipe() final;
+    QtTaskTree::GroupItem runRecipe() final;
     void fromMap(const Store &map) final;
     void toMap(Store &map) const final;
     QVariant data(Id id) const final;
@@ -90,7 +90,7 @@ private:
 TarPackageCreationStep::TarPackageCreationStep(BuildStepList *bsl, Id id)
     : BuildStep(bsl, id)
 {
-    connect(target(), &Target::deploymentDataChanged, this, [this] {
+    connect(buildSystem(), &BuildSystem::deploymentDataChanged, this, [this] {
         m_deploymentDataModified = true;
     });
     m_deploymentDataModified = true;
@@ -128,11 +128,11 @@ bool TarPackageCreationStep::init()
     return true;
 }
 
-Tasking::GroupItem TarPackageCreationStep::runRecipe()
+QtTaskTree::GroupItem TarPackageCreationStep::runRecipe()
 {
-    using namespace Tasking;
+    using namespace QtTaskTree;
     const auto onSetup = [this](Async<void> &async) {
-        const QList<DeployableFile> &files = target()->deploymentData().allFiles();
+        const QList<DeployableFile> &files = buildSystem()->deploymentData().allFiles();
         if (m_incrementalDeployment()) {
             m_files.clear();
             for (const DeployableFile &file : files)
@@ -191,7 +191,7 @@ QVariant TarPackageCreationStep::data(Id id) const
 void TarPackageCreationStep::raiseError(const QString &errorMessage)
 {
     emit addTask(DeploymentTask(Task::Error, errorMessage));
-    emit addOutput(errorMessage, OutputFormat::Stderr);
+    emit addOutput(errorMessage, OutputFormat::ErrorMessage);
 }
 
 void TarPackageCreationStep::raiseWarning(const QString &warningMessage)
@@ -206,9 +206,10 @@ bool TarPackageCreationStep::isPackagingNeeded() const
     if (!packagePath.exists() || m_deploymentDataModified)
         return true;
 
-    const DeploymentData &dd = target()->deploymentData();
-    for (int i = 0; i < dd.fileCount(); ++i) {
-        if (dd.fileAt(i).localFilePath().isNewerThan(packagePath.lastModified()))
+    const DeploymentData &dd = buildSystem()->deploymentData();
+    const auto allFiles = dd.allFiles();
+    for (const DeployableFile &file : allFiles) {
+        if (file.localFilePath().isNewerThan(packagePath.lastModified()))
             return true;
     }
 
@@ -223,11 +224,9 @@ void TarPackageCreationStep::deployFinished(bool success)
     if (!success)
         return;
 
-    const Kit *kit = target()->kit();
-
     // Store files that have been tar'd and successfully deployed
     for (const DeployableFile &file : std::as_const(m_files))
-        m_deployTimes.saveDeploymentTimeStamp(file, kit, QDateTime());
+        m_deployTimes.saveDeploymentTimeStamp(file, kit(), QDateTime());
 }
 
 void TarPackageCreationStep::addNeededDeploymentFiles(
@@ -241,7 +240,7 @@ void TarPackageCreationStep::addNeededDeploymentFiles(
         return;
     }
 
-    const QStringList files = QDir(deployable.localFilePath().toString())
+    const QStringList files = QDir(deployable.localFilePath().toUrlishString())
             .entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
 
     if (files.isEmpty()) {

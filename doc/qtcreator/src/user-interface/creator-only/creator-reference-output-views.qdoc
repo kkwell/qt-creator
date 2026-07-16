@@ -1,0 +1,306 @@
+// Copyright (C) 2025 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
+
+// **********************************************************************
+// NOTE: the sections are not ordered by their logical order to avoid
+// reshuffling the file each time the index order changes (i.e., often).
+// Run the fixnavi.pl script to adjust the links to the index order.
+// **********************************************************************
+
+/*!
+    \page creator-reference-issues-view.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-ui
+
+    \target Issues
+    \title View issues
+
+    Use the \uicontrol Issues view to see issues from different sources.
+
+    The \uicontrol Issues view filters out irrelevant output from the build tools
+    and presents the issues in an organized way.
+
+    To further filter the output by type, select
+    \inlineimage {icons/filtericon.png} {Filter Tree} (\uicontrol {Filter Tree})
+    and then select a filter. See the tooltips for more information about each
+    filter.
+
+    \image {qtcreator-issues.webp} {Issues}
+
+    To find output in the view, enter search criteria in the \uicontrol Filter
+    field.
+
+    To view detailed information about the selected line (where available),
+    select \key Space.
+
+    To jump from one issue to the next or previous
+    one, select \inlineimage {icons/arrowup.png} {Previous Item}
+    and \inlineimage {icons/arrowdown.png} {Next Item}
+    or \key F6 and \key Shift+F6.
+
+    \section1 Clear the view
+
+    By default, a new build clears the \uicontrol Issues view. To keep
+    the issues from the previous build rounds:
+
+    \list 1
+        \li Go to \preferences > \uicontrol {Build & Run} > \uicontrol General,
+            or select \uicontrol Configure in the context menu.
+        \li Clear \uicontrol {Clear issues list on new build}.
+    \endlist
+
+    To clear the view, select \inlineimage {icons/clean_pane_small.png} {Clear}
+    (\uicontrol Clear).
+
+    To remove one or several lines, select them and then select \uicontrol Remove
+    in the context menu.
+
+    \section1 Parse build output
+
+    To parse build output, select \inlineimage {icons/open.png}
+    {Create Issues From External Build Output}
+    (\uicontrol {Create Issues From External Build Output}).
+
+    \section1 Toggle Clang diagnostics
+
+    To show and hide Clang diagnostics, select \inlineimage {icons/warning.png}
+    {Show Warnings} (\uicontrol {Show Warnings}).
+
+    \section1 View the source code
+
+    To navigate to the corresponding source code, select an issue or
+    select \uicontrol {Show in Editor} in the context menu. The entry must contain the
+    name of the file where the issue was found.
+
+    \section1 Annotate issues
+
+    To open a version control annotation view of the line that causes the error
+    message, select \uicontrol Annotate in the context menu.
+
+    \section1 Copy lines
+
+    To copy one or several lines to the clipboard, select them and then select
+    \uicontrol Copy in the context menu.
+
+    \section1 View more information in other views
+
+    To view more information about an issue in \l {Application Output},
+    select \uicontrol {Show App Output} in the context menu.
+
+    To view more information about an issue in \l {Compile Output},
+    select \uicontrol {Show Compile Output} in the context menu.
+
+    \section1 Get help on the issue
+
+    To search the internet for a solution using the contents of a line as search
+    criteria, select the line and then select \uicontrol {Get Help Online} in the
+    context menu.
+
+    To ask an AI to explain the issue on the selected line, select
+    \uicontrol {Get Help from <AI>} in the context menu. To add AIs to the menu,
+    go to \preferences > \uicontrol {AI} > \uicontrol {Custom Language Models}
+    and select \uicontrol {Add}.
+
+    \image {qtcreator-preferences-ai-custom-language-models.webp} {Custom Language Model tab in AI preferences}
+
+    \sa {View output}, {Add custom output parsers}, {Parse build output},
+    {Show task list files in Issues}, {Analyze code with Clang-Tidy and Clazy}
+*/
+
+/*!
+    \page creator-reference-search-results-view.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-ui
+    \ingroup creator-how-to-search
+
+    \target {Search Results view}
+    \title View search results
+
+    Use the \uicontrol {Search Results} view to search through projects, files
+    on a file system, or the currently open files, and view search results.
+
+    \section1 Define a search scope
+
+    The search scope determines where \QC searches for the search string:
+
+    \list
+        \li \uicontrol {All Projects} searches in all projects.
+        \li \uicontrol {Single Project} searches in the selected project.
+        \li \uicontrol {Files in All Project Directories} recursively searches
+            in all project directories.
+        \li \uicontrol {Files in File System} recursively searches in
+            the selected directory.
+        \li \uicontrol {Current File} searches only from the current
+            file.
+        \li \uicontrol {Open Documents} searches in all open files.
+    \endlist
+
+    In \uicontrol {File pattern} and \uicontrol {Exclusion pattern}, specify
+    file patterns to further restrict the search scope.
+
+    \section1 Define search criteria
+
+    The search criteria determine how \QC matches the search
+    string with text and which results it shows:
+
+    \list
+
+        \li To consider case, select \uicontrol {Case sensitive}.
+        \li To search only whole words, select \uicontrol {Whole words only}.
+        \li To search using \l{QRegularExpression}{regular expressions}, select
+            \uicontrol {Use regular expressions}.
+        \li To exclude binary files from the search results, select
+            \uicontrol {Ignore binary files}.
+        \li To exclude generated files from the search results, select
+            \uicontrol {Ignore generated files}.
+    \endlist
+
+    \image {qtcreator-search-file-system.webp} {Search Results view with search options}
+
+    \section1 View the search results
+
+    After you select \uicontrol Search or \uicontrol {Search & Replace}, the view
+    shows a list of files that have search hits.
+
+    \image {qtcreator-search-results-matches.webp} {Found matches in Search Results}
+
+    To show search hits in the editor:
+
+    \list
+
+        \li To see all occurrences in a file, double-click the file name
+            in the list.
+
+        \li To go to an occurrence, double-click it.
+    \endlist
+
+    To repeat the search after you have made changes to the listed files,
+    for example, select \uicontrol {Search Again}.
+
+    \section1 Use the Search Results view toolbar
+
+    The toolbar contains options for searching again and navigating search
+    results:
+
+    \list
+        \li To clear the search results, select
+            \inlineimage {icons/clean_pane_small.png} {Clear} (\uicontrol Clear).
+        \li To move between instances, select
+            \inlineimage {icons/arrowdown.png} {Next Item} (\uicontrol {Next Item})
+            and \inlineimage {icons/arrowup.png} {Previous Item}
+            (\uicontrol {Previous Item}).
+        \li To expand and collapse the search results, select
+            \inlineimage {icons/qtcreator-expand.png} {Expand All}
+            (\uicontrol {Expand All}).
+        \li To filter the search results for the usage of symbols according to
+            access type, such as read, write, or declaration, select
+            \inlineimage {icons/filtericon.png} {Filter Tree}
+            (\uicontrol {Filter Tree}).
+        \li To start a new search, select
+            \inlineimage {icons/qtcreator-new-search-icon.png} {New Search}
+            (\uicontrol {New Search}).
+        \li If the active project has long paths, select \uicontrol {../}
+            (\uicontrol {Show Paths in Relation to Active Project}) to show
+            relative paths.
+        \li To show the results of earlier searches, select them in
+            \uicontrol History.
+    \endlist
+
+    \sa {View output}, {Search}{How to: Search}
+*/
+
+
+/*!
+    \page creator-reference-application-output-view.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-ui
+    \ingroup creator-how-to-run
+
+    \target {Application Output}
+    \title View application output
+
+    Use the \uicontrol {Application Output} view to see the status of a program when
+    you execute it or the debug output.
+
+    \image {qtcreator-application-output.webp} {Application Output}
+
+    If you specify command-line arguments in the run settings that are passed
+    to the application when running it, they are displayed as a part of the
+    application output. For more information, see \l{Run on the desktop}.
+
+    Select toolbar buttons to run applications, to attach the debugger to the
+    running application, and to stop running or debugging.
+
+    \section1 Application Output Preferences
+
+    To set preferences for displaying application output:
+
+    \list
+        \li Select \preferences > \uicontrol {Build & Run} >
+            \uicontrol {Application Output}.
+        \li Select \imagesettings (\uicontrol {Configure}) in
+            \uicontrol {Application Output}.
+    \endlist
+
+    \image {qtcreator-preferences-application-output.webp} {Application Output tab in Build & Run preferences}
+
+    You can select whether to open \uicontrol{Application Output} on output when
+    running or debugging applications, to clear old output on a new run,
+    to word-wrap output, and to limit output to the specified number of lines.
+
+    \sa {View output}
+*/
+
+/*!
+    \page creator-reference-compile-output-view.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-ui
+    \ingroup creator-how-to-build
+
+    \target {Compile Output}
+    \title View compile output
+
+    \brief Shows all output from the compiler.
+
+    \uicontrol{Compile Output} shows a more detailed version of information
+    displayed in \l Issues.
+
+    \image {qtcreator-compile-output.webp} {Compile Output}
+
+    Double-click a file name in an error message to open the file in the
+    code editor.
+
+    To cancel the build, select the \uicontrol {Cancel Build} button.
+
+    To copy the output to the clipboard, select \uicontrol {Select All} in the
+    context menu, and then select \uicontrol Copy. Save the output as a file if
+    you want to examine it later without having to build the project again.
+    This is useful for large projects that take a long time to build.
+
+    \section1 Compile Output Preferences
+
+    To specify whether to open the \uicontrol {Compile Output} view on output
+    when building applications:
+
+    \list 1
+        \li Open the preferences:
+            \list
+                \li In the \uicontrol {Compile Output} view,
+                    select \imagesettings (\uicontrol {Configure}).
+                \li Select \preferences > \uicontrol {Build & Run} >
+                    \uicontrol {Compile Output}.
+            \endlist
+            \image {qtcreator-preferences-compile-output.webp} {Compile Output tab in Build & Run preferences}
+        \li Select \uicontrol {Open Compile Output when building}.
+        \li Select \uicontrol {Discard excessive output} to discard compile
+            output that continuously comes in faster than it can be handled.
+        \li In \uicontrol {Limit output to}, specify the
+            maximum amount of build output lines to display.
+    \endlist
+
+    \sa {View output}, {Add custom output parsers}, {Parse build output}, {Managing kits}
+*/

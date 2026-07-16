@@ -3,16 +3,12 @@
 
 #pragma once
 
-#include <utils/filepath.h>
+#include <QtTaskTree/QMappedTaskTreeRunner>
 
-#include <QCoreApplication>
-#include <QFutureWatcher>
-#include <QPointer>
-#include <QTextDocument>
+#include <utils/filepath.h>
 
 namespace Core { class IDocument; }
 namespace TextEditor { class TextDocument; }
-namespace ProjectExplorer { class RunConfiguration; }
 
 namespace Python::Internal {
 
@@ -30,15 +26,18 @@ class PySideInstaller : public QObject
 public:
     void checkPySideInstallation(const Utils::FilePath &python, TextEditor::TextDocument *document);
     static PySideInstaller &instance();
+    void installPySide(const Utils::FilePath &python, const QString &pySide, bool quiet = false);
+
+public slots:
+    void installPySide(const QUrl &url);
 
 signals:
-    void pySideInstalled(const Utils::FilePath &python, const QString &pySide);
+    void pySideInstalled(const Utils::FilePath &pythonPath, const QString &pySide);
 
 private:
     PySideInstaller();
+    ~PySideInstaller();
 
-    void installPyside(const Utils::FilePath &python,
-                       const QString &pySide, TextEditor::TextDocument *document);
     void handlePySideMissing(const Utils::FilePath &python,
                              const QString &pySide,
                              TextEditor::TextDocument *document);
@@ -47,11 +46,11 @@ private:
     void runPySideChecker(const Utils::FilePath &python,
                           const QString &pySide,
                           TextEditor::TextDocument *document);
-    static bool missingPySideInstallation(const Utils::FilePath &python, const QString &pySide);
     static QString usedPySide(const QString &text, const QString &mimeType);
 
     QHash<Utils::FilePath, QList<TextEditor::TextDocument *>> m_infoBarEntries;
-    QHash<TextEditor::TextDocument *, QPointer<QFutureWatcher<bool>>> m_futureWatchers;
+    QtTaskTree::QMappedTaskTreeRunner<TextEditor::TextDocument *> m_taskTreeRunner;
+    QtTaskTree::QSingleTaskTreeRunner m_pipInstallerRunner;
 };
 
 } // Python::Internal

@@ -46,8 +46,8 @@ public:
         setWindowTitle(Tr::tr("Record Screen"));
         StyleHelper::setPanelWidget(this);
 
-        m_recordFile.open();
-        m_recordWidget = new RecordWidget(FilePath::fromString(m_recordFile.fileName()));
+        QTC_CHECK(m_recordFile.open());
+        m_recordWidget = new RecordWidget(m_recordFile.filePath());
 
         m_cropAndTrimStatusWidget = new CropAndTrimWidget;
 
@@ -139,7 +139,7 @@ private:
     {
         if (!Internal::settings().toolsRegistered()) {
             // Show options if ffmpeg/ffprobe are neither autodetected nor manually set
-            Core::ICore::showOptionsDialog(Constants::TOOLSSETTINGSPAGE_ID);
+            Core::ICore::showSettings(Constants::TOOLSSETTINGSPAGE_ID);
             if (!Internal::settings().toolsRegistered())
                 return; // User did not set ffmpeg/ffprobe
         }

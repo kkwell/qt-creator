@@ -5,6 +5,8 @@
 
 #include "locator.h"
 
+#include "ilocatorfilter.h"
+
 #include <extensionsystem/iplugin.h>
 
 #include <QPointer>
@@ -42,6 +44,7 @@ public:
 
     void updatePlaceholderText(Command *command);
     void acceptEntry(int row);
+    void completeEntry(int row);
 
 signals:
     void showCurrentItemToolTip();
@@ -58,16 +61,23 @@ private:
     void updateFilterList();
     bool isInMainWindow() const;
 
-    void updatePreviousFocusWidget(QWidget *previous, QWidget *current);
     bool eventFilter(QObject *obj, QEvent *event) override;
 
     void runMatcher(const QString &text);
-    static QList<ILocatorFilter*> filtersFor(const QString &text, QString &searchText);
+    struct FiltersFor
+    {
+        QList<ILocatorFilter *> filters;
+        QString searchText;
+        QString prefix;
+    };
+    static FiltersFor filtersFor(const QString &text);
     void setProgressIndicatorVisible(bool visible);
 
     LocatorModel *m_locatorModel = nullptr;
     QMenu *m_filterMenu = nullptr;
-    QAction *m_centeredPopupAction = nullptr;
+    QAction *m_useCenteredPopup = nullptr;
+    QAction *m_useTabCompletion = nullptr;
+    QAction *m_ignoreGeneratedFiles = nullptr;
     QAction *m_refreshAction = nullptr;
     QAction *m_configureAction = nullptr;
     Utils::FancyLineEdit *m_fileLineEdit = nullptr;

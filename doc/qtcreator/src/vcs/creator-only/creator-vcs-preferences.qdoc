@@ -1,4 +1,4 @@
-// Copyright (C) 2023 The Qt Company Ltd.
+// Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
 
 /*!
@@ -6,6 +6,8 @@
     \previouspage creator-how-tos.html
 
     \ingroup creator-how-to-use
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-general
 
     \title Set up version control systems
 
@@ -15,7 +17,7 @@
     executable in the version control system specific tab in \preferences >
     \uicontrol {Version Control}.
 
-    \image qtcreator-preferences-vcs-bazaar.webp {Bazaar preferences}
+    \image {qtcreator-preferences-vcs-bazaar.webp} {Bazaar tab in Version Control preferences}
 
     The other configuration options depend on the version control system.
     After you set up the version control system, use the command line to check
@@ -23,16 +25,21 @@
     arise, you should be ready to use the system also from \QC.
 
     For more information on using Git for Windows, see
-    \l {Using Git for Windows}.
+    \l {Use Git for Windows}.
 
     \section1 General VCS preferences
 
-    Select \preferences > \uicontrol {Version Control}
+    Go to \preferences > \uicontrol {Version Control}
     > \uicontrol General to specify settings for submit messages:
 
-    \image qtcreator-preferences-vcs-general.webp {General tab in Version Control preferences}
+    \image {qtcreator-preferences-vcs-general.webp} {General tab in Version Control preferences}
 
     \list
+        \li \uicontrol {Show VCS file status with refresh interval} sets the
+            interval in seconds at which \QC requests file status updates
+            from the version control. Changed files are shown in the
+            \l {Projects}, \l {File System} or \l {Open Documents} views
+            in a different color.
         \li \uicontrol{Wrap submit messages at} limits the line length of a
             submit message to the specified number of characters.
         \li \uicontrol{Submit message check script} is a script or program that
@@ -74,5 +81,5 @@
             from the command line, for example.
     \endlist
 
-    \sa {Version Control Systems}
+    \sa {Use Git}{How to: Use Git}, {Version control systems}
 */

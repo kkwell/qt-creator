@@ -9,10 +9,11 @@
 
     \title SDK Tool
 
-    \brief Configure CMake and set up compilers, debuggers, devices, Qt versions,
-    and kits from the command line.
+    \brief A command-line tool for configuring CMake and setting up compilers,
+    debuggers, devices, Qt versions, and kits.
 
-    \QOI uses the SDK Tool (\c sdktool) to configure CMake and set \l {Kits}{Kit}
+    \l{Get and Install Qt}{\QOI} uses the SDK Tool (\c sdktool) to configure
+    CMake and set \l {Managing kits}{Kit}
     preferences, such as compilers, debuggers, devices, and Qt versions. You can
     use it from the command line to set Qt and \QC preferences automatically for
     all users of a computer, for example. For a single user, it is usually easier
@@ -21,18 +22,18 @@
     To use the SDK Tool, enter the following command in the \c {Tools\sdktool\bin}
     directory in the Qt installation directory:
 
-    \badcode
+    \code [shell]
     sdktool [OPTION] [OPERATION [OPTIONS]]
     \endcode
 
     For information about the options and operations that your SDK Tool version
     supports, enter:
 
-    \badcode
+    \code [shell]
     sdktool --help
     \endcode
 
-    \section1 Value Types
+    \section1 Value types
 
     The operations add settings in the form \c {<KEY> <TYPE>:<VALUE>} to the
     configuration that they create. The supported \c TYPE values are:
@@ -45,7 +46,7 @@
         \li \l QVariantList
     \endlist
 
-    \section1 SDK Path
+    \section1 SDK path
 
     \QOI and the \QC stand-alone installer both install \c sdktool. The
     \c sdktool from an installer defaults to the location from where the \QC
@@ -90,28 +91,28 @@
             \li Operation
             \li Description
        \row
-            \li addAbiFlavor
+            \li \l {addAbiFlavor}
             \li Add a system architecture (ABI).
        \row
-            \li \c {addCMake}
+            \li \l {addCMake}
             \li Add the path to a CMake tool.
         \row
-            \li \c {addDebugger}
+            \li \l {addDebugger}
             \li Add a debugger.
        \row
-            \li \c {addDev}
+            \li \l {addDev}
             \li Add a device.
         \row
             \li \c {addKeys}
             \li Add settings as \c {<KEY> <TYPE>:<VALUE>} key-value pairs.
         \row
-            \li \c {addKit}
+            \li \l {addKit}
             \li Add a build and run kit.
        \row
-            \li \c {addQt}
+            \li \l {addQt}
             \li Add a Qt version.
        \row
-            \li \c {addTC}
+            \li \l {addTC}
             \li Add a compiler.
         \row
             \li \c {find}
@@ -142,15 +143,15 @@
             \li Remove a compiler.
     \endtable
 
-    \section1 Adding a System Architecture (ABI)
+    \section1 Adding a system architecture (ABI)
 
     \section2 addAbiFlavor
 
-    \badcode
+    \code [shell]
     sdktool addAbiFlavor --flavor <NAME> --oses <OS>(,<OS>)*
     \endcode
 
-    \section2 addAbiFlavor Options
+    \section2 addAbiFlavor options
 
     The following table summarizes the available options.
 
@@ -162,32 +163,32 @@
         \row
             \li \c {--flavor <NAME>}
             \li Name of the system architecture (ABI).
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--oses <OS>(,<OS>)*}
             \li Operating system that the ABI applies to.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
     \endtable
 
-    \section2 ABI Flavor Example
+    \section2 ABI flavor example
 
     To add Yocto Poky on Linux, enter:
 
-    \badcode
+    \code [shell]
     ./sdktool addAbiFlavor \
     --flavor poky \
     --oses linux
     \endcode
 
-    \section1 Adding CMake Tools
+    \section1 Adding CMake tools
 
     \section2 addCMake
 
-    \badcode
+    \code [shell]
     sdktool addCMake --id <ID> --name <NAME> --path <PATH> [<KEY> <TYPE:VALUE>]
     \endcode
 
-    \section2 addCMake Options
+    \section2 addCMake options
 
     The following table summarizes the available options.
 
@@ -204,15 +205,15 @@
                 CMake keeps the ID when you update this CMake installation, and
                 therefore, all kits are automatically updated to use the new
                 version.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--name <NAME>}
             \li Name of the CMake installation.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--path <PATH>}
             \li Path to the CMake executable.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {<KEY> <TYPE:VALUE>}
             \li Additional settings as key-value pairs.
@@ -221,26 +222,26 @@
 
     For more information, see \l{Add CMake tools}.
 
-    \section2 CMake Configuration Example
+    \section2 CMake configuration example
 
     To add a CMake tool on Windows, enter:
 
-    \badcode
+    \code [shell]
     sdktool addCMake \
     --id "my.custom.cmake" \
     --name "Custom CMake" \
     --path "C:\Program Files\CMake-3.30\bin\cmake.exe"
     \endcode
 
-    \section1 Adding Compilers
+    \section1 Adding compilers
 
     \section2 addTC
 
-    \badcode
+    \code [shell]
     sdktool addTC --id <ID> --language <ID> --name <NAME> --path <PATH> --abi <ABI STRING> [OPTIONS]
     \endcode
 
-    \section2 addTC Options
+    \section2 addTC options
 
     The following table summarizes the available options.
 
@@ -253,7 +254,7 @@
             \li \c {--abi <ABI STRING>}
             \li ABI of the compiler in a format that
                 \c {ProjectExplorer::Abi::fromString()} can parse.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--id <ID>}
             \li ID of the toolchain in the format \c {ToolChainType:some_unique_part},
@@ -279,19 +280,21 @@
                 for their IDs.
 
                 \c {some_unique_part} can be anything. \QC uses GUIDs by default.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--language <ID>}
             \li ID of the input language of the toolchain: \c C or \c Cxx.
-            \li \inlineimage ok.png
+                When you register a C or C++ compiler, make sure to register the
+                corresponding C++ or C compiler as well.
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--name <NAME>}
             \li Name of the toolchain.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--path <PATH>}
             \li Path to the compiler executable.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--supportedAbis <ABI STRING>,<ABI STRING>}
             \li List of ABIs that the compiler supports.
@@ -304,11 +307,11 @@
 
     For more information, see \l{Add compilers}.
 
-    \section2 Compiler Example
+    \section2 Compiler example
 
     To add a GCC compiler on Linux, enter:
 
-    \badcode
+    \code [shell]
     ./sdktool addTC \
         --id "ProjectExplorer.ToolChain.Gcc:company.product.toolchain.g++" \
         --language Cxx
@@ -320,15 +323,15 @@
         ADDITIONAL_STRING_PARAMETER "QString:some string" \
     \endcode
 
-    \section1 Adding Debuggers
+    \section1 Adding debuggers
 
     \section2 addDebugger
 
-    \badcode
+    \code [shell]
     sdktool addDebugger --id <ID> --name <NAME> [OPTIONS]
     \endcode
 
-    \section2 addDebugger Options
+    \section2 addDebugger options
 
     The following table summarizes the available options.
 
@@ -363,11 +366,11 @@
         \row
             \li \c {--id <ID>}
             \li Unique ID of the debugger.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--name <NAME>}
             \li Name of the debugger.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {<KEY> <TYPE:VALUE>}
             \li Additional settings as key-value pairs.
@@ -376,11 +379,11 @@
 
     For more information, see \l{Add debuggers}.
 
-    \section2 Debugger Example
+    \section2 Debugger example
 
     To add a GDB debugger on Linux, enter:
 
-    \badcode
+    \code [shell]
     ./sdktool addDebugger \
         --id "company.product.toolchain.gdb" \
         --name "GDB (company, product)" \
@@ -389,15 +392,15 @@
         --abis arm-linux-generic-elf-32 \
     \endcode
 
-    \section1 Adding Devices
+    \section1 Adding devices
 
     \section2 addDev
 
-    \badcode
+    \code [shell]
     sdktool addDev --id <ID> --name <NAME> --type <INT> [OPTIONS]
     \endcode
 
-    \section2 addDev Options
+    \section2 addDev options
 
     The following table summarizes the available options. The options to use
     depend on the device type.
@@ -411,8 +414,8 @@
             \li \c {--authentication <INT>}
             \li Authentication method:
                 \list
-                    \li 1 for all authentication methods
-                    \li 2 for SSH authentication using a public and private key
+                    \li 0 for all authentication methods
+                    \li 1 for SSH authentication using a public and private key
                         pair
                 \endlist
             \li
@@ -455,7 +458,7 @@
         \row
             \li \c {--id <ID>}
             \li Unique ID of the device.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--keyFile <STRING>}
             \li Path to the user's private key file.
@@ -463,13 +466,13 @@
         \row
             \li \c {--name <NAME>}
             \li Name of the device.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--origin <INT>}
             \li Whether the device was detected automatically:
                 \list
-                    \li 1 for a manually added device
-                    \li 2 for an automatically detected device
+                    \li 0 for a manually added device
+                    \li 1 for an automatically detected device
                 \endlist
             \li
         \row
@@ -505,10 +508,10 @@
             \li \c {--type <INT>}
             \li Device type:
                 \list
-                    \li 1 for a hardware device
-                    \li 2 for an emulator, simulator, or virtual device
+                    \li 0 for a hardware device
+                    \li 1 for an emulator, simulator, or virtual device
                 \endlist
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--uname <STRING>}
             \li Username to access the device.
@@ -519,38 +522,38 @@
             \li
     \endtable
 
-    For more information, see \l{Develop for Devices}{How To: Develop for Devices}.
+    For more information, see \l{Develop for devices}{How to: Develop for devices}.
 
-    \section2 Linux Device Example
+    \section2 Linux device example
 
     To add a remote Linux device (hardware device) on Linux and use SSH keys to
     authenticate to the device, enter:
 
-    \badcode
+    \code [shell]
     ./sdktool addDev \
         --id " LinuxDevice1" \
         --name "My Remote Linux Device" \
-        --type 1 \
-        --authentication 2 \
+        --type 0 \
+        --authentication 1 \
         --freePorts "10000-10100" \
         --host "10.10.10.15" \
         --keyFile "/usr/.ssh/qtc_id" \
-        --origin 1 \
+        --origin 0 \
         --osType "GenericLinuxOsType" \
         --sshPort 22 \
         --timeout 10 \
         --uname "root"
     \endcode
 
-    \section1 Adding Qt Versions
+    \section1 Adding Qt versions
 
     \section2 addQt
 
-    \badcode
+    \code [shell]
     sdktool addQt --id <ID> --name <NAME> --qmake <PATH> --type <TYPE> [OPTIONS]
     \endcode
 
-    \section2 addQt Options
+    \section2 addQt options
 
     The following table summarizes the available options.
 
@@ -567,15 +570,15 @@
             \li \c {--id <ID>}
             \li ID of the Qt installation. \QC automatically sets the ID when it
                 detects Qt versions installed on the computer.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--name <NAME>}
             \li Name of the Qt installation.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--qmake <PATH>}
             \li Path to the qmake executable in the Qt installation.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--type <TYPE>}
             \li The type of the Qt version:
@@ -589,7 +592,7 @@
                         WebAssembly.
                 \endlist
                 The string returned by \c {QtVersion::type()}.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {<KEY> <TYPE:VALUE>}
             \li Additional settings as key-value pairs.
@@ -598,11 +601,11 @@
 
     For more information, see \l{Add Qt versions}.
 
-    \section2 Qt Version Example
+    \section2 Qt version example
 
     To add a self-built Qt 6.8 version on Linux, enter:
 
-    \badcode
+    \code [shell]
     ./sdktool addQt \
         --id "company.product.qt" \
         --name "Custom Qt" \
@@ -610,15 +613,15 @@
         --type Qt4ProjectManager.QtVersion.Desktop \
     \endcode
 
-    \section1 Adding Kits
+    \section1 Adding kits
 
     \section2 addKit
 
-    \badcode
+    \code [shell]
     sdktool addKit --id <ID> --name <NAME> --devicetype <TYPE> [OPTIONS]
     \endcode
 
-    \section2 addKit Options
+    \section2 addKit options
 
     The following table summarizes the available options.
 
@@ -676,10 +679,15 @@
                     \li \c {WebAssemblyDeviceType} for web browsers.
                 \endlist
                 The string returned by \c {IDevice::type()}.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--env <VALUE>}
             \li Environment variable values for the build environment. You can
+                add multiple entries of this type.
+            \li
+        \row
+            \li \c {--run-env <VALUE>}
+            \li Environment variable values for the run environment. You can
                 add multiple entries of this type.
             \li
         \row
@@ -690,7 +698,7 @@
             \li \c {--id <ID>}
             \li ID of the kit. \QC automatically sets the ID when it
                 detects Qt versions installed on the computer.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--<LANG>toolchain <ID>}
             \li One of the IDs used when adding compilers with the \c {addTC}
@@ -707,7 +715,7 @@
             \li Name of the kit. You can use variables to generate the kit name
                 based on the kit elements you set with the other operations, such
                 as the Qt version.
-            \li \inlineimage ok.png
+            \li \inlineimage {ok.png} {Yes}
         \row
             \li \c {--qt <ID>}
             \li One of the IDs used when adding Qt versions with the \c {addQt}
@@ -721,12 +729,12 @@
 
     For more information, see \l{Add kits}.
 
-    \section2 Kit Example
+    \section2 Kit example
 
     To add a kit that uses the GCC compiler and the self-built Qt to build
     applications on Linux, enter:
 
-    \badcode
+    \code [shell]
     ./sdktool addKit \
         --id "company.product.kit" \
         --name "Qt %{Qt:Version} (company, product)" \
@@ -739,22 +747,22 @@
         --mkspec "devices/linux-mipsel-broadcom-97425-g++" \
     \endcode
 
-    \section1 Adding, Getting, and Finding Keys
+    \section1 Adding, getting, and finding keys
 
     Enter the path to a file relative to the top-level settings directory and
-    without .xml extension, followed by one or more \c {<KEY> <TYPE>:<VALUE>}
+    without \c .xml extension, followed by one or more \c {<KEY> <TYPE>:<VALUE>}
     key-value pairs.
 
-    \section1 Removing Configured Items
+    \section1 Removing configured items
 
     To remove a CMake tool, compiler, debugger, device, Qt version, or kit,
     enter:
 
-    \badcode
+    \code [shell]
     rm<Item> --id <ID>
     \endcode
 
     Where \c <ID> is the ID of the item.
 
-    \sa {Manage Kits}{How To: Manage Kits}, {Installation}, {Kits}
+    \sa {Manage kits}{How to: Manage kits}, {Installation}, {Managing kits}
 */

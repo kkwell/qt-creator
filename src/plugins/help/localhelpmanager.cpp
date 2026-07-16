@@ -6,9 +6,30 @@
 #include "bookmarkmanager.h"
 #include "helpconstants.h"
 #include "helpmanager.h"
+#include "helpplugin.h"
 #include "helptr.h"
 #include "helpviewer.h"
+#include "helpwidget.h"
+#include "localhelpmanager.h"
 #include "textbrowserhelpviewer.h"
+#include "xbelsupport.h"
+
+#include <bookmarkmanager.h>
+
+#include <coreplugin/coreconstants.h>
+#include <coreplugin/dialogs/ioptionspage.h>
+#include <coreplugin/helpmanager.h>
+#include <coreplugin/icore.h>
+
+#include <utils/algorithm.h>
+#include <utils/appinfo.h>
+#include <utils/environment.h>
+#include <utils/fileutils.h>
+#include <utils/hostosinfo.h>
+#include <utils/layoutbuilder.h>
+#include <utils/mimeconstants.h>
+#include <utils/qtcassert.h>
+#include <utils/stringutils.h>
 
 #ifdef QTC_WEBENGINE_HELPVIEWER
 #include "webenginehelpviewer.h"
@@ -21,61 +42,51 @@
 #include "macwebkithelpviewer.h"
 #endif
 
-#include <coreplugin/icore.h>
-
-#include <utils/algorithm.h>
-#include <utils/appinfo.h>
-#include <utils/environment.h>
-#include <utils/hostosinfo.h>
-#include <utils/mimeconstants.h>
-#include <utils/qtcassert.h>
-#include <utils/stringutils.h>
-
+#include <QCheckBox>
+#include <QComboBox>
+#include <QCoreApplication>
 #include <QDesktopServices>
+#include <QFontComboBox>
 #include <QFontDatabase>
+#include <QFormLayout>
+#include <QGridLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
 #include <QHelpEngine>
 #include <QHelpLink>
+#include <QLabel>
+#include <QLineEdit>
 #include <QMutexLocker>
+#include <QPushButton>
+#include <QSpinBox>
+#include <QTextStream>
+#include <QVBoxLayout>
 #include <QVersionNumber>
 
 #include <optional>
 
-using namespace Help::Internal;
+using namespace Utils;
+
+namespace Help::Internal {
 
 static LocalHelpManager *m_instance = nullptr;
 
-bool LocalHelpManager::m_guiNeedsSetup = true;
-bool LocalHelpManager::m_needsCollectionFile = true;
+static bool m_guiNeedsSetup = true;
+static bool m_needsCollectionFile = true;
 
-QMutex LocalHelpManager::m_guiMutex;
-QHelpEngine* LocalHelpManager::m_guiEngine = nullptr;
+static QMutex m_guiMutex;
+static QHelpEngine *m_guiEngine = nullptr;
 
-QMutex LocalHelpManager::m_bkmarkMutex;
-BookmarkManager* LocalHelpManager::m_bookmarkManager = nullptr;
+static QMutex m_bkmarkMutex;
+static BookmarkManager *m_bookmarkManager = nullptr;
 
-QList<Core::HelpManager::OnlineHelpHandler> LocalHelpManager::m_onlineHelpHandlerList;
+QList<Core::HelpManager::OnlineHelpHandler> m_onlineHelpHandlerList;
 
-const char kHelpHomePageKey[] = "Help/HomePage";
-const char kFontFamilyKey[] = "Help/FallbackFontFamily";
-const char kFontStyleNameKey[] = "Help/FallbackFontStyleName";
-const char kFontSizeKey[] = "Help/FallbackFontSize";
-const char kFontZoomKey[] = "Help/FontZoom";
-const char kAntialiasKey[] = "Help/FontAntialias";
-const char kStartOptionKey[] = "Help/StartOption";
-const char kContextHelpOptionKey[] = "Help/ContextHelpOption";
-const char kReturnOnCloseKey[] = "Help/ReturnOnClose";
-const char kUseScrollWheelZooming[] = "Help/UseScrollWheelZooming";
-const char kLastShownPagesKey[] = "Help/LastShownPages";
-const char kLastSelectedTabKey[] = "Help/LastSelectedTab";
-const char kViewerBackend[] = "Help/ViewerBackend";
-
-const int kDefaultFallbackFontSize = 14;
-const int kDefaultFontZoom = 100;
-const bool kDefaultAntialias = true;
-const int kDefaultStartOption = LocalHelpManager::ShowLastPages;
-const int kDefaultContextHelpOption = Core::HelpManager::SideBySideIfPossible;
-const bool kDefaultReturnOnClose = false;
-const bool kDefaultUseScrollWheelZooming = true;
+HelpSettings &helpSettings()
+{
+    static HelpSettings theHelpSettings;
+    return theHelpSettings;
+}
 
 static QString defaultFallbackFontFamily()
 {
@@ -86,15 +97,220 @@ static QString defaultFallbackFontFamily()
     return QString("Arial");
 }
 
-static QString defaultFallbackFontStyleName(const QString &fontFamily)
+QVariant ViewerBackendAspect::fromSettingsValue(const QVariant &savedValue) const
 {
-    const QStringList styles = QFontDatabase::styles(fontFamily);
-    QTC_ASSERT(!styles.isEmpty(), return QString("Regular"));
-    return styles.first();
+    return indexForItemValue(savedValue);
 }
 
-LocalHelpManager::LocalHelpManager(QObject *parent)
-    : QObject(parent)
+QVariant ViewerBackendAspect::toSettingsValue(const QVariant &valueToSave) const
+{
+    return itemValueForIndex(valueToSave.toInt());
+}
+
+QByteArray ViewerBackendAspect::operator()() const
+{
+    return itemValueForIndex(value()).toByteArray();
+}
+
+HelpSettings::HelpSettings()
+{
+    setAutoApply(false);
+
+    const auto version = QVersionNumber::fromString(QCoreApplication::applicationVersion());
+    const QString defaultHomePage =
+        QString("qthelp://org.qt-project.qtcreator.%1%2%3/doc/index.html")
+                                   .arg(version.majorVersion())
+                                   .arg(version.minorVersion())
+                                   .arg(version.microVersion());
+
+    homePage.setSettingsKey("Help/HomePage");
+    homePage.setDefaultValue(defaultHomePage);
+    homePage.setDisplayStyle(StringAspect::LineEditDisplay);
+    homePage.setLabelText(Tr::tr("Home page:"));
+
+    fontZoom.setSettingsKey("Help/FontZoom");
+    fontZoom.setRange(10, 3000);
+    fontZoom.setDefaultValue(100);
+    fontZoom.setSingleStep(10);
+    fontZoom.setSuffix(Tr::tr("%"));
+
+    antiAlias.setSettingsKey("Help/FontAntialias");
+    antiAlias.setDefaultValue(true);
+    antiAlias.setLabelText(Tr::tr("Antialias"));
+
+    scrollWheelZooming.setSettingsKey("Help/UseScrollWheelZooming");
+    scrollWheelZooming.setDefaultValue(true);
+    scrollWheelZooming.setLabelText(Tr::tr("Enable scroll wheel zooming"));
+
+    returnOnClose.setSettingsKey("Help/ReturnOnClose");
+    returnOnClose.setDefaultValue(true);
+    returnOnClose.setLabelText(Tr::tr("Return to editor on closing the last page"));
+    returnOnClose.setToolTip(
+        Tr::tr("Switches to editor context after last help page is closed."));
+
+    lastShownPages.setSettingsKey("Help/LastShownPages");
+
+    viewerBackend.setSettingsKey("Help/ViewerBackend");
+    viewerBackend.setDisplayStyle(SelectionAspect::DisplayStyle::ComboBox);
+    viewerBackend.addOption(Tr::tr("Default (%1)", "Default viewer backend")
+                              .arg(LocalHelpManager::defaultViewerBackend().displayName));
+    const QVector<HelpViewerFactory> backends = LocalHelpManager::viewerBackends();
+    for (const HelpViewerFactory &f : backends)
+        viewerBackend.addOption(SelectionAspect::Option(f.displayName, {}, f.id));
+    viewerBackend.setEnabled(backends.size() != 1);
+
+    startOption.setSettingsKey("Help/StartOption");
+    startOption.setDefaultValue(ShowLastPages);
+    startOption.setDisplayStyle(SelectionAspect::DisplayStyle::ComboBox);
+    startOption.setLabelText(Tr::tr("On help start:"));
+    startOption.addOption(Tr::tr("Show My Home Page"));
+    startOption.addOption(Tr::tr("Show a Blank Page"));
+    startOption.addOption(Tr::tr("Show My Tabs from Last Session"));
+
+    contextHelpOption.setSettingsKey("Help/ContextHelpOption");
+    contextHelpOption.setObjectName("contextHelpComboBox");
+    contextHelpOption.setDisplayStyle(SelectionAspect::DisplayStyle::ComboBox);
+    contextHelpOption.setDefaultValue(Core::HelpManager::SideBySideIfPossible);
+    contextHelpOption.addOption(Tr::tr("Show Side-by-Side if Possible"));
+    contextHelpOption.addOption(Tr::tr("Always Show Side-by-Side"));
+    contextHelpOption.addOption(Tr::tr("Always Show in Help Mode"));
+    contextHelpOption.addOption(Tr::tr("Always Show in External Window"));
+    contextHelpOption.setLabelText(Tr::tr("On context help:"));
+
+    fallbackFont.fontFamily.setSettingsKey("Help/FallbackFontFamily");
+    fallbackFont.fontFamily.setDefaultValue(defaultFallbackFontFamily());
+    fallbackFont.fontFamily.setLabelText(Tr::tr("Family:"));
+    fallbackFont.fontPointSize.setSettingsKey("Help/FallbackFontSize");
+    fallbackFont.fontPointSize.setDefaultValue(14);
+    fallbackFont.fontPointSize.setLabelText(Tr::tr("Size:"));
+
+    errorLabel.setIconType(InfoLabel::Error);
+
+    setLayouter([this] {
+
+        using namespace Layouting;
+
+        auto fontGroupBox = new QGroupBox(Tr::tr("Font"));
+        // clang-format off
+        Column {
+            Row { fallbackFont, st },
+            Row { Tr::tr("Note: The above setting takes effect only if the "
+                         "HTML file does not use a style sheet.") },
+            Row { Tr::tr("Zoom:"), fontZoom, antiAlias, st }
+        }.attachTo(fontGroupBox);
+        // clang-format on
+
+        auto importBookmarks = [this] {
+            errorLabel.setVisible(false);
+
+            FilePath filePath = FileUtils::getOpenFilePath(Tr::tr("Import Bookmarks"),
+                                                           FilePath::fromString(QDir::currentPath()),
+                                                           Tr::tr("Files (*.xbel)"));
+            if (filePath.isEmpty())
+                return;
+
+            QFile file(filePath.toFSPathString());
+            if (file.open(QIODevice::ReadOnly)) {
+                const BookmarkManager &manager = LocalHelpManager::bookmarkManager();
+                XbelReader reader(manager.treeBookmarkModel(), manager.listBookmarkModel());
+                if (reader.readFromFile(&file))
+                    return;
+            }
+            errorLabel.setVisible(true);
+            errorLabel.setText(Tr::tr("Cannot import bookmarks."));
+        };
+
+        auto exportBookmarks = [this] {
+            errorLabel.setVisible(false);
+
+            FilePath filePath = FileUtils::getSaveFilePath(Tr::tr("Save File"),
+                                                           "untitled.xbel",
+                                                           Tr::tr("Files (*.xbel)"));
+            QLatin1String suffix(".xbel");
+            if (!filePath.endsWith(suffix))
+                filePath = filePath.stringAppended(suffix);
+
+            FileSaver saver(filePath);
+            if (!saver.hasError()) {
+                XbelWriter writer(LocalHelpManager::bookmarkManager().treeBookmarkModel());
+                writer.writeToFile(saver.file());
+                saver.setResult(&writer);
+            }
+            if (const Result<> res = saver.finalize(); !res) {
+                errorLabel.setVisible(true);
+                errorLabel.setText(res.error());
+            }
+        };
+
+        errorLabel.setVisible(false);
+
+        return Column {
+            fontGroupBox,
+            Group {
+                title(Tr::tr("Startup")),
+                Layouting::objectName("startupGroupBox"),
+                Form {
+                    fieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow),
+                    contextHelpOption, br,
+                    startOption, br,
+                    homePage,
+                    PushButton {
+                        text(Tr::tr("Use &Current Page")),
+                        enabled(modeHelpWidget()->currentViewer() != nullptr),
+                        onClicked(this, [this] {
+                            if (HelpViewer *viewer = modeHelpWidget()->currentViewer())
+                                homePage.setVolatileValue(viewer->source().toString());
+                        }),
+                    },
+                    PushButton {
+                        text(Tr::tr("Use &Blank Page")),
+                        onClicked(this, [this] { homePage.setVolatileValue(Help::Constants::AboutBlank); })
+                    },
+                    PushButton {
+                        text(Tr::tr("Reset")),
+                        Layouting::toolTip(Tr::tr("Reset to default.")),
+                        onClicked(this, [this] { homePage.setVolatileValue(homePage.defaultValue()); })
+                    },
+                }
+            },
+            Group {
+                title(Tr::tr("Behavior")),
+                Column {
+                    scrollWheelZooming,
+                    returnOnClose,
+                    Row { Tr::tr("Viewer backend:"), viewerBackend, st }
+                }
+            },
+            Row {
+                st,
+                errorLabel,
+                PushButton {
+                    text(Tr::tr("Import Bookmarks...")),
+                    onClicked(this, importBookmarks)
+                },
+                PushButton {
+                    text(Tr::tr("Export Bookmarks...")),
+                    onClicked(this, exportBookmarks)
+                },
+            },
+            st
+        };
+    });
+
+    readSettings();
+}
+
+void HelpSettings::apply()
+{
+    AspectContainer::apply();
+
+    if (homePage().isEmpty())
+        homePage.setValue(Help::Constants::AboutBlank);
+
+    writeSettings();
+}
+
+LocalHelpManager::LocalHelpManager()
 {
     m_instance = this;
     qRegisterMetaType<Help::Internal::LocalHelpManager::HelpData>("Help::Internal::LocalHelpManager::HelpData");
@@ -117,192 +333,6 @@ LocalHelpManager::~LocalHelpManager()
 LocalHelpManager *LocalHelpManager::instance()
 {
     return m_instance;
-}
-
-QString LocalHelpManager::defaultHomePage()
-{
-    const auto version = QVersionNumber::fromString(QCoreApplication::applicationVersion());
-    static const QString url = QString::fromLatin1("qthelp://org.qt-project.qtcreator."
-                                                   "%1%2%3/doc/index.html")
-                                   .arg(version.majorVersion())
-                                   .arg(version.minorVersion())
-                                   .arg(version.microVersion());
-    return url;
-}
-
-QString LocalHelpManager::homePage()
-{
-    return Core::ICore::settings()->value(kHelpHomePageKey, defaultHomePage()).toString();
-}
-
-void LocalHelpManager::setHomePage(const QString &page)
-{
-    Core::ICore::settings()->setValueWithDefault(kHelpHomePageKey, page, defaultHomePage());
-}
-
-QFont LocalHelpManager::fallbackFont()
-{
-    Utils::QtcSettings *settings = Core::ICore::settings();
-    const QString family = settings->value(kFontFamilyKey, defaultFallbackFontFamily()).toString();
-    const int size = settings->value(kFontSizeKey, kDefaultFallbackFontSize).toInt();
-    QFont font(family, size);
-    const QString styleName = settings->value(kFontStyleNameKey,
-                                              defaultFallbackFontStyleName(font.family())).toString();
-    font.setStyleName(styleName);
-    return font;
-}
-
-void LocalHelpManager::setFallbackFont(const QFont &font)
-{
-    Core::ICore::settings()->setValueWithDefault(kFontFamilyKey,
-                                                 font.family(),
-                                                 defaultFallbackFontFamily());
-    Core::ICore::settings()->setValueWithDefault(kFontStyleNameKey,
-                                                 font.styleName(),
-                                                 defaultFallbackFontStyleName(font.family()));
-    Core::ICore::settings()->setValueWithDefault(kFontSizeKey,
-                                                 font.pointSize(),
-                                                 kDefaultFallbackFontSize);
-    emit m_instance->fallbackFontChanged(font);
-}
-
-int LocalHelpManager::fontZoom()
-{
-    return Core::ICore::settings()->value(kFontZoomKey, kDefaultFontZoom).toInt();
-}
-
-int LocalHelpManager::setFontZoom(int percentage)
-{
-    const int newZoom = qBound(10, percentage, 3000);
-    if (newZoom == fontZoom())
-        return newZoom;
-
-    Core::ICore::settings()->setValueWithDefault(kFontZoomKey, newZoom, kDefaultFontZoom);
-    emit m_instance->fontZoomChanged(newZoom);
-    return newZoom;
-}
-
-bool LocalHelpManager::antialias()
-{
-    return Core::ICore::settings()->value(kAntialiasKey, kDefaultAntialias).toBool();
-}
-
-void LocalHelpManager::setAntialias(bool on)
-{
-    if (on != antialias()) {
-        Core::ICore::settings()->setValueWithDefault(kAntialiasKey, on, kDefaultAntialias);
-        emit m_instance->antialiasChanged(on);
-    }
-}
-
-LocalHelpManager::StartOption LocalHelpManager::startOption()
-{
-    const QVariant value = Core::ICore::settings()->value(kStartOptionKey, kDefaultStartOption);
-    bool ok;
-    int optionValue = value.toInt(&ok);
-    if (!ok)
-        optionValue = ShowLastPages;
-    switch (optionValue) {
-    case ShowHomePage:
-        return ShowHomePage;
-    case ShowBlankPage:
-        return ShowBlankPage;
-    case ShowLastPages:
-        return ShowLastPages;
-    default:
-        break;
-    }
-    return ShowLastPages;
-}
-
-void LocalHelpManager::setStartOption(LocalHelpManager::StartOption option)
-{
-    Core::ICore::settings()->setValueWithDefault(kStartOptionKey, int(option), kDefaultStartOption);
-}
-
-Core::HelpManager::HelpViewerLocation LocalHelpManager::contextHelpOption()
-{
-    const QVariant value = Core::ICore::settings()->value(kContextHelpOptionKey,
-                                                          kDefaultContextHelpOption);
-    bool ok;
-    int optionValue = value.toInt(&ok);
-    if (!ok)
-        optionValue = Core::HelpManager::SideBySideIfPossible;
-    switch (optionValue) {
-    case Core::HelpManager::SideBySideIfPossible:
-        return Core::HelpManager::SideBySideIfPossible;
-    case Core::HelpManager::SideBySideAlways:
-        return Core::HelpManager::SideBySideAlways;
-    case Core::HelpManager::HelpModeAlways:
-        return Core::HelpManager::HelpModeAlways;
-    case Core::HelpManager::ExternalHelpAlways:
-        return Core::HelpManager::ExternalHelpAlways;
-    default:
-        break;
-    }
-    return Core::HelpManager::SideBySideIfPossible;
-}
-
-void LocalHelpManager::setContextHelpOption(Core::HelpManager::HelpViewerLocation location)
-{
-    if (location == contextHelpOption())
-        return;
-    Core::ICore::settings()->setValueWithDefault(kContextHelpOptionKey,
-                                                 int(location),
-                                                 kDefaultContextHelpOption);
-    emit m_instance->contextHelpOptionChanged(location);
-}
-
-bool LocalHelpManager::returnOnClose()
-{
-    const QVariant value = Core::ICore::settings()->value(kReturnOnCloseKey, kDefaultReturnOnClose);
-    return value.toBool();
-}
-
-void LocalHelpManager::setReturnOnClose(bool returnOnClose)
-{
-    Core::ICore::settings()->setValueWithDefault(kReturnOnCloseKey,
-                                                 returnOnClose,
-                                                 kDefaultReturnOnClose);
-    emit m_instance->returnOnCloseChanged();
-}
-
-bool LocalHelpManager::isScrollWheelZoomingEnabled()
-{
-    return Core::ICore::settings()
-        ->value(kUseScrollWheelZooming, kDefaultUseScrollWheelZooming)
-        .toBool();
-}
-
-void LocalHelpManager::setScrollWheelZoomingEnabled(bool enabled)
-{
-    Core::ICore::settings()->setValueWithDefault(kUseScrollWheelZooming,
-                                                 enabled,
-                                                 kDefaultUseScrollWheelZooming);
-    emit m_instance->scrollWheelZoomingEnabledChanged(enabled);
-}
-
-QStringList LocalHelpManager::lastShownPages()
-{
-    const QVariant value = Core::ICore::settings()->value(kLastShownPagesKey, QVariant());
-    return value.toString().split(Constants::ListSeparator, Qt::SkipEmptyParts);
-}
-
-void LocalHelpManager::setLastShownPages(const QStringList &pages)
-{
-    Core::ICore::settings()->setValueWithDefault(kLastShownPagesKey,
-                                                 pages.join(Constants::ListSeparator));
-}
-
-int LocalHelpManager::lastSelectedTab()
-{
-    const QVariant value = Core::ICore::settings()->value(kLastSelectedTabKey, 0);
-    return value.toInt();
-}
-
-void LocalHelpManager::setLastSelectedTab(int index)
-{
-    Core::ICore::settings()->setValueWithDefault(kLastSelectedTabKey, index, -1);
 }
 
 static std::optional<HelpViewerFactory> backendForId(const QByteArray &id)
@@ -355,9 +385,12 @@ QVector<HelpViewerFactory> LocalHelpManager::viewerBackends()
     const int index = Utils::indexOf(result, [](const HelpViewerFactory &f) {
         return f.id == QByteArray(QTC_DEFAULT_HELPVIEWER_BACKEND);
     });
-    if (QTC_GUARD(index >= 0)) {
+    if (index >= 0) {
         const HelpViewerFactory defaultBackend = result.takeAt(index);
         result.prepend(defaultBackend);
+    } else {
+        qWarning("Default help viewer backend \"%s\" not found, using first available.",
+                 QTC_DEFAULT_HELPVIEWER_BACKEND);
     }
 #endif
     return result;
@@ -365,20 +398,10 @@ QVector<HelpViewerFactory> LocalHelpManager::viewerBackends()
 
 HelpViewerFactory LocalHelpManager::viewerBackend()
 {
-    const QByteArray id = Core::ICore::settings()->value(kViewerBackend).toByteArray();
+    const QByteArray id = helpSettings().viewerBackend();
     if (!id.isEmpty())
         return backendForId(id).value_or(defaultViewerBackend());
     return defaultViewerBackend();
-}
-
-void LocalHelpManager::setViewerBackendId(const QByteArray &id)
-{
-    Core::ICore::settings()->setValueWithDefault(kViewerBackend, id, {});
-}
-
-QByteArray LocalHelpManager::viewerBackendId()
-{
-    return Core::ICore::settings()->value(kViewerBackend).toByteArray();
 }
 
 void LocalHelpManager::setupGuiHelpEngine()
@@ -535,12 +558,12 @@ void LocalHelpManager::openQtUrl(const QUrl &url)
     if (url.authority().startsWith(unversionedLocalDomainName)) {
         urlPrefix.append(Utils::appInfo().id);
     } else {
-        const auto host = url.host();
-        const auto dot = host.lastIndexOf('.');
+        const QString host = url.host();
+        const qsizetype dot = host.lastIndexOf('.');
         if (dot < 0) {
             urlPrefix.append("qt-5");
         } else {
-            const auto version = host.mid(dot + 1);
+            const QString version = host.mid(dot + 1);
             if (version.startsWith('6')) {
                 urlPrefix.append("qt-6");
             } else {
@@ -571,5 +594,23 @@ QMultiMap<QString, QUrl> LocalHelpManager::linksForKeyword(const QString &keywor
 
 void LocalHelpManager::addOnlineHelpHandler(const Core::HelpManager::OnlineHelpHandler &handler)
 {
-    LocalHelpManager::m_onlineHelpHandlerList.push_back(handler);
+    m_onlineHelpHandlerList.push_back(handler);
 }
+
+// GeneralSettingPage
+
+class GeneralSettingsPage : public Core::IOptionsPage
+{
+public:
+    GeneralSettingsPage()
+    {
+        setId("A.General settings");
+        setDisplayName(Tr::tr("General"));
+        setCategory(Core::Constants::HELP_CATEGORY);
+        setSettingsProvider([] { return &helpSettings(); });
+    }
+};
+
+const static GeneralSettingsPage theGeneralSettingsPage;
+
+} // namespace Help::Internal

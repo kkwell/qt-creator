@@ -22,6 +22,7 @@ public:
     void handlePressed(const QModelIndex &index);
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
                const QModelIndex &index) const override;
+    void initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const final;
 
     mutable QModelIndex pressedIndex;
     bool closeButtonVisible = true;
@@ -73,6 +74,12 @@ void OpenDocumentsDelegate::paint(QPainter *painter, const QStyleOptionViewItem 
 
 }
 
+void OpenDocumentsDelegate::initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const
+{
+    QStyledItemDelegate::initStyleOption(option, index);
+    option->palette.setColor(QPalette::HighlightedText, option->palette.color(QPalette::Text));
+}
+
 } // namespace Internal
 
 OpenDocumentsTreeView::OpenDocumentsTreeView(QWidget *parent) :
@@ -112,6 +119,25 @@ void OpenDocumentsTreeView::setModel(QAbstractItemModel *model)
 void OpenDocumentsTreeView::setCloseButtonVisible(bool visible)
 {
     m_delegate->setCloseButtonVisible(visible);
+}
+
+void OpenDocumentsTreeView::mousePressEvent(QMouseEvent *e)
+{
+    // ignore press in "close button" column
+    // to avoid selection
+    if (indexAt(e->position().toPoint()).column() != 1)
+        TreeView::mousePressEvent(e);
+}
+
+void OpenDocumentsTreeView::mouseReleaseEvent(QMouseEvent *e)
+{
+    // manually handle click in "close button" column
+    // to avoid selection
+    const QModelIndex mouseIndex = indexAt(e->position().toPoint());
+    if (mouseIndex.column() == 1)
+        emit activated(mouseIndex);
+    else
+        TreeView::mouseReleaseEvent(e);
 }
 
 bool OpenDocumentsTreeView::eventFilter(QObject *obj, QEvent *event)

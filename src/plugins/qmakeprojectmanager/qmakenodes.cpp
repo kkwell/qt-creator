@@ -59,7 +59,7 @@ QmakePriFile *QmakePriFileNode::priFile() const
     return m_buildSystem->rootProFile()->findPriFile(filePath());
 }
 
-bool QmakePriFileNode::deploysFolder(const QString &folder) const
+bool QmakePriFileNode::deploysFolder(const FilePath &folder) const
 {
     const QmakePriFile *pri = priFile();
     return pri ? pri->deploysFolder(folder) : false;
@@ -116,12 +116,12 @@ bool QmakeBuildSystem::supportsAction(Node *context, ProjectAction action, const
                 if (folder) {
                     FilePaths list;
                     folder->forEachFolderNode([&](FolderNode *f) { list << f->filePath(); });
-                    if (n->deploysFolder(FileUtils::commonPath(list).toString()))
+                    if (n->deploysFolder(list.commonPath()))
                         addExistingFiles = false;
                 }
             }
 
-            addExistingFiles = addExistingFiles && !n->deploysFolder(node->filePath().toString());
+            addExistingFiles = addExistingFiles && !n->deploysFolder(node->filePath());
 
             if (action == AddExistingFile || action == AddExistingDirectory)
                 return addExistingFiles;
@@ -191,7 +191,7 @@ bool QmakeBuildSystem::addFiles(Node *context, const FilePaths &filePaths, FileP
         FilePath::removeDuplicates(alreadyPresentFiles);
 
         FilePaths actualFilePaths = filePaths;
-        for (const FilePath &e : alreadyPresentFiles)
+        for (const FilePath &e : std::as_const(alreadyPresentFiles))
             actualFilePaths.removeOne(e);
         if (notAdded)
             *notAdded = alreadyPresentFiles;
@@ -214,7 +214,7 @@ RemovedFilesFromProject QmakeBuildSystem::removeFiles(Node *context, const FileP
         FilePaths wildcardFiles;
         FilePaths nonWildcardFiles;
         for (const FilePath &file : filePaths) {
-            if (pri->proFile()->isFileFromWildcard(file.toString()))
+            if (pri->proFile()->isFileFromWildcard(file.toUrlishString()))
                 wildcardFiles << file;
             else
                 nonWildcardFiles << file;
@@ -254,16 +254,27 @@ bool QmakeBuildSystem::canRenameFile(Node *context,
     return BuildSystem::canRenameFile(context, oldFilePath, newFilePath);
 }
 
-bool QmakeBuildSystem::renameFile(Node *context,
-                                  const FilePath &oldFilePath,
-                                  const FilePath &newFilePath)
+bool QmakeBuildSystem::renameFiles(Node *context, const FilePairs &filesToRename, FilePaths *notRenamed)
 {
     if (auto n = dynamic_cast<QmakePriFileNode *>(context)) {
         QmakePriFile *pri = n->priFile();
-        return pri ? pri->renameFile(oldFilePath, newFilePath) : false;
+        if (!pri) {
+            if (notRenamed)
+                *notRenamed = firstPaths(filesToRename);
+            return false;
+        }
+        bool success = true;
+        for (const auto &[oldFilePath, newFilePath] : filesToRename) {
+            if (!pri->renameFile(oldFilePath, newFilePath)) {
+                success = false;
+                if (notRenamed)
+                    *notRenamed << oldFilePath;
+            }
+        }
+        return success;
     }
 
-    return BuildSystem::renameFile(context, oldFilePath, newFilePath);
+    return BuildSystem::renameFiles(context, filesToRename, notRenamed);
 }
 
 bool QmakeBuildSystem::addDependencies(Node *context, const QStringList &dependencies)
@@ -307,7 +318,7 @@ bool QmakeProFileNode::showInSimpleTree() const
 
 QString QmakeProFileNode::buildKey() const
 {
-    return filePath().toString();
+    return filePath().toUrlishString();
 }
 
 bool QmakeProFileNode::parseInProgress() const
@@ -354,11 +365,11 @@ QVariant QmakeProFileNode::data(Id role) const
         return singleVariableValue(Variable::AndroidDeploySettingsFile);
     if (role == Android::Constants::AndroidSoLibPath) {
         TargetInformation info = targetInformation();
-        QStringList res = {info.buildDir.toString()};
+        QStringList res = {info.buildDir.toUrlishString()};
         FilePath destDir = info.destDir;
         if (!destDir.isEmpty()) {
             destDir = info.buildDir.resolvePath(destDir.path());
-            res.append(destDir.toString());
+            res.append(destDir.toUrlishString());
         }
         res.removeDuplicates();
         return res;
@@ -378,7 +389,7 @@ QVariant QmakeProFileNode::data(Id role) const
     if (role == Ios::Constants::IosBuildDir) {
         const TargetInformation info = targetInformation();
         if (info.valid)
-            return info.buildDir.toString();
+            return info.buildDir.toUrlishString();
     }
 
     if (role == Ios::Constants::IosCmakeGenerator) {
@@ -400,22 +411,25 @@ bool QmakeProFileNode::setData(Id role, const QVariant &value) const
         return false;
     QString scope;
     int flags = QmakeProjectManager::Internal::ProWriter::ReplaceValues;
-    if (Target *target = m_buildSystem->target()) {
-        QtSupport::QtVersion *version = QtSupport::QtKitAspect::qtVersion(target->kit());
-        if (version && !version->supportsMultipleQtAbis()) {
-            const QString arch = pro->singleVariableValue(Variable::AndroidAbi);
-            scope = QString("contains(%1,%2)").arg(Android::Constants::ANDROID_TARGET_ARCH)
-                                              .arg(arch);
-            flags |= QmakeProjectManager::Internal::ProWriter::MultiLine;
-        }
+    const QtSupport::QtVersion * const version = QtSupport::QtKitAspect::qtVersion(
+        m_buildSystem->kit());
+    if (version && !version->supportsMultipleQtAbis()) {
+        const QString arch = pro->singleVariableValue(Variable::AndroidAbi);
+        scope = QString("contains(%1,%2)").arg(Android::Constants::ANDROID_TARGET_ARCH)
+                    .arg(arch);
+        flags |= QmakeProjectManager::Internal::ProWriter::MultiLine;
     }
 
     if (role == Android::Constants::AndroidExtraLibs)
         return pro->setProVariable(QLatin1String(Android::Constants::ANDROID_EXTRA_LIBS),
                                    value.toStringList(), scope, flags);
-    if (role == Android::Constants::AndroidPackageSourceDir)
+    if (role == Android::Constants::AndroidPackageSourceDir) {
+        QString dir = value.toString();
+        if (!dir.startsWith("$$PWD/") && FilePath::fromString(dir).isRelativePath())
+            dir.prepend("$$PWD/");
         return pro->setProVariable(QLatin1String(Android::Constants::ANDROID_PACKAGE_SOURCE_DIR),
-                                   {value.toString()}, scope, flags);
+                                   {dir}, scope, flags);
+    }
     if (role == Android::Constants::AndroidApplicationArgs)
         return pro->setProVariable(QLatin1String(Android::Constants::ANDROID_APPLICATION_ARGUMENTS),
                                    {value.toString()}, scope, flags);
@@ -447,12 +461,6 @@ bool QmakeProFileNode::isDebugAndRelease() const
 bool QmakeProFileNode::isObjectParallelToSource() const
 {
     return variableValue(Variable::Config).contains("object_parallel_to_source");
-}
-
-bool QmakeProFileNode::isQtcRunnable() const
-{
-    const QStringList configValues = variableValue(Variable::Config);
-    return configValues.contains(QLatin1String("qtc_runnable"));
 }
 
 bool QmakeProFileNode::includedInExactParse() const

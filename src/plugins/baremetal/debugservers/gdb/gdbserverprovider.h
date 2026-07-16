@@ -5,7 +5,7 @@
 
 #include <baremetal/idebugserverprovider.h>
 
-#include <projectexplorer/runcontrol.h>
+#include <utils/commandline.h>
 
 QT_BEGIN_NAMESPACE
 class QComboBox;
@@ -37,17 +37,16 @@ public:
 
     virtual Utils::CommandLine command() const;
 
-    bool aboutToRun(Debugger::DebuggerRunTool *runTool,
-                    QString &errorMessage) const final;
-    ProjectExplorer::RunWorker *targetRunner(
-            ProjectExplorer::RunControl *runControl) const override;
+    Utils::Result<> setupDebuggerRunParameters(Debugger::DebuggerRunParameters &rp,
+        ProjectExplorer::RunControl *runControl) const final;
+    std::optional<Utils::ProcessTask> targetProcess(
+        ProjectExplorer::RunControl *runControl) const final;
 
     bool isValid() const override;
     virtual QSet<StartupMode> supportedStartupModes() const = 0;
 
 protected:
     explicit GdbServerProvider(const QString &id);
-    explicit GdbServerProvider(const GdbServerProvider &other);
 
     void setStartupMode(StartupMode);
     void setPeripheralDescriptionFile(const Utils::FilePath &file);
@@ -62,6 +61,8 @@ protected:
     QString m_initCommands;
     QString m_resetCommands;
     bool m_useExtendedRemote = false;
+    Utils::FilePath m_executableFile;
+    QString m_additionalArguments;
 
     friend class GdbServerProviderConfigWidget;
 };
@@ -89,15 +90,6 @@ protected:
 
     QComboBox *m_startupModeComboBox = nullptr;
     Utils::PathChooser *m_peripheralDescriptionFileChooser = nullptr;
-};
-
-// GdbServerProviderRunner
-
-class GdbServerProviderRunner final : public ProjectExplorer::SimpleTargetRunner
-{
-public:
-    explicit GdbServerProviderRunner(ProjectExplorer::RunControl *runControl,
-                                     const Utils::CommandLine &commandLine);
 };
 
 } // BareMetal::Internal

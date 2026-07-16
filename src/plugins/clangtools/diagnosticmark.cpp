@@ -8,9 +8,10 @@
 #include "clangtoolsutils.h"
 #include "diagnosticconfigswidget.h"
 
+#include <coreplugin/actionmanager/command.h>
 #include <texteditor/textdocument.h>
-#include <utils/utilsicons.h>
 #include <utils/stringutils.h>
+#include <utils/utilsicons.h>
 
 #include <QAction>
 
@@ -26,14 +27,16 @@ static TextMarkCategory clangToolsCategory()
 }
 
 DiagnosticMark::DiagnosticMark(const Diagnostic &diagnostic, TextDocument *document)
-    : TextMark(document, diagnostic.location.line, clangToolsCategory())
+    : TextMark(document, diagnostic.location.target.line, clangToolsCategory())
     , m_diagnostic(diagnostic)
 {
     initialize();
 }
 
 DiagnosticMark::DiagnosticMark(const Diagnostic &diagnostic)
-    : TextMark(diagnostic.location.filePath, diagnostic.location.line, clangToolsCategory())
+    : TextMark(diagnostic.location.targetFilePath,
+               diagnostic.location.target.line,
+               clangToolsCategory())
     , m_diagnostic(diagnostic)
 {
     initialize();
@@ -77,7 +80,7 @@ void DiagnosticMark::initialize()
         QList<QAction *> actions;
         QAction *action = new QAction();
         action->setIcon(Icon::fromTheme("edit-copy"));
-        action->setToolTip(Tr::tr("Copy to Clipboard"));
+        action->setToolTip(Core::msgCopyToClipboard());
         QObject::connect(action, &QAction::triggered, [diagnostic] {
             const QString text = createFullLocationString(diagnostic.location)
             + ": "

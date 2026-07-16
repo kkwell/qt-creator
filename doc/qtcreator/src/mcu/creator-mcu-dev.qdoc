@@ -1,18 +1,22 @@
-// Copyright (C) 2024 The Qt Company Ltd.
+// Copyright (C) 2025 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
 
 /*!
     \page creator-developing-mcu.html
     \previouspage creator-reference.html
 
-    \ingroup creator-reference-devices
-
     \title Developing for MCUs
+
+    \quotation
+    \l {MCUs}{How to: Develop for MCUs}
+    \endquotation
 
     \brief Connect MCU devices to the computer to run and debug applications on
     them.
 
-    \note Enable the McuSupport plugin to develop for MCUs.
+    \note Before you start developing for MCUs, go to \uicontrol Help >
+    \uicontrol {About Plugins}, and make sure you have the \uicontrol {Qt for MCUs}
+    plugin enabled.
 
     Use subsets of QML and Qt Quick Controls to create user interfaces for
     devices that are powered by microcontroller units (MCU). \QMCU has a
@@ -23,7 +27,7 @@
     applications on MCUs to run and debug them.
 
     For a list of \QMCU reference implementations, see
-    \l{\QMCU - Supported Target Platforms}.
+    \l{\QMCU - Supported target platforms}.
 
     \section1 Requirements
 
@@ -38,14 +42,26 @@
     Linux, and macOS. However, the Qt for \QMCU SDK is currently only available
     for Windows and Linux.
 
-    The hardware-specific requirements vary depending on the hardware platform you are developing for.
-    For more information see:
+    The hardware-specific requirements vary depending on the hardware platform
+    you are developing for. For more information, see:
+
     \list
-        \li \l{Getting Started on NXP}
-        \li \l{Getting Started on STM}
-        \li \l{Getting Started on Renesas}
-        \li \l{Getting Started on Infineon}
-     \endlist
+        \li \l{Getting started on Espressif}
+        \li Getting started on Infineon
+        \list
+            \li \l {Getting started on Infineon Traveo T2G}
+            \li \l {Getting started on Infineon PSOC Edge platforms}
+        \endlist
+        \li Getting started on NXP
+        \list
+            \li \l {Getting started on NXP (BareMetal and FreeRTOS)}
+            \li \l {Getting started on NXP (Linux)}
+            \li \l {Getting started on NXP (Zephyr)}
+        \endlist
+        \li \l{Getting started on Renesas}
+        \li \l{Getting started on STM}
+    \endlist
+
 
     \section1 \QMCU SDKs
 
@@ -57,8 +73,23 @@
         \li \QC version
         \li \QMCU SDK version
     \row
-        \li 12.0.2 or later
-        \li 2.7 or later
+        \li 18.0.0 or later
+        \li 2.12 or later
+    \row
+        \li 17.0.0
+        \li 2.11
+    \row
+        \li 16.0.0
+        \li 2.10
+    \row
+        \li 15.0.0
+        \li 2.9
+    \row
+        \li 13.0.2
+        \li 2.8
+    \row
+        \li 12.0.2
+        \li 2.7
     \row
         \li 11.0.3
         \li 2.6
@@ -91,41 +122,43 @@
         \li 1.0
     \endtable
 
-    \sa {Enable and disable plugins}, {MCUs}{How To: Develop for MCUs},
-    {Developing for MCUs}, {\QMCU}
+    \sa {Enable and disable plugins}, {MCUs}{How to: Develop for MCUs}, {\QMCU}
 */
 
 /*!
-    \page creator-how-to-create-mcu-kits.html
+    \page creator-how-to-add-mcu-kits.html
     \previouspage creator-how-tos.html
 
     \ingroup creator-how-to-mcu
+    \ingroup creator-how-to-sdks
 
-    \title Connect MCU devices
+    \title Add MCU SDKs
 
-    \note Enable the McuSupport plugin to develop for MCUs.
+    \note Before you start developing for MCUs, go to \uicontrol Help >
+    \uicontrol {About Plugins}, and make sure you have the \uicontrol {Qt for MCUs}
+    plugin enabled.
 
     To configure a connection between \QC and your MCU board:
 
     \list 1
-        \li Go to \preferences > \uicontrol Devices > \uicontrol MCU.
+        \li Go to \preferences > \uicontrol SDKs > \uicontrol MCU.
         \li In \uicontrol {\QMCU SDK}, specify the path to the directory where
             you installed \QMCU SDK.
-            \image qtcreator-preferences-mcu.webp {MCU preferences}
+            \image {qtcreator-preferences-mcu.webp} {MCU tab in SDKs preferences}
         \li In \uicontrol {Targets supported by the \QMCU SDK}, select your MCU
             board.
         \li In \uicontrol Requirements, check that the platform-specific
             requirements are met. This depends on the target:
             \list
-                \li For STM32 targets:
+                \li For Infineon targets:
                     \list
-                        \li The \uicontrol {GNU ARM Embedded Toolchain} or
+                        \li The \uicontrol {Green Hills Compiler for ARM} or
                             \uicontrol {IAR ARM Compiler} path.
-                        \li The \uicontrol {STM32CubeProgrammer} install path.
-                        \li The \uicontrol {Board SDK} for the chosen target.
-                        \li The \uicontrol {FreeRTOS Sources} for the chosen target.
+                        \li The \uicontrol {Graphics Driver for Traveo T2G Cluster Series}
+                            path.
+                        \li The \uicontrol {Infineon Auto Flash Utility} path.
                     \endlist
-                 \li For NXP targets:
+                \li For NXP targets:
                     \list
                         \li The \uicontrol {GNU ARM Embedded Toolchain} or
                             \uicontrol {IAR ARM Compiler} path.
@@ -133,17 +166,19 @@
                         \li The \uicontrol {Board SDK} for the chosen target.
                         \li The \uicontrol {FreeRTOS Sources} for the chosen target.
                     \endlist
-                 \li For Renesas targets:
+                \li For Renesas targets:
                     \list
                         \li The \uicontrol {Green Hills Compiler} path.
                         \li The \uicontrol {Renesas Graphics Library} path.
+                        \li The \uicontrol {Renesas Flash Programmer} path (optional).
                     \endlist
-                 \li For Infineon targets:
+                \li For STM32 targets:
                     \list
-                        \li The \uicontrol {Green Hills Compiler for ARM} path.
-                        \li The \uicontrol {Graphics Driver for Traveo II Cluster Series}
-                            path.
-                        \li The \uicontrol {Infineon Auto Flash Utility} path.
+                        \li The \uicontrol {GNU ARM Embedded Toolchain} or
+                            \uicontrol {IAR ARM Compiler} path.
+                        \li The \uicontrol {STM32CubeProgrammer} install path.
+                        \li The \uicontrol {Board SDK} for the chosen target.
+                        \li The \uicontrol {FreeRTOS Sources} for the chosen target.
                     \endlist
             \endlist
         \li Select
@@ -154,27 +189,40 @@
         \li Select \uicontrol Apply to save the preferences.
     \endlist
 
-    \section1 Add MCU devices
+    \sa {Enable and disable plugins}, {MCUs}{How to: Develop for MCUs},
+    {Developing for MCUs}, {\QMCU}
+*/
+
+/*!
+    \page creator-how-to-add-mcu-devices.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-mcu
+
+    \title Add MCU devices
+
+    \note Before you start developing for MCUs, go to \uicontrol Help >
+    \uicontrol {About Plugins}, and make sure you have the \uicontrol {Qt for MCUs}
+    plugin enabled.
 
     \QC automatically adds a default MCU device when you select
-    \uicontrol Apply in the \uicontrol MCU tab after configuring the
-    MCU toolchain.
+    \uicontrol Apply in \preferences > \uicontrol SDKs > \uicontrol MCU after
+    adding an SDK.
 
-    \image qtcreator-mcu-device.png {MCU devices}
+    \image {qtcreator-mcu-device.webp} {MCU device in the Devices tab in Devices preferences}
 
-    To add MCU devices, select \preferences > \uicontrol Devices > \uicontrol Add
-    > \uicontrol {MCU Device} > \uicontrol {Start Wizard}:
+    To add MCU devices, go to \preferences > \uicontrol Devices > \uicontrol Add
+    > \uicontrol {Start Wizard to Add Device} > \uicontrol {MCU Device}:
+
 
        \list 1
            \li In \uicontrol Name, give the device a name.
-           \li In \uicontrol Type, select the board type.
            \li Select \uicontrol Apply to add the device.
        \endlist
 
-    \sa {Enable and disable plugins}, {MCUs}{How To: Develop for MCUs},
-    {Developing for MCUs}
+    \sa {Enable and disable plugins}, {MCUs}{How to: Develop for MCUs},
+    {Developing for MCUs}, {\QMCU}
 */
-
 
 /*!
     \page creator-how-to-manage-mcu-kits.html
@@ -183,34 +231,39 @@
     \ingroup creator-how-to-mcu
     \ingroup creator-how-to-manage-kits
 
-    \title Manage MCU Kits
+    \title Manage MCU kits
 
-    \note Enable the McuSupport plugin to develop for MCUs.
+    \note Before you start developing for MCUs, go to \uicontrol Help >
+    \uicontrol {About Plugins}, and make sure you have the \uicontrol {Qt for MCUs}
+    plugin enabled.
 
     \QC automatically adds kits for all the available MCU targets if you select
     \uicontrol {Automatically create kits for all available targets on start}
-    in \preferences > \uicontrol Devices > \uicontrol MCU.
+    in \preferences > \uicontrol SDKs > \uicontrol MCU. This setting is selected
+    by default.
 
-    \image qtcreator-preferences-kits-mcu.webp {MCU kit}
+    \image {qtcreator-mcu-new-kit.webp} {Automatically create MCU kits in the MCU tab in SDKs preferences}
 
     \note When you update the \QMCU SDK, \QC asks you whether you want to replace
     the existing kits or create additional kits. To do this manually for each
     target, select \uicontrol {Update Kit} or \uicontrol {Create Kit}.
 
-    To add new kits, go to \preferences > \uicontrol Devices > \uicontrol MCU,
+    To add new kits, go to \preferences > \uicontrol SDKs > \uicontrol MCU,
     and select \uicontrol {Create Kit}. This adds the paths to the kit's toolkits
-    and SDKs, and keeps them synchronized when you select \uicontrol Apply or
-    \uicontrol OK.
+    and SDKs, and keeps them synchronized when you select \uicontrol Apply.
 
     \section1 Change or remove MCU kits
 
     To change or remove individual kits, go to \preferences > \uicontrol Kits.
 
-    The \uicontrol {MCU dependencies} field displays paths to 3rd party
-    software required for MCU development with the current kit.
+    \image {qtcreator-preferences-kits-mcu.webp} {MCU kit in the Kits tab in Kits preferences}
 
-    \sa {Enable and disable plugins}, {MCUs}{How To: Develop for MCUs},
-    {Manage Kits}{How To: Manage Kits}, {Developing for MCUs}
+    \note When working with \QMCU releases prior to \QMCU 2.0, the
+    \uicontrol {MCU Dependencies} filter can be used to display paths to 3rd
+    party software needed for MCU development with the selected kit.
+
+    \sa {Enable and disable plugins}, {MCUs}{How to: Develop for MCUs},
+    {Manage kits}{How to: Manage kits}, {Developing for MCUs}, {\QMCU}
 */
 
 /*!
@@ -221,7 +274,9 @@
 
     \title Create MCU projects
 
-    \note Enable the McuSupport plugin to develop for MCUs.
+    \note Before you start developing for MCUs, go to \uicontrol Help >
+    \uicontrol {About Plugins}, and make sure you have the \uicontrol {Qt for MCUs}
+    plugin enabled.
 
     Create a project for developing an application that you can run on MCUs.
     The project imports a subset of QML and Qt Quick Controls types
@@ -232,7 +287,7 @@
 
     \list 1
         \li Go to \uicontrol File > \uicontrol {New Project}.
-            \image qtcreator-mcu-new-project.webp {New Project dialog}
+            \image {qtcreator-mcu-new-project.webp} {New Project dialog}
         \li Select \uicontrol {QmlProject Application (\QMCU)} >
             \uicontrol {Qt for MCUs Empty Application} or
             \uicontrol {Qt for MCUs Example Application} > \uicontrol Choose.
@@ -240,11 +295,11 @@
         \li Select \uicontrol Projects > \uicontrol {Build & Run}, and then
             select the kit for building the application and running it on the
             MCU board specified in the kit.
-        \li Select \uicontrol Run to specify run settings.
+        \li Go to \uicontrol {Run Settings} to specify run settings.
             Usually, you can use the default settings.
     \endlist
 
     \sa {Configure projects for running}, {Enable and disable plugins},
-    {MCUs}{How To: Develop for MCUs}, {Use project wizards},
-    {Developing for MCUs}
+    {MCUs}{How to: Develop for MCUs}, {Use project wizards},
+    {Developing for MCUs}, {\QMCU}
 */

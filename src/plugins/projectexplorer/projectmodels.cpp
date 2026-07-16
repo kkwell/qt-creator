@@ -18,19 +18,21 @@
 #include <coreplugin/session.h>
 #include <coreplugin/vcsmanager.h>
 
-#include <utils/utilsicons.h>
 #include <utils/algorithm.h>
 #include <utils/dropsupport.h>
+#include <utils/environment.h>
 #include <utils/fsengine/fileiconprovider.h>
 #include <utils/pathchooser.h>
-#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcprocess.h>
 #include <utils/stringutils.h>
 #include <utils/theme/theme.h>
+#include <utils/utilsicons.h>
 
 #include <QButtonGroup>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QFont>
 #include <QGuiApplication>
@@ -53,6 +55,9 @@ using namespace Utils;
 
 namespace ProjectExplorer {
 namespace Internal {
+
+static Q_LOGGING_CATEGORY(projectModelLog, "qtc.pm.projectModel", QtWarningMsg)
+static Q_LOGGING_CATEGORY(projectModelTimingLog, "qtc.pm.projectModelTiming", QtWarningMsg)
 
 /// An output iterator whose assignment operator appends a clone of the operand to the list of
 /// children of the WrapperNode passed to the constructor.
@@ -93,14 +98,14 @@ bool compareNodes(const Node *n1, const Node *n2)
     if (displayNameResult != 0)
         return displayNameResult < 0;
 
-    const int filePathResult = caseFriendlyCompare(n1->filePath().toString(),
-                                 n2->filePath().toString());
+    const int filePathResult = caseFriendlyCompare(n1->filePath().toUrlishString(),
+                                 n2->filePath().toUrlishString());
     return filePathResult < 0;
 }
 
 static bool sortWrapperNodes(const WrapperNode *w1, const WrapperNode *w2)
 {
-    return compareNodes(w1->m_node, w2->m_node);
+    return compareNodes(w1->node(), w2->node());
 }
 
 /// Appends to `dest` clones of children of `first` and `second`, removing duplicates (recursively).
@@ -118,7 +123,7 @@ static void appendMergedChildren(const WrapperNode *first, const WrapperNode *se
                   -> const WrapperNode * {
                       if (childOfSecond->hasChildren()) {
                           if (childOfFirst->hasChildren()) {
-                              WrapperNode *mergeResult = new WrapperNode(childOfFirst->m_node);
+                              WrapperNode *mergeResult = new WrapperNode(childOfFirst->node());
                               dest->appendChild(mergeResult);
                               appendMergedChildren(childOfFirst, childOfSecond, mergeResult);
                               // mergeResult has already been appended to the parent's list of
@@ -148,7 +153,7 @@ static void mergeDuplicates(WrapperNode *parent)
         if (!sortWrapperNodes(child, nextChild)) {
             // child and nextChild must have the same priorities, display names and folder paths.
             // Replace them by a single node 'mergeResult` containing the union of their children.
-            auto mergeResult = new WrapperNode(child->m_node);
+            auto mergeResult = new WrapperNode(child->node());
             parent->insertChild(childIndex, mergeResult);
             appendMergedChildren(child, nextChild, mergeResult);
             // Now we can remove the original children
@@ -168,6 +173,241 @@ void WrapperNode::appendClone(const WrapperNode &node)
         clone->appendClone(*child);
 }
 
+// "Compress" a tree of folder nodes such that those with exactly one folder node as a child
+// are merged into one. This e.g. turns a sequence of FolderNodes "foo" "bar" "baz" into one
+// FolderNode named "foo/bar/baz", saving a lot of clicks in the Project View to get to the actual
+// files.
+void WrapperNode::compress()
+{
+    qCDebug(projectModelLog) << "visiting node" << m_node << m_node->displayName() << "with"
+                             << childCount() << "children";
+
+    // Child nodes need to be compressed first.
+    forFirstLevelChildren([](WrapperNode *n) { n->compress(); });
+
+    if (!m_node->isCompressable())
+        return;
+
+    // There must be exactly one child node, which has to be of the same type as this node.
+    if (childCount() != 1)
+        return;
+    WrapperNode * const childWrapper = childAt(0);
+    const auto subFolder = childWrapper->m_node->asFolderNode();
+    if (!subFolder)
+        return;
+    const bool sameType = (m_node->isFolderNodeType() && subFolder->isFolderNodeType())
+                          || (m_node->isProjectNodeType() && subFolder->isProjectNodeType())
+                          || (m_node->isVirtualFolderType() && subFolder->isVirtualFolderType());
+    if (!sameType)
+        return;
+
+    qCDebug(projectModelLog) << "merging sole child node" << childAt(0)->displayName() << "into"
+                             << displayName();
+
+    // Now do the compression by moving the child node's children into this node
+    // and removing the child node.
+    while (childWrapper->hasChildren()) {
+        WrapperNode * const toMove = childWrapper->takeChildAt(0);
+        appendChild(toMove);
+        qCDebug(projectModelLog) << "  moving node" << toMove->displayName() << "here";
+    }
+    m_displayName = QDir::toNativeSeparators(displayName() + "/" + subFolder->displayName());
+    m_node = subFolder;
+    removeChildAt(0);
+    qCDebug(projectModelLog) << "now have" << childCount() << "children";
+}
+
+QString WrapperNode::displayName() const
+{
+    if (!m_displayName.isEmpty())
+        return m_displayName;
+    if (m_node)
+        return m_node->displayName();
+    return {};
+}
+
+QVariant WrapperNode::data(int column, int role) const
+{
+    Q_UNUSED(column)
+
+    if (!m_node)
+        return {};
+
+    const FolderNode * const folderNode = m_node->asFolderNode();
+    const FileNode * const fileNode = m_node->asFileNode();
+    const ContainerNode * const containerNode = m_node->asContainerNode();
+    const Project * const project = containerNode ? containerNode->project() : nullptr;
+    const BuildSystem * const bs = activeBuildSystem(project);
+
+    switch (role) {
+    case Qt::DisplayRole:
+        return displayName();
+    case Qt::EditRole:
+        return m_node->filePath().fileName();
+    case Qt::ToolTipRole: {
+        QString tooltip = m_node->tooltip();
+        if (project) {
+            if (project->activeKit()) {
+                QString projectIssues = toHtml(project->projectIssues(project->activeKit()));
+                if (!projectIssues.isEmpty())
+                    tooltip += "<p>" + projectIssues;
+            } else {
+                tooltip += "<p>" + Tr::tr("No kits are enabled for this project. "
+                                          "Enable kits in the \"Projects\" mode.");
+            }
+        } else if (fileNode) {
+            const QString &stateText =
+                VcsManager::fileStateDescription(fileNode->modificationState());
+            if (!stateText.isEmpty())
+                tooltip += "<p>" + stateText;
+        }
+        return tooltip;
+    }
+    case Qt::DecorationRole: {
+        QTC_ASSERT(fileNode || folderNode, return {});
+        if (!folderNode)
+            return fileNode->icon();
+        if (!project)
+            return folderNode->icon();
+        static QIcon warnIcon = Utils::Icons::WARNING.icon();
+        static QIcon emptyIcon = Utils::Icons::EMPTY16.icon();
+        if (project->needsConfiguration())
+            return warnIcon;
+        if (bs && bs->isParsing())
+            return emptyIcon;
+        if (!project->activeKit() || !project->projectIssues(project->activeKit()).isEmpty())
+            return warnIcon;
+        return containerNode->rootProjectNode() ? containerNode->rootProjectNode()->icon()
+                                                : folderNode->icon();
+    }
+    case Qt::FontRole: {
+        QFont font;
+        if (project == ProjectManager::startupProject())
+            font.setBold(true);
+        return font;
+    }
+    case Qt::ForegroundRole:
+        if (fileNode) {
+            Core::VcsFileState state = fileNode->modificationState();
+            if (state != Core::VcsFileState::Unknown)
+                return VcsManager::fileStateColor(state);
+        }
+        return m_node->isEnabled() ? QVariant()
+                                 : Utils::creatorColor(Utils::Theme::TextColorDisabled);
+    case Project::isParsingRole:
+        return project && bs ? bs->isParsing() && !project->needsConfiguration() : false;
+    case Project::UseUnavailableMarkerRole:
+        return fileNode ? fileNode->useUnavailableMarker() : false;
+    case Project::NodeRole:
+        return QVariant::fromValue(m_node);
+    }
+    return {};
+}
+
+Qt::ItemFlags WrapperNode::flags(int column) const
+{
+    Q_UNUSED(column)
+
+    // We claim that everything is editable
+    // That's slightly wrong
+    // We control the only view, and that one does the checks
+    Qt::ItemFlags f = Qt::ItemIsSelectable|Qt::ItemIsEnabled|Qt::ItemIsDragEnabled;
+    if (m_node) {
+        if (!m_node->asProjectNode()) {
+            // either folder or file node
+            if (m_node->supportsAction(Rename, m_node))
+                f = f | Qt::ItemIsEditable;
+        } else if (m_node->supportsAction(ProjectAction::AddExistingFile, m_node)) {
+            f |= Qt::ItemIsDropEnabled;
+        }
+    }
+    return f;
+}
+
+bool WrapperNode::setData(int column, const QVariant &value, int role)
+{
+    Q_UNUSED(column)
+
+    if (role != Qt::EditRole)
+        return false;
+
+    QTC_ASSERT(m_node, return false);
+
+    const QString valuePath = value.toString();
+    const FilePath orgFilePath = m_node->filePath();
+    const FilePath newFilePath = orgFilePath.parentDir().pathAppended(valuePath);
+
+    auto selectedFile = std::make_tuple(m_node, orgFilePath, newFilePath);
+
+    using RenameVector = std::vector<std::tuple<Node *, FilePath, FilePath>>;
+
+    const auto rename = [m = model()](const RenameVector &toRename) {
+        QList<std::pair<Node *, FilePath>> renameList;
+        for (const auto &f : toRename)
+            renameList << std::make_pair(std::get<0>(f), std::get<2>(f));
+        const QList<std::pair<FilePath, FilePath>> renamedList = ProjectExplorerPlugin::renameFiles(
+            renameList);
+        if (m) {
+            for (const auto &[oldFilePath, newFilePath] : renamedList)
+                emit qobject_cast<FlatModel *>(m)->renamed(oldFilePath, newFilePath);
+        }
+    };
+
+    // The base name of the file was changed. Go look for other files with the same base name
+    // and offer to rename them as well.
+    if (!orgFilePath.equalsCaseSensitive(newFilePath)
+        && orgFilePath.suffix() == newFilePath.suffix()) {
+        const QList<Node *> candidateNodes = ProjectTree::siblingsWithSameBaseName(m_node);
+        if (!candidateNodes.isEmpty()) {
+            QStringList fileNames = transform<QStringList>(candidateNodes, [](const Node *n) {
+                return n->filePath().fileName();
+            });
+            fileNames.removeDuplicates();
+
+            QMessageBox *msgBox = new QMessageBox(Core::ICore::dialogParent());
+            msgBox->setAttribute(Qt::WA_DeleteOnClose);
+            msgBox->setIcon(QMessageBox::Question);
+            msgBox->setWindowTitle(Tr::tr("Rename More Files?"));
+            msgBox->setText(
+                Tr::tr("Would you like to rename these files as well?\n    %1")
+                    .arg(fileNames.join("\n    ")));
+            msgBox->setStandardButtons(QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
+            msgBox->setDefaultButton(QMessageBox::Yes);
+
+            const auto onFinished =
+                [candidateNodes, valuePath, orgFilePath, msgBox, selectedFile, rename]() {
+                    if (msgBox->result() == QMessageBox::Cancel)
+                        return;
+
+                    if (msgBox->result() == QMessageBox::No) {
+                        rename({selectedFile});
+                        return;
+                    }
+
+                    RenameVector allToRename = {selectedFile};
+                    const FilePath dir = orgFilePath.parentDir();
+                    for (Node *const n : candidateNodes) {
+                        FilePath targetFilePath = dir
+                                                  / dir.pathAppended(valuePath).completeBaseName();
+                        const QString suffix = n->filePath().suffix();
+                        if (!suffix.isEmpty())
+                            targetFilePath = targetFilePath.stringAppended('.' + suffix);
+                        allToRename.emplace_back(std::make_tuple(n, n->filePath(), targetFilePath));
+                    }
+                    rename(allToRename);
+                };
+
+            QObject::connect(msgBox, &QMessageBox::finished, msgBox, onFinished);
+
+            msgBox->show();
+            return false;
+        }
+    }
+
+    rename({selectedFile});
+    return true;
+}
+
 FlatModel::FlatModel(QObject *parent)
     : TreeModel<WrapperNode, WrapperNode>(new WrapperNode(nullptr), parent)
 {
@@ -184,163 +424,17 @@ FlatModel::FlatModel(QObject *parent)
 
     for (Project *project : ProjectManager::projects())
         handleProjectAdded(project);
-}
 
-QVariant FlatModel::data(const QModelIndex &index, int role) const
-{
-    const Node * const node = nodeForIndex(index);
-    if (!node)
-        return {};
-
-    const FolderNode * const folderNode = node->asFolderNode();
-    const FileNode * const fileNode = node->asFileNode();
-    const ContainerNode * const containerNode = node->asContainerNode();
-    const Project * const project = containerNode ? containerNode->project() : nullptr;
-    const Target * const target = project ? project->activeTarget() : nullptr;
-    const BuildSystem * const bs = target ? target->buildSystem() : nullptr;
-
-    switch (role) {
-    case Qt::DisplayRole:
-        return node->displayName();
-    case Qt::EditRole:
-        return node->filePath().fileName();
-    case Qt::ToolTipRole: {
-        QString tooltip = node->tooltip();
-        if (project) {
-            if (target) {
-                QString projectIssues = toHtml(project->projectIssues(project->activeTarget()->kit()));
-                if (!projectIssues.isEmpty())
-                    tooltip += "<p>" + projectIssues;
-            } else {
-                tooltip += "<p>" + Tr::tr("No kits are enabled for this project. "
-                                      "Enable kits in the \"Projects\" mode.");
-            }
-        }
-        return tooltip;
-    }
-    case Qt::DecorationRole: {
-        if (!folderNode)
-            return node->asFileNode()->icon();
-        if (!project)
-            return folderNode->icon();
-        static QIcon warnIcon = Utils::Icons::WARNING.icon();
-        static QIcon emptyIcon = Utils::Icons::EMPTY16.icon();
-        if (project->needsConfiguration())
-            return warnIcon;
-        if (bs && bs->isParsing())
-            return emptyIcon;
-        if (!target || !project->projectIssues(target->kit()).isEmpty())
-            return warnIcon;
-        return containerNode->rootProjectNode() ? containerNode->rootProjectNode()->icon()
-                                                : folderNode->icon();
-    }
-    case Qt::FontRole: {
-        QFont font;
-        if (project == ProjectManager::startupProject())
-            font.setBold(true);
-        return font;
-    }
-    case Qt::ForegroundRole:
-        return node->isEnabled() ? QVariant()
-                                 : Utils::creatorColor(Utils::Theme::TextColorDisabled);
-    case Project::FilePathRole:
-        return node->filePath().toString();
-    case Project::isParsingRole:
-        return project && bs ? bs->isParsing() && !project->needsConfiguration() : false;
-    case Project::UseUnavailableMarkerRole:
-        return fileNode ? fileNode->useUnavailableMarker() : false;
-    }
-    return {};
-}
-
-Qt::ItemFlags FlatModel::flags(const QModelIndex &index) const
-{
-    if (!index.isValid())
-        return {};
-    // We claim that everything is editable
-    // That's slightly wrong
-    // We control the only view, and that one does the checks
-    Qt::ItemFlags f = Qt::ItemIsSelectable|Qt::ItemIsEnabled|Qt::ItemIsDragEnabled;
-    if (Node *node = nodeForIndex(index)) {
-        if (!node->asProjectNode()) {
-            // either folder or file node
-            if (node->supportsAction(Rename, node))
-                f = f | Qt::ItemIsEditable;
-        } else if (node->supportsAction(ProjectAction::AddExistingFile, node)) {
-            f |= Qt::ItemIsDropEnabled;
-        }
-    }
-    return f;
-}
-
-bool FlatModel::setData(const QModelIndex &index, const QVariant &value, int role)
-{
-    if (!index.isValid())
-        return false;
-    if (role != Qt::EditRole)
-        return false;
-
-    Node *node = nodeForIndex(index);
-    QTC_ASSERT(node, return false);
-
-    std::vector<std::tuple<Node *, FilePath, FilePath>> toRename;
-    const FilePath orgFilePath = node->filePath();
-    const FilePath newFilePath = orgFilePath.parentDir().pathAppended(value.toString());
-    const FilePath valuePath = FilePath::fromString(value.toString());
-    const QFileInfo orgFileInfo = orgFilePath.toFileInfo();
-    toRename.emplace_back(std::make_tuple(node, orgFilePath, newFilePath));
-
-    // The base name of the file was changed. Go look for other files with the same base name
-    // and offer to rename them as well.
-    if (!orgFilePath.equalsCaseSensitive(newFilePath)
-        && orgFilePath.suffix() == newFilePath.suffix()) {
-        const QList<Node *> candidateNodes = ProjectTree::siblingsWithSameBaseName(node);
-        if (!candidateNodes.isEmpty()) {
-            QStringList fileNames = transform<QStringList>(candidateNodes, [](const Node *n) {
-                return n->filePath().fileName();
-            });
-            fileNames.removeDuplicates();
-            const QMessageBox::StandardButton reply = QMessageBox::question(
-                        Core::ICore::dialogParent(), Tr::tr("Rename More Files?"),
-                        Tr::tr("Would you like to rename these files as well?\n    %1")
-                        .arg(fileNames.join("\n    ")),
-                        QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel,
-                        QMessageBox::Yes);
-            switch (reply) {
-            case QMessageBox::Yes:
-                for (Node * const n : candidateNodes) {
-                    QString targetFilePath = orgFileInfo.absolutePath() + '/'
-                                             + valuePath.parentDir().path() + '/'
-                                             + valuePath.completeBaseName();
-                    const QString suffix = n->filePath().suffix();
-                    if (!suffix.isEmpty())
-                        targetFilePath.append('.').append(suffix);
-                    toRename.emplace_back(std::make_tuple(n, n->filePath(),
-                                                          FilePath::fromString(targetFilePath).cleanPath()));
-                }
-                break;
-            case QMessageBox::Cancel:
-                return false;
-            default:
-                break;
-            }
-        }
-    }
-
-    QList<std::pair<Node *, FilePath>> renameList;
-    for (const auto &f : toRename)
-        renameList << std::make_pair(std::get<0>(f), std::get<2>(f));
-    const QList<std::pair<FilePath, FilePath>> renamedList
-        = ProjectExplorerPlugin::renameFiles(renameList);
-    for (const auto &[oldFilePath, newFilePath] : renamedList)
-        emit renamed(oldFilePath, newFilePath);
-    return true;
+    connect(VcsManager::instance(), &VcsManager::updateFileState,
+            this, &FlatModel::updateVCStatusFor);
+    connect(VcsManager::instance(), &VcsManager::clearFileState,
+            this, &FlatModel::clearVCStatusFor);
 }
 
 static bool compareProjectNames(const WrapperNode *lhs, const WrapperNode *rhs)
 {
-    Node *p1 = lhs->m_node;
-    Node *p2 = rhs->m_node;
+    Node *p1 = lhs->node();
+    Node *p2 = rhs->node();
     const int displayNameResult = caseFriendlyCompare(p1->displayName(), p2->displayName());
     if (displayNameResult != 0)
         return displayNameResult < 0;
@@ -349,25 +443,35 @@ static bool compareProjectNames(const WrapperNode *lhs, const WrapperNode *rhs)
 
 void FlatModel::addOrRebuildProjectModel(Project *project)
 {
+    QElapsedTimer timer;
+    timer.start();
     WrapperNode *container = nodeForProject(project);
     if (container) {
+        takeItem(container);
         container->removeChildren();
         project->containerNode()->removeAllChildren();
     } else {
         container = new WrapperNode(project->containerNode());
-        rootItem()->insertOrderedChild(container, &compareProjectNames);
     }
 
     QSet<Node *> seen;
 
     if (ProjectNode *projectNode = project->rootProjectNode()) {
         addFolderNode(container, projectNode, &seen);
+        if (!qtcEnvironmentVariableIsSet("QTC_PROJECT_NO_COMPRESS")) {
+            QElapsedTimer t;
+            t.start();
+            container->compress();
+            qCDebug(projectModelTimingLog) << "node compression took" << t.elapsed() << "ms";
+        }
         if (m_trimEmptyDirectories)
             trimEmptyDirectories(container);
     }
 
+    rootItem()->insertOrderedChild(container, &compareProjectNames);
+
     if (project->needsInitialExpansion())
-        m_toExpand.insert(expandDataForNode(container->m_node));
+        m_toExpand.insert(expandDataForNode(container->node()));
 
     if (container->childCount() == 0) {
         auto projectFileNode = std::make_unique<FileNode>(project->projectFilePath(),
@@ -380,28 +484,31 @@ void FlatModel::addOrRebuildProjectModel(Project *project)
     container->sortChildren(&sortWrapperNodes);
 
     container->forAllChildren([this](WrapperNode *node) {
-        if (node->m_node) {
-            if (m_toExpand.contains(expandDataForNode(node->m_node)))
+        if (node->node()) {
+            if (m_toExpand.contains(expandDataForNode(node->node())))
                 emit requestExpansion(node->index());
         } else {
             emit requestExpansion(node->index());
         }
     });
 
-
-    if (m_toExpand.contains(expandDataForNode(container->m_node)))
+    if (m_toExpand.contains(expandDataForNode(container->node())))
         emit requestExpansion(container->index());
+
+    qCDebug(projectModelTimingLog) << "re-building model took" << timer.elapsed() << "ms";
 }
 
 void FlatModel::parsingStateChanged(Project *project)
 {
     const WrapperNode *const node = nodeForProject(project);
-    const QModelIndex nodeIdx = indexForNode(node->m_node);
+    const QModelIndex nodeIdx = indexForNode(node->node());
     emit dataChanged(nodeIdx, nodeIdx);
 }
 
 void FlatModel::updateSubtree(FolderNode *node)
 {
+    QTC_ASSERT(node, return);
+
     // FIXME: This is still excessive, should be limited to the affected subtree.
     while (FolderNode *parent = node->parentFolderNode())
         node = parent;
@@ -429,7 +536,7 @@ void FlatModel::onExpanded(const QModelIndex &idx)
 ExpandData FlatModel::expandDataForNode(const Node *node) const
 {
     QTC_ASSERT(node, return {});
-    return {node->filePath().toString(), node->priority()};
+    return {node->filePath().toUrlishString(), node->rawDisplayName(), node->priority()};
 }
 
 void FlatModel::handleProjectAdded(Project *project)
@@ -447,12 +554,54 @@ void FlatModel::handleProjectAdded(Project *project)
             parsingStateChanged(project);
         emit ProjectTree::instance()->nodeActionsChanged();
     });
+
+    const FilePath &rootPath = project->rootProjectDirectory();
+    VcsManager::monitorDirectory(rootPath, true);
+
     addOrRebuildProjectModel(project);
+}
+
+void FlatModel::updateVCStatusFor(const Utils::FilePath root, const QStringList &files)
+{
+    for (const QString &relFilePath : files) {
+        for (const Project * const project : ProjectManager::projects()) {
+            const QList<const Node *> nodes
+                = project->nodesForFilePath(root.pathAppended(relFilePath), [](const Node *n) {
+                      return n->listInProject() && n->asFileNode();
+                  });
+            for (const Node * const node : nodes) {
+                FileNode * const fileNode = static_cast<FileNode *>(const_cast<Node *>(node));
+                fileNode->resetModificationState();
+                const QModelIndex index = indexForNode(fileNode);
+                emit dataChanged(index, index, {Qt::ForegroundRole});
+            }
+        }
+    }
+}
+
+void FlatModel::clearVCStatusFor(const Utils::FilePath &root)
+{
+    ProjectTree::forEachNode([this, root](Node *n) {
+        FileNode *fileNode = n->asFileNode();
+        if (!fileNode)
+            return;
+        if (fileNode->filePath().isChildOf(root)) {
+            fileNode->resetModificationState();
+            const QModelIndex index = indexForNode(fileNode);
+            emit dataChanged(index, index, {Qt::ForegroundRole});
+        }
+    });
 }
 
 void FlatModel::handleProjectRemoved(Project *project)
 {
     destroyItem(nodeForProject(project));
+
+    if (!project)
+        return;
+
+    const FilePath &rootPath = project->rootProjectDirectory();
+    VcsManager::monitorDirectory(rootPath, false);
 }
 
 WrapperNode *FlatModel::nodeForProject(const Project *project) const
@@ -461,7 +610,7 @@ WrapperNode *FlatModel::nodeForProject(const Project *project) const
     ContainerNode *containerNode = project->containerNode();
     QTC_ASSERT(containerNode, return nullptr);
     return rootItem()->findFirstLevelChild([containerNode](WrapperNode *node) {
-        return node->m_node == containerNode;
+        return node->node() == containerNode;
     });
 }
 
@@ -521,7 +670,7 @@ void FlatModel::addFolderNode(WrapperNode *parent, FolderNode *folderNode, QSet<
 
 bool FlatModel::trimEmptyDirectories(WrapperNode *parent)
 {
-    const FolderNode *fn = parent->m_node->asFolderNode();
+    const FolderNode *fn = parent->node()->asFolderNode();
     if (!fn)
         return false;
 
@@ -772,12 +921,12 @@ bool FlatModel::dropMimeData(const QMimeData *data, Qt::DropAction action, int r
     case DropAction::MoveWithFiles: {
         FilePaths filesToAdd;
         FilePaths filesToRemove;
-        const VcsInfo targetVcs = vcsInfoForFile(targetDir.toString());
+        const VcsInfo targetVcs = vcsInfoForFile(targetDir.toUrlishString());
         const bool vcsAddPossible = targetVcs.vcs
                 && targetVcs.vcs->supportsOperation(Core::IVersionControl::AddOperation);
         for (const FilePath &sourceFile : sourceFiles) {
             const FilePath targetFile = targetFilePath(sourceFile);
-            const VcsInfo sourceVcs = vcsInfoForFile(sourceFile.toString());
+            const VcsInfo sourceVcs = vcsInfoForFile(sourceFile.toUrlishString());
             if (sourceVcs.vcs && targetVcs.vcs && sourceVcs == targetVcs
                     && sourceVcs.vcs->supportsOperation(Core::IVersionControl::MoveOperation)) {
                 if (sourceVcs.vcs->vcsMove(sourceFile, targetFile)) {
@@ -824,7 +973,7 @@ bool FlatModel::dropMimeData(const QMimeData *data, Qt::DropAction action, int r
 
     // Summary for the user in case anything went wrong.
     const auto makeUserFileList = [](const FilePaths &files) {
-        return FilePath::formatFilePaths(files, "\n  ");
+        return files.toUserOutput("\n  ");
     };
     if (!failedAddToProject.empty() || !failedRemoveFromProject.empty()
             || !failedCopyOrMove.empty() || !failedDelete.empty() || !failedVcsOp.empty()) {
@@ -861,7 +1010,7 @@ bool FlatModel::dropMimeData(const QMimeData *data, Qt::DropAction action, int r
 WrapperNode *FlatModel::wrapperForNode(const Node *node) const
 {
     return findNonRootItem([node](WrapperNode *item) {
-        return item->m_node == node;
+        return item->node() == node;
     });
 }
 
@@ -929,7 +1078,7 @@ bool FlatModel::trimEmptyDirectoriesEnabled()
 Node *FlatModel::nodeForIndex(const QModelIndex &index) const
 {
     WrapperNode *flatNode = itemForIndex(index);
-    return flatNode ? flatNode->m_node : nullptr;
+    return flatNode ? flatNode->node() : nullptr;
 }
 
 const QLoggingCategory &FlatModel::logger()

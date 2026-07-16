@@ -7,6 +7,8 @@
 #include "baremetaltr.h"
 #include "debugserverprovidermanager.h"
 
+#include <projectexplorer/devicesupport/devicemanager.h>
+
 #include <utils/environment.h>
 #include <utils/qtcassert.h>
 
@@ -45,9 +47,10 @@ IDebugServerProvider::IDebugServerProvider(const QString &id)
 
 IDebugServerProvider::~IDebugServerProvider()
 {
-    const QSet<BareMetalDevice *> devices = m_devices;
-    for (BareMetalDevice *device : devices)
-        device->unregisterDebugServerProvider(this);
+    DeviceManager::forEachDevice([this](const IDeviceConstPtr &dev) {
+        if (auto device = std::dynamic_pointer_cast<const BareMetalDevice>(dev))
+            device->unregisterDebugServerProvider(id());
+    });
 }
 
 QString IDebugServerProvider::displayName() const
@@ -73,6 +76,7 @@ void IDebugServerProvider::setChannel(const QUrl &channel)
 
 void IDebugServerProvider::setChannel(const QString &host, int port)
 {
+    m_channel.setScheme("tcp");
     m_channel.setHost(host);
     m_channel.setPort(port);
 }
@@ -82,12 +86,9 @@ QUrl IDebugServerProvider::channel() const
     return m_channel;
 }
 
-QString IDebugServerProvider::channelString() const
+QString IDebugServerProvider::channelPipe() const
 {
-    // Just return as "host:port" form.
-    if (m_channel.port() <= 0)
-        return m_channel.host();
-    return m_channel.host() + ':' + QString::number(m_channel.port());
+    return {};
 }
 
 QString IDebugServerProvider::id() const
@@ -147,16 +148,6 @@ void IDebugServerProvider::toMap(Store &data) const
     data.insert(portKeyC, m_channel.port());
 }
 
-void IDebugServerProvider::registerDevice(BareMetalDevice *device)
-{
-    m_devices.insert(device);
-}
-
-void IDebugServerProvider::unregisterDevice(BareMetalDevice *device)
-{
-    m_devices.remove(device);
-}
-
 void IDebugServerProvider::providerUpdated()
 {
     DebugServerProviderManager::notifyAboutUpdate(this);
@@ -184,7 +175,22 @@ void IDebugServerProvider::setConfigurationWidgetCreator(const std::function<IDe
 
 // IDebugServerProviderFactory
 
-IDebugServerProviderFactory::IDebugServerProviderFactory() = default;
+static QList<IDebugServerProviderFactory *> theDebugServerProviderFactories;
+
+IDebugServerProviderFactory::IDebugServerProviderFactory()
+{
+    theDebugServerProviderFactories.append(this);
+}
+
+IDebugServerProviderFactory::~IDebugServerProviderFactory()
+{
+    theDebugServerProviderFactories.removeOne(this);
+}
+
+const QList<IDebugServerProviderFactory *> IDebugServerProviderFactory::factories()
+{
+    return theDebugServerProviderFactories;
+}
 
 QString IDebugServerProviderFactory::id() const
 {
@@ -336,6 +342,7 @@ void HostWidget::setChannel(const QUrl &channel)
 QUrl HostWidget::channel() const
 {
     QUrl url;
+    url.setScheme("tcp");
     url.setHost(m_hostLineEdit->text());
     url.setPort(m_portSpinBox->value());
     return url;

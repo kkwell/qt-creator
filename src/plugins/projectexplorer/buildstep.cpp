@@ -7,7 +7,7 @@
 #include "buildsteplist.h"
 #include "customparser.h"
 #include "deployconfiguration.h"
-#include "kitaspects.h"
+#include "devicesupport/devicekitaspects.h"
 #include "project.h"
 #include "projectexplorerconstants.h"
 #include "sanitizerparser.h"
@@ -15,6 +15,7 @@
 
 #include <utils/fileinprojectfinder.h>
 #include <utils/layoutbuilder.h>
+#include <utils/macroexpander.h>
 #include <utils/outputformatter.h>
 #include <utils/variablechooser.h>
 
@@ -85,15 +86,14 @@ BuildStep::BuildStep(BuildStepList *bsl, Id id)
     : ProjectConfiguration(bsl->target(), id)
     , m_stepList(bsl)
 {
-    if (auto bc = buildConfiguration())
-        setMacroExpander(bc->macroExpander());
-
     connect(this, &ProjectConfiguration::displayNameChanged, this, &BuildStep::updateSummary);
+    macroExpander()->registerSubProvider({this, [bsl] { return bsl->projectConfiguration()->macroExpander(); }});
 }
 
 QWidget *BuildStep::doCreateConfigWidget()
 {
     QWidget *widget = createConfigWidget();
+    VariableChooser::addSupportForChildWidgets(widget, MacroExpanderProvider(this, macroExpander()));
 
     const auto recreateSummary = [this] {
         if (m_summaryUpdater)
@@ -129,35 +129,32 @@ QWidget *BuildStep::createConfigWidget()
 
 void BuildStep::fromMap(const Store &map)
 {
-    m_enabled = map.value(buildStepEnabledKey, true).toBool();
+    m_stepEnabled = map.value(buildStepEnabledKey, true).toBool();
     ProjectConfiguration::fromMap(map);
 }
 
 void BuildStep::toMap(Store &map) const
 {
     ProjectConfiguration::toMap(map);
-    map.insert(buildStepEnabledKey, m_enabled);
+    map.insert(buildStepEnabledKey, m_stepEnabled);
 }
 
 BuildConfiguration *BuildStep::buildConfiguration() const
 {
-    auto config = qobject_cast<BuildConfiguration *>(projectConfiguration());
-    if (config)
-        return config;
+    if (const auto buildConfig = qobject_cast<BuildConfiguration *>(projectConfiguration()))
+        return buildConfig;
+    if (const auto deployConfig = qobject_cast<DeployConfiguration *>(projectConfiguration()))
+        return deployConfig->buildConfiguration();
 
-    // step is not part of a build configuration, use active build configuration of step's target
+    QTC_CHECK(false);
     return target()->activeBuildConfiguration();
 }
 
 DeployConfiguration *BuildStep::deployConfiguration() const
 {
     auto config = qobject_cast<DeployConfiguration *>(projectConfiguration());
-    if (config)
-        return config;
-    // See comment in buildConfiguration()
-    QTC_CHECK(false);
-    // step is not part of a deploy configuration, use active deploy configuration of step's target
-    return target()->activeDeployConfiguration();
+    QTC_ASSERT(config, return target()->activeDeployConfiguration());
+    return config;
 }
 
 ProjectConfiguration *BuildStep::projectConfiguration() const
@@ -167,18 +164,14 @@ ProjectConfiguration *BuildStep::projectConfiguration() const
 
 BuildSystem *BuildStep::buildSystem() const
 {
-    if (auto bc = buildConfiguration())
-        return bc->buildSystem();
-    return target()->buildSystem();
+    BuildConfiguration * const bc = buildConfiguration();
+    QTC_ASSERT(bc, return nullptr);
+    return bc->buildSystem();
 }
 
 Environment BuildStep::buildEnvironment() const
 {
-    if (const auto bc = qobject_cast<BuildConfiguration *>(projectConfiguration()))
-        return bc->environment();
-    if (const auto bc = target()->activeBuildConfiguration())
-        return bc->environment();
-    return Environment::systemEnvironment();
+    return buildConfiguration()->environment();
 }
 
 FilePath BuildStep::buildDirectory() const
@@ -235,12 +228,12 @@ QVariant BuildStep::data(Id id) const
     return {};
 }
 
-void BuildStep::setEnabled(bool b)
+void BuildStep::setStepEnabled(bool b)
 {
-    if (m_enabled == b)
+    if (m_stepEnabled == b)
         return;
-    m_enabled = b;
-    emit enabledChanged();
+    m_stepEnabled = b;
+    emit stepEnabledChanged();
 }
 
 BuildStepList *BuildStep::stepList() const
@@ -248,9 +241,9 @@ BuildStepList *BuildStep::stepList() const
     return m_stepList;
 }
 
-bool BuildStep::enabled() const
+bool BuildStep::stepEnabled() const
 {
-    return m_enabled;
+    return m_stepEnabled;
 }
 
 BuildStepFactory::BuildStepFactory()
@@ -278,7 +271,7 @@ bool BuildStepFactory::canHandle(BuildStepList *bsl) const
     if (!m_supportedDeviceTypes.isEmpty()) {
         Target *target = bsl->target();
         QTC_ASSERT(target, return false);
-        Id deviceType = DeviceTypeKitAspect::deviceTypeId(target->kit());
+        Id deviceType = RunDeviceTypeKitAspect::deviceTypeId(target->kit());
         if (!m_supportedDeviceTypes.contains(deviceType))
             return false;
     }
@@ -286,8 +279,8 @@ bool BuildStepFactory::canHandle(BuildStepList *bsl) const
     if (m_supportedProjectType.isValid()) {
         if (!config)
             return false;
-        Id projectId = config->project()->id();
-        if (projectId != m_supportedProjectType)
+        Id projectType = config->project()->type();
+        if (projectType != m_supportedProjectType)
             return false;
     }
 

@@ -6,8 +6,8 @@
 #include "qdbconstants.h"
 #include "qdbtr.h"
 
+#include <projectexplorer/projectexplorerconstants.h>
 #include <qtsupport/baseqtversion.h>
-#include <qtsupport/qtsupporttr.h>
 
 namespace Qdb::Internal {
 
@@ -16,11 +16,11 @@ class QdbQtVersion final : public QtSupport::QtVersion
 public:
     QString description() const final
     {
-        return QtSupport::Tr::tr("Boot2Qt", "Qt version is used for Boot2Qt development");
+        return Tr::tr("Qt version is used for Boot2Qt development");
     }
     QSet<Utils::Id> targetDeviceTypes() const final
     {
-        return {Utils::Id(Constants::QdbLinuxOsType)};
+        return {Utils::Id(ProjectExplorer::Constants::BOOT2QT_DEVICE_TYPE)};
     }
 };
 

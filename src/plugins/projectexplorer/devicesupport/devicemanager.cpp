@@ -3,11 +3,15 @@
 
 #include "devicemanager.h"
 
-#include "idevicefactory.h"
-#include "../projectexplorertr.h"
 #include "../projectexplorerconstants.h"
+#include "../projectexplorericons.h"
+#include "../projectexplorertr.h"
+#include "idevicefactory.h"
 
+#include <coreplugin/foldernavigationwidget.h>
 #include <coreplugin/icore.h>
+
+#include <extensionsystem/pluginmanager.h>
 
 #include <utils/algorithm.h>
 #include <utils/devicefileaccess.h>
@@ -17,6 +21,7 @@
 #include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 #include <utils/stringutils.h>
+#include <utils/synchronizedvalue.h>
 #include <utils/terminalhooks.h>
 
 #include <QHash>
@@ -24,9 +29,14 @@
 #include <QMutexLocker>
 #include <QVariantList>
 
-#include <limits>
 #include <memory>
 
+#ifdef WITH_TESTS
+#include <QSignalSpy>
+#include <QTest>
+#endif
+
+using namespace Core;
 using namespace Utils;
 
 namespace ProjectExplorer {
@@ -56,88 +66,48 @@ public:
         return devices;
     }
 
-    static DeviceManager *clonedInstance;
+    void clearDeviceState(Utils::Id deviceId)
+    {
+        const auto lockedStates = deviceStates.writeLocked();
+        lockedStates->remove(deviceId);
+    }
+
+    void initDeviceState(Utils::Id deviceId)
+    {
+        const auto lockedStates = deviceStates.writeLocked();
+        if (!lockedStates->contains(deviceId))
+            lockedStates->insert(deviceId, IDevice::DeviceDisconnected);
+    }
 
     mutable QMutex mutex;
     QList<IDevice::Ptr> devices;
     QHash<Id, Id> defaultDevices;
+    SynchronizedValue<QMap<Id, IDevice::DeviceState>> deviceStates;
     PersistentSettingsWriter *writer = nullptr;
 };
-DeviceManager *DeviceManagerPrivate::clonedInstance = nullptr;
 
 } // namespace Internal
 
 using namespace Internal;
 
-DeviceManager *DeviceManager::m_instance = nullptr;
+static DeviceManager *s_instance = nullptr;
+static std::unique_ptr<DeviceManagerPrivate> d;
 
 DeviceManager *DeviceManager::instance()
 {
-    return m_instance;
+    return s_instance;
 }
 
-int DeviceManager::deviceCount() const
+int DeviceManager::deviceCount()
 {
     return d->devices.count();
 }
 
-void DeviceManager::replaceInstance()
-{
-    const QList<Id> newIds =
-        Utils::transform(DeviceManagerPrivate::clonedInstance->d->devices, &IDevice::id);
-
-    for (const IDevice::Ptr &dev : std::as_const(m_instance->d->devices)) {
-        if (!newIds.contains(dev->id()))
-            dev->aboutToBeRemoved();
-    }
-
-    {
-        QMutexLocker locker(&instance()->d->mutex);
-        copy(DeviceManagerPrivate::clonedInstance, instance(), false);
-    }
-
-    emit instance()->deviceListReplaced();
-    emit instance()->updated();
-}
-
-void DeviceManager::removeClonedInstance()
-{
-    delete DeviceManagerPrivate::clonedInstance;
-    DeviceManagerPrivate::clonedInstance = nullptr;
-}
-
-DeviceManager *DeviceManager::cloneInstance()
-{
-    QTC_ASSERT(!DeviceManagerPrivate::clonedInstance, return nullptr);
-
-    DeviceManagerPrivate::clonedInstance = new DeviceManager(false);
-    copy(instance(), DeviceManagerPrivate::clonedInstance, true);
-    return DeviceManagerPrivate::clonedInstance;
-}
-
-DeviceManager *DeviceManager::clonedInstance()
-{
-    return DeviceManagerPrivate::clonedInstance;
-}
-
-void DeviceManager::copy(const DeviceManager *source, DeviceManager *target, bool deep)
-{
-    if (deep) {
-        for (const IDevice::Ptr &device : std::as_const(source->d->devices))
-            target->d->devices << device->clone();
-    } else {
-        target->d->devices = source->d->devices;
-    }
-    target->d->defaultDevices = source->d->defaultDevices;
-}
-
 void DeviceManager::save()
 {
-    if (d->clonedInstance == this || !d->writer)
-        return;
     Store data;
     data.insert(DeviceManagerKey, variantFromStore(toMap()));
-    d->writer->save(data, Core::ICore::dialogParent());
+    d->writer->save(data);
 }
 
 static FilePath settingsFilePath(const QString &extension)
@@ -163,15 +133,28 @@ void DeviceManager::load()
     QList<IDevice::Ptr> sdkDevices;
     if (reader.load(systemSettingsFilePath("devices.xml")))
         sdkDevices = fromMap(storeFromVariant(reader.restoreValues().value(DeviceManagerKey)), &defaultDevices);
+    for (IDevice::Ptr &device : sdkDevices)
+        device->setFromSdk();
     // read devices file from user settings path
     QList<IDevice::Ptr> userDevices;
     if (reader.load(settingsFilePath("devices.xml")))
         userDevices = fromMap(storeFromVariant(reader.restoreValues().value(DeviceManagerKey)), &defaultDevices);
     // Insert devices into the model. Prefer the higher device version when there are multiple
     // devices with the same id.
-    for (IDevice::ConstPtr device : std::as_const(userDevices)) {
+    for (IDevice::Ptr device : std::as_const(userDevices)) {
+        // Make sure devices removed via the sdktool really disappear.
+        if (device->isFromSdk()) {
+            const bool stillPresent
+                = Utils::contains(sdkDevices, [id = device->id()](const IDevice::Ptr &sdkDev) {
+                      return sdkDev->id() == id;
+                  });
+            if (!stillPresent)
+                continue;
+        }
+
         for (const IDevice::Ptr &sdkDevice : std::as_const(sdkDevices)) {
             if (device->id() == sdkDevice->id() || device->rootPath() == sdkDevice->rootPath()) {
+                device->setFromSdk(); // For pre-17 settings.
                 if (device->version() < sdkDevice->version())
                     device = sdkDevice;
                 sdkDevices.removeOne(sdkDevice);
@@ -191,7 +174,11 @@ void DeviceManager::load()
             d->defaultDevices[device->type()] = device->id();
     }
 
-    emit devicesLoaded();
+    // Trigger auto-connection
+    for (const IDevice::Ptr &device : d->devices)
+        device->postLoad();
+
+    emit s_instance->devicesLoaded();
 }
 
 static const IDeviceFactory *restoreFactory(const Store &map)
@@ -227,12 +214,13 @@ QList<IDevice::Ptr> DeviceManager::fromMap(const Store &map, QHash<Id, Id> *defa
         const IDevice::Ptr device = factory->construct();
         QTC_ASSERT(device, continue);
         device->fromMap(map);
+        d->initDeviceState(device->id());
         devices << device;
     }
     return devices;
 }
 
-Store DeviceManager::toMap() const
+Store DeviceManager::toMap()
 {
     Store map;
     Store defaultDeviceMap;
@@ -241,16 +229,46 @@ Store DeviceManager::toMap() const
 
     map.insert(DefaultDevicesKey, variantFromStore(defaultDeviceMap));
     QVariantList deviceList;
-    for (const IDevice::Ptr &device : std::as_const(d->devices))
-        deviceList << variantFromStore(device->toMap());
+    for (const IDevice::Ptr &device : std::as_const(d->devices)) {
+        Store store;
+        device->toMap(store);
+        if (store.isEmpty())
+            continue;
+        deviceList << variantFromStore(store);
+    }
     map.insert(DeviceListKey, deviceList);
     return map;
 }
 
-void DeviceManager::addDevice(const IDevice::ConstPtr &_device)
+IDevice::DeviceState DeviceManager::deviceState(Utils::Id deviceId)
 {
-    const IDevice::Ptr device = _device->clone();
+    return d->deviceStates.readLocked()->value(deviceId, IDevice::DeviceStateUnknown);
+}
 
+void DeviceManager::setDeviceState(Id deviceId, IDevice::DeviceState newState, bool announce)
+{
+    if (!d || !s_instance)
+        return;
+
+    {
+        const auto lockedStates = d->deviceStates.writeLocked();
+        const auto it = lockedStates->find(deviceId);
+        if (it == lockedStates->end())
+            lockedStates->insert(deviceId, newState);
+        else if (*it != newState)
+            *it = newState;
+        else
+            return;
+    }
+
+    if (announce && !ExtensionSystem::PluginManager::isShuttingDown()) {
+        emit s_instance->deviceUpdated(deviceId);
+        emit s_instance->updated();
+    }
+}
+
+void DeviceManager::addDevice(const IDevice::Ptr &device)
+{
     QStringList names;
     for (const IDevice::Ptr &tmp : std::as_const(d->devices)) {
         if (tmp->id() != device->id())
@@ -258,41 +276,41 @@ void DeviceManager::addDevice(const IDevice::ConstPtr &_device)
     }
 
     // TODO: make it thread safe?
-    device->settings()->displayName.setValue(
-        Utils::makeUniquelyNumbered(device->displayName(), names));
+    device->setDisplayName(Utils::makeUniquelyNumbered(device->displayName(), names));
 
     const int pos = d->indexForId(device->id());
 
     if (!defaultDevice(device->type()))
         d->defaultDevices.insert(device->type(), device->id());
-    if (this == DeviceManager::instance() && d->clonedInstance)
-        d->clonedInstance->addDevice(device->clone());
 
     if (pos >= 0) {
         {
             QMutexLocker locker(&d->mutex);
             d->devices[pos] = device;
         }
-        emit deviceUpdated(device->id());
+        emit s_instance->deviceUpdated(device->id());
     } else {
         {
             QMutexLocker locker(&d->mutex);
             d->devices << device;
         }
-        emit deviceAdded(device->id());
+        emit s_instance->deviceAdded(device->id());
 
         if (FSEngine::isAvailable())
             FSEngine::addDevice(device->rootPath());
     }
 
-    emit updated();
+    d->initDeviceState(device->id());
+    emit s_instance->updated();
 }
 
 void DeviceManager::removeDevice(Id id)
 {
     const IDevice::Ptr device = mutableDevice(id);
     QTC_ASSERT(device, return);
-    QTC_ASSERT(this != instance() || device->isAutoDetected(), return);
+
+    device->aboutToBeRemoved();
+    emit s_instance->deviceAboutToBeRemoved(device->id());
 
     const bool wasDefault = d->defaultDevices.value(device->type()) == device->id();
     const Id deviceType = device->type();
@@ -300,7 +318,7 @@ void DeviceManager::removeDevice(Id id)
         QMutexLocker locker(&d->mutex);
         d->devices.removeAt(d->indexForId(id));
     }
-    emit deviceRemoved(device->id());
+    emit s_instance->deviceRemoved(device->id());
 
     if (FSEngine::isAvailable())
         FSEngine::removeDevice(device->rootPath());
@@ -309,38 +327,17 @@ void DeviceManager::removeDevice(Id id)
         for (int i = 0; i < d->devices.count(); ++i) {
             if (deviceAt(i)->type() == deviceType) {
                 d->defaultDevices.insert(deviceAt(i)->type(), deviceAt(i)->id());
-                emit deviceUpdated(deviceAt(i)->id());
+                emit s_instance->deviceUpdated(deviceAt(i)->id());
                 break;
             }
         }
     }
-    if (this == instance() && d->clonedInstance)
-        d->clonedInstance->removeDevice(id);
 
-    emit updated();
+    d->clearDeviceState(id);
+    emit s_instance->updated();
 }
 
-void DeviceManager::setDeviceState(Id deviceId, IDevice::DeviceState deviceState)
-{
-    // To see the state change in the DeviceSettingsWidget. This has to happen before
-    // the pos check below, in case the device is only present in the cloned instance.
-    if (this == instance() && d->clonedInstance)
-        d->clonedInstance->setDeviceState(deviceId, deviceState);
-
-    const int pos = d->indexForId(deviceId);
-    if (pos < 0)
-        return;
-    IDevice::Ptr &device = d->devices[pos];
-    if (device->deviceState() == deviceState)
-        return;
-
-    // TODO: make it thread safe?
-    device->setDeviceState(deviceState);
-    emit deviceUpdated(deviceId);
-    emit updated();
-}
-
-bool DeviceManager::isLoaded() const
+bool DeviceManager::isLoaded()
 {
     return d->writer;
 }
@@ -348,7 +345,7 @@ bool DeviceManager::isLoaded() const
 // Thread safe
 IDevice::ConstPtr DeviceManager::deviceForPath(const FilePath &path)
 {
-    const QList<IDevice::Ptr> devices = instance()->d->deviceList();
+    const QList<IDevice::Ptr> devices = d->deviceList();
 
     if (path.scheme() == u"device") {
         for (const IDevice::Ptr &dev : devices) {
@@ -363,80 +360,86 @@ IDevice::ConstPtr DeviceManager::deviceForPath(const FilePath &path)
         if (dev->handlesFile(path))
             return dev;
     }
+
     return {};
 }
 
 IDevice::ConstPtr DeviceManager::defaultDesktopDevice()
 {
-    return m_instance->defaultDevice(Constants::DESKTOP_DEVICE_TYPE);
+    return s_instance->defaultDevice(Constants::DESKTOP_DEVICE_TYPE);
 }
 
 void DeviceManager::setDefaultDevice(Id id)
 {
-    QTC_ASSERT(this != instance(), return);
-
     const IDevice::ConstPtr &device = find(id);
     QTC_ASSERT(device, return);
     const IDevice::ConstPtr &oldDefaultDevice = defaultDevice(device->type());
     if (device == oldDefaultDevice)
         return;
     d->defaultDevices.insert(device->type(), device->id());
-    emit deviceUpdated(device->id());
-    emit deviceUpdated(oldDefaultDevice->id());
+    emit s_instance->deviceUpdated(device->id());
+    emit s_instance->deviceUpdated(oldDefaultDevice->id());
 
-    emit updated();
+    emit s_instance->updated();
 }
 
-DeviceManager::DeviceManager(bool isInstance) : d(std::make_unique<DeviceManagerPrivate>())
+DeviceManager::DeviceManager()
 {
-    QTC_ASSERT(isInstance == !m_instance, return);
-
-    if (!isInstance)
-        return;
-
-    m_instance = this;
+    d = std::make_unique<DeviceManagerPrivate>();
+    s_instance = this;
     connect(Core::ICore::instance(), &Core::ICore::saveSettingsRequested,
             this, &DeviceManager::save);
 
-    DeviceFileHooks &deviceHooks = DeviceFileHooks::instance();
+    DeviceFileHooks deviceHooks;
 
     deviceHooks.isSameDevice = [](const FilePath &left, const FilePath &right) {
         auto leftDevice = DeviceManager::deviceForPath(left);
         auto rightDevice = DeviceManager::deviceForPath(right);
-
-        return leftDevice == rightDevice;
+        if (leftDevice || rightDevice)
+            return leftDevice == rightDevice;
+        // Fallback if e.g. no devices are registered yet.
+        return left.scheme() == right.scheme() && left.host() == right.host();
     };
 
-    deviceHooks.localSource = [](const FilePath &file) -> expected_str<FilePath> {
+    deviceHooks.localSource = [](const FilePath &file) -> Result<FilePath> {
         auto device = DeviceManager::deviceForPath(file);
         if (!device)
             return make_unexpected(Tr::tr("No device for path \"%1\"").arg(file.toUserOutput()));
         return device->localSource(file);
     };
 
-    deviceHooks.fileAccess = [](const FilePath &filePath) -> expected_str<DeviceFileAccess *> {
-        if (!filePath.needsDevice())
-            return DesktopDeviceFileAccess::instance();
+    deviceHooks.fileAccess = [](const FilePath &filePath) -> Result<DeviceFileAccessPtr> {
+        if (filePath.isLocal())
+            return DesktopDeviceFileAccess::instance()->shared_from_this();
         IDevice::ConstPtr device = DeviceManager::deviceForPath(filePath);
         if (!device) {
             return make_unexpected(
-                Tr::tr("No device found for path \"%1\"").arg(filePath.toUserOutput()));
+                Tr::tr("No device found for path \"%1\".").arg(filePath.toUserOutput()));
         }
-        DeviceFileAccess *fileAccess = device->fileAccess();
+        DeviceFileAccessPtr fileAccess = device->fileAccess();
         if (!fileAccess) {
             return make_unexpected(
-                Tr::tr("No file access for device \"%1\"").arg(device->displayName()));
+                Tr::tr("No file access for device \"%1\".").arg(device->displayName()));
         }
         return fileAccess;
     };
 
-    deviceHooks.environment = [](const FilePath &filePath) -> expected_str<Environment> {
+    deviceHooks.environment = [](const FilePath &filePath) -> Result<Environment> {
         auto device = DeviceManager::deviceForPath(filePath);
         if (!device) {
             return make_unexpected(
-                Tr::tr("No device found for path \"%1\"").arg(filePath.toUserOutput()));
+                Tr::tr("No device found for path \"%1\".").arg(filePath.toUserOutput()));
         }
         return device->systemEnvironmentWithError();
+    };
+
+    deviceHooks.sourcedEnvironment = [](const FilePath &filePath) -> Result<Environment> {
+        auto device = DeviceManager::deviceForPath(filePath);
+        if (!device) {
+            return make_unexpected(
+                Tr::tr("No device found for path \"%1\".").arg(filePath.toUserOutput()));
+        }
+        return device->sourcedEnvironment(filePath);
     };
 
     deviceHooks.deviceDisplayName = [](const FilePath &filePath) {
@@ -446,9 +449,12 @@ DeviceManager::DeviceManager(bool isInstance) : d(std::make_unique<DeviceManager
         return filePath.host().toString();
     };
 
-    deviceHooks.ensureReachable = [](const FilePath &filePath, const FilePath &other) {
+    deviceHooks.ensureReachable = [](const FilePath &filePath, const FilePath &other) -> Result<> {
         auto device = DeviceManager::deviceForPath(filePath);
-        QTC_ASSERT(device, return false);
+        QTC_ASSERT(
+            device,
+            return ResultError(
+                Tr::tr("No device found for path \"%1\".").arg(filePath.toUserOutput())));
         return device->ensureReachable(other);
     };
 
@@ -465,6 +471,8 @@ DeviceManager::DeviceManager(bool isInstance) : d(std::make_unique<DeviceManager
         return device->osType();
     };
 
+    DeviceFileHooks::setupDeviceFileHooks(deviceHooks);
+
     DeviceProcessHooks processHooks;
 
     processHooks.processImplHook = [](const FilePath &filePath) -> ProcessInterface * {
@@ -474,23 +482,68 @@ DeviceManager::DeviceManager(bool isInstance) : d(std::make_unique<DeviceManager
     };
 
     Process::setRemoteProcessHooks(processHooks);
+
+    const auto addDeviceToFileSystemView = [](Id deviceId) -> bool {
+        IDevice::Ptr device = find(deviceId);
+        if (!device || device->type() == Constants::DESKTOP_DEVICE_TYPE
+            || !device->supportsFileAccess()) {
+            return true; // ignore
+        }
+        if (device->deviceState() != IDevice::DeviceReadyToUse
+            && device->deviceState() != IDevice::DeviceConnected) {
+            return false; // cannot add
+        }
+        const QIcon icon = device->icon().isNull() ? Icons::DESKTOP_DEVICE.icon() : device->icon();
+        FolderNavigationWidgetFactory::insertRootDirectory(
+            {device->rootPath().toUrlishString(),
+             /*sortValue=*/30,
+             device->displayName(),
+             device->rootPath(),
+             icon},
+            /*isProjectDirectory=*/false);
+        return true;
+    };
+    const auto removeDeviceFromFileSystemView = [](Id deviceId) {
+        IDevice::Ptr device = find(deviceId);
+        QTC_ASSERT(device, return);
+        const QString id = device->rootPath().toUrlishString();
+        if (FolderNavigationWidgetFactory::hasRootDirectory(id))
+            FolderNavigationWidgetFactory::removeRootDirectory(id);
+    };
+    connect(
+        this,
+        &DeviceManager::deviceAdded,
+        FolderNavigationWidgetFactory::instance(),
+        addDeviceToFileSystemView);
+    connect(
+        this,
+        &DeviceManager::deviceAboutToBeRemoved,
+        FolderNavigationWidgetFactory::instance(),
+        removeDeviceFromFileSystemView);
+    connect(
+        this,
+        &DeviceManager::deviceUpdated,
+        FolderNavigationWidgetFactory::instance(),
+        [addDeviceToFileSystemView, removeDeviceFromFileSystemView](Utils::Id id) {
+            if (!addDeviceToFileSystemView(id))
+                removeDeviceFromFileSystemView(id);
+        });
 }
 
 DeviceManager::~DeviceManager()
 {
-    if (d->clonedInstance != this)
-        delete d->writer;
-    if (m_instance == this)
-        m_instance = nullptr;
+    delete d->writer;
+    s_instance = nullptr;
+    d.reset();
 }
 
-IDevice::ConstPtr DeviceManager::deviceAt(int idx) const
+IDevice::Ptr DeviceManager::deviceAt(int idx)
 {
-    QTC_ASSERT(idx >= 0 && idx < deviceCount(), return IDevice::ConstPtr());
+    QTC_ASSERT(idx >= 0 && idx < deviceCount(), return IDevice::Ptr());
     return d->devices.at(idx);
 }
 
-void DeviceManager::forEachDevice(const std::function<void(const IDeviceConstPtr &)> &func) const
+void DeviceManager::forEachDevice(const std::function<void(const IDeviceConstPtr &)> &func)
 {
     const QList<IDevice::Ptr> devices = d->deviceList();
 
@@ -498,40 +551,33 @@ void DeviceManager::forEachDevice(const std::function<void(const IDeviceConstPtr
         func(device);
 }
 
-IDevice::Ptr DeviceManager::mutableDevice(Id id) const
+IDevice::Ptr DeviceManager::mutableDevice(Id id)
 {
     const int index = d->indexForId(id);
     return index == -1 ? IDevice::Ptr() : d->devices.at(index);
 }
 
-bool DeviceManager::hasDevice(const QString &name) const
+bool DeviceManager::hasDevice(const QString &name)
 {
     return Utils::anyOf(d->devices, [&name](const IDevice::Ptr &device) {
         return device->displayName() == name;
     });
 }
 
-IDevice::ConstPtr DeviceManager::find(Id id) const
+IDevice::Ptr DeviceManager::find(Id id)
 {
     const int index = d->indexForId(id);
-    return index == -1 ? IDevice::ConstPtr() : deviceAt(index);
+    return index == -1 ? IDevice::Ptr() : deviceAt(index);
 }
 
-IDevice::ConstPtr DeviceManager::defaultDevice(Id deviceType) const
+IDevice::Ptr DeviceManager::defaultDevice(Id deviceType)
 {
     const Id id = d->defaultDevices.value(deviceType);
-    return id.isValid() ? find(id) : IDevice::ConstPtr();
+    return id.isValid() ? find(id) : IDevice::Ptr();
 }
 
-} // namespace ProjectExplorer
-
-
 #ifdef WITH_TESTS
-#include <projectexplorer/projectexplorer_test.h>
-#include <QSignalSpy>
-#include <QTest>
-
-namespace ProjectExplorer {
+namespace Internal {
 
 class TestDevice : public IDevice
 {
@@ -560,96 +606,100 @@ public:
     }
 };
 
-void ProjectExplorerTest::testDeviceManager()
+class DeviceManagerTest : public QObject
 {
-    TestDeviceFactory factory;
+    Q_OBJECT
 
-    TestDevice::Ptr dev = IDevice::Ptr(new TestDevice);
-    dev->settings()->displayName.setValue(QLatin1String("blubbdiblubbfurz!"));
-    QVERIFY(dev->isAutoDetected());
-    QCOMPARE(dev->deviceState(), IDevice::DeviceStateUnknown);
-    QCOMPARE(dev->type(), TestDevice::testTypeId());
+private slots:
 
-    TestDevice::Ptr dev2 = dev->clone();
-    QCOMPARE(dev->id(), dev2->id());
+    void test()
+    {
+        TestDeviceFactory factory;
 
-    DeviceManager * const mgr = DeviceManager::instance();
-    QVERIFY(!mgr->find(dev->id()));
-    const int oldDeviceCount = mgr->deviceCount();
+        TestDevice::Ptr dev = IDevice::Ptr(new TestDevice);
+        dev->setDisplayName(QLatin1String("blubbdiblubbfurz!"));
+        QVERIFY(dev->isAutoDetected());
+        QCOMPARE(dev->deviceState(), IDevice::DeviceStateUnknown);
+        QCOMPARE(dev->type(), TestDevice::testTypeId());
 
-    QSignalSpy deviceAddedSpy(mgr, &DeviceManager::deviceAdded);
-    QSignalSpy deviceRemovedSpy(mgr, &DeviceManager::deviceRemoved);
-    QSignalSpy deviceUpdatedSpy(mgr, &DeviceManager::deviceUpdated);
-    QSignalSpy deviceListReplacedSpy(mgr, &DeviceManager::deviceListReplaced);
-    QSignalSpy updatedSpy(mgr, &DeviceManager::updated);
+        QVERIFY(!DeviceManager::find(dev->id()));
+        const int oldDeviceCount = DeviceManager::deviceCount();
 
-    mgr->addDevice(dev);
-    QCOMPARE(mgr->deviceCount(), oldDeviceCount + 1);
-    QVERIFY(mgr->find(dev->id()));
-    QVERIFY(mgr->hasDevice(dev->displayName()));
-    QCOMPARE(deviceAddedSpy.count(), 1);
-    QCOMPARE(deviceRemovedSpy.count(), 0);
-    QCOMPARE(deviceUpdatedSpy.count(), 0);
-    QCOMPARE(deviceListReplacedSpy.count(), 0);
-    QCOMPARE(updatedSpy.count(), 1);
-    deviceAddedSpy.clear();
-    updatedSpy.clear();
+        DeviceManager * const mgr = DeviceManager::instance();
+        QSignalSpy deviceAddedSpy(mgr, &DeviceManager::deviceAdded);
+        QSignalSpy deviceAboutToBeRemovedSpy(mgr, &DeviceManager::deviceAboutToBeRemoved);
+        QSignalSpy deviceRemovedSpy(mgr, &DeviceManager::deviceRemoved);
+        QSignalSpy deviceUpdatedSpy(mgr, &DeviceManager::deviceUpdated);
+        QSignalSpy updatedSpy(mgr, &DeviceManager::updated);
 
-    mgr->setDeviceState(dev->id(), IDevice::DeviceStateUnknown);
-    QCOMPARE(deviceAddedSpy.count(), 0);
-    QCOMPARE(deviceRemovedSpy.count(), 0);
-    QCOMPARE(deviceUpdatedSpy.count(), 0);
-    QCOMPARE(deviceListReplacedSpy.count(), 0);
-    QCOMPARE(updatedSpy.count(), 0);
+        DeviceManager::addDevice(dev);
+        QCOMPARE(DeviceManager::deviceCount(), oldDeviceCount + 1);
+        QVERIFY(DeviceManager::find(dev->id()));
+        QVERIFY(DeviceManager::hasDevice(dev->displayName()));
+        QCOMPARE(deviceAddedSpy.count(), 1);
+        QCOMPARE(deviceAboutToBeRemovedSpy.count(), 0);
+        QCOMPARE(deviceRemovedSpy.count(), 0);
+        QCOMPARE(deviceUpdatedSpy.count(), 0);
+        QCOMPARE(updatedSpy.count(), 1);
+        deviceAddedSpy.clear();
+        updatedSpy.clear();
 
-    mgr->setDeviceState(dev->id(), IDevice::DeviceReadyToUse);
-    QCOMPARE(mgr->find(dev->id())->deviceState(), IDevice::DeviceReadyToUse);
-    QCOMPARE(deviceAddedSpy.count(), 0);
-    QCOMPARE(deviceRemovedSpy.count(), 0);
-    QCOMPARE(deviceUpdatedSpy.count(), 1);
-    QCOMPARE(deviceListReplacedSpy.count(), 0);
-    QCOMPARE(updatedSpy.count(), 1);
-    deviceUpdatedSpy.clear();
-    updatedSpy.clear();
+        DeviceManager::setDeviceState(dev->id(), IDevice::DeviceStateUnknown);
+        QCOMPARE(deviceAddedSpy.count(), 0);
+        QCOMPARE(deviceAboutToBeRemovedSpy.count(), 0);
+        QCOMPARE(deviceRemovedSpy.count(), 0);
+        QCOMPARE(deviceUpdatedSpy.count(), 1);
+        QCOMPARE(updatedSpy.count(), 1);
 
-    mgr->addDevice(dev2);
-    QCOMPARE(mgr->deviceCount(), oldDeviceCount + 1);
-    QVERIFY(mgr->find(dev->id()));
-    QCOMPARE(deviceAddedSpy.count(), 0);
-    QCOMPARE(deviceRemovedSpy.count(), 0);
-    QCOMPARE(deviceUpdatedSpy.count(), 1);
-    QCOMPARE(deviceListReplacedSpy.count(), 0);
-    QCOMPARE(updatedSpy.count(), 1);
-    deviceUpdatedSpy.clear();
-    updatedSpy.clear();
+        DeviceManager::setDeviceState(dev->id(), IDevice::DeviceReadyToUse);
+        QCOMPARE(DeviceManager::find(dev->id())->deviceState(), IDevice::DeviceReadyToUse);
+        QCOMPARE(deviceAddedSpy.count(), 0);
+        QCOMPARE(deviceAboutToBeRemovedSpy.count(), 0);
+        QCOMPARE(deviceRemovedSpy.count(), 0);
+        QCOMPARE(deviceUpdatedSpy.count(), 2);
+        QCOMPARE(updatedSpy.count(), 2);
+        deviceUpdatedSpy.clear();
+        updatedSpy.clear();
 
-    TestDevice::Ptr dev3 = IDevice::Ptr(new TestDevice);
-    QVERIFY(dev->id() != dev3->id());
+        TestDevice::Ptr dev3 = IDevice::Ptr(new TestDevice);
+        QVERIFY(dev->id() != dev3->id());
 
-    dev3->settings()->displayName.setValue(dev->displayName());
-    mgr->addDevice(dev3);
-    QCOMPARE(mgr->deviceAt(mgr->deviceCount() - 1)->displayName(),
-             QString(dev3->displayName() + QLatin1Char('2')));
-    QCOMPARE(deviceAddedSpy.count(), 1);
-    QCOMPARE(deviceRemovedSpy.count(), 0);
-    QCOMPARE(deviceUpdatedSpy.count(), 0);
-    QCOMPARE(deviceListReplacedSpy.count(), 0);
-    QCOMPARE(updatedSpy.count(), 1);
-    deviceAddedSpy.clear();
-    updatedSpy.clear();
+        dev3->setDisplayName(dev->displayName());
+        DeviceManager::addDevice(dev3);
+        QCOMPARE(
+            DeviceManager::deviceAt(DeviceManager::deviceCount() - 1)->displayName(),
+            QString(dev->displayName() + QLatin1Char('2')));
+        QCOMPARE(deviceAddedSpy.count(), 1);
+        QCOMPARE(deviceAboutToBeRemovedSpy.count(), 0);
+        QCOMPARE(deviceRemovedSpy.count(), 0);
+        QCOMPARE(deviceUpdatedSpy.count(), 0);
+        QCOMPARE(updatedSpy.count(), 1);
+        deviceAddedSpy.clear();
+        updatedSpy.clear();
 
-    mgr->removeDevice(dev->id());
-    mgr->removeDevice(dev3->id());
-    QCOMPARE(mgr->deviceCount(), oldDeviceCount);
-    QVERIFY(!mgr->find(dev->id()));
-    QVERIFY(!mgr->find(dev3->id()));
-    QCOMPARE(deviceAddedSpy.count(), 0);
-    QCOMPARE(deviceRemovedSpy.count(), 2);
-//    QCOMPARE(deviceUpdatedSpy.count(), 0); Uncomment once the "default" stuff is gone.
-    QCOMPARE(deviceListReplacedSpy.count(), 0);
-    QCOMPARE(updatedSpy.count(), 2);
+        DeviceManager::removeDevice(dev->id());
+        DeviceManager::removeDevice(dev3->id());
+        QCOMPARE(DeviceManager::deviceCount(), oldDeviceCount);
+        QVERIFY(!DeviceManager::find(dev->id()));
+        QVERIFY(!DeviceManager::find(dev3->id()));
+        QCOMPARE(deviceAddedSpy.count(), 0);
+        QCOMPARE(deviceAboutToBeRemovedSpy.count(), 2);
+        QCOMPARE(deviceRemovedSpy.count(), 2);
+        //    QCOMPARE(deviceUpdatedSpy.count(), 0); Uncomment once the "default" stuff is gone.
+        QCOMPARE(updatedSpy.count(), 2);
+    }
+};
+
+QObject *createDeviceManagerTest()
+{
+    return new DeviceManagerTest;
 }
+
+} // namespace Internal
+#endif // WITH_TESTS
 
 } // namespace ProjectExplorer
 
-#endif // WITH_TESTS
+#ifdef WITH_TESTS
+#include <devicemanager.moc>
+#endif

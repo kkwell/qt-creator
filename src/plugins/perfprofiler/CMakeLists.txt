@@ -28,7 +28,7 @@ set(PERFPROFILER_CPP_SOURCES
   perfprofilertraceview.cpp perfprofilertraceview.h
   perfprofiler_global.h
   perfprofilertr.h
-  perfresourcecounter.cpp perfresourcecounter.h
+  perfresourcecounter.h
   perfrunconfigurationaspect.cpp perfrunconfigurationaspect.h
   perfsettings.cpp perfsettings.h
   perftimelinemodel.cpp perftimelinemodel.h
@@ -40,7 +40,7 @@ set(PERFPROFILER_CPP_SOURCES
 add_qtc_plugin(PerfProfiler
   CONDITION TARGET Tracing
   DEPENDS Tracing Qt::QuickWidgets
-  PLUGIN_DEPENDS Core Debugger ProjectExplorer QtSupport
+  PLUGIN_DEPENDS Core ProjectExplorer QtSupport
   SOURCES
     ${TEST_SOURCES}
 )

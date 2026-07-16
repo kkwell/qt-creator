@@ -12,17 +12,17 @@
 
 #include <utils/async.h>
 #include <utils/differ.h>
-#include <utils/expected.h>
 #include <utils/fileutils.h>
+#include <utils/globaltasktree.h>
 #include <utils/qtcassert.h>
 #include <utils/qtcprocess.h>
 #include <utils/temporarydirectory.h>
 #include <utils/textutils.h>
 
-#include <QFutureWatcher>
 #include <QScrollBar>
 #include <QTextBlock>
 
+using namespace QtTaskTree;
 using namespace Utils;
 
 using namespace std::chrono_literals;
@@ -38,7 +38,7 @@ struct FormatInput
     int endPos = 0;
 };
 
-using FormatOutput = expected_str<QString>;
+using FormatOutput = Result<QString>;
 
 void formatCurrentFile(const Command &command, int startPos, int endPos)
 {
@@ -50,7 +50,7 @@ static QString sourceData(TextEditorWidget *editor, int startPos, int endPos)
 {
     return (startPos < 0)
             ? editor->toPlainText()
-            : Utils::Text::textAt(editor->textCursor(), startPos, (endPos - startPos));
+            : Utils::Text::textAt(editor->document(), startPos, (endPos - startPos));
 }
 
 static FormatOutput format(const FormatInput &input)
@@ -62,20 +62,22 @@ static FormatOutput format(const FormatInput &input)
     switch (input.command.processing()) {
     case Command::FileProcessing: {
         // Save text to temporary file
-        Utils::TempFileSaver sourceFile(Utils::TemporaryDirectory::masterDirectoryPath()
-                                        + "/qtc_beautifier_XXXXXXXX." + input.filePath.suffix());
+        Utils::TempFileSaver sourceFile(
+            input.filePath.parentDir()
+            / (input.filePath.fileName() + "_format_XXXXXXXX." + input.filePath.suffix()));
         sourceFile.setAutoRemove(true);
         sourceFile.write(input.sourceData.toUtf8());
-        if (!sourceFile.finalize()) {
+        if (const Result<> res = sourceFile.finalize(); !res) {
             return Utils::make_unexpected(Tr::tr("Cannot create temporary file \"%1\": %2.")
-                         .arg(sourceFile.filePath().toUserOutput(), sourceFile.errorString()));
+                         .arg(sourceFile.filePath().toUserOutput(), res.error()));
         }
 
         // Format temporary file
         QStringList options = input.command.options();
-        options.replaceInStrings(QLatin1String("%file"), sourceFile.filePath().toString());
+        options.replaceInStrings(QLatin1String("%file"), sourceFile.filePath().toUrlishString());
         Process process;
         process.setCommand({executable, options});
+        process.setUtf8StdOutCodec();
         process.runBlocking(5s);
         if (process.result() != ProcessResult::FinishedWithSuccess) {
             return Utils::make_unexpected(Tr::tr("Failed to format: %1.")
@@ -86,21 +88,22 @@ static FormatOutput format(const FormatInput &input)
             return Utils::make_unexpected(executable.toUserOutput() + ": " + output);
 
         // Read text back
-        Utils::FileReader reader;
-        if (!reader.fetch(sourceFile.filePath(), QIODevice::Text)) {
+        const Result<QByteArray> contents = sourceFile.filePath().fileContents();
+        if (!contents) {
             return Utils::make_unexpected(Tr::tr("Cannot read file \"%1\": %2.")
-                         .arg(sourceFile.filePath().toUserOutput(), reader.errorString()));
+                         .arg(sourceFile.filePath().toUserOutput(), contents.error()));
         }
-        return QString::fromUtf8(reader.data());
+        return QString::fromUtf8(*contents);
     }
 
     case Command::PipeProcessing: {
         Process process;
         QStringList options = input.command.options();
         options.replaceInStrings("%filename", input.filePath.fileName());
-        options.replaceInStrings("%file", input.filePath.toString());
+        options.replaceInStrings("%file", input.filePath.toUrlishString());
         process.setCommand({executable, options});
         process.setWriteData(input.sourceData.toUtf8());
+        process.setUtf8StdOutCodec();
         process.start();
         if (!process.waitForFinished(5s)) {
             return Utils::make_unexpected(Tr::tr("Cannot call %1 or some other error occurred. "
@@ -134,7 +137,7 @@ static FormatOutput format(const FormatInput &input)
  * actually changed parts are updated while preserving the cursor position, the folded
  * blocks, and the scroll bar position.
  */
-void updateEditorText(QPlainTextEdit *editor, const QString &text)
+void updateEditorText(PlainTextEdit *editor, const QString &text)
 {
     const QString editorText = editor->toPlainText();
     if (editorText == text)
@@ -149,11 +152,9 @@ void updateEditorText(QPlainTextEdit *editor, const QString &text)
     QList<int> foldedBlocks;
     QTextBlock block = editor->document()->firstBlock();
     while (block.isValid()) {
-        if (const TextBlockUserData *userdata = static_cast<TextBlockUserData *>(block.userData())) {
-            if (userdata->folded()) {
-                foldedBlocks << block.blockNumber();
-                TextDocumentLayout::doFoldOrUnfold(block, true);
-            }
+        if (TextBlockUserData::isFolded(block)) {
+            foldedBlocks << block.blockNumber();
+            TextBlockUserData::doFoldOrUnfold(block, true);
         }
         block = block.next();
     }
@@ -245,7 +246,7 @@ void updateEditorText(QPlainTextEdit *editor, const QString &text)
     for (int blockId : std::as_const(foldedBlocks)) {
         const QTextBlock block = doc->findBlockByNumber(qMax(0, blockId));
         if (block.isValid())
-            TextDocumentLayout::doFoldOrUnfold(block, false);
+            TextBlockUserData::doFoldOrUnfold(block, false);
     }
 
     editor->document()->setModified(true);
@@ -260,7 +261,7 @@ static void showError(const QString &error)
  * Checks the state of @a task and if the formatting was successful calls updateEditorText() with
  * the respective members of @a task.
  */
-static void checkAndApplyTask(const QPointer<QPlainTextEdit> &textEditor, const FormatInput &input,
+static void checkAndApplyTask(const QPointer<PlainTextEdit> &textEditor, const FormatInput &input,
                               const FormatOutput &output)
 {
     if (!output.has_value()) {
@@ -312,20 +313,23 @@ void formatEditorAsync(TextEditorWidget *editor, const Command &command, int sta
     if (sd.isEmpty())
         return;
 
-    auto watcher = new QFutureWatcher<FormatOutput>;
     const TextDocument *doc = editor->textDocument();
     const FormatInput input{doc->filePath(), sd, command, startPos, endPos};
-    QObject::connect(doc, &TextDocument::contentsChanged, watcher,
-                     &QFutureWatcher<FormatOutput>::cancel);
-    QObject::connect(watcher, &QFutureWatcherBase::finished, watcher,
-                     [watcher, editor = QPointer<QPlainTextEdit>(editor), input] {
-        if (watcher->isCanceled())
+    const auto onSetup = [input](Async<FormatOutput> &task) {
+        task.setConcurrentCallData(format, input);
+    };
+    const auto onDone = [editor = QPointer<PlainTextEdit>(editor), input](
+                            const Async<FormatOutput> &task, DoneWith result) {
+        if (result == DoneWith::Cancel)
             showError(Tr::tr("File was modified."));
         else
-            checkAndApplyTask(editor, input, watcher->result());
-        watcher->deleteLater();
-    });
-    watcher->setFuture(Utils::asyncRun(&format, input));
+            checkAndApplyTask(editor, input, task.result());
+    };
+    const auto onTreeSetup = [doc](QTaskTree &taskTree) {
+        QObject::connect(doc, &TextDocument::contentsChanged, &taskTree, &QTaskTree::cancel,
+                         Qt::QueuedConnection);
+    };
+    GlobalTaskTree::start({AsyncTask<FormatOutput>(onSetup, onDone)}, onTreeSetup);
 }
 
 } // namespace TextEditor

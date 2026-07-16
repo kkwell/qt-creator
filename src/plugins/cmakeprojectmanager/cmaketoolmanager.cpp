@@ -16,6 +16,9 @@
 #include <coreplugin/icore.h>
 
 #include <projectexplorer/buildsystem.h>
+#include <projectexplorer/devicesupport/devicemanager.h>
+#include <projectexplorer/devicesupport/idevice.h>
+#include <projectexplorer/kitaspect.h>
 #include <projectexplorer/projectmanager.h>
 #include <projectexplorer/projecttree.h>
 #include <projectexplorer/target.h>
@@ -233,9 +236,8 @@ CMakeToolManager::CMakeToolManager()
     connect(ICore::instance(), &ICore::saveSettingsRequested,
             this, &CMakeToolManager::saveCMakeTools);
 
-    connect(this, &CMakeToolManager::cmakeAdded, this, &CMakeToolManager::cmakeToolsChanged);
-    connect(this, &CMakeToolManager::cmakeRemoved, this, &CMakeToolManager::cmakeToolsChanged);
-    connect(this, &CMakeToolManager::cmakeUpdated, this, &CMakeToolManager::cmakeToolsChanged);
+    connect(DeviceManager::instance(), &DeviceManager::toolDetectionRequested,
+            this, &CMakeToolManager::handleDeviceToolDetectionRequest);
 
     setObjectName("CMakeToolManager");
     ExtensionSystem::PluginManager::addObject(this);
@@ -293,16 +295,57 @@ void CMakeToolManager::deregisterCMakeTool(const Id &id)
     }
 }
 
-CMakeTool *CMakeToolManager::defaultProjectOrDefaultCMakeTool()
+std::vector<std::unique_ptr<CMakeTool>> CMakeToolManager::autoDetectCMakeTools(
+    const FilePaths &searchPaths, const FilePath &rootPath)
 {
-    CMakeTool *tool = nullptr;
+    QStringList extraDirs;
 
-    if (auto bs = ProjectExplorer::ProjectTree::currentBuildSystem())
-        tool = CMakeKitAspect::cmakeTool(bs->target()->kit());
-    if (!tool)
-        tool = CMakeToolManager::defaultCMakeTool();
+    if (rootPath.osType() == OsTypeWindows) {
+        for (const auto &envVar : QStringList{"ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"}) {
+            if (qtcEnvironmentVariableIsSet(envVar)) {
+                const QString progFiles = qtcEnvironmentVariable(envVar);
+                extraDirs.append(progFiles + "/CMake");
+                extraDirs.append(progFiles + "/CMake/bin");
+            }
+        }
+    } else if (rootPath.osType() == OsTypeMac) {
+        extraDirs.append("/Applications/CMake.app/Contents/bin");
+        extraDirs.append("/usr/local/bin");    // homebrew intel
+        extraDirs.append("/opt/homebrew/bin"); // homebrew arm
+        extraDirs.append("/opt/local/bin");    // macports
+    }
 
-    return tool;
+    const FilePaths suspects = rootPath.withNewMappedPath(FilePath("cmake"))
+                                   .searchAllInDirectories(
+                                       searchPaths + FilePaths::resolvePaths(rootPath, extraDirs));
+
+    std::vector<std::unique_ptr<CMakeTool>> found;
+    for (const FilePath &command : std::as_const(suspects)) {
+        // Consider remote tools as manual, like we want for the "Auto-detect" button in the settings
+        const DetectionSource detectionSource = command.isLocal() ? DetectionSource::FromSystem
+                                                                  : DetectionSource::Manual;
+        auto item = std::make_unique<CMakeTool>(detectionSource, CMakeTool::createId());
+        item->setFilePath(command);
+        item->setDisplayName(Tr::tr("System CMake at %1").arg(command.toUserOutput()));
+
+        found.emplace_back(std::move(item));
+    }
+
+    return found;
+}
+
+CMakeKeywords CMakeToolManager::defaultProjectOrDefaultCMakeKeyWords()
+{
+    if (auto bs = activeBuildSystemForCurrentProject()) {
+        CMakeKeywords keywords = CMakeKitAspect::cmakeKeywords(bs->kit());
+        if (!keywords.variables.isEmpty())
+            return keywords;
+    }
+
+    if (auto tool = CMakeToolManager::defaultCMakeTool())
+        return tool->keywords();
+
+    return {};
 }
 
 CMakeTool *CMakeToolManager::defaultCMakeTool()
@@ -321,9 +364,18 @@ void CMakeToolManager::setDefaultCMakeTool(const Id &id)
     ensureDefaultCMakeToolIsValid();
 }
 
-CMakeTool *CMakeToolManager::findByCommand(const Utils::FilePath &command)
+CMakeTool *CMakeToolManager::findByCommand(const FilePath &command)
 {
-    return Utils::findOrDefault(d->m_cmakeTools, Utils::equal(&CMakeTool::cmakeExecutable, command));
+    return Utils::findOrDefault(
+        d->m_cmakeTools,
+        Utils::equal(&CMakeTool::cmakeExecutable, CMakeTool::cmakeExecutable(command)));
+}
+
+Id CMakeToolManager::idForExecutable(const FilePath &cmakeExecutable)
+{
+    if (CMakeTool *tool = findByCommand(cmakeExecutable))
+        return tool->id();
+    return {};
 }
 
 CMakeTool *CMakeToolManager::findById(const Id &id)
@@ -331,11 +383,17 @@ CMakeTool *CMakeToolManager::findById(const Id &id)
     return Utils::findOrDefault(d->m_cmakeTools, Utils::equal(&CMakeTool::id, id));
 }
 
+FilePath CMakeToolManager::executableForId(const Id id)
+{
+    if (CMakeTool *tool = findById(id))
+        return tool->cmakeExecutable();
+    return {};
+}
+
 void CMakeToolManager::restoreCMakeTools()
 {
     NANOTRACE_SCOPE("CMakeProjectManager", "CMakeToolManager::restoreCMakeTools");
-    Internal::CMakeToolSettingsAccessor::CMakeTools tools
-            = d->m_accessor.restoreCMakeTools(ICore::dialogParent());
+    Internal::CMakeToolSettingsAccessor::CMakeTools tools = d->m_accessor.restoreCMakeTools();
     d->m_cmakeTools = std::move(tools.cmakeTools);
     setDefaultCMakeTool(tools.defaultToolId);
 
@@ -350,7 +408,7 @@ void CMakeToolManager::updateDocumentation()
     QStringList docs;
     for (const auto tool : tools) {
         if (!tool->qchFilePath().isEmpty())
-            docs.append(tool->qchFilePath().toString());
+            docs.append(tool->qchFilePath().path());
     }
     Core::HelpManager::registerDocumentation(docs);
 }
@@ -441,12 +499,12 @@ FilePath CMakeToolManager::mappedFilePath(Project *project, const FilePath &path
     if (!HostOsInfo::isWindowsHost())
         return path;
 
-    if (path.needsDevice())
+    if (!path.isLocal())
         return path;
 
     auto environment = Environment::systemEnvironment();
     if (project)
-        environment.modify(project->additionalEnvironment());
+        project->additionalEnvironment().modifyEnvironment(environment, globalMacroExpander());
     const bool enableJunctions
         = QVariant(environment.value_or(
                        "QTC_CMAKE_USE_JUNCTIONS",
@@ -471,72 +529,22 @@ FilePath CMakeToolManager::mappedFilePath(Project *project, const FilePath &path
     return fullHashPath.exists() ? fullHashPath : path;
 }
 
-QList<Id> CMakeToolManager::autoDetectCMakeForDevice(const FilePaths &searchPaths,
-                                                const QString &detectionSource,
-                                                QString *logMessage)
+void CMakeToolManager::removeDetectedCMake(
+    const QString &detectionSource, const LogCallback &logCallback)
 {
-    QList<Id> result;
-    QStringList messages{Tr::tr("Searching CMake binaries...")};
-    for (const FilePath &path : searchPaths) {
-        const FilePath cmake = path.pathAppended("cmake").withExecutableSuffix();
-        if (cmake.isExecutableFile()) {
-            const Id currentId = registerCMakeByPath(cmake, detectionSource);
-            if (currentId.isValid())
-                result.push_back(currentId);
-            messages.append(Tr::tr("Found \"%1\"").arg(cmake.toUserOutput()));
-        }
-    }
-    if (logMessage)
-        *logMessage = messages.join('\n');
-
-    return result;
-}
-
-
-Id CMakeToolManager::registerCMakeByPath(const FilePath &cmakePath, const QString &detectionSource)
-{
-    Id id = Id::fromString(cmakePath.toUserOutput());
-
-    CMakeTool *cmakeTool = findById(id);
-    if (cmakeTool)
-        return cmakeTool->id();
-
-    auto newTool = std::make_unique<CMakeTool>(CMakeTool::ManualDetection, id);
-    newTool->setFilePath(cmakePath);
-    newTool->setDetectionSource(detectionSource);
-    newTool->setDisplayName(cmakePath.toUserOutput());
-    id = newTool->id();
-    registerCMakeTool(std::move(newTool));
-
-    return id;
-}
-
-void CMakeToolManager::removeDetectedCMake(const QString &detectionSource, QString *logMessage)
-{
-    QStringList logMessages{Tr::tr("Removing CMake entries...")};
     while (true) {
-        auto toRemove = Utils::take(d->m_cmakeTools, Utils::equal(&CMakeTool::detectionSource, detectionSource));
+        auto toRemove = Utils::take(d->m_cmakeTools, [detectionSource](const auto &tool) {
+            return tool->detectionSource().id == detectionSource
+                   && tool->detectionSource().isAutoDetected();
+        });
         if (!toRemove.has_value())
             break;
-        logMessages.append(Tr::tr("Removed \"%1\"").arg((*toRemove)->displayName()));
+        logCallback(Tr::tr("Removing CMake tool \"%1\".").arg((*toRemove)->displayName()));
         emit m_instance->cmakeRemoved((*toRemove)->id());
     }
 
     ensureDefaultCMakeToolIsValid();
     updateDocumentation();
-    if (logMessage)
-        *logMessage = logMessages.join('\n');
-}
-
-void CMakeToolManager::listDetectedCMake(const QString &detectionSource, QString *logMessage)
-{
-    QTC_ASSERT(logMessage, return);
-    QStringList logMessages{Tr::tr("CMake:")};
-    for (const auto &tool : std::as_const(d->m_cmakeTools)) {
-        if (tool->detectionSource() == detectionSource)
-            logMessages.append(tool->displayName());
-    }
-    *logMessage = logMessages.join('\n');
 }
 
 void CMakeToolManager::notifyAboutUpdate(CMakeTool *tool)
@@ -548,7 +556,7 @@ void CMakeToolManager::notifyAboutUpdate(CMakeTool *tool)
 
 void CMakeToolManager::saveCMakeTools()
 {
-    d->m_accessor.saveCMakeTools(cmakeTools(), d->m_defaultCMake, ICore::dialogParent());
+    d->m_accessor.saveCMakeTools(cmakeTools(), d->m_defaultCMake);
 }
 
 void CMakeToolManager::ensureDefaultCMakeToolIsValid()
@@ -560,7 +568,7 @@ void CMakeToolManager::ensureDefaultCMakeToolIsValid()
         if (findById(d->m_defaultCMake))
             return;
         auto cmakeTool = Utils::findOrDefault(cmakeTools(), [](CMakeTool *tool) {
-            return tool->detectionSource().isEmpty() && !tool->cmakeExecutable().needsDevice();
+            return tool->cmakeExecutable().isLocal();
         });
         if (cmakeTool)
             d->m_defaultCMake = cmakeTool->id();
@@ -569,6 +577,20 @@ void CMakeToolManager::ensureDefaultCMakeToolIsValid()
     // signaling:
     if (oldId != d->m_defaultCMake)
         emit m_instance->defaultCMakeChanged();
+}
+
+void CMakeToolManager::handleDeviceToolDetectionRequest(
+    Utils::Id devId, const FilePaths &searchPaths, quint64 token)
+{
+    const IDevicePtr dev = DeviceManager::find(devId);
+    QTC_ASSERT(dev, return);
+    dev->registerToolDetectionTask(token);
+    auto detected = autoDetectCMakeTools(searchPaths, dev->rootPath());
+    for (auto &&tool : detected) {
+        if (!CMakeToolManager::findByCommand(tool->cmakeExecutable()))
+            CMakeToolManager::registerCMakeTool(std::move(tool));
+    }
+    dev->deregisterToolDetectionTask(token);
 }
 
 void Internal::setupCMakeToolManager(QObject *guard)
@@ -580,15 +602,17 @@ void Internal::setupCMakeToolManager(QObject *guard)
 CMakeToolManagerPrivate::CMakeToolManagerPrivate()
 {
     if (HostOsInfo::isWindowsHost()) {
-        const QStringList locations = QStandardPaths::standardLocations(
+        QStringList locations = QStandardPaths::standardLocations(
             QStandardPaths::GenericConfigLocation);
-        m_junctionsDir = FilePath::fromString(*std::min_element(locations.begin(), locations.end()))
-                             .pathAppended("QtCreator/Links");
+        Utils::sort(locations, [](const QString &lhs, const QString &rhs) {
+            return lhs.size() < rhs.size();
+        });
+        m_junctionsDir = FilePath::fromString(locations.first()).pathAppended("QtCreator/Links");
 
         auto project = ProjectManager::startupProject();
         auto environment = Environment::systemEnvironment();
         if (project)
-            environment.modify(project->additionalEnvironment());
+            project->additionalEnvironment().modifyEnvironment(environment, globalMacroExpander());
 
         if (environment.hasKey("QTC_CMAKE_JUNCTIONS_DIR"))
             m_junctionsDir = FilePath::fromUserInput(environment.value("QTC_CMAKE_JUNCTIONS_DIR"));

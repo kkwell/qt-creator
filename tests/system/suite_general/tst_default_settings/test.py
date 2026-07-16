@@ -5,7 +5,6 @@ source("../../shared/qtcreator.py")
 
 currentSelectedTreeItem = None
 sectionInProgress = None
-genericDebuggers = []
 warningOrError = re.compile('<p><b>((Error|Warning).*?)</p>')
 
 def main():
@@ -17,7 +16,8 @@ def main():
         return
     invokeMenuItem("Edit", "Preferences...")
     qmakeFound = __checkKits__()
-    clickButton(waitForObject(":Options.Cancel_QPushButton"))
+    applyButton = findObject(":Options.Apply_QPushButton")
+    test.verify(not applyButton.enabled, "Settings have not been modified.")
     invokeMenuItem("File", "Exit")
     __checkCreatedSettings__(emptySettings, qmakeFound)
 
@@ -29,14 +29,18 @@ def __createMinimumIni__(emptyParent):
     iniFile.write("OverrideLanguage=C\n")
     iniFile.close()
 
+
+glblDefaultKits = 0
+
+
 def __checkKits__():
-    global genericDebuggers
     mouseClick(waitForObjectItem(":Options_QListView", "Kits"))
     # check compilers
     expectedCompilers = __getExpectedCompilers__()
     llvmForBuild = os.getenv("SYSTEST_LLVM_FROM_BUILD", None)
     if llvmForBuild is not None:
-        internalClangExe = os.path.join(llvmForBuild, "bin", "clang")
+        llvmBuildBinFolder = os.path.join(llvmForBuild, "bin")
+        internalClangExe = os.path.join(llvmBuildBinFolder, "clang")
         if platform.system() in ("Microsoft", "Windows"):
             internalClangExe += ".exe"
         internalClangExe = os.path.realpath(internalClangExe) # clean symlinks
@@ -44,6 +48,11 @@ def __checkKits__():
             if platform.system() in ("Microsoft", "Windows"):
                 expectedCompilers.append({'^Default LLVM \d{2} bit based on MSVC\d{4}$' : ''})
             expectedCompilers.append(internalClangExe)
+        if platform.system() in ("Microsoft", "Windows"):
+            clangClExe = os.path.realpath(os.path.join(llvmBuildBinFolder, "clang-cl.exe"))
+            if os.path.exists(clangClExe):
+                expectedCompilers.append(clangClExe)
+
     foundCompilers = []
     foundCompilerNames = []
     clickOnTab(":Options.qt_tabwidget_tabbar_QTabBar", "Compilers")
@@ -52,30 +61,47 @@ def __checkKits__():
                 "Verifying found and expected compilers are equal.")
     # check debugger
     expectedDebuggers = __getExpectedDebuggers__()
+    # workaround preferences issue
+    expectDialog = hasUnsavedSettings()
     clickOnTab(":Options.qt_tabwidget_tabbar_QTabBar", "Debuggers")
+    if expectDialog:
+        handleUnsavedSettings(SettingsAction.Abandon)
     foundDebugger = []
     __iterateTree__(":BuildAndRun_QTreeView", __dbgFunc__, foundDebugger)
     test.verify(__compareDebuggers__(foundDebugger, expectedDebuggers),
                 "Verifying found and expected debuggers are equal.")
-    if not test.compare(len(genericDebuggers), 2, "Verifying generic debugger count."):
-        test.log(str(genericDebuggers))
+
     # check Qt versions
-    qmakePath = which("qmake")
-    if qmakePath and (not "Using Qt version" in
-                      getOutputFromCmdline([qmakePath, "--version"], acceptedError=1)):
-        # ignore dysfunctional qmake, e.g. incomplete qtchooser
-        qmakePath = None
+    qmakePathsInPath = findAllFilesInPATH("qmake")
+    qmakePaths = filter(lambda qmakePath: (not "Using Qt version"
+                                           in getOutputFromCmdline([qmakePath, "--version"],
+                                                                   acceptedError=1)),
+                                           qmakePathsInPath)
+    qmakePaths = map(os.path.dirname, qmakePaths)
+    if platform.system() in ("Microsoft", "Windows"):
+        qmakePaths = map(str.lower, list(qmakePaths))
+    qmakePaths = list(qmakePaths)
     foundQt = []
+    expectDialog = hasUnsavedSettings()
     clickOnTab(":Options.qt_tabwidget_tabbar_QTabBar", "Qt Versions")
-    __iterateTree__(":qtdirList_QTreeView", __qtFunc__, foundQt, qmakePath)
-    test.verify(not qmakePath or len(foundQt) == 1,
-                "Was qmake from %s autodetected? Found %s" % (qmakePath, foundQt))
+    # workaround preferences issue
+    if expectDialog:
+        handleUnsavedSettings(SettingsAction.Abandon)
+    __iterateTree__(":qtdirList_QTreeView", __qtFunc__, foundQt, qmakePaths)
+    test.verify(len(list(qmakePaths)) == len(foundQt),
+                "Was qmake from %s autodetected? Found %s" % (qmakePaths, foundQt))
     if foundQt:
         foundQt = foundQt[0]    # qmake from "which" should be used in kits
     # check kits
+    # workaround preferences issue
+    expectDialog = hasUnsavedSettings()
     clickOnTab(":Options.qt_tabwidget_tabbar_QTabBar", "Kits")
+    if expectDialog:
+        handleUnsavedSettings(SettingsAction.Abandon)
+
     __iterateTree__(":BuildAndRun_QTreeView", __kitFunc__, foundQt, foundCompilerNames)
-    return qmakePath != None
+    test.compare(glblDefaultKits, 1, "Was exactly one default kit found?")
+    return len(qmakePaths) > 0
 
 def __processSubItems__(treeObjStr, section, parModelIndexStr, doneItems,
                         additionalFunc, *additionalParameters):
@@ -102,7 +128,7 @@ def __processSubItems__(treeObjStr, section, parModelIndexStr, doneItems,
 def __iterateTree__(treeObjStr, additionalFunc, *additionalParameters):
     global currentSelectedTreeItem, sectionInProgress
     model = waitForObject(treeObjStr).model()
-    # 1st row: Auto-detected, 2nd row: Manual (Debugger has additional section Generic prepended)
+    # 1st row: Automatically Managed, 2nd row: Manual
     for sect in dumpIndices(model):
         sectionInProgress = str(sect.text)
         doneItems = []
@@ -113,7 +139,7 @@ def __iterateTree__(treeObjStr, additionalFunc, *additionalParameters):
 
 def __compFunc__(it, foundComp, foundCompNames):
     # skip sub section items (will continue on its children)
-    if str(it) == "C" or str(it) == "C++":
+    if str(it) == "C/C++":
         return
     try:
         waitFor("object.exists(':Path.Utils_BaseValidatingLineEdit')", 1000)
@@ -133,27 +159,26 @@ def __compFunc__(it, foundComp, foundCompNames):
     foundCompNames.append(it)
 
 def __dbgFunc__(it, foundDbg):
-    global sectionInProgress, genericDebuggers
+    global sectionInProgress
     waitFor("object.exists(':Path.Utils_BaseValidatingLineEdit')", 2000)
     pathLineEdit = findObject(":Path.Utils_BaseValidatingLineEdit")
-    if sectionInProgress == 'Generic':
-        debugger = str(pathLineEdit.text)
-        test.verify(debugger == 'gdb' or debugger == 'lldb',
-                    'Verifying generic debugger is GDB or LLDB.')
-        genericDebuggers.append(debugger)
-    else:
-        foundDbg.append(str(pathLineEdit.text))
+    foundDbg.append(str(pathLineEdit.text))
 
 def __qtFunc__(it, foundQt, qmakePath):
     qtPath = str(waitForObject(":QtSupport__Internal__QtVersionManager.qmake_QLabel").text)
     if platform.system() in ('Microsoft', 'Windows'):
         qtPath = qtPath.lower()
-        qmakePath = qmakePath.lower()
     test.verify(os.path.isfile(qtPath) and os.access(qtPath, os.X_OK),
                 "Verifying found Qt (%s) is executable." % qtPath)
     # Two Qt versions will be found when using qtchooser: QTCREATORBUG-14697
     # Only add qmake from "which" to list
-    if qtPath == qmakePath:
+    expected = False
+    for candidate in qmakePath:
+        if qtPath.startswith(candidate):
+            expected = True
+            break
+
+    if expected:
         foundQt.append(it)
     try:
         errorLabel = findObject(":QtSupport__Internal__QtVersionManager.errorLabel.QLabel")
@@ -161,30 +186,37 @@ def __qtFunc__(it, foundQt, qmakePath):
     except:
         pass
 
+
+glblUsedKitNames = set()
+
+
 def __kitFunc__(it, foundQt, foundCompNames):
     global currentSelectedTreeItem, warningOrError
     if 'Python' in it: # skip Python kits
         return
 
-    qtVersionStr = str(waitForObjectExists(":Kits_QtVersion_QComboBox").currentText)
-    # The following may fail if Creator doesn't find a Qt version in PATH. It will then create one
-    # Qt-less kit for each available toolchain instead of just one default Desktop kit.
-    # Since Qt usually is in PATH on the test machines anyway, we consider this too much of a
-    # corner case to add error handling code or make Qt in PATH a hard requirement for the tests.
-    test.compare(it, "Desktop (default)", "Verifying whether default Desktop kit has been created.")
+    defaultKitSuffix = " (Default)"
+    if it.endswith(defaultKitSuffix):
+        global glblDefaultKits
+        glblDefaultKits += 1
     if foundQt:
+        test.compare(it, "Desktop" + defaultKitSuffix,
+                     "Verifying whether default Desktop kit has been created.")
+        qtVersionStr = str(waitForObjectExists(":Kits_QtVersion_QComboBox").currentText)
         test.compare(qtVersionStr, foundQt, "Verifying if Qt versions match.")
-    cCompilerCombo = findObject(":CCompiler:_QComboBox")
-    test.compare(cCompilerCombo.enabled, cCompilerCombo.count > 1,
-                 "Verifying whether C compiler combo is enabled/disabled correctly.")
-    cppCompilerCombo = findObject(":CppCompiler:_QComboBox")
-    test.compare(cppCompilerCombo.enabled, cppCompilerCombo.count > 1,
-                 "Verifying whether C++ compiler combo is enabled/disabled correctly.")
+    else:
+        # Creator creates one kit for each compiler's ABI
+        global glblUsedKitNames
+        kitName = it.removesuffix(defaultKitSuffix)
+        test.verify(kitName not in glblUsedKitNames,
+                    "The kit name '%s' was not used before?" % kitName)
+        glblUsedKitNames.add(kitName)
+    compilerCombo = findObject(":Compiler:_QComboBox")
+    test.compare(compilerCombo.enabled, compilerCombo.count > 1,
+                 "Verifying whether compiler combo is enabled/disabled correctly.")
 
-    test.verify(str(cCompilerCombo.currentText) in foundCompNames,
-                "Verifying if one of the found C compilers had been set.")
-    test.verify(str(cppCompilerCombo.currentText) in foundCompNames,
-                "Verifying if one of the found C++ compilers had been set.")
+    test.verify(str(compilerCombo.currentText) in foundCompNames,
+                "Verifying if one of the found compilers had been set.")
     if currentSelectedTreeItem:
         foundWarningOrError = warningOrError.search(str(currentSelectedTreeItem.toolTip))
         if foundWarningOrError:
@@ -215,7 +247,7 @@ def __getExpectedCompilers__():
     compilers = ["g++", "gcc"]
     if platform.system() in ('Linux', 'Darwin'):
         for c in ('clang++', 'clang', 'afl-clang',
-                  'clang-[0-9]', 'clang-[0-9].[0-9]', 'clang-1[0-9]', 'clang-1[0-9].[0-9]',
+                  'clang-[0-9]', 'clang-[0-9].[0-9]', 'clang-[12][0-9]', 'clang-[12][0-9].[0-9]',
                   '*g++*', '*gcc*'):
             filesInPath = set(findAllFilesInPATH(c))
             compilers.extend(filesInPath | set(map(os.path.realpath, filesInPath)))
@@ -231,7 +263,7 @@ def __getExpectedCompilers__():
             expected.append({'^LLVM \d{2} bit based on MSVC\d{4}$' : ''})
 
     for compiler in compilers:
-        compilerPath = which(compiler)
+        compilerPath = shutil.which(compiler)
         if compilerPath:
             if compiler.endswith('clang++') or compiler.endswith('clang'):
                 if subprocess.call([compiler, '-dumpmachine']) != 0:
@@ -288,7 +320,7 @@ def __getExpectedDebuggers__():
         result.extend(findAllFilesInPATH(debugger + exeSuffix))
     if platform.system() == 'Linux':
         explicitlyOmitted = ("lldb-platform", "lldb-gdbserver", "lldb-instr", "lldb-argdumper",
-                             "lldb-server", "lldb-vscode")
+                             "lldb-server", "lldb-vscode", "lldb-dap")
         result.extend(filter(lambda s: not (any(omitted in s for omitted in explicitlyOmitted)),
                              findAllFilesInPATH("lldb-*")))
     if platform.system() == 'Darwin':
@@ -300,11 +332,18 @@ def __getExpectedDebuggers__():
 def __getCDB__():
     result = []
     possibleLocations = ["C:\\Program Files\\Debugging Tools for Windows (x64)",
+                         "C:\\Program Files (x86)\\Debugging Tools for Windows (x86)",
+                         "C:\\Program Files (x86)\\Windows Kits\\8.0\\Debuggers\\x86",
                          "C:\\Program Files (x86)\\Windows Kits\\8.0\\Debuggers\\x64",
+                         "C:\\Program Files\\Windows Kits\\8.0\\Debuggers\\x86",
                          "C:\\Program Files\\Windows Kits\\8.0\\Debuggers\\x64",
+                         "C:\\Program Files (x86)\\Windows Kits\\8.1\\Debuggers\\x86",
                          "C:\\Program Files (x86)\\Windows Kits\\8.1\\Debuggers\\x64",
+                         "C:\\Program Files\\Windows Kits\\8.1\\Debuggers\\x86",
                          "C:\\Program Files\\Windows Kits\\8.1\\Debuggers\\x64",
+                         "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x86",
                          "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64",
+                         "C:\\Program Files\\Windows Kits\\10\\Debuggers\\x86",
                          "C:\\Program Files\\Windows Kits\\10\\Debuggers\\x64"]
     for cdbPath in possibleLocations:
         cdb = os.path.join(cdbPath, "cdb.exe")
@@ -392,7 +431,7 @@ def __checkCreatedSettings__(settingsFolder, qmakeFound):
     if qmakeFound:
         files[os.path.join(creatorFolder, "qtversion.xml")] = 0
     for f in folders:
-        test.verify(os.path.isdir(f),
+        test.verify(waitFor(lambda : os.path.isdir(f), 2500),
                     "Verifying whether folder '%s' has been created." % os.path.basename(f))
     for fName, fMinSize in files.items():
         text = "created non-empty"

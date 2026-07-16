@@ -4,6 +4,7 @@
 #pragma once
 
 #include <coreplugin/helpmanager.h>
+#include <utils/aspects.h>
 
 #include <QMetaType>
 #include <QMutex>
@@ -17,8 +18,7 @@ QT_END_NAMESPACE
 
 class BookmarkManager;
 
-namespace Help {
-namespace Internal {
+namespace Help::Internal {
 
 class HelpViewer;
 
@@ -29,7 +29,48 @@ struct HelpViewerFactory
     std::function<HelpViewer *()> create;
 };
 
-class LocalHelpManager : public QObject
+class ViewerBackendAspect final : public Utils::SelectionAspect
+{
+public:
+    using Utils::SelectionAspect::SelectionAspect;
+
+    QVariant fromSettingsValue(const QVariant &savedValue) const final;
+    QVariant toSettingsValue(const QVariant &valueToSave) const final;
+
+    QByteArray operator()() const;
+};
+
+class HelpSettings final : public Utils::AspectContainer
+{
+public:
+    HelpSettings();
+
+    enum StartOption {
+        ShowHomePage = 0,
+        ShowBlankPage = 1,
+        ShowLastPages = 2,
+    };
+
+    Utils::StringAspect homePage{this};
+    Utils::IntegerAspect fontZoom{this}; // percentages
+    Utils::BoolAspect antiAlias{this};
+    Utils::BoolAspect scrollWheelZooming{this};
+    Utils::BoolAspect returnOnClose{this};
+    Utils::StringAspect lastShownPages{this};
+    Utils::IntegerAspect lastSelectedTab{this};
+    ViewerBackendAspect viewerBackend{this};
+    Utils::TypedSelectionAspect<StartOption> startOption{this};
+    Utils::TypedSelectionAspect<Core::HelpManager::HelpViewerLocation> contextHelpOption{this};
+    Utils::FontAspect fallbackFont{this};
+    Utils::TextDisplay errorLabel{this};
+
+private:
+    void apply() final;
+};
+
+HelpSettings &helpSettings();
+
+class LocalHelpManager final : public QObject
 {
     Q_OBJECT
 
@@ -40,53 +81,14 @@ public:
         QString mimeType;
     };
 
-    enum StartOption {
-        ShowHomePage = 0,
-        ShowBlankPage = 1,
-        ShowLastPages = 2,
-    };
-
-    LocalHelpManager(QObject *parent = nullptr);
+    LocalHelpManager();
     ~LocalHelpManager() override;
 
     static LocalHelpManager *instance();
 
-    static QString defaultHomePage();
-    static QString homePage();
-    static void setHomePage(const QString &page);
-
-    static QFont fallbackFont();
-    static void setFallbackFont(const QFont &font);
-
-    static int fontZoom();
-    static int setFontZoom(int percentage);
-
-    static bool antialias();
-    static void setAntialias(bool on);
-
-    static StartOption startOption();
-    static void setStartOption(StartOption option);
-
-    static Core::HelpManager::HelpViewerLocation contextHelpOption();
-    static void setContextHelpOption(Core::HelpManager::HelpViewerLocation location);
-
-    static bool returnOnClose();
-    static void setReturnOnClose(bool returnOnClose);
-
-    static bool isScrollWheelZoomingEnabled();
-    static void setScrollWheelZoomingEnabled(bool enabled);
-
-    static QStringList lastShownPages();
-    static void setLastShownPages(const QStringList &pages);
-
-    static int lastSelectedTab();
-    static void setLastSelectedTab(int index);
-
     static HelpViewerFactory defaultViewerBackend();
     static QVector<HelpViewerFactory> viewerBackends();
     static HelpViewerFactory viewerBackend();
-    static void setViewerBackendId(const QByteArray &id);
-    static QByteArray viewerBackendId();
 
     static void setupGuiHelpEngine();
     static void setEngineNeedsUpdate();
@@ -110,26 +112,8 @@ public:
 
 signals:
     void fallbackFontChanged(const QFont &font);
-    void fontZoomChanged(int percentage);
-    void antialiasChanged(bool on);
-    void returnOnCloseChanged();
-    void scrollWheelZoomingEnabledChanged(bool enabled);
-    void contextHelpOptionChanged(Core::HelpManager::HelpViewerLocation option);
-
-private:
-    static bool m_guiNeedsSetup;
-    static bool m_needsCollectionFile;
-
-    static QMutex m_guiMutex;
-    static QHelpEngine *m_guiEngine;
-
-    static QMutex m_bkmarkMutex;
-    static BookmarkManager *m_bookmarkManager;
-
-    static QList<Core::HelpManager::OnlineHelpHandler> m_onlineHelpHandlerList;
 };
 
-}   // Internal
-}   // Help
+} // namespace Help::Internal
 
 Q_DECLARE_METATYPE(Help::Internal::LocalHelpManager::HelpData)

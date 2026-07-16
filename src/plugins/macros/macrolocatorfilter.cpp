@@ -14,6 +14,7 @@
 using namespace Core;
 using namespace Macros;
 using namespace Macros::Internal;
+using namespace QtTaskTree;
 using namespace Utils;
 
 MacroLocatorFilter::MacroLocatorFilter()
@@ -28,12 +29,9 @@ MacroLocatorFilter::MacroLocatorFilter()
 
 LocatorMatcherTasks MacroLocatorFilter::matchers()
 {
-    using namespace Tasking;
-
-    Storage<LocatorStorage> storage;
-
-    const auto onSetup = [storage, icon = m_icon] {
-        const QString input = storage->input();
+    const auto onSetup = [icon = m_icon] {
+        const LocatorStorage &storage = *LocatorStorage::storage();
+        const QString input = storage.input();
         const Qt::CaseSensitivity entryCaseSensitivity = caseSensitivity(input);
         const QMap<QString, Macro *> &macros = MacroManager::macros();
         LocatorFilterEntries goodEntries;
@@ -61,7 +59,7 @@ LocatorMatcherTasks MacroLocatorFilter::matchers()
                 };
                 filterEntry.displayIcon = icon;
                 filterEntry.extraInfo = description;
-                filterEntry.highlightInfo = LocatorFilterEntry::HighlightInfo(index, input.length(),
+                filterEntry.highlightInfo = LocatorFilterEntry::HighlightInfo(index, input.size(),
                                                                               hDataType);
                 if (index == 0)
                     betterEntries.append(filterEntry);
@@ -69,7 +67,7 @@ LocatorMatcherTasks MacroLocatorFilter::matchers()
                     goodEntries.append(filterEntry);
             }
         }
-        storage->reportOutput(betterEntries + goodEntries);
+        storage.reportOutput(betterEntries + goodEntries);
     };
-    return {{Sync(onSetup), storage}};
+    return {QSyncTask(onSetup)};
 }

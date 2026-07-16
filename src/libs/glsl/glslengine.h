@@ -22,6 +22,19 @@ public:
         Error
     };
 
+    struct GLSL_EXPORT Location
+    {
+        int line = -1;
+        int position = -1;
+        int length = -1;
+
+        bool operator==(const Location &rhs) const
+        {
+            return line == rhs.line && position == rhs.position && length == rhs.length;
+        }
+
+    };
+
     DiagnosticMessage();
 
     Kind kind() const;
@@ -36,6 +49,9 @@ public:
     int line() const;
     void setLine(int line);
 
+    void setLocation(const Location &location);
+    Location location() const;
+
     QString message() const;
     void setMessage(const QString &message);
 
@@ -43,8 +59,14 @@ private:
     QString _fileName;
     QString _message;
     Kind _kind;
+    Location _location;
     int _line;
 };
+
+inline size_t qHash(const DiagnosticMessage::Location &location, size_t seed)
+{
+    return ::qHashMulti(seed, location.line, location.position, location.length);
+}
 
 template <typename Type>
 class TypeTable
@@ -85,6 +107,7 @@ public:
     const FloatType *floatType();
     const DoubleType *doubleType();
     const SamplerType *samplerType(int kind);
+    const ImageType *imageType(int kind);
     const VectorType *vectorType(const Type *elementType, int dimension);
     const MatrixType *matrixType(const Type *elementType, int columns, int rows);
     const ArrayType *arrayType(const Type *elementType);
@@ -96,6 +119,8 @@ public:
     Function *newFunction(Scope *scope = nullptr);
     Argument *newArgument(Function *function, const QString &name, const Type *type);
     Variable *newVariable(Scope *scope, const QString &name, const Type *type, int qualifiers = 0);
+    InterfaceBlock *newInterfaceBlock(Scope *scope = nullptr);
+    SubroutineType *newSubroutineType(Scope *scope);
 
     MemoryPool *pool();
 
@@ -103,8 +128,8 @@ public:
     QList<DiagnosticMessage> diagnosticMessages() const;
     void clearDiagnosticMessages();
     void addDiagnosticMessage(const DiagnosticMessage &m);
-    void warning(int line, const QString &message);
-    void error(int line, const QString &message);
+    void warning(const DiagnosticMessage::Location &location, const QString &message);
+    void error(const DiagnosticMessage::Location &location, const QString &message);
 
 private:
     std::unordered_set<QString> _identifiers;
@@ -113,6 +138,7 @@ private:
     TypeTable<MatrixType> _matrixTypes;
     TypeTable<ArrayType> _arrayTypes;
     TypeTable<SamplerType> _samplerTypes;
+    TypeTable<ImageType> _imageTypes;
     MemoryPool _pool;
     QList<DiagnosticMessage> _diagnosticMessages;
     QList<Symbol *> _symbols;

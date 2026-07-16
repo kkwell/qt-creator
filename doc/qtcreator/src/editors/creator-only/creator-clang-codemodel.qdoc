@@ -13,7 +13,7 @@
 
     \ingroup creator-reference-editors
 
-    \title Clang Code Model
+    \title Clang code model
 
     \brief Offers code editing services for C++.
 
@@ -47,9 +47,9 @@
     \endlist
 
     The Clang code model plugin offers some of these services
-    for C++ on top of \l{https://clangd.llvm.org/}{Clangd}.
+    for C++ on top of \l{What is clangd}{Clangd}.
 
-    \section1 About the Clang Code Model
+    \section1 About the Clang code model
 
     The Clang project has libraries for parsing
     C language family source files. The feedback you get through warning and
@@ -58,7 +58,7 @@
     Clang focuses on detailed information for diagnostics, which is really
     useful if the code has typos, for example.
     We make use of these libraries via the clangd tool, which implements
-    an \l{https://microsoft.github.io/language-server-protocol/}{LSP} server.
+    an \l{Language Server Protocol}{LSP} server.
 
     Clang keeps up with the development of the C++ language. At the time of this
     writing, it supports C++98/03, C++11, C++14, C++17, C89, C99, Objective-C,
@@ -88,7 +88,7 @@
     \endlist
 
     To use the built-in code model instead, select \preferences >
-    \uicontrol C++ > \uicontrol clangd, and deselect the \uicontrol {Use clangd} check box.
+    \uicontrol C++ > \uicontrol clangd, and clear \uicontrol {Use clangd}.
     This setting also exists on the project level, so that you can have the Clang-based
     services generally enabled, but switch them off for certain projects, or vice versa.
 
@@ -100,7 +100,7 @@
             level)
     \endlist
 
-    \section1 Clangd Indexing
+    \section1 Clangd indexing
 
     The clangd \e index provides exact and complete results for services such
     as finding references, following symbols under cursor, and using the
@@ -114,7 +114,7 @@
     \uicontrol {Toggle Progress Details} (1), and then select \uicontrol X on
     the progress bar.
 
-    \image qtcreator-toggle-progress-bar.webp {Toggle Progress Details button}
+    \image {qtcreator-toggle-progress-bar.webp} {Toggle Progress Details}
 
     By default, \QC runs one clangd process per project. If you have created
     \l{Manage sessions}{sessions} that have related projects, you can
@@ -146,7 +146,7 @@
     \list 1
         \li Go to \uicontrol Projects > \uicontrol {Project Settings} >
             \uicontrol {C++ Code Model}.
-            \image qtcreator-projects-cpp-code-model.webp {C++ Code Model settings}
+            \image {qtcreator-projects-cpp-code-model.webp} {C++ Code Model settings}
         \li Clear \uicontrol {Use global settings}.
         \li Set \uicontrol {C++ Code Model} settings for the project.
     \endlist
@@ -158,7 +158,7 @@
     \page creator-preferences-cpp-code-model.html
     \previouspage creator-reference.html
 
-    \ingroup creator-reference-preferences-cpp
+    \ingroup creator-reference-editors
 
     \title Code Model
 
@@ -170,7 +170,7 @@
     To configure the C++ code model globally, go to \preferences >
     \uicontrol C++ > \uicontrol {Code Model}.
 
-    \image qtcreator-preferences-code-model.webp {C++ Code Model preferences}
+    \image {qtcreator-preferences-code-model.webp} {Code Model tab in C++ preferences}
 
     The following table summarizes the preferences.
 
@@ -220,14 +220,14 @@
     actual contents.
 
     \sa {Configure C++ code model}, {Specify clangd settings},
-    {Clang Code Model}, {Clangd}
+    {Clang code model}, {Clangd}
 */
 
 /*!
     \page creator-preferences-cpp-clangd.html
     \previouspage creator-reference.html
 
-    \ingroup creator-reference-preferences-cpp
+    \ingroup creator-reference-editors
 
     \title Clangd
 
@@ -237,70 +237,82 @@
     and providing you with detailed diagnostics. The clangd \e index provides
     exact and complete results for services such as code completion.
 
-    To set preferences for clangd:
+    To set preferences for clangd, go to \preferences > \uicontrol C++ >
+    \uicontrol Clangd and select \uicontrol {Use clangd}.
 
-    \list 1
-        \li Select \preferences > \uicontrol C++ >
-            \uicontrol Clangd > \uicontrol {Use clangd}.
-            \image qtcreator-preferences-clangd.webp {Clangd preferences}
-        \li In \uicontrol {Path to executable}, enter the path to clangd
-            version 14, or later.
-        \li In the \uicontrol {Background indexing} field, select \uicontrol Off
-            to use a faster, but less accurate built-in indexer than the one used
-            by default. Set the indexing priority depending on whether
-            the accuracy of results or speed is more important to you during
-            global symbol searches.
-        \li In \uicontrol {Per-project index location}, select the folder to
-            store the index files for each project. The \c {compile-commands.json}
-            file is also stored in this folder.
-        \li In \uicontrol {Per-session index location}, select the folder to
-            store the index files for each session.
-        \li In \uicontrol {Header/source switch mode}, select the C/C++
-            backend for switching between header and source files. While the
-            clangd implementation has more capabilities than the built-in
-            code model, it tends to find false positives. \uicontrol {Try Both}
-            uses clangd if the built-in code model does not find anything.
-        \li By default, clangd attempts to use all unused cores. You can set a
-            fixed number of cores to use in \uicontrol {Worker thread count}.
-            Background indexing also uses this many worker threads.
-        \li Select \uicontrol {Insert header files on completion} to insert
-            header files when completing symbols.
-        \li Select \uicontrol {Update dependent sources} to re-parse all source
-            files that include a header file when editing the header file. This
-            can cause a heavy CPU load if the header file is included in many
-            source files. Clear this option to only re-parse the source files
-            when saving the header file.
-        \li Set the number of \uicontrol {Completion results} if you regularly
-            miss important results during code completion. Set it to 0 to remove
-            the limit on the number of completion results. Setting this to 0 or a
-            very high number can make code completion slow.
-        \li In \uicontrol {Completion ranking model}, select the clangd model to
-            use for ranking completion suggestions. This determines their order
-            in the selection list. The \uicontrol {Decision Forest} model
-            (\uicontrol Default) results from pre-trained machine learning
-            and usually provides better results than the hand-crafted
-            \uicontrol Heuristic model. Select the latter if the completion
-            suggestions stray too much from your expectations for your code base.
-        \li In \uicontrol {Document update threshold}, specify the amount of
-            time \QC waits before sending document changes to the server.
-            If the document changes again while waiting, this timeout is reset.
-        \li Select \uicontrol {Ignore files greater than} to make parsing faster
-            by ignoring big files. Specify the maximum size of files to parse in
-            the field next to the check box.
-        \li The \uicontrol {Diagnostic configuration} field shows the Clang
-            checks to perform. Click the value of the field to select and edit
-            the checks to perform.
-        \li Select \uicontrol Add to select sessions that should use a single
-            clangd process for indexing.
-    \endlist
+    \image {qtcreator-preferences-clangd.webp} {Clangd tab in C++ preferences}
 
-    \section1 Clang Checks
+    The following table describes the available preferences.
 
-    Click the value of the \uicontrol {Diagnostic configuration} field to open
+    \table
+    \header
+        \li Preference
+        \li Description
+    \row
+        \li \uicontrol {Path to executable}
+        \li Specify the path to clangd version 14, or later.
+    \row
+        \li \uicontrol {Background indexing}
+        \li Select \uicontrol Off to use a faster, but less accurate built-in
+            indexer. Set the indexing priority based on whether accuracy or
+            speed is more important to you during global symbol searches.
+    \row
+        \li \uicontrol {Per-project index location}
+        \li Specify the folder to store the index files for each project. The
+            \c {compile-commands.json} file is also stored here.
+    \row
+        \li \uicontrol {Per-session index location}
+        \li Specify the folder to store the index files for each session.
+    \row
+        \li \uicontrol {Header/source switch mode}
+        \li Select the C/C++ backend for switching between header and source
+            files. \uicontrol {Try Both} uses clangd if the built-in code
+            model does not find anything.
+    \row
+        \li \uicontrol {Worker thread count}
+        \li Set a fixed number of cores to use. By default, clangd uses all
+            unused cores.
+    \row
+        \li \uicontrol {Insert header files on completion}
+        \li Insert header files when completing symbols.
+    \row
+        \li \uicontrol {Update dependent sources}
+        \li Re-parse all source files that include a header file when editing
+            it. Clear this option to only re-parse when saving the header file.
+    \row
+        \li \uicontrol {Use externally provided compilation database}
+        \li Use an external compilation database instead of the one created by
+            \QC. Place a \c {compile-commands.json} file at the specified index
+            location and keep it synchronized with your project state.
+    \row
+        \li \uicontrol {Completion results}
+        \li Maximum number of completion results. Set to 0 to remove the limit.
+    \row
+        \li \uicontrol {Completion ranking model}
+        \li Select the clangd model for ranking completion suggestions.
+            \uicontrol {Decision Forest} (default) uses machine learning.
+            \uicontrol Heuristic is hand-crafted.
+    \row
+        \li \uicontrol {Document update threshold}
+        \li Time \QC waits before sending document changes to the server.
+    \row
+        \li \uicontrol {Ignore files greater than}
+        \li Maximum size of files to parse. Enable to make parsing faster.
+    \row
+        \li \uicontrol {Diagnostic configuration}
+        \li Clang checks to perform. Select to edit the checks.
+    \row
+        \li \uicontrol {Sessions with a Single Clangd Instance}
+        \li Add sessions that should use a single clangd process for indexing.
+    \endtable
+
+    \section1 Clang checks
+
+    Select the value of the \uicontrol {Diagnostic configuration} field to open
     the \uicontrol {Diagnostic Configurations} dialog, where you can select and
     edit the checks to perform.
 
-    \image qtcreator-clang-diagnostic-configurations.webp {Diagnostic Configurations dialog}
+    \image {qtcreator-clang-diagnostic-configurations.webp} {Diagnostic Configurations dialog}
 
     In addition to using the built-in checks, you can select \uicontrol Copy to
     create copies of them and edit the copies to fit your needs.
@@ -317,10 +329,9 @@
     begins with \c -Wno.
 
     Keep in mind that some options turn on other options. For more information,
-    see \l{https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html}
-    {Options to Request or Suppress Warnings} or the GCC or Clang manual pages.
+    see \l{Options to Request or Suppress Warnings} or the GCC or Clang manual pages.
 
-    \sa {Specify clangd settings}, {Clang Code Model}, {Code Model}
+    \sa {Specify clangd settings}, {Clang code model}, {Code Model}
 */
 
 /*!
@@ -336,11 +347,11 @@
     \list 1
         \li Select \uicontrol Projects > \uicontrol {Project Settings} >
             \uicontrol {Clangd}.
-            \image qtcreator-projects-settings-clangd.webp {Clangd preferences for a project}
-        \li Deselect \uicontrol {Use global settings}.
+            \image {qtcreator-projects-settings-clangd.webp} {Clangd preferences for a project}
+        \li Clear \uicontrol {Use global settings}.
         \li Select \uicontrol {Use clangd}.
         \li Specify \uicontrol Clangd preferences for the project.
     \endlist
 
-    \sa {Clang Code Model}, {Clangd}, {Code Model}
+    \sa {Clang code model}, {Clangd}, {Code Model}
 */

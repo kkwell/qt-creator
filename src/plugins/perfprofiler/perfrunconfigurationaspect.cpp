@@ -6,19 +6,21 @@
 #include "perfrunconfigurationaspect.h"
 #include "perfsettings.h"
 
-#include <debugger/analyzer/analyzerrunconfigwidget.h>
+#include <projectexplorer/buildconfiguration.h>
+
+using namespace ProjectExplorer;
 
 namespace PerfProfiler::Internal {
 
-PerfRunConfigurationAspect::PerfRunConfigurationAspect(ProjectExplorer::Target *target)
+PerfRunConfigurationAspect::PerfRunConfigurationAspect(BuildConfiguration *bc)
 {
-    setProjectSettings(new PerfSettings(target));
-    setGlobalSettings(&PerfProfiler::globalSettings());
+    setProjectSettings(new PerfSettings(bc->target()));
+    setGlobalSettings(&PerfProfiler::globalSettings(), Constants::PerfSettingsId);
     setId(Constants::PerfSettingsId);
     setDisplayName(Tr::tr("Performance Analyzer Settings"));
     setUsingGlobalSettings(true);
     resetProjectToGlobalSettings();
-    setConfigWidgetCreator([this] { return new Debugger::AnalyzerRunConfigWidget(this); });
+    setConfigWidgetCreator([this] { return createRunConfigAspectWidget(this); });
 }
 
 } // PerfProfiler::Internal

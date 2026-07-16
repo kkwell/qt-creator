@@ -9,11 +9,11 @@
 
     \title Edit Markdown files
 
-    Open \l{https://www.markdownguide.org/basic-syntax/}{Markdown} (.md) files,
+    Open \l{Markdown} (\c .md) files,
     or go to \uicontrol File > \uicontrol {New File} and select
     \uicontrol {General} > \uicontrol {Markdown File} to create a new file.
 
-    \image qtcreator-markdown-editor.webp {Markdown file in Preview and Editor views}
+    \image {qtcreator-markdown-editor.webp} {Markdown file in Preview and Editor views}
 
     When you edit the file in the editor, you can see the changes in the preview.
 
@@ -25,7 +25,7 @@
 
     Use the buttons on the editor toolbar to format text as italic (i), bold (b),
     or inline code (`), and to create links to web sites
-    (\inlineimage icons/linkicon.png).
+    (\inlineimage {icons/linkicon.png} {Hyperlink}).
 
     \section1 Move to a line and column
 
@@ -41,8 +41,8 @@
         \li Place the cursor on the link.
         \li Then, do one of the following:
             \list
-                \li Press \key {Ctrl+Click} (or \key {Cmd+Click} on \macos).
-                \li Press \key F2.
+                \li Select \key {Ctrl+Click} (or \key {Cmd+Click} on \macos).
+                \li Select \key F2.
                 \li Go to \uicontrol {Follow Symbol Under Cursor} in the context
                     menu.
             \endlist

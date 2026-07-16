@@ -5,43 +5,41 @@
 
 #include "vcsbasetr.h"
 
+#include <coreplugin/vcsfilestate.h>
+
 #include <utils/fsengine/fileiconprovider.h>
 #include <utils/qtcassert.h>
 #include <utils/theme/theme.h>
 
 #include <QStandardItem>
-#include <QDebug>
 
 using namespace Utils;
 
 namespace VcsBase {
 
-// --------------------------------------------------------------------------
-// Helpers:
-// --------------------------------------------------------------------------
-
-enum { StateColumn = 0, FileColumn = 1 };
-
-static QBrush fileStatusTextForeground(SubmitFileModel::FileStatusHint statusHint)
+static QBrush fileStatusTextForeground(Core::VcsFileState statusHint)
 {
     Theme::Color statusTextColor = Theme::VcsBase_FileStatusUnknown_TextColor;
     switch (statusHint) {
-    case SubmitFileModel::FileStatusUnknown:
+    case Core::VcsFileState::Unknown:
         statusTextColor = Theme::VcsBase_FileStatusUnknown_TextColor;
         break;
-    case SubmitFileModel::FileAdded:
+    case Core::VcsFileState::Untracked:
+        statusTextColor = Theme::VcsBase_FileUntracked_TextColor;
+        break;
+    case Core::VcsFileState::Added:
         statusTextColor = Theme::VcsBase_FileAdded_TextColor;
         break;
-    case SubmitFileModel::FileModified:
+    case Core::VcsFileState::Modified:
         statusTextColor = Theme::VcsBase_FileModified_TextColor;
         break;
-    case SubmitFileModel::FileDeleted:
+    case Core::VcsFileState::Deleted:
         statusTextColor = Theme::VcsBase_FileDeleted_TextColor;
         break;
-    case SubmitFileModel::FileRenamed:
+    case Core::VcsFileState::Renamed:
         statusTextColor = Theme::VcsBase_FileRenamed_TextColor;
         break;
-    case SubmitFileModel::FileUnmerged:
+    case Core::VcsFileState::Unmerged:
         statusTextColor = Theme::VcsBase_FileUnmerged_TextColor;
         break;
     }
@@ -51,7 +49,7 @@ static QBrush fileStatusTextForeground(SubmitFileModel::FileStatusHint statusHin
 static QList<QStandardItem *> createFileRow(const FilePath &repositoryRoot,
                                             const QString &fileName,
                                             const QString &status,
-                                            SubmitFileModel::FileStatusHint statusHint,
+                                            Core::VcsFileState statusHint,
                                             CheckMode checked,
                                             const QVariant &v)
 {
@@ -70,7 +68,7 @@ static QList<QStandardItem *> createFileRow(const FilePath &repositoryRoot,
     // Note: for "overlaid" icons in Utils::FileIconProvider a valid file path is not required
     fileItem->setIcon(FileIconProvider::icon(repositoryRoot.pathAppended(fileName)));
     const QList<QStandardItem *> row{statusItem, fileItem};
-    if (statusHint != SubmitFileModel::FileStatusUnknown) {
+    if (statusHint != Core::VcsFileState::Unknown) {
         const QBrush textForeground = fileStatusTextForeground(statusHint);
         for (QStandardItem *item : row)
             item->setForeground(textForeground);
@@ -78,21 +76,20 @@ static QList<QStandardItem *> createFileRow(const FilePath &repositoryRoot,
     return row;
 }
 
-// --------------------------------------------------------------------------
-// SubmitFileModel:
-// --------------------------------------------------------------------------
+enum Column {
+    State = 0,
+    File = 1,
+    Count = 2
+};
 
 /*!
-    \class VcsBase::SubmitFileModel
-
-    \brief The SubmitFileModel class is a 2-column (checkable, state, file name)
+    The SubmitFileModel class is a two column (checkable and state, file name)
     model to be used to list the files in the submit editor.
 
     Provides header items and a convenience function to add files.
  */
-
 SubmitFileModel::SubmitFileModel(QObject *parent) :
-    QStandardItemModel(0, 2, parent)
+    QStandardItemModel(0, Column::Count, parent)
 {
     setHorizontalHeaderLabels({Tr::tr("State"), Tr::tr("File")});
 }
@@ -107,11 +104,14 @@ void SubmitFileModel::setRepositoryRoot(const FilePath &repoRoot)
     m_repositoryRoot = repoRoot;
 }
 
-QList<QStandardItem *> SubmitFileModel::addFile(const QString &fileName, const QString &status, CheckMode checkMode,
+QList<QStandardItem *> SubmitFileModel::addFile(const QString &fileName,
+                                                const QString &status,
+                                                CheckMode checkMode,
                                                 const QVariant &v)
 {
-    const FileStatusHint statusHint =
-            m_fileStatusQualifier ? m_fileStatusQualifier(status, v) : FileStatusUnknown;
+    const Core::VcsFileState statusHint = m_fileStatusQualifier
+                                            ? m_fileStatusQualifier(status, v)
+                                            : Core::VcsFileState::Unknown;
     const QList<QStandardItem *> row =
             createFileRow(m_repositoryRoot, fileName, status, statusHint, checkMode, v);
     appendRow(row);
@@ -129,7 +129,7 @@ QString SubmitFileModel::file(int row) const
 {
     if (row < 0 || row >= rowCount())
         return {};
-    return item(row, FileColumn)->text();
+    return item(row, Column::File)->text();
 }
 
 bool SubmitFileModel::isCheckable(int row) const
@@ -156,6 +156,15 @@ void SubmitFileModel::setAllChecked(bool check)
 {
     int rows = rowCount();
     for (int row = 0; row < rows; ++row) {
+        QStandardItem *i = item(row);
+        if (i->isCheckable())
+            i->setCheckState(check ? Qt::Checked : Qt::Unchecked);
+    }
+}
+
+void SubmitFileModel::setSelectedChecked(const QList<int> &rows, bool check)
+{
+    for (int row : rows) {
         QStandardItem *i = item(row);
         if (i->isCheckable())
             i->setCheckState(check ? Qt::Checked : Qt::Unchecked);
@@ -189,10 +198,11 @@ unsigned int SubmitFileModel::filterFiles(const QStringList &filter)
     return rc;
 }
 
-/*! Updates user selections from \a source model.
+/*!
+ * Updates user selections from \a source model.
  *
- *  Assumes that both models are sorted with the same order, and there
- *              are no duplicate entries.
+ * Assumes that both models are sorted with the same order, and there
+ * are no duplicate entries.
  */
 void SubmitFileModel::updateSelections(SubmitFileModel *source)
 {
@@ -224,9 +234,10 @@ void SubmitFileModel::setFileStatusQualifier(FileStatusQualifier &&func)
     const int topLevelRowCount = rowCount();
     const int topLevelColCount = columnCount();
     for (int row = 0; row < topLevelRowCount; ++row) {
-        const QStandardItem *statusItem = item(row, StateColumn);
-        const FileStatusHint statusHint =
-                func ? func(statusItem->text(), statusItem->data()) : FileStatusUnknown;
+        const QStandardItem *statusItem = item(row, Column::State);
+        const Core::VcsFileState statusHint = func
+                                          ? func(statusItem->text(), statusItem->data())
+                                          : Core::VcsFileState::Unknown;
         const QBrush textForeground = fileStatusTextForeground(statusHint);
         for (int col = 0; col < topLevelColCount; ++col)
             item(row, col)->setForeground(textForeground);

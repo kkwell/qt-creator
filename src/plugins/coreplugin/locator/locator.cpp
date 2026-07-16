@@ -23,7 +23,6 @@
 #include "../editormanager/editormanager_p.h"
 #include "../icore.h"
 #include "../progressmanager/taskprogress.h"
-#include "../settingsdatabase.h"
 #include "../statusbarmanager.h"
 
 #include <extensionsystem/pluginmanager.h>
@@ -31,11 +30,12 @@
 #include <utils/algorithm.h>
 #include <utils/async.h>
 #include <utils/qtcassert.h>
+#include <utils/settingsdatabase.h>
 #include <utils/utilsicons.h>
 
 #include <QMainWindow>
 
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 using namespace std::chrono;
@@ -47,7 +47,52 @@ static Locator *m_instance = nullptr;
 
 const char kDirectoryFilterPrefix[] = "directory";
 const char kUrlFilterPrefix[] = "url";
-const char kUseCenteredPopup[] = "UseCenteredPopupForShortcut";
+
+LocatorSettings::LocatorSettings()
+{
+    setAutoApply(false);
+    setSettingsGroup("Locator");
+
+    useCenteredPopup.setSettingsKey("UseCenteredPopupForShortcut");
+    useCenteredPopup.setDefaultValue(false);
+    useCenteredPopup.setLabelText(Tr::tr("Open as Centered Popup"));
+
+    useTabCompletion.setSettingsKey("UseTabCompletion");
+    useTabCompletion.setDefaultValue(true);
+    useTabCompletion.setLabelText(Tr::tr("Use Tab Completion"));
+
+    relativePaths.setSettingsKey("RelativePaths");
+    relativePaths.setDefaultValue(false);
+    relativePaths.setLabelText(Tr::tr("Show Paths in Relation to Active Project"));
+    relativePaths.setToolTip(
+        Tr::tr("Locator filters show relative paths to the active project when possible."));
+
+    ignoreGeneratedFiles.setSettingsKey("IgnoreGeneratedFiles");
+    ignoreGeneratedFiles.setDefaultValue(true);
+    ignoreGeneratedFiles.setLabelText(Tr::tr("Ignore Generated Files"));
+    ignoreGeneratedFiles.setToolTip(
+        Tr::tr("Ignore generated files when using project related filters."));
+
+    refreshInterval.setSettingsKey("RefreshInterval");
+    refreshInterval.setRange(0, 320);
+    refreshInterval.setSingleStep(5);
+    refreshInterval.setDefaultValue(60);
+    //: short for "minutes"
+    refreshInterval.setSuffix(Tr::tr(" min"));
+    refreshInterval.setLabelText(Tr::tr("Refresh interval:"));
+    refreshInterval.setToolTip(
+        Tr::tr(
+            "Locator filters that do not update their cached data immediately, such as the "
+            "custom directory filters, update it after this time interval."));
+
+    readSettings();
+}
+
+LocatorSettings &locatorSettings()
+{
+    static LocatorSettings theSettings;
+    return theSettings;
+}
 
 class LocatorData
 {
@@ -83,7 +128,9 @@ LocatorData::LocatorData()
 
     m_bugFilter.setDescription(Tr::tr("Triggers a search in the Qt bug tracker."));
     m_bugFilter.setDefaultShortcutString("bug");
-    m_bugFilter.addDefaultUrl("https://bugreports.qt.io/secure/QuickSearch.jspa?searchString=%1");
+    m_bugFilter.addDefaultUrl(
+        QString(Core::Constants::QT_JIRA_URL)
+        + "/issues/?jql=textfields ~ \"%1\"&wildcardFlag=true");
 }
 
 Locator::Locator()
@@ -159,15 +206,7 @@ void Locator::aboutToShutdown()
 void Locator::loadSettings()
 {
     namespace DB = SettingsDatabase;
-    // check if we have to read old settings
-    // TOOD remove a few versions after 4.15
-    const QString settingsGroup = DB::contains("Locator") ? QString("Locator")
-                                                                : QString("QuickOpen");
-    const Settings def;
-    DB::beginGroup(settingsGroup);
-    m_refreshTimer.setInterval(minutes(DB::value("RefreshInterval", 60).toInt()));
-    m_relativePaths = DB::value("RelativePaths", false).toBool();
-    m_settings.useCenteredPopup = DB::value(kUseCenteredPopup, def.useCenteredPopup).toBool();
+    DB::beginGroup("Locator");
 
     for (ILocatorFilter *filter : std::as_const(m_filters)) {
         if (DB::contains(filter->id().toString())) {
@@ -199,8 +238,19 @@ void Locator::loadSettings()
     DB::endGroup();
     DB::endGroup();
 
-    if (m_refreshTimer.interval() > 0)
+    const auto updateTimer = [this] {
+        const int interval = locatorSettings().refreshInterval();
+        if (interval < 1) {
+            m_refreshTimer.stop();
+            m_refreshTimer.setInterval(0);
+            return;
+        }
+        m_refreshTimer.setInterval(minutes(interval));
         m_refreshTimer.start();
+    };
+    locatorSettings().refreshInterval.addOnChanged(this, updateTimer);
+    updateTimer();
+
     m_settingsInitialized = true;
     setFilters(m_filters + customFilters);
 }
@@ -289,14 +339,10 @@ void Locator::saveSettings() const
     if (!m_settingsInitialized)
         return;
 
-    const Settings def;
     namespace DB = SettingsDatabase;
     DB::beginTransaction();
     DB::beginGroup("Locator");
     DB::remove(QString());
-    DB::setValue("RefreshInterval", refreshInterval());
-    DB::setValue("RelativePaths", relativePaths());
-    DB::setValueWithDefault(kUseCenteredPopup, m_settings.useCenteredPopup, def.useCenteredPopup);
     for (ILocatorFilter *filter : m_filters) {
         if (!m_customFilters.contains(filter) && filter->id().isValid()) {
             const QByteArray state = filter->saveState();
@@ -317,6 +363,8 @@ void Locator::saveSettings() const
     DB::endGroup();
     DB::endGroup();
     DB::endTransaction();
+
+    locatorSettings().writeSettings();
 }
 
 /*!
@@ -349,42 +397,6 @@ void Locator::setCustomFilters(QList<ILocatorFilter *> filters)
     m_customFilters = filters;
 }
 
-int Locator::refreshInterval() const
-{
-    return m_refreshTimer.interval() / 60000;
-}
-
-void Locator::setRefreshInterval(int interval)
-{
-    if (interval < 1) {
-        m_refreshTimer.stop();
-        m_refreshTimer.setInterval(0);
-        return;
-    }
-    m_refreshTimer.setInterval(minutes(interval));
-    m_refreshTimer.start();
-}
-
-bool Locator::relativePaths() const
-{
-    return m_relativePaths;
-}
-
-void Locator::setRelativePaths(bool use)
-{
-    m_relativePaths = use;
-}
-
-bool Locator::useCenteredPopupForShortcut()
-{
-    return m_instance->m_settings.useCenteredPopup;
-}
-
-void Locator::setUseCenteredPopupForShortcut(bool center)
-{
-    m_instance->m_settings.useCenteredPopup = center;
-}
-
 void Locator::refresh(const QList<ILocatorFilter *> &filters)
 {
     if (ExtensionSystem::PluginManager::isShuttingDown())
@@ -393,16 +405,13 @@ void Locator::refresh(const QList<ILocatorFilter *> &filters)
     m_taskTreeRunner.reset(); // Superfluous, just for clarity. The start() below is enough.
     m_refreshingFilters = Utils::filteredUnique(m_refreshingFilters + filters);
 
-    const auto onTreeSetup = [](TaskTree *taskTree) {
-        auto progress = new TaskProgress(taskTree);
+    const auto onTreeSetup = [](QTaskTree &taskTree) {
+        auto progress = new TaskProgress(&taskTree);
         progress->setDisplayName(Tr::tr("Updating Locator Caches"));
     };
-    const auto onTreeDone = [this](DoneWith result) {
-        if (result == DoneWith::Success)
-            saveSettings();
-    };
+    const auto onTreeDone = [this] { saveSettings(); };
 
-    QList<GroupItem> tasks{parallel};
+    GroupItems tasks{parallel};
     for (ILocatorFilter *filter : std::as_const(m_refreshingFilters)) {
         const auto task = filter->refreshRecipe();
         if (!task.has_value())
@@ -411,11 +420,11 @@ void Locator::refresh(const QList<ILocatorFilter *> &filters)
         const Group group {
             finishAllAndSuccess,
             *task,
-            onGroupDone([this, filter] { m_refreshingFilters.removeOne(filter); }, CallDoneIf::Success)
+            onGroupDone([this, filter] { m_refreshingFilters.removeOne(filter); }, CallDoneFlag::OnSuccess)
         };
         tasks.append(group);
     }
-    m_taskTreeRunner.start(tasks, onTreeSetup, onTreeDone);
+    m_taskTreeRunner.start(tasks, onTreeSetup, onTreeDone, CallDoneFlag::OnSuccess);
 }
 
 void Locator::showFilter(ILocatorFilter *filter, LocatorWidget *widget)
@@ -430,15 +439,15 @@ void Locator::showFilter(ILocatorFilter *filter, LocatorWidget *widget)
             const QList<ILocatorFilter *> allFilters = Locator::filters();
             for (ILocatorFilter *otherfilter : allFilters) {
                 if (searchText->startsWith(otherfilter->shortcutString() + ' ')) {
-                    searchText = searchText->mid(otherfilter->shortcutString().length() + 1);
+                    searchText = searchText->mid(otherfilter->shortcutString().size() + 1);
                     break;
                 }
             }
         }
     }
     widget->showText(filter->shortcutString() + ' ' + *searchText,
-                     filter->shortcutString().length() + 1,
-                     searchText->length());
+                     filter->shortcutString().size() + 1,
+                     searchText->size());
 }
 
 } // namespace Internal

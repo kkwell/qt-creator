@@ -11,7 +11,7 @@
 
 namespace QmlDesigner {
 
-class QMLDESIGNERCORE_EXPORT QmlModelNodeProxy : public QObject
+class QMLDESIGNER_EXPORT QmlModelNodeProxy : public QObject
 {
     Q_OBJECT
 
@@ -22,20 +22,26 @@ class QMLDESIGNERCORE_EXPORT QmlModelNodeProxy : public QObject
 public:
     explicit QmlModelNodeProxy(QObject *parent = nullptr);
 
-    void setup(const QmlObjectNode &objectNode);
+    void setup(const ModelNode &node);
+    void setup(const ModelNodes &editorNodes);
 
     static void registerDeclarativeType();
 
     void emitSelectionToBeChanged();
     void emitSelectionChanged();
+    void refresh();
 
     QmlObjectNode qmlObjectNode() const;
 
     ModelNode modelNode() const;
+    ModelNodes editorNodes() const;
+    ModelNode singleSelectedNode() const;
 
     bool multiSelection() const;
 
     QString nodeId() const;
+
+    QString nodeObjectName() const;
 
     QString simplifiedTypeName() const;
 
@@ -60,7 +66,7 @@ public:
 
     Q_INVOKABLE void changeType(int internalId, const QString &typeName);
 
-    void handleInstancePropertyChanged(const ModelNode &modelNode, const PropertyName &propertyName);
+    void handleInstancePropertyChanged(const ModelNode &modelNode, PropertyNameView propertyName);
 
     void handleBindingPropertyChanged(const BindingProperty &property);
     void handleVariantPropertyChanged(const VariantProperty &property);
@@ -70,6 +76,7 @@ signals:
     void modelNodeChanged();
     void selectionToBeChanged();
     void selectionChanged();
+    void refreshRequired();
 
 private:
     QList<int> allChildren(const ModelNode &modelNode) const;
@@ -77,6 +84,7 @@ private:
     PropertyEditorSubSelectionWrapper *findWrapper(int internalId) const;
 
     QmlObjectNode m_qmlObjectNode;
+    ModelNodes m_editorNodes;
     QList<QSharedPointer<PropertyEditorSubSelectionWrapper>> m_subselection;
 };
 

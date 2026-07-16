@@ -5,52 +5,64 @@
 
 #include "cppeditor_global.h"
 
+#include <utils/aspects.h>
 #include <utils/store.h>
 
 namespace ProjectExplorer { class Project; }
-namespace Utils {
-class FilePath;
-class QtcSettings;
-}
 
 namespace CppEditor {
+
 enum class UsePrecompiledHeaders;
 
-class CPPEDITOR_EXPORT CppCodeModelSettings
+enum class PchUsage {
+    PchUse_None = 1,
+    PchUse_BuildSystem = 2
+};
+
+class CPPEDITOR_EXPORT CppCodeModelSettingsData
 {
 public:
-    enum PCHUsage {
-        PchUse_None = 1,
-        PchUse_BuildSystem = 2
-    };
+    int effectiveIndexerFileSizeLimitInMb() const;
+    UsePrecompiledHeaders usePrecompiledHeaders() const;
 
-    CppCodeModelSettings() = default;
-    CppCodeModelSettings(const Utils::Store &store) { fromMap(store); }
+    QString ignorePattern;
+    PchUsage pchUsage = PchUsage::PchUse_BuildSystem;
+    int indexerFileSizeLimitInMb = 5;
+    bool interpretAmbiguousHeadersAsC = false;
+    bool skipIndexingBigFiles = true;
+    bool useBuiltinPreprocessor = true;
+    bool ignoreFiles = false;
+    bool enableIndexing = true;
 
-    friend bool operator==(const CppCodeModelSettings &s1, const CppCodeModelSettings &s2);
-    friend bool operator!=(const CppCodeModelSettings &s1, const CppCodeModelSettings &s2)
-    {
-        return !(s1 == s2);
-    }
+private:
+    friend bool operator==(const CppCodeModelSettingsData &s1, const CppCodeModelSettingsData &s2);
+};
 
-    Utils::Store toMap() const;
-    void fromMap(const Utils::Store &store);
+class IgnorePchAspect final : public Utils::BoolAspect
+{
+private:
+    using Utils::BoolAspect::BoolAspect;
+    QVariant toSettingsValue(const QVariant &valueToSave) const final;
+    QVariant fromSettingsValue(const QVariant &savedValue) const final;
+};
 
-    static CppCodeModelSettings settingsForProject(const ProjectExplorer::Project *project);
-    static CppCodeModelSettings settingsForProject(const Utils::FilePath &projectFile);
-    static CppCodeModelSettings settingsForFile(const Utils::FilePath &file);
+class CPPEDITOR_EXPORT CppCodeModelSettings : public Utils::AspectContainer
+{
+public:
+    CppCodeModelSettings();
+
+    static CppCodeModelSettingsData settingsForProject(const ProjectExplorer::Project *project);
+    static CppCodeModelSettingsData settingsForProject(const Utils::FilePath &projectFile);
+    static CppCodeModelSettingsData settingsForFile(const Utils::FilePath &file);
     static bool hasCustomSettings(const ProjectExplorer::Project *project);
     static void setSettingsForProject(ProjectExplorer::Project *project,
-                                      const CppCodeModelSettings &settings);
+                                      const CppCodeModelSettingsData &settings);
 
-    static const CppCodeModelSettings &global() { return globalInstance(); }
-    static void setGlobal(const CppCodeModelSettings &settings);
+    static CppCodeModelSettings &global();
+    static void setGlobal(const CppCodeModelSettingsData &settings);
 
-    static PCHUsage pchUsageForProject(const ProjectExplorer::Project *project);
-    UsePrecompiledHeaders usePrecompiledHeaders() const;
+    static PchUsage pchUsageForProject(const ProjectExplorer::Project *project);
     static UsePrecompiledHeaders usePrecompiledHeaders(const ProjectExplorer::Project *project);
-
-    int effectiveIndexerFileSizeLimitInMb() const;
 
     static bool categorizeFindReferences();
     static void setCategorizeFindReferences(bool categorize);
@@ -58,25 +70,21 @@ public:
     static bool isInteractiveFollowSymbol();
     static void setInteractiveFollowSymbol(bool interactive);
 
-    QString ignorePattern;
-    PCHUsage pchUsage = PchUse_BuildSystem;
-    int indexerFileSizeLimitInMb = 5;
-    bool interpretAmbigiousHeadersAsC = false;
-    bool skipIndexingBigFiles = true;
-    bool useBuiltinPreprocessor = true;
-    bool ignoreFiles = false;
-    bool enableIndexing = true;
+    CppCodeModelSettingsData data() const;
+    void setData(const CppCodeModelSettingsData &data);
 
-    // Ephemeral!
-    bool m_categorizeFindReferences = false;
-    bool interactiveFollowSymbol = true;
+    Utils::StringAspect ignorePattern{this};
+    Utils::BoolAspect ignorePch{this};
+    Utils::IntegerAspect indexerFileSizeLimitInMb{this};
+    Utils::BoolAspect interpretAmbiguousHeadersAsC{this};
+    Utils::BoolAspect skipIndexingBigFiles{this};
+    Utils::BoolAspect useBuiltinPreprocessor{this};
+    Utils::BoolAspect ignoreFiles{this};
+    Utils::BoolAspect enableIndexing{this};
 
 private:
-    CppCodeModelSettings(Utils::QtcSettings *s) { fromSettings(s); }
-    static CppCodeModelSettings &globalInstance();
-
-    void toSettings(Utils::QtcSettings *s);
-    void fromSettings(Utils::QtcSettings *s);
+    bool m_categorizeFindReferences = false;
+    bool interactiveFollowSymbol = true;
 };
 
 namespace Internal {

@@ -59,8 +59,8 @@ public:
     QAction *action(PluginInterface::ActionType act);
     QToolButton *toolButton(PluginInterface::ToolButtonType type);
 
-    QString fileName() const;
-    void setFileName(const QString &filename);
+    Utils::FilePath filePath() const;
+    void setFilePath(const Utils::FilePath &filePath);
     QString errorMessage() const;
     QString contents() const;
     QUndoStack *undoStack() const;
@@ -69,7 +69,7 @@ public:
     void refresh();
     OutputPane::WarningModel *warningModel() const;
     PluginInterface::ScxmlUiFactory *uiFactory() const;
-    bool load(const QString &fileName);
+    bool load(const Utils::FilePath &filePath);
     bool save();
     void addStateView(PluginInterface::BaseItem *item = nullptr);
     void initView(int id);
@@ -108,8 +108,8 @@ private:
 
     PluginInterface::ScxmlDocument *m_document = nullptr;
     PluginInterface::ScxmlUiFactory *m_uiFactory = nullptr;
-    QVector<QToolButton*> m_toolButtons;
-    QVector<StateView*> m_views;
+    QList<QToolButton*> m_toolButtons;
+    QList<StateView*> m_views;
     bool m_autoFit = true;
     bool m_windowBlocked = false;
     PluginInterface::ActionHandler *m_actionHandler = nullptr;

@@ -5,16 +5,13 @@
 
 #include "projectexplorer_export.h"
 
-#include <utils/id.h>
-#include <utils/store.h>
-
-#include <QObject>
+#include <texteditor/behaviorsettings.h>
+#include <texteditor/extraencodingsettings.h>
+#include <texteditor/marginsettings.h>
+#include <texteditor/storagesettings.h>
+#include <texteditor/typingsettings.h>
 
 #include <memory>
-
-QT_BEGIN_NAMESPACE
-class QTextCodec;
-QT_END_NAMESPACE
 
 namespace TextEditor {
 class BaseTextEditor;
@@ -22,14 +19,15 @@ class TextEditorWidget;
 class TextDocument;
 class TabSettings;
 class ICodeStylePreferences;
-class TypingSettings;
-class StorageSettings;
-class BehaviorSettings;
-class ExtraEncodingSettings;
-class MarginSettings;
+class TypingSettingsData;
 } // namespace TextEditor
 
-namespace Utils { class FilePath; }
+namespace Core { class IEditor; }
+
+namespace Utils {
+class FilePath;
+class TextEncoding;
+};
 
 namespace ProjectExplorer {
 
@@ -49,45 +47,33 @@ public:
     void cloneGlobalSettings();
 
     // The default codec is returned in the case the project doesn't override it.
-    QTextCodec *textCodec() const;
+    Utils::TextEncoding textEncoding() const;
 
-    const TextEditor::TypingSettings &typingSettings() const;
-    const TextEditor::StorageSettings &storageSettings() const;
-    const TextEditor::BehaviorSettings &behaviorSettings() const;
-    const TextEditor::ExtraEncodingSettings &extraEncodingSettings() const;
-    const TextEditor::MarginSettings &marginSettings() const;
+    TextEditor::StorageSettings storageSettings;
+    TextEditor::BehaviorSettings behaviorSettings;
+    TextEditor::ExtraEncodingSettings extraEncodingSettings;
+    TextEditor::MarginSettings marginSettings;
+    TextEditor::TypingSettings typingSettings;
 
     TextEditor::ICodeStylePreferences *codeStyle() const;
     TextEditor::ICodeStylePreferences *codeStyle(Utils::Id languageId) const;
     QMap<Utils::Id, TextEditor::ICodeStylePreferences *> codeStyles() const;
 
-    void configureEditor(TextEditor::BaseTextEditor *textEditor) const;
-    void deconfigureEditor(TextEditor::BaseTextEditor *textEditor) const;
+    void configureEditor(Core::IEditor *editor) const;
+    void deconfigureEditor(Core::IEditor *editor) const;
 
     Utils::Store toMap() const;
     void fromMap(const Utils::Store &map);
 
-    void setTypingSettings(const TextEditor::TypingSettings &settings);
-    void setStorageSettings(const TextEditor::StorageSettings &settings);
-    void setBehaviorSettings(const TextEditor::BehaviorSettings &settings);
-    void setExtraEncodingSettings(const TextEditor::ExtraEncodingSettings &settings);
-    void setMarginSettings(const TextEditor::MarginSettings &settings);
-
-    void setShowWrapColumn(bool onoff);
-    void setTintMarginArea(bool onoff);
-    void setUseIndenter(bool onoff);
-    void setWrapColumn(int column);
-
-    void setTextCodec(QTextCodec *textCodec);
+    void setTextEncoding(const Utils::TextEncoding &textEncoding);
 
     void slotAboutToRemoveProject(ProjectExplorer::Project *project);
 
 signals:
-    void typingSettingsChanged(const TextEditor::TypingSettings &);
-    void storageSettingsChanged(const TextEditor::StorageSettings &);
-    void behaviorSettingsChanged(const TextEditor::BehaviorSettings &);
-    void extraEncodingSettingsChanged(const TextEditor::ExtraEncodingSettings &);
-    void marginSettingsChanged(const TextEditor::MarginSettings &);
+    void typingSettingsChanged(const TextEditor::TypingSettingsData &);
+    void storageSettingsChanged(const TextEditor::StorageSettingsData &);
+    void behaviorSettingsChanged(const TextEditor::BehaviorSettingsData &);
+    void extraEncodingSettingsChanged(const TextEditor::ExtraEncodingSettingsData &);
 
 private:
     void switchSettings(TextEditor::TextEditorWidget *baseTextEditor) const;

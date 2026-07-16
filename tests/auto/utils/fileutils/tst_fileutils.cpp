@@ -1,7 +1,7 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include <QtTest>
+#include <QTest>
 
 #include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
@@ -14,7 +14,7 @@ namespace QTest {
 template<>
 char *toString(const Utils::FilePath &filePath)
 {
-    return qstrdup(filePath.toString().toLocal8Bit().constData());
+    return qstrdup(filePath.toUrlishString().toLocal8Bit().constData());
 }
 
 template<>
@@ -59,9 +59,9 @@ void tst_fileutils::commonPath()
     QFETCH(FilePaths, list);
     QFETCH(FilePath, expected);
 
-    const FilePath result = FileUtils::commonPath(list);
+    const FilePath result = list.commonPath();
 
-    QCOMPARE(expected.toString(), result.toString());
+    QCOMPARE(expected, result);
 }
 
 void tst_fileutils::commonPath_data()

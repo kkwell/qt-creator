@@ -14,7 +14,7 @@
 
     \ingroup creator-reference-debugger
 
-    \title Supported Debuggers
+    \title Supported debuggers
 
     \brief Summary of supported debugger versions.
 
@@ -58,14 +58,14 @@
     \endtable
 
     \QC automatically selects a suitable debugger for
-    each \l{Kits}{kit} from the ones found on the computer. The automatic
+    each \l{Managing kits}{kit} from the ones found on the computer. The automatic
     setup fails if the debugger is not installed on the computer or
     if \QC does not support the installed version.
 
-    \section1 GDB Versions
+    \section1 GDB versions
 
     Use GDB 7.5, or later, with the Python scripting extension and Python version
-    3.5, or later.
+    3.7, or later.
 
     For remote debugging using GDB and GDB server, the minimum supported version
     of GDB server on the target \l{glossary-device}{device} is 7.0.
@@ -76,11 +76,11 @@
     are sufficient.
 
     You can also build your own GDB, as instructed in
-    \l{http://wiki.qt.io/QtCreator_Build_Gdb}{Building GDB}.
+    \l{QtCreator Build Gdb}.
 
     Builds of GDB shipped with Xcode on \macos are no longer supported.
 
-    \section1 Debugging Tools for Windows
+    \section1 Debugging tools for Windows
 
     \QC supports all versions of CDB targeting platforms that Qt supports.
 
@@ -105,7 +105,7 @@
     the required files in
     \c{"%ProgramFiles%\Debugging Tools for Windows"}.
 
-    \section1 Debugging Tools for \macos
+    \section1 Debugging tools for \macos
 
     The Qt binary distribution has both debug and release
     variants of the libraries. However, you have to explicitly tell the
@@ -113,15 +113,11 @@
     your application is compiled as \e debug because \e release is the default
     library.
 
-    If you use a qmake based project in \QC, you can set a flag in
-    your \l{glossary-run-config}{run configuration}, in
-    \uicontrol Projects mode. In the run configuration, select
+    To use debug libraries, set a flag in your \l{glossary-run-config}{run configuration},
+    in \uicontrol Projects mode. In the run configuration, select
     \uicontrol{Use debug version of frameworks}.
 
-    For more detailed information about debugging on \macos,
-    see: \l{http://developer.apple.com/library/mac/#technotes/tn2124/_index.html#//apple_ref/doc/uid/DTS10003391}
-    {Mac OS X Debugging Magic}.
-    \section1 LLDB Versions
+    \section1 LLDB versions
 
     The LLDB debugger has similar functionality to the GDB debugger. LLDB
     is the default debugger in Xcode on \macos for C++ on the desktop.
@@ -136,17 +132,14 @@
 
     On Linux, the minimum supported version is LLDB 3.8.
 
-    \section1 PDB Versions
+    \section1 PDB versions
 
-    \l{https://docs.python.org/3/library/pdb.html}{PDB} is a source code debugger
-    for Python applications. You can use it to debug projects that have a
-    \l {Tutorial: Qt Widgets and Python}{.pyproject}
+    \l{PDB} is a source code debugger
+    for Python applications. You can use the PDB version installed with Python to
+    debug projects that have a \l {Tutorial: Qt Widgets and Python}{\c pyproject.toml}
     configuration file.
 
-    Install Python and set the interpreter to use in \uicontrol Projects
-    > \uicontrol Run.
+    For more information, see \l {Set up PySide6}.
 
-    \image qtcreator-run-settings-python.webp {Run settings for a Python project}
-
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger}, {Kits}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}, {Managing kits}
 */

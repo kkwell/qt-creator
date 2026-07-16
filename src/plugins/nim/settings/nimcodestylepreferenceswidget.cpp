@@ -59,8 +59,6 @@ NimCodeStylePreferencesWidget::NimCodeStylePreferencesWidget(ICodeStylePreferenc
     updatePreview();
 }
 
-NimCodeStylePreferencesWidget::~NimCodeStylePreferencesWidget() = default;
-
 void NimCodeStylePreferencesWidget::decorateEditor(const FontSettings &fontSettings)
 {
     m_previewTextEdit->textDocument()->setFontSettings(fontSettings);
@@ -69,7 +67,7 @@ void NimCodeStylePreferencesWidget::decorateEditor(const FontSettings &fontSetti
 
 void NimCodeStylePreferencesWidget::setVisualizeWhitespace(bool on)
 {
-    DisplaySettings displaySettings = m_previewTextEdit->displaySettings();
+    DisplaySettingsData displaySettings = m_previewTextEdit->displaySettings();
     displaySettings.m_visualizeWhitespace = on;
     m_previewTextEdit->setDisplaySettings(displaySettings);
 }

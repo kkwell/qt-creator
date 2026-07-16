@@ -136,7 +136,7 @@ public:
 
     bool isApplicable(const IDocument *document) const;
 
-    void applyIfNecessary(IDocument *document) const;
+    void applyIfNecessary(IDocument *document, IDocument::SaveOption option) const;
 
     TextEditor::Command formatCommand() const
     {
@@ -153,13 +153,17 @@ public:
         if (dir.isEmpty())
             return FilePaths();
 
-        return filtered(transform({".cmake-format",
-                                   ".cmake-format.py",
-                                   ".cmake-format.json",
-                                   ".cmake-format.yaml",
-                                   "cmake-format.py",
-                                   "cmake-format.json",
-                                   "cmake-format.yaml"},
+        static const QStringList files = {
+            ".cmake-format",
+            ".cmake-format.py",
+            ".cmake-format.json",
+            ".cmake-format.yaml",
+            "cmake-format.py",
+            "cmake-format.json",
+            "cmake-format.yaml"
+        };
+
+        return filtered(transform(files,
                                   [dir](const QString &fileName) {
                                       return dir.pathAppended(fileName);
                                   }),
@@ -168,13 +172,10 @@ public:
 
     static FilePaths findConfigs(const FilePath &fileName)
     {
-        FilePath parentDirectory = fileName.parentDir();
-        while (parentDirectory.exists()) {
+        for (const FilePath &parentDirectory : PathAndParents(fileName.parentDir())) {
             FilePaths configFiles = formatConfigFiles(parentDirectory);
             if (!configFiles.isEmpty())
                 return configFiles;
-
-            parentDirectory = parentDirectory.parentDir();
         }
         return FilePaths();
     }
@@ -213,9 +214,9 @@ bool CMakeFormatterSettings::isApplicable(const IDocument *document) const
     });
 }
 
-void CMakeFormatterSettings::applyIfNecessary(IDocument *document) const
+void CMakeFormatterSettings::applyIfNecessary(IDocument *document, IDocument::SaveOption option) const
 {
-    if (!autoFormatOnSave())
+    if (!autoFormatOnSave() || option != IDocument::SaveOption::None)
         return;
 
     if (!document)
@@ -264,7 +265,6 @@ public:
     {
         setId(Constants::Settings::FORMATTER_ID);
         setDisplayName(Tr::tr("Formatter"));
-        setDisplayCategory("CMake");
         setCategory(Constants::Settings::CATEGORY);
         setSettingsProvider([] { return &formatterSettings(); });
     }

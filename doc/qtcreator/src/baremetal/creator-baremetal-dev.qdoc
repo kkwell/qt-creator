@@ -5,13 +5,15 @@
     \page creator-developing-baremetal.html
     \previouspage creator-reference.html
 
-    \ingroup creator-reference-devices
+    \title Developing for Bare Metal devices
 
-    \title Developing for Bare Metal Devices
+    \quotation
+    \l {Bare Metal}{How to: Develop for Bare Metal}
+    \endquotation
 
-    \brief Create kits to use Bare Metal toolchains installed on the computer
+    \summary {Create kits to use Bare Metal toolchains installed on the computer
     to build applications for and run and debug them on connected Bare Metal
-    devices.
+    devices.}
 
     Run and debug applications on small devices that are not supported
     by the remote Linux device plugin by using GDB or a hardware debugger.
@@ -25,7 +27,7 @@
     \note If you use qmake to build the project and the device does not have
     Qt libraries, you need a Qt installation that meets the requirements in
     \l{Self-built Qt versions}. In addition, the \c mkspecs directory needs
-    to be complete enough to parse .pro files.
+    to be complete enough to parse \c .pro files.
 
     The following toolchains are supported for building applications:
 
@@ -34,16 +36,15 @@
             NXP Semiconductors (ColdFire, M68K), Texas Instruments (MSP430),
             National Semiconductor (CR16C), Renesas Electronics (M32R, M32C,
             RL78, RX, SuperH, V850), Tensilica XTENSA (ESP8266, ESP32), RISC-V,
-            Arm
-        \li \l{https://www.iar.com/iar-embedded-workbench/}{IAR EW}:
-            Microchip Technology (AVR, AVR32), NXP Semiconductors
+            \tm Arm
+        \li \l{IAR EW}: Microchip Technology (AVR, AVR32), NXP Semiconductors
             (ColdFire, M68K), Texas Instruments (MSP430),
             National Semiconductor (CR16C), Renesas Electronics (78K,
             M16/R8C, M32C, R32C, RH850, RL78, RX, SuperH, V850),
-            STMicroelectronics (STM8), 8051, RISC-V, Arm
-        \li \l{https://www.keil.com/product/}{Keil}: Arm, C51 (8051),
+            STMicroelectronics (STM8), 8051, RISC-V, \tm Arm
+        \li \l{Keil}: \tm Arm, C51 (8051),
             C251 (80251), C166 (C16x, XC16x)
-        \li \l{http://sdcc.sourceforge.net/}{SDCC}: STMicroelectronics (STM8),
+        \li \l{SDCC}: STMicroelectronics (STM8),
             8051
     \endlist
 
@@ -51,7 +52,7 @@
     the device preferences. You can specify the commands to execute when connecting
     using a particular debug server provider.
 
-    \section1 Debug Server Providers
+    \section1 Debug server providers
 
     The following debug server providers are supported when using GDB:
 
@@ -72,7 +73,7 @@
     The available settings depend on the debug server provider.
 
     \sa {Add kits}, {Enable and disable plugins},
-    {Bare Metal}{How To: Develop for Bare Metal}
+    {Bare Metal}{How to: Develop for Bare Metal}
 */
 
 /*!
@@ -83,10 +84,10 @@
 
     \title Set up EBlink
 
-    \l{https://github.com/EmBitz/EBlink}{EBlink} is an ARM Cortex-M debug tool
+    \l{EBlink} is an Arm Cortex-M debug tool
     that supports squirrel scripting, live variables, and hot-plugging.
 
-    \image qtcreator-baremetal-eblink.webp {Bare metal device preferences for EBlink}
+    \image {qtcreator-baremetal-eblink.webp} {EBlink in the Bare Metal tab in Devices preferences}
 
     To set preferences for \EBlink:
 
@@ -118,7 +119,7 @@
 
     \endlist
 
-    \sa {Bare Metal}{How To: Develop for Bare Metal},
+    \sa {Bare Metal}{How to: Develop for Bare Metal},
     {Developing for Bare Metal Devices}
 */
 
@@ -130,10 +131,9 @@
 
     \title Set up J-Link
 
-    \l{https://www.segger.com/products/debug-probes/j-link/}{J-Link} is a line
-    of debug probes by Segger.
+    \l{J-Link} is a line of debug probes by Segger.
 
-    \image qtcreator-baremetal-jlink.webp {Bare metal device preferences for J-Link}
+    \image {qtcreator-baremetal-jlink.webp} {J-Link in the Bare Metal tab in Devices preferences}
 
     To set preferences for J-Link debug probes:
 
@@ -157,7 +157,7 @@
 
     \endlist
 
-    \sa {Bare Metal}{How To: Develop for Bare Metal},
+    \sa {Bare Metal}{How to: Develop for Bare Metal},
     {Developing for Bare Metal Devices}
 */
 
@@ -169,12 +169,12 @@
 
     \title Set up OpenOCD
 
-    \l{http://openocd.org}{OpenOCD} (Open On-Chip Debugger) is an on-chip debug
-    solution for targets based on the ARM7 and ARM9 family with Embedded-ICE
+    \l{OpenOCD} (Open On-Chip Debugger) is an on-chip debug
+    solution for targets based on the \tm Arm7 and \tm Arm9 family with Embedded-ICE
     (JTAG) facility. It enables source level debugging with the GDB compiled
-    for the ARM architecture.
+    for the \tm Arm architecture.
 
-    \image qtcreator-baremetal-openocd.webp {Bare metal device preferences for OpenOCD}
+    \image {qtcreator-baremetal-openocd.webp} {OpenOCD in the Bare Metal tab in Devices preferences}
 
     To set preferences for \OpenOCD:
 
@@ -195,7 +195,7 @@
 
     \endlist
 
-    \sa {Bare Metal}{How To: Develop for Bare Metal},
+    \sa {Bare Metal}{How to: Develop for Bare Metal},
     {Developing for Bare Metal Devices}
 */
 
@@ -207,10 +207,9 @@
 
     \title Set up St-Link
 
-    \l{https://www.st.com/en/development-tools/stm32-programmers.html#products}
-    {ST-LINK Utility} is used for programming STM32 microcontrollers.
+    \l{ST-LINK Utility} is used for programming STM32 microcontrollers.
 
-    \image qtcreator-baremetal-stlink.webp {Bare metal device preferences for St-Link}
+    \image {qtcreator-baremetal-stlink.webp} {St-Link  in the Bare Metal tab in Devices preferences}
 
     To set preferences for St-Link:
 
@@ -234,7 +233,7 @@
 
     \endlist
 
-    \sa {Bare Metal}{How To: Develop for Bare Metal},
+    \sa {Bare Metal}{How to: Develop for Bare Metal},
     {Developing for Bare Metal Devices}
 */
 
@@ -246,7 +245,7 @@
 
     \title Set up the uVision IDE
 
-    \l{http://www.keil.com/support/man/docs/uv4/uv4_overview.htm}{uVision} is
+    \l{uVision} is
     an IDE for developing applications for embedded devices. To debug
     applications, use uVision Simulator, or debug directly on hardware by using
     St-Link and J-Link.
@@ -256,7 +255,7 @@
 
     \section1 uVision Simulator
 
-    \image qtcreator-baremetal-uvision-simulator.png {Bare metal device preferences for uVision Simulator}
+    \image {qtcreator-baremetal-uvision-simulator.png} {uVision Simulator in the Bare Metal tab in Devices preferences}}
 
     To set preferences for uVision Simulator:
 
@@ -273,7 +272,7 @@
 
     \section1 uVision St-Link or JLink Debugger
 
-    \image qtcreator-baremetal-uvision-st-link.png {Bare metal device preferences for uVision St-Link}
+    \image {qtcreator-baremetal-uvision-st-link.png} {uVision St-Link in the Bare Metal tab in Devices preferences}
 
     To set preferences for uVision St-Link or JLink Debugger:
 
@@ -288,7 +287,7 @@
 
     \endlist
 
-    \sa {Bare Metal}{How To: Develop for Bare Metal},
+    \sa {Bare Metal}{How to: Develop for Bare Metal},
     {Developing for Bare Metal Devices}
 */
 
@@ -308,13 +307,15 @@
 
         \list 1
 
-           \li Go to \preferences > \uicontrol Devices.
-               \image qtcreator-baremetal-devices.png {Bare Metal device preferences}
+           \li Go to \preferences > \uicontrol Devices > \uicontrol Devices.
+               \image {qtcreator-baremetal-devices.png} {Bare Metal tab in Devices preferences}
            \li Select \uicontrol Add > \uicontrol {Bare Metal Device} >
                 \uicontrol {Start Wizard}.
 
            \li In \uicontrol {Debug server provider}, select a debug
                server provider.
+
+            \li Select \uicontrol Finish to return to > \uicontrol Devices.
 
             \li Select \uicontrol Apply to add the device.
 
@@ -325,12 +326,12 @@
     To add a kit for building applications and running them on bare metal
     devices, go to \preferences > \uicontrol Kits and select \uicontrol Add.
 
-    \image qtcreator-baremetal-kit.png {Kit preferences for Bare Metal}
+    \image {qtcreator-preferences-kits-baremetal.webp} {Bare Metal device selected in Kits preferences}
 
     Build applications for and run them on bare metal devices
     in same way as for and on the desktop.
 
     \sa {Add kits}, {Build for many platforms},
-    {Bare Metal}{How To: Develop for Bare Metal}, {Run on many platforms},
+    {Bare Metal}{How to: Develop for Bare Metal}, {Running applications},
     {Developing for Bare Metal Devices}
 */

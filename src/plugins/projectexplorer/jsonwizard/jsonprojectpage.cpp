@@ -11,12 +11,9 @@
 #include "../projectnodes.h"
 #include "../projectmanager.h"
 #include "../projecttree.h"
-#include "../target.h"
 
 #include <coreplugin/documentmanager.h>
 
-#include <utils/algorithm.h>
-#include <utils/fileutils.h>
 #include <utils/qtcassert.h>
 
 #include <QDir>
@@ -44,7 +41,7 @@ void JsonProjectPage::initializePage()
         connect(ProjectTree::instance(), &ProjectTree::treeChanged,
                 this, &JsonProjectPage::initUiForSubProject);
     }
-    setProjectName(uniqueProjectName(filePath().toString()));
+    setProjectName(uniqueProjectName(filePath().toUrlishString()));
 }
 
 bool JsonProjectPage::validatePage()
@@ -69,7 +66,7 @@ bool JsonProjectPage::validatePage()
         const FilePath preferred = FilePath::fromVariant(property(UserPreferredPath));
 
         ProjectIntroPage::ProjectInfo info = currentProjectInfo();
-        Project *project = ProjectManager::projectWithProjectFilePath(info.projectFile);
+        Project *project = ProjectManager::projectWithProjectFile(info.projectFile, false);
         wiz->setProperty("BuildSystem", info.buildSystem);
         wiz->setProperty(Constants::PROJECT_POINTER, QVariant::fromValue(static_cast<void *>(project)));
         // only if destination path and parent project hasn't changed keep original preferred
@@ -87,8 +84,8 @@ bool JsonProjectPage::validatePage()
 
     const FilePath target = filePath().pathAppended(projectName());
 
-    wiz->setProperty("ProjectDirectory", target.toString());
-    wiz->setProperty("TargetPath", target.toString());
+    wiz->setProperty("ProjectDirectory", target.toUrlishString());
+    wiz->setProperty("TargetPath", target.toUrlishString());
 
     return Utils::ProjectIntroPage::validatePage();
 }
@@ -118,14 +115,15 @@ void JsonProjectPage::initUiForSubProject()
     if (void *storedNode = property(UserPreferredNode).value<void *>()) {
         // fixup stored contextNode / node path
         Node *node = static_cast<Node *>(storedNode);
-        if (auto p = ProjectManager::projectWithProjectFilePath(node->filePath()))
+        if (auto p = ProjectManager::projectWithProjectFile(node->filePath(), false))
             contextNode = p->rootProjectNode();
     } else {
         contextNode = static_cast<Node *>(wiz->value(Constants::PREFERRED_PROJECT_NODE).value<void *>());
         if (!contextNode) {
             const QVariant prefProjPath = wiz->value(Constants::PREFERRED_PROJECT_NODE_PATH);
             if (prefProjPath.isValid()) {
-                if (auto project = ProjectManager::projectWithProjectFilePath(FilePath::fromVariant(prefProjPath)))
+                if (auto project = ProjectManager::projectWithProjectFile(
+                        FilePath::fromVariant(prefProjPath), false))
                     contextNode = project->rootProjectNode();
             }
         }
@@ -139,31 +137,34 @@ void JsonProjectPage::initUiForSubProject()
 
     const QList<Project *> currentProjects = ProjectManager::projects();
     QList<ProjectInfo> projectInfos;
-    projectInfos.append({Tr::tr("None"), Core::DocumentManager::projectsDirectory(), {}, {}, {}});
+    projectInfos.append(
+        {Tr::tr("None", "Add to project: None"),
+         Core::DocumentManager::projectsDirectory(),
+         {},
+         {},
+         {}});
     int index = -1;
     int counter = 1; // we've added None already
     for (const Project *proj : currentProjects) {
         ProjectNode *rootNode = proj->rootProjectNode();
         if (!rootNode)
             continue;
-
-        const QList<Target *> targets = proj->targets();
-        const BuildSystem *bs = targets.isEmpty() ? nullptr : targets.first()->buildSystem();
+        const BuildSystem * const bs = proj->activeBuildSystem();
         if (!bs)
             continue;
         if (bs->isParsing()) {
-            connect(bs, &BuildSystem::parsingFinished, this, &JsonProjectPage::initUiForSubProject,
-                    Qt::UniqueConnection);
+            connect(bs, &BuildSystem::parsingFinished,
+                    this, &JsonProjectPage::initUiForSubProject, Qt::UniqueConnection);
         }
         if (!rootNode->supportsAction(AddSubProject, rootNode))
             continue;
 
         ProjectInfo info;
         info.projectFile = proj->projectFilePath();
-        info.projectId = proj->id();
+        info.projectId = proj->type();
         info.projectDirectory = proj->rootProjectDirectory();
         info.display = rootNode->displayName() + " - " + proj->projectFilePath().toUserOutput();
-        info.buildSystem = (bs ? bs->name() : "");
+        info.buildSystem = proj->buildSystemName();
         if (contextNode && contextNode->getProject() == proj)
             index = counter;
         projectInfos.append(info);

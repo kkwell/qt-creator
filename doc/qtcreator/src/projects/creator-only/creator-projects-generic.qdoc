@@ -11,7 +11,7 @@
     \page creator-project-generic.html
     \previouspage creator-reference.html
 
-    \ingroup creator-how-to-projects
+    \ingroup creator-how-to-projects-create
 
     \title Import an existing project
 
@@ -89,7 +89,7 @@
     a file path in the \c .files file, separated by the pipe character (|).
     For example:
 
-    \badcode
+    \code [text]
     src/pch.h|pch
     \endcode
 
@@ -125,15 +125,15 @@
     you first need to deploy your executable and possibly other files.
     \QC does that for you automatically if you enter the necessary
     information. This works the same way as explained for CMake in
-    \l {Remote Linux Deploy Configuration},
+    \l {Deploy applications to remote Linux devices},
     except that you also need to include your application binary in the list.
 
     \section1 Create a run configuration
 
     \QC cannot automatically determine which executable to run, so you must
-    set the executable in \uicontrol {Projects} > \uicontrol {Run} >
+    set the executable in \uicontrol {Projects} > \uicontrol {Run Settings} >
     \uicontrol Add > \uicontrol {Custom Executable}.
 
     \sa {Specify a custom executable to run},  {Use project wizards},
-    {Configuring Projects}
+    {Building and running projects}
 */

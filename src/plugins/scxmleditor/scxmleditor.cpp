@@ -9,7 +9,6 @@
 
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/coreconstants.h>
-#include <coreplugin/coreplugintr.h>
 #include <coreplugin/designmode.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/editormanager/ieditorfactory.h>
@@ -189,6 +188,9 @@ ScxmlEditorData::~ScxmlEditorData()
         DesignMode::unregisterDesignWidget(m_modeWidget);
         delete m_modeWidget;
         m_modeWidget = nullptr;
+    } else if (m_mainToolBar) { // gets automatically deleted with m_modeWidget
+        delete m_mainToolBar;
+        m_mainToolBar = nullptr;
     }
 
     delete m_xmlEditorFactory;
@@ -219,7 +221,8 @@ void ScxmlEditorData::fullInit()
     scxmlContexts.add(Core::Constants::C_EDITORMANAGER);
     IContext::attach(m_modeWidget, scxmlContexts);
 
-    DesignMode::registerDesignWidget(m_modeWidget, QStringList(Utils::Constants::SCXML_MIMETYPE), m_contexts);
+    DesignMode::registerDesignWidget(
+        "ScxmlEditor", m_modeWidget, QStringList(Utils::Constants::SCXML_MIMETYPE), m_contexts);
 }
 
 IEditor *ScxmlEditorData::createEditor()
@@ -315,7 +318,7 @@ public:
         : QObject(guard)
     {
         setId(Constants::K_SCXML_EDITOR_ID);
-        setDisplayName(::Core::Tr::tr(Constants::C_SCXMLEDITOR_DISPLAY_NAME));
+        setDisplayName(Tr::tr("SCXML Editor"));
         addMimeType(Utils::Constants::SCXML_MIMETYPE);
 
         Utils::FileIconProvider::registerIconOverlayForSuffix(":/projectexplorer/images/fileoverlay_scxml.png", "scxml");

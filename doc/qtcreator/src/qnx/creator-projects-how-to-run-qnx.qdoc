@@ -6,6 +6,7 @@
     \previouspage creator-how-tos.html
 
     \ingroup creator-how-to-qnx
+    \ingroup creator-how-to-run
 
     \title Run on QNX devices
 
@@ -15,9 +16,9 @@
         \li Connect the device to the computer or to a network.
         \li Go to \preferences > \uicontrol Devices > \uicontrol Devices,
             and add a QNX device.
-            \image qtcreator-devices-qnx.webp {QNX device preferences}
+            \image {qtcreator-devices-qnx.webp} {QNX device in the Devices tab in Devices preferences}
         \li Make sure that your kit has your QNX device set.
-        \li Select \inlineimage icons/run_small.png (\uicontrol Run).
+        \li Select \imagerunsmall (\uicontrol Run).
     \endlist
 
     \QC uses the compiler specified in the QNX toolchain to build the
@@ -50,6 +51,8 @@
     \c printf, \c ps, \c read, \c sed, \c sleep, \c uname, \c slog2info, and
     \c cat.
 
-    \sa {QNX Neutrino}{How To: Develop for QNX}, {Run on many platforms},
-    {Compilers}, {kit-preferences}{Kits}
+    \sa {QNX Neutrino}{How to: Develop for QNX},
+    {Manage kits}{How to: Manage kits},
+    {Developing for QNX Neutrino devices}, {Managing kits},
+    {Running applications},
 */

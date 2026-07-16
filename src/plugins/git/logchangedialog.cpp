@@ -6,9 +6,9 @@
 #include "gitclient.h"
 #include "gittr.h"
 
-#include <vcsbase/vcscommand.h>
 #include <vcsbase/vcsoutputwindow.h>
 
+#include <utils/algorithm.h>
 #include <utils/qtcassert.h>
 
 #include <QComboBox>
@@ -30,7 +30,7 @@ namespace Git::Internal {
 
 enum Columns
 {
-    Sha1Column,
+    HashColumn,
     SubjectColumn,
     ColumnCount
 };
@@ -43,12 +43,12 @@ public:
     QVariant data(const QModelIndex &index, int role) const override
     {
         if (role == Qt::ToolTipRole) {
-            const QString revision = index.sibling(index.row(), Sha1Column).data(Qt::EditRole).toString();
+            const QString revision = index.sibling(index.row(), HashColumn).data(Qt::EditRole).toString();
             const auto it = m_descriptions.constFind(revision);
             if (it != m_descriptions.constEnd())
                 return *it;
             const QString desc = QString::fromUtf8(gitClient().synchronousShow(
-                                 m_workingDirectory, revision, RunFlags::NoOutput));
+                                 m_workingDirectory, revision, RunFlag::NoOutput));
             m_descriptions[revision] = desc;
             return desc;
         }
@@ -66,8 +66,7 @@ LogChangeWidget::LogChangeWidget(QWidget *parent)
     , m_model(new LogChangeModel(this))
     , m_hasCustomDelegate(false)
 {
-    QStringList headers;
-    headers << Tr::tr("Sha1")<< Tr::tr("Subject");
+    const QStringList headers = {Tr::tr("Hash"), Tr::tr("Subject")};
     m_model->setHorizontalHeaderLabels(headers);
     setModel(m_model);
     setMinimumWidth(300);
@@ -83,17 +82,21 @@ bool LogChangeWidget::init(const FilePath &repository, const QString &commit, Lo
     m_model->setWorkingDirectory(repository);
     if (!populateLog(repository, commit, flags))
         return false;
+
+    if (selectionMode() == QAbstractItemView::MultiSelection)
+        selectionModel()->clearSelection();
+
     if (m_model->rowCount() > 0)
         return true;
     if (!(flags & Silent))
-        VcsOutputWindow::appendError(GitClient::msgNoCommits(flags & IncludeRemotes));
+        VcsOutputWindow::appendError(repository, GitClient::msgNoCommits(flags & IncludeRemotes));
     return false;
 }
 
 QString LogChangeWidget::commit() const
 {
-    if (const QStandardItem *sha1Item = currentItem(Sha1Column))
-        return sha1Item->text();
+    if (const QStandardItem *hashItem = currentItem(HashColumn))
+        return hashItem->text();
     return {};
 }
 
@@ -105,11 +108,50 @@ int LogChangeWidget::commitIndex() const
     return -1;
 }
 
+/**
+ * Returns a list of commit hashes suitable for cherry-picking.
+ */
+QStringList LogChangeWidget::commitList() const
+{
+    QModelIndexList selected = selectionModel()->selectedRows();
+    std::sort(selected.begin(), selected.end(), [](const QModelIndex &a, const QModelIndex &b) {
+        return a.row() > b.row(); // sort list bottom to top
+    });
+    const QStringList result = Utils::transform(selected, [](const QModelIndex &row) {
+        return row.data().toString();
+    });
+    return result;
+}
+
+/**
+ * Returns a commit range suitable for `git format-patch`.
+ *
+ * The format is {"-n", "hash"} or an empty string list if nothing was selected.
+ */
+QStringList LogChangeWidget::patchRange() const
+{
+    const QModelIndexList selected = selectionModel()->selectedRows();
+    if (selected.isEmpty())
+        return {};
+
+    const QString size = QString::number(selected.size());
+    const QStandardItem *highestItem = m_model->item(selected.first().row());
+    QTC_ASSERT(highestItem, return {});
+    const QString highestText = highestItem->text();
+    const QStringList result = {"-" + size, highestText};
+    return result;
+}
+
+bool LogChangeWidget::isRowSelected(int row) const
+{
+    return selectionModel()->isRowSelected(row);
+}
+
 QString LogChangeWidget::earliestCommit() const
 {
     int rows = m_model->rowCount();
     if (rows) {
-        if (const QStandardItem *item = m_model->item(rows - 1, Sha1Column))
+        if (const QStandardItem *item = m_model->item(rows - 1, HashColumn))
             return item->text();
     }
     return {};
@@ -124,7 +166,7 @@ void LogChangeWidget::setItemDelegate(QAbstractItemDelegate *delegate)
 void LogChangeWidget::emitCommitActivated(const QModelIndex &index)
 {
     if (index.isValid()) {
-        const QString commit = index.sibling(index.row(), Sha1Column).data().toString();
+        const QString commit = index.sibling(index.row(), HashColumn).data().toString();
         if (!commit.isEmpty())
             emit commitActivated(commit);
     }
@@ -134,6 +176,8 @@ void LogChangeWidget::selectionChanged(const QItemSelection &selected,
                                        const QItemSelection &deselected)
 {
     Utils::TreeView::selectionChanged(selected, deselected);
+    emit hasSelectionChanged(!selectionModel()->selectedIndexes().isEmpty());
+
     if (!m_hasCustomDelegate)
         return;
     const QModelIndexList previousIndexes = deselected.indexes();
@@ -157,7 +201,7 @@ bool LogChangeWidget::populateLog(const FilePath &repository, const QString &com
     if (const int rowCount = m_model->rowCount())
         m_model->removeRows(0, rowCount);
 
-    // Retrieve log using a custom format "Sha1:Subject [(refs)]"
+    // Retrieve log using a custom format "Hash:Subject [(refs)]"
     QStringList arguments;
     arguments << "--max-count=1000" << "--format=%h:%s %d";
     arguments << (commit.isEmpty() ? "HEAD" : commit);
@@ -167,13 +211,17 @@ bool LogChangeWidget::populateLog(const FilePath &repository, const QString &com
             remotesFlag += '=' + m_excludedRemote;
         arguments << "--not" << remotesFlag;
     }
+    if (flags & OmitMerges)
+        arguments << "--no-merges";
     arguments << "--";
-    QString output;
-    if (!gitClient().synchronousLog(
-                repository, arguments, &output, nullptr, RunFlags::NoOutput)) {
+
+    const Result<QString> res = gitClient().synchronousLog(repository, arguments, RunFlag::NoOutput);
+    if (!res) {
+        VcsOutputWindow::appendError(repository, res.error());
         return false;
     }
-    const QStringList lines = output.split('\n');
+
+    const QStringList lines = res.value().split('\n');
     for (const QString &line : lines) {
         const int colonPos = line.indexOf(':');
         if (colonPos != -1) {
@@ -188,11 +236,11 @@ bool LogChangeWidget::populateLog(const FilePath &repository, const QString &com
                 }
                 row.push_back(item);
             }
-            const QString sha1 = line.left(colonPos);
-            row[Sha1Column]->setText(sha1);
+            const QString hash = line.left(colonPos);
+            row[HashColumn]->setText(hash);
             row[SubjectColumn]->setText(line.right(line.size() - colonPos - 1));
             m_model->appendRow(row);
-            if (selected == -1 && currentCommit == sha1)
+            if (selected == -1 && currentCommit == hash)
                 selected = m_model->rowCount() - 1;
         }
     }
@@ -208,13 +256,19 @@ const QStandardItem *LogChangeWidget::currentItem(int column) const
     return nullptr;
 }
 
-LogChangeDialog::LogChangeDialog(bool isReset, QWidget *parent) :
+LogChangeDialog::LogChangeDialog(DialogType type, QWidget *parent) :
     QDialog(parent)
     , m_widget(new LogChangeWidget)
     , m_dialogButtonBox(new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this))
 {
+    const bool isReset = type == Reset;
     auto layout = new QVBoxLayout(this);
     layout->addWidget(new QLabel(isReset ? Tr::tr("Reset to:") : Tr::tr("Select change:"), this));
+    m_selectionHintLabel = new QLabel(
+                Tr::tr("Hint: Select or deselect a single commit with a mouse click "
+                       "and multiple commits by dragging the mouse over them."), this);
+    m_selectionHintLabel->setVisible(false);
+    layout->addWidget(m_selectionHintLabel);
     layout->addWidget(m_widget);
     auto popUpLayout = new QHBoxLayout;
     if (isReset) {
@@ -236,8 +290,18 @@ LogChangeDialog::LogChangeDialog(bool isReset, QWidget *parent) :
     connect(m_dialogButtonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     connect(m_widget, &LogChangeWidget::activated, okButton, [okButton] { okButton->animateClick(); });
+    connect(m_widget, &LogChangeWidget::hasSelectionChanged, this, [this](bool hasSelection) {
+        m_dialogButtonBox->button(QDialogButtonBox::Ok)->setEnabled(hasSelection);
+    });
+
 
     resize(600, 400);
+}
+
+void LogChangeDialog::setSelectionMode(QAbstractItemView::SelectionMode mode)
+{
+    m_widget->setSelectionMode(mode);
+    m_selectionHintLabel->setVisible(mode == QAbstractItemView::SelectionMode::MultiSelection);
 }
 
 bool LogChangeDialog::runDialog(const FilePath &repository,
@@ -265,6 +329,16 @@ int LogChangeDialog::commitIndex() const
     return m_widget->commitIndex();
 }
 
+QStringList LogChangeDialog::commitList() const
+{
+    return m_widget->commitList();
+}
+
+QStringList LogChangeDialog::patchRange() const
+{
+    return m_widget->patchRange();
+}
+
 QString LogChangeDialog::resetFlag() const
 {
     if (!m_resetTypeComboBox)
@@ -285,6 +359,11 @@ LogItemDelegate::LogItemDelegate(LogChangeWidget *widget) : m_widget(widget)
 int LogItemDelegate::currentRow() const
 {
     return m_widget->commitIndex();
+}
+
+int LogItemDelegate::isRowSelected(int row) const
+{
+    return m_widget->isRowSelected(row);
 }
 
 IconItemDelegate::IconItemDelegate(LogChangeWidget *widget, const Utils::Icon &icon)

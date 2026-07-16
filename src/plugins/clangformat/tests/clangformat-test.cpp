@@ -8,9 +8,9 @@
 #include <texteditor/tabsettings.h>
 #include <utils/fileutils.h>
 
+#include <QTest>
 #include <QTextCursor>
 #include <QTextDocument>
-#include <QtTest>
 
 #include <optional>
 
@@ -97,6 +97,7 @@ private slots:
     void testFormatBasicFile();
     void testFormatEmptyLine();
     void testFormatLambda();
+    void testIndentTwoLambdas();
     void testFormatInitializerListInArguments();
     void testFormatFunctionArgumentLambdaWithScope();
     void testFormatScopeAsFunctionArgument();
@@ -118,6 +119,7 @@ private slots:
     void testIndentationInTheBegginingOfLine();
     void testIndentationReturnAfterIf();
     void testIndentationReturnAfterIfSomthingFunction();
+    void testReformatQualifier();
 
 private:
     void insertLines(const std::vector<QString> &lines);
@@ -633,6 +635,32 @@ void ClangFormatTest::testFormatLambda()
     QCOMPARE(documentLines(), (std::vector<QString>{"int b = foo([]() {", "", "});"}));
 }
 
+void ClangFormatTest::testIndentTwoLambdas()
+{
+    insertLines({
+        "void SomeTool::reloadModels()",
+        "{",
+        "m_client->listModels([this](QStringList newModels) {",
+        "newModels.sort();",
+        "setSupportedModels(std::move(newModels));",
+        "}, [this](QString error) {",
+        "reportListModelsError(error);",
+        "});",
+        "}"});
+    m_indenter->indent(*m_cursor, {}, {});
+    QEXPECT_FAIL(nullptr, "QTCREATORBUG-34031", Abort);
+    QCOMPARE(documentLines(), (std::vector<QString>{
+        "void SomeTool::reloadModels()",
+        "{",
+        "    m_client->listModels([this](QStringList newModels) {",
+        "            newModels.sort();",
+        "            setSupportedModels(std::move(newModels));",
+        "        }, [this](QString error) {",
+        "            reportListModelsError(error);",
+        "        });",
+        "}"}));
+}
+
 void ClangFormatTest::testFormatInitializerListInArguments()
 {
     insertLines({"foo(arg1,", "args,", "{1, 2});"});
@@ -744,12 +772,12 @@ void ClangFormatTest::testIndentInitializeVector()
         "",
         "Test::Test()",
         "{",
-        "    QVector<int> list = {",
+        "    QList<int> list = {",
         "        1,",
         "        2,",
         "        3,",
         "    };",
-        "    QVector<int> list_2 = {",
+        "    QList<int> list_2 = {",
         "        1,",
         "        2,",
         "        3,",
@@ -770,12 +798,12 @@ void ClangFormatTest::testIndentInitializeVector()
                  "",
                  "Test::Test()",
                  "{",
-                 "    QVector<int> list = {",
+                 "    QList<int> list = {",
                  "        1,",
                  "        2,",
                  "        3,",
                  "    };",
-                 "    QVector<int> list_2 = {",
+                 "    QList<int> list_2 = {",
                  "        1,",
                  "        2,",
                  "        3,",
@@ -997,6 +1025,25 @@ void ClangFormatTest::testIndentationReturnAfterIfSomthingFunction()
                                    "    if_somthing()",
                                    "    return 0;",
                                    "}"}));
+}
+
+void ClangFormatTest::testReformatQualifier()
+{
+    insertLines({
+        "struct S",
+        "{",
+        "    S &operator=(S const &s);",
+        "};",
+        "S &S::operator=(const S &s) {}"
+    });
+    m_extendedIndenter->autoIndent(*m_cursor, TextEditor::TabSettings());
+    const std::vector<QString> expected{
+        "struct S",
+        "{",
+        "    S &operator=(S const &s);",
+        "};",
+        "S &S::operator=(S const &s) {}"};
+    QCOMPARE(documentLines(), expected);
 }
 
 QObject *createClangFormatTest()

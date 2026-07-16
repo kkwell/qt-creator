@@ -56,6 +56,11 @@ private:
     void prependSpaceAfterIndirection(bool hasName);
     void prependSpaceBeforeIndirection(const FullySpecifiedType &type);
 
+    enum class Context { Declaration, Instantiation };
+    QString visitTemplateArgumentList(Scope *scope, int paramCount, Context context,
+                                      bool forceNames);
+    QString visitTemplateParameterList(Scope *scope, int paramCount, bool forceNames);
+
     enum IndirectionType { aPointerType, aReferenceType, aRvalueReferenceType };
     void visitIndirectionType(const IndirectionType indirectionType,
         const FullySpecifiedType &elementType, bool isIndirectionToArrayOrFunction);

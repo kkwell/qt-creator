@@ -11,6 +11,7 @@
 
 #include <coreplugin/editormanager/editormanager.h>
 #include <cplusplus/ASTPath.h>
+#include <cplusplus/declarationcomments.h>
 
 #include <QList>
 #include <QHash>
@@ -19,7 +20,7 @@
 #include "cppquickfix_test.h"
 #include <projectexplorer/kitmanager.h>
 #include <texteditor/textdocument.h>
-#include <QtTest>
+#include <QTest>
 #endif
 
 #include <memory>
@@ -61,11 +62,11 @@ private:
             DefLocations &dl = defLocations[link.targetFilePath];
             DefLocation newElem{decl, link};
             const auto cmp = [](const DefLocation &elem, const DefLocation &value) {
-                if (elem.defLoc.targetLine < value.defLoc.targetLine)
+                if (elem.defLoc.target.line < value.defLoc.target.line)
                     return true;
-                if (elem.defLoc.targetLine > value.defLoc.targetLine)
+                if (elem.defLoc.target.line > value.defLoc.target.line)
                     return false;
-                return elem.defLoc.targetColumn < value.defLoc.targetColumn;
+                return elem.defLoc.target.column < value.defLoc.target.column;
             };
             dl.insert(std::lower_bound(dl.begin(), dl.end(), newElem, cmp), newElem);
         }
@@ -110,8 +111,7 @@ private:
                 if (!link.hasValidTarget())
                     return;
                 if (decl->filePath() == link.targetFilePath) {
-                    const int linkPos = Text::positionInText(doc, link.targetLine,
-                                                             link.targetColumn + 1);
+                    const int linkPos = link.target.toPositionInDocument(doc);
                     if (linkPos == declPos)
                         return;
                 }
@@ -134,9 +134,9 @@ private:
     {
         CppRefactoringChanges factory{CppModelManager::snapshot()};
 
-        const auto findAstRange = [](const CppRefactoringFile &file, const Link &pos) {
+        const auto findAstRange = [](const CppRefactoringFile &file, const DefLocation &defLoc) {
             const QList<AST *> astPath = ASTPath(
-                file.cppDocument())(pos.targetLine, pos.targetColumn + 1);
+                file.cppDocument())(defLoc.defLoc.target.line, defLoc.defLoc.target.column + 1);
             for (auto it = astPath.rbegin(); it != astPath.rend(); ++it) {
                 if (const auto funcDef = (*it)->asFunctionDefinition()) {
                     AST *ast = funcDef;
@@ -145,7 +145,11 @@ private:
                          ++next) {
                         ast = *next;
                     }
-                    return file.range(ast);
+                    const QList<Token> commentTokens = commentsForDeclaration(
+                        defLoc.decl, ast, *file.document(), file.cppDocument());
+                    const int start = commentTokens.isEmpty() ? file.startOf(ast)
+                                                              : file.startOf(commentTokens.first());
+                    return ChangeSet::Range{start, file.endOf(ast)};
                 }
             }
             return ChangeSet::Range();
@@ -175,9 +179,9 @@ private:
                 }
                 if (expectedPos == i)
                     continue;
-                const ChangeSet::Range actualRange = findAstRange(*file, actualLoc.defLoc);
+                const ChangeSet::Range actualRange = findAstRange(*file, actualLoc);
                 const ChangeSet::Range expectedRange
-                    = findAstRange(*file, defLocsActualOrder[expectedPos].defLoc);
+                    = findAstRange(*file, defLocsActualOrder[expectedPos]);
                 if (actualRange.end > actualRange.start && expectedRange.end > expectedRange.start)
                     changes.move(actualRange, expectedRange.start);
             }
@@ -262,7 +266,7 @@ private slots:
             ":/cppeditor/testcases/reorder-member-impls/" + projectName);
         SourceFilesRefreshGuard refreshGuard;
         ProjectOpenerAndCloser projectMgr;
-        QVERIFY(projectMgr.open(projectDir->absolutePath(projectName + ".pro"), true, kit));
+        QVERIFY(projectMgr.open(projectDir->absolutePath(projectName + ".pro"), kit));
         QVERIFY(refreshGuard.wait());
 
         // Open header file and locate class.
@@ -296,7 +300,7 @@ private slots:
         for (const FilePath &expected : expectedDocuments) {
             static const QString suffix = "_expected";
             const FilePath actual = expected.parentDir()
-                                        .pathAppended(expected.fileName().chopped(suffix.length()));
+                                        .pathAppended(expected.fileName().chopped(suffix.size()));
             QVERIFY(actual.exists());
             const auto actualContents = actual.fileContents();
             QVERIFY(actualContents);

@@ -5,22 +5,69 @@
 #include "baremetaldevice.h"
 
 #include "baremetalconstants.h"
-#include "baremetaldeviceconfigurationwidget.h"
-#include "baremetaldeviceconfigurationwizard.h"
+#include "baremetaldevice.h"
 #include "baremetaltr.h"
+#include "debugserverproviderchooser.h"
 #include "debugserverprovidermanager.h"
 #include "idebugserverprovider.h"
 
+#include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/devicesupport/idevicefactory.h>
+#include <projectexplorer/devicesupport/idevicewidget.h>
 
+#include <utils/fileutils.h>
 #include <utils/qtcassert.h>
+#include <utils/variablechooser.h>
+#include <utils/wizard.h>
+
+#include <QFormLayout>
+#include <QLineEdit>
+#include <QWizardPage>
 
 using namespace ProjectExplorer;
 using namespace Utils;
 
 namespace BareMetal::Internal {
 
-const char debugServerProviderIdKeyC[] = "IDebugServerProviderId";
+class BareMetalDeviceWidget final : public IDeviceWidget
+{
+public:
+    explicit BareMetalDeviceWidget(const IDevicePtr &deviceConfig)
+        : IDeviceWidget(deviceConfig)
+    {
+        const auto dev = std::static_pointer_cast<const BareMetalDevice>(device());
+        QTC_ASSERT(dev, return);
+
+        const auto formLayout = new QFormLayout(this);
+        formLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+
+        m_debugServerProviderChooser = new DebugServerProviderChooser(true, this);
+        m_debugServerProviderChooser->populate();
+        m_debugServerProviderChooser->setCurrentProviderId(dev->debugServerProviderId());
+        formLayout->addRow(Tr::tr("Debug server provider:"), m_debugServerProviderChooser);
+
+        connect(m_debugServerProviderChooser, &DebugServerProviderChooser::providerChanged,
+                this, &BareMetalDeviceWidget::debugServerProviderChanged);
+
+        installMarkSettingsDirtyTriggerRecursively(this);
+    }
+
+private:
+    void debugServerProviderChanged()
+    {
+        const auto dev = std::static_pointer_cast<BareMetalDevice>(device());
+        QTC_ASSERT(dev, return);
+        dev->setDebugServerProviderId(m_debugServerProviderChooser->currentProviderId());
+    }
+
+    void updateDeviceFromUi() final
+    {
+        debugServerProviderChanged();
+    }
+
+    DebugServerProviderChooser *m_debugServerProviderChooser = nullptr;
+};
+
 
 // BareMetalDevice
 
@@ -28,14 +75,11 @@ BareMetalDevice::BareMetalDevice()
 {
     setDisplayType(Tr::tr("Bare Metal"));
     setOsType(Utils::OsTypeOther);
+
+    m_debugServerProviderId.setSettingsKey("IDebugServerProviderId");
 }
 
-BareMetalDevice::~BareMetalDevice()
-{
-    if (IDebugServerProvider *provider = DebugServerProviderManager::findProvider(
-                m_debugServerProviderId))
-        provider->unregisterDevice(this);
-}
+BareMetalDevice::~BareMetalDevice() = default;
 
 QString BareMetalDevice::defaultDisplayName()
 {
@@ -44,58 +88,122 @@ QString BareMetalDevice::defaultDisplayName()
 
 QString BareMetalDevice::debugServerProviderId() const
 {
-    return m_debugServerProviderId;
+    return m_debugServerProviderId();
 }
 
 void BareMetalDevice::setDebugServerProviderId(const QString &id)
 {
-    if (id == m_debugServerProviderId)
+    if (id == debugServerProviderId())
         return;
-    if (IDebugServerProvider *currentProvider =
-            DebugServerProviderManager::findProvider(m_debugServerProviderId))
-        currentProvider->unregisterDevice(this);
-    m_debugServerProviderId = id;
-    if (IDebugServerProvider *provider = DebugServerProviderManager::findProvider(id))
-        provider->registerDevice(this);
+    m_debugServerProviderId.setValue(id);
 }
 
-void BareMetalDevice::unregisterDebugServerProvider(IDebugServerProvider *provider)
+void BareMetalDevice::unregisterDebugServerProvider(const QString &providerId) const
 {
-    if (provider->id() == m_debugServerProviderId)
-        m_debugServerProviderId.clear();
+    if (providerId == debugServerProviderId())
+        m_debugServerProviderId.setValue(QString());
 }
 
 void BareMetalDevice::fromMap(const Store &map)
 {
     IDevice::fromMap(map);
-    QString providerId = map.value(debugServerProviderIdKeyC).toString();
-    if (providerId.isEmpty()) {
+
+    // Override wrong state from Creator 19.0.0, see QTCREATORBUG-34221
+    setDeviceState(DeviceStateUnknown);
+
+    if (debugServerProviderId().isEmpty()) {
         const QString name = displayName();
         if (IDebugServerProvider *provider =
                 DebugServerProviderManager::findByDisplayName(name)) {
-            providerId = provider->id();
-            setDebugServerProviderId(providerId);
+            setDebugServerProviderId(provider->id());
         }
-    } else {
-        setDebugServerProviderId(providerId);
     }
-}
-
-Store BareMetalDevice::toMap() const
-{
-    Store map = IDevice::toMap();
-    map.insert(debugServerProviderIdKeyC, debugServerProviderId());
-    return map;
 }
 
 IDeviceWidget *BareMetalDevice::createWidget()
 {
-    return new BareMetalDeviceConfigurationWidget(shared_from_this());
+    return new BareMetalDeviceWidget(shared_from_this());
 }
+
+//  BareMetalDeviceConfigurationWizardSetupPage
+
+class BareMetalDeviceConfigurationWizardSetupPage final : public QWizardPage
+{
+public:
+    explicit BareMetalDeviceConfigurationWizardSetupPage(QWidget *parent)
+        : QWizardPage(parent)
+    {
+        setTitle(Tr::tr("Set up Debug Server or Hardware Debugger"));
+
+        m_nameLineEdit = new QLineEdit(this);
+
+        m_providerChooser = new DebugServerProviderChooser(false, this);
+        m_providerChooser->populate();
+
+        const auto formLayout = new QFormLayout(this);
+        formLayout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+        formLayout->addRow(Tr::tr("Name:"), m_nameLineEdit);
+        formLayout->addRow(Tr::tr("Debug server provider:"), m_providerChooser);
+
+        connect(m_nameLineEdit, &QLineEdit::textChanged,
+                this, &BareMetalDeviceConfigurationWizardSetupPage::completeChanged);
+        connect(m_providerChooser, &DebugServerProviderChooser::providerChanged,
+                this, &QWizardPage::completeChanged);
+    }
+
+    void initializePage() final
+    {
+        m_nameLineEdit->setText(BareMetalDevice::defaultDisplayName());
+    }
+
+    bool isComplete() const final
+    {
+        return !configurationName().isEmpty();
+    }
+
+    QString configurationName() const { return m_nameLineEdit->text().trimmed(); }
+    QString debugServerProviderId() const { return m_providerChooser->currentProviderId(); }
+
+private:
+    QLineEdit *m_nameLineEdit = nullptr;
+    DebugServerProviderChooser *m_providerChooser = nullptr;
+};
+
+//  BareMetalDeviceConfigurationWizardSetupPage
+
+class BareMetalDeviceConfigurationWizard final : public Wizard
+{
+public:
+    BareMetalDeviceConfigurationWizard()
+        : m_setupPage(new BareMetalDeviceConfigurationWizardSetupPage(this))
+    {
+        enum PageId { SetupPageId };
+
+        setWindowTitle(Tr::tr("New Bare Metal Device Configuration Setup"));
+        setPage(SetupPageId, m_setupPage);
+        m_setupPage->setCommitPage(true);
+    }
+
+    IDevicePtr device() const
+    {
+        const auto dev = BareMetalDevice::create();
+        dev->setupId(IDevice::ManuallyAdded, Utils::Id());
+        dev->setDefaultDisplayName(m_setupPage->configurationName());
+        dev->setType(Constants::BareMetalOsType);
+        dev->setMachineType(IDevice::Hardware);
+        dev->setDebugServerProviderId(m_setupPage->debugServerProviderId());
+        dev->setDeviceState(IDevice::DeviceStateUnknown);
+        return dev;
+    }
+
+private:
+    BareMetalDeviceConfigurationWizardSetupPage *m_setupPage = nullptr;
+};
+
 
 // Factory
 
-class BareMetalDeviceFactory final : public ProjectExplorer::IDeviceFactory
+class BareMetalDeviceFactory final : public IDeviceFactory
 {
 public:
     BareMetalDeviceFactory()

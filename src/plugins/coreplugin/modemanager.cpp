@@ -25,6 +25,8 @@
 
 using namespace Utils;
 
+const char kModeOrderKey[] = "Core/ModeOrder";
+
 namespace Core {
 
 /*!
@@ -64,7 +66,7 @@ namespace Core {
 struct ModeManagerPrivate
 {
     void showMenu(int index, QMouseEvent *event);
-    void appendMode(IMode *mode);
+    void appendMode(IMode *mode, int originalIndex);
     void ensureVisibleEnabledMode();
     void enabledStateChanged(IMode *mode);
     void visibleChanged(IMode *mode);
@@ -72,18 +74,24 @@ struct ModeManagerPrivate
     void registerModeSelectorStyleActions();
     void updateModeSelectorStyleMenu();
     void extensionsInitializedHelper();
+    void saveSettings();
+
+    QList<QPointer<IMode>> modesInPriorityOrder();
+    QList<QPointer<IMode>> modesInPreferenceOrder();
 
     Internal::FancyTabWidget *m_modeStack;
     Internal::FancyActionBar *m_actionBar;
     QHash<QAction *, int> m_actions;
-    QVector<IMode *> m_modes;
-    QVector<Command *> m_modeCommands;
+    QList<QPointer<IMode>> m_modes;
+    QList<QPointer<Command>> m_modeCommands;
     Context m_addedContexts;
-    int m_oldCurrent;
+    QPointer<IMode> m_previousMode;
     ModeManager::Style m_modeStyle = ModeManager::Style::IconsAndText;
     QAction *m_setModeSelectorStyleIconsAndTextAction = nullptr;
     QAction *m_setModeSelectorStyleHiddenAction = nullptr;
     QAction *m_setModeSelectorStyleIconsOnlyAction = nullptr;
+
+    QList<Id> m_previousModes; // Includes current.
 
     bool m_startingUp = true;
     Id m_pendingFirstActiveMode; // Valid before extentionsInitialized.
@@ -95,7 +103,7 @@ static ModeManager *m_instance = nullptr;
 static int indexOf(Id id)
 {
     for (int i = 0; i < d->m_modes.count(); ++i) {
-        if (d->m_modes.at(i)->id() == id)
+        if (d->m_modes.at(i) && d->m_modes.at(i)->id() == id)
             return i;
     }
     qDebug() << "Warning, no such mode:" << id.toString();
@@ -110,7 +118,7 @@ void ModeManagerPrivate::showMenu(int index, QMouseEvent *event)
         QTC_ASSERT(viewContainer, return);
         QMenu *viewMenu = viewContainer->menu();
         QTC_ASSERT(viewMenu, return);
-        QList<QAction *> actions = viewMenu->actions();
+        const QList<QAction *> actions = viewMenu->actions();
         if (actions.isEmpty())
             return;
         auto menu = new QMenu(m_actionBar);
@@ -139,7 +147,7 @@ ModeManager::ModeManager(Internal::FancyTabWidget *modeStack)
     m_instance = this;
     d = new ModeManagerPrivate();
     d->m_modeStack = modeStack;
-    d->m_oldCurrent = -1;
+    d->m_previousMode.clear();
     d->m_actionBar = new Internal::FancyActionBar(modeStack);
     d->m_modeStack->addCornerWidget(d->m_actionBar);
     setModeStyle(d->m_modeStyle);
@@ -150,6 +158,7 @@ ModeManager::ModeManager(Internal::FancyTabWidget *modeStack)
             this, &ModeManager::currentTabChanged);
     connect(d->m_modeStack, &Internal::FancyTabWidget::menuTriggered,
             this, [](int index, QMouseEvent *e) { d->showMenu(index, e); });
+    connect(d->m_modeStack, &Internal::FancyTabWidget::tabDragged, this, &ModeManager::moveMode);
 }
 
 ModeManager::~ModeManager()
@@ -170,6 +179,7 @@ Id ModeManager::currentModeId()
     int currentIndex = d->m_modeStack->currentIndex();
     if (currentIndex < 0)
         return Id();
+    QTC_ASSERT(currentIndex < d->m_modes.size() && d->m_modes.at(currentIndex), return Id());
     return d->m_modes.at(currentIndex)->id();
 }
 
@@ -194,20 +204,26 @@ void ModeManager::activateMode(Id id)
     d->activateModeHelper(id);
 }
 
+void ModeManager::activatePreviousMode()
+{
+    if (d->m_previousModes.size() >= 2) {
+        d->m_previousModes.takeLast(); // The current mode.
+        activateMode(d->m_previousModes.takeLast());
+    }
+}
+
 void ModeManagerPrivate::activateModeHelper(Id id)
 {
+    if (ExtensionSystem::PluginManager::isShuttingDown())
+        return;
     if (m_startingUp) {
         m_pendingFirstActiveMode = id;
     } else {
         const int currentIndex = m_modeStack->currentIndex();
         const int newIndex = id.isValid() ? indexOf(id) : -1;
-        if (newIndex != currentIndex) {
-            if (newIndex >= 0) {
-                m_modes.at(newIndex)->setVisible(true);
-                m_modeStack->setCurrentIndex(newIndex);
-            } else {
-                m_modeStack->setCurrentIndex(-1);
-            }
+        if (newIndex >= 0 && newIndex != currentIndex) {
+            m_modes.at(newIndex)->setVisible(true);
+            m_modeStack->setCurrentIndex(newIndex);
         }
     }
 }
@@ -276,30 +292,93 @@ void ModeManagerPrivate::updateModeSelectorStyleMenu()
 
 void ModeManager::extensionsInitialized()
 {
+    connect(
+        ICore::instance(),
+        &ICore::saveSettingsRequested,
+        m_instance,
+        [](ICore::SaveSettingsReason reason) {
+            if (reason == ICore::MainWindowClosing)
+                d->saveSettings();
+        });
     d->extensionsInitializedHelper();
+}
+
+QList<QPointer<IMode>> ModeManagerPrivate::modesInPriorityOrder()
+{
+    QList<QPointer<IMode>> result = filtered(m_modes, [](QPointer<IMode> m) { return !m.isNull(); });
+    Utils::sort(result, &IMode::priority);
+    std::reverse(result.begin(), result.end());
+    return result;
+}
+
+QList<QPointer<IMode>> ModeManagerPrivate::modesInPreferenceOrder()
+{
+    const auto ids
+        = Utils::transform(ICore::settings()->value(kModeOrderKey).toList(), &Id::fromSetting);
+    if (ids.isEmpty())
+        return modesInPriorityOrder();
+    QSet<IMode *> toAdd = Utils::transform<QSet>(m_modes, [](const QPointer<IMode> &m) {
+        return m.data();
+    });
+    QList<QPointer<IMode>> result;
+    for (const Id &id : ids) {
+        IMode *mode = findMode(id);
+        if (!mode)
+            continue;
+        result.append(mode);
+        toAdd.remove(mode);
+    }
+    // Add everything that didn't appear in the settings
+    // Try to order by priority as best as possible
+    for (IMode *mode : std::as_const(toAdd)) {
+        if (!mode)
+            continue;
+        for (int i = 0; i <= result.size(); i++) {
+            if (i == result.size() || mode->priority() >= result.at(i)->priority()) {
+                result.insert(i, mode);
+                break;
+            }
+        }
+    }
+    return result;
 }
 
 void ModeManagerPrivate::extensionsInitializedHelper()
 {
     m_startingUp = false;
     registerModeSelectorStyleActions();
-    Utils::sort(m_modes, &IMode::priority);
-    std::reverse(m_modes.begin(), m_modes.end());
 
-    for (IMode *mode : std::as_const(m_modes))
-        appendMode(mode);
+    const QList<QPointer<IMode>> originalOrder = modesInPriorityOrder();
+    m_modes = modesInPreferenceOrder();
+    for (const QPointer<IMode> &mode : std::as_const(m_modes)) {
+        QTC_ASSERT(mode, continue);
+        appendMode(mode, originalOrder.indexOf(mode));
+    }
 
     if (m_pendingFirstActiveMode.isValid())
         activateModeHelper(m_pendingFirstActiveMode);
 }
 
+void ModeManagerPrivate::saveSettings()
+{
+    if (m_modes == modesInPriorityOrder()) {
+        ICore::settings()->remove(kModeOrderKey);
+    } else {
+        ICore::settings()
+            ->setValue(kModeOrderKey, Utils::transform(m_modes, [](const QPointer<IMode> &m) {
+                           return m ? m->id().toSetting() : QVariant();
+                       }));
+    }
+}
+
 void ModeManager::addMode(IMode *mode)
 {
     QTC_ASSERT(d->m_startingUp, return);
+    QTC_ASSERT(mode, return);
     d->m_modes.append(mode);
 }
 
-void ModeManagerPrivate::appendMode(IMode *mode)
+void ModeManagerPrivate::appendMode(IMode *mode, int originalIndex)
 {
     const int index = m_modeCommands.count();
 
@@ -311,12 +390,15 @@ void ModeManagerPrivate::appendMode(IMode *mode)
     const Id actionId = mode->id().withPrefix("QtCreator.Mode.");
     QAction *action = new QAction(Tr::tr("Switch to <b>%1</b> mode").arg(mode->displayName()), m_instance);
     Command *cmd = ActionManager::registerAction(action, actionId);
-    cmd->setDefaultKeySequence(QKeySequence(useMacShortcuts ? QString("Meta+%1").arg(index + 1)
-                                                            : QString("Ctrl+%1").arg(index + 1)));
+    cmd->setDefaultKeySequence(QKeySequence(
+        useMacShortcuts ? QString("Meta+%1").arg(originalIndex + 1)
+                        : QString("Ctrl+%1").arg(originalIndex + 1)));
     m_modeCommands.append(cmd);
 
     m_modeStack->setTabToolTip(index, cmd->action()->toolTip());
-    QObject::connect(cmd, &Command::keySequenceChanged, m_instance, [cmd, index, this] {
+    QObject::connect(cmd, &Command::keySequenceChanged, m_instance, [cmd, mode, this] {
+        const int index = m_modes.indexOf(mode);
+        QTC_ASSERT(index >= 0, return);
         m_modeStack->setTabToolTip(index, cmd->action()->toolTip());
     });
 
@@ -365,9 +447,9 @@ void ModeManagerPrivate::ensureVisibleEnabledMode()
     IMode *mode = ModeManager::currentMode();
     if (!mode || !mode->isEnabled() || !mode->isVisible()) {
         // This assumes that there is always at least one enabled mode.
-        for (int i = 0; i < d->m_modes.count(); ++i) {
-            IMode *other = d->m_modes.at(i);
-            if (other->isEnabled() && other->isVisible()) {
+        for (int i = 0; i < m_modes.count(); ++i) {
+            IMode *other = m_modes.at(i);
+            if (other && other->isEnabled() && other->isVisible()) {
                 ModeManager::activateMode(other->id());
                 return;
             }
@@ -378,18 +460,18 @@ void ModeManagerPrivate::ensureVisibleEnabledMode()
 
 void ModeManagerPrivate::enabledStateChanged(IMode *mode)
 {
-    int index = d->m_modes.indexOf(mode);
+    int index = m_modes.indexOf(mode);
     QTC_ASSERT(index >= 0, return);
-    d->m_modeStack->setTabEnabled(index, mode->isEnabled());
+    m_modeStack->setTabEnabled(index, mode->isEnabled());
 
     ensureVisibleEnabledMode();
 }
 
 void ModeManagerPrivate::visibleChanged(IMode *mode)
 {
-    int index = d->m_modes.indexOf(mode);
+    int index = m_modes.indexOf(mode);
     QTC_ASSERT(index >= 0, return);
-    d->m_modeStack->setTabVisible(index, mode->isVisible());
+    m_modeStack->setTabVisible(index, mode->isVisible());
 
     ensureVisibleEnabledMode();
 }
@@ -422,10 +504,12 @@ void ModeManager::addProjectSelector(QAction *action)
     d->m_actions.insert(0, INT_MAX);
 }
 
-void ModeManager::currentTabAboutToChange(int index)
+void ModeManager::currentTabAboutToChange(int index, bool *okToSwitch)
 {
+    Id oldModeId = d->m_previousMode ? d->m_previousMode->id() : Id();
+
     IMode *mode = d->m_modes.value(index, nullptr);
-    emit currentModeAboutToChange(mode ? mode->id() : Id());
+    emit currentModeAboutToChange(mode ? mode->id() : Id(), oldModeId, okToSwitch);
 }
 
 void ModeManager::currentTabChanged(int index)
@@ -438,17 +522,45 @@ void ModeManager::currentTabChanged(int index)
     if (!mode)
         return;
 
+    if (mode == d->m_previousMode)
+        return;
+
+    IMode *oldMode = d->m_previousMode;
+    d->m_previousMode = mode;
+
     // Set the mode's context regardless of focus widget.
     // Whenever a mode is active, it's Context is active.
     ICore::updateAdditionalContexts(d->m_addedContexts, mode->context());
     d->m_addedContexts = mode->context();
 
-    IMode *oldMode = nullptr;
-    if (d->m_oldCurrent >= 0)
-        oldMode = d->m_modes.at(d->m_oldCurrent);
-    d->m_oldCurrent = index;
-    emit currentModeChanged(mode->id(), oldMode ? oldMode->id() : Id());
+    // Trim stack a bit if it is getting too long.
+    if (d->m_previousModes.size() >= 10)
+        d->m_previousModes.takeFirst();
+
+    const Id modeId = mode->id();
+    d->m_previousModes.append(modeId);
+
+    emit currentModeChanged(modeId, oldMode ? oldMode->id() : Id());
     emit currentMainWindowChanged();
+}
+
+void ModeManager::moveMode(int fromIndex, int toIndex)
+{
+    IMode *mode = d->m_modes.at(fromIndex);
+    Command *cmd = d->m_modeCommands.at(fromIndex);
+
+    d->m_modes.removeAt(fromIndex);
+    d->m_modeCommands.removeAt(fromIndex);
+
+    d->m_modes.insert(toIndex, mode);
+    d->m_modeCommands.insert(toIndex, cmd);
+
+    d->m_modeStack->moveTab(fromIndex, toIndex);
+}
+
+void ModeManager::aboutToShutdown()
+{
+    disconnect(d->m_modeStack, nullptr, this, nullptr);
 }
 
 /*!

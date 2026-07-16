@@ -37,34 +37,15 @@ struct BaseProjectWizardDialogPrivate
     QSet<Id> requiredFeatureSet;
 };
 
-
 BaseProjectWizardDialog::BaseProjectWizardDialog(const Core::BaseFileWizardFactory *factory,
-                                                 QWidget *parent,
                                                  const Core::WizardDialogParameters &parameters) :
-    Core::BaseFileWizard(factory, parameters.extraValues(), parent),
+    Core::BaseFileWizard(factory, parameters.extraValues()),
     d(std::make_unique<BaseProjectWizardDialogPrivate>(new ProjectIntroPage))
 {
     setFilePath(parameters.defaultPath());
     setSelectedPlatform(parameters.selectedPlatform());
     setRequiredFeatures(parameters.requiredFeatures());
-    init();
-}
 
-BaseProjectWizardDialog::BaseProjectWizardDialog(const Core::BaseFileWizardFactory *factory,
-                                                 ProjectIntroPage *introPage, int introId,
-                                                 QWidget *parent,
-                                                 const Core::WizardDialogParameters &parameters) :
-    Core::BaseFileWizard(factory, parameters.extraValues(), parent),
-    d(std::make_unique<BaseProjectWizardDialogPrivate>(introPage, introId))
-{
-    setFilePath(parameters.defaultPath());
-    setSelectedPlatform(parameters.selectedPlatform());
-    setRequiredFeatures(parameters.requiredFeatures());
-    init();
-}
-
-void BaseProjectWizardDialog::init()
-{
     if (d->introPageId == -1) {
         d->introPageId = addPage(d->introPage);
     } else {
@@ -124,7 +105,7 @@ ProjectIntroPage *BaseProjectWizardDialog::introPage() const
 
 QString BaseProjectWizardDialog::uniqueProjectName(const FilePath &path)
 {
-    const QDir pathDir(path.toString());
+    const QDir pathDir(path.toUrlishString());
     //: File path suggestion for a new project. If you choose
     //: to translate it, make sure it is a valid path name without blanks
     //: and using only ascii chars.

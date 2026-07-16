@@ -56,7 +56,7 @@ private:
 };
 
 MemcheckErrorView::MemcheckErrorView(QWidget *parent)
-    : Debugger::DetailedErrorView(parent)
+    : ProjectExplorer::DetailedErrorView(parent)
 {
     m_suppressAction = new QAction(this);
     m_suppressAction->setText(Tr::tr("Suppress Error"));
@@ -252,13 +252,15 @@ void SuppressionDialog::accept()
         stream << m_suppressionEdit->toPlainText();
         saver.setResult(&stream);
     }
-    if (!saver.finalize(this))
+    if (const Result<> res = saver.finalize(); !res) {
+        FileUtils::showError(res.error());
         return;
+    }
 
     // Add file to project if there is a project containing this file on the file system.
     if (!ProjectExplorer::ProjectManager::projectForFile(path)) {
         for (ProjectExplorer::Project *p : ProjectExplorer::ProjectManager::projects()) {
-            if (path.startsWith(p->projectDirectory().toString())) {
+            if (path.isChildOf(p->projectDirectory())) {
                 p->rootProjectNode()->addFiles({path});
                 break;
             }

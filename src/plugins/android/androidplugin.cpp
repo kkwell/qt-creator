@@ -1,21 +1,21 @@
 // Copyright (C) 2016 BogDan Vatra <bog_dan_ro@yahoo.com>
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include "androidconfigurations.h"
 #include "androidbuildapkstep.h"
+#include "androidconfigurations.h"
 #include "androidconstants.h"
 #include "androiddebugsupport.h"
 #include "androiddeployqtstep.h"
 #include "androiddevice.h"
-#include "androidmanifesteditorfactory.h"
+#include "androidmanifesteditor.h"
 #include "androidpackageinstallationstep.h"
-#include "androidpotentialkit.h"
 #include "androidqmltoolingsupport.h"
 #include "androidqtversion.h"
 #include "androidrunconfiguration.h"
-#include "androidruncontrol.h"
+#include "androidrunner.h"
 #include "androidsettingswidget.h"
 #include "androidtoolchain.h"
+#include "androidtoolmenu.h"
 #include "androidtr.h"
 
 #ifdef WITH_TESTS
@@ -26,20 +26,14 @@
 #include "javaeditor.h"
 #include "javalanguageserver.h"
 
-#ifdef HAVE_QBS
-#  include "androidqbspropertyprovider.h"
-#endif
-
 #include <coreplugin/icore.h>
 
 #include <extensionsystem/iplugin.h>
 
-#include <languageclient/languageclientsettings.h>
-
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/deployconfiguration.h>
 #include <projectexplorer/devicesupport/devicemanager.h>
-#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/environmentkitaspect.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorerconstants.h>
@@ -87,12 +81,11 @@ class AndroidPlugin final : public ExtensionSystem::IPlugin
     {
         setupAndroidConfigurations();
 
-        setupAndroidPotentialKit();
         setupAndroidDevice();
         setupAndroidQtVersion();
         setupAndroidToolchain();
 
-        setupAndroidDeviceManager(this);
+        setupAndroidDeviceManager();
 
         setupAndroidSettingsPage();
 
@@ -108,15 +101,12 @@ class AndroidPlugin final : public ExtensionSystem::IPlugin
         setupAndroidQmlToolingSupport();
 
         setupJavaEditor();
-        setupAndroidManifestEditor();
+        setupAndroidToolsMenu();
 
         connect(KitManager::instance(), &KitManager::kitsLoaded, this, &AndroidPlugin::kitsRestored,
                 Qt::SingleShotConnection);
 
-        LanguageClient::LanguageClientSettings::registerClientType(
-            {Android::Constants::JLS_SETTINGS_ID,
-             Tr::tr("Java Language Server"),
-             [] { return new JLSSettings; }});
+        setupJavaLanguageServer();
 
 #ifdef WITH_TESTS
         addTestCreator(createAndroidSdkManagerTest);
@@ -128,10 +118,9 @@ class AndroidPlugin final : public ExtensionSystem::IPlugin
 
     void kitsRestored()
     {
-        const bool qtForAndroidInstalled
-            = !QtSupport::QtVersionManager::versions([](const QtSupport::QtVersion *v) {
-                   return v->targetDeviceTypes().contains(Android::Constants::ANDROID_DEVICE_TYPE);
-               }).isEmpty();
+        const bool qtForAndroidInstalled = !QtSupport::QtVersionManager::versions(
+                                                &QtSupport::QtVersion::isAndroidQtVersion)
+                                                .isEmpty();
 
         if (!AndroidConfig::sdkFullyConfigured() && qtForAndroidInstalled)
             askUserAboutAndroidSetup();
@@ -148,23 +137,28 @@ class AndroidPlugin final : public ExtensionSystem::IPlugin
     void askUserAboutAndroidSetup()
     {
         NANOTRACE_SCOPE("Android", "AndroidPlugin::askUserAboutAndroidSetup");
-        if (!Core::ICore::infoBar()->canInfoBeAdded(kSetupAndroidSetting))
+        Utils::InfoBar *infoBar = Core::ICore::popupInfoBar();
+        if (!infoBar->canInfoBeAdded(kSetupAndroidSetting))
             return;
 
         Utils::InfoBarEntry
             info(kSetupAndroidSetting,
-                 Tr::tr("Would you like to configure Android options? This will ensure "
-                        "Android kits can be usable and all essential packages are installed. "
-                        "To do it later, select Edit > Preferences > Devices > Android."),
+                 Tr::tr("Automatically create usable Android kits and install all essential "
+                        "packages. "
+                        "To do this later, select Edit > Preferences > SDKs > Android."),
                  Utils::InfoBarEntry::GlobalSuppression::Enabled);
-        info.addCustomButton(Tr::tr("Configure Android"), [this] {
-            Core::ICore::infoBar()->removeInfo(kSetupAndroidSetting);
-            Core::ICore::infoBar()->globallySuppressInfo(kSetupAndroidSetting);
-            QTimer::singleShot(0, this, [] {
-                Core::ICore::showOptionsDialog(Constants::ANDROID_SETTINGS_ID);
-            });
-        });
-        Core::ICore::infoBar()->addInfo(info);
+        info.setTitle(Tr::tr("Configure Android Options?"));
+        info.setInfoType(Utils::InfoLabel::Information);
+        info.addCustomButton(
+            Tr::tr("Configure Android"),
+            [this] {
+                QTimer::singleShot(0, this, [] {
+                    Core::ICore::showSettings(Constants::ANDROID_SETTINGS_ID);
+                });
+            },
+            {},
+            Utils::InfoBarEntry::ButtonAction::SuppressPersistently);
+        infoBar->addInfo(info);
     }
 };
 

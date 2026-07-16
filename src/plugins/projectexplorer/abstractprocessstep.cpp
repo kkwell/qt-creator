@@ -3,6 +3,7 @@
 
 #include "abstractprocessstep.h"
 
+#include "buildsteplist.h"
 #include "processparameters.h"
 #include "projectexplorersettings.h"
 #include "projectexplorertr.h"
@@ -13,9 +14,7 @@
 #include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
-#include <QTextDecoder>
-
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace ProjectExplorer {
@@ -157,12 +156,18 @@ GroupItem AbstractProcessStep::defaultProcessTask()
     const auto onSetup = [this](Process &process) {
         return setupProcess(process) ? SetupResult::Continue : SetupResult::StopWithError;
     };
-    const auto onDone = [this](const Process &process) { handleProcessDone(process); };
+    const auto onDone = [this](const Process &process) { return handleProcessDone(process); };
     return ProcessTask(onSetup, onDone);
 }
 
 bool AbstractProcessStep::setupProcess(Process &process)
 {
+    // Reset the effectiveCommand (if we are not the first step) so they its re-evaluated.
+    // This helps if a previous process has installed additional executables that
+    // might now become available.
+    if (stepList()->at(0) != this)
+        d->m_param.clearEffectiveCommand();
+
     const FilePath workingDir = d->m_param.effectiveWorkingDirectory();
     if (!workingDir.exists() && !workingDir.createDir()) {
         emit addOutput(Tr::tr("Could not create directory \"%1\"").arg(workingDir.toUserOutput()),
@@ -186,17 +191,19 @@ bool AbstractProcessStep::setupProcess(Process &process)
     process.setProcessMode(d->m_param.processMode());
     if (const auto runAsRoot = aspect<RunAsRootAspect>(); runAsRoot && runAsRoot->value()) {
         RunControl::provideAskPassEntry(envWithPwd);
-        process.setRunAsRoot(true);
+        process.setRunAsUser("root");
+    } else if (const auto runAs = aspect<RunAsAspect>(); runAs && !runAs->user().isEmpty()) {
+        RunControl::provideAskPassEntry(envWithPwd);
+        process.setRunAsUser(runAs->user());
     }
     process.setEnvironment(envWithPwd);
     process.setCommand({d->m_param.effectiveCommand(), d->m_param.effectiveArguments(),
                         CommandLine::Raw});
-    if (d->m_lowPriority && projectExplorerSettings().lowBuildPriority)
+    if (d->m_lowPriority && ProjectExplorerSettings::get(this).lowBuildPriority())
         process.setLowPriority();
 
-    process.setStdOutCodec(buildEnvironment().hasKey("VSLANG")
-                               ? QTextCodec::codecForName("UTF-8") : QTextCodec::codecForLocale());
-    process.setStdErrCodec(QTextCodec::codecForLocale());
+    if (buildEnvironment().hasKey("VSLANG"))
+        process.setUtf8StdOutCodec();
 
     process.setStdOutCallback([this](const QString &s){
         emit addOutput(s, OutputFormat::Stdout, DontAppendNewline);
@@ -205,6 +212,8 @@ bool AbstractProcessStep::setupProcess(Process &process)
     process.setStdErrCallback([this](const QString &s){
         emit addOutput(s, OutputFormat::Stderr, DontAppendNewline);
     });
+
+    process.setDisableUnixTerminal();
 
     connect(&process, &Process::started, this, [this] {
         ProcessParameters *params = d->m_displayedParams;
@@ -215,27 +224,14 @@ bool AbstractProcessStep::setupProcess(Process &process)
     return true;
 }
 
-void AbstractProcessStep::handleProcessDone(const Process &process)
+bool AbstractProcessStep::handleProcessDone(const Process &process)
 {
-    const QString command = d->m_displayedParams->effectiveCommand().toUserOutput();
-    if (process.result() == ProcessResult::FinishedWithSuccess) {
-        emit addOutput(Tr::tr("The process \"%1\" exited normally.").arg(command),
-                       OutputFormat::NormalMessage);
-    } else if (process.result() == ProcessResult::FinishedWithError) {
-        emit addOutput(Tr::tr("The process \"%1\" exited with code %2.")
-                           .arg(command, QString::number(process.exitCode())),
-                       OutputFormat::ErrorMessage);
-    } else if (process.result() == ProcessResult::StartFailed) {
-        emit addOutput(Tr::tr("Could not start process \"%1\" %2.")
-                           .arg(command, d->m_displayedParams->prettyArguments()),
-                       OutputFormat::ErrorMessage);
-        const QString errorString = process.errorString();
-        if (!errorString.isEmpty())
-            emit addOutput(errorString, OutputFormat::ErrorMessage);
-    } else {
-        emit addOutput(Tr::tr("The process \"%1\" crashed.").arg(command),
-                       OutputFormat::ErrorMessage);
-    }
+    const OutputFormat format = process.result() == ProcessResult::FinishedWithSuccess
+                                    ? OutputFormat::NormalMessage : OutputFormat::ErrorMessage;
+    emit addOutput(process.exitMessage(), format);
+    if (d->outputFormatter && d->outputFormatter->hasFatalErrors())
+        return false;
+    return process.result() == ProcessResult::FinishedWithSuccess;
 }
 
 void AbstractProcessStep::setLowPriority()
@@ -257,15 +253,17 @@ bool AbstractProcessStep::setupProcessParameters(ProcessParameters *params) cons
         d->m_environmentModifier(env);
     params->setEnvironment(env);
 
-    if (d->m_commandLineProvider)
-        params->setCommandLine(d->m_commandLineProvider());
-
     FilePath workingDirectory;
     if (d->m_workingDirectoryProvider)
         workingDirectory = d->m_workingDirectoryProvider();
     else
         workingDirectory = buildDirectory();
+    params->setWorkingDirectory(workingDirectory);
 
+    // The command line needs to be set after the working directory since the working directory
+    // is used to search for relative executables.
+    if (d->m_commandLineProvider)
+        params->setCommandLine(d->m_commandLineProvider());
     const FilePath executable = params->effectiveCommand();
 
     // E.g. the QMakeStep doesn't have set up anything when this is called
@@ -273,7 +271,6 @@ bool AbstractProcessStep::setupProcessParameters(ProcessParameters *params) cons
     const bool looksGood = executable.isEmpty() || executable.ensureReachable(workingDirectory);
     QTC_ASSERT(looksGood, return false);
 
-    params->setWorkingDirectory(executable.withNewPath(workingDirectory.path()));
 
     return true;
 }

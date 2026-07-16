@@ -37,7 +37,6 @@
 #include <QMenu>
 #include <QRadioButton>
 #include <QTextBlock>
-#include <QTextCodec>
 #include <QXmlStreamWriter>
 
 using namespace TextEditor;
@@ -54,8 +53,8 @@ public:
         : AbstractSettings(SETTINGS_NAME, ".clang-format")
     {
         command.setDefaultValue("clang-format");
-        command.setPromptDialogTitle(BeautifierTool::msgCommandPromptDialogTitle("Clang Format"));
-        command.setLabelText(Tr::tr("Clang Format command:"));
+        command.setPromptDialogTitle(BeautifierTool::msgCommandPromptDialogTitle("ClangFormat"));
+        command.setLabelText(Tr::tr("ClangFormat command:"));
 
         usePredefinedStyle.setSettingsKey("usePredefinedStyle");
         usePredefinedStyle.setDefaultValue(true);
@@ -301,12 +300,21 @@ public:
             settings().apply();
             settings().save();
         });
-        setOnCancel([] { settings().cancel(); });
+        setOnCancel([configurations] {
+            settings().cancel();
+            settings().read();
+            configurations->setSettings(&settings());
+            configurations->setCurrentConfiguration(settings().customStyle());
+        });
 
         s.read();
 
         connect(s.command.pathChooser(), &PathChooser::validChanged, options, &QWidget::setEnabled);
         options->setEnabled(s.command.pathChooser()->isValid());
+
+        installMarkSettingsDirtyTriggerRecursively(this);
+        installMarkSettingsDirtyTrigger(predefinedStyleButton);
+        installMarkSettingsDirtyTrigger(customizedStyleButton);
     }
 };
 
@@ -395,16 +403,17 @@ void ClangFormat::formatAtPosition(const int pos, const int length)
     if (!widget)
         return;
 
-    const QTextCodec *codec = widget->textDocument()->codec();
-    if (!codec) {
+    const TextEncoding encoding = widget->textDocument()->encoding();
+    if (!encoding.isValid()) {
         formatCurrentFile(textCommand(pos, length));
         return;
     }
 
     const QString &text = widget->textAt(0, pos + length);
     const QStringView buffer(text);
-    const int encodedOffset = codec->fromUnicode(buffer.left(pos)).size();
-    const int encodedLength = codec->fromUnicode(buffer.mid(pos, length)).size();
+    QStringEncoder encoder(encoding.name());
+    const int encodedOffset = QByteArray(encoder.encode(buffer.left(pos))).size();
+    const int encodedLength = QByteArray(encoder.encode(buffer.mid(pos, length))).size();
     formatCurrentFile(textCommand(encodedOffset, encodedLength));
 }
 
@@ -530,7 +539,7 @@ public:
     ClangFormatSettingsPage()
     {
         setId("ClangFormat");
-        setDisplayName(Tr::tr("Clang Format"));
+        setDisplayName(Tr::tr("ClangFormat"));
         setCategory(Constants::OPTION_CATEGORY);
         setWidgetCreator([] { return new ClangFormatSettingsPageWidget; });
     }

@@ -12,13 +12,16 @@
 namespace ProjectExplorer {
 
 namespace Internal {
+class XcodebuildParserTest;
 class XcodebuildParserTester;
-class ProjectExplorerTest;
+
+#ifdef WITH_TESTS
+QObject *createXcodebuildParserTest();
+#endif
 } // Internal
 
 class PROJECTEXPLORER_EXPORT XcodebuildParser : public OutputTaskParser
 {
-    Q_OBJECT
 public:
     enum XcodebuildStatus {
         InXcodebuild,
@@ -40,8 +43,8 @@ private:
     XcodebuildStatus m_xcodeBuildParserState = OutsideXcodebuild;
 
 #if defined WITH_TESTS
+    friend class Internal::XcodebuildParserTest;
     friend class Internal::XcodebuildParserTester;
-    friend class Internal::ProjectExplorerTest;
 #endif
 };
 

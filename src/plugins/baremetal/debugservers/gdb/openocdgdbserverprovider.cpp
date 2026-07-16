@@ -3,10 +3,13 @@
 
 #include "openocdgdbserverprovider.h"
 
+#include "gdbserverprovider.h"
+
 #include <baremetal/baremetalconstants.h>
 #include <baremetal/baremetaltr.h>
 #include <baremetal/debugserverprovidermanager.h>
 
+#include <utils/guiutils.h>
 #include <utils/fileutils.h>
 #include <utils/pathchooser.h>
 #include <utils/qtcprocess.h>
@@ -22,10 +25,8 @@ using namespace Utils;
 
 namespace BareMetal::Internal {
 
-const char executableFileKeyC[] = "ExecutableFile";
 const char rootScriptsDirKeyC[] = "RootScriptsDir";
 const char configurationFileKeyC[] = "ConfigurationPath";
-const char additionalArgumentsKeyC[] = "AdditionalArguments";
 
 // OpenOcdGdbServerProviderConfigWidget
 
@@ -62,7 +63,7 @@ public:
 
     bool operator==(const IDebugServerProvider &other) const final;
 
-    QString channelString() const final;
+    QString channelPipe() const final;
     Utils::CommandLine command() const final;
 
     QSet<StartupMode> supportedStartupModes() const final;
@@ -74,10 +75,8 @@ private:
     static QString defaultInitCommands();
     static QString defaultResetCommands();
 
-    Utils::FilePath m_executableFile = "openocd";
     Utils::FilePath m_rootScriptsDir;
     Utils::FilePath m_configurationFile;
-    QString m_additionalArguments;
 
     friend class OpenOcdGdbServerProviderConfigWidget;
     friend class OpenOcdGdbServerProviderFactory;
@@ -87,6 +86,7 @@ private:
 OpenOcdGdbServerProvider::OpenOcdGdbServerProvider()
     : GdbServerProvider(Constants::GDBSERVER_OPENOCD_PROVIDER_ID)
 {
+    m_executableFile = "openocd";
     setInitCommands(defaultInitCommands());
     setResetCommands(defaultResetCommands());
     setChannel("localhost", 3333);
@@ -108,28 +108,17 @@ QString OpenOcdGdbServerProvider::defaultResetCommands()
     return {"monitor reset halt\n"};
 }
 
-QString OpenOcdGdbServerProvider::channelString() const
+QString OpenOcdGdbServerProvider::channelPipe() const
 {
-    switch (startupMode()) {
-    case StartupOnNetwork:
-        // Just return as "host:port" form.
-        return GdbServerProvider::channelString();
-    case StartupOnPipe: {
-        // In the pipe mode need to add quotes to each item of arguments;
-        // otherwise running will be stuck.
-        CommandLine cmd = command();
-        QStringList args = {"|", cmd.executable().toString()};
-        for (const QString &a : ProcessArgs::splitArgs(cmd.arguments(), HostOsInfo::hostOs())) {
-            if (a.startsWith('\"') && a.endsWith('\"'))
-                args << a;
-            else
-                args << ('\"' + a + '\"');
-        }
-        return args.join(' ');
+    CommandLine cmd = command();
+    QStringList args = {cmd.executable().path()};
+    for (const QString &a : ProcessArgs::splitArgs(cmd.arguments(), HostOsInfo::hostOs())) {
+        if (a.startsWith('\"') && a.endsWith('\"'))
+            args << a;
+        else
+            args << ('\"' + a + '\"');
     }
-    default: // wrong
-        return {};
-    }
+    return args.join(' ');
 }
 
 CommandLine OpenOcdGdbServerProvider::command() const
@@ -183,19 +172,15 @@ bool OpenOcdGdbServerProvider::isValid() const
 void OpenOcdGdbServerProvider::toMap(Store &data) const
 {
     GdbServerProvider::toMap(data);
-    data.insert(executableFileKeyC, m_executableFile.toSettings());
     data.insert(rootScriptsDirKeyC, m_rootScriptsDir.toSettings());
     data.insert(configurationFileKeyC, m_configurationFile.toSettings());
-    data.insert(additionalArgumentsKeyC, m_additionalArguments);
 }
 
 void OpenOcdGdbServerProvider::fromMap(const Store &data)
 {
     GdbServerProvider::fromMap(data);
-    m_executableFile = FilePath::fromSettings(data.value(executableFileKeyC));
     m_rootScriptsDir = FilePath::fromSettings(data.value(rootScriptsDirKeyC));
     m_configurationFile = FilePath::fromSettings(data.value(configurationFileKeyC));
-    m_additionalArguments = data.value(additionalArgumentsKeyC).toString();
 }
 
 bool OpenOcdGdbServerProvider::operator==(const IDebugServerProvider &other) const
@@ -208,15 +193,6 @@ bool OpenOcdGdbServerProvider::operator==(const IDebugServerProvider &other) con
             && m_rootScriptsDir == p->m_rootScriptsDir
             && m_configurationFile == p->m_configurationFile
             && m_additionalArguments == p->m_additionalArguments;
-}
-
-// OpenOcdGdbServerProviderFactory
-
-OpenOcdGdbServerProviderFactory::OpenOcdGdbServerProviderFactory()
-{
-    setId(Constants::GDBSERVER_OPENOCD_PROVIDER_ID);
-    setDisplayName(Tr::tr("OpenOCD"));
-    setCreator([] { return new OpenOcdGdbServerProvider; });
 }
 
 // OpenOcdGdbServerProviderConfigWidget
@@ -323,6 +299,24 @@ void OpenOcdGdbServerProviderConfigWidget::setFromProvider()
     m_additionalArgumentsLineEdit->setText(p->m_additionalArguments);
     m_initCommandsTextEdit->setPlainText(p->initCommands());
     m_resetCommandsTextEdit->setPlainText(p->resetCommands());
+}
+
+// OpenOcdGdbServerProviderFactory
+
+class OpenOcdGdbServerProviderFactory final : public IDebugServerProviderFactory
+{
+public:
+    OpenOcdGdbServerProviderFactory()
+    {
+        setId(Constants::GDBSERVER_OPENOCD_PROVIDER_ID);
+        setDisplayName(Tr::tr("OpenOCD"));
+        setCreator([] { return new OpenOcdGdbServerProvider; });
+    }
+};
+
+void setupOpenOcdGdbServerProvider()
+{
+    static OpenOcdGdbServerProviderFactory theOpenOcdGdbServerProviderFactory;
 }
 
 } // BareMetal::Internal

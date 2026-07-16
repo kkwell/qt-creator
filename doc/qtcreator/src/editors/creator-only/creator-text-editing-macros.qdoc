@@ -21,11 +21,11 @@
 
     \list 1
         \li Go to \uicontrol Tools > \uicontrol {Text Editing Macros} >
-            \uicontrol {Record Macro} or press \key {Alt+[}.
-        \li Press keyboard keys.
+            \uicontrol {Record Macro} or select \key {Alt+[}.
+        \li Select keyboard keys.
         \li To stop recording, go to \uicontrol Tools >
             \uicontrol {Text Editing Macros} > \uicontrol {Stop Recording Macro}
-            or press \key {Alt+]}.
+            or select \key {Alt+]}.
     \endlist
 
     \note The macro recorder does not support code completion.
@@ -37,7 +37,7 @@
     \list
         \li Go to \uicontrol Tools > \uicontrol {Text Editing Macros} >
             \uicontrol {Play Last Macro}.
-        \li Press \key {Alt+R}.
+        \li Select \key {Alt+R}.
         \li Enter \c rm in the locator.
     \endlist
 
@@ -49,13 +49,13 @@
     To view and remove saved macros, go to \preferences >
     \uicontrol {Text Editor} > \uicontrol Macros.
 
-    \image qtcreator-preferences-texteditor-macros.webp {Macros tab in Text Editor Preferences}
+    \image {qtcreator-preferences-texteditor-macros.webp} {Macros tab in Text Editor preferences}
 
     \section1 Assign keyboard shortcuts to macros
 
     To assign a keyboard shortcut to a text editing macro, go to
     \preferences > \uicontrol Environment > \uicontrol Keyboard.
 
-    \sa {Assign keyboard shortcuts}, {Edit Code}{How To: Edit Code},
-    {Navigate with locator}
+    \sa {Assign keyboard shortcuts}, {Create Lua scripts},
+    {Edit code}{How to: Edit code}, {Navigate with locator}
 */

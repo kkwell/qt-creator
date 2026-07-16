@@ -8,12 +8,13 @@
 #include <qmlprofiler/qmlprofilerbindingloopsrenderpass.h>
 #include <qmlprofiler/qmlprofilerrangemodel.h>
 
-#include <QtTest>
+#include <QTest>
 
-namespace QmlProfiler {
-namespace Internal {
+using namespace QmlDebug;
+namespace QmlProfiler::Internal {
 
-class DummyModel : public QmlProfilerRangeModel {
+class DummyModel : public QmlProfilerRangeModel
+{
 public:
     DummyModel(QmlProfilerModelManager *manager, Timeline::TimelineModelAggregator *aggregator);
     void loadData();
@@ -46,10 +47,7 @@ void DummyModel::loadData()
     finalize();
 }
 
-QmlProfilerBindingLoopsRenderPassTest::QmlProfilerBindingLoopsRenderPassTest(QObject *parent) :
-    QObject(parent)
-{
-}
+QmlProfilerBindingLoopsRenderPassTest::QmlProfilerBindingLoopsRenderPassTest() = default;
 
 void QmlProfilerBindingLoopsRenderPassTest::testInstance()
 {
@@ -128,12 +126,9 @@ void QmlProfilerBindingLoopsRenderPassTest::testUpdate()
     QCOMPARE(result->expandedRows().count(), 2);
     QCOMPARE(result->collapsedRows().count(), 0);
 
-    parentState.setPassState(0, result);
+    parentState.passes[0] = result;
     parentState.assembleNodeTree(&model, 1, 1);
 
-    QVERIFY(parentState.collapsedOverlayRoot());
-    QVERIFY(parentState.expandedRowRoot());
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

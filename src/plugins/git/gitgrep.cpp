@@ -11,6 +11,7 @@
 #include <texteditor/findinfiles.h>
 
 #include <vcsbase/vcsbaseconstants.h>
+#include <vcsbase/vcsoutputwindow.h>
 
 #include <utils/algorithm.h>
 #include <utils/async.h>
@@ -32,6 +33,7 @@ using namespace VcsBase;
 namespace Git::Internal {
 
 const char GitGrepRef[] = "GitGrepRef";
+const char GitGrepRecurse[] = "GitGrepRecurse";
 
 class GitGrepParameters
 {
@@ -76,7 +78,7 @@ static void processLine(QStringView line, SearchResultItems *resultList,
     const int lineSeparator = line.indexOf(QChar::Null);
     QStringView filePath = line.left(lineSeparator);
     if (!ref.isEmpty() && filePath.startsWith(ref))
-        filePath = filePath.mid(ref.length());
+        filePath = filePath.mid(ref.size());
     result.setFilePath(directory.pathAppended(filePath.toString()));
     const int textSeparator = line.indexOf(QChar::Null, lineSeparator + 1);
     const int lineNumber = line.mid(lineSeparator + 1, textSeparator - lineSeparator - 1).toInt();
@@ -97,7 +99,7 @@ static void processLine(QStringView line, SearchResultItems *resultList,
         matches.append(match);
         text = text.left(matchStart) + matchText + text.mid(matchEnd + resetColor.size());
     }
-    result.setDisplayText(text);
+    result.setLineText(text);
 
     for (const auto &match : std::as_const(matches)) {
         result.setMainRange(lineNumber, match.matchStart, match.matchLength);
@@ -129,55 +131,29 @@ static SearchResultItems parse(const QFuture<void> &future, const QString &input
     return items;
 }
 
-static void runGitGrep(QPromise<SearchResultItems> &promise, const FileFindParameters &parameters,
-                       const GitGrepParameters &gitParameters)
+struct GitGrepInput
 {
-    const auto setupProcess = [&parameters, gitParameters](Process &process) {
-        const FilePath vcsBinary = gitClient().vcsBinary(parameters.searchDir);
-        const Environment environment = gitClient().processEnvironment(vcsBinary);
+    FileFindParameters parameters;
+    GitGrepParameters gitParameters;
+    CommandLine command;
+    Environment environment;
+};
 
-        QStringList arguments = {
-            "-c", "color.grep.match=bold red",
-            "-c", "color.grep=always",
-            "-c", "color.grep.filename=",
-            "-c", "color.grep.lineNumber=",
-            "grep", "-zn", "--no-full-name"
-        };
-        if (!(parameters.flags & FindCaseSensitively))
-            arguments << "-i";
-        if (parameters.flags & FindWholeWords)
-            arguments << "-w";
-        if (parameters.flags & FindRegularExpression)
-            arguments << "-P";
-        else
-            arguments << "-F";
-        arguments << "-e" << parameters.text;
-        if (gitParameters.recurseSubmodules)
-            arguments << "--recurse-submodules";
-        if (!gitParameters.ref.isEmpty()) {
-            arguments << gitParameters.ref;
-        }
-        const QStringList filterArgs =
-            parameters.nameFilters.isEmpty() ? QStringList("*") // needed for exclusion filters
-                                               : parameters.nameFilters;
-        const QStringList exclusionArgs =
-            Utils::transform(parameters.exclusionFilters, [](const QString &filter) {
-                return QString(":!" + filter);
-            });
-        arguments << "--" << filterArgs << exclusionArgs;
-
-        process.setEnvironment(environment);
-        process.setCommand({vcsBinary, arguments});
-        process.setWorkingDirectory(parameters.searchDir);
+static void runGitGrep(QPromise<SearchResultItems> &promise, const GitGrepInput &inputs)
+{
+    const auto setupProcess = [&inputs](Process &process) {
+        process.setEnvironment(inputs.environment);
+        process.setCommand(inputs.command);
+        process.setWorkingDirectory(inputs.parameters.searchDir);
     };
 
-    const QString ref = gitParameters.ref.isEmpty() ? QString() : gitParameters.ref + ':';
-    const auto outputParser = [&ref, &parameters](const QFuture<void> &future, const QString &input,
+    const QString ref = inputs.gitParameters.ref.isEmpty() ? QString() : inputs.gitParameters.ref + ':';
+    const auto outputParser = [&ref, &inputs](const QFuture<void> &future, const QString &input,
                                                  const std::optional<QRegularExpression> &regExp) {
-        return parse(future, input, regExp, ref, parameters.searchDir);
+        return parse(future, input, regExp, ref, inputs.parameters.searchDir);
     };
 
-    TextEditor::searchInProcessOutput(promise, parameters, setupProcess, outputParser);
+    TextEditor::searchInProcessOutput(promise, inputs.parameters, setupProcess, outputParser);
 }
 
 static bool isGitDirectory(const FilePath &path)
@@ -199,14 +175,9 @@ GitGrep::GitGrep()
     const QRegularExpression refExpression("[\\S]*");
     m_treeLineEdit->setValidator(new QRegularExpressionValidator(refExpression, this));
     layout->addWidget(m_treeLineEdit);
-    // asynchronously check git version, add "recurse submodules" option if available
-    Utils::onResultReady(gitClient().gitVersion(), this,
-                         [this, pLayout = QPointer<QHBoxLayout>(layout)](const QVersionNumber &version) {
-        if (version >= QVersionNumber{2, 13} && pLayout) {
-            m_recurseSubmodules = new QCheckBox(Tr::tr("Recurse submodules"));
-            pLayout->addWidget(m_recurseSubmodules);
-        }
-    });
+
+    m_recurseSubmodules = new QCheckBox(Tr::tr("Recurse submodules"));
+    layout->addWidget(m_recurseSubmodules);
     FindInFiles *findInFiles = FindInFiles::instance();
     QTC_ASSERT(findInFiles, return);
     connect(findInFiles, &FindInFiles::searchDirChanged, m_widget, [this](const FilePath &path) {
@@ -247,18 +218,79 @@ GitGrepParameters GitGrep::gitParameters() const
 void GitGrep::readSettings(const Store &s)
 {
     m_treeLineEdit->setText(s.value(GitGrepRef).toString());
+    m_recurseSubmodules->setChecked(s.value(GitGrepRecurse, false).toBool());
 }
 
 void GitGrep::writeSettings(Store &s) const
 {
     if (!m_treeLineEdit->text().isEmpty())
         s.insert(GitGrepRef, m_treeLineEdit->text());
+    s.insert(GitGrepRecurse, m_recurseSubmodules->isChecked());
+}
+
+FindFlags GitGrep::supportedFindFlags() const
+{
+    return Utils::FindCaseSensitively
+           | Utils::FindRegularExpression
+           | Utils::FindWholeWords
+           | Utils::DontFindBinaryFiles;
+}
+
+static QStringList toGitGrepFilter(const QStringList &filters)
+{
+    return Utils::transform(filters, [](const QString &filter) {
+        return QString(":(glob)**/" + filter);
+    });
+}
+
+static QStringList toGitGrepExcludeFilter(const QStringList &filters)
+{
+    return Utils::transform(filters, [](const QString &filter) {
+        return QString(":(exclude,glob)**/" + filter);
+    });
 }
 
 SearchExecutor GitGrep::searchExecutor() const
 {
     return [gitParameters = gitParameters()](const FileFindParameters &parameters) {
-        return Utils::asyncRun(runGitGrep, parameters, gitParameters);
+        GitGrepInput inputs;
+        inputs.parameters = parameters;
+        inputs.gitParameters = gitParameters;
+        const FilePath vcsBinary = gitClient().vcsBinary(parameters.searchDir);
+        inputs.environment = gitClient().processEnvironment(vcsBinary);
+
+        QStringList arguments = {
+            "-c", "color.grep.match=bold red",
+            "-c", "color.grep=always",
+            "-c", "color.grep.filename=",
+            "-c", "color.grep.lineNumber=",
+            "grep", "-zn", "--no-full-name"
+        };
+        if (!(parameters.flags & FindCaseSensitively))
+            arguments << "-i";
+        if (parameters.flags & FindWholeWords)
+            arguments << "-w";
+        if (parameters.flags & DontFindBinaryFiles)
+            arguments << "-I";
+        if (parameters.flags & FindRegularExpression)
+            arguments << "-P";
+        else
+            arguments << "-F";
+        arguments << "-e" << parameters.text;
+        if (gitParameters.recurseSubmodules)
+            arguments << "--recurse-submodules";
+        if (!gitParameters.ref.isEmpty()) {
+            arguments << gitParameters.ref;
+        }
+        const QStringList filterArgs = parameters.nameFilters.isEmpty()
+                                           ? QStringList("*") // needed for exclusion filters
+                                           : toGitGrepFilter(parameters.nameFilters);
+        const QStringList exclusionArgs = toGitGrepExcludeFilter(parameters.exclusionFilters);
+        arguments << "--" << filterArgs << exclusionArgs;
+
+        inputs.command = CommandLine{vcsBinary, arguments};
+        VcsOutputWindow::appendCommand(inputs.parameters.searchDir, inputs.command);
+        return Utils::asyncRun(runGitGrep, inputs);
     };
 }
 

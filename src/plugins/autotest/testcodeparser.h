@@ -7,11 +7,12 @@
 
 #include <qmljs/qmljsdocument.h>
 
-#include <solutions/tasking/tasktreerunner.h>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <utils/futuresynchronizer.h>
 #include <utils/id.h>
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QTimer>
 
@@ -42,6 +43,8 @@ public:
     void setState(State state);
     State state() const { return m_parserState; }
     bool isParsing() const { return m_parserState == PartialParse || m_parserState == FullParse; }
+    bool isParsingOrScheduled() const
+    { return isParsing() || m_singleShotScheduled || m_postponedUpdateType != UpdateType::NoUpdate; }
     void setDirty() { m_dirty = true; }
     void syncTestFrameworks(const QList<ITestParser *> &parsers);
 #ifdef WITH_TESTS
@@ -97,7 +100,7 @@ private:
     QTimer m_reparseTimer;
     QSet<ITestParser *> m_updateParsers;
     Utils::FutureSynchronizer m_futureSynchronizer;
-    Tasking::TaskTreeRunner m_taskTreeRunner;
+    QtTaskTree::QSingleTaskTreeRunner m_taskTreeRunner;
     bool m_withTaskProgress = false;
     QHash<Utils::FilePath, int> m_qmlEditorRev;
 

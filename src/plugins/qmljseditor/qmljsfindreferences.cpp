@@ -986,7 +986,7 @@ void FindReferences::displayResults(int first, int last)
     // the first usage is always a dummy to indicate we now start searching
     if (first == 0) {
         Usage dummy = m_watcher.future().resultAt(0);
-        const QString replacement = dummy.path.toString();
+        const QString replacement = dummy.path.toUrlishString();
         const QString symbolName = dummy.lineText;
         const QString label = Tr::tr("QML/JS Usages:");
 
@@ -1051,12 +1051,10 @@ void FindReferences::setPaused(bool paused)
         m_watcher.setSuspended(paused);
 }
 
-void FindReferences::onReplaceButtonClicked(const QString &text,
-                     const Utils::SearchResultItems &items, bool preserveCase)
+void FindReferences::updateModelManager(const Utils::FilePaths &filePaths)
 {
-    const Utils::FilePaths filePaths = TextEditor::BaseFileFind::replaceAll(text,
-                                                                            items,
-                                                                            preserveCase);
+    if (filePaths.isEmpty())
+        return;
 
     // files that are opened in an editor are changed, but not saved
     Utils::FilePaths changedOnDisk;
@@ -1072,6 +1070,16 @@ void FindReferences::onReplaceButtonClicked(const QString &text,
         ModelManagerInterface::instance()->updateSourceFiles(changedOnDisk, true);
     if (!changedUnsavedEditors.isEmpty())
         ModelManagerInterface::instance()->updateSourceFiles(changedUnsavedEditors, false);
+}
+
+void FindReferences::onReplaceButtonClicked(const QString &text,
+                     const Utils::SearchResultItems &items, bool preserveCase)
+{
+    const Utils::FilePaths filePaths = TextEditor::BaseFileFind::replaceAll(text,
+                                                                            items,
+                                                                            preserveCase);
+
+    updateModelManager(filePaths);
 
     SearchResultWindow::instance()->hide();
 }

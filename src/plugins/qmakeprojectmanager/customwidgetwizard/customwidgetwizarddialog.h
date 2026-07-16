@@ -5,8 +5,7 @@
 
 #include "../wizards/qtwizard.h"
 
-namespace QmakeProjectManager {
-namespace Internal {
+namespace QmakeProjectManager::Internal {
 
 class CustomWidgetWidgetsWizardPage;
 class CustomWidgetPluginWizardPage;
@@ -19,7 +18,6 @@ class CustomWidgetWizardDialog : public BaseQmakeProjectWizardDialog
 public:
     explicit CustomWidgetWizardDialog(const Core::BaseFileWizardFactory *factory,
                                       const QString &templateName, const QIcon &icon,
-                                      QWidget *parent,
                                       const Core::WizardDialogParameters &parameters);
 
     std::shared_ptr<PluginOptions> pluginOptions() const;
@@ -35,5 +33,4 @@ private:
     int m_pluginPageId;
 };
 
-} // namespace Internal
-} // namespace QmakeProjectManager
+} // namespace QmakeProjectManager::Internal

@@ -8,7 +8,9 @@ QtcPlugin {
 
     Depends { name: "lua546" }
     Depends { name: "sol2" }
+    Depends { name: "ProjectExplorer" }
     Depends { name: "TextEditor" }
+    Depends { name: "Utils" }
 
     Properties {
         condition: qbs.toolchain.contains("mingw")
@@ -20,6 +22,7 @@ QtcPlugin {
         "lua_global.h",
         "luaengine.cpp",
         "luaengine.h",
+        "luaexpander.cpp",
         "luaplugin.cpp",
         "luapluginspec.cpp",
         "luapluginspec.h",
@@ -36,7 +39,6 @@ QtcPlugin {
 
         files: [
             "action.cpp",
-            "async.cpp",
             "core.cpp",
             "fetch.cpp",
             "gui.cpp",
@@ -45,12 +47,18 @@ QtcPlugin {
             "install.cpp",
             "json.cpp",
             "localsocket.cpp",
+            "macro.cpp",
+            "menu.cpp",
             "messagemanager.cpp",
+            "project.cpp",
+            "qt.cpp",
             "qtcprocess.cpp",
             "settings.cpp",
+            "taskhub.cpp",
             "texteditor.cpp",
             "translate.cpp",
             "utils.cpp",
+            "utils.h",
         ]
 
         Properties {
@@ -82,14 +90,12 @@ QtcPlugin {
 
     Group {
         name: "Lua scripts rcc"
-        Qt.core.resourcePrefix: "lua/scripts/"
         fileTags: "qt.core.resource_data"
         files: "scripts/**"
     }
 
     Group {
         name: "Lua images rcc"
-        Qt.core.resourcePrefix: "lua/images/"
         fileTags: "qt.core.resource_data"
         files: "images/**"
     }

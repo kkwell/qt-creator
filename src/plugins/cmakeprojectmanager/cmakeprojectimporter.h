@@ -5,12 +5,11 @@
 
 #include <qtsupport/qtprojectimporter.h>
 
-#include <utils/temporarydirectory.h>
+#include <utils/temporaryfile.h>
 
 namespace CMakeProjectManager {
 
 class CMakeProject;
-class CMakeTool;
 
 namespace Internal {
 
@@ -27,28 +26,23 @@ public:
     bool filter(ProjectExplorer::Kit *k) const final;
 
     Utils::FilePaths presetCandidates();
+    void createKitsFromPresets();
+
 private:
     QList<void *> examineDirectory(const Utils::FilePath &importPath,
                                    QString *warningMessage) const final;
     bool matchKit(void *directoryData, const ProjectExplorer::Kit *k) const final;
     ProjectExplorer::Kit *createKit(void *directoryData) const final;
-    const QList<ProjectExplorer::BuildInfo> buildInfoList(void *directoryData) const final;
-
-    struct CMakeToolData {
-        bool isTemporary = false;
-        CMakeTool *cmakeTool = nullptr;
-    };
-    CMakeToolData findOrCreateCMakeTool(const Utils::FilePath &cmakeToolPath) const;
+    ProjectExplorer::BuildInfo buildInfo(void *directoryData) const final;
 
     void deleteDirectoryData(void *directoryData) const final;
 
-    void cleanupTemporaryCMake(ProjectExplorer::Kit *k, const QVariantList &vl);
-    void persistTemporaryCMake(ProjectExplorer::Kit *k, const QVariantList &vl);
+    void ensureBuildDirectory(const DirectoryData &data, const ProjectExplorer::Kit *k) const;
 
-    void ensureBuildDirectory(DirectoryData &data, const ProjectExplorer::Kit *k) const;
+    void applyDirectoryDataToKit(const DirectoryData &data, ProjectExplorer::Kit *k) const;
 
     const CMakeProject *m_project;
-    Utils::TemporaryDirectory m_presetsTempDir;
+    std::unique_ptr<Utils::TemporaryFilePath> m_presetsTempDir;
 };
 
 #ifdef WITH_TESTS

@@ -5,33 +5,49 @@
 
 #include "texteditor_global.h"
 
+#include <utils/aspects.h>
 #include <utils/store.h>
 
 namespace TextEditor {
 
-class TEXTEDITOR_EXPORT StorageSettings
+class TEXTEDITOR_EXPORT StorageSettingsData final
 {
 public:
-    StorageSettings();
-
-    Utils::Store toMap() const;
-    void fromMap(const Utils::Store &map);
+    StorageSettingsData() = default;
 
     // calculated based on boolean setting plus file type blacklist examination
     bool removeTrailingWhitespace(const QString &filePattern) const;
 
-    bool equals(const StorageSettings &ts) const;
+    QString m_ignoreFileTypes{"*.md, *.MD, Makefile"};
+    bool m_cleanWhitespace{true};
+    bool m_inEntireDocument{false};
+    bool m_addFinalNewLine{false};
+    bool m_cleanIndentation{true};
+    bool m_skipTrailingWhitespace{true};
+};
 
-    QString m_ignoreFileTypes;
-    bool m_cleanWhitespace;
-    bool m_inEntireDocument;
-    bool m_addFinalNewLine;
-    bool m_cleanIndentation;
-    bool m_skipTrailingWhitespace;
+class TEXTEDITOR_EXPORT StorageSettings : public Utils::AspectContainer
+{
+public:
+    StorageSettings();
+
+    // calculated based on boolean setting plus file type blacklist examination
+    bool removeTrailingWhitespace(const QString &filePattern) const;
+
+    StorageSettingsData data() const;
+    void setData(const StorageSettingsData &data);
+
+    void apply() final;
+
+    Utils::StringAspect ignoreFileTypes{this};
+    Utils::BoolAspect cleanWhitespace{this};
+    Utils::BoolAspect inEntireDocument{this};
+    Utils::BoolAspect addFinalNewLine{this};
+    Utils::BoolAspect cleanIndentation{this};
+    Utils::BoolAspect skipTrailingWhitespace{this};
 };
 
 void setupStorageSettings();
-void updateGlobalStorageSettings(const StorageSettings &newStorageSettings);
 
 TEXTEDITOR_EXPORT StorageSettings &globalStorageSettings();
 

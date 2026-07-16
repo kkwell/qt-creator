@@ -10,6 +10,7 @@
 #include <QAction>
 #include <QPointer>
 
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace Core {
@@ -25,12 +26,9 @@ CommandLocator::CommandLocator(Id id, const QString &displayName, const QString 
 
 LocatorMatcherTasks CommandLocator::matchers()
 {
-    using namespace Tasking;
-
-    Storage<LocatorStorage> storage;
-
-    const auto onSetup = [storage, commands = m_commands] {
-        const QString input = storage->input();
+    const auto onSetup = [commands = m_commands] {
+        const LocatorStorage &storage = *LocatorStorage::storage();
+        const QString input = storage.input();
         const Qt::CaseSensitivity inputCaseSensitivity = caseSensitivity(input);
         LocatorFilterEntries goodEntries;
         LocatorFilterEntries betterEntries;
@@ -56,16 +54,16 @@ LocatorMatcherTasks CommandLocator::matchers()
                     }
                     return AcceptResult();
                 };
-                entry.highlightInfo = {index, int(input.length())};
+                entry.highlightInfo = {index, int(input.size())};
                 if (index == 0)
                     betterEntries.append(entry);
                 else
                     goodEntries.append(entry);
             }
         }
-        storage->reportOutput(betterEntries + goodEntries);
+        storage.reportOutput(betterEntries + goodEntries);
     };
-    return {{Sync(onSetup), storage}};
+    return {QSyncTask(onSetup)};
 }
 
 }  // namespace Core

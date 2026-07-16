@@ -5,24 +5,24 @@
 
 #include "buildsystem/qmlbuildsystem.h" // IWYU pragma: keep
 #include "qmlprojectmanager_global.h"
-#include <projectexplorer/project.h>
 
-#include <QPointer>
+#include <extensionsystem/iplugin.h>
+#include <projectexplorer/project.h>
+#include <utils/expected.h>
+#include <utils/filepath.h>
 
 namespace QmlProjectManager {
 
 class QmlProject;
+
+ExtensionSystem::IPlugin *findMcuSupportPlugin();
+QMLPROJECTMANAGER_EXPORT Utils::Result<Utils::FilePath> mcuFontsDir();
 
 class QMLPROJECTMANAGER_EXPORT QmlProject : public ProjectExplorer::Project
 {
     Q_OBJECT
 public:
     explicit QmlProject(const Utils::FilePath &filename);
-
-    static bool isQtDesignStudioStartedFromQtC();
-    bool isEditModePreferred() const override;
-
-    ProjectExplorer::Tasks projectIssues(const ProjectExplorer::Kit *k) const final;
 
     static bool isMCUs();
 
@@ -31,38 +31,10 @@ protected:
 
 private:
     ProjectExplorer::DeploymentKnowledge deploymentKnowledge() const override;
-    Utils::FilePaths collectUiQmlFilesForFolder(const Utils::FilePath &folder) const;
-    Utils::FilePaths collectQmlFiles() const;
 
-    bool setKitWithVersion(const int qtMajorVersion, const QList<ProjectExplorer::Kit *> kits);
-
-    bool allowOnlySingleProject();
-    int preferedQtTarget(ProjectExplorer::Target *target);
-
+    void openStartupQmlFile();
 private slots:
-    void parsingFinished(const ProjectExplorer::Target *target, bool success);
-};
-
-class FilesUpdateBlocker
-{
-public:
-    FilesUpdateBlocker(QmlBuildSystem *bs)
-        : m_bs(bs)
-    {
-        if (m_bs)
-            m_bs->m_blockFilesUpdate = true;
-    }
-
-    ~FilesUpdateBlocker()
-    {
-        if (m_bs) {
-            m_bs->m_blockFilesUpdate = false;
-            m_bs->refresh(QmlBuildSystem::RefreshOptions::Project);
-        }
-    }
-
-private:
-    QPointer<QmlBuildSystem> m_bs;
+    void parsingFinished(bool success);
 };
 
 } // namespace QmlProjectManager

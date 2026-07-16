@@ -17,17 +17,13 @@ using namespace Utils;
 
 namespace CppEditor {
 
+using namespace Internal;
+
 using ScopedIndexItemPtr = ScopedSwap<IndexItem::Ptr>;
 using ScopedScope = ScopedSwap<QString>;
 
-SearchSymbols::SymbolTypes SearchSymbols::AllTypes =
-        SymbolSearcher::Classes
-        | SymbolSearcher::Functions
-        | SymbolSearcher::Enums
-        | SymbolSearcher::Declarations;
-
 SearchSymbols::SearchSymbols()
-    : symbolsToSearchFor(SymbolSearcher::Classes | SymbolSearcher::Functions | SymbolSearcher::Enums)
+    : symbolsToSearchFor(SymbolType::Classes | SymbolType::Functions | SymbolType::Enums)
 {
     overview.showTemplateParameters = true;
 }
@@ -39,7 +35,7 @@ void SearchSymbols::setSymbolsToSearchFor(const SymbolTypes &types)
 
 IndexItem::Ptr SearchSymbols::operator()(Document::Ptr doc, const QString &scope)
 {
-    IndexItem::Ptr root = IndexItem::create(StringTable::insert(doc->filePath().toString()), 100);
+    IndexItem::Ptr root = IndexItem::create(StringTable::insert(doc->filePath().toUrlishString()), 100);
 
     { // RAII scope
         ScopedIndexItemPtr parentRaii(_parent, root);
@@ -48,7 +44,7 @@ IndexItem::Ptr SearchSymbols::operator()(Document::Ptr doc, const QString &scope
 
         QTC_ASSERT(_parent, return IndexItem::Ptr());
         QTC_ASSERT(root, return IndexItem::Ptr());
-        QTC_ASSERT(_parent->filePath().toString() == StringTable::insert(doc->filePath().toString()),
+        QTC_ASSERT(_parent->filePath().toUrlishString() == StringTable::insert(doc->filePath().toUrlishString()),
                    return IndexItem::Ptr());
 
         for (int i = 0, ei = doc->globalSymbolCount(); i != ei; ++i)
@@ -64,7 +60,7 @@ IndexItem::Ptr SearchSymbols::operator()(Document::Ptr doc, const QString &scope
 
 bool SearchSymbols::visit(Enum *symbol)
 {
-    if (!(symbolsToSearchFor & SymbolSearcher::Enums))
+    if (!(symbolsToSearchFor & SymbolType::Enums))
         return false;
 
     QString name = overview.prettyName(symbol->name());
@@ -101,10 +97,10 @@ bool SearchSymbols::visit(Namespace *symbol)
 
 bool SearchSymbols::visit(Declaration *symbol)
 {
-    if (!(symbolsToSearchFor & SymbolSearcher::Declarations)) {
-        if ((symbolsToSearchFor & SymbolSearcher::TypeAliases) && symbol->type().isTypedef()) {
+    if (!(symbolsToSearchFor & SymbolType::Declarations)) {
+        if ((symbolsToSearchFor & SymbolType::TypeAliases) && symbol->type().isTypedef()) {
             // Continue.
-        } else if (symbolsToSearchFor & SymbolSearcher::Functions) {
+        } else if (symbolsToSearchFor & SymbolType::Functions) {
             // if we're searching for functions, still allow signal declarations to show up.
             Function *funTy = symbol->type()->asFunctionType();
             if (!funTy) {
@@ -158,6 +154,11 @@ bool SearchSymbols::visit(Argument *)
 }
 
 bool SearchSymbols::visit(TypenameArgument *)
+{
+    return false;
+}
+
+bool SearchSymbols::visit(TemplateTypeArgument *)
 {
     return false;
 }
@@ -297,7 +298,7 @@ void SearchSymbols::processClass(T *clazz)
     QString name = overview.prettyName(clazz->name());
 
     IndexItem::Ptr newParent;
-    if (symbolsToSearchFor & SymbolSearcher::Classes)
+    if (symbolsToSearchFor & SymbolType::Classes)
         newParent = addChildItem(name, QString(), _scope, IndexItem::Class, clazz);
     if (!newParent)
         newParent = _parent;
@@ -312,7 +313,7 @@ void SearchSymbols::processClass(T *clazz)
 template<class T>
 void SearchSymbols::processFunction(T *func)
 {
-    if (!(symbolsToSearchFor & SymbolSearcher::Functions) || !func->name())
+    if (!(symbolsToSearchFor & SymbolType::Functions) || !func->name())
         return;
     QString name = overview.prettyName(func->name());
     QString scope = _scope;

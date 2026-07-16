@@ -11,8 +11,10 @@ local lsp = {}
 ---@field languageFilter LanguageFilter The language filter deciding which files to open with the language server.
 ---@field startBehavior? "AlwaysOn"|"RequiresFile"|"RequiresProject"
 ---@field initializationOptions? function|table|string The initialization options to pass to the language server, either a JSON string, a table, or a function that returns either.
----@field settings? AspectContainer
+---@field initializationOptionsAsync? function A callback that will return the initialization options as a JSON String or a table. Inside the callback you can use Async functions.
+---@field settings? AspectContainer The settings object to associate with the language server.
 ---@field onStartFailed? function This callback is called when client failed to start.
+---@field showInSettings? boolean Whether the client should show up in the general Language Server list.
 local ClientOptions = {}
 
 ---@class LanguageFilter
@@ -45,11 +47,13 @@ function lsp.Client:sendMessageForDocument(document, msg) end
 function lsp.Client:sendMessageWithIdForDocument(document, msg) end
 
 ---@param filePath FilePath to get the version of.
----@return integer Returns -1 on error, otherwise current document version.
+---@return boolean ok Returns false on error, otherwise true.
+---@return integer|string error_or_version Current document version, or an error message.
 function lsp.Client:documentVersion(filePath) end
 ---
 ---@param filePath table file path to get the uri of.
----@return string Returns empty string on error, otherwise the server URI string.
+---@return boolean ok Returns false on error, otherwise true.
+---@return string error_or_uri The server URI string, or an error message.
 function lsp.Client:hostPathToServerUri(filePath) end
 
 ---Creates a new Language Client.

@@ -11,15 +11,14 @@
 
 #include <utils/dropsupport.h>
 #include <utils/environment.h>
-#include <utils/expected.h>
 #include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
 #include <utils/layoutbuilder.h>
 #include <utils/pathchooser.h>
+#include <utils/shutdownguard.h>
 #include <utils/stringutils.h>
 #include <utils/theme/theme.h>
 
-#include <QFontComboBox>
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -78,16 +77,18 @@ void setupColor(TerminalSettings *settings,
     color.setDefaultValue(defaultColor);
     color.setToolTip(Tr::tr("The color used for %1.")
                          .arg(humanReadableName.isEmpty() ? label : humanReadableName));
+    color.setWithResetButton(false);
+    color.setMinimumSize({0, 0});
     settings->registerAspect(&color);
 }
 
-static expected_str<void> loadXdefaults(const FilePath &path)
+static Result<> loadXdefaults(const FilePath &path)
 {
-    const expected_str<QByteArray> readResult = path.fileContents();
+    const Result<QByteArray> readResult = path.fileContents();
     if (!readResult)
         return make_unexpected(readResult.error());
 
-    QRegularExpression re(R"(.*\*(color[0-9]{1,2}|foreground|background):\s*(#[0-9a-f]{6}))");
+    static const QRegularExpression re(R"(.*\*(color[0-9]{1,2}|foreground|background):\s*(#[0-9a-f]{6}))");
 
     for (const QByteArray &line : readResult->split('\n')) {
         if (line.trimmed().startsWith('!'))
@@ -112,7 +113,7 @@ static expected_str<void> loadXdefaults(const FilePath &path)
     return {};
 }
 
-static expected_str<void> loadItermColors(const FilePath &path)
+static Result<> loadItermColors(const FilePath &path)
 {
     QFile f(path.toFSPathString());
     const bool opened = f.open(QIODevice::ReadOnly);
@@ -182,9 +183,9 @@ static expected_str<void> loadItermColors(const FilePath &path)
     return {};
 }
 
-static expected_str<void> loadWindowsTerminalColors(const FilePath &path)
+static Result<> loadWindowsTerminalColors(const FilePath &path)
 {
-    const expected_str<QByteArray> readResult = path.fileContents();
+    const Result<QByteArray> readResult = path.fileContents();
     if (!readResult)
         return make_unexpected(readResult.error());
 
@@ -248,9 +249,9 @@ static expected_str<void> loadWindowsTerminalColors(const FilePath &path)
     return {};
 }
 
-static expected_str<void> loadVsCodeColors(const FilePath &path)
+static Result<> loadVsCodeColors(const FilePath &path)
 {
-    const expected_str<QByteArray> readResult = path.fileContents();
+    const Result<QByteArray> readResult = path.fileContents();
     if (!readResult)
         return make_unexpected(readResult.error());
 
@@ -319,9 +320,9 @@ static expected_str<void> loadVsCodeColors(const FilePath &path)
     return {};
 }
 
-static expected_str<void> loadKonsoleColorScheme(const FilePath &path)
+static Result<> loadKonsoleColorScheme(const FilePath &path)
 {
-    auto parseColor = [](const QStringList &parts) -> expected_str<QColor> {
+    auto parseColor = [](const QStringList &parts) -> Result<QColor> {
         if (parts.size() != 3 && parts.size() != 4)
             return make_unexpected(Tr::tr("Invalid color format."));
         int alpha = parts.size() == 4 ? parts[3].toInt() : 255;
@@ -374,16 +375,17 @@ static expected_str<void> loadKonsoleColorScheme(const FilePath &path)
     return {};
 }
 
-static expected_str<void> loadXFCE4ColorScheme(const FilePath &path)
+static Result<> loadXFCE4ColorScheme(const FilePath &path)
 {
-    expected_str<QByteArray> arr = path.fileContents();
+    Result<QByteArray> arr = path.fileContents();
     if (!arr)
         return make_unexpected(arr.error());
 
     arr->replace(';', ',');
 
     QTemporaryFile f;
-    f.open();
+    if (!f.open())
+        return make_unexpected(f.errorString());
     f.write(*arr);
     f.close();
 
@@ -402,7 +404,7 @@ static expected_str<void> loadXFCE4ColorScheme(const FilePath &path)
             colorKey.second->setVolatileValue(QColor(ini.value(colorKey.first).toString()));
     }
 
-    QStringList colors = ini.value(QLatin1String("Scheme/ColorPalette")).toStringList();
+    const QStringList colors = ini.value(QLatin1String("Scheme/ColorPalette")).toStringList();
     int i = 0;
     for (const QString &color : colors)
         s.colors[i++].setVolatileValue(QColor(color));
@@ -410,13 +412,13 @@ static expected_str<void> loadXFCE4ColorScheme(const FilePath &path)
     return {};
 }
 
-static expected_str<void> loadVsCodeOrWindows(const FilePath &path)
+static Result<> loadVsCodeOrWindows(const FilePath &path)
 {
     return loadVsCodeColors(path).or_else(
         [path](const auto &) { return loadWindowsTerminalColors(path); });
 }
 
-static expected_str<void> loadColorScheme(const FilePath &path)
+static Result<> loadColorScheme(const FilePath &path)
 {
     if (path.endsWith("Xdefaults"))
         return loadXdefaults(path);
@@ -434,7 +436,7 @@ static expected_str<void> loadColorScheme(const FilePath &path)
 
 TerminalSettings &settings()
 {
-    static TerminalSettings theSettings;
+    static GuardedObject<TerminalSettings> theSettings;
     return theSettings;
 }
 
@@ -450,11 +452,12 @@ TerminalSettings::TerminalSettings()
                "enabled and for \"Open Terminal here\"."));
     enableTerminal.setDefaultValue(true);
 
-    font.setSettingsKey("FontFamily");
-    font.setLabelText(Tr::tr("Family:"));
-    font.setHistoryCompleter("Terminal.Fonts.History");
-    font.setToolTip(Tr::tr("The font family used in the terminal."));
-    font.setDefaultValue(defaultFontFamily());
+    fontFamily.setSettingsKey("FontFamily");
+    fontFamily.setLabelText(Tr::tr("Family:"));
+    // fontFamily.setHistoryCompleter("Terminal.Fonts.History");
+    fontFamily.setToolTip(Tr::tr("The font family used in the terminal."));
+    fontFamily.setDefaultValue(defaultFontFamily());
+    fontFamily.setFontFilters(QFontComboBox::MonospacedFonts);
 
     fontSize.setSettingsKey("FontSize");
     fontSize.setLabelText(Tr::tr("Size:"));
@@ -527,6 +530,13 @@ TerminalSettings::TerminalSettings()
     enableMouseTracking.setToolTip(Tr::tr("Enables mouse tracking in the terminal."));
     enableMouseTracking.setDefaultValue(true);
 
+    enableLiveReflow.setSettingsKey("EnableLiveReflow");
+    enableLiveReflow.setLabelText(Tr::tr("Enable live reflow (experimental)"));
+    enableLiveReflow.setToolTip(
+        Tr::tr("Wraps and reflows text when resizing the terminal. "
+               "Note that this does not work properly with all shells and prompts."));
+    enableLiveReflow.setDefaultValue(false);
+
     setupColor(this, foregroundColor, "Foreground", creatorColor(Theme::TerminalForeground));
     setupColor(this, backgroundColor, "Background", creatorColor(Theme::TerminalBackground));
     setupColor(this, selectionColor, "Selection", creatorColor(Theme::TerminalSelection));
@@ -560,14 +570,6 @@ TerminalSettings::TerminalSettings()
     setLayouter([this] {
         using namespace Layouting;
 
-        QFontComboBox *fontComboBox = new QFontComboBox;
-        fontComboBox->setFontFilters(QFontComboBox::MonospacedFonts);
-        fontComboBox->setCurrentFont(font());
-
-        connect(fontComboBox, &QFontComboBox::currentFontChanged, this, [this](const QFont &f) {
-            font.setVolatileValue(f.family());
-        });
-
         auto loadThemeButton = new QPushButton(Tr::tr("Load Theme..."));
         auto resetTheme = new QPushButton(Tr::tr("Reset Theme"));
         auto copyTheme = schemeLog().isDebugEnabled() ? new QPushButton(Tr::tr("Copy Theme"))
@@ -575,7 +577,6 @@ TerminalSettings::TerminalSettings()
 
         connect(loadThemeButton, &QPushButton::clicked, this, [] {
             const FilePath path = FileUtils::getOpenFilePath(
-                Core::ICore::dialogParent(),
                 "Open Theme",
                 {},
                 "All Scheme formats (*.itermcolors *.json *.colorscheme *.theme *.theme.txt);;"
@@ -594,7 +595,7 @@ TerminalSettings::TerminalSettings()
             if (path.isEmpty())
                 return;
 
-            const expected_str<void> result = loadColorScheme(path);
+            const Result<> result = loadColorScheme(path);
             if (!result)
                 QMessageBox::warning(Core::ICore::dialogParent(), Tr::tr("Error"), result.error());
         });
@@ -645,12 +646,13 @@ TerminalSettings::TerminalSettings()
                     audibleBell, st,
                     allowBlinkingCursor, st,
                     enableMouseTracking, st,
+                    enableLiveReflow, st,
                 },
             },
             Group {
                 title(Tr::tr("Font")),
                 Row {
-                    font.labelText(), fontComboBox, Space(20),
+                    fontFamily, Space(20),
                     fontSize, st,
                 },
             },
@@ -703,8 +705,6 @@ public:
         setId("Terminal.General");
         setDisplayName("Terminal");
         setCategory("ZY.Terminal");
-        setDisplayCategory("Terminal");
-        setCategoryIconPath(":/terminal/images/settingscategory_terminal.png");
         setSettingsProvider([] { return &settings(); });
     }
 };

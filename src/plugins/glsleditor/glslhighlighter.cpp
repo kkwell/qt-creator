@@ -61,18 +61,17 @@ void GlslHighlighter::highlightBlock(const QString &text)
     state = lex.state(); // refresh the state
 
     int foldingIndent = initialBraceDepth;
-    if (TextBlockUserData *userData = TextDocumentLayout::textUserData(currentBlock())) {
-        userData->setFoldingIndent(0);
-        userData->setFoldingStartIncluded(false);
-        userData->setFoldingEndIncluded(false);
-    }
+    setFoldingIndent(currentBlock(), 0);
+    setFoldingStartIncluded(currentBlock(), false);
+    setFoldingEndIncluded(currentBlock(), false);
 
     if (tokens.isEmpty()) {
         setCurrentBlockState(previousState);
-        TextDocumentLayout::clearParentheses(currentBlock());
+        TextBlockUserData::clearParentheses(currentBlock());
         if (!text.isEmpty()) // the empty line can still contain whitespace
-            setFormat(0, text.length(), formatForCategory(C_VISUAL_WHITESPACE));
-        TextDocumentLayout::setFoldingIndent(currentBlock(), foldingIndent);
+            setFormat(0, text.size(), formatForCategory(C_VISUAL_WHITESPACE));
+        if (!ignoresFolding())
+            setFoldingIndent(currentBlock(), foldingIndent);
         return;
     }
 
@@ -108,7 +107,7 @@ void GlslHighlighter::highlightBlock(const QString &text)
                 // as if it were inside the folding block
                 if (tk.begin() == firstNonSpace) {
                     ++foldingIndent;
-                    TextDocumentLayout::userData(currentBlock())->setFoldingStartIncluded(true);
+                    setFoldingStartIncluded(currentBlock(), true);
                 }
             }
         } else if (tk.is(GLSL::Parser::T_RIGHT_PAREN) || tk.is(GLSL::Parser::T_RIGHT_BRACE) || tk.is(GLSL::Parser::T_RIGHT_BRACKET)) {
@@ -119,7 +118,7 @@ void GlslHighlighter::highlightBlock(const QString &text)
                 if (braceDepth < foldingIndent) {
                     // unless we are at the end of the block, we reduce the folding indent
                     if (i == tokens.size()-1 || tokens.at(i+1).is(GLSL::Parser::T_SEMICOLON))
-                        TextDocumentLayout::userData(currentBlock())->setFoldingEndIncluded(true);
+                        setFoldingEndIncluded(currentBlock(), true);
                     else
                         foldingIndent = qMin(braceDepth, foldingIndent);
                 }
@@ -153,7 +152,7 @@ void GlslHighlighter::highlightBlock(const QString &text)
                 --braceDepth;
                 // unless we are at the end of the block, we reduce the folding indent
                 if (i == tokens.size()-1)
-                    TextDocumentLayout::userData(currentBlock())->setFoldingEndIncluded(true);
+                    setFoldingEndIncluded(currentBlock(), true);
                 else
                     foldingIndent = qMin(braceDepth, foldingIndent);
                 const int tokenEnd = tk.begin() + tk.length - 1;
@@ -176,8 +175,8 @@ void GlslHighlighter::highlightBlock(const QString &text)
     {
         const GLSL::Token tk = tokens.last();
         const int lastTokenEnd = tk.begin() + tk.length;
-        if (text.length() > lastTokenEnd)
-            highlightLine(text, lastTokenEnd, text.length() - lastTokenEnd, QTextCharFormat());
+        if (text.size() > lastTokenEnd)
+            highlightLine(text, lastTokenEnd, text.size() - lastTokenEnd, QTextCharFormat());
     }
 
     if (! initialState && state && ! tokens.isEmpty()) {
@@ -186,19 +185,18 @@ void GlslHighlighter::highlightBlock(const QString &text)
         ++braceDepth;
     }
 
-    TextDocumentLayout::setParentheses(currentBlock(), parentheses);
+    TextBlockUserData::setParentheses(currentBlock(), parentheses);
 
     // if the block is ifdefed out, we only store the parentheses, but
     // do not adjust the brace depth.
-    if (TextBlockUserData *userData = TextDocumentLayout::textUserData(currentBlock());
-            userData && userData->ifdefedOut()) {
+    if (TextBlockUserData::ifdefedOut(currentBlock())) {
         braceDepth = initialBraceDepth;
         foldingIndent = initialBraceDepth;
     }
 
-    TextDocumentLayout::setFoldingIndent(currentBlock(), foldingIndent);
-
-    setCurrentBlockState((braceDepth << 8) | lex.state());
+    setFoldingIndent(currentBlock(), foldingIndent);
+    TextBlockUserData::setBraceDepth(currentBlock(), braceDepth);
+    setCurrentBlockState(lex.state());
 }
 
 void GlslHighlighter::highlightLine(const QString &text, int position, int length,

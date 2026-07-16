@@ -30,9 +30,10 @@ public:
     void possibleImportsChanged(const Imports &possibleImports) override;
     void usedImportsChanged(const Imports &usedImports) override;
     void documentMessagesChanged(const QList<DocumentMessage> &errors, const QList<DocumentMessage> &warnings) override;
-    void updateImport3DSupport(const QVariantMap &supportMap) override;
     void customNotification(const AbstractView *view, const QString &identifier,
                             const QList<ModelNode> &nodeList, const QList<QVariant> &data) override;
+    void exportedTypeNamesChanged(const ExportedTypeNames &added,
+                                  const ExportedTypeNames &removed) override;
 
 protected:
     void updateImports();
@@ -41,8 +42,6 @@ private:
     AsynchronousImageCache &m_imageCache;
     QPointer<ItemLibraryWidget> m_widget;
     bool m_hasErrors = false;
-    QVariantMap m_importableExtensions3DMap;
-    QVariantMap m_importOptions3DMap;
 };
 
 }

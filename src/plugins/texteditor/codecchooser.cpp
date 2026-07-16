@@ -5,87 +5,42 @@
 
 #include <utils/algorithm.h>
 
-#include <QTextCodec>
-
-static bool isSingleByte(int mib)
-{
-    // Encodings are listed at https://www.iana.org/assignments/character-sets/character-sets.xhtml
-    return (mib >= 0 && mib <= 16)
-            || (mib >= 81 && mib <= 85)
-            || (mib >= 109 && mib <= 112)
-            || (mib >= 2000 && mib <= 2024)
-            || (mib >= 2028 && mib <= 2100)
-            || (mib >= 2106);
-}
+using namespace Utils;
 
 namespace TextEditor {
 
-CodecChooser::CodecChooser(Filter filter)
+CodecChooser::CodecChooser()
 {
-    QList<int> mibs = Utils::sorted(QTextCodec::availableMibs());
-    QList<int>::iterator firstNonNegative =
-        std::find_if(mibs.begin(), mibs.end(), [](int n) { return n >=0; });
-    if (firstNonNegative != mibs.end())
-        std::rotate(mibs.begin(), firstNonNegative, mibs.end());
-    for (int mib : std::as_const(mibs)) {
-        if (filter == Filter::SingleByte && !isSingleByte(mib))
-            continue;
-        if (QTextCodec *codec = QTextCodec::codecForMib(mib)) {
-            QString compoundName = QLatin1String(codec->name());
-            const QList<QByteArray> aliases = codec->aliases();
-            for (const QByteArray &alias : aliases) {
-                compoundName += QLatin1String(" / ");
-                compoundName += QString::fromLatin1(alias);
-            }
-            addItem(compoundName);
-            m_codecs.append(codec);
-        }
+    for (const TextEncoding &encoding : TextEncoding::availableEncodings()) {
+        addItem(encoding.fullDisplayName());
+        m_encodings.append(encoding);
     }
     connect(this, &QComboBox::currentIndexChanged,
-            this, [this](int index) { emit codecChanged(m_codecs.at(index)); });
+            this, [this](int index) { emit encodingChanged(encodingAt(index)); });
 }
 
 void CodecChooser::prependNone()
 {
     insertItem(0, "None");
-    m_codecs.prepend(nullptr);
+    m_encodings.prepend({});
 }
 
-QTextCodec *CodecChooser::currentCodec() const
+TextEncoding CodecChooser::currentEncoding() const
 {
-    return codecAt(currentIndex());
+    return encodingAt(currentIndex());
 }
 
-QTextCodec *CodecChooser::codecAt(int index) const
+TextEncoding CodecChooser::encodingAt(int index) const
 {
     if (index < 0)
         index = 0;
-    return m_codecs[index];
+    return m_encodings[index].isValid() ? m_encodings[index] : TextEncoding();
 }
 
-void CodecChooser::setAssignedCodec(QTextCodec *codec, const QString &name)
+void CodecChooser::setAssignedEncoding(const TextEncoding &encoding)
 {
-    int rememberedSystemPosition = -1;
-    for (int i = 0, total = m_codecs.size(); i < total; ++i) {
-        if (codec != m_codecs.at(i))
-            continue;
-        if (name.isEmpty() || itemText(i) == name) {
-            setCurrentIndex(i);
-            return;
-        }
-        // we've got System matching encoding - but have explicitly set the codec
-        rememberedSystemPosition = i;
-    }
-    if (rememberedSystemPosition != -1)
-        setCurrentIndex(rememberedSystemPosition);
-}
-
-QByteArray CodecChooser::assignedCodecName() const
-{
-    const int index = currentIndex();
-    return index == 0
-            ? QByteArray("System")   // we prepend System to the available codecs
-            : m_codecs.at(index)->name();
+    if (const qsizetype index = m_encodings.indexOf(encoding); index >= 0)
+        setCurrentIndex(index);
 }
 
 } // TextEditor

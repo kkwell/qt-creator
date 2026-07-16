@@ -5,6 +5,7 @@
 
 #include "commitdata.h"
 
+#include <coreplugin/iversioncontrol.h>
 #include <texteditor/syntaxhighlighter.h>
 #include <vcsbase/submiteditorwidget.h>
 #include <utils/filepath.h>
@@ -12,6 +13,7 @@
 #include <QSyntaxHighlighter>
 
 QT_BEGIN_NAMESPACE
+class QCheckBox;
 class QValidator;
 QT_END_NAMESPACE
 
@@ -39,18 +41,21 @@ public:
     GitSubmitEditorWidget();
 
     GitSubmitEditorPanelData panelData() const;
-    QString amendSHA1() const;
+    QString amendHash() const;
     void setHasUnmerged(bool e);
     void initialize(const Utils::FilePath &repository, const CommitData &data);
     void refreshLog(const Utils::FilePath &repository);
 
 protected:
-    bool canSubmit(QString *whyNot) const override;
+    Utils::Result<> canSubmit() const override;
     QString cleanupDescription(const QString &) const override;
     QString commitName() const override;
+    void addFileContextMenuActions(QMenu *menu, const QModelIndex &index) override;
 
 signals:
     void showRequested(const QString &commit);
+    void logRequested(const QStringList &range);
+    void fileActionRequested(const Utils::FilePath &filePath, Core::IVersionControl::FileAction action);
 
 private:
     void authorInformationChanged();
@@ -63,12 +68,14 @@ private:
     void setPanelInfo(const GitSubmitEditorPanelInfo &info);
 
     PushAction m_pushAction = NoPush;
-    GitSubmitPanel *m_gitSubmitPanel;
+    GitSubmitPanel *m_gitSubmitPanel = nullptr;
     GitSubmitHighlighter *m_highlighter = nullptr;
     LogChangeWidget *m_logChangeWidget = nullptr;
-    QValidator *m_emailValidator;
+    QCheckBox *m_editMessageCheckBox = nullptr;
+    QValidator *m_emailValidator = nullptr;
     QString m_originalAuthor;
     QString m_originalEmail;
+    QStringList m_range;
     bool m_hasUnmerged = false;
     bool m_isInitialized = false;
 };

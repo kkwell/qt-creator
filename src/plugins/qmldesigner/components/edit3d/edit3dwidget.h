@@ -2,15 +2,20 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 #pragma once
 
-#include <QLabel>
-#include <QMenu>
+#include <import.h>
+#include <itemlibraryentry.h>
+#include <modelnode.h>
+
+#include <coreplugin/icontext.h>
+
 #include <QPointer>
 #include <QVector3D>
 #include <QWidget>
 
-#include <coreplugin/icontext.h>
-#include <itemlibraryentry.h>
-#include <modelnode.h>
+#include <memory>
+
+QT_FORWARD_DECLARE_CLASS(QLabel)
+QT_FORWARD_DECLARE_CLASS(QMenu)
 
 namespace Core {
 class Command;
@@ -18,8 +23,9 @@ class Command;
 
 namespace QmlDesigner {
 
-class Edit3DView;
 class Edit3DCanvas;
+class Edit3DMaterialsAction;
+class Edit3DView;
 class ToolBox;
 
 struct ItemLibraryDetails {
@@ -27,9 +33,7 @@ struct ItemLibraryDetails {
     QIcon icon;
     QList<ItemLibraryEntry> entryList;
 
-    ItemLibraryDetails(
-            const QString &name = QString(),
-            const QIcon &icon = QIcon())
+    ItemLibraryDetails(const QString &name = QString(), const QIcon &icon = QIcon())
         : name (name)
         , icon(icon)
     {}
@@ -52,6 +56,9 @@ public:
 
     QMenu *backgroundColorMenu() const;
     void showBackgroundColorMenu(bool show, const QPoint &pos);
+
+    QMenu *viewportPresetsMenu() const;
+    void showViewportPresetsMenu(bool show, const QPoint &pos);
 
     void showContextMenu(const QPoint &pos, const ModelNode &modelNode, const QVector3D &pos3d);
     void updateCreateSubMenu(const QList<ItemLibraryDetails> &entriesList);
@@ -86,10 +93,10 @@ private:
     Core::IContext *m_context = nullptr;
     QPointer<QMenu> m_visibilityTogglesMenu;
     QPointer<QMenu> m_backgroundColorMenu;
+    QPointer<QMenu> m_viewportPresetsMenu;
     QPointer<QMenu> m_contextMenu;
     QPointer<QAction> m_bakeLightsAction;
     QPointer<QAction> m_editComponentAction;
-    QPointer<QAction> m_editMaterialAction;
     QPointer<QAction> m_duplicateAction;
     QPointer<QAction> m_copyAction;
     QPointer<QAction> m_pasteAction;
@@ -101,10 +108,12 @@ private:
     QPointer<QAction> m_toggleGroupAction;
     QPointer<QAction> m_wireFrameAction;
     QPointer<QAction> m_addToContentLibAction;
+    QPointer<Edit3DMaterialsAction> m_materialsAction;
     QHash<int, QPointer<QAction>> m_matOverrideActions;
     QPointer<QMenu> m_createSubMenu;
     ModelNode m_contextMenuTarget;
     QVector3D m_contextMenuPos3d;
+    QHash<QString, Import> m_nameToImport;
     QHash<QString, ItemLibraryEntry> m_nameToEntry;
     ItemLibraryEntry m_draggedEntry;
     QHash<QAction *, Core::Command *> m_actionToCommandHash;

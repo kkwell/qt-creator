@@ -9,11 +9,14 @@
 
 /*!
     \page creator-modeling.html
-    \previouspage creator-reference.html
+    \previouspage creator-how-to-create-state-charts.html
+    \nextpage creator-how-to-create-models.html
 
-    \ingroup creator-reference-editors
+    \title Editing UML-style models
 
-    \title Model Editor
+    \quotation
+    \l {Edit UML-style models}{How to: Edit UML-style models}
+    \endquotation
 
     \brief Create Universal Modeling Language (UML) style models with
     structured and behavioral diagrams.
@@ -53,13 +56,13 @@
             instances are activated and destroyed and where their lifeline ends.
     \endlist
 
-    \section1 Editing Models
+    \section1 Editing models
 
     You can create models that have several different structural or behavioral
     diagrams. Add elements to the diagrams and specify properties for them. Use
     standard model elements or add your own elements with custom icons.
 
-    \image qtcreator-modeleditor.webp {Class diagram in the model editor}
+    \image {qtcreator-modeleditor.webp} {Class diagram in the model editor}
     \caption A class diagram in the model editor.
 
     Add elements to diagrams in the following ways:
@@ -75,7 +78,7 @@
 
     \endlist
 
-    \section2 Grouping Elements
+    \section2 Grouping elements
 
     To group elements, surround them with a \e boundary. When you move
     the boundary, all elements within it move together.
@@ -93,14 +96,14 @@
 
     Use \e multiselection to group elements temporarily.
 
-    \section2 Aligning Elements
+    \section2 Aligning elements
 
     To align elements in the editor, select several elements and right-click to
     open a context menu. Select actions in \uicontrol {Align Objects} menu
     to align elements horizontally or vertically or to adjust their width and
     height.
 
-    \section2 Managing Elements
+    \section2 Managing elements
 
     Drag the mouse over elements to select them and apply actions such as
     changing their \e stereotype or color. A stereotype is a classifier for
@@ -115,57 +118,57 @@
     By default, when you select an element in a diagram, it is highlighted also
     in \uicontrol Structure view. To change this behavior so that selecting
     an element in \uicontrol Structure makes it highlighted also in the
-    diagram, select \inlineimage icons/linkicon.png and then select
-    \uicontrol {Synchronize Diagram with Structure}.
+    diagram, select \inlineimage {icons/linkicon.png} {Synchronize} and then
+    select \uicontrol {Synchronize Diagram with Structure}.
     To keep the selections in the diagram and \uicontrol Structure view
     synchronized, select \uicontrol {Keep Synchronized}.
 
-    \section2 Linking from Element Names to Files
+    \section2 Linking from element names to files
 
     To link to a file from the name of an element, select the file in
     \uicontrol {Linked file}.
 
-    \section2 Zooming into Diagrams
+    \section2 Zooming into diagrams
 
     To zoom into diagrams:
 
     \list
         \li Select \uicontrol {Zoom In} toolbar button.
-        \li Press \key Ctrl++.
-        \li Press \key Ctrl and roll the mouse wheel up.
+        \li Select \key Ctrl++.
+        \li Select \key Ctrl and roll the mouse wheel up.
     \endlist
 
     To zoom out of diagrams:
 
     \list
         \li Select \uicontrol {Zoom Out}.
-        \li Press \key Ctrl+-.
-        \li Press \key Ctrl and roll the mouse wheel down.
+        \li Select \key Ctrl+-.
+        \li Select \key Ctrl and roll the mouse wheel down.
     \endlist
 
     To reset the diagram size to 100%:
 
     \list
         \li Select \uicontrol {Reset Zoom}.
-        \li Press \key Ctrl+0.
+        \li Select \key Ctrl+0.
     \endlist
 
-    \section2 Printing Diagrams
+    \section2 Printing diagrams
 
-    To print diagrams, press \key Ctrl+C when no elements are selected in
+    To print diagrams, select \key Ctrl+C when no elements are selected in
     the editor to copy all elements to the clipboard by using 300 dpi. Then
     paste the diagram to an application that can print images.
 
     If you copy a selection of elements in the editor, only those elements and
     their relations will be copied to the clipboard as an image.
 
-    \section2 Exporting Diagrams as Images
+    \section2 Exporting diagrams as images
 
     To save diagrams as images, go to \uicontrol File, and then select
     \uicontrol {Export Diagram}. To save only the selected parts of a diagram,
     select \uicontrol {Export Selected Elements}.
 
-    \section1 Adding Custom Elements
+    \section1 Adding custom elements
 
     The model editor has the following built-in element types: package,
     component, class, and item.
@@ -173,10 +176,10 @@
     To use custom icons for the built-in elements, select an image file in
     \uicontrol {Image} in element properties.
 
-    \image qtcreator-model-editor-component-diagram.webp {Component properties}
+    \image {qtcreator-model-editor-component-diagram.webp} {Component properties}
     \caption The Image field in Component properties.
 
-    \section2 Using Definition Files
+    \section2 Using definition files
 
     For package, component, and class elements, you can use definition files to
     specify custom icons.
@@ -215,20 +218,20 @@
     }
     \endcode
 
-    For more information about the available options, see \e standard.def
-    in the \e share/qtcreator/modeleditor directory in the \QC installation
+    For more information about the available options, see \c standard.def
+    in the \c share/qtcreator/modeleditor directory in the \QC installation
     directory. It describes also how to define custom relation types
     and templates for existing types (such as a composition relation that
     can be drawn between classes).
 
     Add your own definition file and save it with the file extension
-    \e .def to add custom colors and icons for stereotypes, elements, or tool
+    \c .def to add custom colors and icons for stereotypes, elements, or tool
     bars. Either store this file in the same directory as the
-    \e standard.def file or select the root element of a model and apply your
-    \e .def file to the property \uicontrol {Config path}.
+    \c standard.def file or select the root element of a model and apply your
+    \c .def file to the property \uicontrol {Config path}.
 
-    \sa {Create Models and Diagrams}{How To: Create Models and Diagrams},
-    {Create files}, {Sidebar Views}
+    \sa {Edit UML-style models}{How to: Edit UML-style models},
+    {Adding files}, {Show and hide sidebars}
 */
 
 /*!
@@ -253,7 +256,7 @@
         \li Drag model elements to the editor and select them to
             specify properties for them:
 
-            \image qtcreator-modeleditor-packages.webp {Package diagram in the model editor}
+            \image {qtcreator-modeleditor-packages.webp} {Package diagram in the model editor}
             \caption A package diagram in the model editor.
 
         \list 1
@@ -340,14 +343,14 @@
             associations.
 
         \li To create \e {sampling points} that divide a relation into two
-            connected lines, select a relation and press \key Shift and click
+            connected lines, select a relation and select \key Shift and click
             on the relation line.
 
             If possible, the end point of a relation is moved automatically
             to draw the line to the next sampling point either vertically or
             horizontally.
 
-        \li To remove a sampling point, press \key Ctrl and click the sampling
+        \li To remove a sampling point, select \key Ctrl and select the sampling
             point.
 
         \li To group elements, drag a \uicontrol Boundary element to
@@ -359,15 +362,15 @@
 
     Use a scratch model to quickly put a temporary diagram together. The wizard
     creates the model file in a temporary folder without any input from you.
-    Therefore, you can assign a \l{Keyboard Shortcuts}{keyboard shortcut} to the
+    Therefore, you can assign a \l{Keyboard shortcuts}{keyboard shortcut} to the
     wizard and use it to create and open models with empty diagrams.
 
     To create a scratch model, go to \uicontrol File > \uicontrol {New File} >
     \uicontrol Modeling > \uicontrol {Scratch Model}, and then select
     \uicontrol Choose.
 
-    \sa {Create Models and Diagrams}{How To: Create Models and Diagrams},
-    {Model Editor}
+    \sa {Edit UML-style models}{How to: Edit UML-style models},
+    {Editing UML-style models}
 */
 
 /*!
@@ -387,7 +390,7 @@
     Elements stacked on other elements of the same type are automatically drawn
     in a darker shade of the selected color.
 
-    \image qtcreator-modeleditor-packages.webp {Package diagram in the model editor}
+    \image {qtcreator-modeleditor-packages.webp} {Package diagram in the model editor}
     \caption A package diagram in the model editor.
 
     Right-click a package to open a context menu, and select
@@ -397,8 +400,8 @@
     To update the include dependencies of the package, select
     \uicontrol {Update Include Dependencies}.
 
-    \sa {Create Models and Diagrams}{How To: Create Models and Diagrams},
-    {Model Editor}
+    \sa {Edit UML-style models}{How to: Edit UML-style models},
+    {Editing UML-style models}
 */
 
 /*!
@@ -413,7 +416,7 @@
     classes, dependencies, inheritance, associations, aggregation, and
     composition to visualize a system in an object-oriented way.
 
-    \image qtcreator-modeleditor-classes.webp {Class diagram in the model editor}
+    \image {qtcreator-modeleditor-classes.webp} {Class diagram in the model editor}
     \caption A class diagram in the model editor.
 
     To create class diagrams:
@@ -500,9 +503,9 @@
 
     \section2 Add and delete points
 
-    To add more points, press \key Shift and click a relation.
+    To add more points, select \key Shift and select a relation.
 
-    To delete a point, press \key Ctrl and click a point.
+    To delete a point, select \key Ctrl and select a point.
 
     \section2 Specify members
 
@@ -551,8 +554,8 @@
 
     \endlist
 
-    \sa {Create Models and Diagrams}{How To: Create Models and Diagrams},
-    {Model Editor}
+    \sa {Edit UML-style models}{How to: Edit UML-style models},
+    {Edit UML-style models}
 */
 
 /*!
@@ -577,13 +580,13 @@
         \li Select \uicontrol {Add Component}.
     \endlist
 
-    \image qtcreator-model-editor-component-diagram.webp {Component diagram in the model editor}
+    \image {qtcreator-model-editor-component-diagram.webp} {Component diagram in the model editor}
     \caption A component diagram in the model editor.
 
     To navigate from a component in a diagram to the source code, double-click
     the component in the editor or select \uicontrol {Show Definition} in the
     context menu.
 
-    \sa {Create Models and Diagrams}{How To: Create Models and Diagrams},
-    {Model Editor}
+    \sa {Edit UML-style models}{How to: Edit UML-style models},
+    {Edit UML-style models}
 */

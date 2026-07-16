@@ -14,6 +14,7 @@
 QT_BEGIN_NAMESPACE
 class QDialogButtonBox;
 class QComboBox;
+class QLabel;
 class QStandardItemModel;
 class QStandardItem;
 QT_END_NAMESPACE
@@ -22,7 +23,7 @@ namespace Git::Internal {
 
 class LogChangeModel;
 
-// A widget that lists SHA1 and subject of the changes
+// A widget that lists hash and subject of the changes
 // Used for reset and interactive rebase
 
 class LogChangeWidget : public Utils::TreeView
@@ -34,7 +35,8 @@ public:
     {
         None = 0x00,
         IncludeRemotes = 0x01,
-        Silent = 0x02
+        Silent = 0x02,
+        OmitMerges = 0x04,
     };
 
     Q_DECLARE_FLAGS(LogFlags, LogFlag)
@@ -43,12 +45,16 @@ public:
     bool init(const Utils::FilePath &repository, const QString &commit = {}, LogFlags flags = None);
     QString commit() const;
     int commitIndex() const;
+    QStringList commitList() const;
+    QStringList patchRange() const;
+    bool isRowSelected(int row) const;
     QString earliestCommit() const;
     void setItemDelegate(QAbstractItemDelegate *delegate);
     void setExcludedRemote(const QString &remote) { m_excludedRemote = remote; }
 
 signals:
     void commitActivated(const QString &commit);
+    void hasSelectionChanged(bool hasSelection);
 
 private:
     void emitCommitActivated(const QModelIndex &index);
@@ -65,18 +71,27 @@ private:
 class LogChangeDialog : public QDialog
 {
 public:
-    LogChangeDialog(bool isReset, QWidget *parent);
+    enum DialogType {
+        Reset,
+        Select
+    };
+    LogChangeDialog(DialogType type, QWidget *parent);
+
+    void setSelectionMode(QAbstractItemView::SelectionMode mode);
 
     bool runDialog(const Utils::FilePath &repository, const QString &commit = QString(),
                    LogChangeWidget::LogFlags flags = LogChangeWidget::None);
 
     QString commit() const;
     int commitIndex() const;
+    QStringList commitList() const;
+    QStringList patchRange() const;
     QString resetFlag() const;
     LogChangeWidget *widget() const;
 
 private:
     LogChangeWidget *m_widget = nullptr;
+    QLabel *m_selectionHintLabel = nullptr;
     QDialogButtonBox *m_dialogButtonBox = nullptr;
     QComboBox *m_resetTypeComboBox = nullptr;
 };
@@ -87,6 +102,7 @@ protected:
     LogItemDelegate(LogChangeWidget *widget);
 
     int currentRow() const;
+    int isRowSelected(int row) const;
 
 private:
     LogChangeWidget *m_widget;

@@ -5,6 +5,11 @@
 
 #include <KSyntaxHighlighting/Definition>
 
+#include <QFuture>
+#include <QLabel>
+#include <QPointer>
+#include <QTextDocument>
+
 namespace Utils { class FilePath; }
 
 namespace TextEditor {
@@ -19,16 +24,18 @@ Definition definitionForName(const QString &name);
 
 Definitions definitionsForDocument(const TextDocument *document);
 Definitions definitionsForMimeType(const QString &mimeType);
-Definitions definitionsForFileName(const Utils::FilePath &fileName);
+Definitions definitionsForFileName(const Utils::FilePath &filePath);
 
 void rememberDefinitionForDocument(const Definition &definition, const TextDocument *document);
 void clearDefinitionForDocumentCache();
 
 void addCustomHighlighterPath(const Utils::FilePath &path);
-void downloadDefinitions(std::function<void()> callback = nullptr);
+void downloadDefinitions(const QPointer<QLabel> &logger = {});
 void reload();
 
 void handleShutdown();
+
+QFuture<QTextDocument *> highlightCode(const QString &code, const QString &mimeType);
 
 } // namespace HighlighterHelper
 

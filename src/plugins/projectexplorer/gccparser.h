@@ -13,8 +13,6 @@ namespace ProjectExplorer {
 
 class PROJECTEXPLORER_EXPORT GccParser : public OutputTaskParser
 {
-    Q_OBJECT
-
 public:
     GccParser();
 
@@ -42,5 +40,7 @@ private:
     QRegularExpression m_regExpGccNames;
     QRegularExpression m_regExpCc1plus;
 };
+
+namespace Internal { QObject *createGccParserTest(); }
 
 } // namespace ProjectExplorer

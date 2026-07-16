@@ -12,16 +12,15 @@
     You can use Silver Searcher as a search engine in \QC if you install
     Silver Searcher on the computer.
 
-    \image qtcreator-search-file-system.webp {Files in File System scope in Search Results view}
+    \image {qtcreator-search-file-system.webp} {Files in File System scope in Search Results view}
 
     \note Enable the SilverSearcher plugin to use it.
 
     To use Silver Searcher:
 
     \list 1
-        \li Download and install Silver Searcher from
-            \l {https://geoff.greer.fm/ag/}{The Silver Searcher} or
-            \l {https://github.com/ggreer/the_silver_searcher}{GitHub}.
+        \li Download and install Silver Searcher from \l{The Silver Searcher}
+            or \l{GitHub: The Silver Searcher}{GitHub}.
 
             You might have to build Silver Searcher from sources for some
             platforms.
@@ -38,16 +37,16 @@
 
     \list 1
         \li Go to \preferences > \uicontrol Environment > \uicontrol System.
-            \image qtcreator-preferences-environment-system.webp {System preferences}
+            \image {qtcreator-preferences-environment-system.webp} {System tab in Environment preferences}
         \li In \uicontrol Environment, select \uicontrol Change.
         \li In \uicontrol {Edit Environment}, add the path to the Silver Searcher
             executable:
-            \badcode
+            \code [shell]
             PATH=</path/to/bin>:${PATH}
             \endcode
-            \image qtcreator-edit-environment.webp {Edit Environment dialog}
+            \image {qtcreator-edit-environment.webp} {Edit Environment dialog}
     \endlist
 
-    \sa {Enable and disable plugins}, {Search}{How To: Search},
+    \sa {Enable and disable plugins}, {Search}{How to: Search},
     {Edit environment settings}
 */

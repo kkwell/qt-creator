@@ -3,11 +3,12 @@
 
 #include "../cplusplus_global.h"
 
+#include <cplusplus/Lexer.h>
 #include <cplusplus/Token.h>
 #include <cplusplus/SimpleLexer.h>
 
-#include <QtTest>
 #include <QDebug>
+#include <QTest>
 
 //#define DEBUG_TOKENS
 
@@ -56,6 +57,8 @@ private slots:
     void digraph_data();
     void trigraph();
     void trigraph_data();
+
+    void truncatedMultibyteIdentifier();
 
     void bytes_and_utf16chars();
     void bytes_and_utf16chars_data();
@@ -289,7 +292,8 @@ void tst_SimpleLexer::literals()
     QFETCH(TokenKindList, expectedTokenKindList);
 
     LanguageFeatures features;
-    features.cxx14Enabled = true;
+    features.cxx23Enabled = features.cxx20Enabled = features.cxx17Enabled = features.cxx14Enabled
+        = features.cxx11Enabled = true;
     run(source, toTokens(expectedTokenKindList), false, CompareKind, false,
         features);
 }
@@ -327,8 +331,7 @@ void tst_SimpleLexer::literals_data()
                             << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL << T_MINUS
                             << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL
                             << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL
-                            << T_NUMERIC_LITERAL << T_ERROR << T_ERROR
-                               ;
+                            << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL;
     QTest::newRow("float-literals") << source << expectedTokenKindList;
 
     source = // these are all the same
@@ -346,8 +349,8 @@ void tst_SimpleLexer::literals_data()
     expectedTokenKindList =
             TokenKindList() << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL
                             << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL
-                            << T_NUMERIC_LITERAL << T_ERROR << T_ERROR << T_ERROR
-                               ;
+                            << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL
+                            << T_NUMERIC_LITERAL;
     QTest::newRow("integer-literals") << source << expectedTokenKindList;
 
     source =
@@ -397,6 +400,16 @@ void tst_SimpleLexer::literals_data()
             "61llU\n"
             "62LLU\n"
             "63LLu\n"
+            "63z\n"
+            "63Z\n"
+            "63zu\n"
+            "63Zu\n"
+            "63zU\n"
+            "63ZU\n"
+            "63uz\n"
+            "63Uz\n"
+            "63uZ\n"
+            "63UZ\n"
             "64lL\n"  // wrong
             "65Ll\n"  // wrong
             "66luu\n" // wrong
@@ -412,7 +425,10 @@ void tst_SimpleLexer::literals_data()
                             << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL
                             << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL
                             << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL
-                            << T_NUMERIC_LITERAL
+                            << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL
+                            << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL
+                            << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL
+                            << T_NUMERIC_LITERAL << T_NUMERIC_LITERAL
                             << T_ERROR << T_ERROR << T_ERROR
                             << T_ERROR << T_ERROR << T_ERROR
                                ;
@@ -546,6 +562,46 @@ void tst_SimpleLexer::ppOpOrPunc_data()
     QTest::newRow("or_eq") << T_OR_EQ;
     QTest::newRow("xor") << T_XOR;
     QTest::newRow("xor_eq") << T_XOR_EQ;
+}
+
+void tst_SimpleLexer::truncatedMultibyteIdentifier()
+{
+    // Truncated multi-byte UTF-8 sequences at end-of-buffer must not read
+    // past the null terminator (QT-CREATOR-50T).
+    //
+    // SimpleLexer goes through QString::fromUtf8 which sanitizes invalid
+    // sequences before they reach the Lexer, so we drive Lexer directly
+    // with the raw bytes. Without the fix this reliably crashes under
+    // AddressSanitizer; on un-instrumented builds the UB may or may not
+    // fault depending on the allocator's guard layout.
+
+    auto scanRaw = [](const QByteArray &src) -> QList<unsigned> {
+        const char *first = src.constData();
+        Lexer lex(first, first + src.size());
+        lex.setStartWithNewline(true);
+        QList<unsigned> kinds;
+        Token tok;
+        do {
+            lex.scan(&tok);
+            kinds << tok.kind();
+        } while (tok.isNot(T_EOF_SYMBOL));
+        return kinds;
+    };
+
+    // Each truncated sequence must produce exactly one identifier then EOF.
+    for (const QByteArray &src : {
+             _("abc\xC2"),         // 2-byte seq: 0 of 1 trailing bytes present
+             _("abc\xE4\xBA"),     // 3-byte seq: 1 of 2 trailing bytes present
+             _("abc\xF0\x90\x8C"), // 4-byte seq: 2 of 3 trailing bytes present
+             _("\xC2"),            // 2-byte seq alone
+             _("\xE4\xBA"),        // 3-byte seq, partial
+             _("\xF0\x90\x8C"),    // 4-byte seq, partial
+         }) {
+        const QList<unsigned> kinds = scanRaw(src);
+        QCOMPARE(kinds.size(), 2);
+        QCOMPARE(kinds.first(), (unsigned) T_IDENTIFIER);
+        QCOMPARE(kinds.last(),  (unsigned) T_EOF_SYMBOL);
+    }
 }
 
 void tst_SimpleLexer::bytes_and_utf16chars()

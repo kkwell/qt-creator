@@ -3,9 +3,9 @@
 
 #include "androidconfigurations.h"
 #include "androidconstants.h"
-#include "androidmanager.h"
 #include "androidqtversion.h"
 #include "androidtr.h"
+#include "androidutils.h"
 
 #include <utils/algorithm.h>
 #include <utils/environment.h>
@@ -27,6 +27,9 @@
 
 #include <proparser/profileevaluator.h>
 
+#include <qtsupport/qtversionfactory.h>
+
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
@@ -36,6 +39,7 @@
 #endif // WITH_TESTS
 
 using namespace ProjectExplorer;
+using namespace Utils;
 
 namespace Android::Internal {
 
@@ -79,19 +83,23 @@ bool AndroidQtVersion::supportsMultipleQtAbis() const
 
 Abis AndroidQtVersion::detectQtAbis() const
 {
-    const bool conf = AndroidConfig::sdkFullyConfigured();
-    return conf ? Utils::transform<Abis>(androidAbis(), &AndroidManager::androidAbi2Abi) : Abis();
+    Abis result = qtAbisFromJson();
+    if (result.isEmpty() && AndroidConfig::sdkFullyConfigured()) {
+        ensureMkSpecParsed();
+        result = Utils::transform<Abis>(m_androidAbis, &androidAbi2Abi);
+    }
+    return result;
 }
 
-void AndroidQtVersion::addToEnvironment(const Kit *k, Utils::Environment &env) const
+void AndroidQtVersion::addToBuildEnvironment(const Kit *k, Utils::Environment &env) const
 {
-    QtVersion::addToEnvironment(k, env);
+    QtVersion::addToBuildEnvironment(k, env);
 
     // this env vars are used by qmake mkspecs to generate makefiles (check QTDIR/mkspecs/android-g++/qmake.conf for more info)
     env.set(QLatin1String("ANDROID_NDK_HOST"), AndroidConfig::toolchainHost(this));
     env.set(QLatin1String("ANDROID_NDK_ROOT"), AndroidConfig::ndkLocation(this).toUserOutput());
     env.set(QLatin1String("ANDROID_NDK_PLATFORM"),
-        AndroidConfig::bestNdkPlatformMatch(qMax(minimumNDK(), AndroidManager::minimumSDK(k)), this));
+        AndroidConfig::bestNdkPlatformMatch(qMax(minimumNDK(), minimumSDK(k)), this));
 }
 
 void AndroidQtVersion::setupQmakeRunEnvironment(Utils::Environment &env) const
@@ -106,10 +114,9 @@ QString AndroidQtVersion::description() const
     return Tr::tr("Android");
 }
 
-const QStringList &AndroidQtVersion::androidAbis() const
+const QStringList AndroidQtVersion::androidAbis() const
 {
-    ensureMkSpecParsed();
-    return m_androidAbis;
+    return Utils::transform(detectQtAbis(), &Abi::toAndroidAbi);
 }
 
 int AndroidQtVersion::minimumNDK() const
@@ -118,25 +125,42 @@ int AndroidQtVersion::minimumNDK() const
     return m_minNdk;
 }
 
-QString AndroidQtVersion::androidDeploymentSettingsFileName(const Target *target)
+int AndroidQtVersion::defaultMinimumSDK() const
 {
-    const BuildSystem *bs = target->buildSystem();
+    const AndroidQtVersion::BuiltWith built = builtWith();
+
+    if (built.androidPlatform > 0)
+        return built.androidPlatform;
+    if (qtVersion() >= QVersionNumber(6, 8))
+        return 28;
+    if (qtVersion() >= QVersionNumber(6, 5))
+        return 26;
+    if (qtVersion() >=QVersionNumber(6, 0))
+        return 23;
+    if (qtVersion() >= QVersionNumber(5, 13))
+        return 21;
+    return 16;
+}
+
+QString AndroidQtVersion::androidDeploymentSettingsFileName(const BuildConfiguration *bc)
+{
+    const BuildSystem *bs = bc->buildSystem();
     if (!bs)
         return {};
-    const QString buildKey = target->activeBuildKey();
+    const QString buildKey = bc->activeBuildKey();
     const QString displayName = bs->buildTarget(buildKey).displayName;
-    const QString fileName = AndroidManager::isQt5CmakeProject(target)
+    const QString fileName = isQt5CmakeProject(bc->target())
                                  ? QLatin1String("android_deployment_settings.json")
                                  : QString::fromLatin1("android-%1-deployment-settings.json")
                                        .arg(displayName);
     return fileName;
 }
 
-Utils::FilePath AndroidQtVersion::androidDeploymentSettings(const Target *target)
+Utils::FilePath AndroidQtVersion::androidDeploymentSettings(const BuildConfiguration *bc)
 {
     // Try to fetch the file name from node data as provided by qmake and Qbs
-    QString buildKey = target->activeBuildKey();
-    const ProjectNode *node = target->project()->findNodeForBuildKey(buildKey);
+    QString buildKey = bc->activeBuildKey();
+    const ProjectNode *node = bc->project()->findNodeForBuildKey(buildKey);
     if (node) {
         const QString nameFromData = node->data(Constants::AndroidDeploySettingsFile).toString();
         if (!nameFromData.isEmpty())
@@ -144,19 +168,17 @@ Utils::FilePath AndroidQtVersion::androidDeploymentSettings(const Target *target
     }
 
     // If unavailable, construct the name by ourselves (CMake)
-    const QString fileName = androidDeploymentSettingsFileName(target);
-    return AndroidManager::buildDirectory(target) / fileName;
+    const QString fileName = androidDeploymentSettingsFileName(bc);
+    return buildDirectory(bc) / fileName;
 }
 
 AndroidQtVersion::BuiltWith AndroidQtVersion::builtWith(bool *ok) const
 {
-    const Utils::FilePath coreModuleJson = qmakeFilePath().parentDir().parentDir()
-                                           // version.prefix() not yet set when this is called
-                                           / "modules/Core.json";
+    // version.prefix() not yet set when this is called
+    const FilePath coreModuleJson = qmakeFilePath().parentDir().parentDir() / "modules/Core.json";
     if (coreModuleJson.exists()) {
-        Utils::FileReader reader;
-        if (reader.fetch(coreModuleJson))
-            return parseBuiltWith(reader.data(), ok);
+        if (const Result<QByteArray> contents = coreModuleJson.fileContents())
+            return parseModulesCoreJson(*contents, ok);
     }
 
     if (ok)
@@ -173,12 +195,10 @@ static int versionFromPlatformString(const QString &string, bool *ok = nullptr)
     return match.hasMatch() ? match.captured(1).toInt(ok) : -1;
 }
 
-AndroidQtVersion::BuiltWith AndroidQtVersion::parseBuiltWith(const QByteArray &modulesCoreJsonData,
-                                                             bool *ok)
+static AndroidQtVersion::BuiltWith parseBuiltWith(const QJsonObject &jsonObject, bool *ok)
 {
     bool validPlatformString = false;
     AndroidQtVersion::BuiltWith result;
-    const QJsonObject jsonObject = QJsonDocument::fromJson(modulesCoreJsonData).object();
     if (const QJsonValue builtWith = jsonObject.value("built_with"); !builtWith.isUndefined()) {
         if (const QJsonValue android = builtWith["android"]; !android.isUndefined()) {
             if (const QJsonValue apiVersion = android["api_version"]; !apiVersion.isUndefined()) {
@@ -196,6 +216,53 @@ AndroidQtVersion::BuiltWith AndroidQtVersion::parseBuiltWith(const QByteArray &m
 
     if (ok)
         *ok = validPlatformString && !result.ndkVersion.isNull();
+    return result;
+}
+
+static AndroidQtVersion::BuiltWith parsePlatforms(const QJsonObject &jsonObject, bool *ok)
+{
+    AndroidQtVersion::BuiltWith result;
+    if (ok)
+        *ok = false;
+    for (const QJsonValue &platformValue : jsonObject.value("platforms").toArray()) {
+        const QJsonObject platform = platformValue.toObject();
+        if (platform.value("name").toString() != QLatin1String("Android"))
+            continue;
+        const QJsonArray targets = platform.value("targets").toArray();
+        if (targets.isEmpty())
+            continue;
+        const QJsonObject target = targets.first().toObject();
+        const QString apiVersionString = target.value("api_version").toString();
+        if (apiVersionString.isNull())
+            continue;
+        bool apiVersionOK = false;
+        result.apiVersion = versionFromPlatformString(apiVersionString, &apiVersionOK);
+        if (!apiVersionOK)
+            continue;
+        const QString ndkVersionString = target.value("ndk_version").toString();
+        if (ndkVersionString.isNull())
+            continue;
+        result.ndkVersion = QVersionNumber::fromString(ndkVersionString);
+        const QString androidPlatformString = target.value("android_platform").toString();
+        result.androidPlatform = versionFromPlatformString(androidPlatformString);
+        if (result.apiVersion != -1 && !result.ndkVersion.isNull()) {
+            if (ok)
+                *ok = true;
+            break;
+        }
+    }
+    return result;
+}
+
+AndroidQtVersion::BuiltWith AndroidQtVersion::parseModulesCoreJson(const QByteArray &data, bool *ok)
+{
+    AndroidQtVersion::BuiltWith result;
+    const QJsonObject jsonObject = QJsonDocument::fromJson(data).object();
+    const int schemaVersion = jsonObject.value("schema_version").toInt(1);
+    if (schemaVersion >= 2)
+        result = parsePlatforms(jsonObject, ok);
+    else
+        result = parseBuiltWith(jsonObject, ok);
     return result;
 }
 
@@ -304,6 +371,33 @@ void AndroidQtVersionTest::testAndroidQtVersionParseBuiltWith_data()
         << true
         << QVersionNumber(25, 1, 8937393)
         << 31;
+
+    QTest::newRow("Android Qt 6.9")
+        << R"({
+                "schema_version": 2,
+                "name": "Core",
+                "repository": "qtbase",
+                "version": "6.9.0",
+                "platforms": [
+                  {
+                    "name": "Android",
+                    "version": "1",
+                    "compiler_id": "Clang",
+                    "compiler_version": "17.0.2",
+                    "targets": [
+                      {
+                        "api_version": "android-34",
+                        "ndk_version": "26.1.10909125",
+                        "architecture": "arm",
+                        "abi": "arm-little_endian-ilp32-eabi"
+                      }
+                    ]
+                  }
+                ]
+            })"
+        << true
+        << QVersionNumber(26, 1, 10909125)
+        << 34;
 }
 
 void AndroidQtVersionTest::testAndroidQtVersionParseBuiltWith()
@@ -315,7 +409,7 @@ void AndroidQtVersionTest::testAndroidQtVersionParseBuiltWith()
 
     bool ok = false;
     const AndroidQtVersion::BuiltWith bw =
-            AndroidQtVersion::parseBuiltWith(modulesCoreJson.toUtf8(), &ok);
+            AndroidQtVersion::parseModulesCoreJson(modulesCoreJson.toUtf8(), &ok);
     QCOMPARE(ok, hasInfo);
     QCOMPARE(bw.apiVersion, apiVersion);
     QCOMPARE(bw.ndkVersion, ndkVersion);

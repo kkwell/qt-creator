@@ -9,7 +9,7 @@
 
 namespace Utils {
 class FilePath;
-using FilePaths = QList<class FilePath>;
+class FilePaths;
 } // namespace Utils
 
 namespace McuSupport::Internal {
@@ -34,6 +34,7 @@ public:
     virtual QString label() const = 0;
     virtual QString cmakeVariableName() const = 0;
     virtual QString environmentVariableName() const = 0;
+    virtual bool isOptional() const = 0;
     virtual bool isAddToSystemPath() const = 0;
     virtual QStringList versions() const = 0;
 

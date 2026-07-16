@@ -30,7 +30,7 @@ if (NOT QT_CREATOR_API_DEFINED)
 
   find_package(Qt6
     COMPONENTS
-      Gui Core Core5Compat Widgets Network Qml Concurrent Test Xml MODULE)
+      Gui Core Widgets Network Qml Concurrent Test Xml MODULE)
   find_package(Threads)
 
   add_subdirectory(${QtCreator_SOURCE_DIR}/src/libs/utils ${CMAKE_CURRENT_BINARY_DIR}/utils)
@@ -52,7 +52,7 @@ if (WITH_DEBUGGER_DUMPERS)
   add_qtc_test(tst_debugger_dumpers
     EXCLUDE_FROM_PRECHECK
     TIMEOUT 0
-    DEPENDS Qt::Network Utils
+    DEPENDS Qt::Network Utils Debugger
     DEFINES
       DUMPERDIR="${PROJECT_SOURCE_DIR}/share/qtcreator/debugger"
       DEFAULT_QMAKE_BINARY="${qmake_binary}"
@@ -62,7 +62,6 @@ if (WITH_DEBUGGER_DUMPERS)
       "${DEBUGGERDIR}/debuggertr.h"
       "${DEBUGGERDIR}/debuggerprotocol.cpp" "${DEBUGGERDIR}/debuggerprotocol.h"
       "${DEBUGGERDIR}/simplifytype.cpp" "${DEBUGGERDIR}/simplifytype.h"
-      "${DEBUGGERDIR}/watchdata.cpp" "${DEBUGGERDIR}/watchdata.h"
       "${DEBUGGERDIR}/watchutils.cpp" "${DEBUGGERDIR}/watchutils.h"
       tst_dumpers.cpp
   )

@@ -12,9 +12,12 @@ class ExtensionManagerSettings final : public Utils::AspectContainer
 public:
     ExtensionManagerSettings();
 
-    Utils::StringAspect externalRepoUrl{this};
     Utils::BoolAspect useExternalRepo{this};
+    Utils::StringListAspect repositoryUrls{this};
 };
+
+QString externalRepoWarningNote();
+void setUseExternalRepo(bool useIt);
 
 ExtensionManagerSettings &settings();
 

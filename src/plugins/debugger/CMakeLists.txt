@@ -6,15 +6,6 @@ add_qtc_plugin(Debugger
   DEFINES
     CLANG_BINDIR="${LLVM_TOOLS_BINARY_DIR}"
   SOURCES
-    analyzer/analyzerbase.qrc
-    analyzer/analyzerconstants.h
-    analyzer/analyzericons.h
-    analyzer/analyzermanager.h
-    analyzer/analyzerrunconfigwidget.cpp analyzer/analyzerrunconfigwidget.h
-    analyzer/analyzerutils.cpp analyzer/analyzerutils.h
-    analyzer/detailederrorview.cpp analyzer/detailederrorview.h
-    analyzer/diagnosticlocation.cpp analyzer/diagnosticlocation.h
-    analyzer/startremotedialog.cpp analyzer/startremotedialog.h
     breakhandler.cpp breakhandler.h
     breakpoint.cpp breakpoint.h
     cdb/cdbengine.cpp cdb/cdbengine.h
@@ -35,7 +26,6 @@ add_qtc_plugin(Debugger
     dap/gdbdapengine.cpp dap/gdbdapengine.h
     dap/lldbdapengine.cpp dap/lldbdapengine.h
     dap/pydapengine.cpp dap/pydapengine.h
-    debugger.qrc
     debugger_global.h
     debuggeractions.cpp debuggeractions.h
     debuggerconstants.h
@@ -47,7 +37,6 @@ add_qtc_plugin(Debugger
     debuggeritem.cpp debuggeritem.h
     debuggeritemmanager.cpp debuggeritemmanager.h
     debuggerkitaspect.cpp debuggerkitaspect.h
-    debuggermainwindow.cpp debuggermainwindow.h
     debuggerplugin.cpp
     debuggerprotocol.cpp debuggerprotocol.h
     debuggerrunconfigurationaspect.cpp debuggerrunconfigurationaspect.h
@@ -72,6 +61,8 @@ add_qtc_plugin(Debugger
     pdb/pdbengine.cpp pdb/pdbengine.h
     peripheralregisterhandler.cpp peripheralregisterhandler.h
     procinterrupt.cpp procinterrupt.h
+    remotedebuggerconfiguration.cpp remotedebuggerconfiguration.h
+    remotedebuggerdebugsupport.cpp remotedebuggerdebugsupport.h
     qml/interactiveinterpreter.cpp qml/interactiveinterpreter.h
     #qml/qmlcppengine.cpp qml/qmlcppengine.h
     qml/qmlengine.cpp qml/qmlengine.h
@@ -80,6 +71,7 @@ add_qtc_plugin(Debugger
     qml/qmlv8debuggerclientconstants.h
     registerhandler.cpp registerhandler.h
     shared/cdbsymbolpathlisteditor.cpp shared/cdbsymbolpathlisteditor.h
+    shared/coredumputils.cpp shared/coredumputils.h
     shared/hostutils.cpp shared/hostutils.h
     shared/peutils.cpp shared/peutils.h
     shared/symbolpathsdialog.cpp shared/symbolpathsdialog.h
@@ -113,8 +105,26 @@ extend_qtc_plugin(Debugger
 )
 
 extend_qtc_plugin(Debugger
+  SOURCES mcpsupport.cpp
+  DEPENDS McpServerLib
+)
+
+file(GLOB_RECURSE images RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} images/*)
+qtc_add_resources(Debugger "images"
+  PREFIX "/debugger"
+  BASE "."
+  FILES ${images}
+)
+file(GLOB_RECURSE test_cases RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} unit-tests/*)
+qtc_add_resources(Debugger "testcases"
   CONDITION WITH_TESTS
-  SOURCES
-    debuggerunittests.qrc
-    unit-tests/simple/main.cpp
+  PREFIX "/debugger"
+  BASE "."
+  FILES ${test_cases}
+)
+
+add_qtc_library(ptracepreload SHARED
+    CONDITION LINUX
+    SKIP_PCH
+    SOURCES ptracepreload.c
 )

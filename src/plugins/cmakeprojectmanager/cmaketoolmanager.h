@@ -7,18 +7,23 @@
 
 #include "cmaketool.h"
 
+#include <projectexplorer/kitaspect.h>
+
 #include <utils/filepath.h>
 #include <utils/id.h>
 
 #include <QObject>
 
 #include <memory>
+#include <vector>
 
 namespace ProjectExplorer {
 class Project;
 }
 
 namespace CMakeProjectManager {
+
+class CMakeKeywords;
 
 class CMAKE_EXPORT CMakeToolManager : public QObject
 {
@@ -33,13 +38,17 @@ public:
 
     static bool registerCMakeTool(std::unique_ptr<CMakeTool> &&tool);
     static void deregisterCMakeTool(const Utils::Id &id);
+    static std::vector<std::unique_ptr<CMakeTool>> autoDetectCMakeTools(
+        const Utils::FilePaths &searchPaths, const Utils::FilePath &rootPath);
 
-    static CMakeTool *defaultProjectOrDefaultCMakeTool();
+    static CMakeKeywords defaultProjectOrDefaultCMakeKeyWords();
 
     static CMakeTool *defaultCMakeTool();
     static void setDefaultCMakeTool(const Utils::Id &id);
     static CMakeTool *findByCommand(const Utils::FilePath &command);
     static CMakeTool *findById(const Utils::Id &id);
+    static Utils::Id idForExecutable(const Utils::FilePath &cmakeExecutable);
+    static Utils::FilePath executableForId(const Utils::Id id);
 
     static void notifyAboutUpdate(CMakeTool *);
     static void restoreCMakeTools();
@@ -50,26 +59,20 @@ public:
 
     static Utils::FilePath mappedFilePath(ProjectExplorer::Project *project, const Utils::FilePath &path);
 
-public slots:
-    QList<Utils::Id> autoDetectCMakeForDevice(const Utils::FilePaths &searchPaths,
-                                  const QString &detectionSource,
-                                  QString *logMessage);
-    Utils::Id registerCMakeByPath(const Utils::FilePath &cmakePath,
-                             const QString &detectionSource);
-    void removeDetectedCMake(const QString &detectionSource, QString *logMessage);
-    void listDetectedCMake(const QString &detectionSource, QString *logMessage);
+    void removeDetectedCMake(
+        const QString &detectionSource, const ProjectExplorer::LogCallback &logCallback);
 
 signals:
-    void cmakeAdded (const Utils::Id &id);
-    void cmakeRemoved (const Utils::Id &id);
-    void cmakeUpdated (const Utils::Id &id);
-    void cmakeToolsChanged ();
-    void cmakeToolsLoaded ();
-    void defaultCMakeChanged ();
+    void cmakeAdded(const Utils::Id &id);
+    void cmakeRemoved(const Utils::Id &id);
+    void cmakeUpdated(const Utils::Id &id);
+    void cmakeToolsLoaded();
+    void defaultCMakeChanged();
 
 private:
     static void saveCMakeTools();
     static void ensureDefaultCMakeToolIsValid();
+    void handleDeviceToolDetectionRequest(Utils::Id devId, const Utils::FilePaths &searchPaths, quint64 token);
 };
 
 namespace Internal { void setupCMakeToolManager(QObject *guard); }

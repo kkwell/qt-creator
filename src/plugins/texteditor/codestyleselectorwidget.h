@@ -5,6 +5,7 @@
 
 #include "texteditor_global.h"
 
+#include <utils/filepath.h>
 #include <utils/guard.h>
 
 #include <QWidget>
@@ -14,7 +15,7 @@ class QComboBox;
 class QPushButton;
 QT_END_NAMESPACE
 
-namespace ProjectExplorer { class Project; }
+namespace Utils { class InfoLabel; }
 
 namespace TextEditor {
 
@@ -25,30 +26,28 @@ class TEXTEDITOR_EXPORT CodeStyleSelectorWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit CodeStyleSelectorWidget(ICodeStylePreferencesFactory *factory,
-                                     ProjectExplorer::Project *project = nullptr,
-                                     QWidget *parent = nullptr);
+    explicit CodeStyleSelectorWidget(const Utils::FilePath &projectFile, QWidget *parent = nullptr);
     ~CodeStyleSelectorWidget() override;
 
     void setCodeStyle(ICodeStylePreferences *codeStyle);
 
 protected:
+    virtual void slotImportClicked();
+    virtual void slotExportClicked();
+
     ICodeStylePreferences *m_codeStyle = nullptr;
+    const Utils::FilePath m_projectFile;
 
 private:
     void slotComboBoxActivated(int index);
     void slotCurrentDelegateChanged(ICodeStylePreferences *delegate);
     void slotCopyClicked();
     void slotRemoveClicked();
-    virtual void slotImportClicked();
-    virtual void slotExportClicked();
     void slotCodeStyleAdded(ICodeStylePreferences *codeStylePreferences);
     void slotCodeStyleRemoved(ICodeStylePreferences *codeStylePreferences);
     void slotUpdateName(ICodeStylePreferences *codeStylePreferences);
 
     void updateName(ICodeStylePreferences *codeStyle);
-    ICodeStylePreferencesFactory *m_factory;
-    ProjectExplorer::Project *m_project = nullptr;
 
     QString displayName(ICodeStylePreferences *codeStyle) const;
 
@@ -58,6 +57,7 @@ private:
     QPushButton *m_removeButton;
     QPushButton *m_exportButton;
     QPushButton *m_importButton;
+    Utils::InfoLabel *m_readonlyLabel;
 };
 
 } // namespace TextEditor

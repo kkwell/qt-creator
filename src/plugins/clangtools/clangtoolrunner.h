@@ -12,26 +12,30 @@
 
 #include <utils/environment.h>
 
-namespace Tasking { class GroupItem; }
+QT_BEGIN_NAMESPACE
+namespace QtTaskTree { class GroupItem; }
+QT_END_NAMESPACE
 
 namespace ClangTools {
 namespace Internal {
 
 struct AnalyzeUnit
 {
-    AnalyzeUnit(const FileInfo &fileInfo,
-                const Utils::FilePath &clangResourceDir,
-                const QString &clangVersion);
+    AnalyzeUnit(const FileInfo &fileInfo, CppEditor::ClangToolType toolType)
+        : file(fileInfo.file)
+        , toolType(toolType)
+    {}
 
     Utils::FilePath file;
-    QStringList arguments; // without file itself and "-o somePath"
+    CppEditor::ClangToolType toolType;
+
 };
 using AnalyzeUnits = QList<AnalyzeUnit>;
 
 struct AnalyzeInputData
 {
     CppEditor::ClangToolType tool = CppEditor::ClangToolType::Tidy;
-    RunSettings runSettings;
+    RunSettingsData runSettings;
     CppEditor::ClangDiagnosticConfig config;
     Utils::FilePath outputDirPath;
     Utils::Environment environment;
@@ -53,10 +57,11 @@ struct AnalyzeOutputData
 using AnalyzeSetupHandler = std::function<bool(const AnalyzeUnit &)>;
 using AnalyzeOutputHandler = std::function<void(const AnalyzeOutputData &)>;
 
-Tasking::GroupItem clangToolTask(const AnalyzeUnits &units,
+QtTaskTree::GroupItem clangToolTask(const AnalyzeUnits &units,
                                  const AnalyzeInputData &input,
                                  const AnalyzeSetupHandler &setupHandler,
-                                 const AnalyzeOutputHandler &outputHandler);
+                                 const AnalyzeOutputHandler &outputHandler,
+                                 const Utils::FilePath &compilationDb);
 
 } // namespace Internal
 } // namespace ClangTools

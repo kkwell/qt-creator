@@ -784,11 +784,8 @@ bool RegisterHandler::contextMenuEvent(const ItemViewEvent &ev)
     addAction(this, menu, Tr::tr("Open Disassembler..."),
               m_engine->hasCapability(DisassemblerCapability),
               [this, address] {
-                    AddressDialog dialog;
-                    if (address)
-                        dialog.setAddress(address);
-                    if (dialog.exec() == QDialog::Accepted)
-                        m_engine->openDisassemblerView(Location(dialog.address()));
+                    if (std::optional<quint64> result = runAddressDialog(address))
+                        m_engine->openDisassemblerView(Location(*result));
               });
 
     menu->addSeparator();
@@ -814,8 +811,9 @@ bool RegisterHandler::contextMenuEvent(const ItemViewEvent &ev)
     addFormatAction(Tr::tr("Octal"), OctalFormat);
     addFormatAction(Tr::tr("Binary"), BinaryFormat);
 
-    menu->addAction(settings().settingsDialog.action());
-    connect(menu, &QMenu::aboutToHide, menu, &QObject::deleteLater);
+    addStandardActions(ev.view(), menu);
+
+    menu->setAttribute(Qt::WA_DeleteOnClose);
     menu->popup(ev.globalPos());
     return true;
 }

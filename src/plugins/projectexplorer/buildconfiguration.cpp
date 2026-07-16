@@ -5,17 +5,21 @@
 
 #include "buildaspects.h"
 #include "buildinfo.h"
+#include "buildmanager.h"
 #include "buildpropertiessettings.h"
 #include "buildsteplist.h"
 #include "buildstepspage.h"
 #include "buildsystem.h"
 #include "customparser.h"
+#include "deployconfiguration.h"
+#include "devicesupport/devicekitaspects.h"
 #include "environmentwidget.h"
 #include "kit.h"
-#include "kitaspects.h"
-#include "namedwidget.h"
+#include "miniprojecttargetselector.h"
+#include "projectconfigurationmodel.h"
 #include "projectexplorerconstants.h"
 #include "projectexplorer.h"
+#include "projectexplorersettings.h"
 #include "projectexplorertr.h"
 #include "project.h"
 #include "projectmanager.h"
@@ -24,16 +28,17 @@
 
 #include <coreplugin/fileutils.h>
 #include <coreplugin/icore.h>
-#include <coreplugin/idocument.h>
 
 #include <projectexplorer/devicesupport/idevice.h>
 
 #include <utils/algorithm.h>
 #include <utils/detailswidget.h>
+#include <utils/fileutils.h>
 #include <utils/layoutbuilder.h>
 #include <utils/macroexpander.h>
 #include <utils/mimeutils.h>
 #include <utils/qtcassert.h>
+#include <utils/stringutils.h>
 #include <utils/variablechooser.h>
 
 #include <QCheckBox>
@@ -48,26 +53,37 @@ const char BUILD_STEP_LIST_COUNT[] = "ProjectExplorer.BuildConfiguration.BuildSt
 const char BUILD_STEP_LIST_PREFIX[] = "ProjectExplorer.BuildConfiguration.BuildStepList.";
 const char CUSTOM_PARSERS_KEY[] = "ProjectExplorer.BuildConfiguration.CustomParsers";
 const char PARSE_STD_OUT_KEY[] = "ProjectExplorer.BuildConfiguration.ParseStandardOutput";
+const char EXTRA_DATA_KEY[] = "ProjectExplorer.Target.PluginSettings";
+
+const char ACTIVE_DC_KEY[] = "ProjectExplorer.Target.ActiveDeployConfiguration";
+const char DC_KEY_PREFIX[] = "ProjectExplorer.Target.DeployConfiguration.";
+const char DC_COUNT_KEY[] = "ProjectExplorer.Target.DeployConfigurationCount";
+
+const char ACTIVE_RC_KEY[] = "ProjectExplorer.Target.ActiveRunConfiguration";
+const char RC_KEY_PREFIX[] = "ProjectExplorer.Target.RunConfiguration.";
+const char RC_COUNT_KEY[] = "ProjectExplorer.Target.RunConfigurationCount";
 
 Q_LOGGING_CATEGORY(bcLog, "qtc.buildconfig", QtWarningMsg)
 
 namespace ProjectExplorer {
 namespace Internal {
 
-class BuildEnvironmentWidget : public NamedWidget
+class BuildEnvironmentWidget : public QWidget
 {
-
 public:
     explicit BuildEnvironmentWidget(BuildConfiguration *bc)
-        : NamedWidget(Tr::tr("Build Environment"))
     {
+        setWindowTitle(Tr::tr("Build Environment"));
+
         auto clearBox = new QCheckBox(Tr::tr("Clear system environment"), this);
         clearBox->setChecked(!bc->useSystemEnvironment());
 
         auto envWidget = new EnvironmentWidget(this, EnvironmentWidget::TypeLocal, clearBox);
         envWidget->setBaseEnvironment(bc->baseEnvironment());
         envWidget->setBaseEnvironmentText(bc->baseEnvironmentText());
-        envWidget->setUserChanges(bc->userEnvironmentChanges());
+        envWidget->setChanges(bc->userEnvironmentChanges());
+        if (const IDeviceConstPtr &dev = BuildDeviceKitAspect::device(bc->kit()))
+            envWidget->setBrowseHint(dev->rootPath());
 
         const EnvironmentWidget::OpenTerminalFunc openTerminalFunc
                 = [bc](const Utils::Environment &env) {
@@ -76,7 +92,7 @@ public:
         envWidget->setOpenTerminalFunc(openTerminalFunc);
 
         connect(envWidget, &EnvironmentWidget::userChangesChanged, this, [bc, envWidget] {
-            bc->setUserEnvironmentChanges(envWidget->userChanges());
+            bc->setUserEnvironmentChanges(envWidget->changes());
         });
 
         connect(clearBox, &QAbstractButton::toggled, this, [bc, envWidget](bool checked) {
@@ -92,34 +108,41 @@ public:
 
         auto vbox = new QVBoxLayout(this);
         vbox->setContentsMargins(0, 0, 0, 0);
-        vbox->addWidget(clearBox);
         vbox->addWidget(envWidget);
     }
 };
 
-class CustomParsersBuildWidget : public NamedWidget
+class CustomParsersBuildWidget : public QWidget
 {
 public:
-    CustomParsersBuildWidget(BuildConfiguration *bc) : NamedWidget(Tr::tr("Custom Output Parsers"))
+    CustomParsersBuildWidget(BuildConfiguration *bc)
     {
-        const auto layout = new QVBoxLayout(this);
-        layout->setContentsMargins(0, 0, 0, 0);
+        setWindowTitle(Tr::tr("Custom Output Parsers"));
 
         const auto pasteStdOutCB = new QCheckBox(Tr::tr("Parse standard output during build"), this);
         pasteStdOutCB->setToolTip(Tr::tr("Makes output parsers look for diagnostics "
                                      "on stdout rather than stderr."));
         pasteStdOutCB->setChecked(bc->parseStdOut());
-        layout->addWidget(pasteStdOutCB);
-
         connect(pasteStdOutCB, &QCheckBox::clicked, bc, &BuildConfiguration::setParseStdOut);
-        const auto selectionWidget = new CustomParsersSelectionWidget(this);
+
+        const auto selectionWidget = new CustomParsersSelectionWidget(
+            CustomParsersSelectionWidget::InBuildConfig, bc->project(), this);
+
+        const auto layout = new QVBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        selectionWidget->addExtraWidget(pasteStdOutCB);
         layout->addWidget(selectionWidget);
 
+        QList<Id> parsers = bc->customParsers();
+        for (const auto &s : CustomParsers::parsersAvailableInProject(bc->project())) {
+            if (s.buildDefault && !parsers.contains(s.id))
+                parsers.append(s.id);
+        }
+        selectionWidget->setSelectedParsers(parsers);
         connect(selectionWidget, &CustomParsersSelectionWidget::selectionChanged, this,
                 [selectionWidget, bc] {
             bc->setCustomParsers(selectionWidget->selectedParsers());
         });
-        selectionWidget->setSelectedParsers(bc->customParsers());
     }
 };
 
@@ -130,12 +153,12 @@ public:
     BuildConfigurationPrivate(BuildConfiguration *bc)
         : m_buildSteps(bc, Constants::BUILDSTEPS_BUILD)
         , m_cleanSteps(bc, Constants::BUILDSTEPS_CLEAN)
-        , m_buildDirectoryAspect(bc, bc)
+        , m_buildDirectoryAspect(bc)
         , m_tooltipAspect(bc)
     {}
 
     bool m_clearSystemEnvironment = false;
-    EnvironmentItems m_userEnvironmentChanges;
+    EnvironmentChanges m_userEnvironmentChanges;
     BuildStepList m_buildSteps;
     BuildStepList m_cleanSteps;
     BuildDirectoryAspect m_buildDirectoryAspect;
@@ -146,9 +169,17 @@ public:
     bool m_configWidgetHasFrame = false;
     QList<Utils::Id> m_initialBuildSteps;
     QList<Utils::Id> m_initialCleanSteps;
-    Utils::MacroExpander m_macroExpander;
     bool m_parseStdOut = false;
     QList<Utils::Id> m_customParsers;
+    Store m_extraData;
+    QPointer<BuildSystem> m_buildSystem;
+    QList<QPointer<DeployConfiguration>> m_deployConfigurations;
+    QPointer<DeployConfiguration> m_activeDeployConfiguration;
+    QList<QPointer<RunConfiguration>> m_runConfigurations;
+    QPointer<RunConfiguration> m_activeRunConfiguration;
+
+    ProjectConfigurationModel m_deployConfigurationModel;
+    ProjectConfigurationModel m_runConfigurationModel;
 
     // FIXME: Remove.
     BuildConfiguration::BuildType m_initialBuildType = BuildConfiguration::Unknown;
@@ -161,44 +192,68 @@ BuildConfiguration::BuildConfiguration(Target *target, Utils::Id id)
     : ProjectConfiguration(target, id)
     , d(new Internal::BuildConfigurationPrivate(this))
 {
+    d->m_buildSystem = project()->createBuildSystem(this);
+
     MacroExpander *expander = macroExpander();
     expander->setDisplayName(Tr::tr("Build Settings"));
     expander->setAccumulating(true);
-    expander->registerSubProvider([target] { return target->macroExpander(); });
+    expander->registerSubProvider({this, [this] { return kit()->macroExpander(); }});
+    expander->registerVariable("sourceDir", Tr::tr("Source directory"),
+                               [this] { return project()->projectDirectory().toUserOutput(); },
+                               false);
 
+    expander->registerVariable(
+        "Project:Root",
+        Tr::tr("The project root directory. May differ from Project:Path for some build systems."),
+        [this] { return project()->projectDirectory().toFSPathString(); });
+
+    expander->registerVariable("BuildSystem:Name", Tr::tr("Build system"), [this] {
+        return buildSystem()->name();
+    });
+    expander->registerVariable("Project:Name", Tr::tr("Name of current project"), [this] {
+        return project()->displayName();
+    });
     expander->registerVariable("buildDir", Tr::tr("Build directory"),
-            [this] { return buildDirectory().toUserOutput(); });
-
+            [this] { return buildDirectory().toUserOutput(); }, false);
     expander->registerFileVariables("BuildConfig:BuildDirectory",
                                     Tr::tr("Build directory"),
                                     [this] { return buildDirectory(); });
-
+    expander->registerFileVariables("Project", Tr::tr("Main file of the project"), [this] {
+        return project()->projectFilePath();
+    });
     expander->registerVariable("BuildConfig:Name", Tr::tr("Name of the build configuration"),
             [this] { return displayName(); });
-
-    expander->registerPrefix("BuildConfig:Env",
-                             Tr::tr("Variables in the build configuration's environment"),
-                             [this](const QString &var) { return environment().expandedValueForKey(var); });
+    expander->registerPrefix(
+        "BuildConfig:Env",
+        "USER",
+        Tr::tr("Variables in the build configuration's environment"),
+        [this](const QString &var) { return environment().expandedValueForKey(var); });
 
     connect(Core::ICore::instance(), &Core::ICore::systemEnvironmentChanged,
             this, &BuildConfiguration::updateCacheAndEmitEnvironmentChanged);
-    connect(target, &Target::kitChanged,
+    connect(this, &BuildConfiguration::kitChanged,
             this, &BuildConfiguration::updateCacheAndEmitEnvironmentChanged);
     connect(this, &BuildConfiguration::environmentChanged,
             this, &BuildConfiguration::emitBuildDirectoryChanged);
-    connect(target->project(), &Project::environmentChanged,
+    connect(project(), &Project::environmentChanged,
             this, &BuildConfiguration::updateCacheAndEmitEnvironmentChanged);
     // Many macroexpanders are based on the current project, so they may change the environment:
     connect(ProjectTree::instance(), &ProjectTree::currentProjectChanged,
             this, &BuildConfiguration::updateCacheAndEmitEnvironmentChanged);
 
-    d->m_buildDirectoryAspect.setBaseFileName(target->project()->projectDirectory());
+    if (IDeviceConstPtr buildDevice = BuildDeviceKitAspect::device(kit())) {
+        d->m_buildDirectoryAspect.setBaseDirectory(
+            buildDevice->rootPath().withNewMappedPath(project()->projectDirectory()));
+    } else {
+        d->m_buildDirectoryAspect.setBaseDirectory(project()->projectDirectory());
+    }
+
     d->m_buildDirectoryAspect.setEnvironment(environment());
+
     connect(&d->m_buildDirectoryAspect, &StringAspect::changed,
             this, &BuildConfiguration::emitBuildDirectoryChanged);
     connect(this, &BuildConfiguration::environmentChanged, this, [this] {
         d->m_buildDirectoryAspect.setEnvironment(environment());
-        emit this->target()->buildEnvironmentChanged(this);
     });
 
     d->m_tooltipAspect.setLabelText(Tr::tr("Tooltip in target selector:"));
@@ -209,45 +264,51 @@ BuildConfiguration::BuildConfiguration(Target *target, Utils::Id id)
         setToolTip(d->m_tooltipAspect());
     });
 
-    connect(target, &Target::parsingStarted, this, &BuildConfiguration::enabledChanged);
-    connect(target, &Target::parsingFinished, this, &BuildConfiguration::enabledChanged);
+    connect(buildSystem(), &BuildSystem::parsingStarted, this, &BuildConfiguration::enabledChanged);
+    connect(buildSystem(), &BuildSystem::parsingFinished, this, [this](bool success) {
+        if (success)
+            updateDefaultRunConfigurations();
+        emit enabledChanged();
+    }, Qt::QueuedConnection); // Must wait for run configs to change their enabled state.
+
     connect(this, &BuildConfiguration::enabledChanged, this, [this] {
         if (isActive() && project() == ProjectManager::startupProject()) {
             ProjectExplorerPlugin::updateActions();
             ProjectExplorerPlugin::updateRunActions();
         }
     });
+
+    connect(target, &Target::kitChanged, this, [this] {
+        updateDefaultDeployConfigurations();
+        emit kitChanged();
+    });
 }
 
 BuildConfiguration::~BuildConfiguration()
 {
+    qDeleteAll(d->m_deployConfigurations);
+    qDeleteAll(d->m_runConfigurations);
+    delete d->m_buildSystem;
     delete d;
 }
 
 FilePath BuildConfiguration::buildDirectory() const
 {
-    FilePath path = FilePath::fromUserInput(
-        environment().expandVariables(d->m_buildDirectoryAspect.value().trimmed()));
-    // FIXME: If the macro expander is expected to be able to do some
-    // structual changes, the fromUserInput() above might already have
-    // mis-parsed. Should this here be encapsulated in the FilePathAspect?
-    path = macroExpander()->expand(path);
-    path = path.cleanPath();
-
-    const FilePath projectDir = target()->project()->projectDirectory();
-
-    return projectDir.resolvePath(path);
-}
-
-FilePath BuildConfiguration::rawBuildDirectory() const
-{
-    return d->m_buildDirectoryAspect();
+    return expandedBuildDirectory(
+        kit(),
+        FilePath::fromUserInput(d->m_buildDirectoryAspect.value()),
+        project()->projectDirectory(),
+        *macroExpander());
 }
 
 void BuildConfiguration::setBuildDirectory(const FilePath &dir)
 {
-    if (dir == d->m_buildDirectoryAspect())
+    if (!d->m_buildDirectoryAspect.value().isEmpty()
+        && expandedBuildDirectory(kit(), dir, project()->projectDirectory(), *macroExpander())
+               == buildDirectory()) {
         return;
+    }
+
     d->m_buildDirectoryAspect.setValue(dir);
     const FilePath fixedDir = BuildDirectoryAspect::fixupDir(buildDirectory());
     if (!fixedDir.isEmpty())
@@ -255,21 +316,36 @@ void BuildConfiguration::setBuildDirectory(const FilePath &dir)
     emitBuildDirectoryChanged();
 }
 
-void BuildConfiguration::addConfigWidgets(const std::function<void(NamedWidget *)> &adder)
+QList<QWidget *> BuildConfiguration::createConfigWidgets()
 {
-    if (NamedWidget *generalConfigWidget = createConfigWidget())
-        adder(generalConfigWidget);
+    QList<QWidget *> result;
+    if (QWidget *generalConfigWidget = createConfigWidget()) {
+        generalConfigWidget->setWindowTitle(d->m_configWidgetDisplayName);
+        result.append(generalConfigWidget);
+    }
 
-    adder(new Internal::BuildStepListWidget(buildSteps()));
-    adder(new Internal::BuildStepListWidget(cleanSteps()));
+    result.append(new Internal::BuildStepListWidget(buildSteps()));
+    result.append(new Internal::BuildStepListWidget(cleanSteps()));
 
-    const QList<NamedWidget *> subConfigWidgets = createSubConfigWidgets();
-    for (NamedWidget *subConfigWidget : subConfigWidgets)
-        adder(subConfigWidget);
+    result.append(createSubConfigWidgets());
+
+    return result;
 }
 
-void BuildConfiguration::doInitialize(const BuildInfo &info)
+QList<QWidget *> BuildConfiguration::createSubConfigWidgets()
 {
+    return {
+        new Internal::BuildEnvironmentWidget(this),
+        new Internal::CustomParsersBuildWidget(this)
+    };
+}
+
+void BuildConfiguration::doInitialize(const BuildInfo &_info)
+{
+    BuildInfo info = _info;
+    if (QTC_UNEXPECTED(info.buildDirectory.isEmpty()))
+        info.buildDirectory = project()->projectDirectory() / "build";
+
     updateCacheAndEmitEnvironmentChanged();
 
     setDisplayName(info.displayName);
@@ -286,18 +362,32 @@ void BuildConfiguration::doInitialize(const BuildInfo &info)
 
     if (d->m_initializer)
         d->m_initializer(info);
-}
 
-MacroExpander *BuildConfiguration::macroExpander() const
-{
-    return &d->m_macroExpander;
+    project()->syncRunConfigurations(true);
 }
 
 bool BuildConfiguration::createBuildDirectory()
 {
-    const bool result = buildDirectory().ensureWritableDir().has_value();
+    const bool result = bool(buildDirectory().ensureWritableDir());
     buildDirectoryAspect()->validateInput();
     return result;
+}
+
+void BuildConfiguration::setInitialArgs(const QStringList &)
+{
+    QTC_CHECK(false);
+}
+
+QStringList BuildConfiguration::initialArgs() const
+{
+    QTC_CHECK(false);
+    return {};
+}
+
+QStringList BuildConfiguration::additionalArgs() const
+{
+    QTC_CHECK(false);
+    return {};
 }
 
 void BuildConfiguration::setInitializer(const std::function<void(const BuildInfo &)> &initializer)
@@ -305,9 +395,110 @@ void BuildConfiguration::setInitializer(const std::function<void(const BuildInfo
     d->m_initializer = initializer;
 }
 
-NamedWidget *BuildConfiguration::createConfigWidget()
+bool BuildConfiguration::addConfigurationsFromMap(
+    const Utils::Store &map, bool setActiveConfigurations)
 {
-    NamedWidget *named = new NamedWidget(d->m_configWidgetDisplayName);
+    bool ok = true;
+    int dcCount = map.value(DC_COUNT_KEY, 0).toInt(&ok);
+    if (!ok || dcCount < 0)
+        dcCount = 0;
+    int activeDc = map.value(ACTIVE_DC_KEY, 0).toInt(&ok);
+    if (!ok || 0 > activeDc || dcCount < activeDc)
+        activeDc = 0;
+    if (!setActiveConfigurations)
+        activeDc = -1;
+
+    for (int i = 0; i < dcCount; ++i) {
+        const Key key = numberedKey(DC_KEY_PREFIX, i);
+        if (!map.contains(key))
+            return false;
+        Store valueMap = storeFromVariant(map.value(key));
+        DeployConfiguration *dc = DeployConfigurationFactory::restore(this, valueMap);
+        if (!dc) {
+            Utils::Id id = idFromMap(valueMap);
+            qWarning("No factory found to restore deployment configuration of id '%s'!",
+                     id.isValid() ? qPrintable(id.toString()) : "UNKNOWN");
+            continue;
+        }
+        QTC_CHECK(dc->id() == ProjectExplorer::idFromMap(valueMap));
+        addDeployConfiguration(dc);
+        if (i == activeDc)
+            setActiveDeployConfiguration(dc);
+    }
+
+
+    int rcCount = map.value(RC_COUNT_KEY, 0).toInt(&ok);
+    if (!ok || rcCount < 0)
+        rcCount = 0;
+    int activeRc = map.value(ACTIVE_RC_KEY, 0).toInt(&ok);
+    if (!ok || 0 > activeRc || rcCount < activeRc)
+        activeRc = 0;
+    if (!setActiveConfigurations)
+        activeRc = -1;
+
+    for (int i = 0; i < rcCount; ++i) {
+        const Key key = numberedKey(RC_KEY_PREFIX, i);
+        if (!map.contains(key))
+            return false;
+
+        // Ignore missing RCs: We will just populate them using the default ones.
+        Store valueMap = storeFromVariant(map.value(key));
+        RunConfiguration *rc = RunConfigurationFactory::restore(this, valueMap);
+        if (!rc)
+            continue;
+        addRunConfiguration(rc, NameHandling::Keep);
+        if (i == activeRc)
+            setActiveRunConfiguration(rc);
+    }
+
+    return true;
+}
+
+void BuildConfiguration::setExtraDataFromMap(const Utils::Store &map)
+{
+    d->m_extraData = storeFromVariant(map.value(EXTRA_DATA_KEY));
+}
+
+void BuildConfiguration::storeConfigurationsToMap(Utils::Store &map) const
+{
+    const QList<DeployConfiguration *> dcs = deployConfigurations();
+    map.insert(ACTIVE_DC_KEY, dcs.indexOf(d->m_activeDeployConfiguration));
+    map.insert(DC_COUNT_KEY, dcs.size());
+    for (int i = 0; i < dcs.size(); ++i) {
+        Store data;
+        dcs.at(i)->toMap(data);
+        map.insert(numberedKey(DC_KEY_PREFIX, i), variantFromStore(data));
+    }
+
+    const QList<RunConfiguration *> rcs = runConfigurations();
+    map.insert(ACTIVE_RC_KEY, rcs.indexOf(d->m_activeRunConfiguration));
+    map.insert(RC_COUNT_KEY, rcs.size());
+    for (int i = 0; i < rcs.size(); ++i) {
+        Store data;
+        rcs.at(i)->toMap(data);
+        map.insert(numberedKey(RC_KEY_PREFIX, i), variantFromStore(data));
+    }
+}
+
+void BuildConfiguration::setActiveDeployConfiguration(DeployConfiguration *dc)
+{
+    if (dc) {
+        QTC_ASSERT(d->m_deployConfigurations.contains(dc), return);
+    } else {
+        QTC_ASSERT(d->m_deployConfigurations.isEmpty(), return);
+    }
+    if (dc == d->m_activeDeployConfiguration)
+        return;
+
+    d->m_activeDeployConfiguration = dc;
+    emit activeDeployConfigurationChanged(d->m_activeDeployConfiguration);
+    if (this == target()->activeBuildConfiguration())
+        emit target()->activeDeployConfigurationChanged(d->m_activeDeployConfiguration);
+}
+
+QWidget *BuildConfiguration::createConfigWidget()
+{
+    QWidget *named = new QWidget;
 
     QWidget *widget = nullptr;
 
@@ -337,18 +528,9 @@ NamedWidget *BuildConfiguration::createConfigWidget()
     return named;
 }
 
-QList<NamedWidget *> BuildConfiguration::createSubConfigWidgets()
-{
-    return {
-        new Internal::BuildEnvironmentWidget(this),
-        new Internal::CustomParsersBuildWidget(this)
-    };
-}
-
 BuildSystem *BuildConfiguration::buildSystem() const
 {
-    QTC_CHECK(target()->fallbackBuildSystem());
-    return target()->fallbackBuildSystem();
+    return d->m_buildSystem;
 }
 
 BuildStepList *BuildConfiguration::buildSteps() const
@@ -371,13 +553,440 @@ void BuildConfiguration::appendInitialCleanStep(Utils::Id id)
     d->m_initialCleanSteps.append(id);
 }
 
+void BuildConfiguration::addDeployConfiguration(DeployConfiguration *dc)
+{
+    QTC_ASSERT(dc && !d->m_deployConfigurations.contains(dc), return);
+    QTC_ASSERT(dc->buildConfiguration() == this, return);
+
+    // Check that we don't have a configuration with the same displayName
+    QString configurationDisplayName = dc->displayName();
+    QStringList displayNames = Utils::transform(d->m_deployConfigurations, &DeployConfiguration::displayName);
+    configurationDisplayName = Utils::makeUniquelyNumbered(configurationDisplayName, displayNames);
+    dc->setDisplayName(configurationDisplayName);
+
+    // add it
+    d->m_deployConfigurations.push_back(dc);
+
+    ProjectExplorerPlugin::targetSelector()->addedDeployConfiguration(dc); // TODO: Use signal instead?
+    d->m_deployConfigurationModel.addProjectConfiguration(dc);
+    emit addedDeployConfiguration(dc);
+    if (this == target()->activeBuildConfiguration())
+        emit target()->addedDeployConfiguration(dc);
+
+    if (!d->m_activeDeployConfiguration)
+        setActiveDeployConfiguration(dc);
+    Q_ASSERT(activeDeployConfiguration());
+
+}
+
+bool BuildConfiguration::removeDeployConfiguration(DeployConfiguration *dc)
+{
+    if (!d->m_deployConfigurations.contains(dc))
+        return false;
+
+    if (BuildManager::isBuilding(dc))
+        return false;
+
+    d->m_deployConfigurations.removeOne(dc);
+
+    if (activeDeployConfiguration() == dc) {
+        if (d->m_deployConfigurations.isEmpty())
+            setActiveDeployConfiguration(nullptr, SetActive::Cascade);
+        else
+            setActiveDeployConfiguration(d->m_deployConfigurations.at(0), SetActive::Cascade);
+    }
+
+    ProjectExplorerPlugin::targetSelector()->removedDeployConfiguration(dc);
+    d->m_deployConfigurationModel.removeProjectConfiguration(dc);
+    emit removedDeployConfiguration(dc);
+    if (this == target()->activeBuildConfiguration())
+        emit target()->removedDeployConfiguration(dc);
+
+    delete dc;
+    return true;
+
+}
+
+const QList<DeployConfiguration *> BuildConfiguration::deployConfigurations() const
+{
+    return transform(d->m_deployConfigurations, [](const QPointer<DeployConfiguration> &dc) {
+        QTC_CHECK(dc.get());
+        return dc.get();
+    });
+}
+
+DeployConfiguration *BuildConfiguration::activeDeployConfiguration() const
+{
+    return d->m_activeDeployConfiguration;
+}
+
+void BuildConfiguration::setActiveDeployConfiguration(DeployConfiguration *dc, SetActive cascade)
+{
+    QTC_ASSERT(project(), return);
+
+    if (project()->isShuttingDown() || target()->isShuttingDown()) // Do we need our own isShuttungDown()?
+        return;
+
+    setActiveDeployConfiguration(dc);
+
+    if (!dc)
+        return;
+    if (cascade != SetActive::Cascade || !ProjectManager::isProjectConfigurationCascading())
+        return;
+
+    Id kitId = kit()->id();
+    QString name = dc->displayName(); // We match on displayname
+    for (Project *otherProject : ProjectManager::projects()) {
+        if (otherProject == project())
+            continue;
+        Target *otherTarget = otherProject->activeTarget();
+        if (!otherTarget || otherTarget->kit()->id() != kitId)
+            continue;
+
+        for (BuildConfiguration *otherBc : otherTarget->buildConfigurations()) {
+            for (DeployConfiguration *otherDc : otherBc->deployConfigurations()) {
+                if (otherDc->displayName() == name) {
+                    otherBc->setActiveDeployConfiguration(otherDc);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+void BuildConfiguration::updateDefaultDeployConfigurations()
+{
+    const QList<DeployConfigurationFactory *> dcFactories = DeployConfigurationFactory::find(
+        target());
+    QTC_ASSERT(!dcFactories.isEmpty(),
+               qDebug() << "No deploy configuration factories found for target:" << target()->id();
+               return);
+
+    QList<Utils::Id> dcIds;
+    for (const DeployConfigurationFactory *dcFactory : dcFactories)
+        dcIds.append(dcFactory->creationId());
+
+    const QList<DeployConfiguration *> dcList = deployConfigurations();
+    QList<Utils::Id> toCreate = dcIds;
+
+    for (DeployConfiguration *dc : dcList) {
+        if (dcIds.contains(dc->id()))
+            toCreate.removeOne(dc->id());
+        else
+            removeDeployConfiguration(dc);
+    }
+
+    DeployConfiguration *preferredDc = activeDeployConfiguration();
+    for (Utils::Id id : std::as_const(toCreate)) {
+        for (DeployConfigurationFactory *dcFactory : dcFactories) {
+            if (dcFactory->creationId() == id) {
+                DeployConfiguration *dc = dcFactory->create(this);
+                if (dc) {
+                    QTC_CHECK(dc->id() == id);
+                    addDeployConfiguration(dc);
+                    // Prefer a deploy configuration that specifically supports the target
+                    // over the generic DefaultDeployConfiguration:
+                    if (!preferredDc && !dcFactory->supportedTargetDeviceTypes().isEmpty()) {
+                        preferredDc = dc;
+                    }
+                }
+            }
+        }
+    }
+    if (preferredDc)
+        setActiveDeployConfiguration(preferredDc);
+}
+
+void BuildConfiguration::updateDefaultRunConfigurations()
+{
+    // Manual and Auto
+    const QList<RunConfigurationCreationInfo> creators
+        = RunConfigurationFactory::creatorsForBuildConfig(this);
+
+    if (creators.isEmpty()) {
+        qWarning("No run configuration factory found for target id '%s'.", qPrintable(id().toString()));
+        return;
+    }
+
+    QList<RunConfiguration *> existingConfigured; // Existing configured RCs
+    QList<RunConfiguration *> existingUnconfigured; // Existing unconfigured RCs
+    QList<RunConfiguration *> newConfigured; // NEW configured Rcs
+    QList<RunConfiguration *> newUnconfigured; // NEW unconfigured RCs
+
+    // sort existing RCs into configured/unconfigured.
+    std::tie(existingConfigured, existingUnconfigured)
+        = Utils::partition(runConfigurations(),
+                           [](const RunConfiguration *rc) { return rc->isConfigured(); });
+    int configuredCount = existingConfigured.count();
+
+    // Put outdated RCs into toRemove, do not bother with factories
+    // that produce already existing RCs
+    QList<RunConfiguration *> toRemove;
+    QList<RunConfigurationCreationInfo> existing;
+    if (buildSystem()->hasParsingData()) {
+        for (RunConfiguration *rc : std::as_const(existingConfigured)) {
+            bool present = false;
+            for (const RunConfigurationCreationInfo &item : creators) {
+                if (item.factory->runConfigurationId() == rc->id()
+                    && item.buildKey == rc->buildKey()) {
+                    existing.append(item);
+                    present = true;
+                    break;
+                }
+            }
+            if (!present
+                && ProjectExplorerSettings::get(this).automaticallyCreateRunConfigurations()
+                && !rc->isCustomized()) {
+                toRemove.append(rc);
+            }
+        }
+    }
+    configuredCount -= toRemove.count();
+
+    bool removeExistingUnconfigured = false;
+    if (ProjectExplorerSettings::get(this).automaticallyCreateRunConfigurations()) {
+        // Create new "automatic" RCs and put them into newConfigured/newUnconfigured
+        for (const RunConfigurationCreationInfo &item : creators) {
+            if (item.creationMode == RunConfigurationCreationInfo::ManualCreationOnly)
+                continue;
+            bool exists = false;
+            for (const RunConfigurationCreationInfo &ex : existing) {
+                if (ex.factory == item.factory && ex.buildKey == item.buildKey)
+                    exists = true;
+            }
+            if (exists)
+                continue;
+
+            RunConfiguration *rc = item.create(this);
+            if (!rc)
+                continue;
+            QTC_CHECK(rc->id() == item.factory->runConfigurationId());
+            if (!rc->isConfigured())
+                newUnconfigured << rc;
+            else
+                newConfigured << rc;
+        }
+        configuredCount += newConfigured.count();
+
+        // Decide what to do with the different categories:
+        if (configuredCount > 0) {
+            // new non-Custom Executable RCs were added
+            removeExistingUnconfigured = true;
+            qDeleteAll(newUnconfigured);
+            newUnconfigured.clear();
+        } else {
+            // no new RCs, use old or new CERCs?
+            if (!existingUnconfigured.isEmpty()) {
+                qDeleteAll(newUnconfigured);
+                newUnconfigured.clear();
+            }
+        }
+    }
+
+    // Do actual changes:
+    for (RunConfiguration *rc : std::as_const(newConfigured))
+        addRunConfiguration(rc, NameHandling::Uniquify);
+    for (RunConfiguration *rc : std::as_const(newUnconfigured))
+        addRunConfiguration(rc, NameHandling::Uniquify);
+
+    // Generate complete list of RCs to remove later:
+    QList<RunConfiguration *> removalList;
+    for (RunConfiguration *rc : std::as_const(toRemove)) {
+        removalList << rc;
+        existingConfigured.removeOne(rc); // make sure to also remove them from existingConfigured!
+    }
+
+    if (removeExistingUnconfigured) {
+        removalList.append(existingUnconfigured);
+        existingUnconfigured.clear();
+    }
+
+    // Make sure a configured RC will be active after we delete the RCs:
+    RunConfiguration *active = activeRunConfiguration();
+    if (active && removalList.contains(active)) {
+        RunConfiguration *newConfiguredDefault = newConfigured.isEmpty() ? nullptr : newConfigured.at(0);
+
+        RunConfiguration *rc = Utils::findOrDefault(existingConfigured, [](RunConfiguration *rc) {
+            return rc->isEnabled(Constants::NORMAL_RUN_MODE);
+        });
+        if (!rc) {
+            rc = Utils::findOr(newConfigured, newConfiguredDefault,
+                               Utils::equal(&RunConfiguration::displayName, project()->displayName()));
+        }
+        if (!rc)
+            rc = newUnconfigured.isEmpty() ? nullptr : newUnconfigured.at(0);
+        if (!rc) {
+            // No RCs will be deleted, so use the one that will emit the minimum number of signals.
+            // One signal will be emitted from the next setActiveRunConfiguration, another one
+            // when the RC gets removed (and the activeRunConfiguration turns into a nullptr).
+            rc = removalList.isEmpty() ? nullptr : removalList.last();
+        }
+
+        if (rc)
+            setActiveRunConfiguration(rc);
+    }
+
+    // Remove the RCs that are no longer needed:
+    for (RunConfiguration *rc : std::as_const(removalList))
+        removeRunConfiguration(rc);
+
+    if (!newConfigured.isEmpty() || !newUnconfigured.isEmpty())
+        project()->syncRunConfigurations(true);
+    emit runConfigurationsUpdated();
+    runConfigurationModel()->triggerUpdate();
+}
+
+const QList<RunConfiguration *> BuildConfiguration::runConfigurations() const
+{
+    return transform(d->m_runConfigurations, [](const QPointer<RunConfiguration> &rc) {
+        QTC_CHECK(rc.get());
+        return rc.get();
+    });
+}
+
+void BuildConfiguration::addRunConfiguration(RunConfiguration *rc, NameHandling nameHandling)
+{
+    QTC_ASSERT(rc && !d->m_runConfigurations.contains(rc), return);
+    Q_ASSERT(rc->target() == target());
+
+    // Check that we don't have a configuration with the same displayName
+    QString configurationDisplayName = rc->displayName();
+    if (!configurationDisplayName.isEmpty() && nameHandling == NameHandling::Uniquify) {
+        QStringList displayNames = Utils::transform(d->m_runConfigurations,
+                                                    &RunConfiguration::displayName);
+        configurationDisplayName = Utils::makeUniquelyNumbered(configurationDisplayName,
+                                                               displayNames);
+        rc->setDisplayName(configurationDisplayName);
+    }
+
+    d->m_runConfigurations.push_back(rc);
+
+    ProjectExplorerPlugin::targetSelector()->addedRunConfiguration(rc);
+    d->m_runConfigurationModel.addProjectConfiguration(rc);
+    emit addedRunConfiguration(rc);
+    if (this == target()->activeBuildConfiguration())
+        emit target()->addedRunConfiguration(rc);
+
+    if (!activeRunConfiguration())
+        setActiveRunConfiguration(rc);
+}
+
+void BuildConfiguration::removeRunConfiguration(RunConfiguration *rc)
+{
+    QTC_ASSERT(rc && d->m_runConfigurations.contains(rc), return);
+
+    d->m_runConfigurations.removeOne(rc);
+
+    if (activeRunConfiguration() == rc) {
+        if (d->m_runConfigurations.isEmpty())
+            setActiveRunConfiguration(nullptr);
+        else
+            setActiveRunConfiguration(d->m_runConfigurations.at(0));
+    }
+
+    emit removedRunConfiguration(rc);
+    if (this == target()->activeBuildConfiguration())
+        emit target()->removedRunConfiguration(rc);
+    ProjectExplorerPlugin::targetSelector()->removedRunConfiguration(rc);
+    d->m_runConfigurationModel.removeProjectConfiguration(rc);
+
+    delete rc;
+}
+
+void BuildConfiguration::removeAllRunConfigurations()
+{
+    QList<QPointer<RunConfiguration>> runConfigs = d->m_runConfigurations;
+    d->m_runConfigurations.clear();
+    setActiveRunConfiguration(nullptr);
+    removeRunConfigurationsHelper(runConfigs);
+}
+
+void BuildConfiguration::removeRunConfigurations(const QList<RunConfiguration *> &runConfigs)
+{
+    QList<QPointer<RunConfiguration>> toRemove;
+    for (auto it = d->m_runConfigurations.begin(); it != d->m_runConfigurations.end();) {
+        if (runConfigs.contains(it->get())) {
+            toRemove << it->get();
+            it = d->m_runConfigurations.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    setActiveRunConfiguration(
+        d->m_runConfigurations.isEmpty() ? nullptr : d->m_runConfigurations.first());
+    removeRunConfigurationsHelper(toRemove);
+}
+
+void BuildConfiguration::removeRunConfigurationsHelper(
+    const QList<QPointer<RunConfiguration>> &runConfigs)
+{
+    for (RunConfiguration * const rc : runConfigs) {
+        QTC_CHECK(rc);
+        emit removedRunConfiguration(rc);
+        if (this == target()->activeBuildConfiguration())
+            emit target()->removedRunConfiguration(rc);
+        ProjectExplorerPlugin::targetSelector()->removedRunConfiguration(rc);
+        d->m_runConfigurationModel.removeProjectConfiguration(rc);
+        delete rc;
+    }
+}
+
+RunConfiguration *BuildConfiguration::activeRunConfiguration() const
+{
+    return d->m_activeRunConfiguration;
+}
+
+void BuildConfiguration::setActiveRunConfiguration(RunConfiguration *rc)
+{
+    if (target()->isShuttingDown())
+        return;
+
+    if ((!rc && d->m_runConfigurations.isEmpty()) ||
+        (rc && d->m_runConfigurations.contains(rc) && rc != d->m_activeRunConfiguration)) {
+        d->m_activeRunConfiguration = rc;
+        emit activeRunConfigurationChanged(d->m_activeRunConfiguration);
+        if (this == target()->activeBuildConfiguration())
+            emit target()->activeRunConfigurationChanged(d->m_activeRunConfiguration);
+        ProjectExplorerPlugin::updateActions();
+    }
+}
+
+ProjectConfigurationModel *BuildConfiguration::runConfigurationModel() const
+{
+    return &d->m_runConfigurationModel;
+}
+
+QVariant BuildConfiguration::extraData(const Utils::Key &name) const
+{
+    return d->m_extraData.value(name);
+}
+
+void BuildConfiguration::setExtraData(const Utils::Key &name, const QVariant &value)
+{
+    if (value.isValid())
+        d->m_extraData.insert(name, value);
+    else
+        d->m_extraData.remove(name);
+}
+
+ProjectConfigurationModel *BuildConfiguration::deployConfigurationModel() const
+{
+    return &d->m_deployConfigurationModel;
+}
+
+BuildConfiguration *BuildConfiguration::clone(Target *target) const
+{
+    Store map;
+    toMap(map);
+    return BuildConfigurationFactory::restore(target, map);
+}
+
 void BuildConfiguration::toMap(Store &map) const
 {
     ProjectConfiguration::toMap(map);
 
     map.insert(Constants::CLEAR_SYSTEM_ENVIRONMENT_KEY, d->m_clearSystemEnvironment);
-    map.insert(Constants::USER_ENVIRONMENT_CHANGES_KEY,
-               EnvironmentItem::toStringList(d->m_userEnvironmentChanges));
+    map.insert(Constants::USER_ENVIRONMENT_CHANGES_KEY, d->m_userEnvironmentChanges.toVariant());
 
     map.insert(BUILD_STEP_LIST_COUNT, 2);
     map.insert(numberedKey(BUILD_STEP_LIST_PREFIX, 0), variantFromStore(d->m_buildSteps.toMap()));
@@ -385,13 +994,18 @@ void BuildConfiguration::toMap(Store &map) const
 
     map.insert(PARSE_STD_OUT_KEY, d->m_parseStdOut);
     map.insert(CUSTOM_PARSERS_KEY, transform(d->m_customParsers, &Id::toSetting));
+
+    if (!d->m_extraData.isEmpty())
+        map.insert(EXTRA_DATA_KEY, variantFromStore(d->m_extraData));
+
+    storeConfigurationsToMap(map);
 }
 
 void BuildConfiguration::fromMap(const Store &map)
 {
     d->m_clearSystemEnvironment = map.value(Constants::CLEAR_SYSTEM_ENVIRONMENT_KEY).toBool();
-    d->m_userEnvironmentChanges = EnvironmentItem::fromStringList(
-        map.value(Constants::USER_ENVIRONMENT_CHANGES_KEY).toStringList());
+    d->m_userEnvironmentChanges = EnvironmentChanges::createFromVariant(
+        map.value(Constants::USER_ENVIRONMENT_CHANGES_KEY));
 
     updateCacheAndEmitEnvironmentChanged();
 
@@ -422,12 +1036,14 @@ void BuildConfiguration::fromMap(const Store &map)
 
     ProjectConfiguration::fromMap(map);
     setToolTip(d->m_tooltipAspect());
+    setExtraDataFromMap(map);
+    addConfigurationsFromMap(map, true);
 }
 
 void BuildConfiguration::updateCacheAndEmitEnvironmentChanged()
 {
     Environment env = baseEnvironment();
-    env.modify(userEnvironmentChanges());
+    userEnvironmentChanges().modifyEnvironment(env, macroExpander());
     if (env == d->m_cachedEnvironment)
         return;
     d->m_cachedEnvironment = env;
@@ -476,7 +1092,7 @@ Environment BuildConfiguration::baseEnvironment() const
     }
     addToEnvironment(result);
     kit()->addToBuildEnvironment(result);
-    result.modify(project()->additionalEnvironment());
+    project()->additionalEnvironment().modifyEnvironment(result, macroExpander());
     return result;
 }
 
@@ -524,12 +1140,12 @@ bool BuildConfiguration::useSystemEnvironment() const
     return !d->m_clearSystemEnvironment;
 }
 
-EnvironmentItems BuildConfiguration::userEnvironmentChanges() const
+EnvironmentChanges BuildConfiguration::userEnvironmentChanges() const
 {
     return d->m_userEnvironmentChanges;
 }
 
-void BuildConfiguration::setUserEnvironmentChanges(const EnvironmentItems &diff)
+void BuildConfiguration::setUserEnvironmentChanges(const EnvironmentChanges &diff)
 {
     if (d->m_userEnvironmentChanges == diff)
         return;
@@ -581,7 +1197,113 @@ QString BuildConfiguration::buildTypeName(BuildConfiguration::BuildType type)
 
 bool BuildConfiguration::isActive() const
 {
-    return target()->isActive() && target()->activeBuildConfiguration() == this;
+    return project()->activeBuildConfiguration() == this;
+}
+
+QString BuildConfiguration::activeBuildKey() const
+{
+    // Should not happen. If it does, return a buildKey that wont be found in
+    // the project tree, so that the project()->findNodeForBuildKey(buildKey)
+    // returns null.
+    QTC_ASSERT(d->m_activeRunConfiguration, return QString(QChar(0)));
+    return d->m_activeRunConfiguration->buildKey();
+}
+
+void BuildConfiguration::setupBuildDirMacroExpander(
+    Utils::MacroExpander &exp,
+    const Utils::FilePath &mainFilePath,
+    const QString &projectName,
+    const Kit *kit,
+    const QString &bcName,
+    BuildType buildType,
+    const QString &buildSystem,
+    bool documentationOnly)
+{
+    exp.registerFileVariables("Project",
+                              Tr::tr("Main file of the project"),
+                              [mainFilePath] { return mainFilePath; }, true, !documentationOnly);
+    exp.registerVariable("Project:Name",
+                         Tr::tr("Name of the project"),
+                         [projectName] { return projectName; }, true, !documentationOnly);
+    exp.registerVariable("BuildConfig:Name",
+                         Tr::tr("Name of the project's active build configuration"),
+                         [bcName] { return bcName; }, true, !documentationOnly);
+    exp.registerVariable("BuildSystem:Name",
+                         Tr::tr("Name of the project's active build system"),
+                         [buildSystem] { return buildSystem; }, true, !documentationOnly);
+    exp.registerVariable("CurrentBuild:Type",
+                         Tr::tr("Type of current build"),
+                         [buildType] { return buildTypeName(buildType); }, false, false);
+    exp.registerVariable("BuildConfig:Type",
+                         Tr::tr("Type of the project's active build configuration"),
+                         [buildType] { return buildTypeName(buildType); }, true, !documentationOnly);
+    if (kit)
+        exp.registerSubProvider({qApp, [kit] { return kit->macroExpander(); }}); // FIXME: Find a better guard.
+}
+
+BuildInfo BuildConfiguration::fixupBuildInfo(
+    const BuildInfo &info, const Kit *kit, const FilePath &projectPath)
+{
+    BuildInfo fullInfo = info;
+
+    if (info.projectDirectory.isEmpty())
+        fullInfo.projectDirectory = projectPath.absolutePath();
+    if (info.projectName.isEmpty())
+        fullInfo.projectName = projectPath.completeBaseName();
+    if (info.buildDirectory.isEmpty()) {
+        fullInfo.buildDirectory
+            = BuildConfiguration::rawBuildDirectoryFromTemplate(kit, projectPath);
+    }
+
+    return fullInfo;
+}
+
+FilePath BuildConfiguration::expandedBuildDirectory(
+    const Kit *kit, const FilePath &rawBuildDir, const FilePath &projectDir, MacroExpander &exp)
+{
+    qCDebug(bcLog) << Q_FUNC_INFO << rawBuildDir;
+
+    FilePath buildDir = exp.expand(rawBuildDir);
+    qCDebug(bcLog) << "expanded build dir:" << buildDir.toUserOutput();
+
+    buildDir = projectDir.resolvePath(buildDir);
+    qCDebug(bcLog) << "final build dir:" << buildDir.toUserOutput();
+
+    if (IDeviceConstPtr device = BuildDeviceKitAspect::device(kit)) {
+        buildDir = device->rootPath().withNewMappedPath(buildDir);
+        qCDebug(bcLog) << "mapped build dir:" << buildDir.toUserOutput();
+    }
+
+    return buildDir;
+}
+
+FilePath BuildConfiguration::rawBuildDirectoryFromTemplate(
+    const Kit *kit, const FilePath &projectFilePath)
+{
+    qCDebug(bcLog) << Q_FUNC_INFO;
+
+    auto environment = Environment::systemEnvironment();
+    if (const Project * const project
+        = ProjectManager::projectWithProjectFile(projectFilePath, false)) {
+        // This adds the environment variables from the <project>.shared file
+        project->additionalEnvironment()
+            .modifyEnvironment(environment, kit ? kit->macroExpander() : nullptr);
+    }
+
+    // Retrieve the template from setting or evironment.
+    FilePath buildDir = FilePath::fromUserInput(environment.value_or(
+        Constants::QTC_DEFAULT_BUILD_DIRECTORY_TEMPLATE,
+        buildPropertiesSettings().buildDirectoryTemplate()));
+    qCDebug(bcLog) << "build dir template:" << buildDir.toUserOutput();
+
+    // If it's a relative path, we are done.
+    if (buildDir.isRelativePath() && !buildDir.path().startsWith('%'))
+        return buildDir;
+
+    // Otherwise we need to inject the device scheme.
+    if (const IDevice::ConstPtr buildDevice = BuildDeviceKitAspect::device(kit))
+        return buildDevice->rootPath().withNewMappedPath(buildDir);
+    return buildDir;
 }
 
 FilePath BuildConfiguration::buildDirectoryFromTemplate(const FilePath &projectDir,
@@ -592,52 +1314,16 @@ FilePath BuildConfiguration::buildDirectoryFromTemplate(const FilePath &projectD
                                                         BuildType buildType,
                                                         const QString &buildSystem)
 {
-    MacroExpander exp;
-
     qCDebug(bcLog) << Q_FUNC_INFO << projectDir << mainFilePath << projectName << bcName;
 
-    exp.registerFileVariables("Project",
-                              Tr::tr("Main file of the project"),
-                              [mainFilePath] { return mainFilePath; });
-    exp.registerVariable("Project:Name",
-                         Tr::tr("Name of the project"),
-                         [projectName] { return projectName; });
-    exp.registerVariable("BuildConfig:Name",
-                         Tr::tr("Name of the project's active build configuration"),
-                         [bcName] { return bcName; });
-    exp.registerVariable("BuildSystem:Name",
-                         Tr::tr("Name of the project's active build system"),
-                         [buildSystem] { return buildSystem; });
-    exp.registerVariable("CurrentBuild:Type",
-                         Tr::tr("Type of current build"),
-                         [buildType] { return buildTypeName(buildType); }, false);
-    exp.registerVariable("BuildConfig:Type",
-                         Tr::tr("Type of the project's active build configuration"),
-                         [buildType] { return buildTypeName(buildType); });
-    exp.registerSubProvider([kit] { return kit->macroExpander(); });
+    MacroExpander exp;
+    setupBuildDirMacroExpander(
+        exp, mainFilePath, projectName, kit, bcName, buildType, buildSystem, false);
 
-    auto project = ProjectManager::projectWithProjectFilePath(mainFilePath);
-    auto environment = Environment::systemEnvironment();
-    // This adds the environment variables from the <project>.shared file
-    if (project)
-        environment.modify(project->additionalEnvironment());
-
-    FilePath buildDir = FilePath::fromUserInput(environment.value_or(
-        Constants::QTC_DEFAULT_BUILD_DIRECTORY_TEMPLATE,
-        buildPropertiesSettings().buildDirectoryTemplate()));
-    qCDebug(bcLog) << "build dir template:" << buildDir.toUserOutput();
-    buildDir = exp.expand(buildDir);
-    qCDebug(bcLog) << "expanded build:" << buildDir.toUserOutput();
-    buildDir = buildDir.withNewPath(buildDir.path().replace(" ", "-"));
-
-    auto buildDevice = BuildDeviceKitAspect::device(kit);
-
-    if (buildDir.isAbsolutePath())
-        return buildDevice->rootPath().withNewMappedPath(buildDir);
-
-    const FilePath baseDir = buildDevice->rootPath().withNewMappedPath(projectDir);
-    return baseDir.resolvePath(buildDir);
+    return expandedBuildDirectory(
+        kit, rawBuildDirectoryFromTemplate(kit, mainFilePath), projectDir, exp);
 }
+
 ///
 // IBuildConfigurationFactory
 ///
@@ -708,27 +1394,39 @@ const Tasks BuildConfigurationFactory::reportIssues(Kit *kit, const FilePath &pr
     return issues;
 }
 
-const QList<BuildInfo> BuildConfigurationFactory::allAvailableBuilds(const Target *parent) const
+QList<BuildInfo> BuildConfigurationFactory::buildListHelper(const Kit *kit,
+                                                            const FilePath &projectPath,
+                                                            bool forSetup) const
 {
     QTC_ASSERT(m_buildGenerator, return {});
-    QList<BuildInfo> list = m_buildGenerator(parent->kit(), parent->project()->projectFilePath(), false);
+    auto buildDevice = BuildDeviceKitAspect::device(kit);
+    if (!buildDevice)
+        return {};
+
+    FilePath buildRoot = buildDevice->rootPath();
+    if (!buildDevice->ensureReachable(projectPath))
+        return {};
+
+    QList<BuildInfo> list = m_buildGenerator(kit, projectPath, forSetup);
     for (BuildInfo &info : list) {
         info.factory = this;
-        info.kitId = parent->kit()->id();
+        info.kitId = kit->id();
+        if (forSetup)
+            info = BuildConfiguration::fixupBuildInfo(info, kit, projectPath);
     }
     return list;
 }
 
-const QList<BuildInfo>
-    BuildConfigurationFactory::allAvailableSetups(const Kit *k, const FilePath &projectPath) const
+const QList<BuildInfo> BuildConfigurationFactory::allAvailableBuilds(const Target *target) const
 {
-    QTC_ASSERT(m_buildGenerator, return {});
-    QList<BuildInfo> list = m_buildGenerator(k, projectPath, /* forSetup = */ true);
-    for (BuildInfo &info : list) {
-        info.factory = this;
-        info.kitId = k->id();
-    }
-    return list;
+    const FilePath projectPath = target->project()->projectFilePath();
+    return buildListHelper(target->kit(), projectPath, /* forSetup = */ false);
+}
+
+const QList<BuildInfo>
+    BuildConfigurationFactory::allAvailableSetups(const Kit *kit, const FilePath &projectPath) const
+{
+    return buildListHelper(kit, projectPath, /* forSetup = */ true);
 }
 
 bool BuildConfigurationFactory::supportsTargetDeviceType(Utils::Id id) const
@@ -742,11 +1440,14 @@ bool BuildConfigurationFactory::supportsTargetDeviceType(Utils::Id id) const
 BuildConfigurationFactory *BuildConfigurationFactory::find(const Kit *k, const FilePath &projectPath)
 {
     QTC_ASSERT(k, return nullptr);
-    const Utils::Id deviceType = DeviceTypeKitAspect::deviceTypeId(k);
+    const Utils::Id deviceType = RunDeviceTypeKitAspect::deviceTypeId(k);
     for (BuildConfigurationFactory *factory : std::as_const(g_buildConfigurationFactories)) {
-        if (Utils::mimeTypeForFile(projectPath).matchesName(factory->m_supportedProjectMimeTypeName)
-            && factory->supportsTargetDeviceType(deviceType))
-            return factory;
+        if (!factory->supportsTargetDeviceType(deviceType))
+            continue;
+        for (const QString &mimeType : std::as_const(factory->m_supportedProjectMimeTypeNames)) {
+            if (Utils::mimeTypeForFile(projectPath).matchesName(mimeType))
+                return factory;
+        }
     }
     return nullptr;
 }
@@ -768,7 +1469,12 @@ void BuildConfigurationFactory::setSupportedProjectType(Utils::Id id)
 
 void BuildConfigurationFactory::setSupportedProjectMimeTypeName(const QString &mimeTypeName)
 {
-    m_supportedProjectMimeTypeName = mimeTypeName;
+    setSupportedProjectMimeTypeNames({mimeTypeName});
+}
+
+void BuildConfigurationFactory::setSupportedProjectMimeTypeNames(const QStringList &mimeTypeNames)
+{
+    m_supportedProjectMimeTypeNames = mimeTypeNames;
 }
 
 void BuildConfigurationFactory::addSupportedTargetDeviceType(Utils::Id id)
@@ -778,13 +1484,13 @@ void BuildConfigurationFactory::addSupportedTargetDeviceType(Utils::Id id)
 
 bool BuildConfigurationFactory::canHandle(const Target *target) const
 {
-    if (m_supportedProjectType.isValid() && m_supportedProjectType != target->project()->id())
+    if (m_supportedProjectType.isValid() && m_supportedProjectType != target->project()->type())
         return false;
 
     if (containsType(target->project()->projectIssues(target->kit()), Task::TaskType::Error))
         return false;
 
-    if (!supportsTargetDeviceType(DeviceTypeKitAspect::deviceTypeId(target->kit())))
+    if (!supportsTargetDeviceType(RunDeviceTypeKitAspect::deviceTypeId(target->kit())))
         return false;
 
     return true;
@@ -834,12 +1540,44 @@ BuildConfiguration *BuildConfigurationFactory::restore(Target *parent, const Sto
     return nullptr;
 }
 
-BuildConfiguration *BuildConfigurationFactory::clone(Target *parent,
-                                                     const BuildConfiguration *source)
+BuildConfiguration *activeBuildConfig(const Project *project)
 {
-    Store map;
-    source->toMap(map);
-    return restore(parent, map);
+    return project ? project->activeBuildConfiguration() : nullptr;
+}
+
+BuildConfiguration *activeBuildConfigForActiveProject()
+{
+    return activeBuildConfig(ProjectManager::startupProject());
+}
+
+BuildConfiguration *activeBuildConfigForCurrentProject()
+{
+    return activeBuildConfig(ProjectTree::currentProject());
+}
+
+QString msgBuildConfigurationBuild()
+{
+    return Tr::tr("Build");
+}
+
+QString msgBuildConfigurationDefault()
+{
+    return Tr::tr("Default");
+}
+
+QString msgBuildConfigurationDebug()
+{
+    return Tr::tr("Debug");
+}
+
+QString msgBuildConfigurationRelease()
+{
+    return Tr::tr("Release");
+}
+
+QString msgBuildConfigurationProfile()
+{
+    return Tr::tr("Profile");
 }
 
 } // namespace ProjectExplorer

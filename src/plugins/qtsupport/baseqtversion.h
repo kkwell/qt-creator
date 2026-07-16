@@ -10,6 +10,7 @@
 #include <utils/store.h>
 
 #include <projectexplorer/abi.h>
+#include <projectexplorer/kitaspect.h>
 #include <projectexplorer/task.h>
 
 #include <QSet>
@@ -27,9 +28,10 @@ class FileInProjectFinder;
 } // Utils
 
 namespace ProjectExplorer {
+class BuildConfiguration;
+class QmlCodeModelInfo;
 class Kit;
 class Toolchain;
-class Target;
 } // ProjectExplorer
 
 namespace QtSupport {
@@ -52,8 +54,9 @@ public:
     virtual void fromMap(const Utils::Store &map, const Utils::FilePath &filePath = {});
     virtual bool equals(QtVersion *other);
 
-    bool isAutodetected() const;
-    QString detectionSource() const;
+    // Note: the earlier returned QString is the same as DetectionSource::id now
+    ProjectExplorer::DetectionSource detectionSource() const;
+    [[deprecated("Use detectionSource().isAutoDetected() instead")]] bool isAutodetected() const;
 
     QString displayName() const;
     QString unexpandedDisplayName() const;
@@ -79,7 +82,7 @@ public:
     bool hasAbi(ProjectExplorer::Abi::OS, ProjectExplorer::Abi::OSFlavor flavor = ProjectExplorer::Abi::UnknownFlavor) const;
 
     void applyProperties(QMakeGlobals *qmakeGlobals) const;
-    virtual void addToEnvironment(const ProjectExplorer::Kit *k, Utils::Environment &env) const;
+    virtual void addToBuildEnvironment(const ProjectExplorer::Kit *k, Utils::Environment &env) const;
     Utils::Environment qmakeRunEnvironment() const;
 
     // source path defined by qmake property QT_INSTALL_PREFIX/src or by qmake.stash QT_SOURCE_TREE
@@ -174,24 +177,24 @@ public:
     Utils::FilePath librarySearchPath() const;
 
     Utils::FilePaths directoriesToIgnoreInProjectTree() const;
+    QString moduleForHeader(const QString &className) const; // Format is "Qt.Core"
 
     QString qtNamespace() const;
-    QString qtLibInfix() const;
-    bool isFrameworkBuild() const;
-    // Note: A Qt version can have both a debug and a release built at the same time!
-    bool hasDebugBuild() const;
-    bool hasReleaseBuild() const;
 
     Utils::MacroExpander *macroExpander() const; // owned by the Qt version
     static std::unique_ptr<Utils::MacroExpander>
     createMacroExpander(const std::function<const QtVersion *()> &qtVersion);
 
     static void populateQmlFileFinder(Utils::FileInProjectFinder *finder,
-                                      const ProjectExplorer::Target *target);
+                                      const ProjectExplorer::BuildConfiguration *bc);
 
     QSet<Utils::Id> features() const;
 
     virtual bool supportsMultipleQtAbis() const;
+    virtual bool isAndroidQtVersion() const { return false; };
+
+    static void fillExtraProjectInfo(ProjectExplorer::Kit *kit,
+                                    ProjectExplorer::QmlCodeModelInfo &projectInfo);
 
 protected:
     QtVersion();
@@ -202,9 +205,7 @@ protected:
                                                     const Utils::FilePath &buildDir) const;
 
     virtual ProjectExplorer::Abis detectQtAbis() const;
-
-    // helper function for desktop and simulator to figure out the supported abis based on the libraries
-    static ProjectExplorer::Abis qtAbisFromLibrary(const Utils::FilePaths &coreLibraries);
+    ProjectExplorer::Abis qtAbisFromJson() const;
 
     void resetCache() const;
 
@@ -213,12 +214,12 @@ protected:
     virtual void setupQmakeRunEnvironment(Utils::Environment &env) const;
 
 private:
-    void updateDefaultDisplayName();
-
     friend class QtVersionFactory;
     friend class QtVersionManager;
     friend class Internal::QtVersionPrivate;
     friend class Internal::QtSettingsPageWidget;
+
+    void updateDefaultDisplayName();
 
     void setId(int id);
     QtVersion *clone() const;

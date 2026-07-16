@@ -4,7 +4,7 @@
 #include <utils/filepath.h>
 #include <qtsupport/examplesparser.h>
 
-#include <QtTest>
+#include <QTest>
 
 using namespace Core;
 using namespace Utils;
@@ -194,7 +194,7 @@ void tst_Examples::parsing()
     QFETCH(QStringList, categories);
     QFETCH(QStringList, categoryOrder);
     const ExampleItem expected = fetchItem();
-    const expected_str<ParsedExamples> result = parseExamples(data,
+    const Result<ParsedExamples> result = parseExamples(data,
                                                               FilePath(
                                                                   "manifest/examples-manifest.xml"),
                                                               FilePath("examples"),

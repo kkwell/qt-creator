@@ -9,8 +9,9 @@
 #include <texteditor/findinfiles.h>
 
 #include <utils/async.h>
-#include <utils/qtcprocess.h>
+#include <utils/environment.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcsettings.h>
 
 #include <QHBoxLayout>
@@ -50,6 +51,7 @@ static bool isSilverSearcherAvailable()
 {
     Process silverSearcherProcess;
     silverSearcherProcess.setCommand({"ag", {"--version"}});
+    silverSearcherProcess.setEnvironment(Environment::systemEnvironment());
     silverSearcherProcess.start();
     using namespace std::chrono_literals;
     return silverSearcherProcess.waitForFinished(1s)
@@ -79,15 +81,16 @@ static void runSilverSeacher(QPromise<SearchResultItems> &promise,
         QString nameFiltersAsRegExp;
         for (const QString &filter : std::as_const(parameters.nameFilters))
             nameFiltersAsRegExp += QString("(%1)|").arg(convertWildcardToRegex(filter));
-        nameFiltersAsRegExp.remove(nameFiltersAsRegExp.length() - 1, 1);
+        nameFiltersAsRegExp.remove(nameFiltersAsRegExp.size() - 1, 1);
 
         arguments << "-G" << nameFiltersAsRegExp;
 
         if (!searchOptions.isEmpty())
             arguments << searchOptions.split(' ');
 
-        arguments << "--" << parameters.text << parameters.searchDir.normalizedPathName().toString();
+        arguments << "--" << parameters.text << parameters.searchDir.normalizedPathName().toUrlishString();
         process.setCommand({"ag", arguments});
+        process.setEnvironment(Environment::systemEnvironment());
     };
 
     FilePath lastFilePath;

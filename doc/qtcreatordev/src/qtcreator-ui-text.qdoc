@@ -9,14 +9,14 @@
     \title User Interface Text Guidelines
 
     Follow the guidelines in this section to make sure that your extensions
-    are consistent with the Qt Creator UI and that they can be easily
+    are consistent with the \QC UI and that they can be easily
     localized into different languages.
 
     When you write UI text, make sure that it is:
 
     \list
 
-        \li  Consistent with existing Qt Creator UI terms
+        \li  Consistent with existing \QC UI terms
 
         \li  Short and concise
 
@@ -120,7 +120,7 @@
             they can enter in the field, such as a name or a path, unless it is
             obvious from the context. Use a noun phrase, such as \e {The name of
             the user account.} Describe limitations and special requirements.
-        \li For actions, such as most check boxes, radio buttons, push buttons,
+        \li For actions, such as most checkboxes, radio buttons, push buttons,
             and menu items, describe what happens when users select them. Use a
             verb phrase, such as \e {Removes trailing whitespace upon saving.}
         \li For combo boxes, describe when to pick each option.
@@ -145,7 +145,7 @@
     \row
         \li Check box - \uicontrol {Clean whitespace}
         \li Removes trailing whitespace upon saving.
-        \li Enable this check box to remove trailing whitespace upon saving.
+        \li Select this checkbox to remove trailing whitespace upon saving.
     \row
         \li Combo box - \uicontrol Size
         \li The font size used in the terminal (in points).
@@ -222,9 +222,8 @@
 
     \section3 Checking Book Style Capitalization
 
-    If necessary, use an online \l{https://titlecaseconverter.com/}
-    {Title Case Converter} to check book style capitalization
-    of UI text or headings in documentation.
+    If necessary, use an online \l{Title Case Converter} to check book style
+    capitalization of UI text or headings in documentation.
 
     Or, use the to-title-case.js script in the \c{\doc\titlecase} folder:
 
@@ -234,7 +233,7 @@
 
         \li  Enter the UI text in the field.
 
-        \li  Click \uicontrol Convert.
+        \li  Select \uicontrol Convert.
 
     \endlist
 
@@ -268,7 +267,7 @@
 
     \section1 Preparing for Localization
 
-    Qt Creator is localized into several languages. Consistency and conciseness
+    \QC is localized into several languages. Consistency and conciseness
     make UI text easier to translate.
 
     \section2 Marking UI Text for Translation
@@ -391,9 +390,9 @@
                 \c {tr("%1 failed").arg(someCondition ? "the operation" : "opening a file")}
     \endtable
 
-    \section1 Common Qt Creator Terms
+    \section1 Common \QC Terms
 
-    This section summarizes the terminology used for common Qt Creator UI
+    This section summarizes the terminology used for common \QC UI
     components. It also describes the conventions for naming different types of
     UI components.
 
@@ -466,7 +465,7 @@
             \li  Dialog that provides feedback to users, in the form of status
                  information, a warning, or an error message.
                  \image qtcreator-error-message.png {Message box}
-                 Output from Qt Creator should be displayed in output views,
+                 Output from \QC should be displayed in output views,
                  instead.
             \li  Use the event as the title and provide a solution in the
                  message box.
@@ -480,8 +479,8 @@
                  \uicontrol {Mode selector}.
         \row
             \li  Output
-            \li  Views to display output from Qt Creator.
-                 \image qtcreator-output-pane.png {Output}
+            \li  Views to display output from \QC.
+                 \image qtcreator-application-output.webp {Application Output}
             \li  Use descriptive names for output views.
         \row
             \li  Sidebar

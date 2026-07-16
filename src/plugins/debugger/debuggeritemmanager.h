@@ -5,14 +5,16 @@
 
 #include "debugger_global.h"
 #include "debuggerconstants.h"
+#include "debuggeritem.h"
+
+#include <projectexplorer/kit.h>
+#include <projectexplorer/kitaspect.h>
 
 #include <utils/filepath.h>
 
-#include <QList>
+#include <QtTaskTree/QTaskTree>
 
 namespace Debugger {
-
-class DebuggerItem;
 
 namespace DebuggerItemManager {
 
@@ -23,15 +25,29 @@ DEBUGGER_EXPORT const QList<DebuggerItem> debuggers();
 DEBUGGER_EXPORT QVariant registerDebugger(const DebuggerItem &item);
 DEBUGGER_EXPORT void deregisterDebugger(const QVariant &id);
 
-DEBUGGER_EXPORT void autoDetectDebuggersForDevice(const Utils::FilePaths &searchPaths,
-                                         const QString &detectionSource,
-                                         QString *logMessage);
-DEBUGGER_EXPORT void removeDetectedDebuggers(const QString &detectionSource, QString *logMessage);
-DEBUGGER_EXPORT void listDetectedDebuggers(const QString &detectionSource, QString *logMessage);
-
-DEBUGGER_EXPORT const DebuggerItem *findByCommand(const Utils::FilePath &command);
-DEBUGGER_EXPORT const DebuggerItem *findById(const QVariant &id);
-DEBUGGER_EXPORT const DebuggerItem *findByEngineType(DebuggerEngineType engineType);
+DEBUGGER_EXPORT DebuggerItem findByCommand(const Utils::FilePath &command);
+DEBUGGER_EXPORT DebuggerItem findById(const QVariant &id);
+DEBUGGER_EXPORT DebuggerItem findByEngineType(DebuggerEngineType engineType);
 
 } // DebuggerItemManager
+
+namespace Internal {
+
+QtTaskTree::ExecutableItem autoDetectDebuggerRecipe(
+    ProjectExplorer::Kit *kit,
+    const Utils::FilePaths &searchPaths,
+    const ProjectExplorer::DetectionSource &detectionSource,
+    const ProjectExplorer::LogCallback &logCallback);
+
+QtTaskTree::ExecutableItem removeAutoDetected(
+    const QString &detectionSource, const ProjectExplorer::LogCallback &logCallback);
+
+Utils::Result<QtTaskTree::ExecutableItem> createAspectFromJson(
+    const ProjectExplorer::DetectionSource &detectionSource,
+    const Utils::FilePath &rootPath,
+    ProjectExplorer::Kit *kit,
+    const QJsonValue &json,
+    const ProjectExplorer::LogCallback &logCallback);
+
+} // Internal
 } // Debugger

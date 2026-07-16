@@ -8,8 +8,7 @@
 #include "profilehoverhandler.h"
 #include "qmakenodes.h"
 #include "qmakeprojectmanagerconstants.h"
-
-#include <coreplugin/coreplugintr.h>
+#include "qmakeprojectmanagertr.h"
 
 #include <extensionsystem/pluginmanager.h>
 
@@ -36,8 +35,7 @@ using namespace ProjectExplorer;
 using namespace TextEditor;
 using namespace Utils;
 
-namespace QmakeProjectManager {
-namespace Internal {
+namespace QmakeProjectManager::Internal {
 
 class ProFileEditorWidget : public TextEditorWidget
 {
@@ -256,7 +254,7 @@ ProFileEditorFactory::ProFileEditorFactory()
 {
     using namespace Utils::Constants;
     setId(Constants::PROFILE_EDITOR_ID);
-    setDisplayName(::Core::Tr::tr(Constants::PROFILE_EDITOR_DISPLAY_NAME));
+    setDisplayName(Tr::tr(".pro File Editor"));
     addMimeType(PROFILE_MIMETYPE);
     addMimeType(PROINCLUDEFILE_MIMETYPE);
     addMimeType(PROFEATUREFILE_MIMETYPE);
@@ -275,7 +273,7 @@ ProFileEditorFactory::ProFileEditorFactory()
     setOptionalActionMask(OptionalActions::UnCommentSelection
                 | OptionalActions::JumpToFileUnderCursor);
 
-    addHoverHandler(new ProFileHoverHandler);
+    addHoverHandler(&proFileHoverHandler());
     setSyntaxHighlighterCreator([]() { return new ProFileHighlighter; });
 
     const QString defaultOverlay = QLatin1String(ProjectExplorer::Constants::FILEOVERLAY_QT);
@@ -287,5 +285,4 @@ ProFileEditorFactory::ProFileEditorFactory()
                 creatorTheme()->imageFile(Theme::IconOverlayPrf, defaultOverlay), "prf");
 }
 
-} // namespace Internal
-} // namespace QmakeProjectManager
+} // namespace QmakeProjectManager::Internal

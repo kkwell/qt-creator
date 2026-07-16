@@ -33,7 +33,7 @@ void JavaParser::setSourceDirectory(const FilePath &sourceDirectory)
 
 OutputLineParser::Result JavaParser::handleLine(const QString &line, OutputFormat type)
 {
-    Q_UNUSED(type);
+    Q_UNUSED(type)
     static const QRegularExpression javaRegExp("^(.*\\[javac\\]\\s)(.*\\.java):(\\d+):(.*)$");
 
     const QRegularExpressionMatch match = javaRegExp.match(line);
@@ -47,11 +47,11 @@ OutputLineParser::Result JavaParser::handleLine(const QString &line, OutputForma
     FilePath file = FilePath::fromUserInput(match.captured(2));
     if (file.isChildOf(m_buildDirectory)) {
         FilePath relativePath = file.relativeChildPath(m_buildDirectory);
-        file = m_sourceDirectory.pathAppended(relativePath.toString());
+        file = m_sourceDirectory.resolvePath(relativePath);
     }
-    if (file.toFileInfo().isRelative()) {
+    if (file.isRelativePath()) {
         for (int i = 0; i < m_fileList.size(); i++)
-            if (m_fileList[i].endsWith(file.toString())) {
+            if (m_fileList[i].endsWith(file.path())) {
                 file = m_fileList[i];
                 break;
             }
@@ -62,7 +62,7 @@ OutputLineParser::Result JavaParser::handleLine(const QString &line, OutputForma
                      absoluteFilePath(file),
                      lineno);
     LinkSpecs linkSpecs;
-    addLinkSpecForAbsoluteFilePath(linkSpecs, task.file, task.line, task.column, match, 2);
+    addLinkSpecForAbsoluteFilePath(linkSpecs, task.file(), task.line(), task.column(), match, 2);
     scheduleTask(task, 1);
     return {Status::Done, linkSpecs};
 }

@@ -11,6 +11,8 @@
 #include <QSet>
 #include <QTimer>
 
+#include <optional>
+
 namespace ProjectExplorer {
 
 class Node;
@@ -26,9 +28,20 @@ class WrapperNode : public Utils::TypedTreeItem<WrapperNode>
 {
 public:
     explicit WrapperNode(Node *node) : m_node(node) {}
-    Node *m_node = nullptr;
 
     void appendClone(const WrapperNode &node);
+    void compress();
+
+    Node * node() const { return m_node; }
+    QString displayName() const;
+
+private:
+    QVariant data(int column, int role) const override;
+    Qt::ItemFlags flags(int column) const override;
+    bool setData(int column, const QVariant &value, int role) override;
+
+    Node *m_node = nullptr;
+    QString m_displayName;
 };
 
 class FlatModel : public Utils::TreeModel<WrapperNode, WrapperNode>
@@ -39,10 +52,6 @@ public:
     FlatModel(QObject *parent);
 
     // QAbstractItemModel
-    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
-    Qt::ItemFlags flags(const QModelIndex &index) const override;
-    bool setData(const QModelIndex &index, const QVariant &value, int role) override;
-
     Qt::DropActions supportedDragActions() const override;
     QStringList mimeTypes() const override;
     QMimeData *mimeData(const QModelIndexList &indexes) const override;
@@ -85,6 +94,8 @@ private:
     void rebuildModel();
     void addFolderNode(WrapperNode *parent, FolderNode *folderNode, QSet<Node *> *seen);
     bool trimEmptyDirectories(WrapperNode *parent);
+    void updateVCStatusFor(const Utils::FilePath root, const QStringList &files);
+    void clearVCStatusFor(const Utils::FilePath &root);
 
     ExpandData expandDataForNode(const Node *node) const;
     void loadExpandData();

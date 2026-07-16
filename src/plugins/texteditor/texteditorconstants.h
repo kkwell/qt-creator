@@ -50,6 +50,7 @@ enum TextStyle : quint8 {
     C_PREPROCESSOR,
     C_MACRO,
     C_LABEL,
+    C_ATTRIBUTE,
     C_COMMENT,
     C_DOXYGEN_COMMENT,
     C_DOXYGEN_TAG,
@@ -87,6 +88,8 @@ enum TextStyle : quint8 {
     C_LOG_COMMIT_SUBJECT,
     C_LOG_DECORATION,
 
+    C_INFO,
+    C_INFO_CONTEXT,
     C_WARNING,
     C_WARNING_CONTEXT,
     C_ERROR,
@@ -130,12 +133,12 @@ const char TEXT_WRAPPING[]         = "TextEditor.TextWrapping";
 const char UN_COMMENT_SELECTION[]  = "TextEditor.UnCommentSelection";
 const char FOLD[]                  = "TextEditor.Fold";
 const char UNFOLD[]                = "TextEditor.Unfold";
+const char FOLD_RECURSIVELY[]      = "TextEditor.FoldRecursively";
+const char UNFOLD_RECURSIVELY[]    = "TextEditor.UnfoldRecursively";
 const char UNFOLD_ALL[]            = "TextEditor.UnFoldAll";
 const char AUTO_INDENT_SELECTION[] = "TextEditor.AutoIndentSelection";
 const char AUTO_FORMAT_SELECTION[] = "TextEditor.AutoFormatSelection";
-const char INCREASE_FONT_SIZE[]    = "TextEditor.IncreaseFontSize";
-const char DECREASE_FONT_SIZE[]    = "TextEditor.DecreaseFontSize";
-const char RESET_FONT_SIZE[]       = "TextEditor.ResetFontSize";
+const char REFORMAT_FILE[]         = "TextEditor.ReformatFile";
 const char GOTO_BLOCK_START[]      = "TextEditor.GotoBlockStart";
 const char GOTO_BLOCK_START_WITH_SELECTION[] = "TextEditor.GotoBlockStartWithSelection";
 const char GOTO_BLOCK_END[]        = "TextEditor.GotoBlockEnd";
@@ -196,6 +199,9 @@ const char GOTO_PREVIOUS_WORD_WITH_SELECTION[] = "TextEditor.GotoPreviousWordWit
 const char GOTO_NEXT_WORD_WITH_SELECTION[] = "TextEditor.GotoNextWordWithSelection";
 const char GOTO_PREVIOUS_WORD_CAMEL_CASE_WITH_SELECTION[] = "TextEditor.GotoPreviousWordCamelCaseWithSelection";
 const char GOTO_NEXT_WORD_CAMEL_CASE_WITH_SELECTION[] = "TextEditor.GotoNextWordCamelCaseWithSelection";
+const char SUGGESTION_APPLY[] = "TextEditor.Suggestion.Apply";
+const char SUGGESTION_APPLY_WORD[] = "TextEditor.Suggestion.ApplyWord";
+const char SUGGESTION_APPLY_LINE[] = "TextEditor.Suggestion.ApplyLine";
 const char C_TEXTEDITOR_MIMETYPE_TEXT[] = "text/plain";
 const char INFO_MISSING_SYNTAX_DEFINITION[] = "TextEditor.InfoSyntaxDefinition";
 const char INFO_MULTIPLE_SYNTAX_DEFINITIONS[] = "TextEditor.InfoMultipleSyntaxDefinitions";
@@ -242,8 +248,11 @@ const char TEXT_SNIPPET_GROUP_ID[] = "Text";
 const char GLOBAL_SETTINGS_ID[]    = "Global";
 const char GENERIC_PROPOSAL_ID[] = "TextEditor.GenericProposalId";
 
-const char BOOKMARKS_PREV_ACTION[]        = "Bookmarks.Previous";
-const char BOOKMARKS_NEXT_ACTION[]        = "Bookmarks.Next";
+const char BOOKMARKS_PREV_ACTION[]              = "Bookmarks.Previous";
+const char BOOKMARKS_NEXT_ACTION[]              = "Bookmarks.Next";
+const char BOOKMARKS_MOVEUP_ACTION[]            = "Bookmarks.MoveUp";
+const char BOOKMARKS_MOVEDOWN_ACTION[]          = "Bookmarks.MoveDown";
+const char BOOKMARKS_SORTBYFILENAMES_ACTION[]   = "Bookmarks.SortByFilenames";
 
 /**
  * Delay before tooltip will be shown near completion assistant proposal

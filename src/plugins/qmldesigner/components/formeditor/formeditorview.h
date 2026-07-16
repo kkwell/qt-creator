@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 #pragma once
 
+#include "formeditortracing.h"
+
 #include <qmldesignercomponents_global.h>
 
 #include <abstractview.h>
@@ -40,6 +42,8 @@ class QMLDESIGNERCOMPONENTS_EXPORT FormEditorView : public AbstractView
 {
     Q_OBJECT
 
+    using SL = FormEditorTracing::SourceLocation;
+
 public:
     FormEditorView(ExternalDependenciesInterface &externalDependencies);
     ~FormEditorView() override;
@@ -50,7 +54,6 @@ public:
 
     void importsChanged(const Imports &addedImports, const Imports &removedImports) override;
 
-    void nodeCreated(const ModelNode &createdNode) override;
     void nodeAboutToBeRemoved(const ModelNode &removedNode) override;
     void nodeRemoved(const ModelNode &removedNode, const NodeAbstractProperty &parentProperty,
                      PropertyChangeFlags propertyChange) override;
@@ -63,12 +66,6 @@ public:
     void selectedNodesChanged(const QList<ModelNode> &selectedNodeList,
                               const QList<ModelNode> &lastSelectedNodeList) override;
 
-    void variantPropertiesChanged(const QList<VariantProperty> &propertyList,
-                                  PropertyChangeFlags propertyChange) override;
-
-    void bindingPropertiesChanged(const QList<BindingProperty> &propertyList,
-                                  PropertyChangeFlags propertyChange) override;
-
     void documentMessagesChanged(const QList<DocumentMessage> &errors, const QList<DocumentMessage> &warnings) override;
 
     void customNotification(const AbstractView *view,
@@ -79,6 +76,7 @@ public:
     void currentStateChanged(const ModelNode &node) override;
 
     // FormEditorView
+    bool hasWidget() const override { return true; }
     WidgetInfo widgetInfo() override;
 
     FormEditorWidget *formEditorWidget();
@@ -153,6 +151,8 @@ private:
     AbstractFormEditorTool *m_currentTool = nullptr;
     int m_transactionCounter = 0;
     std::function<void(int, int)> m_gotoErrorCallback;
+
+    bool m_hadIncompleteTypeInformation = false;
 };
 
 } // namespace QmlDesigner

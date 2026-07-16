@@ -3,14 +3,12 @@
 
 #include "cppmodelmanager.h"
 
-#include "abstracteditorsupport.h"
 #include "baseeditordocumentprocessor.h"
 #include "compileroptionsbuilder.h"
 #include "cppbuiltinmodelmanagersupport.h"
 #include "cppcanonicalsymbol.h"
 #include "cppcodemodelinspectordumper.h"
 #include "cppcodemodelsettings.h"
-#include "cppeditorconstants.h"
 #include "cppeditortr.h"
 #include "cppeditorwidget.h"
 #include "cppfindreferences.h"
@@ -23,6 +21,7 @@
 #include "cpptoolsjsextension.h"
 #include "cpptoolsreuse.h"
 #include "editordocumenthandle.h"
+#include "generatedcodemodelsupport.h"
 #include "symbolfinder.h"
 #include "symbolsfindfilter.h"
 
@@ -36,6 +35,7 @@
 #include <coreplugin/messagemanager.h>
 #include <coreplugin/progressmanager/futureprogress.h>
 #include <coreplugin/progressmanager/progressmanager.h>
+#include <coreplugin/session.h>
 #include <coreplugin/vcsmanager.h>
 
 #include <cplusplus/ASTPath.h>
@@ -44,11 +44,8 @@
 
 #include <extensionsystem/pluginmanager.h>
 
-#include <coreplugin/session.h>
-
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/gcctoolchain.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorer.h>
@@ -57,14 +54,15 @@
 #include <projectexplorer/projectmacro.h>
 #include <projectexplorer/projectnodes.h>
 #include <projectexplorer/projecttree.h>
+#include <projectexplorer/sysrootkitaspect.h>
 #include <projectexplorer/target.h>
+#include <projectexplorer/toolchainkitaspect.h>
 
+#include <texteditor/refactoringchanges.h>
 #include <texteditor/textdocument.h>
-#include <texteditor/textdocumentlayout.h>
 
 #include <utils/algorithm.h>
 #include <utils/environment.h>
-#include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
 #include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
@@ -189,8 +187,8 @@ public:
 
     // Editor integration
     mutable QMutex m_cppEditorDocumentsMutex;
-    QMap<QString, CppEditorDocumentHandle *> m_cppEditorDocuments;
-    QSet<AbstractEditorSupport *> m_extraEditorSupports;
+    QMap<FilePath, CppEditorDocumentHandle *> m_cppEditorDocuments;
+    QSet<GeneratedFileSupport *> m_generatedFileSupports;
 
     // Model Manager Supports for e.g. completion and highlighting
     BuiltinModelManagerSupport m_builtinModelManagerSupport;
@@ -198,7 +196,6 @@ public:
     ModelManagerSupport *m_activeModelManagerSupport = &m_builtinModelManagerSupport;
 
     // Indexing
-    CppIndexingSupport *m_internalIndexingSupport;
     bool m_indexerEnabled;
 
     QMutex m_fallbackProjectPartMutex;
@@ -415,19 +412,18 @@ void CppModelManager::showPreprocessedFile(bool inNextSplit)
     }
 
     const Project * const project = ProjectTree::currentProject();
-    if (!project || !project->activeTarget()
-            || !project->activeTarget()->activeBuildConfiguration()) {
+    if (!project || !project->activeBuildConfiguration()) {
         showFallbackWarning(Tr::tr("Could not determine which compiler to invoke."));
         useBuiltinPreprocessor();
         return;
     }
 
     const Toolchain * tc = nullptr;
-    const ProjectFile classifier(filePath, ProjectFile::classify(filePath.toString()));
+    const ProjectFile classifier(filePath, ProjectFile::classify(filePath));
     if (classifier.isC()) {
-        tc = ToolchainKitAspect::cToolchain(project->activeTarget()->kit());
+        tc = ToolchainKitAspect::cToolchain(project->activeKit());
     } else if (classifier.isCxx() || classifier.isHeader()) {
-        tc = ToolchainKitAspect::cxxToolchain(project->activeTarget()->kit());
+        tc = ToolchainKitAspect::cxxToolchain(project->activeKit());
     } else {
         showFallbackWarning(Tr::tr("Could not determine which compiler to invoke."));
         useBuiltinPreprocessor();
@@ -467,7 +463,7 @@ void CppModelManager::showPreprocessedFile(bool inNextSplit)
     const CommandLine compilerCommandLine(tc->compilerCommand(), compilerArgs);
     const auto compiler = new Process(instance());
     compiler->setCommand(compilerCommandLine);
-    compiler->setEnvironment(project->activeTarget()->activeBuildConfiguration()->environment());
+    compiler->setEnvironment(project->activeBuildConfiguration()->environment());
     connect(compiler, &Process::done, instance(), [compiler, outFilePath, inNextSplit,
                                                       useBuiltinPreprocessor, isMsvc] {
         compiler->deleteLater();
@@ -484,52 +480,29 @@ void CppModelManager::showPreprocessedFile(bool inNextSplit)
     compiler->start();
 }
 
-static void foldOrUnfoldComments(bool unfold)
+void CppModelManager::foldComments(Backend backend)
 {
-    IEditor * const currentEditor = EditorManager::currentEditor();
-    if (!currentEditor)
-        return;
-    const auto editorWidget = qobject_cast<CppEditorWidget*>(currentEditor->widget());
-    if (!editorWidget)
-        return;
-    TextEditor::TextDocument * const textDoc = editorWidget->textDocument();
-    QTC_ASSERT(textDoc, return);
-
-    const Document::Ptr cppDoc = CppModelManager::snapshot().preprocessedDocument(
-        textDoc->contents(), textDoc->filePath());
-    QTC_ASSERT(cppDoc, return);
-    cppDoc->tokenize();
-    TranslationUnit * const tu = cppDoc->translationUnit();
-    if (!tu || !tu->isTokenized())
-        return;
-
-    for (int commentTokIndex = 0; commentTokIndex < tu->commentCount(); ++commentTokIndex) {
-        const Token &tok = tu->commentAt(commentTokIndex);
-        if (tok.kind() != T_COMMENT && tok.kind() != T_DOXY_COMMENT)
-            continue;
-        const int tokenPos = tu->getTokenPositionInDocument(tok, textDoc->document());
-        const int tokenEndPos = tu->getTokenEndPositionInDocument(tok, textDoc->document());
-        const QTextBlock tokenBlock = textDoc->document()->findBlock(tokenPos);
-        if (!tokenBlock.isValid())
-            continue;
-        const QTextBlock nextBlock = tokenBlock.next();
-        if (!nextBlock.isValid())
-            continue;
-        if (tokenEndPos < nextBlock.position())
-            continue;
-        if (TextEditor::TextDocumentLayout::foldingIndent(tokenBlock)
-            >= TextEditor::TextDocumentLayout::foldingIndent(nextBlock)) {
-            continue;
-        }
-        if (unfold)
-            editorWidget->unfold(tokenBlock);
-        else
-            editorWidget->fold(tokenBlock);
+    if (const auto currentEditor = qobject_cast<TextEditor::BaseTextEditor *>(
+            EditorManager::currentEditor())) {
+        modelManagerSupport(backend)->foldOrUnfoldComments(currentEditor, true);
     }
 }
 
-void CppModelManager::foldComments() { foldOrUnfoldComments(false); }
-void CppModelManager::unfoldComments() { foldOrUnfoldComments(true); }
+void CppModelManager::unfoldComments(Backend backend)
+{
+    if (const auto currentEditor = qobject_cast<TextEditor::BaseTextEditor *>(
+            EditorManager::currentEditor())) {
+        modelManagerSupport(backend)->foldOrUnfoldComments(currentEditor, false);
+    }
+}
+
+void CppModelManager::foldOrUnfoldInactiveRegions(bool fold)
+{
+    if (const auto currentEditor = qobject_cast<TextEditor::BaseTextEditor *>(
+            EditorManager::currentEditor())) {
+        modelManagerSupport(Backend::Best)->foldOrUnfoldInactiveRegions(currentEditor, fold);
+    }
+}
 
 class FindUnusedActionsEnabledSwitcher
 {
@@ -705,25 +678,40 @@ int argumentPositionOf(const AST *last, const CallAST *callAst)
     return 0;
 }
 
-SignalSlotType CppModelManager::getSignalSlotType(const FilePath &filePath,
-                                                  const QByteArray &content,
-                                                  int position)
+SignalSlotType CppModelManager::getSignalSlotType(const FilePath &filePath, QTextCursor cursor)
 {
-    if (content.isEmpty())
+    QTextDocument *doc = cursor.document();
+    if (doc->isEmpty())
         return SignalSlotType::None;
 
-    // Insert a dummy prefix if we don't have a real one. Otherwise the AST path will not contain
-    // anything after the CallAST.
-    QByteArray fixedContent = content;
-    if (position > 2 && content.mid(position - 2, 2) == "::")
-        fixedContent.insert(position, 'x');
-
+    std::unique_ptr<QTextDocument> scopedDocument;
     const Snapshot snapshot = CppModelManager::snapshot();
-    const Document::Ptr document = snapshot.preprocessedDocument(fixedContent, filePath);
-    document->check();
-    QTextDocument textDocument(QString::fromUtf8(fixedContent));
-    QTextCursor cursor(&textDocument);
-    cursor.setPosition(position);
+    Document::Ptr document;
+    // Create a temporary document with a dummy prefix if we don't have a real one.
+    // Otherwise the AST path will not contain anything after the CallAST.
+    const int position = cursor.position();
+    if (position > 2 && Utils::Text::textAt(doc, position - 2, 2) == "::") {
+        doc = doc->clone();
+        scopedDocument.reset(doc);
+        cursor = QTextCursor(doc);
+        cursor.setPosition(position);
+        cursor.insertText("x");
+        cursor.setPosition(position);
+    } else {
+        const QList<CppEditorWidget *> editorWidgets = CppEditorWidget::editorWidgetsForDocument(
+            TextEditor::TextDocument::textDocumentForFilePath(filePath));
+        for (CppEditorWidget *editorWidget : editorWidgets) {
+            if (editorWidget->isSemanticInfoValidExceptLocalUses()) {
+                document = editorWidget->semanticInfo().doc;
+                break;
+            }
+        }
+    }
+
+    if (!document) {
+        document = snapshot.preprocessedDocument(doc->toPlainText().toUtf8(), filePath, false);
+        document->check();
+    }
 
     const QList<AST *> path = ASTPath(document)(cursor);
     if (path.isEmpty())
@@ -807,8 +795,8 @@ SignalSlotType CppModelManager::getSignalSlotType(const FilePath &filePath,
             QString expression;
             LanguageFeatures features = LanguageFeatures::defaultFeatures();
             CPlusPlus::ExpressionUnderCursor expressionUnderCursor(features);
-            for (int i = cursor.position(); i > 0; --i)
-                if (textDocument.characterAt(i) == '(') {
+            for (int i = position; i > 0; --i)
+                if (doc->characterAt(i) == '(') {
                     cursor.setPosition(i);
                     break;
                 }
@@ -867,36 +855,6 @@ void CppModelManager::setSymbolsFindFilter(std::unique_ptr<IFindFilter> &&filter
 void CppModelManager::setCurrentDocumentFilter(std::unique_ptr<ILocatorFilter> &&filter)
 {
     setFilter(d->m_currentDocumentFilter, std::move(filter));
-}
-
-ILocatorFilter *CppModelManager::locatorFilter()
-{
-    return d->m_locatorFilter.get();
-}
-
-ILocatorFilter *CppModelManager::classesFilter()
-{
-    return d->m_classesFilter.get();
-}
-
-ILocatorFilter *CppModelManager::includesFilter()
-{
-    return d->m_includesFilter.get();
-}
-
-ILocatorFilter *CppModelManager::functionsFilter()
-{
-    return d->m_functionsFilter.get();
-}
-
-IFindFilter *CppModelManager::symbolsFindFilter()
-{
-    return d->m_symbolsFindFilter.get();
-}
-
-ILocatorFilter *CppModelManager::currentDocumentFilter()
-{
-    return d->m_currentDocumentFilter.get();
 }
 
 const FilePath &CppModelManager::configurationFileName()
@@ -1041,16 +999,12 @@ CppModelManager::CppModelManager()
     qRegisterMetaType<QList<Document::DiagnosticMessage>>(
                 "QList<CPlusPlus::Document::DiagnosticMessage>");
 
-    d->m_internalIndexingSupport = new CppIndexingSupport;
-
     initCppTools();
 }
 
 CppModelManager::~CppModelManager()
 {
     ExtensionSystem::PluginManager::removeObject(this);
-
-    delete d->m_internalIndexingSupport;
     delete d;
 }
 
@@ -1112,7 +1066,7 @@ HeaderPaths CppModelManagerPrivate::internalHeaderPaths(SyncedProjectData &ld)
     for (const ProjectData &projectData : std::as_const(ld.m_projectData)) {
         for (const ProjectPart::ConstPtr &part : projectData.projectInfo->projectParts()) {
             for (const HeaderPath &path : part->headerPaths) {
-                HeaderPath hp(QDir::cleanPath(path.path), path.type);
+                HeaderPath hp(path.path, path.type);
                 if (!headerPaths.contains(hp))
                     headerPaths.push_back(std::move(hp));
             }
@@ -1158,19 +1112,14 @@ void CppModelManager::dumpModelManagerConfiguration(const QString &logFileId)
                               ProjectExplorer::Macro::toByteArray(definedMacros()));
 }
 
-QSet<AbstractEditorSupport *> CppModelManager::abstractEditorSupports()
+void CppModelManager::addGeneratedFileSupport(GeneratedFileSupport *editorSupport)
 {
-    return d->m_extraEditorSupports;
+    d->m_generatedFileSupports.insert(editorSupport);
 }
 
-void CppModelManager::addExtraEditorSupport(AbstractEditorSupport *editorSupport)
+void CppModelManager::removeGeneratedFileSupport(GeneratedFileSupport *editorSupport)
 {
-    d->m_extraEditorSupports.insert(editorSupport);
-}
-
-void CppModelManager::removeExtraEditorSupport(AbstractEditorSupport *editorSupport)
-{
-    d->m_extraEditorSupports.remove(editorSupport);
+    d->m_generatedFileSupports.remove(editorSupport);
 }
 
 CppEditorDocumentHandle *CppModelManager::cppEditorDocument(const FilePath &filePath)
@@ -1179,7 +1128,7 @@ CppEditorDocumentHandle *CppModelManager::cppEditorDocument(const FilePath &file
         return nullptr;
 
     QMutexLocker locker(&d->m_cppEditorDocumentsMutex);
-    return d->m_cppEditorDocuments.value(filePath.toString(), 0);
+    return d->m_cppEditorDocuments.value(filePath, 0);
 }
 
 BaseEditorDocumentProcessor *CppModelManager::cppEditorDocumentProcessor(const FilePath &filePath)
@@ -1195,11 +1144,11 @@ void CppModelManager::registerCppEditorDocument(CppEditorDocumentHandle *editorD
     QTC_ASSERT(!filePath.isEmpty(), return);
 
     QMutexLocker locker(&d->m_cppEditorDocumentsMutex);
-    QTC_ASSERT(d->m_cppEditorDocuments.value(filePath.toString(), 0) == 0, return);
-    d->m_cppEditorDocuments.insert(filePath.toString(), editorDocument);
+    QTC_ASSERT(d->m_cppEditorDocuments.value(filePath, 0) == 0, return);
+    d->m_cppEditorDocuments.insert(filePath, editorDocument);
 }
 
-void CppModelManager::unregisterCppEditorDocument(const QString &filePath)
+void CppModelManager::unregisterCppEditorDocument(const FilePath &filePath)
 {
     QTC_ASSERT(!filePath.isEmpty(), return);
 
@@ -1277,7 +1226,7 @@ WorkingCopy CppModelManager::buildWorkingCopyList()
                            cppEditorDocument->revision());
     }
 
-    for (AbstractEditorSupport *es : std::as_const(d->m_extraEditorSupports))
+    for (GeneratedFileSupport *es : std::as_const(d->m_generatedFileSupports))
         workingCopy.insert(es->filePath(), es->contents(), es->revision());
 
     // Add the project configuration file
@@ -1303,8 +1252,8 @@ CppLocatorData *CppModelManager::locatorData()
     return &d->m_locatorData;
 }
 
-static QSet<QString> filteredFilesRemoved(const QSet<QString> &files,
-                                          const CppCodeModelSettings &settings)
+static QSet<FilePath> filteredFilesRemoved(const QSet<FilePath> &files,
+                                           const CppCodeModelSettingsData &settings)
 {
     if (!settings.enableIndexing)
         return {};
@@ -1313,7 +1262,7 @@ static QSet<QString> filteredFilesRemoved(const QSet<QString> &files,
     if (fileSizeLimitInMb <= 0 && !settings.ignoreFiles)
         return files;
 
-    QSet<QString> result;
+    QSet<FilePath> result;
     QList<QRegularExpression> regexes;
     const QStringList wildcards = settings.ignorePattern.split('\n');
 
@@ -1321,8 +1270,7 @@ static QSet<QString> filteredFilesRemoved(const QSet<QString> &files,
         regexes.append(QRegularExpression::fromWildcard(wildcard, Qt::CaseInsensitive,
                                                         QRegularExpression::UnanchoredWildcardConversion));
 
-    for (const QString &file : files) {
-        const FilePath filePath = FilePath::fromString(file);
+    for (const FilePath &filePath : files) {
         if (fileSizeLimitInMb > 0 && fileSizeExceedsLimit(filePath, fileSizeLimitInMb))
             continue;
         bool skip = false;
@@ -1339,7 +1287,7 @@ static QSet<QString> filteredFilesRemoved(const QSet<QString> &files,
         }
 
         if (!skip)
-            result << filePath.toString();
+            result << filePath;
     }
 
     return result;
@@ -1351,17 +1299,17 @@ QFuture<void> CppModelManager::updateSourceFiles(const QSet<FilePath> &sourceFil
     if (sourceFiles.isEmpty() || !d->m_indexerEnabled)
         return QFuture<void>();
 
-    std::unordered_map<Project *, QSet<QString>> sourcesPerProject;
+    std::unordered_map<Project *, QSet<FilePath>> sourcesPerProject;
     for (const FilePath &fp : sourceFiles)
-        sourcesPerProject[ProjectManager::projectForFile(fp)] << fp.toString();
-    std::vector<std::pair<QSet<QString>, CppCodeModelSettings>> sourcesAndSettings;
+        sourcesPerProject[ProjectManager::projectForFile(fp)] << fp;
+    std::vector<std::pair<QSet<FilePath>, CppCodeModelSettingsData>> sourcesAndSettings;
     for (const auto &it : sourcesPerProject) {
         sourcesAndSettings
             .emplace_back(it.second, CppCodeModelSettings::settingsForProject(it.first));
     }
 
     const auto filteredFiles = [sourcesAndSettings = std::move(sourcesAndSettings)] {
-        QSet<QString> result;
+        QSet<FilePath> result;
         for (const auto &it : sourcesAndSettings)
             result.unite(filteredFilesRemoved(it.first, it.second));
         return result;
@@ -1370,7 +1318,7 @@ QFuture<void> CppModelManager::updateSourceFiles(const QSet<FilePath> &sourceFil
     // "ReservedProgressNotification" should be shown if there is more than one source file.
     if (sourceFiles.size() > 1)
         mode = ForcedProgressNotification;
-    return d->m_internalIndexingSupport->refreshSourceFiles(filteredFiles, mode);
+    return Internal::refreshSourceFiles(filteredFiles, mode);
 }
 
 ProjectInfoList CppModelManager::projectInfos()
@@ -1384,7 +1332,7 @@ ProjectInfoList CppModelManager::projectInfos()
 
 ProjectInfo::ConstPtr CppModelManager::projectInfo(Project *project)
 {
-    return d->m_lockedProjectData.get<ProjectInfo::ConstPtr>(
+    return d->m_lockedProjectData.get(
         [project](const CppModelManagerPrivate::SyncedProjectData &ld) {
             return ld.m_projectData.value(project).projectInfo;
         });
@@ -1394,16 +1342,16 @@ ProjectInfo::ConstPtr CppModelManager::projectInfo(Project *project)
 void CppModelManager::removeProjectInfoFilesAndIncludesFromSnapshot(const ProjectInfo &projectInfo)
 {
     QMutexLocker snapshotLocker(&d->m_snapshotMutex);
-    QStringList removedFiles;
+    FilePaths removedFiles;
     for (const ProjectPart::ConstPtr &projectPart : projectInfo.projectParts()) {
         for (const ProjectFile &cxxFile : std::as_const(projectPart->files)) {
             const QSet<FilePath> filePaths = d->m_snapshot.allIncludesForDocument(cxxFile.path);
             for (const FilePath &filePath : filePaths) {
                 d->m_snapshot.remove(filePath);
-                removedFiles << filePath.toString();
+                removedFiles << filePath;
             }
             d->m_snapshot.remove(cxxFile.path);
-            removedFiles << cxxFile.path.toString();
+            removedFiles << cxxFile.path;
         }
     }
 
@@ -1476,7 +1424,7 @@ public:
     }
 
 private:
-    static QSet<QString> projectPartIds(const QVector<ProjectPart::ConstPtr> &projectParts)
+    static QSet<QString> projectPartIds(const QList<ProjectPart::ConstPtr> &projectParts)
     {
         QSet<QString> ids;
 
@@ -1618,7 +1566,7 @@ QFuture<void> CppModelManager::updateProjectInfo(const ProjectInfo::ConstPtr &ne
                 const QSet<FilePath> removedFiles = comparer.removedFiles();
                 if (!removedFiles.isEmpty()) {
                     filesRemoved = true;
-                    emit m_instance->aboutToRemoveFiles(transform<QStringList>(removedFiles, &FilePath::toString));
+                    emit m_instance->aboutToRemoveFiles(toList(removedFiles));
                     removeFilesFromSnapshot(removedFiles);
                 }
             }
@@ -1679,7 +1627,7 @@ QFuture<void> CppModelManager::updateProjectInfo(const ProjectInfo::ConstPtr &ne
 
 ProjectPart::ConstPtr CppModelManager::projectPartForId(const QString &projectPartId)
 {
-    return d->m_lockedProjectData.get<ProjectPart::ConstPtr>(
+    return d->m_lockedProjectData.get(
         [projectPartId](const CppModelManagerPrivate::SyncedProjectData &ld) {
             return ld.m_projectPartIdToProjectProjectPart.value(projectPartId);
         });
@@ -1752,16 +1700,15 @@ void CppModelManager::emitDocumentUpdated(Document::Ptr doc)
         emit m_instance->documentUpdated(doc);
 }
 
-void CppModelManager::emitAbstractEditorSupportContentsUpdated(const QString &filePath,
-                                                               const QString &sourcePath,
-                                                               const QByteArray &contents)
+void CppModelManager::emitGeneratedFileContentsUpdated(
+    const FilePath &filePath, const FilePath &sourcePath, const QByteArray &contents)
 {
-    emit m_instance->abstractEditorSupportContentsUpdated(filePath, sourcePath, contents);
+    emit m_instance->generatedFileContentsUpdated(filePath, sourcePath, contents);
 }
 
-void CppModelManager::emitAbstractEditorSupportRemoved(const QString &filePath)
+void CppModelManager::emitGeneratedFileSupportRemoved(const FilePath &filePath)
 {
-    emit m_instance->abstractEditorSupportRemoved(filePath);
+    emit m_instance->generatedFileSupportRemoved(filePath);
 }
 
 void CppModelManager::onProjectAdded(Project *)
@@ -1818,7 +1765,7 @@ void CppModelManager::onActiveProjectChanged(Project *project)
 
 void CppModelManager::onSourceFilesRefreshed()
 {
-    if (CppIndexingSupport::isFindErrorsIndexingActive()) {
+    if (Internal::isFindErrorsIndexingActive()) {
         QTimer::singleShot(1, QCoreApplication::instance(), &QCoreApplication::quit);
         qDebug("FindErrorsIndexing: Done, requesting Qt Creator to quit.");
     }
@@ -1982,18 +1929,19 @@ void CppModelManager::renameIncludes(const QList<std::pair<FilePath, FilePath>> 
 
     const TextEditor::PlainRefactoringFileFactory changes;
     for (auto it = rewriteCandidates.cbegin(); it != rewriteCandidates.cend(); ++it) {
-        const FilePath &includingFileOld = it.key().first;
+        const FilePath includingFileOldDir = it.key().first.parentDir();
         const FilePath &includingFileNew = it.key().second;
+        const FilePath includingFileNewDir = includingFileNew.parentDir();
         TextEditor::RefactoringFilePtr file = changes.file(includingFileNew);
         ChangeSet changeSet;
         for (const RewriteCandidate &candidate : it.value()) {
             const QTextBlock &block = file->document()->findBlockByNumber(
                 candidate.includeLine - 1);
-            const FilePath relPathOld = FilePath::fromString(FilePath::calcRelativePath(
-                candidate.oldHeaderFilePath.toString(), includingFileOld.parentDir().toString()));
-            const FilePath relPathNew = FilePath::fromString(FilePath::calcRelativePath(
-                candidate.newHeaderFilePath.toString(), includingFileNew.parentDir().toString()));
-            int replaceStart = block.text().indexOf(relPathOld.toString());
+            const QString relPathOld = candidate.oldHeaderFilePath.relativePathFromDir(
+                includingFileOldDir);
+            const QString relPathNew = candidate.newHeaderFilePath.relativePathFromDir(
+                includingFileNewDir);
+            int replaceStart = block.text().indexOf(relPathOld);
             QString oldString;
             QString newString;
             if (candidate.isUiHeader || replaceStart == -1) {
@@ -2001,12 +1949,12 @@ void CppModelManager::renameIncludes(const QList<std::pair<FilePath, FilePath>> 
                 oldString = candidate.oldHeaderFileName;
                 newString = candidate.newHeaderFileName;
             } else {
-                oldString = relPathOld.toString();
-                newString = relPathNew.toString();
+                oldString = relPathOld;
+                newString = relPathNew;
             }
             if (replaceStart > -1 && oldString != newString) {
                 changeSet.replace(block.position() + replaceStart,
-                                  block.position() + replaceStart + oldString.length(),
+                                  block.position() + replaceStart + oldString.size(),
                                   newString);
             }
         }
@@ -2084,7 +2032,7 @@ void CppModelManager::handleSettingsChange(Project *project)
     else
         info << projectInfos();
     for (const ProjectInfo::ConstPtr &pi : std::as_const(info)) {
-        const CppCodeModelSettings newSettings = CppCodeModelSettings::settingsForProject(
+        const CppCodeModelSettingsData newSettings = CppCodeModelSettings::settingsForProject(
             pi->projectFilePath());
         if (pi->settings() != newSettings)
             updateProjectInfo(ProjectInfo::cloneWithNewSettings(pi, newSettings));
@@ -2142,9 +2090,9 @@ void CppModelManager::GC()
     for (const CppEditorDocumentHandle *editorDocument : editorDocuments)
         filesInEditorSupports << editorDocument->filePath();
 
-    const QSet<AbstractEditorSupport *> abstractEditorSupportList = abstractEditorSupports();
-    for (AbstractEditorSupport *abstractEditorSupport : abstractEditorSupportList)
-        filesInEditorSupports << abstractEditorSupport->filePath();
+    const QSet<GeneratedFileSupport *> generatedFileSupports = d->m_generatedFileSupports;
+    for (GeneratedFileSupport *generatedFileSupport : generatedFileSupports)
+        filesInEditorSupports << generatedFileSupport->filePath();
 
     Snapshot currentSnapshot = snapshot();
     QSet<FilePath> reachableFiles;
@@ -2166,15 +2114,15 @@ void CppModelManager::GC()
     }
 
     // Find out the files in the current snapshot that are not reachable from the project files
-    QStringList notReachableFiles;
+    FilePaths notReachableFiles;
     Snapshot newSnapshot;
     for (Snapshot::const_iterator it = currentSnapshot.begin(); it != currentSnapshot.end(); ++it) {
-        const FilePath &fileName = it.key();
+        const FilePath &filePath = it.key();
 
-        if (reachableFiles.contains(fileName))
+        if (reachableFiles.contains(filePath))
             newSnapshot.insert(it.value());
         else
-            notReachableFiles.append(fileName.toString());
+            notReachableFiles.append(filePath);
     }
 
     // Announce removing files and replace the snapshot
@@ -2183,7 +2131,7 @@ void CppModelManager::GC()
     emit m_instance->gcFinished();
 }
 
-void CppModelManager::finishedRefreshingSourceFiles(const QSet<QString> &files)
+void CppModelManager::finishedRefreshingSourceFiles(const QSet<FilePath> &files)
 {
     emit m_instance->sourceFilesRefreshed(files);
 }
@@ -2200,9 +2148,9 @@ CppCompletionAssistProvider *CppModelManager::completionAssistProvider()
     return d->m_builtinModelManagerSupport.completionAssistProvider();
 }
 
-TextEditor::BaseHoverHandler *CppModelManager::createHoverHandler()
+TextEditor::BaseHoverHandler &CppModelManager::cppHoverHandler()
 {
-    return d->m_builtinModelManagerSupport.createHoverHandler();
+    return d->m_builtinModelManagerSupport.cppHoverHandler();
 }
 
 void CppModelManager::followSymbol(const CursorInEditor &data,
@@ -2222,6 +2170,12 @@ void CppModelManager::followSymbolToType(const CursorInEditor &data,
                                                                  inNextSplit);
 }
 
+void CppModelManager::followFunctionToParentImpl(
+    const CursorInEditor &data, const Utils::LinkHandler &processLinkCallback)
+{
+    modelManagerSupport(Backend::Builtin)->followFunctionToParentImpl(data, processLinkCallback);
+}
+
 void CppModelManager::switchDeclDef(const CursorInEditor &data,
                                     const LinkHandler &processLinkCallback,
                                     Backend backend)
@@ -2235,27 +2189,20 @@ BaseEditorDocumentProcessor *CppModelManager::createEditorDocumentProcessor(
     return d->m_activeModelManagerSupport->createEditorDocumentProcessor(baseTextDocument);
 }
 
-CppIndexingSupport *CppModelManager::indexingSupport()
-{
-    return d->m_internalIndexingSupport;
-}
-
 FilePaths CppModelManager::projectFiles()
 {
-    return d->m_lockedProjectData.update<FilePaths>(
-        [](CppModelManagerPrivate::SyncedProjectData &sd) {
-            CppModelManagerPrivate::ensureUpdated(sd);
-            return sd.m_projectFiles;
-        });
+    return d->m_lockedProjectData.update([](CppModelManagerPrivate::SyncedProjectData &sd) {
+        CppModelManagerPrivate::ensureUpdated(sd);
+        return sd.m_projectFiles;
+    });
 }
 
 HeaderPaths CppModelManager::headerPaths()
 {
-    return d->m_lockedProjectData.update<HeaderPaths>(
-        [](CppModelManagerPrivate::SyncedProjectData &sd) {
-            CppModelManagerPrivate::ensureUpdated(sd);
-            return sd.m_headerPaths;
-        });
+    return d->m_lockedProjectData.update([](CppModelManagerPrivate::SyncedProjectData &sd) {
+        CppModelManagerPrivate::ensureUpdated(sd);
+        return sd.m_headerPaths;
+    });
 }
 
 void CppModelManager::setHeaderPaths(const HeaderPaths &headerPaths)
@@ -2265,7 +2212,7 @@ void CppModelManager::setHeaderPaths(const HeaderPaths &headerPaths)
 
 Macros CppModelManager::definedMacros()
 {
-    return d->m_lockedProjectData.update<Macros>([](CppModelManagerPrivate::SyncedProjectData &sd) {
+    return d->m_lockedProjectData.update([](CppModelManagerPrivate::SyncedProjectData &sd) {
         CppModelManagerPrivate::ensureUpdated(sd);
         return sd.m_definedMacros;
     });

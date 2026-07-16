@@ -6,14 +6,13 @@
 #include <utils/commandline.h>
 #include <utils/environment.h>
 #include <utils/hostosinfo.h>
-#include <utils/launcherinterface.h>
 #include <utils/macroexpander.h>
+#include <utils/processreaper.h>
 #include <utils/qtcprocess.h>
-#include <utils/processinterface.h>
 #include <utils/temporarydirectory.h>
 
 #include <QObject>
-#include <QtTest>
+#include <QTest>
 
 #include <iostream>
 
@@ -43,10 +42,6 @@ private slots:
         TemporaryDirectory::setMasterTemporaryDirectory(
             QDir::tempPath() + "/" + Core::Constants::IDE_CASED_ID + "-XXXXXX");
 
-        const QString libExecPath(qApp->applicationDirPath() + '/'
-                                  + QLatin1String(TEST_RELATIVE_LIBEXEC_PATH));
-        LauncherInterface::setPathToLauncher(libExecPath);
-
         testEnv.set("TEST_ECHO", "1");
 
         if (HostOsInfo::isWindowsHost())
@@ -55,7 +50,7 @@ private slots:
             newLine = "\n";
     }
 
-    void cleanupTestCase() { Singleton::deleteAll(); }
+    void cleanupTestCase() { ProcessReaper::deleteAll(); }
 
     void testSpace()
     {
@@ -297,6 +292,12 @@ private slots:
 
         QCOMPARE(cmdLine.executable().path(), executable);
         QCOMPARE(cmdLine.arguments(), arguments);
+    }
+
+    void testNestedInitializer()
+    {
+        CommandLine cmd(self, {{"foo", "bar"}, {"baz", "blizz"}});
+        QCOMPARE(cmd.arguments(), "foo bar baz blizz");
     }
 };
 

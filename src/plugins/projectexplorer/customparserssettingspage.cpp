@@ -5,30 +5,277 @@
 
 #include "customparser.h"
 #include "customparserconfigdialog.h"
-#include "projectexplorer.h"
 #include "projectexplorerconstants.h"
 #include "projectexplorertr.h"
 
 #include <utils/algorithm.h>
+#include <utils/fileutils.h>
+#include <utils/itemviews.h>
 #include <utils/qtcassert.h>
 
+#include <QAbstractTableModel>
+#include <QHeaderView>
 #include <QHBoxLayout>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QLabel>
 #include <QList>
-#include <QListWidget>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QVBoxLayout>
 
+using namespace Utils;
+
 namespace ProjectExplorer {
 namespace Internal {
+
+class CustomParsersModel : public QAbstractTableModel
+{
+public:
+    explicit CustomParsersModel(QObject *parent = nullptr);
+
+    QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
+
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override;
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+
+    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+    Qt::ItemFlags flags(const QModelIndex &index) const override;
+    bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole) override;
+
+    bool add(const ProjectExplorer::CustomParserSettings& s);
+    bool remove(const QModelIndexList &indexes);
+
+    void apply();
+
+protected:
+    QList<CustomParserSettings> m_customParsers;
+};
+
+CustomParsersModel::CustomParsersModel(QObject *parent)
+    : QAbstractTableModel(parent)
+    , m_customParsers(CustomParsers::parsersAvailableInProject(nullptr))
+{
+    connect(
+        &CustomParsers::instance(),
+        &CustomParsers::changed,
+        this,
+        [this] {
+            beginResetModel();
+            m_customParsers = CustomParsers::parsersAvailableInProject(nullptr);
+            endResetModel();
+        });
+}
+
+QVariant CustomParsersModel::headerData(int section, Qt::Orientation orientation, int role) const
+{
+    QVariant result;
+    if (orientation == Qt::Vertical)
+        return QVariant();
+
+    switch (role) {
+    case Qt::DisplayRole:
+        switch (section) {
+        case 0:
+            result = Tr::tr("Name");
+            break;
+        case 1:
+            result = Tr::tr("Build default");
+            break;
+        case 2:
+            result = Tr::tr("Run default");
+            break;
+        }
+        break;
+    case Qt::ToolTipRole:
+        switch (section) {
+        case 0:
+            result = Tr::tr("The name of the custom parser.");
+            break;
+        case 1:
+            result = Tr::tr("This custom parser is used by default for all build configurations of "
+                            "the project.");
+            break;
+        case 2:
+            result = Tr::tr(
+                "This custom parser is used by default for all run configurations of the project.");
+            break;
+        }
+    }
+    return result;
+}
+
+int CustomParsersModel::columnCount(const QModelIndex &parent) const
+{
+    if (parent.isValid())
+        return 0;
+
+    return 3;
+}
+
+int CustomParsersModel::rowCount(const QModelIndex &parent) const
+{
+    if (parent.isValid())
+        return 0;
+
+    return m_customParsers.size();
+}
+
+QVariant CustomParsersModel::data(const QModelIndex &index, int role) const
+{
+    if (!index.isValid())
+        return QVariant();
+
+    const CustomParserSettings &s = m_customParsers[index.row()];
+
+    switch (role) {
+    case Qt::CheckStateRole:
+        switch (index.column()) {
+        case 1:
+            return s.buildDefault ? Qt::Checked : Qt::Unchecked;
+        case 2:
+            return s.runDefault ? Qt::Checked : Qt::Unchecked;
+        }
+        break;
+
+    case Qt::DisplayRole:
+        switch (index.column()) {
+        case 0:
+            return s.displayName;
+        }
+        break;
+
+    case Qt::EditRole:
+        switch (index.column()) {
+        case 1:
+            return s.buildDefault;
+        case 2:
+            return s.runDefault;
+        }
+        break;
+
+    case Qt::TextAlignmentRole:
+        switch (index.column()) {
+        case 1:
+        case 2:
+            return Qt::AlignCenter;
+        }
+        break;
+
+    case Qt::FontRole: {
+        QFont f;
+        if (index.column() == 0 && s.readOnly)
+            f.setItalic(true);
+        return f;
+    }
+
+    case Qt::ToolTipRole:
+        if (s.readOnly)
+            return Tr::tr("Cannot modify parser because it was auto-imported.");
+        return {};
+
+    case Qt::UserRole:
+        return QVariant::fromValue<CustomParserSettings>(s);
+    }
+
+    return QVariant();
+}
+
+bool CustomParsersModel::setData(const QModelIndex &index, const QVariant &value, int role)
+{
+    if (!index.isValid())
+        return false;
+
+    if (index.row() >= m_customParsers.size())
+        return false;
+
+    CustomParserSettings &s = m_customParsers[index.row()];
+
+    bool result = true;
+    switch (role) {
+    case Qt::EditRole:
+        switch (index.column()) {
+        case 0:
+            s.displayName = value.toString();
+            emit dataChanged(index, index);
+            break;
+        }
+        break;
+
+    case Qt::CheckStateRole:
+        switch (index.column()) {
+        case 1:
+            s.buildDefault = value == Qt::Checked;
+            emit dataChanged(index, index);
+            break;
+        case 2:
+            s.runDefault = value == Qt::Checked;
+            emit dataChanged(index, index);
+            break;
+        }
+        break;
+
+    case Qt::UserRole:
+        if (value.canConvert<CustomParserSettings>()) {
+            s = value.value<CustomParserSettings>();
+            emit dataChanged(index, index);
+        } else
+            result = false;
+    }
+    return result;
+}
+
+Qt::ItemFlags CustomParsersModel::flags(const QModelIndex &index) const
+{
+    if (!index.isValid())
+        return Qt::NoItemFlags;
+
+    Qt::ItemFlags flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+
+    if (!m_customParsers.at(index.row()).readOnly) {
+        if (index.column() > 0)
+            flags |= Qt::ItemIsUserCheckable;
+        else
+            flags |= Qt::ItemIsEditable;
+    }
+
+    return flags;
+}
+
+bool CustomParsersModel::add(const CustomParserSettings &s)
+{
+    if (!CustomParsers::canAdd(s, m_customParsers))
+        return false;
+
+    beginInsertRows(index(-1, -1), m_customParsers.size(), m_customParsers.size());
+    m_customParsers.append(s);
+    endInsertRows();
+    return true;
+}
+
+bool CustomParsersModel::remove(const QModelIndexList &indexes)
+{
+    beginResetModel();
+    for (auto it = std::rbegin(indexes); it != std::rend(indexes); ++it)
+        m_customParsers.removeAt(it->row());
+    endResetModel();
+    return true;
+}
+
+void CustomParsersModel::apply()
+{
+    CustomParsers::set(m_customParsers);
+}
 
 class CustomParsersSettingsWidget final : public Core::IOptionsPageWidget
 {
 public:
     CustomParsersSettingsWidget()
     {
-        m_customParsers = ProjectExplorerPlugin::customParsers();
-        resetListView();
+        Utils::TreeView *parserView = new Utils::TreeView(this);
+        parserView->setModel(&m_model);
+        parserView->setSelectionMode(QAbstractItemView::ExtendedSelection);
+        parserView->setSelectionBehavior(QAbstractItemView::SelectRows);
 
         const auto mainLayout = new QVBoxLayout(this);
         const auto widgetLayout = new QHBoxLayout;
@@ -37,15 +284,19 @@ public:
             "Custom output parsers defined here can be enabled individually "
             "in the project's build or run settings."));
         mainLayout->addWidget(hintLabel);
-        widgetLayout->addWidget(&m_parserListView);
+        widgetLayout->addWidget(parserView);
         const auto buttonLayout = new QVBoxLayout;
         widgetLayout->addLayout(buttonLayout);
         const auto addButton = new QPushButton(Tr::tr("Add..."));
         const auto removeButton = new QPushButton(Tr::tr("Remove"));
         const auto editButton = new QPushButton("Edit...");
+        const auto exportButton = new QPushButton(Tr::tr("Export..."));
+        const auto importButton = new QPushButton(Tr::tr("Import..."));
         buttonLayout->addWidget(addButton);
         buttonLayout->addWidget(removeButton);
         buttonLayout->addWidget(editButton);
+        buttonLayout->addWidget(exportButton);
+        buttonLayout->addWidget(importButton);
         buttonLayout->addStretch(1);
 
         connect(addButton, &QPushButton::clicked, this, [this] {
@@ -56,61 +307,91 @@ public:
             CustomParserSettings newParser = dlg.settings();
             newParser.id = Utils::Id::generate();
             newParser.displayName = Tr::tr("New Parser");
-            m_customParsers << newParser;
-            resetListView();
+            m_model.add(newParser);
+            markSettingsDirty();
         });
-        connect(removeButton, &QPushButton::clicked, this, [this] {
-            const QList<QListWidgetItem *> sel = m_parserListView.selectedItems();
-            QTC_ASSERT(sel.size() == 1, return);
-            m_customParsers.removeAt(m_parserListView.row(sel.first()));
-            delete sel.first();
+
+        connect(removeButton, &QPushButton::clicked, this, [this, parserView] {
+            m_model.remove(parserView->selectionModel()->selectedRows());
+            markSettingsDirty();
         });
-        connect(editButton, &QPushButton::clicked, this, [this] {
-            const QList<QListWidgetItem *> sel = m_parserListView.selectedItems();
-            QTC_ASSERT(sel.size() == 1, return);
-            CustomParserSettings &s = m_customParsers[m_parserListView.row(sel.first())];
+
+        connect(editButton, &QPushButton::clicked, this, [this, parserView] {
+            CustomParserSettings s = m_model.data(parserView->currentIndex(), Qt::UserRole).value<CustomParserSettings>();
             CustomParserConfigDialog dlg(this);
             dlg.setSettings(s);
             if (dlg.exec() != QDialog::Accepted)
                 return;
+            if (s.error == dlg.settings().error && s.warning == dlg.settings().warning)
+                return;
+
             s.error = dlg.settings().error;
             s.warning = dlg.settings().warning;
+            m_model.setData(parserView->currentIndex(), QVariant::fromValue<CustomParserSettings>(s), Qt::UserRole);
         });
 
-        connect(&m_parserListView, &QListWidget::itemChanged, this, [this](QListWidgetItem *item) {
-            m_customParsers[m_parserListView.row(item)].displayName = item->text();
-            resetListView();
+        connect(exportButton, &QPushButton::clicked, this, [this, parserView] {
+            const QModelIndexList selected = parserView->selectionModel()->selectedRows();
+            QJsonArray jsonArray;
+            for (const QModelIndex &idx : selected) {
+                CustomParserSettings parser
+                    = m_model.data(idx, Qt::UserRole).value<CustomParserSettings>();
+                jsonArray.append(parser.toJson());
+            }
+            FilePath jsonFile = FileUtils::getSaveFilePath(Tr::tr("Save Parsers"), {}, "*.json");
+            if (jsonFile.isEmpty())
+                return;
+            const auto result = jsonFile.writeFileContents(QJsonDocument(jsonArray).toJson());
+            if (!result) {
+                QMessageBox::critical(
+                    this,
+                    Tr::tr(("Error Saving Parsers")),
+                    Tr::tr("Error saving parsers: %1").arg(result.error()));
+            }
         });
 
-        const auto updateButtons = [this, removeButton, editButton] {
-            const bool enable = !m_parserListView.selectedItems().isEmpty();
-            removeButton->setEnabled(enable);
-            editButton->setEnabled(enable);
+        connect(importButton, &QPushButton::clicked, this, [this] {
+            const FilePath jsonFile
+                = FileUtils::getOpenFilePath(Tr::tr("Load Parsers"), {}, Tr::tr("*.json"));
+            if (jsonFile.isEmpty())
+                return;
+            const auto parsersRead = CustomParsers::parsersFromFile(jsonFile);
+            if (!parsersRead) {
+                QMessageBox::critical(
+                    this,
+                    Tr::tr("Error Loading Parsers"),
+                    Tr::tr("Error loading parsers: %1").arg(parsersRead.error()));
+            }
+            for (const CustomParserSettings &parser : *parsersRead)
+                m_model.add(parser);
+            markSettingsDirty();
+        });
+
+        const auto updateButtons = [editButton, parserView, removeButton, exportButton, this] {
+            QList<CustomParserSettings> modifiableParsers;
+            const QModelIndexList indexes = parserView->selectionModel()->selectedRows();
+            for (const QModelIndex &idx : indexes) {
+                const auto parser = m_model.data(idx, Qt::UserRole).value<CustomParserSettings>();
+                if (!parser.readOnly)
+                    modifiableParsers << parser;
+            }
+            removeButton->setEnabled(!modifiableParsers.isEmpty());
+            exportButton->setEnabled(!indexes.isEmpty());
+            editButton->setEnabled(modifiableParsers.size() == 1);
         };
         updateButtons();
-        connect(m_parserListView.selectionModel(), &QItemSelectionModel::selectionChanged,
-                updateButtons);
+        connect(parserView->selectionModel(), &QItemSelectionModel::selectionChanged,
+            updateButtons);
+        connect(&m_model, &QAbstractItemModel::modelReset, updateButtons);
+
+        installMarkSettingsDirtyTriggerRecursively(this);
+        connect(&m_model, &QAbstractItemModel::dataChanged, this, markSettingsDirty);
     }
 
 private:
-    void apply() override { ProjectExplorerPlugin::setCustomParsers(m_customParsers); }
+    void apply() override { m_model.apply(); }
 
-    void resetListView()
-    {
-        m_parserListView.clear();
-        Utils::sort(m_customParsers,
-                    [](const CustomParserSettings &s1, const CustomParserSettings &s2) {
-            return s1.displayName < s2.displayName;
-        });
-        for (const CustomParserSettings &s : std::as_const(m_customParsers)) {
-            const auto item = new QListWidgetItem(s.displayName);
-            item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
-            m_parserListView.addItem(item);
-        }
-    }
-
-    QListWidget m_parserListView;
-    QList<CustomParserSettings> m_customParsers;
+    CustomParsersModel m_model;
 };
 
 CustomParsersSettingsPage::CustomParsersSettingsPage()

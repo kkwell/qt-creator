@@ -29,7 +29,7 @@
 #include <coreplugin/editormanager/editormanager.h>
 #include <projectexplorer/kitmanager.h>
 #include <texteditor/textdocument.h>
-#include <QtTest>
+#include <QTest>
 #endif // WITH_TESTS
 
 using namespace CPlusPlus;
@@ -257,15 +257,14 @@ private:
             if (!link.hasValidTarget())
                 return;
             if (symbol->filePath() == link.targetFilePath) {
-                const int linkPos = Text::positionInText(doc, link.targetLine,
-                                                         link.targetColumn + 1);
+                const int linkPos = link.target.toPositionInDocument(doc);
                 if (linkPos == symbolPos)
                     return;
             }
             const CppRefactoringFilePtr refactoringFile
                 = getRefactoringFile(link.targetFilePath, state);
             const QList<AST *> astPath = ASTPath(
-                refactoringFile->cppDocument())(link.targetLine, link.targetColumn);
+                refactoringFile->cppDocument())(link.target.line, link.target.column);
             const bool isTemplate = symbol->asTemplate();
             const bool isFunction = symbol->type()->asFunctionType();
             for (auto it = astPath.rbegin(); it != astPath.rend(); ++it) {
@@ -305,6 +304,8 @@ private:
     {
         for (int i = 0; i < klass->memberCount(); ++i) {
             Symbol * const member = klass->memberAt(i);
+            if (member->isGenerated())
+                continue;
             if (member->asForwardClassDeclaration() || member->asTemplate()) {
                 lookupSymbol(member, state);
                 continue;
@@ -325,7 +326,7 @@ private:
     {
         Overview ov;
         Project * const project = ProjectManager::projectForFile(state->originalFilePath);
-        const CppFileSettings fileSettings = cppFileSettingsForProject(project);
+        const CppFileSettingsData fileSettings = cppFileSettingsForProject(project);
         const auto constructDefaultFilePaths = [&] {
             const QString className = ov.prettyName(state->classAst->symbol->name());
             const QString baseFileName = fileSettings.lowerCaseFiles ? className.toLower() : className;
@@ -355,11 +356,6 @@ private:
             mustCreateSourceFile = dlg.createSourceFile();
             mustNotCreateSourceFile = !dlg.createSourceFile();
         }
-        const auto fileListForDisplay = [](const FilePaths &files) {
-            return Utils::transform<QStringList>(files, [](const FilePath &fp) {
-                       return '"' + fp.toUserOutput() + '"';
-                   }).join(", ");
-        };
         FilePaths existingFiles;
         if (headerFilePath.exists())
             existingFiles << headerFilePath;
@@ -368,7 +364,7 @@ private:
         if (!existingFiles.isEmpty()) {
             MessageManager::writeDisrupting(
                 Tr::tr("Refusing to overwrite the following files: %1\n")
-                    .arg(fileListForDisplay(existingFiles)));
+                    .arg(existingFiles.toUserOutput(", ")));
             return;
         }
         const QString headerFileName = headerFilePath.fileName();
@@ -378,8 +374,9 @@ private:
         QList<QString *> commonContent{&headerContent};
         if (!mustNotCreateSourceFile)
             commonContent << &sourceContent;
+        const QString licenseTemplate = licenseTemplateForProject(project);
         for (QString *const content : std::as_const(commonContent)) {
-            content->append(fileSettings.licenseTemplate());
+            content->append(licenseTemplate);
             if (!content->isEmpty())
                 content->append('\n');
         }
@@ -388,7 +385,7 @@ private:
             = Utils::transform<QStringList>(state->namespacePath, [&](const Namespace *ns) {
                   return ov.prettyName(ns->name());
               });
-        const QString headerGuard = fileSettings.headerGuard(headerFilePath);
+        const QString headerGuard = headerGuardForProject(project, headerFilePath);
         if (fileSettings.headerPragmaOnce) {
             headerContent.append("#pragma once\n");
         } else {
@@ -411,12 +408,9 @@ private:
             const bool isDeclFile = refactoringFile->filePath() == state->originalFilePath;
             ChangeSet changes;
             if (isDeclFile) {
-                QString relInclude = headerFilePath.relativePathFrom(
-                                                       refactoringFile->filePath().parentDir()).toString();
-                if (!relInclude.isEmpty())
-                    relInclude.append('/');
-                relInclude.append('"').append(headerFileName).append('"');
-                insertNewIncludeDirective(relInclude, refactoringFile,
+                const FilePath baseDir = refactoringFile->filePath().parentDir();
+                const QString relInclude = headerFilePath.relativePathFromDir(baseDir);
+                insertNewIncludeDirective('"' + relInclude + '"', refactoringFile,
                                           refactoringFile->cppDocument(), changes);
             }
             for (AST * const declToMove : std::as_const(it->declarationsToMove)) {
@@ -460,7 +454,7 @@ private:
         if (!notAdded.isEmpty()) {
             MessageManager::writeDisrupting(
                 Tr::tr("Failed to add to project file \"%1\": %2")
-                    .arg(projectNode->filePath().toUserOutput(), fileListForDisplay(notAdded)));
+                    .arg(projectNode->filePath().toUserOutput(), notAdded.toUserOutput(", ")));
         }
 
         if (state->interactive)
@@ -640,7 +634,7 @@ private slots:
             ":/cppeditor/testcases/move-class/" + projectName);
         SourceFilesRefreshGuard refreshGuard;
         ProjectOpenerAndCloser projectMgr;
-        QVERIFY(projectMgr.open(projectDir->absolutePath(projectName + ".pro"), true, kit));
+        QVERIFY(projectMgr.open(projectDir->absolutePath(projectName + ".pro"), kit));
         QVERIFY(refreshGuard.wait());
 
         // Open header file and locate class.
@@ -677,7 +671,7 @@ private slots:
         for (const FilePath &expected : expectedDocuments) {
             static const QString suffix = "_expected";
             const FilePath actual = expected.parentDir()
-                                        .pathAppended(expected.fileName().chopped(suffix.length()));
+                                        .pathAppended(expected.fileName().chopped(suffix.size()));
             QVERIFY(actual.exists());
             const auto actualContents = actual.fileContents();
             QVERIFY(actualContents);

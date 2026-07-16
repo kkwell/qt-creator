@@ -44,7 +44,7 @@ static void addTask(Task::TaskType type,
                     int line = -1)
 {
     QMetaObject::invokeMethod(&taskHub(), [=] {
-        TaskHub::addTask(BuildSystemTask(type, description, file, line));
+        TaskHub::addTask<BuildSystemTask>(type, description, file, line);
     });
 }
 
@@ -124,16 +124,18 @@ QHash<ProFile *, QVector<ProFile *> > ProFileReader::includeFiles() const
     return m_includeFiles;
 }
 
-ProFileCacheManager *ProFileCacheManager::s_instance = nullptr;
-
-ProFileCacheManager::ProFileCacheManager(QObject *parent) :
-    QObject(parent)
+ProFileCacheManager::ProFileCacheManager()
 {
-    s_instance = this;
     m_timer.setInterval(5000);
     m_timer.setSingleShot(true);
     connect(&m_timer, &QTimer::timeout,
             this, &ProFileCacheManager::clear);
+}
+
+ProFileCacheManager *ProFileCacheManager::instance()
+{
+    static thread_local ProFileCacheManager s_instance;
+    return &s_instance;
 }
 
 void ProFileCacheManager::incRefCount()
@@ -151,7 +153,6 @@ void ProFileCacheManager::decRefCount()
 
 ProFileCacheManager::~ProFileCacheManager()
 {
-    s_instance = nullptr;
     clear();
 }
 

@@ -3,49 +3,28 @@
 
 #pragma once
 
-#include "projectexplorer_export.h"
-
 #include <utils/fancymainwindow.h>
 #include <utils/id.h>
 
 #include <memory>
 
-namespace Core {
-class OutputWindow;
-}
+namespace Core { class OutputWindow; }
 
-namespace ProjectExplorer {
-namespace Internal {
-
-enum {
-    ContextMenuItemAdderRole // To augment a context menu, data has a QMenu*
-        = Qt::UserRole + 1,
-
-    ProjectDisplayNameRole,       // Shown in the project selection combobox
-    ItemActivatedDirectlyRole,    // This item got activated through user interaction and
-                                  // is now responsible for the central widget.
-    ItemActivatedFromBelowRole,   // A subitem gots activated and gives us the opportunity to adjust
-    ItemActivatedFromAboveRole,   // A parent item gots activated and makes us its active child.
-    ItemDeactivatedFromBelowRole, // A subitem got deactivated and gives us the opportunity to adjust
-    ItemUpdatedFromBelowRole,     // A subitem got updated, re-expansion is necessary.
-    ActiveItemRole,               // The index of the currently selected item in the tree view
-    KitIdRole,                    // The kit id in case the item is associated with a kit.
-    PanelWidgetRole,              // This item's widget to be shown as central widget.
-    IsShowMoreRole                // This item is a "show more" item.
-};
+namespace ProjectExplorer::Internal {
 
 class ProjectWindowPrivate;
 
 class ProjectWindow : public Utils::FancyMainWindow
 {
     friend class ProjectWindowPrivate;
-    Q_OBJECT
 
 public:
     ProjectWindow();
     ~ProjectWindow() override;
 
     void activateProjectPanel(Utils::Id panelId);
+    void activateBuildSettings();
+    void activateRunSettings();
 
     Core::OutputWindow *buildSystemOutput() const;
 
@@ -59,5 +38,4 @@ private:
     const std::unique_ptr<ProjectWindowPrivate> d;
 };
 
-} // namespace Internal
-} // namespace ProjectExplorer
+} // namespace ProjectExplorer::Internal

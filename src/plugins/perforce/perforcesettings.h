@@ -42,7 +42,6 @@ public:
                         QString *errorMessage);
 
     int longTimeOutS() const { return timeOutS() * 10; }
-    int timeOutMS() const { return timeOutS() * 1000;  }
 
     Utils::FilePath topLevel() const;
     Utils::FilePath topLevelSymLinkTarget() const;
@@ -73,7 +72,7 @@ public:
     Utils::StringAspect p4Client{this};
     Utils::StringAspect p4User{this};
     Utils::IntegerAspect logCount{this};
-    Utils::BoolAspect customEnv{this};
+    Utils::InvertedSavedBoolAspect customEnv{this};
     Utils::IntegerAspect timeOutS{this};
     Utils::BoolAspect autoOpen{this};
 

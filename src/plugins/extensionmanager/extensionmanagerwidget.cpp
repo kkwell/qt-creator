@@ -3,14 +3,19 @@
 
 #include "extensionmanagerwidget.h"
 
+#include "extensionmanagerconstants.h"
+#include "extensionmanagersettings.h"
 #include "extensionmanagertr.h"
 #include "extensionsbrowser.h"
 #include "extensionsmodel.h"
+#include "remotespec.h"
 
+#include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/icontext.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/iwelcomepage.h>
+#include <coreplugin/minisplitter.h>
 #include <coreplugin/plugininstallwizard.h>
 #include <coreplugin/welcomepagehelper.h>
 
@@ -18,66 +23,70 @@
 #include <extensionsystem/pluginspec.h>
 #include <extensionsystem/pluginview.h>
 
-#include <solutions/tasking/networkquery.h>
-#include <solutions/tasking/tasktree.h>
-#include <solutions/tasking/tasktreerunner.h>
+#include <QtTaskTree/QNetworkReplyWrapper>
+#include <QtTaskTree/QTaskTree>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <utils/algorithm.h>
+#include <utils/appinfo.h>
+#include <utils/dropsupport.h>
 #include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
 #include <utils/icon.h>
+#include <utils/infobar.h>
 #include <utils/infolabel.h>
 #include <utils/layoutbuilder.h>
+#include <utils/markdownbrowser.h>
+#include <utils/mimeutils.h>
 #include <utils/networkaccessmanager.h>
+#include <utils/progressdialog.h>
+#include <utils/qtcwidgets.h>
+#include <utils/stringutils.h>
 #include <utils/styledbar.h>
 #include <utils/stylehelper.h>
 #include <utils/temporarydirectory.h>
-#include <utils/utilsicons.h>
+#include <utils/textutils.h>
 
 #include <QAction>
 #include <QApplication>
-#include <QBuffer>
 #include <QCheckBox>
+#include <QCryptographicHash>
 #include <QHBoxLayout>
-#include <QImageReader>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QMessageBox>
-#include <QMovie>
-#include <QPainter>
-#include <QProgressDialog>
+#include <QMetaEnum>
 #include <QScrollArea>
-#include <QSignalMapper>
-#include <QTextDocument>
-#include <QTextBlock>
 
 using namespace Core;
+using namespace ExtensionSystem;
+using namespace QtTaskTree;
 using namespace Utils;
-using namespace StyleHelper;
-using namespace WelcomePageHelpers;
+using namespace Utils::StyleHelper;
 
 namespace ExtensionManager::Internal {
 
 Q_LOGGING_CATEGORY(widgetLog, "qtc.extensionmanager.widget", QtWarningMsg)
 
-constexpr TextFormat h5TF
-    {Theme::Token_Text_Default, UiElement::UiElementH5};
-constexpr TextFormat h6TF
-    {h5TF.themeColor, UiElement::UiElementH6};
-constexpr TextFormat h6CapitalTF
-    {Theme::Token_Text_Muted, UiElement::UiElementH6Capital};
 constexpr TextFormat contentTF
     {Theme::Token_Text_Default, UiElement::UiElementBody2};
 
+constexpr TextFormat h6TF
+    {contentTF.themeColor, UiElement::UiElementH6};
+constexpr TextFormat h6CapitalTF
+    {Theme::Token_Text_Muted, UiElement::UiElementH6Capital};
+
 static QLabel *sectionTitle(const TextFormat &tf, const QString &title)
 {
-    QLabel *label = tfLabel(tf, true);
-    label->setText(title);
+    auto *label = new ElidingLabel(title);
+    applyTf(label, tf);
     return label;
 };
 
 static QWidget *toScrollableColumn(QWidget *widget)
 {
-    widget->setContentsMargins(SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl,
-                               SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl);
+    widget->setContentsMargins(SpacingTokens::PaddingHXxl, SpacingTokens::PaddingVXxl,
+                               SpacingTokens::PaddingHXxl, SpacingTokens::PaddingVXxl);
     widget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
 
     auto scrollArea = new QScrollArea;
@@ -89,29 +98,108 @@ static QWidget *toScrollableColumn(QWidget *widget)
     return scrollArea;
 };
 
-class CollapsingWidget : public QWidget
+const char kRestartSetting[] = "RestartAfterPluginEnabledChanged";
+
+static void requestRestart()
 {
+    InfoBar *infoBar = ICore::popupInfoBar();
+    if (infoBar->canInfoBeAdded(kRestartSetting)) {
+        Utils::InfoBarEntry info(kRestartSetting, msgPluginChangesRequireRestart());
+        info.setTitle(Tr::tr("Restart Required"));
+        info.setInfoType(InfoLabel::Information);
+        info.addCustomButton(
+            Tr::tr("Restart Now"), [] { ICore::restart(); }, {}, InfoBarEntry::ButtonAction::Hide);
+        infoBar->addInfo(info);
+    }
+}
+
+class VersionSelector final : public QWidget
+{
+    Q_OBJECT
 public:
-    explicit CollapsingWidget(QWidget *parent = nullptr)
+    VersionSelector(QWidget *parent = nullptr)
         : QWidget(parent)
     {
-        setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+        m_versionSelector = new QComboBox;
+        m_versionSelector->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+
+        connect(m_versionSelector, &QComboBox::currentIndexChanged, this, [this](int index) {
+            if (index < 0 || size_t(index) >= m_versions.size())
+                return;
+
+            const auto &remoteSpec = m_versions.at(index);
+            emit versionSelected(remoteSpec.get());
+
+            if (remoteSpec->hasError()) {
+                m_versionSelector->setToolTip(remoteSpec->errorString());
+                return;
+            }
+        });
+
+        using namespace Layouting;
+        // clang-format off
+        Row {
+            m_versionSelector,
+        }.attachTo(this);
+        // clang-format on
     }
 
-    void setWidth(int width)
+    void updateEntries()
     {
-        m_width = width;
-        setVisible(width > 0);
-        updateGeometry();
+        m_versionSelector->clear();
+        m_versionSelector->setEnabled(m_versions.size() > 0);
+        // Add to version selector
+        int initialIndex = -1;
+
+        for (int i = 0; const auto &remoteSpec : m_versions) {
+            const bool isCompatible = remoteSpec->resolveDependencies(PluginManager::plugins());
+
+            QString versionStr = remoteSpec->version();
+            if (!isCompatible)
+                versionStr += " " + Tr::tr("(Incompatible)");
+            else if (initialIndex == -1)
+                initialIndex = i;
+
+            m_versionSelector->addItem(versionStr);
+            i++;
+        }
+        if (initialIndex != -1)
+            m_versionSelector->setCurrentIndex(initialIndex);
+        else
+            emit versionSelected(nullptr);
     }
 
-    QSize sizeHint() const override
+    void setExtension(const RemoteSpec *spec)
     {
-        return {m_width, 0};
+        m_versions.clear();
+        m_versionSelector->clear();
+
+        m_versionSelector->setEnabled(!!spec);
+
+        if (spec) {
+            m_versions = spec->versions();
+            Utils::sort(m_versions, [](const auto &a, const auto &b) {
+                return RemoteSpec::versionCompare(a->version(), b->version()) > 0;
+            });
+        }
+
+        updateEntries();
     }
+
+    RemoteSpec *selectedVersion() const
+    {
+        if (m_versionSelector->currentIndex() < 0)
+            return nullptr;
+        return m_versions.at(m_versionSelector->currentIndex()).get();
+    }
+
+signals:
+    void versionSelected(const RemoteSpec *spec);
 
 private:
-    int m_width = 100;
+    std::vector<std::unique_ptr<RemoteSpec>> m_versions;
+    QComboBox *m_versionSelector;
+    QSingleTaskTreeRunner m_fetchVersionsRunner;
 };
 
 class HeadingWidget : public QWidget
@@ -134,10 +222,11 @@ public:
         static const TextFormat dlTF
             {Theme::Token_Text_Muted, vendorTF.uiElement};
         static const TextFormat detailsTF
-            {Theme::Token_Text_Default, UiElementBody2};
+            {titleTF.themeColor, Utils::StyleHelper::UiElementCaption};
 
-        m_title = tfLabel(titleTF);
-        m_vendor = new Button({}, Button::SmallLink);
+        m_title = new ElidingLabel;
+        applyTf(m_title, titleTF);
+        m_vendor = new QtcButton({}, QtcButton::SmallLink);
         m_vendor->setContentsMargins({});
         m_divider = new QLabel;
         m_divider->setFixedSize(1, dividerH);
@@ -146,14 +235,42 @@ public:
         const QPixmap dlIcon = Icon({{":/extensionmanager/images/download.png", dlTF.themeColor}},
                                     Icon::Tint).pixmap();
         m_dlIcon->setPixmap(dlIcon);
-        m_dlCount = tfLabel(dlTF);
+        m_dlCount = new ElidingLabel;
+        applyTf(m_dlCount, dlTF);
         m_dlCount->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Preferred);
-        m_details = tfLabel(detailsTF);
-        installButton = new Button(Tr::tr("Install..."), Button::MediumPrimary);
+        m_details = new ElidingLabel;
+        applyTf(m_details, detailsTF);
+        installButton = new QtcButton(Tr::tr("Install..."), QtcButton::MediumPrimary);
         installButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
         installButton->hide();
+        connect(
+            installButton,
+            &QAbstractButton::pressed,
+            this,
+            &HeadingWidget::pluginInstallationRequested);
+
+        removeButton = new QtcButton(Tr::tr("Remove..."), QtcButton::SmallSecondary);
+        removeButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+        removeButton->hide();
+        connect(removeButton, &QAbstractButton::pressed, this, [this]() {
+            PluginManager::removePluginOnRestart(m_currentPluginId);
+            requestRestart();
+        });
+
+        updateButton = new QtcButton(Tr::tr("Update..."), QtcButton::MediumPrimary);
+        updateButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+        updateButton->hide();
+        connect(updateButton, &QAbstractButton::pressed, this, &HeadingWidget::pluginUpdateRequested);
+
+        m_versionSelector = new VersionSelector();
+        connect(
+            m_versionSelector,
+            &VersionSelector::versionSelected,
+            this,
+            &HeadingWidget::versionSelected);
 
         using namespace Layouting;
+        // clang-format off
         Row {
             m_icon,
             Column {
@@ -164,11 +281,11 @@ public:
                     Widget {
                         bindTo(&m_dlCountItems),
                         Row {
-                            Space(SpacingTokens::HGapXs),
+                            Space(SpacingTokens::GapHM),
                             m_divider,
-                            Space(SpacingTokens::HGapXs),
+                            Space(SpacingTokens::GapHM),
                             m_dlIcon,
-                            Space(SpacingTokens::HGapXxs),
+                            Space(SpacingTokens::GapHXs),
                             m_dlCount,
                             noMargin, spacing(0),
                         },
@@ -180,16 +297,18 @@ public:
             },
             Column {
                 installButton,
+                updateButton,
+                removeButton,
+                m_versionSelector,
                 st,
             },
-            noMargin, spacing(SpacingTokens::ExPaddingGapL),
+            noMargin, spacing(SpacingTokens::GapHL),
         }.attachTo(this);
+        // clang-format on
 
         setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Maximum);
         m_dlCountItems->setVisible(false);
 
-        connect(installButton, &QAbstractButton::pressed,
-                this, &HeadingWidget::pluginInstallationRequested);
         connect(m_vendor, &QAbstractButton::pressed, this, [this]() {
             emit vendorClicked(m_currentVendor);
         });
@@ -197,10 +316,39 @@ public:
         update({});
     }
 
+    RemoteSpec *selectedVersion() { return m_versionSelector->selectedVersion(); }
+
+    void versionSelected(const RemoteSpec *spec)
+    {
+        installButton->setVisible(false);
+        if (spec) {
+            const PluginSpec *installedSpec = PluginManager::specById(spec->id());
+
+            installButton->setVisible(
+                !installedSpec || (installedSpec->version() != spec->version()));
+            installButton->setEnabled(false);
+
+            if (spec->hasError()) {
+                installButton->setToolTip(
+                    Tr::tr("Cannot install extension: %1").arg(spec->errorString()));
+                return;
+            }
+
+            const std::optional<Source> source = spec->compatibleSource();
+            if (!source)
+                return;
+
+            installButton->setEnabled(true);
+            installButton->setToolTip(source->url);
+        }
+    }
+
     void update(const QModelIndex &current)
     {
         if (!current.isValid())
             return;
+
+        m_currentPluginId = current.data(RoleId).toString();
 
         m_icon->setPixmap(itemIcon(current, SizeBig));
 
@@ -216,38 +364,58 @@ public:
             m_dlCount->setText(QString::number(dlCount));
         m_dlCountItems->setVisible(showDlCount);
 
-        const auto pluginData = current.data(RolePlugins).value<PluginsData>();
-        if (current.data(RoleItemType).toInt() == ItemTypePack) {
-            const int pluginsCount = pluginData.count();
-            const QString details = Tr::tr("Pack contains %n plugins.", nullptr, pluginsCount);
-            m_details->setText(details);
-        } else {
-            m_details->setText({});
-        }
+        const QString description = current.data(RoleDescriptionShort).toString();
+        m_details->setText(description);
+
+        QVariant spec = current.data(RoleSpec);
+
+        const PluginSpec *pluginSpec = qvariant_cast<const PluginSpec *>(spec);
+        const RemoteSpec *remoteSpec = qvariant_cast<const RemoteSpec *>(spec);
+
+        if (remoteSpec)
+            pluginSpec = PluginManager::specById(remoteSpec->id());
 
         const ItemType itemType = current.data(RoleItemType).value<ItemType>();
         const bool isPack = itemType == ItemTypePack;
-        const bool isRemotePlugin = !(isPack || pluginSpecForName(name));
-        installButton->setVisible(isRemotePlugin && !pluginData.empty());
-        if (installButton->isVisible())
-            installButton->setToolTip(pluginData.constFirst().second);
+        const bool isRemotePlugin = !(isPack || pluginSpec);
+        removeButton->setVisible(!isRemotePlugin && pluginSpec && !pluginSpec->isSystemPlugin());
+
+        updateButton->setVisible(
+            pluginSpec
+            && PluginSpec::versionCompare(pluginSpec->version(), current.data(RoleVersion).toString())
+                   < 0);
+
+        m_versionSelector->setVisible(isRemotePlugin);
+
+        //const RemoteSpec *remoteSpec = dynamic_cast<RemoteSpec *>(pluginSpec);
+        m_versionSelector->setExtension(remoteSpec);
+
+        if (isRemotePlugin) {
+            auto spec = m_versionSelector->selectedVersion();
+            versionSelected(spec);
+        }
     }
 
 signals:
     void pluginInstallationRequested();
+    void pluginUpdateRequested();
     void vendorClicked(const QString &vendor);
 
 private:
     QLabel *m_icon;
     QLabel *m_title;
-    Button *m_vendor;
+    QtcButton *m_vendor;
     QLabel *m_divider;
     QLabel *m_dlIcon;
     QLabel *m_dlCount;
     QWidget *m_dlCountItems;
     QLabel *m_details;
     QAbstractButton *installButton;
+    QAbstractButton *removeButton;
+    QAbstractButton *updateButton;
+    VersionSelector *m_versionSelector;
     QString m_currentVendor;
+    QString m_currentPluginId;
 };
 
 class PluginStatusWidget : public QWidget
@@ -257,49 +425,53 @@ public:
         : QWidget(parent)
     {
         m_label = new InfoLabel;
-        m_checkBox = new QCheckBox(Tr::tr("Load on start"));
-        m_restartButton = new Button(Tr::tr("Restart Now"), Button::MediumPrimary);
-        m_restartButton->setVisible(false);
+        m_label->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+        m_switch = new QtcSwitch(Tr::tr("Active"));
         m_pluginView.hide();
+        setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
 
         using namespace Layouting;
-        Column {
-            m_label,
-            m_checkBox,
-            m_restartButton,
+        Grid {
+            Span(2, m_label), br,
+            m_switch, empty, br,
         }.attachTo(this);
 
-        connect(m_checkBox, &QCheckBox::clicked, this, [this](bool checked) {
-            ExtensionSystem::PluginSpec *spec = pluginSpecForName(m_pluginName);
+        connect(m_switch, &QtcSwitch::clicked, this, [this](bool checked) {
+            PluginSpec *spec = PluginManager::specById(m_pluginId);
             if (spec == nullptr)
                 return;
             const bool doIt = m_pluginView.data().setPluginsEnabled({spec}, checked);
             if (doIt) {
-                m_restartButton->show();
-                ExtensionSystem::PluginManager::writeSettings();
+                if (checked && spec->isEffectivelySoftloadable())
+                    PluginManager::loadPluginsAtRuntime({spec});
+                else
+                    requestRestart();
+
+                PluginManager::writeSettings();
             } else {
-                m_checkBox->setChecked(!checked);
+                m_switch->setChecked(!checked);
             }
         });
 
-        connect(ExtensionSystem::PluginManager::instance(),
-                &ExtensionSystem::PluginManager::pluginsChanged, this, &PluginStatusWidget::update);
-        connect(m_restartButton, &QAbstractButton::clicked,
-                ICore::instance(), &ICore::restart, Qt::QueuedConnection);
+        connect(
+            PluginManager::instance(),
+            &PluginManager::pluginsChanged,
+            this,
+            &PluginStatusWidget::update);
 
         update();
     }
 
-    void setPluginName(const QString &name)
+    void setPluginId(const QString &id)
     {
-        m_pluginName = name;
+        m_pluginId = id;
         update();
     }
 
 private:
     void update()
     {
-        const ExtensionSystem::PluginSpec *spec = pluginSpecForName(m_pluginName);
+        const PluginSpec *spec = PluginManager::specById(m_pluginId);
         setVisible(spec != nullptr);
         if (spec == nullptr)
             return;
@@ -307,23 +479,23 @@ private:
         if (spec->hasError()) {
             m_label->setType(InfoLabel::Error);
             m_label->setText(Tr::tr("Error"));
-        } else if (spec->state() == ExtensionSystem::PluginSpec::Running) {
+        } else if (spec->state() == PluginSpec::Running) {
             m_label->setType(InfoLabel::Ok);
             m_label->setText(Tr::tr("Loaded"));
         } else {
             m_label->setType(InfoLabel::NotOk);
             m_label->setText(Tr::tr("Not loaded"));
         }
+        m_label->setAdditionalToolTip(spec->errorString());
 
-        m_checkBox->setChecked(spec->isRequired() || spec->isEnabledBySettings());
-        m_checkBox->setEnabled(!spec->isRequired());
+        m_switch->setChecked(spec->isRequired() || spec->isEnabledBySettings());
+        m_switch->setEnabled(!spec->isRequired());
     }
 
     InfoLabel *m_label;
-    QCheckBox *m_checkBox;
-    QAbstractButton *m_restartButton;
-    QString m_pluginName;
-    ExtensionSystem::PluginView m_pluginView{this};
+    QtcSwitch *m_switch;
+    QString m_pluginId;
+    PluginView m_pluginView{this};
 };
 
 class TagList : public QWidget
@@ -331,41 +503,28 @@ class TagList : public QWidget
     Q_OBJECT
 
 public:
-    explicit TagList(QWidget *parent = nullptr)
-        : QWidget(parent)
-    {
-        QHBoxLayout *layout = new QHBoxLayout(this);
-        setLayout(layout);
-        layout->setContentsMargins({});
-        m_signalMapper = new QSignalMapper(this);
-        connect(m_signalMapper, &QSignalMapper::mappedString, this, &TagList::tagSelected);
-    }
+    using QWidget::QWidget;
 
     void setTags(const QStringList &tags)
     {
-        if (m_container) {
-            delete m_container;
-            m_container = nullptr;
-        }
+        delete layout();
+        qDeleteAll(children());
 
         if (!tags.empty()) {
-            m_container = new QWidget(this);
-            layout()->addWidget(m_container);
+            const auto tagToButton = [this](const QString &tag) {
+                auto btn = new QtcButton(tag, QtcButton::Tag);
+                connect(btn, &QAbstractButton::clicked, this, [tag, this] { emit tagSelected(tag); });
+                return btn;
+            };
 
             using namespace Layouting;
-            Flow flow {};
-            flow.setNoMargins();
-            flow.setSpacing(SpacingTokens::HGapXs);
-
-            for (const QString &tag : tags) {
-                QAbstractButton *tagButton = new Button(tag, Button::Tag);
-                connect(tagButton, &QAbstractButton::clicked,
-                        m_signalMapper, qOverload<>(&QSignalMapper::map));
-                m_signalMapper->setMapping(tagButton, tag);
-                flow.addItem(tagButton);
-            }
-
-            flow.attachTo(m_container);
+            // clang-format off
+            Flow {
+                noMargin,
+                spacing(SpacingTokens::GapHM),
+                Utils::transform(tags, tagToButton)
+            }.attachTo(this);
+            // clang-format on
         }
 
         updateGeometry();
@@ -373,10 +532,6 @@ public:
 
 signals:
     void tagSelected(const QString &tag);
-
-private:
-    QWidget *m_container = nullptr;
-    QSignalMapper *m_signalMapper;
 };
 
 class ExtensionManagerWidget final : public Core::ResizeSignallingWidget
@@ -386,26 +541,19 @@ public:
 
 private:
     void updateView(const QModelIndex &current);
-    void fetchAndInstallPlugin(const QUrl &url);
-    void fetchAndDisplayImage(const QUrl &url);
+    void fetchAndInstallPlugin(const QUrl &url, bool update, const QString &sha);
 
     QString m_currentItemName;
+    ExtensionsModel *m_extensionModel;
     ExtensionsBrowser *m_extensionBrowser;
-    CollapsingWidget *m_secondaryDescriptionWidget;
+    QStackedWidget *m_detailsStack;
+    QWidget *m_secondaryDetailsColumn;
     HeadingWidget *m_headingWidget;
-    QWidget *m_primaryContent;
-    QWidget *m_secondaryContent;
-    QLabel *m_description;
-    QLabel *m_linksTitle;
-    QLabel *m_links;
-    QLabel *m_imageTitle;
-    QLabel *m_image;
-    QBuffer m_imageDataBuffer;
-    QMovie m_imageMovie;
+    MarkdownBrowser *m_description;
+    QLabel *m_dateUpdatedTitle;
+    QLabel *m_dateUpdated;
     QLabel *m_tagsTitle;
     TagList *m_tags;
-    QLabel *m_compatVersionTitle;
-    QLabel *m_compatVersion;
     QLabel *m_platformsTitle;
     QLabel *m_platforms;
     QLabel *m_dependenciesTitle;
@@ -413,391 +561,431 @@ private:
     QLabel *m_packExtensionsTitle;
     QLabel *m_packExtensions;
     PluginStatusWidget *m_pluginStatus;
-    PluginsData m_currentItemPlugins;
-    Tasking::TaskTreeRunner m_dlTaskTreeRunner;
-    Tasking::TaskTreeRunner m_imgTaskTreeRunner;
+    QString m_currentDownloadUrl;
+    QString m_currentId;
+    QSingleTaskTreeRunner m_dlTaskTreeRunner;
 };
+
+static QWidget *descriptionPlaceHolder()
+{
+    auto placeHolder = new QWidget;
+    static const TextFormat tF {
+        Theme::Token_Text_Muted, UiElement::UiElementH4
+    };
+    auto title = new ElidingLabel(Tr::tr("No details to show"));
+    applyTf(title, tF);
+    title->setAlignment(Qt::AlignCenter);
+    auto text = new QLabel(Tr::tr("Select an extension to see more information about it."));
+    applyTf(text, tF, false);
+    text->setAlignment(Qt::AlignCenter);
+    text->setFont({});
+    using namespace Layouting;
+    // clang-format off
+    Row {
+        st,
+        Column {
+            Stretch(2),
+            title,
+            WelcomePageHelpers::createRule(Qt::Horizontal),
+            text,
+            Stretch(3),
+            spacing(SpacingTokens::GapVL),
+        },
+        st,
+        noMargin,
+    }.attachTo(placeHolder);
+    // clang-format on
+    WelcomePageHelpers::setBackgroundColor(placeHolder, Theme::Token_Background_Muted);
+    placeHolder->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    return placeHolder;
+}
 
 ExtensionManagerWidget::ExtensionManagerWidget()
 {
-    m_extensionBrowser = new ExtensionsBrowser;
-    auto descriptionColumns = new QWidget;
-    m_secondaryDescriptionWidget = new CollapsingWidget;
+    m_extensionModel = new ExtensionsModel(this);
+    m_extensionBrowser = new ExtensionsBrowser(m_extensionModel);
 
     m_headingWidget = new HeadingWidget;
-    m_description = new QLabel;
-    m_description->setWordWrap(true);
-    m_description->setTextInteractionFlags(Qt::TextBrowserInteraction);
-    m_linksTitle = sectionTitle(h6CapitalTF, Tr::tr("More information"));
-    m_links = tfLabel(contentTF, false);
-    m_links->setOpenExternalLinks(true);
-    m_links->setTextInteractionFlags(Qt::TextBrowserInteraction);
-    m_imageTitle = sectionTitle(h6CapitalTF, {});
-    m_image = new QLabel;
-    m_imageMovie.setDevice(&m_imageDataBuffer);
+    m_description = new MarkdownBrowser;
+    m_description->setAllowRemoteImages(true);
+    m_description->setFrameStyle(QFrame::NoFrame);
+    m_description->setOpenExternalLinks(true);
+    QPalette browserPal = m_description->palette();
+    browserPal.setColor(QPalette::Base, creatorColor(Theme::Token_Background_Default));
+    m_description->setPalette(browserPal);
+    const int verticalPadding = SpacingTokens::PaddingVXxl - SpacingTokens::PaddingVXl;
+    m_description->setMargins({verticalPadding, 0, verticalPadding, 0});
+    m_description->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
-    using namespace Layouting;
-    auto primary = new QWidget;
-    const auto spL = spacing(SpacingTokens::VPaddingL);
-    Column {
-        m_description,
-        Column { m_linksTitle, m_links, spL },
-        Column { m_imageTitle, m_image, spL },
-        st,
-        noMargin, spacing(SpacingTokens::ExVPaddingGapXl),
-    }.attachTo(primary);
-    m_primaryContent = toScrollableColumn(primary);
-
+    m_dateUpdatedTitle = sectionTitle(h6TF, Tr::tr("Last Update"));
+    m_dateUpdated = new QLabel;
+    applyTf(m_dateUpdated, contentTF, false);
     m_tagsTitle = sectionTitle(h6TF, Tr::tr("Tags"));
     m_tags = new TagList;
-    m_compatVersionTitle = sectionTitle(h6TF, Tr::tr("Compatibility"));
-    m_compatVersion = tfLabel(contentTF, false);
     m_platformsTitle = sectionTitle(h6TF, Tr::tr("Platforms"));
-    m_platforms = tfLabel(contentTF, false);
+    m_platforms = new QLabel;
+    applyTf(m_platforms, contentTF, false);
     m_dependenciesTitle = sectionTitle(h6TF, Tr::tr("Dependencies"));
-    m_dependencies = tfLabel(contentTF, false);
+    m_dependencies = new QLabel;
+    applyTf(m_dependencies, contentTF, false);
+    m_dependencies->setTextInteractionFlags(Qt::LinksAccessibleByMouse);
+    connect(m_dependencies, &QLabel::linkActivated, this, [this](const QString &link) {
+        m_extensionBrowser->selectIndex(m_extensionModel->indexOfId(link));
+    });
+
     m_packExtensionsTitle = sectionTitle(h6TF, Tr::tr("Extensions in pack"));
-    m_packExtensions = tfLabel(contentTF, false);
+    m_packExtensions = new QLabel;
+    applyTf(m_packExtensions, contentTF, false);
+
+    m_packExtensions->setTextInteractionFlags(Qt::LinksAccessibleByMouse);
+    connect(m_packExtensions, &QLabel::linkActivated, this, [this](const QString &link) {
+        m_extensionBrowser->selectIndex(m_extensionModel->indexOfId(link));
+    });
+
     m_pluginStatus = new PluginStatusWidget;
 
-    auto secondary = new QWidget;
-    const auto spXxs = spacing(SpacingTokens::VPaddingXxs);
+    ActionBuilder(this, Core::Constants::TOGGLE_RIGHT_SIDEBAR)
+        .setCheckable(true)
+        .setChecked(true)
+        .setContext(Constants::C_EXTENSIONMANAGER)
+        .setText(Tr::tr("Toggle Secondary Details"))
+        .addOnTriggered(this, [this](bool c) { m_secondaryDetailsColumn->setVisible(c); });
+
+    auto primaryDetailsColumn = new QWidget;
+    auto secondaryDetails = new QWidget;
+    secondaryDetails->setMinimumWidth(100);
+    m_secondaryDetailsColumn = toScrollableColumn(secondaryDetails);
+
+    auto detailsSplitter = new MiniSplitter;
+
+    using namespace Layouting;
+    const auto spXxs = spacing(SpacingTokens::GapVXs);
+    // clang-format off
+    Column {
+        Row {
+            m_headingWidget,
+            m_pluginStatus,
+            customMargins(SpacingTokens::PaddingHXxl, SpacingTokens::PaddingVXxl,
+                          SpacingTokens::PaddingHXxl, SpacingTokens::PaddingVXxl),
+        },
+        m_description,
+        noMargin, spacing(0),
+    }.attachTo(primaryDetailsColumn);
+
     Column {
         sectionTitle(h6CapitalTF, Tr::tr("Extension details")),
         Column {
+            Column { m_dateUpdatedTitle, m_dateUpdated, spXxs },
             Column { m_tagsTitle, m_tags, spXxs },
-            Column { m_compatVersionTitle, m_compatVersion, spXxs },
             Column { m_platformsTitle, m_platforms, spXxs },
             Column { m_dependenciesTitle, m_dependencies, spXxs },
             Column { m_packExtensionsTitle, m_packExtensions, spXxs },
-            spacing(SpacingTokens::VPaddingL),
+            spacing(SpacingTokens::GapVXl),
         },
         st,
-        noMargin, spacing(SpacingTokens::ExVPaddingGapXl),
-    }.attachTo(secondary);
-    m_secondaryContent = toScrollableColumn(secondary);
-
-    Row {
-        WelcomePageHelpers::createRule(Qt::Vertical),
-        Column {
-            m_secondaryContent,
-            m_pluginStatus,
-        },
-        noMargin, spacing(0),
-    }.attachTo(m_secondaryDescriptionWidget);
-
-    Row {
-        WelcomePageHelpers::createRule(Qt::Vertical),
-        Row {
-            Column {
-                Column {
-                    m_headingWidget,
-                    customMargins(SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl,
-                                  SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl),
-                },
-                m_primaryContent,
-            },
-        },
-        m_secondaryDescriptionWidget,
-        noMargin, spacing(0),
-    }.attachTo(descriptionColumns);
+        noMargin, spacing(SpacingTokens::GapVXxl),
+    }.attachTo(secondaryDetails);
 
     Column {
         new StyledBar,
         Row {
-            Space(SpacingTokens::ExVPaddingGapXl),
+            Space(SpacingTokens::GapHXxl),
             m_extensionBrowser,
-            descriptionColumns,
-            noMargin, spacing(0),
+            WelcomePageHelpers::createRule(Qt::Vertical),
+            Stack {
+                bindTo(&m_detailsStack),
+                descriptionPlaceHolder(),
+                detailsSplitter,
+            },
         },
         noMargin, spacing(0),
     }.attachTo(this);
+    // clang-format on
+
+    detailsSplitter->addWidget(primaryDetailsColumn);
+    detailsSplitter->addWidget(m_secondaryDetailsColumn);
 
     WelcomePageHelpers::setBackgroundColor(this, Theme::Token_Background_Default);
 
     connect(m_extensionBrowser, &ExtensionsBrowser::itemSelected,
             this, &ExtensionManagerWidget::updateView);
     connect(this, &ResizeSignallingWidget::resized, this, [this](const QSize &size) {
-        const int intendedBrowserColumnWidth = size.width() - 580;
+        const int intendedBrowserColumnWidth = size.width() / 3;
         m_extensionBrowser->adjustToWidth(intendedBrowserColumnWidth);
-        const bool secondaryDescriptionVisible = size.width() > 970;
-        const int secondaryDescriptionWidth = secondaryDescriptionVisible ? 264 : 0;
-        m_secondaryDescriptionWidget->setWidth(secondaryDescriptionWidth);
     });
-    connect(m_headingWidget, &HeadingWidget::pluginInstallationRequested, this, [this](){
-        fetchAndInstallPlugin(QUrl::fromUserInput(m_currentItemPlugins.constFirst().second));
+
+    const auto installOrUpdate = [this](bool update) {
+        QTC_ASSERT(m_headingWidget->selectedVersion(), return);
+        const std::optional<Source> source = m_headingWidget->selectedVersion()->compatibleSource();
+        QTC_ASSERT(source, return);
+        fetchAndInstallPlugin(QUrl::fromUserInput(source->url), update, source->sha);
+    };
+
+    connect(m_headingWidget, &HeadingWidget::pluginInstallationRequested, this, [installOrUpdate] {
+        installOrUpdate(false);
     });
+    connect(m_headingWidget, &HeadingWidget::pluginUpdateRequested, this, [installOrUpdate]() {
+        installOrUpdate(true);
+    });
+
     connect(m_tags, &TagList::tagSelected, m_extensionBrowser, &ExtensionsBrowser::setFilter);
     connect(m_headingWidget, &HeadingWidget::vendorClicked,
             m_extensionBrowser, &ExtensionsBrowser::setFilter);
 
-    updateView({});
-}
-
-static QString markdownToHtml(const QString &markdown)
-{
-    QTextDocument doc;
-    doc.setMarkdown(markdown);
-    doc.setDefaultFont(contentTF.font());
-
-    for (QTextBlock block = doc.begin(); block != doc.end(); block = block.next()) {
-        QTextBlockFormat blockFormat = block.blockFormat();
-        if (blockFormat.hasProperty(QTextFormat::HeadingLevel))
-            blockFormat.setTopMargin(SpacingTokens::ExVPaddingGapXl);
-        else
-            blockFormat.setLineHeight(contentTF.lineHeight(), QTextBlockFormat::FixedHeight);
-        blockFormat.setBottomMargin(SpacingTokens::VGapL);
-        QTextCursor cursor(block);
-        cursor.mergeBlockFormat(blockFormat);
-        const TextFormat headingTf = blockFormat.headingLevel() == 1 ? h5TF : h6TF;
-        const QFont headingFont = headingTf.font();
-        for (auto it = block.begin(); !(it.atEnd()); ++it) {
-            QTextFragment fragment = it.fragment();
-            if (fragment.isValid()) {
-                QTextCharFormat charFormat = fragment.charFormat();
-                cursor.setPosition(fragment.position());
-                cursor.setPosition(fragment.position() + fragment.length(), QTextCursor::KeepAnchor);
-                if (blockFormat.hasProperty(QTextFormat::HeadingLevel)) {
-                    charFormat.setFontFamilies(headingFont.families());
-                    charFormat.setFontWeight(headingFont.weight());
-                    charFormat.setFontPointSize(headingFont.pointSizeF());
-                    charFormat.setForeground(headingTf.color());
-                } else if (charFormat.isAnchor()) {
-                    charFormat.setForeground(creatorColor(Theme::Token_Text_Accent));
-                } else {
-                    charFormat.setForeground(contentTF.color());
-                }
-                cursor.setCharFormat(charFormat);
+    auto dropSupport = new DropSupport(this, [](QDropEvent *event, DropSupport *) {
+        // only accept drops from the "outside" (e.g. file manager)
+        return event->source() == nullptr;
+    });
+    connect(
+        dropSupport,
+        &DropSupport::filesDropped,
+        this,
+        [](const QList<DropSupport::FileSpec> &files, const QPoint &) {
+            bool needsRestart = false;
+            for (const auto &file : files) {
+                InstallResult result = executePluginInstallWizard(file.filePath);
+                if (result == InstallResult::NeedsRestart)
+                    needsRestart = true;
+                if (result == InstallResult::Error)
+                    break;
             }
-        }
-    }
+            if (needsRestart)
+                requestRestart();
+        });
 
-    return doc.toHtml();
+    updateView({});
 }
 
 void ExtensionManagerWidget::updateView(const QModelIndex &current)
 {
+    const bool currentIsValid = current.isValid();
+
+    Command *command = ActionManager::command(Core::Constants::TOGGLE_RIGHT_SIDEBAR);
+    QAction *action = command->actionForContext(Constants::C_EXTENSIONMANAGER);
+    action->setEnabled(currentIsValid);
+
+    if (currentIsValid) {
+        m_detailsStack->setCurrentIndex(1);
+    } else {
+        m_detailsStack->setCurrentIndex(0);
+        return;
+    }
+
     m_headingWidget->update(current);
 
-    const bool showContent = current.isValid();
-    m_primaryContent->setVisible(showContent);
-    m_secondaryContent->setVisible(showContent);
-    m_headingWidget->setVisible(showContent);
-    m_pluginStatus->setVisible(showContent);
-    if (!showContent)
-        return;
-
-    m_currentItemName = current.data().toString();
+    m_currentItemName = current.data(RoleName).toString();
     const bool isPack = current.data(RoleItemType) == ItemTypePack;
-    m_pluginStatus->setPluginName(isPack ? QString() : m_currentItemName);
-    m_currentItemPlugins = current.data(RolePlugins).value<PluginsData>();
+    m_pluginStatus->setPluginId(isPack ? QString() : current.data(RoleId).toString());
+    m_currentDownloadUrl = current.data(RoleDownloadUrl).toString();
 
-    auto toContentParagraph = [](const QString &text) {
-        const QString pHtml = QString::fromLatin1("<p style=\"margin-top:0;margin-bottom:0;"
-                                                  "line-height:%1px\">%2</p>")
-                                  .arg(contentTF.lineHeight()).arg(text);
-        return pHtml;
+    m_currentId = current.data(RoleFullId).toString();
+
+    const QString description = current.data(RoleDescriptionLong).toString();
+    m_description->setMarkdown(description);
+    m_description->document()->setDocumentMargin(SpacingTokens::PaddingVXl);
+
+    auto idToDisplayName = [this](const QString &id) {
+        const QModelIndex dependencyIndex = m_extensionModel->indexOfId(id);
+        QString displayName = dependencyIndex.data(RoleName).toString();
+        if (displayName.isEmpty())
+            displayName = id;
+        return QString("<a href=\"%1\">%2</a>").arg(id).arg(displayName);
     };
 
-    {
-        const TextData textData = current.data(RoleDescriptionText).value<TextData>();
-        const bool hasDescription = !textData.isEmpty();
-        if (hasDescription) {
-            QString descriptionMarkdown;
-            for (const TextData::Type &text : textData) {
-                if (!text.first.isEmpty()) {
-                    const QLatin1String headingMark(descriptionMarkdown.isEmpty() ? "#" : "\n\n##");
-                    descriptionMarkdown.append(headingMark + " " + text.first + "\n");
-                }
-                descriptionMarkdown.append(text.second.join("\n"));
-            }
-            m_description->setText(markdownToHtml(descriptionMarkdown));
-        }
-        m_description->setVisible(hasDescription);
+    auto toContentParagraph =
+        [](const QStringList &text) {
+            const QString lines = text.join("<br/>");
+            const QString pHtml = QString::fromLatin1("<p style=\"margin-top:0;margin-bottom:0;"
+                                                      "line-height:%1px\">%2</p>")
+                                      .arg(contentTF.lineHeight()).arg(lines);
+            return pHtml;
+        };
 
-        const LinksData linksData = current.data(RoleDescriptionLinks).value<LinksData>();
-        const bool hasLinks = !linksData.isEmpty();
-        if (hasLinks) {
-            QString linksHtml;
-            const QStringList links = transform(linksData, [](const LinksData::Type &link) {
-                const QString anchor = link.first.isEmpty() ? link.second : link.first;
-                return QString::fromLatin1(R"(<a href="%1" style="color:%2">%3 &gt;</a>)")
-                    .arg(link.second)
-                    .arg(creatorColor(Theme::Token_Text_Accent).name())
-                    .arg(anchor);
-            });
-            linksHtml = links.join("<br/>");
-            m_links->setText(toContentParagraph(linksHtml));
-        }
-        m_linksTitle->setVisible(hasLinks);
-        m_links->setVisible(hasLinks);
+    const QDate dateUpdated = current.data(RoleDateUpdated).toDate();
+    const bool hasDateUpdated = dateUpdated.isValid();
+    if (hasDateUpdated)
+        m_dateUpdated->setText(dateUpdated.toString());
+    m_dateUpdatedTitle->setVisible(hasDateUpdated);
+    m_dateUpdated->setVisible(hasDateUpdated);
 
-        m_imgTaskTreeRunner.reset();
-        m_imageMovie.stop();
-        m_imageDataBuffer.close();
-        m_image->clear();
-        const ImagesData imagesData = current.data(RoleDescriptionImages).value<ImagesData>();
-        const bool hasImages = !imagesData.isEmpty();
-        if (hasImages) {
-            const ImagesData::Type &image = imagesData.constFirst(); // Only show one image
-            m_imageTitle->setText(image.first);
-            fetchAndDisplayImage(image.second);
-        }
-        m_imageTitle->setVisible(hasImages);
-        m_image->setVisible(hasImages);
+    const QStringList tags = current.data(RoleTags).toStringList();
+    m_tags->setTags(tags);
+    const bool hasTags = !tags.isEmpty();
+    m_tagsTitle->setVisible(hasTags);
+    m_tags->setVisible(hasTags);
+
+    const QStringList platforms = current.data(RolePlatforms).toStringList();
+    const bool hasPlatforms = !platforms.isEmpty();
+    if (hasPlatforms)
+        m_platforms->setText(toContentParagraph(platforms));
+    m_platformsTitle->setVisible(hasPlatforms);
+    m_platforms->setVisible(hasPlatforms);
+
+    const QStringList dependencies = current.data(RoleDependencies).toStringList();
+    const bool hasDependencies = !dependencies.isEmpty();
+    if (hasDependencies) {
+        const QStringList displayNames = transform(dependencies, idToDisplayName);
+        m_dependencies->setText(toContentParagraph(displayNames));
     }
+    m_dependenciesTitle->setVisible(hasDependencies);
+    m_dependencies->setVisible(hasDependencies);
 
-    {
-        const QStringList tags = current.data(RoleTags).toStringList();
-        m_tags->setTags(tags);
-        const bool hasTags = !tags.isEmpty();
-        m_tagsTitle->setVisible(hasTags);
-        m_tags->setVisible(hasTags);
-
-        const QString compatVersion = current.data(RoleCompatVersion).toString();
-        const bool hasCompatVersion = !compatVersion.isEmpty();
-        if (hasCompatVersion)
-            m_compatVersion->setText(compatVersion);
-        m_compatVersionTitle->setVisible(hasCompatVersion);
-        m_compatVersion->setVisible(hasCompatVersion);
-
-        const QStringList platforms = current.data(RolePlatforms).toStringList();
-        const bool hasPlatforms = !platforms.isEmpty();
-        if (hasPlatforms)
-            m_platforms->setText(toContentParagraph(platforms.join("<br/>")));
-        m_platformsTitle->setVisible(hasPlatforms);
-        m_platforms->setVisible(hasPlatforms);
-
-        const QStringList dependencies = current.data(RoleDependencies).toStringList();
-        const bool hasDependencies = !dependencies.isEmpty();
-        if (hasDependencies)
-            m_dependencies->setText(toContentParagraph(dependencies.join("<br/>")));
-        m_dependenciesTitle->setVisible(hasDependencies);
-        m_dependencies->setVisible(hasDependencies);
-
-        const PluginsData plugins = current.data(RolePlugins).value<PluginsData>();
-        const bool hasExtensions = isPack && !plugins.isEmpty();
-        if (hasExtensions) {
-            const QStringList extensions = transform(plugins, &QPair<QString, QString>::first);
-            m_packExtensions->setText(toContentParagraph(extensions.join("<br/>")));
-        }
-        m_packExtensionsTitle->setVisible(hasExtensions);
-        m_packExtensions->setVisible(hasExtensions);
+    const QStringList plugins = current.data(RolePlugins).toStringList();
+    const bool hasExtensions = isPack && !plugins.isEmpty();
+    if (hasExtensions) {
+        const QStringList displayNames = transform(plugins, idToDisplayName);
+        m_packExtensions->setText(toContentParagraph(displayNames));
     }
+    m_packExtensionsTitle->setVisible(hasExtensions);
+    m_packExtensions->setVisible(hasExtensions);
 }
 
-void ExtensionManagerWidget::fetchAndInstallPlugin(const QUrl &url)
+void ExtensionManagerWidget::fetchAndInstallPlugin(const QUrl &url, bool update, const QString &sha)
 {
-    using namespace Tasking;
-
     struct StorageStruct
     {
         StorageStruct() {
-            progressDialog.reset(new QProgressDialog(
-                Tr::tr("Downloading..."), Tr::tr("Cancel"), 0, 0, ICore::dialogParent()));
-            progressDialog->setWindowTitle(Tr::tr("Download Extension"));
-            progressDialog->setWindowModality(Qt::ApplicationModal);
-            progressDialog->setFixedSize(progressDialog->sizeHint());
-            progressDialog->setAutoClose(false);
-            progressDialog->show(); // TODO: Should not be needed. Investigate possible QT_BUG
+            progressDialog.reset(createProgressDialog(0, Tr::tr("Download Extension"),
+                                                      Tr::tr("Downloading...")));
         }
         std::unique_ptr<QProgressDialog> progressDialog;
         QByteArray packageData;
         QUrl url;
+        QString sha;
+        QString filename;
     };
     Storage<StorageStruct> storage;
 
-    const auto onQuerySetup = [url, storage](NetworkQuery &query) {
+    const auto onQuerySetup = [url, storage, sha](QNetworkReplyWrapper &query) {
         storage->url = url;
+        storage->sha = sha;
         query.setRequest(QNetworkRequest(url));
         query.setNetworkAccessManager(NetworkAccessManager::instance());
     };
-    const auto onQueryDone = [storage](const NetworkQuery &query, DoneWith result) {
+    const auto onQueryDone = [storage](const QNetworkReplyWrapper &query, DoneWith result) -> DoneResult {
         storage->progressDialog->close();
-        if (result == DoneWith::Success) {
-            storage->packageData = query.reply()->readAll();
-        } else {
+
+        if (result != DoneWith::Success) {
+            const QNetworkReply::NetworkError error = query.reply()->error();
             QMessageBox::warning(
                 ICore::dialogParent(),
                 Tr::tr("Download Error"),
                 Tr::tr("Cannot download extension") + "\n\n" + storage->url.toString() + "\n\n"
-                    + Tr::tr("Code: %1.").arg(query.reply()->error()));
+                    + Tr::tr("Code: %1 (%2).")
+                          .arg(error)
+                          .arg(QString::fromUtf8(
+                                   QMetaEnum::fromType<QNetworkReply::NetworkError>().key(error))));
+            return DoneResult::Error;
         }
+
+            storage->packageData = query.reply()->readAll();
+
+        const QByteArray hash
+            = QCryptographicHash::hash(storage->packageData, QCryptographicHash::Sha256);
+
+        if (QString::fromLatin1(hash.toHex()) != storage->sha) {
+            QMessageBox::warning(
+                ICore::dialogParent(),
+                Tr::tr("Download Error"),
+                Tr::tr("Downloaded extension has an invalid hash."));
+            return DoneResult::Error;
+        }
+
+        const auto checkContentDisposition = [storage, &query] {
+            QString contentDispo
+                = query.reply()->header(QNetworkRequest::ContentDispositionHeader).toString();
+
+            if (contentDispo.isEmpty())
+                return;
+
+            // Example: `content-disposition: attachment; filename=project-build-windows-.7z`
+            // see also: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Disposition
+            static QRegularExpression re(
+                R"(^(?P<disposition>attachment|inline)(?:\s*;\s*(?P<paramlist>.*))?$)");
+
+            QRegularExpressionMatch matches = re.match(contentDispo);
+            if (!matches.hasMatch())
+                return;
+
+            const QString disposition = matches.captured("disposition");
+            if (disposition != "attachment")
+                return;
+
+            const QString paramlist = matches.captured("paramlist");
+
+            // Parse the "filename" parameter from the Content-Disposition header
+            static QRegularExpression reParam(
+                R"(filename\*?=['"]?(?:UTF-\d['"]*)?([^;\r\n"']*)['"]?;?)");
+
+            QRegularExpressionMatch match = reParam.match(paramlist);
+            if (!match.hasMatch())
+                return;
+
+            storage->filename = match.captured(1);
+        };
+
+        checkContentDisposition();
+
+        return DoneResult::Success;
     };
 
-    const auto onPluginInstallation = [storage]() {
+    const auto onPluginInstallation = [storage, update]() {
         if (storage->packageData.isEmpty())
-            return;
+            return false;
         const FilePath source = FilePath::fromUrl(storage->url);
-        TempFileSaver saver(TemporaryDirectory::masterDirectoryPath()
-                            + "/XXXXXX" + source.fileName());
+        const QString filename = storage->filename.isEmpty() ? source.fileName()
+                                                             : storage->filename;
+        TempFileSaver saver(TemporaryDirectory::masterDirectoryPath() + "/XXXXXX-" + filename);
 
         saver.write(storage->packageData);
-        if (saver.finalize(ICore::dialogParent()))
-            executePluginInstallWizard(saver.filePath());;
-    };
-
-    Group group{
-        storage,
-        NetworkQueryTask{onQuerySetup, onQueryDone},
-        onGroupDone(onPluginInstallation),
-    };
-
-    m_dlTaskTreeRunner.start(group);
-}
-
-void ExtensionManagerWidget::fetchAndDisplayImage(const QUrl &url)
-{
-    using namespace Tasking;
-
-    struct StorageStruct
-    {
-        QByteArray imageData;
-        QUrl url;
-    };
-    Storage<StorageStruct> storage;
-
-    const auto onFetchSetup = [url, storage](NetworkQuery &query) {
-        storage->url = url;
-        query.setRequest(QNetworkRequest(url));
-        query.setNetworkAccessManager(NetworkAccessManager::instance());
-        qCDebug(widgetLog).noquote() << "Sending image request:" << url.toDisplayString();
-    };
-    const auto onFetchDone = [storage](const NetworkQuery &query, DoneWith result) {
-        qCDebug(widgetLog) << "Got image QNetworkReply:" << query.reply()->error();
-        if (result == DoneWith::Success)
-            storage->imageData = query.reply()->readAll();
-    };
-
-    const auto onShowImage = [storage, this]() {
-        if (storage->imageData.isEmpty())
-            return;
-        m_imageDataBuffer.setData(storage->imageData);
-        qCDebug(widgetLog).noquote() << "Image reponse size:"
-                                     << QLocale::system().formattedDataSize(
-                                            m_imageDataBuffer.size());
-        if (!m_imageDataBuffer.open(QIODevice::ReadOnly))
-            return;
-        QImageReader reader(&m_imageDataBuffer);
-        const bool animated = reader.supportsAnimation();
-        if (animated) {
-            m_image->setMovie(&m_imageMovie);
-            m_imageMovie.start();
+        if (const Result<> res = saver.finalize()) {
+            auto result = executePluginInstallWizard(saver.filePath(), update);
+            switch (result) {
+            case InstallResult::Success:
+                return true;
+            case InstallResult::NeedsRestart:
+                requestRestart();
+                return true;
+            case InstallResult::Error:
+                return false;
+            }
         } else {
-            const QPixmap pixmap = QPixmap::fromImage(reader.read());
-            m_image->setPixmap(pixmap);
+            FileUtils::showError(res.error());
         }
-        qCDebug(widgetLog) << "Image dimensions:" << reader.size();
-        qCDebug(widgetLog) << "Image is animated:" << animated;
+        return false;
     };
 
-    Group group{
+    /*
+    // TODO: Implement download completion notification
+
+    const auto onDownloadSetup = [id](QNetworkReplyWrapper &query) {
+        query.setOperation(NetworkOperation::Post);
+        query.setRequest(QNetworkRequest(
+            QUrl(settings().externalRepoUrl() + "/api/v1/downloads/completed/" + id)));
+        query.setNetworkAccessManager(NetworkAccessManager::instance());
+    };
+
+    const auto onDownloadDone = [id](const QNetworkReplyWrapper &query, DoneWith result) {
+        if (result != DoneWith::Success) {
+            qCWarning(widgetLog) << "Failed to notify download completion for" << id;
+            qCWarning(widgetLog) << query.reply()->errorString();
+            qCWarning(widgetLog) << query.reply()->readAll();
+        } else {
+            qCDebug(widgetLog) << "Download completion notification sent for" << id;
+            qCDebug(widgetLog) << query.reply()->readAll();
+        }
+    };
+    */
+
+    const Group recipe {
         storage,
-        NetworkQueryTask{onFetchSetup, onFetchDone},
-        onGroupDone(onShowImage),
+        QNetworkReplyWrapperTask{onQuerySetup, onQueryDone},
+        QSyncTask{onPluginInstallation},
+        QSyncTask{[this] { updateView(m_extensionBrowser->currentIndex()); }},
+        //QNetworkReplyWrapperTask{onDownloadSetup, onDownloadDone},
     };
 
-    m_imgTaskTreeRunner.start(group);
+    m_dlTaskTreeRunner.start(recipe);
 }
 
 QWidget *createExtensionManagerWidget()

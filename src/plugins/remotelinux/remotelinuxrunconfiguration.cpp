@@ -10,8 +10,8 @@
 #include <projectexplorer/buildsystem.h>
 #include <projectexplorer/buildtargetinfo.h>
 #include <projectexplorer/deploymentdata.h>
+#include <projectexplorer/devicesupport/devicekitaspects.h>
 #include <projectexplorer/devicesupport/idevice.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/runconfigurationaspects.h>
 #include <projectexplorer/target.h>
@@ -26,24 +26,26 @@ namespace RemoteLinux::Internal {
 class RemoteLinuxRunConfiguration final : public RunConfiguration
 {
 public:
-    RemoteLinuxRunConfiguration(Target *target, Id id);
+    RemoteLinuxRunConfiguration(BuildConfiguration *bc, Id id);
 
     RemoteLinuxEnvironmentAspect environment{this};
     ExecutableAspect executable{this};
     SymbolFileAspect symbolFile{this};
     ArgumentsAspect arguments{this};
     WorkingDirectoryAspect workingDir{this};
+    RunAsAspect runAs{this};
     TerminalAspect terminal{this};
     X11ForwardingAspect x11Forwarding{this};
+    UseVncDisplayAspect useVncDisplay{this};
     UseLibraryPathsAspect useLibraryPath{this};
 };
 
-RemoteLinuxRunConfiguration::RemoteLinuxRunConfiguration(Target *target, Id id)
-    : RunConfiguration(target, id)
+RemoteLinuxRunConfiguration::RemoteLinuxRunConfiguration(BuildConfiguration *bc, Id id)
+    : RunConfiguration(bc, id)
 {
-    environment.setDeviceSelector(target, EnvironmentAspect::RunDevice);
+    environment.setDeviceSelector(kit(), EnvironmentAspect::RunDevice);
 
-    executable.setDeviceSelector(target, ExecutableAspect::RunDevice);
+    executable.setDeviceSelector(kit(), ExecutableAspect::RunDevice);
     executable.setLabelText(Tr::tr("Executable on device:"));
     executable.setPlaceHolderText(Tr::tr("Remote path not set"));
     executable.makeOverridable("RemoteLinux.RunConfig.AlternateRemoteExecutable",
@@ -52,30 +54,30 @@ RemoteLinuxRunConfiguration::RemoteLinuxRunConfiguration(Target *target, Id id)
 
     symbolFile.setLabelText(Tr::tr("Executable on host:"));
 
-    arguments.setMacroExpander(macroExpander());
-
-    workingDir.setMacroExpander(macroExpander());
     workingDir.setEnvironment(&environment);
 
     terminal.setVisible(HostOsInfo::isAnyUnixHost());
 
-    x11Forwarding.setMacroExpander(macroExpander());
-
     connect(&useLibraryPath, &BaseAspect::changed,
             &environment, &EnvironmentAspect::environmentChanged);
+    connect(&useVncDisplay, &BaseAspect::changed,
+            &environment, &EnvironmentAspect::environmentChanged);
 
-    setUpdater([this, target] {
-        const IDeviceConstPtr buildDevice = BuildDeviceKitAspect::device(target->kit());
-        const IDeviceConstPtr runDevice = DeviceKitAspect::device(target->kit());
+    setUpdater([this] {
+        const IDeviceConstPtr buildDevice = BuildDeviceKitAspect::device(kit());
+        const IDeviceConstPtr runDevice = RunDeviceKitAspect::device(kit());
         QTC_ASSERT(buildDevice, return);
         QTC_ASSERT(runDevice, return);
         const BuildTargetInfo bti = buildTargetInfo();
         const FilePath localExecutable = bti.targetFilePath;
-        const DeploymentData deploymentData = target->deploymentData();
+        const DeploymentData deploymentData = buildSystem()->deploymentData();
         const DeployableFile depFile = deploymentData.deployableForLocalFile(localExecutable);
 
         executable.setExecutable(runDevice->filePath(depFile.remoteFilePath()));
+        if (executable().isEmpty() && buildDevice == runDevice)
+            executable.setExecutable(localExecutable);
         symbolFile.setValue(localExecutable);
+
         useLibraryPath.setEnabled(buildDevice == runDevice);
     });
 
@@ -83,11 +85,9 @@ RemoteLinuxRunConfiguration::RemoteLinuxRunConfiguration(Target *target, Id id)
         BuildTargetInfo bti = buildTargetInfo();
         if (bti.runEnvModifier)
             bti.runEnvModifier(env, useLibraryPath());
+        if (useVncDisplay())
+            env.set("QT_QPA_PLATFORM", "vnc");
     });
-
-    connect(target, &Target::buildSystemUpdated, this, &RunConfiguration::update);
-    connect(target, &Target::deploymentDataChanged, this, &RunConfiguration::update);
-    connect(target, &Target::kitChanged, this, &RunConfiguration::update);
 }
 
 // RemoteLinuxRunConfigurationFactory
@@ -99,7 +99,7 @@ public:
     {
         registerRunConfiguration<RemoteLinuxRunConfiguration>(Constants::RunConfigId);
         setDecorateDisplayNames(true);
-        addSupportedTargetDeviceType(RemoteLinux::Constants::GenericLinuxOsType);
+        addSupportedTargetDeviceType(Constants::GenericLinuxOsType);
     }
 };
 

@@ -252,7 +252,7 @@ static void fetchAndMergeBaseTestFunctions(const QSet<QString> &baseClasses,
                                            const CPlusPlus::Document::Ptr &doc,
                                            const CPlusPlus::Snapshot &snapshot)
 {
-    QList<QString> bases = Utils::toList(baseClasses);
+    QStringList bases = Utils::toList(baseClasses);
     while (!bases.empty()) {
         const QString base = bases.takeFirst();
         TestVisitor baseVisitor(base, snapshot);
@@ -312,7 +312,7 @@ bool QtTestParser::processDocument(QPromise<TestParseResultPtr> &promise,
     // we might be in a reparse without the original entry point with the QTest::qExec()
     if (testCaseList.isEmpty() && !oldTestCases.empty())
         testCaseList.append(oldTestCases);
-    for (const TestCase &testCase : testCaseList) {
+    for (const TestCase &testCase : std::as_const(testCaseList)) {
         if (!testCase.name.isEmpty()) {
             TestCaseData data;
             std::optional<bool> earlyReturn = fillTestCaseData(testCase.name, doc, data);
@@ -370,7 +370,7 @@ std::optional<bool> QtTestParser::fillTestCaseData(
 }
 
 QtTestParseResult *QtTestParser::createParseResult(
-        const QString &testCaseName, const TestCaseData &data, const QString &projectFile) const
+    const QString &testCaseName, const TestCaseData &data, const FilePath &projectFile) const
 {
     QtTestParseResult *parseResult = new QtTestParseResult(framework());
     parseResult->itemType = TestTreeItem::TestCase;
@@ -379,7 +379,7 @@ QtTestParseResult *QtTestParser::createParseResult(
     parseResult->displayName = testCaseName;
     parseResult->line = data.line;
     parseResult->column = data.column;
-    parseResult->proFile = FilePath::fromString(projectFile);
+    parseResult->proFile = projectFile;
     parseResult->setRunsMultipleTestcases(data.multipleTestCases);
     QMap<QString, QtTestCodeLocationAndType>::ConstIterator it = data.testFunctions.begin();
     const QMap<QString, QtTestCodeLocationAndType>::ConstIterator end = data.testFunctions.end();

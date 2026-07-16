@@ -413,6 +413,7 @@ class FindMethodDefinitionInsertPoint : protected ASTVisitor
     QList<const Identifier *> _namespaceNames;
     int _currentDepth = 0;
     HighestValue<int, unsigned> _bestToken;
+    bool _isClassDefinition = false;
 
 public:
     explicit FindMethodDefinitionInsertPoint(TranslationUnit *translationUnit)
@@ -421,11 +422,15 @@ public:
 
     void operator()(Symbol *decl, int *line, int *column)
     {
-        // default to end of file
-        const unsigned lastToken = translationUnit()->ast()->lastToken();
-        _bestToken.maybeSet(-1, lastToken);
+        _isClassDefinition = decl->asForwardClassDeclaration();
 
-        if (lastToken >= 2) {
+        AST * const ast = translationUnit()->ast();
+
+        // default to start of file for class definition, otherwise end of file
+        const unsigned defaultToken = _isClassDefinition ? ast->firstToken() : ast->lastToken();
+        _bestToken.maybeSet(-1, defaultToken);
+
+        if (translationUnit()->ast()->lastToken() >= 2) {
             const QList<const Name *> names = LookupContext::fullyQualifiedName(decl);
             for (const Name *name : names) {
                 const Identifier *id = name->asNameId();
@@ -435,12 +440,12 @@ public:
             }
             _currentDepth = 0;
 
-            accept(translationUnit()->ast());
+            accept(ast);
         }
 
-        if (lastToken == _bestToken.get()) // No matching namespace found
-            translationUnit()->getTokenPosition(lastToken, line, column);
-        else // Insert at end of matching namespace
+        if (defaultToken == _bestToken.get()) // No matching namespace found
+            translationUnit()->getTokenPosition(defaultToken, line, column);
+        else // Insert at start or end of matching namespace
             translationUnit()->getTokenEndPosition(_bestToken.get(), line, column);
     }
 
@@ -464,7 +469,10 @@ protected:
             return false;
 
         // found a good namespace
-        _bestToken.maybeSet(_currentDepth, ast->lastToken() - 2);
+        _bestToken.maybeSet(
+            _currentDepth,
+            _isClassDefinition && ast->linkage_body ? ast->linkage_body->firstToken()
+                                                    : ast->lastToken() - 2);
 
         ++_currentDepth;
         accept(ast->linkage_body);
@@ -537,7 +545,7 @@ static InsertionLocation nextToSurroundingDefinitions(Symbol *declaration,
 {
     InsertionLocation noResult;
     Class *klass = declaration->enclosingClass();
-    if (!klass)
+    if (!klass || declaration->isFriend())
         return noResult;
 
     // find the index of declaration
@@ -562,7 +570,7 @@ static InsertionLocation nextToSurroundingDefinitions(Symbol *declaration,
         if (s->isGenerated() || !(surroundingFunctionDecl = isNonVirtualFunctionDeclaration(s)))
             continue;
         if ((definitionFunction = symbolFinder.findMatchingDefinition(surroundingFunctionDecl,
-                                                                      changes.snapshot())))
+                                                                      changes.snapshot(), true)))
         {
             if (destinationFile.isEmpty() || destinationFile == definitionFunction->filePath()) {
                 prefix = QLatin1String("\n\n");
@@ -578,9 +586,8 @@ static InsertionLocation nextToSurroundingDefinitions(Symbol *declaration,
             surroundingFunctionDecl = isNonVirtualFunctionDeclaration(s);
             if (!surroundingFunctionDecl)
                 continue;
-            if ((definitionFunction = symbolFinder.findMatchingDefinition(surroundingFunctionDecl,
-                                                                          changes.snapshot())))
-            {
+            if ((definitionFunction = symbolFinder.findMatchingDefinition(
+                     surroundingFunctionDecl, changes.snapshot(), true))) {
                 if (destinationFile.isEmpty() || destinationFile ==  definitionFunction->filePath()) {
                     suffix = QLatin1String("\n\n");
                     break;
@@ -636,8 +643,13 @@ const QList<InsertionLocation> InsertionPointLocator::methodDefinition(
 
     if (useSymbolFinder) {
         SymbolFinder symbolFinder;
-        if (symbolFinder.findMatchingDefinition(declaration, m_refactoringChanges.snapshot(), true))
+        const Snapshot &snapshot = m_refactoringChanges.snapshot();
+        if (declaration->type()->asFunctionType()) {
+            if (symbolFinder.findMatchingDefinition(declaration, snapshot, true))
+                return result;
+        } else if (symbolFinder.findMatchingVarDefinition(declaration, snapshot)) {
             return result;
+        }
     }
 
     const InsertionLocation location = nextToSurroundingDefinitions(declaration,
@@ -648,7 +660,7 @@ const QList<InsertionLocation> InsertionPointLocator::methodDefinition(
 
     const FilePath declFilePath = declaration->filePath();
     FilePath target = declFilePath;
-    if (!ProjectFile::isSource(ProjectFile::classify(declFilePath.path()))) {
+    if (!ProjectFile::isSource(ProjectFile::classify(declFilePath))) {
         FilePath candidate = correspondingHeaderOrSource(declFilePath);
         if (!candidate.isEmpty()
             && !Utils::contains(result, [candidate](const InsertionLocation &loc) {
@@ -748,7 +760,7 @@ InsertionLocation insertLocationForMethodDefinition(Symbol *symbol,
     const InsertionPointLocator locator(refactoring);
     const QList<InsertionLocation> list
             = locator.methodDefinition(symbol, useSymbolFinder, filePath);
-    const bool isHeader = ProjectFile::isHeader(ProjectFile::classify(filePath.path()));
+    const bool isHeader = ProjectFile::isHeader(ProjectFile::classify(filePath));
     const bool hasIncludeGuard = isHeader
             && !file->cppDocument()->includeGuardMacroName().isEmpty();
     int lastLine;

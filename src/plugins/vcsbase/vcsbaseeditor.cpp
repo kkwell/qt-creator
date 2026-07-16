@@ -9,7 +9,9 @@
 #include "vcsbaseplugin.h"
 #include "vcsbasetr.h"
 #include "vcscommand.h"
+#include "vcsoutputwindow.h"
 
+#include <coreplugin/coreconstants.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/editormanager/ieditorfactory.h>
 #include <coreplugin/icore.h>
@@ -27,12 +29,16 @@
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectmanager.h>
 
+#include <solutions/spinner/spinner.h>
+
+#include <QtTaskTree/QSingleTaskTreeRunner>
+
+#include <texteditor/marginsettings.h>
 #include <texteditor/textdocument.h>
 #include <texteditor/textdocumentlayout.h>
 #include <texteditor/syntaxhighlighter.h>
 
 #include <utils/algorithm.h>
-#include <utils/progressindicator.h>
 #include <utils/qtcassert.h>
 #include <utils/stringutils.h>
 
@@ -47,10 +53,12 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QTextBlock>
-#include <QTextCodec>
 #include <QTextCursor>
 #include <QTextEdit>
+#include <QTimer>
 #include <QUrl>
+
+#include <algorithm>
 
 /*!
     \enum VcsBase::EditorContentType
@@ -77,6 +85,8 @@
 */
 
 using namespace Core;
+using namespace SpinnerSolution;
+using namespace QtTaskTree;
 using namespace TextEditor;
 using namespace Utils;
 
@@ -98,7 +108,7 @@ QByteArray DiffChunk::asPatch(const FilePath &workingDirectory) const
 {
     const FilePath relativeFile = workingDirectory.isEmpty() ?
                 fileName : fileName.relativeChildPath(workingDirectory);
-    const QByteArray fileNameBA = QFile::encodeName(relativeFile.toString());
+    const QByteArray fileNameBA = QFile::encodeName(relativeFile.toUrlishString());
     QByteArray rc = "--- ";
     rc += fileNameBA;
     rc += "\n+++ ";
@@ -231,6 +241,7 @@ private:
     QAction *createCopyRevisionAction(const QString &change) const;
 
     QString m_currentChange;
+    int m_changeLine = 0;
 };
 
 ChangeTextCursorHandler::ChangeTextCursorHandler(VcsBaseEditorWidget *editorWidget)
@@ -242,6 +253,7 @@ bool ChangeTextCursorHandler::findContentsUnderCursor(const QTextCursor &cursor)
 {
     AbstractTextCursorHandler::findContentsUnderCursor(cursor);
     m_currentChange = editorWidget()->changeUnderCursor(cursor);
+    m_changeLine = editorWidget()->originalLineUnderCursor(cursor);
     return !m_currentChange.isEmpty();
 }
 
@@ -289,7 +301,7 @@ void ChangeTextCursorHandler::fillContextMenu(QMenu *menu, EditorContentType typ
             menu->addAction(createAnnotateAction(m_currentChange, false));
         break;
     }
-    widget->addChangeActions(menu, m_currentChange);
+    widget->addChangeActions(menu, m_currentChange, m_changeLine);
 }
 
 QString ChangeTextCursorHandler::currentContents() const
@@ -385,7 +397,7 @@ private:
 UrlTextCursorHandler::UrlTextCursorHandler(VcsBaseEditorWidget *editorWidget)
     : AbstractTextCursorHandler(editorWidget)
 {
-    setUrlPattern(QLatin1String("https?\\://[^\\s]+"));
+    setUrlPattern("https?\\://[^\\s]+");
 
     m_jiraPattern = QRegularExpression("(Fixes|Task-number): ([A-Z]+-[0-9]+)");
     m_gerritPattern = QRegularExpression("Change-Id: (I[a-f0-9]{40})");
@@ -409,21 +421,21 @@ bool UrlTextCursorHandler::findContentsUnderCursor(const QTextCursor &cursor)
             QRegularExpression &pattern;
             int matchNumber;
             QString urlPrefix;
-        } RegexUrls[] = {
+        } const regexUrls[] = {
             {m_pattern, 0, ""},
-            {m_jiraPattern, 2, "https://bugreports.qt.io/browse/"},
+            {m_jiraPattern, 2, QString("%1/browse/").arg(Core::Constants::QT_JIRA_URL)},
             {m_gerritPattern, 1, "https://codereview.qt-project.org/r/"},
         };
-        for (const auto &r : RegexUrls) {
+        for (const auto &r : regexUrls) {
             QRegularExpressionMatchIterator i = r.pattern.globalMatch(line);
             while (i.hasNext()) {
                 const QRegularExpressionMatch match = i.next();
                 const int urlMatchIndex = match.capturedStart(r.matchNumber);
                 const QString url = match.captured(r.matchNumber);
-                if (urlMatchIndex <= cursorCol && cursorCol <= urlMatchIndex + url.length()) {
+                if (urlMatchIndex <= cursorCol && cursorCol <= urlMatchIndex + url.size()) {
                     m_urlData.startColumn = urlMatchIndex;
                     m_urlData.url = r.urlPrefix + url;
-                    m_urlData.urlLength = url.length();
+                    m_urlData.urlLength = url.size();
                     break;
                 }
             }
@@ -518,7 +530,7 @@ protected slots:
 EmailTextCursorHandler::EmailTextCursorHandler(VcsBaseEditorWidget *editorWidget)
     : UrlTextCursorHandler(editorWidget)
 {
-    setUrlPattern(QLatin1String("[a-zA-Z0-9_\\.-]+@[^@ ]+\\.[a-zA-Z]+"));
+    setUrlPattern("[a-zA-Z0-9_\\.-]+@[^@ ]+\\.[a-zA-Z]+");
 }
 
 void EmailTextCursorHandler::fillContextMenu(QMenu *menu, EditorContentType type) const
@@ -531,7 +543,7 @@ void EmailTextCursorHandler::fillContextMenu(QMenu *menu, EditorContentType type
 
 void EmailTextCursorHandler::slotOpenUrl()
 {
-    QDesktopServices::openUrl(QUrl(QLatin1String("mailto:") + currentContents()));
+    QDesktopServices::openUrl(QUrl("mailto:" + currentContents()));
 }
 
 class VcsBaseEditorWidgetPrivate
@@ -561,10 +573,11 @@ public:
     QString m_annotatePreviousRevisionTextFormat;
     VcsBaseEditorConfig *m_config = nullptr;
     QList<AbstractTextCursorHandler *> m_textCursorHandlers;
-    QPointer<VcsCommand> m_command;
-    ProgressIndicator *m_progressIndicator = nullptr;
     bool m_fileLogAnnotateEnabled = false;
     bool m_mouseDragging = false;
+    bool m_marginsEnabled = false;
+
+    QSingleTaskTreeRunner m_taskTreeRunner;
 
 private:
     QComboBox *m_entriesComboBox = nullptr;
@@ -684,6 +697,11 @@ bool VcsBaseEditorWidget::supportChangeLinks() const
     }
 }
 
+void VcsBaseEditorWidget::setMarginsEnabled(bool enabled)
+{
+    d->m_marginsEnabled = enabled;
+}
+
 FilePath VcsBaseEditorWidget::fileNameForLine(int line) const
 {
     Q_UNUSED(line)
@@ -736,22 +754,22 @@ void VcsBaseEditorWidget::init()
     case LogOutput:
         connect(d->entriesComboBox(), &QComboBox::activated,
                 this, &VcsBaseEditorWidget::slotJumpToEntry);
-        connect(this, &QPlainTextEdit::textChanged,
+        connect(this, &PlainTextEdit::textChanged,
                 this, &VcsBaseEditorWidget::slotPopulateLogBrowser);
-        connect(this, &QPlainTextEdit::cursorPositionChanged,
+        connect(this, &PlainTextEdit::cursorPositionChanged,
                 this, &VcsBaseEditorWidget::slotCursorPositionChanged);
         break;
     case AnnotateOutput:
         // Annotation highlighting depends on contents, which is set later on
-        connect(this, &QPlainTextEdit::textChanged, this, &VcsBaseEditorWidget::slotActivateAnnotation);
+        connect(this, &PlainTextEdit::textChanged, this, &VcsBaseEditorWidget::slotActivateAnnotation);
         break;
     case DiffOutput:
         // Diff: set up diff file browsing
         connect(d->entriesComboBox(), &QComboBox::activated,
                 this, &VcsBaseEditorWidget::slotJumpToEntry);
-        connect(this, &QPlainTextEdit::textChanged,
+        connect(this, &PlainTextEdit::textChanged,
                 this, &VcsBaseEditorWidget::slotPopulateDiffBrowser);
-        connect(this, &QPlainTextEdit::cursorPositionChanged,
+        connect(this, &PlainTextEdit::cursorPositionChanged,
                 this, &VcsBaseEditorWidget::slotCursorPositionChanged);
         break;
     }
@@ -768,7 +786,6 @@ void VcsBaseEditorWidget::init()
 
 VcsBaseEditorWidget::~VcsBaseEditorWidget()
 {
-    setCommand(nullptr); // abort all running commands
     delete d;
 }
 
@@ -833,27 +850,22 @@ void VcsBaseEditorWidget::setWorkingDirectory(const FilePath &wd)
     d->m_workingDirectory = wd;
 }
 
-QTextCodec *VcsBaseEditorWidget::codec() const
+TextEncoding VcsBaseEditorWidget::encoding() const
 {
-    return const_cast<QTextCodec *>(textDocument()->codec());
+    return textDocument()->encoding();
 }
 
-void VcsBaseEditorWidget::setCodec(QTextCodec *c)
+void VcsBaseEditorWidget::setEncoding(const TextEncoding &encoding)
 {
-    if (c)
-        textDocument()->setCodec(c);
+    if (encoding.isValid())
+        textDocument()->setEncoding(encoding);
     else
-        qWarning("%s: Attempt to set 0 codec.", Q_FUNC_INFO);
+        qWarning("%s: Attempt to set invalid encoding.", Q_FUNC_INFO);
 }
 
 EditorContentType VcsBaseEditorWidget::contentType() const
 {
     return d->m_parameters.type;
-}
-
-bool VcsBaseEditorWidget::isModified() const
-{
-    return false;
 }
 
 void VcsBaseEditorWidget::slotPopulateDiffBrowser()
@@ -869,15 +881,15 @@ void VcsBaseEditorWidget::slotPopulateDiffBrowser()
     for (QTextBlock it = document()->begin(); it != cend; it = it.next(), lineNumber++) {
         const QString text = it.text();
         // Check for a new diff section (not repeating the last filename)
-        if (d->m_diffFilePattern.match(text).capturedStart() == 0) {
-            const QString file = fileNameFromDiffSpecification(it);
-            if (!file.isEmpty() && lastFileName != file) {
-                lastFileName = file;
-                // ignore any headers
-                d->m_entrySections.push_back(d->m_entrySections.empty() ? 0 : lineNumber);
-                entriesComboBox->addItem(FilePath::fromString(file).fileName());
-            }
-        }
+        if (d->m_diffFilePattern.match(text).capturedStart() != 0)
+            continue;
+        const QString file = fileNameFromDiffSpecification(it);
+        if (file.isEmpty() || lastFileName == file)
+            continue;
+        lastFileName = file;
+        // ignore any headers
+        d->m_entrySections.push_back(d->m_entrySections.empty() ? 0 : lineNumber);
+        entriesComboBox->addItem(FilePath::fromString(file).fileName());
     }
 }
 
@@ -894,19 +906,19 @@ void VcsBaseEditorWidget::slotPopulateLogBrowser()
         const QString text = it.text();
         // Check for a new log section (not repeating the last filename)
         const QRegularExpressionMatch match = d->m_logEntryPattern.match(text);
-        if (match.hasMatch()) {
-            d->m_entrySections.push_back(d->m_entrySections.empty() ? 0 : lineNumber);
-            QString entry = match.captured(1);
-            QString subject = revisionSubject(it);
-            if (!subject.isEmpty()) {
-                if (subject.length() > 100) {
-                    subject.truncate(97);
-                    subject.append(QLatin1String("..."));
-                }
-                entry.append(QLatin1String(" - ")).append(subject);
+        if (!match.hasMatch())
+            continue;
+        d->m_entrySections.push_back(d->m_entrySections.empty() ? 0 : lineNumber);
+        QString entry = match.captured(1);
+        QString subject = revisionSubject(it);
+        if (!subject.isEmpty()) {
+            if (subject.size() > 100) {
+                subject.truncate(97);
+                subject.append("...");
             }
-            entriesComboBox->addItem(entry);
+            entry.append(" - ").append(subject);
         }
+        entriesComboBox->addItem(entry);
     }
 }
 
@@ -928,15 +940,29 @@ void VcsBaseEditorWidget::slotJumpToEntry(int index)
 // Locate a line number in the list of diff sections.
 static int sectionOfLine(int line, const QList<int> &sections)
 {
-    const int sectionCount = sections.size();
-    if (!sectionCount)
-        return -1;
-    // The section at s indicates where the section begins.
-    for (int s = 0; s < sectionCount; s++) {
-        if (line < sections.at(s))
-            return s - 1;
+    const auto it = std::upper_bound(sections.cbegin(), sections.cend(), line);
+    return int(std::distance(sections.cbegin(), it)) - 1;
+}
+
+QString VcsBaseEditorWidget::revisionForLine(int line) const
+{
+    const int section = sectionOfLine(line, d->m_entrySections);
+    if (section >= 0 && section < d->m_entrySections.size()) {
+        const int sectionLine = d->m_entrySections.at(section);
+        const QTextBlock sectionBlock = document()->findBlockByLineNumber(sectionLine);
+        if (sectionBlock.isValid()) {
+            const QRegularExpressionMatch match = d->m_logEntryPattern.match(sectionBlock.text());
+            if (match.hasMatch())
+                return match.captured(1);
+        }
     }
-    return sectionCount - 1;
+
+    for (QTextBlock block = document()->findBlockByLineNumber(line); block.isValid(); block = block.previous()) {
+        const QRegularExpressionMatch match = d->m_logEntryPattern.match(block.text());
+        if (match.hasMatch())
+            return match.captured(1);
+    }
+    return {};
 }
 
 void VcsBaseEditorWidget::slotCursorPositionChanged()
@@ -1088,6 +1114,14 @@ void VcsBaseEditorWidget::keyPressEvent(QKeyEvent *e)
     TextEditorWidget::keyPressEvent(e);
 }
 
+void VcsBaseEditorWidget::setMarginSettings(const TextEditor::MarginSettingsData &ms)
+{
+    if (d->m_marginsEnabled)
+        TextEditorWidget::setMarginSettings(ms);
+    else
+        TextEditorWidget::setMarginSettings({});
+}
+
 void VcsBaseEditorWidget::slotActivateAnnotation()
 {
     // The annotation highlighting depends on contents (change number
@@ -1099,7 +1133,7 @@ void VcsBaseEditorWidget::slotActivateAnnotation()
     if (changes.isEmpty())
         return;
 
-    disconnect(this, &QPlainTextEdit::textChanged, this, &VcsBaseEditorWidget::slotActivateAnnotation);
+    disconnect(this, &PlainTextEdit::textChanged, this, &VcsBaseEditorWidget::slotActivateAnnotation);
 
     if (SyntaxHighlighter *ah = textDocument()->syntaxHighlighter()) {
         ah->rehighlight();
@@ -1117,20 +1151,20 @@ void VcsBaseEditorWidget::slotActivateAnnotation()
 // Note that git appends stuff after "  @@"/" @@@" (function names, etc.).
 static inline bool checkChunkLine(const QString &line, int *modifiedLineNumber, int numberOfAts)
 {
-    const QString ats(numberOfAts, QLatin1Char('@'));
-    if (!line.startsWith(ats + QLatin1Char(' ')))
+    const QString ats(numberOfAts, '@');
+    if (!line.startsWith(ats + ' '))
         return false;
     const int len = ats.size() + 1;
-    const int endPos = line.indexOf(QLatin1Char(' ') + ats, len);
+    const int endPos = line.indexOf(' ' + ats, len);
     if (endPos == -1)
         return false;
     // the first chunk range applies to the original file, the second one to
     // the modified file, the one we're interested in
-    const int plusPos = line.indexOf(QLatin1Char('+'), len);
+    const int plusPos = line.indexOf('+', len);
     if (plusPos == -1 || plusPos > endPos)
         return false;
     const int lineNumberPos = plusPos + 1;
-    const int commaPos = line.indexOf(QLatin1Char(','), lineNumberPos);
+    const int commaPos = line.indexOf(',', lineNumberPos);
     if (commaPos == -1 || commaPos > endPos) {
         // Git submodule appears as "@@ -1 +1 @@"
         *modifiedLineNumber = 1;
@@ -1153,22 +1187,20 @@ void VcsBaseEditorWidget::jumpToChangeFromDiff(QTextCursor cursor)
 {
     int chunkStart = 0;
     int lineCount = -1;
-    const QChar deletionIndicator = QLatin1Char('-');
+    const QChar deletionIndicator = '-';
     // find nearest change hunk
     QTextBlock block = cursor.block();
-    if (TextDocumentLayout::foldingIndent(block) <= 1) {
+    if (TextBlockUserData::foldingIndent(block) <= 1) {
         // We are in a diff header, do not jump anywhere.
         // DiffAndLogHighlighter sets the foldingIndent for us.
         return;
     }
     for ( ; block.isValid() ; block = block.previous()) {
         const QString line = block.text();
-        if (checkChunkLine(line, &chunkStart)) {
+        if (checkChunkLine(line, &chunkStart))
             break;
-        } else {
-            if (!line.startsWith(deletionIndicator))
-                ++lineCount;
-        }
+        if (!line.startsWith(deletionIndicator))
+            ++lineCount;
     }
 
     if (chunkStart == -1 || lineCount < 0 || !block.isValid())
@@ -1185,9 +1217,17 @@ void VcsBaseEditorWidget::jumpToChangeFromDiff(QTextCursor cursor)
     if (!exists)
         return;
 
-    IEditor *ed = EditorManager::openEditor(FilePath::fromString(fileName));
+    jumpToDiffTarget(FilePath::fromUserInput(fileName), chunkStart + lineCount, block);
+}
+
+void VcsBaseEditorWidget::jumpToDiffTarget(const FilePath &filePath,
+                                           int lineNumber,
+                                           const QTextBlock &contextBlock)
+{
+    Q_UNUSED(contextBlock)
+    IEditor *ed = EditorManager::openEditor(filePath);
     if (auto editor = qobject_cast<BaseTextEditor *>(ed))
-        editor->gotoLine(chunkStart + lineCount);
+        editor->gotoLine(lineNumber);
 }
 
 // cut out chunk and determine file name.
@@ -1197,7 +1237,7 @@ DiffChunk VcsBaseEditorWidget::diffChunk(QTextCursor cursor) const
     QTC_ASSERT(hasDiff(), return rc);
     // Search back for start of chunk.
     QTextBlock block = cursor.block();
-    if (block.isValid() && TextDocumentLayout::foldingIndent(block) <= 1) {
+    if (block.isValid() && TextBlockUserData::foldingIndent(block) <= 1) {
         // We are in a diff header, not in a chunk!
         // DiffAndLogHighlighter sets the foldingIndent for us.
         return rc;
@@ -1211,78 +1251,69 @@ DiffChunk VcsBaseEditorWidget::diffChunk(QTextCursor cursor) const
     if (!chunkStart || !block.isValid())
         return rc;
     QString header;
-    rc.fileName = FilePath::fromString(findDiffFile(fileNameFromDiffSpecification(block, &header)));
+    rc.fileName = FilePath::fromUserInput(findDiffFile(fileNameFromDiffSpecification(block, &header)));
     if (rc.fileName.isEmpty())
         return rc;
     // Concatenate chunk and convert
     QString unicode = block.text();
-    if (!unicode.endsWith(QLatin1Char('\n'))) // Missing in case of hg.
-        unicode.append(QLatin1Char('\n'));
+    if (!unicode.endsWith('\n')) // Missing in case of hg.
+        unicode.append('\n');
     for (block = block.next() ; block.isValid() ; block = block.next()) {
         const QString line = block.text();
-        if (checkChunkLine(line, &chunkStart)
-                || d->m_diffFilePattern.match(line).capturedStart() == 0) {
+        if (checkChunkLine(line, &chunkStart) || d->m_diffFilePattern.match(line).capturedStart() == 0)
             break;
-        } else {
-            unicode += line;
-            unicode += QLatin1Char('\n');
-        }
+        unicode += line;
+        unicode += '\n';
     }
-    const QTextCodec *cd = textDocument()->codec();
-    rc.chunk = cd ? cd->fromUnicode(unicode) : unicode.toLocal8Bit();
-    rc.header = cd ? cd->fromUnicode(header) : header.toLocal8Bit();
+    const TextEncoding encoding = textDocument()->encoding();
+    if (encoding.isValid()) {
+        rc.chunk = encoding.encode(unicode);
+        rc.header = encoding.encode(header);
+    } else {
+        rc.chunk = unicode.toLocal8Bit();
+        rc.header = header.toLocal8Bit();
+    }
     return rc;
 }
 
-const VcsBaseEditorParameters *VcsBaseEditor::findType(const VcsBaseEditorParameters *array,
-                                                       int arraySize,
-                                                       EditorContentType et)
-{
-    for (int i = 0; i < arraySize; i++)
-        if (array[i].type == et)
-            return array + i;
-    return nullptr;
-}
-
 // Find the codec used for a file querying the editor.
-static QTextCodec *findFileCodec(const FilePath &source)
+static TextEncoding findFileCodec(const FilePath &source)
 {
     IDocument *document = DocumentModel::documentForFilePath(source);
     if (auto textDocument = qobject_cast<BaseTextDocument *>(document))
-        return const_cast<QTextCodec *>(textDocument->codec());
-    return nullptr;
+        return textDocument->encoding();
+    return {};
 }
 
 // Find the codec by checking the projects (root dir of project file)
-static QTextCodec *findProjectCodec(const FilePath &dirPath)
+static TextEncoding findProjectEncoding(const FilePath &dirPath)
 {
     // Try to find a project under which file tree the file is.
     const auto projects = ProjectExplorer::ProjectManager::projects();
     const auto *p
         = findOrDefault(projects, equal(&ProjectExplorer::Project::projectDirectory, dirPath));
-    return p ? p->editorConfiguration()->textCodec() : nullptr;
+    return p ? p->editorConfiguration()->textEncoding() : TextEncoding();
 }
 
-QTextCodec *VcsBaseEditor::getCodec(const FilePath &source)
+TextEncoding VcsBaseEditor::getEncoding(const FilePath &source)
 {
     if (!source.isEmpty()) {
         // Check file
         if (source.isFile())
-            if (QTextCodec *fc = findFileCodec(source))
+            if (TextEncoding fc = findFileCodec(source); fc.isValid())
                 return fc;
         // Find by project via directory
-        if (QTextCodec *pc = findProjectCodec(source.isFile() ? source.absolutePath() : source))
+        if (TextEncoding pc = findProjectEncoding(source.isFile() ? source.absolutePath() : source); pc.isValid())
             return pc;
     }
-    QTextCodec *sys = QTextCodec::codecForLocale();
-    return sys;
+    return QStringConverter::System;
 }
 
-QTextCodec *VcsBaseEditor::getCodec(const FilePath &workingDirectory, const QStringList &files)
+TextEncoding VcsBaseEditor::getEncoding(const FilePath &workingDirectory, const QStringList &files)
 {
     if (files.empty())
-        return getCodec(workingDirectory);
-    return getCodec(workingDirectory / files.front());
+        return getEncoding(workingDirectory);
+    return getEncoding(workingDirectory / files.front());
 }
 
 VcsBaseEditorWidget *VcsBaseEditor::getVcsBaseEditor(const IEditor *editor)
@@ -1347,7 +1378,7 @@ QString VcsBaseEditor::getTitleId(const FilePath &workingDirectory,
                                   const QString &revision)
 {
     QStringList nonEmptyFileNames;
-    for (const QString& fileName : fileNames) {
+    for (const QString &fileName : fileNames) {
         if (!fileName.trimmed().isEmpty())
             nonEmptyFileNames.append(fileName);
     }
@@ -1355,17 +1386,17 @@ QString VcsBaseEditor::getTitleId(const FilePath &workingDirectory,
     QString rc;
     switch (nonEmptyFileNames.size()) {
     case 0:
-        rc = workingDirectory.toString();
+        rc = workingDirectory.toUrlishString();
         break;
     case 1:
         rc = nonEmptyFileNames.front();
         break;
     default:
-        rc = nonEmptyFileNames.join(QLatin1String(", "));
+        rc = nonEmptyFileNames.join(", ");
         break;
     }
     if (!revision.isEmpty()) {
-        rc += QLatin1Char(':');
+        rc += ':';
         rc += revision;
     }
     return rc;
@@ -1381,19 +1412,37 @@ VcsBaseEditorConfig *VcsBaseEditorWidget::editorConfig() const
     return d->m_config;
 }
 
-void VcsBaseEditorWidget::setCommand(VcsCommand *command)
+void VcsBaseEditorWidget::executeTask(const ExecutableItem &task,
+                                      const Storage<CommandResult> &resultStorage)
 {
-    if (d->m_command) {
-        delete d->m_command;
-        hideProgressIndicator();
-    }
-    d->m_command = command;
-    if (command) {
-        d->m_progressIndicator = new ProgressIndicator(ProgressIndicatorSize::Large);
-        d->m_progressIndicator->attachToWidget(this);
-        connect(command, &VcsCommand::done, this, &VcsBaseEditorWidget::hideProgressIndicator);
-        QTimer::singleShot(100, this, &VcsBaseEditorWidget::showProgressIndicator);
-    }
+    if (d->m_taskTreeRunner.isRunning())
+        d->m_taskTreeRunner.cancel();
+
+    const Storage<Spinner> spinnerStorage{SpinnerSize::Large, this};
+
+    const auto onSetup = [spinnerStorage] {
+        QTimer::singleShot(100, spinnerStorage.activeStorage(), &Spinner::show);
+    };
+    const auto onDone = [this, resultStorage](DoneWith doneWith) {
+        if (doneWith != DoneWith::Success) {
+            textDocument()->setPlainText(Tr::tr("Failed to retrieve data."));
+            VcsOutputWindow::appendError(resultStorage->workingDirectory(),
+                                         resultStorage->cleanedStdErr());
+            return;
+        }
+        setPlainText(resultStorage->cleanedStdOut());
+        gotoDefaultLine();
+    };
+
+    const Group recipe {
+        spinnerStorage,
+        resultStorage,
+        onGroupSetup(onSetup),
+        task,
+        onGroupDone(onDone)
+    };
+
+    d->m_taskTreeRunner.start(recipe);
 }
 
 void VcsBaseEditorWidget::setDefaultLineNumber(int line)
@@ -1424,7 +1473,7 @@ QString VcsBaseEditorWidget::findDiffFile(const QString &f) const
     if (!d->m_workingDirectory.isEmpty()) {
         const FilePath baseFileInfo = d->m_workingDirectory.pathAppended(f);
         if (baseFileInfo.isFile())
-            return baseFileInfo.absoluteFilePath().toString();
+            return baseFileInfo.absoluteFilePath().toUrlishString();
     }
     // 2) Try in source (which can be file or directory)
     const FilePath sourcePath = source();
@@ -1433,7 +1482,7 @@ QString VcsBaseEditorWidget::findDiffFile(const QString &f) const
                                                       : sourcePath.absolutePath();
         const FilePath sourceFileInfo = sourceDir.pathAppended(f);
         if (sourceFileInfo.isFile())
-            return sourceFileInfo.absoluteFilePath().toString();
+            return sourceFileInfo.absoluteFilePath().toUrlishString();
 
         const FilePath topLevel =
             VcsManager::findTopLevelForDirectory(sourceDir);
@@ -1442,7 +1491,7 @@ QString VcsBaseEditorWidget::findDiffFile(const QString &f) const
 
         const FilePath topLevelFile = topLevel.pathAppended(f);
         if (topLevelFile.isFile())
-            return topLevelFile.absoluteFilePath().toString();
+            return topLevelFile.absoluteFilePath().toUrlishString();
     }
 
     // 3) Try working directory
@@ -1450,10 +1499,10 @@ QString VcsBaseEditorWidget::findDiffFile(const QString &f) const
         return in.absoluteFilePath();
 
     // 4) remove trailing tab char and try again: At least git appends \t when the
-    //    filename contains spaces. Since the diff commend does use \t all of a sudden,
+    //    filename contains spaces. Since the diff command does use \t all of a sudden,
     //    too, when seeing spaces in a filename, I expect the same behavior in other VCS.
-    if (f.endsWith(QLatin1Char('\t')))
-        return findDiffFile(f.left(f.length() - 1));
+    if (f.endsWith('\t'))
+        return findDiffFile(f.left(f.size() - 1));
 
     return {};
 }
@@ -1472,7 +1521,7 @@ void VcsBaseEditorWidget::slotAnnotateRevision(const QString &change)
     const FilePath relativePath = fileName.isRelativePath()
             ? fileName
             : fileName.relativeChildPath(workingDirectory);
-    emit annotateRevisionRequested(workingDirectory, relativePath.toString(), change, currentLine);
+    emit annotateRevisionRequested(workingDirectory, relativePath.toUrlishString(), change, currentLine);
 }
 
 QStringList VcsBaseEditorWidget::annotationPreviousVersions(const QString &) const
@@ -1486,19 +1535,6 @@ void VcsBaseEditorWidget::slotPaste()
     auto pasteService = ExtensionSystem::PluginManager::getObject<CodePaster::Service>();
     QTC_ASSERT(pasteService, return);
     pasteService->postCurrentEditor();
-}
-
-void VcsBaseEditorWidget::showProgressIndicator()
-{
-    if (!d->m_progressIndicator) // already stopped and deleted
-        return;
-    d->m_progressIndicator->show();
-}
-
-void VcsBaseEditorWidget::hideProgressIndicator()
-{
-    delete d->m_progressIndicator;
-    d->m_progressIndicator = nullptr;
 }
 
 bool VcsBaseEditorWidget::canApplyDiffChunk(const DiffChunk &dc) const
@@ -1527,7 +1563,7 @@ QString VcsBaseEditorWidget::fileNameFromDiffSpecification(const QTextBlock &inB
         if (match.hasMatch()) {
             const QString cap = match.captured(1);
             if (header)
-                header->prepend(line + QLatin1String("\n"));
+                header->prepend(line + "\n");
             if (fileName.isEmpty() && !cap.isEmpty())
                 fileName = cap;
         } else if (!fileName.isEmpty()) {
@@ -1539,8 +1575,9 @@ QString VcsBaseEditorWidget::fileNameFromDiffSpecification(const QTextBlock &inB
     return fileName.isEmpty() ? QString() : findDiffFile(fileName);
 }
 
-void VcsBaseEditorWidget::addChangeActions(QMenu *, const QString &)
+void VcsBaseEditorWidget::addChangeActions(QMenu *, const QString &, int line)
 {
+    Q_UNUSED(line);
 }
 
 QSet<QString> VcsBaseEditorWidget::annotationChanges() const
@@ -1611,17 +1648,17 @@ void VcsBaseEditorWidget::slotApplyDiffChunk(const DiffChunk &chunk, PatchAction
 QString VcsBaseEditor::editorTag(EditorContentType t, const FilePath &workingDirectory,
                                  const QStringList &files, const QString &revision)
 {
-    const QChar colon = QLatin1Char(':');
+    const QChar colon = ':';
     QString rc = QString::number(t);
     rc += colon;
     if (!revision.isEmpty()) {
         rc += revision;
         rc += colon;
     }
-    rc += workingDirectory.toString();
+    rc += workingDirectory.toUrlishString();
     if (!files.isEmpty()) {
         rc += colon;
-        rc += files.join(QString(colon));
+        rc += files.join(colon);
     }
     return rc;
 }

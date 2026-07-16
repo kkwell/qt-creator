@@ -3,16 +3,25 @@
 
 #include "materialbrowsertexturesmodel.h"
 
-#include "designmodewidget.h"
-#include "imageutils.h"
-#include "materialbrowserview.h"
-#include "qmldesignerplugin.h"
-#include "qmlobjectnode.h"
-#include "variantproperty.h"
+#include <abstractproperty.h>
+#include <bindingproperty.h>
+#include <designmodewidget.h>
+#include <imageutils.h>
+#include <materialbrowserview.h>
+#include <qmldesignerplugin.h>
+#include <qmlobjectnode.h>
+#include <variantproperty.h>
+
+#include <utils3d.h>
 
 #include <utils/qtcassert.h>
 
 namespace QmlDesigner {
+
+static bool isMaterial(const ModelNode &node)
+{
+    return node.metaInfo().isQtQuick3DMaterial();
+}
 
 MaterialBrowserTexturesModel::MaterialBrowserTexturesModel(MaterialBrowserView *view, QObject *parent)
     : QAbstractListModel(parent)
@@ -34,30 +43,42 @@ QVariant MaterialBrowserTexturesModel::data(const QModelIndex &index, int role) 
     QTC_ASSERT(index.isValid() && index.row() < m_textureList.size(), return {});
     QTC_ASSERT(roleNames().contains(role), return {});
 
-    if (role == RoleTexSource) {
-        QString source = QmlObjectNode(m_textureList.at(index.row())).modelValue("source").toString();
+    switch (role) {
+    case RoleMatchedSearch:
+        return isVisible(index.row());
+    case RoleTexSelected:
+        return m_textureList.at(index.row()).isSelected();
+    case RoleTexHasDynamicProps:
+        return !m_textureList.at(index.row()).dynamicProperties().isEmpty();
+    case RoleTexInternalId:
+        return m_textureList.at(index.row()).internalId();
+    case RoleTexName:
+        return m_textureList.at(index.row()).variantProperty("objectName").value();
+    case RoleTexSource: {
+        ModelNode texNode = m_textureList.at(index.row());
+        QString source = QmlObjectNode(texNode).modelValue("source").toString();
+        if (source.isEmpty()) {
+            // Source might be bound to another property, so resolve that
+            AbstractProperty sourceProp = texNode.property("source");
+            if (sourceProp.isBindingProperty()) {
+                AbstractProperty resolvedProp = sourceProp.toBindingProperty().resolveToProperty();
+                if (resolvedProp.isVariantProperty())
+                    source = resolvedProp.toVariantProperty().value().toString();
+            }
+        }
         if (source.isEmpty())
             return {};
         if (Utils::FilePath::fromString(source).isAbsolutePath())
             return QVariant(source);
-        return QVariant(QmlDesignerPlugin::instance()->documentManager().currentDesignDocument()
-                        ->fileName().absolutePath().pathAppended(source).cleanPath().toString());
-    }
-
-    if (role == RoleTexVisible)
-        return isVisible(index.row());
-
-    if (role == RoleTexHasDynamicProps)
-        return !m_textureList.at(index.row()).dynamicProperties().isEmpty();
-
-    if (role == RoleTexInternalId)
-        return m_textureList.at(index.row()).internalId();
-
-    if (role == RoleTexId) {
-        return m_textureList.at(index.row()).id();
-    }
-
-    if (role == RoleTexToolTip) {
+        return QVariant(QmlDesignerPlugin::instance()
+                            ->documentManager()
+                            .currentDesignDocument()
+                            ->fileName()
+                            .absolutePath()
+                            .pathAppended(source)
+                            .toFSPathString());
+    };
+    case RoleTexToolTip: {
         QString source = data(index, RoleTexSource).toString(); // absolute path
         if (source.isEmpty())
             return tr("Texture has no source image.");
@@ -68,11 +89,13 @@ QVariant MaterialBrowserTexturesModel::data(const QModelIndex &index, int role) 
         if (info.isEmpty())
             return tr("Texture has no data.");
 
+        QString textName = data(index, RoleTexName).toString();
         QString sourceRelative = QmlObjectNode(texNode).modelValue("source").toString();
-        return QLatin1String("%1\n%2\n%3").arg(texNode.id(), sourceRelative, info);
+        return QLatin1String("%1 (%2)\n%3\n%4").arg(textName, texNode.id(), sourceRelative, info);
+    };
+    default:
+        return {};
     }
-
-    return {};
 }
 
 bool MaterialBrowserTexturesModel::isVisible(int idx) const
@@ -80,8 +103,17 @@ bool MaterialBrowserTexturesModel::isVisible(int idx) const
     if (!isValidIndex(idx))
         return false;
 
-    return m_searchText.isEmpty() || m_textureList.at(idx).variantProperty("source")
-            .value().toString().contains(m_searchText, Qt::CaseInsensitive);
+    if (m_searchText.isEmpty())
+        return true;
+
+    const ModelNode &texture = m_textureList.at(idx);
+
+    auto propertyHasMatch = [&](const PropertyName &property) -> bool {
+        return texture.variantProperty(property).value().toString().contains(m_searchText,
+                                                                             Qt::CaseInsensitive);
+    };
+
+    return propertyHasMatch("objectName") || propertyHasMatch("source");
 }
 
 bool MaterialBrowserTexturesModel::isValidIndex(int idx) const
@@ -89,15 +121,25 @@ bool MaterialBrowserTexturesModel::isValidIndex(int idx) const
     return idx > -1 && idx < rowCount();
 }
 
+void MaterialBrowserTexturesModel::setOnlyMaterialsSelected(bool value)
+{
+    if (m_onlyMaterialsSelected == value)
+        return;
+
+    m_onlyMaterialsSelected = value;
+    emit onlyMaterialsSelectedChanged();
+}
+
 QHash<int, QByteArray> MaterialBrowserTexturesModel::roleNames() const
 {
-    static const QHash<int, QByteArray> roles {
+    static const QHash<int, QByteArray> roles{
         {RoleTexHasDynamicProps, "hasDynamicProperties"},
-        {RoleTexInternalId,      "textureInternalId"},
-        {RoleTexId,              "textureId"},
-        {RoleTexSource,          "textureSource"},
-        {RoleTexToolTip,         "textureToolTip"},
-        {RoleTexVisible,         "textureVisible"}
+        {RoleTexInternalId, "textureInternalId"},
+        {RoleTexName, "textureName"},
+        {RoleTexSource, "textureSource"},
+        {RoleTexToolTip, "textureToolTip"},
+        {RoleMatchedSearch, "textureMatchedSearch"},
+        {RoleTexSelected, "textureSelected"},
     };
     return roles;
 }
@@ -121,26 +163,13 @@ void MaterialBrowserTexturesModel::setSearchText(const QString &searchText)
 
 void MaterialBrowserTexturesModel::refreshSearch()
 {
-    bool isEmpty = false;
+    bool isEmpty = true;
 
-    // if selected texture goes invisible, select nearest one
-    if (!isVisible(m_selectedIndex)) {
-        int inc = 1;
-        int incCap = m_textureList.size();
-        while (!isEmpty && inc < incCap) {
-            if (isVisible(m_selectedIndex - inc)) {
-                selectTexture(m_selectedIndex - inc);
-                break;
-            } else if (isVisible(m_selectedIndex + inc)) {
-                selectTexture(m_selectedIndex + inc);
-                break;
-            }
-            ++inc;
-            isEmpty = !isValidIndex(m_selectedIndex + inc)
-                   && !isValidIndex(m_selectedIndex - inc);
+    for (int i = 0; i < m_textureList.size(); ++i) {
+        if (isVisible(i)) {
+            isEmpty = false;
+            break;
         }
-        if (!isVisible(m_selectedIndex)) // handles the case of a single item
-            isEmpty = true;
     }
 
     if (isEmpty != m_isEmpty) {
@@ -164,7 +193,6 @@ void MaterialBrowserTexturesModel::setTextures(const QList<ModelNode> &textures)
         emit isEmptyChanged();
     }
 
-    updateSelectedTexture();
     resetModel();
 }
 
@@ -194,9 +222,18 @@ void MaterialBrowserTexturesModel::addNewTexture()
     emit addNewTextureTriggered();
 }
 
-void MaterialBrowserTexturesModel::deleteSelectedTexture()
+void MaterialBrowserTexturesModel::deleteSelectedTextures()
 {
-    deleteTexture(m_selectedIndex);
+    m_view->executeInTransaction(__FUNCTION__, [this] {
+        QStack<int> selectedIndexes;
+        for (int i = 0; i < m_textureList.size(); ++i) {
+            if (m_textureList.at(i).isSelected())
+                selectedIndexes << i;
+        }
+
+        while (!selectedIndexes.isEmpty())
+            deleteTexture(selectedIndexes.pop());
+    });
 }
 
 void MaterialBrowserTexturesModel::updateTextureSource(const ModelNode &texture)
@@ -206,22 +243,46 @@ void MaterialBrowserTexturesModel::updateTextureSource(const ModelNode &texture)
         emit dataChanged(index(idx, 0), index(idx, 0), {RoleTexSource, RoleTexToolTip});
 }
 
+void MaterialBrowserTexturesModel::updateTextureId(const ModelNode &texture)
+{
+    int idx = textureIndex(texture);
+    if (idx != -1)
+        emit dataChanged(index(idx, 0), index(idx, 0), {RoleTexToolTip});
+}
+
+void MaterialBrowserTexturesModel::updateTextureName(const ModelNode &texture)
+{
+    int idx = textureIndex(texture);
+    if (idx != -1)
+        emit dataChanged(index(idx, 0), index(idx, 0), {RoleTexName, RoleTexToolTip});
+}
+
 void MaterialBrowserTexturesModel::updateAllTexturesSources()
 {
     emit dataChanged(index(0, 0), index(rowCount() - 1, 0), {RoleTexSource, RoleTexToolTip});
 }
 
-void MaterialBrowserTexturesModel::updateSelectedTexture()
+void MaterialBrowserTexturesModel::notifySelectionChanges(const QList<ModelNode> &selectedNodes,
+                                                          const QList<ModelNode> &deselectedNodes)
 {
-    selectTexture(m_selectedIndex, true);
+    QList<int> indices;
+    indices.reserve(selectedNodes.size() + deselectedNodes.size());
+    for (const ModelNode &node : selectedNodes)
+        indices.append(textureIndex(node));
+
+    for (const ModelNode &node : deselectedNodes)
+        indices.append(textureIndex(node));
+
+    using Bound = QPair<int, int>;
+    const QList<Bound> &bounds = MaterialBrowserView::getSortedBounds(indices);
+
+    for (const Bound &bound : bounds)
+        emit dataChanged(index(bound.first), index(bound.second), {Roles::RoleTexSelected});
 }
 
 int MaterialBrowserTexturesModel::textureIndex(const ModelNode &texture) const
 {
-    if (m_textureIndexHash.contains(texture.internalId()))
-        return m_textureIndexHash.value(texture.internalId());
-
-    return -1;
+    return m_textureIndexHash.value(texture.internalId(), -1);
 }
 
 ModelNode MaterialBrowserTexturesModel::textureAt(int idx) const
@@ -230,11 +291,6 @@ ModelNode MaterialBrowserTexturesModel::textureAt(int idx) const
         return m_textureList.at(idx);
 
     return {};
-}
-
-ModelNode MaterialBrowserTexturesModel::selectedTexture() const
-{
-    return textureAt(m_selectedIndex);
 }
 
 bool MaterialBrowserTexturesModel::hasSingleModelSelection() const
@@ -249,6 +305,11 @@ void MaterialBrowserTexturesModel::setHasSingleModelSelection(bool b)
 
     m_hasSingleModelSelection = b;
     emit hasSingleModelSelectionChanged();
+}
+
+bool MaterialBrowserTexturesModel::onlyMaterialsSelected() const
+{
+    return m_onlyMaterialsSelected;
 }
 
 bool MaterialBrowserTexturesModel::hasSceneEnv() const
@@ -271,20 +332,18 @@ void MaterialBrowserTexturesModel::resetModel()
     endResetModel();
 }
 
-void MaterialBrowserTexturesModel::selectTexture(int idx, bool force)
+void MaterialBrowserTexturesModel::selectTexture(int idx, bool appendTxt)
 {
-    if (m_textureList.size() == 0) {
-        m_selectedIndex = -1;
-        emit selectedIndexChanged(m_selectedIndex);
+    if (!isValidIndex(idx))
         return;
-    }
 
-    idx = std::max(0, std::min(idx, rowCount() - 1));
+    ModelNode texture = m_textureList.at(idx);
+    QTC_ASSERT(texture, return);
 
-    if (idx != m_selectedIndex || force) {
-        m_selectedIndex = idx;
-        emit selectedIndexChanged(idx);
-    }
+    if (appendTxt)
+        texture.view()->selectModelNode(texture);
+    else
+        texture.selectNode();
 }
 
 void MaterialBrowserTexturesModel::duplicateTexture(int idx)
@@ -304,19 +363,12 @@ void MaterialBrowserTexturesModel::deleteTexture(int idx)
     }
 }
 
-void MaterialBrowserTexturesModel::setTextureId(int idx, const QString &newId)
+void MaterialBrowserTexturesModel::setTextureName(int idx, const QString &newName)
 {
     if (!isValidIndex(idx))
         return;
 
-    ModelNode node = m_textureList[idx];
-    if (!node.isValid())
-        return;
-
-    if (node.id() != newId) {
-        node.setIdWithRefactoring(newId);
-        emit dataChanged(index(idx, 0), index(idx, 0), {RoleTexId});
-    }
+    QmlObjectNode(m_textureList[idx]).setNameAndId(newName, "texture");
 }
 
 void MaterialBrowserTexturesModel::applyToSelectedMaterial(qint64 internalId)
@@ -337,14 +389,18 @@ void MaterialBrowserTexturesModel::applyToSelectedModel(qint64 internalId)
     }
 }
 
-void MaterialBrowserTexturesModel::openTextureEditor()
-{
-    QmlDesignerPlugin::instance()->mainWidget()->showDockWidget("TextureEditor", true);
-}
-
 void MaterialBrowserTexturesModel::updateSceneEnvState()
 {
     emit updateSceneEnvStateRequested();
+}
+
+void MaterialBrowserTexturesModel::updateSelectionState()
+{
+    setHasSingleModelSelection(
+        m_view->hasSingleSelectedModelNode()
+        && Utils3D::getMaterialOfModel(m_view->singleSelectedModelNode()).isValid());
+
+    setOnlyMaterialsSelected(Utils::allOf(m_view->selectedModelNodes(), isMaterial));
 }
 
 void MaterialBrowserTexturesModel::applyAsLightProbe(qint64 internalId)
@@ -354,11 +410,6 @@ void MaterialBrowserTexturesModel::applyAsLightProbe(qint64 internalId)
         ModelNode tex = m_textureList.at(idx);
         emit applyAsLightProbeRequested(tex);
     }
-}
-
-void MaterialBrowserTexturesModel::updateModelSelectionState()
-{
-    emit updateModelSelectionStateRequested();
 }
 
 } // namespace QmlDesigner

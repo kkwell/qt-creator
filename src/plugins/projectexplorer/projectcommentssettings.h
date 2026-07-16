@@ -3,36 +3,9 @@
 
 #pragma once
 
-#include <texteditor/commentssettings.h>
-
-namespace ProjectExplorer {
-class Project;
-
-namespace Internal {
-
-class ProjectCommentsSettings
-{
-public:
-    // Passing a null ptr is allowed and yields the global settings, so you can use
-    // this class transparently for both cases.
-    ProjectCommentsSettings(Project *project);
-
-    TextEditor::CommentsSettings::Data settings() const;
-    void setSettings(const TextEditor::CommentsSettings::Data &settings);
-    bool useGlobalSettings() const { return m_useGlobalSettings; }
-    void setUseGlobalSettings(bool useGlobal);
-
-private:
-    void loadSettings();
-    void saveSettings();
-
-    ProjectExplorer::Project * const m_project;
-    TextEditor::CommentsSettings::Data m_customSettings;
-    bool m_useGlobalSettings = true;
-};
+namespace ProjectExplorer::Internal {
 
 void setupCommentsSettingsProjectPanel();
 
-} // namespace Internal
-} // namespace ProjectExplorer
+} // namespace Internal::ProjectExplorer
 

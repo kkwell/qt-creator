@@ -14,8 +14,8 @@ namespace TextEditor { class TextDocument; }
 
 namespace Python::Internal {
 
-class PySideUicExtraCompiler;
 class PyLSInterface;
+class PySideUicExtraCompiler;
 
 class PyLSClient : public LanguageClient::Client
 {
@@ -25,10 +25,9 @@ public:
     ~PyLSClient();
 
     void openDocument(TextEditor::TextDocument *document) override;
-    void projectClosed(ProjectExplorer::Project *project) override;
+    void buildConfigurationClosed(ProjectExplorer::BuildConfiguration *bc) override;
 
-    void updateExtraCompilers(ProjectExplorer::Project *project,
-                              const QList<PySideUicExtraCompiler *> &extraCompilers);
+    void updateExtraCompilers(const ProjectExplorer::Project *project);
 
     static PyLSClient *clientForPython(const Utils::FilePath &python);
     void updateConfiguration();
@@ -37,12 +36,12 @@ private:
     void updateExtraCompilerContents(ProjectExplorer::ExtraCompiler *compiler,
                                      const Utils::FilePath &file);
     void closeExtraDoc(const Utils::FilePath &file);
-    void closeExtraCompiler(ProjectExplorer::ExtraCompiler *compiler);
+    void deleteExtraCompiler(ProjectExplorer::ExtraCompiler *compiler);
 
     Utils::FilePaths m_extraWorkspaceDirs;
     Utils::FilePath m_extraCompilerOutputDir;
 
-    QHash<ProjectExplorer::Project *, QList<ProjectExplorer::ExtraCompiler *>> m_extraCompilers;
+    QList<QPointer<PySideUicExtraCompiler>> m_extraCompilers;
 };
 
 void openDocumentWithPython(const Utils::FilePath &python, TextEditor::TextDocument *document);

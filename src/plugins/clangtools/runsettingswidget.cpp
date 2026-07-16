@@ -3,17 +3,21 @@
 
 #include "runsettingswidget.h"
 
+#include "clangtoolsconstants.h"
 #include "clangtoolssettings.h"
 #include "clangtoolstr.h"
 #include "clangtoolsutils.h"
 #include "diagnosticconfigswidget.h"
 #include "executableinfo.h"
-#include "settingswidget.h"
+#include "runsettingswidget.h"
+
+#include <coreplugin/dialogs/ioptionspage.h>
 
 #include <cppeditor/clangdiagnosticconfigswidget.h>
 #include <cppeditor/clangdiagnosticconfigsselectionwidget.h>
 
 #include <utils/layoutbuilder.h>
+#include <utils/pathchooser.h>
 
 #include <QApplication>
 #include <QCheckBox>
@@ -24,6 +28,109 @@ using namespace CppEditor;
 using namespace Utils;
 
 namespace ClangTools::Internal {
+
+class RunSettingsWidget;
+
+class SettingsWidget : public Core::IOptionsPageWidget
+{
+public:
+    SettingsWidget();
+    ~SettingsWidget() override;
+
+    Utils::FilePath clangTidyPath() const;
+    Utils::FilePath clazyStandalonePath() const;
+
+private:
+    void apply() final;
+
+    ClangToolsSettings *m_settings;
+
+    Utils::PathChooser *m_clangTidyPathChooser;
+    Utils::PathChooser *m_clazyStandalonePathChooser;
+    RunSettingsWidget *m_runSettingsWidget;
+};
+
+static SettingsWidget *m_settingsWidgetInstance = nullptr;
+
+SettingsWidget::SettingsWidget()
+    : m_settings(ClangToolsSettings::instance())
+{
+    m_settingsWidgetInstance = this;
+
+    auto createPathChooser = [this](ClangToolType tool)
+    {
+        const FilePath defaultValue = toolShippedExecutable(tool);
+        FilePath path = m_settings->executable(tool);
+        if (path.isEmpty() && defaultValue.isEmpty()) {
+            path = tool == ClangToolType::Tidy ? FilePath(Constants::CLANG_TIDY_EXECUTABLE_NAME)
+                                               : FilePath(Constants::CLAZY_STANDALONE_EXECUTABLE_NAME);
+        }
+        PathChooser *pathChooser = new PathChooser;
+        pathChooser->setExpectedKind(PathChooser::ExistingCommand);
+        pathChooser->setPromptDialogTitle(tool == ClangToolType::Tidy ? Tr::tr("Clang-Tidy Executable")
+                                                                      : Tr::tr("Clazy Executable"));
+        pathChooser->setDefaultValue(defaultValue);
+        pathChooser->setFilePath(path);
+        pathChooser->setHistoryCompleter(tool == ClangToolType::Tidy
+                                        ? Key("ClangTools.ClangTidyExecutable.History")
+                                        : Key("ClangTools.ClazyStandaloneExecutable.History"));
+        pathChooser->setCommandVersionArguments({"--version"});
+        return pathChooser;
+    };
+    m_clangTidyPathChooser = createPathChooser(ClangToolType::Tidy);
+    m_clazyStandalonePathChooser = createPathChooser(ClangToolType::Clazy);
+
+    m_runSettingsWidget = new RunSettingsWidget;
+    m_runSettingsWidget->fromSettings(m_settings->runSettings);
+
+    using namespace Layouting;
+
+    Column {
+        Group {
+            title(Tr::tr("Executables")),
+            Form {
+                Tr::tr("Clang-Tidy:"), m_clangTidyPathChooser, br,
+                Tr::tr("Clazy-Standalone:"), m_clazyStandalonePathChooser
+            }
+        },
+        m_runSettingsWidget,
+        st
+    }.attachTo(this);
+
+    installMarkSettingsDirtyTriggerRecursively(this);
+}
+
+void SettingsWidget::apply()
+{
+    // Executables
+    m_settings->setExecutable(ClangToolType::Tidy, clangTidyPath());
+    m_settings->setExecutable(ClangToolType::Clazy, clazyStandalonePath());
+
+    // Custom configs
+    const ClangDiagnosticConfigs customConfigs
+        = m_runSettingsWidget->diagnosticSelectionWidget()->customConfigs();
+    m_settings->setDiagnosticConfigs(customConfigs);
+
+    // Run options
+    m_runSettingsWidget->toSettings(m_settings->runSettings);
+
+    m_settings->writeSettings();
+}
+
+SettingsWidget::~SettingsWidget()
+{
+    m_settingsWidgetInstance = nullptr;
+}
+
+FilePath SettingsWidget::clangTidyPath() const
+{
+    return m_clangTidyPathChooser->unexpandedFilePath();
+}
+
+FilePath SettingsWidget::clazyStandalonePath() const
+{
+    return m_clazyStandalonePathChooser->unexpandedFilePath();
+}
 
 RunSettingsWidget::RunSettingsWidget(QWidget *parent)
     : QWidget(parent)
@@ -66,13 +173,13 @@ static ClangDiagnosticConfigsWidget *createEditWidget(const ClangDiagnosticConfi
     // Determine executable paths
     FilePath clangTidyPath;
     FilePath clazyStandalonePath;
-    if (auto settingsWidget = SettingsWidget::instance()) {
+    if (m_settingsWidgetInstance) {
         // Global settings case; executables might not yet applied to settings
-        clangTidyPath = settingsWidget->clangTidyPath();
+        clangTidyPath = m_settingsWidgetInstance->clangTidyPath();
         clangTidyPath = clangTidyPath.isEmpty() ? toolFallbackExecutable(ClangToolType::Tidy)
                                                 : fullPath(clangTidyPath);
 
-        clazyStandalonePath = settingsWidget->clazyStandalonePath();
+        clazyStandalonePath = m_settingsWidgetInstance->clazyStandalonePath();
         clazyStandalonePath = clazyStandalonePath.isEmpty()
                             ? toolFallbackExecutable(ClangToolType::Clazy)
                             : fullPath(clazyStandalonePath);
@@ -90,9 +197,10 @@ static ClangDiagnosticConfigsWidget *createEditWidget(const ClangDiagnosticConfi
 
 void RunSettingsWidget::fromSettings(const RunSettings &s)
 {
-    disconnect(m_diagnosticWidget, 0, 0, 0);
+    disconnect(m_diagnosticWidget, &ClangDiagnosticConfigsSelectionWidget::changed,
+               this, &RunSettingsWidget::changed);
     m_diagnosticWidget->refresh(diagnosticConfigsModel(),
-                                s.diagnosticConfigId(),
+                                s.safeDiagnosticConfigId(),
                                 createEditWidget);
     connect(m_diagnosticWidget, &ClangDiagnosticConfigsSelectionWidget::changed,
             this, &RunSettingsWidget::changed);
@@ -100,7 +208,7 @@ void RunSettingsWidget::fromSettings(const RunSettings &s)
     m_preferConfigFile->setChecked(s.preferConfigFile());
     connect(m_preferConfigFile, &QCheckBox::toggled, this, &RunSettingsWidget::changed);
 
-    disconnect(m_buildBeforeAnalysis, 0, 0, 0);
+    disconnect(m_buildBeforeAnalysis, &QCheckBox::toggled, this, nullptr);
     m_buildBeforeAnalysis->setToolTip(hintAboutBuildBeforeAnalysis());
     m_buildBeforeAnalysis->setCheckState(s.buildBeforeAnalysis() ? Qt::Checked : Qt::Unchecked);
     connect(m_buildBeforeAnalysis, &QCheckBox::toggled, this, [this](bool checked) {
@@ -109,7 +217,7 @@ void RunSettingsWidget::fromSettings(const RunSettings &s)
         emit changed();
     });
 
-    disconnect(m_parallelJobsSpinBox, 0, 0, 0);
+    disconnect(m_parallelJobsSpinBox, &QSpinBox::valueChanged, this, &RunSettingsWidget::changed);
     m_parallelJobsSpinBox->setValue(s.parallelJobs());
     m_parallelJobsSpinBox->setMinimum(1);
     m_parallelJobsSpinBox->setMaximum(QThread::idealThreadCount());
@@ -118,16 +226,32 @@ void RunSettingsWidget::fromSettings(const RunSettings &s)
     connect(m_analyzeOpenFiles, &QCheckBox::toggled, this, &RunSettingsWidget::changed);
 }
 
-RunSettings RunSettingsWidget::toSettings() const
+void RunSettingsWidget::toSettings(RunSettings &s) const
 {
-    RunSettings s;
-    s.setDiagnosticConfigId(m_diagnosticWidget->currentConfigId());
-    s.setPreferConfigFile(m_preferConfigFile->isChecked());
-    s.setBuildBeforeAnalysis(m_buildBeforeAnalysis->checkState() == Qt::CheckState::Checked);
-    s.setParallelJobs(m_parallelJobsSpinBox->value());
-    s.setAnalyzeOpenFiles(m_analyzeOpenFiles->checkState() == Qt::CheckState::Checked);
+    s.diagnosticConfigId.setValue(m_diagnosticWidget->currentConfigId());
+    s.preferConfigFile.setValue(m_preferConfigFile->isChecked());
+    s.buildBeforeAnalysis.setValue(m_buildBeforeAnalysis->checkState() == Qt::CheckState::Checked);
+    s.parallelJobs.setValue(m_parallelJobsSpinBox->value());
+    s.analyzeOpenFiles.setValue(m_analyzeOpenFiles->checkState() == Qt::CheckState::Checked);
+}
 
-    return s;
+// ClangToolsOptionsPage
+
+class ClangToolsOptionsPage final : public Core::IOptionsPage
+{
+public:
+    ClangToolsOptionsPage()
+    {
+        setId(Constants::SETTINGS_PAGE_ID);
+        setDisplayName(Tr::tr("Clang Tools"));
+        setCategory("T.Analyzer");
+        setWidgetCreator([] { return new SettingsWidget; });
+    }
+};
+
+void setupClangToolsOptionsPage()
+{
+    static ClangToolsOptionsPage theClangToolsOptionsPage;
 }
 
 } // ClangTools::Internal

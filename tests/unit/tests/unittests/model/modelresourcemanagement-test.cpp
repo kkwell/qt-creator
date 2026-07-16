@@ -6,6 +6,7 @@
 #include "../mocks/abstractviewmock.h"
 #include "../mocks/modelresourcemanagementmock.h"
 #include "../mocks/projectstoragemock.h"
+#include "../mocks/projectstoragetriggerupdatemock.h"
 #include "../mocks/sourcepathcachemock.h"
 
 #include <include/bindingproperty.h>
@@ -46,6 +47,17 @@ auto SetExpression(const PropertyMatcher &propertyMatcher, const ExpressionMatch
 class ModelResourceManagement : public testing::Test
 {
 protected:
+    struct StaticData
+    {
+        Sqlite::Database modulesDatabase{":memory:", Sqlite::JournalMode::Memory};
+        QmlDesigner::ModulesStorage modulesStorage{modulesDatabase, modulesDatabase.isInitialized()};
+    };
+
+    static void SetUpTestSuite() { staticData = std::make_unique<StaticData>(); }
+
+    static void TearDownTestSuite() { staticData.reset(); }
+
+protected:
     ModelResourceManagement()
     {
         model.attachView(&viewMock);
@@ -70,11 +82,19 @@ protected:
     }
 
 protected:
+    inline static std::unique_ptr<StaticData> staticData;
+    QmlDesigner::ModulesStorage &modulesStorage = staticData->modulesStorage;
     NiceMock<AbstractViewMock> viewMock;
+    NiceMock<ProjectStorageTriggerUpdateMock> projectStorageTriggerUpdateMock;
     NiceMock<SourcePathCacheMockWithPaths> pathCacheMock{"/path/foo.qml"};
-    NiceMock<ProjectStorageMockWithQtQtuick> projectStorageMock{pathCacheMock.sourceId};
+    NiceMock<ProjectStorageMockWithQtQuick> projectStorageMock{pathCacheMock.sourceId,
+                                                               "/path",
+                                                               modulesStorage};
     QmlDesigner::ModelResourceManagement management;
-    QmlDesigner::Model model{{projectStorageMock, pathCacheMock},
+    QmlDesigner::Model model{{projectStorageMock,
+                              pathCacheMock,
+                              modulesStorage,
+                              projectStorageTriggerUpdateMock},
                              "Item",
                              {QmlDesigner::Import::createLibraryImport("QtQtuick")},
                              QUrl::fromLocalFile(pathCacheMock.path.toQString())};
@@ -105,7 +125,7 @@ TEST_F(ModelResourceManagement, remove_multiple_properties)
 
 TEST_F(ModelResourceManagement, remove_node)
 {
-    auto node = createNodeWithParent("QtQuick.Item", rootNode.defaultNodeListProperty());
+    auto node = createNodeWithParent("Item", rootNode.defaultNodeListProperty());
 
     auto resources = management.removeNodes({node}, &model);
 
@@ -114,8 +134,8 @@ TEST_F(ModelResourceManagement, remove_node)
 
 TEST_F(ModelResourceManagement, remove_multiple_nodes)
 {
-    auto node = createNodeWithParent("QtQuick.Item", rootNode.defaultNodeListProperty());
-    auto node2 = createNodeWithParent("QtQuick.Item", rootNode.defaultNodeListProperty());
+    auto node = createNodeWithParent("Item", rootNode.defaultNodeListProperty());
+    auto node2 = createNodeWithParent("Item", rootNode.defaultNodeListProperty());
 
     auto resources = management.removeNodes({node, node2}, &model);
 
@@ -124,8 +144,8 @@ TEST_F(ModelResourceManagement, remove_multiple_nodes)
 
 TEST_F(ModelResourceManagement, remove_multiple_nodes_once)
 {
-    auto node = createNodeWithParent("QtQuick.Item", rootNode.defaultNodeListProperty());
-    auto node2 = createNodeWithParent("QtQuick.Item", rootNode.defaultNodeListProperty());
+    auto node = createNodeWithParent("Item", rootNode.defaultNodeListProperty());
+    auto node2 = createNodeWithParent("Item", rootNode.defaultNodeListProperty());
 
     auto resources = management.removeNodes({node, node2, node, node2}, &model);
 
@@ -134,8 +154,8 @@ TEST_F(ModelResourceManagement, remove_multiple_nodes_once)
 
 TEST_F(ModelResourceManagement, dont_remove_child_nodes)
 {
-    auto node = createNodeWithParent("QtQuick.Item", rootNode.defaultNodeListProperty());
-    auto childNode = createNodeWithParent("QtQuick.Item", node.defaultNodeListProperty());
+    auto node = createNodeWithParent("Item", rootNode.defaultNodeListProperty());
+    auto childNode = createNodeWithParent("Item", node.defaultNodeListProperty());
 
     auto resources = management.removeNodes({node}, &model);
 
@@ -144,7 +164,7 @@ TEST_F(ModelResourceManagement, dont_remove_child_nodes)
 
 TEST_F(ModelResourceManagement, remove_property_layer_enabled)
 {
-    auto node = createNodeWithParent("QtQuick.Item", rootNode.nodeProperty("layer.effect"));
+    auto node = createNodeWithParent("Item", rootNode.nodeProperty("layer.effect"));
     auto layerEnabledProperty = rootNode.variantProperty("layer.enabled");
     layerEnabledProperty.setValue(true);
 
@@ -156,7 +176,7 @@ TEST_F(ModelResourceManagement, remove_property_layer_enabled)
 TEST_F(ModelResourceManagement, remove_property_layer_enabled_if_layer_effect_property_is_removed)
 {
     auto layerEffectProperty = rootNode.nodeProperty("layer.effect");
-    auto node = createNodeWithParent("QtQuick.Item", layerEffectProperty);
+    auto node = createNodeWithParent("Item", layerEffectProperty);
     auto layerEnabledProperty = rootNode.variantProperty("layer.enabled");
     layerEnabledProperty.setValue(true);
 
@@ -167,7 +187,7 @@ TEST_F(ModelResourceManagement, remove_property_layer_enabled_if_layer_effect_pr
 
 TEST_F(ModelResourceManagement, dont_remove_property_layer_enabled_if_not_exists)
 {
-    auto node = createNodeWithParent("QtQuick.Item", rootNode.nodeProperty("layer.effect"));
+    auto node = createNodeWithParent("Item", rootNode.nodeProperty("layer.effect"));
     auto layerEnabledProperty = rootNode.variantProperty("layer.enabled");
 
     auto resources = management.removeNodes({node}, &model);
@@ -177,7 +197,7 @@ TEST_F(ModelResourceManagement, dont_remove_property_layer_enabled_if_not_exists
 
 TEST_F(ModelResourceManagement, remove_property_with_id)
 {
-    auto fooNode = createNodeWithParent("QtQuick.Item", rootNode.defaultNodeListProperty(), "foo");
+    auto fooNode = createNodeWithParent("Item", rootNode.defaultNodeListProperty(), "foo");
     auto property = rootNode.bindingProperty("foo");
     property.setDynamicTypeNameAndExpression("var", "foo");
 
@@ -188,7 +208,7 @@ TEST_F(ModelResourceManagement, remove_property_with_id)
 
 TEST_F(ModelResourceManagement, remove_property_with_id_in_complex_expression)
 {
-    auto fooNode = createNodeWithParent("QtQuick.Item", rootNode.defaultNodeListProperty(), "foo");
+    auto fooNode = createNodeWithParent("Item", rootNode.defaultNodeListProperty(), "foo");
     auto foobarProperty = rootNode.bindingProperty("foo");
     foobarProperty.setDynamicTypeNameAndExpression("var", "foo.x+bar.y");
     auto resources = management.removeNodes({fooNode}, &model);
@@ -198,8 +218,8 @@ TEST_F(ModelResourceManagement, remove_property_with_id_in_complex_expression)
 
 TEST_F(ModelResourceManagement, dont_remove_property_without_id)
 {
-    auto fooNode = createNodeWithParent("QtQuick.Item", rootNode.defaultNodeListProperty(), "foo");
-    auto barNode = createNodeWithParent("QtQuick.Item", rootNode.defaultNodeListProperty(), "bar");
+    auto fooNode = createNodeWithParent("Item", rootNode.defaultNodeListProperty(), "foo");
+    auto barNode = createNodeWithParent("Item", rootNode.defaultNodeListProperty(), "bar");
     auto fooProperty = rootNode.bindingProperty("foo");
     fooProperty.setDynamicTypeNameAndExpression("var", "foo.x");
 
@@ -210,8 +230,8 @@ TEST_F(ModelResourceManagement, dont_remove_property_without_id)
 
 TEST_F(ModelResourceManagement, remove_property_with_id_once)
 {
-    auto fooNode = createNodeWithParent("QtQuick.Item", rootNode.defaultNodeListProperty(), "foo");
-    auto barNode = createNodeWithParent("QtQuick.Item", rootNode.defaultNodeListProperty(), "bar");
+    auto fooNode = createNodeWithParent("Item", rootNode.defaultNodeListProperty(), "foo");
+    auto barNode = createNodeWithParent("Item", rootNode.defaultNodeListProperty(), "bar");
     auto foobarProperty = rootNode.bindingProperty("foo");
     foobarProperty.setDynamicTypeNameAndExpression("var", "foo.x+bar.y");
 
@@ -222,7 +242,7 @@ TEST_F(ModelResourceManagement, remove_property_with_id_once)
 
 TEST_F(ModelResourceManagement, remove_alias_property_with_id)
 {
-    auto fooNode = createNodeWithParent("QtQuick.Item", rootNode.defaultNodeListProperty(), "foo");
+    auto fooNode = createNodeWithParent("Item", rootNode.defaultNodeListProperty(), "foo");
     auto property = rootNode.bindingProperty("foo");
     property.setDynamicTypeNameAndExpression("alias", "foo");
 
@@ -233,7 +253,7 @@ TEST_F(ModelResourceManagement, remove_alias_property_with_id)
 
 TEST_F(ModelResourceManagement, dont_remove_property_with_different_id_which_contains_id_string)
 {
-    auto fooNode = createNodeWithParent("QtQuick.Item", rootNode.defaultNodeListProperty(), "foo");
+    auto fooNode = createNodeWithParent("Item", rootNode.defaultNodeListProperty(), "foo");
     auto property = rootNode.bindingProperty("foo");
     property.setDynamicTypeNameAndExpression("var", "foobar+barfoo");
 
@@ -263,7 +283,7 @@ protected:
     ModelNode fooNode = createNodeWithParent(parameters.targetType,
                                              rootNode.defaultNodeListProperty(),
                                              "foo");
-    ModelNode barNode = createNodeWithParent("QtQuick.Item", rootNode.defaultNodeListProperty(), "bar");
+    ModelNode barNode = createNodeWithParent("Item", rootNode.defaultNodeListProperty(), "bar");
     ModelNode source = createNodeWithParent(parameters.type,
                                             rootNode.defaultNodeListProperty(),
                                             "source1");
@@ -275,14 +295,26 @@ protected:
         parameters.propertyName);
 };
 
-INSTANTIATE_TEST_SUITE_P(
-    ModelResourceManagement,
-    ForTarget,
-    testing::Values(TargetData{"QtQuick.Item", "QtQuick.PropertyChanges", "target"},
-                    TargetData{"QtQuick.Item", "QtQuick.Timeline.KeyframeGroup", "target"},
-                    TargetData{"QtQuick.Item", "QtQuick.PropertyAnimation", "target"},
-                    TargetData{"FlowView.FlowItem", "FlowView.FlowTransition", "to"},
-                    TargetData{"FlowView.FlowItem", "FlowView.FlowTransition", "from"}));
+auto target_data_printer = [](const testing::TestParamInfo<TargetData> &info) {
+    std::string text = info.param.targetType.toStdString();
+
+    text += "_";
+
+    text += info.param.type.toStdString();
+
+    text += "_";
+
+    text += info.param.propertyName.toStdString();
+
+    return text;
+};
+
+INSTANTIATE_TEST_SUITE_P(ModelResourceManagement,
+                         ForTarget,
+                         testing::Values(TargetData{"Item", "PropertyChanges", "target"},
+                                         TargetData{"Item", "KeyframeGroup", "target"},
+                                         TargetData{"Item", "PropertyAnimation", "target"}),
+                         target_data_printer);
 
 TEST_P(ForTarget, remove)
 {
@@ -351,12 +383,10 @@ protected:
         parameters.propertyName);
 };
 
-INSTANTIATE_TEST_SUITE_P(
-    ModelResourceManagement,
-    ForTargets,
-    testing::Values(TargetData{"FlowView.FlowTransition", "FlowView.FlowDecision", "targets"},
-                    TargetData{"FlowView.FlowTransition", "FlowView.FlowWildcard", "targets"},
-                    TargetData{"QtQuick.Item", "QtQuick.PropertyAnimation", "targets"}));
+INSTANTIATE_TEST_SUITE_P(ModelResourceManagement,
+                         ForTargets,
+                         testing::Values(TargetData{"Item", "PropertyAnimation", "targets"}),
+                         target_data_printer);
 
 TEST_P(ForTargets, remove)
 {
@@ -380,7 +410,7 @@ TEST_P(ForTargets, handle_invalid_binding)
 
 TEST_P(ForTargets, remove_indirectly)
 {
-    auto parenNode = createNodeWithParent("QtQuick.Item", rootNode.defaultNodeListProperty(), "hoo");
+    auto parenNode = createNodeWithParent("Item", rootNode.defaultNodeListProperty(), "hoo");
     parenNode.defaultNodeListProperty().reparentHere(fooNode);
     parenNode.defaultNodeListProperty().reparentHere(barNode);
     sourceTargetsProperty.setExpression("[foo, bar]");
@@ -442,7 +472,7 @@ protected:
     ModelNode createStateWithParent(QmlDesigner::NodeAbstractProperty parentProperty,
                                     const QString &name)
     {
-        ModelNode stateNode = createNodeWithParent("QtQuick.State", parentProperty, name);
+        ModelNode stateNode = createNodeWithParent("State", parentProperty, name);
         stateNode.variantProperty("name").setValue(name);
 
         return stateNode;
@@ -466,10 +496,21 @@ protected:
         parameters.propertyName);
 };
 
+auto state_data_printer = [](const testing::TestParamInfo<StateData> &info) {
+    std::string text = info.param.type.toStdString();
+
+    text += "_";
+
+    text += info.param.propertyName.toStdString();
+
+    return text;
+};
+
 INSTANTIATE_TEST_SUITE_P(ModelResourceManagement,
                          ForState,
-                         testing::Values(StateData{"QtQuick.Transition", "from"},
-                                         StateData{"QtQuick.Transition", "to"}));
+                         testing::Values(StateData{"Transition", "from"},
+                                         StateData{"Transition", "to"}),
+                         state_data_printer);
 
 TEST_P(ForState, remove)
 {

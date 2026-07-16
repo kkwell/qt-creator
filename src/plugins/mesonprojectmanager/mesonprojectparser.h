@@ -15,7 +15,7 @@
 
 #include <utils/processinterface.h>
 
-#include <QFuture>
+#include <QElapsedTimer>
 #include <QQueue>
 
 #include <utils/qtcprocess.h>
@@ -75,10 +75,9 @@ signals:
      void parsingCompleted(bool success);
 
 private:
-    bool startParser();
-    static ParserData *extractParserResults(const Utils::FilePath &srcDir,
-                                            MesonInfoParser::Result &&parserResult);
-    void update(const QFuture<ParserData *> &data);
+    void startParser();
+    static ParserData extractParserResults(const Utils::FilePath &srcDir,
+                                           MesonInfoParser::Result &&parserResult);
     ProjectExplorer::RawProjectPart buildRawPart(const Target &target,
                                                  const Target::SourceGroup &sources,
                                                  const ProjectExplorer::Toolchain *cxxToolchain,
@@ -89,7 +88,6 @@ private:
     Utils::Id m_meson;
     Utils::FilePath m_buildDir;
     Utils::FilePath m_srcDir;
-    QFuture<ParserData *> m_parserFutureResult;
     bool m_configuring = false;
     IntroDataType m_introType = IntroDataType::file;
     MesonInfoParser::Result m_parserResult;

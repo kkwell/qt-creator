@@ -4,7 +4,6 @@
 #pragma once
 
 #include <coreplugin/minisplitter.h>
-#include <utils/faketooltip.h>
 
 #include <designdocument.h>
 #include <modelnode.h>
@@ -74,6 +73,13 @@ public:
     GlobalAnnotationEditor &globalAnnotationEditor();
 
     void setMinimumSizeHintFromContentMinimumSize(bool value);
+
+    bool isInitialized() const;
+    void showExtraWidget(WidgetInfo widgetInfo);
+    void closeExtraWidget(WidgetInfo widgetInfo);
+    void removeExtraWidget(WidgetInfo widgetInfo);
+
+    void hideSingleWidgetTitleBars(const QString &uniqueId);
 
 signals:
     void navigationHistoryChanged();

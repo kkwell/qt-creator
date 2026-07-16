@@ -31,6 +31,7 @@ public:
 
     bool isConnected() const;
     bool isConnecting() const;
+    bool isListening() const;
     void close();
 
     QmlDebugClient *client(const QString &name) const;
@@ -44,6 +45,12 @@ public:
     {
         return QDataStream::Qt_4_7;
     }
+
+#ifdef WITH_TESTS
+    // Provide a custom device and short-circuit the initialization.
+    void setDevice(QIODevice *device);
+    void assumeServerPlugins();
+#endif
 
 signals:
     void connected();

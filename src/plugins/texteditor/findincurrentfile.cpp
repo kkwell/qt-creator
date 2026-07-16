@@ -11,6 +11,7 @@
 #include <coreplugin/editormanager/editormanager.h>
 
 #include <utils/qtcsettings.h>
+#include <utils/shutdownguard.h>
 
 #include <QPointer>
 
@@ -67,11 +68,11 @@ QString FindInCurrentFile::displayName() const
 FileContainerProvider FindInCurrentFile::fileContainerProvider() const
 {
     return [fileName = m_currentDocument->filePath()] {
-        const QMap<FilePath, QTextCodec *> encodings = TextDocument::openedTextDocumentEncodings();
-        QTextCodec *codec = encodings.value(fileName);
-        if (!codec)
-            codec = Core::EditorManager::defaultTextCodec();
-        return FileListContainer({fileName}, {codec});
+        const QMap<FilePath, TextEncoding> encodings = TextDocument::openedTextDocumentEncodings();
+        TextEncoding encoding = encodings.value(fileName);
+        if (!encoding.isValid())
+            encoding = Core::EditorManager::defaultTextEncoding();
+        return FileListContainer({fileName}, {encoding});
     };
 }
 
@@ -127,7 +128,7 @@ QByteArray FindInCurrentFile::settingsKey() const
 
 void setupFindInCurrentFile()
 {
-    static FindInCurrentFile theFindInCurrentFile;
+    static GuardedObject<FindInCurrentFile> theFindInCurrentFile;
 }
 
 } // TextEditor::Internal

@@ -45,6 +45,14 @@ CommonSettings::CommonSettings()
         Tr::tr("Scrolls the editor only when it is necessary to keep the current line in view, "
                "instead of keeping the next statement centered at all times."));
 
+    showUnsupportedBreakpointWarning.setSettingsKey(debugModeGroup, "ShowUnsupportedBreakpointWarning");
+    showUnsupportedBreakpointWarning.setDefaultValue(true);
+    showUnsupportedBreakpointWarning.setLabelText(
+        Tr::tr("Show warnings for unsupported breakpoints"));
+    showUnsupportedBreakpointWarning.setToolTip(
+        Tr::tr("Shows a warning on debugger start-up when breakpoints are requested "
+               "which are not supported by the selected debugger engine."));
+
     forceLoggingToConsole.setSettingsKey(debugModeGroup, "ForceLoggingToConsole");
     forceLoggingToConsole.setLabelText(Tr::tr("Force logging to console"));
     forceLoggingToConsole.setToolTip(
@@ -125,39 +133,56 @@ CommonSettings::CommonSettings()
     useToolTipsInMainEditor.setLabelText(Tr::tr("Use tooltips in main editor when debugging"));
     useToolTipsInMainEditor.setToolTip(
         "<p>"
-        + Tr::tr("Enables tooltips for variable "
-                 "values during debugging. Since this can slow down debugging and "
-                 "does not provide reliable information as it does not use scope "
-                 "information, it is switched off by default."));
+        + Tr::tr("Enables tooltips for variable values during debugging. "
+                 "This can slow down debugging and does not provide reliable information "
+                 "as it does not use scope information."));
     useToolTipsInMainEditor.setDefaultValue(true);
 
     setLayouter([this] {
         using namespace Layouting;
 
-        Column col1 {
-            useAlternatingRowColors,
-            useAnnotationsInMainEditor,
-            useToolTipsInMainEditor,
-            closeSourceBuffersOnExit,
-            closeMemoryBuffersOnExit,
-            raiseOnInterrupt,
-            breakpointsFullPathByDefault,
-            warnOnReleaseBuilds,
-            Row { maximalStackDepth, st }
+        Group behavior {
+            title(Tr::tr("Behavior")),
+            Column {
+                registerForPostMortem,
+                raiseOnInterrupt,
+                warnOnReleaseBuilds,
+                breakpointsFullPathByDefault,
+                forceLoggingToConsole,
+                Row { maximalStackDepth, st },
+                st
+            }
         };
 
-        Column col2 {
-            fontSizeFollowsEditor,
-            switchModeOnExit,
-            showQmlObjectTree,
-            stationaryEditorWhileStepping,
-            forceLoggingToConsole,
-            registerForPostMortem,
-            st
+        Group userInterface {
+            title(Tr::tr("User Interface")),
+            Column {
+                useAnnotationsInMainEditor,
+                useToolTipsInMainEditor,
+                useAlternatingRowColors,
+                fontSizeFollowsEditor,
+                stationaryEditorWhileStepping,
+                showQmlObjectTree,
+                showUnsupportedBreakpointWarning,
+            }
+        };
+
+        Group afterLife {
+            title(Tr::tr("When Debugging Stops")),
+            Column {
+                closeSourceBuffersOnExit,
+                closeMemoryBuffersOnExit,
+                switchModeOnExit,
+            }
         };
 
         return Column {
-            Group { title(Tr::tr("Behavior")), Row { col1, col2, st } },
+            Grid {
+                Column { behavior, afterLife },
+                Column { userInterface, st },
+                columnStretch(0, 1),
+                columnStretch(1, 1)
+            },
             sourcePathMap,
             st
         };
@@ -199,9 +224,8 @@ public:
         setId(DEBUGGER_COMMON_SETTINGS_ID);
         setDisplayName(Tr::tr("General"));
         setCategory(DEBUGGER_SETTINGS_CATEGORY);
-        setDisplayCategory(Tr::tr("Debugger"));
-        setCategoryIconPath(":/debugger/images/settingscategory_debugger.png");
         setSettingsProvider([] { return &commonSettings(); });
+        setRecreateOnCancel(true);
     }
 };
 
@@ -225,6 +249,10 @@ LocalsAndExpressionsSettings::LocalsAndExpressionsSettings()
     useDebuggingHelpers.setSettingsKey(debugModeGroup, "UseDebuggingHelper");
     useDebuggingHelpers.setDefaultValue(true);
     useDebuggingHelpers.setLabelText(Tr::tr("Use Debugging Helpers"));
+
+    allowInferiorCalls.setSettingsKey(debugModeGroup, "AllowInferiorCalls");
+    allowInferiorCalls.setDefaultValue(true);
+    allowInferiorCalls.setLabelText(Tr::tr("Allow inferior calls in debugging helper"));
 
     useCodeModel.setSettingsKey(debugModeGroup, "UseCodeModel");
     useCodeModel.setDefaultValue(true);
@@ -256,7 +284,7 @@ LocalsAndExpressionsSettings::LocalsAndExpressionsSettings()
 
     showQObjectNames.setSettingsKey(debugModeGroup, "ShowQObjectNames2");
     showQObjectNames.setDefaultValue(true);
-    showQObjectNames.setDisplayName(Tr::tr("Show QObject names if available"));
+    showQObjectNames.setDisplayName(Tr::tr("Show QObject Names if Available"));
     showQObjectNames.setLabelText(Tr::tr("Show QObject names if available"));
     showQObjectNames.setToolTip(
         "<p>"
@@ -345,6 +373,7 @@ LocalsAndExpressionsSettings::LocalsAndExpressionsSettings()
 
         return Column {
             useDebuggingHelpers,
+            allowInferiorCalls,
             useHelper,
             Space(10),
             showStdNamespace,

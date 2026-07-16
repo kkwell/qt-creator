@@ -13,9 +13,7 @@ QT_FORWARD_DECLARE_CLASS(QDesignerFormWindowInterface)
 
 namespace ScxmlEditor {
 
-namespace Common {
-class MainWidget;
-} // namespace Common
+namespace Common { class MainWidget; }
 
 namespace Internal {
 
@@ -27,26 +25,25 @@ public:
     explicit ScxmlEditorDocument(Common::MainWidget *designWidget, QObject *parent = nullptr);
 
     // IDocument
-    OpenResult open(QString *errorString,
-                    const Utils::FilePath &filePath,
-                    const Utils::FilePath &realFilePath) override;
+    Utils::Result<> open(const Utils::FilePath &filePath,
+                         const Utils::FilePath &realFilePath) override;
     bool shouldAutoSave() const override;
     bool isSaveAsAllowed() const override;
     bool isModified() const override;
-    bool reload(QString *errorString, ReloadFlag flag, ChangeType type) override;
-    bool supportsCodec(const QTextCodec *codec) const override;
+    Utils::Result<> reload(ReloadFlag flag, ChangeType type) override;
+    bool supportsEncoding(const Utils::TextEncoding &encoding) const override;
 
     // Internal
     Common::MainWidget *designWidget() const;
     void syncXmlFromDesignWidget();
     QString designWidgetContents() const;
-    void setFilePath(const Utils::FilePath&) override;
+    void setFilePath(const Utils::FilePath &filePath) override;
 
 signals:
-    void reloadRequested(QString *errorString, const QString &);
+    void reloadRequested(QString *errorString, const Utils::FilePath &);
 
 protected:
-    bool saveImpl(QString *errorString, const Utils::FilePath &filePath, bool autoSave) override;
+    Utils::Result<> saveImpl(const Utils::FilePath &filePath, SaveOption option) override;
 
 private:
     QPointer<Common::MainWidget> m_designWidget;

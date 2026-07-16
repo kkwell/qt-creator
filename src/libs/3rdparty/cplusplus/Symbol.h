@@ -149,6 +149,7 @@ public:
     virtual const Declaration *asDeclaration() const { return nullptr; }
     virtual const Argument *asArgument() const { return nullptr; }
     virtual const TypenameArgument *asTypenameArgument() const { return nullptr; }
+    virtual const TemplateTypeArgument *asTemplateTypeArgument() const { return nullptr; }
     virtual const BaseClass *asBaseClass() const { return nullptr; }
     virtual const ForwardClassDeclaration *asForwardClassDeclaration() const { return nullptr; }
     virtual const QtPropertyDeclaration *asQtPropertyDeclaration() const { return nullptr; }
@@ -199,6 +200,9 @@ public:
 
     /// Returns this Symbol as a Typename argument.
     virtual TypenameArgument *asTypenameArgument() { return nullptr; }
+
+    /// Returns this Symbol as a Template Type argument.
+    virtual TemplateTypeArgument *asTemplateTypeArgument() { return nullptr; }
 
     /// Returns this Symbol as a BaseClass.
     virtual BaseClass *asBaseClass() { return nullptr; }
@@ -252,6 +256,9 @@ public:
     bool isUnavailable() const { return _isUnavailable; }
     void setUnavailable(bool isUnavailable) { _isUnavailable = isUnavailable; }
 
+    bool isPack() const { return _isPack; }
+    void setIsPack() { _isPack = true; }
+
     /// Returns this Symbol's eclosing scope.
     Scope *enclosingScope() const { return _enclosingScope; }
 
@@ -301,6 +308,7 @@ private:
     bool _isGenerated: 1;
     bool _isDeprecated: 1;
     bool _isUnavailable: 1;
+    bool _isPack: 1;
 
     class HashCode;
 

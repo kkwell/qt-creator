@@ -63,8 +63,8 @@ public:
 
     class End {
     public:
-        QList<QString> endItems() const { return m_endItems; }
-        void setEndItems(const QList<QString> &endItems);
+        QStringList endItems() const { return m_endItems; }
+        void setEndItems(const QStringList &endItems);
         QString role() const { return m_role; }
         void setRole(const QString &role);
         QString cardinality() const { return m_cardinality; }
@@ -79,7 +79,7 @@ public:
         void setShape(const IconShape &shape);
 
     private:
-        QList<QString> m_endItems;
+        QStringList m_endItems;
         QString m_role;
         QString m_cardinality;
         bool m_navigable = false;
@@ -98,8 +98,8 @@ public:
     void setId(const QString &id);
     QString title() const { return m_title; }
     void setTitle(const QString &title);
-    QList<QString> endItems() const { return m_endItems; }
-    void setEndItems(const QList<QString> &endItems);
+    QStringList endItems() const { return m_endItems; }
+    void setEndItems(const QStringList &endItems);
     QSet<QString> stereotypes() const { return m_stereotypes; }
     void setStereotypes(const QSet<QString> &stereotypes);
     QString name() const { return m_name; }
@@ -119,15 +119,15 @@ public:
     bool emphasized() const { return m_emphasized; }
     void setEmphasized(bool emphasized);
 
-    friend auto qHash(CustomRelation::Relationship relationship) {
+    friend size_t qHash(CustomRelation::Relationship relationship) {
         return ::qHash(static_cast<int>(relationship));
     }
 
-    friend auto qHash(CustomRelation::ShaftPattern pattern) {
+    friend size_t qHash(CustomRelation::ShaftPattern pattern) {
         return ::qHash(static_cast<int>(pattern));
     }
 
-    friend auto qHash(CustomRelation::Head head) {
+    friend size_t qHash(CustomRelation::Head head) {
         return ::qHash(static_cast<int>(head));
     }
 
@@ -135,7 +135,7 @@ private:
     Element m_element = Element::Relation;
     QString m_id;
     QString m_title;
-    QList<QString> m_endItems;
+    QStringList m_endItems;
     QSet<QString> m_stereotypes;
     QString m_name;
     Direction m_direction = Direction::AtoB;

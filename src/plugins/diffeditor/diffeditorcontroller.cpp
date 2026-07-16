@@ -9,10 +9,11 @@
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/progressmanager/taskprogress.h>
 
+#include <utils/ansiescapecodehandler.h>
 #include <utils/qtcassert.h>
 
 using namespace Core;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace DiffEditor {
@@ -24,13 +25,6 @@ DiffEditorController::DiffEditorController(IDocument *document)
 {
     QTC_ASSERT(m_document, return);
     m_document->setController(this);
-    connect(&m_taskTreeRunner, &TaskTreeRunner::aboutToStart, this, [this](TaskTree *taskTree) {
-        auto progress = new TaskProgress(taskTree);
-        progress->setDisplayName(m_displayName);
-    });
-    connect(&m_taskTreeRunner, &TaskTreeRunner::done, this, [this](DoneWith result) {
-        m_document->endReload(result == DoneWith::Success);
-    });
 }
 
 FilePath DiffEditorController::workingDirectory() const
@@ -82,6 +76,11 @@ void DiffEditorController::setDiffFiles(const QList<FileData> &diffFileList)
     m_document->setDiffFiles(diffFileList);
 }
 
+void DiffEditorController::setAnsiEnabled(bool enabled)
+{
+    m_document->setDescriptionAnsiEnabled(enabled);
+}
+
 void DiffEditorController::setDescription(const QString &description)
 {
     m_document->setDescription(description);
@@ -111,7 +110,14 @@ IDocument *DiffEditorController::document() const
 void DiffEditorController::requestReload()
 {
     m_document->beginReload();
-    m_taskTreeRunner.start(m_reloadRecipe);
+    const auto onTaskTreeSetup = [this](QTaskTree &taskTree) {
+        auto progress = new TaskProgress(&taskTree);
+        progress->setDisplayName(m_displayName);
+    };
+    const auto onTaskTreeDone = [this](DoneWith result) {
+        m_document->endReload(result == DoneWith::Success);
+    };
+    m_taskTreeRunner.start(m_reloadRecipe, onTaskTreeSetup, onTaskTreeDone);
 }
 
 void DiffEditorController::addExtraActions(QMenu *menu, int fileIndex, int chunkIndex,
@@ -121,6 +127,15 @@ void DiffEditorController::addExtraActions(QMenu *menu, int fileIndex, int chunk
     Q_UNUSED(fileIndex)
     Q_UNUSED(chunkIndex)
     Q_UNUSED(selection)
+}
+
+void DiffEditorController::resolveCurrentLine(const QString &relativeFilePath,
+                                              int originalLine,
+                                              const std::function<void (int)> &callback)
+{
+    Q_UNUSED(relativeFilePath);
+
+    callback(originalLine);
 }
 
 void DiffEditorController::setStartupFile(const QString &startupFile)

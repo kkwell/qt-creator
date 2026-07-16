@@ -36,9 +36,9 @@ private:
 
 ToolchainList autodetectToolchains(const ToolchainList &alreadyKnown);
 ToolchainList autodetectToolchainsFromNdks(const ToolchainList &alreadyKnown,
-                                           const QList<Utils::FilePath> &ndkLocations,
+                                           const Utils::FilePaths &ndkLocations,
                                            const bool isCustom = false);
 
 void setupAndroidToolchain();
 
-} // Android
+} // Android::Internal

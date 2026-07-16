@@ -18,8 +18,9 @@ namespace Android::Internal {
 
 class AndroidSdkManagerPrivate;
 
-struct InstallationChange
+class InstallationChange
 {
+public:
     QStringList toInstall;
     QStringList toUninstall = {};
     int count() const { return toInstall.count() + toUninstall.count(); }
@@ -32,6 +33,8 @@ class AndroidSdkManager : public QObject
 public:
     AndroidSdkManager();
     ~AndroidSdkManager();
+
+    void setSpinnerTarget(QWidget *spinnerTarget);
 
     SdkPlatformList installedSdkPlatforms();
     const AndroidSdkPackageList &allSdkPackages();
@@ -58,8 +61,7 @@ public:
     void runUpdate();
 
 signals:
-    void packageReloadBegin();
-    void packageReloadFinished();
+    void packagesReloaded();
 
 private:
     friend class AndroidSdkManagerPrivate;
@@ -67,5 +69,6 @@ private:
 };
 
 const QRegularExpression &assertionRegExp();
+AndroidSdkManager &sdkManager();
 
 } // namespace Android::Internal

@@ -14,6 +14,7 @@
 
 #include <extensionsystem/pluginmanager.h>
 
+#include <utils/algorithm.h>
 #include <utils/fancymainwindow.h>
 
 #include <aggregation/aggregate.h>
@@ -41,6 +42,7 @@ namespace Core {
 
 struct DesignEditorInfo
 {
+    Id id;
     int widgetIndex = -1;
     QStringList mimeTypes;
     Context context;
@@ -86,8 +88,7 @@ DesignMode::DesignMode()
     setContext(Context(Constants::C_DESIGN_MODE));
     setWidget(d->m_stackWidget);
     setDisplayName(Tr::tr("Design"));
-    setIcon(Utils::Icon::modeIcon(Icons::MODE_DESIGN_CLASSIC,
-                                  Icons::MODE_DESIGN_FLAT, Icons::MODE_DESIGN_FLAT_ACTIVE));
+    setIcon(Icon::sideBarIcon(Icons::MODE_DESIGN_CLASSIC, Icons::MODE_DESIGN_FLAT));
     setPriority(Constants::P_MODE_DESIGN);
     setId(Constants::MODE_DESIGN);
 
@@ -120,14 +121,17 @@ void DesignMode::setDesignModeIsRequired()
   * mimeTypes is opened. This also appends the additionalContext in ICore to
   * the context, specified here.
   */
-void DesignMode::registerDesignWidget(QWidget *widget,
-                                      const QStringList &mimeTypes,
-                                      const Context &context,
-                                      Utils::FancyMainWindow *mainWindow)
+void DesignMode::registerDesignWidget(
+    Id id,
+    QWidget *widget,
+    const QStringList &mimeTypes,
+    const Context &context,
+    Utils::FancyMainWindow *mainWindow)
 {
     setDesignModeIsRequired();
     int index = d->m_stackWidget->addWidget(widget);
     auto info = new DesignEditorInfo;
+    info->id = id;
     info->mimeTypes = mimeTypes;
     info->context = context;
     info->widgetIndex = index;
@@ -234,6 +238,17 @@ void DesignMode::destroyModeIfRequired()
         delete m_instance;
     }
     delete d;
+}
+
+// for usage statistic
+Id DesignMode::currentDesignWidget()
+{
+    QWidget *currentWidget = d->m_stackWidget->currentWidget();
+    DesignEditorInfo *info
+        = Utils::findOrDefault(d->m_editors, [currentWidget](DesignEditorInfo *info) {
+              return info->widget == currentWidget;
+          });
+    return info ? info->id : Id();
 }
 
 } // namespace Core

@@ -4,18 +4,20 @@
 #include "filepropertiesdialog.h"
 
 #include "../coreplugintr.h"
-#include "../editormanager/editormanager.h"
 #include "../editormanager/ieditorfactory.h"
+#include "../vcsmanager.h"
 
+#include <utils/algorithm.h>
 #include <utils/fileutils.h>
+#include <utils/guiutils.h>
 #include <utils/layoutbuilder.h>
 #include <utils/mimeutils.h>
 
 #include <QCheckBox>
 #include <QDateTime>
 #include <QDebug>
+#include <QDialog>
 #include <QDialogButtonBox>
-#include <QDir>
 #include <QFileInfo>
 #include <QLabel>
 #include <QLocale>
@@ -24,8 +26,37 @@ using namespace Utils;
 
 namespace Core {
 
-FilePropertiesDialog::FilePropertiesDialog(const FilePath &filePath, QWidget *parent)
-    : QDialog(parent)
+class FilePropertiesDialog final : public QDialog
+{
+public:
+    explicit FilePropertiesDialog(const FilePath &filePath);
+
+private:
+    void refresh();
+    void setPermission(QFile::Permissions newPermissions, bool set);
+    void detectTextFileSettings();
+
+    QLabel *m_name;
+    QLabel *m_path;
+    QLabel *m_mimeType;
+    QLabel *m_defaultEditor;
+    QLabel *m_lineEndings;
+    QLabel *m_indentation;
+    QLabel *m_owner;
+    QLabel *m_group;
+    QLabel *m_size;
+    QLabel *m_lastRead;
+    QLabel *m_lastModified;
+    QLabel *m_vcsStatus;
+    QCheckBox *m_readable;
+    QCheckBox *m_writable;
+    QCheckBox *m_executable;
+    QCheckBox *m_symLink;
+    const FilePath m_filePath;
+};
+
+FilePropertiesDialog::FilePropertiesDialog(const FilePath &filePath)
+    : QDialog(dialogParent())
     , m_name(new QLabel)
     , m_path(new QLabel)
     , m_mimeType(new QLabel)
@@ -37,6 +68,7 @@ FilePropertiesDialog::FilePropertiesDialog(const FilePath &filePath, QWidget *pa
     , m_size(new QLabel)
     , m_lastRead(new QLabel)
     , m_lastModified(new QLabel)
+    , m_vcsStatus(new QLabel)
     , m_readable(new QCheckBox)
     , m_writable(new QCheckBox)
     , m_executable(new QCheckBox)
@@ -56,6 +88,7 @@ FilePropertiesDialog::FilePropertiesDialog(const FilePath &filePath, QWidget *pa
     m_size->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_lastRead->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_lastModified->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_vcsStatus->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
     m_symLink->setEnabled(false);
 
@@ -77,6 +110,7 @@ FilePropertiesDialog::FilePropertiesDialog(const FilePath &filePath, QWidget *pa
             Tr::tr("Size:"), m_size, br,
             Tr::tr("Last read:"), m_lastRead, br,
             Tr::tr("Last modified:"), m_lastModified, br,
+            Tr::tr("Version control state:"), m_vcsStatus, br,
             Tr::tr("Readable:"), m_readable, br,
             Tr::tr("Writable:"), m_writable, br,
             Tr::tr("Executable:", "adjective"), m_executable, br,
@@ -101,20 +135,17 @@ FilePropertiesDialog::FilePropertiesDialog(const FilePath &filePath, QWidget *pa
     refresh();
 }
 
-FilePropertiesDialog::~FilePropertiesDialog() = default;
-
 void FilePropertiesDialog::detectTextFileSettings()
 {
-    QFile file(m_filePath.toString());
-    if (!file.open(QIODevice::ReadOnly)) {
+    const Result<QByteArray> res = m_filePath.fileContents(/*maxsize*/ 50000);
+    if (!res) {
         m_lineEndings->setText(Tr::tr("Unknown"));
         m_indentation->setText(Tr::tr("Unknown"));
         return;
     }
+    const QByteArray data = *res;
 
     char lineSeparator = '\n';
-    const QByteArray data = file.read(50000);
-    file.close();
 
     // Try to guess the files line endings
     if (data.contains("\r\n")) {
@@ -161,17 +192,16 @@ void FilePropertiesDialog::detectTextFileSettings()
             break;
     }
 
-    const std::map<int, int>::iterator max = std::max_element(
-                indents.begin(), indents.end(),
-                [](const std::pair<int, int> &a, const std::pair<int, int> &b) {
-        return a.second < b.second;
-    });
+    const auto max = Utils::maxElementOrDefault(
+        indents, [](const std::pair<int, int> &a, const std::pair<int, int> &b) {
+            return a.second < b.second;
+        });
 
     if (!indents.empty()) {
         if (tabIndented) {
             m_indentation->setText(Tr::tr("Mixed"));
         } else {
-            m_indentation->setText(Tr::tr("%1 Spaces").arg(max->first));
+            m_indentation->setText(Tr::tr("%1 Spaces").arg(max.first));
         }
     } else if (tabIndented) {
         m_indentation->setText(Tr::tr("Tabs"));
@@ -186,18 +216,18 @@ void FilePropertiesDialog::refresh()
         const QFileInfo fileInfo = m_filePath.toFileInfo();
         QLocale locale;
 
-        m_name->setText(fileInfo.fileName());
-        m_path->setText(QDir::toNativeSeparators(fileInfo.canonicalPath()));
+        m_name->setText(m_filePath.fileName());
+        m_path->setText(m_filePath.parentDir().toUserOutput());
 
-        const Utils::MimeType mimeType = Utils::mimeTypeForFile(m_filePath);
+        const MimeType mimeType = Utils::mimeTypeForFile(m_filePath);
         m_mimeType->setText(mimeType.name());
 
         const EditorFactories factories = IEditorFactory::preferredEditorTypes(m_filePath);
         m_defaultEditor->setText(!factories.isEmpty() ? factories.at(0)->displayName()
                                                       : Tr::tr("Undefined"));
 
-        m_owner->setText(fileInfo.owner());
-        m_group->setText(fileInfo.group());
+        m_owner->setText(m_filePath.owner());
+        m_group->setText(m_filePath.group());
         m_size->setText(locale.formattedDataSize(fileInfo.size()));
         m_readable->setChecked(fileInfo.isReadable());
         m_writable->setChecked(fileInfo.isWritable());
@@ -205,6 +235,8 @@ void FilePropertiesDialog::refresh()
         m_symLink->setChecked(fileInfo.isSymLink());
         m_lastRead->setText(fileInfo.lastRead().toString(locale.dateTimeFormat()));
         m_lastModified->setText(fileInfo.lastModified().toString(locale.dateTimeFormat()));
+        m_vcsStatus->setText(VcsManager::fileStateText(VcsManager::fileState(m_filePath)));
+
         if (mimeType.inherits("text/plain")) {
             detectTextFileSettings();
         } else {
@@ -228,6 +260,12 @@ void FilePropertiesDialog::setPermission(QFile::Permissions newPermissions, bool
     });
 
     refresh();
+}
+
+void executeFilePropertiesDialog(const FilePath &filePath)
+{
+    FilePropertiesDialog dialog(filePath);
+    dialog.exec();
 }
 
 } // Core

@@ -7,19 +7,14 @@
 #include "behaviorsettingspage.h"
 #include "commentssettings.h"
 #include "completionsettings.h"
-#include "completionsettingspage.h"
 #include "displaysettings.h"
-#include "displaysettingspage.h"
-#include "extraencodingsettings.h"
 #include "fontsettings.h"
 #include "fontsettingspage.h"
-#include "highlightersettingspage.h"
+#include "highlightersettings.h"
 #include "icodestylepreferences.h"
 #include "icodestylepreferencesfactory.h"
 #include "marginsettings.h"
-#include "storagesettings.h"
 #include "texteditortr.h"
-#include "typingsettings.h"
 #include "snippets/snippetssettingspage.h"
 
 #include <coreplugin/find/searchresultwindow.h>
@@ -46,10 +41,7 @@ public:
     FontSettings m_fontSettings;
     FontSettingsPage m_fontSettingsPage{&m_fontSettings, initialFormats()};
     BehaviorSettingsPage m_behaviorSettingsPage;
-    DisplaySettingsPage m_displaySettingsPage;
-    HighlighterSettingsPage m_highlighterSettingsPage;
     SnippetsSettingsPage m_snippetsSettingsPage;
-    CompletionSettingsPage m_completionSettingsPage;
     CommentsSettingsPage m_commentsSettingsPage;
 
     QMap<Utils::Id, ICodeStylePreferencesFactory *> m_languageToFactory;
@@ -251,6 +243,8 @@ FormatDescriptions TextEditorSettingsPrivate::initialFormats()
                              Tr::tr("Macros."), functionFormat);
     formatDescr.emplace_back(C_LABEL, Tr::tr("Label"), Tr::tr("Labels for goto statements."),
                              Qt::darkRed);
+    formatDescr.emplace_back(C_ATTRIBUTE, Tr::tr("Attribute"), Tr::tr("Attributes."),
+                             Qt::darkYellow);
     formatDescr.emplace_back(C_COMMENT, Tr::tr("Comment"),
                              Tr::tr("All style of comments except Doxygen comments."),
                              Qt::darkGreen);
@@ -347,6 +341,18 @@ FormatDescriptions TextEditorSettingsPrivate::initialFormats()
                              QColor(255, 190, 0),
                              QTextCharFormat::DotLine,
                              FormatDescription::ShowAllControls);
+    formatDescr.emplace_back(C_INFO,
+                             Tr::tr("Info"),
+                             Tr::tr("Underline color of info diagnostics."),
+                             QColor(38, 32, 136),
+                             QTextCharFormat::DashUnderline,
+                             FormatDescription::ShowAllControls);
+    formatDescr.emplace_back(C_INFO_CONTEXT,
+                             Tr::tr("Info Context"),
+                             Tr::tr("Underline color of the contexts of info diagnostics."),
+                             QColor(38, 32, 136),
+                             QTextCharFormat::DotLine,
+                             FormatDescription::ShowAllControls);
     Format outputArgumentFormat;
     outputArgumentFormat.setItalic(true);
     formatDescr.emplace_back(C_OUTPUT_ARGUMENT,
@@ -423,6 +429,9 @@ TextEditorSettings::TextEditorSettings()
 {
     d = new Internal::TextEditorSettingsPrivate;
 
+    setupCompletionSettings();
+    setupDisplaySettings();
+
     // Note: default background colors are coming from FormatDescription::background()
 
     auto updateGeneralMessagesFontSettings = []() {
@@ -431,13 +440,13 @@ TextEditorSettings::TextEditorSettings()
     connect(this, &TextEditorSettings::fontSettingsChanged,
             this, updateGeneralMessagesFontSettings);
     updateGeneralMessagesFontSettings();
-    auto updateBehaviorSettings = [](const BehaviorSettings &bs) {
+    auto updateBehaviorSettings = [](const BehaviorSettingsData &bs) {
         Core::MessageManager::setWheelZoomEnabled(bs.m_scrollWheelZooming);
         FancyLineEdit::setCamelCaseNavigationEnabled(bs.m_camelCaseNavigation);
     };
     connect(this, &TextEditorSettings::behaviorSettingsChanged,
             this, updateBehaviorSettings);
-    updateBehaviorSettings(globalBehaviorSettings());
+    updateBehaviorSettings(globalBehaviorSettings().data());
 }
 
 TextEditorSettings::~TextEditorSettings()
@@ -453,26 +462,6 @@ TextEditorSettings *TextEditorSettings::instance()
 const FontSettings &TextEditorSettings::fontSettings()
 {
     return d->m_fontSettings;
-}
-
-const MarginSettings &TextEditorSettings::marginSettings()
-{
-    return d->m_displaySettingsPage.marginSettings();
-}
-
-const DisplaySettings &TextEditorSettings::displaySettings()
-{
-    return d->m_displaySettingsPage.displaySettings();
-}
-
-const CompletionSettings &TextEditorSettings::completionSettings()
-{
-    return d->m_completionSettingsPage.completionSettings();
-}
-
-const HighlighterSettings &TextEditorSettings::highlighterSettings()
-{
-    return d->m_highlighterSettingsPage.highlighterSettings();
 }
 
 void TextEditorSettings::setCommentsSettingsRetriever(

@@ -9,6 +9,7 @@
 #include "texteditortr.h"
 
 #include <utils/fileutils.h>
+#include <utils/infolabel.h>
 #include <utils/layoutbuilder.h>
 
 #include <QApplication>
@@ -26,12 +27,8 @@ using namespace Utils;
 
 namespace TextEditor {
 
-CodeStyleSelectorWidget::CodeStyleSelectorWidget(ICodeStylePreferencesFactory *factory,
-                                                 ProjectExplorer::Project *project,
-                                                 QWidget *parent)
-    : QWidget(parent)
-    , m_factory(factory)
-    , m_project(project)
+CodeStyleSelectorWidget::CodeStyleSelectorWidget(const FilePath &projectFile, QWidget *parent)
+    : QWidget(parent), m_projectFile(projectFile)
 {
     m_delegateComboBox = new QComboBox(this);
     m_delegateComboBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -46,6 +43,11 @@ CodeStyleSelectorWidget::CodeStyleSelectorWidget(ICodeStylePreferencesFactory *f
     m_importButton = new QPushButton(Tr::tr("Import..."));
     m_importButton->setEnabled(false);
 
+    m_readonlyLabel = new InfoLabel(
+        Tr::tr("The selected configuration is read-only. Copy the configuration for editing."),
+        Utils::InfoLabel::Warning);
+    m_readonlyLabel->setVisible(false);
+
     using namespace Layouting;
 
     Column {
@@ -57,6 +59,7 @@ CodeStyleSelectorWidget::CodeStyleSelectorWidget(ICodeStylePreferencesFactory *f
             m_exportButton,
             m_importButton
         },
+        m_readonlyLabel,
         noMargin,
     }.attachTo(this);
 
@@ -144,6 +147,7 @@ void CodeStyleSelectorWidget::slotCurrentDelegateChanged(ICodeStylePreferences *
 
     const bool removeEnabled = delegate && !delegate->isReadOnly() && !delegate->currentDelegate();
     m_removeButton->setEnabled(removeEnabled);
+    m_readonlyLabel->setVisible(delegate && delegate->isReadOnly());
 }
 
 void CodeStyleSelectorWidget::slotCopyClicked()
@@ -198,7 +202,7 @@ void CodeStyleSelectorWidget::slotRemoveClicked()
 void CodeStyleSelectorWidget::slotImportClicked()
 {
     const FilePath fileName =
-            FileUtils::getOpenFilePath(this, Tr::tr("Import Code Style"), {},
+            FileUtils::getOpenFilePath(Tr::tr("Import Code Style"), {},
                                        Tr::tr("Code styles (*.xml);;All files (*)"));
     if (!fileName.isEmpty()) {
         CodeStylePool *codeStylePool = m_codeStyle->delegatingPool();
@@ -217,9 +221,8 @@ void CodeStyleSelectorWidget::slotExportClicked()
 {
     ICodeStylePreferences *currentPreferences = m_codeStyle->currentPreferences();
     const FilePath filePath = FileUtils::getSaveFilePath(
-        this,
         Tr::tr("Export Code Style"),
-        FileUtils::homePath().pathAppended(QString::fromUtf8(currentPreferences->id() + ".xml")),
+        FileUtils::homePath().pathAppended(currentPreferences->displayName() + ".xml"),
         Tr::tr("Code styles (*.xml);;All files (*)"));
     if (!filePath.isEmpty()) {
         CodeStylePool *codeStylePool = m_codeStyle->delegatingPool();
@@ -232,6 +235,11 @@ void CodeStyleSelectorWidget::slotCodeStyleAdded(ICodeStylePreferences *codeStyl
     if (codeStylePreferences == m_codeStyle
             || codeStylePreferences->id() == m_codeStyle->id())
         return;
+
+    if (!codeStylePreferences->project().isEmpty()
+        && codeStylePreferences->project() != m_projectFile) {
+        return;
+    }
 
     const QVariant data = QVariant::fromValue(codeStylePreferences);
     const QString name = displayName(codeStylePreferences);

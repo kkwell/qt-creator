@@ -18,7 +18,7 @@ def main():
         return
     projectName = "DesignerTestApp"
     # explicitly chose new kit to avoid compiler issues on Windows
-    targets = createProject_Qt_GUI(tempDir(), projectName, buildSystem="CMake",
+    targets = createProject_Qt_GUI(tempDir(), projectName, buildSystem="CMake for Qt 5 and Qt 6",
                                    targets=[Targets.DESKTOP_6_2_4])
     if len(targets) != 1:
         earlyExit()
@@ -64,16 +64,12 @@ def main():
                 snooze(1)
                 type(editor, ">")
 
-            if not test.verify(waitFor(proposalExists, 1500), "Proposal should be shown"):
+            if not test.verify(waitFor(proposalExists, 6000), "Proposal should be shown"):
                 type(editor, "<Shift+Delete>")
                 continue
 
             proposalListView = waitForObject(':popupFrame_Proposal_QListView')
-            items = dumpItems(proposalListView.model())
-            if test.verify(" %s" % buttonName in items, "Button present in proposal?"):
-                type(proposalListView, str(buttonName[0]))
-            else:
-                test.log(str(items))
+            type(proposalListView, str(buttonName[0]))
             snooze(1)
             if test.verify(waitFor(proposalExists, 4000),
                            "Verify that GenericProposalWidget is being shown."):

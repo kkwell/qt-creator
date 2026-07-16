@@ -4,15 +4,19 @@
 #pragma once
 
 #include "ioutputparser.h"
-#include "projectconfiguration.h"
 
 #include <projectexplorer/task.h>
 #include <utils/detailswidget.h>
 
+#include <QJsonObject>
+#include <QObject>
 #include <QRegularExpression>
 #include <QVariantMap>
 
+namespace Utils { class QtcSettings; }
+
 namespace ProjectExplorer {
+class Project;
 class Target;
 
 class PROJECTEXPLORER_EXPORT CustomParserExpression
@@ -65,8 +69,15 @@ public:
     Utils::Store toMap() const;
     void fromMap(const Utils::Store &map);
 
+    QJsonObject toJson() const;
+    static CustomParserSettings fromJson(const QJsonObject &obj);
+
     Utils::Id id;
     QString displayName;
+    const Project *project = nullptr;
+    bool buildDefault = false;
+    bool runDefault = false;
+    bool readOnly = false;
     CustomParserExpression error;
     CustomParserExpression warning;
 };
@@ -75,7 +86,7 @@ class PROJECTEXPLORER_EXPORT CustomParsersAspect : public Utils::BaseAspect
 {
     Q_OBJECT
 public:
-    CustomParsersAspect(Target *target);
+    CustomParsersAspect(BuildConfiguration *bc);
 
     void setParsers(const QList<Utils::Id> &parsers) { m_parsers = parsers; }
     QList<Utils::Id> parsers() const { return m_parsers; }
@@ -119,10 +130,14 @@ class CustomParsersSelectionWidget : public Utils::DetailsWidget
 {
     Q_OBJECT
 public:
-    CustomParsersSelectionWidget(QWidget *parent = nullptr);
+    enum Embedded { InRunConfig, InBuildConfig };
+
+    CustomParsersSelectionWidget(Embedded where, Project *project, QWidget *parent = nullptr);
 
     void setSelectedParsers(const QList<Utils::Id> &parsers);
     QList<Utils::Id> selectedParsers() const;
+
+    void addExtraWidget(QWidget *widget);
 
 signals:
     void selectionChanged();
@@ -131,7 +146,38 @@ private:
     void updateSummary();
 };
 
+class PROJECTEXPLORER_EXPORT CustomParsers : public QObject
+{
+    Q_OBJECT
+public:
+    static void set(const QList<CustomParserSettings> &settings);
+    static void add(const CustomParserSettings &settings);
+    static void remove(Utils::Id id);
+    static const QList<CustomParserSettings> get();
+    static const QList<CustomParserSettings> parsersAvailableInProject(const Project *project);
+    static const QList<CustomParserSettings> modifiableParsers();
+
+    static void load(const Utils::QtcSettings &s);
+    static void save(Utils::QtcSettings &s);
+
+    static Utils::Result<QList<CustomParserSettings>> parsersFromFile(
+        const Utils::FilePath &jsonFile);
+
+    static bool canAdd(const CustomParserSettings &parser,
+                       const QList<CustomParserSettings> &parsers);
+
+    static CustomParsers &instance();
+
+signals:
+    void changed();
+};
+
+#ifdef WITH_TESTS
+QObject *createCustomParserTest();
+#endif
+
 } // namespace Internal
 } // namespace ProjectExplorer
 
+Q_DECLARE_METATYPE(ProjectExplorer::CustomParserSettings);
 Q_DECLARE_METATYPE(ProjectExplorer::CustomParserExpression::CustomParserChannel);

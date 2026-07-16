@@ -5,6 +5,8 @@
 
 #include <projectexplorer/jsonwizard/jsonwizardpagefactory.h>
 
+#include <QtTaskTree/QSingleTaskTreeRunner>
+
 #include <utils/filepath.h>
 #include <utils/wizardpage.h>
 
@@ -15,11 +17,7 @@ QT_END_NAMESPACE
 
 namespace Utils { class OutputFormatter; }
 
-namespace VcsBase {
-
-class VcsCommand;
-
-namespace Internal {
+namespace VcsBase::Internal {
 
 class VcsCommandPageFactory : public ProjectExplorer::JsonWizardPageFactory
 {
@@ -28,7 +26,7 @@ public:
 
     Utils::WizardPage *create(ProjectExplorer::JsonWizard *wizard, Utils::Id typeId,
                               const QVariant &data) override;
-    bool validateData(Utils::Id typeId, const QVariant &data, QString *errorMessage) override;
+    Utils::Result<> validateData(Utils::Id typeId, const QVariant &data) override;
 };
 
 class VcsCommandPage : public Utils::WizardPage
@@ -43,44 +41,27 @@ public:
 
     void setCheckoutData(const QString &repo, const QString &baseDir, const QString &name,
                          const QStringList &args);
-    void appendJob(bool skipEmpty, const Utils::FilePath &workDir, const QStringList &command,
-                   const QVariant &condition, int timeoutFactor);
     void setVersionControlId(const QString &id);
     void setRunMessage(const QString &msg);
 
 private:
     void delayedInitialize();
-    void start(VcsCommand *command);
-    void finished(bool success);
-
-    enum State { Idle, Running, Failed, Succeeded };
-
-    struct JobData
-    {
-        bool skipEmptyArguments = false;
-        Utils::FilePath workDirectory;
-        QStringList job;
-        QVariant condition;
-        int timeOutFactor;
-    };
 
     QPlainTextEdit *m_logPlainTextEdit = nullptr;
     Utils::OutputFormatter *m_formatter = nullptr;
     QLabel *m_statusLabel = nullptr;
 
-    VcsCommand *m_command = nullptr;
     QString m_startedStatus;
     bool m_overwriteOutput = false;
 
-    State m_state = Idle;
+    bool m_isComplete = false;
     QString m_vcsId;
     QString m_repository;
     QString m_directory;
     QString m_name;
     QString m_runMessage;
     QStringList m_arguments;
-    QList<JobData> m_additionalJobs;
+    QtTaskTree::QSingleTaskTreeRunner m_taskTreeRunner;
 };
 
-} // namespace Internal
-} // namespace VcsBase
+} // namespace VcsBase::Internal

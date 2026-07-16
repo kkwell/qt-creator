@@ -6,21 +6,27 @@
 #include "documentmanager.h"
 #include "qmldesigner_global.h"
 
-#include <designersettings.h>
-#include <viewmanager.h>
 #include <qmldesignercorelib_global.h>
+#include <viewmanager.h>
 
 #include <extensionsystem/iplugin.h>
 
-#include <qmldesignerbase/qmldesignerbaseplugin.h>
+#include <qmldesigner/qmldesignerplugin.h>
 
 #include <QElapsedTimer>
 
-QT_FORWARD_DECLARE_CLASS(QQmlEngine)
-QT_FORWARD_DECLARE_CLASS(QQuickWidget)
+QT_BEGIN_NAMESPACE
+class QStyle;
+class QQmlEngine;
+class QQuickWidget;
+QT_END_NAMESPACE
 
 namespace Core {
     class IEditor;
+}
+
+namespace ADS {
+    class DockManager;
 }
 
 namespace QmlDesigner {
@@ -31,6 +37,7 @@ class ExternalDependenciesInterface;
 
 namespace Internal { class DesignModeWidget; }
 
+
 class QMLDESIGNER_EXPORT QmlDesignerPlugin final : public ExtensionSystem::IPlugin
 {
     Q_OBJECT
@@ -40,7 +47,7 @@ public:
     QmlDesignerPlugin();
     ~QmlDesignerPlugin() final;
 
-    bool initialize(const QStringList &arguments, QString *errorMessage) final;
+    Utils::Result<> initialize(const QStringList &arguments) final;
     bool delayedInitialize() final;
     void extensionsInitialized() final;
     ShutdownFlag aboutToShutdown() final;
@@ -55,16 +62,16 @@ public:
     DesignerActionManager &designerActionManager();
     const DesignerActionManager &designerActionManager() const;
 
-    static DesignerSettings &settings();
     static ExternalDependenciesInterface &externalDependenciesForPluginInitializationOnly(); // if you use it your code smells
+    static ADS::DockManager *dockManagerForPluginInitializationOnly();
+
+    static bool experimentalFeaturesEnabled();
+    static QByteArray experimentalFeaturesSettingsKey();
 
     DesignDocument *currentDesignDocument() const;
     Internal::DesignModeWidget *mainWidget() const;
 
-    QWidget *createProjectExplorerWidget(QWidget *parent) const;
-
     void switchToTextModeDeferred();
-    void emitCurrentTextEditorChanged(Core::IEditor *editor);
 
     static double formEditorDevicePixelRatio();
 
@@ -92,15 +99,8 @@ signals:
     void usageStatisticsInsertFeedback(const QString &identifier,
                                        const QString &feedback,
                                        int rating);
-    void assetChanged(const QString &assetPath);
-
-private slots:
-    void closeFeedbackPopup();
-    void lauchFeedbackPopup(const QString &identifier);
-    void handleFeedback(const QString &feedback, int rating);
 
 private: // functions
-    void lauchFeedbackPopupInternal(const QString &identifier);
     void integrateIntoQtCreator(Internal::DesignModeWidget *modeWidget);
     void clearDesigner();
     void resetDesignerDocument();
@@ -113,11 +113,11 @@ private: // functions
     void activateAutoSynchronization();
     void deactivateAutoSynchronization();
     void resetModelSelection();
+    void initializeShutdownSettings();
     QString identiferToDisplayString(const QString &identifier);
 
     RewriterView *rewriterView() const;
     Model *currentModel() const;
-    QQuickWidget *m_feedbackWidget = nullptr;
     static QmlDesignerPluginPrivate *privateInstance();
     void enforceDelayedInitialize();
 
@@ -126,6 +126,7 @@ private: // variables
     static QmlDesignerPlugin *m_instance;
     QElapsedTimer m_usageTimer;
     bool m_delayedInitialized = false;
+    bool m_shutdownPending = false;
 };
 
 } // namespace QmlDesigner

@@ -59,7 +59,7 @@ void DebugServerProviderChooser::setCurrentProviderId(const QString &id)
 
 void DebugServerProviderChooser::manageButtonClicked()
 {
-    Core::ICore::showOptionsDialog(Constants::DEBUG_SERVER_PROVIDERS_SETTINGS_ID, this);
+    Core::ICore::showSettings(Constants::DEBUG_SERVER_PROVIDERS_SETTINGS_ID);
 }
 
 void DebugServerProviderChooser::currentIndexChanged(int index)
@@ -82,7 +82,7 @@ void DebugServerProviderChooser::populate()
 {
     const QSignalBlocker blocker(m_chooser);
     m_chooser->clear();
-    m_chooser->addItem(Tr::tr("None"));
+    m_chooser->addItem(Tr::tr("None", "No debug server provider"));
 
     for (const IDebugServerProvider *p : DebugServerProviderManager::providers()) {
         if (!providerMatches(p))

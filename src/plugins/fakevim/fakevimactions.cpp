@@ -88,8 +88,8 @@ FakeVimSettings::FakeVimSettings()
                                   "Backspace",      "bs",  Tr::tr("Backspace:"));
     setup(&isKeyword,      "@,48-57,_,192-255,a-z,A-Z",
                                   "IsKeyword",      "isk", Tr::tr("Keyword characters:"));
-    setup(&clipboard,      {},    "Clipboard",      "cb",  Tr::tr(""));
-    setup(&formatOptions,  {},    "formatoptions",  "fo",  Tr::tr(""));
+    setup(&clipboard,      {},    "Clipboard",      "cb",  "");
+    setup(&formatOptions,  {},    "formatoptions",  "fo",  "");
 
     // Emulated plugins
     setup(&emulateVimCommentary, false, "commentary", {}, "vim-commentary");
@@ -99,7 +99,7 @@ FakeVimSettings::FakeVimSettings()
     setup(&emulateSurround, false, "surround", {}, "vim-surround");
 
     // Some polish
-    useFakeVim.setDisplayName(Tr::tr("Use Vim-style Editing"));
+    useFakeVim.setDisplayName(Tr::tr("Use Vim-Style Editing"));
 
     relativeNumber.setToolTip(Tr::tr("Displays line numbers relative to the line containing "
         "text cursor."));
@@ -114,6 +114,7 @@ FakeVimSettings::FakeVimSettings()
     tabStop.setToolTip(Tr::tr("Vim tabstop option."));
 
 #ifndef FAKEVIM_STANDALONE
+    tabStop.setRange(1, 99);
     backspace.setDisplayStyle(FvStringAspect::LineEditDisplay);
     isKeyword.setDisplayStyle(FvStringAspect::LineEditDisplay);
 
@@ -139,7 +140,9 @@ FakeVimSettings::FakeVimSettings()
                 startOfLine,
                 passKeys,
                 blinkingCursor,
-                If { HostOsInfo::isWindowsHost(), { systemEncoding } }
+                If (HostOsInfo::isWindowsHost()) >> Then {
+                    systemEncoding
+                }
             },
             Column {
                 incSearch,
@@ -188,22 +191,21 @@ FakeVimSettings::FakeVimSettings()
             Row {
                 PushButton {
                     text(Tr::tr("Copy Text Editor Settings")),
-                    onClicked([this] {
+                    onClicked(this, [this] {
                         TabSettings ts = TextEditorSettings::codeStyle()->tabSettings();
-                        TypingSettings tps = globalTypingSettings();
-                        expandTab.setValue(ts.m_tabPolicy != TabSettings::TabsOnlyTabPolicy);
-                        tabStop.setValue(ts.m_tabSize);
-                        shiftWidth.setValue(ts.m_indentSize);
-                        smartTab.setValue(tps.m_smartBackspaceBehavior
-                                          == TypingSettings::BackspaceFollowsPreviousIndents);
-                        autoIndent.setValue(true);
-                        smartIndent.setValue(tps.m_autoIndent);
-                        incSearch.setValue(true);
-                    }, this),
+                        expandTab.setVolatileValue(ts.m_tabPolicy != TabSettings::TabsOnlyTabPolicy);
+                        tabStop.setVolatileValue(ts.m_tabSize);
+                        shiftWidth.setVolatileValue(ts.m_indentSize);
+                        smartTab.setVolatileValue(globalTypingSettings().smartBackspaceBehavior()
+                                                  == TypingSettingsData::BackspaceFollowsPreviousIndents);
+                        autoIndent.setVolatileValue(true);
+                        smartIndent.setVolatileValue(globalTypingSettings().autoIndent());
+                        incSearch.setVolatileValue(true);
+                    }),
                 },
                 PushButton {
                     text(Tr::tr("Set Qt Style")),
-                    onClicked([this] {
+                    onClicked(this, [this] {
                         expandTab.setVolatileValue(true);
                         tabStop.setVolatileValue(4);
                         shiftWidth.setVolatileValue(4);
@@ -213,11 +215,11 @@ FakeVimSettings::FakeVimSettings()
                         incSearch.setVolatileValue(true);
                         backspace.setVolatileValue(QString("indent,eol,start"));
                         passKeys.setVolatileValue(true);
-                    }, this),
+                    }),
                 },
                 PushButton {
                     text(Tr::tr("Set Plain Style")),
-                    onClicked([this] {
+                    onClicked(this, [this] {
                         expandTab.setVolatileValue(false);
                         tabStop.setVolatileValue(8);
                         shiftWidth.setVolatileValue(8);
@@ -227,7 +229,7 @@ FakeVimSettings::FakeVimSettings()
                         incSearch.setVolatileValue(false);
                         backspace.setVolatileValue(QString());
                         passKeys.setVolatileValue(false);
-                    }, this),
+                    }),
                  },
                  st
             },
@@ -304,8 +306,6 @@ public:
         setId(SETTINGS_ID);
         setDisplayName(Tr::tr("General"));
         setCategory(SETTINGS_CATEGORY);
-        setDisplayCategory(Tr::tr("FakeVim"));
-        setCategoryIconPath(":/fakevim/images/settingscategory_fakevim.png");
         setSettingsProvider([] { return &settings(); });
     }
 };

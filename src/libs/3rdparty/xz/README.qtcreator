@@ -1,0 +1,4 @@
+This directory contains a stripped down version of `https://github.com/tukaani-project/xz`
+
+The CMakeLists.txt was replaced with a stripped down version that adds it as
+a Qt Creator static library. The original is preserved in CMakeLists.original.txt

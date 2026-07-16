@@ -6,8 +6,10 @@
 
 #include <qmldesignerplugin.h>
 
+#include <qmldesigner/settings/designersettings.h>
+
 #include <bindingproperty.h>
-#include <model/modelutils.h>
+#include <modelutils.h>
 #include <nodeabstractproperty.h>
 #include <nodelistproperty.h>
 #include <nodemetainfo.h>
@@ -24,14 +26,12 @@ const QString lineBreak = QStringLiteral("<br>");
 
 bool isDebugViewEnabled()
 {
-    return QmlDesigner::QmlDesignerPlugin::settings().value(
-        QmlDesigner::DesignerSettingsKey::ENABLE_DEBUGVIEW).toBool();
+    return QmlDesigner::designerSettings().enableDebugView();
 }
 
 bool isDebugViewShown()
 {
-    return QmlDesigner::QmlDesignerPlugin::settings().value(
-        QmlDesigner::DesignerSettingsKey::SHOW_DEBUGVIEW).toBool();
+    return QmlDesigner::designerSettings().showDebugView();
 }
 
 }
@@ -244,6 +244,9 @@ QTextStream &operator<<(QTextStream &stream, AuxiliaryDataType type)
     case AuxiliaryDataType::Temporary:
         stream << "Temporary";
         break;
+    case AuxiliaryDataType::Persistent:
+        stream << "Persistent";
+        break;
     }
 
     return stream;
@@ -436,7 +439,6 @@ WidgetInfo DebugView::widgetInfo()
     return createWidgetInfo(m_debugViewWidget.data(),
                             QStringLiteral("DebugView"),
                             WidgetInfo::LeftPane,
-                            0,
                             tr("Debug View"));
 }
 
@@ -459,8 +461,11 @@ void DebugView::instancePropertyChanged(const QList<QPair<ModelNode, PropertyNam
 
         for (const Pair &pair : propertyList) {
             message << pair.first;
-            message << lineBreak;
+            message << " ";
             message << pair.second;
+            message << ": ";
+            message << QmlObjectNode(pair.first).instanceValue(pair.second).toString();
+            message << lineBreak;
         }
 
         logInstance(":instancePropertyChanged::", string);
@@ -500,6 +505,10 @@ void DebugView::instanceInformationsChanged(const QMultiHash<ModelNode, Informat
         for (const ModelNode &modelNode : modelNodes) {
             message << modelNode;
             message << informationChangedHash.value(modelNode);
+            message << ": ";
+            message << QmlItemNode(modelNode).instanceSize().width();
+            message << " ";
+            message << QmlItemNode(modelNode).instanceSize().height();
         }
 
         logInstance("::instanceInformationsChanged:", string);

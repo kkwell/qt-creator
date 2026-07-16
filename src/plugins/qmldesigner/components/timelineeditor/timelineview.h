@@ -18,7 +18,8 @@ class TimelineView : public AbstractView
     Q_OBJECT
 
 public:
-    explicit TimelineView(ExternalDependenciesInterface &externalDepoendencies);
+    explicit TimelineView(ExternalDependenciesInterface &externalDepoendencies,
+                          ModulesStorage &modulesStorage);
     ~TimelineView() override;
     //Abstract View
     WidgetInfo widgetInfo() override;
@@ -60,7 +61,11 @@ public:
     void addNewTimelineDialog();
     void openSettingsDialog();
 
+    void activateTimelineRecording(const ModelNode &timeline);
+    void deactivateTimelineRecording();
+
     void setTimelineRecording(bool b);
+    void setCurrentTimeline(const ModelNode &timeline);
 
     void customNotification(const AbstractView *view,
                             const QString &identifier,
@@ -79,6 +84,7 @@ public:
 private:
     TimelineWidget *createWidget();
     QPointer<TimelineWidget> m_timelineWidget;
+    ModulesStorage &m_modulesStorage;
     bool hasQtQuickTimelineImport();
     void ensureQtQuickTimelineImport();
 };

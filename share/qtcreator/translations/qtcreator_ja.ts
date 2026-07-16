@@ -11605,8 +11605,8 @@ in the system&apos;s browser for manual download.</source>
         <translation>エミュレータのコマンドライン起動オプション(&lt;a href=&quot;%1&quot;&gt;Help Web Page&lt;/a&gt;):</translation>
     </message>
     <message>
-        <source>(SDK Version: %1, NDK Version: %2)</source>
-        <translation>(SDK バージョン: %1, NDK バージョン: %2)</translation>
+        <source>(SDK Version: %1)</source>
+        <translation>(SDK バージョン: %1)</translation>
     </message>
     <message>
         <source>The selected path already has a valid SDK Tools package.</source>
@@ -40957,18 +40957,6 @@ Android パッケージソースディレクトリのファイルはビルドデ
     <message>
         <source>&quot;%1&quot; in &quot;data&quot; section of &quot;VcsCommand&quot; page has unexpected type (unset or List).</source>
         <translation>&quot;VcsCommand&quot; ページの &quot;data&quot; セクションの &quot;%1&quot; の値が未設定やリストではありません。</translation>
-    </message>
-    <message>
-        <source>Job in &quot;VcsCommand&quot; page is empty.</source>
-        <translation>&quot;VcsCommand&quot; ページの extraJobs が空です。</translation>
-    </message>
-    <message>
-        <source>Job in &quot;VcsCommand&quot; page is not an object.</source>
-        <translation>&quot;VcsCommand&quot; ページの extraJobs がオブジェクトではありません。</translation>
-    </message>
-    <message>
-        <source>Job in &quot;VcsCommand&quot; page has no &quot;%1&quot; set.</source>
-        <translation>&quot;VcsCommand&quot; ページの extraJobs に &quot;%1&quot; が設定されていません。</translation>
     </message>
     <message>
         <source>Checkout</source>

@@ -11,12 +11,13 @@
 #include <coreplugin/progressmanager/progressmanager.h>
 
 #include <projectexplorer/buildconfiguration.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectmanager.h>
 #include <projectexplorer/runcontrol.h>
+#include <projectexplorer/sysrootkitaspect.h>
 #include <projectexplorer/target.h>
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/toolchainkitaspect.h>
 
 #include <utils/environment.h>
 #include <utils/qtcassert.h>
@@ -33,8 +34,7 @@
 using namespace ProjectExplorer;
 using namespace Utils;
 
-namespace PerfProfiler {
-namespace Internal {
+namespace PerfProfiler::Internal {
 
 static const qint64 million = static_cast<qint64>(1000000);
 
@@ -47,7 +47,6 @@ PerfDataReader::PerfDataReader(QObject *parent) :
     m_lastRemoteTimestamp(0)
 {
     connect(&m_input, &QProcess::finished, this, [this](int exitCode) {
-        emit processFinished();
         // process any remaining input before signaling finished()
         readFromDevice();
         if (m_recording || future().isRunning()) {
@@ -55,12 +54,12 @@ PerfDataReader::PerfDataReader(QObject *parent) :
             emit finished();
         }
         if (exitCode != 0) {
-            QMessageBox::warning(Core::ICore::dialogParent(),
-                                 Tr::tr("Perf Data Parser Failed"),
-                                 Tr::tr("The Perf data parser failed to process all the samples. "
-                                        "Your trace is incomplete. The exit code was %1.")
-                                 .arg(exitCode));
+            Core::MessageManager::writeDisrupting(
+                Tr::tr("The Perf data parser failed to process all the samples. "
+                       "Your trace is incomplete. The exit code was %1.")
+                    .arg(exitCode));
         }
+        emit processFinished();
     });
 
     connect(&m_input, &QIODevice::bytesWritten, this, &PerfDataReader::writeChunk);
@@ -83,17 +82,14 @@ PerfDataReader::PerfDataReader(QObject *parent) :
         switch (e) {
         case QProcess::FailedToStart:
             emit processFailed(Tr::tr("perfparser failed to start."));
-            QMessageBox::warning(Core::ICore::dialogParent(),
-                                 Tr::tr("Perf Data Parser Failed"),
-                                 Tr::tr("Could not start the perfparser utility program. "
-                                        "Make sure a working Perf parser is available at the "
-                                        "location given by the PERFPROFILER_PARSER_FILEPATH "
-                                        "environment variable."));
+            Core::MessageManager::writeDisrupting(
+                Tr::tr("Could not start the perfparser utility program. "
+                       "Make sure a working Perf parser is available at the "
+                       "location given by the PERFPROFILER_PARSER_FILEPATH "
+                       "environment variable."));
             break;
         case QProcess::Crashed:
-            QMessageBox::warning(Core::ICore::dialogParent(),
-                                 Tr::tr("Perf Data Parser Crashed"),
-                                 Tr::tr("This is a bug. Please report it."));
+            Core::MessageManager::writeDisrupting(Tr::tr("Perf Data Parser Crashed"));
             break;
         case QProcess::ReadError:
             qWarning() << "Cannot receive data from perfparser";
@@ -118,7 +114,10 @@ PerfDataReader::PerfDataReader(QObject *parent) :
 
 PerfDataReader::~PerfDataReader()
 {
+    QObject::disconnect(this, &PerfDataReader::processFinished, nullptr, nullptr);
+    QObject::disconnect(this, &PerfDataReader::processFailed, nullptr, nullptr);
     m_input.kill();
+    m_input.waitForFinished();
     qDeleteAll(m_buffer);
 }
 
@@ -384,8 +383,8 @@ void PerfDataReader::addTargetArguments(CommandLine *cmd, const RunControl *runC
 {
     ProjectExplorer::Kit *kit = runControl->kit();
     QTC_ASSERT(kit, return);
-    ProjectExplorer::BuildConfiguration *buildConfig = runControl->target()->activeBuildConfiguration();
-    QString buildDir = buildConfig ? buildConfig->buildDirectory().toString() : QString();
+    ProjectExplorer::BuildConfiguration *buildConfig = runControl->buildConfiguration();
+    QString buildDir = buildConfig ? buildConfig->buildDirectory().toUrlishString() : QString();
     collectArguments(cmd, buildDir, kit);
 }
 
@@ -397,5 +396,4 @@ FilePath findPerfParser()
     return filePath;
 }
 
-} // namespace Internal
-} // namespace PerfProfiler
+} // namespace PerfProfiler::Internal

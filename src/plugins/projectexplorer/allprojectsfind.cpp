@@ -10,6 +10,7 @@
 #include "projectmanager.h"
 
 #include <coreplugin/editormanager/editormanager.h>
+#include <coreplugin/find/findplugin.h>
 
 #include <texteditor/textdocument.h>
 
@@ -18,10 +19,10 @@
 
 #include <QGridLayout>
 
-using namespace ProjectExplorer;
-using namespace ProjectExplorer::Internal;
 using namespace TextEditor;
 using namespace Utils;
+
+namespace ProjectExplorer::Internal {
 
 AllProjectsFind::AllProjectsFind() :  m_configWidget(nullptr)
 {
@@ -57,20 +58,22 @@ FileContainer AllProjectsFind::filesForProjects(const QStringList &nameFilters,
 {
     const FilterFilesFunction filterFiles
         = Utils::filterFilesFunction(nameFilters, exclusionFilters);
-    const QMap<FilePath, QTextCodec *> openEditorEncodings
+    const QMap<FilePath, TextEncoding> openEditorEncodings
         = TextDocument::openedTextDocumentEncodings();
-    QMap<FilePath, QTextCodec *> encodings;
+    QMap<FilePath, TextEncoding> encodings;
     for (const Project *project : projects) {
         const EditorConfiguration *config = project->editorConfiguration();
-        QTextCodec *projectCodec = config->useGlobalSettings()
-            ? Core::EditorManager::defaultTextCodec()
-            : config->textCodec();
-        const FilePaths filteredFiles = filterFiles(project->files(Project::SourceFiles));
+        TextEncoding projectEncoding = config->useGlobalSettings()
+            ? Core::EditorManager::defaultTextEncoding()
+            : config->textEncoding();
+        const FilePaths filteredFiles = filterFiles(project->files(
+            Core::Find::hasFindFlag(DontFindGeneratedFiles) ? Project::SourceFiles
+                                                            : Project::AllFiles));
         for (const FilePath &fileName : filteredFiles) {
-            QTextCodec *codec = openEditorEncodings.value(fileName);
-            if (!codec)
-                codec = projectCodec;
-            encodings.insert(fileName, codec);
+            TextEncoding encoding = openEditorEncodings.value(fileName);
+            if (!encoding.isValid())
+                encoding = projectEncoding;
+            encodings.insert(fileName, encoding);
         }
     }
     return FileListContainer(encodings.keys(), encodings.values());
@@ -87,6 +90,11 @@ QString AllProjectsFind::toolTip() const
     return Tr::tr("Filter: %1\nExcluding: %2\n%3")
             .arg(fileNameFilters().join(','))
             .arg(fileExclusionFilters().join(','));
+}
+
+FindFlags AllProjectsFind::supportedFindFlags() const
+{
+    return BaseFileFind::supportedFindFlags() | DontFindGeneratedFiles;
 }
 
 void AllProjectsFind::handleFileListChanged()
@@ -132,3 +140,5 @@ QByteArray AllProjectsFind::settingsKey() const
 {
     return "AllProjectsFind";
 }
+
+} // ProjectExplorer::Internal

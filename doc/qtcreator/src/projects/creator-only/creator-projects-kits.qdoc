@@ -33,8 +33,9 @@
         \li iOS Simulator
         \li \l{Developing for MCUs}{MCU} (commercial only)
         \li \l{Add a QNX Neutrino device}{QNX}
-        \li \l{Developing for Remote Linux Devices}{Remote Linux}
-        \li \l{Build applications for the web}{WebAssembly Runtime}
+        \li \l{Developing for remote Linux devices}{Remote Linux}
+        \li \l{Create kits for VxWorks devices}{VxWorks}
+        \li \l{Building applications for the web}{WebAssembly Runtime}
     \endlist
 
     To add kits:
@@ -44,11 +45,11 @@
         \li Select \preferences > \uicontrol Kits.
         \li Select \uicontrol Add to start from an empty kit or \uicontrol Clone
             to clone the selected kit and edit its preferences.
-            \image qtcreator-kits.png
-        \li Set \l{Kits}{kit preferences} according to the build system and
+            \image {qtcreator-preferences-kits.webp} {Kits preferences}
+        \li Set \l{Managing kits}{kit preferences} according to the build system and
             device type.
 
-        \li Select \uicontrol OK to create the kit.
+        \li Select \uicontrol Apply to create the kit.
 
     \endlist
 
@@ -58,21 +59,23 @@
     choose the kit to use. To set the selected kit as the default kit,
     select \uicontrol {Make Default}.
 
-    \sa {Manage Kits}{How To: Manage Kits}, {Compilers}, {Kits}
+    \sa {Manage kits}{How to: Manage kits}, {Managing kits}
 */
 
 /*!
     \page creator-preferences-kits.html
     \previouspage creator-reference.html
+    \nextpage creator-running-targets.html
 
-    \ingroup creator-reference-preferences-kits
+    \title Managing kits
 
-    \target kits-tab
-    \title Kits
+    \quotation
+    \l {Manage kits}{How to: Manage kits}
+    \endquotation
 
-    \brief Set kit preferences. A kit consists of a set of values that define
+    \summary {Set kit preferences. A kit consists of a set of values that define
     one environment, such as a \e {device}, toolchain, Qt version, and debugger
-    command to use.
+    command to use.}
 
     Typically, only a subset of the kit preferences is relevant for a particular
     setup. Therefore, \QC plugins register sets of relevant preferences that you
@@ -80,9 +83,9 @@
     \uicontrol Kits. For example, if you use CMake to build all your projects,
     you can hide Qbs and qmake preferences by default.
 
-    \image qtcreator-kits.png
+    \image {qtcreator-preferences-kits.webp} {Kits preferences}
 
-    \section1 Filtering Kit Preferences
+    \section1 Filtering kit preferences
 
     To hide and show preferences in the \uicontrol Kits tab for the
     current kit, select \uicontrol {Settings Filter}.
@@ -90,7 +93,7 @@
     To view and modify the preferences displayed when you add a new kit, select
     \uicontrol {Default Settings Filter}.
 
-    \section1 Kit Preferences
+    \section1 Kit preferences
 
     The following table summarizes the available kit preferences.
 
@@ -103,9 +106,9 @@
         \li Name of the kit. You can use variables to generate the kit name
             based on the values you set in the other fields.
 
-            Click the \inlineimage icons/qtcreator-desktopdevice-button.png icon next to the field,
-            and select the image that is displayed in the kit selector for this kit.
-            Select \uicontrol Browse to select an
+            Select \imagedesktopdevicesmall (\uicontrol {Desktop icon})
+            next to the field, and then select the image that is displayed in the
+            kit selector for this kit. Select \uicontrol Browse to select an
             image in a supported file format (for example, PNG). The image is
             scaled to the size 64x64 pixels. For example, using the compiler
             logo as an icon allows you to easily see, which compiler is used to
@@ -116,22 +119,13 @@
             used for the \c CurrentKit:FileSystemName variable, which determines
             the name of the shadow build directory, for example.
     \row
-        \li \uicontrol{Run device type}
-        \li Type of the run device.
-    \row
         \li \uicontrol {Run device}
-        \li The device to run applications on.
+        \li \uicontrol {Type} is the type of the run device, and
+            \uicontrol {Device} is the device to run applications on.
     \row
         \li \uicontrol {Build device}
-        \li The device to build applications on.
-
-    \row
-        \li \uicontrol Sysroot
-        \li Directory where the device image is located. If you are not
-            cross-compiling, leave this field empty.
-    \row
-        \li \uicontrol {Emulator skin}
-        \li Skin to use for the \l {Emulator}{\B2Q Emulator Device}.
+        \li \uicontrol {Type} is the type of the build device, and
+            \uicontrol {Device} is the device to build applications on.
     \row
         \li \uicontrol {Compiler}
         \li C or C++ compiler that you use to build the project. You can add
@@ -147,9 +141,15 @@
             information from \uicontrol {Qt mkspec}, which you can change.
     \row
         \li \uicontrol Environment
-        \li Select \uicontrol Change to modify environment variable values for
-            build environments in the \uicontrol {Edit Environment Changes}
-            dialog. For more information about how to add and remove variable
+        \li Select \uicontrol {Edit Build Environment} to modify
+            environment variable values for build environments in
+            the \uicontrol {Edit Build Environment} dialog.
+
+            Select \uicontrol {Edit Run Environment} to modify
+            environment variable values for run environments in
+            the \uicontrol {Edit Run Environment} dialog.
+
+            For more information about how to add and remove variable
             values, see \l{Edit environment settings}.
     \row
         \li \uicontrol {Force UTF-8 MSVC compiler output}
@@ -162,9 +162,10 @@
             automatically detects available debuggers and displays a
             suitable debugger in the field. You can add debuggers to the list.
             For more information, see \l{Add debuggers}.
-
-            For Android kits, the \uicontrol {Android GDB server} field will
-            display the path to GDB server executable.
+    \row
+        \li \uicontrol Sysroot
+        \li Directory where the device image is located. If you are not
+            cross-compiling, leave this field empty.
     \row
         \li \uicontrol {Qt version}
         \li Qt version to use for building the project. You can add Qt versions
@@ -175,12 +176,12 @@
             variable for the qmake executable. It refers to the qmake executable
             it finds as \b{Qt in PATH} and selects it as the Qt version
             to use for the \uicontrol Desktop kit that is created by default.
+
+            \uicontrol {mkspec} is the name of the mkspec configuration that
+            qmake uses. If you leave this field empty, qmake uses the default
+            mkspec of the selected Qt version.
     \row
-        \li \uicontrol {Qt mkspec}
-        \li Name of the mkspec configuration that qmake uses. If you leave this
-            field empty, it uses the default mkspec of the selected Qt version.
-    \row
-        \li \uicontrol {Additional Qbs profile settings}
+        \li \uicontrol {Qbs profile additions}
         \li Select \uicontrol Change to add settings to Qbs build profiles.
             For more information, see \l {Edit Qbs profiles}.
     \row
@@ -201,6 +202,11 @@
         \li Select \uicontrol Change to edit the parameters of the CMake
             configuration for the kit.
     \row
+        \li \uicontrol {Python}
+        \li Select the Python version for the kit. Select \uicontrol Manage
+            to add Python versions. For more information, see
+            \l{Select the Python version}.
+    \row
         \li \uicontrol {Meson tool}
         \li Meson tool to use for building the project. Select \uicontrol Manage
             to add installed Meson tools to the list. For more information, see
@@ -211,6 +217,6 @@
             \uicontrol Manage to add installed Ninja tools to the list.
     \endtable
 
-    \sa {Manage Kits}{How To: Manage Kits}, {Add CMake Tools},
+    \sa {Manage kits}{How to: Manage kits}, {Add CMake Tools},
     {Edit Qbs profiles}
 */

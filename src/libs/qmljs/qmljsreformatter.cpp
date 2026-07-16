@@ -105,7 +105,7 @@ public:
         // emit directives
         if (_doc->bind()->isJsLibrary()) {
             const QString pragmaLine(".pragma library");
-            out(pragmaLine, SourceLocation(source.indexOf(".pragma"), pragmaLine.length()));
+            out(pragmaLine, SourceLocation(source.indexOf(".pragma"), pragmaLine.size()));
             newLine();
         }
         const QList<SourceLocation> &directives = _doc->jsDirectives();
@@ -116,7 +116,7 @@ public:
                 i = source.indexOf(QChar('\n'), i + 1);
             quint32 offset = static_cast<quint32>(i) + d.startColumn;
             int endline = source.indexOf('\n', static_cast<int>(offset) + 1);
-            int end = endline == -1 ? source.length() : endline;
+            int end = endline == -1 ? source.size() : endline;
             quint32 length = static_cast<quint32>(end) - offset + 1;
             out(SourceLocation(offset, length, d.startLine, d.startColumn));
         }
@@ -526,6 +526,10 @@ protected:
     {
         out("pragma ", ast->pragmaToken);
         out(ast->name.toString());
+        if (!ast->value.isEmpty()) {
+            out(": ");
+            out(ast->value.toString());
+        }
         newLine();
         return false;
     }
@@ -776,40 +780,47 @@ protected:
     bool visit(PatternPropertyList *ast) override
     {
         for (PatternPropertyList *it = ast; it; it = it->next) {
-            PatternProperty *assignment = AST::cast<PatternProperty *>(it->property);
-            if (assignment) {
-                out("\"");
-                accept(assignment->name);
-                out("\"");
-                out(": ", assignment->colonToken);
-                accept(assignment->initializer);
-                if (it->next) {
-                    out(","); // always invalid?
-                    newLine();
-                }
-                continue;
+            accept(it->property);
+            if (it->next) {
+                out(",");
+                newLine();
             }
-            PatternPropertyList *getterSetter = AST::cast<PatternPropertyList *>(it->next);
-            if (getterSetter->property) {
-                switch (getterSetter->property->type) {
-                case PatternElement::Getter:
-                    out("get");
-                    break;
-                case PatternElement::Setter:
-                    out("set");
-                    break;
-                default:
-                    break;
-                }
+        }
+        return false;
+    }
 
-                accept(getterSetter->property->name);
-                out("(");
-                //accept(getterSetter->formals);  // TODO
-                out(")");
-                out(" {");
-                //accept(getterSetter->functionBody);  // TODO
-                out(" }");
+    bool visit(PatternProperty *ast) override
+    {
+        if (ast->type == PatternElement::Getter || ast->type == PatternElement::Setter
+            || ast->type == PatternElement::Method) {
+            if (ast->type == PatternProperty::Getter) {
+                out("get");
+            } else if (ast->type == PatternProperty::Setter) {
+                out("set");
             }
+            FunctionExpression *f = AST::cast<FunctionExpression *>(ast->initializer);
+            if (f->isGenerator)
+                out("*");
+            accept(ast->name);
+            out(f->lparenToken);
+            accept(f->formals);
+            out(f->rparenToken);
+            out(f->lbraceToken);
+            if (f->body) {
+                if (f->body->next || f->lbraceToken.length != 0) {
+                    lnAcceptIndented(f->body);
+                    newLine();
+                } else {
+                    accept(f->body);
+                }
+            }
+            out(f->rbraceToken);
+        } else {
+            out("\"");
+            accept(ast->name);
+            out("\"");
+            out(": ", ast->colonToken);
+            accept(ast->initializer);
         }
         return false;
     }
@@ -1422,6 +1433,29 @@ protected:
 
     void throwRecursionDepthError() override {
         out("/* ERROR: Hit recursion limit visiting AST, rewrite failed */");
+    }
+
+    bool visit(ClassDeclaration *ast) override
+    {
+        out(ast->classToken);
+        out(" ");
+        out(ast->identifierToken);
+        out(" ");
+        if (ast->heritage) {
+            out("extends");
+            accept(ast->heritage);
+        }
+        out(ast->lbraceToken);
+        for (ClassElementList *it = ast->elements; it; it = it->next) {
+            newLine();
+            if (it->isStatic) {
+                out("static");
+            }
+            accept(it->property);
+            newLine();
+        }
+        out(ast->rbraceToken);
+        return false;
     }
 };
 

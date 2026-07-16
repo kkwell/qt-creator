@@ -27,18 +27,21 @@ class PROJECTEXPLORER_EXPORT TaskHub final : public QObject
     Q_OBJECT
 
 public:
-    // Convenience overload
+    template<typename T, typename ... Args> static void addTask(Args ... args)
+    {
+        addTask(T(args...));
+    }
+
     static void addTask(Task::TaskType type, const QString &description,
                         Utils::Id category);
 
-public slots:
-    static void addTask(ProjectExplorer::Task task);
+    static void addTask(Task task);
     static void clearTasks(Utils::Id categoryId = Utils::Id());
-    static void removeTask(const ProjectExplorer::Task &task);
+    static void removeTask(const Task &task);
+    static void clearAndRemoveTask(Task &task);
 
-public:
     static void addCategory(const TaskCategory &category);
-    static void updateTaskFileName(const Task &task, const QString &fileName);
+    static void updateTaskFilePath(const Task &task, const Utils::FilePath &filePath);
     static void updateTaskLineNumber(const Task &task, int line);
     static void taskMarkClicked(const Task &task);
     static void showTaskInEditor(const Task &task);
@@ -51,7 +54,7 @@ signals:
     void taskAdded(const ProjectExplorer::Task &task);
     void taskRemoved(const ProjectExplorer::Task &task);
     void tasksCleared(Utils::Id categoryId);
-    void taskFileNameUpdated(const Task &task, const QString &fileName);
+    void taskFilePathUpdated(const Task &task, const Utils::FilePath &filePath);
     void taskLineNumberUpdated(const Task &task, int line);
     void categoryVisibilityChanged(Utils::Id categoryId, bool visible);
     void popupRequested(int);

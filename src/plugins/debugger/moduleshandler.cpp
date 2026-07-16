@@ -70,7 +70,8 @@ QVariant ModuleItem::data(int column, int role) const
         if (role == Qt::DisplayRole)
             switch (module.elfData.symbolsType) {
             case UnknownSymbols: return Tr::tr("Unknown");
-            case NoSymbols:      return Tr::tr("None");
+            case NoSymbols:
+                return Tr::tr("None", "Symbols Type (No debug information found)");
             case PlainSymbols:   return Tr::tr("Plain");
             case FastSymbols:    return Tr::tr("Fast");
             case LinkedSymbols:  return Tr::tr("debuglnk");
@@ -171,10 +172,10 @@ bool ModulesModel::contextMenuEvent(const ItemViewEvent &ev)
 
     addAction(this, menu, Tr::tr("Show Dependencies of \"%1\"").arg(moduleName),
               Tr::tr("Show Dependencies"),
-              moduleNameValid && !modulePath.needsDevice() && modulePath.exists()
+              moduleNameValid && modulePath.isLocal() && modulePath.exists()
                   && dependsCanBeFound(),
               [modulePath] {
-                  Process::startDetached({{"depends"}, {modulePath.toString()}});
+                  Process::startDetached({{"depends"}, {modulePath.nativePath()}});
               });
 
     addAction(this, menu, Tr::tr("Load Symbols for All Modules"),
@@ -182,8 +183,13 @@ bool ModulesModel::contextMenuEvent(const ItemViewEvent &ev)
               [this] { engine->loadAllSymbols(); });
 
     addAction(this, menu, Tr::tr("Examine All Modules"),
-              enabled && canLoadSymbols,
-              [this] { engine->examineModules(); });
+              enabled && canLoadSymbols && engine->isExamineModulesEnabled(), [this] {
+        ModulesHandler *handler = engine->modulesHandler();
+        for (const Module &module : handler->modules()) {
+            if (module.elfData.symbolsType == UnknownSymbols)
+                handler->updateModule(module);
+        }
+    });
 
     addAction(this, menu, Tr::tr("Load Symbols for Module \"%1\"").arg(moduleName),
               Tr::tr("Load Symbols for Module"),
@@ -205,9 +211,9 @@ bool ModulesModel::contextMenuEvent(const ItemViewEvent &ev)
               canShowSymbols && moduleNameValid,
               [this, modulePath] { engine->requestModuleSections(modulePath); });
 
-    menu->addAction(settings().settingsDialog.action());
+    addStandardActions(ev.view(), menu);
 
-    connect(menu, &QMenu::aboutToHide, menu, &QObject::deleteLater);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
     menu->popup(ev.globalPos());
     return true;
 }
@@ -295,13 +301,18 @@ void ModulesHandler::updateModule(const Module &module)
         m_model->rootItem()->appendChild(item);
     }
 
-    try { // MinGW occasionallly throws std::bad_alloc.
-        ElfReader reader(path);
-        item->module.elfData = reader.readHeaders();
-        item->update();
-    } catch(...) {
-        qWarning("%s: An exception occurred while reading module '%s'",
-                 Q_FUNC_INFO, qPrintable(module.modulePath.toUserOutput()));
+    if (path.isLocal()) {
+        try { // MinGW occasionallly throws std::bad_alloc.
+            ElfReader reader(path);
+            item->module.elfData = reader.readHeaders();
+            item->update();
+        } catch(...) {
+            qWarning("%s: An exception occurred while reading module '%s'",
+                     Q_FUNC_INFO, qPrintable(module.modulePath.toUserOutput()));
+        }
+    } else {
+        m_model->engine->showMessage(
+                    QString("Skipping elf-reading of remote path %1").arg(path.toUserOutput()));
     }
     item->updated = true;
 }

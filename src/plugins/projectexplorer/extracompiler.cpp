@@ -4,32 +4,33 @@
 #include "extracompiler.h"
 
 #include "buildmanager.h"
-#include "kitaspects.h"
+#include "environmentkitaspect.h"
 #include "projectmanager.h"
 #include "target.h"
 
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/idocument.h>
 
-#include <solutions/tasking/tasktreerunner.h>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <utils/async.h>
-#include <utils/expected.h>
 #include <utils/guard.h>
+#include <utils/result.h>
 #include <utils/qtcprocess.h>
 
+#include <qapplicationstatic.h>
 #include <QDateTime>
 #include <QLoggingCategory>
 #include <QThreadPool>
 #include <QTimer>
 
 using namespace Core;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace ProjectExplorer {
 
-Q_GLOBAL_STATIC(QThreadPool, s_extraCompilerThreadPool);
+Q_APPLICATION_STATIC(QThreadPool, s_extraCompilerThreadPool);
 Q_GLOBAL_STATIC(QList<ExtraCompilerFactory *>, factories);
 Q_LOGGING_CATEGORY(log, "qtc.projectexplorer.extracompiler", QtWarningMsg);
 
@@ -41,14 +42,10 @@ public:
     FileNameToContentsHash contents;
     QDateTime compileTime;
     IEditor *lastEditor = nullptr;
-    QMetaObject::Connection activeBuildConfigConnection;
-    QMetaObject::Connection activeEnvironmentConnection;
     Guard lock;
     bool dirty = false;
-
     QTimer timer;
-
-    TaskTreeRunner m_taskTreeRunner;
+    QSingleTaskTreeRunner m_taskTreeRunner;
 };
 
 ExtraCompiler::ExtraCompiler(const Project *project, const FilePath &source,
@@ -92,8 +89,8 @@ ExtraCompiler::ExtraCompiler(const Project *project, const FilePath &source,
         if (!d->compileTime.isValid() || d->compileTime > lastModified)
             d->compileTime = lastModified;
 
-        const expected_str<QByteArray> contents = target.fileContents();
-        QTC_ASSERT_EXPECTED(contents, return);
+        const Result<QByteArray> contents = target.fileContents();
+        QTC_ASSERT_RESULT(contents, return);
 
         setContent(target, *contents);
     }
@@ -170,7 +167,7 @@ void ExtraCompiler::compileIfDirty()
 ExtraCompiler::ContentProvider ExtraCompiler::fromFileProvider() const
 {
     const auto provider = [fileName = source()] {
-        QFile file(fileName.toString());
+        QFile file(fileName.toUrlishString());
         if (!file.open(QFile::ReadOnly | QFile::Text))
             return QByteArray();
         return file.readAll();
@@ -215,8 +212,8 @@ void ExtraCompiler::onTargetsBuilt(Project *project)
             if (d->compileTime >= generateTime)
                 return;
 
-            const expected_str<QByteArray> contents = target.fileContents();
-            QTC_ASSERT_EXPECTED(contents, return);
+            const Result<QByteArray> contents = target.fileContents();
+            QTC_ASSERT_RESULT(contents, return);
 
             d->compileTime = generateTime;
             setContent(target, *contents);
@@ -274,16 +271,14 @@ void ExtraCompiler::onEditorAboutToClose(IEditor *editor)
 
 Environment ExtraCompiler::buildEnvironment() const
 {
-    Target *target = project()->activeTarget();
-    if (!target)
-        return Environment::systemEnvironment();
-
-    if (BuildConfiguration *bc = target->activeBuildConfiguration())
+    if (BuildConfiguration *bc = project()->activeBuildConfiguration())
         return bc->environment();
 
-    const EnvironmentItems changes = EnvironmentKitAspect::environmentChanges(target->kit());
     Environment env = Environment::systemEnvironment();
-    env.modify(changes);
+    if (project()->activeKit()) {
+        EnvironmentKitAspect::buildEnvChanges(project()->activeKit())
+            .modifyEnvironment(env, project()->activeKit()->macroExpander());
+    }
     return env;
 }
 
@@ -327,17 +322,18 @@ GroupItem ProcessExtraCompiler::taskItemImpl(const ContentProvider &provider)
         async.setConcurrentCallData(&ProcessExtraCompiler::runInThread, this, command(),
                                     workingDirectory(), arguments(), provider, buildEnvironment());
     };
-    const auto onDone = [this](const Async<FileNameToContentsHash> &async) {
-        if (!async.isResultAvailable())
-            return;
-        const FileNameToContentsHash data = async.result();
-        if (data.isEmpty())
-            return; // There was some kind of error...
-        for (auto it = data.constBegin(), end = data.constEnd(); it != end; ++it)
-            setContent(it.key(), it.value());
-        updateCompileTime();
-    };
-    return AsyncTask<FileNameToContentsHash>(onSetup, onDone, CallDoneIf::Success);
+    const auto onDone =
+        [self = QPointer<ProcessExtraCompiler>(this)](const Async<FileNameToContentsHash> &async) {
+            if (!self || !async.isResultAvailable())
+                return;
+            const FileNameToContentsHash data = async.result();
+            if (data.isEmpty())
+                return; // There was some kind of error...
+            for (auto it = data.constBegin(), end = data.constEnd(); it != end; ++it)
+                self->setContent(it.key(), it.value());
+            self->updateCompileTime();
+        };
+    return AsyncTask<FileNameToContentsHash>(onSetup, onDone, CallDoneFlag::OnSuccess);
 }
 
 FilePath ProcessExtraCompiler::workingDirectory() const

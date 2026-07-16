@@ -4,15 +4,14 @@
 #include "qmlprofileranimationsmodel_test.h"
 #include "../qmlprofilertr.h"
 #include <tracing/timelineformattime.h>
-#include <QtTest>
+#include <QTest>
 
-namespace QmlProfiler {
-namespace Internal {
+using namespace QmlDebug;
+namespace QmlProfiler::Internal {
 
-QmlProfilerAnimationsModelTest::QmlProfilerAnimationsModelTest(QObject *parent) :
-    QObject(parent), model(&manager, &aggregator)
-{
-}
+QmlProfilerAnimationsModelTest::QmlProfilerAnimationsModelTest()
+    : model(&manager, &aggregator)
+{}
 
 static int frameRate(int i)
 {
@@ -117,5 +116,4 @@ void QmlProfilerAnimationsModelTest::cleanupTestCase()
     QCOMPARE(model.collapsedRowCount(), 1);
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

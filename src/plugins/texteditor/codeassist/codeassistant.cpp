@@ -47,7 +47,6 @@ public:
     void displayProposal(IAssistProposal *newProposal, AssistReason reason);
     bool isDisplayingProposal() const;
     bool isWaitingForProposal() const;
-    QString proposalPrefix() const;
 
     void notifyChange();
     bool hasContext() const;
@@ -62,9 +61,11 @@ public:
     void startAutomaticProposalTimer();
     void automaticProposalTimeout();
     void clearAbortedPosition();
-    void updateFromCompletionSettings(const TextEditor::CompletionSettings &settings);
 
     bool eventFilter(QObject *o, QEvent *e) override;
+
+    CompletionTrigger completionTrigger() const;
+    std::optional<CompletionTrigger> m_completionTriggerOverride;
 
 private:
     bool requestActivationCharProposal();
@@ -84,7 +85,6 @@ private:
     TextEditorWidget::SuggestionBlocker m_suggestionBlocker;
     bool m_receivedContentWhileWaiting = false;
     QTimer m_automaticProposalTimer;
-    CompletionSettings m_settings;
     int m_abortedBasePosition = -1;
     static const QChar m_null;
     QVariant m_userData;
@@ -103,9 +103,11 @@ CodeAssistantPrivate::CodeAssistantPrivate(CodeAssistant *assistant, TextEditorW
     connect(&m_automaticProposalTimer, &QTimer::timeout,
             this, &CodeAssistantPrivate::automaticProposalTimeout);
 
-    updateFromCompletionSettings(TextEditorSettings::completionSettings());
-    connect(TextEditorSettings::instance(), &TextEditorSettings::completionSettingsChanged,
-            this, &CodeAssistantPrivate::updateFromCompletionSettings);
+    auto updateTimeout = [this] {
+        m_automaticProposalTimer.setInterval(completionSettings().automaticProposalTimeoutInMs());
+    };
+    updateTimeout();
+    completionSettings().automaticProposalTimeoutInMs.addOnChanged(this, updateTimeout);
 
     connect(Core::EditorManager::instance(), &Core::EditorManager::currentEditorChanged,
             this, &CodeAssistantPrivate::clearAbortedPosition);
@@ -130,7 +132,7 @@ bool CodeAssistantPrivate::requestActivationCharProposal()
 {
     if (m_editorWidget->multiTextCursor().hasMultipleCursors())
         return false;
-    if (m_assistKind == Completion && m_settings.m_completionTrigger != ManualCompletion) {
+    if (m_assistKind == Completion && completionTrigger() != ManualCompletion) {
         for (CompletionAssistProvider *provider : identifyActivationSequence()) {
             requestProposal(ActivationCharacter, Completion, provider);
             if (isDisplayingProposal() || isWaitingForProposal())
@@ -183,6 +185,8 @@ void CodeAssistantPrivate::requestProposal(AssistReason reason,
 
     m_assistKind = kind;
     m_requestProvider = provider;
+    connect(
+        m_requestProvider, &QObject::destroyed, this, &CodeAssistantPrivate::cancelCurrentRequest);
     IAssistProcessor *processor = provider->createProcessor(assistInterface.get());
     processor->setAsyncCompletionAvailableHandler([this, reason, processor](
                                                   IAssistProposal *newProposal) {
@@ -354,18 +358,17 @@ bool CodeAssistantPrivate::isWaitingForProposal() const
     return m_processor != nullptr;
 }
 
-QString CodeAssistantPrivate::proposalPrefix() const
-{
-    if (!isDisplayingProposal())
-        return {};
-    return m_editorWidget->textAt(m_proposalWidget->basePosition(),
-                                  m_editorWidget->position() - m_proposalWidget->basePosition());
-}
-
 void CodeAssistantPrivate::invalidateCurrentRequestData()
 {
     m_processor = nullptr;
-    m_requestProvider = nullptr;
+    if (m_requestProvider) {
+        disconnect(
+            m_requestProvider,
+            &QObject::destroyed,
+            this,
+            &CodeAssistantPrivate::cancelCurrentRequest);
+        m_requestProvider = nullptr;
+    }
     m_receivedContentWhileWaiting = false;
 }
 
@@ -382,7 +385,7 @@ QList<CompletionAssistProvider *> CodeAssistantPrivate::identifyActivationSequen
         // case of typing the very first characters in the document for providers that request a
         // length greater than 1 (currently only C++, which specifies 3), the sequence needs to
         // be prepended so it has the expected length.
-        const int lengthDiff = length - sequence.length();
+        const int lengthDiff = length - sequence.size();
         for (int j = 0; j < lengthDiff; ++j)
             sequence.prepend(m_null);
         return provider->isActivationCharSequence(sequence);
@@ -423,9 +426,9 @@ void CodeAssistantPrivate::destroyContext()
 {
     stopAutomaticProposalTimer();
 
-    if (isWaitingForProposal()) {
+    if (isWaitingForProposal())
         cancelCurrentRequest();
-    } else if (m_proposalWidget) {
+    if (m_proposalWidget) {
         m_editorWidget->keepAutoCompletionHighlight(false);
         if (m_proposalWidget->proposalIsVisible())
             m_proposalWidget->closeProposal();
@@ -447,7 +450,7 @@ void CodeAssistantPrivate::setUserData(const QVariant &data)
 
 void CodeAssistantPrivate::startAutomaticProposalTimer()
 {
-    if (m_settings.m_completionTrigger == AutomaticCompletion)
+    if (completionTrigger() == AutomaticCompletion)
         m_automaticProposalTimer.start();
 }
 
@@ -467,13 +470,6 @@ void CodeAssistantPrivate::stopAutomaticProposalTimer()
 {
     if (m_automaticProposalTimer.isActive())
         m_automaticProposalTimer.stop();
-}
-
-void CodeAssistantPrivate::updateFromCompletionSettings(
-        const TextEditor::CompletionSettings &settings)
-{
-    m_settings = settings;
-    m_automaticProposalTimer.setInterval(m_settings.m_automaticProposalTimeoutInMs);
 }
 
 void CodeAssistantPrivate::explicitlyAborted()
@@ -519,6 +515,11 @@ bool CodeAssistantPrivate::eventFilter(QObject *o, QEvent *e)
     }
 
     return false;
+}
+
+CompletionTrigger CodeAssistantPrivate::completionTrigger() const
+{
+    return m_completionTriggerOverride.value_or(completionSettings().completionTrigger());
 }
 
 // -------------
@@ -568,6 +569,11 @@ void CodeAssistant::setUserData(const QVariant &data)
 void CodeAssistant::invoke(AssistKind kind, IAssistProvider *provider)
 {
     d->invoke(kind, provider);
+}
+
+void CodeAssistant::setCompletionTriggerOverride(CompletionTrigger trigger)
+{
+    d->m_completionTriggerOverride = trigger;
 }
 
 } // namespace TextEditor

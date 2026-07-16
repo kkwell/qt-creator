@@ -33,16 +33,17 @@
         \li Go to \uicontrol Analyze > \uicontrol {Performance Analyzer} to
             profile the current application.
 
-        \li Select \inlineimage icons/qtcreator-analyze-start-button.png
+        \li Select
+            \inlineimage {icons/qtcreator-analyze-start-button.png} {Start a performance analysis}
             (\uicontrol Start) to start the application from the
             \uicontrol {Performance Analyzer}.
 
-            \image qtcreator-performance-analyzer-toolbar.png {Performance Analyzer toolbar}
+            \image {qtcreator-performance-analyzer-toolbar.webp} {Performance Analyzer toolbar}
 
     \endlist
 
     \note If data collection does not start automatically, select
-    \inlineimage icons/recordfill.png
+    \inlineimage {icons/recordfill.png} {Start collecting profile data}
     (\uicontrol {Collect profile data}).
 
     When you start analyzing an application, the application is launched, and
@@ -53,7 +54,8 @@
     several seconds after it was generated. \uicontrol {Processing delay} shows
     an estimate of the delay.
 
-    Data is collected until you select \inlineimage icons/recordfill.png
+    Data is collected until you select
+    \inlineimage {icons/recordfill.png} {Stop collecting profile data}
     (\uicontrol {Stop collecting profile data}) or close the application.
 
     Select \uicontrol {Stop collecting profile data} to turn off the
@@ -68,21 +70,22 @@
     \list
         \li Go to \uicontrol Analyze > \uicontrol {Performance Analyzer Options}
             > \uicontrol {Create Memory Trace Points}.
-        \li Select \inlineimage icons/create-tracepoint.png
+        \li Select
+            \inlineimage {icons/create-tracepoint.png} {Create trace points for memory profiling on the target device}
             on the \uicontrol {Performance Analyzer} toolbar.
     \endlist
 
     In the \uicontrol {Create Memory Trace Points} dialog, modify the
     script to run.
 
-    \image qtcreator-performance-analyzer-create-memory-trace-points.png {Create Memory Trace Points dialog}
+    \image {qtcreator-performance-analyzer-create-memory-trace-points.png} {Create Memory Trace Points dialog}
 
     If you need root privileges to run scripts as root, select the privileges to
     use in \uicontrol {Elevate privileges using}.
 
     Select \uicontrol OK to run the script.
 
-    To add events for the trace points, see \l{Choosing Event Types}.
+    To add events for the trace points, see \l{Choosing event types}.
 
     Record a memory trace to view usage graphs in the samples rows of
     the timeline and to view memory allocations, peaks, and releases in the
@@ -100,8 +103,8 @@
         \li Select \uicontrol Yes to recompile the project.
     \endlist
 
-    \sa {Analyze}{How To: Analyze}, {Analyzers}, {Performance Analyzer},
-    {Analyzing Code}
+    \sa {Analyze}{How to: Analyze}, {Analyzers}, {Performance Analyzer},
+    {Analyzing code}
 */
 
 /*!
@@ -112,25 +115,25 @@
 
     \title Performance Analyzer
 
-    \brief Analyze the CPU and memory usage of an application on Linux desktop
-    and embedded devices.
+    \summary {Analyze the CPU and memory usage of an application on Linux desktop
+    and embedded devices.}
 
     To set global preferences for Performance Analyzer, go to \preferences >
     \uicontrol Analyzer > \uicontrol {CPU Usage}.
 
     To set preferences for a particular run configuration, go to
-    \uicontrol Projects > \uicontrol Run, and then select \uicontrol Details
+    \uicontrol Projects > \uicontrol {Run Settings} and select \uicontrol Details
     next to \uicontrol {Performance Analyzer Settings}.
 
-    \image qtcreator-performance-analyzer-settings.png {Performance Analyzer Settings}
+    \image {qtcreator-performance-analyzer-settings.png} {Performance Analyzer Settings}
 
     To edit the settings for the current run configuration, select the
-    drop down menu next to \inlineimage icons/recordfill.png on the
-    Performance Analyzer toolbar.
+    drop down menu next to \inlineimage {icons/recordfill.png}
+    {Toggle profile data collection} on the Performance Analyzer toolbar.
 
-    \image qtcreator-performance-analyzer-toolbar.png {Performance Analyzer toolbar}
+    \image {qtcreator-performance-analyzer-toolbar.webp} {Performance Analyzer toolbar}
 
-    \section1 Choosing Event Types
+    \section1 Choosing event types
 
     The events table lists the events that trigger Performance Analyzer to take
     a sample. The most common way of analyzing
@@ -168,7 +171,7 @@
     \uicontrol {Sample mode} and \uicontrol {Sample period} to the default
     values.
 
-    \section1 Choosing a Sampling Mode and Period
+    \section1 Choosing a sampling mode and period
 
     In \uicontrol {Sample mode} and \uicontrol {Sample period}, specify how
     samples are triggered:
@@ -198,7 +201,7 @@
     data, and the processing delay may grow excessively. You should then change
     the value of \uicontrol {Sample period} or \uicontrol {Stack snapshot size}.
 
-    \section1 Selecting Call Graph Mode
+    \section1 Selecting call graph mode
 
     In \uicontrol {Call graph mode}, you can specify how
     Performance Analyzer recovers call chains from your application:
@@ -224,7 +227,7 @@
     Qt and most system libraries are compiled without frame pointers by
     default, so the frame pointer mode is only useful with customized systems.
 
-    \section1 Setting Stack Snapshot Size
+    \section1 Setting stack snapshot size
 
     Performance Analyzer analyzes and \e unwinds the stack snapshots
     generated by Perf in dwarf mode. Set the size of the stack snapshots in
@@ -233,7 +236,7 @@
     snapshots may fail to capture call chains of highly recursive applications
     or other intense stack usage.
 
-    \section1 Adding Command-Line Options for Perf
+    \section1 Adding command-line options for Perf
 
     Set additional command-line options to pass to Perf when
     recording data in \uicontrol {Additional arguments}. Set \c{--no-delay}
@@ -241,23 +244,23 @@
     delay. However, those options are not supported by all versions of Perf and
     Perf may not start if an unsupported option is given.
 
-    \section1 Resolving Names for JIT-compiled JavaScript Functions
+    \section1 Resolving names for JIT-compiled JavaScript functions
 
-    Since version 5.6.0, Qt can generate perf.map files with information about
+    Since version 5.6.0, Qt can generate \c perf.map files with information about
     JavaScript functions. Performance Analyzer will read them and show the
     function names in the \uicontrol Timeline, \uicontrol Statistics, and
     \uicontrol {Flame Graph} views. This only works if the process being
     profiled is running on the host computer, not on the target device. To
-    switch on the generation of perf.map files, add the environment variable
+    switch on the generation of \c perf.map files, add the environment variable
     \c QV4_PROFILE_WRITE_PERF_MAP to \uicontrol {Run Environment} and set
     its value to \c 1.
 
-    \section1 Analyzing Collected Data
+    \section1 Analyzing collected data
 
     The \uicontrol Timeline view displays a graphical representation of CPU
     usage per thread and a condensed view of all recorded events.
 
-    \image qtcreator-performance-analyzer-timeline.png {Performance Analyzer}
+    \image {qtcreator-performance-analyzer-timeline.webp} {Performance Analyzer Timeline view}
 
     Each category in the timeline describes a thread in the application. Move
     the cursor on an event (5) on a row to see how long it takes and which
@@ -266,7 +269,7 @@
      \uicontrol {View Event Information on Mouseover} (4).
 
     The outline (9) summarizes the period for which data was collected. Drag
-    the zoom range (7) or click the outline to move on the outline. You can
+    the zoom range (7) or select the outline to move on the outline. You can
     also move between events by selecting \uicontrol {Jump to Previous Event}
     and \uicontrol {Jump to Next Event} (1).
 
@@ -275,7 +278,7 @@
     To reset the default zoom level, right-click the timeline to open the
     context menu, and select \uicontrol {Reset Zoom}.
 
-    \section2 Selecting Event Ranges
+    \section2 Selecting event ranges
 
     Select an event range (6) to view the time it represents or to zoom
     into a specific region of the trace. Select \uicontrol {Select Range}
@@ -292,7 +295,7 @@
 
     To remove an event range, close the \uicontrol Selection dialog.
 
-    \section2 Understanding the Data
+    \section2 Understanding the data
 
     Generally, events in the timeline view indicate how long a function call
     took. Move the mouse over them to see details. The details always include
@@ -303,7 +306,7 @@
     encountered in at least once.
 
     For functions with debug information available, the details include the
-    location in source code and the name of the function. You can click on such
+    location in source code and the name of the function. You can select such
     events to move the cursor in the code editor to the part of the code the
     event is associated with.
 
@@ -329,7 +332,7 @@
     JavaScript functions from the QML engine running in the JIT mode can be
     unwound. However, their names will only be displayed when
     \c QV4_PROFILE_WRITE_PERF_MAP is set. Compiled JavaScript generated by the
-    \l{http://doc.qt.io/QtQuickCompiler/}{Qt Quick Compiler} can also be
+    \l{Qt Quick Compiler} can also be
     unwound. In this case the C++ names generated by the compiler are shown for
     JavaScript functions, rather than their JavaScript names. When running in
     interpreted mode, stack frames involving QML can also be unwound, showing
@@ -347,9 +350,9 @@
     overall bottleneck, and the thread with less samples taken has likely spent
     time waiting for external events such as I/O or a mutex.
 
-    \section1 Viewing Statistics
+    \section1 Viewing statistics
 
-    \image qtcreator-performance-analyzer-statistics.png
+    \image {qtcreator-performance-analyzer-statistics.png} {Performance Analyzer Statistics view}
 
     The \uicontrol Statistics view displays the number of samples each function
     in the timeline was contained in, in total and when on the top of the
@@ -357,7 +360,7 @@
     to optimize. A high number of occurrences might indicate that a function is
     triggered unnecessarily or takes very long to execute.
 
-    Click on a row to move to the respective function in the source code in the
+    Select a row to move to the respective function in the source code in the
     code editor.
 
     The \uicontrol Callers and \uicontrol Callees panes show dependencies
@@ -367,15 +370,15 @@
     summarizes the functions called from the function selected in the main
     view.
 
-    Click on a row to move to the respective function in the source code in the
+    Select a row to move to the respective function in the source code in the
     code editor and select it in the main view.
 
     To copy the contents of one view or row to the clipboard, select
     \uicontrol {Copy Table} or \uicontrol {Copy Row} in the context menu.
 
-    \section2 Visualizing Statistics as Flame Graphs
+    \section2 Visualizing statistics as flame graphs
 
-    \image qtcreator-performance-analyzer-flamegraph.png
+    \image {qtcreator-performance-analyzer-flamegraph.png} {Performance Analyzer Flame Graph view}
 
     The \uicontrol {Flame Graph} view shows a more concise statistical overview
     of the execution. The horizontal bars show an aspect of the samples
@@ -409,7 +412,7 @@
     \uicontrol {Releases} modes will only show any data if samples from memory
     trace points have been recorded.
 
-    \section2 Interaction between the Views
+    \section2 Interaction between the views
 
     When you select a stack frame in either of the \uicontrol {Timeline},
     \uicontrol {Flame Graph}, or \uicontrol {Statistics} views, information
@@ -419,14 +422,14 @@
     \uicontrol {Limit to the Range Selected in Timeline}. To show the full
     stack frame, select \uicontrol {Show Full Range}.
 
-    \section1 Loading Perf Data Files
+    \section1 Loading perf data files
 
     You can load any \c perf.data files generated by recent versions of the
     Linux Perf tool and view them in \QC. Select \uicontrol Analyze >
     \uicontrol {Performance Analyzer Options} > \uicontrol {Load perf.data File}
     to load a file.
 
-    \image qtcreator-cpu-usage-analyzer-load-perf-trace.png
+    \image {qtcreator-cpu-usage-analyzer-load-perf-trace.png} {Load Perf Trace dialog}
 
     Performance Analyzer needs to know the context in which the
     data was recorded to find the debug symbols. Therefore, you have to specify
@@ -449,14 +452,18 @@
     can read back its own data in a sensible way by checking the output of
     \c {perf report} or \c {perf script} for the recorded Perf data files.
 
-    \section1 Loading and Saving Trace Files
+    \section1 Loading and saving trace files
 
     You can save and load trace data in a format specific to the
-    Performance Analyzer with the respective entries in \uicontrol Analyze >
-    \uicontrol {Performance Analyzer Options}. This format is self-contained, and
+    Performance Analyzer (.ptq). This format is self-contained, and
     therefore loading it does not require you to specify the recording
     environment. You can transfer such trace files to a different computer
     without any toolchain or debug symbols and analyze them there.
+
+    To load trace data, go to \uicontrol Analyze >
+    \uicontrol {Performance Analyzer Options} > \uicontrol {Load Trace File}.
+
+    To save trace data, select \uicontrol {Save Trace File}.
 
     \section1 Troubleshooting
 
@@ -476,7 +483,7 @@
             On some distributions, you can run the following command with
             root (or equivalent) privileges:
 
-            \badcode
+            \code [shell]
             echo -e "kernel.perf_event_paranoid=-1\nkernel.kptr_restrict=0" | sudo tee /etc/sysctl.d/10-perf.conf
             \endcode
 
@@ -519,5 +526,5 @@
     The \l {Application Output} view shows some information even if the
     Performance Analyzer displays error messages.
 
-    \sa {Analyze}{How To: Analyze}, {Analyzers}, {Analyzing Code}, {Kits}
+    \sa {Analyze}{How to: Analyze}, {Analyzers}, {Analyzing code}, {Managing kits}
 */

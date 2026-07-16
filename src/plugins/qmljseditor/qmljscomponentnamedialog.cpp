@@ -4,6 +4,8 @@
 #include "qmljscomponentnamedialog.h"
 #include "qmljseditortr.h"
 
+#include <algorithm>
+#include <utils/array.h>
 #include <utils/classnamevalidatinglineedit.h>
 #include <utils/layoutbuilder.h>
 #include <utils/pathchooser.h>
@@ -18,6 +20,58 @@
 #include <QPushButton>
 
 using namespace QmlJSEditor::Internal;
+
+namespace {
+
+bool isCheckedByDefault(std::u16string_view property)
+{
+    static constexpr auto properitesCheckedByDefault = Utils::to_sorted_array<std::u16string_view>(
+        u"x",
+        u"y",
+        u"anchors.alignWhenCentered",
+        u"anchors.baseline",
+        u"anchors.baselineOffset",
+        u"anchors.bottom",
+        u"anchors.bottomMargin",
+        u"anchors.centerIn",
+        u"anchors.fill",
+        u"anchors.horizontalCenter",
+        u"anchors.horizontalCenterOffset",
+        u"anchors.left",
+        u"anchors.leftMargin",
+        u"anchors.margins",
+        u"anchors.right",
+        u"anchors.rightMargin",
+        u"anchors.top",
+        u"anchors.topMargin",
+        u"anchors.verticalCenter",
+        u"anchors.verticalCenterOffset",
+        u"Layout.alignment",
+        u"Layout.bottomMargin",
+        u"Layout.column",
+        u"Layout.columnSpan",
+        u"Layout.fillHeight",
+        u"Layout.fillWidth",
+        u"Layout.horizontalStretchFactor",
+        u"Layout.leftMargin",
+        u"Layout.margins",
+        u"Layout.maximumHeight",
+        u"Layout.maximumWidth",
+        u"Layout.minimumHeight",
+        u"Layout.minimumWidth",
+        u"Layout.preferredHeight",
+        u"Layout.preferredWidth",
+        u"Layout.rightMargin",
+        u"Layout.row",
+        u"Layout.rowSpan",
+        u"Layout.topMargin",
+        u"Layout.useDefaultSizePolicy",
+        u"Layout.verticalStretchFactor",
+        u"materials");
+
+    return std::ranges::binary_search(properitesCheckedByDefault, property);
+}
+} // namespace
 
 ComponentNameDialog::ComponentNameDialog(QWidget *parent) :
     QDialog(parent)
@@ -91,7 +145,7 @@ bool ComponentNameDialog::go(QString *proposedName,
 
     if (QDialog::Accepted == d.exec()) {
         *proposedName = d.m_componentNameEdit->text();
-        *proposedPath = d.m_pathEdit->filePath().toString();
+        *proposedPath = d.m_pathEdit->filePath().toUrlishString();
 
         if (d.m_checkBox->isChecked())
             *proposedSuffix = "ui.qml";
@@ -113,8 +167,7 @@ void ComponentNameDialog::setProperties(const QStringList &properties)
     for (int i = 0; i < m_listWidget->count(); ++i) {
         QListWidgetItem *item = m_listWidget->item(i);
         item->setFlags(Qt::ItemIsUserCheckable | Qt:: ItemIsEnabled);
-        if (item->text() == QLatin1String("x")
-                || item->text() == QLatin1String("y"))
+        if (isCheckedByDefault(item->text()))
             m_listWidget->item(i)->setCheckState(Qt::Checked);
         else
             m_listWidget->item(i)->setCheckState(Qt::Unchecked);

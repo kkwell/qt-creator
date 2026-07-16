@@ -19,11 +19,12 @@
 #include <coreplugin/helpmanager.h>
 #include <coreplugin/icore.h>
 #include <debugger/debuggerkitaspect.h>
-#include <utils/algorithm.h>
-#include <utils/filepath.h>
-#include <utils/infobar.h>
 #include <qtsupport/qtkitaspect.h>
 #include <qtsupport/qtversionmanager.h>
+#include <utils/algorithm.h>
+#include <utils/filepath.h>
+#include <utils/hostosinfo.h>
+#include <utils/infobar.h>
 
 #include <QMessageBox>
 #include <QPushButton>
@@ -63,7 +64,7 @@ static const std::pair<Utils::FilePath, int> expandWildcards(
     std::pair<FilePath, int> retPair = {path, patternComponents.size()};
 
     sort(entries, [](const FilePath &a, const FilePath &b) { return a.fileName() < b.fileName(); });
-    for (const auto &entry : entries) {
+    for (const auto &entry : std::as_const(entries)) {
         auto [entry_path, remaining_components] = expandWildcards(entry,
                                                                   {patternComponents.constBegin()
                                                                        + 1,
@@ -134,7 +135,7 @@ MacroExpanderPtr McuSdkRepository::getMacroExpander(const McuTarget &target)
     for (const auto &package : target.packages()) {
         macroExpander->registerVariable(package->cmakeVariableName().toLocal8Bit(),
                                         package->label(),
-                                        [package] { return package->path().toString(); });
+                                        [package] { return package->path().toUrlishString(); });
     }
 
     for (auto [key, macro] : asKeyValueRange(*globalMacros()))
@@ -171,14 +172,12 @@ FilePath McuSupportOptions::qulDocsDir() const
 
 void McuSupportOptions::registerQchFiles() const
 {
-    const QString docsDir = qulDocsDir().toString();
+    const QString docsDir = qulDocsDir().toUrlishString();
     if (docsDir.isEmpty())
         return;
 
     const QFileInfoList qchFiles = QDir(docsDir, "*.qch").entryInfoList();
-    Core::HelpManager::registerDocumentation(
-        Utils::transform<QStringList>(qchFiles,
-                                      [](const QFileInfo &fi) { return fi.absoluteFilePath(); }));
+    Core::HelpManager::registerDocumentation(Utils::transform(qchFiles, &QFileInfo::absoluteFilePath));
 }
 
 void McuSupportOptions::registerExamples() const
@@ -195,8 +194,8 @@ void McuSupportOptions::registerExamples() const
             continue;
 
         QtSupport::QtVersionManager::registerExampleSet(dir.second,
-                                                        docsDir.toString(),
-                                                        examplesDir.toString());
+                                                        docsDir.toUrlishString(),
+                                                        examplesDir.toUrlishString());
     }
 }
 
@@ -262,21 +261,26 @@ void McuSupportOptions::displayKitCreationMessages(const MessagesList messages,
     if (messages.isEmpty() || !qtMCUsPackage->isValidStatus())
         return;
     static const char mcuKitCreationErrorInfoId[] = "ErrorWhileCreatingMCUKits";
-    if (!Core::ICore::infoBar()->canInfoBeAdded(mcuKitCreationErrorInfoId))
+    InfoBar *infoBar = Core::ICore::popupInfoBar();
+    if (!infoBar->canInfoBeAdded(mcuKitCreationErrorInfoId))
         return;
 
     Utils::InfoBarEntry info(mcuKitCreationErrorInfoId,
                              Tr::tr("Errors while creating Qt for MCUs kits"),
                              Utils::InfoBarEntry::GlobalSuppression::Enabled);
+    info.setTitle(Tr::tr("Qt for MCUs"));
+    info.setInfoType(InfoLabel::Error);
+    info.addCustomButton(
+        Tr::tr("Details"),
+        [messages, &settingsHandler, qtMCUsPackage] {
+            auto popup = new McuKitCreationDialog(messages, settingsHandler, qtMCUsPackage);
+            popup->exec();
+            delete popup;
+        },
+        {},
+        InfoBarEntry::ButtonAction::Hide);
 
-    info.addCustomButton(Tr::tr("Details"), [messages, &settingsHandler, qtMCUsPackage] {
-        auto popup = new McuKitCreationDialog(messages, settingsHandler, qtMCUsPackage);
-        popup->exec();
-        delete popup;
-        Core::ICore::infoBar()->removeInfo(mcuKitCreationErrorInfoId);
-    });
-
-    Core::ICore::infoBar()->addInfo(info);
+    infoBar->addInfo(info);
 }
 
 void McuSupportOptions::checkUpgradeableKits()

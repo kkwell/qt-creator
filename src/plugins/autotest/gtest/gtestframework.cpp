@@ -28,6 +28,15 @@ GTestFramework &theGTestFramework()
     return framework;
 }
 
+QVariant GTestFilterAspect::fromSettingsValue(const QVariant &savedValue) const
+{
+    // avoid problems if user messes around with the settings file
+    const QString tmp = savedValue.toString();
+    if (GTestUtils::isValidGTestFilter(tmp))
+        return tmp;
+    return GTest::Constants::DEFAULT_FILTER;
+}
+
 GTestFramework::GTestFramework()
 {
     setActive(true);
@@ -99,20 +108,15 @@ GTestFramework::GTestFramework()
     gtestFilter.setSettingsKey("GTestFilter");
     gtestFilter.setDisplayStyle(StringAspect::LineEditDisplay);
     gtestFilter.setDefaultValue(GTest::Constants::DEFAULT_FILTER);
-    gtestFilter.setFromSettingsTransformation([](const QVariant &savedValue) -> QVariant {
-        // avoid problems if user messes around with the settings file
-        const QString tmp = savedValue.toString();
-        if (GTestUtils::isValidGTestFilter(tmp))
-            return tmp;
-        return GTest::Constants::DEFAULT_FILTER;
-    });
     gtestFilter.setEnabled(false);
     gtestFilter.setLabelText(Tr::tr("Active filter:"));
     gtestFilter.setToolTip(Tr::tr("Set the GTest filter to be used for grouping.\nSee Google Test "
                                   "documentation for further information on GTest filters."));
 
-    gtestFilter.setValidationFunction([](FancyLineEdit *edit, QString * /*error*/) {
-        return edit && GTestUtils::isValidGTestFilter(edit->text());
+    gtestFilter.setValidationFunction([](const QString &text) -> Result<> {
+        if (GTestUtils::isValidGTestFilter(text))
+            return ResultOk;
+        return ResultError(QString());
     });
 
     connect(&groupMode, &SelectionAspect::volatileValueChanged, &gtestFilter, [this] {
@@ -187,5 +191,6 @@ public:
 };
 
 const GTestSettingsPage settingsPage;
+
 
 } // Autotest::Internal

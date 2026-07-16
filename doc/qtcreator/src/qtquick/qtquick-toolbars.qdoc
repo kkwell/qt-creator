@@ -1,22 +1,11 @@
 // Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
 
-// **********************************************************************
-// NOTE: the sections are not ordered by their logical order to avoid
-// reshuffling the file each time the index order changes (i.e., often).
-// Run the fixnavi.pl script to adjust the links to the index order.
-// **********************************************************************
-
 /*!
     \page qt-quick-toolbars.html
-    \if defined(qtdesignstudio)
-    \previouspage qtquick-text-editor.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-edit
-    \ingroup studio-how-to-code
 
     \title Edit properties of QML types
 
@@ -26,27 +15,21 @@
     To easily edit these properties, use the Qt Quick toolbars.
 
     When you select a QML type in the code and a light bulb icon appears
-    (\inlineimage icons/refactormarker.png), select it to open a toolbar
-    for changing the properties of that type.
+    (\inlineimage {icons/refactormarker.png} {Light bulb icon}), select
+    it to open a toolbar for changing the properties of that type.
 
     \section1 Preview images
 
-    Edit the properties of
-    \l {Border Image} and
-    \if defined(qtdesignstudio)
-    \l {Images}{Image} items
-    \else
-    \l Image items
-    \endif
+    Edit the properties of \l {Border Image} and \l Image items
     to scale and tile the images, replace them with other images,
     preview them, and change the image margins.
 
-    \image qml-toolbar-image.png {Qt Quick Toolbar for images}
+    \image {qml-toolbar-image.png} {Qt Quick toolbar for images}
 
     To preview an image, double-click it on the toolbar. In the preview
     dialog, you can zoom the image. Drag the image margins to change them.
 
-    \image qml-toolbar-image-preview.png {Image preview dialog}
+    \image {qml-toolbar-image-preview.png} {Image preview dialog}
 
     \section1 Format text
 
@@ -60,7 +43,7 @@
     cannot use the toolbar to edit it. The button for editing the property
     is disabled.
 
-    \image qml-toolbar-text.png {Qt Quick Toolbar for text}
+    \image {qml-toolbar-text.png} {Qt Quick toolbar for text}
 
     By default, font size is specified as pixels. To use points, instead,
     change \uicontrol px to \uicontrol pt in the size field.
@@ -71,21 +54,16 @@
     to change the easing curve type and duration. For some curves, you can also
     specify amplitude, period, and overshoot values.
 
-    \image qml-toolbar-animation.png {Qt Quick Toolbar for animation}
+    \image {qml-toolbar-animation.png} {Qt Quick toolbar for animation}
 
     Select the play button to preview your changes.
 
     \section1 Edit rectangles
 
-    Edit the properties of
-    \if defined(qtdesignstudio)
-    \l {basic-rectangle}{Rectangle}
-    \else
-    Rectangle
-    \endif
-    items to change the fill and border colors and add gradients.
+    Edit the properties of \l {Rectangle} items to change the fill and border
+    colors and add gradients.
 
-    \image qml-toolbar-rectangle.png {Qt Quick Toolbar for rectangles}
+    \image {qml-toolbar-rectangle.png} {Qt Quick toolbar for rectangles}
 
     To add gradient stop points, click above the gradient bar. To remove
     stop points, drag them upwards.
@@ -96,17 +74,14 @@
     \preferences > \uicontrol {Qt Quick} >
     \uicontrol {QML/JS Editing} > \uicontrol {Always show Qt Quick Toolbar}.
 
-    \image qtcreator-qml-js-editing.webp {QML/JS Editing preferences}
+    \image {qtcreator-qml-js-editing.webp} {QML/JS Editing tab in Qt Quick preferences}
 
     \section1 Pin toolbars
 
-    Drag the toolbar to pin it to another location. Select
-    \inlineimage icons/pin.png to unpin the toolbar and move
-    it to its default location.
+    Drag the toolbar to pin it to another location. Select \imagepin
+    (\uicontrol Unpin) to unpin the toolbar and move it to its default location.
 
     To pin toolbars by default, select \uicontrol {Pin Qt Quick Toolbar}.
 
-    \if defined(qtcreator)
     \sa {Tutorial: Qt Quick application}
-    \endif
 */

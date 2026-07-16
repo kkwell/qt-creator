@@ -5,17 +5,19 @@
 #include "flamegraphmodel_test.h"
 
 #include <qmlprofiler/qmlprofilertool.h>
-#include <QtTest>
+
 #include <QMenu>
+#include <QSignalSpy>
+#include <QTest>
+#include <QTimer>
 #include <QWindow>
 
-namespace QmlProfiler {
-namespace Internal {
+using namespace QmlDebug;
+namespace QmlProfiler::Internal {
 
-FlameGraphViewTest::FlameGraphViewTest(QObject *parent)
-    : QObject(parent), view(&manager)
-{
-}
+FlameGraphViewTest::FlameGraphViewTest()
+    : view(&manager)
+{}
 
 void FlameGraphViewTest::initTestCase()
 {
@@ -42,7 +44,9 @@ void FlameGraphViewTest::testSelection()
     });
 
     QSignalSpy spy(&view, SIGNAL(typeSelected(int)));
-    QTest::mouseClick(view.childAt(250, 250), Qt::LeftButton, Qt::NoModifier, QPoint(15, 485));
+    QTest::mouseClick(
+        view.childAt(view.width() / 2, view.height() / 2), Qt::LeftButton, Qt::NoModifier,
+        QPoint(15, view.height() - 15));
     if (spy.isEmpty())
         QVERIFY(spy.wait());
 
@@ -52,7 +56,9 @@ void FlameGraphViewTest::testSelection()
 
     // Click in empty area deselects
     expectedType = -1;
-    QTest::mouseClick(view.childAt(250, 250), Qt::LeftButton, Qt::NoModifier, QPoint(485, 50));
+    QTest::mouseClick(
+        view.childAt(view.width() / 2, view.height() / 2), Qt::LeftButton, Qt::NoModifier,
+        QPoint(view.width() - 15, 50));
     QCOMPARE(spy.count(), 2);
 
     view.onVisibleFeaturesChanged(1 << ProfileBinding);
@@ -73,7 +79,9 @@ void FlameGraphViewTest::testSelection()
         QCOMPARE(selected, 2);
     });
 
-    QTest::mouseClick(view.childAt(250, 250), Qt::LeftButton, Qt::NoModifier, QPoint(5, 495));
+    QTest::mouseClick(
+        view.childAt(view.width() / 2, view.height() / 2), Qt::LeftButton, Qt::NoModifier,
+        QPoint(5, view.height() - 5));
     if (spy.count() == 1)
         QVERIFY(spy.wait());
 
@@ -109,7 +117,7 @@ void FlameGraphViewTest::testContextMenu()
         auto activePopup = QApplication::activePopupWidget();
         if (!activePopup || !activePopup->windowHandle()->isExposed()) {
             QContextMenuEvent *event = new QContextMenuEvent(QContextMenuEvent::Mouse,
-                                                             QPoint(250, 250));
+                                                             QPoint(250, 250), QCursor::pos());
             QCoreApplication::postEvent(&view, event);
             return;
         }
@@ -142,5 +150,4 @@ void FlameGraphViewTest::cleanupTestCase()
     manager.clearAll();
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

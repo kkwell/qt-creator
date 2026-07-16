@@ -24,6 +24,7 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace Core::Internal {
@@ -122,7 +123,7 @@ static void matches(QPromise<void> &promise,
     // If search string contains spaces, treat them as wildcard '*' and search in full path
     const QString wildcardInput = QDir::fromNativeSeparators(storage.input()).replace(' ', '*');
     const Link inputLink = Link::fromString(wildcardInput, true);
-    const QString newInput = inputLink.targetFilePath.toString();
+    const QString newInput = inputLink.targetFilePath.toUrlishString();
     const QRegularExpression regExp = ILocatorFilter::createRegExp(newInput);
     if (!regExp.isValid())
         return;
@@ -176,31 +177,27 @@ static void matches(QPromise<void> &promise,
 
 LocatorMatcherTasks SpotlightLocatorFilter::matchers()
 {
-    using namespace Tasking;
-
-    Storage<LocatorStorage> storage;
-
-    const auto onSetup = [storage,
-                          command = m_command,
+    const auto onSetup = [command = m_command,
                           insensArgs = m_arguments,
                           sensArgs = m_caseSensitiveArguments,
                           sortResults = m_sortResults](Async<void> &async) {
-        const Link link = Link::fromString(storage->input(), true);
+        const LocatorStorage &storage = *LocatorStorage::storage();
+        const Link link = Link::fromString(storage.input(), true);
         const FilePath input = link.targetFilePath;
         if (input.isEmpty())
             return SetupResult::StopWithSuccess;
 
         // only pass the file name part to allow searches like "somepath/*foo"
         const std::unique_ptr<MacroExpander> expander(createMacroExpander(input.fileName()));
-        const QString args = caseSensitivity(input.toString()) == Qt::CaseInsensitive
+        const QString args = caseSensitivity(input.toUrlishString()) == Qt::CaseInsensitive
                            ? insensArgs : sensArgs;
         const CommandLine cmd(FilePath::fromString(command), expander->expand(args),
                               CommandLine::Raw);
-        async.setConcurrentCallData(matches, *storage, cmd, sortResults);
+        async.setConcurrentCallData(matches, storage, cmd, sortResults);
         return SetupResult::Continue;
     };
 
-    return {{AsyncTask<void>(onSetup), storage}};
+    return {AsyncTask<void>(onSetup)};
 }
 
 bool SpotlightLocatorFilter::openConfigDialog(QWidget *parent, bool &needsRefresh)
@@ -226,12 +223,12 @@ bool SpotlightLocatorFilter::openConfigDialog(QWidget *parent, bool &needsRefres
     layout->addRow({}, sortResults);
     std::unique_ptr<MacroExpander> expander(createMacroExpander(""));
     auto chooser = new VariableChooser(&configWidget);
-    chooser->addMacroExpanderProvider([expander = expander.get()] { return expander; });
+    chooser->addMacroExpanderProvider({this, [expander = expander.get()] { return expander; }});
     chooser->addSupportedWidget(argumentsEdit);
     chooser->addSupportedWidget(caseSensitiveArgumentsEdit);
     const bool accepted = ILocatorFilter::openConfigDialog(parent, &configWidget);
     if (accepted) {
-        m_command = commandEdit->unexpandedFilePath().toString();
+        m_command = commandEdit->unexpandedFilePath().toUrlishString();
         m_arguments = argumentsEdit->text();
         m_caseSensitiveArguments = caseSensitiveArgumentsEdit->text();
         m_sortResults = sortResults->isChecked();

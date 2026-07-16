@@ -3,15 +3,20 @@
 
 #include "edit3dactions.h"
 
-#include "bakelights.h"
 #include "edit3dview.h"
-#include "nodemetainfo.h"
-#include "qmldesignerconstants.h"
+#include "indicatoractionwidget.h"
 #include "seekerslider.h"
+
+#include <qmldesignerconstants.h>
+#include <qmldesignertr.h>
 
 #include <utils3d.h>
 
 #include <utils/algorithm.h>
+#include <utils/qtcassert.h>
+
+#include <QActionGroup>
+#include <QMenu>
 
 namespace QmlDesigner {
 
@@ -27,17 +32,73 @@ Edit3DActionTemplate::Edit3DActionTemplate(const QString &description,
 
 void Edit3DActionTemplate::actionTriggered(bool b)
 {
-    if (m_type != View3DActionType::Empty)
-        m_view->emitView3DAction(m_type, b);
+    if (m_type != View3DActionType::Empty && m_view->isAttached())
+        m_view->model()->emitView3DAction(m_type, b);
 
     if (m_action)
         m_action(m_selectionContext);
 }
 
-Edit3DWidgetActionTemplate::Edit3DWidgetActionTemplate(QWidgetAction *widget)
+Edit3DWidgetActionTemplate::Edit3DWidgetActionTemplate(QWidgetAction *widget,
+                                                       SelectionContextOperation action)
     : PureActionInterface(widget)
+    , m_action(action)
 {
+    QObject::connect(widget, &QAction::triggered, widget, [this](bool value) {
+        actionTriggered(value);
+    });
+}
 
+void Edit3DWidgetActionTemplate::setSelectionContext(const SelectionContext &selectionContext)
+{
+    m_selectionContext = selectionContext;
+}
+
+void Edit3DWidgetActionTemplate::actionTriggered([[maybe_unused]] bool b)
+{
+    if (m_action)
+        m_action(m_selectionContext);
+}
+
+Edit3DSingleSelectionAction::Edit3DSingleSelectionAction(const QString &description,
+                                                         const QList<Option> &options)
+    : DefaultAction(description)
+{
+    QMenu *menu = new QMenu();
+    QObject::connect(this, &QObject::destroyed, menu, &QObject::deleteLater);
+
+    m_group = new QActionGroup(menu);
+
+    for (const Option &option : options) {
+        QAction *action = m_group->addAction(option.name);
+        action->setCheckable(true);
+        action->setData(option.data);
+        action->setToolTip(option.tooltip);
+        m_dataAction.insert(option.data, action);
+    }
+
+    connect(m_group, &QActionGroup::triggered, this, [&](QAction *action) {
+        if (action)
+            emit dataChanged(action->data().toByteArray());
+    });
+
+    menu->addActions(m_group->actions());
+    setMenu(menu);
+}
+
+void Edit3DSingleSelectionAction::selectOption(const QByteArray &data)
+{
+    QAction *action = m_dataAction.value(data, nullptr);
+    if (action)
+        action->setChecked(true);
+}
+
+QByteArray Edit3DSingleSelectionAction::currentData() const
+{
+    QAction *action = m_group->checkedAction();
+    if (action)
+        return action->data().toByteArray();
+    return {};
 }
 
 Edit3DAction::Edit3DAction(const QByteArray &menuId,
@@ -130,14 +191,14 @@ Edit3DBakeLightsAction::Edit3DBakeLightsAction(const QIcon &icon,
                                                SelectionContextOperation selectionAction)
     : Edit3DAction(QmlDesigner::Constants::EDIT3D_BAKE_LIGHTS,
                    View3DActionType::Empty,
-                   QCoreApplication::translate("BakeLights", "Bake Lights"),
+                   Tr::tr("Bake Lights"),
                    QKeySequence(),
                    false,
                    false,
                    icon,
                    view,
                    selectionAction,
-                   QCoreApplication::translate("BakeLights", "Bake lights for the current 3D scene."))
+                   Tr::tr("Bake lights for the current 3D scene."))
     , m_view(view)
 {
 
@@ -154,4 +215,76 @@ bool Edit3DBakeLightsAction::isEnabled(const SelectionContext &) const
             && !Utils3D::activeView3dId(m_view).isEmpty();
 }
 
+Edit3DIndicatorButtonAction::Edit3DIndicatorButtonAction(const QByteArray &menuId,
+                                                         View3DActionType type,
+                                                         const QString &description,
+                                                         const QIcon &icon,
+                                                         SelectionContextOperation customAction,
+                                                         Edit3DView *view)
+    : Edit3DAction(menuId,
+                   type,
+                   view,
+                   new Edit3DWidgetActionTemplate(new IndicatorButtonAction(description, icon),
+                                                  customAction))
+{
+    m_buttonAction = qobject_cast<IndicatorButtonAction *>(action());
 }
+
+void Edit3DIndicatorButtonAction::setIndicator(bool indicator)
+{
+    m_buttonAction->setIndicator(indicator);
+}
+
+bool Edit3DIndicatorButtonAction::isVisible(const SelectionContext &) const
+{
+    return m_buttonAction->isVisible();
+}
+
+bool Edit3DIndicatorButtonAction::isEnabled(const SelectionContext &) const
+{
+    return m_buttonAction->isEnabled();
+}
+
+Edit3DCameraViewAction::Edit3DCameraViewAction(const QByteArray &menuId,
+                                               View3DActionType type,
+                                               Edit3DView *view)
+    : Edit3DAction(menuId,
+                   type,
+                   view,
+                   new Edit3DSingleSelectionAction(tr("Camera view mode"), options()))
+{
+    Edit3DSingleSelectionAction *singleSelectionAction = qobject_cast<Edit3DSingleSelectionAction *>(
+        action());
+    QObject::connect(singleSelectionAction,
+                     &Edit3DSingleSelectionAction::dataChanged,
+                     view,
+                     [this, view](const QByteArray &data) {
+                         view->emitView3DAction(actionType(), data);
+                     });
+}
+
+void Edit3DCameraViewAction::setMode(const QByteArray &mode)
+{
+    Edit3DSingleSelectionAction *singleSelectionAction = qobject_cast<Edit3DSingleSelectionAction *>(
+        action());
+    QTC_ASSERT(singleSelectionAction, return);
+    if (mode.isEmpty())
+        singleSelectionAction->selectOption("CameraOff");
+    else
+        singleSelectionAction->selectOption(mode);
+}
+
+QList<Edit3DSingleSelectionAction::Option> Edit3DCameraViewAction::options() const
+{
+    return {
+        {tr("Hide Camera View"), tr("Never show the camera view."), "CameraOff"},
+        {tr("Show Selected Camera View"),
+         tr("Show the selected camera in the camera view."),
+         "ShowSelectedCamera"},
+        {tr("Always Show Camera View"),
+         tr("Show the last selected camera in the camera view."),
+         "AlwaysShowCamera"},
+    };
+}
+
+} // namespace QmlDesigner

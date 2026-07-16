@@ -3,13 +3,11 @@
 
 #include "compileroptionsbuilder.h"
 
-#include "cppmodelmanager.h"
 #include "headerpathfilter.h"
 
 #include <coreplugin/icore.h>
 
 #include <projectexplorer/headerpath.h>
-#include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projectmacro.h>
 
@@ -18,9 +16,10 @@
 #include <utils/algorithm.h>
 #include <utils/cpplanguage_details.h>
 #include <utils/environment.h>
-#include <utils/fileutils.h>
 #include <utils/qtcassert.h>
 #include <utils/stringutils.h>
+
+#include <webassembly/webassemblyconstants.h>
 
 #include <QDir>
 #include <QRegularExpression>
@@ -318,12 +317,12 @@ void CompilerOptionsBuilder::insertWrappedMingwHeaders()
     insertWrappedHeaders(wrappedMingwHeadersIncludePath());
 }
 
-static QString creatorResourcePath()
+static FilePath creatorResourcePath()
 {
 #ifndef UNIT_TESTS
-    return Core::ICore::resourcePath().toString();
+    return Core::ICore::resourcePath();
 #else
-    return QDir::toNativeSeparators(QString::fromUtf8(QTC_RESOURCE_DIR ""));
+    return FilePath(QTC_RESOURCE_DIR "");
 #endif
 }
 
@@ -336,13 +335,14 @@ void CompilerOptionsBuilder::insertWrappedHeaders(const QStringList &relPaths)
 
     QStringList args;
     for (const QString &relPath : relPaths) {
-        static const QString baseDir = creatorResourcePath() + "/cplusplus";
-        const QString fullPath = baseDir + '/' + relPath;
-        QTC_ASSERT(QDir(fullPath).exists(), continue);
-        args << (includeUserPathOption + QDir::toNativeSeparators(fullPath));
+        static const FilePath baseDir = creatorResourcePath() / "cplusplus";
+        const FilePath fullPath = baseDir / relPath;
+        QTC_ASSERT(fullPath.exists(), continue);
+        args << (includeUserPathOption + fullPath.nativePath());
     }
 
-    const int index = m_options.indexOf(QRegularExpression("\\A-I.*\\z"));
+    static const QRegularExpression regexp("\\A-I.*\\z");
+    const int index = m_options.indexOf(regexp);
     if (index < 0)
         add(args);
     else
@@ -374,12 +374,12 @@ void CompilerOptionsBuilder::addHeaderPathOptions()
     }
 }
 
-void CompilerOptionsBuilder::addIncludeFile(const QString &file)
+void CompilerOptionsBuilder::addIncludeFile(const FilePath &file)
 {
-    if (QFileInfo::exists(file)) {
+    if (file.exists()) {
         add({isClStyle() ? QLatin1String(includeFileOptionCl)
                          : QLatin1String(includeFileOptionGcc),
-             QDir::toNativeSeparators(file)});
+             file.nativePath()});
     }
 }
 
@@ -394,9 +394,9 @@ void CompilerOptionsBuilder::removeUnsupportedCpuFlags()
     }
 }
 
-void CompilerOptionsBuilder::addIncludedFiles(const QStringList &files)
+void CompilerOptionsBuilder::addIncludedFiles(const FilePaths &files)
 {
-    for (const QString &file : files) {
+    for (const FilePath &file : files) {
         if (m_projectPart.precompiledHeaders.contains(file))
             continue;
 
@@ -409,9 +409,8 @@ void CompilerOptionsBuilder::addPrecompiledHeaderOptions(UsePrecompiledHeaders u
     if (usePrecompiledHeaders == UsePrecompiledHeaders::No)
         return;
 
-    for (const QString &pchFile : m_projectPart.precompiledHeaders) {
+    for (const FilePath &pchFile : m_projectPart.precompiledHeaders)
         addIncludeFile(pchFile);
-    }
 }
 
 void CompilerOptionsBuilder::addProjectMacros()
@@ -420,6 +419,7 @@ void CompilerOptionsBuilder::addProjectMacros()
 
     if (m_projectPart.toolchainType == ProjectExplorer::Constants::CUSTOM_TOOLCHAIN_TYPEID
         || m_projectPart.toolchainType == Qnx::Constants::QNX_TOOLCHAIN_ID
+        || m_projectPart.toolchainType == WebAssembly::Constants::WEBASSEMBLY_TOOLCHAIN_TYPEID
         || m_projectPart.toolchainType.name().contains("BareMetal") || useMacros) {
         addMacros(m_projectPart.toolchainMacros);
     }
@@ -497,7 +497,7 @@ void CompilerOptionsBuilder::addLanguageVersionAndExtensions()
         case LanguageVersion::CXX20:
             option = "-clang:-std=c++20";
             break;
-        case LanguageVersion::CXX2b:
+        case LanguageVersion::CXX23:
             option = "-clang:-std=c++2b";
             break;
         }
@@ -550,7 +550,7 @@ void CompilerOptionsBuilder::addLanguageVersionAndExtensions()
     case LanguageVersion::CXX20:
         option = (gnuExtensions ? QLatin1String("-std=gnu++20") : QLatin1String("-std=c++20"));
         break;
-    case LanguageVersion::CXX2b:
+    case LanguageVersion::CXX23:
         option = (gnuExtensions ? QLatin1String("-std=gnu++2b") : QLatin1String("-std=c++2b"));
         break;
     case LanguageVersion::None:
@@ -684,7 +684,7 @@ void CompilerOptionsBuilder::addIncludeDirOptionForPath(const HeaderPath &path)
 {
     if (path.type == HeaderPathType::Framework) {
         QTC_ASSERT(!isClStyle(), return;);
-        add({"-F", QDir::toNativeSeparators(path.path)});
+        add({"-F", path.path.nativePath()});
         return;
     }
 
@@ -696,17 +696,17 @@ void CompilerOptionsBuilder::addIncludeDirOptionForPath(const HeaderPath &path)
     } else {
         // ProjectExplorer::HeaderPathType::User
         if (m_useSystemHeader == UseSystemHeader::Yes && m_projectPart.hasProject()
-            && !Utils::FilePath::fromString(path.path).isChildOf(m_projectPart.topLevelProject)) {
+            && !path.path.isChildOf(m_projectPart.topLevelProject)) {
             systemPath = true;
         }
     }
 
     if (systemPath) {
-        add({includeSystemPathOption, QDir::toNativeSeparators(path.path)}, true);
+        add({includeSystemPathOption, path.path.nativePath()}, true);
         return;
     }
 
-    add(includeUserPathOption + QDir::toNativeSeparators(path.path));
+    add(includeUserPathOption + path.path.nativePath());
 }
 
 bool CompilerOptionsBuilder::excludeDefineDirective(const Macro &macro) const
@@ -769,7 +769,7 @@ void CompilerOptionsBuilder::addProjectConfigFileInclude()
 {
     if (!m_projectPart.projectConfigFile.isEmpty()) {
         add({isClStyle() ? QLatin1String(includeFileOptionCl) : QLatin1String(includeFileOptionGcc),
-             QDir::toNativeSeparators(m_projectPart.projectConfigFile)});
+             m_projectPart.projectConfigFile.nativePath()});
     }
 }
 
@@ -900,8 +900,10 @@ void CompilerOptionsBuilder::evaluateCompilerFlags()
         }
 
         // GCC options that clang doesn't know.
-        if (option.contains("direct-extern-access") || option == "-fnothrow-opt")
+        if (option.contains("direct-extern-access") || option == "-fnothrow-opt"
+            || option.startsWith("-fconcepts-diagnostics-depth")) {
             continue;
+        }
 
         // These were already parsed into ProjectPart::includedFiles.
         if (option == includeFileOptionCl || option == includeFileOptionGcc) {
@@ -920,6 +922,10 @@ void CompilerOptionsBuilder::evaluateCompilerFlags()
 
         // Check whether a language version is already used.
         QString theOption = option;
+        if (toolChain == ProjectExplorer::Constants::CLANG_CL_TOOLCHAIN_TYPEID &&
+                (theOption.startsWith("/clang:") || theOption.startsWith("-clang:"))) {
+            theOption = theOption.sliced(7);
+        }
         if (theOption.startsWith("-std=") || theOption.startsWith("--std=")) {
             m_compilerFlags.isLanguageVersionSpecified = true;
             theOption.replace("=c18", "=c17");
@@ -960,6 +966,12 @@ void CompilerOptionsBuilder::evaluateCompilerFlags()
         m_clStyle = true;
         m_compilerFlags.flags.prepend("--driver-mode=cl");
     }
+
+    // Apple's headers are broken, see QTCREATORBUG-32499.
+    // Note that the condition is not technically correct, but we don't know the target OS
+    // here, and it shouldn't hurt to have the option where it is not strictly needed.
+    if (HostOsInfo::isMacHost())
+        m_compilerFlags.flags << "-Wno-elaborated-enum-base";
 }
 
 bool CompilerOptionsBuilder::isClStyle() const

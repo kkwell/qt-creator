@@ -3,21 +3,30 @@
 
 #include "effectcomposerwidget.h"
 
+#include "compositionnode.h"
 #include "effectcomposercontextobject.h"
 #include "effectcomposermodel.h"
 #include "effectcomposernodesmodel.h"
+#include "effectcomposertr.h"
 #include "effectcomposerview.h"
+#include "effectshaderscodeeditor.h"
 #include "effectutils.h"
 #include "propertyhandler.h"
+
+#include <modelnodeoperations.h>
+#include <qmlitemnode.h>
 
 #include <coreplugin/icore.h>
 #include <coreplugin/idocument.h>
 #include <coreplugin/editormanager/editormanager.h>
 
+#include <qmldesigner/components/componentcore/theme.h>
+#include <qmldesigner/components/propertyeditor/assetimageprovider.h>
+#include <qmldesigner/designermcumanager.h>
 #include <qmldesigner/documentmanager.h>
 #include <qmldesigner/qmldesignerconstants.h>
 #include <qmldesigner/qmldesignerplugin.h>
-#include <qmldesigner/components/componentcore/theme.h>
+#include <qmldesignerutils/asset.h>
 #include <studioquickwidget.h>
 
 #include <qmljs/qmljsmodelmanagerinterface.h>
@@ -38,25 +47,44 @@ using namespace Core;
 
 namespace EffectComposer {
 
+constexpr char qmlEffectComposerContextId[] = "QmlDesigner::EffectComposer";
 static QString propertyEditorResourcesPath()
 {
 #ifdef SHARE_QML_PATH
     if (Utils::qtcEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
         return QLatin1String(SHARE_QML_PATH) + "/propertyEditorQmlSources";
 #endif
-    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toString();
+    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toUrlishString();
+}
+
+static QList<QmlDesigner::ModelNode> modelNodesFromMimeData(const QByteArray &mimeData,
+                                                            QmlDesigner::AbstractView *view)
+{
+    QByteArray encodedModelNodeData = mimeData;
+    QDataStream modelNodeStream(&encodedModelNodeData, QIODevice::ReadOnly);
+
+    QList<QmlDesigner::ModelNode> modelNodeList;
+    while (!modelNodeStream.atEnd()) {
+        qint32 internalId;
+        modelNodeStream >> internalId;
+        if (view->hasModelNodeForInternalId(internalId))
+            modelNodeList.append(view->modelNodeForInternalId(internalId));
+    }
+
+    return modelNodeList;
 }
 
 EffectComposerWidget::EffectComposerWidget(EffectComposerView *view)
     : m_effectComposerModel{new EffectComposerModel(this)}
-    , m_effectComposerNodesModel{new EffectComposerNodesModel(this)}
     , m_effectComposerView(view)
     , m_quickWidget{new StudioQuickWidget(this)}
+    , m_editor(Utils::makeUniqueObjectLatePtr<EffectShadersCodeEditor>(
+          Tr::tr("Shaders Code Editor"), Core::ICore::dialogParent()))
 {
-    setWindowTitle(tr("Effect Composer", "Title of effect composer widget"));
-    setMinimumWidth(250);
+    setWindowTitle(Tr::tr("Effect Composer", "Title of effect composer widget"));
+    setMinimumWidth(400);
 
-    m_quickWidget->quickWidget()->installEventFilter(this);
+    setupCodeEditor();
 
     // create the inner widget
     m_quickWidget->quickWidget()->setObjectName(QmlDesigner::Constants::OBJECT_NAME_EFFECT_COMPOSER);
@@ -73,24 +101,21 @@ EffectComposerWidget::EffectComposerWidget(EffectComposerView *view)
     layout->addWidget(m_quickWidget.data());
 
     setStyleSheet(QmlDesigner::Theme::replaceCssColors(
-        QString::fromUtf8(Utils::FileReader::fetchQrc(":/qmldesigner/stylesheet.css"))));
+        Utils::FileUtils::fetchQrc(":/qmldesigner/stylesheet.css")));
 
     QmlDesigner::QmlDesignerPlugin::trackWidgetFocusTime(this, QmlDesigner::Constants::EVENT_EFFECTCOMPOSER_TIME);
 
-    m_quickWidget->rootContext()->setContextProperty("g_propertyData", &g_propertyData);
+    qmlRegisterSingletonInstance<QQmlPropertyMap>(
+        "EffectComposerPropertyData", 1, 0, "GlobalPropertyData", g_propertyData());
 
     QString blurPath = "file:" + EffectUtils::nodesSourcesPath() + "/common/";
-    g_propertyData.insert(QString("blur_vs_path"), QString(blurPath + "bluritems.vert.qsb"));
-    g_propertyData.insert(QString("blur_fs_path"), QString(blurPath + "bluritems.frag.qsb"));
+    g_propertyData()->insert("blur_vs_path", QString(blurPath + "bluritems.vert.qsb"));
+    g_propertyData()->insert("blur_fs_path", QString(blurPath + "bluritems.frag.qsb"));
 
     auto map = m_quickWidget->registerPropertyMap("EffectComposerBackend");
-    map->setProperties({{"effectComposerNodesModel", QVariant::fromValue(m_effectComposerNodesModel.data())},
+    map->setProperties({{"effectComposerNodesModel", QVariant::fromValue(effectComposerNodesModel().data())},
                         {"effectComposerModel", QVariant::fromValue(m_effectComposerModel.data())},
                         {"rootView", QVariant::fromValue(this)}});
-
-    connect(m_effectComposerModel.data(), &EffectComposerModel::nodesChanged, this, [this]() {
-        m_effectComposerNodesModel->updateCanBeAdded(m_effectComposerModel->uniformNames());
-    });
 
     connect(m_effectComposerModel.data(), &EffectComposerModel::resourcesSaved,
             this, [this](const QmlDesigner::TypeName &type, const Utils::FilePath &path) {
@@ -123,6 +148,18 @@ EffectComposerWidget::EffectComposerWidget(EffectComposerView *view)
         QMetaObject::invokeMethod(quickWidget()->rootObject(), "storeExpandStates");
     });
 
+    connect(
+        m_effectComposerModel.data(),
+        &EffectComposerModel::modelReset,
+        this,
+        &EffectComposerWidget::updateCodeEditorIndex);
+
+    connect(
+        m_effectComposerModel.data(),
+        &EffectComposerModel::rowsMoved,
+        this,
+        &EffectComposerWidget::updateCodeEditorIndex);
+
     connect(Core::EditorManager::instance(), &Core::EditorManager::aboutToSave, this, [this] {
         if (m_effectComposerModel->hasUnsavedChanges()) {
             QString compName = m_effectComposerModel->currentComposition();
@@ -132,19 +169,9 @@ EffectComposerWidget::EffectComposerWidget(EffectComposerView *view)
     });
 
     IContext::attach(this,
-                     Context(QmlDesigner::Constants::C_QMLEFFECTCOMPOSER,
-                             QmlDesigner::Constants::C_QT_QUICK_TOOLS_MENU),
+                     Context(qmlEffectComposerContextId,
+                             QmlDesigner::Constants::qtQuickToolsMenuContextId),
                      [this](const IContext::HelpCallback &callback) { contextHelp(callback); });
-}
-
-bool EffectComposerWidget::eventFilter(QObject *obj, QEvent *event)
-{
-    Q_UNUSED(obj)
-    Q_UNUSED(event)
-
-    // TODO
-
-    return false;
 }
 
 void EffectComposerWidget::contextHelp(const Core::IContext::HelpCallback &callback) const
@@ -164,7 +191,7 @@ QPointer<EffectComposerModel> EffectComposerWidget::effectComposerModel() const
 
 QPointer<EffectComposerNodesModel> EffectComposerWidget::effectComposerNodesModel() const
 {
-    return m_effectComposerNodesModel;
+    return m_effectComposerModel->effectComposerNodesModel();
 }
 
 void EffectComposerWidget::addEffectNode(const QString &nodeQenPath)
@@ -176,6 +203,11 @@ void EffectComposerWidget::addEffectNode(const QString &nodeQenPath)
         QString id = nodeQenPath.split('/').last().chopped(4).prepend('_');
         QmlDesignerPlugin::emitUsageStatistics(Constants::EVENT_EFFECTCOMPOSER_NODE + id);
     }
+}
+
+void EffectComposerWidget::removeEffectNodeFromLibrary(const QString &nodeName)
+{
+    effectComposerNodesModel()->removeEffectNode(nodeName);
 }
 
 void EffectComposerWidget::focusSection(int section)
@@ -199,17 +231,136 @@ QPoint EffectComposerWidget::globalPos(const QPoint &point) const
 
 QString EffectComposerWidget::uniformDefaultImage(const QString &nodeName, const QString &uniformName) const
 {
-    return m_effectComposerNodesModel->defaultImagesForNode(nodeName).value(uniformName);
+    return effectComposerNodesModel()->defaultImagesForNode(nodeName).value(uniformName);
 }
 
 QString EffectComposerWidget::imagesPath() const
 {
-    return Core::ICore::resourcePath("qmldesigner/effectComposerNodes/images").toString();
+    return Core::ICore::resourcePath("qmldesigner/effectComposerNodes/images").toUrlishString();
+}
+
+bool EffectComposerWidget::isEffectAsset(const QUrl &url) const
+{
+    return QmlDesigner::Asset(url.toLocalFile()).isEffect();
+}
+
+void EffectComposerWidget::dropAsset(const QUrl &url)
+{
+    if (isEffectAsset(url))
+        openComposition(url.toLocalFile());
+}
+
+bool EffectComposerWidget::isEffectNode(const QByteArray &mimeData) const
+{
+    QList<QmlDesigner::ModelNode> nodes = modelNodesFromMimeData(mimeData, m_effectComposerView);
+    if (!nodes.isEmpty())
+        return QmlDesigner::QmlItemNode(nodes.last()).isEffectItem();
+    return false;
+}
+
+void EffectComposerWidget::dropNode(const QByteArray &mimeData)
+{
+    QList<QmlDesigner::ModelNode> nodes = modelNodesFromMimeData(mimeData, m_effectComposerView);
+    if (!nodes.isEmpty() && QmlDesigner::QmlItemNode(nodes.last()).isEffectItem()) {
+        Utils::FilePath path = QmlDesigner::ModelNodeOperations::findEffectFile(nodes.last());
+        openComposition(path.toFSPathString());
+    }
+}
+
+void EffectComposerWidget::updateCanBeAdded()
+{
+    effectComposerNodesModel()->updateCanBeAdded(m_effectComposerModel->uniformNames(),
+                                                 m_effectComposerModel->nodeNames());
+}
+
+bool EffectComposerWidget::isMCUProject() const
+{
+    return QmlDesigner::DesignerMcuManager::instance().isMCUProject();
+}
+
+void EffectComposerWidget::openCodeEditor(int idx)
+{
+    ShaderEditorData *editorData = [&]() -> ShaderEditorData * {
+        auto creatorFunction
+            = std::bind_front(&EffectShadersCodeEditor::createEditorData, m_editor.get());
+
+        if (idx == MAIN_CODE_EDITOR_INDEX)
+            return effectComposerModel()->editorData(creatorFunction);
+        else if (auto node = effectComposerModel()->nodeAt(idx))
+            return node->editorData(creatorFunction);
+        return nullptr;
+    }();
+
+    if (!editorData)
+        return;
+
+    m_editor->setupShader(editorData);
+    m_editor->showWidget();
+
+    updateCodeEditorIndex();
+}
+
+void EffectComposerWidget::openNearestAvailableCodeEditor(int idx)
+{
+    int nearestIdx = idx;
+
+    if (int rows = m_effectComposerModel->rowCount(); nearestIdx >= rows)
+        nearestIdx = rows - 1;
+
+    while (nearestIdx >= 0) {
+        CompositionNode *node = m_effectComposerModel->nodeAt(nearestIdx);
+        if (!node->isDependency())
+            return openCodeEditor(nearestIdx);
+
+        --nearestIdx;
+    }
+
+    openCodeEditor(MAIN_CODE_EDITOR_INDEX);
 }
 
 QSize EffectComposerWidget::sizeHint() const
 {
     return {420, 420};
+}
+
+void EffectComposerWidget::setupCodeEditor()
+{
+    EffectShadersCodeEditor *editor = m_editor.get();
+    EffectComposerModel *model = m_effectComposerModel.get();
+
+    editor->setCompositionsModel(model);
+
+    connect(
+        editor,
+        &EffectShadersCodeEditor::liveUpdateChanged,
+        model,
+        &EffectComposerModel::setLiveUpdateMode);
+
+    connect(
+        editor,
+        &EffectShadersCodeEditor::rebakeRequested,
+        model,
+        &EffectComposerModel::startRebakeTimer);
+
+    connect(
+        editor,
+        &EffectShadersCodeEditor::openedChanged,
+        this,
+        &EffectComposerWidget::updateCodeEditorIndex);
+
+    connect(
+        model,
+        &EffectComposerModel::currentCompositionChanged,
+        editor,
+        &EffectShadersCodeEditor::close);
+
+    connect(
+        editor,
+        &EffectShadersCodeEditor::requestToOpenNode,
+        this,
+        &EffectComposerWidget::openCodeEditor);
+
+    model->setLiveUpdateMode(editor->liveUpdate());
 }
 
 QString EffectComposerWidget::qmlSourcesPath()
@@ -218,7 +369,7 @@ QString EffectComposerWidget::qmlSourcesPath()
     if (Utils::qtcEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
         return QLatin1String(SHARE_QML_PATH) + "/effectComposerQmlSources";
 #endif
-    return Core::ICore::resourcePath("qmldesigner/effectComposerQmlSources").toString();
+    return Core::ICore::resourcePath("qmldesigner/effectComposerQmlSources").toUrlishString();
 }
 
 void EffectComposerWidget::initView()
@@ -231,10 +382,9 @@ void EffectComposerWidget::initView()
     m_quickWidget->rootContext()->setContextProperty("modelNodeBackend", &m_backendModelNode);
     m_quickWidget->rootContext()->setContextProperty("activeDragSuffix", "");
 
-    //TODO: Fix crash on macos
-//    m_quickWidget->engine()->addImageProvider("qmldesigner_thumbnails",
-//                                              new QmlDesigner::AssetImageProvider(
-//                                                  QmlDesigner::QmlDesignerPlugin::imageCache()));
+   m_quickWidget->engine()->addImageProvider("qmldesigner_thumbnails",
+                                             new QmlDesigner::AssetImageProvider(
+                                                 QmlDesigner::QmlDesignerPlugin::imageCache()));
 
     // init the first load of the QML UI elements
     reloadQmlSource();
@@ -293,7 +443,7 @@ void EffectComposerWidget::handleImportScanTimer()
         }
     } else if (m_importScan.counter == 102) {
         if (m_effectComposerView->model()) {
-            // If type is in use, we have to reset puppet to update 2D view
+            // If type is in use, we have to reset QML Puppet to update 2D view
             if (!m_effectComposerView->allModelNodesOfType(
                                          m_effectComposerView->model()->metaInfo(m_importScan.type)).isEmpty()) {
                 m_effectComposerView->resetPuppet();
@@ -322,5 +472,16 @@ void EffectComposerWidget::handleImportScanTimer()
     }
 }
 
-} // namespace EffectComposer
+void EffectComposerWidget::updateCodeEditorIndex()
+{
+    if (m_editor && m_editor->isOpened()) {
+        if (auto editorData = m_editor->currentEditorData())
+            m_effectComposerModel->updateCodeEditorIndex(editorData);
+        else
+            openNearestAvailableCodeEditor(m_effectComposerModel->codeEditorIndex());
+    } else {
+        m_effectComposerModel->updateCodeEditorIndex(nullptr);
+    }
+}
 
+} // namespace EffectComposer

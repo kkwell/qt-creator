@@ -9,10 +9,13 @@
 
 #include <projectexplorer/kit.h>
 #include <projectexplorer/kitmanager.h>
+#include <projectexplorer/sysrootkitaspect.h>
 
 #include <utils/algorithm.h>
+#include <utils/buildablehelperlibrary.h>
 #include <utils/filepath.h>
 #include <utils/hostosinfo.h>
+#include <utils/mimeconstants.h>
 #include <utils/qtcassert.h>
 #include <utils/temporarydirectory.h>
 
@@ -23,18 +26,54 @@ using namespace Utils;
 
 namespace QtSupport {
 
-QtProjectImporter::QtProjectImporter(const Utils::FilePath &path) : ProjectImporter(path)
+static QtVersion *versionFromVariant(const QVariant &v)
 {
-    useTemporaryKitAspect(QtKitAspect::id(),
-                               [this](Kit *k, const QVariantList &vl) {cleanupTemporaryQt(k, vl);},
-                               [this](Kit *k, const QVariantList &vl) {persistTemporaryQt(k, vl);});
+    bool ok;
+    const int qtId = v.toInt(&ok);
+    QTC_ASSERT(ok, return nullptr);
+    return QtVersionManager::version(qtId);
+}
+
+static void cleanupTemporaryQt(Kit *k, const QVariantList &vl)
+{
+    if (vl.isEmpty())
+        return; // No temporary Qt
+    QTC_ASSERT(vl.count() == 1, return);
+    QtVersion *version = versionFromVariant(vl.at(0));
+    QTC_ASSERT(version, return);
+    QtVersionManager::removeVersion(version);
+    QtKitAspect::setQtVersion(k, nullptr); // Always mark Kit as not using this Qt
+}
+
+static void persistTemporaryQt(Kit *k, const QVariantList &vl)
+{
+    if (vl.isEmpty())
+        return; // No temporary Qt
+    QTC_ASSERT(vl.count() == 1, return);
+    const QVariant data = vl.at(0);
+    QtVersion *tmpVersion = versionFromVariant(data);
+    QtVersion *actualVersion = QtKitAspect::qtVersion(k);
+
+    // User changed Kit away from temporary Qt that was set up:
+    if (tmpVersion && actualVersion != tmpVersion)
+        QtVersionManager::removeVersion(tmpVersion);
+}
+
+QtProjectImporter::QtProjectImporter(const FilePath &path)
+    : ProjectImporter(path)
+{
+    useTemporaryKitAspect(QtKitAspect::id(), &cleanupTemporaryQt, &persistTemporaryQt);
 }
 
 QtProjectImporter::QtVersionData
 QtProjectImporter::findOrCreateQtVersion(const Utils::FilePath &qmakePath) const
 {
     QtVersionData result;
-    result.qt = QtVersionManager::version(Utils::equal(&QtVersion::qmakeFilePath, qmakePath));
+    result.qt = QtVersionManager::version(
+                Utils::equal(&QtVersion::qmakeFilePath,
+                             Utils::BuildableHelperLibrary::isQtChooser(qmakePath)
+                             ? Utils::BuildableHelperLibrary::qtChooserToQmakePath(qmakePath)
+                             : qmakePath));
     if (result.qt) {
         // Check if version is a temporary qt
         const int qtId = result.qt->uniqueId();
@@ -44,7 +83,7 @@ QtProjectImporter::findOrCreateQtVersion(const Utils::FilePath &qmakePath) const
 
     // Create a new version if not found:
     // Do not use the canonical path here...
-    result.qt = QtVersionFactory::createQtVersionFromQMakePath(qmakePath);
+    result.qt = QtVersionFactory::createQtVersionFromQMakePath(qmakePath, DetectionSource::Manual);
     result.isTemporary = true;
     if (result.qt) {
         UpdateGuard guard(*this);
@@ -71,43 +110,12 @@ Kit *QtProjectImporter::createTemporaryKit(const QtVersionData &versionData,
     });
 }
 
-static QtVersion *versionFromVariant(const QVariant &v)
-{
-    bool ok;
-    const int qtId = v.toInt(&ok);
-    QTC_ASSERT(ok, return nullptr);
-    return QtVersionManager::version(qtId);
-}
-
-void QtProjectImporter::cleanupTemporaryQt(Kit *k, const QVariantList &vl)
-{
-    if (vl.isEmpty())
-        return; // No temporary Qt
-    QTC_ASSERT(vl.count() == 1, return);
-    QtVersion *version = versionFromVariant(vl.at(0));
-    QTC_ASSERT(version, return);
-    QtVersionManager::removeVersion(version);
-    QtKitAspect::setQtVersion(k, nullptr); // Always mark Kit as not using this Qt
-}
-
-void QtProjectImporter::persistTemporaryQt(Kit *k, const QVariantList &vl)
-{
-    if (vl.isEmpty())
-        return; // No temporary Qt
-    QTC_ASSERT(vl.count() == 1, return);
-    const QVariant data = vl.at(0);
-    QtVersion *tmpVersion = versionFromVariant(data);
-    QtVersion *actualVersion = QtKitAspect::qtVersion(k);
-
-    // User changed Kit away from temporary Qt that was set up:
-    if (tmpVersion && actualVersion != tmpVersion)
-        QtVersionManager::removeVersion(tmpVersion);
-}
-
 } // namespace QtSupport
 
 #if WITH_TESTS
 
+#include <extensionsystem/pluginmanager.h>
+#include <extensionsystem/pluginspec.h>
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/buildinfo.h>
 
@@ -116,6 +124,20 @@ void QtProjectImporter::persistTemporaryQt(Kit *k, const QVariantList &vl)
 #include <QTest>
 
 namespace QtSupport::Internal {
+
+class TestBuildConfigFactory : public BuildConfigurationFactory
+{
+public:
+    TestBuildConfigFactory()
+    {
+        using namespace ExtensionSystem;
+        PluginSpec *const spec = PluginManager::specById("qmakeprojectmanager");
+        if (spec && spec->state() == PluginSpec::Running)
+            return;
+        registerBuildConfiguration<BuildConfiguration>("QtSupport.Test");
+        setSupportedProjectMimeTypeName(Utils::Constants::PROFILE_MIMETYPE);
+    }
+};
 
 struct DirectoryData {
     DirectoryData(const QString &ip,
@@ -158,10 +180,11 @@ protected:
                                    QString *warningMessage) const override;
     bool matchKit(void *directoryData, const Kit *k) const override;
     Kit *createKit(void *directoryData) const override;
-    const QList<BuildInfo> buildInfoList(void *directoryData) const override;
+    BuildInfo buildInfo(void *directoryData) const override;
     void deleteDirectoryData(void *directoryData) const override;
 
 private:
+    const TestBuildConfigFactory m_bcFactory;
     const QList<void *> m_testData;
     mutable Utils::FilePath m_path;
     mutable QVector<void*> m_deletedTestData;
@@ -215,7 +238,7 @@ Kit *TestQtProjectImporter::createKit(void *directoryData) const
     });
 }
 
-const QList<BuildInfo> TestQtProjectImporter::buildInfoList(void *directoryData) const
+BuildInfo TestQtProjectImporter::buildInfo(void *directoryData) const
 {
     Q_UNUSED(directoryData)
     assert(m_testData.contains(directoryData));
@@ -223,11 +246,12 @@ const QList<BuildInfo> TestQtProjectImporter::buildInfoList(void *directoryData)
     assert(static_cast<const DirectoryData *>(directoryData)->importPath == m_path);
 
     BuildInfo info;
+    info.buildSystemName = "QtImporterTest";
     info.displayName = "Test Build info";
     info.typeName = "Debug";
     info.buildDirectory = m_path;
     info.buildType = BuildConfiguration::Debug;
-    return {info};
+    return info;
 }
 
 void TestQtProjectImporter::deleteDirectoryData(void *directoryData) const
@@ -247,7 +271,7 @@ static QStringList additionalFilesToCopy(const QtVersion *qt)
     const int major = qt->qtVersion().majorVersion();
     if (major >= 6) {
         if (HostOsInfo::isMacHost()) {
-            return {"lib/QtCore.framework/Versions/A/QtCore"};
+            return {qt->libraryPath().pathAppended("/QtCore.framework/Versions/A/QtCore").toUrlishString()};
         } else if (HostOsInfo::isWindowsHost()) {
             const QString release = QString("bin/Qt%1Core.dll").arg(major);
             const QString debug = QString("bin/Qt%1Cored.dll").arg(major);
@@ -255,15 +279,21 @@ static QStringList additionalFilesToCopy(const QtVersion *qt)
             const QString mingwStd("bin/libstdc++-6.dll");
             const QString mingwPthread("bin/libwinpthread-1.dll");
             const FilePath base = qt->qmakeFilePath().parentDir().parentDir();
-            const QStringList allFiles = {release, debug, mingwGcc, mingwStd, mingwPthread};
-            const QStringList existingFiles = Utils::filtered(allFiles, [&base](const QString &f) {
-                return base.pathAppended(f).exists();
+            const QStringList allFiles = Utils::transform(
+                        {release, debug, mingwGcc, mingwStd, mingwPthread}, [&base](const QString &s) {
+                return base.pathAppended(s).toUrlishString();
+            });
+            const QStringList existingFiles = Utils::filtered(allFiles, [](const QString &f) {
+                return FilePath::fromUserInput(f).exists();
             });
             return !existingFiles.empty() ? existingFiles : QStringList(release);
         } else if (HostOsInfo::isLinuxHost()) {
-            const QString core = QString("lib/libQt%1Core.so.%1").arg(major);
-            const QDir base(qt->qmakeFilePath().parentDir().parentDir().pathAppended("lib").toString());
-            const QStringList icuLibs = Utils::transform(base.entryList({"libicu*.so.*"}), [](const QString &lib) { return QString("lib/" + lib); });
+            const QDir base(qt->libraryPath().toUrlishString());
+            const QString core = base.absolutePath() + QString("/libQt%1Core.so.%1").arg(major);
+            const QStringList icuLibs
+                = Utils::transform(base.entryInfoList({"libicu*.so.*"}), [](const QFileInfo &fi) {
+                      return fi.absoluteFilePath();
+                  });
             return QStringList(core) + icuLibs;
         }
     }
@@ -274,21 +304,25 @@ static Utils::FilePath setupQmake(const QtVersion *qt, const QString &path)
 {
     // This is a hack and only works with local, "standard" installations of Qt
     const FilePath qmake = qt->qmakeFilePath().canonicalPath();
-    const QString qmakeFile = "bin/" + qmake.fileName();
-    const FilePath source = qmake.parentDir().parentDir();
     const FilePath target = FilePath::fromString(path);
 
-    const QStringList filesToCopy = QStringList(qmakeFile) + additionalFilesToCopy(qt);
+    auto removeDriveLetter = [](const FilePath &fp) {
+        if (fp.startsWithDriveLetter())
+            return fp.path().mid(2);
+        return fp.path();
+    };
+
+    const QStringList filesToCopy = QStringList(qmake.toUrlishString()) + additionalFilesToCopy(qt);
     for (const QString &file : filesToCopy) {
-        const FilePath sourceFile = source.pathAppended(file);
-        const FilePath targetFile = target.pathAppended(file);
+        const FilePath sourceFile = FilePath::fromString(file);
+        const FilePath targetFile = target.pathAppended(removeDriveLetter(sourceFile));
         if (!targetFile.parentDir().ensureWritableDir() || !sourceFile.copyFile(targetFile)) {
-            qDebug() << "Failed to copy" << sourceFile.toString() << "to" << targetFile.toString();
+            qDebug() << "Failed to copy" << sourceFile.toUrlishString() << "to" << targetFile.toUrlishString();
             return {};
         }
     }
 
-    return target.pathAppended(qmakeFile);
+    return target.pathAppended(removeDriveLetter(qmake));
 }
 
 class QtProjectImporterTest final : public QObject
@@ -433,7 +467,7 @@ void QtProjectImporterTest::testQtProjectImporter_oneProject()
 
     // Finally set up importer:
     // Copy the directoryData so that importer is free to delete it later.
-    TestQtProjectImporter importer(tempDir1.path(),
+    TestQtProjectImporter importer(tempDir1.filePath("test.pro"),
                                    Utils::transform(testData, [](DirectoryData *i) {
                                        return static_cast<void *>(new DirectoryData(*i));
                                    }));
@@ -446,7 +480,7 @@ void QtProjectImporterTest::testQtProjectImporter_oneProject()
     const QList<BuildInfo> buildInfo = importer.import(Utils::FilePath::fromString(appDir), true);
 
     // VALIDATE: Basic TestImporter state:
-    QCOMPARE(importer.projectFilePath(), tempDir1.path());
+    QCOMPARE(importer.projectFilePath(), tempDir1.filePath("test.pro"));
     QCOMPARE(importer.allDeleted(), true);
 
     // VALIDATE: Result looks reasonable:
@@ -550,7 +584,7 @@ void QtProjectImporterTest::testQtProjectImporter_oneProject()
         QCOMPARE(newKitId, newKitIdAfterImport);
 
         // VALIDATE: Importer state
-        QCOMPARE(importer.projectFilePath(), tempDir1.path());
+        QCOMPARE(importer.projectFilePath(), tempDir1.filePath("test.pro"));
         QCOMPARE(importer.allDeleted(), true);
 
         if (kitIsPersistent) {

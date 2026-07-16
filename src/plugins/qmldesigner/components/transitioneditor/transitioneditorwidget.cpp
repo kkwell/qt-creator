@@ -82,7 +82,7 @@ TransitionEditorWidget::TransitionEditorWidget(TransitionEditorView *view)
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
     m_toolbar->setStyleSheet(Theme::replaceCssColors(
-        QString::fromUtf8(Utils::FileReader::fetchQrc(":/qmldesigner/stylesheet.css"))));
+        Utils::FileUtils::fetchQrc(":/qmldesigner/stylesheet.css")));
     m_scrollbar->setOrientation(Qt::Horizontal);
 
     QSizePolicy sizePolicy1(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -196,7 +196,7 @@ TransitionEditorWidget::TransitionEditorWidget(TransitionEditorView *view)
             [this](const QString &message) { m_statusBar->setText(message); });
 
     connect(m_addButton, &QPushButton::clicked, this, [this] {
-        m_transitionEditorView->addNewTransition();
+        auto transition = m_transitionEditorView->addNewTransition();
     });
 
     Navigation2dFilter *filter = new Navigation2dFilter(m_graphicsView->viewport());
@@ -314,11 +314,10 @@ void TransitionEditorWidget::init(int zoom)
     ModelNode root = transitionEditorView()->rootModelNode();
     ModelNode transition;
 
-    if (NodeAbstractProperty transitions = root.nodeAbstractProperty("transitions")) {
-        const QList<ModelNode> directSubNodes = transitions.directSubNodes();
-        if (!directSubNodes.isEmpty())
-            transition = directSubNodes.constFirst();
-    }
+    //TODO
+    const QList<ModelNode> transitions = transitionEditorView()->allTransitions();
+    if (!transitions.isEmpty())
+        transition = transitions.constFirst();
 
     m_graphicsScene->setTransition(transition);
     setTransitionActive(transition.isValid());
@@ -328,6 +327,7 @@ void TransitionEditorWidget::init(int zoom)
     m_toolbar->setScaleFactor(zoom);
 
     m_toolbar->setCurrentTransition(transition);
+    m_toolbar->setTransitions(transitions);
 
     qreal duration = 2000;
     if (auto data = transition.auxiliaryData(transitionDurationProperty))
@@ -349,7 +349,7 @@ void TransitionEditorWidget::updateData(const ModelNode &transition)
         if (transition.id() == m_toolbar->currentTransitionId()) {
             m_graphicsScene->setTransition(transition);
         } else {
-            m_toolbar->updateComboBox(transition.view()->rootModelNode());
+            m_toolbar->updateComboBox(transitionEditorView()->allTransitions());
         }
     }
 }
@@ -388,7 +388,7 @@ void TransitionEditorWidget::setupScrollbar(int min, int max, int current)
 
 void TransitionEditorWidget::showEvent([[maybe_unused]] QShowEvent *event)
 {
-    m_transitionEditorView->setEnabled(true);
+    QmlDesignerPlugin::viewManager().showView(*m_transitionEditorView);
 
     if (m_transitionEditorView->model())
         init(m_toolbar->scaleFactor());
@@ -403,7 +403,7 @@ void TransitionEditorWidget::showEvent([[maybe_unused]] QShowEvent *event)
 
 void TransitionEditorWidget::hideEvent(QHideEvent *event)
 {
-    m_transitionEditorView->setEnabled(false);
+    QmlDesignerPlugin::viewManager().hideView(*m_transitionEditorView);
     QWidget::hideEvent(event);
 }
 

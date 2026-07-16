@@ -11,6 +11,7 @@
 #include <utils/filepath.h>
 #include <utils/id.h>
 #include <utils/textfileformat.h>
+#include <utils/textutils.h>
 
 #include <QList>
 #include <QPair>
@@ -27,7 +28,7 @@ namespace TextEditor {
 class PlainRefactoringFileFactory;
 class RefactoringFile;
 using RefactoringFilePtr = QSharedPointer<RefactoringFile>;
-using RefactoringSelections = QVector<QPair<QTextCursor, QTextCursor>>;
+using RefactoringSelections = QList<QPair<QTextCursor, QTextCursor>>;
 class TextDocument;
 class TextEditorWidget;
 
@@ -50,6 +51,7 @@ public:
 
     // converts 1-based line and column into 0-based source offset
     int position(int line, int column) const;
+    int position(const Utils::Text::Position &position) const;
     // converts 0-based source offset into 1-based line and column
     void lineAndColumn(int offset, int *line, int *column) const;
 
@@ -73,13 +75,13 @@ protected:
     RefactoringFile(const Utils::FilePath &filePath);
 
     void invalidate() { m_filePath.clear(); }
+    virtual void doFormatting();
 
 private:
     virtual void fileChanged() {} // derived classes may want to clear language specific extra data
     virtual Utils::Id indenterId() const { return {} ;}
 
     void setupFormattingRanges(const QList<Utils::ChangeSet::EditOp> &replaceList);
-    void doFormatting();
 
     TextEditorWidget *openEditor(bool activate, int line, int column);
     QTextDocument *mutableDocument() const;

@@ -11,11 +11,12 @@
 
 #include "pathitem.h"
 
-#include <nodemetainfo.h>
-#include <qmlitemnode.h>
-#include <nodeproperty.h>
 #include <nodelistproperty.h>
+#include <nodemetainfo.h>
+#include <nodeproperty.h>
 #include <qmldesignerplugin.h>
+#include <qmldesignertr.h>
+#include <qmlitemnode.h>
 
 #include <abstractaction.h>
 #include <designeractionmanager.h>
@@ -30,22 +31,22 @@ namespace QmlDesigner {
 
 static bool isNonSupportedPathElement(const ModelNode &pathElement)
 {
-    if (pathElement.type() == "QtQuick.PathCubic")
+    if (pathElement.type() == "PathCubic")
         return false;
 
-    if (pathElement.type() == "QtQuick.PathAttribute")
+    if (pathElement.type() == "PathAttribute")
         return false;
 
-    if (pathElement.type() == "QtQuick.PathPercent")
+    if (pathElement.type() == "PathPercent")
         return false;
 
-    if (pathElement.type() == "QtQuick.PathAttribute")
+    if (pathElement.type() == "PathAttribute")
         return false;
 
-    if (pathElement.type() == "QtQuick.PathQuad")
+    if (pathElement.type() == "PathQuad")
         return false;
 
-    if (pathElement.type() == "QtQuick.PathLine")
+    if (pathElement.type() == "PathLine")
         return false;
 
     return true;
@@ -77,7 +78,9 @@ static int pathRankForModelNode(const ModelNode &modelNode) {
 class PathToolAction : public AbstractAction
 {
 public:
-    PathToolAction() : AbstractAction(QCoreApplication::translate("PathToolAction","Edit Path")) {}
+    PathToolAction()
+        : AbstractAction(Tr::tr("Edit Path"))
+    {}
 
     QByteArray category() const override
     {
@@ -273,7 +276,7 @@ int PathTool::wantHandleItem(const ModelNode &modelNode) const
 
 QString PathTool::name() const
 {
-    return QCoreApplication::translate("PathTool", "Path Tool");
+    return Tr::tr("Path Tool");
 }
 
 ModelNode PathTool::editingPathViewModelNode() const

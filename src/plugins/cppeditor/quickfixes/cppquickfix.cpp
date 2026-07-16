@@ -8,6 +8,7 @@
 #include "../cppeditorwidget.h"
 #include "../cppfunctiondecldeflink.h"
 #include "../cpprefactoringchanges.h"
+#include "addmodulefrominclude.h"
 #include "assigntolocalvariable.h"
 #include "bringidentifierintoscope.h"
 #include "completeswitchstatement.h"
@@ -24,6 +25,7 @@
 #include "extractfunction.h"
 #include "extractliteralasparameter.h"
 #include "insertfunctiondefinition.h"
+#include "layoutpreview.h"
 #include "logicaloperationquickfixes.h"
 #include "moveclasstoownfile.h"
 #include "movefunctiondefinition.h"
@@ -98,11 +100,9 @@ public:
 static ExtensionSystem::IPlugin *getCppEditor()
 {
     using namespace ExtensionSystem;
-    for (PluginSpec * const spec : PluginManager::plugins()) {
-        if (spec->name() == "CppEditor")
-            return spec->plugin();
-    }
-    QTC_ASSERT(false, return nullptr);
+    PluginSpec *const cppEditorSpec = PluginManager::specById("cppeditor");
+    QTC_ASSERT(cppEditorSpec, return nullptr);
+    return cppEditorSpec->plugin();
 }
 
 CppQuickFixOperation::~CppQuickFixOperation() = default;
@@ -113,6 +113,7 @@ void createCppQuickFixFactories()
     new ExtraRefactoringOperations;
 
     registerAssignToLocalVariableQuickfix();
+    registerAddModuleFromIncludeQuickfix();
     registerBringIdentifierIntoScopeQuickfixes();
     registerCodeGenerationQuickfixes();
     registerCompleteSwitchStatementQuickfix();
@@ -127,6 +128,7 @@ void createCppQuickFixFactories()
     registerExtractLiteralAsParameterQuickfix();
     registerInsertFunctionDefinitionQuickfixes();
     registerInsertVirtualMethodsQuickfix();
+    registerLayoutPreviewQuickfix();
     registerLogicalOperationQuickfixes();
     registerMoveClassToOwnFileQuickfix();
     registerMoveFunctionDefinitionQuickfixes();

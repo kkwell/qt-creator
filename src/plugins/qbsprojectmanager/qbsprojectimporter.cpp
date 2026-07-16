@@ -4,18 +4,20 @@
 #include "qbsprojectimporter.h"
 
 #include "qbspmlogging.h"
+#include "qbsproject.h"
 #include "qbsprojectmanagerconstants.h"
 #include "qbssession.h"
 
 #include <coreplugin/documentmanager.h>
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/buildinfo.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/sysrootkitaspect.h>
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/toolchainkitaspect.h>
 #include <qtsupport/qtkitaspect.h>
 #include <utils/algorithm.h>
 #include <utils/filepath.h>
@@ -201,10 +203,11 @@ Kit *QbsProjectImporter::createKit(void *directoryData) const
     });
 }
 
-const QList<BuildInfo> QbsProjectImporter::buildInfoList(void *directoryData) const
+BuildInfo QbsProjectImporter::buildInfo(void *directoryData) const
 {
     const auto * const bgData = static_cast<BuildGraphData *>(directoryData);
     BuildInfo info;
+    info.buildSystemName = QbsBuildSystem::name();
     info.displayName = bgData->bgFilePath.completeBaseName();
     info.buildType = bgData->buildVariant == QbsConstants::QBS_VARIANT_PROFILING
             ? BuildConfiguration::Profile : bgData->buildVariant == QbsConstants::QBS_VARIANT_RELEASE
@@ -214,7 +217,7 @@ const QList<BuildInfo> QbsProjectImporter::buildInfoList(void *directoryData) co
     config.insert("configName", info.displayName);
     info.extraInfo = variantFromStore(config);
     qCDebug(qbsPmLog) << "creating build info for " << info.displayName << ' ' << bgData->buildVariant;
-    return {info};
+    return info;
 }
 
 void QbsProjectImporter::deleteDirectoryData(void *directoryData) const

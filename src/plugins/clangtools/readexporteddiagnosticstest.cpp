@@ -6,14 +6,14 @@
 #include "clangtoolslogfilereader.h"
 
 #include <cppeditor/cpptoolstestcase.h>
+
 #include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
 #include <utils/qtcassert.h>
 
-#include <QtTest>
+#include <QTest>
 
 using namespace CppEditor::Tests;
-using namespace Debugger;
 using namespace Utils;
 
 namespace ClangTools::Internal {
@@ -25,6 +25,43 @@ const char nonAsciiMultiLine[] = "\xc3\xbc" "\n"
                                  "\xe4\xba\x8c" "\n"
                                  "\xf0\x90\x8c\x82" "X";
 
+static QString link2String(const Link &link)
+{
+    return link.targetFilePath.toUserOutput() + ':' + QString::number(link.target.line) + ':'
+           + QString::number(link.target.column) + ':' + QString::number(link.linkTextStart) + ':'
+           + QString::number(link.linkTextEnd);
+}
+
+static QString step2String(const ExplainingStep &step)
+{
+    QString s = step.message;
+    s.append('@').append(link2String(step.location));
+    for (const Link &l : step.ranges)
+        s.append('[').append(link2String(l)).append(']');
+    return s.append('|').append(QString::number(step.isFixIt));
+}
+
+static QString diag2String(const Diagnostic &diag)
+{
+    QString s =diag.name;
+    s.append(' ')
+        .append(diag.description)
+        .append(' ')
+        .append(diag.category)
+        .append(' ')
+        .append(diag.type)
+        .append('@')
+        .append(link2String(diag.location));
+    for (const ExplainingStep &step : diag.explainingSteps)
+        s.append('|').append(step2String(step));
+    return s.append('|').append(QString::number(diag.hasFixits));
+}
+
+static char *toString(const Diagnostic &diag)
+{
+    return QTest::toString(diag2String(diag));
+}
+
 ReadExportedDiagnosticsTest::ReadExportedDiagnosticsTest()
     : m_baseDir(new TemporaryCopiedDir(":/clangtools/unit-tests/exported-diagnostics")) {}
 
@@ -35,21 +72,21 @@ void ReadExportedDiagnosticsTest::init() { }
 
 void ReadExportedDiagnosticsTest::testNonExistingFile()
 {
-    const expected_str<Diagnostics> diags = readExportedDiagnostics("nonExistingFile.yaml");
+    const Result<Diagnostics> diags = readExportedDiagnostics("nonExistingFile.yaml");
     QVERIFY(!diags.has_value());
     QVERIFY(!diags.error().isEmpty());
 }
 
 void ReadExportedDiagnosticsTest::testEmptyFile()
 {
-    const expected_str<Diagnostics> diags = readExportedDiagnostics(filePath("empty.yaml"));
+    const Result<Diagnostics> diags = readExportedDiagnostics(filePath("empty.yaml"));
     QVERIFY(diags.has_value());
     QVERIFY(diags->isEmpty());
 }
 
 void ReadExportedDiagnosticsTest::testUnexpectedFileContents()
 {
-    const expected_str<Diagnostics> diags = readExportedDiagnostics(
+    const Result<Diagnostics> diags = readExportedDiagnostics(
         filePath("tidy.modernize-use-nullptr.cpp"));
     QVERIFY(!diags.has_value());
     QVERIFY(!diags.error().isEmpty());
@@ -68,18 +105,19 @@ void ReadExportedDiagnosticsTest::testTidy()
         = createFile(filePath(appendYamlSuffix("tidy.modernize-use-nullptr")), sourceFile);
     Diagnostic expectedDiag;
     expectedDiag.name = "modernize-use-nullptr";
-    expectedDiag.location = {sourceFile, 2, 25};
+    expectedDiag.location = {sourceFile, 2, 24};
     expectedDiag.description = "use nullptr [modernize-use-nullptr]";
     expectedDiag.type = "warning";
     expectedDiag.hasFixits = true;
     expectedDiag.explainingSteps = {
         ExplainingStep{"nullptr",
                        expectedDiag.location,
-                       {expectedDiag.location, {sourceFile, 2, 26}},
+                       {expectedDiag.location, {sourceFile, 2, 25}},
                        true}};
-    const expected_str<Diagnostics> diags = readExportedDiagnostics(exportedFile);
+    const Result<Diagnostics> diags = readExportedDiagnostics(exportedFile);
 
     QVERIFY(diags.has_value());
+    QVERIFY(!diags->empty());
     QCOMPARE(*diags, {expectedDiag});
 }
 
@@ -89,7 +127,7 @@ void ReadExportedDiagnosticsTest::testAcceptDiagsFromFilePaths_None()
     const FilePath exportedFile = createFile(filePath("tidy.modernize-use-nullptr.yaml"),
                                              sourceFile);
     const auto acceptNone = [](const FilePath &) { return false; };
-    const expected_str<Diagnostics> diags
+    const Result<Diagnostics> diags
         = readExportedDiagnostics(exportedFile, acceptNone);
     QVERIFY(diags.has_value());
     QVERIFY(diags->isEmpty());
@@ -103,28 +141,28 @@ void ReadExportedDiagnosticsTest::testTidy_ClangAnalyzer()
         = createFile(filePath(appendYamlSuffix("clang-analyzer.dividezero")), sourceFile);
     Diagnostic expectedDiag;
     expectedDiag.name = "clang-analyzer-core.DivideZero";
-    expectedDiag.location = {sourceFile, 4, 15};
+    expectedDiag.location = {sourceFile, 4, 14};
     expectedDiag.description = "Division by zero [clang-analyzer-core.DivideZero]";
     expectedDiag.type = "warning";
     expectedDiag.hasFixits = false;
     expectedDiag.explainingSteps = {
         ExplainingStep{"Assuming 'z' is equal to 0",
-                       {sourceFile, 3, 7},
+                       {sourceFile, 3, 6},
                        {},
                        false,
         },
         ExplainingStep{"Taking true branch",
-                       {sourceFile, 3, 3},
+                       {sourceFile, 3, 2},
                        {},
                        false,
         },
         ExplainingStep{"Division by zero",
-                       {sourceFile, 4, 15},
+                       {sourceFile, 4, 14},
                        {},
                        false,
         },
     };
-    const expected_str<Diagnostics> diags = readExportedDiagnostics(exportedFile);
+    const Result<Diagnostics> diags = readExportedDiagnostics(exportedFile);
     QVERIFY(diags.has_value());
     QCOMPARE(*diags, {expectedDiag});
 }
@@ -136,22 +174,22 @@ void ReadExportedDiagnosticsTest::testClazy()
                                              sourceFile);
     Diagnostic expectedDiag;
     expectedDiag.name = "clazy-qgetenv";
-    expectedDiag.location = {sourceFile, 7, 5};
+    expectedDiag.location = {sourceFile, 7, 4};
     expectedDiag.description = "qgetenv().isEmpty() allocates. Use qEnvironmentVariableIsEmpty() instead [clazy-qgetenv]";
     expectedDiag.type = "warning";
     expectedDiag.hasFixits = true;
     expectedDiag.explainingSteps = {
         ExplainingStep{"qEnvironmentVariableIsEmpty",
                        expectedDiag.location,
-                       {expectedDiag.location, {sourceFile, 7, 12}},
+                       {expectedDiag.location, {sourceFile, 7, 11}},
                        true
         },
         ExplainingStep{")",
-                       {sourceFile, 7, 18},
-                       {{sourceFile, 7, 18}, {sourceFile, 7, 29}},
+                       {sourceFile, 7, 17},
+                       {{sourceFile, 7, 17}, {sourceFile, 7, 28}},
                        true},
     };
-    const expected_str<Diagnostics> diags = readExportedDiagnostics(exportedFile);
+    const Result<Diagnostics> diags = readExportedDiagnostics(exportedFile);
     QVERIFY(diags.has_value());
     QCOMPARE(*diags, {expectedDiag});
 }
@@ -186,7 +224,7 @@ void ReadExportedDiagnosticsTest::testOffsetStartOfFirstLine()
     const auto info = byteOffsetInUtf8TextToLineColumn(asciiWord, 0);
     QVERIFY(info);
     QCOMPARE(info->line, 1);
-    QCOMPARE(info->column, 1);
+    QCOMPARE(info->column, 0);
 }
 
 void ReadExportedDiagnosticsTest::testOffsetEndOfFirstLine()
@@ -194,7 +232,7 @@ void ReadExportedDiagnosticsTest::testOffsetEndOfFirstLine()
     const auto info = byteOffsetInUtf8TextToLineColumn(asciiWord, 2);
     QVERIFY(info);
     QCOMPARE(info->line, 1);
-    QCOMPARE(info->column, 3);
+    QCOMPARE(info->column, 2);
 }
 
 // The invocation
@@ -220,7 +258,7 @@ void ReadExportedDiagnosticsTest::testOffsetOffsetPointingToLineSeparator_unix()
     const auto info = byteOffsetInUtf8TextToLineColumn(asciiMultiLine, 3);
     QVERIFY(info);
     QCOMPARE(info->line, 1);
-    QCOMPARE(info->column, 4);
+    QCOMPARE(info->column, 3);
 }
 
 // For a file with dos style line endings ("\r\n"), clang-tidy points to '\r'.
@@ -229,7 +267,7 @@ void ReadExportedDiagnosticsTest::testOffsetOffsetPointingToLineSeparator_dos()
     const auto info = byteOffsetInUtf8TextToLineColumn(asciiMultiLine_dos, 3);
     QVERIFY(info);
     QCOMPARE(info->line, 1);
-    QCOMPARE(info->column, 4);
+    QCOMPARE(info->column, 3);
 }
 
 void ReadExportedDiagnosticsTest::testOffsetStartOfSecondLine()
@@ -237,7 +275,7 @@ void ReadExportedDiagnosticsTest::testOffsetStartOfSecondLine()
     const auto info = byteOffsetInUtf8TextToLineColumn(asciiMultiLine, 4);
     QVERIFY(info);
     QCOMPARE(info->line, 2);
-    QCOMPARE(info->column, 1);
+    QCOMPARE(info->column, 0);
 }
 
 void ReadExportedDiagnosticsTest::testOffsetMultiByteCodePoint1()
@@ -245,7 +283,7 @@ void ReadExportedDiagnosticsTest::testOffsetMultiByteCodePoint1()
     const auto info = byteOffsetInUtf8TextToLineColumn(nonAsciiMultiLine, 3);
     QVERIFY(info);
     QCOMPARE(info->line, 2);
-    QCOMPARE(info->column, 1);
+    QCOMPARE(info->column, 0);
 }
 
 void ReadExportedDiagnosticsTest::testOffsetMultiByteCodePoint2()
@@ -253,25 +291,25 @@ void ReadExportedDiagnosticsTest::testOffsetMultiByteCodePoint2()
     const auto info = byteOffsetInUtf8TextToLineColumn(nonAsciiMultiLine, 11);
     QVERIFY(info);
     QCOMPARE(info->line, 3);
-    QCOMPARE(info->column, 2);
+    QCOMPARE(info->column, 1);
 }
 
 // Replace FILE_PATH with a real absolute file path in the *.yaml files.
-FilePath ReadExportedDiagnosticsTest::createFile(const Utils::FilePath &yamlFilePath,
-                                                 const Utils::FilePath &filePathToInject) const
+FilePath ReadExportedDiagnosticsTest::createFile(const FilePath &yamlFilePath,
+                                                 const FilePath &filePathToInject) const
 {
     QTC_ASSERT(filePathToInject.isAbsolutePath(), return {});
     const FilePath newFileName = m_baseDir->filePath().resolvePath(yamlFilePath);
 
-    FileReader reader;
-    if (QTC_GUARD(reader.fetch(yamlFilePath, QIODevice::ReadOnly | QIODevice::Text))) {
-        QByteArray contents = reader.data();
-        contents.replace("FILE_PATH", filePathToInject.toString().toLocal8Bit());
+    const Result<QByteArray> res = yamlFilePath.fileContents();
+    QTC_ASSERT(res, return newFileName);
 
-        FileSaver fileSaver(newFileName, QIODevice::WriteOnly | QIODevice::Text);
-        QTC_CHECK(fileSaver.write(contents));
-        QTC_CHECK(fileSaver.finalize());
-    }
+    QByteArray contents = *res;
+    contents.replace("FILE_PATH", filePathToInject.toUrlishString().toLocal8Bit());
+
+    FileSaver fileSaver(newFileName, QIODevice::WriteOnly | QIODevice::Text);
+    QTC_CHECK(fileSaver.write(contents));
+    QTC_CHECK(fileSaver.finalize());
 
     return newFileName;
 }

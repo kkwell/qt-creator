@@ -4,16 +4,16 @@
 #pragma once
 
 #include <projectexplorer/buildsystem.h>
+#include <projectexplorer/task.h>
 
 namespace Python::Internal {
-
-class PythonBuildConfiguration;
 
 class PythonBuildSystem final : public ProjectExplorer::BuildSystem
 {
 public:
-    explicit PythonBuildSystem(PythonBuildConfiguration *buildConfig);
-    explicit PythonBuildSystem(ProjectExplorer::Target *target);
+    explicit PythonBuildSystem(ProjectExplorer::BuildConfiguration *buildConfig);
+
+    static QString name() { return "python"; }
 
     bool supportsAction(ProjectExplorer::Node *context,
                         ProjectExplorer::ProjectAction action,
@@ -25,10 +25,10 @@ public:
                                                          const Utils::FilePaths &filePaths,
                                                          Utils::FilePaths *) override;
     bool deleteFiles(ProjectExplorer::Node *, const Utils::FilePaths &) override;
-    bool renameFile(ProjectExplorer::Node *,
-                    const Utils::FilePath &oldFilePath,
-                    const Utils::FilePath &newFilePath) override;
-    QString name() const override { return QLatin1String("python"); }
+    bool renameFiles(
+        ProjectExplorer::Node *,
+        const Utils::FilePairs &filesToRename,
+        Utils::FilePaths *notRenamed) override;
 
     void parse();
     bool save();
@@ -45,10 +45,11 @@ private:
     };
     QList<FileEntry> processEntries(const QStringList &paths) const;
 
+    void updateQmlCodeModelInfo(ProjectExplorer::QmlCodeModelInfo &projectInfo) final;
+
     QList<FileEntry> m_files;
     QList<FileEntry> m_qmlImportPaths;
-    PythonBuildConfiguration *m_buildConfig = nullptr;
+    ProjectExplorer::Task m_saveError;
 };
-
 
 } // namespace Python::Internal

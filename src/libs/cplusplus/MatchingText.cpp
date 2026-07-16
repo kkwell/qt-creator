@@ -92,7 +92,7 @@ static bool insertQuote(const QChar ch, const BackwardsScanner &tk)
 static int countSkippedChars(const QString &blockText, const QString &textToProcess)
 {
     int skippedChars = 0;
-    const int length = qMin(blockText.length(), textToProcess.length());
+    const int length = qMin(blockText.size(), textToProcess.size());
     for (int i = 0; i < length; ++i) {
         const QChar ch1 = blockText.at(i);
         const QChar ch2 = textToProcess.at(i);
@@ -407,6 +407,22 @@ bool MatchingText::contextAllowsAutoParentheses(const QTextCursor &cursor,
     if (ch == QLatin1Char('{'))
         return allowAutoClosingBrace(cursor, isNextIndented);
 
+    // Does this paren create a raw string prefix?
+    if (ch == '(' && textToInsert.size() == 1
+        && cursor.document()->characterAt(cursor.position()) == '"') {
+        const Kind tokKind = stringKindAtCursor(cursor);
+        if (tokKind >= T_FIRST_RAW_STRING_LITERAL && tokKind <= T_LAST_RAW_STRING_LITERAL) {
+            for (int pos = cursor.position() - 1; pos >= 0; --pos) {
+                const QChar c = cursor.document()->characterAt(pos);
+                if (c.isSpace() || c == '\\' || c == '(' || c == ')')
+                    break;
+                if (c == '"' && cursor.document()->characterAt(pos - 1) == 'R')
+                    return true;
+            }
+            return false;
+        }
+    }
+
     if (!shouldInsertMatchingText(cursor) && ch != QLatin1Char('\'') && ch != QLatin1Char('"'))
         return false;
 
@@ -418,7 +434,8 @@ bool MatchingText::contextAllowsAutoParentheses(const QTextCursor &cursor,
 
 bool MatchingText::contextAllowsAutoQuotes(const QTextCursor &cursor, const QString &textToInsert)
 {
-    return !textToInsert.isEmpty() && !isInCommentHelper(cursor);
+    return !textToInsert.isEmpty() && !isInCommentHelper(cursor)
+           && stringKindAtCursor(cursor) == T_EOF_SYMBOL;
 }
 
 bool MatchingText::contextAllowsElectricCharacters(const QTextCursor &cursor)
@@ -475,7 +492,7 @@ bool MatchingText::isInCommentHelper(const QTextCursor &cursor, Token *retToken)
             *retToken = tk;
         if (tk.is(T_CPP_COMMENT) || tk.is(T_CPP_DOXY_COMMENT))
             return true;
-        return tk.isComment() && (cursor.block().userState() & 0xFF);
+        return tk.isComment() && cursor.block().userState();
     }
 
     Token tk = tokenAtPosition(tokens, pos);
@@ -521,6 +538,22 @@ QString MatchingText::insertMatchingBrace(const QTextCursor &cursor, const QStri
         }
     }
 
+    if (textToProcess == "(" && cursor.document()->characterAt(cursor.position()) == '"') {
+        const Kind tokKind = stringKindAtCursor(cursor);
+        if (tokKind >= T_FIRST_RAW_STRING_LITERAL && tokKind <= T_LAST_RAW_STRING_LITERAL) {
+            QString result;
+            for (int pos = cursor.position() - 1; pos > 1; --pos) {
+                const QChar c = cursor.document()->characterAt(pos);
+                if (c == 'R' && !result.isEmpty() && result.front() == '"') {
+                    result.removeFirst();
+                    break;
+                }
+                result.prepend(c);
+            }
+            return result.prepend(')');
+        }
+    }
+
     QString result;
     for (const QChar &ch : std::as_const(text)) {
         if      (ch == QLatin1Char('('))  result += QLatin1Char(')');
@@ -556,7 +589,7 @@ QString MatchingText::insertMatchingQuote(const QTextCursor &cursor, const QStri
         const QChar ch = text.at(0);
         if (!isQuote(ch))
             return QString();
-        if (text.length() != 1)
+        if (text.size() != 1)
             qWarning() << Q_FUNC_INFO << "handle event compression";
 
         BackwardsScanner tk(tc, LanguageFeatures::defaultFeatures(), MAX_NUM_LINES,

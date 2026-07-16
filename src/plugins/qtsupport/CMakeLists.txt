@@ -1,8 +1,9 @@
 add_qtc_plugin(QtSupport
-  DEPENDS Qt::Xml
+  DEPENDS Qt::Xml McpServerLib
   PUBLIC_DEPENDS ProParser
   PLUGIN_DEPENDS Core ProjectExplorer ResourceEditor
   SOURCES
+    mcpsupport.cpp
     baseqtversion.cpp baseqtversion.h
     codegenerator.cpp codegenerator.h
     codegensettings.cpp codegensettings.h
@@ -13,6 +14,7 @@ add_qtc_plugin(QtSupport
     gettingstartedwelcomepage.cpp gettingstartedwelcomepage.h
     profilereader.cpp profilereader.h
     qscxmlcgenerator.cpp qscxmlcgenerator.h
+    qtabiextractor.cpp qtabiextractor.h
     qtbuildaspects.cpp qtbuildaspects.h
     qtconfigwidget.cpp qtconfigwidget.h
     qtcppkitinfo.cpp qtcppkitinfo.h

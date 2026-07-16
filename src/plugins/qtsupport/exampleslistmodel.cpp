@@ -4,6 +4,8 @@
 #include "exampleslistmodel.h"
 
 #include "examplesparser.h"
+#include "qtkitaspect.h"
+#include "qtversionmanager.h"
 
 #include <QBuffer>
 #include <QApplication>
@@ -13,13 +15,10 @@
 #include <QUrl>
 
 #include <android/androidconstants.h>
-#include <ios/iosconstants.h>
 #include <coreplugin/helpmanager.h>
 #include <coreplugin/icore.h>
-
-#include <qtsupport/qtkitaspect.h>
-#include <qtsupport/qtversionmanager.h>
-
+#include <ios/iosconstants.h>
+#include <projectexplorer/kitmanager.h>
 #include <utils/algorithm.h>
 #include <utils/environment.h>
 #include <utils/filepath.h>
@@ -67,6 +66,8 @@ int ExampleSetModel::readCurrentIndexFromSettings() const
 
 ExampleSetModel::ExampleSetModel()
 {
+    static QRegularExpression funnyVersionRepetition("^Qt6 6[.]");
+    static QString funnyVersionRepetitionReplace("Qt 6.");
     if (debugExamples() && !log().isDebugEnabled())
         log().setEnabled(QtDebugMsg, true);
     // read extra example sets settings
@@ -92,6 +93,12 @@ ExampleSetModel::ExampleSetModel()
         qCDebug(log) << "Adding examples set displayName=" << set.displayName
                      << ", manifestPath=" << set.manifestPath
                      << ", examplesPath=" << set.examplesPath;
+        const QString fixedDisplayName
+            = set.displayName.replace(funnyVersionRepetition, funnyVersionRepetitionReplace);
+        if (fixedDisplayName != set.displayName) {
+            set.displayName = fixedDisplayName;
+            qCDebug(log) << "- fixing display name, new displayName=" << set.displayName;
+        }
         if (!Utils::anyOf(m_extraExampleSets, [&set](const ExtraExampleSet &s) {
                 return FilePath::fromString(s.examplesPath).cleanPath()
                            == FilePath::fromString(set.examplesPath).cleanPath()
@@ -116,8 +123,8 @@ ExampleSetModel::ExampleSetModel()
 
 void ExampleSetModel::recreateModel(const QtVersions &qtVersionsIn)
 {
-    beginResetModel();
     clear();
+    beginResetModel();
 
     QHash<FilePath, int> extraManifestDirs;
     for (int i = 0; i < m_extraExampleSets.size(); ++i)
@@ -187,7 +194,7 @@ int ExampleSetModel::indexForQtVersion(QtVersion *qtVersion) const
     }
 
     // check for extra set
-    const QString &documentationPath = qtVersion->docsPath().toString();
+    const QString &documentationPath = qtVersion->docsPath().toUrlishString();
     for (int i = 0; i < rowCount(); ++i) {
         if (getType(i) == ExtraExampleSetType
                 && m_extraExampleSets.at(getExtraExampleSetIndex(i)).manifestPath == documentationPath)
@@ -254,7 +261,7 @@ int ExampleSetModel::getExtraExampleSetIndex(int i) const
 static QString resourcePath()
 {
     // normalize paths so QML doesn't freak out if it's wrongly capitalized on Windows
-    return Core::ICore::resourcePath().normalizedPathName().toString();
+    return Core::ICore::resourcePath().normalizedPathName().toUrlishString();
 }
 
 static QPixmap fetchPixmapAndUpdatePixmapCache(const QString &url)
@@ -320,10 +327,9 @@ ExamplesViewController::ExamplesViewController(ExampleSetModel *exampleSetModel,
     updateExamples();
 }
 
-static std::function<bool(ExampleItem *)> isValidExampleOrDemo(
-    const QSet<QString> &instructionalsModules)
+static std::function<bool(ExampleItem *)> isValidExampleOrDemo()
 {
-    return [instructionalsModules](ExampleItem *item) -> bool {
+    return [](ExampleItem *item) -> bool {
         QTC_ASSERT(item, return false);
         if (item->type == Tutorial)
             return true;
@@ -351,20 +357,6 @@ static std::function<bool(ExampleItem *)> isValidExampleOrDemo(
         if (item->description.isEmpty())
             qCDebug(log) << QString::fromLatin1("WARNING: Item \"%1\" has no description")
                                 .arg(item->name);
-        // a single docdependencies entry is a string of items concatenated with ','
-        // the collected meta data can be a list of this
-        for (const QString &entry : item->metaData.value("docdependencies")) {
-            const QStringList deps = entry.split(',');
-            for (const QString &dep : deps) {
-                if (!instructionalsModules.contains(dep)) {
-                    item->tags.append("unresolvedDependency");
-                    qCDebug(log) << QLatin1String("INFO: Item \"%1\" requires \"%2\"")
-                                        .arg(item->name, dep);
-                    ok = false;
-                    break;
-                }
-            }
-        }
         return ok || debugExamples();
     };
 }
@@ -404,7 +396,6 @@ void ExamplesViewController::updateExamples()
                                                                   &demosInstallPath,
                                                                   &qtVersion,
                                                                   m_isExamples);
-    QSet<QString> instructionalsModules;
     QStringList categoryOrder;
     QList<ExampleItem *> items;
     for (const QString &exampleSource : sources) {
@@ -412,7 +403,7 @@ void ExamplesViewController::updateExamples()
         qCDebug(log) << QString::fromLatin1("Reading file \"%1\"...")
                             .arg(manifest.absoluteFilePath().toUserOutput());
 
-        const expected_str<ParsedExamples> result
+        const Result<ParsedExamples> result
             = parseExamples(manifest,
                             FilePath::fromUserInput(examplesInstallPath),
                             FilePath::fromUserInput(demosInstallPath),
@@ -422,25 +413,35 @@ void ExamplesViewController::updateExamples()
                          << result.error();
             continue;
         }
-        instructionalsModules.insert(result->instructionalsModule);
         items += result->items;
         if (categoryOrder.isEmpty())
             categoryOrder = result->categoryOrder;
     }
-    items = filtered(items, isValidExampleOrDemo(instructionalsModules));
+
+    static const auto filteredItems = [](const QList<ExampleItem *> &items,
+                                         const std::function<bool(ExampleItem *)> &filter) {
+        QList<ExampleItem *> matching;
+        QList<ExampleItem *> nonMatching;
+        std::tie(matching, nonMatching) = Utils::partition(items, filter);
+        qDeleteAll(nonMatching);
+        return matching;
+    };
+    items = filteredItems(items, isValidExampleOrDemo());
 
     if (m_isExamples) {
         if (m_exampleSetModel->selectedQtSupports(Android::Constants::ANDROID_DEVICE_TYPE)) {
-            items = Utils::filtered(items, [](ExampleItem *item) {
+            items = filteredItems(items, [](ExampleItem *item) {
                 return item->tags.contains("android");
             });
         } else if (m_exampleSetModel->selectedQtSupports(Ios::Constants::IOS_DEVICE_TYPE)) {
-            items = Utils::filtered(items,
-                                    [](ExampleItem *item) { return item->tags.contains("ios"); });
+            items = filteredItems(items, [](ExampleItem *item) {
+                return item->tags.contains("ios");
+            });
         }
     }
 
-    const bool sortIntoCategories = !m_isExamples || qtVersion >= *minQtVersionForCategories;
+    const bool sortIntoCategories = !m_isExamples || qtVersion.isNull()
+                                    || qtVersion >= *minQtVersionForCategories;
     const QStringList order = categoryOrder.isEmpty() && m_isExamples ? *defaultOrder
                                                                       : categoryOrder;
     const QList<std::pair<Section, QList<ExampleItem *>>> sections
@@ -473,11 +474,38 @@ bool ExamplesViewController::isVisible() const
     return m_isVisible;
 }
 
-void ExampleSetModel::updateQtVersionList()
+void ExamplesViewController::zoomOut()
+{
+    m_view->zoomOut();
+}
+
+static bool hasExamplesOrDemosAndDocumentation(const QtVersion *v)
+{
+    if ((!v->hasDemos() && !v->hasExamples()) || !v->hasDocs())
+        return false;
+    // Check if some documentation is there.
+    // This is done to exclude the Boot2Qt Qt version that has QT_INSTALL_DOCS and
+    // QT_INSTALL_EXAMPLES set to the toolchain sysroot, which doesn't actually contain
+    // documentation or examples, but the directories exist and contain some other things.
+    // The reasons is that e.g. the examples path is used as the base for example deployment to the
+    // device. See QTBUG-126753
+    if (v->docsPath().dirEntries(Utils::FileFilter({"*.qch"}, QDir::Files)).isEmpty())
+        return false;
+    return true;
+}
+
+const QtVersions qtVersionsToConsiderForExamples()
 {
     QtVersions versions = QtVersionManager::sortVersions(
         QtVersionManager::versions([](const QtVersion *v) {
-            return !v->qmakeFilePath().needsDevice() && (v->hasExamples() || v->hasDemos());
+            const bool consider = v->qmakeFilePath().isLocal()
+                                  && hasExamplesOrDemosAndDocumentation(v);
+            if (!consider)
+                qCDebug(log) << "Skipping" << v->displayName()
+                             << "because it either is remote, or its QT_INSTALL_EXAMPLES and "
+                                "QT_INSTALL_DEMOS, or QT_INSTALL_DOCS paths are not readable "
+                                "directories, or there are no documentation files.";
+            return consider;
         }));
 
     // prioritize default qt version
@@ -485,7 +513,12 @@ void ExampleSetModel::updateQtVersionList()
     QtVersion *defaultVersion = QtKitAspect::qtVersion(defaultKit);
     if (defaultVersion && versions.contains(defaultVersion))
         versions.move(versions.indexOf(defaultVersion), 0);
+    return versions;
+}
 
+void ExampleSetModel::updateQtVersionList()
+{
+    const QtVersions versions = qtVersionsToConsiderForExamples();
     recreateModel(versions);
 
     int currentIndex = m_selectedExampleSetIndex;
@@ -566,9 +599,9 @@ QStringList ExampleSetModel::exampleSources(QString *examplesInstallPath,
         const QtVersions versions = QtVersionManager::versions();
         for (QtVersion *version : versions) {
             if (version->uniqueId() == qtId) {
-                manifestScanPath = version->docsPath().toString();
-                examplesPath = version->examplesPath().toString();
-                demosPath = version->demosPath().toString();
+                manifestScanPath = version->docsPath().toUrlishString();
+                examplesPath = version->examplesPath().toUrlishString();
+                demosPath = version->demosPath().toUrlishString();
                 if (qtVersion)
                     *qtVersion = version->qtVersion();
                 break;

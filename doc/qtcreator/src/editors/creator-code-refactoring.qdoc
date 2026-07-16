@@ -3,20 +3,16 @@
 
 /*!
     \page creator-how-to-rename-symbols.html
-    \if defined(qtdesignstudio)
-    \previouspage qtquick-text-editor.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-search
-    \ingroup studio-how-to-refactor-code
 
     \title Rename symbols
 
     You can rename symbols in all files in a project.
 
-    \if defined(qtcreator)
+    \section1 Rename C++ symbols
+
     When you rename a class, you can also change filenames that match the
     class name.
 
@@ -25,34 +21,39 @@
     \list 1
         \li Place the cursor on the symbol in the editor.
         \li Go to \uicontrol Tools > \uicontrol {C++} >
-            \uicontrol {Rename Symbol Under Cursor}, or press \key {Ctrl+Shift+R}.
+            \uicontrol {Rename Symbol Under Cursor}, or select \key {Ctrl+Shift+R}.
 
             Use the keyboard shortcut to rename Python symbols.
     \endlist
-    \endif
 
-    To rename a QML type in a project, go to \uicontrol Tools >
-    \uicontrol {QML/JS} > \uicontrol {Rename Symbol Under Cursor}
-    or press \key {Ctrl+Shift+R}.
+    \section1 Rename QML types
+
+    To rename a QML type in a project:
+
+    \list
+        \li Go to \uicontrol Tools > \uicontrol {QML/JS} >
+            \uicontrol {Rename Symbol Under Cursor} or select \key {Ctrl+Shift+R}.
+        \li Go to \uicontrol Projects, and select \uicontrol Rename in the
+            context menu to rename a QML file that specifies a QML type. \QC asks
+            you whether you also want to rename all the usages of the type name
+            in other files in the project.
+    \endlist
+
+    \section1 Replace found symbol instances
 
     \uicontrol {Search Results} shows the location
     and number of instances of the symbol in the current project.
 
-    \if defined(qtcreator)
-    \image qtcreator-refactoring-replace.png
-    \else
-    \image qml-rename-symbol.png
-    \endif
+    \image {qtcreator-refactoring-replace.webp} {Rename Symbol Under Cursor}
 
     To replace all selected instances, enter the name of the new symbol
     in \uicontrol {Replace with}, and select \uicontrol Replace.
-    To omit an instance, clear the check box next to the instance.
+    To omit an instance, clear the checkbox next to the instance.
 
     \note This action replaces all selected instances of the symbol in
     all files listed in \uicontrol {Search Results}. You cannot
     undo this action.
 
-    \if defined(qtcreator)
     If the symbol is a class, select \uicontrol {Rename files} to also change
     the filenames that match the class name.
 
@@ -60,9 +61,6 @@
     The instances of the symbol are highlighted in code, and you can edit
     the symbol. All instances of the local symbol are changed as you type.
 
-    \sa {Find symbols}, {Specify settings for quick fixes}, {Quick Fixes},
-    {C++ Quick Fixes}
-    \endif
-
-    \sa {Apply quick fixes}, {QML Quick Fixes}
+    \sa {Apply quick fixes}, {Find symbols}, {Specify settings for quick fixes},
+    {QML quick fixes}, {Quick Fixes}, {C++ quick fixes}
 */

@@ -1,9 +1,9 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include <QtTest>
+#include <QTest>
 #include <tracing/timelinemodelaggregator.h>
-#include <tracing/timelinerenderer_p.h>
+#include <tracing/timelinerenderer.h>
 
 using namespace Timeline;
 
@@ -66,11 +66,11 @@ void tst_TimelineRenderer::updatePaintNode()
 
 void tst_TimelineRenderer::testMouseEvents(DummyRenderer *renderer, int x, int y)
 {
-    QMouseEvent event(QMouseEvent::MouseMove, QPointF(x - 1, y), Qt::NoButton,
+    QMouseEvent event(QMouseEvent::MouseMove, QPointF(x - 1, y), QCursor::pos(), Qt::NoButton,
                       Qt::NoButton, Qt::NoModifier);
     renderer->mouseMoveEvent(&event);
 
-    QHoverEvent hover(QMouseEvent::HoverMove, QPointF(x, y), QPointF(x - 1, y));
+    QHoverEvent hover(QMouseEvent::HoverMove, QPointF(x, y), QPointF(x, y), QPointF(x - 1, y));
     renderer->hoverMoveEvent(&hover);
 }
 
@@ -107,24 +107,24 @@ void tst_TimelineRenderer::mouseEvents()
 
     model.loadData();
     testMouseEvents(&renderer, 1, 1);
-    QCOMPARE(renderer.selectedItem(), 2);
+    QCOMPARE(renderer.selectedItem(), -1); // hover doesn't change selection when locked
     QCOMPARE(renderer.selectionLocked(), true);
 
     model.setExpanded(true);
     testMouseEvents(&renderer, 1, 1);
-    QCOMPARE(renderer.selectedItem(), 2);
-    QCOMPARE(renderer.selectionLocked(), true); // Don't toggle locked status by clicking same item
+    QCOMPARE(renderer.selectedItem(), -1); // hover doesn't change selection when locked
+    QCOMPARE(renderer.selectionLocked(), true);
     renderer.setSelectionLocked(false);
     testMouseEvents(&renderer, 1, 1);
     QCOMPARE(renderer.selectedItem(), 2);
     QCOMPARE(renderer.selectionLocked(), false);
     renderer.setSelectionLocked(true);
     testMouseEvents(&renderer, 1, 40);
-    QCOMPARE(renderer.selectedItem(), -1);
-    QCOMPARE(renderer.selectionLocked(), true); // Don't unset locked by clicking empty space
+    QCOMPARE(renderer.selectedItem(), 2); // hover when locked preserves previous selection
+    QCOMPARE(renderer.selectionLocked(), true); // Don't unset locked by hovering over empty space
     renderer.setSelectionLocked(false);
     testMouseEvents(&renderer, 1, 400);
-    QCOMPARE(renderer.selectedItem(), -1);
+    QCOMPARE(renderer.selectedItem(), 2); // hover over empty space doesn't clear selection
     QCOMPARE(renderer.selectionLocked(), false);
     testMouseEvents(&renderer, 10, 1);
     QCOMPARE(renderer.selectedItem(), 14);

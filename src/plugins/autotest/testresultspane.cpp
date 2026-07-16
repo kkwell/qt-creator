@@ -22,6 +22,7 @@
 #include <coreplugin/icontext.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/outputwindow.h>
+#include <coreplugin/session.h>
 
 #include <projectexplorer/buildmanager.h>
 #include <projectexplorer/projectexplorer.h>
@@ -30,6 +31,8 @@
 #include <texteditor/texteditor.h>
 #include <texteditor/texteditorsettings.h>
 
+#include <utils/algorithm.h>
+#include <utils/async.h>
 #include <utils/fileutils.h>
 #include <utils/proxyaction.h>
 #include <utils/qtcassert.h>
@@ -51,8 +54,7 @@
 using namespace Core;
 using namespace Utils;
 
-namespace Autotest {
-namespace Internal {
+namespace Autotest::Internal {
 
 ResultsTreeView::ResultsTreeView(QWidget *parent)
     : TreeView(parent)
@@ -110,7 +112,8 @@ TestResultsPane::TestResultsPane(QObject *parent) :
     pal.setColor(QPalette::Base, pal.window().color());
     m_treeView->setPalette(pal);
     m_model = new TestResultModel(this);
-    m_filterModel = new TestResultFilterModel(m_model, this);
+    m_filterModel = new TestResultFilterModel(this);
+    m_filterModel->setSourceModel(m_model);
     m_filterModel->setDynamicSortFilter(true);
     m_filterModel->setRecursiveFilteringEnabled(true);
     m_treeView->setModel(m_filterModel);
@@ -127,9 +130,9 @@ TestResultsPane::TestResultsPane(QObject *parent) :
     m_textOutput->setReadOnly(true);
     m_outputWidget->addWidget(m_textOutput);
 
-    setupFilterUi("AutoTest.TextOutput.Filter");
+    setupFilterUi("AutoTest.TextOutput.Filter", "Autotest::Internal::TestResultsPane");
     setupContext("AutoTest.TextOutput", m_textOutput);
-    setFilteringEnabled(false);
+    setFilteringEnabled(true);
     setZoomButtonsEnabled(false);
     connect(this, &IOutputPane::zoomInRequested, m_textOutput, &Core::OutputWindow::zoomIn);
     connect(this, &IOutputPane::zoomOutRequested, m_textOutput, &Core::OutputWindow::zoomOut);
@@ -154,10 +157,18 @@ TestResultsPane::TestResultsPane(QObject *parent) :
     connect(TestRunner::instance(), &TestRunner::testRunFinished,
             this, &TestResultsPane::onTestRunFinished);
     connect(TestRunner::instance(), &TestRunner::testResultReady,
-            this, &TestResultsPane::addTestResult);
+            this, &TestResultsPane::scheduleTestResult);
     connect(TestRunner::instance(), &TestRunner::hadDisabledTests,
             m_model, &TestResultModel::raiseDisabledTests);
     visualOutputWidget->installEventFilter(this);
+    connect(SessionManager::instance(), &SessionManager::sessionLoaded,
+            this, &TestResultsPane::onSessionLoaded);
+    connect(SessionManager::instance(), &SessionManager::aboutToSaveSession,
+            this, &TestResultsPane::onAboutToSaveSession);
+
+    m_bufferTimer.setSingleShot(true);
+    m_bufferTimer.setInterval(150);
+    connect(&m_bufferTimer, &QTimer::timeout, this, &TestResultsPane::handleNextBuffered);
 }
 
 void TestResultsPane::createToolButtons()
@@ -213,6 +224,23 @@ void TestResultsPane::createToolButtons()
     m_outputToggleButton->setToolTip(Tr::tr("Switch Between Visual and Text Display"));
     m_outputToggleButton->setEnabled(true);
     connect(m_outputToggleButton, &QToolButton::clicked, this, &TestResultsPane::toggleOutputStyle);
+    m_showDurationButton = new QToolButton(m_treeView);
+    auto icon = Utils::Icon({{":/utils/images/stopwatch.png", Utils::Theme::IconsBaseColor}});
+    m_showDurationButton->setIcon(icon.icon());
+    m_showDurationButton->setToolTip(Tr::tr("Show Durations"));
+    m_showDurationButton->setCheckable(true);
+    m_showDurationButton->setChecked(true);
+    connect(m_showDurationButton, &QToolButton::toggled, this, [this](bool checked) {
+        if (auto trd = qobject_cast<TestResultDelegate *>(m_treeView->itemDelegate())) {
+            trd->setShowDuration(checked);
+            if (m_model->rowCount()) {
+                m_model->rootItem()->forAllChildren([this](TestResultItem *it) {
+                    const QModelIndex idx = m_model->indexForItem(it);
+                    emit m_model->dataChanged(idx, idx, {Qt::DisplayRole});
+                });
+            }
+        }
+    });
 }
 
 static TestResultsPane *s_instance = nullptr;
@@ -232,6 +260,40 @@ TestResultsPane::~TestResultsPane()
     s_instance = nullptr;
 }
 
+void TestResultsPane::scheduleTestResult(const TestResult &result)
+{
+    if (result.result() == ResultType::MessageCurrentTest) {
+        m_lastCurrentMessage.emplace(result);
+    } else {
+        m_buffered.enqueue(result);
+        m_model->raiseTestResultCount(result.id(), result.result()); // needed for correct summary
+    }
+    if (!m_bufferTimer.isActive())
+        m_bufferTimer.start();
+}
+
+void TestResultsPane::handleNextBuffered()
+{
+    if (m_lastCurrentMessage) {
+        addTestResult(m_lastCurrentMessage.value());
+        m_lastCurrentMessage.reset();
+    }
+    for (int i = 0, end = qMin(30, m_buffered.size()); i < end; ++i)
+        addTestResult(m_buffered.dequeue());
+
+    if (!m_testRunning && m_buffered.size() > 30) {
+        handlePendingResultsSilently();
+        return;
+    }
+
+    if (!m_buffered.isEmpty()) {
+        m_bufferTimer.start();
+    } else if (!m_testRunning) {
+        createMarks();
+        updateMenuItemsEnabledState();
+    }
+}
+
 void TestResultsPane::addTestResult(const TestResult &result)
 {
     const QScrollBar *scrollBar = m_treeView->verticalScrollBar();
@@ -248,7 +310,7 @@ void TestResultsPane::addTestResult(const TestResult &result)
 
 void TestResultsPane::addOutputLine(const QByteArray &outputLine, OutputChannel channel)
 {
-    if (!QTC_GUARD(!outputLine.contains('\n'))) {
+    if (QTC_UNEXPECTED(outputLine.contains('\n'))) {
         for (const auto &line : outputLine.split('\n'))
             addOutputLine(line, channel);
         return;
@@ -272,7 +334,8 @@ QWidget *TestResultsPane::outputWidget(QWidget *parent)
 QList<QWidget *> TestResultsPane::toolBarWidgets() const
 {
     QList<QWidget *> result = {m_expandCollapse, m_runAll, m_runSelected, m_runFailed,
-                               m_runFile, m_stopTestRun, m_outputToggleButton, m_filterButton};
+                               m_runFile, m_stopTestRun, m_showDurationButton,
+                               m_outputToggleButton, m_filterButton};
     for (QWidget *widget : IOutputPane::toolBarWidgets())
         result.append(widget);
     return result;
@@ -280,6 +343,11 @@ QList<QWidget *> TestResultsPane::toolBarWidgets() const
 
 void TestResultsPane::clearContents()
 {
+    m_pendingRunner.reset();
+    m_bufferTimer.stop();
+    m_buffered.clear();
+    m_lastCurrentMessage.reset();
+
     m_filterModel->clearTestResults();
     if (auto delegate = qobject_cast<TestResultDelegate *>(m_treeView->itemDelegate()))
         delegate->clearCache();
@@ -289,17 +357,19 @@ void TestResultsPane::clearContents()
     m_autoScroll = testSettings().autoScroll();
     connect(m_treeView->verticalScrollBar(), &QScrollBar::rangeChanged,
             this, &TestResultsPane::onScrollBarRangeChanged, Qt::UniqueConnection);
+    m_textOutput->reset();
     m_textOutput->clear();
     clearMarks();
 }
 
 void TestResultsPane::setFocus()
 {
+    m_outputWidget->setFocus();
 }
 
 bool TestResultsPane::hasFocus() const
 {
-    return m_treeView->hasFocus();
+    return m_outputWidget->hasFocus();
 }
 
 bool TestResultsPane::canFocus() const
@@ -404,8 +474,18 @@ void TestResultsPane::goToPrev()
 
 void TestResultsPane::updateFilter()
 {
-    m_textOutput->updateFilterProperties(filterText(), filterCaseSensitivity(), filterUsesRegexp(),
-                                         filterIsInverted(), beforeContext(), afterContext());
+    const bool displaysText = m_outputWidget->currentIndex() == 1;
+    if (displaysText) {
+        m_textOutput->updateFilterProperties(filterText(), filterCaseSensitivity(),
+                                             filterUsesRegexp(), filterIsInverted(),
+                                             beforeContext(), afterContext());
+    } else {
+        m_filterModel->updateFilterProperties(filterText(), filterCaseSensitivity(),
+                                              filterUsesRegexp(), filterIsInverted());
+        // filtering results in a collapsed tree even if just a leaf node matches
+        if (!filterText().isEmpty() || (m_expandCollapse && m_expandCollapse->isChecked()))
+            m_treeView->expandAll();
+    }
 }
 
 void TestResultsPane::onItemActivated(const QModelIndex &index)
@@ -420,11 +500,6 @@ void TestResultsPane::onItemActivated(const QModelIndex &index)
 
 void TestResultsPane::initializeFilterMenu()
 {
-    const bool omitIntern = testSettings().omitInternalMsg();
-    // FilterModel has all messages enabled by default
-    if (omitIntern)
-        m_filterModel->toggleTestResultType(ResultType::MessageInternal);
-
     QMap<ResultType, QString> textAndType;
     textAndType.insert(ResultType::Pass, Tr::tr("Pass"));
     textAndType.insert(ResultType::Fail, Tr::tr("Fail"));
@@ -435,12 +510,13 @@ void TestResultsPane::initializeFilterMenu()
     textAndType.insert(ResultType::MessageDebug, Tr::tr("Debug Messages"));
     textAndType.insert(ResultType::MessageWarn, Tr::tr("Warning Messages"));
     textAndType.insert(ResultType::MessageInternal, Tr::tr("Internal Messages"));
+    const QSet<ResultType> enabled = m_filterModel->enabledFilters();
     for (auto it = textAndType.cbegin(); it != textAndType.cend(); ++it) {
         const ResultType &result = it.key();
         QAction *action = new QAction(m_filterMenu);
         action->setText(it.value());
         action->setCheckable(true);
-        action->setChecked(result != ResultType::MessageInternal || !omitIntern);
+        action->setChecked(enabled.contains(result));
         action->setData(int(result));
         m_filterMenu->addAction(action);
     }
@@ -483,7 +559,10 @@ void TestResultsPane::updateSummaryLabel()
     count = m_model->disabledTests();
     if (count)
         labelText += ", " + QString::number(count) + ' ' + Tr::tr("disabled");
-    labelText.append(".</p>");
+    if (auto millisec = m_model->reportedDuration())
+        labelText += ".&nbsp;&nbsp;&nbsp;(" + QString::number(*millisec) + " ms)</p>";
+    else
+        labelText.append(".</p>");
     m_summaryLabel->setText(labelText);
 }
 
@@ -527,10 +606,10 @@ static bool hasFailedTests(const TestResultModel *model)
 
 void TestResultsPane::onTestRunFinished()
 {
+    m_lastCurrentMessage.reset(); // avoid re-adding buffered current message
     m_testRunning = false;
     m_stopTestRun->setEnabled(false);
 
-    updateMenuItemsEnabledState();
     updateSummaryLabel();
     m_summaryWidget->setVisible(true);
     m_model->removeCurrentTestMessage();
@@ -539,7 +618,6 @@ void TestResultsPane::onTestRunFinished()
     if (testSettings().popupOnFinish() && (!testSettings().popupOnFail() || hasFailedTests(m_model))) {
         popup(IOutputPane::NoModeSwitch);
     }
-    createMarks();
 }
 
 void TestResultsPane::onScrollBarRangeChanged(int, int max)
@@ -558,7 +636,7 @@ void TestResultsPane::onCustomContextMenuRequested(const QPoint &pos)
     QAction *action = new QAction(Tr::tr("Copy"), &menu);
     action->setShortcut(QKeySequence(QKeySequence::Copy));
     action->setEnabled(resultsAvailable && clicked.isValid());
-    connect(action, &QAction::triggered, this, [this, &clicked] {
+    connect(action, &QAction::triggered, this, [this, clicked] {
        onCopyItemTriggered(clicked);
     });
     menu.addAction(action);
@@ -576,14 +654,14 @@ void TestResultsPane::onCustomContextMenuRequested(const QPoint &pos)
     const auto correlatingItem = (enabled && clicked.isValid()) ? clicked.findTestTreeItem() : nullptr;
     action = new QAction(Tr::tr("Run This Test"), &menu);
     action->setEnabled(correlatingItem && correlatingItem->canProvideTestConfiguration());
-    connect(action, &QAction::triggered, this, [this, &clicked] {
+    connect(action, &QAction::triggered, this, [this, clicked] {
         onRunThisTestTriggered(TestRunMode::Run, clicked);
     });
     menu.addAction(action);
 
     action = new QAction(Tr::tr("Run This Test Without Deployment"), &menu);
     action->setEnabled(correlatingItem && correlatingItem->canProvideTestConfiguration());
-    connect(action, &QAction::triggered, this, [this, &clicked] {
+    connect(action, &QAction::triggered, this, [this, clicked] {
         onRunThisTestTriggered(TestRunMode::RunWithoutDeploy, clicked);
     });
     menu.addAction(action);
@@ -597,14 +675,14 @@ void TestResultsPane::onCustomContextMenuRequested(const QPoint &pos)
         }
     }
     action->setEnabled(debugEnabled);
-    connect(action, &QAction::triggered, this, [this, &clicked] {
+    connect(action, &QAction::triggered, this, [this, clicked] {
         onRunThisTestTriggered(TestRunMode::Debug, clicked);
     });
     menu.addAction(action);
 
     action = new QAction(Tr::tr("Debug This Test Without Deployment"), &menu);
     action->setEnabled(debugEnabled);
-    connect(action, &QAction::triggered, this, [this, &clicked] {
+    connect(action, &QAction::triggered, this, [this, clicked] {
         onRunThisTestTriggered(TestRunMode::DebugWithoutDeploy, clicked);
     });
     menu.addAction(action);
@@ -634,7 +712,7 @@ void TestResultsPane::onCopyWholeTriggered()
 
 void TestResultsPane::onSaveWholeTriggered()
 {
-    const FilePath filePath = FileUtils::getSaveFilePath(nullptr, Tr::tr("Save Output To"));
+    const FilePath filePath = FileUtils::getSaveFilePath(Tr::tr("Save Output To"));
     if (filePath.isEmpty())
         return;
 
@@ -661,7 +739,7 @@ void TestResultsPane::toggleOutputStyle()
     m_outputWidget->setCurrentIndex(displayText ? 1 : 0);
     m_outputToggleButton->setIcon(displayText ? Icons::VISUAL_DISPLAY.icon()
                                               : Icons::TEXT_DISPLAY.icon());
-    setFilteringEnabled(displayText);
+    updateFilter();
     setZoomButtonsEnabled(displayText);
 }
 
@@ -685,7 +763,7 @@ void TestResultsPane::createMarks(const QModelIndex &parent)
 {
     const TestResult parentResult = m_model->testResult(parent);
     const ResultType parentType = parentResult.isValid() ? parentResult.result() : ResultType::Invalid;
-    const QVector<ResultType> interested{ResultType::Fail, ResultType::UnexpectedPass};
+    const QList<ResultType> interested{ResultType::Fail, ResultType::UnexpectedPass};
     for (int row = 0, count = m_model->rowCount(parent); row < count; ++row) {
         const QModelIndex index = m_model->index(row, 0, parent);
         const TestResult result = m_model->testResult(index);
@@ -697,12 +775,16 @@ void TestResultsPane::createMarks(const QModelIndex &parent)
         bool isLocationItem = result.result() == ResultType::MessageLocation;
         if (interested.contains(result.result())
                 || (isLocationItem && interested.contains(parentType))) {
+            // do not pollute with too many marks - they won't be readable at all
+            if (m_marks.values({result.fileName(), result.line()}).size() > 13)
+                continue;
+
             TestEditorMark *mark = new TestEditorMark(index, result.fileName(), result.line());
-            mark->setIcon(index.data(Qt::DecorationRole).value<QIcon>());
+            mark->setIcon(Icons::TEXTMARK_FAIL.icon());
             mark->setColor(Theme::OutputPanes_TestFailTextColor);
             mark->setPriority(TextEditor::TextMark::NormalPriority);
             mark->setToolTip(result.description());
-            m_marks << mark;
+            m_marks.insert({result.fileName(), result.line()}, mark);
         }
     }
 }
@@ -711,6 +793,33 @@ void TestResultsPane::clearMarks()
 {
     qDeleteAll(m_marks);
     m_marks.clear();
+}
+
+static constexpr char SV_SHOW_DURATIONS[] = "AutoTest.ShowDurations";
+static constexpr char SV_MESSAGE_FILTER[] = "AutoTest.MessageFilter";
+
+void TestResultsPane::onSessionLoaded()
+{
+    const bool showDurations = SessionManager::sessionValue(SV_SHOW_DURATIONS, true).toBool();
+    m_showDurationButton->setChecked(showDurations);
+    const QVariantList enabledFilters = SessionManager::sessionValue(SV_MESSAGE_FILTER).toList();
+
+    if (enabledFilters.isEmpty()) {
+        m_filterModel->enableAllResultTypes(true);
+        if (testSettings().omitInternalMsg())
+            m_filterModel->toggleTestResultType(ResultType::MessageInternal);
+    } else {
+        m_filterModel->setEnabledFiltersFromSetting(enabledFilters);
+    }
+
+    m_filterMenu->clear();
+    initializeFilterMenu();
+}
+
+void TestResultsPane::onAboutToSaveSession()
+{
+    SessionManager::setSessionValue(SV_SHOW_DURATIONS, m_showDurationButton->isChecked());
+    SessionManager::setSessionValue(SV_MESSAGE_FILTER, m_filterModel->enabledFiltersAsSetting());
 }
 
 void TestResultsPane::showTestResult(const QModelIndex &index)
@@ -722,5 +831,116 @@ void TestResultsPane::showTestResult(const QModelIndex &index)
     }
 }
 
-} // namespace Internal
-} // namespace Autotest
+bool TestResultsPane::expandIntermediate() const
+{
+    return !m_pendingRunner.isRunning() && m_expandCollapse->isChecked();
+}
+
+void TestResultsPane::aboutToShutdown()
+{
+    m_pendingRunner.cancel();
+}
+
+struct ExpandedRows
+{
+    int row;
+    QList<ExpandedRows> childRows;
+};
+
+static QList<ExpandedRows> collectExpanded(TestResultFilterModel *model, ResultsTreeView *view,
+                                           const QModelIndex &parent)
+{
+    QList<ExpandedRows> result;
+    const int rowsEnd = model->rowCount(parent);
+    for (int row = 0; row < rowsEnd; ++row) {
+        const QModelIndex child = model->index(row, 0, parent);
+        if (view->isExpanded(child))
+            result.append({row, collectExpanded(model, view, child)});
+    }
+    return result;
+}
+
+static void reexpand(TestResultFilterModel *model, ResultsTreeView *view,
+                     const QList<ExpandedRows> &expanded, const QModelIndex &parent)
+{
+    for (const ExpandedRows &exp : expanded) {
+        const QModelIndex &child = model->index(exp.row, 0, parent);
+        view->expand(child);
+        reexpand(model, view, exp.childRows, child);
+    }
+}
+
+using CopyAndAddResult = Result<std::unique_ptr<TestResultItem>>;
+
+static void copyAndAddPending(QPromise<CopyAndAddResult> &promise,
+                              const QList<TestResult> &original,
+                              const QList<TestResult> &buffered)
+{
+    std::unique_ptr<TestResultItem> newRoot = std::make_unique<TestResultItem>(TestResult{});
+    for (const TestResult &result : original) {
+        if (promise.isCanceled())
+            return;
+        newRoot->addTestResult(result, false);
+    }
+    for (const TestResult &result : buffered) {
+        if (promise.isCanceled())
+            return;
+        newRoot->addTestResult(result, false);
+    }
+    promise.addResult(std::move(newRoot));
+}
+
+void TestResultsPane::handlePendingResultsSilently()
+{
+    auto onSetup = [this](Async<CopyAndAddResult> &task) {
+        QList<TestResult> originalResults;
+        m_model->rootItem()->forAllChildren([&originalResults](TreeItem *it) {
+            originalResults.append(static_cast<TestResultItem *>(it)->testResult());
+        });
+        task.setConcurrentCallData(&copyAndAddPending, originalResults, m_buffered);
+        m_buffered.clear();
+        task.setFutureSynchronizer(nullptr);
+    };
+    auto onDone = [this](const Async<CopyAndAddResult> &async) {
+        if (!async.isResultAvailable()) // task was canceled, no result at all
+            return;
+        CopyAndAddResult newRoot = async.takeResult();
+        if (!newRoot) // no result? so keep whatever is present already
+            return;
+
+        // collect current model's expansion, selection and position
+        const QList<ExpandedRows> origExpanded = collectExpanded(m_filterModel, m_treeView, {});
+        QList<int> selectedRows;
+        const QModelIndexList itemSelection = m_treeView->selectionModel()->selectedIndexes();
+        if (itemSelection.size() == 1) {
+            QModelIndex idx = itemSelection.first();
+            do {
+                selectedRows.prepend(idx.row());
+                idx = idx.parent();
+            } while (idx.isValid());
+        }
+        int value = -1;
+        if (auto sb = m_treeView->verticalScrollBar())
+            value = sb->value();
+
+        // exchange root items
+        m_model->setRootItem(newRoot->release());
+
+        // restore expansion, selection and position, ignore expansion of items added silently
+        reexpand(m_filterModel, m_treeView, origExpanded, {});
+        if (!selectedRows.isEmpty()) {
+            QModelIndex idx;
+            for (int row : std::as_const(selectedRows))
+                idx = m_filterModel->index(row, 0, idx);
+            m_treeView->selectionModel()->select(idx, QItemSelectionModel::Select);
+        }
+        if (value != -1)
+            m_treeView->verticalScrollBar()->setValue(value);
+        createMarks();
+        updateMenuItemsEnabledState();
+    };
+
+    m_pendingRunner.start({AsyncTask<CopyAndAddResult>{onSetup, onDone}});
+}
+
+} // namespace Autotest::Internal

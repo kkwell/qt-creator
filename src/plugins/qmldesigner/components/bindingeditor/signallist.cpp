@@ -6,6 +6,8 @@
 #include "signallistdelegate.h"
 
 #include <qmldesignerplugin.h>
+#include <qmldesignertr.h>
+
 #include <coreplugin/icore.h>
 
 #include <variantproperty.h>
@@ -26,8 +28,8 @@ namespace QmlDesigner {
 SignalListModel::SignalListModel(QObject *parent)
     : QStandardItemModel(0, 3, parent)
 {
-    setHeaderData(TargetColumn, Qt::Horizontal, tr("Item ID"));
-    setHeaderData(SignalColumn, Qt::Horizontal, tr("Signal"));
+    setHeaderData(TargetColumn, Qt::Horizontal, Tr::tr("Item ID"));
+    setHeaderData(SignalColumn, Qt::Horizontal, Tr::tr("Signal"));
     setHeaderData(ButtonColumn, Qt::Horizontal, "");
 }
 
@@ -70,10 +72,9 @@ void SignalList::prepareDialog()
     m_dialog = Utils::makeUniqueObjectPtr<SignalListDialog>(Core::ICore::dialogParent());
     m_dialog->setAttribute(Qt::WA_DeleteOnClose);
     m_dialog->initialize(m_model.get());
-    m_dialog->setWindowTitle(::QmlDesigner::SignalList::tr("Signal List for %1")
-                             .arg(m_modelNode.validId()));
+    m_dialog->setWindowTitle(::QmlDesigner::Tr::tr("Signal List for %1").arg(m_modelNode.validId()));
 
-    auto *delegate = static_cast<SignalListDelegate *>(m_dialog->tableView()->itemDelegate());
+    auto delegate = m_dialog->signalListDelegate();
     connect(delegate, &SignalListDelegate::connectClicked, this, &SignalList::connectClicked);
 }
 
@@ -88,11 +89,9 @@ void SignalList::hideWidget()
 {
     if (m_dialog)
         m_dialog->close();
-
-    m_dialog = nullptr;
 }
 
-SignalList* SignalList::showWidget(const ModelNode &modelNode)
+void SignalList::showWidget(const ModelNode &modelNode)
 {
     auto signalList = new SignalList;
     signalList->setModelNode(modelNode);
@@ -102,8 +101,6 @@ SignalList* SignalList::showWidget(const ModelNode &modelNode)
     connect(signalList->m_dialog.get(), &QDialog::destroyed, [signalList]() {
         signalList->deleteLater();
     });
-
-    return signalList;
 }
 
 void SignalList::setModelNode(const ModelNode &modelNode)
@@ -130,27 +127,6 @@ void SignalList::prepareSignals()
 {
     if (!m_modelNode.isValid())
         return;
-
-    QList<QmlConnections> connections = QmlFlowViewNode::getAssociatedConnections(m_modelNode);
-
-    for (ModelNode &node : m_modelNode.view()->allModelNodes()) {
-        callOnlyMouseSignalNames(node.metaInfo().signalNames(),
-                                 QmlFlowViewNode::mouseSignals(),
-                                 [&](const PropertyName &signal) {
-                                     appendSignalToModel(connections, node, signal);
-                                 });
-
-        // Gather valid properties and aliases from components
-        for (const auto &property : node.metaInfo().properties()) {
-            const NodeMetaInfo info = property.propertyType();
-
-            callOnlyMouseSignalNames(info.signalNames(),
-                                     QmlFlowViewNode::mouseSignals(),
-                                     [&](const PropertyName &signal) {
-                                         appendSignalToModel(connections, node, signal);
-                                     });
-        }
-    }
 }
 
 void SignalList::connectClicked(const QModelIndex &modelIndex)

@@ -336,6 +336,14 @@ public:
         return argument;
     }
 
+    TemplateTypeArgument *newTemplateTypeArgument(unsigned sourceLocation, const Name *name)
+    {
+        TemplateTypeArgument *argument = new TemplateTypeArgument(translationUnit, sourceLocation, name);
+        symbols.push_back(argument);
+        return argument;
+    }
+
+
     Function *newFunction(unsigned sourceLocation, const Name *name)
     {
         Function *function = new Function(translationUnit, sourceLocation, name);
@@ -503,7 +511,6 @@ public:
     Table<SelectorNameId> selectorNameIds;
 
     // types
-    VoidType voidType;
     Table<IntegerType> integerTypes;
     Table<FloatType> floatTypes;
     Table<PointerToMemberType> pointerToMemberTypes;
@@ -567,8 +574,12 @@ TranslationUnit *Control::switchTranslationUnit(TranslationUnit *unit)
 DiagnosticClient *Control::diagnosticClient() const
 { return d->diagnosticClient; }
 
-void Control::setDiagnosticClient(DiagnosticClient *diagnosticClient)
-{ d->diagnosticClient = diagnosticClient; }
+void Control::setDiagnosticClient(DiagnosticClient *diagnosticClient, bool deleteExisting)
+{
+    if (deleteExisting)
+        delete d->diagnosticClient;
+    d->diagnosticClient = diagnosticClient;
+}
 
 const AnonymousNameId *Control::anonymousNameId(unsigned classTokenIndex)
 { return d->findOrInsertAnonymousNameId(classTokenIndex); }
@@ -670,7 +681,7 @@ const SelectorNameId *Control::selectorNameId(const Name *const *names,
 
 
 VoidType *Control::voidType()
-{ return &d->voidType; }
+{ return &VoidType::instance; }
 
 IntegerType *Control::integerType(int kind)
 { return d->findOrInsertIntegerType(kind); }
@@ -698,6 +709,9 @@ Argument *Control::newArgument(int sourceLocation, const Name *name)
 
 TypenameArgument *Control::newTypenameArgument(int sourceLocation, const Name *name)
 { return d->newTypenameArgument(sourceLocation, name); }
+
+TemplateTypeArgument *Control::newTemplateTypeArgument(int sourceLocation, const Name *name)
+{ return d->newTemplateTypeArgument(sourceLocation, name); }
 
 Function *Control::newFunction(int sourceLocation, const Name *name)
 { return d->newFunction(sourceLocation, name); }

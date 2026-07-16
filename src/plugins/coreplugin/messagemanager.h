@@ -15,6 +15,9 @@ namespace Core::MessageManager {
 
 CORE_EXPORT void setFont(const QFont &font);
 CORE_EXPORT void setWheelZoomEnabled(bool enabled);
+CORE_EXPORT void popup();
+
+CORE_EXPORT void clearLinesPrefixedWith(const QString &prefix, bool deleteTrailingLineBreak);
 
 CORE_EXPORT void writeSilently(const QString &message);
 CORE_EXPORT void writeFlashing(const QString &message);
@@ -23,8 +26,5 @@ CORE_EXPORT void writeDisrupting(const QString &message);
 CORE_EXPORT void writeSilently(const QStringList &messages);
 CORE_EXPORT void writeFlashing(const QStringList &messages);
 CORE_EXPORT void writeDisrupting(const QStringList &messages);
-
-void init();
-void destroy();
 
 } // namespace Core::MessageManager

@@ -39,7 +39,6 @@ public:
     void toMap(Utils::Store &data) const override;
     void fromMap(const Utils::Store &data) override;
 
-    std::unique_ptr<ToolchainConfigWidget> createConfigurationWidget() override;
     bool hostPrefersToolchain() const override;
 
     MacroInspectionRunner createMacroInspectionRunner() const override;
@@ -67,11 +66,9 @@ public:
     int priority() const override;
 
     static void cancelMsvcToolChainDetection();
-    static std::optional<QString> generateEnvironmentSettings(const Utils::Environment &env,
-                                                                const QString &batchFile,
-                                                                const QString &batchArgs,
-                                                                QMap<QString, QString> &envPairs);
     bool environmentInitialized() const { return !m_environmentModifications.isEmpty(); }
+
+    using GenerateEnvResult = Utils::Result<Utils::EnvironmentItems>;
 
 protected:
     class WarningFlagAdder
@@ -97,14 +94,8 @@ protected:
     virtual Utils::LanguageVersion msvcLanguageVersion(const QStringList &cxxflags,
                                                        const Utils::Id &language,
                                                        const Macros &macros) const;
+    bool canShareBundleImpl(const Toolchain &other) const override;
 
-    struct GenerateEnvResult
-    {
-        std::optional<QString> error;
-        Utils::EnvironmentItems environmentItems;
-    };
-    static void environmentModifications(QPromise<GenerateEnvResult> &future,
-                                         QString vcvarsBat, QString varsBatArg);
     void initEnvModWatcher(const QFuture<GenerateEnvResult> &future);
 
 protected:
@@ -124,6 +115,7 @@ private:
 protected:
     QString m_vcvarsBat;
     QString m_varsBatArg; // Argument
+    mutable std::optional<bool> m_isValid;
 };
 
 class PROJECTEXPLORER_EXPORT ClangClToolchain : public MsvcToolchain
@@ -135,16 +127,16 @@ public:
     QStringList suggestedMkspecList() const override;
     void addToEnvironment(Utils::Environment &env) const override;
     Utils::FilePath compilerCommand() const override; // FIXME: Remove
+    void setCompilerCommand(const Utils::FilePath &cmd) override { setClangPath(cmd); }
     QList<Utils::OutputLineParser *> createOutputParsers() const override;
     void toMap(Utils::Store &data) const override;
     void fromMap(const Utils::Store &data) override;
-    std::unique_ptr<ToolchainConfigWidget> createConfigurationWidget() override;
     BuiltInHeaderPathsRunner createBuiltInHeaderPathsRunner(
             const Utils::Environment &env) const override;
 
     const QList<MsvcToolchain *> &msvcToolchains() const;
     Utils::FilePath clangPath() const { return m_clangPath; }
-    void setClangPath(const Utils::FilePath &path) { m_clangPath = path; }
+    void setClangPath(const Utils::FilePath &path);
 
     Macros msvcPredefinedMacros(const QStringList &cxxflags,
                                 const Utils::Environment &env) const override;
@@ -157,6 +149,8 @@ public:
     int priority() const override;
 
 private:
+    bool canShareBundleImpl(const Toolchain &other) const override;
+
     Utils::FilePath m_clangPath;
 };
 

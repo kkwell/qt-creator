@@ -14,6 +14,7 @@
 %token AMPERSAND "&"
 %token AND_ASSIGN "&="
 %token AND_OP "&&"
+%token ATOMIC_UINT "atomic_uint"
 %token ATTRIBUTE "attribute"
 %token BANG "!"
 %token BOOL "bool"
@@ -21,9 +22,11 @@
 %token BVEC2 "bvec2"
 %token BVEC3 "bvec3"
 %token BVEC4 "bvec4"
+%token BUFFER "buffer"
 %token CARET "^"
 %token CASE "case"
 %token CENTROID "centroid"
+%token COHERENT "coherent"
 %token COLON ":"
 %token COMMA ","
 %token CONST "const"
@@ -61,6 +64,28 @@
 %token HIGHP "highp"
 %token IDENTIFIER "identifier"
 %token IF "if"
+%token IIMAGE1D "iimage1D"
+%token IIMAGE1DARRAY "iimage1DArray"
+%token IIMAGE2D "iimage2D"
+%token IIMAGE2DARRAY "iimage2DArray"
+%token IIMAGE2DMS "iimage2DMS"
+%token IIMAGE2DMSARRAY "iimage2DMSArray"
+%token IIMAGE2DRECT "iimage2DRect"
+%token IIMAGE3D "iimage3D"
+%token IIMAGEBUFFER "iimageBuffer"
+%token IIMAGECUBE "iimageCube"
+%token IIMAGECUBEARRAY "iimageCubeArray"
+%token IMAGE1D "image1D"
+%token IMAGE1DARRAY "image1DArray"
+%token IMAGE2D "image2D"
+%token IMAGE2DARRAY "image2DArray"
+%token IMAGE2DMS "image2DMS"
+%token IMAGE2DMSARRAY "image2DMSArray"
+%token IMAGE2DRECT "image2DRect"
+%token IMAGE3D "image3D"
+%token IMAGEBUFFER "imageBuffer"
+%token IMAGECUBE "imageCube"
+%token IMAGECUBEARRAY "imageCubeArray"
 %token IN "in"
 %token INC_OP "++"
 %token INOUT "inout"
@@ -77,6 +102,19 @@
 %token ISAMPLERBUFFER "isamplerBuffer"
 %token ISAMPLERCUBE "isamplerCube"
 %token ISAMPLERCUBEARRAY "isamplerCubeArray"
+%token ISUBPASSINPUT "isubpassInput"
+%token ISUBPASSINPUTMS "isubpassInputMS"
+%token ITEXTURE1D "itexture1D"
+%token ITEXTURE1DARRAY "itexture1DArray"
+%token ITEXTURE2D "itexture2D"
+%token ITEXTURE2DARRAY "itexture2DArray"
+%token ITEXTURE2DMS "itexture2DMS"
+%token ITEXTURE2DMSARRAY "itexture2DMSArray"
+%token ITEXTURE2DRECT "itexture2DRect"
+%token ITEXTURE3D "itexture3D"
+%token ITEXTUREBUFFER "itextureBuffer"
+%token ITEXTURECUBE "itextureCube"
+%token ITEXTURECUBEARRAY "itextureCubeArray"
 %token IVEC2 "ivec2"
 %token IVEC3 "ivec3"
 %token IVEC4 "ivec4"
@@ -113,8 +151,11 @@
 %token PATCH "patch"
 %token PERCENT "%"
 %token PLUS "plus"
+%token PRECISE "precise"
 %token PRECISION "precision"
 %token QUESTION "?"
+%token READONLY "readonly"
+%token RESTRICT "restrict"
 %token RETURN "return"
 %token RIGHT_ANGLE ">"
 %token RIGHT_ASSIGN ">>="
@@ -123,6 +164,7 @@
 %token RIGHT_OP ">>"
 %token RIGHT_PAREN ")"
 %token SAMPLE "sample"
+%token SAMPLER "sampler"
 %token SAMPLER1D "sampler1D"
 %token SAMPLER1DARRAY "sampler1DArray"
 %token SAMPLER1DARRAYSHADOW "sampler1DArrayShadow"
@@ -141,16 +183,42 @@
 %token SAMPLERCUBEARRAY "samplerCubeArray"
 %token SAMPLERCUBEARRAYSHADOW "samplerCubeArrayShadow"
 %token SAMPLERCUBESHADOW "samplerCubeShadow"
+%token SAMPLERSHADOW "samplerShadow"
 %token SEMICOLON ";"
+%token SHARED "shared"
 %token SLASH "/"
 %token SMOOTH "smooth"
 %token STAR "*"
 %token STRUCT "struct"
+%token SUBPASSINPUT "subpassInput"
+%token SUBPASSINPUTMS "subpassInputMS"
 %token SUBROUTINE "subroutine"
 %token SUB_ASSIGN "-="
 %token SWITCH "switch"
+%token TEXTURE1D "texture1D"
+%token TEXTURE1DARRAY "texture1DArray"
+%token TEXTURE2D "texture2D"
+%token TEXTURE2DARRAY "texture2DArray"
+%token TEXTURE2DMS "texture2DMS"
+%token TEXTURE2DMSARRAY "texture2DMSArray"
+%token TEXTURE2DRECT "texture2DRect"
+%token TEXTURE3D "texture3D"
+%token TEXTUREBUFFER "textureBuffer"
+%token TEXTURECUBE "textureCube"
+%token TEXTURECUBEARRAY "textureCubeArray"
 %token TILDE "~"
 %token TYPE_NAME "type_name"
+%token UIMAGE1D "uimage1D"
+%token UIMAGE1DARRAY "uimage1DArray"
+%token UIMAGE2D "uimage2D"
+%token UIMAGE2DARRAY "uimage2DArray"
+%token UIMAGE2DMS "uimage2DMS"
+%token UIMAGE2DMSARRAY "uimage2DMSArray"
+%token UIMAGE2DRECT "uimage2DRect"
+%token UIMAGE3D "uimage3D"
+%token UIMAGEBUFFER "uimageBuffer"
+%token UIMAGECUBE "uimageCube"
+%token UIMAGECUBEARRAY "uimageCubeArray"
 %token UINT "uint"
 %token UNIFORM "uniform"
 %token USAMPLER1D "usampler1D"
@@ -158,12 +226,25 @@
 %token USAMPLER2D "usampler2D"
 %token USAMPLER2DARRAY "usampler2DArray"
 %token USAMPLER2DMS "usampler2DMS"
-%token USAMPLER2DMSARRAY "usampler2DMSarray"
+%token USAMPLER2DMSARRAY "usampler2DMSArray"
 %token USAMPLER2DRECT "usampler2DRect"
 %token USAMPLER3D "usampler3D"
 %token USAMPLERBUFFER "usamplerBuffer"
 %token USAMPLERCUBE "usamplerCube"
 %token USAMPLERCUBEARRAY "usamplerCubeArray"
+%token USUBPASSINPUT "usubpassInput"
+%token USUBPASSINPUTMS "usubpassInputMS"
+%token UTEXTURE1D "utexture1D"
+%token UTEXTURE1DARRAY "utexture1DArray"
+%token UTEXTURE2D "utexture2D"
+%token UTEXTURE2DARRAY "utexture2DArray"
+%token UTEXTURE2DMS "utexture2DMS"
+%token UTEXTURE2DMSARRAY "utexture2DMSArray"
+%token UTEXTURE2DRECT "utexture2DRect"
+%token UTEXTURE3D "utexture3D"
+%token UTEXTUREBUFFER "utextureBuffer"
+%token UTEXTURECUBE "utextureCube"
+%token UTEXTURECUBEARRAY "utextureCubeArray"
 %token UVEC2 "uvec2"
 %token UVEC3 "uvec3"
 %token UVEC4 "uvec4"
@@ -173,7 +254,9 @@
 %token VEC4 "vec4"
 %token VERTICAL_BAR "|"
 %token VOID "void"
+%token VOLATILE "volatile"
 %token WHILE "while"
+%token WRITEONLY "writeonly"
 %token XOR_ASSIGN "^="
 %token XOR_OP "^^"
 %token TRUE "true"
@@ -186,30 +269,10 @@
 %start toplevel
 
 /:
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of Qt Creator.
-**
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
+
+#pragma once
 
 #include "$header"
 #include "glsllexer.h"
@@ -239,6 +302,7 @@ public:
         List<StructTypeAST::Field *> *field_list;
         TranslationUnitAST *translation_unit;
         FunctionIdentifierAST *function_identifier;
+        List<ArrayTypeAST::ArraySpecAST *> *array_specifier;
         AST::Kind kind;
         TypeAST::Precision precision;
         struct {
@@ -257,8 +321,10 @@ public:
         LayoutQualifierAST *layout;
         List<LayoutQualifierAST *> *layout_list;
         struct {
+            TypeAST::Precision precision;
             int qualifier;
             List<LayoutQualifierAST *> *layout_list;
+            List<NamedTypeAST *> *type_name_list;
         } type_qualifier;
         struct {
             TypeAST *type;
@@ -266,6 +332,9 @@ public:
         } param_declarator;
         ParameterDeclarationAST *param_declaration;
         FunctionDeclarationAST *function_declaration;
+        InterfaceBlockAST *interface_block;
+        List<IdentifierExpressionAST *> *identifier_list;
+        List<NamedTypeAST *> *type_name_list;
     };
 
     Parser(Engine *engine, const char *source, unsigned size, int variant);
@@ -274,13 +343,13 @@ public:
     TranslationUnitAST *parse() {
         if (AST *u = parse(T_FEED_GLSL))
             return u->asTranslationUnit();
-        return 0;
+        return nullptr;
     }
 
     ExpressionAST *parseExpression() {
         if (AST *u = parse(T_FEED_EXPRESSION))
             return u->asExpression();
-        return 0;
+        return nullptr;
     }
 
     AST *parse(int startToken);
@@ -313,21 +382,36 @@ private:
     }
     void reduce(int ruleno);
 
-    void warning(int line, const QString &message)
+    void warning(const DiagnosticMessage::Location &loc, const QString &message)
     {
-        _engine->warning(line, message);
+        _engine->warning(loc, message);
     }
 
-    void error(int line, const QString &message)
+    void error(const DiagnosticMessage::Location &loc, const QString &message)
     {
-        _engine->error(line, message);
+        _engine->error(loc, message);
+    }
+
+    static bool isInterfaceBlockStorageIdentifier(int qualifier)
+    {
+        qualifier = qualifier & QualifiedTypeAST::StorageMask;
+        return (qualifier == QualifiedTypeAST::In
+                || qualifier == QualifiedTypeAST::Out
+                || qualifier == QualifiedTypeAST::Uniform
+                || qualifier == QualifiedTypeAST::Buffer
+                || qualifier == (QualifiedTypeAST::Centroid | QualifiedTypeAST::In)
+                || qualifier == (QualifiedTypeAST::Centroid | QualifiedTypeAST::Out)
+                || qualifier == (QualifiedTypeAST::Patch | QualifiedTypeAST::In)
+                || qualifier == (QualifiedTypeAST::Patch | QualifiedTypeAST::Out)
+                || qualifier == (QualifiedTypeAST::Sample | QualifiedTypeAST::In)
+                || qualifier == (QualifiedTypeAST::Sample | QualifiedTypeAST::Out));
     }
 
     template <typename T>
     T *makeAstNode()
     {
         T *node = new (_engine->pool()) T ();
-        node->lineno = yyloc >= 0 ? (_tokens[yyloc].line + 1) : 0;
+        setLocationFromToken(node, yyloc);
         return node;
     }
 
@@ -335,7 +419,10 @@ private:
     T *makeAstNode(A1 a1)
     {
         T *node = new (_engine->pool()) T (a1);
-        node->lineno = yyloc >= 0 ? (_tokens[yyloc].line + 1) : 0;
+        const DiagnosticMessage::Location &location = locationFromToken(yyloc);
+        node->lineno = location.line;
+        node->position = location.position;
+        node->length = location.length;
         return node;
     }
 
@@ -343,7 +430,10 @@ private:
     T *makeAstNode(A1 a1, A2 a2)
     {
         T *node = new (_engine->pool()) T (a1, a2);
-        node->lineno = yyloc >= 0 ? (_tokens[yyloc].line + 1) : 0;
+        const DiagnosticMessage::Location &location = locationFromToken(yyloc);
+        node->lineno = location.line;
+        node->position = location.position;
+        node->length = location.length;
         return node;
     }
 
@@ -351,7 +441,7 @@ private:
     T *makeAstNode(A1 a1, A2 a2, A3 a3)
     {
         T *node = new (_engine->pool()) T (a1, a2, a3);
-        node->lineno = yyloc >= 0 ? (_tokens[yyloc].line + 1) : 0;
+        setLocationFromToken(node, yyloc);
         return node;
     }
 
@@ -359,18 +449,40 @@ private:
     T *makeAstNode(A1 a1, A2 a2, A3 a3, A4 a4)
     {
         T *node = new (_engine->pool()) T (a1, a2, a3, a4);
-        node->lineno = yyloc >= 0 ? (_tokens[yyloc].line + 1) : 0;
+        setLocationFromToken(node, yyloc);
         return node;
     }
 
     TypeAST *makeBasicType(int token)
     {
         TypeAST *type = new (_engine->pool()) BasicTypeAST(token, spell[token]);
-        type->lineno = yyloc >= 0 ? (_tokens[yyloc].line + 1) : 0;
+        setLocationFromToken(type, yyloc);
         return type;
     }
 
 private:
+    DiagnosticMessage::Location locationFromToken(int index) const
+    {
+        const Token &token = index > -1 ? tokenAt(index) : Token();
+        return DiagnosticMessage::Location{token.line + 1, token.position, token.length};
+    }
+
+    void setLocationFromToken(AST *node, int index) const
+    {
+        const DiagnosticMessage::Location &location = locationFromToken(index);
+        node->lineno = location.line;
+        node->position = location.position;
+        node->length = location.length;
+    }
+
+    void setLocationFromTokens(AST *node, int index, int endIndex)
+    {
+        const Token &token = tokenAt(index);
+        node->lineno = token.line + 1;
+        node->position = token.position;
+        node->length = tokenAt(endIndex).end() - node->position;
+    }
+
     Engine *_engine;
     int _tos;
     int _index;
@@ -389,30 +501,8 @@ private:
 :/
 
 /.
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of Qt Creator.
-**
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "glslparser.h"
 #include "glslengine.h"
@@ -492,7 +582,7 @@ AST *Parser::parse(int startToken)
     int action = 0;
     yytoken = -1;
     yyloc = -1;
-    void *yyval = 0; // value of the current token.
+    void *yyval = nullptr; // value of the current token.
 
     _recovered = false;
     _tos = -1;
@@ -549,7 +639,8 @@ AST *Parser::parse(int startToken)
             ++recoveryAttempts;
             if (recoveryAttempts > 10)
                break;
-            const int line = _tokens[yyloc].line + 1;
+            const Token &tok = tokenAt(yyloc);
+            const DiagnosticMessage::Location loc{tok.line + 1, tok.position, tok.length};
             QString message = QLatin1String("Syntax error");
             if (yytoken != -1) {
                 const QLatin1String s(spell[yytoken]);
@@ -585,7 +676,7 @@ AST *Parser::parse(int startToken)
                     if (next > 0) {
                         if (! yyrecovering && ! _recovered) {
                             _recovered = true;
-                            error(line, QString::fromLatin1("Expected `%1'").arg(QLatin1String(spell[*tptr])));
+                            error(loc, QString::fromLatin1("Expected `%1'").arg(QLatin1String(spell[*tptr])));
                         }
 
                         yyrecovering = 3;
@@ -594,7 +685,7 @@ AST *Parser::parse(int startToken)
                         else if (*tptr == T_NUMBER || *tptr == T_TYPE_NAME)
                             yyval = (void *) _engine->identifier(QLatin1String("$0"));
                         else
-                            yyval = 0;
+                            yyval = nullptr;
 
                         _symStack[_tos].ptr = yyval;
                         _locationStack[_tos] = yyloc;
@@ -608,13 +699,13 @@ AST *Parser::parse(int startToken)
 
             if (! _recovered) {
                 _recovered = true;
-                error(line, message);
+                error(loc, message);
             }
         }
 
     } while (action);
 
-    return 0;
+    return nullptr;
 }
 ./
 
@@ -631,7 +722,9 @@ switch(ruleno) {
 variable_identifier ::= IDENTIFIER ;
 /.
 case $rule_number: {
-    ast(1) = makeAstNode<IdentifierExpressionAST>(string(1));
+    IdentifierExpressionAST *expression = makeAstNode<IdentifierExpressionAST>(string(1));
+    setLocationFromToken(expression, location(1));
+    ast(1) = expression;
 }   break;
 ./
 
@@ -680,7 +773,9 @@ case $rule_number: {
 postfix_expression ::= postfix_expression LEFT_BRACKET integer_expression RIGHT_BRACKET ;
 /.
 case $rule_number: {
-    ast(1) = makeAstNode<BinaryExpressionAST>(AST::Kind_ArrayAccess, expression(1), expression(3));
+    ExpressionAST *exp = expression(3);
+    setLocationFromToken(exp, location(3));
+    ast(1) = makeAstNode<BinaryExpressionAST>(AST::Kind_ArrayAccess, expression(1), exp);
 }   break;
 ./
 
@@ -694,7 +789,9 @@ case $rule_number: {
 postfix_expression ::= postfix_expression DOT IDENTIFIER ;
 /.
 case $rule_number: {
-    ast(1) = makeAstNode<MemberAccessExpressionAST>(expression(1), string(3));
+    MemberAccessExpressionAST *e = makeAstNode<MemberAccessExpressionAST>(expression(1), string(3));
+    setLocationFromTokens(e, location(1), location(3));
+    ast(1) = e;
 }   break;
 ./
 
@@ -760,7 +857,7 @@ function_call_header_no_parameters ::= function_call_header VOID ;
 /.
 case $rule_number: {
     sym(1).function.id = sym(1).function_identifier;
-    sym(1).function.arguments = 0;
+    sym(1).function.arguments = nullptr;
 }   break;
 ./
 
@@ -768,7 +865,7 @@ function_call_header_no_parameters ::= function_call_header ;
 /.
 case $rule_number: {
     sym(1).function.id = sym(1).function_identifier;
-    sym(1).function.arguments = 0;
+    sym(1).function.arguments = nullptr;
 }   break;
 ./
 
@@ -800,14 +897,18 @@ case $rule_number: {
 function_identifier ::= type_specifier ;
 /.
 case $rule_number: {
-    ast(1) = makeAstNode<FunctionIdentifierAST>(type(1));
+    FunctionIdentifierAST *func = makeAstNode<FunctionIdentifierAST>(type(1));
+    setLocationFromToken(func, location(1));
+    ast(1) = func;
 }   break;
 ./
 
 function_identifier ::= IDENTIFIER ;
 /.
 case $rule_number: {
-    ast(1) = makeAstNode<FunctionIdentifierAST>(string(1));
+    FunctionIdentifierAST *func = makeAstNode<FunctionIdentifierAST>(string(1));
+    setLocationFromToken(func, location(1));
+    ast(1) = func;
 }   break;
 ./
 
@@ -1206,7 +1307,14 @@ case $rule_number: {
 declaration ::= function_prototype SEMICOLON ;
 /.
 case $rule_number: {
-    // nothing to do.
+    if (auto q = function(1)->returnType->asQualifiedType()) {
+        if ((q->qualifiers & QualifiedTypeAST::Subroutine) != 0) {
+            SubroutineTypeAST *namedSubroutineType = makeAstNode<SubroutineTypeAST>(function(1));
+            ast(1) = makeAstNode<TypeDeclarationAST>(namedSubroutineType);
+        }
+    } else {
+        // nothing to do
+    }
 }   break;
 ./
 
@@ -1217,7 +1325,7 @@ case $rule_number: {
 }   break;
 ./
 
-declaration ::= PRECISION precision_qualifier type_specifier_no_prec SEMICOLON ;
+declaration ::= PRECISION precision_qualifier type_specifier SEMICOLON ;
 /.
 case $rule_number: {
     ast(1) = makeAstNode<PrecisionDeclarationAST>(sym(2).precision, type(3));
@@ -1227,70 +1335,134 @@ case $rule_number: {
 declaration ::= type_qualifier IDENTIFIER LEFT_BRACE struct_declaration_list RIGHT_BRACE SEMICOLON ;
 /.
 case $rule_number: {
-    if (sym(1).type_qualifier.qualifier != QualifiedTypeAST::Struct) {
-        // TODO: issue an error if the qualifier is not "struct".
+    const int qualifier = sym(1).type_qualifier.qualifier;
+    if ((qualifier & QualifiedTypeAST::Struct) == 0) {
+        if (!isInterfaceBlockStorageIdentifier(qualifier)) {
+            const DiagnosticMessage::Location &loc = locationFromToken(location(1));
+            if ((qualifier & QualifiedTypeAST::StorageMask) == QualifiedTypeAST::NoStorage)
+                error(loc, "Missing storage qualifier.");
+            else
+                error(loc, "Used storage qualifier not allowed for interface blocks.");
+        }
+        TypeAST *type = makeAstNode<InterfaceBlockAST>(string(2), sym(4).field_list);
+        TypeAST *qualtype = makeAstNode<QualifiedTypeAST>
+                (sym(1).type_qualifier.qualifier, type, sym(1).type_qualifier.layout_list);
+        setLocationFromToken(type, location(2));
+        ast(1) = makeAstNode<TypeDeclarationAST>(qualtype);
+    } else {
+        TypeAST *type = makeAstNode<StructTypeAST>(string(2), sym(4).field_list);
+        setLocationFromToken(type, location(2));
+        ast(1) = makeAstNode<TypeDeclarationAST>(type);
     }
-    TypeAST *type = makeAstNode<StructTypeAST>(string(2), sym(4).field_list);
-    ast(1) = makeAstNode<TypeDeclarationAST>(type);
 }   break;
 ./
 
 declaration ::= type_qualifier IDENTIFIER LEFT_BRACE struct_declaration_list RIGHT_BRACE IDENTIFIER SEMICOLON ;
 /.
 case $rule_number: {
-    if ((sym(1).type_qualifier.qualifier & QualifiedTypeAST::Struct) == 0) {
-        // TODO: issue an error if the qualifier does not contain "struct".
+    const int qualifier = sym(1).type_qualifier.qualifier;
+    if ((qualifier & QualifiedTypeAST::Struct) == 0) {
+        if (!isInterfaceBlockStorageIdentifier(qualifier)) {
+            const DiagnosticMessage::Location &loc = locationFromToken(location(1));
+            if ((qualifier & QualifiedTypeAST::StorageMask) == QualifiedTypeAST::NoStorage)
+                error(loc, "Missing storage qualifier.");
+            else
+                error(loc, "Used storage qualifier not allowed for interface blocks.");
+        }
+        TypeAST *type = makeAstNode<InterfaceBlockAST>(string(2), sym(4).field_list);
+        TypeAST *qualtype = makeAstNode<QualifiedTypeAST>
+                (sym(1).type_qualifier.qualifier, type, sym(1).type_qualifier.layout_list);
+        setLocationFromToken(type, location(2));
+        ast(1) = makeAstNode<TypeAndVariableDeclarationAST>
+            (makeAstNode<TypeDeclarationAST>(type),
+             makeAstNode<VariableDeclarationAST>(qualtype, string(6)));
+    } else {
+        TypeAST *type = makeAstNode<StructTypeAST>(string(2), sym(4).field_list);
+        setLocationFromToken(type, location(2));
+        TypeAST *qualtype = type;
+        if (sym(1).type_qualifier.qualifier != QualifiedTypeAST::Struct) {
+            qualtype = makeAstNode<QualifiedTypeAST>
+                (sym(1).type_qualifier.qualifier & ~QualifiedTypeAST::Struct, qualtype,
+                 sym(1).type_qualifier.layout_list);
+        }
+        ast(1) = makeAstNode<TypeAndVariableDeclarationAST>
+            (makeAstNode<TypeDeclarationAST>(type),
+             makeAstNode<VariableDeclarationAST>(qualtype, string(6)));
     }
-    TypeAST *type = makeAstNode<StructTypeAST>(string(2), sym(4).field_list);
-    TypeAST *qualtype = type;
-    if (sym(1).type_qualifier.qualifier != QualifiedTypeAST::Struct) {
-        qualtype = makeAstNode<QualifiedTypeAST>
-            (sym(1).type_qualifier.qualifier & ~QualifiedTypeAST::Struct, qualtype,
-             sym(1).type_qualifier.layout_list);
-    }
-    ast(1) = makeAstNode<TypeAndVariableDeclarationAST>
-        (makeAstNode<TypeDeclarationAST>(type),
-         makeAstNode<VariableDeclarationAST>(qualtype, string(6)));
 }   break;
 ./
 
 declaration ::= type_qualifier IDENTIFIER LEFT_BRACE struct_declaration_list RIGHT_BRACE IDENTIFIER LEFT_BRACKET RIGHT_BRACKET SEMICOLON ;
 /.
 case $rule_number: {
-    if ((sym(1).type_qualifier.qualifier & QualifiedTypeAST::Struct) == 0) {
-        // TODO: issue an error if the qualifier does not contain "struct".
+    const int qualifier = sym(1).type_qualifier.qualifier;
+    if ((qualifier & QualifiedTypeAST::Struct) == 0) {
+        if (!isInterfaceBlockStorageIdentifier(qualifier)) {
+            const DiagnosticMessage::Location &loc = locationFromToken(location(1));
+            if ((qualifier & QualifiedTypeAST::StorageMask) == QualifiedTypeAST::NoStorage)
+                error(loc, "Missing storage qualifier.");
+            else
+                error(loc, "Used storage qualifier not allowed for interface blocks.");
+        }
+        TypeAST *type = makeAstNode<InterfaceBlockAST>(string(2), sym(4).field_list);
+        TypeAST *qualtype = makeAstNode<QualifiedTypeAST>
+                (sym(1).type_qualifier.qualifier, type, sym(1).type_qualifier.layout_list);
+        setLocationFromToken(type, location(2));
+        ast(1) = makeAstNode<TypeAndVariableDeclarationAST>
+            (makeAstNode<TypeDeclarationAST>(type),
+             makeAstNode<VariableDeclarationAST>
+                (makeAstNode<ArrayTypeAST>(qualtype), string(6)));
+    } else {
+        TypeAST *type = makeAstNode<StructTypeAST>(string(2), sym(4).field_list);
+        setLocationFromToken(type, location(2));
+        TypeAST *qualtype = type;
+        if (sym(1).type_qualifier.qualifier != QualifiedTypeAST::Struct) {
+            qualtype = makeAstNode<QualifiedTypeAST>
+                (sym(1).type_qualifier.qualifier & ~QualifiedTypeAST::Struct, qualtype,
+                 sym(1).type_qualifier.layout_list);
+        }
+        ast(1) = makeAstNode<TypeAndVariableDeclarationAST>
+            (makeAstNode<TypeDeclarationAST>(type),
+             makeAstNode<VariableDeclarationAST>
+                (makeAstNode<ArrayTypeAST>(qualtype), string(6)));
     }
-    TypeAST *type = makeAstNode<StructTypeAST>(string(2), sym(4).field_list);
-    TypeAST *qualtype = type;
-    if (sym(1).type_qualifier.qualifier != QualifiedTypeAST::Struct) {
-        qualtype = makeAstNode<QualifiedTypeAST>
-            (sym(1).type_qualifier.qualifier & ~QualifiedTypeAST::Struct, qualtype,
-             sym(1).type_qualifier.layout_list);
-    }
-    ast(1) = makeAstNode<TypeAndVariableDeclarationAST>
-        (makeAstNode<TypeDeclarationAST>(type),
-         makeAstNode<VariableDeclarationAST>
-            (makeAstNode<ArrayTypeAST>(qualtype), string(6)));
 }   break;
 ./
 
-declaration ::= type_qualifier IDENTIFIER LEFT_BRACE struct_declaration_list RIGHT_BRACE IDENTIFIER LEFT_BRACKET constant_expression RIGHT_BRACKET SEMICOLON ;
+declaration ::= type_qualifier IDENTIFIER LEFT_BRACE struct_declaration_list RIGHT_BRACE IDENTIFIER array_specifier SEMICOLON ;
 /.
 case $rule_number: {
-    if ((sym(1).type_qualifier.qualifier & QualifiedTypeAST::Struct) == 0) {
-        // TODO: issue an error if the qualifier does not contain "struct".
+    const int qualifier = sym(1).type_qualifier.qualifier;
+    if ((qualifier & QualifiedTypeAST::Struct) == 0) {
+        if (!isInterfaceBlockStorageIdentifier(qualifier)) {
+            const DiagnosticMessage::Location &loc = locationFromToken(location(1));
+            if ((qualifier & QualifiedTypeAST::StorageMask) == QualifiedTypeAST::NoStorage)
+                error(loc, "Missing storage qualifier.");
+            else
+                error(loc, "Used storage qualifier not allowed for interface blocks.");
+        }
+        TypeAST *type = makeAstNode<InterfaceBlockAST>(string(2), sym(4).field_list);
+        TypeAST *qualtype = makeAstNode<QualifiedTypeAST>
+                (sym(1).type_qualifier.qualifier, type, sym(1).type_qualifier.layout_list);
+        setLocationFromToken(type, location(2));
+        ast(1) = makeAstNode<TypeAndVariableDeclarationAST>
+            (makeAstNode<TypeDeclarationAST>(type),
+             makeAstNode<VariableDeclarationAST>
+                (makeAstNode<ArrayTypeAST>(qualtype, sym(7).array_specifier), string(6)));
+    } else {
+        TypeAST *type = makeAstNode<StructTypeAST>(string(2), sym(4).field_list);
+        setLocationFromToken(type, location(2));
+        TypeAST *qualtype = type;
+        if (sym(1).type_qualifier.qualifier != QualifiedTypeAST::Struct) {
+            qualtype = makeAstNode<QualifiedTypeAST>
+                (sym(1).type_qualifier.qualifier & ~QualifiedTypeAST::Struct, qualtype,
+                 sym(1).type_qualifier.layout_list);
+        }
+        ast(1) = makeAstNode<TypeAndVariableDeclarationAST>
+            (makeAstNode<TypeDeclarationAST>(type),
+             makeAstNode<VariableDeclarationAST>
+                (makeAstNode<ArrayTypeAST>(qualtype, sym(7).array_specifier), string(6)));
     }
-    TypeAST *type = makeAstNode<StructTypeAST>(string(2), sym(4).field_list);
-    TypeAST *qualtype = type;
-    if (sym(1).type_qualifier.qualifier != QualifiedTypeAST::Struct) {
-        qualtype = makeAstNode<QualifiedTypeAST>
-            (sym(1).type_qualifier.qualifier & ~QualifiedTypeAST::Struct, qualtype,
-             sym(1).type_qualifier.layout_list);
-    }
-    ast(1) = makeAstNode<TypeAndVariableDeclarationAST>
-        (makeAstNode<TypeDeclarationAST>(type),
-         makeAstNode<VariableDeclarationAST>
-            (makeAstNode<ArrayTypeAST>(qualtype, expression(8)), string(6)));
 }   break;
 ./
 
@@ -1298,9 +1470,66 @@ declaration ::= type_qualifier SEMICOLON ;
 /.
 case $rule_number: {
     TypeAST *type = makeAstNode<QualifiedTypeAST>
-        (sym(1).type_qualifier.qualifier, (TypeAST *)0,
+        (sym(1).type_qualifier.qualifier, (TypeAST *)nullptr,
          sym(1).type_qualifier.layout_list);
     ast(1) = makeAstNode<TypeDeclarationAST>(type);
+}   break;
+./
+
+declaration ::= type_qualifier IDENTIFIER SEMICOLON ;
+/.
+case $rule_number: {
+    TypeAST *type = makeAstNode<QualifiedTypeAST>
+        (sym(1).type_qualifier.qualifier, (TypeAST *)nullptr,
+         sym(1).type_qualifier.layout_list);
+    ast(1) = makeAstNode<TypeAndVariableDeclarationAST>
+        (makeAstNode<TypeDeclarationAST>(type),
+         makeAstNode<VariableDeclarationAST>(type, string(2)));
+}   break;
+./
+
+declaration ::= type_qualifier IDENTIFIER identifier_list SEMICOLON ;
+/.
+case $rule_number: {
+    TypeAST *type = makeAstNode<QualifiedTypeAST>
+        (sym(1).type_qualifier.qualifier, (TypeAST *)nullptr,
+         sym(1).type_qualifier.layout_list);
+
+    DeclarationAST * first = makeAstNode<TypeAndVariableDeclarationAST>
+        (makeAstNode<TypeDeclarationAST>(type),
+         makeAstNode<VariableDeclarationAST>(type, string(2)));
+    List<DeclarationAST *> *allDeclarations = makeAstNode<List<DeclarationAST *>>(first);
+
+    // get identifier, convert circular to linked list
+    List<IdentifierExpressionAST *> *idList = sym(3).identifier_list->finish();
+    while (idList) {
+        DeclarationAST *secondary = makeAstNode<TypeAndVariableDeclarationAST>
+            (makeAstNode<TypeDeclarationAST>(type),
+             makeAstNode<VariableDeclarationAST>(type, idList->value->name));
+
+        allDeclarations = appendLists(allDeclarations,
+                                      makeAstNode<List<DeclarationAST *>>(secondary));
+        idList = idList->next;
+    }
+
+    ast(1) = makeAstNode<InitDeclarationAST>(allDeclarations);
+}   break;
+./
+
+identifier_list ::= COMMA IDENTIFIER ;
+/.
+case $rule_number: {
+    IdentifierExpressionAST *id = makeAstNode<IdentifierExpressionAST>(string(2));
+    sym(1).identifier_list = makeAstNode<List<IdentifierExpressionAST *>>(id);
+}   break;
+./
+
+identifier_list ::= identifier_list COMMA IDENTIFIER ;
+/.
+case $rule_number: {
+    IdentifierExpressionAST *id = makeAstNode<IdentifierExpressionAST>(string(3));
+    List<IdentifierExpressionAST *> *nextId = makeAstNode<List<IdentifierExpressionAST *>>(id);
+    sym(1).identifier_list = appendLists(sym(1).identifier_list, nextId);
 }   break;
 ./
 
@@ -1356,60 +1585,78 @@ case $rule_number: {
 }   break;
 ./
 
-parameter_declarator ::= type_specifier IDENTIFIER LEFT_BRACKET constant_expression RIGHT_BRACKET ;
+parameter_declarator ::= type_specifier IDENTIFIER array_specifier ;
 /.
 case $rule_number: {
-    sym(1).param_declarator.type = makeAstNode<ArrayTypeAST>(type(1), expression(4));
+    sym(1).param_declarator.type = makeAstNode<ArrayTypeAST>(type(1), sym(3).array_specifier);
     sym(1).param_declarator.name = string(2);
 }   break;
 ./
 
-parameter_declaration ::= parameter_type_qualifier parameter_qualifier parameter_declarator ;
+parameter_declaration ::= parameter_qualifiers parameter_declarator ;
 /.
 case $rule_number: {
+    int qualifier = sym(1).qualifier;
+    // ensure correct general qualifier
+    if ((qualifier & ParameterDeclarationAST::StorageMask) == 0)
+        qualifier |= ParameterDeclarationAST::In;
     ast(1) = makeAstNode<ParameterDeclarationAST>
         (makeAstNode<QualifiedTypeAST>
-            (sym(1).qualifier, sym(3).param_declarator.type,
-             (List<LayoutQualifierAST *> *)0),
-         ParameterDeclarationAST::Qualifier(sym(2).qualifier),
-         sym(3).param_declarator.name);
-}   break;
-./
-
-parameter_declaration ::= parameter_qualifier parameter_declarator ;
-/.
-case $rule_number: {
-    ast(1) = makeAstNode<ParameterDeclarationAST>
-        (sym(2).param_declarator.type,
-         ParameterDeclarationAST::Qualifier(sym(1).qualifier),
+            (qualifier & QualifiedTypeAST::MemoryMask, sym(2).param_declarator.type,
+             (List<LayoutQualifierAST *> *)nullptr),
+         ParameterDeclarationAST::Qualifier(qualifier),
          sym(2).param_declarator.name);
 }   break;
 ./
 
-parameter_declaration ::= parameter_type_qualifier parameter_qualifier parameter_type_specifier ;
+parameter_declaration ::= parameter_qualifiers parameter_type_specifier ;
 /.
 case $rule_number: {
+    int qualifier = sym(1).qualifier;
+    // ensure correct general qualifier
+    if ((qualifier & ParameterDeclarationAST::StorageMask) == 0)
+        qualifier |= ParameterDeclarationAST::In;
     ast(1) = makeAstNode<ParameterDeclarationAST>
         (makeAstNode<QualifiedTypeAST>
-            (sym(1).qualifier, type(3), (List<LayoutQualifierAST *> *)0),
-         ParameterDeclarationAST::Qualifier(sym(2).qualifier),
-         (const QString *)0);
+            (qualifier & QualifiedTypeAST::MemoryMask, type(2),
+             (List<LayoutQualifierAST *> *)nullptr),
+         ParameterDeclarationAST::Qualifier(qualifier),
+         (const QString *)nullptr);
 }   break;
 ./
 
-parameter_declaration ::= parameter_qualifier parameter_type_specifier ;
+parameter_qualifiers ::= empty ;
 /.
 case $rule_number: {
-    ast(1) = makeAstNode<ParameterDeclarationAST>
-        (type(2), ParameterDeclarationAST::Qualifier(sym(1).qualifier),
-         (const QString *)0);
+    sym(1).qualifier |= ParameterDeclarationAST::None; // or should we just do nothing?
 }   break;
 ./
 
-parameter_qualifier ::= empty ;
+parameter_qualifiers ::= parameter_qualifier parameter_qualifiers ;
 /.
 case $rule_number: {
-    sym(1).qualifier = ParameterDeclarationAST::In;
+    if ((sym(1).qualifier & sym(2).qualifier) != 0) {
+        const DiagnosticMessage::Location &loc = locationFromToken(location(1));
+        error(loc, "Duplicate qualifier.");
+    } else if ((sym(1).qualifier & ParameterDeclarationAST::PrecisionMask) != 0
+                && (sym(2).qualifier & ParameterDeclarationAST::PrecisionMask) != 0) {
+        const DiagnosticMessage::Location &loc = locationFromToken(location(1));
+        error(loc, "Conflicting precision qualifier.");
+    }
+    sym(1).qualifier |= sym(2).qualifier;
+    if ((sym(1).qualifier & ParameterDeclarationAST::Const) != 0) {
+        if (((sym(1).qualifier & ParameterDeclarationAST::InOut) != 0)
+            || (sym(1).qualifier & ParameterDeclarationAST::Out) != 0) {
+            const DiagnosticMessage::Location &loc = locationFromToken(location(1));
+            error(loc, "const cannot be used with out or inout.");
+        }
+    } else if ((sym(1).qualifier & ParameterDeclarationAST::InOut) != 0) {
+        if ((sym(1).qualifier & ParameterDeclarationAST::In) != 0
+            || (sym(1).qualifier & ParameterDeclarationAST::Out) != 0) {
+            const DiagnosticMessage::Location &loc = locationFromToken(location(1));
+            error(loc, "Duplicate qualifier.");
+        }
+    }
 }   break;
 ./
 
@@ -1431,6 +1678,76 @@ parameter_qualifier ::= INOUT ;
 /.
 case $rule_number: {
     sym(1).qualifier = ParameterDeclarationAST::InOut;
+}   break;
+./
+
+parameter_qualifier ::= CONST ;
+/.
+case $rule_number: {
+    sym(1).qualifier = ParameterDeclarationAST::Const;
+}   break;
+./
+
+parameter_qualifier ::= PRECISE ;
+/.
+case $rule_number: {
+    sym(1).qualifier = ParameterDeclarationAST::Precise;
+}   break;
+./
+
+parameter_qualifier ::= LOWP ;
+/.
+case $rule_number: {
+    sym(1).qualifier = ParameterDeclarationAST::Lowp;
+}   break;
+./
+
+parameter_qualifier ::= MEDIUMP ;
+/.
+case $rule_number: {
+    sym(1).qualifier = ParameterDeclarationAST::Mediump;
+}   break;
+./
+
+parameter_qualifier ::= HIGHP ;
+/.
+case $rule_number: {
+    sym(1).qualifier = ParameterDeclarationAST::Highp;
+}   break;
+./
+
+parameter_qualifier ::= COHERENT ;
+/.
+case $rule_number: {
+    sym(1).qualifier = ParameterDeclarationAST::Coherent;
+}   break;
+./
+
+parameter_qualifier ::= VOLATILE ;
+/.
+case $rule_number: {
+    sym(1).qualifier = ParameterDeclarationAST::Volatile;
+}   break;
+./
+
+parameter_qualifier ::= RESTRICT ;
+/.
+case $rule_number: {
+    sym(1).qualifier = ParameterDeclarationAST::Restrict;
+}   break;
+./
+
+parameter_qualifier ::= READONLY ;
+/.
+case $rule_number: {
+    sym(1).qualifier = ParameterDeclarationAST::Readonly;
+}   break;
+./
+
+parameter_qualifier ::= WRITEONLY ;
+/.
+case $rule_number: {
+    sym(1).qualifier = ParameterDeclarationAST::Writeonly;
 }   break;
 ./
 
@@ -1459,47 +1776,24 @@ case $rule_number: {
 }   break;
 ./
 
-init_declarator_list ::= init_declarator_list COMMA IDENTIFIER LEFT_BRACKET RIGHT_BRACKET ;
+init_declarator_list ::= init_declarator_list COMMA IDENTIFIER array_specifier ;
 /.
 case $rule_number: {
     TypeAST *type = VariableDeclarationAST::declarationType(sym(1).declaration_list);
-    type = makeAstNode<ArrayTypeAST>(type);
+    type = makeAstNode<ArrayTypeAST>(type, sym(4).array_specifier);
     DeclarationAST *decl = makeAstNode<VariableDeclarationAST>(type, string(3));
     sym(1).declaration_list = makeAstNode< List<DeclarationAST *> >
             (sym(1).declaration_list, decl);
 }   break;
 ./
 
-init_declarator_list ::= init_declarator_list COMMA IDENTIFIER LEFT_BRACKET constant_expression RIGHT_BRACKET ;
+init_declarator_list ::= init_declarator_list COMMA IDENTIFIER array_specifier EQUAL initializer ;
 /.
 case $rule_number: {
     TypeAST *type = VariableDeclarationAST::declarationType(sym(1).declaration_list);
-    type = makeAstNode<ArrayTypeAST>(type, expression(5));
-    DeclarationAST *decl = makeAstNode<VariableDeclarationAST>(type, string(3));
-    sym(1).declaration_list = makeAstNode< List<DeclarationAST *> >
-            (sym(1).declaration_list, decl);
-}   break;
-./
-
-init_declarator_list ::= init_declarator_list COMMA IDENTIFIER LEFT_BRACKET RIGHT_BRACKET EQUAL initializer ;
-/.
-case $rule_number: {
-    TypeAST *type = VariableDeclarationAST::declarationType(sym(1).declaration_list);
-    type = makeAstNode<ArrayTypeAST>(type);
+    type = makeAstNode<ArrayTypeAST>(type, sym(4).array_specifier);
     DeclarationAST *decl = makeAstNode<VariableDeclarationAST>
-            (type, string(3), expression(7));
-    sym(1).declaration_list = makeAstNode< List<DeclarationAST *> >
-            (sym(1).declaration_list, decl);
-}   break;
-./
-
-init_declarator_list ::= init_declarator_list COMMA IDENTIFIER LEFT_BRACKET constant_expression RIGHT_BRACKET EQUAL initializer ;
-/.
-case $rule_number: {
-    TypeAST *type = VariableDeclarationAST::declarationType(sym(1).declaration_list);
-    type = makeAstNode<ArrayTypeAST>(type, expression(5));
-    DeclarationAST *decl = makeAstNode<VariableDeclarationAST>
-            (type, string(3), expression(8));
+            (type, string(3), expression(6));
     sym(1).declaration_list = makeAstNode< List<DeclarationAST *> >
             (sym(1).declaration_list, decl);
 }   break;
@@ -1530,36 +1824,19 @@ case $rule_number: {
 }   break;
 ./
 
-single_declaration ::= fully_specified_type IDENTIFIER LEFT_BRACKET RIGHT_BRACKET ;
+single_declaration ::= fully_specified_type IDENTIFIER array_specifier ;
 /.
 case $rule_number: {
     ast(1) = makeAstNode<VariableDeclarationAST>
-        (makeAstNode<ArrayTypeAST>(type(1)), string(2));
+        (makeAstNode<ArrayTypeAST>(type(1), sym(3).array_specifier), string(2));
 }   break;
 ./
 
-single_declaration ::= fully_specified_type IDENTIFIER LEFT_BRACKET constant_expression RIGHT_BRACKET ;
+single_declaration ::= fully_specified_type IDENTIFIER array_specifier EQUAL initializer ;
 /.
 case $rule_number: {
     ast(1) = makeAstNode<VariableDeclarationAST>
-        (makeAstNode<ArrayTypeAST>(type(1), expression(4)), string(2));
-}   break;
-./
-
-single_declaration ::= fully_specified_type IDENTIFIER LEFT_BRACKET RIGHT_BRACKET EQUAL initializer ;
-/.
-case $rule_number: {
-    ast(1) = makeAstNode<VariableDeclarationAST>
-        (makeAstNode<ArrayTypeAST>(type(1)), string(2), expression(6));
-}   break;
-./
-
-single_declaration ::= fully_specified_type IDENTIFIER LEFT_BRACKET constant_expression RIGHT_BRACKET EQUAL initializer ;
-/.
-case $rule_number: {
-    ast(1) = makeAstNode<VariableDeclarationAST>
-        (makeAstNode<ArrayTypeAST>(type(1), expression(4)),
-         string(2), expression(7));
+        (makeAstNode<ArrayTypeAST>(type(1), sym(3).array_specifier), string(2), expression(5));
 }   break;
 ./
 
@@ -1571,17 +1848,10 @@ case $rule_number: {
 }   break;
 ./
 
-single_declaration ::= INVARIANT IDENTIFIER ;
-/.
-case $rule_number: {
-    ast(1) = makeAstNode<InvariantDeclarationAST>(string(2));
-}   break;
-./
-
 fully_specified_type ::= type_specifier ;
 /.
 case $rule_number: {
-    ast(1) = makeAstNode<QualifiedTypeAST>(0, type(1), (List<LayoutQualifierAST *> *)0);
+    ast(1) = makeAstNode<QualifiedTypeAST>(0, type(1), (List<LayoutQualifierAST *> *)nullptr);
 }   break;
 ./
 
@@ -1625,7 +1895,7 @@ case $rule_number: {
 layout_qualifier ::= LAYOUT LEFT_PAREN layout_qualifier_id_list RIGHT_PAREN ;
 /.
 case $rule_number: {
-    sym(1) = sym(3);
+    sym(1).type_qualifier.layout_list = sym(3).layout_list;
 }   break;
 ./
 
@@ -1646,85 +1916,120 @@ case $rule_number: {
 layout_qualifier_id ::= IDENTIFIER ;
 /.
 case $rule_number: {
-    sym(1).layout = makeAstNode<LayoutQualifierAST>(string(1), (const QString *)0);
+    LayoutQualifierAST *l = makeAstNode<LayoutQualifierAST>(string(1), (const QString *)nullptr);
+    setLocationFromToken(l, location(1));
+    sym(1).layout = l;
 }   break;
 ./
 
 layout_qualifier_id ::= IDENTIFIER EQUAL NUMBER ;
 /.
 case $rule_number: {
-    sym(1).layout = makeAstNode<LayoutQualifierAST>(string(1), string(3));
+    LayoutQualifierAST *l = makeAstNode<LayoutQualifierAST>(string(1), string(3));
+    setLocationFromTokens(l, location(1), location(3));
+    sym(1).layout = l;
 }   break;
 ./
 
-parameter_type_qualifier ::= CONST ;
+layout_qualifier_id ::= SHARED ;
 /.
 case $rule_number: {
-    sym(1).qualifier = QualifiedTypeAST::Const;
+    LayoutQualifierAST *l = makeAstNode<LayoutQualifierAST>(string(1), (const QString *)nullptr);
+    setLocationFromToken(l, location(1));
+    sym(1).layout = l;
 }   break;
 ./
 
-type_qualifier ::= storage_qualifier ;
+precise_qualifier ::= PRECISE ;
 /.
 case $rule_number: {
-    sym(1).type_qualifier.qualifier = sym(1).qualifier;
-    sym(1).type_qualifier.layout_list = 0;
+    sym(1).precision = TypeAST::Precise;
 }   break;
 ./
 
-type_qualifier ::= layout_qualifier ;
+type_qualifier ::=  single_type_qualifier ;
 /.
 case $rule_number: {
-    sym(1).type_qualifier.layout_list = sym(1).layout_list;
-    sym(1).type_qualifier.qualifier = 0;
+    // nothing to do.
 }   break;
 ./
 
-type_qualifier ::= layout_qualifier storage_qualifier ;
+type_qualifier ::= type_qualifier single_type_qualifier ;
 /.
 case $rule_number: {
-    sym(1).type_qualifier.layout_list = sym(1).layout_list;
-    sym(1).type_qualifier.qualifier = sym(2).qualifier;
+    if (sym(2).type_qualifier.layout_list)
+        sym(1).type_qualifier.layout_list = sym(2).type_qualifier.layout_list;
+    if ((sym(1).type_qualifier.qualifier & sym(2).type_qualifier.qualifier) != 0) {
+        const DiagnosticMessage::Location &loc = locationFromToken(location(1));
+        error(loc, "Duplicate qualifier.");
+    }
+    // TODO check for too many qualifiers?
+    sym(1).type_qualifier.qualifier |= sym(2).type_qualifier.qualifier;
+    sym(1).type_qualifier.precision = sym(2).type_qualifier.precision;
+    if (sym(2).type_qualifier.type_name_list)
+        sym(1).type_qualifier.type_name_list = sym(2).type_qualifier.type_name_list;
 }   break;
 ./
 
-type_qualifier ::= interpolation_qualifier storage_qualifier ;
+single_type_qualifier ::= storage_qualifier ;
 /.
 case $rule_number: {
-    sym(1).type_qualifier.qualifier = sym(1).qualifier | sym(2).qualifier;
-    sym(1).type_qualifier.layout_list = 0;
+    int qualifier = sym(1).qualifier;
+    sym(1).type_qualifier = {TypeAST::PrecUnspecified, 0, nullptr, nullptr};
+    sym(1).type_qualifier.qualifier = qualifier;
 }   break;
 ./
 
-type_qualifier ::= interpolation_qualifier ;
+single_type_qualifier ::= subroutine_storage_qualifier ;
 /.
 case $rule_number: {
-    sym(1).type_qualifier.qualifier = sym(1).qualifier;
-    sym(1).type_qualifier.layout_list = 0;
+    List<NamedTypeAST *> *typeNameList = sym(1).type_name_list;
+    sym(1).type_qualifier = {TypeAST::PrecUnspecified, 0, nullptr, nullptr};
+    sym(1).type_qualifier.qualifier = QualifiedTypeAST::Subroutine;
+    sym(1).type_qualifier.type_name_list = typeNameList;
 }   break;
 ./
 
-type_qualifier ::= invariant_qualifier storage_qualifier ;
+single_type_qualifier ::= layout_qualifier ;
 /.
 case $rule_number: {
-    sym(1).type_qualifier.qualifier = sym(1).qualifier | sym(2).qualifier;
-    sym(1).type_qualifier.layout_list = 0;
+    // nothing to do.
 }   break;
 ./
 
-type_qualifier ::= invariant_qualifier interpolation_qualifier storage_qualifier ;
+single_type_qualifier ::= precision_qualifier ;
 /.
 case $rule_number: {
-    sym(1).type_qualifier.qualifier = sym(1).qualifier | sym(2).qualifier | sym(3).qualifier;
-    sym(1).type_qualifier.layout_list = 0;
+    TypeAST::Precision precision = sym(1).precision;
+    sym(1).type_qualifier = {TypeAST::PrecUnspecified, 0, nullptr, nullptr};
+    sym(1).type_qualifier.precision = precision;
 }   break;
 ./
 
-type_qualifier ::= INVARIANT ;
+single_type_qualifier ::= interpolation_qualifier ;
 /.
 case $rule_number: {
-    sym(1).type_qualifier.qualifier = QualifiedTypeAST::Invariant;
-    sym(1).type_qualifier.layout_list = 0;
+    int qualifier = sym(1).qualifier;
+    sym(1).type_qualifier = {TypeAST::PrecUnspecified, 0, nullptr, nullptr};
+    sym(1).type_qualifier.qualifier = qualifier;
+}   break;
+./
+
+single_type_qualifier ::= invariant_qualifier ;
+/.
+case $rule_number: {
+    int qualifier = sym(1).qualifier;
+    sym(1).type_qualifier = {TypeAST::PrecUnspecified, 0, nullptr, nullptr};
+    sym(1).type_qualifier.qualifier = qualifier;
+}   break;
+./
+
+single_type_qualifier ::= precise_qualifier ;
+/.
+case $rule_number: {
+    TypeAST::Precision precision = sym(1).precision;
+    sym(1).type_qualifier = {TypeAST::PrecUnspecified, 0, nullptr, nullptr};
+    sym(1).type_qualifier.precision = precision;
 }   break;
 ./
 
@@ -1749,10 +2054,10 @@ case $rule_number: {
 }   break;
 ./
 
-storage_qualifier ::= CENTROID VARYING ;
+storage_qualifier ::= CENTROID ;
 /.
 case $rule_number: {
-    sym(1).qualifier = QualifiedTypeAST::CentroidVarying;
+    sym(1).qualifier = QualifiedTypeAST::Centroid;
 }   break;
 ./
 
@@ -1770,45 +2075,17 @@ case $rule_number: {
 }   break;
 ./
 
-storage_qualifier ::= CENTROID IN ;
+storage_qualifier ::= PATCH  ;
 /.
 case $rule_number: {
-    sym(1).qualifier = QualifiedTypeAST::CentroidIn;
+    sym(1).qualifier = QualifiedTypeAST::Patch;
 }   break;
 ./
 
-storage_qualifier ::= CENTROID OUT ;
+storage_qualifier ::= SAMPLE ;
 /.
 case $rule_number: {
-    sym(1).qualifier = QualifiedTypeAST::CentroidOut;
-}   break;
-./
-
-storage_qualifier ::= PATCH IN ;
-/.
-case $rule_number: {
-    sym(1).qualifier = QualifiedTypeAST::PatchIn;
-}   break;
-./
-
-storage_qualifier ::= PATCH OUT ;
-/.
-case $rule_number: {
-    sym(1).qualifier = QualifiedTypeAST::PatchOut;
-}   break;
-./
-
-storage_qualifier ::= SAMPLE IN ;
-/.
-case $rule_number: {
-    sym(1).qualifier = QualifiedTypeAST::SampleIn;
-}   break;
-./
-
-storage_qualifier ::= SAMPLE OUT ;
-/.
-case $rule_number: {
-    sym(1).qualifier = QualifiedTypeAST::SampleOut;
+    sym(1).qualifier = QualifiedTypeAST::Sample;
 }   break;
 ./
 
@@ -1819,41 +2096,132 @@ case $rule_number: {
 }   break;
 ./
 
-type_specifier ::= type_specifier_no_prec ;
+storage_qualifier ::= BUFFER ;
+/.
+case $rule_number: {
+    sym(1).qualifier = QualifiedTypeAST::Buffer;
+}   break;
+./
+
+storage_qualifier ::= SHARED ;
+/.
+case $rule_number: {
+    sym(1).qualifier = QualifiedTypeAST::Shared;
+}   break;
+./
+
+storage_qualifier ::= COHERENT ;
+/.
+case $rule_number: {
+    sym(1).qualifier = QualifiedTypeAST::Coherent;
+} break;
+./
+
+storage_qualifier ::= VOLATILE ;
+/.
+case $rule_number: {
+    sym(1).qualifier = QualifiedTypeAST::Volatile;
+}   break;
+./
+
+storage_qualifier ::= RESTRICT ;
+/.
+case $rule_number: {
+    sym(1).qualifier = QualifiedTypeAST::Restrict;
+}   break;
+./
+
+storage_qualifier ::= READONLY ;
+/.
+case $rule_number: {
+    sym(1).qualifier = QualifiedTypeAST::Readonly;
+}   break;
+./
+
+storage_qualifier ::= WRITEONLY ;
+/.
+case $rule_number: {
+    sym(1).qualifier = QualifiedTypeAST::Writeonly;
+}   break;
+./
+
+storage_qualifier ::= SUBROUTINE ;
+/.
+case $rule_number: {
+    sym(1).qualifier = QualifiedTypeAST::Subroutine;
+}   break;
+./
+
+subroutine_storage_qualifier ::= SUBROUTINE LEFT_PAREN type_name_list RIGHT_PAREN ;
+/.
+case $rule_number: {
+    sym(1).type_name_list = sym(3).type_name_list;
+}   break;
+./
+
+type_name_list ::= IDENTIFIER ;
+/.
+case $rule_number: {
+    NamedTypeAST *namedType = makeAstNode<NamedTypeAST>(string(1));
+    sym(1).type_name_list = makeAstNode<List<NamedTypeAST *>>(namedType);
+}   break;
+./
+
+type_name_list ::= type_name_list COMMA IDENTIFIER ;
+/.
+case $rule_number: {
+    NamedTypeAST *namedType = makeAstNode<NamedTypeAST>(string(3));
+    sym(1).type_name_list = appendLists(sym(1).type_name_list,
+                                        makeAstNode<List<NamedTypeAST *>>(namedType));
+
+}   break;
+./
+
+type_specifier ::= type_specifier_nonarray ;
 /.
 case $rule_number: {
     // nothing to do.
 }   break;
 ./
 
-type_specifier ::= precision_qualifier type_specifier_no_prec ;
+type_specifier ::= type_specifier_nonarray array_specifier ;
 /.
 case $rule_number: {
-    if (!type(2)->setPrecision(sym(1).precision)) {
-        // TODO: issue an error about precision not allowed on this type.
-    }
-    ast(1) = type(2);
+    ast(1) = makeAstNode<ArrayTypeAST>(type(1), sym(2).array_specifier);
 }   break;
 ./
 
-type_specifier_no_prec ::= type_specifier_nonarray ;
+array_specifier ::= LEFT_BRACKET RIGHT_BRACKET ;
 /.
 case $rule_number: {
-    // nothing to do.
+    sym(1).array_specifier = makeAstNode< List<ArrayTypeAST::ArraySpecAST *>>(nullptr);
 }   break;
 ./
 
-type_specifier_no_prec ::= type_specifier_nonarray LEFT_BRACKET RIGHT_BRACKET ;
+array_specifier ::= LEFT_BRACKET conditional_expression RIGHT_BRACKET ;
 /.
 case $rule_number: {
-    ast(1) = makeAstNode<ArrayTypeAST>(type(1));
+    ArrayTypeAST::ArraySpecAST *spec = makeAstNode<ArrayTypeAST::ArraySpecAST>(expression(2));
+    sym(1).array_specifier = makeAstNode< List<ArrayTypeAST::ArraySpecAST *>>(spec);
 }   break;
 ./
 
-type_specifier_no_prec ::= type_specifier_nonarray LEFT_BRACKET constant_expression RIGHT_BRACKET ;
+array_specifier ::= array_specifier LEFT_BRACKET RIGHT_BRACKET ;
 /.
 case $rule_number: {
-    ast(1) = makeAstNode<ArrayTypeAST>(type(1), expression(3));
+    List<ArrayTypeAST::ArraySpecAST *> *empty
+        = makeAstNode< List<ArrayTypeAST::ArraySpecAST *>>(nullptr);
+    sym(1).array_specifier = appendLists(sym(1).array_specifier, empty);
+}   break;
+./
+
+array_specifier ::= array_specifier LEFT_BRACKET conditional_expression RIGHT_BRACKET ;
+/.
+case $rule_number: {
+    ArrayTypeAST::ArraySpecAST *spec = makeAstNode<ArrayTypeAST::ArraySpecAST>(expression(3));
+    List<ArrayTypeAST::ArraySpecAST *> *specifier
+        = makeAstNode< List<ArrayTypeAST::ArraySpecAST *>>(spec);
+    sym(1).array_specifier = appendLists(sym(1).array_specifier, specifier);
 }   break;
 ./
 
@@ -1890,6 +2258,13 @@ type_specifier_nonarray ::= UINT ;
 case $rule_number: {
     ast(1) = makeBasicType(T_UINT);
 }   break;
+./
+
+type_specifier_nonarray ::= ATOMIC_UINT ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_ATOMIC_UINT);
+} break;
 ./
 
 type_specifier_nonarray ::= BOOL ;
@@ -2452,6 +2827,237 @@ case $rule_number: {
 }   break;
 ./
 
+type_specifier_nonarray ::= IIMAGE1D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IIMAGE1D);
+} break;
+./
+
+type_specifier_nonarray ::= IIMAGE1DARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IIMAGE1DARRAY);
+} break;
+./
+
+type_specifier_nonarray ::= IIMAGE2D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IIMAGE2D);
+} break;
+./
+
+type_specifier_nonarray ::= IIMAGE2DARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IIMAGE2DARRAY);
+} break;
+./
+
+type_specifier_nonarray ::= IIMAGE2DMS ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IIMAGE2DMS);
+} break;
+./
+
+type_specifier_nonarray ::= IIMAGE2DMSARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IIMAGE2DMSARRAY);
+} break;
+./
+
+type_specifier_nonarray ::= IIMAGE2DRECT ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IIMAGE2DRECT);
+} break;
+./
+
+type_specifier_nonarray ::= IIMAGE3D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IIMAGE3D);
+} break;
+./
+
+type_specifier_nonarray ::= IIMAGEBUFFER ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IIMAGEBUFFER);
+} break;
+./
+
+type_specifier_nonarray ::= IIMAGECUBE ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IIMAGECUBE);
+} break;
+./
+
+type_specifier_nonarray ::= IIMAGECUBEARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IIMAGECUBEARRAY);
+} break;
+./
+
+type_specifier_nonarray ::= IMAGE1D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IMAGE1D);
+} break;
+./
+
+type_specifier_nonarray ::= IMAGE1DARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IMAGE1DARRAY);
+} break;
+./
+
+type_specifier_nonarray ::= IMAGE2D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IMAGE2D);
+} break;
+./
+
+type_specifier_nonarray ::= IMAGE2DARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IMAGE2DARRAY);
+} break;
+./
+
+type_specifier_nonarray ::= IMAGE2DMS ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IMAGE2DMS);
+} break;
+./
+
+type_specifier_nonarray ::= IMAGE2DMSARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IMAGE2DMSARRAY);
+} break;
+./
+
+type_specifier_nonarray ::= IMAGE2DRECT ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IMAGE2DRECT);
+} break;
+./
+
+type_specifier_nonarray ::= IMAGE3D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IMAGE3D);
+} break;
+./
+
+type_specifier_nonarray ::= IMAGEBUFFER ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IMAGEBUFFER);
+} break;
+./
+
+type_specifier_nonarray ::= IMAGECUBE ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IMAGECUBE);
+} break;
+./
+
+type_specifier_nonarray ::= IMAGECUBEARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_IMAGECUBEARRAY);
+} break;
+./
+
+type_specifier_nonarray ::= UIMAGE1D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UIMAGE1D);
+} break;
+./
+
+type_specifier_nonarray ::= UIMAGE1DARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UIMAGE1DARRAY);
+} break;
+./
+
+type_specifier_nonarray ::= UIMAGE2D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UIMAGE2D);
+} break;
+./
+
+type_specifier_nonarray ::= UIMAGE2DARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UIMAGE2DARRAY);
+} break;
+./
+
+type_specifier_nonarray ::= UIMAGE2DMS ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UIMAGE2DMS);
+} break;
+./
+
+type_specifier_nonarray ::= UIMAGE2DMSARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UIMAGE2DMSARRAY);
+} break;
+./
+
+type_specifier_nonarray ::= UIMAGE2DRECT ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UIMAGE2DRECT);
+} break;
+./
+
+type_specifier_nonarray ::= UIMAGE3D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UIMAGE3D);
+} break;
+./
+
+type_specifier_nonarray ::= UIMAGEBUFFER ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UIMAGEBUFFER);
+} break;
+./
+
+type_specifier_nonarray ::= UIMAGECUBE ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UIMAGECUBE);
+} break;
+./
+
+type_specifier_nonarray ::= UIMAGECUBEARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UIMAGECUBEARRAY);
+} break;
+./
+
 type_specifier_nonarray ::= struct_specifier ;
 /.
 case $rule_number: {
@@ -2465,6 +3071,297 @@ case $rule_number: {
     ast(1) = makeAstNode<NamedTypeAST>(string(1));
 }   break;
 ./
+
+-- Vulkan type additions
+
+type_specifier_nonarray ::= ISUBPASSINPUT ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_ISUBPASSINPUT);
+}   break;
+./
+
+type_specifier_nonarray ::= ISUBPASSINPUTMS ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_ISUBPASSINPUTMS);
+}   break;
+./
+
+type_specifier_nonarray ::= ITEXTURE1D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_ITEXTURE1D);
+}   break;
+./
+
+type_specifier_nonarray ::= ITEXTURE1DARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_ITEXTURE1DARRAY);
+}   break;
+./
+
+type_specifier_nonarray ::= ITEXTURE2D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_ITEXTURE2D);
+}   break;
+./
+
+type_specifier_nonarray ::= ITEXTURE2DARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_ITEXTURE2DARRAY);
+}   break;
+./
+
+type_specifier_nonarray ::= ITEXTURE2DMS ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_ITEXTURE2DMS);
+}   break;
+./
+
+type_specifier_nonarray ::= ITEXTURE2DMSARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_ITEXTURE2DMSARRAY);
+}   break;
+./
+
+type_specifier_nonarray ::= ITEXTURE2DRECT ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_ITEXTURE2DRECT);
+}   break;
+./
+
+type_specifier_nonarray ::= ITEXTURE3D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_ITEXTURE3D);
+}   break;
+./
+
+type_specifier_nonarray ::= ITEXTUREBUFFER ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_ITEXTUREBUFFER);
+}   break;
+./
+
+type_specifier_nonarray ::= ITEXTURECUBE ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_ITEXTURECUBE);
+}   break;
+./
+
+type_specifier_nonarray ::= ITEXTURECUBEARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_ITEXTURECUBEARRAY);
+}   break;
+./
+
+type_specifier_nonarray ::= SAMPLER ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_SAMPLER);
+}   break;
+./
+
+type_specifier_nonarray ::= SAMPLERSHADOW ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_SAMPLERSHADOW);
+}   break;
+./
+
+type_specifier_nonarray ::= SUBPASSINPUT ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_SUBPASSINPUT);
+}   break;
+./
+
+type_specifier_nonarray ::= SUBPASSINPUTMS ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_SUBPASSINPUTMS);
+}   break;
+./
+
+type_specifier_nonarray ::= TEXTURE1D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_TEXTURE1D);
+}   break;
+./
+
+type_specifier_nonarray ::= TEXTURE1DARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_TEXTURE1DARRAY);
+}   break;
+./
+
+type_specifier_nonarray ::= TEXTURE2D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_TEXTURE2D);
+}   break;
+./
+
+type_specifier_nonarray ::= TEXTURE2DARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_TEXTURE2DARRAY);
+}   break;
+./
+
+type_specifier_nonarray ::= TEXTURE2DMS ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_TEXTURE2DMS);
+}   break;
+./
+
+type_specifier_nonarray ::= TEXTURE2DMSARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_TEXTURE2DMSARRAY);
+}   break;
+./
+
+type_specifier_nonarray ::= TEXTURE2DRECT ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_TEXTURE2DRECT);
+}   break;
+./
+
+type_specifier_nonarray ::= TEXTURE3D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_TEXTURE3D);
+}   break;
+./
+
+type_specifier_nonarray ::= TEXTUREBUFFER ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_TEXTUREBUFFER);
+}   break;
+./
+
+type_specifier_nonarray ::= TEXTURECUBE ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_TEXTURECUBE);
+}   break;
+./
+
+type_specifier_nonarray ::= TEXTURECUBEARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_TEXTURECUBEARRAY);
+}   break;
+./
+
+type_specifier_nonarray ::= USUBPASSINPUT ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_USUBPASSINPUT);
+}   break;
+./
+
+type_specifier_nonarray ::= USUBPASSINPUTMS ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_USUBPASSINPUTMS);
+}   break;
+./
+
+type_specifier_nonarray ::= UTEXTURE1D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UTEXTURE1D);
+}   break;
+./
+
+type_specifier_nonarray ::= UTEXTURE1DARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UTEXTURE1DARRAY);
+}   break;
+./
+
+type_specifier_nonarray ::= UTEXTURE2D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UTEXTURE2D);
+}   break;
+./
+
+type_specifier_nonarray ::= UTEXTURE2DARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UTEXTURE2DARRAY);
+}   break;
+./
+
+type_specifier_nonarray ::= UTEXTURE2DMS ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UTEXTURE2DMS);
+}   break;
+./
+
+type_specifier_nonarray ::= UTEXTURE2DMSARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UTEXTURE2DMSARRAY);
+}   break;
+./
+
+type_specifier_nonarray ::= UTEXTURE2DRECT ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UTEXTURE2DRECT);
+}   break;
+./
+
+type_specifier_nonarray ::= UTEXTURE3D ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UTEXTURE3D);
+}   break;
+./
+
+type_specifier_nonarray ::= UTEXTUREBUFFER ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UTEXTUREBUFFER);
+}   break;
+./
+
+type_specifier_nonarray ::= UTEXTURECUBE ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UTEXTURECUBE);
+}   break;
+./
+
+type_specifier_nonarray ::= UTEXTURECUBEARRAY ;
+/.
+case $rule_number: {
+    ast(1) = makeBasicType(T_UTEXTURECUBEARRAY);
+}   break;
+./
+
+-- Vulkan type additions end
 
 precision_qualifier ::= HIGHP ;
 /.
@@ -2550,30 +3447,56 @@ case $rule_number: {
 struct_declarator ::= IDENTIFIER ;
 /.
 case $rule_number: {
-    sym(1).field = makeAstNode<StructTypeAST::Field>(string(1));
+    StructTypeAST::Field *field = makeAstNode<StructTypeAST::Field>(string(1));
+    setLocationFromToken(field, location(1));
+    sym(1).field = field;
 }   break;
 ./
 
-struct_declarator ::= IDENTIFIER LEFT_BRACKET RIGHT_BRACKET ;
+struct_declarator ::= IDENTIFIER array_specifier ;
 /.
 case $rule_number: {
-    sym(1).field = makeAstNode<StructTypeAST::Field>
-        (string(1), makeAstNode<ArrayTypeAST>((TypeAST *)0));
-}   break;
-./
-
-struct_declarator ::= IDENTIFIER LEFT_BRACKET constant_expression RIGHT_BRACKET ;
-/.
-case $rule_number: {
-    sym(1).field = makeAstNode<StructTypeAST::Field>
-        (string(1), makeAstNode<ArrayTypeAST>((TypeAST *)0, expression(3)));
+    StructTypeAST::Field *field = makeAstNode<StructTypeAST::Field>
+        (string(1), makeAstNode<ArrayTypeAST>((TypeAST *)nullptr, sym(2).array_specifier));
+    setLocationFromToken(field, location(1));
+    sym(1).field = field;
 }   break;
 ./
 
 initializer ::= assignment_expression ;
 /.
 case $rule_number: {
-    // nothing to do.
+    List<ExpressionAST *> *expressionList = makeAstNode<List<ExpressionAST *>>(expression(1));
+    sym(1).expression = makeAstNode<InitializerListExpressionAST>(expressionList);
+}   break;
+./
+
+initializer ::= LEFT_BRACE initializer_list RIGHT_BRACE ;
+/.
+case $rule_number: {
+    sym(1).expression = makeAstNode<InitializerListExpressionAST>(sym(2).expression_list);
+}   break;
+./
+
+initializer ::= LEFT_BRACE initializer_list COMMA RIGHT_BRACE ;
+/.
+case $rule_number: {
+    sym(1).expression = makeAstNode<InitializerListExpressionAST>(sym(2).expression_list);
+}   break;
+./
+
+initializer_list ::= initializer ;
+/.
+case $rule_number: {
+    sym(1).expression_list = makeAstNode<List<ExpressionAST *>>(expression(1));
+}   break;
+./
+
+initializer_list ::= initializer_list COMMA initializer ;
+/.
+case $rule_number: {
+    sym(1).expression_list = makeAstNode<List<ExpressionAST *>>
+            (sym(1).expression_list, expression(3));
 }   break;
 ./
 
@@ -2651,8 +3574,7 @@ compound_statement ::= LEFT_BRACE RIGHT_BRACE ;
 /.
 case $rule_number: {
     CompoundStatementAST *stmt = makeAstNode<CompoundStatementAST>();
-    stmt->start = tokenAt(location(1)).begin();
-    stmt->end = tokenAt(location(2)).end();
+    setLocationFromTokens(stmt, location(1), location(2));
     ast(1) = stmt;
 }   break;
 ./
@@ -2661,8 +3583,7 @@ compound_statement ::= LEFT_BRACE statement_list RIGHT_BRACE ;
 /.
 case $rule_number: {
     CompoundStatementAST *stmt = makeAstNode<CompoundStatementAST>(sym(2).statement_list);
-    stmt->start = tokenAt(location(1)).begin();
-    stmt->end = tokenAt(location(3)).end();
+    setLocationFromTokens(stmt, location(1), location(3));
     ast(1) = stmt;
 }   break;
 ./
@@ -2685,8 +3606,7 @@ compound_statement_no_new_scope ::= LEFT_BRACE RIGHT_BRACE ;
 /.
 case $rule_number: {
     CompoundStatementAST *stmt = makeAstNode<CompoundStatementAST>();
-    stmt->start = tokenAt(location(1)).begin();
-    stmt->end = tokenAt(location(2)).end();
+    setLocationFromTokens(stmt, location(1), location(2));
     ast(1) = stmt;
 }   break;
 ./
@@ -2695,8 +3615,7 @@ compound_statement_no_new_scope ::= LEFT_BRACE statement_list RIGHT_BRACE ;
 /.
 case $rule_number: {
     CompoundStatementAST *stmt = makeAstNode<CompoundStatementAST>(sym(2).statement_list);
-    stmt->start = tokenAt(location(1)).begin();
-    stmt->end = tokenAt(location(3)).end();
+    setLocationFromTokens(stmt, location(1), location(3));
     ast(1) = stmt;
 }   break;
 ./
@@ -2718,7 +3637,9 @@ case $rule_number: {
 expression_statement ::= SEMICOLON ;
 /.
 case $rule_number: {
-    ast(1) = makeAstNode<CompoundStatementAST>();  // Empty statement
+    CompoundStatementAST *empty = makeAstNode<CompoundStatementAST>();
+    setLocationFromToken(empty, location(1));
+    ast(1) = empty;  // Empty statement
 }   break;
 ./
 
@@ -2739,16 +3660,22 @@ case $rule_number: {
 selection_rest_statement ::= statement ELSE statement ;
 /.
 case $rule_number: {
-    sym(1).ifstmt.thenClause = statement(1);
-    sym(1).ifstmt.elseClause = statement(3);
+    StatementAST *thenClause = statement(1);
+    setLocationFromToken(thenClause, location(1));
+    sym(1).ifstmt.thenClause = thenClause;
+    StatementAST *elseClause = statement(3);
+    setLocationFromToken(elseClause, location(3));
+    sym(1).ifstmt.elseClause = elseClause;
 }   break;
 ./
 
 selection_rest_statement ::= statement ;
 /.
 case $rule_number: {
-    sym(1).ifstmt.thenClause = statement(1);
-    sym(1).ifstmt.elseClause = 0;
+    StatementAST *thenClause = statement(1);
+    setLocationFromToken(thenClause, location(1));
+    sym(1).ifstmt.thenClause = thenClause;
+    sym(1).ifstmt.elseClause = nullptr;
 }   break;
 ./
 
@@ -2770,7 +3697,9 @@ case $rule_number: {
 switch_statement ::= SWITCH LEFT_PAREN expression RIGHT_PAREN LEFT_BRACE switch_statement_list RIGHT_BRACE ;
 /.
 case $rule_number: {
-    ast(1) = makeAstNode<SwitchStatementAST>(expression(3), statement(6));
+    StatementAST *body = statement(6);
+    setLocationFromToken(body, location(6));
+    ast(1) = makeAstNode<SwitchStatementAST>(expression(3), body);
 }   break;
 ./
 
@@ -2805,21 +3734,27 @@ case $rule_number: {
 iteration_statement ::= WHILE LEFT_PAREN condition RIGHT_PAREN statement_no_new_scope ;
 /.
 case $rule_number: {
-    ast(1) = makeAstNode<WhileStatementAST>(expression(3), statement(5));
+    StatementAST *body = statement(5);
+    setLocationFromToken(body, location(5));
+    ast(1) = makeAstNode<WhileStatementAST>(expression(3), body);
 }   break;
 ./
 
 iteration_statement ::= DO statement WHILE LEFT_PAREN expression RIGHT_PAREN SEMICOLON ;
 /.
 case $rule_number: {
-    ast(1) = makeAstNode<DoStatementAST>(statement(2), expression(5));
+    StatementAST *body = statement(2);
+    setLocationFromToken(body, location(2));
+    ast(1) = makeAstNode<DoStatementAST>(body, expression(5));
 }   break;
 ./
 
 iteration_statement ::= FOR LEFT_PAREN for_init_statement for_rest_statement RIGHT_PAREN statement_no_new_scope ;
 /.
 case $rule_number: {
-    ast(1) = makeAstNode<ForStatementAST>(statement(3), sym(4).forstmt.condition, sym(4).forstmt.increment, statement(6));
+    StatementAST *body = statement(6);
+    setLocationFromToken(body, location(6));
+    ast(1) = makeAstNode<ForStatementAST>(statement(3), sym(4).forstmt.condition, sym(4).forstmt.increment, body);
 }   break;
 ./
 
@@ -2855,7 +3790,7 @@ for_rest_statement ::= conditionopt SEMICOLON ;
 /.
 case $rule_number: {
     sym(1).forstmt.condition = expression(1);
-    sym(1).forstmt.increment = 0;
+    sym(1).forstmt.increment = nullptr;
 }   break;
 ./
 
@@ -2916,7 +3851,7 @@ case $rule_number: {
         sym(1).declaration_list = makeAstNode< List<DeclarationAST *> >
             (sym(1).declaration);
     } else {
-        sym(1).declaration_list = 0;
+        sym(1).declaration_list = nullptr;
     }
 }   break;
 ./
@@ -2932,7 +3867,7 @@ case $rule_number: {
             sym(1).declaration_list = makeAstNode< List<DeclarationAST *> >
                 (sym(2).declaration);
         } else {
-            sym(1).declaration_list = 0;
+            sym(1).declaration_list = nullptr;
         }
     }
 }   break;
@@ -2955,7 +3890,7 @@ case $rule_number: {
 external_declaration ::= SEMICOLON ;
 /.
 case $rule_number: {
-    ast(1) = 0;
+    ast(1) = nullptr;
 }   break;
 ./
 
@@ -2969,7 +3904,7 @@ case $rule_number: {
 empty ::= ;
 /.
 case $rule_number: {
-    ast(1) = 0;
+    ast(1) = nullptr;
 }   break;
 ./
 

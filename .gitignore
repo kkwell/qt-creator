@@ -29,7 +29,9 @@
 .DS_Store
 .qmake.cache
 .qmake.stash
+.qmlls.ini
 .vscode
+.axivion
 Makefile*
 Thumbs.db
 core
@@ -55,7 +57,6 @@ CMakeLists.txt.user*
 /share/qtcreator/generic-highlighter/
 /share/qtcreator/qmldesigner/QtProject/
 /src/app/Info.plist
-/src/plugins/**/*.json
 !/src/plugins/**/wizard.json
 /src/plugins/coreplugin/ide_version.h
 /.cmake/
@@ -119,6 +120,7 @@ compile_commands.json
 .rcc/
 .uic/
 .clangd/
+/.qtcreator/
 /*-debug/
 /*-release/
 /build*/
@@ -143,6 +145,10 @@ tmp/
 # ignore both a directory as well as a symlink
 /share/qtcreator/QtProject
 
+# Claude
+/CLAUDE.md
+/.claude/
+
 # Binaries
 # --------
 *.dll
@@ -156,7 +162,6 @@ tmp/
 /bin/cplusplus-mkvisitor
 /bin/cplusplus-update-frontend
 /bin/qbs*
-/bin/qml2puppet
 /bin/qmlpuppet
 /bin/qtcreator
 /bin/qtcreator_crash_handler

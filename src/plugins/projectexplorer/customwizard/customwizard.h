@@ -54,8 +54,6 @@ public:
 // Documentation inside.
 class PROJECTEXPLORER_EXPORT CustomWizard : public Core::BaseFileWizardFactory
 {
-    Q_OBJECT
-
 public:
     using FieldReplacementMap = QMap<QString, QString>;
 
@@ -64,9 +62,9 @@ public:
 
     // Can be reimplemented to create custom wizards. initWizardDialog() needs to be
     // called.
-    Core::BaseFileWizard *create(QWidget *parent, const Core::WizardDialogParameters &parameters) const override;
+    Core::BaseFileWizard *create(const Core::WizardDialogParameters &parameters) const override;
 
-    Core::GeneratedFiles generateFiles(const QWizard *w, QString *errorMessage) const override;
+    Utils::Result<Core::GeneratedFiles> generateFiles(const QWizard *w) const override;
 
     // Create all wizards. As other plugins might register factories for derived
     // classes, call it in extensionsInitialized().
@@ -80,10 +78,10 @@ protected:
     using CustomWizardContextPtr = std::shared_ptr<Internal::CustomWizardContext>;
 
     // generate files in path
-    Core::GeneratedFiles generateWizardFiles(QString *errorMessage) const;
+    Utils::Result<Core::GeneratedFiles> generateWizardFiles() const;
     // Create replacement map as static base fields + QWizard fields
     FieldReplacementMap replacementMap(const QWizard *w) const;
-    bool writeFiles(const Core::GeneratedFiles &files, QString *errorMessage) const override;
+    Utils::Result<> writeFiles(const Core::GeneratedFiles &files) const override;
 
     CustomWizardParametersPtr parameters() const;
     CustomWizardContextPtr context() const;
@@ -99,22 +97,17 @@ private:
 // Documentation inside.
 class PROJECTEXPLORER_EXPORT CustomProjectWizard : public CustomWizard
 {
-    Q_OBJECT
-
 public:
     CustomProjectWizard();
 
-    static bool postGenerateOpen(const Core::GeneratedFiles &l, QString *errorMessage = nullptr);
-
-signals:
-    void projectLocationChanged(const Utils::FilePath &path);
+    static Utils::Result<> postGenerateOpen(const Core::GeneratedFiles &l);
 
 protected:
-    Core::BaseFileWizard *create(QWidget *parent, const Core::WizardDialogParameters &parameters) const override;
+    Core::BaseFileWizard *create(const Core::WizardDialogParameters &parameters) const override;
 
-    Core::GeneratedFiles generateFiles(const QWizard *w, QString *errorMessage) const override;
+    Utils::Result<Core::GeneratedFiles> generateFiles(const QWizard *w) const override;
 
-    bool postGenerateFiles(const QWizard *w, const Core::GeneratedFiles &l, QString *errorMessage) const override;
+    Utils::Result<> postGenerateFiles(const QWizard *w, const Core::GeneratedFiles &l) const override;
 
     void initProjectWizardDialog(BaseProjectWizardDialog *w, const Utils::FilePath &defaultPath,
                                  const QList<QWizardPage *> &extensionPages) const;

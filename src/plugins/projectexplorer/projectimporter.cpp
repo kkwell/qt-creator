@@ -4,13 +4,14 @@
 #include "projectimporter.h"
 
 #include "buildinfo.h"
+#include "devicesupport/devicekitaspects.h"
 #include "kit.h"
-#include "kitaspects.h"
 #include "kitmanager.h"
 #include "projectexplorerconstants.h"
 #include "projectexplorertr.h"
 #include "target.h"
 #include "toolchain.h"
+#include "toolchainkitaspect.h"
 #include "toolchainmanager.h"
 
 #include <coreplugin/icore.h>
@@ -69,7 +70,7 @@ const QList<BuildInfo> ProjectImporter::import(const Utils::FilePath &importPath
 {
     QList<BuildInfo> result;
 
-    const QLoggingCategory log("qtc.projectexplorer.import", QtWarningMsg);
+    static const QLoggingCategory log("qtc.projectexplorer.import", QtWarningMsg);
     qCDebug(log) << "ProjectImporter::import" << importPath << silent;
 
     QFileInfo fi = importPath.toFileInfo();
@@ -88,16 +89,16 @@ const QList<BuildInfo> ProjectImporter::import(const Utils::FilePath &importPath
                               Tr::tr("No build found in %1 matching project %2.")
                                   .arg(importPath.toUserOutput(), projectFilePath().toUserOutput()));
     };
-    qCDebug(log) << "Examining directory" << absoluteImportPath.toString();
+    qCDebug(log) << "Examining directory" << absoluteImportPath.toUserOutput();
     QString warningMessage;
     QList<void *> dataList = examineDirectory(absoluteImportPath, &warningMessage);
     if (dataList.isEmpty()) {
-        qCDebug(log) << "Nothing to import found in" << absoluteImportPath.toString();
+        qCDebug(log) << "Nothing to import found in" << absoluteImportPath.toUserOutput();
         handleFailure();
         return result;
     }
     if (!warningMessage.isEmpty()) {
-        qCDebug(log) << "Warning when examining" << absoluteImportPath.toString();
+        qCDebug(log) << "Warning when examining" << absoluteImportPath.toUserOutput();
         // we should ask user before importing
         if (silent)
             return result;
@@ -130,19 +131,20 @@ const QList<BuildInfo> ProjectImporter::import(const Utils::FilePath &importPath
 
         for (Kit *k : std::as_const(kitList)) {
             qCDebug(log) << "Creating buildinfos for kit" << k->displayName();
-            const QList<BuildInfo> infoList = buildInfoList(data);
-            if (infoList.isEmpty()) {
-                qCDebug(log) << "No build infos for kit" << k->displayName();
-                continue;
-            }
+            BuildInfo info = buildInfo(data);
 
             auto factory = BuildConfigurationFactory::find(k, projectFilePath());
-            for (BuildInfo i : infoList) {
-                i.kitId = k->id();
-                i.factory = factory;
-                if (!result.contains(i))
-                    result += i;
+            if (!factory) {
+                qCDebug(log) << "No factory for kit" << k->displayName();
+                continue;
             }
+            const QVariantMap extraInfo = info.extraInfo.toMap();
+            if (!extraInfo["hideImportedSuffix"].toBool())
+                info.displayName = Tr::tr("%1 (imported)").arg(info.displayName);
+            info.kitId = k->id();
+            info.factory = factory;
+            if (!result.contains(info))
+                result += info;
         }
     }
 
@@ -173,7 +175,7 @@ Target *ProjectImporter::preferredTarget(const QList<Target *> &possibleTargets)
             return t;
         if (pickedFallback)
             continue;
-        if (DeviceTypeKitAspect::deviceTypeId(t->kit()) == Constants::DESKTOP_DEVICE_TYPE) {
+        if (RunDeviceTypeKitAspect::deviceTypeId(t->kit()) == Constants::DESKTOP_DEVICE_TYPE) {
             activeTarget = t;
             pickedFallback = true;
         }
@@ -262,7 +264,7 @@ void ProjectImporter::addProject(Kit *k) const
 
     UpdateGuard guard(*this);
     QStringList projects = k->value(TEMPORARY_OF_PROJECTS, QStringList()).toStringList();
-    projects.append(m_projectPath.toString()); // note: There can be more than one instance of the project added!
+    projects.append(m_projectPath.toUrlishString()); // note: There can be more than one instance of the project added!
     k->setValueSilently(TEMPORARY_OF_PROJECTS, projects);
 }
 
@@ -274,7 +276,7 @@ void ProjectImporter::removeProject(Kit *k) const
 
     UpdateGuard guard(*this);
     QStringList projects = k->value(TEMPORARY_OF_PROJECTS, QStringList()).toStringList();
-    projects.removeOne(m_projectPath.toString());
+    projects.removeOne(m_projectPath.toUrlishString());
 
     if (projects.isEmpty()) {
         cleanupKit(k);
@@ -318,8 +320,10 @@ static Toolchain *toolChainFromVariant(const QVariant &v)
 
 void ProjectImporter::cleanupTemporaryToolchains(Kit *k, const QVariantList &vl)
 {
-    ToolchainManager::deregisterToolchains(Utils::transform(vl, toolChainFromVariant));
-    ToolchainKitAspect::setToolchain(k, nullptr);
+    const Toolchains toolchains = Utils::transform(vl, toolChainFromVariant);
+    for (Toolchain * const tc : toolchains)
+        ToolchainKitAspect::clearToolchain(k, tc->language());
+    ToolchainManager::deregisterToolchains(toolchains);
 }
 
 void ProjectImporter::persistTemporaryToolchains(Kit *k, const QVariantList &vl)

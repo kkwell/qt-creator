@@ -3,15 +3,14 @@
 
 #pragma once
 
-#include "projectexplorersettings.h"
-
-#include <coreplugin/ioutputpane.h>
+#include <coreplugin/coreconstants.h>
 #include <coreplugin/dialogs/ioptionspage.h>
+#include <coreplugin/ioutputpane.h>
 
 #include <utils/outputformat.h>
+#include <utils/theme/theme.h>
 
 #include <QPointer>
-#include <QVector>
 
 QT_BEGIN_NAMESPACE
 class QToolButton;
@@ -24,64 +23,86 @@ namespace Core { class OutputWindow; }
 namespace ProjectExplorer {
 
 class RunControl;
-class Project;
 
 namespace Internal {
 
 class ShowOutputTaskHandler;
 class TabWidget;
 
-class AppOutputPane : public Core::IOutputPane
-{
-    Q_OBJECT
+enum class AppOutputPaneMode { FlashOnOutput, PopupOnOutput, PopupOnFirstOutput };
 
+class OutputColorAspect : public Utils::ColorAspect
+{
 public:
+    using Utils::ColorAspect::ColorAspect;
+
+    QVariant fromSettingsValue(const QVariant &savedValue) const override;
+};
+
+class OutputMaxCharCountAspect : public Utils::IntegerAspect
+{
+public:
+    using Utils::IntegerAspect::IntegerAspect;
+
+    QVariant fromSettingsValue(const QVariant &savedValue) const override;
+    QVariant toSettingsValue(const QVariant &valueToSave) const override;
+};
+
+class AppOutputSettings : public Utils::AspectContainer
+{
+public:
+    AppOutputSettings();
+
+    QColor effectiveBackgroundColor() const;
+
+    Utils::SelectionAspect runOutputMode{this};
+    Utils::SelectionAspect debugOutputMode{this};
+    Utils::BoolAspect cleanOldOutput{this};
+    Utils::BoolAspect mergeChannels{this};
+    Utils::BoolAspect wrapOutput{this};
+    Utils::BoolAspect discardExcessiveOutput{this};
+    OutputMaxCharCountAspect maxCharCount{this};
+    Utils::BoolAspect overwriteBackground{this};
+    OutputColorAspect backgroundColor{this};
+};
+
+class AppOutputPane final : public Core::IOutputPane
+{
+public:
+    AppOutputPane();
+    ~AppOutputPane() final;
+
+    bool aboutToClose() const;
+
+    QList<RunControl *> allRunControls() const;
+
+    static AppOutputSettings &settings();
+
+    void prepareRunControlStart(RunControl *runControl);
+    void showOutputPaneForRunControl(RunControl *runControl);
+
+    void closeTabsWithoutPrompt();
+
+private:
     enum CloseTabMode {
         CloseTabNoPrompt,
         CloseTabWithPrompt
     };
 
-    AppOutputPane();
-    ~AppOutputPane() override;
-
-    QWidget *outputWidget(QWidget *) override;
-    QList<QWidget *> toolBarWidgets() const override;
-    void clearContents() override;
-    bool canFocus() const override;
-    bool hasFocus() const override;
-    void setFocus() override;
-
-    bool canNext() const override;
-    bool canPrevious() const override;
-    void goToNext() override;
-    void goToPrev() override;
-    bool canNavigate() const override;
-
-    bool hasFilterContext() const override;
-
-    void createNewOutputWindow(RunControl *rc);
-    void showTabFor(RunControl *rc);
-    void setBehaviorOnOutput(RunControl *rc, AppOutputPaneMode mode);
-
-    bool aboutToClose() const;
     void closeTabs(CloseTabMode mode);
+    void showTabFor(RunControl *rc);
 
-    QList<RunControl *> allRunControls() const;
-
-    // ApplicationOutput specifics
+    void setBehaviorOnOutput(RunControl *rc, AppOutputPaneMode mode);
     void projectRemoved();
 
-    const AppOutputSettings &settings() const { return m_settings; }
-    void setSettings(const AppOutputSettings &settings);
-
-private:
+    void createNewOutputWindow(RunControl *rc);
     void appendMessage(ProjectExplorer::RunControl *rc, const QString &out,
                        Utils::OutputFormat format);
     void reRunRunControl();
     void stopRunControl();
     void attachToRunControl();
     void tabChanged(int);
-    void contextMenuRequested(const QPoint &pos, int index);
+    void contextMenuRequested(const QPoint &pos);
     void runControlFinished(RunControl *runControl);
 
     void aboutToUnloadSession();
@@ -114,16 +135,28 @@ private:
     RunControl *currentRunControl() const;
     void handleOldOutput(Core::OutputWindow *window) const;
     void updateCloseActions();
-    void updateFilter() override;
-    const QList<Core::OutputWindow *> outputWindows() const override;
-    void ensureWindowVisible(Core::OutputWindow *ow) override;
 
-    void loadSettings();
-    void storeSettings() const;
+    QWidget *outputWidget(QWidget *) final;
+    QList<QWidget *> toolBarWidgets() const final;
+    void clearContents() final;
+    bool canFocus() const final;
+    bool hasFocus() const final;
+    void setFocus() final;
+
+    bool canNext() const final;
+    bool canPrevious() const final;
+    void goToNext() final;
+    void goToPrev() final;
+    bool canNavigate() const final;
+
+    bool hasFilterContext() const final;
+
+    void updateFilter() final;
+    const QList<Core::OutputWindow *> outputWindows() const final;
+    void ensureWindowVisible(Core::OutputWindow *ow) final;
 
     TabWidget *m_tabWidget;
-    QVector<RunControlTab> m_runControlTabs;
-    int m_runControlCount = 0;
+    QList<RunControlTab> m_runControlTabs;
     QAction *m_stopAction;
     QAction *m_closeCurrentTabAction;
     QAction *m_closeAllTabsAction;
@@ -134,14 +167,12 @@ private:
     QToolButton * const m_settingsButton;
     QWidget *m_formatterWidget;
     ShowOutputTaskHandler * const m_handler;
-    AppOutputSettings m_settings;
 };
 
-class AppOutputSettingsPage final : public Core::IOptionsPage
-{
-public:
-    AppOutputSettingsPage();
-};
+AppOutputPane &appOutputPane();
+
+void setupAppOutputPane();
+void destroyAppOutputPane();
 
 } // namespace Internal
 } // namespace ProjectExplorer

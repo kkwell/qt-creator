@@ -4,7 +4,6 @@
 #include "vcscommandpage.h"
 
 #include "../vcsbaseplugin.h"
-#include "../vcscommand.h"
 #include "../vcsbasetr.h"
 
 #include <coreplugin/vcsmanager.h>
@@ -28,6 +27,7 @@
 
 using namespace Core;
 using namespace ProjectExplorer;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace VcsBase {
@@ -39,14 +39,6 @@ static char VCSCOMMAND_REPO[] = "repository";
 static char VCSCOMMAND_DIR[] = "baseDirectory";
 static char VCSCOMMAND_EXTRA_ARGS[] = "extraArguments";
 static char VCSCOMMAND_CHECKOUTNAME[] = "checkoutName";
-
-static char VCSCOMMAND_JOBS[] = "extraJobs";
-static char JOB_SKIP_EMPTY[] = "skipIfEmpty";
-static char JOB_WORK_DIRECTORY[] = "directory";
-static char JOB_COMMAND[] = "command";
-static char JOB_ARGUMENTS[] = "arguments";
-static char JOB_TIME_OUT[] = "timeoutFactor";
-static char JOB_ENABLED[] = "enabled";
 
 // ----------------------------------------------------------------------
 // VcsCommandPageFactory:
@@ -85,46 +77,12 @@ WizardPage *VcsCommandPageFactory::create(JsonWizard *wizard, Id typeId, const Q
                           tmp.value(QLatin1String(VCSCOMMAND_DIR)).toString(),
                           tmp.value(QLatin1String(VCSCOMMAND_CHECKOUTNAME)).toString(),
                           args);
-
-    const QVariantList values = tmp.value(QLatin1String(VCSCOMMAND_JOBS)).toList();
-    for (const QVariant &value : values) {
-        const QVariantMap job = value.toMap();
-        const bool skipEmpty = job.value(QLatin1String(JOB_SKIP_EMPTY), true).toBool();
-        const FilePath workDir = FilePath::fromSettings(job.value(QLatin1String(JOB_WORK_DIRECTORY)));
-
-        const QString cmdString = job.value(QLatin1String(JOB_COMMAND)).toString();
-        QTC_ASSERT(!cmdString.isEmpty(), continue);
-
-        QStringList command;
-        command << cmdString;
-
-        const QVariant &jobArgVar = job.value(QLatin1String(JOB_ARGUMENTS));
-        QStringList jobArgs;
-        if (!jobArgVar.isNull()) {
-            if (jobArgVar.typeId() == QMetaType::QVariantList)
-                jobArgs = Utils::transform(jobArgVar.toList(), &QVariant::toString);
-            else
-                jobArgs << jobArgVar.toString();
-        }
-
-        bool ok;
-        int timeoutFactor = job.value(QLatin1String(JOB_TIME_OUT), 1).toInt(&ok);
-        if (!ok)
-            timeoutFactor = 1;
-
-        command << jobArgs;
-
-        const QVariant condition = job.value(QLatin1String(JOB_ENABLED), true);
-
-        page->appendJob(skipEmpty, workDir, command, condition, timeoutFactor);
-    }
-
     return page;
 }
 
-bool VcsCommandPageFactory::validateData(Id typeId, const QVariant &data, QString *errorMessage)
+Result<> VcsCommandPageFactory::validateData(Id typeId, const QVariant &data)
 {
-    QTC_ASSERT(canCreate(typeId), return false);
+    QTC_ASSERT(canCreate(typeId), return ResultError(ResultAssert));
 
     QString em;
     if (data.typeId() != QMetaType::QVariantMap)
@@ -165,35 +123,12 @@ bool VcsCommandPageFactory::validateData(Id typeId, const QVariant &data, QStrin
             em = Tr::tr("\"%1\" in \"data\" section of \"VcsCommand\" page has unexpected type (unset, String or List).")
                     .arg(QLatin1String(VCSCOMMAND_EXTRA_ARGS));
         }
-
-        const QVariant jobs = tmp.value(QLatin1String(VCSCOMMAND_JOBS));
-        if (!jobs.isNull() && extra.typeId() != QMetaType::QVariantList) {
-            em = Tr::tr("\"%1\" in \"data\" section of \"VcsCommand\" page has unexpected type (unset or List).")
-                    .arg(QLatin1String(VCSCOMMAND_JOBS));
-        }
-
-        const QVariantList jobList = jobs.toList();
-        for (const QVariant &j : jobList) {
-            if (j.isNull()) {
-                em = Tr::tr("Job in \"VcsCommand\" page is empty.");
-                break;
-            }
-            if (j.typeId() != QMetaType::QVariantMap) {
-                em = Tr::tr("Job in \"VcsCommand\" page is not an object.");
-                break;
-            }
-            const QVariantMap &details = j.toMap();
-            if (details.value(QLatin1String(JOB_COMMAND)).isNull()) {
-                em = Tr::tr("Job in \"VcsCommand\" page has no \"%1\" set.").arg(QLatin1String(JOB_COMMAND));
-                break;
-            }
-        }
     }
 
-    if (errorMessage)
-        *errorMessage = em;
+    if (!em.isEmpty())
+        return ResultError(em);
 
-    return em.isEmpty();
+    return ResultOk;
 }
 
 // ----------------------------------------------------------------------
@@ -227,7 +162,7 @@ VcsCommandPage::VcsCommandPage()
 
 VcsCommandPage::~VcsCommandPage()
 {
-    QTC_ASSERT(m_state != Running, QApplication::restoreOverrideCursor());
+    m_taskTreeRunner.cancel();
     delete m_formatter;
 }
 
@@ -241,16 +176,15 @@ void VcsCommandPage::initializePage()
 
 bool VcsCommandPage::isComplete() const
 {
-    return m_state == Succeeded;
+    return m_isComplete;
 }
 
 bool VcsCommandPage::handleReject()
 {
-    if (m_state != Running)
+    if (!m_taskTreeRunner.isRunning())
         return false;
 
-    if (m_command)
-        m_command->cancel();
+    m_taskTreeRunner.cancel();
     return true;
 }
 
@@ -313,91 +247,49 @@ void VcsCommandPage::delayedInitialize()
         extraArgs << tmp;
     }
 
-    VcsCommand *command = vc->createInitialCheckoutCommand(repo, FilePath::fromString(base),
-                                                           name, extraArgs);
+    const auto outCallback = [formatter = QPointer<OutputFormatter>(m_formatter)](const QString &text) {
+        if (formatter)
+            formatter->appendMessage(text, StdOutFormat);
+    };
+    const auto errCallback = [formatter = QPointer<OutputFormatter>(m_formatter)](const QString &text) {
+        if (formatter)
+            formatter->appendMessage(text, StdErrFormat);
+    };
 
-    for (const JobData &job : std::as_const(m_additionalJobs)) {
-        QTC_ASSERT(!job.job.isEmpty(), continue);
+    const auto onSetup = [this] {
+        QApplication::setOverrideCursor(Qt::WaitCursor);
 
-        if (!JsonWizard::boolFromVariant(job.condition, wiz->expander()))
-            continue;
+        m_logPlainTextEdit->clear();
+        m_overwriteOutput = false;
+        m_statusLabel->setText(m_startedStatus);
+        m_statusLabel->setPalette(QPalette());
 
-        const QString commandString = wiz->expander()->expand(job.job.at(0));
-        if (commandString.isEmpty())
-            continue;
+        wizard()->button(QWizard::BackButton)->setEnabled(false);
+    };
 
-        QStringList args;
-        for (int i = 1; i < job.job.count(); ++i) {
-            const QString tmp = wiz->expander()->expand(job.job.at(i));
-            if (tmp.isEmpty() && job.skipEmptyArguments)
-                continue;
-            args << tmp;
-        }
+    const auto onDone = [this](DoneWith result) {
+        QApplication::restoreOverrideCursor();
 
-        const FilePath dir = wiz->expander()->expand(job.workDirectory);
-        const int defaultTimeoutS = 10;
-        const int timeoutS = defaultTimeoutS * job.timeOutFactor;
-        command->addJob({FilePath::fromUserInput(commandString), args}, timeoutS, dir);
-    }
+        m_isComplete = result == DoneWith::Success;
+        QPalette palette;
+        const Theme::Color role = m_isComplete ? Theme::TextColorNormal : Theme::TextColorError;
+        palette.setColor(QPalette::WindowText, creatorColor(role).name());
+        m_statusLabel->setPalette(palette);
+        m_statusLabel->setText(m_isComplete ? Tr::tr("Succeeded.") : Tr::tr("Failed."));
 
-    start(command);
-}
+        wizard()->button(QWizard::BackButton)->setEnabled(true);
 
-void VcsCommandPage::start(VcsCommand *command)
-{
-    if (!command) {
-        m_logPlainTextEdit->setPlainText(Tr::tr("No job running, please abort."));
-        return;
-    }
+        if (result == DoneWith::Success)
+            emit completeChanged();
+    };
 
-    QTC_ASSERT(m_state != Running, return);
-    m_command = command;
-    m_command->addFlags(RunFlags::ProgressiveOutput);
-    connect(m_command, &VcsCommand::stdOutText, this, [this](const QString &text) {
-        m_formatter->appendMessage(text, StdOutFormat);
-    });
-    connect(m_command, &VcsCommand::stdErrText, this, [this](const QString &text) {
-        m_formatter->appendMessage(text, StdErrFormat);
-    });
-    connect(m_command, &VcsCommand::done, this, [this] {
-        finished(m_command->result() == ProcessResult::FinishedWithSuccess);
-    });
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    m_logPlainTextEdit->clear();
-    m_overwriteOutput = false;
-    m_statusLabel->setText(m_startedStatus);
-    m_statusLabel->setPalette(QPalette());
-    m_state = Running;
-    m_command->start();
+    const Group recipe {
+        onGroupSetup(onSetup),
+        vc->cloneTask({repo, FilePath::fromString(base), name, extraArgs, outCallback, errCallback}),
+        onGroupDone(onDone)
+    };
 
-    wizard()->button(QWizard::BackButton)->setEnabled(false);
-}
-
-void VcsCommandPage::finished(bool success)
-{
-    QTC_ASSERT(m_state == Running, return);
-
-    QString message;
-    QPalette palette;
-
-    if (success) {
-        m_state = Succeeded;
-        message = Tr::tr("Succeeded.");
-        palette.setColor(QPalette::WindowText, creatorColor(Theme::TextColorNormal).name());
-    } else {
-        m_state = Failed;
-        message = Tr::tr("Failed.");
-        palette.setColor(QPalette::WindowText, creatorColor(Theme::TextColorError).name());
-    }
-
-    m_statusLabel->setText(message);
-    m_statusLabel->setPalette(palette);
-
-    QApplication::restoreOverrideCursor();
-    wizard()->button(QWizard::BackButton)->setEnabled(true);
-
-    if (success)
-        emit completeChanged();
+    m_taskTreeRunner.start(recipe);
 }
 
 void VcsCommandPage::setCheckoutData(const QString &repo, const QString &baseDir, const QString &name,
@@ -407,12 +299,6 @@ void VcsCommandPage::setCheckoutData(const QString &repo, const QString &baseDir
     m_directory = baseDir;
     m_name = name;
     m_arguments = args;
-}
-
-void VcsCommandPage::appendJob(bool skipEmpty, const FilePath &workDir, const QStringList &command,
-                               const QVariant &condition, int timeoutFactor)
-{
-    m_additionalJobs.append(JobData{skipEmpty, workDir, command, condition, timeoutFactor});
 }
 
 void VcsCommandPage::setVersionControlId(const QString &id)

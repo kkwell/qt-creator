@@ -113,7 +113,6 @@ void DecltypeSpecifierAST::accept0(ASTVisitor *visitor)
 void TypeConstraintAST::accept0(ASTVisitor *visitor)
 {
     if (visitor->visit(this)) {
-        accept(nestedName, visitor);
         accept(conceptName, visitor);
         accept(templateArgs, visitor);
     }
@@ -459,6 +458,7 @@ void EnumSpecifierAST::accept0(ASTVisitor *visitor)
 {
     if (visitor->visit(this)) {
         accept(name, visitor);
+        accept(attribute_list, visitor);
         accept(type_specifier_list, visitor);
         accept(enumerator_list, visitor);
     }
@@ -541,6 +541,8 @@ void ForeachStatementAST::accept0(ASTVisitor *visitor)
 void RangeBasedForStatementAST::accept0(ASTVisitor *visitor)
 {
     if (visitor->visit(this)) {
+        accept(initDecl, visitor);
+        accept(initStmt, visitor);
         accept(type_specifier_list, visitor);
         accept(declarator, visitor);
         accept(expression, visitor);
@@ -1405,3 +1407,29 @@ void DesignatedInitializerAST::accept0(ASTVisitor *visitor)
     visitor->endVisit(this);
 }
 
+void DeductionGuideAST::accept0(ASTVisitor *visitor)
+{
+    if (visitor->visit(this)) {
+        accept(template_name, visitor);
+        accept(parameter_list, visitor);
+        accept(template_id, visitor);
+        accept(requires_clause, visitor);
+    }
+    visitor->endVisit(this);
+}
+
+void UnaryFoldExpressionAST::accept0(ASTVisitor *visitor)
+{
+    if (visitor->visit(this))
+        accept(cast_expression, visitor);
+    visitor->endVisit(this);
+}
+
+void BinaryFoldExpressionAST::accept0(ASTVisitor *visitor)
+{
+    if (visitor->visit(this)) {
+        accept(cast_expression1, visitor);
+        accept(cast_expression2, visitor);
+    }
+    visitor->endVisit(this);
+}

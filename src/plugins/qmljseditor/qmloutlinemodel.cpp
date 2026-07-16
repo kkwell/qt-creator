@@ -6,9 +6,10 @@
 
 #include <qmljs/parser/qmljsastvisitor_p.h>
 #include <qmljs/qmljscontext.h>
-#include <qmljs/qmljsscopechain.h>
+#include <qmljs/qmljsicons.h>
 #include <qmljs/qmljsmodelmanagerinterface.h>
 #include <qmljs/qmljsrewriter.h>
+#include <qmljs/qmljsscopechain.h>
 #include <qmljs/qmljsvalueowner.h>
 #include <qmljstools/qmljsrefactoringchanges.h>
 
@@ -28,8 +29,6 @@ using namespace QmlJSTools;
 enum {
     debug = false
 };
-
-static const char INTERNAL_MIMETYPE[] = "application/x-qtcreator-qmloutlinemodel";
 
 namespace QmlJSEditor {
 namespace Internal {
@@ -318,93 +317,7 @@ QmlOutlineModel::QmlOutlineModel(QmlJSEditorDocument *document) :
     QStandardItemModel(document),
     m_editorDocument(document)
 {
-    m_icons = Icons::instance();
-    Icons::instance()->setIconFilesPath(Core::ICore::resourcePath("qmlicons").toString());
-
     setItemPrototype(new QmlOutlineItem(this));
-}
-
-QStringList QmlOutlineModel::mimeTypes() const
-{
-    QStringList types;
-    types << QLatin1String(INTERNAL_MIMETYPE);
-    types << Utils::DropSupport::mimeTypesForFilePaths();
-    return types;
-}
-
-
-QMimeData *QmlOutlineModel::mimeData(const QModelIndexList &indexes) const
-{
-    if (indexes.isEmpty())
-        return nullptr;
-    auto data = new Utils::DropMimeData;
-    data->setOverrideFileDropAction(Qt::CopyAction);
-    QByteArray encoded;
-    QDataStream stream(&encoded, QIODevice::WriteOnly);
-    stream << indexes.size();
-
-    for (const auto &index : indexes) {
-        SourceLocation location = sourceLocation(index);
-        data->addFile(m_editorDocument->filePath(), location.startLine,
-                      location.startColumn - 1 /*editors have 0-based column*/);
-
-        QList<int> rowPath;
-        for (QModelIndex i = index; i.isValid(); i = i.parent()) {
-            rowPath.prepend(i.row());
-        }
-
-        stream << rowPath;
-    }
-    data->setData(QLatin1String(INTERNAL_MIMETYPE), encoded);
-    return data;
-}
-
-bool QmlOutlineModel::dropMimeData(const QMimeData *data, Qt::DropAction action, int row, int /*column*/, const QModelIndex &parent)
-{
-    if (debug)
-        qDebug() << __FUNCTION__ << row << parent;
-
-    // check if the action is supported
-    if (!data || !(action == Qt::CopyAction || action == Qt::MoveAction))
-        return false;
-
-    // We cannot reparent outside of the root item
-    if (!parent.isValid())
-        return false;
-
-    // check if the format is supported
-    QStringList types = mimeTypes();
-    if (types.isEmpty())
-        return false;
-    QString format = types.at(0);
-    if (!data->hasFormat(format))
-        return false;
-
-    // decode and insert
-    QByteArray encoded = data->data(format);
-    QDataStream stream(&encoded, QIODevice::ReadOnly);
-    int indexSize;
-    stream >> indexSize;
-    QList<QmlOutlineItem*> itemsToMove;
-    for (int i = 0; i < indexSize; ++i) {
-        QList<int> rowPath;
-        stream >> rowPath;
-
-        QModelIndex index;
-        for (int row : std::as_const(rowPath)) {
-            index = this->index(row, 0, index);
-            if (!index.isValid())
-                continue;
-        }
-
-        itemsToMove << static_cast<QmlOutlineItem*>(itemFromIndex(index));
-    }
-
-    auto targetItem = static_cast<QmlOutlineItem*>(itemFromIndex(parent));
-    reparentNodes(targetItem, row, itemsToMove);
-
-    // Prevent view from calling removeRow() on it's own
-    return false;
 }
 
 Qt::ItemFlags QmlOutlineModel::flags(const QModelIndex &index) const
@@ -412,30 +325,9 @@ Qt::ItemFlags QmlOutlineModel::flags(const QModelIndex &index) const
     if (!index.isValid())
         return QStandardItemModel::flags(index);
 
-    Qt::ItemFlags flags = Qt::ItemIsSelectable|Qt::ItemIsEnabled;
-
-    // only allow drag&drop if we're in sync
-    if (m_semanticInfo.isValid()
-            && !m_editorDocument->isSemanticInfoOutdated()) {
-        if (index.parent().isValid())
-            flags |= Qt::ItemIsDragEnabled;
-        if (index.data(ItemTypeRole) != NonElementBindingType)
-            flags |= Qt::ItemIsDropEnabled;
-    }
+    Qt::ItemFlags flags = Qt::ItemIsSelectable | Qt::ItemIsEnabled;
     return flags;
 }
-
-Qt::DropActions QmlOutlineModel::supportedDragActions() const
-{
-    // copy action used for dragging onto editor splits
-    return Qt::MoveAction | Qt::CopyAction;
-}
-
-Qt::DropActions QmlOutlineModel::supportedDropActions() const
-{
-    return Qt::MoveAction;
-}
-
 
 Document::Ptr QmlOutlineModel::document() const
 {
@@ -1058,18 +950,13 @@ SourceLocation QmlOutlineModel::getLocation(AST::PatternProperty *propertyNode) 
 }
 
 QIcon QmlOutlineModel::getIcon(AST::UiQualifiedId *qualifiedId) {
-    QIcon icon;
     if (qualifiedId) {
         QString name = asString(qualifiedId);
         if (name.contains(QLatin1Char('.')))
             name = name.split(QLatin1Char('.')).last();
-
-        // TODO: get rid of namespace prefixes.
-        icon = m_icons->icon(QLatin1String("Qt"), name);
-        if (icon.isNull())
-            icon = m_icons->icon(QLatin1String("QtWebkit"), name);
+        return Icons::Provider::instance().icon(name);
     }
-    return icon;
+    return QIcon();
 }
 
 QString QmlOutlineModel::getAnnotation(AST::UiObjectInitializer *objectInitializer) {

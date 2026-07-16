@@ -6,6 +6,8 @@
 #include <languageserverprotocol/servercapabilities.h>
 #include <qmljs/qmljsdocument.h>
 #include <qmljstools/qmljssemanticinfo.h>
+#include <texteditor/tabsettings.h>
+#include <texteditor/textdocument.h>
 
 #include <QObject>
 #include <QTextLayout>
@@ -62,7 +64,6 @@ public:
     void setCompletionSource(QmllsStatus::Source newSource);
 public slots:
     void setSourcesWithCapabilities(const LanguageServerProtocol::ServerCapabilities &);
-    void settingsChanged();
 
 public:
     QmlJSEditorDocument *q = nullptr;

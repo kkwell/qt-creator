@@ -95,7 +95,7 @@ public:
     {
         cloneStepCreator(existingStepId);
         setSupportedStepList(ProjectExplorer::Constants::BUILDSTEPS_DEPLOY);
-        setSupportedDeviceType(Constants::QdbLinuxOsType);
+        setSupportedDeviceType(ProjectExplorer::Constants::BOOT2QT_DEVICE_TYPE);
     }
 };
 
@@ -105,15 +105,16 @@ public:
     QdbDeployConfigurationFactory()
     {
         setConfigBaseId(Constants::QdbDeployConfigurationId);
-        addSupportedTargetDeviceType(Constants::QdbLinuxOsType);
+        addSupportedTargetDeviceType(ProjectExplorer::Constants::BOOT2QT_DEVICE_TYPE);
         setDefaultDisplayName(Tr::tr("Deploy to Boot to Qt target"));
         setUseDeploymentDataView();
 
-        addInitialStep(RemoteLinux::Constants::MakeInstallStepId, [](Target *target) {
-            const Project * const prj = target->project();
+        addInitialStep(RemoteLinux::Constants::MakeInstallStepId, [](BuildConfiguration *bc) {
+            const Project * const prj = bc->project();
             return prj->deploymentKnowledge() == DeploymentKnowledge::Bad
                    && prj->hasMakeInstallEquivalent();
         });
+        addInitialStep(RemoteLinux::Constants::ConnectStepId);
         addInitialStep(Qdb::Constants::QdbStopApplicationStepId);
 #ifdef Q_OS_WIN
         addInitialStep(RemoteLinux::Constants::DirectUploadStepId);
@@ -136,6 +137,7 @@ public:
     QdbDeployStepFactory m_directUploadStepFactory{RemoteLinux::Constants::DirectUploadStepId};
     QdbDeployStepFactory m_rsyncDeployStepFactory{RemoteLinux::Constants::GenericDeployStepId};
     QdbDeployStepFactory m_makeInstallStepFactory{RemoteLinux::Constants::MakeInstallStepId};
+    QdbDeployStepFactory m_customRunRemoteStepFactory{RemoteLinux::Constants::CustomCommandDeployStepId};
 
     DeviceDetector m_deviceDetector;
 };
@@ -162,11 +164,10 @@ private:
 
     void extensionsInitialized() final
     {
-        DeviceManager * const dm = DeviceManager::instance();
-        if (dm->isLoaded()) {
+        if (DeviceManager::isLoaded()) {
             d->setupDeviceDetection();
         } else {
-            connect(dm, &DeviceManager::devicesLoaded,
+            connect(DeviceManager::instance(), &DeviceManager::devicesLoaded,
                     d, &QdbPluginPrivate::setupDeviceDetection);
         }
     }

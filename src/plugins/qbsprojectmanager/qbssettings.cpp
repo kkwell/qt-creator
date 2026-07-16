@@ -7,9 +7,13 @@
 #include "qbsprojectmanagertr.h"
 
 #include <coreplugin/icore.h>
+#include <projectexplorer/devicesupport/devicekitaspects.h>
+#include <projectexplorer/devicesupport/devicemanager.h>
+#include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <utils/environment.h>
 #include <utils/hostosinfo.h>
+#include <utils/layoutbuilder.h>
 #include <utils/pathchooser.h>
 #include <utils/qtcprocess.h>
 #include <utils/qtcsettings.h>
@@ -20,6 +24,7 @@
 #include <QLabel>
 #include <QPushButton>
 
+using namespace ProjectExplorer;
 using namespace Utils;
 
 namespace QbsProjectManager::Internal {
@@ -28,12 +33,20 @@ const char QBS_EXE_KEY[] = "QbsProjectManager/QbsExecutable";
 const char QBS_DEFAULT_INSTALL_DIR_KEY[] = "QbsProjectManager/DefaultInstallDir";
 const char USE_CREATOR_SETTINGS_KEY[] = "QbsProjectManager/useCreatorDir";
 
+static Environment getQbsProcessEnvironment(const FilePath &qbsExe)
+{
+    if (qbsExe == QbsSettings::defaultQbsExecutableFilePath())
+        return Environment::originalSystemEnvironment();
+    return qbsExe.deviceEnvironment();
+}
+
 static QString getQbsVersion(const FilePath &qbsExe)
 {
     if (qbsExe.isEmpty() || !qbsExe.exists())
         return {};
     Process qbsProc;
     qbsProc.setCommand({qbsExe, {"--version"}});
+    qbsProc.setEnvironment(getQbsProcessEnvironment(qbsExe));
     qbsProc.start();
     using namespace std::chrono_literals;
     if (!qbsProc.waitForFinished(5s) || qbsProc.exitCode() != 0)
@@ -41,23 +54,22 @@ static QString getQbsVersion(const FilePath &qbsExe)
     return QString::fromLocal8Bit(qbsProc.rawStdOut()).trimmed();
 }
 
-static bool operator==(const QbsSettingsData &s1, const QbsSettingsData &s2)
+FilePath QbsSettings::qbsExecutableFilePathForKit(const Kit &kit)
 {
-    return s1.qbsExecutableFilePath == s2.qbsExecutableFilePath
-            && s1.defaultInstallDirTemplate == s2.defaultInstallDirTemplate
-            && s1.useCreatorSettings == s2.useCreatorSettings;
-}
-static bool operator!=(const QbsSettingsData &s1, const QbsSettingsData &s2)
-{
-    return !(s1 == s2);
+    return qbsExecutableFilePathForDevice(BuildDeviceKitAspect::device(&kit));
 }
 
-FilePath QbsSettings::qbsExecutableFilePath()
+FilePath QbsSettings::qbsExecutableFilePathForDevice(const IDeviceConstPtr &device)
 {
-    FilePath candidate = instance().m_settings.qbsExecutableFilePath;
-    if (!candidate.exists())
-        candidate = defaultQbsExecutableFilePath();
-    return candidate;
+    if (!device)
+        return {};
+    if (device->id() == ProjectExplorer::Constants::DESKTOP_DEVICE_ID) {
+        FilePath candidate = instance().qbsExecutableFilePath();
+        if (!candidate.exists())
+            candidate = defaultQbsExecutableFilePath();
+        return candidate;
+    }
+    return device->searchExecutableInPath("qbs");
 }
 
 FilePath QbsSettings::defaultQbsExecutableFilePath()
@@ -70,9 +82,9 @@ FilePath QbsSettings::defaultQbsExecutableFilePath()
     return candidate;
 }
 
-FilePath QbsSettings::qbsConfigFilePath()
+FilePath QbsSettings::qbsConfigFilePath(const IDeviceConstPtr &device)
 {
-    const FilePath qbsExe = qbsExecutableFilePath();
+    const FilePath qbsExe = qbsExecutableFilePathForDevice(device);
     if (!qbsExe.isExecutableFile())
         return {};
     const FilePath qbsConfig = qbsExe.absolutePath().pathAppended("qbs-config")
@@ -82,27 +94,26 @@ FilePath QbsSettings::qbsConfigFilePath()
     return qbsConfig;
 }
 
-QString QbsSettings::defaultInstallDirTemplate()
+Environment QbsSettings::qbsProcessEnvironment(const IDeviceConstPtr &device)
 {
-    return instance().m_settings.defaultInstallDirTemplate;
+    return getQbsProcessEnvironment(qbsExecutableFilePathForDevice(device));
 }
 
-bool QbsSettings::useCreatorSettingsDirForQbs()
+bool QbsSettings::useCreatorSettingsDirForQbs(const IDeviceConstPtr &device)
 {
-    return instance().m_settings.useCreatorSettings;
+    if (!device || device->id() != ProjectExplorer::Constants::DESKTOP_DEVICE_ID)
+        return false;
+    return instance().useCreatorSettings();
 }
 
-QString QbsSettings::qbsSettingsBaseDir()
+FilePath QbsSettings::qbsSettingsBaseDir(const IDeviceConstPtr &device)
 {
-    return useCreatorSettingsDirForQbs() ? Core::ICore::userResourcePath().toString() : QString();
+    return useCreatorSettingsDirForQbs(device) ? Core::ICore::userResourcePath() : FilePath();
 }
 
-QVersionNumber QbsSettings::qbsVersion()
+QVersionNumber QbsSettings::qbsVersion(const IDeviceConstPtr &device)
 {
-    if (instance().m_settings.qbsVersion.isNull())
-        instance().m_settings.qbsVersion = QVersionNumber::fromString(
-                    getQbsVersion(qbsExecutableFilePath()));
-    return instance().m_settings.qbsVersion;
+    return QVersionNumber::fromString(getQbsVersion(qbsExecutableFilePathForDevice(device)));
 }
 
 QbsSettings &QbsSettings::instance()
@@ -111,109 +122,64 @@ QbsSettings &QbsSettings::instance()
     return theSettings;
 }
 
-void QbsSettings::setSettingsData(const QbsSettingsData &settings)
-{
-    if (instance().m_settings != settings) {
-        instance().m_settings = settings;
-        instance().storeSettings();
-        emit instance().settingsChanged();
-    }
-}
-
-QbsSettingsData QbsSettings::rawSettingsData()
-{
-    return instance().m_settings;
-}
-
 QbsSettings::QbsSettings()
 {
-    loadSettings();
+    setAutoApply(false);
+
+    qbsExecutableFilePath.setSettingsKey(QBS_EXE_KEY);
+    qbsExecutableFilePath.setExpectedKind(PathChooser::ExistingCommand);
+    qbsExecutableFilePath.setDefaultPathValue(defaultQbsExecutableFilePath());
+    qbsExecutableFilePath.setLabelText(Tr::tr("Path to qbs executable:"));
+
+    defaultInstallDirTemplate.setSettingsKey(QBS_DEFAULT_INSTALL_DIR_KEY);
+    defaultInstallDirTemplate.setDefaultValue("%{CurrentBuild:QbsBuildRoot}/install-root");
+    defaultInstallDirTemplate.setDisplayStyle(StringAspect::LineEditDisplay);
+    defaultInstallDirTemplate.setLabelText(Tr::tr("Default installation directory:"));
+
+    useCreatorSettings.setSettingsKey(USE_CREATOR_SETTINGS_KEY);
+    useCreatorSettings.setDefaultValue(true);
+    useCreatorSettings.setValue(true);
+    //: %1 == "Qt Creator" or "Qt Design Studio"
+    useCreatorSettings.setLabelText(Tr::tr("Use %1 settings directory for Qbs")
+                                    .arg(QGuiApplication::applicationDisplayName()));
+
+    setLayouter([this] {
+        using namespace Layouting;
+        return Column {
+            useCreatorSettings,
+            Form {
+                qbsExecutableFilePath,
+                PushButton {
+                    text(Tr::tr("Reset")),
+                    onClicked(this, [this] {
+                        const FilePath defaultPath = QbsSettings::defaultQbsExecutableFilePath();
+                        qbsExecutableFilePath.setVolatileValue(defaultPath.toUserOutput());
+                    })
+                }, br,
+                defaultInstallDirTemplate, br,
+                Tr::tr("Qbs version:"), m_versionLabel, br,
+            },
+            st
+        };
+    });
+
+    readSettings();
+
+    auto updateVersionString = [this] {
+        const QString version = getQbsVersion(qbsExecutableFilePath.expandedVolatileValue());
+        m_versionLabel.setText(version.isEmpty() ? Tr::tr("Failed to retrieve version.") : version);
+    };
+    updateVersionString();
+
+    qbsExecutableFilePath.addOnVolatileValueChanged(this, updateVersionString);
 }
-
-void QbsSettings::loadSettings()
-{
-    QtcSettings * const s = Core::ICore::settings();
-    m_settings.qbsExecutableFilePath = FilePath::fromString(s->value(QBS_EXE_KEY).toString());
-    m_settings.defaultInstallDirTemplate = s->value(
-                QBS_DEFAULT_INSTALL_DIR_KEY,
-                "%{CurrentBuild:QbsBuildRoot}/install-root").toString();
-    m_settings.useCreatorSettings = s->value(USE_CREATOR_SETTINGS_KEY, true).toBool();
-}
-
-void QbsSettings::storeSettings() const
-{
-    QtcSettings * const s = Core::ICore::settings();
-    s->setValueWithDefault(QBS_EXE_KEY, m_settings.qbsExecutableFilePath.toString(),
-                           defaultQbsExecutableFilePath().toString());
-    s->setValue(QBS_DEFAULT_INSTALL_DIR_KEY, m_settings.defaultInstallDirTemplate);
-    s->setValue(USE_CREATOR_SETTINGS_KEY, m_settings.useCreatorSettings);
-}
-
-class QbsSettingsPageWidget : public Core::IOptionsPageWidget
-{
-public:
-    QbsSettingsPageWidget()
-    {
-        m_qbsExePathChooser.setExpectedKind(PathChooser::ExistingCommand);
-        m_qbsExePathChooser.setFilePath(QbsSettings::qbsExecutableFilePath());
-        m_resetQbsExeButton.setText(Tr::tr("Reset"));
-        m_defaultInstallDirLineEdit.setText(QbsSettings::defaultInstallDirTemplate());
-        m_versionLabel.setText(getQbsVersionString());
-        //: %1 == "Qt Creator" or "Qt Design Studio"
-        m_settingsDirCheckBox.setText(Tr::tr("Use %1 settings directory for Qbs")
-                                          .arg(QGuiApplication::applicationDisplayName()));
-        m_settingsDirCheckBox.setChecked(QbsSettings::useCreatorSettingsDirForQbs());
-
-        const auto layout = new QFormLayout(this);
-        layout->addRow(&m_settingsDirCheckBox);
-        const auto qbsExeLayout = new QHBoxLayout;
-        qbsExeLayout->addWidget(&m_qbsExePathChooser);
-        qbsExeLayout->addWidget(&m_resetQbsExeButton);
-        layout->addRow(Tr::tr("Path to qbs executable:"), qbsExeLayout);
-        layout->addRow(Tr::tr("Default installation directory:"), &m_defaultInstallDirLineEdit);
-        layout->addRow(Tr::tr("Qbs version:"), &m_versionLabel);
-
-        connect(&m_qbsExePathChooser, &PathChooser::textChanged, this, [this] {
-            m_versionLabel.setText(getQbsVersionString());
-        });
-        connect(&m_resetQbsExeButton, &QPushButton::clicked, this, [this] {
-            m_qbsExePathChooser.setFilePath(QbsSettings::defaultQbsExecutableFilePath());
-        });
-    }
-
-    void apply() final
-    {
-        QbsSettingsData settings = QbsSettings::rawSettingsData();
-        if (m_qbsExePathChooser.filePath() != QbsSettings::qbsExecutableFilePath())
-            settings.qbsExecutableFilePath = m_qbsExePathChooser.filePath();
-        settings.defaultInstallDirTemplate = m_defaultInstallDirLineEdit.text();
-        settings.useCreatorSettings = m_settingsDirCheckBox.isChecked();
-        settings.qbsVersion = {};
-        QbsSettings::setSettingsData(settings);
-    }
-
-private:
-    QString getQbsVersionString()
-    {
-        const QString version = getQbsVersion(m_qbsExePathChooser.filePath());
-        return version.isEmpty() ? Tr::tr("Failed to retrieve version.") : version;
-    }
-
-    PathChooser m_qbsExePathChooser;
-    QPushButton m_resetQbsExeButton;
-    QLabel m_versionLabel;
-    QCheckBox m_settingsDirCheckBox;
-    FancyLineEdit m_defaultInstallDirLineEdit;
-};
 
 QbsSettingsPage::QbsSettingsPage()
 {
     setId("A.QbsProjectManager.QbsSettings");
     setDisplayName(Tr::tr("General"));
     setCategory(Constants::QBS_SETTINGS_CATEGORY);
-    setDisplayCategory(Tr::tr(Constants::QBS_SETTINGS_TR_CATEGORY));
-    setCategoryIconPath(":/qbsprojectmanager/images/settingscategory_qbsprojectmanager.png");
-    setWidgetCreator([] { return new QbsSettingsPageWidget; });
+    setSettingsProvider([] { return &QbsSettings::instance(); });
 }
 
 } // QbsProjectManager::Internal

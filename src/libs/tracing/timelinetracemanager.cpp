@@ -37,10 +37,10 @@ public:
     quint64 recordedFeatures = 0;
     bool aggregateTraces = false;
 
-    QHash<quint8, QVector<TraceEventLoader>> eventLoaders;
-    QVector<Initializer> initializers;
-    QVector<Finalizer> finalizers;
-    QVector<Clearer> clearers;
+    QHash<quint8, QList<TraceEventLoader>> eventLoaders;
+    QList<Initializer> initializers;
+    QList<Finalizer> finalizers;
+    QList<Clearer> clearers;
 
     qint64 traceStart = -1;
     qint64 traceEnd = -1;
@@ -218,6 +218,9 @@ QFuture<void> TimelineTraceManager::save(const QString &filename)
     writer->setTraceManager(this);
     writer->setNotes(d->notesModel);
 
+    if (d->notesModel)
+        d->notesModel->stash();
+
     connect(writer, &QObject::destroyed, this, &TimelineTraceManager::saveFinished);
     connect(writer, &TimelineTraceFile::error, this, &TimelineTraceManager::error);
 
@@ -278,6 +281,9 @@ QFuture<void> TimelineTraceManager::load(const QString &filename)
             if (reader->traceEnd() >= 0)
                 increaseTraceEnd(reader->traceEnd());
             finalize();
+
+            if (d->notesModel)
+                d->notesModel->restore();
         }
     });
     watcher->setFuture(fi.future());

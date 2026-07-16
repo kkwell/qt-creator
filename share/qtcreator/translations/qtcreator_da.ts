@@ -1020,8 +1020,8 @@ To add the Qt version, select Options &gt; Build &amp; Run &gt; Qt Versions.</so
 Vælg Valgmuligheder &gt; Byg &amp; kør &gt; Qt versioner, for at tilføje Qt versionerne.</translation>
     </message>
     <message>
-        <source>(SDK Version: %1, NDK Version: %2)</source>
-        <translation>(SDK version: %1, NDK version: %2)</translation>
+        <source>(SDK Version: %1)</source>
+        <translation>(SDK version: %1)</translation>
     </message>
     <message>
         <source>Select JDK Path</source>
@@ -37724,18 +37724,6 @@ skal være et repository krævet SSH-autentifikation (se dokumentation på SSH o
     <message>
         <source>&quot;%1&quot; in &quot;data&quot; section of &quot;VcsCommand&quot; page has unexpected type (unset or List).</source>
         <translation>&quot;%1&quot; i &quot;data&quot;-sektion af &quot;VcsCommand&quot;-side har uventet type (usat eller liste).</translation>
-    </message>
-    <message>
-        <source>Job in &quot;VcsCommand&quot; page is empty.</source>
-        <translation>Job på &quot;VcsCommand&quot;-side er tom.</translation>
-    </message>
-    <message>
-        <source>Job in &quot;VcsCommand&quot; page is not an object.</source>
-        <translation>Job på &quot;VcsCommand&quot;-side er ikke et objekt.</translation>
-    </message>
-    <message>
-        <source>Job in &quot;VcsCommand&quot; page has no &quot;%1&quot; set.</source>
-        <translation>Job på &quot;VcsCommand&quot;-side har ingen &quot;%1&quot; sat.</translation>
     </message>
     <message>
         <source>Checkout</source>

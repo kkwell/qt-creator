@@ -7,15 +7,19 @@
 
 #include "idevice.h"
 
-#include <QApplication>
-
 #include <memory>
 
 namespace ProjectExplorer {
 class ProjectExplorerPlugin;
 class DesktopDevicePrivate;
 
-namespace Internal { class DesktopDeviceFactory; }
+namespace Internal {
+class DesktopDeviceFactory;
+
+#ifdef WITH_TESTS
+QObject *createDesktopDeviceTest();
+#endif
+}
 
 class PROJECTEXPLORER_EXPORT DesktopDevice : public IDevice
 {
@@ -26,17 +30,20 @@ public:
 
     IDeviceWidget *createWidget() override;
     bool canCreateProcessModel() const override;
-    DeviceProcessSignalOperation::Ptr signalOperation() const override;
+    QtTaskTree::ExecutableItem signalOperationRecipe(
+        const ProjectExplorer::SignalOperationData &data,
+        const QtTaskTree::Storage<Utils::Result<>> &resultStorage) const final;
     QUrl toolControlChannel(const ControlChannelHint &) const override;
-    bool usableAsBuildDevice() const override;
 
-    bool handlesFile(const Utils::FilePath &filePath) const override;
-    Utils::expected_str<Utils::Environment> systemEnvironmentWithError() const override;
+    Utils::Result<> handlesFile(const Utils::FilePath &filePath) const override;
+    Utils::Result<Utils::Environment> systemEnvironmentWithError() const override;
+    Utils::Result<Utils::Environment> sourcedEnvironment(
+        const Utils::FilePath &script) const override;
 
     Utils::FilePath rootPath() const override;
     Utils::FilePath filePath(const QString &pathOnDevice) const override;
 
-    void fromMap(const Utils::Store &map) override;
+    void initDeviceToolAspects() override;
 
 protected:
     DesktopDevice();

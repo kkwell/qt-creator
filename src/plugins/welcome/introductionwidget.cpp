@@ -5,6 +5,7 @@
 #include "welcometr.h"
 
 #include <coreplugin/icore.h>
+#include <coreplugin/modemanager.h>
 
 #include <utils/algorithm.h>
 #include <utils/checkablemessagebox.h>
@@ -12,6 +13,7 @@
 #include <utils/qtcassert.h>
 #include <utils/stylehelper.h>
 
+#include <QDesktopServices>
 #include <QEvent>
 #include <QGuiApplication>
 #include <QImage>
@@ -39,7 +41,7 @@ struct Item
 class IntroductionWidget : public QWidget
 {
 public:
-    IntroductionWidget();
+    IntroductionWidget(Core::ModeManager::Style previousModeStyle);
 
 protected:
     bool event(QEvent *e) override;
@@ -62,12 +64,16 @@ private:
     std::vector<Item> m_items;
     QPointer<QWidget> m_stepPointerAnchor;
     uint m_step = 0;
+    Core::ModeManager::Style m_previousModeStyle;
 };
 
-IntroductionWidget::IntroductionWidget()
+IntroductionWidget::IntroductionWidget(Core::ModeManager::Style previousModeStyle)
     : QWidget(ICore::dialogParent()),
-      m_borderImage(":/welcome/images/border.png")
+      m_borderImage(":/welcome/images/border.png"),
+      m_previousModeStyle(previousModeStyle)
 {
+    Core::ModeManager::setModeStyle(Core::ModeManager::Style::IconsAndText);
+
     setFocusPolicy(Qt::StrongFocus);
     setFocus();
     parentWidget()->installEventFilter(this);
@@ -86,8 +92,12 @@ IntroductionWidget::IntroductionWidget()
     m_stepText->setTextFormat(Qt::RichText);
     // why is palette not inherited???
     m_stepText->setPalette(palette());
-    m_stepText->setOpenExternalLinks(true);
-    m_stepText->installEventFilter(this);
+    connect(m_stepText, &QLabel::linkActivated, this, [this](const QString &link) {
+        // clicking the User Interface link should both open the documentation page
+        // and step forward (=end the tour)
+        step();
+        QDesktopServices::openUrl(link);
+    });
     layout->addWidget(m_stepText);
 
     m_continueLabel = new QLabel(this);
@@ -175,8 +185,6 @@ bool IntroductionWidget::eventFilter(QObject *obj, QEvent *ev)
 {
     if (obj == parent() && ev->type() == QEvent::Resize)
         resizeToParent();
-    else if (obj == m_stepText && ev->type() == QEvent::MouseButtonRelease)
-        step();
     return QWidget::eventFilter(obj, ev);
 }
 
@@ -360,6 +368,7 @@ void IntroductionWidget::mouseReleaseEvent(QMouseEvent *me)
 
 void IntroductionWidget::finish()
 {
+    Core::ModeManager::setModeStyle(m_previousModeStyle);
     hide();
     deleteLater();
 }
@@ -402,29 +411,32 @@ void IntroductionWidget::resizeToParent()
 
 void runUiTour()
 {
-    auto intro = new IntroductionWidget;
+    auto intro = new IntroductionWidget(Core::ModeManager::modeStyle());
     intro->show();
 }
 
 void askUserAboutIntroduction()
 {
+    InfoBar *infoBar = ICore::popupInfoBar();
+
     // CheckableMessageBox for compatibility with Qt Creator < 4.11
     if (!CheckableDecider(Key(kTakeTourSetting)).shouldAskAgain()
-        || !ICore::infoBar()->canInfoBeAdded(kTakeTourSetting))
+        || !infoBar->canInfoBeAdded(kTakeTourSetting))
         return;
 
     InfoBarEntry
         info(kTakeTourSetting,
-             Tr::tr("Would you like to take a quick UI tour? This tour highlights important user "
-                    "interface elements and shows how they are used. To take the tour later, "
-                    "select Help > UI Tour."),
+             Tr::tr("See where the important UI elements are and how they are used. "
+                    "To take the tour later, select Help > UI Tour."),
              InfoBarEntry::GlobalSuppression::Enabled);
-    info.addCustomButton(Tr::tr("Take UI Tour"), [] {
-        ICore::infoBar()->removeInfo(kTakeTourSetting);
-        ICore::infoBar()->globallySuppressInfo(kTakeTourSetting);
-        runUiTour();
-    });
-    ICore::infoBar()->addInfo(info);
+    info.setTitle(Tr::tr("Take a UI Tour?"));
+    info.setInfoType(InfoLabel::Information);
+    info.addCustomButton(
+        Tr::tr("Take UI Tour"),
+        [] { runUiTour(); },
+        {},
+        InfoBarEntry::ButtonAction::SuppressPersistently);
+    infoBar->addInfo(info);
 }
 
 } //  Welcome::Internal

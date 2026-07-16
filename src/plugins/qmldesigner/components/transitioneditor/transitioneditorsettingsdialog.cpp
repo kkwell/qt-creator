@@ -132,8 +132,10 @@ void TransitionEditorSettingsDialog::setupTransitions(const ModelNode &newTransi
         return;
     }
 
-    for (const auto &transition : transitions)
+    for (const auto &transition : transitions) {
+        transition.ensureIdExists();
         addTransitionTab(transition);
+    }
 
     if (newTransition.isValid()) {
         m_currentTransition = newTransition;
@@ -146,9 +148,17 @@ void TransitionEditorSettingsDialog::setupTransitions(const ModelNode &newTransi
 
 void TransitionEditorSettingsDialog::addTransitionTab(const QmlTimeline &node)
 {
+    QTC_ASSERT(node.modelNode().hasId(), return);
+
     auto transitionForm = new TransitionForm(this);
-    ui->timelineTab->addTab(transitionForm, node.modelNode().displayName());
+    ui->timelineTab->addTab(transitionForm, node.modelNode().id());
     transitionForm->setTransition(node);
+
+    connect(transitionForm, &TransitionForm::stateGroupChanged,  this, [this](const ModelNode &transition, const ModelNode &stateGroup){
+        QTC_ASSERT(transition.isValid(), return);
+        QTC_ASSERT(stateGroup.isValid(), return);
+        m_transitionEditorView->resetTransitionToStateGroup(transition, stateGroup);
+    });
 }
 
 } // namespace QmlDesigner

@@ -235,7 +235,7 @@ void MultiExportDialog::suggestSizes()
 QVector<ExportData> MultiExportDialog::exportData() const
 {
     const QVector<QSize> sizeList = sizes();
-    const QString pattern = exportFileName().toString();
+    const QString pattern = exportFileName().toUrlishString();
      QVector<ExportData> result;
      result.reserve(sizeList.size());
      for (const QSize &s : sizeList)
@@ -286,7 +286,7 @@ void MultiExportDialog::accept()
             ? Tr::tr("The file %1 already exists.\nWould you like to overwrite it?")
                 .arg(existingFiles.constFirst().toUserOutput())
             : Tr::tr("The files %1 already exist.\nWould you like to overwrite them?")
-                .arg(FilePath::formatFilePaths(existingFiles, ", "));
+                .arg(existingFiles.toUserOutput(", "));
         QMessageBox messageBox(QMessageBox::Question, windowTitle(), message,
                                QMessageBox::Yes | QMessageBox::No, this);
         if (messageBox.exec() != QMessageBox::Yes)

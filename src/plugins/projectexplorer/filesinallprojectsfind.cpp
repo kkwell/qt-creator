@@ -15,8 +15,7 @@
 using namespace TextEditor;
 using namespace Utils;
 
-namespace ProjectExplorer {
-namespace Internal {
+namespace ProjectExplorer::Internal {
 
 QString FilesInAllProjectsFind::id() const
 {
@@ -50,6 +49,11 @@ QByteArray FilesInAllProjectsFind::settingsKey() const
     return kSettingsKey;
 }
 
+FindFlags FilesInAllProjectsFind::supportedFindFlags() const
+{
+    return BaseFileFind::supportedFindFlags();
+}
+
 FileContainerProvider FilesInAllProjectsFind::fileContainerProvider() const
 {
     return [nameFilters = fileNameFilters(), exclusionFilters = fileExclusionFilters()] {
@@ -57,7 +61,7 @@ FileContainerProvider FilesInAllProjectsFind::fileContainerProvider() const
             return p->projectFilePath().parentDir();
         });
         return SubDirFileContainer(FilePaths(dirs.constBegin(), dirs.constEnd()), nameFilters,
-                                   exclusionFilters, Core::EditorManager::defaultTextCodec());
+                                   exclusionFilters, Core::EditorManager::defaultTextEncoding());
     };
 }
 
@@ -66,5 +70,4 @@ QString FilesInAllProjectsFind::label() const
     return Tr::tr("Files in All Project Directories:");
 }
 
-} // namespace Internal
-} // namespace ProjectExplorer
+} // namespace ProjectExplorer::Internal

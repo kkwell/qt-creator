@@ -55,7 +55,7 @@ public:
                                                  const QColor &backgroundColor);
 
 public:
-    using SourceColors = QPair<QColor, QColor>;
+    using SourceColors = QPair<QRgb, QRgb>;
     QColor rectColor;
     QColor textColor;
 
@@ -135,8 +135,10 @@ void TextMark::paintAnnotation(QPainter &painter,
                                                    painter.fontMetrics(),
                                                    fadeInOffset,
                                                    fadeOutOffset);
-    if (m_staticAnnotationText.text() != rects.text)
+    if (m_staticAnnotationText.text() != rects.text) {
         m_staticAnnotationText.setText(rects.text);
+        m_staticAnnotationText.setTextFormat(m_annotationTextFormat);
+    }
     annotationRect->setRight(rects.fadeOutRect.right());
     const QRectF eventRectF(eventRect);
     if (!(rects.fadeInRect.intersects(eventRectF) || rects.annotationRect.intersects(eventRectF)
@@ -177,9 +179,13 @@ TextMark::AnnotationRects TextMark::annotationRects(const QRectF &boundingRect,
                                                     const qreal fadeOutOffset) const
 {
     AnnotationRects rects;
-    rects.text = lineAnnotation();
+    rects.text = lineAnnotation().simplified();
     if (rects.text.isEmpty())
         return rects;
+    // truncate the text to a sensible length to avoid expensive width calculation in QFontMetrics
+    // see QTBUG-138487
+    rects.text.truncate(1.2 * boundingRect.width() / fm.averageCharWidth());
+
     rects.fadeInRect = boundingRect;
     rects.fadeInRect.setWidth(fadeInOffset);
     rects.annotationRect = boundingRect;
@@ -290,7 +296,7 @@ void TextMark::addToToolTipLayout(QGridLayout *target) const
     target->addLayout(contentLayout, row, 1);
 
     // Right column: action icons/button
-    QList<QAction *> actions{m_actions.begin(), m_actions.end()};
+    QList<QAction *> actions;
     if (m_actionsProvider)
         actions = m_actionsProvider();
     if (m_category.id.isValid() && !m_lineAnnotation.isEmpty()) {
@@ -315,7 +321,7 @@ void TextMark::addToToolTipLayout(QGridLayout *target) const
         settingsAction->setIcon(Utils::Icons::SETTINGS.icon());
         settingsAction->setToolTip(Tr::tr("Show Diagnostic Settings"));
         QObject::connect(settingsAction, &QAction::triggered, Core::ICore::instance(),
-            [id = m_settingsPage] { Core::ICore::showOptionsDialog(id); },
+            [id = m_settingsPage] { Core::ICore::showSettings(id); },
             Qt::QueuedConnection);
         actions.append(settingsAction);
     }
@@ -406,6 +412,12 @@ void TextMark::setColor(const Theme::Color &color)
     updateMarker();
 }
 
+void TextMark::unsetColor()
+{
+    m_color.reset();
+    updateMarker();
+}
+
 void TextMark::setLineAnnotation(const QString &lineAnnotation)
 {
     m_lineAnnotation = lineAnnotation;
@@ -428,16 +440,6 @@ void TextMark::setToolTip(const QString &toolTip)
     m_toolTipProvider = std::function<QString()>();
 }
 
-QVector<QAction *> TextMark::actions() const
-{
-    return m_actions;
-}
-
-void TextMark::setActions(const QVector<QAction *> &actions)
-{
-    m_actions = actions;
-}
-
 void TextMark::setActionsProvider(const std::function<QList<QAction *>()> &actionsProvider)
 {
     m_actionsProvider = actionsProvider;
@@ -446,6 +448,16 @@ void TextMark::setActionsProvider(const std::function<QList<QAction *>()> &actio
 void TextMark::setSettingsPage(Id settingsPage)
 {
     m_settingsPage = settingsPage;
+}
+
+Qt::TextFormat TextMark::annotationTextFormat() const
+{
+    return m_annotationTextFormat;
+}
+
+void TextMark::setAnnotationTextFormat(Qt::TextFormat newTextFormat)
+{
+    m_annotationTextFormat = newTextFormat;
 }
 
 bool TextMark::isLocationMarker() const
@@ -547,7 +559,7 @@ AnnotationColors &AnnotationColors::getAnnotationColors(const QColor &markColor,
     auto lowClipHsl = [](qreal value) {
         return std::max(0.1, std::min(0.3, value));
     };
-    AnnotationColors &colors = m_colorCache[{markColor, backgroundColor}];
+    AnnotationColors &colors = m_colorCache[{markColor.rgba(), backgroundColor.rgba()}];
     if (!colors.rectColor.isValid() || !colors.textColor.isValid()) {
         const double backgroundLightness = backgroundColor.lightnessF();
         const double foregroundLightness = backgroundLightness > 0.5

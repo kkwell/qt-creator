@@ -6,7 +6,6 @@
 #include "cmakekitaspect.h"
 #include "cmakeprojectconstants.h"
 #include "cmakeprojectmanagertr.h"
-#include "cmaketool.h"
 
 #include <projectexplorer/buildsteplist.h>
 #include <projectexplorer/project.h>
@@ -20,7 +19,7 @@ namespace CMakeProjectManager::Internal {
 
 // CMakeAbstractProcessStep
 
-CMakeAbstractProcessStep::CMakeAbstractProcessStep(BuildStepList *bsl, Utils::Id id)
+CMakeAbstractProcessStep::CMakeAbstractProcessStep(BuildStepList *bsl, Id id)
     : AbstractProcessStep(bsl, id)
 {}
 
@@ -32,15 +31,8 @@ bool CMakeAbstractProcessStep::init()
     BuildConfiguration *bc = buildConfiguration();
     QTC_ASSERT(bc, return false);
 
-    if (!bc->isEnabled()) {
-        emit addTask(
-            BuildSystemTask(Task::Error, Tr::tr("The build configuration is currently disabled.")));
-        emitFaultyConfigurationMessage();
-        return false;
-    }
-
-    CMakeTool *tool = CMakeKitAspect::cmakeTool(kit());
-    if (!tool || !tool->isValid()) {
+    FilePath cmakeExecutable = CMakeKitAspect::cmakeExecutable(kit());
+    if (cmakeExecutable.isEmpty()) {
         emit addTask(BuildSystemTask(Task::Error,
                                      Tr::tr("A CMake tool must be set up for building. "
                                             "Configure a CMake tool in the kit options.")));
@@ -49,7 +41,7 @@ bool CMakeAbstractProcessStep::init()
     }
 
     // Warn if doing out-of-source builds with a CMakeCache.txt is the source directory
-    const Utils::FilePath projectDirectory = bc->target()->project()->projectDirectory();
+    const Utils::FilePath projectDirectory = bc->project()->projectDirectory();
     if (bc->buildDirectory() != projectDirectory) {
         if (projectDirectory.pathAppended(Constants::CMAKE_CACHE_TXT).exists()) {
             emit addTask(BuildSystemTask(

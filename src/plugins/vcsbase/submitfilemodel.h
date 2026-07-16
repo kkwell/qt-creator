@@ -5,6 +5,8 @@
 
 #include "vcsbase_global.h"
 
+#include <coreplugin/iversioncontrol.h>
+
 #include <utils/filepath.h>
 
 #include <QStandardItemModel>
@@ -30,8 +32,8 @@ public:
     void setRepositoryRoot(const Utils::FilePath &repoRoot);
 
     // Convenience to create and add rows containing a file plus status text.
-    QList<QStandardItem *> addFile(const QString &fileName, const QString &status = QString(),
-                                   CheckMode checkMode = Checked, const QVariant &data = QVariant());
+    QList<QStandardItem *> addFile(const QString &fileName, const QString &status = {},
+                                   CheckMode checkMode = Checked, const QVariant &data = {});
 
     QString state(int row) const;
     QString file(int row) const;
@@ -39,6 +41,7 @@ public:
     bool checked(int row) const;
     void setChecked(int row, bool check);
     void setAllChecked(bool check);
+    void setSelectedChecked(const QList<int> &rows, bool check);
     QVariant extraData(int row) const;
 
     bool hasCheckedFiles() const;
@@ -49,21 +52,10 @@ public:
 
     virtual void updateSelections(SubmitFileModel *source);
 
-    enum FileStatusHint
-    {
-        FileStatusUnknown,
-        FileAdded,
-        FileModified,
-        FileDeleted,
-        FileRenamed,
-        FileUnmerged
-    };
-
-    // Function that converts(qualifies) a QString/QVariant pair to FileStatusHint
+    // Function that converts(qualifies) a QString/QVariant pair to VcsFileState
     //     1st arg is the file status string as passed to addFile()
     //     2nd arg is the file extra data as passed to addFile()
-    typedef std::function<FileStatusHint (const QString &, const QVariant &)>
-            FileStatusQualifier;
+    typedef std::function<Core::VcsFileState(const QString &, const QVariant &)> FileStatusQualifier;
 
     const FileStatusQualifier &fileStatusQualifier() const;
     void setFileStatusQualifier(FileStatusQualifier &&func);

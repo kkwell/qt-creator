@@ -2,22 +2,23 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "dynamicpropertiesmodel.h"
+#include "connectioneditorlogging.h"
 #include "dynamicpropertiesitem.h"
-#include "connectioneditorutils.h"
 
 #include <abstractproperty.h>
 #include <bindingproperty.h>
 #include <modelfwd.h>
-#include <rewritertransaction.h>
-#include <rewritingexception.h>
-#include <utils/algorithm.h>
-#include <utils/qtcassert.h>
-#include <variantproperty.h>
 #include <qmlchangeset.h>
 #include <qmldesignerconstants.h>
 #include <qmldesignerplugin.h>
 #include <qmlobjectnode.h>
 #include <qmltimeline.h>
+#include <rewritertransaction.h>
+#include <rewritingexception.h>
+#include <scripteditorutils.h>
+#include <utils/algorithm.h>
+#include <utils/qtcassert.h>
+#include <variantproperty.h>
 
 #include <optional>
 
@@ -68,7 +69,7 @@ void DynamicPropertiesModel::add()
             showErrorMessage(e.description());
         }
     } else {
-        qWarning() << "DynamicPropertiesModel::add not one node selected";
+        qCWarning(ConnectionEditorLog) << __FUNCTION__ << "not one node selected";
     }
 }
 
@@ -136,7 +137,7 @@ void DynamicPropertiesModel::setCurrentProperty(const AbstractProperty &property
         setCurrentIndex(*index);
 }
 
-void DynamicPropertiesModel::setCurrent(int internalId, const PropertyName &name)
+void DynamicPropertiesModel::setCurrent(int internalId, PropertyNameView name)
 {
     if (internalId < 0)
         return;
@@ -147,8 +148,10 @@ void DynamicPropertiesModel::setCurrent(int internalId, const PropertyName &name
 
 void DynamicPropertiesModel::updateItem(const AbstractProperty &property)
 {
-    if (!property.isDynamic())
+    if (!property.isDynamic() && !property.isSignalDeclarationProperty())
         return;
+
+    m_blockCallbackToModel = true;
 
     if (auto *item = itemForProperty(property)) {
         item->updateProperty(property);
@@ -159,6 +162,8 @@ void DynamicPropertiesModel::updateItem(const AbstractProperty &property)
             setCurrentProperty(property);
         }
     }
+
+    m_blockCallbackToModel = false;
 }
 
 void DynamicPropertiesModel::removeItem(const AbstractProperty &property)
@@ -195,7 +200,7 @@ AbstractProperty DynamicPropertiesModel::propertyForRow(int row) const
     return {};
 }
 
-std::optional<int> DynamicPropertiesModel::findRow(int nodeId, const PropertyName &name) const
+std::optional<int> DynamicPropertiesModel::findRow(int nodeId, PropertyNameView name) const
 {
     for (int i = 0; i < rowCount(); ++i) {
         if (auto *item = itemForRow(i)) {
@@ -243,7 +248,7 @@ void DynamicPropertiesModel::addModelNode(const ModelNode &node)
 
 void DynamicPropertiesModel::addProperty(const AbstractProperty &property)
 {
-    const PropertyName name = property.name();
+    const PropertyNameView name = property.name();
     for (int i = 0; i < rowCount(); ++i) {
         if (auto *item = itemForRow(i)) {
             if (item->propertyName() > name) {
@@ -282,7 +287,7 @@ void DynamicPropertiesModel::commitPropertyType(int row, const TypeName &type)
     }
 }
 
-void DynamicPropertiesModel::commitPropertyName(int row, const PropertyName &name)
+void DynamicPropertiesModel::commitPropertyName(int row, PropertyNameView name)
 {
     AbstractProperty property = propertyForRow(row);
     if (!property.isValid())
@@ -346,10 +351,25 @@ void DynamicPropertiesModel::dispatchPropertyChanges(const AbstractProperty &abs
         QmlPropertyChanges changes(abstractProperty.parentModelNode());
         if (changes.target().isValid()) {
             const ModelNode target = changes.target();
-            const PropertyName propertyName = abstractProperty.name();
+            const PropertyNameView propertyName = abstractProperty.name();
             const AbstractProperty targetProperty = target.variantProperty(propertyName);
             if (target.hasProperty(propertyName) && targetProperty.isDynamic())
                 updateItem(targetProperty);
+        }
+    }
+}
+
+void DynamicPropertiesModel::handleInstancePropertyChanged(const ModelNode &modelNode,
+                                                           PropertyNameView propertyName)
+{
+    if (modelNode != singleSelectedNode())
+        return;
+
+    QmlObjectNode qmlObjectNode(modelNode);
+    if (qmlObjectNode.isValid() && qmlObjectNode.currentState().isValid()) {
+        const AbstractProperty property = modelNode.property(propertyName);
+        if (property.isDynamic()) {
+            updateItem(property);
         }
     }
 }

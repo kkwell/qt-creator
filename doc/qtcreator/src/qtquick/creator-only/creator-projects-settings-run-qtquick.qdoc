@@ -3,25 +3,23 @@
 
 /*!
     \page creator-run-settings-qtquick-ui-prototype.html
-    \previouspage creator-reference.html
+    \previouspage creator-how-tos.html
 
-    \ingroup creator-reference-run-configurations
+    \ingroup creator-how-to-run
+    \ingroup creator-how-to-design-qtquick
 
-    \title Qt Quick UI Prototype Run Settings
+    \title Specify Qt Quick UI Prototype run settings
 
-    \brief Settings for running Qt Quick UI Prototype projects (.qmlproject).
+    To specify settings for running applications on the \l {Managing kits}{Run device} that
+    you select for a kit, go to \uicontrol Projects > \uicontrol {Run Settings}.
 
-    Specify settings for running applications on the \l {Kits}{Run device} that
-    you select for a kit in \uicontrol Projects > \uicontrol {Build & Run} >
-    \uicontrol Run > \uicontrol {Run Settings}.
-
-    \note Select the \uicontrol Desktop device type for the \l{Kits}{Run device}
+    \note Select the \uicontrol Desktop device type for the \l{Managing kits}{Run device}
     in the kit.
 
-    \image qtquick-ui-prototype-run-settings.webp {Run Settings for a Qt Quick UI Prototype project}
+    \image {qtquick-ui-prototype-run-settings.webp} {Run Settings for a Qt Quick UI Prototype project}
 
     The following table summarizes the settings for running Qt Quick UI Prototype
-    projects (.qmlproject).
+    projects (\c .qmlproject).
 
     \table
     \header
@@ -37,10 +35,12 @@
         \li \uicontrol {Main QML file}
         \li File to start \QQV with.
     \row
-        \li \uicontrol {Forward to local display}
-        \li Shows a remotely running X11 client on a local display.
+        \li \uicontrol {Use X11 forwarding}
+        \li Select \uicontrol {Use X11 forwarding} and configure its \c DISPLAY
+            to show a remotely running X11 client on a local display.
     \endtable
 
-    \sa {Create Qt Quick UI Prototypes}, {Activate kits for a project},
-    {Configure projects for running}, {Kits}
+    \sa {Activate kits for a project}, {Configure projects for running},
+    {Design Qt Quick UIs}{How to: Design Qt Quick UIs}, {Qt Quick UI design},
+    {Designing Qt Quick UIs}, {Managing kits}
 */

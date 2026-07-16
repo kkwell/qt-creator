@@ -12,8 +12,9 @@
 
 #include <debugger/debuggerconstants.h>
 
+#include <QtTaskTree/QParallelTaskTreeRunner>
+
 #include <utils/async.h>
-#include <utils/futuresynchronizer.h>
 #include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 #include <utils/temporarydirectory.h>
@@ -24,11 +25,10 @@
 #include <QXmlStreamReader>
 
 #include <signal.h>
-#include <string.h>
-#include <errno.h>
 
 static Q_LOGGING_CATEGORY(toolHandlerLog, "qtc.ios.toolhandler", QtWarningMsg)
 
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace Ios {
@@ -47,52 +47,10 @@ using namespace std::placeholders;
 static QString CONSOLE_PATH_TEMPLATE = QDir::homePath() +
         "/Library/Developer/CoreSimulator/Devices/%1/data/tmp/%2";
 
-class LogTailFiles : public QObject
-{
-    Q_OBJECT
-
-public:
-    void exec(QPromise<void> &promise, std::shared_ptr<QTemporaryFile> stdoutFile,
-              std::shared_ptr<QTemporaryFile> stderrFile)
-    {
-        if (promise.isCanceled())
-            return;
-
-        // The future is canceled when app on simulator is stoped.
-        QEventLoop loop;
-        QFutureWatcher<void> watcher;
-        connect(&watcher, &QFutureWatcher<void>::canceled, &loop, [&] { loop.quit(); });
-        watcher.setFuture(promise.future());
-
-        // Process to print the console output while app is running.
-        auto logProcess = [&](Process *tailProcess, std::shared_ptr<QTemporaryFile> file) {
-            QObject::connect(tailProcess, &Process::readyReadStandardOutput, &loop, [&, tailProcess] {
-                if (!promise.isCanceled())
-                    emit logMessage(QString::fromLocal8Bit(tailProcess->readAllRawStandardOutput()));
-            });
-            tailProcess->setCommand({FilePath::fromString("tail"), {"-f", file->fileName()}});
-            tailProcess->start();
-        };
-
-        std::unique_ptr<Process> tailStdout(new Process);
-        if (stdoutFile)
-            logProcess(tailStdout.get(), stdoutFile);
-
-        std::unique_ptr<Process> tailStderr(new Process);
-        if (stderrFile)
-            logProcess(tailStderr.get(), stderrFile);
-
-        // Blocks untill tool is deleted or toolexited is called.
-        loop.exec();
-    }
-
-signals:
-    void logMessage(const QString &message);
-};
-
 struct ParserState {
     enum Kind {
         Msg,
+        Error,
         DeviceId,
         Key,
         Value,
@@ -119,6 +77,7 @@ struct ParserState {
     bool collectChars() {
         switch (kind) {
         case Msg:
+        case Error:
         case DeviceId:
         case Key:
         case Value:
@@ -164,13 +123,13 @@ public:
                         IosToolHandler::OpStatus status);
     void didStartApp(const FilePath &bundlePath, const QString &deviceId,
                      IosToolHandler::OpStatus status);
-    void gotServerPorts(const FilePath &bundlePath, const QString &deviceId, Port gdbPort,
-                        Port qmlPort);
-    void gotInferiorPid(const FilePath &bundlePath, const QString &deviceId, qint64 pid);
+    void gotServerPorts(Port gdbPort, Port qmlPort);
+    void gotInferiorPid(qint64 pid);
     void deviceInfo(const QString &deviceId, const IosToolHandler::Dict &info);
     void appOutput(const QString &output);
     void errorMsg(const QString &msg);
     void toolExited(int code);
+    int exitCode() const { return m_exitCode; }
 
 protected:
     IosToolHandler *q;
@@ -178,6 +137,7 @@ protected:
     FilePath m_bundlePath;
     IosToolHandler::RunKind m_runKind = IosToolHandler::NormalRun;
     IosDeviceType m_devType;
+    int m_exitCode = 0;
 };
 
 class IosDeviceToolHandlerPrivate final : public IosToolHandlerPrivate
@@ -284,14 +244,11 @@ public:
     void stop(int errorCode) override;
 
 private:
-    void installAppOnSimulator();
-    void launchAppOnSimulator(const QStringList &extraArgs);
     bool isResponseValid(const SimulatorControl::ResponseData &responseData);
 
 private:
     qint64 m_pid = -1;
-    LogTailFiles outputLogger;
-    FutureSynchronizer futureSynchronizer;
+    QParallelTaskTreeRunner taskTreeRunner;
 };
 
 IosToolHandlerPrivate::IosToolHandlerPrivate(const IosDeviceType &devType,
@@ -322,16 +279,14 @@ void IosToolHandlerPrivate::didStartApp(const FilePath &bundlePath, const QStrin
     emit q->didStartApp(q, bundlePath, deviceId, status);
 }
 
-void IosToolHandlerPrivate::gotServerPorts(const FilePath &bundlePath, const QString &deviceId,
-                                           Port gdbPort, Port qmlPort)
+void IosToolHandlerPrivate::gotServerPorts(Port gdbPort, Port qmlPort)
 {
-    emit q->gotServerPorts(q, bundlePath, deviceId, gdbPort, qmlPort);
+    emit q->gotServerPorts(gdbPort, qmlPort);
 }
 
-void IosToolHandlerPrivate::gotInferiorPid(const FilePath &bundlePath, const QString &deviceId,
-                                           qint64 pid)
+void IosToolHandlerPrivate::gotInferiorPid(qint64 pid)
 {
-    emit q->gotInferiorPid(q, bundlePath, deviceId, pid);
+    emit q->gotInferiorPid(pid);
 }
 
 void IosToolHandlerPrivate::deviceInfo(const QString &deviceId,
@@ -342,17 +297,18 @@ void IosToolHandlerPrivate::deviceInfo(const QString &deviceId,
 
 void IosToolHandlerPrivate::appOutput(const QString &output)
 {
-    emit q->appOutput(q, output);
+    emit q->appOutput(output);
 }
 
 void IosToolHandlerPrivate::errorMsg(const QString &msg)
 {
-    emit q->errorMsg(q, msg);
+    emit q->errorMsg(msg);
 }
 
 void IosToolHandlerPrivate::toolExited(int code)
 {
-    emit q->toolExited(q, code);
+    m_exitCode = code;
+    emit q->toolExited(code);
 }
 
 void IosDeviceToolHandlerPrivate::processXml()
@@ -386,6 +342,8 @@ void IosDeviceToolHandlerPrivate::processXml()
             const auto elName = outputParser.name();
             if (elName == QLatin1String("msg")) {
                 stack.append(ParserState(ParserState::Msg));
+            } else if (elName == QLatin1String("error")) {
+                stack.append(ParserState(ParserState::Error));
             } else if (elName == QLatin1String("exit")) {
                 stack.append(ParserState(ParserState::Exit));
                 toolExited(outputParser.attributes().value(QLatin1String("code"))
@@ -446,7 +404,7 @@ void IosDeviceToolHandlerPrivate::processXml()
                     attributes.value(QLatin1String("gdb_server")).toString().toInt());
                 Port qmlServerPort(
                     attributes.value(QLatin1String("qml_server")).toString().toInt());
-                gotServerPorts(m_bundlePath, m_deviceId, gdbServerPort, qmlServerPort);
+                gotServerPorts(gdbServerPort, qmlServerPort);
             } else {
                 qCWarning(toolHandlerLog) << "unexpected element " << elName;
             }
@@ -459,6 +417,9 @@ void IosDeviceToolHandlerPrivate::processXml()
             stack.removeLast();
             switch (p.kind) {
             case ParserState::Msg:
+                emit q->message(p.chars);
+                break;
+            case ParserState::Error:
                 errorMsg(p.chars);
                 break;
             case ParserState::DeviceId:
@@ -498,7 +459,7 @@ void IosDeviceToolHandlerPrivate::processXml()
             case ParserState::Exit:
                 break;
             case ParserState::InferiorPid:
-                gotInferiorPid(m_bundlePath, m_deviceId, p.chars.toLongLong());
+                gotInferiorPid(p.chars.toLongLong());
                 break;
             case ParserState::ServerPorts:
                 break;
@@ -612,7 +573,7 @@ IosDeviceToolHandlerPrivate::IosDeviceToolHandlerPrivate(const IosDeviceType &de
             if (process->result() == ProcessResult::StartFailed)
                 qCDebug(toolHandlerLog) << "IosToolHandler::finished(" << this << ")";
         }
-        emit IosToolHandlerPrivate::q->finished(IosToolHandlerPrivate::q);
+        emit IosToolHandlerPrivate::q->finished();
     });
 }
 
@@ -621,7 +582,7 @@ void IosDeviceToolHandlerPrivate::requestTransferApp(const FilePath &bundlePath,
 {
     m_bundlePath = bundlePath;
     m_deviceId = deviceId;
-    QString tmpDeltaPath = TemporaryDirectory::masterDirectoryFilePath().pathAppended("ios").toString();
+    QString tmpDeltaPath = TemporaryDirectory::masterDirectoryFilePath().pathAppended("ios").toUrlishString();
     QStringList args;
     args << QLatin1String("--id") << deviceId << QLatin1String("--bundle")
          << bundlePath.path() << QLatin1String("--timeout") << QString::number(timeout)
@@ -726,10 +687,7 @@ void IosDeviceToolHandlerPrivate::stop(int errorCode)
 IosSimulatorToolHandlerPrivate::IosSimulatorToolHandlerPrivate(const IosDeviceType &devType,
                                                                IosToolHandler *q)
     : IosToolHandlerPrivate(devType, q)
-{
-    QObject::connect(&outputLogger, &LogTailFiles::logMessage,
-                     q, [q](const QString &message) { q->appOutput(q, message); });
-}
+{}
 
 void IosSimulatorToolHandlerPrivate::requestTransferApp(const FilePath &appBundlePath,
                                                         const QString &deviceIdentifier, int timeout)
@@ -737,29 +695,81 @@ void IosSimulatorToolHandlerPrivate::requestTransferApp(const FilePath &appBundl
     Q_UNUSED(timeout)
     m_bundlePath = appBundlePath;
     m_deviceId = deviceIdentifier;
-    isTransferringApp(m_bundlePath, m_deviceId, 0, 100, "");
 
-    auto onSimulatorStart = [this](const SimulatorControl::Response &response) {
+    if (!m_bundlePath.exists()) {
+        errorMsg(
+            Tr::tr(
+                "Application install on Simulator failed. Could not find bundle at expected "
+                "location \"%1\".")
+                .arg(m_bundlePath.toUserOutput()));
+        didTransferApp(m_bundlePath, m_deviceId, Ios::IosToolHandler::Failure);
+        return;
+    }
+
+    GroupItem startTask = nullItem;
+
+    if (!SimulatorControl::isSimulatorRunning(m_deviceId)) {
+        const auto onStartSetup = [this](Async<SimulatorControl::Response> &task) {
+            isTransferringApp(m_bundlePath, m_deviceId, 0, 100, "");
+            task.setConcurrentCallData(Internal::startSimulator, m_deviceId);
+        };
+        const auto onStartDone = [this](const Async<SimulatorControl::Response> &task) {
+            if (!task.isResultAvailable())
+                return false; // TODO: emit finished?
+            const SimulatorControl::Response &response = task.result();
+            if (response) {
+                return isResponseValid(*response); // TODO: call didTransferApp() on failure?
+            } else {
+                errorMsg(Tr::tr("Application install on simulator failed. Simulator not running."));
+                if (!response.error().isEmpty())
+                    errorMsg(response.error());
+                didTransferApp(m_bundlePath, m_deviceId, IosToolHandler::Failure);
+                emit q->finished();
+            }
+            return false;
+        };
+
+        startTask = AsyncTask<SimulatorControl::Response>(onStartSetup, onStartDone);
+    }
+
+    const auto onInstallSetup = [this](Async<SimulatorControl::Response> &task) {
+        isTransferringApp(m_bundlePath, m_deviceId, 20, 100, "");
+        task.setConcurrentCallData(Internal::installApp, m_deviceId, m_bundlePath);
+    };
+    const auto onInstallDone = [this](const Async<SimulatorControl::Response> &task) {
+        if (!task.isResultAvailable())
+            return false; // TODO: emit finished?
+        const SimulatorControl::Response &response = task.result();
         if (response) {
             if (!isResponseValid(*response))
-                return;
-
-            installAppOnSimulator();
+                return false;
+            isTransferringApp(m_bundlePath, m_deviceId, 100, 100, "");
+            didTransferApp(m_bundlePath, m_deviceId, IosToolHandler::Success);
+            return true;
         } else {
-            errorMsg(Tr::tr("Application install on simulator failed. Simulator not running."));
-            if (!response.error().isEmpty())
-                errorMsg(response.error());
+            errorMsg(Tr::tr("Application install on simulator failed. %1").arg(response.error()));
             didTransferApp(m_bundlePath, m_deviceId, IosToolHandler::Failure);
-            emit q->finished(q);
         }
+        emit q->finished();
+        return false;
     };
 
-    if (SimulatorControl::isSimulatorRunning(m_deviceId))
-        installAppOnSimulator();
-    else
-        futureSynchronizer.addFuture(Utils::onResultReady(
-            SimulatorControl::startSimulator(m_deviceId), q, onSimulatorStart));
+    const Group recipe {
+        startTask,
+        AsyncTask<SimulatorControl::Response>(onInstallSetup, onInstallDone)
+    };
+    taskTreeRunner.start(recipe);
 }
+
+#ifdef Q_OS_UNIX
+static void monitorPid(QPromise<void> &promise, qint64 pid)
+{
+    do {
+        // Poll every 1 sec to check whether the app is running.
+        QThread::msleep(1000);
+    } while (!promise.isCanceled() && kill(pid, 0) == 0);
+}
+#endif
 
 void IosSimulatorToolHandlerPrivate::requestRunApp(const FilePath &appBundlePath,
                                                    const QStringList &extraArgs,
@@ -779,24 +789,134 @@ void IosSimulatorToolHandlerPrivate::requestRunApp(const FilePath &appBundlePath
         return;
     }
 
-    auto onSimulatorStart = [this, extraArgs](const SimulatorControl::Response &response) {
-        if (response) {
-            if (!isResponseValid(*response))
-                return;
+    GroupItem startTask = nullItem;
 
-            launchAppOnSimulator(extraArgs);
-        } else {
-            errorMsg(Tr::tr("Application launch on simulator failed. Simulator not running. %1")
-                         .arg(response.error()));
-            didStartApp(m_bundlePath, m_deviceId, Ios::IosToolHandler::Failure);
-        }
+    if (!SimulatorControl::isSimulatorRunning(m_deviceId)) {
+        const auto onStartSetup = [this](Async<SimulatorControl::Response> &task) {
+            task.setConcurrentCallData(Internal::startSimulator, m_deviceId);
+        };
+        const auto onStartDone = [this](const Async<SimulatorControl::Response> &task) {
+            if (!task.isResultAvailable())
+                return false; // TODO: emit finished?
+            const SimulatorControl::Response &response = task.result();
+            if (response) {
+                return isResponseValid(*response); // TODO: call didStartApp() on failure?
+            } else {
+                errorMsg(Tr::tr("Application launch on simulator failed. Simulator not running."));
+                if (!response.error().isEmpty())
+                    errorMsg(response.error());
+                didStartApp(m_bundlePath, m_deviceId, IosToolHandler::Failure);
+                emit q->finished();
+            }
+            return false;
+        };
+
+        startTask = AsyncTask<SimulatorControl::Response>(onStartSetup, onStartDone);
+    }
+
+    struct LaunchData
+    {
+        std::shared_ptr<QTemporaryFile> stdoutFile;
+        std::shared_ptr<QTemporaryFile> stderrFile;
     };
 
-    if (SimulatorControl::isSimulatorRunning(m_deviceId))
-        launchAppOnSimulator(extraArgs);
-    else
-        futureSynchronizer.addFuture(Utils::onResultReady(
-            SimulatorControl::startSimulator(m_deviceId), q, onSimulatorStart));
+    const Storage<LaunchData> storage;
+
+    const auto onLaunchSetup = [this, extraArgs, storage](Async<SimulatorControl::Response> &task) {
+        const QString bundleId = SimulatorControl::bundleIdentifier(m_bundlePath);
+        const bool debugRun = m_runKind == IosToolHandler::DebugRun;
+        bool captureConsole = IosConfigurations::xcodeVersion() >= QVersionNumber(8);
+
+        QString stdOutFileName;
+        QString stdErrFileName;
+
+        if (captureConsole) {
+            const QString fileTemplate = CONSOLE_PATH_TEMPLATE.arg(m_deviceId).arg(bundleId);
+            std::shared_ptr<QTemporaryFile> stdoutFile;
+            std::shared_ptr<QTemporaryFile> stderrFile;
+            stdoutFile.reset(new QTemporaryFile(fileTemplate + ".stdout"));
+            stderrFile.reset(new QTemporaryFile(fileTemplate + ".stderr"));
+
+            captureConsole = stdoutFile->open() && stderrFile->open();
+            if (captureConsole) {
+                *storage = {stdoutFile, stderrFile};
+                stdOutFileName = stdoutFile->fileName();
+                stdErrFileName = stderrFile->fileName();
+            } else {
+                errorMsg(Tr::tr("Cannot capture console output from %1. "
+                                "Error redirecting output to %2.*")
+                             .arg(bundleId).arg(fileTemplate));
+            }
+        } else {
+            errorMsg(Tr::tr("Cannot capture console output from %1. "
+                            "Install Xcode 8 or later.").arg(bundleId));
+        }
+
+        task.setConcurrentCallData(Internal::launchApp, m_deviceId, bundleId, debugRun, extraArgs,
+                                   stdOutFileName, stdErrFileName);
+    };
+    const auto onLaunchDone = [this](const Async<SimulatorControl::Response> &task) {
+        if (!task.isResultAvailable())
+            return false; // TODO: emit finished?
+        const SimulatorControl::Response &response = task.result();
+        if (response) {
+            if (!isResponseValid(*response))
+                return false;
+            m_pid = response->inferiorPid;
+            gotInferiorPid(response->inferiorPid);
+            didStartApp(m_bundlePath, m_deviceId, Ios::IosToolHandler::Success);
+            return true;
+        } else {
+            m_pid = -1;
+            errorMsg(Tr::tr("Application launch on simulator failed. %1").arg(response.error()));
+            didStartApp(m_bundlePath, m_deviceId, Ios::IosToolHandler::Failure);
+            stop(-1);
+        }
+        return false;
+    };
+
+    GroupItem monitorTask = nullItem;
+#ifdef Q_OS_UNIX
+    const auto onMonitorSetup = [this](Async<void> &task) {
+        task.setConcurrentCallData(monitorPid, m_pid);
+    };
+    const auto onMonitorDone = [this] {
+        toolExited(0);
+        emit q->finished();
+        return false;
+    };
+    monitorTask = AsyncTask<void>(onMonitorSetup, onMonitorDone, CallDoneFlag::OnSuccess);
+#endif
+
+    const auto onProcessSetup = [this](Process &process,
+                                       const std::shared_ptr<QTemporaryFile> &file) {
+        if (!file)
+            return SetupResult::StopWithSuccess;
+        process.setCommand({"tail", {"-f", file->fileName()}});
+        QObject::connect(&process, &Process::readyReadStandardOutput, q, [this, process = &process] {
+            q->appOutput(process->readAllStandardOutput());
+        });
+        return SetupResult::Continue;
+    };
+    const auto onStdOutSetup = [storage, onProcessSetup](Process &process) {
+        return onProcessSetup(process, storage->stdoutFile);
+    };
+    const auto onStdErrSetup = [storage, onProcessSetup](Process &process) {
+        return onProcessSetup(process, storage->stderrFile);
+    };
+
+    const Group recipe {
+        storage,
+        startTask,
+        AsyncTask<SimulatorControl::Response>(onLaunchSetup, onLaunchDone),
+        Group {
+            parallel,
+            monitorTask,
+            ProcessTask(onStdOutSetup),
+            ProcessTask(onStdErrSetup)
+        }
+    };
+    taskTreeRunner.start(recipe);
 }
 
 void IosSimulatorToolHandlerPrivate::requestDeviceInfo(const QString &deviceId, int timeout)
@@ -821,100 +941,10 @@ void IosSimulatorToolHandlerPrivate::stop(int errorCode)
         kill(m_pid, SIGKILL);
 #endif
     m_pid = -1;
-    futureSynchronizer.cancelAllFutures();
-    futureSynchronizer.flushFinishedFutures();
+    taskTreeRunner.reset();
 
     toolExited(errorCode);
-    emit q->finished(q);
-}
-
-void IosSimulatorToolHandlerPrivate::installAppOnSimulator()
-{
-    auto onResponseAppInstall = [this](const SimulatorControl::Response &response) {
-        if (response) {
-            if (!isResponseValid(*response))
-                return;
-            isTransferringApp(m_bundlePath, m_deviceId, 100, 100, "");
-            didTransferApp(m_bundlePath, m_deviceId, IosToolHandler::Success);
-        } else {
-            errorMsg(Tr::tr("Application install on simulator failed. %1").arg(response.error()));
-            didTransferApp(m_bundlePath, m_deviceId, IosToolHandler::Failure);
-        }
-        emit q->finished(q);
-    };
-
-    isTransferringApp(m_bundlePath, m_deviceId, 20, 100, "");
-    auto installFuture = SimulatorControl::installApp(m_deviceId, m_bundlePath);
-    futureSynchronizer.addFuture(Utils::onResultReady(installFuture, q, onResponseAppInstall));
-}
-
-#ifdef Q_OS_UNIX
-static void monitorPid(QPromise<void> &promise, qint64 pid)
-{
-    do {
-        // Poll every 1 sec to check whether the app is running.
-        QThread::msleep(1000);
-    } while (!promise.isCanceled() && kill(pid, 0) == 0);
-}
-#endif
-
-void IosSimulatorToolHandlerPrivate::launchAppOnSimulator(const QStringList &extraArgs)
-{
-    const QString bundleId = SimulatorControl::bundleIdentifier(m_bundlePath);
-    const bool debugRun = m_runKind == IosToolHandler::DebugRun;
-    bool captureConsole = IosConfigurations::xcodeVersion() >= QVersionNumber(8);
-    std::shared_ptr<QTemporaryFile> stdoutFile;
-    std::shared_ptr<QTemporaryFile> stderrFile;
-
-    if (captureConsole) {
-        const QString fileTemplate = CONSOLE_PATH_TEMPLATE.arg(m_deviceId).arg(bundleId);
-        stdoutFile.reset(new QTemporaryFile(fileTemplate + ".stdout"));
-        stderrFile.reset(new QTemporaryFile(fileTemplate + ".stderr"));
-
-        captureConsole = stdoutFile->open() && stderrFile->open();
-        if (!captureConsole)
-            errorMsg(Tr::tr("Cannot capture console output from %1. "
-                            "Error redirecting output to %2.*")
-                     .arg(bundleId).arg(fileTemplate));
-    } else {
-        errorMsg(Tr::tr("Cannot capture console output from %1. "
-                        "Install Xcode 8 or later.").arg(bundleId));
-    }
-
-    auto onResponseAppLaunch = [this, captureConsole, stdoutFile, stderrFile](
-                                   const SimulatorControl::Response &response) {
-        if (response) {
-            if (!isResponseValid(*response))
-                return;
-            m_pid = response->inferiorPid;
-            gotInferiorPid(m_bundlePath, m_deviceId, response->inferiorPid);
-            didStartApp(m_bundlePath, m_deviceId, Ios::IosToolHandler::Success);
-#ifdef Q_OS_UNIX
-            // Start monitoring app's life signs.
-            futureSynchronizer.addFuture(Utils::onFinished(
-                Utils::asyncRun(monitorPid, response->inferiorPid), q,
-                [this](const QFuture<void> &future) {
-                    if (!future.isCanceled())
-                        stop(0);
-                }));
-#endif
-            if (captureConsole)
-                futureSynchronizer.addFuture(Utils::asyncRun(&LogTailFiles::exec, &outputLogger,
-                                                             stdoutFile, stderrFile));
-        } else {
-            m_pid = -1;
-            errorMsg(Tr::tr("Application launch on simulator failed. %1").arg(response.error()));
-            didStartApp(m_bundlePath, m_deviceId, Ios::IosToolHandler::Failure);
-            stop(-1);
-            emit q->finished(q);
-        }
-    };
-
-    futureSynchronizer.addFuture(Utils::onResultReady(SimulatorControl::launchApp(
-            m_deviceId, bundleId, debugRun, extraArgs,
-            captureConsole ? stdoutFile->fileName() : QString(),
-            captureConsole ? stderrFile->fileName() : QString()),
-        q, onResponseAppLaunch));
+    emit q->finished();
 }
 
 bool IosSimulatorToolHandlerPrivate::isResponseValid(const SimulatorControl::ResponseData &responseData)
@@ -924,7 +954,7 @@ bool IosSimulatorToolHandlerPrivate::isResponseValid(const SimulatorControl::Res
                         "Device Id = %1 Response Id = %2")
                  .arg(responseData.simUdid)
                  .arg(m_deviceId));
-        emit q->finished(q);
+        emit q->finished();
         return false;
     }
     return true;
@@ -934,7 +964,7 @@ bool IosSimulatorToolHandlerPrivate::isResponseValid(const SimulatorControl::Res
 
 QString IosToolHandler::iosDeviceToolPath()
 {
-    return Core::ICore::libexecPath("ios/iostool").toString();
+    return Core::ICore::libexecPath("ios/iostool").toUrlishString();
 }
 
 IosToolHandler::IosToolHandler(const Internal::IosDeviceType &devType, QObject *parent) :
@@ -954,6 +984,11 @@ IosToolHandler::~IosToolHandler()
 void IosToolHandler::stop()
 {
     d->stop(-1);
+}
+
+int IosToolHandler::exitCode() const
+{
+    return d->exitCode();
 }
 
 void IosToolHandler::requestTransferApp(const FilePath &bundlePath, const QString &deviceId,
@@ -978,6 +1013,14 @@ bool IosToolHandler::isRunning() const
     return d->isRunning();
 }
 
+IosToolRunner::~IosToolRunner()
+{
+    if (m_iosToolHandler && m_iosToolHandler->isRunning()) {
+        QObject::disconnect(m_iosToolHandler.get(), &IosToolHandler::finished, nullptr, nullptr);
+        m_iosToolHandler->stop();
+    }
+}
+
 void IosToolRunner::setStartHandler(const StartHandler &startHandler)
 {
     m_startHandler = startHandler;
@@ -988,18 +1031,16 @@ void IosToolRunner::setDeviceType(const Internal::IosDeviceType &type)
     m_deviceType = type;
 }
 
-IosToolTaskAdapter::IosToolTaskAdapter() {}
-
-void IosToolTaskAdapter::start()
+void IosToolTaskAdapter::operator()(IosToolRunner *task, QTaskInterface *iface)
 {
-    task()->m_iosToolHandler.reset(new IosToolHandler(Internal::IosDeviceType(task()->m_deviceType)));
-    connect(task()->m_iosToolHandler.get(), &IosToolHandler::finished, this, [this] {
-        task()->m_iosToolHandler.release()->deleteLater();
-        emit done(Tasking::DoneResult::Success);
-    });
-    task()->m_startHandler(task()->m_iosToolHandler.get());
+    task->m_iosToolHandler.reset(new IosToolHandler(Internal::IosDeviceType(task->m_deviceType)));
+    QObject::connect(task->m_iosToolHandler.get(), &IosToolHandler::finished, iface, [iface, task] {
+        const DoneResult result = task->m_iosToolHandler->exitCode() == 0
+            ? DoneResult::Success : DoneResult::Error;
+        task->m_iosToolHandler.release()->deleteLater();
+        iface->reportDone(result);
+    }, Qt::SingleShotConnection);
+    task->m_startHandler(task->m_iosToolHandler.get());
 }
 
 } // namespace Ios
-
-#include "iostoolhandler.moc"

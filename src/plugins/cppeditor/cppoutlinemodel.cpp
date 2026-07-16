@@ -249,7 +249,7 @@ Utils::Text::Position OutlineModel::positionFromIndex(const QModelIndex &sourceI
     return lineColumn;
 }
 
-OutlineModel::Range OutlineModel::rangeFromIndex(const QModelIndex &sourceIndex) const
+Utils::Text::Range OutlineModel::rangeFromIndex(const QModelIndex &sourceIndex) const
 {
     Utils::Text::Position lineColumn = positionFromIndex(sourceIndex);
     return {lineColumn, lineColumn};
@@ -287,36 +287,25 @@ void OutlineModel::buildTree(SymbolItem *root, bool isRoot)
     }
 }
 
-static bool contains(const OutlineModel::Range &range, int line, int column)
-{
-    if (line < range.first.line || line > range.second.line)
-        return false;
-    if (line == range.first.line && column < range.first.column)
-        return false;
-    if (line == range.second.line && column > range.second.column)
-        return false;
-    return true;
-}
-
-QModelIndex OutlineModel::indexForPosition(int line, int column,
-                                           const QModelIndex &rootIndex) const
+QModelIndex OutlineModel::indexForPosition(
+    const Utils::Text::Position &pos, const QModelIndex &rootIndex) const
 {
     QModelIndex lastIndex = rootIndex;
     const int rowCount = this->rowCount(rootIndex);
     for (int row = 0; row < rowCount; ++row) {
         const QModelIndex index = this->index(row, 0, rootIndex);
-        const OutlineModel::Range range = rangeFromIndex(index);
-        if (range.first.line > line)
+        const Utils::Text::Range range = rangeFromIndex(index);
+        if (range.begin.line > pos.line)
             break;
         // Skip ranges that do not include current line and column.
-        if (range.second != range.first && !contains(range, line, column))
+        if (range.end != range.begin && !range.contains(pos))
             continue;
         lastIndex = index;
     }
 
     if (lastIndex != rootIndex) {
         // recurse
-        lastIndex = indexForPosition(line, column, lastIndex);
+        lastIndex = indexForPosition(pos, lastIndex);
     }
 
     return lastIndex;

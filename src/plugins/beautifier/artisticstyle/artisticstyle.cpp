@@ -140,8 +140,9 @@ public:
                         for (const QString &key : std::as_const(keys))
                             stream.writeTextElement(Constants::DOCUMENTATION_XMLKEY, key);
                         stream.writeEndElement();
+                        static const QRegularExpression regexp("^\\-");
                         const QString text = "<p><span class=\"option\">"
-                                             + keys.filter(QRegularExpression("^\\-")).join(", ") + "</span></p><p>"
+                                             + keys.filter(regexp).join(", ") + "</span></p><p>"
                                              + (docu.join(' ').toHtmlEscaped()) + "</p>";
                         stream.writeTextElement(Constants::DOCUMENTATION_XMLDOC, text);
                         stream.writeEndElement();
@@ -224,12 +225,19 @@ public:
             s.apply();
             s.save();
         });
-        setOnCancel([&s] { s.cancel(); });
+        setOnCancel([&s, configurations] {
+            s.cancel();
+            s.read();
+            configurations->setSettings(&s);
+            configurations->setCurrentConfiguration(s.customStyle());
+        });
 
         s.read();
 
         connect(s.command.pathChooser(), &PathChooser::validChanged, options, &QWidget::setEnabled);
         options->setEnabled(s.command.pathChooser()->isValid());
+
+        installMarkSettingsDirtyTriggerRecursively(this);
     }
 };
 
@@ -269,7 +277,7 @@ public:
     Command textCommand() const final
     {
         const FilePath cfgFile = configurationFile();
-        return cfgFile.isEmpty() ? Command() : textCommand(cfgFile.toFSPathString());
+        return cfgFile.isEmpty() ? Command() : textCommand(cfgFile);
     }
 
     bool isApplicable(const Core::IDocument *document) const final
@@ -283,7 +291,7 @@ public:
         if (cfgFileName.isEmpty())
             showError(BeautifierTool::msgCannotGetConfigurationFile(asDisplayName()));
         else
-            formatCurrentFile(textCommand(cfgFileName.toFSPathString()));
+            formatCurrentFile(textCommand(cfgFileName));
     }
 
     FilePath configurationFile() const
@@ -322,12 +330,12 @@ public:
         return {};
     }
 
-    Command textCommand(const QString &cfgFile) const
+    Command textCommand(const FilePath &cfgFile) const
     {
         Command cmd;
         cmd.setExecutable(settings().command());
         cmd.addOption("-q");
-        cmd.addOption("--options=" + cfgFile);
+        cmd.addOption("--options=" + cfgFile.path());
 
         const QVersionNumber version = settings().version();
         if (version > QVersionNumber(2, 3)) {

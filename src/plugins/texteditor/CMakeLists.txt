@@ -4,6 +4,13 @@ else()
   set(KSYNTAXHIGHLIGHTING_TARGET KF5::SyntaxHighlighting)
 endif()
 
+add_qtc_library(TextEditorSupport STATIC
+  DEPENDS Utils
+  SOURCES
+    texteditorsupport_global.h
+    tabsettings.cpp tabsettings.h
+)
+
 add_qtc_plugin(TextEditor
   DEPENDS Qt::Concurrent Qt::Network Qt::PrintSupport Qt::Xml
   PUBLIC_DEPENDS ${KSYNTAXHIGHLIGHTING_TARGET}
@@ -51,9 +58,7 @@ add_qtc_plugin(TextEditor
     command.cpp command.h
     commentssettings.cpp commentssettings.h
     completionsettings.cpp completionsettings.h
-    completionsettingspage.cpp completionsettingspage.h
     displaysettings.cpp displaysettings.h
-    displaysettingspage.cpp displaysettingspage.h
     extraencodingsettings.cpp extraencodingsettings.h
     findincurrentfile.cpp findincurrentfile.h
     findinfiles.cpp findinfiles.h
@@ -65,9 +70,8 @@ add_qtc_plugin(TextEditor
     highlighter.cpp highlighter.h
     highlighterhelper.cpp highlighterhelper.h
     highlightersettings.cpp highlightersettings.h
-    highlightersettingspage.cpp highlightersettingspage.h
     icodestylepreferences.cpp icodestylepreferences.h
-    icodestylepreferencesfactory.cpp icodestylepreferencesfactory.h
+    icodestylepreferencesfactory.h
     indenter.h
     ioutlinewidget.h
     jsoneditor.cpp jsoneditor.h
@@ -93,21 +97,20 @@ add_qtc_plugin(TextEditor
     snippets/snippetssettingspage.cpp snippets/snippetssettingspage.h
     storagesettings.cpp storagesettings.h
     syntaxhighlighter.cpp syntaxhighlighter.h
-    tabsettings.cpp tabsettings.h
     tabsettingswidget.cpp tabsettingswidget.h
     textdocument.cpp textdocument.h
     textdocumentlayout.cpp textdocumentlayout.h
     texteditor.cpp texteditor.h
-    texteditor.qrc
     texteditor_global.h
-    texteditortr.h
     texteditorconstants.cpp texteditorconstants.h
     texteditoroverlay.cpp texteditoroverlay.h
     texteditorplugin.cpp
     texteditorsettings.cpp texteditorsettings.h
+    texteditortr.h
     textindenter.cpp textindenter.h
     textmark.cpp textmark.h
     textstyles.h
+    textsuggestion.h textsuggestion.cpp
     typehierarchy.cpp typehierarchy.h
     typingsettings.cpp typingsettings.h
 )
@@ -122,3 +125,27 @@ extend_qtc_plugin(TextEditor
     texteditor_test.cpp
     texteditor_test.h
 )
+
+qtc_add_resources(TextEditor "images"
+  PREFIX "/texteditor"
+  BASE "."
+  FILES
+    images/finddocuments.png
+    images/settingscategory_texteditor.png
+    images/settingscategory_texteditor@2x.png
+    images/snippet.png
+)
+
+# from cmake 3.24 $<LINK_LIBRARY:WHOLE_ARCHIVE,TextEditorSupport> is supported which can be added to DEPENDS
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0" AND NOT CMAKE_GENERATOR STREQUAL "FASTBuild")
+  target_link_libraries(TextEditor PRIVATE $<LINK_LIBRARY:WHOLE_ARCHIVE,TextEditorSupport>)
+else ()
+  if (MSVC)
+    qtc_output_binary_dir(_output_binary_dir)
+    set_target_properties(TextEditor PROPERTIES LINK_FLAGS "/WHOLEARCHIVE:${_output_binary_dir}/${IDE_BIN_PATH}/TextEditorSupport.lib")
+  elseif (APPLE)
+    target_link_libraries(TextEditor PRIVATE -Wl,-force_load "$<TARGET_LINKER_FILE:TextEditorSupport>")
+  else ()
+    target_link_libraries(TextEditor PRIVATE -Wl,--whole-archive $<TARGET_LINKER_FILE:TextEditorSupport> -Wl,--no-whole-archive)
+  endif ()
+endif ()

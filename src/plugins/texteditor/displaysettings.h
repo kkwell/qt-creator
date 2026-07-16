@@ -5,13 +5,7 @@
 
 #include "texteditor_global.h"
 
-#include "QMetaType"
-
-QT_BEGIN_NAMESPACE
-class QLabel;
-QT_END_NAMESPACE
-
-namespace Utils { class QtcSettings; }
+#include <utils/aspects.h>
 
 namespace TextEditor {
 
@@ -23,16 +17,10 @@ enum class AnnotationAlignment
     BetweenLines
 };
 
-class TEXTEDITOR_EXPORT DisplaySettings
+class TEXTEDITOR_EXPORT DisplaySettingsData
 {
 public:
-    DisplaySettings() = default;
-
-    void toSettings(Utils::QtcSettings *s) const;
-    void fromSettings(Utils::QtcSettings *s);
-
-    friend bool operator==(const DisplaySettings &t1, const DisplaySettings &t2) { return t1.equals(t2); }
-    friend bool operator!=(const DisplaySettings &t1, const DisplaySettings &t2) { return !t1.equals(t2); }
+    DisplaySettingsData() = default;
 
     bool m_displayLineNumbers = true;
     bool m_textWrapping = false;
@@ -50,6 +38,7 @@ public:
     bool m_forceOpenLinksInNextSplit = false;
     bool m_displayFileEncoding = false;
     bool m_displayFileLineEnding = true;
+    bool m_displayTabSettings = true;
     bool m_scrollBarHighlights = true;
     bool m_animateNavigationWithinFile = false;
     bool m_highlightSelection = true;
@@ -57,11 +46,48 @@ public:
     bool m_displayAnnotations = true;
     AnnotationAlignment m_annotationAlignment = AnnotationAlignment::RightSide;
     int m_minimalAnnotationContent = 15;
+    bool m_displayMinimap = false;
 
-    bool equals(const DisplaySettings &ds) const;
-
-    static QLabel *createAnnotationSettingsLink();
+    bool equals(const DisplaySettingsData &ds) const;
 };
+
+class TEXTEDITOR_EXPORT DisplaySettings : public Utils::AspectContainer
+{
+public:
+    DisplaySettings();
+
+    Utils::BoolAspect displayLineNumbers{this};
+    Utils::BoolAspect textWrapping{this};
+    Utils::BoolAspect visualizeWhitespace{this};
+    Utils::BoolAspect visualizeIndent{this};
+    Utils::BoolAspect displayFoldingMarkers{this};
+    Utils::BoolAspect highlightCurrentLine{this};
+    Utils::BoolAspect highlightBlocks{this};
+    Utils::BoolAspect animateMatchingParentheses{this};
+    Utils::BoolAspect highlightMatchingParentheses{this};
+    Utils::BoolAspect markTextChanges{this};
+    Utils::BoolAspect autoFoldFirstComment{this};
+    Utils::BoolAspect centerCursorOnScroll{this};
+    Utils::BoolAspect openLinksInNextSplit{this};
+    Utils::BoolAspect forceOpenLinksInNextSplit{this};
+    Utils::BoolAspect displayFileEncoding{this};
+    Utils::BoolAspect displayFileLineEnding{this};
+    Utils::BoolAspect displayTabSettings{this};
+    Utils::BoolAspect scrollBarHighlights{this};
+    Utils::BoolAspect animateNavigationWithinFile{this};
+    Utils::BoolAspect highlightSelection{this};
+    Utils::IntegerAspect animateWithinFileTimeMax{this};
+    Utils::BoolAspect displayAnnotations{this};
+    Utils::TypedSelectionAspect<AnnotationAlignment> annotationAlignment{this};
+    Utils::IntegerAspect minimalAnnotationContent{this};
+    Utils::BoolAspect displayMinimap{this};
+
+    DisplaySettingsData data() const;
+};
+
+TEXTEDITOR_EXPORT DisplaySettings &displaySettings();
+
+namespace Internal { void setupDisplaySettings(); }
 
 } // namespace TextEditor
 

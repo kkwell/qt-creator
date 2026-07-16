@@ -29,7 +29,7 @@
             the device.
         \li In \uicontrol Projects > \uicontrol {Build & Run}, specify settings
             for deploying and running the application with the selected kit.
-        \li In the kit selector, select \inlineimage icons/run_small.png for the
+        \li In the kit selector, select \imagerunsmall (\uicontrol Run) for the
             run target.
     \endlist
 
@@ -46,7 +46,7 @@
     \section1 Application manager CMake functions
 
     Since Qt 6.7, when using CMake as the build system, use the following
-    functions in the CMakeLists.txt file to indicate, which applications
+    functions in the \c CMakeLists.txt file to indicate, which applications
     to create as built-in packages and which to create as installable packages:
 
     \list
@@ -57,10 +57,9 @@
     \section1 Customize the installation
 
     To change the settings for deploying and running the application with the
-    selected kit, go to \uicontrol Projects and select \uicontrol {Build & Run}
-    > \uicontrol Run.
+    selected kit, go to \uicontrol Projects > \uicontrol {Deploy Settings}.
 
-    \image qtcreator-appman-deploy-settings.webp {Deploy to application manager}
+    \image {qtcreator-appman-deploy-settings.webp} {Deploy to application manager}
 
     \section2 Automatic deployment configuration selection
 
@@ -75,12 +74,13 @@
 
     \section2 Deployment configuration
 
-    In \uicontrol Method, \uicontrol {Automatic Application Manager
-    Deploy Configuration} adds the necessary CMake and tool arguments, as well as
+    In \uicontrol {Active deployment configuration},
+    \uicontrol {Automatic Application Manager Deploy Configuration}
+    adds the necessary CMake and tool arguments, as well as
     \uicontrol Targets to the effective \uicontrol Build command. You can select
     the targets in the kit selector to deploy and run applications on them.
 
-    \image qtcreator-appman-kit-selector.webp {Automatically generated run targets in the kit selector}
+    \image {qtcreator-appman-kit-selector.webp} {Automatically generated run targets in the kit selector}
 
     \section2 Installation settings
 
@@ -105,7 +105,7 @@
     To specify settings for running applications, go to \uicontrol Projects >
     \uicontrol {Run Settings}.
 
-    \image qtcreator-appman-run-settings.webp {Run in Qt Application Manager}
+    \image {qtcreator-appman-run-settings.webp} {Run in Qt Application Manager}
 
     The following table summarizes the run settings for each application.
 
@@ -143,7 +143,7 @@
 
     \section1 Analyze the applications
 
-    Use the \l{Profiling QML Applications}{QML Profiler} to find causes
+    Use the \l{Profiling QML applications}{QML Profiler} to find causes
     for typical performance problems in Qt Quick applications, such as
     slowness and unresponsive, stuttering user interfaces. You cannot profile an
     in-process runtime as an individual process.
@@ -152,9 +152,9 @@
     application.
 
     \sa {Activate kits for a project}, {Enable and disable plugins},
-    {\B2Q}{How To: Develop for \B2Q},
-    {Remote Linux}{How To: Develop for remote Linux},
-    {Run on many platforms}, {Debugging}, {Debuggers}, {Debugger},
-    {Developing for \B2Q Devices}, {Developing for Remote Linux Devices},
-    {Profiling QML Applications}, {Kits}
+    {\B2Q}{How to: Develop for \B2Q},
+    {Remote Linux}{How to: Develop for remote Linux},
+    {Running applications}, {Debugging}, {Debuggers},
+    {Developing for \B2Q devices}, {Developing for remote Linux devices},
+    {Profiling QML applications}, {Managing kits}
 */

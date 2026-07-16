@@ -41,9 +41,6 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
-Q_DECLARE_METATYPE(QStringList)
-Q_DECLARE_METATYPE(Core::IFindFilter*)
-
 using namespace Utils;
 
 namespace Core::Internal {
@@ -177,8 +174,10 @@ FindToolBar::FindToolBar(CurrentDocumentFind *currentDocumentFind)
     m_findEdit->setFiltering(true);
     m_findEdit->setPlaceholderText(QString());
     m_findEdit->button(Utils::FancyLineEdit::Left)->setFocusPolicy(Qt::TabFocus);
-    m_findEdit->setValidationFunction([this](Utils::FancyLineEdit *, QString *) {
-                                             return m_lastResult != IFindSupport::NotFound;
+    m_findEdit->setValidationFunction([this](const QString &) -> Result<> {
+                                             if (m_lastResult != IFindSupport::NotFound)
+                                                 return ResultOk;
+                                             return ResultError(QString());
                                          });
     m_replaceEdit->setPlaceholderText(QString());
 
@@ -1063,48 +1062,6 @@ Store FindToolBar::save() const
     if (m_findFlags & FindPreserveCase)
         s.insert("PreserveCase", true);
     return s;
-}
-
-void FindToolBar::writeSettings()
-{
-    Utils::QtcSettings *settings = ICore::settings();
-    settings->beginGroup("Find");
-    settings->beginGroup("FindToolBar");
-    settings->setValueWithDefault("Backward", bool((m_findFlags & FindBackward) != 0), false);
-    settings->setValueWithDefault("CaseSensitively",
-                                  bool((m_findFlags & FindCaseSensitively) != 0),
-                                  false);
-    settings->setValueWithDefault("WholeWords", bool((m_findFlags & FindWholeWords) != 0), false);
-    settings->setValueWithDefault("RegularExpression",
-                                  bool((m_findFlags & FindRegularExpression) != 0),
-                                  false);
-    settings->setValueWithDefault("PreserveCase",
-                                  bool((m_findFlags & FindPreserveCase) != 0),
-                                  false);
-    settings->endGroup();
-    settings->endGroup();
-}
-
-void FindToolBar::readSettings()
-{
-    QtcSettings *settings = ICore::settings();
-    settings->beginGroup("Find");
-    settings->beginGroup("FindToolBar");
-    FindFlags flags;
-    if (settings->value("Backward", false).toBool())
-        flags |= FindBackward;
-    if (settings->value("CaseSensitively", false).toBool())
-        flags |= FindCaseSensitively;
-    if (settings->value("WholeWords", false).toBool())
-        flags |= FindWholeWords;
-    if (settings->value("RegularExpression", false).toBool())
-        flags |= FindRegularExpression;
-    if (settings->value("PreserveCase", false).toBool())
-        flags |= FindPreserveCase;
-    settings->endGroup();
-    settings->endGroup();
-    m_findFlags = flags;
-    findFlagsChanged();
 }
 
 void FindToolBar::setUseFakeVim(bool on)

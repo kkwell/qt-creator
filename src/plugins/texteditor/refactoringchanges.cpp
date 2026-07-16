@@ -53,12 +53,12 @@ RefactoringFile::RefactoringFile(const FilePath &filePath) : m_filePath(filePath
 
 bool RefactoringFile::create(const QString &contents, bool reindent, bool openInEditor)
 {
-    if (m_filePath.isEmpty() || m_filePath.exists() || m_editor)
+    if (m_filePath.isEmpty() || m_filePath.exists() || m_editor || m_document)
         return false;
 
     // Create a text document for the new file:
-    auto document = new QTextDocument;
-    QTextCursor cursor(document);
+    m_document = new QTextDocument;
+    QTextCursor cursor(m_document);
     cursor.beginEditBlock();
     cursor.insertText(contents);
 
@@ -72,10 +72,10 @@ bool RefactoringFile::create(const QString &contents, bool reindent, bool openIn
 
     // Write the file to disk:
     TextFileFormat format;
-    format.codec = EditorManager::defaultTextCodec();
-    QString error;
-    bool saveOk = format.writeFile(m_filePath, document->toPlainText(), &error);
-    delete document;
+    format.setEncoding(EditorManager::defaultTextEncoding());
+    const Result<> saveOk = format.writeFile(m_filePath, m_document->toPlainText());
+    delete m_document;
+    m_document = nullptr;
     if (!saveOk)
         return false;
 
@@ -109,22 +109,16 @@ QTextDocument *RefactoringFile::mutableDocument() const
     if (m_editor)
         return m_editor->document();
     if (!m_document) {
-        QString fileContents;
+        TextFileFormat::ReadResult result;
         if (!m_filePath.isEmpty()) {
-            QString error;
-            QTextCodec *defaultCodec = EditorManager::defaultTextCodec();
-            TextFileFormat::ReadResult result = TextFileFormat::readFile(m_filePath,
-                                                                         defaultCodec,
-                                                                         &fileContents,
-                                                                         &m_textFileFormat,
-                                                                         &error);
-            if (result != TextFileFormat::ReadSuccess) {
-                qWarning() << "Could not read " << m_filePath << ". Error: " << error;
-                m_textFileFormat.codec = nullptr;
+            result = m_textFileFormat.readFile(m_filePath, EditorManager::defaultTextEncoding());
+            if (result.code != TextFileFormat::ReadSuccess) {
+                qWarning() << "Could not read " << m_filePath << ". Error: " << result.error;
+                m_textFileFormat.setEncoding({});
             }
         }
         // always make a QTextDocument to avoid excessive null checks
-        m_document = new QTextDocument(fileContents);
+        m_document = new QTextDocument(result.content);
     }
     return m_document;
 }
@@ -153,11 +147,13 @@ TextEditorWidget *RefactoringFile::editor() const
 
 int RefactoringFile::position(int line, int column) const
 {
-    QTC_ASSERT(line != 0, return -1);
-    QTC_ASSERT(column != 0, return -1);
-    if (const QTextDocument *doc = document())
-        return doc->findBlockByNumber(line - 1).position() + column - 1;
-    return -1;
+    return position(Text::Position{line, column - 1});
+}
+
+int RefactoringFile::position(const Text::Position &position) const
+{
+    QTC_ASSERT(position.isValid(), return -1);
+    return position.toPositionInDocument(document());
 }
 
 void RefactoringFile::lineAndColumn(int offset, int *line, int *column) const
@@ -263,23 +259,22 @@ bool RefactoringFile::apply()
             c.endEditBlock();
 
             // if this document doesn't have an editor, write the result to a file
-            if (!m_editor && m_textFileFormat.codec) {
+            if (!m_editor && m_textFileFormat.encoding().isValid()) {
                 QTC_ASSERT(!m_filePath.isEmpty(), return false);
-                QString error;
                 // suppress "file has changed" warnings if the file is open in a read-only editor
                 Core::FileChangeBlocker block(m_filePath);
-                if (m_textFileFormat.writeFile(m_filePath, doc->toPlainText(), &error)) {
+                if (const Result<> res = m_textFileFormat.writeFile(m_filePath, doc->toPlainText())) {
                     Core::DocumentManager::notifyFilesChangedInternally({m_filePath});
                 } else {
                     qWarning() << "Could not apply changes to" << m_filePath
-                               << ". Error: " << error;
+                               << ". Error: " << res.error();
                     result = false;
                 }
             }
 
             fileChanged();
             if (withUnmodifiedEditor && EditorManager::autoSaveAfterRefactoring())
-                m_editor->textDocument()->save(nullptr, m_filePath, false);
+                DocumentManager::saveDocument(m_editor->textDocument(), m_filePath);
         }
     }
 
@@ -356,6 +351,7 @@ void RefactoringFile::doFormatting()
         indenterOwner.reset(factory ? factory->createIndenter(document)
                                     : new PlainTextIndenter(document));
         indenter = indenterOwner.get();
+        indenter->setFileName(filePath());
         tabSettings = TabSettings::settingsForFile(filePath());
     }
     QTC_ASSERT(document, return);

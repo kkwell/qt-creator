@@ -1,0 +1,1847 @@
+// Copyright (C) 2025 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
+
+#include "devcontainer.h"
+
+#include "devcontainertr.h"
+#include "substitute.h"
+
+#include <QtTaskTree/QBarrier>
+#include <QtTaskTree/QConditional>
+
+#include <utils/algorithm.h>
+#include <utils/environment.h>
+#include <utils/overloaded.h>
+#include <utils/qtcprocess.h>
+#include <utils/stringutils.h>
+
+#include <QCryptographicHash>
+#include <QLoggingCategory>
+
+Q_LOGGING_CATEGORY(devcontainerlog, "devcontainer", QtWarningMsg)
+
+using namespace Utils;
+using namespace QtTaskTree;
+
+namespace DevContainer {
+
+struct InstancePrivate
+{
+    Config config;
+    InstanceConfig instanceConfig;
+    QTaskTree taskTree;
+};
+
+using DynamicString = std::variant<QString, Storage<QString>, std::function<QString()>>;
+
+static QString dynamicStringToString(const DynamicString &containerId)
+{
+    return std::visit(
+        overloaded{
+            [](const QString &id) { return id; },
+            [](const Storage<QString> &id) { return *id; },
+            [](const std::function<QString()> &f) { return f(); }},
+        containerId);
+}
+
+// Generates a unique ID for the devcontainer instance based on the workspace folder
+// and config file path.
+QString InstanceConfig::devContainerId() const
+{
+    const QByteArray workspace = workspaceFolder.toUrlishString().toUtf8();
+    const QByteArray config = configFilePath.toUrlishString().toUtf8();
+    const QByteArray combined = workspace + config;
+    QString id = QString::fromLatin1(
+        QCryptographicHash::hash(combined, QCryptographicHash::Sha256).toHex());
+    return id;
+}
+
+QString InstanceConfig::jsonToString(const QJsonValue &value) const
+{
+    QString str = value.toString();
+
+    const Internal::Replacers replacers
+        = {{"localWorkspaceFolder", [this](const QStringList &) { return workspaceFolder.path(); }},
+           {"localWorkspaceFolderBasename",
+            [this](const QStringList &) { return workspaceFolder.fileName(); }},
+           {"devcontainerId", [this](const QStringList &) { return devContainerId(); }},
+           {"localEnv",
+            [this](const QStringList &parts) {
+                if (parts.isEmpty())
+                    return QString();
+                const QString varname = parts.first();
+                const QString defaultValue = parts.mid(1).join(':');
+                return localEnvironment.value_or(varname, defaultValue);
+            }},
+           {"containerEnv",
+            [](const QStringList &parts) { return QString("${%1}").arg(parts.join(':')); }}};
+
+    Internal::substituteVariables(str, replacers);
+    return str;
+}
+
+Instance::Instance(Config config, InstanceConfig instanceConfig)
+    : d(std::make_unique<InstancePrivate>())
+{
+    d->config = std::move(config);
+    d->instanceConfig = std::move(instanceConfig);
+}
+
+Result<std::unique_ptr<Instance>> Instance::fromFile(InstanceConfig instanceConfig)
+{
+    const Result<Config> config = configFromFile(instanceConfig);
+    if (!config)
+        return ResultError(config.error());
+
+    return std::make_unique<Instance>(*config, instanceConfig);
+}
+
+Result<Config> Instance::configFromFile(InstanceConfig instanceConfig)
+{
+    const Result<QByteArray> contents = instanceConfig.configFilePath.fileContents();
+    if (!contents)
+        return ResultError(contents.error());
+
+    const Result<Config> config
+        = Config::fromJson(*contents, [instanceConfig](const QJsonValue &value) {
+              return instanceConfig.jsonToString(value);
+          });
+
+    return config;
+}
+
+std::unique_ptr<Instance> Instance::fromConfig(const Config &config, InstanceConfig instanceConfig)
+{
+    return std::make_unique<Instance>(config, instanceConfig);
+}
+
+Instance::~Instance() {};
+
+struct ContainerDetails
+{
+    QString Id;
+    QString Created;
+    QString Name;
+    QString Image;
+
+    struct
+    {
+        QString Status;
+        QString StartedAt;
+        QString FinishedAt;
+    } State;
+
+    struct
+    {
+        QString Image;
+        QString User;
+        QMap<QString, QString> Env;
+        std::optional<QMap<QString, QString>> Labels;
+    } Config;
+
+    struct Mount
+    {
+        QString Type;
+        std::optional<QString> Name;
+        QString Source;
+        QString Destination;
+    };
+    QList<Mount> Mounts;
+
+    struct NetworkSettings
+    {
+        struct PortBinding
+        {
+            QString HostIp;
+            QString HostPort;
+        };
+        QMap<QString, std::optional<QList<PortBinding>>> Ports;
+    } NetworkSettings;
+
+    struct Port
+    {
+        QString IP;
+        int PrivatePort;
+        int PublicPort;
+        QString Type;
+    };
+    QList<Port> Ports;
+};
+
+// QDebug stream operator for ContainerDetails
+QDebug operator<<(QDebug debug, const ContainerDetails &details)
+{
+    QDebugStateSaver saver(debug);
+    debug.nospace() << "ContainerDetails(Id: " << details.Id << ", Created: " << details.Created
+                    << ", Name: " << details.Name << ", State: { Status: " << details.State.Status
+                    << ", StartedAt: " << details.State.StartedAt
+                    << ", FinishedAt: " << details.State.FinishedAt
+                    << " }, Config: { Image: " << details.Config.Image
+                    << ", User: " << details.Config.User << ", Env: " << details.Config.Env
+                    << ", Labels: " << details.Config.Labels.value_or(QMap<QString, QString>())
+                    << " }, Mounts: [";
+
+    for (const auto &mount : details.Mounts) {
+        debug.nospace() << "{ Type: " << mount.Type << ", Name: " << mount.Name.value_or(QString())
+                        << ", Source: " << mount.Source << ", Destination: " << mount.Destination
+                        << " }, ";
+    }
+    debug.nospace() << "] NetworkSettings: { Ports: ";
+
+    for (auto it = details.NetworkSettings.Ports.constBegin();
+         it != details.NetworkSettings.Ports.constEnd();
+         ++it) {
+        debug.nospace() << it.key() << ": ";
+        if (it.value()) {
+            for (const auto &binding : *it.value()) {
+                debug.nospace() << "{ HostIp: " << binding.HostIp
+                                << ", HostPort: " << binding.HostPort << " }, ";
+            }
+        } else {
+            debug.nospace() << "(null), ";
+        }
+    }
+
+    debug.nospace() << "} Ports: [";
+    for (const auto &port : details.Ports) {
+        debug.nospace() << "{ IP: " << port.IP << ", PrivatePort: " << port.PrivatePort
+                        << ", PublicPort: " << port.PublicPort << ", Type: " << port.Type << " }, ";
+    }
+    debug.nospace() << "]";
+    return debug;
+}
+
+struct RunningContainerDetails
+{
+    QString userName;
+    QString userShell;
+    Environment probedUserEnvironment;
+};
+
+struct ImageDetails
+{
+    QString Id;
+    QString Architecture;
+    std::optional<QString> Variant;
+    QString Os;
+    struct
+    {
+        QString User;
+        std::optional<QStringList> Env;
+        std::optional<QMap<QString, QString>> Labels;
+        std::optional<QStringList> Entrypoint;
+        std::optional<QStringList> Cmd;
+    } Config;
+};
+
+// QDebug stream operator for ImageDetails
+QDebug operator<<(QDebug debug, const ImageDetails &details)
+{
+    QDebugStateSaver saver(debug);
+    debug.nospace() << "ImageDetails(Id: " << details.Id
+                    << ", Architecture: " << details.Architecture
+                    << ", Variant: " << details.Variant.value_or(QString())
+                    << ", Os: " << details.Os << ", Config: { User: " << details.Config.User
+                    << ", Env: " << details.Config.Env.value_or(QStringList())
+                    << ", Labels: " << details.Config.Labels.value_or(QMap<QString, QString>())
+                    << ", Entrypoint: " << details.Config.Entrypoint.value_or(QStringList())
+                    << ", Cmd: " << details.Config.Cmd.value_or(QStringList()) << " })";
+    return debug;
+}
+
+static void connectProcessToLog(
+    Process &process, const InstanceConfig &instanceConfig, const QString &context)
+{
+    process.setTextChannelMode(Channel::Output, TextChannelMode::MultiLine);
+    process.setTextChannelMode(Channel::Error, TextChannelMode::MultiLine);
+    QObject::connect(
+        &process, &Process::textOnStandardOutput, [instanceConfig, context](const QString &text) {
+            for (const auto &line : text.trimmed().split('\n')) {
+                if (context.isEmpty())
+                    instanceConfig.logFunction(line.trimmed());
+                else
+                    instanceConfig.logFunction(QString("[%1] %2").arg(context).arg(line.trimmed()));
+            }
+        });
+
+    QObject::connect(
+        &process, &Process::textOnStandardError, [instanceConfig, context](const QString &text) {
+            for (const auto &line : text.trimmed().split('\n')) {
+                if (context.isEmpty())
+                    instanceConfig.logFunction(line.trimmed());
+                else
+                    instanceConfig.logFunction(QString("[%1] %2").arg(context).arg(line.trimmed()));
+            }
+        });
+
+    QObject::connect(&process, &Process::done, [instanceConfig, context, &process] {
+        if (process.error() != QProcess::UnknownError) {
+            const QString line = process.verboseExitMessage();
+            if (context.isEmpty())
+                instanceConfig.logFunction(line.trimmed());
+            else
+                instanceConfig.logFunction(QString("[%1] %2").arg(context).arg(line.trimmed()));
+        }
+    });
+}
+
+static QString imageName(const InstanceConfig &instanceConfig)
+{
+    return QString("qtc-devcontainer-%1").arg(instanceConfig.devContainerId());
+}
+
+static QString containerName(const InstanceConfig &instanceConfig)
+{
+    return imageName(instanceConfig) + "-container";
+}
+
+static QString projectName(const InstanceConfig &instanceConfig)
+{
+    QRegularExpression invalidChars("[^-_a-z0-9]");
+    QString fileName = instanceConfig.workspaceFolder.fileName().toLower().remove(invalidChars);
+    return imageName(instanceConfig) + "-" + fileName;
+}
+
+static QStringList toAppPortArg(int port)
+{
+    return {"-p", QString("127.0.0.1:%1:%1").arg(port)};
+}
+
+static QStringList toAppPortArg(const QString &port)
+{
+    return {"-p", port};
+}
+
+static QStringList toAppPortArg(const QList<std::variant<int, QString>> &ports)
+{
+    QStringList args;
+    for (const auto &port : ports) {
+        args += std::visit(
+            overloaded{
+                [](int p) { return toAppPortArg(p); },
+                [](const QString &p) { return toAppPortArg(p); }},
+            port);
+    }
+    return args;
+}
+
+QStringList createAppPortArgs(std::variant<int, QString, QList<std::variant<int, QString>>> appPort)
+{
+    return std::visit(
+        overloaded{
+            [](int port) { return toAppPortArg(port); },
+            [](const QString &port) { return toAppPortArg(port); },
+            [](const QList<std::variant<int, QString>> &ports) { return toAppPortArg(ports); }},
+        appPort);
+}
+
+static ProcessTask checkDocker(const InstanceConfig &instanceConfig)
+{
+    return ProcessTask([instanceConfig](Process &process) {
+        connectProcessToLog(process, instanceConfig, "Check Docker");
+        CommandLine cmdLine{instanceConfig.dockerCli, {"system", "df"}};
+        process.setCommand(cmdLine);
+        process.setEnvironment(instanceConfig.localEnvironment);
+    });
+}
+
+static ProcessTask findContainerId(
+    Storage<QString> containerId,
+    const ComposeContainer &composeContainer,
+    const InstanceConfig &instanceConfig)
+{
+    const auto setup = [composeContainer, instanceConfig](Process &process) {
+        connectProcessToLog(process, instanceConfig, "Find Container Id");
+        CommandLine cmdLine{
+            instanceConfig.dockerCli,
+            {"ps",
+             {"-q", "--no-trunc", "-a"},
+             {"--filter", "label=com.docker.compose.project=" + projectName(instanceConfig)},
+             {"--filter", "label=com.docker.compose.service=" + composeContainer.service}}};
+        process.setCommand(cmdLine);
+        process.setEnvironment(instanceConfig.localEnvironment);
+        process.setWorkingDirectory(instanceConfig.workspaceFolder);
+    };
+
+    const auto done = [containerId](const Process &process) -> DoneResult {
+        const QString output = process.cleanedStdOut().trimmed();
+        if (output.isEmpty()) {
+            qCWarning(devcontainerlog) << "No container found for compose service.";
+            return DoneResult::Error;
+        }
+        *containerId = output;
+        return DoneResult::Success;
+    };
+
+    return ProcessTask(setup, done);
+}
+
+static ExecutableItem testBuildKit(const InstanceConfig &instanceConfig, Storage<bool> useBuildKit)
+{
+    return ProcessTask(
+        [instanceConfig](Process &process) {
+            connectProcessToLog(process, instanceConfig, "Fetch BuildKit Info");
+            process.setCommand({instanceConfig.dockerCli, {"buildx", "version"}});
+            process.setEnvironment(instanceConfig.localEnvironment);
+        },
+        [instanceConfig, useBuildKit](const Process &process, DoneWith doneWith) -> DoneResult {
+            if (doneWith == DoneWith::Error) {
+                // We end up here if buildx is not available.
+                return DoneResult::Success;
+            }
+
+            // Parse the output and store it in buildKitInfo
+            const QString output = process.cleanedStdOut().trimmed();
+            const QRegularExpression versionRegex(R"(([0-9]+)\.([0-9]+)\.([0-9]+))");
+            const QRegularExpressionMatch match = versionRegex.match(output);
+            if (match.hasMatch())
+                *useBuildKit = true;
+
+            return DoneResult::Success;
+        });
+}
+
+static ProcessTask inspectContainerTask(
+    Storage<ContainerDetails> containerDetails,
+    const InstanceConfig &instanceConfig,
+    const DynamicString &identifier)
+{
+    const auto setupInspectContainer = [identifier, instanceConfig](Process &process) {
+        CommandLine inspectCmdLine{
+            instanceConfig.dockerCli,
+            {"inspect", {"--type", "container"}, dynamicStringToString(identifier)}};
+
+        process.setCommand(inspectCmdLine);
+        process.setEnvironment(instanceConfig.localEnvironment);
+        process.setWorkingDirectory(instanceConfig.workspaceFolder);
+
+        instanceConfig.logFunction(
+            Tr::tr("Inspecting container: %1").arg(process.commandLine().toUserOutput()));
+    };
+
+    const auto doneInspectContainer = [containerDetails](const Process &process) -> DoneResult {
+        const auto output = process.cleanedStdOut();
+        QJsonParseError error;
+        QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &error);
+        if (error.error != QJsonParseError::NoError) {
+            qCWarning(devcontainerlog)
+                << "Failed to parse JSON from Docker inspect:" << error.errorString();
+            qCWarning(devcontainerlog).noquote() << output;
+            return DoneResult::Error;
+        }
+        if (!doc.isArray() || doc.array().isEmpty()) {
+            qCWarning(devcontainerlog)
+                << "Expected JSON array with one entry from Docker inspect, got:" << doc.toJson();
+            return DoneResult::Error;
+        }
+        // Parse into ContainerDetails struct
+        QJsonObject json = doc.array()[0].toObject();
+        ContainerDetails details;
+        details.Id = json.value("Id").toString();
+        details.Created = json.value("Created").toString();
+        details.Name = json.value("Name").toString().mid(1); // Remove leading '/'
+        details.Image = json.value("Image").toString();
+
+        QJsonObject stateObj = json.value("State").toObject();
+        details.State.Status = stateObj.value("Status").toString();
+        details.State.StartedAt = stateObj.value("StartedAt").toString();
+        details.State.FinishedAt = stateObj.value("FinishedAt").toString();
+
+        QJsonObject configObj = json.value("Config").toObject();
+        details.Config.Image = configObj.value("Image").toString();
+        details.Config.User = configObj.value("User").toString();
+
+        if (configObj.contains("Env")) {
+            QJsonArray envArray = configObj.value("Env").toArray();
+            details.Config.Env.clear();
+            for (const QJsonValue &envValue : envArray) {
+                if (!envValue.isString()) {
+                    qCWarning(devcontainerlog)
+                        << "Expected string in Env array, found:" << envValue;
+                    continue;
+                }
+                const QString envValueStr = envValue.toString();
+                const auto [key, value] = Utils::splitAtFirst(envValueStr, QLatin1Char('='));
+                details.Config.Env.insert(key.toString(), value.toString());
+            }
+        }
+
+        if (configObj.contains("Labels")) {
+            QJsonObject labelsObj = configObj.value("Labels").toObject();
+            details.Config.Labels = QMap<QString, QString>();
+            for (auto it = labelsObj.begin(); it != labelsObj.end(); ++it)
+                details.Config.Labels->insert(it.key(), it.value().toString());
+        }
+
+        // Parse Mounts
+        if (json.contains("Mounts") && json["Mounts"].isArray()) {
+            QJsonArray mountsArray = json["Mounts"].toArray();
+            for (const QJsonValue &mountValue : mountsArray) {
+                QJsonObject mountObj = mountValue.toObject();
+                ContainerDetails::Mount mount;
+                mount.Type = mountObj.value("Type").toString();
+                if (mountObj.contains("Name"))
+                    mount.Name = mountObj.value("Name").toString();
+                mount.Source = mountObj.value("Source").toString();
+                mount.Destination = mountObj.value("Destination").toString();
+                details.Mounts.append(mount);
+            }
+        }
+
+        // Parse NetworkSettings
+        if (json.contains("NetworkSettings")) {
+            QJsonObject networkSettingsObj = json.value("NetworkSettings").toObject();
+            if (networkSettingsObj.contains("Ports")) {
+                QJsonObject portsObj = networkSettingsObj.value("Ports").toObject();
+                for (auto it = portsObj.begin(); it != portsObj.end(); ++it) {
+                    QJsonArray portBindingsArray = it.value().toArray();
+                    QList<ContainerDetails::NetworkSettings::PortBinding> portBindings;
+                    for (const QJsonValue &bindingValue : portBindingsArray) {
+                        QJsonObject bindingObj = bindingValue.toObject();
+                        ContainerDetails::NetworkSettings::PortBinding binding;
+                        binding.HostIp = bindingObj.value("HostIp").toString();
+                        binding.HostPort = bindingObj.value("HostPort").toString();
+                        portBindings.append(binding);
+                    }
+                    details.NetworkSettings.Ports.insert(it.key(), portBindings);
+                }
+            }
+        }
+
+        details.Ports.clear();
+        for (auto it = details.NetworkSettings.Ports.constBegin();
+             it != details.NetworkSettings.Ports.constEnd();
+             ++it) {
+            const QStringList parts = it.key().split(QLatin1Char('/'));
+            if (parts.size() == 2) {
+                bool okPrivatePort = false;
+                const int privatePort = parts.at(0).toInt(&okPrivatePort);
+                const QString type = parts.at(1);
+
+                if (it.value()) {
+                    for (const ContainerDetails::NetworkSettings::PortBinding &binding :
+                         *it.value()) {
+                        bool okPublicPort = false;
+                        const int publicPort = binding.HostPort.toInt(&okPublicPort);
+
+                        ContainerDetails::Port p;
+                        p.IP = binding.HostIp;
+                        p.PrivatePort = okPrivatePort ? privatePort : 0;
+                        p.PublicPort = okPublicPort ? publicPort : 0;
+                        p.Type = type;
+                        details.Ports.append(p);
+                    }
+                }
+            }
+        }
+
+        *containerDetails = details;
+
+        qCDebug(devcontainerlog) << "Container details:" << details;
+
+        return DoneResult::Success;
+    };
+
+    return ProcessTask{setupInspectContainer, doneInspectContainer};
+}
+
+static ProcessTask inspectContainerTask(
+    Storage<ContainerDetails> containerDetails, const InstanceConfig &instanceConfig)
+{
+    return inspectContainerTask(containerDetails, instanceConfig, containerName(instanceConfig));
+}
+
+static ProcessTask inspectImageTask(
+    Storage<ImageDetails> imageDetails,
+    const InstanceConfig &instanceConfig,
+    const DynamicString &imageName)
+{
+    const auto setupInspectImage = [imageDetails, instanceConfig, imageName](Process &process) {
+        CommandLine inspectCmdLine{
+            instanceConfig.dockerCli,
+            {"inspect", {"--type", "image"}, dynamicStringToString(imageName)}};
+
+        process.setCommand(inspectCmdLine);
+        process.setEnvironment(instanceConfig.localEnvironment);
+        process.setWorkingDirectory(instanceConfig.workspaceFolder);
+
+        instanceConfig.logFunction(
+            Tr::tr("Inspecting image: %1").arg(process.commandLine().toUserOutput()));
+    };
+
+    const auto doneInspectImage =
+        [imageDetails](const Process &process, DoneWith doneWith) -> DoneResult {
+        if (doneWith != DoneWith::Success) {
+            qCWarning(devcontainerlog) << "Docker inspect failed with result:" << doneWith
+                                       << "Output:" << process.cleanedStdOut();
+            return DoneResult::Error;
+        }
+
+        const auto output = process.cleanedStdOut();
+        QJsonParseError error;
+        QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &error);
+        if (error.error != QJsonParseError::NoError) {
+            qCWarning(devcontainerlog)
+                << "Failed to parse JSON from Docker inspect:" << error.errorString();
+            qCWarning(devcontainerlog).noquote() << output;
+            return DoneResult::Error;
+        }
+        if (!doc.isArray() || doc.array().isEmpty()) {
+            qCWarning(devcontainerlog)
+                << "Expected JSON array with one entry from Docker inspect, got:" << doc.toJson();
+            return DoneResult::Error;
+        }
+        // Parse into ImageDetails struct
+        QJsonObject json = doc.array()[0].toObject();
+        ImageDetails details;
+        details.Id = json.value("Id").toString();
+        details.Architecture = json.value("Architecture").toString();
+        if (json.contains("Variant"))
+            details.Variant = json.value("Variant").toString();
+        details.Os = json.value("Os").toString();
+        QJsonObject config = json.value("Config").toObject();
+        details.Config.User = config.value("User").toString();
+        if (config.contains("Env")) {
+            QJsonArray envArray = config.value("Env").toArray();
+            details.Config.Env = QStringList();
+            for (const QJsonValue &envValue : envArray)
+                details.Config.Env->append(envValue.toString());
+        }
+        if (config.contains("Labels")) {
+            QJsonObject labelsObj = config.value("Labels").toObject();
+            details.Config.Labels = QMap<QString, QString>();
+            for (auto it = labelsObj.begin(); it != labelsObj.end(); ++it)
+                details.Config.Labels->insert(it.key(), it.value().toString());
+        }
+        if (config.contains("Entrypoint")) {
+            QJsonArray entrypointArray = config.value("Entrypoint").toArray();
+            details.Config.Entrypoint = QStringList();
+            for (const QJsonValue &entryValue : entrypointArray)
+                details.Config.Entrypoint->append(entryValue.toString());
+        }
+        if (config.contains("Cmd")) {
+            QJsonArray cmdArray = config.value("Cmd").toArray();
+            details.Config.Cmd = QStringList();
+            for (const QJsonValue &cmdValue : cmdArray)
+                details.Config.Cmd->append(cmdValue.toString());
+        }
+        *imageDetails = details;
+        qCDebug(devcontainerlog) << "Image details:" << details;
+
+        return DoneResult::Success;
+    };
+
+    return ProcessTask{setupInspectImage, doneInspectImage};
+}
+
+static QStringList generateMountArgs(
+    const InstanceConfig &instanceConfig, const DevContainerCommon &commonConfig)
+{
+    auto mountToString = [](const std::variant<Mount, QString> &mount) -> QString {
+        return std::visit(
+            overloaded{
+                [](const Mount &m) {
+                    const QString type = m.type == MountType::Bind ? QString("bind")
+                                                                   : QString("volume");
+                    const QString source = m.source ? ",source=" + *m.source : QString();
+                    return QString("--mount=type=%1,target=%2%3").arg(type).arg(m.target).arg(source);
+                },
+                [](const QString &m) { return QString("--mount=%1").arg(m); }},
+            mount);
+    };
+
+    return Utils::transform<QStringList>(commonConfig.mounts, mountToString)
+           + Utils::transform<QStringList>(instanceConfig.mounts, mountToString);
+}
+
+template<typename C>
+static void setupCreateContainerFromImage(
+    const C &containerConfig,
+    const DevContainerCommon &commonConfig,
+    const InstanceConfig &instanceConfig,
+    const ImageDetails &imageDetails,
+    Process &process)
+{
+    connectProcessToLog(process, instanceConfig, Tr::tr("Create Container"));
+
+    QStringList containerEnvArgs;
+
+    for (auto &[key, value] : commonConfig.containerEnv)
+        containerEnvArgs << "-e" << QString("%1=%2").arg(key, value);
+
+    QStringList appPortArgs;
+
+    if (containerConfig.appPort)
+        appPortArgs = createAppPortArgs(*containerConfig.appPort);
+
+    QStringList customEntryPoints = {}; // TODO: Get entry points from features.
+
+    QStringList cmd
+        = {"-c",
+           QString(R"(echo Container started.
+trap "exit 0" TERM
+%1
+exec "$@"
+while sleep 1 & wait $!; do :; done
+)")
+               .arg(customEntryPoints.join('\n')),
+           "-"};
+
+    if (!containerConfig.overrideCommand) {
+        cmd.append(imageDetails.Config.Entrypoint.value_or(QStringList()));
+        cmd.append(imageDetails.Config.Cmd.value_or(QStringList()));
+    }
+    QStringList workspaceMountArgs;
+
+    if (containerConfig.workspaceMount) {
+        workspaceMountArgs = {"--mount", *containerConfig.workspaceMount};
+    } else {
+        workspaceMountArgs
+            = {"--mount",
+               QString("type=bind,source=%1,target=%2")
+                   .arg(
+                       instanceConfig.workspaceFolder.path(),
+                       containerConfig.workspaceFolder)};
+    }
+
+    const auto containerUserArgs = [&commonConfig]() -> QStringList {
+        if (commonConfig.containerUser)
+            return {"-u", *commonConfig.containerUser};
+        return {};
+    }();
+
+    const auto featureArgs = [&commonConfig]() -> QStringList {
+        QStringList args;
+        // TODO: Merge feature args from features
+        if (commonConfig.init)
+            args << "--init";
+        if (commonConfig.privileged)
+            args << "--privileged";
+        for (const QString &cap : commonConfig.capAdd)
+            args << "--cap-add" << cap;
+        for (const QString &securityOpt : commonConfig.securityOpt)
+            args << "--security-opt" << securityOpt;
+        return args;
+    }();
+
+    CommandLine createCmdLine{
+        instanceConfig.dockerCli,
+        {"create",
+         {"--name", containerName(instanceConfig)},
+         containerEnvArgs,
+         containerUserArgs,
+         appPortArgs,
+         workspaceMountArgs,
+         generateMountArgs(instanceConfig, commonConfig),
+         featureArgs,
+         {"--entrypoint", "/bin/sh"},
+         imageName(instanceConfig),
+         cmd}};
+    process.setCommand(createCmdLine);
+    process.setEnvironment(instanceConfig.localEnvironment);
+    process.setWorkingDirectory(instanceConfig.workspaceFolder);
+
+    instanceConfig.logFunction(
+        Tr::tr("Creating container: %1").arg(process.commandLine().toUserOutput()));
+}
+
+static QString anyOf(QJsonObject obj, QStringList keyNames)
+{
+    for (const QString &key : keyNames) {
+        if (obj.contains(key))
+            return obj.value(key).toString();
+    }
+    return QString();
+}
+
+static ProcessTask eventMonitor(const QString &eventType, const InstanceConfig &instanceConfig)
+{
+    const auto monitorSetup = [instanceConfig, eventType](Process &process) {
+        CommandLine eventsCmdLine
+            = {instanceConfig.dockerCli,
+               {"events",
+                {"--filter", QString("event=%1").arg(eventType)},
+                {"--filter", QString("container=%1").arg(containerName(instanceConfig))},
+                {"--format", "{{json .}}"}}};
+
+        process.setCommand(eventsCmdLine);
+        process.setEnvironment(instanceConfig.localEnvironment);
+
+        instanceConfig.logFunction(
+            Tr::tr("Waiting for container to start: %1").arg(eventsCmdLine.toUserOutput()));
+
+        process.setTextChannelMode(Channel::Output, TextChannelMode::SingleLine);
+        process.setTextChannelMode(Channel::Error, TextChannelMode::SingleLine);
+        QObject::connect(
+            &process,
+            &Process::textOnStandardOutput,
+            [&process, eventType, instanceConfig](const QString &text) {
+                instanceConfig.logFunction(QString("[Event Monitor] %1").arg(text));
+
+                QJsonDocument doc = QJsonDocument::fromJson(text.toUtf8());
+                if (doc.isNull() || !doc.isObject()) {
+                    qCWarning(devcontainerlog)
+                        << "Received invalid JSON from Docker events:" << text;
+                    return;
+                }
+                QJsonObject event = doc.object();
+                if (anyOf(event, {"status", "Status", "Action"}) == eventType) {
+                    qCDebug(devcontainerlog) << "Container started!";
+                    process.stop();
+                } else {
+                    qCWarning(devcontainerlog) << "Unexpected Docker event:" << event;
+                }
+            });
+
+        QObject::connect(
+            &process, &Process::textOnStandardError, [instanceConfig](const QString &text) {
+                instanceConfig.logFunction(QString("[Event Monitor] %1").arg(text));
+                qCWarning(devcontainerlog) << "Docker events error:" << text;
+            });
+    };
+
+    return ProcessTask(monitorSetup, DoneResult::Success);
+}
+
+static QString containerUser(const ContainerDetails &containerDetails)
+{
+    if (containerDetails.Config.User.isEmpty())
+        return QString("root");
+
+    static QRegularExpression nameGroupRegex("([^:]*)(:(.*))?");
+
+    QRegularExpressionMatch match = nameGroupRegex.match(containerDetails.Config.User);
+    if (!match.hasMatch()) {
+        qCWarning(devcontainerlog)
+            << "Failed to parse user from container details:" << containerDetails.Config.User;
+        return QString("root");
+    }
+
+    if (match.captured(1).isEmpty())
+        return QString("root");
+
+    return match.captured(1);
+}
+
+static ExecutableItem execInContainerTask(
+    const QString &logPrefix,
+    const InstanceConfig &instanceConfig,
+    const DynamicString &containerId,
+    const std::variant<std::function<CommandLine()>, CommandLine, QString> &cmdLine,
+    const ProcessTask::TaskDoneHandler &doneHandler)
+{
+    const auto setupExec = [instanceConfig, containerId, cmdLine, logPrefix](Process &process) {
+        connectProcessToLog(process, instanceConfig, logPrefix);
+
+        CommandLine
+            execCmdLine{instanceConfig.dockerCli, {"exec", dynamicStringToString(containerId)}};
+        if (std::holds_alternative<CommandLine>(cmdLine)) {
+            execCmdLine.addCommandLineAsArgs(std::get<CommandLine>(cmdLine));
+        } else if (std::holds_alternative<QString>(cmdLine)) {
+            execCmdLine.addArgs({std::get<QString>(cmdLine)}, CommandLine::Raw);
+        } else if (std::holds_alternative<std::function<CommandLine()>>(cmdLine)) {
+            const CommandLine cmd = std::get<std::function<CommandLine()>>(cmdLine)();
+            if (cmd.isEmpty()) {
+                qCWarning(devcontainerlog)
+                    << "Empty command provided for execInContainerTask." << cmd.toUserOutput();
+                return;
+            }
+            execCmdLine.addCommandLineAsArgs(cmd);
+        } else {
+            qCWarning(devcontainerlog) << "Unsupported command line type for execInContainerTask.";
+            return;
+        }
+
+        process.setCommand(execCmdLine);
+        process.setEnvironment(instanceConfig.localEnvironment);
+        process.setWorkingDirectory(instanceConfig.workspaceFolder);
+
+        instanceConfig.logFunction(
+            Tr::tr("Executing in container: %1").arg(process.commandLine().toUserOutput()));
+    };
+
+    return ProcessTask{setupExec, doneHandler};
+}
+
+static ExecutableItem probeUserEnvTask(
+    Storage<RunningContainerDetails> containerDetails,
+    const DevContainerCommon &commonConfig,
+    const InstanceConfig &instanceConfig,
+    const DynamicString &containerId)
+{
+    if (commonConfig.userEnvProbe == UserEnvProbe::None)
+        return Group{};
+
+    static const QMap<UserEnvProbe, QString> shellLoginMap{
+        {UserEnvProbe::None, "-c"},
+        {UserEnvProbe::InteractiveShell, "-ic"},
+        {UserEnvProbe::LoginShell, "-lc"},
+        {UserEnvProbe::LoginInteractiveShell, "-lic"}};
+
+    const QString shellArg = shellLoginMap[commonConfig.userEnvProbe];
+
+    return execInContainerTask(
+        "Probe User Environment",
+        instanceConfig,
+        containerId,
+        [containerDetails, shellArg]() -> CommandLine {
+            return {FilePath::fromUserInput(containerDetails->userShell), {shellArg, "printenv"}};
+        },
+        [containerDetails,
+         commonConfig,
+         instanceConfig](const Process &process, DoneWith doneWith) -> DoneResult {
+            if (doneWith == DoneWith::Error) {
+                qCWarning(devcontainerlog)
+                    << "Failed to probe user environment:" << process.verboseExitMessage();
+                return DoneResult::Error;
+            }
+
+            const QString output = process.cleanedStdOut().trimmed();
+            if (output.isEmpty()) {
+                qCWarning(devcontainerlog) << "No output from user environment probe.";
+                return DoneResult::Success;
+            }
+
+            Environment env(output.split('\n', Qt::SkipEmptyParts), Utils::OsTypeLinux);
+
+            // We don't want to capture the following environment variables:
+            for (const char *key : {"_", "PWD"})
+                env.unset(QLatin1StringView(key));
+
+            containerDetails->probedUserEnvironment = env;
+
+            return DoneResult::Success;
+        });
+}
+
+Result<UserFromPasswd> parseUserFromPasswd(const QString &passwdLine)
+{
+    QStringList row = passwdLine.trimmed().split(QLatin1Char(':'));
+    QTC_ASSERT(row.size() >= 7, return ResultError(Tr::tr("Invalid passwd line: %1").arg(passwdLine)));
+    return UserFromPasswd{
+        row.value(0),
+        row.value(2),
+        row.value(3),
+        row.value(5),
+        row.value(6),
+    };
+}
+
+static ExecutableItem runningContainerDetailsTask(
+    Storage<ContainerDetails> containerDetails,
+    Storage<RunningContainerDetails> runningDetails,
+    const DevContainerCommon &commonConfig,
+    const InstanceConfig &instanceConfig,
+    const DynamicString &containerId)
+{
+    const ExecutableItem idTask = execInContainerTask(
+        "Get Running Container User",
+        instanceConfig,
+        containerId,
+        CommandLine{"id", {"-un"}},
+        [runningDetails](const Process &process, DoneWith doneWith) -> DoneResult {
+            if (doneWith == DoneWith::Error) {
+                qCWarning(devcontainerlog)
+                    << "Failed to get running container user:" << process.verboseExitMessage();
+                return DoneResult::Error;
+            }
+
+            const QString user = process.cleanedStdOut().trimmed();
+            runningDetails->userName = user;
+            qCDebug(devcontainerlog) << "Running container user:" << user;
+            return DoneResult::Success;
+        });
+
+    const ExecutableItem shellTask = execInContainerTask(
+        "Get Running Container User Shell",
+        instanceConfig,
+        containerId,
+        [containerDetails, runningDetails]() -> CommandLine {
+            const QString userName = containerUser(*containerDetails);
+            QString userEscapedForShell = userName;
+            userEscapedForShell.replace(QRegularExpression("(['\\\\])"), "\\\\1");
+            QString userEscapedForGrep = userName;
+            userEscapedForGrep.replace(QRegularExpression("([.*+?^${}()|[\\]\\\\])"), "\\\\1")
+                .replace('\'', "\\'");
+
+            CommandLine testGetEnt{
+                "command",
+                {"-v", "getent", {">/dev/null", CommandLine::Raw}, {"2>&1", CommandLine::Raw}}};
+            const CommandLine getPasswdViaGetent{"getent", {"passwd", userName}};
+            const CommandLine getPasswdViaGrep{
+                "grep",
+                {"-E", QString("^(%1|^[^:]*:[^:]*:%1:)").arg(userEscapedForGrep), "/etc/passwd"}};
+            const CommandLine trueCmd{"true"};
+
+            testGetEnt.addCommandLineWithAnd(getPasswdViaGetent);
+            testGetEnt.addCommandLineWithOr(getPasswdViaGrep);
+            testGetEnt.addCommandLineWithOr(trueCmd);
+
+            CommandLine getShellCmd{"/bin/sh", {"-c"}};
+            getShellCmd.addCommandLineAsSingleArg(testGetEnt);
+            return getShellCmd;
+        },
+        [instanceConfig,
+         containerDetails,
+         runningDetails](const Process &process, DoneWith doneWith) -> DoneResult {
+            const QString output = process.cleanedStdOut().trimmed();
+
+            runningDetails->userShell = containerDetails->Config.Env.value("SHELL", "/bin/sh");
+            instanceConfig.logFunction(
+                "Running container user shell (default): " + runningDetails->userShell);
+
+            if (output.isEmpty() || doneWith == DoneWith::Error) {
+                qCWarning(devcontainerlog) << "Failed to get running container user shell:"
+                                           << process.verboseExitMessage();
+                return DoneResult::Success;
+            }
+
+            auto user = parseUserFromPasswd(output);
+            if (!user) {
+                qCWarning(devcontainerlog) << "Failed to parse user from passwd line:" << output;
+                return DoneResult::Error;
+            }
+
+            instanceConfig.logFunction(
+                QString("Running container user: %1 UID: %2 GID: %3 Home: %4 Shell: %5")
+                    .arg(user->name, user->uid, user->gid, user->home, user->shell));
+
+            runningDetails->userShell = user->shell;
+
+            return DoneResult::Success;
+        });
+
+    return Group{
+        idTask,
+        shellTask,
+        probeUserEnvTask(runningDetails, commonConfig, instanceConfig, containerId)};
+}
+
+static ProcessTask lifecycleHookTask(
+    const CommandLine &cmdLine, const InstanceConfig &instanceConfig, const QString &name)
+{
+    return ProcessTask([cmdLine, instanceConfig, name](Process &process) {
+        connectProcessToLog(process, instanceConfig, name);
+        process.setCommand(cmdLine);
+        process.setEnvironment(instanceConfig.localEnvironment);
+        process.setWorkingDirectory(instanceConfig.workspaceFolder);
+    });
+}
+
+static ExecutableItem singleCommandLifecycleRecipe(
+    const InstanceConfig &instanceConfig,
+    const QString &command,
+    std::optional<CommandLine> dockerExecCmd,
+    const QString &name = {})
+{
+    if (command.isEmpty())
+        return Group{};
+
+    // If dockerExecCmd is provided, we execute the command in the container using a shell.
+    // If not, we execute the command through a host shell.
+    static const CommandLine hostShell = HostOsInfo::isWindowsHost()
+                                             ? CommandLine{"cmd.exe", {"/c"}}
+                                             : CommandLine{"/bin/sh", {"-c"}};
+
+    // We either execute the command in a shell running on the host ...
+    CommandLine cmdLine;
+    if (dockerExecCmd) {
+        cmdLine = *dockerExecCmd;
+        cmdLine.addArgs({"/bin/sh", "-c"});
+    } else {
+        cmdLine = hostShell;
+    }
+
+    cmdLine.addArg(command);
+
+    return lifecycleHookTask(cmdLine, instanceConfig, name);
+}
+
+static ExecutableItem singleCommandLifecycleRecipe(
+    const InstanceConfig &instanceConfig,
+    const QStringList &command,
+    std::optional<CommandLine> dockerExecCmd,
+    const QString &name = {})
+{
+    if (command.isEmpty())
+        return Group{};
+
+    const CommandLine cmdLineFromList
+        = CommandLine(FilePath::fromUserInput(command[0]), command.mid(1));
+
+    CommandLine cmdLine;
+    if (dockerExecCmd) {
+        cmdLine = *dockerExecCmd;
+        cmdLine.addCommandLineAsArgs(cmdLineFromList);
+    } else {
+        cmdLine = cmdLineFromList;
+    }
+
+    return lifecycleHookTask(cmdLine, instanceConfig, name);
+}
+
+static ExecutableItem singleCommandLifecycleRecipe(
+    const InstanceConfig &instanceConfig,
+    std::variant<QString, QStringList> command,
+    std::optional<CommandLine> dockerExecCmd,
+    const QString &name = {})
+{
+    // https://containers.dev/implementors/json_reference/#formatting-string-vs-array-properties
+    // * If the command is a QString, it is executed through a shell.
+    // * If its a QStringList, it is executed directly without a shell.
+
+    return std::visit(
+        overloaded{
+            [&](const QString &cmd) {
+                return singleCommandLifecycleRecipe(instanceConfig, cmd, dockerExecCmd, name);
+            },
+            [&](const QStringList &cmd) {
+                return singleCommandLifecycleRecipe(instanceConfig, cmd, dockerExecCmd, name);
+            }},
+        command);
+}
+
+static ExecutableItem lifecycleHookRecipe(
+    const QString &hookName,
+    const InstanceConfig &instanceConfig,
+    std::optional<Command> command,
+    std::optional<CommandLine> dockerExecCmd = std::nullopt)
+{
+    if (!command)
+        return Group{};
+
+    auto logExecution = QSyncTask([instanceConfig, hookName] {
+        instanceConfig.logFunction(QString("Executing the %1 hook from %2")
+                                       .arg(hookName)
+                                       .arg(instanceConfig.configFilePath.fileName()));
+    });
+
+    const QList<GroupItem> cmds = std::visit(
+        overloaded{
+            [&](const QString &cmd) -> GroupItems {
+                return {singleCommandLifecycleRecipe(instanceConfig, cmd, dockerExecCmd, hookName)};
+            },
+            [&](const QStringList &cmd) -> GroupItems {
+                return {singleCommandLifecycleRecipe(instanceConfig, cmd, dockerExecCmd, hookName)};
+            },
+            [&](const CommandMap &map) {
+                GroupItems commands;
+                for (const auto &[name, cmd] : map) {
+                    commands.push_back(
+                        singleCommandLifecycleRecipe(instanceConfig, cmd, dockerExecCmd, name));
+                }
+                return commands;
+            }},
+        *command);
+
+    return Group{logExecution, Group{parallelIdealThreadCountLimit, cmds}};
+}
+
+static ExecutableItem runLifecycleHooksRecipe(
+    DevContainerCommon commonConfig, const InstanceConfig &instanceConfig)
+{
+    const CommandLine dockerExecPrefix
+        = CommandLine{instanceConfig.dockerCli, {"exec", containerName(instanceConfig)}};
+
+    struct Cmd
+    {
+        const QString name;
+        const std::optional<Command> command;
+    };
+    const QList<Cmd> lifecycleHooks
+        = {{"onCreateCommand", commonConfig.onCreateCommand},
+           {"updateContentCommand", commonConfig.updateContentCommand},
+           {"postCreateCommand", commonConfig.postCreateCommand},
+           {"postStartCommand", commonConfig.postStartCommand},
+           {"postAttachCommand", commonConfig.postAttachCommand}};
+
+    GroupItems remoteItems = Utils::transform(lifecycleHooks, [&](const Cmd &hook) -> GroupItem {
+        return lifecycleHookRecipe(hook.name, instanceConfig, hook.command, dockerExecPrefix);
+    });
+
+    GroupItems localItems = {
+        lifecycleHookRecipe("initializeCommand", instanceConfig, commonConfig.initializeCommand)};
+
+    return Group(localItems + remoteItems);
+}
+
+static ExecutableItem containerDoesNotExistTask(const InstanceConfig &instanceConfig)
+{
+    return ProcessTask(
+        [instanceConfig](Process &process) {
+            instanceConfig.logFunction(
+                Tr::tr("Checking if container exists: %1").arg(containerName(instanceConfig)));
+
+            connectProcessToLog(process, instanceConfig, "Check Container Existence");
+
+            CommandLine cmdLine{
+                instanceConfig.dockerCli,
+                {"container",
+                 "ls",
+                 "-a",
+                 "--format",
+                 "{{.Names}}",
+                 "--filter",
+                 QString("name=%1").arg(containerName(instanceConfig))}};
+            process.setCommand(cmdLine);
+            process.setEnvironment(instanceConfig.localEnvironment);
+            process.setWorkingDirectory(instanceConfig.workspaceFolder);
+        },
+        [instanceConfig](const Process &process, DoneWith doneWith) -> DoneResult {
+            if (doneWith == DoneWith::Error) {
+                qCWarning(devcontainerlog)
+                    << "Failed to check if container exists:" << process.cleanedStdErr();
+                return DoneResult::Error;
+            }
+            const QString output = process.cleanedStdOut().trimmed();
+            if (output == containerName(instanceConfig)) {
+                instanceConfig.logFunction(Tr::tr("Container already exists: %1").arg(output));
+                return DoneResult::Error;
+            }
+
+            instanceConfig.logFunction(
+                Tr::tr("Container does not exist, proceeding to create: %1").arg(output));
+
+            return DoneResult::Success;
+        });
+}
+
+static ExecutableItem containerState(const InstanceConfig &instanceConfig, Storage<QString> state)
+{
+    return ProcessTask(
+        [instanceConfig](Process &process) {
+            CommandLine cmdLine{
+                instanceConfig.dockerCli,
+                {"container",
+                 "ls",
+                 "-a",
+                 "--format",
+                 "{{.State}}",
+                 "--filter",
+                 QString("name=%1").arg(containerName(instanceConfig))}};
+
+            process.setCommand(cmdLine);
+            process.setEnvironment(instanceConfig.localEnvironment);
+            process.setWorkingDirectory(instanceConfig.workspaceFolder);
+        },
+        [instanceConfig, state](const Process &process, DoneWith doneWith) -> DoneResult {
+            if (doneWith == DoneWith::Error) {
+                qCWarning(devcontainerlog) << "Failed to check if container state"
+                                           << ":" << process.cleanedStdErr();
+                return DoneResult::Error;
+            }
+            *state = process.cleanedStdOut().trimmed();
+            return DoneResult::Success;
+        });
+}
+
+template<typename C>
+static ExecutableItem createContainerRecipe(
+    Storage<ImageDetails> imageDetails,
+    const C &containerConfig,
+    const DevContainerCommon &commonConfig,
+    const InstanceConfig &instanceConfig)
+{
+    auto createContainerSetup =
+        [imageDetails, containerConfig, commonConfig, instanceConfig](Process &process) {
+            setupCreateContainerFromImage(
+                containerConfig, commonConfig, instanceConfig, *imageDetails, process);
+        };
+
+    // clang-format off
+    return Group {
+        If (containerDoesNotExistTask(instanceConfig)) >> Then {
+            ProcessTask(createContainerSetup)
+        }
+    };
+    // clang-format on
+}
+
+static ExecutableItem startContainerRecipe(const InstanceConfig &instanceConfig)
+{
+    const auto start = [instanceConfig] {
+        return ProcessTask([instanceConfig](Process &process) {
+            connectProcessToLog(process, instanceConfig, Tr::tr("Start Container"));
+
+            CommandLine
+                startCmdLine{instanceConfig.dockerCli, {"start", containerName(instanceConfig)}};
+            process.setCommand(startCmdLine);
+            process.setEnvironment(instanceConfig.localEnvironment);
+            process.setWorkingDirectory(instanceConfig.workspaceFolder);
+
+            instanceConfig.logFunction(
+                Tr::tr("Starting container: %1").arg(process.commandLine().toUserOutput()));
+        });
+    };
+
+    const auto unpause = [instanceConfig] {
+        return ProcessTask([instanceConfig](Process &process) {
+            connectProcessToLog(process, instanceConfig, Tr::tr("Resume Container"));
+
+            CommandLine
+                startCmdLine{instanceConfig.dockerCli, {"unpause", containerName(instanceConfig)}};
+            process.setCommand(startCmdLine);
+            process.setEnvironment(instanceConfig.localEnvironment);
+            process.setWorkingDirectory(instanceConfig.workspaceFolder);
+
+            instanceConfig.logFunction(
+                Tr::tr("Resuming container: %1").arg(process.commandLine().toUserOutput()));
+        });
+    };
+
+    Storage<QString> containerStateStorage;
+
+    const auto readyToStart = [containerStateStorage] {
+        return (*containerStateStorage == "created" || *containerStateStorage == "exited")
+                   ? DoneResult::Success
+                   : DoneResult::Error;
+    };
+    const auto paused = [containerStateStorage] {
+        return *containerStateStorage == "paused" ? DoneResult::Success : DoneResult::Error;
+    };
+
+    // clang-format off
+    return Group
+    {
+        containerStateStorage,
+        containerState(instanceConfig, containerStateStorage),
+        Group {
+            If (readyToStart) >> Then {
+                When (eventMonitor("start", instanceConfig), &Process::started) >> Do {
+                    start()
+                }
+            } >> ElseIf (paused) >> Then {
+                When (eventMonitor("unpause", instanceConfig), &Process::started) >> Do {
+                    unpause()
+                }
+            }
+        },
+    };
+    // clang-format on
+}
+
+static QSyncTask fillRunningInstance(
+    const RunningInstance &runningInstance,
+    const Storage<RunningContainerDetails> &runningDetails,
+    const Storage<ImageDetails> &imageDetails,
+    const DynamicString &containerId)
+{
+    return QSyncTask([containerId, runningInstance, runningDetails, imageDetails]() {
+        runningInstance->remoteEnvironment = runningDetails->probedUserEnvironment;
+
+        runningInstance->osType = osTypeFromString(imageDetails->Os).value_or(OsType::OsTypeOther);
+        runningInstance->osArch
+            = osArchFromString(imageDetails->Architecture).value_or(OsArch::OsArchUnknown);
+        runningInstance->containerId = dynamicStringToString(containerId);
+    });
+}
+
+static Result<Group> prepareContainerRecipe(
+    const DockerfileContainer &containerConfig,
+    const DevContainerCommon &commonConfig,
+    const InstanceConfig &instanceConfig,
+    const RunningInstance &runningInstance)
+{
+    const auto setupBuildImage = [containerConfig, instanceConfig](Process &process) {
+        connectProcessToLog(process, instanceConfig, Tr::tr("Build Dockerfile"));
+
+        const FilePath configFileDir = instanceConfig.configFilePath.parentDir();
+        const FilePath contextPath = configFileDir.resolvePath(containerConfig.context);
+        const FilePath dockerFile = configFileDir.resolvePath(containerConfig.dockerfile);
+
+        const QStringList cacheFromArgs = [&] {
+            if (!containerConfig.buildOptions->cacheFrom)
+                return QStringList{};
+
+            return std::visit(
+                overloaded{
+                    [](const QString &cacheFrom) { return QStringList{"--cache-from", cacheFrom}; },
+                    [](const QStringList &cacheFroms) {
+                        return Utils::transform<QStringList>(cacheFroms, [](const QString &cf) {
+                            return QString("--cache-from=%1").arg(cf);
+                        });
+                    }},
+                *containerConfig.buildOptions->cacheFrom);
+        }();
+
+        const QStringList target = [&] {
+            if (!containerConfig.buildOptions->target)
+                return QStringList{};
+            return QStringList{"--target", *containerConfig.buildOptions->target};
+        }();
+
+        const QStringList extraBuildArgs = [&] {
+            QStringList args;
+            for (const auto &[k, v] : containerConfig.buildOptions->args) {
+                if (v.isEmpty())
+                    args << QStringList{"--build-arg", k};
+                args << QStringList{"--build-arg", QString("%1=%2").arg(k, v)};
+            }
+            return args;
+        }();
+
+        CommandLine buildCmdLine{
+            instanceConfig.dockerCli,
+            {"build",
+             {"-f", dockerFile.nativePath()},
+             {"-t", imageName(instanceConfig)},
+             containerConfig.buildOptions->options,
+             cacheFromArgs,
+             target,
+             extraBuildArgs,
+             contextPath.nativePath()}};
+
+        process.setCommand(buildCmdLine);
+        process.setEnvironment(instanceConfig.localEnvironment);
+        process.setWorkingDirectory(instanceConfig.workspaceFolder);
+        if (instanceConfig.runProcessesInTerminal)
+            process.setTerminalMode(TerminalMode::Run);
+
+        instanceConfig.logFunction(
+            Tr::tr("Building Dockerfile: %1").arg(process.commandLine().toUserOutput()));
+    };
+
+    Storage<ImageDetails> imageDetails;
+    Storage<ContainerDetails> containerDetails;
+    Storage<RunningContainerDetails> runningDetails;
+    Storage<bool> useBuildKit(false);
+
+    // clang-format off
+    return Group {
+        imageDetails,
+        runningDetails,
+        containerDetails,
+        useBuildKit,
+        checkDocker(instanceConfig),
+        testBuildKit(instanceConfig, useBuildKit),
+        ProcessTask(setupBuildImage),
+        inspectImageTask(imageDetails, instanceConfig, imageName(instanceConfig)),
+        createContainerRecipe(
+            imageDetails, containerConfig, commonConfig, instanceConfig),
+        inspectContainerTask(containerDetails, instanceConfig),
+        startContainerRecipe(instanceConfig),
+        runningContainerDetailsTask(containerDetails, runningDetails, commonConfig, instanceConfig, containerName(instanceConfig)),
+        runLifecycleHooksRecipe(commonConfig, instanceConfig),
+        fillRunningInstance(runningInstance, runningDetails, imageDetails, containerName(instanceConfig))
+    };
+    // clang-format on
+}
+
+static ExecutableItem prepareDockerImageRecipe(
+    Storage<ImageDetails> imageDetails,
+    const ImageContainer &imageConfig,
+    const InstanceConfig &instanceConfig)
+{
+    const auto setupPullImage = [imageConfig, instanceConfig](Process &process) {
+        connectProcessToLog(process, instanceConfig, "Pull Image");
+
+        CommandLine pullCmdLine{instanceConfig.dockerCli, {"pull", imageConfig.image}};
+        process.setCommand(pullCmdLine);
+        process.setEnvironment(instanceConfig.localEnvironment);
+        process.setWorkingDirectory(instanceConfig.workspaceFolder);
+
+        instanceConfig.logFunction(
+            QString("Pulling Image: %1").arg(process.commandLine().toUserOutput()));
+    };
+
+    const auto setupTagImage = [imageConfig, instanceConfig](Process &process) {
+        connectProcessToLog(process, instanceConfig, "Tag Image");
+
+        CommandLine tagCmdLine{
+            instanceConfig.dockerCli, {"tag", imageConfig.image, imageName(instanceConfig)}};
+        process.setCommand(tagCmdLine);
+        process.setEnvironment(instanceConfig.localEnvironment);
+        process.setWorkingDirectory(instanceConfig.workspaceFolder);
+
+        instanceConfig.logFunction(
+            QString("Tagging Image: %1").arg(process.commandLine().toUserOutput()));
+    };
+
+    return Group{
+        If(inspectImageTask(imageDetails, instanceConfig, imageConfig.image)) >> Then{
+            ProcessTask(setupTagImage),
+        } >> Else {
+            ProcessTask(setupPullImage),
+            ProcessTask(setupTagImage),
+            inspectImageTask(imageDetails, instanceConfig, imageName(instanceConfig)),
+        }};
+}
+
+static Result<Group> prepareContainerRecipe(
+    const ImageContainer &imageConfig,
+    const DevContainerCommon &commonConfig,
+    const InstanceConfig &instanceConfig,
+    const RunningInstance &runningInstance)
+{
+    Storage<ImageDetails> imageDetails;
+    Storage<ContainerDetails> containerDetails;
+    Storage<RunningContainerDetails> runningDetails;
+    Storage<bool> useBuildKit(false);
+
+    // clang-format off
+    return Group {
+        imageDetails,
+        containerDetails,
+        runningDetails,
+        useBuildKit,
+        checkDocker(instanceConfig),
+        testBuildKit(instanceConfig, useBuildKit),
+        prepareDockerImageRecipe(imageDetails, imageConfig, instanceConfig),
+        createContainerRecipe(imageDetails, imageConfig, commonConfig, instanceConfig),
+        inspectContainerTask(containerDetails, instanceConfig),
+        startContainerRecipe(instanceConfig),
+        runningContainerDetailsTask(containerDetails, runningDetails, commonConfig, instanceConfig, containerName(instanceConfig)),
+        runLifecycleHooksRecipe(commonConfig, instanceConfig),
+        fillRunningInstance(runningInstance, runningDetails, imageDetails, containerName(instanceConfig)),
+    };
+    // clang-format on
+}
+
+static Result<Group> prepareContainerRecipe(
+    const ComposeContainer &config,
+    const DevContainerCommon &commonConfig,
+    const InstanceConfig &instanceConfig,
+    const RunningInstance &runningInstance)
+{
+    Q_UNUSED(commonConfig);
+    Q_UNUSED(runningInstance);
+
+    const auto setupComposeUp = [config, instanceConfig](Process &process) {
+        connectProcessToLog(process, instanceConfig, "Compose Up");
+
+        const FilePath configFileDir = instanceConfig.configFilePath.parentDir();
+
+        QStringList composeFiles = config.dockerComposeFiles;
+        composeFiles
+            = Utils::transform(composeFiles, [&configFileDir](const QString &relativeComposeFile) {
+                  return configFileDir.resolvePath(relativeComposeFile).nativePath();
+              });
+
+        QStringList composeFilesWithFlag;
+        for (const QString &file : composeFiles) {
+            composeFilesWithFlag.append("-f");
+            composeFilesWithFlag.append(file);
+        }
+
+        QStringList runServices = config.runServices.value_or(QStringList{});
+        QSet<QString> services = {config.service};
+        services.unite({runServices.begin(), runServices.end()});
+
+        CommandLine composeCmdLine{
+            instanceConfig.dockerCli,
+            {"compose",
+             composeFilesWithFlag,
+             {"--project-name", projectName(instanceConfig)},
+             "up",
+             "--build",
+             "--detach",
+             services.values()}};
+        process.setCommand(composeCmdLine);
+        process.setEnvironment(instanceConfig.localEnvironment);
+        process.setWorkingDirectory(instanceConfig.configFilePath.parentDir());
+
+        instanceConfig.logFunction(
+            QString("Compose Up: %1").arg(process.commandLine().toUserOutput()));
+    };
+    Storage<ContainerDetails> containerDetails;
+    Storage<RunningContainerDetails> runningDetails;
+    Storage<QString> containerId;
+    Storage<ImageDetails> imageDetails;
+    Storage<bool> useBuildKit(false);
+
+    DynamicString getImage = (std::function<QString()>) [containerDetails]
+    {
+        return containerDetails->Image;
+    };
+
+    // clang-format off
+    return Group {
+        containerId, containerDetails, runningDetails, imageDetails, useBuildKit,
+        checkDocker(instanceConfig),
+        testBuildKit(instanceConfig, useBuildKit),
+        ProcessTask(setupComposeUp),
+        findContainerId(containerId, config, instanceConfig),
+        inspectContainerTask(containerDetails, instanceConfig, containerId),
+        inspectImageTask(imageDetails, instanceConfig, getImage),
+        runningContainerDetailsTask(containerDetails, runningDetails, commonConfig, instanceConfig, containerId),
+        fillRunningInstance(runningInstance, runningDetails, imageDetails, containerId)
+    };
+    // clang-format on
+}
+
+static Result<Group> prepareRecipe(
+    const Config &config,
+    const InstanceConfig &instanceConfig,
+    const RunningInstance &runningInstance)
+{
+    return std::visit(
+        [&instanceConfig, commonConfig = config.common, runningInstance](
+            const auto &containerConfig) {
+            return prepareContainerRecipe(
+                containerConfig, commonConfig, instanceConfig, runningInstance);
+        },
+        *config.containerConfig);
+}
+
+static void setupRemoveContainer(const InstanceConfig &instanceConfig, Process &process)
+{
+    connectProcessToLog(process, instanceConfig, Tr::tr("Remove Container"));
+
+    CommandLine removeCmdLine{instanceConfig.dockerCli, {"rm", "-f", containerName(instanceConfig)}};
+    process.setCommand(removeCmdLine);
+    process.setEnvironment(instanceConfig.localEnvironment);
+    process.setWorkingDirectory(instanceConfig.workspaceFolder);
+
+    instanceConfig.logFunction(
+        Tr::tr("Removing container: %1").arg(process.commandLine().toUserOutput()));
+}
+
+static Result<Group> downContainerRecipe(
+    const DockerfileContainer &containerConfig, const InstanceConfig &instanceConfig, bool forceDown)
+{
+    const auto setupRMContainer = [containerConfig, instanceConfig](Process &process) {
+        setupRemoveContainer(instanceConfig, process);
+    };
+
+    const auto shouldShutdown = [containerConfig, forceDown]() {
+        return forceDown || containerConfig.shutdownAction == ShutdownAction::StopContainer;
+    };
+
+    // clang-format off
+    return Group {
+        If (shouldShutdown) >> Then {
+            ProcessTask(setupRMContainer)
+        }
+    };
+    // clang-format on
+}
+
+static Result<Group> downContainerRecipe(
+    const ImageContainer &imageConfig, const InstanceConfig &instanceConfig, bool forceDown)
+{
+    const auto setupRemoveImage = [imageConfig, instanceConfig](Process &process) {
+        connectProcessToLog(process, instanceConfig, Tr::tr("Remove Image"));
+
+        CommandLine removeCmdLine{instanceConfig.dockerCli, {"rmi", imageName(instanceConfig)}};
+        process.setCommand(removeCmdLine);
+        process.setEnvironment(instanceConfig.localEnvironment);
+        process.setWorkingDirectory(instanceConfig.workspaceFolder);
+
+        instanceConfig.logFunction(
+            Tr::tr("Removing image: %1").arg(process.commandLine().toUserOutput()));
+    };
+
+    const auto setupRMContainer = [imageConfig, instanceConfig](Process &process) {
+        setupRemoveContainer(instanceConfig, process);
+    };
+
+    const auto shouldShutdown = [imageConfig, forceDown]() {
+        return forceDown || imageConfig.shutdownAction == ShutdownAction::StopContainer;
+    };
+
+    // clang-format off
+    return Group{
+        If (shouldShutdown) >> Then {
+            ProcessTask(setupRMContainer),
+            ProcessTask(setupRemoveImage)
+        }
+    };
+    // clang-format on
+}
+
+static Result<Group> downContainerRecipe(
+    const ComposeContainer &config, const InstanceConfig &instanceConfig, bool forceDown)
+{
+    const auto setupComposeDown = [config, instanceConfig](Process &process) {
+        connectProcessToLog(process, instanceConfig, "Compose Down");
+
+        const FilePath configFileDir = instanceConfig.configFilePath.parentDir();
+
+        QStringList composeFiles = config.dockerComposeFiles;
+
+        composeFiles
+            = Utils::transform(composeFiles, [&configFileDir](const QString &relativeComposeFile) {
+                  return configFileDir.resolvePath(relativeComposeFile).nativePath();
+              });
+
+        QStringList composeFilesWithFlag;
+        for (const QString &file : composeFiles) {
+            composeFilesWithFlag.append("-f");
+            composeFilesWithFlag.append(file);
+        }
+
+        CommandLine composeCmdLine{
+            instanceConfig.dockerCli,
+            {"compose",
+             {"--project-name", projectName(instanceConfig)},
+             composeFilesWithFlag,
+             "down"}};
+        process.setCommand(composeCmdLine);
+        process.setEnvironment(instanceConfig.localEnvironment);
+        process.setWorkingDirectory(instanceConfig.workspaceFolder);
+
+        instanceConfig.logFunction(
+            QString("Compose Down: %1").arg(process.commandLine().toUserOutput()));
+    };
+
+    const auto shouldShutdown = [config, forceDown]() {
+        return forceDown || config.shutdownAction == ShutdownAction::StopCompose;
+    };
+
+    // clang-format off
+    return Group {
+        If (shouldShutdown) >> Then {
+            ProcessTask(setupComposeDown)
+        }
+    };
+    // clang-format on
+}
+
+static Result<Group> downRecipe(
+    const Config &config, const InstanceConfig &instanceConfig, bool forceDown)
+{
+    return std::visit(
+        [&instanceConfig, forceDown](const auto &containerConfig) {
+            return downContainerRecipe(containerConfig, instanceConfig, forceDown);
+        },
+        *config.containerConfig);
+}
+
+Result<Group> Instance::upRecipe(const RunningInstance &runningInstance) const
+{
+    if (!runningInstance)
+        return ResultError(Tr::tr("Running instance cannot be null."));
+
+    return prepareRecipe(d->config, d->instanceConfig, runningInstance);
+}
+
+Result<Group> Instance::downRecipe(bool forceDown) const
+{
+    return ::DevContainer::downRecipe(d->config, d->instanceConfig, forceDown);
+}
+
+const Config &Instance::config() const
+{
+    return d->config;
+}
+
+static WrappedProcessInterface *makeProcessInterface(
+    const Config &config,
+    const InstanceConfig &instanceConfig,
+    const RunningInstance &runningInstance,
+    const DynamicString &containerId)
+{
+    const auto wrapCommandLine = [=](const ProcessSetupData &setupData,
+                                     const QString &markerTemplate) -> Result<CommandLine> {
+        CommandLine dockerCmd{instanceConfig.dockerCli, {"exec"}};
+
+        const bool inTerminal = setupData.m_terminalMode != TerminalMode::Off
+                                || setupData.m_ptyData.has_value();
+
+        const bool interactive = setupData.m_processMode == ProcessMode::Writer
+                                 || !setupData.m_writeData.isEmpty() || inTerminal;
+
+        if (interactive)
+            dockerCmd.addArg("-i");
+
+        if (inTerminal)
+            dockerCmd.addArg("-t");
+
+        Environment remoteEnv;
+        for (const auto &[k, v] : config.common.remoteEnv) {
+            if (v) {
+                QString value = *v;
+                const Internal::Replacers replacers = {
+                    {"containerEnv", [runningInstance](const QStringList &parts) {
+                         if (parts.isEmpty())
+                             return QString();
+                         const QString varname = parts.first();
+                         const QString defaultValue = parts.mid(1).join(':');
+                         return runningInstance->remoteEnvironment.value_or(varname, defaultValue);
+                     }}};
+                Internal::substituteVariables(value, replacers);
+                remoteEnv.set(k, value);
+            } else {
+                remoteEnv.set(k, {}, false); // We use the disabled state to unset the variable.}
+            }
+        }
+
+        const Environment env = setupData.m_environment.appliedToEnvironment(remoteEnv);
+
+        if (env.hasChanges()) {
+            env.forEachEntry([&dockerCmd](const QString &key, const QString &value, bool enabled) {
+                if (enabled)
+                    dockerCmd.addArgs({"-e", key + "=" + value});
+                else
+                    dockerCmd.addArgs({"-e", key});
+            });
+        }
+
+        const FilePath workingDirectory = setupData.rawWorkingDirectory().isEmpty()
+                                              ? Config::workspaceFolder(config)
+                                              : setupData.rawWorkingDirectory();
+
+        dockerCmd.addArgs({"-w", workingDirectory.path()});
+
+        dockerCmd.addArg(dynamicStringToString(containerId));
+
+        dockerCmd.addArgs({"/bin/sh", "-c"});
+
+        CommandLine exec("exec");
+        exec.addCommandLineAsArgs(setupData.m_commandLine, CommandLine::Raw);
+
+        if (!setupData.m_ptyData) {
+            //            auto osAndArch = osTypeAndArch();
+            //            if (!osAndArch)
+            //                return make_unexpected(osAndArch.error());
+
+            // Check the executable for existence.
+            CommandLine testType({"type", {}});
+            testType.addArg(
+                setupData.m_commandLine.executable().path(),
+                OsTypeLinux); //osAndArch->first);
+            testType.addArgs(">/dev/null", CommandLine::Raw);
+
+            // Send PID only if existence was confirmed, so we can correctly notify
+            // a failed start.
+            CommandLine echo("echo");
+            echo.addArgs(markerTemplate.arg("$$"), CommandLine::Raw);
+            echo.addCommandLineWithAnd(exec);
+
+            testType.addCommandLineWithAnd(echo);
+
+            dockerCmd.addCommandLineAsSingleArg(testType);
+        } else {
+            dockerCmd.addCommandLineAsSingleArg(exec);
+        }
+
+        return dockerCmd;
+    };
+
+    const auto controlSignal = [instanceConfig](ControlSignal controlSignal, qint64 remotePid) {
+        const int signal = ProcessInterface::controlSignalToInt(controlSignal);
+
+        CommandLine dockerCmd{
+            instanceConfig.dockerCli,
+            {{"exec", containerName(instanceConfig)},
+             {"kill", QString("-%1").arg(signal), QString("%2").arg(remotePid)}}};
+
+        Process p;
+        p.setCommand(dockerCmd);
+        p.setEnvironment(instanceConfig.localEnvironment);
+        p.runBlocking();
+    };
+
+    auto *processInterface = new WrappedProcessInterface(wrapCommandLine, controlSignal);
+
+    return processInterface;
+}
+
+ProcessInterface *Instance::createProcessInterface(const RunningInstance &runningInstance) const
+{
+    QTC_ASSERT(runningInstance, return nullptr);
+    return makeProcessInterface(
+        d->config, d->instanceConfig, runningInstance, runningInstance->containerId);
+}
+
+} // namespace DevContainer

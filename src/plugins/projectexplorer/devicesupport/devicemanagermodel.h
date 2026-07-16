@@ -6,8 +6,12 @@
 #include "../projectexplorer_export.h"
 #include "idevicefwd.h"
 
-#include <QAbstractListModel>
+#include <utils/filepath.h>
 
+#include <QComboBox>
+#include <QSortFilterProxyModel>
+
+#include <functional>
 #include <memory>
 
 namespace Utils { class Id; }
@@ -15,18 +19,17 @@ namespace Utils { class Id; }
 namespace ProjectExplorer {
 namespace Internal { class DeviceManagerModelPrivate; }
 
-class DeviceManager;
-
 class PROJECTEXPLORER_EXPORT DeviceManagerModel : public QAbstractListModel
 {
 public:
-    explicit DeviceManagerModel(const DeviceManager *deviceManager, QObject *parent = nullptr);
+    DeviceManagerModel();
     ~DeviceManagerModel() override;
 
     void setFilter(const QList<Utils::Id> &filter);
     void setTypeFilter(Utils::Id type);
+    void showAllEntry();
 
-    IDeviceConstPtr device(int pos) const;
+    IDevicePtr device(int pos) const;
     Utils::Id deviceId(int pos) const;
     int indexOf(IDeviceConstPtr dev) const;
     int indexForId(Utils::Id id) const;
@@ -44,6 +47,38 @@ private:
     bool matchesTypeFilter(const IDeviceConstPtr &dev) const;
 
     const std::unique_ptr<Internal::DeviceManagerModelPrivate> d;
+};
+
+// Use with source models that implement the Utils::FilePathRole to filter
+// the respective paths by the given device.
+class PROJECTEXPLORER_EXPORT DeviceFilterModel : public QSortFilterProxyModel
+{
+public:
+    DeviceFilterModel() = default;
+
+    void setDevice(const IDeviceConstPtr &device);
+
+private:
+    bool filterAcceptsRow(int source_row, const QModelIndex &source_parent) const;
+
+    Utils::FilePath m_deviceRoot;
+};
+
+// A QComboBox that owns a DeviceManagerModel showing all devices.
+class PROJECTEXPLORER_EXPORT DeviceComboBox : public QComboBox
+{
+public:
+    DeviceComboBox();
+
+    void setOnDeviceChanged(const std::function<void(const Utils::FilePath &deviceRoot)> &callback);
+
+    IDeviceConstPtr currentDevice() const;
+    QList<IDeviceConstPtr> selectedDevices() const;
+    int indexForId(Utils::Id id) const;
+
+private:
+    DeviceManagerModel m_model;
+    std::function<void(const IDeviceConstPtr &)> m_onDeviceChanged;
 };
 
 } // namespace ProjectExplorer

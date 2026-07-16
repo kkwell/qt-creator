@@ -46,6 +46,15 @@ public:
     void setImportPaths(const QStringList &paths);
     void addImportPath(const QString &importPath);
 
+    QStringList mockImports() const;
+    void setMockImports(const QStringList &paths);
+
+    QStringList qmlProjectModules() const;
+    void setQmlProjectModules(const QStringList &paths);
+    void addQmlProjectModule(const QString &modulePath);
+
+    void addFileFilter(const Utils::FilePath &path);
+
     QStringList fileSelectors() const;
     void setFileSelectors(const QStringList &selectors);
     void addFileSelector(const QString &selector);
@@ -91,7 +100,14 @@ public:
     bool enableCMakeGeneration() const;
     void setEnableCMakeGeneration(bool enable);
 
+    bool enablePythonGeneration() const;
+    void setEnablePythonGeneration(bool enable);
+
+    bool standaloneApp() const;
+    void setStandaloneApp(bool value);
+
 signals:
+    void fileModified(const QString &filePath);
     void filesChanged(const QSet<QString> &, const QSet<QString> &);
 
 private:
@@ -113,6 +129,7 @@ private:
 
     // file update functions
     void insertAndUpdateProjectFile(const QString &key, const QJsonValue &value);
+    void updateFileGroup(const QString &groupType, const QString &property, const QJsonValue &value);
 };
 
 } // namespace QmlProjectManager

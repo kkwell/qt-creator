@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "futureprogress.h"
+
 #include "progressbar.h"
+#include "progressmanager_p.h"
 
 #include <utils/stylehelper.h>
 #include <utils/theme/theme.h>
@@ -127,8 +129,8 @@ FutureProgress::FutureProgress(QWidget *parent) :
         else
             emit clicked();
     });
-    setMinimumWidth(100);
-    setMaximumWidth(300);
+    setMinimumWidth(Internal::ProgressManagerPrivate::infoMinWidth());
+    setMaximumWidth(Internal::ProgressManagerPrivate::infoMaxWidth());
 }
 
 /*!
@@ -136,6 +138,10 @@ FutureProgress::FutureProgress(QWidget *parent) :
 */
 FutureProgress::~FutureProgress()
 {
+    // possibly installed in tryToFadeAway
+    // doesn't hurt if that was never done
+    qApp->removeEventFilter(this);
+
     delete d->m_widget;
     delete d;
 }
@@ -148,12 +154,13 @@ FutureProgress::~FutureProgress()
 void FutureProgress::setWidget(QWidget *widget)
 {
     delete d->m_widget;
-    QSizePolicy sp = widget->sizePolicy();
-    sp.setHorizontalPolicy(QSizePolicy::Ignored);
-    widget->setSizePolicy(sp);
     d->m_widget = widget;
-    if (d->m_widget)
+    if (d->m_widget) {
+        QSizePolicy sp = d->m_widget->sizePolicy();
+        sp.setHorizontalPolicy(QSizePolicy::Ignored);
+        d->m_widget->setSizePolicy(sp);
         d->m_widgetLayout->addWidget(d->m_widget);
+    }
 }
 
 /*!
@@ -222,6 +229,7 @@ bool FutureProgress::eventFilter(QObject *, QEvent *e)
 {
     if (d->m_keep != KeepOnFinish && d->m_waitingForUserInteraction
             && (e->type() == QEvent::MouseMove || e->type() == QEvent::KeyPress)) {
+        // installed in tryToFadeAway
         qApp->removeEventFilter(this);
         QTimer::singleShot(notificationTimeout, d, &FutureProgressPrivate::fadeAway);
     }
@@ -307,8 +315,11 @@ void FutureProgress::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
     if (creatorTheme()->flag(Theme::FlatToolBars)) {
-        p.fillRect(rect(), StyleHelper::baseColor());
-        p.fillRect(rect(), creatorColor(Theme::FancyToolButtonSelectedColor));
+        const int m = StyleHelper::SpacingTokens::PaddingVXxs;
+        StyleHelper::drawCardBg(&p, QRectF(rect()).adjusted(0, m, 0, 0),
+                                creatorColor(Theme::Token_Background_Muted),
+                                creatorColor(Theme::Token_Stroke_Subtle),
+                                StyleHelper::SpacingTokens::RadiusM);
     } else {
         QLinearGradient grad = StyleHelper::statusBarGradient(rect());
         p.fillRect(rect(), grad);
@@ -344,7 +355,7 @@ void FutureProgress::setKeepOnFinish(KeepOnFinishType keepType)
         d->tryToFadeAway();
 }
 
-bool FutureProgress::keepOnFinish() const
+FutureProgress::KeepOnFinishType FutureProgress::keepOnFinish() const
 {
     return d->m_keep;
 }

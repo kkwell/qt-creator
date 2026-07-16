@@ -11,9 +11,9 @@
 #include "cppeditortr.h"
 #include "cppeditorwidget.h"
 #include "cppfilesettingspage.h"
+#include "cppheadersource.h"
 #include "cpphighlighter.h"
 #include "cppincludehierarchy.h"
-#include "cppheadersource.h"
 #include "cppmodelmanager.h"
 #include "cppoutline.h"
 #include "cppprojectupdater.h"
@@ -21,15 +21,14 @@
 #include "cpptoolssettings.h"
 #include "cpptypehierarchy.h"
 #include "quickfixes/cppquickfix.h"
-#include "quickfixes/cppquickfixprojectsettingswidget.h"
-#include "quickfixes/cppquickfixsettingspage.h"
-#include "resourcepreviewhoverhandler.h"
+#include "quickfixes/cppquickfixsettings.h"
 
 #ifdef WITH_TESTS
 #include "compileroptionsbuilder_test.h"
 #include "cppcodegen_test.h"
 #include "cppcompletion_test.h"
 #include "cppdoxygen_test.h"
+#include "cppfollowsymbolundercursor.h"
 #include "cppincludehierarchy_test.h"
 #include "cpplocalsymbols_test.h"
 #include "cpplocatorfilter_test.h"
@@ -51,7 +50,6 @@
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
 #include <coreplugin/coreconstants.h>
-#include <coreplugin/coreplugintr.h>
 #include <coreplugin/documentmanager.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/editormanager/ieditorfactory.h>
@@ -63,19 +61,25 @@
 
 #include <extensionsystem/iplugin.h>
 
+#include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectnodes.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projectmanager.h>
 #include <projectexplorer/projecttree.h>
 #include <projectexplorer/rawprojectpart.h>
+#include <projectexplorer/resourcepreviewhoverhandler.h>
 
+#include <texteditor/codestylepool.h>
 #include <texteditor/colorpreviewhoverhandler.h>
 #include <texteditor/snippets/snippetprovider.h>
 #include <texteditor/texteditor.h>
 #include <texteditor/texteditorconstants.h>
+#include <texteditor/texteditorsettings.h>
 
 #include <utils/algorithm.h>
+#include <utils/async.h>
+#include <utils/clangutils.h>
 #include <utils/fileutils.h>
 #include <utils/fsengine/fileiconprovider.h>
 #include <utils/hostosinfo.h>
@@ -88,8 +92,6 @@
 #include <QAction>
 #include <QCoreApplication>
 #include <QDebug>
-#include <QDir>
-#include <QFileInfo>
 #include <QMenu>
 #include <QStringList>
 
@@ -116,7 +118,7 @@ public:
     CppEditorFactory()
     {
         setId(Constants::CPPEDITOR_ID);
-        setDisplayName(::Core::Tr::tr("C++ Editor"));
+        setDisplayName(Tr::tr("C++ Editor"));
         addMimeType(Utils::Constants::C_SOURCE_MIMETYPE);
         addMimeType(Utils::Constants::C_HEADER_MIMETYPE);
         addMimeType(Utils::Constants::CPP_SOURCE_MIMETYPE);
@@ -147,6 +149,21 @@ public:
     }
 };
 
+class ClangdToolFactory : public DeviceToolAspectFactory
+{
+public:
+    ClangdToolFactory()
+    {
+        setToolId(Constants::CLANGD_TOOL_ID);
+        setToolType(DeviceToolAspect::SourceTool);
+        setFilePattern({"clangd"});
+        setLabelText(Tr::tr("Clangd executable:"));
+        setChecker([](const DeviceConstRef &, const FilePath &candidate) {
+            return checkClangdVersion(candidate);
+        });
+    }
+};
+
 ///////////////////////////////// CppEditorPlugin //////////////////////////////////
 
 class CppEditorPluginPrivate : public QObject
@@ -154,17 +171,15 @@ class CppEditorPluginPrivate : public QObject
 public:
     void onTaskStarted(Utils::Id type);
     void onAllTasksFinished(Utils::Id type);
-    void inspectCppCodeModel();
 
     QAction *m_reparseExternallyChangedFiles = nullptr;
     QAction *m_findRefsCategorizedAction = nullptr;
-
-    QPointer<CppCodeModelInspectorDialog> m_cppCodeModelInspectorDialog;
 
     CppEditorFactory m_cppEditorFactory;
 
     CppModelManager modelManager;
     CppToolsSettings settings;
+    ClangdToolFactory clangdToolFactory;
 };
 
 class CppEditorPlugin final : public ExtensionSystem::IPlugin
@@ -195,6 +210,37 @@ private:
     CppEditorPluginPrivate *d = nullptr;
 };
 
+QFuture<QTextDocument *> highlightCode(const QString &code, const QString &mimeType)
+{
+    QTextDocument *document = new QTextDocument;
+    document->setPlainText(code);
+
+    std::shared_ptr<QPromise<QTextDocument *>> promise
+        = std::make_shared<QPromise<QTextDocument *>>();
+
+    promise->start();
+
+    CppHighlighter *highlighter = new CppHighlighter(document);
+
+    QObject::connect(highlighter, &CppHighlighter::finished, document, [document, promise]() {
+        promise->addResult(document);
+        promise->finish();
+    });
+
+    QFutureWatcher<QTextDocument *> *watcher = new QFutureWatcher<QTextDocument *>(document);
+    QObject::connect(watcher, &QFutureWatcher<QTextDocument *>::canceled, document, [document]() {
+        document->deleteLater();
+    });
+    watcher->setFuture(promise->future());
+
+    highlighter->setParent(document);
+    highlighter->setFontSettings(TextEditorSettings::fontSettings());
+    highlighter->setMimeType(mimeType);
+    highlighter->rehighlight();
+
+    return promise->future();
+}
+
 void CppEditorPlugin::initialize()
 {
     d = new CppEditorPluginPrivate;
@@ -202,7 +248,7 @@ void CppEditorPlugin::initialize()
     setupCppQuickFixSettings();
     setupCppCodeModelSettingsPage();
     provideCppSettingsRetriever([](const Project *p) {
-        return CppCodeModelSettings::settingsForProject(p).toMap();
+        return QVariant::fromValue(CppCodeModelSettings::settingsForProject(p));
     });
     setupCppOutline();
     setupCppCodeStyleSettings();
@@ -222,6 +268,36 @@ void CppEditorPlugin::initialize()
             d, &CppEditorPluginPrivate::onTaskStarted);
     connect(ProgressManager::instance(), &ProgressManager::allTasksFinished,
             d, &CppEditorPluginPrivate::onAllTasksFinished);
+
+    auto oldHighlighter = Utils::Text::codeHighlighter();
+    Utils::Text::setCodeHighlighter(
+        [oldHighlighter](const QString &code, const QString &mimeType) -> QFuture<QTextDocument *> {
+            if (mimeType == "text/x-c++src" || mimeType == "text/x-c++hdr"
+                || mimeType == "text/x-csrc" || mimeType == "text/x-chdr") {
+                return highlightCode(code, mimeType);
+            }
+
+            return oldHighlighter(code, mimeType);
+        });
+
+    const auto loader = [](const Utils::FilePath &codeStyleFile,
+                           const Project &project) -> Result<QVariant> {
+        CodeStylePool * const pool = CppToolsSettings::cppCodeStyle()->delegatingPool();
+        QTC_ASSERT(pool, return ResultError(Tr::tr("Internal error: No code style pool")));
+        if (ICodeStylePreferences * const style
+                = pool->loadCodeStyle(codeStyleFile, true, project.projectFilePath()))
+            return Id::fromName(style->id()).toSetting();
+        return ResultError(Tr::tr("No code style found in file."));
+    };
+    const auto unloader = [](const QVariant &data) {
+        for (const QVariantList &l = data.toList(); const QVariant &id : l) {
+            CodeStylePool * const pool = CppToolsSettings::cppCodeStyle()->delegatingPool();
+            QTC_ASSERT(pool, return);
+            pool->removeAutoImportedCodeStyle(Id::fromSetting(id));
+        }
+    };
+    ProjectManager::registerCustomProjectSettingsHandler(
+        {"codestyles", CustomProjectSettingsHandler::FileType::Dir, loader, unloader});
 }
 
 void CppEditorPlugin::extensionsInitialized()
@@ -237,9 +313,9 @@ void CppEditorPlugin::extensionsInitialized()
 
     // Add the hover handler factories here instead of in initialize()
     // so that the Clang Code Model has a chance to hook in.
-    d->m_cppEditorFactory.addHoverHandler(CppModelManager::createHoverHandler());
-    d->m_cppEditorFactory.addHoverHandler(new ColorPreviewHoverHandler);
-    d->m_cppEditorFactory.addHoverHandler(new ResourcePreviewHoverHandler);
+    d->m_cppEditorFactory.addHoverHandler(&CppModelManager::cppHoverHandler());
+    d->m_cppEditorFactory.addHoverHandler(&colorPreviewHoverHandler());
+    d->m_cppEditorFactory.addHoverHandler(&resourcePreviewHoverHandler());
 
     FileIconProvider::registerIconOverlayForMimeType(
         creatorTheme()->imageFile(Theme::IconOverlayCppSource,
@@ -297,7 +373,7 @@ void CppEditorPlugin::setupMenus()
     inspectCppCodeModel.setText(Tr::tr("Inspect C++ Code Model..."));
     inspectCppCodeModel.setDefaultKeySequence(Tr::tr("Meta+Shift+F12"), Tr::tr("Ctrl+Shift+F12"));
     inspectCppCodeModel.addToContainer(Core::Constants::M_TOOLS_DEBUG);
-    inspectCppCodeModel.addOnTriggered(d, &CppEditorPluginPrivate::inspectCppCodeModel);
+    inspectCppCodeModel.addOnTriggered(d, &Internal::inspectCppCodeModel);
 }
 
 void CppEditorPlugin::addPerSymbolActions()
@@ -317,6 +393,27 @@ void CppEditorPlugin::addPerSymbolActions()
     addSymbolActionToMenus(TextEditor::Constants::FOLLOW_SYMBOL_UNDER_CURSOR_IN_NEXT_SPLIT);
     addSymbolActionToMenus(TextEditor::Constants::FOLLOW_SYMBOL_TO_TYPE);
     addSymbolActionToMenus(TextEditor::Constants::FOLLOW_SYMBOL_TO_TYPE_IN_NEXT_SPLIT);
+
+    ActionBuilder followToParentImpl(this, "CppEditor.FollowToParentImpl");
+    followToParentImpl.setText(Tr::tr("Follow Virtual Function to Base Class Implementation"));
+    followToParentImpl.setContext(context);
+    followToParentImpl.setScriptable(true);
+    followToParentImpl.addToContainers(menus, Constants::G_SYMBOL);
+    followToParentImpl.addOnTriggered(this, [] {
+        if (CppEditorWidget *editorWidget = currentCppEditorWidget())
+            editorWidget->goToParentImpl(/*inNextSplit*/ false);
+    });
+
+    ActionBuilder followToParentImplSplit(this, "CppEditor.FollowToParentImplInNextSplit");
+    followToParentImplSplit.setText(
+        Tr::tr("Follow Virtual Function to Base Class Implementation in Next Split"));
+    followToParentImplSplit.setContext(context);
+    followToParentImplSplit.setScriptable(true);
+    followToParentImplSplit.addToContainers(menus, Constants::G_SYMBOL);
+    followToParentImplSplit.addOnTriggered(this, [] {
+        if (CppEditorWidget *editorWidget = currentCppEditorWidget())
+            editorWidget->goToParentImpl(/*inNextSplit*/ true);
+    });
 
     ActionBuilder switchDeclDef(this, Constants::SWITCH_DECLARATION_DEFINITION);
     switchDeclDef.setText(Tr::tr("Switch Between Function Declaration/Definition"));
@@ -435,6 +532,22 @@ void CppEditorPlugin::addPerFileActions()
     unfoldComments.addToContainers(menus, Constants::G_FILE);
     unfoldComments.addOnTriggered(this, [] { CppModelManager::unfoldComments(); });
 
+    ActionBuilder foldInactiveRegions(this, "CppTools.FoldInactiveRegions");
+    foldInactiveRegions.setText(Tr::tr("Fold All Inactive Code"));
+    foldInactiveRegions.setContext(context);
+    foldInactiveRegions.addToContainers(menus, Constants::G_FILE);
+    foldInactiveRegions.addOnTriggered(this, [] {
+        CppModelManager::foldOrUnfoldInactiveRegions(true);
+    });
+
+    ActionBuilder unfoldInactiveRegions(this, "CppTools.UnfoldInactiveRegions");
+    unfoldInactiveRegions.setText(Tr::tr("Unfold All Inactive Code"));
+    unfoldInactiveRegions.setContext(context);
+    unfoldInactiveRegions.addToContainers(menus, Constants::G_FILE);
+    unfoldInactiveRegions.addOnTriggered(this, [] {
+        CppModelManager::foldOrUnfoldInactiveRegions(false);
+    });
+
     setupCppIncludeHierarchy();
 }
 
@@ -479,11 +592,11 @@ void CppEditorPlugin::registerVariables()
         [] { return globalCppFileSettings().licenseTemplate(); });
     expander->registerFileVariables("Cpp:LicenseTemplatePath",
         Tr::tr("The configured path to the license template"),
-        [] { return globalCppFileSettings().licenseTemplatePath; });
+        [] { return globalCppFileSettings().licenseTemplatePath(); });
     expander->registerVariable(
         "Cpp:PragmaOnce",
         Tr::tr("Insert \"#pragma once\" instead of \"#ifndef\" include guards into header file"),
-        [] { return globalCppFileSettings().headerPragmaOnce ? QString("true") : QString(); });
+        [] { return globalCppFileSettings().headerPragmaOnce() ? QString("true") : QString(); });
 }
 
 void CppEditorPlugin::registerTests()
@@ -493,6 +606,7 @@ void CppEditorPlugin::registerTests()
     addTest<CodegenTest>();
     addTest<CompilerOptionsBuilderTest>();
     addTest<CompletionTest>();
+    addTestCreator(createFindParentImplTest);
     addTest<FunctionUtilsTest>();
     addTest<HeaderPathFilterTest>();
     addTestCreator(createCppHeaderSourceTest);
@@ -532,17 +646,6 @@ void CppEditorPluginPrivate::onAllTasksFinished(Id type)
         ActionManager::command(TextEditor::Constants::FIND_USAGES)->action()->setEnabled(true);
         ActionManager::command(TextEditor::Constants::RENAME_SYMBOL)->action()->setEnabled(true);
         m_reparseExternallyChangedFiles->setEnabled(true);
-    }
-}
-
-void CppEditorPluginPrivate::inspectCppCodeModel()
-{
-    if (m_cppCodeModelInspectorDialog) {
-        ICore::raiseWindow(m_cppCodeModelInspectorDialog);
-    } else {
-        m_cppCodeModelInspectorDialog = new CppCodeModelInspectorDialog(ICore::dialogParent());
-        ICore::registerWindow(m_cppCodeModelInspectorDialog, Context("CppEditor.Inspector"));
-        m_cppCodeModelInspectorDialog->show();
     }
 }
 

@@ -9,9 +9,10 @@
 #include "gitsettings.h"
 #include "gittr.h"
 
+#include <coreplugin/icore.h>
+
 #include <texteditor/textdocument.h>
 #include <texteditor/texteditor.h>
-#include <texteditor/texteditortr.h>
 #include <texteditor/textmark.h>
 
 #include <utils/filepath.h>
@@ -27,7 +28,7 @@
 #include <QLabel>
 #include <QLayout>
 #include <QLoggingCategory>
-#include <QTextCodec>
+#include <QMessageBox>
 #include <QTimer>
 
 namespace Git::Internal {
@@ -45,18 +46,20 @@ BlameMark::BlameMark(const FilePath &fileName, int lineNumber, const CommitInfo 
                            {Tr::tr("Git Blame"), Constants::TEXT_MARK_CATEGORY_BLAME})
     , m_info(info)
 {
-    const QString text = info.shortAuthor + " " + info.authorTime.toString("yyyy-MM-dd");
+    QString text = info.shortAuthor + " " + info.authorDate.toString("yyyy-MM-dd");
+    if (settings().instantBlameShowSubject())
+        text += " • " + info.subject;
 
     setPriority(TextEditor::TextMark::LowPriority);
-    setToolTip(toolTipText(info));
+    setToolTipProvider([this] { return toolTipText(m_info); });
     setLineAnnotation(text);
     setSettingsPage(VcsBase::Constants::VCS_ID_GIT);
     setActionsProvider([info] {
         QAction *copyToClipboardAction = new QAction;
-        copyToClipboardAction->setIcon(QIcon::fromTheme("edit-copy", Utils::Icons::COPY.icon()));
-        copyToClipboardAction->setToolTip(TextEditor::Tr::tr("Copy SHA1 to Clipboard"));
+        copyToClipboardAction->setIcon(Icon::fromTheme("edit-copy"));
+        copyToClipboardAction->setToolTip(Tr::tr("Copy Hash to Clipboard"));
         QObject::connect(copyToClipboardAction, &QAction::triggered, [info] {
-            Utils::setClipboardAndSelection(info.sha1);
+            Utils::setClipboardAndSelection(info.hash);
         });
         return QList<QAction *>{copyToClipboardAction};
     });
@@ -67,54 +70,120 @@ bool BlameMark::addToolTipContent(QLayout *target) const
     auto textLabel = new QLabel;
     textLabel->setText(toolTip());
     target->addWidget(textLabel);
-    QObject::connect(textLabel, &QLabel::linkActivated, textLabel, [this](const QString &link) {
-        qCInfo(log) << "Link activated with target:" << link;
-        const QString sha1 = (link == "blameParent") ? m_info.sha1 + "^" : m_info.sha1;
+    QObject::connect(
+        textLabel, &QLabel::linkActivated, textLabel, [info = m_info](const QString &link) {
+            qCInfo(log) << "Link activated with target:" << link;
+            const QString hash = (link == "blameParent") ? info.hash + "^" : info.hash;
 
-        if (link.startsWith("blame") || link == "showFile") {
-            const VcsBasePluginState state = currentState();
-            QTC_ASSERT(state.hasTopLevel(), return);
-            const Utils::FilePath path = state.topLevel();
+            if (link.startsWith("blame") || link == "revert" || link == "showFile") {
+                const VcsBasePluginState state = currentState();
+                QTC_ASSERT(state.hasTopLevel(), return);
+                const FilePath path = state.topLevel();
 
-            const QString originalFileName = m_info.originalFileName;
-            if (link.startsWith("blame")) {
-                qCInfo(log).nospace().noquote() << "Blaming: \"" << path << "/" << originalFileName
-                                                << "\":" << m_info.line << " @ " << sha1;
-                gitClient().annotate(path, originalFileName, m_info.line, sha1);
+                const QString originalFileName = info.originalFileName;
+                if (link.startsWith("blame")) {
+                    qCInfo(log).nospace().noquote()
+                        << "Blaming: \"" << path << "/" << originalFileName
+                        << "\":" << info.originalLine << " @ " << hash;
+                    gitClient().annotate(path, originalFileName, info.originalLine, hash);
+                } else if (link == "revert") {
+                    const QMessageBox::StandardButton result = QMessageBox::question(
+                        Core::ICore::dialogParent(),
+                        Tr::tr("Revert Commit?"),
+                        Tr::tr("Revert the commit %1?").arg(info.hash.left(8)),
+                        QMessageBox::Yes | QMessageBox::No);
+                    if (result == QMessageBox::Yes) {
+                        qCInfo(log).nospace().noquote()
+                            << "Reverting: \"" << path << "\" @ " << hash;
+                        gitClient().synchronousRevert(path, hash);
+                    }
+                } else {
+                    qCInfo(log).nospace().noquote()
+                        << "Showing file: \"" << path << "/" << originalFileName << "\" @ " << hash;
+
+                    const auto fileName = FilePath::fromString(originalFileName);
+                    gitClient().openShowEditor(path, hash, fileName, GitClient::ShowEditor::Always,
+                                               info.originalLine);
+                }
+            } else if (link == "logLine") {
+                const VcsBasePluginState state = currentState();
+                QTC_ASSERT(state.hasFile(), return);
+
+                qCInfo(log).nospace().noquote()
+                    << "Showing log for: \"" << info.filePath << "\" line:" << info.line;
+
+                const QString lineArg
+                    = QString("-L %1,%1:%2").arg(info.line).arg(state.relativeCurrentFile());
+                gitClient().log(state.currentFileTopLevel(), {}, true, {lineArg, "--no-patch"});
             } else {
-                qCInfo(log).nospace().noquote() << "Showing file: \"" << path << "/"
-                                                << originalFileName << "\" @ " << sha1;
-
-                const auto fileName = Utils::FilePath::fromString(originalFileName);
-                gitClient().openShowEditor(path, sha1, fileName);
+                qCInfo(log).nospace().noquote()
+                    << "Showing commit: " << hash << " for " << info.filePath;
+                gitClient().show(info.filePath, hash);
             }
-        } else {
-            qCInfo(log).nospace().noquote() << "Showing commit: " << sha1 << " for " << m_info.filePath;
-            gitClient().show(m_info.filePath, sha1);
-        }
-    });
+        });
 
     return true;
 }
 
 QString BlameMark::toolTipText(const CommitInfo &info) const
 {
-    QString result = QString(
-                         "<table cellspacing=\"10\"><tr>"
-                         "  <td><a href=\"blame\">Blame %1</a></td>"
-                         "  <td><a href=\"blameParent\">Blame Parent</a></td>"
-                         "  <td><a href=\"showFile\">File at %1</a></td>"
-                         "</tr></table>"
-                         "<p></p>"
+    const ColorNames colors = GitClient::colorNames();
+
+    QString actions;
+    if (!info.modified) {
+        const QString blameRevision = Tr::tr("Blame %1").arg(info.hash.left(8));
+        const QString blameParent = Tr::tr("Blame Parent");
+        const QString showFile = Tr::tr("File at %1").arg(info.hash.left(8));
+        const QString revert = Tr::tr("Revert %1").arg(info.hash.left(8));
+        const QString logForLine = Tr::tr("Log for line %1").arg(info.line);
+        actions = QString(
+                      "<table cellspacing=\"10\"><tr>"
+                      "  <td><a href=\"blame\">%1</a></td>"
+                      "  <td><a href=\"blameParent\">%2</a></td>"
+                      "  <td><a href=\"showFile\">%3</a></td>"
+                      "  <td><a href=\"revert\">%4</a></td>"
+                      "  <td><a href=\"logLine\">%5</a></td>"
+                      "</tr></table>"
+                      "<p></p>")
+                      .arg(blameRevision, blameParent, showFile, revert, logForLine);
+    }
+
+    const QString header = QString(
                          "<table>"
-                         "  <tr><td>commit</td><td><a href=\"show\">%1</a></td></tr>"
-                         "  <tr><td>Author:</td><td>%2 &lt;%3&gt;</td></tr>"
-                         "  <tr><td>Date:</td><td>%4</td></tr>"
-                         "  <tr></tr>"
-                         "  <tr><td colspan='2' align='left'>%5</td></tr>"
-                         "</table>")
-                         .arg(info.sha1.left(8), info.author, info.authorMail,
-                              info.authorTime.toString("yyyy-MM-dd hh:mm:ss"), info.summary);
+                         "  <tr><td>commit</td><td><a style=\"color: %1;\" href=\"show\">%2</a></td></tr>"
+                         "  <tr><td>Author:</td><td style=\"color: %3;\">%4 &lt;%5&gt;</td></tr>"
+                         "  <tr><td>Date:</td><td style=\"color: %6;\">%7</td></tr>"
+                         "</table>"
+                         "<p style=\"color: %8;\">%9</p>")
+                         .arg(colors.hash, info.hash,
+                              colors.author, info.author, info.authorMail,
+                              colors.date, info.authorDate.toString("yyyy-MM-dd hh:mm:ss"),
+                              colors.subject, info.subject.toHtmlEscaped());
+
+    QString result = actions + header;
+
+    QString diff;
+    if (!info.oldLines.isEmpty()) {
+        const QString removed = GitClient::styleColorName(TextEditor::C_REMOVED_LINE);
+
+        QStringList oldLines = info.oldLines;
+        if (oldLines.size() > 5) {
+            oldLines = info.oldLines.first(2);
+            oldLines.append("- ...");
+            oldLines.append(info.oldLines.last(2));
+        }
+
+        for (const QString &oldLine : std::as_const(oldLines)) {
+            diff.append("<p style=\"margin: 0px; color: " + removed + " ;\">" + oldLine.toHtmlEscaped() + "</p>");
+        }
+    }
+    if (!info.newLine.isEmpty()) {
+        const QString added = GitClient::styleColorName(TextEditor::C_ADDED_LINE);
+        diff.append("<p style=\"margin-top: 0px; color: " + added + ";\">" + info.newLine.toHtmlEscaped() + "</p>");
+    }
+
+    if (!diff.isEmpty())
+        result.append("<pre>" + diff + "</pre>");
 
     if (settings().instantBlameIgnoreSpaceChanges()
         || settings().instantBlameIgnoreLineMoves()) {
@@ -130,9 +199,19 @@ QString BlameMark::toolTipText(const CommitInfo &info) const
     return result;
 }
 
+void BlameMark::addOldLine(const QString &oldLine)
+{
+    m_info.oldLines.append(oldLine);
+}
+
+void BlameMark::addNewLine(const QString &newLine)
+{
+    m_info.newLine = newLine;
+}
+
 InstantBlame::InstantBlame()
 {
-    m_codec = gitClient().defaultCommitEncoding();
+    m_encoding = gitClient().defaultCommitEncoding();
     m_cursorPositionChangedTimer = new QTimer(this);
     m_cursorPositionChangedTimer->setSingleShot(true);
     connect(m_cursorPositionChangedTimer, &QTimer::timeout, this, &InstantBlame::perform);
@@ -142,21 +221,20 @@ void InstantBlame::setup()
 {
     qCDebug(log) << "Setup";
 
-    auto setupBlameForEditor = [this](Core::IEditor *editor) {
-        if (!editor) {
-            stop();
-            return;
-        }
+    auto setupBlameForEditor = [this] {
+        qCDebug(log) << "Setting up blame for editor.";
 
         if (!settings().instantBlame()) {
+            qCDebug(log) << "Instant blame is disabled.";
             m_lastVisitedEditorLine = -1;
             stop();
             return;
         }
 
-        const TextEditorWidget *widget = TextEditorWidget::fromEditor(editor);
+        TextEditorWidget *widget = TextEditorWidget::currentTextEditorWidget();
         if (!widget) {
-            qCInfo(log) << "Cannot get widget for editor" << editor;
+            qCInfo(log) << "Cannot get current text editor widget.";
+            stop();
             return;
         }
 
@@ -166,11 +244,14 @@ void InstantBlame::setup()
         }
 
         const FilePath workingDirectory = currentState().currentFileTopLevel();
-        if (!refreshWorkingDirectory(workingDirectory))
+        if (!refreshWorkingDirectory(workingDirectory)) {
+            qCDebug(log).nospace().noquote() << "Cannot refresh working directory: '"
+                                             << workingDirectory << "'";
             return;
+        }
 
         qCInfo(log) << "Adding blame cursor connection";
-        m_blameCursorPosConn = connect(widget, &QPlainTextEdit::cursorPositionChanged, this,
+        m_blameCursorPosConn = connect(widget, &PlainTextEdit::cursorPositionChanged, this,
                                        [this] {
                                            if (!settings().instantBlame()) {
                                                disconnect(m_blameCursorPosConn);
@@ -178,7 +259,7 @@ void InstantBlame::setup()
                                            }
                                            m_cursorPositionChangedTimer->start(500);
                                        });
-        m_document = editor->document();
+        m_document = widget->textDocument();
         m_documentChangedConn = connect(m_document, &IDocument::changed,
                                         this, &InstantBlame::slotDocumentChanged,
                                         Qt::UniqueConnection);
@@ -186,12 +267,10 @@ void InstantBlame::setup()
         force();
     };
 
-    connect(&settings().instantBlame, &BaseAspect::changed, this, [this, setupBlameForEditor] {
-        if (settings().instantBlame())
-            setupBlameForEditor(EditorManager::currentEditor());
-        else
-            stop();
-    });
+    connect(&settings().instantBlame, &BaseAspect::changed, this, setupBlameForEditor);
+    connect(&settings().instantBlameIgnoreSpaceChanges, &BaseAspect::changed, this, setupBlameForEditor);
+    connect(&settings().instantBlameIgnoreLineMoves, &BaseAspect::changed, this, setupBlameForEditor);
+    connect(&settings().instantBlameShowSubject, &BaseAspect::changed, this, setupBlameForEditor);
 
     connect(EditorManager::instance(), &EditorManager::currentEditorChanged,
             this, setupBlameForEditor);
@@ -204,8 +283,13 @@ void InstantBlame::setup()
     });
 }
 
-// Porcelain format of git blame output
-// 8b649d2d61416205977aba56ef93e1e1f155005e 5 5 1
+// Porcelain format of git blame output:
+// Consists of 12 or 13 lines (line 11 can be missing, "boundary", or "previous")
+// The first line contains hash, original line, current line,
+// and optional the  number of lines in this group when blaming multiple lines.
+// The last line starts with a tab and is followed by the actual file content.
+// ----------------------------------------------------------------------------
+// 8b649d2d61416205977aba56ef93e1e1f155005e 4 5 1
 // author John Doe
 // author-mail <john.doe@gmail.com>
 // author-time 1613752276
@@ -215,27 +299,35 @@ void InstantBlame::setup()
 // committer-time 1613752312
 // committer-tz +0100
 // summary Add greeting to script
-// (boundary/previous f6b5868032a5dc0e73b82b09184086d784949646 oldfile)
+// (missing/boundary/previous f6b5868032a5dc0e73b82b09184086d784949646 oldfile)
 // filename foo
-//     echo Hello World!
+// <TAB>echo Hello World!
+// ----------------------------------------------------------------------------
 
-static CommitInfo parseBlameOutput(const QStringList &blame, const Utils::FilePath &filePath,
+static CommitInfo parseBlameOutput(const QStringList &blame, const FilePath &filePath,
                                    int line, const Git::Internal::Author &author)
 {
     CommitInfo result;
     if (blame.size() <= 12)
         return result;
 
-    result.sha1 = blame.at(0).left(40);
-    result.author = blame.at(1).mid(7);
-    result.authorMail = blame.at(2).mid(13).chopped(1);
+    const QStringList firstLineParts = blame.at(0).split(" ");
+    result.hash = firstLineParts.first();
+    result.modified = !gitClient().isValidRevision(result.hash);
+    if (result.modified) {
+        result.author = Tr::tr("Not Committed Yet");
+        result.subject = Tr::tr("Modified line in %1").arg(filePath.fileName());
+    } else {
+        result.author = blame.at(1).mid(7);
+        result.authorMail = blame.at(2).mid(13).chopped(1);
+        result.subject = blame.at(9).mid(8);
+    }
     if (result.author == author.name || result.authorMail == author.email)
         result.shortAuthor = Tr::tr("You");
     else
         result.shortAuthor = result.author;
     const uint timeStamp = blame.at(3).mid(12).toUInt();
-    result.authorTime = QDateTime::fromSecsSinceEpoch(timeStamp);
-    result.summary = blame.at(9).mid(8);
+    result.authorDate = QDateTime::fromSecsSinceEpoch(timeStamp);
     result.filePath = filePath;
     // blame.at(10) can be "boundary", "previous" or "filename"
     if (blame.at(10).startsWith("filename"))
@@ -243,6 +335,10 @@ static CommitInfo parseBlameOutput(const QStringList &blame, const Utils::FilePa
     else
         result.originalFileName = blame.at(11).mid(9);
     result.line = line;
+    if (firstLineParts.size() > 1)
+        result.originalLine = firstLineParts.at(1).toInt();
+    else
+        result.originalLine = line;
     return result;
 }
 
@@ -257,7 +353,7 @@ void InstantBlame::once()
         connect(EditorManager::instance(), &EditorManager::currentEditorChanged,
             this, [this] { m_blameMark.reset(); }, Qt::SingleShotConnection);
 
-        connect(widget, &QPlainTextEdit::cursorPositionChanged,
+        connect(widget, &PlainTextEdit::cursorPositionChanged,
             this, [this] { m_blameMark.reset(); }, Qt::SingleShotConnection);
 
         const FilePath workingDirectory = currentState().topLevel();
@@ -307,11 +403,33 @@ void InstantBlame::perform()
     qCDebug(log) << "New editor line:" << line;
     m_lastVisitedEditorLine = line;
 
-    const Utils::FilePath filePath = widget->textDocument()->filePath();
-    const QFileInfo fi(filePath.toString());
-    const Utils::FilePath workingDirectory = Utils::FilePath::fromString(fi.path());
+    const FilePath filePath = widget->textDocument()->filePath();
+    const FilePath workingDirectory = filePath.parentDir();
     const QString lineString = QString("%1,%1").arg(line);
-    const auto commandHandler = [this, filePath, line](const CommandResult &result) {
+    const auto lineDiffHandler = [this](const CommandResult &result) {
+        const QString error = result.cleanedStdErr().trimmed();
+        if (!error.isEmpty()) {
+            qCWarning(log) << error;
+        }
+        if (!m_blameMark) {
+            qCInfo(log) << "m_blameMark is invalid";
+            return;
+        }
+
+        static const QRegularExpression re("^[-+][^-+].*");
+        const QStringList lines = result.cleanedStdOut().split("\n").filter(re);
+        for (const QString &line : lines) {
+            if (line.startsWith("-")) {
+                m_blameMark->addOldLine(line);
+                qCDebug(log) << "Found removed line: " << line;
+            } else if (line.startsWith("+")) {
+                m_blameMark->addNewLine(line);
+                qCDebug(log) << "Found added line: " << line;
+            }
+        }
+    };
+    const auto commandHandler = [this, filePath, line, lineDiffHandler]
+        (const CommandResult &result) {
         if (result.result() == ProcessResult::FinishedWithError &&
             result.cleanedStdErr().contains("no such path")) {
             stop();
@@ -324,16 +442,29 @@ void InstantBlame::perform()
         }
         const CommitInfo info = parseBlameOutput(output.split('\n'), filePath, line, m_author);
         m_blameMark.reset(new BlameMark(filePath, line, info));
+
+        if (info.modified)
+            return;
+
+        // Get line diff: `git log -n 1 -p -L47,47:README.md a5c4c34c9ab4`
+        const QString origLineString = QString("%1,%1").arg(info.originalLine);
+        const QString fileLineRange = "-L" + origLineString + ":" + info.originalFileName;
+        const QStringList lineDiffOptions = {"log", "-n 1", "-p", fileLineRange, info.hash};
+        const FilePath topLevel = currentState().topLevel();
+
+        qCDebug(log) << "Running git" << lineDiffOptions.join(' ');
+        gitClient().enqueueCommand({topLevel, lineDiffOptions, RunFlag::NoOutput, {},
+                                    m_encoding, lineDiffHandler});
     };
     QStringList options = {"blame", "-p"};
     if (settings().instantBlameIgnoreSpaceChanges())
         options.append("-w");
     if (settings().instantBlameIgnoreLineMoves())
         options.append("-M");
-    options.append({"-L", lineString, "--", filePath.toString()});
-    qCDebug(log) << "Running git" << options;
-    gitClient().vcsExecWithHandler(workingDirectory, options, this,
-                                   commandHandler, RunFlags::NoOutput, m_codec);
+    options.append({"-L", lineString, "--", filePath.path()});
+    qCDebug(log) << "Running git" << options.join(' ');
+    gitClient().enqueueCommand({workingDirectory, options, RunFlag::NoOutput, {}, m_encoding,
+                                commandHandler});
 }
 
 void InstantBlame::stop()
@@ -357,18 +488,18 @@ bool InstantBlame::refreshWorkingDirectory(const FilePath &workingDirectory)
     m_workingDirectory = workingDirectory;
 
     const auto commitCodecHandler = [this, workingDirectory](const CommandResult &result) {
-        QTextCodec *codec = nullptr;
+        TextEncoding encoding;
 
         if (result.result() == ProcessResult::FinishedWithSuccess) {
             const QString codecName = result.cleanedStdOut().trimmed();
-            codec = QTextCodec::codecForName(codecName.toUtf8());
+            encoding = codecName.toUtf8();
         } else {
-            codec = gitClient().defaultCommitEncoding();
+            encoding = gitClient().defaultCommitEncoding();
         }
 
-        if (m_codec != codec) {
-            qCInfo(log) << "Setting new text codec:" << codec->name();
-            m_codec = codec;
+        if (m_encoding != encoding) {
+            qCInfo(log) << "Setting new text codec:" << encoding.name();
+            m_encoding = encoding;
             force();
         }
     };

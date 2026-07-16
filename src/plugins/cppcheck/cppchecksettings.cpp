@@ -6,10 +6,8 @@
 #include "cppcheckconstants.h"
 #include "cppchecktool.h"
 #include "cppchecktr.h"
-#include "cppchecktrigger.h"
 
 #include <utils/environment.h>
-#include <utils/flowlayout.h>
 #include <utils/hostosinfo.h>
 #include <utils/pathchooser.h>
 #include <utils/layoutbuilder.h>
@@ -18,9 +16,6 @@
 
 #include <coreplugin/dialogs/ioptionspage.h>
 #include <coreplugin/icore.h>
-
-#include <debugger/analyzer/analyzericons.h>
-#include <debugger/debuggertr.h>
 
 using namespace Utils;
 
@@ -147,8 +142,6 @@ public:
         setId(Constants::OPTIONS_PAGE_ID);
         setDisplayName(Tr::tr("Cppcheck"));
         setCategory("T.Analyzer");
-        setDisplayCategory(::Debugger::Tr::tr("Analyzer"));
-        setCategoryIconPath(Analyzer::Icons::SETTINGSCATEGORY_ANALYZER);
         setSettingsProvider([] { return &settings(); });
     }
 };

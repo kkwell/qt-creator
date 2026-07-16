@@ -12,10 +12,14 @@
 
 #include <QXmlStreamReader>
 #include <QXmlStreamAttribute>
-#include <QTemporaryFile>
 #include <QDir>
 #include <QFileInfo>
 #include <QDebug>
+
+using namespace QtTaskTree;
+using namespace Utils;
+
+namespace CodePaster {
 
 enum { debug = 0 };
 
@@ -25,163 +29,136 @@ const char pasterElementC[] = "paster";
 const char userElementC[] = "user";
 const char descriptionElementC[] = "description";
 const char textElementC[] = "text";
+const char protocolNameC[] = "Fileshare";
 
-namespace CodePaster {
-
-FileShareProtocol::FileShareProtocol() = default;
-
-FileShareProtocol::~FileShareProtocol() = default;
-
-QString FileShareProtocol::name() const
+static Result<> checkConfig()
 {
-    return fileShareSettingsPage().displayName();
+    return fileShareSettings().path().isEmpty() ? ResultError(Tr::tr("Please configure a path."))
+                                                : ResultOk;
 }
 
-unsigned FileShareProtocol::capabilities() const
-{
-    return ListCapability | PostDescriptionCapability | PostUserNameCapability;
-}
+FileShareProtocol::FileShareProtocol()
+    : Protocol({protocolNameC,
+                Capability::List | Capability::PostDescription | Capability::PostUserName,
+                checkConfig, &fileShareSettingsPage()})
+{}
 
-bool FileShareProtocol::hasSettings() const
+struct ParseResult
 {
-    return true;
-}
+    QString user;
+    QString description;
+    QString text;
+};
 
-const Core::IOptionsPage *FileShareProtocol::settingsPage() const
-{
-    return &fileShareSettingsPage();
-}
-
-static bool parse(const QString &fileName,
-                  QString *errorMessage,
-                  QString *user = nullptr, QString *description = nullptr, QString *text = nullptr)
+static Result<ParseResult> parse(const QString &fileName)
 {
     unsigned elementCount = 0;
 
-    errorMessage->clear();
-    if (user)
-        user->clear();
-    if (description)
-        description->clear();
-    if (text)
-        text->clear();
-
     QFile file(fileName);
-    if (!file.open(QIODevice::ReadOnly|QIODevice::Text)) {
-        *errorMessage = Tr::tr("Cannot open %1: %2").arg(fileName, file.errorString());
-        return false;
-    }
+    if (!file.open(QIODevice::ReadOnly|QIODevice::Text))
+        return ResultError(Tr::tr("Cannot open %1: %2").arg(fileName, file.errorString()));
+
+    ParseResult result;
     QXmlStreamReader reader(&file);
     while (!reader.atEnd()) {
         if (reader.readNext() == QXmlStreamReader::StartElement) {
             const auto elementName = reader.name();
             // Check start element
-            if (elementCount == 0 && elementName != QLatin1String(pasterElementC)) {
-                *errorMessage = Tr::tr("%1 does not appear to be a paster file.").arg(fileName);
-                return false;
-            }
+            if (elementCount == 0 && elementName != QLatin1String(pasterElementC))
+                return ResultError(Tr::tr("%1 does not appear to be a paster file.").arg(fileName));
+
             // Parse elements
             elementCount++;
-            if (user && elementName == QLatin1String(userElementC))
-                *user = reader.readElementText();
-            else if (description && elementName == QLatin1String(descriptionElementC))
-                *description = reader.readElementText();
-            else if (text && elementName == QLatin1String(textElementC))
-                *text = reader.readElementText();
+            if (elementName == QLatin1String(userElementC))
+                result.user = reader.readElementText();
+            else if (elementName == QLatin1String(descriptionElementC))
+                result.description = reader.readElementText();
+            else if (elementName == QLatin1String(textElementC))
+                result.text = reader.readElementText();
         }
     }
     if (reader.hasError()) {
-        *errorMessage = Tr::tr("Error in %1 at %2: %3")
-                        .arg(fileName).arg(reader.lineNumber()).arg(reader.errorString());
-        return false;
+        return ResultError(Tr::tr("Error in %1 at %2: %3")
+                               .arg(fileName).arg(reader.lineNumber()).arg(reader.errorString()));
     }
-    return true;
+    return result;
 }
 
-bool FileShareProtocol::checkConfiguration(QString *errorMessage)
+ExecutableItem FileShareProtocol::fetchRecipe(const QString &id,
+                                              const FetchHandler &handler) const
 {
-    if (fileShareSettings().path().isEmpty()) {
-        if (errorMessage)
-            *errorMessage = Tr::tr("Please configure a path.");
+    return QSyncTask([this, id, handler] {
+        // Absolute or relative path name.
+        QFileInfo fi(id);
+        if (fi.isRelative())
+            fi = fileShareSettings().path().pathAppended(id).toFileInfo();
+        const auto result = parse(fi.absoluteFilePath());
+        if (result) {
+            if (handler)
+                handler(id, result->text);
+            return true;
+        }
+        reportError(result.error());
         return false;
-    }
-    return true;
+    });
 }
 
-void FileShareProtocol::fetch(const QString &id)
-{
-    // Absolute or relative path name.
-    QFileInfo fi(id);
-    if (fi.isRelative())
-        fi = fileShareSettings().path().pathAppended(id).toFileInfo();
-    QString errorMessage;
-    QString text;
-    if (parse(fi.absoluteFilePath(), &errorMessage, nullptr, nullptr, &text))
-        emit fetchDone(id, text, false);
-    else
-        emit fetchDone(id, errorMessage, true);
-}
-
-void FileShareProtocol::list()
+static QFileInfoList fileShareInfoList()
 {
     // Read out directory, display by date (latest first)
     QDir dir(fileShareSettings().path().toFSPathString(), tempGlobPatternC,
-             QDir::Time, QDir::Files|QDir::NoDotAndDotDot|QDir::Readable);
-    QStringList entries;
-    QString user;
-    QString description;
-    QString errorMessage;
-    const QChar blank = QLatin1Char(' ');
+             QDir::Time, QDir::Files | QDir::NoDotAndDotDot | QDir::Readable);
     const QFileInfoList entryInfoList = dir.entryInfoList();
-    const int count = qMin(int(fileShareSettings().displayCount()), entryInfoList.size());
-    for (int i = 0; i < count; i++) {
-        const QFileInfo& entryFi = entryInfoList.at(i);
-        if (parse(entryFi.absoluteFilePath(), &errorMessage, &user, &description)) {
-            QString entry = entryFi.fileName();
-            entry += blank;
-            entry += user;
-            entry += blank;
-            entry += description;
-            entries.push_back(entry);
-        }
-        if (debug)
-            qDebug() << entryFi.absoluteFilePath() << errorMessage;
-    }
-    emit listDone(name(), entries);
+    return entryInfoList.mid(0, fileShareSettings().displayCount());
 }
 
-void FileShareProtocol::paste(
-        const QString &text,
-        ContentType /* ct */,
-        int /* expiryDays */,
-        const QString &username,
-        const QString & /* comment */,
-        const QString &description
-        )
+QtTaskTree::ExecutableItem FileShareProtocol::listRecipe(const ListHandler &handler) const
 {
-    // Write out temp XML file
-    Utils::TempFileSaver saver(fileShareSettings().path().pathAppended(tempPatternC).toFSPathString());
-    saver.setAutoRemove(false);
-    if (!saver.hasError()) {
-        // Flat text sections embedded into pasterElement
-        QXmlStreamWriter writer(saver.file());
-        writer.writeStartDocument();
-        writer.writeStartElement(QLatin1String(pasterElementC));
-
-        writer.writeTextElement(QLatin1String(userElementC), username);
-        writer.writeTextElement(QLatin1String(descriptionElementC), description);
-        writer.writeTextElement(QLatin1String(textElementC), text);
-
-        writer.writeEndElement();
-        writer.writeEndDocument();
-
-        saver.setResult(&writer);
-    }
-    if (!saver.finalize()) {
-        Core::MessageManager::writeDisrupting(saver.errorString());
-        return;
-    }
-
-    emit pasteDone(saver.filePath().toUserOutput());
+    return QSyncTask([handler] {
+        QStringList entries;
+        const QFileInfoList entryInfoList = fileShareInfoList();
+        for (const QFileInfo &entry : entryInfoList) {
+            const auto result = parse(entry.absoluteFilePath());
+            if (result)
+                entries.append(entry.fileName() + u' ' + result->user + u' ' + result->description);
+            else if (debug)
+                qDebug() << entry.absoluteFilePath() << result.error();
+        }
+        if (handler)
+            handler(entries);
+    });
 }
+
+ExecutableItem FileShareProtocol::pasteRecipe(const PasteInputData &inputData,
+                                              const PasteHandler &handler) const
+{
+    return QSyncTask([this, inputData, handler] {
+        // Write out temp XML file
+        TempFileSaver saver(fileShareSettings().path().pathAppended(tempPatternC).toFSPathString());
+        saver.setAutoRemove(false);
+        if (!saver.hasError()) {
+            // Flat text sections embedded into pasterElement
+            QXmlStreamWriter writer(saver.file());
+            writer.writeStartDocument();
+            writer.writeStartElement(QLatin1String(pasterElementC));
+
+            writer.writeTextElement(QLatin1String(userElementC), inputData.username);
+            writer.writeTextElement(QLatin1String(descriptionElementC), inputData.description);
+            writer.writeTextElement(QLatin1String(textElementC), inputData.text);
+
+            writer.writeEndElement();
+            writer.writeEndDocument();
+
+            saver.setResult(&writer);
+        }
+        if (const Result<> res = saver.finalize(); !res) {
+            reportError(res.error());
+            return;
+        }
+
+        if (handler)
+            handler(saver.filePath().toUserOutput());
+    });
+}
+
 } // namespace CodePaster

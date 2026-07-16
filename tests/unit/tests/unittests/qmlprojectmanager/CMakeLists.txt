@@ -4,8 +4,8 @@ extend_qtc_test(unittest
   DEPENDS
     QmlProjectManagerLib
   SOURCES
-    converters-test.cpp
     projectitem-test.cpp
+    mcumoduleprojectitem-test.cpp
 )
 
 unittest_copy_data_folder()

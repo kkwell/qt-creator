@@ -5,17 +5,12 @@
 
 #include <utils/smallstringview.h>
 
-#if !(defined(__cpp_lib_to_chars) && (__cpp_lib_to_chars >= 201611L))
-#  include <QLocale>
-#endif
-
 #include <array>
 #include <charconv>
 #include <limits>
 
 namespace NanotraceHR {
 
-template<std::size_t Capacity>
 class StaticString
 {
 public:
@@ -31,13 +26,13 @@ public:
     {
         auto newSize = m_size + string.size();
 
-        if (newSize <= Capacity) {
+        if (newSize <= capacity) {
             std::char_traits<char>::copy(std::next(data(), static_cast<std::ptrdiff_t>(m_size)),
                                          string.data(),
                                          string.size());
             m_size = newSize;
         } else {
-            m_size = Capacity + 1;
+            m_size = capacity + 1;
         }
     }
 
@@ -45,32 +40,42 @@ public:
     {
         auto newSize = m_size + 1;
 
-        if (newSize <= Capacity) {
+        if (newSize <= capacity) {
             auto current = std::next(data(), static_cast<std::ptrdiff_t>(m_size));
             *current = character;
 
             m_size = newSize;
         } else {
-            m_size = Capacity + 1;
+            m_size = capacity + 1;
         }
+    }
+
+    static consteval bool hasNoFloatStdToChar()
+    {
+#if !defined(__cpp_lib_to_chars) || (__cpp_lib_to_chars < 201611L)
+        return true;
+#else
+        return false;
+#endif
     }
 
     template<typename Type, typename std::enable_if_t<std::is_arithmetic_v<Type>, bool> = true>
     void append(Type number)
     {
-#if !(defined(__cpp_lib_to_chars) && (__cpp_lib_to_chars >= 201611L))
-        if constexpr (std::is_floating_point_v<Type>) {
-            QLocale locale{QLocale::Language::C};
-            append(locale.toString(number).toStdString());
-            return;
-        }
-#endif
-        // 2 bytes for the sign and because digits10 returns the floor
-        char buffer[std::numeric_limits<Type>::digits10 + 2];
-        auto result = std::to_chars(buffer, buffer + sizeof(buffer), number);
-        auto endOfConversionString = result.ptr;
+        if constexpr (std::is_floating_point_v<Type> && hasNoFloatStdToChar()) {
+            // Fallback using snprintf for floating point numbers
+            char buffer[std::numeric_limits<Type>::max_digits10 + 2];
+            auto size = std::snprintf(buffer, sizeof(buffer), "%.g", number);
 
-        append({buffer, endOfConversionString});
+            if (size >= 0)
+                append({buffer, static_cast<std::size_t>(size)});
+        } else {
+            // 2 bytes for the sign and because digits10 returns the floor
+            char buffer[std::numeric_limits<Type>::digits10 + 2];
+            auto result = std::to_chars(buffer, buffer + sizeof(buffer), number);
+            auto endOfConversionString = result.ptr;
+            append({buffer, endOfConversionString});
+        }
     }
 
     void pop_back() { --m_size; }
@@ -97,7 +102,7 @@ public:
         return *this;
     }
 
-    bool isValid() const { return m_size <= Capacity; }
+    constexpr bool isValid() const { return m_size <= capacity; }
 
     std::size_t size() const { return m_size; }
 
@@ -109,7 +114,8 @@ public:
     void clear() { m_size = 0; }
 
 private:
-    std::array<char, Capacity> m_data;
+    inline static constexpr std::size_t capacity = 13700;
+    std::array<char, capacity> m_data;
     std::size_t m_size = 0;
 };
 

@@ -3,25 +3,39 @@
 
 #pragma once
 
+#include "dashboard/dto.h"
+
 #include <QHeaderView>
 #include <QList>
 
-namespace Axivion::Internal {
+#include <optional>
 
-enum class SortOrder { None, Ascending, Descending };
+namespace Axivion::Internal {
 
 class IssueHeaderView : public QHeaderView
 {
     Q_OBJECT
 public:
+    struct ColumnInfo
+    {
+        QString key;
+        int width = 0;
+        std::optional<Qt::SortOrder> sortOrder = std::nullopt;
+        bool sortable = false;
+        bool filterable = false;
+        std::optional<QString> filter = std::nullopt;
+    };
+
     explicit IssueHeaderView(QWidget *parent = nullptr) : QHeaderView(Qt::Horizontal, parent) {}
-    void setSortableColumns(const QList<bool> &sortable);
-    void setColumnWidths(const QList<int> &widths) { m_columnWidths = widths; }
+    void setColumnInfoList(const QList<ColumnInfo> &infos);
 
-    SortOrder currentSortOrder() const { return m_currentSortOrder; }
-    int currentSortColumn() const;
+    const QString currentSortString() const;
+    const QMap<QString, QString> currentFilterMapping() const;
 
+    void updateExistingColumnInfos(const std::map<QString, QString> &filters,
+                                   const std::optional<std::vector<Dto::SortInfoDto>> &sorters);
 signals:
+    void filterChanged();
     void sortTriggered();
 
 protected:
@@ -32,14 +46,14 @@ protected:
     void mouseMoveEvent(QMouseEvent *event) override;
 
 private:
-    void onToggleSort(int index, SortOrder order);
+    void onToggleSort(int index, Qt::SortOrder order, bool multi);
     bool m_dragging = false;
-    bool m_maybeToggleSort = false;
+    enum ToggleMode {Sort, Filter, SortCycle};
+    std::optional<ToggleMode> m_maybeToggle = std::nullopt;
+    bool m_withShift = false;
     int m_lastToggleLogicalPos = -1;
-    int m_currentSortIndex = -1;
-    SortOrder m_currentSortOrder = SortOrder::None;
-    QList<bool> m_sortableColumns;
-    QList<int> m_columnWidths;
+    QList<ColumnInfo> m_columnInfoList;
+    QList<int> m_currentSortIndexes;
 };
 
 } // namespace Axivion::Internal

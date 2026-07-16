@@ -19,6 +19,7 @@
 
 #include <functional>
 
+using namespace QmlDebug;
 namespace QmlProfiler {
 
 static const char *ProfileFeatureNames[] = {
@@ -81,19 +82,11 @@ public:
     Internal::QmlProfilerDetailsRewriter *detailsRewriter = nullptr;
 
     bool isRestrictedToRange = false;
-
-    void addEventType(const QmlEventType &eventType);
-    void handleError(const QString &message);
-
-    int resolveStackTop();
 };
 
-QmlProfilerModelManager::QmlProfilerModelManager(QObject *parent) :
-    Timeline::TimelineTraceManager(
-        std::make_unique<QmlProfilerEventStorage>(
-            std::bind(&Timeline::TimelineTraceManager::error, this, std::placeholders::_1)),
-        std::make_unique<QmlProfilerEventTypeStorage>(), parent),
-    d(new QmlProfilerModelManagerPrivate)
+QmlProfilerModelManager::QmlProfilerModelManager(QObject *parent)
+    : Timeline::TimelineTraceManager({}, std::make_unique<QmlProfilerEventTypeStorage>(), parent)
+    , d(new QmlProfilerModelManagerPrivate)
 {
     setNotesModel(new QmlProfilerNotesModel(this));
     d->textMarkModel = new Internal::QmlProfilerTextMarkModel(this);
@@ -103,6 +96,10 @@ QmlProfilerModelManager::QmlProfilerModelManager(QObject *parent) :
             this, &QmlProfilerModelManager::setTypeDetails);
     connect(d->detailsRewriter, &Internal::QmlProfilerDetailsRewriter::eventDetailsChanged,
             this, &QmlProfilerModelManager::typeDetailsFinished);
+    auto storage = new QmlProfilerEventStorage(QmlProfilerEventStorage::ErrorHandler());
+    storage->setErrorHandler([this](const QString &message) { emit error(message); });
+    std::unique_ptr<Timeline::TraceEventStorage> storagePtr(storage);
+    swapEventStorage(storagePtr);
 }
 
 QmlProfilerModelManager::~QmlProfilerModelManager()
@@ -219,7 +216,7 @@ static QString getInitialDetails(const QmlEventType &event)
             if (event.rangeType() == Javascript)
                 details = Tr::tr("anonymous function");
         } else {
-            QRegularExpression rewrite(QLatin1String("^\\(function \\$(\\w+)\\(\\) \\{ (return |)(.+) \\}\\)$"));
+            static const QRegularExpression rewrite("^\\(function \\$(\\w+)\\(\\) \\{ (return |)(.+) \\}\\)$");
             QRegularExpressionMatch match = rewrite.match(details);
             if (match.hasMatch())
                 details = match.captured(1) + QLatin1String(": ") + match.captured(3);
@@ -230,12 +227,6 @@ static QString getInitialDetails(const QmlEventType &event)
     }
 
     return details;
-}
-
-void QmlProfilerModelManager::QmlProfilerModelManagerPrivate::handleError(const QString &message)
-{
-    // What to do here?
-    qWarning() << message;
 }
 
 const char *QmlProfilerModelManager::featureName(ProfileFeature feature)
@@ -255,9 +246,9 @@ void QmlProfilerModelManager::finalize()
     emit traceChanged();
 }
 
-void QmlProfilerModelManager::populateFileFinder(const ProjectExplorer::Target *target)
+void QmlProfilerModelManager::populateFileFinder(const ProjectExplorer::BuildConfiguration *bc)
 {
-    d->detailsRewriter->populateFileFinder(target);
+    d->detailsRewriter->populateFileFinder(bc);
 }
 
 Utils::FilePath QmlProfilerModelManager::findLocalFile(const QString &remoteFile)
@@ -300,7 +291,7 @@ int QmlProfilerModelManager::appendEventType(QmlEventType &&type)
     if (location.isValid()) {
         const RangeType rangeType = type.rangeType();
         const QmlEventLocation localLocation(d->detailsRewriter->getLocalFile(location.filename())
-                                                 .toString(),
+                                                 .toUrlishString(),
                                              location.line(),
                                              location.column());
 
@@ -331,7 +322,7 @@ void QmlProfilerModelManager::setEventType(int typeIndex, QmlEventType &&type)
         d->textMarkModel->addTextMarkId(typeIndex,
                                         QmlEventLocation(d->detailsRewriter
                                                              ->getLocalFile(location.filename())
-                                                             .toString(),
+                                                             .toUrlishString(),
                                                          location.line(),
                                                          location.column()));
     }
@@ -486,7 +477,7 @@ QmlProfilerEventStorage::QmlProfilerEventStorage(
         const std::function<void (const QString &)> &errorHandler)
     : m_file("qmlprofiler-data"), m_errorHandler(errorHandler)
 {
-    if (!m_file.open())
+    if (!m_file.open() && m_errorHandler)
         errorHandler(Tr::tr("Cannot open temporary trace file to store events."));
 }
 
@@ -506,13 +497,13 @@ void QmlProfilerEventStorage::clear()
 {
     m_size = 0;
     m_file.clear();
-    if (!m_file.open())
+    if (!m_file.open() && m_errorHandler)
         m_errorHandler(Tr::tr("Failed to reset temporary trace file."));
 }
 
 void QmlProfilerEventStorage::finalize()
 {
-    if (!m_file.flush())
+    if (!m_file.flush() && m_errorHandler)
         m_errorHandler(Tr::tr("Failed to flush temporary trace file."));
 }
 
@@ -534,13 +525,15 @@ bool QmlProfilerEventStorage::replay(
     case Timeline::TraceStashFile<QmlEvent>::ReplaySuccess:
         return true;
     case Timeline::TraceStashFile<QmlEvent>::ReplayOpenFailed:
-        m_errorHandler(Tr::tr("Could not re-open temporary trace file."));
+        if (m_errorHandler)
+            m_errorHandler(Tr::tr("Could not re-open temporary trace file."));
         break;
     case Timeline::TraceStashFile<QmlEvent>::ReplayLoadFailed:
         // Happens if the loader rejects an event. Not an actual error
         break;
     case Timeline::TraceStashFile<QmlEvent>::ReplayReadPastEnd:
-        m_errorHandler(Tr::tr("Read past end in temporary trace file."));
+        if (m_errorHandler)
+            m_errorHandler(Tr::tr("Read past end in temporary trace file."));
         break;
     }
     return false;

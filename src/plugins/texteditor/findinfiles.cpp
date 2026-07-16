@@ -53,7 +53,7 @@ FileContainerProvider FindInFiles::fileContainerProvider() const
     return [nameFilters = fileNameFilters(), exclusionFilters = fileExclusionFilters(),
             filePath = searchDir()] {
         return SubDirFileContainer({filePath}, nameFilters, exclusionFilters,
-                                   EditorManager::defaultTextCodec());
+                                   EditorManager::defaultTextEncoding());
     };
 }
 
@@ -129,7 +129,7 @@ QWidget *FindInFiles::createConfigWidget()
         gridLayout->addWidget(m_searchEngineCombo, row, 1);
 
         m_searchEngineWidget = new QStackedWidget(m_configWidget);
-        const QVector<SearchEngine *> searchEngineVector = searchEngines();
+        const QList<SearchEngine *> searchEngineVector = searchEngines();
         for (const SearchEngine *searchEngine : searchEngineVector) {
             m_searchEngineWidget->addWidget(searchEngine->widget());
             m_searchEngineCombo->addItem(searchEngine->title());
@@ -143,7 +143,6 @@ QWidget *FindInFiles::createConfigWidget()
         m_directory->setPromptDialogTitle(Tr::tr("Directory to Search"));
         connect(m_directory.data(), &PathChooser::textChanged, this,
                 [this] { setSearchDir(m_directory->filePath()); });
-        connect(this, &BaseFileFind::searchDirChanged, m_directory, &PathChooser::setFilePath);
         m_directory->setHistoryCompleter(HistoryKey, /*restoreLastItemFromHistory=*/ true);
         if (!HistoryCompleter::historyExistsFor(HistoryKey)) {
             auto completer = static_cast<HistoryCompleter *>(m_directory->lineEdit()->completer());
@@ -220,11 +219,10 @@ FindInFiles &findInFiles()
     return *s_instance;
 }
 
-void FindInFiles::findOnFileSystem(const QString &path)
+void FindInFiles::findOnFileSystem(const FilePath &path)
 {
-    const QFileInfo fi(path);
-    const QString folder = fi.isDir() ? fi.absoluteFilePath() : fi.absolutePath();
-    findInFiles().setSearchDir(FilePath::fromString(folder));
+    const FilePath folder = path.isDir() ? path : path.parentDir();
+    findInFiles().m_directory->setFilePath(folder);
     Find::openFindDialog(&findInFiles());
 }
 

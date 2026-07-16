@@ -18,14 +18,12 @@ public:
 
     void setRemoteEnvironment(const Utils::Environment &env);
 
-    QString userEnvironmentChangesAsString() const;
-
-protected:
+private:
     void fromMap(const Utils::Store &map) override;
     void toMap(Utils::Store &map) const override;
+    void handleKitUpdate() override;
 
-private:
-    Utils::Environment m_remoteEnvironment;
+    Utils::Environment m_remoteEnvironment{Utils::OsTypeLinux};
 };
 
 } // namespace RemoteLinux

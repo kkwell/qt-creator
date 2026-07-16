@@ -9,6 +9,8 @@
 
 #include <android/androidconstants.h>
 
+#include <coreplugin/documentmanager.h>
+
 #include <ios/iosconstants.h>
 
 #include <projectexplorer/projectexplorerconstants.h>
@@ -16,10 +18,38 @@
 
 #include <utils/qtcassert.h>
 
+#include <texteditor/texteditor.h>
+
 using namespace ProjectExplorer;
 using namespace Utils;
 
 namespace CMakeProjectManager::Internal {
+
+static bool addSubdirectory(const Utils::FilePath &projectPathDir, const Utils::FilePath & subProjectFilePath)
+{
+    TextEditor::BaseTextEditor *editor = qobject_cast<TextEditor::BaseTextEditor *>(
+        Core::EditorManager::openEditorAt(
+            {projectPathDir.pathAppended(Constants::CMAKE_LISTS_TXT)},
+            Constants::CMAKE_EDITOR_ID,
+            Core::EditorManager::DoNotMakeVisible | Core::EditorManager::DoNotChangeCurrentEditor));
+    if (!editor)
+        return false;
+
+    const QString subDirectory = subProjectFilePath.relativeChildPath(projectPathDir).parentDir().path();
+    if (subDirectory.isEmpty())
+        return false;
+
+    QTextCursor cursor = editor->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    if (!cursor.block().text().isEmpty())
+        cursor.insertText("\n");
+    cursor.insertText(QString("add_subdirectory(%1)").arg(quoteString(subDirectory)));
+
+    if (!Core::DocumentManager::saveDocument(editor->document()))
+        return false;
+
+    return true;
+}
 
 CMakeInputsNode::CMakeInputsNode(const FilePath &cmakeLists) :
     ProjectExplorer::ProjectNode(cmakeLists)
@@ -39,11 +69,23 @@ CMakePresetsNode::CMakePresetsNode(const FilePath &projectPath) :
     setListInProject(false);
 }
 
+bool CMakeListsNode::hasSubprojectBuildSupport() const
+{
+    return m_hasSubprojectBuildSupport;
+}
+
+void CMakeListsNode::setHasSubprojectBuildSupport(bool hasSubprojectBuildSupport)
+{
+    m_hasSubprojectBuildSupport = hasSubprojectBuildSupport;
+}
+
 CMakeListsNode::CMakeListsNode(const FilePath &cmakeListPath) :
     ProjectExplorer::ProjectNode(cmakeListPath)
 {
     setIcon(DirectoryIcon(Constants::Icons::FILE_OVERLAY));
     setListInProject(false);
+    setLocationInfo(
+        {{Constants::CMAKE_LISTS_TXT, cmakeListPath.pathAppended(Constants::CMAKE_LISTS_TXT)}});
 }
 
 bool CMakeListsNode::showInSimpleTree() const
@@ -56,6 +98,22 @@ std::optional<FilePath> CMakeListsNode::visibleAfterAddFileAction() const
     return filePath().pathAppended(Constants::CMAKE_LISTS_TXT);
 }
 
+bool CMakeListsNode::canAddSubProject(const Utils::FilePath &subProjectFilePath) const
+{
+    return subProjectFilePath != filePath().pathAppended(Constants::CMAKE_LISTS_TXT)
+           && subProjectFilePath.isChildOf(filePath());
+}
+
+bool CMakeListsNode::addSubProject(const Utils::FilePath &subProjectFilePath)
+{
+    return addSubdirectory(filePath(), subProjectFilePath);
+}
+
+QStringList CMakeListsNode::subProjectFileNamePatterns() const
+{
+    return {Constants::CMAKE_LISTS_TXT};
+}
+
 CMakeProjectNode::CMakeProjectNode(const FilePath &directory) :
     ProjectExplorer::ProjectNode(directory)
 {
@@ -64,15 +122,31 @@ CMakeProjectNode::CMakeProjectNode(const FilePath &directory) :
     setListInProject(false);
 }
 
+bool CMakeProjectNode::canAddSubProject(const Utils::FilePath &subProjectFilePath) const
+{
+    return subProjectFilePath != filePath().pathAppended(Constants::CMAKE_LISTS_TXT)
+           && subProjectFilePath.isChildOf(filePath());
+}
+
+bool CMakeProjectNode::addSubProject(const Utils::FilePath &subProjectFilePath)
+{
+    return addSubdirectory(filePath(), subProjectFilePath);
+}
+
+QStringList CMakeProjectNode::subProjectFileNamePatterns() const
+{
+    return {Constants::CMAKE_LISTS_TXT};
+}
+
 QString CMakeProjectNode::tooltip() const
 {
     return QString();
 }
 
-CMakeTargetNode::CMakeTargetNode(const FilePath &directory, const QString &target) :
+CMakeTargetNode::CMakeTargetNode(const FilePath &directory, const CMakeBuildTarget &target) :
     ProjectExplorer::ProjectNode(directory)
 {
-    m_target = target;
+    setCMakeBuildTarget(target);
     setPriority(Node::DefaultProjectPriority + 900);
     setIcon(":/projectexplorer/images/build.png"); // TODO: Use proper icon!
     setListInProject(false);
@@ -168,7 +242,7 @@ QVariant CMakeTargetNode::data(Id role) const
         // or "-iphonesimulator" depending on the device type (which is unavailable here).
 
         // dir/target.app/target -> dir
-        return m_artifact.parentDir().parentDir().toString();
+        return m_artifact.parentDir().parentDir().path();
     }
 
     if (role == Ios::Constants::IosCmakeGenerator)
@@ -187,6 +261,17 @@ void CMakeTargetNode::setConfig(const CMakeConfig &config)
     m_config = config;
 }
 
+CMakeBuildTarget CMakeTargetNode::cmakeBuildTarget() const
+{
+    return m_cmakeBuildTarget;
+}
+
+void CMakeTargetNode::setCMakeBuildTarget(const CMakeBuildTarget &cmakeBuildTarget)
+{
+    m_target = cmakeBuildTarget.title;
+    m_cmakeBuildTarget = cmakeBuildTarget;
+}
+
 void CMakeTargetNode::setVisibleAfterAddFileAction(bool visibleAfterAddFileAction)
 {
     m_visibleAfterAddFileAction = visibleAfterAddFileAction;
@@ -201,13 +286,11 @@ std::optional<FilePath> CMakeTargetNode::visibleAfterAddFileAction() const
 
 void CMakeTargetNode::build()
 {
-    Project *p = getProject();
-    Target *t = p ? p->activeTarget() : nullptr;
-    if (t)
-        static_cast<CMakeBuildSystem *>(t->buildSystem())->buildCMakeTarget(displayName());
+    if (BuildSystem * const bs = activeBuildSystem(getProject()))
+        static_cast<CMakeBuildSystem *>(bs)->buildCMakeTarget(displayName());
 }
 
-void CMakeTargetNode::setTargetInformation(const QList<FilePath> &artifacts, const QString &type)
+void CMakeTargetNode::setTargetInformation(const FilePaths &artifacts, const QString &type)
 {
     m_tooltip = Tr::tr("Target type:") + " " + type + "<br>";
     if (artifacts.isEmpty()) {

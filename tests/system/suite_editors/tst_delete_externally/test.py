@@ -15,7 +15,7 @@ def main():
 
     for currentFile in files:
         test.log("Opening file %s" % currentFile)
-        invokeMenuItem("File", "Open File or Project...")
+        invokeMenuItem("File", "Open File...")
         selectFromFileDialog(currentFile)
         editor = getEditorForFileSuffix(currentFile)
         if editor == None:
@@ -25,7 +25,14 @@ def main():
 
         editorRealName = objectMap.realName(editor)
         contentBefore = readFile(currentFile)
-        os.remove(currentFile)
+        try:
+            os.remove(currentFile)
+        except PermissionError:
+            v = sys.exc_info()[1]
+            test.log("PermissionError: %s" % str(v), "Trying once more in 2s")
+            snooze(2)
+            os.remove(currentFile)
+
         if not currentFile.endswith(".bin"):
             popupText = ("The file %s has been removed from disk. Do you want to "
                          "save it under a different name, or close the editor?")

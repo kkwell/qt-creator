@@ -5,11 +5,14 @@
 
 #include "commitdata.h"
 
+#include <QtTaskTree/QSingleTaskTreeRunner>
+
+#include <coreplugin/iversioncontrol.h>
+
 #include <utils/filepath.h>
 
 #include <vcsbase/vcsbasesubmiteditor.h>
 
-#include <QFutureWatcher>
 #include <QStringList>
 
 namespace VcsBase { class SubmitFileModel; }
@@ -18,16 +21,6 @@ namespace Git::Internal {
 
 class GitSubmitEditorWidget;
 class GitSubmitEditorPanelData;
-
-class CommitDataFetchResult
-{
-public:
-    static CommitDataFetchResult fetch(CommitType commitType, const Utils::FilePath &workingDirectory);
-
-    QString errorMessage;
-    CommitData commitData;
-    bool success;
-};
 
 class GitSubmitEditor : public VcsBase::VcsBaseSubmitEditor
 {
@@ -40,7 +33,7 @@ public:
     void setCommitData(const CommitData &);
     GitSubmitEditorPanelData panelData() const;
     CommitType commitType() const { return m_commitType; }
-    QString amendSHA1() const;
+    QString amendHash() const;
     void updateFileModel() override;
 
 protected:
@@ -50,18 +43,20 @@ protected:
 private:
     void slotDiffSelected(const QList<int> &rows);
     void showCommit(const QString &commit);
-    void commitDataRetrieved();
+    void showLog(const QStringList &range);
+    void performFileAction(const Utils::FilePath &filePath, Core::IVersionControl::FileAction action);
+    void addToGitignore(const Utils::FilePath &relativePath);
 
     inline GitSubmitEditorWidget *submitEditorWidget();
     inline const GitSubmitEditorWidget *submitEditorWidget() const;
 
     VcsBase::SubmitFileModel *m_model = nullptr;
-    QTextCodec *m_commitEncoding = nullptr;
+    Utils::TextEncoding m_commitEncoding;
     CommitType m_commitType = SimpleCommit;
-    QString m_amendSHA1;
+    QString m_amenHash;
     Utils::FilePath m_workingDirectory;
     bool m_firstUpdate = true;
-    QFutureWatcher<CommitDataFetchResult> m_fetchWatcher;
+    QtTaskTree::QSingleTaskTreeRunner m_taskTreeRunner;
 };
 
 } // Git::Internal

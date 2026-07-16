@@ -16,13 +16,13 @@
 
     \title Edit MIME types
 
-    \QC uses the \l{https://www.iana.org/assignments/media-types/media-types.xhtml}
-    {MIME type} of a file to determine what type of a file it is, so it can:
+    \QC uses the \l{IANA: Media Types}{MIME type} of a file to determine what
+    type of a file it is, so it can:
 
     \list
         \li Choose a mode and editor to open the file in.
             For example, \QC opens C++ source and header files in
-            the C++ editor, and Qt widget based UI files (.ui) in \QD.
+            the C++ editor, and Qt widget based UI files (\c .ui) in \QD.
         \li Offer code editing services, such as code formatting and
             highlighting.
         \li Feed files to the correct language server.
@@ -55,7 +55,7 @@
 
         \li Go to \preferences > \uicontrol Environment > \uicontrol {MIME Types}.
 
-            \image qtcreator-mime-types.png {MIME Types}
+            \image {qtcreator-mime-types.png} {MIME Types tab in Environment preferences}
 
         \li In \uicontrol {MIME Type}, select a MIME type.
 
@@ -89,15 +89,14 @@
 
     Magic headers can have the following types of values: string, host,
     big-endian, little-endian, and byte. \QC interprets the values according to the
-    \l{http://standards.freedesktop.org/shared-mime-info-spec/shared-mime-info-spec-latest.html}
-    {Shared MIME-info Database specification}.
+    \l{Shared MIME-info Database}{Shared MIME-info Database specification}.
 
     \list 1
 
-        \li In \uicontrol {Mime Types}, select \uicontrol Add to add
-            \uicontrol {Magic Headers}.
+        \li In \uicontrol {MIME Types}, select \uicontrol Add to add magic
+            headers.
 
-            \image qtcreator-mime-types-magic-header.png {Magic Header}
+            \image {qtcreator-mime-types-magic-header.png} {Add Magic Header dialog}
 
         \li In \uicontrol Value, specify a text string or bytes that
             appear in the files.
@@ -125,10 +124,10 @@
     To revert the changes you made to the default editors, select
     \uicontrol {Reset Handlers}.
 
-    \note If you select \uicontrol OK or \uicontrol Apply after reverting
+    \note If you select \uicontrol Apply after reverting
     changes, you permanently lose all your own patterns and magic headers.
     They are removed the next time you start \QC.
 
-    \sa {Clang Code Model}, {Language Servers}
+    \sa {Clang code model}, {Managing language servers}
 
 */

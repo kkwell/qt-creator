@@ -3,16 +3,17 @@
 
 #include "pixmapcachemodel_test.h"
 #include "../qmlprofilertr.h"
+
 #include <tracing/timelineformattime.h>
-#include <QtTest>
 
-namespace QmlProfiler {
-namespace Internal {
+#include <QTest>
 
-PixmapCacheModelTest::PixmapCacheModelTest(QObject *parent) : QObject(parent),
-    model(&manager, &aggregator)
-{
-}
+using namespace QmlDebug;
+namespace QmlProfiler::Internal {
+
+PixmapCacheModelTest::PixmapCacheModelTest()
+    : model(&manager, &aggregator)
+{}
 
 void PixmapCacheModelTest::initTestCase()
 {
@@ -294,5 +295,4 @@ void PixmapCacheModelTest::cleanupTestCase()
     QCOMPARE(model.count(), 0);
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

@@ -33,6 +33,7 @@ public:
     static QVariantList toVariantList(const EnvironmentItems &list);
     static EnvironmentItem itemFromVariantList(const QVariantList &list);
     static QVariantList toVariantList(const EnvironmentItem &item);
+    static QString toShortSummary(const EnvironmentItems &list, bool multiLine = true);
 
     friend bool operator==(const EnvironmentItem &first, const EnvironmentItem &second)
     {
@@ -52,6 +53,8 @@ public:
     Operation operation = Unset;
 
 private:
+    QString separator() const;
+
     void apply(NameValueDictionary *dictionary, Operation op) const;
 };
 

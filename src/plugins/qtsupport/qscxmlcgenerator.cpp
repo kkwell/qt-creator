@@ -3,10 +3,11 @@
 
 #include "qscxmlcgenerator.h"
 
-#include <qtsupport/baseqtversion.h>
-#include <qtsupport/qtkitaspect.h>
+#include "baseqtversion.h"
+#include "qtkitaspect.h"
 
 #include <projectexplorer/extracompiler.h>
+#include <projectexplorer/kitmanager.h>
 #include <projectexplorer/target.h>
 
 #include <utils/qtcassert.h>
@@ -33,9 +34,9 @@ public:
         , m_tmpdir("qscxmlgenerator")
     {
         QTC_ASSERT(targets.count() == 2, return);
-        m_header = m_tmpdir.filePath(targets[0].fileName()).toString();
+        m_header = m_tmpdir.filePath(targets[0].fileName()).toUrlishString();
         QTC_ASSERT(!m_header.isEmpty(), return);
-        m_impl = m_tmpdir.filePath(targets[1].fileName()).toString();
+        m_impl = m_tmpdir.filePath(targets[1].fileName()).toUrlishString();
     }
 
 private:
@@ -87,8 +88,9 @@ Tasks QScxmlcGenerator::parseIssues(const QByteArray &processStderr)
 
 FilePath QScxmlcGenerator::command() const
 {
-    Target *target = project()->activeTarget();
-    Kit *kit = target ? target->kit() : KitManager::defaultKit();
+    Kit *kit = project()->activeKit();
+    if (!kit)
+        kit = KitManager::defaultKit();
     QtVersion *version = QtKitAspect::qtVersion(kit);
 
     if (!version)
@@ -100,7 +102,7 @@ FilePath QScxmlcGenerator::command() const
 bool QScxmlcGenerator::prepareToRun(const QByteArray &sourceContents)
 {
     const FilePath fn = tmpFile();
-    QFile input(fn.toString());
+    QFile input(fn.toUrlishString());
     if (!input.open(QIODevice::WriteOnly))
         return false;
     input.write(sourceContents);
@@ -116,7 +118,7 @@ FileNameToContentsHash QScxmlcGenerator::handleProcessFinished(Process *process)
     FileNameToContentsHash result;
     forEachTarget([&](const FilePath &target) {
         const FilePath file = wd.pathAppended(target.fileName());
-        QFile generated(file.toString());
+        QFile generated(file.toUrlishString());
         if (!generated.open(QIODevice::ReadOnly))
             return;
         result[target] = generated.readAll();

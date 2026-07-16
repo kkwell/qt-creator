@@ -3,12 +3,12 @@
 
 #include "subdirsprojectwizard.h"
 
+#include "qtprojectparameters.h"
 #include "subdirsprojectwizarddialog.h"
 #include "../qmakeprojectmanagerconstants.h"
 #include "../qmakeprojectmanagertr.h"
 
 #include <projectexplorer/projectexplorerconstants.h>
-#include <projectexplorer/projectexplorertr.h>
 
 #include <coreplugin/icore.h>
 #include <qtsupport/qtsupportconstants.h>
@@ -17,15 +17,13 @@
 
 using namespace Utils;
 
-namespace QmakeProjectManager {
-namespace Internal {
+namespace QmakeProjectManager::Internal {
 
 SubdirsProjectWizard::SubdirsProjectWizard()
 {
     setId("U.Qt4Subdirs");
     setCategory(QLatin1String(ProjectExplorer::Constants::QT_PROJECT_WIZARD_CATEGORY));
-    setDisplayCategory(ProjectExplorer::Tr::tr(
-        ProjectExplorer::Constants::QT_PROJECT_WIZARD_CATEGORY_DISPLAY));
+    setDisplayCategory(Core::msgWizardDisplayCategoryOther());
     setDisplayName(Tr::tr("Subdirs Project"));
     setDescription(Tr::tr("Creates a qmake-based subdirs project. This allows you to group "
                           "your projects in a tree structure."));
@@ -33,11 +31,9 @@ SubdirsProjectWizard::SubdirsProjectWizard()
     setRequiredFeatures({QtSupport::Constants::FEATURE_QT_PREFIX});
 }
 
-Core::BaseFileWizard *SubdirsProjectWizard::create(QWidget *parent,
-                                                   const Core::WizardDialogParameters &parameters) const
+Core::BaseFileWizard *SubdirsProjectWizard::create(const Core::WizardDialogParameters &parameters) const
 {
-    SubdirsProjectWizardDialog *dialog = new SubdirsProjectWizardDialog(this, displayName(), icon(),
-                                                                        parent, parameters);
+    auto dialog = new SubdirsProjectWizardDialog(this, displayName(), icon(), parameters);
 
     dialog->setProjectName(SubdirsProjectWizardDialog::uniqueProjectName(parameters.defaultPath()));
     const QString buttonText = dialog->wizardStyle() == QWizard::MacStyle
@@ -46,8 +42,7 @@ Core::BaseFileWizard *SubdirsProjectWizard::create(QWidget *parent,
     return dialog;
 }
 
-Core::GeneratedFiles SubdirsProjectWizard::generateFiles(const QWizard *w,
-                                                         QString * /*errorMessage*/) const
+Result<Core::GeneratedFiles> SubdirsProjectWizard::generateFiles(const QWizard *w) const
 {
     const auto *wizard = qobject_cast< const SubdirsProjectWizardDialog *>(w);
     const QtProjectParameters params = wizard->parameters();
@@ -60,11 +55,10 @@ Core::GeneratedFiles SubdirsProjectWizard::generateFiles(const QWizard *w,
     return Core::GeneratedFiles() << profile;
 }
 
-bool SubdirsProjectWizard::postGenerateFiles(const QWizard *w, const Core::GeneratedFiles &files,
-                                             QString *errorMessage) const
+Result<> SubdirsProjectWizard::postGenerateFiles(const QWizard *w, const Core::GeneratedFiles &files) const
 {
     const auto *wizard = qobject_cast< const SubdirsProjectWizardDialog *>(w);
-    if (QtWizard::qt4ProjectPostGenerateFiles(wizard, files, errorMessage)) {
+    if (const Result<> res = QtWizard::qt4ProjectPostGenerateFiles(wizard, files)) {
         const QtProjectParameters params = wizard->parameters();
         const FilePath projectPath = params.projectPath();
         const FilePath profileName = Core::BaseFileWizardFactory::buildFileName(projectPath, params.fileName, profileSuffix());
@@ -82,10 +76,9 @@ bool SubdirsProjectWizard::postGenerateFiles(const QWizard *w, const Core::Gener
                                              wizard->parameters().projectPath(),
                                              map);
     } else {
-        return false;
+        return res;
     }
-    return true;
+    return ResultOk;
 }
 
-} // namespace Internal
-} // namespace QmakeProjectManager
+} // namespace QmakeProjectManager::Internal

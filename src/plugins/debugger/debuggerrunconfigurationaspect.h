@@ -6,7 +6,6 @@
 #include "debugger_global.h"
 
 #include <projectexplorer/runconfiguration.h>
-#include <projectexplorer/runconfigurationaspects.h>
 
 namespace Debugger {
 
@@ -14,7 +13,7 @@ class DEBUGGER_EXPORT DebuggerRunConfigurationAspect
     : public ProjectExplorer::GlobalOrProjectAspect
 {
 public:
-    DebuggerRunConfigurationAspect(ProjectExplorer::Target *target);
+    DebuggerRunConfigurationAspect(ProjectExplorer::BuildConfiguration *bc);
     ~DebuggerRunConfigurationAspect();
 
     void fromMap(const Utils::Store &map) override;
@@ -28,15 +27,38 @@ public:
     void setUseMultiProcess(bool on);
     QString overrideStartup() const;
 
-    int portsUsedByDebugger() const;
-
     struct Data : BaseAspect::Data
     {
-        bool useCppDebugger;
-        bool useQmlDebugger;
-        bool usePythonDebugger;
-        bool useMultiProcess;
+        bool useCppDebugger = false;
+        bool useQmlDebugger = false;
+        bool usePythonDebugger = false;
+        bool useMultiProcess = false;
         QString overrideStartup;
+
+#ifdef WITH_TESTS
+        static BaseAspect::Data::Ptr createQmlTestData()
+        {
+            auto *d = new Data;
+            d->m_classId = &DebuggerRunConfigurationAspect::staticMetaObject;
+            d->m_cloner = [](const BaseAspect::Data *src) -> BaseAspect::Data * {
+                return new Data(*static_cast<const Data *>(src));
+            };
+            d->useQmlDebugger = true;
+            return BaseAspect::Data::Ptr(d);
+        }
+
+        static BaseAspect::Data::Ptr createCombinedTestData()
+        {
+            auto *d = new Data;
+            d->m_classId = &DebuggerRunConfigurationAspect::staticMetaObject;
+            d->m_cloner = [](const BaseAspect::Data *src) -> BaseAspect::Data * {
+                return new Data(*static_cast<const Data *>(src));
+            };
+            d->useCppDebugger = true;
+            d->useQmlDebugger = true;
+            return BaseAspect::Data::Ptr(d);
+        }
+#endif
     };
 
 private:
@@ -45,7 +67,7 @@ private:
     Utils::TriStateAspect m_pythonAspect;
     Utils::BoolAspect m_multiProcessAspect;
     Utils::StringAspect m_overrideStartupAspect;
-    ProjectExplorer::Target *m_target;
+    ProjectExplorer::BuildConfiguration * const m_buildConfiguration;
 };
 
 } // namespace Debugger

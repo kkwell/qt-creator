@@ -6,7 +6,8 @@
 #include <extensionsystem/pluginmanager.h>
 #include <extensionsystem/pluginspec.h>
 
-#include <QtTest>
+#include <QSignalSpy>
+#include <QTest>
 #include <QVariant>
 
 typedef QByteArray (*TestFileLoader)(const QString &, bool *);
@@ -29,12 +30,9 @@ private slots:
 
 static ExtensionSystem::IPlugin *getPlugin()
 {
-    const ExtensionSystem::PluginSpecs plugins = ExtensionSystem::PluginManager::plugins();
-    auto it = std::find_if(plugins.begin(), plugins.end(), [](ExtensionSystem::PluginSpec *spec) {
-        return spec->name() == "QmlPreview";
-    });
-
-    return (it == plugins.end()) ? nullptr : (*it)->plugin();
+    using namespace ExtensionSystem;
+    const PluginSpec *spec = PluginManager::specById("qmlpreview");
+    return spec ? spec->plugin() : nullptr;
 }
 
 void QmlPreviewPluginTest::testFileLoaderProperty()

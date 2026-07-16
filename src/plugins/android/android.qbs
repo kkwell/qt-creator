@@ -2,6 +2,7 @@ QtcPlugin {
     name: "Android"
 
     Depends { name: "Qt"; submodules: ["widgets", "xml", "network"] }
+    Depends { name: "CmdBridgeClient" }
     Depends { name: "Core" }
     Depends { name: "Debugger" }
     Depends { name: "LanguageClient" }
@@ -10,19 +11,15 @@ QtcPlugin {
     Depends { name: "ProjectExplorer" }
     Depends { name: "QmlDebug" }
     Depends { name: "QtSupport" }
+    Depends { name: "Spinner" }
     Depends { name: "TextEditor" }
     Depends { name: "Utils" }
 
     files: [
         "androidtr.h",
-        "android.qrc",
-        "androidavdmanager.cpp",
-        "androidavdmanager.h",
         "androidconfigurations.cpp",
         "androidconfigurations.h",
         "androidconstants.h",
-        "androidcreatekeystorecertificate.cpp",
-        "androidcreatekeystorecertificate.h",
         "androidbuildapkstep.cpp",
         "androidbuildapkstep.h",
         "androiddeployqtstep.cpp",
@@ -33,36 +30,19 @@ QtcPlugin {
         "androiddevice.h",
         "androiddeviceinfo.cpp",
         "androiddeviceinfo.h",
-        "androidextralibrarylistmodel.cpp",
-        "androidextralibrarylistmodel.h",
-        "androidglobal.h",
-        "androidmanager.cpp",
-        "androidmanager.h",
-        "androidmanifestdocument.cpp",
-        "androidmanifestdocument.h",
         "androidmanifesteditor.cpp",
         "androidmanifesteditor.h",
-        "androidmanifesteditoriconwidget.cpp",
-        "androidmanifesteditoriconwidget.h",
-        "androidmanifesteditoriconcontainerwidget.cpp",
-        "androidmanifesteditoriconcontainerwidget.h",
-        "androidmanifesteditorfactory.cpp",
-        "androidmanifesteditorfactory.h",
-        "androidmanifesteditorwidget.cpp",
-        "androidmanifesteditorwidget.h",
+        "androidmanifestutils.cpp",
+        "androidmanifestutils.h",
         "androidpackageinstallationstep.cpp",
         "androidpackageinstallationstep.h",
         "androidplugin.cpp",
-        "androidpotentialkit.cpp",
-        "androidpotentialkit.h",
         "androidqmltoolingsupport.cpp",
         "androidqmltoolingsupport.h",
         "androidqtversion.cpp",
         "androidqtversion.h",
         "androidrunconfiguration.cpp",
         "androidrunconfiguration.h",
-        "androidruncontrol.cpp",
-        "androidruncontrol.h",
         "androidrunner.cpp",
         "androidrunner.h",
         "androidrunnerworker.cpp",
@@ -73,39 +53,63 @@ QtcPlugin {
         "androidsdkmanager.h",
         "androidsdkmanagerdialog.cpp",
         "androidsdkmanagerdialog.h",
-        "androidsdkmodel.cpp",
-        "androidsdkmodel.h",
         "androidsdkpackage.cpp",
         "androidsdkpackage.h",
         "androidsettingswidget.cpp",
         "androidsettingswidget.h",
-        "androidsignaloperation.cpp",
-        "androidsignaloperation.h",
         "androidtoolchain.cpp",
         "androidtoolchain.h",
-        "avddialog.cpp",
-        "avddialog.h",
+        "androidtoolmenu.cpp",
+        "androidtoolmenu.h",
+        "androidutils.cpp",
+        "androidutils.h",
+        "avdcreatordialog.cpp",
+        "avdcreatordialog.h",
         "avdmanageroutputparser.cpp",
         "avdmanageroutputparser.h",
-        "certificatesmodel.cpp",
-        "certificatesmodel.h",
-        "createandroidmanifestwizard.h",
-        "createandroidmanifestwizard.cpp",
+        "iconcontainerwidget.cpp",
+        "iconcontainerwidget.h",
         "javaeditor.cpp",
         "javaeditor.h",
-        "javaindenter.cpp",
-        "javaindenter.h",
         "javalanguageserver.cpp",
         "javalanguageserver.h",
         "javaparser.cpp",
         "javaparser.h",
+        "keystorecertificatedialog.cpp",
+        "keystorecertificatedialog.h",
+        "manifestwizard.h",
+        "manifestwizard.cpp",
+        "permissionscontainerwidget.cpp",
+        "permissionscontainerwidget.h",
         "splashscreencontainerwidget.cpp",
         "splashscreencontainerwidget.h",
-        "splashscreenwidget.cpp",
-        "splashscreenwidget.h",
         "sdkmanageroutputparser.cpp",
         "sdkmanageroutputparser.h"
     ]
+
+    Group {
+        name: "license"
+        files: "LICENSE.md"
+        fileTags: "pluginjson.license"
+    }
+
+    Group {
+        name: "long description"
+        files: "plugindescription.md"
+        fileTags: "pluginjson.longDescription"
+    }
+
+    Group {
+        name: "images"
+        prefix: "images/"
+        files: [
+            "androiddevice.png",
+            "androiddevice@2x.png",
+            "androiddevicesmall.png",
+            "androiddevicesmall@2x.png",
+        ]
+        fileTags: "qt.core.resource_data"
+    }
 
     QtcTestFiles {
         files: [

@@ -8,24 +8,21 @@
 #include <coreplugin/find/ifindfilter.h>
 #include <coreplugin/find/searchresultwindow.h>
 
-#include <QFutureWatcher>
-#include <QPointer>
-#include <QWidget>
+#include <QtTaskTree/QParallelTaskTreeRunner>
+
 #include <QCheckBox>
+#include <QPointer>
 #include <QRadioButton>
+#include <QWidget>
 
 namespace Core { class SearchResult; }
 namespace Utils { class SearchResultItem; }
 
-namespace CppEditor {
-namespace Internal {
+namespace CppEditor::Internal {
 
 class SymbolsFindFilter : public Core::IFindFilter
 {
     Q_OBJECT
-
-public:
-    using SearchScope = SymbolSearcher::SearchScope;
 
 public:
     SymbolsFindFilter();
@@ -40,8 +37,8 @@ public:
     Utils::Store save() const override;
     void restore(const Utils::Store &s) override;
 
-    void setSymbolsToSearch(const SearchSymbols::SymbolTypes &types) { m_symbolsToSearch = types; }
-    SearchSymbols::SymbolTypes symbolsToSearch() const { return m_symbolsToSearch; }
+    void setSymbolsToSearch(const SymbolTypes &types) { m_symbolsToSearch = types; }
+    SymbolTypes symbolsToSearch() const { return m_symbolsToSearch; }
 
     void setSearchScope(SearchScope scope) { m_scope = scope; }
     SearchScope searchScope() const { return m_scope; }
@@ -55,27 +52,24 @@ signals:
 private:
     void openEditor(const Utils::SearchResultItem &item);
 
-    void addResults(QFutureWatcher<Utils::SearchResultItem> *watcher, int begin, int end);
-    void finish(QFutureWatcher<Utils::SearchResultItem> *watcher);
-    void cancel(Core::SearchResult *search);
-    void setPaused(Core::SearchResult *search, bool paused);
     void onTaskStarted(Utils::Id type);
     void onAllTasksFinished(Utils::Id type);
 
     QString label() const;
     QString toolTip(Utils::FindFlags findFlags) const;
-    void startSearch(Core::SearchResult *search);
+    void startSearch(Core::SearchResult *search, const SearchParameters &parameters);
 
     bool m_enabled;
-    QHash<QFutureWatcher<Utils::SearchResultItem> *, QPointer<Core::SearchResult>> m_watchers;
     QPointer<Core::SearchResult> m_currentSearch;
-    SearchSymbols::SymbolTypes m_symbolsToSearch;
+    SymbolTypes m_symbolsToSearch;
     SearchScope m_scope;
+    QtTaskTree::QParallelTaskTreeRunner m_taskTreeRunner;
 };
 
 class SymbolsFindFilterConfigWidget : public QWidget
 {
     Q_OBJECT
+
 public:
     explicit SymbolsFindFilterConfigWidget(SymbolsFindFilter *filter);
 
@@ -95,5 +89,4 @@ private:
     QButtonGroup *m_searchGroup;
 };
 
-} // Internal
-} // CppEditor
+} // CppEditor::Internal

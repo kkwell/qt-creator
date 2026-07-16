@@ -83,11 +83,11 @@ bool SimulatorUvscServerProvider::operator==(const IDebugServerProvider &other) 
     return m_limitSpeed == p->m_limitSpeed;
 }
 
-FilePath SimulatorUvscServerProvider::optionsFilePath(DebuggerRunTool *runTool,
+FilePath SimulatorUvscServerProvider::optionsFilePath(RunControl *runControl,
                                                       QString &errorMessage) const
 {
-    const FilePath optionsPath = buildOptionsFilePath(runTool);
-    std::ofstream ofs(optionsPath.toString().toStdString(), std::ofstream::out);
+    const FilePath optionsPath = buildOptionsFilePath(runControl);
+    std::ofstream ofs(optionsPath.path().toStdString(), std::ofstream::out);
     Uv::ProjectOptionsWriter writer(&ofs);
     const SimulatorUvProjectOptions projectOptions(this);
     if (!writer.write(&projectOptions)) {
@@ -95,15 +95,6 @@ FilePath SimulatorUvscServerProvider::optionsFilePath(DebuggerRunTool *runTool,
         return {};
     }
     return optionsPath;
-}
-
-// SimulatorUvscServerProviderFactory
-
-SimulatorUvscServerProviderFactory::SimulatorUvscServerProviderFactory()
-{
-    setId(Constants::UVSC_SIMULATOR_PROVIDER_ID);
-    setDisplayName(Tr::tr("uVision Simulator"));
-    setCreator([] { return new SimulatorUvscServerProvider; });
 }
 
 // SimulatorUvscServerProviderConfigWidget
@@ -144,6 +135,24 @@ void SimulatorUvscServerProviderConfigWidget::setFromProvider()
     Q_ASSERT(p);
     const QSignalBlocker blocker(this);
     m_limitSpeedCheckBox->setChecked(p->m_limitSpeed);
+}
+
+// SimulatorUvscServerProviderFactory
+
+class SimulatorUvscServerProviderFactory final : public IDebugServerProviderFactory
+{
+public:
+    SimulatorUvscServerProviderFactory()
+    {
+        setId(Constants::UVSC_SIMULATOR_PROVIDER_ID);
+        setDisplayName(Tr::tr("uVision Simulator"));
+        setCreator([] { return new SimulatorUvscServerProvider; });
+    }
+};
+
+void setupSimulatorUvscServerProvider()
+{
+    static SimulatorUvscServerProviderFactory theSimulatorUvscServerProviderFactory;
 }
 
 } // BareMetal::Internal

@@ -112,7 +112,7 @@ def lineUnderCursor(window):
     return textUnderCursor(window, QTextCursor.StartOfLine, QTextCursor.EndOfLine)
 
 def textUnderCursor(window, fromPos, toPos):
-    cursor = window.textCursor()
+    cursor = textCursorForWidget(window)
     oldposition = cursor.position()
     cursor.movePosition(fromPos)
     cursor.movePosition(toPos, QTextCursor.KeepAnchor)
@@ -120,18 +120,6 @@ def textUnderCursor(window, fromPos, toPos):
     cursor.setPosition(oldposition)
     return str(returnValue)
 
-def which(program):
-    # Don't use spawn.find_executable because it can't find .bat or
-    # .cmd files and doesn't check whether a file is executable (!)
-    if platform.system() in ('Windows', 'Microsoft'):
-        command = "where"
-    else:
-        command = "which"
-    foundPath = getOutputFromCmdline([command, program], acceptedError=1)
-    if foundPath:
-        return foundPath.splitlines()[0]
-    else:
-        return None
 
 # this function removes the user files of given pro file(s)
 # can be called with a single string object or a list of strings holding path(s) to
@@ -140,17 +128,25 @@ def which(program):
 def cleanUpUserFiles(pathsToProFiles=None):
     if pathsToProFiles==None:
         return False
+
+    def __processSinglePathToProjectFile__(pathToProjFile, fileList):
+        dir, fileName = os.path.split(pathToProjFile)
+        fileList.extend(glob.glob(os.path.join(dir, ".qtcreator", fileName + ".user*")))
+        # needed to be kept for a while - remove with QC19?
+        fileList.extend(glob.glob(pathToProjFile + ".user*"))
+
+    fileList = []
     if isString(pathsToProFiles):
-        filelist = glob.glob(pathsToProFiles+".user*")
+        __processSinglePathToProjectFile__(pathsToProFiles, fileList)
     elif isinstance(pathsToProFiles, (list, tuple)):
-        filelist = []
         for p in pathsToProFiles:
-            filelist.extend(glob.glob(p+".user*"))
+            __processSinglePathToProjectFile__(p, fileList)
     else:
         test.fatal("Got an unsupported object.")
         return False
     doneWithoutErrors = True
-    for file in filelist:
+
+    for file in fileList:
         try:
             file = os.path.abspath(file)
             os.remove(file)
@@ -166,7 +162,8 @@ def invokeMenuItem(menu, item, *subItems):
         except:
             nativeMouseClick(waitForObject(":Qt Creator_Core::Internal::MainWindow", 1000), 20, 20, 0, Qt.LeftButton)
     # Use Locator for menu items which wouldn't work on macOS
-    if menu == "Edit" and item == "Preferences..." or menu == "File" and item == "Exit":
+    if (menu == "Edit" and item == "Preferences..." or menu == "File" and item == "Exit"
+        or menu == "File" and item == "Close All"):
         selectFromLocator("t %s" % item, item)
         return
     menuObject = waitForObjectItem(":Qt Creator.QtCreator.MenuBar_QMenuBar", menu)
@@ -275,7 +272,7 @@ def addHelpDocumentation(which):
     for qch in which:
         clickButton(waitForObject("{type='QPushButton' name='addButton' visible='1' text='Add...'}"))
         selectFromFileDialog(qch)
-    clickButton(waitForObject(":Options.OK_QPushButton"))
+    clickButton(waitForObject(":Options.Apply_QPushButton"))
     progressBarWait(10000)  # Wait for "Update Documentation"
 
 
@@ -295,17 +292,20 @@ def addCurrentCreatorDocumentation():
     clickOnTab(":Options.qt_tabwidget_tabbar_QTabBar", "Documentation")
     clickButton(waitForObject("{type='QPushButton' name='addButton' visible='1' text='Add...'}"))
     selectFromFileDialog(docPath)
+    alreadyRegistered = False
     try:
         windowStr = ("{type='QMessageBox' unnamed='1' visible='1' "
                       "text~='Unable to register documentation.*'}")
         waitForObject(windowStr, 3000)
         test.passes("Qt Creator's documentation found already registered.")
+        alreadyRegistered = True
         clickButton(waitForObject("{type='QPushButton' text='OK' unnamed='1' visible='1' "
                                   "window=%s}" % windowStr))
     except:
         test.fail("Added Qt Creator's documentation explicitly.")
-    clickButton(waitForObject(":Options.OK_QPushButton"))
-    progressBarWait(10000)  # Wait for "Update Documentation"
+    if not alreadyRegistered:
+        clickButton(waitForObject(":Options.Apply_QPushButton"))
+        progressBarWait(10000)  # Wait for "Update Documentation"
 
 
 def verifyOutput(string, substring, outputFrom, outputIn):
@@ -365,7 +365,7 @@ def getConfiguredKits():
     # merge defined target names with their configured Qt versions and devices
     for kit, qtVersion in kitsWithQtVersionName.items():
         if qtVersion in qtVersionNames:
-            result.append(kit)
+            result.append(kit[:-10] if kit.endswith(" (Default)") else kit)
         elif qtVersion != __PYKIT__: # ignore e.g. Python kits
             test.fail("Qt version '%s' for kit '%s' can't be found in qtVersionNames."
                       % (qtVersion, kit))
@@ -423,12 +423,15 @@ def iterateKits(clickOkWhenDone, alreadyOnOptionsDialog,
     if not alreadyOnOptionsDialog:
         invokeMenuItem("Edit", "Preferences...")
     mouseClick(waitForObjectItem(":Options_QListView", "Kits"))
+    expectDialog = hasUnsavedSettings()
     clickOnTab(":Options.qt_tabwidget_tabbar_QTabBar", "Kits")
+    if expectDialog:
+        handleUnsavedSettings(SettingsAction.Abandon)
     treeView = waitForObject(":BuildAndRun_QTreeView")
     model = treeView.model()
     test.compare(model.rowCount(), 2, "Verifying expected target section count")
     autoDetected = model.index(0, 0)
-    test.compare(autoDetected.data().toString(), "Auto-detected",
+    test.compare(autoDetected.data().toString(), "Automatically Managed",
                  "Verifying label for target section")
     manual = model.index(1, 0)
     test.compare(manual.data().toString(), "Manual", "Verifying label for target section")
@@ -448,7 +451,7 @@ def iterateKits(clickOkWhenDone, alreadyOnOptionsDialog,
                            (t.__name__, str(v)))
             additionalResult.append(currResult)
     if clickOkWhenDone:
-        clickButton(waitForObject(":Options.OK_QPushButton"))
+        clickButton(waitForObject(":Options.Apply_QPushButton"))
     return result, additionalResult
 
 # set a help viewer that will always be used, regardless of Creator's width
@@ -468,7 +471,7 @@ def setFixedHelpViewer(helpViewer):
     elif helpViewer == HelpViewer.EXTERNALWINDOW:
         mode += "in External Window"
     selectFromCombo(":Startup.contextHelpComboBox_QComboBox", mode)
-    clickButton(waitForObject(":Options.OK_QPushButton"))
+    clickButton(waitForObject(":Options.Apply_QPushButton"))
 
 
 # returns the indices from a QAbstractItemModel
@@ -639,4 +642,53 @@ def setReloadBehavior(to):
     clickOnTab(":Options.qt_tabwidget_tabbar_QTabBar", "System")
     selectFromCombo("{type='QComboBox' unnamed='1' leftWidget={type='QLabel' "
                     "text='When files are externally modified:'}}", to)
-    clickButton(":Options.OK_QPushButton")
+    clickButton(":Options.Apply_QPushButton")
+
+
+# needs to get called with Edit or Debug mode visible
+def waitForFileSaved(msg):
+    fileNameCombo = waitForObject(":Qt Creator_FilenameQComboBox", 2000)
+    test.verify(waitFor(lambda : not str(fileNameCombo.currentText).endswith('*'), 2000), msg)
+
+
+def waitForClosedAll():
+    label = "{type='QLabel' text~='%s' window=':Qt Creator_Core::Internal::MainWindow'}"
+    label = label % 'Open a document.*Drag and drop files here'
+    try:
+        waitForObject(label, 3000)
+        test.passes("Closed all documents.")
+    except:
+        test.fail("Failed to close all documents.")
+
+
+def hasUnsavedSettings():
+    try:
+        apply = findObject(":Options.Apply_QPushButton")
+    except:
+        apply = None
+    if not apply:
+        test.warning("Checking for unapplied settings while not being in Preferences?")
+        return False
+    return apply.enabled
+
+
+class SettingsAction:
+    Apply = 0
+    Abandon = 1
+
+def handleUnsavedSettings(settingsAction):
+    try:
+        mBox = "{type='QMessageBox' unnamed='1' visible='1' text~='.*contains unsaved changes\.$'}"
+        if settingsAction == SettingsAction.Abandon:
+            text = 'Abandon Unsaved Changes'
+        elif settingsAction == SettingsAction.Apply:
+            text = 'Apply Unsaved Changes'
+        else:
+            test.fatal("Unexpected settingsAction: %s" % settingsAction)
+            return
+        button = waitForObject("{text='%s' type='QPushButton' unnamed='1' visible='1' window=%s}"
+                               % (text, mBox), 5000)
+        clickButton(button)
+        test.warning("Handled unsaved settings with a workaround.")
+    except:
+        test.fatal("Could not handle unsaved settings.")

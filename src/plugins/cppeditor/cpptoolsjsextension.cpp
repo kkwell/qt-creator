@@ -26,28 +26,31 @@
 #include <QStringList>
 #include <QTextStream>
 
+using namespace ProjectExplorer;
+using namespace Utils;
+
 namespace CppEditor::Internal {
 
-static CppFileSettings fileSettings()
+static CppFileSettingsData fileSettings()
 {
     // Note that the user can set a different project in the wizard *after* the file names
     // have been determined. There's nothing we can do about that here.
-    return cppFileSettingsForProject(ProjectExplorer::ProjectTree::currentProject());
+    return cppFileSettingsForProject(ProjectTree::currentProject());
 }
 
 static QString fileName(const QString &path, const QString &extension)
 {
-    return Utils::FilePath::fromStringWithExtension(path, extension).toString();
+    return FilePath::fromStringWithExtension(path, extension).toUrlishString();
 }
 
 QString CppToolsJsExtension::headerGuard(const QString &in) const
 {
-    return fileSettings().headerGuard(Utils::FilePath::fromString(in));
+    return headerGuardForProject(ProjectTree::currentProject(), FilePath::fromString(in));
 }
 
 QString CppToolsJsExtension::licenseTemplate() const
 {
-    return fileSettings().licenseTemplate();
+    return licenseTemplateForProject(ProjectTree::currentProject());
 }
 
 bool CppToolsJsExtension::usePragmaOnce() const
@@ -81,7 +84,7 @@ QString CppToolsJsExtension::className(const QString &klass) const
 QString CppToolsJsExtension::classToFileName(const QString &klass, const QString &extension) const
 {
     const QString raw = fileName(className(klass), extension);
-    const CppFileSettings &settings = fileSettings();
+    const CppFileSettingsData settings = fileSettings();
     if (!settings.lowerCaseFiles)
         return raw;
 
@@ -149,8 +152,8 @@ bool CppToolsJsExtension::hasQObjectParent(const QString &klassName) const
     const WorkingCopy workingCopy = CppModelManager::workingCopy();
     std::optional<QByteArray> source = workingCopy.source(item->filePath());
     if (!source) {
-        const Utils::expected_str<QByteArray> contents = item->filePath().fileContents();
-        QTC_ASSERT_EXPECTED(contents, return false);
+        const Utils::Result<QByteArray> contents = item->filePath().fileContents();
+        QTC_ASSERT_RESULT(contents, return false);
         source = *contents;
     }
     const auto doc = snapshot.preprocessedDocument(*source, item->filePath());
@@ -209,12 +212,12 @@ QString CppToolsJsExtension::includeStatement(
     const QString className = parts(fullyQualifiedClassName).constLast();
     if (className.isEmpty() || specialClasses.contains(className))
         return {};
-    if (className.startsWith('Q') && className.length() > 2 && className.at(1).isUpper())
+    if (className.startsWith('Q') && className.size() > 2 && className.at(1).isUpper())
         return "#include <" + className + ">\n";
     const auto withUnderScores = [&className] {
         QString baseName = className;
         baseName[0] = baseName[0].toLower();
-        for (int i = 1; i < baseName.length(); ++i) {
+        for (int i = 1; i < baseName.size(); ++i) {
             if (baseName[i].isUpper()) {
                 baseName.insert(i, '_');
                 baseName[i + 1] = baseName[i + 1].toLower();
@@ -226,7 +229,7 @@ QString CppToolsJsExtension::includeStatement(
     QStringList candidates{className + '.' + suffix};
     bool hasUpperCase = false;
     bool hasLowerCase = false;
-    for (int i = 0; i < className.length() && (!hasUpperCase || !hasLowerCase); ++i) {
+    for (int i = 0; i < className.size() && (!hasUpperCase || !hasLowerCase); ++i) {
         if (className.at(i).isUpper())
             hasUpperCase = true;
         if (className.at(i).isLower())
@@ -248,15 +251,18 @@ QString CppToolsJsExtension::includeStatement(
         return false;
     };
     for (const Project * const p : ProjectManager::projects()) {
-        const Node *theNode = p->rootProjectNode()->findNode(nodeMatchesFileName);
-        if (theNode) {
-            const bool sameDir = pathOfIncludingFile == theNode->filePath().toFileInfo().path();
-            return QString("#include ")
-                    .append(sameDir ? '"' : '<')
-                    .append(theNode->filePath().fileName())
-                    .append(sameDir ? '"' : '>')
-                    .append('\n');
-        }
+        if (!p->rootProjectNode())
+            continue;
+        const Node * const theNode = p->rootProjectNode()->findNode(nodeMatchesFileName);
+        if (!theNode)
+            continue;
+
+        const bool sameDir = pathOfIncludingFile == theNode->filePath().toFileInfo().path();
+        return QString("#include ")
+            .append(sameDir ? '"' : '<')
+            .append(theNode->filePath().fileName())
+            .append(sameDir ? '"' : '>')
+            .append('\n');
     }
     return {};
 }

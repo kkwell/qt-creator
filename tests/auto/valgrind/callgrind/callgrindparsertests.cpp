@@ -21,9 +21,10 @@ using namespace Valgrind::Callgrind;
 
 namespace {
 
-static QString dataFile(const char *file)
+static Utils::FilePath dataFile(const char *file)
 {
-    return QLatin1String(PARSERTESTS_DATA_DIR) + QLatin1String("/") + QLatin1String(file);
+    return Utils::FilePath::fromString(
+                QLatin1String(PARSERTESTS_DATA_DIR) + QLatin1String("/") + QLatin1String(file));
 }
 
 void testCostItem(const CostItem *item, quint64 expectedPosition, quint64 expectedCost)
@@ -80,17 +81,9 @@ void CallgrindParserTests::cleanup()
 {
 }
 
-ParseData* parseDataFile(const QString &dataFile)
-{
-    Parser p;
-    p.parse(Utils::FilePath::fromString(dataFile));
-
-    return p.takeData();
-}
-
 void CallgrindParserTests::testHeaderData()
 {
-    QScopedPointer<const ParseData> data(parseDataFile(dataFile("simpleFunction.out")));
+    const ParseDataPtr data(parseDataFile(dataFile("simpleFunction.out")));
 
     QCOMPARE(data->command(), QLatin1String("ls"));
     QCOMPARE(data->creator(), QLatin1String("callgrind-3.6.0.SVN-Debian"));
@@ -109,7 +102,7 @@ void CallgrindParserTests::testHeaderData()
 
 void CallgrindParserTests::testSimpleFunction()
 {
-    QScopedPointer<const ParseData> data(parseDataFile(dataFile("simpleFunction.out")));
+    const ParseDataPtr data(parseDataFile(dataFile("simpleFunction.out")));
 
     QCOMPARE(data->functions().size(), 4);
 
@@ -178,7 +171,7 @@ void CallgrindParserTests::testSimpleFunction()
 
 void CallgrindParserTests::testCallee()
 {
-    QScopedPointer<const ParseData> data(parseDataFile(dataFile("calleeFunctions.out")));
+    const ParseDataPtr data(parseDataFile(dataFile("calleeFunctions.out")));
 
     QCOMPARE(data->functions().size(), 3);
 
@@ -253,7 +246,7 @@ void CallgrindParserTests::testCallee()
 
 void CallgrindParserTests::testInlinedCalls()
 {
-    QScopedPointer<const ParseData> data(parseDataFile(dataFile("inlinedFunctions.out")));
+    const ParseDataPtr data(parseDataFile(dataFile("inlinedFunctions.out")));
     QCOMPARE(data->functions().size(), 3);
 
     const Function *main = data->functions().first();
@@ -279,7 +272,7 @@ void CallgrindParserTests::testInlinedCalls()
 
 void CallgrindParserTests::testMultiCost()
 {
-    QScopedPointer<const ParseData> data(parseDataFile(dataFile("multiCost.out")));
+    const ParseDataPtr data(parseDataFile(dataFile("multiCost.out")));
     QCOMPARE(data->functions().size(), 2);
 
     QCOMPARE(data->positions(), QStringList() << "line");
@@ -289,16 +282,16 @@ void CallgrindParserTests::testMultiCost()
     QCOMPARE(data->totalCost(1), quint64(400));
 
     const Function *main = data->functions().at(0);
-    QCOMPARE(main->costItems().first()->costs(), QVector<quint64>() << 1 << 100);
-    QCOMPARE(main->costItems().first()->positions(), QVector<quint64>() << 1);
+    QCOMPARE(main->costItems().first()->costs(), QList<quint64>() << 1 << 100);
+    QCOMPARE(main->costItems().first()->positions(), QList<quint64>() << 1);
 
     QVERIFY(main->costItems().last()->call());
-    QCOMPARE(main->costItems().last()->call()->destinations(), QVector<quint64>() << 1);
+    QCOMPARE(main->costItems().last()->call()->destinations(), QList<quint64>() << 1);
 }
 
 void CallgrindParserTests::testMultiPos()
 {
-    QScopedPointer<const ParseData> data(parseDataFile(dataFile("multiPos.out")));
+    const ParseDataPtr data(parseDataFile(dataFile("multiPos.out")));
     QCOMPARE(data->functions().size(), 2);
 
     QCOMPARE(data->positions(), QStringList() << "line" << "memAddr");
@@ -307,16 +300,16 @@ void CallgrindParserTests::testMultiPos()
     QCOMPARE(data->totalCost(0), quint64(4));
 
     const Function *main = data->functions().at(0);
-    QCOMPARE(main->costItems().first()->costs(), QVector<quint64>() << 1);
-    QCOMPARE(main->costItems().first()->positions(), QVector<quint64>() << 1 << 0x01);
+    QCOMPARE(main->costItems().first()->costs(), QList<quint64>() << 1);
+    QCOMPARE(main->costItems().first()->positions(), QList<quint64>() << 1 << 0x01);
 
     QVERIFY(main->costItems().last()->call());
-    QCOMPARE(main->costItems().last()->call()->destinations(), QVector<quint64>() << 1 << 0x04);
+    QCOMPARE(main->costItems().last()->call()->destinations(), QList<quint64>() << 1 << 0x04);
 }
 
 void CallgrindParserTests::testMultiPosAndCost()
 {
-    QScopedPointer<const ParseData> data(parseDataFile(dataFile("multiCostAndPos.out")));
+    const ParseDataPtr data(parseDataFile(dataFile("multiCostAndPos.out")));
     QCOMPARE(data->functions().size(), 2);
 
     QCOMPARE(data->positions(), QStringList() << "line" << "memAddr");
@@ -326,14 +319,14 @@ void CallgrindParserTests::testMultiPosAndCost()
     QCOMPARE(data->totalCost(1), quint64(400));
 
     const Function *main = data->functions().at(0);
-    QCOMPARE(main->costItems().first()->costs(), QVector<quint64>() << 1 << 100);
-    QCOMPARE(main->costItems().first()->positions(), QVector<quint64>() << 1 << 0x01);
+    QCOMPARE(main->costItems().first()->costs(), QList<quint64>() << 1 << 100);
+    QCOMPARE(main->costItems().first()->positions(), QList<quint64>() << 1 << 0x01);
 
     QVERIFY(main->costItems().last()->call());
-    QCOMPARE(main->costItems().last()->call()->destinations(), QVector<quint64>() << 1 << 0x04);
+    QCOMPARE(main->costItems().last()->call()->destinations(), QList<quint64>() << 1 << 0x04);
 }
 
-const Function *findFunction(const QString &needle, const QVector<const Function *> &haystack)
+const Function *findFunction(const QString &needle, const QList<const Function *> &haystack)
 {
     for (const Function *function : haystack) {
         if (function->name() == needle) {
@@ -345,7 +338,7 @@ const Function *findFunction(const QString &needle, const QVector<const Function
 
 void CallgrindParserTests::testCycle()
 {
-    QScopedPointer<const ParseData> data(parseDataFile(dataFile("cycle.out")));
+    const ParseDataPtr data(parseDataFile(dataFile("cycle.out")));
     QCOMPARE(data->functions().size(), 4);
 
     const Function *main = data->functions().at(0);
@@ -377,7 +370,7 @@ void CallgrindParserTests::testCycle()
 
 void CallgrindParserTests::testRecursiveCycle()
 {
-    QScopedPointer<const ParseData> data(parseDataFile(dataFile("recursiveCycle.out")));
+    const ParseDataPtr data(parseDataFile(dataFile("recursiveCycle.out")));
     QCOMPARE(data->functions().size(), 5);
 
     const Function *main = findFunction(QLatin1String("main"), data->functions());
@@ -418,7 +411,7 @@ void CallgrindParserTests::testRecursiveCycle()
 
 void CallgrindParserTests::testRecursion()
 {
-    QScopedPointer<const ParseData> data(parseDataFile(dataFile("recursion.out")));
+    const ParseDataPtr data(parseDataFile(dataFile("recursion.out")));
     QCOMPARE(data->functions().size(), 3);
     QCOMPARE(data->totalCost(0), quint64(35700972));
 

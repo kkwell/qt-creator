@@ -5,7 +5,7 @@
 
 #include "cppcodeformatter.h"
 #include "cpptoolssettings.h"
-#include "cppcodestylepreferences.h"
+#include "cppcodestylesettings.h"
 
 #include <QChar>
 #include <QTextDocument>
@@ -45,7 +45,7 @@ public:
                   const TabSettings &tabSettings,
                   int cursorPositionInEditor = -1) final;
     int visualIndentFor(const QTextBlock &block, const TabSettings &tabSettings) final;
-    IndentationForBlock indentationForBlocks(const QVector<QTextBlock> &blocks,
+    IndentationForBlock indentationForBlocks(const QList<QTextBlock> &blocks,
                                              const TabSettings &tabSettings,
                                              int cursorPositionInEditor = -1) final;
 
@@ -162,7 +162,7 @@ void CppQtStyleIndenter::indent(const QTextCursor &cursor,
 
 void CppQtStyleIndenter::setCodeStylePreferences(ICodeStylePreferences *preferences)
 {
-    auto cppCodeStylePreferences = qobject_cast<CppCodeStylePreferences *>(preferences);
+    auto cppCodeStylePreferences = dynamic_cast<CppCodeStylePreferences *>(preferences);
     if (cppCodeStylePreferences)
         m_cppCodeStylePreferences = cppCodeStylePreferences;
 }
@@ -201,7 +201,7 @@ CppCodeStyleSettings CppQtStyleIndenter::codeStyleSettings() const
 }
 
 IndentationForBlock CppQtStyleIndenter::indentationForBlocks(
-    const QVector<QTextBlock> &blocks,
+    const QList<QTextBlock> &blocks,
     const TabSettings &tabSettings,
     int /*cursorPositionInEditor*/)
 {

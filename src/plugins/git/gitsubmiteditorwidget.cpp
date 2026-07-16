@@ -10,6 +10,8 @@
 #include "logchangedialog.h"
 
 #include <coreplugin/coreconstants.h>
+#include <coreplugin/editormanager/editormanager.h>
+#include <coreplugin/fileutils.h>
 
 #include <utils/completingtextedit.h>
 #include <utils/filepath.h>
@@ -17,12 +19,15 @@
 #include <utils/theme/theme.h>
 #include <utils/utilsicons.h>
 
+#include <vcsbase/submitfilemodel.h>
+
 #include <QApplication>
 #include <QCheckBox>
 #include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMessageBox>
 #include <QRegularExpressionValidator>
 #include <QTextEdit>
 #include <QVBoxLayout>
@@ -84,16 +89,16 @@ public:
         }.attachTo(this);
     }
 
-    QLabel *repositoryLabel;
-    QLabel *branchLabel;
-    QLabel *showHeadLabel;
-    QGroupBox *editGroup;
-    QLineEdit *authorLineEdit;
-    QLabel *invalidAuthorLabel;
-    QLineEdit *emailLineEdit;
-    QLabel *invalidEmailLabel;
-    QCheckBox *bypassHooksCheckBox;
-    QCheckBox *signOffCheckBox;
+    QLabel *repositoryLabel = nullptr;
+    QLabel *branchLabel = nullptr;
+    QLabel *showHeadLabel = nullptr;
+    QGroupBox *editGroup = nullptr;
+    QLineEdit *authorLineEdit = nullptr;
+    QLabel *invalidAuthorLabel = nullptr;
+    QLineEdit *emailLineEdit = nullptr;
+    QLabel *invalidEmailLabel = nullptr;
+    QCheckBox *bypassHooksCheckBox = nullptr;
+    QCheckBox *signOffCheckBox = nullptr;
 };
 
 // ------------------
@@ -114,21 +119,27 @@ GitSubmitEditorWidget::GitSubmitEditorWidget() :
             this, &GitSubmitEditorWidget::authorInformationChanged);
     connect(m_gitSubmitPanel->showHeadLabel, &QLabel::linkActivated,
             this, [this] { emit showRequested("HEAD"); });
+    connect(m_gitSubmitPanel->branchLabel, &QLabel::linkActivated,
+            this, [this] { emit logRequested(m_range); });
 }
 
 void GitSubmitEditorWidget::setPanelInfo(const GitSubmitEditorPanelInfo &info)
 {
     m_gitSubmitPanel->repositoryLabel->setText(info.repository.toUserOutput());
+    QString label;
     if (info.branch.contains("(no branch)")) {
         const QString errorColor = Utils::creatorColor(Utils::Theme::TextColorError).name();
-        m_gitSubmitPanel->branchLabel->setText(QString::fromLatin1("<span style=\"color:%1\">%2</span>")
-                                                .arg(errorColor, Tr::tr("Detached HEAD")));
+        m_range = {"HEAD", "--not", "--remotes"};
+        label = QString("<a style=\"color: %1;\" href=\"branch\">%2</a>")
+                    .arg(errorColor, Tr::tr("Detached HEAD"));
     } else {
-        m_gitSubmitPanel->branchLabel->setText(info.branch);
+        m_range = {info.branch.split(' ').first()}; // split removes "[ahead 3]"
+        label = "<a href=\"branch\">" + info.branch + "</a> ";
     }
+    m_gitSubmitPanel->branchLabel->setText(label);
 }
 
-QString GitSubmitEditorWidget::amendSHA1() const
+QString GitSubmitEditorWidget::amendHash() const
 {
     return m_logChangeWidget ? m_logChangeWidget->commit() : QString();
 }
@@ -149,9 +160,12 @@ void GitSubmitEditorWidget::initialize(const FilePath &repository, const CommitD
         auto logChangeGroupBox = new QGroupBox(Tr::tr("Select Change"));
         auto logChangeLayout = new QVBoxLayout;
         logChangeGroupBox->setLayout(logChangeLayout);
+        m_editMessageCheckBox = new QCheckBox(Tr::tr("Edit commit message"));
+        m_editMessageCheckBox->setToolTip(Tr::tr("Opens an editor to edit the final commit message."));
         m_logChangeWidget = new LogChangeWidget;
         m_logChangeWidget->init(repository);
         connect(m_logChangeWidget, &LogChangeWidget::commitActivated, this, &GitSubmitEditorWidget::showRequested);
+        logChangeLayout->addWidget(m_editMessageCheckBox);
         logChangeLayout->addWidget(m_logChangeWidget);
         insertLeftWidget(logChangeGroupBox);
         m_gitSubmitPanel->editGroup->hide();
@@ -195,6 +209,8 @@ GitSubmitEditorPanelData GitSubmitEditorWidget::panelData() const
     rc.bypassHooks = m_gitSubmitPanel->bypassHooksCheckBox->isChecked();
     rc.pushAction = m_pushAction;
     rc.signOff = m_gitSubmitPanel->signOffCheckBox->isChecked();
+    if (m_editMessageCheckBox)
+        rc.editMessage = m_editMessageCheckBox->isChecked();
     return rc;
 }
 
@@ -209,24 +225,18 @@ void GitSubmitEditorWidget::setPanelData(const GitSubmitEditorPanelData &data)
     authorInformationChanged();
 }
 
-bool GitSubmitEditorWidget::canSubmit(QString *whyNot) const
+Result<> GitSubmitEditorWidget::canSubmit() const
 {
-    if (m_gitSubmitPanel->invalidAuthorLabel->isVisible()) {
-        if (whyNot)
-            *whyNot = Tr::tr("Invalid author");
-        return false;
-    }
-    if (m_gitSubmitPanel->invalidEmailLabel->isVisible()) {
-        if (whyNot)
-            *whyNot = Tr::tr("Invalid email");
-        return false;
-    }
-    if (m_hasUnmerged) {
-        if (whyNot)
-            *whyNot = Tr::tr("Unresolved merge conflicts");
-        return false;
-    }
-    return SubmitEditorWidget::canSubmit(whyNot);
+    if (m_gitSubmitPanel->invalidAuthorLabel->isVisible())
+        return ResultError(Tr::tr("Invalid author"));
+
+    if (m_gitSubmitPanel->invalidEmailLabel->isVisible())
+        return ResultError(Tr::tr("Invalid email"));
+
+    if (m_hasUnmerged)
+        return ResultError(Tr::tr("Unresolved merge conflicts"));
+
+    return SubmitEditorWidget::canSubmit();
 }
 
 QString GitSubmitEditorWidget::cleanupDescription(const QString &input) const
@@ -256,6 +266,128 @@ QString GitSubmitEditorWidget::commitName() const
         return Tr::tr("&Commit and Push to Gerrit");
 
     return Tr::tr("&Commit");
+}
+
+void GitSubmitEditorWidget::addFileContextMenuActions(QMenu *menu, const QModelIndex &index)
+{
+    using namespace Core;
+
+    // Do not add context menu actions when multiple files are selected
+    if (selectedRows().size() > 1)
+        return;
+
+    const VcsBase::SubmitFileModel *model = fileModel();
+    const FilePath filePath = FilePath::fromString(model->file(index.row()));
+    const FilePath fullFilePath = model->repositoryRoot().resolvePath(filePath);
+    const FileStates state = static_cast<FileStates>(model->extraData(index.row()).toInt());
+
+    menu->addSeparator();
+    const auto addAction =
+        [this,
+         menu,
+         filePath](const QString &title, IVersionControl::FileAction action, const QString &revertPrompt = {}) {
+            const QString text = title.contains("%1") ? title.arg(filePath.toUserOutput()) : title;
+            QAction *act = menu->addAction(text);
+            connect(act, &QAction::triggered, this, [=, this] {
+                if (!revertPrompt.isEmpty()) {
+                    const int result = QMessageBox::question(
+                        this,
+                        Tr::tr("Confirm File Changes"),
+                        revertPrompt.arg(filePath.toUserOutput()),
+                        QMessageBox::Yes | QMessageBox::No);
+                    if (result != QMessageBox::Yes)
+                        return;
+                }
+                emit fileActionRequested(filePath, action);
+            });
+        };
+    addAction(Tr::tr("Copy \"%1\""), IVersionControl::FileCopyClipboard);
+    menu->addSeparator();
+    EditorManager::addContextMenuActions(menu, fullFilePath, EditorManager::HideVersionControl);
+    menu->addSeparator();
+    addAction(Tr::tr("Diff \"%1\""), IVersionControl::FileDiff);
+    addAction(Tr::tr("Log \"%1\""), IVersionControl::FileLog);
+    addAction(Tr::tr("Blame \"%1\""), IVersionControl::FileAnnotate);
+    menu->addSeparator();
+    if (state & RenamedFile) {
+        addAction(Tr::tr("Revert Renaming \"%1\""), IVersionControl::FileRevertRenaming);
+    }
+    if (state & (UnmergedFile | UnmergedThem | UnmergedUs)) {
+        addAction(Tr::tr("Run Merge Tool for \"%1\""), IVersionControl::FileMergeTool);
+        addAction(Tr::tr("Diff Incoming Changes for \"%1\""), IVersionControl::FileMergeDiffIncoming);
+
+        if (state & DeletedFile) {
+            addAction(Tr::tr("Resolve by Recovering \"%1\""), IVersionControl::FileMergeRecover);
+            addAction(Tr::tr("Resolve by Removing \"%1\"..."), IVersionControl::FileMergeRemove,
+                      Tr::tr("<p>Permanently remove file \"%1\"?</p>"
+                             "<p>Note: The changes will be discarded.</p>"));
+        } else {
+            addAction(Tr::tr("Mark Conflicts Resolved for \"%1\""), IVersionControl::FileMergeResolved);
+            addAction(Tr::tr("Resolve Conflicts in \"%1\" with Ours..."), IVersionControl::FileMergeOurs,
+                      Tr::tr("<p>Resolve all conflicts to the file \"%1\" with <b>our</b> version?</p>"
+                             "<p>Note: The other changes will be discarded.</p>"));
+            addAction(Tr::tr("Resolve Conflicts in \"%1\" with Theirs..."), IVersionControl::FileMergeTheirs,
+                      Tr::tr("<p>Resolve all conflicts to the file \"%1\" with <b>their</b> version?</p>"
+                             "<p>Note: Our changes will be discarded.</p>"));
+        }
+    } else if (state & DeletedFile) {
+        addAction(Tr::tr("Recover \"%1\""), IVersionControl::FileRevertDeletion);
+    } else if (state & AddedFile) {
+        if (state & StagedFile) {
+            addAction(Tr::tr("Unstage \"%1\""), IVersionControl::FileUnstageAdded);
+        } else {
+            addAction(Tr::tr("Stage \"%1\""), IVersionControl::FileStage);
+            addAction(Tr::tr("Mark Untracked \"%1\""), IVersionControl::FileUnstage);
+            addAction(Tr::tr("Remove \"%1\"..."), IVersionControl::FileRemove,
+                      Tr::tr("<p>Permanently remove the file \"%1\"?</p>"
+                             "<p>Note: The deletion cannot be undone.</p>"));
+        }
+    } else if (state == (StagedFile | ModifiedFile)) {
+        addAction(Tr::tr("Unstage \"%1\""), IVersionControl::FileUnstage);
+        menu->addSeparator();
+        addAction(
+            Tr::tr("Revert All Changes to \"%1\"..."),
+            IVersionControl::FileRevertAll,
+            Tr::tr("<p>Undo <b>all</b> changes to the file \"%1\"?</p>"
+                   "<p>Note: These changes will be lost.</p>"));
+    } else if (state == ModifiedFile) {
+        addAction(Tr::tr("Stage \"%1\""), IVersionControl::FileStage);
+        menu->addSeparator();
+        addAction(
+            Tr::tr("Revert Unstaged Changes to \"%1\"..."),
+            IVersionControl::FileRevertUnstaged,
+            Tr::tr("<p>Undo unstaged changes to the file \"%1\"?</p>"
+                   "<p>Note: These changes will be lost.</p>"));
+    } else if (state == UntrackedFile) {
+        addAction(Tr::tr("Add \"%1\""), IVersionControl::FileAdd);
+        addAction(Tr::tr("Stage \"%1\""), IVersionControl::FileStage);
+        menu->addSeparator();
+        addAction(Tr::tr("Remove \"%1\"..."), IVersionControl::FileRemove,
+                  Tr::tr("<p>Permanently remove the file \"%1\"?</p>"
+                         "<p>Note: The deletion cannot be undone.</p>"));
+        menu->addSeparator();
+        const char message[] = "Add to gitignore \"%1\"";
+        addAction(Tr::tr(message).arg("/" + filePath.path()), IVersionControl::FileIgnore);
+        const std::optional<Utils::FilePath> path = filePath.tailRemoved(filePath.fileName());
+        if (!path.has_value())
+            return;
+
+        const QString baseName = filePath.completeBaseName();
+        const QString suffix = filePath.suffix();
+        if (baseName.isEmpty() || suffix.isEmpty())
+            return;
+
+        const Utils::FilePath suffixMask = path->stringAppended("*." + suffix);
+        QAction *act0 = menu->addAction(Tr::tr(message).arg("/" + suffixMask.path()));
+        connect(act0, &QAction::triggered, this, [suffixMask, this] {
+            emit fileActionRequested(suffixMask, IVersionControl::FileIgnore);
+        });
+        const Utils::FilePath nameMask = path->stringAppended(baseName + ".*");
+        QAction *act1 = menu->addAction(Tr::tr(message).arg("/" + nameMask.path()));
+        connect(act1, &QAction::triggered, this, [nameMask, this] {
+            emit fileActionRequested(nameMask, IVersionControl::FileIgnore);
+        });
+    }
 }
 
 void GitSubmitEditorWidget::authorInformationChanged()

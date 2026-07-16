@@ -4,6 +4,7 @@
 #pragma once
 
 #include "commentssettings.h"
+#include "displaysettings.h"
 #include "texteditor_global.h"
 
 #include <utils/id.h>
@@ -20,14 +21,13 @@ QT_END_NAMESPACE
 namespace TextEditor {
 
 class FontSettings;
-class TypingSettings;
-class StorageSettings;
-class BehaviorSettings;
-class MarginSettings;
-class DisplaySettings;
-class CompletionSettings;
-class HighlighterSettings;
-class ExtraEncodingSettings;
+class TypingSettingsData;
+class StorageSettingsData;
+class BehaviorSettingsData;
+class MarginSettingsData;
+class DisplaySettingsData;
+class CompletionSettingsData;
+class ExtraEncodingSettingsData;
 class ICodeStylePreferences;
 class ICodeStylePreferencesFactory;
 class CodeStylePool;
@@ -49,10 +49,6 @@ public:
     static TextEditorSettings *instance();
 
     static const FontSettings &fontSettings();
-    static const MarginSettings &marginSettings();
-    static const DisplaySettings &displaySettings();
-    static const CompletionSettings &completionSettings();
-    static const HighlighterSettings &highlighterSettings();
 
     static void setCommentsSettingsRetriever(
         const std::function<CommentsSettings::Data(const Utils::FilePath &)> &);
@@ -83,13 +79,10 @@ public:
 
 signals:
     void fontSettingsChanged(const TextEditor::FontSettings &);
-    void typingSettingsChanged(const TextEditor::TypingSettings &);
-    void storageSettingsChanged(const TextEditor::StorageSettings &);
-    void behaviorSettingsChanged(const TextEditor::BehaviorSettings &);
-    void marginSettingsChanged(const TextEditor::MarginSettings &);
-    void displaySettingsChanged(const TextEditor::DisplaySettings &);
-    void completionSettingsChanged(const TextEditor::CompletionSettings &);
-    void extraEncodingSettingsChanged(const TextEditor::ExtraEncodingSettings &);
+    void typingSettingsChanged(const TextEditor::TypingSettingsData &);
+    void storageSettingsChanged(const TextEditor::StorageSettingsData &);
+    void behaviorSettingsChanged(const TextEditor::BehaviorSettingsData &);
+    void extraEncodingSettingsChanged(const TextEditor::ExtraEncodingSettingsData &);
     void commentsSettingsChanged();
 };
 

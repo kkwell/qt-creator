@@ -30,7 +30,7 @@ public:
     CppEditor::ClangDiagnosticConfigsSelectionWidget *diagnosticSelectionWidget();
 
     void fromSettings(const RunSettings &s);
-    RunSettings toSettings() const;
+    void toSettings(RunSettings &s) const;
 
 signals:
     void changed();
@@ -42,5 +42,7 @@ private:
     QCheckBox *m_analyzeOpenFiles;
     QSpinBox *m_parallelJobsSpinBox;
 };
+
+void setupClangToolsOptionsPage();
 
 } // ClangTools::Internal

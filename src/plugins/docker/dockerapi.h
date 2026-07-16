@@ -3,13 +3,16 @@
 
 #pragma once
 
-#include <utils/expected.h>
 #include <utils/filepath.h>
 #include <utils/guard.h>
+#include <utils/result.h>
+#include <utils/synchronizedvalue.h>
 
 #include <QFuture>
 #include <QMutex>
 #include <QObject>
+
+#include <QtTaskTree/QParallelTaskTreeRunner>
 
 #include <optional>
 
@@ -41,12 +44,16 @@ public:
     bool canConnect();
     void checkCanConnect(bool async = true);
     static void recheckDockerDaemon();
-    QFuture<Utils::expected_str<QList<Network>>> networks();
+
+    Utils::Result<QList<Network>> networks() const { return m_networks; }
+    void refreshNetworks();
 
     bool isContainerRunning(const QString &containerId);
+    bool imageExists(const QString &imageId);
 
 signals:
     void dockerDaemonAvailableChanged();
+    void networksChanged();
 
 public:
     std::optional<bool> dockerDaemonAvailable(bool async = true);
@@ -57,6 +64,10 @@ private:
 
     std::optional<bool> m_dockerDaemonAvailable;
     QMutex m_daemonCheckGuard;
+
+    Utils::SynchronizedValue<Utils::FilePath> m_dockerClientBinary;
+    Utils::Result<QList<Network>> m_networks;
+    QtTaskTree::QParallelTaskTreeRunner m_taskTreeRunner;
 };
 
 } // Docker::Internal

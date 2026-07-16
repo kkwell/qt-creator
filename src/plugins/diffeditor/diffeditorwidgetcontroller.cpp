@@ -9,6 +9,7 @@
 
 #include <coreplugin/documentmanager.h>
 #include <coreplugin/editormanager/editormanager.h>
+#include <coreplugin/messagemanager.h>
 
 #include <cpaster/codepasterservice.h>
 
@@ -23,7 +24,6 @@
 #include <utils/temporaryfile.h>
 
 #include <QMenu>
-#include <QTextCodec>
 
 using namespace Core;
 using namespace TextEditor;
@@ -166,7 +166,7 @@ void DiffEditorWidgetController::patch(PatchAction patchAction, int fileIndex, i
             return;
 
         FileChangeBlocker fileChangeBlocker(absFilePath);
-        if (PatchTool::runPatch(EditorManager::defaultTextCodec()->fromUnicode(patch),
+        if (PatchTool::runPatch(EditorManager::defaultTextEncoding().encode(patch),
                                 workingDirectory, strip, patchAction))
             m_document->reload();
     } else { // PatchEditor
@@ -180,7 +180,7 @@ void DiffEditorWidgetController::patch(PatchAction patchAction, int fileIndex, i
         contentsCopy.write(textDocument->contents());
         contentsCopy.close();
 
-        const QString contentsCopyFileName = contentsCopy.fileName();
+        const QString contentsCopyFileName = contentsCopy.filePath().toFSPathString();
         const QString contentsCopyDir = QFileInfo(contentsCopyFileName).absolutePath();
 
         const QString patch = m_document->makePatch(fileIndex, chunkIndex, {}, patchAction, false,
@@ -189,10 +189,9 @@ void DiffEditorWidgetController::patch(PatchAction patchAction, int fileIndex, i
         if (patch.isEmpty())
             return;
 
-        if (PatchTool::runPatch(EditorManager::defaultTextCodec()->fromUnicode(patch),
+        if (PatchTool::runPatch(EditorManager::defaultTextEncoding().encode(patch),
                                 FilePath::fromString(contentsCopyDir), 0, patchAction)) {
-            QString errorString;
-            if (textDocument->reload(&errorString, FilePath::fromString(contentsCopyFileName)))
+            if (textDocument->reload(FilePath::fromString(contentsCopyFileName)))
                 m_document->reload();
         }
     }
@@ -208,6 +207,8 @@ void DiffEditorWidgetController::jumpToOriginalFile(const QString &fileName,
     const FilePath filePath = m_document->workingDirectory().resolvePath(fileName);
     if (filePath.exists() && !filePath.isDir())
         EditorManager::openEditorAt({filePath, lineNumber, columnNumber});
+    else
+        Core::MessageManager::writeDisrupting(Tr::tr("File not found: \"%1\".").arg(fileName));
 }
 
 void DiffEditorWidgetController::setFontSettings(const FontSettings &fontSettings)
@@ -285,6 +286,18 @@ void DiffEditorWidgetController::addExtraActions(QMenu *menu, int fileIndex, int
         controller->addExtraActions(menu, fileIndex, chunkIndex, selection);
 }
 
+void DiffEditorWidgetController::resolveCurrentLine(const QString &relativeFilePath,
+                                                    int originalLine,
+                                                    const std::function<void(int)> &callback)
+{
+    if (DiffEditorController *controller = m_document->controller()) {
+        controller->resolveCurrentLine(relativeFilePath, originalLine, callback);
+        return;
+    }
+
+    callback(originalLine);
+}
+
 void DiffEditorWidgetController::updateCannotDecodeInfo()
 {
     if (!m_document)
@@ -298,7 +311,7 @@ void DiffEditorWidgetController::updateCannotDecodeInfo()
         InfoBarEntry info(selectEncodingId,
                                  Tr::tr("<b>Error:</b> Could not decode \"%1\" with \"%2\"-encoding.")
                                      .arg(m_document->displayName(),
-                                          QString::fromLatin1(m_document->codec()->name())));
+                                          m_document->encoding().displayName()));
         info.addCustomButton(Tr::tr("Select Encoding"), [this] { m_document->selectEncoding(); });
         infoBar->addInfo(info);
     } else {

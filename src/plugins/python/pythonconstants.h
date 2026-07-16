@@ -11,8 +11,6 @@ namespace Constants {
 const char C_PYTHONEDITOR_ID[] = "PythonEditor.PythonEditor";
 const char C_PYTHONRUNCONFIGURATION_ID[] = "PythonEditor.RunConfiguration.";
 
-const char C_EDITOR_DISPLAY_NAME[] = QT_TRANSLATE_NOOP("QtC::Core", "Python Editor");
-
 const char C_PYTHONOPTIONS_PAGE_ID[] = "PythonEditor.OptionsPage";
 const char C_PYLSCONFIGURATION_PAGE_ID[] = "PythonEditor.PythonLanguageServerConfiguration";
 const char C_PYTHON_SETTINGS_CATEGORY[] = "P.Python";
@@ -34,7 +32,7 @@ const char C_PY3_MIMETYPE[] = "text/x-python3";
 const char C_PY_MIME_ICON[] = "text-x-python";
 const char C_PY_PROJECT_MIME_TYPE[] = "text/x-python-project";
 const char C_PY_PROJECT_MIME_TYPE_LEGACY[] = "text/x-pyqt-project";
-
+const char C_PY_PROJECT_MIME_TYPE_TOML[] = "text/x-python-pyproject-toml";
 
 } // namespace Constants
 } // namespace Python

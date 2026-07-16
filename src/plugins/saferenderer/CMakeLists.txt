@@ -1,8 +1,8 @@
 add_qtc_plugin(SafeRenderer
-  DEPENDS
+  PLUGIN_DEPENDS
     QtCreator::Core QtCreator::ProjectExplorer
   SOURCES
     saferenderer.qrc
-    saferenderer.cpp
     saferenderer.h
+  SKIP_PCH
 )

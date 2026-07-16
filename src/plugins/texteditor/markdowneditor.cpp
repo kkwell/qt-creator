@@ -11,7 +11,6 @@
 
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/coreconstants.h>
-#include <coreplugin/coreplugintr.h>
 #include <coreplugin/editormanager/ieditorfactory.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/minisplitter.h>
@@ -86,7 +85,7 @@ public:
         m_splitter = new MiniSplitter;
 
         // preview
-        m_previewWidget = new QTextBrowser();
+        m_previewWidget = new MarkdownView();
         m_previewWidget->setOpenLinks(false); // we want to open files in QtC, not the browser
         m_previewWidget->setFrameShape(QFrame::NoFrame);
         new Utils::MarkdownHighlighter(m_previewWidget->document());
@@ -176,13 +175,13 @@ public:
         button->setIcon(Utils::Icons::LINK_TOOLBAR.icon());
         connect(button, &QToolButton::clicked, this, &MarkdownEditor::triggerLink);
         m_markDownButtons.append(button);
-        for (auto button : m_markDownButtons) {
+        for (auto button : std::as_const(m_markDownButtons)) {
             // do not call setVisible(true) at this point, this destroys the hover effect on macOS
             if (!showEditor)
                 button->setVisible(false);
         }
 
-        for (auto button : m_markDownButtons | Utils::views::reverse)
+        for (auto button : m_markDownButtons | std::views::reverse)
             m_textEditorWidget->insertExtraToolBarWidget(TextEditorWidget::Left, button);
 
         m_swapViews = Command::createToolButtonWithShortcutToolTip(SWAPVIEWS_ACTION);
@@ -265,7 +264,7 @@ public:
                                 visible,
                                 m_previewWidget,
                                 m_togglePreviewVisible);
-                    for (auto button : m_markDownButtons)
+                    for (auto button : std::as_const(m_markDownButtons))
                         button->setVisible(visible);
                     saveViewSettings();
                 });
@@ -305,6 +304,8 @@ public:
             m_previewTimer.start();
         });
     }
+
+    ~MarkdownEditor() { delete widget(); }
 
     void triggerEmphasis()
     {
@@ -537,7 +538,7 @@ private:
 MarkdownEditorFactory::MarkdownEditorFactory()
 {
     setId(MARKDOWNVIEWER_ID);
-    setDisplayName(::Core::Tr::tr("Markdown Editor"));
+    setDisplayName(Tr::tr("Markdown Editor"));
     addMimeType(MARKDOWNVIEWER_MIME_TYPE);
     setEditorCreator([] { return new MarkdownEditor; });
 

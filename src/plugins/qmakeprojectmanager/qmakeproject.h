@@ -8,9 +8,9 @@
 #include "qmakenodes.h"
 #include "qmakeparsernodes.h"
 
-#include <projectexplorer/deploymentdata.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/task.h>
 
 #include <QStringList>
 #include <QFutureInterface>
@@ -41,19 +41,10 @@ public:
     explicit QmakeProject(const Utils::FilePath &proFile);
     ~QmakeProject() final;
 
-    ProjectExplorer::Tasks projectIssues(const ProjectExplorer::Kit *k) const final;
-
-    void configureAsExampleProject(ProjectExplorer::Kit *kit) final;
-
-    ProjectExplorer::ProjectImporter *projectImporter() const final;
-
-protected:
-    RestoreResult fromMap(const Utils::Store &map, QString *errorMessage) final;
-
 private:
+    ProjectExplorer::Tasks projectIssues(const ProjectExplorer::Kit *k) const final;
     ProjectExplorer::DeploymentKnowledge deploymentKnowledge() const override;
-
-    mutable ProjectExplorer::ProjectImporter *m_projectImporter = nullptr;
+    RestoreResult fromMap(const Utils::Store &map, QString *errorMessage) final;
 };
 
 class QmakeBuildSystem final : public ProjectExplorer::BuildSystem
@@ -61,8 +52,10 @@ class QmakeBuildSystem final : public ProjectExplorer::BuildSystem
     Q_OBJECT
 
 public:
-    explicit QmakeBuildSystem(QmakeBuildConfiguration *bc);
+    explicit QmakeBuildSystem(ProjectExplorer::BuildConfiguration *bc);
     ~QmakeBuildSystem();
+
+    static QString name() { return "qmake"; }
 
     bool supportsAction(ProjectExplorer::Node *context,
                         ProjectExplorer::ProjectAction action,
@@ -79,12 +72,11 @@ public:
     bool canRenameFile(ProjectExplorer::Node *context,
                        const Utils::FilePath &oldFilePath,
                        const Utils::FilePath &newFilePath) override;
-    bool renameFile(ProjectExplorer::Node *context,
-                    const Utils::FilePath &oldFilePath,
-                    const Utils::FilePath &newFilePath) override;
+    bool renameFiles(ProjectExplorer::Node *context,
+                    const Utils::FilePairs &filesToRename,
+                    Utils::FilePaths *notRenamed) override;
     bool addDependencies(ProjectExplorer::Node *context,
                          const QStringList &dependencies) override;
-    QString name() const final { return QLatin1String("qmake"); }
     void triggerParsing() final;
 
     Utils::FilePaths filesGeneratedFrom(const Utils::FilePath &file) const final;
@@ -99,7 +91,6 @@ public:
     Utils::FilePath executableFor(const QmakeProFile *file);
 
     void updateCppCodeModel();
-    void updateQmlJSCodeModel();
 
     static bool equalFileList(const QStringList &a, const QStringList &b);
 
@@ -171,6 +162,8 @@ private:
     void scheduleUpdateAll(QmakeProFile::AsyncUpdateDelay delay);
     void scheduleUpdateAllLater() { scheduleUpdateAll(QmakeProFile::ParseLater); }
 
+    void updateQmlCodeModelInfo(ProjectExplorer::QmlCodeModelInfo &projectInfo) final;
+
     mutable QSet<const QPair<Utils::FilePath, Utils::FilePath>> m_toolChainWarnings;
 
     // Current configuration
@@ -199,6 +192,7 @@ private:
     Internal::CentralizedFolderWatcher *m_centralizedFolderWatcher = nullptr;
 
     ProjectExplorer::BuildSystem::ParseGuard m_guard;
+    ProjectExplorer::Task m_generatorError;
     bool m_firstParseNeeded = true;
 };
 

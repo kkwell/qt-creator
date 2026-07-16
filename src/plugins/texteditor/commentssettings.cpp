@@ -8,7 +8,6 @@
 #include "texteditortr.h"
 
 #include <coreplugin/icore.h>
-#include <projectexplorer/project.h>
 #include <utils/layoutbuilder.h>
 
 #include <QCheckBox>
@@ -27,6 +26,8 @@ const char kAddLeadingAsterisks[] = "AddLeadingAsterisks";
 const char kCommandPrefix[] = "CommandPrefix";
 }
 
+Key CommentsSettings::mainSettingsKey() { return kDocumentationCommentsGroup; }
+
 void CommentsSettings::setData(const Data &data)
 {
     if (data == instance().m_data)
@@ -35,11 +36,22 @@ void CommentsSettings::setData(const Data &data)
     instance().save();
 }
 
-Key CommentsSettings::mainSettingsKey() { return kDocumentationCommentsGroup; }
-Key CommentsSettings::enableDoxygenSettingsKey() { return kEnableDoxygenBlocks; }
-Key CommentsSettings::generateBriefSettingsKey() { return kGenerateBrief; }
-Key CommentsSettings::leadingAsterisksSettingsKey() { return kAddLeadingAsterisks; }
-Key CommentsSettings::commandPrefixKey() { return kCommandPrefix; }
+void CommentsSettings::Data::fromMap(const Store &data)
+{
+    enableDoxygen = data.value(kEnableDoxygenBlocks, enableDoxygen).toBool();
+    generateBrief = data.value(kGenerateBrief, generateBrief).toBool();
+    leadingAsterisks = data.value(kAddLeadingAsterisks, leadingAsterisks).toBool();
+    commandPrefix = static_cast<CommentsSettings::CommandPrefix>(
+            data.value(kCommandPrefix, int(commandPrefix)).toInt());
+}
+
+void CommentsSettings::Data::toMap(Store &data) const
+{
+    data.insert(kEnableDoxygenBlocks, enableDoxygen);
+    data.insert(kGenerateBrief, generateBrief);
+    data.insert(kAddLeadingAsterisks, leadingAsterisks);
+    data.insert(kCommandPrefix, int(commandPrefix));
+}
 
 CommentsSettings::CommentsSettings()
 {
@@ -132,6 +144,8 @@ if the comment starts with "/*!" or "//!".)");
     }
     connect(&d->m_commandPrefixComboBox, &QComboBox::currentIndexChanged,
             this, &CommentsSettingsWidget::settingsChanged);
+
+    installMarkSettingsDirtyTriggerRecursively(this);
 }
 
 CommentsSettingsWidget::~CommentsSettingsWidget() { delete d; }
@@ -169,8 +183,6 @@ CommentsSettingsPage::CommentsSettingsPage()
     setId(Constants::TEXT_EDITOR_COMMENTS_SETTINGS);
     setDisplayName(Tr::tr("Documentation Comments"));
     setCategory(TextEditor::Constants::TEXT_EDITOR_SETTINGS_CATEGORY);
-    setDisplayCategory(Tr::tr("Text Editor"));
-    setCategoryIconPath(TextEditor::Constants::TEXT_EDITOR_SETTINGS_CATEGORY_ICON_PATH);
     setWidgetCreator([] { return new CommentsSettingsWidget(CommentsSettings::data()); });
 }
 

@@ -1,0 +1,23 @@
+
+FROM ubuntu:24.04
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    openssh-client \
+    g++ \
+    sudo \
+    vim \
+    wget \
+    qt6-base-dev \
+    qt6-5compat-dev \
+    gdb \
+    gdbserver \
+    linux-tools-common \
+    valgrind \
+    x11-apps \
+    clangd \
+    clang-tidy \
+    clazy \
+    qbs \
+    cmake \
+    ninja-build

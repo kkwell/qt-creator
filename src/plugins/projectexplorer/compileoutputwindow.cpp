@@ -6,9 +6,9 @@
 #include "buildmanager.h"
 #include "projectexplorerconstants.h"
 #include "projectexplorericons.h"
-#include "projectexplorersettings.h"
 #include "projectexplorertr.h"
 #include "showoutputtaskhandler.h"
+#include "taskhub.h"
 
 #include <coreplugin/outputwindow.h>
 #include <coreplugin/dialogs/ioptionspage.h>
@@ -25,6 +25,7 @@
 #include <utils/layoutbuilder.h>
 #include <utils/outputformatter.h>
 #include <utils/proxyaction.h>
+#include <utils/stylehelper.h>
 #include <utils/theme/theme.h>
 #include <utils/utilsicons.h>
 
@@ -39,6 +40,8 @@
 #include <QTextCursor>
 #include <QToolButton>
 #include <QVBoxLayout>
+
+#include <climits>
 
 namespace ProjectExplorer::Internal {
 
@@ -68,7 +71,7 @@ CompileOutputWindow::CompileOutputWindow(QAction *cancelBuildAction) :
             Utils::ProxyAction::proxyActionWithIcon(cancelBuildAction,
                                                     Utils::Icons::STOP_SMALL_TOOLBAR.icon());
     m_cancelBuildButton->setDefaultAction(cancelBuildProxyButton);
-    m_settingsButton->setToolTip(Core::ICore::msgShowOptionsDialog());
+    m_settingsButton->setToolTip(Core::ICore::msgShowSettings());
     m_settingsButton->setIcon(Utils::Icons::SETTINGS_TOOLBAR.icon());
 
     auto updateFontSettings = [this] {
@@ -77,12 +80,12 @@ CompileOutputWindow::CompileOutputWindow(QAction *cancelBuildAction) :
 
     auto updateZoomEnabled = [this] {
         m_outputWindow->setWheelZoomEnabled(
-                    TextEditor::globalBehaviorSettings().m_scrollWheelZooming);
+                    TextEditor::globalBehaviorSettings().scrollWheelZooming());
     };
 
     updateFontSettings();
     updateZoomEnabled();
-    setupFilterUi("CompileOutputPane.Filter");
+    setupFilterUi("CompileOutputPane.Filter", "ProjectExplorer::Internal::CompileOutputPane");
     setFilteringEnabled(true);
 
     connect(this, &IOutputPane::zoomInRequested, m_outputWindow, &Core::OutputWindow::zoomIn);
@@ -94,7 +97,7 @@ CompileOutputWindow::CompileOutputWindow(QAction *cancelBuildAction) :
             this, updateZoomEnabled);
 
     connect(m_settingsButton, &QToolButton::clicked, this, [] {
-        Core::ICore::showOptionsDialog(OPTIONS_PAGE_ID);
+        Core::ICore::showSettings(OPTIONS_PAGE_ID);
     });
 
     qRegisterMetaType<QTextCharFormat>("QTextCharFormat");
@@ -109,14 +112,28 @@ CompileOutputWindow::CompileOutputWindow(QAction *cancelBuildAction) :
 
     CompileOutputSettings &s = compileOutputSettings();
     m_outputWindow->setWordWrapEnabled(s.wrapOutput());
+    m_outputWindow->setDiscardExcessiveOutput(s.discardOutput());
     m_outputWindow->setMaxCharCount(s.maxCharCount());
 
     connect(&s.wrapOutput, &Utils::BaseAspect::changed, m_outputWindow, [this] {
         m_outputWindow->setWordWrapEnabled(compileOutputSettings().wrapOutput());
     });
+    connect(&s.discardOutput, &Utils::BaseAspect::changed, m_outputWindow, [this] {
+        m_outputWindow->setDiscardExcessiveOutput(compileOutputSettings().discardOutput());
+    });
     connect(&s.maxCharCount, &Utils::BaseAspect::changed, m_outputWindow, [this] {
         m_outputWindow->setMaxCharCount(compileOutputSettings().maxCharCount());
     });
+    connect(m_outputWindow, &Core::OutputWindow::outputDiscarded, this, [] {
+        TaskHub::addTask(
+            Task::Warning,
+            Tr::tr("Discarded excessive compile output."),
+            Constants::TASK_CATEGORY_COMPILE);
+    });
+    connect(&s.overwriteColor, &Utils::BaseAspect::changed,
+            this, &CompileOutputWindow::updateFromSettings);
+    connect(&s.backgroundColor, &Utils::BaseAspect::changed,
+            this, &CompileOutputWindow::updateFromSettings);
 }
 
 CompileOutputWindow::~CompileOutputWindow()
@@ -129,7 +146,16 @@ CompileOutputWindow::~CompileOutputWindow()
 
 void CompileOutputWindow::updateFromSettings()
 {
+    QColor background;
+    if (compileOutputSettings().overwriteColor())
+            background = compileOutputSettings().backgroundColor();
+    if (!background.isValid())
+            background = Utils::creatorColor(Utils::Theme::PaletteBase);
+
+    m_outputWindow->outputFormatter()->setExplicitBackgroundColor(background);
+    Utils::StyleHelper::modifyPaletteBase(m_outputWindow, background);
 }
+
 bool CompileOutputWindow::hasFocus() const
 {
     return m_outputWindow->window()->focusWidget() == m_outputWindow;
@@ -211,7 +237,8 @@ bool CompileOutputWindow::hasFilterContext() const
 void CompileOutputWindow::registerPositionOf(const Task &task, int linkedOutputLines, int skipLines,
                                              int offset)
 {
-    m_outputWindow->registerPositionOf(task.taskId, linkedOutputLines, skipLines, offset);
+    m_outputWindow->registerPositionOf(
+        task.id(), linkedOutputLines, skipLines, offset, Core::OutputWindow::TaskSource::Direct);
 }
 
 void CompileOutputWindow::flush()
@@ -244,6 +271,22 @@ CompileOutputSettings &compileOutputSettings()
     return theSettings;
 }
 
+QVariant CompileOutputColorAspect::fromSettingsValue(const QVariant &savedValue) const
+{
+   const QColor color = savedValue.value<QColor>();
+   return color.isValid() ? color : Utils::creatorColor(Utils::Theme::PaletteBase);
+}
+
+QVariant CompileOutputMaxCharCountAspect::fromSettingsValue(const QVariant &savedValue) const
+{
+    return savedValue.toInt() * 100;
+}
+
+QVariant CompileOutputMaxCharCountAspect::toSettingsValue(const QVariant &valueToSave) const
+{
+    return valueToSave.toInt() / 100;
+}
+
 CompileOutputSettings::CompileOutputSettings()
 {
     setAutoApply(false);
@@ -255,11 +298,25 @@ CompileOutputSettings::CompileOutputSettings()
     popUp.setSettingsKey("ProjectExplorer/Settings/ShowCompilerOutput");
     popUp.setLabelText(Tr::tr("Open Compile Output when building"));
 
+    discardOutput.setSettingsKey("ProjectExplorer/Settings/DiscardCompilerOutput");
+    discardOutput.setLabelText(Tr::tr("Discard excessive output"));
+    discardOutput.setToolTip(
+        Tr::tr(
+            "Discards compile output that continuously comes in faster than "
+            "it can be handled."));
+
     maxCharCount.setSettingsKey("ProjectExplorer/Settings/MaxBuildOutputLines");
-    maxCharCount.setRange(1, Core::Constants::DEFAULT_MAX_CHAR_COUNT);
+    maxCharCount.setRange(1, INT_MAX);
     maxCharCount.setDefaultValue(Core::Constants::DEFAULT_MAX_CHAR_COUNT);
-    maxCharCount.setToSettingsTransformation([](const QVariant &v) { return v.toInt() / 100; });
-    maxCharCount.setFromSettingsTransformation([](const QVariant &v) { return v.toInt() * 100; });
+
+    overwriteColor.setSettingsKey("ProjectExplorer/CompileOutput/OverwriteBackground");
+    overwriteColor.setLabelText(Tr::tr("Overwrite background color"));
+    overwriteColor.setToolTip("Customize background color of the compile output.\n"
+                              "Note: existing output will not get recolored.");
+
+    backgroundColor.setSettingsKey("ProjectExplorer/CompileOutput/BackgroundColor");
+    backgroundColor.setDefaultValue(QColor{});
+    backgroundColor.setEnabler(&overwriteColor);
 
     setLayouter([this] {
         using namespace Layouting;
@@ -268,7 +325,9 @@ CompileOutputSettings::CompileOutputSettings()
         return Column {
             wrapOutput,
             popUp,
+            discardOutput,
             Row { parts.at(0), maxCharCount, parts.at(1), st },
+            Row { overwriteColor, backgroundColor, st },
             st
         };
     });

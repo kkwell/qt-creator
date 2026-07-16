@@ -64,11 +64,12 @@ QString DoxygenGenerator::generate(QTextCursor cursor,
 
     // remove attributes like [[nodiscard]] because
     // Document::Ptr::parse(Document::ParseDeclaration) fails on attributes
-    static QRegularExpression attribute("\\[\\s*\\[.*\\]\\s*\\]");
+    static const QRegularExpression attribute("\\[\\s*\\[.*\\]\\s*\\]");
     declCandidate.replace(attribute, "");
 
     declCandidate.replace("Q_INVOKABLE", "");
-    declCandidate.remove(QRegularExpression(R"(\s*(public|protected|private)\s*:\s*)"));
+    static const QRegularExpression accessSpecifier(R"(\s*(public|protected|private)\s*:\s*)");
+    declCandidate.remove(accessSpecifier);
     declCandidate.replace(QChar::ParagraphSeparator, QLatin1Char('\n'));
 
     // Let's append a closing brace in the case we got content like 'class MyType {'
@@ -77,6 +78,7 @@ QString DoxygenGenerator::generate(QTextCursor cursor,
 
     Document::Ptr doc = snapshot.preprocessedDocument(declCandidate.toUtf8(),
                                                       documentFilePath,
+                                                      true,
                                                       cursor.blockNumber());
     doc->parse(Document::ParseDeclaration);
     doc->check(Document::FastCheck);

@@ -13,7 +13,7 @@
 
 namespace Utils {
 class FilePath;
-using FilePaths = QList<FilePath>;
+class FilePaths;
 } // Utils
 
 namespace CppEditor { class ProjectPart; }
@@ -55,7 +55,7 @@ private:
     std::unique_ptr<CppcheckRunner> m_runner;
     std::unique_ptr<QFutureInterface<void>> m_progress;
     QHash<QString, QString> m_cachedAdditionalArguments;
-    QVector<QRegularExpression> m_filters;
+    QList<QRegularExpression> m_filters;
     QRegularExpression m_progressRegexp;
     QRegularExpression m_messageRegexp;
     Utils::Id m_progressId;

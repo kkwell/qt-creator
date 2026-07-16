@@ -1,35 +1,29 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include "dialogs/ioptionspage.h"
 #include "generalsettings.h"
 #include "coreconstants.h"
 #include "coreplugintr.h"
+#include "dialogs/ioptionspage.h"
 #include "icore.h"
 #include "themechooser.h"
 
-#include <extensionsystem/pluginmanager.h>
 
 #include <utils/algorithm.h>
 #include <utils/checkablemessagebox.h>
-#include <utils/hostosinfo.h>
 #include <utils/infobar.h>
 #include <utils/layoutbuilder.h>
-#include <utils/qtcolorbutton.h>
+#include <utils/shutdownguard.h>
 #include <utils/stylehelper.h>
+#include <utils/textcodec.h>
 
 #include <QApplication>
-#include <QCheckBox>
-#include <QComboBox>
 #include <QCoreApplication>
-#include <QDir>
 #include <QGuiApplication>
 #include <QLibraryInfo>
-#include <QMessageBox>
 #include <QPushButton>
-#include <QSettings>
+#include <QStandardItem>
 #include <QStyleHints>
-#include <QTextCodec>
 
 using namespace Utils;
 using namespace Layouting;
@@ -45,10 +39,159 @@ static bool defaultShowShortcutsInContextMenu()
     return QGuiApplication::styleHints()->showShortcutsInContextMenus();
 }
 
+static bool hasQmFilesForLocale(const QString &locale, const QString &creatorTrPath)
+{
+    static const QString qtTrPath = QLibraryInfo::path(QLibraryInfo::TranslationsPath);
+
+    const QString trFile = QLatin1String("/qt_") + locale + QLatin1String(".qm");
+    return QFileInfo::exists(qtTrPath + trFile) || QFileInfo::exists(creatorTrPath + trFile);
+}
+
+static void fillLanguageItems(const StringSelectionAspect::ResultCallback &cb)
+{
+    QList<QStandardItem *> items;
+
+    auto systemItem = new QStandardItem(Tr::tr("<System Language>"));
+    systemItem->setData(LanguageSelectionAspect::kSystemLanguage);
+    items.append(systemItem);
+
+    struct LangItem
+    {
+        QString display;
+        QString locale;
+        QString comparisonId;
+    };
+
+    QList<LangItem> langItems;
+    // need to add this explicitly, since there is no qm file for English
+    const QString english = QLocale::languageToString(QLocale::English);
+    langItems.append({english, QString("en"), english});
+
+    const FilePath creatorTrPath = ICore::resourcePath("translations");
+    const FilePaths languageFiles = creatorTrPath.dirEntries(
+        QStringList(QLatin1String("qtcreator*.qm")));
+    for (const FilePath &languageFile : languageFiles) {
+        const QString name = languageFile.fileName();
+        // Ignore english ts file that is for temporary spelling fixes only.
+        // We have the "English" item that is explicitly added at the top.
+        if (name == "qtcreator_en.qm")
+            continue;
+        int start = name.indexOf('_') + 1;
+        int end = name.lastIndexOf('.');
+        const QString locale = name.mid(start, end - start);
+        // no need to show a language that creator will not load anyway
+        if (hasQmFilesForLocale(locale, creatorTrPath.toUrlishString())) {
+            QLocale tmpLocale(locale);
+            const auto display = QString("%1 (%2) - %3 (%4)")
+                                     .arg(tmpLocale.nativeLanguageName(),
+                                          tmpLocale.nativeTerritoryName(),
+                                          QLocale::languageToString(tmpLocale.language()),
+                                          QLocale::territoryToString(tmpLocale.territory()));
+            // Create a fancy comparison string.
+            // We cannot use a "locale aware comparison" because we are comparing
+            // different locales. The probably "optimal solution" would be to compare
+            // by "latinized native name", but that's hard. Instead
+            // - for non-Latin-script locales use the english name, otherwise the native name
+            // - get rid of fancy characters like '\u010d' by decomposing them (e.g. to 'c')
+            QString comparisonId
+                = tmpLocale.script() == QLocale::LatinScript
+                      ? (tmpLocale.nativeLanguageName() + " "
+                         + tmpLocale.nativeTerritoryName())
+                      : (QLocale::languageToString(tmpLocale.language()) + " "
+                         + QLocale::territoryToString(tmpLocale.territory()));
+            for (int i = 0; i < comparisonId.size(); ++i) {
+                QChar &c = comparisonId[i];
+                if (c.decomposition().isEmpty())
+                    continue;
+                c = c.decomposition().at(0);
+            }
+            langItems.append({display, locale, comparisonId});
+        }
+    }
+
+    Utils::sort(langItems, [](const LangItem &a, const LangItem &b) {
+        return a.comparisonId.compare(b.comparisonId, Qt::CaseInsensitive) < 0;
+    });
+    for (const LangItem &i : std::as_const(langItems)) {
+        auto item = new QStandardItem(i.display);
+        item->setData(i.locale);
+        items.append(item);
+    }
+
+    cb(items);
+}
+
 GeneralSettings &generalSettings()
 {
-    static GeneralSettings theSettings;
+    static GuardedObject<GeneralSettings> theSettings;
     return theSettings;
+}
+
+static void fillThemeItems(const StringSelectionAspect::ResultCallback &cb)
+{
+    const QList<ThemeEntry> themes = ThemeEntry::availableThemes();
+    QList<QStandardItem *> items;
+    for (const ThemeEntry &t : themes) {
+        auto item = new QStandardItem(t.displayName());
+        item->setData(t.id().toString());
+        items.append(item);
+    }
+    cb(items);
+}
+
+class ResetWarningsButton : public QPushButton
+{
+public:
+    ResetWarningsButton()
+    {
+        setText(Tr::tr("Reset Warnings", "Button text"));
+        setToolTip(
+            Tr::tr("Re-enable warnings that were suppressed by selecting \"Do Not "
+                   "Show Again\" (for example, missing highlighter)."));
+        setEnabled(InfoBar::anyGloballySuppressed()
+                   || CheckableMessageBox::hasSuppressedQuestions());
+        connect(this, &QAbstractButton::clicked, this, [this] {
+            InfoBar::clearGloballySuppressed();
+            CheckableMessageBox::resetAllDoNotAskAgainQuestions();
+            setEnabled(InfoBar::anyGloballySuppressed()
+                       || CheckableMessageBox::hasSuppressedQuestions());
+        });
+    }
+};
+
+InfoLabel *createEnvVarInfoLabel()
+{
+    static const bool showDpiPolicy = StyleHelper::defaultHighDpiScaleFactorRoundingPolicy()
+                                      != Qt::HighDpiScaleFactorRoundingPolicy::Unset;
+
+    if (!showDpiPolicy)
+        return nullptr;
+
+    static const QList<const char *> envVars = {
+        StyleHelper::C_QT_SCALE_FACTOR_ROUNDING_POLICY,
+        "QT_ENABLE_HIGHDPI_SCALING",
+        "QT_FONT_DPI",
+        "QT_SCALE_FACTOR",
+        "QT_SCREEN_SCALE_FACTORS",
+        "QT_USE_PHYSICAL_DPI",
+    };
+    auto setVars = Utils::filtered(envVars, &qEnvironmentVariableIsSet);
+
+    if (setVars.isEmpty())
+        return nullptr;
+
+    QString toolTip
+        = Tr::tr(
+              "The following environment variables are set and can "
+              "influence the UI scaling behavior of %1:")
+              .arg(QGuiApplication::applicationDisplayName())
+          + "\n\n"
+          + Utils::transform<QStringList>(setVars, [](const char *var) {
+                return QString("%1=%2").arg(QString::fromUtf8(var)).arg(qEnvironmentVariable(var));
+            }).join("\n");
+    auto envVarInfo = new InfoLabel(Tr::tr("Environment influences UI scaling behavior."));
+    envVarInfo->setAdditionalToolTip(toolTip);
+    return envVarInfo;
 }
 
 GeneralSettings::GeneralSettings()
@@ -73,345 +216,137 @@ GeneralSettings::GeneralSettings()
                "not displayed properly, you can use the cursors provided by %1.")
             .arg(QGuiApplication::applicationDisplayName()));
 
-    readSettings();
-}
+    preferInfoBarOverPopup.setSettingsKey("General/PreferInfoBarOverPopup");
+    preferInfoBarOverPopup.setDefaultValue(false);
+    preferInfoBarOverPopup.setLabelText(Tr::tr("Prefer banner style info bars over pop-ups"));
 
-class GeneralSettingsWidget final : public IOptionsPageWidget
-{
-public:
-    GeneralSettingsWidget();
+    useTabsInEditorViews.setSettingsKey("General/UseTabsInEditorViews");
+    useTabsInEditorViews.setDefaultValue(false);
+    useTabsInEditorViews.setLabelText(Tr::tr("Use tabbed editors"));
 
-    void apply() final;
+    showOkAndCancelInSettingsMode.setSettingsKey("General/ShowOkAndCancelInSettingsMode");
+    showOkAndCancelInSettingsMode.setDefaultValue(false);
+    showOkAndCancelInSettingsMode.setLabelText(Tr::tr("Show OK and Cancel buttons in Preferences mode"));
 
-    void resetInterfaceColor();
-    void resetWarnings();
-    void resetLanguage();
-
-    static bool canResetWarnings();
-    void fillLanguageBox() const;
-    static QString language();
-    static void setLanguage(const QString&);
-    void fillCodecBox() const;
-    static QByteArray codecForLocale();
-    static void setCodecForLocale(const QByteArray&);
-    void fillToolbarStyleBox() const;
-    static void setDpiPolicy(Qt::HighDpiScaleFactorRoundingPolicy policy);
-
-    QComboBox *m_languageBox;
-    QComboBox *m_codecBox;
-    QtColorButton *m_colorButton;
-    ThemeChooser *m_themeChooser;
-    QPushButton *m_resetWarningsButton;
-    QComboBox *m_toolbarStyleBox;
-    QComboBox *m_policyComboBox = nullptr;
-};
-
-GeneralSettingsWidget::GeneralSettingsWidget()
-    : m_languageBox(new QComboBox)
-    , m_codecBox(new QComboBox)
-    , m_colorButton(new QtColorButton)
-    , m_themeChooser(new ThemeChooser)
-    , m_resetWarningsButton(new QPushButton)
-    , m_toolbarStyleBox(new QComboBox)
-{
-    m_languageBox->setObjectName("languageBox");
-    m_languageBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    m_languageBox->setMinimumContentsLength(20);
-    if (Core::ICore::isQtDesignStudio()) {
-        m_languageBox->setDisabled(true);
-        m_languageBox->setToolTip("Qt Design Studio is currently available in English only.");
-    }
-
-    m_codecBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    m_codecBox->setMinimumContentsLength(20);
-
-    m_colorButton->setMinimumSize(QSize(64, 0));
-    m_colorButton->setProperty("alphaAllowed", QVariant(false));
-
-    m_resetWarningsButton->setText(Tr::tr("Reset Warnings", "Button text"));
-    m_resetWarningsButton->setToolTip(
-        Tr::tr("Re-enable warnings that were suppressed by selecting \"Do Not "
-           "Show Again\" (for example, missing highlighter).",
-           nullptr));
-
-    m_toolbarStyleBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-
-    auto resetColorButton = new QPushButton(Tr::tr("Reset"));
-    resetColorButton->setToolTip(Tr::tr("Reset to default.", "Color"));
-
-    Form form;
-    form.addRow({Tr::tr("Color:"), m_colorButton, resetColorButton, st});
-    form.addRow({Tr::tr("Theme:"), m_themeChooser});
-    form.addRow({Tr::tr("Toolbar style:"), m_toolbarStyleBox, st});
-    form.addRow({Tr::tr("Language:"), m_languageBox, st});
-
-    if (StyleHelper::defaultHighDpiScaleFactorRoundingPolicy()
-        != Qt::HighDpiScaleFactorRoundingPolicy::Unset) {
-        using Policy = Qt::HighDpiScaleFactorRoundingPolicy;
-        m_policyComboBox = new QComboBox;
-        m_policyComboBox->addItem(Tr::tr("Round Up for .5 and Above"), int(Policy::Round));
-        m_policyComboBox->addItem(Tr::tr("Always Round Up"), int(Policy::Ceil));
-        m_policyComboBox->addItem(Tr::tr("Always Round Down"), int(Policy::Floor));
-        m_policyComboBox->addItem(Tr::tr("Round Up for .75 and Above"),
-                                  int(Policy::RoundPreferFloor));
-        m_policyComboBox->addItem(Tr::tr("Don't Round"), int(Policy::PassThrough));
-        m_policyComboBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-        m_policyComboBox->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
-
-        const Policy userPolicy =
-            ICore::settings()->value(settingsKeyDpiPolicy,
-                                     int(StyleHelper::defaultHighDpiScaleFactorRoundingPolicy()))
-                                      .value<Policy>();
-        m_policyComboBox->setCurrentIndex(m_policyComboBox->findData(int(userPolicy)));
-
-        form.addRow({Tr::tr("DPI rounding policy:"), m_policyComboBox});
-        static const char *envVars[] = {
-            StyleHelper::C_QT_SCALE_FACTOR_ROUNDING_POLICY, "QT_ENABLE_HIGHDPI_SCALING",
-            "QT_FONT_DPI", "QT_SCALE_FACTOR", "QT_SCREEN_SCALE_FACTORS", "QT_USE_PHYSICAL_DPI",
-        };
-        if (anyOf(envVars, qEnvironmentVariableIsSet)) {
-            QString toolTip = Tr::tr("The following environment variables are set and can "
-                                     "influence the UI scaling behavior of %1:")
-                                  .arg(QGuiApplication::applicationDisplayName()) + "\n";
-            for (auto var : envVars) {
-                if (qEnvironmentVariableIsSet(var))
-                    toolTip.append(QLatin1String("\n") + var + "=" + qEnvironmentVariable(var));
-            }
-            auto envVarInfo = new InfoLabel(Tr::tr("Environment influences UI scaling behavior."));
-            envVarInfo->setAdditionalToolTip(toolTip);
-            form.addItem(envVarInfo);
-        } else {
-            form.addItem(st);
+    codecForLocale.setSettingsKey(settingsKeyCodecForLocale);
+    codecForLocale.setLabelText(Tr::tr("Text codec for tools:"));
+    codecForLocale.setComboBoxEditable(false);
+    codecForLocale.setFillCallback([](const StringSelectionAspect::ResultCallback &cb) {
+        const auto codecs = TextEncoding::availableEncodings();
+        QList<QStandardItem *> codecNames;
+        for (const auto &codec : codecs) {
+            auto item = new QStandardItem(codec.displayName());
+            item->setData(QString::fromUtf8(codec.name()));
+            codecNames.append(item);
         }
-    }
+        cb(codecNames);
+    });
+    codecForLocale.setDefaultValue(QString::fromUtf8(TextEncoding(TextEncoding::System).name()));
 
-    form.addRow({empty, generalSettings().showShortcutsInContextMenus});
-    form.addRow({empty, generalSettings().provideSplitterCursors});
-    form.addRow({Row{m_resetWarningsButton, st}});
-    form.addRow({Tr::tr("Text codec for tools:"), m_codecBox, st});
-    Column{Group{title(Tr::tr("User Interface")), form}}.attachTo(this);
+    connect(&codecForLocale, &BaseAspect::changed, this, [this] {
+        TextEncoding::setEncodingForLocale(codecForLocale.value().toUtf8());
+    });
 
-    fillLanguageBox();
-    fillCodecBox();
-    fillToolbarStyleBox();
+    language.setSettingsKey("General/OverrideLanguage");
+    language.setDefaultValue(LanguageSelectionAspect::kSystemLanguage);
+    language.setLabelText(Tr::tr("Language:"));
+    language.setComboBoxEditable(false);
+    language.setFillCallback(&fillLanguageItems);
 
-    m_colorButton->setColor(StyleHelper::requestedBaseColor());
-    m_resetWarningsButton->setEnabled(canResetWarnings());
+    connect(&language, &BaseAspect::changed, this, [] {
+        ICore::askForRestart(Tr::tr("The language change will take effect after restart."));
+    });
 
-    connect(resetColorButton,
-            &QAbstractButton::clicked,
-            this,
-            &GeneralSettingsWidget::resetInterfaceColor);
-    connect(m_resetWarningsButton,
-            &QAbstractButton::clicked,
-            this,
-            &GeneralSettingsWidget::resetWarnings);
-}
+    color.setSettingsKey("MainWindow/Color");
+    color.setLabelText(Tr::tr("Color:"));
+    color.setDefaultValue(QColor(StyleHelper::DEFAULT_BASE_COLOR));
+    color.setAlphaAllowed(false);
+    color.addOnChanged(this, [this] { StyleHelper::setBaseColor(color()); });
 
-static bool hasQmFilesForLocale(const QString &locale, const QString &creatorTrPath)
-{
-    static const QString qtTrPath = QLibraryInfo::path(QLibraryInfo::TranslationsPath);
-
-    const QString trFile = QLatin1String("/qt_") + locale + QLatin1String(".qm");
-    return QFileInfo::exists(qtTrPath + trFile) || QFileInfo::exists(creatorTrPath + trFile);
-}
-
-void GeneralSettingsWidget::fillLanguageBox() const
-{
-    const QString currentLocale = Core::ICore::isQtDesignStudio() ? QString("C") : language();
-
-    m_languageBox->addItem(Tr::tr("<System Language>"), QString());
-
-    struct Item
-    {
-        QString display;
-        QString locale;
-        QString comparisonId;
+    static const SelectionAspect::Option options[] = {
+        {Tr::tr("Round Up for .5 and Above"), {}, int(Qt::HighDpiScaleFactorRoundingPolicy::Round)},
+        {Tr::tr("Always Round Up"), {}, int(Qt::HighDpiScaleFactorRoundingPolicy::Ceil)},
+        {Tr::tr("Always Round Down"), {}, int(Qt::HighDpiScaleFactorRoundingPolicy::Floor)},
+        {Tr::tr("Round Up for .75 and Above"),
+         {},
+         int(Qt::HighDpiScaleFactorRoundingPolicy::RoundPreferFloor)},
+        {Tr::tr("Don't Round"), {}, int(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough)},
     };
 
-    QList<Item> items;
-    // need to add this explicitly, since there is no qm file for English
-    const QString english = QLocale::languageToString(QLocale::English);
-    items.append({english, QString("C"), english});
+    highDpiScaleFactorRoundingPolicy.setSettingsKey(settingsKeyDpiPolicy);
+    highDpiScaleFactorRoundingPolicy.setLabelText(Tr::tr("DPI rounding policy:"));
+    highDpiScaleFactorRoundingPolicy.setDisplayStyle(SelectionAspect::DisplayStyle::ComboBox);
+    highDpiScaleFactorRoundingPolicy.setUseDataAsSavedValue();
 
-    const FilePath creatorTrPath = ICore::resourcePath("translations");
-    const FilePaths languageFiles = creatorTrPath.dirEntries(
-        QStringList(QLatin1String("qtcreator*.qm")));
-    for (const FilePath &languageFile : languageFiles) {
-        const QString name = languageFile.fileName();
-        int start = name.indexOf('_') + 1;
-        int end = name.lastIndexOf('.');
-        const QString locale = name.mid(start, end - start);
-        // no need to show a language that creator will not load anyway
-        if (hasQmFilesForLocale(locale, creatorTrPath.toString())) {
-            QLocale tmpLocale(locale);
-            const auto languageItem = QString("%1 (%2) - %3 (%4)")
-                                          .arg(
-                                              tmpLocale.nativeLanguageName(),
-                                              tmpLocale.nativeTerritoryName(),
-                                              QLocale::languageToString(tmpLocale.language()),
-                                              QLocale::territoryToString(tmpLocale.territory()));
-            // Create a fancy comparison string.
-            // We cannot use a "locale aware comparison" because we are comparing different locales.
-            // The probably "optimal solution" would be to compare by "latinized native name",
-            // but that's hard. Instead
-            // - for non-Latin-script locales use the english name, otherwise the native name
-            // - get rid of fancy characters like 'č' by decomposing them (e.g. to 'c')
-            QString comparisonId = tmpLocale.script() == QLocale::LatinScript
-                                       ? (tmpLocale.nativeLanguageName() + " "
-                                          + tmpLocale.nativeTerritoryName())
-                                       : (QLocale::languageToString(tmpLocale.language()) + " "
-                                          + QLocale::territoryToString(tmpLocale.territory()));
-            for (int i = 0; i < comparisonId.size(); ++i) {
-                QChar &c = comparisonId[i];
-                if (c.decomposition().isEmpty())
-                    continue;
-                c = c.decomposition().at(0);
-            }
-            items.append({languageItem, locale, comparisonId});
-        }
-    }
+    for (const auto &option : options)
+        highDpiScaleFactorRoundingPolicy.addOption(option);
 
-    Utils::sort(items, [](const Item &a, const Item &b) {
-        return a.comparisonId.compare(b.comparisonId, Qt::CaseInsensitive) < 0;
-    });
-    for (const Item &i : std::as_const(items)) {
-        m_languageBox->addItem(i.display, i.locale);
-        if (i.locale == currentLocale)
-            m_languageBox->setCurrentIndex(m_languageBox->count() - 1);
-    }
-}
+    const int defaultDpiValue = int(StyleHelper::defaultHighDpiScaleFactorRoundingPolicy());
+    highDpiScaleFactorRoundingPolicy.setDefaultValue(int(defaultDpiValue));
 
-void GeneralSettingsWidget::apply()
-{
-    generalSettings().apply();
-    generalSettings().writeSettings();
-
-    int currentIndex = m_languageBox->currentIndex();
-    setLanguage(m_languageBox->itemData(currentIndex, Qt::UserRole).toString());
-    if (m_policyComboBox) {
-        const Qt::HighDpiScaleFactorRoundingPolicy selectedPolicy =
-            m_policyComboBox->currentData().value<Qt::HighDpiScaleFactorRoundingPolicy>();
-        setDpiPolicy(selectedPolicy);
-    }
-    currentIndex = m_codecBox->currentIndex();
-    setCodecForLocale(m_codecBox->itemText(currentIndex).toLocal8Bit());
-    // Apply the new base color if accepted
-    StyleHelper::setBaseColor(m_colorButton->color());
-    m_themeChooser->apply();
-    if (const auto newStyle = m_toolbarStyleBox->currentData().value<StyleHelper::ToolbarStyle>();
-        newStyle != StyleHelper::toolbarStyle()) {
-        ICore::settings()->setValueWithDefault(settingsKeyToolbarStyle, int(newStyle),
-                                               int(StyleHelper::defaultToolbarStyle));
-        StyleHelper::setToolbarStyle(newStyle);
-        QStyle *applicationStyle = QApplication::style();
-        for (QWidget *widget : QApplication::allWidgets())
-            applicationStyle->polish(widget);
-    }
-}
-
-void GeneralSettingsWidget::resetInterfaceColor()
-{
-    m_colorButton->setColor(StyleHelper::DEFAULT_BASE_COLOR);
-}
-
-void GeneralSettingsWidget::resetWarnings()
-{
-    InfoBar::clearGloballySuppressed();
-    CheckableMessageBox::resetAllDoNotAskAgainQuestions();
-    m_resetWarningsButton->setEnabled(false);
-}
-
-bool GeneralSettingsWidget::canResetWarnings()
-{
-    return InfoBar::anyGloballySuppressed() || CheckableMessageBox::hasSuppressedQuestions();
-}
-
-void GeneralSettingsWidget::resetLanguage()
-{
-    // system language is default
-    m_languageBox->setCurrentIndex(0);
-}
-
-QString GeneralSettingsWidget::language()
-{
-    QtcSettings *settings = ICore::settings();
-    return settings->value("General/OverrideLanguage").toString();
-}
-
-void GeneralSettingsWidget::setLanguage(const QString &locale)
-{
-    QtcSettings *settings = ICore::settings();
-    if (settings->value("General/OverrideLanguage").toString() != locale)
-        ICore::askForRestart(Tr::tr("The language change will take effect after restart."));
-
-    settings->setValueWithDefault("General/OverrideLanguage", locale, {});
-}
-
-void GeneralSettingsWidget::fillCodecBox() const
-{
-    const QByteArray currentCodec = codecForLocale();
-
-    const QByteArrayList codecs = Utils::sorted(QTextCodec::availableCodecs());
-    for (const QByteArray &codec : codecs) {
-        m_codecBox->addItem(QString::fromLocal8Bit(codec));
-        if (codec == currentCodec)
-            m_codecBox->setCurrentIndex(m_codecBox->count() - 1);
-    }
-}
-
-QByteArray GeneralSettingsWidget::codecForLocale()
-{
-    QtcSettings *settings = ICore::settings();
-    QByteArray codec = settings->value(settingsKeyCodecForLocale).toByteArray();
-    if (codec.isEmpty())
-        codec = QTextCodec::codecForLocale()->name();
-    return codec;
-}
-
-void GeneralSettingsWidget::setCodecForLocale(const QByteArray &codec)
-{
-    QtcSettings *settings = ICore::settings();
-    settings->setValueWithDefault(settingsKeyCodecForLocale, codec, {});
-    QTextCodec::setCodecForLocale(QTextCodec::codecForName(codec));
-}
-
-StyleHelper::ToolbarStyle toolbarStylefromSettings()
-{
-    if (!ExtensionSystem::PluginManager::instance()) // May happen in tests
-        return StyleHelper::defaultToolbarStyle;
-
-    return StyleHelper::ToolbarStyle(
-        ICore::settings()->value(settingsKeyToolbarStyle,
-                                 StyleHelper::defaultToolbarStyle).toInt());
-}
-
-void GeneralSettingsWidget::fillToolbarStyleBox() const
-{
-    m_toolbarStyleBox->addItem(Tr::tr("Compact"), StyleHelper::ToolbarStyleCompact);
-    m_toolbarStyleBox->addItem(Tr::tr("Relaxed"), StyleHelper::ToolbarStyleRelaxed);
-    const int curId = m_toolbarStyleBox->findData(toolbarStylefromSettings());
-    m_toolbarStyleBox->setCurrentIndex(curId);
-}
-
-void GeneralSettingsWidget::setDpiPolicy(Qt::HighDpiScaleFactorRoundingPolicy policy)
-{
-    QtcSettings *settings = ICore::settings();
-    using Policy = Qt::HighDpiScaleFactorRoundingPolicy;
-    const Policy previousPolicy = settings->value(
-                settingsKeyDpiPolicy,
-                int(StyleHelper::defaultHighDpiScaleFactorRoundingPolicy())).value<Policy>();
-    if (policy != previousPolicy) {
+    connect(&highDpiScaleFactorRoundingPolicy, &BaseAspect::changed, this, [] {
         ICore::askForRestart(
             Tr::tr("The DPI rounding policy change will take effect after restart."));
-    }
-    settings->setValueWithDefault(settingsKeyDpiPolicy, int(policy),
-                                  int(StyleHelper::defaultHighDpiScaleFactorRoundingPolicy()));
-}
+    });
 
-void GeneralSettings::applyToolbarStyleFromSettings()
-{
-    StyleHelper::setToolbarStyle(toolbarStylefromSettings());
+    toolbarStyle.setSettingsKey(settingsKeyToolbarStyle);
+    toolbarStyle.setLabelText(Tr::tr("Toolbar style:"));
+    toolbarStyle.addOption({Tr::tr("Compact"), {}, int(StyleHelper::ToolbarStyle::Compact)});
+    toolbarStyle.addOption({Tr::tr("Relaxed"), {}, int(StyleHelper::ToolbarStyle::Relaxed)});
+    toolbarStyle.setDefaultValue(int(StyleHelper::defaultToolbarStyle()));
+    toolbarStyle.setDisplayStyle(SelectionAspect::DisplayStyle::ComboBox);
+    connect(&toolbarStyle, &BaseAspect::changed, this, [this] {
+        auto newStyle = StyleHelper::ToolbarStyle(toolbarStyle());
+
+        if (newStyle != StyleHelper::toolbarStyle()) {
+            StyleHelper::setToolbarStyle(newStyle);
+            QStyle *applicationStyle = QApplication::style();
+            for (QWidget *widget : QApplication::allWidgets())
+                applicationStyle->polish(widget);
+        }
+    });
+
+    theme.setSettingsKey(Constants::SETTINGS_THEME);
+    theme.setLabelText(Tr::tr("Theme:"));
+    theme.setComboBoxEditable(false);
+    theme.setFillCallback(&fillThemeItems);
+    theme.setDefaultValue(ThemeEntry::defaultThemeId().toString());
+    connect(&theme, &BaseAspect::changed, this, [] {
+        ICore::askForRestart(Tr::tr("The theme change will take effect after restart."));
+    });
+
+    setLayouter([this]() -> Layouting::Layout {
+        static const bool showDpiPolicy = StyleHelper::defaultHighDpiScaleFactorRoundingPolicy()
+                                          != Qt::HighDpiScaleFactorRoundingPolicy::Unset;
+
+        auto envVarInfo = createEnvVarInfoLabel();
+
+        // clang-format off
+        return Column {
+            Form {
+                color, st, br,
+                theme, st, br,
+                toolbarStyle, st, br,
+                language, st, br,
+                If (showDpiPolicy) >> Then {
+                    highDpiScaleFactorRoundingPolicy, st, br,
+                    If (envVarInfo) >> Then { envVarInfo, br } >> Else { st, br },
+                },
+                codecForLocale, st, br,
+                showShortcutsInContextMenus, st, br,
+                provideSplitterCursors, st, br,
+                preferInfoBarOverPopup, st, br,
+                useTabsInEditorViews, st, br,
+                showOkAndCancelInSettingsMode, st, br,
+                Row { new ResetWarningsButton, st },
+            }
+        };
+        // clang-format on
+    });
+
+    readSettings();
+
+    StyleHelper::setToolbarStyle(StyleHelper::ToolbarStyle(toolbarStyle()));
 }
 
 // GeneralSettingsPage
@@ -424,12 +359,10 @@ public:
         setId(Constants::SETTINGS_ID_INTERFACE);
         setDisplayName(Tr::tr("Interface"));
         setCategory(Constants::SETTINGS_CATEGORY_CORE);
-        setDisplayCategory(Tr::tr("Environment"));
-        setCategoryIconPath(":/core/images/settingscategory_core.png");
-        setWidgetCreator([] { return new GeneralSettingsWidget; });
+        setSettingsProvider([] { return &generalSettings(); });
     }
 };
 
 const GeneralSettingsPage settingsPage;
 
-} // Core::Internal
+} // namespace Core::Internal

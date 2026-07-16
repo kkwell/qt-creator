@@ -5,31 +5,32 @@
     \page creator-developing-b2qt.html
     \previouspage creator-reference.html
 
-    \ingroup creator-reference-devices
+    \title Developing for \B2Q devices
 
-    \title Developing for \B2Q Devices
+    \quotation
+    \l {\B2Q}{How to: Develop for \B2Q}
+    \endquotation
 
-    \brief Connect \B2Q devices to the computer to run,
-    debug, and analyze applications built for them from \QC.
+    \summary {Connect \B2Q devices to the computer to run,
+    debug, and analyze applications built for them from \QC.}
 
     The \l{\B2Q: Documentation}{\B2Q} stack runs on a variety of hardware.
-    \l{http://qt.io/licensing/}{Qt license} holders can customize the contents of
+    \l{Qt Licensing Overview}{Qt license} holders can customize the contents of
     the stack and take it into production hardware.
 
     \note Enable the \B2Q plugin to use it.
 
     If you have a toolchain for building applications for \B2Q devices
-    installed on the computer, add it to a \l{Kits}{kit} with the
+    installed on the computer, add it to a \l{Managing kits}{kit} with the
     \uicontrol \B2Q device type to build applications for and run them on
     the devices.
 
-    \image qtcreator-boot2qt-device-configurations.webp {Devices tab in Preferences}
+    \image {qtcreator-boot2qt-device-configurations.webp} {Devices tab in Devices preferences}
 
     \include linuxdev.qdoc openssh
 
-    \sa {\B2Q}{How To: Develop for \B2Q},
-    {Manage Kits}{How To: Manage Kits}, {Run in Qt Application Manager},
-    {\B2Q Deploy Configuration}, {\B2Q Run Settings},
+    \sa {\B2Q}{How to: Develop for \B2Q},
+    {Manage kits}{How to: Manage kits}, {Run in Qt Application Manager},
     {\B2Q: Documentation}
 */
 
@@ -58,7 +59,7 @@
             applications.
         \li Go to \uicontrol Tools > \uicontrol {Flash \B2Q}
             to flash the \B2Q image to an SD card with \B2Q Flashing Wizard.
-            \image qtcreator-boot2qt-flashing-wizard.png {\B2Q Flashing Wizard}
+            \image {qtcreator-boot2qt-flashing-wizard.png} {\B2Q Flashing Wizard}
         \li Follow the instructions of the wizard to flash the image to the SD
             card.
         \li Go to \preferences > \uicontrol Devices > \uicontrol Devices.
@@ -68,7 +69,9 @@
         \li Go to \preferences > \uicontrol Kits.
         \li Select \uicontrol Add to add a kit for building for the device.
         \li Select the Qt version, compiler, and device that you added above.
-        \li In \uicontrol {Run device type}, select \uicontrol {Boot2Qt Device}.
+        \li In \uicontrol {Run device}, select \uicontrol {Boot2Qt Device} in
+            \uicontrol {Type}, and then select the actual device to run on in
+            \uicontrol {Device}.
         \li To specify build settings:
         \list 1
             \li Open a project for an application you want to develop for the
@@ -76,18 +79,17 @@
             \li Go to \uicontrol Projects > \uicontrol {Build & Run} to activate
                 the kit that you specified above.
         \endlist
-        \li Select \uicontrol Run to specify run settings. Usually, you can use
-            the default settings.
+        \li Go to \uicontrol {Run Settings} to specify run settings.
+            Usually, you can use the default settings.
 
-            When you run the project, \QC deploys the application as
-            specified by the deploy steps. By default, \QC copies the
+        \li When you run the project, \QC deploys the application as specified
+            in \uicontrol {Deploy Settings}. By default, \QC copies the
             application files to the device.
     \endlist
 
     \sa {Configure SSH connections}, {Generate SSH keys},
-    {Enable and disable plugins}, {\B2Q}{How To: Develop for \B2Q},
-    {Manage Kits}{How To: Manage Kits}, {\B2Q Deploy Configuration},
-    {\B2Q Run Settings}, {Developing for \B2Q Devices}
+    {Enable and disable plugins}, {\B2Q}{How to: Develop for \B2Q},
+    {Manage kits}{How to: Manage kits}, {Developing for \B2Q devices}
 */
 
 /*!
@@ -109,10 +111,10 @@
 
     \list 1
         \li Go to \preferences > \uicontrol Devices > \uicontrol Devices.
-            \image qtcreator-boot2qt-device-configurations.webp {Devices tab in Preferences}
+            \image {qtcreator-boot2qt-device-configurations.webp} {Devices tab in Devices preferences}
         \li Select \uicontrol Add > \uicontrol {Boot2Qt Device} to create
             a network connection to the device.
-            \image qtcreator-devices-boot2qt.png {Boot to Qt Network Device Setup wizard}
+            \image {qtcreator-devices-boot2qt.png} {Boot to Qt Network Device Setup wizard}
         \li In \uicontrol {Device name}, enter a name for the connection.
         \li In \uicontrol {Device address}, enter the host
             name or IP address of the device. This value becomes the value of the
@@ -141,6 +143,6 @@
     \uicontrol {Restore Default App}.
 
     \sa {Enable and disable plugins}, {\B2Q}{How To: Develop for \B2Q},
-    {Developing for \B2Q Devices},
+    {Developing for \B2Q devices}, {Remote Debugging},
     {\B2Q: Setting Up USB Access to Embedded Devices}
 */

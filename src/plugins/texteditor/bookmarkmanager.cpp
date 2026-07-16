@@ -214,6 +214,14 @@ BookmarkView::BookmarkView()
     setDragDropMode(QAbstractItemView::DragDrop);
 
     connect(this, &QAbstractItemView::activated, this, &BookmarkView::gotoBookmark);
+    connect(this->selectionModel(), &QItemSelectionModel::currentRowChanged,
+            this, [=](const QModelIndex &current, const QModelIndex &previous) {
+        Q_UNUSED(previous)
+        Command *moveUpCmd = ActionManager::command(TextEditor::Constants::BOOKMARKS_MOVEUP_ACTION);
+        Command *moveDownCmd = ActionManager::command(TextEditor::Constants::BOOKMARKS_MOVEDOWN_ACTION);
+        moveUpCmd->action()->setEnabled(current.isValid());
+        moveDownCmd->action()->setEnabled(current.isValid());
+    });
 }
 
 QList<QToolButton *> BookmarkView::createToolBarWidgets()
@@ -233,8 +241,14 @@ QList<QToolButton *> BookmarkView::createToolBarWidgets()
 void BookmarkView::contextMenuEvent(QContextMenuEvent *event)
 {
     QMenu menu;
-    QAction *moveUp = menu.addAction(Tr::tr("Move Up"));
-    QAction *moveDown = menu.addAction(Tr::tr("Move Down"));
+    Command *moveUpCmd = ActionManager::command(TextEditor::Constants::BOOKMARKS_MOVEUP_ACTION);
+    Command *moveDownCmd = ActionManager::command(TextEditor::Constants::BOOKMARKS_MOVEDOWN_ACTION);
+    menu.addAction(moveUpCmd->action());
+    menu.addAction(moveDownCmd->action());
+    menu.addSeparator();
+    Command *sortByFilenamesCmd = ActionManager::command(TextEditor::Constants::BOOKMARKS_SORTBYFILENAMES_ACTION);
+    menu.addAction(sortByFilenamesCmd->action());
+    menu.addSeparator();
     QAction *edit = menu.addAction(Tr::tr("&Edit"));
     menu.addSeparator();
     QAction *remove = menu.addAction(Tr::tr("&Remove"));
@@ -243,18 +257,17 @@ void BookmarkView::contextMenuEvent(QContextMenuEvent *event)
 
     m_contextMenuIndex = indexAt(event->pos());
     if (!m_contextMenuIndex.isValid()) {
-        moveUp->setEnabled(false);
-        moveDown->setEnabled(false);
+        moveUpCmd->action()->setEnabled(false);
+        moveDownCmd->action()->setEnabled(false);
         remove->setEnabled(false);
         edit->setEnabled(false);
     }
 
-    if (model()->rowCount() == 0)
+    if (model()->rowCount() == 0) {
         removeAll->setEnabled(false);
+    }
 
     BookmarkManager *manager = &bookmarkManager();
-    connect(moveUp, &QAction::triggered, manager, &BookmarkManager::moveUp);
-    connect(moveDown, &QAction::triggered, manager, &BookmarkManager::moveDown);
     connect(remove, &QAction::triggered, this, &BookmarkView::removeFromContextMenu);
     connect(removeAll, &QAction::triggered, this, &BookmarkView::removeAll);
     connect(edit, &QAction::triggered, manager, &BookmarkManager::edit);
@@ -285,8 +298,7 @@ void BookmarkView::keyPressEvent(QKeyEvent *event)
 
 void BookmarkView::removeAll()
 {
-    if (CheckableMessageBox::question(this,
-                                      Tr::tr("Remove All Bookmarks"),
+    if (CheckableMessageBox::question(Tr::tr("Remove All Bookmarks"),
                                       Tr::tr("Are you sure you want to remove all bookmarks from "
                                              "all files in the current session?"),
                                       Key("RemoveAllBookmarks"))
@@ -327,6 +339,7 @@ BookmarkManager::BookmarkManager(QObject *parent)
 
     const Id bookmarkMenuId = "Bookmarks.Menu";
     const Context editorManagerContext(Core::Constants::C_EDITORMANAGER);
+    const Context bookmarksContext(BOOKMARKS_CONTEXT);
 
     MenuBuilder bookmarkMenu(bookmarkMenuId);
     bookmarkMenu.setTitle(Tr::tr("&Bookmarks"));
@@ -412,6 +425,24 @@ BookmarkManager::BookmarkManager(QObject *parent)
 
     ActionContainer *touchBar = ActionManager::actionContainer(Core::Constants::TOUCH_BAR);
     touchBar->addAction(toggleAction.command(), Core::Constants::G_TOUCHBAR_EDITOR);
+
+    ActionBuilder moveDownAction(this, Constants::BOOKMARKS_MOVEDOWN_ACTION);
+    moveDownAction.setContext(bookmarksContext);
+    moveDownAction.setText(Tr::tr("Move Down"));
+    moveDownAction.setDefaultKeySequence(Tr::tr("Ctrl+Alt+."));
+    moveDownAction.addOnTriggered(this, [this] { moveDown(); });
+
+    ActionBuilder moveUpAction(this, Constants::BOOKMARKS_MOVEUP_ACTION);
+    moveUpAction.setContext(bookmarksContext);
+    moveUpAction.setText(Tr::tr("Move Up"));
+    moveUpAction.setDefaultKeySequence(Tr::tr("Ctrl+Alt+,"));
+    moveUpAction.addOnTriggered(this, [this] { moveUp(); });
+
+    ActionBuilder sortByFilenamesAction(this, Constants::BOOKMARKS_SORTBYFILENAMES_ACTION);
+    sortByFilenamesAction.setContext(bookmarksContext);
+    sortByFilenamesAction.setText(Tr::tr("Sort by Filenames"));
+    sortByFilenamesAction.setDefaultKeySequence(Tr::tr("Ctrl+Alt+P"));
+    sortByFilenamesAction.addOnTriggered(this, [this] { sortByFilenames(); });
 
     updateActionStatus();
 }
@@ -519,9 +550,9 @@ bool BookmarkManager::canDropMimeData(const QMimeData *data, Qt::DropAction acti
                                       int row, int column,
                                       const QModelIndex &parent) const
 {
-    Q_UNUSED(row);
-    Q_UNUSED(column);
-    Q_UNUSED(parent);
+    Q_UNUSED(row)
+    Q_UNUSED(column)
+    Q_UNUSED(parent)
 
     if (!(action & supportedDropActions()))
         return false;
@@ -536,7 +567,7 @@ bool BookmarkManager::canDropMimeData(const QMimeData *data, Qt::DropAction acti
 bool BookmarkManager::dropMimeData(const QMimeData *data, Qt::DropAction action,
                                    int row, int column, const QModelIndex &parent)
 {
-    Q_UNUSED(column);
+    Q_UNUSED(column)
 
     if (!(action & supportedDropActions()))
         return false;
@@ -617,6 +648,8 @@ void BookmarkManager::removeAllBookmarks()
 void BookmarkManager::deleteBookmark(Bookmark *bookmark)
 {
     int idx = m_bookmarksList.indexOf(bookmark);
+    if (idx < 0)
+        return;
     beginRemoveRows(QModelIndex(), idx, idx);
 
     m_bookmarksMap[bookmark->filePath()].removeAll(bookmark);
@@ -684,7 +717,7 @@ void BookmarkManager::documentPrevNext(bool next)
     int lastLine = -1;
     int prevLine = -1;
     int nextLine = -1;
-    const QVector<Bookmark *> marks = m_bookmarksMap[filePath];
+    const QList<Bookmark *> marks = m_bookmarksMap[filePath];
     for (int i = 0; i < marks.count(); ++i) {
         int markLine = marks.at(i)->lineNumber();
         if (firstLine == -1 || firstLine > markLine)
@@ -889,6 +922,16 @@ void BookmarkManager::edit()
     }
 }
 
+void BookmarkManager::sortByFilenames()
+{
+    beginResetModel();
+    std::sort(m_bookmarksList.begin(), m_bookmarksList.end(), [](const Bookmark* a, const Bookmark* b){
+        return a->filePath().fileName() < b->filePath().fileName()
+               || (a->filePath().fileName() == b->filePath().fileName() && a->lineNumber() < b->lineNumber());
+    });
+    endResetModel();
+}
+
 /* Returns the bookmark at the given file and line number, or 0 if no such bookmark exists. */
 Bookmark *BookmarkManager::findBookmark(const FilePath &filePath, int lineNumber)
 {
@@ -953,7 +996,7 @@ QString BookmarkManager::bookmarkToString(const Bookmark *b)
     const QLatin1Char colon(':');
     // Using \t as delimiter because any another symbol can be a part of note.
     const QLatin1Char noteDelimiter('\t');
-    return colon + b->filePath().toString() +
+    return colon + b->filePath().toUrlishString() +
             colon + QString::number(b->lineNumber()) +
             noteDelimiter + b->note();
 }

@@ -3,26 +3,25 @@
 
 #include "pythonbuildsystem.h"
 
+#include "pyprojecttoml.h"
 #include "pythonbuildconfiguration.h"
 #include "pythonconstants.h"
-#include "pythonkitaspect.h"
 #include "pythonproject.h"
 #include "pythontr.h"
 
 #include <coreplugin/documentmanager.h>
-#include <coreplugin/messagemanager.h>
+#include <coreplugin/textdocument.h>
 
-#include <projectexplorer/target.h>
 #include <projectexplorer/projectexplorerconstants.h>
-
-#include <qmljs/qmljsmodelmanagerinterface.h>
+#include <projectexplorer/target.h>
+#include <projectexplorer/taskhub.h>
 
 #include <utils/algorithm.h>
 #include <utils/mimeutils.h>
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
 
 using namespace Core;
 using namespace ProjectExplorer;
@@ -32,7 +31,7 @@ namespace Python::Internal {
 
 static QJsonObject readObjJson(const FilePath &projectFile, QString *errorMessage)
 {
-    const expected_str<QByteArray> fileContentsResult = projectFile.fileContents();
+    const Result<QByteArray> fileContentsResult = projectFile.fileContents();
     if (!fileContentsResult) {
         *errorMessage = fileContentsResult.error();
         return {};
@@ -66,7 +65,7 @@ static QStringList readLines(const FilePath &projectFile)
     QSet<QString> visited;
     QStringList lines;
 
-    const expected_str<QByteArray> contents = projectFile.fileContents();
+    const Result<QByteArray> contents = projectFile.fileContents();
     if (contents) {
         QTextStream stream(contents.value());
 
@@ -119,19 +118,8 @@ static QStringList readImportPathsJson(const FilePath &projectFile, QString *err
     return importPaths;
 }
 
-PythonBuildSystem::PythonBuildSystem(PythonBuildConfiguration *buildConfig)
+PythonBuildSystem::PythonBuildSystem(BuildConfiguration *buildConfig)
     : BuildSystem(buildConfig)
-{
-    connect(project(),
-            &Project::projectFileIsDirty,
-            this,
-            &PythonBuildSystem::requestDelayedParse);
-    m_buildConfig = buildConfig;
-    requestParse();
-}
-
-PythonBuildSystem::PythonBuildSystem(ProjectExplorer::Target *target)
-    : BuildSystem(target)
 {
     connect(project(),
             &Project::projectFileIsDirty,
@@ -176,21 +164,16 @@ void PythonBuildSystem::triggerParsing()
 
     auto newRoot = std::make_unique<PythonProjectNode>(projectDirectory());
 
-    FilePath python;
-    if (m_buildConfig)
-        python = m_buildConfig->python();
-    else if (auto kitPython = PythonKitAspect::python(kit()))
-        python = kitPython->command;
-
+    const FilePath python = static_cast<PythonBuildConfiguration *>(buildConfiguration())->python();
     const FilePath projectFile = projectFilePath();
-    const QString displayName = projectFile.relativePathFrom(projectDirectory()).toUserOutput();
+    const QString displayName = projectFile.relativeNativePathFromDir(projectDirectory());
     newRoot->addNestedNode(
         std::make_unique<PythonFileNode>(projectFile, displayName, FileType::Project));
 
     bool hasQmlFiles = false;
 
     for (const FileEntry &entry : std::as_const(m_files)) {
-        const QString displayName = entry.filePath.relativePathFrom(projectDirectory()).toUserOutput();
+        const QString displayName = entry.filePath.relativeNativePathFromDir(projectDirectory());
         const FileType fileType = getFileType(entry.filePath);
 
         hasQmlFiles |= fileType == FileType::QML;
@@ -201,7 +184,7 @@ void PythonBuildSystem::triggerParsing()
             || mt.matchesName(Constants::C_PY_GUI_MIMETYPE)) {
             BuildTargetInfo bti;
             bti.displayName = displayName;
-            bti.buildKey = entry.filePath.toString();
+            bti.buildKey = entry.filePath.toUrlishString();
             bti.targetFilePath = entry.filePath;
             bti.projectFilePath = projectFile;
             bti.isQtcRunnable = entry.filePath.fileName() == "main.py";
@@ -215,83 +198,108 @@ void PythonBuildSystem::triggerParsing()
 
     setApplicationTargets(appTargets);
 
-    auto modelManager = QmlJS::ModelManagerInterface::instance();
-    if (modelManager) {
-        const auto hiddenRccFolders = project()->files(Project::HiddenRccFolders);
-        auto projectInfo = modelManager->defaultProjectInfoForProject(project(), hiddenRccFolders);
-
-        for (const FileEntry &importPath : std::as_const(m_qmlImportPaths)) {
-            if (!importPath.filePath.isEmpty())
-                projectInfo.importPaths.maybeInsert(importPath.filePath, QmlJS::Dialect::Qml);
-        }
-
-        modelManager->updateProjectInfo(projectInfo, project());
-    }
+    updateQmlCodeModel();
 
     guard.markAsSuccess();
 
     emitBuildSystemUpdated();
 }
 
+void PythonBuildSystem::updateQmlCodeModelInfo(QmlCodeModelInfo &projectInfo)
+{
+    for (const FileEntry &importPath : std::as_const(m_qmlImportPaths)) {
+        if (!importPath.filePath.isEmpty())
+            projectInfo.qmlImportPaths.append(importPath.filePath);
+    }
+}
+
+/*!
+    \brief Saves the build system configuration in the corresponding project file.
+    Currently, three project file formats are supported: pyproject.toml, *.pyproject and the legacy
+    *.pyqtc file.
+    \returns true if the save was successful, false otherwise.
+*/
 bool PythonBuildSystem::save()
 {
+    TaskHub::clearAndRemoveTask(m_saveError);
+    const auto setError = [this](const QString &reason) {
+        m_saveError = OtherTask(
+            Task::DisruptingError,
+            Tr::tr("Cannot save Python project file.").append('\n').append(reason));
+        TaskHub::addTask(m_saveError);
+    };
+
     const FilePath filePath = projectFilePath();
-    const QStringList rawList = Utils::transform(m_files, &FileEntry::rawEntry);
+    const QStringList projectFiles = Utils::transform(m_files, &FileEntry::rawEntry);
     const FileChangeBlocker changeGuard(filePath);
-    bool result = false;
 
     QByteArray newContents;
 
-    // New project file
-    if (filePath.endsWith(".pyproject")) {
-        expected_str<QByteArray> contents = filePath.fileContents();
-        if (contents) {
-            QJsonDocument doc = QJsonDocument::fromJson(*contents);
-            QJsonObject project = doc.object();
-            project["files"] = QJsonArray::fromStringList(rawList);
-            doc.setObject(project);
-            newContents = doc.toJson();
-        } else {
-            MessageManager::writeDisrupting(contents.error());
+    if (filePath.fileName() == "pyproject.toml") {
+        Core::BaseTextDocument projectFile;
+        const BaseTextDocument::ReadResult result = projectFile.read(filePath);
+        if (result.code != TextFileFormat::ReadSuccess) {
+            setError(result.error);
+            return false;
         }
-    } else { // Old project file
-        newContents = rawList.join('\n').toUtf8();
+        auto newPyProjectToml = updatePyProjectTomlContent(result.content, projectFiles);
+        if (!newPyProjectToml) {
+            setError(newPyProjectToml.error());
+            return false;
+        }
+        newContents = newPyProjectToml->toUtf8();
+    } else if (filePath.endsWith(".pyproject")) {
+        // *.pyproject project file
+        Result<QByteArray> contents = filePath.fileContents();
+        if (!contents) {
+            setError(contents.error());
+            return false;
+        }
+        QJsonDocument doc = QJsonDocument::fromJson(*contents);
+        QJsonObject project = doc.object();
+        project["files"] = QJsonArray::fromStringList(projectFiles);
+        doc.setObject(project);
+        newContents = doc.toJson();
+    } else {
+        // Old project file
+        newContents = projectFiles.join('\n').toUtf8();
     }
 
-    const expected_str<qint64> writeResult = filePath.writeFileContents(newContents);
-    if (writeResult)
-        result = true;
-    else
-        MessageManager::writeDisrupting(writeResult.error());
-
-    return result;
+    const Result<qint64> writeResult = filePath.writeFileContents(newContents);
+    if (!writeResult) {
+        setError(writeResult.error());
+        return false;
+    }
+    return true;
 }
 
 bool PythonBuildSystem::addFiles(Node *, const FilePaths &filePaths, FilePaths *)
 {
     const FilePath projectDir = projectDirectory();
+    const auto existingPaths = Utils::transform(m_files, &FileEntry::filePath);
 
-    auto comp = [](const FileEntry &left, const FileEntry &right) {
+    auto filesComp = [](const FileEntry &left, const FileEntry &right) {
         return left.rawEntry < right.rawEntry;
     };
 
-    const bool isSorted = std::is_sorted(m_files.begin(), m_files.end(), comp);
+    const bool projectFilesWereSorted = std::is_sorted(m_files.begin(), m_files.end(), filesComp);
 
     for (const FilePath &filePath : filePaths) {
         if (!projectDir.isSameDevice(filePath))
             return false;
-        m_files.append(FileEntry{filePath.relativePathFrom(projectDir).toString(), filePath});
+        if (existingPaths.contains(filePath))
+            continue;
+        m_files.append(FileEntry{filePath.relativePathFromDir(projectDir), filePath});
     }
 
-    if (isSorted)
-        std::sort(m_files.begin(), m_files.end(), comp);
+    if (projectFilesWereSorted)
+        std::sort(m_files.begin(), m_files.end(), filesComp);
 
     return save();
 }
 
 RemovedFilesFromProject PythonBuildSystem::removeFiles(Node *, const FilePaths &filePaths, FilePaths *)
 {
-
     for (const FilePath &filePath : filePaths) {
         Utils::eraseOne(m_files,
                         [filePath](const FileEntry &entry) { return filePath == entry.filePath; });
@@ -305,17 +313,33 @@ bool PythonBuildSystem::deleteFiles(Node *, const FilePaths &)
     return true;
 }
 
-bool PythonBuildSystem::renameFile(Node *, const FilePath &oldFilePath, const FilePath &newFilePath)
+bool PythonBuildSystem::renameFiles(Node *, const FilePairs &filesToRename, FilePaths *notRenamed)
 {
-    for (FileEntry &entry : m_files) {
-        if (entry.filePath == oldFilePath) {
-            entry.filePath = newFilePath;
-            entry.rawEntry = newFilePath.relativeChildPath(projectDirectory()).toString();
-            break;
+    bool success = true;
+    for (const auto &[oldFilePath, newFilePath] : filesToRename) {
+        bool found = false;
+        for (FileEntry &entry : m_files) {
+            if (entry.filePath == oldFilePath) {
+                found = true;
+                entry.filePath = newFilePath;
+                entry.rawEntry = newFilePath.relativeChildPath(projectDirectory()).toUrlishString();
+                break;
+            }
+        }
+        if (!found) {
+            success = false;
+            if (notRenamed)
+                *notRenamed << oldFilePath;
         }
     }
 
-    return save();
+    if (!save()) {
+        if (notRenamed)
+            *notRenamed = firstPaths(filesToRename);
+        return false;
+    }
+
+    return success;
 }
 
 void PythonBuildSystem::parse()
@@ -326,35 +350,55 @@ void PythonBuildSystem::parse()
     QStringList files;
     QStringList qmlImportPaths;
 
-    const FilePath filePath = projectFilePath();
-    // The PySide project file is JSON based
-    if (filePath.endsWith(".pyproject")) {
-        QString errorMessage;
-        files = readLinesJson(filePath, &errorMessage);
-        if (!errorMessage.isEmpty())
-            MessageManager::writeFlashing(errorMessage);
+    TaskHub::clearTasks(ProjectExplorer::Constants::TASK_CATEGORY_BUILDSYSTEM);
+    const auto addError = [](const QString &reason) {
+        TaskHub::addTask<BuildSystemTask>(
+            Task::Warning, Tr::tr("Cannot read Python project.").append('\n').append(reason));
+        TaskHub::requestPopup();
+    };
 
-        errorMessage.clear();
+    const FilePath filePath = projectFilePath();
+    QString errorMessage;
+    if (filePath.endsWith(".pyproject")) {
+        // The PySide .pyproject file is JSON based
+        files = readLinesJson(filePath, &errorMessage);
+        if (!errorMessage.isEmpty()) {
+            addError(errorMessage);
+            errorMessage.clear();
+        }
         qmlImportPaths = readImportPathsJson(filePath, &errorMessage);
         if (!errorMessage.isEmpty())
-            MessageManager::writeFlashing(errorMessage);
+            addError(errorMessage);
     } else if (filePath.endsWith(".pyqtc")) {
         // To keep compatibility with PyQt we keep the compatibility with plain
         // text files as project files.
         files = readLines(filePath);
+    } else if (filePath.fileName() == "pyproject.toml") {
+        auto pyProjectTomlParseResult = parsePyProjectToml(filePath);
+
+        for (const PyProjectTomlError &error : std::as_const(pyProjectTomlParseResult.errors)) {
+            TaskHub::addTask<BuildSystemTask>(
+                Task::TaskType::Error, error.description, filePath, error.line);
+        }
+
+        if (!pyProjectTomlParseResult.projectName.isEmpty()) {
+            project()->setDisplayName(pyProjectTomlParseResult.projectName);
+        }
+
+        files = pyProjectTomlParseResult.projectFiles;
     }
 
     m_files = processEntries(files);
     m_qmlImportPaths = processEntries(qmlImportPaths);
 }
 
-/**
- * Expands environment variables in the given \a string when they are written
- * like $$(VARIABLE).
- */
+/*!
+    \brief Expands environment variables in the given \a string when they are written like
+    $$(VARIABLE).
+*/
 static void expandEnvironmentVariables(const Environment &env, QString &string)
 {
-    const QRegularExpression candidate("\\$\\$\\((.+)\\)");
+    static const QRegularExpression candidate("\\$\\$\\((.+)\\)");
 
     QRegularExpressionMatch match;
     int index = string.indexOf(candidate, 0, &match);
@@ -362,20 +406,23 @@ static void expandEnvironmentVariables(const Environment &env, QString &string)
         const QString value = env.value(match.captured(1));
 
         string.replace(index, match.capturedLength(), value);
-        index += value.length();
+        index += value.size();
 
         index = string.indexOf(candidate, index, &match);
     }
 }
 
-/**
- * Expands environment variables and converts the path from relative to the
- * project to an absolute path for all given raw paths
- */
+/*!
+    \brief Expands environment variables and converts the path from relative to the project root
+    folder to an absolute path for all given raw paths.
+    \note Duplicated resolved paths are removed
+*/
 QList<PythonBuildSystem::FileEntry> PythonBuildSystem::processEntries(
     const QStringList &rawPaths) const
 {
-    QList<FileEntry> processed;
+    QList<FileEntry> files;
+    FilePaths seenResolvedPaths;
+
     const FilePath projectDir = projectDirectory();
     const Environment env = projectDirectory().deviceEnvironment();
 
@@ -386,9 +433,14 @@ QList<PythonBuildSystem::FileEntry> PythonBuildSystem::processEntries(
             expandEnvironmentVariables(env, path);
             resolvedPath = projectDir.resolvePath(path);
         }
-        processed << FileEntry{rawPath, resolvedPath};
+        if (seenResolvedPaths.contains(resolvedPath))
+            continue;
+
+        seenResolvedPaths << resolvedPath;
+        files << FileEntry{rawPath, resolvedPath};
     }
-    return processed;
+
+    return files;
 }
 
-} // namespace Internal
+} // namespace Python::Internal

@@ -41,16 +41,16 @@ OutputLineParser::Result QtTestParser::handleLine(const QString &line, OutputFor
     const QRegularExpressionMatch match = locationPattern.match(theLine);
     if (match.hasMatch()) {
         LinkSpecs linkSpecs;
-        m_currentTask.file = absoluteFilePath(FilePath::fromString(
-                    QDir::fromNativeSeparators(match.captured("file"))));
-        m_currentTask.line = match.captured("line").toInt();
+        m_currentTask.setFile(absoluteFilePath(FilePath::fromString(
+                    QDir::fromNativeSeparators(match.captured("file")))));
+        m_currentTask.setLine(match.captured("line").toInt());
         addLinkSpecForAbsoluteFilePath(
-            linkSpecs, m_currentTask.file, m_currentTask.line, m_currentTask.column, match, "file");
+            linkSpecs, m_currentTask.file(), m_currentTask.line(), m_currentTask.column(), match, "file");
         emitCurrentTask();
         return {Status::Done, linkSpecs};
     }
     if (line.startsWith("   Actual") || line.startsWith("   Expected")) {
-        m_currentTask.details.append(theLine);
+        m_currentTask.addToDetails(theLine);
         return Status::InProgress;
     }
     return Status::NotHandled;
@@ -105,11 +105,11 @@ void QtTestParserTest::testQtTestOutputParser()
 #endif
             "XPASS: irrelevant\n"
             "PASS   : MyTest::anotherTest()";
-    const QString expectedChildOutput =
-            "random output\n"
-            "PASS   : MyTest::someTest()\n"
-            "XPASS: irrelevant\n"
-            "PASS   : MyTest::anotherTest()\n";
+    const QStringList expectedChildOutput{
+            "random output",
+            "PASS   : MyTest::someTest()",
+            "XPASS: irrelevant",
+            "PASS   : MyTest::anotherTest()\n"};
     const FilePath theFile = FilePath::fromString(HostOsInfo::isWindowsHost()
         ? QString("C:/dev/tests/tst_mytest.cpp") : QString("/home/me/tests/tst_mytest.cpp"));
     const Tasks expectedTasks{
@@ -121,7 +121,7 @@ void QtTestParserTest::testQtTestOutputParser()
                           "   Expected (true)           : 1",
              theFile, 220, Constants::TASK_CATEGORY_AUTOTEST)};
     testbench.testParsing(input, OutputParserTester::STDOUT, expectedTasks, expectedChildOutput,
-                          QString(), QString());
+                          QStringList());
 }
 
 QObject *createQtTestParserTest()

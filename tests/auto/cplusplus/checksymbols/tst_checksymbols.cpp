@@ -17,7 +17,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QList>
-#include <QtTest>
+#include <QTest>
 
 /*!
     Tests CheckSymbols, the "data provider" of the semantic highlighter.
@@ -119,7 +119,7 @@ public:
         CPlusPlus::Environment env;
         Preprocessor preprocess(0, &env);
         preprocess.setKeepComments(true);
-        const QByteArray preprocessedSource = preprocess.run(filePath, source);
+        const QByteArray preprocessedSource = preprocess.run(FilePath::fromString(filePath), source);
 
         Document::Ptr document = Document::create(Utils::FilePath::fromString(filePath));
         document->setUtf8Source(preprocessedSource);
@@ -1155,7 +1155,7 @@ void tst_CheckSymbols::test_checksymbols_infiniteLoop()
     document1->addIncludeFile(Document::Include("file2.h", filePath2, 1, Client::IncludeLocal));
     Snapshot snapshot;
     snapshot.insert(document1);
-    snapshot.insert(TestCase::createDocument(filePath2.toString(), source2));
+    snapshot.insert(TestCase::createDocument(filePath2.toUrlishString(), source2));
 
     TestCase::runCheckSymbols(document1, snapshot);
 }

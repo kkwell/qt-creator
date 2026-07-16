@@ -12,11 +12,11 @@
 
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/buildsteplist.h>
-#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/environmentkitaspect.h>
 #include <projectexplorer/processparameters.h>
 #include <projectexplorer/project.h>
-#include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/projectexplorersettings.h>
 #include <projectexplorer/target.h>
 
 #include <qtsupport/qtkitaspect.h>
@@ -125,7 +125,7 @@ FilePath IosDsymBuildStep::defaultCommand() const
 
 QStringList IosDsymBuildStep::defaultCleanCmdList() const
 {
-    auto runConf = qobject_cast<IosRunConfiguration *>(target()->activeRunConfiguration());
+    auto runConf = qobject_cast<IosRunConfiguration *>(buildConfiguration()->activeRunConfiguration());
     QTC_ASSERT(runConf, return {"echo"});
     QString dsymPath = runConf->bundleDirectory().toUserOutput();
     dsymPath.chop(4);
@@ -140,7 +140,7 @@ QStringList IosDsymBuildStep::defaultCmdList() const
             .pathAppended("Toolchains/XcodeDefault.xctoolchain/usr/bin/dsymutil");
     if (dsymUtilPath.exists())
         dsymutilCmd = dsymUtilPath.toUserOutput();
-    auto runConf = qobject_cast<const IosRunConfiguration *>(target()->activeRunConfiguration());
+    auto runConf = qobject_cast<const IosRunConfiguration *>(buildConfiguration()->activeRunConfiguration());
     QTC_ASSERT(runConf, return {"echo"});
     QString dsymPath = runConf->bundleDirectory().toUserOutput();
     dsymPath.chop(4);
@@ -211,7 +211,7 @@ QWidget *IosDsymBuildStep::createConfigWidget()
     auto commandLabel = new QLabel(Tr::tr("Command:"), widget);
 
     auto commandLineEdit = new QLineEdit(widget);
-    commandLineEdit->setText(command().toString());
+    commandLineEdit->setText(command().toUrlishString());
 
     auto argumentsTextEdit = new QPlainTextEdit(widget);
     argumentsTextEdit->setPlainText(Utils::ProcessArgs::joinArgs(arguments()));
@@ -256,16 +256,13 @@ QWidget *IosDsymBuildStep::createConfigWidget()
             [this, commandLineEdit, resetDefaultsButton, argumentsTextEdit, updateDetails] {
         setCommand(defaultCommand());
         setArguments(defaultArguments());
-        commandLineEdit->setText(command().toString());
+        commandLineEdit->setText(command().toUrlishString());
         argumentsTextEdit->setPlainText(Utils::ProcessArgs::joinArgs(arguments()));
         resetDefaultsButton->setEnabled(!isDefault());
         updateDetails();
     });
 
-    connect(ProjectExplorerPlugin::instance(), &ProjectExplorerPlugin::settingsChanged,
-            this, updateDetails);
-    connect(target(), &Target::kitChanged,
-            this, updateDetails);
+    connect(buildConfiguration(), &BuildConfiguration::kitChanged, this, updateDetails);
     connect(buildConfiguration(), &BuildConfiguration::enabledChanged,
             this, updateDetails);
 

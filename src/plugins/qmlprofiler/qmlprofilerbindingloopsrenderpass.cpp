@@ -6,17 +6,18 @@
 
 #include <utils/theme/theme.h>
 
-namespace QmlProfiler {
-namespace Internal {
+namespace QmlProfiler::Internal {
 
-class BindingLoopMaterial : public QSGMaterial {
+class BindingLoopMaterial : public QSGMaterial
+{
 public:
     QSGMaterialType *type() const override;
     QSGMaterialShader *createShader(QSGRendererInterface::RenderMode) const override;
     BindingLoopMaterial();
 };
 
-class BindingLoopsRenderPassState : public Timeline::TimelineRenderPass::State {
+class BindingLoopsRenderPassState : public Timeline::TimelineRenderPass::State
+{
 public:
     BindingLoopsRenderPassState(const QmlProfilerRangeModel *model);
     ~BindingLoopsRenderPassState() override;
@@ -28,24 +29,26 @@ public:
     int indexTo() const { return m_indexTo; }
 
     QSGNode *expandedRow(int row) const { return m_expandedRows[row]; }
-    const QVector<QSGNode *> &expandedRows() const override { return m_expandedRows; }
+    const QList<QSGNode *> &expandedRows() const override { return m_expandedRows; }
     QSGNode *collapsedOverlay() const override { return m_collapsedOverlay; }
 
 private:
-    QVector<QSGNode *> m_expandedRows;
+    QList<QSGNode *> m_expandedRows;
     QSGNode *m_collapsedOverlay;
     BindingLoopMaterial m_material;
     int m_indexFrom;
     int m_indexTo;
 };
 
-struct Point2DWithOffset {
+struct Point2DWithOffset
+{
     float x, y; // vec4 vertexCoord
     float x2, y2; // vec2 postScaleOffset
     void set(float nx, float ny, float nx2, float ny2);
 };
 
-struct BindlingLoopsGeometry {
+struct BindlingLoopsGeometry
+{
     static const QSGGeometry::AttributeSet &point2DWithOffset();
     static const int maxEventsPerNode = 0xffff / 18;
 
@@ -73,8 +76,8 @@ QmlProfilerBindingLoopsRenderPass::QmlProfilerBindingLoopsRenderPass() = default
 static inline bool eventOutsideRange(const QmlProfilerRangeModel *model,
                                   const Timeline::TimelineRenderState *parentState, int i)
 {
-    const qint64 start = qMax(parentState->start(), model->startTime(i));
-    const qint64 end = qMin(parentState->end(), model->endTime(i));
+    const qint64 start = qMax(parentState->start, model->startTime(i));
+    const qint64 end = qMin(parentState->end, model->endTime(i));
     return start > end;
 }
 
@@ -82,7 +85,7 @@ void updateNodes(const QmlProfilerRangeModel *model, int from, int to,
                  const Timeline::TimelineRenderState *parentState,
                  BindingLoopsRenderPassState *state)
 {
-    QVector<BindlingLoopsGeometry> expandedPerRow(model->expandedRowCount());
+    QList<BindlingLoopsGeometry> expandedPerRow(model->expandedRowCount());
     BindlingLoopsGeometry collapsed;
 
     for (int i = from; i < to; ++i) {
@@ -113,18 +116,18 @@ void updateNodes(const QmlProfilerRangeModel *model, int from, int to,
         if (bindingLoopDest == -1 || eventOutsideRange(model, parentState, i))
             continue;
 
-        qint64 center = qMax(parentState->start(), qMin(parentState->end(),
+        qint64 center = qMax(parentState->start, qMin(parentState->end,
                                                         (model->startTime(i) + model->endTime(i)) /
                                                         (qint64)2));
 
-        float itemCenter = (center - parentState->start()) * parentState->scale();
+        float itemCenter = (center - parentState->start) * parentState->scale;
         expandedPerRow[model->expandedRow(i)].addExpandedEvent(itemCenter);
 
-        center = qMax(parentState->start(), qMin(parentState->end(),
+        center = qMax(parentState->start, qMin(parentState->end,
                                                  (model->startTime(bindingLoopDest) +
                                                   model->endTime(bindingLoopDest)) / (qint64)2));
 
-        float itemCenterTarget = (center - parentState->start()) * parentState->scale();
+        float itemCenterTarget = (center - parentState->start) * parentState->scale;
         collapsed.addCollapsedEvent(itemCenter, itemCenterTarget,
                                     (model->collapsedRow(i) + 0.5) * rowHeight,
                                     (model->collapsedRow(bindingLoopDest) + 0.5) * rowHeight);
@@ -355,5 +358,4 @@ void BindingLoopsRenderPassState::updateIndexes(int from, int to)
         m_indexTo = to;
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

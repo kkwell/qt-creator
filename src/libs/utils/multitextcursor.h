@@ -15,6 +15,8 @@ QT_END_NAMESPACE
 
 namespace Utils {
 
+class PlainTextDocumentLayout;
+
 class QTCREATOR_UTILS_EXPORT MultiTextCursor
 {
 public:
@@ -39,6 +41,8 @@ public:
     /// Returns the number of cursors handled by this cursor.
     int cursorCount() const;
 
+    bool containsCursor(const QTextCursor &cursor) const;
+    void removeCursor(const QTextCursor &cursor);
     /// the \param cursor that is appended by added by \brief addCursor
     /// will be interpreted as the new main cursor
     void addCursor(const QTextCursor &cursor);
@@ -57,10 +61,15 @@ public:
     void mergeCursors();
 
     /// applies the move key event \param e to all cursors in this multi cursor
-    bool handleMoveKeyEvent(QKeyEvent *e, QPlainTextEdit *edit, bool camelCaseNavigationEnabled);
+    bool handleMoveKeyEvent(
+        QKeyEvent *e, bool camelCaseNavigationEnabled, PlainTextDocumentLayout *layout = nullptr);
     /// applies the move \param operation to all cursors in this multi cursor \param n times
     /// with the move \param mode
-    void movePosition(QTextCursor::MoveOperation operation, QTextCursor::MoveMode mode, int n = 1);
+    void movePosition(
+        QTextCursor::MoveOperation operation,
+        QTextCursor::MoveMode mode,
+        int n = 1,
+        PlainTextDocumentLayout *layout = nullptr);
 
     /// Returns whether any cursor has a selection.
     bool hasSelection() const;

@@ -9,12 +9,13 @@
 #include "qmlpreviewfileontargetfinder.h"
 
 #include <qmldebug/qmldebugconnectionmanager.h>
+
+#include <QtTaskTree/QTaskTree>
+
 #include <utils/fileinprojectfinder.h>
 #include <utils/filesystemwatcher.h>
 
-namespace ProjectExplorer {
-class Target;
-}
+namespace ProjectExplorer { class BuildConfiguration; }
 
 namespace QmlPreview {
 
@@ -25,7 +26,7 @@ public:
     virtual ~QmlPreviewConnectionManager();
 
     explicit QmlPreviewConnectionManager(QObject *parent = nullptr);
-    void setTarget(ProjectExplorer::Target *target);
+    void setBuildConfiguration(ProjectExplorer::BuildConfiguration *bc);
     void setFileLoader(QmlPreviewFileLoader fileLoader);
     void setFileClassifier(QmlPreviewFileClassifier fileClassifier);
     void setFpsHandler(QmlPreviewFpsHandler fpsHandler);
@@ -59,5 +60,32 @@ private:
     QmlPreviewFpsHandler m_fpsHandler = nullptr;
     QmlDebugTranslationClientFactoryFunction m_createDebugTranslationClientMethod;
 };
+
+class QmlPreviewConnectionManagerTaskAdapter final
+{
+public:
+    ~QmlPreviewConnectionManagerTaskAdapter()
+    {
+        if (m_task)
+            m_task->disconnectFromServer();
+    }
+    void operator()(QmlPreviewConnectionManager *task, QtTaskTree::QTaskInterface *iface)
+    {
+        m_task = task;
+        QObject::connect(task, &QmlPreviewConnectionManager::connectionClosed, iface, [iface] {
+            iface->reportDone(QtTaskTree::DoneResult::Success);
+        }, Qt::SingleShotConnection);
+        QObject::connect(task, &QmlPreviewConnectionManager::connectionFailed, iface, [iface] {
+            iface->reportDone(QtTaskTree::DoneResult::Error);
+        }, Qt::SingleShotConnection);
+        task->connectToServer();
+    }
+
+private:
+    QmlPreviewConnectionManager *m_task = nullptr;
+};
+
+using QmlPreviewConnectionManagerTask
+    = QtTaskTree::QCustomTask<QmlPreviewConnectionManager, QmlPreviewConnectionManagerTaskAdapter>;
 
 } // namespace QmlPreview

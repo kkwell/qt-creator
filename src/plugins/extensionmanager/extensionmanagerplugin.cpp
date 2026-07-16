@@ -13,6 +13,7 @@
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
 #include <coreplugin/coreconstants.h>
+#include <coreplugin/dialogs/ioptionspage.h>
 #include <coreplugin/icontext.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/imode.h>
@@ -37,9 +38,7 @@ public:
         setDisplayName(Tr::tr("Extensions"));
         const Icon FLAT({{":/extensionmanager/images/mode_extensionmanager_mask.png",
                           Theme::IconsBaseColor}});
-        const Icon FLAT_ACTIVE({{":/extensionmanager/images/mode_extensionmanager_mask.png",
-                                 Theme::IconsModeWelcomeActiveColor}});
-        setIcon(Icon::modeIcon(FLAT, FLAT, FLAT_ACTIVE));
+        setIcon(Icon::sideBarIcon(FLAT, FLAT));
         setPriority(72);
         setWidgetCreator(&createExtensionManagerWidget);
     }
@@ -59,6 +58,11 @@ public:
     void initialize() final
     {
         m_mode = new ExtensionManagerMode;
+
+        IOptionsPage::registerCategory(
+            Constants::EXTENSIONMANAGER_SETTINGSPAGE_CATEGORY,
+            Tr::tr("Extensions"),
+            ":/extensionmanager/images/settingscategory_extensionmanager.png");
 
 #ifdef WITH_TESTS
         addTestCreator(createExtensionsModelTest);

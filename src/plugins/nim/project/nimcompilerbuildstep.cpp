@@ -3,18 +3,18 @@
 
 #include "nimcompilerbuildstep.h"
 
-#include "nimbuildconfiguration.h"
 #include "nimconstants.h"
 #include "nimoutputtaskparser.h"
 #include "nimtr.h"
+#include "project/nimproject.h"
 
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/ioutputparser.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/processparameters.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/toolchainkitaspect.h>
 
 #include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
@@ -64,9 +64,9 @@ QWidget *NimCompilerBuildStep::createConfigWidget()
     commandTextEdit->setMinimumSize(QSize(0, 0));
 
     auto defaultArgumentsComboBox = new QComboBox(widget);
-    defaultArgumentsComboBox->addItem(Tr::tr("None"));
-    defaultArgumentsComboBox->addItem(Tr::tr("Debug"));
-    defaultArgumentsComboBox->addItem(Tr::tr("Release"));
+    defaultArgumentsComboBox->addItem(Tr::tr("None", "No default arguments"));
+    defaultArgumentsComboBox->addItem(msgBuildConfigurationDebug());
+    defaultArgumentsComboBox->addItem(msgBuildConfigurationRelease());
 
     auto formLayout = new QFormLayout(widget);
     formLayout->addRow(Tr::tr("Target:"), targetComboBox);
@@ -86,10 +86,10 @@ QWidget *NimCompilerBuildStep::createConfigWidget()
         const FilePaths files = project()->files(Project::AllFiles);
         for (const FilePath &file : files) {
             if (file.endsWith(".nim"))
-                targetComboBox->addItem(file.fileName(), file.toString());
+                targetComboBox->addItem(file.fileName(), file.toVariant());
         }
 
-        const int index = targetComboBox->findData(m_targetNimFile.toString());
+        const int index = targetComboBox->findData(m_targetNimFile.toVariant());
         targetComboBox->setCurrentIndex(index);
 
         const QString text = m_userCompilerOptions.join(QChar::Space);
@@ -98,21 +98,21 @@ QWidget *NimCompilerBuildStep::createConfigWidget()
         defaultArgumentsComboBox->setCurrentIndex(m_defaultOptions);
     };
 
-    connect(project(), &Project::fileListChanged, this, updateUi);
+    connect(project(), &Project::fileListChanged, widget, updateUi);
 
-    connect(targetComboBox, &QComboBox::activated, this, [this, targetComboBox, updateUi] {
+    connect(targetComboBox, &QComboBox::activated, widget, [this, targetComboBox, updateUi] {
         const QVariant data = targetComboBox->currentData();
         m_targetNimFile = FilePath::fromString(data.toString());
         updateUi();
     });
 
     connect(additionalArgumentsLineEdit, &QLineEdit::textEdited,
-            this, [this, updateUi](const QString &text) {
+            widget, [this, updateUi](const QString &text) {
         m_userCompilerOptions = text.split(QChar::Space);
         updateUi();
     });
 
-    connect(defaultArgumentsComboBox, &QComboBox::activated, this, [this, updateUi](int index) {
+    connect(defaultArgumentsComboBox, &QComboBox::activated, widget, [this, updateUi](int index) {
         m_defaultOptions = static_cast<DefaultBuildOptions>(index);
         updateUi();
     });
@@ -135,7 +135,7 @@ void NimCompilerBuildStep::toMap(Store &map) const
     AbstractProcessStep::toMap(map);
     map[Constants::C_NIMCOMPILERBUILDSTEP_USERCOMPILEROPTIONS] = m_userCompilerOptions.join('|');
     map[Constants::C_NIMCOMPILERBUILDSTEP_DEFAULTBUILDOPTIONS] = m_defaultOptions;
-    map[Constants::C_NIMCOMPILERBUILDSTEP_TARGETNIMFILE] = m_targetNimFile.toString();
+    map[Constants::C_NIMCOMPILERBUILDSTEP_TARGETNIMFILE] = m_targetNimFile.toSettings();
 }
 
 void NimCompilerBuildStep::setBuildType(BuildConfiguration::BuildType buildType)
@@ -172,8 +172,8 @@ CommandLine NimCompilerBuildStep::commandLine()
     else if (m_defaultOptions == Debug)
         cmd.addArgs({"--debugInfo", "--lineDir:on"});
 
-    cmd.addArg("--out:" + outFilePath().toString());
-    cmd.addArg("--nimCache:" + bc->cacheDirectory().toString());
+    cmd.addArg("--out:" + outFilePath().path());
+    cmd.addArg("--nimCache:" + bc->cacheDirectory().path());
 
     for (const QString &arg : std::as_const(m_userCompilerOptions)) {
         if (!arg.isEmpty())
@@ -181,7 +181,7 @@ CommandLine NimCompilerBuildStep::commandLine()
     }
 
     if (!m_targetNimFile.isEmpty())
-        cmd.addArg(m_targetNimFile.toString());
+        cmd.addArg(m_targetNimFile.path());
 
     return cmd;
 }

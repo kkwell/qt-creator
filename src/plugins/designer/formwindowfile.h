@@ -12,8 +12,7 @@ QT_BEGIN_NAMESPACE
 class QDesignerFormWindowInterface;
 QT_END_NAMESPACE
 
-namespace Designer {
-namespace Internal {
+namespace Designer::Internal {
 
 class ResourceHandler;
 
@@ -26,21 +25,21 @@ public:
     ~FormWindowFile() override { }
 
     // IDocument
-    OpenResult open(QString *errorString, const Utils::FilePath &filePath,
-                    const Utils::FilePath &realFilePath) override;
+    Utils::Result<> open(const Utils::FilePath &filePath,
+                         const Utils::FilePath &realFilePath) override;
     QByteArray contents() const override;
-    bool setContents(const QByteArray &contents) override;
+    Utils::Result<> setContents(const QByteArray &contents) override;
     bool shouldAutoSave() const override;
     bool isModified() const override;
     bool isSaveAsAllowed() const override;
-    bool reload(QString *errorString, ReloadFlag flag, ChangeType type) override;
+    Utils::Result<> reload(ReloadFlag flag, ChangeType type) override;
     QString fallbackSaveAsFileName() const override;
-    bool supportsCodec(const QTextCodec *codec) const override;
+    bool supportsEncoding(const Utils::TextEncoding &encoding) const override;
 
     // Internal
     void setFallbackSaveAsFileName(const QString &fileName);
 
-    bool writeFile(const Utils::FilePath &filePath, QString *errorString) const;
+    Utils::Result<> writeFile(const Utils::FilePath &filePath) const;
 
     QDesignerFormWindowInterface *formWindow() const;
     void syncXmlFromFormWindow();
@@ -52,7 +51,7 @@ public:
     void updateIsModified();
 
 protected:
-    bool saveImpl(QString *errorString, const Utils::FilePath &filePath, bool autoSave) override;
+    Utils::Result<> saveImpl(const Utils::FilePath &filePath, SaveOption option) override;
 
 private:
     void slotFormWindowRemoved(QDesignerFormWindowInterface *w);
@@ -67,5 +66,4 @@ private:
     Utils::Guard m_modificationChangedGuard;
 };
 
-} // namespace Internal
-} // namespace Designer
+} // namespace Designer::Internal

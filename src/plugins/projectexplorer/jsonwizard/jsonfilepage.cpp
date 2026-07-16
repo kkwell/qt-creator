@@ -27,6 +27,8 @@ void JsonFilePage::initializePage()
         setFileName(wiz->stringValue(QLatin1String("InitialFileName")));
     if (filePath().isEmpty())
         setPath(wiz->stringValue(QLatin1String("InitialPath")));
+    if (const QVariant visible = wiz->value("PathVisible"); visible.isValid())
+        setPathVisible(visible.toBool());
     setDefaultSuffix(wiz->stringValue("DefaultSuffix"));
 }
 
@@ -41,7 +43,7 @@ bool JsonFilePage::validatePage()
 
     const FilePath target = dir.resolvePath(fileName());
 
-    wizard()->setProperty("TargetPath", target.toString());
+    wizard()->setProperty("TargetPath", target.toUrlishString());
     return true;
 }
 

@@ -14,6 +14,8 @@
 
 #include <nodemetainfo.h>
 
+#include <auxiliarydataproperties.h>
+#include <backgroundaction.h>
 #include <bindingproperty.h>
 #include <customnotifications.h>
 #include <nodelistproperty.h>
@@ -68,7 +70,6 @@ WidgetInfo StatesEditorView::widgetInfo()
     return createWidgetInfo(m_statesEditorWidget.data(),
                             "StatesEditor",
                             WidgetInfo::BottomPane,
-                            0,
                             tr("States"));
 }
 
@@ -155,7 +156,7 @@ void StatesEditorView::createNewState()
 {
     // can happen when root node is e.g. a ListModel
     if (!QmlVisualNode::isValidQmlVisualNode(activeStatesGroupNode())
-        && m_activeStatesGroupNode.type() != "QtQuick.StateGroup")
+        && !m_activeStatesGroupNode.metaInfo().isQtQuickStateGroup())
         return;
 
     QmlDesignerPlugin::emitUsageStatistics(Constants::EVENT_STATE_ADDED);
@@ -171,7 +172,7 @@ void StatesEditorView::createNewState()
     }
 
     executeInTransaction("createNewState", [this, newStateName]() {
-        activeStatesGroupNode().validId();
+        activeStatesGroupNode().ensureIdExists();
 
         ModelNode newState = activeStateGroup().addState(newStateName);
         setCurrentState(newState);
@@ -197,7 +198,7 @@ void StatesEditorView::cloneState(int nodeId)
     // Strip out numbers at the end of the string
     QRegularExpression regEx(QLatin1String("[0-9]+$"));
     const QRegularExpressionMatch match = regEx.match(newName);
-    if (match.hasMatch() && (match.capturedStart() + match.capturedLength() == newName.length()))
+    if (match.hasMatch() && (match.capturedStart() + match.capturedLength() == newName.size()))
         newName = newName.left(match.capturedStart());
 
     int i = 1;
@@ -251,7 +252,7 @@ void StatesEditorView::extendState(int nodeId)
     // Strip out numbers at the end of the string
     QRegularExpression regEx(QLatin1String("[0-9]+$"));
     const QRegularExpressionMatch match = regEx.match(newName);
-    if (match.hasMatch() && (match.capturedStart() + match.capturedLength() == newName.length()))
+    if (match.hasMatch() && (match.capturedStart() + match.capturedLength() == newName.size()))
         newName = newName.left(match.capturedStart());
 
     int i = 1;
@@ -719,6 +720,13 @@ void StatesEditorView::modelAttached(Model *model)
     resetModel();
     resetStateGroups();
 
+    // Initially set background color from auxiliary data
+    if (rootModelNode().hasAuxiliaryData(formeditorColorProperty)) {
+        QColor color = rootModelNode().auxiliaryDataWithDefault(formeditorColorProperty).value<QColor>();
+        m_statesEditorModel->setBackgroundColor(
+            color == BackgroundAction::ContextImage ? Qt::transparent : color);
+    }
+
     emit m_statesEditorModel->activeStateGroupChanged();
     emit m_statesEditorModel->activeStateGroupIndexChanged();
 }
@@ -880,6 +888,17 @@ void StatesEditorView::variantPropertiesChanged(const QList<VariantProperty> &pr
     }
 }
 
+void StatesEditorView::auxiliaryDataChanged(const ModelNode &,
+                                            AuxiliaryDataKeyView key,
+                                            const QVariant &data)
+{
+    if (key == formeditorColorProperty) {
+        QColor color = data.value<QColor>();
+        m_statesEditorModel->setBackgroundColor(
+            color == BackgroundAction::ContextImage ? Qt::transparent : color);
+    }
+}
+
 void StatesEditorView::customNotification(const AbstractView * /*view*/,
                                           const QString &identifier,
                                           const QList<ModelNode> & /*nodeList*/,
@@ -950,6 +969,11 @@ void StatesEditorView::moveStates(int from, int to)
     executeInTransaction("moveState", [this, from, to]() {
         activeStatesGroupNode().nodeListProperty("states").slide(from - 1, to - 1);
     });
+}
+
+QmlModelState StatesEditorView::currentState() const
+{
+    return QmlModelState(currentStateNode());
 }
 
 } // namespace QmlDesigner

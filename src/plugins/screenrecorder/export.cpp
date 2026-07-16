@@ -14,17 +14,13 @@
 #include <utils/styledbar.h>
 #include <utils/utilsicons.h>
 
-#include <coreplugin/progressmanager/futureprogress.h>
-#include <coreplugin/progressmanager/progressmanager.h>
+#include <coreplugin/progressmanager/processprogress.h>
 
-#include <QFutureWatcher>
 #include <QToolButton>
 
 using namespace Utils;
 
 namespace ScreenRecorder {
-
-const char screenRecordingExportId[] = "ScreenRecorder::screenRecordingExportTask";
 
 static const QVector<ExportWidget::Format> &formats()
 {
@@ -155,7 +151,7 @@ ExportWidget::ExportWidget(QWidget *parent)
                                         [&lastFormat] (const Format &f) {
                                             return f.displayName == lastFormat();
                                         }).fileDialogFilter();
-        FilePath file = FileUtils::getSaveFilePath(nullptr, Tr::tr("Save As"), lastDir(),
+        FilePath file = FileUtils::getSaveFilePath(Tr::tr("Save As"), lastDir(),
                                                    fileDialogFilters(), &selectedFilter);
         if (!file.isEmpty()) {
             m_currentFormat = findOr(formats(), defaultFormat,
@@ -176,19 +172,12 @@ ExportWidget::ExportWidget(QWidget *parent)
         emit started();
     });
     connect(m_process, &Process::done, this, [this] {
-        m_futureInterface->reportFinished();
         if (m_process->exitCode() == 0) {
             emit finished(m_outputClipInfo.file);
         } else {
             FFmpegUtils::reportError(m_process->commandLine(), m_lastOutputChunk);
             emit finished({});
         }
-    });
-    connect(m_process, &Process::readyReadStandardError, this, [this] {
-        m_lastOutputChunk = m_process->readAllRawStandardError();
-        const int frameProgress = FFmpegUtils::parseFrameProgressFromOutput(m_lastOutputChunk);
-        if (frameProgress >= 0)
-            m_futureInterface->setProgressValue(frameProgress);
     });
 }
 
@@ -199,25 +188,26 @@ ExportWidget::~ExportWidget()
 
 void ExportWidget::startExport()
 {
-    m_futureInterface.reset(new QFutureInterface<void>);
-    m_futureInterface->setProgressRange(0, m_trimRange.second - m_trimRange.first);
-    Core::ProgressManager::addTask(m_futureInterface->future(),
-                                   Tr::tr("Exporting Screen Recording"), screenRecordingExportId);
-    m_futureInterface->setProgressValue(0);
-    m_futureInterface->reportStarted();
-    const auto watcher = new QFutureWatcher<void>(this);
-    connect(watcher, &QFutureWatcher<void>::canceled, this, &ExportWidget::interruptExport);
-    connect(watcher, &QFutureWatcher<void>::finished, this, [watcher] {
-        watcher->disconnect();
-        watcher->deleteLater();
-    });
-    watcher->setFuture(m_futureInterface->future());
-
     m_process->close();
     const CommandLine cl(Internal::settings().ffmpegTool(), ffmpegExportParameters());
     m_process->setCommand(cl);
     m_process->setWorkingDirectory(Internal::settings().ffmpegTool().parentDir());
+    m_process->setTextChannelMode(Channel::Error, TextChannelMode::MultiLine);
     FFmpegUtils::logFfmpegCall(cl);
+
+    auto progress = new Core::ProcessProgress(m_process);
+    progress->setDisplayName(Tr::tr("Exporting Screen Recording"));
+    progress->setProgressParser([this](QFutureInterface<void> &fi, const QString &inputText) {
+        fi.setProgressRange(0, m_trimRange.second - m_trimRange.first);
+        m_lastOutputChunk = inputText.toLatin1();
+        const int frameProgress = FFmpegUtils::parseFrameProgressFromOutput(m_lastOutputChunk);
+        if (frameProgress >= 0)
+            fi.setProgressValue(frameProgress);
+    });
+    progress->setAutoStopOnCancel(false);
+    connect(progress, &Core::ProcessProgress::canceled, this, &ExportWidget::interruptExport);
+    connect(m_process, &Process::done, progress, &QObject::deleteLater);
+
     m_process->start();
 }
 
@@ -268,12 +258,12 @@ QStringList ExportWidget::ffmpegExportParameters() const
             "-v", "error",
             "-stats",
             "-stats_period", "0.25",
-            "-i", m_inputClipInfo.file.toString(),
+            "-i", m_inputClipInfo.file.toUrlishString(),
         }
         << "-filter_complex" << trimFilter + cropFilter + extraFilter << "-map" << "[out]"
         << m_currentFormat.encodingParameters
         << loop
-        << m_outputClipInfo.file.toString();
+        << m_outputClipInfo.file.toUrlishString();
 
     return args;
 }

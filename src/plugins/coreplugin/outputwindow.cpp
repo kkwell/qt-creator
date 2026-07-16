@@ -5,7 +5,6 @@
 
 #include "actionmanager/actionmanager.h"
 #include "coreconstants.h"
-#include "coreplugin.h"
 #include "coreplugintr.h"
 #include "editormanager/editormanager.h"
 #include "find/basetextfind.h"
@@ -14,50 +13,78 @@
 
 #include <aggregation/aggregate.h>
 
+#include <utils/algorithm.h>
 #include <utils/fileutils.h>
 #include <utils/outputformatter.h>
 #include <utils/qtcassert.h>
+#include <utils/theme/theme.h>
 
 #include <QAction>
 #include <QCursor>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QLoggingCategory>
 #include <QMenu>
 #include <QMimeData>
 #include <QPair>
 #include <QPointer>
 #include <QRegularExpression>
 #include <QScrollBar>
+#include <QSyntaxHighlighter>
 #include <QTextBlock>
 #include <QTimer>
 
 #ifdef WITH_TESTS
-#include <QtTest>
+#include <QTest>
 #endif
 
 #include <numeric>
 
-const int chunkSize = 10000;
-
 using namespace Utils;
 using namespace std::chrono_literals;
 
-namespace Core {
+const qsizetype defaultChunkSize = 10000;
+const qsizetype minChunkSize = 1000;
 
+const auto defaultInterval = 10ms;
+const auto maxInterval = 1000ms;
+
+static Q_LOGGING_CATEGORY(chunkLog, "qtc.core.outputChunking", QtWarningMsg)
+
+namespace Core {
 namespace Internal {
 
 class OutputWindowPrivate
 {
 public:
     explicit OutputWindowPrivate(QTextDocument *document)
-        : cursor(document)
+        : startOfNewContentCursor(document)
+        , cursor(document)
     {
+        startOfNewContentCursor.setKeepPositionOnInsert(true);
     }
+
+    qsizetype totalQueuedValue(const std::function<qsizetype(const QString &)> &getValue) const
+    {
+        return std::accumulate(
+            queuedOutput.cbegin(),
+            queuedOutput.cend(),
+            0,
+            [&](qsizetype val, const QPair<QString, OutputFormat> &c) {
+                return val + getValue(c.first);
+            });
+    }
+
+    //: default file name suggested for saving text from output views
+    QString outputFileNameHint{::Core::Tr::tr("output.txt")};
 
     Key settingsKey;
     OutputFormatter formatter;
     QList<QPair<QString, OutputFormat>> queuedOutput;
     QTimer queueTimer;
+    QList<qsizetype> queuedSizeHistory;
+    int formatterCalls = 0;
+    bool discardExcessiveOutput = false;
 
     bool flushRequested = false;
     bool scrollToBottom = true;
@@ -65,11 +92,13 @@ public:
     bool zoomEnabled = false;
     float originalFontSize = 0.;
     bool originalReadOnly = false;
-    int maxCharCount = Core::Constants::DEFAULT_MAX_CHAR_COUNT;
+    qsizetype maxCharCount = Core::Constants::DEFAULT_MAX_CHAR_COUNT;
     Qt::MouseButton mouseButtonPressed = Qt::NoButton;
+    QTextCursor startOfNewContentCursor;
     QTextCursor cursor;
     QString filterText;
     int lastFilteredBlockNumber = -1;
+    qsizetype chunkSize = defaultChunkSize;
     QPalette originalPalette;
     OutputWindow::FilterModeFlags filterMode = OutputWindow::FilterModeFlag::Default;
     int beforeContext = 0;
@@ -77,8 +106,6 @@ public:
     QTimer scrollTimer;
     QElapsedTimer lastMessage;
     QHash<unsigned int, QPair<int, int>> taskPositions;
-    //: default file name suggested for saving text from output views
-    QString outputFileNameHint{::Core::Tr::tr("output.txt")};
 };
 
 } // namespace Internal
@@ -97,7 +124,7 @@ OutputWindow::OutputWindow(Context context, const Key &settingsKey, QWidget *par
     d->formatter.setPlainTextEdit(this);
 
     d->queueTimer.setSingleShot(true);
-    d->queueTimer.setInterval(10ms);
+    d->queueTimer.setInterval(defaultInterval);
     connect(&d->queueTimer, &QTimer::timeout, this, &OutputWindow::handleNextOutputChunk);
 
     d->settingsKey = settingsKey;
@@ -125,7 +152,7 @@ OutputWindow::OutputWindow(Context context, const Key &settingsKey, QWidget *par
     connect(pasteAction, &QAction::triggered, this, &QPlainTextEdit::paste);
     connect(selectAllAction, &QAction::triggered, this, &QPlainTextEdit::selectAll);
     connect(this, &QPlainTextEdit::blockCountChanged, this, [this] {
-        if (!d->filterText.isEmpty())
+        if (shouldFilterNewContentOnBlockCountChanged())
             filterNewContent();
     });
 
@@ -176,7 +203,8 @@ OutputWindow::OutputWindow(Context context, const Key &settingsKey, QWidget *par
     p.setColor(QPalette::HighlightedText, activeHighlightedText);
     setPalette(p);
 
-    Aggregation::aggregate({this, new BaseTextFind(this)});
+    auto find = new BaseTextFind(this);
+    Aggregation::aggregate({this, find});
 }
 
 OutputWindow::~OutputWindow()
@@ -198,6 +226,16 @@ void OutputWindow::handleLink(const QPoint &pos)
 }
 
 void OutputWindow::adaptContextMenu(QMenu *, const QPoint &) {}
+
+void OutputWindow::resetLastFilteredBlockNumber()
+{
+    d->lastFilteredBlockNumber = -1;
+}
+
+bool OutputWindow::shouldFilterNewContentOnBlockCountChanged() const
+{
+    return !d->filterText.isEmpty();
+}
 
 void OutputWindow::mouseReleaseEvent(QMouseEvent *e)
 {
@@ -294,14 +332,13 @@ void OutputWindow::contextMenuEvent(QContextMenuEvent *event)
     QAction *saveAction = menu->addAction(Tr::tr("Save Contents..."));
     connect(saveAction, &QAction::triggered, this, [this] {
         const FilePath file = FileUtils::getSaveFilePath(
-            ICore::dialogParent(), {}, FileUtils::homePath() / d->outputFileNameHint);
+            {}, FileUtils::homePath() / d->outputFileNameHint);
         if (!file.isEmpty()) {
-            QString error;
-            Utils::TextFileFormat format;
-            format.codec = EditorManager::defaultTextCodec();
+            TextFileFormat format;
+            format.setEncoding(EditorManager::defaultTextEncoding());
             format.lineTerminationMode = EditorManager::defaultLineEnding();
-            if (!format.writeFile(file, toPlainText(), &error))
-                MessageManager::writeDisrupting(error);
+            if (const Result<> res = format.writeFile(file, toPlainText()); !res)
+                MessageManager::writeDisrupting(res.error());
         }
     });
     saveAction->setEnabled(!document()->isEmpty());
@@ -365,7 +402,7 @@ void OutputWindow::setWheelZoomEnabled(bool enabled)
     d->zoomEnabled = enabled;
 }
 
-void OutputWindow::updateFilterProperties(
+bool OutputWindow::updateFilterProperties(
         const QString &filterText,
         Qt::CaseSensitivity caseSensitivity,
         bool isRegexp,
@@ -382,8 +419,8 @@ void OutputWindow::updateFilterProperties(
         && d->filterText == filterText
         && d->beforeContext == beforeContext
         && d->afterContext == afterContext)
-        return;
-    d->lastFilteredBlockNumber = -1;
+        return false;
+    resetLastFilteredBlockNumber();
     if (d->filterText != filterText) {
         const bool filterTextWasEmpty = d->filterText.isEmpty();
         d->filterText = filterText;
@@ -411,6 +448,7 @@ void OutputWindow::updateFilterProperties(
     d->beforeContext = beforeContext;
     d->afterContext = afterContext;
     filterNewContent();
+    return true;
 }
 
 void OutputWindow::setOutputFileNameHint(const QString &fileName)
@@ -418,8 +456,11 @@ void OutputWindow::setOutputFileNameHint(const QString &fileName)
     d->outputFileNameHint = fileName;
 }
 
-OutputWindow::TextMatchingFunction OutputWindow::makeMatchingFunction() const
+OutputWindow::TextMatchingFunction OutputWindow::makeMatchingFilterFunction() const
 {
+    const bool normal = !d->filterMode.testFlag(FilterModeFlag::Inverted)
+                        && !d->filterText.isEmpty();
+
     if (d->filterText.isEmpty()) {
         return [](const QString &) { return true; };
     } else if (d->filterMode.testFlag(OutputWindow::FilterModeFlag::RegExp)) {
@@ -429,13 +470,13 @@ OutputWindow::TextMatchingFunction OutputWindow::makeMatchingFunction() const
         if (!regExp.isValid())
             return [](const QString &) { return false; };
 
-        return [regExp](const QString &text) { return regExp.match(text).hasMatch(); };
+        return [regExp, normal](const QString &text) { return regExp.match(text).hasMatch() == normal; };
     } else {
         const auto cs = d->filterMode.testFlag(OutputWindow::FilterModeFlag::CaseSensitive)
                             ? Qt::CaseSensitive : Qt::CaseInsensitive;
 
-        return [cs, filterText = d->filterText](const QString &text) {
-            return text.contains(filterText, cs);
+        return [cs, filterText = d->filterText, normal](const QString &text) {
+            return text.contains(filterText, cs) == normal;
         };
     }
 
@@ -444,10 +485,8 @@ OutputWindow::TextMatchingFunction OutputWindow::makeMatchingFunction() const
 
 void OutputWindow::filterNewContent()
 {
-    const auto findNextMatch = makeMatchingFunction();
-    QTC_ASSERT(findNextMatch, return);
-    const bool invert = d->filterMode.testFlag(FilterModeFlag::Inverted)
-                        && !d->filterText.isEmpty();
+    const auto findNextMatchFilter = makeMatchingFilterFunction();
+    QTC_ASSERT(findNextMatchFilter, return);
     const int requiredBacklog = std::max(d->beforeContext, d->afterContext);
     const int firstBlockIndex = d->lastFilteredBlockNumber - requiredBacklog;
 
@@ -458,7 +497,7 @@ void OutputWindow::filterNewContent()
 
     // Find matching text blocks for the current filter.
     for (; lastBlock != document()->end(); lastBlock = lastBlock.next()) {
-        const bool isMatch = findNextMatch(lastBlock.text()) != invert;
+        const bool isMatch = findNextMatchFilter(lastBlock.text());
 
         if (isMatch)
             matchedBlocks.emplace_back(lastBlock.blockNumber());
@@ -488,12 +527,17 @@ void OutputWindow::filterNewContent()
 void OutputWindow::handleNextOutputChunk()
 {
     QTC_ASSERT(!d->queuedOutput.isEmpty(), return);
+
+    discardExcessiveOutput();
+    if (d->queuedOutput.isEmpty())
+        return;
+
     auto &chunk = d->queuedOutput.first();
 
     // We want to break off the chunks along line breaks, if possible.
     // Otherwise we can get ugly temporary artifacts e.g. for ANSI escape codes.
-    int actualChunkSize = std::min(chunkSize, int(chunk.first.size()));
-    const int minEndPos = std::max(0, actualChunkSize - 1000);
+    qsizetype actualChunkSize = std::min(d->chunkSize, chunk.first.size());
+    const qsizetype minEndPos = std::max(qsizetype(0), actualChunkSize - 1000);
     for (int i = actualChunkSize - 1; i >= minEndPos; --i) {
         if (chunk.first.at(i) == '\n') {
             actualChunkSize = i + 1;
@@ -501,11 +545,14 @@ void OutputWindow::handleNextOutputChunk()
         }
     }
 
+    qCDebug(chunkLog) << "next queued chunk has" << chunk.first.size() << "bytes";
     if (actualChunkSize == chunk.first.size()) {
-        handleOutputChunk(chunk.first, chunk.second);
+        qCDebug(chunkLog) << "chunk can be written in one go";
+        handleOutputChunk(chunk.first, chunk.second, ChunkCompleteness::Complete);
         d->queuedOutput.removeFirst();
     } else {
-        handleOutputChunk(chunk.first.left(actualChunkSize), chunk.second);
+        qCDebug(chunkLog) << "chunk needs to be split";
+        handleOutputChunk(chunk.first.left(actualChunkSize), chunk.second, ChunkCompleteness::Split);
         chunk.first.remove(0, actualChunkSize);
     }
     if (!d->queuedOutput.isEmpty())
@@ -516,35 +563,52 @@ void OutputWindow::handleNextOutputChunk()
     }
 }
 
-void OutputWindow::handleOutputChunk(const QString &output, OutputFormat format)
+void OutputWindow::handleOutputChunk(
+    const QString &output, OutputFormat format, ChunkCompleteness completeness)
 {
     QString out = output;
+    int maxBlockCount = -1;
     if (out.size() > d->maxCharCount) {
         // Current chunk alone exceeds limit, we need to cut it.
-        const int elided = out.size() - d->maxCharCount;
+        const qsizetype elided = out.size() - d->maxCharCount;
         out = out.left(d->maxCharCount / 2)
                 + "[[[... "
-                + Tr::tr("Elided %n characters due to Application Output settings", nullptr, elided)
+                + Tr::tr("Elided %n characters due to settings limit", nullptr, elided)
                 + " ...]]]"
                 + out.right(d->maxCharCount / 2);
-        setMaximumBlockCount(out.count('\n') + 1);
+        maxBlockCount = out.count('\n') + 1;
     } else {
-        int plannedChars = document()->characterCount() + out.size();
+        qsizetype plannedChars = document()->characterCount() + out.size();
         if (plannedChars > d->maxCharCount) {
-            int plannedBlockCount = document()->blockCount();
+            maxBlockCount = document()->blockCount();
             QTextBlock tb = document()->firstBlock();
-            while (tb.isValid() && plannedChars > d->maxCharCount && plannedBlockCount > 1) {
+            while (tb.isValid() && plannedChars > d->maxCharCount && maxBlockCount > 1) {
                 plannedChars -= tb.length();
-                plannedBlockCount -= 1;
+                maxBlockCount -= 1;
                 tb = tb.next();
             }
-            setMaximumBlockCount(plannedBlockCount);
-        } else {
-            setMaximumBlockCount(-1);
         }
     }
+    qCDebug(chunkLog) << "new max block count:" << maxBlockCount;
+    setMaximumBlockCount(maxBlockCount);
 
+    QElapsedTimer formatterTimer;
+    formatterTimer.start();
     d->formatter.appendMessage(out, format);
+    ++d->formatterCalls;
+    qCDebug(chunkLog) << "formatter took" << formatterTimer.elapsed() << "ms";
+    if (formatterTimer.elapsed() > d->queueTimer.interval()) {
+        d->queueTimer.setInterval(std::min(maxInterval, d->queueTimer.intervalAsDuration() * 2));
+        d->chunkSize = std::max(minChunkSize, d->chunkSize / 2);
+        qCDebug(chunkLog) << "increasing interval to" << d->queueTimer.interval()
+                          << "ms and lowering chunk size to" << d->chunkSize << "bytes";
+    } else if (completeness == ChunkCompleteness::Split
+               && formatterTimer.elapsed() < d->queueTimer.interval() / 2) {
+        d->queueTimer.setInterval(std::max(1ms, d->queueTimer.intervalAsDuration() * 2 / 3));
+        d->chunkSize = d->chunkSize * 1.5;
+        qCDebug(chunkLog) << "lowering interval to" << d->queueTimer.interval()
+                          << "ms and increasing chunk size to" << d->chunkSize << "bytes";
+    }
 
     if (d->scrollToBottom) {
         if (d->lastMessage.elapsed() < 5) {
@@ -559,18 +623,72 @@ void OutputWindow::handleOutputChunk(const QString &output, OutputFormat format)
     enableUndoRedo();
 }
 
+void OutputWindow::discardExcessiveOutput()
+{
+    // Unless the user instructs us to, we do not mess with the output.
+    if (!d->discardExcessiveOutput)
+        return;
+
+    // Criterion 1: Are we being flooded?
+    // If the pending output has been growing for the last ten times the output formatter
+    // was invoked and it is considerably larger than the chunk size, we discard it.
+    const qsizetype queuedSize = totalQueuedSize();
+    if (!d->queuedSizeHistory.isEmpty() && d->queuedSizeHistory.last() > queuedSize)
+        d->queuedSizeHistory.clear();
+    d->queuedSizeHistory << queuedSize;
+    bool discard = d->queuedSizeHistory.size() > int(10) && queuedSize > 5 * d->chunkSize;
+    if (discard)
+        qCDebug(chunkLog) << "discarding output due to size";
+
+    // Criterion 2: Are we too slow?
+    // If it would take longer than a minute to print the pending output and we have
+    // already presented a reasonable amount of output to the user, we discard it.
+    if (!discard) {
+        discard = d->formatterCalls >= 10
+                  && (queuedSize / d->chunkSize) * d->queueTimer.intervalAsDuration() > 60s;
+        if (discard)
+            qCDebug(chunkLog) << "discarding output due to time";
+    }
+
+    if (discard) {
+        discardPendingToolOutput();
+        d->queuedSizeHistory.clear();
+        return;
+    }
+}
+
+void OutputWindow::discardPendingToolOutput()
+{
+    Utils::erase(d->queuedOutput, [](const std::pair<QString, OutputFormat> &chunk) {
+        return chunk.second != NormalMessageFormat && chunk.second != ErrorMessageFormat;
+    });
+    d->formatter.appendMessage(Tr::tr("[Discarding excessive amount of pending output.]\n"),
+                               ErrorMessageFormat);
+    emit outputDiscarded();
+}
+
 void OutputWindow::updateAutoScroll()
 {
     d->scrollToBottom = verticalScrollBar()->sliderPosition() >= verticalScrollBar()->maximum() - 1;
 }
 
-void OutputWindow::setMaxCharCount(int count)
+qsizetype OutputWindow::totalQueuedSize() const
+{
+    return d->totalQueuedValue([](const QString &s) { return s.size(); });
+}
+
+qsizetype OutputWindow::totalQueuedLines() const
+{
+    return d->totalQueuedValue([](const QString &s) { return s.count('\n'); });
+}
+
+void OutputWindow::setMaxCharCount(qsizetype count)
 {
     d->maxCharCount = count;
     setMaximumBlockCount(count / 100);
 }
 
-int OutputWindow::maxCharCount() const
+qsizetype OutputWindow::maxCharCount() const
 {
     return d->maxCharCount;
 }
@@ -586,13 +704,20 @@ void OutputWindow::appendMessage(const QString &output, OutputFormat format)
 }
 
 void OutputWindow::registerPositionOf(unsigned taskId, int linkedOutputLines, int skipLines,
-                                      int offset)
+                                      int offset, TaskSource taskSource)
 {
     if (linkedOutputLines <= 0)
         return;
 
+    // For Tasks that result from an OutputLineParser, the corresponding content is the last
+    // one written to the text edit, otherwise it's the last queued output.
+    const int extraLines = taskSource == TaskSource::Parsed ? 0 : totalQueuedLines();
+
     const int blocknumber = document()->blockCount() - offset;
-    const int firstLine = blocknumber - linkedOutputLines - skipLines;
+
+    // -1 because OutputFormatter has already added the newline.
+    const int firstLine = blocknumber - linkedOutputLines - skipLines - 1 + extraLines;
+
     const int lastLine = firstLine + linkedOutputLines - 1;
 
     d->taskPositions.insert(taskId, {firstLine, lastLine});
@@ -653,19 +778,37 @@ void OutputWindow::clear()
     d->formatter.clear();
     d->scrollToBottom = true;
     d->taskPositions.clear();
+    d->startOfNewContentCursor.setPosition(0);
+}
+
+void OutputWindow::clearLinesPrefixedWith(const QString& prefix, bool deleteTrailingLineBreak)
+{
+    QTextDocument *doc = document();
+
+    auto block = doc->lastBlock();
+    while (true) {
+        if (block.text().startsWith(prefix)) {
+            QTextCursor c(block);
+            c.select(QTextCursor::BlockUnderCursor);
+            c.removeSelectedText();
+            if (deleteTrailingLineBreak)
+                c.deleteChar();
+        }
+        if (block == doc->firstBlock())
+            break;
+        block = block.previous();
+    }
 }
 
 void OutputWindow::flush()
 {
-    const int totalQueuedSize = std::accumulate(d->queuedOutput.cbegin(), d->queuedOutput.cend(), 0,
-            [](int val,  const QPair<QString, OutputFormat> &c) { return val + c.first.size(); });
-    if (totalQueuedSize > 5 * chunkSize) {
+    if (totalQueuedSize() > 5 * d->chunkSize) {
         d->flushRequested = true;
         return;
     }
     d->queueTimer.stop();
     for (const auto &chunk : std::as_const(d->queuedOutput))
-        handleOutputChunk(chunk.first, chunk.second);
+        handleOutputChunk(chunk.first, chunk.second, ChunkCompleteness::Complete);
     d->queuedOutput.clear();
     d->formatter.flush();
 }
@@ -673,14 +816,19 @@ void OutputWindow::flush()
 void OutputWindow::reset()
 {
     flush();
-    d->queueTimer.stop();
-    d->formatter.reset();
-    d->scrollToBottom = true;
     if (!d->queuedOutput.isEmpty()) {
+        discardPendingToolOutput();
+        flush();
+
+        // For the unlikely case that we ourselves have sent excessive amount of output
+        // via NormalMessageFormat or ErrorMessageFormat.
         d->queuedOutput.clear();
-        d->formatter.appendMessage(Tr::tr("[Discarding excessive amount of pending output.]\n"),
-                                   ErrorMessageFormat);
     }
+    d->queueTimer.stop();
+    d->queuedSizeHistory.clear();
+    d->formatter.reset();
+    d->formatterCalls = 0;
+    d->scrollToBottom = true;
     d->flushRequested = false;
 }
 
@@ -699,7 +847,8 @@ void OutputWindow::grayOutOldContent()
         d->cursor.movePosition(QTextCursor::End);
     QTextCharFormat endFormat = d->cursor.charFormat();
 
-    d->cursor.select(QTextCursor::Document);
+    d->cursor.setPosition(d->startOfNewContentCursor.position());
+    d->cursor.movePosition(QTextCursor::End, QTextCursor::KeepAnchor, 1);
 
     QTextCharFormat format;
     const QColor bkgColor = palette().base().color();
@@ -713,6 +862,7 @@ void OutputWindow::grayOutOldContent()
 
     d->cursor.movePosition(QTextCursor::End);
     d->cursor.setCharFormat(endFormat);
+    d->startOfNewContentCursor.setPosition(d->cursor.position());
     d->cursor.insertBlock(QTextBlockFormat());
 }
 
@@ -730,84 +880,9 @@ void OutputWindow::setWordWrapEnabled(bool wrap)
         setWordWrapMode(QTextOption::NoWrap);
 }
 
-#ifdef WITH_TESTS
-
-// Handles all lines starting with "A" and the following ones up to and including the next
-// one starting with "A".
-class TestFormatterA : public OutputLineParser
+void OutputWindow::setDiscardExcessiveOutput(bool discard)
 {
-private:
-    Result handleLine(const QString &text, OutputFormat) override
-    {
-        static const QString replacement = "handled by A";
-        if (m_handling) {
-            if (text.startsWith("A")) {
-                m_handling = false;
-                return {Status::Done, {}, replacement};
-            }
-            return {Status::InProgress, {}, replacement};
-        }
-        if (text.startsWith("A")) {
-            m_handling = true;
-            return {Status::InProgress, {}, replacement};
-        }
-        return Status::NotHandled;
-    }
-
-    bool m_handling = false;
-};
-
-// Handles all lines starting with "B". No continuation logic.
-class TestFormatterB : public OutputLineParser
-{
-private:
-    Result handleLine(const QString &text, OutputFormat) override
-    {
-        if (text.startsWith("B"))
-            return {Status::Done, {}, QString("handled by B")};
-        return Status::NotHandled;
-    }
-};
-
-void Internal::CorePlugin::testOutputFormatter()
-{
-    const QString input =
-            "B to be handled by B\r\r\n"
-            "not to be handled\n\n\n\n"
-            "A to be handled by A\n"
-            "continuation for A\r\n"
-            "B looks like B, but still continuation for A\r\n"
-            "A end of A\n"
-            "A next A\n"
-            "A end of next A\n"
-            " A trick\r\n"
-            "line with \r embedded carriage return\n"
-            "B to be handled by B\n";
-    const QString output =
-            "handled by B\n"
-            "not to be handled\n\n\n\n"
-            "handled by A\n"
-            "handled by A\n"
-            "handled by A\n"
-            "handled by A\n"
-            "handled by A\n"
-            "handled by A\n"
-            " A trick\n"
-            " embedded carriage return\n"
-            "handled by B\n";
-
-    // Stress-test the implementation by providing the input in chunks, splitting at all possible
-    // offsets.
-    for (int i = 0; i < input.length(); ++i) {
-        OutputFormatter formatter;
-        QPlainTextEdit textEdit;
-        formatter.setPlainTextEdit(&textEdit);
-        formatter.setLineParsers({new TestFormatterB, new TestFormatterA});
-        formatter.appendMessage(input.left(i), StdOutFormat);
-        formatter.appendMessage(input.mid(i), StdOutFormat);
-        formatter.flush();
-        QCOMPARE(textEdit.toPlainText(), output);
-    }
+    d->discardExcessiveOutput = discard;
 }
-#endif // WITH_TESTS
+
 } // namespace Core

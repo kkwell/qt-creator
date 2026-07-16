@@ -9,7 +9,6 @@
 #include <coreplugin/editormanager/editormanager.h>
 
 #include <cppeditor/cppeditorconstants.h>
-#include <cppeditor/cppeditortr.h>
 #include <cppeditor/cpplocatorfilter.h>
 
 #include <languageclient/currentdocumentsymbolsrequest.h>
@@ -24,6 +23,7 @@ using namespace Core;
 using namespace LanguageClient;
 using namespace LanguageServerProtocol;
 using namespace ProjectExplorer;
+using namespace QtTaskTree;
 using namespace TextEditor;
 using namespace Utils;
 
@@ -34,8 +34,8 @@ const int MaxResultCount = 10000;
 ClangdAllSymbolsFilter::ClangdAllSymbolsFilter()
 {
     setId(CppEditor::Constants::LOCATOR_FILTER_ID);
-    setDisplayName(::CppEditor::Tr::tr(CppEditor::Constants::LOCATOR_FILTER_DISPLAY_NAME));
-    setDescription(::CppEditor::Tr::tr(CppEditor::Constants::LOCATOR_FILTER_DESCRIPTION));
+    setDisplayName(CppEditor::msgSymbolsFilterDisplayName());
+    setDescription(CppEditor::msgSymbolsFilterDescription());
     setDefaultShortcutString(":");
 }
 
@@ -49,8 +49,8 @@ LocatorMatcherTasks ClangdAllSymbolsFilter::matchers()
 ClangdClassesFilter::ClangdClassesFilter()
 {
     setId(CppEditor::Constants::CLASSES_FILTER_ID);
-    setDisplayName(::CppEditor::Tr::tr(CppEditor::Constants::CLASSES_FILTER_DISPLAY_NAME));
-    setDescription(::CppEditor::Tr::tr(CppEditor::Constants::CLASSES_FILTER_DESCRIPTION));
+    setDisplayName(CppEditor::msgClassesFilterDisplayName());
+    setDescription(CppEditor::msgClassesFilterDescription());
     setDefaultShortcutString("c");
 }
 
@@ -64,8 +64,8 @@ LocatorMatcherTasks ClangdClassesFilter::matchers()
 ClangdFunctionsFilter::ClangdFunctionsFilter()
 {
     setId(CppEditor::Constants::FUNCTIONS_FILTER_ID);
-    setDisplayName(::CppEditor::Tr::tr(CppEditor::Constants::FUNCTIONS_FILTER_DISPLAY_NAME));
-    setDescription(::CppEditor::Tr::tr(CppEditor::Constants::FUNCTIONS_FILTER_DESCRIPTION));
+    setDisplayName(CppEditor::msgFunctionsFilterDisplayName());
+    setDescription(CppEditor::msgFunctionsFilterDescription());
     setDefaultShortcutString("m");
 }
 
@@ -79,8 +79,8 @@ LocatorMatcherTasks ClangdFunctionsFilter::matchers()
 ClangdCurrentDocumentFilter::ClangdCurrentDocumentFilter()
 {
     setId(CppEditor::Constants::CURRENT_DOCUMENT_FILTER_ID);
-    setDisplayName(::CppEditor::Tr::tr(CppEditor::Constants::CURRENT_DOCUMENT_FILTER_DISPLAY_NAME));
-    setDescription(::CppEditor::Tr::tr(CppEditor::Constants::CURRENT_DOCUMENT_FILTER_DESCRIPTION));
+    setDisplayName(CppEditor::msgDocumentFilterDisplayName());
+    setDescription(CppEditor::msgDocumentFilterDescription());
     setDefaultShortcutString(".");
     setPriority(High);
     setEnabled(false);
@@ -171,31 +171,25 @@ static void filterCurrentResults(QPromise<void> &promise, const LocatorStorage &
                                           [](const Entry &entry) { return entry.entry; }));
 }
 
-static LocatorMatcherTask currentDocumentMatcher()
+static ExecutableItem currentDocumentMatcher()
 {
-    using namespace Tasking;
-
-    Storage<LocatorStorage> storage;
     Storage<CurrentDocumentSymbolsData> resultStorage;
 
-    const auto onQuerySetup = [=](CurrentDocumentSymbolsRequest &request) {
-        Q_UNUSED(request)
-    };
     const auto onQueryDone = [resultStorage](const CurrentDocumentSymbolsRequest &request) {
         *resultStorage = request.currentDocumentSymbolsData();
     };
 
-    const auto onFilterSetup = [=](Async<void> &async) {
-        async.setConcurrentCallData(filterCurrentResults, *storage, *resultStorage,
+    const auto onFilterSetup = [resultStorage](Async<void> &async) {
+        async.setConcurrentCallData(filterCurrentResults, *LocatorStorage::storage(), *resultStorage,
                                     TextDocument::currentTextDocument()->plainText());
     };
 
     const Group root {
         resultStorage,
-        CurrentDocumentSymbolsRequestTask(onQuerySetup, onQueryDone, CallDoneIf::Success),
+        CurrentDocumentSymbolsRequestTask({}, onQueryDone, CallDoneFlag::OnSuccess),
         AsyncTask<void>(onFilterSetup)
     };
-    return {root, storage};
+    return root;
 }
 
 LocatorMatcherTasks ClangdCurrentDocumentFilter::matchers()

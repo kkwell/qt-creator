@@ -14,23 +14,25 @@
 #include <qmlprofiler/qmlprofilerclientmanager.h>
 #include <qmlprofiler/qmlprofilermodelmanager.h>
 #include <qmlprofiler/qmlprofilerstatemanager.h>
+#include <qmlprofiler/qmlprofilertool.h>
 
 #include <utils/qtcsettings.h>
 #include <utils/url.h>
 
 #include <QTcpServer>
-#include <QtTest>
+#include <QTest>
 
+using namespace ProjectExplorer;
 using namespace Utils;
+using namespace QmlDebug;
 
-namespace QmlProfiler {
-namespace Internal {
+namespace QmlProfiler::Internal {
 
 void QmlProfilerToolTest::testAttachToWaitingApplication()
 {
-    ProjectExplorer::KitManager *kitManager = ProjectExplorer::KitManager::instance();
+    KitManager *kitManager = KitManager::instance();
     QVERIFY(kitManager);
-    ProjectExplorer::Kit * const newKit = ProjectExplorer::KitManager::registerKit({}, "fookit");
+    Kit * const newKit = KitManager::registerKit({}, "fookit");
     QVERIFY(newKit);
     QtcSettings *settings = Core::ICore::settings();
     QVERIFY(settings);
@@ -41,8 +43,9 @@ void QmlProfilerToolTest::testAttachToWaitingApplication()
     QmlProfilerClientManager *clientManager = profilerTool.clientManager();
     clientManager->setRetryInterval(10);
     clientManager->setMaximumRetries(10);
-    connect(clientManager, &QmlProfilerClientManager::connectionFailed,
-            clientManager, &QmlProfilerClientManager::retryConnect);
+    connect(clientManager, &QmlProfilerClientManager::connectionFailed, [] {
+        QFAIL("Connection failed");
+    });
 
     QTcpServer server;
     QUrl serverUrl = Utils::urlFromLocalHostAndFreePort();
@@ -76,7 +79,7 @@ void QmlProfilerToolTest::testAttachToWaitingApplication()
     });
 
     timer.start();
-    ProjectExplorer::RunControl *runControl = profilerTool.attachToWaitingApplication();
+    RunControl *runControl = profilerTool.attachToWaitingApplication();
     QVERIFY(runControl);
 
     QTRY_VERIFY(connection);
@@ -117,5 +120,4 @@ void QmlProfilerToolTest::testClearEvents()
     QCOMPARE(modelManager->numEvents(), 1);
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

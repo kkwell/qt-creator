@@ -18,7 +18,8 @@
 #include <coreplugin/editormanager/editormanager.h>
 #include <utils/temporarydirectory.h>
 
-#include <QtTest/QtTest>
+#include <QSignalSpy>
+#include <QTest>
 
 namespace TextEditor::Internal {
 
@@ -100,7 +101,7 @@ class TestProvider final : public CompletionAssistProvider
 public:
     IAssistProcessor *createProcessor(const AssistInterface *assistInterface) const final
     {
-        Q_UNUSED(assistInterface);
+        Q_UNUSED(assistInterface)
         return new TestProcessor(m_items);
     }
     QList<AssistProposalItemInterface *> m_items;
@@ -165,6 +166,7 @@ void CodeAssistTests::testFollowSymbolBigFile()
 void CodeAssistTests::cleanupTestCase()
 {
     m_testProvider->m_items.clear();
+    delete m_testProvider;
     Core::EditorManager::closeEditors(m_editorsToClose);
     QVERIFY(Core::EditorManager::currentEditor() == nullptr);
 }

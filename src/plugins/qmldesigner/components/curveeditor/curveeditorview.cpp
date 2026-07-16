@@ -13,9 +13,10 @@
 #include <nodeabstractproperty.h>
 #include <nodelistproperty.h>
 #include <nodemetainfo.h>
-#include <variantproperty.h>
+#include <qmldesignerplugin.h>
 #include <qmlstate.h>
 #include <qmltimeline.h>
+#include <variantproperty.h>
 
 #include <cmath>
 
@@ -32,12 +33,15 @@ CurveEditorView::CurveEditorView(ExternalDependenciesInterface &externalDepoende
     connect(m_model, &CurveEditorModel::commitEndFrame, this, &CurveEditorView::commitEndFrame);
     connect(m_model, &CurveEditorModel::curveChanged, this, &CurveEditorView::commitKeyframes);
 
-    connect(m_editor, &CurveEditor::viewEnabledChanged, this, [this](bool enabled){
-        setEnabled(enabled);
-        if (enabled)
+    connect(m_editor, &CurveEditor::viewEnabledChanged, this, [this](bool enabled) {
+        if (enabled) {
+            QmlDesignerPlugin::viewManager().showView(*this);
             init();
+        } else {
+            QmlDesignerPlugin::viewManager().hideView(*this);
+        }
     });
-    setEnabled(false);
+
 }
 
 CurveEditorView::~CurveEditorView() {}
@@ -49,15 +53,14 @@ bool CurveEditorView::hasWidget() const
 
 WidgetInfo CurveEditorView::widgetInfo()
 {
-    return createWidgetInfo(m_editor, "CurveEditorId", WidgetInfo::BottomPane, 0, tr("Curves"));
+    return createWidgetInfo(m_editor, "CurveEditorId", WidgetInfo::BottomPane, tr("Curves"));
 }
 
 void CurveEditorView::modelAttached(Model *model)
 {
     AbstractView::modelAttached(model);
 
-    if (isEnabled())
-        init();
+    init();
 }
 
 void CurveEditorView::modelAboutToBeDetached(Model *model)
@@ -68,9 +71,9 @@ void CurveEditorView::modelAboutToBeDetached(Model *model)
 
 bool dirtyfiesView(const ModelNode &node)
 {
-    return (node.type() == "QtQuick.Timeline.Keyframe" && node.hasParentProperty())
-        || QmlTimeline::isValidQmlTimeline(node)
-        || QmlTimelineKeyframeGroup::isValidQmlTimelineKeyframeGroup(node);
+    return (node.metaInfo().isQtQuickTimelineKeyframe() && node.hasParentProperty())
+           || QmlTimeline::isValidQmlTimeline(node)
+           || QmlTimelineKeyframeGroup::isValidQmlTimelineKeyframeGroup(node);
 }
 
 void CurveEditorView::nodeRemoved([[maybe_unused]] const ModelNode &removedNode,
@@ -171,7 +174,7 @@ QmlTimeline CurveEditorView::activeTimeline() const
     if (!isAttached())
         return {};
 
-    QmlModelState state = currentState();
+    QmlModelState state = currentStateNode();
     if (state.isBaseState()) {
         for (const ModelNode &node : allModelNodesOfType(model()->qtQuickTimelineTimelineMetaInfo())) {
             if (QmlTimeline::isValidQmlTimeline(node)) {
@@ -185,13 +188,11 @@ QmlTimeline CurveEditorView::activeTimeline() const
 
     for (const ModelNode &node : allModelNodesOfType(model()->qtQuickTimelineTimelineMetaInfo())) {
         if (QmlTimeline::isValidQmlTimeline(node) && state.affectsModelNode(node)) {
-            QmlPropertyChanges propertyChanges(state.propertyChanges(node));
-            if (!propertyChanges.isValid())
-                continue;
-
-            if (propertyChanges.modelNode().hasProperty("enabled") &&
-                propertyChanges.modelNode().variantProperty("enabled").value().toBool())
+            if (QmlPropertyChanges propertyChanges = state.propertyChangesForTarget(node)) {
+                if (propertyChanges.modelNode().hasProperty("enabled")
+                    && propertyChanges.modelNode().variantProperty("enabled").value().toBool())
                     return QmlTimeline(node);
+            }
         }
     }
     return {};

@@ -7,98 +7,95 @@
 
 #include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/runconfigurationaspects.h>
+#include <projectexplorer/runcontrol.h>
 
-#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcprocess.h>
 
+#include <QDateTime>
 #include <QRegularExpression>
 
 using namespace ProjectExplorer;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace Qnx::Internal {
 
-Slog2InfoRunner::Slog2InfoRunner(RunControl *runControl)
-    : RunWorker(runControl)
+struct SlogData
 {
-    setId("Slog2InfoRunner");
-    m_applicationId = runControl->aspectData<ExecutableAspect>()->executable.fileName();
+    RunControl *m_runControl = nullptr;
+    QString m_applicationId;
+    QDateTime m_launchDateTime = {};
+    bool m_currentLogs = false;
+    QString m_remainingData = {};
 
+    void processLogLine(const QString &line);
+    void processRemainingLogData();
+    void processLogInput(const QString &input);
+};
+
+Group slog2InfoRecipe(RunControl *runControl)
+{
+    QString applicationId = runControl->aspectData<ExecutableAspect>()->executable.fileName();
     // See QTCREATORBUG-10712 for details.
     // We need to limit length of ApplicationId to 63 otherwise it would not match one in slog2info.
-    m_applicationId.truncate(63);
-}
+    applicationId.truncate(63);
 
-void Slog2InfoRunner::start()
-{
-    using namespace Tasking;
-    QTC_CHECK(!m_taskTreeRunner.isRunning());
+    const Storage<SlogData> storage(SlogData{runControl, applicationId});
 
-    const auto onTestSetup = [this](Process &process) {
-        process.setCommand(CommandLine{device()->filePath("slog2info")});
+    const auto onTestSetup = [runControl](Process &process) {
+        process.setCommand(CommandLine{runControl->device()->filePath("slog2info")});
     };
-    const auto onTestDone = [this](DoneWith result) {
-        if (result == DoneWith::Success) {
-            m_found = true;
-            return;
-        }
-        appendMessage(Tr::tr("Warning: \"slog2info\" is not found on the device, "
-                             "debug output not available."), ErrorMessageFormat);
+    const auto onTestDone = [runControl] {
+        runControl->postMessage(Tr::tr("Warning: \"slog2info\" is not found on the device, "
+                                       "debug output not available."), ErrorMessageFormat);
     };
 
-    const auto onLaunchTimeSetup = [this](Process &process) {
-        process.setCommand({device()->filePath("date"), "+\"%d %H:%M:%S\"", CommandLine::Raw});
+    const auto onLaunchTimeSetup = [runControl](Process &process) {
+        process.setCommand({runControl->device()->filePath("date"), "+\"%d %H:%M:%S\"", CommandLine::Raw});
     };
-    const auto onLaunchTimeDone = [this](const Process &process) {
-        QTC_CHECK(!m_applicationId.isEmpty());
-        QTC_CHECK(m_found);
-        m_launchDateTime = QDateTime::fromString(process.cleanedStdOut().trimmed(), "dd HH:mm:ss");
+    const auto onLaunchTimeDone = [applicationId, storage](const Process &process) {
+        QTC_CHECK(!applicationId.isEmpty());
+        storage->m_launchDateTime = QDateTime::fromString(process.cleanedStdOut().trimmed(),
+                                                          "dd HH:mm:ss");
     };
 
-    const auto onLogSetup = [this](Process &process) {
-        process.setCommand({device()->filePath("slog2info"), {"-w"}});
-        connect(&process, &Process::readyReadStandardOutput, this, [&] {
-            processLogInput(QString::fromLatin1(process.readAllRawStandardOutput()));
+    const auto onLogSetup = [storage, runControl](Process &process) {
+        process.setCommand({runControl->device()->filePath("slog2info"), {"-w"}});
+        SlogData *slogData = storage.activeStorage();
+        QObject::connect(&process, &Process::readyReadStandardOutput, &process,
+                         [slogData, processPtr = &process] {
+            slogData->processLogInput(QString::fromLatin1(processPtr->readAllRawStandardOutput()));
         });
-        connect(&process, &Process::readyReadStandardError, this, [&] {
-            appendMessage(QString::fromLatin1(process.readAllRawStandardError()), StdErrFormat);
+        QObject::connect(&process, &Process::readyReadStandardError, &process,
+                         [runControl, processPtr = &process] {
+            runControl->postMessage(QString::fromLatin1(processPtr->readAllRawStandardError()), StdErrFormat);
         });
     };
-    const auto onLogError = [this](const Process &process) {
-        appendMessage(Tr::tr("Cannot show slog2info output. Error: %1").arg(process.errorString()),
-                      StdErrFormat);
+    const auto onLogError = [runControl](const Process &process) {
+        runControl->postMessage(Tr::tr("Cannot show slog2info output. Error: %1")
+                                    .arg(process.errorString()), StdErrFormat);
     };
 
-    const Group root {
-        ProcessTask(onTestSetup, onTestDone),
-        ProcessTask(onLaunchTimeSetup, onLaunchTimeDone, CallDoneIf::Success),
-        ProcessTask(onLogSetup, onLogError, CallDoneIf::Error)
-    };
+    const auto onCanceled = [storage] { storage->processRemainingLogData(); };
 
-    m_taskTreeRunner.start(root);
-    reportStarted();
+    return Group {
+        storage,
+        ProcessTask(onTestSetup, onTestDone, CallDoneFlag::OnError),
+        ProcessTask(onLaunchTimeSetup, onLaunchTimeDone, CallDoneFlag::OnSuccess),
+        ProcessTask(onLogSetup, onLogError, CallDoneFlag::OnError),
+        onGroupDone(onCanceled, CallDoneFlag::OnCancel)
+    }.withCancel(runControl->canceler());
 }
 
-void Slog2InfoRunner::stop()
-{
-    m_taskTreeRunner.reset();
-    processRemainingLogData();
-    reportStopped();
-}
-
-bool Slog2InfoRunner::commandFound() const
-{
-    return m_found;
-}
-
-void Slog2InfoRunner::processRemainingLogData()
+void SlogData::processRemainingLogData()
 {
     if (!m_remainingData.isEmpty())
         processLogLine(m_remainingData);
     m_remainingData.clear();
 }
 
-void Slog2InfoRunner::processLogInput(const QString &input)
+void SlogData::processLogInput(const QString &input)
 {
     QStringList lines = input.split(QLatin1Char('\n'));
     if (lines.isEmpty())
@@ -109,15 +106,15 @@ void Slog2InfoRunner::processLogInput(const QString &input)
         processLogLine(line);
 }
 
-void Slog2InfoRunner::processLogLine(const QString &line)
+void SlogData::processLogLine(const QString &line)
 {
     // The "(\\s+\\S+)?" represents a named buffer. If message has noname (aka empty) buffer
     // then the message might get cut for the first number in the message.
     // The "\\s+(\\b.*)?$" represents a space followed by a message. We are unable to determinate
     // how many spaces represent separators and how many are a part of the messages, so resulting
     // messages has all whitespaces at the beginning of the message trimmed.
-    static QRegularExpression regexp(QLatin1String(
-        "^[a-zA-Z]+\\s+([0-9]+ [0-9]+:[0-9]+:[0-9]+.[0-9]+)\\s+(\\S+)(\\s+(\\S+))?\\s+([0-9]+)\\s+(.*)?$"));
+    static const QRegularExpression regexp(
+        "^[a-zA-Z]+\\s+([0-9]+ [0-9]+:[0-9]+:[0-9]+.[0-9]+)\\s+(\\S+)(\\s+(\\S+))?\\s+([0-9]+)\\s+(.*)?$");
 
     const QRegularExpressionMatch match = regexp.match(line);
     if (!match.hasMatch())
@@ -127,25 +124,25 @@ void Slog2InfoRunner::processLogLine(const QString &line)
     if (!m_launchDateTime.isNull()) {
         // Check if logs are from the recent launch
         if (!m_currentLogs) {
-            QDateTime dateTime = QDateTime::fromString(match.captured(1),
-                                                       QLatin1String("dd HH:mm:ss.zzz"));
+            const QDateTime dateTime = QDateTime::fromString(match.captured(1),
+                                                             QLatin1String("dd HH:mm:ss.zzz"));
             m_currentLogs = dateTime >= m_launchDateTime;
             if (!m_currentLogs)
                 return;
         }
     }
 
-    QString applicationId = match.captured(2);
+    const QString applicationId = match.captured(2);
     if (!applicationId.startsWith(m_applicationId))
         return;
 
-    QString bufferName = match.captured(4);
+    const QString bufferName = match.captured(4);
     int bufferId = match.captured(5).toInt();
     // filtering out standard BB10 messages
     if (bufferName == QLatin1String("default") && bufferId == 8900)
         return;
 
-    appendMessage(match.captured(6).trimmed() + '\n', StdOutFormat);
+    m_runControl->postMessage(match.captured(6).trimmed() + '\n', StdOutFormat);
 }
 
 } // Qnx::Internal

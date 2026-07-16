@@ -11,7 +11,7 @@
 #include <languageserverprotocol/lsputils.h>
 #include <languageserverprotocol/workspace.h>
 
-#include <solutions/tasking/tasktree.h>
+#include <QtTaskTree/QTaskTree>
 
 namespace LanguageClient {
 
@@ -67,15 +67,14 @@ public:
     bool preStartCheck() override;
 };
 
-class LANGUAGECLIENT_EXPORT ClientWorkspaceSymbolRequestTaskAdapter final
-    : public Tasking::TaskAdapter<ClientWorkspaceSymbolRequest>
+class ClientWorkspaceSymbolRequestTaskAdapter final
 {
 public:
-    ClientWorkspaceSymbolRequestTaskAdapter();
-    void start() final;
+    LANGUAGECLIENT_EXPORT void operator()(ClientWorkspaceSymbolRequest *task,
+                                          QtTaskTree::QTaskInterface *iface);
 };
 
 using ClientWorkspaceSymbolRequestTask
-    = Tasking::CustomTask<ClientWorkspaceSymbolRequestTaskAdapter>;
+    = QtTaskTree::QCustomTask<ClientWorkspaceSymbolRequest, ClientWorkspaceSymbolRequestTaskAdapter>;
 
 } // namespace LanguageClient

@@ -12,7 +12,6 @@
 #include <projectexplorer/buildstep.h>
 #include <projectexplorer/buildsteplist.h>
 #include <projectexplorer/gnumakeparser.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/processparameters.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/project.h>
@@ -20,6 +19,7 @@
 #include <projectexplorer/task.h>
 #include <projectexplorer/toolchain.h>
 #include <projectexplorer/projectmanager.h>
+#include <projectexplorer/toolchainkitaspect.h>
 
 using namespace ProjectExplorer;
 using namespace Utils;
@@ -105,7 +105,7 @@ ConanInstallStep::ConanInstallStep(BuildStepList *bsl, Id id)
     });
 
     setSummaryUpdater([this]() -> QString {
-        QList<Toolchain *> tcList = ToolchainKitAspect::toolChains(target()->kit());
+        QList<Toolchain *> tcList = ToolchainKitAspect::toolChains(kit());
         if (tcList.isEmpty())
             return "<b>" + ToolchainKitAspect::msgNoToolchainInTarget() + "</b>";
         ProcessParameters param;
@@ -125,7 +125,7 @@ bool ConanInstallStep::init()
     if (!AbstractProcessStep::init())
         return false;
 
-    const QList<Toolchain *> tcList = ToolchainKitAspect::toolChains(target()->kit());
+    const QList<Toolchain *> tcList = ToolchainKitAspect::toolChains(kit());
     if (tcList.isEmpty()) {
         emit addTask(Task::compilerMissingTask());
         emitFaultyConfigurationMessage();

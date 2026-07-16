@@ -10,9 +10,10 @@
 #include "suppression.h"
 #include "../valgrindtr.h"
 
+#include <QtTaskTree/QSingleTaskTreeRunner>
+
 #include <utils/async.h>
 #include <utils/expected.h>
-#include <utils/futuresynchronizer.h>
 #include <utils/qtcassert.h>
 
 #include <QAbstractSocket>
@@ -20,10 +21,11 @@
 #include <QMetaEnum>
 #include <QMutex>
 #include <QPromise>
+#include <QTimer>
 #include <QWaitCondition>
 #include <QXmlStreamReader>
 
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace Valgrind::XmlProtocol {
@@ -120,7 +122,7 @@ private:
     // Called from the separate thread, exclusively by run(). Checks if the new data already
     // came before sleeping with wait condition. If so, it doesn't sleep with wait condition,
     // but returns the data collected in meantime. Otherwise, it calls wait() on wait condition.
-    expected_str<QByteArray> waitForData()
+    Result<QByteArray> waitForData()
     {
         QMutexLocker locker(&m_mutex);
         while (true) {
@@ -151,6 +153,7 @@ private:
     XWhat parseXWhat();
     XauxWhat parseXauxWhat();
     int parseErrorKind(const QString &kind);
+    QByteArray applyXmlFix(const QByteArray &data);
 
     QXmlStreamReader::TokenType blockingReadNext();
     bool notAtEnd() const;
@@ -175,6 +178,7 @@ private:
 
     Tool m_tool = Tool::Unknown; // Accessed only from the other thread.
     QXmlStreamReader m_reader; // Accessed only from the other thread.
+    QByteArray m_xmlFixTail;   // Accessed only from the other thread.
 
     QMutex m_mutex;
     QWaitCondition m_waitCondition;
@@ -201,6 +205,29 @@ static qint64 parseInt64(const QString &str, const QString &context)
     return v;
 }
 
+// Valgrind 3.26.0 omits </still_reachable> in <leak_summary> when its counts
+// are zero, producing malformed XML. Fix by inserting the missing closing tag.
+// Only memcheck emits <leak_summary>, so other tools are not affected.
+// m_xmlFixTail retains the last 12 bytes of the previous chunk so that a
+// pattern split across a TCP chunk boundary is caught too. The tail length
+// of 12 equals the insertion offset within the broken pattern minus one,
+// which guarantees the insertion point always falls within the new data.
+QByteArray ParserThread::applyXmlFix(const QByteArray &data)
+{
+    if (m_tool != Tool::Memcheck)
+        return data;
+    static const QByteArray broken = "</blocks>\n  <suppressed>";
+    static const QByteArray fixed  = "</blocks>\n  </still_reachable>\n  <suppressed>";
+    const int oldTailSize = m_xmlFixTail.size();
+    const QByteArray combined = m_xmlFixTail + data;
+    m_xmlFixTail = data.right(12);
+    if (!combined.contains(broken))
+        return data;
+    QByteArray fixedCombined = combined;
+    fixedCombined.replace(broken, fixed);
+    return fixedCombined.mid(oldTailSize);
+}
+
 QXmlStreamReader::TokenType ParserThread::blockingReadNext()
 {
     QXmlStreamReader::TokenType token = QXmlStreamReader::Invalid;
@@ -209,7 +236,7 @@ QXmlStreamReader::TokenType ParserThread::blockingReadNext()
         if (m_reader.error() == QXmlStreamReader::PrematureEndOfDocumentError) {
             const auto data = waitForData();
             if (data) {
-                m_reader.addData(*data);
+                m_reader.addData(applyXmlFix(*data));
                 continue;
             } else {
                 throw ParserException{data.error()};
@@ -270,8 +297,8 @@ void ParserThread::checkProtocolVersion(const QString &versionStr)
     const int version = versionStr.toInt(&ok);
     if (!ok)
         throw ParserException{Tr::tr("Could not parse protocol version from \"%1\"").arg(versionStr)};
-    if (version != 4)
-        throw ParserException{Tr::tr("XmlProtocol version %1 not supported (supported version: 4)").arg(version)};
+    if (version < 4 || version > 6)
+        throw ParserException{Tr::tr("XmlProtocol version %1 not supported (supported versions: %2-%3)").arg(version).arg(4).arg(6)};
 }
 
 void ParserThread::checkTool(const QString &reportedStr)
@@ -396,6 +423,10 @@ void ParserThread::parseError()
             e.setTid(parseInt64(blockingReadElementText(), "error/tid"));
         } else if (name == QLatin1String("kind")) { //TODO this is memcheck-specific:
             e.setKind(parseErrorKind(blockingReadElementText()));
+        } else if (name == QLatin1String("fd")) {
+            e.setFd(parseInt64(blockingReadElementText(), "error/fd"));
+        } else if (name == QLatin1String("path")) {
+            e.setPath(blockingReadElementText());
         } else if (name == QLatin1String("suppression")) {
             e.setSuppression(parseSuppression());
         } else if (name == QLatin1String("xwhat")) {
@@ -679,41 +710,17 @@ public:
 
     ~ParserPrivate()
     {
-        if (!m_watcher)
-            return;
-        m_thread->cancel();
-        Utils::futureSynchronizer()->addFuture(m_watcher->future());
+        if (m_taskTreeRunner.isRunning())
+            m_thread->cancel();
     }
 
     void start()
     {
-        QTC_ASSERT(!m_watcher, return);
+        QTC_ASSERT(!m_taskTreeRunner.isRunning(), return);
         QTC_ASSERT(m_socket || !m_data.isEmpty(), return);
 
         m_errorString = {};
         m_thread.reset(new ParserThread);
-        m_watcher.reset(new QFutureWatcher<OutputData>);
-        QObject::connect(m_watcher.get(), &QFutureWatcherBase::resultReadyAt, q, [this](int index) {
-            const OutputData data = m_watcher->resultAt(index);
-            if (data.m_status)
-                emit q->status(*data.m_status);
-            if (data.m_error)
-                emit q->error(*data.m_error);
-            if (data.m_errorCount)
-                emit q->errorCount(data.m_errorCount->first, data.m_errorCount->second);
-            if (data.m_suppressionCount)
-                emit q->suppressionCount(data.m_suppressionCount->first, data.m_suppressionCount->second);
-            if (data.m_announceThread)
-                emit q->announceThread(*data.m_announceThread);
-            if (data.m_internalError)
-                m_errorString = data.m_internalError;
-        });
-        QObject::connect(m_watcher.get(), &QFutureWatcherBase::finished, q, [this] {
-            emit q->done(toDoneResult(!m_errorString), m_errorString.value_or(QString()));
-            m_watcher.release()->deleteLater();
-            m_thread.reset();
-            m_socket.reset();
-        });
         if (m_socket) {
             QObject::connect(m_socket.get(), &QIODevice::readyRead, q, [this] {
                 if (m_thread)
@@ -728,19 +735,43 @@ public:
             m_thread->addData(m_data);
             m_thread->finalize();
         }
-        auto parse = [](QPromise<OutputData> &promise, const std::shared_ptr<ParserThread> &thread) {
+        const auto parse = [](QPromise<OutputData> &promise,
+                              const std::shared_ptr<ParserThread> &thread) {
             thread->run(promise);
         };
-        m_watcher->setFuture(Utils::asyncRun(parse, m_thread));
+        const auto onSetup = [this, parse](Async<OutputData> &task) {
+            QObject::connect(&task, &AsyncBase::resultReadyAt, q, [this, task = &task](int index) {
+                const OutputData data = task->resultAt(index);
+                if (data.m_status)
+                    emit q->status(*data.m_status);
+                if (data.m_error)
+                    emit q->error(*data.m_error);
+                if (data.m_errorCount)
+                    emit q->errorCount(data.m_errorCount->first, data.m_errorCount->second);
+                if (data.m_suppressionCount)
+                    emit q->suppressionCount(data.m_suppressionCount->first, data.m_suppressionCount->second);
+                if (data.m_announceThread)
+                    emit q->announceThread(*data.m_announceThread);
+                if (data.m_internalError)
+                    m_errorString = data.m_internalError;
+            });
+            task.setConcurrentCallData(parse, m_thread);
+        };
+        const auto onDone = [this] {
+            emit q->done(makeResult(!m_errorString, m_errorString.value_or(QString())));
+            m_thread.reset();
+            m_socket.reset();
+        };
+        m_taskTreeRunner.start({AsyncTask<OutputData>(onSetup, onDone)});
     }
 
     Parser *q = nullptr;
 
     QByteArray m_data;
     std::unique_ptr<QAbstractSocket> m_socket;
-    std::unique_ptr<QFutureWatcher<OutputData>> m_watcher;
     std::shared_ptr<ParserThread> m_thread;
     std::optional<QString> m_errorString;
+    QSingleTaskTreeRunner m_taskTreeRunner;
 };
 
 Parser::Parser(QObject *parent)
@@ -777,16 +808,16 @@ void Parser::start()
 
 bool Parser::isRunning() const
 {
-    return d->m_watcher.get();
+    return d->m_taskTreeRunner.isRunning();
 }
 
-bool Parser::runBlocking()
+Result<> Parser::runBlocking()
 {
-    bool ok = false;
+    Result<> ok(ResultOk);
     QEventLoop loop;
 
-    const auto finalize = [&loop, &ok](DoneResult result) {
-        ok = result == DoneResult::Success;
+    const auto finalize = [&loop, &ok](const Result<> &result) {
+        ok = result;
         // Refer to the QObject::deleteLater() docs.
         QMetaObject::invokeMethod(&loop, [&loop] { loop.quit(); }, Qt::QueuedConnection);
     };

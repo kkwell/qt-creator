@@ -9,22 +9,22 @@
 
     \title Autotools
 
-    \brief With Autotools, you can create a portable, complete, and
-    self-contained GNU Build System from simple instructions.
+    \summary {With Autotools, you can create a portable, complete, and
+    self-contained GNU Build System from simple instructions.}
 
     \QC can open projects that use the Autotools build system. You can
     build and run the projects directly from \QC.
 
     \note Enable the AutotoolsProjectManager plugin to use it.
 
-    \section1 Working with Autotools Projects
+    \section1 Working with Autotools projects
 
     To work with your Autotools project in \QC:
 
     \list 1
 
-        \li Select \uicontrol File > \uicontrol {Open File or Project}.
-        \li Select the Makefile.am file from your project. This is the only way
+        \li Select \uicontrol File > \uicontrol {Open Project}.
+        \li Select the \c Makefile.am file from your project. This is the only way
             you can use the autotools plugin.
         \li Select the build directory. Only in-source building is currently
             supported.
@@ -32,10 +32,10 @@
             The root node displays the project name. All project files are
             listed below it and you can open them from the list.
 
-            \image qtcreator-autotools-buildrun.png
+            \image {qtcreator-autotools-buildrun.webp} {An autotools project open in the Projects and File System sidebar views and in the editor}
 
-        \li Select \inlineimage icons/run_small.png (\uicontrol Run) to execute
-            the predefined build steps (\c autogen.sh or \c autoreconf,
+        \li Select \imagerunsmall (\uicontrol Run) to
+            execute the predefined build steps (\c autogen.sh or \c autoreconf,
             \c configure, and \c make).
 
             The first time you run the application you must choose the
@@ -46,7 +46,7 @@
 
             You can add parameters to the predefined autotools build steps.
 
-            \image qtcreator-autotools-buildsettings.png
+            \image {qtcreator-autotools-buildsettings.webp} {Autotools build settings}
     \endlist
 
     \sa {Enable and disable plugins}

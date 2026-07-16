@@ -15,8 +15,6 @@ namespace Internal {
 
 const char FILTER_OPTIONS_PAGE_ID[] = "Update";
 
-class UpdateInfoPluginPrivate;
-
 class UpdateInfoPlugin final : public ExtensionSystem::IPlugin
 {
     Q_OBJECT
@@ -33,7 +31,7 @@ public:
     ~UpdateInfoPlugin() override;
 
     void extensionsInitialized() override;
-    bool initialize(const QStringList &arguments, QString *errorMessage) override;
+    Utils::Result<> initialize(const QStringList &arguments) final;
 
     bool isAutomaticCheck() const;
     void setAutomaticCheck(bool on);
@@ -68,14 +66,12 @@ private:
     void startPackageManager() const;
     void stopCheckForUpdates();
     void checkForUpdatesStopped();
-
     void checkForUpdatesFinished();
+
+    Q_INVOKABLE void installPackagesHandler(const QUrl &url);
 
     void loadSettings() const;
     void saveSettings();
-
-private:
-    UpdateInfoPluginPrivate *d;
 };
 
 } // namespace Internal

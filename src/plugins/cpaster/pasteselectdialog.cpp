@@ -5,25 +5,53 @@
 
 #include "cpastertr.h"
 #include "protocol.h"
+#include "settings.h"
+
+#include <coreplugin/icore.h>
 
 #include <utils/hostosinfo.h>
 #include <utils/layoutbuilder.h>
 #include <utils/qtcassert.h>
 
-#include <QApplication>
+#include <QtTaskTree/QSingleTaskTreeRunner>
+
 #include <QComboBox>
 #include <QDebug>
+#include <QDialog>
 #include <QDialogButtonBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
 
+using namespace QtTaskTree;
+
 namespace CodePaster {
 
-PasteSelectDialog::PasteSelectDialog(const QList<Protocol*> &protocols, QWidget *parent) :
-    QDialog(parent),
-    m_protocols(protocols)
+class PasteSelectDialog : public QDialog
+{
+public:
+    explicit PasteSelectDialog(const QList<Protocol *> &protocols);
+
+    QString pasteId() const;
+    int protocol() const;
+
+private:
+    void protocolChanged(int);
+    void list();
+
+    const QList<Protocol *> m_protocols;
+
+    QComboBox *m_protocolBox = nullptr;
+    QListWidget *m_listWidget = nullptr;
+    QPushButton *m_refreshButton = nullptr;
+    QLineEdit *m_pasteEdit = nullptr;
+    QSingleTaskTreeRunner m_taskTreeRunner;
+};
+
+PasteSelectDialog::PasteSelectDialog(const QList<Protocol *> &protocols)
+    : QDialog(Core::ICore::dialogParent())
+    , m_protocols(protocols)
 {
     setObjectName("CodePaster.PasteSelectDialog");
     resize(550, 350);
@@ -68,8 +96,8 @@ PasteSelectDialog::PasteSelectDialog(const QList<Protocol*> &protocols, QWidget 
     connect(m_listWidget, &QListWidget::doubleClicked, this, &QDialog::accept);
 
     for (const Protocol *protocol : protocols) {
-        m_protocolBox->addItem(protocol->name());
-        connect(protocol, &Protocol::listDone, this, &PasteSelectDialog::listDone);
+        const QString name = protocol->name();
+        m_protocolBox->addItem(name);
     }
     connect(m_protocolBox, &QComboBox::currentIndexChanged,
             this, &PasteSelectDialog::protocolChanged);
@@ -77,9 +105,15 @@ PasteSelectDialog::PasteSelectDialog(const QList<Protocol*> &protocols, QWidget 
 
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-}
 
-PasteSelectDialog::~PasteSelectDialog() = default;
+    const int index = m_protocolBox->findText(settings().protocols.stringValue());
+    if (index >= 0) {
+        if (index != m_protocolBox->currentIndex())
+            m_protocolBox->setCurrentIndex(index);
+         else
+            protocolChanged(index); // Trigger a refresh
+    }
+}
 
 QString PasteSelectDialog::pasteId() const
 {
@@ -90,36 +124,9 @@ QString PasteSelectDialog::pasteId() const
     return id;
 }
 
-void PasteSelectDialog::setProtocol(const QString &p)
-{
-    const int index = m_protocolBox->findText(p);
-    if (index >= 0) {
-        if (index != m_protocolBox->currentIndex()) {
-            m_protocolBox->setCurrentIndex(index);
-        } else {
-            // Trigger a refresh
-            protocolChanged(index);
-        }
-    }
-}
-
 int PasteSelectDialog::protocol() const
 {
     return m_protocolBox->currentIndex();
-}
-
-QString PasteSelectDialog::protocolName() const
-{
-    return m_protocolBox->currentText();
-}
-
-void PasteSelectDialog::listDone(const QString &name, const QStringList &items)
-{
-    // Set if the protocol is still current
-    if (name == protocolName()) {
-        m_listWidget->clear();
-        m_listWidget->addItems(items);
-    }
 }
 
 void PasteSelectDialog::list()
@@ -127,18 +134,28 @@ void PasteSelectDialog::list()
     const int index = protocol();
 
     Protocol *protocol = m_protocols[index];
-    QTC_ASSERT((protocol->capabilities() & Protocol::ListCapability), return);
+    QTC_ASSERT((protocol->capabilities() & Capability::List), return);
 
     m_listWidget->clear();
-    if (Protocol::ensureConfiguration(protocol, this)) {
-        m_listWidget->addItem(new QListWidgetItem(Tr::tr("Waiting for items")));
-        protocol->list();
+    if (Protocol::ensureConfiguration(protocol)) {
+        m_listWidget->addItem(Tr::tr("Waiting for items..."));
+
+        const auto listHandler = [this](const QStringList &results) {
+            m_listWidget->clear();
+            m_listWidget->addItems(results);
+        };
+        const auto errorHandler = [this] {
+            m_listWidget->addItem(Tr::tr("Error while retrieving items."));
+        };
+        m_taskTreeRunner.start({protocol->listRecipe(listHandler)}, {},
+                               errorHandler, CallDoneFlag::OnError);
     }
 }
 
 void PasteSelectDialog::protocolChanged(int i)
 {
-    const bool canList = m_protocols.at(i)->capabilities() & Protocol::ListCapability;
+    m_taskTreeRunner.reset();
+    const bool canList = m_protocols.at(i)->capabilities() & Capability::List;
     m_refreshButton->setEnabled(canList);
     if (canList) {
         list();
@@ -146,6 +163,20 @@ void PasteSelectDialog::protocolChanged(int i)
         m_listWidget->clear();
         m_listWidget->addItem(new QListWidgetItem(Tr::tr("This protocol does not support listing")));
     }
+}
+
+QString executeFetchDialog(const QList<Protocol *> &protocols)
+{
+    PasteSelectDialog dialog(protocols);
+
+    if (dialog.exec() != QDialog::Accepted)
+        return {};
+    // Save new protocol in case user changed it.
+    if (settings().protocols() != dialog.protocol()) {
+        settings().protocols.setValue(dialog.protocol());
+        settings().writeSettings();
+    }
+    return dialog.pasteId();
 }
 
 } // CodePaster

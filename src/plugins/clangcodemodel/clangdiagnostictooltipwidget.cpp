@@ -16,7 +16,6 @@
 
 #include <QApplication>
 #include <QDesktopServices>
-#include <QFileInfo>
 #include <QHash>
 #include <QLabel>
 #include <QScreen>
@@ -31,22 +30,22 @@ namespace {
 const char LINK_ACTION_GOTO_LOCATION[] = "#gotoLocation";
 const char LINK_ACTION_APPLY_FIX[] = "#applyFix";
 
-QString fileNamePrefix(const QString &mainFilePath, const Utils::Link &location)
+QString fileNamePrefix(const Utils::FilePath &mainFilePath, const Utils::Link &location)
 {
-    const QString filePath = location.targetFilePath.toString();
+    const Utils::FilePath &filePath = location.targetFilePath;
     if (!filePath.isEmpty() && filePath != mainFilePath)
-        return QFileInfo(filePath).fileName() + QLatin1Char(':');
+        return filePath.fileName() + QLatin1Char(':');
 
     return QString();
 }
 
 QString locationToString(const Utils::Link &location)
 {
-    if (location.targetLine <= 0 || location.targetColumn <= 0)
+    if (location.target.line <= 0 || location.target.column <= 0)
         return {};
-    return QString::number(location.targetLine)
+    return QString::number(location.target.line)
          + QStringLiteral(":")
-         + QString::number(location.targetColumn + 1);
+         + QString::number(location.target.column + 1);
 }
 
 void applyFixit(const ClangDiagnostic &diagnostic)
@@ -175,8 +174,8 @@ private:
     QString tableRows(const ClangDiagnostic &diagnostic)
     {
         m_mainFilePath = m_displayHints.showFileNameInMainDiagnostic
-                ? QString()
-                : diagnostic.location.targetFilePath.toString();
+                             ? Utils::FilePath{}
+                             : diagnostic.location.targetFilePath;
 
         const ClangDiagnostic diag = supplementedDiagnostic(diagnostic);
 
@@ -253,8 +252,8 @@ private:
         return text;
     }
 
-    QString clickableLocation(const ClangDiagnostic &diagnostic, const QString &mainFilePath,
-                              bool &hasContent)
+    QString clickableLocation(
+        const ClangDiagnostic &diagnostic, const Utils::FilePath &mainFilePath, bool &hasContent)
     {
         const Utils::Link &location = diagnostic.location;
 
@@ -331,7 +330,7 @@ private:
     TargetIdToDiagnosticTable m_targetIdsToDiagnostics;
     unsigned m_targetIdCounter = 0;
 
-    QString m_mainFilePath;
+    Utils::FilePath m_mainFilePath;
 };
 
 WidgetFromDiagnostics::DisplayHints toHints(const ClangDiagnosticWidget::Destination &destination,

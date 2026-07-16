@@ -29,8 +29,6 @@
 #include <tracing/timelineformattime.h>
 
 #include <aggregation/aggregate.h>
-// Needed for the load&save actions in the context menu
-#include <debugger/analyzer/analyzermanager.h>
 #include <coreplugin/findplaceholder.h>
 #include <utils/styledbar.h>
 #include <utils/algorithm.h>
@@ -50,8 +48,8 @@
 #include <QRegularExpression>
 #include <QTextCursor>
 
-namespace QmlProfiler {
-namespace Internal {
+using namespace QmlDebug;
+namespace QmlProfiler::Internal {
 
 class QmlProfilerTraceView::QmlProfilerTraceViewPrivate
 {
@@ -406,5 +404,4 @@ bool TraceViewFindSupport::findOne(const QString &txt, Utils::FindFlags findFlag
     return false;
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

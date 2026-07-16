@@ -58,9 +58,6 @@ public:
 
     bool equals(const Format &f) const;
 
-    QString toString() const;
-    bool fromString(const QString &str);
-
     friend bool operator==(const Format &f1, const Format &f2) { return f1.equals(f2); }
     friend bool operator!=(const Format &f1, const Format &f2) { return !f1.equals(f2); }
 
@@ -97,7 +94,7 @@ public:
 
     void clear();
 
-    bool save(const Utils::FilePath &filePath, QWidget *parent) const;
+    bool save(const Utils::FilePath &filePath) const;
     bool load(const Utils::FilePath &filePath);
 
     bool equals(const ColorScheme &cs) const

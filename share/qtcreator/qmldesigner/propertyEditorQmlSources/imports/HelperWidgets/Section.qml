@@ -11,6 +11,7 @@ Item {
     id: section
 
     property string caption: "Title"
+    property string captionTooltip: ""
     property color labelColor: StudioTheme.Values.themeTextColor
     property int labelCapitalization: Font.AllUppercase
     property alias sectionHeight: header.height
@@ -21,6 +22,7 @@ Item {
     property alias showLeftBorder: leftBorder.visible
     property alias showCloseButton: closeButton.visible
     property alias closeButtonToolTip: closeButton.tooltip
+    property alias closeButtonIcon: closeButton.icon
     property alias showEyeButton: eyeButton.visible
     property alias eyeButtonToolTip: eyeButton.tooltip
     property alias spacing: column.spacing
@@ -37,14 +39,31 @@ Item {
         font.capitalization: section.labelCapitalization
         anchors.verticalCenter: parent?.verticalCenter
         textFormat: Text.RichText
+
+        MouseArea {
+            id: labelMouseArea
+
+            anchors.fill: parent
+            acceptedButtons: Qt.NoButton
+            hoverEnabled: true
+            enabled: section.captionTooltip !== ""
+        }
+
+        StudioControls.ToolTip {
+            visible: labelMouseArea.containsMouse
+            text: section.captionTooltip
+        }
     }
+
+    property Item icons
 
     property int leftPadding: StudioTheme.Values.sectionLeftPadding
     property int rightPadding: 0
     property int topPadding: StudioTheme.Values.sectionHeadSpacerHeight
     property int bottomPadding: StudioTheme.Values.sectionHeadSpacerHeight
 
-    property bool expanded: true
+    property bool defaultExpanded: true
+    property bool expanded: defaultExpanded
     property int level: 0
     property int levelShift: 10
     property bool hideHeader: false
@@ -55,12 +74,46 @@ Item {
     property bool dropEnabled: false
     property bool highlight: false
     property bool eyeEnabled: true // eye button enabled (on)
+    property bool searchHide: false
 
     property bool useDefaulContextMenu: true
 
     property string category: "properties"
 
     clip: true
+
+    Component.onCompleted: {
+        updateExpansion()
+    }
+
+    function updateExpansion() {
+        // Check if function 'loadExpandedState' exists in current context
+        if (typeof loadExpandedState === "function") {
+            if (section.expandOnClick)
+                section.expanded = loadExpandedState(section.caption, section.defaultExpanded)
+            else if (loadExpandedState(section.caption, section.defaultExpanded))
+                section.expand()
+            else
+                section.collapse()
+        } else {
+            // Fallback to default value
+            if (section.expandOnClick)
+                section.expanded = section.defaultExpanded
+            else if (section.defaultExpanded)
+                section.expand()
+            else
+                section.collapse()
+        }
+    }
+
+    Connections {
+        target: this.modelNodeBackend ?? null
+        ignoreUnknownSignals: true
+
+        function onSelectionChanged() {
+            updateExpansion()
+        }
+    }
 
     Connections {
         id: connection
@@ -159,6 +212,10 @@ Item {
                         section.expanded = !section.expanded
                     else
                         section.toggleExpand()
+
+                    // Check if function 'saveExpandedState' exists in current context
+                    if (typeof saveExpandedState === "function")
+                        saveExpandedState(section.caption, section.expanded)
                 } else {
                     section.showContextMenu()
                 }
@@ -214,6 +271,13 @@ Item {
                 }
             }
 
+            Item {
+                id: iconsContent
+                height: header.height
+                children: [ section.icons ]
+                Layout.preferredWidth: childrenRect.width
+            }
+
             IconButton {
                 id: arrow
                 icon: StudioTheme.Constants.sectionToggle
@@ -236,6 +300,10 @@ Item {
                         section.expanded = !section.expanded
                     else
                         section.toggleExpand()
+
+                    // Check if function 'saveExpandedState' exists in current context
+                    if (typeof saveExpandedState === "function")
+                        saveExpandedState(section.caption, section.expanded)
                 }
             }
 
@@ -333,6 +401,14 @@ Item {
     }
 
     states: [
+        State {
+            name: "Hide"
+            when: section.searchHide
+            PropertyChanges {
+                target: section
+                visible: false
+            }
+        },
         State {
             name: "Collapsed"
             when: !section.expanded

@@ -4,29 +4,30 @@
 #include "cmakeprocess.h"
 
 #include "builddirparameters.h"
-#include "cmakeparser.h"
+#include "cmakeautogenparser.h"
+#include "cmakeoutputparser.h"
 #include "cmakeprojectconstants.h"
 #include "cmakeprojectmanagertr.h"
 #include "cmakespecificsettings.h"
 #include "cmaketoolmanager.h"
 
+#include <coreplugin/icore.h>
+#include <coreplugin/messagemanager.h>
+#include <coreplugin/outputwindow.h>
 #include <coreplugin/progressmanager/processprogress.h>
+
 #include <projectexplorer/buildsystem.h>
+#include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/taskhub.h>
-#include <projectexplorer/kitchooser.h>
-
-#include <extensionsystem/invoker.h>
-#include <extensionsystem/pluginmanager.h>
 
 #include <utils/algorithm.h>
 #include <utils/macroexpander.h>
 #include <utils/qtcprocess.h>
-#include <utils/processinfo.h>
-#include <utils/processinterface.h>
 #include <utils/stringutils.h>
-#include <utils/stylehelper.h>
 #include <utils/theme/theme.h>
+
+#include <QGuiApplication>
 
 using namespace Core;
 using namespace ProjectExplorer;
@@ -52,12 +53,9 @@ static const int failedToStartExitCode = 0xFF; // See ProcessPrivate::handleDone
 
 void CMakeProcess::run(const BuildDirParameters &parameters, const QStringList &arguments)
 {
-    QTC_ASSERT(!m_process, return);
+    QTC_ASSERT(parameters.isValid(), return);
 
-    CMakeTool *cmake = parameters.cmakeTool();
-    QTC_ASSERT(parameters.isValid() && cmake, return);
-
-    const FilePath cmakeExecutable = cmake->cmakeExecutable();
+    const FilePath cmakeExecutable = parameters.cmakeExecutable;
 
     const QString mountHint = ::CMakeProjectManager::Tr::tr(
         "You may need to add the project directory to the list of directories that are mounted by "
@@ -92,65 +90,72 @@ void CMakeProcess::run(const BuildDirParameters &parameters, const QStringList &
         return;
     }
 
-    if (buildDirectory.needsDevice()) {
-        if (!cmake->cmakeExecutable().isSameDevice(buildDirectory)) {
+    if (!buildDirectory.isLocal()) {
+        if (!cmakeExecutable.isSameDevice(buildDirectory)) {
             const QString msg = ::CMakeProjectManager::Tr::tr(
                   "CMake executable \"%1\" and build directory \"%2\" must be on the same device.")
-                    .arg(cmake->cmakeExecutable().toUserOutput(), buildDirectory.toUserOutput());
+                    .arg(cmakeExecutable.toUserOutput(), buildDirectory.toUserOutput());
             BuildSystem::appendBuildSystemOutput(addCMakePrefix({QString(), msg}).join('\n'));
             emit finished(failedToStartExitCode);
             return;
         }
     }
 
-    // Copy the "package-manager" CMake code from the ${IDE:ResourcePath} to the build directory
-    if (settings(parameters.project).packageManagerAutoSetup()) {
-        const FilePath localPackageManagerDir = buildDirectory.pathAppended(Constants::PACKAGE_MANAGER_DIR);
-        const FilePath idePackageManagerDir = FilePath::fromString(
-            parameters.expander->expand(QStringLiteral("%{IDE:ResourcePath}/package-manager")));
+    // Copy the "cmake-helper" CMake code from the ${IDE:ResourcePath} to the build directory
+    const FilePath ideCMakeHelperDir = Core::ICore::resourcePath("cmake-helper");
+    const FilePath localCMakeHelperDir = buildDirectory / Constants::PACKAGE_MANAGER_DIR;
 
-        if (!localPackageManagerDir.exists() && idePackageManagerDir.exists())
-            idePackageManagerDir.copyRecursively(localPackageManagerDir);
+    if (!ideCMakeHelperDir.isDir()) {
+        BuildSystem::appendBuildSystemOutput(
+            //: %1 applicationDisplayName
+            Tr::tr(
+                "The %1 installation is missing the "
+                "\"cmake-helper\" directory. It was expected here: \"%2\".")
+                .arg(QGuiApplication::applicationDisplayName(), ideCMakeHelperDir.toUserOutput()));
+    } else if (!localCMakeHelperDir.exists()) {
+        const auto result = ideCMakeHelperDir.copyRecursively(localCMakeHelperDir);
+        if (!result) {
+            BuildSystem::appendBuildSystemOutput(
+                addCMakePrefix({Tr::tr("Failed to copy \"cmake-helper\" folder:"), result.error()})
+                    .join('\n'));
+        }
     }
 
-    const auto parser = new CMakeParser;
-    parser->setSourceDirectory(parameters.sourceDirectory);
-    m_parser.addLineParser(parser);
+    const auto parser = new CMakeOutputParser;
+    parser->setSourceDirectories({parameters.sourceDirectory, parameters.buildDirectory});
+    m_parser.addLineParsers({new CMakeAutogenParser, parser});
     m_parser.addLineParsers(parameters.outputParsers());
 
     // Always use the sourceDir: If we are triggered because the build directory is getting deleted
     // then we are racing against CMakeCache.txt also getting deleted.
 
-    m_process.reset(new Process);
+    m_process.setWorkingDirectory(buildDirectory);
+    m_process.setEnvironment(parameters.environment);
 
-    m_process->setWorkingDirectory(buildDirectory);
-    m_process->setEnvironment(parameters.environment);
-
-    m_process->setStdOutLineCallback([this](const QString &s) {
+    m_process.setStdOutLineCallback([this](const QString &s) {
         BuildSystem::appendBuildSystemOutput(addCMakePrefix(stripTrailingNewline(s)));
         emit stdOutReady(s);
     });
 
-    m_process->setStdErrLineCallback([this](const QString &s) {
+    m_process.setStdErrLineCallback([this](const QString &s) {
         m_parser.appendMessage(s, StdErrFormat);
         BuildSystem::appendBuildSystemOutput(addCMakePrefix(stripTrailingNewline(s)));
     });
 
-    connect(m_process.get(), &Process::done, this, [this] {
-        if (m_process->result() != ProcessResult::FinishedWithSuccess) {
-            const QString message = m_process->exitMessage();
+    connect(&m_process, &Process::done, this, [this] {
+        if (m_process.result() != ProcessResult::FinishedWithSuccess) {
+            const QString message = m_process.exitMessage();
             BuildSystem::appendBuildSystemOutput(addCMakePrefix({{}, message}).join('\n'));
-            TaskHub::addTask(BuildSystemTask(Task::Error, message));
+            TaskHub::addTask<CMakeTask>(Task::Error, message);
         }
 
-        emit finished(m_process->exitCode());
+        emit finished(m_process.exitCode());
 
         const QString elapsedTime = Utils::formatElapsedTime(m_elapsed.elapsed());
         BuildSystem::appendBuildSystemOutput(addCMakePrefix({{}, elapsedTime}).join('\n'));
     });
 
-    CommandLine commandLine(cmakeExecutable);
-    commandLine.addArgs(
+    CommandLine commandLine(cmakeExecutable,
         {"-S",
          CMakeToolManager::mappedFilePath(parameters.project, sourceDirectory).path(),
          "-B",
@@ -159,22 +164,27 @@ void CMakeProcess::run(const BuildDirParameters &parameters, const QStringList &
 
     TaskHub::clearTasks(ProjectExplorer::Constants::TASK_CATEGORY_BUILDSYSTEM);
 
+    if (settings(parameters.project).cleanOldOutput())
+    {
+        ProjectExplorerPlugin::buildSystemOutput()->clearLinesPrefixedWith(Constants::OUTPUT_PREFIX, true);
+        Core::MessageManager::clearLinesPrefixedWith(Constants::OUTPUT_PREFIX, false);
+    }
+
     BuildSystem::startNewBuildSystemOutput(
         addCMakePrefix(::CMakeProjectManager::Tr::tr("Running %1 in %2.")
                            .arg(commandLine.toUserOutput(), buildDirectory.toUserOutput())));
 
-    ProcessProgress *progress = new ProcessProgress(m_process.get());
+    ProcessProgress *progress = new ProcessProgress(&m_process);
     progress->setDisplayName(::CMakeProjectManager::Tr::tr("Configuring \"%1\"")
                              .arg(parameters.projectName));
-    m_process->setCommand(commandLine);
+    m_process.setCommand(commandLine);
     m_elapsed.start();
-    m_process->start();
+    m_process.start();
 }
 
 void CMakeProcess::stop()
 {
-    if (m_process)
-        m_process->stop();
+    m_process.stop();
 }
 
 QString addCMakePrefix(const QString &str)

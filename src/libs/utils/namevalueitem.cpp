@@ -1,10 +1,12 @@
 // Copyright (C) 2019 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include "namevalueitem.h"
 #include "algorithm.h"
+#include "environment.h"
 #include "namevaluedictionary.h"
+#include "namevalueitem.h"
 #include "qtcassert.h"
+#include "utilstr.h"
 
 #include <QDebug>
 
@@ -98,6 +100,22 @@ QVariantList EnvironmentItem::toVariantList(const EnvironmentItem &item)
     return QVariantList() << item.name << item.operation << item.value;
 }
 
+QString EnvironmentItem::toShortSummary(const EnvironmentItems &list, bool multiLine)
+{
+    return list.empty() ? Tr::tr("No changes to apply.")
+                        : EnvironmentItem::toStringList(list).join(
+                              QLatin1String(multiLine ? "\n" : "; "));
+}
+
+QString EnvironmentItem::separator() const
+{
+    if (const Environment::ListSeparatorProvider &p = Environment::listSeparatorProvider()) {
+        if (const auto sep = p(name))
+            return *sep;
+    }
+    return HostOsInfo::pathListSeparator();
+}
+
 static QString expand(const NameValueDictionary *dictionary, QString value)
 {
     int replaceCount = 0;
@@ -112,9 +130,9 @@ static QString expand(const NameValueDictionary *dictionary, QString value)
                     end = value.indexOf('}', i);
                 if (end != -1) {
                     const QString &key = value.mid(i + 2, end - i - 2);
-                    NameValueDictionary::const_iterator it = dictionary->constFind(key);
-                    if (it != dictionary->constEnd())
-                        value.replace(i, end - i + 1, it.value().first);
+                    const NameValueDictionary::const_iterator it = dictionary->find(key);
+                    if (it != dictionary->end())
+                        value.replace(i, end - i + 1, it.value());
                     ++replaceCount;
                     QTC_ASSERT(replaceCount < 100, break);
                 }
@@ -137,19 +155,19 @@ void EnvironmentItem::apply(NameValueDictionary *dictionary, Operation op) const
         dictionary->unset(name);
         break;
     case Prepend: {
-        const NameValueDictionary::const_iterator it = dictionary->constFind(name);
-        if (it != dictionary->constEnd()) {
-            QString v = dictionary->value(it);
-            const QChar pathSep = HostOsInfo::pathListSeparator();
+        const NameValueDictionary::const_iterator it = dictionary->find(name);
+        if (it != dictionary->end()) {
+            QString v = it.value();
+            const QString listSep = separator();
             int sepCount = 0;
-            if (v.startsWith(pathSep))
+            if (v.startsWith(listSep))
                 ++sepCount;
-            if (value.endsWith(pathSep))
+            if (value.endsWith(listSep))
                 ++sepCount;
             if (sepCount == 2)
-                v.remove(0, 1);
+                v.remove(0, listSep.size());
             else if (sepCount == 0)
-                v.prepend(pathSep);
+                v.prepend(listSep);
             v.prepend(expand(dictionary, value));
             dictionary->set(name, v);
         } else {
@@ -157,19 +175,19 @@ void EnvironmentItem::apply(NameValueDictionary *dictionary, Operation op) const
         }
     } break;
     case Append: {
-        const NameValueDictionary::const_iterator it = dictionary->constFind(name);
-        if (it != dictionary->constEnd()) {
-            QString v = dictionary->value(it);
-            const QChar pathSep = HostOsInfo::pathListSeparator();
+        const NameValueDictionary::const_iterator it = dictionary->find(name);
+        if (it != dictionary->end()) {
+            QString v = it.value();
+            const QString listSep = separator();
             int sepCount = 0;
-            if (v.endsWith(pathSep))
+            if (v.endsWith(listSep))
                 ++sepCount;
-            if (value.startsWith(pathSep))
+            if (value.startsWith(listSep))
                 ++sepCount;
             if (sepCount == 2)
-                v.chop(1);
+                v.chop(listSep.size());
             else if (sepCount == 0)
-                v.append(pathSep);
+                v.append(listSep);
             v.append(expand(dictionary, value));
             dictionary->set(name, v);
         } else {

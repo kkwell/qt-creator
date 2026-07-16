@@ -8,6 +8,7 @@
 #include "remotelinuxtr.h"
 
 #include <projectexplorer/buildstep.h>
+#include <projectexplorer/buildsystem.h>
 #include <projectexplorer/deployablefile.h>
 #include <projectexplorer/deploymentdata.h>
 #include <projectexplorer/devicesupport/filetransfer.h>
@@ -16,7 +17,6 @@
 #include <projectexplorer/runconfigurationaspects.h>
 #include <projectexplorer/target.h>
 
-#include <utils/hostosinfo.h>
 #include <utils/qtcprocess.h>
 #include <utils/processinterface.h>
 #include <utils/qtcassert.h>
@@ -24,7 +24,7 @@
 #include <QDateTime>
 
 using namespace ProjectExplorer;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace RemoteLinux::Internal {
@@ -110,14 +110,14 @@ QDateTime GenericDirectUploadStep::timestampFromStat(const DeployableFile &file,
                               .arg(file.remoteFilePath(), error));
         return {};
     }
-    const QByteArray output = statProc->readAllRawStandardOutput().trimmed();
+    const QString output = statProc->readAllStandardOutput().trimmed();
     const QString warningString(Tr::tr("Unexpected stat output for remote file \"%1\": %2")
-                                .arg(file.remoteFilePath()).arg(QString::fromUtf8(output)));
-    if (!output.startsWith(file.remoteFilePath().toUtf8())) {
+                                .arg(file.remoteFilePath()).arg(output));
+    if (!output.startsWith(file.remoteFilePath())) {
         addWarningMessage(warningString);
         return {};
     }
-    const QByteArrayList columns = output.mid(file.remoteFilePath().toUtf8().size() + 1).split(' ');
+    const QStringList columns = output.mid(file.remoteFilePath().size() + 1).split(' ');
     if (columns.size() < 14) { // Normal Linux stat: 16 columns in total, busybox stat: 15 columns
         addWarningMessage(warningString);
         return {};
@@ -151,17 +151,17 @@ GroupItem GenericDirectUploadStep::statTask(UploadStorage *storage,
 GroupItem GenericDirectUploadStep::statTree(const Storage<UploadStorage> &storage,
                                             FilesToStat filesToStat, StatEndHandler statEndHandler)
 {
-    const auto onSetup = [this, storage, filesToStat, statEndHandler](TaskTree &tree) {
+    const auto onSetup = [this, storage, filesToStat, statEndHandler](QTaskTree &tree) {
         UploadStorage *storagePtr = storage.activeStorage();
         const QList<DeployableFile> files = filesToStat(storagePtr);
-        QList<GroupItem> statList{finishAllAndSuccess, parallelLimit(MaxConcurrentStatCalls)};
+        GroupItems statList{finishAllAndSuccess, ParallelLimit(MaxConcurrentStatCalls)};
         for (const DeployableFile &file : std::as_const(files)) {
             QTC_ASSERT(file.isValid(), continue);
             statList.append(statTask(storagePtr, file, statEndHandler));
         }
         tree.setRecipe({statList});
     };
-    return TaskTreeTask(onSetup);
+    return QTaskTreeTask(onSetup);
 }
 
 GroupItem GenericDirectUploadStep::uploadTask(const Storage<UploadStorage> &storage)
@@ -203,7 +203,7 @@ GroupItem GenericDirectUploadStep::uploadTask(const Storage<UploadStorage> &stor
         addErrorMessage(transfer.resultData().m_errorString);
     };
 
-    return FileTransferTask(onSetup, onError, CallDoneIf::Error);
+    return FileTransferTask(onSetup, onError, CallDoneFlag::OnError);
 }
 
 GroupItem GenericDirectUploadStep::deployRecipe()
@@ -211,7 +211,7 @@ GroupItem GenericDirectUploadStep::deployRecipe()
     const Storage<UploadStorage> storage;
 
     const auto setupHandler = [this, storage] {
-        const QList<DeployableFile> deployableFiles = target()->deploymentData().allFiles();
+        const QList<DeployableFile> deployableFiles = buildSystem()->deploymentData().allFiles();
         QList<DeployableFile> collected;
         for (const DeployableFile &file : deployableFiles)
             collected.append(collectFilesToUpload(file));
@@ -261,7 +261,7 @@ GroupItem GenericDirectUploadStep::deployRecipe()
         statTree(storage, preFilesToStat, preStatEndHandler),
         uploadTask(storage),
         statTree(storage, postFilesToStat, postStatEndHandler),
-        onGroupDone(doneHandler, CallDoneIf::Success)
+        onGroupDone(doneHandler, CallDoneFlag::OnSuccess)
     };
     return root;
 }

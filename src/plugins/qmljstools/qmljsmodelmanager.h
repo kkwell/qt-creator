@@ -5,17 +5,18 @@
 
 #include "qmljstools_global.h"
 
+#include <qmljs/qmljsinterpreter.h>
 #include <qmljs/qmljsmodelmanagerinterface.h>
 
 #include <QFuture>
 
-QT_FORWARD_DECLARE_CLASS(QTimer)
-QT_FORWARD_DECLARE_CLASS(QLocale)
+namespace ProjectExplorer {
+class BuildConfiguration;
+class QmlCodeModelInfo;
+class Project;
+}
 
-namespace Utils { class MimeType; }
-
-namespace QmlJSTools {
-namespace Internal {
+namespace QmlJSTools::Internal {
 
 class QMLJSTOOLS_EXPORT ModelManager: public QmlJS::ModelManagerInterface
 {
@@ -26,20 +27,26 @@ public:
     ~ModelManager() override;
 
     void delayedInitialization();
-protected:
+
+private:
     QHash<QString, QmlJS::Dialect> languageForSuffix() const override;
     void writeMessageInternal(const QString &msg) const override;
     WorkingCopy workingCopyInternal() const override;
     void addTaskInternal(const QFuture<void> &result, const QString &msg,
-                         const char *taskId) const override;
-    ProjectInfo defaultProjectInfoForProject(
-        ProjectExplorer::Project *project, const Utils::FilePaths &hiddenRccFolders) const override;
-private:
-    void updateDefaultProjectInfo();
-    void loadDefaultQmlTypeDescriptions();
+                         const Utils::Id taskId) const override;
+
+    void updateDefaultProjectInfo(ProjectExplorer::Project *project);
+
+    void updateFromBuildConfig(ProjectExplorer::BuildConfiguration *bc,
+                               const ProjectExplorer::QmlCodeModelInfo &extra);
+
+    void loadDefaultQmlTypeDescriptions(
+        QmlJS::CppQmlTypesLoader::BuiltinObjects &defaultQtObjects,
+        QmlJS::CppQmlTypesLoader::BuiltinObjects &defaultLibraryObjects);
     QHash<QString, QmlJS::Dialect> initLanguageForSuffix() const;
 };
 
-} // namespace Internal
+QMLJSTOOLS_EXPORT ProjectExplorer::Project *
+    projectFromProjectInfo(const ModelManager::ProjectInfo &projectInfo);
 
-} // namespace QmlJSTools
+} // namespace QmlJSTools::Internal

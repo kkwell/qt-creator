@@ -9,6 +9,7 @@
 #include "../qdbutils.h"
 
 #include <projectexplorer/devicesupport/devicemanager.h>
+#include <projectexplorer/devicesupport/sshparameters.h>
 #include <projectexplorer/projectexplorerconstants.h>
 
 #include <utils/qtcassert.h>
@@ -17,14 +18,14 @@
 #include <QObject>
 
 using namespace ProjectExplorer;
+using namespace Utils;
 
 namespace Qdb::Internal {
 
 static bool isAutodetectedQdbDevice(const IDevice::ConstPtr &device)
 {
-    return device
-        && device->type() == Qdb::Constants::QdbLinuxOsType
-        && device->isAutoDetected();
+    return device && device->type() == ProjectExplorer::Constants::BOOT2QT_DEVICE_TYPE
+           && device->isAutoDetected();
 }
 
 DeviceDetector::DeviceDetector()
@@ -78,37 +79,44 @@ void DeviceDetector::handleDeviceEvent(QdbDeviceTracker::DeviceEventType eventTy
     const Utils::Id deviceId =
             Utils::Id(Constants::QdbHardwareDevicePrefix).withSuffix(':').withSuffix(serial);
     const QString messagePrefix = Tr::tr("Device \"%1\" %2").arg(serial);
-    DeviceManager * const dm = DeviceManager::instance();
 
     if (eventType == QdbDeviceTracker::NewDevice) {
         const QString name = Tr::tr("Boot to Qt device %1").arg(serial);
         QdbDevice::Ptr device = QdbDevice::create();
         device->setupId(IDevice::AutoDetected, deviceId);
-        device->settings()->displayName.setValue(name);
-        device->setType(Qdb::Constants::QdbLinuxOsType);
-        device->setMachineType(IDevice::Hardware);
-        device->setExtraData(ProjectExplorer::Constants::SUPPORTS_RSYNC, true);
-        device->setExtraData(ProjectExplorer::Constants::SUPPORTS_SFTP, true);
+        device->setDisplayName(name);
 
         const QString ipAddress = info["ipAddress"];
         device->setupDefaultNetworkSettings(ipAddress);
 
-        IDevice::DeviceState state;
-        if (ipAddress.isEmpty())
-            state = IDevice::DeviceConnected;
-        else
-            state = IDevice::DeviceReadyToUse;
-        device->setDeviceState(state);
+        if (const QdbDevice::Ptr existing = std::static_pointer_cast<QdbDevice>(
+                DeviceManager::find(deviceId));
+            existing && existing->sshParameters() == device->sshParameters()) {
+            device = existing;
+        } else {
+            DeviceManager::addDevice(device);
+        }
 
-        dm->addDevice(device);
-
-        if (state == IDevice::DeviceConnected)
-            showMessage(messagePrefix.arg("connected, waiting for IP"), false);
-        else
-            showMessage(messagePrefix.arg("is ready to use at ").append(ipAddress), false);
+        if (ipAddress.isEmpty()) {
+            device->setDeviceState(IDevice::DeviceDisconnected);
+            showMessage(messagePrefix.arg("waiting for IP"), false);
+        } else if (device->deviceState() != IDevice::DeviceReadyToUse) {
+            device->tryToConnect(
+                {this, [ipAddress, messagePrefix](const Result<> &res) {
+                     if (res.has_value())
+                         showMessage(
+                             messagePrefix.arg("is ready to use at ").append(ipAddress), false);
+                     else
+                         showMessage(
+                             messagePrefix.arg("failed to connect to ").append(ipAddress), true);
+                 }});
+        }
     } else if (eventType == QdbDeviceTracker::DisconnectedDevice) {
-        dm->setDeviceState(deviceId, IDevice::DeviceDisconnected);
-        showMessage(messagePrefix.arg("disconnected"), false);
+        if (QdbDevice::Ptr device = std::static_pointer_cast<QdbDevice>(
+                DeviceManager::find(deviceId))) {
+            device->closeConnection(true);
+            showMessage(messagePrefix.arg("disconnected"), false);
+        }
     }
 }
 
@@ -120,11 +128,10 @@ void DeviceDetector::handleTrackerError(const QString &errorMessage)
 
 void DeviceDetector::resetDevices()
 {
-    DeviceManager * const dm = DeviceManager::instance();
-    for (int i = 0; i < dm->deviceCount(); ++i) {
-        const IDevice::ConstPtr device = dm->deviceAt(i);
+    for (int i = 0; i < DeviceManager::deviceCount(); ++i) {
+        const IDevice::ConstPtr device = DeviceManager::deviceAt(i);
         if (isAutodetectedQdbDevice(device))
-            dm->setDeviceState(device->id(), IDevice::DeviceDisconnected);
+            DeviceManager::setDeviceState(device->id(), IDevice::DeviceDisconnected);
     }
 }
 

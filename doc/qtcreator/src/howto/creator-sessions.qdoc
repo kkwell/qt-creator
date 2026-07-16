@@ -9,16 +9,10 @@
 
 /*!
     \page creator-project-managing-sessions.html
-    \if defined(qtdesignstudio)
-    \previouspage creator-project-managing-workspaces.html
-    \nextpage studio-keyboard-shortcuts.html
-    \else
     \previouspage creator-how-tos.html
     \nextpage creator-keyboard-shortcuts.html
-    \endif
 
     \ingroup creator-how-to-use
-    \ingroup studio-how-to
 
     \title Manage sessions
 
@@ -33,10 +27,8 @@
     \list
 
         \li Projects
-            \if defined(qtcreator)
             with their dependencies (including SUBDIRS projects when using
             qmake)
-            \endif
 
         \li Editors
 
@@ -60,7 +52,7 @@
 
     To manage sessions, select \uicontrol File > \uicontrol Sessions > \uicontrol Manage.
 
-    \image qtcreator-session-manager.png {Session Manager}
+    \image {qtcreator-session-manager.png} {Session Manager}
 
     To save a session under a new name, select \uicontrol Clone.
 
@@ -90,14 +82,12 @@
         \li Select \uicontrol {Open} in \uicontrol {Session Manager}.
     \endlist
 
-    \if defined(qtcreator)
-
     The \uicontrol Projects tab in the \uicontrol Welcome mode lists existing
-    sessions. To open a session, select it or press
+    sessions. To open a session, select it or select
     \key Ctrl+Alt+<number>, where \e <number> is the number of the session to
     open (available for the first nine sessions).
 
-    \image qtcreator-welcome-session.webp {Sessions in the Welcome mode}
+    \image {qtcreator-welcome-session.webp} {Sessions in the Welcome mode}
 
     To view more information about a session, select the down arrow icon that
     appears when you move the mouse cursor over the session name. Select actions
@@ -113,7 +103,7 @@
     To locate a session:
 
     \list 1
-        \li Press \key {Ctrl+K} (\key {Cmd+K} on \macos) to activate the locator.
+        \li Select \key {Ctrl+K} (\key {Cmd+K} on \macos) to activate the locator.
         \li Enter:
             \list
                 \li \c {t} \e {<session_name>}
@@ -123,6 +113,5 @@
         \li Double-click the session name to open it.
     \endlist
 
-    \sa {Navigate with locator}, {Command-Line Options}
-    \endif
+    \sa {Navigate with locator}, {Command-line options}
 */

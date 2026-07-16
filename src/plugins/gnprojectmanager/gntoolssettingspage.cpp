@@ -1,0 +1,322 @@
+// Copyright (C) 2024 The Qt Company Ltd.
+// Copyright (C) 2026 BogDan Vatra <bogdan@kde.org>
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
+
+#include "gntoolssettingspage.h"
+
+#include "gnpluginconstants.h"
+#include "gnprojectmanagertr.h"
+#include "gntools.h"
+
+#include <coreplugin/dialogs/ioptionspage.h>
+
+#include <projectexplorer/projectexplorerconstants.h>
+
+#include <utils/aspects.h>
+#include <utils/detailswidget.h>
+#include <utils/groupedmodel.h>
+#include <utils/guiutils.h>
+#include <utils/layoutbuilder.h>
+#include <utils/qtcassert.h>
+#include <utils/stringutils.h>
+#include <utils/utilsicons.h>
+
+#include <QPushButton>
+
+using namespace Utils;
+using namespace ProjectExplorer;
+
+namespace GNProjectManager::Internal {
+
+class GNToolItem final
+{
+public:
+    GNToolItem() = default;
+    explicit GNToolItem(const QString &name);
+    explicit GNToolItem(const GNTools::Tool &tool);
+    GNToolItem cloned() const;
+
+    QVariant data(int column, int role) const;
+    friend bool operator==(const GNToolItem &, const GNToolItem &) = default;
+
+    QString name;
+    FilePath executable;
+    Id id;
+    bool autoDetected = false;
+};
+
+} // namespace GNProjectManager::Internal
+
+Q_DECLARE_METATYPE(GNProjectManager::Internal::GNToolItem)
+
+namespace GNProjectManager::Internal {
+
+GNToolItem::GNToolItem(const QString &name)
+    : name{name}
+    , id{Id::generate()}
+    , autoDetected{false}
+{}
+
+GNToolItem::GNToolItem(const GNTools::Tool &tool)
+    : name{tool->name()}
+    , executable{tool->exe()}
+    , id{tool->id()}
+    , autoDetected{tool->autoDetected()}
+{}
+
+GNToolItem GNToolItem::cloned() const
+{
+    GNToolItem result;
+    result.name = Tr::tr("Clone of %1").arg(name);
+    result.executable = executable;
+    result.id = Id::generate();
+    result.autoDetected = false;
+    return result;
+}
+
+QVariant GNToolItem::data(int column, int role) const
+{
+    switch (role) {
+    case Qt::DisplayRole:
+        switch (column) {
+        case 0:
+            return name;
+        case 1:
+            return executable.toUserOutput();
+        }
+        return {};
+    case Qt::ToolTipRole: {
+        if (!executable.exists())
+            return Tr::tr("GN executable path does not exist.");
+        if (!executable.isFile())
+            return Tr::tr("GN executable path is not a file.");
+        if (!executable.isExecutableFile())
+            return Tr::tr("GN executable path is not executable.");
+        const QVersionNumber ver = GNTool::readVersion(executable);
+        return ver.isNull() ? Tr::tr("Cannot get tool version.")
+                            : Tr::tr("Version: %1").arg(ver.toString());
+    }
+    case Qt::DecorationRole:
+        if (column == 0 && !executable.isExecutableFile())
+            return Icons::CRITICAL.icon();
+        return {};
+    }
+    return {};
+}
+
+
+// GNToolsModel
+
+class GNToolsModel final : public TypedGroupedModel<GNToolItem>
+{
+public:
+    GNToolsModel();
+
+    int addGNTool();
+    int cloneRow(int row) override;
+    void updateItem(int row, const QString &name, const FilePath &exe);
+    void apply() override;
+
+private:
+    QVariant variantData(int row, int column, int role) const override;
+    QString uniqueName(const QString &baseName) const;
+};
+
+GNToolsModel::GNToolsModel()
+{
+    setShowDefault(true);
+    setHeader({Tr::tr("Name"), Tr::tr("Location")});
+    setFilters(ProjectExplorer::Constants::msgAutoDetected(),
+               {{ProjectExplorer::Constants::msgManual(), [this](int row) {
+                    return !item(row).autoDetected;
+                }}});
+    for (const GNTools::Tool &tool : GNTools::tools())
+        appendItem(GNToolItem{tool});
+    const Id defaultId = GNTools::defaultToolId();
+    for (int row = 0; row < itemCount(); ++row) {
+        if (item(row).id == defaultId) {
+            setDefaultRow(row);
+            break;
+        }
+    }
+}
+
+int GNToolsModel::addGNTool()
+{
+    return appendVolatileItem(GNToolItem{uniqueName(Tr::tr("New GN"))});
+}
+
+int GNToolsModel::cloneRow(int row)
+{
+    return appendVolatileItem(item(row).cloned());
+}
+
+void GNToolsModel::updateItem(int row, const QString &name, const FilePath &exe)
+{
+    QTC_ASSERT(row >= 0, return);
+    GNToolItem it = item(row);
+    it.name = name;
+    it.executable = exe;
+    setVolatileItem(row, it);
+    notifyRowChanged(row);
+}
+
+void GNToolsModel::apply()
+{
+    const int defRow = defaultRow();
+    GNTools::setDefaultToolId(defRow >= 0 ? item(defRow).id : Id());
+    for (int row = 0; row < itemCount(); ++row) {
+        if (isRemoved(row)) {
+            GNTools::removeTool(item(row).id);
+            continue;
+        }
+        if (isDirty(row)) {
+            const GNToolItem it = item(row);
+            GNTools::updateTool(it.id, it.name, it.executable);
+        }
+    }
+
+    GroupedModel::apply();
+}
+
+QVariant GNToolsModel::variantData(int row, int column, int role) const
+{
+    return item(row).data(column, role);
+}
+
+QString GNToolsModel::uniqueName(const QString &baseName) const
+{
+    QStringList names;
+    for (int row = 0; row < itemCount(); ++row)
+        names << item(row).name;
+    return Utils::makeUniquelyNumbered(baseName, names);
+}
+
+// GNToolsSettingsWidget
+
+class GNToolsSettingsWidget final : public Core::IOptionsPageWidget
+{
+public:
+    GNToolsSettingsWidget();
+
+private:
+    void apply() final { m_model.apply(); }
+    void cancel() final { m_model.cancel(); }
+    bool isDirty() const final { return m_model.isDirty(); }
+
+    void currentToolChanged(int oldRow, int newRow);
+    void store();
+
+    GNToolsModel m_model;
+    GroupedView m_groupedView{m_model};
+    bool m_loading = false;
+
+    DetailsWidget m_gnDetails;
+    QPushButton m_addButton;
+
+    QWidget m_itemConfigWidget;
+    AspectContainer m_data;
+    StringAspect m_name{&m_data};
+    FilePathAspect m_executable{&m_data};
+};
+
+GNToolsSettingsWidget::GNToolsSettingsWidget()
+{
+    m_name.setDisplayStyle(StringAspect::LineEditDisplay);
+    m_name.setLabelText(Tr::tr("Name:"));
+
+    m_executable.setExpectedKind(PathChooser::ExistingCommand);
+    m_executable.setHistoryCompleter("GN.Command.History");
+    m_executable.setLabelText(Tr::tr("Path:"));
+
+    using namespace Layouting;
+    Form {
+        m_name, br,
+        m_executable, br, noMargin
+    }.attachTo(&m_itemConfigWidget);
+
+    m_gnDetails.setState(DetailsWidget::NoSummary);
+    m_gnDetails.setVisible(false);
+    m_gnDetails.setWidget(&m_itemConfigWidget);
+
+    m_addButton.setText(Tr::tr("Add"));
+    m_groupedView.makeDefaultButton().setToolTip(
+        Tr::tr("Set as the default GN executable to use "
+               "when creating a new kit or when no value is set."));
+
+    Row {
+        Column {
+            m_groupedView.view(),
+            m_gnDetails
+        },
+        Column {
+            m_addButton,
+            m_groupedView.cloneButton(),
+            m_groupedView.removeButton(),
+            m_groupedView.makeDefaultButton(),
+            st
+        }
+    }.attachTo(this);
+
+    connect(&m_groupedView, &GroupedView::currentRowChanged,
+            this, &GNToolsSettingsWidget::currentToolChanged);
+
+    m_name.addOnVolatileValueChanged(this, [this] { store(); });
+    m_executable.addOnVolatileValueChanged(this, [this] { store(); });
+
+    connect(&m_addButton, &QPushButton::clicked, this, [this] {
+        m_groupedView.selectRow(m_model.addGNTool());
+    });
+    m_groupedView.setCanRemoveRow([this](int row) {
+        return !m_model.item(row).autoDetected;
+    });
+
+
+    connect(&m_data, &AspectContainer::changed, &checkSettingsDirty);
+}
+
+void GNToolsSettingsWidget::store()
+{
+    if (m_loading)
+        return;
+    const int row = m_groupedView.currentRow();
+    if (row >= 0 && !m_model.isRemoved(row))
+        m_model.updateItem(row, m_name.volatileValue(), m_executable.expandedVolatileValue());
+}
+
+void GNToolsSettingsWidget::currentToolChanged(int, int newRow)
+{
+    const bool hasRow = newRow >= 0;
+    const bool hasItem = hasRow && !m_model.isRemoved(newRow);
+    m_loading = true;
+    if (hasItem) {
+        const GNToolItem &it = m_model.item(newRow);
+        m_name.setEnabled(!it.autoDetected);
+        m_name.setValue(it.name);
+        m_executable.setEnabled(!it.autoDetected);
+        m_executable.setValue(it.executable);
+    }
+    m_loading = false;
+    m_gnDetails.setVisible(hasItem);
+}
+
+// Setup
+
+class GNToolsSettingsPage final : public Core::IOptionsPage
+{
+public:
+    GNToolsSettingsPage()
+    {
+        setId(Constants::SettingsPage::TOOLS_ID);
+        setDisplayName(Tr::tr("Tools"));
+        setCategory(Constants::SettingsPage::CATEGORY);
+        setWidgetCreator([] { return new GNToolsSettingsWidget; });
+    }
+};
+
+void setupGNToolsSettingsPage()
+{
+    static GNToolsSettingsPage theGNToolsSettingsPage;
+}
+
+} // namespace GNProjectManager::Internal

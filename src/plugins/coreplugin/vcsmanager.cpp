@@ -4,7 +4,6 @@
 #include "vcsmanager.h"
 
 #include "coreplugintr.h"
-#include "dialogs/addtovcsdialog.h"
 #include "documentmanager.h"
 #include "editormanager/editormanager.h"
 #include "icore.h"
@@ -12,18 +11,30 @@
 #include "iversioncontrol.h"
 
 #include <extensionsystem/pluginmanager.h>
+#include <extensionsystem/pluginspec.h>
 
 #include <utils/algorithm.h>
 #include <utils/fileutils.h>
+#include <utils/layoutbuilder.h>
 #include <utils/infobar.h>
 #include <utils/qtcassert.h>
+#include <utils/theme/theme.h>
 
+#include <QDialogButtonBox>
+#include <QJsonArray>
+#include <QLabel>
 #include <QList>
+#include <QListWidget>
 #include <QMap>
 #include <QMessageBox>
+#include <QScrollArea>
 #include <QString>
+#include <QTimer>
 
 #include <optional>
+
+static Q_LOGGING_CATEGORY(findRepoLog, "qtc.vcs.find-repo", QtWarningMsg)
+static Q_LOGGING_CATEGORY(status, "qtc.vcs.status", QtWarningMsg)
 
 using namespace Utils;
 
@@ -33,12 +44,66 @@ namespace Core {
 const char TEST_PREFIX[] = "/8E3A9BA0-0B97-40DF-AEC1-2BDF9FC9EDBE/";
 #endif
 
+class AddToVcsDialog final : public QDialog
+{
+public:
+    AddToVcsDialog(const QString &title, const FilePaths &files, const QString &vcsDisplayName)
+        : QDialog(ICore::dialogParent())
+    {
+        using namespace Layouting;
+
+        resize(363, 375);
+        setMinimumSize({200, 200});
+        setBaseSize({300, 500});
+        setWindowTitle(title);
+
+        auto filesListWidget = new QListWidget;
+        filesListWidget->setSelectionMode(QAbstractItemView::NoSelection);
+        filesListWidget->setSelectionBehavior(QAbstractItemView::SelectRows);
+
+        QWidget *scrollAreaWidgetContents = Column{filesListWidget, noMargin}.emerge();
+        scrollAreaWidgetContents->setGeometry({0, 0, 341, 300});
+
+        auto scrollArea = new QScrollArea;
+        scrollArea->setWidgetResizable(true);
+        scrollArea->setWidget(scrollAreaWidgetContents);
+
+        auto buttonBox = new QDialogButtonBox;
+        buttonBox->setStandardButtons(QDialogButtonBox::No | QDialogButtonBox::Yes);
+        connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
+        connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+        const QString addTo = files.size() == 1
+                                  ? Tr::tr("Add the file to version control (%1)").arg(vcsDisplayName)
+                                  : Tr::tr("Add the files to version control (%1)").arg(vcsDisplayName);
+
+        // clang-format off
+        Column {
+            addTo,
+            scrollArea,
+            buttonBox
+        }.attachTo(this);
+        // clang-format on
+
+        for (const Utils::FilePath &file : files) {
+            QListWidgetItem *item = new QListWidgetItem(file.toUserOutput());
+            filesListWidget->addItem(item);
+        }
+    }
+};
+
 // ---- VCSManagerPrivate:
 // Maintains a cache of top-level directory->version control.
 
 class VcsManagerPrivate
 {
 public:
+    VcsManagerPrivate()
+    {
+        m_repoChangedTimer.setInterval(1000);
+        m_repoChangedTimer.setSingleShot(true);
+    }
+
     class VcsInfo {
     public:
         IVersionControl *versionControl = nullptr;
@@ -72,19 +137,15 @@ public:
     void cache(IVersionControl *vc, const FilePath &topLevel, const FilePath &dir)
     {
         QTC_ASSERT(dir.isAbsolutePath(), return);
-
-        const QString topLevelString = topLevel.toString();
         QTC_ASSERT(dir.isChildOf(topLevel) || topLevel == dir || topLevel.isEmpty(), return);
         QTC_ASSERT((topLevel.isEmpty() && !vc) || (!topLevel.isEmpty() && vc), return);
 
-        FilePath tmpDir = dir;
-        while (tmpDir.toString().size() >= topLevelString.size() && !tmpDir.isEmpty()) {
+        for (const FilePath &tmpDir : PathAndParents(dir, topLevel)) {
             m_cachedMatches.insert(tmpDir, {vc, topLevel});
             // if no vc was found, this might mean we're inside a repo internal directory (.git)
             // Cache only input directory, not parents
             if (!vc)
                 break;
-            tmpDir = tmpDir.parentDir();
         }
     }
 
@@ -94,6 +155,9 @@ public:
 
     FilePaths m_cachedAdditionalToolsPaths;
     bool m_cachedAdditionalToolsPathsDirty = true;
+    QSet<FilePath> m_repoChangedSet;
+    QHash<FilePath, FileStateHash> m_fileStates;
+    QTimer m_repoChangedTimer;
 };
 
 static VcsManagerPrivate *d = nullptr;
@@ -104,6 +168,8 @@ VcsManager::VcsManager(QObject *parent) :
 {
     m_instance = this;
     d = new VcsManagerPrivate;
+    connect(&d->m_repoChangedTimer, &QTimer::timeout,
+            this, &VcsManager::delayedEmitRepositoryChanged);
 }
 
 // ---- VCSManager:
@@ -131,12 +197,11 @@ void VcsManager::extensionsInitialized()
     const QList<IVersionControl *> vcs = versionControls();
     for (IVersionControl *vc : vcs) {
         connect(vc, &IVersionControl::filesChanged, DocumentManager::instance(),
-                [](const QStringList &fileNames) {
-            DocumentManager::notifyFilesChangedInternally(
-                        FileUtils::toFilePathList(fileNames));
+                [](const FilePaths &filePaths) {
+            DocumentManager::notifyFilesChangedInternally(filePaths);
         });
         connect(vc, &IVersionControl::repositoryChanged,
-                m_instance, &VcsManager::repositoryChanged);
+                m_instance, &VcsManager::emitRepositoryChanged);
         connect(vc, &IVersionControl::configurationChanged, m_instance, [vc] {
             m_instance->handleConfigurationChanges(vc);
         });
@@ -160,13 +225,13 @@ void VcsManager::resetVersionControlForDirectory(const FilePath &inputDirectory)
 
     const FilePath directory = inputDirectory.absolutePath();
     d->resetCache(directory);
-    emit m_instance->repositoryChanged(directory);
+    emitRepositoryChanged(directory);
 }
 
 static FilePath fixedDir(const FilePath &directory)
 {
 #ifdef WITH_TESTS
-    const QString directoryString = directory.toString();
+    const QString directoryString = directory.toUrlishString();
     if (!directoryString.isEmpty() && directoryString[0].isLetter()
         && directoryString.indexOf(QLatin1Char(':') + QLatin1String(TEST_PREFIX)) == 1) {
         return FilePath::fromString(directoryString.mid(2));
@@ -175,6 +240,78 @@ static FilePath fixedDir(const FilePath &directory)
     return directory;
 }
 
+static void askForDisabledVcsPlugins(const FilePath &inputDirectory)
+{
+    using namespace ExtensionSystem;
+    FilePath toplevel;
+
+    PluginSpec *spec = Utils::findOrDefault(
+        PluginManager::plugins(), [&toplevel, inputDirectory](PluginSpec *plugin) {
+            if (plugin->isEffectivelyEnabled())
+                return false;
+            const QJsonObject metaData = plugin->metaData();
+            QJsonArray filesArray
+                = metaData.value("core").toObject().value("VcsDetectionFiles").toArray();
+            if (filesArray.isEmpty()) // TODO -> legacy, remove some time after QtC 19.0
+                filesArray = metaData.value("VcsDetectionFiles").toArray();
+            if (filesArray.isEmpty())
+                return false;
+            QStringList files;
+            for (const QJsonValue &v : std::as_const(filesArray)) {
+                const QString str = v.toString();
+                if (!str.isEmpty())
+                    files.append(str);
+            }
+            if (files.isEmpty())
+                return false;
+            qCDebug(findRepoLog) << "Checking if plugin" << plugin->displayName() << "can handle"
+                                 << inputDirectory.toUserOutput();
+            qCDebug(findRepoLog) << "by checking for" << files;
+            const FilePath dir = VcsManager::findRepositoryForFiles(inputDirectory, files);
+            if (dir.isEmpty())
+                return false;
+            qCDebug(findRepoLog) << "The plugin" << plugin->displayName() << "can handle"
+                                 << inputDirectory.toUserOutput();
+            toplevel = dir;
+            return true;
+        });
+
+    if (!spec)
+        return;
+
+    const Id vcsSuggestion = Id("VcsManager.Suggestion.").withSuffix(spec->id());
+    InfoBar *infoBar = ICore::popupInfoBar();
+    if (!infoBar->canInfoBeAdded(vcsSuggestion))
+        return;
+
+    const QString pluginDisplayName = spec->displayName();
+    Utils::InfoBarEntry info(
+        vcsSuggestion,
+        Tr::tr("A directory under version control was detected that is supported by the %1 plugin.")
+            .arg(pluginDisplayName),
+        Utils::InfoBarEntry::GlobalSuppression::Enabled);
+    info.setTitle(Tr::tr("Version Control Detected"));
+    info.addCustomButton(Tr::tr("Enable %1").arg(pluginDisplayName), [vcsSuggestion, spec, infoBar] {
+        // TODO In case the plugin is actually loaded during runtime (softloadable),
+        // we'd need to restructure findVersionControlForDirectory below to take the new plugin
+        // into account.
+        // At the moment softloadable VCS plugins are not supported though.
+        if (ICore::enablePlugins({spec}))
+            infoBar->removeInfo(vcsSuggestion);
+    });
+
+    info.setDetailsWidgetCreator([toplevel, pluginDisplayName]() -> QWidget * {
+        auto label = new QLabel;
+        label->setWordWrap(true);
+        label->setOpenExternalLinks(true);
+        label->setText(Tr::tr("The directory \"%1\" seems to be under version control that can be "
+                              "handled by the disabled %2 plugin.")
+                           .arg(toplevel.toUserOutput(), pluginDisplayName));
+        label->setContentsMargins(0, 0, 0, 8);
+        return label;
+    });
+    infoBar->addInfo(info);
+};
 
 IVersionControl* VcsManager::findVersionControlForDirectory(const FilePath &inputDirectory,
                                                             FilePath *topLevelDirectory)
@@ -210,7 +347,7 @@ IVersionControl* VcsManager::findVersionControlForDirectory(const FilePath &inpu
     // we need to select the version control with the longest toplevel pathname.
     Utils::sort(allThatCanManage, [](const FilePathVersionControlPair &l,
                                      const FilePathVersionControlPair &r) {
-        return l.first.toString().size() > r.first.toString().size();
+        return l.first.toUrlishString().size() > r.first.toUrlishString().size();
     });
 
     if (allThatCanManage.isEmpty()) {
@@ -219,23 +356,25 @@ IVersionControl* VcsManager::findVersionControlForDirectory(const FilePath &inpu
         // report result;
         if (topLevelDirectory)
             topLevelDirectory->clear();
+
+        askForDisabledVcsPlugins(directory);
         return nullptr;
     }
 
     // Register Vcs(s) with the cache
-    FilePath tmpDir = directory.absolutePath();
+    FilePath tmpDir = directory.absoluteFilePath();
 #if defined WITH_TESTS
     // Force caching of test directories (even though they do not exist):
-    if (directory.startsWith(TEST_PREFIX))
+    if (directory.path().startsWith(TEST_PREFIX))
         tmpDir = directory;
 #endif
     // directory might refer to a historical directory which doesn't exist.
     // In this case, don't cache it.
     if (!tmpDir.isEmpty()) {
         for (auto i = allThatCanManage.constBegin(); i != allThatCanManage.constEnd(); ++i) {
-            const QString firstString = i->first.toString();
+            const QString firstString = i->first.toUrlishString();
             // If topLevel was already cached for another VC, skip this one
-            if (tmpDir.toString().size() < firstString.size())
+            if (tmpDir.toUrlishString().size() < firstString.size())
                 continue;
             d->cache(i->second, i->first, tmpDir);
             tmpDir = i->first.parentDir();
@@ -264,9 +403,9 @@ IVersionControl* VcsManager::findVersionControlForDirectory(const FilePath &inpu
                                              .arg(versionControl->displayName()),
                                          Utils::InfoBarEntry::GlobalSuppression::Enabled);
                 d->m_unconfiguredVcs = versionControl;
-                info.addCustomButton(ICore::msgShowOptionsDialog(), [] {
+                info.addCustomButton(ICore::msgShowSettings(), [] {
                     QTC_ASSERT(d->m_unconfiguredVcs, return);
-                    ICore::showOptionsDialog(d->m_unconfiguredVcs->id());
+                    ICore::showSettings(d->m_unconfiguredVcs->id());
                  });
 
                 infoBar->addInfo(info);
@@ -360,7 +499,7 @@ QString VcsManager::msgPromptToAddToVcs(const QStringList &files, const IVersion
         ? Tr::tr("Add the file\n%1\nto version control (%2)?")
               .arg(files.front(), vc->displayName())
         : Tr::tr("Add the files\n%1\nto version control (%2)?")
-              .arg(files.join(QString(QLatin1Char('\n'))), vc->displayName());
+              .arg(files.join('\n'), vc->displayName());
 }
 
 QString VcsManager::msgAddToVcsFailedTitle()
@@ -368,7 +507,7 @@ QString VcsManager::msgAddToVcsFailedTitle()
     return Tr::tr("Adding to Version Control Failed");
 }
 
-QString VcsManager::msgToAddToVcsFailed(const QStringList &files, const IVersionControl *vc)
+QString VcsManager::msgAddToVcsFailed(const QStringList &files, const IVersionControl *vc)
 {
     QStringList fileList = files;
     const qsizetype size = files.size();
@@ -378,11 +517,11 @@ QString VcsManager::msgToAddToVcsFailed(const QStringList &files, const IVersion
         //: %1 = name of VCS system, %2 = lines with file paths
         return Tr::tr("Could not add the following files to version control (%1)\n%2\n"
                       "... and %n more.", "", size - maxSize)
-            .arg(vc->displayName(), fileList.join(QString(QLatin1Char('\n'))));
+            .arg(vc->displayName(), fileList.join('\n'));
     }
     //: %1 = name of VCS system, %2 = lines with file paths
     return Tr::tr("Could not add the following files to version control (%1)\n%2")
-        .arg(vc->displayName(), fileList.join(QString(QLatin1Char('\n'))));
+        .arg(vc->displayName(), fileList.join('\n'));
 }
 
 FilePaths VcsManager::additionalToolsPath()
@@ -406,8 +545,7 @@ void VcsManager::promptToAdd(const FilePath &directory, const FilePaths &filePat
     if (unmanagedFiles.isEmpty())
         return;
 
-    Internal::AddToVcsDialog dlg(ICore::dialogParent(), VcsManager::msgAddToVcsTitle(),
-                                 unmanagedFiles, vc->displayName());
+    AddToVcsDialog dlg(VcsManager::msgAddToVcsTitle(), unmanagedFiles, vc->displayName());
     if (dlg.exec() == QDialog::Accepted) {
         QStringList notAddedToVc;
         for (const FilePath &file : unmanagedFiles) {
@@ -418,14 +556,25 @@ void VcsManager::promptToAdd(const FilePath &directory, const FilePaths &filePat
         if (!notAddedToVc.isEmpty()) {
             QMessageBox::warning(ICore::dialogParent(),
                                  VcsManager::msgAddToVcsFailedTitle(),
-                                 VcsManager::msgToAddToVcsFailed(notAddedToVc, vc));
+                                 VcsManager::msgAddToVcsFailed(notAddedToVc, vc));
         }
     }
 }
 
 void VcsManager::emitRepositoryChanged(const FilePath &repository)
 {
-    emit m_instance->repositoryChanged(repository);
+    d->m_repoChangedSet.insert(repository);
+    d->m_repoChangedTimer.start();
+}
+
+void VcsManager::delayedEmitRepositoryChanged()
+{
+    for (const Utils::FilePath &repository : std::as_const(d->m_repoChangedSet)) {
+        qCDebug(status).nospace() << "delayedEmitRepositoryChanged(" << repository << ")";
+        emit m_instance->repositoryChanged(repository);
+    }
+
+    d->m_repoChangedSet.clear();
 }
 
 void VcsManager::clearVersionControlCache()
@@ -433,12 +582,172 @@ void VcsManager::clearVersionControlCache()
     const FilePaths repoList = d->m_cachedMatches.keys();
     d->clearCache();
     for (const FilePath &repo : repoList)
-        emit m_instance->repositoryChanged(repo);
+        emitRepositoryChanged(repo);
+}
+
+void VcsManager::monitorDirectory(const Utils::FilePath &path, bool monitor)
+{
+    IVersionControl *vc = VcsManager::findVersionControlForDirectory(path);
+    if (!vc)
+        return;
+
+    const Utils::FilePaths paths = vc->monitorDirectory(path, monitor);
+    for (const FilePath &p : paths) {
+        if (monitor)
+            d->m_fileStates[p] = {};
+        else
+            d->m_fileStates.remove(p);
+    }
+}
+
+static FilePath nearestParentDirectory(const QList<FilePath> &dirs, const FilePath &file)
+{
+    FilePath nearest;
+    for (const auto &parent : dirs) {
+        if (!file.isChildOf(parent))
+            continue;
+        if (parent.pathView().size() > nearest.pathView().size())
+            nearest = parent;
+    }
+    return nearest;
+}
+
+Core::VcsFileState VcsManager::fileState(const Utils::FilePath &filePath)
+{
+    const FilePath repository = nearestParentDirectory(d->m_fileStates.keys(), filePath);
+    const QString relativePath = filePath.relativeChildPath(repository).path();
+
+    return d->m_fileStates.value(repository).value(relativePath, VcsFileState::Unknown);
+}
+
+QColor VcsManager::fileStateColor(const VcsFileState &state)
+{
+    using UT = Utils::Theme;
+    switch (state) {
+    case VcsFileState::Modified:
+        return Utils::creatorColor(UT::VcsBase_FileModified_TextColor);
+    case VcsFileState::Added:
+        return Utils::creatorColor(UT::VcsBase_FileAdded_TextColor);
+    case VcsFileState::Renamed:
+        return Utils::creatorColor(UT::VcsBase_FileRenamed_TextColor);
+    case VcsFileState::Deleted:
+        return Utils::creatorColor(UT::VcsBase_FileDeleted_TextColor);
+    case VcsFileState::Untracked:
+        return Utils::creatorColor(UT::VcsBase_FileUntracked_TextColor);
+    case VcsFileState::Unmerged:
+        return Utils::creatorColor(UT::VcsBase_FileUnmerged_TextColor);
+    default:
+        return Utils::creatorColor(UT::PaletteText);
+    }
+}
+
+QString VcsManager::fileStateText(const VcsFileState &state)
+{
+    switch (state) {
+    case VcsFileState::Added:     return Tr::tr("added");
+    case VcsFileState::Modified:  return Tr::tr("modified");
+    case VcsFileState::Deleted:   return Tr::tr("deleted");
+    case VcsFileState::Renamed:   return Tr::tr("renamed");
+    case VcsFileState::Untracked: return Tr::tr("untracked");
+    case VcsFileState::Unmerged:  return Tr::tr("unmerged");
+    default:                      return Tr::tr("unknown");
+    }
+}
+
+QString VcsManager::fileStateDescription(const VcsFileState &state)
+{
+    switch (state) {
+    case VcsFileState::Added:
+        return Tr::tr("Version control state: added.");
+    case VcsFileState::Modified:
+        return Tr::tr("Version control state: modified.");
+    case VcsFileState::Deleted:
+        return Tr::tr("Version control state: deleted.");
+    case VcsFileState::Renamed:
+        return Tr::tr("Version control state: renamed.");
+    case VcsFileState::Untracked:
+        return Tr::tr("Version control state: untracked.");
+    case VcsFileState::Unmerged:
+        return Tr::tr("Version control state: unmerged.");
+    default:
+        return {};
+    }
+}
+
+void VcsManager::updateModifiedFiles(const Utils::FilePath &repository, const FileStateHash &modifiedFiles)
+{
+    QTC_ASSERT(d->m_fileStates.contains(repository), return);
+
+    const FileStateHash oldStates = d->m_fileStates.value(repository);
+    const FileStateHash newStates = modifiedFiles;
+    QStringList changedFiles;
+
+    // Files that changed the state or went back to unmodified
+    for (auto it = oldStates.cbegin(); it != oldStates.cend(); ++it) {
+        const QString &file = it.key();
+        const VcsFileState state = it.value();
+
+        if (!newStates.contains(file) || newStates.value(file) != state)
+            changedFiles.append(file);
+    }
+
+    // Files that have new modifications
+    for (auto it = newStates.cbegin(); it != newStates.cend(); ++it) {
+        if (const QString &file = it.key(); !oldStates.contains(file))
+            changedFiles.append(file);
+    }
+
+    if (changedFiles.isEmpty())
+        return;
+
+    d->m_fileStates[repository] = modifiedFiles;
+
+    qCDebug(status).nospace() << "emit updateFileState(" << repository << ", " << changedFiles << ")";
+    emit instance()->updateFileState(repository, changedFiles);
+}
+
+void VcsManager::emitClearFileState(const Utils::FilePath &repository)
+{
+    qCDebug(status).nospace() << "emit clearFileState(" << repository << ")";
+
+    d->m_fileStates[repository].clear();
+
+    emit instance()->clearFileState(repository);
+}
+
+// Find top level for version controls like git/Mercurial that have
+// a directory at the top of the repository.
+// Note that checking for the existence of files is preferred over directories
+// since checking for directories can cause them to be created when
+// AutoFS is used (due its automatically creating mountpoints when querying
+// a directory). In addition, bail out when reaching the home directory
+// of the user or root (generally avoid '/', where mountpoints are created).
+FilePath VcsManager::findRepositoryForFiles(
+    const Utils::FilePath &fileOrDir, const QStringList &checkFiles)
+{
+    const FilePath dirS = fileOrDir.isDir() ? fileOrDir : fileOrDir.parentDir();
+    qCDebug(findRepoLog) << ">" << dirS << checkFiles;
+    QTC_ASSERT(!dirS.isEmpty(), return {});
+
+    FilePath found;
+    dirS.searchHereAndInParents([&](const FilePath &dir) {
+        for (const QString &checkFile : checkFiles) {
+            if (dir.pathAppended(checkFile).isFile()) {
+                qCDebug(findRepoLog) << "<" << dir.toUserOutput();
+                found = dir;
+                return IterationPolicy::Stop;
+            }
+        }
+        return IterationPolicy::Continue;
+    });
+
+    return found;
 }
 
 void VcsManager::handleConfigurationChanges(IVersionControl *vc)
 {
     d->m_cachedAdditionalToolsPathsDirty = true;
+    qCDebug(status).nospace() << "handleConfigurationChanges(" << vc << ")";
     emit configurationChanged(vc);
 }
 
@@ -447,7 +756,7 @@ void VcsManager::handleConfigurationChanges(IVersionControl *vc)
 
 #ifdef WITH_TESTS
 
-#include <QtTest>
+#include <QTest>
 
 #include <extensionsystem/pluginmanager.h>
 
@@ -507,6 +816,8 @@ public:
     bool vcsMove(const FilePath &, const FilePath &) final { return false; }
     bool vcsCreateRepository(const FilePath &) final { return false; }
     void vcsAnnotate(const FilePath &, int) final {}
+    void vcsLog(const Utils::FilePath &, const Utils::FilePath &) final {};
+    void vcsDiff(const Utils::FilePath &, const Utils::FilePath &) final {};
     void vcsDescribe(const FilePath &, const QString &) final {}
 
 private:
@@ -659,7 +970,7 @@ void VcsManagerTest::testVcsManager()
         FilePath realTopLevel;
         vcs = VcsManager::findVersionControlForDirectory(
             FilePath::fromString(makeString(directory)), &realTopLevel);
-        QCOMPARE(realTopLevel.toString(), makeString(topLevel));
+        QCOMPARE(realTopLevel.toUrlishString(), makeString(topLevel));
         if (vcs)
             QCOMPARE(vcs->id().toString(), vcsId);
         else

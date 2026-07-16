@@ -29,16 +29,16 @@ QT_END_NAMESPACE
 namespace TextEditor {
 
 class CompletionAssistProvider;
-class ExtraEncodingSettings;
+class ExtraEncodingSettingsData;
 class FontSettings;
 class IAssistProvider;
-class StorageSettings;
+class StorageSettingsData;
 class SyntaxHighlighter;
 class TabSettings;
 class TextDocumentPrivate;
 class TextMark;
 class TextSuggestion;
-class TypingSettings;
+class TypingSettingsData;
 
 using TextMarks = QList<TextMark *>;
 
@@ -51,7 +51,7 @@ public:
     ~TextDocument() override;
 
     static QMap<Utils::FilePath, QString> openedTextDocumentContents();
-    static QMap<Utils::FilePath, QTextCodec *> openedTextDocumentEncodings();
+    static QMap<Utils::FilePath, Utils::TextEncoding> openedTextDocumentEncodings();
     static TextDocument *currentTextDocument();
     static TextDocument *textDocumentForFilePath(const Utils::FilePath &filePath);
     static QString convertToPlainText(const QString &rawText);
@@ -61,14 +61,14 @@ public:
     virtual QChar characterAt(int pos) const;
     QString blockText(int blockNumber) const;
 
-    void setTypingSettings(const TypingSettings &typingSettings);
-    void setStorageSettings(const StorageSettings &storageSettings);
-    void setExtraEncodingSettings(const ExtraEncodingSettings &extraEncodingSettings);
+    void setTypingSettings(const TypingSettingsData &typingSettings);
+    void setStorageSettings(const StorageSettingsData &storageSettings);
+    void setExtraEncodingSettings(const ExtraEncodingSettingsData &extraEncodingSettings);
 
-    const TypingSettings &typingSettings() const;
-    const StorageSettings &storageSettings() const;
+    const TypingSettingsData &typingSettings() const;
+    const StorageSettingsData &storageSettings() const;
     virtual TabSettings tabSettings() const;
-    const ExtraEncodingSettings &extraEncodingSettings() const;
+    const ExtraEncodingSettingsData &extraEncodingSettings() const;
     const FontSettings &fontSettings() const;
 
     void setIndenter(Indenter *indenter);
@@ -81,8 +81,10 @@ public:
     Utils::MultiTextCursor indent(const Utils::MultiTextCursor &cursor);
     Utils::MultiTextCursor unindent(const Utils::MultiTextCursor &cursor);
 
+    Formatter* formatter() const;
     void setFormatter(Formatter *indenter); // transfers ownership
-    void autoFormat(const QTextCursor &cursor);
+    void setFormatterMode(Formatter::FormatMode mode);
+    virtual void autoFormat(const QTextCursor &cursor);
     bool applyChangeSet(const Utils::ChangeSet &changeSet);
 
     TextMarks marks() const;
@@ -100,12 +102,12 @@ public:
 
     // IDocument implementation.
     QByteArray contents() const override;
-    bool setContents(const QByteArray &contents) override;
+    Utils::Result<> setContents(const QByteArray &contents) override;
     void formatContents() override;
     bool shouldAutoSave() const override;
     bool isModified() const override;
     bool isSaveAsAllowed() const override;
-    bool reload(QString *errorString, ReloadFlag flag, ChangeType type) override;
+    Utils::Result<> reload(ReloadFlag flag, ChangeType type) override;
     void setFilePath(const Utils::FilePath &newName) override;
     ReloadBehavior reloadBehavior(ChangeTrigger state, ChangeType type) const override;
 
@@ -115,19 +117,19 @@ public:
     void setFallbackSaveAsPath(const Utils::FilePath &fallbackSaveAsPath);
     void setFallbackSaveAsFileName(const QString &fallbackSaveAsFileName);
 
-    OpenResult open(QString *errorString, const Utils::FilePath &filePath,
-                    const Utils::FilePath &realFilePath) override;
-    virtual bool reload(QString *errorString);
-    bool reload(QString *errorString, const Utils::FilePath &realFilePath);
+    Utils::Result<> open(const Utils::FilePath &filePath,
+                         const Utils::FilePath &realFilePath) override;
+    virtual Utils::Result<> reload();
+    Utils::Result<> reload(const Utils::FilePath &realFilePath);
 
-    bool setPlainText(const QString &text);
+    Utils::Result<> setPlainText(const QString &text);
     QTextDocument *document() const;
 
     using SyntaxHighLighterCreator = std::function<SyntaxHighlighter *()>;
     void resetSyntaxHighlighter(const SyntaxHighLighterCreator &creator);
     SyntaxHighlighter *syntaxHighlighter() const;
 
-    bool reload(QString *errorString, QTextCodec *codec);
+    Utils::Result<> reload(const Utils::TextEncoding &encoding);
     void cleanWhitespace(const QTextCursor &cursor);
 
     virtual void triggerPendingUpdates();
@@ -139,14 +141,13 @@ public:
     void setQuickFixAssistProvider(IAssistProvider *provider) const;
     virtual IAssistProvider *quickFixAssistProvider() const;
 
+    void setCodeStyle(ICodeStylePreferences *preferences);
+    ICodeStylePreferences *codeStyle() const;
     void setTabSettings(const TextEditor::TabSettings &tabSettings);
     void setFontSettings(const TextEditor::FontSettings &fontSettings);
 
-    static QAction *createDiffAgainstCurrentFileAction(QObject *parent,
-        const std::function<Utils::FilePath()> &filePath);
-
-    void insertSuggestion(const QString &text, const QTextCursor &cursor);
-    void insertSuggestion(std::unique_ptr<TextSuggestion> &&suggestion);
+    void setFoldingIndentExternallyProvided(bool ext);
+    bool isFoldingIndentExternallyProvided() const;
 
 #ifdef WITH_TESTS
     void setSilentReload();
@@ -158,17 +159,18 @@ signals:
     void contentsChangedWithPosition(int position, int charsRemoved, int charsAdded);
     void tabSettingsChanged();
     void fontSettingsChanged();
-    void markRemoved(TextMark *mark);
+    void markRemoved(TextEditor::TextMark *mark);
 
 protected:
     virtual void applyFontSettings();
-    bool saveImpl(QString *errorString, const Utils::FilePath &filePath, bool autoSave) override;
+    Utils::Result<> saveImpl(const Utils::FilePath &filePath, SaveOption option) override;
+    virtual void slotCodeStyleSettingsChanged(); // Used in CppEditorDocumet
+    virtual void removeTrailingWhitespace(const QTextBlock &block);
 
 private:
-    OpenResult openImpl(QString *errorString,
-                        const Utils::FilePath &filePath,
-                        const Utils::FilePath &realFileName,
-                        bool reload);
+    Utils::Result<> openImpl(const Utils::FilePath &filePath,
+                             const Utils::FilePath &realFileName,
+                             bool reload);
     void cleanWhitespace(QTextCursor &cursor, bool inEntireDocument, bool cleanIndentation);
     void ensureFinalNewLine(QTextCursor &cursor);
     void modificationChanged(bool modified);

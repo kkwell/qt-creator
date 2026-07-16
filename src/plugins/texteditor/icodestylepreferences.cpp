@@ -19,17 +19,16 @@ class ICodeStylePreferencesPrivate
 public:
     CodeStylePool *m_pool = nullptr;
     ICodeStylePreferences *m_currentDelegate = nullptr;
+    Utils::Id m_globalSettingsCategory;
     TabSettings m_tabSettings;
     QByteArray m_id;
     QString m_displayName;
+    FilePath m_projectFile;
     bool m_readOnly = false;
-    bool m_temporarilyReadOnly = false;
-    bool m_isAdditionalTabVisible = false;
-    bool m_isAdditionalTabExist = false;
     Key m_settingsSuffix;
 };
 
-}
+} // Internal
 
 ICodeStylePreferences::ICodeStylePreferences(QObject *parent) :
     QObject(parent),
@@ -71,36 +70,6 @@ bool ICodeStylePreferences::isReadOnly() const
 void ICodeStylePreferences::setReadOnly(bool on)
 {
     d->m_readOnly = on;
-}
-
-void ICodeStylePreferences::setTemporarilyReadOnly(bool on)
-{
-    d->m_temporarilyReadOnly = on;
-}
-
-bool ICodeStylePreferences::isTemporarilyReadOnly() const
-{
-    return d->m_temporarilyReadOnly;
-}
-
-bool ICodeStylePreferences::isAdditionalTabVisible() const
-{
-    return d->m_isAdditionalTabVisible;
-}
-
-void ICodeStylePreferences::setIsAdditionalTabVisible(bool on)
-{
-    d->m_isAdditionalTabVisible = on;
-}
-
-bool ICodeStylePreferences::additionalTabExist() const
-{
-    return d->m_isAdditionalTabExist;
-}
-
-void ICodeStylePreferences::setAdditionalTabExist(bool on)
-{
-    d->m_isAdditionalTabExist = on;
 }
 
 void ICodeStylePreferences::setTabSettings(const TabSettings &settings)
@@ -223,7 +192,9 @@ void ICodeStylePreferences::setSettingsSuffix(const Key &suffix)
 
 void ICodeStylePreferences::toSettings(const Key &category) const
 {
-    Utils::storeToSettings(category + d->m_settingsSuffix, Core::ICore::settings(), toMap());
+    Store map;
+    toMap(map);
+    Utils::storeToSettings(category + d->m_settingsSuffix, Core::ICore::settings(), map);
 }
 
 void ICodeStylePreferences::fromSettings(const Key &category)
@@ -231,11 +202,12 @@ void ICodeStylePreferences::fromSettings(const Key &category)
     fromMap(Utils::storeFromSettings(category + d->m_settingsSuffix, Core::ICore::settings()));
 }
 
-Store ICodeStylePreferences::toMap() const
+void ICodeStylePreferences::toMap(Store &map) const
 {
     if (!currentDelegate())
-        return d->m_tabSettings.toMap();
-    return {{currentPreferencesKey, currentDelegateId()}};
+        d->m_tabSettings.toMap(map);
+    else
+        map.insert(currentPreferencesKey, currentDelegateId());
 }
 
 void ICodeStylePreferences::fromMap(const Store &map)
@@ -247,6 +219,26 @@ void ICodeStylePreferences::fromMap(const Store &map)
         if (!delegateId.isEmpty() && delegate)
             setCurrentDelegate(delegate);
     }
+}
+
+void ICodeStylePreferences::setProject(const FilePath &projectFile)
+{
+    d->m_projectFile = projectFile;
+}
+
+FilePath ICodeStylePreferences::project() const
+{
+    return d->m_projectFile;
+}
+
+Id ICodeStylePreferences::globalSettingsCategory()
+{
+    return d->m_globalSettingsCategory;
+}
+
+void ICodeStylePreferences::setGlobalSettingsCategory(const Utils::Id &id)
+{
+    d->m_globalSettingsCategory = id;
 }
 
 void ICodeStylePreferences::codeStyleRemoved(ICodeStylePreferences *preferences)

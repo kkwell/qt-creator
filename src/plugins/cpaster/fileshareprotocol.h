@@ -14,21 +14,12 @@ class FileShareProtocol : public Protocol
 {
 public:
     FileShareProtocol();
-    ~FileShareProtocol() override;
 
-    QString name() const override;
-    unsigned capabilities() const override;
-    bool hasSettings() const override;
-    const Core::IOptionsPage *settingsPage() const override;
-
-    bool checkConfiguration(QString *errorMessage = nullptr) override;
-    void fetch(const QString &id) override;
-    void list() override;
-    void paste(const QString &text,
-               ContentType ct = Text, int expiryDays = 1,
-               const QString &username = QString(),
-               const QString &comment = QString(),
-               const QString &description = QString()) override;
+    QtTaskTree::ExecutableItem fetchRecipe(const QString &id,
+                                           const FetchHandler &handler) const override;
+    QtTaskTree::ExecutableItem listRecipe(const ListHandler &handler) const override;
+    QtTaskTree::ExecutableItem pasteRecipe(const PasteInputData &inputData,
+                                           const PasteHandler &handler) const override;
 };
 
 } // CodePaster

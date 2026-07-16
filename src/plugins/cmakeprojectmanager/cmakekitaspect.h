@@ -7,23 +7,27 @@
 
 #include "cmakeconfigitem.h"
 
-#include <projectexplorer/kitmanager.h>
+#include <utils/id.h>
+
+namespace ProjectExplorer { class KitAspect; }
 
 namespace CMakeProjectManager {
 
-class CMakeTool;
+class CMakeKeywords;
 
 class CMAKE_EXPORT CMakeKitAspect
 {
 public:
     static Utils::Id id();
 
-    static Utils::Id cmakeToolId(const ProjectExplorer::Kit *k);
-    static CMakeTool *cmakeTool(const ProjectExplorer::Kit *k);
-    static void setCMakeTool(ProjectExplorer::Kit *k, const Utils::Id id);
+    static Utils::FilePath cmakeExecutable(const ProjectExplorer::Kit *k);
+    static CMakeKeywords cmakeKeywords(const ProjectExplorer::Kit *k);
+    static void setCMakeExecutable(ProjectExplorer::Kit *k,
+                                   const Utils::FilePath &cmakeExecutable);
     static QString msgUnsupportedVersion(const QByteArray &versionString);
 
     static ProjectExplorer::KitAspect *createKitAspect(ProjectExplorer::Kit *k);
+    static void openCMakeHelpUrl(ProjectExplorer::Kit *k, const QString &target);
 
 private:
     friend class CMakeToolManager;
@@ -40,7 +44,6 @@ public:
     static void setToolset(ProjectExplorer::Kit *k, const QString &toolset);
     static void set(ProjectExplorer::Kit *k, const QString &generator,
                     const QString &platform, const QString &toolset);
-    static QStringList generatorArguments(const ProjectExplorer::Kit *k);
     static CMakeConfig generatorCMakeConfig(const ProjectExplorer::Kit *k);
     static bool isMultiConfigGenerator(const ProjectExplorer::Kit *k);
 
@@ -65,6 +68,7 @@ public:
 
     static void setCMakePreset(ProjectExplorer::Kit *k, const QString &presetName);
     static CMakeConfigItem cmakePresetConfigItem(const ProjectExplorer::Kit *k);
+    static Utils::Id cmakePresetKitId(const QString &projectName, const QString &presetName);
 
     static ProjectExplorer::KitAspect *createKitAspect(ProjectExplorer::Kit *k);
 };

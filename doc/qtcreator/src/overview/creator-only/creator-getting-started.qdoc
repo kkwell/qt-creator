@@ -6,43 +6,41 @@
     \page creator-getting-started.html
     \nextpage creator-overview.html
 
-    \title Getting Started
+    \title Getting started
 
-    To learn the basics of \QC, take the
-    \l{https://www.qt.io/academy/course-catalog#getting-started-with-qt-creator}
-    {Getting Started with Qt Creator} course in Qt Academy.
+    To learn the basics of \QC, take the \l{Qt Academy: Getting Started with \QC}
+    course.
 
     \table borderless
         \row
-            \li \inlineimage icons/app-development.png
-            \li \inlineimage icons/ide.png
-            \li \inlineimage icons/getting-started.png
+            \li \inlineimage {icons/app-development.png} {}
+            \li \inlineimage {icons/ide.png} {}
+            \li \inlineimage {icons/getting-started.png} {}
         \row
             \li \b {\l{Overview}}
 
                 If you have not used an integrated development environment (IDE)
                 before, or want to know what kind of IDE \QC is, go to
                 \l{Overview}.
-            \li \b {\l{User Interface}}
+            \li \b {\l{Adapting the UI}}
 
-                If you have not used \QC before, and want to become familiar
-                with the parts of the user interface, go to \l{User Interface}.
-            \li \b {\l{Configuring Qt Creator}}
+                If you have not used \QC before, and want to become familiar with
+                the parts of the user interface, go to \l{Adapting the UI}.
+            \li \b {\l{Configuring \QC}}
 
                 To make \QC behave more like your favorite code editor or IDE,
                 you can change the settings for keyboard shortcuts, color
                 schemes, generic highlighting, code snippets, and version
                 control systems. For an overview of the options you have, go to
-                \l{Configuring Qt Creator}.
+                \l{Configuring \QC}.
         \row
-            \li \inlineimage icons/platform-and-toolchain.png
-            \li \inlineimage icons/tutorials.png
-            \li \inlineimage icons/api-reference.png
+            \li \inlineimage {icons/platform-and-toolchain.png} {}
+            \li \inlineimage {icons/tutorials.png} {}
+            \li \inlineimage {icons/api-reference.png} {}
         \row
-            \li \b {\l{Tutorial: Build and run}{Building and Running an Example}}
+            \li \b {\l{Tutorial: Build and run}{Building and running an example}}
 
-                To check that \l{https://www.qt.io/download-qt-installer}
-                {\QOI} created \l{Kits}
+                To check that \l{\QOI} created \l{Managing kits}
                 {build and run kits}, open an example application and run it.
                 If you have not done so before, go to
                 \l{Tutorial: Build and run}.
@@ -50,12 +48,12 @@
 
                 Now you are ready to start developing your own applications.
                 Pick a tutorial to follow in \l{Tutorials}. To start developing
-                for mobile devices, select \l{Tutorial: Mobile application}.
+                for mobile devices, select \l{Tutorial: Qt Quick application}.
             \li \b{\l {Qt Documentation}}
 
                 For more examples, as well as the details about using Qt tools
                 and APIs to develop Qt applications, go to \l {Qt Documentation}.
     \endtable
 
-    \sa {Installation}
+    \sa {Installation}, {Get and Install Qt}
 */

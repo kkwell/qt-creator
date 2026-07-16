@@ -3,16 +3,20 @@
 
 #include "pastebindotcomprotocol.h"
 
+#include <utils/networkaccessmanager.h>
 #include <utils/qtcassert.h>
+
+#include <QtTaskTree/QNetworkReplyWrapper>
 
 #include <QDebug>
 #include <QRegularExpression>
 #include <QStringList>
 #include <QByteArray>
 
-#include <QNetworkReply>
-
 enum { debug = 0 };
+
+using namespace QtTaskTree;
+using namespace Utils;
 
 namespace CodePaster {
 
@@ -25,42 +29,26 @@ const char API_KEY[]="api_dev_key=516686fc461fb7f9341fd7cf2af6f829&"; // user: q
 
 const char PROTOCOL_NAME[] = "Pastebin.Com";
 
+PasteBinDotComProtocol::PasteBinDotComProtocol()
+    : Protocol({protocolName(), Capability::List | Capability::PostDescription})
+{}
+
 QString PasteBinDotComProtocol::protocolName()
 {
     return QLatin1String(PROTOCOL_NAME);
 }
 
-unsigned PasteBinDotComProtocol::capabilities() const
+static QByteArray typeToString(ContentType type)
 {
-    return ListCapability | PostDescriptionCapability;
-}
-
-static inline QByteArray format(Protocol::ContentType ct)
-{
-    QByteArray format = "api_paste_format=";
-    switch (ct) {
-    case Protocol::C:
-        format += 'c';
-        break;
-    case Protocol::Cpp:
-        format += "cpp-qt";
-        break;
-    case Protocol::JavaScript:
-        format += "javascript";
-        break;
-    case Protocol::Diff:
-        format += "diff";
-        break;
-    case Protocol::Xml:
-        format += "xml";
-        break;
-    case Protocol::Text:
-        // fallthrough!
-    default:
-        format += "text";
+    switch (type) {
+    case C:          return "c";
+    case Cpp:        return "cpp-qt";
+    case Diff:       return "diff";
+    case JavaScript: return "javascript";
+    case Text:       return "text";
+    case Xml:        return "xml";
     }
-    format += '&';
-    return format;
+    return {};
 }
 
 // According to documentation, Pastebin.com accepts only fixed expiry specifications:
@@ -76,99 +64,42 @@ static inline QByteArray expirySpecification(int expiryDays)
     return QByteArray("N");
 }
 
-void PasteBinDotComProtocol::paste(
-        const QString &text,
-        ContentType ct,
-        int expiryDays,
-        const QString & /* username */, // Not used unless registered user
-        const QString &comment,
-        const QString &description
-        )
+ExecutableItem PasteBinDotComProtocol::fetchRecipe(const QString &id,
+                                                   const FetchHandler &handler) const
 {
-    Q_UNUSED(comment)
-    Q_UNUSED(description)
-    QTC_ASSERT(!m_pasteReply, return);
+    const auto onSetup = [id](QNetworkReplyWrapper &task) {
+        task.setNetworkAccessManager(NetworkAccessManager::instance());
+        // Did we get a complete URL or just an id. Insert a call to the php-script
+        QString link = QLatin1String(PASTEBIN_BASE) + QLatin1String(PASTEBIN_RAW);
 
-    // Format body
-    QByteArray pasteData = API_KEY;
-    pasteData += "api_option=paste&";
-    pasteData += "api_paste_expire_date=";
-    pasteData += expirySpecification(expiryDays);
-    pasteData += '&';
-    pasteData += format(ct);
-    pasteData += "api_paste_name="; // Title or name.
-    pasteData += QUrl::toPercentEncoding(description);
-    pasteData += "&api_paste_code=";
-    pasteData += QUrl::toPercentEncoding(fixNewLines(text));
-    // fire request
-    m_pasteReply = httpPost(QLatin1String(PASTEBIN_BASE) + QLatin1String(PASTEBIN_API), pasteData);
-    connect(m_pasteReply, &QNetworkReply::finished, this, &PasteBinDotComProtocol::pasteFinished);
-    if (debug)
-        qDebug() << "paste: sending " << m_pasteReply << pasteData;
-}
+        if (id.startsWith(QLatin1String("http://")))
+            link.append(id.mid(id.lastIndexOf(QLatin1Char('/')) + 1));
+        else
+            link.append(id);
 
-void PasteBinDotComProtocol::pasteFinished()
-{
-    if (m_pasteReply->error())
-        qWarning("%s protocol error: %s", PROTOCOL_NAME, qPrintable(m_pasteReply->errorString()));
-    else
-        emit pasteDone(QString::fromLatin1(m_pasteReply->readAll()));
-
-    m_pasteReply->deleteLater();
-    m_pasteReply = nullptr;
-}
-
-void PasteBinDotComProtocol::fetch(const QString &id)
-{
-    // Did we get a complete URL or just an id. Insert a call to the php-script
-    QString link = QLatin1String(PASTEBIN_BASE) + QLatin1String(PASTEBIN_RAW);
-
-    if (id.startsWith(QLatin1String("http://")))
-        link.append(id.mid(id.lastIndexOf(QLatin1Char('/')) + 1));
-    else
-        link.append(id);
-
-    if (debug)
-        qDebug() << "fetch: sending " << link;
-
-    m_fetchReply = httpGet(link);
-    connect(m_fetchReply, &QNetworkReply::finished, this, &PasteBinDotComProtocol::fetchFinished);
-    m_fetchId = id;
-}
-
-void PasteBinDotComProtocol::fetchFinished()
-{
-    QString title;
-    QString content;
-    const bool error = m_fetchReply->error();
-    if (error) {
-        content = m_fetchReply->errorString();
         if (debug)
-            qDebug() << "fetchFinished: error" << m_fetchId << content;
-    } else {
-        title = QLatin1String(PROTOCOL_NAME) + QLatin1String(": ") + m_fetchId;
-        content = QString::fromUtf8(m_fetchReply->readAll());
+            qDebug() << "fetch: sending " << link;
+        task.setRequest(QNetworkRequest(QUrl(link)));
+    };
+    const auto onDone = [this, id, handler](const QNetworkReplyWrapper &task, DoneWith result) {
+        QNetworkReply *reply = task.reply();
+        if (result == DoneWith::Error) {
+            reportError(reply->errorString());
+            return;
+        }
+        const QString title = QLatin1String(PROTOCOL_NAME) + QLatin1String(": ") + id;
+        const QString content = QString::fromUtf8(reply->readAll());
         if (debug) {
             QDebug nsp = qDebug().nospace();
             nsp << "fetchFinished: " << content.size() << " Bytes";
             if (debug > 1)
                 nsp << content;
         }
-    }
-    m_fetchReply->deleteLater();
-    m_fetchReply = nullptr;
-    emit fetchDone(title, content, error);
-}
+        if (handler)
+            handler(title, content);
+    };
 
-void PasteBinDotComProtocol::list()
-{
-    QTC_ASSERT(!m_listReply, return);
-
-    const QString url = QLatin1String(PASTEBIN_BASE) + QLatin1String(PASTEBIN_ARCHIVE);
-    m_listReply = httpGet(url);
-    connect(m_listReply, &QNetworkReply::finished, this, &PasteBinDotComProtocol::listFinished);
-    if (debug)
-        qDebug() << "list: sending " << url << m_listReply;
+    return QNetworkReplyWrapperTask(onSetup, onDone);
 }
 
 /* Quick & dirty: Parse out the 'archive' table as of 16.3.2016:
@@ -220,7 +151,7 @@ struct Attribute {
 static QList<Attribute> toAttributes(QStringView attributes)
 {
     QList<Attribute> result;
-    const QRegularExpression att("\\s+([a-zA-Z]+)\\s*=\\s*('.*?'|\".*?\")");
+    static const QRegularExpression att("\\s+([a-zA-Z]+)\\s*=\\s*('.*?'|\".*?\")");
     QRegularExpressionMatchIterator it = att.globalMatch(attributes.toString());
     while (it.hasNext()) {
         const QRegularExpressionMatch match = it.next();
@@ -338,7 +269,7 @@ static inline QStringList parseLists(QIODevice *io, QString *errorMessage)
 
     QString dataStr = QString::fromUtf8(data);
     // remove comments if any
-    const QRegularExpression comment("<!--.*--!>", QRegularExpression::MultilineOption);
+    static const QRegularExpression comment("<!--.*--!>", QRegularExpression::MultilineOption);
     for ( ;; ) {
         const QRegularExpressionMatch match = comment.match(dataStr);
         if (!match.hasMatch())
@@ -346,14 +277,14 @@ static inline QStringList parseLists(QIODevice *io, QString *errorMessage)
         dataStr.remove(match.capturedStart(), match.capturedLength());
     }
 
-    const QRegularExpression tag("<(/?)\\s*([a-zA-Z][a-zA-Z0-9]*)(.*?)(/?)\\s*>",
-                                 QRegularExpression::MultilineOption);
-    const QRegularExpression wsOnly("^\\s+$", QRegularExpression::MultilineOption);
+    static const QRegularExpression tag("<(/?)\\s*([a-zA-Z][a-zA-Z0-9]*)(.*?)(/?)\\s*>",
+                                        QRegularExpression::MultilineOption);
+    static const QRegularExpression wsOnly("^\\s+$", QRegularExpression::MultilineOption);
     QRegularExpressionMatchIterator it = tag.globalMatch(dataStr);
     while (it.hasNext()) {
         const QRegularExpressionMatch match = it.next();
 
-        bool startElement = match.captured(4).length() == 0 && match.captured(1).length() == 0;
+        bool startElement = match.captured(4).size() == 0 && match.captured(1).size() == 0;
         if (startElement) {
             state = nextOpeningState(state, match.capturedView(2), match.capturedView(3));
             switch (state) {
@@ -445,29 +376,70 @@ static inline QStringList parseLists(QIODevice *io, QString *errorMessage)
     return rc;
 }
 
-void PasteBinDotComProtocol::listFinished()
+ExecutableItem PasteBinDotComProtocol::listRecipe(const ListHandler &handler) const
 {
-    const bool error = m_listReply->error();
-    if (error) {
-        if (debug)
-            qDebug() << "listFinished: error" << m_listReply->errorString();
-    } else {
-        if (m_listReply->hasRawHeader("Content-Type")) {
+    const auto onSetup = [](QNetworkReplyWrapper &task) {
+        task.setNetworkAccessManager(NetworkAccessManager::instance());
+        const QUrl url(QLatin1String(PASTEBIN_BASE) + QLatin1String(PASTEBIN_ARCHIVE));
+        task.setRequest(QNetworkRequest(url));
+    };
+    const auto onDone = [handler](const QNetworkReplyWrapper &task, DoneWith result) {
+        QNetworkReply *reply = task.reply();
+        if (result == DoneWith::Error) {
+            if (debug)
+                qDebug() << "listFinished: error" << reply->errorString();
+            return;
+        }
+        if (reply->hasRawHeader("Content-Type")) {
             // if the content type changes to xhtml we should switch back to QXmlStreamReader
-            const QByteArray contentType = m_listReply->rawHeader("Content-Type");
+            const QByteArray contentType = reply->rawHeader("Content-Type");
             if (!contentType.startsWith("text/html"))
                 qWarning() << "Content type has changed to" << contentType;
         }
         QString errorMessage;
-        const QStringList list = parseLists(m_listReply, &errorMessage);
+        const QStringList list = parseLists(reply, &errorMessage);
         if (list.isEmpty())
             qWarning().nospace() << "Failed to read list from " << PASTEBIN_BASE <<  ':' << errorMessage;
-        emit listDone(name(), list);
+        if (handler)
+            handler(list);
         if (debug)
             qDebug() << list;
-    }
-    m_listReply->deleteLater();
-    m_listReply = nullptr;
+    };
+
+    return QNetworkReplyWrapperTask(onSetup, onDone);
+}
+
+ExecutableItem PasteBinDotComProtocol::pasteRecipe(const PasteInputData &inputData,
+                                                   const PasteHandler &handler) const
+{
+    const auto onSetup = [inputData](QNetworkReplyWrapper &task) {
+        task.setNetworkAccessManager(NetworkAccessManager::instance());
+        QByteArray pasteData = API_KEY;
+        pasteData += "api_option=paste";
+        pasteData += "&api_paste_expire_date=" + expirySpecification(inputData.expiryDays);
+        pasteData += "&api_paste_format=" + typeToString(inputData.ct);
+        pasteData += "&api_paste_name=" + QUrl::toPercentEncoding(inputData.description);
+        pasteData += "&api_paste_code=" + QUrl::toPercentEncoding(fixNewLines(inputData.text));
+        QNetworkRequest request{QUrl(QLatin1String(PASTEBIN_BASE) + QLatin1String(PASTEBIN_API))};
+        request.setHeader(QNetworkRequest::ContentTypeHeader,
+                          QVariant(QByteArray("application/x-www-form-urlencoded")));
+        task.setRequest(request);
+        task.setOperation(QNetworkAccessManager::PostOperation);
+        task.setData(pasteData);
+        if (debug)
+            qDebug() << "paste: sending " << pasteData;
+    };
+    const auto onDone = [this, handler](const QNetworkReplyWrapper &task, DoneWith result) {
+        QNetworkReply *reply = task.reply();
+        if (result == DoneWith::Error) {
+            reportError(reply->errorString());
+            return;
+        }
+        if (handler)
+            handler(QString::fromLatin1(reply->readAll()));
+    };
+
+    return QNetworkReplyWrapperTask(onSetup, onDone);
 }
 
 } // CodePaster

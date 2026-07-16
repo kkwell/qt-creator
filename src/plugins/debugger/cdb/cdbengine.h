@@ -30,7 +30,6 @@ public:
     void runEngine();
     void shutdownInferior() override;
     void shutdownEngine() override;
-    void abortDebuggerProcess() override;
     void detachDebugger() override;
     bool hasCapability(unsigned cap) const override;
     void watchPoint(const QPoint &) override;
@@ -76,14 +75,13 @@ public:
     static QString extensionLibraryName(bool is64Bit, bool isArm = false);
 
 private:
+    void abortDebuggerProcess() override;
     void processStarted();
     void processDone();
-    void runCommand(const DebuggerCommand &cmd) override;
+    void runCommand(const DebuggerCommand &cmd);
     void adjustOperateByInstruction(bool);
 
     void createFullBacktrace();
-
-    void handleDoInterruptInferior(const QString &errorMessage);
 
     typedef QPair<QString, QString> SourcePathMapping;
     struct NormalizedSourceFileName // Struct for caching mapped/normalized source files.
@@ -210,6 +208,7 @@ private:
     int m_pythonVersion = 0; // 0xMMmmpp MM = major; mm = minor; pp = patch
     bool m_initialSessionIdleHandled = false;
     mutable CPlusPlus::Snapshot m_codeModelSnapshot;
+    mutable QStringDecoder m_cdbOutputDecoder;
 };
 
 } // Debugger::Internal

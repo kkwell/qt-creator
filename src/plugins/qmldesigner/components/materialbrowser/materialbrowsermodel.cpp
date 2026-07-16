@@ -10,6 +10,8 @@
 #include "variantproperty.h"
 #include "qmltimelinekeyframegroup.h"
 
+#include <utils3d.h>
+
 #include <utils/qtcassert.h>
 
 namespace QmlDesigner {
@@ -31,32 +33,32 @@ int MaterialBrowserModel::rowCount(const QModelIndex &) const
 
 QVariant MaterialBrowserModel::data(const QModelIndex &index, int role) const
 {
-    QTC_ASSERT(index.isValid() && index.row() < m_materialList.size(), return {});
-    QTC_ASSERT(roleNames().contains(role), return {});
+    QTC_ASSERT(index.isValid(), return {});
 
-    QByteArray roleName = roleNames().value(role);
-    if (roleName == "materialName") {
+    switch (role) {
+    case Roles::NameRole: {
         QVariant objName = m_materialList.at(index.row()).variantProperty("objectName").value();
         return objName.isValid() ? objName : "";
-    }
-
-    if (roleName == "materialInternalId")
+    } break;
+    case Roles::InternalIdRole:
         return m_materialList.at(index.row()).internalId();
-
-    if (roleName == "materialVisible")
+    case Roles::MatchedSearchRole:
         return isVisible(index.row());
-
-    if (roleName == "materialType") {
+    case Roles::SelectedRole:
+        return m_materialList.at(index.row()).isSelected();
+    case Roles::IsComponentRole:
+        return m_materialList.at(index.row()).isComponent();
+    case Roles::TypeRole: {
         QString matType = QString::fromLatin1(m_materialList.at(index.row()).type());
         if (matType.startsWith("QtQuick3D."))
             matType.remove("QtQuick3D.");
         return matType;
-    }
-
-    if (roleName == "hasDynamicProperties")
+    } break;
+    case Roles::HasDynamicPropertiesRole:
         return !m_materialList.at(index.row()).dynamicProperties().isEmpty();
-
-    return {};
+    default:
+        return {};
+    };
 }
 
 bool MaterialBrowserModel::isVisible(int idx) const
@@ -135,12 +137,14 @@ void MaterialBrowserModel::unloadPropertyGroups()
 
 QHash<int, QByteArray> MaterialBrowserModel::roleNames() const
 {
-    static const QHash<int, QByteArray> roles {
-        {Qt::UserRole + 1, "materialName"},
-        {Qt::UserRole + 2, "materialInternalId"},
-        {Qt::UserRole + 3, "materialVisible"},
-        {Qt::UserRole + 4, "materialType"},
-        {Qt::UserRole + 5, "hasDynamicProperties"}
+    static const QHash<int, QByteArray> roles{
+        {Roles::NameRole, "materialName"},
+        {Roles::InternalIdRole, "materialInternalId"},
+        {Roles::MatchedSearchRole, "materialMatchedSearch"},
+        {Roles::SelectedRole, "materialSelected"},
+        {Roles::IsComponentRole, "materialIsComponent"},
+        {Roles::TypeRole, "materialType"},
+        {Roles::HasDynamicPropertiesRole, "hasDynamicProperties"},
     };
     return roles;
 }
@@ -234,26 +238,13 @@ void MaterialBrowserModel::setSearchText(const QString &searchText)
 
 void MaterialBrowserModel::refreshSearch()
 {
-    bool isEmpty = false;
+    bool isEmpty = true;
 
-    // if selected material goes invisible, select nearest material
-    if (!isVisible(m_selectedIndex)) {
-        int inc = 1;
-        int incCap = m_materialList.size();
-        while (!isEmpty && inc < incCap) {
-            if (isVisible(m_selectedIndex - inc)) {
-                selectMaterial(m_selectedIndex - inc);
-                break;
-            } else if (isVisible(m_selectedIndex + inc)) {
-                selectMaterial(m_selectedIndex + inc);
-                break;
-            }
-            ++inc;
-            isEmpty = !isValidIndex(m_selectedIndex + inc)
-                   && !isValidIndex(m_selectedIndex - inc);
+    for (int i = 0; i < m_materialList.size(); ++i) {
+        if (isVisible(i)) {
+            isEmpty = false;
+            break;
         }
-        if (!isVisible(m_selectedIndex)) // handles the case of a single material
-            isEmpty = true;
     }
 
     if (isEmpty != m_isEmpty) {
@@ -282,7 +273,6 @@ void MaterialBrowserModel::setMaterials(const QList<ModelNode> &materials, bool 
     else
         resetModel();
 
-    updateSelectedMaterial();
     setHasQuick3DImport(hasQuick3DImport);
 }
 
@@ -307,14 +297,18 @@ void MaterialBrowserModel::removeMaterial(const ModelNode &material)
     }
 }
 
-void MaterialBrowserModel::deleteSelectedMaterial()
+void MaterialBrowserModel::deleteSelectedMaterials()
 {
-    deleteMaterial(m_selectedIndex);
-}
+    m_view->executeInTransaction(__FUNCTION__, [this] {
+        QStack<int> selectedIndexes;
+        for (int i = 0; i < m_materialList.size(); ++i) {
+            if (m_materialList.at(i).isSelected())
+                selectedIndexes << i;
+        }
 
-void MaterialBrowserModel::updateSelectedMaterial()
-{
-    selectMaterial(m_selectedIndex, true);
+        while (!selectedIndexes.isEmpty())
+            deleteMaterial(selectedIndexes.pop());
+    });
 }
 
 void MaterialBrowserModel::updateMaterialName(const ModelNode &material)
@@ -326,10 +320,7 @@ void MaterialBrowserModel::updateMaterialName(const ModelNode &material)
 
 int MaterialBrowserModel::materialIndex(const ModelNode &material) const
 {
-    if (m_materialIndexHash.contains(material.internalId()))
-        return m_materialIndexHash.value(material.internalId());
-
-    return -1;
+    return m_materialIndexHash.value(material.internalId(), -1);
 }
 
 ModelNode MaterialBrowserModel::materialAt(int idx) const
@@ -340,36 +331,51 @@ ModelNode MaterialBrowserModel::materialAt(int idx) const
     return {};
 }
 
-ModelNode MaterialBrowserModel::selectedMaterial() const
-{
-    if (isValidIndex(m_selectedIndex))
-        return m_materialList[m_selectedIndex];
-    return {};
-}
-
 void MaterialBrowserModel::resetModel()
 {
     beginResetModel();
     endResetModel();
 }
 
-void MaterialBrowserModel::selectMaterial(int idx, bool force)
+void MaterialBrowserModel::notifySelectionChanges(const QList<ModelNode> &selectedNodes,
+                                                  const QList<ModelNode> &deselectedNodes)
 {
-    if (m_materialList.size() == 0) {
-        m_selectedIndex = -1;
-        emit selectedIndexChanged(m_selectedIndex);
+    QList<int> indices;
+    indices.reserve(selectedNodes.size() + deselectedNodes.size());
+    for (const ModelNode &node : selectedNodes)
+        indices.append(materialIndex(node));
+
+    for (const ModelNode &node : deselectedNodes)
+        indices.append(materialIndex(node));
+
+    using Bound = QPair<int, int>;
+    const QList<Bound> &bounds = MaterialBrowserView::getSortedBounds(indices);
+
+    for (const Bound &bound : bounds)
+        emit dataChanged(index(bound.first), index(bound.second), {Roles::SelectedRole});
+}
+
+void MaterialBrowserModel::updateMaterialComponent(int idx)
+{
+    if (!isValidIndex(idx))
         return;
-    }
 
-    idx = std::max(0, std::min(idx, rowCount() - 1));
+    const QModelIndex &mIdx = index(idx);
+    emit dataChanged(mIdx, mIdx, {Roles::IsComponentRole});
+}
 
-    if (idx != m_selectedIndex || force) {
-        m_selectedIndex = idx;
-        emit selectedIndexChanged(idx);
+void MaterialBrowserModel::selectMaterial(int idx, bool appendMat)
+{
+    if (!isValidIndex(idx))
+        return;
 
-        m_selectedMaterialIsComponent = selectedMaterial().isComponent();
-        emit selectedMaterialIsComponentChanged();
-    }
+    ModelNode mat = m_materialList.at(idx);
+    QTC_ASSERT(mat, return);
+
+    if (appendMat)
+        mat.view()->selectModelNode(mat);
+    else
+        mat.selectNode();
 }
 
 void MaterialBrowserModel::duplicateMaterial(int idx)
@@ -401,8 +407,8 @@ void MaterialBrowserModel::copyMaterialProperties(int idx, const QString &sectio
         // Dynamic properties must always be set in base state
         const QList<AbstractProperty> dynProps = m_copiedMaterial.dynamicProperties();
         for (const auto &prop : dynProps) {
-            dynamicProps.insert(prop.name(), prop.dynamicTypeName());
-            validProps.insert(prop.name());
+            dynamicProps.insert(prop.name().toByteArray(), prop.dynamicTypeName());
+            validProps.insert(prop.name().toByteArray());
         }
     }
 
@@ -413,11 +419,11 @@ void MaterialBrowserModel::copyMaterialProperties(int idx, const QString &sectio
             validProps.insert(baseProp);
 
         if (!mat.isInBaseState()) {
-            QmlPropertyChanges changes = mat.propertyChangeForCurrentState();
+            QmlPropertyChanges changes = mat.ensurePropertyChangeForCurrentState();
             if (changes.isValid()) {
                 const QList<AbstractProperty> changedProps = changes.targetProperties();
                 for (const auto &changedProp : changedProps)
-                    validProps.insert(changedProp.name());
+                    validProps.insert(changedProp.name().toByteArray());
             }
         }
 
@@ -450,7 +456,7 @@ void MaterialBrowserModel::copyMaterialProperties(int idx, const QString &sectio
     }
 
     m_copiedMaterialProps.clear();
-    for (const PropertyName &propName : copiedProps) {
+    for (const PropertyName &propName : std::as_const(copiedProps)) {
         PropertyCopyData data;
         data.name = propName;
         data.isValid = m_allPropsCopied || validProps.contains(propName);
@@ -504,11 +510,6 @@ void MaterialBrowserModel::applyToSelected(qint64 internalId, bool add)
         ModelNode mat = m_materialList.at(idx);
         emit applyToSelectedTriggered(mat, add);
     }
-}
-
-void MaterialBrowserModel::openMaterialEditor()
-{
-    QmlDesignerPlugin::instance()->mainWidget()->showDockWidget("MaterialEditor", true);
 }
 
 // This is provided as invokable instead of property, as it is difficult to know when ModelNode

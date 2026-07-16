@@ -211,6 +211,12 @@ ActionBuilder &ActionBuilder::setCommandAttribute(Command::CommandAttribute attr
     return *this;
 }
 
+ActionBuilder &ActionBuilder::setCommandAttributes(Command::CommandAttributes attr)
+{
+    d->command->setAttributes(attr);
+    return *this;
+}
+
 ActionBuilder &ActionBuilder::setCommandDescription(const QString &desc)
 {
     d->command->setDescription(desc);
@@ -545,6 +551,7 @@ ActionManager::ActionManager(QObject *parent)
 ActionManager::~ActionManager()
 {
     delete d;
+    d = nullptr;
 }
 
 /*!
@@ -728,6 +735,8 @@ QList<Command *> ActionManager::commands()
 */
 void ActionManager::unregisterAction(QAction *action, Id id)
 {
+    if (!d) // stray call during shutdown
+        return;
     Command *cmd = d->m_idCmdMap.value(id, nullptr);
     if (!cmd) {
         qWarning() << "unregisterAction: id" << id.name()

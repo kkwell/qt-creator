@@ -3,16 +3,13 @@
 
 #pragma once
 
-#include "buildtargetinfo.h"
 #include "projectconfiguration.h"
 #include "task.h"
 
 #include <utils/aspects.h>
-#include <utils/environment.h>
 #include <utils/macroexpander.h>
 
 #include <functional>
-#include <memory>
 
 namespace Utils {
 class OutputFormatter;
@@ -89,7 +86,7 @@ public:
     ~GlobalOrProjectAspect() override;
 
     void setProjectSettings(Utils::AspectContainer *settings);
-    void setGlobalSettings(Utils::AspectContainer *settings);
+    void setGlobalSettings(Utils::AspectContainer *settings, Utils::Id settingsPage);
 
     bool isUsingGlobalSettings() const { return m_useGlobalSettings; }
     void setUsingGlobalSettings(bool value);
@@ -97,11 +94,16 @@ public:
 
     Utils::AspectContainer *projectSettings() const { return m_projectSettings; }
     Utils::AspectContainer *currentSettings() const;
+    Utils::Id settingsPage() const { return m_settingsPage; }
 
     struct Data : Utils::BaseAspect::Data
     {
         Utils::AspectContainer *currentSettings = nullptr;
     };
+
+signals:
+    void currentSettingsChanged();
+    void wasResetToGlobalValues();
 
 protected:
     friend class RunConfiguration;
@@ -113,7 +115,11 @@ private:
     bool m_useGlobalSettings = false;
     Utils::AspectContainer *m_projectSettings = nullptr; // Owned if present.
     Utils::AspectContainer *m_globalSettings = nullptr;  // Not owned.
+    Utils::Id m_settingsPage;
 };
+
+PROJECTEXPLORER_EXPORT QWidget *createGlobalOrProjectAspectWidget(GlobalOrProjectAspect *aspect);
+PROJECTEXPLORER_EXPORT QWidget *createRunConfigAspectWidget(GlobalOrProjectAspect *aspect);
 
 // Documentation inside.
 class PROJECTEXPLORER_EXPORT RunConfiguration : public ProjectConfiguration
@@ -151,6 +157,12 @@ public:
     // The BuildTargetInfo corresponding to the buildKey.
     BuildTargetInfo buildTargetInfo() const;
 
+    // An identifier for the purpose of syncing this run config with its counterparts
+    // in other build configurations.
+    // For auto-created run configurations, this is the build key.
+    QString uniqueId() const;
+    void setUniqueId(const QString &id);
+
     ProjectExplorer::ProjectNode *productNode() const;
 
     template <class T = Utils::AspectContainer> T *currentSettings(Utils::Id id) const
@@ -161,10 +173,10 @@ public:
     }
 
     using ProjectConfiguration::registerAspect;
-    using AspectFactory = std::function<Utils::BaseAspect *(Target *)>;
+    using AspectFactory = std::function<Utils::BaseAspect *(BuildConfiguration *)>;
     template <class T> static void registerAspect()
     {
-        addAspectFactory([](Target *target) { return new T(target); });
+        addAspectFactory([](BuildConfiguration *bc) { return new T(bc); });
     }
 
     QMap<Utils::Id, Utils::Store> settingsData() const; // FIXME: Merge into aspectData?
@@ -172,18 +184,35 @@ public:
 
     void update();
 
-    const Utils::MacroExpander *macroExpander() const { return &m_expander; }
+    virtual RunConfiguration *clone(BuildConfiguration *bc);
+    void cloneFromOther(const RunConfiguration *rc);
+
+    BuildConfiguration *buildConfiguration() const { return m_buildConfiguration; }
+    const QList<BuildConfiguration *> syncableBuildConfigurations() const;
+    void forEachLinkedRunConfig(const std::function<void(RunConfiguration *)> &handler);
+    void makeActive();
+
+    BuildSystem *buildSystem() const;
+
+    bool equals(const RunConfiguration *other) const;
+
+    static void setupMacroExpander(
+        Utils::MacroExpander &exp, const RunConfiguration *rc, bool documentationOnly);
+
+    void setExecutionType(Utils::Id executionType);
+    Utils::Id executionType() const;
+
+    QString expandedDisplayName() const override;
 
 protected:
-    RunConfiguration(Target *target, Utils::Id id);
-
-    /// convenience function to get current build system. Try to avoid.
-    BuildSystem *activeBuildSystem() const;
+    RunConfiguration(BuildConfiguration *bc, Utils::Id id);
 
     using Updater = std::function<void()>;
     void setUpdater(const Updater &updater);
 
     Task createConfigurationIssue(const QString &description) const;
+
+    void setUsesEmptyBuildKeys() { m_usesEmptyBuildKeys = true; }
 
 private:
     // Any additional data should be handled by aspects.
@@ -193,24 +222,28 @@ private:
 
     static void addAspectFactory(const AspectFactory &aspectFactory);
 
+    friend class BuildConfiguration;
     friend class RunConfigurationCreationInfo;
     friend class RunConfigurationFactory;
     friend class Target;
 
+    BuildConfiguration * const m_buildConfiguration;
     QString m_buildKey;
     CommandLineGetter m_commandLineGetter;
     RunnableModifier m_runnableModifier;
     Updater m_updater;
-    Utils::MacroExpander m_expander;
     Utils::Store m_pristineState;
+    QString m_uniqueId;
     bool m_customized = false;
+    bool m_usesEmptyBuildKeys = false;
+    Utils::Id m_executionType;
 };
 
 class RunConfigurationCreationInfo
 {
 public:
     enum CreationMode {AlwaysCreate, ManualCreationOnly};
-    RunConfiguration *create(Target *target) const;
+    RunConfiguration *create(BuildConfiguration *bc) const;
 
     const RunConfigurationFactory *factory = nullptr;
     QString buildKey;
@@ -229,25 +262,23 @@ public:
     RunConfigurationFactory operator=(const RunConfigurationFactory &) = delete;
     virtual ~RunConfigurationFactory();
 
-    static RunConfiguration *restore(Target *parent, const Utils::Store &map);
-    static RunConfiguration *clone(Target *parent, RunConfiguration *source);
-    static const QList<RunConfigurationCreationInfo> creatorsForTarget(Target *parent);
+    static RunConfiguration *restore(BuildConfiguration *bc, const Utils::Store &map);
+    static const QList<RunConfigurationCreationInfo> creatorsForBuildConfig(BuildConfiguration *bc);
 
     Utils::Id runConfigurationId() const { return m_runConfigurationId; }
-
-    static QString decoratedTargetName(const QString &targetName, Target *kit);
+    static QString decoratedTargetName(const QString &targetName, Kit *kit);
 
 protected:
-    virtual QList<RunConfigurationCreationInfo> availableCreators(Target *target) const;
-    virtual bool supportsBuildKey(Target *target, const QString &key) const;
+    virtual QList<RunConfigurationCreationInfo> availableCreators(BuildConfiguration *bc) const;
+    virtual bool supportsBuildKey(BuildConfiguration *bc, const QString &key) const;
 
-    using RunConfigurationCreator = std::function<RunConfiguration *(Target *)>;
+    using RunConfigurationCreator = std::function<RunConfiguration *(BuildConfiguration *)>;
 
     template <class RunConfig>
     void registerRunConfiguration(Utils::Id runConfigurationId)
     {
-        m_creator = [runConfigurationId](Target *t) -> RunConfiguration * {
-            return new RunConfig(t, runConfigurationId);
+        m_creator = [runConfigurationId](BuildConfiguration *bc) -> RunConfiguration * {
+            return new RunConfig(bc, runConfigurationId);
         };
         m_runConfigurationId = runConfigurationId;
     }
@@ -255,15 +286,18 @@ protected:
     void addSupportedProjectType(Utils::Id projectTypeId);
     void addSupportedTargetDeviceType(Utils::Id deviceTypeId);
     void setDecorateDisplayNames(bool on);
+    void setExecutionTypeId(Utils::Id executionType);
+    Utils::Id executionTypeId() const;
 
 private:
     bool canHandle(Target *target) const;
-    RunConfiguration *create(Target *target) const;
+    RunConfiguration *create(BuildConfiguration *bc) const;
 
     friend class RunConfigurationCreationInfo;
     friend class RunConfiguration;
     RunConfigurationCreator m_creator;
     Utils::Id m_runConfigurationId;
+    Utils::Id m_executionType;
     QList<Utils::Id> m_supportedProjectTypes;
     QList<Utils::Id> m_supportedTargetDeviceTypes;
     bool m_decorateDisplayNames = false;
@@ -276,11 +310,15 @@ public:
                                           bool addDeviceName = false);
 
 private:
-    QList<RunConfigurationCreationInfo> availableCreators(Target *parent) const override;
-    bool supportsBuildKey(Target *target, const QString &key) const override;
+    QList<RunConfigurationCreationInfo> availableCreators(BuildConfiguration *bc) const override;
+    bool supportsBuildKey(BuildConfiguration *bc, const QString &key) const override;
 
     const QString m_fixedBuildTarget;
     const bool m_decorateTargetName;
 };
+
+PROJECTEXPLORER_EXPORT RunConfiguration *activeRunConfig(const Project *project);
+PROJECTEXPLORER_EXPORT RunConfiguration *activeRunConfigForActiveProject();
+PROJECTEXPLORER_EXPORT RunConfiguration *activeRunConfigForCurrentProject();
 
 } // namespace ProjectExplorer

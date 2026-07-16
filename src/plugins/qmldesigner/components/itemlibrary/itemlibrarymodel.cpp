@@ -7,6 +7,7 @@
 #include "itemlibraryentry.h"
 #include "itemlibraryimport.h"
 #include "itemlibraryitem.h"
+#include "itemlibrarytracing.h"
 
 #include <designermcumanager.h>
 #include <model.h>
@@ -14,11 +15,13 @@
 #include <nodemetainfo.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectmanager.h>
-#include "qmldesignerconstants.h"
-#include "qmldesignerplugin.h"
+#include <qmldesignerconstants.h>
+#include <qmldesignerplugin.h>
+#include <qmldesignerutils/version.h>
 #include <utils/algorithm.h>
 #include <utils/qtcassert.h>
 
+#include <QFileInfo>
 #include <QIODevice>
 #include <QLoggingCategory>
 #include <QMetaProperty>
@@ -27,30 +30,41 @@
 
 namespace QmlDesigner {
 
+using ItemLibraryTracing::category;
+
 // sectionName can be an import url or a category name
 void ItemLibraryModel::saveExpandedState(bool expanded, const QString &sectionName)
 {
+    NanotraceHR::Tracer tracer{"item library model save expanded state", category()};
+
     expandedStateHash.insert(sectionName, expanded);
 }
 
 bool ItemLibraryModel::loadExpandedState(const QString &sectionName)
 {
+    NanotraceHR::Tracer tracer{"item library model load expanded state", category()};
     return expandedStateHash.value(sectionName, true);
 }
 
 void ItemLibraryModel::saveCategoryVisibleState(bool isVisible, const QString &categoryName,
                                                 const QString &importName)
 {
+    NanotraceHR::Tracer tracer{"item library model save category visible state", category()};
+
     categoryVisibleStateHash.insert(categoryName + '_' + importName, isVisible);
 }
 
 bool ItemLibraryModel::loadCategoryVisibleState(const QString &categoryName, const QString &importName)
 {
+    NanotraceHR::Tracer tracer{"item library model load category visible state", category()};
+
     return categoryVisibleStateHash.value(categoryName + '_' + importName, true);
 }
 
 void ItemLibraryModel::selectImportCategory(const QString &importUrl, int categoryIndex)
 {
+    NanotraceHR::Tracer tracer{"item library model select import category", category()};
+
     clearSelectedCategory();
 
     m_selectedImportUrl = importUrl;
@@ -61,6 +75,8 @@ void ItemLibraryModel::selectImportCategory(const QString &importUrl, int catego
 
 void ItemLibraryModel::clearSelectedCategory()
 {
+    NanotraceHR::Tracer tracer{"item library model clear selected category", category()};
+
     if (m_selectedCategoryIndex != -1) {
         ItemLibraryImport *selectedImport = importByUrl(m_selectedImportUrl);
         if (selectedImport)
@@ -70,6 +86,8 @@ void ItemLibraryModel::clearSelectedCategory()
 
 void ItemLibraryModel::selectImportFirstVisibleCategory()
 {
+    NanotraceHR::Tracer tracer{"item library model select import first visible category", category()};
+
     if (m_selectedCategoryIndex != -1) {
         ItemLibraryImport *selectedImport = importByUrl(m_selectedImportUrl);
         if (selectedImport) {
@@ -108,11 +126,15 @@ void ItemLibraryModel::selectImportFirstVisibleCategory()
 
 bool ItemLibraryModel::isAnyCategoryHidden() const
 {
+    NanotraceHR::Tracer tracer{"item library model is any category hidden", category()};
+
     return m_isAnyCategoryHidden;
 }
 
 void ItemLibraryModel::setIsAnyCategoryHidden(bool state)
 {
+    NanotraceHR::Tracer tracer{"item library model set is any category hidden", category()};
+
     if (state != m_isAnyCategoryHidden) {
         m_isAnyCategoryHidden = state;
         emit isAnyCategoryHiddenChanged();
@@ -121,11 +143,15 @@ void ItemLibraryModel::setIsAnyCategoryHidden(bool state)
 
 bool ItemLibraryModel::importUnimportedSelected() const
 {
+    NanotraceHR::Tracer tracer{"item library model import unimported selected", category()};
+
     return m_importUnimportedSelected;
 }
 
 void ItemLibraryModel::setImportUnimportedSelected(bool state)
 {
+    NanotraceHR::Tracer tracer{"item library model set import unimported selected", category()};
+
     if (state != m_importUnimportedSelected) {
         m_importUnimportedSelected = state;
         emit importUnimportedSelectedChanged();
@@ -134,17 +160,23 @@ void ItemLibraryModel::setImportUnimportedSelected(bool state)
 
 QObject *ItemLibraryModel::itemsModel() const
 {
+    NanotraceHR::Tracer tracer{"item library model items model", category()};
+
     return m_itemsModel;
 }
 
 void ItemLibraryModel::setItemsModel(QObject *model)
 {
+    NanotraceHR::Tracer tracer{"item library model set items model", category()};
+
     m_itemsModel = model;
     emit itemsModelChanged();
 }
 
 void ItemLibraryModel::expandAll()
 {
+    NanotraceHR::Tracer tracer{"item library model expand all", category()};
+
     int i = 0;
     for (const QPointer<ItemLibraryImport> &import : std::as_const(m_importList)) {
         if (!import->importExpanded()) {
@@ -159,6 +191,8 @@ void ItemLibraryModel::expandAll()
 
 void ItemLibraryModel::collapseAll()
 {
+    NanotraceHR::Tracer tracer{"item library model collapse all", category()};
+
     int i = 0;
     for (const QPointer<ItemLibraryImport> &import : std::as_const(m_importList)) {
         if (import->hasCategories() && import->importExpanded()) {
@@ -172,6 +206,8 @@ void ItemLibraryModel::collapseAll()
 
 void ItemLibraryModel::hideCategory(const QString &importUrl, const QString &categoryName)
 {
+    NanotraceHR::Tracer tracer{"item library model hide category", category()};
+
     ItemLibraryImport *import = importByUrl(importUrl);
     if (!import)
         return;
@@ -184,6 +220,8 @@ void ItemLibraryModel::hideCategory(const QString &importUrl, const QString &cat
 
 void ItemLibraryModel::showImportHiddenCategories(const QString &importUrl)
 {
+    NanotraceHR::Tracer tracer{"item library model show import hidden categories", category()};
+
     ItemLibraryImport *targetImport = nullptr;
     bool hiddenCatsExist = false;
     for (const QPointer<ItemLibraryImport> &import : std::as_const(m_importList)) {
@@ -202,6 +240,8 @@ void ItemLibraryModel::showImportHiddenCategories(const QString &importUrl)
 
 void ItemLibraryModel::showAllHiddenCategories()
 {
+    NanotraceHR::Tracer tracer{"item library model show all hidden categories", category()};
+
     for (const QPointer<ItemLibraryImport> &import : std::as_const(m_importList))
         import->showAllCategories();
 
@@ -210,29 +250,32 @@ void ItemLibraryModel::showAllHiddenCategories()
     categoryVisibleStateHash.clear();
 }
 
-void ItemLibraryModel::setFlowMode(bool b)
-{
-    m_flowMode = b;
-}
-
 ItemLibraryModel::ItemLibraryModel(QObject *parent)
     : QAbstractListModel(parent)
 {
+    NanotraceHR::Tracer tracer{"item library model constructor", category()};
+
     addRoleNames();
 }
 
 ItemLibraryModel::~ItemLibraryModel()
 {
+    NanotraceHR::Tracer tracer{"item library model destructor", category()};
+
     clearSections();
 }
 
 int ItemLibraryModel::rowCount(const QModelIndex & /*parent*/) const
 {
+    NanotraceHR::Tracer tracer{"item library model row count", category()};
+
     return m_importList.size();
 }
 
 QVariant ItemLibraryModel::data(const QModelIndex &index, int role) const
 {
+    NanotraceHR::Tracer tracer{"item library model data", category()};
+
     if (!index.isValid() || index.row() >= m_importList.size())
         return {};
 
@@ -253,6 +296,8 @@ QVariant ItemLibraryModel::data(const QModelIndex &index, int role) const
 
 bool ItemLibraryModel::setData(const QModelIndex &index, const QVariant &value, int role)
 {
+    NanotraceHR::Tracer tracer{"item library model set data", category()};
+
     // currently only importExpanded property is updatable
     if (index.isValid() && m_roleNames.contains(role)) {
         QVariant currValue = m_importList.at(index.row())->property(m_roleNames.value(role));
@@ -269,16 +314,22 @@ bool ItemLibraryModel::setData(const QModelIndex &index, const QVariant &value, 
 
 QHash<int, QByteArray> ItemLibraryModel::roleNames() const
 {
+    NanotraceHR::Tracer tracer{"item library model role names", category()};
+
     return m_roleNames;
 }
 
 QString ItemLibraryModel::searchText() const
 {
+    NanotraceHR::Tracer tracer{"item library model search text", category()};
+
     return m_searchText;
 }
 
 void ItemLibraryModel::setSearchText(const QString &searchText)
 {
+    NanotraceHR::Tracer tracer{"item library model set search text", category()};
+
     QString lowerSearchText = searchText.toLower();
 
     if (m_searchText != lowerSearchText) {
@@ -296,10 +347,13 @@ void ItemLibraryModel::setSearchText(const QString &searchText)
 
 Import ItemLibraryModel::entryToImport(const ItemLibraryEntry &entry)
 {
+    NanotraceHR::Tracer tracer{"item library model entry to import", category()};
+
 #ifndef QDS_USE_PROJECTSTORAGE
     if (entry.majorVersion() == -1 && entry.minorVersion() == -1)
         return Import::createFileImport(entry.requiredImport());
 #endif
+
     return Import::createLibraryImport(entry.requiredImport(), QString::number(entry.majorVersion()) + QLatin1Char('.') +
                                                                QString::number(entry.minorVersion()));
 
@@ -307,6 +361,8 @@ Import ItemLibraryModel::entryToImport(const ItemLibraryEntry &entry)
 
 void ItemLibraryModel::update(Model *model)
 {
+    NanotraceHR::Tracer tracer{"item library model update", category()};
+
     if (!model)
         return;
 
@@ -318,36 +374,24 @@ void ItemLibraryModel::update(Model *model)
     auto compUtils = QmlDesignerPlugin::instance()->documentManager().generatedComponentUtils();
 
     QStringList excludedImports {
-        projectName,
-        compUtils.materialsBundleType(),
-        compUtils.effectsBundleType(),
-        compUtils.userMaterialsBundleType(),
-        compUtils.user3DBundleType(),
-        compUtils.userEffectsBundleType()
+        projectName
     };
 
     // create import sections
     const Imports usedImports = model->usedImports();
     QHash<QString, ItemLibraryImport *> importHash;
+    const QString generatedPrefix = compUtils.generatedComponentTypePrefix();
     for (const Import &import : model->imports()) {
-        if (excludedImports.contains(import.url())
-            || import.url().startsWith(compUtils.composedEffectsTypePrefix())) {
+        if (excludedImports.contains(import.url()) || import.url().startsWith(generatedPrefix))
             continue;
-        }
 
         bool addNew = true;
-        bool isQuick3DAsset = import.url().startsWith(compUtils.import3dTypePrefix());
         QString importUrl = import.url();
-        if (isQuick3DAsset)
-            importUrl = ItemLibraryImport::quick3DAssetsTitle();
-        else if (import.isFileImport())
+        if (import.isFileImport())
             importUrl = import.toString(true, true).remove("\"");
 
         ItemLibraryImport *oldImport = importHash.value(importUrl);
-        if (oldImport && oldImport->sectionType() == ItemLibraryImport::SectionType::Quick3DAssets
-            && isQuick3DAsset) {
-            addNew = false; // add only 1 Quick3DAssets import section
-        } else if (oldImport && oldImport->importEntry().url() == import.url()) {
+        if (oldImport && oldImport->importEntry().url() == import.url()) {
             // Retain the higher version if multiples exist
             if (oldImport->importEntry().toVersion() >= import.toVersion() || import.hasVersion())
                 addNew = false;
@@ -356,8 +400,7 @@ void ItemLibraryModel::update(Model *model)
         }
 
         if (addNew) {
-            auto sectionType = isQuick3DAsset ? ItemLibraryImport::SectionType::Quick3DAssets
-                                              : ItemLibraryImport::SectionType::Default;
+            auto sectionType = ItemLibraryImport::SectionType::Default;
             ItemLibraryImport *itemLibImport = new ItemLibraryImport(import, this, sectionType);
             itemLibImport->setImportUsed(usedImports.contains(import));
             importHash.insert(importUrl, itemLibImport);
@@ -371,14 +414,19 @@ void ItemLibraryModel::update(Model *model)
 
     DesignDocument *document = QmlDesignerPlugin::instance()->currentDesignDocument();
     const bool blockNewImports = document->inFileComponentModelActive();
-    const QList<ItemLibraryEntry> itemLibEntries = model->itemLibraryEntries();
-    for (const ItemLibraryEntry &entry : itemLibEntries) {
+
+    SourceId currentDocumentSourceId = model->fileUrlSourceId();
+
+    QList<ItemLibraryEntry> itemLibEntries = model->allItemLibraryEntries();
+    itemLibEntries.append(model->directoryImportsItemLibraryEntries());
+    for (const ItemLibraryEntry &entry : std::as_const(itemLibEntries)) {
         NodeMetaInfo metaInfo;
 
-        if constexpr (useProjectStorage())
-            metaInfo = NodeMetaInfo{entry.typeId(), model->projectStorage()};
-        else
-            metaInfo = model->metaInfo(entry.typeName());
+#ifdef QDS_USE_PROJECTSTORAGE
+        metaInfo = NodeMetaInfo{entry.typeId(), model->projectStorage()};
+#else
+        metaInfo = model->metaInfo(entry.typeName());
+#endif
 
 #ifdef QDS_USE_PROJECTSTORAGE
         bool valid = metaInfo.isValid();
@@ -391,11 +439,6 @@ void ItemLibraryModel::update(Model *model)
         bool forceVisibility = valid
                                && NodeHints::fromItemLibraryEntry(entry, model).visibleInLibrary();
 
-        if (m_flowMode) {
-            isItem = metaInfo.isFlowViewItem();
-            forceVisibility = isItem;
-        }
-
         bool blocked = false;
         const DesignerMcuManager &mcuManager = DesignerMcuManager::instance();
         if (mcuManager.isMCUProject()) {
@@ -403,21 +446,35 @@ void ItemLibraryModel::update(Model *model)
 
             if (blockTypes.contains(QString::fromUtf8(entry.typeName())))
                 blocked = true;
+
+            // we need to exclude all items from unsupported imports but only if they are not user-defined modules
+            if (!(entry.category() == ItemLibraryImport::userComponentsTitle())
+                && !entry.requiredImport().isEmpty()
+                && !mcuManager.allowedImports().contains(entry.requiredImport())) {
+                blocked = true;
+            }
         }
 
         Import import = entryToImport(entry);
         bool hasImport = model->hasImport(import, true, true);
+#ifndef QDS_USE_PROJECTSTORAGE
         bool isImportPossible = false;
         if (!hasImport)
             isImportPossible = !blockNewImports && model->isImportPossible(import, true, true);
+#else
+        bool isImportPossible = !blockNewImports;
+#endif
         bool isUsable = (valid && (isItem || forceVisibility))
-                && (entry.requiredImport().isEmpty() || hasImport);
+                        && (entry.requiredImport().isEmpty() || hasImport);
         if (!blocked && (isUsable || isImportPossible)) {
             ItemLibraryImport *importSection = nullptr;
             QString catName = entry.category();
             if (isUsable) {
-                if (catName == ItemLibraryImport::userComponentsTitle()) {
-                    if (entry.requiredImport().isEmpty()) { // user components
+                if (entry.sourceId()) {
+                    if (entry.sourceId().directoryPathId()
+                        == currentDocumentSourceId.directoryPathId()) { // user components
+                        if (currentDocumentSourceId == entry.sourceId())
+                            continue;
                         importSection = importHash[ItemLibraryImport::userComponentsTitle()];
                         if (!importSection) {
                             importSection = new ItemLibraryImport(
@@ -427,11 +484,8 @@ void ItemLibraryModel::update(Model *model)
                             importSection->setImportExpanded(loadExpandedState(catName));
                         }
                     } else { // directory import
-                        importSection = importHash[entry.requiredImport()];
-
+                        importSection = importHash[entry.category()];
                     }
-                } else if (catName == ItemLibraryImport::quick3DAssetsTitle()) {
-                    importSection = importHash[ItemLibraryImport::quick3DAssetsTitle()];
                 } else {
                     if (catName.contains("Qt Quick - ")) {
                         QString sortingName = catName;
@@ -443,6 +497,8 @@ void ItemLibraryModel::update(Model *model)
                                                                                 : entry.requiredImport()];
                 }
             } else {
+                if (entry.requiredImport().startsWith(generatedPrefix))
+                    continue;
                 catName = ItemLibraryImport::unimportedComponentsTitle();
                 importSection = importHash[catName];
                 if (!importSection) {
@@ -485,9 +541,11 @@ void ItemLibraryModel::update(Model *model)
     endResetModel();
 }
 
-QMimeData *ItemLibraryModel::getMimeData(const ItemLibraryEntry &itemLibraryEntry)
+std::unique_ptr<QMimeData> ItemLibraryModel::getMimeData(const ItemLibraryEntry &itemLibraryEntry)
 {
-    auto mimeData = new QMimeData();
+    NanotraceHR::Tracer tracer{"item library model get mime data", category()};
+
+    auto mimeData = std::make_unique<QMimeData>();
 
     QByteArray data;
     QDataStream stream(&data, QIODevice::WriteOnly);
@@ -501,12 +559,16 @@ QMimeData *ItemLibraryModel::getMimeData(const ItemLibraryEntry &itemLibraryEntr
 
 void ItemLibraryModel::clearSections()
 {
+    NanotraceHR::Tracer tracer{"item library model clear sections", category()};
+
     qDeleteAll(m_importList);
     m_importList.clear();
 }
 
 void ItemLibraryModel::updateSelection()
 {
+    NanotraceHR::Tracer tracer{"item library model update selection", category()};
+
     if (m_selectedCategoryIndex != -1) {
         ItemLibraryImport *selectedImport = importByUrl(m_selectedImportUrl);
         if (selectedImport) {
@@ -524,18 +586,20 @@ void ItemLibraryModel::updateSelection()
 
 void ItemLibraryModel::registerQmlTypes()
 {
+    NanotraceHR::Tracer tracer{"item library model register QML types", category()};
+
     qmlRegisterAnonymousType<QmlDesigner::ItemLibraryModel>("ItemLibraryModel", 1);
 }
 
 ItemLibraryImport *ItemLibraryModel::importByUrl(const QString &importUrl) const
 {
+    NanotraceHR::Tracer tracer{"item library model import by URL", category()};
+
     for (ItemLibraryImport *itemLibraryImport : std::as_const(m_importList)) {
         if (itemLibraryImport->importUrl() == importUrl
             || (importUrl.isEmpty() && itemLibraryImport->importUrl() == "QtQuick")
             || (importUrl == ItemLibraryImport::userComponentsTitle()
                 && itemLibraryImport->sectionType() == ItemLibraryImport::SectionType::User)
-            || (importUrl == ItemLibraryImport::quick3DAssetsTitle()
-                && itemLibraryImport->sectionType() == ItemLibraryImport::SectionType::Quick3DAssets)
             || (importUrl == ItemLibraryImport::unimportedComponentsTitle()
                 && itemLibraryImport->sectionType() == ItemLibraryImport::SectionType::Unimported)) {
             return itemLibraryImport;
@@ -547,8 +611,10 @@ ItemLibraryImport *ItemLibraryModel::importByUrl(const QString &importUrl) const
 
 void ItemLibraryModel::updateUsedImports(const Imports &usedImports)
 {
+    NanotraceHR::Tracer tracer{"item library model update used imports", category()};
+
     // imports in the excludeList are not marked used and thus can always be removed even when in use.
-    const QList<QString> excludeList = {"SimulinkConnector"};
+    const QStringList excludeList = {"SimulinkConnector"};
 
     for (ItemLibraryImport *importSection : std::as_const(m_importList)) {
         if (!excludeList.contains(importSection->importUrl()))
@@ -558,6 +624,8 @@ void ItemLibraryModel::updateUsedImports(const Imports &usedImports)
 
 void ItemLibraryModel::updateVisibility(bool *changed)
 {
+    NanotraceHR::Tracer tracer{"item library model update visibility", category()};
+
     for (ItemLibraryImport *import : std::as_const(m_importList)) {
         bool categoryChanged = false;
         bool hasVisibleItems = import->updateCategoryVisibility(m_searchText, &categoryChanged);
@@ -574,6 +642,8 @@ void ItemLibraryModel::updateVisibility(bool *changed)
 
 void ItemLibraryModel::addRoleNames()
 {
+    NanotraceHR::Tracer tracer{"item library model add role names", category()};
+
     int role = 0;
     const QMetaObject meta = ItemLibraryImport::staticMetaObject;
     for (int i = meta.propertyOffset(); i < meta.propertyCount(); ++i)
@@ -582,6 +652,8 @@ void ItemLibraryModel::addRoleNames()
 
 void ItemLibraryModel::sortSections()
 {
+    NanotraceHR::Tracer tracer{"item library model sort sections", category()};
+
     auto sectionSort = [](ItemLibraryImport *first, ItemLibraryImport *second) {
         return QString::localeAwareCompare(first->sortingName(), second->sortingName()) < 0;
     };

@@ -7,13 +7,14 @@
 #include <projectexplorer/gccparser.h>
 #include <projectexplorer/gnumakeparser.h>
 #include <projectexplorer/msvcparser.h>
-#include <projectexplorer/osparser.h>
+#include <projectexplorer/outputparsers.h>
 #include <projectexplorer/taskhub.h>
 #include <qmakeprojectmanager/qmakeparser.h>
 #include <qtsupport/qtparser.h>
 #include <utils/fileutils.h>
 #include <utils/outputformatter.h>
 
+#include <QCoreApplication>
 #include <QIODevice>
 #include <QTextStream>
 
@@ -34,7 +35,7 @@ CompilerOutputProcessor::~CompilerOutputProcessor()
 void CompilerOutputProcessor::start()
 {
     Utils::OutputFormatter parser;
-    parser.addLineParser(new ProjectExplorer::OsParser);
+    parser.addLineParser(ProjectExplorer::createOsOutputParser());
     parser.addLineParser(new QmakeProjectManager::QMakeParser);
     parser.addLineParser(new ProjectExplorer::GnuMakeParser);
     parser.addLineParser(new QtSupport::QtParser);
@@ -61,11 +62,11 @@ void CompilerOutputProcessor::start()
 
 void CompilerOutputProcessor::handleTask(const ProjectExplorer::Task &task)
 {
-    const QString &fileName = task.file.toString();
+    const QString &fileName = task.file().toUrlishString();
     if (!fileName.isEmpty()) {
         *m_ostream << fileName;
-        if (task.line != -1)
-            *m_ostream << ':' << task.line;
+        if (task.line() != -1)
+            *m_ostream << ':' << task.line();
         *m_ostream << ": ";
     }
     *m_ostream << task.description() << '\n';

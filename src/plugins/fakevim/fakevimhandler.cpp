@@ -65,6 +65,15 @@
 #include <functional>
 #include <optional>
 
+#ifdef FAKEVIM_STANDALONE
+namespace Utils {
+using PlainTextEdit = QPlainTextEdit;
+}
+#else
+#include <utils/plaintextedit/plaintextedit.h>
+#endif
+#include <utils/hostosinfo.h>
+
 //#define DEBUG_KEY  1
 #if DEBUG_KEY
 #   define KEY_DEBUG(s) qDebug() << s
@@ -102,14 +111,7 @@ namespace Internal {
 
 #define ParagraphSeparator QChar::ParagraphSeparator
 
-#define EDITOR(s) (m_textedit ? m_textedit->s : m_plaintextedit->s)
-
-
-#ifdef Q_OS_DARWIN
-#define ControlModifier Qt::MetaModifier
-#else
-#define ControlModifier Qt::ControlModifier
-#endif
+#define EDITOR(s) (m_textedit ? m_textedit->s : m_plaintextedit ? m_plaintextedit->s : m_qcPlainTextEdit->s)
 
 /* Clipboard MIME types used by Vim. */
 static const QString vimMimeText = "_VIM_TEXT";
@@ -408,8 +410,9 @@ static QRegularExpression vimPatternToQtPattern(const QString &needle)
 
     // FIXME: Option smartcase should be used only if search was typed by user.
     const bool smartCaseOption = settings().smartCase();
+    static const QRegularExpression regexp("[A-Z]");
     const bool initialIgnoreCase = settings().ignoreCase()
-        && !(smartCaseOption && needle.contains(QRegularExpression("[A-Z]")));
+        && !(smartCaseOption && needle.contains(regexp));
 
     bool ignorecase = initialIgnoreCase;
 
@@ -639,10 +642,11 @@ static void bracketSearchBackward(QTextCursor *tc, const QString &needleExp, int
 static void bracketSearchForward(QTextCursor *tc, const QString &needleExp, int repeat,
                                  bool searchWithCommand)
 {
-    QRegularExpression re(searchWithCommand ? QString("^\\}|^\\{") : needleExp);
+    static const QRegularExpression reWithCommand("^\\}|^\\{");
+    const QRegularExpression reNeedle(needleExp);
     QTextCursor tc2 = *tc;
     tc2.setPosition(tc2.position() + 1);
-    searchForward(&tc2, re, &repeat);
+    searchForward(&tc2, searchWithCommand ? reWithCommand : reNeedle, &repeat);
     if (repeat <= 1) {
         if (tc2.isNull()) {
             tc->setPosition(tc->document()->characterCount() - 1, KeepAnchor);
@@ -925,12 +929,18 @@ static const QMap<QString, int> &vimKeyNames()
 
 static bool isOnlyControlModifier(const Qt::KeyboardModifiers &mods)
 {
-    return (mods ^ ControlModifier) == Qt::NoModifier;
+    return (mods ^ Utils::HostOsInfo::controlModifier()) == Qt::NoModifier;
 }
 
 static bool isAcceptableModifier(const Qt::KeyboardModifiers &mods)
 {
-    if (mods & ControlModifier) {
+    if (Utils::HostOsInfo::isMacHost() && (mods & Qt::ControlModifier)) {
+        // We want to have Cmd+S as save and not as 's' action
+        // See QTCREATORBUG-13392
+        return false;
+    }
+
+    if (mods & Utils::HostOsInfo::controlModifier()) {
         // Generally, CTRL is not fine, except in combination with ALT.
         // See QTCREATORBUG-24673
         return mods & AltModifier;
@@ -975,7 +985,7 @@ QString quoteUnprintable(const QString &ba)
         else if (cc == '\n')
             res += "<CR>";
         else
-            res += QString("\\x%1").arg(c.unicode(), 2, 16, QLatin1Char('0'));
+            res += QString("\\x%1").arg(int16_t(c.unicode()), 2, 16, QLatin1Char('0'));
     }
     return res;
 }
@@ -1035,7 +1045,7 @@ public:
         }
 
         // Set text only if input is ascii key without control modifier.
-        if (m_text.isEmpty() && k >= 0 && k <= 0x7f && (m & ControlModifier) == 0) {
+        if (m_text.isEmpty() && k >= 0 && k <= 0x7f && (m & Utils::HostOsInfo::controlModifier()) == 0) {
             QChar c = QChar(k);
             if (c.isLetter())
                 m_text = isShift() ? c.toUpper() : c;
@@ -1205,7 +1215,7 @@ public:
             << quoteUnprintable(m_text);
     }
 
-    friend auto qHash(const Input &i)
+    friend size_t qHash(const Input &i)
     {
         return ::qHash(i.m_key);
     }
@@ -1317,7 +1327,7 @@ private:
 
 static Input parseVimKeyName(const QString &keyName)
 {
-    if (keyName.length() == 1)
+    if (keyName.size() == 1)
         return Input(keyName.at(0));
 
     const QStringList keys = keyName.split('-');
@@ -1332,14 +1342,14 @@ static Input parseVimKeyName(const QString &keyName)
         if (key == "S")
             mods |= Qt::ShiftModifier;
         else if (key == "C")
-            mods |= ControlModifier;
+            mods |= Utils::HostOsInfo::controlModifier();
         else
             return Input();
     }
 
     if (!keys.isEmpty()) {
         const QString key = keys.last();
-        if (key.length() == 1) {
+        if (key.size() == 1) {
             // simple character
             QChar c = key.at(0).toUpper();
             return Input(c.unicode(), mods);
@@ -2072,6 +2082,8 @@ public:
 public:
     QTextEdit *m_textedit;
     QPlainTextEdit *m_plaintextedit;
+    Utils::PlainTextEdit *m_qcPlainTextEdit;
+    bool hasValidEditor();
     bool m_wasReadOnly; // saves read-only state of document
 
     bool m_inFakeVim; // true if currently processing a key press or a command
@@ -2375,6 +2387,7 @@ FakeVimHandler::Private::Private(FakeVimHandler *parent, QWidget *widget)
     q = parent;
     m_textedit = qobject_cast<QTextEdit *>(widget);
     m_plaintextedit = qobject_cast<QPlainTextEdit *>(widget);
+    m_qcPlainTextEdit = qobject_cast<Utils::PlainTextEdit *>(widget);
 
     init();
 
@@ -2508,7 +2521,7 @@ void FakeVimHandler::Private::leaveFakeVim(bool needUpdate)
     }
 
     // The command might have destroyed the editor.
-    if (m_textedit || m_plaintextedit) {
+    if (hasValidEditor()) {
         if (s.showMarks())
             updateSelection();
 
@@ -2656,8 +2669,11 @@ void FakeVimHandler::Private::setupWidget()
     if (m_textedit) {
         connect(m_textedit, &QTextEdit::cursorPositionChanged,
                 this, &FakeVimHandler::Private::onCursorPositionChanged, Qt::UniqueConnection);
-    } else {
+    } else if (m_plaintextedit) {
         connect(m_plaintextedit, &QPlainTextEdit::cursorPositionChanged,
+                this, &FakeVimHandler::Private::onCursorPositionChanged, Qt::UniqueConnection);
+    } else {
+        connect(m_qcPlainTextEdit, &Utils::PlainTextEdit::cursorPositionChanged,
                 this, &FakeVimHandler::Private::onCursorPositionChanged, Qt::UniqueConnection);
     }
 
@@ -2702,7 +2718,8 @@ void FakeVimHandler::Private::commitInsertState()
     lastInsertion.prepend(QString("<DELETE>").repeated(insertState.deletes));
 
     // Remove indentation.
-    lastInsertion.replace(QRegularExpression("(^|\n)[\\t ]+"), "\\1");
+    static const QRegularExpression regexp("(^|\n)[\\t ]+");
+    lastInsertion.replace(regexp, "\\1");
 }
 
 void FakeVimHandler::Private::invalidateInsertState()
@@ -2792,8 +2809,11 @@ void FakeVimHandler::Private::restoreWidget(int tabSize)
     if (m_textedit) {
         disconnect(m_textedit, &QTextEdit::cursorPositionChanged,
                    this, &FakeVimHandler::Private::onCursorPositionChanged);
-    } else {
+    } else if (m_plaintextedit) {
         disconnect(m_plaintextedit, &QPlainTextEdit::cursorPositionChanged,
+                   this, &FakeVimHandler::Private::onCursorPositionChanged);
+    } else {
+        disconnect(m_qcPlainTextEdit, &Utils::PlainTextEdit::cursorPositionChanged,
                    this, &FakeVimHandler::Private::onCursorPositionChanged);
     }
 }
@@ -2883,7 +2903,7 @@ EventResult FakeVimHandler::Private::handleDefaultKey(const Input &input)
         passShortcuts(false);
         QKeyEvent event(QEvent::KeyPress, input.key(), input.modifiers(), input.text());
         bool accepted = QApplication::sendEvent(editor()->window(), &event);
-        if (accepted || (!m_textedit && !m_plaintextedit))
+        if (accepted || (!hasValidEditor()))
             return EventHandled;
     }
 
@@ -3750,7 +3770,7 @@ void FakeVimHandler::Private::updateHighlights()
 
 void FakeVimHandler::Private::updateMiniBuffer()
 {
-    if (!m_textedit && !m_plaintextedit)
+    if (!hasValidEditor())
         return;
 
     QString msg;
@@ -4816,7 +4836,8 @@ bool FakeVimHandler::Private::handleReplaceSubMode(const Input &input)
             ++range.endPos;
         // Replace each character but preserve lines.
         transformText(range, [&c](const QString &text) {
-            return QString(text).replace(QRegularExpression("[^\\n]"), c);
+            static const QRegularExpression regexp("[^\\n]");
+            return QString(text).replace(regexp, c);
         });
     } else if (count() <= rightDist()) {
         pushUndoState();
@@ -5124,7 +5145,7 @@ EventResult FakeVimHandler::Private::handleInsertOrReplaceMode(const Input &inpu
     else
         handleReplaceMode(input);
 
-    if (!m_textedit && !m_plaintextedit)
+    if (!hasValidEditor())
         return EventHandled;
 
     if (!isInsertMode() || m_buffer->breakEditBlock
@@ -5533,6 +5554,11 @@ void FakeVimHandler::Private::handleAs(const QString &command)
     endEditBlock();
 }
 
+bool FakeVimHandler::Private::hasValidEditor()
+{
+    return m_textedit || m_plaintextedit || m_qcPlainTextEdit;
+}
+
 bool FakeVimHandler::Private::executeRegister(int reg)
 {
     QChar regChar(reg);
@@ -5778,7 +5804,8 @@ bool FakeVimHandler::Private::parseExCommand(QString *line, ExCommand *cmd)
     cmd->cmd = line->mid(0, i).trimmed();
 
     // command arguments starts with first non-letter character
-    cmd->args = cmd->cmd.section(QRegularExpression("(?=[^a-zA-Z])"), 1);
+    static const QRegularExpression regexp("(?=[^a-zA-Z])");
+    cmd->args = cmd->cmd.section(regexp, 1);
     if (!cmd->args.isEmpty()) {
         cmd->cmd.chop(cmd->args.size());
         cmd->args = cmd->args.trimmed();
@@ -5798,7 +5825,8 @@ bool FakeVimHandler::Private::parseExCommand(QString *line, ExCommand *cmd)
 bool FakeVimHandler::Private::parseLineRange(QString *line, ExCommand *cmd)
 {
     // remove leading colons and spaces
-    line->remove(QRegularExpression("^\\s*(:+\\s*)*"));
+    static const QRegularExpression regexp("^\\s*(:+\\s*)*");
+    line->remove(regexp);
 
     // special case ':!...' (use invalid range)
     if (line->startsWith('!')) {
@@ -5857,7 +5885,8 @@ bool FakeVimHandler::Private::handleExSubstituteCommand(const ExCommand &cmd)
 
     int count = 1;
     QString line = cmd.args;
-    const QRegularExpressionMatch match = QRegularExpression("\\d+$").match(line);
+    static const QRegularExpression regexp("\\d+$");
+    const QRegularExpressionMatch match = regexp.match(line);
     if (match.hasMatch()) {
         count = match.captured().toInt();
         line = line.left(match.capturedStart()).trimmed();
@@ -6021,8 +6050,9 @@ bool FakeVimHandler::Private::handleExMapCommand(const ExCommand &cmd0) // :map
         break;
     }
 
-    const QString lhs = args.section(QRegularExpression("\\s+"), 0, 0);
-    const QString rhs = args.section(QRegularExpression("\\s+"), 1);
+    static const QRegularExpression regexp("\\s+");
+    const QString lhs = args.section(regexp, 0, 0);
+    const QString rhs = args.section(regexp, 1);
     if ((rhs.isNull() && type != Unmap) || (!rhs.isNull() && type == Unmap)) {
         // FIXME: Dump mappings here.
         //qDebug() << g.mappings;
@@ -6337,7 +6367,8 @@ bool FakeVimHandler::Private::handleExWriteCommand(const ExCommand &cmd)
         }
         // Check result by reading back.
         QFile file3(fileName);
-        file3.open(QIODevice::ReadOnly);
+        if (!file3.open(QIODevice::ReadOnly))
+            return false;
         QByteArray ba = file3.readAll();
         showMessage(MessageInfo, Tr::tr("\"%1\" %2 %3L, %4C written.")
             .arg(fileName).arg(exists ? QString(" ") : Tr::tr(" [New] "))
@@ -6367,7 +6398,8 @@ bool FakeVimHandler::Private::handleExReadCommand(const ExCommand &cmd)
 
     m_currentFileName = replaceTildeWithHome(cmd.args);
     QFile file(m_currentFileName);
-    file.open(QIODevice::ReadOnly);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
     QTextStream ts(&file);
     QString data = ts.readAll();
     insertText(data);
@@ -6660,7 +6692,7 @@ void FakeVimHandler::Private::handleExCommand(const QString &line0)
     }
 
     // if the last command closed the editor, we would crash here (:vs and then :on)
-    if (!(m_textedit || m_plaintextedit))
+    if (!hasValidEditor())
         return;
 
     endEditBlock();
@@ -6705,7 +6737,7 @@ bool FakeVimHandler::Private::handleExPluginCommand(const ExCommand &cmd)
     commitCursor();
     q->handleExCommandRequested(&handled, cmd);
     //qDebug() << "HANDLER REQUEST: " << cmd.cmd << handled;
-    if (handled && (m_textedit || m_plaintextedit)) {
+    if (handled && hasValidEditor()) {
         pullCursor();
         if (m_cursor.position() != pos)
             recordJump(pos);
@@ -7623,7 +7655,7 @@ void FakeVimHandler::Private::invertCase(const Range &range)
     transformText(range,
         [] (const QString &text) -> QString {
             QString result = text;
-            for (int i = 0; i < result.length(); ++i) {
+            for (int i = 0; i < result.size(); ++i) {
                 const QChar c = result[i];
                 result[i] = c.isUpper() ? c.toLower() : c.toUpper();
             }
@@ -7662,7 +7694,8 @@ void FakeVimHandler::Private::toggleComment(const Range &range)
                                                                      : commentString.size();
                     line.replace(line.indexOf(commentString), sizeToReplace, "");
                 } else {
-                    const int indexOfFirstNonSpace = line.indexOf(QRegularExpression("[^\\s]"));
+                    static const QRegularExpression regexp("[^\\s]");
+                    const int indexOfFirstNonSpace = line.indexOf(regexp);
                     line = line.left(indexOfFirstNonSpace) + commentString  + " " + line.right(line.size() - indexOfFirstNonSpace);
                 }
             }
@@ -7903,10 +7936,13 @@ void FakeVimHandler::Private::joinLines(int count, bool preserveSpace)
     const int blockNumber = m_cursor.blockNumber();
 
     const QString currentLine = lineContents(blockNumber + 1);
+    static const QRegularExpression cppStyleRegexp("^\\s*\\/\\/");
+    static const QRegularExpression cStyleRegexp("^\\s*\\/?\\*");
+    static const QRegularExpression pythonStyleRegexp("^\\s*#");
     const bool startingLineIsComment
-            = currentLine.contains(QRegularExpression("^\\s*\\/\\/")) // Cpp-style
-              || currentLine.contains(QRegularExpression("^\\s*\\/?\\*")) // C-style
-              || currentLine.contains(QRegularExpression("^\\s*#")); // Python/Shell-style
+            = currentLine.contains(cppStyleRegexp)
+              || currentLine.contains(cStyleRegexp)
+              || currentLine.contains(pythonStyleRegexp);
 
     for (int i = qMax(count - 2, 0); i >= 0 && blockNumber < document()->blockCount(); --i) {
         moveBehindEndOfLine();
@@ -7958,7 +7994,7 @@ bool FakeVimHandler::Private::handleInsertInEditor(const Input &input)
     QKeyEvent event(QEvent::KeyPress, input.key(), input.modifiers(), input.text());
     setAnchor();
     if (!passEventToEditor(event, m_cursor))
-        return !m_textedit && !m_plaintextedit; // Mark event as handled if it has destroyed editor.
+        return !hasValidEditor(); // Mark event as handled if it has destroyed editor.
 
     endEditBlock();
 
@@ -7976,7 +8012,7 @@ bool FakeVimHandler::Private::passEventToEditor(QEvent &event, QTextCursor &tc)
     EDITOR(setTextCursor(tc));
 
     bool accepted = QApplication::sendEvent(editor(), &event);
-    if (!m_textedit && !m_plaintextedit)
+    if (!hasValidEditor())
         return false;
 
     if (accepted)
@@ -8200,9 +8236,11 @@ void FakeVimHandler::Private::saveLastVisualMode()
 
 QWidget *FakeVimHandler::Private::editor() const
 {
-    return m_textedit
-        ? static_cast<QWidget *>(m_textedit)
-        : static_cast<QWidget *>(m_plaintextedit);
+    if (m_textedit)
+        return static_cast<QWidget *>(m_textedit);
+    if (m_plaintextedit)
+        return static_cast<QWidget *>(m_plaintextedit);
+    return static_cast<QWidget *>(m_qcPlainTextEdit);
 }
 
 void FakeVimHandler::Private::joinPreviousEditBlock()
@@ -8988,7 +9026,7 @@ bool FakeVimHandler::Private::changeNumberTextObject(int count)
     const int posMin = m_cursor.positionInBlock() + 1;
 
     // find first decimal, hexadecimal or octal number under or after cursor position
-    QRegularExpression re("(0[xX])(0*[0-9a-fA-F]+)|(0)(0*[0-7]+)(?=\\D|$)|(\\d+)");
+    static const QRegularExpression re("(0[xX])(0*[0-9a-fA-F]+)|(0)(0*[0-7]+)(?=\\D|$)|(\\d+)");
     QRegularExpressionMatch match;
     QRegularExpressionMatchIterator it = re.globalMatch(lineText);
     while (true) {
@@ -9001,7 +9039,7 @@ bool FakeVimHandler::Private::changeNumberTextObject(int count)
     int pos = match.capturedStart();
     int len = match.capturedLength();
     QString prefix = match.captured(1) + match.captured(3);
-    bool hex = prefix.length() >= 2 && (prefix[1].toLower() == 'x');
+    bool hex = prefix.size() >= 2 && (prefix[1].toLower() == 'x');
     bool octal = !hex && !prefix.isEmpty();
     const QString num = hex ? match.captured(2) : octal ? match.captured(4) : match.captured(5);
 
@@ -9035,7 +9073,8 @@ bool FakeVimHandler::Private::changeNumberTextObject(int count)
 
     // convert hexadecimal number to upper-case if last letter was upper-case
     if (hex) {
-        const int lastLetter = num.lastIndexOf(QRegularExpression("[a-fA-F]"));
+        static const QRegularExpression regexp("[a-fA-F]");
+        const int lastLetter = num.lastIndexOf(regexp);
         if (lastLetter != -1 && num[lastLetter].isUpper())
             repl = repl.toUpper();
     }
@@ -9355,6 +9394,7 @@ void FakeVimHandler::disconnectFromEditor()
 {
     d->m_textedit = nullptr;
     d->m_plaintextedit = nullptr;
+    d->m_qcPlainTextEdit = nullptr;
 }
 
 void FakeVimHandler::updateGlobalMarksFilenames(const QString &oldFileName, const QString &newFileName)

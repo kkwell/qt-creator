@@ -130,6 +130,7 @@ protected:
     bool visit(NamespaceAlias *) override { return false; }
     bool visit(Argument *) override { return false; }
     bool visit(TypenameArgument *) override { return false; }
+    bool visit(TemplateTypeArgument *) override { return false; }
     bool visit(BaseClass *) override { return false; }
     bool visit(ForwardClassDeclaration *) override { return false; }
 
@@ -258,7 +259,7 @@ Document::Document(const FilePath &filePath)
 {
     _control = new Control();
 
-    _control->setDiagnosticClient(new DocumentDiagnosticClient(this, &_diagnosticMessages));
+    _control->setDiagnosticClient(new DocumentDiagnosticClient(this, &_diagnosticMessages), true);
 
     const QByteArray localFileName = filePath.path().toUtf8();
     const StringLiteral *fileId = _control->stringLiteral(localFileName.constData(),
@@ -330,7 +331,7 @@ void Document::addMacroUse(const Macro &macro,
                            int bytesOffset, int bytesLength,
                            int utf16charsOffset, int utf16charLength,
                            int beginLine,
-                           const QVector<MacroArgumentReference> &actuals)
+                           const QList<MacroArgumentReference> &actuals)
 {
     MacroUse use(macro,
                  bytesOffset, bytesOffset + bytesLength,
@@ -338,10 +339,10 @@ void Document::addMacroUse(const Macro &macro,
                  beginLine);
 
     for (const MacroArgumentReference &actual : actuals) {
-        const Block arg(actual.bytesOffset(),
-                        actual.bytesOffset() + actual.bytesLength(),
-                        actual.utf16charsOffset(),
-                        actual.utf16charsOffset() + actual.utf16charsLength());
+        const Block arg(actual.bytesOffset,
+                        actual.bytesOffset + actual.bytesLength,
+                        actual.utf16charsOffset,
+                        actual.utf16charsOffset + actual.utf16charsLength);
         use.addArgument(arg);
     }
 
@@ -527,7 +528,7 @@ const Document::UndefinedMacroUse *Document::findUndefinedMacroUseAt(int utf16ch
     for (const Document::UndefinedMacroUse &use : std::as_const(_undefinedMacroUses)) {
         if (use.containsUtf16charOffset(utf16charsOffset)
                 && (utf16charsOffset < use.utf16charsBegin()
-                    + QString::fromUtf8(use.name(), use.name().size()).length()))
+                    + QString::fromUtf8(use.name(), use.name().size()).size()))
             return &use;
     }
     return nullptr;
@@ -592,10 +593,10 @@ bool Document::isParsed() const
 
 bool Document::parse(ParseMode mode)
 {
-    TranslationUnit::ParseMode m = TranslationUnit::ParseTranlationUnit;
+    TranslationUnit::ParseMode m = TranslationUnit::ParseTranslationUnit;
     switch (mode) {
-    case ParseTranlationUnit:
-        m = TranslationUnit::ParseTranlationUnit;
+    case ParseTranslationUnit:
+        m = TranslationUnit::ParseTranslationUnit;
         break;
 
     case ParseDeclaration:
@@ -734,6 +735,7 @@ static QList<Macro> macrosDefinedUntilLine(const QList<Macro> &macros, int line)
 
 Document::Ptr Snapshot::preprocessedDocument(const QByteArray &source,
                                              const FilePath &filePath,
+                                             bool expandFunctionLikeMacros,
                                              int withDefinedMacrosFromDocumentUntilLine) const
 {
     Document::Ptr newDoc = Document::create(filePath);
@@ -750,7 +752,7 @@ Document::Ptr Snapshot::preprocessedDocument(const QByteArray &source,
         }
     }
 
-    FastPreprocessor pp(*this);
+    FastPreprocessor pp(*this, expandFunctionLikeMacros);
     const bool mergeDefinedMacrosOfDocument = !newDoc->_definedMacros.isEmpty();
     const QByteArray preprocessedCode = pp.run(newDoc, source, mergeDefinedMacrosOfDocument);
     newDoc->setUtf8Source(preprocessedCode);

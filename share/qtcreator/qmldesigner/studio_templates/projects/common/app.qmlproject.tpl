@@ -1,8 +1,4 @@
-@if %{IsQt6Project}
 import QmlProject
-@else
-import QmlProject 1.1
-@endif
 
 Project {
     mainFile: "%{ContentDir}/App.qml"
@@ -26,13 +22,13 @@ Project {
     }
 
     JavaScriptFiles {
-        directory: "%{ProjectName}"
+        directory: "%{ContentDir}"
     }
 
     ImageFiles {
         directory: "%{ContentDir}"
     }
-    
+
     ImageFiles {
         directory: "%{AssetDir}"
     }
@@ -47,7 +43,7 @@ Project {
         directory: "."
     }
 
-    Files {
+    FontFiles {
         filter: "*.ttf;*.otf"
     }
 
@@ -83,12 +79,7 @@ Project {
 
     Environment {
        QT_QUICK_CONTROLS_CONF: "qtquickcontrols2.conf"
-       QT_AUTO_SCREEN_SCALE_FACTOR: "1"
        QML_COMPAT_RESOLVE_URLS_ON_ASSIGNMENT: "1"
-@if %{IsQt6Project}
-@else
-       QMLSCENE_CORE_PROFILE: "true" // Required for macOS, but can create issues on embedded Linux
-@endif
 @if %{UseVirtualKeyboard}
        QT_IM_MODULE: "qtvirtualkeyboard"
        QT_VIRTUALKEYBOARD_DESKTOP_DISABLE: 1
@@ -103,9 +94,7 @@ Project {
        */
     }
 
-@if %{IsQt6Project}
     qt6Project: true
-@endif
 
     /* List of plugin directories passed to QML runtime */
     importPaths: [ "." ]
@@ -113,11 +102,15 @@ Project {
     /* Required for deployment */
     targetDirectory: "/opt/%{ProjectName}"
 
-    qdsVersion: "4.5"
+@if %{EnableCMakeGeneration}
+    enableCMakeGeneration: true
+    standaloneApp: true
+@endif
+
+    qdsVersion: "4.8"
 
     quickVersion: "%{QtQuickVersion}"
 
-@if %{IsQt6Project}
     /* If any modules the project imports require widgets (e.g. QtCharts), widgetApp must be true */
     widgetApp: true
 
@@ -129,7 +122,6 @@ Project {
         args: "-s --glsl \\\"100 es,120,150\\\" --hlsl 50 --msl 12"
         files: [ "%{ContentDir}/shaders/*" ]
     }
-@endif
 
     multilanguageSupport: true
     supportedLanguages: ["en"]

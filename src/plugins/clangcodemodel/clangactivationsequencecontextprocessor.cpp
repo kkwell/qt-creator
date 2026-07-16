@@ -73,8 +73,7 @@ void ActivationSequenceContextProcessor::process()
 void ActivationSequenceContextProcessor::processActivationSequence()
 {
     const int nonSpacePosition = skipPrecedingWhitespace(m_document, m_startOfNamePosition);
-    const auto activationSequence = Utils::Text::textAt(QTextCursor(m_document),
-                                                        nonSpacePosition - 3, 3);
+    const auto activationSequence = Utils::Text::textAt(m_document, nonSpacePosition - 3, 3);
     ActivationSequenceProcessor activationSequenceProcessor(activationSequence,
                                                             nonSpacePosition,
                                                             true);
@@ -89,7 +88,7 @@ void ActivationSequenceContextProcessor::processStringLiteral()
         QTextCursor selectionTextCursor = m_textCursor;
         selectionTextCursor.movePosition(QTextCursor::StartOfLine, QTextCursor::KeepAnchor);
         QString selection = selectionTextCursor.selectedText();
-        if (selection.indexOf(QLatin1Char('"')) < selection.length() - 1)
+        if (selection.indexOf(QLatin1Char('"')) < selection.size() - 1)
             m_completionKind = CPlusPlus::T_EOF_SYMBOL;
     }
 }
@@ -156,6 +155,11 @@ void ActivationSequenceContextProcessor::processLeftParenOrBrace()
                 case CPlusPlus::T_SIGNAL:
                 case CPlusPlus::T_SLOT:
                     break; // good
+
+                // Special handling for lambdas
+                case CPlusPlus::T_RBRACKET:
+                    m_startOfNamePosition = INT_MIN;
+                    break;
 
                 default:
                     // that's a bad token :)
@@ -274,7 +278,7 @@ void ActivationSequenceContextProcessor::goBackToStartOfName()
         const int tokenStart = tokens.at(tokIndex).utf16charOffset;
         const int slashIndex = m_textCursor.block().text().lastIndexOf(
             '/',
-            std::min(m_textCursor.positionInBlock(), int(m_textCursor.block().text().length() - 1)));
+            std::min(m_textCursor.positionInBlock(), int(m_textCursor.block().text().size() - 1)));
         m_startOfNamePosition = m_textCursor.block().position() + std::max(slashIndex, tokenStart)
                 + 1;
     } else {

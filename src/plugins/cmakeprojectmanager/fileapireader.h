@@ -9,23 +9,16 @@
 #include "fileapidataextractor.h"
 
 #include <projectexplorer/rawprojectpart.h>
-#include <projectexplorer/treescanner.h>
 
-#include <utils/filesystemwatcher.h>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <QDateTime>
-#include <QFuture>
-#include <QObject>
-
-#include <memory>
-#include <optional>
 
 namespace ProjectExplorer { class ProjectNode; }
 
 namespace CMakeProjectManager::Internal {
 
 class CMakeProcess;
-class FileApiQtcData;
 
 class FileApiReader final : public QObject
 {
@@ -57,11 +50,11 @@ public:
     bool isMultiConfig() const;
     bool usesAllCapsTargets() const;
 
-    int lastCMakeExitCode() const;
-
     std::unique_ptr<CMakeProjectNode> rootProjectNode();
 
     Utils::FilePath topCmakeFile() const;
+
+    QString cmakeGenerator() const;
 
 signals:
     void configurationStarted() const;
@@ -76,10 +69,11 @@ private:
     void startCMakeState(const QStringList &configurationArguments);
     void cmakeFinishedState(int exitCode);
 
-    void replyDirectoryHasChanged(const QString &directory) const;
+    void handleReplyIndexFileChange(const Utils::FilePath &indexFile);
     void makeBackupConfiguration(bool store);
 
     void writeConfigurationIntoBuildDirectory(const QStringList &configuration);
+    void setupCMakeFileApi();
 
     std::unique_ptr<CMakeProcess> m_cmakeProcess;
 
@@ -90,19 +84,19 @@ private:
     ProjectExplorer::RawProjectParts m_projectParts;
     std::unique_ptr<CMakeProjectNode> m_rootProjectNode;
     QString m_ctestPath;
+    QString m_cmakeGenerator;
     bool m_isMultiConfig = false;
     bool m_usesAllCapsTargets = false;
     int m_lastCMakeExitCode = 0;
-
-    std::optional<QFuture<std::shared_ptr<FileApiQtcData>>> m_future;
 
     // Update related:
     bool m_isParsing = false;
     BuildDirParameters m_parameters;
 
     // Notification on changes outside of creator:
-    Utils::FileSystemWatcher m_watcher;
+    std::unique_ptr<Utils::FilePathWatcher> m_watcher;
     QDateTime m_lastReplyTimestamp;
+    QtTaskTree::QSingleTaskTreeRunner m_taskTreeRunner;
 };
 
 } // CMakeProjectManager::Internal

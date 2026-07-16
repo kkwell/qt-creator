@@ -8,11 +8,15 @@
 #include <QIcon>
 #include <QStringList>
 
+#include <coreplugin/iversioncontrol.h>
+#include <coreplugin/vcsfilestate.h>
+
 #include <utils/filepath.h>
 #include <utils/id.h>
 
 #include <functional>
 #include <optional>
+#include <utility>
 #include <variant>
 
 namespace Utils { class MimeType; }
@@ -123,10 +127,12 @@ public:
     const Utils::FilePath &filePath() const;  // file system path
     int line() const;
     virtual QString displayName() const;
+    virtual QString rawDisplayName() const { return displayName(); }
     virtual QString tooltip() const;
     bool isEnabled() const;
     bool listInProject() const;
     bool isGenerated() const;
+    bool isCompressable() const { return m_isCompressable; }
 
     virtual bool supportsAction(ProjectAction action, const Node *node) const;
 
@@ -144,7 +150,6 @@ public:
 
     virtual QString buildKey() const { return {}; }
 
-    static bool sortByPath(const Node *a, const Node *b);
     void setParentFolderNode(FolderNode *parentFolder);
 
     void setListInProject(bool l);
@@ -164,6 +169,7 @@ protected:
     bool operator=(const Node &other) = delete;
 
     void setFilePath(const Utils::FilePath &filePath);
+    void setCompressable(bool compressable) { m_isCompressable = compressable; }
 
 private:
     Utils::FilePath pathOrDirectory(bool dir) const;
@@ -180,6 +186,8 @@ private:
         FlagListInProject = 1 << 2,
     };
     NodeFlag m_flags = FlagIsEnabled;
+
+    bool m_isCompressable = false;
 };
 
 class PROJECTEXPLORER_EXPORT FileNode : public Node
@@ -201,6 +209,9 @@ public:
     void setHasError(const bool error);
     void setHasError(const bool error) const;
 
+    Core::VcsFileState modificationState() const;
+    void resetModificationState();
+
     QIcon icon() const;
     void setIcon(const QIcon icon);
 
@@ -209,6 +220,7 @@ public:
 
 private:
     FileType m_fileType;
+    mutable std::optional<Core::VcsFileState> m_modificationState;
     mutable QIcon m_icon;
     mutable bool m_hasError = false;
     bool m_useUnavailableMarker = false;
@@ -252,7 +264,11 @@ public:
                        const Utils::FilePath &overrideBaseDir = Utils::FilePath(),
                        const FolderNodeFactory &factory
                        = [](const Utils::FilePath &fn) { return std::make_unique<FolderNode>(fn); });
-    virtual void compress();
+
+    void addNestedNode(std::unique_ptr<FolderNode> &&folderNode,
+                       const Utils::FilePath &overrideBaseDir = {},
+                       const FolderNodeFactory &factory
+                       = [](const Utils::FilePath &fn) {return std::make_unique<FolderNode>(fn); });
 
     // takes ownership of newNode.
     // Will delete newNode if oldNode is not a child of this node.
@@ -284,8 +300,8 @@ public:
         unsigned int priority = 0;
         QString displayName;
     };
-    void setLocationInfo(const QVector<LocationInfo> &info);
-    const QVector<LocationInfo> locationInfo() const;
+    void setLocationInfo(const QList<LocationInfo> &info);
+    const QList<LocationInfo> locationInfo() const;
 
     QString addFileFilter() const;
     void setAddFileFilter(const QString &filter) { m_addFileFilter = filter; }
@@ -298,7 +314,7 @@ public:
     virtual bool deleteFiles(const Utils::FilePaths &filePaths);
     virtual bool canRenameFile(const Utils::FilePath &oldFilePath,
                                const Utils::FilePath &newFilePath);
-    virtual bool renameFile(const Utils::FilePath &oldFilePath, const Utils::FilePath &newFilePath);
+    virtual bool renameFiles(const Utils::FilePairs &filesToRename, Utils::FilePaths *notRenamed);
     virtual bool addDependencies(const QStringList &dependencies);
 
     class AddNewInformation
@@ -332,7 +348,7 @@ protected:
     virtual void handleSubTreeChanged(FolderNode *node);
 
     std::vector<std::unique_ptr<Node>> m_nodes;
-    QVector<LocationInfo> m_locations;
+    QList<LocationInfo> m_locations;
 
 private:
     std::unique_ptr<Node> takeNode(Node *node);
@@ -380,13 +396,14 @@ public:
     RemovedFilesFromProject removeFiles(const Utils::FilePaths &filePaths,
                                         Utils::FilePaths *notRemoved = nullptr) final;
     bool deleteFiles(const Utils::FilePaths &filePaths) final;
-    bool canRenameFile(const Utils::FilePath &oldFilePath, const Utils::FilePath &newFilePath) final;
-    bool renameFile(const Utils::FilePath &oldFilePath, const Utils::FilePath &newFilePath) final;
+    bool canRenameFile(
+        const Utils::FilePath &oldFilePath, const Utils::FilePath &newFilePath) override;
+    bool renameFiles(const Utils::FilePairs &filesToRename, Utils::FilePaths *notRenamed) final;
     bool addDependencies(const QStringList &dependencies) final;
     bool supportsAction(ProjectAction action, const Node *node) const final;
 
     // by default returns false
-    virtual bool deploysFolder(const QString &folder) const;
+    virtual bool deploysFolder(const Utils::FilePath &folder) const;
 
     ProjectNode *projectNode(const Utils::FilePath &file) const;
 
@@ -430,6 +447,7 @@ public:
     ContainerNode(Project *project);
 
     QString displayName() const final;
+    QString rawDisplayName() const final;
     bool supportsAction(ProjectAction action, const Node *node) const final;
 
     bool isFolderNodeType() const override { return false; }

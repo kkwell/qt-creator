@@ -3,28 +3,27 @@
 
 #pragma once
 
-#include "qmleventlocation.h"
-
+#include <qmldebug/qmleventlocation.h>
 #include <projectexplorer/runconfiguration.h>
 #include <qmljs/qmljsdocument.h>
 #include <utils/fileinprojectfinder.h>
 
 #include <QObject>
 
-namespace QmlProfiler {
-namespace Internal {
+namespace QmlProfiler::Internal {
 
 class QmlProfilerDetailsRewriter : public QObject
 {
     Q_OBJECT
+
 public:
     explicit QmlProfilerDetailsRewriter(QObject *parent = nullptr);
 
     void clear();
-    void requestDetailsForLocation(int typeId, const QmlEventLocation &location);
+    void requestDetailsForLocation(int typeId, const QmlDebug::QmlEventLocation &location);
     Utils::FilePath getLocalFile(const QString &remoteFile);
     void reloadDocuments();
-    void populateFileFinder(const ProjectExplorer::Target *target);
+    void populateFileFinder(const ProjectExplorer::BuildConfiguration *bc);
 
 signals:
     void rewriteDetailsString(int typeId, const QString &details);
@@ -32,7 +31,7 @@ signals:
 
 private:
     struct PendingEvent {
-        QmlEventLocation location;
+        QmlDebug::QmlEventLocation location;
         int typeId;
     };
 
@@ -40,7 +39,7 @@ private:
     Utils::FileInProjectFinder m_projectFinder;
 
     void rewriteDetailsForLocation(const QString &source, QmlJS::Document::Ptr doc, int typeId,
-                                   const QmlEventLocation &location);
+                                   const QmlDebug::QmlEventLocation &location);
     void connectQmlModel();
     void disconnectQmlModel();
     void documentReady(QmlJS::Document::Ptr doc);
@@ -48,8 +47,7 @@ private:
     friend class QTypeInfo<PendingEvent>;
 };
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal
 
 QT_BEGIN_NAMESPACE
 Q_DECLARE_TYPEINFO(QmlProfiler::Internal::QmlProfilerDetailsRewriter::PendingEvent, Q_MOVABLE_TYPE);

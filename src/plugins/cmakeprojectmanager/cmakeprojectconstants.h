@@ -19,6 +19,14 @@ const char BUILD_FILE[] = "CMakeProject.BuildFile";
 const char CMAKE_HOME_DIR[] = "CMakeProject.HomeDirectory";
 const char QML_DEBUG_SETTING[] = "CMakeProject.EnableQmlDebugging";
 const char RELOAD_CMAKE_PRESETS[] = "CMakeProject.ReloadCMakePresets";
+const char BUILD_SUBPROJECT[] = "CMakeProject.BuildSubProject";
+const char CLEAN_SUBPROJECT[] = "CMakeProject.CleanSubProject";
+const char REBUILD_SUBPROJECT[] = "CMakeProject.RebuildSubProject";
+const char BUILD_SUBPROJECT_CONTEXT_MENU[] = "CMakeProject.BuildSubProjectContextMenu";
+const char CLEAN_SUBPROJECT_CONTEXT_MENU[] = "CMakeProject.CleanSubProjectContextMenu";
+const char REBUILD_SUBPROJECT_CONTEXT_MENU[] = "CMakeProject.RebuildSubProjectContextMenu";
+
+const char CMAKE_CURRENT_SOURCE_DIR[] = "${CMAKE_CURRENT_SOURCE_DIR}";
 
 const char CMAKEFORMATTER_SETTINGS_GROUP[] = "CMakeFormatter";
 const char CMAKEFORMATTER_GENERAL_GROUP[] = "General";
@@ -26,7 +34,8 @@ const char CMAKEFORMATTER_ACTION_ID[] = "CMakeFormatter.Action";
 const char CMAKEFORMATTER_MENU_ID[] = "CMakeFormatter.Menu";
 const char CMAKE_DEBUGGING_GROUP[] = "Debugger.Group.CMake";
 
-const char PACKAGE_MANAGER_DIR[] = ".qtc/package-manager";
+const char PACKAGE_MANAGER_DIR[] = ".qtcreator/cmake-helper";
+const char VCPKG_ROOT[] = "VCPKG_ROOT";
 
 const char CMAKE_LISTS_TXT[] = "CMakeLists.txt";
 const char CMAKE_CACHE_TXT[] = "CMakeCache.txt";
@@ -36,6 +45,7 @@ const char CMAKE_CACHE_TXT_PREV[] = "CMakeCache.txt.prev";
 const char CMAKE_PROJECT_ID[] = "CMakeProjectManager.CMakeProject";
 
 const char CMAKE_BUILDCONFIGURATION_ID[] = "CMakeProjectManager.CMakeBuildConfiguration";
+const char CMAKE_IMPORTED_BUILD[] = "CMake.Imported";
 
 // Menu
 const char M_CONTEXT[] = "CMakeEditor.ContextMenu";
@@ -77,6 +87,11 @@ const char BUILD_FOLDER_ROLE[] = "CMakeProjectManager.data.buildFolder";
 
 // Output
 const char OUTPUT_PREFIX[] = "[cmake] ";
+
+const char VXWORKS_DEVICE_TYPE[] = "VxWorks.Device.Type";
+
+const char KIT_BUILDINFO_LIST[] = "CMakeProjectManager.BuildInfoList";
+const char PRESETS_KITS_PROGRESS[] = "CMakeProjectManager.Presets.Kits.Progress";
 
 } // namespace Constants
 } // namespace CMakeProjectManager

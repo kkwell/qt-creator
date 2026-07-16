@@ -3,11 +3,14 @@
 
 /*!
     \page creator-language-servers.html
-    \previouspage creator-reference.html
+    \previouspage creator-editor-fakevim.html
+    \nextpage creator-how-to-add-java-language-servers.html
 
-    \ingroup creator-reference-editors
+    \title Managing language servers
 
-    \title Language Servers
+    \quotation
+    \l {Manage language servers}{How to: Manage language servers}
+    \endquotation
 
     \brief Get code completion, highlighting of the symbol under cursor, and
     jumping to the symbol definition in the editor for other programming
@@ -27,14 +30,13 @@
         \li Highlighting the symbol under cursor
         \li \l{View function tooltips}{Viewing function tooltips}
         \li \l{Semantic Highlighting}{Semantic highlighting}, as defined in
-            \l{https://github.com/microsoft/vscode-languageserver-node/pull/367}
-            {Proposal of the semantic highlighting protocol extension}
+            \l{Proposal of the semantic highlighting protocol extension}
         \li Navigating in the code by using the \l{Navigate with locator}
             {locator} or \l{Move to symbol definition or declaration}
             {moving to the symbol definition}
         \li Inspecting code by viewing the document outline in the
             \l{Outline} view or in the \uicontrol Symbols list on the
-            \l{Edit Mode}{editor toolbar}
+            \l{Editing code}{editor toolbar}
         \li \l{Call Hierarchy}{Viewing the callers and callees of a function}
         \li \l{Type Hierarchy}{Viewing the base classes and derived classes of a class}
         \li \l{Find references to a symbol}{Finding references to symbols}
@@ -49,10 +51,10 @@
     However, the client does not support language servers that require special
     handling.
 
-    \section1 Adding MIME Types for Language Servers
+    \section1 Adding MIME types for language servers
 
-    \QC uses the \l{https://www.iana.org/assignments/media-types/media-types.xhtml}
-    {MIME type} of the file to determine which language server to request
+    \QC uses the \l{IANA: Media Types}{MIME type} of the file to determine
+    which language server to request
     information from when you open a file for editing. Add new MIME types or
     file patterns to match language servers. If you do not set at least one MIME
     type or file pattern, no files will be sent to the language server. This is
@@ -61,17 +63,20 @@
     more information about how \QC uses MIME types, see
     \l {Edit MIME types}.
 
-    \section1 Adding Language Servers
+    \section1 Adding language servers
 
     \QC adds a \l{Configure Python language servers}{Python language server} by
     default.
 
     Also, it offers to install language servers for JSON and YAML files
     when you open them in the editor if it can find the
-    \l{https://nodejs.org/en/learn/getting-started/an-introduction-to-the-npm-package-manager}
-    {NPM} package manager on the computer.
+    \l{An introduction to the npm package manager}{NPM} package manager on
+    the computer.
 
-    \image qtcreator-language-server-json.webp {Prompt to install JSON language server}
+    \QC also offers to install language servers for Rust, C#, and Swift from
+    their respective systems when you open projects in the editor that use them.
+
+    \image {qtcreator-language-server-json.webp} {Prompt to install JSON language server}
 
     \l{Add a Java language server} for  \l{Developing for Android}
     {Android development}. For other languages,
@@ -80,22 +85,19 @@
     To add language servers, go to \preferences > \uicontrol {Language Client}
     and select \uicontrol Add.
 
-    \image qtcreator-language-client-options-java.png {Java language server preferences}
+    \image {qtcreator-preferences-language-client-qmlls.webp} {General tab in Language Client preferences}
 
     To enable a language server, select the checkbox next to the language
     server name and set server preferences.
 
-    To configure \l{Configure \QMLLS}{\QMLLS}, go to
-    \preferences > \uicontrol {Qt Quick} > \uicontrol {QML/JS Editing}.
-
     To remove language servers from the list, select \uicontrol Delete.
 
-    \section1 Updating Python Language Server
+    \section1 Updating Python language server
 
     \QC offers to update the Python language server when you open a Python
     file in the editor.
 
-    \image qtcreator-python-update-language-server.webp {Message about updating Python Language Server}
+    \image {qtcreator-python-update-language-server.webp} {Message about updating Python Language Server}
 
     To update the language server, select \uicontrol Update. To save your choice,
     select \uicontrol {Always Update}.
@@ -103,7 +105,7 @@
     To skip updating and hide the message for future updates, select
     \uicontrol Never.
 
-    \section1 Supported Locator Filters
+    \section1 Supported locator filters
 
     The locator enables you to browse not only files, but any items defined by
     \e {locator filters}. The language client plugin supports the following
@@ -116,16 +118,16 @@
                 definitions in your project
     \endlist
 
-    \section1 Reporting Issues
+    \section1 Reporting issues
 
     The language server client has been mostly tested with Python and C++.
     If problems arise when you try them or some other language, please select
     \uicontrol Help > \uicontrol {Report Bug} to report them in the
-    \l{https://bugreports.qt.io/}{Qt Project Bug Tracker}. The reports
+    \l{Qt Project Bug Tracker}. The reports
     should include \QC console output with the environment
     variable \c {QT_LOGGING_RULES=qtc.languageclient.*=true} set.
 
-    \sa {Manage Language Servers}{How To: Manage Language Servers}, {Behavior}
+    \sa {Manage language servers}{How to: Manage language servers}, {Behavior}
 */
 
 /*!
@@ -142,32 +144,32 @@
         \li Go to \preferences > \uicontrol {Language Client} >
             \uicontrol Add > \uicontrol {Generic StdIO Language Server}
             to add a generic language server.
-            \image qtcreator-language-server-generic-stdio.png
+            \image {qtcreator-language-server-generic-stdio.png} {Generic StdIO Language Server in the General tab in Language Client preferences}
         \li In the \uicontrol Name field, enter a name for the language server.
-            Select the \inlineimage icons/replace.png
-            (\uicontrol {Variables}) button to use a variable for the server
-            name. For more information, see \l{Use Qt Creator variables}.
-        \li In the \uicontrol {Language} field, select
+            Select \inlineimage {icons/replace.png} {Variables}
+            (\uicontrol {Variables}) to use a variable for the server
+            name. For more information, see \l{Use \QC variables}.
+        \li In \uicontrol {Language}, select
             \uicontrol {Set MIME Types} to select the MIME types of the files to
             send to the language server. In the field below, you can enter file
             patterns to extend the MIME types, separated by semicolons.
-        \li In the \uicontrol {Startup behavior} field, select whether the
+        \li In \uicontrol {Startup behavior}, select whether the
             language server is started when \QC starts or when a project or file
             with a matching MIME type is opened. \l{View output}
             {General Messages} displays information about the connection to the
             language server.
-        \li In the \uicontrol {Initialization options} field, you can add
+        \li In \uicontrol {Initialization options}, you can add
             language server specific JSON attributes to pass to an \c initialize
             request.
-        \li In the \uicontrol Executable field, enter the path to the language
+        \li In \uicontrol Executable, enter the path to the language
             server executable.
-        \li In the \uicontrol Arguments field, enter any required command-line
+        \li In \uicontrol Arguments, enter any required command-line
             arguments. Select \uicontrol Variables to use variables as
             arguments.
     \endlist
 
-    \sa {Manage Language Servers}{How To: Manage Language Servers},
-    {Language Servers}
+    \sa {Manage language servers}{How to: Manage language servers},
+    {Managing language servers}
 */
 
 /*!
@@ -184,20 +186,19 @@
         \li Go to \preferences > \uicontrol {Language Client} >
             \uicontrol Add > \uicontrol {Java Language Server} to add
             a Java language server.
-            \image qtcreator-language-client-options-java.png {Java language server preferences}
-        \li In the \uicontrol Name field, enter a name for the language server.
-            Select the \inlineimage icons/replace.png
-            (\uicontrol {Variables}) button to use a variable for the server
+            \image {qtcreator-language-client-options-java.png} {Java language server in the General tab in Language Client preferences}
+        \li In \uicontrol Name, enter a name for the language server.
+            Select \inlineimage {icons/replace.png} {Variables}
+            (\uicontrol {Variables}) to use a variable for the server
             name.
-        \li In the \uicontrol Java field, enter the path to the Java executable.
-        \li In the \uicontrol {Java Language Server} field, enter the path to
+        \li In \uicontrol Java, enter the path to the Java executable.
+        \li In \uicontrol {Java Language Server}, enter the path to
             the Java language server \c .jar file. You can download the Java
-            language server from \l{https://download.eclipse.org/jdtls/milestones/}
-            {Eclipse Downloads}.
+            language server from \l{Eclipse Downloads}.
     \endlist
 
-    \sa {Manage Language Servers}{How To: Manage Language Servers},
-    {Use Qt Creator variables}, {Language Servers}
+    \sa {Manage language servers}{How to: Manage language servers},
+    {Use \QC variables}, {Managing language servers}
 */
 
 /*!
@@ -214,20 +215,19 @@
         \li Go to \preferences> \uicontrol Python >
             \uicontrol {Language Server Configuration} to
             select the Python language server plugins to use.
-            \image qtcreator-python-plugins.png {Python Language Server Configuration}
+            \image {qtcreator-python-plugins.png} {Language Server Configuration in the Python preferences}
         \li Select \uicontrol Advanced to configure the plugins.
-            \image qtcreator-python-advanced.png {Python language server plugin configuration}
+            \image {qtcreator-python-advanced.png} {Python language server plugin configuration}
     \endlist
 
     For a complete list of configuration options, see
-    \l{https://github.com/python-lsp/python-lsp-server/blob/develop/CONFIGURATION.md}
-    {Python Language Server Configuration}.
+    \l{Python Language Server Configuration}.
 
     To disable the Python language server, clear
     \uicontrol {Use Python Language Server}.
 
-    \sa {Manage Language Servers}{How To: Manage Language Servers},
-    {Develop Qt for Python applications}, {Language Servers}
+    \sa {Manage language servers}{How to: Manage language servers},
+    {Develop Qt for Python applications}, {Managing language servers}
 */
 
 /*!
@@ -240,30 +240,62 @@
 
     Since Qt 6.4, \QMLLS offers code completion and issues warnings for QML.
 
-    To turn off \QMLLS, go to \preferences > \uicontrol {Qt Quick} >
-    \uicontrol {QML/JS Editing} and clear \uicontrol {Turn on}.
+    To set preferences for \QMLLS, go to \preferences >
+    \uicontrol {Language Client} > \uicontrol General and
+    select \uicontrol {\QMLLS}.
+
+    \image {qtcreator-preferences-language-client-qmlls.webp} {General tab in Language Client preferences}
+
+    \section1 Turn off \QMLLS for all projects
+
+    To globally turn off \QMLLS, clear the \uicontrol {\QMLLS} checkbox.
+
+    For more information about how to turn on and off language servers for a
+    particular project, see \l{Configure language servers for projects}.
+
+    \section1 Use advanced features
 
     By default, \QMLLS issues warning messages and provides code completion,
     while the embedded code model handles advanced features, such as renaming
-    symbols and finding usages. To disable the embedded code model and use
-    \QMLLS for everything, select \uicontrol {Use advanced features}.
+    symbols and finding usages.
 
-    Also, \QC tries to use \QMLLS shipped with the Qt version in your current
-    \l{Kits}{kit}. To override that behavior and always use
-    \QMLLS of the highest registered Qt version, select
-    \uicontrol {Use from latest Qt version}.
+    To disable the embedded code model and use \QMLLS for everything, select
+    \uicontrol {Use advanced features}.
 
-    To use older \QMLLS versions, select
+    \section1 Select \QMLLS version
+
+    To use \QMLLS shipped with the Qt version in your current \l{Managing kits}{kit},
+    select \uicontrol {Use qmlls from project Qt kit}. This is the default
+    option.
+
+    To always use \QMLLS of the highest registered Qt version, select
+    \uicontrol {Use qmlls from latest Qt kit}.
+
+    To use earlier \QMLLS versions, select
     \uicontrol{Allow versions below Qt 6.8}.
 
-    \image qtcreator-qml-js-editing.webp {QML/JS Editing preferences}
+    To use a specific \QMLLS version, set the path to the executable in
+    \uicontrol {Use custom qmlls executable}. To download the latest
+    \QMLLS version, select \uicontrol {Download latest standalone qmlls}.
 
-    To automatically configure new CMake projects, select
-    \uicontrol {Create .qmlls.ini files for new projects}.
+    \section1 Automatically configure new CMake projects
 
-    \sa {Manage Language Servers}{How To: Manage Language Servers},
-    {Enabling and Disabling Messages}, {CMake Build Configuration}, {Kits},
-    {Language Servers}
+    To automatically configure new CMake projects that target 6.10 or later,
+    select \uicontrol {Enable qmml's CMake integration}.
+
+    To configure projects that target Qt versions earlier than 6.10:
+
+    \list
+        \li Select \uicontrol {QT_QML_GENERATE_QMLLS_INI to ON in CMake} when you
+            create the project.
+        \li Select \uicontrol {Create .qmlls.ini files for new projects
+            targeting Qt < 6.10}.
+    \endlist
+
+    \sa {Create Qt Quick Applications},
+    {Manage language servers}{How to: Manage language servers},
+    {Enabling and Disabling Messages}, {Building projects with CMake},
+    {Managing kits}, {Managing language servers}
 */
 
 /*!
@@ -274,7 +306,7 @@
 
     \title Inspect language clients
 
-    \QC sends messages (\e requests) to a \l{Language Servers}{language server} and
+    \QC sends messages (\e requests) to a \l{Managing language servers}{language server} and
     receives responses that have the requested information if the language server is
     capable of handling the requests. To inspect the communication between \QC
     and language servers and to view server capabilities, select \uicontrol Tools
@@ -288,8 +320,8 @@
     For a generic language server, the value of the \uicontrol {Startup behavior}
     field in the \l{Add generic language servers}{language server preferences}
     determines when the server is started. To restart language servers, select
-    \inlineimage icons/languageclient.png on the \l{Edit Mode}{editor toolbar},
-    and go to \uicontrol {Restart}.
+    \inlineimage {icons/languageclient.png} {Language Client menu} on the
+    \l{Editing code} {editor toolbar}, and then select \uicontrol {Restart}.
 
     \uicontrol Log displays additional information about the selected log entry.
     You can see the \uicontrol {Content length} and \uicontrol {MIME type} of
@@ -307,7 +339,7 @@
     You can view the \uicontrol Name, \uicontrol Value, and \uicontrol Type
     of the capability.
 
-    \image qtcreator-language-client-inspector-capabilities.webp {Language Client Inspector Capabilities tab}
+    \image {qtcreator-language-client-inspector-capabilities.webp} {Capabilities tab in the Language Client Inspector dialog}
 
     For some language servers, \uicontrol {Dynamic Capabilities} lists the
     \uicontrol Methods and \uicontrol Options available.
@@ -317,10 +349,10 @@
     For a clangd server, you can inspect the total amount of memory used by a
     particular component in \uicontrol {Memory Usage}.
 
-    \image qtcreator-language-client-inspector-memory-usage.webp {Language Client Inspector Memory Usage tab}
+    \image {qtcreator-language-client-inspector-memory-usage.webp} {Memory Usage tab in the Language Client Inspector dialog}
 
-    \sa {Manage Language Servers}{How To: Manage Language Servers},
-    {Language Servers}
+    \sa {Manage language servers}{How to: Manage language servers},
+    {Managing language servers}
 */
 
 /*!
@@ -330,7 +362,23 @@
     \ingroup creator-how-to-lsp
     \ingroup creator-how-to-projects-configure
 
-    \title Configure language server workspace
+    \title Configure language servers for projects
+
+    To configure language servers for the current project, go to
+    \uicontrol Projects > \uicontrol {Project Settings} >
+    \uicontrol {Language Server}.
+
+    \image {qtcreator-projects-settings-language-server.webp} {Language Server settings for a project}
+
+    To add language servers and change their preferences, select
+    \uicontrol {Global settings}.
+
+    \section1 Turn on and off language servers
+
+    To turn on and off language servers, select \uicontrol Enabled or
+    \uicontrol Disabled in \uicontrol {Project Specific Language Servers}.
+
+    \section1 Configure language server workspace
 
     The language client sends the contents of the
     \uicontrol {Workspace Configuration} field as a JSON file to all language
@@ -338,19 +386,67 @@
     JSON file must be valid JSON. The available settings depend on the language
     server.
 
-    To configure the language server workspace for the current project:
+    In \uicontrol {Workspace Configuration}, specify language server settings
+    using valid JSON format.
+
+    \sa {Manage language servers}{How to: Manage language servers},
+    {Managing language servers}, {Building and running projects}
+*/
+
+/*!
+    \page creator-how-to-set-up-vale.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-lsp
+
+    \title Use Vale
+
+    Vale is a linter that checks documentation source files for style, grammar,
+    and terminology issues. The \uicontrol {Vale Language Server} extension
+    integrates Vale into \QC using the \l{Language Server Protocol}
+    {language server protocol (LSP)}.
+
+    \note Install the \uicontrol {Vale Language Server} extension to use Vale.
+
+    \section1 Set a Vale configuration file
+
+    You need a \c {.vale.ini} configuration file to use Vale. For more
+    information, see \l{Vale: .vale.ini}.
+
+    To set your \c {.vale.ini} configuration file path, go to \preferences >
+    \uicontrol Vale > \uicontrol {Config path}.
+
+    \section1 Run Vale
+
+    After installing the extension and creating the configuration file, open a
+    text file that you want to check with Vale.
+
+    \QC prompts you to allow the extension to fetch updates to the Vale language
+    server. To see what will be downloaded, select \uicontrol {Show Details}.
+
+    You can see suggestions from Vale as annotations in the editor.
+
+    \image {qtcreator-vale-results-in-editor.webp} {Vale suggestions in the editor}
+
+    \section1 Set Vale preferences
+
+    To install the lanaguge server later or use another Vale LS installation:
 
     \list 1
-        \li Go to \uicontrol Projects > \uicontrol {Project Settings} >
-            \uicontrol {Language Server}.
-            \image qtcreator-projects-settings-language-server.webp {Language Server settings for a project}
-        \li In \uicontrol {Workspace Configuration}, specify language server
-            settings using valid JSON format.
+        \li Go to \preferences > \uicontrol Vale > \uicontrol {Language Server}.
+            \image {qtcreator-preferences-vale.webp} {Language Server tab in Vale preferences}
+        \li In \uicontrol Binary, set the path to the Vale language server
+            executable.
+        \li In \uicontrol {Config path}, set the path to the Vale configuration
+            file.
+        \li Select \uicontrol {Auto install Vale} to automatically install Vale
+            CLI.
+        \li Select \uicontrol {Sync on startup} to run \c {vale sync} when the
+            server starts.
+        \li Select \uicontrol {Install Vale Language Server} to install the Vale
+            language server.
     \endlist
 
-    To add language servers and change their preferences, go to
-    \uicontrol {Global settings}.
-
-    \sa {Manage Language Servers}{How To: Manage Language Servers},
-    {Language Servers}, {Configuring Projects}
+    \sa {Manage language servers}{How to: Manage language servers},
+    {Install extensions}, {Managing language servers}
 */

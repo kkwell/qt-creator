@@ -2,57 +2,63 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "qmljsbundleprovider.h"
-#include "qmljscodestylesettingspage.h"
+#include "qmljscodestylesettings.h"
 #include "qmljsfunctionfilter.h"
-#include "qmljslocatordata.h"
 #include "qmljsmodelmanager.h"
 #include "qmljstoolsconstants.h"
 #include "qmljstoolssettings.h"
 #include "qmljstoolstr.h"
 #include "qmljstools_test.h"
 
+#include <coreplugin/actionmanager/actioncontainer.h>
+#include <coreplugin/actionmanager/actionmanager.h>
+#include <coreplugin/coreconstants.h>
 #include <coreplugin/icontext.h>
 #include <coreplugin/icore.h>
-#include <coreplugin/coreconstants.h>
-#include <coreplugin/actionmanager/actionmanager.h>
-#include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/progressmanager/progressmanager.h>
 
 #include <extensionsystem/iplugin.h>
 
+#include <projectexplorer/devicesupport/idevice.h>
+
+#include <qmljseditor/qmljseditorconstants.h>
+
 #include <QMenu>
 
 using namespace Core;
+using namespace ProjectExplorer;
 
 namespace QmlJSTools::Internal {
 
-enum { debug = 0 };
+class QmlRuntimeToolFactory : public DeviceToolAspectFactory
+{
+public:
+    QmlRuntimeToolFactory()
+    {
+        setToolId(Constants::QML_TOOL_ID);
+        setToolType(DeviceToolAspect::RunTool);
+        setFilePattern({"qml"});
+        setLabelText(Tr::tr("QML runtime executable:"));
+        setToolTip(Tr::tr("The QML runtime executable to use on the device."));
+    }
+};
 
 class QmlJSToolsPluginPrivate : public QObject
 {
 public:
     QmlJSToolsPluginPrivate();
 
-    QmlJSToolsSettings settings;
     ModelManager modelManager;
 
     QAction resetCodeModelAction{Tr::tr("Reset Code Model"), nullptr};
 
-    LocatorData locatorData;
-    QmlJSFunctionsFilter functionsFilter{&locatorData};
     QmlJSCodeStyleSettingsPage codeStyleSettingsPage;
     BasicBundleProvider basicBundleProvider;
+    QmlRuntimeToolFactory qmlRuntimeToolFactory;
 };
 
 QmlJSToolsPluginPrivate::QmlJSToolsPluginPrivate()
 {
-//    Core::VcsManager *vcsManager = Core::VcsManager::instance();
-//    Core::DocumentManager *documentManager = Core::DocumentManager::instance();
-//    connect(vcsManager, &Core::VcsManager::repositoryChanged,
-//            &d->modelManager, &ModelManager::updateModifiedSourceFiles);
-//    connect(documentManager, &DocumentManager::filesChangedInternally,
-//            &d->modelManager, &ModelManager::updateSourceFiles);
-
     // Menus
     ActionContainer *mtools = ActionManager::actionContainer(Core::Constants::M_TOOLS);
     ActionContainer *mqmljstools = ActionManager::createMenu(Constants::M_TOOLS_QMLJS);
@@ -96,10 +102,19 @@ public:
 private:
     void initialize() final
     {
+        IOptionsPage::registerCategory(
+            QmlJSEditor::Constants::SETTINGS_CATEGORY_QML,
+            Tr::tr("Qt Quick"),
+            ":/qmljstools/images/settingscategory_qml.png");
+
 #ifdef WITH_TESTS
         addTestCreator(createQmlJSToolsTest);
 #endif
+        setupQmlJSToolsSettings();
+
         d = new QmlJSToolsPluginPrivate;
+
+        setupQmlJSFunctionsFilter();
     }
 
     void extensionsInitialized() final

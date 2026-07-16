@@ -9,12 +9,15 @@ import QtQuick
 import Constants
 
 Rectangle {
+    id: root
     width: Constants.width
     height: Constants.height
     color: Constants.backgroundColor
 
     Text {
+        id: textLabel
         text: qsTr("Hello %{ProjectName}")
         anchors.centerIn: parent
+        font.pixelSize: 14
     }
 }

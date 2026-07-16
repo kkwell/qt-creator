@@ -7,18 +7,13 @@
 
 namespace CodePaster {
 
-class UrlOpenProtocol : public NetworkProtocol
+class UrlOpenProtocol : public Protocol
 {
 public:
-    QString name() const override;
-    unsigned capabilities() const override;
-    void fetch(const QString &url) override;
-    void paste(const QString &, ContentType, int, const QString &, const QString &, const QString &) override;
+    UrlOpenProtocol();
 
-private:
-    void fetchFinished();
-
-    QNetworkReply *m_fetchReply = nullptr;
+    QtTaskTree::ExecutableItem fetchRecipe(const QString &id,
+                                           const FetchHandler &handler) const override;
 };
 
 } // CodePaster

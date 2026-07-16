@@ -66,12 +66,7 @@ PerforceSettings::PerforceSettings()
     logCount.setDefaultValue(1000);
     logCount.setLabelText(Tr::tr("Log count:"));
 
-    // The settings value has been stored with the opposite meaning for a while.
-    // Avoid changing the stored value, but flip it on read/write:
     customEnv.setSettingsKey("Default");
-    const auto invertBoolVariant = [](const QVariant &v) { return QVariant(!v.toBool()); };
-    customEnv.setFromSettingsTransformation(invertBoolVariant);
-    customEnv.setToSettingsTransformation(invertBoolVariant);
 
     timeOutS.setSettingsKey("TimeOut");
     timeOutS.setRange(1, 360);
@@ -114,7 +109,7 @@ PerforceSettings::PerforceSettings()
             errorLabel->setType(InfoLabel::Information);
             errorLabel->setText(Tr::tr("Testing..."));
 
-            const FilePath p4Bin = FilePath::fromUserInput(p4BinaryPath.volatileValue());
+            const FilePath p4Bin = p4BinaryPath.expandedVolatileValue();
             checker->start(p4Bin, {}, commonP4Arguments_volatile(), 10000);
         });
 

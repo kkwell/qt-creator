@@ -33,17 +33,11 @@ public:
 
     // Call these before initializePage!
     void setTasksGenerator(const TasksGenerator &tasksGenerator);
-    void setProjectPath(const Utils::FilePath &dir);
-    void setProjectImporter(ProjectImporter *importer);
+    void setProjectAndPath(Project *project, const Utils::FilePath &dir);
     bool importLineEditHasFocus() const;
 
-    /// Sets whether the targetsetupage uses a scrollarea
-    /// to host the widgets from the factories
-    /// call this before \sa initializePage()
-    void setUseScrollArea(bool b);
-
     bool isComplete() const override;
-    bool setupProject(Project *project);
+    void setupProject(Project *project);
     QList<Utils::Id> selectedKits() const;
 
     void openOptions();

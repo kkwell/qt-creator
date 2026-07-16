@@ -7,7 +7,9 @@
 #include "propertyeditorcontextobject.h"
 #include "propertyeditorvalue.h"
 #include "qmlanchorbindingproxy.h"
+#include "qmlmaterialnodeproxy.h"
 #include "qmlmodelnodeproxy.h"
+#include "qmltexturenodeproxy.h"
 #include "quick2propertyeditorview.h"
 
 #include <utils/uniqueobjectptr.h>
@@ -17,6 +19,8 @@
 #include <QQmlPropertyMap>
 
 #include <memory>
+
+QT_FORWARD_DECLARE_CLASS(QQuickImageProvider)
 
 class PropertyEditorValue;
 
@@ -36,10 +40,12 @@ public:
                              class AsynchronousImageCache &imageCache);
     ~PropertyEditorQmlBackend();
 
-    void setup(const QmlObjectNode &fxObjectNode, const QString &stateName, const QUrl &qmlSpecificsFile, PropertyEditorView *propertyEditor);
-    void initialSetup(const TypeName &typeName, const QUrl &qmlSpecificsFile, PropertyEditorView *propertyEditor);
-    void setValue(const QmlObjectNode &fxObjectNode, const PropertyName &name, const QVariant &value);
-    void setExpression(const PropertyName &propName, const QString &exp);
+    void setup(const ModelNodes &editorNodes,
+               const QString &stateName,
+               const QUrl &qmlSpecificsFile,
+               PropertyEditorView *propertyEditor);
+    void setValue(const QmlObjectNode &fxObjectNode, PropertyNameView name, const QVariant &value);
+    void setExpression(PropertyNameView propName, const QString &exp);
 
     QQmlContext *context();
     PropertyEditorContextObject* contextObject();
@@ -52,6 +58,8 @@ public:
     PropertyEditorValue *propertyValueForName(const QString &propertyName);
 
     static QString propertyEditorResourcesPath();
+    static QString scriptsEditorResourcesPath();
+    static QUrl emptyPaneUrl();
 #ifndef QDS_USE_PROJECTSTORAGE
     static QString templateGeneration(const NodeMetaInfo &type,
                                       const NodeMetaInfo &superType,
@@ -66,9 +74,9 @@ public:
     void emitSelectionChanged();
 
     void setValueforLayoutAttachedProperties(const QmlObjectNode &qmlObjectNode,
-                                             const PropertyName &name);
+                                             PropertyNameView name);
     void setValueforInsightAttachedProperties(const QmlObjectNode &qmlObjectNode,
-                                              const PropertyName &name);
+                                              PropertyNameView name);
     void setValueforAuxiliaryProperties(const QmlObjectNode &qmlObjectNode, AuxiliaryDataKeyView key);
 
     void setupLayoutAttachedProperties(const QmlObjectNode &qmlObjectNode,
@@ -79,21 +87,35 @@ public:
                                   PropertyEditorView *propertyEditor);
 
     void handleInstancePropertyChangedInModelNodeProxy(const ModelNode &modelNode,
-                                                       const PropertyName &propertyName);
+                                                       PropertyNameView propertyName);
 
+    void handleAuxiliaryDataChanges(const QmlObjectNode &qmlObjectNode, AuxiliaryDataKeyView key);
     void handleVariantPropertyChangedInModelNodeProxy(const VariantProperty &property);
     void handleBindingPropertyChangedInModelNodeProxy(const BindingProperty &property);
+    void handleBindingPropertyInModelNodeProxyAboutToChange(const BindingProperty &property);
     void handlePropertiesRemovedInModelNodeProxy(const AbstractProperty &property);
+    void handleModelNodePreviewPixmapChanged(const ModelNode &node,
+                                             const QPixmap &pixmap,
+                                             const QByteArray &requestId);
+    void handleModelSelectedNodesChanged(PropertyEditorView *propertyEditor);
 
-    static NodeMetaInfo findCommonAncestor(const ModelNode &node);
+    void refreshBackendModel();
+    void refreshPreview();
+    void updateInstanceImage();
+
+    void setupContextProperties();
 
 private:
     void createPropertyEditorValue(const QmlObjectNode &qmlObjectNode,
-                                   const PropertyName &name, const QVariant &value,
-                                   PropertyEditorView *propertyEditor);
-    void setupPropertyEditorValue(const PropertyName &name,
-                                  PropertyEditorView *propertyEditor,
-                                  const NodeMetaInfo &type);
+                                   PropertyNameView name,
+                                   const QVariant &value,
+                                   PropertyEditorView *propertyEditor,
+                                   const PropertyMetaInfo &propertyMetaInfo = {});
+    void createPropertyEditorValues(const QmlObjectNode &qmlObjectNode, PropertyEditorView *propertyEditor);
+
+    PropertyEditorValue *insertValue(const QString &name,
+                                     const QVariant &value = {},
+                                     const ModelNode &modelNode = {});
 
     static QUrl fileToUrl(const QString &filePath);
     static QString fileFromUrl(const QUrl &url);
@@ -102,18 +124,22 @@ private:
     static QString locateQmlFile(const NodeMetaInfo &info, const QString &relativePath);
 #endif
     static TypeName fixTypeNameForPanes(const TypeName &typeName);
+    static QString resourcesPath(const QString &dir);
 
 private:
     // to avoid a crash while destructing DesignerPropertyMap in the QQmlData
     // this needs be destructed after m_quickWidget->engine() is destructed
     DesignerPropertyMap m_backendValuesPropertyMap;
+    std::unique_ptr<PropertyEditorContextObject> m_contextObject;
+    QmlModelNodeProxy m_backendModelNode;
+    QmlAnchorBindingProxy m_backendAnchorBinding;
+    QmlMaterialNodeProxy m_backendMaterialNode;
+    QmlTextureNodeProxy m_backendTextureNode;
 
     Utils::UniqueObjectPtr<Quick2PropertyEditorView> m_view = nullptr;
-    QmlAnchorBindingProxy m_backendAnchorBinding;
-    QmlModelNodeProxy m_backendModelNode;
+
     std::unique_ptr<PropertyEditorTransaction> m_propertyEditorTransaction;
     std::unique_ptr<PropertyEditorValue> m_dummyPropertyEditorValue;
-    std::unique_ptr<PropertyEditorContextObject> m_contextObject;
 };
 
 } //QmlDesigner

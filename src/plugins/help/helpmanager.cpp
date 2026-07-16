@@ -23,13 +23,16 @@
 #include <QStringList>
 #include <QUrl>
 
-#include <QHelpEngineCore>
+#include <QtTaskTree/QSequentialTaskTreeRunner>
 
-#include <QMutexLocker>
+#include <QHelpEngineCore>
 
 #include <QtHelp/QHelpLink>
 
+static Q_LOGGING_CATEGORY(helpLog, "qtc.help.helpmanager", QtWarningMsg)
+
 using namespace Core;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace Help {
@@ -57,12 +60,10 @@ struct HelpManagerPrivate
     QSet<QString> m_filesToRegister;
     QSet<QString> m_blockedDocumentation;
     QSet<QString> m_filesToUnregister;
-    QHash<QString, QVariant> m_customValues;
 
     QSet<QString> m_userRegisteredFiles;
 
-    QMutex m_helpengineMutex;
-    QFuture<bool> m_registerFuture;
+    QSequentialTaskTreeRunner m_taskTreeRunner;
 };
 
 static HelpManager *m_instance = nullptr;
@@ -94,14 +95,20 @@ HelpManager *HelpManager::instance()
 
 QString HelpManager::collectionFilePath()
 {
-    return ICore::userResourcePath("helpcollection.qhc").toString();
+    return ICore::userResourcePath("helpcollection.qhc").toUrlishString();
+}
+
+static void onDone(const Async<bool> &task)
+{
+    if (task.isResultAvailable() && task.result()) {
+        d->m_helpEngine->setupData();
+        emit Core::HelpManager::Signals::instance()->documentationChanged();
+    }
 }
 
 static void registerDocumentationNow(QPromise<bool> &promise, const QString &collectionFilePath,
                                      const QStringList &files)
 {
-    QMutexLocker locker(&d->m_helpengineMutex);
-
     promise.setProgressRange(0, files.count());
     promise.setProgressValue(0);
 
@@ -138,15 +145,17 @@ void HelpManager::registerDocumentation(const QStringList &files)
         return;
     }
 
-    QFuture<bool> future = Utils::asyncRun(&registerDocumentationNow, collectionFilePath(), files);
-    Utils::futureSynchronizer()->addFuture(future);
-    Utils::onResultReady(future, this, [](bool docsChanged){
-        if (docsChanged) {
-            d->m_helpEngine->setupData();
-            emit Core::HelpManager::Signals::instance()->documentationChanged();
-        }
-    });
-    ProgressManager::addTask(future, Tr::tr("Update Documentation"), kUpdateDocumentationTask);
+    if (files.isEmpty())
+        return;
+
+    const auto onSetup = [files](Async<bool> &task) {
+        task.setConcurrentCallData(registerDocumentationNow, collectionFilePath(), files);
+        QObject::connect(&task, &AsyncBase::started, &task, [taskPtr = &task] {
+            ProgressManager::addTask(taskPtr->future(), Tr::tr("Update Documentation"),
+                                     kUpdateDocumentationTask);
+        });
+    };
+    d->m_taskTreeRunner.enqueue({AsyncTask<bool>(onSetup, onDone)});
 }
 
 void HelpManager::setBlockedDocumentation(const QStringList &fileNames)
@@ -159,8 +168,6 @@ static void unregisterDocumentationNow(QPromise<bool> &promise,
                                        const QString collectionFilePath,
                                        const QStringList &files)
 {
-    QMutexLocker locker(&d->m_helpengineMutex);
-
     promise.setProgressRange(0, files.count());
     promise.setProgressValue(0);
 
@@ -201,17 +208,15 @@ void HelpManager::unregisterDocumentation(const QStringList &files)
         return;
 
     d->m_userRegisteredFiles.subtract(Utils::toSet(files));
-    QFuture<bool> future = Utils::asyncRun(&unregisterDocumentationNow, collectionFilePath(), files);
-    Utils::futureSynchronizer()->addFuture(future);
-    Utils::onResultReady(future, this, [](bool docsChanged){
-        if (docsChanged) {
-            d->m_helpEngine->setupData();
-            emit Core::HelpManager::Signals::instance()->documentationChanged();
-        }
-    });
-    ProgressManager::addTask(future,
-                             Tr::tr("Purge Outdated Documentation"),
-                             kPurgeDocumentationTask);
+
+    const auto onSetup = [files](Async<bool> &task) {
+        task.setConcurrentCallData(unregisterDocumentationNow, collectionFilePath(), files);
+        QObject::connect(&task, &AsyncBase::started, &task, [taskPtr = &task] {
+            ProgressManager::addTask(taskPtr->future(), Tr::tr("Purge Outdated Documentation"),
+                                     kPurgeDocumentationTask);
+        });
+    };
+    d->m_taskTreeRunner.enqueue({AsyncTask<bool>(onSetup, onDone)});
 }
 
 void HelpManager::registerUserDocumentation(const QStringList &filePaths)
@@ -243,6 +248,10 @@ QMultiMap<QString, QUrl> HelpManager::linksForKeyword(QHelpEngineCore *engine,
         return links.find(it.key(), it.value()) != it;
     });
 
+    qCDebug(helpLog) << "Looking up help for keyword" << key
+                     << (filterName.has_value() ? "with filter" : "without filter")
+                     << " returned" << links.size() << "links";
+
     return links;
 }
 
@@ -251,7 +260,13 @@ QMultiMap<QString, QUrl> HelpManager::linksForKeyword(const QString &key)
     QTC_ASSERT(!d->m_needsSetup, return {});
     if (key.isEmpty())
         return {};
-    return HelpManager::linksForKeyword(d->m_helpEngine, key, QString());
+
+    auto results = HelpManager::linksForKeyword(d->m_helpEngine, key, QString());
+
+    qCDebug(helpLog) << "Looking up help for keyword" << key
+                     << "returned" << results.size() << "links";
+
+    return results;
 }
 
 QMultiMap<QString, QUrl> HelpManager::linksForIdentifier(const QString &id)
@@ -263,6 +278,10 @@ QMultiMap<QString, QUrl> HelpManager::linksForIdentifier(const QString &id)
     const QList<QHelpLink> docs = d->m_helpEngine->documentsForIdentifier(id, QString());
     for (const auto &doc : docs)
         links.insert(doc.title, doc.url);
+
+    qCDebug(helpLog) << "Looking up help for id" << id
+                     << "returned" << links.size() << "links";
+
     return links;
 }
 
@@ -306,30 +325,6 @@ QString HelpManager::fileFromNamespace(const QString &nameSpace)
     return d->m_helpEngine->documentationFileName(nameSpace);
 }
 
-void HelpManager::setCustomValue(const QString &key, const QVariant &value)
-{
-    if (d->m_needsSetup) {
-        d->m_customValues.insert(key, value);
-        return;
-    }
-    if (d->m_helpEngine->setCustomValue(key, value))
-        emit m_instance->collectionFileChanged();
-}
-
-QVariant HelpManager::customValue(const QString &key, const QVariant &value)
-{
-    QTC_ASSERT(!d->m_needsSetup, return {});
-    return d->m_helpEngine->customValue(key, value);
-}
-
-void HelpManager::aboutToShutdown()
-{
-    if (d && d->m_registerFuture.isRunning()) {
-        d->m_registerFuture.cancel();
-        d->m_registerFuture.waitForFinished();
-    }
-}
-
 // -- private
 
 void HelpManager::setupHelpManager()
@@ -366,10 +361,6 @@ void HelpManager::setupHelpManager()
         m_instance->registerDocumentation(Utils::toList(d->m_filesToRegister));
         d->m_filesToRegister.clear();
     }
-
-    QHash<QString, QVariant>::const_iterator it;
-    for (it = d->m_customValues.constBegin(); it != d->m_customValues.constEnd(); ++it)
-        setCustomValue(it.key(), it.value());
 
     emit Core::HelpManager::Signals::instance()->setupFinished();
 }

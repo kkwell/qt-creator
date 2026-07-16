@@ -3,8 +3,6 @@
 
 #pragma once
 
-#include "qnxconstants.h"
-
 #include <qtsupport/baseqtversion.h>
 #include <qtsupport/qtversionfactory.h>
 
@@ -32,7 +30,7 @@ public:
 
     ProjectExplorer::Abis detectQtAbis() const override;
 
-    void addToEnvironment(const ProjectExplorer::Kit *k, Utils::Environment &env) const override;
+    void addToBuildEnvironment(const ProjectExplorer::Kit *k, Utils::Environment &env) const override;
     void setupQmakeRunEnvironment(Utils::Environment &env) const override;
 
     QtSupport::QtConfigWidget *createConfigurationWidget() const override;

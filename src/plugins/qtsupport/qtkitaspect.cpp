@@ -3,32 +3,84 @@
 
 #include "qtkitaspect.h"
 
+#include "qtoptionspage.h"
 #include "qtparser.h"
 #include "qtsupportconstants.h"
 #include "qtsupporttr.h"
 #include "qttestparser.h"
+#include "qtversionfactory.h"
 #include "qtversionmanager.h"
 
+#include <projectexplorer/devicesupport/devicekitaspects.h>
 #include <projectexplorer/devicesupport/idevice.h>
+#include <projectexplorer/kitaspect.h>
+#include <projectexplorer/kitmanager.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/task.h>
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/toolchainkitaspect.h>
 #include <projectexplorer/toolchainmanager.h>
 
+#include <qmakeprojectmanager/qmakeprojectmanagerconstants.h>
+
 #include <utils/algorithm.h>
+#include <utils/async.h>
 #include <utils/buildablehelperlibrary.h>
 #include <utils/guard.h>
 #include <utils/layoutbuilder.h>
 #include <utils/macroexpander.h>
 #include <utils/qtcassert.h>
 
-#include <QComboBox>
+#include <QAbstractListModel>
+#include <QHBoxLayout>
+#include <QJsonValue>
 
 using namespace ProjectExplorer;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace QtSupport {
 namespace Internal {
+
+class QtVersionListModel : public QAbstractListModel
+{
+public:
+    QtVersionListModel(const Kit &kit, QObject *parent)
+        : QAbstractListModel(parent)
+        , m_kit(kit)
+    {}
+
+    void reset()
+    {
+        beginResetModel();
+        m_versions.clear();
+        if (const IDevice::ConstPtr device = BuildDeviceKitAspect::device(&m_kit)) {
+            const FilePath deviceRoot = device->rootPath();
+            m_versions = QtVersionManager::versions(
+                [&deviceRoot](const QtVersion *qt) {
+                    return qt->qmakeFilePath().isSameDevice(deviceRoot);
+                });
+        }
+        m_versions.append(nullptr); // The "No Qt" entry.
+        endResetModel();
+    }
+
+    int rowCount(const QModelIndex &parent = {}) const override
+    {
+        return parent.isValid() ? 0 : m_versions.size();
+    }
+
+    QVariant data(const QModelIndex &index, int role) const override
+    {
+        if (!index.isValid() || index.row() < 0 || index.row() >= m_versions.size())
+            return {};
+        return qtVersionData(m_versions[index.row()], 0, role, false);
+    }
+
+private:
+    const Kit &m_kit;
+    QtVersions m_versions;
+};
 
 class QtKitAspectImpl final : public KitAspect
 {
@@ -37,93 +89,38 @@ public:
     {
         setManagingPage(Constants::QTVERSION_SETTINGS_PAGE_ID);
 
-        m_combo = createSubWidget<QComboBox>();
-        m_combo->setSizePolicy(QSizePolicy::Ignored, m_combo->sizePolicy().verticalPolicy());
+        const auto model = new QtVersionListModel(*k, this);
+        auto getter = [](const Kit &k) { return QtKitAspect::qtVersionId(&k); };
+        auto setter = [](Kit &k, const QVariant &versionId) {
+            QtKitAspect::setQtVersionId(&k, versionId.toInt());
+        };
+        auto resetModel = [model] { model->reset(); };
+        addListAspectSpec({model, std::move(getter), std::move(setter), std::move(resetModel)});
 
-        refresh();
-        m_combo->setToolTip(ki->description());
-
-        connect(m_combo, &QComboBox::currentIndexChanged, this, [this] {
-            if (!m_ignoreChanges.isLocked())
-                currentWasChanged(m_combo->currentIndex());
+        connect(KitManager::instance(), &KitManager::kitUpdated, this, [this](Kit *k) {
+            if (k == kit())
+                refresh();
         });
-
-        connect(QtVersionManager::instance(),
-                &QtVersionManager::qtVersionsChanged,
-                this,
-                &QtKitAspectImpl::refresh);
-    }
-
-    ~QtKitAspectImpl() final
-    {
-        delete m_combo;
+        connect(QtVersionManager::instance(), &QtVersionManager::qtVersionsChanged,
+                this, &QtKitAspectImpl::refresh);
     }
 
 private:
-    void makeReadOnly() final { m_combo->setEnabled(false); }
-
-    void addToInnerLayout(Layouting::Layout &parent) override
+    void addToInnerLayout(Layouting::Layout &layout) override
     {
-        addMutableAction(m_combo);
-        parent.addItem(m_combo);
-    }
-
-    void refresh() final
-    {
-        const GuardLocker locker(m_ignoreChanges);
-        m_combo->clear();
-        m_combo->addItem(Tr::tr("None"), -1);
-
-        IDeviceConstPtr device = BuildDeviceKitAspect::device(kit());
-        const FilePath deviceRoot = device->rootPath();
-
-        const QtVersions versions = QtVersionManager::versions();
-
-        const QList<QtVersion *> same = Utils::filtered(versions, [device](QtVersion *qt) {
-            return qt->qmakeFilePath().isSameDevice(device->rootPath());
-        });
-        const QList<QtVersion *> other = Utils::filtered(versions, [device](QtVersion *qt) {
-            return !qt->qmakeFilePath().isSameDevice(device->rootPath());
-        });
-
-        for (QtVersion *item : same)
-            m_combo->addItem(item->displayName(), item->uniqueId());
-
-        if (!same.isEmpty() && !other.isEmpty())
-            m_combo->insertSeparator(m_combo->count());
-
-        for (QtVersion *item : other)
-            m_combo->addItem(item->displayName(), item->uniqueId());
-
-        m_combo->setCurrentIndex(findQtVersion(QtKitAspect::qtVersionId(m_kit)));
-    }
-
-private:
-    static QString itemNameFor(const QtVersion *v)
-    {
-        QTC_ASSERT(v, return QString());
-        QString name = v->displayName();
-        if (!v->isValid())
-            name = Tr::tr("%1 (invalid)").arg(v->displayName());
-        return name;
-    }
-
-    void currentWasChanged(int idx)
-    {
-        QtKitAspect::setQtVersionId(m_kit, m_combo->itemData(idx).toInt());
-    }
-
-    int findQtVersion(const int id) const
-    {
-        for (int i = 0; i < m_combo->count(); ++i) {
-            if (id == m_combo->itemData(i).toInt())
-                return i;
+        if (const QList<KitAspect *> embedded = aspectsToEmbed(); !embedded.isEmpty()) {
+            Layouting::Layout box(new QHBoxLayout);
+            KitAspect::addToInnerLayout(box);
+            QSizePolicy p = comboBoxes().first()->sizePolicy();
+            p.setHorizontalStretch(2);
+            comboBoxes().first()->setSizePolicy(p);
+            box.addItem(createSubWidget<QLabel>(Tr::tr("Mkspec:")));
+            embedded.first()->addToInnerLayout(box);
+            layout.addItem(box);
+        } else {
+            KitAspect::addToInnerLayout(layout);
         }
-        return -1;
     }
-
-    Guard m_ignoreChanges;
-    QComboBox *m_combo;
 };
 } // namespace Internal
 
@@ -140,8 +137,6 @@ private:
 
     KitAspect *createKitAspect(Kit *k) const override;
 
-    QString displayNamePostfix(const Kit *k) const override;
-
     ItemList toUserOutput(const Kit *k) const override;
 
     void addToBuildEnvironment(const Kit *k, Environment &env) const override;
@@ -152,11 +147,31 @@ private:
     QSet<Id> availableFeatures(const Kit *k) const override;
 
     int weight(const Kit *k) const override;
+    QVariant getInfo(const Kit *k, Id request, const QVariant &input) const override;
 
     void qtVersionsChanged(const QList<int> &addedIds,
                            const QList<int> &removedIds,
                            const QList<int> &changedIds);
     void onKitsLoaded() override;
+
+    std::optional<ExecutableItem> autoDetect(
+        Kit *kit,
+        const Utils::FilePaths &searchPaths,
+        const DetectionSource &detectionSource,
+        const LogCallback &logCallback) const override;
+
+    std::optional<ExecutableItem> removeAutoDetected(
+        const QString &detectionSource, const LogCallback &logCallback) const override;
+
+    void listAutoDetected(
+        const QString &detectionSource, const LogCallback &logCallback) const override;
+
+    Utils::Result<ExecutableItem> createAspectFromJson(
+        const DetectionSource &detectionSource,
+        const FilePath &rootPath,
+        Kit *kit,
+        const QJsonValue &json,
+        const LogCallback &logCallback) const override;
 };
 
 const QtKitAspectFactory theQtKitAspectFactory;
@@ -164,25 +179,34 @@ const QtKitAspectFactory theQtKitAspectFactory;
 QtKitAspectFactory::QtKitAspectFactory()
 {
     setId(QtKitAspect::id());
+    setJsonKeys({"qt", "qmake"});
     setDisplayName(Tr::tr("Qt version"));
     setDescription(Tr::tr("The Qt library to use for all projects using this kit.<br>"
                           "A Qt version is required for qmake-based projects "
                           "and optional when using other build systems."));
     setPriority(26000);
+    setEmbeddableAspects({QmakeProjectManager::Constants::KIT_INFORMATION_ID});
 }
 
 void QtKitAspectFactory::setup(Kit *k)
 {
     if (!k || k->hasValue(id()))
         return;
-    const Abi tcAbi = ToolchainKitAspect::targetAbi(k);
-    const Id deviceType = DeviceTypeKitAspect::deviceTypeId(k);
 
-    const QtVersions matches
-            = QtVersionManager::versions([&tcAbi, &deviceType](const QtVersion *qt) {
-        return qt->targetDeviceTypes().contains(deviceType)
-                && Utils::contains(qt->qtAbis(), [&tcAbi](const Abi &qtAbi) {
-            return qtAbi.isCompatibleWith(tcAbi); });
+    const IDeviceConstPtr buildDev = BuildDeviceKitAspect::device(k);
+    if (!buildDev)
+        return;
+
+    const Abi tcAbi = ToolchainKitAspect::targetAbi(k);
+    const Id runDeviceType = RunDeviceTypeKitAspect::deviceTypeId(k);
+    const FilePath buildDeviceRoot = buildDev->rootPath();
+
+    const QtVersions matches = QtVersionManager::versions([&](const QtVersion *qt) {
+        return buildDeviceRoot.isSameDevice(qt->qmakeFilePath())
+               && qt->targetDeviceTypes().contains(runDeviceType)
+               && Utils::contains(qt->qtAbis(), [&tcAbi](const Abi &qtAbi) {
+                      return qtAbi.isCompatibleWith(tcAbi);
+                  });
     });
     if (matches.empty())
         return;
@@ -194,12 +218,22 @@ void QtKitAspectFactory::setup(Kit *k)
     });
     const QtVersions &candidates = !exactMatches.empty() ? exactMatches : matches;
 
-    QtVersion * const qtFromPath = QtVersionManager::version(
-                equal(&QtVersion::detectionSource, QString("PATH")));
-    if (qtFromPath && candidates.contains(qtFromPath))
+    // Prefer higher versions to lower ones.
+    const QVersionNumber maxVersion
+        = Utils::maxElementOrDefault(candidates, [](const QtVersion *v1, const QtVersion *v2) {
+              return v1->qtVersion() < v2->qtVersion();
+          })->qtVersion();
+    const auto [highestVersions, lowerVersions]
+        = Utils::partition(candidates, [&maxVersion](const QtVersion *v) {
+              return v->qtVersion() == maxVersion;
+          });
+
+    QtVersion *const qtFromPath = QtVersionManager::version(
+        [](const QtVersion *v) { return v->detectionSource().id == "PATH"; });
+    if (qtFromPath && highestVersions.contains(qtFromPath))
         k->setValue(id(), qtFromPath->uniqueId());
     else
-        k->setValue(id(), candidates.first()->uniqueId());
+        k->setValue(id(), highestVersions.first()->uniqueId());
 }
 
 Tasks QtKitAspectFactory::validate(const Kit *k) const
@@ -214,6 +248,10 @@ Tasks QtKitAspectFactory::validate(const Kit *k) const
 
 void QtKitAspectFactory::fix(Kit *k)
 {
+    const IDeviceConstPtr dev = BuildDeviceKitAspect::device(k);
+    if (!dev)
+        return QtKitAspect::setQtVersionId(k, -1);
+
     QTC_ASSERT(QtVersionManager::isLoaded(), return);
     QtVersion *version = QtKitAspect::qtVersion(k);
     if (!version) {
@@ -224,67 +262,68 @@ void QtKitAspectFactory::fix(Kit *k)
         }
         return;
     }
+    if (!version->qmakeFilePath().isSameDevice(dev->rootPath()))
+        return QtKitAspect::setQtVersionId(k, -1);
 
     // Set a matching toolchain if we don't have one.
     if (ToolchainKitAspect::cxxToolchain(k))
         return;
 
-    const QString spec = version->mkspec();
-    Toolchains possibleTcs = ToolchainManager::toolchains([version](const Toolchain *t) {
-        if (!t->isValid() || t->language() != ProjectExplorer::Constants::CXX_LANGUAGE_ID)
+    QList<ToolchainBundle> bundles = ToolchainBundle::collectBundles(
+        ToolchainBundle::HandleMissing::CreateAndRegister);
+    using ProjectExplorer::Constants::CXX_LANGUAGE_ID;
+    bundles = Utils::filtered(bundles, [&](const ToolchainBundle &b) {
+        if (!b.isCompletelyValid() || !b.factory()->languageCategory().contains(CXX_LANGUAGE_ID))
             return false;
-        return Utils::anyOf(version->qtAbis(), [t](const Abi &qtAbi) {
-            return t->supportedAbis().contains(qtAbi)
-                   && t->targetAbi().wordWidth() == qtAbi.wordWidth()
-                   && t->targetAbi().architecture() == qtAbi.architecture();
+        for (const Toolchain * const tc : b.toolchains()) {
+            if (!dev->rootPath().isSameDevice(tc->compilerCommand()))
+                return false;
+        }
+        return Utils::anyOf(version->qtAbis(), [&b](const Abi &qtAbi) {
+            return b.supportedAbis().contains(qtAbi)
+                   && b.targetAbi().wordWidth() == qtAbi.wordWidth()
+                   && b.targetAbi().architecture() == qtAbi.architecture();
+
         });
     });
-    if (!possibleTcs.isEmpty()) {
-        // Prefer exact matches.
-        // TODO: We should probably prefer the compiler with the highest version number instead,
-        //       but this information is currently not exposed by the Toolchain class.
-        const FilePaths envPathVar = Environment::systemEnvironment().path();
-        sort(possibleTcs, [version, &envPathVar](const Toolchain *tc1, const Toolchain *tc2) {
-            const QVector<Abi> &qtAbis = version->qtAbis();
-            const bool tc1ExactMatch = qtAbis.contains(tc1->targetAbi());
-            const bool tc2ExactMatch = qtAbis.contains(tc2->targetAbi());
-            if (tc1ExactMatch && !tc2ExactMatch)
+
+    if (bundles.isEmpty())
+        return;
+
+    // Prefer exact matches.
+    sort(bundles, [version](const ToolchainBundle &b1, const ToolchainBundle &b2) {
+        const QVector<Abi> &qtAbis = version->qtAbis();
+        const bool tc1ExactMatch = qtAbis.contains(b1.targetAbi());
+        const bool tc2ExactMatch = qtAbis.contains(b2.targetAbi());
+        if (tc1ExactMatch && !tc2ExactMatch)
+            return true;
+        if (!tc1ExactMatch && tc2ExactMatch)
+            return false;
+
+        // For a multi-arch Qt that support the host ABI, prefer toolchains that match
+        // the host ABI.
+        if (qtAbis.size() > 1 && qtAbis.contains(Abi::hostAbi())) {
+            const bool tc1HasHostAbi = b1.targetAbi() == Abi::hostAbi();
+            const bool tc2HasHostAbi = b2.targetAbi() == Abi::hostAbi();
+            if (tc1HasHostAbi && !tc2HasHostAbi)
                 return true;
-            if (!tc1ExactMatch && tc2ExactMatch)
+            if (!tc1HasHostAbi && tc2HasHostAbi)
                 return false;
+        }
 
-            // For a multi-arch Qt that support the host ABI, prefer toolchains that match
-            // the host ABI.
-            if (qtAbis.size() > 1 && qtAbis.contains(Abi::hostAbi())) {
-                const bool tc1HasHostAbi = tc1->targetAbi() == Abi::hostAbi();
-                const bool tc2HasHostAbi = tc2->targetAbi() == Abi::hostAbi();
-                if (tc1HasHostAbi && !tc2HasHostAbi)
-                    return true;
-                if (!tc1HasHostAbi && tc2HasHostAbi)
-                    return false;
-            }
+        return ToolchainManager::isBetterToolchain(b1, b2);
+    });
 
-            if (tc1->priority() > tc2->priority())
-                return true;
-            if (tc1->priority() < tc2->priority())
-                return false;
+    // TODO: Why is this not done during sorting?
+    const QString spec = version->mkspec();
+    const QList<ToolchainBundle> goodBundles
+        = Utils::filtered(bundles, [&spec](const ToolchainBundle &b) {
+              return b.get(&Toolchain::suggestedMkspecList).contains(spec);
+          });
 
-            // Hack to prefer a tool chain from PATH (e.g. autodetected) over other matches.
-            // This improves the situation a bit if a cross-compilation tool chain has the
-            // same ABI as the host.
-            const bool tc1IsInPath = envPathVar.contains(tc1->compilerCommand().parentDir());
-            const bool tc2IsInPath = envPathVar.contains(tc2->compilerCommand().parentDir());
-            return tc1IsInPath && !tc2IsInPath;
-        });
-
-        // TODO: Why is this not done during sorting?
-        const Toolchains goodTcs = Utils::filtered(possibleTcs, [&spec](const Toolchain *t) {
-            return t->suggestedMkspecList().contains(spec);
-        });
-
-        if (Toolchain * const bestTc = goodTcs.isEmpty() ? possibleTcs.first() : goodTcs.first())
-            ToolchainKitAspect::setAllToolchainsToMatch(k, bestTc);
-    }
+    const ToolchainBundle &bestBundle = goodBundles.isEmpty() ? bundles.first()
+                                                              : goodBundles.first();
+    ToolchainKitAspect::setBundle(k, bestBundle);
 }
 
 KitAspect *QtKitAspectFactory::createKitAspect(Kit *k) const
@@ -293,23 +332,18 @@ KitAspect *QtKitAspectFactory::createKitAspect(Kit *k) const
     return new Internal::QtKitAspectImpl(k, this);
 }
 
-QString QtKitAspectFactory::displayNamePostfix(const Kit *k) const
-{
-    QtVersion *version = QtKitAspect::qtVersion(k);
-    return version ? version->displayName() : QString();
-}
-
 KitAspectFactory::ItemList QtKitAspectFactory::toUserOutput(const Kit *k) const
 {
     QtVersion *version = QtKitAspect::qtVersion(k);
-    return {{Tr::tr("Qt version"), version ? version->displayName() : Tr::tr("None")}};
+    return {
+        {Tr::tr("Qt version"), version ? version->displayName() : Tr::tr("None", "No Qt version")}};
 }
 
 void QtKitAspectFactory::addToBuildEnvironment(const Kit *k, Environment &env) const
 {
     QtVersion *version = QtKitAspect::qtVersion(k);
     if (version)
-        version->addToEnvironment(k, env);
+        version->addToBuildEnvironment(k, env);
 }
 
 QList<OutputLineParser *> QtKitAspectFactory::createOutputParsers(const Kit *k) const
@@ -338,7 +372,7 @@ public:
 void QtKitAspectFactory::addToMacroExpander(Kit *kit, MacroExpander *expander) const
 {
     QTC_ASSERT(kit, return);
-    expander->registerSubProvider(QtMacroSubProvider(kit));
+    expander->registerSubProvider({qApp, QtMacroSubProvider(kit)}); // FIXME: Find better guard
 
     expander->registerVariable("Qt:Name", Tr::tr("Name of Qt Version"),
                 [kit]() -> QString {
@@ -371,7 +405,8 @@ int QtKitAspect::qtVersionId(const Kit *k)
             id = -1;
     } else {
         QString source = data.toString();
-        QtVersion *v = QtVersionManager::version([source](const QtVersion *v) { return v->detectionSource() == source; });
+        QtVersion *v = QtVersionManager::version(
+            [source](const QtVersion *v) { return v->detectionSource().id == source; });
         if (v)
             id = v->uniqueId();
     }
@@ -416,13 +451,13 @@ void QtKitAspectFactory::qtVersionsChanged(const QList<int> &addedIds,
                                            const QList<int> &removedIds,
                                            const QList<int> &changedIds)
 {
-    Q_UNUSED(addedIds)
-    Q_UNUSED(removedIds)
+    const bool listChanged = !addedIds.isEmpty() || !removedIds.isEmpty();
     for (Kit *k : KitManager::kits()) {
-        if (changedIds.contains(QtKitAspect::qtVersionId(k))) {
+        const int id = QtKitAspect::qtVersionId(k);
+        if (removedIds.contains(id) || changedIds.contains(id))
             k->validate(); // Qt version may have become (in)valid
+        if (listChanged || changedIds.contains(id))
             notifyAboutUpdate(k);
-        }
     }
 }
 
@@ -433,6 +468,149 @@ void QtKitAspectFactory::onKitsLoaded()
 
     connect(QtVersionManager::instance(), &QtVersionManager::qtVersionsChanged,
             this, &QtKitAspectFactory::qtVersionsChanged);
+}
+
+std::optional<ExecutableItem> QtKitAspectFactory::autoDetect(
+    Kit *kit,
+    const FilePaths &searchPaths,
+    const DetectionSource &detectionSource,
+    const LogCallback &logCallback) const
+{
+    const auto searchQtse = [searchPaths, detectionSource](Async<QtVersion *> &async) {
+        async.setConcurrentCallData(
+            [detectionSource](QPromise<QtVersion *> &promise, FilePaths searchPaths) {
+                QList<QtVersion *> foundQtVersions;
+                const auto handleQmake =
+                    [&detectionSource, &foundQtVersions, &promise](const FilePath &qmake) {
+                        QString error;
+                        QtVersion *qtVersion = QtVersionFactory::createQtVersionFromQMakePath(
+                            qmake, detectionSource, &error);
+
+                        if (qtVersion && qtVersion->isValid()) {
+                            // Trigger loading the version data
+                            const Utils::FilePath binPath = qtVersion->binPath();
+
+                            const bool alreadyFound
+                                = Utils::anyOf(foundQtVersions, [qtVersion](QtVersion *other) {
+                                      return qtVersion->mkspecPath() == other->mkspecPath();
+                                  });
+                            if (!alreadyFound) {
+                                foundQtVersions.append(qtVersion);
+                                promise.addResult(qtVersion);
+                            }
+                        }
+                        return IterationPolicy::Continue;
+                    };
+
+                const QStringList candidates
+                    = {"qmake6", "qmake-qt6", "qmake-qt5", "qmake", "qtpaths6", "qtpaths"};
+                for (const FilePath &searchPath : searchPaths) {
+                    searchPath.iterateDirectory(
+                        handleQmake,
+                        {candidates, QDir::Files | QDir::Executable, QDirIterator::Subdirectories});
+                }
+            },
+            searchPaths);
+    };
+
+    const auto qtDetectionDone = [kit, logCallback](const Async<QtVersion *> &async) {
+        const auto versions = async.results();
+
+        for (QtVersion *version : versions) {
+            logCallback(Tr::tr("Found Qt version: %1.").arg(version->displayName()));
+            QtVersionManager::addVersion(version);
+            QtKitAspect::setQtVersion(kit, version);
+        }
+    };
+
+    return AsyncTask<QtVersion *>(searchQtse, qtDetectionDone);
+}
+
+std::optional<ExecutableItem> QtKitAspectFactory::removeAutoDetected(
+    const QString &detectionSource, const LogCallback &logCallback) const
+{
+    return QSyncTask([detectionSource, logCallback]() {
+        const auto versions = QtVersionManager::versions([detectionSource](const QtVersion *qt) {
+            return qt->detectionSource().id == detectionSource;
+        });
+
+        for (QtVersion *version : versions) {
+            logCallback(Tr::tr("Removing Qt: %1.").arg(version->displayName()));
+            QtVersionManager::removeVersion(version);
+        }
+    });
+}
+
+void QtKitAspectFactory::listAutoDetected(
+    const QString &detectionSource, const LogCallback &logCallback) const
+{
+    for (const QtVersion *qt : QtVersionManager::versions()) {
+        if (qt->detectionSource().id == detectionSource)
+            logCallback(Tr::tr("Qt: %1.").arg(qt->displayName()));
+    }
+}
+
+Utils::Result<ExecutableItem> QtKitAspectFactory::createAspectFromJson(
+    const DetectionSource &detectionSource,
+    const FilePath &rootPath,
+    Kit *kit,
+    const QJsonValue &json,
+    const LogCallback &logCallback) const
+{
+    using ResultType = Result<QtVersion *>;
+
+    if (!json.isString())
+        return ResultError(Tr::tr("Expected String, got: %1.").arg(json.toString()));
+
+    const QString qmakePath = json.toString();
+
+    if (qmakePath.isEmpty())
+        return ResultError(Tr::tr("Expected non-empty qmake path."));
+
+    const auto setup =
+        [qmakePath, rootPath, detectionSource, logCallback](Async<ResultType> &async) {
+            async.setConcurrentCallData(
+                [](QPromise<ResultType> &promise,
+                   const QString &qmakePath,
+                   const DetectionSource &detectionSource,
+                   const FilePath &rootPath) {
+                    QString error;
+                    QtVersion *qtVersion = QtVersionFactory::createQtVersionFromQMakePath(
+                        rootPath.withNewPath(qmakePath), detectionSource, &error);
+
+                    if (!qtVersion) {
+                        promise.addResult(ResultError(
+                            Tr::tr("Cannot create Qt version from qmake path \"%1\": %2")
+                                .arg(qmakePath, error)));
+                        return;
+                    }
+
+                    promise.addResult(qtVersion);
+                },
+                qmakePath,
+                detectionSource,
+                rootPath);
+        };
+
+    const auto onDone = [logCallback, kit, json](const Async<ResultType> &async) {
+        const ResultType result = async.result();
+        if (!result) {
+            logCallback(result.error());
+            return;
+        }
+
+        QtVersion *qtVersion = result.value();
+        if (!qtVersion->isValid()) {
+            logCallback(Tr::tr("Qt version \"%1\" is not valid.").arg(qtVersion->displayName()));
+            return;
+        }
+
+        logCallback(Tr::tr("Adding Qt version: %1").arg(qtVersion->displayName()));
+        QtVersionManager::addVersion(qtVersion);
+        QtKitAspect::setQtVersion(kit, qtVersion);
+    };
+
+    return AsyncTask<ResultType>(setup, onDone);
 }
 
 Kit::Predicate QtKitAspect::platformPredicate(Id platform)
@@ -477,13 +655,26 @@ int QtKitAspectFactory::weight(const Kit *k) const
     const QtVersion * const qt = QtKitAspect::qtVersion(k);
     if (!qt)
         return 0;
-    if (!qt->targetDeviceTypes().contains(DeviceTypeKitAspect::deviceTypeId(k)))
+    if (!qt->targetDeviceTypes().contains(RunDeviceTypeKitAspect::deviceTypeId(k)))
         return 0;
     const Abi tcAbi = ToolchainKitAspect::targetAbi(k);
     if (qt->qtAbis().contains(tcAbi))
         return 2;
     return Utils::contains(qt->qtAbis(), [&tcAbi](const Abi &qtAbi) {
         return qtAbi.isCompatibleWith(tcAbi); }) ? 1 : 0;
+}
+
+QVariant QtKitAspectFactory::getInfo(const Kit *k, Id request, const QVariant &input) const
+{
+    QtVersion * const version = QtKitAspect::qtVersion(k);
+    if (!version || !version->isValid())
+        return {};
+
+    if (request == "moduleForHeader")
+        return version->moduleForHeader(input.toString());
+    if (request == "supportsQtCategoryFilter")
+        return version->qtVersion() >= QVersionNumber(6, 11);
+    return {};
 }
 
 } // namespace QtSupport

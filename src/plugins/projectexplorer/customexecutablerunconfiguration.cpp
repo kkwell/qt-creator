@@ -8,33 +8,28 @@
 #include "runconfigurationaspects.h"
 #include "target.h"
 
-#include <utils/processinterface.h>
-
 using namespace Utils;
 
 namespace ProjectExplorer {
 
 // CustomExecutableRunConfiguration
 
-CustomExecutableRunConfiguration::CustomExecutableRunConfiguration(Target *target)
-    : CustomExecutableRunConfiguration(target, Constants::CUSTOM_EXECUTABLE_RUNCONFIG_ID)
+CustomExecutableRunConfiguration::CustomExecutableRunConfiguration(BuildConfiguration *bc)
+    : CustomExecutableRunConfiguration(bc, Constants::CUSTOM_EXECUTABLE_RUNCONFIG_ID)
 {}
 
-CustomExecutableRunConfiguration::CustomExecutableRunConfiguration(Target *target, Id id)
-    : RunConfiguration(target, id)
+CustomExecutableRunConfiguration::CustomExecutableRunConfiguration(BuildConfiguration *bc, Id id)
+    : RunConfiguration(bc, id)
 {
-    environment.setSupportForBuildEnvironment(target);
+    environment.setSupportForBuildEnvironment(bc);
 
-    executable.setDeviceSelector(target, ExecutableAspect::HostDevice);
+    executable.setDeviceSelector(kit(), ExecutableAspect::HostDevice);
     executable.setSettingsKey("ProjectExplorer.CustomExecutableRunConfiguration.Executable");
     executable.setReadOnly(false);
     executable.setHistoryCompleter("Qt.CustomExecutable.History");
     executable.setExpectedKind(PathChooser::ExistingCommand);
     executable.setEnvironment(environment.environment());
 
-    arguments.setMacroExpander(macroExpander());
-
-    workingDir.setMacroExpander(macroExpander());
     workingDir.setEnvironment(&environment);
 
     connect(&environment, &EnvironmentAspect::environmentChanged, this, [this]  {
@@ -42,6 +37,7 @@ CustomExecutableRunConfiguration::CustomExecutableRunConfiguration(Target *targe
     });
 
     setDefaultDisplayName(defaultDisplayName());
+    setUsesEmptyBuildKeys();
 }
 
 bool CustomExecutableRunConfiguration::isEnabled(Id) const
@@ -60,8 +56,25 @@ Tasks CustomExecutableRunConfiguration::checkForIssues() const
 {
     Tasks tasks;
     if (executable().isEmpty()) {
-        tasks << createConfigurationIssue(Tr::tr("You need to set an executable in the custom run "
-                                             "configuration."));
+        const QString summary = Tr::tr(
+            "No executable configured in the custom run "
+            "configuration.");
+        const QString linkText = displayName();
+        //: %1 = display name of the run configuration
+        const QString detail = Tr::tr("Go to the %1 run configuration and set up an executable.");
+        const QString link = Constants::URL_HANDLER_SCHEME + QChar(':')
+                             + Constants::ACTIVE_RUN_CONFIG_PATH;
+
+        QTextCharFormat format;
+        format.setAnchor(true);
+        format.setAnchorHref(link);
+        const int offset = summary.length() + detail.indexOf("%1") + 1;
+        const QTextLayout::FormatRange formatRange{offset, int(linkText.size()), format};
+
+        Task task = createConfigurationIssue(summary);
+        task.addToDetails(detail.arg(linkText));
+        task.setFormats({formatRange});
+        tasks << task;
     }
     return tasks;
 }
@@ -73,13 +86,6 @@ CustomExecutableRunConfigurationFactory::CustomExecutableRunConfigurationFactory
 {
     registerRunConfiguration<CustomExecutableRunConfiguration>(
         Constants::CUSTOM_EXECUTABLE_RUNCONFIG_ID);
-}
-
-CustomExecutableRunWorkerFactory::CustomExecutableRunWorkerFactory()
-{
-    setProduct<SimpleTargetRunner>();
-    addSupportedRunMode(Constants::NORMAL_RUN_MODE);
-    addSupportedRunConfig(Constants::CUSTOM_EXECUTABLE_RUNCONFIG_ID);
 }
 
 } // namespace ProjectExplorer

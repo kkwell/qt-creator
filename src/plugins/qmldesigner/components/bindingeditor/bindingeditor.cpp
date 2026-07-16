@@ -177,10 +177,8 @@ bool isType(const TypeName &first, const TypeName &second, const Tuple &...types
 bool compareTypes(const NodeMetaInfo &sourceType, const NodeMetaInfo &targetType)
 {
 #ifdef QDS_USE_PROJECTSTORAGE
-    return targetType.isVariant() || sourceType.isVariant() || targetType == sourceType
-           || (targetType.isNumber() && sourceType.isNumber())
-           || (targetType.isColor() && sourceType.isColor())
-           || (targetType.isString() && sourceType.isString());
+    return targetType.isVariant() || sourceType.isVariant()
+           || (targetType.isNumber() && sourceType.isNumber()) || sourceType.isBasedOn(targetType);
 #else
     const TypeName source = sourceType.simplifiedTypeName();
     const TypeName target = targetType.simplifiedTypeName();
@@ -207,8 +205,9 @@ void BindingEditor::prepareBindings()
 
     for (const auto &objnode : allNodes) {
         BindingEditorDialog::BindingOption binding;
-        for (const auto &property : objnode.metaInfo().properties()) {
-            const auto &propertyType = property.propertyType();
+        for (const auto &property :
+             MetaInfoUtils::addInflatedValueAndReferenceProperties(objnode.metaInfo().properties())) {
+            const auto &propertyType = property.property.propertyType();
 
             if (compareTypes(m_backendValueType, propertyType)) {
                 binding.properties.append(QString::fromUtf8(property.name()));
@@ -246,6 +245,27 @@ void BindingEditor::prepareBindings()
     }
 
     //singletons:
+#ifdef QDS_USE_PROJECTSTORAGE
+    if (auto model = m_modelNode.view()->model()) {
+        for (const auto &metaInfo : model->singletonMetaInfos()) {
+            BindingEditorDialog::BindingOption binding;
+
+            for (const auto &property : metaInfo.properties()) {
+                const auto propertyType = property.propertyType();
+
+                if (compareTypes(m_backendValueType, propertyType)) {
+                    binding.properties.append(QString::fromUtf8(property.name()));
+                }
+            }
+
+            if (!binding.properties.isEmpty()) {
+                binding.item = model->exportedTypeNameForMetaInfo(metaInfo).name.toQString();
+                if (binding.item.size())
+                    bindings.append(binding);
+            }
+        }
+    }
+#else
     if (RewriterView *rv = m_modelNode.view()->rewriterView()) {
         for (const QmlTypeData &data : rv->getQMLTypes()) {
             if (!data.typeName.isEmpty()) {
@@ -270,7 +290,7 @@ void BindingEditor::prepareBindings()
             }
         }
     }
-
+#endif
     if (!bindings.isEmpty() && m_dialog)
         m_dialog->setAllBindings(bindings, m_backendValueType);
 }
@@ -279,22 +299,17 @@ void BindingEditor::updateWindowName()
 {
     if (m_dialog && m_backendValueType) {
         QString targetString;
-        if constexpr (useProjectStorage()) {
-            auto exportedTypeNames = m_backendValueType.exportedTypeNamesForSourceId(
-                m_modelNode.model()->fileUrlSourceId());
-            if (exportedTypeNames.size()) {
-                targetString = " [" + (m_targetName.isEmpty() ? QString() : (m_targetName + ": "))
-                               + exportedTypeNames.front().name.toQString() + "]";
-            }
-        } else {
 #ifdef QDS_USE_PROJECTSTORAGE
+
+        auto exportedTypeName = m_modelNode.model()->exportedTypeNameForMetaInfo(m_backendValueType);
+        if (exportedTypeName.name.size()) {
             targetString = " [" + (m_targetName.isEmpty() ? QString() : (m_targetName + ": "))
-                           + QString::fromUtf8(m_backendValueType.displayName()) + "]";
-#else
-            targetString = " [" + (m_targetName.isEmpty() ? QString() : (m_targetName + ": "))
-                           + QString::fromUtf8(m_backendValueType.simplifiedTypeName()) + "]";
-#endif
+                           + exportedTypeName.name.toQString() + "]";
         }
+#else
+        targetString = " [" + (m_targetName.isEmpty() ? QString() : (m_targetName + ": "))
+                       + QString::fromUtf8(m_backendValueType.simplifiedTypeName()) + "]";
+#endif
 
         m_dialog->setWindowTitle(m_dialog->defaultTitle() + targetString);
     }

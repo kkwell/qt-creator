@@ -112,6 +112,11 @@ AutoCompleter::AutoCompleter() = default;
 
 AutoCompleter::~AutoCompleter() = default;
 
+static bool cursorBeforeSpaces(const QTextCursor &cursor)
+{
+    return cursor.atBlockEnd() || cursor.block().text().at(cursor.positionInBlock()).isSpace();
+}
+
 bool AutoCompleter::contextAllowsAutoBrackets(const QTextCursor &cursor,
                                               const QString &textToInsert) const
 {
@@ -174,7 +179,7 @@ bool AutoCompleter::contextAllowsAutoBrackets(const QTextCursor &cursor,
         break;
     } // end of switch
 
-    return true;
+    return cursorBeforeSpaces(cursor);
 }
 
 bool AutoCompleter::contextAllowsAutoQuotes(const QTextCursor &cursor,
@@ -218,7 +223,7 @@ bool AutoCompleter::contextAllowsAutoQuotes(const QTextCursor &cursor,
         break;
     } // end of switch
 
-    return true;
+    return cursorBeforeSpaces(cursor);
 }
 
 bool AutoCompleter::contextAllowsElectricCharacters(const QTextCursor &cursor) const
@@ -244,7 +249,7 @@ QString AutoCompleter::insertMatchingBrace(const QTextCursor &cursor,
                                            bool skipChars,
                                            int *skippedChars) const
 {
-    if (text.length() != 1)
+    if (text.size() != 1)
         return QString();
 
     if (! shouldInsertMatchingText(cursor))

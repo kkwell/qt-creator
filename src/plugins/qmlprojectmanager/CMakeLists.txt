@@ -2,7 +2,7 @@ add_qtc_plugin(QmlProjectManager
   CONDITION TARGET Qt::QuickWidgets
   PLUGIN_CLASS QmlProjectPlugin
   DEPENDS QmlJS Qt::QuickWidgets Utils
-  PLUGIN_DEPENDS Core ProjectExplorer QtSupport QmlDesignerBase
+  PLUGIN_DEPENDS Core ProjectExplorer QtSupport QmlJSEditor
   SOURCES
     qmlprojectgen/qmlprojectgenerator.cpp qmlprojectgen/qmlprojectgenerator.h
     qmlprojectgen/templates.qrc
@@ -18,6 +18,7 @@ add_qtc_plugin(QmlProjectManager
     qmlprojectmanagertr.h
     qmlprojectplugin.cpp qmlprojectplugin.h
     qmlprojectrunconfiguration.cpp qmlprojectrunconfiguration.h
+    qmlprojectwizardpage.cpp qmlprojectwizardpage.h
     buildsystem/qmlbuildsystem.cpp buildsystem/qmlbuildsystem.h
 
     "${PROJECT_SOURCE_DIR}/src/share/3rdparty/studiofonts/studiofonts.qrc"
@@ -39,25 +40,41 @@ extend_qtc_plugin(QmlProjectManager
 )
 
 extend_qtc_plugin(QmlProjectManager
-  PUBLIC_INCLUDES ${CMAKE_CURRENT_LIST_DIR}/cmakegen
-  SOURCES_PREFIX ${CMAKE_CURRENT_LIST_DIR}/cmakegen
+  PUBLIC_INCLUDES ${CMAKE_CURRENT_LIST_DIR}/qmlprojectexporter
+  SOURCES_PREFIX ${CMAKE_CURRENT_LIST_DIR}/qmlprojectexporter
   SOURCES
+      pythongenerator.cpp pythongenerator.h
+      resourcegenerator.cpp resourcegenerator.h
       cmakegenerator.cpp cmakegenerator.h
       cmakewriter.cpp cmakewriter.h
       cmakewriterv0.cpp cmakewriterv0.h
       cmakewriterv1.cpp cmakewriterv1.h
+      cmakewriterlib.cpp cmakewriterlib.h
+      exporter.cpp exporter.h
+      filegenerator.cpp filegenerator.h
+      filetypes.cpp filetypes.h
       boilerplate.qrc
 )
 
+extend_qtc_plugin(QmlProjectManager
+    PUBLIC_INCLUDES ${CMAKE_CURRENT_LIST_DIR}/qmldirtoqmlproject
+    SOURCES_PREFIX ${CMAKE_CURRENT_LIST_DIR}/qmldirtoqmlproject
+    SOURCES
+    mcumoduleprojectitem.cpp mcumoduleprojectitem.h
+)
+
 add_qtc_library(QmlProjectManagerLib OBJECT
+    CONDITION WITH_TESTS AND Qt6_VERSION VERSION_GREATER_EQUAL 6.4.3
     EXCLUDE_FROM_INSTALL
+    DEFINES QMLPROJECTMANAGER_STATIC_LIBRARY
     DEPENDS
-        QmlJS Utils ProjectExplorer
+        QmlJS Utils
     INCLUDES
         ${CMAKE_CURRENT_LIST_DIR}
-    SOURCES_PREFIX ${CMAKE_CURRENT_LIST_DIR}/buildsystem
     SOURCES
-        projectitem/filefilteritems.cpp projectitem/filefilteritems.h
-        projectitem/qmlprojectitem.cpp projectitem/qmlprojectitem.h
-        projectitem/converters.cpp projectitem/converters.h
+        buildsystem/projectitem/filefilteritems.cpp buildsystem/projectitem/filefilteritems.h
+        buildsystem/projectitem/qmlprojectitem.cpp buildsystem/projectitem/qmlprojectitem.h
+        buildsystem/projectitem/converters.cpp buildsystem/projectitem/converters.h
+        qmlprojectexporter/filetypes.cpp qmlprojectexporter/filetypes.h
+        qmldirtoqmlproject/mcumoduleprojectitem.cpp qmldirtoqmlproject/mcumoduleprojectitem.h
 )

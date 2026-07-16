@@ -3,42 +3,40 @@
 
 #include "qmltaskmanager.h"
 #include "qmljseditorconstants.h"
+#include "qmllsclientsettings.h"
 
 #include <coreplugin/icore.h>
 #include <coreplugin/idocument.h>
+#include <projectexplorer/buildsystem.h>
+#include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorer.h>
+#include <projectexplorer/projectmanager.h>
 #include <projectexplorer/taskhub.h>
+#include <projectexplorer/projectexplorerconstants.h>
 #include <qmljs/qmljsmodelmanagerinterface.h>
 #include <qmljs/qmljscontext.h>
 #include <qmljs/qmljsconstants.h>
 #include <qmljs/qmljslink.h>
 #include <qmljs/qmljscheck.h>
+#include <qmljstools/qmljsmodelmanager.h>
 #include <utils/async.h>
 
 #include <QDebug>
-#include <QtConcurrentRun>
 
 using namespace ProjectExplorer;
 using namespace QmlJS;
 using namespace Utils;
 
-namespace QmlJSEditor {
-namespace Internal {
+namespace QmlJSEditor::Internal {
 
 QmlTaskManager::QmlTaskManager()
 {
-    // displaying results incrementally leads to flickering
-//    connect(&m_messageCollector, &QFutureWatcherBase::resultsReadyAt,
-//            this, &QmlTaskManager::displayResults);
-    connect(&m_messageCollector, &QFutureWatcherBase::finished,
-            this, &QmlTaskManager::displayAllResults);
-
     m_updateDelay.setInterval(500);
     m_updateDelay.setSingleShot(true);
     connect(&m_updateDelay, &QTimer::timeout, this, [this] { updateMessagesNow(); });
 }
 
-static Tasks convertToTasks(const QList<DiagnosticMessage> &messages, const FilePath &fileName, Utils::Id category)
+static Tasks convertToTasks(const QList<DiagnosticMessage> &messages, const FilePath &fileName, Id category)
 {
     Tasks result;
     for (const DiagnosticMessage &msg : messages) {
@@ -49,7 +47,7 @@ static Tasks convertToTasks(const QList<DiagnosticMessage> &messages, const File
     return result;
 }
 
-static Tasks convertToTasks(const QList<StaticAnalysis::Message> &messages, const FilePath &fileName, Utils::Id category)
+static Tasks convertToTasks(const QList<StaticAnalysis::Message> &messages, const FilePath &fileName, Id category)
 {
     QList<DiagnosticMessage> diagnostics;
     for (const StaticAnalysis::Message &msg : messages)
@@ -58,20 +56,23 @@ static Tasks convertToTasks(const QList<StaticAnalysis::Message> &messages, cons
 }
 
 void QmlTaskManager::collectMessages(QPromise<FileErrorMessages> &promise,
-                                     Snapshot snapshot,
+                                     const Snapshot &snapshot,
                                      const QList<ModelManagerInterface::ProjectInfo> &projectInfos,
-                                     ViewerContext vContext,
+                                     const ViewerContext &vContext,
                                      bool updateSemantic)
 {
     for (const ModelManagerInterface::ProjectInfo &info : projectInfos) {
-        QHash<Utils::FilePath, QList<DiagnosticMessage>> linkMessages;
+        if (qmllsSettings()->isEnabledOnProject(QmlJSTools::Internal::projectFromProjectInfo(info)))
+            continue;
+
+        QHash<FilePath, QList<DiagnosticMessage>> linkMessages;
         ContextPtr context;
         if (updateSemantic) {
-            QmlJS::Link link(snapshot, vContext, QmlJS::LibraryInfo());
+            QmlJS::Link link(snapshot, vContext, LibraryInfo());
             context = link(&linkMessages);
         }
 
-        for (const Utils::FilePath &fileName : std::as_const(info.sourceFiles)) {
+        for (const FilePath &fileName : std::as_const(info.sourceFiles)) {
             Document::Ptr document = snapshot.document(fileName);
             if (!document)
                 continue;
@@ -110,6 +111,21 @@ void QmlTaskManager::updateMessages()
 
 void QmlTaskManager::updateSemanticMessagesNow()
 {
+    // note: this can only be called for the startup project
+    BuildSystem *buildSystem = activeBuildSystemForActiveProject();
+    if (!buildSystem)
+        return;
+
+    const bool isCMake = buildSystem->name() == "cmake";
+    // heuristic: qmllint will output meaningful warnings if qmlls is enabled
+    if (isCMake && qmllsSettings()->isEnabledOnProject(buildSystem->project())) {
+        // abort any update that's going on already, and remove old codemodel warnings
+        m_taskTreeRunner.reset();
+        removeAllTasks(true);
+        buildSystem->buildNamedTarget(Constants::QMLLINT_BUILD_TARGET);
+        return;
+    }
+
     updateMessagesNow(true);
 }
 
@@ -121,49 +137,46 @@ void QmlTaskManager::updateMessagesNow(bool updateSemantic)
     m_updatingSemantic = updateSemantic;
 
     // abort any update that's going on already
-    m_messageCollector.cancel();
     removeAllTasks(updateSemantic);
 
-    ModelManagerInterface *modelManager = ModelManagerInterface::instance();
-
-    // process them
-    QFuture<FileErrorMessages> future = Utils::asyncRun(
-                &collectMessages, modelManager->newestSnapshot(), modelManager->projectInfos(),
-                modelManager->defaultVContext(Dialect::AnyLanguage), updateSemantic);
-    m_messageCollector.setFuture(future);
-}
-
-void QmlTaskManager::documentsRemoved(const Utils::FilePaths &path)
-{
-    for (const Utils::FilePath &item : path)
-        removeTasksForFile(item);
-}
-
-void QmlTaskManager::displayResults(int begin, int end)
-{
-    for (int i = begin; i < end; ++i) {
-        const ProjectExplorer::Tasks tasks = m_messageCollector.resultAt(i).tasks;
-        for (const Task &task : tasks) {
-            insertTask(task);
+    const auto onSetup = [updateSemantic](Async<FileErrorMessages> &task) {
+        ModelManagerInterface *modelManager = ModelManagerInterface::instance();
+        task.setConcurrentCallData(&collectMessages,
+                                   modelManager->newestSnapshot(),
+                                   modelManager->projectInfos(),
+                                   modelManager->defaultVContext(Dialect::AnyLanguage),
+                                   updateSemantic);
+    };
+    // displaying results incrementally leads to flickering
+    const auto onDone = [this](const Async<FileErrorMessages> &task) {
+        if (task.isResultAvailable()) {
+            const auto results = task.results();
+            for (const FileErrorMessages &result : results) {
+                const Tasks tasks = result.tasks;
+                for (const Task &task : tasks)
+                    insertTask(task);
+            }
         }
-    }
+        m_updatingSemantic = false;
+    };
+    m_taskTreeRunner.start({AsyncTask<FileErrorMessages>(onSetup, onDone)});
 }
 
-void QmlTaskManager::displayAllResults()
+void QmlTaskManager::documentsRemoved(const FilePaths &paths)
 {
-    displayResults(0, m_messageCollector.future().resultCount());
-    m_updatingSemantic = false;
+    for (const FilePath &path : paths)
+        removeTasksForFile(path);
 }
 
 void QmlTaskManager::insertTask(const Task &task)
 {
-    Tasks tasks = m_docsWithTasks.value(task.file);
+    Tasks tasks = m_docsWithTasks.value(task.file());
     tasks.append(task);
-    m_docsWithTasks.insert(task.file, tasks);
+    m_docsWithTasks.insert(task.file(), tasks);
     TaskHub::addTask(task);
 }
 
-void QmlTaskManager::removeTasksForFile(const Utils::FilePath &fileName)
+void QmlTaskManager::removeTasksForFile(const FilePath &fileName)
 {
     if (m_docsWithTasks.contains(fileName)) {
         const Tasks tasks = m_docsWithTasks.value(fileName);
@@ -181,5 +194,4 @@ void QmlTaskManager::removeAllTasks(bool clearSemantic)
     m_docsWithTasks.clear();
 }
 
-} // Internal
-} // QmlProjectManager
+} // QmlProjectManager::Internal

@@ -16,17 +16,11 @@ const Icon BREAKPOINT_PENDING({
         {":/debugger/images/breakpoint_pending_overlay.png", Theme::PanelTextColorDark}}, Icon::IconStyleOptions(Icon::Tint | Icon::PunchEdges));
 const Icon BREAKPOINT_WITH_LOCATION({
         {":/utils/images/filledcircle.png", Theme::IconsErrorColor},
-        {":/debugger/images/location.png", Theme::IconsWarningToolBarColor}}, Icon::Tint);
+        {":/debugger/images/location.png", Theme::IconsWarningColor}}, Icon::Tint);
 const Icon BREAKPOINTS(
         ":/debugger/images/debugger_breakpoints.png");
 const Icon WATCHPOINT({
         {":/utils/images/eye_open.png", Theme::TextColorNormal}}, Icon::Tint);
-const Icon TRACEPOINT({
-        {":/utils/images/eye_open.png", Theme::TextColorNormal},
-        {":/debugger/images/tracepointoverlay.png", Theme::TextColorNormal}}, Icon::Tint | Icon::PunchEdges);
-const Icon TRACEPOINT_TOOLBAR({
-        {":/utils/images/eye_open.png", Theme::IconsBaseColor},
-        {":/debugger/images/tracepointoverlay.png", Theme::IconsBaseColor}});
 const Icon CONTINUE(
         ":/debugger/images/debugger_continue.png");
 const Icon CONTINUE_FLAT({
@@ -65,10 +59,10 @@ const Icon DEBUG_EXIT_SMALL_TOOLBAR({
         {":/utils/images/debugger_overlay_small.png", Theme::IconsDebugColor}});
 const Icon LOCATION({
         {":/debugger/images/location_background.png", Theme::IconsCodeModelOverlayForegroundColor},
-        {":/debugger/images/location.png", Theme::IconsWarningToolBarColor}}, Icon::Tint);
+        {":/debugger/images/location.png", Theme::IconsWarningColor}}, Icon::Tint);
 const Icon REVERSE_LOCATION({
         {":/debugger/images/debugger_reversemode_background.png", Theme::IconsCodeModelOverlayForegroundColor},
-        {":/debugger/images/debugger_reversemode.png", Theme::IconsWarningToolBarColor}}, Icon::Tint);
+        {":/debugger/images/debugger_reversemode.png", Theme::IconsWarningColor}}, Icon::Tint);
 const Icon REVERSE_MODE({
         {":/debugger/images/debugger_reversemode_background.png", Theme::IconsCodeModelOverlayForegroundColor},
         {":/debugger/images/debugger_reversemode.png", Theme::IconsInfoColor}}, Icon::Tint);
@@ -88,12 +82,6 @@ const Icon SELECT_TOOLBAR({
         {":/utils/images/select.png", Theme::IconsBaseColor}});
 const Icon EMPTY(
         ":/debugger/images/debugger_empty_14.png");
-const Icon RECORD_ON({
-        {":/debugger/images/recordfill.png", Theme::IconsStopColor},
-        {":/debugger/images/recordoutline.png", Theme::IconsBaseColor}}, Icon::Tint | Icon::DropShadow);
-const Icon RECORD_OFF({
-        {":/debugger/images/recordfill.png", Theme::IconsDisabledColor},
-        {":/debugger/images/recordoutline.png", Theme::IconsBaseColor}}, Icon::Tint | Icon::DropShadow);
 
 const Icon STEP_OVER({
         {":/debugger/images/debugger_stepover_small.png", Theme::PanelTextColorMid}}, Icon::MenuTintedStyle);
@@ -118,8 +106,6 @@ const Icon MODE_DEBUGGER_CLASSIC(
         ":/debugger/images/mode_debug.png");
 const Icon MODE_DEBUGGER_FLAT({
         {":/debugger/images/mode_debug_mask.png", Theme::IconsBaseColor}});
-const Icon MODE_DEBUGGER_FLAT_ACTIVE({
-        {":/debugger/images/mode_debug_mask.png", Theme::IconsModeDebugActiveColor}});
 
 const Icon MACOS_TOUCHBAR_DEBUG(
         ":/debugger/images/macos_touchbar_debug.png");

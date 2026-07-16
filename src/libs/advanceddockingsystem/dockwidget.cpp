@@ -44,11 +44,11 @@ public:
 
     DockWidget *q = nullptr;
     QBoxLayout *m_layout = nullptr;
-    QWidget *m_widget = nullptr;
+    QPointer<QWidget> m_widget;
     DockWidgetTab *m_tabWidget = nullptr;
     DockWidget::DockWidgetFeatures m_features = DockWidget::DefaultDockWidgetFeatures;
     DockManager *m_dockManager = nullptr;
-    DockAreaWidget *m_dockArea = nullptr;
+    QPointer<DockAreaWidget> m_dockArea;
     QAction *m_toggleViewAction = nullptr;
     bool m_closed = false;
     bool m_focused = false;
@@ -585,18 +585,19 @@ void DockWidget::toggleViewInternal(bool open)
 
     d->m_closed = !open;
 
+    //d->m_toggleViewAction->blockSignals(true);
+    d->m_toggleViewAction->setChecked(open);
+    //d->m_toggleViewAction->blockSignals(false);
+
     if (open)
         d->showDockWidget();
     else
         d->hideDockWidget();
 
-    //d->m_toggleViewAction->blockSignals(true);
-    d->m_toggleViewAction->setChecked(open);
-    //d->m_toggleViewAction->blockSignals(false);
     if (d->m_dockArea)
         d->m_dockArea->toggleDockWidgetView(this, open);
 
-    if (d->m_dockArea->isAutoHide())
+    if (d->m_dockArea && d->m_dockArea->isAutoHide())
         d->m_dockArea->autoHideDockContainer()->toggleView(open);
 
     if (open && topLevelDockWidgetBefore)
@@ -624,7 +625,7 @@ void DockWidget::toggleViewInternal(bool open)
 void DockWidget::setDockArea(DockAreaWidget *dockArea)
 {
     d->m_dockArea = dockArea;
-    d->m_toggleViewAction->setChecked(dockArea != nullptr && !isClosed());
+    d->m_toggleViewAction->setChecked(!isClosed());
     setParent(dockArea);
 }
 

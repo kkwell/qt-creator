@@ -13,8 +13,6 @@ namespace QmakeProjectManager {
 
 class QMAKEPROJECTMANAGER_EXPORT QMakeParser : public ProjectExplorer::OutputTaskParser
 {
-    Q_OBJECT
-
 public:
     QMakeParser();
 
@@ -24,8 +22,22 @@ private:
     const QRegularExpression m_error;
 };
 
+namespace Internal {
+
+class QmakeTask : public ProjectExplorer::BuildSystemTask
+{
+public:
+    QmakeTask(TaskType type, const QString &description, const Utils::FilePath &file = {},
+              int line = -1)
+        : ProjectExplorer::BuildSystemTask(type, description, file, line)
+    {
+        setOrigin("qmake");
+    }
+};
+
 #ifdef WITH_TESTS
-namespace Internal { QObject *createQmakeOutputParserTest(); }
+QObject *createQmakeOutputParserTest();
 #endif
 
+} // namespace Internal
 } // namespace QmakeProjectManager

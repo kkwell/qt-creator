@@ -2,18 +2,17 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 import QtQuick
+import QtQuick.Layouts
 import Qt.labs.qmlmodels
 import HelperWidgets as HelperWidgets
 import StudioControls as StudioControls
 import StudioTheme as StudioTheme
 import ContentLibraryBackend
 
-HelperWidgets.ScrollView {
+Item {
     id: root
 
-    clip: true
-    interactive: !ctxMenuItem.opened && !ctxMenuTexture.opened
-                 && !ContentLibraryBackend.rootView.isDragging && !HelperWidgets.Controller.contextMenuOpened
+    property alias adsFocus: scrollView.adsFocus
 
     property real cellWidth: 100
     property real cellHeight: 120
@@ -46,125 +45,282 @@ HelperWidgets.ScrollView {
         }
     }
 
-    Column {
-        ContentLibraryItemContextMenu {
-            id: ctxMenuItem
+    ContentLibraryItemContextMenu {
+        id: ctxMenuItem
 
-            enableRemove: true
+        showRemoveAction: true
 
-            onApplyToSelected: (add) => ContentLibraryBackend.userModel.applyToSelected(ctxMenuItem.targetItem, add)
+        onApplyToSelected: (add) => ContentLibraryBackend.userModel.applyToSelected(ctxMenuItem.targetItem, add)
 
-            onUnimport: root.unimport(ctxMenuItem.targetItem)
-            onAddToProject: ContentLibraryBackend.userModel.addToProject(ctxMenuItem.targetItem)
-            onRemoveFromContentLib: root.removeFromContentLib(ctxMenuItem.targetItem)
+        onUnimport: root.unimport(ctxMenuItem.targetItem)
+        onAddToProject: ContentLibraryBackend.userModel.addToProject(ctxMenuItem.targetItem)
+        onRemoveFromContentLib: root.removeFromContentLib(ctxMenuItem.targetItem)
+    }
+
+    ContentLibraryTextureContextMenu {
+        id: ctxMenuTexture
+
+        showRemoveAction: true
+        hasSceneEnv: ContentLibraryBackend.texturesModel.hasSceneEnv
+    }
+
+    MouseArea {
+        id: rootMouseArea
+
+        anchors.fill: parent
+        acceptedButtons: Qt.RightButton
+        enabled: ContentLibraryBackend.rootView.isQt6Project
+              && ContentLibraryBackend.rootView.hasQuick3DImport
+              && ContentLibraryBackend.rootView.hasMaterialLibrary
+
+        onClicked: (mouse) => {
+            ctxMenuItem.popupMenu()
+        }
+    }
+
+    ColumnLayout {
+        id: col
+
+        anchors.fill: parent
+        spacing: 0
+
+        Rectangle {
+            id: toolbar
+
+            width: parent.width
+            height: StudioTheme.Values.toolbarHeight
+            color: StudioTheme.Values.themeToolbarBackground
+
+            HelperWidgets.AbstractButton {
+                style: StudioTheme.Values.viewBarButtonStyle
+                buttonIcon: StudioTheme.Constants.add_medium
+                tooltip: qsTr("Add a custom bundle folder.")
+                onClicked: ContentLibraryBackend.rootView.browseBundleFolder()
+                x: 5 // left margin
+            }
         }
 
-        ContentLibraryTextureContextMenu {
-            id: ctxMenuTexture
+        HelperWidgets.ScrollView {
+            id: scrollView
 
-            enableRemove: true
-            hasSceneEnv: ContentLibraryBackend.texturesModel.hasSceneEnv
-        }
+            Layout.fillWidth: true
+            Layout.fillHeight: true
 
-        Repeater {
-            id: categoryRepeater
+            clip: true
+            interactive: !ctxMenuItem.opened && !ctxMenuTexture.opened
+                         && !ContentLibraryBackend.rootView.isDragging && !HelperWidgets.Controller.contextMenuOpened
+            hideHorizontalScrollBar: true
 
-            model: ContentLibraryBackend.userModel
+            Column {
+                Repeater {
+                    id: categoryRepeater
 
-            delegate: HelperWidgets.Section {
-                id: section
+                    model: ContentLibraryBackend.userModel
 
-                width: root.width
-                leftPadding: StudioTheme.Values.sectionPadding
-                rightPadding: StudioTheme.Values.sectionPadding
-                topPadding: StudioTheme.Values.sectionPadding
-                bottomPadding: StudioTheme.Values.sectionPadding
+                    delegate: HelperWidgets.Section {
+                        id: section
 
-                caption: categoryName
-                visible: categoryVisible && infoText.text === ""
-                category: "ContentLib_User"
+                        width: root.width
+                        leftPadding: StudioTheme.Values.sectionPadding
+                        rightPadding: StudioTheme.Values.sectionPadding
+                        topPadding: StudioTheme.Values.sectionPadding
+                        bottomPadding: StudioTheme.Values.sectionPadding
 
-                function expandSection() {
-                    section.expanded = true
-                }
+                        caption: categoryTitle
+                        captionTooltip: section.isCustomCat ? categoryBundlePath : ""
+                        dropEnabled: true
+                        category: "ContentLib_User"
+                        showCloseButton: section.isCustomCat
+                        closeButtonToolTip: qsTr("Remove folder")
+                        closeButtonIcon: StudioTheme.Constants.deletepermanently_small
 
-                property alias count: repeater.count
+                        onCloseButtonClicked: {
+                            ContentLibraryBackend.userModel.removeBundleDir(index)
+                        }
 
-                onCountChanged: root.assignMaxCount()
+                        function expandSection() {
+                            section.expanded = true
+                        }
 
-                Grid {
-                    width: section.width - section.leftPadding - section.rightPadding
-                    spacing: StudioTheme.Values.sectionGridSpacing
-                    columns: root.numColumns
+                        property alias count: repeater.count
+                        property bool isCustomCat: !["Textures", "Materials", "2D", "3D"].includes(section.caption);
 
-                    Repeater {
-                        id: repeater
-                        model: categoryItems
+                        onCountChanged: root.assignMaxCount()
 
-                        delegate: DelegateChooser {
-                            role: "itemType"
+                        onDropEnter: (drag) => {
 
-                            DelegateChoice {
-                                roleValue: "material"
-                                ContentLibraryMaterial {
-                                    width: root.cellWidth
-                                    height: root.cellHeight
+                            let hasTexture = ContentLibraryBackend.rootView
+                                         .hasTexture(drag.formats[0], drag.urls)
+                            let isValid2DNode = categoryTitle === "2D"
+                                         && ContentLibraryBackend.rootView
+                                         .has2DNode(drag.getDataAsArrayBuffer(drag.formats[0]))
+                            let isValid3DNode = categoryTitle === "3D"
+                                         && ContentLibraryBackend.rootView
+                                         .has3DNode(drag.getDataAsArrayBuffer(drag.formats[0]))
 
-                                    onShowContextMenu: ctxMenuItem.popupMenu(modelData)
-                                    onAddToProject: ContentLibraryBackend.userModel.addToProject(modelData)
-                                }
-                            }
-                            DelegateChoice {
-                                roleValue: "texture"
-                                delegate: ContentLibraryTexture {
-                                    width: root.cellWidth
-                                    height: root.cellWidth // for textures use a square size since there is no name row
+                            drag.accepted = (categoryTitle === "Textures" && hasTexture)
+                                         || (categoryTitle === "Materials"
+                                             && drag.formats[0] === "application/vnd.qtdesignstudio.material")
+                                         || isValid2DNode
+                                         || isValid3DNode
+                                         || (section.isCustomCat && hasTexture)
 
-                                    onShowContextMenu: ctxMenuTexture.popupMenu(modelData)
-                                }
-                            }
-                            DelegateChoice {
-                                roleValue: "item"
-                                delegate: ContentLibraryItem {
-                                    width: root.cellWidth
-                                    height: root.cellHeight
+                            section.highlight = drag.accepted
+                        }
 
-                                    onShowContextMenu: ctxMenuItem.popupMenu(modelData)
+                        onDropExit: {
+                            section.highlight = false
+                        }
+
+                        onDrop: (drag) => {
+                            section.highlight = false
+                            drag.accept()
+                            section.expandSection()
+
+                            if (categoryTitle === "Textures") {
+                                if (drag.formats[0] === "application/vnd.qtdesignstudio.assets")
+                                    ContentLibraryBackend.rootView.acceptTexturesDrop(drag.urls)
+                                else if (drag.formats[0] === "application/vnd.qtdesignstudio.texture")
+                                    ContentLibraryBackend.rootView.acceptTextureDrop(drag.getDataAsString(drag.formats[0]))
+                            } else if (categoryTitle === "Materials") {
+                                ContentLibraryBackend.rootView.acceptMaterialDrop(drag.getDataAsString(drag.formats[0]))
+                            } else if (categoryTitle === "2D" || categoryTitle === "3D") {
+                                ContentLibraryBackend.rootView.acceptNodeDrop(drag.getDataAsArrayBuffer(drag.formats[0]))
+                            } else { // custom bundle folder
+
+                                if (drag.formats[0] === "application/vnd.qtdesignstudio.assets") {
+                                    ContentLibraryBackend.rootView.acceptTexturesDrop(drag.urls, categoryBundlePath)
+                                } else if (drag.formats[0] === "application/vnd.qtdesignstudio.texture") {
+                                    ContentLibraryBackend.rootView.acceptTextureDrop(drag.getDataAsString(drag.formats[0]), categoryBundlePath)
+                                } else if (drag.formats[0] === "text/uri-list") {
+                                    let validExternalDrop = ContentLibraryBackend.rootView
+                                            .hasTexture(drag.formats[0], drag.urls)
+
+                                    if (validExternalDrop)
+                                        ContentLibraryBackend.rootView.acceptTexturesDrop(drag.urls, categoryBundlePath)
                                 }
                             }
                         }
 
-                        onCountChanged: root.assignMaxCount()
+                        Grid {
+                            id: grid
+
+                            width: section.width - section.leftPadding - section.rightPadding
+                            spacing: StudioTheme.Values.sectionGridSpacing
+                            columns: root.numColumns
+
+                            property int catIdx: index
+
+                            Repeater {
+                                id: repeater
+
+                                model: categoryItems
+
+                                delegate: DelegateChooser {
+                                    role: "bundleId"
+
+                                    DelegateChoice {
+                                        roleValue: "UserMaterials"
+                                        ContentLibraryItem {
+                                            width: root.cellWidth
+                                            height: root.cellHeight
+                                            visible: modelData.bundleItemVisible && !infoText.visible
+
+                                            onShowContextMenu: ctxMenuItem.popupMenu(modelData)
+                                            onAddToProject: ContentLibraryBackend.userModel.addToProject(modelData)
+                                        }
+                                    }
+                                    DelegateChoice {
+                                        roleValue: "UserTextures"
+                                        delegate: ContentLibraryTexture {
+                                            width: root.cellWidth
+                                            height: root.cellWidth // for textures use a square size since there is no name row
+
+                                            onShowContextMenu: ctxMenuTexture.popupMenu(modelData, grid.catIdx > 2)
+                                        }
+                                    }
+                                    DelegateChoice {
+                                        roleValue: "User2D"
+                                        delegate: ContentLibraryItem {
+                                            width: root.cellWidth
+                                            height: root.cellHeight
+                                            visible: modelData.bundleItemVisible && !infoText.visible
+
+                                            onShowContextMenu: ctxMenuItem.popupMenu(modelData)
+                                            onAddToProject: ContentLibraryBackend.userModel.addToProject(modelData)
+                                        }
+                                    }
+                                    DelegateChoice {
+                                        roleValue: "User3D"
+                                        delegate: ContentLibraryItem {
+                                            width: root.cellWidth
+                                            height: root.cellHeight
+                                            visible: modelData.bundleItemVisible && !infoText.visible
+
+                                            onShowContextMenu: ctxMenuItem.popupMenu(modelData)
+                                            onAddToProject: ContentLibraryBackend.userModel.addToProject(modelData)
+                                        }
+                                    }
+                                }
+
+                                onCountChanged: root.assignMaxCount()
+                            }
+                        }
+
+                        Text {
+                            text: qsTr("No match found.");
+                            color: StudioTheme.Values.themeTextColor
+                            font.pixelSize: StudioTheme.Values.baseFontSize
+                            leftPadding: 10
+                            visible: infoText.text === "" && !searchBox.isEmpty() && categoryNoMatch
+                        }
+
+                        Text {
+                            id: infoText
+
+                            text: {
+                                let categoryName = (categoryTitle === "3D") ? categoryTitle + " assets"
+                                                                            : categoryTitle.toLowerCase()
+                                let alwaysAvailable = categoryTitle === "Textures"
+                                    || categoryTitle === "2D" || section.isCustomCat
+                                if (!ContentLibraryBackend.rootView.isQt6Project) {
+                                    qsTr("<b>Content Library</b> is not supported in Qt5 projects.")
+                                } else if (!ContentLibraryBackend.rootView.hasQuick3DImport
+                                           && !alwaysAvailable) {
+                                    qsTr('To use %1, add the <b>QtQuick3D</b> module and the <b>View3D</b>
+                                         component in the <b>Components</b> view, or click
+                                         <a href=\"#add_import\"><span style=\"text-decoration:none;color:%2\">
+                                         here</span></a>.')
+                                    .arg(categoryName)
+                                    .arg(StudioTheme.Values.themeInteraction)
+                                } else if (!ContentLibraryBackend.rootView.hasMaterialLibrary
+                                           && !alwaysAvailable) {
+                                    qsTr("<b>Content Library</b> is disabled inside a non-visual component.")
+                                } else if (categoryEmpty) {
+                                    qsTr("There are no items in this category.")
+                                } else {
+                                    ""
+                                }
+                            }
+                            textFormat: Text.RichText
+                            color: StudioTheme.Values.themeTextColor
+                            font.pixelSize: StudioTheme.Values.mediumFontSize
+                            padding: 10
+                            visible: infoText.text !== ""
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                            width: root.width
+
+                            onLinkActivated: ContentLibraryBackend.rootView.addQtQuick3D()
+
+                            HoverHandler {
+                                enabled: infoText.hoveredLink
+                                cursorShape: Qt.PointingHandCursor
+                            }
+                        }
                     }
                 }
-
-                Text {
-                    text: qsTr("No match found.");
-                    color: StudioTheme.Values.themeTextColor
-                    font.pixelSize: StudioTheme.Values.baseFontSize
-                    leftPadding: 10
-                    visible: infoText.text === "" && !searchBox.isEmpty() && categoryNoMatch
-                }
             }
-        }
-
-        Text {
-            id: infoText
-            text: {
-                if (!ContentLibraryBackend.rootView.isQt6Project)
-                    qsTr("<b>Content Library</b> is not supported in Qt5 projects.")
-                else if (!ContentLibraryBackend.rootView.hasQuick3DImport)
-                    qsTr("To use <b>Content Library</b>, first add the QtQuick3D module in the <b>Components</b> view.")
-                else if (!ContentLibraryBackend.rootView.hasMaterialLibrary)
-                    qsTr("<b>Content Library</b> is disabled inside a non-visual component.")
-                else
-                    ""
-            }
-            color: StudioTheme.Values.themeTextColor
-            font.pixelSize: StudioTheme.Values.baseFontSize
-            topPadding: 10
-            leftPadding: 10
-            visible: infoText.text !== ""
         }
     }
 }

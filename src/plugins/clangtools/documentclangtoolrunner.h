@@ -7,7 +7,7 @@
 #include "clangtoolsdiagnostic.h"
 #include "clangtoolsprojectsettings.h"
 
-#include <solutions/tasking/tasktreerunner.h>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <utils/filepath.h>
 #include <utils/temporarydirectory.h>
@@ -15,8 +15,10 @@
 #include <QObject>
 #include <QTimer>
 
-namespace Core { class IDocument; }
-namespace TextEditor { class TextEditorWidget; }
+namespace TextEditor {
+class TextDocument;
+class TextEditorWidget;
+}
 
 namespace ClangTools {
 namespace Internal {
@@ -28,13 +30,12 @@ class DocumentClangToolRunner : public QObject
 {
     Q_OBJECT
 public:
-    DocumentClangToolRunner(Core::IDocument *doc);
+    DocumentClangToolRunner(TextEditor::TextDocument *doc);
     ~DocumentClangToolRunner();
 
-    Utils::FilePath filePath() const;
-    Diagnostics diagnosticsAtLine(int lineNumber) const;
-
 private:
+    void showDiagnostics();
+    void hideDiagnostics();
     void scheduleRun();
     void run();
 
@@ -44,15 +45,16 @@ private:
     bool isSuppressed(const Diagnostic &diagnostic) const;
 
     QTimer m_runTimer;
-    Core::IDocument *m_document = nullptr;
+    TextEditor::TextDocument * const m_document;
     Utils::TemporaryDirectory m_temporaryDir;
     QList<DiagnosticMark *> m_marks;
+    QList<ProjectExplorer::Task> m_tasks;
     FileInfo m_fileInfo;
     QMetaObject::Connection m_projectSettingsUpdate;
     QList<QPointer<TextEditor::TextEditorWidget>> m_editorsWithMarkers;
     SuppressedDiagnosticsList m_suppressed;
     Utils::FilePath m_lastProjectDirectory;
-    Tasking::TaskTreeRunner m_taskTreeRunner;
+    QtTaskTree::QSingleTaskTreeRunner m_taskTreeRunner;
 };
 
 } // namespace Internal

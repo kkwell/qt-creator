@@ -167,7 +167,7 @@ void TodoOutputPane::todoTreeViewClicked(const QModelIndex &index)
     item.iconType = static_cast<IconType>(index.sibling(row, Constants::OUTPUT_COLUMN_TEXT)
                                           .data(Qt::UserRole).toInt());
 
-    emit todoItemClicked(item);
+    todoItemClicked(item);
 }
 
 void TodoOutputPane::updateTodoCount()
@@ -260,7 +260,7 @@ void TodoOutputPane::createScopeButtons()
     m_spacer->setMinimumWidth(Constants::OUTPUT_TOOLBAR_SPACER_WIDTH);
 
     QString tooltip = Tr::tr("Show \"%1\" entries");
-    for (const Keyword &keyword: todoSettings().keywords) {
+    for (const Keyword &keyword: std::as_const(todoSettings().keywords)) {
         QToolButton *button = createCheckableToolButton(keyword.name, tooltip.arg(keyword.name), toolBarIcon(keyword.iconType));
         button->setProperty(Constants::FILTER_KEYWORD_NAME, keyword.name);
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);

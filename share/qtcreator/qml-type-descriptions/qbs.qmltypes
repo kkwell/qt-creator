@@ -20,6 +20,7 @@ Module {
         prototype: "QQuickItem"
         Property { name: "condition"; type: "bool" }
         Property { name: "limitToSubProject"; type: "bool" }
+        Property { name: "minimal"; type: "bool" }
         Property { name: "multiplexConfigurationIds"; type: "string"; isList: true }
         Property { name: "name"; type: "string" }
         Property { name: "productTypes"; type: "string"; isList: true }
@@ -92,6 +93,7 @@ Module {
         name: "ModuleProvider"
         exports: [ "qbs/ModuleProvider 1.0" ]
         prototype: "QQuickItem"
+        Property { name: "condition"; type: "bool" }
         Property { name: "isEager"; type: "bool" }
         Property { name: "moduleName"; type: "string" }
         Property { name: "name"; type: "string" }
@@ -183,6 +185,7 @@ Module {
         prototype: "QQuickItem"
         Property { name: "alwaysRun"; type: "bool" }
         Property { name: "auxiliaryInputs"; type: "string"; isList: true }
+        Property { name: "auxiliaryInputsFromDependencies"; type: "string"; isList: true }
         Property { name: "condition"; type: "bool" }
         Property { name: "excludedAuxiliaryInputs"; type: "string"; isList: true }
         Property { name: "excludedInputs"; type: "string"; isList: true }
@@ -202,8 +205,10 @@ Module {
         name: "Scanner"
         exports: [ "qbs/Scanner 1.0" ]
         prototype: "QQuickItem"
+        Property { name: "cacheIsPerFile"; type: "bool" }
         Property { name: "condition"; type: "bool" }
         Property { name: "inputs"; type: "string"; isList: true }
+        Property { name: "pluginName"; type: "string" }
         Property { name: "recursive"; type: "bool" }
         Property { name: "scan"; type: "QVariant" }
         Property { name: "searchPaths"; type: "string"; isList: true }

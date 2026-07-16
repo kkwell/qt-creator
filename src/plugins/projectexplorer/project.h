@@ -5,8 +5,8 @@
 
 #include "projectexplorer_export.h"
 
-#include "deploymentdata.h"
 #include "kit.h"
+#include "task.h"
 
 #include <coreplugin/idocument.h>
 
@@ -20,6 +20,7 @@
 #include <memory>
 
 namespace Core { class Context; }
+namespace TextEditor { class ProjectWrapper; }
 namespace Utils {
 class Environment;
 class MacroExpander;
@@ -27,16 +28,22 @@ class MacroExpander;
 
 namespace ProjectExplorer {
 
+enum class DeploymentKnowledge;
+
 class BuildConfiguration;
 class BuildInfo;
 class BuildSystem;
 class ContainerNode;
+class DeployConfiguration;
 class EditorConfiguration;
+class QmlCodeModelInfo;
 class FolderNode;
 class Node;
+class PerProjectProjectExplorerSettings;
 class ProjectImporter;
 class ProjectNode;
 class ProjectPrivate;
+class RunConfiguration;
 class Target;
 enum class SetActive : int;
 
@@ -48,17 +55,17 @@ class PROJECTEXPLORER_EXPORT Project : public QObject
 public:
     // Roles to be implemented by all models that are exported via model()
     enum ModelRoles {
-        // Absolute file path
-        FilePathRole = QFileSystemModel::FilePathRole,
-        isParsingRole,
+        isParsingRole = Qt::UserRole + 1,
         UseUnavailableMarkerRole,
+        NodeRole,
     };
 
     Project(const QString &mimeType, const Utils::FilePath &fileName);
     ~Project() override;
 
+    QString buildSystemName() const;
     QString displayName() const;
-    Utils::Id id() const;
+    Utils::Id type() const;
 
     void markAsShuttingDown();
     bool isShuttingDown() const;
@@ -66,16 +73,16 @@ public:
     QString mimeType() const;
     bool canBuildProducts() const;
 
-    BuildSystem *createBuildSystem(Target *target) const;
+    BuildSystem *createBuildSystem(BuildConfiguration *bc) const;
 
-    virtual Utils::FilePath projectFilePath() const;
+    Utils::FilePath projectFilePath() const;
     virtual Utils::FilePath projectDirectory() const;
 
     // This does not affect nodes, only the root path.
     void changeRootProjectDirectory();
     Utils::FilePath rootProjectDirectory() const;
 
-    virtual ProjectNode *rootProjectNode() const;
+    ProjectNode *rootProjectNode() const;
     ContainerNode *containerNode() const;
 
     // EditorConfiguration:
@@ -84,7 +91,7 @@ public:
     // Target:
     Target *addTargetForDefaultKit();
     Target *addTargetForKit(Kit *kit);
-    bool removeTarget(Target *target);
+    void removeTarget(Target *target);
 
     const QList<Target *> targets() const;
     // Note: activeTarget can be 0 (if no targets are defined).
@@ -92,10 +99,25 @@ public:
     Target *target(Utils::Id id) const;
     Target *target(Kit *k) const;
     void setActiveTarget(Target *target, SetActive cascade);
+    void setActiveBuildConfiguration(BuildConfiguration *bc, SetActive cascade);
 
+    Kit *activeKit() const;
+    RunConfiguration *activeRunConfiguration() const;
+    BuildConfiguration *activeBuildConfiguration() const;
+    DeployConfiguration *activeDeployConfiguration() const;
+    BuildSystem *activeBuildSystem() const;
+    bool isParsing() const;
+    QList<BuildConfiguration *> allBuildConfigurations() const;
+
+    void setIssuesGenerator(const std::function<Tasks(const Kit *)> &generator);
+    static Task checkBuildDevice(const Kit *k, const Utils::FilePath &projectFile);
     virtual Tasks projectIssues(const Kit *k) const;
 
-    static bool copySteps(Target *sourceTarget, Target *newTarget);
+    // Will be added to the Issues Pane and stay there for the lifetime of the Project,
+    // unless the user removes it.
+    void addTask(const Task &task);
+
+    bool copySteps(Target *sourceTarget, Kit *targetKit);
     bool copySteps(const Utils::Store &store, Kit *targetKit);
 
     void saveSettings();
@@ -112,6 +134,8 @@ public:
     bool isKnownFile(const Utils::FilePath &filename) const;
     const Node *nodeForFilePath(const Utils::FilePath &filePath,
                                 const NodeMatcher &extraMatcher = {}) const;
+    QList<const Node *> nodesForFilePath(const Utils::FilePath &filePath,
+                                         const NodeMatcher &extraMatcher = {}) const;
     ProjectNode *productNodeForFilePath(
         const Utils::FilePath &filePath, const NodeMatcher &extraMatcher = {}) const;
     Utils::FilePaths binariesForSourceFile(const Utils::FilePath &sourceFile) const;
@@ -124,16 +148,16 @@ public:
     QVariant namedSettings(const Utils::Key &name) const;
     void setNamedSettings(const Utils::Key &name, const QVariant &value);
 
-    void setAdditionalEnvironment(const Utils::EnvironmentItems &envItems);
-    Utils::EnvironmentItems additionalEnvironment() const;
+    void setAdditionalEnvironment(const Utils::EnvironmentChanges &envItems);
+    Utils::EnvironmentChanges additionalEnvironment() const;
 
     virtual bool needsConfiguration() const;
-    bool needsBuildConfigurations() const;
-    virtual void configureAsExampleProject(ProjectExplorer::Kit *kit);
+    bool supportsBuilding() const;
+    [[nodiscard]] bool configureAsExampleProject(ProjectExplorer::Kit *kit);
 
-    virtual ProjectImporter *projectImporter() const;
+    ProjectImporter *projectImporter() const;
 
-    virtual DeploymentKnowledge deploymentKnowledge() const { return DeploymentKnowledge::Bad; }
+    virtual DeploymentKnowledge deploymentKnowledge() const;
     bool hasMakeInstallEquivalent() const;
 
     void setup(const QList<BuildInfo> &infoList);
@@ -169,7 +193,7 @@ public:
     QList<Core::IDocument *> modifiedDocuments() const;
     bool isModified() const;
 
-    virtual bool isEditModePreferred() const;
+    bool isEditModePreferred() const;
 
     void registerGenerator(Utils::Id id, const QString &displayName,
                            const std::function<void()> &runner);
@@ -180,11 +204,30 @@ public:
                                             const QString &descriptor,
                                             Utils::MacroExpander *expander,
                                             const std::function<Project *()> &projectGetter);
+    static Task createTask(ProjectExplorer::Task::TaskType type, const QString &description);
 
     QList<Utils::Store> vanishedTargets() const;
     void removeVanishedTarget(int index);
+    void removeVanishedTarget(const Utils::Store &store);
     void removeAllVanishedTargets();
     Target *createKitAndTargetFromStore(const Utils::Store &store);
+
+    void collectQmlCodeModelInfo(QmlCodeModelInfo &projectInfo, Kit *kit);
+
+    using QmlCodeModelInfoFromQtVersionHook = void (*)(Kit *, QmlCodeModelInfo &);
+    static void setQmlCodeModelInfoFromQtVersionHook(QmlCodeModelInfoFromQtVersionHook hook);
+
+    static void setQmlCodeModelIsUsed();
+    void updateQmlCodeModel(Kit *kit, BuildConfiguration *bc);
+    void resetQmlCodeModel();
+    QmlCodeModelInfo gatherQmlCodeModelInfo(Kit *kit, BuildConfiguration *bc);
+
+    void syncRunConfigurations(bool force);
+
+    PerProjectProjectExplorerSettings &projectExplorerSettings() const;
+
+    [[deprecated("Use Project::type()")]]
+    Utils::Id id() const { return type(); }
 
 signals:
     void projectFileIsDirty(const Utils::FilePath &path);
@@ -200,6 +243,8 @@ signals:
     void removedTarget(ProjectExplorer::Target *target);
     void addedTarget(ProjectExplorer::Target *target);
 
+    void activeBuildConfigurationChanged(BuildConfiguration *bc);
+
     void vanishedTargetsChanged();
 
     void settingsLoaded();
@@ -207,8 +252,8 @@ signals:
 
     void projectLanguagesUpdated();
 
-    void anyParsingStarted(Target *target);
-    void anyParsingFinished(Target *target, bool success);
+    void anyParsingStarted();
+    void anyParsingFinished(bool success);
 
     void rootProjectDirectoryChanged();
 
@@ -219,26 +264,33 @@ signals:
 protected:
     virtual RestoreResult fromMap(const Utils::Store &map, QString *errorMessage);
     void createTargetFromMap(const Utils::Store &map, int index);
-    virtual bool setupTarget(Target *t);
 
     void setCanBuildProducts();
+    void setIsEditModePreferred(bool preferEditMode);
 
-    void setId(Utils::Id id);
+    void setType(Utils::Id id);
     void setProjectLanguages(Core::Context language);
     void setHasMakeInstallEquivalent(bool enabled);
 
-    void setNeedsBuildConfigurations(bool value);
-    void setNeedsDeployConfigurations(bool value);
+    void setSupportsBuilding(bool value);
 
-    static ProjectExplorer::Task createProjectTask(ProjectExplorer::Task::TaskType type,
-                                                   const QString &description);
     template <typename BuildSystemImpl>
     void setBuildSystemCreator() {
-        setBuildSystemCreator([](Target *t) { return new BuildSystemImpl(t); });
+        setBuildSystemName(BuildSystemImpl::name());
+        setBuildSystemCreator([](BuildConfiguration *bc) { return new BuildSystemImpl(bc); });
     }
-    void setBuildSystemCreator(const std::function<BuildSystem *(Target *)> &creator);
+
+    [[deprecated("Use Project::setType()")]]
+    void setId(Utils::Id id) { setType(id); }
+
+    void setProjectImporter(ProjectImporter *importer);
 
 private:
+    virtual bool configureAsExampleProjectImpl(ProjectExplorer::Kit *kit);
+
+    void setBuildSystemName(const QString &name);
+    void setBuildSystemCreator(const std::function<BuildSystem *(BuildConfiguration *)> &creator);
+
     void addTarget(std::unique_ptr<Target> &&target);
 
     void addProjectLanguage(Utils::Id id);
@@ -247,10 +299,18 @@ private:
     void handleSubTreeChanged(FolderNode *node);
     void setActiveTargetHelper(Target *target);
 
+    void handleKitUpdated(Kit *k);
+    void handleKitRemoval(Kit *k);
+
     friend class ContainerNode;
     ProjectPrivate *d;
 };
 
-} // namespace ProjectExplorer
+PROJECTEXPLORER_EXPORT TextEditor::ProjectWrapper wrapProject(Project *p);
+PROJECTEXPLORER_EXPORT Project *unwrapProject(const TextEditor::ProjectWrapper &w);
 
-Q_DECLARE_METATYPE(ProjectExplorer::Project *)
+#ifdef WITH_TESTS
+namespace Internal { QObject *createProjectTest(); }
+#endif
+
+} // namespace ProjectExplorer

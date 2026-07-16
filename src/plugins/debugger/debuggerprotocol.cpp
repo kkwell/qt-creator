@@ -8,12 +8,19 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QHostAddress>
-#include <QTimeZone>
-#include <QJsonArray>
 #include <QJsonDocument>
+#include <QTimeZone>
 
 #include <utils/processhandle.h>
 #include <utils/qtcassert.h>
+#include <utils/textcodec.h>
+
+#include <QByteArrayView>
+#include <QChar>
+
+#include <array>
+#include <cstdio>
+#include <cstring>
 
 namespace Debugger::Internal {
 
@@ -30,8 +37,8 @@ static uchar fromhex(uchar c)
 
 // DebuggerOutputParser
 
-DebuggerOutputParser::DebuggerOutputParser(const QString &output)
-    : from(output.begin()), to(output.end())
+DebuggerOutputParser::DebuggerOutputParser(const QString &output, QStringDecoder &decoder)
+    : from(output.begin()), to(output.end()), decoder(decoder)
 {
 }
 
@@ -150,6 +157,7 @@ static void parseSimpleEscape(DebuggerOutputParser &parser, DebuggerOutputParser
     switch (c.unicode()) {
         case 'a': buffer += '\a'; break;
         case 'b': buffer += '\b'; break;
+        case 'e': buffer += '\033'; break; // msvc complains about '\e'
         case 'f': buffer += '\f'; break;
         case 'n': buffer += '\n'; break;
         case 'r': buffer += '\r'; break;
@@ -178,34 +186,49 @@ static void parseCharOrEscape(DebuggerOutputParser &parser, DebuggerOutputParser
     }
 }
 
-void DebuggerOutputParser::readCStringData(Buffer &buffer)
-{
-    if (isAtEnd())
-        return;
-
-    if (*from != '"') {
-        qDebug() << "MI Parse Error, double quote expected";
-        ++from; // So we don't hang
-        return;
-    }
-
-    ++from; // Skip initial quote.
-    while (from < to) {
-        if (*from == '"') {
-            ++from;
-            return;
-        }
-        parseCharOrEscape(*this, buffer);
-    }
-
-    qDebug() << "MI Parse Error, unfinished string";
-}
 
 QString DebuggerOutputParser::readCString()
 {
+    if (isAtEnd())
+        return {};
+
+    if (*from != '"') {
+        qDebug() << "MI Parse Error, double quote expected";
+        ++from;
+        return {};
+    }
+
+    ++from; // Skip initial quote.
+
+    QString result;
     Buffer buffer;
-    readCStringData(buffer);
-    return QString::fromUtf8(buffer);
+
+    auto flushBuffer = [&] {
+        if (!buffer.isEmpty()) {
+            result += decoder.decode(buffer);
+            buffer.clear();
+        }
+    };
+
+    while (from < to) {
+        if (*from == '"') {
+            ++from;
+            break;
+        }
+        if (from->unicode() > 0x7f) {
+            // GDB may emit non-ASCII chars (e.g. in file names) as raw bytes
+            // rather than octal-escaping them. The process output decoder has
+            // already turned those bytes into QChars, so append them directly
+            // instead of routing through the locale-decoding byte buffer.
+            flushBuffer();
+            result += *from++;
+        } else {
+            parseCharOrEscape(*this, buffer);
+        }
+    }
+
+    flushBuffer();
+    return result;
 }
 
 void GdbMi::parseValue(DebuggerOutputParser &parser)
@@ -306,8 +329,8 @@ void GdbMi::dumpChildren(QString * str, bool multiline, int indent) const
 QString GdbMi::escapeCString(const QString &ba)
 {
     QString ret;
-    ret.reserve(ba.length() * 2);
-    for (int i = 0; i < ba.length(); ++i) {
+    ret.reserve(ba.size() * 2);
+    for (int i = 0; i < ba.size(); ++i) {
         const ushort c = ba.at(i).unicode();
         switch (c) {
             case '\\': ret += "\\\\"; break;
@@ -378,15 +401,15 @@ QString GdbMi::toString(bool multiline, int indent) const
     return result;
 }
 
-void GdbMi::fromString(const QString &ba)
+void GdbMi::fromString(const QString &ba, QStringDecoder &decoder)
 {
-    DebuggerOutputParser parser(ba);
+    DebuggerOutputParser parser(ba, decoder);
     parseResultOrValue(parser);
 }
 
-void GdbMi::fromStringMultiple(const QString &ba)
+void GdbMi::fromStringMultiple(const QString &ba, QStringDecoder &decoder)
 {
-    DebuggerOutputParser parser(ba);
+    DebuggerOutputParser parser(ba, decoder);
     parseTuple_helper(parser);
 }
 
@@ -401,11 +424,11 @@ const GdbMi &GdbMi::operator[](const char *name) const
 
 qulonglong GdbMi::toAddress() const
 {
-    QString ba = m_data;
+    QStringView ba{m_data};
     if (ba.endsWith('L'))
         ba.chop(1);
     if (ba.startsWith('*') || ba.startsWith('@'))
-        ba = ba.mid(1);
+        ba = ba.sliced(1);
     return ba.toULongLong(nullptr, 0);
 }
 
@@ -426,7 +449,7 @@ QString DebuggerResponse::stringFromResultClass(ResultClass resultClass)
         case ResultDone: return QLatin1String("done");
         case ResultRunning: return QLatin1String("running");
         case ResultConnected: return QLatin1String("connected");
-        case ResultError: return QLatin1String("error");
+        case ResultFail: return QLatin1String("error");
         case ResultExit: return QLatin1String("exit");
         default: return QLatin1String("unknown");
     }
@@ -481,7 +504,7 @@ void extractGdbVersion(const QString &msg,
       gdbMsgBegin = 0;
 
     for (int i = gdbMsgBegin, gdbMsgSize = msg.size(); i < gdbMsgSize; ++i) {
-        QChar c = msg.at(i);
+        const QChar c = msg.at(i);
         if (inClean && !cleaned.isEmpty() && c != dot && (c.isPunct() || c.isSpace()))
             inClean = false;
         if (ignoreParenthesisContent) {
@@ -526,16 +549,17 @@ void extractGdbVersion(const QString &msg,
 //
 //////////////////////////////////////////////////////////////////////////////////
 
-static QString quoteUnprintableLatin1(const QString &ba)
+static QString quoteUnprintableLatin1(QStringView ba)
 {
     QString res;
+    res.reserve(ba.size());
     char buf[10];
     for (int i = 0, n = ba.size(); i != n; ++i) {
         const unsigned char c = ba.at(i).unicode();
         if (isprint(c)) {
             res += ba.at(i);
         } else {
-            qsnprintf(buf, sizeof(buf) - 1, "\\%x", int(c));
+            std::snprintf(buf, sizeof(buf) - 1, "\\%x", int(c));
             res += QLatin1String(buf);
         }
     }
@@ -599,7 +623,7 @@ static void getDateTime(qint64 msecs, int status, QDate *date, QTime *time, int 
     *time = ((status & NullTime) && tiVersion < 14) ? QTime() : QTime::fromMSecsSinceStartOfDay(ds);
 }
 
-QString decodeData(const QString &ba, const QString &encoding)
+QString decodeData(QStringView ba, const QString &encoding)
 {
     if (encoding.isEmpty())
         return quoteUnprintableLatin1(ba); // The common case.
@@ -700,7 +724,8 @@ QString decodeData(const QString &ba, const QString &encoding)
         }
         case DebuggerEncoding::IPv6AddressAndHexScopeId: { // 16 hex-encoded bytes, "%" and the string-encoded scope
             const int p = ba.indexOf('%');
-            QHostAddress ip6(p == -1 ? ba : ba.left(p));
+            const QStringView cleared{p == -1 ? ba : ba.left(p)};
+            QHostAddress ip6(cleared.toString());
             if (ip6.isNull())
                 break;
 
@@ -764,75 +789,6 @@ QString decodeData(const QString &ba, const QString &encoding)
 //
 //////////////////////////////////////////////////////////////////////////////////
 
-template<typename Value>
-QJsonValue addToJsonObject(const QJsonValue &args, const char *name, const Value &value)
-{
-    QTC_ASSERT(args.isObject() || args.isNull(), return args);
-    QJsonObject obj = args.toObject();
-    obj.insert(QLatin1String(name), value);
-    return obj;
-}
-
-void DebuggerCommand::arg(const char *name, int value)
-{
-    args = addToJsonObject(args, name, value);
-}
-
-void DebuggerCommand::arg(const char *name, qlonglong value)
-{
-    args = addToJsonObject(args, name, value);
-}
-
-void DebuggerCommand::arg(const char *name, qulonglong value)
-{
-    // gdb and lldb will correctly cast the value back to unsigned if needed, so this is no problem.
-    args = addToJsonObject(args, name, qint64(value));
-}
-
-void DebuggerCommand::arg(const char *name, const QString &value)
-{
-    args = addToJsonObject(args, name, value);
-}
-
-void DebuggerCommand::arg(const char *name, const char *value)
-{
-    args = addToJsonObject(args, name, value);
-}
-
-void DebuggerCommand::arg(const char *name, const QList<int> &list)
-{
-    QJsonArray numbers;
-    for (int item : list)
-        numbers.append(item);
-    args = addToJsonObject(args, name, numbers);
-}
-
-void DebuggerCommand::arg(const char *name, const QStringList &list)
-{
-    QJsonArray arr;
-    for (const QString &item : list)
-        arr.append(toHex(item));
-    args = addToJsonObject(args, name, arr);
-}
-
-void DebuggerCommand::arg(const char *value)
-{
-    QTC_ASSERT(args.isArray() || args.isNull(), return);
-    QJsonArray arr = args.toArray();
-    arr.append(value);
-    args = arr;
-}
-
-void DebuggerCommand::arg(const char *name, bool value)
-{
-    args = addToJsonObject(args, name, value);
-}
-
-void DebuggerCommand::arg(const char *name, const QJsonValue &value)
-{
-    args = addToJsonObject(args, name, value);
-}
-
 static QJsonValue translateJsonToPython(const QJsonValue &value)
 {
     // TODO: Verify that this covers all incompatibilities between python and json,
@@ -877,46 +833,46 @@ QString DebuggerCommand::argsToString() const
     return args.toString();
 }
 
-DebuggerEncoding::DebuggerEncoding(const QString &data)
+DebuggerEncoding::DebuggerEncoding(QStringView data)
 {
-    const QStringList l = data.split(':');
+    const auto l = data.split(':');
 
-    const QString &t = l.at(0);
-    if (t == "latin1") {
+    QStringView t = l.at(0);
+    if (t == u"latin1") {
         type = HexEncodedLatin1;
         size = 1;
         quotes = true;
-    } else if (t == "local8bit") {
+    } else if (t == u"local8bit") {
         type = HexEncodedLocal8Bit;
         size = 1;
         quotes = true;
-    } else if (t == "utf8") {
+    } else if (t == u"utf8") {
         type = HexEncodedUtf8;
         size = 1;
         quotes = true;
-    } else if (t == "utf16") {
+    } else if (t == u"utf16") {
         type = HexEncodedUtf16;
         size = 2;
         quotes = true;
-    } else if (t == "ucs4") {
+    } else if (t == u"ucs4") {
         type = HexEncodedUcs4;
         size = 4;
         quotes = true;
-    } else if (t == "int") {
+    } else if (t == u"int") {
         type = HexEncodedSignedInteger;
-    } else if (t == "uint") {
+    } else if (t == u"uint") {
         type = HexEncodedUnsignedInteger;
-    } else if (t == "float") {
+    } else if (t == u"float") {
         type = HexEncodedFloat;
-    } else if (t == "juliandate") {
+    } else if (t == u"juliandate") {
         type = JulianDate;
-    } else if (t == "juliandateandmillisecondssincemidnight") {
+    } else if (t == u"juliandateandmillisecondssincemidnight") {
         type = JulianDateAndMillisecondsSinceMidnight;
-    } else if (t == "millisecondssincemidnight") {
+    } else if (t == u"millisecondssincemidnight") {
         type = MillisecondsSinceMidnight;
-    } else if (t == "ipv6addressandhexscopeid") {
+    } else if (t == u"ipv6addressandhexscopeid") {
         type = IPv6AddressAndHexScopeId;
-    } else if (t == "datetimeinternal") {
+    } else if (t == u"datetimeinternal") {
         type = DateTimeInternal;
     } else if (!t.isEmpty()) {
         qDebug() << "CANNOT DECODE ENCODING" << data;
@@ -942,6 +898,168 @@ QString fromHex(const QString &str)
 QString toHex(const QString &str)
 {
     return QString::fromUtf8(str.toUtf8().toHex());
+}
+
+int formatToIntegerBase(int format)
+{
+    switch (format) {
+        case HexadecimalIntegerFormat: return 16;
+        case BinaryIntegerFormat:      return 2;
+        case OctalIntegerFormat:       return 8;
+    }
+    return 10;
+}
+
+static QString reformatIntegerHelper(quint64 value, int format)
+{
+    switch (format) {
+        case HexadecimalIntegerFormat:
+            return "(hex) " + QString::number(value, 16);
+        case BinaryIntegerFormat:
+            return "(bin) " + QString::number(value, 2);
+        case OctalIntegerFormat:
+            return "(oct) " + QString::number(value, 8);
+    }
+    return QString::number(value, 10);
+}
+
+QString reformatSignedInteger(qint64 value, int format)
+{
+    if (format == DecimalIntegerFormat || format == AutomaticFormat)
+        return QString::number(value, 10);
+    return reformatIntegerHelper(quint64(value), format);
+}
+
+QString reformatUnsignedInteger(quint64 value, int format)
+{
+    if (format == CharCodeIntegerFormat)
+        return reformatInteger(value, format, 4, false);
+    return reformatIntegerHelper(value, format);
+}
+
+QString reformatInteger(quint64 value, int format, int size, bool isSigned)
+{
+    // Follow convention and don't show negative non-decimal numbers.
+    if (format != AutomaticFormat && format != DecimalIntegerFormat)
+        isSigned = false;
+
+    switch (size) {
+    case 1: value = value & 0xff;         break;
+    case 2: value = value & 0xffff;       break;
+    case 4: value = value & 0xffffffff;   break;
+    default: break;
+    }
+    if (format == CharCodeIntegerFormat) {
+        QString res = "'";
+        for (int i = (size - 1) * 8; i >= 0; i -= 8) {
+            const ushort c = (value >> i) & 0xff;
+            if (c == 0)
+                res += "\\0";
+            else
+                res += QChar(c);
+        }
+        return res + "'";
+    }
+    return isSigned ? reformatSignedInteger(qint64(value), format)
+                    : reformatUnsignedInteger(value, format);
+}
+
+#if defined(__SIZEOF_INT128__)
+static QString uint128ToBase(unsigned __int128 v, int base)
+{
+    if (v == 0)
+        return "0";
+    QString result;
+    while (v > 0) {
+        const int digit = int(v % unsigned(base));
+        result.prepend(QChar(digit < 10 ? '0' + digit : 'a' + digit - 10));
+        v /= unsigned(base);
+    }
+    return result;
+}
+
+QString reformatUnsignedInteger128(unsigned __int128 value, int format)
+{
+    switch (format) {
+    case HexadecimalIntegerFormat:
+        return "(hex) " + uint128ToBase(value, 16);
+    case BinaryIntegerFormat:
+        return "(bin) " + uint128ToBase(value, 2);
+    case OctalIntegerFormat:
+        return "(oct) " + uint128ToBase(value, 8);
+    default:
+        return uint128ToBase(value, 10);
+    }
+}
+#endif
+
+QString reformatCharacter(int code, int size, bool isSigned)
+{
+    if (code > 0xffff) {
+        std::array<char, sizeof(char32_t)> buf;
+        memcpy(buf.data(), &code, sizeof(char32_t));
+        QByteArrayView view(buf);
+        const QString encoded = QStringDecoder(QStringDecoder::Utf32)(view);
+        return QString("'%1'\t%2\t0x%3").arg(encoded).arg(unsigned(code))
+                   .arg(uint(code & ((1ULL << (8*size)) - 1)), 2 * size, 16, QLatin1Char('0'));
+    }
+
+    QChar c;
+    switch (size) {
+        case 1: c = QChar(char(code));     break;
+        case 2: c = QChar(uint16_t(code)); break;
+        case 4: c = QChar(uint32_t(code)); break;
+        default: c = QChar(uint(code));    break;
+    }
+
+    QString out;
+    if (c.isPrint())
+        out = QString("'") + c + "' ";
+    else if (code == 0)
+        out = "'\\0'";
+    else if (code == '\r')
+        out = "'\\r'";
+    else if (code == '\n')
+        out = "'\\n'";
+    else if (code == '\t')
+        out = "'\\t'";
+    else
+        out = "    ";
+
+    out += '\t';
+
+    if (isSigned) {
+        switch (size) {
+        case 1: code = int8_t(code);  break;
+        case 2: code = int16_t(code); break;
+        case 4: code = int32_t(code); break;
+        }
+
+        out += QString::number(code);
+        if (code < 0)
+            out += QString("/%1    ").arg((1ULL << (8*size)) + code).left(2 + 2 * size);
+        else
+            out += QString(2 + 2 * size, ' ');
+    } else {
+        if (size == 1)
+            out += QString::number(uint8_t(code));
+        else if (size == 2)
+            out += QString::number(char16_t(code));
+        else
+            out += QString::number(unsigned(code));
+    }
+
+    out += '\t';
+    out += QString("0x%1").arg(uint(code & ((1ULL << (8*size)) - 1)),
+                               2 * size, 16, QLatin1Char('0'));
+    return out;
+}
+
+QString reformatCharacterWithFormat(int code, int size, bool isSigned, int format)
+{
+    if (format == AutomaticFormat)
+        return reformatCharacter(code, size, isSigned);
+    return reformatInteger(quint64(code), format, size, isSigned);
 }
 
 } // Debugger::Internal

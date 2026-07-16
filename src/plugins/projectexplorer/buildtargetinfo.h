@@ -13,7 +13,6 @@
 #include <QList>
 
 namespace ProjectExplorer {
-class Launcher;
 
 class PROJECTEXPLORER_EXPORT BuildTargetInfo
 {
@@ -53,7 +52,7 @@ public:
         return !(ti1 == ti2);
     }
 
-    friend auto qHash(const BuildTargetInfo &ti)
+    friend size_t qHash(const BuildTargetInfo &ti)
     {
         return qHash(ti.displayName) ^ qHash(ti.buildKey);
     }

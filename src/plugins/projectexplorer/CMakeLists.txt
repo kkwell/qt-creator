@@ -6,7 +6,7 @@ add_qtc_plugin(ProjectExplorer
     abi.cpp abi.h
     abiwidget.cpp abiwidget.h
     abstractprocessstep.cpp abstractprocessstep.h
-    addrunconfigdialog.cpp addrunconfigdialog.h
+    runconfigdialogs.cpp runconfigdialogs.h
     allprojectsfilter.cpp allprojectsfilter.h
     allprojectsfind.cpp allprojectsfind.h
     appoutputpane.cpp appoutputpane.h
@@ -14,7 +14,7 @@ add_qtc_plugin(ProjectExplorer
     buildaspects.cpp buildaspects.h
     buildpropertiessettings.cpp buildpropertiessettings.h
     buildconfiguration.cpp buildconfiguration.h
-    buildinfo.cpp buildinfo.h
+    buildinfo.h
     buildmanager.cpp buildmanager.h
     buildsettingspropertiespage.cpp buildsettingspropertiespage.h
     buildstep.cpp buildstep.h
@@ -26,9 +26,7 @@ add_qtc_plugin(ProjectExplorer
     clangparser.cpp clangparser.h
     codestylesettingspropertiespage.cpp codestylesettingspropertiespage.h
     compileoutputwindow.cpp compileoutputwindow.h
-    configtaskhandler.cpp configtaskhandler.h
     copystep.cpp copystep.h
-    copytaskhandler.cpp copytaskhandler.h
     currentprojectfilter.cpp currentprojectfilter.h
     currentprojectfind.cpp currentprojectfind.h
     customexecutablerunconfiguration.cpp customexecutablerunconfiguration.h
@@ -48,15 +46,14 @@ add_qtc_plugin(ProjectExplorer
     desktoprunconfiguration.cpp desktoprunconfiguration.h
     devicesupport/desktopdevice.cpp devicesupport/desktopdevice.h
     devicesupport/desktopdevicefactory.cpp devicesupport/desktopdevicefactory.h
-    devicesupport/desktopprocesssignaloperation.cpp devicesupport/desktopprocesssignaloperation.h
     devicesupport/devicecheckbuildstep.cpp devicesupport/devicecheckbuildstep.h
     devicesupport/devicefactoryselectiondialog.cpp devicesupport/devicefactoryselectiondialog.h
+    devicesupport/devicekitaspects.cpp devicesupport/devicekitaspects.h
     devicesupport/devicemanager.cpp devicesupport/devicemanager.h
     devicesupport/devicemanagermodel.cpp devicesupport/devicemanagermodel.h
     devicesupport/deviceprocessesdialog.cpp devicesupport/deviceprocessesdialog.h
     devicesupport/devicesettingspage.cpp devicesupport/devicesettingspage.h
     devicesupport/devicetestdialog.cpp devicesupport/devicetestdialog.h
-    devicesupport/deviceusedportsgatherer.cpp devicesupport/deviceusedportsgatherer.h
     devicesupport/filetransfer.cpp devicesupport/filetransfer.h
     devicesupport/filetransferinterface.h
     devicesupport/idevice.cpp devicesupport/idevice.h
@@ -66,11 +63,11 @@ add_qtc_plugin(ProjectExplorer
     devicesupport/processlist.cpp devicesupport/processlist.h
     devicesupport/sshparameters.cpp devicesupport/sshparameters.h
     devicesupport/sshsettings.cpp devicesupport/sshsettings.h
-    devicesupport/sshsettingspage.cpp devicesupport/sshsettingspage.h
     editorconfiguration.cpp editorconfiguration.h
     editorsettingspropertiespage.cpp editorsettingspropertiespage.h
     environmentaspect.cpp environmentaspect.h
     environmentaspectwidget.cpp environmentaspectwidget.h
+    environmentkitaspect.cpp environmentkitaspect.h
     environmentwidget.cpp environmentwidget.h
     expanddata.cpp expanddata.h
     extraabi.cpp extraabi.h
@@ -85,8 +82,6 @@ add_qtc_plugin(ProjectExplorer
     headerpath.h
     importwidget.cpp importwidget.h
     ioutputparser.cpp ioutputparser.h
-    ipotentialkit.h
-    itaskhandler.h
     jsonwizard/jsonfieldpage.cpp jsonwizard/jsonfieldpage.h jsonwizard/jsonfieldpage_p.h
     jsonwizard/jsonfilepage.cpp jsonwizard/jsonfilepage.h
     jsonwizard/jsonkitspage.cpp jsonwizard/jsonkitspage.h
@@ -102,11 +97,11 @@ add_qtc_plugin(ProjectExplorer
     jsonwizard/wizarddebug.h
     jsonwizard/jsonwizardscannergenerator.cpp jsonwizard/jsonwizardscannergenerator.h
     kit.cpp kit.h
-    kitaspects.cpp kitaspects.h
+    kitdata.cpp kitdata.h
+    kitaspect.cpp kitaspect.h
     kitchooser.cpp kitchooser.h
     kitfeatureprovider.h
     kitmanager.cpp kitmanager.h
-    kitmanagerconfigwidget.cpp kitmanagerconfigwidget.h
     kitoptionspage.cpp kitoptionspage.h
     ldparser.cpp ldparser.h
     lldparser.cpp lldparser.h
@@ -115,9 +110,7 @@ add_qtc_plugin(ProjectExplorer
     miniprojecttargetselector.cpp miniprojecttargetselector.h
     msvcparser.cpp msvcparser.h
     msvctoolchain.cpp msvctoolchain.h
-    namedwidget.cpp namedwidget.h
-    osparser.cpp osparser.h
-    panelswidget.cpp panelswidget.h
+    outputparsers.cpp outputparsers.h
     parseissuesdialog.cpp parseissuesdialog.h
     processparameters.cpp processparameters.h
     processstep.cpp processstep.h
@@ -125,10 +118,10 @@ add_qtc_plugin(ProjectExplorer
     projectcommentssettings.cpp projectcommentssettings.h
     projectconfiguration.cpp projectconfiguration.h
     projectconfigurationmodel.cpp projectconfigurationmodel.h
+    detailederrorview.cpp detailederrorview.h
     projectexplorer.cpp projectexplorer.h
     projectexplorer.qrc
     projectexplorer_export.h
-    projectexplorer_test.h
     projectexplorerconstants.cpp
     projectexplorerconstants.h
     projectexplorericons.cpp projectexplorericons.h
@@ -148,37 +141,39 @@ add_qtc_plugin(ProjectExplorer
     projectwelcomepage.cpp projectwelcomepage.h
     projectwindow.cpp projectwindow.h
     projectwizardpage.cpp projectwizardpage.h
+    qmldebugcommandlinearguments.cpp qmldebugcommandlinearguments.h
     rawprojectpart.cpp rawprojectpart.h
-    removetaskhandler.cpp removetaskhandler.h
+    resourcepreviewhoverhandler.cpp resourcepreviewhoverhandler.h
     runconfiguration.cpp runconfiguration.h
     runconfigurationaspects.cpp runconfigurationaspects.h
     runcontrol.cpp runcontrol.h
     runsettingspropertiespage.cpp runsettingspropertiespage.h
     sanitizerparser.cpp sanitizerparser.h
     selectablefilesmodel.cpp selectablefilesmodel.h
-    showineditortaskhandler.cpp showineditortaskhandler.h
     showoutputtaskhandler.cpp showoutputtaskhandler.h
     simpleprojectwizard.cpp simpleprojectwizard.h
+    sysrootkitaspect.cpp sysrootkitaspect.h
     target.cpp target.h
-    targetsettingspanel.cpp targetsettingspanel.h
     targetsetuppage.cpp targetsetuppage.h
     targetsetupwidget.cpp targetsetupwidget.h
     task.cpp task.h
     taskfile.cpp taskfile.h
+    taskhandlers.cpp taskhandlers.h
     taskhub.cpp taskhub.h
     taskmodel.cpp taskmodel.h
     taskwindow.cpp taskwindow.h
     toolchain.cpp toolchain.h
     toolchaincache.h
     toolchainconfigwidget.cpp toolchainconfigwidget.h
+    toolchainkitaspect.cpp toolchainkitaspect.h
     toolchainmanager.cpp toolchainmanager.h
     toolchainoptionspage.cpp toolchainoptionspage.h
     toolchainsettingsaccessor.cpp toolchainsettingsaccessor.h
     treescanner.cpp treescanner.h
     userfileaccessor.cpp userfileaccessor.h
-    vcsannotatetaskhandler.cpp vcsannotatetaskhandler.h
     waitforstopdialog.cpp waitforstopdialog.h
     windebuginterface.cpp windebuginterface.h
+    windowsappsdksettings.cpp windowsappsdksettings.h
     workspaceproject.h workspaceproject.cpp
     xcodebuildparser.cpp xcodebuildparser.h
 )
@@ -203,15 +198,15 @@ extend_qtc_plugin(ProjectExplorer
 )
 
 extend_qtc_plugin(ProjectExplorer
-  CONDITION WITH_TESTS
-  SOURCES
-    outputparser_test.cpp outputparser_test.h
+  SOURCES mcpsupport.cpp issuesmanager.cpp issuesmanager.h
+  DEPENDS McpServerLib
 )
+
 extend_qtc_plugin(ProjectExplorer
   CONDITION WITH_TESTS
   SOURCES
-    jsonwizard/jsonwizard_test.cpp
-  SOURCES_PROPERTIES HEADER_FILE_ONLY ON
+    jsonwizard/jsonwizard_test.cpp jsonwizard/jsonwizard_test.h
+    outputparser_test.cpp outputparser_test.h
 )
 
 file(GLOB_RECURSE test_resources RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} testdata/*)

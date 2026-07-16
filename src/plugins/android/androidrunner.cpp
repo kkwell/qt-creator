@@ -4,158 +4,151 @@
 
 #include "androidrunner.h"
 
-#include "androidavdmanager.h"
+#include "androidconstants.h"
 #include "androiddevice.h"
-#include "androidmanager.h"
 #include "androidrunnerworker.h"
 #include "androidtr.h"
+#include "androidutils.h"
 
+#include <debugger/debuggerrunconfigurationaspect.h>
+
+#include <projectexplorer/buildconfiguration.h>
+#include <projectexplorer/devicesupport/devicekitaspects.h>
+#include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projectexplorersettings.h>
 #include <projectexplorer/target.h>
+
 #include <qtsupport/qtkitaspect.h>
+
 #include <utils/url.h>
+#include <utils/utilsicons.h>
 
 #include <QHostAddress>
 #include <QLoggingCategory>
+#include <QTcpServer>
 
 namespace {
 static Q_LOGGING_CATEGORY(androidRunnerLog, "qtc.android.run.androidrunner", QtWarningMsg)
 }
 
 using namespace ProjectExplorer;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace Android::Internal {
 
-AndroidRunner::AndroidRunner(RunControl *runControl, const QString &intentName)
-    : RunWorker(runControl), m_target(runControl->target())
+Group androidKicker(const QStoredBarrier &barrier, RunControl *runControl)
 {
-    setId("AndroidRunner");
-    static const int metaTypes[] = {
-        qRegisterMetaType<QList<QStringList>>("QList<QStringList>"),
-        qRegisterMetaType<Utils::Port>("Utils::Port"),
-        qRegisterMetaType<AndroidDeviceInfo>("Android::AndroidDeviceInfo")
-    };
-    Q_UNUSED(metaTypes)
+    BuildConfiguration *bc = runControl->buildConfiguration();
+    QTC_ASSERT(bc, return {});
+    QString deviceSerialNumber;
+    int apiLevel = -1;
 
-    QString intent = intentName;
-    if (intent.isEmpty())
-        intent = AndroidManager::packageName(m_target) + '/' + AndroidManager::activityName(m_target);
+    const Storage<RunnerInterface> glueStorage;
 
-    m_packageName = intent.left(intent.indexOf('/'));
-    qCDebug(androidRunnerLog) << "Intent name:" << intent << "Package name" << m_packageName;
+    std::optional<ExecutableItem> avdRecipe;
 
-    m_worker = new AndroidRunnerWorker(this, m_packageName);
-    m_worker->setIntentName(intent);
-
-    m_worker->moveToThread(&m_thread);
-    QObject::connect(&m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
-
-    connect(this, &AndroidRunner::asyncStart, m_worker, &AndroidRunnerWorker::asyncStart);
-    connect(this, &AndroidRunner::asyncStop, m_worker, &AndroidRunnerWorker::asyncStop);
-    connect(this, &AndroidRunner::androidDeviceInfoChanged,
-            m_worker, &AndroidRunnerWorker::setAndroidDeviceInfo);
-
-    connect(m_worker, &AndroidRunnerWorker::remoteProcessStarted,
-            this, &AndroidRunner::handleRemoteProcessStarted);
-    connect(m_worker, &AndroidRunnerWorker::remoteProcessFinished,
-            this, &AndroidRunner::handleRemoteProcessFinished);
-    connect(m_worker, &AndroidRunnerWorker::remoteOutput, this, &AndroidRunner::remoteOutput);
-    connect(m_worker, &AndroidRunnerWorker::remoteErrorOutput,
-            this, &AndroidRunner::remoteErrorOutput);
-
-    connect(&m_outputParser, &QmlDebug::QmlOutputParser::waitingForConnectionOnPort,
-            this, &AndroidRunner::qmlServerPortReady);
-
-    m_thread.start();
-}
-
-AndroidRunner::~AndroidRunner()
-{
-    m_thread.quit();
-    m_thread.wait();
-}
-
-void AndroidRunner::start()
-{
-    if (!projectExplorerSettings().deployBeforeRun && m_target && m_target->project()) {
+    if (!ProjectExplorerSettings::get(runControl).deployBeforeRun() && runControl->project()) {
         qCDebug(androidRunnerLog) << "Run without deployment";
 
-        const IDevice::ConstPtr device = DeviceKitAspect::device(m_target->kit());
-        AndroidDeviceInfo info = AndroidDevice::androidDeviceInfoFromIDevice(device.get());
-        AndroidManager::setDeviceSerialNumber(m_target, info.serialNumber);
-        emit androidDeviceInfoChanged(info);
+        const IDevice::ConstPtr device = RunDeviceKitAspect::device(runControl->kit());
+        AndroidDeviceInfo info = AndroidDevice::androidDeviceInfoFromDevice(device);
+        setDeviceSerialNumber(bc, info.serialNumber);
+        deviceSerialNumber = info.serialNumber;
+        apiLevel = info.sdk;
+        qCDebug(androidRunnerLog) << "Android Device Info changed" << deviceSerialNumber
+                                  << apiLevel;
 
         if (!info.avdName.isEmpty()) {
             const Storage<QString> serialNumberStorage;
 
-            const Group recipe {
+            avdRecipe = Group {
                 serialNumberStorage,
-                AndroidAvdManager::startAvdRecipe(info.avdName, serialNumberStorage)
-            };
-
-            m_startAvdRunner.start(recipe, {}, [this](DoneWith result) {
-                if (result == DoneWith::Success)
-                    emit asyncStart();
+                startAvdRecipe(info.avdName, serialNumberStorage)
+            }.withCancel([glueStorage] {
+                return makeObjectSignal(glueStorage.activeStorage(), &RunnerInterface::canceled);
             });
-            return;
         }
+    } else {
+        deviceSerialNumber = Internal::deviceSerialNumber(bc);
+        apiLevel = Internal::deviceApiLevel(bc);
     }
-    emit asyncStart();
+
+    const auto onSetup = [runControl, glueStorage, deviceSerialNumber, apiLevel, barrier] {
+        RunnerInterface *glue = glueStorage.activeStorage();
+        glue->setRunControl(runControl);
+        glue->setDeviceSerialNumber(deviceSerialNumber);
+        glue->setApiLevel(apiLevel);
+
+        auto aspect = runControl->aspectData<Debugger::DebuggerRunConfigurationAspect>();
+        const Id runMode = runControl->runMode();
+        const bool debuggingMode = runMode == ProjectExplorer::Constants::DEBUG_RUN_MODE;
+        QmlDebugServicesPreset services = NoQmlDebugServices;
+        if (debuggingMode && aspect->useQmlDebugger)
+            services = QmlDebuggerServices;
+        else if (runMode == ProjectExplorer::Constants::QML_PROFILER_RUN_MODE)
+            services = QmlProfilerServices;
+        else if (runMode == ProjectExplorer::Constants::QML_PREVIEW_RUN_MODE)
+            services = QmlPreviewServices;
+        glue->setQmlDebugServicesPreset(services);
+
+        if (services != NoQmlDebugServices) {
+            qCDebug(androidRunnerLog) << "QML debugging enabled";
+            QTcpServer server;
+            const bool isListening = server.listen(QHostAddress::LocalHost);
+            QTC_ASSERT(isListening,
+                       qDebug() << Tr::tr("No free ports available on host for QML debugging."));
+            QUrl qmlChannel;
+            qmlChannel.setScheme(Utils::urlTcpScheme());
+            qmlChannel.setHost(server.serverAddress().toString());
+            qmlChannel.setPort(server.serverPort());
+            runControl->setQmlChannel(qmlChannel);
+            qCDebug(androidRunnerLog) << "QML server:" << qmlChannel.toDisplayString();
+        }
+
+        QObject::connect(runControl, &RunControl::canceled, glue, &RunnerInterface::cancel);
+        QObject::connect(glue, &RunnerInterface::started, barrier.activeStorage(), &QBarrier::advance,
+                         Qt::QueuedConnection);
+        QObject::connect(glue, &RunnerInterface::finished, runControl, [runControl](const QString &errorString) {
+            runControl->postMessage(errorString, Utils::NormalMessageFormat);
+            if (runControl->isRunning())
+                runControl->initiateStop();
+        });
+    };
+
+    return {
+        glueStorage,
+        onGroupSetup(onSetup),
+        avdRecipe ? *avdRecipe : nullItem,
+        runnerRecipe(glueStorage)
+    };
 }
 
-void AndroidRunner::stop()
+Group androidRecipe(RunControl *runControl)
 {
-    if (m_startAvdRunner.isRunning()) {
-        m_startAvdRunner.reset();
-        appendMessage("\n\n" + Tr::tr("\"%1\" terminated.").arg(m_packageName),
-                      Utils::NormalMessageFormat);
-        return;
+    const auto kicker = [runControl](const QStoredBarrier &barrier) {
+        return androidKicker(barrier, runControl);
+    };
+    return When (kicker) >> Do {
+        QSyncTask([runControl] { runControl->reportStarted(); })
+    };
+}
+
+class AndroidRunWorkerFactory final : public RunWorkerFactory
+{
+public:
+    AndroidRunWorkerFactory()
+    {
+        setId("AndroidRunWorkerFactory");
+        setRecipeProducer(androidRecipe);
+        addSupportedRunMode(ProjectExplorer::Constants::NORMAL_RUN_MODE);
+        addSupportedRunConfig(Constants::ANDROID_RUNCONFIG_ID);
     }
-    emit asyncStop();
-}
+};
 
-void AndroidRunner::qmlServerPortReady(Port port)
+void setupAndroidRunWorker()
 {
-    // FIXME: Note that the passed is nonsense, as the port is on the
-    // device side. It only happens to work since we redirect
-    // host port n to target port n via adb.
-    QUrl serverUrl;
-    serverUrl.setHost(QHostAddress(QHostAddress::LocalHost).toString());
-    serverUrl.setPort(port.number());
-    serverUrl.setScheme(urlTcpScheme());
-    qCDebug(androidRunnerLog) << "Qml Server port ready"<< serverUrl;
-    emit qmlServerReady(serverUrl);
-}
-
-void AndroidRunner::remoteOutput(const QString &output)
-{
-    appendMessage(output, Utils::StdOutFormat);
-    m_outputParser.processOutput(output);
-}
-
-void AndroidRunner::remoteErrorOutput(const QString &output)
-{
-    appendMessage(output, Utils::StdErrFormat);
-    m_outputParser.processOutput(output);
-}
-
-void AndroidRunner::handleRemoteProcessStarted(Utils::Port debugServerPort,
-                                               const QUrl &qmlServer, qint64 pid)
-{
-    m_pid = ProcessHandle(pid);
-    m_debugServerPort = debugServerPort;
-    m_qmlServer = qmlServer;
-    reportStarted();
-}
-
-void AndroidRunner::handleRemoteProcessFinished(const QString &errString)
-{
-    appendMessage(errString, Utils::NormalMessageFormat);
-    if (runControl()->isRunning())
-        runControl()->initiateStop();
-    reportStopped();
+    static AndroidRunWorkerFactory theAndroidRunWorkerFactory;
 }
 
 } // namespace Android::Internal

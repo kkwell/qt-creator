@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "uniform.h"
+
+#include "effectcomposertr.h"
+
 #include <qmldesignerplugin.h>
 
 #include "propertyhandler.h"
@@ -24,6 +27,9 @@ Uniform::Uniform(const QString &effectName, const QJsonObject &propObj, const QS
     m_type = Uniform::typeFromString(propObj.value("type").toString());
     defaultValue = propObj.value("defaultValue").toString();
 
+    if (propObj.contains("userAdded"))
+        m_userAdded = getBoolValue(propObj.value("userAdded"), false);
+
     m_displayName = propObj.value("displayName").toString();
     if (m_displayName.isEmpty())
         m_displayName = m_name;
@@ -41,7 +47,7 @@ Uniform::Uniform(const QString &effectName, const QJsonObject &propObj, const QS
             m_enableMipmap = getBoolValue(propObj.value("enableMipmap"), false);
         // Update the mipmap property
         QString mipmapProperty = mipmapPropertyName(m_name);
-        g_propertyData[mipmapProperty] = m_enableMipmap;
+        g_propertyData()->insert(mipmapProperty, m_enableMipmap);
     }
 
     QString controlType = propObj.value("controlType").toString();
@@ -57,6 +63,14 @@ Uniform::Uniform(const QString &effectName, const QJsonObject &propObj, const QS
 
     m_backendValue = new QmlDesigner::PropertyEditorValue(this);
     m_backendValue->setValue(value);
+
+    connect(m_backendValue, &QmlDesigner::PropertyEditorValue::dropCommitted,
+        this, [this](const QString &dropData) {
+            m_backendValue->setValue(dropData);
+            auto *model = QmlDesigner::QmlDesignerPlugin::instance()
+                              ->currentDesignDocument()->currentModel();
+            model->endDrag();
+        });
 }
 
 Uniform::Type Uniform::type() const
@@ -140,6 +154,24 @@ QString Uniform::description() const
 QString Uniform::displayName() const
 {
     return m_displayName;
+}
+
+bool Uniform::userAdded() const
+{
+    return m_userAdded;
+}
+
+void Uniform::setIsInUse(bool inUse)
+{
+    if (m_isInUse != inUse) {
+        m_isInUse = inUse;
+        emit uniformIsInUseChanged();
+    }
+}
+
+bool Uniform::isInUse() const
+{
+    return m_isInUse;
 }
 
 QString Uniform::customValue() const
@@ -299,27 +331,36 @@ R"(
     case Type::Vec2: {
         QVector2D minVal = m_minValue.value<QVector2D>();
         QVector2D maxVal = m_maxValue.value<QVector2D>();
-        appendVectorSpinbox("x", tr("X"), minVal.x(), maxVal.x(), true);
-        appendVectorSpinbox("y", tr("Y"), minVal.y(), maxVal.y(), false);
+        //: X-coordinate
+        appendVectorSpinbox("x", Tr::tr("X"), minVal.x(), maxVal.x(), true);
+        //: Y-coordinate
+        appendVectorSpinbox("y", Tr::tr("Y"), minVal.y(), maxVal.y(), false);
         break;
     }
     case Type::Vec3: {
         QVector3D minVal = m_minValue.value<QVector3D>();
         QVector3D maxVal = m_maxValue.value<QVector3D>();
-        appendVectorSpinbox("x", tr("X"), minVal.x(), maxVal.x(), true);
-        appendVectorSpinbox("y", tr("Y"), minVal.y(), maxVal.y(), false);
+        //: X-coordinate
+        appendVectorSpinbox("x", Tr::tr("X"), minVal.x(), maxVal.x(), true);
+        //: Y-coordinate
+        appendVectorSpinbox("y", Tr::tr("Y"), minVal.y(), maxVal.y(), false);
         appendVectorSeparator();
-        appendVectorSpinbox("z", tr("Z"), minVal.z(), maxVal.z(), true);
+        //: Z-coordinate
+        appendVectorSpinbox("z", Tr::tr("Z"), minVal.z(), maxVal.z(), true);
         break;
     }
     case Type::Vec4: {
         QVector4D minVal = m_minValue.value<QVector4D>();
         QVector4D maxVal = m_maxValue.value<QVector4D>();
-        appendVectorSpinbox("x", tr("X"), minVal.x(), maxVal.x(), true);
-        appendVectorSpinbox("y", tr("Y"), minVal.y(), maxVal.y(), false);
+        //: X-coordinate
+        appendVectorSpinbox("x", Tr::tr("X"), minVal.x(), maxVal.x(), true);
+        //: Y-coordinate
+        appendVectorSpinbox("y", Tr::tr("Y"), minVal.y(), maxVal.y(), false);
         appendVectorSeparator();
-        appendVectorSpinbox("z", tr("Z"), minVal.z(), maxVal.z(), true);
-        appendVectorSpinbox("w", tr("W"), minVal.w(), maxVal.w(), false);
+        //: Z-coordinate
+        appendVectorSpinbox("z", Tr::tr("Z"), minVal.z(), maxVal.z(), true);
+        //: W-coordinate
+        appendVectorSpinbox("w", Tr::tr("W"), minVal.w(), maxVal.w(), false);
         break;
     }
     case Type::Color: {
@@ -338,9 +379,30 @@ R"(
 R"(
                 UrlChooser {
                     backendValue: backendValues.%1
+                    enabled: comboBox_%1.currentIndex === 0
+                }
+                ExpandingSpacer {}
+            }
+
+            PropertyLabel {
+                text: "%3"
+                tooltip: "%4"
+            }
+
+            SecondColumnLayout {
+                ItemFilterComboBox {
+                    id: comboBox_%1
+                    backendValue: backendValues.%2
                 }
 )";
-        specs += typeSpec.arg(m_name + "Url");
+        specs
+            += typeSpec.arg(m_name + "Url")
+                   .arg(m_name)
+                   .arg(Tr::tr("%1 Item").arg(m_displayName))
+                   .arg(
+                       Tr::tr(
+                           "Set this to use an item in the scene as %1 instead of the above image.")
+                           .arg(m_displayName));
         break;
     }
     case Type::Define:
@@ -385,14 +447,15 @@ bool Uniform::getBoolValue(const QJsonValue &jsonValue, bool defaultValue)
 // Used with sampler types
 QString Uniform::getResourcePath(const QString &effectName, const QString &value, const QString &qenPath) const
 {
-    QString filePath = value;
-    if (qenPath.isEmpty()) {
+    if (Utils::FilePath::fromString(value).isAbsolutePath()) {
+        return value;
+    } else if (qenPath.isEmpty()) {
         const Utils::FilePath effectsResDir = QmlDesigner::ModelNodeOperations::getEffectsImportDirectory();
-        return effectsResDir.pathAppended(effectName).pathAppended(value).toString();
+        return effectsResDir.pathAppended(effectName).pathAppended(value).toUrlishString();
     } else {
         QDir dir(m_qenPath);
         dir.cdUp();
-        QString absPath = dir.absoluteFilePath(filePath);
+        QString absPath = dir.absoluteFilePath(value);
         absPath = QDir::cleanPath(absPath);
         absPath = QUrl::fromLocalFile(absPath).toString();
         return absPath;

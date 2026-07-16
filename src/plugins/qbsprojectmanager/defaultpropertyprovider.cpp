@@ -7,24 +7,25 @@
 #include "qbsprojectmanagerconstants.h"
 #include "qbsprojectmanagertr.h"
 
+#include <android/androidconstants.h>
 #include <coreplugin/messagemanager.h>
 #include <baremetal/baremetalconstants.h>
+#include <ios/iosconstants.h>
 #include <projectexplorer/abi.h>
+#include <projectexplorer/devicesupport/devicekitaspects.h>
 #include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/gcctoolchain.h>
 #include <projectexplorer/kit.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/sysrootkitaspect.h>
+#include <projectexplorer/toolchainkitaspect.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/msvctoolchain.h>
-
-#include <utils/hostosinfo.h>
-#include <utils/qtcassert.h>
-
-#include <android/androidconstants.h>
-#include <ios/iosconstants.h>
 #include <qtsupport/baseqtversion.h>
 #include <qtsupport/qtkitaspect.h>
+#include <utils/hostosinfo.h>
+#include <utils/qtcassert.h>
+#include <webassembly/webassemblyconstants.h>
 
 #include <QDir>
 #include <QFileInfo>
@@ -59,16 +60,19 @@ static QString extractToolchainPrefix(QString *compilerName)
 
 static QString targetPlatform(const ProjectExplorer::Abi &abi, const ProjectExplorer::Kit *k)
 {
-    const Utils::Id device = ProjectExplorer::DeviceTypeKitAspect::deviceTypeId(k);
+    const Utils::Id deviceType = ProjectExplorer::RunDeviceTypeKitAspect::deviceTypeId(k);
+    if (deviceType == WebAssembly::Constants::WEBASSEMBLY_DEVICE_TYPE)
+        return "wasm-emscripten";
+
     switch (abi.os()) {
     case ProjectExplorer::Abi::WindowsOS:
         return QLatin1String("windows");
    case ProjectExplorer::Abi::DarwinOS:
-        if (device == DESKTOP_DEVICE_TYPE)
+        if (deviceType == DESKTOP_DEVICE_TYPE)
             return QLatin1String("macos");
-        if (device == IOS_DEVICE_TYPE)
+        if (deviceType == IOS_DEVICE_TYPE)
             return QLatin1String("ios");
-        if (device == IOS_SIMULATOR_TYPE)
+        if (deviceType == IOS_SIMULATOR_TYPE)
             return QLatin1String("ios-simulator");
         return QLatin1String("darwin");
     case ProjectExplorer::Abi::LinuxOS:
@@ -102,35 +106,40 @@ static QString targetPlatform(const ProjectExplorer::Abi &abi, const ProjectExpl
     return QString();
 }
 
-static QStringList toolchainList(const ProjectExplorer::Toolchain *tc)
+static QString toolchainType(const ProjectExplorer::Toolchain *tc)
 {
     const Utils::Id type = tc->typeId();
     if (type == ProjectExplorer::Constants::CLANG_TOOLCHAIN_TYPEID
             || (type == Android::Constants::ANDROID_TOOLCHAIN_TYPEID
                 && tc->compilerCommand().fileName().contains("clang"))) {
-        return {"clang", "llvm", "gcc"};
+        return "clang";
     }
     if (type == ProjectExplorer::Constants::GCC_TOOLCHAIN_TYPEID
                || type == Android::Constants::ANDROID_TOOLCHAIN_TYPEID) {
-        return {"gcc"}; // TODO: Detect llvm-gcc
+        return "gcc"; // TODO: Detect llvm-gcc
     }
     if (type == ProjectExplorer::Constants::MINGW_TOOLCHAIN_TYPEID)
-        return {"mingw", "gcc"};
+        return "mingw";
     if (type == ProjectExplorer::Constants::CLANG_CL_TOOLCHAIN_TYPEID)
-        return {"clang-cl", "msvc"};
+        return "clang-cl";
     if (type == ProjectExplorer::Constants::MSVC_TOOLCHAIN_TYPEID)
-        return {"msvc"};
+        return "msvc";
     if (type == BareMetal::Constants::IAREW_TOOLCHAIN_TYPEID)
-        return {"iar"};
+        return "iar";
     if (type == BareMetal::Constants::KEIL_TOOLCHAIN_TYPEID)
-        return {"keil"};
+        return "keil";
     if (type == BareMetal::Constants::SDCC_TOOLCHAIN_TYPEID)
-        return {"sdcc"};
+        return "sdcc";
+    if (type == WebAssembly::Constants::WEBASSEMBLY_TOOLCHAIN_TYPEID)
+        return "emscripten";
     return {};
 }
 
 static QString architecture(const ProjectExplorer::Abi &targetAbi)
 {
+    if (targetAbi.architecture() == Abi::AsmJsArchitecture)
+        return "wasm";
+
     if (targetAbi.architecture() != ProjectExplorer::Abi::UnknownArchitecture) {
         QString architecture = ProjectExplorer::Abi::toString(targetAbi.architecture());
 
@@ -146,6 +155,10 @@ static QString architecture(const ProjectExplorer::Abi &targetAbi)
                 else
                     architecture += "v7a";
                 return architecture;
+            case ProjectExplorer::Abi::LoongArchArchitecture:
+                if (targetAbi.wordWidth() == 64)
+                    architecture += "_64";
+                return architecture;
             default:
                 break;
             }
@@ -160,6 +173,7 @@ static QString architecture(const ProjectExplorer::Abi &targetAbi)
             case ProjectExplorer::Abi::ArmArchitecture:
                 // ARM sub-architectures are currently not handled, which is kind of problematic
             case ProjectExplorer::Abi::MipsArchitecture:
+            case ProjectExplorer::Abi::LoongArchArchitecture:
             case ProjectExplorer::Abi::PowerPCArchitecture:
                 architecture.append(QString::number(targetAbi.wordWidth()));
                 break;
@@ -219,8 +233,7 @@ static void filterCompilerLinkerFlags(const ProjectExplorer::Abi &targetAbi, QSt
 {
     for (int i = 0; i < flags.size(); ) {
         if (targetAbi.architecture() != ProjectExplorer::Abi::UnknownArchitecture
-                && flags[i] == QStringLiteral("-arch")
-                && i + 1 < flags.size()) {
+            && (flags[i] == "-arch" || flags[i] == "-target") && i + 1 < flags.size()) {
             flags.removeAt(i);
             flags.removeAt(i);
         } else {
@@ -258,9 +271,9 @@ QVariantMap DefaultPropertyProvider::autoGeneratedProperties(const ProjectExplor
     }
     data.insert(QLatin1String(QBS_TARGETPLATFORM), targetPlatform(targetAbi, k));
 
-    QStringList toolchain = toolchainList(mainTc);
+    QString toolchain = toolchainType(mainTc);
     if (targetAbi.osFlavor() == Abi::AndroidLinuxFlavor) {
-        const IDevice::ConstPtr dev = DeviceKitAspect::device(k);
+        const IDevice::ConstPtr dev = RunDeviceKitAspect::device(k);
         if (dev) {
             const QString sdkDir = k->value(Android::Constants::ANDROID_KIT_SDK).toString();
             if (!sdkDir.isEmpty())
@@ -313,12 +326,12 @@ QVariantMap DefaultPropertyProvider::autoGeneratedProperties(const ProjectExplor
         if (!mainToolchainPrefix.isEmpty())
             data.insert(QLatin1String(CPP_TOOLCHAINPREFIX), mainToolchainPrefix);
 
-        if (toolchain.contains(QLatin1String("clang-cl"))) {
+        if (toolchain == "clang-cl") {
             data.insert(QLatin1String(CPP_COMPILERNAME), mainCompilerName);
             const auto clangClToolchain =
                     static_cast<ProjectExplorer::Internal::ClangClToolchain *>(mainTc);
             data.insert(QLatin1String(CPP_VCVARSALLPATH), clangClToolchain->varsBat());
-        } else if (toolchain.contains(QLatin1String("msvc"))) {
+        } else if (toolchain == "msvc") {
             data.insert(QLatin1String(CPP_COMPILERNAME), mainCompilerName);
         } else {
             if (!mainCompilerName.isEmpty())
@@ -334,7 +347,7 @@ QVariantMap DefaultPropertyProvider::autoGeneratedProperties(const ProjectExplor
             Core::MessageManager::writeFlashing(
                 Tr::tr("C and C++ compiler paths differ. C compiler may not work."));
         }
-        data.insert(QLatin1String(CPP_TOOLCHAINPATH), mainFilePath.absolutePath().toString());
+        data.insert(QLatin1String(CPP_TOOLCHAINPATH), mainFilePath.absolutePath().path());
 
         if (auto gcc = mainTc->asGccToolchain()) {
             QStringList compilerFlags = gcc->platformCodeGenFlags();
@@ -347,13 +360,13 @@ QVariantMap DefaultPropertyProvider::autoGeneratedProperties(const ProjectExplor
         }
         if (targetAbi.os() == ProjectExplorer::Abi::DarwinOS) {
             // Reverse engineer the Xcode developer path from the compiler path
-            const QRegularExpression compilerRe(
+            static const QRegularExpression compilerRe(
                 QStringLiteral("^(?<developerpath>.*)/Toolchains/(?:.+)\\.xctoolchain/usr/bin$"));
-            const QRegularExpressionMatch compilerReMatch = compilerRe.match(cxxCompilerPath.absolutePath().toString());
+            const QRegularExpressionMatch compilerReMatch = compilerRe.match(cxxCompilerPath.absolutePath().toUrlishString());
             if (compilerReMatch.hasMatch()) {
                 const QString developerPath = compilerReMatch.captured(QStringLiteral("developerpath"));
                 data.insert(QLatin1String(XCODE_DEVELOPERPATH), developerPath);
-                toolchain.insert(0, QStringLiteral("xcode"));
+                toolchain = "xcode";
 
                 // If the sysroot is part of this developer path, set the canonical SDK name
                 const QDir sysrootdir(QDir::cleanPath(sysroot));
@@ -382,7 +395,7 @@ QVariantMap DefaultPropertyProvider::autoGeneratedProperties(const ProjectExplor
     }
 
     if (!toolchain.isEmpty())
-        data.insert(QLatin1String(QBS_TOOLCHAIN), toolchain);
+        data.insert("qbs.toolchainType", toolchain);
 
     return data;
 }

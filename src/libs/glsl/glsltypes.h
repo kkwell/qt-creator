@@ -185,6 +185,27 @@ private:
     QVector<Symbol *> _members;
 };
 
+class GLSL_EXPORT InterfaceBlock : public Type, public Scope
+{
+public:
+    InterfaceBlock(Scope *scope = nullptr)
+        : Scope(scope) {}
+
+    QList<Symbol *> members() const override;
+    void add(Symbol *member) override;
+    Symbol *find(const QString &name) const override;
+
+    QString toString() const override { return name(); }
+    const InterfaceBlock *asInterfaceBlockType() const override { return this; }
+    bool isEqualTo(const Type *other) const override;
+    bool isLessThan(const Type *other) const override;
+
+    InterfaceBlock *asInterfaceBlock() override { return this; }
+    const Type *type() const override { return this; }
+private:
+    QVector<Symbol *> _members;
+};
+
 class GLSL_EXPORT Function: public Type, public Scope
 {
 public:
@@ -240,6 +261,45 @@ public:
 
 private:
     int _kind;
+};
+
+class GLSL_EXPORT ImageType : public Type
+{
+public:
+    explicit ImageType(int kind) : _kind(kind) {}
+
+    // kind of image as a token code; e.g. T_IMAGE2D
+    int kind() const { return _kind; }
+
+    QString toString() const override;
+    const ImageType *asImageType() const override { return this; }
+    bool isEqualTo(const Type *other) const override;
+    bool isLessThan(const Type *other) const override;
+
+private:
+    int _kind;
+};
+
+class GLSL_EXPORT SubroutineType : public Type, public Symbol
+{
+public:
+    explicit SubroutineType(Scope *scope) : Symbol(scope) {}
+
+    void setReturnType(const Type *returnType) { _returnType = returnType; }
+    const Type *returnType() const { return _returnType; }
+
+    // as symbol
+    SubroutineType *asSubroutine() override { return this; }
+    const Type *type() const override { return this; }
+
+    // as type
+    const SubroutineType *asSubroutineType() const override { return this; }
+    QString toString() const override { return _name; }
+    bool isEqualTo(const Type *other) const override;
+    bool isLessThan(const Type *other) const override;
+private:
+    const QString _name;
+    const Type *_returnType;
 };
 
 class GLSL_EXPORT OverloadSet: public Type, public Scope

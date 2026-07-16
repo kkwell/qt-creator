@@ -5,6 +5,8 @@
 
 #include "vcsbase_global.h"
 
+#include <utils/result.h>
+
 #include <QAbstractItemView>
 
 QT_BEGIN_NAMESPACE
@@ -27,16 +29,12 @@ public:
     SubmitEditorWidget();
     ~SubmitEditorWidget() override;
 
-    // Register/Unregister actions that are managed by ActionManager with this widget.
-    // The submit action should have Core::Command::CA_UpdateText set as its text will
-    // be updated.
     void registerActions(QAction *editorUndoAction,  QAction *editorRedoAction,
                          QAction *submitAction = nullptr, QAction *diffAction = nullptr);
 
     QString descriptionText() const;
     void setDescriptionText(const QString &text);
 
-    // 'Commit' action enabled despite empty file list
     bool isEmptyFileListEnabled() const;
     void setEmptyFileListEnabled(bool e);
 
@@ -49,24 +47,19 @@ public:
     bool isDescriptionMandatory() const;
     void setDescriptionMandatory(bool);
 
-    QAbstractItemView::SelectionMode fileListSelectionMode() const;
-    void setFileListSelectionMode(QAbstractItemView::SelectionMode sm);
-
     void setFileModel(SubmitFileModel *model);
     SubmitFileModel *fileModel() const;
 
-    // Files to be included in submit
     QStringList checkedFiles() const;
 
     Utils::CompletingTextEdit *descriptionEdit() const;
 
     void addDescriptionEditContextMenuAction(QAction *a);
-    void insertDescriptionEditContextMenuAction(int pos, QAction *a);
 
     void addSubmitFieldWidget(SubmitFieldWidget *f);
     QList<SubmitFieldWidget *> submitFieldWidgets() const;
 
-    virtual bool canSubmit(QString *whyNot = nullptr) const;
+    virtual Utils::Result<> canSubmit() const;
     bool isEdited() const;
     void setUpdateInProgress(bool value);
     bool updateInProgress() const;
@@ -82,11 +75,13 @@ signals:
     void fileSelectionChanged(bool someFileSelected);
     void submitActionTextChanged(const QString &);
     void submitActionEnabledChanged(bool);
+    void updateFileListRequested();
 
 protected:
     void changeEvent(QEvent *event) override;
     virtual QString cleanupDescription(const QString &) const;
     virtual QString commitName() const;
+    virtual void addFileContextMenuActions(QMenu *menu, const QModelIndex &index);
     void insertTopWidget(QWidget *w);
     void insertLeftWidget(QWidget *w);
     void addSubmitButtonMenu(QMenu *menu);
@@ -95,10 +90,9 @@ protected:
     void verifyDescription();
 
 private:
-    enum { MinSubjectLength = 20, MaxSubjectLength = 72, WarningSubjectLength = 55 };
-
     void updateCheckAllComboBox();
     void checkAllToggled();
+    void checkSelectedToggled();
 
     void triggerDiffSelected();
     void diffActivated(const QModelIndex &index);
@@ -106,7 +100,7 @@ private:
     void updateActions();
     void updateDiffAction();
     void editorCustomContextMenuRequested(const QPoint &);
-    void fileListCustomContextMenuRequested(const QPoint & pos);
+    void fileListCustomContextMenuRequested(const QPoint &pos);
 
     bool hasSelection() const;
     int checkedFilesCount() const;

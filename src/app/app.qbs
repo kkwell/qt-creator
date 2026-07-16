@@ -30,7 +30,7 @@ QtcProduct {
     // Some of these are in here only to override the entries added to app-Info.plist with other
     // build systems in mind.
     bundle.infoPlist: ({
-        "NSHumanReadableCopyright": qtc.qtcreator_copyright_string,
+        "NSHumanReadableCopyright": qtc.ide_copyright_string,
         "CFBundleExecutable": qtc.ide_app_target,
         "CFBundleIdentifier": qtc.ide_bundle_identifier,
         "CFBundleVersion": version
@@ -52,8 +52,8 @@ QtcProduct {
     files: [
         "app-Info.plist",
         "app_logo.qrc",
+        "macos/qtcreator.xcassets",
         "main.cpp",
-        "qtcreator.xcassets",
         "../shared/qtsingleapplication/qtsingleapplication.h",
         "../shared/qtsingleapplication/qtsingleapplication.cpp",
         "../shared/qtsingleapplication/qtlocalpeer.h",
@@ -69,10 +69,9 @@ QtcProduct {
         // Also, we need to replace space with \x20 to be able to work with both rc and windres
         cpp.defines: outer.concat(["RC_VERSION=" + qtc.qtcreator_version.replace(/\./g, ",") + ",0",
                                    "RC_VERSION_STRING=" + qtc.qtcreator_display_version,
-                                   "RC_COPYRIGHT=2008-" + qtc.qtcreator_copyright_year
-                                   + " The Qt Company Ltd".replace(/ /g, "\\x20"),
+                                   "RC_COPYRIGHT=" + qtc.ide_copyright_string.replace(/ /g, "\\x20"),
                                    "RC_ICON_PATH=."])
-        files: "qtcreator.rc"
+        files: ["qtcreator.rc", "easyboard.ico"]
     }
 
     Group {

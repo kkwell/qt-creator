@@ -5,25 +5,30 @@
     \page creator-developing-generic-linux.html
     \previouspage creator-reference.html
 
-    \ingroup creator-reference-devices
+    \title Developing for remote Linux devices
 
-    \title Developing for Remote Linux Devices
+    \quotation
+    \l {Remote Linux}{How to: Develop for remote Linux}
+    \endquotation
 
     \brief Connect generic Linux devices to the computer to run,
     debug, and analyze applications built for them from \QC.
 
     If you have a toolchain for building applications for embedded Linux
-    devices installed on the computer, add it to a \l{Kits}{kit}
+    devices installed on the computer, add it to a \l{Managing kits}{kit}
     with the device type \uicontrol {Remote Linux Device} to
     build applications for and run them on the devices.
 
     Use a wizard to connect remote Linux devices to the computer. You can edit
     the settings later in \preferences > \uicontrol Devices > \uicontrol Devices.
 
-    \image qtcreator-preferences-devices-remote-linux.webp {Remote Linux Device in Devices}
+    \image {qtcreator-preferences-devices-remote-linux.webp} {Remote Linux device in the Devices tab in Devices preferences}
+
+    To automatically connect to the remote Linux device when \QC starts, select
+    \uicontrol {Auto-connect on startup}.
 
     //! [openssh]
-    \section1 Protecting Device Connections
+    \section1 Protecting device connections
 
     To protect the connections between \QC and a device, use \l{OpenSSH} for
     remote login over the SSH protocol. The OpenSSH suite is not delivered with
@@ -46,12 +51,11 @@
     \uicontrol {Connection sharing timeout} field. Windows does not support
     shared connections.
 
-    \image qtcreator-ssh-options.png {SSH preferences}
+    \image {qtcreator-ssh-options.png} {SSH tab in Devices preferences}
     //! [openssh]
 
-    \sa {Add Docker devices}, {Remote Linux}{How To: Develop for remote Linux},
-    {Run in Qt Application Manager}, {Remote Linux Deploy Configuration},
-    {Remote Linux Run Settings}
+    \sa {Add Docker devices}, {Remote Linux}{How to: Develop for remote Linux},
+    {Run in Qt Application Manager}
 */
 
 /*!
@@ -75,26 +79,26 @@
 
         \li Select \uicontrol Add to add the Qt version for embedded Linux.
 
-        \li Go to \preferences > \uicontrol Kits > \uicontrol Compilers.
+        \li Go to \uicontrol {Preferences} > \uicontrol Kits >
+            \uicontrol Compilers.
 
         \li Select \uicontrol Add to add the compiler for building the
             applications.
 
-        \li Go to \preferences > \uicontrol Devices > \uicontrol Devices.
+        \li Go to \uicontrol {Preferences} > \uicontrol Devices >
+            \uicontrol Devices.
 
         \li Select \uicontrol Add to add a remote Linux device.
 
-        \li Go to \preferences > \uicontrol Kits.
+        \li Go to \uicontrol {Preferences} > \uicontrol Kits.
 
         \li Select \uicontrol Add to add a kit for building for the device.
 
         \li Select the Qt version, compiler, and device that you added above.
 
-        \li In \uicontrol {Run device type}, select
-            \uicontrol {Remote Linux Device}.
-
-        \li To build on the remote device, select \uicontrol {Remote Linux Device}
-            also in \uicontrol {Build device}.
+        \li In \uicontrol {Run device}, select \uicontrol {Remote Linux Device}
+            in \uicontrol {Type}, and then select the actual device to run on in
+            \uicontrol {Device}.
 
         \li To specify build settings:
 
@@ -108,17 +112,16 @@
 
         \endlist
 
-        \li Select \uicontrol Run to specify run settings. Usually, you can use
-            the default settings.
+        \li Go to \uicontrol {Run Settings} to specify run settings.
+            Usually, you can use the default settings.
 
-            When you run the project, \QC deploys the application as specified by
-            the deploy steps.
+        \li When you run the project, \QC deploys the application as specified by
+            \uicontrol {Deploy Settings}.
 
     \endlist
 
-    \sa {Remote Linux}{How To: Develop for remote Linux},
-    {Manage Kits}{How To: Manage Kits}, {Developing for Remote Linux Devices},
-    {Remote Linux Deploy Configuration}, {Remote Linux Run Settings}
+    \sa {Remote Linux}{How to: Develop for remote Linux},
+    {Manage kits}{How to: Manage kits}, {Developing for remote Linux devices}
 */
 
 /*!
@@ -132,12 +135,36 @@
     Create connections between generic Linux devices and \QC to run, debug, and
     analyze applications on them.
 
-    \image qtcreator-preferences-devices-remote-linux.webp {Remote Linux Device in Devices}
+    \image {qtcreator-preferences-devices-remote-linux.webp} {Remote Linux device in the Devices tab in Devices preferences}
     \caption Remote Linux Device preferences
+
+    To access files on a connected remote Linux device, go to \uicontrol File
+    > \uicontrol {Open From Device}.
 
     \include qtcreator-add-linux-device.qdocinc {add linux device} {Remote Linux Device}
 
-    \sa {Remote Linux}{How To: Develop for remote Linux},
-    {Debug remotely with GDB}, {Developing for Remote Linux Devices},
-    {Remote Linux Deploy Configuration}
+    \sa {Remote Linux}{How to: Develop for remote Linux},
+    {Developing for remote Linux devices}
+*/
+
+/*!
+    \page creator-how-to-build-on-remote-linux.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-remote-linux
+
+    \title Build applications on remote Linux devices
+
+    In addition to building applications \e {for} a generic Linux device, you can
+    use the toolchain on the device to build the applications \e {on} the device.
+
+    To build applications on a connected remote Linux device, the source code
+    must be accessible on the device. You can copy or mount the source code on
+    the device if it does not already reside there. To open the files on the
+    connected device, go to \uicontrol File > \uicontrol {Open From Device}.
+
+    \include creator-how-to-build-on-remote-devices.qdocinc {build on remote devices} {remote Linux device}
+
+    \sa {Add CMake tools}, {Remote Linux}{How to: Develop for remote Linux},
+    {Manage kits}{How to: Manage kits}, {Developing for remote Linux devices}
 */

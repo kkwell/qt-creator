@@ -44,7 +44,7 @@ public:
     QModelIndex currentBranch() const;
     QString fullName(const QModelIndex &idx, bool includePrefix = false) const;
     QStringList localBranchNames() const;
-    QString sha(const QModelIndex &idx) const;
+    QString hash(const QModelIndex &idx) const;
     QDateTime dateTime(const QModelIndex &idx) const;
     bool isHead(const QModelIndex &idx) const;
     bool isLocal(const QModelIndex &idx) const;
@@ -53,7 +53,7 @@ public:
 
     void removeBranch(const QModelIndex &idx);
     void removeTag(const QModelIndex &idx);
-    void checkoutBranch(const QModelIndex &idx, const QObject *context = nullptr,
+    void checkoutBranch(const QModelIndex &idx,
                         const std::function<void(const VcsBase::CommandResult &)> &handler = {});
     bool branchIsMerged(const QModelIndex &idx);
     QModelIndex addBranch(const QString &name, bool track, const QModelIndex &trackedBranch);
@@ -67,9 +67,8 @@ private:
     BranchNode *indexToNode(const QModelIndex &index) const;
     QModelIndex nodeToIndex(BranchNode *node, int column) const;
     void removeNode(const QModelIndex &idx);
-    void updateUpstreamStatus(BranchNode *node);
 
-    QString toolTip(const QString &sha) const;
+    QString toolTip(const QString &hash) const;
 
     class Private;
     Private *d;

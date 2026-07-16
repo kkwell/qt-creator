@@ -8,19 +8,43 @@
 #include "environment.h"
 #include "filepath.h"
 #include "qtcprocess.h"
+#include "synchronizedvalue.h"
+#include "shutdownguard.h"
+#include "utils_global.h"
 
 #include <QDateTime>
 #include <QHash>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QThread>
 
 #include <chrono>
 #include <functional>
-#include <memory>
 #include <optional>
 #include <utility>
 
 namespace Utils {
+
+class QTCREATOR_UTILS_EXPORT DataFromProcessSettingsCache
+{
+public:
+    struct ProcessOutput
+    {
+        static std::optional<ProcessOutput> fromVariant(const QVariant &var);
+        QVariant toVariant() const;
+
+        QString stdOut;
+        QString stdErr;
+    };
+
+    static void writeToSettings();
+
+    static std::optional<ProcessOutput> value(const QString &key);
+    static void setValue(const QString &key, const ProcessOutput &value);
+
+private:
+    static SynchronizedValue<QHash<QString, QVariant>> m_newValuesCache;
+};
 
 // Use this facility for cached retrieval of data from a tool that always returns the same
 // output for the same parameters and is side effect free.
@@ -31,7 +55,8 @@ public:
     class Parameters
     {
     public:
-        using OutputParser = std::function<std::optional<Data>(const QString &)>;
+        using OutputParser = std::function<
+            std::optional<Data>(const QString & /* stdOut */, const QString & /* stdErr */)>;
         using ErrorHandler = std::function<void(const Process &)>;
         using Callback = std::function<void(const std::optional<Data> &)>;
 
@@ -46,7 +71,10 @@ public:
         OutputParser parser;
         ErrorHandler errorHandler;
         Callback callback;
+        Callback cachedValueChangedCallback;
+        bool persistValue = true;
         QList<ProcessResult> allowedResults{ProcessResult::FinishedWithSuccess};
+        bool disableUnixTerminal = false;
     };
 
     // Use the first variant whenever possible.
@@ -61,10 +89,9 @@ private:
     static std::optional<Data> handleProcessFinished(const Parameters &params,
                                                      const QDateTime &exeTimestamp,
                                                      const Key &cacheKey,
-                                                     const std::shared_ptr<Process> &process);
+                                                     const Process *process);
 
-    static inline QHash<Key, Value> m_cache;
-    static inline QMutex m_cacheMutex;
+    static inline SynchronizedValue<QHash<Key, Value>> m_cache;
 };
 
 template<typename Data>
@@ -94,27 +121,72 @@ inline std::optional<Data> DataFromProcess<Data>::getOrProvideData(const Paramet
                                      params.environment.toStringList(),
                                      params.commandLine.arguments());
     const QDateTime exeTimestamp = params.commandLine.executable().lastModified();
-    {
-        QMutexLocker<QMutex> cacheLocker(&m_cacheMutex);
-        const auto it = m_cache.constFind(key);
-        if (it != m_cache.constEnd() && it.value().second == exeTimestamp)
-            return it.value().first;
+
+    const auto cachedValue = m_cache.get(
+        [&key, &exeTimestamp](const QHash<Key, Value> &cache) -> std::optional<Data> {
+            const auto it = cache.constFind(key);
+            if (it != cache.constEnd() && it.value().second == exeTimestamp)
+                return it.value().first;
+            return std::nullopt;
+        });
+
+    if (cachedValue) {
+        if (params.callback)
+            params.callback(cachedValue);
+        return cachedValue;
     }
 
-    const auto outputRetriever = std::make_shared<Process>();
+    const auto outputRetriever = new Process();
     outputRetriever->setCommand(params.commandLine);
-    if (params.callback) {
-        QObject::connect(outputRetriever.get(),
-                         &Process::done,
-                         [params, exeTimestamp, key, outputRetriever] {
-                             handleProcessFinished(params, exeTimestamp, key, outputRetriever);
-                         });
-        outputRetriever->start();
-        return {};
+    outputRetriever->setEnvironment(params.environment);
+    if (params.disableUnixTerminal)
+        outputRetriever->setDisableUnixTerminal();
+
+    if (QThread::isMainThread()) {
+        outputRetriever->setParent(Utils::shutdownGuard());
+        if (params.persistValue && !params.callback) {
+            const QChar separator = params.commandLine.executable().pathListSeparator();
+            const QString stringKey = params.commandLine.executable().toUrlishString() + separator
+                                      + params.commandLine.arguments() + separator
+                                      + params.environment.toStringList().join(separator);
+            const std::optional<DataFromProcessSettingsCache::ProcessOutput> output
+                = DataFromProcessSettingsCache::value(stringKey);
+            if (output) {
+                std::optional<Data> data = params.parser(output->stdOut, output->stdErr);
+
+                m_cache.writeLocked()->insert(key, std::make_pair(data, exeTimestamp));
+
+                QObject::connect(
+                    outputRetriever,
+                    &Process::done,
+                    Utils::shutdownGuard(),
+                    [params, exeTimestamp, key, outputRetriever] {
+                        handleProcessFinished(params, exeTimestamp, key, outputRetriever);
+                        outputRetriever->deleteLater();
+                    });
+                outputRetriever->start();
+                return data;
+            }
+        }
+        if (params.callback) {
+            QObject::connect(
+                outputRetriever,
+                &Process::done,
+                Utils::shutdownGuard(),
+                [params, exeTimestamp, key, outputRetriever] {
+                    handleProcessFinished(params, exeTimestamp, key, outputRetriever);
+                    outputRetriever->deleteLater();
+                });
+            outputRetriever->start();
+            return {};
+        }
     }
 
     outputRetriever->runBlocking(params.timeout);
-    return handleProcessFinished(params, exeTimestamp, key, outputRetriever);
+    const std::optional<Data> result
+        = handleProcessFinished(params, exeTimestamp, key, outputRetriever);
+    delete outputRetriever;
+    return result;
 }
 
 template<typename Data>
@@ -122,7 +194,7 @@ inline std::optional<Data> DataFromProcess<Data>::handleProcessFinished(
     const Parameters &params,
     const QDateTime &exeTimestamp,
     const Key &cacheKey,
-    const std::shared_ptr<Process> &process)
+    const Process *process)
 {
     // Do not store into cache: The next call might succeed.
     if (process->result() == ProcessResult::Canceled) {
@@ -132,12 +204,38 @@ inline std::optional<Data> DataFromProcess<Data>::handleProcessFinished(
     }
 
     std::optional<Data> data;
-    if (params.allowedResults.contains(process->result()))
-        data = params.parser(process->cleanedStdOut());
-    else if (params.errorHandler)
+    if (params.allowedResults.contains(process->result())) {
+        if (params.persistValue) {
+            const QChar separator = params.commandLine.executable().pathListSeparator();
+            const QString stringKey = params.commandLine.executable().toUrlishString() + separator
+                                      + params.commandLine.arguments() + separator
+                                      + params.environment.toStringList().join(separator);
+            const DataFromProcessSettingsCache::ProcessOutput
+                output{process->cleanedStdOut(), process->cleanedStdErr()};
+            DataFromProcessSettingsCache::setValue(stringKey, output);
+        }
+        data = params.parser(process->cleanedStdOut(), process->cleanedStdErr());
+    } else if (params.errorHandler) {
         params.errorHandler(*process);
-    QMutexLocker<QMutex> cacheLocker(&m_cacheMutex);
-    m_cache.insert(cacheKey, std::make_pair(data, exeTimestamp));
+    }
+
+    if (params.cachedValueChangedCallback) {
+        const bool valueChanged = m_cache.get(
+            [&cacheKey, &exeTimestamp, &data](const auto &cache) {
+                const auto it = cache.constFind(cacheKey);
+                if (it != cache.constEnd() && it.value().second == exeTimestamp) {
+                    if (it.value().first != data)
+                        return true;
+                }
+                return false;
+            });
+
+        if (valueChanged)
+            params.cachedValueChangedCallback(data);
+    }
+
+    m_cache.writeLocked()->insert(cacheKey, std::make_pair(data, exeTimestamp));
+
     if (params.callback) {
         params.callback(data);
         return {};

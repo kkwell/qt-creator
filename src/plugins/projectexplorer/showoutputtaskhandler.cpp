@@ -10,14 +10,16 @@
 #include <utils/algorithm.h>
 #include <utils/qtcassert.h>
 
-#include <QAction>
-
 namespace ProjectExplorer {
 namespace Internal {
 
-ShowOutputTaskHandler::ShowOutputTaskHandler(Core::IOutputPane *window, const QString &text,
-                                             const QString &tooltip, const QString &shortcut)
-    : m_window(window), m_text(text), m_tooltip(tooltip), m_shortcut(shortcut)
+ShowOutputTaskHandler::ShowOutputTaskHandler(
+    Core::IOutputPane *window, const QString &text, const QString &tooltip, const QString &shortcut)
+    : ITaskHandler(createAction(text, tooltip, shortcut))
+    , m_window(window)
+    , m_text(text)
+    , m_tooltip(tooltip)
+    , m_shortcut(shortcut)
 {
     QTC_CHECK(m_window);
     QTC_CHECK(!m_text.isEmpty());
@@ -26,7 +28,7 @@ ShowOutputTaskHandler::ShowOutputTaskHandler(Core::IOutputPane *window, const QS
 bool ShowOutputTaskHandler::canHandle(const Task &task) const
 {
     return Utils::anyOf(m_window->outputWindows(), [task](const Core::OutputWindow *ow) {
-        return ow->knowsPositionOf(task.taskId);
+        return ow->knowsPositionOf(task.id());
     });
 }
 
@@ -36,21 +38,22 @@ void ShowOutputTaskHandler::handle(const Task &task)
     // popup first as this does move the visible area!
     m_window->popup(Core::IOutputPane::Flags(Core::IOutputPane::ModeSwitch | Core::IOutputPane::WithFocus));
     for (Core::OutputWindow * const ow : m_window->outputWindows()) {
-        if (ow->knowsPositionOf(task.taskId)) {
+        if (ow->knowsPositionOf(task.id())) {
             m_window->ensureWindowVisible(ow);
-            ow->showPositionOf(task.taskId);
+            ow->showPositionOf(task.id());
             break;
         }
     }
 }
 
-QAction *ShowOutputTaskHandler::createAction(QObject *parent) const
+QAction *ShowOutputTaskHandler::createAction(const QString &text, const QString &tooltip,
+                                             const QString &shortcut)
 {
-    QAction * const outputAction = new QAction(m_text, parent);
-    if (!m_tooltip.isEmpty())
-        outputAction->setToolTip(m_tooltip);
-    if (!m_shortcut.isEmpty())
-        outputAction->setShortcut(QKeySequence(m_shortcut));
+    QAction * const outputAction = new QAction(text);
+    if (!tooltip.isEmpty())
+        outputAction->setToolTip(tooltip);
+    if (!shortcut.isEmpty())
+        outputAction->setShortcut(QKeySequence(shortcut));
     outputAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     return outputAction;
 }

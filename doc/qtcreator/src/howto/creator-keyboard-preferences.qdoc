@@ -9,13 +9,7 @@
 
 /*!
     \page creator-how-to-assign-keyboard-shortcuts.html
-    \if defined(qtdesignstudio)
-    \previouspage studio-keyboard-shortcuts.html
-    \nextpage studio-projects.html
-    \else
     \previouspage creator-how-tos.html
-
-    \endif
 
     \ingroup creator-how-to-ui
 
@@ -32,7 +26,7 @@
     \list 1
 
         \li Select \preferences > \uicontrol Environment > \uicontrol Keyboard.
-            \image qtcreator-keyboard-shortcuts.png {Keyboard preferences}
+            \image {qtcreator-keyboard-shortcuts.png} {Keyboard tab in Environment preferences}
 
         \li Select a command from the list.
 
@@ -59,23 +53,18 @@
 
     \list 1
         \li Select \uicontrol Record.
-        \li Press the keys to use as the keyboard shortcut.
+        \li Select the keys to use as the keyboard shortcut.
         \li Select \uicontrol {Stop Recording} when you are done.
     \endlist
 
-    \sa {Keyboard Shortcuts}, {Find keyboard shortcuts},
-        {Import and export keyboard shortcuts}
+    \sa {Keyboard shortcuts}, {Find keyboard shortcuts},
+        {Import and export keyboard shortcuts},
+        {Adapt the UI}{How to: Adapt the UI}, {Adapting the UI}
 */
 
 /*!
     \page creator-how-to-find-keyboard-shortcuts.html
-    \if defined(qtdesignstudio)
-    \previouspage studio-keyboard-shortcuts.html
-    \nextpage studio-projects.html
-    \else
     \previouspage creator-how-tos.html
-
-    \endif
 
     \ingroup creator-how-to-ui
 
@@ -89,26 +78,23 @@
 
     \list 1
         \li Select \preferences > \uicontrol Environment > \uicontrol Keyboard.
-            \image qtcreator-keyboard-shortcuts.png {Keyboard preferences}
+            \image {qtcreator-keyboard-shortcuts.png} {Keyboard tab in Environment preferences}
         \li Start typing the name of a function or shortcut in the
             \uicontrol Filter field.
     \endlist
 
     You can change the existing keyboard shortcuts or import and export them.
 
-    \sa {Keyboard Shortcuts}, {Assign keyboard shortcuts},
-        {Import and export keyboard shortcuts}
+    \sa {Keyboard shortcuts}, {Assign keyboard shortcuts},
+        {Import and export keyboard shortcuts},
+        {Adapt the UI}{How to: Adapt the UI}, {Adapting the UI}
 */
 
 /*!
     \page creator-how-to-change-keyboard-shortcuts.html
-    \if defined(qtdesignstudio)
-    \previouspage studio-keyboard-shortcuts.html
-    \nextpage studio-projects.html
-    \else
     \previouspage creator-how-tos.html
 
-    \endif
+    \ingroup creator-how-to-ui
 
     \title Import and export keyboard shortcuts
 
@@ -120,9 +106,9 @@
     \list 1
 
         \li Select \preferences > \uicontrol Environment > \uicontrol Keyboard.
-            \image qtcreator-keyboard-shortcuts.png {Keyboard preferences}
+            \image {qtcreator-keyboard-shortcuts.png} {Keyboard tab in Environment preferences}
 
-        \li To import a keyboard shortcut mapping scheme, click \uicontrol Import
+        \li To import a keyboard shortcut mapping scheme, select \uicontrol Import
             and select the .kms file that has the keyboard shortcut mapping scheme
             you want to import.
 
@@ -132,6 +118,7 @@
 
     \endlist
 
-    \sa {Keyboard Shortcuts}, {Assign keyboard shortcuts},
-        {Find keyboard shortcuts}
+    \sa {Keyboard shortcuts}, {Assign keyboard shortcuts},
+        {Find keyboard shortcuts},
+        {Adapt the UI}{How to: Adapt the UI}, {Adapting the UI}
 */

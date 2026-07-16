@@ -6,8 +6,8 @@
 #include "qdbconstants.h"
 #include "qdbtr.h"
 
+#include <projectexplorer/devicesupport/devicekitaspects.h>
 #include <projectexplorer/devicesupport/idevice.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/target.h>
 
@@ -16,7 +16,7 @@
 #include <utils/qtcprocess.h>
 
 using namespace ProjectExplorer;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace Qdb::Internal {
@@ -40,7 +40,7 @@ public:
 GroupItem QdbStopApplicationStep::deployRecipe()
 {
     const auto onSetup = [this](Process &process) {
-        const auto device = DeviceKitAspect::device(target()->kit());
+        const auto device = RunDeviceKitAspect::device(kit());
         if (!device) {
             addErrorMessage(Tr::tr("No device to stop the application on."));
             return SetupResult::StopWithError;
@@ -81,7 +81,7 @@ QdbStopApplicationStepFactory::QdbStopApplicationStepFactory()
 {
     registerStep<QdbStopApplicationStep>(Constants::QdbStopApplicationStepId);
     setDisplayName(Tr::tr("Stop already running application"));
-    setSupportedDeviceType(Constants::QdbLinuxOsType);
+    setSupportedDeviceType(ProjectExplorer::Constants::BOOT2QT_DEVICE_TYPE);
     setSupportedStepList(ProjectExplorer::Constants::BUILDSTEPS_DEPLOY);
 }
 

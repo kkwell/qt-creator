@@ -3,13 +3,14 @@
 
 #pragma once
 
+#include <utils/filepath.h>
+
+#include <QFileInfo>
 #include <QObject>
 #include <QRegularExpression>
 #include <QSet>
 #include <QTimer>
 #include <QJsonArray>
-
-QT_FORWARD_DECLARE_CLASS(QDir)
 
 namespace Utils { class FileSystemWatcher; }
 
@@ -52,26 +53,29 @@ signals:
     void directoryChanged();
     void recursiveChanged();
     void pathsChanged();
+    void fileModified(const QString &filePath);
     void filesChanged(const QSet<QString> &added, const QSet<QString> &removed);
 
 private:
     void updateFileList();
     void updateFileListNow();
+    void watchFiles(QSet<QString> filters, const QSet<QString> &add, const QSet<QString> &remove);
 
     QString absolutePath(const QString &path) const;
     QString absoluteDir() const;
 
     bool fileMatches(const QString &fileName) const;
-    QSet<QString> filesInSubTree(const QDir &rootDir, const QDir &dir, QSet<QString> *parsedDirs = nullptr);
+    bool ignoreDirectory(const QFileInfo &file) const;
+    QSet<QString> filesInSubTree(const QDir &rootDir, const QDir &dir, QSet<Utils::FilePath> *parsedDirs = nullptr);
     Utils::FileSystemWatcher *dirWatcher();
-    QStringList watchedDirectories() const;
+    Utils::FilePaths watchedDirectories() const;
 
     QString m_rootDir;
     QString m_defaultDir;
 
     QStringList m_filter;
     // simple "*.png" patterns are stored in m_fileSuffixes, otherwise store in m_regExpList
-    QList<QString> m_fileSuffixes;
+    QStringList m_fileSuffixes;
     QList<QRegularExpression> m_regExpList;
 
     enum RecursiveOption {

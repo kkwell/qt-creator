@@ -5,79 +5,192 @@
 
 #include "mesonpluginconstants.h"
 #include "mesonprojectmanagertr.h"
-#include "toolsmodel.h"
+#include "mesontools.h"
 
 #include <coreplugin/dialogs/ioptionspage.h>
 
-#include <utils/detailswidget.h>
-#include <utils/layoutbuilder.h>
+#include <projectexplorer/projectexplorerconstants.h>
 
-#include <QHeaderView>
+#include <utils/aspects.h>
+#include <utils/detailswidget.h>
+#include <utils/groupedmodel.h>
+#include <utils/guiutils.h>
+#include <utils/layoutbuilder.h>
+#include <utils/qtcassert.h>
+#include <utils/stringutils.h>
+#include <utils/utilsicons.h>
+
 #include <QPushButton>
-#include <QTreeView>
 
 using namespace Utils;
 
 namespace MesonProjectManager::Internal {
 
-class ToolTreeItem;
-
-class ToolItemSettings final : public QWidget
+class ToolItem
 {
-    Q_OBJECT
-
 public:
-    ToolItemSettings()
-    {
-        m_mesonNameLineEdit = new QLineEdit;
+    ToolItem() = default;
+    explicit ToolItem(const QString &name);
+    explicit ToolItem(const MesonTools::Tool_t &tool);
+    ToolItem cloned() const;
 
-        m_mesonPathChooser = new PathChooser;
-        m_mesonPathChooser->setExpectedKind(PathChooser::ExistingCommand);
-        m_mesonPathChooser->setHistoryCompleter("Meson.Command.History");
+    QVariant data(int column, int role) const;
 
-        using namespace Layouting;
+    friend bool operator==(const ToolItem &, const ToolItem &) = default;
 
-        Form {
-            Tr::tr("Name:"), m_mesonNameLineEdit, br,
-            Tr::tr("Path:"), m_mesonPathChooser, br,
-            noMargin
-        }.attachTo(this);
+    QString name;
+    FilePath executable;
+    Id id;
+    bool autoDetected = false;
+};
 
-        connect(m_mesonPathChooser, &PathChooser::rawPathChanged, this, &ToolItemSettings::store);
-        connect(m_mesonNameLineEdit, &QLineEdit::textChanged, this, &ToolItemSettings::store);
-    }
+} // namespace MesonProjectManager::Internal
 
-    void load(ToolTreeItem *item)
-    {
-        if (item) {
-            m_currentId = std::nullopt;
-            m_mesonNameLineEdit->setDisabled(item->isAutoDetected());
-            m_mesonNameLineEdit->setText(item->name());
-            m_mesonPathChooser->setDisabled(item->isAutoDetected());
-            m_mesonPathChooser->setFilePath(item->executable());
-            m_currentId = item->id();
-        } else {
-            m_currentId = std::nullopt;
+Q_DECLARE_METATYPE(MesonProjectManager::Internal::ToolItem)
+
+namespace MesonProjectManager::Internal {
+
+ToolItem::ToolItem(const QString &name)
+    : name{name}
+    , id{Id::generate()}
+    , autoDetected{false}
+{}
+
+ToolItem::ToolItem(const MesonTools::Tool_t &tool)
+    : name{tool->name()}
+    , executable{tool->exe()}
+    , id{tool->id()}
+    , autoDetected{tool->autoDetected()}
+{}
+
+ToolItem ToolItem::cloned() const
+{
+    ToolItem result;
+    result.name = Tr::tr("Clone of %1").arg(name);
+    result.executable = executable;
+    result.id = Id::generate();
+    result.autoDetected = false;
+    return result;
+}
+
+QVariant ToolItem::data(int column, int role) const
+{
+    switch (role) {
+    case Qt::DisplayRole:
+        switch (column) {
+        case 0:
+            return name;
+        case 1:
+            return executable.toUserOutput();
         }
+        return {};
+    case Qt::ToolTipRole: {
+        if (!executable.exists())
+            return Tr::tr("Meson executable path does not exist.");
+        if (!executable.isFile())
+            return Tr::tr("Meson executable path is not a file.");
+        if (!executable.isExecutableFile())
+            return Tr::tr("Meson executable path is not executable.");
+        const QVersionNumber ver = MesonToolWrapper::read_version(executable);
+        return ver.isNull() ? Tr::tr("Cannot get tool version.")
+                            : Tr::tr("Version: %1").arg(ver.toString());
     }
-
-    void store()
-    {
-        if (m_currentId) {
-            emit applyChanges(*m_currentId,
-                              m_mesonNameLineEdit->text(),
-                              m_mesonPathChooser->filePath());
-        }
+    case Qt::DecorationRole:
+        if (column == 0 && !executable.isExecutableFile())
+            return Icons::CRITICAL.icon();
+        return {};
     }
+    return {};
+}
 
-signals:
-    void applyChanges(Id itemId, const QString &name, const FilePath &exe);
+// ToolsModel
+
+class ToolsModel final : public TypedGroupedModel<ToolItem>
+{
+public:
+    ToolsModel();
+
+    int addMesonTool();
+    int cloneRow(int row) override;
+    void updateItem(int row, const QString &name, const FilePath &exe);
+    void apply() override;
 
 private:
-    std::optional<Id> m_currentId{std::nullopt};
-    QLineEdit *m_mesonNameLineEdit;
-    PathChooser *m_mesonPathChooser;
+    QVariant variantData(int row, int column, int role) const override;
+    QString uniqueName(const QString &baseName) const;
 };
+
+ToolsModel::ToolsModel()
+{
+    setShowDefault(true);
+    setHeader({Tr::tr("Name"), Tr::tr("Location")});
+    setFilters(ProjectExplorer::Constants::msgAutoDetected(),
+               {{ProjectExplorer::Constants::msgManual(), [this](int row) {
+                    return !item(row).autoDetected;
+                }}});
+    for (const MesonTools::Tool_t &tool : MesonTools::tools())
+        appendItem(ToolItem{tool});
+    const Id defaultId = MesonTools::defaultToolId();
+    for (int row = 0; row < itemCount(); ++row) {
+        if (item(row).id == defaultId) {
+            setDefaultRow(row);
+            break;
+        }
+    }
+}
+
+int ToolsModel::addMesonTool()
+{
+    return appendVolatileItem(ToolItem{uniqueName(Tr::tr("New Meson"))});
+}
+
+int ToolsModel::cloneRow(int row)
+{
+    return appendVolatileItem(item(row).cloned());
+}
+
+void ToolsModel::updateItem(int row, const QString &name, const FilePath &exe)
+{
+    QTC_ASSERT(row >= 0, return);
+    ToolItem it = item(row);
+    it.name = name;
+    it.executable = exe;
+    setVolatileItem(row, it);
+    notifyRowChanged(row);
+}
+
+void ToolsModel::apply()
+{
+    const int defRow = defaultRow();
+    MesonTools::setDefaultToolId(defRow >= 0 ? item(defRow).id : Id());
+    for (int row = 0; row < itemCount(); ++row) {
+        if (isRemoved(row)) {
+            MesonTools::removeTool(item(row).id);
+            continue;
+        }
+        if (isDirty(row)) {
+            const ToolItem it = item(row);
+            MesonTools::updateTool(it.id, it.name, it.executable);
+        }
+    }
+
+    GroupedModel::apply();
+}
+
+QVariant ToolsModel::variantData(int row, int column, int role) const
+{
+    return item(row).data(column, role);
+}
+
+QString ToolsModel::uniqueName(const QString &baseName) const
+{
+    QStringList names;
+    for (int row = 0; row < itemCount(); ++row)
+        names << item(row).name;
+    return Utils::makeUniquelyNumbered(baseName, names);
+}
+
+// ToolsSettingsWidget
 
 class ToolsSettingsWidget final : public Core::IOptionsPageWidget
 {
@@ -86,96 +199,105 @@ public:
 
 private:
     void apply() final { m_model.apply(); }
+    void cancel() final { m_model.cancel(); }
 
-    void cloneMesonTool();
-    void removeMesonTool();
-    void currentMesonToolChanged(const QModelIndex &newCurrent);
+    bool isDirty() const final { return m_model.isDirty(); }
+
+    void currentMesonToolChanged(int oldRow, int newRow);
+    void store();
 
     ToolsModel m_model;
-    ToolItemSettings *m_itemSettings;
-    ToolTreeItem *m_currentItem = nullptr;
+    GroupedView m_groupedView{m_model};
+    bool m_loading = false;
 
-    QTreeView *m_mesonList;
-    DetailsWidget *m_mesonDetails;
-    QPushButton *m_cloneButton;
-    QPushButton *m_removeButton;
+    QPushButton m_addButton;
+
+    DetailsWidget m_mesonDetails;
+    QWidget m_itemConfigWidget;
+    AspectContainer m_data;
+    StringAspect m_name{&m_data};
+    FilePathAspect m_executable{&m_data};
 };
 
 ToolsSettingsWidget::ToolsSettingsWidget()
 {
-    m_mesonList = new QTreeView;
-    m_mesonList->setModel(&m_model);
-    m_mesonList->expandAll();
-    m_mesonList->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    m_mesonList->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_name.setDisplayStyle(StringAspect::LineEditDisplay);
+    m_name.setLabelText(Tr::tr("Name:"));
 
-    m_itemSettings = new ToolItemSettings;
-
-    m_mesonDetails = new DetailsWidget;
-    m_mesonDetails->setState(DetailsWidget::NoSummary);
-    m_mesonDetails->setVisible(false);
-    m_mesonDetails->setWidget(m_itemSettings);
-
-    auto addButton = new QPushButton(Tr::tr("Add"));
-
-    m_cloneButton = new QPushButton(Tr::tr("Clone"));
-    m_cloneButton->setEnabled(false);
-
-    m_removeButton = new QPushButton(Tr::tr("Remove"));
-    m_removeButton->setEnabled(false);
-
-    auto makeDefaultButton = new QPushButton(Tr::tr("Make Default"));
-    makeDefaultButton->setEnabled(false);
-    makeDefaultButton->setVisible(false);
-    makeDefaultButton->setToolTip(Tr::tr("Set as the default Meson executable to use "
-                                         "when creating a new kit or when no value is set."));
+    m_executable.setExpectedKind(PathChooser::ExistingCommand);
+    m_executable.setHistoryCompleter("Meson.Command.History");
+    m_executable.setLabelText(Tr::tr("Path:"));
 
     using namespace Layouting;
+    Form {
+        m_name, br,
+        m_executable, br, noMargin
+    }.attachTo(&m_itemConfigWidget);
+
+    m_mesonDetails.setState(DetailsWidget::NoSummary);
+    m_mesonDetails.setVisible(false);
+    m_mesonDetails.setWidget(&m_itemConfigWidget);
+
+    m_addButton.setText(Tr::tr("Add"));
+    m_groupedView.makeDefaultButton().setToolTip(
+        Tr::tr("Set as the default Meson executable to use "
+               "when creating a new kit or when no value is set."));
 
     Row {
         Column {
-            m_mesonList,
+            m_groupedView.view(),
             m_mesonDetails
         },
         Column {
-            addButton,
-            m_cloneButton,
-            m_removeButton,
-            makeDefaultButton,
+            m_addButton,
+            m_groupedView.cloneButton(),
+            m_groupedView.removeButton(),
+            m_groupedView.makeDefaultButton(),
             st
         }
     }.attachTo(this);
 
-    connect(m_mesonList->selectionModel(), &QItemSelectionModel::currentChanged,
+    connect(&m_groupedView, &GroupedView::currentRowChanged,
             this, &ToolsSettingsWidget::currentMesonToolChanged);
-    connect(m_itemSettings, &ToolItemSettings::applyChanges, &m_model, &ToolsModel::updateItem);
 
-    connect(addButton, &QPushButton::clicked, &m_model, &ToolsModel::addMesonTool);
-    connect(m_cloneButton, &QPushButton::clicked, this, &ToolsSettingsWidget::cloneMesonTool);
-    connect(m_removeButton, &QPushButton::clicked, this, &ToolsSettingsWidget::removeMesonTool);
+    m_name.addOnVolatileValueChanged(this, [this] { store(); });
+    m_executable.addOnVolatileValueChanged(this, [this] { store(); });
+
+    connect(&m_addButton, &QPushButton::clicked, this, [this] {
+        m_groupedView.selectRow(m_model.addMesonTool());
+    });
+    m_groupedView.setCanRemoveRow([this](int row) {
+        return !m_model.item(row).autoDetected;
+    });
+
+
+    connect(&m_data, &AspectContainer::changed, &checkSettingsDirty);
 }
 
-void ToolsSettingsWidget::cloneMesonTool()
+void ToolsSettingsWidget::store()
 {
-    if (m_currentItem) {
-        auto newItem = m_model.cloneMesonTool(m_currentItem);
-        m_mesonList->setCurrentIndex(newItem->index());
+    if (m_loading)
+        return;
+    const int row = m_groupedView.currentRow();
+    if (row >= 0 && !m_model.isRemoved(row)) {
+        m_model.updateItem(row, m_name.volatileValue(), m_executable.expandedVolatileValue());
     }
 }
 
-void ToolsSettingsWidget::removeMesonTool()
+void ToolsSettingsWidget::currentMesonToolChanged(int, int newRow)
 {
-    if (m_currentItem)
-        m_model.removeMesonTool(m_currentItem);
-}
-
-void ToolsSettingsWidget::currentMesonToolChanged(const QModelIndex &newCurrent)
-{
-    m_currentItem = m_model.mesoneToolTreeItem(newCurrent);
-    m_itemSettings->load(m_currentItem);
-    m_mesonDetails->setVisible(m_currentItem);
-    m_cloneButton->setEnabled(m_currentItem);
-    m_removeButton->setEnabled(m_currentItem && !m_currentItem->isAutoDetected());
+    const bool hasRow = newRow >= 0;
+    const bool hasItem = hasRow && !m_model.isRemoved(newRow);
+    m_loading = true;
+    if (hasItem) {
+        const ToolItem &it = m_model.item(newRow);
+        m_name.setEnabled(!it.autoDetected);
+        m_name.setValue(it.name);
+        m_executable.setEnabled(!it.autoDetected);
+        m_executable.setValue(it.executable);
+    }
+    m_loading = false;
+    m_mesonDetails.setVisible(hasItem);
 }
 
 class ToolsSettingsPage final : public Core::IOptionsPage
@@ -196,5 +318,3 @@ void setupToolsSettingsPage()
 }
 
 } // namespace MesonProjectManager
-
-#include "toolssettingspage.moc"

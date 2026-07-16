@@ -85,6 +85,8 @@ public:
 
 class CompletionList : public TreeView
 {
+    Q_OBJECT
+
 public:
     CompletionList(QWidget *parent = nullptr);
 
@@ -99,6 +101,9 @@ public:
 
     void keyPressEvent(QKeyEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
+
+signals:
+    void completionRequested(const QModelIndex &index);
 
 private:
     QMetaObject::Connection m_updateSizeConnection;
@@ -163,7 +168,7 @@ QVariant LocatorModel::data(const QModelIndex &index, int role) const
         if (index.column() == DisplayNameColumn)
             return m_entries.at(index.row()).displayName;
         if (index.column() == ExtraInfoColumn) {
-            if (Locator::instance()->relativePaths()) {
+            if (locatorSettings().relativePaths()) {
                 return ICore::pathRelativeToActiveProject(FilePath::fromUserInput(m_entries.at(index.row()).extraInfo)).toUserOutput();
             } else {
                 return m_entries.at(index.row()).extraInfo;
@@ -374,7 +379,7 @@ bool LocatorPopup::eventFilter(QObject *watched, QEvent *event)
         auto fe = static_cast<QFocusEvent *>(event);
         if (fe->reason() == Qt::ActiveWindowFocusReason && !QApplication::activeWindow())
             hide();
-    } else if (watched == m_window && event->type() == QEvent::Resize) {
+    } else if (watched == m_window && (event->type() == QEvent::Resize || event->type() == QEvent::Move)) {
         doUpdateGeometry();
     }
     return QWidget::eventFilter(watched, event);
@@ -433,9 +438,21 @@ LocatorPopup::LocatorPopup(LocatorWidget *locatorWidget, QWidget *parent)
     });
     connect(locatorWidget, &LocatorWidget::showCurrentItemToolTip,
             m_tree, &CompletionList::showCurrentItemToolTip);
-    connect(locatorWidget, &LocatorWidget::handleKey, this, [this](QKeyEvent *keyEvent) {
-        QApplication::sendEvent(m_tree, keyEvent);
-    }, Qt::DirectConnection); // must be handled directly before event is deleted
+    connect(
+        locatorWidget,
+        &LocatorWidget::handleKey,
+        this,
+        [this](QKeyEvent *keyEvent) { m_tree->keyPressEvent(keyEvent); },
+        Qt::DirectConnection); // must be handled directly before event is deleted
+    connect(
+        m_tree,
+        &CompletionList::completionRequested,
+        locatorWidget,
+        [this, locatorWidget](const QModelIndex &index) {
+            if (!index.isValid() || !isVisible())
+                return;
+            locatorWidget->completeEntry(index.row());
+        });
     connect(m_tree, &QAbstractItemView::activated, locatorWidget,
             [this, locatorWidget](const QModelIndex &index) {
         if (!index.isValid() || !isVisible())
@@ -495,6 +512,11 @@ void CompletionList::keyPressEvent(QKeyEvent *event)
 {
     switch (event->key()) {
     case Qt::Key_Tab:
+        if (locatorSettings().useTabCompletion()) {
+            emit completionRequested(currentIndex());
+            return;
+        }
+        [[fallthrough]];
     case Qt::Key_Down:
         next();
         return;
@@ -554,9 +576,11 @@ bool CompletionList::eventFilter(QObject *watched, QEvent *event)
 LocatorWidget::LocatorWidget(Locator *locator)
     : m_locatorModel(new LocatorModel(this))
     , m_filterMenu(new QMenu(this))
-    , m_centeredPopupAction(new QAction(Tr::tr("Open as Centered Popup"), this))
+    , m_useCenteredPopup(new QAction(locatorSettings().useCenteredPopup.labelText(), this))
+    , m_useTabCompletion(new QAction(locatorSettings().useTabCompletion.labelText(), this))
+    , m_ignoreGeneratedFiles(new QAction(locatorSettings().ignoreGeneratedFiles.labelText(), this))
     , m_refreshAction(new QAction(Tr::tr("Refresh"), this))
-    , m_configureAction(new QAction(ICore::msgShowOptionsDialog(), this))
+    , m_configureAction(new QAction(ICore::msgShowSettings(), this))
     , m_fileLineEdit(new FancyLineEdit)
 {
     setAttribute(Qt::WA_Hover);
@@ -586,24 +610,32 @@ LocatorWidget::LocatorWidget(Locator *locator)
     m_fileLineEdit->installEventFilter(this);
     this->installEventFilter(this);
 
-    m_centeredPopupAction->setCheckable(true);
-    m_centeredPopupAction->setChecked(Locator::useCenteredPopupForShortcut());
+    m_useCenteredPopup->setCheckable(true);
+    m_useTabCompletion->setCheckable(true);
+    m_ignoreGeneratedFiles->setCheckable(true);
 
-    connect(m_filterMenu, &QMenu::aboutToShow, this, [this] {
-        m_centeredPopupAction->setChecked(Locator::useCenteredPopupForShortcut());
-    });
+    const auto updateActions = [this] {
+        m_useCenteredPopup->setChecked(locatorSettings().useCenteredPopup());
+        m_useTabCompletion->setChecked(locatorSettings().useTabCompletion());
+        m_ignoreGeneratedFiles->setChecked(locatorSettings().ignoreGeneratedFiles());
+    };
+    updateActions();
+    connect(m_filterMenu, &QMenu::aboutToShow, this, updateActions);
+
     Utils::addToolTipsToMenu(m_filterMenu);
 
-    connect(m_centeredPopupAction, &QAction::toggled, locator, [locator](bool toggled) {
-        if (toggled != Locator::useCenteredPopupForShortcut()) {
-            Locator::setUseCenteredPopupForShortcut(toggled);
+    connect(m_useCenteredPopup, &QAction::toggled, locator, [locator](bool toggled) {
+        if (toggled != locatorSettings().useCenteredPopup()) {
+            locatorSettings().useCenteredPopup.setValue(toggled);
             QMetaObject::invokeMethod(locator, [] { LocatorManager::show({}); });
         }
     });
-
-    m_filterMenu->addAction(m_centeredPopupAction);
-    m_filterMenu->addAction(m_refreshAction);
-    m_filterMenu->addAction(m_configureAction);
+    connect(m_useTabCompletion, &QAction::toggled, locator, [](bool checked) {
+        locatorSettings().useTabCompletion.setValue(checked);
+    });
+    connect(m_ignoreGeneratedFiles, &QAction::toggled, locator, [](bool checked) {
+        locatorSettings().ignoreGeneratedFiles.setValue(checked);
+    });
 
     m_fileLineEdit->setButtonMenu(FancyLineEdit::Left, m_filterMenu);
 
@@ -630,7 +662,11 @@ LocatorWidget::LocatorWidget(Locator *locator)
         updatePlaceholderText(locateCmd);
     }
 
-    connect(qApp, &QApplication::focusChanged, this, &LocatorWidget::updatePreviousFocusWidget);
+    connect(qApp, &QApplication::focusChanged, this, [this](QWidget *previous, QWidget *current) {
+        const auto isInLocator = [this](QWidget *w) { return w == this || isAncestorOf(w); };
+        if (isInLocator(current) && !isInLocator(previous))
+            m_previousFocusWidget = previous;
+    });
 
     connect(locator, &Locator::filtersChanged, this, &LocatorWidget::updateFilterList);
     updateFilterList();
@@ -669,7 +705,9 @@ void LocatorWidget::updateFilterList()
         });
     }
     m_filterMenu->addSeparator();
-    m_filterMenu->addAction(m_centeredPopupAction);
+    m_filterMenu->addAction(m_useCenteredPopup);
+    m_filterMenu->addAction(m_useTabCompletion);
+    m_filterMenu->addAction(m_ignoreGeneratedFiles);
     m_filterMenu->addAction(m_refreshAction);
     m_filterMenu->addAction(m_configureAction);
 }
@@ -677,13 +715,6 @@ void LocatorWidget::updateFilterList()
 bool LocatorWidget::isInMainWindow() const
 {
     return window() == ICore::mainWindow();
-}
-
-void LocatorWidget::updatePreviousFocusWidget(QWidget *previous, QWidget *current)
-{
-    const auto isInLocator = [this](QWidget *w) { return w == this || isAncestorOf(w); };
-    if (isInLocator(current) && !isInLocator(previous))
-        m_previousFocusWidget = previous;
 }
 
 static void resetFocus(QPointer<QWidget> previousFocus, bool isInMainWindow)
@@ -721,7 +752,7 @@ bool LocatorWidget::eventFilter(QObject *obj, QEvent *event)
             || keyEvent->matches(QKeySequence::MoveToStartOfLine)
             || keyEvent->matches(QKeySequence::SelectStartOfLine)) {
             const int filterEndIndex = currentText().indexOf(' ');
-            if (filterEndIndex > 0 && filterEndIndex < currentText().length() - 1) {
+            if (filterEndIndex > 0 && filterEndIndex < currentText().size() - 1) {
                 const bool startsWithShortcutString
                     = Utils::anyOf(Locator::filters(),
                                    [shortcutString = currentText().left(filterEndIndex)](
@@ -841,7 +872,7 @@ void LocatorWidget::showPopupNow()
     emit showPopup();
 }
 
-QList<ILocatorFilter *> LocatorWidget::filtersFor(const QString &text, QString &searchText)
+LocatorWidget::FiltersFor LocatorWidget::filtersFor(const QString &text)
 {
     const int length = text.size();
     int firstNonSpace;
@@ -855,6 +886,7 @@ QList<ILocatorFilter *> LocatorWidget::filtersFor(const QString &text, QString &
     if (whiteSpace >= 0) {
         const QString prefix = text.mid(firstNonSpace, whiteSpace - firstNonSpace).toLower();
         QList<ILocatorFilter *> prefixFilters;
+        QString searchText;
         for (ILocatorFilter *filter : filters) {
             if (prefix == filter->shortcutString()) {
                 searchText = text.mid(whiteSpace).trimmed();
@@ -862,10 +894,10 @@ QList<ILocatorFilter *> LocatorWidget::filtersFor(const QString &text, QString &
             }
         }
         if (!prefixFilters.isEmpty())
-            return prefixFilters;
+            return {prefixFilters, searchText, prefix};
     }
-    searchText = text.trimmed();
-    return Utils::filtered(filters, &ILocatorFilter::isIncludedByDefault);
+    const QString searchText = text.trimmed();
+    return {Utils::filtered(filters, &ILocatorFilter::isIncludedByDefault), searchText, QString()};
 }
 
 void LocatorWidget::setProgressIndicatorVisible(bool visible)
@@ -885,8 +917,7 @@ void LocatorWidget::setProgressIndicatorVisible(bool visible)
 
 void LocatorWidget::runMatcher(const QString &text)
 {
-    QString searchText;
-    const QList<ILocatorFilter *> filters = filtersFor(text, searchText);
+    const auto [filters, searchText, prefix] = filtersFor(text);
 
     LocatorMatcherTasks tasks;
     for (ILocatorFilter *filter : filters)
@@ -958,6 +989,26 @@ void LocatorWidget::acceptEntry(int row)
     }
 }
 
+void LocatorWidget::completeEntry(int row)
+{
+    if (row < 0 || row >= m_locatorModel->rowCount())
+        return;
+    const QModelIndex index = m_locatorModel->index(row, 0);
+    if (!index.isValid())
+        return;
+    const LocatorFilterEntry entry
+        = m_locatorModel->data(index, LocatorEntryRole).value<LocatorFilterEntry>();
+    const auto defaultCompleter = [this, &entry] {
+        const QString prefix = filtersFor(currentText()).prefix;
+        const QString text = prefix.isEmpty() ? entry.displayName
+                                              : (prefix + " " + entry.displayName);
+        return AcceptResult{text, int(text.size())};
+    };
+    const AcceptResult result = entry.completer ? entry.completer() : defaultCompleter();
+    if (!result.newText.isEmpty())
+        showText(result.newText, result.selectionStart, result.selectionLength);
+}
+
 void LocatorWidget::showText(const QString &text, int selectionStart, int selectionLength)
 {
     if (!text.isEmpty())
@@ -987,7 +1038,7 @@ QAbstractItemModel *LocatorWidget::model() const
 
 void LocatorWidget::showConfigureDialog()
 {
-    ICore::showOptionsDialog(Constants::FILTER_OPTIONS_PAGE);
+    ICore::showSettings(Constants::FILTER_OPTIONS_PAGE);
 }
 
 LocatorWidget *createStaticLocatorWidget(Locator *locator)
@@ -1023,3 +1074,5 @@ QSize CompletionDelegate::sizeHint(const QStyleOptionViewItem &option, const QMo
 
 } // namespace Internal
 } // namespace Core
+
+#include "locatorwidget.moc"

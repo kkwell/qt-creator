@@ -373,6 +373,10 @@ int Lexer::findKeyword(const char *word, int length) const
     if (!(t & Variant_Mask))
         return t;
     if ((_variant & t & Variant_Mask) == 0) {
+        if ((t & Variant_Vulkan) == Variant_Vulkan) {
+            // must be some of the types defined for Vulkan, but not present for others
+            return Parser::T_IDENTIFIER;
+        }
         // Return a "reserved word" token if this keyword is not permitted
         // in the current language variant so that the syntax highlighter
         // can warn the user about the word.
@@ -380,14 +384,4 @@ int Lexer::findKeyword(const char *word, int length) const
             return Parser::T_RESERVED;
     }
     return t & ~Variant_Mask;
-}
-
-void Lexer::warning(int line, const QString &message)
-{
-    _engine->warning(line, message);
-}
-
-void Lexer::error(int line, const QString &message)
-{
-    _engine->error(line, message);
 }

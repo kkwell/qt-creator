@@ -6,6 +6,7 @@
 #include "core_global.h"
 #include "icontext.h"
 
+#include <extensionsystem/pluginspec.h>
 #include <utils/appmainwindow.h>
 #include <utils/filepath.h>
 #include <utils/qtcsettings.h>
@@ -30,7 +31,6 @@ namespace Core {
 class Context;
 class IDocument;
 class IWizardFactory;
-class NewDialog;
 
 class CORE_EXPORT ICore : public QObject
 {
@@ -54,17 +54,16 @@ public:
                                   const Utils::FilePath &defaultLocation = {},
                                   const QVariantMap &extraVariables = {});
 
-    static bool showOptionsDialog(const Utils::Id page, QWidget *parent = nullptr);
-    static bool showOptionsDialog(const Utils::Id page, Utils::Id item, QWidget *parent = nullptr);
-    static QString msgShowOptionsDialog();
-    static QString msgShowOptionsDialogToolTip();
+    static void showSettings(const Utils::Id page);
+    static void showSettings(const Utils::Id page, Utils::Id item);
 
-    static bool showWarningWithOptions(const QString &title, const QString &text,
+    static QString msgShowSettings();
+    static QString msgShowSettingsToolTip();
+
+    static void showWarningWithOptions(const QString &title, const QString &text,
                                        const QString &details = QString(),
-                                       Utils::Id settingsId = {},
-                                       QWidget *parent = nullptr);
+                                       Utils::Id settingsId = {});
 
-    static bool isQtDesignStudio();
     static Utils::QtcSettings *settings(QSettings::Scope scope = QSettings::UserScope);
     static QPrinter *printer();
     static QString userInterfaceLanguage();
@@ -81,8 +80,9 @@ public:
     static QMainWindow *mainWindow();
     static QWidget *dialogParent();
     static Utils::InfoBar *infoBar();
+    static Utils::InfoBar *popupInfoBar();
 
-    static void askForRestart(const QString &text);
+    static bool askForRestart(const QString &text, const QString &altButtonText = {});
 
     static void raiseWindow(QWidget *widget);
     static void raiseMainWindow();
@@ -116,11 +116,19 @@ public:
 
     static void restart();
 
+    static bool enablePlugins(const QSet<ExtensionSystem::PluginSpec *> &plugins);
+
     enum SaveSettingsReason {
         SettingsDialogDone,
         ModeChanged,
         MainWindowClosing,
     };
+
+    // If there are dirty settings, ask the user if they want to apply them.
+    // The callback is called if the user decides to apply the changed settings.
+    // If the user cancels the dialog, the callback is never called.
+    // If no settings are dirty, the callback is called immediately.
+    static void askToApplySettings(const std::function<void()> &callback);
 
 public slots:
     static void openFileWith();
@@ -130,6 +138,8 @@ signals:
     void coreAboutToOpen();
     void coreOpened();
     void newItemDialogStateChanged();
+    void wizardFinished(const Utils::Id &id, bool accepted);
+    void askToApplySettingsRequested(const std::function<void()> &callback);
     void saveSettingsRequested(SaveSettingsReason reason);
     void coreAboutToClose();
     void contextAboutToChange(const QList<Core::IContext *> &context);
@@ -142,24 +152,22 @@ public:
     static Utils::FilePath pathRelativeToActiveProject(const Utils::FilePath &path);
     static QStringList additionalAboutInformation();
     static void clearAboutInformation();
+    static void setPrependAboutInformation(const QString &line);
     static void appendAboutInformation(const QString &line);
     static QString aboutInformationCompact();
     static QString aboutInformationHtml();
     static QString systemInformation();
     static void setupScreenShooter(const QString &name, QWidget *w, const QRect &rc = QRect());
-    static QString pluginPath();
-    static QString userPluginPath();
-    static Utils::FilePath clangExecutable(const Utils::FilePath &clangBinDirectory);
-    static Utils::FilePath clangdExecutable(const Utils::FilePath &clangBinDirectory);
-    static Utils::FilePath clangTidyExecutable(const Utils::FilePath &clangBinDirectory);
-    static Utils::FilePath clazyStandaloneExecutable(const Utils::FilePath &clangBinDirectory);
+    static Utils::Result<Utils::FilePath> clangExecutable(const Utils::FilePath &clangBinDirectory);
+    static Utils::Result<Utils::FilePath> clangdExecutable(const Utils::FilePath &clangBinDirectory);
+    static Utils::Result<Utils::FilePath> clangTidyExecutable(const Utils::FilePath &clangBinDirectory);
+    static Utils::Result<Utils::FilePath> clazyStandaloneExecutable(const Utils::FilePath &clangBinDirectory);
     static Utils::FilePath clangIncludeDirectory(const QString &clangVersion,
                                                  const Utils::FilePath &clangFallbackIncludeDir);
-    static Utils::FilePath lldbExecutable(const Utils::FilePath &lldbBinDirectory);
+    static Utils::Result<Utils::FilePath> lldbExecutable(const Utils::FilePath &lldbBinDirectory);
     static QStatusBar *statusBar();
 
     static void saveSettings(SaveSettingsReason reason);
-    static void setNewDialogFactory(const std::function<NewDialog *(QWidget *)> &newFactory);
     static void updateNewItemDialogState();
 
     static void setOverrideColor(const QColor &color);
@@ -169,12 +177,11 @@ public:
     static void aboutToShutdown();
     static void saveSettings();
 
-    static IDocument *openFiles(const Utils::FilePaths &filePaths,
-                                OpenFilesFlags flags = None,
-                                const Utils::FilePath &workingDirectory = {});
-
-private:
-    std::function<Utils::FilePath(const Utils::FilePath &)> m_relativePathToProject = nullptr;
+    static IDocument *openFiles(
+        const Utils::FilePaths &filePaths,
+        OpenFilesFlags flags = None,
+        const Utils::FilePath &workingDirectory = {},
+        bool openProjects = true);
 };
 
 } // namespace Core

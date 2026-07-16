@@ -70,16 +70,16 @@ WebAssemblySettings::WebAssemblySettings()
                    "or %3 version that you plan to develop against.")
                 .arg(R"(<a href="https://emscripten.org/docs/getting_started/downloads.html">Emscripten SDK</a>)")
                 .arg(R"(<a href="https://doc.qt.io/qt-5/wasm.html#install-emscripten">Qt 5</a>)")
-                .arg(R"(<a href="https://doc.qt.io/qt-6/wasm.html#install-emscripten">Qt 6</a>)"));
+                .arg(R"(<a href="https://doc.qt.io/qt-6/wasm.html#installing-emscripten">Qt 6</a>)"));
         instruction->setOpenExternalLinks(true);
         instruction->setWordWrap(true);
 
         m_statusIsEmsdkDir = new InfoLabel(Tr::tr("The chosen directory is an emsdk location."));
         m_statusSdkInstalled = new InfoLabel(Tr::tr("An SDK is installed."));
         m_statusSdkActivated = new InfoLabel(Tr::tr("An SDK is activated."));
-        m_statusSdkValid = new InfoLabel(Tr::tr("The activated SDK is usable by %1.")
-                                             .arg(QGuiApplication::applicationDisplayName()),
-                                         InfoLabel::NotOk);
+        m_statusSdkInvalid = new InfoLabel({}, InfoLabel::Error);
+        m_statusSdkInvalid->setWordWrap(true);
+        m_statusSdkInvalid->setElideMode(Qt::ElideNone);
 
         m_emSdkVersionDisplay = new InfoLabel;
         m_emSdkVersionDisplay->setElideMode(Qt::ElideNone);
@@ -109,7 +109,7 @@ WebAssemblySettings::WebAssemblySettings()
                     m_statusIsEmsdkDir,
                     m_statusSdkInstalled,
                     m_statusSdkActivated,
-                    m_statusSdkValid,
+                    m_statusSdkInvalid,
                     m_emSdkVersionDisplay,
                 },
             },
@@ -160,17 +160,19 @@ void WebAssemblySettings::updateStatus()
     WebAssemblyEmSdk::clearCaches();
 
     const Utils::FilePath newEmSdk = emSdk.pathChooser()->filePath();
-    const bool sdkValid = newEmSdk.exists() && WebAssemblyEmSdk::isValid(newEmSdk);
+    const auto version = WebAssemblyEmSdk::version(newEmSdk);
+    const bool sdkValid = newEmSdk.exists() && version;
 
     m_statusIsEmsdkDir->setVisible(!sdkValid);
     m_statusSdkInstalled->setVisible(!sdkValid);
     m_statusSdkActivated->setVisible(!sdkValid);
-    m_statusSdkValid->setVisible(!sdkValid);
+    m_statusSdkInvalid->setVisible(!sdkValid);
+    m_statusSdkInvalid->setText(version.has_value() ? QString() : version.error());
     m_emSdkVersionDisplay->setVisible(sdkValid);
     m_emSdkEnvDisplay->setEnabled(sdkValid);
 
-    if (sdkValid) {
-        const QVersionNumber sdkVersion = WebAssemblyEmSdk::version(newEmSdk);
+    if (sdkValid && version) {
+        const QVersionNumber sdkVersion = *version;
         const QVersionNumber minVersion = minimumSupportedEmSdkVersion();
         const bool versionTooLow = sdkVersion < minVersion;
         m_emSdkVersionDisplay->setType(versionTooLow ? InfoLabel::NotOk : InfoLabel::Ok);
@@ -207,7 +209,7 @@ public:
     {
         setId(Id(Constants::SETTINGS_ID));
         setDisplayName(Tr::tr("WebAssembly"));
-        setCategory(ProjectExplorer::Constants::DEVICE_SETTINGS_CATEGORY);
+        setCategory(ProjectExplorer::Constants::SDK_SETTINGS_CATEGORY);
         setSettingsProvider([] { return &settings(); });
     }
 };

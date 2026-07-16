@@ -9,15 +9,13 @@
 #include <tracing/timelineformattime.h>
 
 #include <QCoreApplication>
-#include <QVector>
 #include <QHash>
 #include <QUrl>
 #include <QString>
 #include <QStack>
 
-
-namespace QmlProfiler {
-namespace Internal {
+using namespace QmlDebug;
+namespace QmlProfiler::Internal {
 
 QmlProfilerAnimationsModel::QmlProfilerAnimationsModel(QmlProfilerModelManager *manager,
                                                        Timeline::TimelineModelAggregator *parent) :
@@ -164,5 +162,4 @@ QVariantMap QmlProfilerAnimationsModel::details(int index) const
     return result;
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

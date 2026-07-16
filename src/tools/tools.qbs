@@ -8,8 +8,7 @@ Project {
         "cplusplustools.qbs",
         "disclaim/disclaim.qbs",
         "process_stub/process_stub.qbs",
-        "processlauncher/processlauncher.qbs",
-        "qml2puppet/qml2puppet.qbs",
+        "qmlpuppet/qmlpuppet.qbs",
         "qtcdebugger/qtcdebugger.qbs",
         "qtcreatorcrashhandler/qtcreatorcrashhandler.qbs",
         "qtc-askpass/qtc-askpass.qbs",
@@ -18,6 +17,7 @@ Project {
         "sdktool/sdktoollib.qbs",
         "valgrindfake/valgrindfake.qbs",
         "iostool/iostool.qbs",
+        "qmltraceviewer/qmltraceviewer.qbs",
     ].concat(project.additionalTools)
 
     Project {

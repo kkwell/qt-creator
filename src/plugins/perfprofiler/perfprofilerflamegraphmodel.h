@@ -4,14 +4,11 @@
 #pragma once
 
 #include "perfprofilertracemanager.h"
-#include "perfresourcecounter.h"
 
 #include <QAbstractItemModel>
-#include <QScopedPointer>
 #include <QtQml/qqml.h>
 
-namespace PerfProfiler {
-namespace Internal {
+namespace PerfProfiler::Internal {
 
 class PerfProfilerFlameGraphData;
 class PerfProfilerFlameGraphModel : public QAbstractItemModel
@@ -77,9 +74,8 @@ signals:
     void gotoSourceLocation(QString file, int line, int column);
 
 private:
-    QScopedPointer<Data> m_stackBottom;
-    QScopedPointer<PerfProfilerFlameGraphData> m_offlineData;
+    std::unique_ptr<Data> m_stackBottom;
+    std::unique_ptr<PerfProfilerFlameGraphData> m_offlineData;
 };
 
-} // namespace Internal
-} // namespace PerfProfiler
+} // namespace PerfProfiler::Internal

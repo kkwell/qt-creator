@@ -15,8 +15,10 @@
 #include <texteditor/texteditorsettings.h>
 
 #include <utils/async.h>
+#include <utils/icon.h>
 #include <utils/mathutils.h>
 #include <utils/qtcassert.h>
+#include <utils/stringutils.h>
 
 #include <QMenu>
 #include <QScrollBar>
@@ -40,10 +42,12 @@ UnifiedDiffEditorWidget::UnifiedDiffEditorWidget(QWidget *parent)
 
     clear(Tr::tr("No document"));
 
-    connect(this, &QPlainTextEdit::cursorPositionChanged,
+    connect(this, &PlainTextEdit::cursorPositionChanged,
             this, &UnifiedDiffEditorWidget::slotCursorPositionChangedInEditor);
 
     IContext::attach(this, Context(Constants::UNIFIED_VIEW_ID));
+
+    setOptionalActions(TextEditor::OptionalActions::UnCollapseAll);
 }
 
 UnifiedDiffEditorWidget::~UnifiedDiffEditorWidget() = default;
@@ -138,6 +142,20 @@ void UnifiedDiffEditorWidget::contextMenuEvent(QContextMenuEvent *e)
     end.setPosition(tc.selectionEnd());
     const int startBlockNumber = start.blockNumber();
     const int endBlockNumber = end.blockNumber();
+
+    if (tc.hasSelection()) {
+        menu->addSeparator();
+        QAction *action = menu->addAction(Tr::tr("Copy Cleaned Text"), this, [tc] {
+            const QRegularExpression endingsRe(R"([\r\x{2028}\x{2029}])");
+            const QRegularExpression headerRe(R"(^(?:@@ |\+\+\+ |--- ).*\n)",
+                                              QRegularExpression::MultilineOption);
+            const QRegularExpression patchRe(R"(^[\+\- ])", QRegularExpression::MultilineOption);
+            const QString text = tc.selectedText()
+                    .replace(endingsRe, "\n").remove(headerRe).remove(patchRe);
+            Utils::setClipboardAndSelection(text);
+        });
+        action->setIcon(Icon::fromTheme("edit-copy"));
+    }
 
     QTextCursor cursor = cursorForPosition(e->pos());
     const int blockNumber = cursor.blockNumber();
@@ -529,6 +547,12 @@ void UnifiedDiffEditorWidget::jumpToOriginalFile(const QTextCursor &cursor)
     if (fileIndex < 0)
         return;
 
+    auto jumpToOriginalFile = [this](const QString &file, int line, int column) {
+        m_controller.resolveCurrentLine(file, line, [this, file, column](int line) {
+            m_controller.jumpToOriginalFile(file, line, column);
+        });
+    };
+
     const FileData fileData = m_controller.m_contextFileData.at(fileIndex);
     const QString leftFileName = fileData.fileInfo[LeftSide].fileName;
     const QString rightFileName = fileData.fileInfo[RightSide].fileName;
@@ -537,7 +561,7 @@ void UnifiedDiffEditorWidget::jumpToOriginalFile(const QTextCursor &cursor)
 
     const int rightLineNumber = m_data.m_lineNumbers[RightSide].value(blockNumber, {-1, 0}).first;
     if (rightLineNumber >= 0) {
-        m_controller.jumpToOriginalFile(rightFileName, rightLineNumber, columnNumber);
+        jumpToOriginalFile(rightFileName, rightLineNumber, columnNumber);
         return;
     }
 
@@ -545,7 +569,7 @@ void UnifiedDiffEditorWidget::jumpToOriginalFile(const QTextCursor &cursor)
     if (leftLineNumber < 0)
         return;
     if (leftFileName != rightFileName) {
-        m_controller.jumpToOriginalFile(leftFileName, leftLineNumber, columnNumber);
+        jumpToOriginalFile(leftFileName, leftLineNumber, columnNumber);
         return;
     }
 
@@ -558,7 +582,7 @@ void UnifiedDiffEditorWidget::jumpToOriginalFile(const QTextCursor &cursor)
             if (rowData.line[RightSide].textLineType == TextLineData::TextLine)
                 newRightLineNumber++;
             if (newLeftLineNumber == leftLineNumber) {
-                m_controller.jumpToOriginalFile(leftFileName, newRightLineNumber, 0);
+                jumpToOriginalFile(leftFileName, newRightLineNumber, 0);
                 return;
             }
         }
@@ -578,7 +602,7 @@ void UnifiedDiffEditorWidget::setCurrentDiffFileIndex(int diffFileIndex)
     QTextCursor cursor = textCursor();
     cursor.setPosition(block.position());
     setTextCursor(cursor);
-    verticalScrollBar()->setValue(blockNumber);
+    setTopBlock(block);
 }
 
 } // namespace DiffEditor::Internal

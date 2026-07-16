@@ -6,13 +6,21 @@
 #include "vcsbase_global.h"
 
 #include <coreplugin/patchtool.h>
+
 #include <texteditor/texteditor.h>
 
 #include <QSet>
-#include <QTextCodec>
+
+#include <functional>
 
 QT_BEGIN_NAMESPACE
 class QTextCursor;
+
+namespace QtTaskTree {
+class ExecutableItem;
+template <typename StorageStruct>
+class Storage;
+}
 QT_END_NAMESPACE
 
 namespace VcsBase {
@@ -22,12 +30,12 @@ class ChangeTextCursorHandler;
 class VcsBaseEditorWidgetPrivate;
 } // namespace Internal
 
+class Annotation;
 class BaseAnnotationHighlighter;
+class CommandResult;
 class VcsBaseEditorConfig;
 class VcsBaseEditorWidget;
-class VcsCommand;
 class VcsEditorFactory;
-class Annotation;
 
 // Documentation inside
 enum EditorContentType
@@ -67,16 +75,12 @@ class VCSBASE_EXPORT VcsBaseEditor : public TextEditor::BaseTextEditor
 public:
     VcsBaseEditor();
 
-    // Utility to find a parameter set by type in an array.
-    static const VcsBaseEditorParameters *
-    findType(const VcsBaseEditorParameters *array, int arraySize, EditorContentType et);
-
     // Utility to find the codec for a source (file or directory), querying
     // the editor manager and the project managers (defaults to system codec).
     // The codec should be set on editors displaying diff or annotation
     // output.
-    static QTextCodec *getCodec(const Utils::FilePath &source);
-    static QTextCodec *getCodec(const Utils::FilePath &workingDirectory, const QStringList &files);
+    static Utils::TextEncoding getEncoding(const Utils::FilePath &source);
+    static Utils::TextEncoding getEncoding(const Utils::FilePath &workingDirectory, const QStringList &files);
 
     // Utility to return the widget from the IEditor returned by the editor
     // manager which is a BaseTextEditor.
@@ -138,6 +142,8 @@ protected:
     void setAnnotationSeparatorPattern(const QString &pattern);
     virtual bool supportChangeLinks() const;
     virtual Utils::FilePath fileNameForLine(int line) const;
+    // Enable margins for example in diff editors. default is disabled
+    void setMarginsEnabled(bool enabled);
 
     QString lineNumber(int blockNumber) const override;
     int lineNumberDigits() const override;
@@ -178,8 +184,8 @@ public:
 
     void setHighlightingEnabled(bool e);
 
-    QTextCodec *codec() const;
-    void setCodec(QTextCodec *);
+    Utils::TextEncoding encoding() const;
+    void setEncoding(const Utils::TextEncoding &encoding);
 
     // Base directory for diff views
     Utils::FilePath workingDirectory() const;
@@ -188,14 +194,14 @@ public:
     int firstLineNumber() const;
     void setFirstLineNumber(int firstLineNumber);
 
-    bool isModified() const;
-
     EditorContentType contentType() const;
 
     void setEditorConfig(VcsBaseEditorConfig *config);
     VcsBaseEditorConfig *editorConfig() const;
 
-    void setCommand(VcsCommand *command);
+    void executeTask(const QtTaskTree::ExecutableItem &task,
+                     const QtTaskTree::Storage<CommandResult> &resultStorage);
+
     void setDefaultLineNumber(int line);
     void gotoDefaultLine();
 
@@ -217,6 +223,8 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent *e) override;
     void keyPressEvent(QKeyEvent *) override;
 
+    void setMarginSettings(const TextEditor::MarginSettingsData &ms) final;
+
     /* A helper that can be used to locate a file in a diff in case it
      * is relative. Tries to derive the directory from base directory,
      * source and version control. */
@@ -224,13 +232,15 @@ protected:
 
     virtual void addDiffActions(QMenu *menu, const DiffChunk &chunk);
 
-    virtual void addChangeActions(QMenu *menu, const QString &change);
+    virtual void addChangeActions(QMenu *menu, const QString &change, int line = 0);
 
     // Implement to return a set of change identifiers in
     // annotation mode
     QSet<QString> annotationChanges() const;
     // Implement to identify a change number at the cursor position
     virtual QString changeUnderCursor(const QTextCursor &) const = 0;
+    // Implement to identify the original line of a change at the cursor position
+    virtual int originalLineUnderCursor(const QTextCursor &) const { return 0; };
     // Factory functions for highlighters
     virtual BaseAnnotationHighlighterCreator annotationHighlighterCreator() const = 0;
     // Returns a local file name from the diff file specification
@@ -247,6 +257,12 @@ protected:
     // Implement to return subject for a change line in log
     virtual QString revisionSubject(const QTextBlock &inBlock) const;
 
+    QString revisionForLine(int line) const;
+
+    virtual void jumpToDiffTarget(const Utils::FilePath &filePath,
+                                  int lineNumber,
+                                  const QTextBlock &contextBlock);
+
 private:
     void slotActivateAnnotation();
     void slotPopulateDiffBrowser();
@@ -256,8 +272,6 @@ private:
     void slotAnnotateRevision(const QString &change);
     void slotApplyDiffChunk(const DiffChunk &chunk, Core::PatchAction patchAction);
     void slotPaste();
-    void showProgressIndicator();
-    void hideProgressIndicator();
 
     bool canApplyDiffChunk(const DiffChunk &dc) const;
     // Revert a patch chunk. Default implementation uses patch.exe

@@ -3,10 +3,10 @@
 
 #include "pythonproject.h"
 
+#include "pythonbuildconfiguration.h"
 #include "pythonbuildsystem.h"
 #include "pythonconstants.h"
-#include "pythonkitaspect.h"
-#include "pythontr.h"
+#include "pythonlanguageclient.h"
 
 #include <coreplugin/icontext.h>
 
@@ -20,21 +20,20 @@ using namespace Utils;
 namespace Python::Internal {
 
 PythonProject::PythonProject(const FilePath &fileName)
-    : Project(Constants::C_PY_PROJECT_MIME_TYPE, fileName)
+    : Project(Constants::C_PY_PROJECT_MIME_TYPE_TOML, fileName)
 {
-    setId(PythonProjectId);
+    setType(PythonProjectId);
     setProjectLanguages(Context(ProjectExplorer::Constants::PYTHON_LANGUAGE_ID));
     setDisplayName(fileName.completeBaseName());
-
     setBuildSystemCreator<PythonBuildSystem>();
-}
-
-Tasks PythonProject::projectIssues(const Kit *k) const
-{
-    if (PythonKitAspect::python(k))
-        return {};
-    return {BuildSystemTask{
-        Task::Error, Tr::tr("No Python interpreter set for kit \"%1\".").arg(k->displayName())}};
+    connect(this, &Project::activeBuildConfigurationChanged, this, [this]() {
+        for (auto bc : allBuildConfigurations()) {
+            if (auto pythonBc = qobject_cast<PythonBuildConfiguration *>(bc)) {
+                if (auto client = PyLSClient::clientForPython(pythonBc->python()))
+                    client->updateExtraCompilers(this);
+            }
+        }
+    });
 }
 
 PythonProjectNode::PythonProjectNode(const FilePath &path)
@@ -56,4 +55,4 @@ QString PythonFileNode::displayName() const
     return m_displayName;
 }
 
-} // Python::Internal
+} // namespace Python::Internal

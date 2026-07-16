@@ -3,7 +3,8 @@
 
 import QtQuick
 import QtQuick.Templates as T
-import StudioTheme 1.0 as StudioTheme
+import StudioTheme as StudioTheme
+import StudioQuickUtils
 
 T.SpinBox {
     id: control
@@ -71,6 +72,8 @@ T.SpinBox {
     signal dragging
     signal indicatorPressed
 
+    locale: Utils.locale
+
     // Use custom wheel handling due to bugs
     property bool __wheelEnabled: false
     wheelEnabled: false
@@ -97,7 +100,7 @@ T.SpinBox {
 
     DoubleValidator {
         id: doubleValidator
-        locale: control.locale.name
+        locale: control.locale
         notation: DoubleValidator.StandardNotation
         decimals: control.decimals
         bottom: Math.min(control.realFrom, control.realTo)
@@ -106,7 +109,7 @@ T.SpinBox {
 
     IntValidator {
         id: intValidator
-        locale: control.locale.name
+        locale: control.locale
         bottom: Math.round(Math.min(control.realFrom, control.realTo))
         top: Math.round(Math.max(control.realFrom, control.realTo))
     }
@@ -185,6 +188,18 @@ T.SpinBox {
         }
 
         onTextEdited: control.dirty = true
+
+        Keys.onPressed: (event) => {
+            if (event.key === Qt.Key_Enter) {
+                let inputValue = control.valueFromAnyText(spinBoxInput.text, control.locale)
+                control.setRealValue(inputValue)
+                spinBoxInput.focus = false
+            } else if (event.key === Qt.Key_Escape) {
+                let controlText = control.textFromAnyValue(control.realValue, control.locale)
+                spinBoxInput.text = controlText
+                spinBoxInput.focus = false
+            }
+        }
     }
 
     background: Rectangle {
@@ -223,14 +238,11 @@ T.SpinBox {
     }
 
     textFromValue: function (value, locale) {
-        locale.numberOptions = Locale.OmitGroupSeparator
-        var decimals = trailingZeroes ? control.decimals : decimalCounter(value)
-
-        return Number(control.realValue).toLocaleString(locale, 'f', decimals)
+        return control.textFromAnyValue(control.realValue, locale)
     }
 
     valueFromText: function (text, locale) {
-        control.setRealValue(Number.fromLocaleString(locale, spinBoxInput.text))
+        control.setRealValue(control.valueFromAnyText(spinBoxInput.text, locale))
 
         return 0
     }
@@ -432,5 +444,15 @@ T.SpinBox {
         var index = decimalIndex == -1 ? 1 : strNumber.length - decimalIndex - 1
 
         return Math.min(index, control.decimals);
+    }
+
+    function textFromAnyValue(value: real, locale: var) : string {
+        locale.numberOptions = Locale.OmitGroupSeparator
+        var decimals = control.trailingZeroes ? control.decimals : control.decimalCounter(value)
+        return Number(value).toLocaleString(locale, 'f', decimals)
+    }
+
+    function valueFromAnyText(text: string, locale: var) : var {
+        return Number.fromLocaleString(locale, text)
     }
 }

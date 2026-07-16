@@ -1,0 +1,17 @@
+add_qtc_plugin(ZenMode
+  PLUGIN_DEPENDS
+    Core
+    TextEditor
+  DEPENDS
+    Qt::Widgets
+    QtCreator::ExtensionSystem
+    QtCreator::Utils
+  SOURCES
+    zenmodeplugin.cpp
+    zenmodeplugin.h
+    zenmodepluginconstants.h
+    zenmodeplugintr.h
+    zenmode.qrc
+    zenmodesettings.cpp
+    zenmodesettings.h
+)

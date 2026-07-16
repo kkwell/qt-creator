@@ -1,21 +1,20 @@
 // Copyright (C) 2019 Klarälvdalens Datakonsult AB, a KDAB Group company,
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
-#include "ctfvisualizertool.h"
 
-#include "ctftracemanager.h"
+#include "ctfvisualizertool.h"
 
 #include "ctfstatisticsmodel.h"
 #include "ctfstatisticsview.h"
 #include "ctftimelinemodel.h"
+#include "ctftracemanager.h"
 #include "ctfvisualizertr.h"
 #include "ctfvisualizertraceview.h"
 
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
+#include <coreplugin/coreconstants.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/progressmanager/taskprogress.h>
-
-#include <debugger/analyzer/analyzerconstants.h>
 
 #include <utils/async.h>
 #include <utils/stylehelper.h>
@@ -24,12 +23,13 @@
 #include <QFileDialog>
 #include <QMenu>
 #include <QMessageBox>
+#include <QQuickItem>
 
 #include <fstream>
 
 using namespace Core;
 using namespace CtfVisualizer::Constants;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace CtfVisualizer::Internal {
@@ -45,10 +45,10 @@ CtfVisualizerTool::CtfVisualizerTool(QObject *parent)
     , m_restrictToThreadsButton(new QToolButton)
     , m_restrictToThreadsMenu(new QMenu(m_restrictToThreadsButton))
 {
-    ActionContainer *menu = ActionManager::actionContainer(Debugger::Constants::M_DEBUG_ANALYZER);
+    ActionContainer *menu = ActionManager::actionContainer(Core::Constants::M_DEBUG_ANALYZER);
     ActionContainer *options = ActionManager::createMenu(Constants::CtfVisualizerMenuId);
     options->menu()->setTitle(Tr::tr("Chrome Trace Format Viewer"));
-    menu->addMenu(options, Debugger::Constants::G_ANALYZER_REMOTE_TOOLS);
+    menu->addMenu(options, Core::Constants::G_ANALYZER_REMOTE_TOOLS);
     options->menu()->setEnabled(true);
 
     const Core::Context globalContext(Core::Constants::C_GLOBAL);
@@ -78,33 +78,6 @@ CtfVisualizerTool::CtfVisualizerTool(QObject *parent)
             this, &CtfVisualizerTool::toggleThreadRestriction);
 
     m_perspective.addToolBarWidget(m_restrictToThreadsButton);
-
-    connect(&m_taskTreeRunner, &TaskTreeRunner::aboutToStart, this, [](TaskTree *taskTree) {
-        auto progress = new TaskProgress(taskTree);
-        progress->setDisplayName(Tr::tr("Loading CTF File"));
-    });
-    connect(&m_taskTreeRunner, &TaskTreeRunner::done, this, [this](DoneWith result) {
-        if (result == DoneWith::Success) {
-            m_traceManager->updateStatistics();
-            if (m_traceManager->isEmpty()) {
-                QMessageBox::warning(Core::ICore::dialogParent(), Tr::tr("CTF Visualizer"),
-                                     Tr::tr("The file does not contain any trace data."));
-            } else if (!m_traceManager->errorString().isEmpty()) {
-                QMessageBox::warning(Core::ICore::dialogParent(), Tr::tr("CTF Visualizer"),
-                                     m_traceManager->errorString());
-            } else {
-                m_traceManager->finalize();
-                m_perspective.select();
-                const auto end = m_traceManager->traceEnd() + m_traceManager->traceDuration() / 20;
-                zoomControl()->setTrace(m_traceManager->traceBegin(), end);
-                zoomControl()->setRange(m_traceManager->traceBegin(), end);
-            }
-            setAvailableThreads(m_traceManager->getSortedThreads());
-        } else {
-            QMessageBox::warning(Core::ICore::dialogParent(), Tr::tr("CTF Visualizer"),
-                                 Tr::tr("Cannot read the CTF file."));
-        }
-    });
 }
 
 CtfVisualizerTool::~CtfVisualizerTool() = default;
@@ -151,23 +124,28 @@ void CtfVisualizerTool::setAvailableThreads(const QList<CtfTimelineModel *> &thr
         action->setCheckable(true);
         action->setData(timelineModel->tid());
         action->setChecked(m_traceManager->isRestrictedTo(timelineModel->tid()));
+        action->setEnabled(timelineModel->count());
     }
 }
 
 void CtfVisualizerTool::toggleThreadRestriction(QAction *action)
 {
     const QString tid = action->data().toString();
+
+    // deselect possibly current event
+    // (avoids crashes as next / previous would act afterwards on different or even nullptr models)
+    if (auto root = m_traceView->rootObject()) {
+        QMetaObject::invokeMethod(root, "selectByIndices",
+                                  Q_ARG(QVariant, QVariant(-1)),
+                                  Q_ARG(QVariant, QVariant(-1)));
+    }
+
     m_traceManager->setThreadRestriction(tid, action->isChecked());
 }
 
 Timeline::TimelineModelAggregator *CtfVisualizerTool::modelAggregator() const
 {
     return m_modelAggregator.get();
-}
-
-CtfTraceManager *CtfVisualizerTool::traceManager() const
-{
-    return m_traceManager.get();
 }
 
 Timeline::TimelineZoomControl *CtfVisualizerTool::zoomControl() const
@@ -246,7 +224,33 @@ void CtfVisualizerTool::loadJson(const QString &fileName)
             m_traceManager->addEvent(asyncPtr->resultAt(index));
         });
     };
-    m_taskTreeRunner.start({AsyncTask<json>(onSetup)});
+    const auto onTaskTreeSetup = [](QTaskTree &taskTree) {
+        auto progress = new TaskProgress(&taskTree);
+        progress->setDisplayName(Tr::tr("Loading CTF File"));
+    };
+    const auto onTaskTreeDone = [this](DoneWith result) {
+        if (result == DoneWith::Success) {
+            m_traceManager->updateStatistics();
+            if (m_traceManager->isEmpty()) {
+                QMessageBox::warning(Core::ICore::dialogParent(), Tr::tr("CTF Visualizer"),
+                                     Tr::tr("The file does not contain any trace data."));
+            } else if (!m_traceManager->errorString().isEmpty()) {
+                QMessageBox::warning(Core::ICore::dialogParent(), Tr::tr("CTF Visualizer"),
+                                     m_traceManager->errorString());
+            } else {
+                m_traceManager->finalize();
+                m_perspective.select();
+                const auto end = m_traceManager->traceEnd() + m_traceManager->traceDuration() / 20;
+                zoomControl()->setTrace(m_traceManager->traceBegin(), end);
+                zoomControl()->setRange(m_traceManager->traceBegin(), end);
+            }
+            setAvailableThreads(m_traceManager->getSortedThreads());
+        } else {
+            QMessageBox::warning(Core::ICore::dialogParent(), Tr::tr("CTF Visualizer"),
+                                 Tr::tr("Cannot read the CTF file."));
+        }
+    };
+    m_taskTreeRunner.start({AsyncTask<json>(onSetup)}, onTaskTreeSetup, onTaskTreeDone);
 }
 
 void setupCtfVisualizerTool(QObject *guard)

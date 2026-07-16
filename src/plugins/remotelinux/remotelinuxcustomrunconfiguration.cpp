@@ -20,7 +20,7 @@ namespace RemoteLinux::Internal {
 class RemoteLinuxCustomRunConfiguration : public RunConfiguration
 {
 public:
-    RemoteLinuxCustomRunConfiguration(Target *target, Id id);
+    RemoteLinuxCustomRunConfiguration(BuildConfiguration *bc, Id id);
 
     QString runConfigDefaultDisplayName();
 
@@ -34,14 +34,15 @@ private:
     WorkingDirectoryAspect workingDir{this};
     TerminalAspect terminal{this};
     X11ForwardingAspect x11Forwarding{this};
+    UseVncDisplayAspect useVncDisplay{this};
 };
 
-RemoteLinuxCustomRunConfiguration::RemoteLinuxCustomRunConfiguration(Target *target, Id id)
-    : RunConfiguration(target, id)
+RemoteLinuxCustomRunConfiguration::RemoteLinuxCustomRunConfiguration(BuildConfiguration *bc, Id id)
+    : RunConfiguration(bc, id)
 {
-    environment.setDeviceSelector(target, EnvironmentAspect::RunDevice);
+    environment.setDeviceSelector(kit(), EnvironmentAspect::RunDevice);
 
-    executable.setDeviceSelector(target, ExecutableAspect::RunDevice);
+    executable.setDeviceSelector(kit(), ExecutableAspect::RunDevice);
     executable.setSettingsKey("RemoteLinux.CustomRunConfig.RemoteExecutable");
     executable.setLabelText(Tr::tr("Remote executable:"));
     executable.setReadOnly(false);
@@ -51,16 +52,19 @@ RemoteLinuxCustomRunConfiguration::RemoteLinuxCustomRunConfiguration(Target *tar
     symbolFile.setSettingsKey("RemoteLinux.CustomRunConfig.LocalExecutable");
     symbolFile.setLabelText(Tr::tr("Local executable:"));
 
-    arguments.setMacroExpander(macroExpander());
-
-    workingDir.setMacroExpander(macroExpander());
     workingDir.setEnvironment(&environment);
 
     terminal.setVisible(HostOsInfo::isAnyUnixHost());
 
-    x11Forwarding.setMacroExpander(macroExpander());
-
     setDefaultDisplayName(runConfigDefaultDisplayName());
+    setUsesEmptyBuildKeys();
+
+    connect(&useVncDisplay, &BaseAspect::changed,
+            &environment, &EnvironmentAspect::environmentChanged);
+    environment.addModifier([this](Environment &env) {
+        if (useVncDisplay())
+            env.set("QT_QPA_PLATFORM", "vnc");
+    });
 }
 
 QString RemoteLinuxCustomRunConfiguration::runConfigDefaultDisplayName()
@@ -69,7 +73,7 @@ QString RemoteLinuxCustomRunConfiguration::runConfigDefaultDisplayName()
     QString display = remoteExecutable.isEmpty()
             ? Tr::tr("Custom Executable")
             : Tr::tr("Run \"%1\"").arg(remoteExecutable.toUserOutput());
-    return RunConfigurationFactory::decoratedTargetName(display, target());
+    return RunConfigurationFactory::decoratedTargetName(display, kit());
 }
 
 Tasks RemoteLinuxCustomRunConfiguration::checkForIssues() const
@@ -92,7 +96,7 @@ public:
         : FixedRunConfigurationFactory(Tr::tr("Custom Executable"), true)
     {
         registerRunConfiguration<RemoteLinuxCustomRunConfiguration>(Constants::CustomRunConfigId);
-        addSupportedTargetDeviceType(RemoteLinux::Constants::GenericLinuxOsType);
+        setExecutionTypeId(Constants::ExecutionType);
     }
 };
 

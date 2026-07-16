@@ -13,29 +13,22 @@
 #include <projectexplorer/target.h>
 
 #include <cmakeprojectmanager/cmakekitaspect.h>
-#include <cmakeprojectmanager/cmaketool.h>
 
 #include <utils/aspects.h>
+#include <utils/qtcprocess.h>
 
 using namespace ProjectExplorer;
 using namespace Utils;
 
 namespace McuSupport::Internal {
 
-static FilePath cmakeFilePath(const Target *target)
-{
-    const CMakeProjectManager::CMakeTool *tool = CMakeProjectManager::CMakeKitAspect::cmakeTool(
-        target->kit());
-    return tool->filePath();
-}
-
-static QStringList flashAndRunArgs(const RunConfiguration *rc, const Target *target)
+static QStringList flashAndRunArgs(const RunConfiguration *rc)
 {
     // Use buildKey if provided, fallback to projectName
     const QString targetName = QLatin1String("flash_%1")
                                    .arg(!rc->buildKey().isEmpty()
                                             ? rc->buildKey()
-                                            : target->project()->displayName());
+                                            : rc->project()->displayName());
 
     return {"--build", ".", "--target", targetName};
 }
@@ -43,20 +36,16 @@ static QStringList flashAndRunArgs(const RunConfiguration *rc, const Target *tar
 class FlashAndRunConfiguration final : public RunConfiguration
 {
 public:
-    FlashAndRunConfiguration(Target *target, Id id)
-        : RunConfiguration(target, id)
+    FlashAndRunConfiguration(BuildConfiguration *bc, Id id)
+        : RunConfiguration(bc, id)
     {
         flashAndRunParameters.setLabelText(Tr::tr("Flash and run CMake parameters:"));
         flashAndRunParameters.setDisplayStyle(StringAspect::TextEditDisplay);
         flashAndRunParameters.setSettingsKey("FlashAndRunConfiguration.Parameters");
 
-        setUpdater([target, this] {
-            flashAndRunParameters.setValue(flashAndRunArgs(this, target).join(' '));
-        });
-
+        setUpdater([this] { flashAndRunParameters.setValue(flashAndRunArgs(this).join(' ')); });
         update();
-
-        connect(target->project(), &Project::displayNameChanged, this, &RunConfiguration::update);
+        connect(project(), &Project::displayNameChanged, this, &RunConfiguration::update);
     }
 
     bool isEnabled(Utils::Id runMode) const override
@@ -73,31 +62,6 @@ public:
 
 bool FlashAndRunConfiguration::disabled = false;
 
-class FlashAndRunWorker : public SimpleTargetRunner
-{
-public:
-    FlashAndRunWorker(RunControl *runControl)
-        : SimpleTargetRunner(runControl)
-    {
-        setStartModifier([this, runControl] {
-            const Target *target = runControl->target();
-            setCommandLine({cmakeFilePath(target), runControl->aspectData<StringAspect>()->value,
-                            CommandLine::Raw});
-            setWorkingDirectory(target->activeBuildConfiguration()->buildDirectory());
-            setEnvironment(target->activeBuildConfiguration()->environment());
-        });
-
-        connect(runControl, &RunControl::started, []() {
-            FlashAndRunConfiguration::disabled = true;
-            ProjectExplorerPlugin::updateRunActions();
-        });
-        connect(runControl, &RunControl::stopped, []() {
-            FlashAndRunConfiguration::disabled = false;
-            ProjectExplorerPlugin::updateRunActions();
-        });
-    }
-};
-
 // Factories
 
 McuSupportRunConfigurationFactory::McuSupportRunConfigurationFactory()
@@ -108,7 +72,28 @@ McuSupportRunConfigurationFactory::McuSupportRunConfigurationFactory()
 
 FlashRunWorkerFactory::FlashRunWorkerFactory()
 {
-    setProduct<FlashAndRunWorker>();
+    setId("FlashRunWorkerFactory");
+    setRecipeProducer([](RunControl *runControl) {
+        const auto modifier = [runControl](Process &process) {
+            process.setCommand({
+                CMakeProjectManager::CMakeKitAspect::cmakeExecutable(runControl->kit()),
+                runControl->aspectData<StringAspect>()->value,
+                CommandLine::Raw});
+            const BuildConfiguration *bc = runControl->buildConfiguration();
+            process.setWorkingDirectory(bc->buildDirectory());
+            process.setEnvironment(bc->environment());
+        };
+
+        QObject::connect(runControl, &RunControl::started, runControl, [] {
+            FlashAndRunConfiguration::disabled = true;
+            ProjectExplorerPlugin::updateRunActions();
+        });
+        QObject::connect(runControl, &RunControl::stopped, runControl, [] {
+            FlashAndRunConfiguration::disabled = false;
+            ProjectExplorerPlugin::updateRunActions();
+        });
+        return runControl->processRecipe(modifier);
+    });
     addSupportedRunMode(ProjectExplorer::Constants::NORMAL_RUN_MODE);
     addSupportedRunConfig(Constants::RUNCONFIGURATION);
 }

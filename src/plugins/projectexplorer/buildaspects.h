@@ -16,7 +16,7 @@ class PROJECTEXPLORER_EXPORT BuildDirectoryAspect : public Utils::FilePathAspect
     Q_OBJECT
 
 public:
-    explicit BuildDirectoryAspect(Utils::AspectContainer *container, const BuildConfiguration *bc);
+    explicit BuildDirectoryAspect(BuildConfiguration *bc);
     ~BuildDirectoryAspect() override;
 
     void allowInSourceBuilds(const Utils::FilePath &sourceDir);
@@ -24,6 +24,7 @@ public:
     void setProblem(const QString &description);
 
     void addToLayoutImpl(Layouting::Layout &parent) override;
+    void announceChanges(Changes changes, Announcement howToAnnounce) override;
 
     static Utils::FilePath fixupDir(const Utils::FilePath &dir);
 
@@ -31,8 +32,10 @@ private:
     void toMap(Utils::Store &map) const override;
     void fromMap(const Utils::Store &map) override;
 
+    Utils::FilePath absoluteBuildDir(const Utils::FilePath &rawPath) const;
     void updateProblemLabels();
     QString updateProblemLabelsHelper(const QString &value);
+    BuildConfiguration *buildConfiguration() const;
 
     class Private;
     Private * const d;

@@ -17,11 +17,10 @@
     code to develop a small application that uses Qt Quick to display the text
     \e {Hello World} in several languages.
 
-    \image qtcreator-new-qt-for-python-app-qt-quick-empty-project-ready.webp {A small Qt Quick application}
+    \image {qtcreator-new-qt-for-python-app-qt-quick-empty-project-ready.webp} {A small Qt Quick application}
 
     For more examples of creating Qt for Python applications, see
-    \l {https://doc.qt.io/qtforpython/tutorials/index.html}
-    {Qt for Python Examples and Tutorials}.
+    \l{Qt for Python Examples and Tutorials}.
 
     \section1 Create an empty project
 
@@ -32,19 +31,19 @@
         \li Select \uicontrol {Application (Qt for Python)} >
             \uicontrol {Qt Quick Application - Empty} > \uicontrol Choose to
             open the \uicontrol {Project Location} dialog.
-            \image qtcreator-new-qt-for-python-app-qt-quick-empty-project-location.webp {Project Location dialog}
+            \image {qtcreator-new-qt-for-python-app-qt-quick-empty-project-location.webp} {Project Location dialog}
         \li In \uicontrol {Name}, enter the project name. For example,
             \e {hello_world_quick}.
         \li In \uicontrol {Create in}, enter the path for the project files.
             For example, \c {C:\Examples}.
         \li Select \uicontrol{Next} (on Windows and Linux) or \uicontrol Continue
             (on \macos) to open the \uicontrol {Define Project Details} dialog.
-            \image qtcreator-new-qt-for-python-app-project-details.webp {Define Project Details dialog}
+            \image {qtcreator-new-qt-for-python-app-project-details.webp} {Define Project Details dialog}
         \li In \uicontrol {PySide version}, select the PySide version of
             the generated code.
         \li Select \uicontrol{Next} or \uicontrol Continue to open the
             \uicontrol {Kit Selection} dialog.
-            \image qtcreator-new-project-qt-for-python-kit-selection.webp {Selecting a kit for a Python project}
+            \image {qtcreator-new-project-qt-for-python-kit-selection.webp} {Selecting a kit for a Python project}
         \li Select Python kits for building, deploying, and running the
             project. By default, this creates a virtual environment for the project inside
             the source directory. To use the global interpreter, select the build configuration
@@ -54,14 +53,16 @@
             project.
     \endlist
 
-    The wizard generates the following files:
+    The wizard creates a subdirectory named after the project for
+    a QML module of the same name and generates the following files:
 
     \list
-        \li \c {hello_world_quick.pyproject}, which lists the files in the Python
-            project.
+        \li \c {pyproject.toml}, which lists the files in the Python
+            project and other configurations.
         \li \c {main.py}, which has some boilerplate code.
-        \li \c {main.qml}, which imports Qt Quick controls.
-        \li \c {reguirements.txt}, which stores the PySide version of the
+        \li \c {<ProjectName>/Main.qml}, which imports Qt Quick controls.
+        \li \c {<ProjectName>/qmldir}, declaring a QML module.
+        \li \c {requirements.txt}, which stores the PySide version of the
             generated code. You can use this file to install the required PySide version
             using pip.
     \endlist
@@ -72,7 +73,7 @@
     In the \uicontrol {Edit} mode, select \uicontrol {Install} to set up PySide6
     for the project.
 
-    \image qtcreator-python-install.webp {Prompt to install PySide6}
+    \image {qtcreator-python-install.webp} {Prompt to install PySide6}
     //! [install-pyside6]
 
     \section1 Add Qt Quick imports
@@ -80,7 +81,7 @@
     The wizard adds the following imports to the \c {main.py} source file for
     access to QGuiApplication and QQmlApplicationEngine:
 
-    \badcode
+    \code [python]
     import sys
     from pathlib import Path
 
@@ -93,7 +94,7 @@
     The wizard also adds a main function, where it creates a QGuiApplication
     instance and passes system arguments to the QGuiApplication object:
 
-    \badcode
+    \code [python]
     if __name__ == "__main__":
         app = QGuiApplication(sys.argv)
         ...
@@ -102,13 +103,13 @@
     \section1 Load the QML file
 
     The following lines in the main class create a QQmlApplicationEngine
-    instance and load the generated QML file to the engine object:
+    instance and load the generated QML module to the engine object:
 
-    \badcode
+    \code [python]
         ...
         engine = QQmlApplicationEngine()
-        qml_file = Path(__file__).resolve().parent / "main.qml"
-        engine.load(qml_file)
+        engine.addImportPath(Path(__file__).parent)
+        engine.loadFromModule("ProjectName", "Main")
         ...
     \endcode
 
@@ -117,7 +118,7 @@
     If loading succeeds, the wizard calls the \c app.exec() method to enter the
     Qt main loop and start executing the Qt code:
 
-    \badcode
+    \code [python]
     ...
     if not engine.rootObjects():
         sys.exit(-1)
@@ -127,14 +128,14 @@
 
     \section1 Design the UI
 
-    Open the \c {main.qml} file in the \uicontrol Edit mode to design a
+    Open the \c {Main.qml} file in the \uicontrol Edit mode to design a
     Qt Quick UI.
 
     \section2 Add imports
 
     Add imports for Qt Quick Controls and Layouts:
 
-    \badcode
+    \code [text]
     import QtQuick
     import QtQuick.Window
     import QtQuick.Controls
@@ -145,7 +146,7 @@
 
     The wizard adds a main window:
 
-    \badcode
+    \code [text]
     Window {
         width: 640
         height: 480
@@ -157,7 +158,7 @@
     Add a property and function to randomly select the language of the displayed
     text:
 
-    \badcode
+    \code [text]
         ...
         readonly property list<string> texts: ["Hallo Welt", "Hei maailma",
                                            "Hola Mundo", "Привет мир"]
@@ -173,7 +174,7 @@
     Add \l {Text} and \l {Button} QML types within a \l {ColumnLayout} type to
     design the UI:
 
-    \badcode
+    \code [text]
         ColumnLayout {
         anchors.fill:  parent
 
@@ -190,12 +191,13 @@
     }
     \endcode
 
-    You can also use \l{Qt Design Studio Manual}{\QDS} to design Qt Quick UIs.
+    You can also use \QMLD or \QDS to design Qt Quick UIs.
 
     \section1 Run the application
 
-    Select \inlineimage icons/run_small.png to run the application.
+    Select \imagerunsmall (\uicontrol {Run}) to run the
+    application.
 
     \sa {Tutorial: Qt Widgets and Python}, {Tutorial: Qt Widgets UI and Python},
-    {Develop Qt for Python Applications}
+    {Develop Qt for Python applications}
 */

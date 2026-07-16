@@ -8,10 +8,17 @@
 #include "languageclientutils.h"
 #include "semantichighlightsupport.h"
 
+#include <texteditor/refactoringchanges.h>
+
 namespace Core { class IDocument; }
-namespace ProjectExplorer { class Project; }
-namespace TextEditor
-{
+
+namespace ProjectExplorer {
+class BuildConfiguration;
+class Project;
+}
+
+namespace TextEditor {
+class BaseTextEditor;
 class IAssistProcessor;
 class TextDocument;
 class TextEditorWidget;
@@ -81,6 +88,7 @@ public:
         FailedToInitialize,
         Initialized,
         ShutdownRequested,
+        FailedToShutdown,
         Shutdown,
         Error
     };
@@ -114,9 +122,13 @@ public:
     virtual void openDocument(TextEditor::TextDocument *document);
     void closeDocument(TextEditor::TextDocument *document,
                        const std::optional<Utils::FilePath> &overwriteFilePath = {});
-    void activateDocument(TextEditor::TextDocument *document);
+    bool activatable() const;
+    void setActivatable(bool active);
+    virtual void activateDocument(TextEditor::TextDocument *document);
     void activateEditor(Core::IEditor *editor);
-    void deactivateDocument(TextEditor::TextDocument *document);
+    virtual void deactivateDocument(TextEditor::TextDocument *document);
+    void deactivateEditor(Core::IEditor *editor);
+
     bool documentOpen(const TextEditor::TextDocument *document) const;
     TextEditor::TextDocument *documentForFilePath(const Utils::FilePath &file) const;
     void setShadowDocument(const Utils::FilePath &filePath, const QString &contents);
@@ -134,10 +146,11 @@ public:
     void setDocumentChangeUpdateThreshold(int msecs);
 
     // workspace control
-    virtual void setCurrentProject(ProjectExplorer::Project *project);
+    virtual void setCurrentBuildConfiguration(ProjectExplorer::BuildConfiguration *bc);
+    ProjectExplorer::BuildConfiguration *buildConfiguration() const;
     ProjectExplorer::Project *project() const;
-    virtual void projectOpened(ProjectExplorer::Project *project);
-    virtual void projectClosed(ProjectExplorer::Project *project);
+    virtual void buildConfigurationOpened(ProjectExplorer::BuildConfiguration *bc);
+    virtual void buildConfigurationClosed(ProjectExplorer::BuildConfiguration *bc);
     virtual bool canOpenProject(ProjectExplorer::Project *project);
     void updateConfiguration(const QJsonValue &configuration);
 
@@ -165,11 +178,13 @@ public:
                     LinkTarget target);
     DocumentSymbolCache *documentSymbolCache();
     HoverHandler *hoverHandler();
+    SemanticTokenSupport *semanticTokenSupport();
     QList<LanguageServerProtocol::Diagnostic> diagnosticsAt(const Utils::FilePath &filePath,
                                                             const QTextCursor &cursor) const;
     bool hasDiagnostic(const Utils::FilePath &filePath,
                        const LanguageServerProtocol::Diagnostic &diag) const;
     bool hasDiagnostics(const TextEditor::TextDocument *document) const;
+    void hideDiagnostics(const Utils::FilePath &documentPath);
     void setSemanticTokensHandler(const SemanticTokensHandler &handler);
     void setSnippetsGroup(const QString &group);
     void setCompletionAssistProvider(LanguageClientCompletionAssistProvider *provider);
@@ -186,17 +201,20 @@ public:
     Utils::OsType osType() const;
 
     // custom methods
-    using CustomMethodHandler = std::function<void(
+    using CustomMethodHandler = std::function<bool(
         const LanguageServerProtocol::JsonRpcMessage &message)>;
     void registerCustomMethod(const QString &method, const CustomMethodHandler &handler);
 
     // logging
     enum class LogTarget { Console, Ui };
     void setLogTarget(LogTarget target);
-    void log(const QString &message) const;
+    void log(QtMsgType msgType, const QString &message) const;
+
     template<typename Error>
     void log(const LanguageServerProtocol::ResponseError<Error> &responseError) const
-    { log(responseError.toString()); }
+    {
+        log(QtMsgType::QtCriticalMsg, responseError.toString());
+    }
 
     // Caller takes ownership.
     using CustomInspectorTab = std::pair<QWidget *, QString>;
@@ -208,6 +226,9 @@ public:
 
     void setCompletionResultsLimit(int limit);
     int completionResultsLimit() const;
+
+    void foldOrUnfoldCommentBlocks(TextEditor::BaseTextEditor *editor, bool fold);
+    void foldOrUnfoldInactiveRegions(TextEditor::BaseTextEditor *editor, bool fold);
 
 signals:
     void initialized(const LanguageServerProtocol::ServerCapabilities &capabilities);
@@ -224,6 +245,7 @@ protected:
     void handleMessage(const LanguageServerProtocol::JsonRpcMessage &message);
     virtual void handleDiagnostics(const LanguageServerProtocol::PublishDiagnosticsParams &params);
     virtual DiagnosticManager *createDiagnosticManager();
+    virtual void startImpl();
 
 private:
     friend class ClientPrivate;

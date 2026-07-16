@@ -5,8 +5,7 @@
 
 #include "mesontools.h"
 
-#include <projectexplorer/kit.h>
-#include <projectexplorer/kitmanager.h>
+namespace ProjectExplorer { class Kit; }
 
 namespace MesonProjectManager::Internal {
 
@@ -17,17 +16,7 @@ public:
     static Utils::Id mesonToolId(const ProjectExplorer::Kit *kit);
 
     static bool isValid(const ProjectExplorer::Kit *kit);
-    static std::shared_ptr<ToolWrapper> mesonTool(const ProjectExplorer::Kit *kit);
-};
-
-class NinjaToolKitAspect final
-{
-public:
-    static void setNinjaTool(ProjectExplorer::Kit *kit, Utils::Id id);
-    static Utils::Id ninjaToolId(const ProjectExplorer::Kit *kit);
-
-    static bool isValid(const ProjectExplorer::Kit *kit);
-    static std::shared_ptr<ToolWrapper> ninjaTool(const ProjectExplorer::Kit *kit);
+    static std::shared_ptr<MesonToolWrapper> mesonTool(const ProjectExplorer::Kit *kit);
 };
 
 } // MesonProjectManager::Internal

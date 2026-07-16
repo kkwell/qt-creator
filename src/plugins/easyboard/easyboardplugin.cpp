@@ -55,7 +55,7 @@
 using namespace Core;
 using namespace ExtensionSystem;
 using namespace Utils;
-using namespace StyleHelper::SpacingTokens;
+using namespace Utils::StyleHelper::SpacingTokens;
 
 namespace EasyBoard::Internal {
 
@@ -98,7 +98,7 @@ public:
         delete m_easyboardmode;
     }
 
-    bool initialize(const QStringList &arguments, QString *) final
+    Result<> initialize(const QStringList &) final
     {
         // QPalette palette = creatorTheme()->palette();
         // palette.setColor(QPalette::Window, themeColor(Theme::Welcome_BackgroundColor));
@@ -107,7 +107,7 @@ public:
         //addAutoReleasedObject(pDev);
         m_easyboardmode = new EasyBoardMode;
         //addAutoReleasedObject(m_sgasMode);
-        return true;
+        return ResultOk;
     }
 
     void extensionsInitialized() final
@@ -128,9 +128,7 @@ EasyBoardMode::EasyBoardMode()
     const Icon CLASSIC(":/easyboard/images/mode_device.png");
     const Icon FLAT({{":/easyboard/images/mode_device_mask.png",
                       Theme::IconsBaseColor}});
-    const Icon FLAT_ACTIVE({{":/easyboard/images/mode_device_mask.png",
-                             Theme::IconsModeHelpActiveColor}});
-    setIcon(Icon::modeIcon(CLASSIC, FLAT, FLAT_ACTIVE));
+    setIcon(Icon::sideBarIcon(CLASSIC, FLAT));
 
     setPriority(Constants::P_MODE_EASYBOARD);
 

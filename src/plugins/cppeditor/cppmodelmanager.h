@@ -44,11 +44,10 @@ class TextDocument;
 
 namespace CppEditor {
 
-class AbstractEditorSupport;
+class GeneratedFileSupport;
 class BaseEditorDocumentProcessor;
 class CppCompletionAssistProvider;
 class CppEditorDocumentHandle;
-class CppIndexingSupport;
 class CppLocatorData;
 class FollowSymbolUnderCursor;
 class ModelManagerSupportProvider;
@@ -130,30 +129,27 @@ public:
     static bool replaceDocument(Document::Ptr newDoc);
 
     static void emitDocumentUpdated(Document::Ptr doc);
-    static void emitAbstractEditorSupportContentsUpdated(const QString &filePath,
-                                                  const QString &sourcePath,
-                                                  const QByteArray &contents);
-    static void emitAbstractEditorSupportRemoved(const QString &filePath);
+    static void emitGeneratedFileContentsUpdated(const Utils::FilePath &filePath,
+                                                 const Utils::FilePath &sourcePath,
+                                                 const QByteArray &contents);
+    static void emitGeneratedFileSupportRemoved(const Utils::FilePath &filePath);
 
     static bool isCppEditor(Core::IEditor *editor);
     static std::optional<QVersionNumber> usesClangd(const TextEditor::TextDocument *document);
     static bool isClangCodeModelActive();
 
-    static QSet<AbstractEditorSupport*> abstractEditorSupports();
-    static void addExtraEditorSupport(AbstractEditorSupport *editorSupport);
-    static void removeExtraEditorSupport(AbstractEditorSupport *editorSupport);
+    static void addGeneratedFileSupport(GeneratedFileSupport *editorSupport);
+    static void removeGeneratedFileSupport(GeneratedFileSupport *editorSupport);
 
     static const QList<CppEditorDocumentHandle *> cppEditorDocuments();
     static CppEditorDocumentHandle *cppEditorDocument(const Utils::FilePath &filePath);
     static BaseEditorDocumentProcessor *cppEditorDocumentProcessor(const Utils::FilePath &filePath);
     static void registerCppEditorDocument(CppEditorDocumentHandle *cppEditorDocument);
-    static void unregisterCppEditorDocument(const QString &filePath);
+    static void unregisterCppEditorDocument(const Utils::FilePath &filePath);
 
     static QList<int> references(CPlusPlus::Symbol *symbol, const CPlusPlus::LookupContext &context);
 
-    static SignalSlotType getSignalSlotType(const Utils::FilePath &filePath,
-                                            const QByteArray &content,
-                                            int position);
+    static SignalSlotType getSignalSlotType(const Utils::FilePath &filePath, QTextCursor cursor);
 
     static void renameUsages(CPlusPlus::Symbol *symbol, const CPlusPlus::LookupContext &context,
                              const QString &replacement = QString(),
@@ -168,13 +164,13 @@ public:
     static void findMacroUsages(const CPlusPlus::Macro &macro);
     static void renameMacroUsages(const CPlusPlus::Macro &macro, const QString &replacement);
 
-    static void finishedRefreshingSourceFiles(const QSet<QString> &files);
+    static void finishedRefreshingSourceFiles(const QSet<Utils::FilePath> &files);
 
     static void activateClangCodeModel(std::unique_ptr<ModelManagerSupport> &&modelManagerSupport);
     static CppCompletionAssistProvider *completionAssistProvider();
     static BaseEditorDocumentProcessor *createEditorDocumentProcessor(
                     TextEditor::TextDocument *baseTextDocument);
-    static TextEditor::BaseHoverHandler *createHoverHandler();
+    static TextEditor::BaseHoverHandler &cppHoverHandler();
     static FollowSymbolUnderCursor &builtinFollowSymbol();
 
     enum class Backend { Builtin, Best };
@@ -185,6 +181,8 @@ public:
     static void followSymbolToType(const CursorInEditor &data,
                                    const Utils::LinkHandler &processLinkCallback, bool inNextSplit,
                                    Backend backend = Backend::Best);
+    static void followFunctionToParentImpl(
+        const CursorInEditor &data, const Utils::LinkHandler &processLinkCallback);
     static void switchDeclDef(const CursorInEditor &data,
                               const Utils::LinkHandler &processLinkCallback,
                               Backend backend = Backend::Best);
@@ -197,14 +195,14 @@ public:
     static void findUsages(const CursorInEditor &data, Backend backend = Backend::Best);
     static void switchHeaderSource(bool inNextSplit, Backend backend = Backend::Best);
     static void showPreprocessedFile(bool inNextSplit);
-    static void foldComments();
-    static void unfoldComments();
+    static void foldComments(Backend backend = Backend::Best);
+    static void unfoldComments(Backend backend = Backend::Best);
+    static void foldOrUnfoldInactiveRegions(bool fold);
     static void findUnusedFunctions(const Utils::FilePath &folder);
     static void checkForUnusedSymbol(Core::SearchResult *search, const Utils::Link &link,
                                      CPlusPlus::Symbol *symbol,
                                      const CPlusPlus::LookupContext &context,
                                      const Utils::LinkHandler &callback);
-    static CppIndexingSupport *indexingSupport();
 
     static Utils::FilePaths projectFiles();
 
@@ -234,13 +232,6 @@ public:
     static void setSymbolsFindFilter(std::unique_ptr<Core::IFindFilter> &&filter);
     static void setCurrentDocumentFilter(std::unique_ptr<Core::ILocatorFilter> &&filter);
 
-    static Core::ILocatorFilter *locatorFilter();
-    static Core::ILocatorFilter *classesFilter();
-    static Core::ILocatorFilter *includesFilter();
-    static Core::ILocatorFilter *functionsFilter();
-    static Core::IFindFilter *symbolsFindFilter();
-    static Core::ILocatorFilter *currentDocumentFilter();
-
     /*
      * try to find build system target that depends on the given file - if the file is no header
      * try to find the corresponding header and use this instead to find the respective target
@@ -256,10 +247,10 @@ public:
 
 signals:
     /// Project data might be locked while this is emitted.
-    void aboutToRemoveFiles(const QStringList &files);
+    void aboutToRemoveFiles(const Utils::FilePaths &files);
 
     void documentUpdated(CPlusPlus::Document::Ptr doc);
-    void sourceFilesRefreshed(const QSet<QString> &files);
+    void sourceFilesRefreshed(const QSet<Utils::FilePath> &files);
 
     void projectPartsUpdated(ProjectExplorer::Project *project);
     void projectPartsRemoved(const QStringList &projectPartIds);
@@ -268,10 +259,10 @@ signals:
 
     void gcFinished(); // Needed for tests.
 
-    void abstractEditorSupportContentsUpdated(const QString &filePath,
-                                              const QString &sourcePath,
-                                              const QByteArray &contents);
-    void abstractEditorSupportRemoved(const QString &filePath);
+    void generatedFileContentsUpdated(const Utils::FilePath &filePath,
+                                      const Utils::FilePath &sourcePath,
+                                      const QByteArray &contents);
+    void generatedFileSupportRemoved(const Utils::FilePath &filePath);
     void fallbackProjectPartUpdated();
 
     void diagnosticsChanged(const Utils::FilePath &filePath, const QString &kind);

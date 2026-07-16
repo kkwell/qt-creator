@@ -25,10 +25,10 @@ QWidget *ColorPickerAction::createWidget(QWidget *parent)
     return picker;
 }
 
-ColorToolButton::ColorToolButton(const QString &key, const QString &iconName, const QString &tooltip, QWidget *parent)
+ColorToolButton::ColorToolButton(const QString &key, const QIcon &icon, const QString &tooltip, QWidget *parent)
     : QToolButton(parent)
 {
-    setIcon(QIcon(iconName));
+    setIcon(icon);
     setToolTip(tooltip);
     setPopupMode(QToolButton::MenuButtonPopup);
 
@@ -82,7 +82,7 @@ void ColorToolButton::paintEvent(QPaintEvent *e)
     QToolButton::paintEvent(e);
 
     QPainter p(this);
-    QRect r(2, height() - 7, width() - 17, 4);
+    QRect r(2, height() - 6, width() - 16, 4);
     p.fillRect(r, QBrush(QColor(m_color)));
 
     if (!isEnabled()) {

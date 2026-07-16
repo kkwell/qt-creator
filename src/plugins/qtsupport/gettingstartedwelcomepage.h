@@ -5,6 +5,9 @@
 
 namespace QtSupport::Internal {
 
+class ExampleItem;
+
 void setupGettingStartedWelcomePage();
+void openExampleProject(const ExampleItem &item);
 
 } // QtSupport::Internal

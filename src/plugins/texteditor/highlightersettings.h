@@ -3,52 +3,23 @@
 
 #pragma once
 
-#include <utils/filepath.h>
-
-#include <QString>
-#include <QStringList>
-#include <QList>
-#include <QRegularExpression>
-
-namespace Utils {
-class Key;
-class QtcSettings;
-} // Utils
+#include <utils/aspects.h>
 
 namespace TextEditor {
 
-class HighlighterSettings
+class HighlighterSettings final : public Utils::AspectContainer
 {
 public:
-    HighlighterSettings() = default;
+    HighlighterSettings();
 
-    void toSettings(const Utils::Key &category, Utils::QtcSettings *s) const;
-    void fromSettings(const Utils::Key &category, Utils::QtcSettings *s);
+    bool skipUpdateCheck(const QString &fileName) const;
+    bool skipHighlighting(const QString &fileName) const;
 
-    void setDefinitionFilesPath(const Utils::FilePath &path) { m_definitionFilesPath = path; }
-    const Utils::FilePath &definitionFilesPath() const { return m_definitionFilesPath; }
-
-    void setIgnoredFilesPatterns(const QString &patterns);
-    QString ignoredFilesPatterns() const;
-    bool isIgnoredFilePattern(const QString &fileName) const;
-
-    bool equals(const HighlighterSettings &highlighterSettings) const;
-
-    friend bool operator==(const HighlighterSettings &a, const HighlighterSettings &b)
-    { return a.equals(b); }
-
-    friend bool operator!=(const HighlighterSettings &a, const HighlighterSettings &b)
-    { return !a.equals(b); }
-
-private:
-    void assignDefaultIgnoredPatterns();
-    void assignDefaultDefinitionsPath();
-
-    void setExpressionsFromList(const QStringList &patterns);
-    QStringList listFromExpressions() const;
-
-    Utils::FilePath m_definitionFilesPath;
-    QList<QRegularExpression> m_ignoredFiles;
+    Utils::FilePathAspect definitionFilesPath{this};
+    Utils::StringListAspect skipUpdateCheckForFilesPattern{this};
+    Utils::StringListAspect skipFilesPattern{this};
 };
+
+HighlighterSettings &highlighterSettings();
 
 } // namespace TextEditor

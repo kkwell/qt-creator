@@ -16,7 +16,6 @@ add_qtc_plugin(Valgrind
     callgrind/callgrindstackbrowser.cpp callgrind/callgrindstackbrowser.h
     callgrindcostdelegate.cpp callgrindcostdelegate.h
     callgrindcostview.cpp callgrindcostview.h
-    callgrindengine.cpp callgrindengine.h
     callgrindhelper.cpp callgrindhelper.h
     callgrindnamedelegate.cpp callgrindnamedelegate.h
     callgrindtextmark.cpp callgrindtextmark.h
@@ -24,12 +23,13 @@ add_qtc_plugin(Valgrind
     callgrindvisualisation.cpp callgrindvisualisation.h
     memcheckerrorview.cpp memcheckerrorview.h
     memchecktool.cpp memchecktool.h
+    startremotedialog.cpp startremotedialog.h
     valgrind.qrc
-    valgrindengine.cpp valgrindengine.h
     valgrindplugin.cpp
     valgrindprocess.cpp valgrindprocess.h
     valgrindsettings.cpp valgrindsettings.h
     valgrindtr.h
+    valgrindutils.cpp valgrindutils.h
     xmlprotocol/announcethread.cpp xmlprotocol/announcethread.h
     xmlprotocol/error.cpp xmlprotocol/error.h
     xmlprotocol/errorlistmodel.cpp xmlprotocol/errorlistmodel.h
@@ -49,6 +49,11 @@ extend_qtc_plugin(Valgrind
 extend_qtc_plugin(Valgrind
   CONDITION WITH_TESTS
   SOURCES
+    unit_testdata/helgrind-output-sample1.xml
+    unit_testdata/memcheck-output-charm.xml
+    unit_testdata/memcheck-output-sample1.xml
+    unit_testdata/memcheck-output-sample2.xml
+    unit_testdata/memcheck-output-sample3.xml
     valgrindmemcheckparsertest.cpp valgrindmemcheckparsertest.h
     valgrindtestrunnertest.cpp valgrindtestrunnertest.h
   DEFINES

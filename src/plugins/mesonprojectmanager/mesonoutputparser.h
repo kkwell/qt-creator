@@ -9,13 +9,10 @@
 
 #include <QRegularExpression>
 
-#include <array>
-
 namespace MesonProjectManager::Internal {
 
 class MesonOutputParser final : public ProjectExplorer::OutputTaskParser
 {
-    Q_OBJECT
     const QRegularExpression m_errorFileLocRegex{R"((^.*meson.build):(\d+):(\d+): ERROR)"};
     const QRegularExpression m_errorOptionRegex{R"!(ERROR: Value)!"};
     int m_remainingLines = 0;
@@ -36,6 +33,7 @@ public:
     Result handleLine(const QString &line, Utils::OutputFormat type) override;
     void readStdo(const QByteArray &data);
     void setSourceDirectory(const Utils::FilePath &sourceDir);
+    void setBuildDirectory(const Utils::FilePath &buildDir);
 };
 
 } // namespace MesonProjectManager::Internal

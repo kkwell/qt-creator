@@ -8,13 +8,16 @@
 #include "lsputils.h"
 
 #include <utils/qtcassert.h>
+#include <utils/textcodec.h>
 
 #include <QCoreApplication>
 #include <QObject>
 #include <QJsonDocument>
-#include <QTextCodec>
+
+using namespace Utils;
 
 namespace LanguageServerProtocol {
+
 Q_LOGGING_CATEGORY(timingLog, "qtc.languageserverprotocol.timing", QtWarningMsg)
 
 constexpr const char CancelRequest::methodName[];
@@ -45,8 +48,6 @@ JsonRpcMessage::JsonRpcMessage()
     m_jsonObject[jsonRpcVersionKey] = "2.0";
 }
 
-constexpr int utf8mib = 106;
-
 static QString docType(const QJsonDocument &doc)
 {
     if (doc.isArray())
@@ -65,11 +66,8 @@ JsonRpcMessage::JsonRpcMessage(const BaseMessage &message)
     if (message.content.isEmpty())
         return;
     QByteArray content;
-    if (message.codec && message.codec->mibEnum() != utf8mib) {
-        QTextCodec *utf8 = QTextCodec::codecForMib(utf8mib);
-        if (utf8)
-            content = utf8->fromUnicode(message.codec->toUnicode(message.content));
-    }
+    if (message.encoding.isValid() && !message.encoding.isUtf8())
+        content = message.encoding.decode(message.content).toUtf8();
     if (content.isEmpty())
         content = message.content;
     QJsonParseError error = {0, QJsonParseError::NoError};

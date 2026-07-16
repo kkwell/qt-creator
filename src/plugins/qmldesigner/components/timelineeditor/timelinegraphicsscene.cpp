@@ -63,13 +63,15 @@ QList<QmlTimelineKeyframeGroup> allTimelineFrames(const QmlTimeline &timeline)
 }
 
 TimelineGraphicsScene::TimelineGraphicsScene(TimelineWidget *parent,
-                                             ExternalDependenciesInterface &m_externalDependencies)
+                                             ExternalDependenciesInterface &m_externalDependencies,
+                                             ModulesStorage &modulesStorage)
     : AbstractScrollGraphicsScene(parent)
     , m_parent(parent)
     , m_layout(new TimelineGraphicsLayout(this))
     , m_currentFrameIndicator(new TimelineFrameHandle)
     , m_tools(this)
     , m_externalDependencies{m_externalDependencies}
+    , m_modulesStorage{modulesStorage}
 {
     addItem(m_layout);
     addItem(m_currentFrameIndicator);
@@ -487,9 +489,10 @@ QmlTimeline TimelineGraphicsScene::currentTimeline() const
 {
     QmlTimeline timeline(timelineModelNode());
     if (timeline.isValid()) {
-        QTC_ASSERT(timeline == timelineView()->currentTimeline(), ;);
+        QTC_CHECK(timeline == timelineView()->currentTimelineNode());
     }
-    return timelineView()->currentTimeline();
+
+    return timelineView()->currentTimelineNode();
 }
 
 QRectF AbstractScrollGraphicsScene::selectionBounds() const
@@ -732,7 +735,7 @@ void TimelineGraphicsScene::copyAllKeyframesForTarget(const ModelNode &targetNod
 
 void TimelineGraphicsScene::pasteKeyframesToTarget(const ModelNode &targetNode)
 {
-    TimelineActions::pasteKeyframesToTarget(targetNode, currentTimeline());
+    TimelineActions::pasteKeyframesToTarget(targetNode, currentTimeline(), m_modulesStorage);
 }
 
 void TimelineGraphicsScene::copySelectedKeyframes()
@@ -744,7 +747,7 @@ void TimelineGraphicsScene::copySelectedKeyframes()
 
 void TimelineGraphicsScene::pasteSelectedKeyframes()
 {
-    TimelineActions::pasteKeyframes(timelineView(), currentTimeline());
+    TimelineActions::pasteKeyframes(timelineView(), currentTimeline(), m_modulesStorage);
 }
 
 void TimelineGraphicsScene::handleKeyframeInsertion(const ModelNode &target,

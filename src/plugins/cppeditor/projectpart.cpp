@@ -27,7 +27,7 @@ QString ProjectPart::id() const
 
 QString ProjectPart::projectFileLocation() const
 {
-    QString location = QDir::fromNativeSeparators(projectFile);
+    QString location = projectFile.toUrlishString();
     if (projectFileLine > 0)
         location += ":" + QString::number(projectFileLine);
     if (projectFileColumn > 0)
@@ -47,14 +47,15 @@ bool ProjectPart::belongsToProject(const Utils::FilePath &project) const
 
 Project *ProjectPart::project() const
 {
-    return ProjectManager::projectWithProjectFilePath(topLevelProject);
+    return hasProject() ? ProjectManager::projectWithProjectFile(topLevelProject, true)
+                        : nullptr;
 }
 
-QByteArray ProjectPart::readProjectConfigFile(const QString &projectConfigFile)
+QByteArray ProjectPart::readProjectConfigFile(const FilePath &projectConfigFile)
 {
     QByteArray result;
 
-    QFile f(projectConfigFile);
+    QFile f(projectConfigFile.toFSPathString());
     if (f.open(QIODevice::ReadOnly)) {
         QTextStream is(&f);
         result = is.readAll().toUtf8();
@@ -76,15 +77,15 @@ static Macros getProjectMacros(const RawProjectPart &rpp)
 
 static HeaderPaths getHeaderPaths(const RawProjectPart &rpp,
                                   const RawProjectPartFlags &flags,
-                                  const ProjectExplorer::ToolchainInfo &tcInfo)
+                                  const ToolchainInfo &tcInfo)
 {
     HeaderPaths headerPaths;
 
     // Prevent duplicate include paths.
     // TODO: Do this once when finalizing the raw project part?
-    std::set<QString> seenPaths;
+    std::set<FilePath> seenPaths;
     for (const HeaderPath &p : std::as_const(rpp.headerPaths)) {
-        const QString cleanPath = QDir::cleanPath(p.path);
+        const FilePath cleanPath = p.path.cleanPath();
         if (seenPaths.insert(cleanPath).second)
             headerPaths << HeaderPath(cleanPath, p.type);
     }
@@ -117,7 +118,7 @@ static Toolchain::MacroInspectionReport getToolchainMacros(
     return report;
 }
 
-static QStringList getIncludedFiles(const RawProjectPart &rpp, const RawProjectPartFlags &flags)
+static FilePaths getIncludedFiles(const RawProjectPart &rpp, const RawProjectPartFlags &flags)
 {
     return !rpp.includedFiles.isEmpty() ? rpp.includedFiles : flags.includedFiles;
 }
@@ -133,14 +134,11 @@ static QStringList getExtraCodeModelFlags(const RawProjectPart &rpp, const Proje
             continue;
         if (!hp.path.endsWith("/include"))
             continue;
-        const Utils::FilePath includeDir = Utils::FilePath::fromString(hp.path);
+        const FilePath includeDir = hp.path;
         if (!includeDir.pathAppended("cuda.h").exists())
             continue;
-        for (FilePath dir = includeDir.parentDir(); cudaPath.isEmpty() && !dir.isRootPath();
-             dir = dir.parentDir()) {
-            if (dir.pathAppended("nvvm").exists())
-                cudaPath = dir;
-        }
+        if (cudaPath.isEmpty())
+            cudaPath = includeDir.parentDir().searchHereAndInParents("nvvm", QDir::Files);
         break;
     }
     if (!cudaPath.isEmpty())
@@ -198,6 +196,7 @@ CPlusPlus::LanguageFeatures ProjectPart::deriveLanguageFeatures() const
     features.cxx14Enabled = languageVersion >= Utils::LanguageVersion::CXX14;
     features.cxx17Enabled = languageVersion >= Utils::LanguageVersion::CXX17;
     features.cxx20Enabled = languageVersion >= Utils::LanguageVersion::CXX20;
+    features.cxx23Enabled = languageVersion >= Utils::LanguageVersion::CXX23;
     features.cxxEnabled = hasCxx;
     features.c99Enabled = languageVersion >= Utils::LanguageVersion::C99;
     features.objCEnabled = languageExtensions.testFlag(Utils::LanguageExtension::ObjectiveC);

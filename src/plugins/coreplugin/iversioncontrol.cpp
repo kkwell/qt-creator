@@ -11,6 +11,7 @@
 #include <utils/qtcassert.h>
 
 #include <QDir>
+#include <QMenu>
 #include <QRegularExpression>
 #include <QStringList>
 
@@ -60,6 +61,13 @@ QString IVersionControl::vcsMakeWritableText() const
 
 FilePaths IVersionControl::additionalToolsPath() const
 {
+    return {};
+}
+
+FilePaths IVersionControl::monitorDirectory(const Utils::FilePath &path, bool monitor)
+{
+    Q_UNUSED(path)
+    Q_UNUSED(monitor)
     return {};
 }
 
@@ -113,12 +121,6 @@ FilePath IVersionControl::trackFile(const FilePath &repository)
     return d->m_fileTracker(repository);
 }
 
-QString IVersionControl::refreshTopic(const FilePath &repository)
-{
-    QTC_ASSERT(d->m_topicRefresher, return {});
-    return d->m_topicRefresher(repository);
-}
-
 /*!
     Returns the topic for repository under \a topLevel.
 
@@ -157,8 +159,45 @@ QString IVersionControl::vcsTopic(const FilePath &topLevel)
     const QDateTime lastModified = file.lastModified();
     if (lastModified == data.timeStamp)
         return data.topic;
+    QTC_ASSERT(d->m_topicRefresher, return {});
     data.timeStamp = lastModified;
-    return data.topic = refreshTopic(topLevel);
+    return data.topic = d->m_topicRefresher(topLevel);
+}
+
+void IVersionControl::fillDefaultFileActionMenu(QMenu *menu,
+                                                IVersionControl *vc,
+                                                const Utils::FilePath &topLevel,
+                                                const Utils::FilePath &relativePath)
+{
+    const QString name = relativePath.isEmpty() ? topLevel.fileName() : relativePath.fileName();
+
+    const QAction *diff = menu->addAction(Tr::tr("Diff \"%1\"").arg(name));
+    connect(diff, &QAction::triggered, this, [=] {
+        const FilePath path = relativePath.isEmpty() ? "." : relativePath;
+        vc->vcsDiff(topLevel, path);
+    });
+
+    const QAction *log = menu->addAction(Tr::tr("Log \"%1\"").arg(name));
+    connect(log, &QAction::triggered, this, [=] { vc->vcsLog(topLevel, relativePath); });
+
+    const FilePath fullPath = topLevel.pathAppended(relativePath.path());
+    if (!fullPath.isDir()) {
+        const QAction *annotate = menu->addAction(Tr::tr("Annotate \"%1\"").arg(name));
+        connect(annotate, &QAction::triggered, this, [=] { vc->vcsAnnotate(fullPath, 1); });
+    }
+
+    menu->addSeparator();
+}
+
+void IVersionControl::vcsFillFileActionMenu(QMenu *menu,
+                                            const Utils::FilePath &topLevel,
+                                            const Utils::FilePath &relativePath,
+                                            VcsFileState vcsFileState)
+{
+    Q_UNUSED(menu);
+    Q_UNUSED(topLevel);
+    Q_UNUSED(relativePath);
+    Q_UNUSED(vcsFileState);
 }
 
 /*!

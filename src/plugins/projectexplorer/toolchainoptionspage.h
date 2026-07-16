@@ -3,12 +3,11 @@
 
 #pragma once
 
+#include "toolchain.h"
+
 #include <coreplugin/dialogs/ioptionspage.h>
 
-#include <QCoreApplication>
-
-namespace ProjectExplorer {
-namespace Internal {
+namespace ProjectExplorer::Internal {
 
 class ToolChainOptionsPage final : public Core::IOptionsPage
 {
@@ -16,5 +15,6 @@ public:
     ToolChainOptionsPage();
 };
 
-} // namespace Internal
-} // namespace ProjectExplorer
+QVariant toolchainBundleData(const std::optional<ToolchainBundle> &bundle, int column, int role);
+
+} // namespace ProjectExplorer::Internal

@@ -5,20 +5,16 @@
 
 #include "cppindexingsupport.h"
 #include "cpptoolstestcase.h"
-#include "searchsymbols.h"
 
-#include <coreplugin/testdatadir.h>
 #include <coreplugin/find/searchresultwindow.h>
 
 #include <utils/async.h>
 
-#include <QtTest>
+#include <QTest>
 
 using namespace Utils;
 
 namespace {
-
-QTC_DECLARE_MYTESTDATADIR("../../../tests/cppsymbolsearcher/")
 
 inline QString _(const QByteArray &ba) { return QString::fromLatin1(ba, ba.size()); }
 
@@ -70,17 +66,16 @@ namespace  {
 class SymbolSearcherTestCase : public CppEditor::Tests::TestCase
 {
 public:
-    SymbolSearcherTestCase(const QString &testFile,
-                           const SymbolSearcher::Parameters &searchParameters,
+    SymbolSearcherTestCase(const FilePath &testFile,
+                           const SearchParameters &searchParameters,
                            const ResultDataList &expectedResults)
     {
         QVERIFY(succeededSoFar());
-        QVERIFY(parseFiles(testFile));
+        QVERIFY(parseFiles({testFile}));
 
-        const QScopedPointer<SymbolSearcher> symbolSearcher(
-            new SymbolSearcher(searchParameters, QSet<FilePath>{FilePath::fromString(testFile)}));
         QFuture<Utils::SearchResultItem> search
-            = Utils::asyncRun(&SymbolSearcher::runSearch, symbolSearcher.data());
+            = Utils::asyncRun(&Internal::searchForSymbols, CppModelManager::snapshot(),
+                              searchParameters, QSet<FilePath>{testFile});
         search.waitForFinished();
         ResultDataList results = ResultData::fromSearchResultList(search.results());
         QCOMPARE(results, expectedResults);
@@ -90,8 +85,8 @@ public:
 
 void SymbolSearcherTest::test()
 {
-    QFETCH(QString, testFile);
-    QFETCH(SymbolSearcher::Parameters, searchParameters);
+    QFETCH(FilePath, testFile);
+    QFETCH(SearchParameters, searchParameters);
     QFETCH(ResultDataList, expectedResults);
 
     SymbolSearcherTestCase(testFile, searchParameters, expectedResults);
@@ -99,21 +94,21 @@ void SymbolSearcherTest::test()
 
 void SymbolSearcherTest::test_data()
 {
-    QTest::addColumn<QString>("testFile");
-    QTest::addColumn<SymbolSearcher::Parameters>("searchParameters");
+    QTest::addColumn<FilePath>("testFile");
+    QTest::addColumn<SearchParameters>("searchParameters");
     QTest::addColumn<ResultDataList>("expectedResults");
 
-    MyTestDataDir testDirectory(QLatin1String("testdata_basic"));
-    const QString testFile = testDirectory.file(QLatin1String("file1.cpp"));
+    const FilePath testFile = SRCDIR "/../../../tests/cppsymbolsearcher/testdata_basic/file1.cpp";
+    QVERIFY(testFile.isReadableFile());
 
-    SymbolSearcher::Parameters searchParameters;
+    SearchParameters searchParameters;
 
     // Check All Symbol Types
-    searchParameters = SymbolSearcher::Parameters();
+    searchParameters = SearchParameters();
     searchParameters.text = _("");
     searchParameters.flags = {};
-    searchParameters.types = SearchSymbols::AllTypes;
-    searchParameters.scope = SymbolSearcher::SearchGlobal;
+    searchParameters.types = SymbolType::AllTypes;
+    searchParameters.scope = SearchGlobal;
     QTest::newRow("BuiltinSymbolSearcher::AllTypes")
         << testFile
         << searchParameters
@@ -165,11 +160,11 @@ void SymbolSearcherTest::test_data()
         );
 
     // Check Classes
-    searchParameters = SymbolSearcher::Parameters();
+    searchParameters = SearchParameters();
     searchParameters.text = _("myclass");
     searchParameters.flags = {};
-    searchParameters.types = SymbolSearcher::Classes;
-    searchParameters.scope = SymbolSearcher::SearchGlobal;
+    searchParameters.types = SymbolType::Classes;
+    searchParameters.scope = SearchGlobal;
     QTest::newRow("BuiltinSymbolSearcher::Classes")
         << testFile
         << searchParameters
@@ -180,11 +175,11 @@ void SymbolSearcherTest::test_data()
         );
 
     // Check Functions
-    searchParameters = SymbolSearcher::Parameters();
+    searchParameters = SearchParameters();
     searchParameters.text = _("fun");
     searchParameters.flags = {};
-    searchParameters.types = SymbolSearcher::Functions;
-    searchParameters.scope = SymbolSearcher::SearchGlobal;
+    searchParameters.types = SymbolType::Functions;
+    searchParameters.scope = SearchGlobal;
     QTest::newRow("BuiltinSymbolSearcher::Functions")
         << testFile
         << searchParameters
@@ -205,11 +200,11 @@ void SymbolSearcherTest::test_data()
         );
 
     // Check Enums
-    searchParameters = SymbolSearcher::Parameters();
+    searchParameters = SearchParameters();
     searchParameters.text = _("enum");
     searchParameters.flags = {};
-    searchParameters.types = SymbolSearcher::Enums;
-    searchParameters.scope = SymbolSearcher::SearchGlobal;
+    searchParameters.types = SymbolType::Enums;
+    searchParameters.scope = SearchGlobal;
     QTest::newRow("BuiltinSymbolSearcher::Enums")
         << testFile
         << searchParameters
@@ -220,11 +215,11 @@ void SymbolSearcherTest::test_data()
         );
 
     // Check Declarations
-    searchParameters = SymbolSearcher::Parameters();
+    searchParameters = SearchParameters();
     searchParameters.text = _("myvar");
     searchParameters.flags = {};
-    searchParameters.types = SymbolSearcher::Declarations;
-    searchParameters.scope = SymbolSearcher::SearchGlobal;
+    searchParameters.types = SymbolType::Declarations;
+    searchParameters.scope = SearchGlobal;
     QTest::newRow("BuiltinSymbolSearcher::Declarations")
         << testFile
         << searchParameters

@@ -3,22 +3,29 @@
 
 #pragma once
 
-#include "baseeditordocumentprocessor.h"
-#include "cppcompletionassistprovider.h"
-#include "cppoutlinemodel.h"
-#include "cppparsecontext.h"
+#include "cppeditor_global.h"
 #include "cppsemanticinfo.h"
-#include "editordocumenthandle.h"
 
+#include <cplusplus/CppDocument.h>
+
+#include <texteditor/refactoroverlay.h>
 #include <texteditor/textdocument.h>
 
-#include <QMutex>
-#include <QTimer>
+#include <QTextEdit>
+
+namespace ProjectExplorer { class Node; }
 
 namespace CppEditor {
-namespace Internal {
 
-class CppEditorDocument : public TextEditor::TextDocument
+namespace Internal {
+class OutlineModel;
+class ParseContextModel;
+}
+
+class CursorInfo;
+class CursorInfoParams;
+
+class CPPEDITOR_EXPORT CppEditorDocument : public TextEditor::TextDocument
 {
     Q_OBJECT
 
@@ -26,6 +33,7 @@ class CppEditorDocument : public TextEditor::TextDocument
 
 public:
     explicit CppEditorDocument();
+    ~CppEditorDocument() override;
 
     bool isObjCEnabled() const;
     void setCompletionAssistProvider(TextEditor::CompletionAssistProvider *provider) override;
@@ -36,6 +44,7 @@ public:
     SemanticInfo recalculateSemanticInfo(); // TODO: Remove me
 
     void setPreferredParseContext(const QString &parseContextId);
+    void updateSoftPreferredParseContext(const ProjectExplorer::Node *currentNode);
     void setExtraPreprocessorDirectives(const QByteArray &directives);
 
     // the blocks list must be sorted
@@ -43,8 +52,8 @@ public:
 
     void scheduleProcessDocument();
 
-    ParseContextModel &parseContextModel();
-    OutlineModel &outlineModel();
+    Internal::ParseContextModel &parseContextModel();
+    Internal::OutlineModel &outlineModel();
     void updateOutline();
 
     QFuture<CursorInfo> cursorInfo(const CursorInfoParams &params);
@@ -52,74 +61,35 @@ public:
 
     bool usesClangd() const;
 
+#ifdef WITH_TESTS
+    QList<TextEditor::BlockRange> ifdefedOutBlocks() const;
+#endif
+
 signals:
     void codeWarningsUpdated(unsigned contentsRevision,
                              const QList<QTextEdit::ExtraSelection> selections,
-                             const TextEditor::RefactorMarkers &refactorMarkers);
-
-    void ifdefedOutBlocksUpdated(unsigned contentsRevision,
-                                 const QList<TextEditor::BlockRange> ifdefedOutBlocks);
+                             const QList<TextEditor::RefactorMarker> &refactorMarkers);
 
     void cppDocumentUpdated(const CPlusPlus::Document::Ptr document);    // TODO: Remove me
     void semanticInfoUpdated(const SemanticInfo semanticInfo); // TODO: Remove me
 
     void preprocessorSettingsChanged(bool customSettings);
 
+#ifdef WITH_TESTS
+    void ifdefedOutBlocksApplied();
+#endif
+
 protected:
     void applyFontSettings() override;
-    bool saveImpl(QString *errorString,
-                  const Utils::FilePath &filePath = Utils::FilePath(),
-                  bool autoSave = false) override;
+    Utils::Result<> saveImpl(const Utils::FilePath &filePath, SaveOption option) override;
+    void slotCodeStyleSettingsChanged() override;
+    void removeTrailingWhitespace(const QTextBlock &block) override;
 
 private:
-
-    void invalidateFormatterCache();
-    void onFilePathChanged(const Utils::FilePath &oldPath, const Utils::FilePath &newPath);
-    void onMimeTypeChanged();
-
-    void onAboutToReload();
-    void onReloadFinished();
-    void onDiagnosticsChanged(const Utils::FilePath &fileName, const QString &kind);
-
-
-    void reparseWithPreferredParseContext(const QString &id);
-
     void processDocument();
 
-    QByteArray contentsText() const;
-    unsigned contentsRevision() const;
-
-    BaseEditorDocumentProcessor *processor();
-    void resetProcessor();
-    void applyPreferredParseContextFromSettings();
-    void applyExtraPreprocessorDirectivesFromSettings();
-    void releaseResources();
-
-    void showHideInfoBarAboutMultipleParseContexts(bool show);
-
-    void initializeTimer();
-
-private:
-    bool m_fileIsBeingReloaded = false;
-    bool m_isObjCEnabled = false;
-
-    // Caching contents
-    mutable QMutex m_cachedContentsLock;
-    mutable QByteArray m_cachedContents;
-    mutable int m_cachedContentsRevision = -1;
-
-    unsigned m_processorRevision = 0;
-    QTimer m_processorTimer;
-    QScopedPointer<BaseEditorDocumentProcessor> m_processor;
-
-    CppCompletionAssistProvider *m_completionAssistProvider = nullptr;
-
-    // (Un)Registration in CppModelManager
-    QScopedPointer<CppEditorDocumentHandle> m_editorDocumentHandle;
-
-    ParseContextModel m_parseContextModel;
-    OutlineModel m_overviewModel;
+    class Private;
+    Private * const d;
 };
 
-} // namespace Internal
 } // namespace CppEditor

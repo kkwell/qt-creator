@@ -16,6 +16,7 @@ QT_END_NAMESPACE
 namespace QmlDesigner {
 
 class MaterialBrowserWidget;
+class QmlObjectNode;
 
 class MaterialBrowserView : public AbstractView
 {
@@ -34,16 +35,19 @@ public:
     void modelAboutToBeDetached(Model *model) override;
     void selectedNodesChanged(const QList<ModelNode> &selectedNodeList,
                               const QList<ModelNode> &lastSelectedNodeList) override;
-    void modelNodePreviewPixmapChanged(const ModelNode &node, const QPixmap &pixmap) override;
+    void modelNodePreviewPixmapChanged(const ModelNode &node,
+                                       const QPixmap &pixmap,
+                                       const QByteArray &requestId) override;
     void nodeIdChanged(const ModelNode &node, const QString &newId, const QString &oldId) override;
     void variantPropertiesChanged(const QList<VariantProperty> &propertyList, PropertyChangeFlags propertyChange) override;
+    void bindingPropertiesChanged(const QList<BindingProperty> &propertyList,
+                                  PropertyChangeFlags propertyChange) override;
+    void propertiesAboutToBeRemoved(const QList<AbstractProperty> &propertyList) override;
     void propertiesRemoved(const QList<AbstractProperty> &propertyList) override;
     void nodeReparented(const ModelNode &node, const NodeAbstractProperty &newPropertyParent,
                         const NodeAbstractProperty &oldPropertyParent,
                         AbstractView::PropertyChangeFlags propertyChange) override;
     void nodeAboutToBeRemoved(const ModelNode &removedNode) override;
-    void nodeRemoved(const ModelNode &removedNode, const NodeAbstractProperty &parentProperty,
-                     PropertyChangeFlags propertyChange) override;
     void importsChanged(const Imports &addedImports, const Imports &removedImports) override;
     void customNotification(const AbstractView *view, const QString &identifier,
                             const QList<ModelNode> &nodeList, const QList<QVariant> &data) override;
@@ -63,6 +67,8 @@ public:
     Q_INVOKABLE void applyTextureToProperty(const QString &matId, const QString &propName);
     Q_INVOKABLE void closeChooseMatPropsView();
 
+    static QList<QPair<int, int>> getSortedBounds(const QList<int> &values);
+
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
 
@@ -70,20 +76,19 @@ private:
     void active3DSceneChanged(qint32 sceneId);
     void refreshModel(bool updateImages);
     void updateMaterialsPreview();
-    bool isMaterial(const ModelNode &node) const;
-    bool isTexture(const ModelNode &node) const;
+
+    template<typename T, typename = typename std::enable_if<std::is_base_of<AbstractProperty, T>::value>::type>
+    void updatePropertyList(const QList<T> &propertyList);
+
     void loadPropertyGroups();
     void requestPreviews();
     ModelNode resolveSceneEnv();
-    ModelNode getMaterialOfModel(const ModelNode &model, int idx = 0);
+    void handleNodesRemoved(const QList<ModelNode> &removedNodes);
 
     AsynchronousImageCache &m_imageCache;
     QPointer<MaterialBrowserWidget> m_widget;
-    QList<ModelNode> m_selectedModels; // selected 3D model nodes
 
     bool m_hasQuick3DImport = false;
-    bool m_autoSelectModelMaterial = false; // TODO: wire this to some action
-    bool m_puppetResetPending = false;
     bool m_propertyGroupsLoaded = false;
 
     QTimer m_previewTimer;

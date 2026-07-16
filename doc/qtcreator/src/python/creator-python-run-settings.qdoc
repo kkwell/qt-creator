@@ -5,7 +5,6 @@
     \page creator-how-to-run-python-apps.html
     \previouspage creator-how-tos.html
 
-    \ingroup creator-how-to-projects
     \ingroup creator-how-to-run
 
     \title Run Python applications
@@ -15,27 +14,12 @@
     \c main.py file is automatically executed when you select the
     \uicontrol Run button.
 
-    You can specify another file to execute in the run settings of the project.
+    \section1 Specify Python run settings
 
-    \sa {Configure projects for running}, {Create Qt for Python applications},
-    {Develop Qt for Python applications}, {Python Run Settings}
-*/
+    To specify settings for running applications on the \l {Managing kits}{Run device} that
+    you select for a kit, go to \uicontrol Projects > \uicontrol {Run Settings}.
 
-/*!
-    \page creator-run-settings-python.html
-    \previouspage creator-reference.html
-
-    \ingroup creator-reference-run-configurations
-
-    \title Python Run Settings
-
-    \brief Settings for running Qt for Python applications.
-
-    Specify settings for running applications on the \l {Kits}{Run device} that
-    you select for a kit in \uicontrol Projects > \uicontrol {Build & Run} >
-    \uicontrol Run > \uicontrol {Run Settings}.
-
-    \image qtcreator-python-run-settings.webp {Python run settings}
+    \image {qtcreator-python-run-settings.webp } {Python run settings}
 
     The following table summarizes the settings for running Qt for Python
     applications.
@@ -59,12 +43,13 @@
         \li Command-line arguments to pass to the executable.
     \endtable
 
-    \section1 Custom Executable Run Configuration
+    \section1 Specify custom executable run configuration
 
     To run some other Python file than \c main.py, create a custom
     executable run configuration:
 
-    \image qtcreator-python-run-settings-custom-executable.png {Python custom executable run configuration}
+    \image {qtcreator-python-run-settings-custom-executable.webp}
+    {Python custom executable run settings}
 
     \list 1
         \li Select \uicontrol Add > \uicontrol {Custom Executable}.

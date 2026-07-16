@@ -23,8 +23,8 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QLoggingCategory>
 #include <QTextStream>
-#include <QDebug>
 
 using namespace Core;
 using namespace DiffEditor;
@@ -34,9 +34,10 @@ using namespace VcsBase;
 namespace Subversion {
 namespace Internal {
 
+static Q_LOGGING_CATEGORY(Log, "qtc.vcs.svn", QtWarningMsg);
+
 class SubversionLogConfig : public VcsBaseEditorConfig
 {
-    Q_OBJECT
 public:
     explicit SubversionLogConfig(QToolBar *toolBar)
         : VcsBaseEditorConfig(toolBar)
@@ -61,14 +62,13 @@ bool SubversionClient::doCommit(const FilePath &repositoryRoot,
     args << vcsCommandString(CommitCommand)
          << extraOptions
          << AddAuthOptions()
-         << QLatin1String(Constants::NON_INTERACTIVE_OPTION)
-         << QLatin1String("--encoding")
-         << QLatin1String("UTF-8")
-         << QLatin1String("--file")
+         << Constants::NON_INTERACTIVE_OPTION
+         << "--encoding"
+         << "UTF-8"
+         << "--file"
          << commitMessageFile
          << escapeFiles(files);
-    const CommandResult result = vcsSynchronousExec(repositoryRoot, args,
-                                 RunFlags::ShowStdOut | RunFlags::UseEventLoop);
+    const CommandResult result = vcsSynchronousExec(repositoryRoot, args, RunFlag::ShowStdOut);
     return result.result() == ProcessResult::FinishedWithSuccess;
 }
 
@@ -77,8 +77,7 @@ void SubversionClient::commit(const FilePath &repositoryRoot,
                               const QString &commitMessageFile,
                               const QStringList &extraOptions)
 {
-    if (Subversion::Constants::debug)
-        qDebug() << Q_FUNC_INFO << commitMessageFile << files;
+    qCDebug(Log) << Q_FUNC_INFO << commitMessageFile << files;
 
     doCommit(repositoryRoot, files, commitMessageFile, extraOptions);
 }
@@ -115,18 +114,15 @@ CommandLine &operator<<(Utils::CommandLine &command, SubversionClient::AddAuthOp
 
 QString SubversionClient::synchronousTopic(const FilePath &repository) const
 {
-    // TODO: Looks unused
-    QStringList args;
-
-    QString svnVersionBinary = vcsBinary(repository).toString();
-    int pos = svnVersionBinary.lastIndexOf('/');
+    QString svnVersionBinary = vcsBinary(repository).toUrlishString();
+    const int pos = svnVersionBinary.lastIndexOf('/');
     if (pos < 0)
         svnVersionBinary.clear();
     else
         svnVersionBinary = svnVersionBinary.left(pos + 1);
     svnVersionBinary.append(HostOsInfo::withExecutableSuffix("svnversion"));
     const CommandResult result = vcsSynchronousExec(repository,
-                                 {FilePath::fromString(svnVersionBinary), args});
+                                 {FilePath::fromString(svnVersionBinary), QStringList()});
     if (result.result() == ProcessResult::FinishedWithSuccess)
         return result.cleanedStdOut().trimmed();
     return {};
@@ -162,7 +158,7 @@ SubversionDiffEditorController::SubversionDiffEditorController(IDocument *docume
     setDisplayName("Svn Diff");
     forceContextLineCount(3); // SVN cannot change that when using internal diff
 
-    using namespace Tasking;
+    using namespace QtTaskTree;
 
     const Storage<QString> diffInputStorage;
 
@@ -181,7 +177,7 @@ SubversionDiffEditorController::SubversionDiffEditorController(IDocument *docume
     };
 
     const auto onDiffSetup = [this](Process &process) {
-        QStringList args = QStringList{"diff"} << "--internal-diff";
+        QStringList args = {"diff", "--internal-diff"};
         if (ignoreWhitespace())
             args << "-x" << "-uw";
         if (m_changeNumber)
@@ -206,7 +202,7 @@ SubversionDiffEditorController::SubversionDiffEditorController(IDocument *docume
             ProcessTask(onDescriptionSetup, onDescriptionDone)
         },
         Group {
-            ProcessTask(onDiffSetup, onDiffDone, CallDoneIf::Success),
+            ProcessTask(onDiffSetup, onDiffDone, CallDoneFlag::OnSuccess),
             postProcessTask(diffInputStorage)
         }
     };
@@ -249,7 +245,7 @@ SubversionDiffEditorController *SubversionClient::findOrCreateDiffEditor(const Q
 void SubversionClient::showDiffEditor(const FilePath &workingDirectory, const QStringList &files)
 {
     const QString vcsCmdString = vcsCommandString(DiffCommand);
-    const QString documentId = QLatin1String(Constants::SUBVERSION_PLUGIN)
+    const QString documentId = Constants::SUBVERSION_PLUGIN
             + QLatin1String(".Diff.") + VcsBaseEditor::getTitleId(workingDirectory, files);
     const QString title = vcsEditorTitle(vcsCmdString, documentId);
 
@@ -268,7 +264,7 @@ void SubversionClient::log(const FilePath &workingDir,
     const int logCount = settings().logCount();
     QStringList svnExtraOptions = extraOptions;
     if (logCount > 0)
-        svnExtraOptions << QLatin1String("-l") << QString::number(logCount);
+        svnExtraOptions << "-l" << QString::number(logCount);
 
     // subversion stores log in UTF-8 and returns it back in user system locale.
     // So we do not need to encode it.
@@ -282,7 +278,7 @@ void SubversionClient::log(const FilePath &workingDir,
 void SubversionClient::describe(const FilePath &workingDirectory, int changeNumber,
                                 const QString &title)
 {
-    const QString documentId = QLatin1String(Constants::SUBVERSION_PLUGIN)
+    const QString documentId = Constants::SUBVERSION_PLUGIN
         + QLatin1String(".Describe.") + VcsBaseEditor::editorTag(DiffOutput,
                                         workingDirectory, {}, QString::number(changeNumber));
 

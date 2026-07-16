@@ -27,6 +27,8 @@ constexpr const char DocumentOnTypeFormattingRequest::methodName[];
 constexpr const char RenameRequest::methodName[];
 constexpr const char SignatureHelpRequest::methodName[];
 constexpr const char PrepareRenameRequest::methodName[];
+constexpr const char FoldingRangeRequest::methodName[];
+constexpr const char FoldingRangeRefreshRequest::methodName[];
 
 HoverContent LanguageServerProtocol::Hover::content() const
 {
@@ -400,6 +402,20 @@ bool HoverResult::isValid() const
     if (auto hover = std::get_if<Hover>(this))
         return hover->isValid();
     return true;
+}
+
+FoldingRangeResult::FoldingRangeResult(const QJsonValue &value)
+{
+    if (value.isArray()) {
+        QList<FoldingRange> ranges;
+        for (auto arrayValue : value.toArray()) {
+            if (arrayValue.isObject())
+                ranges.append(FoldingRange(arrayValue.toObject()));
+        }
+        *this = ranges;
+    } else {
+        *this = nullptr;
+    }
 }
 
 } // namespace LanguageServerProtocol

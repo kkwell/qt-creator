@@ -4,6 +4,7 @@
 #pragma once
 
 #include "core_global.h"
+#include "vcsfilestate.h"
 
 #include <utils/filepath.h>
 #include <utils/id.h>
@@ -16,6 +17,8 @@ namespace Core {
 class IVersionControl;
 
 namespace Internal { class ICorePrivate; }
+
+using FileStateHash = QHash<QString, Core::VcsFileState>;
 
 /* VcsManager:
  * 1) Provides functionality for finding the IVersionControl * for a given
@@ -61,12 +64,13 @@ public:
     static void promptToAdd(const Utils::FilePath &directory, const Utils::FilePaths &filePaths);
 
     static void emitRepositoryChanged(const Utils::FilePath &repository);
+    static void delayedEmitRepositoryChanged();
 
     // Utility messages for adding files
     static QString msgAddToVcsTitle();
     static QString msgPromptToAddToVcs(const QStringList &files, const IVersionControl *vc);
     static QString msgAddToVcsFailedTitle();
-    static QString msgToAddToVcsFailed(const QStringList &files, const IVersionControl *vc);
+    static QString msgAddToVcsFailed(const QStringList &files, const IVersionControl *vc);
 
     /*!
      * Return a list of paths where tools that came with the VCS may be installed.
@@ -76,9 +80,28 @@ public:
 
     static void clearVersionControlCache();
 
+    // Convenience that searches for the repository specifically for version control
+    // systems that do not have directories like "CVS" in each managed subdirectory
+    // but have a directory at the top of the repository like ".git" containing
+    // a well known file. See implementation for gory details.
+    static Utils::FilePath findRepositoryForFiles(
+        const Utils::FilePath &fileOrDir, const QStringList &checkFiles);
+
+    static void monitorDirectory(const Utils::FilePath &path, bool monitor);
+    static Core::VcsFileState fileState(const Utils::FilePath &path);
+    static QColor fileStateColor(const VcsFileState &state);
+    static QString fileStateText(const VcsFileState &state);
+    static QString fileStateDescription(const VcsFileState &state);
+
+    static void updateModifiedFiles(const Utils::FilePath &repository, const FileStateHash &modifiedFiles);
+    static void emitClearFileState(const Utils::FilePath &repository);
+
 signals:
     void repositoryChanged(const Utils::FilePath &repository);
-    void configurationChanged(const IVersionControl *vcs);
+    void configurationChanged(const Core::IVersionControl *vcs);
+
+    void updateFileState(const Utils::FilePath &repository, const QStringList &files);
+    void clearFileState(const Utils::FilePath &repository);
 
 private:
     explicit VcsManager(QObject *parent = nullptr);

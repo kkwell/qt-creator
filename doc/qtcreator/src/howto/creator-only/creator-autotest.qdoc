@@ -13,6 +13,8 @@
     \QC integrates the \l{Qt Test} framework for unit testing Qt applications and
     libraries.
 
+    \note Running Qt tests and displaying their results is supported in Qt 5 or later.
+
     To create a Qt test:
 
     \list 1
@@ -21,25 +23,36 @@
         \li Select \uicontrol {Qt Test Project} > \uicontrol Choose.
         \li In the \uicontrol {Project and Test Information} dialog, specify
             settings for the project and test.
-            \image qtcreator-new-project-qt-test.webp {Project and Test Information - Qt Test}
+            \image {qtcreator-new-project-qt-test.webp} {Project and Test Information dialog in the Qt Test Project wizard}
         \li In \uicontrol {Test case name}, enter a name for the test case.
         \li Select \uicontrol {Requires \QApplication} to add the include
-            statement for QApplication to the main.cpp file of the project.
+            statement for QApplication to the \c main.cpp file of the project.
         \li Select \uicontrol {GUI Application} to create a Qt application.
         \li Select \uicontrol {Generate initialization and cleanup code}
             to add functions to your test that the testing framework
             executes to initialize and clean up the test.
-        \li In \uicontrol {Build system}, select the build system to use
-           for building the project: CMake, qmake, or Qbs.
+        \li In \uicontrol {Build system}, select the build system to use for building
+            the project: CMake, qmake, or Qbs. To build with CMake when developing with
+            Qt 5 or Qt 6.4 or earlier, select \uicontrol {CMake with Qt 5 Compatibility}.
     \endlist
 
-    \QC creates the test in the specified project directory. Edit the .cpp file
+    \QC creates the test in the specified project directory. Edit the \c .cpp file
     to add private slots for each test function in your test.
 
     For more information about creating Qt tests, see \l{Creating a Test}.
 
+    \note While scanning for tests, the parser takes into account only files that
+    directly or indirectly include QTest or QtTest or its equivalent \c {QtTest/qtest.h}
+    and get linked against \c QTestLib when building the project.
+    Files that currently will not be built will be ignored.
+
+    \note If \uicontrol General > \uicontrol {Process arguments} is enabled, you can
+    execute tests and write one or more additional log files in parallel.
+    Use the output format option \c {-o filename,format} to do so. Using standard out for
+    \c filename is not allowed as \QC is using this output channel.
+
     \sa {Test}{How To: Test}, {Select the build system}, {Testing},
-    {Test Results}
+    {Qt Test Overview#Logging Options}{Logging Options}
 */
 
 /*!
@@ -61,7 +74,7 @@
         \li Select \uicontrol {Qt Quick Test Project} > \uicontrol Choose.
         \li In the \uicontrol {Project and Test Information} dialog, specify
             settings for the project and test.
-            \image qtcreator-new-project-qtquick-test.webp {Project and Test Information - Qt Quick Test}
+            \image {qtcreator-new-project-qtquick-test.webp} {Project and Test Information dialog in the Qt Quick Test Project wizard}
         \li In \uicontrol {Test case name}, enter a name for the test case.
         \li Select \uicontrol {Generate setup code} to execute C++
             code before running any of the QML tests. The testing
@@ -70,15 +83,30 @@
         \li Select \uicontrol {Generate initialization and cleanup code}
             to add functions to your test that the testing framework
             executes to initialize and clean up the test.
-        \li In \uicontrol {Build system}, select the build system to use
-            for building the project: CMake, qmake, or Qbs.
+        \li In \uicontrol {Qt code compatibility}, select
+            \uicontrol {Qt6 and higher} or \uicontrol {Qt5 and higher} to set
+            the Qt version compatibility for the test.
+        \li In \uicontrol {Build system}, select the build system to use for building
+            the project: CMake, qmake, or Qbs. To build with CMake when developing with
+            Qt 5 or Qt 6.4 or earlier, select \uicontrol {CMake with Qt 5 Compatibility}.
     \endlist
 
-    \QC creates the test in the specified project directory. Edit the .cpp file
+    \QC creates the test in the specified project directory. Edit the \c .cpp file
     to add private slots for each test function in your test.
 
-    \sa {Test}{How To: Test}, {Select the build system}, {Testing},
-    {Test Results}
+    \note While scanning for tests, the parser takes into account only files that
+    directly or indirectly include QuickTest or its equivalent \c {QtQuickTest/quicktest.h}.
+    If one gets found, it tries to detect statements to create a Qt Quick test application
+    and if it can find any it will parse respective QML files. If the C++ part will not
+    be built with the current configuration, there will be no automatic scanning of QML
+    files.
+
+    \note If \uicontrol General > \uicontrol {Process arguments} is enabled, you can
+    execute tests and write one or more additional log files in parallel.
+    Use the output format option \c {-o filename,format} to do so. Using standard out for
+    \c filename is not supported as \QC is using this output channel.
+
+    \sa {Test}{How To: Test}, {Select the build system}, {Testing}
 */
 
 /*!
@@ -101,7 +129,7 @@
         \li In the \uicontrol {Project and Test Information} dialog, specify
             settings for the project and test:
 
-            \image qtcreator-new-project-google-test.webp {Project and Test Information - Google test}
+            \image {qtcreator-new-project-google-test.webp} {Project and Test Information dialog in the Google Test Project wizard}
 
             \list 1
 
@@ -134,11 +162,13 @@
     \QC creates the test in the specified project directory.
 
     For more information about creating Google tests, see the
-    \l{https://github.com/google/googletest/blob/master/docs/primer.md}
-    {Google Test Primer}.
+    \l{Google Test Primer}.
 
-    \sa {Test}{How To: Test}, {Select the build system}, {Testing},
-    {Test Results}
+    \note While scanning for tests, the parser takes into account only files that
+    directly or indirectly include \c {gtest/gtest.h}. Files that currently will
+    not be built will be ignored.
+
+    \sa {Test}{How To: Test}, {Select the build system}, {Testing}
 */
 
 /*!
@@ -151,7 +181,7 @@
 
     To build and run Boost tests, install Boost.Test on the computer.
     Typically, the Boost installation includes it. Download Boost from
-    \l{https://www.boost.org/}{Boost.org}.
+    \l{Boost.org}.
 
     If the compiler and build system can find the Boost libraries, you
     do not need to specify the include directory when creating the test.
@@ -166,7 +196,7 @@
             Boost test.
         \li In the \uicontrol {Project and Test Information} dialog, specify
             settings for the project and test:
-            \image qtcreator-new-project-boost-test.webp {Project and Test Information - Boost test}
+            \image {qtcreator-new-project-boost-test.webp} {Project and Test Information dialog in the Boost Test Project wizard}
             \list 1
                 \li In \uicontrol {Test framework}, select
                     \uicontrol {Boost Test (header only)} to include needed
@@ -178,7 +208,7 @@
                     the test case.
                 \li In \uicontrol {Boost include directory (optional)},
                     enter the path to the directory that has files needed
-                    by Boost.Test, such as \e version.hpp and the \e test
+                    by Boost.Test, such as \c version.hpp and the \c test
                     subfolder that contains the test header files.
                 \li In \uicontrol {Build system}, select the build
                     system to use for building the project: CMake, qmake, or Qbs.
@@ -188,11 +218,14 @@
     \QC creates the test in the project directory.
 
     For more information about creating Boost tests, see
-    \l{https://www.boost.org/doc/libs/1_81_0/libs/test/doc/html/index.html}
-    {Boost.Test}.
+    \l{Boost.Test}.
 
-    \sa {Test}{How To: Test}, {Select the build system}, {Testing},
-    {Test Results}
+    \note While scanning for tests, the parser takes into account only files that
+    directly or indirectly include one of Boost's test library headers (any include
+    starting with \c {boost/test/} and having the \c {.hpp} suffix).
+    Files that currently will not be built will be ignored.
+
+    \sa {Test}{How To: Test}, {Select the build system}, {Testing}
 */
 
 /*!
@@ -219,7 +252,7 @@
             a project with boilerplate code for a Catch2 test.
         \li In the \uicontrol {Project and Test Information} dialog, specify
             settings for the project and test:
-            \image qtcreator-new-project-catch2-test.webp {Project and Test Information dialog - Catch2 test}
+            \image {qtcreator-new-project-catch2-test.webp} {Project and Test Information dialog in the Catch2 Test Project wizard}
             \list 1
                 \li In \uicontrol {Test framework}, select
                     \uicontrol {Catch2 v3 (shared libraries)} to link against
@@ -243,11 +276,14 @@
     \QC creates the test in the project directory.
 
     For more information about creating Catch2 tests, see
-    \l{https://github.com/catchorg/Catch2/blob/master/docs/Readme.md}
-    {Catch2}.
+    \l{Catch2}.
 
-    \sa {Test}{How To: Test}, {Select the build system}, {Testing},
-    {Test Results}
+    \note While scanning for tests, the parser takes into account only files that
+    directly or indirectly include one of the common Catch2 headers
+    (\c {catch2.hpp}, \c {catch_all.hpp}, and some more).
+    Files that currently will not be built will be ignored.
+
+    \sa {Test}{How To: Test}, {Select the build system}, {Testing}
 */
 
 /*!
@@ -259,7 +295,7 @@
     \title Create CTest Based Tests
 
     CTest can execute tests for CMake based projects regardless of the test
-    framework. You configure tests in the project file, usually, CMakeLists.txt.
+    framework. You configure tests in the project file, usually, \c CMakeLists.txt.
     Basically, you enable testing for the project and register the test
     applications or even special commands.
 
@@ -272,11 +308,9 @@
     It may be any executable command including arguments.
 
     For more information about how to use CTest, see
-    \l{https://gitlab.kitware.com/cmake/community/-/wikis/doc/ctest/Testing-With-CTest}
-    {Testing with CTest}.
+    \l{Testing with CTest}.
 
-    \sa {Test}{How To: Test}, {Select the build system}, {Testing},
-    {Test Results}
+    \sa {Test}{How to: Test}, {Select the build system}, {Testing}
 */
 
 /*!
@@ -296,7 +330,7 @@
         \li In \uicontrol {Test framework}, select the test framework in use.
             This has to match the test framework you are using inside the project
             you want to add this file to.
-            \image qtcreator-new-file-test-case.webp {Test Information dialog}
+            \image {qtcreator-new-file-test-case.webp} {Test Information dialog in the Test Case wizard}
     \endlist
 
     The settings to specify depend on the selected test framework.
@@ -306,7 +340,7 @@
     inside a single Qt test application, and it is better to create
     a separate test sub project for each test case.
 
-    \sa {Test}{How To: Test}, {Testing}, {Test Results}
+    \sa {Test}{How to: Test}, {Testing}
 */
 
 /*!
@@ -328,16 +362,15 @@
         \li In the \uicontrol {Test Results} view, select:
 
             \list
-                \li \inlineimage icons/run_small.png
-                    (\uicontrol {Run All Tests}) to run all tests.
-                 \li \inlineimage icons/qtcreator-run-selected-tests.png
+                \li \imagerunsmall (\uicontrol {Run All Tests}) to run all tests.
+                 \li \inlineimage {icons/qtcreator-run-selected-tests.png} {Run Selected Tests}
                     (\uicontrol {Run Selected Tests}) to run the selected tests.
-                 \li \inlineimage icons/qtcreator-run-failed-tests.png
+                 \li \inlineimage {icons/qtcreator-run-failed-tests.png} {Run Failed Tests}
                     (\uicontrol {Run Failed Tests}) to re-run the tests which failed
                     in the last run.
                     Depending on the framework, this may select more tests if it
                     is impossible to distinguish or to fully address the test.
-                 \li \inlineimage icons/qtcreator-run-tests-in-current-file.png
+                 \li \inlineimage {icons/qtcreator-run-tests-in-current-file.png} {Run Tests for Current File}
                     (\uicontrol {Run Tests for Current File}) to run the tests
                     in the file currently open in the code editor.
             \endlist
@@ -364,26 +397,30 @@
     The \uicontrol Tests view shows all the tests found for the currently active
     test frameworks in the current project. Select the test cases to run.
 
-    \image qtcreator-tests-view.png
+    \image {qtcreator-tests-view.webp} {Tests view}
 
     If a Qt Quick test case does not have a name, it is marked
     \uicontrol Unnamed in the list. \uicontrol {Run All Tests} executes
-    unnamed test cases. You cannot select or deselect them.
+    unnamed test cases. You cannot select or clear them.
 
     \QC scans the project for tests when you open the project and updates the
     test list for the currently active test frameworks when you edit tests.
     To refresh the view, select \uicontrol {Rescan Tests} in the context menu.
 
     To show or hide init and cleanup or data functions in the \uicontrol Tests
-    view, select \inlineimage icons/filtericon.png
+    view, select \inlineimage {icons/filtericon.png} {Filter Test Tree}
     (\uicontrol {Filter Test Tree}), and then select \uicontrol {Show Init and
     Cleanup Functions} or \uicontrol {Show Data Functions}. Double-click a
     function in the list to open its source code in the code editor.
 
     The \uicontrol Tests view lists test cases in alphabetic, case insensitive
     order. To list them in the order in which they appear in the source code,
-    select \inlineimage icons/leafsort.png
+    select \inlineimage {icons/leafsort.png} {Sort Naturally}
     (\uicontrol {Sort Naturally}).
+
+    To filter the test list, write a search term in the filter field. To hide
+    the test filter, select \inlineimage {icons/filtericon.png} {Filter Test Tree}
+    (\uicontrol {Filter Test Tree}), and then clear \uicontrol {Show Text Filter}.
 
     \section1 Run and debug tests from code editor
 
@@ -400,6 +437,10 @@
     \uicontrol {Debug Test Under Cursor} in the context menu.
     \note Availability for build system based tests depends on the build system
     tool's abilities.
+
+    \section1 Run CTest tests from the locator
+
+    You can use the \c ct locator filter to run CTest tests.
 
     \section1 Turn on build system based tests
 
@@ -421,28 +462,30 @@
     To locate Qt Test data tags:
 
     \list 1
-        \li Press \key {Ctrl+K} (\key {Cmd+K} on \macos) to activate the locator.
+        \li Select \key {Ctrl+K} (\key {Cmd+K} on \macos) to activate the locator.
         \li Enter \c qdt, followed by a space.
     \endlist
 
-    \sa {Test}{How To: Test}, {Select the build system}, {Testing},
-    {Test Results}
+    \sa {Test}{How to: Test}, {Select the build system}, {Testing}
 */
 
 /*!
     \page creator-preferences-testing.html
     \previouspage creator-reference.html
-
-    \ingroup creator-reference-preferences
+    \nextpage creator-vcs-git.html
 
     \title Testing
 
-    \brief Customize the handling of tests, test frameworks, and test tools.
+    \quotation
+    \l {Test}{How to: Test}
+    \endquotation
+
+    \summary {Customize the handling of tests, test frameworks, and test tools.}
 
     To set preferences for handling tests, go to
     \preferences > \uicontrol {Testing} > \uicontrol General.
 
-    \image qtcreator-preferences-testing-general.webp {General tab in Testing preferences}
+    \image {qtcreator-preferences-testing-general.webp} {General tab in Testing preferences}
 
     The following table summarizes the general testing preferences.
 
@@ -475,7 +518,7 @@
         \li Show test results automatically when testing ends.
     \row
         \li \uicontrol {Open results only for unsuccesfull test runs}
-        \li Show test results only if thy contain failed, fatal, or
+        \li Show test results only if they contain failed, fatal, or
             unexpectedly passed tests.
     \row
         \li \uicontrol {Automatically scroll results}
@@ -490,7 +533,8 @@
         \li Pass arguments to the test executable that you specify in the
             \l {Configure projects for running}{run configuration}. This is an
             experimental feature that might cause the execution of the test
-            executable to fail.
+            executable to fail. Options known to interfere with the used
+            test framework are filtered out.
     \row
         \li \uicontrol {Automatically run}
         \li Automatically run all or selected tests after successfully building
@@ -523,7 +567,7 @@
     To set preference for Qt tests, go to \preferences > \uicontrol {Testing} >
     \uicontrol {Qt Test}.
 
-    \image qtcreator-preferences-testing-qttest.webp {Qt Tests tab in Testing preferences}
+    \image {qtcreator-preferences-testing-qttest.webp} {Qt Test tab in Testing preferences}
 
     The code inside a benchmark test is measured, and possibly also repeated
     several times in order to get an accurate measurement. This depends on the
@@ -586,7 +630,7 @@
     To specify settings for running Google tests, go to \preferences >
     \uicontrol {Testing} > \uicontrol {Google Test}.
 
-    \image qtcreator-preferences-testing-googletest.webp {Gooble Test tab in Testing preferences}
+    \image {qtcreator-preferences-testing-googletest.webp} {Google Test tab in Testing preferences}
 
     The following table summarizes the Google test preferences.
 
@@ -626,15 +670,14 @@
     \endtable
 
     For more information about GTest filters, see
-    \l{https://github.com/google/googletest/blob/master/docs/advanced.md#running-a-subset-of-the-tests}
-    {Running a Subset of the Tests}.
+    \l{Running a Subset of the Tests}.
 
     \section1 Boost Tests
 
     To specify settings for running Boost tests, go to \preferences >
     \uicontrol {Testing} > \uicontrol {Boost Test}.
 
-    \image qtcreator-preferences-testing-boosttest.webp {Boost Test tab in Testing preferences}
+    \image {qtcreator-preferences-testing-boosttest.webp} {Boost Test tab in Testing preferences}
 
     The following table summarizes the Boost test preferences.
 
@@ -673,7 +716,7 @@
     To specify settings for running Catch2 tests, go to \preferences >
     \uicontrol {Testing} > \uicontrol {Catch Test}.
 
-    \image qtcreator-preferences-testing-catchtest.webp {Catch Test tab in Testing preferences}
+    \image {qtcreator-preferences-testing-catchtest.webp} {Catch Test tab in Testing preferences}
 
     The following table summarizes the Catch2 test preferences.
 
@@ -720,7 +763,7 @@
     To specify settings for running CTest-based tests, go to \preferences >
     \uicontrol {Testing} > \uicontrol {CTest}.
 
-    \image qtcreator-preferences-testing-ctest.webp {CTest tab in Testing preferences}
+    \image {qtcreator-preferences-testing-ctest.webp} {CTest tab in Testing preferences}
 
     The following table summarizes the CTest preferences.
 
@@ -754,24 +797,26 @@
             CPU load to pass the threshold set in \uicontrol {Threshold}.
     \endtable
 
-    \sa {Test}{How To: Test}, {Test Results}
+    \sa {Test}{How to: Test}
 */
 
 /*!
     \page creator-test-results.html
-    \previouspage creator-reference.html
+    \previouspage creator-how-tos.html
 
-    \ingroup creator-reference-output-views
+    \ingroup creator-how-to-test
 
-    \title Test Results
-
-    \brief View test results.
+    \title View test results
 
     View and filter test results in the \uicontrol{Test Results} view.
 
-    \image qtcreator-test-results.webp {Visual display in the Test Results view}
+    \image {qtcreator-test-results.webp} {Visual display in the Test Results view}
 
-    \section1 Qt Test Output
+    The view shows test duration for the test frameworks that support it. To
+    show and hide duration information, select
+    \inlineimage {icons/stopwatch.png} {Duration}.
+
+    \section1 View Qt test output
 
     The \uicontrol{Test Results} view shows Qt and Qt Quick test results
     in XML format and other test results in plain text format.
@@ -781,13 +826,19 @@
     code that can be parsed, which might lead to information loss. You might see
     the lost information when viewing the results as plain text.
 
-    To view the results of Qt and Qt Quick tests as plain text, go to
-    \preferences > \uicontrol {Testing} > \uicontrol {Qt Test} and then clear
-    \uicontrol {Use XML output}. Then select \inlineimage icons/text.png
-    (\uicontrol {Switch Between Visual and Text Display}) in
-    \uicontrol {Test Results} to switch to the text display.
+    To view the results of Qt and Qt Quick tests as plain text:
 
-    \section1 Summary of Messages
+    \list 1
+        \li Go to \preferences > \uicontrol {Testing} > \uicontrol {Qt Test}.
+        \li Clear \uicontrol {Use XML output}.
+        \li Go to \uicontrol {Test Results}.
+        \li Select
+            \inlineimage {icons/text.png} {Switch Between Visual and Text Display}
+            (\uicontrol {Switch Between Visual and Text Display}) to switch to
+            the text display.
+    \endlist
+
+    \section1 Summary of messages
 
     The following table lists the messages that \uicontrol {Test Results} shows.
 
@@ -837,38 +888,46 @@
 
     \endtable
 
-    \section1 Filtering Test Results
+    \section1 Filter test results
 
-    To view only messages of a particular type, select
-    \inlineimage icons/filtericon.png (\uicontrol {Filter Test Results}) and
-    then select the types of messages to show.
+    To view only messages of a particular type:
+
+    \list 1
+        \li Go to \uicontrol {Test Results}.
+        \li Select \inlineimage {icons/filtericon.png} {Filter Test Results}
+            (\uicontrol {Filter Test Results}).
+        \li Select the types of messages to show.
+    \endlist
 
     To show all messages, select \uicontrol {Check All Filters}.
 
-    To deselect all message types, select \uicontrol {Uncheck All Filters}.
+    To clear all message types, select \uicontrol {Uncheck All Filters}.
 
-    \section1 Blacklisting Tests
+    To filter the test result messages by text, write a search term in the
+    filter field.
 
-    A BLACKLIST file for tests is mainly used internally by the Qt CI system.
+    \section1 Blacklist tests
+
+    A \c BLACKLIST file for tests is mainly used internally by the Qt CI system.
 
     \table
         \header
             \li Result
             \li Description
         \row
-            \li BFAIL
+            \li \c {BFAIL}
             \li Blacklisted test case failed.
         \row
-            \li BPASS
+            \li \c {BPASS}
             \li Blacklisted test case passed.
         \row
-            \li BXFAIL
+            \li \c {BXFAIL}
             \li Blacklisted test case failed but was marked to be expected to fail.
         \row
-            \li BXPASS
+            \li \c {BXPASS}
             \li Blacklisted test case passed even though it was expected to fail.
 
     \endtable
 
-    \sa {Test}{How To: Test}, {Test Results}
+    \sa {Test}{How to: Test}, {Testing}
 */

@@ -36,8 +36,7 @@
 #include <QStringListModel>
 #include <QLabel>
 
-namespace QmlProfiler {
-namespace Internal {
+namespace QmlProfiler::Internal {
 
 Quick3DFrameView::Quick3DFrameView(QmlProfilerModelManager *profilerModelManager, QWidget *parent)
     : QmlProfilerEventsView(parent)
@@ -45,7 +44,7 @@ Quick3DFrameView::Quick3DFrameView(QmlProfilerModelManager *profilerModelManager
     setObjectName(QLatin1String("QmlProfiler.Quick3DFrame.Dock"));
     setWindowTitle(Tr::tr("Quick3D Frame"));
 
-    auto model = new Quick3DFrameModel(profilerModelManager);
+    auto model = new Quick3DFrameModel(profilerModelManager, this);
     m_mainView.reset(new Quick3DMainView(model, false, this));
     connect(m_mainView.get(), &Quick3DMainView::gotoSourceLocation,
             this, &Quick3DFrameView::gotoSourceLocation);
@@ -54,13 +53,13 @@ Quick3DFrameView::Quick3DFrameView(QmlProfilerModelManager *profilerModelManager
     connect(m_compareFrameView.get(), &Quick3DMainView::gotoSourceLocation,
             this, &Quick3DFrameView::gotoSourceLocation);
 
-    auto groupLayout = new QVBoxLayout(this);
+    auto groupLayout = new QVBoxLayout;
     groupLayout->setContentsMargins(0,0,0,0);
     groupLayout->setSpacing(0);
-    auto hMainLayout = new QHBoxLayout(this);
+    auto hMainLayout = new QHBoxLayout;
     hMainLayout->setContentsMargins(0,0,0,0);
     hMainLayout->setSpacing(0);
-    auto hFrameLayout = new QHBoxLayout(this);
+    auto hFrameLayout = new QHBoxLayout;
     hFrameLayout->setContentsMargins(0,0,0,0);
     hFrameLayout->setSpacing(0);
     auto view3DComboBox = new QComboBox(this);
@@ -81,19 +80,19 @@ Quick3DFrameView::Quick3DFrameView(QmlProfilerModelManager *profilerModelManager
     groupLayout->addLayout(hMainLayout);
     connect(model, &Quick3DFrameModel::modelReset, [model, view3DComboModel, frameComboModel](){
         QStringList list;
-        list << Tr::tr("All");
+        list << Tr::tr("All", "All View3D frames");
         list << model->view3DNames();
         view3DComboModel->setStringList(list);
         list.clear();
-        list << Tr::tr("None");
-        list << model->frameNames(Tr::tr("All"));
+        list << Tr::tr("None", "Compare Frame: None");
+        list << model->frameNames(Tr::tr("All", "Compare Frame: All"));
         frameComboModel->setStringList(list);
     });
     connect(view3DComboBox, &QComboBox::currentTextChanged, [this, model, frameComboModel](const QString &text){
         m_mainView->setFilterView3D(text);
         model->setFilterView3D(text);
         QStringList list;
-        list << Tr::tr("None");
+        list << Tr::tr("None", "Compare Frame: None");
         list << model->frameNames(text);
         frameComboModel->setStringList(list);
     });
@@ -145,7 +144,7 @@ Quick3DMainView::Quick3DMainView(Quick3DFrameModel *model, bool compareView, QWi
                 return;
             lineIdx += 4;
             file = location.mid(nameIdx + 1, lineIdx - nameIdx - 1);
-            line = location.right(location.length() - lineIdx - 1);
+            line = location.right(location.size() - lineIdx - 1);
             QUrl url(file);
             emit gotoSourceLocation(url.fileName(), line.toInt(), 0);
         }
@@ -161,7 +160,7 @@ Quick3DMainView::Quick3DMainView(Quick3DFrameModel *model, bool compareView, QWi
 
 void Quick3DMainView::setFilterView3D(const QString &objectName)
 {
-    if (objectName == Tr::tr("All"))
+    if (objectName == Tr::tr("All", "All View3D frames"))
         m_sortModel->setFilterFixedString("");
     else
         m_sortModel->setFilterFixedString(objectName);
@@ -172,5 +171,4 @@ void Quick3DMainView::setFilterFrame(const QString &)
     m_sortModel->setFilterFixedString("+");
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

@@ -3,11 +3,13 @@
 
 #include "toolbarbackend.h"
 
+#include "messagemodel.h"
+#include "appoutputmodel.h"
+
 #include <changestyleaction.h>
 #include <crumblebar.h>
 #include <designeractionmanager.h>
 #include <designmodewidget.h>
-#include <dynamiclicensecheck.h>
 #include <qmldesignerconstants.h>
 #include <qmldesignerplugin.h>
 #include <qmleditormenu.h>
@@ -24,6 +26,7 @@
 
 #include <texteditor/textdocument.h>
 
+#include <projectexplorer/devicesupport/devicekitaspects.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorer.h>
@@ -39,6 +42,8 @@
 #include <utils/qtcassert.h>
 
 #include <QQmlEngine>
+
+#include <memory>
 
 namespace QmlDesigner {
 
@@ -268,8 +273,7 @@ void ActionSubscriber::setupNotifier()
     emit tooltipChanged();
 }
 
-ToolBarBackend::ToolBarBackend(QObject *parent)
-    : QObject(parent)
+ToolBarBackend::ToolBarBackend()
 {
     ActionAddedInterface callback = [this](ActionInterface *interface) {
         if (interface->menuId() == "PreviewZoom")
@@ -305,16 +309,17 @@ ToolBarBackend::ToolBarBackend(QObject *parent)
             this,
             &ToolBarBackend::documentIndexChanged);
 
-    connect(Core::EditorManager::instance(), &Core::EditorManager::currentEditorChanged, this, [this]() {
-        static QMetaObject::Connection *lastConnection = nullptr;
-        delete lastConnection;
+    connect(Core::EditorManager::instance(), &Core::EditorManager::currentEditorChanged, this, [this] {
+        disconnect(m_documentConnection);
 
         if (auto textDocument = qobject_cast<TextEditor::TextDocument *>(
                 Core::EditorManager::currentDocument())) {
-            connect(textDocument->document(),
-                    &QTextDocument::modificationChanged,
-                    this,
-                    &ToolBarBackend::isDocumentDirtyChanged);
+            m_documentConnection = connect(textDocument->document(),
+                                           &QTextDocument::modificationChanged,
+                                           this,
+
+                                           &ToolBarBackend::isDocumentDirtyChanged);
+
             emit isDocumentDirtyChanged();
         }
     });
@@ -407,6 +412,10 @@ void ToolBarBackend::registerDeclarativeType()
     qmlRegisterType<ActionSubscriber>("ToolBar", 1, 0, "ActionSubscriber");
     qmlRegisterType<CrumbleBarModel>("ToolBar", 1, 0, "CrumbleBarModel");
     qmlRegisterType<WorkspaceModel>("ToolBar", 1, 0, "WorkspaceModel");
+
+    qmlRegisterType<MessageModel>("OutputPane", 1, 0, "MessageModel");
+    qmlRegisterType<AppOutputParentModel>("OutputPane", 1, 0, "AppOutputParentModel");
+    qmlRegisterType<AppOutputChildModel>("OutputPane", 1, 0, "AppOutputChildModel");
 }
 
 void ToolBarBackend::triggerModeChange()
@@ -430,6 +439,8 @@ void ToolBarBackend::triggerModeChange()
         else if (qmlFileOpen)
             Core::ModeManager::activateMode(Core::Constants::MODE_DESIGN);
         else if (Core::ModeManager::currentModeId() == Core::Constants::MODE_WELCOME)
+            openUiFile();
+        else if (Core::ModeManager::currentModeId() == Core::Constants::MODE_EDIT)
             openUiFile();
         else
             Core::ModeManager::activateMode(Core::Constants::MODE_WELCOME);
@@ -473,9 +484,15 @@ void ToolBarBackend::openFileByIndex(int i)
     Core::EditorManager::openEditor(fileName, Utils::Id(), Core::EditorManager::DoNotMakeVisible);
 }
 
-void ToolBarBackend::closeCurrentDocument()
+void ToolBarBackend::closeDocument(int i)
 {
     QmlDesignerPlugin::emitUsageStatistics(Constants::EVENT_TOOLBAR_CLOSE_DOCUMENT);
+    Core::EditorManager::closeDocument(i);
+}
+
+void ToolBarBackend::closeCurrentDocument()
+{
+    QmlDesignerPlugin::emitUsageStatistics(Constants::EVENT_TOOLBAR_CLOSE_CURRENT_DOCUMENT);
     Core::EditorManager::slotCloseCurrentEditorOrDocument();
 }
 
@@ -685,28 +702,32 @@ bool ToolBarBackend::isDesignModeEnabled() const
 
 int ToolBarBackend::currentStyle() const
 {
-    if (!currentDesignDocument())
-        return 0;
+    if (currentDesignDocument()) {
+        auto view = currentDesignDocument()->rewriterView();
+        const QString qmlFile = view->model()->fileUrl().toLocalFile();
+        return ChangeStyleWidgetAction::getCurrentStyle(qmlFile);
+    } else if (Core::EditorManager::currentDocument()) {
+        const QString documentPath = Core::EditorManager::currentDocument()->filePath().toFSPathString();
+        return ChangeStyleWidgetAction::getCurrentStyle(documentPath);
+    }
 
-    auto view = currentDesignDocument()->rewriterView();
-
-    const QString qmlFile = view->model()->fileUrl().toLocalFile();
-
-    return ChangeStyleWidgetAction::getCurrentStyle(qmlFile);
+    return 0;
 }
 
 QStringList ToolBarBackend::kits() const
 {
+    if (!ProjectExplorer::KitManager::isLoaded())
+        return {};
     auto kits = Utils::filtered(ProjectExplorer::KitManager::kits(), [](ProjectExplorer::Kit *kit) {
         const auto qtVersion = QtSupport::QtKitAspect::qtVersion(kit);
-        const auto dev = ProjectExplorer::DeviceKitAspect::device(kit);
+        const auto dev = ProjectExplorer::RunDeviceKitAspect::device(kit);
 
         return kit->isValid() && !kit->isReplacementKit() && qtVersion && qtVersion->isValid()
                && dev
             /*&& kit->isAutoDetected() */;
     });
 
-    return Utils::transform(kits, [](ProjectExplorer::Kit *kit) { return kit->displayName(); });
+    return Utils::transform(kits, &ProjectExplorer::Kit::displayName);
 }
 
 int ToolBarBackend::currentKit() const
@@ -750,11 +771,6 @@ bool ToolBarBackend::isMCUs() const
 bool ToolBarBackend::projectOpened() const
 {
     return ProjectExplorer::ProjectManager::instance()->startupProject();
-}
-
-bool ToolBarBackend::isSharingEnabled()
-{
-    return QmlDesigner::checkEnterpriseLicense();
 }
 
 bool ToolBarBackend::isDocumentDirty() const

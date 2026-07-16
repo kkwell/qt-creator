@@ -3,23 +3,21 @@
 
 #include "taskmodel.h"
 
-#include "fileinsessionfinder.h"
 #include "task.h"
 #include "taskhub.h"
 
 #include <utils/algorithm.h>
 #include <utils/qtcassert.h>
 
-#include <QFileInfo>
 #include <QFontMetrics>
 
 #include <algorithm>
 #include <functional>
 
 using namespace std::placeholders;
+using namespace Utils;
 
-namespace ProjectExplorer {
-namespace Internal {
+namespace ProjectExplorer::Internal {
 
 /////
 // TaskModel
@@ -57,7 +55,7 @@ bool TaskModel::hasFile(const QModelIndex &index) const
     int row = index.row();
     if (!index.isValid() || row < 0 || row >= m_tasks.count())
         return false;
-    return !m_tasks.at(row).file.isEmpty();
+    return m_tasks.at(row).hasFile();
 }
 
 void TaskModel::addCategory(const TaskCategory &category)
@@ -68,43 +66,32 @@ void TaskModel::addCategory(const TaskCategory &category)
     m_categories.insert(category.id, data);
 }
 
-Tasks TaskModel::tasks(Utils::Id categoryId) const
-{
-    if (!categoryId.isValid())
-        return m_tasks;
-
-    Tasks taskList;
-    for (const Task &t : std::as_const(m_tasks)) {
-        if (t.category == categoryId)
-            taskList.append(t);
-    }
-    return taskList;
-}
-
 bool TaskModel::compareTasks(const Task &task1, const Task &task2)
 {
-    if (task1.category == task2.category)
-        return task1.taskId < task2.taskId;
+    if (task1.category() == task2.category())
+        return task1.id() < task2.id();
 
     // Higher-priority task should appear higher up in the view and thus compare less-than.
-    const int prio1 = m_categories.value(task1.category).category.priority;
-    const int prio2 = m_categories.value(task2.category).category.priority;
+    const int prio1 = m_categories.value(task1.category()).category.priority;
+    const int prio2 = m_categories.value(task2.category()).category.priority;
     if (prio1 < prio2)
         return false;
     if (prio1 > prio2)
         return true;
 
-    return task1.taskId < task2.taskId;
+    return task1.id() < task2.id();
 }
 
-void TaskModel::addTask(const Task &task)
+void TaskModel::addTask(Task task)
 {
-    Q_ASSERT(m_categories.contains(task.category));
-    CategoryData &data = m_categories[task.category];
+    Q_ASSERT(m_categories.contains(task.category()));
+    CategoryData &data = m_categories[task.category()];
     CategoryData &global = m_categories[Utils::Id()];
 
+    task.createTextMarkIfApplicable();
+
     auto it = std::lower_bound(m_tasks.begin(), m_tasks.end(), task,
-                               std::bind(&TaskModel::compareTasks, this,  _1, task));
+                               std::bind(&TaskModel::compareTasks, this,  _1, _2));
     int i = it - m_tasks.begin();
     beginInsertRows(QModelIndex(), i, i);
     m_tasks.insert(it, task);
@@ -116,11 +103,11 @@ void TaskModel::addTask(const Task &task)
 void TaskModel::removeTask(unsigned int id)
 {
     for (int index = 0; index < m_tasks.length(); ++index) {
-        if (m_tasks.at(index).taskId != id)
+        if (m_tasks.at(index).id() != id)
             continue;
         const Task &t = m_tasks.at(index);
         beginRemoveRows(QModelIndex(), index, index);
-        m_categories[t.category].removeTask(t);
+        m_categories[t.category()].removeTask(t);
         m_categories[Utils::Id()].removeTask(t);
         m_tasks.removeAt(index);
         endRemoveRows();
@@ -131,18 +118,19 @@ void TaskModel::removeTask(unsigned int id)
 int TaskModel::rowForTask(const Task &task)
 {
     auto it = std::lower_bound(m_tasks.constBegin(), m_tasks.constEnd(), task,
-                               std::bind(&TaskModel::compareTasks, this, _1, task));
+                               std::bind(&TaskModel::compareTasks, this, _1, _2));
+
     if (it == m_tasks.constEnd())
         return -1;
     return it - m_tasks.constBegin();
 }
 
-void TaskModel::updateTaskFileName(const Task &task, const QString &fileName)
+void TaskModel::updateTaskFilePath(const Task &task, const FilePath &filePath)
 {
     int i = rowForTask(task);
     QTC_ASSERT(i != -1, return);
-    if (m_tasks.at(i).taskId == task.taskId) {
-        m_tasks[i].file = Utils::FilePath::fromString(fileName);
+    if (m_tasks.at(i).id() == task.id()) {
+        m_tasks[i].setFile(filePath);
         const QModelIndex itemIndex = index(i, 0);
         emit dataChanged(itemIndex, itemIndex);
     }
@@ -152,8 +140,8 @@ void TaskModel::updateTaskLineNumber(const Task &task, int line)
 {
     int i = rowForTask(task);
     QTC_ASSERT(i != -1, return);
-    if (m_tasks.at(i).taskId == task.taskId) {
-        m_tasks[i].movedLine = line;
+    if (m_tasks.at(i).id() == task.id()) {
+        m_tasks[i].updateLine(line);
         const QModelIndex itemIndex = index(i, 0);
         emit dataChanged(itemIndex, itemIndex);
     }
@@ -179,13 +167,13 @@ void TaskModel::clearTasks(Utils::Id categoryId)
         CategoryData &cat = m_categories[categoryId];
 
         while (index < m_tasks.count()) {
-            while (index < m_tasks.count() && m_tasks.at(index).category != categoryId) {
+            while (index < m_tasks.count() && m_tasks.at(index).category() != categoryId) {
                 ++start;
                 ++index;
             }
             if (index == m_tasks.count())
                 break;
-            while (index < m_tasks.count() && m_tasks.at(index).category == categoryId)
+            while (index < m_tasks.count() && m_tasks.at(index).category() == categoryId)
                 ++index;
 
             // Index is now on the first non category
@@ -226,7 +214,7 @@ int TaskModel::rowCount(const QModelIndex &parent) const
         return m_tasks.count();
     if (parent.column() != 0)
         return 0;
-    return task(parent).details.isEmpty() ? 0 : 1;
+    return task(parent).hasDetails() ? 1 : 0;
 }
 
 int TaskModel::columnCount(const QModelIndex &parent) const
@@ -249,8 +237,8 @@ QVariant TaskModel::data(const QModelIndex &index, int role) const
     }
 
     static const auto lineString = [](const Task &task) {
-        QString file = task.file.fileName();
-        const int line = task.movedLine > 0 ? task.movedLine : task.line;
+        QString file = task.file().fileName();
+        const int line = task.line();
         if (line > 0)
             file.append(':').append(QString::number(line));
         return file;
@@ -261,7 +249,7 @@ QVariant TaskModel::data(const QModelIndex &index, int role) const
         if (role == Qt::DisplayRole)
             return lineString(task);
         if (role == Qt::ToolTipRole)
-            return task.file.toUserOutput();
+            return task.file().toUserOutput();
         return {};
     }
 
@@ -269,11 +257,11 @@ QVariant TaskModel::data(const QModelIndex &index, int role) const
     case Qt::DecorationRole:
         return task.icon();
     case Qt::DisplayRole:
-        return task.summary;
+        return task.summary();
     case TaskModel::Description:
         return task.description();
     case TaskModel::Type:
-        return int(task.type);
+        return int(task.type());
     }
     return {};
 }
@@ -314,7 +302,7 @@ int TaskModel::sizeOfFile(const QFont &font)
     m_fileMeasurementFont = font;
 
     for (int i = m_lastMaxSizeIndex; i < count; ++i) {
-        QString filename = m_tasks.at(i).file.toString();
+        QString filename = m_tasks.at(i).file().toUrlishString();
         const int pos = filename.lastIndexOf(QLatin1Char('/'));
         if (pos != -1)
             filename = filename.mid(pos +1);
@@ -340,7 +328,7 @@ void TaskModel::setFileNotFound(const QModelIndex &idx, bool b)
     int row = idx.row();
     if (!idx.isValid() || row < 0 || row >= m_tasks.count())
         return;
-    m_fileNotFound.insert(m_tasks[row].file.toUserOutput(), b);
+    m_fileNotFound.insert(m_tasks[row].file().toUserOutput(), b);
     emit dataChanged(idx, idx);
 }
 
@@ -373,7 +361,7 @@ int TaskFilterModel::issuesCount(int startRow, int endRow) const
 {
     int count = 0;
     for (int r = startRow; r <= endRow; ++r) {
-        if (task(index(r, 0)).type != Task::Unknown)
+        if (task(index(r, 0)).hasKnownType())
             ++count;
     }
     return count;
@@ -406,13 +394,13 @@ bool TaskFilterModel::filterAcceptsRow(int source_row, const QModelIndex &source
 {
     if (source_parent.isValid())
         return true;
-    return filterAcceptsTask(taskModel()->tasks().at(source_row));
+    return filterAcceptsTask(taskModel()->taskAt(source_row));
 }
 
 bool TaskFilterModel::filterAcceptsTask(const Task &task) const
 {
     bool accept = true;
-    switch (task.type) {
+    switch (task.type()) {
     case Task::Unknown:
         accept = m_includeUnknowns;
         break;
@@ -422,9 +410,12 @@ bool TaskFilterModel::filterAcceptsTask(const Task &task) const
     case Task::Error:
         accept = m_includeErrors;
         break;
+    case Task::DisruptingError:
+        QTC_CHECK(false);
+        break;
     }
 
-    if (accept && m_categoryIds.contains(task.category))
+    if (accept && m_categoryIds.contains(task.category()))
         accept = false;
 
     if (accept && !m_filterText.isEmpty()) {
@@ -432,12 +423,11 @@ bool TaskFilterModel::filterAcceptsTask(const Task &task) const
             return m_filterStringIsRegexp ? m_filterRegexp.isValid() && s.contains(m_filterRegexp)
                                           : s.contains(m_filterText, m_filterCaseSensitivity);
         };
-        if ((accepts(task.file.toString()) || accepts(task.description())) == m_filterIsInverted)
+        if ((accepts(task.file().toUrlishString()) || accepts(task.description())) == m_filterIsInverted)
             accept = false;
     }
 
     return accept;
 }
 
-} // namespace Internal
-} // namespace ProjectExplorer
+} // namespace ProjectExplorer::Internal

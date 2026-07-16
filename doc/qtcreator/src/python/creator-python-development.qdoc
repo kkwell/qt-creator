@@ -5,11 +5,11 @@
     \page creator-python-development.html
     \previouspage creator-how-tos.html
 
-    \ingroup creator-how-to-projects
+    \ingroup creator-how-to-projects-create
 
     \title Develop Qt for Python applications
 
-    With \l {https://doc.qt.io/qtforpython/index.html}{Qt for Python}, you can
+    With \l{Qt for Python}, you can
     use Qt 6 API in Python applications. Use the PySide6 modules to gain access
     to individual Qt modules, such as \l {Qt Core}, \l {Qt GUI}, and
     \l {Qt Widgets}.
@@ -24,22 +24,21 @@
         \li \l{Use Python interactive shell}
         \li \l{Configure Python language servers}
         \li \l{Run Python applications}
-        \li \l{Python Run Settings}
+        \li \l{Run Python applications}
         \li \l{PDB versions}
-        \li \l{Supported Debuggers}
+        \li \l{Supported debuggers}
     \endlist
 
     For more information about developing with Qt for Python, including
-    limitations, see \l {https://doc.qt.io/qtforpython/index.html}
-    {Qt for Python}.
+    limitations, see \l{Qt for Python}.
 
     \section1 Set up PySide6
 
     The recommended way to run PySide6 projects from \QC is to install PySide6
-    for each project. \QC prompts you to do so the first time you open a .py file
+    for each project. \QC prompts you to do so the first time you open a \c .py file
     for a project.
 
-    \image qtcreator-python-install.webp {Prompts to install PySide6 and Python language server}
+    \image {qtcreator-python-install.webp} {Prompts to install PySide6 and Python language server}
 
     Further, \QC prompts you to install the \l {Configure Python language servers}
     {Python language server} that offers services such as code completion
@@ -49,12 +48,12 @@
     \section1 Create Qt for Python applications
 
     Use wizards to create Qt for Python application projects. The wizards
-    generate a project file, \c {.pyproject}, that lists the files in the Python
-    project. They also generate a \c {.py} file that has some boilerplate code
-    and \c {reguirements.txt} that stores the PySide version of the generated code.
-    In addition, the widget-based UI wizard creates a \c {.ui} file that has a
-    \QD form, and the Qt Quick Application wizard creates a \c {.qml} file that
-    imports Qt Quick controls.
+    generate a project file, \c {pyproject.toml}, that lists the files in the
+    Python project and other configuration. They also generate a \c {.py} file
+    that has some boilerplate code and \c {requirements.txt} that stores the
+    PySide version of the generated code. In addition, the widget-based UI
+    wizard creates a \c {.ui} file that has a \QD form, and the Qt Quick
+    Application wizard creates a \c {.qml} file that imports Qt Quick controls.
 
     The \uicontrol Window wizard adds code to the source file, without the UI
     file.
@@ -62,19 +61,19 @@
     The \uicontrol Empty wizard adds code to the source file, but it
     does not add any classes, so you need to add and instantiate them yourself.
 
-    The \c{.pyproject} files are JSON-based configuration files that replace
-    the previously used \c {.pyqtc} configuration files. You can still open and
-    use \c {.pyqtc} files, but we recommend that you choose \c{.pyproject} files
-    for new projects.
+    The \c{pyproject.toml} files are TOML-based configuration files that
+    replace the previously used \c {.pyproject} configuration files. You can
+    still open and use \c {.pyproject} files, but we recommend that you choose
+    \c{pyproject.toml} files for new projects.
 
     \section1 Select the Python version
 
-    The \l{Kits}{kits} you select for the project in \uicontrol Projects >
+    The \l{Managing kits}{kits} you select for the project in \uicontrol Projects >
     \uicontrol {Build & Run} set the Python version to use.
 
-    The \l {Edit Mode}{Edit mode} toolbar shows the current Python version.
+    The \l {Editing code}{Editing code} toolbar shows the current Python version.
 
-    \image qtcreator-python-interpreter-edit-mode.webp {Python version on the Edit mode toolbar}
+    \image {qtcreator-python-interpreter-edit-mode.webp} {Python version on the Edit mode toolbar}
 
     To use another Python version, activate another kit for the project.
 
@@ -85,7 +84,9 @@
     It generates kits for the global Python versions that are not inside a
     virtual environment.
 
-    \image qtcreator-python-interpreters.webp {Python Interpreters in Preferences}
+    \image {qtcreator-python-interpreters.webp} {Interpreters tab in Python preferences}
+
+    \section2 Manage Python versions
 
     You can add and remove Python versions and clean up references to Python
     versions that you uninstalled, but that still appear in the list.
@@ -93,16 +94,26 @@
     To use the selected Python version when opening \c {.py} files that don't
     belong to a project, select \uicontrol {Make Default}.
 
+    \section2 Use virtual environments as kits
+
     To use a virtual environment as a kit, select it in \uicontrol Interpreters,
     and then select \uicontrol {Generate Kit}.
+
+    \section2 Change the debugger for a Python kit
+
+    To change the debugger for a Python kit, select the kit in
+    \preferences > \uicontrol Kits. Then, in the \uicontrol Debugger field,
+    select the debugger to use from the list of available debuggers.
+
+    \image {qtcreator-preferences-kits.webp} {Kits preferences}
 
     \section1 Use Python interactive shell
 
     You can write Python code in the \uicontrol Edit mode. Select \uicontrol REPL
-    on the toolbar to start the \l{https://pythonprogramminglanguage.com/repl/}
-    {Python interactive shell} in the \l Terminal view.
+    on the toolbar to start the \l{Python interactive shell} in the
+    \l {Open a Terminal}{Terminal} view.
 
-    \image qtcreator-terminal-python.webp {Python shell in the Terminal view}
+    \image {qtcreator-terminal-python.webp} {Python shell in the Terminal view}
 
     To start the shell and import the current file as a module, select
     \uicontrol {REPL Import File}. To also import all functions from

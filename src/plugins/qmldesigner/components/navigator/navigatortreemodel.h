@@ -7,6 +7,7 @@
 
 #include <modelnode.h>
 #include <nodemetainfo.h>
+#include <utils/uniqueobjectptr.h>
 
 #include <QAbstractItemModel>
 #include <QPointer>
@@ -16,10 +17,10 @@ QT_FORWARD_DECLARE_CLASS(QPixmap)
 
 namespace QmlDesigner {
 
-class Model;
-class NavigatorView;
-class ModelNode;
 class DesignerActionManager;
+class Model;
+class ModelNode;
+class NavigatorView;
 
 class NavigatorTreeModel : public QAbstractItemModel, public NavigatorModelInterface
 {
@@ -77,7 +78,9 @@ public:
     void notifyModelNodesRemoved(const QList<ModelNode> &modelNodes) override;
     void notifyModelNodesInserted(const QList<ModelNode> &modelNodes) override;
     void notifyModelNodesMoved(const QList<ModelNode> &modelNodes) override;
+    void notifyModelReferenceNodesUpdated(const QList<ModelNode> &modelNodes) override;
     void notifyIconsChanged() override;
+    void showReferences(bool show) override;
     void setFilter(bool showOnlyVisibleItems) override;
     void setNameFilter(const QString &filter) override;
     void setOrder(bool reverseItemOrder) override;
@@ -85,31 +88,55 @@ public:
 
     void updateToolTipPixmap(const ModelNode &node, const QPixmap &pixmap);
 
+    bool isReferenceNodesVisible() const override;
+    bool canBeReference(const ModelNode &modelNode) const override;
+    bool isReference(const QModelIndex &index) const;
+
 signals:
-    void toolTipPixmapUpdated(const QString &id, const QPixmap &pixmap) const;
+    void toolTipPixmapUpdated(const QString &id, const QPixmap &pixmap);
 
 private:
+    struct ReferenceData {
+        ModelNode current;
+        ModelNode owner;
+    };
+
     void moveNodesInteractive(NodeAbstractProperty &parentProperty, const QList<ModelNode> &modelNodes,
                               int targetIndex, bool executeInTransaction = true);
     void handleInternalDrop(const QMimeData *mimeData, int rowNumber, const QModelIndex &dropModelIndex);
     void handleItemLibraryItemDrop(const QMimeData *mimeData, int rowNumber, const QModelIndex &dropModelIndex);
 
-    bool dropAsImage3dTexture(const ModelNode &targetNode, const NodeAbstractProperty &targetProp,
-                              const QString &imagePath, ModelNode &newNode, bool &outMoveNodesAfter);
-    ModelNode createTextureNode(const NodeAbstractProperty &targetProp, const QString &imagePath);
+    bool dropAsImage3dTexture(const ModelNode &targetNode,
+                              const NodeAbstractProperty &targetProp,
+                              const QString &imagePath,
+                              ModelNode &newNode,
+                              bool &outMoveNodesAfter);
     QList<QPersistentModelIndex> nodesToPersistentIndex(const QList<ModelNode> &modelNodes);
     void addImport(const QString &importName);
     QList<ModelNode> filteredList(const NodeListProperty &property, bool filter, bool reverseOrder) const;
     bool moveNodeToParent(const NodeAbstractProperty &targetProperty, const ModelNode &newModelNode);
+    QIcon colorizeIcon(const QIcon &icon, const QColor &color) const;
+    QList<ModelNode> referenceList(const QList<BindingProperty> &bindingProperties, const QList<ModelNode> &unwanted = {}) const;
+    QModelIndex createReferenceIndex(int row, int column, const ReferenceData &referenceData) const;
+    void resetReferences();
+    ModelNode referenceExtractCurrent(const QModelIndex &index) const;
+    ModelNode referenceExtractOwner(const QModelIndex &index) const;
 
     QPointer<NavigatorView> m_view;
     mutable QHash<ModelNode, QModelIndex> m_nodeIndexHash;
     mutable QHash<ModelNode, QList<ModelNode> > m_rowCache;
+    mutable QHash<qint64, QIcon> m_colorizeIconHash;
     bool m_showOnlyVisibleItems = true;
     bool m_reverseItemOrder = false;
     DesignerActionManager *m_actionManager = nullptr;
     QString m_nameFilter;
     QList<ModelNode> m_nameFilteredList;
+    bool m_showReferenceItems = true;
+    mutable qint32 m_referenceInternalIdCounter = -1;
+    mutable QHash<QString, qint32> m_referenceUnique;
+    mutable QHash<qint32, ReferenceData> m_references;
+    mutable QHash<ModelNode, QList<ModelNode>> m_rowReferenceCache;
+    mutable QHash<ModelNode, QSet<QModelIndex>> m_referenceIndexHash;
 };
 
 } // namespace QmlDesigner

@@ -16,8 +16,9 @@
 
 namespace Core { class SearchResult; }
 namespace TextEditor {
-class TextDocument;
+class BaseTextEditor;
 class BaseHoverHandler;
+class TextDocument;
 } // namespace TextEditor
 
 namespace CppEditor {
@@ -46,6 +47,8 @@ public:
     virtual void followSymbolToType(const CursorInEditor &data,
                                    const Utils::LinkHandler &processLinkCallback,
                                    bool inNextSplit) = 0;
+    virtual void followFunctionToParentImpl(
+        const CursorInEditor &data, const Utils::LinkHandler &processLinkCallback) = 0;
     virtual void switchDeclDef(const CursorInEditor &data,
                                const Utils::LinkHandler &processLinkCallback) = 0;
     virtual void startLocalRenaming(const CursorInEditor &data,
@@ -55,7 +58,8 @@ public:
                               const std::function<void()> &callback) = 0;
     virtual void findUsages(const CursorInEditor &data) const = 0;
     virtual void switchHeaderSource(const Utils::FilePath &filePath, bool inNextSplit) = 0;
-
+    virtual void foldOrUnfoldComments(TextEditor::BaseTextEditor *editor, bool fold) = 0;
+    virtual void foldOrUnfoldInactiveRegions(TextEditor::BaseTextEditor *editor, bool fold) = 0;
     virtual void checkUnused(const Utils::Link &link, Core::SearchResult *search,
                              const Utils::LinkHandler &callback) = 0;
 };

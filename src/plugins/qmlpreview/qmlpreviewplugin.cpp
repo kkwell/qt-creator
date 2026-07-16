@@ -22,8 +22,8 @@
 
 #include <extensionsystem/pluginmanager.h>
 
+#include <projectexplorer/devicesupport/devicekitaspects.h>
 #include <projectexplorer/kit.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
@@ -42,7 +42,7 @@
 #include <qtsupport/qtversionmanager.h>
 #include <qtsupport/baseqtversion.h>
 
-#include <solutions/tasking/tasktreerunner.h>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <texteditor/texteditor.h>
 
@@ -58,7 +58,7 @@
 #include <QToolBar>
 
 using namespace ProjectExplorer;
-using namespace Tasking;
+using namespace QtTaskTree;
 
 namespace QmlPreview {
 
@@ -94,9 +94,6 @@ static std::unique_ptr<QmlDebugTranslationClient> defaultCreateDebugTranslationC
     return client;
 }
 
-static void defaultRefreshTranslationFunction()
-{}
-
 class QmlPreviewPluginPrivate : public QObject
 {
 public:
@@ -124,17 +121,18 @@ public:
     QmlPreviewRunnerSetting m_settings;
     QmlPreviewRunWorkerFactory runWorkerFactory;
 
-    TaskTreeRunner m_parseRunner;
+    QSingleTaskTreeRunner m_parseRunner;
+    QList<QmlDebug::QmlEvent> m_events;
+    QList<QmlDebug::QmlEventType> m_eventTypes;
 };
 
 QmlPreviewPluginPrivate::QmlPreviewPluginPrivate(QmlPreviewPlugin *parent)
-    : q(parent), runWorkerFactory(parent, &m_settings)
+    : q(parent)
 {
     m_settings.fileLoader = &defaultFileLoader;
     m_settings.fileClassifier = &defaultFileClassifier;
     m_settings.fpsHandler = &defaultFpsHandler;
     m_settings.createDebugTranslationClientMethod = &defaultCreateDebugTranslationClientMethod;
-    m_settings.refreshTranslationsFunction = &defaultRefreshTranslationFunction;
 
     Core::ActionContainer *menu = Core::ActionManager::actionContainer(
                 Constants::M_BUILDPROJECT);
@@ -148,10 +146,10 @@ QmlPreviewPluginPrivate::QmlPreviewPluginPrivate(QmlPreviewPlugin *parent)
         if (auto multiLanguageAspect = QmlProjectManager::QmlMultiLanguageAspect::current())
             m_localeIsoCode = multiLanguageAspect->currentLocale();
         bool skipDeploy = false;
-        const Kit *kit = ProjectManager::startupTarget()->kit();
-        if (ProjectManager::startupTarget() && kit)
+        if (const Kit *kit = activeKitForActiveProject()) {
             skipDeploy = kit->supportedPlatforms().contains(Android::Constants::ANDROID_DEVICE_TYPE)
-                || DeviceTypeKitAspect::deviceTypeId(kit) == Android::Constants::ANDROID_DEVICE_TYPE;
+                || RunDeviceTypeKitAspect::deviceTypeId(kit) == Android::Constants::ANDROID_DEVICE_TYPE;
+        }
         ProjectExplorerPlugin::runStartupProject(Constants::QML_PREVIEW_RUN_MODE, skipDeploy);
     });
     menu->addAction(
@@ -206,14 +204,28 @@ QmlPreviewPluginPrivate::QmlPreviewPluginPrivate(QmlPreviewPlugin *parent)
     connect(q, &QmlPreviewPlugin::previewedFileChanged, this, &QmlPreviewPluginPrivate::checkFile);
 }
 
+static QmlPreviewPlugin *theInstance = nullptr;
+
 QmlPreviewPlugin::~QmlPreviewPlugin()
 {
     delete d;
+    theInstance = nullptr;
+}
+
+QmlPreviewPlugin *QmlPreviewPlugin::instance()
+{
+    return theInstance;
+}
+
+const QmlPreviewRunnerSetting &QmlPreviewPlugin::settings()
+{
+    return theInstance->d->m_settings;
 }
 
 void QmlPreviewPlugin::initialize()
 {
     d = new QmlPreviewPluginPrivate(this);
+    theInstance = this;
 
 #ifdef WITH_TESTS
     addTestCreator(createQmlPreviewClientTest);
@@ -340,7 +352,7 @@ void QmlPreviewPlugin::previewCurrentFile()
                              Tr::tr("Start the QML Preview for the project before selecting "
                                     "a specific file for preview."));
 
-    const QString file = currentNode->filePath().toString();
+    const QString file = currentNode->filePath().toUrlishString();
     if (file != d->m_previewedFile)
         setPreviewedFile(file);
     else
@@ -459,7 +471,7 @@ void QmlPreviewPluginPrivate::checkEditor()
         dialect = QmlJS::Dialect::QmlQtQuick2Ui;
     else
         dialect = QmlJS::Dialect::NoLanguage;
-    checkDocument(doc->filePath().toString(), doc->contents(), dialect);
+    checkDocument(doc->filePath().toUrlishString(), doc->contents(), dialect);
 }
 
 void QmlPreviewPluginPrivate::checkFile(const QString &fileName)
@@ -505,8 +517,28 @@ void QmlPreviewPluginPrivate::checkDocument(const QString &name, const QByteArra
     const auto onParseSetup = [name, contents, dialect](Utils::Async<void> &async) {
         async.setConcurrentCallData(parse, name, contents, dialect);
     };
-    const auto onParseDone = [this, name, contents] { triggerPreview(name, contents); };
-    m_parseRunner.start({Utils::AsyncTask<void>(onParseSetup, onParseDone, CallDoneIf::Success)});
+    const auto onDone = [this, name, contents] { triggerPreview(name, contents); };
+    m_parseRunner.start({Utils::AsyncTask<void>(onParseSetup)}, {}, onDone, CallDoneFlag::OnSuccess);
+}
+
+void QmlPreviewPlugin::setEvents(const QList<QmlDebug::QmlEvent> &events)
+{
+    d->m_events = events;
+}
+
+void QmlPreviewPlugin::setEventTypes(const QList<QmlDebug::QmlEventType> &types)
+{
+    d->m_eventTypes = types;
+}
+
+QList<QmlDebug::QmlEvent> QmlPreviewPlugin::events() const
+{
+    return d->m_events;
+}
+
+QList<QmlDebug::QmlEventType> QmlPreviewPlugin::eventTypes() const
+{
+    return d->m_eventTypes;
 }
 
 } // namespace QmlPreview

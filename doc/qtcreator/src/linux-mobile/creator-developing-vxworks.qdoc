@@ -1,0 +1,197 @@
+// Copyright (C) 2025 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
+
+/*!
+    \page creator-vxworks.html
+    \previouspage creator-how-tos.html
+
+    \title Developing for VxWorks
+
+    \quotation
+    \l {how-to-vxworks}{How to: Develop for VxWorks}
+    \endquotation
+
+    \summary {Use Qt for VxWorks to develop Qt applications for VxWorks
+    embedded systems.}
+
+    \note Enable the VxWorks plugin to use it.
+
+    Run and debug applications on \l{VxWorks} devices. Currently, you can develop
+    applications with Qt 6.8 and build them for VxWorks 24.03 devices.
+
+    Create a connection between \QC and a VxWorks device. Then add the device to
+    a VxWorks kit.
+
+    For more information about how to configure the device and Qt, as well as how
+    to develop applications, see \l {Qt for VxWorks}.
+
+    \sa {Enable and disable plugins}, {how-to-vxworks}{How to: VxWorks},
+    {Qt for VxWorks}
+*/
+
+/*!
+    \page creator-how-to-create-vxworks-kits.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-vxworks
+
+    \title Create kits for VxWorks devices
+
+    To develop Qt applications for VxWorks, build \l {Qt for VxWorks} and create
+    a VxWorks \l {Managing kits}{kit}.
+
+    \note Enable the VxWorks plugin to use it.
+
+    To create a kit:
+
+    \list 1
+        \li Go to \preferences > \uicontrol Devices > \uicontrol VxWorks.
+            \image {qtcreator-preferences-devices-vxworks.webp} {VxWorks tab in Devices preferences}
+        \li In \uicontrol {VxWorks installation folder}, enter the path to the
+            directory where WindRiver installer installed VxWorks.
+        \li In \uicontrol {NFS export directory for VxWorks devices}, enter the
+            path to an NFS directory shared with the device.
+        \li Select \uicontrol {Add Kit}.
+        \li In \uicontrol {Kit name}, enter a name for the kit.
+            \image {qtcreator-create-new-kit-vxworks.webp} {Create New Kit dialog}
+        \li In \uicontrol {Path}, select the folder that contains qmake for
+            the Qt VxWorks build.
+        \li In \uicontrol {VSB path}, enter the path to the VxWorks source build
+            (VSB) directory.
+        \li In \uicontrol {Hostname}, enter the host name or IP address of the
+            device.
+        \li In \uicontrol {Username}, enter the user name to access the device.
+        \li Select \uicontrol OK to create a VxWorks kit.
+        \li Go to \uicontrol Projects > \uicontrol {Build & Run} to activate the
+            kit for your project.
+    \endlist
+
+    \note To deploy the built package, you can add a build step to the deploy
+    configuration of the project that copies the built binary of your project to
+    a NFS directory shared with the device.
+
+    \sa {Enable and disable plugins}, {how-to-vxworks}{How to: VxWorks},
+    {Developing for VxWorks}, {Qt for VxWorks}
+*/
+
+/*!
+    \page creator-how-to-debug-vxworks.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-vxworks
+    \ingroup creator-how-to-debug
+
+    \title Debug C++ applications on VxWorks devices
+
+    \note Place all the library dependencies on the SD card. Debugging doesn't
+    work from other locations, such as a mounted NFS directory.
+
+    \QC only copies the application binaries and other deployable files to
+    the root of the SD card. It doesn't preserve nor create the directory
+    structure on the SD card.
+
+    To debug Qt applications, add the following line to your VxWorks source build
+    (VSB) configuration:
+
+    \code [shell]
+    vxprj vsb config -s -add "_WRS_CONFIG_TCF_GDB_RSP=y"
+    \endcode
+
+    To automatically start the GDB server on the device, add the following lines
+    to your VxWorks image project (VIP) configuration:
+
+    \code [text]
+    "INCLUDE_DEBUG_AGENT"
+    "INCLUDE_DEBUG_AGENT_START"
+    "INCLUDE_STANDALONE_SYM_TBL"
+    \endcode
+
+    For more information, see \l {Qt for VxWorks}.
+
+    To set up debugging:
+
+    \list 1
+        \li Activate a VxWorks kit for the project.
+        \li Go to \uicontrol Projects > \uicontrol {Run Settings}.
+        \li Set \uicontrol Priority and \uicontrol {Stack size}.
+            \image {qtcreator-run-settings-vxworks.webp} {Run Settings for VxWorks}
+        \li In \uicontrol Environment, set the \c LD_LIBRARY_PATH variable to
+            the location of the libraries on the SD card. If the path to the
+            SD card is not \c {/sd0a}, set \c VX_SDCARD_PATH to the correct
+            location.
+    \endlist
+
+    To start debugging, select \key {F5} or go to \uicontrol Debug >
+    \uicontrol {Start Debugging} > \uicontrol {Start Debugging of Startup Project}.
+
+    \sa {Activate kits for a project}, {Enable and disable plugins},
+    {how-to-vxworks}{How to: VxWorks}, {Debugging}, {Developing for VxWorks},
+    {Qt for VxWorks}
+*/
+
+/*!
+    \page creator-how-to-connect-vxworks-ssh.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-vxworks
+
+    \title Create SSH connections to VxWorks devices
+
+    To run an SSH server on the VxWorks device, you need to configure it, as
+    described in the following sections.
+
+    \note Enable the VxWorks plugin to use it.
+
+    \section1 Configure the VxWorks source build
+
+    Set the following keys in the VxWorks Source Build (VSB):
+
+    \code [text]
+    "USER_MANAGEMENT"
+    "USER_MANAGEMENT_USER_PRIVILEGES"
+    \endcode
+
+    \section1 Configure the VxWorks kernel
+
+    Add the following includes to the VxWorks Kernel configuration (VIP):
+
+    \code [text]
+    "INCLUDE_IPSSH_CLIENT_CMD"
+    "INCLUDE_SHELL_SECURITY"
+    "INCLUDE_USER_DATABASE"
+    "INCLUDE_USER_IDENTIFICATION"
+    "INCLUDE_USER_PRIVILEGES"
+    "INCLUDE_USER_MGT_SHELL_CMD"
+    "INCLUDE_SEC_KEY_STORE_CMD"
+    "INCLUDE_SHELL"
+    "INCLUDE_SSH"
+    "INCLUDE_IPD_CMD"
+    \endcode
+
+    \section1 Create a startup script
+
+    In the startup script, set up user management and starting the SSH server.
+
+    An example startup script:
+
+    \code [text]
+    cp "/romfs/ssh/keys/WindRiver.pk2","/ram"
+    cmd keyStore import default_rsa /romfs/ssh/keys/default_rsa.pem
+    cmd keyStore import default_dsa /romfs/ssh/keys/default_dsa.pem
+    cmd ipd start ipssh
+    udbReset
+    userAdd "WindRiver","vxTarget"
+    \endcode
+
+    \section1 Test the connection
+
+    To test the connection from the terminal, specify the key algorithms for it
+    (because VxWorks uses old keys):
+
+    \code [shell]
+    ssh -oHostKeyAlgorithms=+ssh-rsa -lWindRiver 192.168.0.3
+    \endcode
+
+    \sa {Enable and disable plugins}, {how-to-vxworks}{How to: VxWorks},
+    {Debugging}, {Developing for VxWorks}, {Qt for VxWorks}
+*/

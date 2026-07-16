@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "pixmapcachemodel.h"
-#include "qmlprofilereventtypes.h"
 #include "qmlprofilermodelmanager.h"
 #include "qmlprofilertr.h"
 
+#include <qmldebug/qmlprofilereventtypes.h>
 #include <tracing/timelineformattime.h>
 
-namespace QmlProfiler {
-namespace Internal {
+using namespace QmlDebug;
+namespace QmlProfiler::Internal {
 
 PixmapCacheModel::PixmapCacheModel(QmlProfilerModelManager *manager,
                                    Timeline::TimelineModelAggregator *parent) :
@@ -61,7 +61,7 @@ float PixmapCacheModel::relativeHeight(int index) const
 QString getFilenameOnly(QString absUrl)
 {
     int characterPos = absUrl.lastIndexOf(QLatin1Char('/'))+1;
-    if (characterPos < absUrl.length())
+    if (characterPos < absUrl.size())
         absUrl = absUrl.mid(characterPos);
     return absUrl;
 }
@@ -437,7 +437,7 @@ void PixmapCacheModel::flattenLoads()
     int collapsedRowCount = 0;
 
     // computes "compressed row"
-    QVector <qint64> eventEndTimes;
+    QList <qint64> eventEndTimes;
     for (int i = 0; i < count(); i++) {
         PixmapCacheModel::Item &event = m_data[i];
         if (event.pixmapEventType == PixmapCacheModel::PixmapLoadingStarted) {
@@ -490,6 +490,4 @@ int PixmapCacheModel::updateCacheCount(int lastCacheSizeEvent,
     return index;
 }
 
-
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

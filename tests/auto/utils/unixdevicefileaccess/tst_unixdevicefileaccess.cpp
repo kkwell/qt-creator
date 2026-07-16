@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include <QDebug>
+#include <QIODevice>
+#include <QProcess>
 #include <QRandomGenerator>
-#include <QtCore/qiodevice.h>
-#include <QtTest>
+#include <QSignalSpy>
+#include <QTest>
 
 #include <utils/commandline.h>
 #include <utils/devicefileaccess.h>
@@ -18,7 +20,7 @@ namespace QTest {
 template<>
 char *toString(const Utils::FilePath &filePath)
 {
-    return qstrdup(filePath.toString().toLocal8Bit().constData());
+    return qstrdup(filePath.toUrlishString().toLocal8Bit().constData());
 }
 } // namespace QTest
 QT_END_NAMESPACE
@@ -30,12 +32,12 @@ class TestDFA : public UnixDeviceFileAccess
 public:
     using UnixDeviceFileAccess::UnixDeviceFileAccess;
 
-    RunResult runInShell(const CommandLine &cmdLine,
-                         const QByteArray &inputData = {}) const override
+    Result<RunResult> runInShellImpl(const CommandLine &cmdLine,
+                                     const QByteArray &inputData = {}) const override
     {
         // Note: Don't convert into Utils::Process. See more comments in this change in gerrit.
         QProcess p;
-        p.setProgram(cmdLine.executable().toString());
+        p.setProgram(cmdLine.executable().toFSPathString());
         p.setArguments(cmdLine.splitArguments());
         p.setProcessChannelMode(QProcess::SeparateChannels);
 
@@ -46,12 +48,17 @@ public:
             p.closeWriteChannel();
         }
         p.waitForFinished();
-        return {p.exitCode(), p.readAllStandardOutput(), p.readAllStandardError()};
+        return RunResult{p.exitCode(), p.readAllStandardOutput(), p.readAllStandardError()};
     }
 
     void findUsingLs(const QString &current, const FileFilter &filter, QStringList *found)
     {
         UnixDeviceFileAccess::findUsingLs(current, filter, found, {});
+    }
+
+    Result<FilePath> createTempDir(const FilePath &filePath) override
+    {
+        return UnixDeviceFileAccess::createTempDir(filePath);
     }
 };
 
@@ -93,6 +100,16 @@ private slots:
         QCOMPARE(result,
                  QStringList(
                      {".", "..", "lsfindsubdir/.", "lsfindsubdir/..", "lsfindsubdir", "size-test"}));
+    }
+
+    void createTempDir()
+    {
+        FilePath tmpDirTemplate = FilePath::fromUserInput(QDir::tempPath()) / "qtc-XXXXXX";
+        const Result<FilePath> tmpDirResult = m_dfa.createTempDir(tmpDirTemplate);
+        QVERIFY_RESULT(tmpDirResult);
+        const FilePath tmpDir = *tmpDirResult;
+        QVERIFY(tmpDir.isWritableDir());
+        QVERIFY(tmpDir.removeRecursively());
     }
 
 private:

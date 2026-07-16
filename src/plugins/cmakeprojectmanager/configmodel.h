@@ -5,6 +5,7 @@
 
 #include "cmakeconfigitem.h"
 
+#include <utils/macroexpander.h>
 #include <utils/treemodel.h>
 
 namespace CMakeProjectManager::Internal {
@@ -90,7 +91,7 @@ public:
     QList<DataItem> configurationForCMake() const;
 
     Utils::MacroExpander *macroExpander() const;
-    void setMacroExpander(Utils::MacroExpander *newExpander);
+    void setMacroExpander(const Utils::MacroExpanderProvider &newExpander);
 
 private:
     enum class KitOrInitial { Kit, Initial };
@@ -115,7 +116,7 @@ private:
     void setConfiguration(const QList<InternalDataItem> &config);
     QList<InternalDataItem> m_configuration;
     KitConfiguration m_kitConfiguration;
-    Utils::MacroExpander *m_macroExpander = nullptr;
+    Utils::MacroExpanderProvider m_macroExpander{nullptr};
 
     friend class Internal::ConfigModelTreeItem;
 };
@@ -123,7 +124,11 @@ private:
 class ConfigModelTreeItem  : public Utils::TreeItem
 {
 public:
-    ConfigModelTreeItem(ConfigModel::InternalDataItem *di = nullptr) : dataItem(di) {}
+    ConfigModelTreeItem(
+        ConfigModel::InternalDataItem *di, const Utils::MacroExpanderProvider &macroExpander)
+        : dataItem(di)
+        , m_macroExpander(macroExpander)
+    {}
     ~ConfigModelTreeItem() override;
 
     QVariant data(int column, int role) const final;
@@ -134,6 +139,9 @@ public:
     QString currentValue() const;
 
     ConfigModel::InternalDataItem *dataItem;
+
+private:
+    Utils::MacroExpanderProvider m_macroExpander;
 };
 
 } // CMakeProjectManager::Internal

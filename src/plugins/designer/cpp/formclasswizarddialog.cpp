@@ -15,17 +15,15 @@
 
 using namespace Utils;
 
+namespace Designer::Internal {
+
 enum { FormPageId, ClassPageId };
 
-namespace Designer {
-namespace Internal {
-
-// ----------------- FormClassWizardDialog
 FormClassWizardDialog::FormClassWizardDialog(const Core::BaseFileWizardFactory *factory,
-                                             QWidget *parent) :
-    Core::BaseFileWizard(factory, QVariantMap(), parent),
-    m_formPage(new FormTemplateWizardPage),
-    m_classPage(new FormClassWizardPage)
+                                             const FilePath &filePath)
+    : Core::BaseFileWizard(factory, QVariantMap())
+    , m_formPage(new FormTemplateWizardPage)
+    , m_classPage(new FormClassWizardPage)
 {
     setWindowTitle(Tr::tr("Qt Widgets Designer Form Class"));
 
@@ -35,16 +33,8 @@ FormClassWizardDialog::FormClassWizardDialog(const Core::BaseFileWizardFactory *
     const auto pages = extensionPages();
     for (QWizardPage *p : pages)
         addPage(p);
-}
 
-FilePath FormClassWizardDialog::filePath() const
-{
-    return m_classPage->filePath();
-}
-
-void FormClassWizardDialog::setFilePath(const FilePath &p)
-{
-    m_classPage->setFilePath(p);
+    m_classPage->setFilePath(filePath);
 }
 
 void FormClassWizardDialog::initializePage(int id)
@@ -69,10 +59,8 @@ FormClassWizardParameters FormClassWizardDialog::parameters() const
     m_classPage->getParameters(&rc);
     // Name the ui class in the Ui namespace after the class specified
     rc.uiTemplate = QtSupport::CodeGenerator::changeUiClassName(m_rawFormTemplate, rc.className);
-    rc.usePragmaOnce = CppEditor::AbstractEditorSupport::usePragmaOnce(
-        ProjectExplorer::ProjectTree::currentProject());
+    rc.usePragmaOnce = CppEditor::usePragmaOnce(ProjectExplorer::ProjectTree::currentProject());
     return rc;
 }
 
-} // namespace Internal
-} // namespace Designer
+} // namespace Designer::Internal

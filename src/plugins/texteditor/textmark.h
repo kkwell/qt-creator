@@ -12,7 +12,6 @@
 #include <QCoreApplication>
 #include <QIcon>
 #include <QStaticText>
-#include <QVector>
 
 #include <optional>
 
@@ -99,6 +98,7 @@ public:
 
     std::optional<Utils::Theme::Color> color() const;
     void setColor(const Utils::Theme::Color &color);
+    void unsetColor();
 
     QString defaultToolTip() const { return m_defaultToolTip; }
     void setDefaultToolTip(const QString &toolTip) { m_defaultToolTip = toolTip; }
@@ -113,13 +113,13 @@ public:
     void setToolTip(const QString &toolTip);
     void setToolTipProvider(const std::function<QString ()> &toolTipProvider);
 
-    QVector<QAction *> actions() const;
-    void setActions(const QVector<QAction *> &actions); // Takes ownership
     void setActionsProvider(const std::function<QList<QAction *>()> &actionsProvider); // Takes ownership
 
     bool isLocationMarker() const;
     void setIsLocationMarker(bool newIsLocationMarker);
 
+    Qt::TextFormat annotationTextFormat() const;
+    void setAnnotationTextFormat(Qt::TextFormat newTextFormat);
 
 protected:
     void setSettingsPage(Utils::Id settingsPage);
@@ -139,12 +139,12 @@ private:
     std::optional<Utils::Theme::Color> m_color;
     bool m_visible = false;
     TextMarkCategory m_category;
+    Qt::TextFormat m_annotationTextFormat = Qt::AutoText;
     QString m_lineAnnotation;
     mutable QStaticText m_staticAnnotationText;
     QString m_toolTip;
     std::function<QString()> m_toolTipProvider;
     QString m_defaultToolTip;
-    QVector<QAction *> m_actions; // FIXME Remove in master
     std::function<QList<QAction *>()> m_actionsProvider;
     Utils::Id m_settingsPage;
     std::function<void()> m_deleteCallback;

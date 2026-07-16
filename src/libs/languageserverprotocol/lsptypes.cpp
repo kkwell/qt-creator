@@ -16,7 +16,6 @@
 #include <QRegularExpression>
 #include <QTextBlock>
 #include <QTextDocument>
-#include <QVector>
 
 namespace LanguageServerProtocol {
 
@@ -113,7 +112,7 @@ static QHash<Utils::MimeType, QString> mimeTypeLanguageIdMap()
     static QHash<Utils::MimeType, QString> hash;
     if (!hash.isEmpty())
         return hash;
-    const QVector<QPair<QString, QString>> languageIdsForMimeTypeNames{
+    const QPair<QString, QString> languageIdsForMimeTypeNames[] = {
         {"text/x-python", "python"},
         {"text/x-bibtex", "bibtex"},
         {"application/vnd.coffeescript", "coffeescript"},
@@ -146,6 +145,7 @@ static QHash<Utils::MimeType, QString> mimeTypeLanguageIdMap()
         {"application/xml", "xml"},
         {"application/xslt+xml", "xsl"},
         {"application/x-yaml", "yaml"},
+        {"text/x-swift", "swift"},
     };
     for (const QPair<QString, QString> &languageIdForMimeTypeName : languageIdsForMimeTypeNames) {
         const Utils::MimeType &mimeType = Utils::mimeTypeForName(languageIdForMimeTypeName.first);
@@ -324,7 +324,7 @@ QTextCursor Range::toSelection(QTextDocument *doc) const
     return cursor;
 }
 
-QString expressionForGlob(QString globPattern)
+static QString expressionForGlob(QString globPattern)
 {
     const QString anySubDir("qtc_anysubdir_id");
     globPattern.replace("**/", anySubDir);
@@ -339,11 +339,9 @@ QString expressionForGlob(QString globPattern)
 bool DocumentFilter::applies(const Utils::FilePath &fileName, const Utils::MimeType &mimeType) const
 {
     if (std::optional<QString> _pattern = pattern()) {
-        QRegularExpression::PatternOption option = QRegularExpression::NoPatternOption;
-        if (fileName.caseSensitivity() == Qt::CaseInsensitive)
-            option = QRegularExpression::CaseInsensitiveOption;
-        const QRegularExpression regexp(expressionForGlob(*_pattern), option);
-        if (regexp.isValid() && regexp.match(fileName.toString()).hasMatch())
+        const QRegularExpression
+            regexp(expressionForGlob(*_pattern), QRegularExpression::CaseInsensitiveOption);
+        if (regexp.isValid() && regexp.match(fileName.path()).hasMatch())
             return true;
     }
     if (std::optional<QString> _lang = language()) {
@@ -352,7 +350,7 @@ bool DocumentFilter::applies(const Utils::FilePath &fileName, const Utils::MimeT
         };
         if (mimeType.isValid() && match(mimeType))
             return true;
-        return Utils::anyOf(Utils::mimeTypesForFileName(fileName.toString()), match);
+        return Utils::anyOf(Utils::mimeTypesForFileName(fileName.toFSPathString()), match);
     }
     // return false when any of the filter didn't match but return true when no filter was defined
     return !contains(schemeKey) && !contains(languageKey) && !contains(patternKey);
@@ -511,4 +509,9 @@ std::optional<QList<SymbolTag>> DocumentSymbol::symbolTags() const
 {
     return Internal::getSymbolTags(*this);
 }
+
+QString FoldingRangeKind::comment() { return "comment"; }
+QString FoldingRangeKind::imports() { return "imports"; }
+QString FoldingRangeKind::region() { return "region"; }
+
 } // namespace LanguageServerProtocol

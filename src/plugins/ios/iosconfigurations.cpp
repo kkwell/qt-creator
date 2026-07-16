@@ -12,14 +12,17 @@
 
 #include <coreplugin/icore.h>
 
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/kitmanager.h>
+#include <projectexplorer/devicesupport/devicekitaspects.h>
 #include <projectexplorer/devicesupport/devicemanager.h>
 #include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/toolchainmanager.h>
 #include <projectexplorer/toolchain.h>
 #include <projectexplorer/gcctoolchain.h>
 #include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/sysrootkitaspect.h>
+#include <projectexplorer/toolchainkitaspect.h>
+#include <projectexplorer/toolchainconfigwidget.h>
 
 #include <debugger/debuggeritemmanager.h>
 #include <debugger/debuggeritem.h>
@@ -31,7 +34,6 @@
 #include <qtsupport/qtversionfactory.h>
 
 #include <utils/algorithm.h>
-#include <utils/futuresynchronizer.h>
 #include <utils/qtcassert.h>
 #include <utils/qtcprocess.h>
 
@@ -68,7 +70,6 @@ const bool IgnoreAllDevicesDefault = false;
 const char SettingsGroup[] = "IosConfigurations";
 const char ignoreAllDevicesKey[] = "IgnoreAllDevices";
 
-const char provisioningTeamsTag[] = "IDEProvisioningTeams";
 const char freeTeamTag[] = "isFreeProvisioningTeam";
 const char emailTag[] = "eMail";
 const char teamNameTag[] = "teamName";
@@ -82,6 +83,8 @@ const char profileTeamIdTag[] = "TeamIdentifier";
 
 static const QString xcodePlistPath = QDir::homePath() + "/Library/Preferences/com.apple.dt.Xcode.plist";
 static const QString provisioningProfileDirPath = QDir::homePath() + "/Library/MobileDevice/Provisioning Profiles";
+
+const char iosDetectionSource[] = "iosdetectionsource";
 
 static Id deviceId(const QString &sdkName)
 {
@@ -110,9 +113,8 @@ static QList<GccToolchain *> autoDetectedIosToolchains()
 {
     const QList<GccToolchain *> toolchains = clangToolchains(ToolchainManager::toolchains());
     return filtered(toolchains, [](GccToolchain *toolChain) {
-        return toolChain->isAutoDetected()
-               && (toolChain->displayName().startsWith("iphone")
-                   || toolChain->displayName().startsWith("Apple Clang")); // TODO tool chains should be marked directly
+        const DetectionSource ds = toolChain->detectionSource();
+        return ds.isAutoDetected() && ds.id == iosDetectionSource;
     });
 }
 
@@ -153,8 +155,8 @@ static QHash<XcodePlatform::ToolchainTarget, ToolchainPair> findToolchains(const
 static QSet<Kit *> existingAutoDetectedIosKits()
 {
     return toSet(filtered(KitManager::kits(), [](Kit *kit) -> bool {
-        Id deviceKind = DeviceTypeKitAspect::deviceTypeId(kit);
-        return kit->isAutoDetected() && (deviceKind == Constants::IOS_DEVICE_TYPE
+        Id deviceKind = RunDeviceTypeKitAspect::deviceTypeId(kit);
+        return kit->detectionSource().isAutoDetected() && (deviceKind == Constants::IOS_DEVICE_TYPE
                                          || deviceKind == Constants::IOS_SIMULATOR_TYPE);
     }));
 }
@@ -168,7 +170,7 @@ static void printKits(const QSet<Kit *> &kits)
 static void setupKit(Kit *kit, Id pDeviceType, const ToolchainPair& toolchains,
                      const QVariant &debuggerId, const FilePath &sdkPath, QtVersion *qtVersion)
 {
-    DeviceTypeKitAspect::setDeviceTypeId(kit, pDeviceType);
+    RunDeviceTypeKitAspect::setDeviceTypeId(kit, pDeviceType);
     if (toolchains.first)
         ToolchainKitAspect::setToolchain(kit, toolchains.first);
     else
@@ -182,14 +184,13 @@ static void setupKit(Kit *kit, Id pDeviceType, const ToolchainPair& toolchains,
     // only replace debugger with the default one if we find an unusable one here
     // (since the user could have changed it)
     if ((!DebuggerKitAspect::debugger(kit)
-            || !DebuggerKitAspect::debugger(kit)->isValid()
-            || DebuggerKitAspect::debugger(kit)->engineType() != LldbEngineType)
+            || DebuggerKitAspect::debugger(kit).engineType() != LldbEngineType)
             && debuggerId.isValid())
         DebuggerKitAspect::setDebugger(kit, debuggerId);
 
     kit->setSticky(QtKitAspect::id(), true);
     kit->setSticky(ToolchainKitAspect::id(), true);
-    kit->setSticky(DeviceTypeKitAspect::id(), true);
+    kit->setSticky(RunDeviceTypeKitAspect::id(), true);
     kit->setSticky(SysRootKitAspect::id(), true);
     kit->setSticky(DebuggerKitAspect::id(), false);
 
@@ -200,7 +201,7 @@ static QVersionNumber findXcodeVersion(const FilePath &developerPath)
 {
     const FilePath xcodeInfo = developerPath.parentDir().pathAppended("Info.plist");
     if (xcodeInfo.exists()) {
-        QSettings settings(xcodeInfo.toString(), QSettings::NativeFormat);
+        QSettings settings(xcodeInfo.toUrlishString(), QSettings::NativeFormat);
         return QVersionNumber::fromString(settings.value("CFBundleShortVersionString").toString());
     } else {
         qCDebug(iosCommonLog) << "Error finding Xcode version." << xcodeInfo.toUserOutput() <<
@@ -234,11 +235,11 @@ void IosConfigurations::updateAutomaticKitList()
     const auto targetToolchainHash = findToolchains(platforms);
 
     const auto qtVersions = toSet(QtVersionManager::versions([](const QtVersion *v) {
-        return v->isValid() && v->type() == Constants::IOSQT;
+        return v->type() == Constants::IOSQT && v->isValid();
     }));
 
-    const DebuggerItem *possibleDebugger = DebuggerItemManager::findByEngineType(LldbEngineType);
-    const QVariant debuggerId = (possibleDebugger ? possibleDebugger->id() : QVariant());
+    const DebuggerItem possibleDebugger = DebuggerItemManager::findByEngineType(LldbEngineType);
+    const QVariant debuggerId = (possibleDebugger ? possibleDebugger.id() : QVariant());
 
     QSet<Kit *> existingKits = existingAutoDetectedIosKits();
     qCDebug(kitSetupLog) << "Existing auto-detected iOS kits:";
@@ -271,7 +272,7 @@ void IosConfigurations::updateAutomaticKitList()
                 Kit *kit = findOrDefault(existingKits, [&pDeviceType, &platformToolchains, &qtVersion](const Kit *kit) {
                     // we do not compare the sdk (thus automatically upgrading it in place if a
                     // new Xcode is used). Change?
-                    return DeviceTypeKitAspect::deviceTypeId(kit) == pDeviceType
+                    return RunDeviceTypeKitAspect::deviceTypeId(kit) == pDeviceType
                             && ToolchainKitAspect::cxxToolchain(kit) == platformToolchains.second
                             && ToolchainKitAspect::cToolchain(kit) == platformToolchains.first
                             && QtKitAspect::qtVersion(kit) == qtVersion;
@@ -285,7 +286,7 @@ void IosConfigurations::updateAutomaticKitList()
                 } else {
                     qCDebug(kitSetupLog) << "    - Setting up new kit";
                     const auto init = [&](Kit *k) {
-                        k->setAutoDetected(true);
+                        k->setDetectionSource({DetectionSource::FromSystem, iosDetectionSource});
                         const QString baseDisplayName = isSimulatorDeviceId(pDeviceType)
                                 ? Tr::tr("%1 Simulator").arg(qtVersion->unexpandedDisplayName())
                                 : qtVersion->unexpandedDisplayName();
@@ -377,14 +378,13 @@ void IosConfigurations::load()
 void IosConfigurations::updateSimulators()
 {
     // currently we have just one simulator
-    DeviceManager *devManager = DeviceManager::instance();
     Id devId = Constants::IOS_SIMULATOR_DEVICE_ID;
-    IDevice::ConstPtr dev = devManager->find(devId);
+    IDevice::Ptr dev = DeviceManager::find(devId);
     if (!dev) {
-        dev = IDevice::ConstPtr(new IosSimulator(devId));
-        devManager->addDevice(dev);
+        dev = IDevice::Ptr(new IosSimulator(devId));
+        DeviceManager::addDevice(dev);
     }
-    Utils::futureSynchronizer()->addFuture(SimulatorControl::updateAvailableSimulators(this));
+    SimulatorControl::updateAvailableSimulators();
 }
 
 void IosConfigurations::setDeveloperPath(const FilePath &devPath)
@@ -427,6 +427,46 @@ void IosConfigurations::initializeProvisioningData()
             std::bind(&IosConfigurations::loadProvisioningData, this, true));
 }
 
+static QVariantMap getTeamMap(const QSettings &xcodeSettings)
+{
+    // Check the version for Xcode 16.2 and later
+    const QVariantMap teamMap = xcodeSettings.value("IDEProvisioningTeamByIdentifier").toMap();
+    if (!teamMap.isEmpty())
+        return teamMap;
+    // Fall back to setting from Xcode < 16.2
+    return xcodeSettings.value("IDEProvisioningTeams").toMap();
+}
+
+static QHash<QString, QString> getIdentifierToEmail(const QSettings &xcodeSettings)
+{
+    // Available for Xcode 16.2 and later, where the keys for the IDEProvisioningTeamByIdentifier
+    // (see getTeamMap) are identifiers, and the "email" is in yet another "map":
+    // "DVTDeveloperAccountManagerAppleIDLists" => {
+    //   "IDE.Identifiers.Prod" => [
+    //     0 => {
+    //       "identifier" => "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+    //     }
+    //   ]
+    //   "IDE.Prod" => [
+    //     0 => {
+    //       "username" => "xxxx"
+    //     }
+    //   ]
+    // }
+    const QVariantMap accountMap
+        = xcodeSettings.value("DVTDeveloperAccountManagerAppleIDLists").toMap();
+    const QVariantList idList = accountMap.value("IDE.Identifiers.Prod").toList();
+    const QVariantList emailList = accountMap.value("IDE.Prod").toList();
+    QHash<QString, QString> result;
+    const int size = std::min(idList.size(), emailList.size());
+    for (int i = 0; i < size; ++i) {
+        result.insert(
+            idList.at(i).toMap().value("identifier").toString(),
+            emailList.at(i).toMap().value("username").toString());
+    }
+    return result;
+}
+
 void IosConfigurations::loadProvisioningData(bool notify)
 {
     m_developerTeams.clear();
@@ -434,7 +474,8 @@ void IosConfigurations::loadProvisioningData(bool notify)
 
     // Populate Team id's
     const QSettings xcodeSettings(xcodePlistPath, QSettings::NativeFormat);
-    const QVariantMap teamMap = xcodeSettings.value(provisioningTeamsTag).toMap();
+    const QVariantMap teamMap = getTeamMap(xcodeSettings);
+    const QHash<QString, QString> identifierToName = getIdentifierToEmail(xcodeSettings);
     QList<QVariantMap> teams;
     for (auto accountiterator = teamMap.cbegin(), end = teamMap.cend();
             accountiterator != end; ++accountiterator) {
@@ -446,7 +487,8 @@ void IosConfigurations::loadProvisioningData(bool notify)
             QVariantMap teamInfo = teamInfoIt.toMap();
             int provisioningTeamIsFree = teamInfo.value(freeTeamTag).toBool() ? 1 : 0;
             teamInfo[freeTeamTag] = provisioningTeamIsFree;
-            teamInfo[emailTag] = accountiterator.key();
+            teamInfo[emailTag]
+                = identifierToName.value(accountiterator.key(), /*default=*/accountiterator.key());
             teams.append(teamInfo);
         }
     }
@@ -555,6 +597,12 @@ public:
     }
 
     Toolchains autoDetect(const ToolchainDetector &detector) const final;
+
+    std::unique_ptr<ToolchainConfigWidget> createConfigurationWidget(
+        const ToolchainBundle &bundle) const override
+    {
+        return GccToolchain::createConfigurationWidget(bundle);
+    }
 };
 
 Toolchains IosToolchainFactory::autoDetect(const ToolchainDetector &detector) const
@@ -574,16 +622,16 @@ Toolchains IosToolchainFactory::autoDetect(const ToolchainDetector &detector) co
                 if (!toolChain) {
                     toolChain = new GccToolchain(ProjectExplorer::Constants::CLANG_TOOLCHAIN_TYPEID,
                                                  GccToolchain::Clang);
-                    toolChain->setPriority(Toolchain::PriorityHigh);
-                    toolChain->setDetection(Toolchain::AutoDetection);
                     toolChain->setLanguage(l);
-                    toolChain->setDisplayName(target.name);
                     toolChain->setPlatformCodeGenFlags(target.backendFlags);
                     toolChain->setPlatformLinkerFlags(target.backendFlags);
                     toolChain->resetToolchain(l == ProjectExplorer::Constants::CXX_LANGUAGE_ID ?
                                                   platform.cxxCompilerPath : platform.cCompilerPath);
                     existingClangToolchains.append(toolChain);
                 }
+                toolChain->setPriority(Toolchain::PriorityLow);
+                toolChain->setDetectionSource({DetectionSource::FromSystem, iosDetectionSource});
+                toolChain->setDisplayName(target.name);
                 toolchains.append(toolChain);
             };
 

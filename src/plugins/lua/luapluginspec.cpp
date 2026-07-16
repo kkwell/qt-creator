@@ -8,11 +8,8 @@
 
 #include <coreplugin/icore.h>
 
-#include <extensionsystem/extensionsystemtr.h>
-
 #include <utils/algorithm.h>
 #include <utils/appinfo.h>
-#include <utils/expected.h>
 
 #include <QJsonDocument>
 #include <QLoggingCategory>
@@ -22,6 +19,7 @@ Q_LOGGING_CATEGORY(luaPluginSpecLog, "qtc.lua.pluginspec", QtWarningMsg)
 
 using namespace ExtensionSystem;
 using namespace Utils;
+using namespace std::string_view_literals;
 
 namespace Lua {
 
@@ -29,7 +27,7 @@ class LuaScriptPluginPrivate
 {
 public:
     QString name;
-    QList<QString> cppDepends;
+    QStringList cppDepends;
     sol::function setup;
     sol::environment pluginEnvironment;
 };
@@ -46,13 +44,18 @@ LuaPluginSpec::LuaPluginSpec()
     : d(new LuaPluginSpecPrivate())
 {}
 
-expected_str<LuaPluginSpec *> LuaPluginSpec::create(const FilePath &filePath, sol::table pluginTable)
+Result<LuaPluginSpec *> LuaPluginSpec::create(const FilePath &filePath, sol::table pluginTable)
 {
     const FilePath directory = filePath.parentDir();
     std::unique_ptr<LuaPluginSpec> pluginSpec(new LuaPluginSpec());
 
-    if (!pluginTable.get_or<sol::function>("setup", {}))
+    if (!pluginTable.get_or<sol::function>("setup"sv, {}))
         return make_unexpected(QString("Plugin info table did not contain a setup function"));
+
+    if (pluginTable.get_or<QString>("Type"sv, {}).toLower() != "script") {
+        qCWarning(luaPluginSpecLog) << "Plugin info table did not contain a Type=\"Script\" field";
+        pluginTable.set("Type"sv, "script"sv);
+    }
 
     QJsonValue v = toJson(pluginTable);
     if (luaPluginSpecLog().isDebugEnabled()) {
@@ -93,19 +96,6 @@ ExtensionSystem::IPlugin *LuaPluginSpec::plugin() const
     return nullptr;
 }
 
-bool LuaPluginSpec::provides(PluginSpec *spec, const PluginDependency &dependency) const
-{
-    if (QString::compare(dependency.name, spec->name(), Qt::CaseInsensitive) != 0)
-        return false;
-
-    // Since we first released the lua support with Qt Creator 14.0.0, but the internal version
-    // number was still 13.0.82, we needed to special case this version.
-    if (versionCompare(dependency.version, "14.0.0") <= 0)
-        return true;
-
-    return (versionCompare(spec->version(), dependency.version) >= 0);
-}
-
 // LuaPluginSpec::For internal use {}
 bool LuaPluginSpec::loadLibrary()
 {
@@ -114,13 +104,14 @@ bool LuaPluginSpec::loadLibrary()
     setState(PluginSpec::State::Loaded);
     return true;
 }
+
 bool LuaPluginSpec::initializePlugin()
 {
     QTC_ASSERT(!d->activeLuaState, return false);
 
     std::unique_ptr<sol::state> activeLuaState = std::make_unique<sol::state>();
 
-    expected_str<sol::protected_function> setupResult = prepareSetup(*activeLuaState, *this);
+    Result<sol::protected_function> setupResult = prepareSetup(*activeLuaState, *this);
 
     if (!setupResult) {
         setError(Lua::Tr::tr("Cannot prepare extension setup: %1").arg(setupResult.error()));
@@ -155,19 +146,34 @@ bool LuaPluginSpec::initializeExtensions()
 
 bool LuaPluginSpec::delayedInitialize()
 {
-    return true;
+    return false;
 }
 ExtensionSystem::IPlugin::ShutdownFlag LuaPluginSpec::stop()
 {
-    d->activeLuaState->stack_clear();
+    setState(PluginSpec::State::Stopped);
     return ExtensionSystem::IPlugin::ShutdownFlag::SynchronousShutdown;
 }
 
-void LuaPluginSpec::kill() {}
+void LuaPluginSpec::kill()
+{
+    if (!d->activeLuaState)
+        return;
+
+    d->activeLuaState.reset();
+    setState(PluginSpec::State::Deleted);
+}
 
 bool LuaPluginSpec::printToOutputPane() const
 {
     return d->printToOutputPane;
+}
+
+Utils::FilePath LuaPluginSpec::installLocation(bool inUserFolder) const
+{
+    if (inUserFolder)
+        return appInfo().userLuaPlugins;
+
+    return appInfo().luaPlugins;
 }
 
 } // namespace Lua

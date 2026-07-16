@@ -4,14 +4,14 @@
 #include "externaltoolsfilter.h"
 
 #include "../coreconstants.h"
-#include "../coreplugin.h"
 #include "../coreplugintr.h"
 #include "../externaltool.h"
 #include "../externaltoolmanager.h"
 #include "../icore.h"
-#include "../messagemanager.h"
 
 #include <utils/qtcassert.h>
+
+using namespace QtTaskTree;
 
 namespace Core::Internal {
 
@@ -27,12 +27,9 @@ ExternalToolsFilter::ExternalToolsFilter()
 
 LocatorMatcherTasks ExternalToolsFilter::matchers()
 {
-    using namespace Tasking;
-
-    Storage<LocatorStorage> storage;
-
-    const auto onSetup = [storage] {
-        const QString input = storage->input();
+    const auto onSetup = [] {
+        const LocatorStorage &storage = *LocatorStorage::storage();
+        const QString input = storage.input();
 
         LocatorFilterEntries bestEntries;
         LocatorFilterEntries betterEntries;
@@ -51,13 +48,11 @@ LocatorMatcherTasks ExternalToolsFilter::matchers()
                 LocatorFilterEntry filterEntry;
                 filterEntry.displayName = tool->displayName();
                 filterEntry.acceptor = [tool] {
-                    auto runner = new ExternalToolRunner(tool);
-                    if (runner->hasError())
-                        MessageManager::writeFlashing(runner->errorString());
+                    tool->execute();
                     return AcceptResult();
                 };
                 filterEntry.extraInfo = tool->description();
-                filterEntry.highlightInfo = LocatorFilterEntry::HighlightInfo(index, input.length(), hDataType);
+                filterEntry.highlightInfo = LocatorFilterEntry::HighlightInfo(index, input.size(), hDataType);
 
                 if (filterEntry.displayName.startsWith(input, entryCaseSensitivity))
                     bestEntries.append(filterEntry);
@@ -71,16 +66,16 @@ LocatorMatcherTasks ExternalToolsFilter::matchers()
         configEntry.displayName = "Configure External Tool...";
         configEntry.extraInfo = "Opens External Tool settings";
         configEntry.acceptor = [] {
-            QMetaObject::invokeMethod(CorePlugin::instance(), [] {
-                ICore::showOptionsDialog(Constants::SETTINGS_ID_TOOLS);
+            QMetaObject::invokeMethod(ICore::instance(), [] {
+                ICore::showSettings(Constants::SETTINGS_ID_TOOLS);
             }, Qt::QueuedConnection);
             return AcceptResult();
         };
 
-        storage->reportOutput(bestEntries + betterEntries + goodEntries
-                              + LocatorFilterEntries{configEntry});
+        storage.reportOutput(bestEntries + betterEntries + goodEntries
+                             + LocatorFilterEntries{configEntry});
     };
-    return {{Sync(onSetup), storage}};
+    return {QSyncTask(onSetup)};
 }
 
 } // Core::Internal

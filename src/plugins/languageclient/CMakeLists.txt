@@ -15,7 +15,7 @@ add_qtc_plugin(LanguageClient
     diagnosticmanager.cpp diagnosticmanager.h
     documentsymbolcache.cpp documentsymbolcache.h
     dynamiccapabilities.cpp dynamiccapabilities.h
-    languageclient.qrc
+    foldingrangesupport.cpp foldingrangesupport.h
     languageclientcompletionassist.cpp languageclientcompletionassist.h
     languageclientfunctionhint.cpp languageclientfunctionhint.h
     languageclientformatter.cpp languageclientformatter.h
@@ -32,9 +32,19 @@ add_qtc_plugin(LanguageClient
     languageclienttr.h
     locatorfilter.cpp locatorfilter.h
     lspinspector.cpp lspinspector.h
+    mimetypesaspect.cpp mimetypesaspect.h
     progressmanager.cpp progressmanager.h
     semantichighlightsupport.cpp semantichighlightsupport.h
     snippet.cpp snippet.h
+)
+
+qt_add_resources(LanguageClient lc_images_rcc
+  PREFIX "/languageclient"
+  FILES
+    images/languageclient.png
+    images/languageclient@2x.png
+    images/settingscategory_languageclient.png
+    images/settingscategory_languageclient@2x.png
 )
 
 add_subdirectory(lualanguageclient)

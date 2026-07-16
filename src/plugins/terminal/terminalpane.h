@@ -7,16 +7,26 @@
 
 #include <coreplugin/ioutputpane.h>
 
+#include <utils/documenttabbar.h>
 #include <utils/terminalhooks.h>
 
 #include <QAction>
 #include <QMenu>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QToolButton>
+
+class QComboBox;
 
 namespace Terminal {
 
 class TerminalWidget;
+
+class TabWidget : public QTabWidget
+{
+public:
+    TabWidget();
+};
 
 class TerminalPane : public Core::IOutputPane
 {
@@ -52,19 +62,24 @@ private:
     void setupTerminalWidget(TerminalWidget *terminal);
     void initActions();
     void createShellMenu();
+    void contextMenuRequested(const QPoint &pos);
 
 private:
-    QTabWidget m_tabWidget;
+    TabWidget m_tabWidget;
 
     QToolButton *m_newTerminalButton{nullptr};
     QToolButton *m_closeTerminalButton{nullptr};
     QToolButton *m_openSettingsButton{nullptr};
     QToolButton *m_escSettingButton{nullptr};
     QToolButton *m_lockKeyboardButton{nullptr};
+    QToolButton *m_variablesButton{nullptr};
 
     QAction *m_newTerminalAction{nullptr};
     QAction *m_closeTerminalAction{nullptr};
     QAction *m_toggleKeyboardLockAction{nullptr};
+    QAction *m_closeCurrentTabAction{nullptr};
+    QAction *m_closeAllTabsAction{nullptr};
+    QAction *m_closeOtherTabsAction{nullptr};
 
     QMenu m_shellMenu;
 

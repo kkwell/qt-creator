@@ -7,13 +7,12 @@
 #include "environment.h"
 #include "guard.h"
 #include "hostosinfo.h"
-#include "launcherinterface.h"
-#include "launchersocket.h"
 #include "processhelper.h"
+#include "processinterface.h"
 #include "processreaper.h"
 #include "stringutils.h"
 #include "terminalhooks.h"
-#include "threadutils.h"
+#include "textcodec.h"
 #include "utilstr.h"
 
 #include <iptyprocess.h>
@@ -24,15 +23,17 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QLoggingCategory>
+#include <QMutex>
 #include <QScopeGuard>
-#include <QTextCodec>
 #include <QThread>
 #include <QTimer>
+#include <QWaitCondition>
 
 #ifdef QT_GUI_LIB
 // qmlpuppet does not use that.
 #include <QGuiApplication>
 #include <QMessageBox>
+#include <QStringConverter>
 #endif
 
 #include <algorithm>
@@ -40,9 +41,9 @@
 #include <chrono>
 #include <functional>
 #include <iostream>
-#include <limits>
 #include <memory>
 
+using namespace QtTaskTree;
 using namespace Utils::Internal;
 
 using namespace std::chrono;
@@ -57,7 +58,7 @@ const char QTC_PROCESS_STARTTIME[] = "__STARTTIME__";
 static bool isGuiEnabled()
 {
     static bool isGuiApp = qobject_cast<QGuiApplication *>(qApp);
-    return isGuiApp && isMainThread();
+    return isGuiApp && QThread::isMainThread();
 }
 
 static bool isMeasuring()
@@ -81,7 +82,7 @@ public:
         timer.start();
         const QScopeGuard cleanup([this, &timer] {
             const qint64 currentNsecs = timer.nsecsElapsed();
-            const bool mainThread = isMainThread();
+            const bool mainThread = QThread::isMainThread();
             const int hitThisAll = m_hitThisAll.fetch_add(1) + 1;
             const int hitAllAll = m_hitAllAll.fetch_add(1) + 1;
             const int hitThisMain = mainThread
@@ -193,12 +194,18 @@ public:
     void handleRest();
     void append(const QByteArray &text);
 
-    QByteArray readAllData() { return std::exchange(rawData, {}); }
+    QByteArray readAllRawData() { return std::exchange(rawData, {}); }
+
+    QString readAllData()
+    {
+        QString msg = decoder.decode(rawData);
+        rawData.clear();
+        return msg;
+    }
 
     QByteArray rawData;
     QString incompleteLineBuffer; // lines not yet signaled
-    QTextCodec *codec = nullptr; // Not owner
-    std::unique_ptr<QTextCodec::ConverterState> codecState;
+    QStringDecoder decoder;
     std::function<void(const QString &lines)> outputCallback;
     TextChannelMode m_textChannelMode = TextChannelMode::Off;
 
@@ -224,10 +231,14 @@ void DefaultImpl::start()
     if (!ensureProgramExists(program))
         return;
 
-    if (m_setup.m_runAsRoot && !HostOsInfo::isWindowsHost()) {
+    if (!m_setup.m_runAsUser.isEmpty() && !HostOsInfo::isWindowsHost()) {
         arguments.prepend(program);
         arguments.prepend("-E");
         arguments.prepend("-A");
+        if (m_setup.m_runAsUser != "root") {
+            arguments.prepend(m_setup.m_runAsUser);
+            arguments.prepend("-u");
+        }
         program = "sudo";
     }
 
@@ -237,13 +248,15 @@ void DefaultImpl::start()
 bool DefaultImpl::dissolveCommand(QString *program, QStringList *arguments)
 {
     const CommandLine &commandLine = m_setup.m_commandLine;
+    const OsType osType = commandLine.executable().osType();
+
     QString commandString;
-    ProcessArgs processArgs;
+    QString processArgs;
     const bool success = ProcessArgs::prepareCommand(commandLine, &commandString, &processArgs,
                                                      &m_setup.m_environment,
-                                                     &m_setup.m_workingDirectory);
+                                                     m_setup.rawWorkingDirectory());
 
-    if (commandLine.executable().osType() == OsTypeWindows) {
+    if (osType == OsTypeWindows) {
         QString args;
         if (m_setup.m_useCtrlCStub) {
             if (m_setup.m_lowPriority)
@@ -254,7 +267,7 @@ bool DefaultImpl::dissolveCommand(QString *program, QStringList *arguments)
         } else if (m_setup.m_lowPriority) {
             m_setup.m_belowNormalPriority = true;
         }
-        ProcessArgs::addArgs(&args, processArgs.toWindowsArgs());
+        ProcessArgs::addArgs(&args, processArgs);
         m_setup.m_nativeArguments = args;
         // Note: Arguments set with setNativeArgs will be appended to the ones
         // passed with start() below.
@@ -268,7 +281,7 @@ bool DefaultImpl::dissolveCommand(QString *program, QStringList *arguments)
             emit done(result);
             return false;
         }
-        *arguments = processArgs.toUnixArgs();
+        *arguments = ProcessArgs::splitArgs(processArgs, osType);
     }
     *program = commandString;
     return true;
@@ -287,7 +300,7 @@ static FilePath resolve(const FilePath &workingDir, const FilePath &filePath)
 
 bool DefaultImpl::ensureProgramExists(const QString &program)
 {
-    const FilePath programFilePath = resolve(m_setup.m_workingDirectory,
+    const FilePath programFilePath = resolve(m_setup.rawWorkingDirectory(),
                                              FilePath::fromString(program));
     if (programFilePath.exists() && programFilePath.isExecutableFile())
         return true;
@@ -300,42 +313,15 @@ bool DefaultImpl::ensureProgramExists(const QString &program)
     return false;
 }
 
-// TODO: Remove QProcessBlockingImpl later, after Creator 13.0 is released at least.
-
-// Rationale: QProcess::waitForReadyRead() waits only for one channel, either stdOut or stdErr.
-// Since we can't predict where the data will come first,
-// setting the QProcess::setReadChannel() in advance is a mis-design of the QProcess API.
-// This issue does not affect GeneralProcessBlockingImpl, but it might be not as optimal
-// as QProcessBlockingImpl. However, since we are blocking the caller thread anyway,
-// the small overhead in speed doesn't play the most significant role, thus the proper
-// behavior of Process::waitForReadyRead(), which listens to both channels, wins.
-
-// class QProcessBlockingImpl : public ProcessBlockingInterface
-// {
-// public:
-//     QProcessBlockingImpl(QProcess *process) : m_process(process) {}
-
-// private:
-//     bool waitForSignal(ProcessSignalType signalType, int msecs) final
-//     {
-//         switch (signalType) {
-//         case ProcessSignalType::Started:
-//             return m_process->waitForStarted(msecs);
-//         case ProcessSignalType::ReadyRead:
-//             return m_process->waitForReadyRead(msecs);
-//         case ProcessSignalType::Done:
-//             return m_process->waitForFinished(msecs);
-//         }
-//         return false;
-//     }
-
-//     QProcess *m_process = nullptr;
-// };
-
 class PtyProcessImpl final : public DefaultImpl
 {
 public:
-    ~PtyProcessImpl() { QTC_CHECK(m_setup.m_ptyData); m_setup.m_ptyData->setResizeHandler({}); }
+    ~PtyProcessImpl() {
+        QTC_CHECK(m_setup.m_ptyData);
+        m_setup.m_ptyData->setResizeHandler({});
+        if (m_ptyProcess)
+            m_ptyProcess->kill();
+    }
 
     qint64 write(const QByteArray &data) final
     {
@@ -400,22 +386,53 @@ public:
             penv = Environment::systemEnvironment().toProcessEnvironment();
         const QStringList senv = penv.toStringList();
 
-        bool startResult = m_ptyProcess->startProcess(executable,
-                                                      HostOsInfo::isWindowsHost()
-                                                          ? QStringList{m_setup.m_nativeArguments}
-                                                                << arguments
-                                                          : arguments,
-                                                      m_setup.m_workingDirectory.nativePath(),
-                                                      senv,
-                                                      m_setup.m_ptyData->size().width(),
-                                                      m_setup.m_ptyData->size().height());
+        connect(m_ptyProcess->notifier(), &QIODevice::readyRead, this, [this] {
+            if (m_setup.m_ptyData->ptyInputFlagsChangedHandler()
+                && m_inputFlags != m_ptyProcess->inputFlags()) {
+                m_inputFlags = m_ptyProcess->inputFlags();
+                m_setup.m_ptyData->ptyInputFlagsChangedHandler()(
+                    static_cast<Pty::PtyInputFlag>(m_inputFlags.toInt()));
+            }
+
+            const QByteArray data = m_ptyProcess->readAll();
+            if (!data.isEmpty())
+              emit readyRead(data, {});
+        });
+
+        connect(m_ptyProcess->notifier(), &QIODevice::aboutToClose, this, [this] {
+            if (m_ptyProcess) {
+                const ProcessResultData result
+                    = {m_ptyProcess->exitCode(), QProcess::NormalExit, QProcess::UnknownError, {}};
+
+                const QByteArray restOfOutput = m_ptyProcess->readAll();
+                if (!restOfOutput.isEmpty()) {
+                    emit readyRead(restOfOutput, {});
+                    m_ptyProcess->notifier()->disconnect();
+                }
+
+                emit done(result);
+                return;
+            }
+
+            const ProcessResultData result = {0, QProcess::NormalExit, QProcess::UnknownError, {}};
+            emit done(result);
+        });
+
+        bool startResult = m_ptyProcess->startProcess(
+            executable,
+            HostOsInfo::isWindowsHost() ? QStringList{m_setup.m_nativeArguments} << arguments
+                                        : arguments,
+            m_setup.fixedWorkingDirectory().nativePath(),
+            senv,
+            m_setup.m_ptyData->size().width(),
+            m_setup.m_ptyData->size().height());
 
         if (!startResult) {
-            const ProcessResultData result = {-1,
-                                              QProcess::CrashExit,
-                                              QProcess::FailedToStart,
-                                              "Failed to start pty process: "
-                                                  + m_ptyProcess->lastError()};
+            const ProcessResultData result
+                = {-1,
+                   QProcess::CrashExit,
+                   QProcess::FailedToStart,
+                   "Failed to start pty process: " + m_ptyProcess->lastError()};
             emit done(result);
             return;
         }
@@ -426,29 +443,6 @@ public:
             emit done(result);
             return;
         }
-
-        connect(m_ptyProcess->notifier(), &QIODevice::readyRead, this, [this] {
-            if (m_setup.m_ptyData->ptyInputFlagsChangedHandler()
-                && m_inputFlags != m_ptyProcess->inputFlags()) {
-                m_inputFlags = m_ptyProcess->inputFlags();
-                m_setup.m_ptyData->ptyInputFlagsChangedHandler()(
-                    static_cast<Pty::PtyInputFlag>(m_inputFlags.toInt()));
-            }
-
-            emit readyRead(m_ptyProcess->readAll(), {});
-        });
-
-        connect(m_ptyProcess->notifier(), &QIODevice::aboutToClose, this, [this] {
-            if (m_ptyProcess) {
-                const ProcessResultData result
-                    = {m_ptyProcess->exitCode(), QProcess::NormalExit, QProcess::UnknownError, {}};
-                emit done(result);
-                return;
-            }
-
-            const ProcessResultData result = {0, QProcess::NormalExit, QProcess::UnknownError, {}};
-            emit done(result);
-        });
 
         emit started(m_ptyProcess->pid());
     }
@@ -499,8 +493,6 @@ private:
         }
     }
 
-    // ProcessBlockingInterface *processBlockingInterface() const override { return m_blockingImpl; }
-
     void doDefaultStart(const QString &program, const QStringList &arguments) final
     {
         QTC_ASSERT(QThread::currentThread()->eventDispatcher(),
@@ -517,7 +509,7 @@ private:
         const QProcessEnvironment penv = m_setup.m_environment.toProcessEnvironment();
         if (!penv.isEmpty())
             m_process->setProcessEnvironment(penv);
-        m_process->setWorkingDirectory(m_setup.m_workingDirectory.path());
+        m_process->setWorkingDirectory(m_setup.fixedWorkingDirectory().path());
         m_process->setStandardInputFile(m_setup.m_standardInputFile);
         m_process->setProcessChannelMode(m_setup.m_processChannelMode);
         if (m_setup.m_lowPriority)
@@ -525,6 +517,7 @@ private:
         if (m_setup.m_unixTerminalDisabled)
             m_process->setUnixTerminalDisabled();
         m_process->setUseCtrlCStub(m_setup.m_useCtrlCStub);
+        m_process->setAllowCoreDumps(m_setup.m_allowCoreDumps);
         m_process->start(program, arguments, handler->openMode());
         handler->handleProcessStart();
     }
@@ -554,113 +547,6 @@ private:
     ProcessHelper *m_process = nullptr;
     // QProcessBlockingImpl *m_blockingImpl = nullptr;
 };
-
-static uint uniqueToken()
-{
-    static std::atomic_uint globalUniqueToken = 0;
-    return ++globalUniqueToken;
-}
-
-class ProcessLauncherBlockingImpl : public ProcessBlockingInterface
-{
-public:
-    ProcessLauncherBlockingImpl(CallerHandle *caller) : m_caller(caller) {}
-
-private:
-    bool waitForSignal(ProcessSignalType signalType, QDeadlineTimer timeout) final
-    {
-        // TODO: Remove CallerHandle::SignalType
-        const CallerHandle::SignalType type = [signalType] {
-            switch (signalType) {
-            case ProcessSignalType::Started:
-                return CallerHandle::SignalType::Started;
-            case ProcessSignalType::ReadyRead:
-                return CallerHandle::SignalType::ReadyRead;
-            case ProcessSignalType::Done:
-                return CallerHandle::SignalType::Done;
-            }
-            QTC_CHECK(false);
-            return CallerHandle::SignalType::NoSignal;
-        }();
-        return m_caller->waitForSignal(type, timeout);
-    }
-
-    CallerHandle *m_caller = nullptr;
-};
-
-class ProcessLauncherImpl final : public DefaultImpl
-{
-    Q_OBJECT
-public:
-    ProcessLauncherImpl() : m_token(uniqueToken())
-    {
-        m_handle = LauncherInterface::registerHandle(this, token());
-        m_handle->setProcessSetupData(&m_setup);
-        connect(m_handle, &CallerHandle::started,
-                this, &ProcessInterface::started);
-        connect(m_handle, &CallerHandle::readyRead,
-                this, &ProcessInterface::readyRead);
-        connect(m_handle, &CallerHandle::done,
-                this, &ProcessInterface::done);
-        m_blockingImpl = new ProcessLauncherBlockingImpl(m_handle);
-    }
-    ~ProcessLauncherImpl() final
-    {
-        m_handle->close();
-        LauncherInterface::unregisterHandle(token());
-        m_handle = nullptr;
-    }
-
-private:
-    qint64 write(const QByteArray &data) final { return m_handle->write(data); }
-    void sendControlSignal(ControlSignal controlSignal) final {
-        switch (controlSignal) {
-        case ControlSignal::Terminate:
-            m_handle->terminate();
-            break;
-        case ControlSignal::Kill:
-            m_handle->kill();
-            break;
-        case ControlSignal::Interrupt:
-            ProcessHelper::interruptPid(m_handle->processId());
-            break;
-        case ControlSignal::KickOff:
-            QTC_CHECK(false);
-            break;
-        case ControlSignal::CloseWriteChannel:
-            m_handle->closeWriteChannel();
-            break;
-        }
-    }
-
-    ProcessBlockingInterface *processBlockingInterface() const override { return m_blockingImpl; }
-
-    void doDefaultStart(const QString &program, const QStringList &arguments) final
-    {
-        m_handle->start(program, arguments);
-    }
-
-    quintptr token() const { return m_token; }
-
-    const uint m_token = 0;
-    // Lives in caller's thread.
-    CallerHandle *m_handle = nullptr;
-    ProcessLauncherBlockingImpl *m_blockingImpl = nullptr;
-};
-
-static ProcessImpl defaultProcessImplHelper()
-{
-    const QString value = qtcEnvironmentVariable("QTC_USE_QPROCESS", "TRUE").toUpper();
-    if (value != "FALSE" && value != "0")
-        return ProcessImpl::QProcess;
-    return ProcessImpl::ProcessLauncher;
-}
-
-static ProcessImpl defaultProcessImpl()
-{
-    static const ProcessImpl impl = defaultProcessImplHelper();
-    return impl;
-}
 
 class ProcessInterfaceSignal
 {
@@ -712,12 +598,12 @@ private:
     const ProcessResultData m_resultData;
 };
 
-class GeneralProcessBlockingImpl;
+class ProcessBlockingInterface;
 
 class ProcessInterfaceHandler : public QObject
 {
 public:
-    ProcessInterfaceHandler(GeneralProcessBlockingImpl *caller, ProcessInterface *process);
+    ProcessInterfaceHandler(ProcessBlockingInterface *caller, ProcessInterface *process);
 
     // Called from caller's thread exclusively.
     bool waitForSignal(ProcessSignalType newSignal, QDeadlineTimer timeout);
@@ -734,16 +620,23 @@ private:
     void handleDone(const ProcessResultData &data);
     void appendSignal(ProcessInterfaceSignal *newSignal);
 
-    GeneralProcessBlockingImpl *m_caller = nullptr;
+    ProcessBlockingInterface *m_caller = nullptr;
     QMutex m_mutex;
     QWaitCondition m_waitCondition;
 };
 
-class GeneralProcessBlockingImpl : public ProcessBlockingInterface
+class ProcessBlockingInterface : public QObject
 {
 public:
-    GeneralProcessBlockingImpl(ProcessPrivate *parent);
+    ProcessBlockingInterface(ProcessPrivate *parent);
 
+    // Wait for:
+    // - Started is being called only in Starting state.
+    // - ReadyRead is being called in Starting or Running state.
+    // - Done is being called in Starting or Running state.
+    bool waitForSignal(ProcessSignalType signalType, QDeadlineTimer timeout);
+
+private:
     void flush() { flushSignals(takeAllSignals()); }
     bool flushFor(ProcessSignalType signalType) {
         return flushSignals(takeSignalsFor(signalType), &signalType);
@@ -752,10 +645,6 @@ public:
     bool shouldFlush() const { QMutexLocker locker(&m_mutex); return !m_signals.isEmpty(); }
     // Called from ProcessInterfaceHandler thread exclusively.
     void appendSignal(ProcessInterfaceSignal *launcherSignal);
-
-private:
-    // Called from caller's thread exclusively
-    bool waitForSignal(ProcessSignalType newSignal, QDeadlineTimer timeout) final;
 
     QList<ProcessInterfaceSignal *> takeAllSignals();
     QList<ProcessInterfaceSignal *> takeSignalsFor(ProcessSignalType signalType);
@@ -766,6 +655,7 @@ private:
     void handleReadyReadSignal(const ReadyReadSignal *launcherSignal);
     void handleDoneSignal(const DoneSignal *launcherSignal);
 
+    friend class ProcessInterfaceHandler;
     ProcessPrivate *m_caller = nullptr;
     std::unique_ptr<ProcessInterfaceHandler> m_processHandler;
     mutable QMutex m_mutex;
@@ -784,6 +674,7 @@ public:
         m_killTimer.setSingleShot(true);
         connect(&m_killTimer, &QTimer::timeout, this, [this] {
             m_killTimer.stop();
+            emit q->stoppingForcefully();
             sendControlSignal(ControlSignal::Kill);
         });
         setupDebugLog();
@@ -794,16 +685,13 @@ public:
 
     ProcessInterface *createProcessInterface()
     {
+        if (m_processInterfaceCreator)
+            return m_processInterfaceCreator();
         if (m_setup.m_ptyData)
             return new PtyProcessImpl;
         if (m_setup.m_terminalMode != TerminalMode::Off)
             return Terminal::Hooks::instance().createTerminalProcessInterface();
-
-        const ProcessImpl impl = m_setup.m_processImpl == ProcessImpl::Default
-                               ? defaultProcessImpl() : m_setup.m_processImpl;
-        if (impl == ProcessImpl::QProcess)
-            return new QProcessImpl;
-        return new ProcessLauncherImpl;
+        return new QProcessImpl;
     }
 
     void setProcessInterface(ProcessInterface *process)
@@ -819,9 +707,7 @@ public:
         connect(m_process.get(), &ProcessInterface::done,
                 this, &ProcessPrivate::handleDone);
 
-        m_blockingInterface.reset(process->processBlockingInterface());
-        if (!m_blockingInterface)
-            m_blockingInterface.reset(new GeneralProcessBlockingImpl(this));
+        m_blockingInterface.reset(new ProcessBlockingInterface(this));
         m_blockingInterface->setParent(this);
     }
 
@@ -829,6 +715,8 @@ public:
     std::unique_ptr<ProcessBlockingInterface> m_blockingInterface;
     std::unique_ptr<ProcessInterface> m_process;
     ProcessSetupData m_setup;
+
+    Process::ProcessInterfaceCreator m_processInterfaceCreator;
 
     void handleStarted(qint64 processId, qint64 applicationMainThreadId);
     void handleReadyRead(const QByteArray &outputData, const QByteArray &errorData);
@@ -850,8 +738,8 @@ public:
     qint64 m_applicationMainThreadId = 0;
     ProcessResultData m_resultData;
 
-    QTextCodec *m_stdOutCodec = QTextCodec::codecForLocale();
-    QTextCodec *m_stdErrCodec = QTextCodec::codecForLocale();
+    std::optional<TextEncoding> m_stdOutEncoding;
+    std::optional<TextEncoding> m_stdErrEncoding;
 
     ProcessResult m_result = ProcessResult::StartFailed;
     ChannelBuffer m_stdOut;
@@ -859,12 +747,11 @@ public:
 
     time_point<system_clock, nanoseconds> m_startTimestamp = {};
     time_point<system_clock, nanoseconds> m_doneTimestamp = {};
-    bool m_timeOutMessageBoxEnabled = false;
 
     Guard m_guard;
 };
 
-ProcessInterfaceHandler::ProcessInterfaceHandler(GeneralProcessBlockingImpl *caller,
+ProcessInterfaceHandler::ProcessInterfaceHandler(ProcessBlockingInterface *caller,
                                                  ProcessInterface *process)
     : m_caller(caller)
 {
@@ -941,10 +828,10 @@ void ProcessInterfaceHandler::appendSignal(ProcessInterfaceSignal *newSignal)
     }
     m_waitCondition.wakeOne();
     // call in callers thread
-    QMetaObject::invokeMethod(m_caller, &GeneralProcessBlockingImpl::flush);
+    QMetaObject::invokeMethod(m_caller, &ProcessBlockingInterface::flush);
 }
 
-GeneralProcessBlockingImpl::GeneralProcessBlockingImpl(ProcessPrivate *parent)
+ProcessBlockingInterface::ProcessBlockingInterface(ProcessPrivate *parent)
     : m_caller(parent)
     , m_processHandler(new ProcessInterfaceHandler(this, parent->m_process.get()))
 {
@@ -954,14 +841,14 @@ GeneralProcessBlockingImpl::GeneralProcessBlockingImpl(ProcessPrivate *parent)
     // So the hierarchy looks like:
     // ProcessPrivate
     //  |
-    //  +- GeneralProcessBlockingImpl
+    //  +- ProcessBlockingInterface
     //      |
     //      +- ProcessInterfaceHandler
     //          |
     //          +- ProcessInterface
 }
 
-bool GeneralProcessBlockingImpl::waitForSignal(ProcessSignalType newSignal, QDeadlineTimer timeout)
+bool ProcessBlockingInterface::waitForSignal(ProcessSignalType newSignal, QDeadlineTimer timeout)
 {
     QTC_ASSERT(!m_guard.isLocked(), qWarning("Process::waitForSignal() called recursively. "
                                              "The call is being ignored."); return false);
@@ -985,14 +872,14 @@ bool GeneralProcessBlockingImpl::waitForSignal(ProcessSignalType newSignal, QDea
 }
 
 // Called from caller's thread exclusively
-QList<ProcessInterfaceSignal *> GeneralProcessBlockingImpl::takeAllSignals()
+QList<ProcessInterfaceSignal *> ProcessBlockingInterface::takeAllSignals()
 {
     QMutexLocker locker(&m_mutex);
     return std::exchange(m_signals, {});
 }
 
 // Called from caller's thread exclusively
-QList<ProcessInterfaceSignal *> GeneralProcessBlockingImpl::takeSignalsFor(ProcessSignalType signalType)
+QList<ProcessInterfaceSignal *> ProcessBlockingInterface::takeSignalsFor(ProcessSignalType signalType)
 {
     // If we are flushing for ReadyRead or Done - flush all.
     if (signalType != ProcessSignalType::Started)
@@ -1022,8 +909,8 @@ QList<ProcessInterfaceSignal *> GeneralProcessBlockingImpl::takeSignalsFor(Proce
 }
 
 // Called from caller's thread exclusively
-bool GeneralProcessBlockingImpl::flushSignals(const QList<ProcessInterfaceSignal *> &signalList,
-                                     ProcessSignalType *signalType)
+bool ProcessBlockingInterface::flushSignals(const QList<ProcessInterfaceSignal *> &signalList,
+                                            ProcessSignalType *signalType)
 {
     bool signalMatched = false;
     for (const ProcessInterfaceSignal *storedSignal : std::as_const(signalList)) {
@@ -1048,23 +935,23 @@ bool GeneralProcessBlockingImpl::flushSignals(const QList<ProcessInterfaceSignal
     return signalMatched;
 }
 
-void GeneralProcessBlockingImpl::handleStartedSignal(const StartedSignal *aSignal)
+void ProcessBlockingInterface::handleStartedSignal(const StartedSignal *aSignal)
 {
     m_caller->handleStarted(aSignal->processId(), aSignal->applicationMainThreadId());
 }
 
-void GeneralProcessBlockingImpl::handleReadyReadSignal(const ReadyReadSignal *aSignal)
+void ProcessBlockingInterface::handleReadyReadSignal(const ReadyReadSignal *aSignal)
 {
     m_caller->handleReadyRead(aSignal->stdOut(), aSignal->stdErr());
 }
 
-void GeneralProcessBlockingImpl::handleDoneSignal(const DoneSignal *aSignal)
+void ProcessBlockingInterface::handleDoneSignal(const DoneSignal *aSignal)
 {
     m_caller->handleDone(aSignal->resultData());
 }
 
 // Called from ProcessInterfaceHandler thread exclusively.
-void GeneralProcessBlockingImpl::appendSignal(ProcessInterfaceSignal *newSignal)
+void ProcessBlockingInterface::appendSignal(ProcessInterfaceSignal *newSignal)
 {
     QMutexLocker locker(&m_mutex);
     m_signals.append(newSignal);
@@ -1110,10 +997,16 @@ void ProcessPrivate::sendControlSignal(ControlSignal controlSignal)
 
 void ProcessPrivate::clearForRun()
 {
+    if (!m_stdOutEncoding)
+        m_stdOutEncoding = m_setup.m_commandLine.executable().processStdOutEncoding();
     m_stdOut.clearForRun();
-    m_stdOut.codec = m_stdOutCodec;
+    m_stdOut.decoder = QStringDecoder(m_stdOutEncoding->name());
+
+    if (!m_stdErrEncoding)
+        m_stdErrEncoding = m_setup.m_commandLine.executable().processStdErrEncoding();
     m_stdErr.clearForRun();
-    m_stdErr.codec = m_stdErrCodec;
+    m_stdErr.decoder = QStringDecoder(m_stdErrEncoding->name());
+
     m_result = ProcessResult::StartFailed;
     m_startTimestamp = {};
     m_doneTimestamp = {};
@@ -1154,11 +1047,6 @@ Process::~Process()
     if (d->m_process)
         d->m_process->disconnect();
     delete d;
-}
-
-void Process::setProcessImpl(ProcessImpl processImpl)
-{
-    d->m_setup.m_processImpl = processImpl;
 }
 
 void Process::setPtyData(const std::optional<Pty::Data> &data)
@@ -1213,23 +1101,23 @@ const Environment &Process::controlEnvironment() const
 
 void Process::setRunData(const ProcessRunData &data)
 {
-    if (data.workingDirectory.needsDevice() && data.command.executable().needsDevice()) {
+    if (!data.workingDirectory.isLocal() && !data.command.executable().isLocal()) {
         QTC_CHECK(data.workingDirectory.isSameDevice(data.command.executable()));
     }
     d->m_setup.m_commandLine = data.command;
-    d->m_setup.m_workingDirectory = data.workingDirectory;
+    d->m_setup.setWorkingDirectory(data.workingDirectory);
     d->m_setup.m_environment = data.environment;
 }
 
 ProcessRunData Process::runData() const
 {
-    return {d->m_setup.m_commandLine, d->m_setup.m_workingDirectory, d->m_setup.m_environment};
+    return {d->m_setup.m_commandLine, d->m_setup.rawWorkingDirectory(), d->m_setup.m_environment};
 }
 
 void Process::setCommand(const CommandLine &cmdLine)
 {
-    if (d->m_setup.m_workingDirectory.needsDevice() && cmdLine.executable().needsDevice()) {
-        QTC_CHECK(d->m_setup.m_workingDirectory.isSameDevice(cmdLine.executable()));
+    if (!d->m_setup.rawWorkingDirectory().isLocal() && !cmdLine.executable().isLocal()) {
+        QTC_CHECK(d->m_setup.rawWorkingDirectory().isSameDevice(cmdLine.executable()));
     }
     d->m_setup.m_commandLine = cmdLine;
 }
@@ -1241,20 +1129,25 @@ const CommandLine &Process::commandLine() const
 
 FilePath Process::workingDirectory() const
 {
-    return d->m_setup.m_workingDirectory;
+    return d->m_setup.rawWorkingDirectory();
 }
 
 void Process::setWorkingDirectory(const FilePath &dir)
 {
-    if (dir.needsDevice() && d->m_setup.m_commandLine.executable().needsDevice()) {
+    if (!dir.isLocal() && !d->m_setup.m_commandLine.executable().isLocal()) {
         QTC_CHECK(dir.isSameDevice(d->m_setup.m_commandLine.executable()));
     }
-    d->m_setup.m_workingDirectory = dir;
+    d->m_setup.setWorkingDirectory(dir);
 }
 
 void Process::setUseCtrlCStub(bool enabled)
 {
     d->m_setup.m_useCtrlCStub = enabled;
+}
+
+void Process::setAllowCoreDumps(bool enabled)
+{
+    d->m_setup.m_allowCoreDumps = enabled;
 }
 
 void Process::start()
@@ -1264,12 +1157,25 @@ void Process::start()
                qWarning("Restarting the Process directly from one of its signal handlers will "
                         "lead to crash! Consider calling close() prior to direct restart."));
     d->clearForRun();
+
+    if (d->m_setup.m_commandLine.executable().isEmpty()
+        && d->m_setup.m_commandLine.executable().scheme().isEmpty()
+        && d->m_setup.m_commandLine.executable().host().isEmpty()) {
+        d->m_result = ProcessResult::StartFailed;
+        d->m_resultData.m_exitCode = 255;
+        d->m_resultData.m_exitStatus = QProcess::CrashExit;
+        d->m_resultData.m_errorString = Tr::tr("No executable specified.");
+        d->m_resultData.m_error = QProcess::FailedToStart;
+        d->emitGuardedSignal(&Process::done);
+        return;
+    }
+
     ProcessInterface *processImpl = nullptr;
-    if (d->m_setup.m_commandLine.executable().needsDevice()) {
+    if (d->m_setup.m_commandLine.executable().isLocal() || d->m_processInterfaceCreator) {
+        processImpl = d->createProcessInterface();
+    } else {
         QTC_ASSERT(s_deviceHooks.processImplHook, return);
         processImpl = s_deviceHooks.processImplHook(commandLine().executable());
-    } else {
-        processImpl = d->createProcessInterface();
     }
 
     if (!processImpl) {
@@ -1346,14 +1252,14 @@ void Process::setAbortOnMetaChars(bool abort)
     d->m_setup.m_abortOnMetaChars = abort;
 }
 
-void Process::setRunAsRoot(bool on)
+void Process::setProcessInterfaceCreator(const ProcessInterfaceCreator &creator)
 {
-    d->m_setup.m_runAsRoot = on;
+    d->m_processInterfaceCreator = creator;
 }
 
-bool Process::isRunAsRoot() const
+void Process::setRunAsUser(const QString &user)
 {
-    return d->m_setup.m_runAsRoot;
+    d->m_setup.m_runAsUser = user;
 }
 
 void Process::setStandardInputFile(const QString &inputFile)
@@ -1365,9 +1271,9 @@ QString Process::toStandaloneCommandLine() const
 {
     QStringList parts;
     parts.append("/usr/bin/env");
-    if (!d->m_setup.m_workingDirectory.isEmpty()) {
+    if (!d->m_setup.rawWorkingDirectory().isEmpty()) {
         parts.append("-C");
-        parts.append(d->m_setup.m_workingDirectory.path());
+        parts.append(d->m_setup.rawWorkingDirectory().path());
     }
     parts.append("-i");
     if (d->m_setup.m_environment.hasChanges()) {
@@ -1398,6 +1304,22 @@ void Process::setForceDefaultErrorModeOnWindows(bool force)
 bool Process::forceDefaultErrorModeOnWindows() const
 {
     return d->m_setup.m_forceDefaultErrorMode;
+}
+
+ProcessInterface *Process::takeProcessInterface()
+{
+    QTC_ASSERT(QThread::currentThread() == thread(), return nullptr);
+    QTC_ASSERT(state() == QProcess::NotRunning, return nullptr);
+    QTC_ASSERT(d->m_process, return nullptr);
+    QTC_ASSERT(d->m_process->thread() == thread(), return nullptr);
+    if (d->m_blockingInterface) {
+        d->m_blockingInterface->disconnect();
+        d->m_blockingInterface.release()->deleteLater();
+    }
+    d->clearForRun();
+    d->m_process->disconnect();
+    d->m_process->setParent(nullptr);
+    return d->m_process.release();
 }
 
 void Process::setExtraData(const QString &key, const QVariant &value)
@@ -1595,12 +1517,12 @@ bool Process::waitForFinished(QDeadlineTimer timeout)
 
 QByteArray Process::readAllRawStandardOutput()
 {
-    return d->m_stdOut.readAllData();
+    return d->m_stdOut.readAllRawData();
 }
 
 QByteArray Process::readAllRawStandardError()
 {
-    return d->m_stdErr.readAllData();
+    return d->m_stdErr.readAllRawData();
 }
 
 qint64 Process::write(const QString &input)
@@ -1659,17 +1581,22 @@ void Process::stop()
         return;
 
     d->sendControlSignal(ControlSignal::Terminate);
+
+    // done() signal could have been sent synchronously - see TerminalInterface::killInferiorProcess()
+    if (state() == QProcess::NotRunning)
+        return;
+
     d->m_killTimer.start(d->m_process->m_setup.m_reaperTimeout);
 }
 
 QString Process::readAllStandardOutput()
 {
-    return QString::fromUtf8(readAllRawStandardOutput());
+    return d->m_stdOut.readAllData();
 }
 
 QString Process::readAllStandardError()
 {
-    return QString::fromUtf8(readAllRawStandardError());
+    return d->m_stdErr.readAllData();
 }
 
 QString Process::exitMessage(const CommandLine &command, ProcessResult result,
@@ -1693,9 +1620,31 @@ QString Process::exitMessage(const CommandLine &command, ProcessResult result,
     return {};
 }
 
-QString Process::exitMessage() const
+QString Process::exitMessage(FailureMessageFormat format) const
 {
-    return exitMessage(commandLine(), result(), exitCode(), processDuration());
+    QString msg = exitMessage(commandLine(), result(), exitCode(), processDuration());
+    if (result() == ProcessResult::StartFailed) {
+        msg.append(' ');
+        msg.append(errorString());
+        return msg;
+    }
+    if (format == FailureMessageFormat::Plain || result() == ProcessResult::FinishedWithSuccess)
+        return msg;
+    if (format == FailureMessageFormat::WithStdErr
+        || format == FailureMessageFormat::WithAllOutput) {
+        const QString stdErr = cleanedStdErr();
+        if (!stdErr.isEmpty()) {
+            msg.append('\n').append(Tr::tr("Standard error output was:")).append('\n')
+                .append(stdErr);
+        }
+    }
+    if (format == FailureMessageFormat::WithStdOut
+        || format == FailureMessageFormat::WithAllOutput) {
+        const QString stdOut = cleanedStdOut();
+        if (!stdOut.isEmpty())
+            msg.append('\n').append(Tr::tr("Standard output was:")).append('\n').append(stdOut);
+    }
+    return msg;
 }
 
 milliseconds Process::processDuration() const
@@ -1753,13 +1702,15 @@ QByteArray Process::rawStdErr() const
 QString Process::stdOut() const
 {
     QTC_CHECK(d->m_stdOut.keepRawData);
-    return d->m_stdOutCodec->toUnicode(d->m_stdOut.rawData);
+    QTC_ASSERT(d->m_stdOutEncoding, return {}); // Process was not started
+    return d->m_stdOut.decoder.decode(d->m_stdOut.rawData);
 }
 
 QString Process::stdErr() const
 {
     QTC_CHECK(d->m_stdErr.keepRawData);
-    return d->m_stdErrCodec->toUnicode(d->m_stdErr.rawData);
+    QTC_ASSERT(d->m_stdErrEncoding, return {}); // Process was not started
+    return d->m_stdErr.decoder.decode(d->m_stdErr.rawData);
 }
 
 QString Process::cleanedStdOut() const
@@ -1804,7 +1755,6 @@ QTCREATOR_UTILS_EXPORT QDebug operator<<(QDebug str, const Process &r)
 void ChannelBuffer::clearForRun()
 {
     rawData.clear();
-    codecState.reset(new QTextCodec::ConverterState);
     incompleteLineBuffer.clear();
 }
 
@@ -1823,14 +1773,16 @@ void ChannelBuffer::append(const QByteArray &text)
         return;
 
     // Convert and append the new input to the buffer of incomplete lines
-    incompleteLineBuffer.append(codec->toUnicode(text.constData(), text.size(), codecState.get()));
+    incompleteLineBuffer.append(decoder.decode(text));
+
+    QStringView bufferView(incompleteLineBuffer);
 
     do {
-        // Any completed lines in the incompleteLineBuffer?
+        // Any completed lines in the bufferView?
         int pos = -1;
         if (emitSingleLines) {
-            const int posn = incompleteLineBuffer.indexOf('\n');
-            const int posr = incompleteLineBuffer.indexOf('\r');
+            const int posn = bufferView.indexOf('\n');
+            const int posr = bufferView.indexOf('\r');
             if (posn != -1) {
                 if (posr != -1) {
                     if (posn == posr + 1)
@@ -1844,16 +1796,16 @@ void ChannelBuffer::append(const QByteArray &text)
                 pos = posr; // Make sure internal '\r' triggers a line output
             }
         } else {
-            pos = qMax(incompleteLineBuffer.lastIndexOf('\n'),
-                       incompleteLineBuffer.lastIndexOf('\r'));
+            pos = qMax(bufferView.lastIndexOf('\n'),
+                       bufferView.lastIndexOf('\r'));
         }
 
         if (pos == -1)
             break;
 
         // Get completed lines and remove them from the incompleteLinesBuffer:
-        const QString line = Utils::normalizeNewlines(incompleteLineBuffer.left(pos + 1));
-        incompleteLineBuffer = incompleteLineBuffer.mid(pos + 1);
+        const QString line = Utils::normalizeNewlines(bufferView.left(pos + 1));
+        bufferView = bufferView.mid(pos + 1);
 
         QTC_ASSERT(outputCallback, return);
         outputCallback(line);
@@ -1861,6 +1813,7 @@ void ChannelBuffer::append(const QByteArray &text)
         if (!emitSingleLines)
             break;
     } while (true);
+    incompleteLineBuffer = bufferView.toString();
 }
 
 void ChannelBuffer::handleRest()
@@ -1871,28 +1824,21 @@ void ChannelBuffer::handleRest()
     }
 }
 
-void Process::setCodec(QTextCodec *c)
+void Process::setEncoding(const TextEncoding &encoding)
 {
-    QTC_ASSERT(c, return);
-    d->m_stdOutCodec = c;
-    d->m_stdErrCodec = c;
+    d->m_stdOutEncoding = encoding;
+    d->m_stdErrEncoding = encoding;
 }
 
-void Process::setStdOutCodec(QTextCodec *c)
+void Process::setUtf8Codec()
 {
-    QTC_ASSERT(c, return);
-    d->m_stdOutCodec = c;
+    d->m_stdOutEncoding = QStringDecoder::Utf8;
+    d->m_stdErrEncoding = QStringDecoder::Utf8;
 }
 
-void Process::setStdErrCodec(QTextCodec *c)
+void Process::setUtf8StdOutCodec()
 {
-    QTC_ASSERT(c, return);
-    d->m_stdErrCodec = c;
-}
-
-void Process::setTimeOutMessageBoxEnabled(bool v)
-{
-    d->m_timeOutMessageBoxEnabled = v;
+    d->m_stdOutEncoding = QStringDecoder::Utf8;
 }
 
 void Process::setWriteData(const QByteArray &writeData)
@@ -1900,68 +1846,31 @@ void Process::setWriteData(const QByteArray &writeData)
     d->m_setup.m_writeData = writeData;
 }
 
-void Process::runBlocking(seconds timeout, EventLoopMode eventLoopMode)
+void Process::runBlocking(seconds timeout)
 {
     QDateTime startTime;
     static const int blockingThresholdMs = qtcEnvironmentVariableIntValue("QTC_PROCESS_THRESHOLD");
 
-    const auto handleStart = [this, eventLoopMode, &startTime] {
-        // Attach a dynamic property with info about blocking type
-        d->storeEventLoopDebugInfo(int(eventLoopMode));
+    // Attach a dynamic property with info about blocking type
+    d->storeEventLoopDebugInfo(true);
 
-        if (blockingThresholdMs > 0 && isMainThread())
-            startTime = QDateTime::currentDateTime();
-        start();
+    if (blockingThresholdMs > 0 && QThread::isMainThread())
+        startTime = QDateTime::currentDateTime();
+    start();
 
-        // Remove the dynamic property so that it's not reused in subseqent start()
-        d->storeEventLoopDebugInfo({});
-    };
+    // Remove the dynamic property so that it's not reused in subseqent start()
+    d->storeEventLoopDebugInfo({});
 
-    const auto handleTimeout = [this] {
-        if (state() == QProcess::NotRunning)
-            return;
+    if (state() != QProcess::NotRunning && !waitForFinished(timeout)) {
         stop();
+        // TODO: This arbitrary 2s causes flakiness of:
+        //       tst_Process::runBlockingStdOut:"Short timeout without end of line".
         QTC_CHECK(waitForFinished(2s));
-    };
-
-    if (eventLoopMode == EventLoopMode::On) {
-#ifdef QT_GUI_LIB
-        if (isGuiEnabled())
-            QGuiApplication::setOverrideCursor(Qt::WaitCursor);
-#endif
-        QEventLoop eventLoop(this);
-
-        // Queue the call to start() so that it's executed after the nested event loop is started,
-        // otherwise it fails on Windows with QProcessImpl. See QTCREATORBUG-30066.
-        QMetaObject::invokeMethod(this, handleStart, Qt::QueuedConnection);
-
-        std::function<void(void)> timeoutHandler = {};
-        if (timeout > seconds::zero()) {
-            timeoutHandler = [this, &eventLoop, &timeoutHandler, &handleTimeout, timeout] {
-                if (!d->m_timeOutMessageBoxEnabled || askToKill(d->m_setup.m_commandLine)) {
-                    handleTimeout();
-                    return;
-                }
-                QTimer::singleShot(timeout, &eventLoop, timeoutHandler);
-            };
-            QTimer::singleShot(timeout, &eventLoop, timeoutHandler);
-        }
-
-        connect(this, &Process::done, &eventLoop, [&eventLoop] { eventLoop.quit(); });
-
-        eventLoop.exec(QEventLoop::ExcludeUserInputEvents);
-#ifdef QT_GUI_LIB
-        if (isGuiEnabled())
-            QGuiApplication::restoreOverrideCursor();
-#endif
-    } else {
-        handleStart();
-        if (state() != QProcess::NotRunning && !waitForFinished(timeout))
-            handleTimeout();
     }
+
     if (blockingThresholdMs > 0) {
         const int timeDiff = startTime.msecsTo(QDateTime::currentDateTime());
-        if (timeDiff > blockingThresholdMs && isMainThread()) {
+        if (timeDiff > blockingThresholdMs && QThread::isMainThread()) {
             qWarning() << "Blocking process " << d->m_setup.m_commandLine << "took" << timeDiff
                        << "ms, longer than threshold" << blockingThresholdMs;
         }
@@ -2082,7 +1991,7 @@ void ProcessPrivate::handleDone(const ProcessResultData &data)
 
     switch (m_state) {
     case QProcess::NotRunning:
-        QTC_CHECK(false); // Can't happen
+        QTC_ASSERT(false, return); // Can't happen
         break;
     case QProcess::Starting:
         QTC_CHECK(m_resultData.m_error == QProcess::FailedToStart);
@@ -2100,6 +2009,9 @@ void ProcessPrivate::handleDone(const ProcessResultData &data)
     // HACK: See QIODevice::errorString() implementation.
     if (m_resultData.m_error == QProcess::UnknownError)
         m_resultData.m_errorString.clear();
+    if (m_resultData.m_error == QProcess::FailedToStart && m_resultData.m_errorString.isEmpty())
+        m_resultData.m_errorString = Tr::tr("Either the invoked program is missing, or you may have "
+                                            "insufficient permissions to invoke the program.");
 
     if (m_result != ProcessResult::Canceled && m_resultData.m_error != QProcess::FailedToStart) {
         switch (m_resultData.m_exitStatus) {
@@ -2123,11 +2035,7 @@ void ProcessPrivate::handleDone(const ProcessResultData &data)
 
 static QString blockingMessage(const QVariant &variant)
 {
-    if (!variant.isValid())
-        return "non blocking";
-    if (variant.toInt() == int(EventLoopMode::On))
-        return "blocking with event loop";
-    return "blocking without event loop";
+    return variant.isValid() ? QString("blocking") : QString("non blocking");
 }
 
 void ProcessPrivate::setupDebugLog()
@@ -2148,7 +2056,7 @@ void ProcessPrivate::setupDebugLog()
         qCDebug(processLog).nospace().noquote()
             << "Process " << currentNumber << " starting ("
             << qPrintable(blockingMessage(property(QTC_PROCESS_BLOCKING_TYPE)))
-            << (isMainThread() ? ", main thread" : "")
+            << (QThread::isMainThread() ? ", main thread" : "")
             << "): " << m_setup.m_commandLine.toUserOutput();
         setProperty(QTC_PROCESS_NUMBER, currentNumber);
     });
@@ -2185,18 +2093,12 @@ void ProcessPrivate::storeEventLoopDebugInfo(const QVariant &value)
         setProperty(QTC_PROCESS_BLOCKING_TYPE, value);
 }
 
-ProcessTaskAdapter::ProcessTaskAdapter()
+void ProcessTaskAdapter::operator()(Process *task, QTaskInterface *iface)
 {
-    connect(task(), &Process::done, this, [this] {
-        emit done(Tasking::toDoneResult(task()->result() == ProcessResult::FinishedWithSuccess));
-    });
-}
-
-void ProcessTaskAdapter::start()
-{
-    task()->start();
+    QObject::connect(task, &Process::done, iface, [iface, task] {
+        iface->reportDone(toDoneResult(task->result() == ProcessResult::FinishedWithSuccess));
+    }, Qt::SingleShotConnection);
+    task->start();
 }
 
 } // namespace Utils
-
-#include "qtcprocess.moc"

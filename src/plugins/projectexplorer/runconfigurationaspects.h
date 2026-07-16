@@ -4,6 +4,7 @@
 #pragma once
 
 #include "environmentaspect.h"
+#include "kitaspect.h"
 
 #include <utils/aspects.h>
 
@@ -69,7 +70,6 @@ public:
     Utils::FilePath unexpandedWorkingDirectory() const;
     void setDefaultWorkingDirectory(const Utils::FilePath &defaultWorkingDirectory);
     Utils::PathChooser *pathChooser() const;
-    void setMacroExpander(const Utils::MacroExpander *expander);
     void setEnvironment(EnvironmentAspect *envAspect);
 
 private:
@@ -83,7 +83,6 @@ private:
     Utils::FilePath m_defaultWorkingDirectory;
     QPointer<Utils::PathChooser> m_chooser;
     QPointer<QToolButton> m_resetButton;
-    const Utils::MacroExpander *m_macroExpander = nullptr;
 };
 
 class PROJECTEXPLORER_EXPORT ArgumentsAspect : public Utils::BaseAspect
@@ -94,16 +93,15 @@ public:
     explicit ArgumentsAspect(Utils::AspectContainer *container = nullptr);
 
     void addToLayoutImpl(Layouting::Layout &parent) override;
+    void setFocusToInputField();
 
     QString operator()() const { return arguments(); }
     QString arguments() const;
     QString unexpandedArguments() const;
 
     void setArguments(const QString &arguments);
-    void setLabelText(const QString &labelText);
     void setResetter(const std::function<QString()> &resetter);
     void resetArguments();
-    void setMacroExpander(const Utils::MacroExpander *macroExpander);
 
     struct Data : BaseAspect::Data
     {
@@ -117,7 +115,6 @@ private:
     QWidget *setupChooser();
 
     QString m_arguments;
-    QString m_labelText;
     QPointer<Utils::FancyLineEdit> m_chooser;
     QPointer<QPlainTextEdit> m_multiLineChooser;
     QPointer<Utils::ExpandButton> m_multiLineButton;
@@ -125,7 +122,6 @@ private:
     bool m_multiLine = false;
     mutable bool m_currentlyExpanding = false;
     std::function<QString()> m_resetter;
-    const Utils::MacroExpander *m_macroExpander = nullptr;
 };
 
 class PROJECTEXPLORER_EXPORT UseLibraryPathsAspect : public Utils::BoolAspect
@@ -134,6 +130,16 @@ class PROJECTEXPLORER_EXPORT UseLibraryPathsAspect : public Utils::BoolAspect
 
 public:
     UseLibraryPathsAspect(Utils::AspectContainer *container = nullptr);
+
+    bool operator()() const { return isEnabled() && Utils::BoolAspect::operator()(); }
+};
+
+class PROJECTEXPLORER_EXPORT UseVncDisplayAspect : public Utils::BoolAspect
+{
+    Q_OBJECT
+
+public:
+    UseVncDisplayAspect(Utils::AspectContainer *container = nullptr);
 
     bool operator()() const { return isEnabled() && Utils::BoolAspect::operator()(); }
 };
@@ -151,7 +157,38 @@ class PROJECTEXPLORER_EXPORT RunAsRootAspect : public Utils::BoolAspect
     Q_OBJECT
 
 public:
-    RunAsRootAspect(Utils::AspectContainer *container = nullptr);
+    [[deprecated("Use RunAsAspect instead")]] RunAsRootAspect(
+        Utils::AspectContainer *container = nullptr);
+};
+
+class PROJECTEXPLORER_EXPORT RunAsAspect : public Utils::AspectContainer
+{
+    Q_OBJECT
+
+public:
+    RunAsAspect(Utils::AspectContainer *container = nullptr);
+
+    // Empty means default
+    QString user() const;
+
+private:
+    QVariant variantValue() const override { return user(); }
+    void fromMap(const Utils::Store &map) override;
+    void addToLayoutImpl(Layouting::Layout &parent) override;
+
+    void updateUserNameEnabled();
+
+    Utils::SelectionAspect m_selection{this};
+    Utils::StringAspect m_user{this};
+
+};
+
+class PROJECTEXPLORER_EXPORT EnableCategoriesFilterAspect : public Utils::BoolAspect
+{
+    Q_OBJECT
+
+public:
+    EnableCategoriesFilterAspect(Utils::AspectContainer *container = nullptr);
 };
 
 class PROJECTEXPLORER_EXPORT ExecutableAspect : public Utils::BaseAspect
@@ -168,7 +205,7 @@ public:
     Utils::FilePath executable() const;
     void setExecutable(const Utils::FilePath &executable);
 
-    void setDeviceSelector(Target *target, ExecutionDeviceSelector selector);
+    void setDeviceSelector(Kit *kit, ExecutionDeviceSelector selector);
     void setSettingsKey(const Utils::Key &key);
     void makeOverridable(const Utils::Key &overridingKey, const Utils::Key &useOverridableKey);
     void addToLayoutImpl(Layouting::Layout &parent) override;
@@ -178,6 +215,8 @@ public:
     void setExpectedKind(const Utils::PathChooser::Kind expectedKind);
     void setEnvironment(const Utils::Environment &env);
     void setReadOnly(bool readOnly);
+
+    void setFocusToInputField();
 
     struct Data : BaseAspect::Data
     {
@@ -193,7 +232,7 @@ private:
 
     Utils::FilePathAspect m_executable;
     Utils::FilePathAspect *m_alternativeExecutable = nullptr;
-    Target *m_target = nullptr;
+    Kit *m_kit = nullptr;
     ExecutionDeviceSelector m_selector = RunDevice;
 };
 
@@ -212,7 +251,7 @@ public:
     Interpreter(const QString &id,
                 const QString &name,
                 const Utils::FilePath &command,
-                bool autoDetected = true);
+                const DetectionSource &detectionSource = {});
 
     inline bool operator==(const Interpreter &other) const
     {
@@ -220,11 +259,13 @@ public:
                && detectionSource == other.detectionSource;
     }
 
+    void fromMap(const Utils::Store &);
+    void toMap(Utils::Store &) const;
+
     QString id;
     QString name;
     Utils::FilePath command;
-    bool autoDetected = true;
-    QString detectionSource;
+    DetectionSource detectionSource;
 };
 
 class PROJECTEXPLORER_EXPORT LauncherAspect : public Utils::BaseAspect
@@ -272,14 +313,9 @@ class PROJECTEXPLORER_EXPORT X11ForwardingAspect : public Utils::StringAspect
 public:
     X11ForwardingAspect(Utils::AspectContainer *container = nullptr);
 
-    void setMacroExpander(const Utils::MacroExpander *macroExpander);
-
     struct Data : StringAspect::Data { QString display; };
 
     QString display() const;
-
-private:
-    const Utils::MacroExpander *m_macroExpander;
 };
 
 } // namespace ProjectExplorer

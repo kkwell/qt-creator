@@ -6,7 +6,7 @@
 #include "cppcodestylesettings.h"
 
 #include <coreplugin/dialogs/ioptionspage.h>
-#include <texteditor/icodestylepreferencesfactory.h>
+#include <texteditor/codestyleeditor.h>
 #include <texteditor/tabsettings.h>
 
 #include <QWidget>
@@ -20,15 +20,19 @@ namespace TextEditor {
 }
 
 namespace CppEditor {
-class CppCodeStylePreferences;
 
 namespace Internal {
 
 class CppCodeStylePreferencesWidgetPrivate;
 
-class CppCodeStylePreferencesWidget : public TextEditor::CodeStyleEditorWidget
+void setupCppCodeStyleSettings();
+
+} // namespace Internal
+
+class CPPEDITOR_EXPORT CppCodeStylePreferencesWidget : public TextEditor::CodeStyleEditorWidget
 {
     Q_OBJECT
+
 public:
     explicit CppCodeStylePreferencesWidget(QWidget *parent = nullptr);
     ~CppCodeStylePreferencesWidget() override;
@@ -37,6 +41,10 @@ public:
     void addTab(TextEditor::CodeStyleEditorWidget *page, QString tabName);
     void apply() override;
     void finish() override;
+
+signals:
+    void applyEmitted();
+    void finishEmitted();
 
 private:
     void decorateEditors(const TextEditor::FontSettings &fontSettings);
@@ -52,19 +60,12 @@ private:
     CppCodeStyleSettings cppCodeStyleSettings() const;
 
     CppCodeStylePreferences *m_preferences = nullptr;
-    CppCodeStylePreferencesWidgetPrivate *d = nullptr;
+    Internal::CppCodeStylePreferencesWidgetPrivate *d = nullptr;
     CppCodeStyleSettings m_originalCppCodeStyleSettings;
     TextEditor::TabSettings m_originalTabSettings;
     bool m_blockUpdates = false;
-    friend class CppCodeStylePreferencesWidgetPrivate;
-signals:
-    void codeStyleSettingsChanged(const CppEditor::CppCodeStyleSettings &);
-    void tabSettingsChanged(const TextEditor::TabSettings &);
-    void applyEmitted();
-    void finishEmitted();
+
+    friend class Internal::CppCodeStylePreferencesWidgetPrivate;
 };
 
-void setupCppCodeStyleSettings();
-
-} // namespace Internal
 } // namespace CppEditor

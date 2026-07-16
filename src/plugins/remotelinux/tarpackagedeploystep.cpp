@@ -16,7 +16,7 @@
 #include <utils/processinterface.h>
 
 using namespace ProjectExplorer;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace RemoteLinux::Internal {
@@ -31,7 +31,7 @@ public:
     {
         setWidgetExpandedByDefault(false);
 
-        setInternalInitializer([this]() -> expected_str<void> {
+        setInternalInitializer([this]() -> Result<> {
             const BuildStep *tarCreationStep = nullptr;
 
             for (BuildStep *step : deployConfiguration()->stepList()->steps()) {

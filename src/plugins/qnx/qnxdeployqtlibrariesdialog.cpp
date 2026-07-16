@@ -13,8 +13,6 @@
 
 #include <qtsupport/qtversionmanager.h>
 
-#include <solutions/tasking/tasktreerunner.h>
-
 #include <utils/algorithm.h>
 #include <utils/hostosinfo.h>
 #include <utils/layoutbuilder.h>
@@ -23,6 +21,7 @@
 #include <utils/qtcassert.h>
 
 #include <QComboBox>
+#include <QDialog>
 #include <QDir>
 #include <QLabel>
 #include <QLineEdit>
@@ -30,19 +29,22 @@
 #include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 using namespace ProjectExplorer;
 using namespace QtSupport;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace Qnx::Internal {
 
-class QnxDeployQtLibrariesDialogPrivate : public QObject
+class QnxDeployQtLibrariesDialog : public QDialog
 {
 public:
-    QnxDeployQtLibrariesDialogPrivate(QnxDeployQtLibrariesDialog *parent,
-                                      const IDevice::ConstPtr &device);
+    explicit QnxDeployQtLibrariesDialog(const ProjectExplorer::IDeviceConstPtr &device);
+
+private:
+    void closeEvent(QCloseEvent *event) override;
 
     void start();
     void stop();
@@ -56,8 +58,6 @@ public:
                                                        const QStringList &nameFilters = {});
 
     QString fullRemoteDirectory() const { return m_remoteDirectory->text(); }
-
-    QnxDeployQtLibrariesDialog *q;
 
     QComboBox *m_qtLibraryCombo;
     QPushButton *m_deployButton;
@@ -82,12 +82,6 @@ public:
         m_deployLogWindow->appendPlainText(msg);
     }
 
-    void emitWarningMessage(const QString &message)
-    {
-        if (!message.contains("stat:"))
-            m_deployLogWindow->appendPlainText(message);
-    }
-
 private:
     Group deployRecipe();
     GroupItem checkDirTask();
@@ -97,7 +91,7 @@ private:
     enum class CheckResult { RemoveDir, SkipRemoveDir, Abort };
     CheckResult m_checkResult = CheckResult::Abort;
     mutable QList<DeployableFile> m_deployableFiles;
-    TaskTreeRunner m_taskTreeRunner;
+    QSingleTaskTreeRunner m_taskTreeRunner;
 };
 
 QList<DeployableFile> collectFilesToUpload(const DeployableFile &deployable)
@@ -115,7 +109,7 @@ QList<DeployableFile> collectFilesToUpload(const DeployableFile &deployable)
     return collected;
 }
 
-GroupItem QnxDeployQtLibrariesDialogPrivate::checkDirTask()
+GroupItem QnxDeployQtLibrariesDialog::checkDirTask()
 {
     const auto onSetup = [this](Process &process) {
         m_deployLogWindow->appendPlainText(Tr::tr("Checking existence of \"%1\"")
@@ -133,7 +127,7 @@ GroupItem QnxDeployQtLibrariesDialogPrivate::checkDirTask()
             m_checkResult = CheckResult::SkipRemoveDir;
             return;
         }
-        const int answer = QMessageBox::question(q, q->windowTitle(),
+        const int answer = QMessageBox::question(this, windowTitle(),
                 Tr::tr("The remote directory \"%1\" already exists.\n"
                        "Deploying to that directory will remove any files already present.\n\n"
                        "Are you sure you want to continue?").arg(fullRemoteDirectory()),
@@ -143,7 +137,7 @@ GroupItem QnxDeployQtLibrariesDialogPrivate::checkDirTask()
     return ProcessTask(onSetup, onDone);
 }
 
-GroupItem QnxDeployQtLibrariesDialogPrivate::removeDirTask()
+GroupItem QnxDeployQtLibrariesDialog::removeDirTask()
 {
     const auto onSetup = [this](Process &process) {
         if (m_checkResult != CheckResult::RemoveDir)
@@ -157,10 +151,10 @@ GroupItem QnxDeployQtLibrariesDialogPrivate::removeDirTask()
         m_deployLogWindow->appendPlainText(Tr::tr("Connection failed: %1")
                                            .arg(process.errorString()));
     };
-    return ProcessTask(onSetup, onError, CallDoneIf::Error);
+    return ProcessTask(onSetup, onError, CallDoneFlag::OnError);
 }
 
-GroupItem QnxDeployQtLibrariesDialogPrivate::uploadTask()
+GroupItem QnxDeployQtLibrariesDialog::uploadTask()
 {
     const auto onSetup = [this](FileTransfer &transfer) {
         if (m_deployableFiles.isEmpty()) {
@@ -188,16 +182,16 @@ GroupItem QnxDeployQtLibrariesDialogPrivate::uploadTask()
         }
         transfer.setFilesToTransfer(files);
         QObject::connect(&transfer, &FileTransfer::progress,
-                         this, &QnxDeployQtLibrariesDialogPrivate::emitProgressMessage);
+                         this, &QnxDeployQtLibrariesDialog::emitProgressMessage);
         return SetupResult::Continue;
     };
     const auto onError = [this](const FileTransfer &transfer) {
         emitErrorMessage(transfer.resultData().m_errorString);
     };
-    return FileTransferTask(onSetup, onError, CallDoneIf::Error);
+    return FileTransferTask(onSetup, onError, CallDoneFlag::OnError);
 }
 
-Group QnxDeployQtLibrariesDialogPrivate::deployRecipe()
+Group QnxDeployQtLibrariesDialog::deployRecipe()
 {
     const auto setupHandler = [this] {
         if (!m_device) {
@@ -235,17 +229,17 @@ Group QnxDeployQtLibrariesDialogPrivate::deployRecipe()
             removeDirTask(),
             uploadTask()
         },
-        onGroupDone(doneHandler, CallDoneIf::Success)
+        onGroupDone(doneHandler, CallDoneFlag::OnSuccess)
     };
     return root;
 }
 
-void QnxDeployQtLibrariesDialogPrivate::start()
+void QnxDeployQtLibrariesDialog::start()
 {
     QTC_ASSERT(m_device, return);
     QTC_ASSERT(!m_taskTreeRunner.isRunning(), return);
     if (m_remoteDirectory->text().isEmpty()) {
-        QMessageBox::warning(q, q->windowTitle(),
+        QMessageBox::warning(this, windowTitle(),
                              Tr::tr("Please input a remote directory to deploy to."));
         return;
     }
@@ -262,10 +256,10 @@ void QnxDeployQtLibrariesDialogPrivate::start()
     m_deployableFiles = gatherFiles();
     m_deployProgress->setRange(0, m_deployableFiles.count());
 
-    m_taskTreeRunner.start(deployRecipe());
+    m_taskTreeRunner.start(deployRecipe(), {}, [this] { handleUploadFinished(); });
 }
 
-void QnxDeployQtLibrariesDialogPrivate::stop()
+void QnxDeployQtLibrariesDialog::stop()
 {
     if (!m_taskTreeRunner.isRunning())
         return;
@@ -273,39 +267,33 @@ void QnxDeployQtLibrariesDialogPrivate::stop()
     handleUploadFinished();
 }
 
-QnxDeployQtLibrariesDialog::QnxDeployQtLibrariesDialog(const IDevice::ConstPtr &device,
-                                                       QWidget *parent)
-    : QDialog(parent), d(new QnxDeployQtLibrariesDialogPrivate(this, device))
+QnxDeployQtLibrariesDialog::QnxDeployQtLibrariesDialog(const IDevice::ConstPtr &device)
+    : QDialog(dialogParent()), m_device(device)
 {
     setWindowTitle(Tr::tr("Deploy Qt to QNX Device"));
-}
 
-QnxDeployQtLibrariesDialogPrivate::QnxDeployQtLibrariesDialogPrivate(
-    QnxDeployQtLibrariesDialog *parent, const IDevice::ConstPtr &device)
-    : q(parent), m_device(device)
-{
-    m_qtLibraryCombo = new QComboBox(q);
-    const QList<QtVersion*> qtVersions = QtVersionManager::sortVersions(
+    m_qtLibraryCombo = new QComboBox(this);
+    const QtVersions qtVersions = QtVersionManager::sortVersions(
                 QtVersionManager::versions(QtVersion::isValidPredicate(
                 equal(&QtVersion::type, QString::fromLatin1(Constants::QNX_QNX_QT)))));
     for (QtVersion *v : qtVersions)
         m_qtLibraryCombo->addItem(v->displayName(), v->uniqueId());
 
-    m_deployButton = new QPushButton(Tr::tr("Deploy"), q);
+    m_deployButton = new QPushButton(Tr::tr("Deploy"), this);
     m_deployButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 
-    m_basePathLabel = new QLabel(q);
+    m_basePathLabel = new QLabel(this);
 
-    m_remoteDirectory = new QLineEdit(q);
+    m_remoteDirectory = new QLineEdit(this);
     m_remoteDirectory->setText(QLatin1String("/qt"));
 
-    m_deployProgress = new QProgressBar(q);
+    m_deployProgress = new QProgressBar(this);
     m_deployProgress->setValue(0);
     m_deployProgress->setTextVisible(true);
 
-    m_deployLogWindow = new QPlainTextEdit(q);
+    m_deployLogWindow = new QPlainTextEdit(this);
 
-    m_closeButton = new QPushButton(Tr::tr("Close"), q);
+    m_closeButton = new QPushButton(Tr::tr("Close"), this);
 
     using namespace Layouting;
 
@@ -317,45 +305,29 @@ QnxDeployQtLibrariesDialogPrivate::QnxDeployQtLibrariesDialogPrivate(
         m_deployProgress,
         m_deployLogWindow,
         Row { st, m_closeButton }
-    }.attachTo(q);
+    }.attachTo(this);
 
     connect(m_deployButton, &QAbstractButton::clicked,
-            this, &QnxDeployQtLibrariesDialogPrivate::start);
+            this, &QnxDeployQtLibrariesDialog::start);
     connect(m_closeButton, &QAbstractButton::clicked,
-            q, &QWidget::close);
-    connect(&m_taskTreeRunner, &TaskTreeRunner::done,
-            this, &QnxDeployQtLibrariesDialogPrivate::handleUploadFinished);
-}
-
-QnxDeployQtLibrariesDialog::~QnxDeployQtLibrariesDialog()
-{
-    delete d;
-}
-
-int QnxDeployQtLibrariesDialog::execAndDeploy(int qtVersionId, const QString &remoteDirectory)
-{
-    d->m_remoteDirectory->setText(remoteDirectory);
-    d->m_qtLibraryCombo->setCurrentIndex(d->m_qtLibraryCombo->findData(qtVersionId));
-
-    d->start();
-    return exec();
+            this, &QWidget::close);
 }
 
 void QnxDeployQtLibrariesDialog::closeEvent(QCloseEvent *event)
 {
     // A disabled Deploy button indicates the upload is still running
-    if (!d->m_deployButton->isEnabled()) {
+    if (!m_deployButton->isEnabled()) {
         const int answer = QMessageBox::question(this, windowTitle(),
             Tr::tr("Closing the dialog will stop the deployment. Are you sure you want to do this?"),
             QMessageBox::Yes | QMessageBox::No);
         if (answer == QMessageBox::No)
             event->ignore();
         else if (answer == QMessageBox::Yes)
-            d->stop();
+            stop();
     }
 }
 
-void QnxDeployQtLibrariesDialogPrivate::updateProgress(const QString &progressMessage)
+void QnxDeployQtLibrariesDialog::updateProgress(const QString &progressMessage)
 {
     const int progress = progressMessage.count("sftp> put") + progressMessage.count("sftp> ln -s");
     if (progress != 0) {
@@ -364,14 +336,14 @@ void QnxDeployQtLibrariesDialogPrivate::updateProgress(const QString &progressMe
     }
 }
 
-void QnxDeployQtLibrariesDialogPrivate::handleUploadFinished()
+void QnxDeployQtLibrariesDialog::handleUploadFinished()
 {
     m_remoteDirectory->setEnabled(true);
     m_deployButton->setEnabled(true);
     m_qtLibraryCombo->setEnabled(true);
 }
 
-QList<DeployableFile> QnxDeployQtLibrariesDialogPrivate::gatherFiles()
+QList<DeployableFile> QnxDeployQtLibrariesDialog::gatherFiles()
 {
     QList<DeployableFile> result;
 
@@ -382,19 +354,19 @@ QList<DeployableFile> QnxDeployQtLibrariesDialogPrivate::gatherFiles()
     QTC_ASSERT(qtVersion, return result);
 
     if (HostOsInfo::isWindowsHost()) {
-        result.append(gatherFiles(qtVersion->libraryPath().toString(), {}, {{"*.so.?"}}));
-        result.append(gatherFiles(qtVersion->libraryPath().toString() + QLatin1String("/fonts")));
+        result.append(gatherFiles(qtVersion->libraryPath().toUrlishString(), {}, {{"*.so.?"}}));
+        result.append(gatherFiles(qtVersion->libraryPath().toUrlishString() + QLatin1String("/fonts")));
     } else {
-        result.append(gatherFiles(qtVersion->libraryPath().toString()));
+        result.append(gatherFiles(qtVersion->libraryPath().toUrlishString()));
     }
 
-    result.append(gatherFiles(qtVersion->pluginPath().toString()));
-    result.append(gatherFiles(qtVersion->importsPath().toString()));
-    result.append(gatherFiles(qtVersion->qmlPath().toString()));
+    result.append(gatherFiles(qtVersion->pluginPath().toUrlishString()));
+    result.append(gatherFiles(qtVersion->importsPath().toUrlishString()));
+    result.append(gatherFiles(qtVersion->qmlPath().toUrlishString()));
     return result;
 }
 
-QList<DeployableFile> QnxDeployQtLibrariesDialogPrivate::gatherFiles(
+QList<DeployableFile> QnxDeployQtLibrariesDialog::gatherFiles(
         const QString &dirPath, const QString &baseDirPath, const QStringList &nameFilters)
 {
     QList<DeployableFile> result;
@@ -431,6 +403,12 @@ QList<DeployableFile> QnxDeployQtLibrariesDialogPrivate::gatherFiles(
         }
     }
     return result;
+}
+
+void executeQnxDeployQtLibrariesDialog(const IDeviceConstPtr &device)
+{
+    QnxDeployQtLibrariesDialog dialog(device);
+    dialog.exec();
 }
 
 } // Qnx::Internal

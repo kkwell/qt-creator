@@ -3,14 +3,14 @@
 
 #include "cmakebuildstep.h"
 
+#include "cmakeautogenparser.h"
 #include "cmakebuildconfiguration.h"
 #include "cmakebuildsystem.h"
 #include "cmakekitaspect.h"
-#include "cmakeparser.h"
+#include "cmakeoutputparser.h"
 #include "cmakeproject.h"
 #include "cmakeprojectconstants.h"
 #include "cmakeprojectmanagertr.h"
-#include "cmaketool.h"
 #include "cmaketoolmanager.h"
 
 #include <android/androidconstants.h>
@@ -23,17 +23,18 @@
 
 #include <coreplugin/find/itemviewfind.h>
 #include <projectexplorer/buildsteplist.h>
+#include <projectexplorer/deploymentdata.h>
+#include <projectexplorer/devicesupport/devicekitaspects.h>
 #include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/environmentwidget.h>
 #include <projectexplorer/gnumakeparser.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/processparameters.h>
 #include <projectexplorer/project.h>
-#include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
-#include <projectexplorer/projectexplorertr.h>
+#include <projectexplorer/projectexplorersettings.h>
 #include <projectexplorer/runconfiguration.h>
 #include <projectexplorer/target.h>
+#include <projectexplorer/toolchainkitaspect.h>
 #include <projectexplorer/xcodebuildparser.h>
 
 #include <utils/algorithm.h>
@@ -47,7 +48,7 @@
 
 using namespace Core;
 using namespace ProjectExplorer;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace CMakeProjectManager::Internal {
@@ -63,29 +64,40 @@ const char CLEAR_SYSTEM_ENVIRONMENT_KEY[] = "CMakeProjectManager.MakeStep.ClearS
 const char USER_ENVIRONMENT_CHANGES_KEY[] = "CMakeProjectManager.MakeStep.UserEnvironmentChanges";
 const char BUILD_PRESET_KEY[] = "CMakeProjectManager.MakeStep.BuildPreset";
 
-class ProjectParserTaskAdapter : public TaskAdapter<QPointer<Target>>
+class ProjectParserTaskAdapter final
 {
 public:
-    void start() final {
-        Target *target = *task();
-        if (!target) {
-            emit done(DoneResult::Error);
+    void operator()(QPointer<BuildSystem> *task, QTaskInterface *iface)
+    {
+        BuildSystem *bs = *task;
+        if (!bs) {
+            iface->reportDone(DoneResult::Error);
             return;
         }
-        connect(target, &Target::parsingFinished, this, [this](bool success) {
-            emit done(toDoneResult(success));
-        });
+        QObject::connect(bs, &BuildSystem::parsingFinished, iface, [iface](bool success) {
+            iface->reportDone(toDoneResult(success));
+        }, Qt::SingleShotConnection);
     }
 };
 
-using ProjectParserTask = CustomTask<ProjectParserTaskAdapter>;
+using ProjectParserTask = QCustomTask<QPointer<BuildSystem>, ProjectParserTaskAdapter>;
 
-class CmakeProgressParser : public Utils::OutputLineParser
+class CMakeProgressParser : public Utils::OutputLineParser
 {
     Q_OBJECT
 
+public:
+    CMakeProgressParser(const QString &cmakeGenerator)
+    {
+        if (cmakeGenerator.startsWith("Ninja")) {
+            m_progressType = ProgressType::Ninja;
+        } else {
+            m_progressType = ProgressType::Make;
+        }
+    }
+
 signals:
-    void progress(int percentage);
+    void progress(int percentage, const QString &message);
 
 private:
     Result handleLine(const QString &line, Utils::OutputFormat format) override
@@ -93,40 +105,41 @@ private:
         if (format != Utils::StdOutFormat)
             return Status::NotHandled;
 
-        static const QRegularExpression percentProgress("^\\[\\s*(\\d*)%\\]");
-        static const QRegularExpression ninjaProgress("^\\[\\s*(\\d*)/\\s*(\\d*)");
+        static const QRegularExpression percentProgress("^\\[(\\s*(\\d*)%)\\]");
+        static const QRegularExpression ninjaProgress("^\\[(\\s*(\\d*)/\\s*(\\d*).*)\\]");
 
-        QRegularExpressionMatch match = percentProgress.match(line);
-        if (match.hasMatch()) {
-            bool ok = false;
-            const int percent = match.captured(1).toInt(&ok);
-            if (ok)
-                emit progress(percent);
-            return Status::Done;
-        }
-        match = ninjaProgress.match(line);
-        if (match.hasMatch()) {
-            m_useNinja = true;
-            bool ok = false;
-            const int done = match.captured(1).toInt(&ok);
-            if (ok) {
-                const int all = match.captured(2).toInt(&ok);
-                if (ok && all != 0) {
-                    const int percent = static_cast<int>(100.0 * done / all);
-                    emit progress(percent);
-                }
+        QRegularExpressionMatch match;
+        if (m_progressType == ProgressType::Make) {
+            match = percentProgress.match(line);
+            if (match.hasMatch()) {
+                bool ok = false;
+                const int percent = match.captured(2).toInt(&ok);
+                if (ok)
+                    emit progress(percent, match.captured(1));
+                return Status::Done;
             }
-            return Status::Done;
+        } else if (m_progressType == ProgressType::Ninja) {
+            match = ninjaProgress.match(line);
+            if (match.hasMatch()) {
+                bool ok = false;
+                const int done = match.captured(2).toInt(&ok);
+                if (ok) {
+                    const int all = match.captured(3).toInt(&ok);
+                    if (ok && all != 0) {
+                        const int percent = static_cast<int>(100.0 * done / all);
+                        emit progress(percent, match.captured(1));
+                    }
+                }
+                return Status::Done;
+            }
         }
         return Status::NotHandled;
     }
-    bool hasDetectedRedirection() const override { return m_useNinja; }
+    bool hasDetectedRedirection() const override { return m_progressType == ProgressType::Ninja; }
 
-    // TODO: Shouldn't we know the backend in advance? Then we could merge this class
-    //       with CmakeParser.
-    bool m_useNinja = false;
+    enum class ProgressType { Make, Ninja };
+    ProgressType m_progressType{ProgressType::Make};
 };
-
 
 // CmakeTargetItem
 
@@ -184,24 +197,10 @@ Qt::ItemFlags CMakeTargetItem::flags(int) const
 
 // CMakeBuildStep
 
-static QString initialStagingDir(Kit *kit)
-{
-    // Avoid actual file accesses.
-    auto rg = QRandomGenerator::global();
-    const qulonglong rand = rg->generate64();
-    char buf[sizeof(rand)];
-    memcpy(&buf, &rand, sizeof(rand));
-    const QByteArray ba = QByteArray(buf, sizeof(buf)).toHex();
-    IDeviceConstPtr buildDevice = BuildDeviceKitAspect::device(kit);
-    if (buildDevice && buildDevice->type() == ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE)
-        return TemporaryDirectory::masterDirectoryPath() + "/staging-" + ba;
-    return QString::fromUtf8("/tmp/Qt-Creator-staging-" + ba);
-}
-
 static bool supportsStageForInstallation(const Kit *kit)
 {
-    IDeviceConstPtr runDevice = DeviceKitAspect::device(kit);
-    Id runDeviceType = DeviceTypeKitAspect::deviceTypeId(kit);
+    IDeviceConstPtr runDevice = RunDeviceKitAspect::device(kit);
+    Id runDeviceType = RunDeviceTypeKitAspect::deviceTypeId(kit);
     IDeviceConstPtr buildDevice = BuildDeviceKitAspect::device(kit);
     QTC_ASSERT(runDeviceType.isValid(), return false);
     QTC_ASSERT(buildDevice, return false);
@@ -225,16 +224,30 @@ CMakeBuildStep::CMakeBuildStep(BuildStepList *bsl, Id id) :
     toolArguments.setDisplayStyle(StringAspect::LineEditDisplay);
 
     useStaging.setSettingsKey(USE_STAGING_KEY);
-    useStaging.setLabel(Tr::tr("Stage for installation"), BoolAspect::LabelPlacement::AtCheckBox);
+    useStaging
+        .setLabel(Tr::tr("Install into staging directory:"), BoolAspect::LabelPlacement::AtCheckBox);
     useStaging.setDefaultValue(supportsStageForInstallation(kit()) && !isCleanStep());
     useStaging.setEnabled(!isCleanStep());
+    useStaging.setToolTip(
+        "<p>"
+        //: %1 = the "install" CMake target, %2 = the DESTDIR environment variable
+        + Tr::tr(
+              "Implies the %1 target, but sets the %2 variable to install into the specified "
+              "directory instead of into the default system directories. This does not affect the "
+              "target location for deployment configurations.")
+              .arg("<code>install</code>", "<code>DESTDIR</code>")
+        + "</p><p>"
+        + Tr::tr(
+            "Use this option for example if you develop for a remote target device and do not "
+            "want to install into the system directories of the build device, or to use "
+            "separate installation directories on the build device for different build "
+            "configurations."));
 
     stagingDir.setSettingsKey(STAGING_DIR_KEY);
-    stagingDir.setLabelText(Tr::tr("Staging directory:"));
-    stagingDir.setDefaultValue(initialStagingDir(kit()));
+    stagingDir.setDefaultValue("%{BuildConfig:BuildDirectory:FilePath}/.qtcreator/staging");
     stagingDir.setExpectedKind(PathChooser::Kind::Directory);
 
-    Kit *kit = buildConfiguration()->kit();
+    Kit *kit = this->kit();
     if (CMakeBuildConfiguration::isIos(kit) && CMakeGeneratorKitAspect::generator(kit) == "Xcode") {
         useiOSAutomaticProvisioningUpdates.setDefaultValue(true);
         useiOSAutomaticProvisioningUpdates.setSettingsKey(
@@ -264,7 +277,7 @@ CMakeBuildStep::CMakeBuildStep(BuildStepList *bsl, Id id) :
         env.setupEnglishOutput();
         if (!env.expandedValueForKey("NINJA_STATUS").startsWith(ninjaProgressString))
             env.set("NINJA_STATUS", ninjaProgressString + "%o/sec] ");
-        env.modify(m_userEnvironmentChanges);
+        m_userEnvironmentChanges.modifyEnvironment(env, macroExpander());
 
         env.setFallback("CLICOLOR_FORCE", "1");
 
@@ -272,12 +285,12 @@ CMakeBuildStep::CMakeBuildStep(BuildStepList *bsl, Id id) :
             env.set("DESTDIR", stagingDir().path());
     });
 
-    connect(target(), &Target::parsingFinished, this, [this](bool success) {
+    connect(buildSystem(), &BuildSystem::parsingFinished, this, [this](bool success) {
         if (success) // Do not change when parsing failed.
             recreateBuildTargetsModel();
     });
 
-    connect(target(), &Target::activeRunConfigurationChanged,
+    connect(buildConfiguration(), &BuildConfiguration::activeRunConfigurationChanged,
             this, &CMakeBuildStep::updateBuildTargetsModel);
 }
 
@@ -286,7 +299,7 @@ void CMakeBuildStep::toMap(Utils::Store &map) const
     CMakeAbstractProcessStep::toMap(map);
     map.insert(BUILD_TARGETS_KEY, m_buildTargets);
     map.insert(CLEAR_SYSTEM_ENVIRONMENT_KEY, m_clearSystemEnvironment);
-    map.insert(USER_ENVIRONMENT_CHANGES_KEY, EnvironmentItem::toStringList(m_userEnvironmentChanges));
+    map.insert(USER_ENVIRONMENT_CHANGES_KEY, m_userEnvironmentChanges.toVariant());
     map.insert(BUILD_PRESET_KEY, m_buildPreset);
 }
 
@@ -295,8 +308,8 @@ void CMakeBuildStep::fromMap(const Utils::Store &map)
     setBuildTargets(map.value(BUILD_TARGETS_KEY).toStringList());
 
     m_clearSystemEnvironment = map.value(CLEAR_SYSTEM_ENVIRONMENT_KEY).toBool();
-    m_userEnvironmentChanges = EnvironmentItem::fromStringList(
-        map.value(USER_ENVIRONMENT_CHANGES_KEY).toStringList());
+    m_userEnvironmentChanges = EnvironmentChanges::createFromVariant(
+        map.value(USER_ENVIRONMENT_CHANGES_KEY));
 
     updateAndEmitEnvironmentChanged();
 
@@ -311,13 +324,13 @@ bool CMakeBuildStep::init()
         return false;
 
     if (m_buildTargets.contains(QString())) {
-        RunConfiguration *rc = target()->activeRunConfiguration();
+        RunConfiguration *rc = buildConfiguration()->activeRunConfiguration();
         if (!rc || rc->buildKey().isEmpty()) {
-            emit addTask(BuildSystemTask(Task::Error,
-                                         ::ProjectExplorer::Tr::tr(
-                                    "You asked to build the current Run Configuration's build target only, "
-                                    "but it is not associated with a build target. "
-                                    "Update the Make Step in your build settings.")));
+            emit addTask(BuildSystemTask(
+                Task::Error,
+                Tr::tr("You asked to build the current Run Configuration's build target only, "
+                       "but it is not associated with a build target. "
+                       "Update the Make Step in your build settings.")));
             emitFaultyConfigurationMessage();
             return false;
         }
@@ -330,14 +343,14 @@ bool CMakeBuildStep::init()
 
 void CMakeBuildStep::setupOutputFormatter(Utils::OutputFormatter *formatter)
 {
-    CMakeParser *cmakeParser = new CMakeParser;
-    CmakeProgressParser * const progressParser = new CmakeProgressParser;
-    connect(progressParser, &CmakeProgressParser::progress, this, [this](int percent) {
-        emit progress(percent, {});
-    });
+    CMakeOutputParser *cmakeOutputParser = new CMakeOutputParser;
+    auto cbs = qobject_cast<CMakeBuildSystem *>(this->buildSystem());
+    CMakeProgressParser * const progressParser = new CMakeProgressParser(cbs->cmakeGenerator());
+    connect(progressParser, &CMakeProgressParser::progress, this, &CMakeBuildStep::progress);
     formatter->addLineParser(progressParser);
-    cmakeParser->setSourceDirectory(project()->projectDirectory());
-    formatter->addLineParsers({cmakeParser, new GnuMakeParser});
+    cmakeOutputParser->setSourceDirectories(
+        {project()->projectDirectory(), buildConfiguration()->buildDirectory()});
+    formatter->addLineParsers({new CMakeAutogenParser, cmakeOutputParser, new GnuMakeParser});
     Toolchain *tc = ToolchainKitAspect::cxxToolchain(kit());
     OutputTaskParser *xcodeBuildParser = nullptr;
     if (tc && tc->targetAbi().os() == Abi::DarwinOS) {
@@ -355,9 +368,9 @@ void CMakeBuildStep::setupOutputFormatter(Utils::OutputFormatter *formatter)
 
 GroupItem CMakeBuildStep::runRecipe()
 {
-    const auto onParserSetup = [this](QPointer<Target> &parseTarget) {
+    const auto onParserSetup = [this](QPointer<BuildSystem> &buildSystem) {
         // Make sure CMake state was written to disk before trying to build:
-        auto bs = qobject_cast<CMakeBuildSystem *>(buildSystem());
+        auto bs = qobject_cast<CMakeBuildSystem *>(this->buildSystem());
         QTC_ASSERT(bs, return SetupResult::StopWithError);
         QString message;
         if (bs->persistCMakeState())
@@ -367,7 +380,7 @@ GroupItem CMakeBuildStep::runRecipe()
         else
             return SetupResult::StopWithSuccess;
         emit addOutput(message, OutputFormat::NormalMessage);
-        parseTarget = target();
+        buildSystem = bs;
         return SetupResult::Continue;
     };
     const auto onParserError = [this] {
@@ -376,7 +389,7 @@ GroupItem CMakeBuildStep::runRecipe()
     };
     Group root {
         ignoreReturnValue() ? finishAllAndSuccess : stopOnError,
-        ProjectParserTask(onParserSetup, onParserError, CallDoneIf::Error),
+        ProjectParserTask(onParserSetup, onParserError, CallDoneFlag::OnError),
         defaultProcessTask(),
         onGroupDone([this] { updateDeploymentData(); })
     };
@@ -423,12 +436,54 @@ void CMakeBuildStep::setBuildsBuildTarget(const QString &target, bool on)
     setBuildTargets(targets);
 }
 
+// In the case of using a staging directory and having to build one target
+// then use the `sub/dir/all` target for building. This will trigger also
+// a `sub/dir/install` target which will affect a smaller part of the project
+// than the `install` target which will trigger a build of `all`
+// See QTCREATORBUG-33580 for details.
+QStringList CMakeBuildStep::processSubDirStagingSingleTarget(const QStringList &targets)
+{
+    if (targets.size() != 1)
+        return targets;
+
+    const CMakeBuildSystem *cmakeBuildSystem = qobject_cast<const CMakeBuildSystem *>(buildSystem());
+    // Only for staging and Ninja or Makefiles generators
+    if (!useStaging() || !cmakeBuildSystem->hasSubprojectBuildSupport())
+        return targets;
+
+    // Skip the "all" "clean" "install" "pack" targets
+    const QString targetName = targets.front();
+    if (specialTargets(cmakeBuildSystem->isMultiConfig()).contains(targetName))
+        return targets;
+
+    // This can happen if you select and deselect targets in the UI
+    // we get the already prepared target back
+    if (targetName.endsWith("/all"))
+        return targets;
+
+    CMakeBuildTarget targetInfo = Utils::findOrDefault(
+        cmakeBuildSystem->buildTargets(),
+        [targetName](const CMakeBuildTarget &bt) { return bt.title == targetName; });
+
+    if (targetInfo.backtrace.isEmpty() || targetInfo.targetType == UtilityType)
+        return targets;
+
+    const QString targetSubdir = targetInfo.backtrace.last()
+                                     .path.parentDir()
+                                     .relativeChildPath(buildSystem()->projectDirectory())
+                                     .path();
+    if (targetSubdir.isEmpty())
+        return targets;
+
+    return {targetSubdir + "/all"};
+}
+
 void CMakeBuildStep::setBuildTargets(const QStringList &buildTargets)
 {
     if (buildTargets.isEmpty())
         m_buildTargets = QStringList(defaultBuildTarget());
     else
-        m_buildTargets = buildTargets;
+        m_buildTargets = processSubDirStagingSingleTarget(buildTargets);
     updateBuildTargetsModel();
 }
 
@@ -443,26 +498,85 @@ CommandLine CMakeBuildStep::cmakeCommand() const
         project = buildConfiguration()->project();
     }
 
-    cmd.addArgs(
-        {"--build",
-         CMakeToolManager::mappedFilePath(project, buildDirectory).path()});
-
-    cmd.addArg("--target");
-    cmd.addArgs(Utils::transform(m_buildTargets, [this](const QString &s) {
-        if (s.isEmpty()) {
-            if (RunConfiguration *rc = target()->activeRunConfiguration())
-                return rc->buildKey();
-        }
-        return s;
-    }));
-    if (useStaging())
-        cmd.addArg("install");
-
     auto bs = qobject_cast<CMakeBuildSystem *>(buildSystem());
+    const bool hasSubprojectBuild = bs && bs->hasSubprojectBuildSupport();
+    bool ninjaSubprojectClean = false;
+
+    // Subprojects have subdir/<command> structure
+    if (m_buildTargets.size() == 1 && m_buildTargets.front().contains("/") && hasSubprojectBuild) {
+        QString target = m_buildTargets.front();
+        const auto separator = target.lastIndexOf("/");
+        const QString path = target.left(separator);
+        const QString operation = target.mid(separator + 1);
+
+        if (bs && bs->cmakeGenerator().contains("Makefiles")) {
+            cmd.addArgs(
+                {"--build",
+                 CMakeToolManager::mappedFilePath(project, buildDirectory.pathAppended(path))
+                     .path()});
+            cmd.addArg("--target");
+            cmd.addArg(operation);
+
+            if (useStaging()) {
+                cmd.addArg("--target");
+                cmd.addArg("install");
+            }
+        } else {
+            cmd.addArgs(
+                {"--build", CMakeToolManager::mappedFilePath(project, buildDirectory).path()});
+
+            cmd.addArg("--target");
+            if (operation == "clean") {
+                target = path + "/" + "all";
+                ninjaSubprojectClean = true;
+            }
+            cmd.addArg(target);
+
+            if (useStaging()) {
+                cmd.addArg("--target");
+                cmd.addArg(path + "/" + "install");
+            }
+        }
+    } else {
+        cmd.addArgs({"--build", CMakeToolManager::mappedFilePath(project, buildDirectory).path()});
+
+        cmd.addArg("--target");
+        cmd.addArgs(Utils::transform(m_buildTargets, [this](const QString &s) {
+            if (s.isEmpty()) {
+                if (RunConfiguration *rc = buildConfiguration()->activeRunConfiguration())
+                    return rc->buildKey();
+            }
+            return s;
+        }));
+
+        // For the case when we have only one target to build, and this is an utility target
+        // we don't need to do an "install" step when using staging
+        auto isUtilityTarget = [bs, this]() -> bool {
+            if (bs == nullptr)
+                return false;
+
+            if (m_buildTargets.size() != 1)
+                return false;
+
+            const QString targetName = m_buildTargets.front();
+            if (specialTargets(bs->isMultiConfig()).contains(targetName))
+                return false;
+
+            const CMakeBuildTarget targetInfo
+                = Utils::findOrDefault(bs->buildTargets(), [targetName](const CMakeBuildTarget &bt) {
+                      return bt.title == targetName;
+                  });
+            return targetInfo.targetType == UtilityType;
+        };
+
+        if (useStaging() && !isUtilityTarget())
+            cmd.addArg("install");
+    }
+
     if (bs && bs->isMultiConfigReader()) {
         cmd.addArg("--config");
         if (m_configuration)
-            cmd.addArg(m_configuration.value());
+            cmd.addArg(*m_configuration);
         else
             cmd.addArg(bs->cmakeBuildType());
     }
@@ -481,6 +595,12 @@ CommandLine CMakeBuildStep::cmakeCommand() const
         if (!toolArgumentsSpecified)
             cmd.addArg("--");
         cmd.addArgs("-allowProvisioningUpdates", CommandLine::Raw);
+    }
+
+    if (ninjaSubprojectClean) {
+        if (!toolArgumentsSpecified)
+            cmd.addArg("--");
+        cmd.addArgs({"-t", "clean"});
     }
 
     return cmd;
@@ -511,7 +631,7 @@ QStringList CMakeBuildStep::specialTargets(bool allCapsTargets)
 
 QString CMakeBuildStep::activeRunConfigTarget() const
 {
-    RunConfiguration *rc = target()->activeRunConfiguration();
+    RunConfiguration *rc = buildConfiguration()->activeRunConfiguration();
     return rc ? rc->buildKey() : QString();
 }
 
@@ -551,7 +671,7 @@ QWidget *CMakeBuildStep::createConfigWidget()
                       return bp.name == m_buildPreset;
                   });
 
-            const QString presetDisplayName = preset.displayName ? preset.displayName.value()
+            const QString presetDisplayName = preset.displayName ? *preset.displayName
                                                                  : preset.name;
             if (!presetDisplayName.isEmpty())
                 summaryText.append(QString("<br><b>Preset</b>: %1").arg(presetDisplayName));
@@ -578,10 +698,12 @@ QWidget *CMakeBuildStep::createConfigWidget()
         auto envWidget = new EnvironmentWidget(nullptr, EnvironmentWidget::TypeLocal, clearBox);
         envWidget->setBaseEnvironment(baseEnvironment());
         envWidget->setBaseEnvironmentText(baseEnvironmentText());
-        envWidget->setUserChanges(userEnvironmentChanges());
+        envWidget->setChanges(userEnvironmentChanges());
+        if (const IDeviceConstPtr &dev = BuildDeviceKitAspect::device(kit()))
+            envWidget->setBrowseHint(dev->rootPath());
 
         connect(envWidget, &EnvironmentWidget::userChangesChanged, this, [this, envWidget] {
-            setUserEnvironmentChanges(envWidget->userChanges());
+            setUserEnvironmentChanges(envWidget->changes());
         });
 
         connect(clearBox, &QAbstractButton::toggled, this, [this, envWidget](bool checked) {
@@ -603,7 +725,7 @@ QWidget *CMakeBuildStep::createConfigWidget()
     builder.addRow({cmakeArguments});
     builder.addRow({toolArguments});
     builder.addRow({useStaging});
-    builder.addRow({stagingDir});
+    builder.addRow({Layouting::empty, stagingDir});
     builder.addRow({useiOSAutomaticProvisioningUpdates});
 
     builder.addRow({new QLabel(Tr::tr("Targets:")), frame});
@@ -622,12 +744,7 @@ QWidget *CMakeBuildStep::createConfigWidget()
     stagingDir.addOnChanged(this, updateDetails);
     useiOSAutomaticProvisioningUpdates.addOnChanged(this, updateDetails);
 
-    connect(ProjectExplorerPlugin::instance(), &ProjectExplorerPlugin::settingsChanged,
-            this, updateDetails);
-
-    connect(buildConfiguration(), &BuildConfiguration::environmentChanged,
-            this, updateDetails);
-
+    connect(buildConfiguration(), &BuildConfiguration::environmentChanged, this, updateDetails);
     connect(this, &CMakeBuildStep::buildTargetsChanged, widget, updateDetails);
 
     return widget;
@@ -703,7 +820,7 @@ Environment CMakeBuildStep::environment() const
     return m_environment;
 }
 
-void CMakeBuildStep::setUserEnvironmentChanges(const Utils::EnvironmentItems &diff)
+void CMakeBuildStep::setUserEnvironmentChanges(const EnvironmentChanges &diff)
 {
     if (m_userEnvironmentChanges == diff)
         return;
@@ -711,7 +828,7 @@ void CMakeBuildStep::setUserEnvironmentChanges(const Utils::EnvironmentItems &di
     updateAndEmitEnvironmentChanged();
 }
 
-EnvironmentItems CMakeBuildStep::userEnvironmentChanges() const
+EnvironmentChanges CMakeBuildStep::userEnvironmentChanges() const
 {
     return m_userEnvironmentChanges;
 }
@@ -732,7 +849,7 @@ void CMakeBuildStep::setUseClearEnvironment(bool b)
 void CMakeBuildStep::updateAndEmitEnvironmentChanged()
 {
     Environment env = baseEnvironment();
-    env.modify(userEnvironmentChanges());
+    userEnvironmentChanges().modifyEnvironment(env, macroExpander());
     if (env == m_environment)
         return;
     m_environment = env;
@@ -746,9 +863,10 @@ Environment CMakeBuildStep::baseEnvironment() const
         ProjectExplorer::IDevice::ConstPtr devicePtr = BuildDeviceKitAspect::device(kit());
         result = devicePtr ? devicePtr->systemEnvironment() : Environment::systemEnvironment();
     }
-    buildConfiguration()->addToEnvironment(result);
+    if (buildConfiguration())
+        buildConfiguration()->addToEnvironment(result);
     kit()->addToBuildEnvironment(result);
-    result.modify(project()->additionalEnvironment());
+    project()->additionalEnvironment().modifyEnvironment(result, macroExpander());
     return result;
 }
 
@@ -770,23 +888,24 @@ QString CMakeBuildStep::currentInstallPrefix() const
 
 FilePath CMakeBuildStep::cmakeExecutable() const
 {
-    CMakeTool *tool = CMakeKitAspect::cmakeTool(kit());
-    return tool ? tool->cmakeExecutable() : FilePath();
+    return CMakeKitAspect::cmakeExecutable(kit());
 }
 
 void CMakeBuildStep::updateDeploymentData()
 {
-    if (!useStaging())
+    if (!useStaging()) {
+        buildSystem()->setDeploymentData({});
         return;
+    }
 
     QString install = currentInstallPrefix();
     FilePath rootDir = cmakeExecutable().withNewPath(stagingDir().path());
-    Q_UNUSED(install);
+    Q_UNUSED(install)
 
     DeploymentData deploymentData;
     deploymentData.setLocalInstallRoot(rootDir);
 
-    IDeviceConstPtr runDevice = DeviceKitAspect::device(buildSystem()->kit());
+    IDeviceConstPtr runDevice = RunDeviceKitAspect::device(buildSystem()->kit());
 
     if (!runDevice)
         return;
@@ -800,9 +919,9 @@ void CMakeBuildStep::updateDeploymentData()
                                                   ? DeployableFile::TypeExecutable
                                                   : DeployableFile::TypeNormal;
 
-            FilePath targetDirPath = filePath.parentDir().relativePathFrom(rootDir);
+            QString targetDirPath = filePath.parentDir().relativePathFromDir(rootDir);
 
-            const FilePath targetDir = runDevice->rootPath().pathAppended(targetDirPath.path());
+            const FilePath targetDir = runDevice->rootPath().pathAppended(targetDirPath);
             deploymentData.addFile(filePath, targetDir.nativePath(), type);
             return IterationPolicy::Continue;
         };

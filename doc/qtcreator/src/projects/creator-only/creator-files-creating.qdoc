@@ -4,18 +4,21 @@
 /*!
     \page creator-file-creating.html
     \previouspage creator-how-tos.html
+    \nextpage
 
-    \ingroup creator-how-to-projects-files
+    \title Adding files
 
-    \title Create files
+    \quotation
+    \l {Add files}{How to: Add files}
+    \endquotation
 
-    Use wizard templates to add individual files to your \l{Creating Projects}
+    Use wizard templates to add individual files to your \l{Creating projects}
     {projects}.
 
     To add files to projects, select \uicontrol File > \uicontrol {New File}, and
     then select the type of the file.
 
-    \image qtcreator-new-file.webp {New File wizard}
+    \image {qtcreator-new-file.webp} {New File wizard}
 
     \note You can also use the \c f locator filter to create a new
     file and open it in the editor. However, you must manually add
@@ -39,6 +42,10 @@
         \li State Chart XML (SCXML) files, Universal Modeling Language (UML)
             style models, and scratch models that use a temporary file.
     \row
+        \li \uicontrol {Lua}
+        \li Simple Lua files for \l {Extending \QC with Lua}{Lua plugins} and
+            script files that can access \QC internals and be triggered by an action.
+    \row
         \li \uicontrol {Qt}
         \li Source and header files for item, table,
             or list models, \QD forms and a matching classes for Qt Widgets
@@ -46,8 +53,8 @@
             JavaScript files for Qt Quick projects.
     \row
         \li \uicontrol {Compiler Explorer}
-        \li Example setup for using Compiler Explorer to compile C++ or Python
-            code.
+        \li Example setup for using Compiler Explorer to compile C++, Python,
+            or Qt and C++ code.
     \row
         \li \uicontrol {GLSL}
         \li OpenGL fragment and vertex shaders.
@@ -63,7 +70,7 @@
         \li Class and script files for Python projects.
     \row
         \li \uicontrol {vcpkg} (experimental)
-        \li vcpkg package manager manifest files (vcpkg.json).
+        \li vcpkg package manager manifest files (\c vcpkg.json).
     \row
         \li \uicontrol {Test Case}
         \li Test framework specific file holding a new test case, to be
@@ -73,7 +80,7 @@
         \li Empty Nim source and script files.
     \endtable
 
-    \sa {Navigate with locator}, {Add Files}{How To: Add Files},
+    \sa {Navigate with locator}, {Add files}{How to: Add files},
     {Add tests to existing test projects}, {Create UML-style models},
     {Use project wizards}
 */
@@ -90,11 +97,11 @@
     C++ project:
 
     \list 1
-        \li Select \uicontrol File > \uicontrol {New File} >
-            \uicontrol {C++ Class Wizard} > \uicontrol Choose.
+        \li Select \uicontrol File > \uicontrol {New File} > \uicontrol {C/C++} >
+            \uicontrol {C++ Class} > \uicontrol Choose.
         \li Specify the class name, base class, and header and source files for
             the class.
-            \image qtcreator-cpp-class-wizard.png {Enter Class Name dialog}
+            \image {qtcreator-cpp-class-wizard.webp} {Define Class dialog}
     \endlist
 
     The wizard supports namespaces. To use a namespace, enter a qualified
@@ -104,8 +111,8 @@
 
     You can also create your own project and class wizards.
 
-    \sa {Create files}, {Set C++ file naming preferences}, {Use project wizards},
-    {Custom Wizards}
+    \sa {Adding files}, {Set C++ file naming preferences}, {Use project wizards},
+    {Custom wizards}
 */
 
 /*!
@@ -122,10 +129,10 @@
     select \uicontrol Projects > \uicontrol {Project Settings} >
     \uicontrol {C++ File Naming}.
 
-    \image qtcreator-projects-settings-cpp-file-naming.webp {C++ File Naming settings for a project}
+    \image {qtcreator-projects-settings-cpp-file-naming.webp} {C++ File Naming settings for a project}
 
     In the \uicontrol {License template} field, enter
-    \l{Using Variables in Wizards}{predefined wizard variables} to specify the
+    \l{Using variables in wizards}{predefined wizard variables} to specify the
     path and filename of the license to use in the source and header files.
 
     To globally change the preferences, select \preferences > \uicontrol {C++} >
@@ -150,11 +157,11 @@
     \list 1
         \li Select \uicontrol File > \uicontrol {New File} > \uicontrol {Qt} >
             \uicontrol {Qt Resource File} > \uicontrol Choose.
-            \image qtcreator-new-file-qrc.webp {New File dialog}
+            \image {qtcreator-new-file-qrc.webp} {New File dialog}
         \li Follow the instructions of the wizard to create a resource
-            collection file (.qrc).
+            collection file (\c .qrc).
         \li Open the resource file in the resource editor.
-            \image qtcreator-add-resource.png "Editing resource files"
+            \image {qtcreator-add-resource.png} {Editing resource files}
         \li Select \uicontrol {Add Files} to locate and add individual files.
     \endlist
 
@@ -177,19 +184,19 @@
     translation files or icons. You can specify a locale in the
     \uicontrol Language field.
 
-    Use a lowercase, two-letter \l {https://www.iso.org/iso-639-language-codes.html}
-    {ISO 639 language code}, such as \e de, \e en, or \e fr.
+    Use a lowercase, two-letter \l{ISO 639 language code}, such as
+    \e de, \e en, or \e fr.
 
     \section1 Remove resource files
 
     Select \uicontrol Remove to remove the selected file from the resource
     collection.
 
-    In the \uicontrol {Remove File} dialog, select the
-    \uicontrol {Delete file permanently} check box to remove the file from
+    In the \uicontrol {Remove File} dialog, select
+    \uicontrol {Delete file permanently} to remove the file from
     the file system.
 
-    \image qtcreator-remove-file.webp {Remove File dialog}
+    \image {qtcreator-remove-file.webp} {Remove File dialog}
 
     To remove files that cannot be found in the file system,
     select \uicontrol {Remove Missing Files}.
@@ -197,7 +204,7 @@
     The above functions are also available in the context menu in the
     \l Projects view.
 
-    \sa {Create files}, {Use project wizards}, {QLocale}
+    \sa {Adding files}, {Use project wizards}, {QLocale}
 */
 
 /*!
@@ -206,29 +213,29 @@
 
     \ingroup creator-how-to-projects-files
 
-    \title Create OpenGL fragment and vertex shaders
+    \title Create OpenGL and Vulkan shaders
 
-    Qt supports integration with OpenGL implementations on all platforms, so you
-    can display hardware accelerated 3D graphics alongside a more conventional
-    user interface. For more information, see \l{Qt GUI}.
+    Qt supports integration with OpenGL and Vulkan implementations on all
+    platforms, so you can display hardware accelerated 3D graphics alongside a
+    more conventional user interface. For more information, see \l{Qt GUI}.
 
     You can use the QOpenGLShader class to compile OpenGL shaders written in the
     OpenGL Shading Language (GLSL) and in the OpenGL/ES Shading Language
     (GLSL/ES). QOpenGLShader and QOpenGLShaderProgram shelter you from the
     details of compiling and linking vertex and fragment shaders.
 
-    To create OpenGL shaders:
+    To create OpenGL or Vulkan shaders:
 
     \list 1
         \li Select \uicontrol File > \uicontrol {New File} > \uicontrol {GLSL}.
-            \image qtcreator-new-opengl-file.png {New OpenGL file wizard}
+            \image {qtcreator-new-opengl-file.webp} {New GLSL file wizard}
         \li Select the type of the shader to create, and then select
             \uicontrol Choose.
         \li Follow the instructions of the wizard to create the shader file.
         \li Open the shader file in the code editor, and write the shader code
-            in GLSL or GLSL/ES. The code editor offers syntax highlighting and
-            code completion for the files.
+            in GLSL, GLSL/ES, or Vulkan-compatible GLSL. The code editor offers
+            syntax highlighting and code completion for the files.
     \endlist
 
-    \sa {Create files}, {Use project wizards}
+    \sa {Adding files}, {Use project wizards}
 */

@@ -7,7 +7,7 @@
 #include <QTextStream>
 #include <QDateTime>
 #include <QLibraryInfo>
-#include <QtTest>
+#include <QTest>
 
 #include <QDebug>
 
@@ -49,11 +49,12 @@ struct TestData
     const int staticMessages;
 };
 
-static TestData testData(const QString &path)
+static std::optional<TestData> testData(const QString &path)
 {
     QFile file(path);
     Utils::FilePath pathPath = Utils::FilePath::fromString(path);
-    file.open(QFile::ReadOnly | QFile::Text);
+    if (!file.open(QFile::ReadOnly | QFile::Text))
+        return std::nullopt;
     const QString content = QString::fromUtf8(file.readAll());
     file.close();
 
@@ -122,7 +123,7 @@ void tst_Ecmascript::initTestCase()
             m_files << f;
     }
 
-    m_basePaths.append(QLibraryInfo::location(QLibraryInfo::Qml2ImportsPath));
+    m_basePaths.append(QLibraryInfo::path(QLibraryInfo::Qml2ImportsPath));
 
     if (!ModelManagerInterface::instance())
         new ModelManagerInterface;
@@ -138,7 +139,7 @@ void tst_Ecmascript::test_data()
     QTest::addColumn<int>("nStaticMessages");
 
 
-    for (const QFileInfo& f: m_files)
+    for (const QFileInfo& f: std::as_const(m_files))
         QTest::newRow(f.fileName().toLatin1().data()) << f.absoluteFilePath();
 }
 
@@ -154,11 +155,12 @@ void tst_Ecmascript::test()
         lPaths.maybeInsert(Utils::FilePath::fromString(p), Dialect::Qml);
     ModelManagerInterface::importScan(ModelManagerInterface::workingCopy(), lPaths,
                                       ModelManagerInterface::instance(), false);
-
-    TestData data = testData(filename);
-    Document::MutablePtr doc = data.doc;
-    int nExpectedSemanticMessages = data.semanticMessages;
-    int nExpectedStaticMessages = data.staticMessages;
+    ModelManagerInterface::instance()->test_joinAllThreads();
+    auto data = testData(filename);
+    QVERIFY(data);
+    Document::MutablePtr doc = data->doc;
+    int nExpectedSemanticMessages = data->semanticMessages;
+    int nExpectedStaticMessages = data->staticMessages;
     QVERIFY(!doc->source().isEmpty());
 
     Snapshot snapshot = modelManager->snapshot();

@@ -4,9 +4,11 @@
 #include "cmakeinstallstep.h"
 
 #include "cmakeabstractprocessstep.h"
+#include "cmakeautogenparser.h"
 #include "cmakebuildsystem.h"
 #include "cmakekitaspect.h"
-#include "cmakeparser.h"
+#include "cmakeoutputparser.h"
+#include "cmakeproject.h"
 #include "cmakeprojectconstants.h"
 #include "cmakeprojectmanagertr.h"
 #include "cmaketool.h"
@@ -15,8 +17,8 @@
 #include <projectexplorer/buildsteplist.h>
 #include <projectexplorer/processparameters.h>
 #include <projectexplorer/project.h>
-#include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/projectexplorersettings.h>
 
 #include <utils/layoutbuilder.h>
 
@@ -52,9 +54,10 @@ private:
 
 void CMakeInstallStep::setupOutputFormatter(OutputFormatter *formatter)
 {
-    CMakeParser *cmakeParser = new CMakeParser;
-    cmakeParser->setSourceDirectory(project()->projectDirectory());
-    formatter->addLineParsers({cmakeParser});
+    CMakeOutputParser *cmakeOutputParser = new CMakeOutputParser;
+    cmakeOutputParser->setSourceDirectories(
+        {project()->projectDirectory(), buildConfiguration()->buildDirectory()});
+    formatter->addLineParsers({new CMakeAutogenParser, cmakeOutputParser});
     formatter->addSearchDir(processParameters()->effectiveWorkingDirectory());
     CMakeAbstractProcessStep::setupOutputFormatter(formatter);
 }
@@ -62,8 +65,7 @@ void CMakeInstallStep::setupOutputFormatter(OutputFormatter *formatter)
 CommandLine CMakeInstallStep::cmakeCommand() const
 {
     CommandLine cmd;
-    if (CMakeTool *tool = CMakeKitAspect::cmakeTool(kit()))
-        cmd.setExecutable(tool->cmakeExecutable());
+    cmd.setExecutable(CMakeKitAspect::cmakeExecutable(kit()));
 
     FilePath buildDirectory = ".";
     if (buildConfiguration())
@@ -101,14 +103,26 @@ QWidget *CMakeInstallStep::createConfigWidget()
 
     cmakeArguments.addOnChanged(this, updateDetails);
 
-    connect(ProjectExplorerPlugin::instance(),
-            &ProjectExplorerPlugin::settingsChanged,
-            this,
-            updateDetails);
     connect(buildConfiguration(), &BuildConfiguration::buildDirectoryChanged, this, updateDetails);
     connect(buildConfiguration(), &BuildConfiguration::buildTypeChanged, this, updateDetails);
 
     return widget;
+}
+
+bool hasInstallDeployPreset(Project *project)
+{
+    auto cmakeProject = qobject_cast<CMakeProject *>(project);
+    if (!cmakeProject)
+        return false;
+
+    const auto &vendor = cmakeProject->presetsData().vendor;
+    if (!vendor)
+        return false;
+
+    const QVariantList deployPresets = vendor->value("deployPresets").toList();
+    return std::any_of(deployPresets.begin(), deployPresets.end(), [](const QVariant &v) {
+        return v.toMap().value("type").toString() == "install";
+    });
 }
 
 // CMakeInstallStepFactory

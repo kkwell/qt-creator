@@ -8,6 +8,7 @@
 #include "presetsparser.h"
 
 #include <projectexplorer/project.h>
+#include <utils/result.h>
 
 namespace CMakeProjectManager {
 
@@ -19,11 +20,8 @@ class CMAKE_EXPORT CMakeProject final : public ProjectExplorer::Project
 
 public:
     explicit CMakeProject(const Utils::FilePath &filename);
-    ~CMakeProject() final;
 
     ProjectExplorer::Tasks projectIssues(const ProjectExplorer::Kit *k) const final;
-
-    ProjectExplorer::ProjectImporter *projectImporter() const final;
 
     using IssueType = ProjectExplorer::Task::TaskType;
     void addIssue(IssueType type, const QString &text);
@@ -31,29 +29,29 @@ public:
 
     Internal::PresetsData presetsData() const;
     void readPresets();
-
-    void setOldPresetKits(const QList<ProjectExplorer::Kit *> &presetKits) const;
-    QList<ProjectExplorer::Kit *> oldPresetKits() const;
+    Utils::FilePath buildDirectoryToImport() const;
+    void createKitsFromPresets() const;
 
     Internal::CMakeSpecificSettings &settings();
-
-protected:
-    bool setupTarget(ProjectExplorer::Target *t) final;
+    static QString projectDisplayName(const Utils::FilePath &projectFilePath);
 
 private:
     ProjectExplorer::DeploymentKnowledge deploymentKnowledge() const override;
-    void configureAsExampleProject(ProjectExplorer::Kit *kit) override;
 
     Internal::PresetsData combinePresets(Internal::PresetsData &cmakePresetsData,
                                          Internal::PresetsData &cmakeUserPresetsData);
     void setupBuildPresets(Internal::PresetsData &presetsData);
-
-    mutable Internal::CMakeProjectImporter *m_projectImporter = nullptr;
-    mutable QList<ProjectExplorer::Kit*> m_oldPresetKits;
+    void setupTestPresets(Internal::PresetsData &presetsData);
 
     ProjectExplorer::Tasks m_issues;
     Internal::PresetsData m_presetsData;
     Internal::CMakeSpecificSettings m_settings;
+    Utils::FilePath m_buildDirToImport;
+    std::vector<Utils::Result<std::unique_ptr<Utils::FilePathWatcher>>> m_includeFilesWatcher;
 };
+
+#ifdef WITH_TESTS
+QObject *createTestPresetsInheritanceTest();
+#endif
 
 } // namespace CMakeProjectManager

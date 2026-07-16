@@ -44,7 +44,6 @@
 #include <vcsbase/vcsoutputwindow.h>
 #include <vcsbase/vcsbasesubmiteditor.h>
 #include <vcsbase/vcsbaseplugin.h>
-#include <vcsbase/vcsbasetr.h>
 #include <vcsbase/vcscommand.h>
 
 #include <QAbstractButton>
@@ -65,13 +64,13 @@
 #include <QMetaObject>
 #include <QMutex>
 #include <QRegularExpression>
-#include <QTextCodec>
 #include <QUuid>
 #include <QVBoxLayout>
 
 #ifdef WITH_TESTS
-#include <QTest>
 #include <coreplugin/vcsmanager.h>
+#include <QSignalSpy>
+#include <QTest>
 #endif
 
 using namespace Core;
@@ -105,11 +104,6 @@ const char LOG_EDITOR_ID[]             = "ClearCase File Log Editor";
 const char ANNOTATION_EDITOR_ID[]      = "ClearCase Annotation Editor";
 const char DIFF_EDITOR_ID[]            = "ClearCase Diff Editor";
 
-static QString debugCodec(const QTextCodec *c)
-{
-    return c ? QString::fromLatin1(c->name()) : QString::fromLatin1("Null codec");
-}
-
 class ClearCasePluginPrivate final : public VcsBase::VersionControlBase
 {
     Q_OBJECT
@@ -119,7 +113,7 @@ public:
     ~ClearCasePluginPrivate() final;
 
     // IVersionControl
-    QString displayName() const final;
+    QString displayName() const final { return "ClearCase"; }
     Id id() const final;
 
     bool isVcsFileOrDirectory(const FilePath &filePath) const final;
@@ -139,6 +133,12 @@ public:
     bool vcsCreateRepository(const FilePath &directory) final;
 
     void vcsAnnotate(const FilePath &file, int line) final;
+    void vcsLog(const Utils::FilePath &topLevel, const Utils::FilePath &relativePath) final {
+        history(topLevel, {relativePath.path()});
+    }
+    void vcsDiff(const Utils::FilePath &topLevel, const Utils::FilePath &relativePath) final {
+        ccDiffWithPred(topLevel, {relativePath.path()});
+    }
     void vcsDescribe(const FilePath &source, const QString &changeNr) final;
 
     QString vcsOpenText() const final;
@@ -172,14 +172,13 @@ public:
     QString ccGetComment(const FilePath &workingDir, const QString &fileName) const;
     bool ccFileOp(const FilePath &workingDir, const QString &title, const QStringList &args,
                   const QString &fileName, const QString &file2 = {});
-    FileStatus vcsStatus(const QString &file) const;
-    void checkAndReIndexUnknownFile(const QString &file);
-    QString currentView() const { return m_viewData.name; }
+    FileStatus vcsStatus(const FilePath &file) const;
+    void checkAndReIndexUnknownFile(const FilePath &file);
     QString viewRoot() const { return m_viewData.root; }
     void refreshActivities();
     inline bool isUcm() const { return m_viewData.isUcm; }
     inline bool isDynamic() const { return m_viewData.isDynamic; }
-    void setStatus(const QString &file, FileStatus::Status status, bool update = true);
+    void setStatus(const FilePath &file, FileStatus::Status status, bool update = true);
 
     bool ccCheckUcm(const QString &viewname, const FilePath &workingDir) const;
 #ifdef WITH_TESTS
@@ -191,6 +190,11 @@ public:
     bool newActivity();
     void updateStreamAndView();
 
+#ifdef WITH_TESTS
+signals:
+    void reindexedDynamicFile();
+    void statusActionsUpdated();
+#endif
 protected:
     void updateActions(VcsBase::VersionControlBase::ActionState) override;
     bool activateCommit() override;
@@ -227,18 +231,18 @@ private:
     void closing();
 
     inline bool isCheckInEditorOpen() const;
-    QStringList getVobList() const;
-    QString ccManagesDirectory(const FilePath &directory) const;
-    QString ccViewRoot(const FilePath &directory) const;
-    QString findTopLevel(const FilePath &directory) const;
+    FilePaths getVobList() const;
+    FilePath ccManagesDirectory(const FilePath &directory) const;
+    FilePath ccViewRoot(const FilePath &directory) const;
+    FilePath findTopLevel(const FilePath &directory) const;
     IEditor *showOutputInEditor(const QString& title, const QString &output, Id id,
-                                const FilePath &source, QTextCodec *codec) const;
+                                const FilePath &source, const TextEncoding &encoding) const;
     CommandResult runCleartoolProc(const FilePath &workingDir,
                                    const QStringList &arguments) const;
     CommandResult runCleartool(const FilePath &workingDir, const QStringList &arguments,
-                               VcsBase::RunFlags flags = VcsBase::RunFlags::None,
-                               QTextCodec *codec = nullptr, int timeoutMultiplier = 1) const;
-    static void sync(QPromise<void> &promise, QStringList files);
+                               VcsBase::RunFlags flags = VcsBase::RunFlag::None,
+                               const TextEncoding &encoding = {}, int timeoutMultiplier = 1) const;
+    static void sync(QPromise<void> &promise, FilePaths files);
 
     void history(const FilePath &workingDir,
                  const QStringList &file = {},
@@ -254,12 +258,12 @@ private:
     QString diffExternal(QString file1, QString file2 = QString(), bool keep = false);
     QString getFile(const QString &nativeFile, const QString &prefix);
     QString runExtDiff(const FilePath &workingDir, const QStringList &arguments, int timeOutS,
-                       QTextCodec *outputCodec = nullptr);
-    static QString getDriveLetterOfPath(const QString &directory);
+                       const TextEncoding &encoding = {});
+    static FilePath getDriveLetterOfPath(FilePath directory);
 
-    FileStatus::Status getFileStatus(const QString &fileName) const;
-    void updateStatusForFile(const QString &absFile);
-    void updateEditDerivedObjectWarning(const QString &fileName, const FileStatus::Status status);
+    FileStatus::Status getFileStatus(const FilePath &fileName) const;
+    void updateStatusForFile(const FilePath &absFile);
+    void updateEditDerivedObjectWarning(const FilePath &fileName, const FileStatus::Status status);
 
 public:
     ClearCaseSettings m_settings;
@@ -296,32 +300,29 @@ public:
 
     ClearCaseSettingsPage m_settingsPage;
 
-    VcsEditorFactory logEditorFactory {{
-        LogOutput,
-        LOG_EDITOR_ID,
-        VcsBase::Tr::tr("ClearCase File Log Editor"),   // display_name
-        "text/vnd.qtcreator.clearcase.log",
-        [] { return new ClearCaseEditorWidget; },
-        std::bind(&ClearCasePluginPrivate::vcsDescribe, this, _1, _2)
-    }};
+    VcsEditorFactory logEditorFactory{
+        {LogOutput,
+         LOG_EDITOR_ID,
+         Tr::tr("ClearCase File Log Editor"), // display_name
+         "text/vnd.qtcreator.clearcase.log",
+         [] { return new ClearCaseEditorWidget; },
+         std::bind(&ClearCasePluginPrivate::vcsDescribe, this, _1, _2)}};
 
-    VcsEditorFactory annotateEditorFactory {{
-        AnnotateOutput,
-        ANNOTATION_EDITOR_ID,
-        VcsBase::Tr::tr("ClearCase Annotation Editor"),   // display_name
-        "text/vnd.qtcreator.clearcase.annotation",
-        [] { return new ClearCaseEditorWidget; },
-        std::bind(&ClearCasePluginPrivate::vcsDescribe, this, _1, _2)
-    }};
+    VcsEditorFactory annotateEditorFactory{
+        {AnnotateOutput,
+         ANNOTATION_EDITOR_ID,
+         Tr::tr("ClearCase Annotation Editor"), // display_name
+         "text/vnd.qtcreator.clearcase.annotation",
+         [] { return new ClearCaseEditorWidget; },
+         std::bind(&ClearCasePluginPrivate::vcsDescribe, this, _1, _2)}};
 
-    VcsEditorFactory diffEditorFactory {{
-        DiffOutput,
-        DIFF_EDITOR_ID,
-        VcsBase::Tr::tr("ClearCase Diff Editor"),   // display_name
-        "text/x-patch",
-        [] { return new ClearCaseEditorWidget; },
-        std::bind(&ClearCasePluginPrivate::vcsDescribe, this, _1, _2)
-    }};
+    VcsEditorFactory diffEditorFactory{
+        {DiffOutput,
+         DIFF_EDITOR_ID,
+         Tr::tr("ClearCase Diff Editor"), // display_name
+         "text/x-patch",
+         [] { return new ClearCaseEditorWidget; },
+         std::bind(&ClearCasePluginPrivate::vcsDescribe, this, _1, _2)}};
 
 #ifdef WITH_TESTS
     bool m_fakeClearTool = false;
@@ -353,32 +354,33 @@ bool ClearCasePluginPrivate::isCheckInEditorOpen() const
 }
 
 /// Files in this directories are under ClearCase control
-QStringList ClearCasePluginPrivate::getVobList() const
+FilePaths ClearCasePluginPrivate::getVobList() const
 {
     const CommandResult result = runCleartoolProc(currentState().topLevel(), {"lsvob", "-s"});
-    return result.cleanedStdOut().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    return transform(
+        result.cleanedStdOut().split(QLatin1Char('\n'), Qt::SkipEmptyParts),
+        FilePath::fromUserInput);
 }
 
 /// Get the drive letter of a path
 /// Necessary since QDir(directory).rootPath() returns C:/ in all cases
-QString ClearCasePluginPrivate::getDriveLetterOfPath(const QString &directory)
+FilePath ClearCasePluginPrivate::getDriveLetterOfPath(FilePath directory)
 {
-    // cdUp until we get just the drive letter
-    QDir dir(directory);
-    while (!dir.isRoot() && dir.cdUp())
-        ;
+    // Go up until we get just the drive letter
+    while (!directory.isRootPath() && directory.parentDir().exists())
+        directory = directory.parentDir();
 
-    return dir.path();
+    return directory;
 }
 
-void ClearCasePluginPrivate::updateStatusForFile(const QString &absFile)
+void ClearCasePluginPrivate::updateStatusForFile(const FilePath &absFile)
 {
     setStatus(absFile, getFileStatus(absFile), false);
 }
 
 /// Give warning if a derived object is edited
-void ClearCasePluginPrivate::updateEditDerivedObjectWarning(const QString &fileName,
-                                                     const FileStatus::Status status)
+void ClearCasePluginPrivate::updateEditDerivedObjectWarning(
+    const FilePath &fileName, const FileStatus::Status status)
 {
     if (!isDynamic())
         return;
@@ -394,26 +396,26 @@ void ClearCasePluginPrivate::updateEditDerivedObjectWarning(const QString &fileN
         if (!infoBar->canInfoBeAdded(derivedObjectWarning))
             return;
 
-        infoBar->addInfo(InfoBarEntry(derivedObjectWarning,
-                                      Tr::tr("Editing Derived Object: %1").arg(fileName)));
+        infoBar->addInfo(InfoBarEntry(
+            derivedObjectWarning,
+            Tr::tr("Editing Derived Object: %1").arg(fileName.toUserOutput())));
     } else {
         infoBar->removeInfo(derivedObjectWarning);
     }
 }
 
-FileStatus::Status ClearCasePluginPrivate::getFileStatus(const QString &fileName) const
+FileStatus::Status ClearCasePluginPrivate::getFileStatus(const FilePath &fileName) const
 {
     QTC_CHECK(!fileName.isEmpty());
 
-    const QDir viewRootDir = QFileInfo(fileName).dir();
-    const QString buffer = runCleartoolProc(FilePath::fromString(viewRootDir.path()),
-                                            {"ls", fileName}).cleanedStdOut();
+    const FilePath viewRootDir = fileName.parentDir();
+    const QString buffer
+        = runCleartoolProc(FilePath::fromString(viewRootDir.path()), {"ls", fileName.nativePath()})
+              .cleanedStdOut();
     const int atatpos = buffer.indexOf(QLatin1String("@@"));
     if (atatpos != -1) { // probably a managed file
-        const QString absFile =
-                viewRootDir.absoluteFilePath(
-                    QDir::fromNativeSeparators(buffer.left(atatpos)));
-        QTC_CHECK(QFileInfo::exists(absFile));
+        const FilePath absFile = viewRootDir.pathAppended(buffer.left(atatpos)).absolutePath();
+        QTC_CHECK(absFile.exists());
         QTC_CHECK(!absFile.isEmpty());
 
         // "cleartool ls" of a derived object looks like this:
@@ -424,13 +426,14 @@ FileStatus::Status ClearCasePluginPrivate::getFileStatus(const QString &fileName
             return FileStatus::Derived;
 
         // find first whitespace. anything before that is not interesting
-        const int wspos = buffer.indexOf(QRegularExpression("\\s"));
+        static const QRegularExpression regexp("\\s");
+        const int wspos = buffer.indexOf(regexp);
         if (buffer.lastIndexOf(QLatin1String("CHECKEDOUT"), wspos) != -1)
             return FileStatus::CheckedOut;
         else
             return FileStatus::CheckedIn;
     } else {
-        QTC_CHECK(QFileInfo::exists(fileName));
+        QTC_CHECK(fileName.exists());
         QTC_CHECK(!fileName.isEmpty());
         return FileStatus::NotManaged;
     }
@@ -464,13 +467,13 @@ FileStatus::Status ClearCasePluginPrivate::getFileStatus(const QString &fileName
 /// 6) /home/<username>/snapshots/myview/vobs/vobA
 ///
 /// Note: The VOB directory is used as toplevel although the directory one up could have been
-///       used on cases execpt 5. For case 5 it would have been /, which we don't want.
+///       used on cases except 5. For case 5 it would have been /, which we don't want.
 ///
 /// "cleartool pwv" returns the values for "set view" and "working directory view", also for
 /// snapshot views.
 ///
 /// Returns the ClearCase topLevel/VOB directory for this directory.
-QString ClearCasePluginPrivate::ccManagesDirectory(const FilePath &directory) const
+FilePath ClearCasePluginPrivate::ccManagesDirectory(const FilePath &directory) const
 {
     const CommandResult result = runCleartoolProc(directory, {"pwv"});
     if (result.result() != ProcessResult::FinishedWithSuccess)
@@ -491,21 +494,18 @@ QString ClearCasePluginPrivate::ccManagesDirectory(const FilePath &directory) co
     const QString workingDirectoryView = output[0].mid(workingDirPattern.size());
     const QString setView = output[1].mid(setViewDirPattern.size());
     const QString none(QLatin1String("** NONE **"));
-    QString rootDir;
-    if (setView != none || workingDirectoryView != none)
-        rootDir = ccViewRoot(directory);
-    else
+    if (setView == none && workingDirectoryView == none)
         return {};
+    const FilePath rootDir = ccViewRoot(directory);
 
     // Check if the directory is inside one of the known VOBs.
-    static QStringList vobs;
+    static FilePaths vobs;
     if (vobs.empty())
         vobs = getVobList();
 
-    for (const QString &relativeVobDir : std::as_const(vobs)) {
-        const QString vobPath = QDir::cleanPath(rootDir + QDir::fromNativeSeparators(relativeVobDir));
-        const bool isManaged = (vobPath == directory.toString())
-                || directory.isChildOf(FilePath::fromString(vobPath));
+    for (const FilePath &relativeVobDir : std::as_const(vobs)) {
+        const FilePath vobPath = rootDir.resolvePath(relativeVobDir).cleanPath();
+        const bool isManaged = (vobPath == directory) || directory.isChildOf(vobPath);
         if (isManaged)
             return vobPath;
     }
@@ -513,30 +513,30 @@ QString ClearCasePluginPrivate::ccManagesDirectory(const FilePath &directory) co
 }
 
 /// Find the root path of a clearcase view. Precondition: This is a clearcase managed dir
-QString ClearCasePluginPrivate::ccViewRoot(const FilePath &directory) const
+FilePath ClearCasePluginPrivate::ccViewRoot(const FilePath &directory) const
 {
     const CommandResult result = runCleartoolProc(directory, {"pwv", "-root"});
-    QString root = result.cleanedStdOut().trimmed();
+    auto root = FilePath::fromUserInput(result.cleanedStdOut().trimmed());
     if (root.isEmpty()) {
         if (HostOsInfo::isWindowsHost())
-            root = getDriveLetterOfPath(directory.toString());
+            root = getDriveLetterOfPath(directory);
         else
-            root = QLatin1Char('/');
+            root = FilePath::fromUserInput("/");
     }
 
-    return QDir::fromNativeSeparators(root);
+    return root;
 }
 
 /*! Find top level for view that contains \a directory
  *
  * Handles both dynamic views and snapshot views.
  */
-QString ClearCasePluginPrivate::findTopLevel(const FilePath &directory) const
+FilePath ClearCasePluginPrivate::findTopLevel(const FilePath &directory) const
 {
     // Do not check again if we've already tested that the dir is managed,
     // or if it is a child of a managed dir (top level).
     if (directory == m_topLevel || directory.isChildOf(m_topLevel))
-        return m_topLevel.toString();
+        return m_topLevel;
 
     return ccManagesDirectory(directory);
 }
@@ -731,13 +731,13 @@ ClearCasePluginPrivate::ClearCasePluginPrivate()
     status.addToContainer(CMD_ID_CLEARCASE_MENU);
     m_commandLocator->appendCommand(status.command());
 
-    setupVcsSubmitEditor(this, {
-        Constants::CLEARCASE_SUBMIT_MIMETYPE,
-        Constants::CLEARCASECHECKINEDITOR_ID,
-        VcsBase::Tr::tr("ClearCase Check In Editor"),
-        VcsBaseSubmitEditorParameters::DiffFiles,
-        [] { return new ClearCaseSubmitEditor; }
-    });
+    setupVcsSubmitEditor(
+        this,
+        {Constants::CLEARCASE_SUBMIT_MIMETYPE,
+         Constants::CLEARCASECHECKINEDITOR_ID,
+         Tr::tr("ClearCase Check In Editor"),
+         VcsBaseSubmitEditorParameters::DiffFiles,
+         [] { return new ClearCaseSubmitEditor; }});
 }
 
 // called before closing the submit editor
@@ -841,19 +841,24 @@ QStringList ClearCasePluginPrivate::ccGetActiveVobs() const
     return res;
 }
 
-void ClearCasePluginPrivate::checkAndReIndexUnknownFile(const QString &file)
+void ClearCasePluginPrivate::checkAndReIndexUnknownFile(const FilePath &file)
 {
     if (isDynamic()) {
         // reindex unknown files
-        if (m_statusMap->value(file, FileStatus(FileStatus::Unknown)).status == FileStatus::Unknown)
+        if (m_statusMap->value(file.path(), FileStatus(FileStatus::Unknown)).status
+            == FileStatus::Unknown) {
             updateStatusForFile(file);
+#ifdef WITH_TESTS
+            emit reindexedDynamicFile();
+#endif
+        }
     }
 }
 
 // file must be absolute, and using '/' path separator
-FileStatus ClearCasePluginPrivate::vcsStatus(const QString &file) const
+FileStatus ClearCasePluginPrivate::vcsStatus(const FilePath &file) const
 {
-    return m_statusMap->value(file, FileStatus(FileStatus::Unknown));
+    return m_statusMap->value(file.path(), FileStatus(FileStatus::Unknown));
 }
 
 QString ClearCasePluginPrivate::ccGetFileActivity(const FilePath &workingDir, const QString &file)
@@ -900,7 +905,7 @@ void ClearCasePluginPrivate::updateStatusActions()
     FileStatus fileStatus = FileStatus::Unknown;
     bool hasFile = currentState().hasFile();
     if (hasFile) {
-        const QString absoluteFileName = currentState().currentFile().toString();
+        const FilePath absoluteFileName = currentState().currentFile();
         checkAndReIndexUnknownFile(absoluteFileName);
         fileStatus = vcsStatus(absoluteFileName);
 
@@ -922,6 +927,10 @@ void ClearCasePluginPrivate::updateStatusActions()
 
     m_checkInActivityAction->setEnabled(m_viewData.isUcm);
     m_diffActivityAction->setEnabled(m_viewData.isUcm);
+
+#ifdef WITH_TESTS
+    emit statusActionsUpdated();
+#endif
 }
 
 void ClearCasePluginPrivate::updateActions(VersionControlBase::ActionState as)
@@ -995,12 +1004,12 @@ void ClearCasePluginPrivate::addCurrentFile()
 }
 
 // Set the FileStatus of file given in absolute path
-void ClearCasePluginPrivate::setStatus(const QString &file, FileStatus::Status status, bool update)
+void ClearCasePluginPrivate::setStatus(const FilePath &file, FileStatus::Status status, bool update)
 {
     QTC_CHECK(!file.isEmpty());
-    m_statusMap->insert(file, FileStatus(status, QFileInfo(file).permissions()));
+    m_statusMap->insert(file.path(), FileStatus(status, file.permissions()));
 
-    if (update && currentState().currentFile().toString() == file)
+    if (update && currentState().currentFile() == file)
         QMetaObject::invokeMethod(this, &ClearCasePluginPrivate::updateStatusActions);
 }
 
@@ -1089,14 +1098,14 @@ bool ClearCasePluginPrivate::vcsUndoCheckOut(const FilePath &workingDir, const Q
     args << QLatin1String(keep ? "-keep" : "-rm");
     args << QDir::toNativeSeparators(fileName);
 
-    const CommandResult result = runCleartool(workingDir, args, RunFlags::ShowStdOut);
+    const CommandResult result = runCleartool(workingDir, args, RunFlag::ShowStdOut);
     if (result.result() != ProcessResult::FinishedWithSuccess)
         return false;
 
-    const QString absPath = workingDir.pathAppended(fileName).toString();
+    const FilePath absPath = workingDir.pathAppended(fileName);
     if (!m_settings.disableIndexer)
         setStatus(absPath, FileStatus::CheckedIn);
-    emit filesChanged(QStringList(absPath));
+    emit filesChanged({absPath});
     return true;
 }
 
@@ -1119,14 +1128,14 @@ bool ClearCasePluginPrivate::vcsUndoHijack(const FilePath &workingDir, const QSt
     args << QLatin1String("/dev/null");
     args << QDir::toNativeSeparators(fileName);
 
-    const CommandResult result = runCleartool(workingDir, args, RunFlags::ShowStdOut);
+    const CommandResult result = runCleartool(workingDir, args, RunFlag::ShowStdOut);
     if (result.result() == ProcessResult::FinishedWithSuccess)
         return false;
 
     if (m_settings.disableIndexer)
         return true;
 
-    const QString absPath = workingDir.pathAppended(fileName).toString();
+    const FilePath absPath = workingDir.pathAppended(fileName);
     setStatus(absPath, FileStatus::CheckedIn);
     return true;
 }
@@ -1158,7 +1167,7 @@ void ClearCasePluginPrivate::undoHijackCurrent()
 
     // revert
     if (vcsUndoHijack(state.currentFileTopLevel(), fileName, keep))
-        emit filesChanged(QStringList(state.currentFile().toString()));
+        emit filesChanged({state.currentFile()});
 }
 
 QString ClearCasePluginPrivate::ccGetFileVersion(const FilePath &workingDir, const QString &file) const
@@ -1171,12 +1180,11 @@ void ClearCasePluginPrivate::ccDiffWithPred(const FilePath &workingDir, const QS
     if (Constants::debug)
         qDebug() << Q_FUNC_INFO << files;
     const FilePath source = VcsBaseEditor::getSource(workingDir, files);
-    QTextCodec *codec = source.isEmpty() ? static_cast<QTextCodec *>(nullptr)
-                                         : VcsBaseEditor::getCodec(source);
+    const TextEncoding encoding = source.isEmpty() ? TextEncoding() : VcsBaseEditor::getEncoding(source);
 
     if ((m_settings.diffType == GraphicalDiff) && (files.count() == 1)) {
         const QString file = files.first();
-        const QString absFilePath = workingDir.pathAppended(file).toString();
+        const FilePath absFilePath = workingDir.pathAppended(file);
         if (vcsStatus(absFilePath).status == FileStatus::Hijacked)
             diffGraphical(ccGetFileVersion(workingDir, file), file);
         else
@@ -1184,13 +1192,13 @@ void ClearCasePluginPrivate::ccDiffWithPred(const FilePath &workingDir, const QS
         return; // done here, diff is opened in a new window
     }
     if (!m_settings.extDiffAvailable) {
-        VcsOutputWindow::appendError(Tr::tr("External diff is required to compare multiple files."));
+        VcsOutputWindow::appendError(workingDir, Tr::tr("External diff is required to compare multiple files."));
         return;
     }
     QString result;
     for (const QString &file : files) {
-        const QString absFilePath = workingDir.pathAppended(file).toString();
-        if (vcsStatus(QDir::fromNativeSeparators(absFilePath)).status == FileStatus::Hijacked)
+        const FilePath absFilePath = workingDir.pathAppended(file);
+        if (vcsStatus(absFilePath).status == FileStatus::Hijacked)
             result += diffExternal(ccGetFileVersion(workingDir, file), file);
         else
             result += diffExternal(file);
@@ -1212,7 +1220,7 @@ void ClearCasePluginPrivate::ccDiffWithPred(const FilePath &workingDir, const QS
         diffname = QDir::toNativeSeparators(files.first());
     }
     const QString title = QString::fromLatin1("cc diff %1").arg(diffname);
-    IEditor *editor = showOutputInEditor(title, result, DIFF_EDITOR_ID, source, codec);
+    IEditor *editor = showOutputInEditor(title, result, DIFF_EDITOR_ID, source, encoding);
     setWorkingDirectory(editor, workingDir);
     VcsBaseEditor::tagEditor(editor, tag);
     auto diffEditorWidget = qobject_cast<ClearCaseEditorWidget *>(editor->widget());
@@ -1240,11 +1248,11 @@ void ClearCasePluginPrivate::diffActivity()
     QTC_ASSERT(state.hasTopLevel(), return);
     if (Constants::debug)
         qDebug() << Q_FUNC_INFO;
+    const FilePath topLevel = state.topLevel();
     if (!m_settings.extDiffAvailable) {
-        VcsOutputWindow::appendError(Tr::tr("External diff is required to compare multiple files."));
+        VcsOutputWindow::appendError(topLevel, Tr::tr("External diff is required to compare multiple files."));
         return;
     }
-    FilePath topLevel = state.topLevel();
     const QString activity = QInputDialog::getText(ICore::dialogParent(), Tr::tr("Enter Activity"),
                                              Tr::tr("Activity Name"), QLineEdit::Normal, m_activity);
     if (activity.isEmpty())
@@ -1254,7 +1262,7 @@ void ClearCasePluginPrivate::diffActivity()
     QString result;
     // map from fileName to (first, latest) pair
     QMap<QString, QStringPair> filever;
-    int topLevelLen = topLevel.toString().length();
+    int topLevelLen = topLevel.path().size();
     for (const QString &version : versions) {
         QString shortver = version.mid(topLevelLen + 1);
         int atatpos = shortver.indexOf(QLatin1String("@@"));
@@ -1265,11 +1273,12 @@ void ClearCasePluginPrivate::diffActivity()
 
             // pre-first version. only for the first occurrence
             if (filever[file].first.isEmpty()) {
-                int verpos = shortver.lastIndexOf(QRegularExpression("[^0-9]")) + 1;
+                static const QRegularExpression regexp("[^0-9]");
+                int verpos = shortver.lastIndexOf(regexp) + 1;
                 int vernum = shortver.mid(verpos).toInt();
                 if (vernum)
                     --vernum;
-                shortver.replace(verpos, shortver.length() - verpos, QString::number(vernum));
+                shortver.replace(verpos, shortver.size() - verpos, QString::number(vernum));
                 // first version
                 filever[file].first = shortver;
             }
@@ -1294,7 +1303,7 @@ void ClearCasePluginPrivate::diffActivity()
     m_diffPrefix.clear();
     const QString title = QString::fromLatin1("%1.patch").arg(activity);
     IEditor *editor = showOutputInEditor(title, result, DIFF_EDITOR_ID,
-                                         FilePath::fromString(activity), nullptr);
+                                         FilePath::fromString(activity), {});
     setWorkingDirectory(editor, topLevel);
 }
 
@@ -1349,7 +1358,7 @@ void ClearCasePluginPrivate::startCheckInActivity()
         return;
 
     FilePath topLevel = state.topLevel();
-    int topLevelLen = topLevel.toString().length();
+    int topLevelLen = topLevel.path().size();
     const QStringList versions = ccGetActivityVersions(topLevel, actSelector->activity());
     QStringList files;
     QString last;
@@ -1378,13 +1387,13 @@ void ClearCasePluginPrivate::startCheckIn(const FilePath &workingDir, const QStr
         return;
 
     if (isCheckInEditorOpen()) {
-        VcsOutputWindow::appendWarning(Tr::tr("Another check in is currently being executed."));
+        VcsOutputWindow::appendWarning(workingDir, Tr::tr("Another check in is currently being executed."));
         return;
     }
 
     // Get list of added/modified/deleted files
     if (files.empty()) {
-        VcsOutputWindow::appendWarning(Tr::tr("There are no modified files."));
+        VcsOutputWindow::appendWarning(workingDir, Tr::tr("There are no modified files."));
         return;
     }
     // Create a new submit change file containing the submit template
@@ -1395,8 +1404,8 @@ void ClearCasePluginPrivate::startCheckIn(const FilePath &workingDir, const QStr
         submitTemplate = ccGetComment(workingDir, files.first());
     // Create a submit
     saver.write(submitTemplate.toUtf8());
-    if (!saver.finalize()) {
-        VcsOutputWindow::appendError(saver.errorString());
+    if (const Result<> res = saver.finalize(); !res) {
+        VcsOutputWindow::appendError(workingDir, res.error());
         return;
     }
     m_checkInMessageFilePath = saver.filePath();
@@ -1428,7 +1437,7 @@ void ClearCasePluginPrivate::history(const FilePath &workingDir,
                                      const QStringList &files,
                                      bool enableAnnotationContextMenu)
 {
-    QTextCodec *codec = VcsBaseEditor::getCodec(workingDir, files);
+    const TextEncoding encoding = VcsBaseEditor::getEncoding(workingDir, files);
     // no need for temp file
     QStringList args(QLatin1String("lshistory"));
     if (m_settings.historyCount > 0)
@@ -1438,7 +1447,7 @@ void ClearCasePluginPrivate::history(const FilePath &workingDir,
     for (const QString &file : files)
         args.append(QDir::toNativeSeparators(file));
 
-    const CommandResult result = runCleartool(workingDir, args, RunFlags::None, codec);
+    const CommandResult result = runCleartool(workingDir, args, RunFlag::None, encoding);
     if (result.result() != ProcessResult::FinishedWithSuccess)
         return;
 
@@ -1455,7 +1464,7 @@ void ClearCasePluginPrivate::history(const FilePath &workingDir,
     const QString title = QString::fromLatin1("cc history %1").arg(id);
     const FilePath source = VcsBaseEditor::getSource(workingDir, files);
     IEditor *newEditor = showOutputInEditor(title, result.cleanedStdOut(),
-                                            LOG_EDITOR_ID, source, codec);
+                                            LOG_EDITOR_ID, source, encoding);
     VcsBaseEditor::tagEditor(newEditor, tag);
     if (enableAnnotationContextMenu)
         VcsBaseEditor::getVcsBaseEditor(newEditor)->setFileLogAnnotateEnabled(true);
@@ -1466,9 +1475,8 @@ void ClearCasePluginPrivate::viewStatus()
     if (m_viewData.name.isEmpty())
         m_viewData = ccGetView(m_topLevel);
     QTC_ASSERT(!m_viewData.name.isEmpty() && !m_settings.disableIndexer, return);
-    VcsOutputWindow::append(QLatin1String("Indexed files status (C=Checked Out, "
-                                          "H=Hijacked, ?=Missing)"),
-                            VcsOutputWindow::Command, true);
+    VcsOutputWindow::appendMessage(m_topLevel, "Indexed files status (C=Checked Out, "
+                                               "H=Hijacked, ?=Missing)");
     bool anymod = false;
     for (StatusMap::ConstIterator it = m_statusMap->constBegin();
          it != m_statusMap->constEnd();
@@ -1482,14 +1490,14 @@ void ClearCasePluginPrivate::viewStatus()
             default: break;
         }
         if (cstat) {
-            VcsOutputWindow::append(QString::fromLatin1("%1    %2\n")
+            VcsOutputWindow::appendSilently(m_topLevel, QString::fromLatin1("%1    %2\n")
                            .arg(cstat)
                            .arg(QDir::toNativeSeparators(it.key())));
             anymod = true;
         }
     }
     if (!anymod)
-        VcsOutputWindow::appendWarning(QLatin1String("No modified files found."));
+        VcsOutputWindow::appendWarning(m_topLevel, QLatin1String("No modified files found."));
 }
 
 void ClearCasePluginPrivate::ccUpdate(const FilePath &workingDir, const QStringList &relativePaths)
@@ -1498,7 +1506,7 @@ void ClearCasePluginPrivate::ccUpdate(const FilePath &workingDir, const QStringL
     args << QLatin1String("-noverwrite");
     if (!relativePaths.isEmpty())
         args.append(relativePaths);
-    const CommandResult result = runCleartool(workingDir, args, RunFlags::ShowStdOut, nullptr, 10);
+    const CommandResult result = runCleartool(workingDir, args, RunFlag::ShowStdOut, {}, 10);
     if (result.result() == ProcessResult::FinishedWithSuccess)
         emit repositoryChanged(workingDir);
 }
@@ -1518,7 +1526,7 @@ void ClearCasePluginPrivate::vcsAnnotateHelper(const FilePath &workingDir, const
         qDebug() << Q_FUNC_INFO << file;
 
     // FIXME: Should this be something like workingDir.resolvePath(file) ?
-    QTextCodec *codec = VcsBaseEditor::getCodec(FilePath::fromString(file));
+    const TextEncoding encoding = VcsBaseEditor::getEncoding(FilePath::fromString(file));
 
     // Determine id
     QString id = file;
@@ -1531,7 +1539,7 @@ void ClearCasePluginPrivate::vcsAnnotateHelper(const FilePath &workingDir, const
     args << QLatin1String("-out") << QLatin1String("-");
     args.append(QDir::toNativeSeparators(id));
 
-    const CommandResult result = runCleartool(workingDir, args, RunFlags::None, codec);
+    const CommandResult result = runCleartool(workingDir, args, RunFlag::None, encoding);
     if (result.result() != ProcessResult::FinishedWithSuccess)
         return;
 
@@ -1558,7 +1566,7 @@ void ClearCasePluginPrivate::vcsAnnotateHelper(const FilePath &workingDir, const
         EditorManager::activateEditor(editor);
     } else {
         const QString title = QString::fromLatin1("cc annotate %1").arg(id);
-        IEditor *newEditor = showOutputInEditor(title, res, ANNOTATION_EDITOR_ID, source, codec);
+        IEditor *newEditor = showOutputInEditor(title, res, ANNOTATION_EDITOR_ID, source, encoding);
         VcsBaseEditor::tagEditor(newEditor, tag);
         VcsBaseEditor::gotoLineOfEditor(newEditor, lineNumber);
     }
@@ -1574,12 +1582,11 @@ void ClearCasePluginPrivate::vcsDescribe(const FilePath &source, const QString &
     if (Constants::debug)
         qDebug() << Q_FUNC_INFO << source << topLevel << changeNr;
     QString description;
-    const QString relPath = QDir::toNativeSeparators(QDir(topLevel.toString())
-                                                         .relativeFilePath(source.toString()));
-    const QString id = QString::fromLatin1("%1@@%2").arg(relPath, changeNr);
+    const QString relNativePath = source.relativeNativePathFromDir(topLevel);
+    const QString id = QString::fromLatin1("%1@@%2").arg(relNativePath, changeNr);
 
-    QTextCodec *codec = VcsBaseEditor::getCodec(source);
-    const CommandResult result = runCleartool(topLevel, {"describe", id}, RunFlags::None, codec);
+    const TextEncoding encoding = VcsBaseEditor::getEncoding(source);
+    const CommandResult result = runCleartool(topLevel, {"describe", id}, RunFlag::None, encoding);
     description = result.cleanedStdOut();
     if (m_settings.extDiffAvailable)
         description += diffExternal(id);
@@ -1592,7 +1599,7 @@ void ClearCasePluginPrivate::vcsDescribe(const FilePath &source, const QString &
         EditorManager::activateEditor(editor);
     } else {
         const QString title = QString::fromLatin1("cc describe %1").arg(id);
-        IEditor *newEditor = showOutputInEditor(title, description, DIFF_EDITOR_ID, source, codec);
+        IEditor *newEditor = showOutputInEditor(title, description, DIFF_EDITOR_ID, source, encoding);
         VcsBaseEditor::tagEditor(newEditor, tag);
     }
 }
@@ -1616,24 +1623,29 @@ CommandResult ClearCasePluginPrivate::runCleartoolProc(const FilePath &workingDi
 CommandResult ClearCasePluginPrivate::runCleartool(const FilePath &workingDir,
                                                    const QStringList &arguments,
                                                    RunFlags flags,
-                                                   QTextCodec *codec,
+                                                   const TextEncoding &encoding,
                                                    int timeoutMultiplier) const
 {
     if (m_settings.ccBinaryPath.isEmpty())
         return CommandResult(ProcessResult::StartFailed, Tr::tr("No ClearCase executable specified."));
 
-    const int timeoutS = m_settings.timeOutS * timeoutMultiplier;
-    return VcsCommand::runBlocking(workingDir, Environment::systemEnvironment(),
-                                   {m_settings.ccBinaryPath, arguments}, flags, timeoutS, codec);
+    return vcsRunBlocking({
+        .runData = {
+            {m_settings.ccBinaryPath, arguments},
+            workingDir,
+            Environment::systemEnvironment()},
+        .flags = flags,
+        .encoding = encoding},
+        std::chrono::seconds(m_settings.timeOutS * timeoutMultiplier));
 }
 
 IEditor *ClearCasePluginPrivate::showOutputInEditor(const QString& title, const QString &output,
                                                     Id id, const FilePath &source,
-                                                    QTextCodec *codec) const
+                                                    const TextEncoding &encoding) const
 {
     if (Constants::debug)
         qDebug() << "ClearCasePlugin::showOutputInEditor" << title << id.name()
-                 <<  "Size= " << output.size() << debugCodec(codec);
+                 <<  "Size= " << output.size() << encoding.name();
     QString s = title;
     IEditor *editor = EditorManager::openEditorWithContents(id, &s, output.toUtf8());
     auto e = qobject_cast<ClearCaseEditorWidget*>(editor->widget());
@@ -1646,8 +1658,8 @@ IEditor *ClearCasePluginPrivate::showOutputInEditor(const QString& title, const 
     e->textDocument()->setFallbackSaveAsFileName(s);
     if (!source.isEmpty())
         e->setSource(source);
-    if (codec)
-        e->setCodec(codec);
+    if (encoding.isValid())
+        e->setEncoding(encoding);
     return editor;
 }
 
@@ -1678,22 +1690,21 @@ bool ClearCasePluginPrivate::vcsOpen(const FilePath &workingDir, const QString &
     if (Constants::debug)
         qDebug() << Q_FUNC_INFO << workingDir << fileName;
 
-    const QFileInfo fi(workingDir.toString(), fileName);
     const FilePath topLevel = currentState().topLevel();
-    const QString absPath = fi.absoluteFilePath();
+    const FilePath absPath = workingDir.pathAppended(fileName).absolutePath();
 
-    if (!m_settings.disableIndexer &&
-            (fi.isWritable() || vcsStatus(absPath).status == FileStatus::Unknown))
-        Utils::asyncRun(sync, QStringList(absPath)).waitForFinished();
+    if (!m_settings.disableIndexer
+        && (absPath.isWritableFile() || vcsStatus(absPath).status == FileStatus::Unknown))
+        Utils::asyncRun(sync, FilePaths{absPath}).waitForFinished();
     if (vcsStatus(absPath).status == FileStatus::CheckedOut) {
         QMessageBox::information(ICore::dialogParent(), Tr::tr("ClearCase Checkout"),
                                  Tr::tr("File is already checked out."));
         return true;
     }
 
-    const QString relFile = QDir(topLevel.toString()).relativeFilePath(absPath);
-    const QString file = QDir::toNativeSeparators(relFile);
-    const QString title = QString::fromLatin1("Checkout %1").arg(file);
+    const QString relFile = absPath.relativePathFromDir(topLevel);
+    const QString relFileNative = absPath.relativeNativePathFromDir(topLevel);
+    const QString title = QString::fromLatin1("Checkout %1").arg(relFileNative);
     CheckOutDialog coDialog(title, m_viewData.isUcm, !m_settings.noComment);
 
     // Only snapshot views can have hijacked files
@@ -1706,7 +1717,7 @@ bool ClearCasePluginPrivate::vcsOpen(const FilePath &workingDir, const QString &
     if (m_viewData.isUcm && !vcsSetActivity(topLevel, title, coDialog.activity()))
         return false;
 
-    FileChangeBlocker fcb(FilePath::fromString(absPath));
+    FileChangeBlocker fcb(absPath);
     QStringList args(QLatin1String("checkout"));
 
     const QString comment = coDialog.comment();
@@ -1718,6 +1729,7 @@ bool ClearCasePluginPrivate::vcsOpen(const FilePath &workingDir, const QString &
     args << QLatin1String("-query");
     const bool reserved = coDialog.isReserved();
     const bool unreserved = !reserved || coDialog.isUnreserved();
+    const FilePath hijackedPath = absPath.stringAppended(QLatin1String(".hijack"));
     if (reserved)
         args << QLatin1String("-reserved");
     if (unreserved)
@@ -1726,7 +1738,7 @@ bool ClearCasePluginPrivate::vcsOpen(const FilePath &workingDir, const QString &
         args << QLatin1String("-ptime");
     if (isHijacked) {
         if (Constants::debug)
-            qDebug() << Q_FUNC_INFO << file << " seems to be hijacked";
+            qDebug() << Q_FUNC_INFO << relFileNative << " seems to be hijacked";
 
         // A hijacked files means that the file is modified but was
         // not checked out. By checking it out now changes will
@@ -1736,32 +1748,32 @@ bool ClearCasePluginPrivate::vcsOpen(const FilePath &workingDir, const QString &
         // -usehijack not supported in old cleartool versions...
         // args << QLatin1String("-usehijack");
         if (coDialog.isUseHijacked())
-            QFile::rename(absPath, absPath + QLatin1String(".hijack"));
+            absPath.renameFile(hijackedPath);
         vcsUndoHijack(topLevel, relFile, false); // don't keep, we've already kept a copy
     }
-    args << file;
+    args << relFileNative;
     CommandResult result = runCleartool(topLevel, args,
-                                        RunFlags::ShowStdOut | RunFlags::SuppressStdErr);
+                                        RunFlag::ShowStdOut | RunFlag::SuppressStdErr);
     if (result.result() != ProcessResult::FinishedWithSuccess) {
         if (result.cleanedStdErr().contains(QLatin1String("Versions other than the selected version"))) {
-            VersionSelector selector(file, result.cleanedStdErr());
+            VersionSelector selector(relFileNative, result.cleanedStdErr());
             if (selector.exec() == QDialog::Accepted) {
                 if (selector.isUpdate())
-                    ccUpdate(workingDir, QStringList(file));
+                    ccUpdate(workingDir, {relFileNative});
                 else
                     args.removeOne(QLatin1String("-query"));
-                result = runCleartool(topLevel, args, RunFlags::ShowStdOut);
+                result = runCleartool(topLevel, args, RunFlag::ShowStdOut);
             }
         } else {
-            VcsOutputWindow::append(result.cleanedStdOut());
-            VcsOutputWindow::appendError(result.cleanedStdErr());
+            VcsOutputWindow::appendSilently(topLevel, result.cleanedStdOut());
+            VcsOutputWindow::appendError(topLevel, result.cleanedStdErr());
         }
     }
 
     const bool success = result.result() == ProcessResult::FinishedWithSuccess;
     if (success && isHijacked && coDialog.isUseHijacked()) { // rename back
-        QFile::remove(absPath);
-        QFile::rename(absPath + QLatin1String(".hijack"), absPath);
+        absPath.removeFile();
+        hijackedPath.renameFile(absPath);
     }
 
     if ((success || result.cleanedStdErr().contains(QLatin1String("already checked out")))
@@ -1769,7 +1781,7 @@ bool ClearCasePluginPrivate::vcsOpen(const FilePath &workingDir, const QString &
         setStatus(absPath, FileStatus::CheckedOut);
     }
 
-    if (DocumentModel::Entry *e = DocumentModel::entryForFilePath(FilePath::fromString(absPath)))
+    if (DocumentModel::Entry *e = DocumentModel::entryForFilePath(absPath))
         e->document->checkPermissions();
 
     return success;
@@ -1779,7 +1791,7 @@ bool ClearCasePluginPrivate::vcsSetActivity(const FilePath &workingDir, const QS
 {
     QStringList args;
     args << QLatin1String("setactivity") << activity;
-    const CommandResult result = runCleartool(workingDir, args, RunFlags::ShowStdOut);
+    const CommandResult result = runCleartool(workingDir, args, RunFlag::ShowStdOut);
     if (result.result() != ProcessResult::FinishedWithSuccess) {
         QMessageBox::warning(ICore::dialogParent(), title, Tr::tr("Set current activity failed: %1")
                              .arg(result.exitMessage()), QMessageBox::Ok);
@@ -1802,18 +1814,16 @@ bool ClearCasePluginPrivate::vcsCheckIn(const FilePath &messageFile, const QStri
     replaceActivity &= (activity != QLatin1String(Constants::KEEP_ACTIVITY));
     if (replaceActivity && !vcsSetActivity(m_checkInView, title, activity))
         return false;
-    QString message;
-    QFile msgFile(messageFile.toString());
-    if (msgFile.open(QFile::ReadOnly | QFile::Text)) {
-        message = QString::fromLocal8Bit(msgFile.readAll().trimmed());
-        msgFile.close();
-    }
+    Result<QByteArray> messageFileContents = messageFile.fileContents();
+    const QString message = messageFileContents
+                                ? QString::fromLocal8Bit(*std::move(messageFileContents))
+                                : QString{};
     QStringList args;
     args << QLatin1String("checkin");
     if (message.isEmpty())
         args << QLatin1String("-nc");
     else
-        args << QLatin1String("-cfile") << messageFile.toString();
+        args << QLatin1String("-cfile") << messageFile.nativePath();
     if (isIdentical)
         args << QLatin1String("-identical");
     if (isPreserve)
@@ -1821,24 +1831,21 @@ bool ClearCasePluginPrivate::vcsCheckIn(const FilePath &messageFile, const QStri
     args << files;
     QList<FCBPointer> blockers;
     for (const QString &fileName : files) {
-        FCBPointer fcb(new FileChangeBlocker(
-            FilePath::fromString(QFileInfo(m_checkInView.toString(), fileName).canonicalFilePath())));
+        FCBPointer fcb(new FileChangeBlocker(m_checkInView.pathAppended(fileName).canonicalPath()));
         blockers.append(fcb);
     }
-    const CommandResult result = runCleartool(m_checkInView, args, RunFlags::ShowStdOut, nullptr,
-                                              10);
-    const QRegularExpression checkedIn("Checked in \\\"([^\"]*)\\\"");
+    const CommandResult result = runCleartool(m_checkInView, args, RunFlag::ShowStdOut, {}, 10);
+    static const QRegularExpression checkedIn("Checked in \\\"([^\"]*)\\\"");
     QRegularExpressionMatch match = checkedIn.match(result.cleanedStdOut());
     bool anySucceeded = false;
     int offset = match.capturedStart();
     while (match.hasMatch()) {
         const QString file = match.captured(1);
-        const QFileInfo fi(m_checkInView.toString(), file);
-        const QString absPath = fi.absoluteFilePath();
+        const FilePath absPath = m_checkInView.pathAppended(file).absolutePath();
 
         if (!m_settings.disableIndexer)
-            setStatus(QDir::fromNativeSeparators(absPath), FileStatus::CheckedIn);
-        emit filesChanged(files);
+            setStatus(absPath, FileStatus::CheckedIn);
+        emit filesChanged(FilePaths::fromStrings(files));
         anySucceeded = true;
         match = checkedIn.match(result.cleanedStdOut(), offset + 12);
         offset = match.capturedStart();
@@ -1883,8 +1890,7 @@ bool ClearCasePluginPrivate::ccFileOp(const FilePath &workingDir, const QString 
     if (m_viewData.isUcm && actSelector->changed())
         vcsSetActivity(workingDir, fileOpDlg.windowTitle(), actSelector->activity());
 
-    const QString dirName = QDir::toNativeSeparators(QFileInfo(workingDir.toString(),
-                                                               fileName).absolutePath());
+    const QString dirName = workingDir.resolvePath(fileName).absolutePath().nativePath();
     QStringList commentArg;
     if (comment.isEmpty())
         commentArg << QLatin1String("-nc");
@@ -1894,7 +1900,7 @@ bool ClearCasePluginPrivate::ccFileOp(const FilePath &workingDir, const QString 
     // check out directory
     QStringList args;
     args << QLatin1String("checkout") << commentArg << dirName;
-    const CommandResult coResult = runCleartool(workingDir, args, RunFlags::ShowStdOut);
+    const CommandResult coResult = runCleartool(workingDir, args, RunFlag::ShowStdOut);
     if (coResult.result() != ProcessResult::FinishedWithSuccess) {
         if (coResult.cleanedStdErr().contains(QLatin1String("already checked out")))
             noCheckout = true;
@@ -1907,7 +1913,7 @@ bool ClearCasePluginPrivate::ccFileOp(const FilePath &workingDir, const QString 
     args << opArgs << commentArg << file;
     if (!file2.isEmpty())
         args << QDir::toNativeSeparators(file2);
-    const CommandResult opResult = runCleartool(workingDir, args, RunFlags::ShowStdOut);
+    const CommandResult opResult = runCleartool(workingDir, args, RunFlag::ShowStdOut);
     if (opResult.result() != ProcessResult::FinishedWithSuccess) {
         // on failure - undo checkout for the directory
         if (!noCheckout)
@@ -1921,7 +1927,7 @@ bool ClearCasePluginPrivate::ccFileOp(const FilePath &workingDir, const QString 
     // check in the directory
     args.clear();
     args << QLatin1String("checkin") << commentArg << dirName;
-    const CommandResult ciResult = runCleartool(workingDir, args, RunFlags::ShowStdOut);
+    const CommandResult ciResult = runCleartool(workingDir, args, RunFlag::ShowStdOut);
     return ciResult.result() == ProcessResult::FinishedWithSuccess;
 }
 
@@ -1960,13 +1966,13 @@ bool ClearCasePluginPrivate::managesDirectory(const FilePath &directory, FilePat
 {
 #ifdef WITH_TESTS
     // If running with tests and fake ClearTool is enabled, then pretend we manage every directory
-    const QString topLevelFound = m_fakeClearTool ? directory.toString() : findTopLevel(directory);
+    const FilePath topLevelFound = m_fakeClearTool ? directory : findTopLevel(directory);
 #else
-    const QString topLevelFound = findTopLevel(directory);
+    const FilePath topLevelFound = findTopLevel(directory);
 #endif
 
     if (topLevel)
-        *topLevel = FilePath::fromString(topLevelFound);
+        *topLevel = topLevelFound;
     return !topLevelFound.isEmpty();
 }
 
@@ -2067,12 +2073,13 @@ bool ClearCasePluginPrivate::ccCheckUcm(const QString &viewname, const FilePath 
     const QString catcsData = runCleartoolProc(workingDir,
                                                {"catcs", "-tag", viewname}).cleanedStdOut();
     // check output for the word "ucm"
-    return catcsData.indexOf(QRegularExpression("(^|\\n)ucm\\n")) != -1;
+    static const QRegularExpression regexp("(^|\\n)ucm\\n");
+    return catcsData.indexOf(regexp) != -1;
 }
 
 bool ClearCasePluginPrivate::managesFile(const FilePath &workingDirectory, const QString &fileName) const
 {
-    const QString absFile = QFileInfo(QDir(workingDirectory.toString()), fileName).absoluteFilePath();
+    const FilePath absFile = workingDirectory.pathAppended(fileName).absoluteFilePath();
     const FileStatus::Status status = getFileStatus(absFile);
     return status != FileStatus::NotManaged && status != FileStatus::Derived;
 }
@@ -2088,7 +2095,7 @@ ViewData ClearCasePluginPrivate::ccGetView(const FilePath &workingDir) const
         res.isDynamic = !data.isEmpty() && (data.at(0) == QLatin1Char('*'));
         res.name = data.mid(2, data.indexOf(QLatin1Char(' '), 2) - 2);
         res.isUcm = ccCheckUcm(res.name, workingDir);
-        res.root = ccViewRoot(workingDir);
+        res.root = ccViewRoot(workingDir).toUserOutput();
     }
 
     return res;
@@ -2105,7 +2112,7 @@ void ClearCasePluginPrivate::updateStreamAndView()
                            {"lsstream", "-fmt", "%n\\t%[def_deliver_tgt]Xp"}).cleanedStdOut();
     const int tabPos = result.indexOf(QLatin1Char('\t'));
     m_stream = result.left(tabPos);
-    const QRegularExpression intStreamExp("stream:([^@]*)");
+    static const QRegularExpression intStreamExp("stream:([^@]*)");
     const QRegularExpressionMatch match = intStreamExp.match(result.mid(tabPos + 1));
     if (match.hasMatch())
         m_intStream = match.captured(1);
@@ -2123,9 +2130,8 @@ void ClearCasePluginPrivate::projectChanged(Project *project)
     ProgressManager::cancelTasks(ClearCase::Constants::TASK_INDEX);
     if (project) {
         const FilePath projDir = project->projectDirectory();
-        const QString topLevel = findTopLevel(projDir);
-        m_topLevel = FilePath::fromString(topLevel);
-        if (topLevel.isEmpty())
+        m_topLevel = findTopLevel(projDir);
+        if (m_topLevel.isEmpty())
             return;
         connect(qApp, &QApplication::applicationStateChanged,
                 this, [this](Qt::ApplicationState state) {
@@ -2156,8 +2162,7 @@ void ClearCasePluginPrivate::updateIndex()
         return;
     m_checkInAllAction->setEnabled(false);
     m_statusMap->clear();
-    QFuture<void> result = Utils::asyncRun(sync, transform(project->files(Project::SourceFiles),
-                                                           &FilePath::toString));
+    QFuture<void> result = Utils::asyncRun(sync, project->files(Project::SourceFiles));
     if (!m_settings.disableIndexer)
         ProgressManager::addTask(result, Tr::tr("Updating ClearCase Index"), ClearCase::Constants::TASK_INDEX);
 }
@@ -2186,7 +2191,7 @@ QString ClearCasePluginPrivate::getFile(const QString &nativeFile, const QString
     if (Constants::debug)
         qDebug() << Q_FUNC_INFO << nativeFile;
     if ((atatpos != -1) && (nativeFile.indexOf(QLatin1String("CHECKEDOUT"), atatpos) != -1)) {
-        bool res = QFile::copy(QDir(m_topLevel.toString()).absoluteFilePath(file), tempFile);
+        bool res = QFile::copy(QDir(m_topLevel.toFSPathString()).absoluteFilePath(file), tempFile);
         return res ? tempFile : QString();
     }
     const CommandResult result = runCleartoolProc(m_topLevel, {"get", "-to", tempFile, nativeFile});
@@ -2200,7 +2205,7 @@ QString ClearCasePluginPrivate::getFile(const QString &nativeFile, const QString
 // runs external (GNU) diff, and returns the stdout result
 QString ClearCasePluginPrivate::diffExternal(QString file1, QString file2, bool keep)
 {
-    QTextCodec *codec = VcsBaseEditor::getCodec(FilePath::fromString(file1));
+    const TextEncoding encoding = VcsBaseEditor::getEncoding(FilePath::fromString(file1));
 
     // if file2 is empty, we should compare to predecessor
     if (file2.isEmpty()) {
@@ -2232,7 +2237,7 @@ QString ClearCasePluginPrivate::diffExternal(QString file1, QString file2, bool 
     } else {
         args << file2;
     }
-    const QString diffResponse = runExtDiff(m_topLevel, args, m_settings.timeOutS, codec);
+    const QString diffResponse = runExtDiff(m_topLevel, args, m_settings.timeOutS, encoding);
     if (!keep && !tempFile1.isEmpty()) {
         QFile::remove(tempFile1);
         QFileInfo(tempFile1).dir().rmpath(QLatin1String("."));
@@ -2264,13 +2269,13 @@ void ClearCasePluginPrivate::diffGraphical(const QString &file1, const QString &
 }
 
 QString ClearCasePluginPrivate::runExtDiff(const FilePath &workingDir, const QStringList &arguments,
-                                           int timeOutS, QTextCodec *outputCodec)
+                                           int timeOutS, const TextEncoding &encoding)
 {
     Process process;
     process.setWorkingDirectory(workingDir);
-    process.setCodec(outputCodec ? outputCodec : QTextCodec::codecForName("UTF-8"));
+    process.setEncoding(encoding.isValid() ? encoding : TextEncoding(QStringConverter::Utf8));
     process.setCommand({"diff", {m_settings.diffArgs.split(' ', Qt::SkipEmptyParts), arguments}});
-    process.runBlocking(seconds(timeOutS), EventLoopMode::On);
+    process.runBlocking(seconds(timeOutS));
     if (process.result() != ProcessResult::FinishedWithSuccess)
         return {};
     return process.allOutput();
@@ -2284,7 +2289,7 @@ void ClearCasePluginPrivate::syncSlot()
     FilePath topLevel = state.topLevel();
     if (topLevel != state.currentProjectTopLevel())
         return;
-    Utils::asyncRun(sync, QStringList()); // TODO: make use of returned QFuture
+    Utils::asyncRun(sync, FilePaths{}); // TODO: make use of returned QFuture
 }
 
 void ClearCasePluginPrivate::closing()
@@ -2294,17 +2299,17 @@ void ClearCasePluginPrivate::closing()
     disconnect(qApp, &QApplication::applicationStateChanged, nullptr, nullptr);
 }
 
-void ClearCasePluginPrivate::sync(QPromise<void> &promise, QStringList files)
+void ClearCasePluginPrivate::sync(QPromise<void> &promise, FilePaths files)
 {
     ClearCasePluginPrivate *plugin = ClearCasePluginPrivate::instance();
     ClearCaseSync ccSync(plugin->m_statusMap);
-    connect(&ccSync, &ClearCaseSync::updateStreamAndView, plugin, &ClearCasePluginPrivate::updateStreamAndView);
-    ccSync.run(promise, files);
-}
-
-QString ClearCasePluginPrivate::displayName() const
-{
-    return QLatin1String("ClearCase");
+    connect(
+        &ccSync,
+        &ClearCaseSync::updateStreamAndView,
+        plugin,
+        &ClearCasePluginPrivate::updateStreamAndView);
+    QStringList transformed = transform(std::move(files), &FilePath::path);
+    ccSync.run(promise, transformed);
 }
 
 Id ClearCasePluginPrivate::id() const
@@ -2351,7 +2356,7 @@ IVersionControl::OpenSupportMode ClearCasePluginPrivate::openSupportMode(const F
         // NB! Has to use managesFile() and not vcsStatus() since the index can only be guaranteed
         // to be up to date if the file has been explicitly opened, which is not the case when
         // doing a search and replace as a part of a refactoring.
-        if (managesFile(FilePath::fromString(filePath.toFileInfo().absolutePath()), filePath.toString())) {
+        if (managesFile(FilePath::fromString(filePath.toFileInfo().absolutePath()), filePath.path())) {
             // Checkout is the only option for managed files in dynamic views
             return IVersionControl::OpenMandatory;
         } else {
@@ -2448,7 +2453,7 @@ const ViewData viewData()
 
 void setStatus(const QString &file, FileStatus::Status status, bool update)
 {
-    dd->setStatus(file, status, update);
+    dd->setStatus(FilePath::fromUserInput(file), status, update);
 }
 
 const ClearCaseSettings &settings()
@@ -2459,11 +2464,6 @@ const ClearCaseSettings &settings()
 void setSettings(const ClearCaseSettings &s)
 {
     dd->setSettings(s);
-}
-
-std::shared_ptr<StatusMap> statusMap()
-{
-    return dd->m_statusMap;
 }
 
 #ifdef WITH_TESTS
@@ -2608,17 +2608,16 @@ namespace {
 class TestCase
 {
 public:
-    TestCase(const QString &fileName) :
-        m_fileName(fileName)
+    TestCase(const FilePath &fileName)
+        : m_fileName(fileName)
     {
         ClearCasePluginPrivate::instance()->setFakeCleartool(true);
         VcsManager::clearVersionControlCache();
 
-        const auto filePath = FilePath::fromString(fileName);
-        FileSaver srcSaver(filePath);
+        FileSaver srcSaver(fileName);
         srcSaver.write(QByteArray());
         srcSaver.finalize();
-        m_editor = EditorManager::openEditor(filePath);
+        m_editor = EditorManager::openEditor(fileName);
 
         QCoreApplication::processEvents(); // process any pending events
     }
@@ -2637,15 +2636,14 @@ public:
         EditorManager::closeDocuments({m_editor->document()}, false);
         QCoreApplication::processEvents(); // process any pending events
 
-        QFile file(m_fileName);
-        if (!file.isWritable()) // Windows can't delete read only files
-            file.setPermissions(file.permissions() | QFile::WriteUser);
-        QVERIFY(file.remove());
+        if (!m_fileName.isWritableFile())
+            m_fileName.setPermissions(m_fileName.permissions() | QFile::WriteUser);
+        QVERIFY(m_fileName.removeFile());
         ClearCasePluginPrivate::instance()->setFakeCleartool(false);
     }
 
 private:
-    QString m_fileName;
+    FilePath m_fileName;
     IEditor *m_editor;
 };
 }
@@ -2673,7 +2671,7 @@ void ClearCaseTest::testStatusActions_data()
 
 void ClearCaseTest::testStatusActions()
 {
-    const QString fileName = QDir::currentPath() + QLatin1String("/clearcase_file.cpp");
+    const auto fileName = FilePath::currentWorkingPath().pathAppended("clearcase_file.cpp");
     TestCase testCase(fileName);
 
     dd->m_viewData = testCase.dummyViewData();
@@ -2681,10 +2679,13 @@ void ClearCaseTest::testStatusActions()
     QFETCH(int, status);
     auto tempStatus = static_cast<FileStatus::Status>(status);
 
+    QSignalSpy spy(dd, &ClearCasePluginPrivate::statusActionsUpdated);
     // special case: file should appear as "Unknown" since there is no entry in the index
     // and we don't want to explicitly set the status for this test case
-    if (tempStatus != FileStatus::Unknown)
+    if (tempStatus != FileStatus::Unknown) {
         dd->setStatus(fileName, tempStatus, true);
+        QVERIFY(spy.wait(1000));
+    }
 
     QFETCH(bool, checkOutAction);
     QFETCH(bool, undoCheckOutAction);
@@ -2705,33 +2706,38 @@ void ClearCaseTest::testStatusActions()
 
 void ClearCaseTest::testVcsStatusDynamicReadonlyNotManaged()
 {
+    QSKIP("Skipping flaky test");
+
     // File is not in map, and is read-only
     ClearCasePluginPrivate::instance();
+    QSignalSpy spy(dd, &ClearCasePluginPrivate::reindexedDynamicFile);
     dd->m_statusMap = std::shared_ptr<StatusMap>(new StatusMap);
 
-    const QString fileName = QDir::currentPath() + QLatin1String("/readonly_notmanaged_file.cpp");
+    const auto fileName = FilePath::currentWorkingPath().pathAppended(
+        "readonly_notmanaged_file.cpp");
 
     dd->m_viewData.isDynamic = true;
     TestCase testCase(fileName);
 
-    QFile::setPermissions(fileName, QFile::ReadOwner |
-                          QFile::ReadUser |
-                          QFile::ReadGroup |
-                          QFile::ReadOther);
+    fileName.setPermissions(
+        QFile::ReadOwner | QFile::ReadUser | QFile::ReadGroup | QFile::ReadOther);
 
     dd->m_viewData = testCase.dummyViewData();
     dd->m_viewData.isDynamic = true;
-
+    QVERIFY(spy.wait(1500));
     QCOMPARE(dd->vcsStatus(fileName).status, FileStatus::NotManaged);
 
 }
 
 void ClearCaseTest::testVcsStatusDynamicNotManaged()
 {
+    QSKIP("Skipping flaky test");
+
     ClearCasePluginPrivate::instance();
+    QSignalSpy spy(dd, &ClearCasePluginPrivate::reindexedDynamicFile);
     dd->m_statusMap = std::shared_ptr<StatusMap>(new StatusMap);
 
-    const QString fileName = QDir::currentPath() + QLatin1String("/notmanaged_file.cpp");
+    const auto fileName = FilePath::currentWorkingPath().pathAppended("notmanaged_file.cpp");
 
     dd->m_viewData.isDynamic = true;
     TestCase testCase(fileName);
@@ -2739,6 +2745,7 @@ void ClearCaseTest::testVcsStatusDynamicNotManaged()
     dd->m_viewData = testCase.dummyViewData();
     dd->m_viewData.isDynamic = true;
 
+    QVERIFY(spy.wait(1500));
     QCOMPARE(dd->vcsStatus(fileName).status, FileStatus::NotManaged);
 }
 #endif

@@ -31,14 +31,16 @@ AbstractHighlighterPrivate::~AbstractHighlighterPrivate()
 void AbstractHighlighterPrivate::ensureDefinitionLoaded()
 {
     auto defData = DefinitionData::get(m_definition);
-    if (Q_UNLIKELY(!m_definition.isValid() && defData->repo && !m_definition.name().isEmpty())) {
-        qCDebug(Log) << "Definition became invalid, trying re-lookup.";
-        m_definition = defData->repo->definitionForName(m_definition.name());
-        defData = DefinitionData::get(m_definition);
-    }
+    if (Q_UNLIKELY(!m_definition.isValid())) {
+        if (defData->repo && !defData->name.isEmpty()) {
+            qCDebug(Log) << "Definition became invalid, trying re-lookup.";
+            m_definition = defData->repo->definitionForName(defData->name);
+            defData = DefinitionData::get(m_definition);
+        }
 
-    if (Q_UNLIKELY(!defData->repo && !defData->fileName.isEmpty())) {
-        qCCritical(Log) << "Repository got deleted while a highlighter is still active!";
+        if (Q_UNLIKELY(!defData->repo && !defData->fileName.isEmpty())) {
+            qCCritical(Log) << "Repository got deleted while a highlighter is still active!";
+        }
     }
 
     if (m_definition.isValid()) {
@@ -126,7 +128,8 @@ State AbstractHighlighter::highlightLine(QStringView text, const State &state)
     }
     if (Q_UNLIKELY(!stateData)) {
         stateData = StateData::reset(newState);
-        stateData->push(defData->initialContext(), QStringList());
+        auto *initialContext = defData->initialContext();
+        stateData->push(&initialContext, &initialContext + 1, QStringList());
         stateData->m_defId = defData->id;
         isSharedData = false;
     }
@@ -404,9 +407,7 @@ State AbstractHighlighter::highlightLine(QStringView text, const State &state)
 
 bool AbstractHighlighterPrivate::switchContext(StateData *&data, const ContextSwitch &contextSwitch, QStringList &&captures, State &state, bool &isSharedData)
 {
-    const auto popCount = contextSwitch.popCount();
-    const auto context = contextSwitch.context();
-    if (popCount <= 0 && !context) {
+    if (contextSwitch.isStay()) {
         return true;
     }
 
@@ -416,13 +417,15 @@ bool AbstractHighlighterPrivate::switchContext(StateData *&data, const ContextSw
         isSharedData = false;
     }
 
-    // kill as many items as requested from the stack, will always keep the initial context alive!
-    const bool initialContextSurvived = data->pop(popCount);
+    const auto &contexts = contextSwitch.contexts();
 
-    // if we have a new context to add, push it
+    // kill as many items as requested from the stack, will always keep the initial context alive!
+    const bool initialContextSurvived = data->pop(contextSwitch.popCount());
+
+    // if we have new contexts to add, push it
     // then we always "succeed"
-    if (context) {
-        data->push(context, std::move(captures));
+    if (!contexts.isEmpty()) {
+        data->push(contexts.begin(), contexts.end(), std::move(captures));
         return true;
     }
 

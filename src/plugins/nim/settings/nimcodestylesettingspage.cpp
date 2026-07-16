@@ -34,7 +34,7 @@ SimpleCodeStylePreferences *globalCodeStyle()
 
 static void createGlobalCodeStyle()
 {
-    auto factory = new NimCodeStylePreferencesFactory();
+    auto factory = createNimCodeStylePreferencesFactory();
     TextEditorSettings::registerCodeStyleFactory(factory);
 
     // code style pool
@@ -101,8 +101,8 @@ public:
         m_nimCodeStylePreferences->setId(originalTabPreferences->id());
 
         auto factory = TextEditorSettings::codeStyleFactory(Nim::Constants::C_NIMLANGUAGE_ID);
-
-        auto editor = new CodeStyleEditor(factory, m_nimCodeStylePreferences);
+        CodeStyleEditorWidget *editor
+            = factory->createCodeStyleEditor({}, m_nimCodeStylePreferences);
 
         auto layout = new QVBoxLayout(this);
         layout->addWidget(editor);
@@ -125,8 +125,6 @@ NimCodeStyleSettingsPage::NimCodeStyleSettingsPage()
     setId(Nim::Constants::C_NIMCODESTYLESETTINGSPAGE_ID);
     setDisplayName(Tr::tr("Code Style"));
     setCategory(Nim::Constants::C_NIMCODESTYLESETTINGSPAGE_CATEGORY);
-    setDisplayCategory(Tr::tr("Nim"));
-    setCategoryIconPath(":/nim/images/settingscategory_nim.png");
     setWidgetCreator([] { return new NimCodeStyleSettingsWidget; });
 
     createGlobalCodeStyle();

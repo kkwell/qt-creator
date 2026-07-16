@@ -18,6 +18,8 @@ namespace Internal {
 
 class ExamplesViewController;
 
+const QtVersions qtVersionsToConsiderForExamples();
+
 class ExampleSetModel : public QStandardItemModel
 {
     Q_OBJECT
@@ -33,7 +35,7 @@ public:
         // (which is not ideal).
         QVersionNumber qtVersion = {};
     };
-    static QVector<ExtraExampleSet> pluginRegisteredExampleSets();
+    static QList<ExtraExampleSet> pluginRegisteredExampleSets();
 
     ExampleSetModel();
 
@@ -75,7 +77,7 @@ private:
     void helpManagerInitialized();
     void tryToInitialize();
 
-    QVector<ExtraExampleSet> m_extraExampleSets;
+    QList<ExtraExampleSet> m_extraExampleSets;
     int m_selectedExampleSetIndex = -1;
     QSet<Utils::Id> m_selectedQtTypes;
 
@@ -97,6 +99,7 @@ public:
     void setVisible(bool isVisible);
     bool isVisible() const;
 
+    void zoomOut();
 private:
     ExampleSetModel *m_exampleSetModel;
     Core::SectionedGridView *m_view;

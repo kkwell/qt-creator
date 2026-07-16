@@ -138,7 +138,7 @@ DiffAndLogHighlighter::~DiffAndLogHighlighter()
 // Check trailing spaces
 static inline int trimmedLength(const QString &in)
 {
-    for (int pos = in.length() - 1; pos >= 0; pos--)
+    for (int pos = in.size() - 1; pos >= 0; pos--)
         if (!in.at(pos).isSpace())
             return pos + 1;
     return 0;
@@ -155,7 +155,7 @@ void DiffAndLogHighlighter::highlightBlock(const QString &text)
     if (text.isEmpty())
         return;
 
-    const int length = text.length();
+    const int length = text.size();
     const TextEditor::TextStyle format = d->analyzeLine(text);
 
     if (d->m_enabled) {
@@ -174,9 +174,9 @@ void DiffAndLogHighlighter::highlightBlock(const QString &text)
 
     // codefolding:
     TextEditor::TextBlockUserData *data =
-            TextEditor::TextDocumentLayout::userData(currentBlock());
+            TextEditor::TextBlockUserData::userData(currentBlock());
     QTC_ASSERT(data, return; );
-    if (!TextEditor::TextDocumentLayout::textUserData(currentBlock().previous()))
+    if (!TextEditor::TextBlockUserData::textUserData(currentBlock().previous()))
         d->m_foldingState = Internal::StartOfFile;
 
     switch (d->m_foldingState) {
@@ -184,33 +184,33 @@ void DiffAndLogHighlighter::highlightBlock(const QString &text)
     case Internal::Header:
         if (format == TextEditor::C_DIFF_FILE) {
             d->m_foldingState = Internal::File;
-            TextEditor::TextDocumentLayout::setFoldingIndent(currentBlock(), BASE_LEVEL);
+            setFoldingIndent(currentBlock(), BASE_LEVEL);
         } else if (format == TextEditor::C_DIFF_LOCATION) {
             d->m_foldingState = Internal::Location;
-            TextEditor::TextDocumentLayout::setFoldingIndent(currentBlock(), FILE_LEVEL);
+            setFoldingIndent(currentBlock(), FILE_LEVEL);
         } else {
             d->m_foldingState = Internal::Header;
-            TextEditor::TextDocumentLayout::setFoldingIndent(currentBlock(), BASE_LEVEL);
+            setFoldingIndent(currentBlock(), BASE_LEVEL);
         }
         break;
     case Internal::File:
         if (format == TextEditor::C_DIFF_FILE) {
-            TextEditor::TextDocumentLayout::setFoldingIndent(currentBlock(), FILE_LEVEL);
+            setFoldingIndent(currentBlock(), FILE_LEVEL);
         } else if (format == TextEditor::C_DIFF_LOCATION) {
             d->m_foldingState = Internal::Location;
-            TextEditor::TextDocumentLayout::setFoldingIndent(currentBlock(), FILE_LEVEL);
+            setFoldingIndent(currentBlock(), FILE_LEVEL);
         } else {
-            TextEditor::TextDocumentLayout::setFoldingIndent(currentBlock(), FILE_LEVEL);
+            setFoldingIndent(currentBlock(), FILE_LEVEL);
         }
         break;
     case Internal::Location:
         if (format == TextEditor::C_DIFF_FILE) {
             d->m_foldingState = Internal::File;
-            TextEditor::TextDocumentLayout::setFoldingIndent(currentBlock(), BASE_LEVEL);
+            setFoldingIndent(currentBlock(), BASE_LEVEL);
         } else if (format == TextEditor::C_DIFF_LOCATION) {
-            TextEditor::TextDocumentLayout::setFoldingIndent(currentBlock(), FILE_LEVEL);
+            setFoldingIndent(currentBlock(), FILE_LEVEL);
         } else {
-            TextEditor::TextDocumentLayout::setFoldingIndent(currentBlock(), LOCATION_LEVEL);
+            setFoldingIndent(currentBlock(), LOCATION_LEVEL);
         }
         break;
     }

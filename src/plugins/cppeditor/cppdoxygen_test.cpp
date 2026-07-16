@@ -14,7 +14,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QKeyEvent>
-#include <QtTest>
+#include <QTest>
 
 namespace { typedef QByteArray _; }
 
@@ -387,6 +387,18 @@ void DoxygenTest::testBasic_data()
         " *  \n"
         " */\n"
         "int a;\n") << int(CommandPrefix::Auto);
+
+    QTest::newRow("continuation_on_asterisk") << _(
+        "bool preventFolding;\n"
+        "/* leading comment\n"
+        " * cont|*/\n"
+        "int a;\n"
+        ) << _(
+        "bool preventFolding;\n"
+        "/* leading comment\n"
+        " * cont\n"
+        " */\n"
+        "int a;\n") << int(CommandPrefix::Auto);
 }
 
 void DoxygenTest::testBasic()
@@ -473,7 +485,7 @@ void DoxygenTest::runTest(const QByteArray &original,
     }
 
     // Update Code Model
-    QVERIFY(TestCase::parseFiles(testDocument.filePath().toString()));
+    QVERIFY(TestCase::parseFiles({testDocument.filePath()}));
 
     // Open Editor
     QVERIFY(TestCase::openCppEditor(testDocument.filePath(), &testDocument.m_editor,

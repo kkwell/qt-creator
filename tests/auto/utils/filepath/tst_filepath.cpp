@@ -2,24 +2,34 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include <QRandomGenerator>
-#include <QtTest>
+#include <QTest>
 
 #include <utils/algorithm.h>
+#include <utils/co_result.h>
+#include <utils/devicefileaccess.h>
 #include <utils/filepath.h>
 #include <utils/hostosinfo.h>
 #include <utils/link.h>
+#include <utils/temporaryfile.h>
+
+#include <QSignalSpy>
 
 QT_BEGIN_NAMESPACE
 namespace QTest {
 template<>
 char *toString(const Utils::FilePath &filePath)
 {
-    return qstrdup(filePath.toString().toLocal8Bit().constData());
+    return qstrdup(filePath.toUrlishString().toLocal8Bit().constData());
 }
 } // namespace QTest
 QT_END_NAMESPACE
 
 namespace Utils {
+
+void ignoreSoftAssert()
+{
+    QTest::ignoreMessage(QtDebugMsg, QRegularExpression("SOFT ASSERT.*"));
+}
 
 class tst_filepath : public QObject
 {
@@ -40,12 +50,9 @@ private slots:
     void fileName_data();
     void fileName();
 
-    void calcRelativePath_data();
-    void calcRelativePath();
-
-    void relativePath_specials();
-    void relativePath_data();
-    void relativePath();
+    void relativePathFromDir_specials();
+    void relativePathFromDir_data();
+    void relativePathFromDir();
 
     void absolute_data();
     void absolute();
@@ -74,8 +81,11 @@ private slots:
     void pathAppended_data();
     void pathAppended();
 
-    void resolvePath_data();
-    void resolvePath();
+    void resolvePath_filepath_data();
+    void resolvePath_filepath();
+
+    void resolvePath_string_data();
+    void resolvePath_string();
 
     void relativeChildPath_data();
     void relativeChildPath();
@@ -92,6 +102,9 @@ private slots:
 
     void withNewMappedPath_data();
     void withNewMappedPath();
+
+    void withNewFileName_data();
+    void withNewFileName();
 
     void stringAppended();
     void stringAppended_data();
@@ -116,11 +129,55 @@ private slots:
     void sort_data();
 
     void isRootPath();
+    void isRootPath_data();
 
     void lessThan();
     void lessThan_data();
 
     void asQMapKey();
+
+    void makeTemporaryFile();
+
+    void dontBreakPathOnWierdWindowsPaths();
+
+    void isRelativePath();
+    void isRelativePath_data();
+
+    void pathComponents();
+    void pathComponents_data();
+
+    void symLinks();
+    void resolveSymLinks();
+
+    void ensureWritableDirectory();
+    void ensureWritableDirectoryPermissions();
+
+    void searchHereAndInParents();
+
+    void parents();
+    void emptyParents();
+    void parentsWithDevice();
+    void parentsWithDrive();
+    void parentsWithUncPath();
+    void parentsWithLastPath();
+    void parentsWithMacros();
+    void exists();
+    void isNewerThan();
+    void watch();
+
+    void coroTest();
+
+    void macrosInPaths();
+
+    void caseSensitivity();
+
+    void toUrl();
+    void toUrl_data();
+
+    void fromUrl();
+    void fromUrl_data();
+
+    void fromUrlHost();
 
 private:
     QTemporaryDir tempDir;
@@ -128,12 +185,15 @@ private:
     QString exeExt;
 };
 
-static void touch(const QDir &dir, const QString &filename, bool fill, bool executable = false)
+static bool touch(const QDir &dir, const QString &filename, bool fill, bool executable = false)
 {
     QFile file(dir.absoluteFilePath(filename));
-    file.open(QIODevice::WriteOnly);
-    if (executable)
-        file.setPermissions(file.permissions() | QFileDevice::ExeUser);
+    if (!file.open(QIODevice::WriteOnly))
+        return false;
+    if (executable) {
+        if (!file.setPermissions(file.permissions() | QFileDevice::ExeUser))
+            return false;
+    }
 
     if (fill) {
         QRandomGenerator *random = QRandomGenerator::global();
@@ -141,25 +201,66 @@ static void touch(const QDir &dir, const QString &filename, bool fill, bool exec
             file.write(QString::number(random->generate(), 16).toUtf8());
     }
     file.close();
+    return true;
 }
 
 void tst_filepath::initTestCase()
 {
+    class TestDFA : public DeviceFileAccess
+    {
+    public:
+        TestDFA(Qt::CaseSensitivity caseSensitivity)
+            : m_caseSensitivity(caseSensitivity)
+        {}
+        Result<bool> isSameFile(const FilePath &path1, const FilePath &path2) const override
+        {
+            return path1.toUrlishString().compare(path2.toUrlishString(), m_caseSensitivity) == 0;
+        }
+        Qt::CaseSensitivity m_caseSensitivity;
+    };
+    DeviceFileHooks hooky;
+    hooky.isSameDevice = [](const FilePath &lhs, const FilePath &rhs) {
+        if (lhs.scheme() != rhs.scheme())
+            return false;
+        if (lhs.host() != rhs.host())
+            return false;
+        return true;
+    };
+
+    hooky.fileAccess = [](const FilePath &path) -> Utils::Result<DeviceFileAccessPtr> {
+        static std::shared_ptr<TestDFA> dfaCase = std::make_shared<TestDFA>(Qt::CaseSensitive);
+        static std::shared_ptr<TestDFA> dfaNoCase = std::make_shared<TestDFA>(Qt::CaseInsensitive);
+
+        if (path.scheme() == "case") {
+            return dfaCase;
+        }
+        if (path.scheme() == "nocase" || path.scheme() == "win") {
+            return dfaNoCase;
+        }
+        return dfaCase;
+    };
+    hooky.osType = [](const FilePath &path) {
+        if (path.scheme() == "win")
+            return OsTypeWindows;
+        return OsTypeLinux;
+    };
+    DeviceFileHooks::setupDeviceFileHooks(hooky);
+
     // initialize test for tst_filepath::relativePath*()
     QVERIFY(tempDir.isValid());
-    rootPath = tempDir.path();
+    rootPath = QFileInfo(tempDir.path()).canonicalFilePath();
     QDir dir(rootPath);
     dir.mkpath("a/b/c/d");
     dir.mkpath("a/x/y/z");
     dir.mkpath("a/b/x/y/z");
     dir.mkpath("x/y/z");
-    touch(dir, "a/b/c/d/file1.txt", false);
-    touch(dir, "a/x/y/z/file2.txt", false);
-    touch(dir, "a/file3.txt", false);
-    touch(dir, "x/y/file4.txt", false);
+    QVERIFY(touch(dir, "a/b/c/d/file1.txt", false));
+    QVERIFY(touch(dir, "a/x/y/z/file2.txt", false));
+    QVERIFY(touch(dir, "a/file3.txt", false));
+    QVERIFY(touch(dir, "x/y/file4.txt", false));
 
     // initialize test for tst_filepath::asyncLocalCopy()
-    touch(dir, "x/y/fileToCopy.txt", true);
+    QVERIFY(touch(dir, "x/y/fileToCopy.txt", true));
 
 // initialize test for tst_filepath::searchIn()
 #ifdef Q_OS_WIN
@@ -168,8 +269,8 @@ void tst_filepath::initTestCase()
 
     dir.mkpath("s/1");
     dir.mkpath("s/2");
-    touch(dir, "s/1/testexe" + exeExt, false, true);
-    touch(dir, "s/2/testexe" + exeExt, false, true);
+    QVERIFY(touch(dir, "s/1/testexe" + exeExt, false, true));
+    QVERIFY(touch(dir, "s/2/testexe" + exeExt, false, true));
 }
 
 void tst_filepath::searchInWithFilter()
@@ -208,6 +309,32 @@ void tst_filepath::isEmpty_data()
     QTest::newRow("scheme://host/.") << "scheme://host/." << false;
 }
 
+void tst_filepath::coroTest()
+{
+    Result<> res = [this]() -> Result<> {
+        const FilePath dir = FilePath::fromUserInput(tempDir.path()) / "coro_test_dir";
+        co_await dir.ensureWritableDir();
+
+        const FilePath file = dir / "coro_test_file.txt";
+        const QByteArray data = "Hello, coroutine!";
+        co_await file.writeFileContents(data);
+
+        QByteArray readData = co_await file.fileContents();
+        if (readData != data) // Unlikely to happen
+            co_return ResultError("Data read does not match data written");
+
+        // We want it to fail to have an example of error handling
+        const FilePath nonExistentFile = dir / "non_existent_file.txt";
+        readData = co_await nonExistentFile.fileContents();
+
+        qDebug() << "This line should not be reached, as the previous co_await should fail";
+        co_return ResultOk;
+    }();
+
+    QEXPECT_FAIL("", "Expected failure reading non-existent file", Continue);
+    QVERIFY_RESULT(res);
+}
+
 void tst_filepath::isEmpty()
 {
     QFETCH(QString, path);
@@ -226,11 +353,8 @@ void tst_filepath::parentDir_data()
     QTest::newRow("empty path") << ""
                                 << ""
                                 << "";
-    QTest::newRow("root only") << "/"
-                               << ""
-                               << "";
     QTest::newRow("//") << "//"
-                        << ""
+                        << "//"
                         << "";
     QTest::newRow("/tmp/dir") << "/tmp/dir"
                               << "/tmp"
@@ -246,9 +370,6 @@ void tst_filepath::parentDir_data()
     QTest::newRow("C:/data") << "C:/data"
                              << "C:/"
                              << "";
-    QTest::newRow("C:/") << "C:/"
-                         << ""
-                         << "";
     QTest::newRow("//./com1") << "//./com1"
                               << "//./"
                               << "";
@@ -265,12 +386,43 @@ void tst_filepath::parentDir_data()
                                         << "//server/"
                                         << "";
     QTest::newRow("//server") << "//server"
-                              << ""
+                              << "//server"
                               << "";
 
     QTest::newRow("qrc") << ":/foo/bar.txt"
                          << ":/foo"
                          << "";
+
+    QTest::newRow("root only") << "/"
+                               << "/"
+                               << "";
+    QTest::newRow("C:/") << "C:/"
+                         << "C:/"
+                         << "";
+    QTest::newRow("D:/") << "D:/"
+                         << "D:/"
+                         << "";
+
+    // WSL paths (UNC via wsl.localhost / wsl$)
+    QTest::newRow("//wsl.localhost/Ubuntu-22.04/home/mtillmanns")
+        << "//wsl.localhost/Ubuntu-22.04/home/mtillmanns"
+        << "//wsl.localhost/Ubuntu-22.04/home"
+        << "";
+    QTest::newRow("//wsl.localhost/Ubuntu-22.04")
+        << "//wsl.localhost/Ubuntu-22.04"
+        << "//wsl.localhost/"
+        << "";
+    QTest::newRow("//wsl$/distro/home/mtillmanns/test.txt")
+        << "//wsl$/distro/home/mtillmanns/test.txt"
+        << "//wsl$/distro/home/mtillmanns"
+        << "";
+
+    QTest::newRow("macro") << "/Test/%{ActiveProject:FileName}"
+                           << "/Test/%{ActiveProject:FileName}/.."
+                           << "";
+    QTest::newRow("macro-again") << "/Test/%{ActiveProject:FileName}/.."
+                                 << "/Test/%{ActiveProject:FileName}/../.."
+                                 << "";
 }
 
 void tst_filepath::parentDir()
@@ -282,7 +434,7 @@ void tst_filepath::parentDir()
     FilePath result = FilePath::fromUserInput(path).parentDir();
     if (!expectFailMessage.isEmpty())
         QEXPECT_FAIL("", expectFailMessage.toUtf8().constData(), Continue);
-    QCOMPARE(result.toString(), parentPath);
+    QCOMPARE(result.toUrlishString(), parentPath);
 }
 
 void tst_filepath::isChildOf_data()
@@ -299,10 +451,28 @@ void tst_filepath::isChildOf_data()
                               << "/tmp/dir" << true;
     QTest::newRow("relative/path") << "relative"
                                    << "relative/path" << true;
+    QTest::newRow("relative-vs-absolute") << "relative"
+                                          << "/relative/path" << false;
+    QTest::newRow("absolute-vs-relative") << "/relative"
+                                          << "relative/path" << false;
+    QTest::newRow("relative-complex-path") << "relative/path/complex"
+                                           << "relative/path/complex/a/B/c" << true;
+    QTest::newRow("relative-with-dots") << "relative"
+                                        << "x/../relative/path" << true;
+    QTest::newRow("absolute-relative-with-dots") << "/relative"
+                                                 << "x/../relative/path" << false;
+    QTest::newRow("nocase") << "nocase://x/nocase/a"
+                            << "nocase://x/nocase/A/b" << true;
+    QTest::newRow("case") << "case://x/case/a"
+                          << "case://x/case/A/b" << false;
     QTest::newRow("/tmpdir") << "/tmp"
                              << "/tmpdir" << false;
-    QTest::newRow("same") << "/tmp/dir"
-                          << "/tmp/dir" << false;
+    QTest::newRow("same-0") << "/tmp/dir"
+                            << "/tmp/dir" << false;
+    QTest::newRow("same-1") << "/tmp/dir/"
+                            << "/tmp/dir" << false;
+    QTest::newRow("same-2") << "/tmp/dir"
+                            << "/tmp/dir/" << false;
 
     // Windows stuff:
     QTest::newRow("C:/data") << "C:/"
@@ -320,8 +490,52 @@ void tst_filepath::isChildOf_data()
     QTest::newRow("//server/directory") << "//server"
                                         << "//server/directory" << true;
 
+    // WSL paths (UNC via wsl.localhost / wsl$)
+    QTest::newRow("wsl-localhost-distro-child")
+        << "//wsl.localhost/Ubuntu-22.04"
+        << "//wsl.localhost/Ubuntu-22.04/home/mtillmanns" << true;
+    QTest::newRow("wsl-localhost-root-child")
+        << "//wsl.localhost"
+        << "//wsl.localhost/Ubuntu-22.04" << true;
+    QTest::newRow("wsl-dollar-distro-child")
+        << "//wsl$/distro"
+        << "//wsl$/distro/home/mtillmanns/test.txt" << true;
+    QTest::newRow("wsl-different-distros")
+        << "//wsl.localhost/Ubuntu-22.04"
+        << "//wsl.localhost/Debian/home" << false;
+
     QTest::newRow("qrc") << ":/foo/bar"
                          << ":/foo/bar/blah" << true;
+    QTest::newRow("parent-trailing-slash") << "/tmp/dir/"
+                                           << "/tmp/dir/child" << true;
+    QTest::newRow("both-empty") << ""
+                                << "" << false;
+    QTest::newRow("empty-child") << "/tmp"
+                                 << "" << false;
+    QTest::newRow("dots-resolve-to-parent") << "/a/b"
+                                            << "/a/b/c/.." << false;
+    QTest::newRow("child-with-intermediate-dots") << "/a/b"
+                                                  << "/a/b/c/../d" << true;
+    QTest::newRow("deeply-nested") << "/a/b/c/d/e"
+                                   << "/a/b/c/d/e/f/g/h" << true;
+    QTest::newRow("different-schemes") << "case://x/foo"
+                                       << "nocase://x/foo/bar" << false;
+    QTest::newRow("different-hosts") << "case://x/foo"
+                                     << "case://y/foo/bar" << false;
+    QTest::newRow("double-slash-child") << "/tmp"
+                                        << "/tmp//dir" << true;
+    QTest::newRow("single-relative-dir") << "a"
+                                         << "a/b" << true;
+    QTest::newRow("nocase-trailing-slash") << "nocase://x/A/"
+                                           << "nocase://x/a/B" << true;
+    QTest::newRow("same-with-trailing-slash-only") << "/tmp/dir"
+                                                   << "/tmp/dir/" << false;
+    QTest::newRow("different-drives") << "C:/"
+                                      << "D:/data" << false;
+    QTest::newRow("qrc-not-child") << ":/foo/bar"
+                                   << ":/foo/barbaz" << false;
+    QTest::newRow("root-of-root") << "/"
+                                  << "/" << false;
 }
 
 void tst_filepath::isChildOf()
@@ -352,6 +566,12 @@ void tst_filepath::fileName_data()
     QTest::newRow("too many parts") << "/foo/bar/baz" << 5 << "/foo/bar/baz";
     QTest::newRow("windows root") << "C:/foo/bar/baz" << 2 << "C:/foo/bar/baz";
     QTest::newRow("smb share") << "//server/share/file" << 2 << "//server/share/file";
+    // WSL paths (UNC via wsl.localhost / wsl$)
+    QTest::newRow("wsl-localhost filename") << "//wsl.localhost/Ubuntu-22.04/home/mtillmanns" << 0 << "mtillmanns";
+    QTest::newRow("wsl-localhost 2 parts") << "//wsl.localhost/Ubuntu-22.04/home/mtillmanns" << 1 << "home/mtillmanns";
+    QTest::newRow("wsl-localhost distro") << "//wsl.localhost/Ubuntu-22.04/home/mtillmanns" << 3 << "//wsl.localhost/Ubuntu-22.04/home/mtillmanns";
+    QTest::newRow("wsl-dollar filename") << "//wsl$/distro/home/mtillmanns/test.txt" << 0 << "test.txt";
+    QTest::newRow("wsl-dollar 2 parts") << "//wsl$/distro/home/mtillmanns/test.txt" << 1 << "mtillmanns/test.txt";
     QTest::newRow("no slashes") << "foobar" << 0 << "foobar";
     QTest::newRow("no slashes with depth") << "foobar" << 1 << "foobar";
     QTest::newRow("multiple slashes 1") << "/foo/bar////baz" << 0 << "baz";
@@ -378,12 +598,65 @@ void tst_filepath::fileName()
     QCOMPARE(FilePath::fromString(path).fileNameWithPathComponents(components), result);
 }
 
-void tst_filepath::calcRelativePath_data()
+void tst_filepath::relativePathFromDir_specials()
 {
-    QTest::addColumn<QString>("absolutePath");
-    QTest::addColumn<QString>("anchorPath");
+    QString path = FilePath("").relativePathFromDir("");
+    QCOMPARE(path, "");
+}
+
+void tst_filepath::relativePathFromDir_data()
+{
+    QTest::addColumn<QString>("current");
+    QTest::addColumn<QString>("anchor");
     QTest::addColumn<QString>("result");
 
+    QTest::newRow("root") << "/"
+                          << "/"
+                          << ".";
+    QTest::newRow("samedir") << "a/b/c/d"
+                             << "a/b/c/d"
+                             << ".";
+    QTest::newRow("samedir_but_file") << "a/b/c/d/file1.txt"
+                                      << "a/b/c/d"
+                                      << "file1.txt";
+    QTest::newRow("dir2dir_1") << "a/b/c/d"
+                               << "a/x/y/z"
+                               << "../../../b/c/d";
+    QTest::newRow("dir2dir_2") << "a/b"
+                               << "a/b/c"
+                               << "..";
+    QTest::newRow("file2dir_1") << "a/b/c/d/file1.txt"
+                                << "x/y"
+                                << "../../a/b/c/d/file1.txt";
+
+    QTest::newRow("abs_samedir_but_file") << "/a/b/c/d/file1.txt"
+                                          << "/a/b/c/d"
+                                          << "file1.txt";
+    QTest::newRow("abs_dir2dir_1") << "/a/b/c/d"
+                                   << "/a/x/y/z"
+                                   << "../../../b/c/d";
+    QTest::newRow("abs_dir2dir_2") << "/a/b"
+                                   << "/a/b/c"
+                                   << "..";
+    QTest::newRow("abs_file2dir_1") << "/a/b/c/d/file1.txt"
+                                    << "/x/y"
+                                    << "../../a/b/c/d/file1.txt";
+
+
+    QTest::newRow("remote_samedir_but_file") << "ssh://1.2.3.4/a/b/c/d/file1.txt"
+                                             << "ssh://1.2.3.4/a/b/c/d"
+                                             << "file1.txt";
+    QTest::newRow("remote_dir2dir_1") << "ssh://1.2.3.4/a/b/c/d"
+                                      << "ssh://1.2.3.4/a/x/y/z"
+                                      << "../../../b/c/d";
+    QTest::newRow("remote_dir2dir_2") << "ssh://1.2.3.4/a/b"
+                                      << "ssh://1.2.3.4/a/b/c"
+                                      << "..";
+    QTest::newRow("remote_file2dir_1") << "ssh://1.2.3.4/a/b/c/d/file1.txt"
+                                       << "ssh://1.2.3.4/x/y"
+                                       << "../../a/b/c/d/file1.txt";
+
+    ///
     QTest::newRow("empty") << ""
                            << ""
                            << "";
@@ -393,9 +666,6 @@ void tst_filepath::calcRelativePath_data()
     QTest::newRow("rightempty") << "/"
                                 << ""
                                 << "";
-    QTest::newRow("root") << "/"
-                          << "/"
-                          << ".";
     QTest::newRow("simple1") << "/a"
                              << "/"
                              << "a";
@@ -423,63 +693,27 @@ void tst_filepath::calcRelativePath_data()
     QTest::newRow("normal3") << "/a/b/c"
                              << "/x/y"
                              << "../../a/b/c";
+
+    QTest::newRow("different drive letter case") << "win://x/C:/myproject/main.cpp"
+                                                 << "win://x/c:/myproject"
+                                                 << "main.cpp";
+
+    QTest::newRow("different case but nocase") << "nocase://x/a/B/c.txt"
+                                               << "nocase://x/a/b"
+                                               << "c.txt";
+    QTest::newRow("different case") << "case://x/a/B/c.txt"
+                                    << "case://x/a/b"
+                                    << "../B/c.txt";
 }
 
-void tst_filepath::calcRelativePath()
+void tst_filepath::relativePathFromDir()
 {
-    QFETCH(QString, absolutePath);
-    QFETCH(QString, anchorPath);
-    QFETCH(QString, result);
-    QString relativePath = Utils::FilePath::calcRelativePath(absolutePath, anchorPath);
-    QCOMPARE(relativePath, result);
-}
-
-void tst_filepath::relativePath_specials()
-{
-    QString path = FilePath("").relativePathFrom("").toString();
-    QCOMPARE(path, "");
-}
-
-void tst_filepath::relativePath_data()
-{
-    QTest::addColumn<QString>("relative");
-    QTest::addColumn<QString>("anchor");
-    QTest::addColumn<QString>("result");
-
-    QTest::newRow("samedir") << "/"
-                             << "/"
-                             << ".";
-    QTest::newRow("samedir_but_file") << "a/b/c/d/file1.txt"
-                                      << "a/b/c/d"
-                                      << "file1.txt";
-    QTest::newRow("samedir_but_file2") << "a/b/c/d"
-                                       << "a/b/c/d/file1.txt"
-                                       << ".";
-    QTest::newRow("dir2dir_1") << "a/b/c/d"
-                               << "a/x/y/z"
-                               << "../../../b/c/d";
-    QTest::newRow("dir2dir_2") << "a/b"
-                               << "a/b/c"
-                               << "..";
-    QTest::newRow("file2file_1") << "a/b/c/d/file1.txt"
-                                 << "a/file3.txt"
-                                 << "b/c/d/file1.txt";
-    QTest::newRow("dir2file_1") << "a/b/c"
-                                << "a/x/y/z/file2.txt"
-                                << "../../../b/c";
-    QTest::newRow("file2dir_1") << "a/b/c/d/file1.txt"
-                                << "x/y"
-                                << "../../a/b/c/d/file1.txt";
-}
-
-void tst_filepath::relativePath()
-{
-    QFETCH(QString, relative);
+    QFETCH(QString, current);
     QFETCH(QString, anchor);
     QFETCH(QString, result);
-    FilePath actualPath = FilePath::fromString(rootPath + "/" + relative)
-                              .relativePathFrom(FilePath::fromString(rootPath + "/" + anchor));
-    QCOMPARE(actualPath.toString(), result);
+    QString actualPath = FilePath::fromString(current)
+                              .relativePathFromDir(FilePath::fromString(anchor));
+    QCOMPARE(actualPath, result);
 }
 
 void tst_filepath::rootLength_data()
@@ -502,6 +736,19 @@ void tst_filepath::rootLength_data()
     QTest::newRow("unc-localhost-drive") << "//localhost/c$" << 12;
     QTest::newRow("unc-localhost-drive-slash") << "//localhost//c$/" << 12;
     QTest::newRow("unc-localhost-drive-slash-rest") << "//localhost//c$/x" << 12;
+
+    QTest::newRow("windows-1") << "C:" << 2;
+    QTest::newRow("windows-2") << "C:/" << 3;
+    QTest::newRow("windows-3") << "C:/foor" << 3;
+
+    // WSL paths (UNC via wsl.localhost / wsl$)
+    QTest::newRow("wsl-localhost-unfinished") << "//wsl.localhost" << 15;
+    QTest::newRow("wsl-localhost-slash") << "//wsl.localhost/" << 16;
+    QTest::newRow("wsl-localhost-distro") << "//wsl.localhost/Ubuntu-22.04" << 16;
+    QTest::newRow("wsl-localhost-full") << "//wsl.localhost/Ubuntu-22.04/home/mtillmanns" << 16;
+    QTest::newRow("wsl-dollar-unfinished") << "//wsl$" << 6;
+    QTest::newRow("wsl-dollar-slash") << "//wsl$/" << 7;
+    QTest::newRow("wsl-dollar-full") << "//wsl$/distro/home/mtillmanns/test.txt" << 7;
 }
 
 void tst_filepath::rootLength()
@@ -650,9 +897,9 @@ void tst_filepath::toString()
     QFETCH(QString, userResult);
 
     FilePath filePath = FilePath::fromParts(scheme, host, path);
-    QCOMPARE(filePath.toString(), result);
-    QString cleanedOutput = filePath.needsDevice() ? filePath.toUserOutput()
-                                                   : QDir::cleanPath(filePath.toUserOutput());
+    QCOMPARE(filePath.toUrlishString(), result);
+    QString cleanedOutput = filePath.isLocal() ? QDir::cleanPath(filePath.toUserOutput())
+                                               : filePath.toUserOutput();
     QCOMPARE(cleanedOutput, userResult);
 }
 
@@ -717,8 +964,8 @@ void tst_filepath::toFSPathString()
 
     FilePath filePath = FilePath::fromParts(scheme, host, path);
     QCOMPARE(filePath.toFSPathString(), result);
-    QString cleanedOutput = filePath.needsDevice() ? filePath.toUserOutput()
-                                                   : QDir::cleanPath(filePath.toUserOutput());
+    QString cleanedOutput = filePath.isLocal() ? QDir::cleanPath(filePath.toUserOutput())
+                                               : filePath.toUserOutput();
     QCOMPARE(cleanedOutput, userResult);
 }
 
@@ -835,6 +1082,14 @@ void tst_filepath::fromString_data()
 
     QTest::newRow("unc-dos-1") << D("//?/c:", "", "", "//?/c:");
     QTest::newRow("unc-dos-com") << D("//./com1", "", "", "//./com1");
+
+    // WSL paths (UNC via wsl.localhost / wsl$)
+    QTest::newRow("wsl-localhost")
+        << D("//wsl.localhost/Ubuntu-22.04/home/mtillmanns",
+             "", "", "//wsl.localhost/Ubuntu-22.04/home/mtillmanns");
+    QTest::newRow("wsl-dollar")
+        << D("//wsl$/distro/home/mtillmanns/test.txt",
+             "", "", "//wsl$/distro/home/mtillmanns/test.txt");
 }
 
 void tst_filepath::fromString()
@@ -873,7 +1128,7 @@ void tst_filepath::fromUserInput_data()
     QTest::newRow("qrc-no-slash") << D(":test.txt", "", "", ":test.txt");
     QTest::newRow("tilde") << D("~/", "", "", QDir::homePath());
     QTest::newRow("tilde-with-path") << D("~/foo", "", "", QDir::homePath() + "/foo");
-    QTest::newRow("tilde-only") << D("~", "", "", "~");
+    QTest::newRow("tilde-only") << D("~", "", "", QDir::homePath());
 
     QTest::newRow("unc-incomplete") << D("//", "", "", "//");
     QTest::newRow("unc-incomplete-only-server") << D("//server", "", "", "//server");
@@ -897,7 +1152,7 @@ void tst_filepath::fromUserInput_data()
     QTest::newRow("docker-root-url-special-win")
         << D("c:/__qtc_devices__/docker/1234/", "docker", "1234", "/");
     QTest::newRow("docker-relative-path")
-        << D("docker://1234/./rel", "docker", "1234", "rel", FailEverywhere);
+        << D("docker://1234/./rel", "docker", "1234", "rel");
 
     QTest::newRow("qtc-dev-linux") << D("/__qtc_devices__", "", "", "/__qtc_devices__");
     QTest::newRow("qtc-dev-win") << D("c:/__qtc_devices__", "", "", "c:/__qtc_devices__");
@@ -947,6 +1202,21 @@ void tst_filepath::fromUserInput_data()
 
     QTest::newRow("unc-dos-1") << D("//?/c:", "", "", "c:");
     QTest::newRow("unc-dos-com") << D("//./com1", "", "", "//./com1");
+
+    // WSL paths — backslash form as typed on Windows
+    QTest::newRow("wsl-localhost-backslash")
+        << D("\\\\wsl.localhost\\Ubuntu-22.04\\home\\mtillmanns",
+             "", "", "//wsl.localhost/Ubuntu-22.04/home/mtillmanns");
+    QTest::newRow("wsl-dollar-backslash")
+        << D("\\\\wsl$\\distro\\home\\mtillmanns\\test.txt",
+             "", "", "//wsl$/distro/home/mtillmanns/test.txt");
+    // WSL paths — forward-slash form
+    QTest::newRow("wsl-localhost-fwdslash")
+        << D("//wsl.localhost/Ubuntu-22.04/home/mtillmanns",
+             "", "", "//wsl.localhost/Ubuntu-22.04/home/mtillmanns");
+    QTest::newRow("wsl-dollar-fwdslash")
+        << D("//wsl$/distro/home/mtillmanns/test.txt",
+             "", "", "//wsl$/distro/home/mtillmanns/test.txt");
 }
 
 void tst_filepath::fromUserInput()
@@ -1038,25 +1308,21 @@ void tst_filepath::fromToString()
 
     FilePath filePath = FilePath::fromString(full);
 
-    QCOMPARE(filePath.toString(), full);
+    QCOMPARE(filePath.toUrlishString(), full);
 
     QCOMPARE(filePath.scheme(), scheme);
     QCOMPARE(filePath.host(), host);
     QCOMPARE(filePath.path(), path);
 
     FilePath copy = FilePath::fromParts(scheme, host, path);
-    QCOMPARE(copy.toString(), full);
+    QCOMPARE(copy.toUrlishString(), full);
 }
 
 void tst_filepath::comparison()
 {
     QFETCH(QString, left);
     QFETCH(QString, right);
-    QFETCH(bool, hostSensitive);
     QFETCH(bool, expected);
-
-    HostOsInfo::setOverrideFileNameCaseSensitivity(hostSensitive ? Qt::CaseSensitive
-                                                                 : Qt::CaseInsensitive);
 
     FilePath l = FilePath::fromUserInput(left);
     FilePath r = FilePath::fromUserInput(right);
@@ -1067,26 +1333,12 @@ void tst_filepath::comparison_data()
 {
     QTest::addColumn<QString>("left");
     QTest::addColumn<QString>("right");
-    QTest::addColumn<bool>("hostSensitive");
     QTest::addColumn<bool>("expected");
 
-    QTest::newRow("r1") << "Abc"
-                        << "abc" << true << false;
-    QTest::newRow("r2") << "Abc"
-                        << "abc" << false << true;
-    QTest::newRow("r3") << "x://y/Abc"
-                        << "x://y/abc" << true << false;
-    QTest::newRow("r4") << "x://y/Abc"
-                        << "x://y/abc" << false << false;
-
-    QTest::newRow("s1") << "abc"
-                        << "abc" << true << true;
-    QTest::newRow("s2") << "abc"
-                        << "abc" << false << true;
-    QTest::newRow("s3") << "x://y/abc"
-                        << "x://y/abc" << true << true;
-    QTest::newRow("s4") << "x://y/abc"
-                        << "x://y/abc" << false << true;
+    QTest::newRow("r1") << "Abc" << "abc" << false;
+    QTest::newRow("r2") << "abc" << "abc" << true;
+    QTest::newRow("r3") << "case://y/Abc" << "case://y/abc" << false;
+    QTest::newRow("r4") << "nocase://y/Abc" << "nocase://y/abc" << true;
 }
 
 void tst_filepath::linkFromString()
@@ -1097,8 +1349,8 @@ void tst_filepath::linkFromString()
     QFETCH(int, column);
     const Link link = Link::fromString(testFile, true);
     QCOMPARE(link.targetFilePath, filePath);
-    QCOMPARE(link.targetLine, line);
-    QCOMPARE(link.targetColumn, column);
+    QCOMPARE(link.target.line, line);
+    QCOMPARE(link.target.column, column);
 }
 
 void tst_filepath::linkFromString_data()
@@ -1229,7 +1481,45 @@ void tst_filepath::pathAppended_data()
     }
 }
 
-void tst_filepath::resolvePath_data()
+void tst_filepath::resolvePath_string_data()
+{
+    QTest::addColumn<FilePath>("left");
+    QTest::addColumn<QString>("right");
+    QTest::addColumn<FilePath>("expected");
+
+    QTest::newRow("empty") << FilePath() << QString() << FilePath();
+    QTest::newRow("s0") << FilePath("/") << QString("b") << FilePath("/b");
+    QTest::newRow("s1") << FilePath() << QString("b") << FilePath("b");
+    QTest::newRow("s2") << FilePath("a") << QString() << FilePath("a");
+    QTest::newRow("s3") << FilePath("a") << QString("b") << FilePath("a/b");
+    QTest::newRow("s4") << FilePath("/a") << QString("/b") << FilePath("/b");
+    QTest::newRow("s5") << FilePath("a") << QString("/b") << FilePath("/b");
+    QTest::newRow("s6") << FilePath("/a") << QString("b") << FilePath("/a/b");
+    QTest::newRow("s7") << FilePath("/a") << QString(".") << FilePath("/a");
+    QTest::newRow("s8") << FilePath("/a") << QString("./b") << FilePath("/a/b");
+    QTest::newRow("s9") << FilePath("../..") << QString("/b") << FilePath("/b");
+    QTest::newRow("sa") << FilePath("../..") << QString("b") << FilePath("../../b");
+    QTest::newRow("sb") << FilePath("a/A") << QString("..") << FilePath("a");
+
+    FilePath r = FilePath::fromString("ssh://user@127.0.0.1/tmp/a");
+    QTest::newRow("r1") << r  << QString("bar") << FilePath::fromString("ssh://user@127.0.0.1/tmp/a/bar");
+    QTest::newRow("r2") << r  << QString("..") << FilePath::fromString("ssh://user@127.0.0.1/tmp");
+    QTest::newRow("r3") << r  << QString("../..") << FilePath::fromString("ssh://user@127.0.0.1/");
+    QTest::newRow("r4") << r  << QString("/foo") << FilePath::fromString("ssh://user@127.0.0.1/foo");
+}
+
+void tst_filepath::resolvePath_string()
+{
+    QFETCH(FilePath, left);
+    QFETCH(QString, right);
+    QFETCH(FilePath, expected);
+
+    const FilePath result = left.resolvePath(right);
+
+    QCOMPARE(result, expected);
+}
+
+void tst_filepath::resolvePath_filepath_data()
 {
     QTest::addColumn<FilePath>("left");
     QTest::addColumn<FilePath>("right");
@@ -1245,9 +1535,18 @@ void tst_filepath::resolvePath_data()
     QTest::newRow("s6") << FilePath("/a") << FilePath("b") << FilePath("/a/b");
     QTest::newRow("s7") << FilePath("/a") << FilePath(".") << FilePath("/a");
     QTest::newRow("s8") << FilePath("/a") << FilePath("./b") << FilePath("/a/b");
+    QTest::newRow("s9") << FilePath("../..") << FilePath("/b") << FilePath("/b");
+    QTest::newRow("sa") << FilePath("../..") << FilePath("b") << FilePath("../../b");
+    QTest::newRow("sb") << FilePath("a/A") << FilePath("..") << FilePath("a");
+
+    FilePath r = FilePath::fromString("ssh://user@127.0.0.1/tmp/a");
+    QTest::newRow("r1") << r  << FilePath("bar") << FilePath::fromString("ssh://user@127.0.0.1/tmp/a/bar");
+    QTest::newRow("r2") << r  << FilePath("..") << FilePath::fromString("ssh://user@127.0.0.1/tmp");
+    QTest::newRow("r3") << r  << FilePath("../..") << FilePath::fromString("ssh://user@127.0.0.1/");
+    QTest::newRow("r4") << r  << FilePath("/foo") << FilePath::fromString("/foo");
 }
 
-void tst_filepath::resolvePath()
+void tst_filepath::resolvePath_filepath()
 {
     QFETCH(FilePath, left);
     QFETCH(FilePath, right);
@@ -1273,6 +1572,10 @@ void tst_filepath::relativeChildPath_data()
 
     QTest::newRow("not-0") << FilePath("/x") << FilePath("/a/b") << FilePath();
     QTest::newRow("not-1") << FilePath("/a/b/c") << FilePath("/a/b") << FilePath();
+
+    QTest::newRow("same-0") << FilePath("/a/b") << FilePath("/a/b") << FilePath();
+    QTest::newRow("same-1") << FilePath("/a/b/") << FilePath("/a/b") << FilePath();
+    QTest::newRow("same-2") << FilePath("/a/b") << FilePath("/a/b/") << FilePath();
 }
 
 void tst_filepath::relativeChildPath()
@@ -1294,7 +1597,7 @@ void tst_filepath::asyncLocalCopy()
     bool wasCalled = false;
     // When QTRY_VERIFY failed, don't call the continuation after we leave this method
     QObject context;
-    auto afterCopy = [&orig, &dest, &wasCalled](expected_str<void> result) {
+    auto afterCopy = [&orig, &dest, &wasCalled](const Result<> &result) {
         QVERIFY(result);
         // check existence, size and content
         QVERIFY(dest.exists());
@@ -1302,7 +1605,7 @@ void tst_filepath::asyncLocalCopy()
         QCOMPARE(dest.fileContents(), orig.fileContents());
         wasCalled = true;
     };
-    orig.asyncCopy(dest, &context, afterCopy);
+    orig.asyncCopy({&context, afterCopy}, dest);
     QTRY_VERIFY(wasCalled);
 }
 
@@ -1319,7 +1622,7 @@ void tst_filepath::startsWithDriveLetter_data()
     QTest::newRow("remote-slash") << FilePath::fromString("docker://1234/") << false;
     QTest::newRow("remote-single-letter") << FilePath::fromString("docker://1234/c") << false;
     QTest::newRow("remote-drive") << FilePath::fromString("docker://1234/c:") << true;
-    QTest::newRow("remote-invalid-drive") << FilePath::fromString("docker://1234/c:a") << true;
+    QTest::newRow("remote-invalid-drive") << FilePath::fromString("docker://1234/c:a") << false;
     QTest::newRow("remote-with-path") << FilePath::fromString("docker://1234/c:/a") << true;
     QTest::newRow("remote-z") << FilePath::fromString("docker://1234/z:") << true;
     QTest::newRow("remote-1") << FilePath::fromString("docker://1234/1:") << false;
@@ -1357,6 +1660,34 @@ void tst_filepath::withNewMappedPath()
     QFETCH(FilePath, expected);
 
     QCOMPARE(templatePath.withNewMappedPath(path), expected);
+}
+
+void tst_filepath::withNewFileName_data()
+{
+    QTest::addColumn<FilePath>("path");
+    QTest::addColumn<QString>("newFileName");
+    QTest::addColumn<FilePath>("expected");
+
+    QTest::newRow("empty") << FilePath() << QString() << FilePath();
+    QTest::newRow("simple") << FilePath("/a/b") << QString("c.txt") << FilePath("/a/c.txt");
+    QTest::newRow("only-name") << FilePath("a") << QString("c.txt") << FilePath("c.txt");
+    QTest::newRow("relative") << FilePath("a/b") << QString("c.txt") << FilePath("a/c.txt");
+
+    QTest::newRow("with-device-empty")
+        << FilePath("docker://1234/") << QString() << FilePath("docker://1234/");
+    QTest::newRow("with-device") << FilePath("docker://1234/a/b") << QString("c.txt")
+                                 << FilePath("docker://1234/a/c.txt");
+    QTest::newRow("with-device-relative") << FilePath("docker://1234/./a/b") << QString("c.txt")
+                                          << FilePath("docker://1234/./a/c.txt");
+}
+
+void tst_filepath::withNewFileName()
+{
+    QFETCH(FilePath, path);
+    QFETCH(QString, newFileName);
+    QFETCH(FilePath, expected);
+
+    QCOMPARE(path.withNewFileName(newFileName), expected);
 }
 
 void tst_filepath::stringAppended_data()
@@ -1430,6 +1761,9 @@ void tst_filepath::cleanPath_data()
 {
     QTest::addColumn<QString>("path");
     QTest::addColumn<QString>("expected");
+
+    QTest::newRow("dot") << "."
+                         << ".";
 
     QTest::newRow("data0") << "/Users/sam/troll/qt4.0//.."
                            << "/Users/sam/troll";
@@ -1518,6 +1852,10 @@ void tst_filepath::cleanPath_data()
                          << "ssh://host/foo.bar";
     QTest::newRow("ssh2") << "ssh://host/../foo.bar"
                           << "ssh://host/../foo.bar";
+
+    QTest::newRow("cannot-change-path-with-macros") << "/a/%{MACRO}/b/../c" << "/a/%{MACRO}/b/../c";
+    QTest::newRow("keep-macros-at-start")
+        << "%{CurrentProject:Path}/../.." << "%{CurrentProject:Path}/../..";
 }
 
 void tst_filepath::cleanPath()
@@ -1539,7 +1877,7 @@ void tst_filepath::isSameFile_data()
                             << false;
 
     QDir dir(tempDir.path());
-    touch(dir, "target-file", false);
+    QVERIFY(touch(dir, "target-file", false));
 
     QFile file(dir.absoluteFilePath("target-file"));
     if (file.link(dir.absoluteFilePath("source-file"))) {
@@ -1610,19 +1948,19 @@ void tst_filepath::hostSpecialChars()
     QCOMPARE(fp.host(), host);
     QCOMPARE(expected.host(), host);
 
-    QString toStringExpected = expected.toString();
-    QString toStringActual = fp.toString();
+    QString toStringExpected = expected.toUrlishString();
+    QString toStringActual = fp.toUrlishString();
 
     // Check that toString gives the same result
     QCOMPARE(toStringActual, toStringExpected);
 
     // Check that fromString => toString => fromString gives the same result
-    FilePath toFromExpected = FilePath::fromString(expected.toString());
+    FilePath toFromExpected = FilePath::fromString(expected.toUrlishString());
     QCOMPARE(toFromExpected, expected);
     QCOMPARE(toFromExpected, fp);
 
     // Check that setParts => toString => fromString gives the same result
-    FilePath toFromActual = FilePath::fromString(fp.toString());
+    FilePath toFromActual = FilePath::fromString(fp.toUrlishString());
     QCOMPARE(toFromActual, fp);
     QCOMPARE(toFromExpected, expected);
 }
@@ -1637,8 +1975,6 @@ void tst_filepath::tmp_data()
     QTest::addRow("realtive-template") << "my-file-XXXXXXXX" << true;
     QTest::addRow("absolute-template") << QDir::tempPath() + "/my-file-XXXXXXXX" << true;
     QTest::addRow("non-existing-dir") << "/this/path/does/not/exist/my-file-XXXXXXXX" << false;
-
-    QTest::addRow("on-device") << "device://test/./my-file-XXXXXXXX" << true;
 }
 
 void tst_filepath::tmp()
@@ -1666,7 +2002,7 @@ void tst_filepath::sort()
     sorted.sort();
 
     FilePath::sort(filePaths);
-    QStringList sortedPaths = Utils::transform(filePaths, &FilePath::toString);
+    QStringList sortedPaths = Utils::transform(filePaths, &FilePath::toUrlishString);
 
     QCOMPARE(sortedPaths, sorted);
 }
@@ -1707,31 +2043,39 @@ void tst_filepath::asQMapKey()
              false);
 }
 
-void tst_filepath::isRootPath()
+void tst_filepath::isRootPath_data()
 {
-    FilePath localRoot = FilePath::fromString(QDir::rootPath());
-    QVERIFY(localRoot.isRootPath());
+    QTest::addColumn<FilePath>("path");
+    QTest::addColumn<bool>("expected");
 
-    FilePath localNonRoot = FilePath::fromString(QDir::rootPath() + "x");
-    QVERIFY(!localNonRoot.isRootPath());
+    QTest::newRow("local-root") << FilePath::fromString(QDir::rootPath()) << true;
+    QTest::newRow("local-non-root") << FilePath::fromString(QDir::rootPath() + "x") << false;
+
+    QTest::newRow("remote-windows-root") << FilePath::fromString("win://test/c:/") << true;
+    QTest::newRow("remote-windows-root1") << FilePath::fromString("win://test/c:") << true;
+    QTest::newRow("remote-windows-not-root") << FilePath::fromString("win://test/c:/x") << false;
 
     if (HostOsInfo::isWindowsHost()) {
-        FilePath remoteWindowsRoot = FilePath::fromString("device://test/c:/");
-        QVERIFY(remoteWindowsRoot.isRootPath());
-
-        FilePath remoteWindowsRoot1 = FilePath::fromString("device://test/c:");
-        QVERIFY(remoteWindowsRoot1.isRootPath());
-
-        FilePath remoteWindowsNotRoot = FilePath::fromString("device://test/c:/x");
-        QVERIFY(!remoteWindowsNotRoot.isRootPath());
+        QTest::newRow("local-c-drive") << FilePath::fromString("c:/") << true;
+        QTest::newRow("local-d-drive") << FilePath::fromString("d:/") << true;
+        QTest::newRow("local-c-drive-noslash") << FilePath::fromString("c:") << false;
+        QTest::newRow("local-d-drive-noslash") << FilePath::fromString("d:") << false;
+        QTest::newRow("unc-root-and-share") << FilePath::fromString("//server/share") << false;
+        QTest::newRow("unc-root") << FilePath::fromString("//server") << true;
     } else {
-        FilePath remoteRoot = FilePath::fromString("device://test/");
-        QVERIFY(remoteRoot.isRootPath());
-
-        FilePath remotePath = FilePath::fromString("device://test/x");
-        QVERIFY(!remotePath.isRootPath());
+        QTest::newRow("remote-root") << FilePath::fromString("device://test/") << true;
+        QTest::newRow("remote-path") << FilePath::fromString("device://test/x") << false;
     }
 }
+
+void tst_filepath::isRootPath()
+{
+    QFETCH(FilePath, path);
+    QFETCH(bool, expected);
+
+    QCOMPARE(path.isRootPath(), expected);
+}
+
 void tst_filepath::sort_data()
 {
     QTest::addColumn<QStringList>("input");
@@ -1764,6 +2108,680 @@ void tst_filepath::sort_data()
                                            "b://b//b"};
     QTest::addRow("others-reversed")
         << QStringList{"b://b//b", "a://b//b", "a://a//b", "a://b//a", "a://a//a"};
+}
+
+void tst_filepath::makeTemporaryFile()
+{
+    FilePath tmpFilePath;
+    // Test auto remove
+    {
+        const FilePath tmplate = FilePath::fromUserInput(QDir::tempPath())
+                                 / "test-auto-remove-XXXXXX.txt";
+        auto tmpFile = TemporaryFilePath::create(tmplate);
+        QVERIFY(tmpFile);
+
+        QVERIFY(!(*tmpFile)->templatePath().exists());
+        QVERIFY((*tmpFile)->filePath().exists());
+        tmpFilePath = (*tmpFile)->filePath();
+    }
+    QVERIFY(!tmpFilePath.exists());
+
+    // Check !autoRemove
+    {
+        const FilePath tmplate = FilePath::fromUserInput(QDir::tempPath())
+                                 / "test-no-auto-remove-XXXXXX.txt";
+        auto tmpFile = TemporaryFilePath::create(tmplate);
+        QVERIFY(tmpFile);
+        (*tmpFile)->setAutoRemove(false);
+
+        QVERIFY(!(*tmpFile)->templatePath().exists());
+        QVERIFY((*tmpFile)->filePath().exists());
+        tmpFilePath = (*tmpFile)->filePath();
+    }
+    QVERIFY(tmpFilePath.exists());
+    QVERIFY(tmpFilePath.removeFile());
+
+    // Check invalid filename
+    {
+        const FilePath tmplate = FilePath::fromUserInput("/Some/non/existing/path")
+                                 / "test-invalid-filename-XXXXXX";
+        auto tmpFile = TemporaryFilePath::create(tmplate);
+        QVERIFY(!tmpFile);
+    }
+}
+
+void tst_filepath::isRelativePath_data()
+{
+    QTest::addColumn<QString>("path");
+    QTest::addColumn<bool>("expected");
+
+    QTest::newRow("empty") << "" << true;
+    QTest::newRow("root") << "/" << false;
+    QTest::newRow("relative") << "foo" << true;
+    QTest::newRow("relative-path") << "foo/bar" << true;
+    QTest::newRow("absolute") << "/foo" << false;
+    QTest::newRow("absolute-path") << "/foo/bar" << false;
+    QTest::newRow("remote") << "device://host/foo" << false;
+    QTest::newRow("remote-path") << "device://host/foo/bar" << false;
+
+    QTest::newRow("windows-current-dir") << "c:" << true;
+    QTest::newRow("windows-path") << "c:/" << false;
+    QTest::newRow("windows-path-with-dir") << "c:/foo" << false;
+
+    QTest::newRow("windows-remote-current-dir") << "device://host/C:" << true;
+    QTest::newRow("windows-remote-path") << "device://host/C:/" << false;
+    QTest::newRow("windows-remote-path-with-dir") << "device://host/C:/foo" << false;
+
+    QTest::newRow("qrc-absolute-path-variant1") << ":/foo/bar" << false;
+    QTest::newRow("qrc-absolute-path-variant2") << ":foo/bar" << false;
+}
+
+void tst_filepath::isRelativePath()
+{
+    QFETCH(QString, path);
+    QFETCH(bool, expected);
+
+    QCOMPARE(FilePath::fromUserInput(path).isRelativePath(), expected);
+}
+
+void tst_filepath::dontBreakPathOnWierdWindowsPaths()
+{
+    FilePath path = FilePath::fromString(
+        "device://host/./C:/Users/johndoe/Documents/"
+        "build-iartest-IAR-Debugx/Debug_IAR_55df6f02d5b3d06d/iartest.a152245e/iartest.out");
+    QCOMPARE(
+        path.toUrlishString(),
+        "device://host/C:/Users/johndoe/Documents/"
+        "build-iartest-IAR-Debugx/Debug_IAR_55df6f02d5b3d06d/iartest.a152245e/iartest.out");
+
+    FilePath pathWithBackslash = FilePath::fromUserInput(
+        "device://host/C:\\Users\\johndoe\\Documents\\test.elf");
+    QCOMPARE(pathWithBackslash.toUrlishString(), "device://host/C:/Users/johndoe/Documents/test.elf");
+    QCOMPARE(pathWithBackslash.path(), "C:/Users/johndoe/Documents/test.elf");
+
+    const FilePath bin = FilePath::fromString(pathWithBackslash.path());
+    QCOMPARE(bin.toUrlishString(), "C:/Users/johndoe/Documents/test.elf");
+
+    // Make sure the optimization still works
+    FilePath path2 = FilePath::fromString("/./");
+    QCOMPARE(path2.toUrlishString(), "");
+
+    // Make sure unix paths are not affected
+    FilePath path3 = FilePath::fromString("/./foo/bar");
+    QCOMPARE(path3.toUrlishString(), "foo/bar");
+
+    // Make sure unix paths with device also work
+    FilePath path4 = FilePath::fromString("device://host/./foo/bar");
+    QCOMPARE(path4.toUrlishString(), "device://host/./foo/bar");
+}
+
+void tst_filepath::pathComponents_data()
+{
+    QTest::addColumn<QString>("path");
+    QTest::addColumn<QStringList>("expected");
+
+    QTest::newRow("empty") << "" << QStringList{};
+    QTest::newRow("root") << "/" << QStringList{"/"};
+    QTest::newRow("relative") << "foo" << QStringList{"foo"};
+    QTest::newRow("relative-path") << "foo/bar" << QStringList{"foo", "bar"};
+    QTest::newRow("absolute") << "/foo" << QStringList{"/", "foo"};
+    QTest::newRow("absolute-path") << "/foo/bar" << QStringList{"/", "foo", "bar"};
+    QTest::newRow("remote") << "device://host/foo" << QStringList{"/", "foo"};
+    QTest::newRow("remote-path") << "device://host/foo/bar" << QStringList{"/", "foo", "bar"};
+    QTest::newRow("remote-relative") << "device://host/./foo" << QStringList{"foo"};
+    QTest::newRow("windows-current-dir") << "c:" << QStringList{"c:"};
+
+    QTest::newRow("single-letter") << "c" << QStringList{"c"};
+    QTest::newRow("single-letter-path") << "c/b" << QStringList{"c", "b"};
+    QTest::newRow("single-letter-path-with-root") << "/c/b" << QStringList{"/", "c", "b"};
+
+    if (HostOsInfo::isWindowsHost()) {
+        QTest::newRow("cwd-windows-path") << "c:foo" << QStringList{"c:", "foo"};
+        QTest::newRow("windows-path") << "c:/" << QStringList{"c:", "/"};
+        QTest::newRow("windows-path-2") << "c:/test" << QStringList{"c:", "/", "test"};
+        QTest::newRow("single-letter-path-with-windows-root")
+            << "c:/a/b/c" << QStringList{"c:", "/", "a", "b", "c"};
+        QTest::newRow("windows-path-with-dir") << "c:/foo" << QStringList{"c:", "/", "foo"};
+    } else {
+        QTest::newRow("cwd-windows-path") << "c:foo" << QStringList{"c:foo"};
+        QTest::newRow("windows-path") << "c:/" << QStringList{"c:"};
+        QTest::newRow("windows-path-2") << "c:/test" << QStringList{"c:", "test"};
+        QTest::newRow("single-letter-path-with-windows-root")
+            << "c:/a/b/c" << QStringList{"c:", "a", "b", "c"};
+        QTest::newRow("windows-path-with-dir") << "c:/foo" << QStringList{"c:", "foo"};
+    }
+}
+
+void tst_filepath::symLinks()
+{
+    const FilePath orig = FilePath::fromString(rootPath).pathAppended("x/y/fileToCopy.txt");
+    QVERIFY(orig.exists());
+    const FilePath link = FilePath::fromString(rootPath).pathAppended("x/fileToCopySymLink.txt");
+    const Result<> res = orig.createSymLink(link);
+    if (HostOsInfo::isWindowsHost() && !res) {
+        QSKIP("Creating symbolic links requires special privileges on Windows: "
+              "Local group policy editor (gpedit.msc) "
+              "computer configuration > Windows settings > security settings "
+              "> local policy > user rights > creating symbolic links");
+    }
+    QVERIFY(link.isSymLink());
+    QCOMPARE(link.symLinkTarget(), orig);
+}
+
+void tst_filepath::resolveSymLinks()
+{
+    // relative link chain to existing file
+    const FilePath orig1 = FilePath::fromString(rootPath).pathAppended("a/file3.txt");
+    QVERIFY(orig1.exists());
+    const FilePath link1 = FilePath::fromString(rootPath).pathAppended("x/linktest1.txt");
+    const Result<> res1 = FilePath::fromString("../a/file3.txt").createSymLink(link1);
+    if (HostOsInfo::isWindowsHost() && !res1) {
+        QSKIP("Creating symbolic links requires special privileges on Windows: "
+              "Local group policy editor (gpedit.msc) "
+              "computer configuration > Windows settings > security settings "
+              "> local policy > user rights > creating symbolic links");
+    }
+    QVERIFY_RESULT(res1);
+    QVERIFY(link1.isSymLink());
+    QCOMPARE(link1.symLinkTarget(), orig1);
+    const FilePath link2 = FilePath::fromString(rootPath).pathAppended("x/linktest2.txt");
+    const Result<> res2 = FilePath::fromString("linktest1.txt").createSymLink(link2);
+    QVERIFY_RESULT(res2);
+    QVERIFY(link2.isSymLink());
+    QCOMPARE(link2.symLinkTarget(), link1);
+    QCOMPARE(link2.resolveSymlinks(), orig1);
+
+    // relative link chain to non-existing file
+    const FilePath orig2 = FilePath::fromString(rootPath).pathAppended("a/broken.txt");
+    QVERIFY(!orig2.exists());
+    const FilePath link3 = FilePath::fromString(rootPath).pathAppended("x/linktest3.txt");
+    const Result<> res3 = FilePath::fromString("../a/broken.txt").createSymLink(link3);
+    QVERIFY_RESULT(res3);
+    QVERIFY(link3.isSymLink());
+    QCOMPARE(link3.symLinkTarget(), orig2);
+    const FilePath link4 = FilePath::fromString(rootPath).pathAppended("x/linktest4.txt");
+    const Result<> res4 = FilePath::fromString("linktest3.txt").createSymLink(link4);
+    QVERIFY_RESULT(res4);
+    QVERIFY(link4.isSymLink());
+    QCOMPARE(link4.symLinkTarget(), link3);
+    QCOMPARE(link4.resolveSymlinks(), orig2);
+
+    // relative links in directory links
+    // currently:
+    // <tmp>/a/file3.txt
+    // <tmp>/x/linktest1.txt -> ../a/file3.txt
+    // if now:
+    // <tmp>/a/dirlink -> ../x
+    // then resolution should happen like this:
+    // <tmp>/a/dirlink/linktest1.txt -> <tmp>/a/file3.txt
+    const FilePath dirlink = FilePath::fromString(rootPath).pathAppended("a/dirlink");
+    const Result<> res5 = FilePath::fromString("../x").createSymLink(dirlink);
+    QVERIFY_RESULT(res5);
+    QVERIFY(dirlink.isSymLink());
+    QCOMPARE(dirlink.symLinkTarget(), FilePath::fromString(rootPath).pathAppended("x"));
+    QCOMPARE(dirlink.pathAppended("linktest1.txt").resolveSymlinks(), orig1);
+}
+
+void tst_filepath::ensureWritableDirectory()
+{
+    const FilePath dir = FilePath::fromString(rootPath).pathAppended("x/y/writableDir");
+    QVERIFY(!dir.exists());
+    Result<> res = dir.ensureWritableDir();
+    QVERIFY_RESULT(res);
+    QVERIFY(dir.exists());
+    QVERIFY(dir.isWritableDir());
+
+    const FilePath notdir = FilePath::fromString(rootPath).pathAppended("x/y/notADirectory.txt");
+    QVERIFY(!notdir.exists());
+    QVERIFY_RESULT(notdir.writeFileContents({}));
+    QVERIFY(notdir.exists());
+    res = notdir.ensureWritableDir();
+    QVERIFY(!res);
+    QVERIFY(notdir.isFile());
+}
+
+void tst_filepath::ensureWritableDirectoryPermissions()
+{
+    if (HostOsInfo::isWindowsHost())
+        QSKIP("Permissions are not supported on Windows");
+
+    const FilePath dir2 = FilePath::fromString(rootPath).pathAppended("x/y/initiallyNotWritableDir");
+    QVERIFY(!dir2.exists());
+    const Result<> res = dir2.ensureWritableDir();
+    QVERIFY_RESULT(res);
+    QVERIFY(dir2.exists());
+    QVERIFY(dir2.isWritableDir());
+
+    dir2.setPermissions(QFile::Permissions(QFile::ReadOwner | QFile::ReadGroup | QFile::ReadOther));
+    QVERIFY(dir2.exists());
+    QVERIFY(!dir2.isWritableDir());
+    QVERIFY(!dir2.ensureWritableDir());
+    QVERIFY(dir2.exists());
+    QVERIFY(!dir2.isWritableDir());
+}
+
+void tst_filepath::searchHereAndInParents()
+{
+    const FilePath dir = FilePath::fromString(rootPath).pathAppended("a/b/c/d");
+    QVERIFY(dir.isDir());
+
+    // Do not find (not reachable by going up from here).
+    const FilePath file2 = dir.searchHereAndInParents("file2.txt", QDir::Files);
+    QVERIFY2(file2.isEmpty(), qPrintable(file2.toUserOutput()));
+
+    // Do not find (wrong type).
+    const FilePath file1Dir = dir.searchHereAndInParents("file1.txt", QDir::Dirs);
+    QVERIFY2(file1Dir.isEmpty(), qPrintable(file1Dir.toUserOutput()));
+
+    // Find in same dir.
+    const FilePath file1 = dir.searchHereAndInParents("file1.txt", QDir::Files);
+    QCOMPARE(file1, dir.pathAppended("file1.txt"));
+
+    // Find in some parent dir.
+    const FilePath file3 = file1.searchHereAndInParents("file3.txt", QDir::Files);
+    QCOMPARE(file3, FilePath::fromString(rootPath).pathAppended("a/file3.txt"));
+}
+
+void tst_filepath::pathComponents()
+{
+    QFETCH(QString, path);
+    QFETCH(QStringList, expected);
+
+    const auto components
+        = Utils::transform(FilePath::fromString(path).pathComponents(), &QStringView::toString);
+
+    QCOMPARE(components, expected);
+}
+
+void tst_filepath::parentsWithDevice()
+{
+    const FilePath path = FilePath::fromUserInput("test://test/a/b/c");
+    const PathAndParents parentPaths(path);
+    auto it = std::begin(parentPaths);
+    QCOMPARE(*it, FilePath::fromUserInput("test://test/a/b/c"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("test://test/a/b"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("test://test/a"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("test://test/"));
+    ++it;
+    QCOMPARE(it, std::end(parentPaths));
+}
+
+void tst_filepath::parentsWithDrive()
+{
+    const FilePath path = FilePath::fromUserInput("C:/a/b/c");
+    const PathAndParents parentPaths(path);
+    auto it = std::begin(parentPaths);
+    QCOMPARE(*it, FilePath::fromUserInput("C:/a/b/c"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("C:/a/b"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("C:/a"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("C:/"));
+    ++it;
+    QCOMPARE(it, std::end(parentPaths));
+}
+
+void tst_filepath::parentsWithUncPath()
+{
+    const FilePath path = FilePath::fromUserInput("//server/share/a/b/c");
+    const PathAndParents parentPaths(path);
+    auto it = std::begin(parentPaths);
+    QCOMPARE(*it, FilePath::fromUserInput("//server/share/a/b/c"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("//server/share/a/b"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("//server/share/a"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("//server/share"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("//server/"));
+    ++it;
+    QCOMPARE(it, std::end(parentPaths));
+}
+
+void tst_filepath::emptyParents()
+{
+    const FilePath path = FilePath::fromUserInput("");
+    const PathAndParents parentPaths(path);
+    auto it = std::begin(parentPaths);
+    QCOMPARE(it, std::end(parentPaths));
+}
+
+void tst_filepath::parents()
+{
+    const FilePath path = FilePath::fromUserInput("/a/b/c");
+    const PathAndParents parentPaths(path);
+    auto it = std::begin(parentPaths);
+    QCOMPARE(*it, FilePath::fromUserInput("/a/b/c"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("/a/b"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("/a"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("/"));
+    ++it;
+    QCOMPARE(it, std::end(parentPaths));
+}
+
+void tst_filepath::parentsWithLastPath()
+{
+    const FilePath path = FilePath::fromUserInput("/a/b/c/d");
+    const PathAndParents parentPaths(path, FilePath::fromUserInput("/a/b"));
+    auto it = std::begin(parentPaths);
+    QCOMPARE(*it, FilePath::fromUserInput("/a/b/c/d"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("/a/b/c"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("/a/b"));
+    ++it;
+    QCOMPARE(it, std::end(parentPaths));
+
+    const PathAndParents parentPaths2(path, path);
+    it = std::begin(parentPaths2);
+    QCOMPARE(*it, FilePath::fromUserInput("/a/b/c/d"));
+    ++it;
+    QCOMPARE(it, std::end(parentPaths2));
+
+    // Specifying a path that is not a parent of the given path
+    // should fall back to iterating until the root.
+    ignoreSoftAssert();
+    const PathAndParents parentPaths3(path, FilePath::fromUserInput("/x"));
+    it = std::begin(parentPaths3);
+    QCOMPARE(*it, FilePath::fromUserInput("/a/b/c/d"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("/a/b/c"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("/a/b"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("/a"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("/"));
+    ++it;
+    ignoreSoftAssert();
+    QCOMPARE(it, std::end(parentPaths3));
+
+    const PathAndParents emptyLast(path, FilePath());
+    it = std::begin(emptyLast);
+    QCOMPARE(*it, FilePath::fromUserInput("/a/b/c/d"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("/a/b/c"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("/a/b"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("/a"));
+    ++it;
+    QCOMPARE(*it, FilePath::fromUserInput("/"));
+    ++it;
+    QCOMPARE(it, std::end(emptyLast));
+}
+
+void tst_filepath::parentsWithMacros()
+{
+    const FilePath path = FilePath::fromUserInput("%{MACRO1}/a/b/c");
+    const PathAndParents parentPaths(path);
+    auto it = std::begin(parentPaths);
+    QCOMPARE(*it, FilePath::fromUserInput("%{MACRO1}/a/b/c"));
+    ++it;
+    QCOMPARE(it, std::end(parentPaths));
+
+    const PathAndParents parentPaths2(path, FilePath::fromUserInput("%{MACRO1}/a"));
+    it = std::begin(parentPaths);
+    QCOMPARE(*it, FilePath::fromUserInput("%{MACRO1}/a/b/c"));
+    ++it;
+    QCOMPARE(it, std::end(parentPaths));
+}
+
+void tst_filepath::exists()
+{
+    const Result<FilePath> tmpPath = FilePath().tmpDir();
+    QVERIFY_RESULT(tmpPath);
+
+    const FilePath pattern = tmpPath.value() / "test.XXXXXXXXXXX";
+
+    const Result<FilePath> resultPath = pattern.createTempFile();
+    QVERIFY_RESULT(resultPath);
+
+    QVERIFY(resultPath->exists());
+    QVERIFY_RESULT(resultPath->removeFile());
+    QVERIFY(!resultPath->exists());
+}
+
+void tst_filepath::isNewerThan()
+{
+    const QDateTime time = QDateTime::currentDateTime().addSecs(-1);
+
+    const Result<FilePath> tmpPath = FilePath().tmpDir();
+    QVERIFY_RESULT(tmpPath);
+
+    const FilePath pattern = (tmpPath.value() / "test.XXXXXXXXXXX");
+
+    const Result<FilePath> resultPath = pattern.createTempFile();
+    QVERIFY_RESULT(resultPath);
+
+    QVERIFY(resultPath->isNewerThan(time));
+    QVERIFY(!resultPath->isNewerThan(QDateTime::currentDateTime()));
+    QVERIFY(!resultPath->isNewerThan(resultPath->lastModified()));
+}
+
+// QSignalSpy does not work with signals from threads, because it uses a direct connection
+// so add a QObject in between
+class Spy : public QObject
+{
+    Q_OBJECT
+
+public:
+    Spy(FilePathWatcher *watcher)
+        : signalSpy(this, &Spy::trigger)
+    {
+        QObject::connect(watcher, &FilePathWatcher::pathChanged, this, &Spy::trigger);
+    }
+
+    bool wait(int millis) { return signalSpy.wait(millis); }
+
+    void clear() { signalSpy.clear(); }
+
+    qsizetype count() { return signalSpy.count(); }
+
+signals:
+    void trigger();
+
+private:
+    QSignalSpy signalSpy;
+};
+
+void tst_filepath::watch()
+{
+    QSKIP("Flaky test.");
+
+    const FilePath rootDir = FilePath::fromString(rootPath);
+    const auto fileName = [&rootDir](int i) {
+        return rootDir.pathAppended("watchfile" + QString::number(i) + ".txt");
+    };
+    const auto createFile = [fileName](int i) {
+        const auto filePath = fileName(i);
+        filePath.writeFileContents("test");
+        return filePath;
+    };
+    FilePaths watchFiles
+        = Utils::transform<FilePaths, QList<int>>({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, createFile);
+    // Add one that does not exist to make sure the rest still works.
+    watchFiles.append(rootDir.pathAppended("nonexistingfile.txt"));
+    std::vector<Utils::Result<std::unique_ptr<FilePathWatcher>>> firstWatches = watchFiles.watch();
+    QVERIFY(!firstWatches.back().has_value());
+    firstWatches.pop_back();
+    for (const auto &watchResult : firstWatches)
+        QVERIFY_RESULT(watchResult);
+
+    // Verify that modifying one of the files triggers its watcher
+    Spy spy1(firstWatches[0].value().get());
+    QVERIFY_RESULT(fileName(0).writeFileContents("test 1"));
+    QVERIFY(spy1.wait(3000));
+    QCOMPARE(spy1.count(), 1);
+    spy1.clear();
+
+    // Make sure triggering a different file does not trigger the watcher of the first file
+    QVERIFY_RESULT(fileName(1).writeFileContents("test 2"));
+    QVERIFY_RESULT(fileName(0).writeFileContents("test 1"));
+    QVERIFY(spy1.wait(3000));
+    QCOMPARE(spy1.count(), 1);
+    spy1.clear();
+
+    // Add another watcher on the first file
+    const std::vector<Utils::Result<std::unique_ptr<FilePathWatcher>>> secondWatches
+        = FilePaths{fileName(0)}.watch();
+    for (const auto &watchResult : secondWatches)
+        QVERIFY_RESULT(watchResult);
+
+    // Make sure that both watchers are triggered when the file changes
+    Spy spy2(secondWatches[0].value().get());
+    QVERIFY_RESULT(fileName(0).writeFileContents("test 2"));
+    QVERIFY(spy2.wait(3000));
+    QCOMPARE(spy2.count(), 1);
+    QCOMPARE(spy1.count(), 1);
+    spy1.clear();
+    spy2.clear();
+
+    // Make sure that removing the first watcher(s) leaves the second working
+    firstWatches.clear();
+    QVERIFY_RESULT(fileName(0).writeFileContents("test 3"));
+    QVERIFY(spy2.wait(3000));
+    QCOMPARE(spy2.count(), 1);
+    QCOMPARE(spy1.count(), 0);
+    spy1.clear();
+    spy2.clear();
+
+    // Test replacement like it is done for SaveFile
+    const FilePath saveFile = rootDir / "watchfile.savefile";
+    saveFile.writeFileContents("test for save");
+    fileName(0).removeFile();
+    QVERIFY_RESULT(saveFile.renameFile(fileName(0)));
+    QVERIFY(spy2.wait(3000));
+    QCOMPARE(spy2.count(), 1);
+    spy2.clear();
+    // Check that we still are notified for further changes
+    QVERIFY_RESULT(fileName(0).writeFileContents("change after replace"));
+    QVERIFY(spy2.wait(3000));
+    QCOMPARE(spy2.count(), 1);
+}
+
+void tst_filepath::macrosInPaths()
+{
+    FilePath path = FilePath::fromUserInput(rootPath) / "macrosInPaths";
+    const FilePath existingMacroLikePath = path / "%{existing}";
+    QVERIFY_RESULT(existingMacroLikePath.ensureWritableDir());
+
+    const FilePath nonExistingMacroLikePath = path / "%{nonexisting}";
+    QVERIFY(!nonExistingMacroLikePath.exists());
+
+    QCOMPARE(existingMacroLikePath.parentDir(), path);
+    QCOMPARE(nonExistingMacroLikePath.parentDir(), nonExistingMacroLikePath / "..");
+}
+
+void tst_filepath::caseSensitivity()
+{
+    {
+        FilePath p = FilePath::fromUserInput("nocase://host/test/file");
+        FilePath p1 = FilePath::fromUserInput("nocase://host/test/FILE");
+
+        QCOMPARE(p, p1);
+    }
+    {
+        FilePath p2 = FilePath::fromUserInput("case://host/test/file");
+        FilePath p3 = FilePath::fromUserInput("case://host/test/FILE");
+
+        QVERIFY(p2 != p3);
+    }
+    {
+        FilePath p4 = FilePath::fromUserInput("case://host/test/file");
+        FilePath p5 = FilePath::fromUserInput("case://host/test");
+        QVERIFY(p4.isChildOf(p5));
+        FilePath p6 = FilePath::fromUserInput("case://host/TEST");
+        QVERIFY(!p4.isChildOf(p6));
+    }
+
+    {
+        FilePath p = FilePath::fromUserInput("nocase://host/test/file");
+        FilePath p1 = FilePath::fromUserInput("nocase://host/test/");
+        QVERIFY(p.isChildOf(p1));
+        FilePath p2 = FilePath::fromUserInput("nocase://host/TEST/");
+        QVERIFY(p.isChildOf(p2));
+    }
+}
+
+void tst_filepath::toUrl_data()
+{
+    QTest::addColumn<FilePath>("path");
+    QTest::addColumn<QUrl>("expected");
+
+    QTest::newRow("local") << FilePath::fromString("/a/b/c") << QUrl("file:///a/b/c");
+    QTest::newRow("remote") << FilePath::fromString("device://host/a/b/c")
+                            << QUrl("device://host/a/b/c");
+
+    QTest::newRow("with-port") << FilePath::fromString("ssh://host:1234/a/b/c")
+                               << QUrl("ssh://host:1234/a/b/c");
+}
+
+void tst_filepath::toUrl()
+{
+    QFETCH(FilePath, path);
+    QFETCH(QUrl, expected);
+
+    QCOMPARE(path.toUrl(), expected);
+}
+
+void tst_filepath::fromUrl_data()
+{
+    QTest::addColumn<QUrl>("url");
+    QTest::addColumn<FilePath>("expected");
+
+    QTest::newRow("local") << QUrl("file:///a/b/c") << FilePath::fromString("/a/b/c");
+    QTest::newRow("remote") << QUrl("device://host/a/b/c")
+                            << FilePath::fromParts(u"device", u"host", u"/a/b/c");
+
+    QTest::newRow("with-port") << QUrl("ssh://host:1234/a/b/c")
+                               << FilePath::fromParts(u"ssh", u"host:1234", u"/a/b/c");
+
+    QTest::newRow("local-with-scheme") << QUrl("file:///a/b/c") << FilePath::fromString("/a/b/c");
+    QTest::newRow("local-with-scheme-directory-trailing-slash")
+        << QUrl("file:///a/b/c/") << FilePath::fromString("/a/b/c");
+
+    QTest::newRow("expl") << QUrl("ssh://bolle:bommel@host:1234/a/b/c")
+                          << FilePath::fromParts(u"ssh", u"bolle:bommel@host:1234", u"/a/b/c");
+}
+
+void tst_filepath::fromUrl()
+{
+    QFETCH(QUrl, url);
+    QFETCH(FilePath, expected);
+
+    QCOMPARE(FilePath::fromUrl(url), expected);
+}
+
+void tst_filepath::fromUrlHost()
+{
+    QUrl u1("ssh://host:1234/a/b/c");
+    const auto p1 = FilePath::fromUrl(u1);
+    QCOMPARE(p1.host(), "host:1234");
+
+    QUrl u2("ssh://user@host:444/a/b/c");
+    const auto p2 = FilePath::fromUrl(u2);
+    QCOMPARE(p2.host(), "user@host:444");
+
+    QUrl u3("ssh://user:pwd@host/a/b/c");
+    const auto p3 = FilePath::fromUrl(u3);
+    QCOMPARE(p3.host(), "user:pwd@host");
+
+    QUrl u4("ssh://:pwd@host/a/b/c");
+    const auto p4 = FilePath::fromUrl(u4);
+    QCOMPARE(p4.host(), ":pwd@host");
+
+    QUrl u5("ssh://:pwd@host:555/a/b/c");
+    const auto p5 = FilePath::fromUrl(u5);
+    QCOMPARE(p5.host(), ":pwd@host:555");
 }
 
 } // Utils

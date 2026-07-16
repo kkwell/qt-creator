@@ -6,16 +6,20 @@
 #include "commonvcssettings.h"
 #include "vcsbasesubmiteditor.h"
 #include "vcsbasetr.h"
+#include "vcscommand.h"
 #include "vcsplugin.h"
 
 #include <coreplugin/documentmanager.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/idocument.h>
+#include <coreplugin/vcsmanager.h>
 
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectmanager.h>
 #include <projectexplorer/projecttree.h>
+
+#include <QtTaskTree/QTaskTree>
 
 #include <utils/fileutils.h>
 #include <utils/qtcprocess.h>
@@ -29,15 +33,15 @@
 #include <QScopedPointer>
 #include <QSharedData>
 #include <QProcessEnvironment>
-#include <QTextCodec>
+#include <QTimer>
 
 using namespace Core;
-using namespace Utils;
 using namespace ProjectExplorer;
+using namespace QtTaskTree;
+using namespace Utils;
 
 namespace {
 static Q_LOGGING_CATEGORY(baseLog, "qtc.vcs.base", QtWarningMsg)
-static Q_LOGGING_CATEGORY(findRepoLog, "qtc.vcs.find-repo", QtWarningMsg)
 static Q_LOGGING_CATEGORY(stateLog, "qtc.vcs.state", QtWarningMsg)
 }
 
@@ -71,7 +75,6 @@ public:
     void clearFile();
     void clearPatchFile();
     void clearProject();
-    inline void clear();
 
     bool equals(const State &rhs) const;
 
@@ -111,13 +114,6 @@ void State::clearProject()
     currentProjectPath.clear();
     currentProjectName.clear();
     currentProjectTopLevel.clear();
-}
-
-void State::clear()
-{
-    clearFile();
-    clearPatchFile();
-    clearProject();
 }
 
 bool State::equals(const State &rhs) const
@@ -308,8 +304,13 @@ void StateListener::slotStateChanged()
         state.clearPatchFile(); // Need a repository to patch
 
     qCDebug(stateLog).noquote() << "VC:" << (vc ? vc->displayName() : QString("None")) << state;
-    EditorManager::updateWindowTitles();
-    emit stateChanged(state, vc);
+
+    auto updateState = [this, state, vc] {
+        EditorManager::updateWindowTitles();
+        emit stateChanged(state, vc);
+    };
+    updateState();
+    QTimer::singleShot(500, this, updateState); // QTCREATORBUG-31815
 }
 
 } // namespace Internal
@@ -326,11 +327,11 @@ public:
     \brief The VcsBasePluginState class provides relevant state information
     about the VCS plugins.
 
-    Qt Creator's state relevant to VCS plugins is a tuple of
+    \QC's state relevant to VCS plugins is a tuple of
 
     \list
-    \li Current file and it's version system control/top level
-    \li Current project and it's version system control/top level
+    \li Current file and its version control system top level
+    \li Current project and its version control system top level
     \endlist
 
     \sa VcsBase::VcsBasePlugin
@@ -380,7 +381,7 @@ QString VcsBasePluginState::relativeCurrentFile() const
 
 QString VcsBasePluginState::currentPatchFile() const
 {
-    return data->m_state.currentPatchFile.toString();
+    return data->m_state.currentPatchFile.toUrlishString();
 }
 
 QString VcsBasePluginState::currentPatchFileDisplayName() const
@@ -406,7 +407,7 @@ FilePath VcsBasePluginState::currentProjectTopLevel() const
 QString VcsBasePluginState::relativeCurrentProject() const
 {
     QTC_ASSERT(hasProject(), return QString());
-    return data->m_state.currentProjectPath.relativeChildPath(data->m_state.currentProjectTopLevel).toString();
+    return data->m_state.currentProjectPath.relativeChildPath(data->m_state.currentProjectTopLevel).toUrlishString();
 }
 
 bool VcsBasePluginState::hasTopLevel() const
@@ -422,16 +423,6 @@ FilePath VcsBasePluginState::topLevel() const
 bool VcsBasePluginState::equals(const Internal::State &rhs) const
 {
     return data->m_state.equals(rhs);
-}
-
-bool VcsBasePluginState::equals(const VcsBasePluginState &rhs) const
-{
-    return equals(rhs.data->m_state);
-}
-
-void VcsBasePluginState::clear()
-{
-    data->m_state.clear();
 }
 
 void VcsBasePluginState::setState(const Internal::State &s)
@@ -472,7 +463,7 @@ VCSBASE_EXPORT QDebug operator<<(QDebug in, const VcsBasePluginState &state)
     plugins.
 
     The plugin connects to the
-    relevant change signals in Qt Creator and calls the virtual
+    relevant change signals in \QC and calls the virtual
     updateActions() for the plugins to update their menu actions
     according to the new state. This is done centrally to avoid
     single plugins repeatedly invoking searches/QFileInfo on files,
@@ -556,16 +547,9 @@ const VcsBasePluginState &VersionControlBase::currentState() const
     return m_state;
 }
 
-VcsCommand *VersionControlBase::createInitialCheckoutCommand(const QString &url,
-                                                               const FilePath &baseDirectory,
-                                                               const QString &localName,
-                                                               const QStringList &extraArgs)
+ExecutableItem VersionControlBase::cloneTask(const CloneTaskData &data) const
 {
-    Q_UNUSED(url)
-    Q_UNUSED(baseDirectory)
-    Q_UNUSED(localName)
-    Q_UNUSED(extraArgs)
-    return nullptr;
+    return errorTask(data.baseDirectory, Tr::tr("Initial checkout task not implemented."));
 }
 
 bool VersionControlBase::enableMenuAction(ActionState as, QAction *menuAction) const
@@ -643,7 +627,7 @@ static inline bool ask(QWidget *parent, const QString &title, const QString &que
     return QMessageBox::question(parent, title, question, QMessageBox::Yes|QMessageBox::No, defaultButton) == QMessageBox::Yes;
 }
 
-void VersionControlBase::createRepository()
+void VersionControlBase::createRepository(FilePath *repoDirectory)
 {
     QTC_ASSERT(supportsOperation(IVersionControl::CreateRepositoryOperation), return);
     // Find current starting directory
@@ -653,7 +637,7 @@ void VersionControlBase::createRepository()
     // Prompt for a directory that is not under version control yet
     QWidget *mw = ICore::dialogParent();
     do {
-        directory = FileUtils::getExistingDirectory(nullptr, Tr::tr("Choose Repository Directory"), directory);
+        directory = FileUtils::getExistingDirectory(Tr::tr("Choose Repository Directory"), directory);
         if (directory.isEmpty())
             return;
         const IVersionControl *managingControl = VcsManager::findVersionControlForDirectory(directory);
@@ -668,6 +652,8 @@ void VersionControlBase::createRepository()
     } while (true);
     // Create
     const bool rc = vcsCreateRepository(directory);
+    if (repoDirectory)
+        *repoDirectory = directory;
     const QString nativeDir = directory.toUserOutput();
     if (rc) {
         QMessageBox::information(mw, Tr::tr("Repository Created"),
@@ -700,37 +686,6 @@ bool VersionControlBase::raiseSubmitEditor() const
 
 void VersionControlBase::discardCommit()
 {
-}
-
-// Find top level for version controls like git/Mercurial that have
-// a directory at the top of the repository.
-// Note that checking for the existence of files is preferred over directories
-// since checking for directories can cause them to be created when
-// AutoFS is used (due its automatically creating mountpoints when querying
-// a directory). In addition, bail out when reaching the home directory
-// of the user or root (generally avoid '/', where mountpoints are created).
-FilePath findRepositoryForFile(const FilePath &fileOrDir, const QString &checkFile)
-{
-    const FilePath dirS = fileOrDir.isDir() ? fileOrDir : fileOrDir.parentDir();
-    qCDebug(findRepoLog) << ">" << dirS << checkFile;
-    QTC_ASSERT(!dirS.isEmpty() && !checkFile.isEmpty(), return {});
-
-    const QString root = QDir::rootPath();
-    const QString home = QDir::homePath();
-
-    QDir directory(dirS.toString());
-    do {
-        const QString absDirPath = directory.absolutePath();
-        if (absDirPath == root || absDirPath == home)
-            break;
-
-        if (QFileInfo(directory, checkFile).isFile()) {
-            qCDebug(findRepoLog) << "<" << absDirPath;
-            return FilePath::fromString(absDirPath);
-        }
-    } while (!directory.isRoot() && directory.cdUp());
-    qCDebug(findRepoLog) << "< bailing out at" << directory.absolutePath();
-    return {};
 }
 
 static const char SOURCE_PROPERTY[] = "qtcreator_source";

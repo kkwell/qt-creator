@@ -7,18 +7,18 @@
 #include <tracing/timelinemodel_p.h>
 #include <tracing/timelineformattime.h>
 
-#include <QtTest>
+#include <QTest>
 
-namespace QmlProfiler {
-namespace Internal {
+using namespace QmlDebug;
+namespace QmlProfiler::Internal {
 
 static InputEventType inputType(int i)
 {
     return static_cast<InputEventType>(i % (MaximumInputEventType + 1));
 }
 
-InputEventsModelTest::InputEventsModelTest(QObject *parent) :
-    QObject(parent), model(&manager, &aggregator)
+InputEventsModelTest::InputEventsModelTest()
+    : model(&manager, &aggregator)
 {
     keyTypeId = manager.appendEventType(QmlEventType(Event, UndefinedRangeType, Key));
     mouseTypeId = manager.appendEventType(QmlEventType(Event, UndefinedRangeType, Mouse));
@@ -179,5 +179,4 @@ void InputEventsModelTest::cleanupTestCase()
     QCOMPARE(model.collapsedRowCount(), 1);
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

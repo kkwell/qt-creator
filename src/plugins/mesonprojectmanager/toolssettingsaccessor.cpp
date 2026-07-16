@@ -58,22 +58,27 @@ void ToolsSettingsAccessor::saveMesonTools()
         ++entry_count;
     }
     data.insert(ToolsSettings::ENTRY_COUNT, entry_count);
-    saveSettings(data, ICore::dialogParent());
+    data.insert(ToolsSettings::DEFAULT_TOOL_KEY, MesonTools::defaultToolId().toSetting());
+    saveSettings(data);
 }
 
 void ToolsSettingsAccessor::loadMesonTools()
 {
     using namespace Constants;
-    auto data = restoreSettings(ICore::dialogParent());
-    auto entry_count = data.value(ToolsSettings::ENTRY_COUNT, 0).toInt();
+    Store data = restoreSettings();
+    int entry_count = data.value(ToolsSettings::ENTRY_COUNT, 0).toInt();
     std::vector<MesonTools::Tool_t> result;
     for (auto toolIndex = 0; toolIndex < entry_count; toolIndex++) {
         Key name = entryName(toolIndex);
         Store store = storeFromVariant(data[name]);
-        result.emplace_back(new ToolWrapper(store));
+        // Users will have Ninja tool saved from previous versions of Qt Creator
+        // so we need to keep filtering them out for some time.
+        if (store[Constants::ToolsSettings::TOOL_TYPE_KEY].toString() == Constants::ToolsSettings::TOOL_TYPE_MESON)
+            result.emplace_back(new MesonToolWrapper(store));
     }
 
     MesonTools::setTools(std::move(result));
+    MesonTools::setDefaultToolId(Id::fromSetting(data.value(ToolsSettings::DEFAULT_TOOL_KEY)));
 }
 
 void setupToolsSettingsAccessor()

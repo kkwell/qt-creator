@@ -23,14 +23,14 @@
                 \li \uicontrol {Compiler Explorer Python Source}
                 \li \uicontrol {Compiler Explorer Qt & C++ Source}
             \endlist
-            \image qtcreator-new-project-compiler-explorer.webp {New File dialog}
+            \image {qtcreator-new-project-compiler-explorer.webp} {New File dialog}
         \li Select \uicontrol Choose.
         \li Follow the instructions of the wizard to create an example
             compiler explorer session as a JSON-based \c .qtce file and to open
             it.
     \endlist
 
-    \sa {Create files}, {Enable and disable plugins}, {Explore compiler code}
+    \sa {Adding files}, {Enable and disable plugins}, {Explore compiler code}
 */
 
 /*!
@@ -41,12 +41,12 @@
 
     \title Explore compiler code
 
-    With the \l{https://godbolt.org/}{Compiler Explorer}, you can enter code to
+    With the \l{Compiler Explorer}, you can enter code to
     explore the capabilities of your compilers and interpreters. \QC supports
     all languages, compilers, and libraries that Compiler Explorer supports. You
     can save your compiler explorer session as a JSON-based \c .qtce file.
 
-    \image qtcreator-compiler-explorer.webp {Python code in the compiler explorer}
+    \image {qtcreator-compiler-explorer.webp} {Python code in the compiler explorer}
 
     \note Enable the Compiler Explorer plugin to use it.
 
@@ -55,13 +55,12 @@
     \list 1
         \li Go to \uicontrol Tools > \uicontrol {Compiler Explorer} >
             \uicontrol {Open Compiler Explorer}.
-        \li In the \uicontrol Language field, select the language to compile.
-        \li In the \uicontrol Compiler field, select a compiler to see the
-            assembly code.
+        \li In \uicontrol Language, select the language to compile.
+        \li In \uicontrol Compiler, select a compiler to see the assembly code.
         \li Enter code to see the resulting assembly code.
     \endlist
 
-    Hover the mouse over the assembly code, to have the matching source lines
+   hover over the assembly code, to have the matching source lines
     highlighted.
 
     You can also see the application status and output.
@@ -70,10 +69,10 @@
 
     \section1 Set compiler options
 
-    Select \inlineimage icons/settings.png
-    to set options for the selected compiler.
+    Select \imagesettings (\uicontrol {Options}) next to the
+    \uicontrol Compiler field to set options for the selected compiler.
 
-    \image qtcreator-compiler-explorer-options.webp {Compiler Explorer options}
+    \image {qtcreator-compiler-explorer-options.webp} {Compiler Explorer options}
 
     \table
     \header
@@ -106,6 +105,17 @@
             at link time. The data indicates which namespace and object a
             function belongs to and which arguments it handles in which order.
     \endtable
+
+    \section1 Change the server URL
+
+    To use Compiler Explorer at another URL:
+
+    \list 1
+        \li Select \imagesettings (\uicontrol {Options}) next to
+            \uicontrol {Powered by}.
+        \li In \uicontrol URL, enter the address of the Compiler Explorer to use.
+            \image {qtcreator-set-compiler-explorer-url.webp} {Set Compiler Explorer dialog}
+    \endlist
 
     \sa {Create compiler explorer sessions}, {Enable and disable plugins},
     {Add compilers}, {Add custom compilers}

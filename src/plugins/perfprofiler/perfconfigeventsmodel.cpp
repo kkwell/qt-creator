@@ -10,8 +10,7 @@
 
 using namespace Utils;
 
-namespace PerfProfiler {
-namespace Internal {
+namespace PerfProfiler::Internal {
 
 PerfConfigEventsModel::PerfConfigEventsModel(PerfSettings *settings, QObject *parent) :
     QAbstractTableModel(parent), m_settings(settings)
@@ -40,7 +39,7 @@ QVariant PerfConfigEventsModel::data(const QModelIndex &index, int role) const
         return QVariant(); // ignore
     }
 
-    QString event = m_settings->events().value(index.row());
+    QString event = m_settings->events.volatileValue().value(index.row());
     const EventDescription description = parseEvent(event);
     switch (index.column()) {
     case ColumnEventType: {
@@ -124,7 +123,7 @@ bool PerfConfigEventsModel::setData(const QModelIndex &dataIndex, const QVariant
     const int row = dataIndex.row();
     const int column = dataIndex.column();
 
-    QStringList events = m_settings->events();
+    QStringList events = m_settings->events.volatileValue();
     EventDescription description = parseEvent(events[row]);
     switch (column) {
     case ColumnEventType:
@@ -158,7 +157,7 @@ bool PerfConfigEventsModel::setData(const QModelIndex &dataIndex, const QVariant
         break;
     }
     events[row] = generateEvent(description);
-    m_settings->events.setValue(events);
+    m_settings->events.setVolatileValue(events);
     emit dataChanged(index(row, ColumnEventType), index(row, ColumnResult));
     return true;
 }
@@ -201,7 +200,7 @@ bool PerfConfigEventsModel::removeRows(int row, int count, const QModelIndex &pa
     for (int i = 0; i < count; ++i)
         events.removeAt(row);
     beginRemoveRows(parent, row, row + count - 1);
-    m_settings->events.setValue(events);
+    m_settings->events.setValue(events, BaseAspect::BeQuiet);
     endRemoveRows();
 
     if (events.isEmpty()) {
@@ -335,7 +334,7 @@ PerfConfigEventsModel::EventDescription PerfConfigEventsModel::parseEvent(
         return description;
     }
 
-    if (event.startsWith('r') && event.length() == 4) {
+    if (event.startsWith('r') && event.size() == 4) {
         bool ok = false;
         const uint eventNumber = event.mid(1).toUInt(&ok, 16);
         if (ok) {
@@ -404,5 +403,4 @@ PerfConfigEventsModel::EventDescription PerfConfigEventsModel::parseEvent(
 
 }
 
-} // namespace Internal
-} // namespace PerfProfiler
+} // namespace PerfProfiler::Internal

@@ -1,5 +1,4 @@
 ---@meta Action
-
 local action = {}
 
 ---@enum CommandAttributes
@@ -17,18 +16,39 @@ action.CommandAttribute = {
 ---@class ActionOptions
 ---@field context? string The context in which the action is available.
 ---@field text? string The text to display for the action.
+---@field icon? IconFilePathOrString The icon to display for the action.
 ---@field iconText? string The icon text to display for the action.
----@field toolTip? string The tooltip to display for the action.
+---@field toolTip? string The toolTip to display for the action.
 ---@field onTrigger? function The callback to call when the action is triggered.
 ---@field commandAttributes? CommandAttributes The attributes of the action.
 ---@field commandDescription? string The description of the command.
 ---@field defaultKeySequence? string The default key sequence for the action.
 ---@field defaultKeySequences? string[] The default key sequences for the action.
-local ActionOptions = {}
+---@field asModeAction? integer Register the action as a mode action with the given priority.
+---@field containers? string[]|ContainerAndGroup[] The containers into which the action should be added.
+ActionOptions = {}
 
 ---Creates a new Action.
 ---@param id string The id of the action.
 ---@param options ActionOptions
+---@return Command command The created command.
 function action.create(id, options) end
 
+---Triggers an Action.
+---@param id string The id of the action.
+function action.trigger(id) end
+
+---Sets the state of an Action.
+---@param id string The id of the action.
+---@param checked boolean Whether the action should be set or not.
+function action.setChecked(id, checked) end
+
+---@class Command
+---@field enabled boolean Whether the command is enabled or not.
+---@field keySequences QKeySequence[] Current key sequences for the command.
+---@field text string The text of the command. Make sure to specify `commandAttributes = CommandAttribute.CA_UpdateText` in the options.
+---@field toolTip string The toolTip of the command. Make sure to specify `commandAttributes = CommandAttribute.CA_UpdateText` in the options.
+Command = {}
+
+---return the module
 return action

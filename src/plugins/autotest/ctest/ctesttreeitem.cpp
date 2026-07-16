@@ -7,18 +7,20 @@
 #include "ctesttool.h"
 
 #include "../autotestplugin.h"
+#include "../autotesttr.h"
 #include "../testsettings.h"
 
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/buildsystem.h>
+#include <projectexplorer/devicesupport/devicekitaspects.h>
 #include <projectexplorer/environmentaspect.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectmanager.h>
-#include <projectexplorer/target.h>
 
 #include <utils/link.h>
 #include <utils/qtcassert.h>
 
+using namespace ProjectExplorer;
 using namespace Utils;
 
 namespace Autotest {
@@ -78,32 +80,39 @@ QVariant CTestTreeItem::data(int column, int role) const
 
 QList<ITestConfiguration *> CTestTreeItem::testConfigurationsFor(const QStringList &selected) const
 {
-    ProjectExplorer::Project *project = ProjectExplorer::ProjectManager::startupProject();
-    if (!project)
+    const BuildConfiguration *buildConfig = ProjectExplorer::activeBuildConfigForActiveProject();
+    if (!buildConfig)
         return {};
-
-    const ProjectExplorer::Target *target = ProjectExplorer::ProjectManager::startupTarget();
-    if (!target)
-        return {};
-
-    const ProjectExplorer::BuildSystem *buildSystem = target->buildSystem();
     QStringList options;
     if (testSettings().useTimeout()) {
         options << "--timeout"
                 << QString::number(testSettings().timeout() / 1000);
     }
     options << theCTestTool().activeSettingsAsOptions();
-    const CommandLine command = buildSystem->commandLineForTests(selected, options);
+    const CommandLine command = buildConfig->buildSystem()->commandLineForTests(selected, options);
     if (command.executable().isEmpty())
         return {};
 
     CTestConfiguration *config = new CTestConfiguration(testBase());
-    config->setProject(project);
+    config->setProject(buildConfig->project());
     config->setCommandLine(command);
-    const ProjectExplorer::RunConfiguration *runConfig = target->activeRunConfiguration();
+
+    auto runDevice = RunDeviceKitAspect::device(buildConfig->kit());
+    auto buildDevice = BuildDeviceKitAspect::device(buildConfig->kit());
+    if (runDevice && buildDevice) {
+        if (runDevice != buildDevice) {
+            config->setInvalid(Tr::tr("Build and run device mismatch - skipping run of ctest."));
+            return {config};
+        }
+    } else {
+        config->setInvalid(Tr::tr("Build or run device does not exist - skipping run of ctest."));
+        return {config};
+    }
+
+    const RunConfiguration *runConfig = buildConfig->activeRunConfiguration();
     Environment env = Environment::systemEnvironment();
     if (QTC_GUARD(runConfig)) {
-        if (auto envAspect = runConfig->aspect<ProjectExplorer::EnvironmentAspect>())
+        if (auto envAspect = runConfig->aspect<EnvironmentAspect>())
             env = envAspect->environment();
     }
     if (HostOsInfo::isWindowsHost()) {
@@ -112,9 +121,7 @@ QList<ITestConfiguration *> CTestTreeItem::testConfigurationsFor(const QStringLi
     }
     env.setFallback("CLICOLOR_FORCE", "1");
     config->setEnvironment(env);
-    const ProjectExplorer::BuildConfiguration *buildConfig = target->activeBuildConfiguration();
-    if (QTC_GUARD(buildConfig))
-        config->setWorkingDirectory(buildConfig->buildDirectory());
+    config->setWorkingDirectory(buildConfig->buildDirectory());
 
     if (selected.isEmpty())
         config->setTestCaseCount(testBase()->asTestTool()->rootNode()->childCount());

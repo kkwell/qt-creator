@@ -24,16 +24,13 @@ namespace MesonProjectManager::Internal {
 class MesonRunConfiguration final : public RunConfiguration
 {
 public:
-    MesonRunConfiguration(Target *target, Id id)
-        : RunConfiguration(target, id)
+    MesonRunConfiguration(BuildConfiguration *bc, Id id)
+        : RunConfiguration(bc, id)
     {
-        environment.setSupportForBuildEnvironment(target);
+        environment.setSupportForBuildEnvironment(bc);
 
-        executable.setDeviceSelector(target, ExecutableAspect::RunDevice);
+        executable.setDeviceSelector(kit(), ExecutableAspect::RunDevice);
 
-        arguments.setMacroExpander(macroExpander());
-
-        workingDir.setMacroExpander(macroExpander());
         workingDir.setEnvironment(&environment);
 
         connect(&useLibraryPaths, &BaseAspect::changed,
@@ -57,17 +54,12 @@ public:
         });
 
         setUpdater([this] {
-            if (!activeBuildSystem())
-                return;
-
+            QTC_ASSERT(buildSystem(), return);
             BuildTargetInfo bti = buildTargetInfo();
             terminal.setUseTerminalHint(bti.usesTerminal);
             executable.setExecutable(bti.targetFilePath);
-            workingDir.setDefaultWorkingDirectory(bti.workingDirectory);
             emit environment.environmentChanged();
         });
-
-        connect(target, &Target::buildSystemUpdated, this, &RunConfiguration::update);
     }
 
     EnvironmentAspect environment{this};
@@ -88,7 +80,7 @@ public:
     {
         registerRunConfiguration<MesonRunConfiguration>(Constants::MESON_RUNCONFIG_ID);
         addSupportedProjectType(Constants::Project::ID);
-        addSupportedTargetDeviceType(ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE);
+        setExecutionTypeId(ProjectExplorer::Constants::STDPROCESS_EXECUTION_TYPE_ID);
     }
 };
 
@@ -100,7 +92,7 @@ void setupMesonRunConfiguration()
 void setupMesonRunAndDebugWorkers()
 {
     using namespace Debugger;
-    static SimpleTargetRunnerFactory theMesonRunWorkerFactory({Constants::MESON_RUNCONFIG_ID});
+    static ProcessRunnerFactory theMesonRunWorkerFactory({Constants::MESON_RUNCONFIG_ID});
     static SimpleDebugRunnerFactory theMesonDebugRunWorkerFactory({Constants::MESON_RUNCONFIG_ID});
 }
 

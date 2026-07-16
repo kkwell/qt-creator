@@ -150,7 +150,7 @@ AbstractSettings::AbstractSettings(const QString &name, const QString &ending)
     command.setSettingsKey("command");
     command.setExpectedKind(PathChooser::ExistingCommand);
     command.setCommandVersionArguments({"--version"});
-    command.setPromptDialogTitle(BeautifierTool::msgCommandPromptDialogTitle("Clang Format"));
+    command.setPromptDialogTitle(BeautifierTool::msgCommandPromptDialogTitle("ClangFormat"));
     command.setValidatePlaceHolder(true);
     command.addOnChanged(this, [this] { m_version = {}; version(); });
 
@@ -302,10 +302,11 @@ void AbstractSettings::save()
         FilePath filePath = styleFileName(key);
         filePath.removeFile();
         QTC_ASSERT(m_styleDir.isAbsolutePath(), break);
-        QTC_ASSERT(!m_styleDir.needsDevice(), break);
-        if (filePath.parentDir() != m_styleDir) {
+        QTC_ASSERT(m_styleDir.isLocal(), break);
+        const FilePath parentDir = filePath.parentDir();
+        if (parentDir != m_styleDir) {
             // FIXME: Missing in FilePath
-            QDir(m_styleDir.toString()).rmdir(filePath.parentDir().toString());
+            QDir(m_styleDir.toFSPathString()).rmdir(parentDir.toFSPathString());
         }
     }
     m_stylesToRemove.clear();
@@ -322,6 +323,7 @@ void AbstractSettings::save()
         if (!filePath.parentDir().ensureWritableDir()) {
             BeautifierTool::showError(Tr::tr("Cannot save styles. %1 does not exist.")
                                           .arg(filePath.toUserOutput()));
+            ++iStyles;
             continue;
         }
 
@@ -332,10 +334,10 @@ void AbstractSettings::save()
                                           .arg(saver.errorString()));
         } else {
             saver.write(iStyles.value().toLocal8Bit());
-            if (!saver.finalize()) {
+            if (const Result<> res = saver.finalize(); !res) {
                 BeautifierTool::showError(Tr::tr("Cannot save file \"%1\": %2.")
                                               .arg(filePath.toUserOutput())
-                                              .arg(saver.errorString()));
+                                              .arg(res.error()));
             }
         }
         ++iStyles;
@@ -432,7 +434,7 @@ void AbstractSettings::readStyles()
 
         if (auto contents = filePath.fileContents()) {
             const QString filename = filePath.fileName();
-            m_styles.insert(filename.left(filename.length() - m_ending.length()),
+            m_styles.insert(filename.left(filename.size() - m_ending.size()),
                             QString::fromLocal8Bit(*contents));
         }
     }

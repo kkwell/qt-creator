@@ -32,7 +32,7 @@ const char qt_file_dialog_filter_reg_exp[] =
 
 static QStringList qt_clean_filter_list(const QString &filter)
 {
-    const QRegularExpression regexp(qt_file_dialog_filter_reg_exp);
+    static const QRegularExpression regexp(qt_file_dialog_filter_reg_exp);
     const QRegularExpressionMatch match = regexp.match(filter);
     QString f = filter;
     if (match.hasMatch())
@@ -49,24 +49,18 @@ static FancyLineEdit::AsyncValidationResult validateLibraryPath(const QString &i
 
     const QString fileName = filePath.fileName();
 
-    QRegularExpression::PatternOption option =
-        HostOsInfo::fileNameCaseSensitivity() == Qt::CaseInsensitive
-            ? QRegularExpression::CaseInsensitiveOption
-            : QRegularExpression::NoPatternOption;
-
     const QStringList filters = qt_clean_filter_list(promptDialogFilter);
     for (const QString &filter : filters) {
         QString pattern = QRegularExpression::wildcardToRegularExpression(filter);
-        QRegularExpression regExp(pattern, option);
+        QRegularExpression regExp(pattern, QRegularExpression::CaseInsensitiveOption);
         if (regExp.match(fileName).hasMatch())
             return input;
     }
     return make_unexpected(::QmakeProjectManager::Tr::tr("File does not match filter."));
 }
 
-AddLibraryWizard::AddLibraryWizard(const FilePath &proFile, QWidget *parent)
-    : Wizard(parent)
-    , m_proFile(proFile)
+AddLibraryWizard::AddLibraryWizard(const FilePath &proFile)
+    : m_proFile(proFile)
 {
     setWindowTitle(Tr::tr("Add Library"));
     m_libraryTypePage = new LibraryTypePage(this);

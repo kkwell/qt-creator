@@ -9,9 +9,9 @@
 
     \title Detach views
 
-    You can detach \QC views that have the \inlineimage icons/detach-view.png
-    icon. You can then move them to other places on the screen or to other
-    screens.
+    You can detach \QC views that have the
+    \inlineimage {icons/detach-view.png} {Detach} icon. You can then
+    move them to other places on the screen or to other screens.
 
     To detach views:
 
@@ -19,18 +19,17 @@
         \li Double-click the title bar of the view.
         \li Grab the title bar of the view with the mouse and start moving the
             view to another position on the screen.
-        \li Select \inlineimage icons/detach-view.png
-            .
+        \li Select \inlineimage {icons/detach-view.png} {Detach}.
     \endlist
 
     To show the title bars of views, select \uicontrol View > \uicontrol Views,
-    and deselect the \uicontrol {Automatically Hide Title Bars} check box.
+    and clear \uicontrol {Automatically Hide Title Bars}.
 
     \section1 Attach views
 
     To attach views, drag them to a highlighted dock area.
 
-    \image qtcreator-attach-views.webp {Attaching a view to a dock area}
+    \image {qtcreator-attach-views.webp} {Attaching a view to a dock area}
 
     \section1 Revert changes
 
@@ -38,4 +37,6 @@
 
     To revert the changes, select \uicontrol View > \uicontrol Views >
     \uicontrol {Reset to Default Layout}.
+
+    \sa {Adapt the UI}{How to: Adapt the UI}, {Adapting the UI}
 */

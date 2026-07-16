@@ -5,16 +5,24 @@
 
 #include "effectcomposermodel.h"
 #include "effectcomposernodesmodel.h"
+#include "effectcomposertr.h"
 #include "effectcomposerwidget.h"
+#include "listmodelwidthcalculator.h"
+#include "studioquickwidget.h"
+#include "tableheaderlengthmodel.h"
 
 #include <designermcumanager.h>
 #include <documentmanager.h>
+#include <import.h>
 #include <modelnodeoperations.h>
 #include <qmlchangeset.h>
 #include <qmldesignerconstants.h>
 #include <qmldesignerplugin.h>
 
 #include <coreplugin/icore.h>
+
+#include <QTimer>
+#include <QtQml>
 
 namespace EffectComposer {
 
@@ -55,8 +63,15 @@ QmlDesigner::WidgetInfo EffectComposerView::widgetInfo()
             if (!document)
                 return;
 
+#ifdef QDS_USE_PROJECTSTORAGE
+            auto module = model()->module(QString("%1.%2").arg(m_componentUtils.composedEffectsTypePrefix(),
+                                                               typeName).toUtf8(),
+                                          QmlDesigner::Storage::ModuleKind::QmlLibrary);
+            auto effectMetaInfo = model()->metaInfo(module, typeName.toUtf8());
+#else
             const QByteArray fullType = QString("%1.%2.%2").arg(m_componentUtils.composedEffectsTypePrefix(),
                                                              typeName).toUtf8();
+#endif
             const QList<QmlDesigner::ModelNode> allNodes = allModelNodes();
             QList<QmlDesigner::ModelNode> typeNodes;
             QList<QmlDesigner::ModelNode> propertyChangeNodes;
@@ -64,11 +79,11 @@ QmlDesigner::WidgetInfo EffectComposerView::widgetInfo()
                 if (QmlDesigner::QmlPropertyChanges::isValidQmlPropertyChanges(node))
                     propertyChangeNodes.append(node);
 #ifdef QDS_USE_PROJECTSTORAGE
-// TODO: typeName() shouldn't be used with projectstorage. Needs alternative solution (using modules?)
+                else if (node.metaInfo() == effectMetaInfo)
 #else
                 else if (node.metaInfo().typeName() == fullType)
-                    typeNodes.append(node);
 #endif
+                    typeNodes.append(node);
             }
             if (!typeNodes.isEmpty()) {
                 bool clearStacks = false;
@@ -106,8 +121,11 @@ QmlDesigner::WidgetInfo EffectComposerView::widgetInfo()
         });
     }
 
-    return createWidgetInfo(m_widget.data(), "EffectComposer",
-                            QmlDesigner::WidgetInfo::LeftPane, 0, tr("Effect Composer [beta]"));
+    return createWidgetInfo(
+        m_widget.data(),
+        "EffectComposer",
+        QmlDesigner::WidgetInfo::LeftPane,
+        Tr::tr("Effect Composer"));
 }
 
 void EffectComposerView::customNotification([[maybe_unused]] const AbstractView *view,
@@ -132,7 +150,7 @@ void EffectComposerView::modelAttached(QmlDesigner::Model *model)
     AbstractView::modelAttached(model);
 
 
-    QString currProjectPath = QmlDesigner::DocumentManager::currentProjectDirPath().toString();
+    QString currProjectPath = QmlDesigner::DocumentManager::currentProjectDirPath().toUrlishString();
 
     if (m_currProjectPath != currProjectPath) { // starting a new project
         m_widget->effectComposerNodesModel()->loadModel();
@@ -150,6 +168,8 @@ void EffectComposerView::modelAttached(QmlDesigner::Model *model)
 void EffectComposerView::modelAboutToBeDetached(QmlDesigner::Model *model)
 {
     AbstractView::modelAboutToBeDetached(model);
+    if (m_widget)
+        m_widget->effectComposerModel()->clear(true);
 }
 
 void EffectComposerView::selectedNodesChanged(const QList<QmlDesigner::ModelNode> & selectedNodeList,
@@ -165,6 +185,36 @@ void EffectComposerView::selectedNodesChanged(const QList<QmlDesigner::ModelNode
     }
 
     m_widget->effectComposerModel()->setHasValidTarget(hasValidTarget);
+}
+
+void EffectComposerView::highlightSupportedProperties(bool highlight, const QString &suffix)
+{
+    QQmlContext *ctxObj = m_widget->quickWidget()->rootContext();
+    ctxObj->setContextProperty("activeDragSuffix", suffix);
+    ctxObj->setContextProperty("hasActiveDrag", highlight);
+}
+
+void EffectComposerView::dragStarted(QMimeData *mimeData)
+{
+    if (mimeData->hasFormat(QmlDesigner::Constants::MIME_TYPE_ASSETS)
+        || mimeData->hasFormat(QmlDesigner::Constants::MIME_TYPE_BUNDLE_TEXTURE)) {
+        QString format = mimeData->formats()[0];
+        const QString assetPath = QString::fromUtf8(mimeData->data(format)).split(',')[0];
+        const QString suffix = "*." + assetPath.split('.').last().toLower();
+
+        highlightSupportedProperties(true, suffix);
+    }
+}
+
+void EffectComposerView::dragEnded()
+{
+    highlightSupportedProperties(false);
+}
+
+void EffectComposer::EffectComposerView::registerDeclarativeTypes()
+{
+    qmlRegisterType<TableHeaderLengthModel>("TableModules", 1, 0, "TableHeaderLengthModel");
+    qmlRegisterType<ListModelWidthCalculator>("ModelModules", 1, 0, "ListModelWidthCalculator");
 }
 
 } // namespace EffectComposer

@@ -1956,8 +1956,8 @@ in the system&apos;s browser for manual download.</source>
         <translation>Git 工具可能没有正确安装。</translation>
     </message>
     <message>
-        <source>(SDK Version: %1, NDK Version: %2)</source>
-        <translation>（SDK 版本：%1， NDK 版本：%2）</translation>
+        <source>(SDK Version: %1)</source>
+        <translation>（SDK 版本：%1）</translation>
     </message>
     <message>
         <source>Unset Default</source>
@@ -2174,11 +2174,8 @@ To hide a sticky splash screen, invoke QtAndroid::hideSplashScreen().</source>
         <translation>超超超高屏幕密度</translation>
     </message>
     <message>
-        <source>An image is used for the splashscreen. Qt Creator manages
-splashscreen by using a different method which requires changing
-the manifest file by overriding your settings. Allow override?</source>
-        <translation>用于启动画面的图像。Qt Creator 通过使用需要修改 manifest 文件的不同方法
-来管理启动图像，并会覆盖你的设置。允许覆盖？</translation>
+        <source>An image is used for the splashscreen. Qt Creator manages splashscreen by using a different method which requires changing the manifest file by overriding your settings. Allow override?</source>
+        <translation>用于启动画面的图像。Qt Creator 通过使用需要修改 manifest 文件的不同方法来管理启动图像，并会覆盖你的设置。允许覆盖？</translation>
     </message>
     <message>
         <source>Convert</source>
@@ -30806,9 +30803,7 @@ Expiration date: %3</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>File created:
-
-%1</source>
+        <source>File created:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -38550,7 +38545,7 @@ For more details, see /etc/sysctl.d/10-ptrace.conf
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Linking with a Qt installation automatically registers Qt versions and kits, and other tools that were installed with that Qt installer, in this Qt Creator installation. Other Qt Creator installations are not affected.</source>
+        <source>Linking with a Qt installation automatically registers Qt versions and kits, and other tools that were installed with that Qt installer, in this %1 installation. Other %1 installations are not affected.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -47114,18 +47109,6 @@ should a repository require SSH-authentication (see documentation on SSH and the
     </message>
     <message>
         <source>&quot;%1&quot; in &quot;data&quot; section of &quot;VcsCommand&quot; page has unexpected type (unset or List).</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Job in &quot;VcsCommand&quot; page is empty.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Job in &quot;VcsCommand&quot; page is not an object.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Job in &quot;VcsCommand&quot; page has no &quot;%1&quot; set.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

@@ -129,10 +129,9 @@ Declaration::Declaration(Clone *clone, Subst *subst, Declaration *original)
         return;
 
     const Name *firstTemplParamName = nullptr;
-    if (const TypenameArgument *templParam =
-            templSpec->templateParameterAt(0)->asTypenameArgument()) {
-        firstTemplParamName = templParam->name();
-    }
+    if (Symbol *param = templSpec->templateParameterAt(0);
+        param->asTypenameArgument() || param->asTemplateTypeArgument())
+        firstTemplParamName = param->name();
 
     if (!firstTemplParamName)
         return;
@@ -228,6 +227,18 @@ TypenameArgument::TypenameArgument(Clone *clone, Subst *subst, TypenameArgument 
 { }
 
 void TypenameArgument::visitSymbol0(SymbolVisitor *visitor)
+{ visitor->visit(this); }
+
+
+TemplateTypeArgument::TemplateTypeArgument(TranslationUnit *translationUnit, int sourceLocation, const Name *name)
+    : Scope(translationUnit, sourceLocation, name)
+{ }
+
+TemplateTypeArgument::TemplateTypeArgument(Clone *clone, Subst *subst, TemplateTypeArgument *original)
+    : Scope(clone, subst, original)
+{ }
+
+void TemplateTypeArgument::visitSymbol0(SymbolVisitor *visitor)
 { visitor->visit(this); }
 
 

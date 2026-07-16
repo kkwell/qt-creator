@@ -11,21 +11,20 @@
     \page creator-build-settings.html
     \previouspage creator-how-tos.html
 
-    \ingroup creator-how-to-projects
+    \ingroup creator-how-to-projects-configure
     \ingroup creator-how-to-build
 
     \title Configure projects for building
 
-    Specify build settings for the selected \l{Kits}{kit} in
-    \uicontrol Projects > \uicontrol {Build & Run} > \uicontrol Build >
-    \uicontrol {Build Settings}.
+    To specify build settings for the selected \l{Managing kits}{kit}, go to
+    \uicontrol Projects > \uicontrol {Build Settings}.
 
-    \image qtcreator-build-configurations.png {Build Settings}
+    \image {qtcreator-settings-build.webp} {Build Settings in the Projects mode}
 
     \section1 Manage build configurations
 
     To add a new build configuration to the list in
-    \uicontrol {Edit build configuration}, click \uicontrol Add and select the
+    \uicontrol {Edit build configuration}, select \uicontrol Add and then select the
     type of configuration to add. The options you have depend on the
     build system that you selected for the project. You can add as many build
     configurations as you need. You can also select \uicontrol Clone to
@@ -34,21 +33,24 @@
     Select \uicontrol Rename to give the currently selected build configuration
     a new name.
 
-    To delete the currently selected build configuration, click \uicontrol Remove.
+    To delete the currently selected build configuration, select \uicontrol Remove.
 
     \section1 Edit build configurations
 
     Select the build configuration to edit in the
     \uicontrol {Edit build configuration} field.
 
+    To edit the active build configuration, select \key {Ctrl+E, Ctrl+B}
+    (or \key {Cmd+E, Cmd+B} on \macos).
+
     The available build settings depend on the build system that you selected
     for the project:
 
     \list
-        \li \l{CMake Build Configuration}{CMake}
-        \li \l{qmake Build Configuration}{qmake}
-        \li \l{Qbs Build Configuration}{Qbs}
-        \li \l{Meson Build Configuration}{Meson}
+        \li \l{Building projects with CMake}{CMake}
+        \li \l{Building projects with qmake}{qmake}
+        \li \l{Qbs build configuration}{Qbs}
+        \li \l{Meson build configuration}{Meson}
         \li \l{IncrediBuild Build Configuration}{IncrediBuild}
     \endlist
 
@@ -56,7 +58,7 @@
 
     \section1 Build on remote devices
 
-    You can build applications on \l{Developing for Remote Linux Devices}
+    You can build applications on \l{Developing for remote Linux devices}
     {remote Linux} or \l{Add Docker devices}{Docker} devices if you
     have kits that specify the devices and toolchains to use. When the
     build device of the kit is a remote device, such as a remote Linux or
@@ -91,13 +93,14 @@
     tested or grouping commands, are not supported because the value of the
     \uicontrol Executable field is always placed first when constructing the command.
 
-    You can \l {Use Qt Creator variables}{use \QC variables} in arguments,
+    You can \l {Use \QC variables}{use \QC variables} in arguments,
     executable paths, and working directories. That is, in all fields where you
-    see the \inlineimage icons/replace.png (\uicontrol {Variables}) button.
+    see the \inlineimage {icons/replace.png} {Variables} (\uicontrol {Variables})
+    button.
 
     \section1 Add build steps
 
-    \image qtcreator-cmake-build-steps.webp {CMake build steps}
+    \image {qtcreator-cmake-build-steps.webp} {CMake build steps}
 
     In \uicontrol{Build Steps}, you can change the settings for the build system
     selected for building the project:
@@ -110,6 +113,9 @@
         \li \l{Conan Build Configuration}{Conan}
     \endlist
 
+    You can also edit the build steps for the
+    \l{Partially supported project types}{partially supported build systems}.
+
     You can use \l{IncrediBuild Build Steps}{IncrediBuild} to accelerate the
     build process when using qmake or CMake.
 
@@ -119,11 +125,13 @@
         \li To add a build step, select \uicontrol {Add Build Step} and select
             the step to add.
         \li To disable a step you added, select
-            \inlineimage icons/buildstepdisable.png (\uicontrol {Disable}).
-        \li To change the order of steps, select \inlineimage icons/arrowup.png
-            (\uicontrol {Move Up}) and \inlineimage icons/arrowdown.png
+            \inlineimage {icons/buildstepdisable.png} {Disable}
+            (\uicontrol {Disable}).
+        \li To change the order of steps, select
+            \inlineimage {icons/arrowup.png} {Move Up} (\uicontrol {Move Up})
+            and \inlineimage {icons/arrowdown.png} {Move Down}
             (\uicontrol {Move Down}).
-        \li To remove a step, select \inlineimage icons/close.png
+        \li To remove a step, select \inlineimage {icons/close.png} {Remove Item}
             (\uicontrol {Remove Item}).
     \endlist
 
@@ -133,7 +141,7 @@
     \uicontrol {Add Build Step} > \uicontrol {Custom Process Step}.
 
 
-    \image qtcreator-build-steps-custom.png {Custom Process Step}
+    \image {qtcreator-build-steps-custom.png} {Custom Process Step}
 
     \section2 Execute custom commands
 
@@ -159,9 +167,9 @@
     To add a clean step using make or a custom process, select
     \uicontrol{Add Clean Step} and select the step to add.
 
-    \image qtcreator-cmake-clean-steps.webp {Clean steps}
+    \image {qtcreator-cmake-clean-steps.webp} {Clean steps}
 
-    \sa {Configuring Projects}, {Select the build system}, {Use \QC variables},
-    {Enable debugging}, {Setting Up QML Debugging},
+    \sa {Building and running projects}, {Select the build system}, {Use \QC variables},
+    {Enable debugging}, {Setting up QML debugging},
     {Build Systems}{Reference: Build Systems}
 */

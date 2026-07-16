@@ -3,7 +3,7 @@
 
 /*!
     \page index.html
-    \title Extending Qt Creator Manual
+    \title Extending \QC Manual
 
     \QC is a cross-platform integrated development environment (IDE) tailored to
     the needs of Qt developers.
@@ -35,8 +35,7 @@
     your own snippets.
 
     \list
-        \li \l{https://doc.qt.io/qtcreator/creator-completing-code.html#editing-code-snippets}
-            {Snippets User Interface}
+        \li \l{\QC: Add code snippets to the auto-complete menu}
         \omit
         \li \l{Adding Snippets Groups}
         \endomit
@@ -48,8 +47,7 @@
     \uicontrol {New File} or \uicontrol {New Project} with your own file and project templates by
     writing JSON definition files for them.
     \list
-        \li \l{https://doc.qt.io/qtcreator/creator-project-wizards.html}
-            {Adding New Custom Wizards}
+        \li \l{\QC: Add wizards}
         \li \l{User Interface Text Guidelines}
     \endlist
 
@@ -61,8 +59,8 @@
     UI and the logic yourself.
 
     \list
-        \li \l{Creating Plugins}
-        \li \l{Qt Creator Coding Rules}
+        \li \l{Creating Extensions and Plugins}
+        \li \l{\QC Coding Rules}
         \li \l{Creating Wizards in Code}
         \li \l{User Interface Text Guidelines}
     \endlist
@@ -82,10 +80,8 @@
     extensions and specifying magic headers.
 
     \list
-        \li \l{https://doc.qt.io/qtcreator/creator-mime-types.html}
-            {Edit MIME types}
-        \li \l{http://standards.freedesktop.org/shared-mime-info-spec/shared-mime-info-spec-latest.html}
-            {MIME Type Specification Files}
+        \li \l{\QC: Edit MIME types}
+        \li \l{Shared MIME-info Database}
     \endlist
 
     \section2 Text Highlighting and Indentation
@@ -97,10 +93,8 @@
     your own definition files.
 
     \list
-        \li \l{https://doc.qt.io/qtcreator/creator-highlighting.html#generic-highlighting}
-            {Download highlight definitions}
-        \li \l{https://docs.kde.org/stable5/en/applications/katepart/highlight.html}
-            {Working with Syntax Highlighting}
+        \li \l{\QC: Download highlight definitions}
+        \li \l{Working with Syntax Highlighting}
     \endlist
 
     \section2 Custom Text Editors
@@ -113,8 +107,8 @@
     the ground up.
 
     \list
-        \li \l{Creating Plugins}
-        \li \l{Qt Creator Coding Rules}
+        \li \l{Creating Extensions and Plugins}
+        \li \l{\QC Coding Rules}
         \omit
         \li Text Editors
         \li \l{CodeAssist}{Providing Code Assist}
@@ -127,8 +121,8 @@
     its appearance and behavior.
 
     \list
-        \li \l{Creating Plugins}
-        \li \l{Qt Creator Coding Rules}
+        \li \l{Creating Extensions and Plugins}
+        \li \l{\QC Coding Rules}
         \omit
         \li \l{Editors}
         \endomit
@@ -155,8 +149,7 @@
     can share.
 
     \list
-        \li \l{https://doc.qt.io/qtcreator/creator-editor-external.html}
-            {Use external tools}
+        \li \l{\QC: Use external tools}
         \li \l{External Tool Specification Files}
     \endlist
 
@@ -180,10 +173,10 @@
     configure the tool in \QC, you can add an options page for it.
 
     \list
-        \li \l{https://doc.qt.io/qtcreator/creator-editor-external.html}{Use external tools}
+        \li \l{\QC: Use external tools}
         \li \l{External Tool Specification Files}
-        \li \l{Creating Plugins}
-        \li \l{Qt Creator Coding Rules}
+        \li \l{Creating Extensions and Plugins}
+        \li \l{\QC Coding Rules}
         \omit
         \li \l{Menus and Menu Items}
         \li \l{Options Pages}
@@ -205,10 +198,9 @@
     which are shown in \uicontrol Issues.
 
     \list
-        \li \l{https://doc.qt.io/qtcreator/creator-task-lists.html}
-            {Show task list files in Issues}
-        \li \l{Creating Plugins}
-        \li \l{Qt Creator Coding Rules}
+        \li \l{\QC: Show task list files in issues}
+        \li \l{Creating Extensions and Plugins}
+        \li \l{\QC Coding Rules}
         \omit
         \li \l{Menus and Menu Items}
         \li \l{Options Pages}
@@ -222,15 +214,15 @@
     a full-blown plugin, you can extend \QC with Lua Extensions.
 
     \list
-        \li \l{Extending \QC with Lua}
+        \li \l{Creating Lua-Based Extensions}
     \endlist
 
     \section1 All Topics
 
     \list
-        \li Developing Qt Creator Plugins
+        \li Developing \QC Plugins
             \list
-                \li \l{Creating Plugins}
+                \li \l{Creating Extensions and Plugins}
                 \omit
                 \li \l{Menus and Menu Items}
                 \endomit
@@ -243,17 +235,14 @@
             \endlist
         \li Reference
             \list
-                \li \l{http://standards.freedesktop.org/shared-mime-info-spec/shared-mime-info-spec-latest.html}
-                    {MIME Type Specification Files}
+                \li \l{Shared MIME-info Database}
                 \li \l{External Tool Specification Files}
-                \li \l{http://kate-editor.org/2005/03/24/writing-a-syntax-highlighting-file/}
-                    {Highlight Definition Files}
-                \li \l{https://doc.qt.io/qtcreator/creator-build-settings.html#using-qt-creator-variables}
-                    {Qt Creator Variables}
+                \li \l{Working with Syntax Highlighting}
+                \li \l{\QC: Use \QC Variables}
                 \li \l{User Interface Text Guidelines}
                 \li \l{Writing Documentation}
-                \li \l{Qt Creator Coding Rules}
-                \li \l{Qt Creator API Reference}
+                \li \l{\QC Coding Rules}
+                \li \l{C++ API Reference}
             \endlist
     \endlist
 */

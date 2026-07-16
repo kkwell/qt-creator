@@ -5,8 +5,8 @@
 
 #include "buildconfiguration.h"
 #include "buildpropertiessettings.h"
+#include "devicesupport/devicekitaspects.h"
 #include "devicesupport/idevice.h"
-#include "kitaspects.h"
 #include "projectexplorerconstants.h"
 #include "projectexplorer.h"
 #include "projectexplorersettings.h"
@@ -31,10 +31,7 @@ namespace ProjectExplorer {
 class BuildDirectoryAspect::Private
 {
 public:
-    Private(Target *target) : target(target) {}
-
     FilePath sourceDir;
-    Target * const target;
     FilePath savedShadowBuildDir;
     QString specialProblem;
     QLabel *genericProblemSpacer;
@@ -43,9 +40,9 @@ public:
     QPointer<InfoLabel> specialProblemLabel;
 };
 
-BuildDirectoryAspect::BuildDirectoryAspect(AspectContainer *container, const BuildConfiguration *bc)
-    : FilePathAspect(container),
-      d(new Private(bc->target()))
+BuildDirectoryAspect::BuildDirectoryAspect(BuildConfiguration *bc)
+    : FilePathAspect(bc),
+      d(new Private)
 {
     setSettingsKey("ProjectExplorer.BuildConfiguration.BuildDirectory");
     setLabelText(Tr::tr("Build directory:"));
@@ -56,28 +53,28 @@ BuildDirectoryAspect::BuildDirectoryAspect(AspectContainer *container, const Bui
         if (!fixedDir.isEmpty())
             text = fixedDir.toUserOutput();
 
-        const QString problem = updateProblemLabelsHelper(text);
-        if (!problem.isEmpty())
-            return QtFuture::makeReadyFuture(expected_str<QString>(make_unexpected(problem)));
-
         const FilePath newPath = FilePath::fromUserInput(text);
-        const auto buildDevice = BuildDeviceKitAspect::device(d->target->kit());
+        const auto buildDevice = BuildDeviceKitAspect::device(buildConfiguration()->kit());
+
+        const FilePath expandedPath = absoluteBuildDir(newPath);
+        const QString problem = updateProblemLabelsHelper(expandedPath.toFSPathString());
+        if (!problem.isEmpty())
+            return QtFuture::makeReadyFuture(Result<QString>(ResultError(problem)));
 
         if (buildDevice && buildDevice->type() != ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE
-            && !buildDevice->rootPath().ensureReachable(newPath)) {
-            return QtFuture::makeReadyFuture((Utils::expected_str<QString>(make_unexpected(
+            && !buildDevice->rootPath().ensureReachable(expandedPath)) {
+            return QtFuture::makeReadyFuture((Utils::Result<QString>(ResultError(
                 Tr::tr("The build directory is not reachable from the build device.")))));
         }
 
         return pathChooser()->defaultValidationFunction()(text);
     });
 
-    setOpenTerminalHandler([this, bc] {
-        Core::FileUtils::openTerminal(expandedValue(), bc->environment());
-    });
+    setOpenTerminalHandler(
+        [bc] { Core::FileUtils::openTerminal(bc->buildDirectory(), bc->environment()); });
 
-    connect(ProjectExplorerPlugin::instance(), &ProjectExplorerPlugin::settingsChanged,
-            this, &BuildDirectoryAspect::validateInput);
+    ProjectExplorerSettings::registerCallback(
+        this, &ProjectExplorerSettings::warnAgainstNonAsciiBuildDir, [this] { validateInput(); });
 }
 
 BuildDirectoryAspect::~BuildDirectoryAspect()
@@ -123,6 +120,13 @@ void BuildDirectoryAspect::fromMap(const Store &map)
     }
 }
 
+FilePath BuildDirectoryAspect::absoluteBuildDir(const FilePath &rawPath) const
+{
+    const BuildConfiguration * const bc = buildConfiguration();
+    return BuildConfiguration::expandedBuildDirectory(
+        bc->kit(), rawPath, bc->project()->projectDirectory(), *bc->macroExpander());
+}
+
 void BuildDirectoryAspect::addToLayoutImpl(Layouting::Layout &parent)
 {
     FilePathAspect::addToLayoutImpl(parent);
@@ -131,7 +135,7 @@ void BuildDirectoryAspect::addToLayoutImpl(Layouting::Layout &parent)
     d->genericProblemLabel = new InfoLabel({}, InfoLabel::Warning);
     d->genericProblemLabel->setElideMode(Qt::ElideNone);
     connect(d->genericProblemLabel, &QLabel::linkActivated, this, [] {
-        Core::ICore::showOptionsDialog(Constants::BUILD_AND_RUN_SETTINGS_PAGE_ID);
+        Core::ICore::showSettings(Constants::BUILD_AND_RUN_SETTINGS_PAGE_ID);
     });
     d->specialProblemLabel = new InfoLabel({}, InfoLabel::Warning);
     d->specialProblemLabel->setElideMode(Qt::ElideNone);
@@ -150,20 +154,27 @@ void BuildDirectoryAspect::addToLayoutImpl(Layouting::Layout &parent)
         });
     }
 
-    const auto buildDevice = DeviceKitAspect::device(d->target->kit());
+    const auto buildDevice = BuildDeviceKitAspect::device(buildConfiguration()->kit());
     if (buildDevice && buildDevice->type() != ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE)
         pathChooser()->setAllowPathFromDevice(true);
     else
         pathChooser()->setAllowPathFromDevice(false);
 }
 
+void BuildDirectoryAspect::announceChanges(Changes changes, Announcement howToAnnounce)
+{
+    if (changes.volatileValueFromValue && isCheckable())
+        setChecked(d->sourceDir != expandedValue());
+    FilePathAspect::announceChanges(changes, howToAnnounce);
+}
+
 FilePath BuildDirectoryAspect::fixupDir(const FilePath &dir)
 {
-    if (dir.needsDevice())
-        return dir;
-    if (HostOsInfo::isWindowsHost() && !dir.startsWithDriveLetter())
+    if (!dir.isLocal())
         return {};
-    const QString dirString = dir.toString().toLower();
+    if (!HostOsInfo::isWindowsHost() || !dir.startsWithDriveLetter())
+        return {};
+    const QString dirString = dir.toUrlishString().toLower();
     const QStringList drives = Utils::transform(QDir::drives(), [](const QFileInfo &fi) {
         return fi.absoluteFilePath().toLower().chopped(1);
     });
@@ -179,7 +190,7 @@ FilePath BuildDirectoryAspect::fixupDir(const FilePath &dir)
 
 void BuildDirectoryAspect::updateProblemLabels()
 {
-    updateProblemLabelsHelper(value());
+    updateProblemLabelsHelper(absoluteBuildDir(FilePath::fromUserInput(value())).toFSPathString());
 }
 
 QString BuildDirectoryAspect::updateProblemLabelsHelper(const QString &value)
@@ -190,7 +201,7 @@ QString BuildDirectoryAspect::updateProblemLabelsHelper(const QString &value)
 
     QString genericProblem;
     QString genericProblemLabelString;
-    if (projectExplorerSettings().warnAgainstNonAsciiBuildDir) {
+    if (ProjectExplorerSettings::get(this).warnAgainstNonAsciiBuildDir()) {
         const auto isInvalid = [](QChar c) { return c.isSpace() || !isascii(c.toLatin1()); };
         if (const auto invalidChar = Utils::findOr(value, std::nullopt, isInvalid)) {
             genericProblem = Tr::tr(
@@ -220,10 +231,15 @@ QString BuildDirectoryAspect::updateProblemLabelsHelper(const QString &value)
     return genericProblem + '\n' + d->specialProblem;
 }
 
+BuildConfiguration *BuildDirectoryAspect::buildConfiguration() const
+{
+    return qobject_cast<BuildConfiguration *>(container());
+}
+
 SeparateDebugInfoAspect::SeparateDebugInfoAspect(AspectContainer *container)
     : TriStateAspect(container)
 {
-    setDisplayName(Tr::tr("Separate debug info:"));
+    setLabelText(Tr::tr("Separate debug info:"));
     setSettingsKey("SeparateDebugInfo");
     setValue(buildPropertiesSettings().separateDebugInfo());
 }

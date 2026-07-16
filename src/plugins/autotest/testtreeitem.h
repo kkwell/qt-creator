@@ -80,7 +80,7 @@ public:
     ITestBase *testBase() const { return m_testBase; }
 
     virtual bool lessThan(const ITestTreeItem *other, SortMode mode) const;
-    QString cacheName() const { return m_filePath.toString() + ':' + m_name; }
+    QString cacheName() const { return m_filePath.path() + ':' + m_name; }
 
 protected:
     void setType(Type type) { m_type = type; }
@@ -190,7 +190,7 @@ public:
     TestTreeItem::Type m_type = TestTreeItem::Root;
 };
 
-typedef QVector<TestCodeLocationAndType> TestCodeLocationList;
+using TestCodeLocationList = QList<TestCodeLocationAndType>;
 
 } // namespace Autotest
 

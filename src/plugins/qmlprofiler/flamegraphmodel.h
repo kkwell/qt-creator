@@ -4,30 +4,44 @@
 #pragma once
 
 #include "qmlprofilernotesmodel.h"
-#include "qmlprofilereventtypes.h"
-#include "qmleventlocation.h"
+
+#include <qmldebug/qmleventlocation.h>
+#include <qmldebug/qmlprofilereventtypes.h>
 
 #include <QSet>
-#include <QVector>
 #include <QStack>
 #include <QAbstractItemModel>
 
 namespace QmlProfiler {
 namespace Internal {
 
-struct FlameGraphData {
+struct FlameGraphData
+{
+    Q_DISABLE_COPY_MOVE(FlameGraphData)
+
     FlameGraphData(FlameGraphData *parent = nullptr, int typeIndex = -1, qint64 duration = 0);
     ~FlameGraphData();
 
-    qint64 duration;
-    qint64 calls;
-    qint64 memory;
+    void clear()
+    {
+        duration = 0;
+        calls = 1;
+        memory = 0;
+        allocations = 0;
+        typeIndex = -1;
+        parent = nullptr;
+        qDeleteAll(std::exchange(children, {}));
+    }
 
-    int allocations;
-    int typeIndex;
+    qint64 duration = 0;
+    qint64 calls = 1;
+    qint64 memory = 0;
 
-    FlameGraphData *parent;
-    QVector<FlameGraphData *> children;
+    int allocations = 0;
+    int typeIndex = -1;
+
+    FlameGraphData *parent = nullptr;
+    QList<FlameGraphData *> children;
 };
 
 class FlameGraphModel : public QAbstractItemModel
@@ -66,7 +80,7 @@ public:
     QHash<int, QByteArray> roleNames() const override;
     QmlProfilerModelManager *modelManager() const;
 
-    void loadEvent(const QmlEvent &event, const QmlEventType &type);
+    void loadEvent(const QmlDebug::QmlEvent &event, const QmlDebug::QmlEventType &type);
     void finalize();
     void onTypeDetailsFinished();
     void restrictToFeatures(quint64 visibleFeatures);
@@ -78,11 +92,11 @@ signals:
 
 private:
     QVariant lookup(const FlameGraphData &data, int role) const;
-    FlameGraphData *pushChild(FlameGraphData *parent, const QmlEvent &data);
+    FlameGraphData *pushChild(FlameGraphData *parent, const QmlDebug::QmlEvent &data);
 
     // used by binding loop detection
-    QStack<QmlEvent> m_callStack;
-    QStack<QmlEvent> m_compileStack;
+    QStack<QmlDebug::QmlEvent> m_callStack;
+    QStack<QmlDebug::QmlEvent> m_compileStack;
     FlameGraphData m_stackBottom;
     FlameGraphData *m_callStackTop;
     FlameGraphData *m_compileStackTop;

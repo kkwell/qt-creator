@@ -5,51 +5,47 @@
 #include "customwidgetwizarddialog.h"
 #include "plugingenerator.h"
 #include "filenamingparameters.h"
-#include "pluginoptions.h"
 #include "../qmakeprojectmanagertr.h"
 
 #include <projectexplorer/projectexplorerconstants.h>
-#include <projectexplorer/projectexplorertr.h>
 
 #include <qtsupport/qtsupportconstants.h>
 
 #include <utils/filepath.h>
 
-namespace QmakeProjectManager {
-namespace Internal {
+using namespace Utils;
+
+namespace QmakeProjectManager::Internal {
 
 CustomWidgetWizard::CustomWidgetWizard()
 {
     setId("P.Qt4CustomWidget");
     setCategory(QLatin1String(ProjectExplorer::Constants::QT_PROJECT_WIZARD_CATEGORY));
-    setDisplayCategory(ProjectExplorer::Tr::tr(ProjectExplorer::Constants::QT_PROJECT_WIZARD_CATEGORY_DISPLAY));
+    setDisplayCategory(Core::msgWizardDisplayCategoryOther());
     setDisplayName(Tr::tr("Qt Custom Designer Widget"));
     setDescription(Tr::tr("Creates a Qt Custom Designer Widget or a Custom Widget Collection."));
     setIcon(themedIcon(":/wizards/images/gui.png"));
     setRequiredFeatures({QtSupport::Constants::FEATURE_QWIDGETS});
 }
 
-Core::BaseFileWizard *CustomWidgetWizard::create(QWidget *parent, const Core::WizardDialogParameters &parameters) const
+Core::BaseFileWizard *CustomWidgetWizard::create(const Core::WizardDialogParameters &parameters) const
 {
-    CustomWidgetWizardDialog *rc = new CustomWidgetWizardDialog(this, displayName(),
-                                                                icon(), parent, parameters);
+    auto rc = new CustomWidgetWizardDialog(this, displayName(), icon(), parameters);
     rc->setProjectName(CustomWidgetWizardDialog::uniqueProjectName(parameters.defaultPath()));
     rc->setFileNamingParameters(FileNamingParameters(headerSuffix(), sourceSuffix(), QtWizard::lowerCaseFiles()));
     return rc;
 }
 
-Core::GeneratedFiles CustomWidgetWizard::generateFiles(const QWizard *w,
-                                                       QString *errorMessage) const
+Result<Core::GeneratedFiles> CustomWidgetWizard::generateFiles(const QWizard *w) const
 {
     const auto *cw = qobject_cast<const CustomWidgetWizardDialog *>(w);
     Q_ASSERT(w);
     GenerationParameters p;
     p.fileName = cw->projectName();
-    p.path = cw->filePath().toString();
+    p.path = cw->filePath().toUrlishString();
     p.templatePath = QtWizard::templateDir();
     p.templatePath += QLatin1String("/customwidgetwizard");
-    return PluginGenerator::generatePlugin(p, *(cw->pluginOptions()), errorMessage);
+    return generatePlugin(p, *(cw->pluginOptions()));
 }
 
-} // namespace Internal
-} // namespace QmakeProjectManager
+} // namespace QmakeProjectManager::Internal

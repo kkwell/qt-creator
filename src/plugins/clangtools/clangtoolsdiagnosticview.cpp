@@ -17,10 +17,7 @@
 #include <cppeditor/cppmodelmanager.h>
 #include <cppeditor/cpprefactoringchanges.h>
 
-#include <debugger/analyzer/diagnosticlocation.h>
-
 #include <utils/algorithm.h>
-#include <utils/fileutils.h>
 #include <utils/qtcassert.h>
 #include <utils/theme/theme.h>
 #include <utils/utilsicons.h>
@@ -32,11 +29,12 @@
 #include <QHeaderView>
 #include <QPainter>
 #include <QSet>
+#include <QStyledItemDelegate>
 
 #include <set>
 
 using namespace CppEditor;
-using namespace Debugger;
+using namespace Utils;
 
 namespace ClangTools {
 namespace Internal {
@@ -113,7 +111,7 @@ private:
 };
 
 DiagnosticView::DiagnosticView(QWidget *parent)
-    : Debugger::DetailedErrorView(parent)
+    : ProjectExplorer::DetailedErrorView(parent)
     , m_style(new DiagnosticViewStyle)
     , m_delegate(new DiagnosticViewDelegate(m_style, this))
 {
@@ -172,18 +170,18 @@ DiagnosticView::DiagnosticView(QWidget *parent)
 
 void DiagnosticView::scheduleAllFixits(bool schedule)
 {
-    const auto proxyModel = static_cast<QSortFilterProxyModel *>(model());
+    const FixitStatus newStatus = schedule ? FixitStatus::Scheduled : FixitStatus::NotScheduled;
+    const auto proxyModel = qobject_cast<DiagnosticFilterModel *>(model());
     for (int i = 0, count = proxyModel->rowCount(); i < count; ++i) {
         const QModelIndex filePathItemIndex = proxyModel->index(i, 0);
         for (int j = 0, count = proxyModel->rowCount(filePathItemIndex); j < count; ++j) {
             const QModelIndex proxyIndex = proxyModel->index(j, 0, filePathItemIndex);
             const QModelIndex diagnosticItemIndex = proxyModel->mapToSource(proxyIndex);
             auto item = static_cast<DiagnosticItem *>(diagnosticItemIndex.internalPointer());
-            item->setData(DiagnosticView::DiagnosticColumn,
-                          schedule ? Qt::Checked : Qt::Unchecked,
-                          Qt::CheckStateRole);
+            item->scheduleOrUnscheduleFixit(newStatus, false);
         }
     }
+    emit proxyModel->fixitCountersChanged();
 }
 
 DiagnosticView::~DiagnosticView()
@@ -210,9 +208,8 @@ void DiagnosticView::suppressCurrentDiagnostic()
             diags << diag;
             continue;
         }
-        Utils::FilePath filePath = diag.location.filePath;
-        const Utils::FilePath relativeFilePath
-                = filePath.relativeChildPath(project->projectDirectory());
+        FilePath filePath = diag.location.targetFilePath;
+        const FilePath relativeFilePath = filePath.relativeChildPath(project->projectDirectory());
         if (!relativeFilePath.isEmpty())
             filePath = relativeFilePath;
         const SuppressedDiagnostic supDiag(filePath, diag.description,
@@ -242,7 +239,9 @@ void DiagnosticView::suppressCurrentDiagnosticInline()
         if (!isApplicable)
             continue;
 
-        diagnosticsPerFileAndLine[diag.location.filePath][diag.location.line] << diag.name;
+        diagnosticsPerFileAndLine[diag.location.targetFilePath][diag.location.target.line]
+                << diag.name;
+
         diags << diag;
     }
 
@@ -397,12 +396,12 @@ bool DiagnosticView::disableChecksEnabled() const
 
     ClangToolsSettings * const settings = ClangToolsSettings::instance();
     const ClangDiagnosticConfigs configs = settings->diagnosticConfigs();
-    Utils::Id activeConfigId = settings->runSettings().diagnosticConfigId();
+    Utils::Id activeConfigId = settings->runSettings.diagnosticConfigId();
     if (ProjectExplorer::Project * const project
             = static_cast<DiagnosticFilterModel *>(model())->project()) {
         const auto projectSettings = ClangToolsProjectSettings::getSettings(project);
         if (!projectSettings->useGlobalSettings())
-            activeConfigId = projectSettings->runSettings().diagnosticConfigId();
+            activeConfigId = projectSettings->runSettings.diagnosticConfigId();
     }
     const ClangDiagnosticConfig activeConfig = Utils::findOrDefault(configs,
         [activeConfigId](const ClangDiagnosticConfig &c) { return c.id() == activeConfigId; });
@@ -417,7 +416,7 @@ bool DiagnosticView::disableChecksEnabled() const
         return false;
 
     // If all selected diagnostics come from clang-tidy and we prefer a .clang-tidy file, then we do not offer the action.
-    if (!settings->runSettings().preferConfigFile())
+    if (!settings->runSettings.data().preferConfigFile)
         return true;
     return Utils::anyOf(indexes, [this](const QModelIndex &index) {
         return model()->data(index).toString().startsWith("clazy-");
@@ -479,15 +478,15 @@ bool DiagnosticView::eventFilter(QObject *watched, QEvent *event)
 void DiagnosticView::mouseDoubleClickEvent(QMouseEvent *event)
 {
     openEditorForCurrentIndex();
-    Debugger::DetailedErrorView::mouseDoubleClickEvent(event);
+    ProjectExplorer::DetailedErrorView::mouseDoubleClickEvent(event);
 }
 
 void DiagnosticView::openEditorForCurrentIndex()
 {
-    const QVariant v = model()->data(currentIndex(), Debugger::DetailedErrorView::LocationRole);
-    const auto loc = v.value<Debugger::DiagnosticLocation>();
-    if (loc.isValid())
-        Core::EditorManager::openEditorAt(Utils::Link(loc.filePath, loc.line, loc.column - 1));
+    const QVariant v = model()->data(currentIndex(), ProjectExplorer::DetailedErrorView::LocationRole);
+    Link loc = v.value<Link>();
+    if (loc.hasValidTarget())
+        Core::EditorManager::openEditorAt(loc);
 }
 
 } // namespace Internal

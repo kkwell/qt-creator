@@ -3,12 +3,7 @@
 
 #pragma once
 
-#include <utils/id.h>
-
-namespace Qdb {
-namespace Constants {
-
-const char QdbLinuxOsType[] = "QdbLinuxOsType";
+namespace Qdb::Constants {
 
 const char QdbRunConfigurationId[] = "QdbLinuxRunConfiguration:";
 const char QdbDeployConfigurationId[] = "Qt4ProjectManager.Qdb.QdbDeployConfiguration";
@@ -19,10 +14,4 @@ const char QdbMakeDefaultAppStepId[] = "Qdb.MakeDefaultAppStep";
 const char QdbHardwareDevicePrefix[] = "QdbHardwareDevice";
 const char AppcontrollerFilepath[] = "/usr/bin/appcontroller";
 
-} // namespace Constants
-
-namespace Internal {
-enum VmState { VmReady, VmNotReady, VmShutDown };
-}
-
-} // namespace Qdb
+} // namespace Qdb::Constants

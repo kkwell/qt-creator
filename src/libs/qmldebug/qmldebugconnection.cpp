@@ -251,6 +251,12 @@ bool QmlDebugConnection::isConnecting() const
     return !d->gotHello && d->device;
 }
 
+bool QmlDebugConnection::isListening() const
+{
+    Q_D(const QmlDebugConnection);
+    return d->server && d->server->isListening();
+}
+
 void QmlDebugConnection::close()
 {
     Q_D(QmlDebugConnection);
@@ -342,14 +348,19 @@ void QmlDebugConnection::startLocalServer(const QString &fileName)
     Q_D(QmlDebugConnection);
     if (d->gotHello)
         close();
-    if (d->server)
+    if (d->server) {
+        d->server->close(); // removes the socket file before the deferred deletion
         d->server->deleteLater();
+    }
     d->server = new QLocalServer(this);
     // QueuedConnection so that waitForNewConnection() returns true.
     connect(d->server, &QLocalServer::newConnection,
             this, &QmlDebugConnection::newConnection, Qt::QueuedConnection);
-    if (!d->server->listen(fileName))
+    if (!d->server->listen(fileName)) {
+        qWarning("QmlDebugConnection: failed to listen on \"%s\": %s",
+                 qPrintable(fileName), qPrintable(d->server->errorString()));
         emit connectionFailed();
+    }
 }
 
 void QmlDebugConnection::newConnection()
@@ -401,5 +412,29 @@ QAbstractSocket::SocketState QmlDebugConnection::socketState() const
         return static_cast<QAbstractSocket::SocketState>(socket->state());
     return QAbstractSocket::UnconnectedState;
 }
+
+#ifdef WITH_TESTS
+
+void QmlDebugConnection::setDevice(QIODevice *device)
+{
+    Q_D(QmlDebugConnection);
+    delete d->device;
+    d->device = device;
+    delete d->protocol;
+    d->protocol = new QPacketProtocol(device, this);
+    QObject::connect(d->protocol, &QPacketProtocol::readyRead,
+                     this, &QmlDebugConnection::protocolReadyRead);
+}
+
+void QmlDebugConnection::assumeServerPlugins()
+{
+    Q_D(QmlDebugConnection);
+    d->gotHello = true;
+    d->currentDataStreamVersion = d->maximumDataStreamVersion;
+    for (auto it = d->plugins.keyBegin(), end = d->plugins.keyEnd(); it != end; ++it)
+        d->serverPlugins.insert(*it, 1.0);
+}
+
+#endif // WITH_TESTS
 
 } // namespace QmlDebug

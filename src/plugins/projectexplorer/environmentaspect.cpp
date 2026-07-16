@@ -4,9 +4,12 @@
 #include "environmentaspect.h"
 
 #include "buildconfiguration.h"
+#include "devicesupport/devicekitaspects.h"
+#include "devicesupport/devicemanager.h"
 #include "environmentaspectwidget.h"
+#include "environmentkitaspect.h"
 #include "kit.h"
-#include "projectexplorer.h"
+#include "kitmanager.h"
 #include "projectexplorersettings.h"
 #include "projectexplorertr.h"
 #include "target.h"
@@ -17,11 +20,8 @@
 using namespace Utils;
 
 namespace ProjectExplorer {
-const char PRINT_ON_RUN_KEY[] = "PE.EnvironmentAspect.PrintOnRun";
 
-// --------------------------------------------------------------------
-// EnvironmentAspect:
-// --------------------------------------------------------------------
+const char PRINT_ON_RUN_KEY[] = "PE.EnvironmentAspect.PrintOnRun";
 
 EnvironmentAspect::EnvironmentAspect(AspectContainer *container)
     : BaseAspect(container)
@@ -30,17 +30,37 @@ EnvironmentAspect::EnvironmentAspect(AspectContainer *container)
     setId("EnvironmentAspect");
     setConfigWidgetCreator([this] { return new EnvironmentAspectWidget(this); });
     addDataExtractor(this, &EnvironmentAspect::environment, &Data::environment);
-    if (qobject_cast<RunConfiguration *>(container)) {
-        addModifier([](Environment &env) { env.modify(projectExplorerSettings().appEnvChanges); });
-        connect(ProjectExplorerPlugin::instance(), &ProjectExplorerPlugin::settingsChanged,
-                this, &EnvironmentAspect::environmentChanged);
+    if (const auto runConfig = qobject_cast<RunConfiguration *>(container)) {
+        addModifier([runConfig](Environment &env) {
+            ProjectExplorerSettings::get(runConfig)
+                .appEnvChanges()
+                .modifyEnvironment(env, runConfig->macroExpander());
+            EnvironmentKitAspect::runEnvChanges(runConfig->kit())
+                .modifyEnvironment(env, runConfig->macroExpander());
+        });
+        globalProjectExplorerSettings().appEnvChanges.addOnChanged(this, [this] {
+            emit environmentChanged();
+        });
     }
+    connect(this, &EnvironmentAspect::environmentChanged, this, &BaseAspect::changed);
 }
 
-void EnvironmentAspect::setDeviceSelector(Target *target, DeviceSelector selector)
+void EnvironmentAspect::setDeviceSelector(Kit *kit, DeviceSelector selector)
 {
-    m_target = target;
+    QTC_ASSERT(!m_kit, return);
+    QTC_ASSERT(kit, return);
+
+    m_kit = kit;
     m_selector = selector;
+
+    handleKitUpdate();
+    connect(KitManager::instance(), &KitManager::kitUpdated, this, [this](Kit *k) {
+        if (k == m_kit) {
+            handleKitUpdate();
+            emit devicePotentiallyChanged();
+        }
+    });
+    emit devicePotentiallyChanged();
 }
 
 int EnvironmentAspect::baseEnvironmentBase() const
@@ -57,7 +77,7 @@ void EnvironmentAspect::setBaseEnvironmentBase(int base)
     }
 }
 
-void EnvironmentAspect::setUserEnvironmentChanges(const Utils::EnvironmentItems &diff)
+void EnvironmentAspect::setUserEnvironmentChanges(const EnvironmentChanges &diff)
 {
     if (m_userChanges != diff) {
         m_userChanges = diff;
@@ -66,11 +86,20 @@ void EnvironmentAspect::setUserEnvironmentChanges(const Utils::EnvironmentItems 
     }
 }
 
-Utils::Environment EnvironmentAspect::environment() const
+Environment EnvironmentAspect::environment() const
 {
     Environment env = modifiedBaseEnvironment();
-    env.modify(userEnvironmentChanges());
+    userEnvironmentChanges().modifyEnvironment(env, macroExpander());
     return env;
+}
+
+Environment EnvironmentAspect::expandedEnvironment(const MacroExpander &expander) const
+{
+    Environment expandedEnv;
+    environment().forEachEntry([&](const QString &key, const QString &value, bool enabled) {
+        expandedEnv.set(key, expander.expand(value), enabled);
+    });
+    return expandedEnv;
 }
 
 Environment EnvironmentAspect::modifiedBaseEnvironment() const
@@ -90,6 +119,19 @@ const QStringList EnvironmentAspect::displayNames() const
 void EnvironmentAspect::addModifier(const EnvironmentAspect::EnvironmentModifier &modifier)
 {
     m_modifiers.append(modifier);
+}
+
+IDeviceConstPtr EnvironmentAspect::device() const
+{
+    switch (m_selector) {
+    case BuildDevice:
+        return BuildDeviceKitAspect::device(m_kit);
+    case RunDevice:
+        return RunDeviceKitAspect::device(m_kit);
+    case HostDevice:
+        DeviceManager::defaultDesktopDevice();
+    }
+    return {};
 }
 
 int EnvironmentAspect::addSupportedBaseEnvironment(const QString &displayName,
@@ -119,7 +161,7 @@ int EnvironmentAspect::addPreferredBaseEnvironment(const QString &displayName,
     return index;
 }
 
-void EnvironmentAspect::setSupportForBuildEnvironment(Target *target)
+void EnvironmentAspect::setSupportForBuildEnvironment(BuildConfiguration *bc)
 {
     setIsLocal(true);
     addSupportedBaseEnvironment(Tr::tr("Clean Environment"), {});
@@ -127,30 +169,23 @@ void EnvironmentAspect::setSupportForBuildEnvironment(Target *target)
     addSupportedBaseEnvironment(Tr::tr("System Environment"), [] {
         return Environment::systemEnvironment();
     });
-    addPreferredBaseEnvironment(Tr::tr("Build Environment"), [target] {
-        if (BuildConfiguration *bc = target->activeBuildConfiguration())
-            return bc->environment();
-        // Fallback for targets without buildconfigurations:
-        return target->kit()->buildEnvironment();
-    });
+    addPreferredBaseEnvironment(Tr::tr("Build Environment"), [bc] { return bc->environment(); });
 
-    connect(target, &Target::activeBuildConfigurationChanged,
-            this, &EnvironmentAspect::environmentChanged);
-    connect(target, &Target::buildEnvironmentChanged,
+    connect(bc, &BuildConfiguration::environmentChanged,
             this, &EnvironmentAspect::environmentChanged);
 }
 
 void EnvironmentAspect::fromMap(const Store &map)
 {
     m_base = map.value(BASE_KEY, -1).toInt();
-    m_userChanges = EnvironmentItem::fromStringList(map.value(CHANGES_KEY).toStringList());
+    m_userChanges = EnvironmentChanges::createFromVariant(map.value(CHANGES_KEY));
     m_printOnRun = map.value(PRINT_ON_RUN_KEY).toBool();
 }
 
 void EnvironmentAspect::toMap(Store &data) const
 {
     data.insert(BASE_KEY, m_base);
-    data.insert(CHANGES_KEY, EnvironmentItem::toStringList(m_userChanges));
+    data.insert(CHANGES_KEY, m_userChanges.toVariant());
     data.insert(PRINT_ON_RUN_KEY, m_printOnRun);
 }
 
@@ -165,9 +200,10 @@ Environment EnvironmentAspect::BaseEnvironment::unmodifiedBaseEnvironment() cons
     return getter ? getter() : Environment();
 }
 
-Utils::EnvironmentItems EnvironmentAspect::userEnvironmentChanges() const
+EnvironmentChanges EnvironmentAspect::userEnvironmentChanges() const
 {
     emit userChangesUpdateRequested();
     return m_userChanges;
 }
+
 } // namespace ProjectExplorer

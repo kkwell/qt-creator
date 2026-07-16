@@ -3,9 +3,9 @@
 
 #include "externaleditors.h"
 
-#include <coreplugin/coreplugintr.h>
 #include <coreplugin/editormanager/ieditorfactory.h>
 
+#include <projectexplorer/kitmanager.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
@@ -19,9 +19,10 @@
 #include <utils/filepath.h>
 #include <utils/hostosinfo.h>
 #include <utils/mimeconstants.h>
-#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcprocess.h>
 
+#include <QCoreApplication>
 #include <QDebug>
 #include <QMap>
 #include <QStringList>
@@ -121,7 +122,7 @@ static QString locateBinary(const QString &path, const QString &binary)
 static QString designerBinary(const QtSupport::QtVersion *qtVersion)
 {
     if (qtVersion)
-        return qtVersion->designerFilePath().toString();
+        return qtVersion->designerFilePath().toUrlishString();
     return QLatin1String(HostOsInfo::isMacHost() ? "Designer" : "designer");
 }
 
@@ -149,7 +150,7 @@ static LaunchData createMacOpenCommand(const LaunchData &data)
 
 using CommandForQtVersion = std::function<QString(const QtSupport::QtVersion *)>;
 
-static QString findFirstCommand(const QVector<QtSupport::QtVersion *> &qtVersions,
+static QString findFirstCommand(const QList<QtSupport::QtVersion *> &qtVersions,
                                 CommandForQtVersion command)
 {
     for (QtSupport::QtVersion *qt : qtVersions) {
@@ -162,10 +163,9 @@ static QString findFirstCommand(const QVector<QtSupport::QtVersion *> &qtVersion
     return QString();
 }
 
-static bool getEditorLaunchData(const CommandForQtVersion &commandForQtVersion,
-                                const FilePath &filePath,
-                                LaunchData *data,
-                                QString *errorMessage)
+static Result<> getEditorLaunchData(const CommandForQtVersion &commandForQtVersion,
+                                    const FilePath &filePath,
+                                    LaunchData *data)
 {
     // Check in order for Qt version with the binary:
     // - active kit of project
@@ -173,27 +173,24 @@ static bool getEditorLaunchData(const CommandForQtVersion &commandForQtVersion,
     // - default kit
     // - any other kit
     // As fallback check PATH
-    if (!KitManager::waitForLoaded()) {
-        *errorMessage = Tr::tr("Could not load kits in a reasonable amount of time.");
-        return false;
-    }
+    if (!KitManager::waitForLoaded())
+        return ResultError(Tr::tr("Could not load kits in a reasonable amount of time."));
+
     data->workingDirectory.clear();
-    QVector<QtSupport::QtVersion *> qtVersionsToCheck; // deduplicated after being filled
+    QList<QtSupport::QtVersion *> qtVersionsToCheck; // deduplicated after being filled
     if (const Project *project = ProjectManager::projectForFile(filePath)) {
         data->workingDirectory = project->projectDirectory();
         // active kit
-        if (const Target *target = project->activeTarget()) {
-            qtVersionsToCheck << QtSupport::QtKitAspect::qtVersion(target->kit());
-        }
+        qtVersionsToCheck << QtSupport::QtKitAspect::qtVersion(project->activeKit());
         // all kits of project
-        qtVersionsToCheck += Utils::transform<QVector>(project->targets(), [](Target *t) {
+        qtVersionsToCheck += Utils::transform<QList>(project->targets(), [](Target *t) {
             return QTC_GUARD(t) ? QtSupport::QtKitAspect::qtVersion(t->kit()) : nullptr;
         });
     }
     // default kit
     qtVersionsToCheck << QtSupport::QtKitAspect::qtVersion(KitManager::defaultKit());
     // all kits
-    qtVersionsToCheck += Utils::transform<QVector>(KitManager::kits(), QtSupport::QtKitAspect::qtVersion);
+    qtVersionsToCheck += Utils::transform<QList>(KitManager::kits(), QtSupport::QtKitAspect::qtVersion);
     qtVersionsToCheck = Utils::filteredUnique(qtVersionsToCheck); // can still contain nullptr
     data->binary = findFirstCommand(qtVersionsToCheck, commandForQtVersion);
     // fallback
@@ -203,29 +200,27 @@ static bool getEditorLaunchData(const CommandForQtVersion &commandForQtVersion,
     }
 
     if (data->binary.isEmpty()) {
-        *errorMessage = Tr::tr("The application \"%1\" could not be found.")
-            .arg(filePath.toUserOutput());
-        return false;
+        return ResultError(Tr::tr("The application \"%1\" could not be found.")
+            .arg(filePath.toUserOutput()));
     }
 
     // Setup binary + arguments, use Mac Open if appropriate
-    data->arguments.push_back(filePath.toString());
+    data->arguments.push_back(filePath.toUrlishString());
     if (HostOsInfo::isMacHost())
         *data = createMacOpenCommand(*data);
     if (debug)
         qDebug() << Q_FUNC_INFO << '\n' << data->binary << data->arguments;
-    return true;
+    return ResultOk;
 }
 
-static bool startEditorProcess(const LaunchData &data, QString *errorMessage)
+Result<> startEditorProcess(const LaunchData &data)
 {
     if (debug)
         qDebug() << Q_FUNC_INFO << '\n' << data.binary << data.arguments << data.workingDirectory;
     const CommandLine cmd{FilePath::fromString(data.binary), data.arguments};
-    if (Process::startDetached(cmd, data.workingDirectory))
-        return true;
-    *errorMessage = Tr::tr("Unable to start \"%1\".").arg(cmd.toUserOutput());
-    return false;
+    if (!Process::startDetached(cmd, data.workingDirectory))
+        return  ResultError(Tr::tr("Unable to start \"%1\".").arg(cmd.toUserOutput()));
+    return ResultOk;
 }
 
 // ExternalDesignerEditorFactory with Designer Tcp remote control.
@@ -256,18 +251,18 @@ public:
     explicit ExternalDesignerFactory(QObject *guard)
     {
         setId("Qt.Designer");
-        setDisplayName(::Core::Tr::tr("Qt Widgets Designer"));
+        setDisplayName(Tr::tr("Qt Widgets Designer"));
         setMimeTypes({Utils::Constants::FORM_MIMETYPE});
 
-        setEditorStarter([guard](const FilePath &filePath, QString *errorMessage) {
+        setEditorStarter([guard](const FilePath &filePath) -> Result<> {
             LaunchData data;
 
             // Find the editor binary
-            if (!getEditorLaunchData(designerBinary, filePath, &data, errorMessage))
-                return false;
+            if (const Result<> res = getEditorLaunchData(designerBinary, filePath, &data); !res)
+                return res;
 
             if (HostOsInfo::isMacHost())
-                return startEditorProcess(data, errorMessage);
+                return startEditorProcess(data);
 
             /* Qt Widgets Designer on the remaining platforms: Uses Designer's own
             * Tcp-based communication mechanism to ensure all files are opened
@@ -280,19 +275,17 @@ public:
                 if (debug)
                     qDebug() << Q_FUNC_INFO << "\nWriting to socket:" << data.binary << filePath;
                 QTcpSocket *socket = it.value();
-                if (!socket->write(filePath.toString().toUtf8() + '\n')) {
-                    *errorMessage = Tr::tr("Qt Widgets Designer is not responding (%1).")
-                                        .arg(socket->errorString());
-                    return false;
+                if (!socket->write(filePath.toUrlishString().toUtf8() + '\n')) {
+                    return ResultError(Tr::tr("Qt Widgets Designer is not responding (%1).")
+                                        .arg(socket->errorString()));
                 }
-                return true;
+                return ResultOk;
             }
             // No process yet. Create socket & launch the process
             QTcpServer server;
-            if (!server.listen(QHostAddress::LocalHost)) {
-                *errorMessage = Tr::tr("Unable to create server socket: %1").arg(server.errorString());
-                return false;
-            }
+            if (!server.listen(QHostAddress::LocalHost))
+                return ResultError(Tr::tr("Unable to create server socket: %1").arg(server.errorString()));
+
             const quint16 port = server.serverPort();
             if (debug)
                 qDebug() << Q_FUNC_INFO << "\nLaunching server:" << port << data.binary << filePath;
@@ -301,8 +294,9 @@ public:
             data.arguments.push_front(QString::number(port));
             data.arguments.push_front(QLatin1String("-client"));
 
-            if (!startEditorProcess(data, errorMessage))
-                return false;
+            if (const Result<> res = startEditorProcess(data); !res)
+                return res;
+
             // Insert into cache if socket is created, else try again next time
             if (server.waitForNewConnection(3000)) {
                 QTcpSocket *socket = server.nextPendingConnection();
@@ -313,7 +307,7 @@ public:
                 QObject::connect(socket, &QAbstractSocket::disconnected, guard, mapSlot);
                 QObject::connect(socket, &QAbstractSocket::errorOccurred, guard, mapSlot);
             }
-            return true;
+            return ResultOk;
         });
     }
 };
@@ -328,7 +322,7 @@ void setupExternalDesigner(QObject *guard)
 static QString linguistBinary(const QtSupport::QtVersion *qtVersion)
 {
     if (qtVersion)
-        return qtVersion->linguistFilePath().toString();
+        return qtVersion->linguistFilePath().toUrlishString();
     return QLatin1String(HostOsInfo::isMacHost() ? "Linguist" : "linguist");
 }
 
@@ -338,12 +332,13 @@ public:
     ExternalLinguistFactory()
     {
         setId("Qt.Linguist");
-        setDisplayName(::Core::Tr::tr("Qt Linguist"));
+        setDisplayName(Tr::tr("Qt Linguist"));
         setMimeTypes({Utils::Constants::LINGUIST_MIMETYPE});
-        setEditorStarter([](const FilePath &filePath, QString *errorMessage) {
+        setEditorStarter([](const FilePath &filePath) {
             LaunchData data;
-            return getEditorLaunchData(linguistBinary, filePath, &data, errorMessage)
-                   && startEditorProcess(data, errorMessage);
+            if (const Result<> res = getEditorLaunchData(linguistBinary, filePath, &data); !res)
+                return res;
+            return startEditorProcess(data);
         });
     }
 };

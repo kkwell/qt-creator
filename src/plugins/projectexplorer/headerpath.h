@@ -6,10 +6,6 @@
 #include <utils/algorithm.h>
 #include <utils/filepath.h>
 
-#include <QDir>
-#include <QString>
-#include <QVector>
-
 namespace ProjectExplorer {
 
 enum class HeaderPathType {
@@ -23,11 +19,8 @@ class HeaderPath
 {
 public:
     HeaderPath() = default;
-    HeaderPath(const QString &path, HeaderPathType type)
-        : path(QDir::fromNativeSeparators(path)), type(type) { }
-    HeaderPath(const char *path, HeaderPathType type) : HeaderPath(QLatin1String(path), type) {}
     HeaderPath(const Utils::FilePath &path, HeaderPathType type)
-        : HeaderPath(path.path(), type)
+        : path(path), type(type)
     {}
 
     bool operator==(const HeaderPath &other) const
@@ -40,50 +33,39 @@ public:
         return !(*this == other);
     }
 
-    template<typename F> static HeaderPath makeUser(const F &fp)
+    static HeaderPath makeUser(const Utils::FilePath &fp)
     {
         return {fp, HeaderPathType::User};
     }
-    template<typename F> static HeaderPath makeBuiltIn(const F &fp)
+    static  HeaderPath makeBuiltIn(const Utils::FilePath &fp)
     {
         return {fp, HeaderPathType::BuiltIn};
     }
-    template<typename F> static HeaderPath makeSystem(const F &fp)
+    static HeaderPath makeSystem(const Utils::FilePath &fp)
     {
         return {fp, HeaderPathType::System};
     }
-    template<typename F> static HeaderPath makeFramework(const F &fp)
+    static HeaderPath makeFramework(const Utils::FilePath &fp)
     {
         return {fp, HeaderPathType::Framework};
     }
 
-    friend auto qHash(const HeaderPath &key, uint seed = 0)
+    friend size_t qHash(const HeaderPath &key, size_t seed = 0)
     {
-        return ((qHash(key.path) << 2) | uint(key.type)) ^ seed;
+        return ((qHash(key.path) << 2) | size_t(key.type)) ^ seed;
     }
 
-    QString path;
+    Utils::FilePath path;
     HeaderPathType type = HeaderPathType::User;
 };
 
-using HeaderPaths = QVector<HeaderPath>;
-template<typename C> HeaderPaths toHeaderPaths(const C &list, HeaderPathType type)
+using HeaderPaths = QList<HeaderPath>;
+
+inline HeaderPaths toHeaderPaths(const Utils::FilePaths &list, HeaderPathType type)
 {
-    return Utils::transform<HeaderPaths>(list, [type](const auto &fp) {
+    return Utils::transform<HeaderPaths>(list, [type](const Utils::FilePath &fp) {
         return HeaderPath(fp, type);
     });
-}
-template<typename C> HeaderPaths toUserHeaderPaths(const C &list)
-{
-    return toHeaderPaths(list, HeaderPathType::User);
-}
-template<typename C> HeaderPaths toBuiltInHeaderPaths(const C &list)
-{
-    return toHeaderPaths(list, HeaderPathType::BuiltIn);
-}
-template<typename C> HeaderPaths toFrameworkHeaderPaths(const C &list)
-{
-    return toHeaderPaths(list, HeaderPathType::Framework);
 }
 
 } // namespace ProjectExplorer

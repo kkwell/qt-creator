@@ -8,7 +8,7 @@
 
 QT_FORWARD_DECLARE_CLASS(QLabel)
 
-namespace Core::WelcomePageHelpers {
+namespace Utils::StyleHelper {
 class TextFormat;
 }
 
@@ -52,7 +52,7 @@ private:
     QModelIndex m_modelIndex;
 };
 
-QLabel *tfLabel(const Core::WelcomePageHelpers::TextFormat &tf, bool singleLine = true);
+QLabel *tfLabel(const Utils::StyleHelper::TextFormat &tf, bool singleLine = true);
 
 constexpr static QSize iconBgSizeSmall{50, 50};
 constexpr static QSize iconBgSizeBig{68, 68};

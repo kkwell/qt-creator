@@ -8,6 +8,8 @@
 #include <nodeabstractproperty.h>
 #include <toolbar.h>
 
+#include <qmldesigner/settings/designersettings.h>
+
 #include <coreplugin/documentmanager.h>
 #include <coreplugin/idocument.h>
 #include <coreplugin/imode.h>
@@ -146,7 +148,7 @@ QList<CrumbleBarInfo> CrumbleBar::infos() const
 bool CrumbleBar::showSaveDialog()
 {
     bool canceled = false;
-    bool alwaysSave = QmlDesignerPlugin::settings().value(DesignerSettingsKey::ALWAYS_SAVE_IN_CRUMBLEBAR).toBool();
+    bool alwaysSave = designerSettings().alwaysSaveInCrumbleBar();
     if (alwaysSave) {
         Core::DocumentManager::saveModifiedDocumentSilently(currentDesignDocument()->editor()->document());
     } else {
@@ -156,7 +158,7 @@ bool CrumbleBar::showSaveDialog()
                                                     tr("Always save when leaving subcomponent"),
                                                     &alwaysSave);
 
-        QmlDesignerPlugin::settings().insert(DesignerSettingsKey::ALWAYS_SAVE_IN_CRUMBLEBAR, alwaysSave);
+        designerSettings().alwaysSaveInCrumbleBar.setValue(alwaysSave);
     }
     return !canceled;
 }

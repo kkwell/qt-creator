@@ -37,32 +37,38 @@
 #include <texteditor/texteditor.h>
 #include <texteditor/textdocument.h>
 
+#include <qtsupport/qtkitaspect.h>
+
 #include <utils/algorithm.h>
-#include <utils/fileutils.h>
 #include <utils/mimeutils.h>
 #include <utils/qtcassert.h>
 #include <utils/stringutils.h>
 #include <utils/temporaryfile.h>
 
 #include <QDesignerFormWindowInterface>
+#include <QDesignerFormWindowManagerInterface>
 #include <QDesignerFormEditorInterface>
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
+#include <QLibraryInfo>
 #include <QLoggingCategory>
 #include <QMessageBox>
 #include <QHash>
+#include <QVersionNumber>
 #include <QUrl>
 
 #include <memory>
+#include <optional>
 
-Q_LOGGING_CATEGORY(log, "qtc.designer", QtWarningMsg);
-
-using namespace Designer::Internal;
 using namespace CPlusPlus;
 using namespace TextEditor;
 using namespace ProjectExplorer;
 using namespace Utils;
+
+namespace Designer::Internal {
+
+Q_LOGGING_CATEGORY(log, "qtc.designer", QtWarningMsg);
 
 static QString msgClassNotFound(const QString &uiClassName, const QList<Document::Ptr> &docList)
 {
@@ -82,6 +88,16 @@ static void reportRenamingError(const QString &oldName, const QString &reason)
     Core::MessageManager::writeFlashing(
                 Designer::Tr::tr("Cannot rename UI symbol \"%1\" in C++ files: %2")
                 .arg(oldName, reason));
+}
+
+static std::optional<QVersionNumber> qtVersionFromProject(const Project *project)
+{
+    const auto *kit = project->activeKit();
+    if (kit && kit->isValid()) {
+        if (const auto *qtVersion = QtSupport::QtKitAspect::qtVersion(kit))
+            return qtVersion->qtVersion();
+    }
+    return std::nullopt;
 }
 
 class QtCreatorIntegration::Private
@@ -143,6 +159,10 @@ QtCreatorIntegration::QtCreatorIntegration(QDesignerFormEditorInterface *core, Q
             }
         }
     });
+
+    auto *fwm = core->formWindowManager();
+    connect(fwm, &QDesignerFormWindowManagerInterface::activeFormWindowChanged,
+            this, &QtCreatorIntegration::slotActiveFormWindowChanged);
 }
 
 QtCreatorIntegration::~QtCreatorIntegration()
@@ -433,6 +453,40 @@ static ClassDocumentPtrPair
     return ClassDocumentPtrPair(0, Document::Ptr());
 }
 
+void QtCreatorIntegration::slotActiveFormWindowChanged(QDesignerFormWindowInterface *formWindow)
+{
+    if (formWindow == nullptr
+        || !setQtVersionFromFile(FilePath::fromString(formWindow->fileName()))) {
+        resetQtVersion();
+    }
+}
+
+// Set the file's Qt version on the integration for Qt Designer to write
+// it out in the appropriate format (PYSIDE-2492, scoped enum support).
+bool QtCreatorIntegration::setQtVersionFromFile(const FilePath &filePath)
+{
+    if (const auto *uiProject = ProjectManager::projectForFile(filePath)) {
+        if (auto versionOpt = qtVersionFromProject(uiProject)) {
+            setQtVersion(versionOpt.value());
+            return true;
+        }
+    }
+    return false;
+}
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 9, 0)
+// FIXME: To be replaced by a real property setter on QDesignerIntegration
+void QtCreatorIntegration::setQtVersion(const QVersionNumber &version)
+{
+    setProperty("qtVersion", QVariant::fromValue(version));
+}
+#endif // < 6.9
+
+void QtCreatorIntegration::resetQtVersion()
+{
+    setQtVersion(QLibraryInfo::version());
+}
+
 void QtCreatorIntegration::slotNavigateToSlot(const QString &objectName, const QString &signalSignature,
         const QStringList &parameterNames)
 {
@@ -462,9 +516,9 @@ static Document::Ptr getParsedDocument(const FilePath &filePath,
     if (const auto source = workingCopy.source(filePath)) {
         src = *source;
     } else {
-        Utils::FileReader reader;
-        if (reader.fetch(filePath)) // ### FIXME error reporting
-            src = QString::fromLocal8Bit(reader.data()).toUtf8();
+        const Result<QByteArray> res = filePath.fileContents();
+        if (res) // ### FIXME error reporting
+            src = QString::fromLocal8Bit(*res).toUtf8();
     }
 
     Document::Ptr doc = snapshot.preprocessedDocument(src, filePath);
@@ -483,7 +537,7 @@ bool QtCreatorIntegration::navigateToSlot(const QString &objectName,
 {
     using DocumentMap = QMap<int, Document::Ptr>;
 
-    const Utils::FilePath currentUiFile = activeEditor()->document()->filePath();
+    const FilePath currentUiFile = activeEditor()->document()->filePath();
 #if 0
     return Designer::Internal::navigateToSlot(currentUiFile.toString(), objectName,
                                               signalSignature, parameterNames, errorMessage);
@@ -512,7 +566,7 @@ bool QtCreatorIntegration::navigateToSlot(const QString &objectName,
         const CppEditor::WorkingCopy::Table elements =
                 CppEditor::CppModelManager::workingCopy().elements();
         for (auto it = elements.cbegin(), end = elements.cend(); it != end; ++it) {
-            const Utils::FilePath &fileName = it.key();
+            const FilePath &fileName = it.key();
             if (fileName != configFileName)
                 newDocTable.insert(docTable.document(fileName));
         }
@@ -525,7 +579,7 @@ bool QtCreatorIntegration::navigateToSlot(const QString &objectName,
     const QList<Document::Ptr> docList = findDocumentsIncluding(docTable, uicedName, true); // change to false when we know the absolute path to generated ui_<>.h file
     DocumentMap docMap;
     for (const Document::Ptr &d : docList) {
-        docMap.insert(qAbs(d->filePath().absolutePath().toString()
+        docMap.insert(qAbs(d->filePath().absolutePath().toUrlishString()
                            .compare(uiFolder, Qt::CaseInsensitive)), d);
     }
 
@@ -583,7 +637,7 @@ bool QtCreatorIntegration::navigateToSlot(const QString &objectName,
         addDeclaration(docTable, declFilePath, cl, functionNameWithParameterNames);
 
         // Re-load C++ documents.
-        QList<Utils::FilePath> filePaths;
+        FilePaths filePaths;
         for (auto it = docTable.begin(); it != docTable.end(); ++it)
             filePaths << it.key();
         workingCopy = CppEditor::CppModelManager::workingCopy();
@@ -626,8 +680,8 @@ bool QtCreatorIntegration::navigateToSlot(const QString &objectName,
             + functionNameWithParameterNames + "\n{\n\n}\n"
             + location.suffix();
         const RefactoringFilePtr file = refactoring.file(location.filePath());
-        const int insertionPos = Utils::Text::positionInText(file->document(),
-                                                             location.line(), location.column());
+        const int insertionPos
+            = Utils::Text::positionInText(file->document(), location.line(), location.column() - 1);
         file->apply(ChangeSet::makeInsert(insertionPos, definition));
         const int indentationPos = file->document()->toPlainText().indexOf('}', insertionPos) - 1;
         QTextCursor cursor(editor->textDocument()->document());
@@ -659,10 +713,7 @@ void QtCreatorIntegration::handleSymbolRenameStage1(
         return reportRenamingError(oldName, Designer::Tr::tr("File \"%1\" not found in project.")
                                    .arg(uiFile.toUserOutput()));
     }
-    const Target * const target = project->activeTarget();
-    if (!target)
-        return reportRenamingError(oldName, Designer::Tr::tr("No active target."));
-    BuildSystem * const buildSystem = target->buildSystem();
+    BuildSystem * const buildSystem = project->activeBuildSystem();
     if (!buildSystem)
         return reportRenamingError(oldName, Designer::Tr::tr("No active build system."));
     ExtraCompiler * const ec = buildSystem->extraCompilerForSource(uiFile);
@@ -730,10 +781,9 @@ void QtCreatorIntegration::handleSymbolRenameStage2(
     std::unique_ptr<TemporaryFile> tempFile
             = std::make_unique<TemporaryFile>("XXXXXX" + uiHeader.fileName());
     QTC_ASSERT(tempFile->open(), return);
-    qCDebug(log) << '\t' << tempFile->fileName();
+    qCDebug(log) << '\t' << tempFile->filePath();
     const auto editor = qobject_cast<BaseTextEditor *>(
-                Core::EditorManager::openEditor(FilePath::fromString(tempFile->fileName()), {},
-                                                openFlags));
+                Core::EditorManager::openEditor(tempFile->filePath(), {}, openFlags));
     QTC_ASSERT(editor, return);
     resourceHandler->setTempFile(std::move(tempFile));
     resourceHandler->setEditor(editor);
@@ -768,7 +818,7 @@ void QtCreatorIntegration::handleSymbolRenameStage2(
             Symbol * const symbol = scope->memberAt(i);
             if (const Scope * const s = symbol->asScope())
                 scopes << s;
-            if (symbol->asNamespace())
+            if (symbol->asNamespace() || !symbol->name())
                 continue;
             qCDebug(log) << '\t' << Overview().prettyName(symbol->name());
             if (!symbol->name()->match(&oldIdentifier))
@@ -807,3 +857,5 @@ void QtCreatorIntegration::slotSyncSettingsToDesigner()
     setHeaderSuffix(CppEditor::preferredCxxHeaderSuffix(ProjectTree::currentProject()));
     setHeaderLowercase(FormClassWizardPage::lowercaseHeaderFiles());
 }
+
+} // namespace Designer::Internal

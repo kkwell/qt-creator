@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "documentmodel.h"
+
 #include <utils/dropsupport.h>
 #include <utils/filepath.h>
 #include <utils/id.h>
@@ -15,12 +17,14 @@
 #include <functional>
 
 QT_BEGIN_NAMESPACE
+class QDataStream;
 class QFrame;
 class QLabel;
 class QMenu;
 class QSplitter;
 class QStackedLayout;
 class QStackedWidget;
+class QTabBar;
 class QToolButton;
 QT_END_NAMESPACE
 
@@ -34,6 +38,13 @@ class IEditor;
 class EditorToolBar;
 
 namespace Internal {
+
+class EditorArea;
+class SplitterOrView;
+class ViewTabBar;
+#if WITH_TESTS
+class TabbedEditorTest;
+#endif
 
 class EditLocation
 {
@@ -50,15 +61,27 @@ public:
     QByteArray state;
 };
 
-class SplitterOrView;
-
 class EditorView : public QWidget
 {
     Q_OBJECT
 
 public:
+    enum RemovalOption { RemoveTab, KeepTab };
+
+    struct TabData
+    {
+        IEditor *editor = nullptr;
+        DocumentModel::Entry *entry = nullptr;
+
+        bool operator==(const TabData &) const = default;
+    };
+
     explicit EditorView(SplitterOrView *parentSplitterOrView, QWidget *parent = nullptr);
     ~EditorView() override;
+
+    bool isInSplit() const;
+    EditorView *split(Qt::Orientation orientation);
+    EditorArea *editorArea() const;
 
     SplitterOrView *parentSplitterOrView() const;
     EditorView *findNextView() const;
@@ -66,7 +89,7 @@ public:
 
     int editorCount() const;
     void addEditor(IEditor *editor);
-    void removeEditor(IEditor *editor);
+    void removeEditor(IEditor *editor, RemovalOption option = RemoveTab);
     IEditor *currentEditor() const;
     void setCurrentEditor(IEditor *editor);
 
@@ -74,6 +97,16 @@ public:
 
     QList<IEditor *> editors() const;
     IEditor *editorForDocument(const IDocument *document) const;
+    // If no tabs are shown, this is just the current, visible editor, if any
+    QList<TabData> visibleTabs() const;
+    int tabForEditor(IEditor *editor) const;
+    // all "tabs" (even if no actual tabs are shown)
+    QList<TabData> tabs() const;
+    void closeTab(DocumentModel::Entry *document);
+    void closeAllTabs();
+    void closeOtherTabs(DocumentModel::Entry *entry);
+    // Use with care. Doesn't close any document Entry, just removes tabs.
+    void removeUnpinnedSuspendedTabs();
 
     void showEditorStatusBar(const QString &id,
                            const QString &infoText,
@@ -82,6 +115,9 @@ public:
     void hideEditorStatusBar(const QString &id);
     void setCloseSplitEnabled(bool enable);
     void setCloseSplitIcon(const QIcon &icon);
+
+    bool isShowingTabs() const;
+    void setTabsVisible(bool visible);
 
     bool canGoForward() const;
     bool canGoBack() const;
@@ -93,6 +129,8 @@ public:
     void reopenLastClosedDocument();
 
     void goToEditLocation(const EditLocation &location);
+    void gotoNextTab();
+    void gotoPreviousTab();
 
     void addCurrentPositionToNavigationHistory(const QByteArray &saveState = QByteArray());
     void addClosedEditorToCloseHistory(IEditor *editor);
@@ -104,6 +142,9 @@ public:
     void updateEditorHistory(IEditor *editor);
     static void updateEditorHistory(IEditor *editor, QList<EditLocation> &history);
 
+    void saveTabState(QDataStream *stream) const;
+    void restoreTabState(QDataStream *stream);
+
 signals:
     void currentEditorChanged(Core::IEditor *editor);
 
@@ -111,9 +152,13 @@ protected:
     void paintEvent(QPaintEvent *) override;
     void mousePressEvent(QMouseEvent *e) override;
     void focusInEvent(QFocusEvent *) override;
+    bool event(QEvent *e) override;
 
 private:
     friend class SplitterOrView; // for setParentSplitterOrView
+#if WITH_TESTS
+    friend class Core::Internal::TabbedEditorTest; // tabCloseRequested
+#endif
 
     void closeCurrentEditor();
     void listSelectionActivated(int index);
@@ -122,10 +167,15 @@ private:
     void splitNewWindow();
     void closeSplit();
     void openDroppedFiles(const QList<Utils::DropSupport::FileSpec> &files);
+    int tabForEntry(DocumentModel::Entry *entry) const;
+    void activateTab(int index);
+    void tabCloseRequested(int index);
+    void closeTab(int index);
+    void ensurePinnedOrder();
 
     void setParentSplitterOrView(SplitterOrView *splitterOrView);
 
-    void fillListContextMenu(QMenu *menu) const;
+    void fillListContextMenu(QMenu *menu);
     void updateNavigatorActions();
     void updateToolBar(IEditor *editor);
     void checkProjectLoaded(IEditor *editor);
@@ -136,6 +186,8 @@ private:
 
     SplitterOrView *m_parentSplitterOrView;
     EditorToolBar *m_toolBar;
+    ViewTabBar *m_tabBar;
+    bool m_isShowingTabs = false;
 
     QStackedWidget *m_container;
     Utils::InfoBarDisplay *m_infoBarDisplay;
@@ -164,7 +216,7 @@ public:
     explicit SplitterOrView(EditorView *view);
     ~SplitterOrView() override;
 
-    void split(Qt::Orientation orientation, bool activateView = true);
+    EditorView *split(Qt::Orientation orientation);
     void unsplit();
 
     bool isView() const { return m_view != nullptr; }
@@ -189,7 +241,7 @@ public:
     QSize sizeHint() const override { return minimumSizeHint(); }
     QSize minimumSizeHint() const override;
 
-    void unsplitAll();
+    void unsplitAll(EditorView *viewToKeep);
 
 signals:
     void splitStateChanged();

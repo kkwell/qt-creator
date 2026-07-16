@@ -11,7 +11,7 @@
 
 #include <utils/filepath.h>
 
-#include <QtTest>
+#include <QTest>
 #include <QTextDocument>
 
 using namespace CPlusPlus;
@@ -181,7 +181,7 @@ QByteArray tst_CppSelectionChanger::preprocess(const QByteArray &source, const Q
     CPlusPlus::Environment env;
     Preprocessor preprocess(client, &env);
     preprocess.setKeepComments(true);
-    return preprocess.run(fileName, source);
+    return preprocess.run(FilePath::fromString(fileName), source);
 }
 
 void tst_CppSelectionChanger::initTestCase()
@@ -189,7 +189,7 @@ void tst_CppSelectionChanger::initTestCase()
     // Read cpp file contents into QTextDocument and CppEditor::Document::Ptr.
     QString fileName(SRCDIR "/testCppFile.cpp");
     QFile file(fileName);
-    file.open(QIODevice::ReadOnly | QIODevice::Text);
+    QVERIFY2(file.open(QIODevice::ReadOnly | QIODevice::Text), qPrintable(fileName));
     QTextStream s(&file);
     cppFileString = s.readAll();
     file.close();

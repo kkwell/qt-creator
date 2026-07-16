@@ -11,6 +11,7 @@ Flickable {
     interactive: false
     property color color
 
+    required property Item timelineContent
     property int selectedModel
     property int selectedItem
     property bool reverseSelect
@@ -20,8 +21,7 @@ Flickable {
     signal selectItem(int modelIndex, int eventIndex)
     signal moveCategories(int sourceIndex, int targetIndex)
 
-    // reserve some more space than needed to prevent weird effects when resizing
-    contentHeight: categoryContent.height + height
+    contentHeight: categoryContent.height
 
     // Dispatch the cursor shape to all labels. When dragging the DropArea receiving
     // the drag events is not necessarily related to the MouseArea receiving the mouse
@@ -83,7 +83,8 @@ Flickable {
                         contentY: categories.contentY
                         contentHeight: categories.contentHeight
                         visibleHeight: categories.height
-                        width: 150
+                        anchors.left: parent.left
+                        anchors.right: parent.right
                         height: parent.height
                         dragOffset: loader.y
 
@@ -115,8 +116,12 @@ Flickable {
                         id: timeMarks
                         model: modelData
                         mockup: categories.modelProxy.height === 0
-                        anchors.right: parent.right
-                        anchors.left: label.right
+
+                        // Small hack: We are shifting the background of alternating light/dark
+                        // bands outside of the left split and over to the timeline.
+                        x: categories.x + categories.width
+                        width: timelineContent.width
+
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         property int visualIndex: loader.visualIndex

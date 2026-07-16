@@ -7,26 +7,17 @@
 
 namespace CodePaster {
 
-class DPasteDotComProtocol : public NetworkProtocol
+class DPasteDotComProtocol : public Protocol
 {
 public:
+    DPasteDotComProtocol();
     static QString protocolName();
 
 private:
-    QString name() const override { return protocolName(); }
-    bool hasSettings() const override { return false; }
-    unsigned capabilities() const override;
-    void fetch(const QString &id) override;
-    void fetchFinished(const QString &id, QNetworkReply * const reply, bool alreadyRedirected);
-    void paste(const QString &text,
-               ContentType ct = Text,
-               int expiryDays = 1,
-               const QString &username = QString(),
-               const QString &comment = QString(),
-               const QString &description = QString()) override;
-    bool checkConfiguration(QString *errorMessage) override;
-
-    static void reportError(const QString &message);
+    QtTaskTree::ExecutableItem fetchRecipe(const QString &id,
+                                           const FetchHandler &handler) const override;
+    QtTaskTree::ExecutableItem pasteRecipe(const PasteInputData &inputData,
+                                           const PasteHandler &handler) const override;
 };
 
 } // CodePaster

@@ -64,7 +64,7 @@ void DObject::setModelUid(const Uid &uid)
     m_modelUid = uid;
 }
 
-void DObject::setStereotypes(const QList<QString> &stereotypes)
+void DObject::setStereotypes(const QStringList &stereotypes)
 {
     m_stereotypes = stereotypes;
 }
@@ -129,7 +129,7 @@ bool DObject::hasImage() const
     return !m_image.isNull();
 }
 
-void DObject::setImagePath(const FilePath &path)
+void DObject::setImagePath(const QString &path)
 {
     m_imagePath = path;
 }

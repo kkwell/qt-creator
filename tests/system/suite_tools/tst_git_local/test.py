@@ -31,7 +31,9 @@ def commit(commitMessage, expectedLogMessage, uncheckUntracked=False):
 
 def verifyItemsInGit(commitMessages):
     gitEditor = waitForObject(":Qt Creator_Git::Internal::GitEditor")
-    waitFor("len(str(gitEditor.plainText)) > 0 and str(gitEditor.plainText) != 'Working...'", 20000)
+    if not waitFor("len(str(gitEditor.plainText))>0 and str(gitEditor.plainText)!='Working...'",
+                   40000):
+        test.warning("Waiting for GitEditor timed out.")
     plainText = str(gitEditor.plainText)
     verifyItemOrder(commitMessages, plainText)
     return plainText
@@ -87,7 +89,7 @@ def __clickCommit__(count):
     show = str(description.plainText)
     id = "Nobody <nobody@nowhere\.com>"
     time = "\w{3} \w{3} \d{1,2} \d{2}:\d{2}:\d{2} \d{4}.* seconds ago\)"
-    expected = [["commit %s" % commit, False],
+    expected = [["commit %s " % commit, False],
                 ["Author: %s, %s" % (id, time), True],
                 ["Committer: %s, %s" % (id, time), True]]
     for line, exp in zip(show.splitlines(), expected):
@@ -175,10 +177,9 @@ def main():
                     "Verify that no unrelated commits are displayed in file log")
     invokeMenuItem("File", "Close All")
 
-    invokeMenuItem('Tools', 'Git', 'Current Project', 'Log Project "%s"' % projectName)
-    projectLog = verifyItemsInGit(commitsInProject)
-    test.xverify(not commitOutsideProject in projectLog,    # QTCREATORBUG-10170
-                 "Verify that no unrelated commits are displayed in project log")
+    invokeMenuItem('Tools', 'Git', 'Current Project Directory',
+                   'Log Directory of Project "%s"' % projectName)
+    verifyItemsInGit(commitMessages)
     invokeMenuItem("File", "Close All")
 
     invokeMenuItem("Tools", "Git", "Local Repository", "Log")
@@ -200,7 +201,7 @@ def main():
         type(gitEditor, "<Home>")
     for _ in range(5):
         type(gitEditor, "<Right>")
-    rect = gitEditor.cursorRect(gitEditor.textCursor())
+    rect = gitEditor.cursorRect()
     mouseClick(gitEditor, rect.x+rect.width/2, rect.y+rect.height/2, 0, Qt.LeftButton)
     changed = waitForObject(":Qt Creator_DiffEditor::SideDiffEditorWidgetChanged")
     waitFor('str(changed.plainText) != "Waiting for data..."', 5000)

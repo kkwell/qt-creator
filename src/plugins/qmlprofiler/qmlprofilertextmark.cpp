@@ -14,8 +14,7 @@
 
 using namespace Utils;
 
-namespace QmlProfiler {
-namespace Internal {
+namespace QmlProfiler::Internal {
 
 QmlProfilerTextMark::QmlProfilerTextMark(QmlProfilerViewManager *viewManager, int typeId,
                                          const FilePath &fileName, int lineNumber)
@@ -51,7 +50,7 @@ void QmlProfilerTextMarkModel::clear()
     m_ids.clear();
 }
 
-void QmlProfilerTextMarkModel::addTextMarkId(int typeId, const QmlEventLocation &location)
+void QmlProfilerTextMarkModel::addTextMarkId(int typeId, const QmlDebug::QmlEventLocation &location)
 {
     m_ids.insert(location.filename(), {typeId, location.line(), location.column()});
 }
@@ -135,7 +134,4 @@ bool QmlProfilerTextMark::addToolTipContent(QLayout *target) const
     return true;
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
-
-
+} // namespace QmlProfiler::Internal

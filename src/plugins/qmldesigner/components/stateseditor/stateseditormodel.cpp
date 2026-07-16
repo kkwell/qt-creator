@@ -6,6 +6,7 @@
 
 #include <bindingproperty.h>
 #include <designermcumanager.h>
+#include <functional.h>
 #include <modelnode.h>
 #include <modelnodeoperations.h>
 #include <nodelistproperty.h>
@@ -276,8 +277,9 @@ QStringList StatesEditorModel::stateGroups() const
 
     const auto groupMetaInfo = m_statesEditorView->model()->qtQuickStateGroupMetaInfo();
 
+    using SL = ModelTracing::SourceLocation;
     auto stateGroups = Utils::transform(m_statesEditorView->allModelNodesOfType(groupMetaInfo),
-                                        [](const ModelNode &node) { return node.displayName(); });
+                                        bind_back(&ModelNode::displayName, SL{}));
     stateGroups.prepend(tr("Default"));
     return stateGroups;
 }
@@ -460,6 +462,21 @@ void StatesEditorModel::setCanAddNewStates(bool b)
     m_canAddNewStates = b;
 
     emit canAddNewStatesChanged();
+}
+
+QColor StatesEditorModel::backgroundColor() const
+{
+    return m_backgrounColor;
+}
+
+void StatesEditorModel::setBackgroundColor(const QColor &c)
+{
+    if (c == m_backgrounColor)
+        return;
+
+    m_backgrounColor = c;
+
+    emit backgroundColorChanged();
 }
 
 bool StatesEditorModel::isMCUs() const

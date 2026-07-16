@@ -25,7 +25,6 @@
 #include <texteditor/texteditorconstants.h>
 
 #include <utils/async.h>
-#include <utils/futuresynchronizer.h>
 #include <utils/proxyaction.h>
 #include <utils/qtcassert.h>
 #include <utils/textutils.h>
@@ -35,31 +34,15 @@
 #include <QVarLengthArray>
 
 using namespace CPlusPlus;
+using namespace QtTaskTree;
 using namespace TextEditor;
 using namespace Utils;
 
-namespace CppEditor {
-namespace Internal {
+namespace CppEditor::Internal {
 
 FunctionDeclDefLinkFinder::FunctionDeclDefLinkFinder(QObject *parent)
     : QObject(parent)
 {}
-
-void FunctionDeclDefLinkFinder::onFutureDone()
-{
-    std::shared_ptr<FunctionDeclDefLink> link = m_watcher->result();
-    m_watcher.release()->deleteLater();
-    if (link) {
-        link->linkSelection = m_scannedSelection;
-        link->nameSelection = m_nameSelection;
-        if (m_nameSelection.selectedText() != link->nameInitial)
-            link.reset();
-    }
-    m_scannedSelection = {};
-    m_nameSelection = {};
-    if (link)
-        emit foundLink(link);
-}
 
 QTextCursor FunctionDeclDefLinkFinder::scannedSelection() const
 {
@@ -225,8 +208,9 @@ void FunctionDeclDefLinkFinder::startFindLinkAt(
     m_nameSelection.setPosition(sourceFile->startOf(declId), QTextCursor::KeepAnchor);
     m_nameSelection.setKeepPositionOnInsert(true);
 
+    using ResultType = std::shared_ptr<FunctionDeclDefLink>;
     // set up a base result
-    std::shared_ptr<FunctionDeclDefLink> result(new FunctionDeclDefLink);
+    ResultType result(new FunctionDeclDefLink);
     result->nameInitial = m_nameSelection.selectedText();
     result->sourceDocument = doc;
     result->sourceFunction = funcDecl->symbol;
@@ -234,10 +218,25 @@ void FunctionDeclDefLinkFinder::startFindLinkAt(
     result->sourceFunctionDeclarator = funcDecl;
 
     // handle the rest in a thread
-    m_watcher.reset(new QFutureWatcher<std::shared_ptr<FunctionDeclDefLink> >());
-    connect(m_watcher.get(), &QFutureWatcherBase::finished, this, &FunctionDeclDefLinkFinder::onFutureDone);
-    m_watcher->setFuture(Utils::asyncRun(findLinkHelper, result, refactoringChanges));
-    Utils::futureSynchronizer()->addFuture(m_watcher->future());
+    const auto onSetup = [result, refactoringChanges](Async<ResultType> &task) {
+        task.setConcurrentCallData(findLinkHelper, result, refactoringChanges);
+    };
+    const auto onDone = [this](const Async<ResultType> &task) {
+        ResultType link = task.result();
+        if (link) {
+            link->linkSelection = m_scannedSelection;
+            link->nameSelection = m_nameSelection;
+            if (m_nameSelection.selectedText() != link->nameInitial)
+                link.reset();
+        }
+        m_scannedSelection = {};
+        m_nameSelection = {};
+        if (link)
+            emit foundLink(link);
+    };
+    m_taskTreeRunner.start({
+        AsyncTask<ResultType>(onSetup, onDone, CallDoneFlag::OnSuccess)
+    });
 }
 
 bool FunctionDeclDefLink::isValid() const
@@ -271,7 +270,12 @@ void FunctionDeclDefLink::apply(CppEditorWidget *editor, bool jumpToMatch)
             const int jumpTarget = newTargetFile->position(targetFunction->line(), targetFunction->column());
             newTargetFile->setOpenEditor(true, jumpTarget);
         }
-        newTargetFile->apply(changes(snapshot, targetStart));
+        ChangeSet changeSet = changes(snapshot, targetStart);
+        for (ChangeSet::EditOp &op : changeSet.operationList()) {
+            if (op.type() == ChangeSet::EditOp::Replace)
+                op.setFormat1(true);
+        }
+        newTargetFile->apply(changeSet);
     } else {
         ToolTip::show(editor->toolTipPosition(linkSelection),
                       Tr::tr("Target file was changed, could not apply changes"));
@@ -477,10 +481,14 @@ static IndicesList unmatchedIndices(const IndicesList &indices)
 static QString ensureCorrectParameterSpacing(const QString &text, bool isFirstParam)
 {
     if (isFirstParam) { // drop leading spaces
+        int newlineCount = 0;
         int firstNonSpace = 0;
-        while (firstNonSpace + 1 < text.size() && text.at(firstNonSpace).isSpace())
+        while (firstNonSpace + 1 < text.size() && text.at(firstNonSpace).isSpace()) {
+            if (text.at(firstNonSpace) == QChar::ParagraphSeparator)
+                ++newlineCount;
             ++firstNonSpace;
-        return text.mid(firstNonSpace);
+        }
+        return QString(newlineCount, QChar::ParagraphSeparator) + text.mid(firstNonSpace);
     } else { // ensure one leading space
         if (text.isEmpty() || !text.at(0).isSpace())
             return QLatin1Char(' ') + text;
@@ -720,6 +728,7 @@ ChangeSet FunctionDeclDefLink::changes(const Snapshot &snapshot, int targetOffse
         QString newTargetParameters;
         bool hadChanges = newParamCount < existingParamCount; // below, additions and changes set this to true as well
         QHash<Symbol *, QString> renamedTargetParameters;
+        bool switchedOnly = !hadChanges;
         for (int newParamIndex = 0; newParamIndex < newParamCount; ++newParamIndex) {
             const int existingParamIndex = newParamToSourceParam[newParamIndex];
             Symbol *newParam = newFunction->argumentAt(newParamIndex);
@@ -735,6 +744,7 @@ ChangeSet FunctionDeclDefLink::changes(const Snapshot &snapshot, int targetOffse
                 FullySpecifiedType type = rewriteType(newParam->type(), &env, control);
                 newTargetParam = overview.prettyType(type, newParam->name());
                 hadChanges = true;
+                switchedOnly = false;
             // otherwise preserve as much as possible from the existing parameter
             } else {
                 Symbol *targetParam = targetFunction->argumentAt(existingParamIndex);
@@ -776,6 +786,7 @@ ChangeSet FunctionDeclDefLink::changes(const Snapshot &snapshot, int targetOffse
                 FullySpecifiedType replacementType = rewriteType(newParam->type(), &env, control);
                 if (!newParam->type().match(sourceParam->type())
                         && !replacementType.match(targetParam->type())) {
+                    switchedOnly = false;
                     const int parameterTypeStart = targetFile->startOf(targetParamAst);
                     int parameterTypeEnd = 0;
                     if (targetParamAst->declarator)
@@ -791,6 +802,7 @@ ChangeSet FunctionDeclDefLink::changes(const Snapshot &snapshot, int targetOffse
                     hadChanges = true;
                 // change the name only?
                 } else if (!namesEqual(targetParam->name(), replacementName)) {
+                    switchedOnly = false;
                     DeclaratorIdAST *id = getDeclaratorId(targetParamAst->declarator);
                     const QString &replacementNameStr = overview.prettyName(replacementName);
                     if (id) {
@@ -845,9 +857,27 @@ ChangeSet FunctionDeclDefLink::changes(const Snapshot &snapshot, int targetOffse
             newTargetParameters += ensureCorrectParameterSpacing(newTargetParam, isFirstNewParam);
         }
         if (hadChanges) {
-            changes.replace(targetFile->endOf(targetFunctionDeclarator->lparen_token),
-                            targetFile->startOf(targetFunctionDeclarator->rparen_token),
-                            newTargetParameters);
+            // Special case for when there was purely a parameter switch:
+            // This operation can simply be mapped to the "flip" change operation, with
+            // no heuristics as to the formatting.
+            if (switchedOnly) {
+                QList<int> srcIndices;
+                for (int tgtIndex = 0; tgtIndex < newParamToSourceParam.size(); ++tgtIndex) {
+                    if (srcIndices.contains(tgtIndex))
+                        continue;
+                    const int srcIndex = newParamToSourceParam[tgtIndex];
+                    srcIndices << srcIndex;
+                    const ParameterDeclarationAST * const srcDecl = targetParameterDecls.at(srcIndex);
+                    const ParameterDeclarationAST * const tgtDecl = targetParameterDecls.at(tgtIndex);
+                    const ChangeSet::Range srcRange = targetFile->range(srcDecl);
+                    const ChangeSet::Range tgtRange = targetFile->range(tgtDecl);
+                    changes.flip(srcRange, tgtRange);
+                }
+            } else {
+                changes.replace(targetFile->endOf(targetFunctionDeclarator->lparen_token),
+                                targetFile->startOf(targetFunctionDeclarator->rparen_token),
+                                newTargetParameters);
+            }
         }
 
         // Change parameter names in function documentation.
@@ -877,10 +907,8 @@ ChangeSet FunctionDeclDefLink::changes(const Snapshot &snapshot, int targetOffse
                     const QList<Text::Range> ranges = symbolOccurrencesInText(
                         *targetFile->document(), tokenView, tokenStartPos, paramName);
                     for (const Text::Range &r : ranges) {
-                        const int startPos = Text::positionInText(
-                            targetFile->document(), r.begin.line, r.begin.column + 1);
-                        const int endPos = Text::positionInText(
-                            targetFile->document(), r.end.line, r.end.column + 1);
+                        const int startPos = r.begin.toPositionInDocument(targetFile->document());
+                        const int endPos = r.end.toPositionInDocument(targetFile->document());
                         changes.replace(startPos, endPos, it.value());
                     }
                 }
@@ -1006,16 +1034,15 @@ QString FunctionDeclDefLink::normalizedInitialName() const
         return n;
     if (index > 0 && n.at(index - 1).isLetterOrNumber())
         return n;
-    index += op.length();
-    if (index == n.length())
+    index += op.size();
+    if (index == n.size())
         return n;
     if (n.at(index).isLetterOrNumber())
         return n;
     n.insert(index++, ' ');
-    while (index < n.length() && n.at(index) == ' ')
+    while (index < n.size() && n.at(index) == ' ')
         n.remove(index, 1);
     return n;
 }
 
-} // namespace Internal
-} // namespace CppEditor
+} // namespace CppEditor::Internal

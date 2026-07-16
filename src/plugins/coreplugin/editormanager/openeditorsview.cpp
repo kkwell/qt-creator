@@ -9,12 +9,17 @@
 #include "../actionmanager/command.h"
 #include "../coreplugintr.h"
 #include "../inavigationwidgetfactory.h"
+#include "../iversioncontrol.h"
 #include "../opendocumentstreeview.h"
+#include "../vcsmanager.h"
 
 #include <utils/fsengine/fileiconprovider.h>
 #include <utils/qtcassert.h>
+#include <utils/theme/theme.h>
+#include <utils/treemodel.h>
 
 #include <QAbstractProxyModel>
+#include <QApplication>
 #include <QMenu>
 
 using namespace Utils;
@@ -85,8 +90,17 @@ OpenEditorsWidget::OpenEditorsWidget()
 
     connect(EditorManager::instance(), &EditorManager::currentEditorChanged,
             this, &OpenEditorsWidget::updateCurrentItem);
-    connect(this, &OpenDocumentsTreeView::activated,
-            this, &OpenEditorsWidget::handleActivated);
+    connect(qApp, &QApplication::focusChanged, this, [this](QWidget *old) {
+        // re-sync after the user possibly changed the current item while
+        // focus was in this view
+        if (old == this) {
+            QMetaObject::invokeMethod(
+                this,
+                [this] { updateCurrentItem(EditorManager::currentEditor()); },
+                Qt::QueuedConnection);
+        }
+    });
+    connect(this, &OpenDocumentsTreeView::activated, this, &OpenEditorsWidget::handleActivated);
     connect(this, &OpenDocumentsTreeView::closeActivated,
             this, &OpenEditorsWidget::closeDocument);
 
@@ -104,8 +118,11 @@ void OpenEditorsWidget::updateCurrentItem(IEditor *editor)
         return;
     }
     const std::optional<int> index = DocumentModel::indexOfDocument(editor->document());
-    if (QTC_GUARD(index))
-        setCurrentIndex(m_model->index(index.value(), 0));
+    QTC_ASSERT(index, return);
+    const QModelIndex idx = m_model->index(*index, 0);
+    if (idx == currentIndex())
+        return;
+    setCurrentIndex(idx);
     selectionModel()->select(currentIndex(),
                              QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     scrollTo(currentIndex());
@@ -136,8 +153,6 @@ void OpenEditorsWidget::activateEditor(const QModelIndex &index)
 void OpenEditorsWidget::closeDocument(const QModelIndex &index)
 {
     EditorManager::closeDocuments({DocumentModel::entryAtRow(m_model->mapToSource(index).row())});
-    // work around selection changes
-    updateCurrentItem(EditorManager::currentEditor());
 }
 
 bool OpenEditorsWidget::userWantsContextMenu(const QMouseEvent *e) const
@@ -153,7 +168,7 @@ void OpenEditorsWidget::contextMenuRequested(QPoint pos)
     QModelIndex editorIndex = indexAt(pos);
     const int row = m_model->mapToSource(editorIndex).row();
     DocumentModel::Entry *entry = DocumentModel::entryAtRow(row);
-    EditorManager::addContextMenuActions(&contextMenu, entry);
+    EditorManager::addContextMenuActions(&contextMenu, entry, {}, EditorManager::ShowEditorActions);
     contextMenu.exec(mapToGlobal(pos));
 }
 
@@ -239,12 +254,27 @@ void ProxyModel::setSourceModel(QAbstractItemModel *sm)
 
 QVariant ProxyModel::data(const QModelIndex &index, int role) const
 {
+    auto filePath = [this, index] {
+        return FilePath::fromVariant(QAbstractProxyModel::data(index, FilePathRole));
+    };
+
     if (role == Qt::DecorationRole && index.column() == 0) {
         const QVariant sourceDecoration = QAbstractProxyModel::data(index, role);
         if (sourceDecoration.isValid())
             return sourceDecoration;
-        const QVariant filePath = QAbstractProxyModel::data(index, DocumentModel::FilePathRole);
-        return FileIconProvider::icon(FilePath::fromVariant(filePath));
+        return FileIconProvider::icon(filePath());
+    } else if (role == Qt::ForegroundRole) {
+        const VcsFileState state = VcsManager::fileState(filePath());
+        return VcsManager::fileStateColor(state);
+    } else if (role == Qt::ToolTipRole) {
+        const FilePath path = filePath();
+        const VcsFileState state = VcsManager::fileState(path);
+        QString toolTip = path.toUserOutput();
+        if (state != VcsFileState::Unknown) {
+            const QString stateText = VcsManager::fileStateDescription(state);
+            toolTip += "<p>" + stateText;
+        }
+        return toolTip;
     }
 
     return QAbstractProxyModel::data(index, role);

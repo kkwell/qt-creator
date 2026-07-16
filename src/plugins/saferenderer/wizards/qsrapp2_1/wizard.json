@@ -3,13 +3,13 @@
     "supportedProjectTypes": [ "Qt4ProjectManager.Qt4Project", "CMakeProjectManager.CMakeProject" ],
     "id": "E.QSRApp2_1",
     "category": "D.QtSafeRendererApplication",
-    "trDescription": "Creates a Qt Safe Renderer 2.1 (and newer) project with a simple UI and project setup.\n\nSupports both qmake and CMake.",
+    "trDescription": "Creates a Qt Safe Renderer 2.1 project with a simple UI and project setup.\n\nSupports both qmake and CMake.",
     "trDisplayName": "Qt Safe Renderer Application 2.1",
     "trDisplayCategory": "Application (Qt Safe Renderer)",
     "icon": "../icon.png",
     "iconKind": "Themed",
     "featuresRequired": [ "QtSupport.Wizards.FeatureQt" ],
-    "enabled": "%{JS: value('Plugins').indexOf('QmakeProjectManager') >= 0 || value('Plugins').indexOf('CMakeProjectManager') >= 0}",
+    "enabled": "%{JS: isAnyPluginRunning(['qmakeprojectmanager', 'cmakeprojectmanager'])}",
 
     "options":
     [
@@ -49,12 +49,12 @@
                             {
                                 "trKey": "qmake",
                                 "value": "qmake",
-                                "condition": "%{JS: value('Plugins').indexOf('QmakeProjectManager') >= 0}"
+                                "condition": "%{JS: isPluginRunning('qmakeprojectmanager')}"
                             },
                             {
                                 "trKey": "cmake",
                                 "value": "cmake",
-                                "condition": "%{JS: value('Plugins').indexOf('CMakeProjectManager') >= 0}"
+                                "condition": "%{JS: isPluginRunning('cmakeprojectmanager')}"
                             }
                         ]
                     }

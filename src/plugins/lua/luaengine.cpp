@@ -10,6 +10,7 @@
 #include <coreplugin/messagemanager.h>
 
 #include <utils/algorithm.h>
+#include <utils/hostosinfo.h>
 #include <utils/lua.h>
 #include <utils/stringutils.h>
 #include <utils/theme/theme.h>
@@ -18,15 +19,43 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 
 using namespace Utils;
+using namespace std::string_view_literals;
 
 namespace Lua {
 
-Utils::expected_str<void> connectHooks(
+Utils::Result<> connectHooks(
         sol::state_view lua, const sol::table &table, const QString &path, QObject *guard);
 
 static Q_LOGGING_CATEGORY(logLuaEngine, "qtc.lua.engine", QtWarningMsg);
+
+QString luaToString(lua_State *state, int index)
+{
+    size_t l;
+    const char *s = luaL_tolstring(state, index, &l);
+    if (s == nullptr)
+        return {};
+
+    // Remove from stack what tolstring pushed onto it.
+    sol::stack::pop_n(state, 1);
+
+    return QString::fromUtf8(s, l);
+}
+
+template<typename T>
+QString refToString(const T &ref)
+{
+    if (ref.template is<QString>())
+        return ref.template as<QString>();
+
+    if (ref.template is<sol::table>())
+        return toJsonString(ref.template as<sol::table>());
+
+    auto pp = sol::stack::push_pop(ref);
+    return luaToString(ref.lua_state(), -1);
+}
 
 class LuaInterfaceImpl final : public QObject, public LuaInterface
 {
@@ -34,7 +63,7 @@ public:
     LuaInterfaceImpl(QObject *guard) : QObject(guard) { Utils::setLuaInterface(this); }
     ~LuaInterfaceImpl() final { Utils::setLuaInterface(nullptr); }
 
-    expected_str<std::unique_ptr<LuaState>> runScript(
+    Result<std::unique_ptr<LuaState>> runScript(
         const QString &script, const QString &name) final
     {
         return Lua::runScript(script, name);
@@ -52,15 +81,43 @@ class LuaStateImpl : public Utils::LuaState
 {
 public:
     sol::state lua;
+    QTemporaryDir appDataDir;
 };
 
-// Runs the gives script in a new Lua state. The returned Object manages the lifetime of the state.
-std::unique_ptr<Utils::LuaState> runScript(
-    const QString &script, const QString &name, std::function<void(sol::state &)> customizeState)
+QObject *ScriptPluginSpec::setup(
+    sol::state_view lua,
+    const QString &id,
+    const QString &name,
+    const Utils::FilePath appDataPath,
+    const Utils::FilePath pluginLocation)
 {
-    std::unique_ptr<LuaStateImpl> opaque = std::make_unique<LuaStateImpl>();
+    lua.new_usertype<ScriptPluginSpec>(
+        "PluginSpec",
+        sol::no_constructor,
+        "id",
+        sol::property([](ScriptPluginSpec &self) { return self.id; }),
+        "name",
+        sol::property([](ScriptPluginSpec &self) { return self.name; }),
+        "pluginDirectory",
+        sol::property([pluginLocation]() { return pluginLocation; }),
+        "appDataPath",
+        sol::property([appDataPath]() { return appDataPath; }));
 
-    opaque->lua.open_libraries(
+    auto guardObject = std::make_unique<QObject>();
+    auto guardObjectPtr = guardObject.get();
+
+    lua["PluginSpec"] = ScriptPluginSpec{id, name, appDataPath, std::move(guardObject)};
+
+    return guardObjectPtr;
+}
+
+void prepareLuaState(
+    sol::state &lua,
+    const QString &name,
+    const std::function<void(sol::state &)> &customizeState,
+    const FilePath &appDataPath)
+{
+    lua.open_libraries(
         sol::lib::base,
         sol::lib::bit32,
         sol::lib::coroutine,
@@ -73,7 +130,7 @@ std::unique_ptr<Utils::LuaState> runScript(
         sol::lib::table,
         sol::lib::utf8);
 
-    opaque->lua["print"] = [prefix = name, printToOutputPane = true](sol::variadic_args va) {
+    lua["print"] = [prefix = name, printToOutputPane = true](sol::variadic_args va) {
         const QString msg = variadicToStringList(va).join("\t");
 
         qDebug().noquote() << "[" << prefix << "]" << msg;
@@ -83,24 +140,34 @@ std::unique_ptr<Utils::LuaState> runScript(
             Core::MessageManager::writeSilently(QString("%1 %2").arg(p, msg));
         }
     };
-
-    opaque->lua.new_usertype<ScriptPluginSpec>(
-        "PluginSpec", sol::no_constructor, "name", sol::property([](ScriptPluginSpec &self) {
-            return self.name;
-        }));
-
-    opaque->lua["PluginSpec"] = ScriptPluginSpec{name, {}, std::make_unique<QObject>()};
+    const Result<FilePath> tmpDir = HostOsInfo::root().tmpDir();
+    QTC_ASSERT_RESULT(tmpDir, return);
+    QString id = name;
+    static const QRegularExpression regexp("[^a-zA-Z0-9_]");
+    id = id.replace(regexp, "_").toLower();
+    ScriptPluginSpec::setup(lua, id, name, appDataPath, *tmpDir);
 
     for (const auto &[name, func] : d->m_providers.asKeyValueRange()) {
-        opaque->lua["package"]["preload"][name.toStdString()] =
-            [func = func](const sol::this_state &s) { return func(s); };
+        lua["package"]["preload"][name.toStdString()] = [func = func](const sol::this_state &s) {
+            return func(s);
+        };
     }
 
-    for (const auto &func : d->m_autoProviders)
-        func(opaque->lua);
+    for (const auto &func : std::as_const(d->m_autoProviders))
+        func(lua);
 
     if (customizeState)
-        customizeState(opaque->lua);
+        customizeState(lua);
+}
+
+// Runs the gives script in a new Lua state. The returned Object manages the lifetime of the state.
+std::unique_ptr<Utils::LuaState> runScript(
+    const QString &script, const QString &name, std::function<void(sol::state &)> customizeState)
+{
+    std::unique_ptr<LuaStateImpl> opaque = std::make_unique<LuaStateImpl>();
+
+    prepareLuaState(
+        opaque->lua, name, customizeState, FilePath::fromUserInput(opaque->appDataDir.path()));
 
     auto result
         = opaque->lua
@@ -108,7 +175,8 @@ std::unique_ptr<Utils::LuaState> runScript(
 
     if (!result.valid()) {
         sol::error err = result;
-        qWarning() << "Failed to run script" << name << ":" << QString::fromUtf8(err.what());
+        qWarning().noquote() << "Failed to run script" << name << ":"
+                             << QString::fromUtf8(err.what());
         Core::MessageManager::writeFlashing(
             Tr::tr("Failed to run script %1: %2").arg(name, QString::fromUtf8(err.what())));
     }
@@ -116,10 +184,37 @@ std::unique_ptr<Utils::LuaState> runScript(
     return opaque;
 }
 
+sol::protected_function_result runFunction(
+    sol::state &lua,
+    const QString &script,
+    const QString &name,
+    std::function<void(sol::state &)> customizeState)
+{
+    prepareLuaState(lua, name, customizeState, {});
+    return lua.safe_script(script.toStdString(), sol::script_pass_on_error, name.toStdString());
+}
+
 void registerProvider(const QString &packageName, const PackageProvider &provider)
 {
     QTC_ASSERT(!d->m_providers.contains(packageName), return);
     d->m_providers[packageName] = provider;
+}
+
+void registerProvider(const QString &packageName, const FilePath &path)
+{
+    registerProvider(packageName, [path](sol::state_view lua) -> sol::object {
+        auto content = path.fileContents();
+        if (!content)
+            throw sol::error(content.error().toStdString());
+
+        sol::protected_function_result res
+            = lua.script(content->data(), path.fileName().toStdString());
+        if (!res.valid()) {
+            sol::error err = res;
+            throw err;
+        }
+        return res.get<sol::table>(0);
+    });
 }
 
 void autoRegister(const std::function<void(sol::state_view)> &registerFunction)
@@ -132,31 +227,51 @@ void registerHook(QString name, const std::function<void(sol::function, QObject 
     d->m_hooks.insert("." + name, hook);
 }
 
-expected_str<void> connectHooks(
+Result<> connectHooks(
     sol::state_view lua, const sol::table &table, const QString &path, QObject *guard)
 {
     qCDebug(logLuaEngine) << "connectHooks called with path: " << path;
 
     for (const auto &[k, v] : table) {
-        qCDebug(logLuaEngine) << "Processing key: " << k.as<QString>();
-        if (v.get_type() == sol::type::table) {
-            return connectHooks(
-                lua, v.as<sol::table>(), QStringList{path, k.as<QString>()}.join("."), guard);
-        } else if (v.get_type() == sol::type::function) {
-            QString hookName = QStringList{path, k.as<QString>()}.join(".");
-            qCDebug(logLuaEngine) << "Connecting function to hook: " << hookName;
-            auto it = d->m_hooks.find(hookName);
-            if (it == d->m_hooks.end())
-                return make_unexpected(Tr::tr("No hook with the name \"%1\" found.").arg(hookName));
-            else
-                it.value()(v.as<sol::function>(), guard);
+        if (k.get_type() != sol::type::string)
+            return make_unexpected(
+                Tr::tr("Non-string key encountered in Lua table at path \"%1\".").arg(path));
+
+        const auto keyName = k.as<QString>();
+        const auto currentPath = QStringList{path, keyName}.join(".");
+        qCDebug(logLuaEngine) << "Processing path:" << currentPath;
+
+        switch (v.get_type()) {
+        case sol::type::table: {
+            auto result = connectHooks(lua, v.as<sol::table>(), currentPath, guard);
+            if (!result)
+                return result;
+            break;
+        }
+        case sol::type::function: {
+            qCDebug(logLuaEngine) << "Connecting function to hook:" << currentPath;
+
+            auto it = d->m_hooks.find(currentPath);
+            if (it == d->m_hooks.end()) {
+                return make_unexpected(
+                    Tr::tr("No hook with the name \"%1\" found.").arg(currentPath));
+            }
+
+            it.value()(v.as<sol::function>(), guard);
+            break;
+        }
+        default: {
+            return make_unexpected(Tr::tr("Unsupported value type \"%1\" at path \"%2\".")
+                                       .arg(static_cast<int>(v.get_type()))
+                                       .arg(currentPath));
+        }
         }
     }
 
     return {};
 }
 
-expected_str<LuaPluginSpec *> loadPlugin(const FilePath &path)
+Result<LuaPluginSpec *> loadPlugin(const FilePath &path)
 {
     auto contents = path.fileContents();
     if (!contents)
@@ -184,7 +299,7 @@ expected_str<LuaPluginSpec *> loadPlugin(const FilePath &path)
     return LuaPluginSpec::create(path, pluginInfo);
 }
 
-expected_str<sol::protected_function> prepareSetup(
+Result<sol::protected_function> prepareSetup(
     sol::state_view lua, const LuaPluginSpec &pluginSpec)
 {
     auto contents = pluginSpec.filePath().fileContents();
@@ -224,27 +339,22 @@ expected_str<sol::protected_function> prepareSetup(
     const FilePath appDataPath = Core::ICore::userResourcePath() / "plugin-data" / "lua"
                                  / pluginSpec.location().fileName();
 
-    lua.new_usertype<ScriptPluginSpec>(
-        "PluginSpec",
-        sol::no_constructor,
-        "name",
-        sol::property([](ScriptPluginSpec &self) { return self.name; }),
-        "pluginDirectory",
-        sol::property([p = pluginSpec.location()]() { return p; }));
-
-    auto guardObject = std::make_unique<QObject>();
-    auto guardObjectPtr = guardObject.get();
-
-    lua["PluginSpec"] = ScriptPluginSpec{pluginSpec.name(), appDataPath, std::move(guardObject)};
+    QObject *guard = ScriptPluginSpec::setup(
+        lua, pluginSpec.id(), pluginSpec.name(), appDataPath, pluginSpec.location());
 
     // TODO: only register what the plugin requested
     for (const auto &[name, func] : d->m_providers.asKeyValueRange()) {
         lua["package"]["preload"][name.toStdString()] = [func = func](const sol::this_state &s) {
-            return func(s);
+            sol::state_view lua = s;
+            // We need to make sure that providers work on the main_thread, otherwise they might
+            // crash when trying to access the lua state on destruction.
+            if (isCoroutine(lua))
+                lua = sol::main_thread(lua);
+            return func(lua);
         };
     }
 
-    for (const auto &func : d->m_autoProviders)
+    for (const auto &func : std::as_const(d->m_autoProviders))
         func(lua);
 
     sol::protected_function_result result = lua.safe_script(
@@ -259,8 +369,8 @@ expected_str<sol::protected_function> prepareSetup(
     if (logLuaEngine().isDebugEnabled()) {
         qCDebug(logLuaEngine) << "Script returned table with keys:";
         for (const auto &[key, value] : *pluginTable) {
-            qCDebug(logLuaEngine) << "Key:" << key.as<QString>();
-            qCDebug(logLuaEngine) << "Value:" << value.as<QString>();
+            qCDebug(logLuaEngine) << "Key:" << refToString(key);
+            qCDebug(logLuaEngine) << "Value:" << refToString(value);
         }
     }
 
@@ -268,12 +378,12 @@ expected_str<sol::protected_function> prepareSetup(
 
     qCDebug(logLuaEngine) << "Hooks table found: " << hookTable.has_value();
     if (hookTable) {
-        auto connectResult = connectHooks(lua, *hookTable, {}, guardObjectPtr);
+        auto connectResult = connectHooks(lua, *hookTable, {}, guard);
         if (!connectResult)
             return make_unexpected(connectResult.error());
     }
 
-    auto setupFunction = pluginTable->get_or<sol::function>("setup", {});
+    auto setupFunction = pluginTable->get_or<sol::function>("setup"sv, {});
 
     if (!setupFunction)
         return make_unexpected(Tr::tr("Extension info table did not contain a setup function."));
@@ -394,7 +504,7 @@ QStringList variadicToStringList(const sol::variadic_args &vargs)
         size_t l;
         const char *s = luaL_tolstring(vargs.lua_state(), int(i), &l);
         if (s != nullptr)
-            strings.append(QString::fromUtf8(s, l).replace('\0', "\\0"));
+            strings.append(QString::fromUtf8(s, l).replace(QLatin1Char('\0'), "\\0"));
     }
 
     return strings;
@@ -404,6 +514,11 @@ void setupLuaEngine(QObject *guard)
 {
     QTC_ASSERT(!d, return);
     d = new LuaInterfaceImpl(guard);
+
+    autoRegister([](sol::state_view lua) {
+        lua.new_usertype<Null>("NullType", sol::no_constructor);
+        lua.set("Null", Null{});
+    });
 }
 
 } // namespace Lua

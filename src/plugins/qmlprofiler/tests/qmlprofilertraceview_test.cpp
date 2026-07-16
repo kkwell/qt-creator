@@ -2,15 +2,14 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "qmlprofilertraceview_test.h"
-#include <QtTest>
 
-namespace QmlProfiler {
-namespace Internal {
+#include <QTest>
 
-QmlProfilerTraceViewTest::QmlProfilerTraceViewTest(QObject *parent) :
-    QObject(parent), traceView(nullptr, nullptr, &modelManager)
-{
-}
+namespace QmlProfiler::Internal {
+
+QmlProfilerTraceViewTest::QmlProfilerTraceViewTest()
+    : traceView(nullptr, nullptr, &modelManager)
+{}
 
 void QmlProfilerTraceViewTest::testStateChanges()
 {
@@ -41,5 +40,4 @@ void QmlProfilerTraceViewTest::testStateChanges()
     QVERIFY(!traceView.isSuspended());
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

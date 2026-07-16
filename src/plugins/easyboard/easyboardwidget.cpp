@@ -20,9 +20,8 @@
 #include <extensionsystem/pluginspec.h>
 #include <extensionsystem/pluginview.h>
 
-#include <solutions/tasking/networkquery.h>
-#include <solutions/tasking/tasktree.h>
-#include <solutions/tasking/tasktreerunner.h>
+#include <QtTaskTree/QNetworkReplyWrapper>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <utils/algorithm.h>
 #include <utils/fileutils.h>
@@ -54,7 +53,8 @@
 
 using namespace Core;
 using namespace Utils;
-using namespace StyleHelper::SpacingTokens;
+using namespace Utils::StyleHelper;
+using namespace Utils::StyleHelper::SpacingTokens;
 using namespace WelcomePageHelpers;
 
 namespace EasyBoard::Internal {
@@ -79,8 +79,7 @@ static QLabel *sectionTitle(const TextFormat &tf, const QString &title)
 
 static QWidget *toScrollableColumn(QWidget *widget)
 {
-    widget->setContentsMargins(SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl,
-                               SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl);
+    widget->setContentsMargins(PaddingHXxl, PaddingVXxl, PaddingHXxl, PaddingVXxl);
     widget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
 
     auto scrollArea = new QScrollArea;
@@ -134,8 +133,8 @@ public:
                 ideIconLabel,
                 welcomeLabel,
                 st,
-                spacing(ExVPaddingGapXl),
-                customMargins(HPaddingM, VPaddingM, HPaddingM, VPaddingM),
+                spacing(GapHXxl),
+                customMargins(PaddingHXxl, PaddingVXl, PaddingHXxl, PaddingVXl),
             },
             createRule(Qt::Horizontal),
             noMargin, spacing(0),
@@ -189,7 +188,7 @@ public:
         auto contain_details = new QWidget;
 
         Row{
-            Space(SpacingTokens::ExVPaddingGapXl),
+            Space(GapHXxl),
             m_details,
         }.attachTo(contain_details);
 
@@ -248,7 +247,7 @@ public:
             m_icon,
             noMargin,
             paneSplitter,
-            noMargin, spacing(SpacingTokens::ExPaddingGapL),
+            noMargin, spacing(GapHL),
         }.attachTo(this);
 
         setMaximumHeight(200);
@@ -397,8 +396,8 @@ private:
     QLabel *m_dependencies;
     QLabel *m_packExtensionsTitle;
     QLabel *m_packExtensions;
-    Tasking::TaskTreeRunner m_dlTaskTreeRunner;
-    Tasking::TaskTreeRunner m_imgTaskTreeRunner;
+    QtTaskTree::QSingleTaskTreeRunner m_dlTaskTreeRunner;
+    QtTaskTree::QSingleTaskTreeRunner m_imgTaskTreeRunner;
 };
 
 EasyBoardWidget::EasyBoardWidget()
@@ -440,14 +439,14 @@ EasyBoardWidget::EasyBoardWidget()
     m_primary = new t113s;
     // primary->setStyleSheet("QWidget { background-color: #bb229d; }"); // 设置背景颜色为红色
     m_primaryContent = new QWidget;
-    const auto spL = spacing(SpacingTokens::VPaddingL);
+    const auto spL = spacing(GapVXl);
     Column {
         st,
         m_description,
         // Column { m_linksTitle, m_links, spL },
         // Column { m_imageTitle, m_image, spL },
         st,
-        noMargin, spacing(SpacingTokens::ExVPaddingGapXl),
+        noMargin, spacing(GapVXxl),
     }.attachTo(m_primaryContent);
     // m_primaryContent = toScrollableColumn(temp);
 
@@ -469,8 +468,7 @@ EasyBoardWidget::EasyBoardWidget()
             Column {
                 Column {
                     m_headingWidget,
-                    customMargins(SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl,
-                                  SpacingTokens::ExVPaddingGapXl, SpacingTokens::ExVPaddingGapXl),
+                    customMargins(PaddingHXxl, PaddingVXxl, PaddingHXxl, PaddingVXxl),
                 },
                 m_primary,//m_primaryContent,
             },
@@ -504,7 +502,7 @@ EasyBoardWidget::EasyBoardWidget()
         // new StyledBar,
         m_topArea,
         Row {
-            Space(SpacingTokens::ExVPaddingGapXl),
+            Space(GapHXxl),
             m_easyboardBrowser,
             WelcomePageHelpers::createRule(Qt::Vertical),
             m_stackWidget,//descriptionColumns,
@@ -590,7 +588,7 @@ void EasyBoardWidget::updateView(const QModelIndex &current)
 
 void EasyBoardWidget::fetchAndInstallPlugin(const QUrl &url)
 {
-    using namespace Tasking;
+    using namespace QtTaskTree;
 
     struct StorageStruct
     {
@@ -609,12 +607,12 @@ void EasyBoardWidget::fetchAndInstallPlugin(const QUrl &url)
     };
     Storage<StorageStruct> storage;
 
-    const auto onQuerySetup = [url, storage](NetworkQuery &query) {
+    const auto onQuerySetup = [url, storage](QNetworkReplyWrapper &query) {
         storage->url = url;
         query.setRequest(QNetworkRequest(url));
         query.setNetworkAccessManager(NetworkAccessManager::instance());
     };
-    const auto onQueryDone = [storage](const NetworkQuery &query, DoneWith result) {
+    const auto onQueryDone = [storage](const QNetworkReplyWrapper &query, DoneWith result) {
         storage->progressDialog->close();
         if (result == DoneWith::Success) {
             storage->packageData = query.reply()->readAll();
@@ -635,13 +633,15 @@ void EasyBoardWidget::fetchAndInstallPlugin(const QUrl &url)
                             + "/XXXXXX" + source.fileName());
 
         saver.write(storage->packageData);
-        if (saver.finalize(ICore::dialogParent()))
-            executePluginInstallWizard(saver.filePath());;
+        if (const Result<> result = saver.finalize())
+            executePluginInstallWizard(saver.filePath());
+        else
+            FileUtils::showError(result.error());
     };
 
     Group group{
         storage,
-        NetworkQueryTask{onQuerySetup, onQueryDone},
+        QNetworkReplyWrapperTask(onQuerySetup, onQueryDone),
         onGroupDone(onPluginInstallation),
     };
 
@@ -650,7 +650,7 @@ void EasyBoardWidget::fetchAndInstallPlugin(const QUrl &url)
 
 void EasyBoardWidget::fetchAndDisplayImage(const QUrl &url)
 {
-    using namespace Tasking;
+    using namespace QtTaskTree;
 
     struct StorageStruct
     {
@@ -659,13 +659,13 @@ void EasyBoardWidget::fetchAndDisplayImage(const QUrl &url)
     };
     Storage<StorageStruct> storage;
 
-    const auto onFetchSetup = [url, storage](NetworkQuery &query) {
+    const auto onFetchSetup = [url, storage](QNetworkReplyWrapper &query) {
         storage->url = url;
         query.setRequest(QNetworkRequest(url));
         query.setNetworkAccessManager(NetworkAccessManager::instance());
         qCDebug(widgetLog).noquote() << "Sending image request:" << url.toDisplayString();
     };
-    const auto onFetchDone = [storage](const NetworkQuery &query, DoneWith result) {
+    const auto onFetchDone = [storage](const QNetworkReplyWrapper &query, DoneWith result) {
         qCDebug(widgetLog) << "Got image QNetworkReply:" << query.reply()->error();
         if (result == DoneWith::Success)
             storage->imageData = query.reply()->readAll();
@@ -695,7 +695,7 @@ void EasyBoardWidget::fetchAndDisplayImage(const QUrl &url)
 
     Group group{
         storage,
-        NetworkQueryTask{onFetchSetup, onFetchDone},
+        QNetworkReplyWrapperTask(onFetchSetup, onFetchDone),
         onGroupDone(onShowImage),
     };
 

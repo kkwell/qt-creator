@@ -16,6 +16,7 @@
 #include <utils/headerviewstretcher.h>
 #include <utils/layoutbuilder.h>
 #include <utils/mimeutils.h>
+#include <utils/patternvalidator.h>
 #include <utils/qtcassert.h>
 #include <utils/stringutils.h>
 
@@ -220,6 +221,7 @@ void MimeTypeSettingsModel::resetUserDefaults()
     beginResetModel();
     m_userDefault.clear();
     endResetModel();
+    markSettingsDirty();
 }
 
 class MimeFilterModel : public QSortFilterProxyModel
@@ -252,12 +254,10 @@ bool MimeFilterModel::filterAcceptsRow(int source_row, const QModelIndex &source
 
 const QChar kSemiColon(QLatin1Char(';'));
 
-class MimeTypeSettingsPage final : public QObject, public IOptionsPage
+class MimeTypeSettingsPage final : public IOptionsPage
 {
 public:
     MimeTypeSettingsPage();
-
-    QStringList keywords() const final;
 
     void writeUserModifiedMimeTypes();
 
@@ -283,9 +283,10 @@ public:
         Core::Internal::setUserPreferredEditorTypes(d->m_model.m_userDefault);
         d->m_pendingModifiedMimeTypes.clear();
         d->m_model.load();
+        d->writeUserModifiedMimeTypes();
     }
 
-    void finish() final
+    void cancel() final
     {
         d->m_pendingModifiedMimeTypes.clear();
     }
@@ -346,6 +347,7 @@ MimeTypeSettingsWidget::MimeTypeSettingsWidget(MimeTypeSettingsPage *settings)
     m_patternsLineEdit = new QLineEdit;
     m_patternsLineEdit->setObjectName("patternsLineEdit");
     m_patternsLineEdit->setToolTip(Tr::tr("A semicolon-separated list of wildcarded file names."));
+    m_patternsLineEdit->setValidator(new PatternValidator(';', {' ', ','}, m_patternsLineEdit));
 
     m_magicHeadersTreeWidget = new QTreeWidget;
     m_magicHeadersTreeWidget->setHeaderItem(new QTreeWidgetItem({
@@ -367,41 +369,35 @@ MimeTypeSettingsWidget::MimeTypeSettingsWidget(MimeTypeSettingsPage *settings)
     m_removeMagicButton = new QPushButton;
     m_removeMagicButton->setText(Tr::tr("Remove"));
 
-    auto mimeTypesGroupBox = new QGroupBox;
-    mimeTypesGroupBox->setTitle(Tr::tr("Registered MIME Types"));
-
-    auto detailsGroupBox = new QGroupBox;
-    detailsGroupBox->setTitle(Tr::tr("Details"));
-
-    auto splitter = new QSplitter(this);
-    splitter->setOrientation(Qt::Vertical);
-    splitter->setChildrenCollapsible(false);
-    splitter->addWidget(mimeTypesGroupBox);
-    splitter->addWidget(detailsGroupBox);
-
     using namespace Layouting;
 
     Column {
-        filterLineEdit,
-        m_mimeTypesTreeView,
-        Row { resetButton, m_resetHandlersButton, st }
-    }.attachTo(mimeTypesGroupBox);
-
-    Column {
-        Form { patternsLabel, m_patternsLineEdit, br, },
-        Row {
-            m_magicHeadersTreeWidget,
-            Column {
-                m_addMagicButton,
-                m_editMagicButton,
-                m_removeMagicButton,
-                st
+        Splitter {
+            childrenCollapsible(false),
+            Group {
+                title(Tr::tr("Registered MIME Types")),
+                Column {
+                    filterLineEdit,
+                    m_mimeTypesTreeView,
+                    Row { resetButton, m_resetHandlersButton, st }
+                }
+            },
+            Group {
+                title(Tr::tr("Details")),
+                Column {
+                    Form { patternsLabel, m_patternsLineEdit },
+                    Row {
+                        m_magicHeadersTreeWidget,
+                        Column {
+                            m_addMagicButton,
+                            m_editMagicButton,
+                            m_removeMagicButton,
+                            st
+                        }
+                    }
+                }
             }
         }
-    }.attachTo(detailsGroupBox);
-
-    Column {
-        splitter
     }.attachTo(this);
 
     d->m_model.load();
@@ -433,6 +429,11 @@ MimeTypeSettingsWidget::MimeTypeSettingsWidget(MimeTypeSettingsPage *settings)
             this, &MimeTypeSettingsWidget::updatePatternEditAndMagicButtons);
 
     updatePatternEditAndMagicButtons();
+
+    setIgnoreForDirtyHook(filterLineEdit);
+    installMarkSettingsDirtyTriggerRecursively(this);
+    connect(m_mimeTypesTreeView->model(), &QAbstractItemModel::dataChanged,
+            this, markSettingsDirty);
 }
 
 void MimeTypeSettingsWidget::syncData(const QModelIndex &current,
@@ -520,6 +521,7 @@ void MimeTypeSettingsWidget::addMagicHeader()
         ensurePendingMimeType(mt);
         d->m_pendingModifiedMimeTypes[mt.name()].rules[data.m_priority].append(data.m_rule);
         addMagicHeaderRow(data);
+        markSettingsDirty();
     }
 }
 
@@ -541,6 +543,7 @@ void MimeTypeSettingsWidget::removeMagicHeader()
     ensurePendingMimeType(mt);
     d->m_pendingModifiedMimeTypes[mt.name()].rules[data.m_priority].removeOne(data.m_rule);
     syncData(mimeTypeIndex, mimeTypeIndex);
+    markSettingsDirty();
 }
 
 void MimeTypeSettingsWidget::editMagicHeader()
@@ -572,6 +575,7 @@ void MimeTypeSettingsWidget::editMagicHeader()
                 d->m_pendingModifiedMimeTypes[mt.name()].rules[oldData.m_priority][ruleIndex] = dialogData.m_rule;
             }
             editMagicHeaderRowData(magicIndex.row(), dialogData);
+            markSettingsDirty();
         }
     }
 }
@@ -583,6 +587,7 @@ void MimeTypeSettingsWidget::resetMimeTypes()
     QMessageBox::information(ICore::dialogParent(),
                              Tr::tr("Reset MIME Types"),
                              Tr::tr("Changes will take effect after restart."));
+    markSettingsDirty();
 }
 
 void MimeTypeSettingsWidget::setFilterPattern(const QString &pattern)
@@ -604,11 +609,10 @@ void MimeTypeSettingsWidget::ensurePendingMimeType(const Utils::MimeType &mimeTy
 
 void MimeTypeSettingsPage::writeUserModifiedMimeTypes()
 {
-    static Utils::FilePath modifiedMimeTypesFile = ICore::userResourcePath(kModifiedMimeTypesFile);
+    static FilePath modifiedMimeTypesFile = ICore::userResourcePath(kModifiedMimeTypesFile);
 
-    if (QFileInfo::exists(modifiedMimeTypesFile.toString())
-            || QDir().mkpath(modifiedMimeTypesFile.parentDir().toString())) {
-        QFile file(modifiedMimeTypesFile.toString());
+    if (modifiedMimeTypesFile.parentDir().ensureWritableDir()) {
+        QFile file(modifiedMimeTypesFile.toFSPathString());
         if (file.open(QFile::WriteOnly | QFile::Truncate)) {
             // Notice this file only represents user modifications. It is writen in a
             // convienient way for synchronization, which is similar to but not exactly the
@@ -667,7 +671,7 @@ MimeTypeSettingsPage::UserMimeTypeHash MimeTypeSettingsPage::readUserModifiedMim
 {
     static Utils::FilePath modifiedMimeTypesPath = ICore::userResourcePath(kModifiedMimeTypesFile);
     UserMimeTypeHash userMimeTypes;
-    QFile file(modifiedMimeTypesPath.toString());
+    QFile file(modifiedMimeTypesPath.toFSPathString());
     if (file.open(QFile::ReadOnly)) {
         UserMimeType mt;
         QXmlStreamReader reader(&file);
@@ -744,20 +748,7 @@ MimeTypeSettingsPage::MimeTypeSettingsPage()
     setDisplayName(Tr::tr("MIME Types"));
     setCategory(Constants::SETTINGS_CATEGORY_CORE);
     setWidgetCreator([this] { return new MimeTypeSettingsWidget(this); });
-
-    m_filterModel.setSourceModel(&m_model);
-    m_filterModel.setFilterKeyColumn(-1);
-    m_filterModel.setFilterCaseSensitivity(Qt::CaseInsensitive);
-    connect(ICore::instance(), &ICore::saveSettingsRequested,
-            this, &MimeTypeSettingsPage::writeUserModifiedMimeTypes);
-
-    m_userModifiedMimeTypes = readUserModifiedMimeTypes();
-    Utils::addMimeInitializer([this] { registerUserModifiedMimeTypes(m_userModifiedMimeTypes); });
-}
-
-QStringList MimeTypeSettingsPage::keywords() const
-{
-    return {
+    setFixedKeywords({
         Tr::tr("Reset MIME Types"),
         Tr::tr("Reset Handlers"),
         Tr::tr("Registered MIME Types"),
@@ -766,7 +757,14 @@ QStringList MimeTypeSettingsPage::keywords() const
         Tr::tr("Edit..."),
         Tr::tr("Remove"),
         Tr::tr("Details")
-    };
+    });
+
+    m_filterModel.setSourceModel(&m_model);
+    m_filterModel.setFilterKeyColumn(-1);
+    m_filterModel.setFilterCaseSensitivity(Qt::CaseInsensitive);
+
+    m_userModifiedMimeTypes = readUserModifiedMimeTypes();
+    Utils::addMimeInitializer([this] { registerUserModifiedMimeTypes(m_userModifiedMimeTypes); });
 }
 
 QWidget *MimeEditorDelegate::createEditor(QWidget *parent,

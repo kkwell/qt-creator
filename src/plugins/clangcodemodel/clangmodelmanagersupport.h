@@ -6,6 +6,8 @@
 #include <cppeditor/cppmodelmanagersupport.h>
 #include <cppeditor/projectinfo.h>
 
+#include <QtTaskTree/QParallelTaskTreeRunner>
+
 #include <utils/filepath.h>
 #include <utils/futuresynchronizer.h>
 #include <utils/id.h>
@@ -58,6 +60,9 @@ private:
     void followSymbolToType(const CppEditor::CursorInEditor &data,
                             const Utils::LinkHandler &processLinkCallback,
                             bool inNextSplit) override;
+    void followFunctionToParentImpl(
+        const CppEditor::CursorInEditor &data,
+        const Utils::LinkHandler &processLinkCallback) override;
     void switchDeclDef(const CppEditor::CursorInEditor &data,
                        const Utils::LinkHandler &processLinkCallback) override;
     void startLocalRenaming(const CppEditor::CursorInEditor &data,
@@ -67,16 +72,19 @@ private:
                       const std::function<void()> &callback) override;
     void findUsages(const CppEditor::CursorInEditor &cursor) const override;
     void switchHeaderSource(const Utils::FilePath &filePath, bool inNextSplit) override;
+    void foldOrUnfoldComments(TextEditor::BaseTextEditor *editor, bool fold) override;
+    void foldOrUnfoldInactiveRegions(TextEditor::BaseTextEditor *editor, bool fold) override;
+
     void checkUnused(const Utils::Link &link, Core::SearchResult *search,
                      const Utils::LinkHandler &callback) override;
 
     void onEditorOpened(Core::IEditor *editor);
     void onCurrentEditorChanged(Core::IEditor *newCurrent);
 
-    void onAbstractEditorSupportContentsUpdated(const QString &filePath,
-                                                const QString &sourceFilePath,
-                                                const QByteArray &content);
-    void onAbstractEditorSupportRemoved(const QString &filePath);
+    void onGeneratedFileContentsUpdated(const Utils::FilePath &filePath,
+                                        const Utils::FilePath &sourceFilePath,
+                                        const QByteArray &content);
+    void onGeneratedFileSupportRemoved(const Utils::FilePath &filePath);
 
     void onTextMarkContextMenuRequested(TextEditor::TextEditorWidget *widget,
                                         int lineNumber,
@@ -88,16 +96,21 @@ private:
     void connectToWidgetsMarkContextMenuRequested(QWidget *editorWidget);
 
     void updateLanguageClient(ProjectExplorer::Project *project);
+    void doUpdateLanguageClient(
+        ProjectExplorer::Project *project,
+        const CppEditor::ProjectInfoList &projectInfo,
+        const Utils::FilePath &jsonDbDir);
     void claimNonProjectSources(ClangdClient *client);
     void watchForExternalChanges();
     void watchForInternalChanges();
     void scheduleClientRestart(ClangdClient *client);
-    static ClangdClient *clientWithProject(const ProjectExplorer::Project *project);
+    static ClangdClient *clientWithBuildConfiguration(const ProjectExplorer::BuildConfiguration *bc);
 
     QList<QPointer<ClangdClient>> m_clientsToRestart;
     QTimer * const m_clientRestartTimer;
     QHash<Utils::FilePath, QString> m_potentialShadowDocuments;
-    Utils::FutureSynchronizer m_generatorSynchronizer; // Keep me last
+    Utils::FutureSynchronizer m_generatorSynchronizer; // Sync after task tree.
+    QtTaskTree::QParallelTaskTreeRunner m_taskTreeRunner;
 };
 
 } // namespace Internal

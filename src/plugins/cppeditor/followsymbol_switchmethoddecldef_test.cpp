@@ -30,7 +30,7 @@
 
 #include <QDebug>
 #include <QDir>
-#include <QtTest>
+#include <QTest>
 
 //
 // The following "non-latin1" code points are used in the tests:
@@ -153,7 +153,7 @@ public:
                 = dynamic_cast<VirtualFunctionProposalItem *>(model->proposalItem(i));
 
             const QString text = model->text(i);
-            const int line = item->link().targetLine;
+            const int line = item->link().target.line;
 //            Uncomment for updating/generating reference data:
 //            qDebug("<< OverrideItem(QLatin1String(\"%s\"), %d)", qPrintable(text), line);
             result << OverrideItem(text, line);
@@ -214,7 +214,7 @@ ProjectExplorer::Kit *F2TestCase::m_testKit = nullptr;
 F2TestCase::F2TestCase(CppEditorAction action,
                        const QList<TestDocumentPtr> &testFiles,
                        OverrideItemList expectedVirtualFunctionProposal)
-    : m_prevUseClangd(ClangdSettings::instance().useClangd())
+    : m_prevUseClangd(ClangdSettings::instance().data().useGoodClangd(nullptr))
 {
     QVERIFY(succeededSoFar());
 
@@ -254,7 +254,7 @@ F2TestCase::F2TestCase(CppEditorAction action,
         testFile->setBaseDirectory(temporaryDir.path());
         QVERIFY(testFile->writeToDisk());
         projectFileContent += QString::fromLatin1("\"%1\",")
-                .arg(testFile->filePath().toString());
+                .arg(testFile->filePath().toFSPathString());
     }
     projectFileContent += "]}\n";
 
@@ -274,7 +274,7 @@ F2TestCase::F2TestCase(CppEditorAction action,
         QVERIFY2(openProjectResult && openProjectResult.project(),
                  qPrintable(openProjectResult.errorMessage()));
         projectCloser.setProject(openProjectResult.project());
-        openProjectResult.project()->configureAsExampleProject(m_testKit);
+        QVERIFY(openProjectResult.project()->configureAsExampleProject(m_testKit));
 
         // Wait until project is fully indexed.
         QVERIFY(CppEditor::Tests::waitForSignalOrTimeout(openProjectResult.project(),
@@ -431,6 +431,8 @@ F2TestCase::F2TestCase(CppEditorAction action,
         QEXPECT_FAIL("matchFunctionSignature_Follow_5", "foo(int) resolved as CallAST", Abort);
         if (tag.contains("SLOT") && tag.contains("no 2nd QObject"))
             QEXPECT_FAIL("", "FIXME", Abort);
+        QEXPECT_FAIL(
+            "baseClassViaDecltype", "we cannot properly evaluate decltype at bind time", Abort);
     }
 
     QCOMPARE(currentTextEditor->currentLine(), expectedLine);
@@ -496,7 +498,7 @@ void FollowSymbolTest::initTestCase()
     if (clangdFromEnv.isEmpty())
         return;
     ClangdSettings::setClangdFilePath(Utils::FilePath::fromUserInput(clangdFromEnv));
-    const auto clangd = ClangdSettings::instance().clangdFilePath();
+    const auto clangd = ClangdSettings::instance().data().clangdFilePath(nullptr);
     if (clangd.isEmpty() || !clangd.exists())
         return;
 
@@ -801,6 +803,43 @@ void FollowSymbolTest::testSwitchMethodDeclDef_data()
                  "};\n")
             << _("#include \"file.h\"\n"
                  "Foo::@operator int() const { return {}; }\n");
+
+    QTest::newRow("defaultedConstructorDecl2Def")
+        << _("struct Foo {\n"
+             "    @Foo();\n"
+             "};\n")
+        << _("#include \"file.h\"\n"
+             "Foo::$Foo() = default;\n");
+    QTest::newRow("defaultedConstructorDef2Decl")
+        << _("struct Foo {\n"
+             "    $Foo();\n"
+             "};\n")
+        << _("#include \"file.h\"\n"
+             "Foo::Foo() = @default;\n");
+    QTest::newRow("defaultedDestructorDecl2Def")
+        << _("struct Foo {\n"
+             "    ~@Foo();\n"
+             "};\n")
+        << _("#include \"file.h\"\n"
+             "Foo::~$Foo() = default;\n");
+    QTest::newRow("defaultedDestructorDef2Decl")
+        << _("struct Foo {\n"
+             "    ~$Foo();\n"
+             "};\n")
+        << _("#include \"file.h\"\n"
+             "Foo::~Foo() @= default;\n");
+    QTest::newRow("defaultedOperatorDecl2Def")
+        << _("struct Foo {\n"
+             "    Foo& @operator=(const Foo &);\n"
+             "};\n")
+        << _("#include \"file.h\"\n"
+             "Foo& Foo::$operator=(const Foo &) = default;\n");
+    QTest::newRow("defaultedOperatorDef2Decl")
+        << _("struct Foo {\n"
+             "    Foo& $operator=(const Foo &);\n"
+             "};\n")
+        << _("#include \"file.h\"\n"
+             "Foo& Foo::op@erator=(const Foo &) = default;\n");
 }
 
 void FollowSymbolTest::testSwitchMethodDeclDef()
@@ -1258,6 +1297,43 @@ void FollowSymbolTest::testFollowSymbol_data()
         "struct Child : public Parent { void $disconnect(); };\n"
         "void test() { Child c; c.@disconnect(); }\n"
     );
+
+    QTest::newRow("defaultedConstructorDecl2Def")
+        << _("struct Foo {\n"
+             "    @Foo();\n"
+             "};\n"
+             "Foo::$Foo() = default;\n");
+    QTest::newRow("defaultedConstructorDef2Decl")
+        << _("struct Foo {\n"
+             "    $Foo();\n"
+             "};\n"
+             "Foo::@Foo() = default;\n");
+    QTest::newRow("defaultedDestructorDecl2Def")
+        << _("struct Foo {\n"
+             "    ~@Foo();\n"
+             "};\n"
+             "Foo::~$Foo() = default;\n");
+    QTest::newRow("defaultedDestructorDef2Decl")
+        << _("struct Foo {\n"
+             "    ~$Foo();\n"
+             "};\n"
+             "Foo::~@Foo() = default;\n");
+    QTest::newRow("defaultedOperatorDecl2Def")
+        << _("struct Foo {\n"
+             "    Foo& @operator=(const Foo &);\n"
+             "};\n"
+             "Foo& Foo::$operator=(const Foo &) = default;\n");
+    QTest::newRow("defaultedOperatorDef2Decl")
+        << _("struct Foo {\n"
+             "    Foo& $operator=(const Foo &);\n"
+             "};\n"
+             "Foo& Foo::op@erator=(const Foo &) = default;\n");
+    QTest::newRow("baseClassViaDecltype")
+        << _("struct Foo { static const int $_foo = 0; };\n"
+             "struct Bar : public decltype(Foo()) { static const int _bar = @_foo; };\n");
+    QTest::newRow("concept")
+        << _("namespace N { template<typename T> concept $C1 = true; }\n"
+             "static void func(N::@C1 auto p);\n");
 }
 
 void FollowSymbolTest::testFollowSymbol()

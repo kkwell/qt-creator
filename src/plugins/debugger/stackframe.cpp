@@ -10,7 +10,6 @@
 
 #include <QDebug>
 #include <QDir>
-#include <QFileInfo>
 
 #include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
@@ -74,9 +73,7 @@ StackFrame StackFrame::parseFrame(const GdbMi &frameMi, const DebuggerRunParamet
     frame.level = frameMi["level"].data();
     frame.function = frameMi["function"].data();
     frame.module = frameMi["module"].data();
-    const FilePath debugger = rp.debugger.command.executable();
-    const FilePath onDevicePath = debugger.withNewPath(frameMi["file"].data()).cleanPath();
-    frame.file = onDevicePath.localSource().value_or(onDevicePath);
+    frame.file = rp.mapToProjectPath(frameMi["file"].data()).cleanPath();
     frame.line = frameMi["line"].toInt();
     frame.address = frameMi["address"].toAddress();
     frame.context = frameMi["context"].data();
@@ -144,12 +141,7 @@ QString StackFrame::toToolTip() const
 
 static FilePath findFile(const FilePath &baseDir, const FilePath &relativeFile)
 {
-    for (FilePath dir(baseDir); !dir.isEmpty(); dir = dir.parentDir()) {
-        const FilePath absolutePath = dir.resolvePath(relativeFile);
-        if (absolutePath.isFile())
-            return absolutePath;
-    }
-    return {};
+    return baseDir.searchHereAndInParents(relativeFile.path(), QDir::Files);
 }
 
 // Try to resolve files coming from resource files.
@@ -161,7 +153,7 @@ void StackFrame::fixQrcFrame(const DebuggerRunParameters &rp)
         usable = file.isFile();
         return;
     }
-    if (!file.startsWith("qrc:/"))
+    if (!file.path().startsWith("qrc:/"))
         return;
 
     FilePath relativeFile = file;
@@ -171,7 +163,7 @@ void StackFrame::fixQrcFrame(const DebuggerRunParameters &rp)
         relativePath = relativePath.mid(1);
     relativeFile = relativeFile.withNewPath(relativePath);
 
-    FilePath absFile = findFile(rp.projectSourceDirectory, relativeFile);
+    FilePath absFile = findFile(rp.projectSourceDirectory(), relativeFile);
     if (absFile.isEmpty())
         absFile = findFile(FilePath::fromString(QDir::currentPath()), relativeFile);
 

@@ -11,7 +11,6 @@
 
 #include <extensionsystem/pluginmanager.h>
 
-#include <projectexplorer/projectexplorertr.h>
 #include <projectexplorer/jsonwizard/jsonwizard.h>
 #include <projectexplorer/jsonwizard/jsonwizardfactory.h>
 
@@ -51,25 +50,24 @@ WizardPage *VcsConfigurationPageFactory::create(JsonWizard *wizard, Id typeId,
     return page;
 }
 
-bool VcsConfigurationPageFactory::validateData(Id typeId, const QVariant &data,
-                                               QString *errorMessage)
+Result<> VcsConfigurationPageFactory::validateData(Id typeId, const QVariant &data)
 {
-    QTC_ASSERT(canCreate(typeId), return false);
+    QTC_ASSERT(canCreate(typeId), return ResultError(ResultAssert));
 
     if (data.isNull() || data.typeId() != QMetaType::QVariantMap) {
         //: Do not translate "VcsConfiguration", because it is the id of a page.
-        *errorMessage = ProjectExplorer::Tr::tr("\"data\" must be a JSON object for \"VcsConfiguration\" pages.");
-        return false;
+        return ResultError(
+            Tr::tr("\"data\" must be a JSON object for \"VcsConfiguration\" pages."));
     }
 
     QVariantMap tmp = data.toMap();
     const QString vcsId = tmp.value(QLatin1String("vcsId")).toString();
     if (vcsId.isEmpty()) {
         //: Do not translate "VcsConfiguration", because it is the id of a page.
-        *errorMessage = ProjectExplorer::Tr::tr("\"VcsConfiguration\" page requires a \"vcsId\" set.");
-        return false;
+        return ResultError(Tr::tr("\"VcsConfiguration\" page requires a \"vcsId\" set."));
     }
-    return true;
+
+    return ResultOk;
 }
 
 class VcsConfigurationPagePrivate
@@ -87,7 +85,7 @@ VcsConfigurationPage::VcsConfigurationPage() : d(new Internal::VcsConfigurationP
     setTitle(Tr::tr("Configuration"));
 
     d->m_versionControl = nullptr;
-    d->m_configureButton = new QPushButton(ICore::msgShowOptionsDialog(), this);
+    d->m_configureButton = new QPushButton(ICore::msgShowSettings(), this);
     d->m_configureButton->setEnabled(false);
 
     auto verticalLayout = new QVBoxLayout(this);
@@ -159,7 +157,7 @@ bool VcsConfigurationPage::isComplete() const
 
 void VcsConfigurationPage::openConfiguration()
 {
-    ICore::showOptionsDialog(d->m_versionControl->id(), this);
+    ICore::showSettings(d->m_versionControl->id());
 }
 
 } // namespace VcsBase

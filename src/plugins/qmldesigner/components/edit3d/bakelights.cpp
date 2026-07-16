@@ -9,19 +9,22 @@
 #include <bakelightsdatamodel.h>
 #include <bindingproperty.h>
 #include <documentmanager.h>
-#include <model/modelutils.h>
+#include <indentingtexteditormodifier.h>
 #include <modelnode.h>
+#include <modelutils.h>
 #include <nodeabstractproperty.h>
 #include <nodeinstanceview.h>
 #include <nodemetainfo.h>
-#include <plaintexteditmodifier.h>
 #include <rewriterview.h>
 #include <utils3d.h>
 #include <variantproperty.h>
 
 #include <coreplugin/icore.h>
+#include <projectexplorer/projectmanager.h>
 
+#ifndef QDS_USE_PROJECTSTORAGE
 #include <qmljs/qmljsmodelmanagerinterface.h>
+#endif
 
 #include <utils/algorithm.h>
 #include <utils/environment.h>
@@ -35,7 +38,6 @@
 #include <QSaveFile>
 #include <QTextCursor>
 #include <QTextDocument>
-#include <QTimer>
 #include <QVariant>
 
 namespace QmlDesigner {
@@ -46,7 +48,7 @@ static QString propertyEditorResourcesPath()
     if (Utils::qtcEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
         return QLatin1String(SHARE_QML_PATH) + "/propertyEditorQmlSources";
 #endif
-    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toString();
+    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toUrlishString();
 }
 
 static QString qmlSourcesPath()
@@ -55,12 +57,13 @@ static QString qmlSourcesPath()
     if (Utils::qtcEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
         return QLatin1String(SHARE_QML_PATH) + "/edit3dQmlSource";
 #endif
-    return Core::ICore::resourcePath("qmldesigner/edit3dQmlSource").toString();
+    return Core::ICore::resourcePath("qmldesigner/edit3dQmlSource").toUrlishString();
 }
 
-BakeLights::BakeLights(AbstractView *view)
+BakeLights::BakeLights(AbstractView *view, ModulesStorage &modulesStorage)
     : QObject(view)
     , m_view(view)
+    , m_modulesStorage{modulesStorage}
 {
     m_view3dId = Utils3D::activeView3dId(view);
 
@@ -70,6 +73,9 @@ BakeLights::BakeLights(AbstractView *view)
         deleteLater();
         return;
     }
+
+    m_pendingRebakeTimer.setInterval(100);
+    connect(&m_pendingRebakeTimer, &QTimer::timeout, this, &BakeLights::handlePendingRebakeTimeout);
 
     showSetupDialog();
 }
@@ -108,8 +114,12 @@ void BakeLights::bakeLights()
 
     // Start baking process
     m_connectionManager = new BakeLightsConnectionManager;
-    m_rewriterView = new RewriterView{m_view->externalDependencies(), RewriterView::Amend};
-    m_nodeInstanceView = new NodeInstanceView{*m_connectionManager, m_view->externalDependencies()};
+    m_rewriterView = new RewriterView{m_view->externalDependencies(),
+                                      m_modulesStorage,
+                                      RewriterView::Amend};
+    m_nodeInstanceView = new NodeInstanceView{*m_connectionManager,
+                                              m_view->externalDependencies(),
+                                              m_modulesStorage};
 
 #ifdef QDS_USE_PROJECTSTORAGE
     m_model = m_view->model()->createModel("Item");
@@ -121,8 +131,7 @@ void BakeLights::bakeLights()
     auto textDocument = std::make_unique<QTextDocument>(
                 m_view->model()->rewriterView()->textModifier()->textDocument()->toRawText());
 
-    auto modifier = std::make_unique<NotIndentingTextEditModifier>(textDocument.get(),
-                                                                   QTextCursor{textDocument.get()});
+    auto modifier = std::make_unique<NotIndentingTextEditModifier>(textDocument.get());
 
     m_rewriterView->setTextModifier(modifier.get());
     m_model->setRewriterView(m_rewriterView);
@@ -140,7 +149,7 @@ void BakeLights::bakeLights()
         return;
     }
 
-    m_nodeInstanceView->setTarget(m_view->nodeInstanceView()->target());
+    m_nodeInstanceView->setTarget(ProjectExplorer::ProjectManager::startupTarget());
 
     auto progressCallback = [this](const QString &msg) {
         emit progress(msg);
@@ -151,7 +160,7 @@ void BakeLights::bakeLights()
         emit progress(msg);
         emit finished();
 
-        // Puppet reset is needed to update baking results to current views
+        // QML Puppet reset is needed to update baking results to current views
         m_view->resetPuppet();
     };
 
@@ -213,7 +222,8 @@ void BakeLights::rebake()
 void BakeLights::exposeModelsAndLights(const QString &nodeId)
 {
     ModelNode compNode = m_view->modelNodeForId(nodeId);
-    if (!compNode.isValid() || !compNode.isComponent()) {
+    if (!compNode.isValid() || !compNode.isComponent()
+        || (m_pendingRebakeTimer.isActive() && compNode == m_pendingRebakeCheckNode)) {
         return;
     }
 
@@ -222,7 +232,8 @@ void BakeLights::exposeModelsAndLights(const QString &nodeId)
         return;
     }
 
-    RewriterView rewriter{m_view->externalDependencies(), RewriterView::Amend};
+    RewriterView rewriter{m_view->externalDependencies(), m_modulesStorage, RewriterView::Amend};
+
 #ifdef QDS_USE_PROJECTSTORAGE
     auto compModel = m_view->model()->createModel("Item");
 #else
@@ -234,8 +245,7 @@ void BakeLights::exposeModelsAndLights(const QString &nodeId)
     compModel->setFileUrl(QUrl::fromLocalFile(componentFilePath));
 
     auto textDocument = std::make_unique<QTextDocument>(QString::fromUtf8(src));
-    auto modifier = std::make_unique<IndentingTextEditModifier>(
-        textDocument.get(), QTextCursor{textDocument.get()});
+    auto modifier = std::make_unique<IndentingTextEditModifier>(textDocument.get());
 
     rewriter.setTextModifier(modifier.get());
     compModel->setRewriterView(&rewriter);
@@ -284,16 +294,18 @@ void BakeLights::exposeModelsAndLights(const QString &nodeId)
         }
     }
 
+#ifndef QDS_USE_PROJECTSTORAGE
     QmlJS::ModelManagerInterface *modelManager = QmlJS::ModelManagerInterface::instance();
-    QmlJS::Document::Ptr doc = rewriter.document()->ptr();
+    QmlJS::Document::Ptr doc = rewriter.document();
     modelManager->updateDocument(doc);
-
     m_view->model()->rewriterView()->forceAmend();
+#endif
 
     compModel->setRewriterView({});
 
-    // Rebake to relaunch setup dialog with updated properties
-    rebake();
+    m_pendingRebakeTimerCount = 0;
+    m_pendingRebakeCheckNode = compNode;
+    m_pendingRebakeTimer.start();
 }
 
 void BakeLights::showSetupDialog()
@@ -374,6 +386,8 @@ void BakeLights::cleanup()
         m_model.reset();
     }
 
+    pendingRebakeCleanup();
+
     delete m_setupDialog;
     delete m_progressDialog;
     delete m_rewriterView;
@@ -382,6 +396,42 @@ void BakeLights::cleanup()
     delete m_dataModel;
 
     m_manualMode = false;
+}
+
+void BakeLights::handlePendingRebakeTimeout()
+{
+    QScopeGuard timerCleanup([this]() {
+        pendingRebakeCleanup();
+    });
+
+    if (m_view.isNull() || !m_pendingRebakeCheckNode || !m_pendingRebakeCheckNode.isComponent())
+        return;
+
+    const Model *model = m_pendingRebakeCheckNode.model();
+    if (!model)
+        return;
+
+    PropertyMetaInfos metaInfos = m_pendingRebakeCheckNode.metaInfo().properties();
+    for (const PropertyMetaInfo &mi : metaInfos) {
+        if (mi.isValid() && !mi.isPrivate() && mi.isWritable()) {
+            if (mi.propertyType().isBasedOn(model->qtQuick3DModelMetaInfo(),
+                                            model->qtQuick3DLightMetaInfo())) {
+                // Rebake to relaunch setup dialog with updated properties
+                rebake();
+                return;
+            }
+        }
+    }
+
+    if (++m_pendingRebakeTimerCount < 100)
+        timerCleanup.dismiss();
+}
+
+void BakeLights::pendingRebakeCleanup()
+{
+    m_pendingRebakeTimer.stop();
+    m_pendingRebakeTimerCount = 0;
+    m_pendingRebakeCheckNode = {};
 }
 
 void BakeLights::cancel()

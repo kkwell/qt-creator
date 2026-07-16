@@ -68,7 +68,7 @@ void ElidingLabel::paintEvent(QPaintEvent *)
     QRect contents = contentsRect().adjusted(m, m, -m, -m);
     QFontMetrics fm = fontMetrics();
     QString txt = text();
-    if (txt.length() > 4 && fm.horizontalAdvance(txt) > contents.width()) {
+    if (txt.size() > 4 && fm.horizontalAdvance(txt) > contents.width()) {
         updateToolTip(txt);
         txt = fm.elidedText(txt, m_elideMode, contents.width());
     } else {
@@ -104,6 +104,22 @@ QString ElidingLabel::additionalToolTipSeparator() const
 void ElidingLabel::setAdditionalToolTipSeparator(const QString &newAdditionalToolTipSeparator)
 {
     m_additionalToolTipSeparator = newAdditionalToolTipSeparator;
+}
+
+QSize ElidingLabel::sizeHint() const
+{
+    if (m_elideMode == Qt::ElideNone)
+        return QLabel::sizeHint();
+    const int h = fontMetrics().height() + 2 * margin();
+    return QSize(QLabel::sizeHint().width(), h);
+}
+
+QSize ElidingLabel::minimumSizeHint() const
+{
+    if (m_elideMode == Qt::ElideNone)
+        return QLabel::minimumSizeHint();
+    const int h = fontMetrics().height() + 2 * margin();
+    return QSize(QLabel::minimumSizeHint().width(), h);
 }
 
 } // namespace Utils

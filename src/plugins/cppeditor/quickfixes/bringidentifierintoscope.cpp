@@ -4,6 +4,7 @@
 #include "bringidentifierintoscope.h"
 
 #include "../cppeditortr.h"
+#include "../cppeditorwidget.h"
 #include "../cpplocatordata.h"
 #include "../cppprojectfile.h"
 #include "../cpprefactoringchanges.h"
@@ -12,20 +13,27 @@
 #include "cppquickfix.h"
 #include "cppquickfixhelpers.h"
 
+#include <coreplugin/editormanager/editormanager.h>
 #include <cplusplus/Overview.h>
+#include <projectexplorer/kitmanager.h>
+#include <projectexplorer/projectmanager.h>
 #include <projectexplorer/projectnodes.h>
 #include <projectexplorer/projecttree.h>
 #include <texteditor/quickfix.h>
+#include <texteditor/textdocument.h>
+#include <texteditor/texteditor.h>
 
 #ifdef WITH_TESTS
 #include "../cppsourceprocessertesthelper.h"
 #include "../cpptoolstestcase.h"
 #include "cppquickfix_test.h"
-#include <QtTest>
+#include <QTest>
 #endif
 
+using namespace Core;
 using namespace CPlusPlus;
 using namespace ProjectExplorer;
+using namespace TextEditor;
 using namespace Utils;
 
 #ifdef WITH_TESTS
@@ -51,9 +59,9 @@ static QString findShortestInclude(
         result = QLatin1Char('"') + fileInfo.fileName() + QLatin1Char('"');
     } else {
         for (const HeaderPath &headerPath : headerPaths) {
-            if (!candidateFilePath.startsWith(headerPath.path))
+            if (!candidateFilePath.startsWith(headerPath.path.path()))
                 continue;
-            QString relativePath = candidateFilePath.mid(headerPath.path.size());
+            QString relativePath = candidateFilePath.mid(headerPath.path.path().size());
             if (!relativePath.isEmpty() && relativePath.at(0) == QLatin1Char('/'))
                 relativePath = relativePath.mid(1);
             if (result.isEmpty() || relativePath.size() + 2 < result.size())
@@ -75,7 +83,7 @@ static QString findMatchingInclude(const QString &className, const HeaderPaths &
         className.toLower() + ".hpp"};
     for (const QString &fileName : candidateFileNames) {
         for (const HeaderPath &headerPath : headerPaths) {
-            const QString headerPathCandidate = headerPath.path + QLatin1Char('/') + fileName;
+            const QString headerPathCandidate = headerPath.path.path() + QLatin1Char('/') + fileName;
             const QFileInfo fileInfo(headerPathCandidate);
             if (fileInfo.exists() && fileInfo.isFile())
                 return '<' + fileName + '>';
@@ -228,13 +236,14 @@ class AddIncludeForUndefinedIdentifierOp : public CppQuickFixOperation
 {
 public:
     AddIncludeForUndefinedIdentifierOp(const CppQuickFixInterface &interface, int priority,
-                                       const QString &include);
+                                       const QString &include, const QString &module);
     void perform() override;
 
     QString include() const { return m_include; }
 
 private:
-    QString m_include;
+    const QString m_include;
+    const QString m_module;
 };
 
 class AddForwardDeclForUndefinedIdentifierOp : public CppQuickFixOperation
@@ -276,9 +285,9 @@ private:
         } else if (visitor.firstNamespace()) {
             insertPos = file->startOf(visitor.firstNamespace());
         } else {
+            static const QRegularExpression regexp("^\\s*#include .*$");
             const QTextCursor tc = file->document()->find(
-                QRegularExpression("^\\s*#include .*$"),
-                m_symbolPos,
+                regexp, m_symbolPos,
                 QTextDocument::FindBackward | QTextDocument::FindCaseSensitively);
             if (!tc.isNull())
                 insertPos = tc.position() + 1;
@@ -299,11 +308,17 @@ private:
 };
 
 AddIncludeForUndefinedIdentifierOp::AddIncludeForUndefinedIdentifierOp(
-    const CppQuickFixInterface &interface, int priority, const QString &include)
+    const CppQuickFixInterface &interface, int priority, const QString &include,
+    const QString &module = {})
     : CppQuickFixOperation(interface, priority)
     , m_include(include)
+    , m_module(module)
 {
-    setDescription(Tr::tr("Add #include %1").arg(m_include));
+    const QString desc
+        = !m_module.isEmpty()
+              ? Tr::tr("Add #include %1 and Project Dependency %2").arg(m_include, m_module)
+              : Tr::tr("Add #include %1").arg(m_include);
+    setDescription(desc);
 }
 
 void AddIncludeForUndefinedIdentifierOp::perform()
@@ -313,6 +328,14 @@ void AddIncludeForUndefinedIdentifierOp::perform()
     ChangeSet changes;
     insertNewIncludeDirective(m_include, file, semanticInfo().doc, changes);
     file->apply(changes);
+    if (!m_module.isEmpty()) {
+        Project * const project = ProjectManager::projectForFile(file->filePath());
+        if (!project)
+            return;
+        ProjectNode * const product = project->productNodeForFilePath(file->filePath());
+        if (product)
+            product->addDependencies({m_module});
+    }
 }
 
 AddForwardDeclForUndefinedIdentifierOp::AddForwardDeclForUndefinedIdentifierOp(
@@ -348,7 +371,7 @@ private:
             return;
 
         QString className;
-        const QString currentDocumentFilePath = interface.semanticInfo().doc->filePath().toString();
+        const QString currentDocumentFilePath = interface.semanticInfo().doc->filePath().toUrlishString();
         const HeaderPaths headerPaths = relevantHeaderPaths(currentDocumentFilePath);
         FilePaths headers;
 
@@ -358,8 +381,10 @@ private:
             QList<IndexItem::Ptr> indexItems;
             const Snapshot forwardHeaders = forwardingHeaders(interface);
             for (const IndexItem::Ptr &info : matches) {
-                if (!info || info->symbolName() != className)
+                if (!info || info->symbolName() != className
+                    || !ProjectFile::isHeader(info->filePath())) {
                     continue;
+                }
                 indexItems << info;
 
                 Snapshot localForwardHeaders = forwardHeaders;
@@ -370,7 +395,7 @@ private:
 
                 for (const FilePath &header : std::as_const(headerAndItsForwardingHeaders)) {
                     const QString include = findShortestInclude(currentDocumentFilePath,
-                                                                header.toString(),
+                                                                header.toUrlishString(),
                                                                 headerPaths);
                     if (include.size() > 2) {
                         const QString headerFileName = info->filePath().fileName();
@@ -398,7 +423,7 @@ private:
                     FileType fileType = node && node->asFileNode() ? node->asFileNode()->fileType()
                                                                    : FileType::Unknown;
                     if (fileType == FileType::Unknown
-                        && ProjectFile::isHeader(ProjectFile::classify(interface.filePath().toString()))) {
+                        && ProjectFile::isHeader(ProjectFile::classify(interface.filePath()))) {
                         fileType = FileType::Header;
                     }
                     if (fileType == FileType::Header) {
@@ -424,6 +449,20 @@ private:
             };
             if (!include.isEmpty() && !contains(result, matcher))
                 result << new AddIncludeForUndefinedIdentifierOp(interface, 1, include);
+        }
+
+        if (!result.isEmpty())
+            return;
+
+        // Convenience functionality: A matching header might be available, but not currently
+        // reachable because the respective component has not been added as a dependency
+        // to the project.
+        Kit * const currentKit = activeKitForCurrentProject();
+        if (!currentKit)
+            return;
+        if (const QString module = currentKit->moduleForHeader(className); !module.isEmpty()) {
+            result << new AddIncludeForUndefinedIdentifierOp(
+                interface, 2, '<' + className + '>', module);
         }
     }
 };
@@ -473,7 +512,7 @@ class BringIdentifierIntoScopeTest : public QObject
 private slots:
     void testAddIncludeForUndefinedIdentifier_data()
     {
-        QTest::addColumn<QString>("headerPath");
+        QTest::addColumn<FilePath>("headerPath");
         QTest::addColumn<QuickFixTestDocuments>("testDocuments");
         QTest::addColumn<int>("refactoringOperationIndex");
         QTest::addColumn<QString>("includeForTestFactory");
@@ -1278,11 +1317,19 @@ private slots:
             << TestIncludePaths::globalIncludePath()
             << testDocuments << firstRefactoringOperation << "";
         testDocuments.clear();
+
+        original = "static @C *c = nullptr;\n";
+        testDocuments << CppTestDocument::create("c.h", original, "");
+        original = "class C {};\n";
+        testDocuments << CppTestDocument::create("x.cpp", original, "");
+        QTest::newRow("do not include cpp file")
+            << TestIncludePaths::globalIncludePath() << testDocuments << 0 << "";
+        testDocuments.clear();
     }
 
     void testAddIncludeForUndefinedIdentifier()
     {
-        QFETCH(QString, headerPath);
+        QFETCH(FilePath, headerPath);
         QFETCH(QuickFixTestDocuments, testDocuments);
         QFETCH(int, refactoringOperationIndex);
         QFETCH(QString, includeForTestFactory);
@@ -1326,8 +1373,7 @@ private slots:
         QuickFixOfferedOperationsTest(
             testDocuments,
             &factory,
-            ProjectExplorer::toUserHeaderPaths(
-                QStringList{TestIncludePaths::globalQtCoreIncludePath()}),
+            {HeaderPath(TestIncludePaths::globalQtCoreIncludePath(), HeaderPathType::User)},
             expectedOperations);
     }
 
@@ -1494,6 +1540,74 @@ private slots:
         QScopedPointer<CppQuickFixFactory> factory(
             new AddForwardDeclForUndefinedIdentifierTestFactory(symbol, symbolPos));
         QuickFixOperationTest::run({testDocuments}, factory.data(), ".", 0);
+    }
+
+    void testAddIncludeAndQtDependency()
+    {
+        // Set up project.
+        Kit * const kit  = Utils::findOr(KitManager::kits(), nullptr, [](const Kit *k) {
+            return k->isValid() && !k->hasWarning() && k->value("QtSupport.QtInformation").isValid();
+        });
+        if (!kit)
+            QSKIP("The test requires at least one valid kit with a valid Qt");
+        const auto projectDir = std::make_unique<TemporaryCopiedDir>(
+            ":/cppeditor/testcases/bring-identifier-into-scope/add-qt-dependency");
+        SourceFilesRefreshGuard refreshGuard;
+        ProjectOpenerAndCloser projectMgr;
+        QVERIFY(projectMgr.open(projectDir->absolutePath("add-qt-dependency.pro"), kit));
+        QVERIFY(refreshGuard.wait());
+
+        // Open source file and locate the use of Qt class.
+        const FilePath sourceFilePath = projectDir->absolutePath("main.cpp");
+        QVERIFY2(sourceFilePath.exists(), qPrintable(sourceFilePath.toUserOutput()));
+        const auto editor = qobject_cast<BaseTextEditor *>(
+            EditorManager::openEditor(sourceFilePath));
+        QVERIFY(editor);
+        const auto doc = qobject_cast<TextEditor::TextDocument *>(editor->document());
+        QVERIFY(doc);
+        QTextCursor classCursor = doc->document()->find("QApplication");
+        QVERIFY(!classCursor.isNull());
+        editor->setCursorPosition(classCursor.position());
+        const auto editorWidget = qobject_cast<CppEditorWidget *>(editor->editorWidget());
+        QVERIFY(editorWidget);
+        QVERIFY(TestCase::waitForRehighlightedSemanticDocument(editorWidget));
+
+        // Query factory.
+        AddIncludeForUndefinedIdentifier factory;
+        CppQuickFixInterface quickFixInterface(editorWidget, ExplicitlyInvoked);
+        QuickFixOperations operations;
+        factory.match(quickFixInterface, operations);
+        QCOMPARE(operations.size(), qsizetype(1));
+        operations.first()->perform();
+
+        // Compare files.
+        const FileFilter filter({"*_expected"}, QDir::Files);
+        const FilePaths expectedDocuments = projectDir->filePath().dirEntries(filter);
+        QVERIFY(!expectedDocuments.isEmpty());
+        for (const FilePath &expected : expectedDocuments) {
+            static const QString suffix = "_expected";
+            const FilePath actual = expected.parentDir()
+                                        .pathAppended(expected.fileName().chopped(suffix.size()));
+            QVERIFY(actual.exists());
+            const auto actualContents = actual.fileContents();
+            QVERIFY(actualContents);
+            const auto expectedContents = expected.fileContents();
+            const QByteArrayList actualLines = actualContents->split('\n');
+            const QByteArrayList expectedLines = expectedContents->split('\n');
+            if (actualLines.size() != expectedLines.size()) {
+                qDebug().noquote().nospace() << "---\n" << *expectedContents << "EOF";
+                qDebug().noquote().nospace() << "+++\n" << *actualContents << "EOF";
+            }
+            QCOMPARE(actualLines.size(), expectedLines.size());
+            for (int i = 0; i < actualLines.size(); ++i) {
+                const QByteArray actualLine = actualLines.at(i);
+                const QByteArray expectedLine = expectedLines.at(i);
+                if (actualLine != expectedLine)
+                    qDebug() << "Unexpected content in line" << (i + 1) << "of file"
+                             << actual.fileName();
+                QCOMPARE(actualLine, expectedLine);
+            }
+        }
     }
 };
 

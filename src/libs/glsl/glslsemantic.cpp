@@ -99,9 +99,9 @@ Semantic::ExprResult Semantic::functionIdentifier(FunctionIdentifierAST *ast)
                 if (s->asOverloadSet() != nullptr || s->asFunction() != nullptr)
                     result.type = s->type();
                 else
-                    _engine->error(ast->lineno, QString::fromLatin1("`%1' cannot be used as a function").arg(*ast->name));
+                    reportError(ast, QString::fromLatin1("`%1' cannot be used as a function").arg(*ast->name));
             } else {
-                _engine->error(ast->lineno, QString::fromLatin1("`%1' was not declared in this scope").arg(*ast->name));
+                reportError(ast, QString::fromLatin1("`%1' was not declared in this scope").arg(*ast->name));
             }
         } else if (ast->type) {
             const Type *ty = type(ast->type);
@@ -161,7 +161,7 @@ bool Semantic::visit(IdentifierExpressionAST *ast)
         if (Symbol *s = _scope->lookup(*ast->name))
             _expr.type = s->type();
         else
-            _engine->error(ast->lineno, QString::fromLatin1("`%1' was not declared in this scope").arg(*ast->name));
+            reportError(ast, QString::fromLatin1("`%1' was not declared in this scope").arg(*ast->name));
     }
     return false;
 }
@@ -198,7 +198,7 @@ bool Semantic::visit(BinaryExpressionAST *ast)
             if (const IndexType *idxType = left.type->asIndexType())
                 _expr = idxType->indexElementType();
             else
-                _engine->error(ast->lineno, QString::fromLatin1("Invalid type `%1' for array subscript").arg(left.type->toString()));
+                reportError(ast->right, QString::fromLatin1("Invalid type `%1' for array subscript").arg(left.type->toString()));
         }
         break;
 
@@ -267,14 +267,19 @@ bool Semantic::visit(MemberAccessExpressionAST *ast)
             if (Symbol *s = vecTy->find(*ast->field))
                 _expr.type = s->type();
             else
-                _engine->error(ast->lineno, QString::fromLatin1("`%1' has no member named `%2'").arg(vecTy->name()).arg(*ast->field));
+                reportError(ast->expr, QString::fromLatin1("`%1' has no member named `%2'").arg(vecTy->toString()).arg(*ast->field));
         } else if (const Struct *structTy = expr.type->asStructType()) {
             if (Symbol *s = structTy->find(*ast->field))
                 _expr.type = s->type();
             else
-                _engine->error(ast->lineno, QString::fromLatin1("`%1' has no member named `%2'").arg(structTy->name()).arg(*ast->field));
+                reportError(ast, QString::fromLatin1("`%1' has no member named `%2'").arg(structTy->name()).arg(*ast->field));
+        } else if (const InterfaceBlock *interfaceBlockTy = expr.type->asInterfaceBlockType()) {
+            if (Symbol *s = interfaceBlockTy->find(*ast->field))
+                _expr.type = s->type();
+            else
+                reportError(ast->expr, QString::fromLatin1("`%1' has no member named `%2'").arg(interfaceBlockTy->name()).arg(*ast->field));
         } else {
-            _engine->error(ast->lineno, QString::fromLatin1("Requested for member `%1', in a non class or vec instance").arg(*ast->field));
+            reportError(ast->expr, QString::fromLatin1("Requested for member `%1', in a non class or vec instance").arg(*ast->field));
         }
     }
     return false;
@@ -346,9 +351,9 @@ bool Semantic::visit(FunctionCallExpressionAST *ast)
     if (id.isValid()) {
         if (const Function *funTy = id.type->asFunctionType()) {
             if (actuals.size() < funTy->argumentCount())
-                _engine->error(ast->lineno, QString::fromLatin1("not enough arguments"));
+                reportError(ast->id, QString::fromLatin1("Not enough arguments"));
             else if (actuals.size() > funTy->argumentCount())
-                _engine->error(ast->lineno, QString::fromLatin1("too many arguments"));
+                reportError(ast->id, QString::fromLatin1("Too many arguments"));
             _expr.type = funTy->returnType();
         } else if (const OverloadSet *overloads = id.type->asOverloadSetType()) {
             QVector<Function *> candidates;
@@ -481,7 +486,6 @@ bool Semantic::visit(DeclarationStatementAST *ast)
     return false;
 }
 
-
 // types
 bool Semantic::visit(BasicTypeAST *ast)
 {
@@ -499,6 +503,7 @@ bool Semantic::visit(BasicTypeAST *ast)
         break;
 
     case Parser::T_UINT:
+    case Parser::T_ATOMIC_UINT:
         _type = _engine->uintType();
         break;
 
@@ -704,8 +709,94 @@ bool Semantic::visit(BasicTypeAST *ast)
         _type = _engine->samplerType(ast->token);
         break;
 
+    // images
+    case Parser::T_IIMAGE1D:
+    case Parser::T_IIMAGE1DARRAY:
+    case Parser::T_IIMAGE2D:
+    case Parser::T_IIMAGE2DARRAY:
+    case Parser::T_IIMAGE2DMS:
+    case Parser::T_IIMAGE2DMSARRAY:
+    case Parser::T_IIMAGE2DRECT:
+    case Parser::T_IIMAGE3D:
+    case Parser::T_IIMAGEBUFFER:
+    case Parser::T_IIMAGECUBE:
+    case Parser::T_IIMAGECUBEARRAY:
+    case Parser::T_IMAGE1D:
+    case Parser::T_IMAGE1DARRAY:
+    case Parser::T_IMAGE2D:
+    case Parser::T_IMAGE2DARRAY:
+    case Parser::T_IMAGE2DMS:
+    case Parser::T_IMAGE2DMSARRAY:
+    case Parser::T_IMAGE2DRECT:
+    case Parser::T_IMAGE3D:
+    case Parser::T_IMAGEBUFFER:
+    case Parser::T_IMAGECUBE:
+    case Parser::T_IMAGECUBEARRAY:
+    case Parser::T_UIMAGE1D:
+    case Parser::T_UIMAGE1DARRAY:
+    case Parser::T_UIMAGE2D:
+    case Parser::T_UIMAGE2DARRAY:
+    case Parser::T_UIMAGE2DMS:
+    case Parser::T_UIMAGE2DMSARRAY:
+    case Parser::T_UIMAGE2DRECT:
+    case Parser::T_UIMAGE3D:
+    case Parser::T_UIMAGEBUFFER:
+    case Parser::T_UIMAGECUBE:
+    case Parser::T_UIMAGECUBEARRAY:
+        _type = _engine->imageType(ast->token);
+        break;
+
+    // samplers (Vulkan additions)
+    case Parser::T_SAMPLER:
+    case Parser::T_SAMPLERSHADOW:
+        _type = _engine->samplerType(ast->token); // should we invent a new type instead?
+        break;
+
+    // subpass inputs and textures (Vulkan additions)
+    case Parser::T_ISUBPASSINPUT:
+    case Parser::T_ISUBPASSINPUTMS:
+    case Parser::T_ITEXTURE1D:
+    case Parser::T_ITEXTURE1DARRAY:
+    case Parser::T_ITEXTURE2D:
+    case Parser::T_ITEXTURE2DARRAY:
+    case Parser::T_ITEXTURE2DMS:
+    case Parser::T_ITEXTURE2DMSARRAY:
+    case Parser::T_ITEXTURE2DRECT:
+    case Parser::T_ITEXTURE3D:
+    case Parser::T_ITEXTUREBUFFER:
+    case Parser::T_ITEXTURECUBE:
+    case Parser::T_ITEXTURECUBEARRAY:
+    case Parser::T_SUBPASSINPUT:
+    case Parser::T_SUBPASSINPUTMS:
+    case Parser::T_TEXTURE1D:
+    case Parser::T_TEXTURE1DARRAY:
+    case Parser::T_TEXTURE2D:
+    case Parser::T_TEXTURE2DARRAY:
+    case Parser::T_TEXTURE2DMS:
+    case Parser::T_TEXTURE2DMSARRAY:
+    case Parser::T_TEXTURE2DRECT:
+    case Parser::T_TEXTURE3D:
+    case Parser::T_TEXTUREBUFFER:
+    case Parser::T_TEXTURECUBE:
+    case Parser::T_TEXTURECUBEARRAY:
+    case Parser::T_USUBPASSINPUT:
+    case Parser::T_USUBPASSINPUTMS:
+    case Parser::T_UTEXTURE1D:
+    case Parser::T_UTEXTURE1DARRAY:
+    case Parser::T_UTEXTURE2D:
+    case Parser::T_UTEXTURE2DARRAY:
+    case Parser::T_UTEXTURE2DMS:
+    case Parser::T_UTEXTURE2DMSARRAY:
+    case Parser::T_UTEXTURE2DRECT:
+    case Parser::T_UTEXTURE3D:
+    case Parser::T_UTEXTUREBUFFER:
+    case Parser::T_UTEXTURECUBE:
+    case Parser::T_UTEXTURECUBEARRAY:
+        _type = _engine->imageType(ast->token); // should we invent a new type instead?
+        break;
+
     default:
-        _engine->error(ast->lineno, QString::fromLatin1("Unknown type `%1'").arg(QLatin1String(GLSLParserTable::spell[ast->token])));
+        reportError(ast, QString::fromLatin1("Unknown type `%1'").arg(QLatin1String(GLSLParserTable::spell[ast->token])));
     }
 
     return false;
@@ -719,8 +810,16 @@ bool Semantic::visit(NamedTypeAST *ast)
                 _type = ty;
                 return false;
             }
+            if (InterfaceBlock *ty = s->asInterfaceBlock()) {
+                _type = ty;
+                return false;
+            }
+            if (SubroutineType *ty = s->asSubroutine()) {
+                _type = ty;
+                return false;
+            }
         }
-        _engine->error(ast->lineno, QString::fromLatin1("Undefined type `%1'").arg(*ast->name));
+        reportError(ast, QString::fromLatin1("Undefined type `%1'").arg(*ast->name));
     }
 
     return false;
@@ -729,9 +828,20 @@ bool Semantic::visit(NamedTypeAST *ast)
 bool Semantic::visit(ArrayTypeAST *ast)
 {
     const Type *elementType = type(ast->elementType);
-    Q_UNUSED(elementType)
     ExprResult size = expression(ast->size);
-    _type = _engine->arrayType(elementType); // ### ignore the size for now
+    if (ast->arraySpecifier) {
+        // recursively create array
+        auto createArr = [&](const auto &self, List<ArrayTypeAST::ArraySpecAST *> *spec,
+                const Type *elementType) {
+            if (!spec->next)
+                return _engine->arrayType(elementType);
+
+            return _engine->arrayType(self(self, spec->next, elementType));
+        };
+        _type = createArr(createArr, ast->arraySpecifier, elementType);
+        return false;
+    }
+    _type = _engine->arrayType(elementType); // ### ignore the size if there is no arraySpecifier
     return false;
 }
 
@@ -764,6 +874,38 @@ bool Semantic::visit(QualifiedTypeAST *ast)
     return false;
 }
 
+bool Semantic::visit(InterfaceBlockAST *ast)
+{
+    InterfaceBlock *iBlock = _engine->newInterfaceBlock(_scope);
+    _type = iBlock->type();
+    if (ast->name)
+        iBlock->setName(*ast->name);
+    if (Scope *e = iBlock->scope())
+        e->add(iBlock);
+    Scope *previousScope = switchScope(iBlock);
+    for (List<StructTypeAST::Field *> *it = ast->fields; it; it = it->next) {
+        StructTypeAST::Field *f = it->value;
+        if (Symbol *member = field(f))
+            iBlock->add(member);
+    }
+    (void) switchScope(previousScope);
+    return false;
+}
+
+bool Semantic::visit(SubroutineTypeAST *ast)
+{
+    if (!ast || !ast->name)
+        return false;
+    SubroutineType *subroutine = _engine->newSubroutineType(_scope);
+    if (ast->name)
+        subroutine->setName(*ast->name);
+    if (Scope *s = subroutine->scope())
+        s->add(subroutine);
+    _type = subroutine;
+
+    // returnType & args
+    return false;
+}
 
 // declarations
 bool Semantic::visit(PrecisionDeclarationAST *ast)
@@ -849,3 +991,14 @@ bool Semantic::visit(FunctionDeclarationAST *ast)
     return false;
 }
 
+void Semantic::reportError(AST *ast, const QString &message)
+{
+    DiagnosticMessage::Location location{ast->lineno, ast->position, ast->length};
+    _engine->error(location, message);
+}
+
+void Semantic::reportWarning(AST *ast, const QString &message)
+{
+    DiagnosticMessage::Location location{ast->lineno, ast->position, ast->length};
+    _engine->warning(location, message);
+}

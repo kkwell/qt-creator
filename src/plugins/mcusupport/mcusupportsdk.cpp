@@ -61,6 +61,7 @@ McuPackagePtr createQtForMCUsPackage(const SettingsHandler::Ptr &settingsHandler
                        {},                                              // versions
                        {},                                              // downloadUrl
                        nullptr,                                         // versionDetector
+                       false,                                           // optional
                        false,                                           // addToPath
                        Utils::PathChooser::Kind::ExistingDirectory,     // valueType
                        true)};                                          // useNewestVersionKey
@@ -116,7 +117,7 @@ McuPackagePtr createBoardSdkPackage(const SettingsHandler::Ptr &settingsHandler,
             return FilePath::fromUserInput(qtcEnvironmentVariable(envVar));
         if (!desc.boardSdk.defaultPath.isEmpty()) {
             FilePath defaultPath = FilePath::fromUserInput(QDir::rootPath()
-                                                           + desc.boardSdk.defaultPath.toString());
+                                                           + desc.boardSdk.defaultPath.toUrlishString());
             if (defaultPath.exists())
                 return defaultPath;
         }
@@ -640,7 +641,8 @@ static VersionDetection parseVersionDetection(const QJsonObject &packageEntry)
     };
 }
 
-static Utils::PathChooser::Kind parseLineEditType(const QJsonValue &type)
+using PathChooserKind = Utils::PathChooser::Kind; // trick lupdate, QTBUG-140636
+static PathChooserKind parseLineEditType(const QJsonValue &type)
 {
     //Utility function to handle the different kinds of PathChooser
     //Default is ExistingDirectory, see pathchooser.h for more options
@@ -678,15 +680,12 @@ static Utils::PathChooser::Kind parseLineEditType(const QJsonValue &type)
 static PackageDescription parsePackage(const QJsonObject &cmakeEntry)
 {
     const QVariantList versionsVariantList = cmakeEntry["versions"].toArray().toVariantList();
-    const auto versions = Utils::transform<QStringList>(versionsVariantList,
-                                                        [&](const QVariant &version) {
-                                                            return version.toString();
-                                                        });
+    const auto versions = Utils::transform(versionsVariantList, &QVariant::toString);
 
     //Parse the default value depending on the operating system
     QString defaultPathString = getOsSpecificValue(cmakeEntry["defaultValue"]).toString();
     QString detectionPathString = getOsSpecificValue(cmakeEntry["detectionPath"]).toString();
-    QList<FilePath> detectionPaths;
+    FilePaths detectionPaths;
     if (!detectionPathString.isEmpty())
         detectionPaths.push_back(FilePath::fromUserInput(detectionPathString));
     detectionPaths
@@ -706,6 +705,7 @@ static PackageDescription parsePackage(const QJsonObject &cmakeEntry)
             detectionPaths,
             versions,
             parseVersionDetection(cmakeEntry),
+            cmakeEntry["optional"].toBool(),
             cmakeEntry["addToSystemPath"].toBool(),
             parseLineEditType(cmakeEntry["type"])};
 }
@@ -742,16 +742,11 @@ McuTargetDescription parseDescriptionJson(const QByteArray &data, const Utils::F
     const PackageDescription freeRtosPackage{parsePackage(freeRTOS)};
 
     const QVariantList toolchainVersions = toolchain.value("versions").toArray().toVariantList();
-    const auto toolchainVersionsList = Utils::transform<QStringList>(toolchainVersions,
-                                                                     [&](const QVariant &version) {
-                                                                         return version.toString();
-                                                                     });
+    const auto toolchainVersionsList = Utils::transform(toolchainVersions, &QVariant::toString);
 
     const QVariantList colorDepths = platform.value("colorDepths").toArray().toVariantList();
-    const auto colorDepthsVector = Utils::transform<QVector<int>>(colorDepths,
-                                                                  [&](const QVariant &colorDepth) {
-                                                                      return colorDepth.toInt();
-                                                                  });
+    const auto colorDepthsVector = Utils::transform(colorDepths,
+                                                    [](const QVariant &v) { return v.toInt(); });
     const QString platformName = platform.value("platformName").toString();
 
     return {sourceFile,

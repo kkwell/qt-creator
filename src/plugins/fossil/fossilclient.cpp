@@ -23,9 +23,7 @@
 #include <QSyntaxHighlighter>
 
 #include <QDateTime>
-#include <QDir>
 #include <QFile>
-#include <QFileInfo>
 #include <QTextStream>
 #include <QMap>
 #include <QRegularExpression>
@@ -35,13 +33,9 @@ using namespace VcsBase;
 
 namespace Fossil::Internal {
 
-const RunFlags s_pullFlags = RunFlags::ShowStdOut | RunFlags::ShowSuccessMessage;
-
 // Parameter widget controlling whitespace diff mode, associated with a parameter
 class FossilDiffConfig : public VcsBaseEditorConfig
 {
-    Q_OBJECT
-
 public:
     FossilDiffConfig(FossilClient *client, QToolBar *toolBar) :
         VcsBaseEditorConfig(toolBar)
@@ -63,8 +57,6 @@ public:
 // Parameter widget controlling annotate/blame mode
 class FossilAnnotateConfig : public VcsBaseEditorConfig
 {
-    Q_OBJECT
-
 public:
     FossilAnnotateConfig(FossilClient *client, QToolBar *toolBar) :
         VcsBaseEditorConfig(toolBar)
@@ -89,8 +81,6 @@ public:
 
 class FossilLogCurrentFileConfig : public VcsBaseEditorConfig
 {
-    Q_OBJECT
-
 public:
     FossilLogCurrentFileConfig(FossilClient *client, QToolBar *toolBar) :
         VcsBaseEditorConfig(toolBar)
@@ -102,8 +92,6 @@ public:
 
 class FossilLogConfig : public VcsBaseEditorConfig
 {
-    Q_OBJECT
-
 public:
     FossilLogConfig(QToolBar *toolBar)
         : VcsBaseEditorConfig(toolBar)
@@ -196,19 +184,6 @@ unsigned FossilClient::makeVersionNumber(int major, int minor, int patch)
            (QString().setNum(patch).toUInt(0,16));
 }
 
-static inline QString versionPart(unsigned part)
-{
-    return QString::number(part & 0xff, 16);
-}
-
-QString FossilClient::makeVersionString(unsigned version)
-{
-    return QString::fromLatin1("%1.%2.%3")
-                    .arg(versionPart(version >> 16))
-                    .arg(versionPart(version >> 8))
-                    .arg(versionPart(version));
-}
-
 FossilSettings &FossilClient::settings() const
 {
     return Internal::settings();
@@ -235,7 +210,7 @@ unsigned int FossilClient::synchronousBinaryVersion() const
 
     // fossil version:
     // "This is fossil version 1.27 [ccdefa355b] 2013-09-30 11:47:18 UTC"
-    QRegularExpression versionPattern("(\\d+)\\.(\\d+)");
+    static const QRegularExpression versionPattern("(\\d+)\\.(\\d+)");
     QTC_ASSERT(versionPattern.isValid(), return 0);
     QRegularExpressionMatch versionMatch = versionPattern.match(output);
     QTC_ASSERT(versionMatch.hasMatch(), return 0);
@@ -325,8 +300,8 @@ QStringList FossilClient::parseRevisionCommentLine(const QString &commentLine)
 {
     // "comment:      This is a (test) commit message (user: the.name)"
 
-    const QRegularExpression commentRx("^comment:\\s+(.*)\\s\\(user:\\s(.*)\\)$",
-                                       QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression commentRx("^comment:\\s+(.*)\\s\\(user:\\s(.*)\\)$",
+                                              QRegularExpression::CaseInsensitiveOption);
     QTC_ASSERT(commentRx.isValid(), return {});
 
     const QRegularExpressionMatch match = commentRx.match(commentLine);
@@ -350,7 +325,7 @@ RevisionInfo FossilClient::synchronousRevisionQuery(const FilePath &workingDirec
         args << id;
 
     const CommandResult result = vcsSynchronousExec(workingDirectory, args,
-                                                    RunFlags::SuppressCommandLogging);
+                                                    RunFlag::SuppressCommandLogging);
     if (result.result() != ProcessResult::FinishedWithSuccess)
         return {};
 
@@ -362,7 +337,7 @@ RevisionInfo FossilClient::synchronousRevisionQuery(const FilePath &workingDirec
     QString commentMsg;
     QString committer;
 
-    const QRegularExpression idRx("([0-9a-f]{5,40})");
+    static const QRegularExpression idRx("([0-9a-f]{5,40})");
     QTC_ASSERT(idRx.isValid(), return {});
 
     const QString hashToken =
@@ -594,22 +569,22 @@ bool FossilClient::synchronousCreateRepository(const FilePath &workingDirectory,
     // @TODO: what about --template options?
 
     const FilePath fullRepoName = FilePath::fromStringWithExtension(repoName, Constants::FOSSIL_FILE_SUFFIX);
-    const FilePath repoFilePath = repoPath.pathAppended(fullRepoName.toString());
+    const FilePath repoFilePath = repoPath.pathAppended(fullRepoName.path());
     QStringList args(vcsCommandString(CreateRepositoryCommand));
     if (!adminUser.isEmpty())
         args << "--admin-user" << adminUser;
-    args << extraOptions << repoFilePath.toUserOutput();
+    args << extraOptions << repoFilePath.nativePath();
     CommandResult result = vcsSynchronousExec(workingDirectory, args);
     if (result.result() != ProcessResult::FinishedWithSuccess)
         return false;
-    outputWindow->append(sanitizeFossilOutput(result.cleanedStdOut()));
+    outputWindow->appendSilently(workingDirectory, sanitizeFossilOutput(result.cleanedStdOut()));
 
     // check out the created repository file into the working directory
     // --force as it may be not empty e.g. when creating a project from wizard
-    result = vcsSynchronousExec(workingDirectory, {"open", "--force", repoFilePath.toUserOutput()});
+    result = vcsSynchronousExec(workingDirectory, {"open", "--force", repoFilePath.nativePath()});
     if (result.result() != ProcessResult::FinishedWithSuccess)
         return false;
-    outputWindow->append(sanitizeFossilOutput(result.cleanedStdOut()));
+    outputWindow->appendSilently(workingDirectory, sanitizeFossilOutput(result.cleanedStdOut()));
 
     // set user default to admin if specified
     if (!adminUser.isEmpty()) {
@@ -617,7 +592,7 @@ bool FossilClient::synchronousCreateRepository(const FilePath &workingDirectory,
                                     {"user", "default", adminUser, "--user", adminUser});
         if (result.result() != ProcessResult::FinishedWithSuccess)
             return false;
-        outputWindow->append(sanitizeFossilOutput(result.cleanedStdOut()));
+        outputWindow->appendSilently(workingDirectory, sanitizeFossilOutput(result.cleanedStdOut()));
     }
 
     resetCachedVcsInfo(workingDirectory);
@@ -625,54 +600,20 @@ bool FossilClient::synchronousCreateRepository(const FilePath &workingDirectory,
 }
 
 bool FossilClient::synchronousMove(const FilePath &workingDir,
-                                   const QString &from, const QString &to,
+                                   const FilePath &from, const FilePath &to,
                                    const QStringList &extraOptions)
 {
     // Fossil move does not rename actual file on disk, only changes it in repo
     // So try to move the actual file first, then move it in repo to preserve
     // history in case actual move fails.
 
-    if (!QFile::rename(from, to))
+    Result<> res = from.renameFile(to);
+    if (!res)
         return false;
 
     QStringList args(vcsCommandString(MoveCommand));
-    args << extraOptions << from << to;
+    args << extraOptions << from.path() << to.path();
     return vcsSynchronousExec(workingDir, args).result() == ProcessResult::FinishedWithSuccess;
-}
-
-bool FossilClient::synchronousPull(const FilePath &workingDir, const QString &srcLocation, const QStringList &extraOptions)
-{
-    QStringList args(vcsCommandString(PullCommand));
-    if (srcLocation.isEmpty()) {
-        const QString defaultURL(synchronousGetRepositoryURL(workingDir));
-        if (defaultURL.isEmpty())
-            return false;
-    } else {
-        args << srcLocation;
-    }
-
-    args << extraOptions;
-    const CommandResult result = vcsSynchronousExec(workingDir, args, s_pullFlags);
-    const bool success = (result.result() == ProcessResult::FinishedWithSuccess);
-    if (success)
-        emit changed(workingDir.toVariant());
-    return success;
-}
-
-bool FossilClient::synchronousPush(const FilePath &workingDir, const QString &dstLocation, const QStringList &extraOptions)
-{
-    QStringList args(vcsCommandString(PushCommand));
-    if (dstLocation.isEmpty()) {
-        const QString defaultURL(synchronousGetRepositoryURL(workingDir));
-        if (defaultURL.isEmpty())
-            return false;
-    } else {
-        args << dstLocation;
-    }
-
-    args << extraOptions;
-    return vcsSynchronousExec(workingDir, args, s_pullFlags).result()
-            == ProcessResult::FinishedWithSuccess;
 }
 
 void FossilClient::commit(const FilePath &repositoryRoot, const QStringList &files,
@@ -697,7 +638,7 @@ void FossilClient::annotate(const FilePath &workingDir, const QString &file, int
     const FilePath source = VcsBaseEditor::getSource(workingDir, file);
 
     VcsBaseEditorWidget *editor = createVcsEditor(kind, title, source,
-                                                  VcsBaseEditor::getCodec(source),
+                                                  VcsBaseEditor::getEncoding(source),
                                                   vcsCmdString.toLatin1().constData(), id);
 
     auto fossilEditor = qobject_cast<VcsBaseEditorWidget *>(editor);
@@ -735,19 +676,13 @@ void FossilClient::annotate(const FilePath &workingDir, const QString &file, int
         lineNumber = -1;
     editor->setDefaultLineNumber(lineNumber);
 
-    enqueueJob(createCommand(workingDir, fossilEditor), args, workingDir);
+    executeInEditor(workingDir, args, fossilEditor);
 }
 
 bool FossilClient::isVcsFileOrDirectory(const FilePath &filePath) const
 {
     // false for any dir or file other than fossil checkout db-file
-    return !filePath.fileName().compare(Constants::FOSSILREPO, HostOsInfo::fileNameCaseSensitivity())
-           && filePath.isFile();
-}
-
-FilePath FossilClient::findTopLevelForFile(const FilePath &file) const
-{
-    return findRepositoryForFile(file, Constants::FOSSILREPO);
+    return filePath.withNewFileName(Constants::FOSSILREPO) == filePath && filePath.isFile();
 }
 
 bool FossilClient::managesFile(const FilePath &workingDirectory, const QString &fileName) const
@@ -780,16 +715,6 @@ unsigned int FossilClient::binaryVersion() const
     }
 
     return cachedBinaryVersion;
-}
-
-QString FossilClient::binaryVersionString() const
-{
-    const unsigned int version = binaryVersion();
-
-    // Fossil itself does not report patch version, only maj.min
-    // Here we include the patch part for general convention consistency
-
-    return makeVersionString(version);
 }
 
 FossilClient::SupportedFeatures FossilClient::supportedFeatures() const
@@ -828,10 +753,15 @@ void FossilClient::view(const FilePath &source, const QString &id, const QString
     const QString title = vcsEditorTitle(vcsCommandString(DiffCommand), id);
 
     VcsBaseEditorWidget *editor = createVcsEditor(kind, title, source,
-                                                  VcsBaseEditor::getCodec(source), "view", id);
+                                                  VcsBaseEditor::getEncoding(source), "view", id);
     editor->setWorkingDirectory(workingDirectory);
+    executeInEditor(workingDirectory, args + extraOptions, editor);
+}
 
-    enqueueJob(createCommand(workingDirectory, editor), args + extraOptions, source);
+void FossilClient::update(const Utils::FilePath &repositoryRoot, const QString &revision,
+                          const QStringList &extraOptions)
+{
+    VcsBaseClient::update(repositoryRoot, {}, QStringList{revision} + extraOptions);
 }
 
 class FossilLogHighlighter : QSyntaxHighlighter
@@ -891,7 +821,7 @@ void FossilClient::log(const FilePath &workingDir, const QStringList &files,
     SupportedFeatures features = supportedFeatures();
     if (!files.isEmpty()
         && !features.testFlag(TimelinePathFeature)) {
-        logCurrentFile(workingDir, files, extraOptions, enableAnnotationContextMenu, addAuthOptions);
+        logCurrentFile(workingDir, files, extraOptions, enableAnnotationContextMenu);
         return;
     }
 
@@ -901,7 +831,7 @@ void FossilClient::log(const FilePath &workingDir, const QStringList &files,
     const QString title = vcsEditorTitle(vcsCmdString, id);
     const FilePath source = VcsBaseEditor::getSource(workingDir, files);
     VcsBaseEditorWidget *editor = createVcsEditor(kind, title, source,
-                                                  VcsBaseEditor::getCodec(source),
+                                                  VcsBaseEditor::getEncoding(source),
                                                   vcsCmdString.toLatin1().constData(), id);
 
     auto fossilEditor = qobject_cast<VcsBaseEditorWidget *>(editor);
@@ -933,13 +863,12 @@ void FossilClient::log(const FilePath &workingDir, const QStringList &files,
     args << effectiveArgs;
     if (!files.isEmpty())
          args << "--path" << files;
-    enqueueJob(createCommand(workingDir, fossilEditor), args, workingDir);
+    executeInEditor(workingDir, args, fossilEditor);
 }
 
 void FossilClient::logCurrentFile(const FilePath &workingDir, const QStringList &files,
                                   const QStringList &extraOptions,
-                                  bool enableAnnotationContextMenu,
-                                  const std::function<void(CommandLine &)> &addAuthOptions)
+                                  bool enableAnnotationContextMenu)
 {
     // Show commit history for the given file/file-revision
     // NOTE: 'fossil finfo' shows full history from all branches.
@@ -947,7 +876,7 @@ void FossilClient::logCurrentFile(const FilePath &workingDir, const QStringList 
     // With newer clients, 'fossil timeline' can handle both repository and file
     SupportedFeatures features = supportedFeatures();
     if (features.testFlag(TimelinePathFeature)) {
-        log(workingDir, files, extraOptions, enableAnnotationContextMenu, addAuthOptions);
+        log(workingDir, files, extraOptions, enableAnnotationContextMenu);
         return;
     }
 
@@ -957,7 +886,7 @@ void FossilClient::logCurrentFile(const FilePath &workingDir, const QStringList 
     const QString title = vcsEditorTitle(vcsCmdString, id);
     const FilePath source = VcsBaseEditor::getSource(workingDir, files);
     VcsBaseEditorWidget *editor = createVcsEditor(kind, title, source,
-                                                  VcsBaseEditor::getCodec(source),
+                                                  VcsBaseEditor::getEncoding(source),
                                                   vcsCmdString.toLatin1().constData(), id);
 
     auto fossilEditor = qobject_cast<VcsBaseEditorWidget *>(editor);
@@ -970,9 +899,9 @@ void FossilClient::logCurrentFile(const FilePath &workingDir, const QStringList 
             editorConfig->setBaseArguments(extraOptions);
             // editor has been just created, createVcsEditor() didn't set a configuration widget yet
             connect(editorConfig, &VcsBaseEditorConfig::commandExecutionRequested, this,
-                    [this, workingDir, files, editorConfig, enableAnnotationContextMenu, addAuthOptions] {
+                    [this, workingDir, files, editorConfig, enableAnnotationContextMenu] {
                 logCurrentFile(workingDir, files, editorConfig->arguments(),
-                               enableAnnotationContextMenu, addAuthOptions);
+                               enableAnnotationContextMenu);
             });
             fossilEditor->setEditorConfig(editorConfig);
         }
@@ -987,27 +916,7 @@ void FossilClient::logCurrentFile(const FilePath &workingDir, const QStringList 
 
     QStringList args(vcsCmdString);
     args << effectiveArgs << files;
-    enqueueJob(createCommand(workingDir, fossilEditor), args, workingDir);
-}
-
-void FossilClient::revertFile(const FilePath &workingDir,
-                              const QString &file,
-                              const QString &revision,
-                              const QStringList &extraOptions)
-{
-    QStringList args(vcsCommandString(RevertCommand));
-    if (!revision.isEmpty())
-        args << "-r" << revision;
-    args << extraOptions << file;
-
-    // Indicate file list
-    VcsCommand *cmd = createCommand(workingDir);
-    const QStringList files = {workingDir.toString() + "/" + file};
-    connect(cmd, &VcsCommand::done, this, [this, files, cmd] {
-        if (cmd->result() == ProcessResult::FinishedWithSuccess)
-            emit changed(files);
-    });
-    enqueueJob(cmd, args, workingDir);
+    executeInEditor(workingDir, args, fossilEditor);
 }
 
 void FossilClient::revertAll(const FilePath &workingDir, const QString &revision, const QStringList &extraOptions)
@@ -1023,15 +932,12 @@ void FossilClient::revertAll(const FilePath &workingDir, const QString &revision
         args << vcsCommandString(RevertCommand) << extraOptions;
     else
         args << "checkout" << revision << "--force" << extraOptions;
-
-    // Indicate repository change
-    VcsCommand *cmd = createCommand(workingDir);
-    const QStringList files = QStringList(workingDir.toString());
-    connect(cmd, &VcsCommand::done, this, [this, files, cmd] {
-        if (cmd->result() == ProcessResult::FinishedWithSuccess)
-            emit changed(files);
-    });
-    enqueueJob(createCommand(workingDir), args, workingDir);
+    const FilePaths files = {workingDir};
+    enqueueCommand({.workingDirectory = workingDir, .arguments = args,
+                    .commandHandler = [this, files](const CommandResult &result) {
+                        if (result.result() == ProcessResult::FinishedWithSuccess)
+                            emit filesChanged(files);
+                    }});
 }
 
 QString FossilClient::sanitizeFossilOutput(const QString &output) const
@@ -1080,16 +986,7 @@ Id FossilClient::vcsEditorKind(VcsCommandTag cmd) const
 
 QStringList FossilClient::revisionSpec(const QString &revision) const
 {
-    // Pass the revision verbatim.
-    // Fossil uses a variety of ways to spec the revisions.
-    // In most cases revision is passed directly (SHA1) or via tag.
-    // Tag name may need to be prefixed with tag: to disambiguate it from hex (beef).
-    // Handle the revision option per specific command (e.g. diff, revert ).
-
-    QStringList args;
-    if (!revision.isEmpty())
-        args << revision;
-    return args;
+    return revision.isEmpty() ? QStringList{} : QStringList{"-r", revision};
 }
 
 FossilClient::StatusItem FossilClient::parseStatusLine(const QString &line) const
@@ -1177,5 +1074,3 @@ FossilClient &fossilClient()
 }
 
 } // namespace Fossil::Internal
-
-#include "fossilclient.moc"

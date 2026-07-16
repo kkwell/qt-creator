@@ -12,14 +12,14 @@
 #include "iostr.h"
 
 #include <projectexplorer/buildconfiguration.h>
+#include <projectexplorer/devicesupport/devicekitaspects.h>
+#include <projectexplorer/devicesupport/devicemanager.h>
+#include <projectexplorer/kitmanager.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/target.h>
 #include <projectexplorer/taskhub.h>
-#include <projectexplorer/kitaspects.h>
-#include <projectexplorer/kitmanager.h>
-#include <projectexplorer/devicesupport/devicemanager.h>
 
-#include <solutions/tasking/tasktree.h>
+#include <QtTaskTree/QTaskTree>
 
 #include <utils/qtcprocess.h>
 #include <utils/temporaryfile.h>
@@ -30,7 +30,7 @@
 #include <QSettings>
 
 using namespace ProjectExplorer;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace Ios::Internal {
@@ -54,29 +54,26 @@ public:
                        int progress, int maxProgress, const QString &info) {
             emit progressValueChanged(progress * 100 / maxProgress, info);
         });
-        connect(
-            m_toolHandler.get(),
-            &IosToolHandler::errorMsg,
-            this,
-            [this](IosToolHandler *, const QString &message) {
-                TaskHub::addTask(DeploymentTask(Task::Error, message));
-                emit errorMessage(message);
-            });
+        connect(m_toolHandler.get(), &IosToolHandler::message, this, &IosTransfer::message);
+        connect(m_toolHandler.get(), &IosToolHandler::errorMsg, this, [this](const QString &message) {
+            TaskHub::addTask<DeploymentTask>(Task::Error, message);
+            emit errorMessage(message);
+        });
         connect(m_toolHandler.get(), &IosToolHandler::didTransferApp, this,
                 [this](IosToolHandler *, const FilePath &, const QString &,
                        IosToolHandler::OpStatus status) {
             disconnect(m_toolHandler.get(), nullptr, this, nullptr);
             m_toolHandler.release()->deleteLater();
             if (status != IosToolHandler::Success && m_expectSuccess) {
-                TaskHub::addTask(DeploymentTask(Task::Error, Tr::tr("Deployment failed. "
-                    "The settings in the Devices window of Xcode might be incorrect.")));
+                TaskHub::addTask<DeploymentTask>(Task::Error, Tr::tr("Deployment failed. "
+                    "The settings in the Devices window of Xcode might be incorrect."));
             }
             emit done(toDoneResult(status == IosToolHandler::Success));
         });
         connect(m_toolHandler.get(), &IosToolHandler::finished, this, [this] {
             disconnect(m_toolHandler.get(), nullptr, this, nullptr);
             m_toolHandler.release()->deleteLater();
-            TaskHub::addTask(DeploymentTask(Task::Error, Tr::tr("Deployment failed.")));
+            TaskHub::addTask<DeploymentTask>(Task::Error, Tr::tr("Deployment failed."));
             emit done(DoneResult::Error);
         });
         m_toolHandler->requestTransferApp(m_bundlePath, m_deviceType->identifier);
@@ -85,6 +82,7 @@ public:
 signals:
     void done(DoneResult result);
     void progressValueChanged(int progress, const QString &info); // progress in %
+    void message(const QString &message);
     void errorMessage(const QString &message);
 
 private:
@@ -94,16 +92,7 @@ private:
     std::unique_ptr<IosToolHandler> m_toolHandler;
 };
 
-class IosTransferTaskAdapter : public TaskAdapter<IosTransfer>
-{
-public:
-    IosTransferTaskAdapter() { connect(task(), &IosTransfer::done, this, &TaskInterface::done); }
-
-private:
-    void start() final { task()->start(); }
-};
-
-using IosTransferTask = CustomTask<IosTransferTaskAdapter>;
+using IosTransferTask = QCustomTask<IosTransfer>;
 
 GroupItem createDeviceCtlDeployTask(
     const IosDevice::ConstPtr &device,
@@ -113,8 +102,7 @@ GroupItem createDeviceCtlDeployTask(
 {
     const auto onSetup = [=](Process &process) {
         if (!device) {
-            TaskHub::addTask(
-                DeploymentTask(Task::Error, Tr::tr("Deployment failed. No iOS device found.")));
+            TaskHub::addTask<DeploymentTask>(Task::Error, Tr::tr("Deployment failed. No iOS device found."));
             return SetupResult::StopWithError;
         }
         process.setCommand({FilePath::fromString("/usr/bin/xcrun"),
@@ -144,7 +132,7 @@ GroupItem createDeviceCtlDeployTask(
                          Task::Error);
             return DoneResult::Error;
         }
-        const Utils::expected_str<QJsonValue> resultValue = parseDevicectlResult(
+        const Utils::Result<QJsonValue> resultValue = parseDevicectlResult(
             process.rawStdOut());
         if (resultValue) {
             // success
@@ -197,22 +185,22 @@ IosDeployStep::IosDeployStep(BuildStepList *parent, Utils::Id id)
     updateDisplayNames();
     connect(DeviceManager::instance(), &DeviceManager::updated,
             this, &IosDeployStep::updateDisplayNames);
-    connect(target(), &Target::kitChanged,
+    connect(buildConfiguration(), &BuildConfiguration::kitChanged,
             this, &IosDeployStep::updateDisplayNames);
 }
 
 void IosDeployStep::updateDisplayNames()
 {
-    IDevice::ConstPtr dev = DeviceKitAspect::device(kit());
+    IDevice::ConstPtr dev = RunDeviceKitAspect::device(kit());
     const QString devName = dev ? dev->displayName() : IosDevice::name();
     setDisplayName(Tr::tr("Deploy to %1").arg(devName));
 }
 
 bool IosDeployStep::init()
 {
-    m_device = DeviceKitAspect::device(kit());
+    m_device = RunDeviceKitAspect::device(kit());
     auto runConfig = qobject_cast<const IosRunConfiguration *>(
-        this->target()->activeRunConfiguration());
+        buildConfiguration()->activeRunConfiguration());
     QTC_ASSERT(runConfig, return false);
     m_bundlePath = runConfig->bundleDirectory();
 
@@ -237,15 +225,14 @@ GroupItem IosDeployStep::runRecipe()
                                         const std::optional<Task::TaskType> &taskType) {
             emit addOutput(error, OutputFormat::ErrorMessage);
             if (taskType)
-                TaskHub::addTask(DeploymentTask(*taskType, error));
+                TaskHub::addTask<DeploymentTask>(*taskType, error);
         };
         return createDeviceCtlDeployTask(iosdevice(), m_bundlePath, handleProgress, handleError);
     }
     // otherwise use iostool:
     const auto onSetup = [this](IosTransfer &transfer) {
         if (!m_device) {
-            TaskHub::addTask(
-                DeploymentTask(Task::Error, Tr::tr("Deployment failed. No iOS device found.")));
+            TaskHub::addTask<DeploymentTask>(Task::Error, Tr::tr("Deployment failed. No iOS device found."));
             return SetupResult::StopWithError;
         }
         transfer.setDeviceType(m_deviceType);
@@ -253,6 +240,9 @@ GroupItem IosDeployStep::runRecipe()
         transfer.setExpectSuccess(checkProvisioningProfile());
         emit progress(0, transferringMessage);
         connect(&transfer, &IosTransfer::progressValueChanged, this, &IosDeployStep::progress);
+        connect(&transfer, &IosTransfer::message, this, [this](const QString &message) {
+            emit addOutput(message, OutputFormat::NormalMessage);
+        });
         connect(&transfer, &IosTransfer::errorMessage, this, [this](const QString &message) {
             emit addOutput(message, OutputFormat::ErrorMessage);
         });
@@ -292,7 +282,7 @@ bool IosDeployStep::checkProvisioningProfile()
     if (!provisioningFilePath.exists())
         return true;
 
-    QFile provisionFile(provisioningFilePath.toString());
+    QFile provisionFile(provisioningFilePath.toUrlishString());
     if (!provisionFile.open(QIODevice::ReadOnly))
         return true;
 
@@ -309,7 +299,7 @@ bool IosDeployStep::checkProvisioningProfile()
 
     f.write(provisionData.mid(start, end - start));
     f.flush();
-    const QSettings provisionPlist(f.fileName(), QSettings::NativeFormat);
+    const QSettings provisionPlist(f.filePath().toFSPathString(), QSettings::NativeFormat);
     if (!provisionPlist.contains(QLatin1String("ProvisionedDevices")))
         return true;
 

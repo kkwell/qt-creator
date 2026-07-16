@@ -47,7 +47,7 @@ public:
     mode selector on the left side of \QC's main window.
 
     Modes are used to show a different UI for different development tasks.
-    Therefore modes control the layout of most of Qt Creator's main window,
+    Therefore modes control the layout of most of \QC's main window,
     except for the tool bar on the left side and the status bar. For example
     Edit mode, the most commonly used mode for coding, shows the code editor
     and various navigation and output panes. Debug mode enhances that view with
@@ -62,7 +62,7 @@ public:
 
     Adding a mode should be done sparingly, only as a last reserve. Consider if
     your feature can instead be implemented as a INavigationWidgetFactory,
-    IOutputPane, \c{Debugger::Utils::Perspective}, separate dialog, or
+    IOutputPane, Perspective, separate dialog, or
     specialized IEditor first.
 
     If you add a mode, consider adding a NavigationWidgetPlaceHolder
@@ -74,7 +74,7 @@ public:
 */
 
 /*!
-    \property IMode::enabled
+    \property Core::IMode::enabled
 
     This property holds whether the mode is enabled.
 
@@ -82,7 +82,7 @@ public:
 */
 
 /*!
-    \property IMode::displayName
+    \property Core::IMode::displayName
 
     This property holds the display name of the mode.
 
@@ -90,7 +90,7 @@ public:
 */
 
 /*!
-    \property IMode::icon
+    \property Core::IMode::icon
 
     This property holds the icon of the mode.
 
@@ -99,7 +99,7 @@ public:
 */
 
 /*!
-    \property IMode::priority
+    \property Core::IMode::priority
 
     This property holds the priority of the mode.
 
@@ -110,7 +110,7 @@ public:
 */
 
 /*!
-    \property IMode::id
+    \property Core::IMode::id
 
     This property holds the ID of the mode.
 */

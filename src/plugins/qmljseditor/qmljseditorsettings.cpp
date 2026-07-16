@@ -4,9 +4,21 @@
 #include "qmljseditorsettings.h"
 #include "qmljseditorconstants.h"
 #include "qmljseditortr.h"
+#include "qmllsclient.h"
 
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/icore.h>
+#include <coreplugin/dialogs/ioptionspage.h>
+
+#include <languageclient/languageclientinterface.h>
+#include <languageclient/languageclientmanager.h>
+#include <languageclient/languageclientsettings.h>
+
+#include <projectexplorer/projectexplorer.h>
+#include <projectexplorer/projectmanager.h>
+#include <projectexplorer/projectpanelfactory.h>
+#include <projectexplorer/projectsettingswidget.h>
+#include <projectexplorer/projecttree.h>
 
 #include <qmljs/qmljscheck.h>
 #include <qmljs/qmljsmodelmanagerinterface.h>
@@ -14,7 +26,11 @@
 
 #include <qmljstools/qmljstoolsconstants.h>
 
-#include <qtsupport/qtversionmanager.h>
+#include <qtsupport/qtsupportconstants.h>
+
+#include <updateinfo/updateinfoservice.h>
+
+#include <extensionsystem/pluginmanager.h>
 
 #include <utils/algorithm.h>
 #include <utils/hostosinfo.h>
@@ -31,40 +47,30 @@
 #include <QLineEdit>
 #include <QLoggingCategory>
 #include <QMenu>
+#include <QPushButton>
 #include <QTextStream>
 #include <QTreeView>
 
 #include <nanotrace/nanotrace.h>
 
-#include <limits>
-
 using namespace QmlJSEditor::Internal;
 using namespace QtSupport;
 using namespace Utils;
+using namespace ProjectExplorer;
 
 namespace QmlJSEditor::Internal {
-
-static Q_LOGGING_CATEGORY(qmllsLog, "qtc.qmlls.settings", QtWarningMsg)
 
 const char AUTO_FORMAT_ON_SAVE[] = "QmlJSEditor.AutoFormatOnSave";
 const char AUTO_FORMAT_ONLY_CURRENT_PROJECT[] = "QmlJSEditor.AutoFormatOnlyCurrentProject";
 const char QML_CONTEXTPANE_KEY[] = "QmlJSEditor.ContextPaneEnabled";
 const char QML_CONTEXTPANEPIN_KEY[] = "QmlJSEditor.ContextPanePinned";
 const char FOLD_AUX_DATA[] = "QmlJSEditor.FoldAuxData";
-const char USE_QMLLS[] = "QmlJSEditor.UseQmlls";
-const char USE_LATEST_QMLLS[] = "QmlJSEditor.UseLatestQmlls";
-const char IGNORE_MINIMUM_QMLLS_VERSION[] = "QmlJSEditor.IgnoreMinimumQmllsVersion";
-const char DISABLE_BUILTIN_CODEMODEL[] = "QmlJSEditor.DisableBuiltinCodemodel";
-const char GENERATE_QMLLS_INI_FILES[] = "QmlJSEditor.GenerateQmllsIniFiles";
 const char UIQML_OPEN_MODE[] = "QmlJSEditor.openUiQmlMode";
-const char FORMAT_COMMAND[] = "QmlJSEditor.formatCommand";
-const char FORMAT_COMMAND_OPTIONS[] = "QmlJSEditor.formatCommandOptions";
-const char CUSTOM_COMMAND[] = "QmlJSEditor.useCustomFormatCommand";
 const char CUSTOM_ANALYZER[] = "QmlJSEditor.useCustomAnalyzer";
 const char DISABLED_MESSAGES[] = "QmlJSEditor.disabledMessages";
 const char DISABLED_MESSAGES_NONQUICKUI[] = "QmlJSEditor.disabledMessagesNonQuickUI";
-const char DEFAULT_CUSTOM_FORMAT_COMMAND[]
-    = "%{CurrentDocument:Project:QT_HOST_BINS}/qmlformat%{HostOs:ExecutableSuffix}";
+const char QDS_COMMAND[] = "QmlJSEditor.qdsCommand";
+const char SETTINGS_PAGE[] = "C.QmlJsEditing";
 
 QmlJsEditingSettings &settings()
 {
@@ -72,100 +78,7 @@ QmlJsEditingSettings &settings()
     return settings;
 }
 
-static FilePath evaluateLatestQmlls()
-{
-    // find latest qmlls, i.e. vals
-    if (!QtVersionManager::isLoaded())
-        return {};
-    const QtVersions versions = QtVersionManager::versions();
-    FilePath latestQmlls;
-    QVersionNumber latestVersion;
-    FilePath latestQmakeFilePath;
-    int latestUniqueId = std::numeric_limits<int>::min();
-    for (QtVersion *v : versions) {
-        // check if we find qmlls
-        QVersionNumber vNow = v->qtVersion();
-        FilePath qmllsNow = QmlJS::ModelManagerInterface::qmllsForBinPath(v->hostBinPath(), vNow);
-        if (!qmllsNow.isExecutableFile())
-            continue;
-        if (latestVersion > vNow)
-            continue;
-        FilePath qmakeNow = v->qmakeFilePath();
-        int uniqueIdNow = v->uniqueId();
-        if (latestVersion == vNow) {
-            if (latestQmakeFilePath > qmakeNow)
-                continue;
-            if (latestQmakeFilePath == qmakeNow && latestUniqueId >= v->uniqueId())
-                continue;
-        }
-        latestVersion = vNow;
-        latestQmlls = qmllsNow;
-        latestQmakeFilePath = qmakeNow;
-        latestUniqueId = uniqueIdNow;
-    }
-    return latestQmlls;
-}
-
-QmllsSettingsManager *QmllsSettingsManager::instance()
-{
-    static QmllsSettingsManager *manager = new QmllsSettingsManager;
-    return manager;
-}
-
-FilePath QmllsSettingsManager::latestQmlls()
-{
-    QMutexLocker l(&m_mutex);
-    return m_latestQmlls;
-}
-
-void QmllsSettingsManager::setupAutoupdate()
-{
-    QObject::connect(QtVersionManager::instance(),
-                     &QtVersionManager::qtVersionsChanged,
-                     this,
-                     &QmllsSettingsManager::checkForChanges);
-    if (QtVersionManager::isLoaded())
-        checkForChanges();
-    else
-        QObject::connect(QtVersionManager::instance(),
-                         &QtVersionManager::qtVersionsLoaded,
-                         this,
-                         &QmllsSettingsManager::checkForChanges);
-}
-
-void QmllsSettingsManager::checkForChanges()
-{
-    const QmlJsEditingSettings &newSettings = settings();
-    FilePath newLatest = newSettings.useLatestQmlls() && newSettings.useQmlls()
-            ? evaluateLatestQmlls() : m_latestQmlls;
-    if (m_useQmlls == newSettings.useQmlls()
-        && m_useLatestQmlls == newSettings.useLatestQmlls()
-        && m_disableBuiltinCodemodel == newSettings.disableBuiltinCodemodel()
-        && m_generateQmllsIniFiles == newSettings.generateQmllsIniFiles()
-        && newLatest == m_latestQmlls)
-        return;
-    qCDebug(qmllsLog) << "qmlls settings changed:" << newSettings.useQmlls()
-                      << newSettings.useLatestQmlls() << newLatest;
-    {
-        QMutexLocker l(&m_mutex);
-        m_latestQmlls = newLatest;
-        m_useQmlls = newSettings.useQmlls();
-        m_useLatestQmlls = newSettings.useLatestQmlls();
-        m_disableBuiltinCodemodel = newSettings.disableBuiltinCodemodel();
-        m_generateQmllsIniFiles = newSettings.generateQmllsIniFiles();
-    }
-    emit settingsChanged();
-}
-
-bool QmllsSettingsManager::useLatestQmlls() const
-{
-    return m_useLatestQmlls;
-}
-
-bool QmllsSettingsManager::useQmlls() const
-{
-    return m_useQmlls;
-}
+using namespace LanguageClient;
 
 static QList<int> defaultDisabledMessages()
 {
@@ -183,27 +96,24 @@ static QList<int> defaultDisabledMessagesNonQuickUi()
     return disabledForNonQuickUi;
 }
 
-static QVariant toSettingsTransformation(const QVariant &v)
+QVariant DisabledMessagesAspect::fromSettingsValue(const QVariant &savedValue) const
 {
-    QList<int> list = v.value<QList<int>>();
-    QStringList result = Utils::transform<QStringList>(list, [](int i) { return QString::number(i); });
+    QStringList list = savedValue.value<QStringList>();
+    QList<int> result =  Utils::transform<QList<int>>(list, [](const QString &s) { return s.toInt(); });
     return QVariant::fromValue(result);
 }
 
-static QVariant fromSettingsTransformation(const QVariant &v)
+QVariant DisabledMessagesAspect::toSettingsValue(const QVariant &valueToSave) const
 {
-    QStringList list = v.value<QStringList>();
-    QList<int> result =  Utils::transform<QList<int>>(list, [](const QString &s) { return s.toInt(); });
+    QList<int> list = valueToSave.value<QList<int>>();
+    QStringList result = Utils::transform<QStringList>(list, [](int i) { return QString::number(i); });
     return QVariant::fromValue(result);
 }
 
 QmlJsEditingSettings::QmlJsEditingSettings()
 {
+    setAutoApply(false);
     const Key group = QmlJSEditor::Constants::SETTINGS_CATEGORY_QML;
-
-    useQmlls.setSettingsKey(group, USE_QMLLS);
-    useQmlls.setDefaultValue(true);
-    useQmlls.setLabelText(Tr::tr("Turn on"));
 
     enableContextPane.setSettingsKey(group, QML_CONTEXTPANE_KEY);
     enableContextPane.setLabelText(Tr::tr("Always show Qt Quick Toolbar"));
@@ -230,63 +140,28 @@ QmlJsEditingSettings::QmlJsEditingSettings()
     uiQmlOpenMode.addOption({Tr::tr("Qt Design Studio"), {}, Core::Constants::MODE_DESIGN});
     uiQmlOpenMode.addOption({Tr::tr("Qt Creator"), {}, Core::Constants::MODE_EDIT});
 
-    useLatestQmlls.setSettingsKey(group, USE_LATEST_QMLLS);
-    useLatestQmlls.setLabelText(Tr::tr("Use from latest Qt version"));
-
-    disableBuiltinCodemodel.setSettingsKey(group, DISABLE_BUILTIN_CODEMODEL);
-    disableBuiltinCodemodel.setLabelText(
-        Tr::tr("Use advanced features (renaming, find usages, and so on) "
-               "(experimental)"));
-
-    generateQmllsIniFiles.setSettingsKey(group, GENERATE_QMLLS_INI_FILES);
-    generateQmllsIniFiles.setLabelText(
-        Tr::tr("Create .qmlls.ini files for new projects"));
-
-    ignoreMinimumQmllsVersion.setSettingsKey(group, IGNORE_MINIMUM_QMLLS_VERSION);
-    ignoreMinimumQmllsVersion.setLabelText(
-        Tr::tr("Allow versions below Qt %1")
-            .arg(QmlJsEditingSettings::mininumQmllsVersion.toString()));
-
-    useCustomFormatCommand.setSettingsKey(group, CUSTOM_COMMAND);
-    useCustomFormatCommand.setLabelText(
-        Tr::tr("Use custom command instead of built-in formatter"));
-
-    formatCommand.setSettingsKey(group, FORMAT_COMMAND);
-    formatCommand.setDisplayStyle(StringAspect::LineEditDisplay);
-    formatCommand.setPlaceHolderText(defaultFormatCommand());
-    formatCommand.setLabelText(Tr::tr("Command:"));
-
-    formatCommandOptions.setSettingsKey(group, FORMAT_COMMAND_OPTIONS);
-    formatCommandOptions.setDisplayStyle(StringAspect::LineEditDisplay);
-    formatCommandOptions.setLabelText(Tr::tr("Arguments:"));
-
     useCustomAnalyzer.setSettingsKey(group, CUSTOM_ANALYZER);
     useCustomAnalyzer.setLabelText(Tr::tr("Use customized static analyzer"));
 
     disabledMessages.setSettingsKey(group, DISABLED_MESSAGES);
     disabledMessages.setDefaultValue(defaultDisabledMessages());
-    disabledMessages.setFromSettingsTransformation(&fromSettingsTransformation);
-    disabledMessages.setToSettingsTransformation(&toSettingsTransformation);
 
     disabledMessagesForNonQuickUi.setSettingsKey(group, DISABLED_MESSAGES_NONQUICKUI);
     disabledMessagesForNonQuickUi.setDefaultValue(defaultDisabledMessagesNonQuickUi());
-    disabledMessagesForNonQuickUi.setFromSettingsTransformation(&fromSettingsTransformation);
-    disabledMessagesForNonQuickUi.setToSettingsTransformation(&toSettingsTransformation);
+
+    qdsCommand.setSettingsKey(group, QDS_COMMAND);
+    qdsCommand.setPlaceHolderText(defaultQdsCommand().toUserOutput());
+    qdsCommand.setLabelText(Tr::tr("Command:"));
+    qdsCommand.setVisible(false);
 
     readSettings();
-
-    autoFormatOnlyCurrentProject.setEnabler(&autoFormatOnSave);
-    useLatestQmlls.setEnabler(&useQmlls);
-    disableBuiltinCodemodel.setEnabler(&useQmlls);
-    generateQmllsIniFiles.setEnabler(&useQmlls);
-    ignoreMinimumQmllsVersion.setEnabler(&useQmlls);
-    formatCommand.setEnabler(&useCustomFormatCommand);
-    formatCommandOptions.setEnabler(&useCustomFormatCommand);
 }
 
-QString QmlJsEditingSettings::defaultFormatCommand() const
+FilePath QmlJsEditingSettings::defaultQdsCommand() const
 {
-    return DEFAULT_CUSTOM_FORMAT_COMMAND;
+    QtcSettings *settings = Core::ICore::settings();
+    const Key qdsInstallationEntry = "QML/Designer/DesignStudioInstallation"; //set in installer
+    return FilePath::fromUserInput(settings->value(qdsInstallationEntry).toString());
 }
 
 class AnalyzerMessageItem final : public Utils::TreeItem
@@ -345,6 +220,16 @@ private:
     bool m_disabledInNonQuickUi = false;
 };
 
+static void openQtVersionsOptions()
+{
+    Core::ICore::showSettings(QtSupport::Constants::QTVERSION_SETTINGS_PAGE_ID);
+}
+
+static UpdateInfo::Service *updateInfoService()
+{
+    return ExtensionSystem::PluginManager::getObject<UpdateInfo::Service>();
+}
+
 class QmlJsEditingSettingsPageWidget final : public Core::IOptionsPageWidget
 {
 public:
@@ -352,9 +237,8 @@ public:
     {
         QmlJsEditingSettings &s = settings();
 
-        analyzerMessageModel.setHeader({Tr::tr("Enabled"),
-                                        Tr::tr("Disabled for non Qt Quick UI"),
-                                        Tr::tr("Message")});
+        analyzerMessageModel.setHeader(
+            {Tr::tr("Enabled"), Tr::tr("Only for Qt Quick UI"), Tr::tr("Message")});
         analyzerMessagesView = new QTreeView;
         analyzerMessagesView->setModel(&analyzerMessageModel);
         analyzerMessagesView->setEnabled(s.useCustomAnalyzer());
@@ -369,21 +253,20 @@ public:
         analyzerMessagesView->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(analyzerMessagesView, &QTreeView::customContextMenuRequested,
                 this, &QmlJsEditingSettingsPageWidget::showContextMenu);
+
         using namespace Layouting;
+        QWidget *installQdsRow = nullptr;
+        QPushButton *installQdsButton = nullptr;
         // clang-format off
         QWidget *formattingGroup = nullptr;
+        QWidget *qdsGroup = nullptr;
         Column {
             Group {
                 bindTo(&formattingGroup),
-                title(Tr::tr("Automatic Formatting on File Save")),
+                title(Tr::tr("Formatting")),
                 Column {
                     s.autoFormatOnSave,
                     s.autoFormatOnlyCurrentProject,
-                    s.useCustomFormatCommand,
-                    Form {
-                        s.formatCommand, br,
-                        s.formatCommandOptions
-                    }
                 },
             },
             Group {
@@ -394,20 +277,50 @@ public:
                 },
             },
             Group {
+                bindTo(&qdsGroup),
+                title(Tr::tr("Qt Design Studio")),
+                Column {
+                    Label {
+                        wordWrap(true),
+                        text(Tr::tr("Set the path to the Qt Design Studio application to enable "
+                                    "the \"Open in Qt Design Studio\" feature. If you have Qt "
+                                    "Design Studio installed alongside Qt Creator with the Qt "
+                                    "Online Installer, it is used as the default. Use "
+                                    "<a href=\"linwithqt\">\"Link with Qt\"</a> to link an "
+                                    "offline installation of Qt Creator to a Qt Online Installer.")),
+                        onLinkActivated(this, [](const QString &) { openQtVersionsOptions(); })
+                    },
+                    Form {
+                        s.qdsCommand, br
+                    },
+                    Widget {
+                        bindTo(&installQdsRow),
+                        Row {
+                            st,
+                            PushButton {
+                                bindTo(&installQdsButton),
+                                text(Tr::tr("Install Qt Design Studio"))
+                            }
+                        }
+                    }
+                }
+            },
+            Group {
                 title(Tr::tr("Features")),
                 Column {
                     s.foldAuxData,
                     Row { s.uiQmlOpenMode, st }
                 },
             },
-            Group{
+            Group {
                 title(Tr::tr("QML Language Server")),
-                Column {
-                    s.useQmlls,
-                    s.ignoreMinimumQmllsVersion,
-                    s.disableBuiltinCodemodel,
-                    s.useLatestQmlls,
-                    s.generateQmllsIniFiles
+                Row {
+                    PushButton {
+                        ignoreDirtyHooks,
+                        text(Tr::tr("Open Language Server preferences...")),
+                        onClicked(this, [] { Core::ICore::showSettings(LanguageClient::Constants::LANGUAGECLIENT_SETTINGS_PAGE); })
+                    },
+                    st
                 },
             },
             Group {
@@ -421,10 +334,31 @@ public:
         }.attachTo(this);
         // clang-format on
 
-        Utils::VariableChooser::addSupportForChildWidgets(formattingGroup,
-                                                          Utils::globalMacroExpander());
+        qdsGroup->setVisible(s.qdsCommand.isVisible());
+        const auto updateQdsSettings = [installQdsRow] {
+            QmlJsEditingSettings &s = settings();
+            const QString placeholder = s.defaultQdsCommand().toUserOutput();
+            s.qdsCommand.setPlaceHolderText(placeholder);
+            s.qdsCommand.pathChooser()->setPlaceholderText(placeholder);
+            installQdsRow->setVisible(s.defaultQdsCommand().isEmpty() && updateInfoService());
+        };
+        updateQdsSettings();
+        connect(installQdsButton, &QPushButton::clicked, this, [updateQdsSettings] {
+            UpdateInfo::Service *updater = updateInfoService();
+            QTC_ASSERT(updater, return);
+            if (updater->installPackages("^qt[.].*qtdesignstudio.*$")) {
+                updateQdsSettings();
+                emit settings().qdsCommand.changed();
+            }
+        });
+
+        VariableChooser::addSupportForChildWidgets(formattingGroup,
+                                      MacroExpanderProvider(globalMacroExpander()));
 
         populateAnalyzerMessages(s.disabledMessages(), s.disabledMessagesForNonQuickUi());
+
+        installMarkSettingsDirtyTriggerRecursively(this);
+        connect(&analyzerMessageModel, &QAbstractItemModel::dataChanged, this, markSettingsDirty);
     }
 
     void apply() final
@@ -444,14 +378,24 @@ public:
         s.disabledMessages.setValue(disabled);
         s.disabledMessagesForNonQuickUi.setValue(disabledForNonQuickUi);
         s.writeSettings();
-        QmllsSettingsManager::instance()->checkForChanges();
+        Core::IOptionsPageWidget::apply();
+    }
+
+    void cancel() final
+    {
+        QmlJsEditingSettings &s = settings();
+        s.cancel();
+        analyzerMessageModel.clear();
+        populateAnalyzerMessages(s.disabledMessages(), s.disabledMessagesForNonQuickUi());
+        analyzerMessagesView->setEnabled(s.useCustomAnalyzer());
+        Core::IOptionsPageWidget::cancel();
     }
 
 private:
     void populateAnalyzerMessages(const QList<int> &disabled, const QList<int> &disabledForNonQuickUi)
     {
         using namespace QmlJS::StaticAnalysis;
-        auto knownMessages = Utils::sorted(Message::allMessageTypes());
+        const QList<Type> knownMessages = Utils::sorted(Message::allMessageTypes());
         auto root = analyzerMessageModel.rootItem();
         for (auto msgType : knownMessages) {
             const QString msg = Message::prototypeForMessageType(msgType).message;
@@ -474,7 +418,7 @@ private:
             analyzerMessageModel.clear();
             populateAnalyzerMessages(defaultDisabledMessages(),
                                      defaultDisabledMessagesNonQuickUi());
-
+            markSettingsDirty();
         });
         menu.exec(analyzerMessagesView->mapToGlobal(position));
     }
@@ -483,12 +427,23 @@ private:
     Utils::TreeModel<AnalyzerMessageItem> analyzerMessageModel;
 };
 
-QmlJsEditingSettingsPage::QmlJsEditingSettingsPage()
+class QmlJsEditingSettingsPage : public Core::IOptionsPage
 {
-    setId("C.QmlJsEditing");
-    setDisplayName(::QmlJSEditor::Tr::tr("QML/JS Editing"));
-    setCategory(Constants::SETTINGS_CATEGORY_QML);
-    setWidgetCreator([] { return new QmlJsEditingSettingsPageWidget; });
+public:
+    QmlJsEditingSettingsPage()
+    {
+        setId(SETTINGS_PAGE);
+        setDisplayName(::QmlJSEditor::Tr::tr("QML/JS Editing"));
+        setCategory(Constants::SETTINGS_CATEGORY_QML);
+        setWidgetCreator([] { return new QmlJsEditingSettingsPageWidget; });
+        setSettingsProvider([] { return &settings(); });
+    }
+};
+
+void setupQmlJsEditingSettings()
+{
+    static QmlJsEditingSettingsPage theQmlJsEditingSettingsPage;
 }
+
 
 } // QmlJsEditor::Internal

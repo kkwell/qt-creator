@@ -40,7 +40,7 @@ Section {
     anchors.left: parent.left
     anchors.right: parent.right
     caption: qsTr('Effects <a style="color:%1;">[beta]</a>').arg(StudioTheme.Values.themeInteraction)
-    visible: backendValues.layer_effect.isAvailable
+    visible: backendValues.layer_effect?.isAvailable ?? false
 
     property Connections connection: Connections {
         target: modelNodeBackend
@@ -62,8 +62,8 @@ Section {
                 implicitWidth: StudioTheme.Values.singleControlColumnWidth
                 width: StudioTheme.Values.singleControlColumnWidth
                 buttonIcon: root.hasDesignerEffect ? qsTr("Remove Effects") : qsTr("Add Effects")
-                iconFont: StudioTheme.Constants.font
-                tooltip: qsTr("Adds visual effects on the component.")
+                iconFontFamily: StudioTheme.Constants.font.family
+                tooltip: root.hasDesignerEffect ? qsTr("Removes all the visual effects from the component.") : qsTr("Adds visual effects to the component.")
                 onClicked: {
                     if (root.hasDesignerEffect) {
                          root.effectNodeWrapper.deleteModelNode()
@@ -75,6 +75,8 @@ Section {
                     root.invalidate()
                 }
             }
+
+            ExpandingSpacer {}
         }
 
         PropertyLabel {
@@ -89,7 +91,7 @@ Section {
             CheckBox {
                 implicitWidth: StudioTheme.Values.twoControlColumnWidth
                                + StudioTheme.Values.actionIndicatorWidth
-                backendValue: root.effectNodeWrapper.properties.visible
+                backendValue: root.effectNodeWrapper?.properties.visible
             }
 
             ExpandingSpacer {}
@@ -191,7 +193,8 @@ Section {
             labelCapitalization: Font.MixedCase
             visible: root.hasDesignerEffect
             category: "DesignEffects"
-            expanded: false
+            defaultExpanded: false
+            expanded: defaultExpanded
 
             SectionLayout {
 
@@ -204,7 +207,7 @@ Section {
                     CheckBox {
                         implicitWidth: StudioTheme.Values.twoControlColumnWidth
                                        + StudioTheme.Values.actionIndicatorWidth
-                        backendValue: root.effectNodeWrapper.properties.layerBlurVisible
+                        backendValue: root.effectNodeWrapper?.properties.layerBlurVisible
                     }
 
                     ExpandingSpacer {}
@@ -219,7 +222,7 @@ Section {
                     SpinBox {
                         implicitWidth: StudioTheme.Values.twoControlColumnWidth
                                        + StudioTheme.Values.actionIndicatorWidth
-                        backendValue: root.effectNodeWrapper.properties.layerBlurRadius
+                        backendValue: root.effectNodeWrapper?.properties.layerBlurRadius
                         minimumValue: 0
                         maximumValue: 250
                     }
@@ -237,7 +240,8 @@ Section {
             labelCapitalization: Font.MixedCase
             visible: root.hasDesignerEffect
             category: "DesignEffects"
-            expanded: false
+            defaultExpanded: false
+            expanded: defaultExpanded
 
             SectionLayout {
 
@@ -250,7 +254,7 @@ Section {
                     CheckBox {
                         implicitWidth: StudioTheme.Values.twoControlColumnWidth
                                        + StudioTheme.Values.actionIndicatorWidth
-                        backendValue: root.effectNodeWrapper.properties.backgroundBlurVisible
+                        backendValue: root.effectNodeWrapper?.properties.backgroundBlurVisible
                     }
 
                     ExpandingSpacer {}
@@ -267,7 +271,7 @@ Section {
                     SpinBox {
                         implicitWidth: StudioTheme.Values.twoControlColumnWidth
                                        + StudioTheme.Values.actionIndicatorWidth
-                        backendValue: root.effectNodeWrapper.properties.backgroundBlurRadius
+                        backendValue: root.effectNodeWrapper?.properties.backgroundBlurRadius
                         minimumValue: 0
                         maximumValue: 250
                     }
@@ -288,7 +292,7 @@ Section {
                                        + StudioTheme.Values.actionIndicatorWidth
                         width: implicitWidth
                         typeFilter: "QtQuick.Item"
-                        backendValue: root.effectNodeWrapper.properties.backgroundLayer
+                        backendValue: root.effectNodeWrapper?.properties.backgroundLayer
                     }
 
                     ExpandingSpacer {}
@@ -347,7 +351,8 @@ Section {
                 anchors.right: parent.right
                 category: "DesignEffects"
                 fillBackground: true
-                expanded: false
+                defaultExpanded: false
+                expanded: defaultExpanded
 
                 draggable: true
                 showCloseButton: true
@@ -533,7 +538,7 @@ Section {
                 implicitWidth: StudioTheme.Values.singleControlColumnWidth
                 width: StudioTheme.Values.singleControlColumnWidth
                 buttonIcon: qsTr("Add Shadow Effect")
-                iconFont: StudioTheme.Constants.font
+                iconFontFamily: StudioTheme.Constants.font.family
                 tooltip: qsTr("Adds <b>Drop Shadow</b> or <b>Inner Shadow</b> effects to a component.")
                 onClicked: {
                     modelNodeBackend.createModelNode(root.effectNode,

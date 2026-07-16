@@ -3,14 +3,9 @@
 
 /*!
     \page creator-editor-quick-fixes.html
-    \if defined(qtdesignstudio)
-    \previouspage qtquick-text-editor.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-edit
-    \ingroup studio-how-to-refactor-code
 
     \title Apply quick fixes
 
@@ -19,35 +14,30 @@
     cursor in the code editor.
 
     \list 1
-    \if defined(qtcreator)
         \li To apply quick fixes:
             \list
                 \li In C++ code, right-click an operand, conditional statement,
                     string, or name.
                 \li In QML code, right-click an item ID or name.
             \endlist
-    \else
-        \li To apply quick fixes to QML code, right-click an item ID or name.
-    \endif
         \li In the context menu, go to \uicontrol {Refactoring} and then select a
             quick fix.
     \endlist
 
-    Or, press \key {Alt+Enter} to open a context menu that has
+    Or, select \key {Alt+Enter} to open a context menu that has
     quick fixes available in the current cursor position.
 
     By default, the refactored files are saved automatically. To turn off
     this feature, go to \preferences > \uicontrol Environment >
     \uicontrol System and clear \uicontrol {Auto-save files after refactoring}.
 
-    \if defined(qtcreator)
     \section1 Create functions
 
     Apply quick fixes to implement member functions, insert
     virtual functions of base classes, create getter and setter functions,
     and generate constructors. Specify settings for generating the
     functions either globally for all projects or separately for each project
-    in the \l{Configuring Projects}{build and run} settings of the project.
+    in the \l{Building and running projects}{build and run} settings of the project.
 
     \section2 Implement member functions
 
@@ -57,7 +47,7 @@
     specify whether the member functions are generated inline or outside the
     class.
 
-    \image qtcreator-refactoring-member-function-implementations.png "Implement Member Functions dialog"
+    \image {qtcreator-refactoring-member-function-implementations.png} {Implement Member Functions dialog}
 
     \section2 Insert virtual functions
 
@@ -65,7 +55,7 @@
     quick fix to insert declarations and the corresponding definitions
     inside or outside the class or in an implementation file (if it exists).
 
-    \image qtcreator-refactoring-virtual-function-dialog.png "Insert Virtual Functions dialog"
+    \image {qtcreator-refactoring-virtual-function-dialog.png} {Insert Virtual Functions dialog}
 
     Select the functions to insert in the list of available functions.
     Filter the list and hide reimplemented functions from it.
@@ -79,7 +69,7 @@
     quick fix to create either both getter and setter member functions
     for member variables or only a getter or setter.
 
-    \image qtcreator-refactoring-getters-and-setters.png "Getters and Setters dialog"
+    \image {qtcreator-refactoring-getters-and-setters.png} {Getters and Setters dialog}
 
     \section2 Generate constructors
 
@@ -88,38 +78,32 @@
     class members to initialize in the constructor. Drag the parameters
     to specify their order in the constructor.
 
-    \image qtcreator-refactoring-constructor.png "Constructor dialog"
+    \image {qtcreator-refactoring-constructor.png} {Constructor dialog}
 
-    \sa {Find symbols}, {Specify settings for quick fixes}, {Quick Fixes},
-    {C++ Quick Fixes}
-    \endif
+    \sa {Find symbols}, {Specify settings for quick fixes},
+    {Quick Fixes}, {C++ quick fixes}
 
     \section1 Move classes to separate files
 
     Apply the \uicontrol {Move Class to a Dedicated Set of Source Files} quick
     fix to move a class to a separate set of header and implementation files.
 
-    \image qtcreator-move-class-to-separate-files.webp {Give names to header and implementation files}
+    \image {qtcreator-move-class-to-separate-files.webp} {Give names to header and implementation files}
 
     Specify paths and file names for the header and implementation file.
 
     To omit the implementation file, select \uicontrol {Header file only}.
 
-    \sa {Rename symbols}, {QML Quick Fixes}
+    \sa {Rename symbols}, {QML quick fixes}
 */
 
 /*!
     \page creator-reference-qml-quick-fixes.html
-    \if defined(qtdesignstudio)
-    \previouspage qtquick-text-editor.html
-    \else
     \previouspage creator-reference.html
-    \endif
 
     \ingroup creator-reference-editors
-    \ingroup studio-code-view
 
-    \title QML Quick Fixes
+    \title QML quick fixes
 
     \brief Summary of quick fixes for QML code.
 
@@ -128,7 +112,7 @@
     \list
         \li Rename IDs
         \li Split initializers
-        \li Move a QML type into a separate file to reuse it in other .qml files
+        \li Move a QML type into a separate file to reuse it in other \c .qml files
     \endlist
 
     The following table summarizes the quick fixes for QML code. The
@@ -147,12 +131,10 @@
                 name and select whether properties are set for the new component
                 or for the original one.
 
-                \image qtcreator-move-component-into-separate-file.png
+                \image {qtcreator-move-component-into-separate-file.webp} {Move Component into Separate File dialog}
 
             \li QML type name.
-                \if defined(qtdesignstudio)
-                This action is also available in the \l {2D} view.
-                \endif
+                This action is also available in the \uicontrol {2D} view.
         \row
             \li Split Initializer
             \li Reformats a one-line type into a multi-line type. For example,
@@ -186,10 +168,7 @@
 
     \endtable
 
-    \sa {Apply quick fixes}, {Rename symbols}
-
-    \if defined(qtcreator)
-    \sa {Exclude files from to-do lists}, {Find symbols},
-    {Specify settings for quick fixes}, {Quick Fixes}, {C++ Quick Fixes}
-    \endif
+    \sa {Apply quick fixes}, {Exclude files from to-do lists}, {Find symbols},
+    {Rename symbols}, {Specify settings for quick fixes},
+    {Quick Fixes}, {C++ quick fixes}
 */

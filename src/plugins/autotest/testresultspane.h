@@ -7,7 +7,14 @@
 
 #include <coreplugin/ioutputpane.h>
 
+#include <utils/filepath.h>
 #include <utils/itemviews.h>
+
+#include <QtTaskTree/QSingleTaskTreeRunner>
+
+#include <QMultiHash>
+#include <QQueue>
+#include <QTimer>
 
 QT_BEGIN_NAMESPACE
 class QAction;
@@ -71,10 +78,17 @@ public:
     void goToPrev() override;
     void updateFilter() override;
 
-    void addTestResult(const TestResult &result);
+    void scheduleTestResult(const TestResult &result);
     void addOutputLine(const QByteArray &outputLine, OutputChannel channel);
     void showTestResult(const QModelIndex &index);
+
+    bool expandIntermediate() const;
+
+    void aboutToShutdown();
+
 private:
+    void addTestResult(const TestResult &result);
+    void handleNextBuffered();
     explicit TestResultsPane(QObject *parent = nullptr);
 
     void onItemActivated(const QModelIndex &index);
@@ -100,27 +114,37 @@ private:
     void createMarks(const QModelIndex &parent = QModelIndex());
     void clearMarks();
 
-    QStackedWidget *m_outputWidget;
-    QFrame *m_summaryWidget;
-    QLabel *m_summaryLabel;
-    ResultsTreeView *m_treeView;
-    TestResultModel *m_model;
-    TestResultFilterModel *m_filterModel;
-    Core::IContext *m_context;
-    QToolButton *m_expandCollapse;
-    QToolButton *m_runAll;
-    QToolButton *m_runSelected;
-    QToolButton *m_runFailed;
-    QToolButton *m_runFile;
-    QToolButton *m_stopTestRun;
-    QToolButton *m_filterButton;
-    QToolButton *m_outputToggleButton;
-    Core::OutputWindow *m_textOutput;
-    QMenu *m_filterMenu;
+    void onSessionLoaded();
+    void onAboutToSaveSession();
+
+    void handlePendingResultsSilently();
+
+    QStackedWidget *m_outputWidget = nullptr;
+    QFrame *m_summaryWidget = nullptr;
+    QLabel *m_summaryLabel = nullptr;
+    ResultsTreeView *m_treeView = nullptr;
+    TestResultModel *m_model = nullptr;
+    TestResultFilterModel *m_filterModel = nullptr;
+    Core::IContext *m_context = nullptr;
+    QToolButton *m_expandCollapse = nullptr;
+    QToolButton *m_runAll = nullptr;
+    QToolButton *m_runSelected = nullptr;
+    QToolButton *m_runFailed = nullptr;
+    QToolButton *m_runFile = nullptr;
+    QToolButton *m_stopTestRun = nullptr;
+    QToolButton *m_filterButton = nullptr;
+    QToolButton *m_outputToggleButton = nullptr;
+    QToolButton *m_showDurationButton = nullptr;
+    Core::OutputWindow *m_textOutput = nullptr;
+    QMenu *m_filterMenu = nullptr;
     bool m_autoScroll = false;
     bool m_atEnd = false;
     bool m_testRunning = false;
-    QVector<TestEditorMark *> m_marks;
+    QMultiHash<QPair<Utils::FilePath, int>, TestEditorMark *> m_marks;
+    QQueue<TestResult> m_buffered;
+    std::optional<TestResult> m_lastCurrentMessage = std::nullopt;
+    QTimer m_bufferTimer;
+    QtTaskTree::QSingleTaskTreeRunner m_pendingRunner;
 };
 
 } // namespace Internal

@@ -3,10 +3,12 @@
 
 #include "nimblerunconfiguration.h"
 
-#include "nimbuildsystem.h"
 #include "nimconstants.h"
+#include "nimproject.h"
 #include "nimtr.h"
 
+#include <projectexplorer/buildtargetinfo.h>
+#include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/runconfigurationaspects.h>
 #include <projectexplorer/target.h>
@@ -21,26 +23,19 @@ namespace Nim {
 class NimbleRunConfiguration : public RunConfiguration
 {
 public:
-    NimbleRunConfiguration(Target *target, Id id)
-        : RunConfiguration(target, id)
+    NimbleRunConfiguration(BuildConfiguration *bc, Id id)
+        : RunConfiguration(bc, id)
     {
-        environment.setSupportForBuildEnvironment(target);
+        environment.setSupportForBuildEnvironment(bc);
 
-        executable.setDeviceSelector(target, ExecutableAspect::RunDevice);
-
-        arguments.setMacroExpander(macroExpander());
-
-        workingDir.setMacroExpander(macroExpander());
+        executable.setDeviceSelector(kit(), ExecutableAspect::RunDevice);
 
         setUpdater([this] {
             BuildTargetInfo bti = buildTargetInfo();
             setDisplayName(bti.displayName);
             setDefaultDisplayName(bti.displayName);
             executable.setExecutable(bti.targetFilePath);
-            workingDir.setDefaultWorkingDirectory(bti.workingDirectory);
         });
-
-        connect(target, &Target::buildSystemUpdated, this, &RunConfiguration::update);
         update();
     }
 
@@ -56,7 +51,7 @@ NimbleRunConfigurationFactory::NimbleRunConfigurationFactory()
 {
     registerRunConfiguration<NimbleRunConfiguration>("Nim.NimbleRunConfiguration");
     addSupportedProjectType(Constants::C_NIMBLEPROJECT_ID);
-    addSupportedTargetDeviceType(ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE);
+    setExecutionTypeId(ProjectExplorer::Constants::STDPROCESS_EXECUTION_TYPE_ID);
 }
 
 
@@ -65,19 +60,17 @@ NimbleRunConfigurationFactory::NimbleRunConfigurationFactory()
 class NimbleTestConfiguration : public RunConfiguration
 {
 public:
-    NimbleTestConfiguration(Target *target, Id id)
-        : RunConfiguration(target, id)
+    NimbleTestConfiguration(BuildConfiguration *bc, Id id)
+        : RunConfiguration(bc, id)
     {
         setDisplayName(Tr::tr("Nimble Test"));
         setDefaultDisplayName(Tr::tr("Nimble Test"));
 
-        executable.setDeviceSelector(target, ExecutableAspect::BuildDevice);
+        executable.setDeviceSelector(kit(), ExecutableAspect::BuildDevice);
         executable.setExecutable(Nim::nimblePathFromKit(kit()));
 
-        arguments.setMacroExpander(macroExpander());
         arguments.setArguments("test");
 
-        workingDir.setMacroExpander(macroExpander());
         workingDir.setDefaultWorkingDirectory(project()->projectDirectory());
     }
 

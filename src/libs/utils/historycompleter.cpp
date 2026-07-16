@@ -32,7 +32,7 @@ public:
     QStringList list;
     Key historyKey;
     Key historyKeyIsLastItemEmpty;
-    int maxLines = 6;
+    int maxLines;
     bool isLastItemEmpty = isLastItemEmptyDefault;
 };
 
@@ -174,15 +174,16 @@ void HistoryCompleterPrivate::addEntry(const QString &str)
                                      isLastItemEmptyDefault);
 }
 
-HistoryCompleter::HistoryCompleter(const Key &historyKey, QObject *parent)
-    : QCompleter(parent),
-      d(new HistoryCompleterPrivate)
+HistoryCompleter::HistoryCompleter(const Key &historyKey, int maxLines, QObject *parent)
+    : QCompleter(parent)
+    , d(new HistoryCompleterPrivate)
 {
     QTC_ASSERT(!historyKey.isEmpty(), return);
     QTC_ASSERT(theSettings, return);
 
+    d->maxLines = maxLines;
     d->historyKey = "CompleterHistory/" + historyKey;
-    d->list = theSettings->value(d->historyKey).toStringList();
+    d->list = theSettings->value(d->historyKey).toStringList().mid(0, maxLines);
     d->historyKeyIsLastItemEmpty = "CompleterHistory/" + historyKey + ".IsLastItemEmpty";
     d->isLastItemEmpty = theSettings->value(d->historyKeyIsLastItemEmpty, isLastItemEmptyDefault)
                              .toBool();
@@ -222,16 +223,6 @@ HistoryCompleter::~HistoryCompleter()
 int HistoryCompleter::historySize() const
 {
     return d->rowCount();
-}
-
-int HistoryCompleter::maximalHistorySize() const
-{
-    return d->maxLines;
-}
-
-void HistoryCompleter::setMaximalHistorySize(int numberOfEntries)
-{
-    d->maxLines = numberOfEntries;
 }
 
 void HistoryCompleter::clearHistory()

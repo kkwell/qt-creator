@@ -117,13 +117,13 @@ void CppcheckRunner::checkQueued()
     FilePaths files = m_queue.begin().value();
     commandLine.addArgs(m_queue.begin().key(), CommandLine::Raw);
     m_currentFiles.clear();
-    int argumentsLength = commandLine.arguments().length();
+    int argumentsLength = commandLine.arguments().size();
     while (!files.isEmpty()) {
-        argumentsLength += files.first().toString().size() + 3; // +1 for separator +2 for quotes
+        argumentsLength += files.first().toUrlishString().size() + 3; // +1 for separator +2 for quotes
         if (argumentsLength >= m_maxArgumentsLength)
             break;
         m_currentFiles.push_back(files.first());
-        commandLine.addArg(files.first().toString());
+        commandLine.addArg(files.first().toUrlishString());
         files.pop_front();
     }
 

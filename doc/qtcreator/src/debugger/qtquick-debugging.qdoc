@@ -1,68 +1,47 @@
-// Copyright (C) 2021 The Qt Company Ltd.
+// Copyright (C) 2026 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
-
-// **********************************************************************
-// NOTE: the sections are not ordered by their logical order to avoid
-// reshuffling the file each time the index order changes (i.e., often).
-// Run the fixnavi.pl script to adjust the links to the index order.
-// **********************************************************************
 
 /*!
     \page creator-debugging-qml.html
-    \if defined(qtdesignstudio)
-    \previouspage studio-debugging.html
-    \nextpage creator-stack-view.html
-    \else
     \previouspage creator-reference.html
-    \endif
 
     \ingroup creator-reference-debugger
-    \ingroup studio-debugger
 
-    \title Debugging Qt Quick Projects
+    \title Debugging Qt Quick projects
 
-    \brief Debug JavaScript functions, execute JavaScript expressions to get
+    \summary {Debug JavaScript functions, execute JavaScript expressions to get
     information about the state of the UI, and inspect QML properties and
-    JavaScript variables, as well as change their values temporarily at runtime.
+    JavaScript variables, as well as change their values temporarily at runtime.}
 
     For an example of how to debug Qt Quick Projects, see
     \l{Tutorial: Qt Quick debugging}.
 
-    \if defined(qtdesignstudio)
-    \note In this section, you are using advanced menu items. These are not
-    visible by default. To toggle the visibility of advanced menu items, see
-    \l{Customizing the Menu Bar}.
-    \endif
+    \section1 Setting up QML debugging
 
-    \section1 Setting Up QML Debugging
-
-    \if defined(qtcreator)
     The process of setting up debugging for Qt Quick projects depends on the
     \e type of the project: \uicontrol {Qt Quick UI Prototype} or
     \uicontrol {Qt Quick Application}, and the Qt version.
 
-    \section2 Debugging Qt Quick UI Projects
-    \endif
+    \section2 Debugging Qt Quick UI projects
 
-    To debug Qt Quick UI projects (.qmlproject), select \uicontrol Automatic
+    To debug Qt Quick UI projects (\c .qmlproject), select \uicontrol Automatic
     or \uicontrol Enabled in \uicontrol{Run Settings} >
     \uicontrol {Debugger Settings} > \uicontrol {QML debugger}.
 
-    \image qtquick-debugger-settings.webp {Debugger settings section in Run Settings}
+    \image {qtquick-debugger-settings.webp} {Debugger settings section in Run Settings}
 
-    \if defined(qtcreator)
-    \section2 Debugging Qt Quick Applications
+    \section2 Debugging Qt Quick applications
 
     To debug Qt Quick Applications:
 
         \list 1
 
         \li To create a build configuration that supports QML debugging,
-            go to \uicontrol {Projects} > \uicontrol {Build}.
+            go to \uicontrol {Projects} > \uicontrol {Build Settings}.
 
         \li In \uicontrol {QML debugging and profiling}, select \uicontrol Enable.
 
-            \image qtcreator-build-settings-cmake-configure.webp {Build settings for a CMake project}
+            \image {qtcreator-build-settings-cmake-configure.webp} {Build settings for a CMake project}
 
             \note Debugging requires opening a socket at a TCP port,
             which presents a security risk. Anyone on the Internet could connect
@@ -78,12 +57,12 @@
             time, also select \uicontrol Automatic or \uicontrol Enabled in
             \uicontrol {C++ debugger}.
 
-        \li Select \uicontrol Build > \uicontrol {Rebuild Project} to clean and
-            rebuild the project.
+        \li Go to \uicontrol Build, and select \uicontrol {Rebuild Project} to
+            clean and rebuild the project.
 
         \li To debug applications on \l{glossary-device}{devices}, check that
             Qt libraries are installed on the device and
-            \l{Run on many platforms}{select the corresponding kit for the device}
+            \l{Running applications}{select the corresponding kit for the device}
             before you start debugging.
 
     \endlist
@@ -92,12 +71,12 @@
     automatically installed during \QC and Qt installation. Do not delete
     them if you plan to debug QML applications.
 
-    \section2 Using Default Values
+    \section2 Using default values
 
     You can enable or disable QML debugging globally in \preferences >
     \uicontrol {Build & Run} > \uicontrol {Default Build Properties}.
 
-    \image qtcreator-build-settings-default.webp "Default Build Properties tab in Build & Run Preferences"
+    \image {qtcreator-build-settings-default.webp} {Default Build Properties tab in Build & Run preferences}
 
     The value of the \uicontrol {QML debugging} field determines what happens
     when creating new build configurations. The values \uicontrol Enable
@@ -107,15 +86,15 @@
 
     \uicontrol {Use Project Default} makes the values depend on the type of
     build configuration: \uicontrol Debug, \uicontrol Profile, or
-    \uicontrol Release. When you use \l {CMake Build Configuration}{CMake} or
-    \l {qmake Build Configuration}{qmake} as a build system, debug and profile
+    \uicontrol Release. When you use \l {Building projects with CMake}{CMake} or
+    \l {Building projects with qmake}{qmake} as a build system, debug and profile
     build configurations have QML debugging enabled. However, release build
     configurations do not include QML debugging because the debugging feature
     makes applications vulnerable.
 
-    The \uicontrol {Leave at Default} option in \uicontrol {Projects} >
-    \uicontrol {Build} > \uicontrol {QML debugging and profiling} is needed to keep existing,
-    already configured CMake build directories intact. Also, it
+    The \uicontrol {Default} option in \uicontrol {Projects} >
+    \uicontrol {Build Settings} > \uicontrol {QML debugging and profiling}
+    keeps existing, already configured CMake build directories intact. Also, it
     enables you to import an existing build into \QC without enforced changes,
     so that you don't have to worry about a complete rebuild of the project, for
     example. Even if you later change the configuration of the build outside of
@@ -127,12 +106,11 @@
     For example, for qmake the global setting only affects build configurations
     that are automatically created when enabling a kit. Also, CMake ignores the
     global setting.
-    \endif
 
-    \section1 Starting QML Debugging
+    \section1 Starting QML debugging
 
     To start the application, choose \uicontrol Debug > \uicontrol {Start Debugging}
-    > \uicontrol {Start Debugging of Startup Project} or press \key F5. Once the
+    > \uicontrol {Start Debugging of Startup Project} or select \key F5. Once the
     application starts running, it behaves and performs as usual. You can then
     perform the following tasks:
 
@@ -152,7 +130,6 @@
 
     \list 1
 
-        \if defined(qtcreator)
         \li Build the application by using the appropriate configuration
             parameters (if you build the application with \QC, it automatically
             uses the correct configuration):
@@ -160,15 +137,14 @@
                 \li When using CMake, the
                     \l{CMake: target_compile_definitions command}
                     {target_compile_definitions} command is defined
-                    in the CMakeLists.txt file:
+                    in the \c CMakeLists.txt file:
                     \c {target_compile_definitions(myapp PRIVATE QT_QML_DEBUG)}
 
                     Where \e myapp is the application to debug.
                 \li When using qmake, the following value is defined for the
-                    \l CONFIG property in the .pro file:
+                    \l CONFIG property in the \c .pro file:
                     \c {CONFIG += qml_debug}
             \endlist
-        \endif
 
         \li Start the application with the following arguments:
 
@@ -191,30 +167,30 @@
 
     \endlist
 
-    \section1 Debugging JavaScript Functions
+    \section1 Debugging JavaScript functions
 
     You can use the \QC \uicontrol Debug mode to inspect the state of your
     application while debugging. You can interact with the debugger by:
 
     \list
 
-        \li \l{Viewing Call Stack Trace}{Viewing call stack trace}
+        \li \l{Viewing call stack trace}{Viewing call stack trace}
 
-        \li \l{Setting Breakpoints}{Setting breakpoints}
+        \li \l{Setting breakpoints}{Setting breakpoints}
 
-        \li \l{Local Variables and Function Parameters}
+        \li \l{Local variables and function parameters}
               {Viewing local variables and function parameters}
 
-        \li \l{Evaluating Expressions}
+        \li \l{Evaluating expressions}
 
     \endlist
 
-    \section1 Inspecting Items
+    \section1 Inspecting items
 
     While the application is running, you can use the \uicontrol {Locals}
     view to explore the QML item structure.
 
-    \image qml-observer-view.png "QML item tree"
+    \image {qml-observer-view.png} {QML item tree in the Locals view}
 
     To keep the application visible while you interact with the debugger, select
     \uicontrol Debug > \uicontrol {Show Application on Top}.
@@ -229,7 +205,7 @@
         \li Select the item in the code editor.
 
         \li Go to \uicontrol Debug > \uicontrol Select to activate selection
-            mode and then click an item in the running application.
+            mode and then select an item in the running application.
 
     \endlist
 
@@ -237,12 +213,12 @@
     double-click them and enter the new values. You can view the results in the
     running application.
 
-    \section1 Inspecting User Interfaces
+    \section1 Inspecting user interfaces
 
     When you debug complex applications, you can jump to the position in code
     where an item is defined.
 
-    In the selection mode, you can click items in the running
+    In the selection mode, you can select items in the running
     application to jump to their definitions in the code. The properties of the
     selected item are displayed in the \uicontrol {Locals} view.
 
@@ -256,31 +232,24 @@
     To move the application running in \QQV to the front, select
     \uicontrol Debug > \uicontrol {Show Application on Top}.
 
-    \section1 Executing JavaScript Expressions
+    \section1 Executing JavaScript expressions
 
     When the application is interrupted by a breakpoint, you can use the
     \uicontrol {QML Debugger Console} to execute JavaScript expressions in the
     current context. To open it, choose \uicontrol View > \uicontrol Output >
     \uicontrol {QML Debugger Console}.
 
-    \image qml-script-console.png "QML Debugger Console"
+    \image {qml-script-console.png} {QML Debugger Console}
 
     You can change property values temporarily, without editing the source, and
     view the results in the running application. You can change the property
-    values permanently in
-    \if defined(qtcreator)
-    code.
-    \else
-    the \l Properties view.
-    \endif
+    values permanently in code.
 
-    \section1 Applying QML Changes at Runtime
+    \section1 Applying QML changes at runtime
 
     When you change property values in the \uicontrol {QML Debugger Console} or
     in the \uicontrol Locals or \uicontrol Expression view, they are immediately
     updated in the running application, but not in the source code.
 
-    \if defined(qtcreator)
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger}, {Kits}
-    \endif
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}, {Managing kits}
 */

@@ -205,7 +205,7 @@ void QuickToolBar::apply(TextEditor::TextEditorWidget *editorWidget, Document::P
             else
                 contextWidget()->rePosition(p3 , p1, p2, settings().pinContextPane());
             contextWidget()->setOptions(settings().enableContextPane(), settings().pinContextPane());
-            contextWidget()->setPath(document->path().toString());
+            contextWidget()->setPath(document->path().toUrlishString());
             contextWidget()->setProperties(&propertyReader);
             m_doc = document;
             m_node = node;
@@ -296,7 +296,7 @@ void QuickToolBar::setProperty(const QString &propertyName, const QVariant &valu
         int column;
 
         int changeSetPos = changeSet.operationList().constLast().pos1;
-        int changeSetLength = changeSet.operationList().constLast().text().length();
+        int changeSetLength = changeSet.operationList().constLast().text().size();
         QTextCursor tc = m_editorWidget->textCursor();
         tc.beginEditBlock();
         changeSet.apply(&tc);

@@ -7,6 +7,7 @@
 #include "languageclientmanager.h"
 #include "languageclienttr.h"
 
+#include <coreplugin/actionmanager/command.h>
 #include <coreplugin/editormanager/documentmodel.h>
 
 #include <projectexplorer/project.h>
@@ -39,13 +40,19 @@ public:
     {
         setLineAnnotation(diag.message());
         setToolTip(diag.message());
-        const bool isError
-            = diag.severity().value_or(DiagnosticSeverity::Hint) == DiagnosticSeverity::Error;
-        setColor(isError ? Theme::CodeModel_Error_TextMarkColor
-                         : Theme::CodeModel_Warning_TextMarkColor);
-
-        setIcon(isError ? Icons::CODEMODEL_ERROR.icon()
-                        : Icons::CODEMODEL_WARNING.icon());
+        switch (diag.severity().value_or(DiagnosticSeverity::Hint)) {
+        case DiagnosticSeverity::Error:
+            setColor(Theme::CodeModel_Error_TextMarkColor);
+            setIcon(Icons::CODEMODEL_ERROR.icon());
+            break;
+        case DiagnosticSeverity::Warning:
+            setColor(Theme::CodeModel_Warning_TextMarkColor);
+            setIcon(Icons::CODEMODEL_WARNING.icon());
+            break;
+        default:
+            setColor(Theme::CodeModel_Info_TextMarkColor);
+            break;
+        }
     }
 };
 
@@ -137,7 +144,7 @@ void DiagnosticManager::disableDiagnostics(TextEditor::TextDocument *document)
     Marks &marks = d->m_marks[document->filePath()];
     if (!marks.enabled)
         return;
-    for (TextEditor::TextMark *mark : marks.marks)
+    for (TextEditor::TextMark *mark : std::as_const(marks.marks))
         mark->setColor(Utils::Theme::Color::IconsDisabledColor);
     marks.enabled = false;
 }
@@ -184,12 +191,11 @@ TextEditor::TextMark *DiagnosticManager::createTextMark(TextDocument *doc,
                                                         bool /*isProjectFile*/) const
 {
     static const QIcon icon = Icon::fromTheme("edit-copy");
-    static const QString tooltip = Tr::tr("Copy to Clipboard");
     auto mark = new TextMark(doc, diagnostic, d->m_client);
     mark->setActionsProvider([text = diagnostic.message()] {
         QAction *action = new QAction();
         action->setIcon(icon);
-        action->setToolTip(tooltip);
+        action->setToolTip(Core::msgCopyToClipboard());
         QObject::connect(action, &QAction::triggered, [text] {
             setClipboardAndSelection(text);
         });
@@ -224,13 +230,20 @@ std::optional<Task> DiagnosticManager::createTask(
         }
     }
 
-    return Task(taskType,
-                taskText(diagnostic),
-                doc->filePath(),
-                diagnostic.range().start().line(),
-                d->m_taskCategory,
-                icon,
-                Task::NoOptions);
+    Task task(
+        taskType,
+        taskText(diagnostic),
+        doc->filePath(),
+        diagnostic.range().start().line() + 1,
+        d->m_taskCategory,
+        icon);
+    task.preventFlashing();
+    task.preventTextMarkCreation();
+
+    if (const std::optional<CodeDescription> codeDescription = diagnostic.codeDescription())
+        task.addLinkDetail(codeDescription->href());
+
+    return task;
 }
 
 QString DiagnosticManager::taskText(const LanguageServerProtocol::Diagnostic &diagnostic) const
@@ -251,16 +264,25 @@ void DiagnosticManager::setForceCreateTasks(bool forceCreateTasks)
 QTextEdit::ExtraSelection DiagnosticManager::createDiagnosticSelection(
     const LanguageServerProtocol::Diagnostic &diagnostic, QTextDocument *textDocument) const
 {
+    const DiagnosticSeverity severity = diagnostic.severity().value_or(DiagnosticSeverity::Warning);
+    TextStyle style;
+    if (severity == DiagnosticSeverity::Error)
+        style = C_ERROR;
+    else if (severity == DiagnosticSeverity::Warning)
+        style = C_WARNING;
+    else if (severity == DiagnosticSeverity::Information)
+        style = C_INFO;
+    else
+        return {};
+
     QTextCursor cursor(textDocument);
     cursor.setPosition(diagnostic.range().start().toPositionInDocument(textDocument));
     cursor.setPosition(diagnostic.range().end().toPositionInDocument(textDocument),
                        QTextCursor::KeepAnchor);
 
-    const FontSettings &fontSettings = TextEditorSettings::fontSettings();
-    const DiagnosticSeverity severity = diagnostic.severity().value_or(DiagnosticSeverity::Warning);
-    const TextStyle style = severity == DiagnosticSeverity::Error ? C_ERROR : C_WARNING;
+    const QTextCharFormat format = TextEditorSettings::fontSettings().toTextCharFormat(style);
 
-    return QTextEdit::ExtraSelection{cursor, fontSettings.toTextCharFormat(style)};
+    return QTextEdit::ExtraSelection{cursor, format};
 }
 
 void DiagnosticManager::setExtraSelectionsId(const Utils::Id &extraSelectionsId)

@@ -4,7 +4,7 @@
 
 #include <utils/fuzzymatcher.h>
 
-#include <QtTest>
+#include <QTest>
 
 class tst_FuzzyMatcher : public QObject
 {
@@ -102,7 +102,7 @@ void tst_FuzzyMatcher::fuzzyMatcherMultiWord_data()
     QTest::newRow("inword_second_match") << "foar" << "foo bar" << -1;
 }
 
-typedef QVector<QPair<int, int>> Matches;
+typedef QList<QPair<int, int>> Matches;
 
 void tst_FuzzyMatcher::highlighting()
 {

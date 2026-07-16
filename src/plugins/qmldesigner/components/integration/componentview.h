@@ -7,6 +7,7 @@
 #include <modelnode.h>
 
 #include <QStringList>
+#include <QTimer>
 
 QT_BEGIN_NAMESPACE
 class QStandardItemModel;
@@ -27,7 +28,7 @@ public:
         ModelNodeRole = Qt::UserRole
     };
 
-    ComponentView(ExternalDependenciesInterface &externalDependencies);
+    ComponentView(ExternalDependenciesInterface &externalDependencies, ModulesStorage &modulesStorage);
 
     void modelAttached(Model *model) override;
     void modelAboutToBeDetached(Model *model) override;
@@ -39,8 +40,12 @@ public:
     void nodeReparented(const ModelNode &node, const NodeAbstractProperty &newPropertyParent,
                         const NodeAbstractProperty &oldPropertyParent,
                         AbstractView::PropertyChangeFlags propertyChange) override;
-    void nodeIdChanged(const ModelNode& node, const QString& newId, const QString& oldId) override;
+    void nodeIdChanged(const ModelNode &node, const QString &newId, const QString &oldId) override;
     void nodeSourceChanged(const ModelNode &node, const QString &newNodeSource) override;
+    void customNotification(const AbstractView *view, const QString &identifier, const QList<ModelNode> &nodeList, const QList<QVariant> &data) override;
+    void updateImport3DSupport(const QVariantMap &supportMap) override;
+    void importsChanged(const Imports &addedImports, const Imports &removedImports) override;
+    void possibleImportsChanged(const Imports &possibleImports) override;
 
     QStandardItemModel *standardItemModel() const;
 
@@ -67,10 +72,16 @@ private: //functions
     QString descriptionForNode(const ModelNode &node) const;
     void updateDescription(const ModelNode &node);
     bool isSubComponentNode(const ModelNode &node) const;
+    void ensureMatLibTriggered();
 
 private:
     QStandardItemModel *m_standardItemModel;
     ComponentAction *m_componentAction;
+    ModulesStorage &m_modulesStorage;
+
+    QVariantMap m_importableExtensions3DMap;
+    QVariantMap m_importOptions3DMap;
+    QTimer m_ensureMatLibTimer;
 };
 
 } // namespace QmlDesigner

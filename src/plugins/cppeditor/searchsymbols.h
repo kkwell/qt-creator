@@ -16,10 +16,10 @@
 
 namespace CppEditor {
 
-class SearchSymbols: protected CPlusPlus::SymbolVisitor
+class SearchSymbols : protected CPlusPlus::SymbolVisitor
 {
 public:
-    using SymbolTypes = SymbolSearcher::SymbolTypes;
+    using SymbolTypes = Internal::SymbolTypes;
 
     static SymbolTypes AllTypes;
 
@@ -28,7 +28,7 @@ public:
     void setSymbolsToSearchFor(const SymbolTypes &types);
 
     IndexItem::Ptr operator()(CPlusPlus::Document::Ptr doc)
-    { return operator()(doc, QString()); }
+    { return operator()(doc, {}); }
 
     IndexItem::Ptr operator()(CPlusPlus::Document::Ptr doc, const QString &scope);
 
@@ -44,6 +44,7 @@ protected:
     bool visit(CPlusPlus::Declaration *) override;
     bool visit(CPlusPlus::Argument *) override;
     bool visit(CPlusPlus::TypenameArgument *) override;
+    bool visit(CPlusPlus::TemplateTypeArgument *) override;
     bool visit(CPlusPlus::BaseClass *) override;
     bool visit(CPlusPlus::Enum *) override;
     bool visit(CPlusPlus::Function *) override;
@@ -83,5 +84,3 @@ private:
 };
 
 } // namespace CppEditor
-
-Q_DECLARE_OPERATORS_FOR_FLAGS(CppEditor::SearchSymbols::SymbolTypes)

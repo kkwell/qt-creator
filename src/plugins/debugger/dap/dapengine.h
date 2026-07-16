@@ -87,7 +87,6 @@ protected:
     void loadSymbols(const Utils::FilePath &moduleName) override;
     void loadAllSymbols() override;
     void reloadModules() override;
-    void reloadRegisters() override {}
     void reloadSourceFiles() override {}
     void reloadFullStack() override;
 
@@ -97,7 +96,7 @@ protected:
     void doUpdateLocals(const UpdateParameters &params) override;
     void getVariableFromQueue();
 
-    void runCommand(const DebuggerCommand &cmd) override;
+    void runCommand(const DebuggerCommand &cmd);
 
     void refreshLocation(const GdbMi &reportedLocation);
     void refreshStack(const QJsonArray &stackFrames);

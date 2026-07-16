@@ -9,8 +9,7 @@
 
     \title Use compilation databases
 
-    The \l{https://clang.llvm.org/docs/JSONCompilationDatabase.html}
-    {JSON compilation database format} specifies how to replay single builds
+    The \l{JSON compilation database format} specifies how to replay single builds
     independently of the build system.
 
     A \e {compilation database} is basically a list of files and the compiler
@@ -18,11 +17,16 @@
     code model with the necessary information for correctly parsing the code
     when you open a file for editing.
 
+    To open a compilation database as a \l {Managing Projects}{project}, go to
+    \uicontrol File > \uicontrol {Open Project} and select a compilation
+    database JSON file.
+
     To generate a compilation database from the information that the code model
-    has, select \uicontrol Build > \uicontrol {Generate Compilation Database}.
+    has, go to \uicontrol Build > \uicontrol {Run Generator} and select
+    \uicontrol {Compilation Database}.
 
     You can add files, such as non-C files, to the project in
-    \e {compile_database.json.files}.
+    \c {compile_database.json.files}.
 
     You can use the experimental Compilation Database Project Manager to open
     the files in a compilation database with access to all the editing features
@@ -37,5 +41,5 @@
     database projects in the \uicontrol Projects mode.
 
     \sa {Enable and disable plugins}, {Add custom build steps},
-    {Configure projects for running}, {Code Model}
+    {Configure projects for running}, {Code Model}, {Building and running projects}
 */

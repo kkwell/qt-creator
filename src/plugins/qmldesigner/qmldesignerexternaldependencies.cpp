@@ -27,31 +27,11 @@ double ExternalDependencies::formEditorDevicePixelRatio() const
     return QmlDesignerPlugin::formEditorDevicePixelRatio();
 }
 
-QString ExternalDependencies::defaultPuppetFallbackDirectory() const
-{
-    return Core::ICore::libexecPath().toString();
-}
-
-QString ExternalDependencies::qmlPuppetFallbackDirectory() const
-{
-    QString puppetFallbackDirectory = m_designerSettings
-                                          .value(DesignerSettingsKey::PUPPET_DEFAULT_DIRECTORY)
-                                          .toString();
-    if (puppetFallbackDirectory.isEmpty() || !QFileInfo::exists(puppetFallbackDirectory))
-        return defaultPuppetFallbackDirectory();
-    return puppetFallbackDirectory;
-}
-
-QString ExternalDependencies::defaultPuppetToplevelBuildDirectory() const
-{
-    return Core::ICore::userResourcePath("qmlpuppet/").toString();
-}
-
 QUrl ExternalDependencies::projectUrl() const
 {
     DesignDocument *document = QmlDesignerPlugin::instance()->viewManager().currentDesignDocument();
     if (document)
-        return QUrl::fromLocalFile(document->projectFolder().toString());
+        return QUrl::fromLocalFile(document->projectFolder().toUrlishString());
 
     return {};
 }
@@ -63,7 +43,7 @@ QString ExternalDependencies::projectName() const
 
 QString ExternalDependencies::currentProjectDirPath() const
 {
-    return QmlDesignerPlugin::instance()->documentManager().currentProjectDirPath().toString();
+    return QmlDesignerPlugin::instance()->documentManager().currentProjectDirPath().toUrlishString();
 }
 
 QUrl ExternalDependencies::currentResourcePath() const
@@ -76,7 +56,7 @@ void ExternalDependencies::parseItemLibraryDescriptions() {}
 
 const DesignerSettings &ExternalDependencies::designerSettings() const
 {
-    return m_designerSettings;
+    return QmlDesigner::designerSettings();
 }
 
 void ExternalDependencies::undoOnCurrentDesignDocument()
@@ -125,12 +105,10 @@ bool ExternalDependencies::hasStartupTarget() const
     return false;
 }
 
-namespace {
-
-bool isForcingFreeType(ProjectExplorer::Target *target)
+static bool isForcingFreeType(ProjectExplorer::BuildSystem *buildSystem)
 {
-    if (Utils::HostOsInfo::isWindowsHost() && target) {
-        const QVariant customData = target->additionalData("CustomForceFreeType");
+    if (Utils::HostOsInfo::isWindowsHost() && buildSystem) {
+        const QVariant customData = buildSystem->additionalData("CustomForceFreeType");
 
         if (customData.isValid())
             return customData.toBool();
@@ -139,28 +117,28 @@ bool isForcingFreeType(ProjectExplorer::Target *target)
     return false;
 }
 
-QString createFreeTypeOption(ProjectExplorer::Target *target)
+static QString createFreeTypeOption(ProjectExplorer::BuildSystem *buildSystem)
 {
-    if (isForcingFreeType(target))
+    if (isForcingFreeType(buildSystem))
         return "-platform windows:fontengine=freetype";
 
     return {};
 }
 
-} // namespace
-
 PuppetStartData ExternalDependencies::puppetStartData(const Model &model) const
 {
     PuppetStartData data;
-    auto target = ProjectExplorer::ProjectManager::startupTarget();
-    auto [workingDirectory, puppetPath] = QmlPuppetPaths::qmlPuppetPaths(target, m_designerSettings);
+    auto buildSystem = ProjectExplorer::activeBuildSystemForActiveProject();
+    if (!buildSystem)
+        return data;
+    auto [workingDirectory, puppetPath] = QmlPuppetPaths::qmlPuppetPaths(buildSystem->kit());
 
-    data.puppetPath = puppetPath.toString();
-    data.workingDirectoryPath = workingDirectory.toString();
-    data.environment = PuppetEnvironmentBuilder::createEnvironment(target, m_designerSettings, model, qmlPuppetPath());
-    data.debugPuppet = m_designerSettings.value(DesignerSettingsKey::DEBUG_PUPPET).toString();
-    data.freeTypeOption = createFreeTypeOption(target);
-    data.forwardOutput = m_designerSettings.value(DesignerSettingsKey::FORWARD_PUPPET_OUTPUT).toString();
+    data.puppetPath = puppetPath;
+    data.workingDirectoryPath = workingDirectory;
+    data.environment = PuppetEnvironmentBuilder::createEnvironment(buildSystem, designerSettings(), model, qmlPuppetPath());
+    data.debugPuppet = designerSettings().debugPuppet.stringValue();
+    data.freeTypeOption = createFreeTypeOption(buildSystem);
+    data.forwardOutput = designerSettings().forwardPuppetOutput.stringValue();
 
     return data;
 }
@@ -173,13 +151,11 @@ bool ExternalDependencies::instantQmlTextUpdate() const
 Utils::FilePath ExternalDependencies::qmlPuppetPath() const
 {
     auto target = ProjectExplorer::ProjectManager::startupTarget();
-    auto [workingDirectory, puppetPath] = QmlPuppetPaths::qmlPuppetPaths(target, m_designerSettings);
+    auto [workingDirectory, puppetPath] = QmlPuppetPaths::qmlPuppetPaths(target->kit());
     return puppetPath;
 }
 
-namespace {
-
-QString qmlPath(ProjectExplorer::Target *target)
+static QString qmlPath(ProjectExplorer::Target *target)
 {
     auto kit = target->kit();
 
@@ -190,10 +166,10 @@ QString qmlPath(ProjectExplorer::Target *target)
     if (!qtVersion)
         return {};
 
-    return qtVersion->qmlPath().toString();
+    return qtVersion->qmlPath().toUrlishString();
 }
 
-std::tuple<ProjectExplorer::Project *, ProjectExplorer::Target *, QmlProjectManager::QmlBuildSystem *>
+static std::tuple<ProjectExplorer::Project *, ProjectExplorer::Target *, QmlProjectManager::QmlBuildSystem *>
 activeProjectEntries()
 {
     auto project = ProjectExplorer::ProjectManager::startupProject();
@@ -214,7 +190,6 @@ activeProjectEntries()
 
     return {};
 }
-} // namespace
 
 QStringList ExternalDependencies::modulePaths() const
 {
@@ -273,6 +248,16 @@ QString ExternalDependencies::qtQuickVersion() const
 Utils::FilePath ExternalDependencies::resourcePath(const QString &relativePath) const
 {
     return Core::ICore::resourcePath(relativePath);
+}
+
+QString ExternalDependencies::userResourcePath(QStringView relativePath) const
+{
+    return Core::ICore::userResourcePath(relativePath.toString()).path();
+}
+
+QWidget *ExternalDependencies::mainWindow() const
+{
+    return Core::ICore::mainWindow();
 }
 
 } // namespace QmlDesigner

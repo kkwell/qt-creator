@@ -4,9 +4,11 @@
 #include "projecttree.h"
 
 #include "project.h"
+#include "projectexplorer.h"
 #include "projectexplorerconstants.h"
 #include "projectexplorertr.h"
 #include "projectmanager.h"
+#include "projectmodels.h"
 #include "projectnodes.h"
 #include "projecttreewidget.h"
 #include "target.h"
@@ -18,6 +20,7 @@
 #include <coreplugin/editormanager/ieditor.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/idocument.h>
+#include <coreplugin/iversioncontrol.h>
 #include <coreplugin/modemanager.h>
 #include <coreplugin/navigationwidget.h>
 #include <coreplugin/vcsmanager.h>
@@ -51,7 +54,8 @@ ProjectTree::ProjectTree(QObject *parent) : QObject(parent)
             this, &ProjectTree::update);
 
     connect(qApp, &QApplication::focusChanged,
-            this, &ProjectTree::update);
+            this, &ProjectTree::update,
+            Qt::QueuedConnection);
 
     connect(ProjectManager::instance(), &ProjectManager::projectAdded,
             this, &ProjectTree::sessionAndTreeChanged);
@@ -85,18 +89,6 @@ ProjectTree *ProjectTree::instance()
 Project *ProjectTree::currentProject()
 {
     return s_instance->m_currentProject;
-}
-
-Target *ProjectTree::currentTarget()
-{
-    Project *p = currentProject();
-    return p ? p->activeTarget() : nullptr;
-}
-
-BuildSystem *ProjectTree::currentBuildSystem()
-{
-    Target *t = currentTarget();
-    return t ? t->buildSystem() : nullptr;
 }
 
 Node *ProjectTree::currentNode()
@@ -158,7 +150,7 @@ void ProjectTree::updateFromDocumentManager()
 {
     if (Core::IDocument *document = Core::EditorManager::currentDocument()) {
         const FilePath fileName = document->filePath();
-        updateFromNode(ProjectTreeWidget::nodeForFile(fileName));
+        updateFromNode(ProjectTreeWidget::nodeForFile(fileName, s_instance->m_currentNode));
     } else {
         updateFromNode(nullptr);
     }
@@ -197,11 +189,9 @@ void ProjectTree::setCurrent(Node *node, Project *project)
     if (Core::IDocument *document = Core::EditorManager::currentDocument()) {
         disconnect(document, &Core::IDocument::changed, this, nullptr);
         if (!node || node->isGenerated()) {
-            const QString message = node
-                    ? Tr::tr("<b>Warning:</b> This file is generated.")
-                    : Tr::tr("<b>Warning:</b> This file is outside the project directory.");
-            connect(document, &Core::IDocument::changed, this, [this, document, message] {
-                updateFileWarning(document, message);
+            connect(document, &Core::IDocument::changed, this,
+                    [this, document, generated = node && node->isGenerated()] {
+                updateFileWarning(document, generated);
             });
         } else {
             document->infoBar()->removeInfo(EXTERNAL_OR_GENERATED_FILE_WARNING);
@@ -257,6 +247,16 @@ void ProjectTree::emitSubtreeChanged(FolderNode *node)
         emit s_instance->subtreeChanged(node);
 }
 
+QAbstractItemModel *ProjectTree::createProjectsModel(QObject *parent)
+{
+    const auto model = new FlatModel(parent);
+    model->setDisabledFilesFilterEnabled(true);
+    model->setGeneratedFilesFilterEnabled(true);
+    model->setHideSourceGroups(true);
+    model->setTrimEmptyDirectories(true);
+    return model;
+}
+
 void ProjectTree::sessionAndTreeChanged()
 {
     sessionChanged();
@@ -287,7 +287,7 @@ void ProjectTree::changeProjectRootDirectory()
         m_currentProject->changeRootProjectDirectory();
 }
 
-void ProjectTree::updateFileWarning(Core::IDocument *document, const QString &text)
+void ProjectTree::updateFileWarning(Core::IDocument *document, bool generated)
 {
     if (document->filePath().isEmpty())
         return;
@@ -299,27 +299,39 @@ void ProjectTree::updateFileWarning(Core::IDocument *document, const QString &te
     }
     if (!infoBar->canInfoBeAdded(infoId))
         return;
-    const FilePath filePath = document->filePath();
     const QList<Project *> projects = ProjectManager::projects();
     if (projects.isEmpty())
         return;
-    for (Project *project : projects) {
-        FilePath projectDir = project->projectDirectory();
-        if (projectDir.isEmpty())
-            continue;
-        if (filePath.isChildOf(projectDir))
-            return;
-        if (filePath.canonicalPath().isChildOf(projectDir.canonicalPath()))
-            return;
-        // External file. Test if it under the same VCS
-        FilePath topLevel;
-        if (Core::VcsManager::findVersionControlForDirectory(projectDir, &topLevel)
+    QString message;
+    if (generated) {
+        message = Tr::tr("<b>Warning:</b> This file is generated.");
+    } else {
+        const FilePath filePath = document->filePath();
+        const FilePath canonicalFilePath = filePath.canonicalPath();
+        for (Project *project : projects) {
+            FilePath projectDir = project->projectDirectory();
+            if (projectDir.isEmpty())
+                continue;
+            if (ProjectManager::isInProjectBuildDir(filePath, *project)) {
+                message = Tr::tr("<b>Warning:</b> This file is inside the build directory.");
+                break;
+            }
+            if (filePath.isChildOf(projectDir))
+                return;
+            if (canonicalFilePath.isChildOf(projectDir.canonicalPath()))
+                return;
+            // External file. Test if it under the same VCS
+            FilePath topLevel;
+            if (Core::VcsManager::findVersionControlForDirectory(projectDir, &topLevel)
                 && filePath.isChildOf(topLevel)) {
-            return;
+                return;
+            }
         }
     }
+    if (message.isEmpty())
+        message = Tr::tr("<b>Warning:</b> This file is outside the project directory.");
     infoBar->addInfo(
-        Utils::InfoBarEntry(infoId, text, Utils::InfoBarEntry::GlobalSuppression::Enabled));
+        Utils::InfoBarEntry(infoId, message, Utils::InfoBarEntry::GlobalSuppression::Enabled));
 }
 
 bool ProjectTree::hasFocus(ProjectTreeWidget *widget)
@@ -337,6 +349,29 @@ void ProjectTree::showContextMenu(ProjectTreeWidget *focus, const QPoint &global
 {
     QMenu *contextMenu = nullptr;
     emit s_instance->aboutToShowContextMenu(node);
+
+    if (node) {
+        QMenu *menu = ProjectExplorerPlugin::vcsFileContextMenu();
+        menu->clear();
+        menu->menuAction()->setVisible(false);
+
+        if (!node->isVirtualFolderType()) {
+            const FilePath filePath = node->filePath();
+            FilePath topLevel;
+            Core::IVersionControl *vc =
+                    Core::VcsManager::findVersionControlForDirectory(filePath, &topLevel);
+            if (vc) {
+                const FilePath relativePath = filePath.relativeChildPath(topLevel);
+                menu->setTitle(vc->displayName());
+                menu->menuAction()->setVisible(true);
+                vc->fillDefaultFileActionMenu(menu, vc, topLevel, relativePath);
+                if (const FileNode *fileNode = node->asFileNode(); fileNode) {
+                    const Core::VcsFileState state = fileNode->modificationState();
+                    vc->vcsFillFileActionMenu(menu, topLevel, relativePath, state);
+                }
+            }
+        }
+    }
 
     if (!node) {
         contextMenu = Core::ActionManager::actionContainer(Constants::M_SESSIONCONTEXT)->menu();
@@ -458,12 +493,13 @@ const QList<Node *> ProjectTree::siblingsWithSameBaseName(const Node *fileNode)
         productNode = productNode->parentProjectNode();
     if (!productNode)
         return {};
-    const QFileInfo fi = fileNode->filePath().toFileInfo();
-    const auto filter = [&fi](const Node *n) {
+    const FilePath fp = fileNode->filePath();
+    const FilePath fpd = fp.parentDir();
+    const auto filter = [fp, fpd](const Node *n) {
         return n->asFileNode()
-                && n->filePath().toFileInfo().dir() == fi.dir()
-                && n->filePath().completeBaseName() == fi.completeBaseName()
-                && n->filePath().toString() != fi.filePath();
+                && n->filePath().parentDir() == fpd
+                && n->filePath().completeBaseName() == fp.completeBaseName()
+                && n->filePath() != fp;
     };
     return productNode->findNodes(filter);
 }

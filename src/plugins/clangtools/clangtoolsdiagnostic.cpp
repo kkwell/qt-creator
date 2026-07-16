@@ -3,14 +3,19 @@
 
 #include "clangtoolsdiagnostic.h"
 
+#include "clangtoolsutils.h"
+
+#include <projectexplorer/task.h>
 #include <utils/utilsicons.h>
+
+using namespace ProjectExplorer;
 
 namespace ClangTools {
 namespace Internal {
 
 bool ExplainingStep::isValid() const
 {
-    return location.isValid() && !ranges.isEmpty() && !message.isEmpty();
+    return location.hasValidTarget() && !ranges.isEmpty() && !message.isEmpty();
 }
 
 bool operator==(const ExplainingStep &lhs, const ExplainingStep &rhs)
@@ -40,13 +45,32 @@ QIcon Diagnostic::icon() const
     return {};
 }
 
+ProjectExplorer::Task Diagnostic::asTask() const
+{
+    const auto taskType = [&] {
+        if (type == "warning" || type == "fix-it")
+            return Task::Warning;
+        if (type == "error")
+            return Task::Error;
+        return Task::Unknown;
+    };
+    Task t(taskType(),
+          description,
+          location.targetFilePath,
+          location.target.line,
+          taskCategory(),
+          icon());
+    t.setColumn(location.target.column);
+    return t;
+}
+
 size_t qHash(const Diagnostic &diagnostic)
 {
     return qHash(diagnostic.name)
          ^ qHash(diagnostic.description)
-         ^ qHash(diagnostic.location.filePath)
-         ^ diagnostic.location.line
-         ^ diagnostic.location.column;
+         ^ qHash(diagnostic.location.targetFilePath)
+         ^ diagnostic.location.target.line
+         ^ diagnostic.location.target.column;
 }
 
 bool operator==(const Diagnostic &lhs, const Diagnostic &rhs)

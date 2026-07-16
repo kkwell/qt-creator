@@ -29,7 +29,8 @@ QtcPlugin {
         "documentsymbolcache.h",
         "dynamiccapabilities.cpp",
         "dynamiccapabilities.h",
-        "languageclient.qrc",
+        "foldingrangesupport.cpp",
+        "foldingrangesupport.h",
         "languageclient_global.h",
         "languageclienttr.h",
         "languageclientformatter.cpp",
@@ -59,6 +60,8 @@ QtcPlugin {
         "locatorfilter.h",
         "lspinspector.cpp",
         "lspinspector.h",
+        "mimetypesaspect.cpp",
+        "mimetypesaspect.h",
         "progressmanager.cpp",
         "progressmanager.h",
         "semantichighlightsupport.cpp",
@@ -66,6 +69,18 @@ QtcPlugin {
         "snippet.cpp",
         "snippet.h",
     ]
+
+    Group {
+        name: "images"
+        prefix: "images/"
+        fileTags: "qt.core.resource_data"
+        files: [
+            "languageclient.png",
+            "languageclient@2x.png",
+            "settingscategory_languageclient.png",
+            "settingscategory_languageclient@2x.png",
+        ]
+    }
 
     Properties {
         condition: qbs.toolchain.contains("mingw")

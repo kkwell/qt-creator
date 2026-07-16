@@ -9,7 +9,8 @@ def main():
         return
     # using a temporary directory won't mess up a potentially existing
     workingDir = tempDir()
-    projectName = createNewQtQuickApplication(workingDir)[1]
+    projectName = createNewQtQuickApplication(workingDir, template="Qt Quick Application (compat)",
+                                              minimumQtVersion="6.2")[1]
     editor = waitForObject(":Qt Creator_QmlJSEditor::QmlJSTextEditorWidget")
     if placeCursorToLine(editor, "}"):
         type(editor, '<Left>')
@@ -30,7 +31,7 @@ def main():
         invokeMenuItem("File", "Save All")
         availableConfigs = iterateBuildConfigs("Debug")
         if not availableConfigs:
-            test.fatal("Haven't found a suitable Qt version (need Qt 6.2+) - leaving without profiling.")
+            test.fatal("Haven't found a suitable Qt version (need Qt 6.5+) - leaving without profiling.")
         else:
             performTest(workingDir, projectName, availableConfigs)
     invokeMenuItem("File", "Exit")
@@ -39,10 +40,13 @@ def performTest(workingDir, projectName, availableConfigs):
     def __elapsedTime__(elapsedTimeLabelText):
         return float(re.search("Elapsed:\s+(-?\d+\.\d+) s", elapsedTimeLabelText).group(1))
 
+    runButton = findObject(':*Qt Creator.Run_Core::Internal::FancyToolButton')
     for kit, config in availableConfigs:
+        if not runButton.enabled: # ensure we have an 'Active Project' (and the clean action)
+            waitForProjectParsing()
         # switching from MSVC to MinGW build will fail on the clean step of 'Rebuild All Projects'
         # because of differences between MSVC's and MinGW's Makefile (so clean before changing kit)
-        selectFromLocator("t clean", "Clean Project")
+        selectFromLocator("t clean", "Clean Active Project")
         verifyBuildConfig(kit, config, True, True, True)
         test.log("Selected kit '%s'" % Targets.getStringForTarget(kit))
         # explicitly build before start debugging for adding the executable as allowed program to WinFW
@@ -77,7 +81,14 @@ def performTest(workingDir, projectName, availableConfigs):
              colMean, colMedian, colLongest, colShortest) = range(2, 11)
             model = waitForObject(":Events.QmlProfilerEventsTable_QmlProfiler::"
                                   "Internal::QmlProfilerStatisticsMainView").model()
-            compareEventsTab(model, "events_qt6.2.4.tsv")
+            targetStr = Targets.getStringForTarget(kit)
+            versionStr = re.match("Desktop ([56]\.\d+\.\d+).*", targetStr)
+            test.log("Using Qt %s" % targetStr)
+            tsv = "events_qt6.9.2.tsv"
+            # surprisingly it looks like some versions between 6.3 and 6.8 have different results
+            if versionStr and versionStr.group(1) < "6.8" and versionStr.group(1) > "6.3":
+                tsv = "events_qt6.7.3.tsv"
+            compareEventsTab(model, tsv)
             test.compare(dumpItems(model, column=colPercent)[0], '100 %')
             # cannot run following test on colShortest (unstable)
             for i in [colMean, colMedian, colLongest]:
@@ -118,15 +129,23 @@ def compareEventsTab(model, file):
 
     test.compare(model.rowCount(), len(expectedTable),
                  "Checking number of rows in Events table")
-    if not test.verify(containsOnce(expectedTable, foundTable),
+    if not test.verify(matches(expectedTable, foundTable),
                        "Verifying that Events table matches expected values"):
         test.log("Events displayed by Creator: %s" % foundTable, str(expectedTable))
 
-def containsOnce(tuple, items):
+
+def matches(expectedItems, items):
+    expected = list(expectedItems)
     for item in items:
-        if tuple.count(item) != 1:
+        if item in expected:
+            expected.remove(item)
+        else:
+            test.log("Unexpected item: %s" % str(item))
             return False
-    return True
+    if len(expected) != 0:
+        test.log("Missing items: %s" % str(expected))
+    return len(expected) == 0
+
 
 def safeClickTab(tab):
     for bar in [":Qt Creator.Events_QTabBar",

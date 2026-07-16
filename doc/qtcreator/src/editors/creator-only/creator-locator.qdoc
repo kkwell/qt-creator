@@ -13,7 +13,7 @@
     as well as trigger global actions and perform other tasks, such as build
     projects or run external tools.
 
-    \image qtcreator-locator.webp {List of locator filters}
+    \image {qtcreator-locator.webp} {List of locator filters}
 
     \section1 Go to the locator
 
@@ -21,49 +21,52 @@
 
     \list
 
-        \li Press \key {Ctrl+K} (\key {Cmd+K} on \macos).
+        \li Select \key {Ctrl+K} (\key {Cmd+K} on \macos).
 
         \li Go to \uicontrol Tools, and then select \uicontrol Locate.
 
         \li Go to \uicontrol Edit, and then select \uicontrol {Go to Line}.
 
-        \li Click the line and column indicator on the
-            \l{Edit Mode}{editor toolbar}.
+        \li Select the line and column indicator on the
+            \l{Editing code}{editor toolbar}.
 
     \endlist
 
     By default, you can find the locator in the bottom left of the \QC window.
-    To open it as a centered popup, select \inlineimage icons/magnifier.png, and
-    then select \uicontrol {Open as Centered Popup}.
+    To open it as a centered popup, select \inlineimage {icons/magnifier.png} {Locator menu},
+    and then select \uicontrol {Open as Centered Popup}.
 
     \section1 Use locator filters
 
     The filters that are available depend on the current document and project.
     If the locator field is empty, a list of available filters is shown.
-    A list of filters is also shown when selecting \inlineimage icons/magnifier.png.
+    A list of filters is also shown when selecting \inlineimage {icons/magnifier.png} {Locator menu}.
     For more information about what a particular locator filter does, see the
     tooltips that appear when you hover over a filter.
 
     To use a locator filter:
 
     \list
-        \li Type the locator filter prefix followed by \key Space. The prefix
-            is usually short, from one to three characters. Then type the search
+        \li Enter the locator filter prefix followed by \key Space. The prefix
+            is usually short, from one to three characters. Then enter the search
             string (for example, a filename or class name) or the command to
-            execute.
+            execute. Select \key {Tab} to complete the search string.
 
-        \li Select a locator filter in the filter list to use it. Press
-            the up and down arrow keys or press \key Ctrl+P and \key Ctrl+N
-            to move up and down the list, and then press \key Enter to use the
+        \li Select a locator filter in the filter list to use it. Use
+            the up and down arrow keys or select \key Ctrl+P and \key Ctrl+N
+            to move up and down the list, and then select \key Enter to use the
             selected filter.
     \endlist
 
-    As you type a search string,
+    As you enter a search string,
     the locator shows the occurrences of that string regardless of where in the
     name of an object it appears. Some locator filters, such as colon, \c m,
     and \c t, support \e fuzzy matching, which means that you can enter the
     uppercase letters to locate a symbol when using camel case or the letters
     after the underscore when using snake case.
+
+    To turn off \key Tab completion, select \inlineimage {icons/magnifier.png}
+    {Locator menu} and clear \uicontrol {Use Tab Completion}.
 
     \section2 Use wildcard characters in search strings
 
@@ -98,7 +101,7 @@
     open the document, append the line and column number to the file name in
     the locator, separated by plus signs (+) or colons (:).
 
-    For example, to open \e HelloWorld.qml to line
+    For example, to open \c HelloWorld.qml to line
     41 and column 2, enter:
 
     \code
@@ -118,34 +121,33 @@
     To create a new file and open it in the editor:
 
     \list 1
-        \li Type \c f followed by \key Space, followed by path and file name
-        \li Press \key Enter or select \uicontrol {Create and Open File}.
+        \li Enter \c f followed by \key Space, followed by path and file name
+        \li Select \key Enter or select \uicontrol {Create and Open File}.
     \endlist
 
     To create a directory, select \uicontrol {Create Directory}.
 
-    \sa {Search}{How To: Search}, {Manage sessions}, {Perform calculations},
-    {Locator}
+    \sa {Search}{How to: Search}, {Manage sessions}, {Perform calculations}
 
 */
 
 /*!
     \page creator-preferences-locator.html
-    \previouspage creator-reference.html
+    \previouspage creator-how-tos.html
 
-    \ingroup creator-reference-preferences
+    \ingroup creator-how-to-search
+    \ingroup creator-how-to-use
 
-    \title Locator
-
-    \brief Add and change locator filters.
+    \title Configure the locator
 
     To set locator preferences, go to \preferences > \uicontrol Environment >
     \uicontrol Locator, or select
-    \inlineimage icons/magnifier.png > \uicontrol Configure in the locator field.
+    \inlineimage {icons/magnifier.png} {Locator menu} > \uicontrol Configure in
+    the locator field.
 
-    \image qtcreator-locator-customize.webp {Locator preferences}
+    \image {qtcreator-locator-customize.webp} {Locator tab in Environment preferences}
 
-    \section1 Changing Locator Filters
+    \section1 Change locator filters
 
     You can change the preset locator filters to match your use case. For
     example, change the filter prefix and restrict the search to
@@ -161,14 +163,14 @@
 
         \li Specify the prefix string.
 
-            \image qtcreator-locator-filter-edit-ai.webp {Filter Configuration dialog}
+            \image {qtcreator-locator-filter-edit-ai.webp} {Filter Configuration dialog}
 
         \li To implicitly include the filter even when not typing a prefix as a
             part of the search string, select \uicontrol {Include by default}.
 
     \endlist
 
-    \section1 Adding Web Search Engines
+    \section1 Add web search engines
 
     By default, the \uicontrol {Web Search (r)} locator filter includes the URLs
     and search commands for Bing, Google, Yahoo! Search, cplusplus.com, and
@@ -189,19 +191,19 @@
 
         \li Select \uicontrol Add to add a URL filter to the list.
 
-            \image qtcreator-add-online-doc.webp {List of URLs in Filter Configuration dialog}
+            \image {qtcreator-add-online-doc.webp} {List of URLs in Filter Configuration dialog}
 
         \li Double-click the new entry to specify a URL and a search command.
-            For example, \c {http://www.google.com/search?q=%1}.
+            For example, \c {https://www.google.com/search?q=%1}.
 
-        \li Click \uicontrol OK.
+        \li Select \uicontrol OK.
 
     \endlist
 
     To add a new separate web search locator filter instead of updating the
     default filter, select \uicontrol Add > \uicontrol {URL Template}.
 
-    \section1 Creating Locator Filters
+    \section1 Create locator filters
 
     To quickly access files not directly mentioned in your project,
     create your own directory filters. That way you can locate files in a
@@ -216,7 +218,7 @@
         \li Select \uicontrol Add > \uicontrol {Files in Directories} to add
             a directory filter.
 
-            \image qtcreator-locator-generic-directory-filter.png {Filter Configuration dialog}
+            \image {qtcreator-locator-generic-directory-filter.png} {Filter Configuration dialog}
 
         \li In \uicontrol Name, enter a name for your filter.
 
@@ -241,7 +243,7 @@
 
     \endlist
 
-    \section1 Configuring Locator Cache
+    \section1 Configure locator cache
 
     The locator searches the files matching your file pattern in the directories
     you have selected and caches that information. \QC updates the cache for all
@@ -249,7 +251,8 @@
     filters once an hour.
 
     To update the cached information manually, select
-    \inlineimage icons/magnifier.png > \uicontrol Refresh in the locator.
+    \inlineimage {icons/magnifier.png} {Locator menu} > \uicontrol Refresh in the
+    locator.
 
     To set a new cache update time:
 
@@ -261,7 +264,7 @@
 
     \endlist
 
-    \section1 Hiding Long Paths
+    \section1 Hide long paths
 
     To hide the common part of absolute paths in the locator:
 
@@ -271,6 +274,5 @@
             show relative paths.
     \endlist
 
-    \sa {Navigate with locator}, {Search}{How To: Search}, {Perform calculations},
-    {Locator}
+    \sa {Navigate with locator}, {Search}{How to: Search}, {Perform calculations}
 */

@@ -35,7 +35,7 @@
                         },
                         "executable": {
                             "type": "string",
-                            "description": "The executable to run"
+                            "description": "The executable to run. Can be absolute or relative to the project or build directory."
                         },
                         "name": {
                             "type": "string",
@@ -43,11 +43,91 @@
                         },
                         "workingDirectory": {
                             "type": "string",
-                            "description": "The working directory to run the executable in"
+                            "description": "The working directory to run the executable in. Can be absolute or relative to the project directory."
+                        },
+                        "useTerminal": {
+                            "type": "boolean",
+                            "description": "Whether to run the executable in a terminal"
                         }
                     },
                     "required": [
                         "executable",
+                        "name"
+                    ]
+                }
+            ]
+        },
+        "build.configuration": {
+            "type": "array",
+            "description": "A list of build configurations",
+            "items": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "steps": {
+                            "type": "array",
+                            "items": [
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "arguments": {
+                                            "type": "array",
+                                            "items": [
+                                                {
+                                                    "type": "string"
+                                                }
+                                            ],
+                                            "description": "Arguments to pass to the executable"
+                                        },
+                                        "executable": {
+                                            "type": "string",
+                                            "description": "The executable to run"
+                                        },
+                                        "workingDirectory": {
+                                            "type": "string",
+                                            "description": "The working directory to run the executable in"
+                                        }
+                                    },
+                                    "required": [
+                                        "executable"
+                                    ]
+                                }
+                            ],
+                            "description": "The steps required for the build"
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "The name of the build configuration"
+                        },
+                        "buildDirectory": {
+                            "type": "string",
+                            "description": "The directory to build the project in"
+                        },
+                        "env": {
+                            "type": "object",
+                            "description": "Environment variables for the build as key/value pairs (Requires Qt Creator >= 19.0).\n\nPossibly existing values in the base environment are replaced.\n\nTo append, prepend, or unset values:\n  +VAR: Append value to existing variable or set new variable\n  VAR+: Prepend value to existing variable or set new variable\n  -VAR: Unset variable (value is ignored)",
+                            "patternProperties": {
+                                "^\\+": {
+                                    "type": "string",
+                                    "description": "Appends value to existing variable or set new variable."
+                                },
+                                "\\+$": {
+                                    "type": "string",
+                                    "description": "Prepends value to existing variable or set new variable."
+                                },
+                                "^-": {
+                                    "type": "string",
+                                    "description": "Unsets variable. The value is ignored."
+                                }
+                            },
+                            "additionalProperties": {
+                                "type": "string",
+                                "description": "Sets the variable to the specified value."
+                            }
+                        }
+                    },
+                    "required": [
+                        "steps",
                         "name"
                     ]
                 }

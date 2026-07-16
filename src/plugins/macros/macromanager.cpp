@@ -167,7 +167,7 @@ void MacroManagerPrivate::changeMacroDescription(Macro *macro, const QString &de
     if (!macro->load())
         return;
     macro->setDescription(description);
-    macro->save(macro->fileName(), Core::ICore::dialogParent());
+    macro->save(macro->fileName());
 
     QAction *action = actions[macro->displayName()];
     QTC_ASSERT(action, return);
@@ -259,8 +259,9 @@ void MacroManagerPrivate::showSaveDialog()
         const QString fileName = MacroManager::macrosDirectory() + QLatin1Char('/') + dialog.name()
                 + QLatin1Char('.') + QLatin1String(Constants::M_EXTENSION);
         currentMacro->setDescription(dialog.description());
-        currentMacro->save(fileName, Core::ICore::dialogParent());
+        currentMacro->save(fileName);
         addMacro(currentMacro);
+        emit q->macroAdded();
     }
 }
 
@@ -416,7 +417,7 @@ void MacroManager::saveLastMacro()
 
 QString MacroManager::macrosDirectory()
 {
-    const QString path = Core::ICore::userResourcePath("macros").toString();
+    const QString path = Core::ICore::userResourcePath("macros").toUrlishString();
     if (QFileInfo::exists(path) || QDir().mkpath(path))
         return path;
     return QString();

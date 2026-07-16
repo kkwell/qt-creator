@@ -7,17 +7,17 @@
 #include "remotelinuxtr.h"
 
 #include <projectexplorer/deployablefile.h>
+#include <projectexplorer/devicesupport/devicekitaspects.h>
 #include <projectexplorer/devicesupport/idevice.h>
-#include <projectexplorer/kitaspects.h>
 
-#include <solutions/tasking/tasktree.h>
+#include <QtTaskTree/QTaskTree>
 
 #include <utils/qtcassert.h>
 
 #include <QDateTime>
 
 using namespace ProjectExplorer;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace RemoteLinux {
@@ -26,7 +26,7 @@ namespace Internal {
 class AbstractRemoteLinuxDeployStepPrivate
 {
 public:
-    std::function<expected_str<void>()> internalInit;
+    std::function<Result<>()> internalInit;
 
     DeploymentTimeInfo deployTimes;
 };
@@ -47,7 +47,7 @@ AbstractRemoteLinuxDeployStep::~AbstractRemoteLinuxDeployStep()
 
 IDevice::ConstPtr AbstractRemoteLinuxDeployStep::deviceConfiguration() const
 {
-    return DeviceKitAspect::device(kit());
+    return RunDeviceKitAspect::device(kit());
 }
 
 void AbstractRemoteLinuxDeployStep::saveDeploymentTimeStamp(const DeployableFile &deployableFile,
@@ -68,7 +68,7 @@ bool AbstractRemoteLinuxDeployStep::hasRemoteFileChanged(
     return d->deployTimes.hasRemoteFileChanged(deployableFile, kit(), remoteTimestamp);
 }
 
-expected_str<void> AbstractRemoteLinuxDeployStep::isDeploymentPossible() const
+Result<> AbstractRemoteLinuxDeployStep::isDeploymentPossible() const
 {
     if (!deviceConfiguration())
         return make_unexpected(Tr::tr("No device configuration set."));
@@ -76,7 +76,7 @@ expected_str<void> AbstractRemoteLinuxDeployStep::isDeploymentPossible() const
 }
 
 void AbstractRemoteLinuxDeployStep::setInternalInitializer(
-    const std::function<expected_str<void>()> &init)
+    const std::function<Result<>()> &init)
 {
     d->internalInit = init;
 }

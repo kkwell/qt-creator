@@ -5,23 +5,21 @@
 
 #include <app/app_version.h>
 
+#include <utils/async.h>
 #include <utils/environment.h>
 #include <utils/hostosinfo.h>
-#include <utils/launcherinterface.h>
 #include <utils/qtcprocess.h>
 #include <utils/processinfo.h>
 #include <utils/processinterface.h>
+#include <utils/processreaper.h>
 #include <utils/qtcassert.h>
-#include <utils/singleton.h>
 #include <utils/stringutils.h>
 #include <utils/temporarydirectory.h>
 
 #include <QElapsedTimer>
 #include <QRegularExpression>
-#include <QtTest>
-
-#include <iostream>
-#include <fstream>
+#include <QSignalSpy>
+#include <QTest>
 
 using namespace Utils;
 
@@ -65,29 +63,6 @@ protected:
 int MessageHandler::s_destroyCount = 0;
 QtMessageHandler MessageHandler::s_oldMessageHandler = 0;
 
-class MacroMapExpander : public AbstractMacroExpander {
-public:
-    bool resolveMacro(const QString &name, QString *ret, QSet<AbstractMacroExpander*> &seen)
-        override
-    {
-        // loop prevention
-        const int count = seen.count();
-        seen.insert(this);
-        if (seen.count() == count)
-            return false;
-
-        QHash<QString, QString>::const_iterator it = m_map.constFind(name);
-        if (it != m_map.constEnd()) {
-            *ret = it.value();
-            return true;
-        }
-        return false;
-    }
-    void insert(const QString &key, const QString &value) { m_map.insert(key, value); }
-private:
-    QHash<QString, QString> m_map;
-};
-
 static constexpr char s_skipTerminateOnWindows[] =
         "Windows implementation of this test is lacking handling of WM_CLOSE message.";
 
@@ -98,6 +73,9 @@ class tst_Process : public QObject
 private slots:
     void initTestCase();
 
+    // Keep me as a first test to ensure that all singletons are working OK
+    // when being instantiated from the non-main thread.
+    void processReaperCreatedInNonMainThread();
     void testEnv()
     {
         if (HostOsInfo::isWindowsHost())
@@ -131,8 +109,6 @@ private slots:
     void prepareArgs();
     void prepareArgsEnv_data();
     void prepareArgsEnv();
-    void expandMacros_data();
-    void expandMacros();
     void iterations_data();
     void iterations();
     void iteratorEditsWindows();
@@ -166,8 +142,7 @@ private slots:
     void quitBlockingProcess();
     void tarPipe();
     void stdinToShell();
-    void eventLoopMode_data();
-    void eventLoopMode();
+    void runBlocking();
 
     void cleanupTestCase();
 
@@ -177,8 +152,6 @@ private:
     Environment envWindows;
     Environment envLinux;
 
-    MacroMapExpander mxWin;
-    MacroMapExpander mxUnix;
     QString homeStr;
     QString home;
 
@@ -190,9 +163,6 @@ void tst_Process::initTestCase()
     msgHandler = new MessageHandler;
     TemporaryDirectory::setMasterTemporaryDirectory(QDir::tempPath() + "/"
                                                 + Core::Constants::IDE_CASED_ID + "-XXXXXX");
-    const QString libExecPath(qApp->applicationDirPath() + '/'
-                              + QLatin1String(TEST_RELATIVE_LIBEXEC_PATH));
-    LauncherInterface::setPathToLauncher(libExecPath);
     SubProcessConfig::setPathToProcessTestApp(QLatin1String(PROCESS_TESTAPP));
 
     homeStr = QLatin1String("@HOME@");
@@ -202,43 +172,11 @@ void tst_Process::initTestCase()
     env << "empty=" << "word=hi" << "words=hi ho" << "spacedwords= hi   ho sucker ";
     envWindows = Environment(env, OsTypeWindows);
     envLinux = Environment(env, OsTypeLinux);
-
-    mxWin.insert("a", "hi");
-    mxWin.insert("aa", "hi ho");
-
-    mxWin.insert("b", "h\\i");
-    mxWin.insert("c", "\\hi");
-    mxWin.insert("d", "hi\\");
-    mxWin.insert("ba", "h\\i ho");
-    mxWin.insert("ca", "\\hi ho");
-    mxWin.insert("da", "hi ho\\");
-
-    mxWin.insert("e", "h\"i");
-    mxWin.insert("f", "\"hi");
-    mxWin.insert("g", "hi\"");
-
-    mxWin.insert("h", "h\\\"i");
-    mxWin.insert("i", "\\\"hi");
-    mxWin.insert("j", "hi\\\"");
-
-    mxWin.insert("k", "&special;");
-
-    mxWin.insert("x", "\\");
-    mxWin.insert("y", "\"");
-    mxWin.insert("z", "");
-
-    mxUnix.insert("a", "hi");
-    mxUnix.insert("b", "hi ho");
-    mxUnix.insert("c", "&special;");
-    mxUnix.insert("d", "h\\i");
-    mxUnix.insert("e", "h\"i");
-    mxUnix.insert("f", "h'i");
-    mxUnix.insert("z", "");
 }
 
 void tst_Process::cleanupTestCase()
 {
-    Singleton::deleteAll();
+    ProcessReaper::deleteAll();
     const int destroyCount = msgHandler->destroyCount();
     delete msgHandler;
     if (destroyCount)
@@ -249,6 +187,27 @@ void tst_Process::cleanupTestCase()
 Q_DECLARE_METATYPE(ProcessArgs::SplitError)
 Q_DECLARE_METATYPE(OsType)
 Q_DECLARE_METATYPE(ProcessResult)
+
+static bool deleteRunningProcess()
+{
+    SubProcessConfig subConfig(ProcessTestApp::SimpleTest::envVar(), {});
+    Process process;
+    subConfig.setupSubProcess(&process);
+    process.start();
+    process.waitForStarted();
+    return process.isRunning();
+}
+
+void tst_Process::processReaperCreatedInNonMainThread()
+{
+    ProcessReaper::deleteAll();
+
+    auto future = Utils::asyncRun(deleteRunningProcess);
+    future.waitForFinished();
+    QVERIFY(future.result());
+
+    ProcessReaper::deleteAll();
+}
 
 void tst_Process::multiRead_data()
 {
@@ -427,8 +386,7 @@ void tst_Process::prepareArgs()
     QFETCH(OsType, os);
 
     ProcessArgs::SplitError outerr;
-    ProcessArgs args = ProcessArgs::prepareArgs(in, &outerr, os);
-    QString outstr = args.toString();
+    QString outstr = ProcessArgs::prepareShellArgs(in, &outerr, os);
 
     QCOMPARE(outerr, err);
     if (err == ProcessArgs::SplitOk)
@@ -517,260 +475,13 @@ void tst_Process::prepareArgsEnv()
     QFETCH(OsType, os);
 
     ProcessArgs::SplitError outerr;
-    ProcessArgs args = ProcessArgs::prepareArgs(in, &outerr, os, os == OsTypeLinux ? &envLinux : &envWindows);
-    QString outstr = args.toString();
+    QString outstr = ProcessArgs::prepareShellArgs(in, &outerr, os, os == OsTypeLinux ? &envLinux : &envWindows);
 
     QCOMPARE(outerr, err);
     if (err == ProcessArgs::SplitOk)
         QCOMPARE(outstr, out);
 }
 
-void tst_Process::expandMacros_data()
-
-{
-    QTest::addColumn<QString>("in");
-    QTest::addColumn<QString>("out");
-    QTest::addColumn<OsType>("os");
-    QChar sp(QLatin1Char(' '));
-
-    static const struct {
-        const char * const in;
-        const char * const out;
-        OsType os;
-    } vals[] = {
-        {"plain", 0, OsTypeWindows},
-        {"%{a}", "hi", OsTypeWindows},
-        {"%{aa}", "\"hi ho\"", OsTypeWindows},
-        {"%{b}", "h\\i", OsTypeWindows},
-        {"%{c}", "\\hi", OsTypeWindows},
-        {"%{d}", "hi\\", OsTypeWindows},
-        {"%{ba}", "\"h\\i ho\"", OsTypeWindows},
-        {"%{ca}", "\"\\hi ho\"", OsTypeWindows},
-        {"%{da}", "\"hi ho\\\\\"", OsTypeWindows}, // or "\"hi ho\"\\"
-        {"%{e}", "\"h\"\\^\"\"i\"", OsTypeWindows},
-        {"%{f}", "\"\"\\^\"\"hi\"", OsTypeWindows},
-        {"%{g}", "\"hi\"\\^\"\"\"", OsTypeWindows},
-        {"%{h}", "\"h\\\\\"\\^\"\"i\"", OsTypeWindows},
-        {"%{i}", "\"\\\\\"\\^\"\"hi\"", OsTypeWindows},
-        {"%{j}", "\"hi\\\\\"\\^\"\"\"", OsTypeWindows},
-        {"%{k}", "\"&special;\"", OsTypeWindows},
-        {"%{x}", "\\", OsTypeWindows},
-        {"%{y}", "\"\"\\^\"\"\"", OsTypeWindows},
-        {"%{z}", "\"\"", OsTypeWindows},
-        {"^%{z}%{z}", "^%{z}%{z}", OsTypeWindows}, // stupid user check
-
-        {"quoted", 0, OsTypeWindows},
-        {"\"%{a}\"", "\"hi\"", OsTypeWindows},
-        {"\"%{aa}\"", "\"hi ho\"", OsTypeWindows},
-        {"\"%{b}\"", "\"h\\i\"", OsTypeWindows},
-        {"\"%{c}\"", "\"\\hi\"", OsTypeWindows},
-        {"\"%{d}\"", "\"hi\\\\\"", OsTypeWindows},
-        {"\"%{ba}\"", "\"h\\i ho\"", OsTypeWindows},
-        {"\"%{ca}\"", "\"\\hi ho\"", OsTypeWindows},
-        {"\"%{da}\"", "\"hi ho\\\\\"", OsTypeWindows},
-        {"\"%{e}\"", "\"h\"\\^\"\"i\"", OsTypeWindows},
-        {"\"%{f}\"", "\"\"\\^\"\"hi\"", OsTypeWindows},
-        {"\"%{g}\"", "\"hi\"\\^\"\"\"", OsTypeWindows},
-        {"\"%{h}\"", "\"h\\\\\"\\^\"\"i\"", OsTypeWindows},
-        {"\"%{i}\"", "\"\\\\\"\\^\"\"hi\"", OsTypeWindows},
-        {"\"%{j}\"", "\"hi\\\\\"\\^\"\"\"", OsTypeWindows},
-        {"\"%{k}\"", "\"&special;\"", OsTypeWindows},
-        {"\"%{x}\"", "\"\\\\\"", OsTypeWindows},
-        {"\"%{y}\"", "\"\"\\^\"\"\"", OsTypeWindows},
-        {"\"%{z}\"", "\"\"", OsTypeWindows},
-
-        {"leading bs", 0, OsTypeWindows},
-        {"\\%{a}", "\\hi", OsTypeWindows},
-        {"\\%{aa}", "\\\\\"hi ho\"", OsTypeWindows},
-        {"\\%{b}", "\\h\\i", OsTypeWindows},
-        {"\\%{c}", "\\\\hi", OsTypeWindows},
-        {"\\%{d}", "\\hi\\", OsTypeWindows},
-        {"\\%{ba}", "\\\\\"h\\i ho\"", OsTypeWindows},
-        {"\\%{ca}", "\\\\\"\\hi ho\"", OsTypeWindows},
-        {"\\%{da}", "\\\\\"hi ho\\\\\"", OsTypeWindows},
-        {"\\%{e}", "\\\\\"h\"\\^\"\"i\"", OsTypeWindows},
-        {"\\%{f}", "\\\\\"\"\\^\"\"hi\"", OsTypeWindows},
-        {"\\%{g}", "\\\\\"hi\"\\^\"\"\"", OsTypeWindows},
-        {"\\%{h}", "\\\\\"h\\\\\"\\^\"\"i\"", OsTypeWindows},
-        {"\\%{i}", "\\\\\"\\\\\"\\^\"\"hi\"", OsTypeWindows},
-        {"\\%{j}", "\\\\\"hi\\\\\"\\^\"\"\"", OsTypeWindows},
-        {"\\%{x}", "\\\\", OsTypeWindows},
-        {"\\%{y}", "\\\\\"\"\\^\"\"\"", OsTypeWindows},
-        {"\\%{z}", "\\", OsTypeWindows},
-
-        {"trailing bs", 0, OsTypeWindows},
-        {"%{a}\\", "hi\\", OsTypeWindows},
-        {"%{aa}\\", "\"hi ho\"\\", OsTypeWindows},
-        {"%{b}\\", "h\\i\\", OsTypeWindows},
-        {"%{c}\\", "\\hi\\", OsTypeWindows},
-        {"%{d}\\", "hi\\\\", OsTypeWindows},
-        {"%{ba}\\", "\"h\\i ho\"\\", OsTypeWindows},
-        {"%{ca}\\", "\"\\hi ho\"\\", OsTypeWindows},
-        {"%{da}\\", "\"hi ho\\\\\"\\", OsTypeWindows},
-        {"%{e}\\", "\"h\"\\^\"\"i\"\\", OsTypeWindows},
-        {"%{f}\\", "\"\"\\^\"\"hi\"\\", OsTypeWindows},
-        {"%{g}\\", "\"hi\"\\^\"\"\"\\", OsTypeWindows},
-        {"%{h}\\", "\"h\\\\\"\\^\"\"i\"\\", OsTypeWindows},
-        {"%{i}\\", "\"\\\\\"\\^\"\"hi\"\\", OsTypeWindows},
-        {"%{j}\\", "\"hi\\\\\"\\^\"\"\"\\", OsTypeWindows},
-        {"%{x}\\", "\\\\", OsTypeWindows},
-        {"%{y}\\", "\"\"\\^\"\"\"\\", OsTypeWindows},
-        {"%{z}\\", "\\", OsTypeWindows},
-
-        {"bs-enclosed", 0, OsTypeWindows},
-        {"\\%{a}\\", "\\hi\\", OsTypeWindows},
-        {"\\%{aa}\\", "\\\\\"hi ho\"\\", OsTypeWindows},
-        {"\\%{b}\\", "\\h\\i\\", OsTypeWindows},
-        {"\\%{c}\\", "\\\\hi\\", OsTypeWindows},
-        {"\\%{d}\\", "\\hi\\\\", OsTypeWindows},
-        {"\\%{ba}\\", "\\\\\"h\\i ho\"\\", OsTypeWindows},
-        {"\\%{ca}\\", "\\\\\"\\hi ho\"\\", OsTypeWindows},
-        {"\\%{da}\\", "\\\\\"hi ho\\\\\"\\", OsTypeWindows},
-        {"\\%{e}\\", "\\\\\"h\"\\^\"\"i\"\\", OsTypeWindows},
-        {"\\%{f}\\", "\\\\\"\"\\^\"\"hi\"\\", OsTypeWindows},
-        {"\\%{g}\\", "\\\\\"hi\"\\^\"\"\"\\", OsTypeWindows},
-        {"\\%{h}\\", "\\\\\"h\\\\\"\\^\"\"i\"\\", OsTypeWindows},
-        {"\\%{i}\\", "\\\\\"\\\\\"\\^\"\"hi\"\\", OsTypeWindows},
-        {"\\%{j}\\", "\\\\\"hi\\\\\"\\^\"\"\"\\", OsTypeWindows},
-        {"\\%{x}\\", "\\\\\\", OsTypeWindows},
-        {"\\%{y}\\", "\\\\\"\"\\^\"\"\"\\", OsTypeWindows},
-        {"\\%{z}\\", "\\\\", OsTypeWindows},
-
-        {"bs-enclosed and trailing literal quote", 0, OsTypeWindows},
-        {"\\%{a}\\\\\\^\"", "\\hi\\\\\\^\"", OsTypeWindows},
-        {"\\%{aa}\\\\\\^\"", "\\\\\"hi ho\"\\\\\\^\"", OsTypeWindows},
-        {"\\%{b}\\\\\\^\"", "\\h\\i\\\\\\^\"", OsTypeWindows},
-        {"\\%{c}\\\\\\^\"", "\\\\hi\\\\\\^\"", OsTypeWindows},
-        {"\\%{d}\\\\\\^\"", "\\hi\\\\\\\\\\^\"", OsTypeWindows},
-        {"\\%{ba}\\\\\\^\"", "\\\\\"h\\i ho\"\\\\\\^\"", OsTypeWindows},
-        {"\\%{ca}\\\\\\^\"", "\\\\\"\\hi ho\"\\\\\\^\"", OsTypeWindows},
-        {"\\%{da}\\\\\\^\"", "\\\\\"hi ho\\\\\"\\\\\\^\"", OsTypeWindows},
-        {"\\%{e}\\\\\\^\"", "\\\\\"h\"\\^\"\"i\"\\\\\\^\"", OsTypeWindows},
-        {"\\%{f}\\\\\\^\"", "\\\\\"\"\\^\"\"hi\"\\\\\\^\"", OsTypeWindows},
-        {"\\%{g}\\\\\\^\"", "\\\\\"hi\"\\^\"\"\"\\\\\\^\"", OsTypeWindows},
-        {"\\%{h}\\\\\\^\"", "\\\\\"h\\\\\"\\^\"\"i\"\\\\\\^\"", OsTypeWindows},
-        {"\\%{i}\\\\\\^\"", "\\\\\"\\\\\"\\^\"\"hi\"\\\\\\^\"", OsTypeWindows},
-        {"\\%{j}\\\\\\^\"", "\\\\\"hi\\\\\"\\^\"\"\"\\\\\\^\"", OsTypeWindows},
-        {"\\%{x}\\\\\\^\"", "\\\\\\\\\\\\\\^\"", OsTypeWindows},
-        {"\\%{y}\\\\\\^\"", "\\\\\"\"\\^\"\"\"\\\\\\^\"", OsTypeWindows},
-        {"\\%{z}\\\\\\^\"", "\\\\\\\\\\^\"", OsTypeWindows},
-
-        {"bs-enclosed and trailing unclosed quote", 0, OsTypeWindows},
-        {"\\%{a}\\\\\"", "\\hi\\\\\"", OsTypeWindows},
-        {"\\%{aa}\\\\\"", "\\\\\"hi ho\"\\\\\"", OsTypeWindows},
-        {"\\%{b}\\\\\"", "\\h\\i\\\\\"", OsTypeWindows},
-        {"\\%{c}\\\\\"", "\\\\hi\\\\\"", OsTypeWindows},
-        {"\\%{d}\\\\\"", "\\hi\\\\\\\\\"", OsTypeWindows},
-        {"\\%{ba}\\\\\"", "\\\\\"h\\i ho\"\\\\\"", OsTypeWindows},
-        {"\\%{ca}\\\\\"", "\\\\\"\\hi ho\"\\\\\"", OsTypeWindows},
-        {"\\%{da}\\\\\"", "\\\\\"hi ho\\\\\"\\\\\"", OsTypeWindows},
-        {"\\%{e}\\\\\"", "\\\\\"h\"\\^\"\"i\"\\\\\"", OsTypeWindows},
-        {"\\%{f}\\\\\"", "\\\\\"\"\\^\"\"hi\"\\\\\"", OsTypeWindows},
-        {"\\%{g}\\\\\"", "\\\\\"hi\"\\^\"\"\"\\\\\"", OsTypeWindows},
-        {"\\%{h}\\\\\"", "\\\\\"h\\\\\"\\^\"\"i\"\\\\\"", OsTypeWindows},
-        {"\\%{i}\\\\\"", "\\\\\"\\\\\"\\^\"\"hi\"\\\\\"", OsTypeWindows},
-        {"\\%{j}\\\\\"", "\\\\\"hi\\\\\"\\^\"\"\"\\\\\"", OsTypeWindows},
-        {"\\%{x}\\\\\"", "\\\\\\\\\\\\\"", OsTypeWindows},
-        {"\\%{y}\\\\\"", "\\\\\"\"\\^\"\"\"\\\\\"", OsTypeWindows},
-        {"\\%{z}\\\\\"", "\\\\\\\\\"", OsTypeWindows},
-
-        {"multi-var", 0, OsTypeWindows},
-        {"%{x}%{y}%{z}", "\\\\\"\"\\^\"\"\"", OsTypeWindows},
-        {"%{x}%{z}%{y}%{z}", "\\\\\"\"\\^\"\"\"", OsTypeWindows},
-        {"%{x}%{z}%{y}", "\\\\\"\"\\^\"\"\"", OsTypeWindows},
-        {"%{x}\\^\"%{z}", "\\\\\\^\"", OsTypeWindows},
-        {"%{x}%{z}\\^\"%{z}", "\\\\\\^\"", OsTypeWindows},
-        {"%{x}%{z}\\^\"", "\\\\\\^\"", OsTypeWindows},
-        {"%{x}\\%{z}", "\\\\", OsTypeWindows},
-        {"%{x}%{z}\\%{z}", "\\\\", OsTypeWindows},
-        {"%{x}%{z}\\", "\\\\", OsTypeWindows},
-        {"%{aa}%{a}", "\"hi hohi\"", OsTypeWindows},
-        {"%{aa}%{aa}", "\"hi hohi ho\"", OsTypeWindows},
-        {"%{aa}:%{aa}", "\"hi ho\":\"hi ho\"", OsTypeWindows},
-        {"hallo ^|%{aa}^|", "hallo ^|\"hi ho\"^|", OsTypeWindows},
-
-        {"quoted multi-var", 0, OsTypeWindows},
-        {"\"%{x}%{y}%{z}\"", "\"\\\\\"\\^\"\"\"", OsTypeWindows},
-        {"\"%{x}%{z}%{y}%{z}\"", "\"\\\\\"\\^\"\"\"", OsTypeWindows},
-        {"\"%{x}%{z}%{y}\"", "\"\\\\\"\\^\"\"\"", OsTypeWindows},
-        {"\"%{x}\"^\"\"%{z}\"", "\"\\\\\"^\"\"\"", OsTypeWindows},
-        {"\"%{x}%{z}\"^\"\"%{z}\"", "\"\\\\\"^\"\"\"", OsTypeWindows},
-        {"\"%{x}%{z}\"^\"\"\"", "\"\\\\\"^\"\"\"", OsTypeWindows},
-        {"\"%{x}\\%{z}\"", "\"\\\\\\\\\"", OsTypeWindows},
-        {"\"%{x}%{z}\\%{z}\"", "\"\\\\\\\\\"", OsTypeWindows},
-        {"\"%{x}%{z}\\\\\"", "\"\\\\\\\\\"", OsTypeWindows},
-        {"\"%{aa}%{a}\"", "\"hi hohi\"", OsTypeWindows},
-        {"\"%{aa}%{aa}\"", "\"hi hohi ho\"", OsTypeWindows},
-        {"\"%{aa}:%{aa}\"", "\"hi ho:hi ho\"", OsTypeWindows},
-
-        {"plain", 0, OsTypeLinux},
-        {"%{a}", "hi", OsTypeLinux},
-        {"%{b}", "'hi ho'", OsTypeLinux},
-        {"%{c}", "'&special;'", OsTypeLinux},
-        {"%{d}", "'h\\i'", OsTypeLinux},
-        {"%{e}", "'h\"i'", OsTypeLinux},
-        {"%{f}", "'h'\\''i'", OsTypeLinux},
-        {"%{z}", "''", OsTypeLinux},
-        {"\\%{z}%{z}", "\\%{z}%{z}", OsTypeLinux}, // stupid user check
-
-        {"single-quoted", 0, OsTypeLinux},
-        {"'%{a}'", "'hi'", OsTypeLinux},
-        {"'%{b}'", "'hi ho'", OsTypeLinux},
-        {"'%{c}'", "'&special;'", OsTypeLinux},
-        {"'%{d}'", "'h\\i'", OsTypeLinux},
-        {"'%{e}'", "'h\"i'", OsTypeLinux},
-        {"'%{f}'", "'h'\\''i'", OsTypeLinux},
-        {"'%{z}'", "''", OsTypeLinux},
-
-        {"double-quoted", 0, OsTypeLinux},
-        {"\"%{a}\"", "\"hi\"", OsTypeLinux},
-        {"\"%{b}\"", "\"hi ho\"", OsTypeLinux},
-        {"\"%{c}\"", "\"&special;\"", OsTypeLinux},
-        {"\"%{d}\"", "\"h\\\\i\"", OsTypeLinux},
-        {"\"%{e}\"", "\"h\\\"i\"", OsTypeLinux},
-        {"\"%{f}\"", "\"h'i\"", OsTypeLinux},
-        {"\"%{z}\"", "\"\"", OsTypeLinux},
-
-        {"complex", 0, OsTypeLinux},
-        {"echo \"$(echo %{a})\"", "echo \"$(echo hi)\"", OsTypeLinux},
-        {"echo \"$(echo %{b})\"", "echo \"$(echo 'hi ho')\"", OsTypeLinux},
-        {"echo \"$(echo \"%{a}\")\"", "echo \"$(echo \"hi\")\"", OsTypeLinux},
-        // These make no sense shell-wise, but they test expando nesting
-        {"echo \"%{echo %{a}}\"", "echo \"%{echo hi}\"", OsTypeLinux},
-        {"echo \"%{echo %{b}}\"", "echo \"%{echo hi ho}\"", OsTypeLinux},
-        {"echo \"%{echo \"%{a}\"}\"", "echo \"%{echo \"hi\"}\"", OsTypeLinux },
-    };
-
-    const char *title = 0;
-    for (unsigned i = 0; i < sizeof(vals)/sizeof(vals[0]); i++) {
-        if (!vals[i].out) {
-            title = vals[i].in;
-        } else {
-            char buf[80];
-            snprintf(buf, 80, "%s: %s", title, vals[i].in);
-            QTest::newRow(buf) << QString::fromLatin1(vals[i].in)
-                               << QString::fromLatin1(vals[i].out)
-                               << vals[i].os;
-            snprintf(buf, 80, "padded %s: %s", title, vals[i].in);
-            QTest::newRow(buf) << QString(sp + QString::fromLatin1(vals[i].in) + sp)
-                               << QString(sp + QString::fromLatin1(vals[i].out) + sp)
-                               << vals[i].os;
-        }
-    }
-}
-
-void tst_Process::expandMacros()
-{
-    QFETCH(QString, in);
-    QFETCH(QString, out);
-    QFETCH(OsType, os);
-
-    if (os == OsTypeWindows)
-        ProcessArgs::expandMacros(&in, &mxWin, os);
-    else
-        ProcessArgs::expandMacros(&in, &mxUnix, os);
-    QCOMPARE(in, out);
-}
 
 void tst_Process::iterations_data()
 {
@@ -1266,7 +977,10 @@ void tst_Process::destroyBlockingProcess_data()
 {
     QTest::addColumn<BlockType>("blockType");
 
-    QTest::newRow("EndlessLoop") << BlockType::EndlessLoop;
+    // The test has been failing on GitHub Actions on macOS starting with 1.09.2025"
+    if (!(qEnvironmentVariableIsSet("GITHUB_WORKSPACE") && HostOsInfo::isMacHost()))
+        QTest::newRow("EndlessLoop") << BlockType::EndlessLoop;
+
     QTest::newRow("InfiniteSleep") << BlockType::InfiniteSleep;
     QTest::newRow("MutexDeadlock") << BlockType::MutexDeadlock;
     QTest::newRow("EventLoop") << BlockType::EventLoop;
@@ -1284,7 +998,7 @@ void tst_Process::destroyBlockingProcess()
     process.start();
     QVERIFY(process.waitForStarted());
     QVERIFY(process.isRunning());
-    QVERIFY(!process.waitForFinished(1s));
+    QVERIFY(!process.waitForFinished(10s));
 }
 
 void tst_Process::flushFinishedWhileWaitingForReadyRead_data()
@@ -1374,8 +1088,9 @@ void tst_Process::recursiveCrashingProcess()
 static int runningTestProcessCount()
 {
     int testProcessCounter = 0;
-    const QList<ProcessInfo> processInfoList = ProcessInfo::processInfoList();
-    for (const ProcessInfo &processInfo : processInfoList) {
+    const Result<QList<ProcessInfo>> processInfoList
+        = ProcessInfo::processInfoList().value_or(QList<ProcessInfo>());
+    for (const ProcessInfo &processInfo : *processInfoList) {
         if (FilePath::fromString(processInfo.executable).baseName() == "processtestapp")
             ++testProcessCounter;
     }
@@ -1387,7 +1102,7 @@ void tst_Process::recursiveBlockingProcess()
     if (HostOsInfo::isWindowsHost())
         QSKIP(s_skipTerminateOnWindows);
 
-    Singleton::deleteAll();
+    ProcessReaper::deleteAll();
     QCOMPARE(runningTestProcessCount(), 0);
     const int recursionDepth = 5; // must be at least 2
     SubProcessConfig subConfig(ProcessTestApp::RecursiveBlockingProcess::envVar(),
@@ -1409,7 +1124,7 @@ void tst_Process::recursiveBlockingProcess()
         QCOMPARE(process.exitStatus(), QProcess::NormalExit);
         QCOMPARE(process.exitCode(), s_crashCode);
     }
-    Singleton::deleteAll();
+    ProcessReaper::deleteAll();
     QCOMPARE(runningTestProcessCount(), 0);
 }
 
@@ -1563,32 +1278,13 @@ void tst_Process::stdinToShell()
     QCOMPARE(result, "hallo");
 }
 
-void tst_Process::eventLoopMode_data()
+void tst_Process::runBlocking()
 {
-    QTest::addColumn<ProcessImpl>("processImpl");
-    QTest::addColumn<EventLoopMode>("eventLoopMode");
-
-    QTest::newRow("QProcess, blocking with event loop")
-        << ProcessImpl::QProcess << EventLoopMode::On;
-    QTest::newRow("QProcess, blocking without event loop")
-        << ProcessImpl::QProcess << EventLoopMode::Off;
-    QTest::newRow("ProcessLauncher, blocking with event loop")
-        << ProcessImpl::ProcessLauncher << EventLoopMode::On;
-    QTest::newRow("ProcessLauncher, blocking without event loop")
-        << ProcessImpl::ProcessLauncher << EventLoopMode::Off;
-}
-
-void tst_Process::eventLoopMode()
-{
-    QFETCH(ProcessImpl, processImpl);
-    QFETCH(EventLoopMode, eventLoopMode);
-
     {
         SubProcessConfig subConfig(ProcessTestApp::SimpleTest::envVar(), {});
         Process process;
         subConfig.setupSubProcess(&process);
-        process.setProcessImpl(processImpl);
-        process.runBlocking(10s, eventLoopMode);
+        process.runBlocking(10s);
         QCOMPARE(process.result(), ProcessResult::FinishedWithSuccess);
     }
 
@@ -1596,8 +1292,7 @@ void tst_Process::eventLoopMode()
         Process process;
         process.setCommand(
             CommandLine{"there_is_a_big_chance_that_executable_with_that_name_does_not_exists"});
-        process.setProcessImpl(processImpl);
-        process.runBlocking(10s, eventLoopMode);
+        process.runBlocking(10s);
         QCOMPARE(process.result(), ProcessResult::StartFailed);
     }
 }

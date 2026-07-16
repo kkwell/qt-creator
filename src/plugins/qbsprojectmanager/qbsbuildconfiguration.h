@@ -3,13 +3,10 @@
 
 #pragma once
 
-#include "qbsprojectmanager_global.h"
-
 #include "qbsproject.h"
 
 #include <projectexplorer/buildaspects.h>
 #include <projectexplorer/buildconfiguration.h>
-#include <qtsupport/baseqtversion.h>
 #include <qtsupport/qtbuildaspects.h>
 
 namespace ProjectExplorer { class BuildStep; }
@@ -41,11 +38,8 @@ class QbsBuildConfiguration final : public ProjectExplorer::BuildConfiguration
 
     friend class ProjectExplorer::BuildConfigurationFactory;
     QbsBuildConfiguration(ProjectExplorer::Target *target, Utils::Id id);
-    ~QbsBuildConfiguration() final;
 
 public:
-    ProjectExplorer::BuildSystem *buildSystem() const final;
-
     QbsBuildStep *qbsStep() const;
     Utils::Store qbsConfiguration() const;
 
@@ -78,16 +72,12 @@ private:
     QStringList m_changedFiles;
     QStringList m_activeFileTags;
     QStringList m_products;
-    QbsBuildSystem *m_buildSystem = nullptr;
 };
 
 class QbsBuildConfigurationFactory final : public ProjectExplorer::BuildConfigurationFactory
 {
 public:
     QbsBuildConfigurationFactory();
-
-private:
-    ProjectExplorer::BuildInfo createBuildInfo(ProjectExplorer::BuildConfiguration::BuildType type) const;
 };
 
 } // namespace Internal

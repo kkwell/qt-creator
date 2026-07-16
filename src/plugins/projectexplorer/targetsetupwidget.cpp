@@ -7,7 +7,7 @@
 #include "buildinfo.h"
 #include "projectexplorerconstants.h"
 #include "projectexplorertr.h"
-#include "kitmanager.h"
+#include "kitaspect.h"
 #include "kitoptionspage.h"
 
 #include <coreplugin/icore.h>
@@ -16,9 +16,11 @@
 #include <utils/detailsbutton.h>
 #include <utils/detailswidget.h>
 #include <utils/hostosinfo.h>
+#include <utils/macroexpander.h>
 #include <utils/pathchooser.h>
 #include <utils/qtcassert.h>
 #include <utils/utilsicons.h>
+#include <utils/variablechooser.h>
 
 #include <QCheckBox>
 #include <QHBoxLayout>
@@ -99,68 +101,113 @@ bool TargetSetupWidget::isKitSelected() const
 
 void TargetSetupWidget::setKitSelected(bool b)
 {
-    // Only check target if there are build configurations possible
-    b &= hasSelectedBuildConfigurations();
     const GuardLocker locker(m_ignoreChanges);
     m_detailsWidget->setChecked(b);
-    m_detailsWidget->setState(b ? DetailsWidget::Expanded : DetailsWidget::Collapsed);
+    m_detailsWidget->setState(
+        b && hasSelectableBuildConfigurations() ? DetailsWidget::Expanded
+                                                : DetailsWidget::Collapsed);
     m_detailsWidget->widget()->setEnabled(b);
 }
 
-void TargetSetupWidget::addBuildInfo(const BuildInfo &info, bool isImport)
+void TargetSetupWidget::addBuildInfos(const QList<BuildInfo> &infos, bool isImport)
 {
-    QTC_ASSERT(info.kitId == m_kit->id(), return);
+    QList<int> insertedOrReplacedPositions;
+    for (const BuildInfo &info : infos) {
+        QTC_ASSERT(info.kitId == m_kit->id(), return);
 
-    if (isImport && !m_haveImported) {
-        // disable everything on first import
-        for (BuildInfoStore &store : m_infoStore) {
-            store.isEnabled = false;
-            store.checkbox->setChecked(false);
+        if (isImport && !m_haveImported) {
+            // disable everything on first import
+            for (BuildInfoStore &store : m_infoStore) {
+                store.isEnabled = false;
+                store.checkbox->setChecked(false);
+            }
+            m_selected = 0;
+
+            m_haveImported = true;
         }
-        m_selected = 0;
 
-        m_haveImported = true;
-    }
-
-    const auto pos = static_cast<int>(m_infoStore.size());
-
-    BuildInfoStore store;
-    store.buildInfo = info;
-    store.isEnabled = info.enabledByDefault;
-    ++m_selected;
-
-    if (info.factory) {
+        BuildInfoStore store;
+        store.buildInfo = info;
+        store.isEnabled = info.enabledByDefault;
+        store.hasIssues = false;
+        store.isImported = isImport;
         store.checkbox = new QCheckBox;
         store.checkbox->setText(info.displayName);
         store.checkbox->setChecked(store.isEnabled);
         store.checkbox->setAttribute(Qt::WA_LayoutUsesWidgetRect);
-        m_newBuildsLayout->addWidget(store.checkbox, pos * 2, 0);
 
         store.pathChooser = new PathChooser();
         store.pathChooser->setExpectedKind(PathChooser::Directory);
-        store.pathChooser->setFilePath(info.buildDirectory);
         if (!info.showBuildDirConfigWidget)
             store.pathChooser->setVisible(false);
         store.pathChooser->setHistoryCompleter("TargetSetup.BuildDir.History");
         store.pathChooser->setReadOnly(isImport);
-        m_newBuildsLayout->addWidget(store.pathChooser, pos * 2, 1);
+        store.pathChooser->setBaseDirectory(info.projectDirectory);
+        store.expander = new MacroExpander;
+        BuildConfiguration::setupBuildDirMacroExpander(
+            *store.expander,
+            m_projectPath,
+            info.projectName,
+            m_kit,
+            info.displayName,
+            info.buildType,
+            info.buildSystemName,
+            false);
+        store.pathChooser->setMacroExpander(store.expander);
+        store.pathChooser->setFilePath(info.buildDirectory);
+        const auto varChooser = new VariableChooser(store.pathChooser);
+        varChooser->addMacroExpanderProvider({store.pathChooser, [e = store.expander] { return e; }});
+        varChooser->addSupportedWidget(store.pathChooser->lineEdit());
 
         store.issuesLabel = new QLabel;
         store.issuesLabel->setIndent(32);
-        m_newBuildsLayout->addWidget(store.issuesLabel, pos * 2 + 1, 0, 1, 2);
         store.issuesLabel->setVisible(false);
 
-        connect(store.checkbox, &QAbstractButton::toggled, this,
-                [this, checkBox = store.checkbox](bool b) { checkBoxToggled(checkBox, b); });
-        connect(store.pathChooser, &PathChooser::rawPathChanged, this,
-                [this, pathChooser = store.pathChooser] { pathChanged(pathChooser); });
+        // imported configurations may overwrite pre-existing configurations,
+        // but nothing else overwrites anything
+        const auto findConfigIndexToOverwrite = [this, &insertedOrReplacedPositions, &store] {
+            for (auto it = m_infoStore.begin(); it != m_infoStore.end(); ++it) {
+                if (!insertedOrReplacedPositions.contains(std::distance(m_infoStore.begin(), it))
+                    && it->expandedBuildDir(m_kit) == store.expandedBuildDir(m_kit)) {
+                    return it;
+                }
+            }
+            return m_infoStore.end();
+        };
+        const auto it = isImport ? findConfigIndexToOverwrite() : m_infoStore.end();
+        const int pos = std::distance(m_infoStore.begin(), it);
+        insertedOrReplacedPositions << pos;
+        const bool replace = pos != int(m_infoStore.size());
+        if (!replace || (isImport && m_selected == 0))
+            ++m_selected;
+
+        connect(
+            store.checkbox,
+            &QAbstractButton::toggled,
+            this,
+            [this, checkBox = store.checkbox](bool b) { checkBoxToggled(checkBox, b); });
+        connect(
+            store.pathChooser,
+            &PathChooser::rawPathChanged,
+            this,
+            [this, pathChooser = store.pathChooser] { pathChanged(pathChooser); });
+
+        if (replace) {
+            QTC_CHECK(isImport);
+            m_newBuildsLayout->replaceWidget(it->checkbox, store.checkbox);
+            m_newBuildsLayout->replaceWidget(it->pathChooser, store.pathChooser);
+            m_newBuildsLayout->replaceWidget(it->issuesLabel, store.issuesLabel);
+            *it = std::move(store);
+        } else {
+            m_newBuildsLayout->addWidget(store.checkbox, pos * 2, 0);
+            m_newBuildsLayout->addWidget(store.pathChooser, pos * 2, 1);
+            m_newBuildsLayout->addWidget(store.issuesLabel, pos * 2 + 1, 0, 1, 2);
+            m_infoStore.emplace_back(std::move(store));
+        }
+
+        reportIssues(pos);
     }
-
-    store.hasIssues = false;
-    m_infoStore.emplace_back(std::move(store));
-
-    reportIssues(pos);
-
+    QTC_CHECK(insertedOrReplacedPositions.size() == infos.size());
     emit selectedToggled();
 }
 
@@ -169,7 +216,9 @@ void TargetSetupWidget::targetCheckBoxToggled(bool b)
     if (m_ignoreChanges.isLocked())
         return;
     m_detailsWidget->widget()->setEnabled(b);
-    m_detailsWidget->setState(b ? DetailsWidget::Expanded : DetailsWidget::Collapsed);
+    m_detailsWidget->setState(
+        b && hasSelectableBuildConfigurations() ? DetailsWidget::Expanded
+                                                : DetailsWidget::Collapsed);
     emit selectedToggled();
 }
 
@@ -178,7 +227,7 @@ void TargetSetupWidget::manageKit()
     if (!m_kit)
         return;
 
-    Core::ICore::showOptionsDialog(Constants::KITS_SETTINGS_PAGE_ID, m_kit->id(), parentWidget());
+    Core::ICore::showSettings(Constants::KITS_SETTINGS_PAGE_ID, m_kit->id());
 }
 
 void TargetSetupWidget::setProjectPath(const FilePath &projectPath)
@@ -189,13 +238,13 @@ void TargetSetupWidget::setProjectPath(const FilePath &projectPath)
     m_projectPath = projectPath;
     clear();
 
-    for (const BuildInfo &info : buildInfoList(m_kit, projectPath))
-        addBuildInfo(info, false);
+    addBuildInfos(buildInfoList(m_kit, projectPath), false);
 }
 
 void TargetSetupWidget::expandWidget()
 {
-    m_detailsWidget->setState(DetailsWidget::Expanded);
+    if (hasSelectableBuildConfigurations())
+        m_detailsWidget->setState(DetailsWidget::Expanded);
 }
 
 void TargetSetupWidget::update(const TasksGenerator &generator)
@@ -205,24 +254,24 @@ void TargetSetupWidget::update(const TasksGenerator &generator)
     m_detailsWidget->setSummaryText(kit()->displayName());
     if (!kit()->isValid())
         m_detailsWidget->setIcon(Icons::CRITICAL.icon());
-    else if (kit()->hasWarning() || Utils::anyOf(tasks, Utils::equal(&Task::type, Task::Warning)))
+    else if (kit()->hasWarning() || Utils::anyOf(tasks, [](const Task &t) { return t.isWarning(); }))
         m_detailsWidget->setIcon(Icons::WARNING.icon());
     else
         m_detailsWidget->setIcon(kit()->icon());
 
     m_detailsWidget->setToolTip(kit()->toHtml(tasks, ""));
 
-    const Task errorTask = Utils::findOrDefault(tasks, Utils::equal(&Task::type, Task::Error));
+    const Task errorTask = Utils::findOrDefault(tasks, [](const Task &t) { return t.isError(); });
 
     // Kits that where the taskGenarator reports an error are not selectable, because we cannot
     // guarantee that we can handle the project sensibly (e.g. qmake project without Qt).
     if (!errorTask.isNull()) {
-        toggleEnabled(false);
+        setValid(false);
         m_infoStore.clear();
         return;
     }
 
-    toggleEnabled(true);
+    setValid(true);
     updateDefaultBuildDirectories();
 }
 
@@ -230,30 +279,35 @@ const QList<BuildInfo> TargetSetupWidget::buildInfoList(const Kit *k, const File
 {
     if (auto factory = BuildConfigurationFactory::find(k, projectPath))
         return factory->allAvailableSetups(k, projectPath);
-
-    BuildInfo info;
-    info.kitId = k->id();
-    return {info};
+    return {};
 }
 
-bool TargetSetupWidget::hasSelectedBuildConfigurations() const
+bool TargetSetupWidget::hasSelectableBuildConfigurations() const
 {
-    return !selectedBuildInfoList().isEmpty();
+    return !m_infoStore.empty() && m_infoStore.front().buildInfo.showBuildConfigs;
 }
 
-void TargetSetupWidget::toggleEnabled(bool enabled)
+void TargetSetupWidget::setValid(bool valid)
 {
-    m_detailsWidget->widget()->setEnabled(enabled && hasSelectedBuildConfigurations());
-    m_detailsWidget->setCheckable(enabled);
-    m_detailsWidget->setExpandable(enabled);
-    if (!enabled) {
+    m_isValid = valid;
+    m_detailsWidget->widget()->setEnabled(valid);
+    m_detailsWidget->setCheckable(valid);
+    m_detailsWidget->setExpandable(valid && hasSelectableBuildConfigurations());
+    if (!valid) {
         m_detailsWidget->setState(DetailsWidget::Collapsed);
         m_detailsWidget->setChecked(false);
     }
+    emit validToggled();
 }
 
 const QList<BuildInfo> TargetSetupWidget::selectedBuildInfoList() const
 {
+    if (m_infoStore.empty()) {
+        BuildInfo info;
+        info.kitId = m_kit->id();
+        return {info};
+    }
+
     QList<BuildInfo> result;
     for (const BuildInfoStore &store : m_infoStore) {
         if (store.isEnabled)
@@ -275,8 +329,7 @@ void TargetSetupWidget::clear()
 void TargetSetupWidget::updateDefaultBuildDirectories()
 {
     for (const BuildInfo &buildInfo : buildInfoList(m_kit, m_projectPath)) {
-        if (!buildInfo.factory)
-            continue;
+        QTC_ASSERT(buildInfo.factory, continue);
         bool found = false;
         for (BuildInfoStore &buildInfoStore : m_infoStore) {
             if (buildInfoStore.buildInfo.typeName == buildInfo.typeName) {
@@ -290,7 +343,7 @@ void TargetSetupWidget::updateDefaultBuildDirectories()
             }
         }
         if (!found)  // the change of the kit may have produced more build information than before
-            addBuildInfo(buildInfo, false);
+            addBuildInfos({buildInfo}, false);
     }
 }
 
@@ -319,7 +372,7 @@ void TargetSetupWidget::pathChanged(PathChooser *pathChooser)
         return store.pathChooser == pathChooser;
     });
     QTC_ASSERT(it != m_infoStore.end(), return);
-    it->buildInfo.buildDirectory = pathChooser->filePath();
+    it->buildInfo.buildDirectory = pathChooser->unexpandedFilePath();
     it->customBuildDir = true;
     reportIssues(static_cast<int>(std::distance(m_infoStore.begin(), it)));
 }
@@ -331,33 +384,32 @@ void TargetSetupWidget::reportIssues(int index)
 
     BuildInfoStore &store = m_infoStore[static_cast<size_t>(index)];
     if (store.issuesLabel) {
-        QPair<Task::TaskType, QString> issues = findIssues(store.buildInfo);
+        QPair<Task::TaskType, QString> issues = findIssues(store);
         store.issuesLabel->setText(issues.second);
         store.hasIssues = issues.first != Task::Unknown;
         store.issuesLabel->setVisible(store.hasIssues);
     }
 }
 
-QPair<Task::TaskType, QString> TargetSetupWidget::findIssues(const BuildInfo &info)
+QPair<Task::TaskType, QString> TargetSetupWidget::findIssues(const BuildInfoStore &store)
 {
-    if (m_projectPath.isEmpty() || !info.factory)
+    QTC_ASSERT(store.buildInfo.factory, return std::make_pair(Task::Unknown, QString()));
+    if (m_projectPath.isEmpty())
         return {Task::Unknown, {}};
 
-    Tasks issues;
-    if (info.factory)
-        issues = info.factory->reportIssues(m_kit, m_projectPath, info.buildDirectory);
-
+    const Tasks issues
+        = store.buildInfo.factory->reportIssues(m_kit, m_projectPath, store.expandedBuildDir(m_kit));
     QString text;
     Task::TaskType highestType = Task::Unknown;
-    for (const Task &t : std::as_const(issues)) {
+    for (const Task &t : issues) {
         if (!text.isEmpty())
             text.append(QLatin1String("<br>"));
         // set severity:
         QString severity;
-        if (t.type == Task::Error) {
+        if (t.isError()) {
             highestType = Task::Error;
             severity = Tr::tr("<b>Error:</b> ", "Severity is Task::Error");
-        } else if (t.type == Task::Warning) {
+        } else if (t.isWarning()) {
             if (highestType == Task::Unknown)
                 highestType = Task::Warning;
             severity = Tr::tr("<b>Warning:</b> ", "Severity is Task::Warning");
@@ -375,17 +427,33 @@ TargetSetupWidget::BuildInfoStore::~BuildInfoStore()
     delete label;
     delete issuesLabel;
     delete pathChooser;
+    delete expander;
 }
 
 TargetSetupWidget::BuildInfoStore::BuildInfoStore(TargetSetupWidget::BuildInfoStore &&other)
+{
+    *this = std::move(other);
+}
+
+TargetSetupWidget::BuildInfoStore &TargetSetupWidget::BuildInfoStore::operator=(
+    BuildInfoStore &&other)
 {
     std::swap(other.buildInfo, buildInfo);
     std::swap(other.checkbox, checkbox);
     std::swap(other.label, label);
     std::swap(other.issuesLabel, issuesLabel);
     std::swap(other.pathChooser, pathChooser);
+    std::swap(other.expander, expander);
     std::swap(other.isEnabled, isEnabled);
     std::swap(other.hasIssues, hasIssues);
+    std::swap(other.isImported, isImported);
+    return *this;
+}
+
+FilePath TargetSetupWidget::BuildInfoStore::expandedBuildDir(const Kit *kit) const
+{
+    return BuildConfiguration::expandedBuildDirectory(
+        kit, buildInfo.buildDirectory, buildInfo.projectDirectory, *expander);
 }
 
 } // namespace Internal

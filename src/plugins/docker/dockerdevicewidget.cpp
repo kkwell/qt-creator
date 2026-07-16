@@ -7,6 +7,10 @@
 #include "dockerdevice.h"
 #include "dockertr.h"
 
+#include <cppeditor/cppeditorconstants.h>
+
+#include <projectexplorer/kitaspect.h>
+
 #include <utils/algorithm.h>
 #include <utils/clangutils.h>
 #include <utils/commandline.h>
@@ -29,12 +33,10 @@ using namespace Utils;
 namespace Docker::Internal {
 
 DockerDeviceWidget::DockerDeviceWidget(const IDevice::Ptr &device)
-    : IDeviceWidget(device), m_kitItemDetector(device)
+    : IDeviceWidget(device)
 {
     auto dockerDevice = std::dynamic_pointer_cast<DockerDevice>(device);
     QTC_ASSERT(dockerDevice, return);
-
-    DockerDeviceSettings *deviceSettings = static_cast<DockerDeviceSettings *>(device->settings());
 
     using namespace Layouting;
 
@@ -56,57 +58,30 @@ DockerDeviceWidget::DockerDeviceWidget(const IDevice::Ptr &device)
     });
 
     auto pathListLabel = new InfoLabel(Tr::tr("Paths to mount:"));
+    pathListLabel->setElideMode(Qt::ElideNone);
     pathListLabel->setAdditionalToolTip(Tr::tr("Source directory list should not be empty."));
 
-    auto markupMounts = [deviceSettings, pathListLabel] {
-        const bool isEmpty = deviceSettings->mounts.volatileValue().isEmpty();
+    auto markupMounts = [dockerDevice, pathListLabel] {
+        const bool isEmpty = dockerDevice->mounts.volatileValue().isEmpty();
         pathListLabel->setType(isEmpty ? InfoLabel::Warning : InfoLabel::None);
     };
     markupMounts();
 
-    connect(&deviceSettings->mounts, &FilePathListAspect::volatileValueChanged, this, markupMounts);
+    connect(&dockerDevice->mounts, &FilePathListAspect::volatileValueChanged, this, markupMounts);
 
     auto logView = new QTextBrowser;
-    connect(&m_kitItemDetector, &KitDetector::logOutput,
-            logView, &QTextBrowser::append);
 
     auto autoDetectButton = new QPushButton(Tr::tr("Auto-detect Kit Items"));
     auto undoAutoDetectButton = new QPushButton(Tr::tr("Remove Auto-Detected Kit Items"));
     auto listAutoDetectedButton = new QPushButton(Tr::tr("List Auto-Detected Kit Items"));
-
-    auto searchDirsComboBox = new QComboBox;
-    searchDirsComboBox->addItem(Tr::tr("Search in PATH"));
-    searchDirsComboBox->addItem(Tr::tr("Search in Selected Directories"));
-    searchDirsComboBox->addItem(Tr::tr("Search in PATH and Additional Directories"));
-
-    auto searchDirsLineEdit = new FancyLineEdit;
-
-    searchDirsLineEdit->setPlaceholderText(Tr::tr("Semicolon-separated list of directories"));
-    searchDirsLineEdit->setToolTip(
-        Tr::tr("Select the paths in the Docker image that should be scanned for kit entries."));
-    searchDirsLineEdit->setHistoryCompleter("DockerMounts", true);
-
-    auto searchPaths = [searchDirsComboBox, searchDirsLineEdit, dockerDevice] {
-        FilePaths paths;
-        const int idx = searchDirsComboBox->currentIndex();
-        if (idx == 0 || idx == 2)
-            paths += dockerDevice->systemEnvironment().path();
-        if (idx == 1 || idx == 2) {
-            for (const QString &path : searchDirsLineEdit->text().split(';'))
-                paths.append(FilePath::fromString(path.trimmed()));
-        }
-        paths = Utils::transform(paths, [dockerDevice](const FilePath &path) {
-            return dockerDevice->filePath(path.path());
-        });
-        return paths;
-    };
-
+    const QList<QWidget *> tempDisabledWidgets = {autoDetectButton, undoAutoDetectButton,
+                                                  listAutoDetectedButton};
     connect(autoDetectButton,
             &QPushButton::clicked,
             this,
-            [this, logView, dockerDevice, searchPaths, deviceSettings] {
+            [this, logView, dockerDevice, tempDisabledWidgets] {
                 logView->clear();
-                expected_str<void> startResult = dockerDevice->updateContainerAccess();
+                Result<> startResult = dockerDevice->updateContainerAccess();
 
                 if (!startResult) {
                     logView->append(Tr::tr("Failed to start container."));
@@ -114,94 +89,104 @@ DockerDeviceWidget::DockerDeviceWidget(const IDevice::Ptr &device)
                     return;
                 }
 
-                const FilePath clangdPath
-                    = dockerDevice->filePath("clangd")
-                          .searchInPath({}, FilePath::AppendToPath, [](const FilePath &clangd) {
-                              return Utils::checkClangdVersion(clangd);
-                          });
+                const auto log = [logView](const QString &msg) { logView->append(msg); };
+                // clang-format off
+                const QtTaskTree::Group recipe {
+                    dockerDevice->autoDetectDeviceToolsRecipe(),
+                    ProjectExplorer::removeDetectedKitsRecipe(dockerDevice, log),
+                    ProjectExplorer::kitDetectionRecipe(dockerDevice, DetectionSource::FromSystem, log)
+                };
+                // clang-format on
 
-                if (!clangdPath.isEmpty())
-                    deviceSettings->clangdExecutable.setValue(clangdPath);
+                const auto onTaskTreeSetup = [logView, tempDisabledWidgets] {
+                    for (QWidget *widget : tempDisabledWidgets)
+                        widget->setEnabled(false);
+                    logView->append(Tr::tr("Starting auto-detection..."));
+                };
 
-                m_kitItemDetector.autoDetect(dockerDevice->id().toString(), searchPaths());
+                const auto onTaskTreeDone = [logView, tempDisabledWidgets] {
+                    for (QWidget *widget : tempDisabledWidgets)
+                        widget->setEnabled(true);
+                    logView->append(Tr::tr("Done."));
+                };
+
+                m_detectionRunner.start(recipe, onTaskTreeSetup, onTaskTreeDone);
 
                 if (DockerApi::instance()->dockerDaemonAvailable().value_or(false) == false)
                     logView->append(Tr::tr("Docker daemon appears to be stopped."));
                 else
                     logView->append(Tr::tr("Docker daemon appears to be running."));
-
-                logView->append(Tr::tr("Detection complete."));
                 updateDaemonStateTexts();
             });
 
     connect(undoAutoDetectButton, &QPushButton::clicked, this, [this, logView, device] {
         logView->clear();
-        m_kitItemDetector.undoAutoDetect(device->id().toString());
+        m_detectionRunner.start(
+            ProjectExplorer::removeDetectedKitsRecipe(device, [logView](const QString &msg) {
+                logView->append(msg);
+            })
+        );
     });
 
-    connect(listAutoDetectedButton, &QPushButton::clicked, this, [this, logView, device] {
+    connect(listAutoDetectedButton, &QPushButton::clicked, this, [logView, device] {
         logView->clear();
-        m_kitItemDetector.listAutoDetected(device->id().toString());
+        listAutoDetected(device, [logView](const QString &msg) { logView->append(msg); });
     });
 
-    auto createLineLabel = new QLabel(dockerDevice->createCommandLine().toUserOutput());
+    auto createLineLabel = new QLabel(dockerDevice->createCommandLineForDisplay().toUserOutput());
     createLineLabel->setWordWrap(true);
+    createLineLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    auto refreshNetworksButton = new QToolButton();
+    setIgnoreForDirtyHook(refreshNetworksButton);
+    refreshNetworksButton->setIcon(Icons::RELOAD_TOOLBAR.icon());
+    refreshNetworksButton->setToolTip(Tr::tr("Refresh Docker networks"));
+    connect(refreshNetworksButton, &QPushButton::clicked, this, [dockerDevice] {
+        DockerApi::instance()->refreshNetworks();
+    });
 
     using namespace Layouting;
 
     // clang-format off
-    Column detectionControls {
-        Space(20),
-        Row {
-            Tr::tr("Search Locations:"),
-            searchDirsComboBox,
-            searchDirsLineEdit
-        },
-        Row {
-            autoDetectButton,
-            undoAutoDetectButton,
-            listAutoDetectedButton,
-            st,
-        },
-        Tr::tr("Detection log:"),
-        logView
-    };
     Column {
         noMargin,
         Form {
-            deviceSettings->repo, br,
-            deviceSettings->tag, br,
-            deviceSettings->imageId, br,
-            daemonStateLabel, m_daemonReset, m_daemonState, br,
-            Tr::tr("Container state:"), deviceSettings->containerStatus, br,
-            deviceSettings->useLocalUidGid, br,
-            deviceSettings->keepEntryPoint, br,
-            deviceSettings->enableLldbFlags, br,
-            deviceSettings->clangdExecutable, br,
-            deviceSettings->network, br,
-            deviceSettings->extraArgs, br,
-            Column {
-                pathListLabel,
-                deviceSettings->mounts,
-            }, br,
-            If { dockerDevice->isAutoDetected(), {}, {detectionControls} },
             noMargin,
-        },br,
-        Tr::tr("Command line:"), createLineLabel, br,
+            dockerDevice->repo, br,
+            dockerDevice->tag, br,
+            dockerDevice->imageId, br,
+            daemonStateLabel, m_daemonReset, m_daemonState, br,
+            dockerDevice->useLocalUidGid, br,
+            dockerDevice->keepEntryPoint, br,
+            dockerDevice->enableLldbFlags, br,
+            dockerDevice->mountCmdBridge, br,
+            dockerDevice->enableX11Forwarding, br,
+            dockerDevice->network, refreshNetworksButton,br,
+            dockerDevice->extraArgs, br,
+            dockerDevice->environment, br,
+            pathListLabel, dockerDevice->mounts, br,
+            Tr::tr("Port mappings:"), dockerDevice->portMappings, br,
+            Tr::tr("Command line:"), createLineLabel, br,
+            dockerDevice->deviceToolsGui(), br,
+            Span(2, Row {
+                autoDetectButton,
+                undoAutoDetectButton,
+                listAutoDetectedButton,
+                st,
+            }), br,
+            Tr::tr("Detection log:"), logView
+        }, br,
     }.attachTo(this);
     // clang-format on
 
-    searchDirsLineEdit->setVisible(false);
-    auto updateDirectoriesLineEdit = [searchDirsLineEdit](int index) {
-        searchDirsLineEdit->setVisible(index == 1 || index == 2);
-        if (index == 1 || index == 2)
-            searchDirsLineEdit->setFocus();
-    };
-    QObject::connect(searchDirsComboBox, &QComboBox::activated, this, updateDirectoriesLineEdit);
-
-    connect(deviceSettings, &AspectContainer::applied, this, [createLineLabel, dockerDevice] {
-        createLineLabel->setText(dockerDevice->createCommandLine().toUserOutput());
+    connect(dockerDevice.get(), &BaseAspect::volatileValueChanged, this, [createLineLabel, dockerDevice] {
+        createLineLabel->setText(dockerDevice->createCommandLineForDisplay().toUserOutput());
     });
+
+    connect(&dockerDevice->mounts, &FilePathListAspect::volatileValueChanged,
+            this, checkSettingsDirty);
+
+    installMarkSettingsDirtyTriggerRecursively(this);
 }
 
 void DockerDeviceWidget::updateDaemonStateTexts()
@@ -219,4 +204,4 @@ void DockerDeviceWidget::updateDaemonStateTexts()
     }
 }
 
-} // Docker::Internal
+} // namespace Docker::Internal

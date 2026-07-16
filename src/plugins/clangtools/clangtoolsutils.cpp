@@ -29,9 +29,9 @@ using namespace Utils;
 namespace ClangTools {
 namespace Internal {
 
-static QString lineColumnString(const Debugger::DiagnosticLocation &location)
+static QString lineColumnString(const Link &link)
 {
-    return QString("%1:%2").arg(QString::number(location.line), QString::number(location.column));
+    return QString("%1:%2").arg(link.target.line).arg(link.target.column + 1);
 }
 
 static QString fixitStatus(FixitStatus status)
@@ -91,7 +91,7 @@ QString createDiagnosticToolTipString(
             if (!steps.second.isEmpty())
                 steps.second += "<br>";
             steps.second += QString("%1:%2: %3")
-                    .arg(step.location.filePath.toUserOutput(),
+                    .arg(step.location.targetFilePath.toUserOutput(),
                          lineColumnString(step.location),
                          step.message);
         }
@@ -121,10 +121,11 @@ QString createDiagnosticToolTipString(
     return html;
 }
 
-QString createFullLocationString(const Debugger::DiagnosticLocation &location)
+QString createFullLocationString(const Link &location)
 {
-    return location.filePath.toUserOutput() + QLatin1Char(':') + QString::number(location.line)
-            + QLatin1Char(':') + QString::number(location.column);
+    return location.targetFilePath.toUserOutput()
+            + QLatin1Char(':') + QString::number(location.target.line)
+            + QLatin1Char(':') + QString::number(location.target.column);
 }
 
 QString hintAboutBuildBeforeAnalysis()
@@ -138,8 +139,7 @@ QString hintAboutBuildBeforeAnalysis()
 
 void showHintAboutBuildBeforeAnalysis()
 {
-    Utils::CheckableMessageBox::information(Core::ICore::dialogParent(),
-                                            Tr::tr("Info About Build the Project Before Analysis"),
+    Utils::CheckableMessageBox::information(Tr::tr("Info About Build the Project Before Analysis"),
                                             hintAboutBuildBeforeAnalysis(),
                                             Key("ClangToolsDisablingBuildBeforeAnalysisHint"));
 }
@@ -154,7 +154,7 @@ FilePath fullPath(const FilePath &executable)
             candidate = candidate.withExecutableSuffix();
     } else {
         const Environment environment = Environment::systemEnvironment();
-        const FilePath expandedPath = environment.searchInPath(candidate.toString());
+        const FilePath expandedPath = environment.searchInPath(candidate.fileName());
         if (!expandedPath.isEmpty())
             candidate = expandedPath;
     }
@@ -175,12 +175,10 @@ static FilePath findValidExecutable(const FilePaths &candidates)
 
 FilePath toolShippedExecutable(ClangToolType tool)
 {
-    const FilePath shippedExecutable = tool == ClangToolType::Tidy
-                                     ? Core::ICore::clangTidyExecutable(CLANG_BINDIR)
-                                     : Core::ICore::clazyStandaloneExecutable(CLANG_BINDIR);
-    if (shippedExecutable.isExecutableFile())
-        return shippedExecutable;
-    return {};
+    const Result<FilePath> shippedExecutable
+        = tool == ClangToolType::Tidy ? Core::ICore::clangTidyExecutable(CLANG_BINDIR)
+                                      : Core::ICore::clazyStandaloneExecutable(CLANG_BINDIR);
+    return shippedExecutable.value_or(FilePath{});
 }
 
 FilePath toolExecutable(ClangToolType tool)
@@ -259,7 +257,7 @@ QString documentationUrl(const QString &checkName)
     const QString clazyPrefix = "clazy-";
     const QString clangStaticAnalyzerPrefix = "clang-analyzer-core.";
     if (name.startsWith(clazyPrefix)) {
-        name = checkName.mid(clazyPrefix.length());
+        name = checkName.mid(clazyPrefix.size());
         url = clazyDocUrl(name);
     } else if (name.startsWith(clangStaticAnalyzerPrefix)) {
         url = CppEditor::Constants::CLANG_STATIC_ANALYZER_DOCUMENTATION_URL;
@@ -339,6 +337,8 @@ QString clangTidyDocUrl(const QString &check)
     if (version.first.majorVersion() < 15) {
         url.append(check);
     } else {
+        if (check.startsWith("clang-analyzer-"))
+            return CppEditor::Constants::CLANG_STATIC_ANALYZER_DOCUMENTATION_URL;
         const int hyphenIndex = check.indexOf('-');
         QTC_ASSERT(hyphenIndex != -1, return {});
         url.append(check.left(hyphenIndex)).append('/').append(check.mid(hyphenIndex + 1));
@@ -351,7 +351,7 @@ QString clazyDocUrl(const QString &check)
     QVersionNumber version = ClangToolsSettings::clazyVersion();
     if (!version.isNull())
         version = QVersionNumber(version.majorVersion(), version.minorVersion());
-    const QString versionString = version.isNull() ? "master" : version.toString();
+    const QString versionString = version.isNull() ? "master" : version.toString().prepend("v");
     static const char urlTemplate[]
             = "https://github.com/KDE/clazy/blob/%1/docs/checks/README-%2.md";
     return QString::fromLatin1(urlTemplate).arg(versionString, check);

@@ -11,7 +11,6 @@
 #include "../projectnodes.h"
 #include "../projectmanager.h"
 #include "../projecttree.h"
-#include "../target.h"
 
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/iversioncontrol.h>
@@ -108,7 +107,14 @@ void JsonSummaryPage::initializePage()
     connect(m_wizard, &JsonWizard::filesReady, this, &JsonSummaryPage::triggerCommit);
     connect(m_wizard, &JsonWizard::filesReady, this, &JsonSummaryPage::addToProject);
 
+    // set result to accepted, so we can check if updateFileList -> m_wizard->generateFileList
+    // called reject()
+    m_wizard->setResult(QDialog::Accepted);
     updateFileList();
+    // if there were errors while updating the file list, the dialog is rejected
+    // so don't continue the setup (which also avoids showing the error message again)
+    if (m_wizard->result() == QDialog::Rejected)
+        return;
 
     IWizardFactory::WizardKind kind = wizardKind(m_wizard);
     bool isProject = (kind == IWizardFactory::ProjectWizard);
@@ -133,35 +139,28 @@ void JsonSummaryPage::initializePage()
     const ProjectAction currentAction = isProject ? AddSubProject : AddNewFile;
     const bool isSubproject = m_wizard->value(Constants::PROJECT_ISSUBPROJECT).toBool();
 
-    auto updateProjectTree = [this, files, kind, currentAction, preferredNodePath]() {
+    const auto updateProjectTree = [this, files, kind, currentAction, preferredNodePath] {
         Node *node = currentNode();
         if (!node) {
-            if (auto p = ProjectManager::projectWithProjectFilePath(preferredNodePath))
+            if (auto p = ProjectManager::projectWithProjectFile(preferredNodePath, false))
                 node = p->rootProjectNode();
         }
         initializeProjectTree(findWizardContextNode(node), files, kind, currentAction,
                               m_wizard->value(Constants::PROJECT_ISSUBPROJECT).toBool());
-        if (m_bsConnection && sender() != ProjectTree::instance())
-            disconnect(m_bsConnection);
     };
 
     if (contextNode) {
         if (auto p = contextNode->getProject()) {
-            if (auto targets = p->targets(); !targets.isEmpty()) {
-                if (auto bs = targets.first()->buildSystem()) {
-                    if (bs->isParsing()) {
-                        m_bsConnection = connect(bs, &BuildSystem::parsingFinished,
-                                                 this, updateProjectTree);
-                    }
-                }
+            if (BuildSystem * const bs = p->activeBuildSystem(); bs && bs->isParsing()) {
+                connect(bs, &BuildSystem::parsingFinished,
+                        this, updateProjectTree, Qt::SingleShotConnection);
             }
         }
     }
     initializeProjectTree(contextNode, files, kind, currentAction, isSubproject);
 
     // Refresh combobox on project tree changes:
-    connect(ProjectTree::instance(), &ProjectTree::treeChanged,
-            this, updateProjectTree);
+    connect(ProjectTree::instance(), &ProjectTree::treeChanged, this, updateProjectTree);
 
     bool hideProjectUi = JsonWizard::boolFromVariant(m_hideProjectUiValue, m_wizard->expander());
     setProjectUiVisible(!hideProjectUi);
@@ -190,11 +189,10 @@ void JsonSummaryPage::triggerCommit(const JsonWizard::GeneratorFiles &files)
     GeneratedFiles coreFiles
             = Utils::transform(files, &JsonWizard::GeneratorFile::file);
 
-    QString errorMessage;
-    if (!runVersionControl(coreFiles, &errorMessage)) {
+    if (const Result<> res = runVersionControl(coreFiles); !res) {
         QMessageBox::critical(wizard(), Tr::tr("Failed to Commit to Version Control"),
                               Tr::tr("Error message from Version Control System: \"%1\".")
-                              .arg(errorMessage));
+                              .arg(res.error()));
     }
 }
 
@@ -224,7 +222,7 @@ void JsonSummaryPage::addToProject(const JsonWizard::GeneratorFiles &files)
             QMessageBox::critical(wizard(), Tr::tr("Failed to Add to Project"),
                                   Tr::tr("Failed to add one or more files to project\n\"%1\" (%2).")
                                   .arg(folder->filePath().toUserOutput(),
-                                       FilePath::formatFilePaths(filePaths, ", ")));
+                                       filePaths.toUserOutput(", ")));
             return;
         }
         const QStringList dependencies = m_wizard->stringValue("Dependencies")
@@ -275,7 +273,10 @@ void JsonSummaryPage::updateProjectData(FolderNode *node)
 
     m_wizard->setValue(QLatin1String(KEY_SELECTED_PROJECT), QVariant::fromValue(project));
     m_wizard->setValue(QLatin1String(KEY_SELECTED_NODE), QVariant::fromValue(node));
-    m_wizard->setValue(QLatin1String(Constants::PROJECT_ISSUBPROJECT), node ? true : false);
+    m_wizard->setValue(Constants::PROJECT_ISSUBPROJECT, node ? true : false);
+    m_wizard->setValue(Constants::PREFERRED_PROJECT_NODE, QVariant::fromValue(node));
+    m_wizard->setValue(Constants::PREFERRED_PROJECT_NODE_PATH, node ?
+node->filePath().toUrlishString() : QString());
     bool qtKeyWordsEnabled = true;
     if (ProjectTree::hasNode(node)) {
         const ProjectNode *projectNode = node->asProjectNode();

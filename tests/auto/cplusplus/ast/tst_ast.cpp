@@ -1,8 +1,8 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include <QtTest>
 #include <QDebug>
+#include <QTest>
 
 #include <cplusplus/ASTVisitor.h>
 #include <cplusplus/Control.h>
@@ -112,6 +112,8 @@ private slots:
     void templated_dtor_3();
     void templated_dtor_4();
     void templated_dtor_5();
+    void emptyMemberInitialization();
+    void placementNewWithEmptyConstructorArgs();
 
     // possible declaration-or-expression statements
     void call_call_1();
@@ -2005,7 +2007,7 @@ void tst_AST::invalidCode()
     QFETCH(QByteArray, source);
 
     source += "\nclass Foo {};\n";
-    const std::shared_ptr<TranslationUnit> unit(parse(source, TranslationUnit::ParseTranlationUnit,
+    const std::shared_ptr<TranslationUnit> unit(parse(source, TranslationUnit::ParseTranslationUnit,
                                                      false, false, true));
 
     // Check that we find the class coming after the invalid garbage.
@@ -2056,14 +2058,31 @@ void tst_AST::invalidEnumWithDestructorId()
 void tst_AST::invalidFunctionInitializer()
 {
     std::shared_ptr<TranslationUnit> unit(parse(
-        "int main() { a t=b; c d(e)=\"\"; }", TranslationUnit::ParseTranlationUnit, false, false, true));
+        "int main() { a t=b; c d(e)=\"\"; }", TranslationUnit::ParseTranslationUnit, false, false, true));
 
     QVERIFY(diag.errorCount != 0);
 }
 
+void tst_AST::emptyMemberInitialization()
+{
+    const std::shared_ptr<TranslationUnit> unit(parse(
+        "struct S\n{\n    S(): i() {}\n    int i;};", TranslationUnit::ParseTranslationUnit));
+    QVERIFY(unit->ast());
+    QCOMPARE(diag.errorCount, 0);
+}
+
+void tst_AST::placementNewWithEmptyConstructorArgs()
+{
+    const std::shared_ptr<TranslationUnit> unit(parse(
+        "int main()\n{    int* i = new int;\n    i = new(i) int();}",
+        TranslationUnit::ParseTranslationUnit));
+    QVERIFY(unit->ast());
+    QCOMPARE(diag.errorCount, 0);
+}
+
 void tst_AST::initTestCase()
 {
-    control.setDiagnosticClient(&diag);
+    control.setDiagnosticClient(&diag, true);
 }
 
 void tst_AST::cleanup()

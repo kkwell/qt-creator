@@ -8,21 +8,14 @@
 #include "qnxdevicetester.h"
 #include "qnxtr.h"
 
-#include <coreplugin/icore.h>
-
 #include <projectexplorer/devicesupport/idevicefactory.h>
 #include <projectexplorer/devicesupport/sshparameters.h>
 
 #include <remotelinux/linuxdevice.h>
 #include <remotelinux/remotelinux_constants.h>
-#include <remotelinux/remotelinuxsignaloperation.h>
 #include <remotelinux/sshdevicewizard.h>
 
-#include <utils/port.h>
-#include <utils/portlist.h>
-#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
-#include <utils/wizard.h>
 
 using namespace ProjectExplorer;
 using namespace RemoteLinux;
@@ -39,54 +32,35 @@ static QString signalProcessByNameQnxCommandLine(const QString &filePath, int si
         "done").arg(executable.replace(QLatin1String("/"), QLatin1String("\\/"))).arg(sig);
 }
 
-class QnxDeviceProcessSignalOperation : public RemoteLinuxSignalOperation
+static QString killCommandForPath(const FilePath &filePath)
 {
-public:
-    explicit QnxDeviceProcessSignalOperation(const IDeviceConstPtr &device)
-        : RemoteLinuxSignalOperation(device)
-    {}
-
-    QString killProcessByNameCommandLine(const QString &filePath) const override
-    {
-        return QString::fromLatin1("%1; %2").arg(signalProcessByNameQnxCommandLine(filePath, 15),
-                                                 signalProcessByNameQnxCommandLine(filePath, 9));
-    }
-
-    QString interruptProcessByNameCommandLine(const QString &filePath) const override
-    {
-        return signalProcessByNameQnxCommandLine(filePath, 2);
-    }
-};
-
+    return QString::fromLatin1("%1; %2").arg(signalProcessByNameQnxCommandLine(filePath.path(), 15),
+                                             signalProcessByNameQnxCommandLine(filePath.path(), 9));
+}
 class QnxDevice final : public LinuxDevice
 {
 public:
     QnxDevice()
     {
         setDisplayType(Tr::tr("QNX"));
-        settings()->displayName.setDefaultValue(Tr::tr("QNX Device"));
+        setDefaultDisplayName(Tr::tr("QNX Device"));
         setOsType(OsTypeOtherUnix);
         setupId(IDevice::ManuallyAdded);
         setType(Constants::QNX_QNX_OS_TYPE);
         setMachineType(IDevice::Hardware);
         SshParameters sshParams;
-        sshParams.timeout = 10;
-        setSshParameters(sshParams);
+        sshParams.setTimeout(10);
+        setDefaultSshParameters(sshParams);
         setFreePorts(PortList::fromString("10000-10100"));
-        setExtraData(RemoteLinux::Constants::SourceProfile, true);
+        sourceProfile.setDefaultValue(true);
+        setKillCommandForPathFunction(killCommandForPath);
 
-        addDeviceAction({Tr::tr("Deploy Qt libraries..."), [](const IDevice::Ptr &device, QWidget *parent) {
-            QnxDeployQtLibrariesDialog dialog(device, parent);
-            dialog.exec();
+        addDeviceAction({Tr::tr("Deploy Qt libraries..."), [](const IDevice::Ptr &device) {
+                             executeQnxDeployQtLibrariesDialog(device);
         }});
     }
 
-    DeviceProcessSignalOperation::Ptr signalOperation() const final
-    {
-        return DeviceProcessSignalOperation::Ptr(new QnxDeviceProcessSignalOperation(shared_from_this()));
-    }
-
-    DeviceTester *createDeviceTester() const final { return new QnxDeviceTester; }
+    DeviceTester *createDeviceTester() final { return new QnxDeviceTester(shared_from_this()); }
 };
 
 class QnxDeviceFactory final : public IDeviceFactory
@@ -106,6 +80,7 @@ public:
                 return {};
             return device;
         });
+        setExecutionTypeId(RemoteLinux::Constants::ExecutionType);
     }
 };
 

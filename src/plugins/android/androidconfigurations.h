@@ -4,15 +4,13 @@
 
 #pragma once
 
-#include "androiddeviceinfo.h"
-#include "androidsdkmanager.h"
 #include "androidsdkpackage.h"
 
 #include <projectexplorer/toolchain.h>
 
 #include <qtsupport/qtversionmanager.h>
 
-#include <solutions/tasking/tasktree.h>
+#include <QtTaskTree/QTaskTree>
 
 #include <utils/filepath.h>
 
@@ -21,9 +19,7 @@
 
 namespace ProjectExplorer { class Abi; }
 
-namespace Android {
-
-namespace Internal { class AndroidSdkManager; }
+namespace Android::Internal {
 
 class CreateAvdInfo
 {
@@ -55,8 +51,10 @@ QVersionNumber ndkVersion(const Utils::FilePath &ndkPath);
 QUrl sdkToolsUrl();
 QByteArray getSdkToolsSha256();
 
+QString optionalSystemImagePackage();
+
 QStringList allEssentials();
-bool allEssentialsInstalled(Internal::AndroidSdkManager *sdkManager);
+bool allEssentialsInstalled();
 bool sdkToolsOk();
 
 Utils::FilePath openJDKLocation();
@@ -89,7 +87,7 @@ Utils::FilePath makePathFromNdk(const Utils::FilePath &ndkLocation);
 Utils::FilePath keytoolPath();
 
 QStringList devicesCommandOutput();
-Tasking::ExecutableItem devicesCommandOutputRecipe(const Tasking::Storage<QStringList> &outputStorage);
+QtTaskTree::ExecutableItem devicesCommandOutputRecipe(const QtTaskTree::Storage<QStringList> &outputStorage);
 
 QString bestNdkPlatformMatch(int target, const QtSupport::QtVersion *qtVersion);
 
@@ -100,10 +98,10 @@ QString getProductModel(const QString &device);
 bool sdkFullyConfigured();
 void setSdkFullyConfigured(bool allEssentialsInstalled);
 
-bool isValidNdk(const QString &ndkLocation);
-QStringList getCustomNdkList();
-void addCustomNdk(const QString &customNdk);
-void removeCustomNdk(const QString &customNdk);
+bool isValidNdk(const Utils::FilePath &ndkPath);
+Utils::FilePaths getCustomNdkList();
+void addCustomNdk(const Utils::FilePath &customNdk);
+void removeCustomNdk(const Utils::FilePath &customNdk);
 void setDefaultNdk(const Utils::FilePath &defaultNdk);
 Utils::FilePath defaultNdk();
 
@@ -123,7 +121,6 @@ class AndroidConfigurations : public QObject
     Q_OBJECT
 
 public:
-    static Internal::AndroidSdkManager *sdkManager();
     static void applyConfig();
     static AndroidConfigurations *instance();
 
@@ -136,17 +133,14 @@ public:
 
 signals:
     void aboutToUpdate();
-    void updated();
+
+    void sdkLocationChanged();
 
 private:
     friend void setupAndroidConfigurations();
     AndroidConfigurations();
 
-    void load();
-    void save();
-
     static void updateAndroidDevice();
-    std::unique_ptr<Internal::AndroidSdkManager> m_sdkManager;
 };
 
 #ifdef WITH_TESTS
@@ -155,7 +149,7 @@ QObject *createAndroidConfigurationsTest();
 
 void setupAndroidConfigurations();
 
-} // namespace Android
+} // namespace Android::Internal
 
 Q_DECLARE_METATYPE(ProjectExplorer::Abis)
 Q_DECLARE_METATYPE(Utils::OsType)

@@ -5,10 +5,10 @@
 
 #include "dapclient.h"
 
-#include <coreplugin/messagemanager.h>
 #include <coreplugin/icore.h>
+#include <coreplugin/messagemanager.h>
+#include <coreplugin/perspective.h>
 
-#include <debugger/debuggermainwindow.h>
 #include <debugger/debuggertr.h>
 
 #include <utils/infobar.h>
@@ -40,8 +40,8 @@ const char installDebugPyInfoBarId[] = "Python::InstallDebugPy";
 
 static FilePath packageDir(const FilePath &python, const QString &packageName)
 {
-    expected_str<FilePath> baseDir = python.needsDevice() ? python.tmpDir()
-                                                          : Core::ICore::userResourcePath();
+    Result<FilePath> baseDir = python.isLocal() ? Core::ICore::userResourcePath()
+                                                      : python.tmpDir();
     return baseDir ? baseDir->pathAppended(packageName) : FilePath();
 }
 
@@ -80,7 +80,7 @@ public:
 
     void start() override
     {
-        Environment env = m_runParameters.debugger.environment;
+        Environment env = m_runParameters.debugger().environment;
         const FilePath debugPyDir = packageDir(m_cmd.executable(), "debugpy");
         if (QTC_GUARD(debugPyDir.isSameDevice(m_cmd.executable()))) {
             env.appendOrSet("PYTHONPATH", debugPyDir.path());
@@ -215,9 +215,9 @@ void PyDapEngine::setupEngine()
 {
     QTC_ASSERT(state() == EngineSetupRequested, qDebug() << state());
 
-    Utils::FilePath interpreter = runParameters().interpreter;
+    Utils::FilePath interpreter = runParameters().interpreter();
 
-    const FilePath scriptFile = runParameters().mainScript;
+    const FilePath scriptFile = runParameters().mainScript();
     if (!scriptFile.isReadableFile()) {
         MessageManager::writeDisrupting(
             "Python Error" + QString("Cannot open script file %1").arg(scriptFile.toUserOutput()));
@@ -228,28 +228,31 @@ void PyDapEngine::setupEngine()
     if (missingModuleInstallation(interpreter, "debugpy")) {
         Utils::InfoBarEntry
             info(installDebugPyInfoBarId,
-                 Tr::tr(
-                     "Python debugging support is not available. Install the debugpy package."),
+                 Tr::tr("Install the debugpy package to turn on Python debugging support."),
                  Utils::InfoBarEntry::GlobalSuppression::Enabled);
-        info.addCustomButton(Tr::tr("Install debugpy"), [this] {
-            Core::ICore::infoBar()->removeInfo(installDebugPyInfoBarId);
-            Core::ICore::infoBar()->globallySuppressInfo(installDebugPyInfoBarId);
-            const FilePath target = packageDir(runParameters().interpreter, "debugpy");
-            QTC_ASSERT(target.isSameDevice(runParameters().interpreter), return);
-            m_installProcess.reset(new Process);
-            m_installProcess->setCommand(
-                {runParameters().interpreter,
-                 {"-m",
-                  "pip",
-                  "install",
-                  "-t",
-                  target.needsDevice() ? target.path() : target.toUserOutput(),
-                  "debugpy",
-                  "--upgrade"}});
-            m_installProcess->setTerminalMode(TerminalMode::Run);
-            m_installProcess->start();
-        });
-        Core::ICore::infoBar()->addInfo(info);
+        info.setTitle(Tr::tr("Python Debugging Is Not Available"));
+        info.setInfoType(InfoLabel::Warning);
+        info.addCustomButton(
+            Tr::tr("Install debugpy"),
+            [this] {
+                const FilePath target = packageDir(runParameters().interpreter(), "debugpy");
+                QTC_ASSERT(target.isSameDevice(runParameters().interpreter()), return);
+                m_installProcess.reset(new Process);
+                m_installProcess->setCommand(
+                    {runParameters().interpreter(),
+                     {"-m",
+                      "pip",
+                      "install",
+                      "-t",
+                      target.isLocal() ? target.toUserOutput() : target.path(),
+                      "debugpy",
+                      "--upgrade"}});
+                m_installProcess->setTerminalMode(TerminalMode::Run);
+                m_installProcess->start();
+            },
+            {},
+            InfoBarEntry::ButtonAction::SuppressPersistently);
+        Core::ICore::popupInfoBar()->addInfo(info);
 
         notifyEngineSetupFailed();
         return;
@@ -260,12 +263,12 @@ void PyDapEngine::setupEngine()
                      "-m", "debugpy",
                      "--listen", "127.0.0.1:5679"}};
 
-    if (isLocalAttachEngine()) {
-        cmd.addArgs({"--pid", QString::number(runParameters().attachPID.pid())});
+    if (runParameters().isLocalAttachEngine()) {
+        cmd.addArgs({"--pid", QString::number(runParameters().attachPid().pid())});
     } else {
         cmd.addArgs({"--wait-for-client",
                      scriptFile.path(),
-                     runParameters().inferior.workingDirectory.path()});
+                     runParameters().inferior().workingDirectory.path()});
     }
 
     IDataProvider *dataProvider
@@ -281,11 +284,6 @@ bool PyDapEngine::acceptsBreakpoint(const BreakpointParameters &bp) const
     const auto mimeType = Utils::mimeTypeForFile(bp.fileName);
     return mimeType.matchesName(C_PY3_MIMETYPE) || mimeType.matchesName(C_PY_GUI_MIMETYPE)
            || mimeType.matchesName(C_PY_MIMETYPE) || mimeType.matchesName(C_PY_MIME_ICON);
-}
-
-bool PyDapEngine::isLocalAttachEngine() const
-{
-    return runParameters().startMode == AttachToLocalProcess;
 }
 
 const QLoggingCategory &PyDapEngine::logCategory()

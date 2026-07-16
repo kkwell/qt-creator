@@ -22,7 +22,7 @@ public:
     bool operator==(const IDebugServerProvider &other) const final;
     bool isSimulator() const final { return true; }
 
-    Utils::FilePath optionsFilePath(Debugger::DebuggerRunTool *runTool,
+    Utils::FilePath optionsFilePath(ProjectExplorer::RunControl *runControl,
                                     QString &errorMessage) const final;
 
 private:
@@ -33,14 +33,6 @@ private:
     friend class SimulatorUvscServerProviderConfigWidget;
     friend class SimulatorUvscServerProviderFactory;
     friend class SimulatorUvProjectOptions;
-};
-
-// SimulatorUvscServerProviderFactory
-
-class SimulatorUvscServerProviderFactory final : public IDebugServerProviderFactory
-{
-public:
-    SimulatorUvscServerProviderFactory();
 };
 
 // SimulatorUvscServerProviderConfigWidget
@@ -58,5 +50,7 @@ private:
 
     QCheckBox *m_limitSpeedCheckBox = nullptr;
 };
+
+void setupSimulatorUvscServerProvider();
 
 } // BareMetal::Internal

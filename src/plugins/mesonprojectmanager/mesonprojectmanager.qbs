@@ -34,6 +34,8 @@ Project {
             "buildoptionsmodel.h",
             "mesonbuildconfiguration.cpp",
             "mesonbuildconfiguration.h",
+            "mesonbuildstep.cpp",
+            "mesonbuildstep.h",
             "mesonbuildsystem.cpp",
             "mesonbuildsystem.h",
             "mesonproject.cpp",
@@ -45,26 +47,33 @@ Project {
             "mesonprojectparser.h",
             "mesonrunconfiguration.cpp",
             "mesonrunconfiguration.h",
-            "ninjabuildstep.cpp",
-            "ninjabuildstep.h",
             "mesonoutputparser.cpp",
             "mesonoutputparser.h",
             "ninjaparser.cpp",
             "ninjaparser.h",
             "mesonprojectnodes.cpp",
             "mesonprojectnodes.h",
-            "resources_meson.qrc",
             "settings.cpp",
             "settings.h",
             "toolkitaspectwidget.cpp",
             "toolkitaspectwidget.h",
-            "toolsmodel.cpp",
-            "toolsmodel.h",
             "toolssettingsaccessor.cpp",
             "toolssettingsaccessor.h",
             "toolssettingspage.cpp",
             "toolssettingspage.h",
         ]
+
+        Group {
+            name: "images"
+            prefix: "icons/"
+            files: [
+                "meson_logo.png",
+                "meson_bw_logo.png",
+                "meson_bw_logo@2x.png",
+            ]
+            fileTags: "qt.core.resource_data"
+            Qt.core.resourcePrefix: "/mesonproject"
+        }
     }
 
     QtcAutotest {

@@ -9,12 +9,7 @@
 
 /*!
     \page creator-how-to-profile-qml.html
-    \if defined(qtdesignstudio)
-    \previouspage creator-qml-performance-monitor.html
-    \nextpage studio-advanced.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-analyze
 
@@ -24,28 +19,20 @@
     in your applications, such as slowness and unresponsive, stuttering user
     interfaces.
 
-    \if defined(qtdesignstudio)
-    \note In this section, you are using advanced menu items. These are not
-    visible by default. To toggle the visibility of advanced menu items, see
-    \l{Customizing the Menu Bar}.
-    \endif
-
-
     To collect data about a QML application:
 
     \list 1
         \li Set up QML debugging for the project. For more information, see
-            \l{Setting Up QML Debugging}.
-        \if defined(qtcreator)
-        \li In the \uicontrol Projects mode, select a \l{Kits}
+            \l{Setting up QML debugging}.
+        \li In the \uicontrol Projects mode, select a \l{Managing kits}
             {kit} with Qt version 4.7.4 or later.
-       \endif
             \note To profile applications on \l{glossary-device}{devices}, you
             must install Qt libraries on them.
         \li Go to \uicontrol Analyze > \uicontrol {QML Profiler} to profile the
             current application.
-            \image qtcreator-qml-profiler-toolbar.webp {QML Profiler}
-        \li Select \inlineimage icons/qtcreator-analyze-start-button.png
+            \image {qtcreator-qml-profiler-toolbar.webp} {QML Profiler}
+        \li Select
+            \inlineimage {icons/qtcreator-analyze-start-button.png} {Start QML Profiler analysis}
             (\uicontrol Start) to start the application from QML Profiler.
     \endlist
 
@@ -53,24 +40,33 @@
     the time running in the \uicontrol Elapsed field.
 
     \note If data collection does not start automatically, select
-    \inlineimage icons/recordfill.png (\uicontrol {Enable Profiling}).
+    \inlineimage {icons/recordfill.png} {Enable Profiling}
+    (\uicontrol {Enable Profiling}).
 
-    Data is collected until you select \inlineimage icons/recordfill.png again.
+    Data is collected until you select
+    \inlineimage {icons/recordfill.png} {Disable Profiling}
+    (\uicontrol {Disable Profiling}).
     Data collection takes time, so expect a delay before seeing data.
 
     Do not use application commands to exit the application because data is
-    sent to QML Profiler when you select \inlineimage icons/recordfill.png.
-    The application stops in seconds. If you exit the application, the data is
-    not sent.
+    sent to QML Profiler when you select
+    \inlineimage {icons/recordfill.png} {Disable Profiling}. The application
+    stops in seconds. If you exit the application, the data is not sent.
 
     Select \uicontrol {Disable Profiling} to disable the automatic start of the
     data collection when an application is launched. Data collection starts when
     you select the button again.
 
-    To save all the collected data, select \uicontrol Analyze >
-    \uicontrol {QML Profiler Options} > \uicontrol {Save QML Trace}. To view the saved
-    data, select \uicontrol {Load QML Trace}. You can also deliver the saved data to
-    others for examination or load data saved by them.
+    \section1 Save and load data
+
+    To save all the collected data in the \c .qzt format, go to
+    \uicontrol Analyze > \uicontrol {QML Profiler Options} and select
+    \uicontrol {Save QML Trace}.
+
+    To view the saved data, select \uicontrol {Load QML Trace}.
+
+    You can also deliver \c .qzt files to others for examination
+    or load files that you receive from them.
 
     \section1 Flush data while profiling
 
@@ -83,9 +79,9 @@
     To specify custom QML Profiler settings for a particular project:
 
     \list 1
-        \li Go to \uicontrol Projects > \uicontrol Run.
+        \li Go to \uicontrol Projects > \uicontrol {Run Settings}.
         \li In \uicontrol {QML Profiler Settings}, select \uicontrol Custom.
-            \image qml-profiler-settings.png {QML Profiler Settings}
+            \image {qml-profiler-settings.png} {QML Profiler Settings}
     \endlist
 
     You can set the following preferences:
@@ -122,46 +118,32 @@
     You can profile a Qt Quick application that you do not run from \QC.
     However, you must enable QML debugging and profiling for the application
     in the project build settings. For more information, see
-    \l{Setting Up QML Debugging}.
+    \l{Setting up QML debugging}.
 
     To attach to a waiting application:
 
     \list 1
         \li Go to \uicontrol Analyze >
             \uicontrol {QML Profiler (Attach to Waiting Application)}.
-            \image qml-profiler-start-dialog.png {Start QML Profiler dialog}
+            \image {qml-profiler-start-dialog.png} {Start QML Profiler dialog}
          \li In \uicontrol Kit, select the kit used to build the application.
          \li In \uicontrol Port, specify the port to listen to.
          \li Select \uicontrol OK.
     \endlist
 
-    \sa {Profiling QML applications}
-
-    \if defined(qtcreator)
-    \sa {Analyze}{How To: Analyze}, {Analyzers}, {Analyzing Code}
-    \endif
+    \sa {Analyze}{How to: Analyze}, {Analyzers}, {Analyzing code},
+    {Profiling QML applications}
 */
 
 /*!
     \page creator-qml-performance-monitor.html
-    \if defined(qtdesignstudio)
-    \previouspage creator-qml-debugging-example.html
-    \nextpage creator-how-to-profile-qml.html
-    \else
     \previouspage creator-reference.html
-    \endif
 
     \ingroup creator-reference-analyzer
 
-    \title Profiling QML Applications
+    \title Profiling QML applications
 
     \brief Improve the performance of QML applications.
-
-    \if defined(qtdesignstudio)
-    \note In this section, you are using advanced menu items. These are not
-    visible by default. To toggle the visibility of advanced menu items, see
-    \l{Customizing the Menu Bar}.
-    \endif
 
     With QML Profiler, you can find causes for typical performance problems
     in your applications, such as slowness and unresponsive, stuttering user
@@ -172,11 +154,9 @@
     Another typical cause for similar performance problems is creating or
     updating invisible items, which takes time in the GUI thread.
 
-    \if defined(qtcreator)
     Triggering long-running C++ functions, such as paint methods and signal
     handlers, also takes time in the GUI thread, but is more difficult to see in
     QML Profiler because it does not profile C++ code.
-    \endif
 
     To find excessive use of JavaScript, check the frame rate in animations and
     Scene Graph events, look for gaps, and check whether the application behaves
@@ -190,7 +170,6 @@
     are never visible to the users because they are located outside the screen
     or hidden beneath other, visible elements.
 
-    \if defined(qtcreator)
     If frames get dropped even though JavaScript is not being run, and there are
     large, unexplained gaps in the timeline, check your custom QQuickItem
     implementations. You can use \l{Profile function execution}
@@ -200,14 +179,13 @@
     JavaScript down to the C++ and all the way to the kernel space. You can
     view the collected data in the \l{Chrome Trace Format Visualizer}
     {Chrome Trace Format Viewer}.
-    \endif
 
-    \section1 Analyzing Collected Data
+    \section1 Analyzing collected data
 
     The \uicontrol Timeline view displays graphical representations of QML and
     JavaScript execution and a condensed view of all recorded events.
 
-    \image qtcreator-qml-profiler.webp {QML Profiler}
+    \image {qtcreator-qml-profiler.webp} {QML Profiler}
 
     Each row in the timeline (6) describes a type of QML events that were
     recorded. Move the cursor on an event on a row to see how long it takes and
@@ -225,9 +203,9 @@
     the default zoom level, right-click the timeline to open the context menu,
     and select \uicontrol {Reset Zoom}.
 
-    Click the time ruler to add vertical orientation lines (5) to the timeline.
+    Select the time ruler to add vertical orientation lines (5) to the timeline.
 
-    \section2 Selecting Event Ranges
+    \section2 Selecting event ranges
 
     Select an event range (7) to view the frame rate of events and to
     compare it with the frame rate of similar events. Select
@@ -250,7 +228,7 @@
 
     To remove an event range, close the \uicontrol Selection dialog.
 
-    \section2 Understanding the Data
+    \section2 Understanding the data
 
     Generally, events in the timeline view indicate how long QML or JavaScript
     execution took. Move the mouse over them to see details. For most events,
@@ -336,7 +314,7 @@
             This event type is available since Qt 6.3.
     \endtable
 
-    \section2 Analyzing Scene Graph Events
+    \section2 Analyzing scene graph events
 
     To understand the scene graph category, read more about how
     Qt Quick scene graph works in \l {Qt Quick Scene Graph} and
@@ -361,14 +339,14 @@
         \li \uicontrol {Polish}
         \li GUI
         \li Threaded, Basic, Windows
-        \li polish
+        \li \c polish
         \li Final touch-up of items before they are rendered using
             QQuickItem::updatePolish().
     \row
         \li \uicontrol {GUI Thread Wait}
         \li GUI
         \li Threaded
-        \li lock
+        \li \c lock
         \li Executing slots connected to the QQuickWindow::afterAnimating()
             signal and then locking the render thread's mutex before waiting on
             the same mutex at \uicontrol {GUI Thread Sync}. If this starts long
@@ -378,13 +356,13 @@
         \li \uicontrol {GUI Thread Sync}
         \li GUI
         \li Threaded
-        \li blockedForSync
+        \li \c blockedForSync
         \li The time the GUI thread is blocked, waiting for the render thread.
     \row
         \li \uicontrol {Animations}
         \li GUI
         \li Threaded, Windows
-        \li animations
+        \li \c animations
         \li Advancing animations in the GUI thread. The basic render loop does
             not drive animations in sync with the rendering. This is why no
             animation events will be shown when using the basic render loop.
@@ -394,14 +372,14 @@
         \li \uicontrol {Render Thread Sync}
         \li Render
         \li Threaded, Basic, Windows
-        \li Frame rendered ... sync
+        \li \c {Frame rendered ... sync}
         \li Synchronizing the QML state into the scene graph using
             QQuickItem::updatePaintNode().
     \row
         \li \uicontrol {Render}
         \li Render
         \li Threaded, Basic, Windows
-        \li Frame rendered ... render
+        \li \c {Frame rendered ... render}
         \li Total time spent rendering the frame, including preparing and
             uploading all the necessary data to the GPU. This is the \e gross
             render time. Do not confuse it with the \e net \uicontrol{Render Render}
@@ -410,20 +388,20 @@
         \li \uicontrol {Swap}
         \li Render
         \li Threaded, Basic, Windows
-        \li Frame rendered ... swap
+        \li \c {Frame rendered ... swap}
         \li Swapping frames after rendering.
     \row
         \li \uicontrol {Render Preprocess}
         \li Render
         \li Threaded, Basic, Windows
-        \li time in renderer ... preprocess
+        \li \c {time in renderer ... preprocess}
         \li Calling QSGNode::preprocess() on all nodes that need to be
             preprocessed. This is part of the gross \uicontrol {Render} step.
     \row
         \li \uicontrol {Render Update}
         \li Render
         \li Threaded, Basic, Windows
-        \li time in renderer ... updates
+        \li \c {time in renderer ... updates}
         \li Iterating and processing all the nodes in the scene graph to update
             their geometry, transformations, opacity, and other state. In the
             \uicontrol {Render Thread Sync} stage, each node is updated separately
@@ -434,74 +412,74 @@
         \li \uicontrol {Render Bind}
         \li Render
         \li Threaded, Basic, Windows
-        \li time in renderer ... binding
+        \li \c {time in renderer ... binding}
         \li Binding the correct framebuffer for OpenGL rendering. This is part
             of the gross \uicontrol {Render} step.
     \row
         \li \uicontrol {Render Render}
         \li Render
         \li Threaded, Basic, Windows
-        \li time in renderer ... rendering
+        \li \c {time in renderer ... rendering}
         \li The actual process of sending all the data to the GPU via OpenGL.
             This is part of the gross \uicontrol {Render} step.
     \row
         \li \uicontrol {Material Compile}
         \li Render
         \li Threaded, Basic, Windows
-        \li shader compiled
+        \li \c {shader compiled}
         \li Compiling GLSL shader programs.
     \row
         \li \uicontrol {Glyph Render}
         \li Render
         \li Threaded, Basic, Windows
-        \li glyphs ... rendering
+        \li \c {glyphs ... rendering}
         \li Rendering of font glyphs into textures.
     \row
         \li \uicontrol {Glyph Upload}
         \li Render
         \li Threaded, Basic, Windows
-        \li glyphs ... upload
+        \li \c {glyphs ... upload}
         \li Uploading of glyph textures to the GPU.
     \row
         \li \uicontrol {Texture Bind}
         \li Render
         \li Threaded, Basic, Windows
-        \li plain texture ... bind
+        \li \c {plain texture ... bind}
         \li Binding a texture in the OpenGL context using glBindTextures.
     \row
         \li \uicontrol {Texture Convert}
         \li Render
         \li Threaded, Basic, Windows
-        \li plain texture ... convert
+        \li \c {plain texture ... convert}
         \li Converting the format and downscaling an image to make it suitable
             for usage as a texture.
     \row
         \li \uicontrol {Texture Swizzle}
         \li Render
         \li Threaded, Basic, Windows
-        \li plain texture ... swizzle
+        \li \c {plain texture ... swizzle}
         \li Swizzling the texture data on the CPU if necessary.
     \row
         \li \uicontrol {Texture Upload}
         \li Render
         \li Threaded, Basic, Windows
-        \li plain texture ... upload / atlastexture uploaded
+        \li \c {plain texture ... upload / atlastexture uploaded}
         \li Uploading the texture data to the GPU.
     \row
         \li \uicontrol {Texture Mipmap}
         \li Render
         \li Threaded, Basic, Windows
-        \li plain texture ... mipmap
+        \li \c {plain texture ... mipmap}
         \li Mipmapping a texture on the GPU.
     \row
         \li \uicontrol {Texture Delete}
         \li Render
         \li Threaded, Basic, Windows
-        \li plain texture deleted
+        \li \c {plain texture deleted}
         \li Deleting a texture from the GPU that became unnecessary.
     \endtable
 
-    \section2 Analyzing Qt Quick 3D Events
+    \section2 Analyzing Qt Quick 3D events
 
     The following is the list of events for Qt Quick 3D. Each rendered frame
     consists of synchronize, prepare, and render phases, which are done in that order.
@@ -568,9 +546,19 @@
         \li \uicontrol {Texture Memory Consumption}
         \li Render
         \li Shows a bar view of total texture memory consumption.
+    \row
+        \li \uicontrol {Render Call}
+        \li Render
+        \li Time taken by a single draw or compute call. Useful for identifying heavy
+            GPU operations.
+    \row
+        \li \uicontrol {Render Pass}
+        \li Render
+        \li Time taken by an entire render pass. Shows grouped rendering operations
+            for frame buffers.
     \endtable
 
-    \section1 Viewing Statistics
+    \section1 Viewing statistics
 
     The \uicontrol Statistics view displays the number of times each binding, create,
     compile, JavaScript, or signal event is triggered and the average time it
@@ -582,7 +570,7 @@
     Select an event to move to it in the source code
     in the code editor.
 
-    \image qml-profiler-statistics.png "Statistics view"
+    \image {qml-profiler-statistics.png} {Statistics view}
 
     \uicontrol Callers and \uicontrol Callees show dependencies between events.
     They allow you to examine the internal functions of the application.
@@ -600,7 +588,7 @@
     To copy the contents of one view or row to the clipboard, select
     \uicontrol {Copy Table} or \uicontrol {Copy Row} in the context menu.
 
-    \section2 Visualizing Statistics as Flame Graphs
+    \section2 Visualizing statistics as flame graphs
 
     The \uicontrol {Flame Graph} view shows a more concise statistical overview
     of QML and JavaScript execution. In the \uicontrol {Total Time} view, the
@@ -609,7 +597,7 @@
     total runtime of all JavaScript and QML events. The nesting shows which
     functions were called by which other ones.
 
-    \image qml-profiler-flamegraph.png "Flame Graph View"
+    \image {qml-profiler-flamegraph.png} {Flame Graph view}
 
     To view the total amount of memory allocated by the functions, select
     \uicontrol Memory in the drop-down menu.
@@ -626,9 +614,6 @@
     suitable for analyzing per frame execution times. However, it is very easy
     to see the total impact of the various QML and JavaScript events there.
 
-    \sa {Profile QML applications}
-
-    \if defined(qtcreator)
-    \sa {Analyze}{How To: Analyze}, {Analyzers}, {Analyzing Code}
-    \endif
+    \sa {Analyze}{How to: Analyze}, {Analyzers}, {Analyzing code},
+    {Profile QML applications}
 */

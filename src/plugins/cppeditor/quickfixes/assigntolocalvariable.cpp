@@ -8,7 +8,7 @@
 #include "../cppeditorwidget.h"
 #include "../cpprefactoringchanges.h"
 #include "cppquickfix.h"
-#include "cppquickfixprojectsettings.h"
+#include "cppquickfixsettings.h"
 
 #include <cplusplus/CppRewriter.h>
 #include <cplusplus/Overview.h>
@@ -17,7 +17,6 @@
 
 #ifdef WITH_TESTS
 #include "cppquickfix_test.h"
-#include <QtTest>
 #endif
 
 using namespace CPlusPlus;
@@ -48,15 +47,15 @@ private:
         QString type = deduceType();
         if (type.isEmpty())
             return;
-        const int origNameLength = m_originalName.length();
+        const int origNameLength = m_originalName.size();
         const QString varName = constructVarName();
-        const QString insertString = type.replace(type.length() - origNameLength, origNameLength,
+        const QString insertString = type.replace(type.size() - origNameLength, origNameLength,
                                                   varName + QLatin1String(" = "));
         m_file->apply(ChangeSet::makeInsert(m_insertPos, insertString));
 
         // move cursor to new variable name
         QTextCursor c = m_file->cursor();
-        c.setPosition(m_insertPos + insertString.length() - varName.length() - 3);
+        c.setPosition(m_insertPos + insertString.size() - varName.size() - 3);
         c.movePosition(QTextCursor::EndOfWord, QTextCursor::KeepAnchor);
         editor()->setTextCursor(c);
     }
@@ -96,12 +95,12 @@ private:
     {
         QString newName = m_originalName;
         if (newName.startsWith(QLatin1String("get"), Qt::CaseInsensitive)
-            && newName.length() > 3
+            && newName.size() > 3
             && newName.at(3).isUpper()) {
             newName.remove(0, 3);
             newName.replace(0, 1, newName.at(0).toLower());
         } else if (newName.startsWith(QLatin1String("to"), Qt::CaseInsensitive)
-                   && newName.length() > 2
+                   && newName.size() > 2
                    && newName.at(2).isUpper()) {
             newName.remove(0, 2);
             newName.replace(0, 1, newName.at(0).toLower());
@@ -123,10 +122,11 @@ private:
 //! Assigns the return value of a function call or a new expression to a local variable
 class AssignToLocalVariable : public CppQuickFixFactory
 {
-#ifdef WITH_TESTS
 public:
-    static QObject *createTest();
-#endif
+    AssignToLocalVariable()
+    {
+        setClangdReplacement({20});
+    }
 
 private:
     void doMatch(const CppQuickFixInterface &interface, QuickFixOperations &result) override
@@ -250,257 +250,19 @@ private:
 };
 
 #ifdef WITH_TESTS
-using namespace Tests;
-
-class AssignToLocalVariableTest : public QObject
+class AssignToLocalVariableTest : public Tests::CppQuickFixTestObject
 {
     Q_OBJECT
-
-private slots:
-    void testTemplates()
-    {
-        QList<TestDocumentPtr> testDocuments;
-        QByteArray original;
-        QByteArray expected;
-
-        // Header File
-        original =
-            "template <typename T>\n"
-            "class List {\n"
-            "public:\n"
-            "    T first();"
-            "};\n"
-            ;
-        expected = original;
-        testDocuments << CppTestDocument::create("file.h", original, expected);
-
-        // Source File
-        original =
-            "#include \"file.h\"\n"
-            "void foo() {\n"
-            "    List<int> list;\n"
-            "    li@st.first();\n"
-            "}\n";
-        expected =
-            "#include \"file.h\"\n"
-            "void foo() {\n"
-            "    List<int> list;\n"
-            "    auto localFirst = list.first();\n"
-            "}\n";
-        testDocuments << CppTestDocument::create("file.cpp", original, expected);
-
-        AssignToLocalVariable factory;
-        QuickFixOperationTest(testDocuments, &factory);
-    }
-
-    void test_data()
-    {
-        QTest::addColumn<QByteArray>("original");
-        QTest::addColumn<QByteArray>("expected");
-
-        // Check: Add local variable for a free function.
-        QTest::newRow("freeFunction")
-            << QByteArray(
-                   "int foo() {return 1;}\n"
-                   "void bar() {fo@o();}\n")
-            << QByteArray(
-                   "int foo() {return 1;}\n"
-                   "void bar() {auto localFoo = foo();}\n");
-
-        // Check: Add local variable for a member function.
-        QTest::newRow("memberFunction")
-            << QByteArray(
-                   "class Foo {public: int* fooFunc();}\n"
-                   "void bar() {\n"
-                   "    Foo *f = new Foo;\n"
-                   "    @f->fooFunc();\n"
-                   "}\n")
-            << QByteArray(
-                   "class Foo {public: int* fooFunc();}\n"
-                   "void bar() {\n"
-                   "    Foo *f = new Foo;\n"
-                   "    auto localFooFunc = f->fooFunc();\n"
-                   "}\n");
-
-        // Check: Add local variable for a member function, cursor in the middle (QTCREATORBUG-10355)
-        QTest::newRow("memberFunction2ndGrade1")
-            << QByteArray(
-                   "struct Foo {int* func();};\n"
-                   "struct Baz {Foo* foo();};\n"
-                   "void bar() {\n"
-                   "    Baz *b = new Baz;\n"
-                   "    b->foo@()->func();\n"
-                   "}")
-            << QByteArray(
-                   "struct Foo {int* func();};\n"
-                   "struct Baz {Foo* foo();};\n"
-                   "void bar() {\n"
-                   "    Baz *b = new Baz;\n"
-                   "    auto localFunc = b->foo()->func();\n"
-                   "}");
-
-        // Check: Add local variable for a member function, cursor on function call (QTCREATORBUG-10355)
-        QTest::newRow("memberFunction2ndGrade2")
-            << QByteArray(
-                   "struct Foo {int* func();};\n"
-                   "struct Baz {Foo* foo();};\n"
-                   "void bar() {\n"
-                   "    Baz *b = new Baz;\n"
-                   "    b->foo()->f@unc();\n"
-                   "}")
-            << QByteArray(
-                   "struct Foo {int* func();};\n"
-                   "struct Baz {Foo* foo();};\n"
-                   "void bar() {\n"
-                   "    Baz *b = new Baz;\n"
-                   "    auto localFunc = b->foo()->func();\n"
-                   "}");
-
-        // Check: Add local variable for a static member function.
-        QTest::newRow("staticMemberFunction")
-            << QByteArray(
-                   "class Foo {public: static int* fooFunc();}\n"
-                   "void bar() {\n"
-                   "    Foo::fooF@unc();\n"
-                   "}")
-            << QByteArray(
-                   "class Foo {public: static int* fooFunc();}\n"
-                   "void bar() {\n"
-                   "    auto localFooFunc = Foo::fooFunc();\n"
-                   "}");
-
-        // Check: Add local variable for a new Expression.
-        QTest::newRow("newExpression")
-            << QByteArray(
-                   "class Foo {}\n"
-                   "void bar() {\n"
-                   "    new Fo@o;\n"
-                   "}")
-            << QByteArray(
-                   "class Foo {}\n"
-                   "void bar() {\n"
-                   "    auto localFoo = new Foo;\n"
-                   "}");
-
-        // Check: No trigger for function inside member initialization list.
-        QTest::newRow("noInitializationList")
-            << QByteArray(
-                   "class Foo\n"
-                   "{\n"
-                   "    public: Foo : m_i(fooF@unc()) {}\n"
-                   "    int fooFunc() {return 2;}\n"
-                   "    int m_i;\n"
-                   "};\n")
-            << QByteArray();
-
-        // Check: No trigger for void functions.
-        QTest::newRow("noVoidFunction")
-            << QByteArray(
-                   "void foo() {}\n"
-                   "void bar() {fo@o();}")
-            << QByteArray();
-
-        // Check: No trigger for void member functions.
-        QTest::newRow("noVoidMemberFunction")
-            << QByteArray(
-                   "class Foo {public: void fooFunc();}\n"
-                   "void bar() {\n"
-                   "    Foo *f = new Foo;\n"
-                   "    @f->fooFunc();\n"
-                   "}")
-            << QByteArray();
-
-        // Check: No trigger for void static member functions.
-        QTest::newRow("noVoidStaticMemberFunction")
-            << QByteArray(
-                   "class Foo {public: static void fooFunc();}\n"
-                   "void bar() {\n"
-                   "    Foo::fo@oFunc();\n"
-                   "}")
-            << QByteArray();
-
-        // Check: No trigger for functions in expressions.
-        QTest::newRow("noFunctionInExpression")
-            << QByteArray(
-                   "int foo(int a) {return a;}\n"
-                   "int bar() {return 1;}"
-                   "void baz() {foo(@bar() + bar());}")
-            << QByteArray();
-
-        // Check: No trigger for functions in functions. (QTCREATORBUG-9510)
-        QTest::newRow("noFunctionInFunction")
-            << QByteArray(
-                   "int foo(int a, int b) {return a + b;}\n"
-                   "int bar(int a) {return a;}\n"
-                   "void baz() {\n"
-                   "    int a = foo(ba@r(), bar());\n"
-                   "}\n")
-            << QByteArray();
-
-        // Check: No trigger for functions in return statements (classes).
-        QTest::newRow("noReturnClass1")
-            << QByteArray(
-                   "class Foo {public: static void fooFunc();}\n"
-                   "Foo* bar() {\n"
-                   "    return new Fo@o;\n"
-                   "}")
-            << QByteArray();
-
-        // Check: No trigger for functions in return statements (classes). (QTCREATORBUG-9525)
-        QTest::newRow("noReturnClass2")
-            << QByteArray(
-                   "class Foo {public: int fooFunc();}\n"
-                   "int bar() {\n"
-                   "    return (new Fo@o)->fooFunc();\n"
-                   "}")
-            << QByteArray();
-
-        // Check: No trigger for functions in return statements (functions).
-        QTest::newRow("noReturnFunc1")
-            << QByteArray(
-                   "class Foo {public: int fooFunc();}\n"
-                   "int bar() {\n"
-                   "    return Foo::fooFu@nc();\n"
-                   "}")
-            << QByteArray();
-
-        // Check: No trigger for functions in return statements (functions). (QTCREATORBUG-9525)
-        QTest::newRow("noReturnFunc2")
-            << QByteArray(
-                   "int bar() {\n"
-                   "    return list.firs@t().foo;\n"
-                   "}\n")
-            << QByteArray();
-
-        // Check: No trigger for functions which does not match in signature.
-        QTest::newRow("noSignatureMatch")
-            << QByteArray(
-                   "int someFunc(int);\n"
-                   "\n"
-                   "void f()\n"
-                   "{\n"
-                   "    some@Func();\n"
-                   "}")
-            << QByteArray();
-    }
-
-    void test()
-    {
-        QFETCH(QByteArray, original);
-        QFETCH(QByteArray, expected);
-        AssignToLocalVariable factory;
-        QuickFixOperationTest(singleDocument(original, expected), &factory);
-    }
+public:
+    using CppQuickFixTestObject::CppQuickFixTestObject;
 };
+#endif
 
-QObject *AssignToLocalVariable::createTest() { return new AssignToLocalVariableTest; }
-
-#endif // WITH_TESTS
 } // namespace
 
 void registerAssignToLocalVariableQuickfix()
 {
-    CppQuickFixFactory::registerFactory<AssignToLocalVariable>();
+    REGISTER_QUICKFIX_FACTORY_WITH_STANDARD_TEST(AssignToLocalVariable);
 }
 
 } // namespace CppEditor::Internal

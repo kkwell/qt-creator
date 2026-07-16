@@ -104,7 +104,7 @@ void CommandBuilderAspectPrivate::tryToMigrate()
         for (Utils::Id stepId : migratableSteps) {
             if (BuildStep *bs = m_buildStep->stepList()->firstStepWithId(stepId)) {
                 m_activeCommandBuilder = p;
-                bs->setEnabled(false);
+                bs->setStepEnabled(false);
                 m_buildStep->project()->saveSettings();
                 return;
             }
@@ -193,7 +193,7 @@ void CommandBuilderAspect::updateGui()
 
     const FilePath defaultCommand = d->m_activeCommandBuilder->defaultCommand();
     d->makePathChooser->setFilePath(d->m_activeCommandBuilder->command());
-    d->makePathChooser->setDefaultValue(defaultCommand.toUserOutput());
+    d->makePathChooser->setDefaultValue(defaultCommand);
 
     const QString defaultArgs = d->m_activeCommandBuilder->defaultArguments();
     d->makeArgumentsLineEdit->setPlaceholderText(defaultArgs);

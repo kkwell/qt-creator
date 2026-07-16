@@ -4,13 +4,13 @@
 #pragma once
 
 #include "transitionwarningitem.h"
+
 #include <QGraphicsSceneMouseEvent>
 #include <QKeyEvent>
 #include <QPen>
 #include <QPointF>
 #include <QPolygon>
 #include <QRectF>
-#include <QVector>
 
 namespace ScxmlEditor {
 
@@ -119,14 +119,16 @@ private:
     void removeGrabbers();
     void updateGrabberPositions();
     void removeTransition(TransitionPoint p);
-    void snapToAnyPoint(int index, const QPointF &newPoint, int diff = 8);
+    bool snapToAnyPoint(int index, const QPointF &newPoint, int diff = 8);
     void snapPointToPoint(int index, const QPointF &newPoint, int diff = 8);
     QPointF loadPoint(const QString &name);
     void savePoint(const QPointF &p, const QString &name);
     QPointF calculateTargetFactor(ConnectableItem *item, const QPointF &pos);
     QPointF sceneTargetPoint(TransitionPoint p);
     QPointF findIntersectionPoint(ConnectableItem *item, const QLineF &line, const QPointF &defaultPoint);
-    QVector<CornerGrabberItem*> m_cornerGrabbers;
+    static QRectF adjustedSceneBoundingRect(const BaseItem &item);
+
+    QList<CornerGrabberItem*> m_cornerGrabbers;
     CornerGrabberItem *m_selectedCornerGrabber = nullptr;
 
     QPolygonF m_cornerPoints;
@@ -141,6 +143,7 @@ private:
     QPen m_pen;
     QPen m_highlightPen;
     bool m_lineSelected = false;
+    bool m_moveSnapped = false;
 
     TagTextItem *m_eventTagItem;
     TagTextItem *m_condTagItem;

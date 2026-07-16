@@ -12,16 +12,14 @@
 #include <qtsupport/qtkitaspect.h>
 #include <qtsupport/qtsupportconstants.h>
 
-namespace QmakeProjectManager {
-namespace Internal {
+namespace QmakeProjectManager::Internal {
 
 enum { IntroPageId = 0};
 
 CustomWidgetWizardDialog::CustomWidgetWizardDialog(const Core::BaseFileWizardFactory *factory,
                                                    const QString &templateName,
-                                                   const QIcon &icon, QWidget *parent,
-                                                   const Core::WizardDialogParameters &parameters) :
-    BaseQmakeProjectWizardDialog(factory, parent, parameters),
+                                                   const QIcon &icon, const Core::WizardDialogParameters &parameters) :
+    BaseQmakeProjectWizardDialog(factory, parameters),
     m_widgetsPage(new CustomWidgetWidgetsWizardPage),
     m_pluginPage(new CustomWidgetPluginWizardPage)
 {
@@ -64,5 +62,4 @@ std::shared_ptr<PluginOptions> CustomWidgetWizardDialog::pluginOptions() const
     return rc;
 }
 
-} // namespace Internal
-} // namespace QmakeProjectManager
+} // namespace QmakeProjectManager::Internal

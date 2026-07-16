@@ -135,6 +135,10 @@ class PlainDumper():
         if isinstance(val, str):
             # encode and avoid extra quotes ('"') at beginning and end
             d.putValue(d.hexencode(val), 'utf8:1:0')
+        # It might as well be just another gdb.Value, see
+        # https://sourceware.org/gdb/current/onlinedocs/gdb.html/Pretty-Printing-API.html#:~:text=Function%3A%20pretty_printer.to_string%20(self)
+        elif isinstance(val, gdb.Value):
+            d.putItem(d.fromNativeValue(val))
         elif val is not None:  # Assuming LazyString
             d.putCharArrayValue(val.address, val.length,
                                 val.type.target().sizeof)
@@ -273,6 +277,7 @@ class Dumper(DumperBase):
                 val.typeid = typeid
         #elif code == gdb.TYPE_CODE_ARRAY:
         #    val.type.ltarget = nativeValue[0].type.unqualified()
+        val.size = nativeType.sizeof * 8
         return val
 
     def nativeDataFromValueFallback(self, nativeValue, size):
@@ -318,7 +323,7 @@ class Dumper(DumperBase):
             target_typeid = self.from_native_type(nativeType.target().unqualified())
             typeid = self.create_reference_typeid(target_typeid)
 
-        elif code == gdb.TYPE_CODE_RVALUE_REF and hasattr(gdb, "TYPE_CODE_RVALUE_REF"):
+        elif hasattr(gdb, "TYPE_CODE_RVALUE_REF") and code == gdb.TYPE_CODE_RVALUE_REF:
             #self.warn('RVALUEREF')
             target_typeid = self.from_native_type(nativeType.target())
             typeid = self.create_rvalue_reference_typeid(target_typeid)
@@ -577,6 +582,17 @@ class Dumper(DumperBase):
         return fields
 
 
+    def nativeStructAlignment(self, nativeType):
+        #DumperBase.warn("NATIVE ALIGN FOR %s" % nativeType.name)
+        def handleItem(nativeFieldType, align):
+            a = self.type_alignment(self.from_native_type(nativeFieldType))
+            return a if a > align else align
+        align = 1
+        for f in nativeType.fields():
+            align = handleItem(f.type, align)
+        return align
+
+
     def listLocals(self, partialVar):
         frame = gdb.selected_frame()
 
@@ -679,6 +695,7 @@ class Dumper(DumperBase):
 
         self.isBigEndian = gdb.execute('show endian', to_string=True).find('big endian') > 0
         self.packCode = '>' if self.isBigEndian else '<'
+        self.byteorder = 'big' if self.isBigEndian else 'little'
 
         #(ok, res) = self.tryFetchInterpreterVariables(args)
         #if ok:
@@ -737,6 +754,9 @@ class Dumper(DumperBase):
         return None if val is None else self.fromNativeValue(val)
 
     def nativeParseAndEvaluate(self, exp):
+        # FIXME: This breaks symbol discovery
+        if not self.allowInferiorCalls:
+            return None
         #self.warn('EVALUATE "%s"' % exp)
         try:
             val = gdb.parse_and_eval(exp)
@@ -747,8 +767,6 @@ class Dumper(DumperBase):
             return None
 
     def callHelper(self, rettype, value, function, args):
-        if self.isWindowsTarget():
-            raise Exception("gdb crashes when calling functions on Windows")
         # args is a tuple.
         arg = ''
         for i in range(len(args)):
@@ -772,6 +790,9 @@ class Dumper(DumperBase):
         #self.warn('PTR: %s -> %s(%s)' % (value, function, addr))
         exp = '((%s*)0x%x)->%s(%s)' % (type_name, addr, function, arg)
         #self.warn('CALL: %s' % exp)
+        if not self.allowInferiorCalls:
+            return None
+
         result = gdb.parse_and_eval(exp)
         #self.warn('  -> %s' % result)
         res = self.fromNativeValue(result)
@@ -1023,7 +1044,8 @@ class Dumper(DumperBase):
                 for printer in printers.subprinters:
                     self.importPlainDumper(printer)
             else:
-                self.warn('Loading a printer without the subprinters attribute not supported.')
+                self.warn("Failed to load printer '{}': loading printers without "
+                          "the subprinters attribute not supported.".format(printers.name))
 
     def importPlainDumpers(self):
         for obj in gdb.objfiles():
@@ -1034,6 +1056,10 @@ class Dumper(DumperBase):
             return int(gdb.parse_and_eval("(size_t)&'%s'" % symbolName))
         except:
             return 0
+
+    def symbolAddress(self, symbolName):
+        res = self.findSymbol(symbolName)
+        return res
 
     def handleNewObjectFile(self, objfile):
         name = objfile.filename
@@ -1169,6 +1195,8 @@ class Dumper(DumperBase):
         return self.qtNamespace() + 'Qt::' + enumValue
 
     def lookupNativeType(self, type_name):
+        typeobj = None
+
         if type_name == 'void':
             typeobj = gdb.lookup_type(type_name)
             self.typesToReport[type_name] = typeobj
@@ -1271,6 +1299,8 @@ class Dumper(DumperBase):
         self.prepare(args)
         self.output = []
 
+        self.output = []
+        self.put('stack={frames=[')
         i = 0
         if extraQml:
             frame = gdb.newest_frame()
@@ -1323,8 +1353,6 @@ class Dumper(DumperBase):
 
         frame = gdb.newest_frame()
         self.currentCallContext = None
-        self.output = []
-        self.put('stack={frames=[')
         while i < limit and frame:
             name = frame.name()
             functionName = '??' if name is None else name
@@ -1504,6 +1532,12 @@ class CliDumper(Dumper):
 
         args = {}
         args['fancy'] = 1
+        # It enables skipping the execution of gdb.parse_and_eval which prevents the application from being rerun,
+        # which could lead to hitting breakpoints repeatedly in different threads, causing an infinite loop.
+        # Currently, gdb.parse_and_eval is bypassed in several places, resolving the bug QTCREATORBUG-23219.
+        # In the future, a full wrapper for gdb.parse_and_eval might be necessary to avoid this issue entirely.
+        # For now, we leave it as-is to retain as much pretty-printing functionality as possible.
+        args['allowinferiorcalls'] = 1
         args['passexceptions'] = 1
         args['autoderef'] = 1
         args['qobjectnames'] = 1

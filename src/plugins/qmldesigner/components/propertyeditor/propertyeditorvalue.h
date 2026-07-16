@@ -3,8 +3,11 @@
 
 #pragma once
 
-#include "modelnode.h"
-#include "qmldesignercorelib_global.h"
+#include "qmldesigner_global.h"
+
+#include <modelnode.h>
+#include <nodemetainfo.h>
+#include <propertymetainfo.h>
 
 #include <QObject>
 #include <QQmlPropertyMap>
@@ -12,6 +15,7 @@
 
 namespace QmlDesigner {
 
+class QmlObjectNode;
 class PropertyEditorValue;
 
 class PropertyEditorSubSelectionWrapper : public QObject
@@ -30,15 +34,18 @@ public:
 
     Q_INVOKABLE void deleteModelNode();
 
-    void setValueFromModel(const PropertyName &name, const QVariant &value);
-    void resetValue(const PropertyName &name);
+    void setValueFromModel(PropertyNameView name, const QVariant &value);
+    void resetValue(PropertyNameView name);
 
     bool isRelevantModelNode(const ModelNode &modelNode) const;
 
 private:
     void changeValue(const QString &name);
     void changeExpression(const QString &propertyName);
-    void createPropertyEditorValue(const QmlObjectNode &qmlObjectNode, const PropertyName &name, const QVariant &value);
+    void createPropertyEditorValue(const QmlObjectNode &qmlObjectNode,
+                                   PropertyNameView name,
+                                   const QVariant &value,
+                                   const PropertyMetaInfo &property);
     void exportPropertyAsAlias(const QString &name);
     void removeAliasExport(const QString &name);
     bool locked() const;
@@ -46,8 +53,8 @@ private:
     ModelNode m_modelNode;
     QQmlPropertyMap m_valuesPropertyMap;
     bool m_locked = false;
-    void removePropertyFromModel(const PropertyName &propertyName);
-    void commitVariantValueToModel(const PropertyName &propertyName, const QVariant &value);
+    void removePropertyFromModel(PropertyNameView propertyName);
+    void commitVariantValueToModel(PropertyNameView propertyName, const QVariant &value);
     AbstractView *view() const;
 };
 
@@ -67,7 +74,7 @@ public:
     QString type() const;
     QQmlPropertyMap *properties();
     ModelNode parentModelNode() const;
-    PropertyName propertyName() const;
+    PropertyNameView propertyName() const;
 
 public slots:
     void add(const QString &type = QString());
@@ -88,7 +95,7 @@ private:
     PropertyEditorValue *m_editorValue = nullptr;
 };
 
-class QMLDESIGNERCORE_EXPORT PropertyEditorValue : public QObject
+class QMLDESIGNER_EXPORT PropertyEditorValue : public QObject
 {
     Q_OBJECT
 
@@ -142,12 +149,16 @@ public:
 
     bool isAvailable() const;
 
-    PropertyName name() const;
+    PropertyNameView name() const;
     QString nameAsQString() const;
-    void setName(const PropertyName &name);
 
     ModelNode modelNode() const;
-    void setModelNode(const ModelNode &modelNode);
+    void setModelNodeAndProperty(const ModelNode &modelNode,
+                                 PropertyNameView name,
+                                 const PropertyMetaInfo &propertyMetaInfo = {});
+
+    NodeMetaInfo propertyType() const { return m_propertyType; }
+    void resetMetaInfo();
 
     PropertyEditorNodeWrapper *complexNode();
 
@@ -168,7 +179,7 @@ public:
     Q_INVOKABLE bool idListRemove(int idx);
     Q_INVOKABLE bool idListReplace(int idx, const QString &value);
     Q_INVOKABLE void commitDrop(const QString &dropData);
-    Q_INVOKABLE void openMaterialEditor(int idx);
+    Q_INVOKABLE void editMaterial(int idx);
 
     Q_INVOKABLE void setForceBound(bool b);
 
@@ -197,15 +208,18 @@ signals:
     void isValidChanged();
     void isExplicitChanged();
     void hasActiveDragChanged();
+    void dropCommitted(QString dropData);
 
 private:
     QStringList generateStringList(const QString &string) const;
     QString generateString(const QStringList &stringList) const;
 
     ModelNode m_modelNode;
+    NodeMetaInfo m_propertyType;
+    PropertyMetaInfo m_propertyMetaInfo;
     QVariant m_value;
     QString m_expression;
-    PropertyName m_name;
+    Utils::SmallString m_name;
     bool m_isInSubState = false;
     bool m_isInModel = false;
     bool m_isBound = false;

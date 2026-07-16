@@ -20,7 +20,7 @@
 using namespace Core;
 using namespace Help;
 using namespace Help::Internal;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 HelpIndexFilter::HelpIndexFilter()
@@ -29,7 +29,7 @@ HelpIndexFilter::HelpIndexFilter()
     setDisplayName(Tr::tr("Help Index"));
     setDescription(Tr::tr("Locates help topics, for example in the Qt documentation."));
     setDefaultShortcutString("?");
-    setRefreshRecipe(Sync([this] { invalidateCache(); }));
+    setRefreshRecipe(QSyncTask([this] { invalidateCache(); }));
 
     m_icon = Utils::Icons::BOOKMARK.icon();
     connect(Core::HelpManager::Signals::instance(), &Core::HelpManager::Signals::setupFinished,
@@ -73,7 +73,7 @@ static void matches(QPromise<QStringList> &promise, const LocatorStorage &storag
             return AcceptResult();
         };
         filterEntry.displayIcon = icon;
-        filterEntry.highlightInfo = {index, int(input.length())};
+        filterEntry.highlightInfo = {index, int(input.size())};
         entries.append(filterEntry);
     }
     storage.reportOutput(entries);
@@ -82,9 +82,7 @@ static void matches(QPromise<QStringList> &promise, const LocatorStorage &storag
 
 LocatorMatcherTasks HelpIndexFilter::matchers()
 {
-    Storage<LocatorStorage> storage;
-
-    const auto onSetup = [this, storage](Async<QStringList> &async) {
+    const auto onSetup = [this](Async<QStringList> &async) {
         if (m_needsUpdate) {
             m_needsUpdate = false;
             LocalHelpManager::setupGuiHelpEngine();
@@ -92,18 +90,19 @@ LocatorMatcherTasks HelpIndexFilter::matchers()
             m_lastIndicesCache.clear();
             m_lastEntry.clear();
         }
-        const QStringList cache = m_lastEntry.isEmpty() || !storage->input().contains(m_lastEntry)
+        const LocatorStorage &storage = *LocatorStorage::storage();
+        const QStringList cache = m_lastEntry.isEmpty() || !storage.input().contains(m_lastEntry)
                                       ? m_allIndicesCache : m_lastIndicesCache;
-        async.setConcurrentCallData(matches, *storage, cache, m_icon);
+        async.setConcurrentCallData(matches, storage, cache, m_icon);
     };
-    const auto onDone = [this, storage](const Async<QStringList> &async) {
+    const auto onDone = [this](const Async<QStringList> &async) {
         if (async.isResultAvailable()) {
             m_lastIndicesCache = async.result();
-            m_lastEntry = storage->input();
+            m_lastEntry = LocatorStorage::storage()->input();
         }
     };
 
-    return {{AsyncTask<QStringList>(onSetup, onDone, CallDoneIf::Success), storage}};
+    return {AsyncTask<QStringList>(onSetup, onDone, CallDoneFlag::OnSuccess)};
 }
 
 void HelpIndexFilter::invalidateCache()

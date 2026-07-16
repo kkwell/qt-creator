@@ -26,17 +26,17 @@ class CORE_EXPORT IOptionsPageWidget : public QWidget
 public:
     IOptionsPageWidget();
     ~IOptionsPageWidget();
+
     void setOnApply(const std::function<void()> &func);
     void setOnCancel(const std::function<void()> &func);
-    void setOnFinish(const std::function<void()> &func);
+    void setDirtyChecker(const std::function<bool()> &func);
 
-protected:
-    friend class IOptionsPage;
     virtual void apply();
     virtual void cancel();
-    virtual void finish();
+    virtual bool isDirty() const;
 
 private:
+    friend class Internal::IOptionsPagePrivate;
     std::unique_ptr<Internal::IOptionsPageWidgetPrivate> d;
 };
 
@@ -48,33 +48,31 @@ public:
     explicit IOptionsPage(bool registerGlobally = true);
     virtual ~IOptionsPage();
 
+    static void registerCategory(
+        Utils::Id id, const QString &displayName, const Utils::FilePath &iconPath);
     static const QList<IOptionsPage *> allOptionsPages();
+
+    IOptionsPageWidget *createWidget();
 
     Utils::Id id() const;
     QString displayName() const;
     Utils::Id category() const;
     QString displayCategory() const;
     Utils::FilePath categoryIconPath() const;
+    bool recreateOnCancel() const;
 
-    using WidgetCreator = std::function<QWidget *()>;
-    void setWidgetCreator(const WidgetCreator &widgetCreator);
-
-    virtual QWidget *widget();
-    virtual void apply();
-    virtual void cancel();
-    virtual void finish();
-
-    virtual bool matches(const QRegularExpression &regexp) const;
+    std::optional<Utils::AspectContainer *> aspects() const;
+    bool matches(const QRegularExpression &regexp) const;
 
 protected:
-    virtual QStringList keywords() const;
-
     void setId(Utils::Id id);
     void setDisplayName(const QString &displayName);
     void setCategory(Utils::Id category);
-    void setDisplayCategory(const QString &displayCategory);
-    void setCategoryIconPath(const Utils::FilePath &categoryIconPath);
     void setSettingsProvider(const std::function<Utils::AspectContainer *()> &provider);
+    void setWidgetCreator(const std::function<IOptionsPageWidget *()> &widgetCreator);
+    void setFixedKeywords(const QStringList &);
+    void setRecreateOnCancel(bool on);
+    void setAutoApply();
 
 private:
     std::unique_ptr<Internal::IOptionsPagePrivate> d;

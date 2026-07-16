@@ -5,6 +5,9 @@
 
 #include "utils_global.h"
 
+#include "filepath.h"
+
+#include <QDateTime>
 #include <QString>
 
 namespace Utils {
@@ -13,15 +16,29 @@ class QTCREATOR_UTILS_EXPORT AppInfo
 {
 public:
     QString author;
-    QString year;
+    QString copyright;
     QString displayVersion;
     QString id;
     QString revision;
     QString revisionUrl;
     QString userFileExtension;
+    QDateTime buildTime; // can be invalid if compiled without time stamp
+
+    FilePath plugins;
+    FilePath userPluginsRoot;
+
+    FilePath luaPlugins;
+    FilePath userLuaPlugins;
+
+    FilePath resources;
+    FilePath userResources;
+    FilePath crashReports;
+
+    FilePath libexec;
 };
 
-QTCREATOR_UTILS_EXPORT AppInfo appInfo();
+QTCREATOR_UTILS_EXPORT const AppInfo &appInfo();
+QTCREATOR_UTILS_EXPORT QString compilerString();
 
 namespace Internal {
 QTCREATOR_UTILS_EXPORT void setAppInfo(const AppInfo &info);

@@ -18,7 +18,7 @@ QString unqualifyName(const QString &qualifiedName)
     const int index = qualifiedName.lastIndexOf(QLatin1String("::"));
     if (index == -1)
         return qualifiedName;
-    return qualifiedName.right(qualifiedName.length() - index - 2);
+    return qualifiedName.right(qualifiedName.size() - index - 2);
 }
 
 class DerivedHierarchyVisitor : public SymbolVisitor
@@ -123,7 +123,7 @@ LookupItem TypeHierarchyBuilder::followTypedef(const LookupContext &context, con
                                                Scope *enclosingScope,
                                                std::set<const Symbol *> typedefs)
 {
-    QList<LookupItem> items = context.lookup(symbolName, enclosingScope);
+    const QList<LookupItem> items = context.lookup(symbolName, enclosingScope);
 
     Symbol *actualBaseSymbol = nullptr;
     LookupItem matchingItem;
@@ -185,6 +185,7 @@ void TypeHierarchyBuilder::buildDerived(const std::optional<QFuture<void>> &futu
             return;
         Document::Ptr doc = snapshot.document(fileName);
         if ((_candidates.contains(fileName) && !_candidates.value(fileName).contains(symbolName))
+                || !symbol->identifier()
                 || !doc->control()->findIdentifier(symbol->identifier()->chars(),
                                                    symbol->identifier()->size())) {
             continue;

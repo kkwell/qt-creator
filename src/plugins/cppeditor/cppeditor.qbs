@@ -18,10 +18,10 @@ QtcPlugin {
         "QbsProjectManager",
     ]
 
-    cpp.defines: base
+    Properties { cpp.defines: base }
     Properties {
         condition: qbs.toolchain.contains("msvc")
-        cpp.defines: base.concat("_SCL_SECURE_NO_WARNINGS")
+        cpp.defines: "_SCL_SECURE_NO_WARNINGS"
     }
 
     files: [
@@ -47,6 +47,8 @@ QtcPlugin {
         "clangdiagnosticconfigswidget.h",
         "clangdsettings.cpp",
         "clangdsettings.h",
+        "compilationdb.cpp",
+        "compilationdb.h",
         "compileroptionsbuilder.cpp",
         "compileroptionsbuilder.h",
         "cppautocompleter.cpp",
@@ -65,8 +67,6 @@ QtcPlugin {
         "cppcodemodelinspectordumper.h",
         "cppcodemodelsettings.cpp",
         "cppcodemodelsettings.h",
-        "cppcodestylepreferences.cpp",
-        "cppcodestylepreferences.h",
         "cppcodestylepreferencesfactory.cpp",
         "cppcodestylepreferencesfactory.h",
         "cppcodestylesettings.cpp",
@@ -88,7 +88,6 @@ QtcPlugin {
         "cppeditorlogging.h",
         "cppeditorwidget.cpp",
         "cppeditorwidget.h",
-        "cppeditor.qrc",
         "cppeditor_global.h",
         "cppeditortr.h",
         "cppeditorconstants.h",
@@ -201,8 +200,6 @@ QtcPlugin {
         "projectinfo.h",
         "projectpart.cpp",
         "projectpart.h",
-        "resourcepreviewhoverhandler.cpp",
-        "resourcepreviewhoverhandler.h",
         "searchsymbols.cpp",
         "searchsymbols.h",
         "semantichighlighter.cpp",
@@ -221,6 +218,8 @@ QtcPlugin {
         name: "Quickfixes"
         prefix: "quickfixes/"
         files: [
+            "addmodulefrominclude.cpp",
+            "addmodulefrominclude.h",
             "assigntolocalvariable.cpp",
             "assigntolocalvariable.h",
             "bringidentifierintoscope.cpp",
@@ -249,16 +248,8 @@ QtcPlugin {
             "cppquickfixassistant.h",
             "cppquickfixhelpers.cpp",
             "cppquickfixhelpers.h",
-            "cppquickfixprojectsettings.cpp",
-            "cppquickfixprojectsettings.h",
-            "cppquickfixprojectsettingswidget.cpp",
-            "cppquickfixprojectsettingswidget.h",
             "cppquickfixsettings.cpp",
             "cppquickfixsettings.h",
-            "cppquickfixsettingspage.cpp",
-            "cppquickfixsettingspage.h",
-            "cppquickfixsettingswidget.cpp",
-            "cppquickfixsettingswidget.h",
             "createdeclarationfromuse.cpp",
             "createdeclarationfromuse.h",
             "extractfunction.cpp",
@@ -267,6 +258,8 @@ QtcPlugin {
             "extractliteralasparameter.h",
             "insertfunctiondefinition.cpp",
             "insertfunctiondefinition.h",
+            "layoutpreview.cpp",
+            "layoutpreview.h",
             "logicaloperationquickfixes.cpp",
             "logicaloperationquickfixes.h",
             "moveclasstoownfile.cpp",
@@ -351,6 +344,19 @@ QtcPlugin {
             "typehierarchybuilder_test.cpp",
             "typehierarchybuilder_test.h",
         ]
+    }
+
+    QtcTestResources { files: "testcases/**/*" }
+
+    Group {
+        name: "images"
+        prefix: "images/"
+        files: [
+            "dark_qt_cpp.png",
+            "dark_qt_h.png",
+            "dark_qt_c.png",
+        ]
+        fileTags: "qt.core.resource_data"
     }
 
     Export {

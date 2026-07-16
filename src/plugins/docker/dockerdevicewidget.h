@@ -5,10 +5,10 @@
 
 #include "dockerdevice.h"
 
-#include "kitdetector.h"
-
 #include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/devicesupport/idevicewidget.h>
+
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <utils/pathchooser.h>
 #include <utils/pathlisteditor.h>
@@ -33,8 +33,7 @@ public:
 private:
     QLabel *m_daemonState;
     QToolButton *m_daemonReset;
-
-    KitDetector m_kitItemDetector;
+    QtTaskTree::QSingleTaskTreeRunner m_detectionRunner;
 };
 
 } // Docker::Internal

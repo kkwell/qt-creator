@@ -7,6 +7,7 @@
 #include "utilstr.h"
 
 #include <QDir>
+#include <QtProcessorDetection>
 
 #if !defined(QT_NO_OPENGL) && defined(QT_GUI_LIB)
 #include <QOpenGLContext>
@@ -24,54 +25,32 @@
 #include <sys/sysctl.h>
 #endif
 
-namespace Utils {
+namespace Utils::HostOsInfo {
 
-Qt::CaseSensitivity HostOsInfo::m_overrideFileNameCaseSensitivity = Qt::CaseSensitive;
-bool HostOsInfo::m_useOverrideFileNameCaseSensitivity = false;
-
-OsArch HostOsInfo::hostArchitecture()
+OsArch hostArchitecture()
 {
+#ifdef Q_OS_WIN
+    // Workaround for Creator running in x86 emulation mode on ARM machines
+    static const OsArch arch = []() {
+        const HANDLE procHandle = GetCurrentProcess();
+        ushort processMachine;
+        ushort nativeMachine;
+        if (IsWow64Process2(procHandle, &processMachine, &nativeMachine)
+            && nativeMachine == IMAGE_FILE_MACHINE_ARM64) {
+            return OsArchArm64;
+        }
+
+        return osArchFromString(QSysInfo::currentCpuArchitecture()).value_or(OsArchUnknown);
+    }();
+#else
     static const OsArch arch
         = osArchFromString(QSysInfo::currentCpuArchitecture()).value_or(OsArchUnknown);
+#endif
+
     return arch;
 }
 
-bool HostOsInfo::isRunningUnderRosetta()
-{
-#ifdef Q_OS_MACOS
-    int translated = 0;
-    auto size = sizeof(translated);
-    if (sysctlbyname("sysctl.proc_translated", &translated, &size, nullptr, 0) == 0)
-        return translated;
-#endif
-    return false;
-}
-
-void HostOsInfo::setOverrideFileNameCaseSensitivity(Qt::CaseSensitivity sensitivity)
-{
-    m_useOverrideFileNameCaseSensitivity = true;
-    m_overrideFileNameCaseSensitivity = sensitivity;
-}
-
-void HostOsInfo::unsetOverrideFileNameCaseSensitivity()
-{
-    m_useOverrideFileNameCaseSensitivity = false;
-}
-
-bool HostOsInfo::canCreateOpenGLContext(QString *errorMessage)
-{
-#if defined(QT_NO_OPENGL) || !defined(QT_GUI_LIB)
-    Q_UNUSED(errorMessage)
-    return false;
-#else
-    static const bool canCreate = QOpenGLContext().create();
-    if (!canCreate)
-        *errorMessage = Tr::tr("Cannot create OpenGL context.");
-    return canCreate;
-#endif
-}
-
-std::optional<quint64> HostOsInfo::totalMemoryInstalledInBytes()
+std::optional<quint64> totalMemoryInstalledInBytes()
 {
 #ifdef Q_OS_LINUX
     struct sysinfo info;
@@ -95,10 +74,37 @@ std::optional<quint64> HostOsInfo::totalMemoryInstalledInBytes()
     return {};
 }
 
-const FilePath &HostOsInfo::root()
+const FilePath &root()
 {
     static const FilePath rootDir = FilePath::fromUserInput(QDir::rootPath());
     return rootDir;
+}
+
+OsArch binaryArchitecture()
+{
+#if defined(Q_PROCESSOR_X86_64)
+    return OsArchAMD64;
+#elif defined(Q_PROCESSOR_X86_32)
+    return OsArchX86;
+#elif defined(Q_PROCESSOR_ARM_64)
+    return OsArchArm64;
+#elif defined(Q_PROCESSOR_ARM_32)
+    return OsArchArm;
+#elif defined(Q_PROCESSOR_IA64)
+    return OsArchItanium;
+#elif defined(Q_PROCESSOR_LOONGARCH_64)
+    return OsArchLoongArch64;
+#else
+#  if !defined(QT_NO_DEBUG) || defined(QT_FORCE_ASSERTS)
+    static_assert(false, "Unknown architecture, please add detection.");
+#  endif
+    return OsArchUnknown;
+#endif
+}
+
+QString withExecutableSuffix(const QString &executable)
+{
+    return OsSpecificAspects::withExecutableSuffix(hostOs(), executable);
 }
 
 } // namespace Utils

@@ -18,7 +18,7 @@
     example. You'll use \QD to construct the application user interface from
     Qt widgets and the code editor to write the application logic in C++.
 
-    \image qtcreator-textfinder-screenshot.png
+    \image {qtcreator-textfinder-screenshot.png} {Text Finder example}
 
     \section1 Create the Text Finder project
 
@@ -27,12 +27,12 @@
         \li Go to \uicontrol File > \uicontrol {New Project} >
             \uicontrol {Application (Qt)} > \uicontrol {Qt Widgets Application}.
 
-            \image qtcreator-new-project-qt-widgets.webp {New Project dialog}
+            \image {qtcreator-new-project-qt-widgets.webp} {New Project dialog}
 
         \li Select \uicontrol Choose to open the \uicontrol {Project Location}
             dialog.
 
-            \image qtcreator-new-project-location-qt-widgets.webp {Project Location dialog}
+            \image {qtcreator-new-project-location-qt-widgets.webp} {Project Location dialog}
 
         \li In \uicontrol{Name}, type \b {TextFinder}.
 
@@ -43,7 +43,7 @@
             \uicontrol Continue (on \macos) to open the
             \uicontrol {Define Build System} dialog.
 
-            \image qtcreator-new-project-build-system.webp {Define Build System dialog}
+            \image {qtcreator-new-project-build-system.webp} {Define Build System dialog}
 
         \li In \uicontrol {Build system}, select \l {CMake}
             {CMake} as the build system to use for building the project.
@@ -51,7 +51,7 @@
         \li Select \uicontrol Next or \uicontrol Continue to open the
             \uicontrol{Class Information} dialog.
 
-            \image qtcreator-new-project-class-info.webp {Class Information dialog}
+            \image {qtcreator-new-project-class-info.webp} {Class Information dialog}
 
         \li In \uicontrol{Class name}, type \b {TextFinder} as the class
             name.
@@ -65,7 +65,7 @@
         \li Select \uicontrol Next or \uicontrol Continue to open the
             \uicontrol {Translation File} dialog.
 
-            \image qtcreator-new-project-translation-file.webp {Translation File dialog}
+            \image {qtcreator-new-project-translation-file.webp} {Translation File dialog}
 
         \li In \uicontrol Language, you can select a language that you
             plan to \l {Use Qt Linguist}{translate} the application to. This
@@ -75,15 +75,15 @@
         \li Select \uicontrol Next or \uicontrol Continue to open the
             \uicontrol {Kit Selection} dialog.
 
-            \image qtcreator-new-project-kit-selection.webp {Kit Selection dialog}
+            \image {qtcreator-new-project-kit-selection.webp} {Kit Selection dialog}
 
-        \li Select build and run \l{Kits}{kits} for your
+        \li Select build and run \l{Managing kits}{kits} for your
             project.
 
         \li Select \uicontrol Next or \uicontrol Continue to open the
             \uicontrol {Project Management} dialog.
 
-            \image qtcreator-new-project-summary.webp {Project Management dialog}
+            \image {qtcreator-new-project-summary.webp} {Project Management dialog}
 
         \li Review the project settings, and select \uicontrol{Finish} (on Windows and
             Linux) or \uicontrol Done (on \macos) to create the project.
@@ -97,19 +97,19 @@
 
     \list
 
-        \li main.cpp
-        \li textfinder.h
-        \li textfinder.cpp
-        \li textfinder.ui
-        \li CMakeLists.txt
+        \li \c main.cpp
+        \li \c textfinder.h
+        \li \c textfinder.cpp
+        \li \c textfinder.ui
+        \li \c CMakeLists.txt
 
     \endlist
 
-    \image qtcreator-textfinder-contents.png {TextFinder project contents}
+    \image {qtcreator-textfinder-contents.webp} {TextFinder project contents}
 
-    The .h and .cpp files come with the necessary boiler plate code.
+    The \c .h and \c .cpp files come with the necessary boiler plate code.
 
-    If you selected CMake as the build system, \QC created a CMakeLists.txt
+    If you selected CMake as the build system, \QC created a \c CMakeLists.txt
     project file for you.
 
     \section1 Fill in the missing pieces
@@ -119,11 +119,11 @@
 
     \section2 Design the user interface
 
-    \image qtcreator-textfinder-ui.png {Text Finder UI}
+    \image {qtcreator-textfinder-ui.png} {Text Finder UI}
 
     \list 1
 
-        \li In the \uicontrol {Edit} mode, double-click the textfinder.ui file in the
+        \li In the \uicontrol {Edit} mode, double-click the \c textfinder.ui file in the
             \uicontrol{Projects} view to launch the integrated \QD.
 
         \li Drag the following widgets to the form:
@@ -136,13 +136,13 @@
 
         \endlist
 
-        \image qtcreator-textfinder-ui-widgets.png {Adding widgets to Text Finder UI}
+        \image {qtcreator-textfinder-ui-widgets.png} {Adding widgets to Text Finder UI}
 
         \note To easily locate the widgets, use the search box at the top of the
         \uicontrol {Widget Box}. For example, to find the \uicontrol Label widget,
         start typing the word \b label.
 
-        \image qtcreator-textfinder-filter.png {Filter}
+        \image {qtcreator-textfinder-filter.png} {Filter}
 
         \li Double-click the \uicontrol{Label} widget and enter the text
             \b{Keyword}.
@@ -150,24 +150,24 @@
         \li Double-click the \uicontrol{Push Button} widget and enter the text
             \b{Find}.
 
-        \li In the \uicontrol Properties view, change the \uicontrol objectName to
+        \li In the \uicontrol {Property Editor} view, change the \uicontrol objectName to
             \b findButton.
 
-            \image qtcreator-textfinder-objectname.png {Changing object names}
+            \image {qtcreator-textfinder-objectname.png} {Changing object names}
 
-        \li Press \key {Ctrl+A} (or \key {Cmd+A}) to select the widgets and
-            select \uicontrol{Lay out Horizontally} (or press \key {Ctrl+H} on Linux or
+        \li Select \key {Ctrl+A} (or \key {Cmd+A}) to select the widgets and
+            select \uicontrol{Lay out Horizontally} (or select \key {Ctrl+H} on Linux or
             Windows or \key {Ctrl+Shift+H} on \macos) to apply a horizontal
             layout (QHBoxLayout).
 
-            \image qtcreator-textfinder-ui-horizontal-layout.png {Applying horizontal layout}
+            \image {qtcreator-textfinder-ui-horizontal-layout.png} {Applying horizontal layout}
 
         \li Drag a \uicontrol{Text Edit} widget (QTextEdit) to the form.
 
         \li Select the screen area, and then select \uicontrol{Lay out Vertically}
-            (or press \key {Ctrl+L}) to apply a vertical layout (QVBoxLayout).
+            (or select \key {Ctrl+L}) to apply a vertical layout (QVBoxLayout).
 
-            \image qtcreator-textfinder-ui.png {Text Finder UI}
+            \image {qtcreator-textfinder-ui.png} {Text Finder UI}
 
             Applying the horizontal and vertical layouts ensures that the
             application UI scales to different screen sizes.
@@ -187,13 +187,13 @@
                     then select \uicontrol OK.
 
                     This adds a private slot, \c{on_findButton_clicked()}, to the
-                    header file, textfinder.h and a private function,
+                    header file, \c textfinder.h and a private function,
                     \c{TextFinder::on_findButton_clicked()}, to the
-                    source file, textfinder.cpp.
+                    source file, \c textfinder.cpp.
 
             \endlist
 
-        \li Press \key {Ctrl+S} (or \key {Cmd+S}) to save your changes.
+        \li Select \key {Ctrl+S} (or \key {Cmd+S}) to save your changes.
 
     \endlist
 
@@ -202,14 +202,14 @@
 
     \section2 Complete the header file
 
-    The textfinder.h file already has the necessary #includes, a constructor,
+    The \c textfinder.h file already has the necessary #includes, a constructor,
     a destructor, and the \c{Ui} object. You need to add a private function,
     \c{loadTextFile()}, to read and display the contents of the input text file
     in the QTextEdit.
 
     \list 1
 
-        \li In the \uicontrol{Projects} view in the \uicontrol {Edit view}, double-click the
+        \li In the \uicontrol{Projects} view in the \uicontrol Edit mode, double-click the
             \c{textfinder.h} file to open it for editing.
 
         \li Add a private function to the \c{private} section, after the
@@ -222,12 +222,12 @@
     \section2 Complete the source file
 
     Now that the header file is complete, move on to the source file,
-    textfinder.cpp.
+    \c textfinder.cpp.
 
     \list 1
 
-        \li In the \uicontrol{Projects} view in the \uicontrol Edit view, double-click the
-            textfinder.cpp file to open it for editing.
+        \li In the \uicontrol{Projects} view in the \uicontrol Edit mode, double-click the
+            \c textfinder.cpp file to open it for editing.
 
         \li Add code to load a text file using QFile, read it with QTextStream,
             and then display it on \c{textEdit} with
@@ -236,7 +236,7 @@
             \snippet textfinder/textfinder.cpp 0
 
         \li To use QFile and QTextStream, add the following #includes to
-            textfinder.cpp:
+            \c textfinder.cpp:
 
             \snippet textfinder/textfinder.cpp 1
 
@@ -253,7 +253,7 @@
     \endlist
 
     The following line of code automatically calls the \c{on_findButton_clicked()}
-    slot in the uic generated ui_textfinder.h file:
+    slot in the uic generated \c ui_textfinder.h file:
 
     \code
     QMetaObject::connectSlotsByName(TextFinder);
@@ -261,9 +261,9 @@
 
     \section2 Create a resource file
 
-    You need a resource file (.qrc) within which you embed the input
-    text file. The input file can be any .txt file with a paragraph of text.
-    Create a text file called input.txt and store it in the textfinder
+    You need a resource file (\c .qrc) within which you embed the input
+    text file. The input file can be any \c .txt file with a paragraph of text.
+    Create a text file called \c input.txt and store it in the textfinder
     folder.
 
     To add a resource file:
@@ -273,11 +273,11 @@
         \li Go to \uicontrol File > \uicontrol {New File} >
             \uicontrol Qt > \uicontrol {Qt Resource File} > \uicontrol Choose.
 
-            \image qtcreator-new-file-qrc.webp {New File dialog}
+            \image {qtcreator-new-file-qrc.webp} {New File dialog}
 
             The \uicontrol {Choose the Location} dialog opens.
 
-            \image qtcreator-new-file-qrc1.webp {Choose the Location dialog}
+            \image {qtcreator-new-file-qrc1.webp} {Choose the Location dialog}
 
         \li In \uicontrol{Name}, enter \b{textfinder}.
 
@@ -286,29 +286,29 @@
 
             The \uicontrol{Project Management} dialog opens.
 
-            \image qtcreator-new-file-qrc2.webp {Project Management dialog}
+            \image {qtcreator-new-file-qrc2.webp} {Project Management dialog}
 
 
         \li In \uicontrol{Add to project}, select \b{TextFinder}
             and select \uicontrol{Finish} or \uicontrol Done to open the file
             in the code editor.
 
-        \li Select \uicontrol Add > \uicontrol {Add Prefix}.
+        \li Select \uicontrol {Add Prefix}.
 
         \li In \uicontrol{Prefix}, replace the default prefix with a slash
             (/).
 
-        \li Select \uicontrol Add > \uicontrol {Add Files}, to locate and add
-            input.txt.
+        \li Select \uicontrol {Add Files}, to locate and add
+            \c input.txt.
 
-            \image qtcreator-add-resource.png {Editing resource files}
+            \image {qtcreator-add-resource.png} {Editing resource files}
 
     \endlist
 
     \section1 Add resources to the project file
 
     For the text file to appear when you run the application, you must specify
-    the resource file as a source file in the \e CMakeLists.txt file that the
+    the resource file as a source file in the \c CMakeLists.txt file that the
     wizard created for you:
 
     \quotefromfile textfinder/CMakeLists.txt
@@ -318,6 +318,7 @@
     \section1 Build and run your application
 
     Now that you have all the necessary files, select
-    \inlineimage icons/run_small.png to build and run your application.
+    \imagerunsmall (\uicontrol Run)
+    to build and run your application.
 
 */

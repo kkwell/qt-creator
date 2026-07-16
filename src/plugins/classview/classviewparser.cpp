@@ -120,7 +120,7 @@ ParserTreeItem::ConstPtr Parser::parse()
     for (auto it = d->m_projectCache.cbegin(); it != d->m_projectCache.cend(); ++it) {
         const ParserPrivate::ProjectCache &projectCache = it.value();
         const FilePath projectPath = it.key();
-        const SymbolInformation projectInfo = { projectCache.projectName, projectPath.toString() };
+        const SymbolInformation projectInfo = {projectCache.projectName, projectPath.path()};
         ParserTreeItem::ConstPtr item = getCachedOrParseProjectTree(projectPath, projectCache.fileNames);
         if (!item)
             continue;
@@ -270,13 +270,12 @@ void Parser::updateDocumentsFromSnapshot(const QSet<FilePath> &documentPaths,
     Removes the files defined in the \a fileList from the parsing.
 */
 
-void Parser::removeFiles(const QStringList &fileList)
+void Parser::removeFiles(const FilePaths &fileList)
 {
     if (fileList.isEmpty())
         return;
 
-    for (const QString &name : fileList) {
-        const FilePath filePath = FilePath::fromString(name);
+    for (const FilePath &filePath : fileList) {
         d->m_documentCache.remove(filePath);
         d->m_projectCache.remove(filePath);
         for (auto it = d->m_projectCache.begin(); it != d->m_projectCache.end(); ++it)

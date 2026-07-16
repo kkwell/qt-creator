@@ -13,13 +13,14 @@
 #include <coreplugin/editormanager/documentmodel.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/messagemanager.h>
-#include <coreplugin/progressmanager/progressmanager.h>
+#include <coreplugin/progressmanager/processprogress.h>
 
 #include <texteditor/refactoringchanges.h>
 #include <texteditor/textdocument.h>
 #include <texteditor/texteditor.h>
 
 #include <utils/environment.h>
+#include <utils/globaltasktree.h>
 #include <utils/infobar.h>
 #include <utils/qtcprocess.h>
 #include <utils/textutils.h>
@@ -27,16 +28,15 @@
 #include <utils/utilsicons.h>
 
 #include <QActionGroup>
-#include <QFile>
 #include <QMenu>
 #include <QTextDocument>
-#include <QTimer>
 #include <QToolBar>
-#include <QToolButton>
 
+using namespace Core;
 using namespace LanguageServerProtocol;
-using namespace Utils;
+using namespace QtTaskTree;
 using namespace TextEditor;
+using namespace Utils;
 
 namespace LanguageClient {
 
@@ -103,8 +103,8 @@ void applyTextEdit(TextEditorWidget *editorWidget, const TextEdit &edit, bool ne
 {
     const Range range = edit.range();
     const QTextDocument *doc = editorWidget->document();
-    const int start = Text::positionInText(doc, range.start().line() + 1, range.start().character() + 1);
-    const int end = Text::positionInText(doc, range.end().line() + 1, range.end().character() + 1);
+    const int start = range.start().toPositionInDocument(doc);
+    const int end = range.end().toPositionInDocument(doc);
     if (newTextIsSnippet) {
         editorWidget->replace(start, end - start, {});
         editorWidget->insertCodeSnippet(start, edit.newText(), &parseSnippet);
@@ -165,13 +165,15 @@ void updateCodeActionRefactoringMarker(Client *client,
         if (action.isValid())
             marker.tooltip = action.title();
         if (action.edit()) {
-            marker.callback = [client, edit = action.edit()](const TextEditorWidget *) {
-                applyWorkspaceEdit(client, *edit);
+            marker.callback = [client = QPointer(client),
+                               edit = action.edit()](const TextEditorWidget *) {
+                if (QTC_GUARD(client))
+                    applyWorkspaceEdit(client, *edit);
             };
         } else if (action.command()) {
             marker.callback = [command = action.command(),
                     client = QPointer(client)](const TextEditorWidget *) {
-                if (client)
+                if (QTC_GUARD(client))
                     client->executeCommand(*command);
             };
         }
@@ -249,11 +251,14 @@ void updateEditorToolBar(Core::IEditor *editor)
         const QIcon icon = Utils::Icon({{":/languageclient/images/languageclient.png",
                                          Utils::Theme::IconsBaseColor}}).icon();
         extras->m_popupAction = widget->toolBar()->addAction(
-                    icon, client->name(), [document = QPointer(document), client = QPointer<Client>(client)] {
-            auto menu = new QMenu;
+                    icon, client->name(), [widget, document = QPointer(document), client = QPointer<Client>(client)] {
+            auto menu = new QMenu(widget);
+            menu->setAttribute(Qt::WA_DeleteOnClose);
             auto clientsGroup = new QActionGroup(menu);
             clientsGroup->setExclusive(true);
             for (auto client : LanguageClientManager::clientsSupportingDocument(document, false)) {
+                if (!client->activatable())
+                    continue;
                 auto action = clientsGroup->addAction(client->name());
                 auto reopen = [action, client = QPointer(client), document] {
                     if (!client)
@@ -282,7 +287,7 @@ void updateEditorToolBar(Core::IEditor *editor)
                 LanguageClientManager::showInspector();
             });
             menu->addAction(Tr::tr("Manage..."), [] {
-                Core::ICore::showOptionsDialog(Constants::LANGUAGECLIENT_SETTINGS_PAGE);
+                Core::ICore::showSettings(Constants::LANGUAGECLIENT_SETTINGS_PAGE);
             });
             menu->popup(QCursor::pos());
         });
@@ -296,7 +301,7 @@ void updateEditorToolBar(Core::IEditor *editor)
     }
 
     if (!extras->m_client) {
-        extras->m_outline = LanguageClientOutlineWidgetFactory::createComboBox(client, textEditor);
+        extras->m_outline = createOutlineComboBox(client, textEditor);
         if (extras->m_outline) {
             widget->setToolbarOutline(extras->m_outline);
             extras->m_client = client;
@@ -304,44 +309,95 @@ void updateEditorToolBar(Core::IEditor *editor)
     }
 }
 
-const QIcon symbolIcon(int type)
+static CodeModelIcon::Type symbolTypeToIconType(SymbolKind kind, const QList<SymbolTag> &tags)
 {
+    const auto isPrivate = [&] { return tags.contains(SymbolTag::Private); };
+    const auto isProtected = [&] { return tags.contains(SymbolTag::Protected); };
+    const auto isStatic = [&] { return tags.contains(SymbolTag::Static); };
+
     using namespace Utils::CodeModelIcon;
-    static QMap<SymbolKind, QIcon> icons;
+    switch (kind) {
+    case SymbolKind::Module:
+    case SymbolKind::Namespace:
+    case SymbolKind::Package:
+        return Namespace;
+    case SymbolKind::Class:
+    case SymbolKind::Interface:
+    case SymbolKind::Constructor:
+    case SymbolKind::Object:
+        return Class;
+    case SymbolKind::Property:
+        return Property;
+    case SymbolKind::Field:
+    case SymbolKind::Variable:
+        if (isStatic()) {
+            if (isPrivate())
+                return VarPrivateStatic;
+            if (isProtected())
+                return VarProtectedStatic;
+            return VarPublicStatic;
+        }
+        if (isPrivate())
+            return VarPrivate;
+        if (isProtected())
+            return VarProtected;
+        [[fallthrough]];
+    case SymbolKind::Constant:
+    case SymbolKind::String:
+    case SymbolKind::Number:
+    case SymbolKind::Boolean:
+    case SymbolKind::Array:
+    case SymbolKind::TypeParameter:
+        return VarPublic;
+    case SymbolKind::Enum:
+        return Enum;
+    case SymbolKind::Function:
+    case SymbolKind::Method:
+    case SymbolKind::Operator:
+        if (isStatic()) {
+            if (isPrivate())
+                return FuncPrivateStatic;
+            if (isProtected())
+                return FuncProtectedStatic;
+            return FuncPublicStatic;
+        }
+        if (isPrivate())
+            return FuncPrivate;
+        if (isProtected())
+            return FuncProtected;
+        [[fallthrough]];
+    case SymbolKind::Event:
+        return FuncPublic;
+    case SymbolKind::Key:
+    case SymbolKind::Null:
+        return Keyword;
+    case SymbolKind::EnumMember:
+        return Enumerator;
+    case SymbolKind::Struct:
+        return Struct;
+    case SymbolKind::File:
+        break;
+    }
+    return Unknown;
+}
+
+const QIcon symbolIcon(int type, const QList<SymbolTag> &tags)
+{
     if (type < int(SymbolKind::FirstSymbolKind) || type > int(SymbolKind::LastSymbolKind))
         return {};
-    auto kind = static_cast<SymbolKind>(type);
-    if (!icons.contains(kind)) {
-        switch (kind) {
-        case SymbolKind::File: icons[kind] = Utils::Icons::NEWFILE.icon(); break;
-        case SymbolKind::Module:
-        case SymbolKind::Namespace:
-        case SymbolKind::Package: icons[kind] = iconForType(Namespace); break;
-        case SymbolKind::Class: icons[kind] = iconForType(Class); break;
-        case SymbolKind::Method: icons[kind] = iconForType(FuncPublic); break;
-        case SymbolKind::Property: icons[kind] = iconForType(Property); break;
-        case SymbolKind::Field: icons[kind] = iconForType(VarPublic); break;
-        case SymbolKind::Constructor: icons[kind] = iconForType(Class); break;
-        case SymbolKind::Enum: icons[kind] = iconForType(Enum); break;
-        case SymbolKind::Interface: icons[kind] = iconForType(Class); break;
-        case SymbolKind::Function: icons[kind] = iconForType(FuncPublic); break;
-        case SymbolKind::Variable:
-        case SymbolKind::Constant:
-        case SymbolKind::String:
-        case SymbolKind::Number:
-        case SymbolKind::Boolean:
-        case SymbolKind::Array: icons[kind] = iconForType(VarPublic); break;
-        case SymbolKind::Object: icons[kind] = iconForType(Class); break;
-        case SymbolKind::Key:
-        case SymbolKind::Null: icons[kind] = iconForType(Keyword); break;
-        case SymbolKind::EnumMember: icons[kind] = iconForType(Enumerator); break;
-        case SymbolKind::Struct: icons[kind] = iconForType(Struct); break;
-        case SymbolKind::Event:
-        case SymbolKind::Operator: icons[kind] = iconForType(FuncPublic); break;
-        case SymbolKind::TypeParameter: icons[kind] = iconForType(VarPublic); break;
-        }
-    }
-    return icons[kind];
+
+    const auto kind = static_cast<SymbolKind>(type);
+    if (kind == SymbolKind::File)
+        return Icons::NEWFILE.icon();
+
+    using namespace Utils::CodeModelIcon;
+    const Type iconType = symbolTypeToIconType(kind, tags);
+    static QMap<Type, QIcon> icons;
+    const auto icon = icons.constFind(iconType);
+    if (icon != icons.constEnd())
+        return *icon;
+
+    return icons[iconType] = iconForType(iconType);
 }
 
 bool applyDocumentChange(const Client *client, const DocumentChange &change)
@@ -381,16 +437,16 @@ bool applyDocumentChange(const Client *client, const DocumentChange &change)
                 }
             }
         }
-        return oldPath.renameFile(newPath);
+        return bool(oldPath.renameFile(newPath));
     } else if (const auto deleteOperation = std::get_if<DeleteFileOperation>(&change)) {
         const FilePath filePath = deleteOperation->uri().toFilePath(client->hostPathMapper());
         if (const std::optional<DeleteFileOptions> options = deleteOperation->options()) {
             if (!filePath.exists())
                 return options->ignoreIfNotExists().value_or(false);
             if (filePath.isDir() && options->recursive().value_or(false))
-                return filePath.removeRecursively();
+                return filePath.removeRecursively().has_value();
         }
-        return filePath.removeFile();
+        return bool(filePath.removeFile());
     }
     return false;
 }
@@ -398,86 +454,28 @@ bool applyDocumentChange(const Client *client, const DocumentChange &change)
 constexpr char installJsonLsInfoBarId[] = "LanguageClient::InstallJsonLs";
 constexpr char installYamlLsInfoBarId[] = "LanguageClient::InstallYamlLs";
 constexpr char installBashLsInfoBarId[] = "LanguageClient::InstallBashLs";
-
-const char npmInstallTaskId[] = "LanguageClient::npmInstallTask";
-
-class NpmInstallTask : public QObject
-{
-    Q_OBJECT
-public:
-    NpmInstallTask(const FilePath &npm,
-                   const FilePath &workingDir,
-                   const QString &package,
-                   QObject *parent = nullptr)
-        : QObject(parent)
-        , m_package(package)
-    {
-        m_process.setCommand(CommandLine(npm, {"install", package}));
-        m_process.setWorkingDirectory(workingDir);
-        m_process.setTerminalMode(TerminalMode::Run);
-        connect(&m_process, &Process::done, this, &NpmInstallTask::handleDone);
-        connect(&m_killTimer, &QTimer::timeout, this, &NpmInstallTask::cancel);
-        connect(&m_watcher, &QFutureWatcher<void>::canceled, this, &NpmInstallTask::cancel);
-        m_watcher.setFuture(m_future.future());
-    }
-    void run()
-    {
-        const QString taskTitle = Tr::tr("Install npm Package");
-        Core::ProgressManager::addTask(m_future.future(), taskTitle, npmInstallTaskId);
-
-        m_process.start();
-
-        Core::MessageManager::writeSilently(
-            Tr::tr("Running \"%1\" to install %2.")
-                .arg(m_process.commandLine().toUserOutput(), m_package));
-
-        m_killTimer.setSingleShot(true);
-        m_killTimer.start(5 /*minutes*/ * 60 * 1000);
-    }
-
-signals:
-    void finished(bool success);
-
-private:
-    void cancel()
-    {
-        m_process.stop();
-        m_process.waitForFinished();
-        Core::MessageManager::writeFlashing(
-            m_killTimer.isActive()
-                ? Tr::tr("The installation of \"%1\" was canceled by timeout.").arg(m_package)
-                : Tr::tr("The installation of \"%1\" was canceled by the user.")
-                      .arg(m_package));
-    }
-    void handleDone()
-    {
-        m_future.reportFinished();
-        const bool success = m_process.result() == ProcessResult::FinishedWithSuccess;
-        if (!success) {
-            Core::MessageManager::writeFlashing(Tr::tr("Installing \"%1\" failed with exit code %2.")
-                                                    .arg(m_package)
-                                                    .arg(m_process.exitCode()));
-        }
-        emit finished(success);
-    }
-
-    QString m_package;
-    Utils::Process m_process;
-    QFutureInterface<void> m_future;
-    QFutureWatcher<void> m_watcher;
-    QTimer m_killTimer;
-};
+constexpr char installDockerfileLsInfoBarId[] = "LanguageClient::InstallDockerfileLs";
 
 constexpr char YAML_MIME_TYPE[]{"application/x-yaml"};
 constexpr char SHELLSCRIPT_MIME_TYPE[]{"application/x-shellscript"};
 constexpr char JSON_MIME_TYPE[]{"application/json"};
+constexpr char DOCKERFILE_MIME_TYPE[]{"application/x-dockerfile"};
 
-static void setupNpmServer(TextDocument *document,
-                           const Id &infoBarId,
-                           const QString &languageServer,
-                           const QString &languageServerArgs,
-                           const QString &language,
-                           const QStringList &serverMimeTypes)
+static FilePath relativePathForServer(const QString &languageServer)
+{
+    const FilePath relativePath = FilePath::fromPathPart(
+        QString("node_modules/.bin/" + languageServer));
+    return HostOsInfo::isWindowsHost() ? relativePath.withSuffix(".cmd") : relativePath;
+}
+
+static void setupNpmServer(
+    TextDocument *document,
+    const Id &infoBarId,
+    const QString &languageServer,
+    const QString &languageServerArgs,
+    const QString &language,
+    const QStringList &serverMimeTypes,
+    const QString &executableName = QString())
 {
     InfoBar *infoBar = document->infoBar();
     if (!infoBar->canInfoBeAdded(infoBarId))
@@ -486,7 +484,7 @@ static void setupNpmServer(TextDocument *document,
     // check if it is already configured
     const QList<BaseSettings *> settings = LanguageClientManager::currentSettings();
     for (BaseSettings *setting : settings) {
-        if (setting->isValid() && setting->m_languageFilter.isSupported(document))
+        if (setting->isValid() && setting->languageFilter().isSupported(document))
             return;
     }
 
@@ -511,53 +509,61 @@ static void setupNpmServer(TextDocument *document,
     const bool install = !lsExecutable.isExecutableFile();
 
     const QString message = install ? Tr::tr("Install %1 language server via npm.").arg(language)
-                                    : Tr::tr("Setup %1 language server (%2).")
+                                    : Tr::tr("Set up %1 language server (%2).")
                                           .arg(language)
                                           .arg(lsExecutable.toUserOutput());
     InfoBarEntry info(infoBarId, message, InfoBarEntry::GlobalSuppression::Enabled);
-    info.addCustomButton(install ? Tr::tr("Install") : Tr::tr("Setup"), [=]() {
-        const QList<Core::IDocument *> &openedDocuments = Core::DocumentModel::openedDocuments();
-        for (Core::IDocument *doc : openedDocuments)
+    info.addCustomButton(install ? Tr::tr("Install") : Tr::tr("Set Up"), [=]() {
+        const QList<IDocument *> &openedDocuments = DocumentModel::openedDocuments();
+        for (IDocument *doc : openedDocuments)
             doc->infoBar()->removeInfo(infoBarId);
 
         auto setupStdIOSettings = [=](const FilePath &executable) {
             auto settings = new StdIOSettings();
 
-            settings->m_executable = executable;
-            settings->m_arguments = languageServerArgs;
-            settings->m_name = Tr::tr("%1 Language Server").arg(language);
-            settings->m_languageFilter.mimeTypes = serverMimeTypes;
+            settings->executable.setValue(executable);
+            settings->arguments.setValue(languageServerArgs);
+            settings->name.setValue(Tr::tr("%1 Language Server").arg(language));
+            settings->mimeTypes.setValue(serverMimeTypes);
             LanguageClientSettings::addSettings(settings);
             LanguageClientManager::applySettings();
         };
 
         if (install) {
-            const FilePath lsPath = Core::ICore::userResourcePath(languageServer);
+            const FilePath lsPath = ICore::userResourcePath(languageServer);
             if (!lsPath.ensureWritableDir())
                 return;
-            auto install = new NpmInstallTask(npm,
-                                              lsPath,
-                                              languageServer,
-                                              LanguageClientManager::instance());
 
-            auto handleInstall = [=](const bool success) {
-                install->deleteLater();
-                if (!success)
-                    return;
-                FilePath relativePath = FilePath::fromPathPart(
-                    QString("node_modules/.bin/" + languageServer));
-                if (HostOsInfo::isWindowsHost())
-                    relativePath = relativePath.withSuffix(".cmd");
-                FilePath lsExecutable = lsPath.resolvePath(relativePath);
+            const auto onInstallSetup = [npm, lsPath, languageServer](Process &process) {
+                process.setCommand({npm, {"install", languageServer}});
+                process.setWorkingDirectory(lsPath);
+                process.setTerminalMode(TerminalMode::Run);
+                auto progress = new ProcessProgress(&process);
+                progress->setDisplayName(Tr::tr("Install npm Package"));
+                MessageManager::writeSilently(Tr::tr("Running \"%1\" to install %2.")
+                    .arg(process.commandLine().toUserOutput(), languageServer));
+            };
+            const auto onInstallDone = [languageServer](const Process &process) {
+                MessageManager::writeFlashing(Tr::tr("Installing \"%1\" failed with exit code %2.")
+                    .arg(languageServer).arg(process.exitCode()));
+            };
+            const auto onInstallTimeout = [languageServer] {
+                MessageManager::writeFlashing(
+                    Tr::tr("The installation of \"%1\" was canceled by timeout.").arg(languageServer));
+            };
+
+            const auto onListSetup = [npm, lsPath, languageServer, setupStdIOSettings](Process &process) {
+                const FilePath lsExecutable = lsPath.resolvePath(relativePathForServer(languageServer));
                 if (lsExecutable.isExecutableFile()) {
                     setupStdIOSettings(lsExecutable);
-                    return;
+                    return SetupResult::StopWithSuccess;
                 }
-                Process process;
                 process.setCommand(CommandLine(npm, {"list", languageServer}));
                 process.setWorkingDirectory(lsPath);
-                process.start();
-                process.waitForFinished();
+                return SetupResult::Continue;
+            };
+            const auto onListDone = [languageServer, setupStdIOSettings, executableName](
+                                        const Process &process) {
                 const QStringList output = process.stdOutLines();
                 // we are expecting output in the form of:
                 // tst@ C:\tmp\tst
@@ -566,8 +572,10 @@ static void setupNpmServer(TextDocument *document,
                     const qsizetype splitIndex = line.indexOf('@');
                     if (splitIndex == -1)
                         continue;
-                    lsExecutable = FilePath::fromUserInput(line.mid(splitIndex + 1).trimmed())
-                                       .resolvePath(relativePath);
+                    const FilePath lsExecutable
+                        = FilePath::fromUserInput(line.mid(splitIndex + 1).trimmed())
+                              .resolvePath(relativePathForServer(
+                                  executableName.isEmpty() ? languageServer : executableName));
                     if (lsExecutable.isExecutableFile()) {
                         setupStdIOSettings(lsExecutable);
                         return;
@@ -575,12 +583,13 @@ static void setupNpmServer(TextDocument *document,
                 }
             };
 
-            QObject::connect(install,
-                             &NpmInstallTask::finished,
-                             LanguageClientManager::instance(),
-                             handleInstall);
-
-            install->run();
+            using namespace std::literals::chrono_literals;
+            const Group recipe {
+                ProcessTask(onInstallSetup, onInstallDone, CallDoneFlag::OnError)
+                    .withTimeout(5min, onInstallTimeout),
+                ProcessTask(onListSetup, onListDone)
+            };
+            GlobalTaskTree::start(recipe);
         } else {
             setupStdIOSettings(lsExecutable);
         }
@@ -613,9 +622,16 @@ void autoSetupLanguageServer(TextDocument *document)
                        "start",
                        QString("Bash"),
                        {SHELLSCRIPT_MIME_TYPE});
+    } else if (mimeType.inherits(DOCKERFILE_MIME_TYPE)) {
+        setupNpmServer(
+            document,
+            installDockerfileLsInfoBarId,
+            "dockerfile-language-server-nodejs",
+            "--stdio",
+            QString("Dockerfile"),
+            {DOCKERFILE_MIME_TYPE},
+            "docker-langserver");
     }
 }
 
 } // namespace LanguageClient
-
-#include "languageclientutils.moc"

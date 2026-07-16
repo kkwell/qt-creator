@@ -118,9 +118,9 @@ QString NameController::calcElementNameSearchId(const QString &elementName)
 QStringList NameController::buildElementsPath(const FilePath &filePath,
                                               bool ignoreLastFilePathPart)
 {
-    QList<QString> relativeElements;
+    QStringList relativeElements;
 
-    QStringList split = filePath.toString().split("/");
+    QStringList split = filePath.toUrlishString().split("/");
     QStringList::const_iterator splitEnd = split.constEnd();
     if (ignoreLastFilePathPart || split.last().isEmpty())
         --splitEnd;

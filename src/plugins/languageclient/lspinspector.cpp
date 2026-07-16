@@ -39,7 +39,6 @@
 #include <QPushButton>
 #include <QSplitter>
 #include <QStyledItemDelegate>
-#include <QTextCodec>
 #include <QTreeView>
 
 using namespace LanguageServerProtocol;
@@ -164,8 +163,11 @@ LspCapabilitiesWidget::LspCapabilitiesWidget()
 
 void LspCapabilitiesWidget::setCapabilities(const Capabilities &serverCapabilities)
 {
+    if (m_capabilitiesView->model())
+        m_capabilitiesView->model()->deleteLater();
     m_capabilitiesView->setModel(
         createJsonModel(Tr::tr("Server Capabilities"), QJsonObject(serverCapabilities.capabilities)));
+
     m_dynamicCapabilities = serverCapabilities.dynamicCapabilities;
     const QStringList &methods = m_dynamicCapabilities.registeredMethods();
     if (methods.isEmpty()) {
@@ -316,13 +318,15 @@ void LspLogWidget::saveLog()
         stream << "\n\n";
     });
 
-    const FilePath filePath = FileUtils::getSaveFilePath(this, Tr::tr("Log File"));
+    const FilePath filePath = FileUtils::getSaveFilePath(Tr::tr("Log File"));
     if (filePath.isEmpty())
         return;
     FileSaver saver(filePath, QIODevice::Text);
     saver.write(contents.toUtf8());
-    if (!saver.finalize(this))
+    if (const Result<> res = saver.finalize(); !res) {
+        FileUtils::showError(res.error());
         saveLog();
+    }
 }
 
 class LspInspectorWidget : public QDialog
@@ -397,7 +401,7 @@ Capabilities LspInspector::capabilities(const QString &clientName) const
     return m_capabilities.value(clientName);
 }
 
-QList<QString> LspInspector::clients() const
+QStringList LspInspector::clients() const
 {
     return m_logs.keys();
 }
@@ -473,7 +477,7 @@ LspInspectorWidget::LspInspectorWidget(LspInspector *inspector)
 })");
 
     VariableChooser *vc = new VariableChooser(messageEditor->editorWidget());
-    vc->addMacroExpanderProvider(&Utils::globalMacroExpander);
+    vc->addMacroExpanderProvider(MacroExpanderProvider(globalMacroExpander()));
     vc->addSupportedWidget(messageEditor->editorWidget());
 
     auto errorLabel = new QLabel();
@@ -482,14 +486,13 @@ LspInspectorWidget::LspInspectorWidget(LspInspector *inspector)
             messageEditor->editorWidget()->setVisible(true);
             return;
         }
-        QList<Client *> clients = LanguageClientManager::instance()->clientsByName(
+        const QList<Client *> clients = LanguageClientManager::instance()->clientsByName(
             m_clients->currentText());
         QString errMsg;
         for (Client *client : clients) {
             errMsg += sendMessage(
                 client,
-                Utils::globalMacroExpander()->expand(
-                    QString::fromUtf8(messageEditor->document()->contents())));
+                Utils::globalMacroExpander()->expand(messageEditor->textDocument()->plainText()));
         }
         errorLabel->setText(errMsg);
     };
@@ -497,12 +500,12 @@ LspInspectorWidget::LspInspectorWidget(LspInspector *inspector)
     // clang-format off
     using namespace Layouting;
     Column {
-        Row { Tr::tr("Language Server:"), m_clients, st, errorLabel, PushButton { text(Tr::tr("Send message")), onClicked(send, this) } },
+        Row { Tr::tr("Language Server:"), m_clients, st, errorLabel, PushButton { text(Tr::tr("Send message")), onClicked(this, send) } },
         messageEditor->editorWidget(),
         TabWidget {
             bindTo(&m_tabWidget),
             Tab(Tr::tr("Log"), Column { m_logWidget }),
-            Tab(Tr::tr("Capabilities"), Column {new LspCapabilitiesWidget}),
+            Tab(Tr::tr("Capabilities"), Column { m_capWidget }),
         },
         buttonBox,
     }.attachTo(this);
@@ -578,11 +581,15 @@ MessageDetailWidget::MessageDetailWidget()
 
 void MessageDetailWidget::setMessage(const LspLogMessage &message)
 {
+    if (m_jsonTree->model())
+        m_jsonTree->model()->deleteLater();
     m_jsonTree->setModel(createJsonModel("content", message.message.toJsonObject()));
 }
 
 void MessageDetailWidget::clear()
 {
+    if (m_jsonTree->model())
+        m_jsonTree->model()->deleteLater();
     m_jsonTree->setModel(createJsonModel("", QJsonObject()));
 }
 

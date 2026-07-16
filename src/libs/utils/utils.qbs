@@ -2,23 +2,32 @@ import qbs.FileInfo
 
 QtcLibrary {
     name: "Utils"
-    cpp.includePaths: base.concat("mimetypes2", ".")
+    Properties { cpp.includePaths: base.concat("mimetypes2", ".") }
     cpp.defines: base.concat(["UTILS_LIBRARY"])
-    cpp.dynamicLibraries: {
-        var libs = [];
-        if (qbs.targetOS.contains("windows")) {
-            libs.push("user32", "iphlpapi", "ws2_32", "shell32", "ole32");
+    Properties { cpp.dynamicLibraries: base }
+
+    Properties {
+        condition: qbs.targetOS.contains("windows")
+        cpp.dynamicLibraries: {
+            var winLibs = ["user32", "iphlpapi", "ws2_32", "shell32", "ole32"];
             if (qbs.toolchain.contains("mingw"))
-                libs.push("uuid");
-            else if (qbs.toolchain.contains("msvc"))
-                libs.push("dbghelp");
-        } else if (qbs.targetOS.contains("unix")) {
-            if (!qbs.targetOS.contains("macos"))
-                libs.push("X11");
-            if (!qbs.targetOS.contains("openbsd"))
-                libs.push("pthread");
+                winLibs.push("uuid");
+            if (qbs.toolchain.contains("msvc"))
+                winLibs.push("dbghelp");
+            return winLibs;
         }
-        return libs;
+        cpp.defines: qbs.toolchain.contains("msvc") ? ["HAVE_DBGHELP"] : []
+    }
+    Properties {
+        condition: qbs.targetOS.contains("unix")
+        cpp.dynamicLibraries: {
+            var unixLibs = [];
+            if (!qbs.targetOS.contains("macos"))
+                unixLibs.push("X11");
+            if (!qbs.targetOS.contains("openbsd"))
+                unixLibs.push("pthread");
+            return unixLibs;
+        }
     }
 
     cpp.enableExceptions: true
@@ -28,11 +37,13 @@ QtcLibrary {
         cpp.frameworks: ["Foundation", "AppKit"]
     }
 
-    Depends { name: "Qt"; submodules: ["concurrent", "core-private", "network", "qml", "widgets", "xml"] }
+    Depends { name: "Qt"; submodules: ["concurrent", "core-private", "network", "printsupport", "qml", "widgets", "xml", "sql"] }
     Depends { name: "Qt.macextras"; condition: Qt.core.versionMajor < 6 && qbs.targetOS.contains("macos") }
+    Depends { name: "Qt.testlib"; condition: qtc.withPluginTests }
     Depends { name: "Spinner" }
-    Depends { name: "Tasking" }
+    Depends { name: "QtTaskTree" }
     Depends { name: "ptyqt" }
+    Depends { name: "qtcLibArchive" }
 
     files: [
         "action.cpp",
@@ -75,10 +86,14 @@ QtcLibrary {
         "completinglineedit.h",
         "completingtextedit.cpp",
         "completingtextedit.h",
+        "covariantcallback.h",
         "cpplanguage_details.h",
+        "crashreporting.cpp",
+        "crashreporting.h",
         "crumblepath.cpp",
         "crumblepath.h",
         "datafromprocess.h",
+        "datafromprocess.cpp",
         "delegates.cpp",
         "delegates.h",
         "detailsbutton.cpp",
@@ -87,12 +102,12 @@ QtcLibrary {
         "detailswidget.h",
         "devicefileaccess.cpp",
         "devicefileaccess.h",
-        "deviceshell.cpp",
-        "deviceshell.h",
         "differ.cpp",
         "differ.h",
         "displayname.cpp",
         "displayname.h",
+        "documenttabbar.cpp",
+        "documenttabbar.h",
         "dropsupport.cpp",
         "dropsupport.h",
         "elfreader.cpp",
@@ -103,6 +118,7 @@ QtcLibrary {
         "environment.h",
         "environmentdialog.cpp",
         "environmentdialog.h",
+        "environmentfwd.h",
         "environmentmodel.cpp",
         "environmentmodel.h",
         "execmenu.cpp",
@@ -113,6 +129,8 @@ QtcLibrary {
         "fadingindicator.h",
         "faketooltip.cpp",
         "faketooltip.h",
+        "fancyiconbutton.cpp",
+        "fancyiconbutton.h",
         "fancylineedit.cpp",
         "fancylineedit.h",
         "fancymainwindow.cpp",
@@ -131,24 +149,25 @@ QtcLibrary {
         "filestreamer.h",
         "filestreamermanager.cpp",
         "filestreamermanager.h",
-        "filesystemmodel.cpp",
-        "filesystemmodel.h",
         "filesystemwatcher.cpp",
         "filesystemwatcher.h",
         "fileutils.cpp",
         "fileutils.h",
         "filewizardpage.cpp",
         "filewizardpage.h",
-        "flowlayout.cpp",
-        "flowlayout.h",
         "futuresynchronizer.cpp",
         "futuresynchronizer.h",
         "fuzzymatcher.cpp",
         "fuzzymatcher.h",
         "globalfilechangeblocker.cpp",
         "globalfilechangeblocker.h",
+        "globaltasktree.cpp",
+        "globaltasktree.h",
+        "groupedmodel.cpp",
+        "groupedmodel.h",
         "guard.cpp",
         "guard.h",
+        "guardedcallback.h",
         "guiutils.cpp",
         "guiutils.h",
         "highlightingitemdelegate.cpp",
@@ -161,8 +180,6 @@ QtcLibrary {
         "htmldocextractor.h",
         "icon.cpp",
         "icon.h",
-        "iconbutton.cpp",
-        "iconbutton.h",
         "id.cpp",
         "id.h",
         "indexedcontainerproxyconstiterator.h",
@@ -174,14 +191,9 @@ QtcLibrary {
         "itemviews.h",
         "jsontreeitem.cpp",
         "jsontreeitem.h",
-        "launcherinterface.cpp",
-        "launcherinterface.h",
-        "launcherpackets.cpp",
-        "launcherpackets.h",
-        "launchersocket.cpp",
-        "launchersocket.h",
         "layoutbuilder.cpp",
         "layoutbuilder.h",
+        "lazy.h",
         "link.cpp",
         "link.h",
         "listmodel.h",
@@ -190,6 +202,8 @@ QtcLibrary {
         "lua.h",
         "macroexpander.cpp",
         "macroexpander.h",
+        "markdownbrowser.cpp",
+        "markdownbrowser.h",
         "mathutils.cpp",
         "mathutils.h",
         "mimeconstants.h",
@@ -198,6 +212,8 @@ QtcLibrary {
         "minimizableinfobars.h",
         "multitextcursor.cpp",
         "multitextcursor.h",
+        "movie.cpp",
+        "movie.h",
         "namevaluedictionary.cpp",
         "namevaluedictionary.h",
         "namevalueitem.cpp",
@@ -213,11 +229,13 @@ QtcLibrary {
         "optionpushbutton.h",
         "optionpushbutton.cpp",
         "osspecificaspects.h",
+        "osspecificaspects.cpp",
         "outputformat.h",
         "outputformatter.cpp",
         "outputformatter.h",
         "overlaywidget.cpp",
         "overlaywidget.h",
+        "overloaded.h",
         "overridecursor.cpp",
         "overridecursor.h",
         "passworddialog.cpp",
@@ -247,6 +265,8 @@ QtcLibrary {
         "processinterface.h",
         "processreaper.cpp",
         "processreaper.h",
+        "progressdialog.cpp",
+        "progressdialog.h",
         "progressindicator.cpp",
         "progressindicator.h",
         "projectintropage.cpp",
@@ -261,13 +281,22 @@ QtcLibrary {
         "qtcolorbutton.h",
         "qtcsettings.cpp",
         "qtcsettings.h",
+        "qtcsettings_p.h",
+        "qtcwidgets.cpp",
+        "qtcwidgets.h",
+        "qtdesignsystemstyle.cpp",
+        "qtdesignsystemstyle.h",
         "ranges.h",
         "reloadpromptutils.cpp",
         "reloadpromptutils.h",
         "removefiledialog.cpp",
         "removefiledialog.h",
+        "result.cpp",
+        "result.h",
         "savefile.cpp",
         "savefile.h",
+        "shutdownguard.cpp",
+        "shutdownguard.h",
         "scopedswap.h",
         "scopedtimer.cpp",
         "scopedtimer.h",
@@ -276,10 +305,8 @@ QtcLibrary {
         "set_algorithm.h",
         "settingsaccessor.cpp",
         "settingsaccessor.h",
-        "settingsselector.cpp",
-        "settingsselector.h",
-        "singleton.cpp",
-        "singleton.h",
+        "settingsdatabase.cpp",
+        "settingsdatabase.h",
         "sizedarray.h",
         "smallstring.h",
         "smallstringiterator.h",
@@ -306,6 +333,8 @@ QtcLibrary {
         "styledbar.h",
         "stylehelper.cpp",
         "stylehelper.h",
+        "summarywidget.cpp",
+        "summarywidget.h",
         "synchronizedvalue.h",
         "templateengine.cpp",
         "templateengine.h",
@@ -319,6 +348,8 @@ QtcLibrary {
         "terminalhooks.h",
         "terminalinterface.cpp",
         "terminalinterface.h",
+        "textcodec.cpp",
+        "textcodec.h",
         "textfieldcheckbox.cpp",
         "textfieldcheckbox.h",
         "textfieldcombobox.cpp",
@@ -327,8 +358,6 @@ QtcLibrary {
         "textfileformat.h",
         "textutils.cpp",
         "textutils.h",
-        "threadutils.cpp",
-        "threadutils.h",
         "transientscroll.cpp",
         "transientscroll.h",
         "treemodel.cpp",
@@ -342,8 +371,6 @@ QtcLibrary {
         "uncommentselection.cpp",
         "uncommentselection.h",
         "uniqueobjectptr.h",
-        "unixutils.cpp",
-        "unixutils.h",
         "url.cpp",
         "url.h",
         "utils.qrc",
@@ -405,7 +432,15 @@ QtcLibrary {
         name: "FileUtils_macos"
         condition: qbs.targetOS.contains("macos")
         files: [
-            "fileutils_mac.h", "fileutils_mac.mm",
+            "fileutils_mac.h", "fileutils_mac.mm"
+        ]
+    }
+
+    Group {
+        name: "PathChooser_macos"
+        condition: qbs.targetOS.contains("macos")
+        files: [
+            "pathchooser.mm"
         ]
     }
 
@@ -471,9 +506,26 @@ QtcLibrary {
         }
     }
 
+    Group {
+        name: "PlainTextEdit"
+        prefix: "plaintextedit/"
+        files: [
+            "inputcontrol.cpp",
+            "inputcontrol.h",
+            "plaintextedit.cpp",
+            "plaintextedit.h",
+            "plaintexteditaccessibility.cpp",
+            "plaintexteditaccessibility.h",
+            "texteditorlayout.cpp",
+            "texteditorlayout.h",
+            "widgettextcontrol.cpp",
+            "widgettextcontrol.h",
+        ]
+    }
+
     Export {
         Depends { name: "Qt"; submodules: ["concurrent", "widgets" ] }
-        Depends { name: "Tasking" }
+        Depends { name: "QtTaskTree" }
         cpp.includePaths: exportingProduct.sourceDirectory + "/mimetypes2"
     }
 }

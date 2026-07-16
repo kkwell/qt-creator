@@ -1,32 +1,40 @@
-import qbs 1.0
+import qbs.Utilities
 
 QtcPlugin {
     name: "Python"
 
     Depends { name: "Qt.widgets" }
 
-    Depends { name: "QmlJS" }
     Depends { name: "Utils" }
 
     Depends { name: "Core" }
+    Depends { name: "Debugger" }
     Depends { name: "LanguageClient" }
     Depends { name: "LanguageServerProtocol" }
     Depends { name: "ProjectExplorer" }
     Depends { name: "QtSupport" }
     Depends { name: "TextEditor" }
 
+    Properties {
+        condition: qbs.toolchain.contains("gcc") && (!qbs.toolchain.contains("clang")
+            || Utilities.versionCompare(cpp.compilerVersion, "17") >= 0)
+        cpp.cxxFlags: "-Wno-deprecated-literal-operator"
+    }
+
     Group {
         name: "General"
         files: [
+            "../../libs/3rdparty/toml11/toml.hpp",
             "pipsupport.cpp",
             "pipsupport.h",
+            "pyprojecttoml.cpp",
+            "pyprojecttoml.h",
             "pyside.cpp",
             "pyside.h",
             "pythonbuildconfiguration.cpp",
             "pythonbuildconfiguration.h",
             "pysideuicextracompiler.cpp",
             "pysideuicextracompiler.h",
-            "python.qrc",
             "pythonbuildsystem.cpp",
             "pythonbuildsystem.h",
             "pythonconstants.h",
@@ -56,5 +64,30 @@ QtcPlugin {
             "pythonwizardpage.cpp",
             "pythonwizardpage.h",
         ]
+    }
+
+    Group {
+        name: "images"
+        prefix: "images/"
+        fileTags: "qt.core.resource_data"
+        files: [
+            "qtforpython_neon.png",
+            "settingscategory_python.png",
+            "settingscategory_python@2x.png",
+        ]
+    }
+
+    QtcTestFiles {
+        name: "tests"
+        prefix: "tests/"
+        files: [
+            "pyprojecttoml_test.cpp",
+            "pyprojecttoml_test.h",
+        ]
+    }
+    QtcTestResources {
+        Qt.core.resourceSourceBase: product.sourceDirectory + "/tests/testfiles"
+        Qt.core.resourcePrefix: "/unittests/Python"
+        files: "tests/testfiles/*"
     }
 }

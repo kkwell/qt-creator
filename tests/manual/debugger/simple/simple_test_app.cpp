@@ -2173,15 +2173,13 @@ namespace plugin {
     void testPlugin()
     {
         QString dir = QApplication::applicationDirPath();
-    #ifdef Q_OS_LINUX
-        QLibrary lib(dir + "/libsimple_test_plugin.so");
-    #endif
     #ifdef Q_OS_MAC
         dir = QFileInfo(dir + "/../..").canonicalPath();
         QLibrary lib(dir + "/libsimple_test_plugin.dylib");
-    #endif
-    #ifdef Q_OS_WIN
+    #elif defined(Q_OS_WIN)
         QLibrary lib(dir + "/simple_test_plugin.dll");
+    #elif defined(Q_OS_UNIX)
+        QLibrary lib(dir + "/libsimple_test_plugin.so");
     #endif
         BREAK_HERE;
         // CheckType dir QString.
@@ -4216,6 +4214,12 @@ namespace qthread {
                 ++j;
             }
             if (m_id == 3) {
+                /*
+                    NOTE:
+
+                    See the NOTE below.
+
+                */
                 BREAK_HERE;
                 // Expand this.
                 // Expand this.@1.
@@ -4235,6 +4239,19 @@ namespace qthread {
 
     void testQThread()
     {
+        /*
+            NOTE:
+
+            The outcome here is inherently non-deterministic as several threads may hit
+            the breakpoint simultaneously, so the breakpoint can be hit less than N=14
+            times.
+
+            It is however expected that the breakpoint is hit at least once, and when
+            this happens, the thread should be expandable in the Locals pane and the
+            result should look sane.
+
+        */
+
         //return;
         const int N = 14;
         Thread thread[N];

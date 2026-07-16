@@ -13,11 +13,13 @@ const char MODE_SESSION[]         = "Project";
 
 // Actions
 const char BUILD[]                = "ProjectExplorer.Build";
+const char CLEAN[]                = "ProjectExplorer.Clean";
 const char STOP[]                 = "ProjectExplorer.Stop";
 const char ADDNEWFILE[]           = "ProjectExplorer.AddNewFile";
 const char FILEPROPERTIES[]       = "ProjectExplorer.FileProperties";
 const char RENAMEFILE[]           = "ProjectExplorer.RenameFile";
 const char REMOVEFILE[]           = "ProjectExplorer.RemoveFile";
+const char RUN[]                  = "ProjectExplorer.Run";
 
 // Context
 const char C_PROJECTEXPLORER[]    = "Project Explorer";
@@ -48,6 +50,7 @@ const char M_FOLDERCONTEXT[]      = "Project.Menu.Folder";
 const char M_FILECONTEXT[]        = "Project.Menu.File";
 const char M_OPENFILEWITHCONTEXT[] = "Project.Menu.File.OpenWith";
 const char M_OPENTERMINALCONTEXT[] = "Project.Menu.File.OpenTerminal";
+const char M_VCSFILECONTEXT[]      = "Project.Menu.File.Vcs";
 
 // Context menu groups
 const char G_SESSION_BUILD[]      = "Session.Group.Build";
@@ -88,7 +91,6 @@ const char BUILD_AND_RUN_SETTINGS_CATEGORY[]  = "K.BuildAndRun";
 
 // Build and Run page
 const char BUILD_AND_RUN_SETTINGS_PAGE_ID[] = "A.ProjectExplorer.BuildAndRunOptions";
-const char SHOW_ALL_KITS_SETTINGS_KEY[] = "ProjectExplorer/Settings/ShowAllKits";
 
 // Device settings page
 const char DEVICE_SETTINGS_CATEGORY[] = "AM.Devices";
@@ -99,12 +101,11 @@ const char TASK_CATEGORY_COMPILE[] = "Task.Category.Compile";
 const char TASK_CATEGORY_BUILDSYSTEM[] = "Task.Category.Buildsystem";
 const char TASK_CATEGORY_DEPLOYMENT[] = "Task.Category.Deploy";
 const char TASK_CATEGORY_AUTOTEST[] = "Task.Category.Autotest";
-const char TASK_CATEGORY_SANITIZER[] = "Task.Category.Analyzer";
+const char TASK_CATEGORY_OTHER[] = "Task.Category.Other";
 const char TASK_CATEGORY_TASKLIST_ID[] = "Task.Category.TaskListId";
 
 // Wizard categories
 const char QT_PROJECT_WIZARD_CATEGORY[] = "H.Project";
-const char QT_PROJECT_WIZARD_CATEGORY_DISPLAY[] = QT_TRANSLATE_NOOP("QtC::ProjectExplorer", "Other Project");
 
 const char IMPORT_WIZARD_CATEGORY[] = "T.Import";
 const char IMPORT_WIZARD_CATEGORY_DISPLAY[] = QT_TRANSLATE_NOOP("QtC::ProjectExplorer", "Import Project");
@@ -128,6 +129,10 @@ const char COPY_DIRECTORY_STEP[] = "ProjectExplorer.CopyDirectoryStep";
 const char DEVICE_CHECK_STEP[] =  "ProjectExplorer.DeviceCheckBuildStep";
 const char CUSTOM_PROCESS_STEP[] =  "ProjectExplorer.ProcessStep";
 
+// Project Configuration
+const char CONFIGURATION_ID_KEY[] = "ProjectExplorer.ProjectConfiguration.Id";
+const char DISPLAY_NAME_KEY[] = "ProjectExplorer.ProjectConfiguration.DisplayName";
+
 // Language
 
 // Keep these short: These constants are exposed to the MacroExplorer!
@@ -150,10 +155,10 @@ const char DEFAULT_WORKING_DIR[] = "%{buildDir}";
 const char DEFAULT_WORKING_DIR_ALTERNATE[] = "%{sourceDir}";
 
 const char QTC_DEFAULT_BUILD_DIRECTORY_TEMPLATE[] = "QTC_DEFAULT_BUILD_DIRECTORY_TEMPLATE";
+const char QTC_DEFAULT_WORKING_DIRECTORY_TEMPLATE[] = "QTC_DEFAULT_WORKING_DIRECTORY_TEMPLATE";
 
 // Desktop Device related ids:
 const char DESKTOP_DEVICE_ID[] = "Desktop Device";
-const char DESKTOP_DEVICE_TYPE[] = "Desktop";
 const int DESKTOP_PORT_START = 30000;
 const int DESKTOP_PORT_END = 31000;
 
@@ -167,6 +172,10 @@ const char ANDROID_ABI_X86_64[] = "x86_64";
 // JsonWizard:
 const char PAGE_ID_PREFIX[] = "PE.Wizard.Page.";
 const char GENERATOR_ID_PREFIX[] = "PE.Wizard.Generator.";
+
+// Device types
+const char DESKTOP_DEVICE_TYPE[] = "Desktop";
+const char BOOT2QT_DEVICE_TYPE[] = "QdbLinuxOsType";
 
 // RunMode
 const char NO_RUN_MODE[]="RunConfiguration.NoRunMode";
@@ -184,14 +193,18 @@ const char PERFPROFILER_RUN_MODE[]="PerfProfiler.RunMode";
 const char PERFPROFILER_RUNNER[]="PerfProfiler.Runner";
 
 // RunWorkerFactory
-const char QML_PROFILER_RUN_FACTORY[] = "RunWorkerFactory.LocalQmlProfilerSupport";
-const char QML_PREVIEW_RUN_FACTORY[] = "RunWorkerFactory.LocalQmlPreviewSupport";
+const char QML_PROFILER_RUN_FACTORY[] = "LocalQmlProfilerRunWorkerFactory";
+const char QML_PREVIEW_RUN_FACTORY[] = "LocalQmlPreviewSupportFactory";
 
 // RunConfig
 const char QMAKE_RUNCONFIG_ID[] = "Qt4ProjectManager.Qt4RunConfiguration:";
 const char QBS_RUNCONFIG_ID[]   = "Qbs.RunConfiguration:";
 const char CMAKE_RUNCONFIG_ID[] = "CMakeProjectManager.CMakeRunConfiguration.";
+const char GN_RUNCONFIG_ID[] = "GNProjectManager.GNRunConfiguration.";
 const char CUSTOM_EXECUTABLE_RUNCONFIG_ID[] = "ProjectExplorer.CustomExecutableRunConfiguration";
+const char WORKSPACE_RUNCONFIG_ID[] = "WorkspaceProject.RunConfiguration:";
+
+const char STDPROCESS_EXECUTION_TYPE_ID[] = "StdProcessExecutionType";
 
 // Navigation Widget
 const char PROJECTTREE_ID[] = "Projects";
@@ -221,9 +234,28 @@ const char SESSION_TASKFILE_KEY[] = "TaskList.File";
 const char CLEAR_SYSTEM_ENVIRONMENT_KEY[] = "ProjectExplorer.BuildConfiguration.ClearSystemEnvironment";
 const char USER_ENVIRONMENT_CHANGES_KEY[] = "ProjectExplorer.BuildConfiguration.UserEnvironmentChanges";
 
+// File Transfer
 // Called "RemoteLinux." for backwards compatibility
 const char SUPPORTS_RSYNC[] = "RemoteLinux.SupportsRSync";
 const char SUPPORTS_SFTP[] = "RemoteLinux.SupportsSftp";
+// Tool implementation is actually in RemoteLinux
+const char RSYNC_TOOL_ID[] = "RsyncExecutable";
+const char SSH_TOOL_ID[] = "SshExecutable";
+
+// Ninja tool
+const char TOOL_TYPE_NINJA[] = "ninja";
+
+// SDKs related ids:
+const char SDK_SETTINGS_CATEGORY[] = "AN.SDKs";
+const char WINDOWS_SETTINGS_ID[] = "Windows Configurations";
+const char WINDOWS_WINAPPSDK_ROOT_ENV_KEY[] = "WIN_APP_SDK_ROOT";
+
+// Welcome page
+const char PROJECT_WELCOMEPAGE_ID[] = "Develop";
+
+// URL handler
+const char URL_HANDLER_SCHEME[] = "QCProjectExplorer";
+const char ACTIVE_RUN_CONFIG_PATH[] = "activeRunConfiguration";
 
 // UI texts
 PROJECTEXPLORER_EXPORT QString msgAutoDetected();

@@ -2,15 +2,35 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
 
 /*!
+    \page creator-searching.html
+    \previouspage creator-language-servers.html
+    \nextpage creator-scxml.html
+
+    \title Searching
+
+    \quotation
+    \l {Search}{How to: Search}
+    \endquotation
+
+    Open the \e {locator} to locate not only files, but any items defined by
+    \e {locator filters}, as well as trigger global actions and perform other
+    tasks, such as build projects or run external tools.
+
+    \image {qtcreator-locator-open.webp} {List of found files in the locator}
+
+    Use the incremental and advanced search to search in currently open projects
+    or files on the file system.
+
+    \image {qtcreator-find-from-current-file.webp} {Search hits highlighted in the editor}
+
+    \sa {Search}{How to: Search}
+*/
+
+/*!
     \page creator-editor-finding.html
-    \if defined(qtdesignstudio)
-    \previouspage qtquick-text-editor.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-search
-    \ingroup studio-how-to-search
 
     \title Search in current file
 
@@ -21,21 +41,21 @@
 
     \list 1
 
-        \li Press \key {Ctrl+F} or go to \uicontrol Edit >
+        \li Select \key {Ctrl+F} or go to \uicontrol Edit >
             \uicontrol {Find/Replace} > \uicontrol {Find/Replace}.
 
         \li In \uicontrol Find, enter the text you are looking for.
 
-            \image qtcreator-find-from-current-file.webp {Search hits highlighted in editor}
+            \image {qtcreator-find-from-current-file.webp} {Search hits highlighted in the editor}
 
             All occurrences of the text are highlighted in the editor as you
             type.
 
-        \li To go to the next occurrence, select \inlineimage icons/next.png
-            (\uicontrol {Find Next}), or press \key F3.
+        \li To go to the next occurrence, select \imagenext
+            (\uicontrol {Find Next}) or \key F3.
 
-        \li To go to the previous occurrence, select \inlineimage icons/prev.png
-            (\uicontrol {Find Previous}), or press \key {Shift+F3}.
+        \li To go to the previous occurrence, select \imageprev
+            (\uicontrol {Find Previous}) or \key {Shift+F3}.
 
         \li To select all found occurrences in a file, select
             \uicontrol {Select All}.
@@ -48,7 +68,8 @@
     \section1 Set search criteria
 
     To restrict the search in the \uicontrol Find box, select
-    \inlineimage icons/qtcreator-new-search-icon.png and set search criteria:
+    \inlineimage {icons/qtcreator-new-search-icon.png} {New Search}
+    (\uicontrol {New Search}) and set search criteria:
 
     \list
 
@@ -79,7 +100,8 @@
     \section1 Preserve case when replacing
 
     To preserve the case of the original text when replacing, select
-    \inlineimage icons/qtcreator-new-search-icon.png and then select
+    \inlineimage {icons/qtcreator-new-search-icon.png} {New Search}
+    (\uicontrol {New Search}) and then select
     \uicontrol {Preserve Case when Replacing}. You cannot use this option
     together with \uicontrol {Use Regular Expressions}.
 
@@ -110,7 +132,7 @@
     \preferences > \uicontrol {Text Editor} >
     \uicontrol Display > \uicontrol {Highlight search results on the scrollbar}.
 
-    \image qtcreator-options-text-editor-display.png {Text Editor Display preferences}
+    \image {qtcreator-preferences-text-editor-display.webp} {Display tab in Text Editor preferences}
 
     \section1 Search globally
 
@@ -118,42 +140,43 @@
     you can search in currently open projects or files on the file system. Or,
     search for symbols to refactor code.
 
-    \if defined(qtcreator)
-    \sa {Search}{How To: Search}
-    \else
-    \sa {Search in projects or file systems}
-    \endif
+    \sa {Search}{How to: Search}
 
-    \sa {Search Results View}
 */
 
 /*!
     \page creator-how-to-advanced-search.html
-    \if defined(qtdesignstudio)
-    \previouspage qtquick-text-editor.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-search
-    \ingroup studio-how-to-search
 
     \title Search in projects or file systems
+
+    To search in projects or file systems in the \uicontrol {Search Results}
+    view:
+
+    \list
+        \li Select \key {Ctrl+Shift+F}
+        \li Go to \uicontrol Edit > \uicontrol {Find/Replace} >
+            \uicontrol {Advanced Find}, and select
+            \uicontrol {Open Advanced Find}.
+        \li Go to the \uicontrol {Search Results} view.
+    \endlist
 
     The search scope and search criteria determine where \QC looks for the search
     string, how it matches the string with text, and which results it shows.
 
-    \section1 Search in all projects
+    \section1 Search in a single project
 
     \list 1
-        \li Press \key {Ctrl+Shift+F} or go to \uicontrol Edit >
-            \uicontrol {Find/Replace} > \uicontrol {Advanced Find} >
-            \uicontrol {Open Advanced Find}.
-        \li In \uicontrol Scope, select \uicontrol {All Projects}.
-            \image qtcreator-search-all-projects.webp {Search Results view}
+        \li In \uicontrol Scope, select \uicontrol {Single Project}.
+            \image {qtcreator-search-single-projects.webp} {Single Project option in the Search Results view}
         \li In \uicontrol {Search for}, enter the string you are looking for.
-        \li Select options to make the  search case sensitive, search only whole
-            words, or use regular expressions.
+        \li Select options to make the search case sensitive, search only whole
+            words, use regular expressions, or ignore binary or generated files.
+        \li In \uicontrol Project, select an open project to search in.
+            Select \uicontrol Current to search in the project that the currently
+            active file belongs to.
         \li In \uicontrol {File pattern}, specify file patterns to
             restrict the search to files that match the pattern. For example, to
             search for a string only in \c {.cpp} and \c {.h} files, enter
@@ -163,10 +186,17 @@
         \li Select \uicontrol Search.
     \endlist
 
-    \if defined(qtcreator)
     If you cannot find some files, see \l{Specify project contents} for
     how to declare them as a part of the project.
-    \endif
+
+    \section1 Search in all projects
+
+    \list 1
+        \li In \uicontrol Scope, select \uicontrol {All Projects}.
+            \image {qtcreator-search-all-projects.webp} {All Projects option in the Search Results view}
+        \li Set search criteria.
+        \li Select \uicontrol Search.
+    \endlist
 
     \section1 Search in the file system
 
@@ -175,7 +205,7 @@
 
     \list 1
         \li In \uicontrol Scope, select \uicontrol {Files in File System}.
-            \image qtcreator-search-file-system.webp {Search Results view}
+            \image {qtcreator-search-file-system.webp} {Files in File System option in the Search Results view}
         \li In \uicontrol {Search for}, enter the string you are looking for.
         \li In \uicontrol {Search engine}, select the search engine to use:
             \list
@@ -187,10 +217,8 @@
                     remote branch, or a commit hash, enter a reference.
                     Leave the field empty to search through the file
                     system.
-                \if defined(qtcreator)
                 \li Select \uicontrol {Silver Searcher} to use the
                     experimental Silver Searcher plugin.
-                \endif
             \endlist
         \li In \uicontrol Directory, select the directory to search in.
             Select \uicontrol Browse to locate the directory or
@@ -205,7 +233,7 @@
 
     \list 1
         \li Select \uicontrol {Search & Replace}.
-        \image qtcreator-search-results-reg-exp.webp {Search results when searching and replacing}
+        \image {qtcreator-search-results-reg-exp.webp} {Search results when searching and replacing}
         \li Enter the new text in \uicontrol {Replace with}.
         \li Select \uicontrol Replace.
     \endlist
@@ -214,9 +242,6 @@
     select \uicontrol {Preserve case}. The rules listed in
     \l {Preserve case when replacing} apply here as well.
 
-    \if defined(qtcreator)
-    \sa {Search}{How To: Search}, {Find symbols}, {Turn on Silver Searcher}
-    \endif
-
-    \sa {Search in current file}, {Search Results View}
+    \sa {Search}{How to: Search}, {Find symbols}, {Search in current file},
+    {Turn on Silver Searcher}
 */

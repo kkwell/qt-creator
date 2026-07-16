@@ -6,9 +6,9 @@
 #include <qmldebug/qmldebug_global.h>
 #include <qmldebug/qmldebugclient.h>
 
-#include <QPointer>
 #include <QTimer>
 #include <QUrl>
+#include <memory>
 
 namespace QmlDebug {
 
@@ -19,7 +19,9 @@ public:
     explicit QmlDebugConnectionManager(QObject *parent = nullptr);
     ~QmlDebugConnectionManager() override;
 
-    void connectToServer(const QUrl &server);
+    void setServer(const QUrl &server);
+
+    void connectToServer();
     void disconnectFromServer();
 
     bool isConnecting() const;
@@ -49,11 +51,11 @@ private:
     void connectToTcpServer();
     void startLocalServer();
 
-    QScopedPointer<QmlDebug::QmlDebugConnection> m_connection;
+    std::unique_ptr<QmlDebug::QmlDebugConnection> m_connection;
     QTimer m_connectionTimer;
     QUrl m_server;
 
-    int m_retryInterval = 200;
+    int m_retryInterval = 5000;
     int m_maximumRetries = 10;
     int m_numRetries = 0;
 

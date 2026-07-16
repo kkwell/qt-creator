@@ -154,6 +154,17 @@ enum class DiagnosticSeverity
 
 };
 
+class LANGUAGESERVERPROTOCOL_EXPORT CodeDescription : public JsonObject
+{
+public:
+    using JsonObject::JsonObject;
+
+    QString href() const { return typedValue<QString>(hrefKey); }
+    void setHref(const QString &href) { insert(hrefKey, href); }
+
+    bool isValid() const override { return contains(hrefKey); }
+};
+
 class LANGUAGESERVERPROTOCOL_EXPORT Diagnostic : public JsonObject
 {
 public:
@@ -187,6 +198,12 @@ public:
     QString message() const
     { return typedValue<QString>(messageKey); }
     void setMessage(const QString &message) { insert(messageKey, message); }
+
+    std::optional<CodeDescription> codeDescription() const
+    { return optionalValue<CodeDescription>(codeDescriptionKey); }
+    void setCodeDescription(const CodeDescription &codeDescription)
+    { insert(codeDescriptionKey, codeDescription); }
+    void clearCodeDescription() { remove(codeDescriptionKey); }
 
     bool isValid() const override { return contains(rangeKey) && contains(messageKey); }
 };
@@ -575,7 +592,28 @@ public:
 };
 
 enum class SymbolTag {
-    Deprecated = 1,
+    FirstTag = 1,
+    Deprecated = FirstTag,
+    Private = 2,
+    Package = 3,
+    Protected = 4,
+    Public = 5,
+    Internal= 6,
+    File = 7,
+    Static = 8,
+    Abstract = 9,
+    Final = 10,
+    Sealed = 11,
+    Transient = 12,
+    Volatile = 13,
+    Synchronized = 14,
+    Virtual = 15,
+    Nullable = 16,
+    NonNull = 17,
+    Declaration = 18,
+    Definition = 19,
+    ReadOnly = 20,
+    LastTag = ReadOnly
 };
 namespace Internal {
 std::optional<QList<SymbolTag>> getSymbolTags(const JsonObject &o);
@@ -703,5 +741,11 @@ enum Kind {
     TypeParameter = 25
 };
 } // namespace CompletionItemKind
+
+namespace FoldingRangeKind {
+LANGUAGESERVERPROTOCOL_EXPORT QString comment();
+LANGUAGESERVERPROTOCOL_EXPORT QString imports();
+LANGUAGESERVERPROTOCOL_EXPORT QString region();
+} // namespace FoldingRangeKind
 
 } // namespace LanguageServerProtocol

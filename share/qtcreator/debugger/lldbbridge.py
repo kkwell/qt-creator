@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 import inspect
+import json
 import os
 import platform
 import re
@@ -17,9 +18,10 @@ from contextlib import contextmanager
 sys.path.insert(1, os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))))
 
 # Simplify development of this module by reloading deps
-if 'dumper' in sys.modules:
-    from importlib import reload
-    reload(sys.modules['dumper'])
+# Does not work when the module is injected via stdio
+# if 'dumper' in sys.modules:
+#     from importlib import reload
+#     reload(sys.modules['dumper'])
 
 from dumper import DumperBase, SubItem, Children, TopLevelItem
 
@@ -98,6 +100,7 @@ class Dumper(DumperBase):
         self.startMode_ = None
         self.processArgs_ = None
         self.attachPid_ = None
+        self.deviceUuid_ = None
         self.dyldImageSuffix = None
         self.dyldLibraryPath = None
         self.dyldFrameworkPath = None
@@ -113,7 +116,7 @@ class Dumper(DumperBase):
         if msg[-1:] == '\n':
             msg += '\n'
         print('@\nbridgemessage={msg="%s",channel="%s"}\n@'
-                % (msg.replace('"', '$'), LogChannel.AppError))
+                % (msg.replace('"', '$'), LogChannel.LogWarning))
 
     def fromNativeValue(self, nativeValue):
         self.check(isinstance(nativeValue, lldb.SBValue))
@@ -135,6 +138,10 @@ class Dumper(DumperBase):
                     summary = nativeValue.Dereference().GetSummary()
                 else:
                     summary = nativeValue.GetSummary()
+                # GetSummary() uses LLDB's built-in ObjC formatters (Apple only).
+                # Fall back to GetObjectDescription() for GNUstep and other runtimes.
+                if not summary:
+                    summary = nativeValue.GetObjectDescription()
 
         nativeValue.SetPreferSyntheticValue(False)
 
@@ -145,7 +152,7 @@ class Dumper(DumperBase):
             target_typeid = self.from_native_type(nativeTargetType)
             target_address = nativeValue.GetValueAsUnsigned()
             val = self.Value(self)
-            val.ldata = target_address.to_bytes(self.ptrSize(), 'little')
+            val.ldata = target_address.to_bytes(self.ptrSize(), self.byteorder)
             if self.useDynamicType:
                 target_typeid = self.dynamic_typeid_at_address(target_typeid, target_address)
             val.typeid = self.create_reference_typeid(target_typeid)
@@ -206,6 +213,7 @@ class Dumper(DumperBase):
         val.summary = summary
         val.lIsInScope = nativeValue.IsInScope()
         val.name = nativeValue.GetName()
+        val.size = nativeType.GetByteSize() * 8
         return val
 
     def nativeListMembers(self, value, nativeType, include_base):
@@ -264,7 +272,7 @@ class Dumper(DumperBase):
                 val.laddress = None
                 fields.append(val)
 
-            elif fieldName is None:  # Anon members
+            elif not fieldName:  # Anon members (None in old LLDB, "" in LLDB 2100+)
                 anonNumber += 1
                 fieldName = '#%s' % anonNumber
                 fakeMember = nativeValue.GetChildAtIndex(i)
@@ -903,6 +911,18 @@ class Dumper(DumperBase):
 
         return lldb.SBType()
 
+
+    def nativeStructAlignment(self, nativeType):
+        #DumperBase.warn("NATIVE ALIGN FOR %s" % nativeType.name)
+        def handleItem(nativeFieldType, align):
+            a = self.type_alignment(self.from_native_type(nativeFieldType))
+            return a if a > align else align
+        align = 1
+        for f in nativeType.get_fields_array():
+            align = handleItem(f.type, align)
+        return align
+
+
     def setupInferior(self, args):
         """ Set up SBTarget instance """
 
@@ -918,6 +938,7 @@ class Dumper(DumperBase):
         self.environment_ = args.get('environment', [])
         self.environment_ = list(map(lambda x: self.hexdecode(x), self.environment_))
         self.attachPid_ = args.get('attachpid', 0)
+        self.deviceUuid_ = args.get('deviceUuid', '')
         self.sysRoot_ = args.get('sysroot', '')
         self.remoteChannel_ = args.get('remotechannel', '')
         self.platform_ = args.get('platform', '')
@@ -942,11 +963,23 @@ class Dumper(DumperBase):
         if self.startMode_ == DebuggerStartMode.AttachExternal:
             self.symbolFile_ = ''
 
-        self.target = self.debugger.CreateTarget(
-            self.symbolFile_, None, self.platform_, True, error)
+        if self.startMode_ == DebuggerStartMode.AttachToIosDevice:
+            # The script code depends on a target from now on,
+            # so we already need to attach with the special Apple lldb debugger commands
+            self.runDebuggerCommand('device select ' + self.deviceUuid_)
+            self.runDebuggerCommand('device process attach -p ' + str(self.attachPid_))
+            self.target = self.debugger.GetSelectedTarget()
+        else:
+            self.target = self.debugger.CreateTarget(
+                self.symbolFile_, None, self.platform_, True, error)
 
         if not error.Success():
             self.report(self.describeError(error))
+            self.reportState('enginerunfailed')
+            return
+
+        if not self.target:
+            self.report('Debugger failed to create target.')
             self.reportState('enginerunfailed')
             return
 
@@ -986,14 +1019,22 @@ class Dumper(DumperBase):
                     and self.platform_ == 'remote-android'):
 
             connect_options = lldb.SBPlatformConnectOptions(self.remoteChannel_)
-            res = self.target.GetPlatform().ConnectRemote(connect_options)
+            target_platform = self.target.GetPlatform()
 
-            DumperBase.warn("CONNECT: %s %s platform: %s %s" % (res,
-                        self.remoteChannel_,
-                        self.target.GetPlatform().GetName(),
-                        self.target.GetPlatform().IsConnected()))
+            res = target_platform.ConnectRemote(connect_options)
+
+            is_connected = target_platform.IsConnected()
+
+            DumperBase.warn("CONNECT: %s %s target platform: %s connected: %s"
+                % (res, self.remoteChannel_, target_platform.GetName(), is_connected))
+
             if not res.Success():
                 self.report(self.describeError(res))
+                self.reportState('enginerunfailed')
+                return
+
+            if not is_connected:
+                self.report('Could not connect to debug server')
                 self.reportState('enginerunfailed')
                 return
 
@@ -1082,6 +1123,11 @@ class Dumper(DumperBase):
                 self.reportState('enginerunokandinferiorunrunnable')
             else:
                 self.reportState('enginerunfailed')
+        elif self.startMode_ == DebuggerStartMode.AttachToIosDevice:
+            # Already attached in setupInferior (to get a SBTarget),
+            # just get the process from it
+            self.process = self.target.GetProcess()
+            self.reportState('enginerunandinferiorrunok')
         else:
             launchInfo = lldb.SBLaunchInfo(self.processArgs_)
             launchInfo.SetWorkingDirectory(self.workingDirectory_)
@@ -1354,6 +1400,9 @@ class Dumper(DumperBase):
             return
 
         self.isArmMac = frame.module.triple.startswith('arm64-apple')
+        self.isBigEndian = frame.module.byte_order == lldb.eByteOrderBig
+        self.packCode = '>' if self.isBigEndian else '<'
+        self.byteorder = 'big' if self.isBigEndian else 'little'
 
         self.output = []
         isPartial = len(self.partialVariable) > 0
@@ -1505,12 +1554,21 @@ class Dumper(DumperBase):
         if self.platform_ != 'remote-android':
             return False
         funcname = frame.GetFunctionName()
-        if funcname and funcname.startswith('java.'):
-            return True
+        if funcname:
+            if funcname.startswith('java.'):
+                return True
+            if funcname.startswith('android.'):
+                return True
+            if funcname.startswith('com.android.'):
+                return True
+            if funcname.startswith('jdk.'):
+                return True
+            if funcname.startswith('sun.'):
+                return True
         module = frame.GetModule()
         filespec = module.GetPlatformFileSpec() # Not GetFileSpec
         filename = filespec.GetFilename()
-        if filename == 'libart.so':
+        if filename and filename.endswith('libart.so'):
             return True
         if funcname == None and not frame.line_entry.file.IsValid() and filename == None:
             return True
@@ -1659,6 +1717,35 @@ class Dumper(DumperBase):
         return self.target.BreakpointCreateByName(
             'main', self.target.GetExecutable().GetFilename())
 
+    def breakpointCallback(self, frame, bp_loc, extra_args, internal_dict):
+        command_str = extra_args.GetValueForKey('command').GetStringValue(65536)
+        tracepoint = extra_args.GetValueForKey('tracepoint').GetBooleanValue()
+        message = extra_args.GetValueForKey('message').GetStringValue(65536)
+
+        from io import StringIO
+        origout = sys.stdout
+        sys.stdout = StringIO()
+        result = True
+
+        if command_str:
+            local_ns = {'frame': frame, 'bp_loc': bp_loc, 'internal_dict': internal_dict}
+            userCode = 'def foo(frame=frame, bp_loc=bp_loc, dict=internal_dict):\n  ' + command_str.replace('\n', '\n  ')
+            exec(userCode, local_ns)
+            result = local_ns['foo']()
+
+        d = lldb.theDumper
+        output = d.hexencode(sys.stdout.getvalue())
+        sys.stdout = origout
+        d.report(f'output={{channel="stderr",data="{output}"}}')
+        sys.stdout.flush()
+        if result is False:
+            d.reportState("continueafternextstop")
+        if tracepoint:
+            d.report(f'tracepointhit={{message="{d.hexencode(message)}"}}')
+            d.reportState("continueafternextstop")
+
+        return True
+
     def insertBreakpoint(self, args):
         bpType = args['type']
         if bpType == BreakpointType.BreakpointByFileAndLine:
@@ -1710,22 +1797,14 @@ class Dumper(DumperBase):
             bp.SetIgnoreCount(int(args['ignorecount']))
             bp.SetCondition(self.hexdecode(args['condition']))
             bp.SetEnabled(bool(args['enabled']))
-            bp.SetScriptCallbackBody('\n'.join([
-                'def foo(frame = frame, bp_loc = bp_loc, dict = internal_dict):',
-                '  ' + self.hexdecode(args['command']).replace('\n', '\n  '),
-                'from cStringIO import StringIO',
-                'origout = sys.stdout',
-                'sys.stdout = StringIO()',
-                'result = foo()',
-                'd = lldb.theDumper',
-                'output = d.hexencode(sys.stdout.getvalue())',
-                'sys.stdout = origout',
-                'd.report("output={channel=\"stderr\",data=\" + output + \"}")',
-                'sys.stdout.flush()',
-                'if result is False:',
-                '  d.reportState("continueafternextstop")',
-                'return True'
-            ]))
+            extra_args_dict = {
+                'tracepoint': bool(args['tracepoint']),
+                'message': self.hexdecode(args['message']),
+                'command': self.hexdecode(args['command'])
+            }
+            extra_args = lldb.SBStructuredData()
+            extra_args.SetFromJSON(json.dumps(extra_args_dict))
+            res = bp.SetScriptCallbackFunction('lldb.theDumper.breakpointCallback', extra_args)
             if isinstance(bp, lldb.SBBreakpoint):
                 bp.SetOneShot(bool(args['oneshot']))
         self.reportResult(self.describeBreakpoint(bp) + extra, args)
@@ -1912,15 +1991,19 @@ class Dumper(DumperBase):
         self.debugger.GetCommandInterpreter().HandleCommand(command, result)
         self.reportResult('fulltrace="%s"' % self.hexencode(result.GetOutput()), args)
 
-    def executeDebuggerCommand(self, args):
-        self.reportToken(args)
+    def runDebuggerCommand(self, command):
+        self.report('Running debugger command "{}"'.format(command))
         result = lldb.SBCommandReturnObject()
-        command = args['command']
         self.debugger.GetCommandInterpreter().HandleCommand(command, result)
         success = result.Succeeded()
         output = toCString(result.GetOutput())
         error = toCString(str(result.GetError()))
         self.report('success="%d",output="%s",error="%s"' % (success, output, error))
+
+    def executeDebuggerCommand(self, args):
+        self.reportToken(args)
+        command = args['command']
+        self.runDebuggerCommand(command)
 
     def executeRoundtrip(self, args):
         self.reportResult('', args)
@@ -2132,6 +2215,10 @@ class Tester(Dumper):
                             #self.report('ENV=%s' % os.environ.items())
                             #self.report('DUMPER=%s' % self.qqDumpers)
                             break
+                        else:
+                            # Stopped at an intermediate location (e.g. runtime
+                            # initialisation) with no source line. Resume.
+                            self.process.Continue()
 
             else:
                 self.warn('TIMEOUT')
@@ -2530,7 +2617,7 @@ def ensure_gdbmiparser():
 def __lldb_init_module(debugger, internal_dict):
     # Module is being imported in an LLDB session
     if 'QT_CREATOR_LLDB_PROCESS' in os.environ:
-        # Let Qt Creator take care of its own dumper
+        debug("Returning early, letting Qt Creator take care of its own dumper", debugger)
         return
 
     debug("Initializing module with", debugger)
@@ -2571,3 +2658,4 @@ def __lldb_init_module(debugger, internal_dict):
                            % ("qt.SyntheticChildrenProvider", type_category))
 
     debugger.HandleCommand('type category enable %s' % type_category)
+    debugger.HandleCommand("settings set target.process.prefer-dynamic-value no-dynamic-values")

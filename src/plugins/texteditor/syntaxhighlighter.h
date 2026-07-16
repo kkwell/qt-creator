@@ -53,9 +53,11 @@ public:
     void setExtraFormats(const QTextBlock &block, const QList<QTextLayout::FormatRange> &formats);
     virtual void setLanguageFeaturesFlags(unsigned int /*flags*/) {}; // needed for CppHighlighting
     virtual void setEnabled(bool /*enabled*/) {}; // needed for DiffAndLogHighlighter
-    virtual void setDefinitionName(const QString & /*definitionName*/) {} // needed for Highlighter
 
     bool syntaxHighlighterUpToDate() const;
+
+    void setIgnoreFolding(bool ignore);
+    bool ignoresFolding() const;
 
 public slots:
     virtual void rehighlight();
@@ -93,6 +95,11 @@ protected:
     QTextBlockUserData *currentBlockUserData() const;
 
     QTextBlock currentBlock() const;
+    void forceRehighlightBlock(const QTextBlock &block);
+
+    void setFoldingIndent(const QTextBlock &block, int indent);
+    void setFoldingStartIncluded(const QTextBlock &block, bool included);
+    void setFoldingEndIncluded(const QTextBlock &block, bool included);
 
     virtual void documentChanged(QTextDocument * /*oldDoc*/, QTextDocument * /*newDoc*/) {};
 

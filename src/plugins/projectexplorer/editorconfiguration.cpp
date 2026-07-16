@@ -24,7 +24,6 @@
 #include <texteditor/marginsettings.h>
 #include <texteditor/icodestylepreferencesfactory.h>
 
-#include <QTextCodec>
 #include <QDebug>
 
 using namespace TextEditor;
@@ -41,28 +40,25 @@ const Key kCodeStyleCount("EditorConfiguration.CodeStyle.Count");
 struct EditorConfigurationPrivate
 {
     EditorConfigurationPrivate() :
-        m_typingSettings(globalTypingSettings()),
-        m_storageSettings(globalStorageSettings()),
-        m_behaviorSettings(globalBehaviorSettings()),
-        m_extraEncodingSettings(globalExtraEncodingSettings()),
-        m_textCodec(Core::EditorManager::defaultTextCodec())
+        m_textEncoding(Core::EditorManager::defaultTextEncoding())
     { }
 
     ICodeStylePreferences *m_defaultCodeStyle = nullptr;
-    TypingSettings m_typingSettings;
-    StorageSettings m_storageSettings;
-    BehaviorSettings m_behaviorSettings;
     bool m_useGlobal = true;
-    ExtraEncodingSettings m_extraEncodingSettings;
-    MarginSettings m_marginSettings;
-    QTextCodec *m_textCodec;
+    TextEncoding m_textEncoding;
 
     QMap<Utils::Id, ICodeStylePreferences *> m_languageCodeStylePreferences;
-    QList<BaseTextEditor *> m_editors;
+    QList<Core::IEditor *> m_editors;
 };
 
-EditorConfiguration::EditorConfiguration() : d(std::make_unique<EditorConfigurationPrivate>())
+EditorConfiguration::EditorConfiguration()
+    : marginSettings(kPrefix)
+    , d(std::make_unique<EditorConfigurationPrivate>())
 {
+    behaviorSettings.setAutoApply(true);
+    storageSettings.setAutoApply(true);
+    extraEncodingSettings.setAutoApply(true);
+
     const QMap<Utils::Id, ICodeStylePreferences *> languageCodeStylePreferences = TextEditorSettings::codeStyles();
     for (auto itCodeStyle = languageCodeStylePreferences.cbegin(), end = languageCodeStylePreferences.cend();
             itCodeStyle != end; ++itCodeStyle) {
@@ -106,42 +102,22 @@ bool EditorConfiguration::useGlobalSettings() const
 void EditorConfiguration::cloneGlobalSettings()
 {
     d->m_defaultCodeStyle->setTabSettings(TextEditorSettings::codeStyle()->tabSettings());
-    setTypingSettings(globalTypingSettings());
-    setStorageSettings(globalStorageSettings());
-    setBehaviorSettings(globalBehaviorSettings());
-    setExtraEncodingSettings(globalExtraEncodingSettings());
-    setMarginSettings(TextEditorSettings::marginSettings());
-    d->m_textCodec = Core::EditorManager::defaultTextCodec();
+    typingSettings.setData(globalTypingSettings().data());
+    storageSettings.setData(globalStorageSettings().data());
+    behaviorSettings.setData(globalBehaviorSettings().data());
+    extraEncodingSettings.setData(globalExtraEncodingSettings().data());
+    marginSettings.setData(TextEditor::marginSettings().data());
+    d->m_textEncoding = Core::EditorManager::defaultTextEncoding();
+
+    emit typingSettingsChanged(typingSettings.data());
+    emit storageSettingsChanged(storageSettings.data());
+    emit behaviorSettingsChanged(behaviorSettings.data());
+    emit extraEncodingSettingsChanged(extraEncodingSettings.data());
 }
 
-QTextCodec *EditorConfiguration::textCodec() const
+TextEncoding EditorConfiguration::textEncoding() const
 {
-    return d->m_textCodec;
-}
-
-const TypingSettings &EditorConfiguration::typingSettings() const
-{
-    return d->m_typingSettings;
-}
-
-const StorageSettings &EditorConfiguration::storageSettings() const
-{
-    return d->m_storageSettings;
-}
-
-const BehaviorSettings &EditorConfiguration::behaviorSettings() const
-{
-    return d->m_behaviorSettings;
-}
-
-const ExtraEncodingSettings &EditorConfiguration::extraEncodingSettings() const
-{
-    return d->m_extraEncodingSettings;
-}
-
-const MarginSettings &EditorConfiguration::marginSettings() const
-{
-    return d->m_marginSettings;
+    return d->m_textEncoding;
 }
 
 ICodeStylePreferences *EditorConfiguration::codeStyle() const
@@ -169,7 +145,7 @@ Store EditorConfiguration::toMap() const
 {
     Store map = {
         {kUseGlobal, d->m_useGlobal},
-        {kCodec, d->m_textCodec->name()},
+        {kCodec, d->m_textEncoding.name()},
         {kCodeStyleCount, d->m_languageCodeStylePreferences.count()}
     };
 
@@ -177,30 +153,34 @@ Store EditorConfiguration::toMap() const
     for (auto itCodeStyle = d->m_languageCodeStylePreferences.cbegin(),
                end = d->m_languageCodeStylePreferences.cend();
             itCodeStyle != end; ++itCodeStyle) {
+        Store inner;
+        itCodeStyle.value()->toMap(inner);
         const Store settingsIdMap = {
             {"language", QVariant::fromValue(itCodeStyle.key().toSetting())},
-            {"value", QVariant::fromValue(itCodeStyle.value()->toMap())}
+            {"value", QVariant::fromValue(inner)}
         };
         map.insert(numberedKey(kCodeStylePrefix, i), variantFromStore(settingsIdMap));
         i++;
     }
 
-    toMapWithPrefix(&map, d->m_defaultCodeStyle->tabSettings().toMap());
-    toMapWithPrefix(&map, d->m_typingSettings.toMap());
-    toMapWithPrefix(&map, d->m_storageSettings.toMap());
-    toMapWithPrefix(&map, d->m_behaviorSettings.toMap());
-    toMapWithPrefix(&map, d->m_extraEncodingSettings.toMap());
-    toMapWithPrefix(&map, d->m_marginSettings.toMap());
+    Store inner;
+    d->m_defaultCodeStyle->tabSettings().toMap(inner);
+    typingSettings.toMap(inner);
+    storageSettings.toMap(inner);
+    behaviorSettings.toMap(inner);
+    extraEncodingSettings.toMap(inner);
+    toMapWithPrefix(&map, inner);
+    marginSettings.toMap(map);
 
     return map;
 }
 
 void EditorConfiguration::fromMap(const Store &map)
 {
-    const QByteArray &codecName = map.value(kCodec, d->m_textCodec->name()).toByteArray();
-    d->m_textCodec = QTextCodec::codecForName(codecName);
-    if (!d->m_textCodec)
-        d->m_textCodec = Core::EditorManager::defaultTextCodec();
+    const QByteArray codecName = map.value(kCodec, d->m_textEncoding.name()).toByteArray();
+    d->m_textEncoding = TextEncoding(codecName);
+    if (!d->m_textEncoding.isValid())
+        d->m_textEncoding = Core::EditorManager::defaultTextEncoding();
 
     const int codeStyleCount = map.value(kCodeStyleCount, 0).toInt();
     for (int i = 0; i < codeStyleCount; ++i) {
@@ -222,37 +202,38 @@ void EditorConfiguration::fromMap(const Store &map)
             submap.insert(it.key().toByteArray().mid(kPrefix.view().size()), it.value());
     }
     d->m_defaultCodeStyle->fromMap(submap);
-    d->m_typingSettings.fromMap(submap);
-    d->m_storageSettings.fromMap(submap);
-    d->m_behaviorSettings.fromMap(submap);
-    d->m_extraEncodingSettings.fromMap(submap);
-    d->m_marginSettings.fromMap(submap);
+    typingSettings.fromMap(submap);
+    storageSettings.fromMap(submap);
+    behaviorSettings.fromMap(submap);
+    extraEncodingSettings.fromMap(submap);
+    marginSettings.fromMap(map);
+
     setUseGlobalSettings(map.value(kUseGlobal, d->m_useGlobal).toBool());
 }
 
-void EditorConfiguration::configureEditor(BaseTextEditor *textEditor) const
+void EditorConfiguration::configureEditor(Core::IEditor *editor) const
 {
-    TextEditorWidget *widget = textEditor->editorWidget();
-    if (widget)
-        widget->setCodeStyle(codeStyle(widget->languageSettingsId()));
-    if (!d->m_useGlobal) {
-        textEditor->textDocument()->setCodec(d->m_textCodec);
-        if (widget)
+    TextEditorWidget *widget = TextEditorWidget::fromEditor(editor);
+    if (widget) {
+        widget->textDocument()->setCodeStyle(codeStyle(widget->languageSettingsId()));
+        if (!d->m_useGlobal) {
+            widget->textDocument()->setEncoding(d->m_textEncoding);
             switchSettings(widget);
+        }
     }
-    d->m_editors.append(textEditor);
-    connect(textEditor, &BaseTextEditor::destroyed, this, [this, textEditor]() {
-        d->m_editors.removeOne(textEditor);
+    d->m_editors.append(editor);
+    connect(editor, &Core::IEditor::destroyed, this, [this, editor]() {
+        d->m_editors.removeOne(editor);
     });
 }
 
-void EditorConfiguration::deconfigureEditor(BaseTextEditor *textEditor) const
+void EditorConfiguration::deconfigureEditor(Core::IEditor *editor) const
 {
-    TextEditorWidget *widget = textEditor->editorWidget();
+    TextEditorWidget *widget = TextEditorWidget::fromEditor(editor);
     if (widget)
-        widget->setCodeStyle(TextEditorSettings::codeStyle(widget->languageSettingsId()));
+        widget->textDocument()->setCodeStyle(TextEditorSettings::codeStyle(widget->languageSettingsId()));
 
-    d->m_editors.removeOne(textEditor);
+    d->m_editors.removeOne(editor);
 
     // TODO: what about text codec and switching settings?
 }
@@ -275,8 +256,6 @@ template<typename New, typename Old>
 static void switchSettings_helper(const New *newSender, const Old *oldSender,
                                   TextEditorWidget *widget)
 {
-    QObject::disconnect(oldSender, &Old::marginSettingsChanged,
-                        widget, &TextEditorWidget::setMarginSettings);
     QObject::disconnect(oldSender, &Old::typingSettingsChanged,
                         widget, &TextEditorWidget::setTypingSettings);
     QObject::disconnect(oldSender, &Old::storageSettingsChanged,
@@ -286,8 +265,6 @@ static void switchSettings_helper(const New *newSender, const Old *oldSender,
     QObject::disconnect(oldSender, &Old::extraEncodingSettingsChanged,
                         widget, &TextEditorWidget::setExtraEncodingSettings);
 
-    QObject::connect(newSender, &New::marginSettingsChanged,
-                     widget, &TextEditorWidget::setMarginSettings);
     QObject::connect(newSender, &New::typingSettingsChanged,
                      widget, &TextEditorWidget::setTypingSettings);
     QObject::connect(newSender, &New::storageSettingsChanged,
@@ -301,89 +278,25 @@ static void switchSettings_helper(const New *newSender, const Old *oldSender,
 void EditorConfiguration::switchSettings(TextEditorWidget *widget) const
 {
     if (d->m_useGlobal) {
-        widget->setMarginSettings(TextEditorSettings::marginSettings());
-        widget->setTypingSettings(globalTypingSettings());
-        widget->setStorageSettings(globalStorageSettings());
-        widget->setBehaviorSettings(globalBehaviorSettings());
-        widget->setExtraEncodingSettings(globalExtraEncodingSettings());
+        widget->setMarginSettings(TextEditor::marginSettings().data());
+        widget->setTypingSettings(globalTypingSettings().data());
+        widget->setStorageSettings(globalStorageSettings().data());
+        widget->setBehaviorSettings(globalBehaviorSettings().data());
+        widget->setExtraEncodingSettings(globalExtraEncodingSettings().data());
         switchSettings_helper(TextEditorSettings::instance(), this, widget);
     } else {
-        widget->setMarginSettings(marginSettings());
-        widget->setTypingSettings(typingSettings());
-        widget->setStorageSettings(storageSettings());
-        widget->setBehaviorSettings(behaviorSettings());
-        widget->setExtraEncodingSettings(extraEncodingSettings());
+        widget->setMarginSettings(marginSettings.data());
+        widget->setTypingSettings(typingSettings.data());
+        widget->setStorageSettings(storageSettings.data());
+        widget->setBehaviorSettings(behaviorSettings.data());
+        widget->setExtraEncodingSettings(extraEncodingSettings.data());
         switchSettings_helper(this, TextEditorSettings::instance(), widget);
     }
 }
 
-void EditorConfiguration::setTypingSettings(const TypingSettings &settings)
+void EditorConfiguration::setTextEncoding(const TextEncoding &textEncoding)
 {
-    d->m_typingSettings = settings;
-    emit typingSettingsChanged(d->m_typingSettings);
-}
-
-void EditorConfiguration::setStorageSettings(const StorageSettings &settings)
-{
-    d->m_storageSettings = settings;
-    emit storageSettingsChanged(d->m_storageSettings);
-}
-
-void EditorConfiguration::setBehaviorSettings(const BehaviorSettings &settings)
-{
-    d->m_behaviorSettings = settings;
-    emit behaviorSettingsChanged(d->m_behaviorSettings);
-}
-
-void EditorConfiguration::setExtraEncodingSettings(const ExtraEncodingSettings &settings)
-{
-    d->m_extraEncodingSettings = settings;
-    emit extraEncodingSettingsChanged(d->m_extraEncodingSettings);
-}
-
-void EditorConfiguration::setMarginSettings(const MarginSettings &settings)
-{
-    if (d->m_marginSettings != settings) {
-        d->m_marginSettings = settings;
-        emit marginSettingsChanged(d->m_marginSettings);
-    }
-}
-
-void EditorConfiguration::setTextCodec(QTextCodec *textCodec)
-{
-    d->m_textCodec = textCodec;
-}
-
-void EditorConfiguration::setShowWrapColumn(bool onoff)
-{
-    if (d->m_marginSettings.m_showMargin != onoff) {
-        d->m_marginSettings.m_showMargin = onoff;
-        emit marginSettingsChanged(d->m_marginSettings);
-    }
-}
-
-void EditorConfiguration::setTintMarginArea(bool onoff)
-{
-    if (d->m_marginSettings.m_tintMarginArea != onoff) {
-        d->m_marginSettings.m_tintMarginArea = onoff;
-        emit marginSettingsChanged(d->m_marginSettings);
-    }
-}
-
-void EditorConfiguration::setUseIndenter(bool onoff)
-{
-    if (d->m_marginSettings.m_useIndenter != onoff) {
-        d->m_marginSettings.m_useIndenter = onoff;
-        emit marginSettingsChanged(d->m_marginSettings);
-    }
-}
-
-void EditorConfiguration::setWrapColumn(int column)
-{
-    if (d->m_marginSettings.m_marginColumn != column) {
-        d->m_marginSettings.m_marginColumn = column;
-        emit marginSettingsChanged(d->m_marginSettings);
-    }
+    d->m_textEncoding = textEncoding;
 }
 
 void EditorConfiguration::slotAboutToRemoveProject(Project *project)
@@ -391,7 +304,7 @@ void EditorConfiguration::slotAboutToRemoveProject(Project *project)
     if (project->editorConfiguration() != this)
         return;
 
-    for (BaseTextEditor *editor : std::as_const(d->m_editors))
+    for (Core::IEditor *editor : std::as_const(d->m_editors))
         deconfigureEditor(editor);
 }
 

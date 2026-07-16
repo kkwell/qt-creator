@@ -22,11 +22,13 @@
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/buildstep.h>
 #include <projectexplorer/deployconfiguration.h>
-#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/devicesupport/devicekitaspects.h>
+#include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/target.h>
+#include <projectexplorer/toolchainkitaspect.h>
 
 #include <remotelinux/remotelinux_constants.h>
 
@@ -34,13 +36,14 @@
 
 using namespace Core;
 using namespace ProjectExplorer;
+using namespace Utils;
 
 namespace Qnx::Internal {
 
 class QnxDeployStepFactory : public BuildStepFactory
 {
 public:
-    QnxDeployStepFactory(Utils::Id existingStepId, Utils::Id overrideId = {})
+    QnxDeployStepFactory(Id existingStepId, Id overrideId = {})
     {
         cloneStepCreator(existingStepId, overrideId);
         setSupportedConfiguration(Constants::QNX_QNX_DEPLOYCONFIGURATION_ID);
@@ -58,8 +61,8 @@ public:
         addSupportedTargetDeviceType(Constants::QNX_QNX_OS_TYPE);
         setUseDeploymentDataView();
 
-        addInitialStep(RemoteLinux::Constants::MakeInstallStepId, [](Target *target) {
-            const Project * const prj = target->project();
+        addInitialStep(RemoteLinux::Constants::MakeInstallStepId, [](BuildConfiguration *bc) {
+            const Project * const prj = bc->project();
             return prj->deploymentKnowledge() == DeploymentKnowledge::Bad
                     && prj->hasMakeInstallEquivalent();
         });
@@ -76,6 +79,34 @@ void setupQnxDeployment()
     static QnxDeployStepFactory makeInstallStepFactory{RemoteLinux::Constants::MakeInstallStepId};
 }
 
+class QnxSdpEnvFileToolAspectFactory : public DeviceToolAspectFactory
+{
+public:
+    QnxSdpEnvFileToolAspectFactory()
+    {
+        setToolId(Constants::QNX_SDPENVFILE_TOOL_ID);
+        setToolType(DeviceToolAspect::BuildTool);
+        setFilePattern({"/opt/qnx710/qnxsdp-env.sh", "/opt/qnx710/qnxsdp-env.bat",
+                        "/opt/qnx800/qnxsdp-env.sh", "/opt/qnx800/qnxsdp-env.bat"});
+        setLabelText(Tr::tr("QNX sdpenv.sh:"));
+        setToolTip(Tr::tr("QNX Software Development Platform environment file."));
+        setChecker([](const DeviceConstRef &device, const FilePath &candidate) -> Result<> {
+            IDevice::ConstPtr dev = device.lock();
+            QTC_ASSERT(dev, return ResultError(ResultAssert));
+            if (dev->osType() == OsTypeWindows && candidate.suffix() == "bat")
+                return ResultOk;
+            if (dev->osType() != OsTypeWindows && candidate.suffix() == "sh")
+                return ResultOk;
+            return ResultError(Tr::tr("File suffix does not match OS type."));
+        });
+    }
+};
+
+void setupQnxSdpEnvFileToolAspect()
+{
+    static QnxSdpEnvFileToolAspectFactory theQnxSdpEnvFileToolAspectFactory;
+}
+
 class QnxPlugin final : public ExtensionSystem::IPlugin
 {
     Q_OBJECT
@@ -90,6 +121,7 @@ class QnxPlugin final : public ExtensionSystem::IPlugin
         setupQnxRunnning();
         setupQnxDebugging();
         setupQnxQmlProfiler();
+        setupQnxSdpEnvFileToolAspect();
         setupQnxSettingsPage(this);
     }
 
@@ -115,8 +147,8 @@ class QnxPlugin final : public ExtensionSystem::IPlugin
         connect(KitManager::instance(), &KitManager::kitsChanged, this,
                 [attachToQnxApplication, debugSeparator] {
             auto isQnxKit = [](const Kit *kit) {
-                return DeviceTypeKitAspect::deviceTypeId(kit) == Constants::QNX_QNX_OS_TYPE
-                       && DeviceKitAspect::device(kit) && kit->isValid();
+                return RunDeviceTypeKitAspect::deviceTypeId(kit) == Constants::QNX_QNX_OS_TYPE
+                       && RunDeviceKitAspect::device(kit) && kit->isValid();
             };
 
             const bool hasValidQnxKit = KitManager::kit(isQnxKit) != nullptr;

@@ -93,13 +93,13 @@ class GitLabPlugin final : public ExtensionSystem::IPlugin
     void openView()
     {
         if (dd->dialog.isNull()) {
-            while (!gitLabParameters().isValid()) {
+            if (!gitLabParameters().isValid()) {
                 QMessageBox::warning(Core::ICore::dialogParent(), Tr::tr("Error"),
                                      Tr::tr("Invalid GitLab configuration. For a fully functional "
                                             "configuration, you need to set up host name or address and "
                                             "an access token. Providing the path to curl is mandatory."));
-                if (!Core::ICore::showOptionsDialog("GitLab"))
-                    return;
+                Core::ICore::showSettings("GitLab");
+                return;
             }
             GitLabDialog *gitlabD = new GitLabDialog(Core::ICore::dialogParent());
             gitlabD->setModal(true);
@@ -236,8 +236,9 @@ void GitLabPluginPrivate::handleEvents(const Events &events, const QDateTime &ti
         return;
 
     if (!events.error.message.isEmpty()) {
-        VcsBase::VcsOutputWindow::appendError("GitLab: Error while fetching events. "
-                                              + events.error.message + '\n');
+        const Utils::FilePath workingDirectory = project->projectDirectory();
+        VcsBase::VcsOutputWindow::appendError(workingDirectory,
+                                              "GitLab: Error while fetching events. " + events.error.message);
         return;
     }
 
@@ -245,7 +246,8 @@ void GitLabPluginPrivate::handleEvents(const Events &events, const QDateTime &ti
     for (const Event &event : events.events) {
         const QDateTime eventTimeStamp = QDateTime::fromString(event.timeStamp, Qt::ISODateWithMs);
         if (!timeStamp.isValid() || timeStamp < eventTimeStamp) {
-            VcsBase::VcsOutputWindow::appendMessage("GitLab: " + event.toMessage());
+            const Utils::FilePath workingDirectory = project->projectDirectory();
+            VcsBase::VcsOutputWindow::appendMessage(workingDirectory, "GitLab: " + event.toMessage());
             if (!lastTimeStamp.isValid() || lastTimeStamp < eventTimeStamp)
                 lastTimeStamp = eventTimeStamp;
         }

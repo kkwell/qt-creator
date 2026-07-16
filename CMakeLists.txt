@@ -11,7 +11,6 @@ include(Utils)
 
 env_with_default("QTC_BUILD_WITH_PCH" ENV_QTC_BUILD_WITH_PCH ON)
 env_with_default("QTC_WITH_TESTS" ENV_QTC_WITH_TESTS OFF)
-env_with_default("QTC_WITH_QMLDESIGNER" ENV_QTC_WITH_QMLDESIGNER ON)
 
 option(BUILD_WITH_PCH "Build with precompiled headers" "${ENV_QTC_BUILD_WITH_PCH}")
 
@@ -20,6 +19,7 @@ include(QtCreatorIDEBranding RESULT_VARIABLE IDE_BRANDING_FILE)
 include(QtCreatorTranslations)
 include(QtCreatorDocumentation)
 include(QtCreatorAPI)
+include(QtCreatorSbom)
 
 set(IDE_REVISION FALSE CACHE BOOL "Marks the presence of IDE revision string.")
 set(IDE_REVISION_STR "" CACHE STRING "The IDE revision string.")
@@ -36,9 +36,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 qtc_handle_compiler_cache_support()
 qtc_handle_llvm_linker()
-
-option(BUILD_LINK_WITH_QT "Link with Qt from the parent Qt Creator" OFF)
-qtc_link_with_qt()
 
 option(WITH_TESTS "Build Tests" ${ENV_QTC_WITH_TESTS})
 add_feature_info("Build tests" ${WITH_TESTS} "")
@@ -60,8 +57,8 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 if (WITH_TESTS)
- set(QT_TEST_COMPONENT Test)
- set(IMPLICIT_DEPENDS Qt::Test)
+  set(QT_TEST_COMPONENT_REQUIRED REQUIRED)
+  set(IMPLICIT_DEPENDS Qt::Test)
 endif()
 
 # suppress bogus warning
@@ -70,34 +67,62 @@ endif()
 # with other compilers
 if(MSVC)
   add_compile_options(/wd4573)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL GNU)
+  add_compile_options(-Wno-missing-field-initializers)
+endif()
+
+if (MSVC)
+  if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS ${IDE_MSVC_VERSION_MIN})
+    message(FATAL_ERROR "You need at least MSVC2022 to build Qt Creator.")
+  endif()
 endif()
 
 find_package(Qt6
   ${IDE_QT_VERSION_MIN}
-  COMPONENTS Concurrent Core Gui Network PrintSupport Qml Sql Widgets Xml Core5Compat ${QT_TEST_COMPONENT}
+  COMPONENTS Concurrent Core Gui Network PrintSupport Qml Sql Widgets Xml
   REQUIRED
 )
 
-if (Qt6_VERSION VERSION_GREATER_EQUAL 6.5.4)
-    option(WITH_QMLDESIGNER "Build QmlDesigner" ${ENV_QTC_WITH_QMLDESIGNER})
-else()
-    option(WITH_QMLDESIGNER "Build QmlDesigner" OFF)
-endif()
-add_feature_info("Build QmlDesigner and related code (only if Qt is 6.5.4 or newer)" ${WITH_QMLDESIGNER} "")
+# Always look for Qt::Test since we always optionally want it for ExtensionSystem
+# but only required if WITH_TESTS=ON
+find_package(Qt6 COMPONENTS Test QUIET ${QT_TEST_COMPONENT_REQUIRED})
 
-# hack for Qbs which still supports Qt5 and Qt6
-if (TARGET Qt6::Core5CompatPrivate)
-    if (CMAKE_VERSION VERSION_LESS 3.18)
-        set_property(TARGET Qt6::Core5CompatPrivate PROPERTY IMPORTED_GLOBAL TRUE)
-    endif()
-    add_library(Qt6Core5CompatPrivate ALIAS Qt6::Core5CompatPrivate)
+find_package(Qt6 OPTIONAL_COMPONENTS Quick QuickWidgets Designer DesignerComponentsPrivate
+                                     Help SerialPort Svg Tools LinguistTools QUIET)
+
+if (Qt6_VERSION VERSION_GREATER_EQUAL 6.9.0)
+  find_package(Qt6 OPTIONAL_COMPONENTS
+    CorePrivate
+    GuiPrivate
+    DesignerComponentsPrivate
+    QmlPrivate
+    QuickPrivate
+    QUIET
+  )
 endif()
-if (TARGET Qt6::Core5Compat)
-    if (CMAKE_VERSION VERSION_LESS 3.18)
-        set_property(TARGET Qt6::Core5Compat PROPERTY IMPORTED_GLOBAL TRUE)
-    endif()
-    add_library(Qt6Core5Compat ALIAS Qt6::Core5Compat)
+
+find_package(Qt6 OPTIONAL_COMPONENTS TaskTree QUIET)
+if(TARGET Qt6::TaskTree)
+  set(QTC_USE_INTERNAL_TASKTREE_DEFAULT OFF)
+else()
+  set(QTC_USE_INTERNAL_TASKTREE_DEFAULT ON)
 endif()
+option(QTC_USE_INTERNAL_TASKTREE "Use internal copy of QtTaskTree" ${QTC_USE_INTERNAL_TASKTREE_DEFAULT})
+add_feature_info("Use internal copy of QtTaskTree" ${QTC_USE_INTERNAL_TASKTREE} "")
+if(NOT QTC_USE_INTERNAL_TASKTREE)
+  find_package(Qt6 REQUIRED COMPONENTS TaskTree QUIET)
+  set_property(TARGET Qt6::TaskTree PROPERTY IMPORTED_GLOBAL TRUE)
+  add_library(QtTaskTree ALIAS Qt6::TaskTree)
+endif()
+
+qtc_setup_sbom()
+qtc_sbom_begin_project()
+# Do this after qtc_sbom_begin_project(), so we can show the path to the used python interpreter.
+qtc_add_sbom_feature_info()
+
+# depending on Qt version and compiler version enable or disable Qml Designer
+# can be overwritten by variable WITH_QMLDESIGNER / QTC_WITH_QMLDESIGNER (env)
+configure_qml_designer(${Qt6_VERSION})
 
 # Common intermediate directory for QML modules which are defined via qt_add_qml_module()
 set(QT_QML_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml_modules")
@@ -110,24 +135,26 @@ if (MSVC AND QT_FEATURE_static_runtime)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
-find_package(Qt6 OPTIONAL_COMPONENTS Quick QuickWidgets Designer DesignerComponentsPrivate
-                                     Help SerialPort Svg Tools LinguistTools QUIET)
-
 find_package(Threads)
 find_package(Clang QUIET)
 
-# Crashpad
-set(CRASHPAD_BACKEND_URL "" CACHE STRING "Crashpad backend URL")
-set(BUILD_WITH_CRASHPAD OFF)
-# Linux is not supported for now
-# x86_64;arm64 is not supported for now
-if(CRASHPAD_BACKEND_URL AND (WIN32 OR APPLE)) # Linux is not supported for now
-  find_package(Crashpad QUIET)
-  if(TARGET Crashpad::Crashpad)
-    set(BUILD_WITH_CRASHPAD ON)
+set(SENTRY_DSN "$ENV{QTC_SENTRY_DSN}" CACHE STRING "Data Source Name to use for sending Sentry events.")
+set(SENTRY_PROJECT "" CACHE STRING "Project ID to use for sending Sentry events.")
+set(BUILD_WITH_SENTRY OFF)
+if(SENTRY_DSN AND SENTRY_PROJECT)
+  find_package(sentry QUIET)
+  if(TARGET sentry::sentry)
+    set(BUILD_WITH_SENTRY ON)
+    get_target_property(__sentry_configs sentry::sentry IMPORTED_CONFIGURATIONS)
+    get_target_property(__sentry_lib sentry::sentry IMPORTED_LOCATION_${__sentry_configs})
+    install(FILES ${__sentry_lib}
+      DESTINATION "${IDE_LIBRARY_ARCHIVE_PATH}"
+      COMPONENT Dependencies
+      EXCLUDE_FROM_ALL
+    )
   endif()
 endif()
-add_feature_info("Build with Crashpad" ${BUILD_WITH_CRASHPAD} "")
+add_feature_info("Build with Sentry" ${BUILD_WITH_SENTRY} "")
 
 function (set_if_target var target)
    if (TARGET "${target}")
@@ -161,7 +188,7 @@ if (APPLE)
 endif()
 
 if (WITH_TESTS)
- enable_testing()
+  enable_testing()
 endif()
 
 if (UNIX)
@@ -175,10 +202,10 @@ if (NOT BUILD_DESIGNSTUDIO)
 endif()
 
 if (WITH_TESTS)
- add_subdirectory(tests)
+  add_subdirectory(tests)
 endif()
 
-# add_subdirectory(doc)
+add_subdirectory(doc)
 
 setup_dependencies_component()
 
@@ -188,7 +215,9 @@ feature_summary(INCLUDE_QUIET_PACKAGES WHAT
 )
 
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR
-    AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.GPL3-EXCEPT")
+    AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/LICENSES/LICENSE.GPL3-EXCEPT")
   # Only for opensource, non-super-repo builds
-#  add_subdirectory(packaging)
+  add_subdirectory(packaging)
 endif()
+
+qtc_sbom_end_project()

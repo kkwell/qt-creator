@@ -6,8 +6,8 @@ add_qtc_test(unittest GTEST
   PROPERTIES SKIP_AUTOGEN ON
   DEPENDS
     Qt::Core Qt::Network Qt::Widgets
-    Qt::Xml Qt::Concurrent Qt::QmlPrivate Qt::Gui
-    Qt::Core5Compat Utils QmlJS Sqlite
+    Qt::Xml Qt::Concurrent Qt::QmlPrivate Qt::Gui Qt::Quick
+    QmlJS Sqlite QmlDesignerSettings TextEditorSupport
     Googletest TestDesignerCore TestUtils TestMatchers TestPrinters TestMocks
   DEFINES
     GTEST_INTERNAL_HAS_STRING_VIEW
@@ -30,12 +30,6 @@ extend_qtc_test(unittest
   DEPENDS Nanotrace
 )
 
-
-finalize_qtc_gtest(unittest
-  EXCLUDE_SOURCES_REGEX ".c$"
-  EXCLUDE_ALL_FROM_PRECHECK
-)
-
 function(unittest_copy_data_folder)
   execute_process(
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -45,11 +39,20 @@ function(unittest_copy_data_folder)
 endfunction(unittest_copy_data_folder)
 
 add_subdirectory(componentcore)
+add_subdirectory(designercoreutils)
+add_subdirectory(qmldesignerutils)
+add_subdirectory(designsystem)
 add_subdirectory(listmodeleditor)
 add_subdirectory(imagecache)
 add_subdirectory(metainfo)
 add_subdirectory(model)
 add_subdirectory(sqlite)
 add_subdirectory(projectstorage)
+add_subdirectory(sourcepathstorage)
 add_subdirectory(qmlprojectmanager)
 add_subdirectory(utils)
+
+finalize_qtc_gtest(unittest
+  EXCLUDE_SOURCES_REGEX ".c$"
+  EXCLUDE_ALL_FROM_PRECHECK
+)

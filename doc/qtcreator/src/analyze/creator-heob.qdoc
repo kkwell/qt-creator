@@ -24,7 +24,7 @@
 
         \li Select \uicontrol Analyze > \uicontrol Heob.
 
-            \image qtcreator-heob-settings.png {Heob settings}
+            \image {qtcreator-heob-settings.png} {Heob settings}
 
         \li Select the Heob settings profile to use, or select \uicontrol New
             to create a new profile.
@@ -40,15 +40,15 @@
 
     \QC runs the application, and then it runs Heob in a terminal.
 
-    \image qtcreator-heob-in-terminal.webp {Heob running in a terminal}
+    \image {qtcreator-heob-in-terminal.webp} {Heob running in a terminal}
 
     Heob raises an access violation on buffer overruns and records stack traces
     of the offending instruction and buffer allocation. You can see the results
     in the \uicontrol Memcheck view after Heob exits normally.
 
-    \image qtcreator-heob-output.png {Results from Heob in the Memcheck view}
+    \image {qtcreator-heob-output.png} {Results from Heob in the Memcheck view}
 
-    \sa {Analyze}{How To: Analyze}, {Analyzers}, {Heob}, {Analyzing Code}
+    \sa {Analyze}{How to: Analyze}, {Analyzers}, {Heob}, {Analyzing code}
 */
 
 /*!
@@ -59,15 +59,15 @@
 
     \title Heob
 
-    \brief Detect memory leaks with Heob.
+    \summary {Detect memory leaks with Heob.}
 
     To specify settings for Heob, go to \uicontrol Analyze > \uicontrol Heob.
 
-    \image qtcreator-heob-settings.png {Heob settings}
+    \image {qtcreator-heob-settings.png} {Heob settings}
 
     In \uicontrol {Extra arguments}, enter additional arguments for
     running Heob. To list the available arguments in the Heob console, enter
-    \c -H in this field and press \key Enter.
+    \c -H in this field and select \key Enter.
 
     For example, use the \c -oleaks.html option to record leak data in an HTML
     file. Together with this option, you can use the \c -g2 option to group the
@@ -75,14 +75,14 @@
     up to 1024 bytes in the file. For example, \c {-oleaks.html -g2 -L1024}
 
     To save your changes as default settings, select
-    \inlineimage icons/savefile.png.
+    \inlineimage {icons/savefile.png} {Save}.
 
     To remove a customized settings profile, select the profile, and then
     select \uicontrol Delete.
 
     The following sections describe the available options in more detail.
 
-    \section1 Recording Results
+    \section1 Recording results
 
     The results of the checks are displayed in the \uicontrol Memcheck view and
     recorded in a file. Specify the file name in \uicontrol {XML output file}.
@@ -98,14 +98,14 @@
     If you use variables, \QC cannot open the file automatically, but you can
     open it from the project directory.
 
-    \section1 Handling Exceptions
+    \section1 Handling exceptions
 
     In \uicontrol {Handle exceptions}, select \uicontrol Off to use the
     standard exception handler and have the debugger automatically attached if
     the application crashes. This works only if you register \QC is as a
     post-mortem debugger by selecting \preferences >
     \uicontrol Debugger > \uicontrol General >
-    \uicontrol {Use Qt Creator for post-mortem debugging}.
+    \uicontrol {Use \QC for post-mortem debugging}.
 
     Select \uicontrol On to use the Heob exception handler that checks the
     reason and location of the crash and detects whether it occurred because of
@@ -116,7 +116,7 @@
     crash is displayed. Therefore, this option is mostly useful when using Heob
     on the console or running it for child processes, as well.
 
-    \section1 Raising Exceptions on Errors
+    \section1 Raising exceptions on errors
 
     Select the \uicontrol {Raise breakpoint exception on error} check
     box to display errors when the application runs.
@@ -130,7 +130,7 @@
     This is mostly useful when used with the \uicontrol {Run with debugger}
     option, which runs Heob under the debugger.
 
-    \section1 Protecting Pages
+    \section1 Protecting pages
 
     In \uicontrol {Page protection}, select \uicontrol Off to use
     standard memory allocation functions and enable only memory leak detection.
@@ -146,7 +146,7 @@
     useful for \e use-after-free and \e double-free detection. However, the
     available memory address space can run out fast for 32-bit programs.
 
-    \section1 Handling Leak Data
+    \section1 Handling leak data
 
     In \uicontrol {Leak details}, determine how to handle the
     collected leak data when the process exits. Selecting \uicontrol None means
@@ -189,6 +189,6 @@
     To start leak recording when Heob starts and still have the option to
     control the recording, select \uicontrol {On (Start Enabled)}.
 
-    \sa {Detect memory leaks with Heob}, {Analyze}{How To: Analyze}, {Analyzers},
-     {Analyzing Code}
+    \sa {Detect memory leaks with Heob}, {Analyze}{How to: Analyze}, {Analyzers},
+     {Analyzing code}
 */

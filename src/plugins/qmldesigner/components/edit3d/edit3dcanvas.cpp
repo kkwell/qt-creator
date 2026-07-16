@@ -30,7 +30,7 @@ static QQuickWidget *createBusyIndicator(QWidget *p)
 {
     auto widget = new QQuickWidget(p);
 
-    const QString source = Core::ICore::resourcePath("qmldesigner/misc/BusyIndicator.qml").toString();
+    const QString source = Core::ICore::resourcePath("qmldesigner/misc/BusyIndicator.qml").toUrlishString();
     QTC_ASSERT(QFileInfo::exists(source), return widget);
     widget->setSource(QUrl::fromLocalFile(source));
     widget->setFixedSize(64, 64);
@@ -81,21 +81,13 @@ QWidget *Edit3DCanvas::busyIndicator() const
     return m_busyIndicator;
 }
 
-#ifdef Q_OS_MACOS
-extern "C" bool AXIsProcessTrusted();
-#endif
-
 void Edit3DCanvas::setFlyMode(bool enabled, const QPoint &pos)
 {
     if (m_flyMode == enabled)
         return;
 
-#ifdef Q_OS_MACOS
-    if (!AXIsProcessTrusted())
-        m_isTrusted = false;
-#endif
-
     m_flyMode = enabled;
+    m_isQDSTrusted = Edit3DView::isQDSTrusted();
 
     if (enabled) {
         m_flyModeStartTime = QDateTime::currentMSecsSinceEpoch();
@@ -106,11 +98,11 @@ void Edit3DCanvas::setFlyMode(bool enabled, const QPoint &pos)
         m_flyModeStartCursorPos = pos;
         m_flyModeFirstUpdate = true;
 
-        // Hide cursor on the middle of the active split to make the wheel work during flight mode.
-        // We can't rely on current activeSplit value, as mouse press to enter flight mode can change the
-        // active split, so hide the cursor based on its current location.
+        // Hide cursor on the middle of the active viewport to make the wheel work during flight mode.
+        // We can't rely on current activeViewport value, as mouse press to enter flight mode can change the
+        // active viewport, so hide the cursor based on its current location.
         QPoint center = mapToGlobal(QPoint(width() / 2, height() / 2));
-        if (m_parent->view()->isSplitView()) {
+        if (m_parent->view()->isMultiViewportView()) {
             if (pos.x() <= center.x()) {
                 if (pos.y() <= center.y())
                     m_hiddenCursorPos = mapToGlobal(QPoint(width() / 4, height() / 4));
@@ -164,7 +156,7 @@ void Edit3DCanvas::mousePressEvent(QMouseEvent *e)
 {
     m_contextMenuPending = false;
     if (!m_flyMode && e->modifiers() == Qt::NoModifier && e->buttons() == Qt::RightButton) {
-        setFlyMode(true, e->globalPos());
+        setFlyMode(true, e->globalPosition().toPoint());
         m_parent->view()->startContextMenu(e->pos());
         m_contextMenuPending = true;
     }
@@ -194,28 +186,33 @@ void Edit3DCanvas::mouseMoveEvent(QMouseEvent *e)
 
     QWidget::mouseMoveEvent(e);
 
-    if (m_flyMode && e->globalPos() != m_hiddenCursorPos) {
-        if (!m_flyModeFirstUpdate) {
-            // We notify explicit camera rotation need for puppet rather than rely in mouse events,
-            // as mouse isn't grabbed on puppet side and can't handle fast movements that go out of
-            // edit camera mouse area. This also simplifies split view handling.
-            QPointF diff = m_isTrusted ? (m_hiddenCursorPos - e->globalPos()) : (m_lastCursorPos - e->globalPos());
+    const QPoint globalPos = e->globalPosition().toPoint();
 
-            if (e->buttons() == (Qt::LeftButton | Qt::RightButton)) {
-                m_parent->view()->emitView3DAction(View3DActionType::EditCameraMove,
-                                                   QVector3D{float(-diff.x()), float(-diff.y()), 0.f});
-            } else {
-                m_parent->view()->emitView3DAction(View3DActionType::EditCameraRotation, diff / 6.);
+    if (m_flyMode && globalPos != m_hiddenCursorPos) {
+        if (!m_flyModeFirstUpdate) {
+            // We notify explicit camera rotation needs for QML Puppet rather than relying on mouse events,
+            // as mouse isn't grabbed on QML Puppet side and can't handle fast movements that go out of
+            // edit camera mouse area. This also simplifies viewport view handling.
+            QPointF diff = m_isQDSTrusted ? (m_hiddenCursorPos - globalPos)
+                                          : (m_lastCursorPos - e->globalPosition().toPoint());
+
+            if (auto model = m_parent->view()->model()) {
+                if (e->buttons() == (Qt::LeftButton | Qt::RightButton)) {
+                    model->emitView3DAction(View3DActionType::EditCameraMove,
+                                            QVector3D{float(-diff.x()), float(-diff.y()), 0.f});
+                } else {
+                    model->emitView3DAction(View3DActionType::EditCameraRotation, diff / 6.);
+                }
             }
         } else {
             // Skip first move to avoid undesirable jump occasionally when initiating flight mode
             m_flyModeFirstUpdate = false;
         }
 
-        if (m_isTrusted)
+        if (m_isQDSTrusted)
             QCursor::setPos(m_hiddenCursorPos);
         else
-            m_lastCursorPos = e->globalPos();
+            m_lastCursorPos = globalPos;
     }
 }
 
@@ -274,7 +271,8 @@ void Edit3DCanvas::focusOutEvent(QFocusEvent *focusEvent)
                                                m_usageTimer.elapsed());
 
     setFlyMode(false);
-    m_parent->view()->emitView3DAction(View3DActionType::EditCameraStopAllMoves, {});
+    if (auto model = m_parent->view()->model())
+        model->emitView3DAction(View3DActionType::EditCameraStopAllMoves, {});
 
     QWidget::focusOutEvent(focusEvent);
 }

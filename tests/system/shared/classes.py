@@ -5,28 +5,50 @@ import builtins
 
 # for easier re-usage (because Python hasn't an enum type)
 class Targets:
-    ALL_TARGETS = tuple(range(4))
+    ALL_TARGETS = tuple(range(5))
 
-    (DESKTOP_5_4_1_GCC,
-     DESKTOP_5_10_1_DEFAULT,
-     DESKTOP_5_14_1_DEFAULT,
-     DESKTOP_6_2_4) = ALL_TARGETS
+    if os.getenv("SYSTEST_NEW_SETTINGS") != "1":
+        (DESKTOP_5_4_1_GCC,
+         DESKTOP_5_10_1_DEFAULT,
+         DESKTOP_5_14_1_DEFAULT,
+         DESKTOP_6_2_4,
+         DESKTOP_6_9_2) = ALL_TARGETS
 
-    __TARGET_NAME_DICT__ = dict(zip(ALL_TARGETS,
-                                    ["Desktop 5.4.1 GCC",
-                                     "Desktop 5.10.1 default",
-                                     "Desktop 5.14.1 default",
-                                     "Desktop 6.2.4"]))
+        __TARGET_NAME_DICT__ = dict(zip(ALL_TARGETS,
+                                        ["Desktop 5.4.1 GCC",
+                                         "Desktop 5.10.1 default",
+                                         "Desktop 5.14.1 default",
+                                         "Desktop 6.2.4",
+                                         "Desktop 6.9.2"]))
+    else:
+        (DESKTOP_6_7_3_GCC,
+         DESKTOP_5_10_1_DEFAULT,
+         DESKTOP_5_14_1_DEFAULT,
+         DESKTOP_6_2_4,
+         DESKTOP_6_9_2) = ALL_TARGETS
+
+        __TARGET_NAME_DICT__ = dict(zip(ALL_TARGETS,
+                                        ["Desktop 6.7.3 GCC",
+                                         "Desktop 5.10.1 default",
+                                         "Desktop 5.14.1 default",
+                                         "Desktop 6.2.4",
+                                         "Desktop 6.9.2"]))
 
     @staticmethod
     def isOnlineInstaller(target):
-        return target == Targets.DESKTOP_6_2_4
+        onlineInstallerTargets = [Targets.DESKTOP_6_2_4, Targets.DESKTOP_6_9_2]
+        if os.getenv("SYSTEST_NEW_SETTINGS") == "1":
+            onlineInstallerTargets.append(Targets.DESKTOP_6_7_3_GCC)
+        return target in onlineInstallerTargets
 
     @staticmethod
     def availableTargetClasses(ignoreValidity=False):
         availableTargets = set(Targets.ALL_TARGETS)
-        if platform.system() == 'Darwin':
-            availableTargets.remove(Targets.DESKTOP_5_4_1_GCC)
+        if platform.system() not in ('Windows', 'Microsoft'):
+            if os.getenv("SYSTEST_NEW_SETTINGS") == "1":
+                availableTargets.remove(Targets.DESKTOP_6_7_3_GCC)
+            else:
+                availableTargets.remove(Targets.DESKTOP_5_4_1_GCC)
         return availableTargets
 
     @staticmethod
@@ -49,6 +71,27 @@ class Targets:
     def getDefaultKit():
         return Targets.DESKTOP_5_14_1_DEFAULT
 
+
+    # targets: set or list of targets, represented either by their int value or display string
+    # qtVersion: version string (major.minor) to be used as minimum target
+    @staticmethod
+    def removeTargetsBefore(targets, qtVersion):
+        if not isinstance(targets, (list, set)):
+            test.fatal("Expected list or set of targets, got %s." % className(targets))
+            return
+        copyOfTargets = list(targets)
+        for t in copyOfTargets:
+            if isinstance(t, str):
+                targetStr = t
+            else:
+                targetStr = Targets.getStringForTarget(t)
+            targetVersion = re.match("Desktop ([56]\.\d+\.\d+).*", targetStr)
+            if not targetVersion:
+                test.fatal("Unexpected version: '%s'" % qtVersion)
+            elif targetVersion.group(1) < qtVersion:
+                targets.remove(t)
+
+
 # this class holds some constants for easier usage inside the Projects view
 class ProjectSettings:
     BUILD = 1
@@ -56,10 +99,10 @@ class ProjectSettings:
 
 # this class defines some constants for the views of the creator's MainWindow
 class ViewConstants:
-    WELCOME, EDIT, DESIGN, DEBUG, PROJECTS, EXTENSIONS, HELP = range(7)
+    WELCOME, EDIT, DESIGN, DEBUG, PROJECTS, EXTENSIONS, HELP, PREFERENCES = range(8)
     FIRST_AVAILABLE = 0
     # always adjust the following to the highest value of the available ViewConstants when adding new
-    LAST_AVAILABLE = HELP
+    LAST_AVAILABLE = PREFERENCES
 
 class LibType:
     SHARED = 0
@@ -83,9 +126,12 @@ class QtPath:
     @staticmethod
     def getPaths(pathSpec):
         qtTargets = [Targets.DESKTOP_5_10_1_DEFAULT, Targets.DESKTOP_5_14_1_DEFAULT,
-                     Targets.DESKTOP_6_2_4]
-        if platform.system() != 'Darwin':
-            qtTargets.append(Targets.DESKTOP_5_4_1_GCC)
+                     Targets.DESKTOP_6_2_4, Targets.DESKTOP_6_9_2]
+        if platform.system() in ('Windows', 'Microsoft'):
+            if os.getenv("SYSTEST_NEW_SETTINGS") == "1":
+                qtTargets.append(Targets.DESKTOP_6_7_3_GCC)
+            else:
+                qtTargets.append(Targets.DESKTOP_5_4_1_GCC)
         if pathSpec == QtPath.DOCS:
             return map(lambda target: QtPath.docsPath(target), qtTargets)
         elif pathSpec == QtPath.EXAMPLES:

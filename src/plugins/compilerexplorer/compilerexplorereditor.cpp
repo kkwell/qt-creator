@@ -41,6 +41,7 @@
 #include <QDesktopServices>
 #include <QDockWidget>
 #include <QFutureWatcher>
+#include <QInputDialog>
 #include <QPushButton>
 #include <QTimer>
 #include <QToolBar>
@@ -146,18 +147,16 @@ private:
 class JsonSettingsDocument : public Core::IDocument
 {
     Q_OBJECT
+
 public:
     JsonSettingsDocument(QUndoStack *undoStack);
 
-    OpenResult open(QString *errorString,
-                    const Utils::FilePath &filePath,
-                    const Utils::FilePath &realFilePath) override;
+    Result<> open(const Utils::FilePath &filePath,
+                  const Utils::FilePath &realFilePath) override;
 
-    bool saveImpl(QString *errorString,
-                  const Utils::FilePath &filePath = Utils::FilePath(),
-                  bool autoSave = false) override;
+    Result<> saveImpl(const Utils::FilePath &filePath, SaveOption) override;
 
-    bool setContents(const QByteArray &contents) override;
+    Result<> setContents(const QByteArray &contents) override;
 
     QString fallbackSaveAsFileName() const override;
 
@@ -186,7 +185,6 @@ class SourceEditorWidget : public QWidget
 public:
     SourceEditorWidget(const std::shared_ptr<SourceSettings> &settings, QUndoStack *undoStack);
 
-    QString sourceCode();
     SourceSettings *sourceSettings() { return m_sourceSettings.get(); }
 
     void focusInEvent(QFocusEvent *) override { emit gotFocus(); }
@@ -382,39 +380,32 @@ JsonSettingsDocument::JsonSettingsDocument(QUndoStack *undoStack)
     m_ceSettings.setUndoStack(undoStack);
 }
 
-Core::IDocument::OpenResult JsonSettingsDocument::open(QString *errorString,
-                                                       const FilePath &filePath,
-                                                       const FilePath &realFilePath)
+Result<> JsonSettingsDocument::open(const FilePath &filePath,
+                                    const FilePath &realFilePath)
 {
     if (!filePath.isReadableFile())
-        return OpenResult::ReadError;
+        return ResultError(Tr::tr("File not readable."));
 
-    auto contents = realFilePath.fileContents();
-    if (!contents) {
-        if (errorString)
-            *errorString = contents.error();
-        return OpenResult::ReadError;
-    }
+    Result<QByteArray> contents = realFilePath.fileContents();
+    if (!contents)
+        return ResultError(contents.error());
 
-    auto result = storeFromJson(*contents);
-    if (!result) {
-        if (errorString)
-            *errorString = result.error();
-        return OpenResult::ReadError;
-    }
+    Result<Store> result = storeFromJson(*contents);
+    if (!result)
+        return ResultError(result.error());
 
     setFilePath(filePath);
 
     m_ceSettings.fromMap(*result);
     emit settingsChanged();
-    return OpenResult::Success;
+    return ResultOk;
 }
 
-bool JsonSettingsDocument::saveImpl(QString *errorString, const FilePath &newFilePath, bool autoSave)
+Result<> JsonSettingsDocument::saveImpl(const FilePath &newFilePath, SaveOption option)
 {
     Store store;
 
-    if (autoSave) {
+    if (option == SaveOption::AutoSave) {
         if (m_windowStateCallback)
             m_ceSettings.windowState.setVolatileValue(m_windowStateCallback());
 
@@ -427,21 +418,19 @@ bool JsonSettingsDocument::saveImpl(QString *errorString, const FilePath &newFil
         m_ceSettings.toMap(store);
     }
 
-    Utils::FilePath path = newFilePath.isEmpty() ? filePath() : newFilePath;
+    FilePath path = newFilePath.isEmpty() ? filePath() : newFilePath;
 
-    if (!newFilePath.isEmpty() && !autoSave) {
+    if (!newFilePath.isEmpty() && option != SaveOption::AutoSave) {
         setPreferredDisplayName({});
         setFilePath(newFilePath);
     }
 
-    auto result = path.writeFileContents(jsonFromStore(store));
-    if (!result && errorString) {
-        *errorString = result.error();
-        return false;
-    }
+    Result<qint64> result = path.writeFileContents(jsonFromStore(store));
+    if (!result)
+        return ResultError(result.error());
 
     emit changed();
-    return true;
+    return ResultOk;
 }
 
 bool JsonSettingsDocument::isModified() const
@@ -449,17 +438,17 @@ bool JsonSettingsDocument::isModified() const
     return m_ceSettings.isDirty();
 }
 
-bool JsonSettingsDocument::setContents(const QByteArray &contents)
+Result<> JsonSettingsDocument::setContents(const QByteArray &contents)
 {
-    auto result = storeFromJson(contents);
-    QTC_ASSERT_EXPECTED(result, return false);
+    Result<Store> result = storeFromJson(contents);
+    QTC_ASSERT_RESULT(result, return ResultError(result.error()));
 
     m_ceSettings.fromMap(*result);
 
     emit settingsChanged();
     emit changed();
     emit contentsChanged();
-    return true;
+    return ResultOk;
 }
 
 QString JsonSettingsDocument::fallbackSaveAsFileName() const
@@ -525,13 +514,6 @@ SourceEditorWidget::SourceEditorWidget(const std::shared_ptr<SourceSettings> &se
     setFocusProxy(m_codeEditor);
 }
 
-QString SourceEditorWidget::sourceCode()
-{
-    if (m_codeEditor && m_codeEditor->textDocument())
-        return QString::fromUtf8(m_codeEditor->textDocument()->contents());
-    return {};
-}
-
 void SourceEditorWidget::markSourceLocation(
     const std::optional<Api::CompileResult::AssemblyLine> &assemblyLine)
 {
@@ -590,7 +572,6 @@ CompilerWidget::CompilerWidget(const std::shared_ptr<SourceSettings> &sourceSett
     , m_compilerSettings(compilerSettings)
 {
     using namespace Layouting;
-    Store map;
 
     m_delayTimer = new QTimer(this);
     m_delayTimer->setSingleShot(true);
@@ -613,7 +594,7 @@ CompilerWidget::CompilerWidget(const std::shared_ptr<SourceSettings> &sourceSett
             this,
             &CompilerWidget::hoveredLineChanged);
 
-    QTC_ASSERT_EXPECTED(m_asmEditor->configureGenericHighlighter("Intel x86 (NASM)"),
+    QTC_ASSERT_RESULT(m_asmEditor->configureGenericHighlighter("Intel x86 (NASM)"),
                         m_asmEditor->configureGenericHighlighter(
                             Utils::mimeTypeForName("text/x-asm")));
     m_asmEditor->setReadOnly(true);
@@ -768,18 +749,18 @@ void CompilerWidget::doCompile()
             m_resultTerminal->restart();
             m_resultTerminal->writeToTerminal("\x1b[?25l", false);
 
-            for (const auto &err : r.stdErr)
+            for (const auto &err : std::as_const(r.stdErr))
                 m_resultTerminal->writeToTerminal((err.text + "\r\n").toUtf8(), false);
-            for (const auto &out : r.stdOut)
+            for (const auto &out : std::as_const(r.stdOut))
                 m_resultTerminal->writeToTerminal((out.text + "\r\n").toUtf8(), false);
 
             m_resultTerminal->writeToTerminal(
                 QString("ASM generation compiler returned: %1\r\n\r\n").arg(r.code).toUtf8(), true);
 
             if (r.execResult) {
-                for (const auto &err : r.execResult->buildResult.stdErr)
+                for (const auto &err : std::as_const(r.execResult->buildResult.stdErr))
                     m_resultTerminal->writeToTerminal((err.text + "\r\n").toUtf8(), false);
-                for (const auto &out : r.execResult->buildResult.stdOut)
+                for (const auto &out : std::as_const(r.execResult->buildResult.stdOut))
                     m_resultTerminal->writeToTerminal((out.text + "\r\n").toUtf8(), false);
 
                 m_resultTerminal
@@ -794,11 +775,11 @@ void CompilerWidget::doCompile()
                                                           .toUtf8(),
                                                       true);
 
-                    for (const auto &err : r.execResult->stdErrLines)
+                    for (const auto &err : std::as_const(r.execResult->stdErrLines))
                         m_resultTerminal
                             ->writeToTerminal(("  \033[0;31m" + err + "\033[0m\r\n\r\n").toUtf8(),
                                               false);
-                    for (const auto &out : r.execResult->stdOutLines)
+                    for (const auto &out : std::as_const(r.execResult->stdOutLines))
                         m_resultTerminal->writeToTerminal((out + "\r\n").toUtf8(), false);
                 }
             }
@@ -828,11 +809,11 @@ EditorWidget::EditorWidget(const std::shared_ptr<JsonSettingsDocument> &document
 
     document->setWindowStateCallback([this] { return storeFromMap(windowStateCallback()); });
 
-    document->settings()->m_sources.setItemAddedCallback<SourceSettings>(
-        [this](const std::shared_ptr<SourceSettings> &source) { addSourceEditor(source); });
+    document->settings()->m_sources.itemAddedCallback =
+        [this](const std::shared_ptr<SourceSettings> &source) { addSourceEditor(source); };
 
-    document->settings()->m_sources.setItemRemovedCallback<SourceSettings>(
-        [this](const std::shared_ptr<SourceSettings> &source) { removeSourceEditor(source); });
+    document->settings()->m_sources.itemRemovedCallback =
+        [this](const std::shared_ptr<SourceSettings> &source) { removeSourceEditor(source); };
 
     connect(document.get(),
             &JsonSettingsDocument::settingsChanged,
@@ -914,7 +895,7 @@ void EditorWidget::addSourceEditor(const std::shared_ptr<SourceSettings> &source
     dockWidget->setFeatures(QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetMovable);
     addDockWidget(Qt::LeftDockWidgetArea, dockWidget);
 
-    sourceSettings->compilers.forEachItem<CompilerSettings>(
+    sourceSettings->compilers.forEachItem(
         [this,
          sourceEditor,
          sourceSettings](const std::shared_ptr<CompilerSettings> &compilerSettings, int idx) {
@@ -925,7 +906,7 @@ void EditorWidget::addSourceEditor(const std::shared_ptr<SourceSettings> &source
                     &SourceEditorWidget::markSourceLocation);
         });
 
-    sourceSettings->compilers.setItemAddedCallback<CompilerSettings>(
+    sourceSettings->compilers.itemAddedCallback =
         [this, sourceEditor, sourceSettings](
             const std::shared_ptr<CompilerSettings> &compilerSettings) {
             auto compilerWidget = addCompiler(sourceSettings->shared_from_this(),
@@ -936,9 +917,9 @@ void EditorWidget::addSourceEditor(const std::shared_ptr<SourceSettings> &source
                     &CompilerWidget::hoveredLineChanged,
                     sourceEditor,
                     &SourceEditorWidget::markSourceLocation);
-        });
+        };
 
-    sourceSettings->compilers.setItemRemovedCallback<CompilerSettings>(
+    sourceSettings->compilers.itemRemovedCallback =
         [this, sourceSettings](const std::shared_ptr<CompilerSettings> &compilerSettings) {
             auto it = std::find_if(m_compilerWidgets.begin(),
                                    m_compilerWidgets.end(),
@@ -952,7 +933,7 @@ void EditorWidget::addSourceEditor(const std::shared_ptr<SourceSettings> &source
                 m_sourceWidgets.first()->widget()->setFocus(Qt::OtherFocusReason);
             delete *it;
             m_compilerWidgets.erase(it);
-        });
+        };
 
     m_sourceWidgets.append(dockWidget);
 
@@ -985,8 +966,10 @@ void EditorWidget::recreateEditors()
     m_sourceWidgets.clear();
     m_compilerWidgets.clear();
 
-    m_document->settings()->m_sources.forEachItem<SourceSettings>(
-        [this](const auto &sourceSettings) { addSourceEditor(sourceSettings); });
+    m_document->settings()->m_sources.forEachItem(
+        [this](const std::shared_ptr<SourceSettings> &sourceSettings) {
+            addSourceEditor(sourceSettings);
+        });
 
     const Store windowState = m_document->settings()->windowState.value();
 
@@ -1118,10 +1101,12 @@ QWidget *Editor::toolBar()
 
         m_toolBar->addSeparator();
 
-        QString link = QString(R"(<a href="%1">%1</a>)")
-                           .arg(m_document->settings()->compilerExplorerUrl.value());
-
-        auto poweredByLabel = new QLabel(Tr::tr("powered by %1").arg(link));
+        auto labelText = [this]() {
+            return Tr::tr("powered by %1")
+                .arg(QString(R"(<a href="%1">%1</a>)")
+                         .arg(m_document->settings()->compilerExplorerUrl.value()));
+        };
+        auto poweredByLabel = new QLabel(labelText());
 
         poweredByLabel->setTextInteractionFlags(Qt::TextInteractionFlag::TextBrowserInteraction);
         poweredByLabel->setContentsMargins(6, 0, 0, 0);
@@ -1130,7 +1115,30 @@ QWidget *Editor::toolBar()
             QDesktopServices::openUrl(link);
         });
 
+        connect(
+            &m_document->settings()->compilerExplorerUrl,
+            &StringAspect::changed,
+            poweredByLabel,
+            [labelText, poweredByLabel] { poweredByLabel->setText(labelText()); });
+
         m_toolBar->addWidget(poweredByLabel);
+
+        QAction *setUrlAction = new QAction();
+        setUrlAction->setIcon(Utils::Icons::SETTINGS_TOOLBAR.icon());
+        setUrlAction->setToolTip(Tr::tr("Change backend URL."));
+        connect(setUrlAction, &QAction::triggered, this, [this] {
+            bool ok;
+            QString text = QInputDialog::getText(
+                ICore::dialogParent(),
+                Tr::tr("Set Compiler Explorer URL"),
+                Tr::tr("URL:"),
+                QLineEdit::Normal,
+                m_document->settings()->compilerExplorerUrl.value(),
+                &ok);
+            if (ok)
+                m_document->settings()->compilerExplorerUrl.setValue(text);
+        });
+        m_toolBar->addAction(setUrlAction);
 
         connect(newSource,
                 &QAction::triggered,
@@ -1169,7 +1177,7 @@ QList<QTextEdit::ExtraSelection> AsmDocument::setCompileResult(
         Utils::transform(m_assemblyLines, [](const auto &line) { return line.text; }).join('\n'));
 
     int currentLine = 0;
-    for (auto l : m_assemblyLines) {
+    for (auto l : std::as_const(m_assemblyLines)) {
         currentLine++;
 
         auto createLabelLink = [currentLine, &linkFormat, &cursor, labelRow](

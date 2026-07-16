@@ -35,11 +35,11 @@ public:
     QList<TaskCategory> categories() const;
     void addCategory(const TaskCategory &category);
 
-    Tasks tasks(Utils::Id categoryId = Utils::Id()) const;
-    void addTask(const Task &t);
+    const Task &taskAt(int index) const { return m_tasks.at(index); }
+    void addTask(Task t);
     void removeTask(unsigned int id);
     void clearTasks(Utils::Id categoryId = Utils::Id());
-    void updateTaskFileName(const Task &task, const QString &fileName);
+    void updateTaskFilePath(const Task &task, const Utils::FilePath &filePath);
     void updateTaskLineNumber(const Task &task, int line);
 
     int sizeOfFile(const QFont &font);
@@ -65,18 +65,18 @@ private:
         void addTask(const Task &task)
         {
             ++count;
-            if (task.type == Task::Warning)
+            if (task.isWarning())
                 ++warnings;
-            else if (task.type == Task::Error)
+            else if (task.isError())
                 ++errors;
         }
 
         void removeTask(const Task &task)
         {
             --count;
-            if (task.type == Task::Warning)
+            if (task.isWarning())
                 --warnings;
-            else if (task.type == Task::Error)
+            else if (task.isError())
                 --errors;
         }
 

@@ -7,13 +7,15 @@
 
 #include <projectexplorer/devicesupport/idevice.h>
 
-#include <solutions/tasking/tasktree.h>
+#include <QtTaskTree/QMappedTaskTreeRunner>
 
 #include <QMessageBox>
 #include <QPointer>
 #include <QTimer>
+#include <QVersionNumber>
 
-#include <unordered_map>
+#include <memory>
+#include <optional>
 
 namespace Ios {
 class IosConfigurations;
@@ -39,14 +41,20 @@ public:
     QString osVersion() const;
     QString productType() const;
     QString cpuArchitecture() const;
-    Utils::Port nextPort() const;
     Handler handler() const;
 
     static QString name();
 
-protected:
+    static IosDevice::Ptr make() { return IosDevice::Ptr(new IosDevice()); }
+    static IosDevice::Ptr make(const QString &uid) { return IosDevice::Ptr(new IosDevice(uid)); }
+
+private:
     void fromMap(const Utils::Store &map) final;
-    Utils::Store toMap() const final;
+    void toMap(Utils::Store &map) const final;
+
+    QtTaskTree::ExecutableItem portsGatheringRecipe(
+        const QtTaskTree::Storage<Utils::PortsOutputData> &output) const override;
+    QUrl toolControlChannel(const ControlChannelHint &) const override;
 
     friend class IosDeviceFactory;
     friend class Ios::Internal::IosDeviceManager;
@@ -59,7 +67,6 @@ protected:
     Dict m_extraInfo;
     Handler m_handler = Handler::IosTool;
     bool m_ignoreDevice = false;
-    mutable quint16 m_lastPort;
 };
 
 class IosDeviceManager : public QObject
@@ -80,13 +87,17 @@ public:
                     const Ios::IosToolHandler::Dict &info);
     void monitorAvailableDevices();
 
+    static bool isDeviceCtlOutputSupported();
+    static bool isDeviceCtlDebugSupported();
+
 private:
     void updateUserModeDevices();
     IosDeviceManager(QObject *parent = nullptr);
-    std::unordered_map<QString, std::unique_ptr<Tasking::TaskTree>> m_updateTasks; // deviceid->task
+    QtTaskTree::QMappedTaskTreeRunner<QString> m_updatesRunner; // deviceid->task
     QTimer m_userModeDevicesTimer;
     QStringList m_userModeDeviceIds;
     QPointer<QMessageBox> m_devModeDialog;
+    std::optional<QVersionNumber> m_deviceCtlVersion;
 };
 
 void setupIosDevice();

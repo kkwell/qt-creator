@@ -17,13 +17,13 @@ bool StereotypesController::isParsable(const QString &stereotypes)
     const QStringList list = stereotypes.split(QLatin1Char(','));
     for (const QString &part : list) {
         QString stereotype = part.trimmed();
-        if (stereotype.length() == 0)
+        if (stereotype.size() == 0)
             return false;
     }
     return true;
 }
 
-QString StereotypesController::toString(const QList<QString> &stereotypes)
+QString StereotypesController::toString(const QStringList &stereotypes)
 {
     QString s;
     bool first = true;
@@ -36,13 +36,13 @@ QString StereotypesController::toString(const QList<QString> &stereotypes)
     return s;
 }
 
-QList<QString> StereotypesController::fromString(const QString &stereotypes)
+QStringList StereotypesController::fromString(const QString &stereotypes)
 {
-    QList<QString> result;
+    QStringList result;
     const QStringList list = stereotypes.split(QLatin1Char(','));
     for (const QString &part : list) {
         QString stereotype = part.trimmed();
-        if (stereotype.length() > 0)
+        if (stereotype.size() > 0)
             result.append(stereotype);
     }
     return result;

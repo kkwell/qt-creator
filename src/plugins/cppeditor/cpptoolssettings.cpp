@@ -5,14 +5,14 @@
 
 #include "cppeditorconstants.h"
 #include "cppeditortr.h"
-#include "cppcodestylepreferences.h"
 #include "cppcodestylepreferencesfactory.h"
+#include "cppcodestylesettings.h"
 
 #include <coreplugin/icore.h>
 
 #include <extensionsystem/pluginmanager.h>
 
-#include <texteditor/completionsettingspage.h>
+#include <texteditor/completionsettings.h>
 #include <texteditor/codestylepool.h>
 #include <texteditor/tabsettings.h>
 #include <texteditor/texteditorsettings.h>
@@ -46,7 +46,7 @@ CppToolsSettings::CppToolsSettings()
     qRegisterMetaType<CppCodeStyleSettings>("CppEditor::CppCodeStyleSettings");
 
     // code style factory
-    ICodeStylePreferencesFactory *factory = new CppCodeStylePreferencesFactory();
+    ICodeStylePreferencesFactory *factory = createCppCodeStylePreferencesFactory();
     TextEditorSettings::registerCodeStyleFactory(factory);
 
     // code style pool
@@ -97,6 +97,7 @@ CppToolsSettings::CppToolsSettings()
     qtTabSettings.m_tabSize = 4;
     qtTabSettings.m_indentSize = 4;
     qtTabSettings.m_continuationAlignBehavior = TabSettings::ContinuationAlignWithIndent;
+    qtTabSettings.m_autoDetect = false;
     qtCodeStyle->setTabSettings(qtTabSettings);
     pool->addCodeStyle(qtCodeStyle);
 
@@ -106,9 +107,10 @@ CppToolsSettings::CppToolsSettings()
     gnuCodeStyle->setDisplayName(Tr::tr("GNU"));
     gnuCodeStyle->setReadOnly(true);
     TabSettings gnuTabSettings;
-    gnuTabSettings.m_tabPolicy = TabSettings::MixedTabPolicy;
-    gnuTabSettings.m_tabSize = 8;
+    gnuTabSettings.m_tabPolicy = TabSettings::TabsOnlyTabPolicy;
+    gnuTabSettings.m_tabSize = 2;
     gnuTabSettings.m_indentSize = 2;
+    gnuTabSettings.m_autoDetect = false;
     gnuTabSettings.m_continuationAlignBehavior = TabSettings::ContinuationAlignWithIndent;
     gnuCodeStyle->setTabSettings(gnuTabSettings);
     CppCodeStyleSettings gnuCodeStyleSettings;

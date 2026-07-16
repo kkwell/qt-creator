@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <projectexplorer/devicesupport/idevicefwd.h>
+#include <projectexplorer/task.h>
 #include <utils/filepath.h>
 
 #include <QHash>
@@ -14,6 +16,8 @@
 
 #include <functional>
 #include <optional>
+#include <utility>
+#include <variant>
 
 namespace ProjectExplorer { class Target; }
 
@@ -43,6 +47,7 @@ public:
 
     QString toString() const;
     bool hasError() const { return !items.isEmpty(); }
+    void generateTasks(ProjectExplorer::Task::TaskType type) const;
 
     QList<ErrorInfoItem> items;
 };
@@ -91,28 +96,21 @@ public:
     const Utils::FilePath filePath;
     const int line;
 };
-Location locationFromObject(const QJsonObject &o); // Project, Product or Group
+// Project, Product or Group
+Location locationFromObject(const QJsonObject &o, const Utils::FilePath &projectDir);
 
 class QbsSession : public QObject
 {
     Q_OBJECT
 public:
-    explicit QbsSession(QbsBuildSystem *buildSystem);
+    explicit QbsSession(QbsBuildSystem *buildSystem, const ProjectExplorer::IDeviceConstPtr &device);
     ~QbsSession() override;
 
     enum class State { Initializing, Active, Inactive };
-    enum class Error {
-        NoQbsPath,
-        InvalidQbsExecutable,
-        QbsFailedToStart,
-        QbsQuit,
-        ProtocolError,
-        VersionMismatch
-    };
 
-    std::optional<Error> lastError() const;
-    static QString errorString(Error error);
     QJsonObject projectData() const;
+
+    int apiLevel() const;
 
     void sendRequest(const QJsonObject &request);
     void cancelCurrentJob();
@@ -122,6 +120,13 @@ public:
                               const QString &group);
     FileChangeResult removeFiles(const QStringList &files, const QString &product,
                                  const QString &group);
+    FileChangeResult renameFiles(
+        const QList<std::pair<QString, QString>> &files,
+        const QString &product,
+        const QString &group);
+    ErrorInfo addDependencies(
+        const QStringList &dependencies, const QString &product, const QString &group);
+
     RunEnvironmentResult getRunEnvironment(const QString &product,
             const QProcessEnvironment &baseEnv,
             const QStringList &config);
@@ -141,7 +146,7 @@ public:
                                             const QStringList &requestedProperties);
 
 signals:
-    void errorOccurred(Error lastError);
+    void errorOccurred(const QString &msg);
     void projectResolved(const ErrorInfo &error);
     void projectBuilt(const ErrorInfo &error);
     void projectCleaned(const ErrorInfo &error);
@@ -168,10 +173,15 @@ private:
     void sendRequestNow(const QJsonObject &request);
     ErrorInfo getErrorInfo(const QJsonObject &packet);
     void setProjectDataFromReply(const QJsonObject &packet, bool withBuildSystemFiles);
-    void setError(Error error);
+    QString protocolErrorMsg() const;
+    QString qbsExecutableUserString() const;
+    void setError(const QString &error);
     void setInactive();
-    FileChangeResult updateFileList(const char *action, const QStringList &files,
-                                    const QString &product, const QString &group);
+    FileChangeResult updateFileList(
+        const char *action,
+        const std::variant<QStringList, QList<std::pair<QString, QString>>> &files,
+        const QString &product,
+        const QString &group);
     void handleFileListUpdated(const QJsonObject &reply);
     void sendNextPendingFileUpdateRequest();
     void sendFileUpdateRequest(const QJsonObject &request);

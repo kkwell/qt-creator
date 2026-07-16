@@ -3,14 +3,9 @@
 
 /*!
     \page creator-how-to-switch-ui-themes.html
-    \if defined(qtcreator)
     \previouspage creator-how-tos.html
-    \else
-    \previouspage creator-quick-tour.html
-    \endif
 
     \ingroup creator-how-to-ui
-    \ingroup studio-how-to
 
     \title Switch UI themes
 
@@ -22,7 +17,9 @@
     \list 1
         \li Select \preferences >
             \uicontrol Environment > \uicontrol Interface.
-            \image qtcreator-preferences-environment-interface.webp {Interface preferences}
+            \image {qtcreator-preferences-environment-interface.webp} {Interface tab in Environment preferences}
         \li In \uicontrol Theme, select a theme.
     \endlist
+
+    \sa {Adapt the UI}{How to: Adapt the UI}, {Adapting the UI}
 */

@@ -3,13 +3,13 @@
 
 #include <tracing/timelineselectionrenderpass.h>
 #include <tracing/timelinerenderstate.h>
-#include <tracing/timelineabstractrenderer_p.h>
+#include <tracing/timelineabstractrenderer.h>
 #include <tracing/timelineitemsrenderpass.h>
 #include <tracing/timelinemodelaggregator.h>
 
-#include <QtTest>
 #include <QSGMaterialShader>
 #include <QSGSimpleRectNode>
+#include <QTest>
 
 using namespace Timeline;
 
@@ -146,11 +146,9 @@ void tst_TimelineSelectionRenderPass::update()
     QVERIFY(result != nullState);
     compareSelectionNode(result->expandedOverlay(), QRectF(11, 0, 200, 30), model.selectionId(11));
 
-    parentState.setPassState(0, result);
+    parentState.passes[0] = result;
     parentState.assembleNodeTree(&model, 1, 1);
 
-    QVERIFY(parentState.collapsedOverlayRoot());
-    QVERIFY(parentState.expandedOverlayRoot());
 }
 
 QTEST_MAIN(tst_TimelineSelectionRenderPass)

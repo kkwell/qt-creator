@@ -19,6 +19,7 @@
 #include <coreplugin/documentmanager.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/locator/commandlocator.h>
+#include <coreplugin/vcsmanager.h>
 
 #include <extensionsystem/iplugin.h>
 
@@ -35,7 +36,6 @@
 #include <vcsbase/vcsbaseconstants.h>
 #include <vcsbase/vcsbaseeditor.h>
 #include <vcsbase/vcsbaseplugin.h>
-#include <vcsbase/vcsbasetr.h>
 #include <vcsbase/vcsbasesubmiteditor.h>
 #include <vcsbase/vcscommand.h>
 #include <vcsbase/vcsoutputwindow.h>
@@ -56,6 +56,7 @@
 #endif
 
 using namespace Core;
+using namespace QtTaskTree;
 using namespace Utils;
 using namespace VcsBase;
 using namespace std::placeholders;
@@ -128,7 +129,7 @@ class BazaarPluginPrivate final : public VersionControlBase
 public:
     BazaarPluginPrivate();
 
-    QString displayName() const final;
+    QString displayName() const final { return "Bazaar"; }
     Utils::Id id() const final;
 
     bool isVcsFileOrDirectory(const Utils::FilePath &filePath) const final;
@@ -143,17 +144,17 @@ public:
     bool vcsMove(const Utils::FilePath &from, const Utils::FilePath &to) final;
     bool vcsCreateRepository(const Utils::FilePath &directory) final;
     void vcsAnnotate(const Utils::FilePath &file, int line) final;
+    void vcsLog(const Utils::FilePath &topLevel, const Utils::FilePath &relativePath) final {
+        const QStringList options = {"--limit=" + QString::number(settings().logCount())};
+        m_client.log(topLevel, {relativePath.path()}, options);
+    }
+    void vcsDiff(const Utils::FilePath &topLevel, const Utils::FilePath &relativePath) final {
+        m_client.diff(topLevel, {relativePath.path()});
+    }
     void vcsDescribe(const Utils::FilePath &source, const QString &id) final { m_client.view(source, id); }
 
-    VcsCommand *createInitialCheckoutCommand(const QString &url,
-                                             const Utils::FilePath &baseDirectory,
-                                             const QString &localName,
-                                             const QStringList &extraArgs) final;
+    ExecutableItem cloneTask(const CloneTaskData &data) const final;
 
-    // To be connected to the VCSTask's success signal to emit the repository/
-    // files changed signals according to the variant's type:
-    // String -> repository, StringList -> files
-    void changed(const QVariant &);
     void updateActions(VcsBase::VersionControlBase::ActionState) final;
     bool activateCommit() final;
 
@@ -200,32 +201,29 @@ public:
 
     FilePath m_submitRepository;
 
-    VcsEditorFactory logEditorFactory {{
-        LogOutput, // type
-        Constants::FILELOG_ID, // id
-        VcsBase::Tr::tr("Bazaar File Log Editor"),
-        Constants::LOGAPP,// mime type
-        [] { return new BazaarEditorWidget; },
-        std::bind(&BazaarPluginPrivate::vcsDescribe, this, _1, _2)
-    }};
+    VcsEditorFactory logEditorFactory{
+        {LogOutput,             // type
+         Constants::FILELOG_ID, // id
+         Tr::tr("Bazaar File Log Editor"),
+         Constants::LOGAPP, // mime type
+         [] { return new BazaarEditorWidget; },
+         std::bind(&BazaarPluginPrivate::vcsDescribe, this, _1, _2)}};
 
-    VcsEditorFactory annotateEditorFactory {{
-        AnnotateOutput,
-        Constants::ANNOTATELOG_ID,
-        VcsBase::Tr::tr("Bazaar Annotation Editor"),
-        Constants::ANNOTATEAPP,
-        [] { return new BazaarEditorWidget; },
-        std::bind(&BazaarPluginPrivate::vcsDescribe, this, _1, _2)
-    }};
+    VcsEditorFactory annotateEditorFactory{
+        {AnnotateOutput,
+         Constants::ANNOTATELOG_ID,
+         Tr::tr("Bazaar Annotation Editor"),
+         Constants::ANNOTATEAPP,
+         [] { return new BazaarEditorWidget; },
+         std::bind(&BazaarPluginPrivate::vcsDescribe, this, _1, _2)}};
 
-    VcsEditorFactory diffEditorFactory {{
-        DiffOutput,
-        Constants::DIFFLOG_ID,
-        VcsBase::Tr::tr("Bazaar Diff Editor"),
-        Constants::DIFFAPP,
-        [] { return new BazaarEditorWidget; },
-        std::bind(&BazaarPluginPrivate::vcsDescribe, this, _1, _2)
-    }};
+    VcsEditorFactory diffEditorFactory{
+        {DiffOutput,
+         Constants::DIFFLOG_ID,
+         Tr::tr("Bazaar Diff Editor"),
+         Constants::DIFFAPP,
+         [] { return new BazaarEditorWidget; },
+         std::bind(&BazaarPluginPrivate::vcsDescribe, this, _1, _2)}};
 };
 
 class UnCommitDialog : public QDialog
@@ -300,7 +298,8 @@ BazaarPluginPrivate::BazaarPluginPrivate()
 {
     Context context(Constants::BAZAAR_CONTEXT);
 
-    connect(&m_client, &VcsBaseClient::changed, this, &BazaarPluginPrivate::changed);
+    connect(&m_client, &VcsBaseClient::repositoryChanged, this, &BazaarPluginPrivate::repositoryChanged);
+    connect(&m_client, &VcsBaseClient::filesChanged, this, &BazaarPluginPrivate::filesChanged);
 
     const QString prefix = QLatin1String("bzr");
     m_commandLocator = new CommandLocator("Bazaar", prefix, prefix, this);
@@ -478,13 +477,13 @@ BazaarPluginPrivate::BazaarPluginPrivate()
 
     connect(&settings(), &AspectContainer::applied, this, &IVersionControl::configurationChanged);
 
-    setupVcsSubmitEditor(this, {
-        COMMITMIMETYPE,
-        COMMIT_ID,
-        VcsBase::Tr::tr("Bazaar Commit Log Editor"),
-        VcsBaseSubmitEditorParameters::DiffFiles,
-        [] { return new CommitEditor; }
-    });
+    setupVcsSubmitEditor(
+        this,
+        {COMMITMIMETYPE,
+         COMMIT_ID,
+         Tr::tr("Bazaar Commit Log Editor"),
+         VcsBaseSubmitEditorParameters::DiffFiles,
+         [] { return new CommitEditor; }});
 }
 
 void BazaarPluginPrivate::addCurrentFile()
@@ -587,7 +586,7 @@ void BazaarPluginPrivate::pull()
         extraOptions += QLatin1String("--local");
     if (!dialog.revision().isEmpty())
         extraOptions << QLatin1String("-r") << dialog.revision();
-    m_client.synchronousPull(state.topLevel(), dialog.branchLocation(), extraOptions);
+    m_client.pull(state.topLevel(), dialog.branchLocation(), extraOptions);
 }
 
 void BazaarPluginPrivate::push()
@@ -609,7 +608,7 @@ void BazaarPluginPrivate::push()
         extraOptions += QLatin1String("--create-prefix");
     if (!dialog.revision().isEmpty())
         extraOptions << QLatin1String("-r") << dialog.revision();
-    m_client.synchronousPush(state.topLevel(), dialog.branchLocation(), extraOptions);
+    m_client.push(state.topLevel(), dialog.branchLocation(), extraOptions);
 }
 
 void BazaarPluginPrivate::update()
@@ -650,7 +649,7 @@ void BazaarPluginPrivate::showCommitWidget(const QList<VcsBaseClient::StatusItem
                         this, &BazaarPluginPrivate::showCommitWidget);
 
     if (status.isEmpty()) {
-        VcsOutputWindow::appendError(Tr::tr("There are no changes to commit."));
+        VcsOutputWindow::appendError(m_submitRepository, Tr::tr("There are no changes to commit."));
         return;
     }
 
@@ -658,21 +657,21 @@ void BazaarPluginPrivate::showCommitWidget(const QList<VcsBaseClient::StatusItem
     TempFileSaver saver;
     // Keep the file alive, else it removes self and forgets its name
     saver.setAutoRemove(false);
-    if (!saver.finalize()) {
-        VcsOutputWindow::appendError(saver.errorString());
+    if (const Result<> res = saver.finalize(); !res) {
+        VcsOutputWindow::appendError(m_submitRepository, res.error());
         return;
     }
 
     IEditor *editor = EditorManager::openEditor(saver.filePath(), COMMIT_ID);
     if (!editor) {
-        VcsOutputWindow::appendError(Tr::tr("Unable to create an editor for the commit."));
+        VcsOutputWindow::appendError(m_submitRepository, Tr::tr("Unable to create an editor for the commit."));
         return;
     }
 
     auto commitEditor = qobject_cast<CommitEditor *>(editor);
 
     if (!commitEditor) {
-        VcsOutputWindow::appendError(Tr::tr("Unable to create a commit editor."));
+        VcsOutputWindow::appendError(m_submitRepository, Tr::tr("Unable to create a commit editor."));
         return;
     }
     setSubmitEditor(commitEditor);
@@ -828,7 +827,7 @@ bool BazaarPluginPrivate::activateCommit()
         // Whether local commit or not
         if (commitWidget->isLocalOptionEnabled())
             extraOptions += QLatin1String("--local");
-        m_client.commit(m_submitRepository, files, editorDocument->filePath().toString(), extraOptions);
+        m_client.commit(m_submitRepository, files, editorDocument->filePath().path(), extraOptions);
     }
     return true;
 }
@@ -855,11 +854,6 @@ void BazaarPluginPrivate::updateActions(VersionControlBase::ActionState as)
         repoAction->setEnabled(repoEnabled);
 }
 
-QString BazaarPluginPrivate::displayName() const
-{
-    return Tr::tr("Bazaar");
-}
-
 Utils::Id BazaarPluginPrivate::id() const
 {
     return Utils::Id(VcsBase::Constants::VCS_ID_BAZAAR);
@@ -872,7 +866,8 @@ bool BazaarPluginPrivate::isVcsFileOrDirectory(const Utils::FilePath &fileName) 
 
 bool BazaarPluginPrivate::managesDirectory(const FilePath &directory, FilePath *topLevel) const
 {
-    const FilePath topLevelFound = m_client.findTopLevelForFile(directory);
+    const FilePath topLevelFound = VcsManager::findRepositoryForFiles(
+        directory, {QString(Constants::BAZAARREPO) + "/branch-format"});
     if (topLevel)
         *topLevel = topLevelFound;
     return !topLevelFound.isEmpty();
@@ -926,11 +921,7 @@ bool BazaarPluginPrivate::vcsDelete(const FilePath &filePath)
 
 bool BazaarPluginPrivate::vcsMove(const FilePath &from, const FilePath &to)
 {
-    const QFileInfo fromInfo = from.toFileInfo();
-    const QFileInfo toInfo = to.toFileInfo();
-    return m_client.synchronousMove(from.absolutePath(),
-                                    fromInfo.absoluteFilePath(),
-                                    toInfo.absoluteFilePath());
+    return m_client.synchronousMove(from.absolutePath(), from, to);
 }
 
 bool BazaarPluginPrivate::vcsCreateRepository(const FilePath &directory)
@@ -943,31 +934,16 @@ void BazaarPluginPrivate::vcsAnnotate(const FilePath &file, int line)
     m_client.annotate(file.parentDir(), file.fileName(), line);
 }
 
-VcsCommand *BazaarPluginPrivate::createInitialCheckoutCommand(const QString &url,
-                                                              const FilePath &baseDirectory,
-                                                              const QString &localName,
-                                                              const QStringList &extraArgs)
+ExecutableItem BazaarPluginPrivate::cloneTask(const CloneTaskData &data) const
 {
-    Environment env = m_client.processEnvironment(baseDirectory);
+    Environment env = m_client.processEnvironment(data.baseDirectory);
     env.set("BZR_PROGRESS_BAR", "text");
-    auto command = VcsBaseClient::createVcsCommand(this, baseDirectory, env);
-    command->addJob({m_client.vcsBinary(baseDirectory),
-        {m_client.vcsCommandString(BazaarClient::CloneCommand), extraArgs, url, localName}}, -1);
-    return command;
-}
-
-void BazaarPluginPrivate::changed(const QVariant &v)
-{
-    switch (v.typeId()) {
-    case QMetaType::QString:
-        emit repositoryChanged(FilePath::fromVariant(v));
-        break;
-    case QMetaType::QStringList:
-        emit filesChanged(v.toStringList());
-        break;
-    default:
-        break;
-    }
+    const CommandLine command{m_client.vcsBinary(data.baseDirectory),
+                              {m_client.vcsCommandString(BazaarClient::CloneCommand),
+                               data.extraArgs, data.url, data.localName}};
+    return vcsProcessTask({.runData = {command, data.baseDirectory, env},
+                           .stdOutHandler = data.stdOutHandler,
+                           .stdErrHandler = data.stdErrHandler});
 }
 
 } // Bazaar::Internal

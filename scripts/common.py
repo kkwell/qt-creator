@@ -1,12 +1,20 @@
 # Copyright (C) 2016 The Qt Company Ltd.
 # SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
+from __future__ import annotations
 import argparse
+import asyncio
+from itertools import islice
 import os
 import locale
+from pathlib import Path
+import re
 import shutil
+import struct
 import subprocess
 import sys
+from urllib.parse import urlparse
+import urllib.request
 
 encoding = locale.getdefaultlocale()[1]
 if not encoding:
@@ -27,13 +35,16 @@ def to_posix_path(path):
         return path.replace('\\', '/')
     return path
 
-def check_print_call(command, workdir=None, env=None):
+def cmake_option(option):
+    return 'ON' if option else 'OFF'
+
+def check_print_call(command, cwd=None, env=None):
     print('------------------------------------------')
     print('COMMAND:')
     print(' '.join(['"' + c.replace('"', '\\"') + '"' for c in command]))
-    print('PWD:      "' + (workdir if workdir else os.getcwd()) + '"')
+    print('PWD:      "' + (str(cwd) if cwd else os.getcwd()) + '"')
     print('------------------------------------------')
-    subprocess.check_call(command, cwd=workdir, env=env)
+    subprocess.check_call(command, cwd=cwd, shell=is_windows_platform(), env=env)
 
 
 def get_git_SHA(path):
@@ -55,6 +66,30 @@ def get_commit_SHA(path):
             with open(tagfile, 'r') as f:
                 git_sha = f.read().strip()
     return git_sha
+
+
+def get_single_subdir(path: Path):
+    entries = list(islice(path.iterdir(), 2))
+    if len(entries) == 1:
+        return path / entries[0]
+    return path
+
+
+def sevenzip_command(threads=None, targets_7zip=True):
+    # use -mf=off to avoid usage of the ARM executable compression filter,
+    # which cannot be extracted by p7zip
+    # use -snl to preserve symlinks even if their target doesn't exist
+    # which is important for the _dev package on Linux
+    # (only works with official/upstream 7zip)
+    # Linux: look for 7-zip first, then fallback to p7zip
+    archiver = shutil.which("7zz") or "7z"
+    command = [archiver, 'a', '-snl']
+    if targets_7zip:
+        command.extend(['-mf=off'])
+    if threads:
+        command.extend(['-mmt' + threads])
+    return command
+
 
 # copy of shutil.copytree that does not bail out if the target directory already exists
 # and that does not create empty directories
@@ -104,6 +139,79 @@ def copytree(src, dst, symlinks=False, ignore=None):
         errors.extend((src, dst, str(why)))
     if errors:
         raise shutil.Error(errors)
+
+
+def extract_file(archive: Path, target: Path) -> None:
+    cmd_args = []
+    if archive.suffix == '.tar':
+        cmd_args = ['tar', '-xf', str(archive)]
+    elif archive.suffixes[-2:] == ['.tar', '.gz'] or archive.suffix == '.tgz':
+        cmd_args = ['tar', '-xzf', str(archive)]
+    elif archive.suffixes[-2:] == ['.tar', '.xz']:
+        cmd_args = ['tar', '-xf', str(archive)]
+    elif archive.suffixes[-2:] == ['.tar', '.bz2'] or archive.suffix == '.tbz':
+        cmd_args = ['tar', '-xjf', str(archive)]
+    elif archive.suffix in ('.7z', '.zip', '.gz', '.xz', '.bz2', '.qbsp'):
+        cmd_args = ['7z', 'x', str(archive)]
+    else:
+        raise(
+            "Extract fail: %s. Not an archive or appropriate extractor was not found", str(archive)
+        )
+        return
+    target.mkdir(parents=True, exist_ok=True)
+    subprocess.check_call(cmd_args, cwd=target)
+
+
+async def download(url: str, target: Path) -> None:
+    print(('''
+- Starting download {}
+                 -> {}''').strip().format(url, str(target)))
+    # Since urlretrieve does blocking I/O it would prevent parallel downloads.
+    # Run in default thread pool.
+    temp_target = target.with_suffix(target.suffix + '-part')
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, urllib.request.urlretrieve, url, str(temp_target))
+    temp_target.rename(target)
+    print('+ finished downloading {}'.format(str(target)))
+
+
+def download_and_extract(
+    urls: list[str],
+    target: Path,
+    temp: Path,
+    skip_existing: bool = False
+) -> None:
+    download_and_extract_tuples([(url, target) for url in urls],
+                                temp,
+                                skip_existing)
+
+
+def download_and_extract_tuples(
+    urls_and_targets: list[tuple[str, Path]],
+    temp: Path,
+    skip_existing: bool = False
+) -> None:
+    temp.mkdir(parents=True, exist_ok=True)
+    target_tuples : list[tuple[Path, Path]] = []
+    # TODO make this work with file URLs, which then aren't downloaded
+    #      but just extracted
+    async def impl():
+        tasks : list[asyncio.Task] = []
+        for (url, target_path) in urls_and_targets:
+            u = urlparse(url)
+            filename = Path(u.path).name
+            target_file = temp / filename
+            target_tuples.append((target_file, target_path))
+            if skip_existing and target_file.exists():
+                print('Skipping download of {}'.format(url))
+            else:
+                tasks.append(asyncio.create_task(download(url, target_file)))
+        for task in tasks:
+            await task
+    asyncio.run(impl())
+    for (file, target) in target_tuples:
+        extract_file(file, target)
+
 
 def get_qt_install_info(qmake_bin):
     output = subprocess.check_output([qmake_bin, '-query'])
@@ -208,42 +316,114 @@ def codesign_call(identity=None, flags=None):
         codesign_call.extend(signing_flags.split())
     return codesign_call
 
-def codesign_executable(path):
-    codesign = codesign_call()
-    if not codesign:
+def _is_mach_o_file(path: Path) -> bool:
+    """Determine whether a file is a Mach-O image containing native code."""
+    try:
+        with path.open("rb") as f:
+            header = f.read(8)
+    except OSError:
+        return False
+    if len(header) < 4:
+        return False
+    magic = header[:4]
+    if magic in {
+        b"\xfe\xed\xfa\xce",  # MH_MAGIC
+        b"\xce\xfa\xed\xfe",  # MH_CIGAM
+        b"\xfe\xed\xfa\xcf",  # MH_MAGIC_64
+        b"\xcf\xfa\xed\xfe",  # MH_CIGAM_64
+    }:
+        return True
+    # Universal (fat) binary shares 0xCAFEBABE with Java class files.
+    # Disambiguate by nfat_arch at offset 4 (< 20 means Mach-O).
+    if len(header) >= 8 and magic in {b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"}:
+        byte_order = ">" if magic == b"\xca\xfe\xba\xbe" else "<"
+        nfat_arch = struct.unpack(f"{byte_order}I", header[4:8])[0]
+        return 0 < nfat_arch < 20
+    return False
+
+def _is_framework_version(path: Path) -> bool:
+    """Determine whether a path is a versioned macOS framework directory."""
+    return path.parent.name == "Versions" and path.parent.parent.suffix == ".framework"
+
+def _collect_signable_items(app_path: Path) -> list[Path]:
+    """Collect all Mach-O files and bundles under app_path, sorted deepest-first."""
+    items: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(app_path):
+        dp = Path(dirpath)
+        for dirname in dirnames:
+            full = dp / dirname
+            if full.suffix == ".app":
+                items.append(full)
+            elif full.suffix == ".framework":
+                # Sign individual versions, not the framework bundle itself
+                versions_dir = full / "Versions"
+                if versions_dir.is_dir():
+                    for entry in versions_dir.iterdir():
+                        if entry.is_dir() and not entry.is_symlink():
+                            items.append(entry)
+        for filename in filenames:
+            filepath = dp / filename
+            if filepath.is_symlink():
+                continue
+            if filepath.suffix == ".dylib" or _is_mach_o_file(filepath):
+                items.append(filepath)
+    items.sort(key=lambda p: len(p.parts), reverse=True)
+    return items
+
+def _sign_item_with_deps(path: Path, codesign_cmd: list[str], app_path: Path, signed: set[Path]):
+    """Sign a single item, recursively signing unsigned dependencies first."""
+    if path in signed:
         return
-    entitlements_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'dist',
-                                     'installer', 'mac', os.path.basename(path) + '.entitlements')
-    if os.path.exists(entitlements_path):
-        codesign.extend(['--entitlements', entitlements_path])
-    subprocess.check_call(codesign + [path])
+    cmd = list(codesign_cmd)
+    entitlements_path = (
+        Path(__file__).resolve().parent.parent / "dist" / "installer" / "mac"
+        / (path.name + ".entitlements")
+    )
+    if entitlements_path.exists():
+        cmd.extend(["--entitlements", str(entitlements_path)])
+    if path.suffix == ".app" or _is_framework_version(path):
+        cmd.append("--preserve-metadata=entitlements")
+    while True:
+        result = subprocess.run([*cmd, str(path)], capture_output=True)
+        if result.returncode == 0:
+            signed.add(path)
+            return
+        output = result.stdout.decode(errors="ignore") + result.stderr.decode(errors="ignore")
+        match = re.search(
+            re.escape(str(path))
+            + r": code object is not signed at all\nIn subcomponent: (.+)",
+            output,
+        )
+        if match:
+            dep_path = Path(match.group(1).strip())
+            if not dep_path.is_relative_to(app_path):
+                msg = f"Dependency {dep_path} is outside of app bundle {app_path}"
+                raise RuntimeError(msg)
+            if dep_path in signed:
+                msg = f"Already signed {dep_path} but still failing for {path}"
+                raise RuntimeError(msg)
+            _sign_item_with_deps(dep_path, codesign_cmd, app_path, signed)
+            continue
+        raise subprocess.CalledProcessError(
+            result.returncode, [*cmd, str(path)], result.stdout, result.stderr,
+        )
 
-def os_walk(path, filter, function):
-    for r, _, fs in os.walk(path):
-        for f in fs:
-            ff = os.path.join(r, f)
-            if filter(ff):
-                function(ff)
-
-def conditional_sign_recursive(path, filter):
-    if is_mac_platform():
-        os_walk(path, filter, lambda fp: codesign_executable(fp))
 
 def codesign(app_path, identity=None, flags=None):
-    codesign = codesign_call(identity, flags)
-    if not codesign or not is_mac_platform():
+    codesign_cmd = codesign_call(identity, flags)
+    if not codesign_cmd or not is_mac_platform():
         return
-    # sign all executables in Resources
-    conditional_sign_recursive(os.path.join(app_path, 'Contents', 'Resources'),
-                               lambda ff: os.access(ff, os.X_OK))
-    # sign all libraries in Imports
-    conditional_sign_recursive(os.path.join(app_path, 'Contents', 'Imports'),
-                               lambda ff: ff.endswith('.dylib'))
+    root = Path(app_path)
+    # Collect all signable items and sign bottom-up (deepest first)
+    items = _collect_signable_items(root)
+    signed: set[Path] = set()
+    for item in items:
+        _sign_item_with_deps(item, codesign_cmd, root, signed)
+    # Sign the top-level bundle
+    if root not in signed:
+        _sign_item_with_deps(root, codesign_cmd, root, signed)
 
-    # sign the whole bundle
-    entitlements_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'dist',
-                                     'installer', 'mac', 'entitlements.plist')
-    subprocess.check_call(codesign + ['--deep', app_path, '--entitlements', entitlements_path])
+
 
 def codesign_main(args):
     codesign(args.app_bundle, args.identity, args.flags)

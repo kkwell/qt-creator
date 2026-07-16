@@ -51,21 +51,26 @@ ProjectFile::Kind ProjectFile::classifyByMimeType(const QString &mt)
     return Unsupported;
 }
 
-ProjectFile::Kind ProjectFile::classify(const QString &filePath)
+ProjectFile::Kind ProjectFile::classify(const Utils::FilePath &filePath)
 {
-    if (isAmbiguousHeader(filePath))
-        return AmbiguousHeader;
+    if (ProjectFile::isAmbiguousHeader(filePath))
+        return ProjectFile::Kind::AmbiguousHeader;
 
     const Utils::MimeType mimeType = Utils::mimeTypeForFile(filePath);
-    return classifyByMimeType(mimeType.name());
+    return ProjectFile::classifyByMimeType(mimeType.name());
 }
 
-bool ProjectFile::isAmbiguousHeader(const QString &filePath)
+bool ProjectFile::isAmbiguousHeader(QStringView filePath)
 {
-    return filePath.endsWith(".h");
+    return filePath.endsWith(u".h");
 }
 
-bool ProjectFile::isObjC(const QString &filePath)
+bool ProjectFile::isAmbiguousHeader(const Utils::FilePath &filePath)
+{
+    return isAmbiguousHeader(filePath.fileNameView());
+}
+
+bool ProjectFile::isObjC(const Utils::FilePath &filePath)
 {
     return isObjC(classify(filePath));
 }
@@ -131,7 +136,7 @@ bool ProjectFile::isHeader(ProjectFile::Kind kind)
 
 bool ProjectFile::isHeader(const Utils::FilePath &fp)
 {
-    return isHeader(classify(fp.toString()));
+    return isHeader(classify(fp));
 }
 
 bool ProjectFile::isSource(ProjectFile::Kind kind)

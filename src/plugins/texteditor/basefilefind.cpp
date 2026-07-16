@@ -21,6 +21,7 @@
 #include <utils/algorithm.h>
 #include <utils/fadingindicator.h>
 #include <utils/futuresynchronizer.h>
+#include <utils/patternvalidator.h>
 #include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
@@ -186,7 +187,7 @@ public:
     QString m_exclusionSetting;
     QPointer<QComboBox> m_filterCombo;
     QPointer<QComboBox> m_exclusionCombo;
-    QVector<SearchEngine *> m_searchEngines;
+    QList<SearchEngine *> m_searchEngines;
     InternalEngine m_internalSearchEngine;
     int m_currentSearchEngineIndex = -1;
     FilePath m_searchDir;
@@ -279,7 +280,7 @@ SearchEngine *BaseFileFind::currentSearchEngine() const
     return d->m_searchEngines[d->m_currentSearchEngineIndex];
 }
 
-QVector<SearchEngine *> BaseFileFind::searchEngines() const
+QList<SearchEngine *> BaseFileFind::searchEngines() const
 {
     return d->m_searchEngines;
 }
@@ -294,7 +295,7 @@ void BaseFileFind::setCurrentSearchEngine(int index)
 }
 
 void BaseFileFind::runNewSearch(const QString &txt, FindFlags findFlags,
-                                    SearchResultWindow::SearchMode searchMode)
+                                SearchResultWindow::SearchMode searchMode)
 {
     d->m_currentFindSupport = nullptr;
     if (d->m_filterCombo)
@@ -322,23 +323,22 @@ void BaseFileFind::runNewSearch(const QString &txt, FindFlags findFlags,
     parameters.editorOpener = searchEngine->editorOpener();
     parameters.searchExecutor = searchEngine->searchExecutor();
 
-    search->setUserData(QVariant::fromValue(parameters));
-    connect(search, &SearchResult::activated, this, [this, search](const SearchResultItem &item) {
-        openEditor(search, item);
+    connect(search, &SearchResult::activated, this, [this, parameters](const SearchResultItem &item) {
+        openEditor(item, parameters);
     });
     if (searchMode == SearchResultWindow::SearchAndReplace)
         connect(search, &SearchResult::replaceButtonClicked, this, &BaseFileFind::doReplace);
     connect(search, &SearchResult::visibilityChanged, this, &BaseFileFind::hideHighlightAll);
-    connect(search, &SearchResult::searchAgainRequested, this, [this, search] {
-        searchAgain(search);
+    connect(search, &SearchResult::searchAgainRequested, this, [this, search, parameters] {
+        search->restart();
+        runSearch(search, parameters);
     });
 
-    runSearch(search);
+    runSearch(search, parameters);
 }
 
-void BaseFileFind::runSearch(SearchResult *search)
+void BaseFileFind::runSearch(SearchResult *search, const FileFindParameters &parameters)
 {
-    const FileFindParameters parameters = search->userData().value<FileFindParameters>();
     SearchResultWindow::instance()->popup(IOutputPane::Flags(IOutputPane::ModeSwitch|IOutputPane::WithFocus));
     auto watcher = new QFutureWatcher<SearchResultItems>;
     watcher->setPendingResultsLimit(1);
@@ -425,11 +425,15 @@ QList<QPair<QWidget *, QWidget *>> BaseFileFind::createPatternWidgets()
     QLabel *filterLabel = createLabel(msgFilePatternLabel());
     d->m_filterCombo = createCombo(&d->m_filterStrings);
     d->m_filterCombo->setToolTip(msgFilePatternToolTip());
+    d->m_filterCombo->lineEdit()->setValidator(
+        new PatternValidator(',', {';', ' '}, d->m_filterCombo));
     filterLabel->setBuddy(d->m_filterCombo);
     syncComboWithSettings(d->m_filterCombo, d->m_filterSetting);
     QLabel *exclusionLabel = createLabel(msgExclusionPatternLabel());
     d->m_exclusionCombo = createCombo(&d->m_exclusionStrings);
     d->m_exclusionCombo->setToolTip(msgFilePatternToolTip(InclusionType::Excluded));
+    d->m_exclusionCombo->lineEdit()->setValidator(
+        new PatternValidator(',', {';', ' '}, d->m_exclusionCombo));
     exclusionLabel->setBuddy(d->m_exclusionCombo);
     syncComboWithSettings(d->m_exclusionCombo, d->m_exclusionSetting);
     return {{filterLabel, d->m_filterCombo}, {exclusionLabel, d->m_exclusionCombo}};
@@ -489,8 +493,7 @@ void BaseFileFind::readCommonSettings(
     const QStringList filters = filterSetting.isEmpty() ? QStringList(defaultFilter)
                                                         : filterSetting;
     const QVariant currentFilter = s.value("currentFilter");
-    d->m_filterSetting = currentFilter.isValid() ? currentFilter.toString()
-                                                 : filters.first();
+    d->m_filterSetting = currentFilter.isValid() ? currentFilter.toString() : defaultFilter;
     d->m_filterStrings.setStringList(toNativeSeparators(filters));
     if (d->m_filterCombo)
         syncComboWithSettings(d->m_filterCombo, d->m_filterSetting);
@@ -511,9 +514,8 @@ void BaseFileFind::readCommonSettings(
     syncSearchEngineCombo(currentSearchEngineIndex);
 }
 
-void BaseFileFind::openEditor(SearchResult *result, const SearchResultItem &item)
+void BaseFileFind::openEditor(const SearchResultItem &item, const FileFindParameters &parameters)
 {
-    const FileFindParameters parameters = result->userData().value<FileFindParameters>();
     IEditor *openedEditor = parameters.editorOpener ? parameters.editorOpener(item, parameters)
                                                     : nullptr;
     if (!openedEditor)
@@ -534,12 +536,6 @@ void BaseFileFind::hideHighlightAll(bool visible)
 {
     if (!visible && d->m_currentFindSupport)
         d->m_currentFindSupport->clearHighlights();
-}
-
-void BaseFileFind::searchAgain(SearchResult *search)
-{
-    search->restart();
-    runSearch(search);
 }
 
 void BaseFileFind::setupSearch(SearchResult *search)

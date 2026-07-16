@@ -11,8 +11,8 @@
 #include <projectexplorer/buildsteplist.h>
 #include <projectexplorer/buildsystem.h>
 #include <projectexplorer/deployconfiguration.h>
+#include <projectexplorer/devicesupport/devicekitaspects.h>
 #include <projectexplorer/devicesupport/idevice.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/makestep.h>
 #include <projectexplorer/processparameters.h>
 #include <projectexplorer/projectexplorerconstants.h>
@@ -42,7 +42,7 @@ private:
     void fromMap(const Store &map) final;
     QWidget *createConfigWidget() final;
     bool init() final;
-    Tasking::GroupItem runRecipe() final;
+    QtTaskTree::GroupItem runRecipe() final;
     bool isJobCountSupported() const final { return false; }
 
     void updateCommandFromAspect();
@@ -73,7 +73,7 @@ MakeInstallStep::MakeInstallStep(BuildStepList *parent, Id id) : MakeStep(parent
 
     // FIXME: Hack, Part#1: If the build device is not local, start with a temp dir
     // inside the build dir. On Docker that's typically shared with the host.
-    const IDevice::ConstPtr device = BuildDeviceKitAspect::device(target()->kit());
+    const IDevice::ConstPtr device = BuildDeviceKitAspect::device(kit());
     const bool hack = device && device->type() != ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE;
     FilePath rootPath;
     if (hack) {
@@ -83,7 +83,7 @@ MakeInstallStep::MakeInstallStep(BuildStepList *parent, Id id) : MakeStep(parent
         rootPath = FilePath::fromString(tmpDir.path());
     }
 
-    m_makeBinary.setDeviceSelector(parent->target(), ExecutableAspect::BuildDevice);
+    m_makeBinary.setDeviceSelector(kit(), ExecutableAspect::BuildDevice);
     m_makeBinary.setSettingsKey("RemoteLinux.MakeInstall.Make");
     m_makeBinary.setReadOnly(false);
     m_makeBinary.setLabelText(Tr::tr("Command:"));
@@ -121,7 +121,7 @@ MakeInstallStep::MakeInstallStep(BuildStepList *parent, Id id) : MakeStep(parent
     connect(&m_customCommand, &StringAspect::changed,
             this, &MakeInstallStep::updateFromCustomCommandLineAspect);
 
-    connect(target(), &Target::buildSystemUpdated, this, updateCommand);
+    connect(buildSystem(), &BuildSystem::updated, this, updateCommand);
 
     const MakeInstallCommand cmd = buildSystem()->makeInstallCommand(rootPath);
     QTC_ASSERT(!cmd.command.isEmpty(), return);
@@ -183,15 +183,15 @@ bool MakeInstallStep::init()
 
     const auto buildStep = buildConfiguration()->buildSteps()->firstOfType<AbstractProcessStep>();
     m_isCmakeProject = buildStep
-            && buildStep->processParameters()->command().executable().toString()
+            && buildStep->processParameters()->command().executable().toUrlishString()
             .contains("cmake");
 
     return true;
 }
 
-Tasking::GroupItem MakeInstallStep::runRecipe()
+QtTaskTree::GroupItem MakeInstallStep::runRecipe()
 {
-    using namespace Tasking;
+    using namespace QtTaskTree;
 
     const auto onDone = [this](DoneWith result) {
         if (result != DoneWith::Success) {
@@ -206,7 +206,7 @@ Tasking::GroupItem MakeInstallStep::runRecipe()
         m_deploymentData = DeploymentData();
         m_deploymentData.setLocalInstallRoot(rootDir);
 
-        const int startPos = rootDir.path().length();
+        const int startPos = rootDir.path().size();
 
         const auto appFileNames = transform<QSet<QString>>(buildSystem()->applicationTargets(),
             [](const BuildTargetInfo &appTarget) { return appTarget.targetFilePath.fileName(); });

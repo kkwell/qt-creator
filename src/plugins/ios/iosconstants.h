@@ -24,14 +24,14 @@ const char IOS_DSYM_BUILD_STEP_ID[] = "Ios.IosDsymBuildStep";
 const char IOS_DEPLOY_STEP_ID[] = "Qt4ProjectManager.IosDeployStep";
 const char IOS_RUNCONFIG_ID[] = "Qt4ProjectManager.IosRunConfiguration:";
 
+const char IOS_EXECUTION_TYPE_ID[] = "IosExecutionType";
+
 const char IosTarget[] = "IosTarget"; // QString
 const char IosBuildDir[] = "IosBuildDir"; // QString
 const char IosCmakeGenerator[] = "IosCmakeGenerator";
 
 const quint16 IOS_DEVICE_PORT_START = 30000;
 const quint16 IOS_DEVICE_PORT_END = 31000;
-const quint16 IOS_SIMULATOR_PORT_START = 30000;
-const quint16 IOS_SIMULATOR_PORT_END = 31000;
 
 const char EXTRA_INFO_KEY[] = "extraInfo";
 

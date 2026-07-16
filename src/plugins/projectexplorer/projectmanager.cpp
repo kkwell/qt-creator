@@ -18,26 +18,20 @@
 #include <coreplugin/foldernavigationwidget.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/idocument.h>
-#include <coreplugin/imode.h>
+#include <coreplugin/messagemanager.h>
 #include <coreplugin/modemanager.h>
-#include <coreplugin/progressmanager/progressmanager.h>
 #include <coreplugin/session.h>
 
-#include <texteditor/texteditor.h>
-
 #include <utils/algorithm.h>
-#include <utils/fileutils.h>
+#include <utils/mimeutils.h>
 #include <utils/persistentsettings.h>
 #include <utils/qtcassert.h>
-#include <utils/stylehelper.h>
 
 #include <QDebug>
 #include <QMessageBox>
 #include <QPushButton>
 
 #ifdef WITH_TESTS
-#include "projectexplorer_test.h"
-
 #include <QTemporaryFile>
 #include <QTest>
 #include <vector>
@@ -48,6 +42,71 @@ using namespace Utils;
 using namespace ProjectExplorer::Internal;
 
 namespace ProjectExplorer {
+
+static void configureEditor(IEditor *editor, const FilePath &filePath)
+{
+    // Global settings are the default.
+    if (const Project *project = ProjectManager::projectForFile(filePath))
+        project->editorConfiguration()->configureEditor(editor);
+}
+
+static void configureEditors(const Project *project)
+{
+    const QList<IDocument *> documents = DocumentModel::openedDocuments();
+    for (IDocument *document : documents) {
+        if (project->isKnownFile(document->filePath())) {
+            const QList<IEditor *> editors = DocumentModel::editorsForDocument(document);
+            for (IEditor *editor : editors)
+                project->editorConfiguration()->configureEditor(editor);
+        }
+    }
+}
+
+void CustomProjectSettingsHandler::load(Project &project) const
+{
+    QTC_ASSERT(m_loader, return);
+    const FilePath candidate
+        = project.projectDirectory().pathAppended(".qtcreator").pathAppended(m_fileName);
+    if (!candidate.exists())
+        return;
+    const auto showError = [](const FilePath &file, const QString &error) {
+        MessageManager::writeFlashing(
+            Tr::tr("Failed to load settings from \"%1\": %2").arg(file.toUserOutput(), error));
+    };
+    QVariant data;
+    const bool dirExpected = m_fileType == FileType::Dir;
+    if (candidate.isDir()) {
+        if (!dirExpected)
+            return showError(candidate, Tr::tr("Is a directory, but must be a file."));
+        QVariantList list;
+        for (const FilePaths &entries = candidate.dirEntries(QDir::Files);
+             const FilePath &entry : entries) {
+            const auto result = m_loader(entry, project);
+            if (!result) {
+                showError(entry, result.error());
+                continue;
+            }
+            list << *result;
+        }
+        data = list;
+    } else {
+        if (dirExpected)
+            return showError(candidate, Tr::tr("Is a file, but must be a directory."));
+        const auto result = m_loader(candidate, project);
+        if (!result)
+            return showError(candidate, result.error());
+        data = *result;
+    }
+    project.setExtraData(m_key, data);
+}
+
+void CustomProjectSettingsHandler::unload(const Project &project) const
+{
+    if (const QVariant data = project.extraData(m_key); data.isValid()) {
+        QTC_ASSERT(m_unloader, return);
+        m_unloader(data);
+    }
+}
 
 class ProjectManagerPrivate
 {
@@ -86,7 +145,7 @@ static ProjectManagerPrivate *d = nullptr;
 
 static QString projectFolderId(Project *pro)
 {
-    return pro->projectFilePath().toString();
+    return pro->projectFilePath().toUrlishString();
 }
 
 const int PROJECT_SORT_VALUE = 100;
@@ -97,13 +156,16 @@ ProjectManager::ProjectManager()
     d = new ProjectManagerPrivate;
 
     connect(EditorManager::instance(), &EditorManager::editorCreated,
-            this, &ProjectManager::configureEditor);
+            this, &configureEditor);
     connect(this, &ProjectManager::projectAdded,
             EditorManager::instance(), &EditorManager::updateWindowTitles);
     connect(this, &ProjectManager::projectRemoved,
             EditorManager::instance(), &EditorManager::updateWindowTitles);
     connect(this, &ProjectManager::projectDisplayNameChanged,
             EditorManager::instance(), &EditorManager::updateWindowTitles);
+    connect(this, &ProjectManager::startupProjectChanged, this, [this] {
+        emit activeBuildConfigurationChanged(activeBuildConfigForActiveProject());
+    });
 
     EditorManager::setWindowTitleAdditionHandler(&ProjectManagerPrivate::windowTitleAddition);
     EditorManager::setSessionTitleHandler(&ProjectManagerPrivate::sessionTitle);
@@ -268,29 +330,11 @@ Target *ProjectManager::startupTarget()
     return d->m_startupProject ? d->m_startupProject->activeTarget() : nullptr;
 }
 
-BuildSystem *ProjectManager::startupBuildSystem()
-{
-    Target *t = startupTarget();
-    return t ? t->buildSystem() : nullptr;
-}
-
-/*!
- * Returns the RunConfiguration of the currently active target
- * of the startup project, if such exists, or \c nullptr otherwise.
- */
-
-
-RunConfiguration *ProjectManager::startupRunConfiguration()
-{
-    Target *t = startupTarget();
-    return t ? t->activeRunConfiguration() : nullptr;
-}
-
 void ProjectManager::addProject(Project *pro)
 {
     QTC_ASSERT(pro, return);
     QTC_CHECK(!pro->displayName().isEmpty());
-    QTC_CHECK(pro->id().isValid());
+    QTC_CHECK(pro->type().isValid());
 
     SessionManager::markSessionFileDirty();
     QTC_ASSERT(!d->m_projects.contains(pro), return);
@@ -348,18 +392,18 @@ void ProjectManagerPrivate::saveSession()
 
     SessionManager::setSessionValue("ProjectList",
                                     Utils::transform<QStringList>(projectFiles,
-                                                                  &FilePath::toString));
+                                                                  &FilePath::toUrlishString));
     SessionManager::setSessionValue("CascadeSetActive", m_casadeSetActive);
     SessionManager::setSessionValue("DeployProjectDependencies", m_deployProjectDependencies);
 
     QVariantMap depMap;
     auto i = m_depMap.constBegin();
     while (i != m_depMap.constEnd()) {
-        QString key = i.key().toString();
+        QString key = i.key().toUrlishString();
         QStringList values;
         const FilePaths valueList = i.value();
         for (const FilePath &value : valueList)
-            values << value.toString();
+            values << value.toUrlishString();
         depMap.insert(key, values);
         ++i;
     }
@@ -521,18 +565,34 @@ Project *ProjectManager::projectForFile(const FilePath &fileName)
     });
 }
 
-bool ProjectManager::isInProjectSourceDir(const Utils::FilePath &filePath, const Project &project)
+QList<Project *> ProjectManager::projectsForFile(const Utils::FilePath &fileName)
+{
+    return Utils::filtered(ProjectManager::projects(), [&fileName](Project *p) {
+        return p->isKnownFile(fileName) || isInProjectSourceDir(fileName, *p);
+    });
+}
+
+bool ProjectManager::isInProjectBuildDir(const Utils::FilePath &filePath, const Project &project)
 {
     for (const Target * const target : project.targets()) {
         for (const BuildConfiguration * const bc : target->buildConfigurations()) {
+            if (bc->buildDirectory() == project.projectDirectory())
+                continue;
             if (filePath.isChildOf(bc->buildDirectory()))
-                return false;
+                return true;
             if (const FilePath canonicalBuildDir = bc->buildDirectory().canonicalPath();
                 canonicalBuildDir != bc->buildDirectory() && filePath.isChildOf(canonicalBuildDir)) {
-                return false;
+                return true;
             }
         }
     }
+    return false;
+}
+
+bool ProjectManager::isInProjectSourceDir(const Utils::FilePath &filePath, const Project &project)
+{
+    if (isInProjectBuildDir(filePath, project))
+        return false;
     if (filePath.isChildOf(project.projectDirectory()))
         return true;
     if (const FilePath canonicalRoot = project.projectDirectory().canonicalPath();
@@ -542,40 +602,38 @@ bool ProjectManager::isInProjectSourceDir(const Utils::FilePath &filePath, const
     return false;
 }
 
-Project *ProjectManager::projectWithProjectFilePath(const FilePath &filePath)
+Project *ProjectManager::projectWithProjectFile(const FilePath &projectFile, bool shouldExist)
 {
-    return Utils::findOrDefault(ProjectManager::projects(),
-            [&filePath](const Project *p) { return p->projectFilePath() == filePath; });
+    Project * const project = Utils::findOrDefault(projects(), [&projectFile](const Project *p) {
+        return p->projectFilePath() == projectFile;
+    });
+    if (shouldExist) {
+        QTC_ASSERT(project, qDebug() << projectFile);
+    }
+    return project;
 }
 
-void ProjectManager::configureEditor(IEditor *editor, const FilePath &filePath)
+bool ProjectManager::isKnownFile(const Utils::FilePath &filePath)
 {
-    if (auto textEditor = qobject_cast<TextEditor::BaseTextEditor*>(editor)) {
-        // Global settings are the default.
-        if (Project *project = projectForFile(filePath))
-            project->editorConfiguration()->configureEditor(textEditor);
-    }
+    return Utils::anyOf(d->m_projects, [&filePath](const Project *p) {
+        return p->isKnownFile(filePath);
+    });
 }
 
-void ProjectManager::configureEditors(Project *project)
+bool ProjectManager::isAnyProjectParsing()
 {
-    const QList<IDocument *> documents = DocumentModel::openedDocuments();
-    for (IDocument *document : documents) {
-        if (project->isKnownFile(document->filePath())) {
-            const QList<IEditor *> editors = DocumentModel::editorsForDocument(document);
-            for (IEditor *editor : editors) {
-                if (auto textEditor = qobject_cast<TextEditor::BaseTextEditor*>(editor)) {
-                        project->editorConfiguration()->configureEditor(textEditor);
-                }
-            }
-        }
-    }
+    return Utils::anyOf(d->m_projects, &Project::isParsing);
 }
 
 void ProjectManager::removeProjects(const QList<Project *> &remove)
 {
-    for (Project *pro : remove)
+    for (Project *pro : remove) {
+        for (const Target * const t : pro->targets()) {
+            for (BuildConfiguration * const bc : t->buildConfigurations())
+                emit m_instance->aboutToRemoveBuildConfiguration(bc);
+        }
         emit m_instance->aboutToRemoveProject(pro);
+    }
 
     bool changeStartupProject = false;
 
@@ -593,6 +651,7 @@ void ProjectManager::removeProjects(const QList<Project *> &remove)
         FolderNavigationWidgetFactory::removeRootDirectory(projectFolderId(pro));
         disconnect(pro, nullptr, m_instance, nullptr);
         emit m_instance->projectRemoved(pro);
+        unloadCustomProjectSettings(*pro);
     }
 
     if (changeStartupProject)
@@ -621,7 +680,7 @@ void ProjectManagerPrivate::askUserAboutFailedProjects()
 {
     FilePaths failedProjects = m_failedProjects;
     if (!failedProjects.isEmpty()) {
-        QString fileList = FilePath::formatFilePaths(failedProjects, "<br>");
+        const QString fileList = failedProjects.toUserOutput("<br>");
         QMessageBox box(QMessageBox::Warning,
                                    Tr::tr("Failed to restore project files"),
                                    Tr::tr("Could not restore the following project files:<br><b>%1</b>").
@@ -689,7 +748,7 @@ void ProjectManagerPrivate::loadSession()
         modeId = Id(Core::Constants::MODE_EDIT);
 
     // find a list of projects to close later
-    const FilePaths fileList = FileUtils::toFilePathList(
+    const FilePaths fileList = FilePaths::fromStrings(
         SessionManager::sessionValue("ProjectList").toStringList());
     const QList<Project *> projectsToRemove
         = Utils::filtered(ProjectManager::projects(), [&fileList](Project *p) {
@@ -741,59 +800,82 @@ FilePaths ProjectManager::projectsForSessionName(const QString &session)
 }
 
 #ifdef WITH_TESTS
+namespace Internal {
 
-void ProjectExplorerTest::testSessionSwitch()
-{
-    QVERIFY(SessionManager::createSession("session1"));
-    QVERIFY(SessionManager::createSession("session2"));
-    QTemporaryFile cppFile("main.cpp");
-    QVERIFY(cppFile.open());
-    cppFile.close();
-    QTemporaryFile projectFile1("XXXXXX.pro");
-    QTemporaryFile projectFile2("XXXXXX.pro");
-    struct SessionSpec {
-        SessionSpec(const QString &n, QTemporaryFile &f) : name(n), projectFile(f) {}
-        const QString name;
-        QTemporaryFile &projectFile;
-    };
-    std::vector<SessionSpec> sessionSpecs{SessionSpec("session1", projectFile1),
-                SessionSpec("session2", projectFile2)};
-    for (const SessionSpec &sessionSpec : sessionSpecs) {
-        static const QByteArray proFileContents
+class SessionTest : public QObject {
+    Q_OBJECT
+
+private slots:
+
+    void testSessionSwitch()
+    {
+        QVERIFY(SessionManager::createSession("session1"));
+        QVERIFY(SessionManager::createSession("session2"));
+        QTemporaryFile cppFile("main.cpp");
+        QVERIFY(cppFile.open());
+        cppFile.close();
+        QTemporaryFile projectFile1("XXXXXX.pro");
+        QTemporaryFile projectFile2("XXXXXX.pro");
+        struct SessionSpec {
+            SessionSpec(const QString &n, QTemporaryFile &f) : name(n), projectFile(f) {}
+            const QString name;
+            QTemporaryFile &projectFile;
+        };
+        std::vector<SessionSpec> sessionSpecs{SessionSpec("session1", projectFile1),
+                                              SessionSpec("session2", projectFile2)};
+        for (const SessionSpec &sessionSpec : sessionSpecs) {
+            static const QByteArray proFileContents
                 = "TEMPLATE = app\n"
                   "CONFIG -= qt\n"
                   "SOURCES = " + cppFile.fileName().toLocal8Bit();
-        QVERIFY(sessionSpec.projectFile.open());
-        sessionSpec.projectFile.write(proFileContents);
-        sessionSpec.projectFile.close();
-        QVERIFY(SessionManager::loadSession(sessionSpec.name));
-        const OpenProjectResult openResult
+            QVERIFY(sessionSpec.projectFile.open());
+            sessionSpec.projectFile.write(proFileContents);
+            sessionSpec.projectFile.close();
+            QVERIFY(SessionManager::loadSession(sessionSpec.name));
+            const OpenProjectResult openResult
                 = ProjectExplorerPlugin::openProject(
                     FilePath::fromString(sessionSpec.projectFile.fileName()));
-        if (openResult.errorMessage().contains("text/plain"))
-            QSKIP("This test requires the presence of QmakeProjectManager to be fully functional. "
-                  "Hint: run this test with \"-load QmakeProjectManager\" option.");
-        QVERIFY(openResult);
-        QCOMPARE(openResult.projects().count(), 1);
-        QVERIFY(openResult.project());
-        QCOMPARE(ProjectManager::projects().count(), 1);
-    }
-    for (int i = 0; i < 30; ++i) {
+            if (!ProjectManager::canOpenProjectForMimeType(
+                    Utils::mimeTypeForFile(sessionSpec.projectFile.fileName()))) {
+                QEXPECT_FAIL(
+                    nullptr,
+                    "This test requires the presence of QmakeProjectManager to be fully functional. "
+                    "Hint: run this test with \"-load QmakeProjectManager\" option.",
+                    Abort);
+            }
+            QVERIFY2(openResult, qPrintable(openResult.errorMessage()));
+            QCOMPARE(openResult.projects().count(), 1);
+            QVERIFY(openResult.project());
+            QCOMPARE(ProjectManager::projects().count(), 1);
+        }
+        for (int i = 0; i < 30; ++i) {
+            QVERIFY(SessionManager::loadSession("session1"));
+            QCOMPARE(SessionManager::activeSession(), "session1");
+            QCOMPARE(ProjectManager::projects().count(), 1);
+            QVERIFY(SessionManager::loadSession("session2"));
+            QCOMPARE(SessionManager::activeSession(), "session2");
+            QCOMPARE(ProjectManager::projects().count(), 1);
+        }
         QVERIFY(SessionManager::loadSession("session1"));
-        QCOMPARE(SessionManager::activeSession(), "session1");
-        QCOMPARE(ProjectManager::projects().count(), 1);
+        ProjectManager::closeAllProjects();
         QVERIFY(SessionManager::loadSession("session2"));
-        QCOMPARE(SessionManager::activeSession(), "session2");
-        QCOMPARE(ProjectManager::projects().count(), 1);
+        ProjectManager::closeAllProjects();
+        QVERIFY(SessionManager::deleteSession("session1"));
+        QVERIFY(SessionManager::deleteSession("session2"));
     }
-    QVERIFY(SessionManager::loadSession("session1"));
-    ProjectManager::closeAllProjects();
-    QVERIFY(SessionManager::loadSession("session2"));
-    ProjectManager::closeAllProjects();
-    QVERIFY(SessionManager::deleteSession("session1"));
-    QVERIFY(SessionManager::deleteSession("session2"));
+};
+
+QObject *createSessionTest()
+{
+    return new SessionTest;
 }
+
+} // namespace Internal
 
 #endif // WITH_TESTS
 
 } // namespace ProjectExplorer
+
+#ifdef WITH_TESTS
+#include <projectmanager.moc>
+#endif

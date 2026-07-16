@@ -7,8 +7,6 @@
 #include "../projectmanager.h"
 #include "../projectexplorertr.h"
 
-#include <coreplugin/editormanager/editormanager.h>
-
 #include <utils/algorithm.h>
 #include <utils/filepath.h>
 #include <utils/macroexpander.h>
@@ -27,7 +25,7 @@ namespace ProjectExplorer::Internal {
 class JsonWizardScannerGenerator final : public JsonWizardGenerator
 {
 public:
-    bool setup(const QVariant &data, QString *errorMessage);
+    Result<> setup(const QVariant &data);
 
     Core::GeneratedFiles fileList(MacroExpander *expander,
                                   const FilePath &wizardDir,
@@ -35,21 +33,19 @@ public:
                                   QString *errorMessage) final;
 private:
     Core::GeneratedFiles scan(const FilePath &dir, const FilePath &base);
-    bool matchesSubdirectoryPattern(const FilePath &path);
+    bool matchesSubdirectoryPattern(const QString &relPath);
 
     QString m_binaryPattern;
     QList<QRegularExpression> m_subDirectoryExpressions;
 };
 
-bool JsonWizardScannerGenerator::setup(const QVariant &data, QString *errorMessage)
+Result<> JsonWizardScannerGenerator::setup(const QVariant &data)
 {
     if (data.isNull())
-        return true;
+        return ResultOk;
 
-    if (data.typeId() != QMetaType::QVariantMap) {
-        *errorMessage = Tr::tr("Key is not an object.");
-        return false;
-    }
+    if (data.typeId() != QMetaType::QVariantMap)
+        return ResultError(Tr::tr("Key is not an object."));
 
     QVariantMap gen = data.toMap();
 
@@ -57,14 +53,12 @@ bool JsonWizardScannerGenerator::setup(const QVariant &data, QString *errorMessa
     const QStringList patterns = gen.value(QLatin1String("subdirectoryPatterns")).toStringList();
     for (const QString &pattern : patterns) {
         QRegularExpression regexp(pattern);
-        if (!regexp.isValid()) {
-            *errorMessage = Tr::tr("Pattern \"%1\" is no valid regular expression.");
-            return false;
-        }
+        if (!regexp.isValid())
+            return ResultError(Tr::tr("Pattern \"%1\" is no valid regular expression."));
         m_subDirectoryExpressions << regexp;
     }
 
-    return true;
+    return ResultOk;
 }
 
 Core::GeneratedFiles JsonWizardScannerGenerator::fileList(Utils::MacroExpander *expander,
@@ -93,8 +87,8 @@ Core::GeneratedFiles JsonWizardScannerGenerator::fileList(Utils::MacroExpander *
             [](const Utils::FilePath &filePath) { return int(filePath.path().count('/')); };
     int minDepth = std::numeric_limits<int>::max();
     for (auto it = result.begin(); it != result.end(); ++it) {
-        const Utils::FilePath relPath = it->filePath().relativePathFrom(projectDir);
-        it->setBinary(binaryPattern.match(relPath.toString()).hasMatch());
+        const QString relPath = it->filePath().relativePathFromDir(projectDir);
+        it->setBinary(binaryPattern.match(relPath).hasMatch());
         bool found = ProjectManager::canOpenProjectForMimeType(Utils::mimeTypeForFile(relPath));
         if (found) {
             it->setAttributes(it->attributes() | Core::GeneratedFile::OpenProjectAttribute);
@@ -115,10 +109,10 @@ Core::GeneratedFiles JsonWizardScannerGenerator::fileList(Utils::MacroExpander *
     return result;
 }
 
-bool JsonWizardScannerGenerator::matchesSubdirectoryPattern(const Utils::FilePath &path)
+bool JsonWizardScannerGenerator::matchesSubdirectoryPattern(const QString &relPath)
 {
     for (const QRegularExpression &regexp : std::as_const(m_subDirectoryExpressions)) {
-        if (regexp.match(path.path()).hasMatch())
+        if (regexp.match(relPath).hasMatch())
             return true;
     }
     return false;
@@ -132,10 +126,10 @@ Core::GeneratedFiles JsonWizardScannerGenerator::scan(const Utils::FilePath &dir
     if (!dir.exists())
         return result;
 
-    const Utils::FilePaths entries = dir.dirEntries({{}, QDir::AllEntries | QDir::NoDotAndDotDot},
-                                                    QDir::DirsLast | QDir::Name);
-    for (const Utils::FilePath &fi : entries) {
-        const Utils::FilePath relativePath = fi.relativePathFrom(base);
+    const FilePaths entries = dir.dirEntries({{}, QDir::AllEntries | QDir::NoDotAndDotDot},
+                                             QDir::DirsLast | QDir::Name);
+    for (const FilePath &fi : entries) {
+        const QString relativePath = fi.relativePathFromDir(base);
         if (fi.isDir() && matchesSubdirectoryPattern(relativePath)) {
             result += scan(fi, base);
         } else {

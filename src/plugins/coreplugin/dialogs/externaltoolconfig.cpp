@@ -72,11 +72,11 @@ public:
     QMap<QString, QList<ExternalTool *> > tools() const { return m_tools; }
 
     static ExternalTool *toolForIndex(const QModelIndex &modelIndex);
-    QString categoryForIndex(const QModelIndex &modelIndex, bool *found) const;
+    std::optional<QString> categoryForIndex(const QModelIndex &modelIndex) const;
     void revertTool(const QModelIndex &modelIndex);
     QModelIndex addCategory();
     QModelIndex addTool(const QModelIndex &atIndex);
-    void removeTool(const QModelIndex &modelIndex);
+    void removeToolOrCategory(const QModelIndex &modelIndex);
     Qt::DropActions supportedDropActions() const override { return Qt::MoveAction; }
 
 private:
@@ -94,8 +94,7 @@ ExternalToolModel::~ExternalToolModel()
 
 int ExternalToolModel::columnCount(const QModelIndex &parent) const
 {
-    bool categoryFound;
-    categoryForIndex(parent, &categoryFound);
+    const bool categoryFound = categoryForIndex(parent).has_value();
     if (!parent.isValid() || toolForIndex(parent) || categoryFound)
         return 1;
     return 0;
@@ -105,10 +104,9 @@ QVariant ExternalToolModel::data(const QModelIndex &index, int role) const
 {
     if (ExternalTool *tool = toolForIndex(index))
         return data(tool, role);
-    bool found;
-    QString category = categoryForIndex(index, &found);
-    if (found)
-        return data(category, role);
+    const std::optional<QString> category = categoryForIndex(index);
+    if (category)
+        return data(*category, role);
     return QVariant();
 }
 
@@ -145,13 +143,12 @@ QMimeData *ExternalToolModel::mimeData(const QModelIndexList &indexes) const
     QModelIndex modelIndex = indexes.first();
     ExternalTool *tool = toolForIndex(modelIndex);
     QTC_ASSERT(tool, return nullptr);
-    bool found;
-    QString category = categoryForIndex(modelIndex.parent(), &found);
-    QTC_ASSERT(found, return nullptr);
+    const std::optional<QString> category = categoryForIndex(modelIndex.parent());
+    QTC_ASSERT(category, return nullptr);
     auto md = new QMimeData();
     QByteArray ba;
     QDataStream stream(&ba, QIODevice::WriteOnly);
-    stream << category << m_tools.value(category).indexOf(tool);
+    stream << *category << m_tools.value(*category).indexOf(tool);
     md->setData("application/qtcreator-externaltool-config", ba);
     return md;
 }
@@ -165,9 +162,8 @@ bool ExternalToolModel::dropMimeData(const QMimeData *data,
     Q_UNUSED(column)
     if (action != Qt::MoveAction || !data)
         return false;
-    bool found;
-    QString toCategory = categoryForIndex(parent, &found);
-    QTC_ASSERT(found, return false);
+    const std::optional<QString> toCategory = categoryForIndex(parent);
+    QTC_ASSERT(toCategory, return false);
     QByteArray ba = data->data("application/qtcreator-externaltool-config");
     if (ba.isEmpty())
         return false;
@@ -180,7 +176,7 @@ bool ExternalToolModel::dropMimeData(const QMimeData *data,
     QTC_ASSERT(pos >= 0 && pos < items.count(), return false);
     const int sourceCategoryIndex = std::distance(m_tools.constBegin(), m_tools.constFind(category));
     const int targetCategoryIndex
-        = std::distance(m_tools.constBegin(), m_tools.constFind(toCategory));
+        = std::distance(m_tools.constBegin(), m_tools.constFind(*toCategory));
     QTC_ASSERT(sourceCategoryIndex >= 0 && targetCategoryIndex >= 0, return false);
     if (row < 0) // target row can be -1 when dropping onto the category itself
         row = 0;
@@ -190,9 +186,9 @@ bool ExternalToolModel::dropMimeData(const QMimeData *data,
     }
     beginMoveRows(index(sourceCategoryIndex, 0), pos, pos, index(targetCategoryIndex, 0), row);
     ExternalTool *tool = items.takeAt(pos);
-    if (category == toCategory && pos < row) // adapt the target row for the removed item
+    if (category == *toCategory && pos < row) // adapt the target row for the removed item
         --row;
-    m_tools[toCategory].insert(row, tool);
+    m_tools[*toCategory].insert(row, tool);
     endMoveRows();
     return true;
 }
@@ -205,10 +201,9 @@ QStringList ExternalToolModel::mimeTypes() const
 QModelIndex ExternalToolModel::index(int row, int column, const QModelIndex &parent) const
 {
     if (column == 0 && parent.isValid()) {
-        bool found;
-        QString category = categoryForIndex(parent, &found);
-        if (found) {
-            QList<ExternalTool *> items = m_tools.value(category);
+        const std::optional<QString> category = categoryForIndex(parent);
+        if (category) {
+            QList<ExternalTool *> items = m_tools.value(*category);
             if (row < items.count())
                 return createIndex(row, 0, items.at(row));
         }
@@ -237,10 +232,9 @@ int ExternalToolModel::rowCount(const QModelIndex &parent) const
         return m_tools.size();
     if (toolForIndex(parent))
         return 0;
-    bool found;
-    QString category = categoryForIndex(parent, &found);
-    if (found)
-        return m_tools.value(category).count();
+    std::optional<QString> category = categoryForIndex(parent);
+    if (category)
+        return m_tools.value(*category).count();
 
     return 0;
 }
@@ -249,10 +243,9 @@ Qt::ItemFlags ExternalToolModel::flags(const QModelIndex &index) const
 {
     if (toolForIndex(index))
         return TOOL_ITEM_FLAGS;
-    bool found;
-    QString category = categoryForIndex(index, &found);
-    if (found) {
-        if (category.isEmpty())
+    const std::optional<QString> category = categoryForIndex(index);
+    if (category) {
+        if (category->isEmpty())
             return TOOLSMENU_ITEM_FLAGS;
         return CATEGORY_ITEM_FLAGS;
     }
@@ -272,14 +265,13 @@ bool ExternalToolModel::setData(const QModelIndex &modelIndex, const QVariant &v
         emit dataChanged(modelIndex, modelIndex);
         return true;
     } else {
-        bool found;
-        QString category = categoryForIndex(modelIndex, &found);
-        if (found) {
+        std::optional<QString> category = categoryForIndex(modelIndex);
+        if (category) {
             if (string.isEmpty() || m_tools.contains(string))
                 return false;
             // rename category
-            QList<QString> categories = m_tools.keys();
-            int previousIndex = categories.indexOf(category);
+            QStringList categories = m_tools.keys();
+            int previousIndex = categories.indexOf(*category);
             categories.removeAt(previousIndex);
             categories.append(string);
             Utils::sort(categories);
@@ -289,7 +281,7 @@ bool ExternalToolModel::setData(const QModelIndex &modelIndex, const QVariant &v
                 int beginMoveRowsSpecialIndex = (previousIndex < newIndex ? newIndex + 1 : newIndex);
                 beginMoveRows(QModelIndex(), previousIndex, previousIndex, QModelIndex(), beginMoveRowsSpecialIndex);
             }
-            QList<ExternalTool *> items = m_tools.take(category);
+            QList<ExternalTool *> items = m_tools.take(*category);
             m_tools.insert(string, items);
             if (newIndex != previousIndex)
                 endMoveRows();
@@ -311,17 +303,14 @@ ExternalTool *ExternalToolModel::toolForIndex(const QModelIndex &index)
     return static_cast<ExternalTool *>(index.internalPointer());
 }
 
-QString ExternalToolModel::categoryForIndex(const QModelIndex &index, bool *found) const
+std::optional<QString> ExternalToolModel::categoryForIndex(const QModelIndex &index) const
 {
     if (index.isValid() && !index.parent().isValid() && index.column() == 0 && index.row() >= 0) {
-        const QList<QString> &keys = m_tools.keys();
-        if (index.row() < keys.count()) {
-            if (found) *found = true;
+        const QStringList &keys = m_tools.keys();
+        if (index.row() < keys.count())
             return keys.at(index.row());
-        }
     }
-    if (found) *found = false;
-    return QString();
+    return {};
 }
 
 void ExternalToolModel::revertTool(const QModelIndex &modelIndex)
@@ -345,7 +334,7 @@ QModelIndex ExternalToolModel::addCategory()
         ++count;
         category = categoryBase + QString::number(count);
     }
-    QList<QString> categories = m_tools.keys();
+    QStringList categories = m_tools.keys();
     categories.append(category);
     Utils::sort(categories);
     int pos = categories.indexOf(category);
@@ -358,13 +347,12 @@ QModelIndex ExternalToolModel::addCategory()
 
 QModelIndex ExternalToolModel::addTool(const QModelIndex &atIndex)
 {
-    bool found;
-    QString category = categoryForIndex(atIndex, &found);
-    if (!found)
-        category = categoryForIndex(atIndex.parent(), &found);
-
+    std::optional<QString> category = categoryForIndex(atIndex);
+    if (!category)
+        category = categoryForIndex(atIndex.parent());
+    QTC_ASSERT(category, return QModelIndex());
     auto tool = new ExternalTool;
-    tool->setDisplayCategory(category);
+    tool->setDisplayCategory(*category);
     tool->setDisplayName(Tr::tr("New Tool"));
     tool->setDescription(Tr::tr("This tool prints a line of useful text"));
     //: Sample external tool text
@@ -383,33 +371,43 @@ QModelIndex ExternalToolModel::addTool(const QModelIndex &atIndex)
         pos = atIndex.row() + 1;
         parent = atIndex.parent();
     } else {
-        pos = m_tools.value(category).count();
+        pos = m_tools.value(*category).count();
         parent = atIndex;
     }
     beginInsertRows(parent, pos, pos);
-    m_tools[category].insert(pos, tool);
+    m_tools[*category].insert(pos, tool);
     endInsertRows();
     return index(pos, 0, parent);
 }
 
-void ExternalToolModel::removeTool(const QModelIndex &modelIndex)
+void ExternalToolModel::removeToolOrCategory(const QModelIndex &modelIndex)
 {
-    ExternalTool *tool = toolForIndex(modelIndex);
-    QTC_ASSERT(tool, return);
-    QTC_ASSERT(!tool->preset(), return);
-    // remove the tool and the tree item
-    int categoryIndex = 0;
-    for (QList<ExternalTool *> &items : m_tools) {
-        int pos = items.indexOf(tool);
-        if (pos != -1) {
-            beginRemoveRows(index(categoryIndex, 0), pos, pos);
-            items.removeAt(pos);
-            endRemoveRows();
-            break;
+    if (modelIndex.parent().isValid()) {
+        ExternalTool *tool = toolForIndex(modelIndex);
+        QTC_ASSERT(tool, return);
+        QTC_ASSERT(!tool->preset(), return);
+        // remove the tool and the tree item
+        int categoryIndex = 0;
+        for (QList<ExternalTool *> &items : m_tools) {
+            int pos = items.indexOf(tool);
+            if (pos != -1) {
+                beginRemoveRows(index(categoryIndex, 0), pos, pos);
+                items.removeAt(pos);
+                endRemoveRows();
+                break;
+            }
+            ++categoryIndex;
         }
-        ++categoryIndex;
+        delete tool;
+    } else {
+        // category
+        const std::optional<QString> category = categoryForIndex(modelIndex);
+        QTC_ASSERT(category, return);
+        QTC_ASSERT(m_tools.value(*category).isEmpty(), return);
+        beginRemoveRows(QModelIndex(), modelIndex.row(), modelIndex.row());
+        m_tools.remove(*category);
+        endRemoveRows();
     }
-    delete tool;
 }
 
 static void fillBaseEnvironmentComboBox(QComboBox *box)
@@ -438,13 +436,13 @@ private:
     void updateButtons(const QModelIndex &index);
     void updateCurrentItem();
     void addTool();
-    void removeTool();
+    void removeToolOrCategory();
     void addCategory();
     void updateEffectiveArguments();
     void editEnvironmentChanges();
     void updateEnvironmentLabel();
 
-    EnvironmentItems m_environment;
+    EnvironmentChanges m_environment;
     ExternalToolModel m_model;
 
     QTreeView *m_toolTree;
@@ -471,11 +469,16 @@ ExternalToolConfig::ExternalToolConfig()
     m_toolTree->header()->setVisible(false);
     m_toolTree->header()->setDefaultSectionSize(21);
 
+    setIgnoreForDirtyHook(m_toolTree);
+    connect(&m_model, &QAbstractItemModel::dataChanged, this, markSettingsDirty);
+    connect(&m_model, &QAbstractItemModel::rowsMoved, this, markSettingsDirty);
+    connect(&m_model, &QAbstractItemModel::rowsInserted, this, markSettingsDirty);
+    connect(&m_model, &QAbstractItemModel::rowsRemoved, this, markSettingsDirty);
+
     auto addButton = new QPushButton(Tr::tr("Add"));
     addButton->setToolTip(Tr::tr("Add tool."));
 
     m_removeButton = new QPushButton(Tr::tr("Remove"));
-    m_removeButton->setToolTip(Tr::tr("Remove tool."));
 
     m_revertButton = new QPushButton(Tr::tr("Reset"));
     m_revertButton->setToolTip(Tr::tr("Revert tool to default."));
@@ -532,7 +535,7 @@ ExternalToolConfig::ExternalToolConfig()
     m_errorOutputBehavior->addItem(Tr::tr("Show in General Messages"));
     m_errorOutputBehavior->addItem(Tr::tr("Replace Selection"));
 
-    m_environmentLabel = new QLabel(Tr::tr("No changes to apply."));
+    m_environmentLabel = new QLabel;
     m_environmentLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
     auto environmentButton = new QPushButton(Tr::tr("Change..."));
@@ -629,8 +632,8 @@ ExternalToolConfig::ExternalToolConfig()
 
     connect(m_revertButton, &QAbstractButton::clicked,
             this, &ExternalToolConfig::revertCurrentItem);
-    connect(m_removeButton, &QAbstractButton::clicked,
-            this, &ExternalToolConfig::removeTool);
+    connect(
+        m_removeButton, &QAbstractButton::clicked, this, &ExternalToolConfig::removeToolOrCategory);
 
     auto menu = new QMenu(addButton);
     addButton->setMenu(menu);
@@ -644,6 +647,11 @@ ExternalToolConfig::ExternalToolConfig()
     showInfoForItem(QModelIndex());
 
     setTools(ExternalToolManager::toolsByCategory());
+
+    updateEnvironmentLabel();
+
+    installMarkSettingsDirtyTriggerRecursively(this);
+    installMarkSettingsDirtyTrigger(m_inputText);
 }
 
 void ExternalToolConfig::setTools(const QMap<QString, QList<ExternalTool *> > &tools)
@@ -671,7 +679,9 @@ void ExternalToolConfig::updateButtons(const QModelIndex &index)
 {
     const ExternalTool *tool = ExternalToolModel::toolForIndex(index);
     if (!tool) {
-        m_removeButton->setEnabled(false);
+        const bool isCategory = m_model.categoryForIndex(index).has_value();
+        const bool isEmpty = m_model.rowCount(index) == 0;
+        m_removeButton->setEnabled(isCategory && isEmpty);
         m_revertButton->setEnabled(false);
         return;
     }
@@ -715,6 +725,8 @@ void ExternalToolConfig::updateItem(const QModelIndex &index)
 
 void ExternalToolConfig::showInfoForItem(const QModelIndex &index)
 {
+    DirtySettingsGuard suppressor;
+
     updateButtons(index);
     const ExternalTool *tool = ExternalToolModel::toolForIndex(index);
     if (!tool) {
@@ -727,6 +739,7 @@ void ExternalToolConfig::showInfoForItem(const QModelIndex &index)
         m_environment.clear();
         return;
     }
+
     m_infoWidget->setEnabled(true);
     m_description->setText(tool->description());
     m_executable->setFilePath(tool->executables().isEmpty() ? FilePath()
@@ -778,7 +791,8 @@ static FilePath getUserFilePath(const QString &proposalFileName)
 static QString idFromDisplayName(const QString &displayName)
 {
     QString id = displayName;
-    id.remove(QRegularExpression("&(?!&)"));
+    static const QRegularExpression regexp("&(?!&)");
+    id.remove(regexp);
     QChar *c = id.data();
     while (!c->isNull()) {
         if (!c->isLetterOrNumber())
@@ -906,11 +920,11 @@ void ExternalToolConfig::addTool()
     m_toolTree->edit(index);
 }
 
-void ExternalToolConfig::removeTool()
+void ExternalToolConfig::removeToolOrCategory()
 {
     QModelIndex currentIndex = m_toolTree->selectionModel()->currentIndex();
-    m_toolTree->selectionModel()->setCurrentIndex(QModelIndex(), QItemSelectionModel::Clear);
-    m_model.removeTool(currentIndex);
+    m_model.removeToolOrCategory(currentIndex);
+    updateCurrentItem();
 }
 
 void ExternalToolConfig::addCategory()
@@ -923,7 +937,12 @@ void ExternalToolConfig::addCategory()
 
 void ExternalToolConfig::updateEffectiveArguments()
 {
-    m_arguments->setToolTip(Utils::globalMacroExpander()->expandProcessArgs(m_arguments->text()));
+    const Result<QString> result = Utils::globalMacroExpander()->expandProcessArgs(
+        m_arguments->text());
+    if (result)
+        m_arguments->setToolTip(*result);
+    else
+        m_arguments->setToolTip(result.error());
 }
 
 void ExternalToolConfig::editEnvironmentChanges()
@@ -931,21 +950,21 @@ void ExternalToolConfig::editEnvironmentChanges()
     const QString placeholderText = HostOsInfo::isWindowsHost()
             ? Tr::tr("PATH=C:\\dev\\bin;${PATH}")
             : Tr::tr("PATH=/opt/bin:${PATH}");
-    const auto newItems = EnvironmentDialog::getEnvironmentItems(m_environmentLabel,
-                                                                 m_environment,
-                                                                 placeholderText);
+    const std::optional<EnvironmentChanges> newItems =
+            runEnvironmentItemsDialog(m_environmentLabel, m_environment, placeholderText);
     if (newItems) {
         m_environment = *newItems;
         updateEnvironmentLabel();
+        markSettingsDirty();
     }
 }
 
 void ExternalToolConfig::updateEnvironmentLabel()
 {
-    QString shortSummary = EnvironmentItem::toStringList(m_environment).join("; ");
+    QString shortSummary = m_environment.toShortSummary(globalMacroExpander(), true);
     QFontMetrics fm(m_environmentLabel->font());
     shortSummary = fm.elidedText(shortSummary, Qt::ElideRight, m_environmentLabel->width());
-    m_environmentLabel->setText(shortSummary.isEmpty() ? Tr::tr("No changes to apply.") : shortSummary);
+    m_environmentLabel->setText(shortSummary);
 }
 
 // ExternalToolSettings

@@ -6,13 +6,10 @@
 #include "gitsettings.h" // CommitType
 
 #include <utils/filepath.h>
+#include <utils/textcodec.h>
 
 #include <QStringList>
 #include <QPair>
-
-QT_BEGIN_NAMESPACE
-class QTextCodec;
-QT_END_NAMESPACE
 
 namespace Git::Internal {
 
@@ -20,7 +17,6 @@ namespace Git::Internal {
 class GitSubmitEditorPanelInfo
 {
 public:
-    void clear();
     Utils::FilePath repository;
     QString branch;
 };
@@ -34,15 +30,15 @@ enum PushAction {
 class GitSubmitEditorPanelData
 {
 public:
-    void clear();
     // Format as "John Doe <jdoe@foobar.com>"
     QString authorString() const;
 
     QString author;
     QString email;
-    bool bypassHooks;
-    PushAction pushAction;
-    bool signOff;
+    PushAction pushAction = NoPush;
+    bool bypassHooks = false;
+    bool signOff = false;
+    bool editMessage = false;
 };
 
 enum FileState {
@@ -72,7 +68,6 @@ public:
     // A pair of state string/file name ('modified', 'file.cpp').
     using StateFilePair = QPair<FileStates, QString>;
 
-    void clear();
     // Parse the files and the branch of panelInfo
     // from a git status output
     bool parseFilesFromStatus(const QString &output);
@@ -84,12 +79,13 @@ public:
     static QString stateDisplayName(const FileStates &state);
 
     CommitType commitType;
-    QString amendSHA1;
-    QTextCodec *commitEncoding = nullptr;
+    QString amendHash;
+    Utils::TextEncoding commitEncoding;
     GitSubmitEditorPanelInfo panelInfo;
     GitSubmitEditorPanelData panelData;
     bool enablePush = false;
     QChar commentChar;
+    QString commitTemplate;
 
     QList<StateFilePair> files;
 

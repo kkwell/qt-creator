@@ -5,6 +5,8 @@
 
 #include "extraencodingsettings.h"
 #include "fontsettings.h"
+#include "icodestylepreferences.h"
+#include "refactoringchanges.h"
 #include "storagesettings.h"
 #include "syntaxhighlighter.h"
 #include "tabsettings.h"
@@ -37,7 +39,6 @@
 #include <QFutureInterface>
 #include <QScrollBar>
 #include <QStringList>
-#include <QTextCodec>
 
 using namespace Core;
 using namespace Utils;
@@ -74,10 +75,11 @@ public:
 public:
     FilePath m_defaultPath;
     QString m_suggestedFileName;
-    TypingSettings m_typingSettings;
-    StorageSettings m_storageSettings;
+    TypingSettingsData m_typingSettings;
+    StorageSettingsData m_storageSettings;
+    ICodeStylePreferences *m_codeStylePreferences = nullptr;
     TabSettings m_tabSettings;
-    ExtraEncodingSettings m_extraEncodingSettings;
+    ExtraEncodingSettingsData m_extraEncodingSettings;
     FontSettings m_fontSettings;
     bool m_fontSettingsNeedsApply = false; // for applying font settings delayed till an editor becomes visible
     QTextDocument m_document;
@@ -101,6 +103,7 @@ public:
     Utils::Guard m_modificationChangedGuard;
 
     SyntaxHighlighter *m_highlighter = nullptr;
+    bool m_externalFoldingIndent = false;
 };
 
 MultiTextCursor TextDocumentPrivate::indentOrUnindent(const MultiTextCursor &cursors,
@@ -143,18 +146,27 @@ MultiTextCursor TextDocumentPrivate::indentOrUnindent(const MultiTextCursor &cur
                 cursor.removeSelectedText();
             } else {
                 for (QTextBlock block = startBlock; block != endBlock; block = block.next()) {
+                    QTC_ASSERT(block.isValid(), break);
                     const QString text = block.text();
-                    int indentPosition = tabSettings.lineIndentPosition(text);
-                    if (!doIndent && !indentPosition)
-                        indentPosition = TabSettings::firstNonSpace(text);
-                    int targetColumn
-                        = tabSettings.indentedColumn(tabSettings.columnAt(text, indentPosition),
-                                                     doIndent);
-                    cursor.setPosition(block.position() + indentPosition);
-                    cursor.insertText(tabSettings.indentationString(0, targetColumn, 0, block));
+                    const int fnsPos = tabSettings.firstNonSpace(text);
+                    const int fnsCol = tabSettings.columnAt(text, fnsPos);
+                    const int indentColumn = fnsCol / tabSettings.m_indentSize * tabSettings.m_indentSize;
+                    const int indentPosition = tabSettings.positionAtColumn(text, indentColumn);
+                    if (!doIndent && indentColumn == 0) {
+                        if (fnsPos == 0)
+                            continue;
+                        // Unindent line that has no indentation but leading spaces, just remove
+                        // everything from beginning of line until first non-space character
+                        cursor.setPosition(block.position());
+                        cursor.setPosition(block.position() + fnsPos, QTextCursor::KeepAnchor);
+                        cursor.removeSelectedText();
+                        continue;
+                    }
+                    const int targetColumn = tabSettings.indentedColumn(indentColumn, doIndent);
+                    const QString indentationString = tabSettings.indentationString(0, targetColumn, 0);
                     cursor.setPosition(block.position());
                     cursor.setPosition(block.position() + indentPosition, QTextCursor::KeepAnchor);
-                    cursor.removeSelectedText();
+                    cursor.insertText(indentationString);
                 }
                 // make sure that selection that begins in first column stays at first column
                 // even if we insert text at first column
@@ -182,7 +194,7 @@ MultiTextCursor TextDocumentPrivate::indentOrUnindent(const MultiTextCursor &cur
                                QTextCursor::KeepAnchor);
             cursor.removeSelectedText();
             cursor.insertText(
-                tabSettings.indentationString(startColumn, targetColumn, 0, startBlock));
+                tabSettings.indentationString(startColumn, targetColumn, 0));
         }
 
         cursor.endEditBlock();
@@ -270,16 +282,16 @@ QMap<FilePath, QString> TextDocument::openedTextDocumentContents()
     return workingCopy;
 }
 
-QMap<FilePath, QTextCodec *> TextDocument::openedTextDocumentEncodings()
+QMap<FilePath, TextEncoding> TextDocument::openedTextDocumentEncodings()
 {
-    QMap<FilePath, QTextCodec *> workingCopy;
+    QMap<FilePath, TextEncoding> workingCopy;
     const QList<IDocument *> documents = DocumentModel::openedDocuments();
     for (IDocument *document : documents) {
         auto textEditorDocument = qobject_cast<TextDocument *>(document);
         if (!textEditorDocument)
             continue;
         const FilePath fileName = textEditorDocument->filePath();
-        workingCopy[fileName] = const_cast<QTextCodec *>(textEditorDocument->codec());
+        workingCopy[fileName] = textEditorDocument->encoding();
     }
     return workingCopy;
 }
@@ -332,7 +344,7 @@ QString TextDocument::plainText() const
 
 QString TextDocument::textAt(int pos, int length) const
 {
-    return Utils::Text::textAt(QTextCursor(document()), pos, length);
+    return Utils::Text::textAt(document(), pos, length);
 }
 
 QChar TextDocument::characterAt(int pos) const
@@ -345,33 +357,33 @@ QString TextDocument::blockText(int blockNumber) const
     return document()->findBlockByNumber(blockNumber).text();
 }
 
-void TextDocument::setTypingSettings(const TypingSettings &typingSettings)
+void TextDocument::setTypingSettings(const TypingSettingsData &typingSettings)
 {
     d->m_typingSettings = typingSettings;
 }
 
-void TextDocument::setStorageSettings(const StorageSettings &storageSettings)
+void TextDocument::setStorageSettings(const StorageSettingsData &storageSettings)
 {
     d->m_storageSettings = storageSettings;
 }
 
-const TypingSettings &TextDocument::typingSettings() const
+const TypingSettingsData &TextDocument::typingSettings() const
 {
     return d->m_typingSettings;
 }
 
-const StorageSettings &TextDocument::storageSettings() const
+const StorageSettingsData &TextDocument::storageSettings() const
 {
     return d->m_storageSettings;
 }
 
-void TextDocument::setTabSettings(const TabSettings &newTabSettings)
+void TextDocument::setTabSettings(const TabSettings &tabSettings)
 {
-    if (newTabSettings == d->m_tabSettings)
-        return;
-    d->m_tabSettings = newTabSettings;
-
-    emit tabSettingsChanged();
+    if (const TabSettings candidate = tabSettings.autoDetect(document());
+        candidate != d->m_tabSettings) {
+        d->m_tabSettings = candidate;
+        emit tabSettingsChanged();
+    }
 }
 
 TabSettings TextDocument::tabSettings() const
@@ -383,35 +395,28 @@ void TextDocument::setFontSettings(const FontSettings &fontSettings)
 {
     if (fontSettings == d->m_fontSettings)
         return;
+    bool emitDocumentSizeChanged = fontSettings.lineSpacing() != d->m_fontSettings.lineSpacing();
     d->m_fontSettings = fontSettings;
     d->m_fontSettingsNeedsApply = true;
     emit fontSettingsChanged();
+    if (emitDocumentSizeChanged) {
+        auto documentLayout = qobject_cast<TextDocumentLayout*>(d->m_document.documentLayout());
+        QTC_ASSERT(documentLayout, return);
+        emit documentLayout->blockSizeChanged(document()->firstBlock());
+        documentLayout->emitDocumentSizeChanged();
+    }
 }
 
-QAction *TextDocument::createDiffAgainstCurrentFileAction(
-    QObject *parent, const std::function<Utils::FilePath()> &filePath)
+void TextDocument::setFoldingIndentExternallyProvided(bool ext)
 {
-    const auto diffAgainstCurrentFile = [filePath]() {
-        auto diffService = DiffService::instance();
-        auto textDocument = TextEditor::TextDocument::currentTextDocument();
-        const QString leftFilePath = textDocument ? textDocument->filePath().toString() : QString();
-        const QString rightFilePath = filePath().toString();
-        if (diffService && !leftFilePath.isEmpty() && !rightFilePath.isEmpty())
-            diffService->diffFiles(leftFilePath, rightFilePath);
-    };
-    auto diffAction = new QAction(Tr::tr("Diff Against Current File"), parent);
-    QObject::connect(diffAction, &QAction::triggered, parent, diffAgainstCurrentFile);
-    return diffAction;
+    d->m_externalFoldingIndent = ext;
+    if (d->m_highlighter)
+        d->m_highlighter->setIgnoreFolding(ext);
 }
 
-void TextDocument::insertSuggestion(std::unique_ptr<TextSuggestion> &&suggestion)
+bool TextDocument::isFoldingIndentExternallyProvided() const
 {
-    QTextCursor cursor(&d->m_document);
-    cursor.setPosition(suggestion->position());
-    const QTextBlock block = cursor.block();
-    TextDocumentLayout::userData(block)->insertSuggestion(std::move(suggestion));
-    TextDocumentLayout::updateSuggestionFormats(block, fontSettings());
-    updateLayout();
+    return d->m_externalFoldingIndent;
 }
 
 #ifdef WITH_TESTS
@@ -457,25 +462,54 @@ IAssistProvider *TextDocument::quickFixAssistProvider() const
     return d->m_quickFixProvider;
 }
 
+void TextDocument::setCodeStyle(ICodeStylePreferences *preferences)
+{
+    indenter()->setCodeStylePreferences(preferences);
+    if (d->m_codeStylePreferences) {
+        disconnect(d->m_codeStylePreferences, &ICodeStylePreferences::currentTabSettingsChanged,
+                   this, &TextDocument::setTabSettings);
+        disconnect(d->m_codeStylePreferences, &ICodeStylePreferences::currentValueChanged,
+                   this, &TextDocument::slotCodeStyleSettingsChanged);
+    }
+    d->m_codeStylePreferences = preferences;
+    if (d->m_codeStylePreferences) {
+        connect(d->m_codeStylePreferences, &ICodeStylePreferences::currentTabSettingsChanged,
+                this, &TextDocument::setTabSettings);
+        connect(d->m_codeStylePreferences, &ICodeStylePreferences::currentValueChanged,
+                this, &TextDocument::slotCodeStyleSettingsChanged);
+        setTabSettings(d->m_codeStylePreferences->currentTabSettings());
+        slotCodeStyleSettingsChanged();
+    }
+}
+
+ICodeStylePreferences *TextDocument::codeStyle() const
+{
+    return d->m_codeStylePreferences;
+}
+
 void TextDocument::applyFontSettings()
 {
     d->m_fontSettingsNeedsApply = false;
     QTextBlock block = document()->firstBlock();
     while (block.isValid()) {
-        TextDocumentLayout::updateSuggestionFormats(block, fontSettings());
+        TextBlockUserData::updateSuggestionFormats(block, fontSettings());
         block = block.next();
     }
     updateLayout();
-    if (d->m_highlighter)
+    if (d->m_highlighter) {
         d->m_highlighter->setFontSettings(d->m_fontSettings);
+        d->m_highlighter->scheduleRehighlight();
+    }
 }
+
+void TextDocument::slotCodeStyleSettingsChanged() { }
 
 const FontSettings &TextDocument::fontSettings() const
 {
     return d->m_fontSettings;
 }
 
-void TextDocument::setExtraEncodingSettings(const ExtraEncodingSettings &extraEncodingSettings)
+void TextDocument::setExtraEncodingSettings(const ExtraEncodingSettingsData &extraEncodingSettings)
 {
     d->m_extraEncodingSettings = extraEncodingSettings;
 }
@@ -505,9 +539,20 @@ Utils::MultiTextCursor TextDocument::unindent(const Utils::MultiTextCursor &curs
     return d->indentOrUnindent(cursor, false, tabSettings());
 }
 
+Formatter *TextDocument::formatter() const
+{
+    return d->m_formatter.get();
+}
+
 void TextDocument::setFormatter(Formatter *formatter)
 {
     d->m_formatter.reset(formatter);
+}
+
+void TextDocument::setFormatterMode(Formatter::FormatMode mode)
+{
+    if (d->m_formatter)
+        d->m_formatter->setMode(mode);
 }
 
 void TextDocument::autoFormat(const QTextCursor &cursor)
@@ -515,13 +560,9 @@ void TextDocument::autoFormat(const QTextCursor &cursor)
     using namespace Utils::Text;
     if (!d->m_formatter)
         return;
-    if (QFutureWatcher<ChangeSet> *watcher = d->m_formatter->format(cursor, tabSettings())) {
-        connect(watcher, &QFutureWatcher<ChangeSet>::finished, this, [this, watcher]() {
-            if (!watcher->isCanceled())
-                applyChangeSet(watcher->result());
-            delete watcher;
-        });
-    }
+    d->m_formatter->format(cursor, tabSettings(), [this](const ChangeSet &result) {
+        applyChangeSet(result);
+    });
 }
 
 bool TextDocument::applyChangeSet(const ChangeSet &changeSet)
@@ -531,7 +572,7 @@ bool TextDocument::applyChangeSet(const ChangeSet &changeSet)
     return PlainRefactoringFileFactory().file(filePath())->apply(changeSet);
 }
 
-const ExtraEncodingSettings &TextDocument::extraEncodingSettings() const
+const ExtraEncodingSettingsData &TextDocument::extraEncodingSettings() const
 {
     return d->m_extraEncodingSettings;
 }
@@ -539,11 +580,8 @@ const ExtraEncodingSettings &TextDocument::extraEncodingSettings() const
 void TextDocument::setIndenter(Indenter *indenter)
 {
     // clear out existing code formatter data
-    for (QTextBlock it = document()->begin(); it.isValid(); it = it.next()) {
-        TextBlockUserData *userData = TextDocumentLayout::textUserData(it);
-        if (userData)
-            userData->setCodeFormatterData(nullptr);
-    }
+    for (QTextBlock it = document()->begin(); it.isValid(); it = it.next())
+        TextBlockUserData::setCodeFormatterData(it, nullptr);
     d->m_indenter.reset(indenter);
 }
 
@@ -584,12 +622,11 @@ QTextDocument *TextDocument::document() const
 
 /*!
  * Saves the document to the file specified by \a fileName. If errors occur,
- * \a errorString contains their cause.
- * \a autoSave returns whether this function was called by the automatic save routine.
- * If \a autoSave is true, the cursor will be restored and some signals suppressed
+ * the return value will be Result::Error that contains their cause.
+ * If \a option is \c SaveOption::AutoSave, the cursor will be restored and some signals suppressed
  * and we do not clean up the text file (cleanWhitespace(), ensureFinalNewLine()).
  */
-bool TextDocument::saveImpl(QString *errorString, const FilePath &filePath, bool autoSave)
+Result<> TextDocument::saveImpl(const FilePath &filePath, SaveOption option)
 {
     QTextCursor cursor(&d->m_document);
 
@@ -615,7 +652,7 @@ bool TextDocument::saveImpl(QString *errorString, const FilePath &filePath, bool
         }
     }
 
-    if (!autoSave) {
+    if (option != SaveOption::AutoSave) {
         cursor.beginEditBlock();
         cursor.movePosition(QTextCursor::Start);
 
@@ -630,24 +667,24 @@ bool TextDocument::saveImpl(QString *errorString, const FilePath &filePath, bool
     }
 
     // check if UTF8-BOM has to be added or removed
-    Utils::TextFileFormat saveFormat = format();
-    if (saveFormat.codec->name() == "UTF-8" && supportsUtf8Bom()) {
+    TextFileFormat saveFormat = format();
+    if (saveFormat.encoding().isUtf8() && supportsUtf8Bom()) {
         switch (d->m_extraEncodingSettings.m_utf8BomSetting) {
-        case ExtraEncodingSettings::AlwaysAdd:
+        case ExtraEncodingSettingsData::AlwaysAdd:
             saveFormat.hasUtf8Bom = true;
             break;
-        case ExtraEncodingSettings::OnlyKeep:
+        case ExtraEncodingSettingsData::OnlyKeep:
             break;
-        case ExtraEncodingSettings::AlwaysDelete:
+        case ExtraEncodingSettingsData::AlwaysDelete:
             saveFormat.hasUtf8Bom = false;
             break;
         }
     }
 
-    const bool ok = write(filePath, saveFormat, plainText(), errorString);
+    const Result<> res = write(filePath, saveFormat, plainText());
 
     // restore text cursor and scroll bar positions
-    if (autoSave && undos < d->m_document.availableUndoSteps()) {
+    if (option == SaveOption::AutoSave && undos < d->m_document.availableUndoSteps()) {
         d->m_document.undo();
         if (editorWidget) {
             QTextCursor cur = editorWidget->textCursor();
@@ -659,17 +696,18 @@ bool TextDocument::saveImpl(QString *errorString, const FilePath &filePath, bool
         }
     }
 
-    if (!ok)
-        return false;
+    if (!res)
+        return res;
+
     d->m_autoSaveRevision = d->m_document.revision();
-    if (autoSave)
-        return true;
+    if (option == SaveOption::AutoSave)
+        return ResultOk;
 
     // inform about the new filename
     d->m_document.setModified(false); // also triggers update of the block revisions
     setFilePath(filePath.absoluteFilePath());
     emit changed();
-    return true;
+    return ResultOk;
 }
 
 QByteArray TextDocument::contents() const
@@ -677,7 +715,7 @@ QByteArray TextDocument::contents() const
     return plainText().toUtf8();
 }
 
-bool TextDocument::setContents(const QByteArray &contents)
+Result<> TextDocument::setContents(const QByteArray &contents)
 {
     return setPlainText(QString::fromUtf8(contents));
 }
@@ -695,9 +733,11 @@ bool TextDocument::shouldAutoSave() const
 
 void TextDocument::setFilePath(const Utils::FilePath &newName)
 {
-    if (newName == filePath())
-        return;
-    IDocument::setFilePath(newName.absoluteFilePath().cleanPath());
+    if (const FilePath newPath = newName.absoluteFilePath().cleanPath(); newPath != filePath()) {
+        if (d->m_indenter)
+            d->m_indenter->setFileName(newPath);
+        IDocument::setFilePath(newPath);
+    }
 }
 
 IDocument::ReloadBehavior TextDocument::reloadBehavior(ChangeTrigger state, ChangeType type) const
@@ -712,31 +752,26 @@ bool TextDocument::isModified() const
     return d->m_document.isModified();
 }
 
-Core::IDocument::OpenResult TextDocument::open(QString *errorString,
-                                               const Utils::FilePath &filePath,
-                                               const Utils::FilePath &realFilePath)
+Result<> TextDocument::open(const FilePath &filePath, const FilePath &realFilePath)
 {
     emit aboutToOpen(filePath, realFilePath);
-    OpenResult success = openImpl(errorString, filePath, realFilePath, /*reload =*/ false);
-    if (success == OpenResult::Success) {
+    const Result<> result = openImpl(filePath, realFilePath, /*reload =*/ false);
+    if (result) {
         setMimeType(Utils::mimeTypeForFile(filePath, MimeMatchMode::MatchDefaultAndRemote).name());
+        setTabSettings(d->m_tabSettings);
         emit openFinishedSuccessfully();
     }
-    return success;
+    return result;
 }
 
-Core::IDocument::OpenResult TextDocument::openImpl(QString *errorString,
-                                                   const Utils::FilePath &filePath,
-                                                   const Utils::FilePath &realFilePath,
-                                                   bool reload)
+Result<> TextDocument::openImpl(const FilePath &filePath,
+                                const FilePath &realFilePath,
+                                bool reload)
 {
-    QStringList content;
-
-    ReadResult readResult = Utils::TextFileFormat::ReadIOError;
+    ReadResult readResult = TextFileFormat::ReadIOError;
 
     if (!filePath.isEmpty()) {
-        readResult = read(realFilePath, &content, errorString);
-        const int chunks = content.size();
+        readResult = read(realFilePath);
 
         // Don't call setUndoRedoEnabled(true) when reload is true and filenames are different,
         // since it will reset the undo's clear index
@@ -752,17 +787,20 @@ Core::IDocument::OpenResult TextDocument::openImpl(QString *errorString,
             d->m_document.clear();
         }
 
-        if (chunks == 1) {
-            c.insertText(content.at(0));
-        } else if (chunks > 1) {
+        const int textChunkSize = 65536;
+        if (readResult.content.size() <= textChunkSize) {
+            c.insertText(readResult.content);
+        } else {
+            const int chunks = readResult.content.size() / textChunkSize;
             QFutureInterface<void> interface;
             interface.setProgressRange(0, chunks);
             ProgressManager::addTask(interface.future(), Tr::tr("Opening File"),
                                      Constants::TASK_OPEN_FILE);
             interface.reportStarted();
 
-            for (int i = 0; i < chunks; ++i) {
-                c.insertText(content.at(i));
+            QStringView view(readResult.content);
+            for (int i = 0; !view.isEmpty(); ++i, view = view.mid(textChunkSize)) {
+                c.insertText(view.left(textChunkSize).toString());
                 interface.setProgressValue(i + 1);
                 QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
             }
@@ -779,30 +817,30 @@ Core::IDocument::OpenResult TextDocument::openImpl(QString *errorString,
 
         auto documentLayout =
             qobject_cast<TextDocumentLayout*>(d->m_document.documentLayout());
-        QTC_ASSERT(documentLayout, return OpenResult::CannotHandle);
+        QTC_ASSERT(documentLayout, return ResultError(ResultAssert));
         documentLayout->lastSaveRevision = d->m_autoSaveRevision = d->m_document.revision();
         d->updateRevisions();
         d->m_document.setModified(filePath != realFilePath);
         setFilePath(filePath);
     }
-    if (readResult == Utils::TextFileFormat::ReadIOError)
-        return OpenResult::ReadError;
-    return OpenResult::Success;
+    if (readResult.code == TextFileFormat::ReadIOError)
+        return ResultError(readResult.error);
+    return ResultOk;
 }
 
-bool TextDocument::reload(QString *errorString, QTextCodec *codec)
+Result<> TextDocument::reload(const TextEncoding &encoding)
 {
-    QTC_ASSERT(codec, return false);
-    setCodec(codec);
-    return reload(errorString);
+    QTC_ASSERT(encoding.isValid(), return ResultError("No encoding given"));
+    setEncoding(encoding);
+    return reload();
 }
 
-bool TextDocument::reload(QString *errorString)
+Result<> TextDocument::reload()
 {
-    return reload(errorString, filePath());
+    return reload(filePath());
 }
 
-bool TextDocument::reload(QString *errorString, const FilePath &realFilePath)
+Result<> TextDocument::reload(const FilePath &realFilePath)
 {
     emit aboutToReload();
     auto documentLayout =
@@ -810,57 +848,58 @@ bool TextDocument::reload(QString *errorString, const FilePath &realFilePath)
     if (documentLayout)
         documentLayout->documentAboutToReload(this); // removes text marks non-permanently
 
-    bool success = openImpl(errorString, filePath(), realFilePath, /*reload =*/true)
-                   == OpenResult::Success;
+    const Result<> result = openImpl(filePath(), realFilePath, /*reload =*/true);
 
     if (documentLayout)
         documentLayout->documentReloaded(this); // re-adds text marks
-    emit reloadFinished(success);
-    return success;
+    emit reloadFinished(result.has_value());
+
+    return result;
 }
 
-bool TextDocument::setPlainText(const QString &text)
+Result<> TextDocument::setPlainText(const QString &text)
 {
     if (text.size() > EditorManager::maxTextFileSize()) {
         document()->setPlainText(TextEditorWidget::msgTextTooLarge(text.size()));
         d->resetRevisions();
         document()->setModified(false);
-        return false;
+        return ResultError(TextEditorWidget::msgTextTooLarge(text.size()));
     }
     document()->setPlainText(text);
     d->resetRevisions();
     document()->setModified(false);
-    return true;
+    return ResultOk;
 }
 
-bool TextDocument::reload(QString *errorString, ReloadFlag flag, ChangeType type)
+Result<> TextDocument::reload(ReloadFlag flag, ChangeType type)
 {
     if (flag == FlagIgnore) {
         if (type != TypeContents)
-            return true;
+            return ResultOk;
 
         const bool wasModified = document()->isModified();
         {
-            Utils::GuardLocker locker(d->m_modificationChangedGuard);
+            GuardLocker locker(d->m_modificationChangedGuard);
             // hack to ensure we clean the clear state in QTextDocument
             document()->setModified(false);
             document()->setModified(true);
         }
         if (!wasModified)
             modificationChanged(true);
-        return true;
+        return ResultOk;
     }
-    return reload(errorString);
+    return reload();
 }
 
 void TextDocument::resetSyntaxHighlighter(const std::function<SyntaxHighlighter *()> &creator)
 {
-    SyntaxHighlighter *highlighter = creator();
-    highlighter->setParent(this);
-    highlighter->setDocument(this->document());
-    highlighter->setFontSettings(TextEditorSettings::fontSettings());
-    highlighter->setMimeType(mimeType());
-    d->m_highlighter = highlighter;
+    delete d->m_highlighter;
+    d->m_highlighter = creator();
+    d->m_highlighter->setParent(this);
+    d->m_highlighter->setDocument(this->document());
+    d->m_highlighter->setFontSettings(TextEditorSettings::fontSettings());
+    d->m_highlighter->setMimeType(mimeType());
+    d->m_highlighter->setIgnoreFolding(d->m_externalFoldingIndent);
 }
 
 SyntaxHighlighter *TextDocument::syntaxHighlighter() const
@@ -886,8 +925,6 @@ void TextDocument::cleanWhitespace(const QTextCursor &cursor)
 void TextDocument::cleanWhitespace(QTextCursor &cursor, bool inEntireDocument,
                                    bool cleanIndentation)
 {
-    const bool removeTrailingWhitespace = d->m_storageSettings.removeTrailingWhitespace(filePath().fileName());
-
     auto documentLayout = qobject_cast<TextDocumentLayout*>(d->m_document.documentLayout());
     Q_ASSERT(cursor.visualNavigation() == false);
 
@@ -896,7 +933,7 @@ void TextDocument::cleanWhitespace(QTextCursor &cursor, bool inEntireDocument,
     if (cursor.hasSelection())
         end = d->m_document.findBlock(cursor.selectionEnd()-1).next();
 
-    QVector<QTextBlock> blocks;
+    QList<QTextBlock> blocks;
     while (block.isValid() && block != end) {
         if (inEntireDocument || block.revision() != documentLayout->lastSaveRevision) {
             blocks.append(block);
@@ -910,24 +947,24 @@ void TextDocument::cleanWhitespace(QTextCursor &cursor, bool inEntireDocument,
     const IndentationForBlock &indentations
         = d->m_indenter->indentationForBlocks(blocks, currentTabSettings);
 
-    for (QTextBlock block : std::as_const(blocks)) {
+    const bool cleanTrailingWhitespace = d->m_storageSettings.removeTrailingWhitespace(filePath().fileName());
+    for (const QTextBlock &block : std::as_const(blocks)) {
         QString blockText = block.text();
 
-        if (removeTrailingWhitespace)
-            TabSettings::removeTrailingWhitespace(cursor, block);
+        if (cleanTrailingWhitespace)
+            removeTrailingWhitespace(block);
 
         const int indent = indentations[block.blockNumber()];
         if (cleanIndentation && !currentTabSettings.isIndentationClean(block, indent)) {
             cursor.setPosition(block.position());
             const int firstNonSpace = TabSettings::firstNonSpace(blockText);
-            if (firstNonSpace == blockText.length()) {
+            if (firstNonSpace == blockText.size()) {
                 cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
                 cursor.removeSelectedText();
             } else {
                 int column = currentTabSettings.columnAt(blockText, firstNonSpace);
                 cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor, firstNonSpace);
-                QString indentationString = currentTabSettings.indentationString(0, column, column - indent, block);
-                cursor.insertText(indentationString);
+                cursor.insertText(currentTabSettings.indentationString(0, column, column - indent));
             }
         }
     }
@@ -957,6 +994,11 @@ void TextDocument::modificationChanged(bool modified)
     if (!modified)
         d->updateRevisions();
     emit changed();
+}
+
+void TextDocument::removeTrailingWhitespace(const QTextBlock &block)
+{
+    TabSettings::removeTrailingWhitespace(block);
 }
 
 void TextDocument::updateLayout() const
@@ -989,7 +1031,7 @@ bool TextDocument::addMark(TextMark *mark)
     QTextBlock block = d->m_document.findBlockByNumber(blockNumber);
 
     if (block.isValid()) {
-        TextBlockUserData *userData = TextDocumentLayout::userData(block);
+        TextBlockUserData *userData = TextBlockUserData::userData(block);
         userData->addMark(mark);
         d->m_marksCache.append(mark);
         mark->updateLineNumber(blockNumber + 1);
@@ -1021,7 +1063,7 @@ TextMarks TextDocument::marksAt(int line) const
     QTextBlock block = d->m_document.findBlockByNumber(blockNumber);
 
     if (block.isValid()) {
-        if (TextBlockUserData *userData = TextDocumentLayout::textUserData(block))
+        if (TextBlockUserData *userData = TextBlockUserData::textUserData(block))
             return userData->marks();
     }
     return TextMarks();
@@ -1031,23 +1073,16 @@ void TextDocument::removeMarkFromMarksCache(TextMark *mark)
 {
     auto documentLayout = qobject_cast<TextDocumentLayout*>(d->m_document.documentLayout());
     QTC_ASSERT(documentLayout, return);
-    d->m_marksCache.removeAll(mark);
-
-    auto scheduleLayoutUpdate = [documentLayout](){
-        // make sure all destructors that may directly or indirectly call this function are
-        // completed before updating.
-        QMetaObject::invokeMethod(documentLayout, &QPlainTextDocumentLayout::requestUpdate,
-                                  Qt::QueuedConnection);
-    };
+    d->m_marksCache.removeOne(mark);
 
     if (mark->isLocationMarker()) {
         documentLayout->hasLocationMarker = false;
-        scheduleLayoutUpdate();
+        documentLayout->scheduleUpdate();
     }
 
     if (d->m_marksCache.isEmpty()) {
         documentLayout->hasMarks = false;
-        scheduleLayoutUpdate();
+        documentLayout->scheduleUpdate();
         return;
     }
 
@@ -1116,7 +1151,7 @@ void TextDocument::updateMark(TextMark *mark)
 {
     QTextBlock block = d->m_document.findBlockByNumber(mark->lineNumber() - 1);
     if (block.isValid()) {
-        TextBlockUserData *userData = TextDocumentLayout::userData(block);
+        TextBlockUserData *userData = TextBlockUserData::userData(block);
         // re-evaluate priority
         userData->removeMark(mark);
         userData->addMark(mark);
@@ -1127,7 +1162,7 @@ void TextDocument::updateMark(TextMark *mark)
 void TextDocument::moveMark(TextMark *mark, int previousLine)
 {
     QTextBlock block = d->m_document.findBlockByNumber(previousLine - 1);
-    if (TextBlockUserData *data = TextDocumentLayout::textUserData(block)) {
+    if (TextBlockUserData *data = TextBlockUserData::textUserData(block)) {
         if (!data->removeMark(mark))
             qDebug() << "Could not find mark" << mark << "on line" << previousLine;
     }

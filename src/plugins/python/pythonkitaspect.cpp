@@ -8,20 +8,45 @@
 #include "pythontr.h"
 #include "pythonutils.h"
 
+#include <projectexplorer/kit.h>
+#include <projectexplorer/kitaspect.h>
 #include <projectexplorer/kitmanager.h>
 
+#include <utils/algorithm.h>
+#include <utils/async.h>
 #include <utils/guard.h>
 #include <utils/layoutbuilder.h>
 #include <utils/qtcprocess.h>
 
 #include <QComboBox>
+#include <QSortFilterProxyModel>
 
 using namespace ProjectExplorer;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace Python {
+namespace Internal {
 
-using namespace Internal;
+class PythonAspectModel : public QSortFilterProxyModel
+{
+public:
+    using QSortFilterProxyModel::QSortFilterProxyModel;
+
+    void reset()
+    {
+        if (QAbstractItemModel * const model = sourceModel()) {
+            setSourceModel(nullptr);
+            model->deleteLater();
+        }
+        InterpreterModel * const model = new InterpreterModel([](const QString &id) {
+            return id == PythonSettings::defaultInterpreter().id;
+        });
+        model->setParent(this);
+        model->setAllData(model->allData() << Interpreter("none", {}, {}));
+        setSourceModel(model);
+    }
+};
 
 class PythonKitAspectImpl final : public KitAspect
 {
@@ -31,57 +56,29 @@ public:
     {
         setManagingPage(Constants::C_PYTHONOPTIONS_PAGE_ID);
 
-        m_comboBox = createSubWidget<QComboBox>();
-        m_comboBox->setSizePolicy(QSizePolicy::Ignored, m_comboBox->sizePolicy().verticalPolicy());
+        const auto model = new PythonAspectModel(this);
+        auto getter = [](const Kit &k) -> QVariant {
+            if (const auto interpreter = PythonKitAspect::python(&k))
+                return interpreter->id;
+            return {};
+        };
+        auto setter = [](Kit &k, const QVariant &v) {
+            PythonKitAspect::setPython(&k, v.toString());
+        };
+        auto resetModel = [model] { model->reset(); };
+        addListAspectSpec({model, std::move(getter), std::move(setter), std::move(resetModel)});
 
-        refresh();
-        m_comboBox->setToolTip(kitInfo->description());
-        connect(m_comboBox, &QComboBox::currentIndexChanged, this, [this] {
-            if (m_ignoreChanges.isLocked())
-                return;
-
-            PythonKitAspect::setPython(m_kit, m_comboBox->currentData().toString());
-        });
         connect(PythonSettings::instance(),
                 &PythonSettings::interpretersChanged,
                 this,
                 &PythonKitAspectImpl::refresh);
     }
 
-    void makeReadOnly() override
-    {
-        m_comboBox->setEnabled(false);
-    }
-
     void refresh() override
     {
-        const GuardLocker locker(m_ignoreChanges);
-        m_comboBox->clear();
-        m_comboBox->addItem(Tr::tr("None"), QString());
-
-        for (const Interpreter &interpreter : PythonSettings::interpreters())
-            m_comboBox->addItem(interpreter.name, interpreter.id);
-
-        updateComboBox(PythonKitAspect::python(m_kit));
+        KitAspect::refresh();
         emit changed(); // we need to emit changed here to update changes in the macro expander
     }
-
-    void updateComboBox(const std::optional<Interpreter> &python)
-    {
-        const int index = python ? std::max(m_comboBox->findData(python->id), 0) : 0;
-        m_comboBox->setCurrentIndex(index);
-    }
-
-protected:
-    void addToInnerLayout(Layouting::Layout &parent) override
-    {
-        addMutableAction(m_comboBox);
-        parent.addItem(m_comboBox);
-    }
-
-private:
-    Guard m_ignoreChanges;
-    QComboBox *m_comboBox = nullptr;
 };
 
 class PythonKitAspectFactory : public KitAspectFactory
@@ -102,10 +99,10 @@ public:
         if (!python)
             return result;
         const FilePath path = python->command;
-        if (path.needsDevice())
+        if (!path.isLocal())
             return result;
         if (path.isEmpty()) {
-            result << BuildSystemTask(Task::Error, Tr::tr("No Python setup."));
+            result << BuildSystemTask(Task::Error, Tr::tr("No Python set up."));
         } else if (!path.exists()) {
             result << BuildSystemTask(Task::Error,
                                       Tr::tr("Python \"%1\" not found.").arg(path.toUserOutput()));
@@ -114,7 +111,11 @@ public:
                                       Tr::tr("Python \"%1\" is not executable.")
                                           .arg(path.toUserOutput()));
         } else {
-            if (!pipIsUsable(path)) {
+            auto changedHandler = [id = k->id()](const bool) {
+                if (auto k = KitManager::kit(id))
+                    k->validate();
+            };
+            if (!pipIsUsable(path, changedHandler)) {
                 result << BuildSystemTask(
                     Task::Warning,
                     Tr::tr("Python \"%1\" does not contain a usable pip. pip is needed to install "
@@ -124,7 +125,7 @@ public:
                            "ensure that pip is installed for that Python.")
                         .arg(path.toUserOutput()));
             }
-            if (!venvIsUsable(path)) {
+            if (!venvIsUsable(path, changedHandler)) {
                 result << BuildSystemTask(
                     Task::Warning,
                     Tr::tr(
@@ -173,7 +174,34 @@ public:
                                        return {};
                                    });
     }
+
+    std::optional<ExecutableItem> autoDetect(
+        Kit *kit,
+        const Utils::FilePaths &searchPaths,
+        const DetectionSource &detectionSource,
+        const LogCallback &logCallback) const override
+    {
+        return PythonSettings::autoDetect(kit, searchPaths, detectionSource, logCallback);
+    }
+
+    std::optional<ExecutableItem> removeAutoDetected(
+        const QString &detectionSource, const LogCallback &logCallback) const override
+    {
+        return QSyncTask([detectionSource, logCallback] {
+            PythonSettings::removeDetectedPython(detectionSource, logCallback);
+        });
+    }
+
+    void listAutoDetected(
+        const QString &detectionSource, const LogCallback &logCallback) const override
+    {
+        PythonSettings::listDetectedPython(detectionSource, logCallback);
+    }
 };
+
+} // Internal
+
+using namespace Internal;
 
 std::optional<Interpreter> PythonKitAspect::python(const Kit *kit)
 {

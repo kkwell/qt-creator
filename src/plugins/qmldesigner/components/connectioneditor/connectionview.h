@@ -21,9 +21,7 @@ class ConnectionViewWidget;
 class BindingModel;
 class ConnectionModel;
 class DynamicPropertiesModel;
-class BackendModel;
 class ConnectionViewQuickWidget;
-class PropertyTreeModel;
 class PropertyListProxyModel;
 
 class ConnectionView : public AbstractView
@@ -52,10 +50,11 @@ public:
     void bindingPropertiesChanged(const QList<BindingProperty>& propertyList, PropertyChangeFlags propertyChange) override;
     void signalHandlerPropertiesChanged(const QVector<SignalHandlerProperty>& propertyList, PropertyChangeFlags propertyChange) override;
 
+    void signalDeclarationPropertiesChanged(const QVector<SignalDeclarationProperty> &propertyList,
+                                            PropertyChangeFlags propertyChange) override;
+
     void selectedNodesChanged(const QList<ModelNode> &selectedNodeList,
                               const QList<ModelNode> &lastSelectedNodeList) override;
-
-    void importsChanged(const Imports &addedImports, const Imports &removedImports) override;
 
     void currentStateChanged(const ModelNode &node) override;
 
@@ -67,7 +66,6 @@ public:
 
     ConnectionModel *connectionModel() const;
     BindingModel *bindingModel() const;
-    BackendModel *backendModel() const;
 
     int currentIndex() const;
     void setCurrentIndex(int i);

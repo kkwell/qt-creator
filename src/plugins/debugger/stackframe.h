@@ -3,18 +3,20 @@
 
 #pragma once
 
+#include "debugger_global.h"
 #include "debuggerconstants.h"
 
 #include <utils/filepath.h>
 
 #include <QMetaType>
 
+namespace Debugger { class DebuggerRunParameters; }
+
 namespace Debugger::Internal {
 
-class DebuggerRunParameters;
 class GdbMi;
 
-class StackFrame
+class DEBUGGER_EXPORT StackFrame
 {
 public:
     StackFrame();

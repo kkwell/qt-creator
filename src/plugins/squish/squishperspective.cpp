@@ -7,15 +7,17 @@
 #include "squishtr.h"
 #include "squishxmloutputhandler.h"
 
-#include <debugger/analyzer/analyzermanager.h>
 #include <debugger/debuggericons.h>
 #include <coreplugin/icore.h>
+
+#include <projectexplorer/projectexplorericons.h>
 
 #include <utils/itemviews.h>
 #include <utils/qtcassert.h>
 #include <utils/theme/theme.h>
 #include <utils/utilsicons.h>
 
+#include <QAction>
 #include <QDialog>
 #include <QLabel>
 #include <QProgressBar>
@@ -35,7 +37,7 @@ static QIcon iconForType(IconType type)
 
     switch (type) {
     case IconType::StopRecord:
-        return Debugger::Icons::RECORD_ON.icon();
+        return ProjectExplorer::Icons::RECORD_ON.icon();
     case IconType::Play:
         return Debugger::Icons::DEBUG_CONTINUE_SMALL_TOOLBAR.icon();
     case IconType::Pause:
@@ -253,7 +255,7 @@ void SquishControlBar::updateProgressText(const QString &label)
 }
 
 SquishPerspective::SquishPerspective()
-    : Utils::Perspective("Squish.Perspective", Tr::tr("Squish"))
+    : Core::Perspective("Squish.Perspective", Tr::tr("Squish"))
 {
     Core::ICore::addPreCloseListener([this]{
         destroyControlBar();
@@ -285,7 +287,8 @@ void SquishPerspective::initPerspective()
     m_stepOutAction->setIcon(iconForType(IconType::StepReturn));
     m_stepOutAction->setToolTip(Tr::tr("Step Out"));
     m_stepOutAction->setEnabled(false);
-    m_stopAction = Debugger::createStopAction();
+    m_stopAction = new QAction(Tr::tr("Stop"), this);
+    m_stopAction->setIcon(Utils::Icons::STOP_SMALL_TOOLBAR.icon());
     m_stopAction->setEnabled(false);
     m_inspectAction = new QAction(this);
     m_inspectAction->setIcon(iconForType(IconType::Inspect));

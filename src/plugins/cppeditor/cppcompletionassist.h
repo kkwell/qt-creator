@@ -19,9 +19,10 @@
 #include <texteditor/codeassist/iassistprocessor.h>
 #include <texteditor/snippets/snippetassistcollector.h>
 
-
 #include <QStringList>
 #include <QVariant>
+
+#include <unordered_set>
 
 namespace CPlusPlus {
 class LookupItem;
@@ -56,8 +57,6 @@ using CppAssistProposalModelPtr = QSharedPointer<CppAssistProposalModel>;
 
 class InternalCompletionAssistProvider : public CppCompletionAssistProvider
 {
-    Q_OBJECT
-
 public:
     TextEditor::IAssistProcessor *createProcessor(const TextEditor::AssistInterface *) const override;
 
@@ -79,7 +78,7 @@ public:
 private:
     TextEditor::IAssistProposal *createContentProposal();
     TextEditor::IAssistProposal *createHintProposal(QList<CPlusPlus::Function *> symbols) const;
-    bool accepts() const;
+    bool accepts();
 
     int startOfOperator(int positionInDocument, unsigned *kind, bool wantFunctionCall) const;
     int findStartOfName(int pos = -1) const;
@@ -93,7 +92,7 @@ private:
 
     void completeObjCMsgSend(CPlusPlus::ClassOrNamespace *binding, bool staticClassAccess);
     bool completeInclude(const QTextCursor &cursor);
-    void completeInclude(const QString &realPath, const QStringList &suffixes);
+    void completeInclude(const Utils::FilePath &realPath, const QStringList &suffixes);
     void completePreprocessor();
     bool completeConstructorOrFunction(const QList<CPlusPlus::LookupItem> &results,
                                        int endOfExpression,
@@ -121,6 +120,8 @@ private:
                            const QVariant &data = QVariant());
     void addCompletionItem(CPlusPlus::Symbol *symbol,
                            int order = 0);
+    bool isKnownCompletion(const QString &text);
+
     void addKeywords();
     void addMacros(const Utils::FilePath &filePath, const CPlusPlus::Snapshot &snapshot);
     void addMacros_helper(const CPlusPlus::Snapshot &snapshot,
@@ -137,6 +138,7 @@ private:
     QScopedPointer<const CppCompletionAssistInterface> m_interface;
     const CppCompletionAssistInterface *cppInterface() const;
     CppAssistProposalModelPtr m_model;
+    std::unordered_set<QString> m_knownCompletions;
 };
 
 class CppCompletionAssistInterface : public TextEditor::AssistInterface

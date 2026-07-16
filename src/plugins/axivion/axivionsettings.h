@@ -8,11 +8,15 @@
 
 #include <QtGlobal>
 
+#include <QtTaskTree/QSingleTaskTreeRunner>
+
 QT_BEGIN_NAMESPACE
 class QJsonObject;
 QT_END_NAMESPACE
 
 namespace Axivion::Internal {
+
+constexpr char s_axivionKeychainService[] = "keychain.axivion.qtcreator";
 
 class AxivionServer
 {
@@ -33,8 +37,27 @@ public:
     bool validateCert = true;
 };
 
+class PathMapping
+{
+public:
+    bool operator==(const PathMapping &other) const;
+    bool operator!=(const PathMapping &other) const;
+
+    bool isValid() const;
+    QString projectName;
+    Utils::FilePath analysisPath;
+    Utils::FilePath localPath;
+};
+
+struct AxivionVersionInfo
+{
+    QString versionNumber;
+    QString dateTime;
+};
+
 class AxivionSettings : public Utils::AspectContainer
 {
+    Q_OBJECT
 public:
     AxivionSettings();
 
@@ -45,14 +68,37 @@ public:
     const AxivionServer serverForId(const Utils::Id &id) const;
     void disableCertificateValidation(const Utils::Id &id);
     const QList<AxivionServer> allAvailableServers() const { return m_allServers; };
-    void updateDashboardServers(const QList<AxivionServer> &other);
+    bool updateDashboardServers(const QList<AxivionServer> &other, const Utils::Id &selected);
+    const QList<PathMapping> validPathMappings() const;
+    Utils::FilePath mappedFilePath(const Utils::FilePath &filePath,
+                                   const QString &projectName) const;
+    Utils::FilePath localProjectForProjectName(const QString &projectName) const;
+    void validatePath();
+    std::optional<AxivionVersionInfo> versionInfo() const { return m_versionInfo; }
 
     Utils::BoolAspect highlightMarks{this};
+    Utils::BoolAspect saveOpenFiles{this};
+    Utils::FilePathAspect axivionSuitePath{this};
+    Utils::FilePathAspect bauhausPython{this};
+    Utils::FilePathAspect javaHome{this};
+    Utils::FilePathAspect lastLocalBuildCommand{this};
+    Utils::FilePathAspect lastBauhausConfig{this};
+    Utils::FilePathAspect lastSfaCommand{this};
+    Utils::StringAspect defaultIssueKind{this};
+
+signals:
+    void serversChanged();
+    void suitePathValidated();
 private:
+    std::optional<AxivionVersionInfo> m_versionInfo = std::nullopt;
     Utils::StringAspect m_defaultServerId{this};
     QList<AxivionServer> m_allServers;
+    QtTaskTree::QSingleTaskTreeRunner m_taskTreeRunner;
 };
 
 AxivionSettings &settings();
+
+QString credentialKey(const AxivionServer &server);
+bool handleMissingPathMapping(const Utils::FilePath &missingPath, const QString &projectName);
 
 } // Axivion::Internal

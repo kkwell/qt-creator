@@ -7,4 +7,4 @@ namespace CMakeProjectManager::Internal {
 
 void setupCMakeSettingsPage();
 
-} // CMakeProjectManager::Internal
+} // namespace CMakeProjectManager::Internal

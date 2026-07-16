@@ -1,0 +1,90 @@
+// Copyright (C) 2022 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
+
+#include "puppetstarter.h"
+
+#include <qmldesignertr.h>
+#include <puppetstartdata.h>
+
+#include <utils/filepath.h>
+
+#include <QCoreApplication>
+#include <QMessageBox>
+#include <QProcess>
+
+using namespace Utils;
+
+namespace QmlDesigner::PuppetStarter {
+
+static QProcessUniquePointer puppetProcess(const FilePath &puppetPath,
+                                           const FilePath &workingDirectory,
+                                           const QString &forwardOutput,
+                                           const QString &freeTypeOption,
+                                           const QString &debugPuppet,
+                                           const QProcessEnvironment &processEnvironment,
+                                           const QString &puppetMode,
+                                           const QString &socketToken,
+                                           std::function<void()> processOutputCallback,
+                                           std::function<void(int, QProcess::ExitStatus)> processFinishCallback,
+                                           const QStringList &customOptions)
+{
+    QProcessUniquePointer puppetProcess{new QProcess};
+    puppetProcess->setObjectName(puppetMode);
+    puppetProcess->setProcessEnvironment(processEnvironment);
+
+    QObject::connect(QCoreApplication::instance(),
+                     &QCoreApplication::aboutToQuit,
+                     puppetProcess.get(),
+                     &QProcess::kill);
+    QObject::connect(puppetProcess.get(),
+                     &QProcess::finished,
+                     processFinishCallback);
+
+    if (forwardOutput == puppetMode || forwardOutput == "all") {
+        puppetProcess->setProcessChannelMode(QProcess::MergedChannels);
+        QObject::connect(puppetProcess.get(), &QProcess::readyRead, processOutputCallback);
+    }
+    puppetProcess->setWorkingDirectory(workingDirectory.toFSPathString());
+
+    QStringList processArguments;
+    if (puppetMode == "custom")
+        processArguments = customOptions;
+    else
+        processArguments = {socketToken, puppetMode};
+
+    processArguments.push_back(freeTypeOption);
+
+    puppetProcess->start(puppetPath.toFSPathString(), processArguments);
+
+    if (debugPuppet == puppetMode || debugPuppet == "all") {
+        QMessageBox::information(
+            nullptr,
+            Tr::tr("Puppet is starting..."),
+            Tr::tr("You can now attach your debugger to the %1(%2) QML Puppet with process id: %3.")
+                .arg(puppetMode, puppetPath.toUserOutput(), QString::number(puppetProcess->processId())));
+    }
+
+    return puppetProcess;
+}
+
+QProcessUniquePointer createPuppetProcess(const PuppetStartData &data,
+                                          const QString &puppetMode,
+                                          const QString &socketToken,
+                                          std::function<void()> processOutputCallback,
+                                          std::function<void(int, QProcess::ExitStatus)> processFinishCallback,
+                                          const QStringList &customOptions)
+{
+    return puppetProcess(data.puppetPath,
+                         data.workingDirectoryPath,
+                         data.forwardOutput,
+                         data.freeTypeOption,
+                         data.debugPuppet,
+                         data.environment,
+                         puppetMode,
+                         socketToken,
+                         processOutputCallback,
+                         processFinishCallback,
+                         customOptions);
+}
+
+} // namespace QmlDesigner::PuppetStarter

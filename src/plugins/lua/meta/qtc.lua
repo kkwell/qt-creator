@@ -3,21 +3,25 @@
 ---@class PluginSpec
 ---@field name string The name of the plugin.
 ---@field pluginDirectory FilePath The directory of the plugin.
+---@field appDataPath FilePath The application data directory of the plugin.
 PluginSpec = {}
 ---The global qtc object defined in the Lua plugin.
 ---@class qtc
 Qtc = {}
 
 ---@class (exact) QtcPlugin
----@field Name string The name of the plugin.
+---@field Id string The id of the plugin.
+---@field Name string? The name of the plugin. ( Default: `Id` )
 ---@field Version string The version of the plugin. (`major.minor.patch`)
 ---@field CompatVersion string The lowest previous version of the plugin that this one is compatible to. (`major.minor.patch`)
----@field Vendor string The vendor of the plugin.
+---@field VendorId string
+---@field Vendor string? The display name of the vendor of the plugin. ( Default: `VendorId` )
 ---@field Category string The category of the plugin.
 ---@field Dependencies? QtcPluginDependency[] The dependencies of the plugin.
 ---@field Description? string A short one line description of the plugin.
 ---@field LongDescription? string A long description of the plugin. Can contain newlines.
 ---@field Url? string The url of the plugin.
+---@field DocumentationUrl? string The url of the online documentation for the plugin.
 ---@field License? string The license text of the plugin.
 ---@field Revision? string The revision of the plugin.
 ---@field Copyright? string The copyright of the plugin.
@@ -32,7 +36,7 @@ Qtc = {}
 QtcPlugin = {}
 
 ---@class QtcPluginDependency
----@field Name string The name of the dependency.
+---@field Id string The name of the dependency.
 ---@field Version string The version of the dependency. (`major.minor.patch`)
 ---@field Required? "required"|"optional"|"test" Whether the dependency is required or not. (Default: "required")
 QtcPluginDependency = {}
@@ -49,6 +53,23 @@ EditorHooks = {}
 ---@field contentsChanged? function function(document: TextDocument, position: integer, charsRemoved: integer, charsAdded: integer)
 ---@field cursorChanged? function function(editor: TextEditor, cursor: MultiTextCursor)
 
+---@class ProjectHooks
+---@field startupProjectChanged? function function(project: Project)
+---@field projectAdded? function function(project: Project)
+---@field projectRemoved? function function(project: Project)
+---@field aboutToRemoveProject? function function(project: Project)
+---@field runActionsUpdated? function function() Called when Project.canRunStartupProject() might have changed.
+---@field buildStateChanged? function function(project: Project, isBuilding: boolean)
+
+---@class TaskHubHooks
+---@field categoryAdded? function function(category: TaskCategory)
+---@field taskAdded? function function(task: Task)
+---@field taskRemoved? function function(task: Task)
+---@field tasksCleared? function function(categoryId: Id)
+---@field categoryVisibilityChanged? function function(categoryId: Id, visible: boolean)
+
 ---@class Hooks
 ---@field editors? EditorHooks
+---@field projects? ProjectHooks
+---@field taskHub? TaskHubHooks
 Hooks = {}

@@ -5,8 +5,9 @@
 
 #include "qmljseditor_global.h"
 
-#include <qmljstools/qmljssemanticinfo.h>
+#include <languageserverprotocol/servercapabilities.h>
 #include <texteditor/textdocument.h>
+#include <qmljstools/qmljssemanticinfo.h>
 
 #include <QTextLayout>
 
@@ -20,11 +21,13 @@ class QmlOutlineModel;
 class QMLJSEDITOR_EXPORT QmlJSEditorDocument : public TextEditor::TextDocument
 {
     Q_OBJECT
+
 public:
     QmlJSEditorDocument(Utils::Id id);
     ~QmlJSEditorDocument() override;
 
-    bool supportsCodec(const QTextCodec *codec) const override;
+    bool supportsEncoding(const Utils::TextEncoding &encoding) const override;
+    void autoFormat(const QTextCursor &cursor) override;
 
     const QmlJSTools::SemanticInfo &semanticInfo() const;
     bool isSemanticInfoOutdated() const;
@@ -36,6 +39,8 @@ public:
 
     void setIsDesignModePreferred(bool value);
     bool isDesignModePreferred() const;
+
+    void setSourcesWithCapabilities(const LanguageServerProtocol::ServerCapabilities &cap);
 
 signals:
     void updateCodeWarnings(QmlJS::Document::Ptr doc);

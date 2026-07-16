@@ -3,15 +3,23 @@
 
 #include "propertyeditorcontextobject.h"
 
-#include "abstractview.h"
-#include "easingcurvedialog.h"
-#include "nodemetainfo.h"
-#include "qmldesignerconstants.h"
-#include "qml3dnode.h"
-#include "qmldesignerplugin.h"
-#include "qmlmodelnodeproxy.h"
-#include "qmlobjectnode.h"
-#include "qmltimeline.h"
+#include "compatibleproperties.h"
+#include "propertyeditortracing.h"
+#include "propertyeditorutils.h"
+
+#include <abstractview.h>
+#include <easingcurvedialog.h>
+#include <nodemetainfo.h>
+#include <qml3dnode.h>
+#include <qmldesignerconstants.h>
+#include <qmldesignerplugin.h>
+#include <qmlmodelnodeproxy.h>
+#include <qmlobjectnode.h>
+#include <qmltimeline.h>
+
+#include <utils3d.h>
+
+#include <qmldesigner/settings/designersettings.h>
 
 #include <coreplugin/messagebox.h>
 #include <utils/algorithm.h>
@@ -23,68 +31,36 @@
 #include <QLoggingCategory>
 #include <QMessageBox>
 #include <QQmlContext>
+#include <QQuickWidget>
 #include <QWindow>
 
 #include <coreplugin/icore.h>
 
-static uchar fromHex(const uchar c, const uchar c2)
-{
-    uchar rv = 0;
-    if (c >= '0' && c <= '9')
-        rv += (c - '0') * 16;
-    else if (c >= 'A' && c <= 'F')
-        rv += (c - 'A' + 10) * 16;
-    else if (c >= 'a' && c <= 'f')
-        rv += (c - 'a' + 10) * 16;
-
-    if (c2 >= '0' && c2 <= '9')
-        rv += (c2 - '0');
-    else if (c2 >= 'A' && c2 <= 'F')
-        rv += (c2 - 'A' + 10);
-    else if (c2 >= 'a' && c2 <= 'f')
-        rv += (c2 - 'a' + 10);
-
-    return rv;
-}
-
-static uchar fromHex(const QString &s, int idx)
-{
-    uchar c = s.at(idx).toLatin1();
-    uchar c2 = s.at(idx + 1).toLatin1();
-    return fromHex(c, c2);
-}
-
-QColor convertColorFromString(const QString &s)
-{
-    if (s.length() == 9 && s.startsWith(QLatin1Char('#'))) {
-        uchar a = fromHex(s, 1);
-        uchar r = fromHex(s, 3);
-        uchar g = fromHex(s, 5);
-        uchar b = fromHex(s, 7);
-        return {r, g, b, a};
-    } else {
-        QColor rv(s);
-        return rv;
-    }
-}
+#include <extensionsystem/pluginmanager.h>
+#include <extensionsystem/pluginspec.h>
 
 namespace QmlDesigner {
 
+using namespace Qt::StringLiterals;
+using QmlDesigner::PropertyEditorTracing::category;
+
 static Q_LOGGING_CATEGORY(urlSpecifics, "qtc.propertyeditor.specifics", QtWarningMsg)
 
-    PropertyEditorContextObject::PropertyEditorContextObject(Quick2PropertyEditorView *widget,
-                                                             QObject *parent)
+PropertyEditorContextObject::PropertyEditorContextObject(QObject *parent)
     : QObject(parent)
     , m_isBaseState(false)
     , m_selectionChanged(false)
     , m_backendValues(nullptr)
     , m_qmlComponent(nullptr)
     , m_qmlContext(nullptr)
-    , m_quickWidget(widget)
-{}
+{
+    NanotraceHR::Tracer tracer{"property editor context object constructor", category()};
+}
 
 QString PropertyEditorContextObject::convertColorToString(const QVariant &color)
 {
+    NanotraceHR::Tracer tracer{"property editor context object convert color to string", category()};
+
     QString colorString;
     QColor theColor;
     if (color.canConvert(QMetaType(QMetaType::QColor))) {
@@ -107,27 +83,29 @@ QString PropertyEditorContextObject::convertColorToString(const QVariant &color)
 
 QColor PropertyEditorContextObject::colorFromString(const QString &colorString)
 {
-    return convertColorFromString(colorString);
+    NanotraceHR::Tracer tracer{"property editor context object color from string", category()};
+
+    return QColor::fromString(colorString);
 }
 
 QString PropertyEditorContextObject::translateFunction()
 {
-    if (QmlDesignerPlugin::instance()->settings().value(
-            DesignerSettingsKey::TYPE_OF_QSTR_FUNCTION).toInt())
+    NanotraceHR::Tracer tracer{"property editor context object translate function", category()};
 
-        switch (QmlDesignerPlugin::instance()->settings().value(
-                    DesignerSettingsKey::TYPE_OF_QSTR_FUNCTION).toInt()) {
+    switch (designerSettings().typeOfQsTrFunction()) {
         case 0: return QLatin1String("qsTr");
         case 1: return QLatin1String("qsTrId");
         case 2: return QLatin1String("qsTranslate");
         default:
             break;
-        }
+    }
     return QLatin1String("qsTr");
 }
 
 QStringList PropertyEditorContextObject::autoComplete(const QString &text, int pos, bool explicitComplete, bool filter)
 {
+    NanotraceHR::Tracer tracer{"property editor context object auto complete", category()};
+
     if (m_model && m_model->rewriterView())
         return  Utils::filtered(m_model->rewriterView()->autoComplete(text, pos, explicitComplete), [filter](const QString &string) {
             return !filter || (!string.isEmpty() && string.at(0).isUpper()); });
@@ -135,8 +113,10 @@ QStringList PropertyEditorContextObject::autoComplete(const QString &text, int p
     return {};
 }
 
-void PropertyEditorContextObject::toogleExportAlias()
+void PropertyEditorContextObject::toggleExportAlias()
 {
+    NanotraceHR::Tracer tracer{"property editor context object toggle export alias", category()};
+
     QTC_ASSERT(m_model && m_model->rewriterView(), return);
 
     /* Ideally we should not missuse the rewriterView
@@ -153,18 +133,20 @@ void PropertyEditorContextObject::toogleExportAlias()
         PropertyName modelNodeId = selectedNode.id().toUtf8();
         ModelNode rootModelNode = rewriterView->rootModelNode();
 
-        rewriterView->executeInTransaction("PropertyEditorContextObject:toogleExportAlias", [&objectNode, &rootModelNode, modelNodeId](){
-            if (!objectNode.isAliasExported())
-                objectNode.ensureAliasExport();
-            else
-                if (rootModelNode.hasProperty(modelNodeId))
-                    rootModelNode.removeProperty(modelNodeId);
-        });
+        rewriterView->executeInTransaction("PropertyEditorContextObject:toggleExportAlias",
+                                           [&objectNode, &rootModelNode, modelNodeId]() {
+                                               if (!objectNode.isAliasExported())
+                                                   objectNode.ensureAliasExport();
+                                               else if (rootModelNode.hasProperty(modelNodeId))
+                                                   rootModelNode.removeProperty(modelNodeId);
+                                           });
     }
 }
 
 void PropertyEditorContextObject::goIntoComponent()
 {
+    NanotraceHR::Tracer tracer{"property editor context object go into component", category()};
+
     QTC_ASSERT(m_model && m_model->rewriterView(), return);
 
     /* Ideally we should not missuse the rewriterView
@@ -180,36 +162,35 @@ void PropertyEditorContextObject::goIntoComponent()
 
 void PropertyEditorContextObject::changeTypeName(const QString &typeName)
 {
+    NanotraceHR::Tracer tracer{"property editor context object change type name", category()};
+
     QTC_ASSERT(m_model && m_model->rewriterView(), return);
 
     /* Ideally we should not missuse the rewriterView
      * If we add more code here we have to forward the property editor view */
     RewriterView *rewriterView = m_model->rewriterView();
 
-    QTC_ASSERT(!rewriterView->selectedModelNodes().isEmpty(), return);
+    QTC_ASSERT(!m_editorNodes.isEmpty(), return);
 
-    try {
-        auto transaction = RewriterTransaction(rewriterView, "PropertyEditorContextObject:changeTypeName");
-
-        ModelNode selectedNode = rewriterView->selectedModelNodes().constFirst();
-
+    auto changeNodeTypeName = [&](ModelNode &selectedNode) {
         // Check if the requested type is the same as already set
         if (selectedNode.simplifiedTypeName() == typeName)
             return;
 
         NodeMetaInfo metaInfo = m_model->metaInfo(typeName.toLatin1());
         if (!metaInfo.isValid()) {
-            Core::AsynchronousMessageBox::warning(tr("Invalid Type"), tr("%1 is an invalid type.").arg(typeName));
+            Core::AsynchronousMessageBox::warning(tr("Invalid Type"),
+                                                  tr("%1 is an invalid type.").arg(typeName));
             return;
         }
 
         // Create a list of properties available for the new type
-        auto propertiesAndSignals = Utils::transform<PropertyNameList>(metaInfo.properties(),
-                                                                       [](const auto &property) {
-                                                                           return property.name();
-                                                                       });
+        auto propertiesAndSignals = Utils::transform<PropertyNameList>(
+            PropertyEditorUtils::filteredProperties(metaInfo), &PropertyMetaInfo::name);
         // Add signals to the list
-        for (const auto &signal : metaInfo.signalNames()) {
+
+        const PropertyNameList &signalNames = metaInfo.signalNames();
+        for (const PropertyName &signal : signalNames) {
             if (signal.isEmpty())
                 continue;
 
@@ -221,14 +202,15 @@ void PropertyEditorContextObject::changeTypeName(const QString &typeName)
         }
 
         // Add dynamic properties and respective change signals
-        for (const auto &property : selectedNode.properties()) {
+        const QList<AbstractProperty> &nodeProperties = selectedNode.properties();
+        for (const AbstractProperty &property : nodeProperties) {
             if (!property.isDynamic())
                 continue;
 
             // Add dynamic property
-            propertiesAndSignals.append(property.name());
+            propertiesAndSignals.append(property.name().toByteArray());
             // Add its change signal
-            PropertyName name = property.name();
+            PropertyName name = property.name().toByteArray();
             QChar firstChar = QChar(property.name().at(0)).toUpper().toLatin1();
             name[0] = firstChar.toLatin1();
             name.prepend("on");
@@ -238,10 +220,13 @@ void PropertyEditorContextObject::changeTypeName(const QString &typeName)
 
         // Compare current properties and signals with the once available for change type
         QList<PropertyName> incompatibleProperties;
-        for (const auto &property : selectedNode.properties()) {
+        for (const AbstractProperty &property : nodeProperties) {
             if (!propertiesAndSignals.contains(property.name()))
-                incompatibleProperties.append(property.name());
+                incompatibleProperties.append(property.name().toByteArray());
         }
+
+        CompatibleProperties compatibleProps(selectedNode.metaInfo(), metaInfo);
+        compatibleProps.createCompatibilityMap(incompatibleProperties);
 
         Utils::sort(incompatibleProperties);
 
@@ -258,11 +243,11 @@ void PropertyEditorContextObject::changeTypeName(const QString &typeName)
             msgBox.setTextFormat(Qt::RichText);
             msgBox.setIcon(QMessageBox::Question);
             msgBox.setWindowTitle("Change Type");
-            msgBox.setText(QString("Changing the type from %1 to %2 can't be done without removing incompatible properties.<br><br>%3")
-                                   .arg(selectedNode.simplifiedTypeName())
-                                   .arg(typeName)
-                                   .arg(detailedText));
-            msgBox.setInformativeText("Do you want to continue by removing incompatible properties?");
+            msgBox.setText(QString("Changing the type from %1 to %2 can't be done without removing "
+                                   "incompatible properties.<br><br>%3")
+                               .arg(selectedNode.simplifiedTypeName(), typeName, detailedText));
+            msgBox.setInformativeText(
+                "Do you want to continue by removing incompatible properties?");
             msgBox.setStandardButtons(QMessageBox::Ok | QMessageBox::Cancel);
             msgBox.setDefaultButton(QMessageBox::Ok);
 
@@ -273,6 +258,7 @@ void PropertyEditorContextObject::changeTypeName(const QString &typeName)
                 selectedNode.removeProperty(p);
         }
 
+        compatibleProps.copyMappedProperties(selectedNode);
 #ifdef QDS_USE_PROJECTSTORAGE
         if (selectedNode.isRootNode())
             rewriterView->changeRootNodeType(typeName.toUtf8(), -1, -1);
@@ -280,10 +266,24 @@ void PropertyEditorContextObject::changeTypeName(const QString &typeName)
             selectedNode.changeType(typeName.toUtf8(), -1, -1);
 #else
         if (selectedNode.isRootNode())
-            rewriterView->changeRootNodeType(metaInfo.typeName(), metaInfo.majorVersion(), metaInfo.minorVersion());
+            rewriterView->changeRootNodeType(metaInfo.typeName(),
+                                             metaInfo.majorVersion(),
+                                             metaInfo.minorVersion());
         else
-            selectedNode.changeType(metaInfo.typeName(), metaInfo.majorVersion(), metaInfo.minorVersion());
+            selectedNode.changeType(metaInfo.typeName(),
+                                    metaInfo.majorVersion(),
+                                    metaInfo.minorVersion());
 #endif
+        compatibleProps.applyCompatibleProperties(selectedNode);
+    };
+
+    try {
+        auto transaction = RewriterTransaction(rewriterView, "PropertyEditorContextObject:changeTypeName");
+
+        ModelNodes selectedNodes = m_editorNodes;
+        for (ModelNode &selectedNode : selectedNodes)
+            changeNodeTypeName(selectedNode);
+
         transaction.commit();
     } catch (const Exception &e) {
         e.showException();
@@ -305,7 +305,7 @@ void PropertyEditorContextObject::insertKeyframe(const QString &propertyName)
 
     ModelNode selectedNode = rewriterView->selectedModelNodes().constFirst();
 
-    QmlTimeline timeline = rewriterView->currentTimeline();
+    QmlTimeline timeline = rewriterView->currentTimelineNode();
 
     QTC_ASSERT(timeline.isValid(), return );
     QTC_ASSERT(selectedNode.isValid(), return );
@@ -317,11 +317,15 @@ void PropertyEditorContextObject::insertKeyframe(const QString &propertyName)
 
 QString PropertyEditorContextObject::activeDragSuffix() const
 {
+    NanotraceHR::Tracer tracer{"property editor context object active drag suffix", category()};
+
     return m_activeDragSuffix;
 }
 
 void PropertyEditorContextObject::setActiveDragSuffix(const QString &suffix)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set active drag suffix", category()};
+
     if (m_activeDragSuffix != suffix) {
         m_activeDragSuffix = suffix;
         emit activeDragSuffixChanged();
@@ -330,22 +334,29 @@ void PropertyEditorContextObject::setActiveDragSuffix(const QString &suffix)
 
 int PropertyEditorContextObject::majorVersion() const
 {
-    return m_majorVersion;
+    NanotraceHR::Tracer tracer{"property editor context object major version", category()};
 
+    return m_majorVersion;
 }
 
 int PropertyEditorContextObject::majorQtQuickVersion() const
 {
+    NanotraceHR::Tracer tracer{"property editor context object major Qt Quick version", category()};
+
     return m_majorQtQuickVersion;
 }
 
 int PropertyEditorContextObject::minorQtQuickVersion() const
 {
+    NanotraceHR::Tracer tracer{"property editor context object minor Qt Quick version", category()};
+
     return m_minorQtQuickVersion;
 }
 
 void PropertyEditorContextObject::setMajorVersion(int majorVersion)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set major version", category()};
+
     if (m_majorVersion == majorVersion)
         return;
 
@@ -356,6 +367,9 @@ void PropertyEditorContextObject::setMajorVersion(int majorVersion)
 
 void PropertyEditorContextObject::setMajorQtQuickVersion(int majorVersion)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set major Qt Quick version",
+                               category()};
+
     if (m_majorQtQuickVersion == majorVersion)
         return;
 
@@ -367,6 +381,9 @@ void PropertyEditorContextObject::setMajorQtQuickVersion(int majorVersion)
 
 void PropertyEditorContextObject::setMinorQtQuickVersion(int minorVersion)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set minor Qt Quick version",
+                               category()};
+
     if (m_minorQtQuickVersion == minorVersion)
         return;
 
@@ -377,6 +394,8 @@ void PropertyEditorContextObject::setMinorQtQuickVersion(int minorVersion)
 
 int PropertyEditorContextObject::minorVersion() const
 {
+    NanotraceHR::Tracer tracer{"property editor context object minor version", category()};
+
     return m_minorVersion;
 }
 
@@ -390,13 +409,35 @@ void PropertyEditorContextObject::setMinorVersion(int minorVersion)
     emit minorVersionChanged();
 }
 
+void PropertyEditorContextObject::setEditorInstancesCount(int n)
+{
+    NanotraceHR::Tracer tracer{"property editor context object set editor instances count",
+                               category()};
+
+    if (m_editorInstancesCount == n)
+        return;
+
+    m_editorInstancesCount = n;
+    emit editorInstancesCountChanged();
+}
+
+int PropertyEditorContextObject::editorInstancesCount() const
+{
+    NanotraceHR::Tracer tracer{"property editor context object editor instances count", category()};
+
+    return m_editorInstancesCount;
+}
+
 bool PropertyEditorContextObject::hasActiveTimeline() const
 {
+    NanotraceHR::Tracer tracer{"property editor context object has active timeline", category()};
     return m_setHasActiveTimeline;
 }
 
 void PropertyEditorContextObject::setHasActiveTimeline(bool b)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set has active timeline", category()};
+
     if (b == m_setHasActiveTimeline)
         return;
 
@@ -406,12 +447,16 @@ void PropertyEditorContextObject::setHasActiveTimeline(bool b)
 
 void PropertyEditorContextObject::insertInQmlContext(QQmlContext *context)
 {
+    NanotraceHR::Tracer tracer{"property editor context object insert in QML context", category()};
+
     m_qmlContext = context;
     m_qmlContext->setContextObject(this);
 }
 
 QQmlComponent *PropertyEditorContextObject::specificQmlComponent()
 {
+    NanotraceHR::Tracer tracer{"property editor context object specific QML component", category()};
+
     if (m_qmlComponent)
         return m_qmlComponent;
 
@@ -430,11 +475,14 @@ QQmlComponent *PropertyEditorContextObject::specificQmlComponent()
 
 bool PropertyEditorContextObject::hasMultiSelection() const
 {
+    NanotraceHR::Tracer tracer{"property editor context object has multi selection", category()};
+
     return m_hasMultiSelection;
 }
 
 void PropertyEditorContextObject::setHasMultiSelection(bool b)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set has multi selection", category()};
     if (b == m_hasMultiSelection)
         return;
 
@@ -442,8 +490,42 @@ void PropertyEditorContextObject::setHasMultiSelection(bool b)
     emit hasMultiSelectionChanged();
 }
 
+bool PropertyEditorContextObject::isMultiPropertyEditorPluginEnabled() const
+{
+    NanotraceHR::Tracer tracer{
+        "property editor context object is multi property editor plugin enabled", category()};
+
+    const auto plugins = ExtensionSystem::PluginManager::plugins();
+    auto found = std::ranges::find(plugins, "multipropertyeditor"_L1, &ExtensionSystem::PluginSpec::id);
+
+    if (found != plugins.end())
+        return (*found)->isEffectivelyEnabled();
+
+    return false;
+}
+
+bool PropertyEditorContextObject::isSelectionLocked() const
+{
+    NanotraceHR::Tracer tracer{"property editor context object is selection locked", category()};
+
+    return m_isSelectionLocked;
+}
+
+void PropertyEditorContextObject::setIsSelectionLocked(bool lock)
+{
+    NanotraceHR::Tracer tracer{"property editor context object set is selection locked", category()};
+
+    if (lock == m_isSelectionLocked)
+        return;
+
+    m_isSelectionLocked = lock;
+    emit isSelectionLockedChanged();
+}
+
 void PropertyEditorContextObject::setInsightEnabled(bool value)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set insight enabled", category()};
+
     if (value != m_insightEnabled) {
         m_insightEnabled = value;
         emit insightEnabledChanged();
@@ -452,12 +534,111 @@ void PropertyEditorContextObject::setInsightEnabled(bool value)
 
 void PropertyEditorContextObject::setInsightCategories(const QStringList &categories)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set insight categories", category()};
+
     m_insightCategories = categories;
     emit insightCategoriesChanged();
 }
 
+bool PropertyEditorContextObject::hasQuick3DImport() const
+{
+    NanotraceHR::Tracer tracer{"property editor context object has quick 3D import", category()};
+
+    return m_hasQuick3DImport;
+}
+
+void PropertyEditorContextObject::setEditorNodes(const ModelNodes &nodes)
+{
+    m_editorNodes = nodes;
+}
+
+void PropertyEditorContextObject::setHasQuick3DImport(bool value)
+{
+    NanotraceHR::Tracer tracer{"property editor context object set has quick 3D import", category()};
+
+    if (value == m_hasQuick3DImport)
+        return;
+
+    m_hasQuick3DImport = value;
+    emit hasQuick3DImportChanged();
+}
+
+bool PropertyEditorContextObject::hasMaterialLibrary() const
+{
+    NanotraceHR::Tracer tracer{"property editor context object has material library", category()};
+
+    return m_hasMaterialLibrary;
+}
+
+void PropertyEditorContextObject::setHasMaterialLibrary(bool value)
+{
+    NanotraceHR::Tracer tracer{"property editor context object set has material library", category()};
+
+    if (value == m_hasMaterialLibrary)
+        return;
+
+    m_hasMaterialLibrary = value;
+    emit hasMaterialLibraryChanged();
+}
+
+bool PropertyEditorContextObject::isQt6Project() const
+{
+    NanotraceHR::Tracer tracer{"property editor context object is Qt6 project", category()};
+
+    return m_isQt6Project;
+}
+
+void PropertyEditorContextObject::setIsQt6Project(bool value)
+{
+    NanotraceHR::Tracer tracer{"property editor context object set is Qt6 project", category()};
+
+    if (m_isQt6Project == value)
+        return;
+
+    m_isQt6Project = value;
+    emit isQt6ProjectChanged();
+}
+
+bool PropertyEditorContextObject::has3DModelSelected() const
+{
+    NanotraceHR::Tracer tracer{"property editor context object has 3D model selected", category()};
+
+    return m_has3DModelSelected;
+}
+
+bool PropertyEditorContextObject::has3DScene() const
+{
+    NanotraceHR::Tracer tracer{"property editor context object has 3D scene", category()};
+
+    return m_has3DScene;
+}
+
+void PropertyEditorContextObject::setHas3DScene(bool value)
+{
+    NanotraceHR::Tracer tracer{"property editor context object set has 3D scene", category()};
+
+    if (value == m_has3DScene)
+        return;
+
+    m_has3DScene = value;
+    emit has3DSceneChanged();
+}
+
+void PropertyEditorContextObject::setHas3DModelSelected(bool value)
+{
+    NanotraceHR::Tracer tracer{"property editor context object set has 3D model selected", category()};
+
+    if (value == m_has3DModelSelected)
+        return;
+
+    m_has3DModelSelected = value;
+    emit has3DModelSelectedChanged();
+}
+
 void PropertyEditorContextObject::setSpecificsUrl(const QUrl &newSpecificsUrl)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set specifics URL", category()};
+
     if (newSpecificsUrl == m_specificsUrl)
         return;
 
@@ -469,6 +650,8 @@ void PropertyEditorContextObject::setSpecificsUrl(const QUrl &newSpecificsUrl)
 
 void PropertyEditorContextObject::setSpecificQmlData(const QString &newSpecificQmlData)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set specific QML data", category()};
+
     if (m_specificQmlData == newSpecificQmlData)
         return;
 
@@ -483,6 +666,8 @@ void PropertyEditorContextObject::setSpecificQmlData(const QString &newSpecificQ
 
 void PropertyEditorContextObject::setStateName(const QString &newStateName)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set state name", category()};
+
     if (newStateName == m_stateName)
         return;
 
@@ -492,8 +677,10 @@ void PropertyEditorContextObject::setStateName(const QString &newStateName)
 
 void PropertyEditorContextObject::setAllStateNames(const QStringList &allStates)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set all state names", category()};
+
     if (allStates == m_allStateNames)
-            return;
+        return;
 
     m_allStateNames = allStates;
     emit allStateNamesChanged();
@@ -501,7 +688,9 @@ void PropertyEditorContextObject::setAllStateNames(const QStringList &allStates)
 
 void PropertyEditorContextObject::setIsBaseState(bool newIsBaseState)
 {
-    if (newIsBaseState ==  m_isBaseState)
+    NanotraceHR::Tracer tracer{"property editor context object set is base state", category()};
+
+    if (newIsBaseState == m_isBaseState)
         return;
 
     m_isBaseState = newIsBaseState;
@@ -510,6 +699,8 @@ void PropertyEditorContextObject::setIsBaseState(bool newIsBaseState)
 
 void PropertyEditorContextObject::setSelectionChanged(bool newSelectionChanged)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set selection changed", category()};
+
     if (newSelectionChanged == m_selectionChanged)
         return;
 
@@ -519,6 +710,8 @@ void PropertyEditorContextObject::setSelectionChanged(bool newSelectionChanged)
 
 void PropertyEditorContextObject::setBackendValues(QQmlPropertyMap *newBackendValues)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set backend values", category()};
+
     if (newBackendValues == m_backendValues)
         return;
 
@@ -528,21 +721,35 @@ void PropertyEditorContextObject::setBackendValues(QQmlPropertyMap *newBackendVa
 
 void PropertyEditorContextObject::setModel(Model *model)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set model", category()};
+
     m_model = model;
+    setHas3DScene(Utils3D::active3DSceneId(model) != -1);
 }
 
 void PropertyEditorContextObject::triggerSelectionChanged()
 {
+    NanotraceHR::Tracer tracer{"property editor context object trigger selection changed", category()};
+
     setSelectionChanged(!m_selectionChanged);
 }
 
 void PropertyEditorContextObject::setHasAliasExport(bool hasAliasExport)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set has alias export", category()};
+
     if (m_aliasExport == hasAliasExport)
         return;
 
     m_aliasExport = hasAliasExport;
     emit hasAliasExportChanged();
+}
+
+void PropertyEditorContextObject::setQuickWidget(QQuickWidget *newQuickWidget)
+{
+    NanotraceHR::Tracer tracer{"property editor context object set quick widget", category()};
+
+    m_quickWidget = newQuickWidget;
 }
 
 void PropertyEditorContextObject::hideCursor()
@@ -558,6 +765,8 @@ void PropertyEditorContextObject::hideCursor()
 
 void PropertyEditorContextObject::restoreCursor()
 {
+    NanotraceHR::Tracer tracer{"property editor context object restore cursor", category()};
+
     if (!QApplication::overrideCursor())
         return;
 
@@ -569,6 +778,8 @@ void PropertyEditorContextObject::restoreCursor()
 
 void PropertyEditorContextObject::holdCursorInPlace()
 {
+    NanotraceHR::Tracer tracer{"property editor context object hold cursor in place", category()};
+
     if (!QApplication::overrideCursor())
         return;
 
@@ -578,6 +789,8 @@ void PropertyEditorContextObject::holdCursorInPlace()
 
 int PropertyEditorContextObject::devicePixelRatio()
 {
+    NanotraceHR::Tracer tracer{"property editor context object device pixel ratio", category()};
+
     if (QWidget *w = QApplication::activeWindow())
         return w->devicePixelRatio();
 
@@ -586,22 +799,28 @@ int PropertyEditorContextObject::devicePixelRatio()
 
 QStringList PropertyEditorContextObject::styleNamesForFamily(const QString &family)
 {
+    NanotraceHR::Tracer tracer{"property editor context object style names for family", category()};
+
     return QFontDatabase::styles(family);
 }
 
 QStringList PropertyEditorContextObject::allStatesForId(const QString &id)
 {
-      if (m_model && m_model->rewriterView()) {
-          const QmlObjectNode node = m_model->rewriterView()->modelNodeForId(id);
-          if (node.isValid())
-              return node.allStateNames();
-      }
+    NanotraceHR::Tracer tracer{"property editor context object all states for id", category()};
+
+    if (m_model && m_model->rewriterView()) {
+        const QmlObjectNode node = m_model->rewriterView()->modelNodeForId(id);
+        if (node.isValid())
+            return node.allStateNames();
+    }
 
       return {};
 }
 
 bool PropertyEditorContextObject::isBlocked(const QString &propName) const
 {
+    NanotraceHR::Tracer tracer{"property editor context object is blocked", category()};
+
     if (m_model && m_model->rewriterView()) {
         const QList<ModelNode> nodes = m_model->rewriterView()->selectedModelNodes();
         for (const auto &node : nodes) {
@@ -614,6 +833,8 @@ bool PropertyEditorContextObject::isBlocked(const QString &propName) const
 
 void PropertyEditorContextObject::verifyInsightImport()
 {
+    NanotraceHR::Tracer tracer{"property editor context object verify insight import", category()};
+
     Import import = Import::createLibraryImport("QtInsightTracker", "1.0");
 
     if (!m_model->hasImport(import))
@@ -622,6 +843,8 @@ void PropertyEditorContextObject::verifyInsightImport()
 
 QRect PropertyEditorContextObject::screenRect() const
 {
+    NanotraceHR::Tracer tracer{"property editor context object screen rect", category()};
+
     if (m_quickWidget && m_quickWidget->screen())
         return m_quickWidget->screen()->availableGeometry();
     return  {};
@@ -629,24 +852,53 @@ QRect PropertyEditorContextObject::screenRect() const
 
 QPoint PropertyEditorContextObject::globalPos(const QPoint &point) const
 {
+    NanotraceHR::Tracer tracer{"property editor context object global pos", category()};
+
     if (m_quickWidget)
         return m_quickWidget->mapToGlobal(point);
     return point;
 }
 
+void PropertyEditorContextObject::handleToolBarAction(int action)
+{
+    NanotraceHR::Tracer tracer{"property editor context object handle toolbar action", category()};
+
+    emit toolBarAction(action);
+}
+
+void PropertyEditorContextObject::saveExpandedState(const QString &sectionName, bool expanded)
+{
+    NanotraceHR::Tracer tracer{"property editor context object save expanded state", category()};
+
+    s_expandedStateHash.insert(sectionName, expanded);
+}
+
+bool PropertyEditorContextObject::loadExpandedState(const QString &sectionName, bool defaultValue) const
+{
+    NanotraceHR::Tracer tracer{"property editor context object load expanded state", category()};
+
+    return s_expandedStateHash.value(sectionName, defaultValue);
+}
+
 void EasingCurveEditor::registerDeclarativeType()
 {
-     qmlRegisterType<EasingCurveEditor>("HelperWidgets", 2, 0, "EasingCurveEditor");
+    NanotraceHR::Tracer tracer{"property editor context object register declarative type", category()};
+
+    qmlRegisterType<EasingCurveEditor>("HelperWidgets", 2, 0, "EasingCurveEditor");
 }
 
 void EasingCurveEditor::runDialog()
 {
+    NanotraceHR::Tracer tracer{"property editor context object run dialog", category()};
+
     if (m_modelNode.isValid())
         EasingCurveDialog::runDialog({ m_modelNode }, Core::ICore::dialogParent());
 }
 
 void EasingCurveEditor::setModelNodeBackend(const QVariant &modelNodeBackend)
 {
+    NanotraceHR::Tracer tracer{"property editor context object set model node backend", category()};
+
     if (!modelNodeBackend.isNull() && modelNodeBackend.isValid()) {
         m_modelNodeBackend = modelNodeBackend;
 
@@ -665,6 +917,8 @@ void EasingCurveEditor::setModelNodeBackend(const QVariant &modelNodeBackend)
 
 QVariant EasingCurveEditor::modelNodeBackend() const
 {
+    NanotraceHR::Tracer tracer{"property editor context object model node backend", category()};
+
     return m_modelNodeBackend;
 }
 

@@ -9,6 +9,7 @@
 #include "clangmodelmanagersupport.h"
 #include "tasktimers.h"
 
+#include <cppeditor/cppeditordocument.h>
 #include <cppeditor/cppeditorwidget.h>
 #include <cppeditor/semantichighlighter.h>
 #include <languageclient/languageclientmanager.h>
@@ -18,7 +19,7 @@
 #include <texteditor/texteditor.h>
 #include <texteditor/textstyles.h>
 
-#include <QtConcurrent>
+#include <QtConcurrentMap>
 #include <QTextDocument>
 
 using namespace LanguageClient;
@@ -106,7 +107,7 @@ void doSemanticHighlighting(
             styles.mainStyle = token.modifiers.contains(QLatin1String("readonly"))
                     ? C_PARAMETER : C_TYPE;
         } else if (token.type == "operator") {
-            const int pos = Utils::Text::positionInText(&doc, token.line, token.column);
+            const int pos = Utils::Text::positionInText(&doc, token.line, token.column - 1);
             QTC_ASSERT(pos >= 0 || pos < docContents.size(), return HighlightingResult());
             const QChar firstChar = docContents.at(pos);
             if (firstChar.isLetter())
@@ -131,7 +132,7 @@ void doSemanticHighlighting(
         } else if (token.type == "bracket") {
             styles.mainStyle = C_PUNCTUATION;
             HighlightingResult result(token.line, token.column, token.length, styles);
-            const int pos = Utils::Text::positionInText(&doc, token.line, token.column);
+            const int pos = Utils::Text::positionInText(&doc, token.line, token.column - 1);
             QTC_ASSERT(pos >= 0 || pos < docContents.size(), return HighlightingResult());
             const char symbol = docContents.at(pos).toLatin1();
             QTC_ASSERT(symbol == '<' || symbol == '>', return HighlightingResult());
@@ -174,7 +175,7 @@ void doSemanticHighlighting(
     if (!promise.isCanceled()) {
         qCInfo(clangdLogHighlight) << "reporting" << results.size() << "highlighting results";
         QList<Range> virtualRanges;
-        for (const HighlightingResult &r : results) {
+        for (const HighlightingResult &r : std::as_const(results)) {
             qCDebug(clangdLogHighlight)
                 << '\t' << r.line << r.column << r.length << int(r.textStyles.mainStyle);
             if (r.textStyles.mainStyle != C_VIRTUAL_METHOD)
@@ -187,12 +188,7 @@ void doSemanticHighlighting(
             if (ClangdClient * const client = ClangModelManagerSupport::clientForFile(filePath))
                 client->setVirtualRanges(filePath, virtualRanges, docRevision);
         }, Qt::QueuedConnection);
-#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
         promise.addResults(results);
-#else
-        for (const HighlightingResult &r : results)
-            promise.addResult(r);
-#endif
     }
 }
 
@@ -211,15 +207,15 @@ void ExtraHighlightingResultsCollector::collect()
         const HighlightingResult res = m_results.at(i);
         if (res.textStyles.mainStyle != TextEditor::C_MACRO || res.length != 10)
             continue;
-        const int pos = Utils::Text::positionInText(m_doc, res.line, res.column);
+        const int pos = Utils::Text::positionInText(m_doc, res.line, res.column - 1);
         if (subViewLen(m_docContent, pos, 10) != QLatin1String("Q_PROPERTY"))
             continue;
         int endPos;
         if (i < m_results.length() - 1) {
             const HighlightingResult nextRes = m_results.at(i + 1);
-            endPos = Utils::Text::positionInText(m_doc, nextRes.line, nextRes.column);
+            endPos = Utils::Text::positionInText(m_doc, nextRes.line, nextRes.column - 1);
         } else {
-            endPos = m_docContent.length();
+            endPos = m_docContent.size();
         }
         const QString qPropertyString = m_docContent.mid(pos, endPos - pos);
         QPropertyHighlighter propHighlighter(m_doc, qPropertyString, pos);
@@ -252,12 +248,9 @@ void handleInactiveRegions(LanguageClient::Client *client, const JsonRpcMessage 
     const auto params = InactiveRegionsNotification(msg.toJsonObject()).params();
     if (!params)
         return;
-    TextDocument * const doc = client->documentForFilePath(
-        params->uri().toFilePath(client->hostPathMapper()));
+    auto *const doc = qobject_cast<CppEditor::CppEditorDocument *>(
+        client->documentForFilePath(params->uri().toFilePath(client->hostPathMapper())));
     if (!doc)
-        return;
-    const auto editorWidget = CppEditor::CppEditorWidget::fromTextDocument(doc);
-    if (!editorWidget)
         return;
 
     const QList<Range> inactiveRegions = params->inactiveRegions();
@@ -267,7 +260,7 @@ void handleInactiveRegions(LanguageClient::Client *client, const JsonRpcMessage 
         const int endPos = r.end().toPositionInDocument(doc->document()) + 1;
         ifdefedOutBlocks.emplaceBack(startPos, endPos);
     }
-    editorWidget->setIfdefedOutBlocks(ifdefedOutBlocks);
+    doc->setIfdefedOutBlocks(ifdefedOutBlocks);
 }
 
 QString inactiveRegionsMethodName()

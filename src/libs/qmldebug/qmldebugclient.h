@@ -4,9 +4,9 @@
 #pragma once
 
 #include "qmldebug_global.h"
-#include <qtcpsocket.h>
 
 #include <QDataStream>
+#include <QTcpSocket>
 
 namespace QmlDebug {
 
@@ -29,8 +29,8 @@ public:
     State state() const;
     QmlDebugConnection *connection() const;
     int dataStreamVersion() const;
+    void sendMessage(const QByteArray &);
 
-    virtual void sendMessage(const QByteArray &);
     virtual void stateChanged(State);
     virtual void messageReceived(const QByteArray &);
 

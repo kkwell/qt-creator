@@ -7,17 +7,18 @@
 #include "clangtoolsdiagnostic.h"
 #include "clangtoolsdiagnosticmodel.h"
 
-#include <debugger/debuggermainwindow.h>
+#include <coreplugin/perspective.h>
 
 #include <variant>
 
 QT_BEGIN_NAMESPACE
 class QToolButton;
+
+namespace QtTaskTree { class Group; }
 QT_END_NAMESPACE
 
 namespace CppEditor { class ClangDiagnosticConfig; }
 namespace ProjectExplorer { class RunControl; }
-namespace Tasking { class Group; }
 namespace Utils { class FilePath; }
 
 namespace ClangTools::Internal {
@@ -26,7 +27,7 @@ class InfoBarWidget;
 class Diagnostic;
 class DiagnosticFilterModel;
 class DiagnosticView;
-class RunSettings;
+class RunSettingsData;
 class SelectFixitsCheckBox;
 
 class ClangTool : public QObject
@@ -45,7 +46,7 @@ public:
     using FileSelection = std::variant<FileSelectionType, Utils::FilePath>;
 
     void startTool(FileSelection fileSelection);
-    void startTool(FileSelection fileSelection, const RunSettings &runSettings,
+    void startTool(FileSelection fileSelection, const RunSettingsData &runSettings,
                    const CppEditor::ClangDiagnosticConfig &diagnosticConfig);
 
     FileInfos collectFileInfos(ProjectExplorer::Project *project,
@@ -56,7 +57,9 @@ public:
 
     const QString &name() const;
 
-    void onNewDiagnosticsAvailable(const Diagnostics &diagnostics, bool generateMarks);
+    enum class RootItemUse { Existing, New };
+    void onNewDiagnosticsAvailable(
+        const Diagnostics &diagnostics, bool generateMarks, RootItemUse rootItemUse);
 
     QAction *startAction() const { return m_startAction; }
     QAction *startOnCurrentFileAction() const { return m_startOnCurrentFileAction; }
@@ -68,7 +71,7 @@ protected:
     ClangTool(const QString &name, Utils::Id id, CppEditor::ClangToolType type);
 
 private:
-    Tasking::Group runRecipe(const RunSettings &runSettings,
+    QtTaskTree::Group runRecipe(const RunSettingsData &runSettings,
                              const CppEditor::ClangDiagnosticConfig &diagnosticConfig,
                              const FileInfos &fileInfos, bool buildBeforeAnalysis);
 
@@ -134,7 +137,7 @@ private:
     QAction *m_clear = nullptr;
     QAction *m_expandCollapse = nullptr;
 
-    Utils::Perspective m_perspective;
+    Core::Perspective m_perspective;
     const CppEditor::ClangToolType m_type;
 };
 

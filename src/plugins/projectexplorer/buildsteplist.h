@@ -12,6 +12,7 @@
 
 namespace ProjectExplorer {
 
+class BuildConfiguration;
 class BuildStep;
 class ProjectConfiguration;
 class Target;
@@ -27,6 +28,7 @@ public:
     void clear();
 
     QList<BuildStep *> steps() const;
+    QList<BuildStep *> takeSteps();
 
     template <class BS> BS *firstOfType() const {
         BS *bs = nullptr;
@@ -50,7 +52,7 @@ public:
 
     struct StepCreationInfo {
         Utils::Id stepId;
-        std::function<bool(Target *)> condition; // unset counts as unrestricted
+        std::function<bool(BuildConfiguration *)> condition; // unset counts as unrestricted
     };
 
     bool removeStep(int position);

@@ -7,16 +7,18 @@
 #include "qmldebugtranslationclient.h"
 
 #include <extensionsystem/iplugin.h>
+#include <projectexplorer/runcontrol.h>
 #include <qmljs/qmljsdialect.h>
+#include <qmldebug/quickeventreplayclient.h>
+
 
 namespace Core { class IEditor; }
-
-namespace ProjectExplorer { class RunControl; }
 
 namespace QmlDebug { class QmlDebugConnection; }
 
 namespace QmlPreview {
 
+struct QmlPreviewRunnerSetting;
 using QmlPreviewFileClassifier = bool (*)(const QString &);
 using QmlPreviewFileLoader = QByteArray (*)(const QString &, bool *);
 using QmlPreviewFpsHandler = void (*)(quint16[8]);
@@ -44,6 +46,9 @@ class QMLPREVIEW_EXPORT QmlPreviewPlugin : public ExtensionSystem::IPlugin
 
 public:
     ~QmlPreviewPlugin() override;
+
+    static QmlPreviewPlugin *instance();
+    static const QmlPreviewRunnerSetting &settings();
 
     void initialize() override;
 
@@ -73,6 +78,11 @@ public:
     void previewCurrentFile();
     void addPreview(ProjectExplorer::RunControl *preview);
     void removePreview(ProjectExplorer::RunControl *preview);
+
+    QList<QmlDebug::QmlEvent> events() const;
+    QList<QmlDebug::QmlEventType> eventTypes() const;
+    void setEvents(const QList<QmlDebug::QmlEvent> &events);
+    void setEventTypes(const QList<QmlDebug::QmlEventType> &types);
 
 signals:
     void updatePreviews(const QString &previewedFile, const QString &changedFile,

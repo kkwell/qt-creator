@@ -10,7 +10,7 @@
 #include <projectexplorer/buildsystem.h>
 #include <utils/filesystemwatcher.h>
 
-#include "qmlprojectmanager/cmakegen/cmakegenerator.h"
+#include "qmlprojectmanager/qmlprojectexporter/exporter.h"
 
 namespace QmlProjectManager {
 
@@ -23,8 +23,10 @@ class QMLPROJECTMANAGER_EXPORT QmlBuildSystem final : public ProjectExplorer::Bu
     Q_OBJECT
 
 public:
-    explicit QmlBuildSystem(ProjectExplorer::Target *target);
+    explicit QmlBuildSystem(ProjectExplorer::BuildConfiguration *bc);
     ~QmlBuildSystem() = default;
+
+    static QString name() { return "qml"; }
 
     void triggerParsing() final;
 
@@ -35,13 +37,11 @@ public:
                   const Utils::FilePaths &filePaths,
                   Utils::FilePaths *notAdded = nullptr) override;
     bool deleteFiles(ProjectExplorer::Node *context, const Utils::FilePaths &filePaths) override;
-    bool renameFile(ProjectExplorer::Node *context,
-                    const Utils::FilePath &oldFilePath,
-                    const Utils::FilePath &newFilePath) override;
+    bool renameFiles(ProjectExplorer::Node *context,
+                     const Utils::FilePairs &filesToRename,
+                     Utils::FilePaths *notRenamed) override;
 
     bool updateProjectFile();
-
-    QString name() const override { return QLatin1String("qml"); }
 
     QmlProject *qmlProject() const;
 
@@ -73,9 +73,14 @@ public:
 
     Utils::EnvironmentItems environment() const;
 
-    QStringList importPaths() const;
+    QStringList allImports() const;
+    QStringList mockImports() const;
     QStringList absoluteImportPaths() const;
+    QStringList targetImportPaths() const;
     QStringList fileSelectors() const;
+
+    QStringList importPaths() const;
+    void addImportPath(const Utils::FilePath &path);
 
     bool multilanguageSupport() const;
     QStringList supportedLanguages() const;
@@ -86,6 +91,12 @@ public:
 
     bool enableCMakeGeneration() const;
     void setEnableCMakeGeneration(bool enable);
+
+    bool enablePythonGeneration() const;
+    void setEnablePythonGeneration(bool enable);
+
+    bool standaloneApp() const;
+    void setStandaloneApp(bool enable);
 
     bool forceFreeType() const;
     bool widgetApp() const;
@@ -109,6 +120,10 @@ public:
 
     static QmlBuildSystem *getStartupBuildSystem();
 
+    void addQmlProjectModule(const Utils::FilePath &path);
+
+    void addFileFilter(const Utils::FilePath &path);
+
 signals:
     void projectChanged();
 
@@ -116,6 +131,8 @@ private:
     bool setFileSettingInProjectFile(const QString &setting,
                                      const Utils::FilePath &mainFilePath,
                                      const QString &oldFile);
+
+    void updateQmlCodeModelInfo(ProjectExplorer::QmlCodeModelInfo &projectInfo) final;
 
     // this is the main project item
     QSharedPointer<QmlProjectItem> m_projectItem;
@@ -131,9 +148,14 @@ private:
 
     void registerMenuButtons();
     void updateDeploymentData();
+
+    [[nodiscard]] QString defaultFontFamilyMCU() const;
+
     friend class FilesUpdateBlocker;
 
-    GenerateCmake::CMakeGenerator* m_cmakeGen;
+    QmlProjectExporter::Exporter* m_fileGen;
 };
+
+void setupQmlBuildConfiguration();
 
 } // namespace QmlProjectManager

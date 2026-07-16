@@ -16,7 +16,7 @@
     \title Specify editor settings
 
     \QC uses the MIME type of the file to determine which mode and editor to use
-    for opening the file. For example, \QC opens .txt files in \uicontrol Edit
+    for opening the file. For example, \QC opens \c .txt files in \uicontrol Edit
     mode in the text editor.
 
     To configure the text editor behavior for the current project:
@@ -26,16 +26,16 @@
         \li Select \uicontrol Projects > \uicontrol {Project Settings} >
             \uicontrol Editor.
 
-        \li Deselect \uicontrol {Use global settings}.
+        \li Clear \uicontrol {Use global settings}.
 
         \li Specify text editor settings for the project.
 
     \endlist
 
-    \image qtcreator-editor-settings.webp {Editor settings for a project}
+    \image {qtcreator-editor-settings.webp} {Editor settings for a project in the Projects mode}
 
-    Click \uicontrol {Restore Global} to revert to the global settings.
+    Select \uicontrol {Restore Global} to revert to the global settings.
 
-    \sa {Configuring Fonts}, {Change text encoding}, {Indent text or code},
-    {View function tooltips}, {Text Editor}
+    \sa {Configuring fonts}, {Change text encoding}, {Indent text or code},
+    {View function tooltips}, {Configuring editors}
 */

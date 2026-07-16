@@ -3,6 +3,7 @@
 
 #include "qmlprofilerclientmanager_test.h"
 #include "fakedebugserver.h"
+
 #include <utils/url.h>
 
 #include <QTcpServer>
@@ -10,14 +11,15 @@
 #include <QLocalSocket>
 #include <QQmlDebuggingEnabler>
 
-#include <QtTest>
+#include <QTest>
+#include <QSignalSpy>
 
 using namespace ProjectExplorer;
 
-namespace QmlProfiler {
-namespace Internal {
+namespace QmlProfiler::Internal {
 
-struct MessageHandler {
+struct MessageHandler
+{
     MessageHandler(QtMessageHandler handler)
     {
         defaultHandler = qInstallMessageHandler(handler);
@@ -33,8 +35,7 @@ struct MessageHandler {
 
 QtMessageHandler MessageHandler::defaultHandler;
 
-QmlProfilerClientManagerTest::QmlProfilerClientManagerTest(QObject *parent) :
-    QObject(parent), modelManager(nullptr)
+QmlProfilerClientManagerTest::QmlProfilerClientManagerTest()
 {
     clientManager.setRetryInterval(10);
     clientManager.setMaximumRetries(10);
@@ -116,7 +117,8 @@ void QmlProfilerClientManagerTest::testConnectionFailure()
 
     QVERIFY(!clientManager.isConnected());
 
-    clientManager.connectToServer(serverUrl);
+    clientManager.setServer(serverUrl);
+    clientManager.connectToServer();
     QTRY_COMPARE(failedSpy.count(), 1);
     QCOMPARE(closedSpy.count(), 0);
     QCOMPARE(openedSpy.count(), 0);
@@ -152,7 +154,8 @@ void QmlProfilerClientManagerTest::testUnresponsiveTcp()
     server.listen(QHostAddress(serverUrl.host()), serverUrl.port());
     QSignalSpy connectionSpy(&server, &QTcpServer::newConnection);
 
-    clientManager.connectToServer(serverUrl);
+    clientManager.setServer(serverUrl);
+    clientManager.connectToServer();
 
     QTRY_VERIFY(connectionSpy.count() > 0);
     QTRY_COMPARE(failedSpy.count(), 1);
@@ -178,7 +181,8 @@ void QmlProfilerClientManagerTest::testUnresponsiveLocal()
     QLocalSocket socket;
     QSignalSpy connectionSpy(&socket, &QLocalSocket::connected);
 
-    clientManager.connectToServer(socketUrl);
+    clientManager.setServer(socketUrl);
+    clientManager.connectToServer();
 
     socket.connectToServer(socketUrl.path());
     QTRY_COMPARE(connectionSpy.count(), 1);
@@ -231,7 +235,8 @@ void QmlProfilerClientManagerTest::testResponsiveTcp()
         connect(&clientManager, &QmlProfilerClientManager::connectionFailed,
                 &clientManager, &QmlProfilerClientManager::retryConnect);
 
-        clientManager.connectToServer(serverUrl);
+        clientManager.setServer(serverUrl);
+        clientManager.connectToServer();
 
         QTRY_COMPARE(openedSpy.count(), 1);
         QCOMPARE(closedSpy.count(), 0);
@@ -279,7 +284,8 @@ void QmlProfilerClientManagerTest::testResponsiveLocal()
     connect(&clientManager, &QmlProfilerClientManager::connectionFailed,
             &clientManager, &QmlProfilerClientManager::retryConnect);
 
-    clientManager.connectToServer(socketUrl);
+    clientManager.setServer(socketUrl);
+    clientManager.connectToServer();
 
     {
         QScopedPointer<QLocalSocket> socket(new QLocalSocket(this));
@@ -346,7 +352,8 @@ void QmlProfilerClientManagerTest::testInvalidData()
 
     server.listen(QHostAddress(serverUrl.host()), serverUrl.port());
 
-    clientManager.connectToServer(serverUrl);
+    clientManager.setServer(serverUrl);
+    clientManager.connectToServer();
 
     QTRY_VERIFY(dataSent);
     QTRY_COMPARE(failedSpy.count(), 1);
@@ -376,7 +383,8 @@ void QmlProfilerClientManagerTest::testStopRecording()
         connect(&clientManager, &QmlProfilerClientManager::connectionFailed,
                 &clientManager, &QmlProfilerClientManager::retryConnect);
 
-        clientManager.connectToServer(socketUrl);
+        clientManager.setServer(socketUrl);
+        clientManager.connectToServer();
 
         QScopedPointer<QLocalSocket> socket(new QLocalSocket(this));
         socket->connectToServer(socketUrl.path());
@@ -404,7 +412,8 @@ void QmlProfilerClientManagerTest::testConnectionDrop()
         clientManager.setMaximumRetries(10);
         clientManager.setProfilerStateManager(&stateManager);
         clientManager.setModelManager(&modelManager);
-        clientManager.connectToServer(socketUrl);
+        clientManager.setServer(socketUrl);
+        clientManager.connectToServer();
 
         QScopedPointer<QLocalSocket> socket(new QLocalSocket(this));
         socket->connectToServer(socketUrl.path());
@@ -419,5 +428,4 @@ void QmlProfilerClientManagerTest::testConnectionDrop()
     QTRY_VERIFY(!stateManager.serverRecording());
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

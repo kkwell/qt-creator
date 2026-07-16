@@ -19,7 +19,7 @@ public:
     ClangFormatBaseIndenter(QTextDocument *doc);
     ~ClangFormatBaseIndenter();
 
-    TextEditor::IndentationForBlock indentationForBlocks(const QVector<QTextBlock> &blocks,
+    TextEditor::IndentationForBlock indentationForBlocks(const QList<QTextBlock> &blocks,
                                                          const TextEditor::TabSettings &tabSettings,
                                                          int cursorPositionInEditor = -1) override;
     void indent(const QTextCursor &cursor,
@@ -52,8 +52,10 @@ public:
 
     const clang::format::FormatStyle &styleForFile() const;
 
-    void setOverriddenPreferences(TextEditor::ICodeStylePreferences *preferences);
+    void setOverriddenPreferences(TextEditor::ICodeStylePreferences *preferences) final;
     void setOverriddenStyle(const clang::format::FormatStyle &style);
+
+    bool respectsTabSettings() const override;
 
 protected:
     virtual bool formatCodeInsteadOfIndent() const { return false; }

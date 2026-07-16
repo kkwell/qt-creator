@@ -91,7 +91,7 @@ void DebuggerUnitTests::testStateMachine()
     FilePath proFile = m_tmpDir->absolutePath("simple/simple.pro");
 
     CppEditor::Tests::ProjectOpenerAndCloser projectManager;
-    QVERIFY(projectManager.open(proFile, true));
+    QVERIFY(projectManager.open(proFile));
 
     QEventLoop loop;
     connect(BuildManager::instance(), &BuildManager::buildQueueFinished,
@@ -101,24 +101,24 @@ void DebuggerUnitTests::testStateMachine()
 
     const QScopeGuard cleanup([] { EditorManager::closeAllEditors(false); });
 
-    RunConfiguration *rc = ProjectManager::startupRunConfiguration();
+    RunConfiguration *rc = activeRunConfigForActiveProject();
     QVERIFY(rc);
 
     auto runControl = new RunControl(ProjectExplorer::Constants::DEBUG_RUN_MODE);
     runControl->copyDataFromRunConfiguration(rc);
-    auto debugger = new DebuggerRunTool(runControl);
 
-    debugger->setInferior(rc->runnable());
-    debugger->setTestCase(TestNoBoundsOfCurrentFunction);
+    DebuggerRunParameters rp = DebuggerRunParameters::fromRunControl(runControl);
+    rp.setInferior(rc->runnable());
+    rp.setTestCase(TestNoBoundsOfCurrentFunction);
 
-    connect(debugger, &DebuggerRunTool::stopped,
+    connect(runControl, &RunControl::stopped,
             &QTestEventLoop::instance(), &QTestEventLoop::exitLoop);
 
-    debugger->startRunControl();
+    runControl->setRunRecipe(debuggerRecipe(runControl, rp));
+    runControl->start();
 
     QTestEventLoop::instance().enterLoop(5);
 }
-
 
 enum FakeEnum { FakeDebuggerCommonSettingsId };
 

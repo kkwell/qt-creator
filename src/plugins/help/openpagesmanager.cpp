@@ -85,34 +85,29 @@ QComboBox *OpenPagesManager::openPagesComboBox() const
     return m_comboBox;
 }
 
-QStringList splitString(const QVariant &value)
-{
-    using namespace Help::Constants;
-    return value.toString().split(ListSeparator, Qt::SkipEmptyParts);
-}
-
 void OpenPagesManager::setupInitialPages()
 {
     const QHelpEngineCore &engine = LocalHelpManager::helpEngine();
-    const LocalHelpManager::StartOption option = LocalHelpManager::startOption();
-    QString homePage = LocalHelpManager::homePage();
+    const HelpSettings::StartOption option = helpSettings().startOption();
+    const QString homePage = helpSettings().homePage();
 
     int initialPage = 0;
     switch (option) {
-    case LocalHelpManager::ShowHomePage:
+    case HelpSettings::ShowHomePage:
         m_helpWidget->addViewer(homePage);
         break;
 
-    case LocalHelpManager::ShowBlankPage:
+    case HelpSettings::ShowBlankPage:
         m_helpWidget->addViewer(QUrl(Help::Constants::AboutBlank));
         break;
 
-    case LocalHelpManager::ShowLastPages: {
-        const QStringList &lastShownPageList = LocalHelpManager::lastShownPages();
-        const int pageCount = lastShownPageList.count();
+    case HelpSettings::ShowLastPages: {
+        const QStringList lastShownPageList =
+            helpSettings().lastShownPages().split(Constants::ListSeparator, Qt::SkipEmptyParts);
+        const int pageCount = lastShownPageList.size();
 
         if (pageCount > 0) {
-            initialPage = LocalHelpManager::lastSelectedTab();
+            initialPage = helpSettings().lastSelectedTab();
             for (int curPage = 0; curPage < pageCount; ++curPage) {
                 const QString &curFile = lastShownPageList.at(curPage);
                 if (engine.findFile(curFile).isValid() || curFile == Help::Constants::AboutBlank) {
@@ -132,25 +127,6 @@ void OpenPagesManager::setupInitialPages()
         m_helpWidget->addViewer(homePage);
 
     m_helpWidget->setCurrentIndex(std::max(initialPage, m_helpWidget->viewerCount() - 1));
-}
-
-void OpenPagesManager::closeCurrentPage()
-{
-    if (!m_openPagesWidget)
-        return;
-
-    QModelIndexList indexes = m_openPagesWidget->selectionModel()->selectedRows();
-    if (indexes.isEmpty())
-        return;
-
-    const bool returnOnClose = LocalHelpManager::returnOnClose();
-
-    if (m_helpWidget->viewerCount() == 1 && returnOnClose) {
-        ModeManager::activateMode(Core::Constants::MODE_EDIT);
-    } else {
-        QTC_ASSERT(indexes.count() == 1, return );
-        removePage(indexes.first().row());
-    }
 }
 
 void OpenPagesManager::closePage(const QModelIndex &index)

@@ -12,32 +12,31 @@
     To view the Qbs profile associated with a kit, select \preferences >
     \uicontrol Qbs > \uicontrol Profiles.
 
-    \image creator-qbs-profiles.png "Qbs Profiles tab"
+    \image {creator-qbs-profiles.png} {Profiles tab in Qbs preferences}
 
     You can add keys and values to the profile or remove them from it, as well
     as modify existing values. For a list of available keys and values, see
-    \l{http://doc.qt.io/qbs/list-of-modules.html}{List of Modules} in the Qbs
-    Manual.
+    \l{List of Modules} in the Qbs Manual.
 
     To edit the Qbs profile associated with a kit:
 
     \list 1
         \li In \preferences > \uicontrol Kits, select
-            the kit, and then select \uicontrol Change next to the
-            \uicontrol {Additional Qbs Profile Settings} field to open the
+            the kit, and then select \uicontrol Change next to
+            \uicontrol {Qbs profile additions} to open the
             \uicontrol {Custom Properties} dialog.
-            \image qtcreator-qbs-profile-settings.png "Custom Properties dialog"
+            \image {qtcreator-qbs-profile-settings.png} {Custom Properties dialog}
         \li Double-click an empty cell in the \uicontrol Key column to specify
             the key to add or modify as: \c <module_name>.<property_name>.
         \li Double-click the cell on the same row in the \uicontrol Value column
             to specify a value as a JSON literal.
         \li Select \uicontrol Add to add the key-value pair.
-        \li Click \uicontrol OK.
+        \li Select \uicontrol OK.
     \endlist
 
     To modify an existing value, double-click it in the \uicontrol Value field.
 
     To remove the selected property, select \uicontrol Remove.
 
-    \sa {Activate kits for a project}, {Add kits}, {Kits}
+    \sa {Activate kits for a project}, {Add kits}, {Managing kits}
 */

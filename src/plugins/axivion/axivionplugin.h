@@ -3,28 +3,40 @@
 
 #pragma once
 
+#include "axivionutils.h"
 #include "dashboard/dto.h"
 
-#include <utils/expected.h>
 #include <utils/id.h>
+#include <utils/networkaccessmanager.h>
+#include <utils/result.h>
 
 #include <QHash>
+#include <QMap>
 #include <QUrl>
 #include <QVersionNumber>
 
-QT_BEGIN_NAMESPACE
-class QIcon;
-QT_END_NAMESPACE
-
 namespace ProjectExplorer { class Project; }
 
-namespace Tasking { class Group; }
+namespace Utils {
+class Environment;
+class FilePath;
+}
 
-namespace Utils { class FilePath; }
+QT_BEGIN_NAMESPACE
+class QIcon;
+
+namespace QtTaskTree {
+class Group;
+template <typename StorageStruct>
+class Storage;
+}
+QT_END_NAMESPACE
 
 namespace Axivion::Internal {
 
 constexpr int DefaultSearchLimit = 2048;
+
+enum class DashboardMode { Global, Local };
 
 enum class QueryMode {
     SimpleQuery,            // just kind and version start and end
@@ -41,6 +53,7 @@ struct IssueListSearch
     QString owner;
     QString filter_path;
     QString sort;
+    QMap<QString, QString> filter;
     int offset = 0;
     int limit = DefaultSearchLimit;
     bool computeTotalRowCount = false;
@@ -56,38 +69,84 @@ public:
     QStringList projects;
     QHash<QString, QUrl> projectUrls;
     std::optional<QUrl> checkCredentialsUrl;
+    std::optional<QUrl> globalNamedFilters;
+    std::optional<QUrl> userNamedFilters;
+    std::optional<QString> userName;
 };
 
-using DashboardInfoHandler = std::function<void(const Utils::expected_str<DashboardInfo> &)>;
-Tasking::Group dashboardInfoRecipe(const DashboardInfoHandler &handler = {});
+class DownloadData
+{
+public:
+    QUrl inputUrl;
+    ContentType expectedContentType = ContentType::Html;
+    QByteArray outputData;
+};
 
-// TODO: Wrap into expected_str<>?
+QUrl resolveDashboardInfoUrl(DashboardMode dashboardMode, const QUrl &url);
+
+QtTaskTree::Group downloadDataRecipe(DashboardMode dashboardMode,
+                                  const QtTaskTree::Storage<DownloadData> &storage);
+
+using DashboardInfoHandler = std::function<void(const Utils::Result<DashboardInfo> &)>;
+QtTaskTree::Group dashboardInfoRecipe(DashboardMode dashboardMode,
+                                   const DashboardInfoHandler &handler = {});
+
+QtTaskTree::Group projectInfoRecipe(DashboardMode dashboardMode, const QString &projectName);
+
+// TODO: Wrap into Result<>?
 using TableInfoHandler = std::function<void(const Dto::TableInfoDto &)>;
-Tasking::Group tableInfoRecipe(const QString &prefix, const TableInfoHandler &handler);
+QtTaskTree::Group tableInfoRecipe(DashboardMode dashboardMode,
+                               const QString &prefix, const TableInfoHandler &handler);
 
-// TODO: Wrap into expected_str<>?
+// TODO: Wrap into Result<>?
 using IssueTableHandler = std::function<void(const Dto::IssueTableDto &)>;
-Tasking::Group issueTableRecipe(const IssueListSearch &search, const IssueTableHandler &handler);
+QtTaskTree::Group issueTableRecipe(DashboardMode dashboardMode,
+                                const IssueListSearch &search, const IssueTableHandler &handler);
 
-// TODO: Wrap into expected_str<>?
+// TODO: Wrap into Result<>?
 using LineMarkerHandler = std::function<void(const Dto::FileViewDto &)>;
-Tasking::Group lineMarkerRecipe(const Utils::FilePath &filePath, const LineMarkerHandler &handler);
+QtTaskTree::Group lineMarkerRecipe(DashboardMode dashboardMode,
+                                const Utils::FilePath &filePath, const LineMarkerHandler &handler);
 
-using HtmlHandler = std::function<void(const QByteArray &)>;
-Tasking::Group issueHtmlRecipe(const QString &issueId, const HtmlHandler &handler);
-
-void fetchProjectInfo(const QString &projectName);
+void fetchLocalDashboardInfo(const DashboardInfoHandler &handler, const QString &projectName);
+void fetchDashboardAndProjectInfo(const DashboardInfoHandler &handler, const QString &projectName);
 std::optional<Dto::ProjectInfoDto> projectInfo();
+std::optional<Dto::ProjectInfoDto> localProjectInfo();
+
+struct NamedFilter
+{
+    QString key;
+    QString displayName;
+    bool global = false;
+};
+
+void fetchNamedFilters(DashboardMode dashboardMode);
+QList<NamedFilter> knownNamedFiltersFor(const QString &issueKind, bool global);
+std::optional<Dto::NamedFilterInfoDto> namedFilterInfoForKey(const QString &key, bool global);
+
 bool handleCertificateIssue();
 
-QIcon iconForIssue(const std::optional<Dto::IssueKind> &issueKind);
-QString anyToSimpleString(const Dto::Any &any);
-void fetchIssueInfo(const QString &id);
+enum class LineMarkerType;
+QIcon iconForIssue(const std::optional<Dto::IssueKind> &issueKind, LineMarkerType type);
+QString anyToSimpleString(const Dto::Any &any, const QString &type,
+                          const std::optional<std::vector<Dto::ColumnTypeOptionDto>> &options);
+void fetchIssueInfo(DashboardMode dashboardMode, const QString &id);
 
 void switchActiveDashboardId(const Utils::Id &toDashboardId);
+const Utils::Id activeDashboardId();
 const std::optional<DashboardInfo> currentDashboardInfo();
+void setAnalysisVersion(const QString &version);
+void enableInlineIssues(bool enable);
+
+void switchDashboardMode(DashboardMode mode, bool byLocalBuildButton); // FIXME
+DashboardMode currentDashboardMode();
 
 Utils::FilePath findFileForIssuePath(const Utils::FilePath &issuePath);
 
+void updateEnvironmentForLocalBuild(Utils::Environment *env);
+
+Utils::NetworkAccessManager *axivionNetworkManager();
+
 } // Axivion::Internal
 
+Q_DECLARE_METATYPE(Axivion::Internal::NamedFilter)

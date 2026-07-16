@@ -4,14 +4,16 @@
 #pragma once
 
 #include "qmlprofilertimelinemodel.h"
-#include "qmlprofilereventtypes.h"
-#include "qmleventlocation.h"
+
+#include <qmldebug/qmleventlocation.h>
+#include <qmldebug/qmlprofilereventtypes.h>
 
 #include <QVariantList>
 #include <QColor>
 #include <QObject>
 
 namespace QmlProfiler {
+
 class QmlProfilerModelManager;
 
 namespace Internal {
@@ -42,12 +44,12 @@ public:
     QVariantList labels() const override;
     QVariantMap details(int index) const override;
 
-    void loadEvent(const QmlEvent &event, const QmlEventType &type) override;
+    void loadEvent(const QmlDebug::QmlEvent &event, const QmlDebug::QmlEventType &type) override;
     void finalize() override;
     void clear() override;
 
 private:
-    QVector<Item> m_data;
+    QList<Item> m_data;
     int m_maxGuiThreadAnimations = 0;
     int m_maxRenderThreadAnimations = 0;
     qint64 m_minNextStartTimes[2];
@@ -56,4 +58,5 @@ private:
 };
 
 } // namespace Internal
+
 } // namespace QmlProfiler

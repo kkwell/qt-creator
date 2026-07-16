@@ -5,8 +5,7 @@
 
 #include "qmlprofilertimelinemodel.h"
 
-namespace QmlProfiler {
-namespace Internal {
+namespace QmlProfiler::Internal {
 
 class Quick3DModel : public QmlProfilerTimelineModel
 {
@@ -51,7 +50,7 @@ public:
     int collapsedRow(int index) const override;
     qint64 rowMaxValue(int rowNumber) const override;
     float relativeHeight(int index) const override;
-    void loadEvent(const QmlEvent &event, const QmlEventType &type) override;
+    void loadEvent(const QmlDebug::QmlEvent &event, const QmlDebug::QmlEventType &type) override;
     void finalize() override;
     void clear() override;
     QVariantMap location(int index) const override;
@@ -75,9 +74,8 @@ private:
     quint64 m_maxMeshSize = 0;
     quint64 m_maxTextureSize = 0;
     int m_maxNestedRenderCalls = 1;
-    QVector<Item> m_data;
+    QList<Item> m_data;
     QHash<int, int> m_eventData;
 };
 
-} // namespace Internal
-} // namespace Qmlprofiler
+} // namespace Qmlprofiler::Internal

@@ -1,16 +1,18 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include <QtTest>
+#include <QSignalSpy>
+#include <QTest>
 #include <tracing/timelinemodelaggregator.h>
-#include <tracing/timelineabstractrenderer_p.h>
+#include <tracing/timelineabstractrenderer.h>
 
 using namespace Timeline;
 
+// Friend access lets the test call protected updatePaintNode() directly.
 class DummyRenderer : public TimelineAbstractRenderer {
     friend class tst_TimelineAbstractRenderer;
 public:
-    DummyRenderer() : TimelineAbstractRenderer(*new TimelineAbstractRendererPrivate) {}
+    DummyRenderer() = default;
 };
 
 class tst_TimelineAbstractRenderer : public QObject
@@ -18,7 +20,6 @@ class tst_TimelineAbstractRenderer : public QObject
     Q_OBJECT
 
 private slots:
-    void privateCtor();
     void selectionLocked();
     void selectedItem();
     void model();
@@ -26,12 +27,6 @@ private slots:
     void zoomer();
     void dirty();
 };
-
-void tst_TimelineAbstractRenderer::privateCtor()
-{
-    DummyRenderer renderer;
-    QVERIFY(renderer.d_func() != 0);
-}
 
 void tst_TimelineAbstractRenderer::selectionLocked()
 {

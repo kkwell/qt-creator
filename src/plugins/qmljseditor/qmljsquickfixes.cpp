@@ -49,9 +49,9 @@ public:
         setDescription(Tr::tr("Split Initializer"));
     }
 
-    void performChanges(QmlJSRefactoringFilePtr currentFile,
-                        const QmlJSRefactoringChanges &,
-                        const QString &) override
+    QString performChanges(QmlJSRefactoringFilePtr currentFile,
+                           const QmlJSRefactoringChanges &,
+                           const QString &) override
     {
         Q_ASSERT(_objectInitializer);
 
@@ -60,6 +60,16 @@ public:
         for (UiObjectMemberList *it = _objectInitializer->members; it; it = it->next) {
             if (UiObjectMember *member = it->member) {
                 const SourceLocation loc = member->firstSourceLocation();
+
+                if (auto *binding = dynamic_cast<UiScriptBinding *>(member)) {
+                    if (auto *expressionStatement = dynamic_cast<ExpressionStatement *>(binding->statement)) {
+                        const SourceLocation semiColonToken = expressionStatement->semicolonToken;
+                        if (semiColonToken.isValid()) {
+                            const int semiColonPosition = currentFile->startOf(semiColonToken);
+                            changes.remove(semiColonPosition, semiColonPosition + semiColonToken.length);
+                        }
+                    }
+                }
 
                 // insert a newline at the beginning of this binding
                 changes.insert(currentFile->startOf(loc), QLatin1String("\n"));
@@ -71,6 +81,8 @@ public:
                        QLatin1String("\n"));
 
         currentFile->apply(changes);
+
+        return {};
     }
 };
 
@@ -112,13 +124,14 @@ public:
         setDescription(Tr::tr("Add a Comment to Suppress This Message"));
     }
 
-    void performChanges(QmlJSRefactoringFilePtr currentFile,
-                        const QmlJSRefactoringChanges &,
-                        const QString &) override
+    QString performChanges(QmlJSRefactoringFilePtr currentFile,
+                           const QmlJSRefactoringChanges &,
+                           const QString &) override
     {
         currentFile->apply(Utils::ChangeSet::makeInsert(
             _message.location.begin() - _message.location.startColumn + 1,
             QString::fromLatin1("// %1\n").arg(_message.suppressionString())));
+        return {};
     }
 };
 

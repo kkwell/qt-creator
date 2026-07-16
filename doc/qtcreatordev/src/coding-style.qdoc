@@ -6,17 +6,17 @@
     \page coding-style.html
     \nextpage qtcreator-api.html
 
-    \title Qt Creator Coding Rules
+    \title \QC Coding Rules
 
     \note This document is work in progress.
 
-    The coding rules aim to guide Qt Creator developers, to help them write
+    The coding rules aim to guide \QC developers, to help them write
     understandable and maintainable code, and to minimize confusion and surprises.
 
     As usual, rules are not set in stone. If you have a good reason to break one,
     do so. But first make sure that at least some other developers agree with you.
 
-    To contribute to the main Qt Creator source, you should comply to the
+    To contribute to the main \QC source, you should comply to the
     following rules:
 
     \list
@@ -27,8 +27,8 @@
             and object-oriented.
         \li Take advantage of Qt. Do not re-invent the wheel. Think about which parts
             of your code are generic enough that they might be incorporated into
-            Qt instead of Qt Creator.
-        \li Adapt the code to the existing structures in Qt Creator.
+            Qt instead of \QC.
+        \li Adapt the code to the existing structures in \QC.
             If you have improvement ideas, discuss them with other developers
             before writing the code.
         \li Follow the guidelines in \l{Code Constructs}, \l{Formatting}, and
@@ -40,11 +40,10 @@
 
     \section1 Submitting Code
 
-    To submit code to Qt Creator, you must understand the tools and mechanics as well as
+    To submit code to \QC, you must understand the tools and mechanics as well as
     the philosophy behind Qt development. For more information about how to set up
-    the development environment for working on Qt Creator and how to submit code
-    and documentation for inclusion, see
-    \l{https://wiki.qt.io/Qt_Contribution_Guidelines}{Qt Contribution Guidelines}.
+    the development environment for working on \QC and how to submit code
+    and documentation for inclusion, see \l{Qt Contribution Guidelines}.
 
     \section1 Binary and Source Compatibility
 
@@ -71,7 +70,7 @@
     \list
         \li Soft API freeze: Starting shortly after the beta release of a minor release,
             we start keeping backward source code compatibility within that minor release,
-            including its patch releases. This means that from that point, code that uses \QC API will
+            including its patch releases. This means that from that point, code that uses \QC C++ API will
             compile against the API of all coming versions of this minor release, including its
             patch releases. There still might be occasional exceptions to this rule, which should
             be properly communicated.
@@ -93,13 +92,12 @@
             public/protected/private member functions).
         \li Do not reimplement functions (not even inlines,
             nor protected or private functions).
-        \li Check
-            \l {https://wiki.qt.io/Binary_Compatibility_Workarounds}{Binary Compatibility Workarounds}
+        \li Check \l {Binary Compatibility Workarounds}
             for ways to preserve binary compatibility.
     \endlist
 
     For more information on binary compatibility, see
-    \l{http://techbase.kde.org/Policies/Binary_Compatibility_Issues_With_C++}{Binary Compatibility Issues With C++}.
+    \l{Binary Compatibility Issues With C++}.
 
     From the viewpoint of \l{Plugin Meta Data}{plugin metadata} this means that:
     \list
@@ -186,7 +184,7 @@
 
     \section2 Capitalizing Identifiers
 
-    Use \l{http://en.wikipedia.org/wiki/CamelCase}{camel case} in identifiers.
+    Use \l{camel case} in identifiers.
 
     Capitalize the first word in an identifier as follows:
 
@@ -480,7 +478,7 @@
             potentially more expensive than direct construction by
             \c {QString a("Joe")}. However, the compiler is allowed to elide the
             copy (even if this has side effects), and modern compilers typically do
-            so. Given these equal costs, Qt Creator code favours the '=' idiom as
+            so. Given these equal costs, \QC code favours the '=' idiom as
             it is in
             line with the traditional C-style initialization, it cannot be
             mistaken as function declaration, and it reduces the level of nested
@@ -595,10 +593,10 @@
     \target coding-rules-namespacing
     \section2 Namespacing
 
-    Read \l{https://wiki.qt.io/Qt_In_Namespace}{Qt In Namespace}
-    and keep in mind that all of Qt Creator is \e{namespace aware} code.
+    Read \l{Qt In Namespace} and keep in mind that all of \QC is
+    \e{namespace aware} code.
 
-    The namespacing policy within Qt Creator is as follows:
+    The namespacing policy within \QC is as follows:
     \list
         \li Classes/Symbols of a library or plugin that are exported for use of
             other libraries or plugins are in a namespace specific to that
@@ -609,7 +607,7 @@
 
     \section2 Passing File Names
 
-    Qt Creator API expects file names in portable format, that is, with slashes (/)
+    \QC API expects file names in portable format, that is, with slashes (/)
     instead of backslashes (\\) even on Windows. To pass a file name from the user
     to the API, convert it with QDir::fromNativeSeparators first. To present a file
     name to the user, convert it back to native format with
@@ -622,15 +620,15 @@
 
     \section2 Classes to Use and Classes Not to Use
 
-    A significant portion of Qt Creator code handles data on devices that are not
+    A significant portion of \QC code handles data on devices that are not
     the same as the development machine. These may differ in aspects like path
     separator, line endings, process launching details and so on.
 
     However, some basic Qt classes assume that a Qt application is only
     concerned with machines that are similar to the development machine.
 
-    These classes are therefore not appropriate to use in the part of Qt Creator that
-    is concerned with non-local code. Instead, Qt Creator's Utils library provides
+    These classes are therefore not appropriate to use in the part of \QC that
+    is concerned with non-local code. Instead, \QC's Utils library provides
     substitutes, leading to the following rules:
 
     \list
@@ -647,7 +645,7 @@
 
     \section2 Plugin Dependencies
 
-    To keep Qt Creator scalable we aim at keeping hard run-time dependencies
+    To keep \QC scalable we aim at keeping hard run-time dependencies
     between plugins and to external libraries as few as reasonably possible.
 
     There are several techniques for that.
@@ -1043,7 +1041,7 @@
     \section2 File Headers
 
     If you create a new file, the top of the file should include a
-    header comment equal to the one found in other source files of Qt Creator.
+    header comment equal to the one found in other source files of \QC.
 
     \section2 Including Headers
 
@@ -1206,8 +1204,7 @@
             \endcode
 
         \li Do not inline virtual destructors in exported classes. This leads to duplicated vtables
-            in dependent plugins and this can also break RTTI. See
-            \l {https://bugreports.qt.io/browse/QTBUG-45582}{QTBUG-45582}.
+            in dependent plugins and this can also break RTTI. See \l{QTBUG-45582}.
     \endlist
 
     \section2 Esthetics
@@ -1217,7 +1214,7 @@
             Enumeration values will be replaced by the compiler at compile time,
             resulting in faster code. Defines are not namespace safe.
         \li Prefer verbose argument names in headers.
-            Qt Creator will show the argument names in their completion box.
+            \QC will show the argument names in their completion box.
             It will look better in the documentation.
     \endlist
 

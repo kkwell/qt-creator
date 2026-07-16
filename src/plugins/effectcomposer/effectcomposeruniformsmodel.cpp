@@ -29,6 +29,8 @@ QHash<int, QByteArray> EffectComposerUniformsModel::roleNames() const
     roles[TypeRole] = "uniformType";
     roles[ControlTypeRole] = "uniformControlType";
     roles[UseCustomValueRole] = "uniformUseCustomValue";
+    roles[UserAdded] = "uniformUserAdded";
+    roles[IsInUse] = "uniformIsInUse";
     return roles;
 }
 
@@ -54,7 +56,9 @@ bool EffectComposerUniformsModel::setData(const QModelIndex &index, const QVaria
 
     auto uniform = m_uniforms.at(index.row());
 
-    if (uniform->type() == Uniform::Type::Sampler) {
+    if (role == IsInUse) {
+        uniform->setIsInUse(value.toBool());
+    } else if (uniform->type() == Uniform::Type::Sampler) {
         QString updatedValue = value.toString();
         int idx = value.toString().indexOf("file:");
 
@@ -64,10 +68,10 @@ bool EffectComposerUniformsModel::setData(const QModelIndex &index, const QVaria
             updatedValue = QUrl::fromLocalFile(path).toString();
 
         uniform->setValue(updatedValue);
-        g_propertyData.insert(uniform->name(), updatedValue);
+        g_propertyData()->insert(uniform->name(), updatedValue);
     } else {
         uniform->setValue(value);
-        g_propertyData.insert(uniform->name(), value);
+        g_propertyData()->insert(uniform->name(), value);
     }
 
     emit dataChanged(index, index, {role});
@@ -83,6 +87,31 @@ bool EffectComposerUniformsModel::resetData(int row)
     return setData(idx, idx.data(DefaultValueRole), ValueRole);
 }
 
+bool EffectComposerUniformsModel::remove(int row)
+{
+    QModelIndex idx = index(row, 0);
+    QTC_ASSERT(idx.isValid(), return false);
+
+    beginRemoveRows({}, row, row);
+    m_uniforms.removeAt(row);
+    endRemoveRows();
+
+    return true;
+}
+
+QStringList EffectComposerUniformsModel::displayNames() const
+{
+    QStringList displayNames;
+    for (Uniform *u : std::as_const(m_uniforms))
+        displayNames.append(u->displayName());
+    return displayNames;
+}
+
+QStringList EffectComposerUniformsModel::uniformNames() const
+{
+    return Utils::transform(m_uniforms, &Uniform::name);
+}
+
 void EffectComposerUniformsModel::resetModel()
 {
     beginResetModel();
@@ -94,6 +123,29 @@ void EffectComposerUniformsModel::addUniform(Uniform *uniform)
     beginInsertRows({}, m_uniforms.size(), m_uniforms.size());
     m_uniforms.append(uniform);
     endInsertRows();
+}
+
+void EffectComposerUniformsModel::updateUniform(int uniformIndex, Uniform *uniform)
+{
+    QTC_ASSERT(uniformIndex < m_uniforms.size() && uniformIndex >= 0, return);
+
+    Uniform *oldUniform = m_uniforms.at(uniformIndex);
+
+    // Do full row remove + insert to make sure UI updates the type controls properly
+    beginRemoveRows({}, uniformIndex, uniformIndex);
+    m_uniforms.removeAt(uniformIndex);
+    endRemoveRows();
+
+    beginInsertRows({}, uniformIndex, uniformIndex);
+    m_uniforms.insert(uniformIndex, uniform);
+    endInsertRows();
+
+    const QString &oldName = oldUniform->name();
+    const QString &newName = uniform->name();
+    if (oldName != newName)
+        emit uniformRenamed(oldName, newName);
+
+    delete oldUniform;
 }
 
 QList<Uniform *> EffectComposerUniformsModel::uniforms() const

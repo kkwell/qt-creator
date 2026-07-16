@@ -16,9 +16,8 @@ class Target;
 class Toolchain;
 
 // Documentation inside.
-class PROJECTEXPLORER_EXPORT ProjectImporter : public QObject
+class PROJECTEXPLORER_EXPORT ProjectImporter
 {
-    Q_OBJECT
 public:
     struct ToolchainData {
         QList<Toolchain *> tcs;
@@ -26,12 +25,12 @@ public:
     };
 
     ProjectImporter(const Utils::FilePath &path);
-    ~ProjectImporter() override;
+    virtual ~ProjectImporter();
 
     const Utils::FilePath projectFilePath() const { return m_projectPath; }
     const Utils::FilePath projectDirectory() const { return m_projectPath.parentDir(); }
 
-    virtual const QList<BuildInfo> import(const Utils::FilePath &importPath, bool silent = false);
+    const QList<BuildInfo> import(const Utils::FilePath &importPath, bool silent = false);
     virtual Utils::FilePaths importCandidates() = 0;
     virtual Target *preferredTarget(const QList<Target *> &possibleTargets);
     virtual bool filter(Kit *) const { return true; }
@@ -45,9 +44,6 @@ public:
 
     void addProject(Kit *k) const;
     void removeProject(Kit *k) const;
-
-signals:
-    void cmakePresetsUpdated();
 
 protected:
     class UpdateGuard
@@ -73,7 +69,7 @@ protected:
     // will get one of the results from examineDirectory
     virtual Kit *createKit(void *directoryData) const = 0;
     // will get one of the results from examineDirectory
-    virtual const QList<BuildInfo> buildInfoList(void *directoryData) const = 0;
+    virtual BuildInfo buildInfo(void *directoryData) const = 0;
 
     virtual void deleteDirectoryData(void *directoryData) const = 0;
 

@@ -3,11 +3,11 @@
 
 #include "qnxsettingspage.h"
 
+#include "qnxconstants.h"
 #include "qnxqtversion.h"
 #include "qnxtoolchain.h"
 #include "qnxtr.h"
 #include "qnxutils.h"
-#include "qnxversionnumber.h"
 
 #include <coreplugin/icore.h>
 
@@ -15,12 +15,16 @@
 #include <debugger/debuggeritemmanager.h>
 #include <debugger/debuggerkitaspect.h>
 
+#include <projectexplorer/devicesupport/devicekitaspects.h>
 #include <projectexplorer/devicesupport/devicemanager.h>
+#include <projectexplorer/kit.h>
+#include <projectexplorer/environmentkitaspect.h>
+#include <projectexplorer/kitmanager.h>
 #include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/sysrootkitaspect.h>
 #include <projectexplorer/toolchainmanager.h>
 #include <projectexplorer/toolchain.h>
-#include <projectexplorer/kit.h>
-#include <projectexplorer/kitmanager.h>
+#include <projectexplorer/toolchainkitaspect.h>
 
 #include <qtsupport/baseqtversion.h>
 #include <qtsupport/qtversionmanager.h>
@@ -81,15 +85,15 @@ public:
         if (envFilePath.isEmpty())
             envFilePath = data.value(SdpEnvFileKey).toString();
 
-        m_version = QnxVersionNumber(data.value(QNXVersionKey).toString());
+        m_version = data.value(QNXVersionKey).toString();
         m_envFile = FilePath::fromString(envFilePath);
     }
 
     Store toMap() const
     {
         Store data;
-        data.insert(QNXEnvFileKey, m_envFile.toString());
-        data.insert(QNXVersionKey, m_version.toString());
+        data.insert(QNXEnvFileKey, m_envFile.toUrlishString());
+        data.insert(QNXVersionKey, m_version);
         return data;
     }
 
@@ -138,7 +142,7 @@ public:
     FilePath m_qnxHost;
     FilePath m_qccCompiler;
     EnvironmentItems m_qnxEnv;
-    QnxVersionNumber m_version;
+    QString m_version;
 
     QList<QnxTarget> m_targets;
 };
@@ -181,8 +185,8 @@ void QnxConfiguration::deactivate()
 
     const QList<Kit *> kits = KitManager::kits();
     for (Kit *kit : kits) {
-        if (kit->isAutoDetected()
-                && DeviceTypeKitAspect::deviceTypeId(kit) == Constants::QNX_QNX_OS_TYPE
+        if (kit->detectionSource().isAutoDetected()
+                && RunDeviceTypeKitAspect::deviceTypeId(kit) == Constants::QNX_QNX_OS_TYPE
                 && toolChainsToRemove.contains(ToolchainKitAspect::cxxToolchain(kit))) {
             KitManager::deregisterKit(kit);
         }
@@ -229,10 +233,10 @@ Toolchains QnxConfiguration::createToolChains(const QnxTarget &target)
 {
     Toolchains toolchains;
 
-    for (const Id language : {ProjectExplorer::Constants::C_LANGUAGE_ID,
-                              ProjectExplorer::Constants::CXX_LANGUAGE_ID}) {
+    for (const Id language : {Id(ProjectExplorer::Constants::C_LANGUAGE_ID),
+                              Id(ProjectExplorer::Constants::CXX_LANGUAGE_ID)}) {
         auto toolchain = new QnxToolchain;
-        toolchain->setDetection(Toolchain::ManualDetection);
+        toolchain->setDetectionSource(DetectionSource::Manual);
         toolchain->setLanguage(language);
         toolchain->setTargetAbi(target.m_abi);
         toolchain->setDisplayName(Tr::tr("QCC for %1 (%2)")
@@ -263,23 +267,23 @@ void QnxConfiguration::createKit(const QnxTarget &target)
         if (debugger.isValid())
             DebuggerKitAspect::setDebugger(k, debugger);
 
-        DeviceTypeKitAspect::setDeviceTypeId(k, Constants::QNX_QNX_OS_TYPE);
+        RunDeviceTypeKitAspect::setDeviceTypeId(k, Constants::QNX_QNX_OS_TYPE);
         // TODO: Add sysroot?
 
         k->setUnexpandedDisplayName(Tr::tr("Kit for %1 (%2)")
                     .arg(m_configName)
                     .arg(target.shortDescription()));
 
-        k->setAutoDetected(false);
-        k->setAutoDetectionSource(m_envFile.toString());
+        // TODO: Manual with detection source make little sense, why?
+        k->setDetectionSource({DetectionSource::Manual, m_envFile.toUrlishString()});
 
         k->setSticky(ToolchainKitAspect::id(), true);
-        k->setSticky(DeviceTypeKitAspect::id(), true);
+        k->setSticky(RunDeviceTypeKitAspect::id(), true);
         k->setSticky(SysRootKitAspect::id(), true);
         k->setSticky(DebuggerKitAspect::id(), true);
         k->setSticky(QmakeProjectManager::Constants::KIT_INFORMATION_ID, true);
 
-        EnvironmentKitAspect::setEnvironmentChanges(k, qnxEnvironmentItems());
+        EnvironmentKitAspect::setBuildEnvChanges(k, {qnxEnvironmentItems(), {}});
     };
 
     // add kit with device and qt version not sticky
@@ -391,8 +395,7 @@ void QnxConfiguration::mutableEnsureContents()
             return IterationPolicy::Continue;
 
         m_configName = childElt.firstChildElement(QLatin1String("name")).text();
-        QString version = childElt.firstChildElement(QLatin1String("version")).text();
-        m_version = QnxVersionNumber(version);
+        m_version = childElt.firstChildElement(QLatin1String("version")).text();
         return IterationPolicy::Stop;
     }, {{"*.xml"}, QDir::Files});
 }
@@ -446,7 +449,7 @@ public:
         }
 
         data.insert(QNXConfigCountKey, count);
-        m_writer.save(data, Core::ICore::dialogParent());
+        m_writer.save(data);
     }
 
     void restoreConfigurations()
@@ -486,7 +489,7 @@ public:
             return;
 
         auto l = new QHBoxLayout(this);
-        for (const QnxTarget &target : config->m_targets) {
+        for (const QnxTarget &target : std::as_const(config->m_targets)) {
             auto button = new QPushButton(Tr::tr("Create Kit for %1").arg(target.cpuDir()));
             connect(button, &QPushButton::clicked, this, [config, target] {
                 config->createKit(target);
@@ -568,11 +571,11 @@ QnxSettingsWidget::QnxSettingsWidget()
         Column {
             PushButton {
                 text(Tr::tr("Add...")),
-                onClicked([this] { addConfiguration(); }, this)
+                onClicked(this, [this] { addConfiguration(); })
             },
             PushButton {
                 text(Tr::tr("Remove")),
-                onClicked([this] { removeConfiguration(); }, this)
+                onClicked(this, [this] { removeConfiguration(); })
             },
             st
         }
@@ -582,6 +585,8 @@ QnxSettingsWidget::QnxSettingsWidget()
 
     connect(m_configsCombo, &QComboBox::currentIndexChanged,
             this, &QnxSettingsWidget::updateInformation);
+
+    installMarkSettingsDirtyTriggerRecursively(this);
 }
 
 void QnxSettingsWidget::addConfiguration()
@@ -592,7 +597,7 @@ void QnxSettingsWidget::addConfiguration()
     else
         filter = "*.sh file";
 
-    const FilePath envFile = FileUtils::getOpenFilePath(this, Tr::tr("Select QNX Environment File"),
+    const FilePath envFile = FileUtils::getOpenFilePath(Tr::tr("Select QNX Environment File"),
                                                         {}, filter);
     if (envFile.isEmpty())
         return;
@@ -649,9 +654,9 @@ void QnxSettingsWidget::updateInformation()
     if (QnxConfiguration *config = configurationFromEnvFile(envFile)) {
         config->ensureContents();
         m_configName->setText(config->m_configName);
-        m_configVersion->setText(config->m_version.toString());
-        m_configHost->setText(config->m_qnxHost.toString());
-        m_configTarget->setText(config->m_qnxTarget.toString());
+        m_configVersion->setText(config->m_version);
+        m_configHost->setText(config->m_qnxHost.toUrlishString());
+        m_configTarget->setText(config->m_qnxTarget.toUrlishString());
         m_compiler->setText(config->m_qccCompiler.toUserOutput());
         m_architectures->setText(config->architectureNames());
         m_kitCreation->setConfiguration(envFile);
@@ -743,7 +748,7 @@ QnxSettingsPage::QnxSettingsPage(QObject *guard)
 {
     setId("DD.Qnx Configuration");
     setDisplayName(Tr::tr("QNX"));
-    setCategory(ProjectExplorer::Constants::DEVICE_SETTINGS_CATEGORY);
+    setCategory(ProjectExplorer::Constants::SDK_SETTINGS_CATEGORY);
     setWidgetCreator([] { return new QnxSettingsWidget; });
 
     connect(Core::ICore::instance(), &Core::ICore::saveSettingsRequested,

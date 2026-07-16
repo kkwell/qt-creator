@@ -19,13 +19,10 @@ class BasicTable
 public:
     using Column = ::Sqlite::BasicColumn<ColumnType>;
     using ColumnConstReferences = ::Sqlite::BasicColumnConstReferences<ColumnType>;
-    using Columns = ::Sqlite::BasicColumns<ColumnType>;
+    using Columns = ::Sqlite::StableReferenceBasicColumns<ColumnType>;
+    using Indices = StableReferenceSqliteIndices;
 
-    BasicTable(std::size_t reserve = 10)
-    {
-        m_sqliteColumns.reserve(reserve);
-        m_sqliteIndices.reserve(reserve);
-    }
+    BasicTable([[maybe_unused]] std::size_t reserve = 10) {}
 
     void setName(Utils::SmallStringView name) { m_tableName = name; }
 
@@ -107,7 +104,6 @@ public:
     void addPrimaryKeyContraint(const BasicColumnConstReferences<ColumnType> &columns)
     {
         Utils::SmallStringVector columnNames;
-        columnNames.reserve(columns.size());
 
         for (const auto &column : columns)
             columnNames.emplace_back(column.name);
@@ -140,29 +136,31 @@ public:
         return m_isReady;
     }
 
-    template <typename Database>
-    void initialize(Database &database)
+    template<typename Database>
+    void initialize(Database &database,
+                    const source_location &sourceLocation = source_location::current())
     {
         CreateTableSqlStatementBuilder<ColumnType> builder;
 
-        builder.setTableName(m_tableName.clone());
+        builder.setTableName(m_tableName);
         builder.setUseWithoutRowId(m_withoutRowId);
         builder.setUseIfNotExists(m_useIfNotExists);
         builder.setUseTemporaryTable(m_useTemporaryTable);
         builder.setColumns(m_sqliteColumns);
         builder.setConstraints(m_tableConstraints);
 
-        database.execute(builder.sqlStatement());
+        database.execute(builder.sqlStatement(), sourceLocation);
 
-        initializeIndices(database);
+        initializeIndices(database, sourceLocation);
 
         m_isReady = true;
     }
-    template <typename Database>
-    void initializeIndices(Database &database)
+
+    template<typename Database>
+    void initializeIndices(Database &database, const source_location &sourceLocation)
     {
         for (const Index &index : m_sqliteIndices)
-            database.execute(index.sqlStatement());
+            database.execute(index.sqlStatement(), sourceLocation);
     }
 
     friend bool operator==(const BasicTable &first, const BasicTable &second)
@@ -199,7 +197,7 @@ private:
 private:
     Utils::SmallString m_tableName;
     Columns m_sqliteColumns;
-    SqliteIndices m_sqliteIndices;
+    Indices m_sqliteIndices;
     TableConstraints m_tableConstraints;
     bool m_withoutRowId = false;
     bool m_useIfNotExists = false;

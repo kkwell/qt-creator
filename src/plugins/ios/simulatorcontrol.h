@@ -3,30 +3,24 @@
 
 #pragma once
 
+#include <projectexplorer/abi.h>
 #include <utils/filepath.h>
 
-#include <QObject>
-#include <QFuture>
 #include <QDebug>
-
-#include <memory>
+#include <QObject>
+#include <QPromise>
 
 namespace Ios::Internal {
 
-class SimulatorControlPrivate;
-
-class SimulatorEntity
+class SimulatorRuntime
 {
 public:
-    QString name;
-    QString identifier;
-    bool operator <(const SimulatorEntity &o) const
-    {
-        return name < o.name;
-    }
+    QString id;
+    QString version;
+    QList<ProjectExplorer::Abi::Architecture> architectures;
 };
 
-class SimulatorInfo : public SimulatorEntity
+class SimulatorInfo
 {
 public:
     QString toString() const;
@@ -36,19 +30,15 @@ public:
     bool isShutdown() const { return state == "Shutdown"; }
     bool operator==(const SimulatorInfo &other) const;
     bool operator!=(const SimulatorInfo &other) const { return !(*this == other); }
+
+    QString name;
+    QString identifier;
+    bool operator<(const SimulatorInfo &o) const { return name < o.name; }
+
     bool available;
     QString state;
-    QString runtimeName;
+    SimulatorRuntime runtime;
 };
-
-class RuntimeInfo : public SimulatorEntity
-{
-public:
-    QString version;
-    QString build;
-};
-
-class DeviceTypeInfo : public SimulatorEntity {};
 
 class SimulatorControl
 {
@@ -62,37 +52,24 @@ public:
         qint64 inferiorPid{-1};
     };
 
-    using Response = Utils::expected_str<ResponseData>;
+    using Response = Utils::Result<ResponseData>;
 
-public:
-    static QFuture<QList<DeviceTypeInfo>> updateDeviceTypes();
-    static QFuture<QList<RuntimeInfo>> updateRuntimes();
     static QList<SimulatorInfo> availableSimulators();
-    static QFuture<QList<SimulatorInfo>> updateAvailableSimulators(QObject *context);
+    static void updateAvailableSimulators(const std::function<void()> &doneHandler = {});
     static bool isSimulatorRunning(const QString &simUdid);
     static QString bundleIdentifier(const Utils::FilePath &bundlePath);
-    static QString bundleExecutable(const Utils::FilePath &bundlePath);
-
-public:
-    static QFuture<Response> startSimulator(const QString &simUdid);
-    static QFuture<Response> installApp(const QString &simUdid, const Utils::FilePath &bundlePath);
-    static QFuture<Response> launchApp(const QString &simUdid,
-                                       const QString &bundleIdentifier,
-                                       bool waitForDebugger,
-                                       const QStringList &extraArgs,
-                                       const QString &stdoutPath = QString(),
-                                       const QString &stderrPath = QString());
-    static QFuture<Response> deleteSimulator(const QString &simUdid);
-    static QFuture<Response> resetSimulator(const QString &simUdid);
-    static QFuture<Response> renameSimulator(const QString &simUdid, const QString &newName);
-    static QFuture<Response> createSimulator(const QString &name,
-                                             const DeviceTypeInfo &deviceType,
-                                             const RuntimeInfo &runtime);
-    static QFuture<Response> takeSceenshot(const QString &simUdid, const QString &filePath);
 };
+
+void startSimulator(QPromise<SimulatorControl::Response> &promise, const QString &simUdid);
+void installApp(QPromise<SimulatorControl::Response> &promise, const QString &simUdid,
+                const Utils::FilePath &bundlePath);
+void launchApp(QPromise<SimulatorControl::Response> &promise, const QString &simUdid,
+               const QString &bundleIdentifier,
+               bool waitForDebugger,
+               const QStringList &extraArgs,
+               const QString &stdoutPath,
+               const QString &stderrPath);
 
 } // Ios::Internal
 
-Q_DECLARE_METATYPE(Ios::Internal::DeviceTypeInfo)
-Q_DECLARE_METATYPE(Ios::Internal::RuntimeInfo)
 Q_DECLARE_METATYPE(Ios::Internal::SimulatorInfo)

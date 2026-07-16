@@ -1,5 +1,8 @@
+find_package(Qt6 COMPONENTS DBus QUIET)
+
 add_qtc_plugin(Core
-  DEPENDS Qt::PrintSupport Qt::Qml Qt::Sql Qt::Gui Qt::GuiPrivate TerminalLib
+  DEPENDS Qt::PrintSupport Qt::Qml Qt::Gui Qt::GuiPrivate TerminalLib qtkeychain
+  PLUGIN_TEST_DEPENDS TextEditor
   PUBLIC_DEPENDS Aggregation ExtensionSystem Utils
   SOURCES
     actionmanager/actioncontainer.cpp
@@ -13,8 +16,6 @@ add_qtc_plugin(Core
     actionmanager/command_p.h
     actionmanager/commandmappings.cpp
     actionmanager/commandmappings.h
-    actionmanager/commandsfile.cpp
-    actionmanager/commandsfile.h
     actionsfilter.cpp
     actionsfilter.h
     basefilewizard.cpp
@@ -31,10 +32,12 @@ add_qtc_plugin(Core
     coreplugin.cpp
     coreplugin.h
     coreplugintr.h
+    credentialquery.cpp
+    credentialquery.h
+    customlanguagemodels.cpp
+    customlanguagemodels.h
     designmode.cpp
     designmode.h
-    dialogs/addtovcsdialog.cpp
-    dialogs/addtovcsdialog.h
     dialogs/codecselector.cpp
     dialogs/codecselector.h
     dialogs/externaltoolconfig.cpp
@@ -45,8 +48,6 @@ add_qtc_plugin(Core
     dialogs/ioptionspage.h
     dialogs/newdialog.cpp
     dialogs/newdialog.h
-    dialogs/newdialogwidget.cpp
-    dialogs/newdialogwidget.h
     dialogs/openwithdialog.cpp
     dialogs/openwithdialog.h
     dialogs/promptoverwritedialog.cpp
@@ -55,8 +56,6 @@ add_qtc_plugin(Core
     dialogs/readonlyfilesdialog.h
     dialogs/saveitemsdialog.cpp
     dialogs/saveitemsdialog.h
-    dialogs/settingsdialog.cpp
-    dialogs/settingsdialog.h
     dialogs/shortcutsettings.cpp
     dialogs/shortcutsettings.h
     diffservice.cpp
@@ -90,6 +89,8 @@ add_qtc_plugin(Core
     editormanager/systemeditor.h
     editortoolbar.cpp
     editortoolbar.h
+    envvarseparatoraspect.cpp
+    envvarseparatoraspect.h
     externaltool.cpp
     externaltool.h
     externaltoolmanager.cpp
@@ -122,8 +123,14 @@ add_qtc_plugin(Core
     find/ifindsupport.h
     find/itemviewfind.cpp
     find/itemviewfind.h
+    find/minimapcontroller.cpp
+    find/minimapcontroller.h
+    find/minimapoverlay.cpp
+    find/minimapoverlay.h
     find/optionspopup.cpp
     find/optionspopup.h
+    find/searchresulthighlighter.cpp
+    find/searchresulthighlighter.h
     find/searchresulttreeitemdelegate.cpp
     find/searchresulttreeitemdelegate.h
     find/searchresulttreeitemroles.h
@@ -211,12 +218,14 @@ add_qtc_plugin(Core
     loggingviewer.h
     manhattanstyle.cpp
     manhattanstyle.h
+    mcp/mcpmanager.cpp
+    mcp/mcpmanager.h
+    mcp/mcpregistry.cpp
+    mcp/mcpregistry.h
     messagebox.cpp
     messagebox.h
     messagemanager.cpp
     messagemanager.h
-    messageoutputwindow.cpp
-    messageoutputwindow.h
     mimetypemagicdialog.cpp
     mimetypemagicdialog.h
     mimetypesettings.cpp
@@ -231,7 +240,6 @@ add_qtc_plugin(Core
     navigationwidget.h
     opendocumentstreeview.cpp
     opendocumentstreeview.h
-    outputpane.cpp
     outputpane.h
     outputpanemanager.cpp
     outputpanemanager.h
@@ -256,8 +264,12 @@ add_qtc_plugin(Core
     progressmanager/progressview.h
     progressmanager/taskprogress.cpp
     progressmanager/taskprogress.h
+    perspective.cpp
+    perspective.h
     rightpane.cpp
     rightpane.h
+    secretaspect.cpp
+    secretaspect.h
     session.cpp
     session.h
     sessiondialog.cpp
@@ -266,8 +278,8 @@ add_qtc_plugin(Core
     sessionmodel.h
     sessionview.cpp
     sessionview.h
-    settingsdatabase.cpp
-    settingsdatabase.h
+    settingsmode.cpp
+    settingsmode.h
     sidebar.cpp
     sidebar.h
     sidebarwidget.cpp
@@ -284,28 +296,23 @@ add_qtc_plugin(Core
     themechooser.h
     vcsmanager.cpp
     vcsmanager.h
+    vcsfilestate.h
     versiondialog.cpp
     versiondialog.h
     welcomepagehelper.cpp
     welcomepagehelper.h
     windowsupport.cpp
     windowsupport.h
-  EXPLICIT_MOC dialogs/filepropertiesdialog.h
-)
-
-extend_qtc_plugin(Core
-  CONDITION SHOW_BUILD_DATE
-  DEFINES QTC_SHOW_BUILD_DATE
 )
 
 extend_qtc_plugin(Core
   CONDITION WITH_TESTS
   SOURCES
+    editormanager/editormanager_test.cpp
     locator/locator_test.cpp
+    locator/locator_test.h
     locator/locatorfiltertest.cpp
     locator/locatorfiltertest.h
-    testdatadir.cpp
-    testdatadir.h
 )
 
 extend_qtc_plugin(Core
@@ -326,8 +333,10 @@ extend_qtc_plugin(Core
 )
 
 extend_qtc_plugin(Core
-  CONDITION BUILD_WITH_CRASHPAD
-  DEFINES ENABLE_CRASHPAD
+  FEATURE_INFO "Freedesktop file manager support"
+  CONDITION UNIX AND NOT APPLE AND TARGET Qt::DBus
+  DEFINES QTC_SUPPORT_DBUSFILEMANAGER
+  DEPENDS Qt::DBus
 )
 
 set(FONTS_BASE "${QtCreator_SOURCE_DIR}/src/share/3rdparty/studiofonts/")

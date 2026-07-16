@@ -7,7 +7,7 @@
 
     \ingroup creator-reference-platforms
 
-    \title Desktop Platforms
+    \title Desktop platforms
 
     \brief Requirements for operating systems that you can install and run \QC
     on.
@@ -25,7 +25,11 @@
 
     \section1 Linux
 
-    (K)Ubuntu Linux 22.04 (64-bit) or later is supported.
+    Supported platforms are:
+    \list
+        \li (K)Ubuntu Linux 22.04 (x86_64) or later (glibc 2.34)
+        \li (K)Ubuntu Linux 24.04 (Arm64) or later (glibc 2.39)
+    \endlist
 
     To build Qt applications using \QC on Linux, you usually need the
     following:
@@ -50,25 +54,27 @@
 
     \section1 macOS
 
-    \macos 11.0 or later is supported with the Xcode tools for your \macos
+    \macos 13.0 or later is supported with the Xcode tools for your \macos
     version available in the Mac App Store.
 
     \section1 Windows
 
-    Windows 10 (64-bit) or later is supported.
+    Supported platforms are:
+    \list
+        \li Windows 10 (x86_64) or later
+        \li Windows 11 (Arm64) or later
+    \endlist
 
     \note Some \QC plugins rely on Direct3D (part of DirectX). You might
     have to manually enable support for it if you are running Windows in a
     Virtual Machine. For more information, see
-    \l{http://www.virtualbox.org/manual/ch04.html#guestadd-3d}
-    {Hardware 3D acceleration (OpenGL and Direct3D 8/9)} and
-    \l{http://pubs.vmware.com/workstation-10/index.jsp?topic=%2Fcom.vmware.ws.using.doc%2FGUID-EA588485-718A-4FD8-81F5-B6E1F04C5788.html}
-    {Prepare the Host System to Use DirectX 9 Accelerated Graphics}.
+    \l{Hardware 3D acceleration (OpenGL and Direct3D 8/9)} and
+    \l{Prepare the Host System to Use DirectX 9 Accelerated Graphics}.
 
-    \section1 Compiling from Source
+    \section1 Compiling from source
 
     To build \QC from the source, see the requirements and instructions in the
     readme file that is located in the source repository.
 
-    \sa {Supported Platforms}
+    \sa {Supported platforms}
 */

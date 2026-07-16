@@ -8,31 +8,170 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-if (NOT QT_CREATOR_API_DEFINED)
-  # standalone build
-  include(QtCreatorIDEBranding)
-  include(QtCreatorAPI)
-  qtc_handle_compiler_cache_support()
+if (NOT DEFINED QTCREATORCDBEXT_INSTALL_LLVM)
+  set(QTCREATORCDBEXT_INSTALL_LLVM YES) # default
 endif()
-
-if (NOT WIN32 OR NOT MSVC)
-  return()
-endif()
-
-find_library(DbgEngLib dbgeng)
 
 set(ArchSuffix "32")
-if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
   set(ArchSuffix "64")
 endif()
 
-if (MSVC_CXX_ARCHITECTURE_ID MATCHES "^ARM")
+if(MSVC_CXX_ARCHITECTURE_ID MATCHES "^ARM")
   set(ArchSuffix "arm${ArchSuffix}")
+endif()
+
+if (NOT QT_CREATOR_API_DEFINED)
+  # standalone build
+  set(QTC_SBOM_READY ON)
+  include(QtCreatorIDEBranding)
+  include(QtCreatorAPI)
+  include(QtCreatorSbom)
+  qtc_handle_compiler_cache_support()
+
+  # Need to look for Qt6, so that we can use the SBOM feature, even though the
+  # project doesn't link to Qt.
+  # Explicitly disable the version checks, because when configuring for an architecture that
+  # is not compatible with the found Qt, we'd fail to find the package. We don't care about
+  # binary compatibility here, we only want the SBOM feature.
+  if(QT_GENERATE_SBOM)
+    set(QT_NO_PACKAGE_VERSION_CHECK ON)
+    set(QT_NO_PACKAGE_VERSION_INCOMPATIBLE_WARNING ON)
+    find_package(Qt6 REQUIRED)
+    unset(QT_NO_PACKAGE_VERSION_CHECK)
+    unset(QT_NO_PACKAGE_VERSION_INCOMPATIBLE_WARNING)
+  endif()
+
+  set(QT_CREATOR_CDB_EXT_STANDALONE_BUILD TRUE)
+
+  # Compile for x86, x64 and arm64
+  if (NOT ${PROJECT_NAME}-MultiBuild AND NOT MINGW)
+    include(ExternalProject)
+
+    set(generator "Visual Studio 16 2019")
+    if(CMAKE_CXX_COMPILER MATCHES "Microsoft Visual Studio/2022/")
+      set(generator "Visual Studio 17 2022")
+    endif()
+
+    string(REPLACE ";" "|" CMAKE_PREFIX_PATH_ALT_SEP "${CMAKE_PREFIX_PATH}")
+
+    set(extra_cmake_args "")
+    set(extra_install_commands "")
+    if(QT_GENERATE_SBOM)
+      list(APPEND extra_cmake_args -DQT_GENERATE_SBOM=${QT_GENERATE_SBOM})
+      if(DEFINED QT_SBOM_GENERATE_SPDX_V2_JSON)
+        list(APPEND extra_cmake_args
+          -DQT_SBOM_GENERATE_SPDX_V2_JSON=${QT_SBOM_GENERATE_SPDX_V2_JSON})
+      endif()
+      if(DEFINED QT_SBOM_REQUIRE_GENERATE_SPDX_V2_JSON)
+        list(APPEND extra_cmake_args
+          -DQT_SBOM_REQUIRE_GENERATE_SPDX_V2_JSON=${QT_SBOM_REQUIRE_GENERATE_SPDX_V2_JSON})
+      endif()
+      if(DEFINED QT_SBOM_GENERATE_CYDX_V1_6)
+        list(APPEND extra_cmake_args -DQT_SBOM_GENERATE_CYDX_V1_6=${QT_SBOM_GENERATE_CYDX_V1_6})
+      endif()
+      if(DEFINED QT_SBOM_REQUIRE_GENERATE_CYDX_V1_6)
+        list(APPEND extra_cmake_args
+          -DQT_SBOM_REQUIRE_GENERATE_CYDX_V1_6=${QT_SBOM_REQUIRE_GENERATE_CYDX_V1_6})
+      endif()
+      list(APPEND extra_install_commands
+        && ${CMAKE_COMMAND} --install . --config ${CMAKE_BUILD_TYPE}
+                            --prefix "${CMAKE_BINARY_DIR}" --component sbom
+      )
+    endif()
+
+    macro (setup_library arch install_llvm)
+      ExternalProject_Add(${arch}-bld
+        SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}"
+        CMAKE_GENERATOR "${generator}"
+        CMAKE_GENERATOR_PLATFORM "${arch}"
+        USES_TERMINAL_INSTALL TRUE
+        LIST_SEPARATOR |
+        CMAKE_ARGS
+          -D${PROJECT_NAME}-MultiBuild=ON
+          -DPythonTargetArchDll=${PythonTarget${arch}Dll}
+          -DPython3_ROOT_DIR=${Python3_ROOT_DIR}
+          -DCMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH_ALT_SEP}
+          -DQTCREATORCDBEXT_INSTALL_LLVM=${install_llvm}
+          -DCMAKE_CONFIGURATION_TYPES=${CMAKE_BUILD_TYPE}
+          ${extra_cmake_args}
+        BUILD_COMMAND
+          ${CMAKE_COMMAND} --build . --config ${CMAKE_BUILD_TYPE}
+        INSTALL_COMMAND
+          ${CMAKE_COMMAND} --install . --config ${CMAKE_BUILD_TYPE}
+                           --prefix "${CMAKE_BINARY_DIR}" --component qtcreatorcdbext
+          ${extra_install_commands}
+      )
+    endmacro()
+
+    if (NOT QTCREATORCDBEXT_BUILD_ARCHS)
+      set(QTCREATORCDBEXT_BUILD_ARCHS arm64 win32 x64)
+    endif()
+    set(install_llvm YES)
+    foreach(arch IN LISTS QTCREATORCDBEXT_BUILD_ARCHS)
+      setup_library(${arch} ${install_llvm})
+      set(install_llvm NO)
+    endforeach()
+
+    list(LENGTH QTCREATORCDBEXT_BUILD_ARCHS build_archs_length)
+    if (build_archs_length GREATER 0)
+      install(
+        DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+        DESTINATION .
+        COMPONENT qtcreatorcdbext
+      )
+      install(CODE
+        "if (EXISTS \"${CMAKE_BINARY_DIR}/bin\")
+          message(\"Copying ${CMAKE_BINARY_DIR}/bin to ${CMAKE_INSTALL_PREFIX}\")
+          file(COPY \"${CMAKE_BINARY_DIR}/bin\" DESTINATION \"${CMAKE_INSTALL_PREFIX}\")
+         endif()"
+        COMPONENT qtcreatorcdbext
+      )
+      if(QT_GENERATE_SBOM)
+        qtc_sbom_get_sbom_install_path(sbom_install_path)
+        # Because we are installing a dir, the destination should be the same without the dir
+        # name.
+        get_filename_component(sbom_install_dest "${sbom_install_path}" DIRECTORY)
+        install(
+          DIRECTORY "${CMAKE_BINARY_DIR}/${sbom_install_path}"
+          DESTINATION "${sbom_install_dest}"
+          COMPONENT qtcreatorcdbext
+        )
+      endif()
+    endif()
+
+    return()
+  endif()
+endif()
+
+if (NOT WIN32 OR NOT MSVC OR BUILD_DESIGNSTUDIO)
+  return()
+endif()
+
+if (NOT EXISTS "${CMAKE_BINARY_DIR}/lib/qtcreatorcdbext${ArchSuffix}")
+  file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/lib/qtcreatorcdbext${ArchSuffix}")
+endif()
+
+if(QT_CREATOR_CDB_EXT_STANDALONE_BUILD AND QT_GENERATE_SBOM)
+  qtc_setup_sbom()
+  qtc_sbom_compute_cpe(project_cpe
+    VENDOR "qt"
+    PRODUCT "${PROJECT_NAME}"
+    VERSION "${IDE_VERSION}"
+  )
+  set(QT_SBOM_LICENSE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/../../../LICENSES")
+  qtc_sbom_begin_project(
+    SBOM_PROJECT_NAME "${PROJECT_NAME}-${ArchSuffix}"
+    QT_REPO_PROJECT_NAME "${PROJECT_NAME}-${ArchSuffix}"
+    PURL_NAMESPACE "qt"
+    PURL_NAME "${PROJECT_NAME}"
+    CPE "${project_cpe}"
+  )
 endif()
 
 add_qtc_library(qtcreatorcdbext SHARED
   COMPONENT qtcreatorcdbext
-  DEPENDS ${DbgEngLib}
+  DEPENDS dbgeng
   DESTINATION lib/qtcreatorcdbext${ArchSuffix}/
   SOURCES
     common.cpp common.h
@@ -95,24 +234,39 @@ if (_library_enabled)
   endif()
 
   # Support for cross-compilation for arm64 on a x64 system
-  if (MSVC_CXX_ARCHITECTURE_ID MATCHES "^ARM" AND CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^AMD")
+  if (MSVC_CXX_ARCHITECTURE_ID STREQUAL "ARM64" AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "ARM64")
+    set(arm64_on_arm64 ON)
+  endif()
+  if (MSVC_CXX_ARCHITECTURE_ID STREQUAL "x64" AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "AMD64")
+    set(x64_on_x64 ON)
+  endif()
+
+  if (NOT arm64_on_arm64 AND NOT x64_on_x64)
     find_program(dumpbin_executable dumpbin)
     find_program(lib_executable lib)
 
     string(TOLOWER ${MSVC_CXX_ARCHITECTURE_ID} lower_arch_name)
+    if (lower_arch_name STREQUAL "arm64")
+      set(python_suffix "arm64")
+    elseif (lower_arch_name STREQUAL "x64")
+      set(python_suffix "amd64")
+    else()
+      set(python_suffix "win32")
+    endif()
 
     if (NOT dumpbin_executable OR NOT lib_executable)
       message(WARNING "Couldn't locate dumpbin.exe or lib.exe executables")
       return()
     endif()
 
-    if (Python3_VERSION VERSION_LESS "3.11.0")
+    if (Python3_VERSION VERSION_LESS "3.11.0" AND lower_arch_name STREQUAL "arm64")
       message(WARNING "Python 3.11.0 needs to be installed. This version is the first version that has arm64 Windows support")
       return()
     endif()
 
+    file(TO_NATIVE_PATH ${PythonDll} NativePythonDll)
     execute_process(
-      COMMAND ${dumpbin_executable} /exports ${PythonDll}
+      COMMAND ${dumpbin_executable} /exports ${NativePythonDll}
       OUTPUT_VARIABLE dumpbin_output
       RESULT_VARIABLE dumpbin_result)
 
@@ -129,7 +283,7 @@ if (_library_enabled)
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/${PythonNameWithVersion}.def "${pythondef}")
 
     execute_process(
-      COMMAND ${lib_executable}
+      COMMAND "${lib_executable}"
               /def:${CMAKE_CURRENT_BINARY_DIR}/${PythonNameWithVersion}.def
               /out:${CMAKE_CURRENT_BINARY_DIR}/${PythonNameWithVersion}.lib /machine:${lower_arch_name} /nologo)
     set(Python3_LIBRARIES "${CMAKE_CURRENT_BINARY_DIR}/${PythonNameWithVersion}.lib")
@@ -139,7 +293,7 @@ if (_library_enabled)
     endif()
 
     if (NOT PythonTargetArchDll)
-      set(python_embed_url "https://www.python.org/ftp/python/${Python3_VERSION}/python-${Python3_VERSION}-embed-${lower_arch_name}.zip")
+      set(python_embed_url "https://www.python.org/ftp/python/${Python3_VERSION}/python-${Python3_VERSION}-embed-${python_suffix}.zip")
       message(STATUS "Downloading ${python_embed_url}")
 
       foreach(retry RANGE 10)
@@ -202,23 +356,30 @@ if (_library_enabled)
     VERBATIM
   )
 
-  # Deploy lldb.exe and its Python dependency
-  find_package(Clang QUIET)
-  if (LLVM_TOOLS_BINARY_DIR AND LLVM_LIBRARY_DIRS)
-    foreach(lldb_file lldb.exe lldb-dap.exe liblldb.dll python311.zip python311.dll)
-      if (EXISTS ${LLVM_TOOLS_BINARY_DIR}/${lldb_file})
-        install(FILES ${LLVM_TOOLS_BINARY_DIR}/${lldb_file}
-                DESTINATION bin/clang/bin
-                COMPONENT qtcreatorcdbext)
-      endif()
-    endforeach()
+  if (QTCREATORCDBEXT_INSTALL_LLVM)
+    # Deploy lldb.exe and its Python dependency
+    find_package(Clang QUIET)
+    if (LLVM_TOOLS_BINARY_DIR AND LLVM_LIBRARY_DIRS)
+      file(GLOB python_files RELATIVE ${LLVM_TOOLS_BINARY_DIR} "${LLVM_TOOLS_BINARY_DIR}/python*")
+      foreach(lldb_file lldb.exe lldb-dap.exe liblldb.dll ${python_files})
+        if (EXISTS ${LLVM_TOOLS_BINARY_DIR}/${lldb_file})
+          install(FILES ${LLVM_TOOLS_BINARY_DIR}/${lldb_file}
+                  DESTINATION bin/clang/bin
+                  COMPONENT qtcreatorcdbext)
+        endif()
+      endforeach()
 
-    if (EXISTS ${LLVM_LIBRARY_DIRS}/site-packages)
-      install(DIRECTORY ${LLVM_LIBRARY_DIRS}/site-packages
-              DESTINATION bin/clang/lib
-              COMPONENT qtcreatorcdbext
-              PATTERN _lldb.cp311-win_amd64.pyd EXCLUDE)
+      if (EXISTS ${LLVM_LIBRARY_DIRS}/site-packages)
+        install(DIRECTORY ${LLVM_LIBRARY_DIRS}/site-packages
+                DESTINATION bin/clang/lib
+                COMPONENT qtcreatorcdbext
+                PATTERN "_lldb.cp*64.pyd" EXCLUDE)
+      endif()
     endif()
   endif()
 
+endif()
+
+if(QT_CREATOR_CDB_EXT_STANDALONE_BUILD AND QT_GENERATE_SBOM)
+  qtc_sbom_end_project()
 endif()

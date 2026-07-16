@@ -3,10 +3,13 @@
 
 #include "stlinkutilgdbserverprovider.h"
 
+#include "gdbserverprovider.h"
+
 #include <baremetal/baremetalconstants.h>
 #include <baremetal/baremetaltr.h>
 #include <baremetal/debugserverprovidermanager.h>
 
+#include <utils/guiutils.h>
 #include <utils/filepath.h>
 #include <utils/pathchooser.h>
 #include <utils/qtcassert.h>
@@ -72,7 +75,6 @@ public:
 
     bool operator==(const IDebugServerProvider &other) const final;
 
-    QString channelString() const final;
     Utils::CommandLine command() const final;
 
     QSet<StartupMode> supportedStartupModes() const final;
@@ -113,20 +115,6 @@ QString StLinkUtilGdbServerProvider::defaultInitCommands()
 QString StLinkUtilGdbServerProvider::defaultResetCommands()
 {
     return {};
-}
-
-QString StLinkUtilGdbServerProvider::channelString() const
-{
-    switch (startupMode()) {
-    case StartupOnNetwork:
-        // Just return as "host:port" form.
-        return GdbServerProvider::channelString();
-    case StartupOnPipe:
-        // Unsupported mode
-        return {};
-    default: // wrong
-        return {};
-    }
 }
 
 CommandLine StLinkUtilGdbServerProvider::command() const
@@ -212,15 +200,6 @@ bool StLinkUtilGdbServerProvider::operator==(const IDebugServerProvider &other) 
             && m_resetBoard == p->m_resetBoard
             && m_transport == p->m_transport
             && m_connectUnderReset == p->m_connectUnderReset;
-}
-
-// StLinkUtilGdbServerProviderFactory
-
-StLinkUtilGdbServerProviderFactory::StLinkUtilGdbServerProviderFactory()
-{
-    setId(Constants::GDBSERVER_STLINK_UTIL_PROVIDER_ID);
-    setDisplayName(Tr::tr("ST-LINK Utility"));
-    setCreator([] { return new StLinkUtilGdbServerProvider; });
 }
 
 // StLinkUtilGdbServerProviderConfigWidget
@@ -370,6 +349,24 @@ void StLinkUtilGdbServerProviderConfigWidget::setFromProvider()
     m_initCommandsTextEdit->setPlainText(p->initCommands());
     m_resetCommandsTextEdit->setPlainText(p->resetCommands());
     m_resetOnConnectCheckBox->setChecked(p->m_connectUnderReset);
+}
+
+// StLinkUtilGdbServerProviderFactory
+
+class StLinkUtilGdbServerProviderFactory final : public IDebugServerProviderFactory
+{
+public:
+    StLinkUtilGdbServerProviderFactory()
+    {
+        setId(Constants::GDBSERVER_STLINK_UTIL_PROVIDER_ID);
+        setDisplayName(Tr::tr("ST-LINK Utility"));
+        setCreator([] { return new StLinkUtilGdbServerProvider; });
+    }
+};
+
+void setupStLinkUtilGdbServerProvider()
+{
+    static StLinkUtilGdbServerProviderFactory theStLinkUtilGdbServerProviderFactory;
 }
 
 } // ProjectExplorer::Internal

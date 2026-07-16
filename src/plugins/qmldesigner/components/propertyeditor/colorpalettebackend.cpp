@@ -3,29 +3,40 @@
 
 #include "colorpalettebackend.h"
 
+#include "propertyeditortracing.h"
+
 #include <coreplugin/icore.h>
 
 #include <QApplication>
 #include <QColorDialog>
 #include <QDebug>
 #include <QPainter>
+#include <QPainterPath>
 #include <QScreen>
 #include <QTimer>
+
+#include <private/qguiapplication_p.h>
+#include <qpa/qplatformintegration.h>
+#include <qpa/qplatformservices.h>
 
 namespace QmlDesigner {
 
 QPointer<ColorPaletteBackend> ColorPaletteBackend::m_instance = nullptr;
 
+using PropertyEditorTracing::category;
+
 ColorPaletteBackend::ColorPaletteBackend()
     : m_currentPalette()
     , m_data()
-    , m_colorPickingEventFilter(nullptr)
+    , m_eyeDropperEventFilter(nullptr)
 #ifdef Q_OS_WIN32
     , updateTimer(0)
 #endif
 {
-    m_data.insert(g_recent, Palette(QmlDesigner::DesignerSettingsKey::COLOR_PALETTE_RECENT));
-    m_data.insert(g_favorite, Palette(QmlDesigner::DesignerSettingsKey::COLOR_PALETTE_FAVORITE));
+    NanotraceHR::Tracer tracer{"color palette backend constructor", category()};
+
+    m_data.insert(g_recent, Palette(PaletteType::Recent));
+    m_data.insert(g_favorite, Palette(PaletteType::Favorite));
 
     readPalettes();
 
@@ -42,36 +53,44 @@ ColorPaletteBackend::ColorPaletteBackend()
 
 ColorPaletteBackend::~ColorPaletteBackend()
 {
+    NanotraceHR::Tracer tracer{"color palette backend destructor", category()};
+
     //writePalettes(); // TODO crash on QtDS close
+    if (m_eyeDropperActive)
+        eyeDropperLeave(QCursor::pos(), EyeDropperEventFilter::LeaveReason::Default);
 }
 
 void ColorPaletteBackend::readPalettes()
 {
-    QHash<QString, Palette>::iterator i = m_data.begin();
-    while (i != m_data.end()) {
-        i.value().read();
-        ++i;
-    }
+    NanotraceHR::Tracer tracer{"color palette backend read palettes", category()};
+
+    for (auto &palette : m_data)
+        palette.read();
 }
 
 void ColorPaletteBackend::writePalettes()
 {
-    QHash<QString, Palette>::iterator i = m_data.begin();
-    while (i != m_data.end()) {
-        i.value().write();
-        ++i;
-    }
+    NanotraceHR::Tracer tracer{"color palette backend write palettes", category()};
+
+    for (auto &palette : m_data)
+        palette.write();
 }
 
-void ColorPaletteBackend::addColor(const QString &color, const QString &palette)
+void ColorPaletteBackend::addColor(const QString &color, const QString &paletteName)
 {
-    if (!m_data.contains(palette)) {
-        qWarning() << Q_FUNC_INFO << "Unknown palette: " << palette;
+    NanotraceHR::Tracer tracer{"color palette backend add color", category()};
+
+    auto found = m_data.find(paletteName);
+
+    if (found == m_data.end()) {
+        qWarning() << Q_FUNC_INFO << "Unknown palette: " << paletteName;
         return;
     }
 
+    auto palette = *found;
+
     // If palette is currently active palette also add it to the local color list
-    if (palette == m_currentPalette) {
+    if (paletteName == m_currentPalette) {
         if (m_currentPaletteColors.size() + 1 > g_maxPaletteSize)
             m_currentPaletteColors.removeLast();
 
@@ -79,27 +98,32 @@ void ColorPaletteBackend::addColor(const QString &color, const QString &palette)
         emit currentPaletteColorsChanged();
     }
 
-    if (m_data[palette].m_colors.size() + 1 > g_maxPaletteSize)
-        m_data[palette].m_colors.removeLast();
+    if (palette.m_colors.size() + 1 > g_maxPaletteSize)
+        palette.m_colors.removeLast();
 
-    m_data[palette].m_colors.prepend(color);
-    m_data[palette].write();
+    palette.m_colors.prepend(color);
+    palette.write();
 }
 
-void ColorPaletteBackend::removeColor(int id, const QString &palette)
+void ColorPaletteBackend::removeColor(int id, const QString &paletteName)
 {
-    if (!m_data.contains(palette)) {
-        qWarning() << Q_FUNC_INFO << "Unknown palette: " << palette;
+    NanotraceHR::Tracer tracer{"color palette backend remove color", category()};
+
+    auto found = m_data.find(paletteName);
+
+    if (found == m_data.end()) {
+        qWarning() << Q_FUNC_INFO << "Unknown palette: " << paletteName;
         return;
     }
+    auto palette = *found;
 
-    if (id >= m_data[palette].m_colors.size()) {
-        qWarning() << Q_FUNC_INFO << "Id(" << id << ") is out of bounds for palette " << palette;
+    if (id >= palette.m_colors.size()) {
+        qWarning() << Q_FUNC_INFO << "Id(" << id << ") is out of bounds for palette " << paletteName;
         return;
     }
 
     // If palette is currently active palette also add it to the local color list
-    if (palette == m_currentPalette) {
+    if (paletteName == m_currentPalette) {
         m_currentPaletteColors.removeAt(id);
 
         // Fill up with empty strings
@@ -109,12 +133,14 @@ void ColorPaletteBackend::removeColor(int id, const QString &palette)
         emit currentPaletteColorsChanged();
     }
 
-    m_data[palette].m_colors.removeAt(id);
-    m_data[palette].write();
+    palette.m_colors.removeAt(id);
+    palette.write();
 }
 
 void ColorPaletteBackend::addRecentColor(const QString &item)
 {
+    NanotraceHR::Tracer tracer{"color palette backend add recent color", category()};
+
     if (m_data[g_recent].m_colors.isEmpty()) {
         addColor(item, g_recent);
         return;
@@ -127,26 +153,36 @@ void ColorPaletteBackend::addRecentColor(const QString &item)
 
 void ColorPaletteBackend::addFavoriteColor(const QString &item)
 {
+    NanotraceHR::Tracer tracer{"color palette backend add favorite color", category()};
+
     addColor(item, g_favorite);
 }
 
 void ColorPaletteBackend::removeFavoriteColor(int id)
 {
+    NanotraceHR::Tracer tracer{"color palette backend  remove favorite color", category()};
+
     removeColor(id, g_favorite);
 }
 
 QStringList ColorPaletteBackend::palettes() const
 {
+    NanotraceHR::Tracer tracer{"color palette backend get palettes", category()};
+
     return m_data.keys();
 }
 
 const QString &ColorPaletteBackend::currentPalette() const
 {
+    NanotraceHR::Tracer tracer{"color palette backend get current palette", category()};
+
     return m_currentPalette;
 }
 
 void ColorPaletteBackend::setCurrentPalette(const QString &palette)
 {
+    NanotraceHR::Tracer tracer{"color palette backend set current palette", category()};
+
     if (!m_data.contains(palette)) {
         qWarning() << Q_FUNC_INFO << "Unknown palette: " << palette;
         return;
@@ -179,11 +215,15 @@ void ColorPaletteBackend::setCurrentPalette(const QString &palette)
 
 const QStringList &ColorPaletteBackend::currentPaletteColors() const
 {
+    NanotraceHR::Tracer tracer{"color palette backend get current palette colors", category()};
+
     return m_currentPaletteColors;
 }
 
 void ColorPaletteBackend::registerDeclarativeType()
 {
+    NanotraceHR::Tracer tracer{"color palette backend register declarative type", category()};
+
     [[maybe_unused]] static const int typeIndex = qmlRegisterSingletonType<ColorPaletteBackend>(
         "QtQuickDesignerColorPalette", 1, 0, "ColorPaletteBackend", [](QQmlEngine *, QJSEngine *) {
             return new ColorPaletteBackend();
@@ -192,6 +232,8 @@ void ColorPaletteBackend::registerDeclarativeType()
 
 void ColorPaletteBackend::showDialog(QColor color)
 {
+    NanotraceHR::Tracer tracer{"color palette backend show dialog", category()};
+
     auto colorDialog = new QColorDialog(Core::ICore::dialogParent());
     colorDialog->setCurrentColor(color);
     colorDialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -204,75 +246,151 @@ void ColorPaletteBackend::showDialog(QColor color)
     QTimer::singleShot(0, [colorDialog](){ colorDialog->exec(); });
 }
 
-void ColorPaletteBackend::eyeDropper()
+void ColorPaletteBackend::invokeEyeDropper()
 {
-    QWidget *widget = Core::ICore::mainWindow();
-    if (!widget)
-        return;
+    NanotraceHR::Tracer tracer{"color palette backend invoke eye dropper", category()};
 
-    m_eyeDropperActive = true;
-    emit eyeDropperActiveChanged();
-
-    if (!m_colorPickingEventFilter)
-        m_colorPickingEventFilter = new QColorPickingEventFilter(this);
-
-    widget->installEventFilter(m_colorPickingEventFilter);
-#ifndef QT_NO_CURSOR
-    widget->grabMouse(/*Qt::CrossCursor*/);
-#else
-    widget->grabMouse();
-#endif
-#ifdef Q_OS_WIN32 // excludes WinRT
-    // On Windows mouse tracking doesn't work over other processes's windows
-    updateTimer->start(30);
-    // HACK: Because mouse grabbing doesn't work across processes, we have to have a dummy,
-    // invisible window to catch the mouse click, otherwise we will click whatever we clicked
-    // and loose focus.
-    dummyTransparentWindow.show();
-#endif
-    widget->grabKeyboard();
-    /* With setMouseTracking(true) the desired color can be more precisely picked up,
-     * and continuously pushing the mouse button is not necessary.
-     */
-    widget->setMouseTracking(true);
-
-    QGuiApplication::setOverrideCursor(QCursor());
-
-    updateEyeDropperPosition(QCursor::pos());
+    eyeDropperEnter();
 }
 
-const int g_cursorWidth = 64;
-const int g_cursorHeight = 64;
-const int g_screenGrabWidth = 7;
-const int g_screenGrabHeight = 7;
-const int g_pixelX = 3;
-const int g_pixelY = 3;
+void ColorPaletteBackend::eyeDropperEnter()
+{
+    NanotraceHR::Tracer tracer{"color palette backend eye dropper enter", category()};
+
+    if (m_eyeDropperActive)
+        return;
+
+    QPointer<QWindow> window = Core::ICore::mainWindow()->windowHandle();
+
+    if (m_eyeDropperWindow.isNull()) {
+        if (window.isNull()) {
+            qWarning() << "No window found, cannot enter eyeDropperMode.";
+            return;
+        }
+
+        m_eyeDropperWindow = window;
+    }
+
+    if (auto *platformServices = QGuiApplicationPrivate::platformIntegration()->services();
+        platformServices
+        && platformServices->hasCapability(QPlatformServices::Capability::ColorPicking)) {
+        if (auto *colorPickerService = platformServices->colorPicker(m_eyeDropperWindow)) {
+            connect(colorPickerService,
+                    &QPlatformServiceColorPicker::colorPicked,
+                    this,
+                    [this, colorPickerService](const QColor &color) {
+                        colorPickerService->deleteLater();
+                        // When the service was canceled by pressing escape the color returned will
+                        // be QColor(ARGB, 0, 0, 0, 0), so we test for alpha to avoid setting the color.
+                        // https://codereview.qt-project.org/c/qt/qtbase/+/589113
+                        if (color.alpha() != 0 || !color.isValid())
+                            emit currentColorChanged(color);
+                        m_eyeDropperActive = false;
+                        emit eyeDropperActiveChanged();
+                    });
+            m_eyeDropperActive = true;
+            emit eyeDropperActiveChanged();
+            colorPickerService->pickColor();
+            return;
+        }
+    }
+
+    m_eyeDropperPreviousColor = m_eyeDropperCurrentColor;
+
+    if (!bool(m_eyeDropperEventFilter))
+        m_eyeDropperEventFilter.reset(new EyeDropperEventFilter(
+            [this](QPoint pos, EyeDropperEventFilter::LeaveReason c) { eyeDropperLeave(pos, c); },
+            [this](QPoint pos) { eyeDropperPointerMoved(pos); }));
+
+    if (m_eyeDropperWindow->setMouseGrabEnabled(true)
+        && m_eyeDropperWindow->setKeyboardGrabEnabled(true)) {
+#if QT_CONFIG(cursor)
+        QGuiApplication::setOverrideCursor(QCursor());
+        updateEyeDropperPosition(QCursor::pos());
+#endif
+        m_eyeDropperWindow->installEventFilter(m_eyeDropperEventFilter.get());
+        m_eyeDropperActive = true;
+        emit eyeDropperActiveChanged();
+    }
+}
+
+void ColorPaletteBackend::eyeDropperLeave(const QPoint &pos,
+                                          EyeDropperEventFilter::LeaveReason actionOnLeave)
+{
+    NanotraceHR::Tracer tracer{"color palette backend eye dropper leave", category()};
+
+    if (!m_eyeDropperActive)
+        return;
+
+    if (!m_eyeDropperWindow) {
+        qWarning() << "Window not set, cannot leave eyeDropperMode.";
+        return;
+    }
+
+    if (actionOnLeave != EyeDropperEventFilter::LeaveReason::Cancel) {
+        m_eyeDropperCurrentColor = grabScreenColor(pos);
+
+        emit currentColorChanged(m_eyeDropperCurrentColor);
+    }
+
+    m_eyeDropperWindow->removeEventFilter(m_eyeDropperEventFilter.get());
+    m_eyeDropperWindow->setMouseGrabEnabled(false);
+    m_eyeDropperWindow->setKeyboardGrabEnabled(false);
+#if QT_CONFIG(cursor)
+    QGuiApplication::restoreOverrideCursor();
+#endif
+
+    m_eyeDropperActive = false;
+    emit eyeDropperActiveChanged();
+    m_eyeDropperWindow.clear();
+}
+
+void ColorPaletteBackend::eyeDropperPointerMoved(const QPoint &pos)
+{
+    NanotraceHR::Tracer tracer{"color palette backend eye dropper pointer moved", category()};
+
+    m_eyeDropperCurrentColor = grabScreenColor(pos);
+    updateEyeDropperPosition(pos);
+}
+
+const QSize g_cursorSize(64, 64);
+const QSize g_halfCursorSize = g_cursorSize / 2;
+const QSize g_screenGrabSize(11, 11);
+const QSize g_previewSize(12, 12);
+const QSize g_halfPreviewSize = g_previewSize / 2;
 
 QColor ColorPaletteBackend::grabScreenColor(const QPoint &p)
 {
-    return grabScreenRect(p).pixel(g_pixelX, g_pixelY);
+    NanotraceHR::Tracer tracer{"color palette backend grab screen color", category()};
+
+    return grabScreenRect(QRect(p, QSize(1, 1))).pixel(0, 0);
 }
 
-QImage ColorPaletteBackend::grabScreenRect(const QPoint &p)
+QImage ColorPaletteBackend::grabScreenRect(const QRect &r)
 {
-    QScreen *screen = QGuiApplication::screenAt(p);
+    NanotraceHR::Tracer tracer{"color palette backend grab screen rect", category()};
+
+    QScreen *screen = QGuiApplication::screenAt(r.topLeft());
     if (!screen)
         screen = QGuiApplication::primaryScreen();
 
     const QRect screenRect = screen->geometry();
     const QPixmap pixmap = screen->grabWindow(0,
-                                              p.x() - screenRect.x(),
-                                              p.y() - screenRect.y(),
-                                              g_screenGrabWidth,
-                                              g_screenGrabHeight);
+                                              r.x() - screenRect.x(),
+                                              r.y() - screenRect.y(),
+                                              r.width(),
+                                              r.height());
+
     return pixmap.toImage();
 }
 
 void ColorPaletteBackend::updateEyeDropper()
 {
+    NanotraceHR::Tracer tracer{"color palette backend update eye dropper", category()};
+
 #ifndef QT_NO_CURSOR
     static QPoint lastGlobalPos;
-    QPoint newGlobalPos = QCursor::pos();
+    const QPoint newGlobalPos = QCursor::pos();
     if (lastGlobalPos == newGlobalPos)
         return;
 
@@ -287,104 +405,77 @@ void ColorPaletteBackend::updateEyeDropper()
 
 void ColorPaletteBackend::updateEyeDropperPosition(const QPoint &globalPos)
 {
-    updateCursor(grabScreenRect(globalPos));
+    NanotraceHR::Tracer tracer{"color palette backend update eye dropper position", category()};
+
+#if QT_CONFIG(cursor)
+    QPoint topLeft = globalPos - QPoint(g_halfCursorSize.width(), g_halfCursorSize.height());
+    updateCursor(grabScreenRect(QRect(topLeft, g_cursorSize)));
+#endif
 }
 
 void ColorPaletteBackend::updateCursor(const QImage &image)
 {
-    QWidget *widget = Core::ICore::mainWindow();
-    if (!widget)
+    NanotraceHR::Tracer tracer{"color palette backend update cursor", category()};
+
+    QWindow *window = Core::ICore::mainWindow()->windowHandle();
+    if (!window)
         return;
 
-    QPixmap pixmap(QSize(g_cursorWidth, g_cursorHeight));
+    QPixmap pixmap(g_cursorSize);
+    pixmap.fill(Qt::transparent);
+
     QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    QPainterPath clipPath;
+    clipPath.addEllipse(QRect(QPoint(0, 0), g_cursorSize).adjusted(1, 1, -1, -1));
+
+    painter.setClipPath(clipPath, Qt::IntersectClip);
+
+    const QPoint topLeft = QPoint(g_halfCursorSize.width(), g_halfCursorSize.height())
+                           - QPoint(qFloor(g_screenGrabSize.width() / 2),
+                                    qFloor(g_screenGrabSize.height() / 2));
+
+    const QColor topCenter = image.pixelColor(g_halfCursorSize.width(), 0);
+    const QColor bottomCenter = image.pixelColor(g_halfCursorSize.width(), g_cursorSize.height() - 1);
+    const QColor leftCenter = image.pixelColor(0, g_halfCursorSize.height());
+    const QColor rightCenter = image.pixelColor(g_cursorSize.width() - 1, g_halfCursorSize.height());
+
+    // Find the mean gray value of top, bottom, left and right center
+    int borderGray = (qGray(topCenter.rgb()) + qGray(bottomCenter.rgb()) + qGray(leftCenter.rgb())
+                      + qGray(rightCenter.rgb()))
+                     / 4;
+
     // Draw the magnified image/screen grab
-    QRect r(QPoint(), pixmap.size());
-    painter.drawImage(r, image, QRect(0, 0, g_screenGrabWidth, g_screenGrabHeight));
+    const QRect r(QPoint(), pixmap.size());
+    painter.drawImage(r, image, QRect(topLeft, g_screenGrabSize));
 
-    const int pixelWidth = (g_cursorWidth - 1) / g_screenGrabWidth;
-    const int pixelHeight = (g_cursorHeight - 1) / g_screenGrabHeight;
-    // Draw the pixel lines
-    painter.setPen(QPen(QColor(192, 192, 192, 150), 1.0, Qt::SolidLine));
-    for (int i = 1; i != g_screenGrabWidth; ++i) {
-        int x = pixelWidth * i;
-        painter.drawLine(x, 0, x, g_cursorHeight);
-    }
+    painter.setClipping(false);
 
-    for (int i = 1; i != g_screenGrabHeight; ++i) {
-        int y = pixelHeight * i;
-        painter.drawLine(0, y, g_cursorWidth, y);
-    }
-    // Draw the sorounding border
-    painter.setPen(QPen(Qt::black, 1.0, Qt::SolidLine));
-    painter.drawRect(r.adjusted(0, 0, -1, -1));
+    QPen pen(borderGray < 128 ? Qt::white : Qt::black, 2.0, Qt::SolidLine);
 
-    const QColor color = image.pixel(g_pixelX, g_pixelY);
-    QRect centerRect = QRect(2 * pixelWidth, 2 * pixelHeight, 3 * pixelWidth, 3 * pixelHeight);
-    // Draw the center rectangle with the current eye dropper color
-    painter.setBrush(QBrush(color, Qt::SolidPattern));
-    painter.drawRect(centerRect);
+    // Draw the surrounding border
+    painter.setPen(pen);
+    painter.drawPath(clipPath);
+
+    pen.setWidth(1);
+    painter.setPen(pen);
+
+    const QRect previewRect(QPoint(g_halfCursorSize.width() - g_halfPreviewSize.width(),
+                                   g_halfCursorSize.height() - g_halfPreviewSize.height()),
+                            g_previewSize);
+
+    painter.fillRect(previewRect, m_eyeDropperCurrentColor);
+    painter.drawRect(previewRect);
 
     painter.end();
+
     QGuiApplication::changeOverrideCursor(QCursor(pixmap));
-}
-
-void ColorPaletteBackend::releaseEyeDropper()
-{
-    QWidget *widget = Core::ICore::mainWindow();
-    if (!widget)
-        return;
-
-    m_eyeDropperActive = false;
-    emit eyeDropperActiveChanged();
-
-    widget->removeEventFilter(m_colorPickingEventFilter);
-    widget->releaseMouse();
-#ifdef Q_OS_WIN32
-    updateTimer->stop();
-    dummyTransparentWindow.setVisible(false);
-#endif
-    widget->releaseKeyboard();
-    widget->setMouseTracking(false);
-
-    QGuiApplication::restoreOverrideCursor();
-}
-
-bool ColorPaletteBackend::handleEyeDropperMouseMove(QMouseEvent *e)
-{
-    updateEyeDropperPosition(e->globalPosition().toPoint());
-    return true;
-}
-
-bool ColorPaletteBackend::handleEyeDropperMouseButtonRelease(QMouseEvent *e)
-{
-    if (e->button() == Qt::LeftButton)
-        emit currentColorChanged(grabScreenColor(e->globalPosition().toPoint()));
-    else
-        emit eyeDropperRejected();
-
-    releaseEyeDropper();
-    return true;
-}
-
-bool ColorPaletteBackend::handleEyeDropperKeyPress(QKeyEvent *e)
-{
-#if QT_CONFIG(shortcut)
-    if (e->matches(QKeySequence::Cancel)) {
-        emit eyeDropperRejected();
-        releaseEyeDropper();
-    } //else
-#endif
-    //if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) {
-    //    emit currentColorChanged(grabScreenColor(e->globalPosition().toPoint()));
-    //    releaseEyeDropper();
-    //}
-    e->accept();
-    return true;
 }
 
 bool ColorPaletteBackend::eyeDropperActive() const
 {
+    NanotraceHR::Tracer tracer{"color palette backend eye dropper active", category()};
     return m_eyeDropperActive;
 }
 

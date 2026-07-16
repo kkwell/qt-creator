@@ -6,6 +6,7 @@
 #include <matchers/info_exportedtypenames-matcher.h>
 #include <matchers/qvariant-matcher.h>
 #include <mocks/projectstoragemock.h>
+#include <mocks/projectstoragetriggerupdatemock.h>
 #include <mocks/sourcepathcachemock.h>
 
 #include <designercore/include/model.h>
@@ -29,6 +30,16 @@ using QmlDesigner::Storage::TypeTraits;
 class PropertyMetaInfo : public ::testing::Test
 {
 protected:
+    struct StaticData
+    {
+        Sqlite::Database modulesDatabase{":memory:", Sqlite::JournalMode::Memory};
+        QmlDesigner::ModulesStorage modulesStorage{modulesDatabase, modulesDatabase.isInitialized()};
+    };
+
+    static void SetUpTestSuite() { staticData = std::make_unique<StaticData>(); }
+
+    static void TearDownTestSuite() { staticData.reset(); }
+
     QmlDesigner::NodeMetaInfo createNodeMetaInfo(Utils::SmallStringView moduleName,
                                                  ModuleKind moduleKind,
                                                  Utils::SmallStringView typeName,
@@ -37,13 +48,20 @@ protected:
         auto moduleId = projectStorageMock.createModule(moduleName, moduleKind);
         auto typeId = projectStorageMock.createType(moduleId, typeName, typeTraits);
 
+        projectStorageMock.typeCache.refreshTypeIds();
+
         return QmlDesigner::NodeMetaInfo{typeId, &projectStorageMock};
     }
 
 protected:
+    inline static std::unique_ptr<StaticData> staticData;
+    QmlDesigner::ModulesStorage &modulesStorage = staticData->modulesStorage;
+    NiceMock<ProjectStorageTriggerUpdateMock> projectStorageTriggerUpdateMock;
     NiceMock<SourcePathCacheMockWithPaths> pathCache{"/path/foo.qml"};
-    NiceMock<ProjectStorageMockWithQtQtuick> projectStorageMock{pathCache.sourceId};
-    QmlDesigner::Model model{{projectStorageMock, pathCache},
+    NiceMock<ProjectStorageMockWithQtQuick> projectStorageMock{pathCache.sourceId,
+                                                               "/path",
+                                                               modulesStorage};
+    QmlDesigner::Model model{{projectStorageMock, pathCache, modulesStorage, projectStorageTriggerUpdateMock},
                              "Item",
                              {QmlDesigner::Import::createLibraryImport("QML"),
                               QmlDesigner::Import::createLibraryImport("QtQuick"),
@@ -689,16 +707,29 @@ TEST_F(PropertyMetaInfo, cast_url_to_url)
     ASSERT_THAT(castedValue, IsQVariant<QUrl>(url));
 }
 
-TEST_F(PropertyMetaInfo, cast_string_to_empty_url)
+TEST_F(PropertyMetaInfo, cast_empty_string_to_empty_url)
+{
+    auto propertyTypeInfo = createNodeMetaInfo("QML", ModuleKind::QmlLibrary, "url", {});
+    projectStorageMock.createProperty(nodeInfo.id(), "bar", {}, propertyTypeInfo.id());
+    auto propertyInfo = nodeInfo.property("bar");
+    auto value = QVariant::fromValue(QString{});
+
+    auto castedValue = propertyInfo.castedValue(value);
+
+    ASSERT_THAT(castedValue, IsQVariant<QUrl>(IsEmpty()));
+}
+
+TEST_F(PropertyMetaInfo, cast_string_to_url)
 {
     auto propertyTypeInfo = createNodeMetaInfo("QML", ModuleKind::QmlLibrary, "url", {});
     projectStorageMock.createProperty(nodeInfo.id(), "bar", {}, propertyTypeInfo.id());
     auto propertyInfo = nodeInfo.property("bar");
     auto value = QVariant::fromValue(QString{"http://www.qt.io/future"});
+    auto url = QUrl{"http://www.qt.io/future"};
 
     auto castedValue = propertyInfo.castedValue(value);
 
-    ASSERT_THAT(castedValue, IsQVariant<QUrl>(IsEmpty()));
+    ASSERT_THAT(castedValue, IsQVariant<QUrl>(url));
 }
 
 TEST_F(PropertyMetaInfo, cast_default_to_empty_url)

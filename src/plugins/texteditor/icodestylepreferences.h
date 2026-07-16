@@ -3,8 +3,10 @@
 
 #pragma once
 
+#include "tabsettings.h"
 #include "texteditor_global.h"
 
+#include <utils/id.h>
 #include <utils/store.h>
 
 #include <QObject>
@@ -17,7 +19,6 @@ namespace TextEditor {
 
 namespace Internal { class ICodeStylePreferencesPrivate; }
 
-class TabSettings;
 class CodeStylePool;
 
 class TEXTEDITOR_EXPORT ICodeStylePreferences : public QObject
@@ -37,15 +38,6 @@ public:
 
     bool isReadOnly() const;
     void setReadOnly(bool on);
-
-    bool isTemporarilyReadOnly() const;
-    void setTemporarilyReadOnly(bool on);
-
-    bool isAdditionalTabVisible() const;
-    void setIsAdditionalTabVisible(bool on);
-
-    bool additionalTabExist() const;
-    void setAdditionalTabExist(bool on);
 
     void setTabSettings(const TabSettings &settings);
     TabSettings tabSettings() const;
@@ -72,8 +64,14 @@ public:
     void fromSettings(const Utils::Key &category);
 
     // make below 2 protected?
-    virtual Utils::Store toMap() const;
+    virtual void toMap(Utils::Store &map) const;
     virtual void fromMap(const Utils::Store &map);
+
+    void setProject(const Utils::FilePath &projectFile);
+    Utils::FilePath project() const;
+
+    Utils::Id globalSettingsCategory();
+    void setGlobalSettingsCategory(const Utils::Id &id);
 
 signals:
     void tabSettingsChanged(const TextEditor::TabSettings &settings);
@@ -93,5 +91,74 @@ private:
     Internal::ICodeStylePreferencesPrivate *d;
 };
 
+template <typename T>
+class TypedCodeStylePreferences : public ICodeStylePreferences
+{
+public:
+    TypedCodeStylePreferences(QObject *parent = nullptr)
+        : ICodeStylePreferences(parent)
+    {
+        setSettingsSuffix("CodeStyleSettings");
+        setGlobalSettingsCategory(T::settingsId());
+    }
+
+    QVariant value() const final
+    {
+        QVariant v;
+        v.setValue(codeStyleSettings());
+        return v;
+    }
+    void setValue(const QVariant &data) final
+    {
+        if (!data.canConvert<T>())
+            return;
+
+        setCodeStyleSettings(data.value<T>());
+    }
+
+    T codeStyleSettings() const { return m_data; }
+
+    // Tracks parent hierarchy until currentParentSettings is null. TODO: return optional?
+    T currentCodeStyleSettings() const
+    {
+        QVariant v = currentValue();
+        if (!v.canConvert<T>()) {
+            // warning
+            return {};
+        }
+        return v.value<T>();
+    }
+
+    void toMap(Utils::Store &map) const override
+    {
+        ICodeStylePreferences::toMap(map);
+        if (!currentDelegate())
+            m_data.toMap(map);
+    }
+
+    void fromMap(const Utils::Store &map) override
+    {
+        ICodeStylePreferences::fromMap(map);
+        if (!currentDelegate())
+            m_data.fromMap(map);
+    }
+
+    void setCodeStyleSettings(const T &data)
+    {
+        if (m_data == data)
+            return;
+
+        m_data = data;
+
+        QVariant v;
+        v.setValue(data);
+        emit valueChanged(v);
+        if (!currentDelegate())
+            emit currentValueChanged(v);
+    }
+
+private:
+    T m_data;
+};
 
 } // namespace TextEditor

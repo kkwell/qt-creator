@@ -46,7 +46,7 @@ public:
     void setTopLevelDeclarationProcessor(TopLevelDeclarationProcessor *processor);
 
     DiagnosticClient *diagnosticClient() const;
-    void setDiagnosticClient(DiagnosticClient *diagnosticClient);
+    void setDiagnosticClient(DiagnosticClient *diagnosticClient, bool deleteExisting);
 
     /// Returns the canonical anonymous name id
     const AnonymousNameId *anonymousNameId(unsigned classTokenIndex);
@@ -109,6 +109,9 @@ public:
 
     /// Creates a new Argument symbol.
     TypenameArgument *newTypenameArgument(int sourceLocation, const Name *name = nullptr);
+
+    /// Creates a new Argument symbol.
+    TemplateTypeArgument *newTemplateTypeArgument(int sourceLocation, const Name *name = nullptr);
 
     /// Creates a new Function symbol.
     Function *newFunction(int sourceLocation, const Name *name = nullptr);

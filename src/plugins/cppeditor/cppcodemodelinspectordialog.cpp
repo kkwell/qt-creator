@@ -5,15 +5,16 @@
 
 #include "baseeditordocumentprocessor.h"
 #include "cppcodemodelinspectordumper.h"
-#include "cppeditordocument.h"
-#include "cppeditorwidget.h"
 #include "cppeditortr.h"
+#include "cppeditorwidget.h"
 #include "cppmodelmanager.h"
 #include "cpptoolsreuse.h"
 #include "cppworkingcopy.h"
+#include "editordocumenthandle.h"
 
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/icore.h>
+
 #include <projectexplorer/projectmacro.h>
 #include <projectexplorer/project.h>
 
@@ -25,7 +26,6 @@
 #include <utils/layoutbuilder.h>
 #include <utils/qtcassert.h>
 
-#include <QAbstractTableModel>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -43,6 +43,7 @@
 
 #include <algorithm>
 
+using namespace Core;
 using namespace CPlusPlus;
 using namespace Utils;
 
@@ -133,7 +134,7 @@ signals:
 
 private:
     QTreeView *view;
-    Utils::FancyLineEdit *lineEdit;
+    FancyLineEdit *lineEdit;
 };
 
 FilterableView::FilterableView(QWidget *parent)
@@ -144,7 +145,7 @@ FilterableView::FilterableView(QWidget *parent)
     view->setTextElideMode(Qt::ElideMiddle);
     view->setSortingEnabled(true);
 
-    lineEdit = new Utils::FancyLineEdit(this);
+    lineEdit = new FancyLineEdit(this);
     lineEdit->setFiltering(true);
     lineEdit->setPlaceholderText(QLatin1String("File Path"));
     QObject::connect(lineEdit, &QLineEdit::textChanged, this, &FilterableView::filterChanged);
@@ -197,9 +198,8 @@ void FilterableView::clearFilter()
 
 class ProjectFilesModel : public QAbstractListModel
 {
-    Q_OBJECT
 public:
-    ProjectFilesModel(QObject *parent) : QAbstractListModel(parent) {}
+    ProjectFilesModel() = default;
 
     void configure(const ProjectFiles &files);
     void clear();
@@ -276,9 +276,9 @@ QVariant ProjectFilesModel::headerData(int section, Qt::Orientation orientation,
 
 class ProjectHeaderPathsModel : public QAbstractListModel
 {
-    Q_OBJECT
 public:
-    ProjectHeaderPathsModel(QObject *parent);
+    ProjectHeaderPathsModel() = default;
+
     void configure(const ProjectExplorer::HeaderPaths &paths);
     void clear();
 
@@ -292,10 +292,6 @@ public:
 private:
     ProjectExplorer::HeaderPaths m_paths;
 };
-
-ProjectHeaderPathsModel::ProjectHeaderPathsModel(QObject *parent) : QAbstractListModel(parent)
-{
-}
 
 void ProjectHeaderPathsModel::configure(const ProjectExplorer::HeaderPaths &paths)
 {
@@ -326,11 +322,10 @@ QVariant ProjectHeaderPathsModel::data(const QModelIndex &index, int role) const
     if (role == Qt::DisplayRole) {
         const int row = index.row();
         const int column = index.column();
-        if (column == TypeColumn) {
+        if (column == TypeColumn)
             return CMI::Utils::toString(m_paths.at(row).type);
-        } else if (column == PathColumn) {
-            return m_paths.at(row).path;
-        }
+        if (column == PathColumn)
+            return m_paths.at(row).path.toUserOutput();
     }
     return QVariant();
 }
@@ -354,11 +349,11 @@ QVariant ProjectHeaderPathsModel::headerData(int section, Qt::Orientation orient
 
 class KeyValueModel : public QAbstractListModel
 {
-    Q_OBJECT
 public:
     using Table = QList<QPair<QString, QString>>;
 
-    KeyValueModel(QObject *parent);
+    KeyValueModel() = default;
+
     void configure(const Table &table);
     void clear();
 
@@ -372,10 +367,6 @@ public:
 private:
     Table m_table;
 };
-
-KeyValueModel::KeyValueModel(QObject *parent) : QAbstractListModel(parent)
-{
-}
 
 void KeyValueModel::configure(const Table &table)
 {
@@ -434,13 +425,13 @@ QVariant KeyValueModel::headerData(int section, Qt::Orientation orientation, int
 
 class SnapshotModel : public QAbstractListModel
 {
-    Q_OBJECT
 public:
-    SnapshotModel(QObject *parent);
+    SnapshotModel() = default;
+
     void configure(const Snapshot &snapshot);
     void setGlobalSnapshot(const Snapshot &snapshot);
 
-    QModelIndex indexForDocument(const Utils::FilePath &filePath);
+    QModelIndex indexForDocument(const FilePath &filePath);
 
     enum Columns { SymbolCountColumn, SharedColumn, FilePathColumn, ColumnCount };
 
@@ -453,10 +444,6 @@ private:
     QList<Document::Ptr> m_documents;
     Snapshot m_globalSnapshot;
 };
-
-SnapshotModel::SnapshotModel(QObject *parent) : QAbstractListModel(parent)
-{
-}
 
 void SnapshotModel::configure(const Snapshot &snapshot)
 {
@@ -536,9 +523,9 @@ static bool includesSorter(const Document::Include &i1,
 
 class IncludesModel : public QAbstractListModel
 {
-    Q_OBJECT
 public:
-    IncludesModel(QObject *parent);
+    IncludesModel() = default;
+
     void configure(const QList<Document::Include> &includes);
     void clear();
 
@@ -552,10 +539,6 @@ public:
 private:
     QList<Document::Include> m_includes;
 };
-
-IncludesModel::IncludesModel(QObject *parent) : QAbstractListModel(parent)
-{
-}
 
 void IncludesModel::configure(const QList<Document::Include> &includes)
 {
@@ -638,9 +621,9 @@ static bool diagnosticMessagesModelSorter(const Document::DiagnosticMessage &m1,
 
 class DiagnosticMessagesModel : public QAbstractListModel
 {
-    Q_OBJECT
 public:
-    DiagnosticMessagesModel(QObject *parent);
+    DiagnosticMessagesModel() = default;
+
     void configure(const QList<Document::DiagnosticMessage> &messages);
     void clear();
 
@@ -655,12 +638,7 @@ private:
     QList<Document::DiagnosticMessage> m_messages;
 };
 
-DiagnosticMessagesModel::DiagnosticMessagesModel(QObject *parent) : QAbstractListModel(parent)
-{
-}
-
-void DiagnosticMessagesModel::configure(
-        const QList<Document::DiagnosticMessage> &messages)
+void DiagnosticMessagesModel::configure(const QList<Document::DiagnosticMessage> &messages)
 {
     emit layoutAboutToBeChanged();
     m_messages = messages;
@@ -745,9 +723,9 @@ QVariant DiagnosticMessagesModel::headerData(int section, Qt::Orientation orient
 
 class MacrosModel : public QAbstractListModel
 {
-    Q_OBJECT
 public:
-    MacrosModel(QObject *parent);
+    MacrosModel() = default;
+
     void configure(const QList<CPlusPlus::Macro> &macros);
     void clear();
 
@@ -761,10 +739,6 @@ public:
 private:
     QList<CPlusPlus::Macro> m_macros;
 };
-
-MacrosModel::MacrosModel(QObject *parent) : QAbstractListModel(parent)
-{
-}
 
 void MacrosModel::configure(const QList<CPlusPlus::Macro> &macros)
 {
@@ -824,9 +798,9 @@ QVariant MacrosModel::headerData(int section, Qt::Orientation orientation, int r
 
 class SymbolsModel : public QAbstractItemModel
 {
-    Q_OBJECT
 public:
-    SymbolsModel(QObject *parent);
+    SymbolsModel() = default;
+
     void configure(const Document::Ptr &document);
     void clear();
 
@@ -842,10 +816,6 @@ public:
 private:
     Document::Ptr m_document;
 };
-
-SymbolsModel::SymbolsModel(QObject *parent) : QAbstractItemModel(parent)
-{
-}
 
 void SymbolsModel::configure(const Document::Ptr &document)
 {
@@ -960,9 +930,9 @@ QVariant SymbolsModel::headerData(int section, Qt::Orientation orientation, int 
 
 class TokensModel : public QAbstractListModel
 {
-    Q_OBJECT
 public:
-    TokensModel(QObject *parent);
+    TokensModel() = default;
+
     void configure(TranslationUnit *translationUnit);
     void clear();
 
@@ -983,10 +953,6 @@ private:
     };
     QList<TokenInfo> m_tokenInfos;
 };
-
-TokensModel::TokensModel(QObject *parent) : QAbstractListModel(parent)
-{
-}
 
 void TokensModel::configure(TranslationUnit *translationUnit)
 {
@@ -1090,9 +1056,8 @@ QVariant TokensModel::headerData(int section, Qt::Orientation orientation, int r
 
 class ProjectPartsModel : public QAbstractListModel
 {
-    Q_OBJECT
 public:
-    ProjectPartsModel(QObject *parent);
+    ProjectPartsModel() = default;
 
     void configure(const QList<ProjectInfo::ConstPtr> &projectInfos,
                    const ProjectPart::ConstPtr &currentEditorsProjectPart);
@@ -1109,13 +1074,8 @@ public:
 
 private:
     QList<ProjectPart::ConstPtr> m_projectPartsList;
-    int m_currentEditorsProjectPartIndex;
+    int m_currentEditorsProjectPartIndex = -1;
 };
-
-ProjectPartsModel::ProjectPartsModel(QObject *parent)
-    : QAbstractListModel(parent), m_currentEditorsProjectPartIndex(-1)
-{
-}
 
 void ProjectPartsModel::configure(const QList<ProjectInfo::ConstPtr> &projectInfos,
                                   const ProjectPart::ConstPtr &currentEditorsProjectPart)
@@ -1123,7 +1083,7 @@ void ProjectPartsModel::configure(const QList<ProjectInfo::ConstPtr> &projectInf
     emit layoutAboutToBeChanged();
     m_projectPartsList.clear();
     for (const ProjectInfo::ConstPtr &info : std::as_const(projectInfos)) {
-        const QVector<ProjectPart::ConstPtr> projectParts = info->projectParts();
+        const QList<ProjectPart::ConstPtr> projectParts = info->projectParts();
         for (const ProjectPart::ConstPtr &projectPart : projectParts) {
             if (!m_projectPartsList.contains(projectPart)) {
                 m_projectPartsList << projectPart;
@@ -1168,8 +1128,8 @@ QVariant ProjectPartsModel::data(const QModelIndex &index, int role) const
         const int column = index.column();
         if (column == PartNameColumn)
             return m_projectPartsList.at(row)->displayName;
-        else if (column == PartFilePathColumn)
-            return QDir::toNativeSeparators(m_projectPartsList.at(row)->projectFile);
+        if (column == PartFilePathColumn)
+            return m_projectPartsList.at(row)->projectFile.toUserOutput();
     } else if (role == Qt::ForegroundRole) {
         if (!m_projectPartsList.at(row)->selectedForBuilding) {
             return QApplication::palette().color(QPalette::ColorGroup::Disabled,
@@ -1200,12 +1160,11 @@ QVariant ProjectPartsModel::headerData(int section, Qt::Orientation orientation,
 
 class WorkingCopyModel : public QAbstractListModel
 {
-    Q_OBJECT
 public:
-    WorkingCopyModel(QObject *parent);
+    WorkingCopyModel() = default;
 
     void configure(const WorkingCopy &workingCopy);
-    QModelIndex indexForFile(const Utils::FilePath &filePath);
+    QModelIndex indexForFile(const FilePath &filePath);
 
     enum Columns { RevisionColumn, FilePathColumn, ColumnCount };
 
@@ -1215,22 +1174,19 @@ public:
     QVariant headerData(int section, Qt::Orientation orientation, int role) const override;
 
 private:
-    struct WorkingCopyEntry {
-        WorkingCopyEntry(const Utils::FilePath &filePath, const QByteArray &source, unsigned revision)
+    struct WorkingCopyEntry
+    {
+        WorkingCopyEntry(const FilePath &filePath, const QByteArray &source, unsigned revision)
             : filePath(filePath), source(source), revision(revision)
         {}
 
-        Utils::FilePath filePath;
+        FilePath filePath;
         QByteArray source;
         unsigned revision;
     };
 
     QList<WorkingCopyEntry> m_workingCopyList;
 };
-
-WorkingCopyModel::WorkingCopyModel(QObject *parent) : QAbstractListModel(parent)
-{
-}
 
 void WorkingCopyModel::configure(const WorkingCopy &workingCopy)
 {
@@ -1243,7 +1199,7 @@ void WorkingCopyModel::configure(const WorkingCopy &workingCopy)
     emit layoutChanged();
 }
 
-QModelIndex WorkingCopyModel::indexForFile(const Utils::FilePath &filePath)
+QModelIndex WorkingCopyModel::indexForFile(const FilePath &filePath)
 {
     for (int i = 0, total = m_workingCopyList.size(); i < total; ++i) {
         const WorkingCopyEntry entry = m_workingCopyList.at(i);
@@ -1271,7 +1227,7 @@ QVariant WorkingCopyModel::data(const QModelIndex &index, int role) const
         if (column == RevisionColumn)
             return m_workingCopyList.at(row).revision;
         else if (column == FilePathColumn)
-            return m_workingCopyList.at(row).filePath.toString();
+            return m_workingCopyList.at(row).filePath.toUrlishString();
     } else if (role == Qt::UserRole) {
         return m_workingCopyList.at(row).source;
     }
@@ -1308,27 +1264,87 @@ public:
 
 // --- CppCodeModelInspectorDialog ----------------------------------------------------------------
 
-CppCodeModelInspectorDialog::CppCodeModelInspectorDialog(QWidget *parent)
-    : QDialog(parent)
-    , m_snapshotInfos(new QList<SnapshotInfo>())
+//
+// This dialog is for DEBUGGING PURPOSES and thus NOT TRANSLATED.
+//
+
+class CppCodeModelInspectorDialog : public QDialog
+{
+public:
+    CppCodeModelInspectorDialog();
+
+private:
+    void onSnapshotFilterChanged(const QString &pattern);
+    void onSnapshotSelected(int row);
+    void onDocumentSelected(const QModelIndex &current, const QModelIndex &);
+    void onSymbolsViewExpandedOrCollapsed(const QModelIndex &);
+
+    void onProjectPartFilterChanged(const QString &pattern);
+    void onProjectPartSelected(const QModelIndex &current, const QModelIndex &);
+
+    void onWorkingCopyFilterChanged(const QString &pattern);
+    void onWorkingCopyDocumentSelected(const QModelIndex &current, const QModelIndex &);
+
+    void refresh();
+
+    void clearDocumentData();
+    void updateDocumentData(const CPlusPlus::Document::Ptr &document);
+
+    void clearProjectPartData();
+    void updateProjectPartData(const ProjectPart::ConstPtr &part);
+
+    bool event(QEvent *e) override;
+
+private:
+    QTabWidget *m_projectPartTab;
+    QPlainTextEdit *m_partGeneralCompilerFlagsEdit;
+    QPlainTextEdit *m_partToolchainDefinesEdit;
+    QPlainTextEdit *m_partProjectDefinesEdit;
+    QPlainTextEdit *m_partPrecompiledHeadersEdit;
+    QComboBox *m_snapshotSelector;
+    QTabWidget *m_docTab;
+    QTreeView *m_docGeneralView;
+    QTreeView *m_docIncludesView;
+    QTreeView *m_docDiagnosticMessagesView;
+    QTreeView *m_docDefinedMacrosView;
+    QPlainTextEdit *m_docPreprocessedSourceEdit;
+    QTreeView *m_docSymbolsView;
+    QPlainTextEdit *m_workingCopySourceEdit;
+    QCheckBox *m_selectEditorRelevantEntriesAfterRefreshCheckBox;
+    QTreeView *m_partGeneralView;
+    QTreeView *m_docTokensView;
+
+    // Snapshots and Documents
+    QList<SnapshotInfo> m_snapshotInfos;
+    FilterableView *m_snapshotView;
+    SnapshotModel m_snapshotModel;
+    QSortFilterProxyModel m_proxySnapshotModel;
+    KeyValueModel m_docGenericInfoModel;
+    IncludesModel m_docIncludesModel;
+    DiagnosticMessagesModel m_docDiagnosticMessagesModel;
+    MacrosModel m_docMacrosModel;
+    SymbolsModel m_docSymbolsModel;
+    TokensModel m_docTokensModel;
+
+    // Project Parts
+    FilterableView *m_projectPartsView;
+    ProjectPartsModel m_projectPartsModel;
+    QSortFilterProxyModel m_proxyProjectPartsModel;
+    KeyValueModel m_partGenericInfoModel;
+    ProjectFilesModel m_projectFilesModel;
+    ProjectHeaderPathsModel m_projectHeaderPathsModel;
+
+    // Working Copy
+    FilterableView *m_workingCopyView;
+    WorkingCopyModel m_workingCopyModel;
+    QSortFilterProxyModel m_proxyWorkingCopyModel;
+};
+
+CppCodeModelInspectorDialog::CppCodeModelInspectorDialog()
+    : QDialog(ICore::dialogParent())
     , m_snapshotView(new FilterableView(this))
-    , m_snapshotModel(new SnapshotModel(this))
-    , m_proxySnapshotModel(new QSortFilterProxyModel(this))
-    , m_docGenericInfoModel(new KeyValueModel(this))
-    , m_docIncludesModel(new IncludesModel(this))
-    , m_docDiagnosticMessagesModel(new DiagnosticMessagesModel(this))
-    , m_docMacrosModel(new MacrosModel(this))
-    , m_docSymbolsModel(new SymbolsModel(this))
-    , m_docTokensModel(new TokensModel(this))
     , m_projectPartsView(new FilterableView(this))
-    , m_projectPartsModel(new ProjectPartsModel(this))
-    , m_proxyProjectPartsModel(new QSortFilterProxyModel(this))
-    , m_partGenericInfoModel(new KeyValueModel(this))
-    , m_projectFilesModel(new ProjectFilesModel(this))
-    , m_projectHeaderPathsModel(new ProjectHeaderPathsModel(this))
     , m_workingCopyView(new FilterableView(this))
-    , m_workingCopyModel(new WorkingCopyModel(this))
-    , m_proxyWorkingCopyModel(new QSortFilterProxyModel(this))
 {
     resize(818, 756);
     setWindowTitle(QString::fromUtf8("C++ Code Model Inspector"));
@@ -1401,26 +1417,26 @@ CppCodeModelInspectorDialog::CppCodeModelInspectorDialog(QWidget *parent)
     m_partGeneralView->setSizePolicy(sizePolicyWithStretchFactor(2));
     m_partGeneralCompilerFlagsEdit->setSizePolicy(sizePolicyWithStretchFactor(1));
 
-    m_proxySnapshotModel->setSourceModel(m_snapshotModel);
-    m_proxySnapshotModel->setFilterKeyColumn(SnapshotModel::FilePathColumn);
-    m_snapshotView->setModel(m_proxySnapshotModel);
-    m_docGeneralView->setModel(m_docGenericInfoModel);
-    m_docIncludesView->setModel(m_docIncludesModel);
-    m_docDiagnosticMessagesView->setModel(m_docDiagnosticMessagesModel);
-    m_docDefinedMacrosView->setModel(m_docMacrosModel);
-    m_docSymbolsView->setModel(m_docSymbolsModel);
-    m_docTokensView->setModel(m_docTokensModel);
+    m_proxySnapshotModel.setSourceModel(&m_snapshotModel);
+    m_proxySnapshotModel.setFilterKeyColumn(SnapshotModel::FilePathColumn);
+    m_snapshotView->setModel(&m_proxySnapshotModel);
+    m_docGeneralView->setModel(&m_docGenericInfoModel);
+    m_docIncludesView->setModel(&m_docIncludesModel);
+    m_docDiagnosticMessagesView->setModel(&m_docDiagnosticMessagesModel);
+    m_docDefinedMacrosView->setModel(&m_docMacrosModel);
+    m_docSymbolsView->setModel(&m_docSymbolsModel);
+    m_docTokensView->setModel(&m_docTokensModel);
 
-    m_proxyProjectPartsModel->setSourceModel(m_projectPartsModel);
-    m_proxyProjectPartsModel->setFilterKeyColumn(ProjectPartsModel::PartFilePathColumn);
-    m_projectPartsView->setModel(m_proxyProjectPartsModel);
-    m_partGeneralView->setModel(m_partGenericInfoModel);
-    projectFilesView->setModel(m_projectFilesModel);
-    projectHeaderPathsView->setModel(m_projectHeaderPathsModel);
+    m_proxyProjectPartsModel.setSourceModel(&m_projectPartsModel);
+    m_proxyProjectPartsModel.setFilterKeyColumn(ProjectPartsModel::PartFilePathColumn);
+    m_projectPartsView->setModel(&m_proxyProjectPartsModel);
+    m_partGeneralView->setModel(&m_partGenericInfoModel);
+    projectFilesView->setModel(&m_projectFilesModel);
+    projectHeaderPathsView->setModel(&m_projectHeaderPathsModel);
 
-    m_proxyWorkingCopyModel->setSourceModel(m_workingCopyModel);
-    m_proxyWorkingCopyModel->setFilterKeyColumn(WorkingCopyModel::FilePathColumn);
-    m_workingCopyView->setModel(m_proxyWorkingCopyModel);
+    m_proxyWorkingCopyModel.setSourceModel(&m_workingCopyModel);
+    m_proxyWorkingCopyModel.setFilterKeyColumn(WorkingCopyModel::FilePathColumn);
+    m_workingCopyView->setModel(&m_proxyWorkingCopyModel);
 
     using namespace Layouting;
 
@@ -1448,8 +1464,8 @@ CppCodeModelInspectorDialog::CppCodeModelInspectorDialog(QWidget *parent)
                 }
             }
         ),
-        Tab("&Header Paths", Column{ projectHeaderPathsView }),
-        Tab("Pre&compiled Headers", Column{ m_partPrecompiledHeadersEdit }),
+        Tab("&Header Paths", Column { projectHeaderPathsView }),
+        Tab("Pre&compiled Headers", Column { m_partPrecompiledHeadersEdit }),
     };
 
     TabWidget docTab {
@@ -1529,47 +1545,37 @@ CppCodeModelInspectorDialog::CppCodeModelInspectorDialog(QWidget *parent)
     connect(m_workingCopyView, &FilterableView::filterChanged,
             this, &CppCodeModelInspectorDialog::onWorkingCopyFilterChanged);
 
-    connect(refreshButton, &QAbstractButton::clicked, this, &CppCodeModelInspectorDialog::onRefreshRequested);
+    connect(refreshButton, &QAbstractButton::clicked, this, &CppCodeModelInspectorDialog::refresh);
     connect(closeButton, &QAbstractButton::clicked, this, &QWidget::close);
 
     refresh();
 }
 
-CppCodeModelInspectorDialog::~CppCodeModelInspectorDialog()
-{
-    delete m_snapshotInfos;
-}
-
-void CppCodeModelInspectorDialog::onRefreshRequested()
-{
-    refresh();
-}
-
 void CppCodeModelInspectorDialog::onSnapshotFilterChanged(const QString &pattern)
 {
-    m_proxySnapshotModel->setFilterWildcard(pattern);
+    m_proxySnapshotModel.setFilterWildcard(pattern);
 }
 
 void CppCodeModelInspectorDialog::onSnapshotSelected(int row)
 {
-    if (row < 0 || row >= m_snapshotInfos->size())
+    if (row < 0 || row >= m_snapshotInfos.size())
         return;
 
     m_snapshotView->clearFilter();
-    const SnapshotInfo info = m_snapshotInfos->at(row);
-    m_snapshotModel->configure(info.snapshot);
+    const SnapshotInfo info = m_snapshotInfos.at(row);
+    m_snapshotModel.configure(info.snapshot);
     m_snapshotView->resizeColumns(SnapshotModel::ColumnCount);
 
     if (info.type == SnapshotInfo::GlobalSnapshot) {
         // Select first document
-        const QModelIndex index = m_proxySnapshotModel->index(0, SnapshotModel::FilePathColumn);
+        const QModelIndex index = m_proxySnapshotModel.index(0, SnapshotModel::FilePathColumn);
         m_snapshotView->selectIndex(index);
     } else if (info.type == SnapshotInfo::EditorSnapshot) {
         // Select first document, unless we can find the editor document
-        QModelIndex index = m_snapshotModel->indexForDocument(fileInCurrentEditor());
-        index = m_proxySnapshotModel->mapFromSource(index);
+        QModelIndex index = m_snapshotModel.indexForDocument(fileInCurrentEditor());
+        index = m_proxySnapshotModel.mapFromSource(index);
         if (!index.isValid())
-            index = m_proxySnapshotModel->index(0, SnapshotModel::FilePathColumn);
+            index = m_proxySnapshotModel.index(0, SnapshotModel::FilePathColumn);
         m_snapshotView->selectIndex(index);
     }
 }
@@ -1578,11 +1584,11 @@ void CppCodeModelInspectorDialog::onDocumentSelected(const QModelIndex &current,
                                                      const QModelIndex &)
 {
     if (current.isValid()) {
-        const QModelIndex index = m_proxySnapshotModel->index(current.row(),
-                                                              SnapshotModel::FilePathColumn);
+        const QModelIndex index = m_proxySnapshotModel.index(current.row(),
+                                                             SnapshotModel::FilePathColumn);
         const FilePath filePath = FilePath::fromUserInput(
-            m_proxySnapshotModel->data(index, Qt::DisplayRole).toString());
-        const SnapshotInfo info = m_snapshotInfos->at(m_snapshotSelector->currentIndex());
+            m_proxySnapshotModel.data(index, Qt::DisplayRole).toString());
+        const SnapshotInfo info = m_snapshotInfos.at(m_snapshotSelector->currentIndex());
         updateDocumentData(info.snapshot.document(filePath));
     } else {
         clearDocumentData();
@@ -1596,18 +1602,18 @@ void CppCodeModelInspectorDialog::onSymbolsViewExpandedOrCollapsed(const QModelI
 
 void CppCodeModelInspectorDialog::onProjectPartFilterChanged(const QString &pattern)
 {
-    m_proxyProjectPartsModel->setFilterWildcard(pattern);
+    m_proxyProjectPartsModel.setFilterWildcard(pattern);
 }
 
 void CppCodeModelInspectorDialog::onProjectPartSelected(const QModelIndex &current,
                                                         const QModelIndex &)
 {
     if (current.isValid()) {
-        QModelIndex index = m_proxyProjectPartsModel->mapToSource(current);
+        QModelIndex index = m_proxyProjectPartsModel.mapToSource(current);
         if (index.isValid()) {
-            index = m_projectPartsModel->index(index.row(), ProjectPartsModel::PartFilePathColumn);
-            const QString projectPartId = m_projectPartsModel->data(index, Qt::UserRole).toString();
-            updateProjectPartData(m_projectPartsModel->projectPartForProjectId(projectPartId));
+            index = m_projectPartsModel.index(index.row(), ProjectPartsModel::PartFilePathColumn);
+            const QString projectPartId = m_projectPartsModel.data(index, Qt::UserRole).toString();
+            updateProjectPartData(m_projectPartsModel.projectPartForProjectId(projectPartId));
         }
     } else {
         clearProjectPartData();
@@ -1616,17 +1622,17 @@ void CppCodeModelInspectorDialog::onProjectPartSelected(const QModelIndex &curre
 
 void CppCodeModelInspectorDialog::onWorkingCopyFilterChanged(const QString &pattern)
 {
-    m_proxyWorkingCopyModel->setFilterWildcard(pattern);
+    m_proxyWorkingCopyModel.setFilterWildcard(pattern);
 }
 
 void CppCodeModelInspectorDialog::onWorkingCopyDocumentSelected(const QModelIndex &current,
                                                                 const QModelIndex &)
 {
     if (current.isValid()) {
-        const QModelIndex index = m_proxyWorkingCopyModel->mapToSource(current);
+        const QModelIndex index = m_proxyWorkingCopyModel.mapToSource(current);
         if (index.isValid()) {
             const QString source
-                = QString::fromUtf8(m_workingCopyModel->data(index, Qt::UserRole).toByteArray());
+                = QString::fromUtf8(m_workingCopyModel.data(index, Qt::UserRole).toByteArray());
             m_workingCopySourceEdit->setPlainText(source);
         }
     } else {
@@ -1641,14 +1647,14 @@ void CppCodeModelInspectorDialog::refresh()
         = m_selectEditorRelevantEntriesAfterRefreshCheckBox->isChecked();
 
     // Snapshots and Documents
-    m_snapshotInfos->clear();
+    m_snapshotInfos.clear();
     m_snapshotSelector->clear();
 
     const Snapshot globalSnapshot = CppModelManager::snapshot();
     CppCodeModelInspector::Dumper dumper(globalSnapshot);
-    m_snapshotModel->setGlobalSnapshot(globalSnapshot);
+    m_snapshotModel.setGlobalSnapshot(globalSnapshot);
 
-    m_snapshotInfos->append(SnapshotInfo(globalSnapshot, SnapshotInfo::GlobalSnapshot));
+    m_snapshotInfos.append(SnapshotInfo(globalSnapshot, SnapshotInfo::GlobalSnapshot));
     const QString globalSnapshotTitle
         = QString::fromLatin1("Global/Indexing Snapshot (%1 Documents)").arg(globalSnapshot.size());
     m_snapshotSelector->addItem(globalSnapshotTitle);
@@ -1660,7 +1666,7 @@ void CppCodeModelInspectorDialog::refresh()
         cppEditorDocument = CppModelManager::cppEditorDocument(editorFilePath);
         if (auto documentProcessor = CppModelManager::cppEditorDocumentProcessor(editorFilePath)) {
             const Snapshot editorSnapshot = documentProcessor->snapshot();
-            m_snapshotInfos->append(SnapshotInfo(editorSnapshot, SnapshotInfo::EditorSnapshot));
+            m_snapshotInfos.append(SnapshotInfo(editorSnapshot, SnapshotInfo::EditorSnapshot));
             const QString editorSnapshotTitle
                 = QString::fromLatin1("Current Editor's Snapshot (%1 Documents)")
                     .arg(editorSnapshot.size());
@@ -1674,7 +1680,7 @@ void CppCodeModelInspectorDialog::refresh()
 
             // Add semantic info snapshot
             snapshot = semanticInfo.snapshot;
-            m_snapshotInfos->append(SnapshotInfo(snapshot, SnapshotInfo::EditorSnapshot));
+            m_snapshotInfos.append(SnapshotInfo(snapshot, SnapshotInfo::EditorSnapshot));
             m_snapshotSelector->addItem(
                 QString::fromLatin1("Current Editor's Semantic Info Snapshot (%1 Documents)")
                     .arg(snapshot.size()));
@@ -1683,7 +1689,7 @@ void CppCodeModelInspectorDialog::refresh()
             // is not part of the semantic snapshot.
             snapshot = Snapshot();
             snapshot.insert(cppEditorWidget->semanticInfo().doc);
-            m_snapshotInfos->append(SnapshotInfo(snapshot, SnapshotInfo::EditorSnapshot));
+            m_snapshotInfos.append(SnapshotInfo(snapshot, SnapshotInfo::EditorSnapshot));
             const QString snapshotTitle
                 = QString::fromLatin1("Current Editor's Pseudo Snapshot with Semantic Info Document (%1 Documents)")
                     .arg(snapshot.size());
@@ -1694,14 +1700,14 @@ void CppCodeModelInspectorDialog::refresh()
 
     int snapshotIndex = 0;
     if (selectEditorRelevant) {
-        for (int i = 0, total = m_snapshotInfos->size(); i < total; ++i) {
-            const SnapshotInfo info = m_snapshotInfos->at(i);
+        for (int i = 0, total = m_snapshotInfos.size(); i < total; ++i) {
+            const SnapshotInfo info = m_snapshotInfos.at(i);
             if (info.type == SnapshotInfo::EditorSnapshot) {
                 snapshotIndex = i;
                 break;
             }
         }
-    } else if (oldSnapshotIndex < m_snapshotInfos->size()) {
+    } else if (oldSnapshotIndex < m_snapshotInfos.size()) {
         snapshotIndex = oldSnapshotIndex;
     }
     m_snapshotSelector->setCurrentIndex(snapshotIndex);
@@ -1714,13 +1720,13 @@ void CppCodeModelInspectorDialog::refresh()
 
     const QList<ProjectInfo::ConstPtr> projectInfos = CppModelManager::projectInfos();
     dumper.dumpProjectInfos(projectInfos);
-    m_projectPartsModel->configure(projectInfos, editorsProjectPart);
+    m_projectPartsModel.configure(projectInfos, editorsProjectPart);
     m_projectPartsView->resizeColumns(ProjectPartsModel::ColumnCount);
-    QModelIndex index = m_proxyProjectPartsModel->index(0, ProjectPartsModel::PartFilePathColumn);
+    QModelIndex index = m_proxyProjectPartsModel.index(0, ProjectPartsModel::PartFilePathColumn);
     if (index.isValid()) {
         if (selectEditorRelevant && editorsProjectPart) {
-            QModelIndex editorPartIndex = m_projectPartsModel->indexForCurrentEditorsProjectPart();
-            editorPartIndex = m_proxyProjectPartsModel->mapFromSource(editorPartIndex);
+            QModelIndex editorPartIndex = m_projectPartsModel.indexForCurrentEditorsProjectPart();
+            editorPartIndex = m_proxyProjectPartsModel.mapFromSource(editorPartIndex);
             if (editorPartIndex.isValid())
                 index = editorPartIndex;
         }
@@ -1730,14 +1736,14 @@ void CppCodeModelInspectorDialog::refresh()
     // Working Copy
     const WorkingCopy workingCopy = CppModelManager::workingCopy();
     dumper.dumpWorkingCopy(workingCopy);
-    m_workingCopyModel->configure(workingCopy);
+    m_workingCopyModel.configure(workingCopy);
     m_workingCopyView->resizeColumns(WorkingCopyModel::ColumnCount);
     if (workingCopy.size() > 0) {
-        QModelIndex index = m_proxyWorkingCopyModel->index(0, WorkingCopyModel::FilePathColumn);
+        QModelIndex index = m_proxyWorkingCopyModel.index(0, WorkingCopyModel::FilePathColumn);
         if (selectEditorRelevant) {
-            const QModelIndex eindex = m_workingCopyModel->indexForFile(fileInCurrentEditor());
+            const QModelIndex eindex = m_workingCopyModel.indexForFile(fileInCurrentEditor());
             if (eindex.isValid())
-                index = m_proxyWorkingCopyModel->mapFromSource(eindex);
+                index = m_proxyWorkingCopyModel.mapFromSource(eindex);
         }
         m_workingCopyView->selectIndex(index);
     }
@@ -1776,23 +1782,23 @@ static QString docTabName(int tabIndex, int numberOfEntries = -1)
 
 void CppCodeModelInspectorDialog::clearDocumentData()
 {
-    m_docGenericInfoModel->clear();
+    m_docGenericInfoModel.clear();
 
     m_docTab->setTabText(DocumentIncludesTab, docTabName(DocumentIncludesTab));
-    m_docIncludesModel->clear();
+    m_docIncludesModel.clear();
 
     m_docTab->setTabText(DocumentDiagnosticsTab, docTabName(DocumentDiagnosticsTab));
-    m_docDiagnosticMessagesModel->clear();
+    m_docDiagnosticMessagesModel.clear();
 
     m_docTab->setTabText(DocumentDefinedMacrosTab, docTabName(DocumentDefinedMacrosTab));
-    m_docMacrosModel->clear();
+    m_docMacrosModel.clear();
 
     m_docPreprocessedSourceEdit->clear();
 
-    m_docSymbolsModel->clear();
+    m_docSymbolsModel.clear();
 
     m_docTab->setTabText(DocumentTokensTab, docTabName(DocumentTokensTab));
-    m_docTokensModel->clear();
+    m_docTokensModel.clear();
 }
 
 void CppCodeModelInspectorDialog::updateDocumentData(const Document::Ptr &document)
@@ -1810,39 +1816,39 @@ void CppCodeModelInspectorDialog::updateDocumentData(const Document::Ptr &docume
         {QString::fromLatin1("Parsed"), CMI::Utils::toString(document->isParsed())},
         {QString::fromLatin1("Project Parts"), CMI::Utils::partsForFile(document->filePath())}
     };
-    m_docGenericInfoModel->configure(table);
+    m_docGenericInfoModel.configure(table);
     resizeColumns<KeyValueModel>(m_docGeneralView);
 
     // Includes
-    m_docIncludesModel->configure(document->resolvedIncludes() + document->unresolvedIncludes());
+    m_docIncludesModel.configure(document->resolvedIncludes() + document->unresolvedIncludes());
     resizeColumns<IncludesModel>(m_docIncludesView);
     m_docTab->setTabText(DocumentIncludesTab,
-        docTabName(DocumentIncludesTab, m_docIncludesModel->rowCount()));
+        docTabName(DocumentIncludesTab, m_docIncludesModel.rowCount()));
 
     // Diagnostic Messages
-    m_docDiagnosticMessagesModel->configure(document->diagnosticMessages());
+    m_docDiagnosticMessagesModel.configure(document->diagnosticMessages());
     resizeColumns<DiagnosticMessagesModel>(m_docDiagnosticMessagesView);
     m_docTab->setTabText(DocumentDiagnosticsTab,
-        docTabName(DocumentDiagnosticsTab, m_docDiagnosticMessagesModel->rowCount()));
+        docTabName(DocumentDiagnosticsTab, m_docDiagnosticMessagesModel.rowCount()));
 
     // Macros
-    m_docMacrosModel->configure(document->definedMacros());
+    m_docMacrosModel.configure(document->definedMacros());
     resizeColumns<MacrosModel>(m_docDefinedMacrosView);
     m_docTab->setTabText(DocumentDefinedMacrosTab,
-        docTabName(DocumentDefinedMacrosTab, m_docMacrosModel->rowCount()));
+        docTabName(DocumentDefinedMacrosTab, m_docMacrosModel.rowCount()));
 
     // Source
     m_docPreprocessedSourceEdit->setPlainText(QString::fromUtf8(document->utf8Source()));
 
     // Symbols
-    m_docSymbolsModel->configure(document);
+    m_docSymbolsModel.configure(document);
     resizeColumns<SymbolsModel>(m_docSymbolsView);
 
     // Tokens
-    m_docTokensModel->configure(document->translationUnit());
+    m_docTokensModel.configure(document->translationUnit());
     resizeColumns<TokensModel>(m_docTokensView);
     m_docTab->setTabText(DocumentTokensTab,
-        docTabName(DocumentTokensTab, m_docTokensModel->rowCount()));
+        docTabName(DocumentTokensTab, m_docTokensModel.rowCount()));
 }
 
 enum ProjectPartTabs {
@@ -1870,9 +1876,9 @@ static QString partTabName(int tabIndex, int numberOfEntries = -1)
 
 void CppCodeModelInspectorDialog::clearProjectPartData()
 {
-    m_partGenericInfoModel->clear();
-    m_projectFilesModel->clear();
-    m_projectHeaderPathsModel->clear();
+    m_partGenericInfoModel.clear();
+    m_projectFilesModel.clear();
+    m_projectHeaderPathsModel.clear();
 
     m_projectPartTab->setTabText(ProjectPartFilesTab, partTabName(ProjectPartFilesTab));
 
@@ -1917,7 +1923,7 @@ void CppCodeModelInspectorDialog::updateProjectPartData(const ProjectPart::Const
 
     const QString precompiledHeaders = part->precompiledHeaders.isEmpty()
             ? QString::fromLatin1("<None>")
-            : part->precompiledHeaders.join(',');
+            : part->precompiledHeaders.toUserOutput(",");
 
     KeyValueModel::Table table = {
         {QString::fromLatin1("Project Part Name"), part->displayName},
@@ -1932,21 +1938,21 @@ void CppCodeModelInspectorDialog::updateProjectPartData(const ProjectPart::Const
         {QString::fromLatin1("ToolChain Type"), part->toolchainType.toString()},
         {QString::fromLatin1("ToolChain Target Triple"), part->toolchainTargetTriple},
         {QString::fromLatin1("ToolChain Word Width"), CMI::Utils::toString(part->toolchainAbi.wordWidth())},
-        {QString::fromLatin1("ToolChain Install Dir"), part->toolchainInstallDir.toString()},
+        {QString::fromLatin1("ToolChain Install Dir"), part->toolchainInstallDir.toUserOutput()},
         {QString::fromLatin1("Language Version"), CMI::Utils::toString(part->languageVersion)},
         {QString::fromLatin1("Language Extensions"), CMI::Utils::toString(part->languageExtensions)},
         {QString::fromLatin1("Qt Version"), CMI::Utils::toString(part->qtVersion)}
     };
     if (!part->projectConfigFile.isEmpty())
-        table.prepend({QString::fromLatin1("Project Config File"), part->projectConfigFile});
-    m_partGenericInfoModel->configure(table);
+        table.prepend({QString::fromLatin1("Project Config File"), part->projectConfigFile.toUserOutput()});
+    m_partGenericInfoModel.configure(table);
     resizeColumns<KeyValueModel>(m_partGeneralView);
 
     // Compiler Flags
     m_partGeneralCompilerFlagsEdit->setPlainText(part->compilerFlags.join("\n"));
 
     // Project Files
-    m_projectFilesModel->configure(part->files);
+    m_projectFilesModel.configure(part->files);
     m_projectPartTab->setTabText(ProjectPartFilesTab,
         partTabName(ProjectPartFilesTab, part->files.size()));
 
@@ -1958,13 +1964,12 @@ void CppCodeModelInspectorDialog::updateProjectPartData(const ProjectPart::Const
         partTabName(ProjectPartDefinesTab, numberOfDefines));
 
     // Header Paths
-    m_projectHeaderPathsModel->configure(part->headerPaths);
+    m_projectHeaderPathsModel.configure(part->headerPaths);
     m_projectPartTab->setTabText(ProjectPartHeaderPathsTab,
         partTabName(ProjectPartHeaderPathsTab, part->headerPaths.size()));
 
     // Precompiled Headers
-    m_partPrecompiledHeadersEdit->setPlainText(
-                CMI::Utils::pathListToString(part->precompiledHeaders));
+    m_partPrecompiledHeadersEdit->setPlainText(part->precompiledHeaders.toUserOutput("\n"));
     m_projectPartTab->setTabText(ProjectPartPrecompiledHeadersTab,
         partTabName(ProjectPartPrecompiledHeadersTab, part->precompiledHeaders.size()));
 }
@@ -1980,6 +1985,19 @@ bool CppCodeModelInspectorDialog::event(QEvent *e)
         }
     }
     return QDialog::event(e);
+}
+
+void inspectCppCodeModel()
+{
+    static QPointer<CppCodeModelInspectorDialog> theCppCodeModelInspectorDialog;
+
+    if (theCppCodeModelInspectorDialog) {
+        ICore::raiseWindow(theCppCodeModelInspectorDialog);
+    } else {
+        theCppCodeModelInspectorDialog = new CppCodeModelInspectorDialog;
+        ICore::registerWindow(theCppCodeModelInspectorDialog, Context("CppEditor.Inspector"));
+        theCppCodeModelInspectorDialog->show();
+    }
 }
 
 } // CppEditor::Internal

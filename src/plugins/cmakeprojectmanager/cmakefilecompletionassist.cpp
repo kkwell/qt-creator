@@ -215,7 +215,7 @@ static QList<AssistProposalItemInterface *> generateList(
 
     QList<AssistProposalItemInterface *> list;
     for (auto it = cache.cbegin(); it != cache.cend(); ++it) {
-        if (it->isAdvanced || it->isUnset || it->type == CMakeConfig::Type::INTERNAL)
+        if (it->isAdvanced || it->isUnset || it->type == CMakeConfigItem::Type::INTERNAL)
             continue;
 
         QString text = QString::fromUtf8(it->key);
@@ -248,8 +248,7 @@ static int addFilePathItems(const AssistInterface *interface,
     const int startPos = findPathStart(interface);
 
     if (interface->reason() == IdleEditor
-        && interface->position() - startPos
-               < TextEditorSettings::completionSettings().m_characterThreshold)
+            && interface->position() - startPos < completionSettings().characterThreshold())
         return symbolStartPos;
 
     const QString word = interface->textAt(startPos, interface->position() - startPos);
@@ -314,8 +313,8 @@ static void updateCMakeConfigurationWithLocalData(CMakeConfig &cmakeCache,
         return var == "CMAKE_PREFIX_PATH" || var == "CMAKE_MODULE_PATH";
     };
 
-    const FilePath projectDir = ProjectTree::currentBuildSystem()
-                                    ? ProjectTree::currentBuildSystem()->projectDirectory()
+    const FilePath projectDir = activeBuildSystemForCurrentProject()
+                                    ? activeBuildSystemForCurrentProject()->projectDirectory()
                                     : currentDir;
     auto updateDirVariables = [currentDir, projectDir, cmakeCache](QByteArray &value) {
         value.replace("${CMAKE_CURRENT_SOURCE_DIR}", currentDir.path().toUtf8());
@@ -326,14 +325,12 @@ static void updateCMakeConfigurationWithLocalData(CMakeConfig &cmakeCache,
     };
 
     auto insertOrAppendListValue = [&cmakeCache](const QByteArray &key, const QByteArray &value) {
-        auto it = std::find_if(cmakeCache.begin(), cmakeCache.end(), [key](const auto &item) {
-            return item.key == key;
-        });
-        if (it == cmakeCache.end()) {
-            cmakeCache << CMakeConfigItem(key, value);
+        if (cmakeCache.contains(key)) {
+            CMakeConfigItem &item = cmakeCache[key];
+            item.value.append(";");
+            item.value.append(value);
         } else {
-            it->value.append(";");
-            it->value.append(value);
+            cmakeCache.insert(CMakeConfigItem(key, value));
         }
     };
 
@@ -414,7 +411,7 @@ static QPair<QStringList, QStringList> getFindAndConfigCMakePackages(
                                                  .split(";"),
                                              &FilePath::fromUserInput);
 
-        for (const auto &prefix : paths) {
+        for (const auto &prefix : std::as_const(paths)) {
             // Only search for directories if we have a prefix
             const FilePaths dirs = !m.pathPrefix.isEmpty()
                                        ? prefix.pathAppended(m.pathPrefix)
@@ -451,13 +448,10 @@ PerformInputDataPtr CMakeFileCompletionAssist::generatePerformInputData() const
 {
     PerformInputDataPtr data = PerformInputDataPtr(new PerformInputData);
 
-    const FilePath &filePath = interface()->filePath();
-    if (!filePath.isEmpty() && filePath.isFile()) {
-        if (auto tool = CMakeToolManager::defaultProjectOrDefaultCMakeTool())
-            data->keywords = tool->keywords();
-    }
+    if (interface()->filePath().isFile())
+        data->keywords = CMakeToolManager::defaultProjectOrDefaultCMakeKeyWords();
 
-    if (auto bs = qobject_cast<CMakeBuildSystem *>(ProjectTree::currentBuildSystem())) {
+    if (auto bs = qobject_cast<CMakeBuildSystem *>(activeBuildSystemForCurrentProject())) {
         for (const auto &target : std::as_const(bs->buildTargets()))
             if (target.targetType != TargetType::UtilityType)
                 data->buildTargets << target.title;
@@ -502,10 +496,8 @@ IAssistProposal *CMakeFileCompletionAssist::doPerform(const PerformInputDataPtr 
     if (interface()->reason() == IdleEditor) {
         const QChar chr = interface()->characterAt(interface()->position());
         const int wordSize = interface()->position() - startPos;
-        if (isValidIdentifierChar(chr)
-            || wordSize < TextEditorSettings::completionSettings().m_characterThreshold) {
+        if (isValidIdentifierChar(chr) || wordSize < completionSettings().characterThreshold())
             return nullptr;
-        }
     }
 
     cmListFile cmakeListFile = parseCMakeListFromBuffer(

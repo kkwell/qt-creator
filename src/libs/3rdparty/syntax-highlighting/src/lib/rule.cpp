@@ -97,7 +97,7 @@ static QString replaceCaptures(const QString &pattern, const QStringList &captur
 
 static MatchResult matchString(QStringView pattern, QStringView text, int offset, Qt::CaseSensitivity caseSensitivity)
 {
-    if (offset + pattern.size() <= text.size() && text.mid(offset, pattern.size()).compare(pattern, caseSensitivity) == 0) {
+    if (offset + pattern.size() <= text.size() && text.sliced(offset, pattern.size()).compare(pattern, caseSensitivity) == 0) {
         return offset + pattern.size();
     }
     return offset;
@@ -533,7 +533,7 @@ MatchResult KeywordListRule::doMatch(QStringView text, int offset, const QString
         return offset;
     }
 
-    if (m_keywordList.contains(text.mid(offset, newOffset - offset), m_caseSensitivity)) {
+    if (m_keywordList.contains(text.sliced(offset, newOffset - offset), m_caseSensitivity)) {
         return newOffset;
     }
 
@@ -589,9 +589,15 @@ static QRegularExpression::PatternOptions makePattenOptions(const HighlightingCo
         | QRegularExpression::UseUnicodePropertiesOption;
 }
 
-static void resolveRegex(QRegularExpression &regexp, Context *context)
+static void resolveRegex(QRegularExpression &regexp, const ContextSwitch::ContextList &contexts)
 {
-    bool enableCapture = context && context->hasDynamicRule();
+    bool enableCapture = false;
+    for (auto *context : contexts) {
+        if (context->hasDynamicRule()) {
+            enableCapture = true;
+            break;
+        }
+    }
 
     // disable DontCaptureOption when reference a context with dynamic rule or
     // with invalid regex because DontCaptureOption with back reference capture is an error
@@ -609,11 +615,7 @@ static MatchResult regexMatch(const QRegularExpression &regexp, QStringView text
     /**
      * match the pattern
      */
-#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     const auto result = regexp.matchView(text, offset, QRegularExpression::NormalMatch, QRegularExpression::DontCheckSubjectStringMatchOption);
-#else
-    const auto result = regexp.match(text, offset, QRegularExpression::NormalMatch, QRegularExpression::DontCheckSubjectStringMatchOption);
-#endif
     if (result.capturedStart() == offset) {
         /**
          * we only need to compute the captured texts if we have real capture groups
@@ -653,7 +655,7 @@ void RegExpr::resolve()
 {
     m_isResolved = true;
 
-    resolveRegex(m_regexp, context().context());
+    resolveRegex(m_regexp, context().contexts());
 }
 
 MatchResult RegExpr::doMatch(QStringView text, int offset, const QStringList &, DynamicRegexpCache &) const
@@ -678,7 +680,7 @@ void DynamicRegExpr::resolve()
     m_isResolved = true;
 
     QRegularExpression regexp(m_pattern, m_patternOptions);
-    resolveRegex(regexp, context().context());
+    resolveRegex(regexp, context().contexts());
     m_patternOptions = regexp.patternOptions();
 }
 
@@ -745,7 +747,7 @@ MatchResult WordDetect::doMatch(QStringView text, int offset, const QStringList 
         return offset;
     }
 
-    if (text.mid(offset, m_word.size()).compare(m_word, m_caseSensitivity) != 0) {
+    if (text.sliced(offset, m_word.size()).compare(m_word, m_caseSensitivity) != 0) {
         return offset;
     }
 

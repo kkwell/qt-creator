@@ -144,7 +144,7 @@ LayoutInGridLayout::LayoutInGridLayout(const QmlDesigner::SelectionContext &sele
 
 void LayoutInGridLayout::doIt()
 {
-    const TypeName layoutType = "QtQuick.Layouts.GridLayout";
+    const TypeName layoutType = "GridLayout";
 
     if (!m_selectionContext.view()
             || !m_selectionContext.view()->model()->hasNodeMetaInfo(layoutType))
@@ -176,6 +176,7 @@ void LayoutInGridLayout::doIt()
                 layoutNode = m_selectionContext.view()->createModelNode(layoutType, metaInfo.majorVersion(), metaInfo.minorVersion());
 #endif
                 reparentTo(layoutNode, m_parentNode);
+                layoutNode.ensureIdExists();
             });
 
             m_selectionContext.view()->executeInTransaction("LayoutInGridLayout2", [this, layoutNode](){

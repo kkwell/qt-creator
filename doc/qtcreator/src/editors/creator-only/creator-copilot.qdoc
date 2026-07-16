@@ -5,13 +5,12 @@
     \page creator-copilot.html
     \previouspage creator-how-tos.html
 
-    \ingroup creator-how-to-edit
+    \ingroup creator-how-to-ai
 
     \title Use GitHub Copilot
 
-    The Copilot plugin (disabled by default) integrates
-    \l{https://github.com/features/copilot}{GitHub Copilot} into \QC.
-    You can view suggestions from Copilot in the \uicontrol Edit mode.
+    The Copilot plugin (disabled by default) integrates \l{GitHub Copilot} into
+    \QC. You can view suggestions from Copilot in the \uicontrol Edit mode.
 
     \note If you enable the Copilot plugin, you must agree with and abide by
     the GitHub terms of use. It is your responsibility to know and accept the
@@ -25,11 +24,9 @@
     To use the Copilot plugin, you need:
 
     \list
-        \li An active \l{https://docs.github.com/en/billing/managing-billing-for-github-copilot/about-billing-for-github-copilot}
-            {GitHub Copilot subscription}.
+        \li An active \l{GitHub Copilot licenses}{GitHub Copilot subscription}.
         \li GitHub Copilot Neovim plugin installed (requires Node.js), as described in
-            \l{https://github.com/github/copilot.vim/blob/release/README.md}
-            {Copilot.vim/Readme.md}.
+            \l{GitHub Copilot for Vim and Neovim}{Copilot.vim/Readme.md}.
     \endlist
 
     \section1 Set Copilot preferences
@@ -37,8 +34,8 @@
     To set preferences for using Copilot:
 
     \list 1
-        \li Go to \preferences > \uicontrol Copilot.
-            \image qtcreator-preferences-copilot.webp {Copilot tab in Preferences}
+        \li Go to \preferences > \uicontrol AI > \uicontrol Copilot.
+            \image {qtcreator-preferences-copilot.webp} {Copilot tab in AI preferences}
         \li Select \uicontrol {Enable Copilot} to use Copilot.
         \li Select \uicontrol {Sign In} to sign into your subscription, activate
             your device, and authorize the GitHub Copilot plugin.
@@ -46,52 +43,42 @@
             The button turns into a \uicontrol {Sign Out} button.
         \li In \uicontrol {Node.js path}, enter the full path to the
             Node.js executable.
-        \li In \uicontrol {Path to agent.js}, enter the path to
-            agent.js in the Copilot Neovim plugin installation folder.
+        \li In \uicontrol {Path to language-server.js}, enter the path to
+            \c language-server.js in the Copilot Neovim plugin installation folder.
         \li Select \uicontrol {Auto request} to receive suggestions
             for the current text cursor position when you make changes.
-        \li Select \uicontrol {Use proxy} to use a proxy server to
-            connect to Copilot servers.
-        \li In \uicontrol {Proxy host}, enter the host name of the proxy server.
-        \li In \uicontrol {Proxy port}, enter the port number of the
-            proxy server.
+        \li In \uicontrol {GitHub Enterprise URL}, enter the URL to Copilot
+            server that runs in the enterprise environment.
+        \li In \uicontrol {Proxy}, enter the host name and port number of the
+            proxy server to connect to Copilot servers.
         \li Select \uicontrol {Reject unauthorized} to prevent the
             security risk presented by accepting unauthorized certificates from
             the proxy server.
-        \li In \uicontrol {Proxy user}, enter the user name to
-            authenticate to the proxy server.
-        \li Select \uicontrol {Save proxy password} to save the
-            password to authenticate to the proxy server.
-            \note The password is saved insecurely.
-        \li In \uicontrol {Proxy password}, enter the password to save.
-            To see the password as you type, select
-            \inlineimage icons/original-size.png.
     \endlist
 
     \section1 Receive suggestions
 
-    When you write code in the \l {Edit Mode}{Edit} mode and
+    When you write code in the \l {Editing code}{Edit} mode and
     \uicontrol {Auto request} is enabled, Copilot automatically makes
     suggestions when you type.
 
-    \image qtcreator-copilot.gif {Receiving suggestions from Copilot in the editor}
+    \image {qtcreator-copilot.gif} {Receiving suggestions from Copilot in the editor}
 
     To manually request a suggestion at the current editor's cursor position,
-    enter \uicontrol {t} (\uicontrol {Request Copilot Suggestion}) in the
-    \l{Navigate with locator}{locator}.
+    enter \uicontrol {t}, followed by \key Space to show
+    \uicontrol {Request Copilot Suggestion} in the \l{Navigate with locator}
+    {locator}.
 
-    Hover the mouse over a suggestion to show a toolbar with
-    \inlineimage icons/prev.png
-    and \inlineimage icons/next.png
+    Hover over a suggestion to show a toolbar with \imageprev
+    (\uicontrol {Previous}) and \imagenext (\uicontrol {Next})
     buttons for cycling between Copilot suggestions.
 
-    To apply a suggestion as a whole, select \uicontrol Apply or press
-    the \key Tab key.
+    To apply a suggestion as a whole, select \uicontrol Apply or \key Tab.
 
     To apply a suggestion word-by-word, select \uicontrol {Apply Word}
-    or press \key {Alt+Right}.
+    or \key {Alt+Right}.
 
-    To reject a suggestion, press \key Esc or the arrow keys.
+    To reject a suggestion, select \key Esc or the arrow keys.
 
     \section1 Turn suggestions on and off
 
@@ -101,8 +88,8 @@
     \section2 Toggle Copilot suggestions
 
     To turn Copilot suggestions on or off globally, select
-    \inlineimage icons/copilot.png (\uicontrol {Toggle Copilot}). This also
-    sets the value of \uicontrol {Enable Copilot} in \preferences >
+    \inlineimage {icons/copilot.png} {Toggle Copilot} (\uicontrol {Toggle Copilot}).
+    This also sets the value of \uicontrol {Enable Copilot} in \preferences >
     \uicontrol Copilot accordingly.
 
     \section2 Turn suggestions on or off for a project
@@ -112,10 +99,10 @@
     \list 1
         \li Go to \uicontrol Projects > \uicontrol {Project Settings} >
             \uicontrol Copilot.
-            \image qtcreator-project-settings-copilot.webp {Copilot project settings}
+            \image {qtcreator-project-settings-copilot.webp} {Copilot project settings}
         \li Clear \uicontrol {Use global settings}.
         \li Select or clear \uicontrol {Enable Copilot}.
     \endlist
 
-    \sa {Enable and disable plugins}, {Edit Mode}
+    \sa {Enable and disable plugins}, {Use AI}{How to: Use AI}, {Editing code}
 */

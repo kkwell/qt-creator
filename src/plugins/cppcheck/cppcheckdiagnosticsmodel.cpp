@@ -5,17 +5,16 @@
 
 #include "cppchecktr.h"
 
-#include <debugger/analyzer/diagnosticlocation.h>
-
 #include <utils/algorithm.h>
 #include <utils/fsengine/fileiconprovider.h>
+#include <utils/link.h>
 #include <utils/utilsicons.h>
 
-using namespace Debugger;
+using namespace Utils;
 
 namespace Cppcheck::Internal {
 
-FilePathItem::FilePathItem(const QString &filePath)
+FilePathItem::FilePathItem(const FilePath &filePath)
     : m_filePath(filePath)
 {}
 
@@ -24,11 +23,11 @@ QVariant FilePathItem::data(int column, int role) const
     if (column == DiagnosticsModel::DiagnosticColumn) {
         switch (role) {
         case Qt::DisplayRole:
-            return m_filePath;
+            return m_filePath.toUrlishString();
         case Qt::DecorationRole:
-            return Utils::FileIconProvider::icon(Utils::FilePath::fromString(m_filePath));
-        case Debugger::DetailedErrorView::FullTextRole:
-            return m_filePath;
+            return FileIconProvider::icon(m_filePath);
+        case ProjectExplorer::DetailedErrorView::FullTextRole:
+            return m_filePath.toUrlishString();
         default:
             return QVariant();
         }
@@ -57,19 +56,15 @@ QVariant DiagnosticItem::data(int column, int role) const
 {
     if (column == DiagnosticsModel::DiagnosticColumn) {
         switch (role) {
-        case DetailedErrorView::LocationRole: {
-            const auto location = DiagnosticLocation(m_diagnostic.fileName,
-                                                     m_diagnostic.lineNumber,
-                                                     0);
-            return QVariant::fromValue(location);
-        }
+        case ProjectExplorer::DetailedErrorView::LocationRole:
+            return QVariant::fromValue(Link(m_diagnostic.fileName, m_diagnostic.lineNumber, 0));
         case Qt::DisplayRole:
             return QString("%1: %2").arg(m_diagnostic.lineNumber).arg(m_diagnostic.message);
         case Qt::ToolTipRole:
             return QString("%1: %2").arg(m_diagnostic.severityText, m_diagnostic.checkId);
         case Qt::DecorationRole:
             return getIcon(m_diagnostic.severity);
-        case Debugger::DetailedErrorView::FullTextRole:
+        case ProjectExplorer::DetailedErrorView::FullTextRole:
             return QString("%1:%2: %3")
                 .arg(m_diagnostic.fileName.toUserOutput())
                 .arg(m_diagnostic.lineNumber)
@@ -106,7 +101,7 @@ void DiagnosticsModel::add(const Diagnostic &diagnostic)
     if (m_diagnostics.size() == 1)
         emit hasDataChanged(true);
 
-    const QString filePath = diagnostic.fileName.toString();
+    const FilePath filePath = diagnostic.fileName;
     FilePathItem *&filePathItem = m_filePathToItem[filePath];
     if (!filePathItem) {
         filePathItem = new FilePathItem(filePath);

@@ -3,11 +3,13 @@
 
 #include "assetimageprovider.h"
 
+#include "propertyeditortracing.h"
+
 #include <asset.h>
-#include <imagecacheimageresponse.h>
+#include <imagecache/imagecacheimageresponse.h>
 
 #include <projectexplorer/target.h>
-#include <utils/hdrimage.h>
+#include <qmldesignerutils/hdrimage.h>
 #include <utils/stylehelper.h>
 
 #include <QMetaObject>
@@ -18,6 +20,9 @@ namespace QmlDesigner {
 QQuickImageResponse *AssetImageProvider::requestImageResponse(const QString &id,
                                                               const QSize &requestedSize)
 {
+    NanotraceHR::Tracer tracer{"asset image provider request image response",
+                               PropertyEditorTracing::category()};
+
     if (id.endsWith(".mesh"))
         return m_imageCacheProvider.requestImageResponse(id, {});
 
@@ -31,7 +36,8 @@ QQuickImageResponse *AssetImageProvider::requestImageResponse(const QString &id,
             response.get(),
             [response = QPointer<ImageCacheImageResponse>(response.get()), requestedSize] {
                 QImage ktxImage;
-                ktxImage.load(Utils::StyleHelper::dpiSpecificImageFile(":/textureeditor/images/texture_ktx.png"));
+                ktxImage.load(Utils::StyleHelper::dpiSpecificImageFile(
+                    ":/propertyeditor/images/texture_ktx.png"));
                 if (ktxImage.isNull())
                     ktxImage = response->image();
                 if (requestedSize.isValid())

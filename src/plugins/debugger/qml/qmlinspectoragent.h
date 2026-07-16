@@ -3,8 +3,9 @@
 
 #pragma once
 
-#include <QStack>
 #include <QPointer>
+#include <QSet>
+#include <QStack>
 #include <QTimer>
 
 #include <coreplugin/icontext.h>
@@ -50,7 +51,8 @@ private:
 
     void queryEngineContext();
     void updateObjectTree(const QmlDebug::ContextReference &contexts, int engineId = -1);
-    void verifyAndInsertObjectInTree(const QmlDebug::ObjectReference &object, int engineId = -1);
+    void verifyAndInsertObjectInTree(const QmlDebug::ObjectReference &object, int engineId = -1,
+                                     bool calledFromUpdateObjectTree = false);
     void insertObjectInTree(const QmlDebug::ObjectReference &result, int parentId);
 
     void buildDebugIdHashRecursive(const QmlDebug::ObjectReference &ref);
@@ -96,6 +98,7 @@ private:
 
     QList<int> m_objectWatches;
     QList<int> m_fetchDataIds;
+    QSet<int> m_knownDelegateIds;
     QTimer m_delayQueryTimer;
 
     // toolbar

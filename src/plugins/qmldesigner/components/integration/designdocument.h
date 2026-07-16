@@ -28,6 +28,10 @@ namespace ProjectExplorer {
 class Target;
 }
 
+namespace TextEditor {
+class TextEditorWidget;
+}
+
 namespace QmlDesigner {
 
 class ModelNode;
@@ -44,13 +48,14 @@ class QMLDESIGNERCOMPONENTS_EXPORT DesignDocument : public QObject
 public:
     DesignDocument(const QUrl &filePath,
                    ProjectStorageDependencies projectStorageDependencies,
-                   ExternalDependenciesInterface &externalDependencies);
+                   ExternalDependenciesInterface &externalDependencies,
+                   ModulesStorage &modulesStorage);
     ~DesignDocument() override;
 
     QString displayName() const;
     QString simplfiedDisplayName() const;
 
-    void loadDocument(QPlainTextEdit *edit);
+    void loadDocument(TextEditor::TextEditorWidget *edit);
     void attachRewriterToModel();
     void close();
 #ifndef QDS_USE_PROJECTSTORAGE
@@ -77,7 +82,7 @@ public:
     Core::IEditor *editor() const;
 
     TextEditor::BaseTextEditor *textEditor() const;
-    QPlainTextEdit *plainTextEdit() const;
+    TextEditor::TextEditorWidget *textEditorWidget() const;
     Utils::FilePath fileName() const;
     ProjectExplorer::Target *currentTarget() const;
     bool isDocumentLoaded() const;
@@ -87,6 +92,7 @@ public:
     void changeToDocumentModel();
 
     bool isQtForMCUsProject() const;
+    [[nodiscard]] QString defaultFontFamilyMCU() const;
 
     Utils::FilePath projectFolder() const;
     bool hasProject() const;
@@ -154,6 +160,7 @@ private: // variables
     ProjectExplorer::Target *m_currentTarget;
     ProjectStorageDependencies m_projectStorageDependencies;
     ExternalDependenciesInterface &m_externalDependencies;
+    ModulesStorage &m_modulesStorage;
 };
 
 } // namespace QmlDesigner

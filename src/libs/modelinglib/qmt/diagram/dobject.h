@@ -59,8 +59,8 @@ public:
 
     Uid modelUid() const override { return m_modelUid; }
     void setModelUid(const Uid &uid);
-    QList<QString> stereotypes() const { return m_stereotypes; }
-    void setStereotypes(const QList<QString> &stereotypes);
+    QStringList stereotypes() const { return m_stereotypes; }
+    void setStereotypes(const QStringList &stereotypes);
     QString context() const { return m_context; }
     void setContext(const QString &context);
     QString name() const { return m_name; }
@@ -83,8 +83,8 @@ public:
     void setVisualEmphasized(bool visualEmphasized);
     bool hasLinkedFile() const { return m_hasLinkedFile; }
     void setLinkedFile(bool linkedFile);
-    Utils::FilePath imagePath() const { return m_imagePath; }
-    void setImagePath(const Utils::FilePath &path);
+    QString imagePath() const { return m_imagePath; }
+    void setImagePath(const QString &path);
     bool hasImage() const;
     QImage image() const { return m_image; }
     void setImage(const QImage &image);
@@ -94,7 +94,7 @@ public:
 
 private:
     Uid m_modelUid = Uid::invalidUid();
-    QList<QString> m_stereotypes;
+    QStringList m_stereotypes;
     QString m_context;
     QString m_name;
     QPointF m_pos;
@@ -106,7 +106,7 @@ private:
     bool m_isAutoSized = true;
     bool m_isVisualEmphasized = false;
     bool m_hasLinkedFile = false;
-    Utils::FilePath m_imagePath;
+    QString m_imagePath; // This is a relative path.
     QImage m_image;
 };
 

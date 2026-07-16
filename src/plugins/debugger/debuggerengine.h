@@ -16,27 +16,32 @@
 
 #include <texteditor/textmark.h>
 
+#include <utils/fileinprojectfinder.h>
 #include <utils/filepath.h>
 #include <utils/outputformat.h>
 #include <utils/processhandle.h>
 #include <utils/processinterface.h>
+#include <utils/result.h>
+#include <utils/temporaryfile.h>
 
 QT_BEGIN_NAMESPACE
 class QDebug;
 class QPoint;
 QT_END_NAMESPACE
 
-namespace Core { class IOptionsPage; }
+namespace Core {
+class IOptionsPage;
+class Perspective;
+} // Core
+
+namespace ProjectExplorer { class RunControl; }
 
 namespace Utils {
 class MacroExpander;
-class Perspective;
 class ProcessResultData;
 } // Utils
 
 namespace Debugger {
-
-class DebuggerRunTool;
 
 enum DebuggerState
 {
@@ -69,6 +74,284 @@ enum DebuggerState
 
 DEBUGGER_EXPORT QDebug operator<<(QDebug str, DebuggerState state);
 
+class DEBUGGER_EXPORT DebuggerRunParameters
+{
+public:
+    static DebuggerRunParameters fromRunControl(ProjectExplorer::RunControl *runControl);
+
+    static void setBreakOnMainNextTime();
+
+    void setupPortsGatherer(ProjectExplorer::RunControl *runControl) const;
+
+    Utils::Result<> fixupParameters(ProjectExplorer::RunControl *runControl);
+
+    void setStartMode(DebuggerStartMode startMode);
+    DebuggerStartMode startMode() const { return m_startMode; }
+    bool isLocalAttachEngine() const { return m_startMode == AttachToLocalProcess; }
+
+    void setCloseMode(DebuggerCloseMode closeMode) { m_closeMode = closeMode; }
+    DebuggerCloseMode closeMode() const { return m_closeMode; }
+
+    void setInferior(const Utils::ProcessRunData &runnable) { m_inferior = runnable; }
+    void setInferiorExecutable(const Utils::FilePath &executable) {
+        m_inferior.command.setExecutable(executable);
+    }
+    void setInferiorEnvironment(const Utils::Environment &env) { m_inferior.environment = env; }
+    Utils::ProcessRunData inferior() const { return m_inferior; }
+
+    void setDisplayName(const QString &name) { m_displayName = name; }
+    QString displayName() const { return m_displayName; }
+
+    void setAttachPid(Utils::ProcessHandle pid) { m_attachPid = pid; }
+    Utils::ProcessHandle attachPid() const { return m_attachPid; }
+
+    void setSolibSearchPath(const Utils::FilePaths &list) { m_solibSearchPath = list; }
+    void addSolibSearchDir(const QString &str);
+    Utils::FilePaths solibSearchPath() const { return m_solibSearchPath; }
+
+    void setQmlServer(const QUrl &qmlServer) { m_qmlServer = qmlServer; }
+    QUrl qmlServer() const { return m_qmlServer; }
+
+    bool isQmlDebugging() const { return m_isQmlDebugging; }
+    void setQmlDebugging(bool on) { m_isQmlDebugging = on; }
+
+    void setRemoteChannel(const QString &channel) { m_remoteChannel = channel; }
+    QString remoteChannel() const { return m_remoteChannel; }
+
+    void setUseExtendedRemote(bool on) { m_useExtendedRemote = on; }
+    bool useExtendedRemote() const { return m_useExtendedRemote; }
+
+    void setSymbolFile(const Utils::FilePath &symbolFile) { m_symbolFile = symbolFile; }
+    Utils::FilePath symbolFile() const { return m_symbolFile; }
+
+    void insertSourcePath(const QString &key, const QString &value) {
+        m_sourcePathMap.insert(key, value);
+    }
+    QMap<QString, QString> sourcePathMap() const { return m_sourcePathMap; }
+
+    void setCommandsAfterConnect(const QString &commands) { m_commandsAfterConnect = commands; }
+    QStringList commandsAfterConnect() const;
+
+    void setCommandsForReset(const QString &commands) { m_commandsForReset = commands; }
+    QStringList commandsForReset() const;
+
+    void setUseContinueInsteadOfRun(bool on) { m_useContinueInsteadOfRun = on; }
+    bool useContinueInsteadOfRun() const { return m_useContinueInsteadOfRun; }
+
+    void addExpectedSignal(const QString &signal) { m_expectedSignals.append(signal); }
+    QStringList expectedSignals() const { return m_expectedSignals; }
+
+    void setUseCtrlCStub(bool on) { m_useCtrlCStub = on; }
+    bool useCtrlCStub() const { return m_useCtrlCStub; }
+
+    void setUseTargetAsync(bool on) { m_useTargetAsync = on; }
+    bool useTargetAsync() const { return m_useTargetAsync; }
+
+    void addSearchDirectory(const Utils::FilePath &dir) { m_additionalSearchDirectories.append(dir); }
+    Utils::FilePaths additionalSearchDirectories() const { return m_additionalSearchDirectories; }
+
+    void setLldbPlatform(const QString &platform) { m_lldbPlatform = platform; }
+    QString lldbPlatform() const { return m_lldbPlatform; }
+
+    void setDeviceSymbolsRoot(const QString &deviceSymbolsRoot) {
+        m_deviceSymbolsRoot = deviceSymbolsRoot;
+    }
+    QString deviceSymbolsRoot() const { return m_deviceSymbolsRoot; }
+
+    void setContinueAfterAttach(bool on) { m_continueAfterAttach = on; }
+    bool continueAfterAttach() const { return m_continueAfterAttach; }
+
+    void setSysRoot(const Utils::FilePath &sysRoot) { m_sysRoot = sysRoot; }
+    Utils::FilePath sysRoot() const { return m_sysRoot; }
+
+    void setDeviceUuid(const QString &uuid) { m_deviceUuid = uuid; }
+    QString deviceUuid() const { return m_deviceUuid; }
+
+    void setCoreFilePath(const Utils::FilePath &coreFile) { m_coreFile = coreFile; }
+    Utils::FilePath coreFile() const { return m_coreFile; }
+
+    void setSnapshot(bool isSnapshot) { m_isSnapshot = isSnapshot; }
+    bool isSnapshot() const { return m_isSnapshot; }
+
+    QString additionalStartupCommands() const { return m_additionalStartupCommands; }
+
+    DebuggerEngineType cppEngineType() const { return m_cppEngineType; }
+
+    QString version() const { return m_version; }
+
+    bool isPythonDebugging() const { return m_isPythonDebugging; }
+
+    void setBreakOnMain(bool on) { m_breakOnMain = on; }
+    bool breakOnMain() const { return m_breakOnMain; }
+
+    bool multiProcess() const { return m_multiProcess; }
+
+    void setUseTerminal(bool on) { m_useTerminal = on; }
+    bool useTerminal() const { return m_useTerminal; }
+
+    QString runAsUser() const { return m_runAsUser; }
+
+    void modifyDebuggerEnvironment(const Utils::EnvironmentItems &items) {
+        m_debugger.environment.modify(items);
+    }
+    Utils::ProcessRunData debugger() const { return m_debugger; }
+
+    void setOverrideStartScript(const Utils::FilePath &script) { m_overrideStartScript = script; }
+    Utils::FilePath overrideStartScript() const { return m_overrideStartScript; }
+
+    void setStartMessage(const QString &msg) { m_startMessage = msg; }
+    // FIXME: Add a startMessage() getter and use it.
+
+    void setDebugInfoLocation(const Utils::FilePath &location) { m_debugInfoLocation = location; }
+    Utils::FilePath debugInfoLocation() const { return m_debugInfoLocation; }
+
+    QStringList debugSourceLocation() const { return m_debugSourceLocation; }
+
+    Utils::FilePath qtSourceLocation() const { return m_qtSourceLocation; }
+
+    void setToolChainAbi(const ProjectExplorer::Abi &abi) { m_toolChainAbi = abi; }
+    ProjectExplorer::Abi toolChainAbi() const { return m_toolChainAbi; }
+
+    Utils::FilePath buildDirectory() const { return m_buildDirectory; }
+    Utils::FilePath projectSourceDirectory() const { return m_projectSourceDirectory; }
+    Utils::FilePaths projectSourceFiles() const { return m_projectSourceFiles; }
+
+    void setApplicationPid(qint64 pid) { m_applicationPid = pid; }
+    qint64 applicationPid() const { return m_applicationPid; }
+
+    void setApplicationMainThreadId(qint64 threadId) { m_applicationMainThreadId = threadId; }
+    qint64 applicationMainThreadId() const { return m_applicationMainThreadId; }
+
+    void setInterpreter(const Utils::FilePath &path) { m_interpreter = path; }
+    Utils::FilePath interpreter() const { return m_interpreter; }
+
+    void setMainScript(const Utils::FilePath &path) { m_mainScript = path; }
+    Utils::FilePath mainScript() const { return m_mainScript; }
+
+    void setCrashParameter(const QString &event) { m_crashParameter = event; }
+    QString crashParameter() const { return m_crashParameter; }
+
+    bool isCppDebugging() const;
+    bool isNativeMixedDebugging() const;
+
+    const Utils::MacroExpander *macroExpander() const { return m_macroExpander; }
+
+    void setExitCode(int code) { m_exitCode = code; }
+    std::optional<int> exitCode() const { return m_exitCode; }
+
+    void setTestCase(int testCase) { m_testCase = testCase; }
+    int testCase() const { return m_testCase; }
+
+    int qtVersion() const { return m_qtVersion; }
+    QString qtNamespace() const { return m_qtNamespace; };
+
+    void setPeripheralDescriptionFile(const Utils::FilePath &path) { m_peripheralDescriptionFile = path; }
+    Utils::FilePath peripheralDescriptionFile() const { return m_peripheralDescriptionFile; }
+
+    void setUVisionProjectFilePath(const Utils::FilePath &path) { m_uVisionProjectFilePath = path; }
+    Utils::FilePath uVisionProjectFilePath() const { return m_uVisionProjectFilePath; }
+
+    void setUVisionOptionsFilePath(const Utils::FilePath &path) { m_uVisionOptionsFilePath = path; }
+    Utils::FilePath uVisionOptionsFilePath() const { return m_uVisionOptionsFilePath; }
+
+    void setUVisionSimulator(bool on) { m_uVisionSimulator = on; }
+    bool uVisionSimulator() const { return m_uVisionSimulator; }
+
+    void setServerAttachPid(const Utils::ProcessHandle &handle) { m_serverAttachPid = handle; }
+    Utils::ProcessHandle serverAttachPid() const { return m_serverAttachPid; }
+
+    void setServerUseMulti(bool on) { m_serverUseMulti = on; }
+    bool serverUseMulti() const { return m_serverUseMulti; }
+
+    void setServerEssential(bool on) { m_serverEssential = on; }
+    bool serverEssential() const { return m_serverEssential; }
+
+    void setSkipDebugServer(bool on) { m_skipDebugServer = on; }
+    bool skipDebugServer() const { return m_skipDebugServer; }
+
+    void setAddQmlServerInferiorCmdArgIfNeeded(bool on) { m_addQmlServerInferiorCmdArgIfNeeded = on; }
+    bool isAddQmlServerInferiorCmdArgIfNeeded() const { return m_addQmlServerInferiorCmdArgIfNeeded; }
+
+    Utils::FilePaths findQmlFile(const QUrl &url) const;
+    void populateQmlFileFinder(const ProjectExplorer::RunControl *runControl);
+
+    Utils::FilePath mapToProjectPath(const QString &debuggerOutput) const;
+
+private:
+    Utils::ProcessHandle m_attachPid;
+    Utils::ProcessHandle m_serverAttachPid;
+    QUrl m_qmlServer; // Used by Qml debugging.
+    QMap<QString, QString> m_sourcePathMap; // Used by Mer plugin (3rd party)
+    qint64 m_applicationPid = 0; // Terminal
+    qint64 m_applicationMainThreadId = 0; // Terminal
+    const Utils::MacroExpander *m_macroExpander = nullptr;
+
+    QString m_displayName; // Used in the Snapshots view.
+    QString m_remoteChannel; // Used by general remote debugging.
+    QString m_commandsForReset; // Used by baremetal plugin. Commands used for resetting the inferior
+    QString m_commandsAfterConnect; // Additional commands to post after connection to debug target
+    QString m_lldbPlatform;
+    QString m_deviceSymbolsRoot;
+    QString m_deviceUuid; // iOS 17+
+    QString m_additionalStartupCommands; // Macro-expanded and passed to debugger startup
+    QString m_version;
+    QString m_runAsUser;
+    QString m_startMessage; // First status message shown.
+    QString m_crashParameter; // Used by AttachCrashedExternal.
+    QString m_qtNamespace;
+
+    QStringList m_expectedSignals; // Used by Valgrind
+    QStringList m_debugSourceLocation; // Gdb "directory"
+    QStringList m_validationErrors;
+
+    Utils::FilePath m_symbolFile;
+    Utils::FilePath m_sysRoot;
+    Utils::FilePath m_coreFile;
+    Utils::FilePath m_overrideStartScript; // Used in attach to core and remote debugging
+    Utils::FilePath m_debugInfoLocation; // Gdb "set-debug-file-directory".
+    Utils::FilePath m_qtSourceLocation;
+    Utils::FilePath m_projectSourceDirectory;
+    Utils::FilePath m_buildDirectory;
+    Utils::FilePath m_interpreter; // Used by Script debugging
+    Utils::FilePath m_mainScript; // Used by Script debugging
+    Utils::FilePath m_peripheralDescriptionFile; // Common debugger constant.
+    Utils::FilePath m_uVisionProjectFilePath; // UVSC-specific debugger constant.
+    Utils::FilePath m_uVisionOptionsFilePath; // UVSC-specific debugger constant.
+
+    Utils::FilePaths m_solibSearchPath;
+    Utils::FilePaths m_additionalSearchDirectories;
+    Utils::FilePaths m_projectSourceFiles;
+
+    ProjectExplorer::Abi m_toolChainAbi;
+    Utils::ProcessRunData m_inferior;
+    Utils::ProcessRunData m_debugger;
+    Utils::FileInProjectFinder m_qmlFileFinder;
+    DebuggerStartMode m_startMode = NoStartMode;
+    DebuggerCloseMode m_closeMode = KillAtClose;
+    DebuggerEngineType m_cppEngineType = NoEngineType;
+    int m_testCase = 0; // For Debugger testing.
+    int m_qtVersion = 0;
+    std::optional<int> m_exitCode = {};
+
+    bool m_isQmlDebugging = false;
+    bool m_useExtendedRemote = false; // Whether to use GDB's target extended-remote or not.
+    bool m_useContinueInsteadOfRun = false; // If connected to a hw debugger run is not possible but continue is used
+    bool m_useCtrlCStub = false; // For QNX debugging.
+    bool m_useTargetAsync = false;
+    bool m_continueAfterAttach = false;
+    bool m_isSnapshot = false; // Set if created internally.
+    bool m_isPythonDebugging = false;
+    bool m_breakOnMain = false;
+    bool m_multiProcess = false; // Whether to set detach-on-fork off.
+    bool m_useTerminal = false;
+    bool m_nativeMixedEnabled = false;
+    bool m_uVisionSimulator = false;
+    bool m_serverUseMulti = true;
+    bool m_serverEssential = true;
+    bool m_skipDebugServer = false;
+    bool m_addQmlServerInferiorCmdArgIfNeeded = false;
+};
+
 namespace Internal {
 
 class DebuggerEnginePrivate;
@@ -93,112 +376,6 @@ class WatchTreeView;
 class DebuggerToolTipContext;
 class DebuggerToolTipManager;
 class MemoryViewSetupData;
-class TerminalRunner;
-
-class DebuggerRunParameters
-{
-public:
-    DebuggerStartMode startMode = NoStartMode;
-    DebuggerCloseMode closeMode = KillAtClose;
-
-    Utils::ProcessRunData inferior;
-    QString displayName; // Used in the Snapshots view.
-    Utils::ProcessHandle attachPID;
-    Utils::FilePaths solibSearchPath;
-
-    // Used by Qml debugging.
-    QUrl qmlServer;
-
-    // Used by general remote debugging.
-    QString remoteChannel;
-    bool useExtendedRemote = false; // Whether to use GDB's target extended-remote or not.
-    Utils::FilePath symbolFile;
-
-    // Used by Mer plugin (3rd party)
-    QMap<QString, QString> sourcePathMap;
-
-    // Used by baremetal plugin
-    QString commandsForReset; // commands used for resetting the inferior
-    bool useContinueInsteadOfRun = false; // if connected to a hw debugger run is not possible but continue is used
-    QString commandsAfterConnect; // additional commands to post after connection to debug target
-
-    // Used by Valgrind
-    QStringList expectedSignals;
-
-    // For QNX debugging
-    bool useCtrlCStub = false;
-
-    // Used by Android to avoid false positives on warnOnRelease
-    bool skipExecutableValidation = false;
-    bool useTargetAsync = false;
-    Utils::FilePaths additionalSearchDirectories;
-
-    // Used by iOS.
-    QString platform;
-    QString deviceSymbolsRoot;
-    bool continueAfterAttach = false;
-    Utils::FilePath sysRoot;
-
-    // Used by general core file debugging. Public access requested in QTCREATORBUG-17158.
-    Utils::FilePath coreFile;
-
-    // Macro-expanded and passed to debugger startup.
-    QString additionalStartupCommands;
-
-    DebuggerEngineType cppEngineType = NoEngineType;
-    QString version;
-
-    bool isQmlDebugging = false;
-    bool isPythonDebugging = false;
-    bool breakOnMain = false;
-    bool multiProcess = false; // Whether to set detach-on-fork off.
-    bool useTerminal = false;
-    bool runAsRoot = false;
-
-    Utils::ProcessRunData debugger;
-    Utils::FilePath overrideStartScript; // Used in attach to core and remote debugging
-    QString startMessage; // First status message shown.
-    Utils::FilePath debugInfoLocation; // Gdb "set-debug-file-directory".
-    QStringList debugSourceLocation; // Gdb "directory"
-    Utils::FilePath qtSourceLocation;
-    bool isSnapshot = false; // Set if created internally.
-    ProjectExplorer::Abi toolChainAbi;
-
-    Utils::FilePath projectSourceDirectory;
-    Utils::FilePaths projectSourceFiles;
-
-    // Used by Script debugging
-    Utils::FilePath interpreter;
-    Utils::FilePath mainScript;
-
-    // Used by AttachCrashedExternal.
-    QString crashParameter;
-
-    bool nativeMixedEnabled = false;
-
-    bool isCppDebugging() const;
-    bool isNativeMixedDebugging() const;
-
-    const Utils::MacroExpander *macroExpander = nullptr;
-
-    std::optional<int> exitCode = {};
-
-    // For Debugger testing.
-    int testCase = 0;
-
-    QStringList validationErrors;
-
-    int qtVersion = 0;
-    QString qtNamespace;
-
-    // Common debugger constants.
-    Utils::FilePath peripheralDescriptionFile;
-
-    // UVSC-specific debugger constants.
-    Utils::FilePath uVisionProjectFilePath;
-    Utils::FilePath uVisionOptionsFilePath;
-    bool uVisionSimulator = false;
-};
 
 class UpdateParameters
 {
@@ -255,7 +432,7 @@ private:
     quint64 m_address = 0;
 };
 
-class DebuggerEngine : public QObject
+class DEBUGGER_EXPORT DebuggerEngine : public QObject
 {
     Q_OBJECT
 
@@ -263,7 +440,7 @@ public:
     DebuggerEngine();
     ~DebuggerEngine() override;
 
-    void setRunTool(DebuggerRunTool *runTool);
+    void setDevice(const ProjectExplorer::IDeviceConstPtr &device);
     void setRunParameters(const DebuggerRunParameters &runParameters);
 
     void setRunId(const QString &id);
@@ -298,22 +475,17 @@ public:
     void updateWatchData(const QString &iname); // FIXME: Merge with above.
     virtual void selectWatchData(const QString &iname);
 
-    virtual void validateRunParameters(DebuggerRunParameters &) {}
-    virtual void prepareForRestart() {}
-    virtual void abortDebuggerProcess() {} // second attempt
-
     virtual void watchPoint(const QPoint &pnt);
-    virtual void runCommand(const DebuggerCommand &cmd);
-    virtual void openMemoryView(const MemoryViewSetupData &data);
+    void openMemoryView(const MemoryViewSetupData &data);
     virtual void fetchMemory(MemoryAgent *, quint64 addr, quint64 length);
     virtual void changeMemory(MemoryAgent *, quint64 addr, const QByteArray &data);
-    virtual void updateMemoryViews();
-    virtual void openDisassemblerView(const Internal::Location &location);
+    void updateMemoryViews();
+    void openDisassemblerView(const Internal::Location &location);
     virtual void fetchDisassembler(Internal::DisassemblerAgent *);
     virtual void activateFrame(int index);
 
     virtual void reloadModules();
-    virtual void examineModules();
+    bool isExamineModulesEnabled() const;
     virtual void loadSymbols(const Utils::FilePath &moduleName);
     virtual void loadSymbolsForStack();
     virtual void loadAllSymbols();
@@ -325,11 +497,9 @@ public:
     virtual void reloadSourceFiles();
     virtual void reloadFullStack();
     virtual void loadAdditionalQmlStack();
-    virtual void reloadDebuggingHelpers();
 
     virtual void setRegisterValue(const QString &name, const QString &value);
     virtual void setPeripheralRegisterValue(quint64 address, quint64 value);
-    virtual void addOptionPages(QList<Core::IOptionsPage*> *) const;
     virtual bool hasCapability(unsigned cap) const = 0;
     virtual void debugLastCommand() {}
 
@@ -350,7 +520,6 @@ public:
     virtual void updateBreakpoint(const Breakpoint &bp) = 0;
     virtual void enableSubBreakpoint(const SubBreakpoint &sbp, bool enabled);
 
-    virtual bool acceptsDebuggerCommands() const { return true; }
     virtual void executeDebuggerCommand(const QString &command);
 
     virtual void assignValueInDebugger(WatchItem *item,
@@ -358,20 +527,16 @@ public:
     virtual void selectThread(const Internal::Thread &thread) = 0;
 
     virtual void executeRecordReverse(bool) {}
-    virtual void executeReverse(bool) {}
 
-    ModulesHandler *modulesHandler() const;
     RegisterHandler *registerHandler() const;
-    PeripheralRegisterHandler *peripheralRegisterHandler() const;
     StackHandler *stackHandler() const;
     ThreadsHandler *threadsHandler() const;
     WatchHandler *watchHandler() const;
-    SourceFilesHandler *sourceFilesHandler() const;
     BreakHandler *breakHandler() const;
+    ModulesHandler *modulesHandler() const;
     LogWindow *logWindow() const;
     DisassemblerAgent *disassemblerAgent() const;
 
-    void progressPing();
     bool debuggerActionsEnabled() const;
     virtual bool companionPreventsActions() const;
 
@@ -410,7 +575,7 @@ public:
 
     QString expand(const QString &string) const;
     QString nativeStartupCommands() const;
-    Utils::Perspective *perspective() const;
+    Core::Perspective *perspective() const;
     void updateMarkers();
 
     void updateToolTips();
@@ -419,14 +584,19 @@ public:
 signals:
     void engineStarted();
     void engineFinished();
-    void requestRunControlFinish();
     void requestRunControlStop();
-    void attachToCoreRequested(const QString &coreFile);
-    void appendMessageRequested(const QString &msg,
-                                Utils::OutputFormat format,
-                                bool appendNewLine) const;
+    void attachToCoreRequested(const Utils::FilePath &coreFile);
+    void postMessageRequested(const QString &msg, Utils::OutputFormat format, bool appendNewLine) const;
+    void interruptTerminalRequested();
+    void kickoffTerminalProcessRequested();
 
 protected:
+    void setExamineModulesEnabled(bool on);
+    PeripheralRegisterHandler *peripheralRegisterHandler() const;
+    SourceFilesHandler *sourceFilesHandler() const;
+
+    void progressPing();
+
     void notifyEngineSetupOk();
     void notifyEngineSetupFailed();
     void notifyEngineRunFailed();
@@ -464,8 +634,8 @@ public:
 
     void openMemoryEditor();
 
-    static void showModuleSymbols(const Utils::FilePath &moduleName, const QVector<Symbol> &symbols);
-    static void showModuleSections(const Utils::FilePath &moduleName, const QVector<Section> &sections);
+    static void showModuleSymbols(const Utils::FilePath &moduleName, const QList<Symbol> &symbols);
+    static void showModuleSections(const Utils::FilePath &moduleName, const QList<Section> &sections);
 
     void handleExecDetach();
     void handleExecContinue();
@@ -536,7 +706,9 @@ protected:
 
     virtual void doUpdateLocals(const UpdateParameters &params);
 
-    TerminalRunner *terminal() const;
+    bool usesTerminal() const;
+    qint64 applicationPid() const;
+    qint64 applicationMainThreadId() const;
 
     static QString msgStopped(const QString &reason = QString());
     static QString msgStoppedBySignal(const QString &meaning, const QString &name);
@@ -557,6 +729,10 @@ protected:
     QList<DebuggerEngine *> companionEngines() const;
 
 private:
+    virtual void validateRunParameters(DebuggerRunParameters &) {}
+    virtual void abortDebuggerProcess() {} // second attempt
+    virtual void reloadDebuggingHelpers();
+
     friend class DebuggerPluginPrivate;
     friend class DebuggerEnginePrivate;
     friend class LocationMark;
@@ -570,8 +746,29 @@ public:
     CppDebuggerEngine() {}
     ~CppDebuggerEngine() override {}
 
-    void validateRunParameters(DebuggerRunParameters &rp) override;
     Core::Context languageContext() const override;
+
+protected:
+    using SetupDumper = std::function<void(const Utils::FilePath &)>;
+    using RunPythonCommand = std::function<void(DebuggerCommand)>;
+    using ImportResponse = std::function<void(const DebuggerResponse &)>;
+
+    Utils::Result<> initDebugHelper(
+        const QString &bridgeBaseName,
+        const SetupDumper &setupDumper,
+        const RunPythonCommand &runPythonCommand,
+        const ImportResponse &callback = {});
+
+private:
+    void validateRunParameters(DebuggerRunParameters &rp) override;
+    Utils::Result<Utils::FilePath> copyDebuggerHelpers();
+    Utils::Result<> pipeInDebuggerHelpers(
+        const QString &bridgeModuleName,
+        const RunPythonCommand &runPythonCommand,
+        const ImportResponse &callback);
+
+private:
+    std::unique_ptr<Utils::TemporaryFilePath> m_remoteDebuggerHelperDir;
 };
 
 class LocationMark : public TextEditor::TextMark

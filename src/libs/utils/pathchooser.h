@@ -5,8 +5,10 @@
 
 #include "utils_global.h"
 
+#include "environment.h"
 #include "fancylineedit.h"
 #include "filepath.h"
+#include "lazy.h"
 
 #include <QWidget>
 
@@ -72,8 +74,15 @@ public:
 
     FilePath unexpandedFilePath() const; // The raw unexpanded input as FilePath.
 
+    static FilePath expandPath(
+        const FilePath &path,
+        const MacroExpander *macroExpander = nullptr,
+        const FilePath &baseDirectory = FilePath(),
+        const Environment &env = Environment(),
+        Kind expectedKind = Any);
+
     FilePath baseDirectory() const;
-    void setBaseDirectory(const FilePath &base);
+    void setBaseDirectory(const Lazy<FilePath> &base);
 
     void setEnvironment(const Environment &env);
 
@@ -126,12 +135,14 @@ public:
     // this sets the placeHolderText to defaultValue and enables to use this as
     // input value during validation if the real value is empty
     // setting an empty QString will disable this and clear the placeHolderText
-    void setDefaultValue(const QString &defaultValue);
+    void setDefaultValue(const FilePath &defaultValue);
     void setPlaceholderText(const QString &placeholderText);
     void setToolTip(const QString &toolTip);
 
     void setAllowPathFromDevice(bool allow);
     bool allowPathFromDevice() const;
+
+    void setValueAlternatives(const FilePaths &candidates);
 
 public slots:
     void setPath(const QString &);
@@ -149,7 +160,7 @@ signals:
 private:
     // Deprecated, only used in property getter.
     // Use filePath().toString() or better suitable conversions.
-    QString path() const { return filePath().toString(); }
+    QString path() const { return filePath().toUrlishString(); }
 
     // Returns overridden title or the one from <title>
     QString makeDialogTitle(const QString &title);
@@ -157,7 +168,6 @@ private:
     void contextMenuRequested(const QPoint &pos);
 
     PathChooserPrivate *d = nullptr;
-    static AboutToShowContextMenuHandler s_aboutToShowContextMenuHandler;
 };
 
 } // namespace Utils

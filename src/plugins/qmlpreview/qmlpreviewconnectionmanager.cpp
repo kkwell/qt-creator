@@ -5,27 +5,30 @@
 
 #include <coreplugin/icore.h>
 #include <coreplugin/messagemanager.h>
+
+#include <projectexplorer/buildconfiguration.h>
+
 #include <qtsupport/baseqtversion.h>
 
-#include <QFileInfo>
-#include <QDir>
 #include <QMessageBox>
+
+using namespace Utils;
 
 namespace QmlPreview {
 
 QmlPreviewConnectionManager::QmlPreviewConnectionManager(QObject *parent) :
     QmlDebug::QmlDebugConnectionManager(parent)
 {
-    setTarget(nullptr);
+    setBuildConfiguration(nullptr);
 }
 
 QmlPreviewConnectionManager::~QmlPreviewConnectionManager() = default;
 
-void QmlPreviewConnectionManager::setTarget(ProjectExplorer::Target *target)
+void QmlPreviewConnectionManager::setBuildConfiguration(ProjectExplorer::BuildConfiguration *bc)
 {
-    QtSupport::QtVersion::populateQmlFileFinder(&m_projectFileFinder, target);
+    QtSupport::QtVersion::populateQmlFileFinder(&m_projectFileFinder, bc);
     m_projectFileFinder.setAdditionalSearchDirectories(Utils::FilePaths());
-    m_targetFileFinder.setTarget(target);
+    m_targetFileFinder.setBuildConfiguration(bc);
 }
 
 void QmlPreviewConnectionManager::setFileLoader(QmlPreviewFileLoader fileLoader)
@@ -70,7 +73,7 @@ QUrl QmlPreviewConnectionManager::findValidI18nDirectoryAsUrl(const QString &loc
         auto tryPath = [&](const QString &postfix) {
             url.setPath(path + "/i18n/qml_" + postfix);
             bool success = false;
-            foundPath = m_projectFileFinder.findFile(url, &success).constFirst().toString();
+            foundPath = m_projectFileFinder.findFile(url, &success).constFirst().toUrlishString();
             foundPath = foundPath.left(qMax(0, foundPath.lastIndexOf("/i18n")));
             return success;
         };
@@ -117,6 +120,16 @@ void QmlPreviewConnectionManager::createPreviewClient()
 {
     m_qmlPreviewClient = new QmlPreviewClient(connection());
 
+    QmlPreviewPlugin *plugin = QmlPreviewPlugin::instance();
+    // Maybe we are starting after a hot reload failure, so we already have the events
+    // to replay in the plugin. In that case, we want to set them to the client, so that
+    // they can be replayed as soon as the configuration is confirmed.
+    if (plugin->events().size() > 0) {
+        m_qmlPreviewClient->setEvents(plugin->events());
+        m_qmlPreviewClient->setEventTypes(plugin->eventTypes());
+        plugin->setEvents({});
+        plugin->setEventTypes({});
+    }
     connect(this, &QmlPreviewConnectionManager::loadFile, m_qmlPreviewClient.data(),
                 [this](const QString &filename, const QString &changedFile,
                        const QByteArray &contents) {
@@ -149,31 +162,31 @@ void QmlPreviewConnectionManager::createPreviewClient()
             &QmlPreviewClient::pathRequested,
             this,
             [this](const QString &path) {
-                const bool found = m_projectFileFinder.findFileOrDirectory(
+                bool found = false;
+                m_projectFileFinder.findFileOrDirectory(
                     Utils::FilePath::fromString(path),
                     [&](const Utils::FilePath &filename, int confidence) {
-                        if (m_fileLoader && confidence == path.length()) {
-                            bool success = false;
-                            QByteArray contents = m_fileLoader(filename.toFSPathString(), &success);
-                            if (success) {
-                                if (!m_fileSystemWatcher.watchesFile(filename)) {
-                                    m_fileSystemWatcher
-                                        .addFile(filename,
-                                                 Utils::FileSystemWatcher::WatchModifiedDate);
-                                }
-                                m_qmlPreviewClient->announceFile(path, contents);
-                            } else {
-                                m_qmlPreviewClient->announceError(path);
-                            }
-                        } else {
-                            m_qmlPreviewClient->announceError(path);
+                        if (!m_fileLoader || confidence < path.size())
+                            return;
+
+                        bool success = false;
+                        QByteArray contents = m_fileLoader(filename.toFSPathString(), &success);
+                        if (!success)
+                            return;
+
+                        if (!m_fileSystemWatcher.watchesFile(filename)) {
+                            m_fileSystemWatcher.addFile(
+                                filename, Utils::FileSystemWatcher::WatchModifiedDate);
                         }
+                        m_qmlPreviewClient->announceFile(path, contents);
+                        found = true;
                     },
                     [&](const QStringList &entries, int confidence) {
-                        if (confidence == path.length())
-                            m_qmlPreviewClient->announceDirectory(path, entries);
-                        else
-                            m_qmlPreviewClient->announceError(path);
+                        if (confidence < path.size())
+                            return;
+
+                        m_qmlPreviewClient->announceDirectory(path, entries);
+                        found = true;
                     });
 
                 if (!found)
@@ -199,29 +212,44 @@ void QmlPreviewConnectionManager::createPreviewClient()
         }
     });
 
+    connect(
+        m_qmlPreviewClient.data(),
+        &QmlPreviewClient::hotReloadFailure,
+        this,
+        [this, plugin](const QString &reason) {
+            // In case of hot reload failure, we want to keep the recorded events,
+            //  so that the user can start where they left off after restart.
+            // We have to keep the events in the plugin, because the connection manager
+            // and thus the client will be destroyed on restart.
+            plugin->setEvents(m_qmlPreviewClient->events());
+            plugin->setEventTypes(m_qmlPreviewClient->eventTypes());
+            Core::MessageManager::writeFlashing(QStringLiteral("Hot reload failed: %1").arg(reason));
+            emit restart();
+        });
+
     connect(m_qmlPreviewClient.data(), &QmlPreviewClient::debugServiceUnavailable,
                      this, []() {
         QMessageBox::warning(Core::ICore::dialogParent(), "Error loading QML Live Preview",
                              "QML Live Preview is not available for this version of Qt.");
     }, Qt::QueuedConnection); // Queue it, so that it interfere with the connection timer
 
-    connect(&m_fileSystemWatcher, &Utils::FileSystemWatcher::fileChanged,
-                     m_qmlPreviewClient.data(), [this](const QString &changedFile) {
+    connect(&m_fileSystemWatcher, &FileSystemWatcher::fileChanged,
+                     m_qmlPreviewClient.data(), [this](const FilePath &changedFile) {
         if (!m_fileLoader || !m_lastLoadedUrl.isValid())
             return;
 
         bool success = false;
 
-        const QByteArray contents = m_fileLoader(changedFile, &success);
+        const QByteArray contents = m_fileLoader(changedFile.toFSPathString(), &success);
         if (!success)
             return;
 
-        if (!m_fileClassifier(changedFile)) {
+        if (!m_fileClassifier(changedFile.toFSPathString())) {
             emit restart();
             return;
         }
 
-        const QString remoteChangedFile = m_targetFileFinder.findPath(changedFile, &success);
+        const QString remoteChangedFile = m_targetFileFinder.findPath(changedFile.toFSPathString(), &success);
         if (success)
             m_qmlPreviewClient->announceFile(remoteChangedFile, contents);
         else

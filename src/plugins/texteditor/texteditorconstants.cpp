@@ -52,6 +52,7 @@ const char *nameForStyle(TextStyle style)
     case C_PREPROCESSOR:        return "Preprocessor";
     case C_MACRO:               return "Macro";
     case C_LABEL:               return "Label";
+    case C_ATTRIBUTE:           return "Attribute";
     case C_COMMENT:             return "Comment";
     case C_DOXYGEN_COMMENT:     return "Doxygen.Comment";
     case C_DOXYGEN_TAG:         return "Doxygen.Tag";
@@ -92,6 +93,8 @@ const char *nameForStyle(TextStyle style)
     case C_ERROR_CONTEXT:       return "ErrorContext";
     case C_WARNING:             return "Warning";
     case C_WARNING_CONTEXT:     return "WarningContext";
+    case C_INFO:                return "Info";
+    case C_INFO_CONTEXT:        return "InfoContext";
 
     case C_DECLARATION:         return "Declaration";
     case C_FUNCTION_DEFINITION: return "FunctionDefinition";

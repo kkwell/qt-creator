@@ -3,12 +3,10 @@
 
 #pragma once
 
-#include "expected.h"
+#include "result.h"
+#include "utils_global.h"
 
-#include <QDebug>
 #include <QString>
-
-#include <algorithm>
 
 #define QTC_WIN_EXE_SUFFIX ".exe"
 
@@ -17,74 +15,19 @@ namespace Utils {
 // Add more as needed.
 enum OsType { OsTypeWindows, OsTypeLinux, OsTypeMac, OsTypeOtherUnix, OsTypeOther };
 
-enum OsArch { OsArchUnknown, OsArchX86, OsArchAMD64, OsArchItanium, OsArchArm, OsArchArm64 };
+enum OsArch { OsArchUnknown, OsArchX86, OsArchAMD64, OsArchItanium, OsArchArm, OsArchArm64, OsArchLoongArch64 };
 
-inline QString osTypeToString(OsType osType)
-{
-    switch (osType) {
-    case OsTypeWindows:
-        return "Windows";
-    case OsTypeLinux:
-        return "Linux";
-    case OsTypeMac:
-        return "Mac";
-    case OsTypeOtherUnix:
-        return "Other Unix";
-    case OsTypeOther:
-    default:
-        return "Other";
-    }
-}
-
-inline Utils::expected_str<OsType> osTypeFromString(const QString &string)
-{
-    if (string.compare("windows", Qt::CaseInsensitive) == 0)
-        return OsTypeWindows;
-    if (string.compare("linux", Qt::CaseInsensitive) == 0)
-        return OsTypeLinux;
-    if (string.compare("mac", Qt::CaseInsensitive) == 0
-        || string.compare("darwin", Qt::CaseInsensitive) == 0)
-        return OsTypeMac;
-    if (string.compare("other unix", Qt::CaseInsensitive) == 0)
-        return OsTypeOtherUnix;
-
-    return Utils::make_unexpected(QString::fromLatin1("Unknown os type: %1").arg(string));
-}
-
-inline Utils::expected_str<OsArch> osArchFromString(const QString &architecture)
-{
-    if (architecture == QLatin1String("x86_64") || architecture == QLatin1String("amd64"))
-        return OsArchAMD64;
-    if (architecture == QLatin1String("x86"))
-        return OsArchX86;
-    if (architecture == QLatin1String("ia64"))
-        return OsArchItanium;
-    if (architecture == QLatin1String("arm"))
-        return OsArchArm;
-    if (architecture == QLatin1String("arm64") || architecture == QLatin1String("aarch64"))
-        return OsArchArm64;
-
-    return Utils::make_unexpected(QString::fromLatin1("Unknown architecture: %1").arg(architecture));
-}
+QTCREATOR_UTILS_EXPORT QString osTypeToString(OsType osType);
+QTCREATOR_UTILS_EXPORT Utils::Result<OsType> osTypeFromString(const QString &string);
+QTCREATOR_UTILS_EXPORT Utils::Result<OsArch> osArchFromString(const QString &architecture);
 
 namespace OsSpecificAspects {
 
-inline QString withExecutableSuffix(OsType osType, const QString &executable)
-{
-    QString finalName = executable;
-    if (osType == OsTypeWindows && !finalName.endsWith(QTC_WIN_EXE_SUFFIX))
-        finalName += QLatin1String(QTC_WIN_EXE_SUFFIX);
-    return finalName;
-}
-
-constexpr Qt::CaseSensitivity fileNameCaseSensitivity(OsType osType)
-{
-    return osType == OsTypeWindows || osType == OsTypeMac ? Qt::CaseInsensitive : Qt::CaseSensitive;
-}
+QTCREATOR_UTILS_EXPORT QString withExecutableSuffix(OsType osType, const QString &executable);
 
 constexpr Qt::CaseSensitivity envVarCaseSensitivity(OsType osType)
 {
-    return fileNameCaseSensitivity(osType);
+    return osType == OsTypeWindows ? Qt::CaseInsensitive : Qt::CaseSensitive;
 }
 
 constexpr QChar pathListSeparator(OsType osType)
@@ -97,25 +40,7 @@ constexpr Qt::KeyboardModifier controlModifier(OsType osType)
     return osType == OsTypeMac ? Qt::MetaModifier : Qt::ControlModifier;
 }
 
-inline QString pathWithNativeSeparators(OsType osType, const QString &pathName)
-{
-    if (osType == OsTypeWindows) {
-        const int pos = pathName.indexOf('/');
-        if (pos >= 0) {
-            QString n = pathName;
-            std::replace(std::begin(n) + pos, std::end(n), '/', '\\');
-            return n;
-        }
-    } else {
-        const int pos = pathName.indexOf('\\');
-        if (pos >= 0) {
-            QString n = pathName;
-            std::replace(std::begin(n) + pos, std::end(n), '\\', '/');
-            return n;
-        }
-    }
-    return pathName;
-}
+QTCREATOR_UTILS_EXPORT QString pathWithNativeSeparators(OsType osType, const QString &pathName);
 
 } // namespace OsSpecificAspects
 } // namespace Utils

@@ -8,13 +8,12 @@
 #include <utils/algorithm.h>
 #include <utils/qtcassert.h>
 
-#include <QVector>
-#include <QString>
 #include <QQueue>
 #include <QSet>
+#include <QString>
 
-namespace QmlProfiler {
-namespace Internal {
+using namespace QmlDebug;
+namespace QmlProfiler::Internal {
 
 static inline quint64 supportedFeatures()
 {
@@ -46,7 +45,7 @@ FlameGraphModel::FlameGraphModel(QmlProfilerModelManager *modelManager,
 void FlameGraphModel::clear()
 {
     beginResetModel();
-    m_stackBottom = FlameGraphData(nullptr, -1, 0);
+    m_stackBottom.clear();
     m_callStack.clear();
     m_compileStack.clear();
     m_callStack.append(QmlEvent());
@@ -76,7 +75,7 @@ void FlameGraphModel::loadNotes(int typeIndex, bool emitSignal)
     }
 
     if (emitSignal)
-        emit dataChanged(QModelIndex(), QModelIndex(), QVector<int>() << NoteRole);
+        emit dataChanged(QModelIndex(), QModelIndex(), QList<int>() << NoteRole);
 }
 
 void FlameGraphModel::loadEvent(const QmlEvent &event, const QmlEventType &type)
@@ -127,7 +126,7 @@ void FlameGraphModel::finalize()
 
 void FlameGraphModel::onTypeDetailsFinished()
 {
-    emit dataChanged(QModelIndex(), QModelIndex(), QVector<int>(1, DetailsRole));
+    emit dataChanged(QModelIndex(), QModelIndex(), QList<int>(1, DetailsRole));
 }
 
 void FlameGraphModel::restrictToFeatures(quint64 visibleFeatures)
@@ -215,7 +214,7 @@ QVariant FlameGraphModel::lookup(const FlameGraphData &stats, int role) const
 }
 
 FlameGraphData::FlameGraphData(FlameGraphData *parent, int typeIndex, qint64 duration) :
-    duration(duration), calls(1), memory(0), allocations(0), typeIndex(typeIndex), parent(parent) {}
+    duration(duration), typeIndex(typeIndex), parent(parent) {}
 
 FlameGraphData::~FlameGraphData()
 {
@@ -224,7 +223,7 @@ FlameGraphData::~FlameGraphData()
 
 FlameGraphData *FlameGraphModel::pushChild(FlameGraphData *parent, const QmlEvent &data)
 {
-    QVector<FlameGraphData *> &siblings = parent->children;
+    QList<FlameGraphData *> &siblings = parent->children;
 
     for (auto it = siblings.begin(), end = siblings.end(); it != end; ++it) {
         FlameGraphData *child = *it;
@@ -317,5 +316,4 @@ QmlProfilerModelManager *FlameGraphModel::modelManager() const
     return m_modelManager;
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

@@ -26,7 +26,7 @@
     how the hardware is utilized and what the kernel and application are doing.
 
     Tracing information can tell you more about the data that
-    \l{Profiling QML Applications}{QML Profiler} collects. For example, you
+    \l{Profiling QML applications}{QML Profiler} collects. For example, you
     can check why a trivial binding evaluation is taking so long. This might
     be caused by C++ being executed or the disk I/O being slow.
 
@@ -37,7 +37,7 @@
     trace-viewer (\c{chrome://tracing}) due to its high memory usage.
 
     The visualizer supports all event types used in data that the
-    \l {https://lttng.org/}{LTTng} tracing framework generates, converted
+    \l{LTTng} tracing framework generates, converted
     to CTF. However, some of the more advanced event types used, for example,
     in Android system traces, are not supported. The visualizer silently
     ignores unsupported event types.
@@ -50,17 +50,17 @@
         \li Metadata events (process and thread name)
     \endlist
 
-    \section1 Opening JSON Files
+    \section1 Opening JSON files
 
     To open JSON files for viewing, select \uicontrol Analyze >
     \uicontrol {Chrome Trace Format Viewer} > \uicontrol {Load JSON File}.
 
-    \section1 Visualizing Events
+    \section1 Visualizing events
 
     The \uicontrol Timeline view displays a graphical representation of trace
     events and a condensed view of all recorded events.
 
-    \image qtcreator-ctf-visualizer-timeline.webp {Timeline view}
+    \image {qtcreator-ctf-visualizer-timeline.webp} {Timeline view}
 
     Each category in the timeline describes a thread in the application. Move
     the cursor on an event (5) on a row to view its duration and event category.
@@ -77,11 +77,11 @@
     To reset the default zoom level, right-click the timeline to open the
     context menu, and select \uicontrol {Reset Zoom}.
 
-    Select the \inlineimage icons/filtericon.png
+    Select the \inlineimage {icons/filtericon.png} {Restrict to Threads}
     (\uicontrol {Restrict to Threads}) button (6) to select the threads to
     show.
 
-    \section2 Selecting Event Ranges
+    \section2 Selecting event ranges
 
     You can select an event range (7) to view the time it represents or to zoom
     into a specific region of the trace. Select the \uicontrol {Select Range}
@@ -98,9 +98,9 @@
 
     To remove an event range, close the \uicontrol Selection dialog.
 
-    \section1 Viewing Statistics
+    \section1 Viewing statistics
 
-    \image qtcreator-ctf-visualizer-statistics.png
+    \image {qtcreator-ctf-visualizer-statistics.png} {Statistics view}
 
     The \uicontrol Statistics view displays the number of samples each function
     in the timeline was contained in, in total and when on the top of the
@@ -108,7 +108,7 @@
     to optimize. A high number of occurrences might indicate that a function is
     triggered unnecessarily or takes very long to execute.
 
-    \section1 Collecting LTTng Data
+    \section1 Collecting LTTng data
 
     LTTng is a tracing toolkit for Linux that you can apply on embedded Linux
     systems to find out how to optimize the startup time of an application.
@@ -116,7 +116,7 @@
     Qt has a set of kernel trace points and a tracing
     subsystem for custom user space trace points.
 
-    \section2 Configuring the Kernel
+    \section2 Configuring the kernel
 
     To use LTTng, you have to set the following configuration options for the
     kernel before building it:
@@ -153,12 +153,12 @@
     In Yocto, you just need to enable
     \c {EXTRA_IMAGE_FEATURES += "tools profile"}.
 
-    \section2 Building Qt with Tracepoints
+    \section2 Building Qt with tracepoints
 
     Trace points are continuously being added to Qt versions. To use them, you
     need to build Qt yourself with the \c {configure -trace lttng} option.
 
-    \section2 Recording Events
+    \section2 Recording events
 
     To create a session, you call the \c {lttng create} command. Then you
     call \c {lttng enable-channel kernel -k} to enable the kernel channel.
@@ -173,13 +173,13 @@
     You can write and run scripts that contain the above commands to start and
     stop full-stack tracing. You can use \c systemd to execute the scripts.
 
-    \section2 Enabling Trace Points
+    \section2 Enabling trace points
 
     Data is recorded according to the trace points that you enable in the LTTng
     session. Usually, it is useful to enable scheduler switch, syscall, and Qt
     trace points.
 
-    \section3 Scheduler Switch Trace Points
+    \section3 Scheduler switch trace points
 
     Scheduler switch trace points are reached when an application is switched
     out due to predemption, for example, when another process gets the chance
@@ -187,7 +187,7 @@
     the thread that is currently running and the process it belongs to, as
     well as the time when the process started and stopped.
 
-    \section3 Syscall Trace Points
+    \section3 Syscall trace points
 
     Syscall trace points help you to understand why a scheduler switch happened.
     The following are examples of syscalls to trace:
@@ -200,9 +200,9 @@
         \li \c ioctl controls the GPU and display
     \endlist
 
-    \section1 Converting LTTng Data to CTF
+    \section1 Converting LTTng data to CTF
 
-    The \l{https://github.com/KDAB/ctf2ctf}{ctf2ctf} tool uses \c babeltrace to
+    The \l{ctf2ctf} tool uses \c babeltrace to
     parse binary Common Trace Format (CTF) and converts it to Chrome Trace
     Format (CTF). It performs the following custom tasks to make the recording
     more human-readable:
@@ -222,5 +222,5 @@
     ctf2ctf -o trace.json path/to/lttng trace/
     \endcode
 
-    \sa {Analyze}{How To: Analyze}, {Analyzers}, {Analyzing Code}
+    \sa {Analyze}{How to: Analyze}, {Analyzers}, {Analyzing code}
 */

@@ -18,11 +18,11 @@
     To configure how projects are built, deployed, and run, go to
     \preferences > \uicontrol {Build & Run} > \uicontrol General.
 
-    \image qtcreator-preferences-build-run-general.webp {Build & Run General preferences}
+    \image {qtcreator-preferences-build-run-general.webp} {General tab in Build & Run preferences}
 
     By default, \uicontrol {Always deploy project before running it} (1) and
     \uicontrol {Build the Whole Project} (2) are selected. Therefore, when
-    you select \inlineimage icons/run_small.png (\uicontrol Run), \QC checks
+    you select \imagerunsmall (\uicontrol Run), \QC checks
     for changes in the project files and also builds and deploys the project if
     necessary.
 
@@ -47,10 +47,9 @@
     To use \c jom:
 
     \list 1
-        \li Download \c jom from \l{http://download.qt.io/official_releases/jom}
-            {Qt Downloads}.
+        \li Download \c jom from \l{Qt Downloads: jom}.
         \li Select \uicontrol {Use jom instead of nmake}.
     \endlist
 
-    Clear the check box if builds fail.
+    Clear the checkbox if builds fail.
 */

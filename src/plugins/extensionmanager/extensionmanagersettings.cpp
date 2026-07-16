@@ -2,12 +2,23 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "extensionmanagersettings.h"
+
+#include "extensionmanagerconstants.h"
 #include "extensionmanagertr.h"
 
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/dialogs/ioptionspage.h>
+#include <coreplugin/icore.h>
+#include <coreplugin/plugininstallwizard.h>
 
 #include <utils/layoutbuilder.h>
+#include <utils/stylehelper.h>
+
+#include <QGuiApplication>
+
+#ifndef QT_NO_SSL
+  #include <QSslSocket>
+#endif
 
 namespace ExtensionManager::Internal {
 
@@ -22,22 +33,64 @@ ExtensionManagerSettings::ExtensionManagerSettings()
     setAutoApply(false);
     setSettingsGroup("ExtensionManager");
 
-    externalRepoUrl.setDefaultValue("https://qc-extensions.qt.io");
-    externalRepoUrl.setReadOnly(true);
-
     useExternalRepo.setSettingsKey("UseExternalRepo");
-    useExternalRepo.setLabelText(Tr::tr("Use external repository"));
-    useExternalRepo.setToolTip(Tr::tr("Repository: %1").arg(externalRepoUrl()));
     useExternalRepo.setDefaultValue(false);
+    useExternalRepo.setLabelText(Tr::tr("Use external repository"));
 
+    repositoryUrls.setSettingsKey("RepositoryUrls");
+    repositoryUrls.setLabelText(Tr::tr("Repository URLs:"));
+    repositoryUrls.setToolTip(
+        Tr::tr("Repositories to query for extensions. You can specify local paths or "
+               "HTTP(S) URLs that should be merged with the main repository."));
+    repositoryUrls.setDefaultValue(
+        {"https://github.com/qt-creator/extension-registry/archive/refs/heads/main.tar.gz"});
+
+    // clang-format off
     setLayouter([this] {
-        using namespace Layouting;
+#ifndef QT_NO_SSL
+        const bool sslSupported = QSslSocket::supportsSsl();
+#else
+        const bool sslSupported = false;
+#endif
+        useExternalRepo.setEnabled(sslSupported);
+        if (!sslSupported)
+            useExternalRepo.setToolTip(Tr::tr("SSL support is not available."));
 
+        using namespace Layouting;
+        using namespace Core;
         return Column {
-            useExternalRepo,
-            st
+            Group {
+                title(Tr::tr("Note")),
+                Column {
+                    Label {
+                        wordWrap(true),
+                        text(externalRepoWarningNote()),
+                    }
+                }
+            },
+            Group {
+                title(Tr::tr("Use External Repository")),
+                groupChecker(useExternalRepo.groupChecker()),
+                Form {
+                    repositoryUrls, br,
+                },
+            },
+            Row {
+                PushButton {
+                    text(Tr::tr("Install Extension...")),
+                    onClicked(this, [] {
+                        if (executePluginInstallWizard() == InstallResult::NeedsRestart) {
+                            ICore::askForRestart(msgPluginChangesRequireRestart());
+                        }
+                    }),
+                },
+                st,
+            },
+            st,
+            spacing(Utils::StyleHelper::SpacingTokens::GapVXxl),
         };
     });
+    // clang-format on
 
     readSettings();
 }
@@ -47,13 +100,33 @@ class ExtensionManagerSettingsPage : public Core::IOptionsPage
 public:
     ExtensionManagerSettingsPage()
     {
-        setId("ExtensionManager");
-        setDisplayName(Tr::tr("Extensions"));
-        setCategory(Core::Constants::SETTINGS_CATEGORY_CORE);
+        setId(Constants::EXTENSIONMANAGER_SETTINGSPAGE_ID);
+        setDisplayName(Tr::tr("Browser"));
+        setCategory(Constants::EXTENSIONMANAGER_SETTINGSPAGE_CATEGORY);
         setSettingsProvider([] { return &settings(); });
     }
 };
 
 const ExtensionManagerSettingsPage settingsPage;
+
+QString externalRepoWarningNote()
+{
+    return
+    Tr::tr("If you choose to link or connect an external repository, "
+           "you are acting at your own discretion and risk. "
+           "The Qt Company does not control, endorse, or maintain any "
+           "external repositories that you connect. Any changes, "
+           "unavailability or security issues in external repositories "
+           "are beyond The Qt Company's control and responsibility. "
+           "By linking or connecting external repositories, you "
+           "acknowledge these conditions and accept responsibility "
+           "for managing associated risks appropriately.");
+}
+
+void setUseExternalRepo(bool useIt)
+{
+    settings().useExternalRepo.setValue(useIt);
+    settings().writeSettings();
+}
 
 } // ExtensionManager::Internal

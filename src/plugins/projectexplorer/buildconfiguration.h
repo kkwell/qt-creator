@@ -5,6 +5,7 @@
 
 #include "projectexplorer_export.h"
 #include "projectconfiguration.h"
+#include "target.h"
 #include "task.h"
 
 #include <utils/environment.h>
@@ -20,11 +21,14 @@ class BuildDirectoryAspect;
 class BuildInfo;
 class BuildSystem;
 class BuildStepList;
+class DeployConfiguration;
 class Kit;
-class NamedWidget;
 class Node;
+class Project;
 class RunConfiguration;
 class Target;
+
+enum class NameHandling { Uniquify, Keep };
 
 class PROJECTEXPLORER_EXPORT BuildConfiguration : public ProjectConfiguration
 {
@@ -32,26 +36,25 @@ class PROJECTEXPLORER_EXPORT BuildConfiguration : public ProjectConfiguration
 
 protected:
     friend class BuildConfigurationFactory;
+    friend class Target;
     explicit BuildConfiguration(Target *target, Utils::Id id);
 
 public:
     ~BuildConfiguration() override;
 
     Utils::FilePath buildDirectory() const;
-    Utils::FilePath rawBuildDirectory() const;
     void setBuildDirectory(const Utils::FilePath &dir);
 
-    virtual BuildSystem *buildSystem() const;
+    BuildSystem *buildSystem() const;
 
-    virtual NamedWidget *createConfigWidget();
-    virtual QList<NamedWidget *> createSubConfigWidgets();
+    QList<QWidget *> createConfigWidgets();
 
     // Maybe the BuildConfiguration is not the best place for the environment
     Utils::Environment baseEnvironment() const;
     QString baseEnvironmentText() const;
     Utils::Environment environment() const;
-    void setUserEnvironmentChanges(const Utils::EnvironmentItems &diff);
-    Utils::EnvironmentItems userEnvironmentChanges() const;
+    void setUserEnvironmentChanges(const Utils::EnvironmentChanges &diff);
+    Utils::EnvironmentChanges userEnvironmentChanges() const;
     bool useSystemEnvironment() const;
     void setUseSystemEnvironment(bool b);
 
@@ -68,6 +71,28 @@ public:
     void appendInitialBuildStep(Utils::Id id);
     void appendInitialCleanStep(Utils::Id id);
 
+    void addDeployConfiguration(DeployConfiguration *dc);
+    bool removeDeployConfiguration(DeployConfiguration *dc);
+    const QList<DeployConfiguration *> deployConfigurations() const;
+    void setActiveDeployConfiguration(DeployConfiguration *dc);
+    DeployConfiguration *activeDeployConfiguration() const;
+    void setActiveDeployConfiguration(DeployConfiguration *dc, SetActive cascade);
+    void updateDefaultDeployConfigurations();
+    ProjectConfigurationModel *deployConfigurationModel() const;
+    void updateDefaultRunConfigurations();
+    const QList<RunConfiguration *> runConfigurations() const;
+    void addRunConfiguration(RunConfiguration *rc, NameHandling nameHandling);
+    void removeRunConfiguration(RunConfiguration *rc);
+    void removeAllRunConfigurations();
+    void removeRunConfigurations(const QList<RunConfiguration *> &runConfigs);
+    RunConfiguration *activeRunConfiguration() const;
+    void setActiveRunConfiguration(RunConfiguration *rc);
+    ProjectConfigurationModel *runConfigurationModel() const;
+
+    QVariant extraData(const Utils::Key &name) const;
+    void setExtraData(const Utils::Key &name, const QVariant &value);
+
+    virtual BuildConfiguration *clone(Target *target) const;
     void fromMap(const Utils::Store &map) override;
     void toMap(Utils::Store &map) const override;
 
@@ -88,6 +113,22 @@ public:
 
     static QString buildTypeName(BuildType type);
 
+    static void setupBuildDirMacroExpander(
+        Utils::MacroExpander &exp,
+        const Utils::FilePath &mainFilePath,
+        const QString &projectName,
+        const Kit *kit,
+        const QString &bcName,
+        BuildType buildType,
+        const QString &buildSystem,
+        bool documentationOnly);
+    static Utils::FilePath expandedBuildDirectory(
+        const Kit *kit,
+        const Utils::FilePath &rawBuildDir,
+        const Utils::FilePath &projectDir,
+        Utils::MacroExpander &exp);
+    static Utils::FilePath rawBuildDirectoryFromTemplate(
+        const Kit *kit, const Utils::FilePath &projectFilePath);
     static Utils::FilePath buildDirectoryFromTemplate(const Utils::FilePath &projectDir,
                                                       const Utils::FilePath &mainFilePath,
                                                       const QString &projectName,
@@ -95,8 +136,11 @@ public:
                                                       const QString &bcName,
                                                       BuildType buildType,
                                                       const QString &buildSystem);
+    static BuildInfo fixupBuildInfo(
+        const BuildInfo &info, const Kit *kit, const Utils::FilePath &projectPath);
 
     bool isActive() const;
+    QString activeBuildKey() const; // Build key of active run configuration
 
     void updateCacheAndEmitEnvironmentChanged();
 
@@ -106,24 +150,47 @@ public:
     void setConfigWidgetHasFrame(bool configWidgetHasFrame);
     void setBuildDirectorySettingsKey(const Utils::Key &key);
 
-    void addConfigWidgets(const std::function<void (NamedWidget *)> &adder);
-
     void doInitialize(const BuildInfo &info);
-
-    Utils::MacroExpander *macroExpander() const;
 
     bool createBuildDirectory();
 
+    // For tools that need to manipulate the main build command's argument list
+    virtual void setInitialArgs(const QStringList &);
+    virtual QStringList initialArgs() const;
+    virtual QStringList additionalArgs() const;
+
+    virtual void reconfigure() {}
+    virtual void stopReconfigure() {}
+
 signals:
+    void kitChanged();
+
     void environmentChanged();
     void buildDirectoryInitialized();
     void buildDirectoryChanged();
     void buildTypeChanged();
 
+    void removedRunConfiguration(ProjectExplorer::RunConfiguration *rc);
+    void addedRunConfiguration(ProjectExplorer::RunConfiguration *rc);
+    void activeRunConfigurationChanged(ProjectExplorer::RunConfiguration *rc);
+    void runConfigurationsUpdated();
+
+    void removedDeployConfiguration(ProjectExplorer::DeployConfiguration *dc);
+    void addedDeployConfiguration(ProjectExplorer::DeployConfiguration *dc);
+    void activeDeployConfigurationChanged(ProjectExplorer::DeployConfiguration *dc);
+
 protected:
     void setInitializer(const std::function<void(const BuildInfo &info)> &initializer);
 
+    virtual QWidget *createConfigWidget();
+    virtual QList<QWidget *> createSubConfigWidgets();
+
 private:
+    bool addConfigurationsFromMap(const Utils::Store &map, bool setActiveConfigurations);
+    void setExtraDataFromMap(const Utils::Store &map);
+    void storeConfigurationsToMap(Utils::Store &map) const;
+    void removeRunConfigurationsHelper(const QList<QPointer<RunConfiguration>> &runConfigs);
+
     void emitBuildDirectoryChanged();
     Internal::BuildConfigurationPrivate *d = nullptr;
 };
@@ -149,7 +216,6 @@ public:
     BuildConfiguration *create(Target *parent, const BuildInfo &info) const;
 
     static BuildConfiguration *restore(Target *parent, const Utils::Store &map);
-    static BuildConfiguration *clone(Target *parent, const BuildConfiguration *source);
 
     static BuildConfigurationFactory *find(const Kit *k, const Utils::FilePath &projectPath);
     static BuildConfigurationFactory *find(Target *parent);
@@ -169,6 +235,7 @@ protected:
     bool supportsTargetDeviceType(Utils::Id id) const;
     void setSupportedProjectType(Utils::Id id);
     void setSupportedProjectMimeTypeName(const QString &mimeTypeName);
+    void setSupportedProjectMimeTypeNames(const QStringList &mimeTypeNames);
     void addSupportedTargetDeviceType(Utils::Id id);
     void setDefaultDisplayName(const QString &defaultDisplayName);
 
@@ -183,14 +250,26 @@ protected:
 
 private:
     bool canHandle(const ProjectExplorer::Target *t) const;
+    QList<BuildInfo> buildListHelper(
+        const Kit *kit, const Utils::FilePath &projectPath, bool forSetup) const;
 
     BuildConfigurationCreator m_creator;
     Utils::Id m_buildConfigId;
     Utils::Id m_supportedProjectType;
     QList<Utils::Id> m_supportedTargetDeviceTypes;
-    QString m_supportedProjectMimeTypeName;
+    QStringList m_supportedProjectMimeTypeNames;
     IssueReporter m_issueReporter;
     BuildGenerator m_buildGenerator;
 };
+
+PROJECTEXPLORER_EXPORT BuildConfiguration *activeBuildConfig(const Project *project);
+PROJECTEXPLORER_EXPORT BuildConfiguration *activeBuildConfigForActiveProject();
+PROJECTEXPLORER_EXPORT BuildConfiguration *activeBuildConfigForCurrentProject();
+
+PROJECTEXPLORER_EXPORT QString msgBuildConfigurationBuild();
+PROJECTEXPLORER_EXPORT QString msgBuildConfigurationDefault();
+PROJECTEXPLORER_EXPORT QString msgBuildConfigurationDebug();
+PROJECTEXPLORER_EXPORT QString msgBuildConfigurationRelease();
+PROJECTEXPLORER_EXPORT QString msgBuildConfigurationProfile();
 
 } // namespace ProjectExplorer

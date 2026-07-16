@@ -55,7 +55,7 @@ TextBrowserHelpViewer::~TextBrowserHelpViewer() = default;
 
 void TextBrowserHelpViewer::setViewerFont(const QFont &newFont)
 {
-    setFontAndScale(newFont, LocalHelpManager::fontZoom() / 100.0, LocalHelpManager::antialias());
+    setFontAndScale(newFont, helpSettings().fontZoom() / 100.0, helpSettings().antiAlias());
 }
 
 void TextBrowserHelpViewer::setFontAndScale(const QFont &font, qreal scale, bool antialias)
@@ -71,12 +71,12 @@ void TextBrowserHelpViewer::setFontAndScale(const QFont &font, qreal scale, bool
 
 void TextBrowserHelpViewer::setScale(qreal scale)
 {
-    setFontAndScale(LocalHelpManager::fallbackFont(), scale, LocalHelpManager::antialias());
+    setFontAndScale(helpSettings().fallbackFont(), scale, helpSettings().antiAlias());
 }
 
 void TextBrowserHelpViewer::setAntialias(bool on)
 {
-    setFontAndScale(LocalHelpManager::fallbackFont(), LocalHelpManager::fontZoom() / 100.0, on);
+    setFontAndScale(helpSettings().fallbackFont(), helpSettings().fontZoom() / 100.0, on);
 }
 
 QString TextBrowserHelpViewer::title() const
@@ -265,7 +265,7 @@ QString TextBrowserHelpWidget::linkAt(const QPoint &pos)
 
 void TextBrowserHelpWidget::withFixedTopPosition(const std::function<void()> &action)
 {
-    const int topTextPosition = cursorForPosition({width() / 2, 0}).position();
+    const int topTextPosition = cursorForPosition(QPoint{width() / 2, 0}).position();
     action();
     scrollToTextPosition(topTextPosition);
 }
@@ -373,7 +373,7 @@ void TextBrowserHelpWidget::mouseReleaseEvent(QMouseEvent *e)
 
 void TextBrowserHelpWidget::resizeEvent(QResizeEvent *e)
 {
-    const int topTextPosition = cursorForPosition({width() / 2, 0}).position();
+    const int topTextPosition = cursorForPosition(QPoint{width() / 2, 0}).position();
     QTextBrowser::resizeEvent(e);
     scrollToTextPosition(topTextPosition);
 }

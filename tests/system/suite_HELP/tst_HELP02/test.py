@@ -73,7 +73,7 @@ def setKeyboardShortcutForAboutQtC():
     shortcut = ("{container=%s type='Utils::FancyLineEdit' unnamed='1' visible='1' "
                 "placeholderText='Enter key sequence as text'}" % shortcutGB)
     clickButton(record)
-    nativeType(keysToType)
+    type(waitForObject(shortcut, 1000), keysToType)
     waitFor(lambda: str(findObject(shortcut).text) == expectedKeys, 5000)
     clickButton(record)
 
@@ -84,7 +84,7 @@ def setKeyboardShortcutForAboutQtC():
         replaceEditorContent(shortcut, expectedKeys)
     else:
         test.compare(foundShortcut, expectedKeys, "Expected key sequence is displayed?")
-    clickButton(waitForObject(":Options.OK_QPushButton"))
+    clickButton(waitForObject(":Options.Apply_QPushButton"))
 
 def main():
     expectedVersion = getQtCreatorVersionFromFile()

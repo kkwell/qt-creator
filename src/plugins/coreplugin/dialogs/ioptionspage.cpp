@@ -14,40 +14,55 @@
 #include <QCheckBox>
 #include <QGroupBox>
 #include <QHash>
-#include <QLabel>
 #include <QPointer>
 #include <QPushButton>
-#include <QRegularExpression>
+
+#include <utility>
 
 using namespace Utils;
+using namespace Core::Internal;
+
+static QHash<Id, std::pair<QString, FilePath>> g_categories;
 
 namespace Core {
-
 namespace Internal {
 
-class IOptionsPageWidgetPrivate
+using WidgetCreator = std::function<IOptionsPageWidget *()>;
+using SettingsProvider = std::function<Utils::AspectContainer *()>;
+
+class IOptionsPageWidgetPrivate final : public QObject
 {
 public:
+    explicit IOptionsPageWidgetPrivate(IOptionsPageWidget *q) : q(q) {}
+
+    void setAspects(Utils::AspectContainer *aspects);
+
+    IOptionsPageWidget *q;
+
     std::function<void()> m_onApply;
     std::function<void()> m_onCancel;
     std::function<void()> m_onFinish;
+    std::function<bool()> m_dirtyChecker;
+
+    AspectContainer *m_aspects = nullptr;
 };
 
 class IOptionsPagePrivate
 {
 public:
+    QStringList keywords();
+    IOptionsPageWidget *createWidget();
+
     Id m_id;
     Id m_category;
     QString m_displayName;
-    QString m_displayCategory;
-    FilePath m_categoryIconPath;
-    IOptionsPage::WidgetCreator m_widgetCreator;
-    QPointer<QWidget> m_widget; // Used in conjunction with m_widgetCreator
-
+    WidgetCreator m_widgetCreator;
     bool m_keywordsInitialized = false;
     QStringList m_keywords;
-
     std::function<AspectContainer *()> m_settingsProvider;
+    bool m_recreateOnCancel = false;
+    bool m_autoApply = false;
+    QPointer<IOptionsPageWidget> m_widget; // Cache.
 };
 
 class IOptionsPageProviderPrivate
@@ -92,10 +107,13 @@ public:
 */
 
 IOptionsPageWidget::IOptionsPageWidget()
-    : d(new Internal::IOptionsPageWidgetPrivate)
+    : d(new Internal::IOptionsPageWidgetPrivate(this))
 {}
 
-IOptionsPageWidget::~IOptionsPageWidget() = default;
+IOptionsPageWidget::~IOptionsPageWidget()
+{
+    d.reset();
+}
 
 /*!
     Sets the function that is called by default on apply to \a func.
@@ -110,12 +128,9 @@ void IOptionsPageWidget::setOnCancel(const std::function<void()> &func)
     d->m_onCancel = func;
 }
 
-/*!
-    Sets the function that is called by default on finish to \a func.
-*/
-void IOptionsPageWidget::setOnFinish(const std::function<void()> &func)
+void IOptionsPageWidget::setDirtyChecker(const std::function<bool ()> &func)
 {
-    d->m_onFinish = func;
+    d->m_dirtyChecker = func;
 }
 
 /*!
@@ -124,24 +139,60 @@ void IOptionsPageWidget::setOnFinish(const std::function<void()> &func)
 */
 void IOptionsPageWidget::apply()
 {
-    if (d->m_onApply)
+    if (d->m_onApply) {
         d->m_onApply();
+        return;
+    }
+
+    if (d->m_aspects) {
+        AspectContainer *container = d->m_aspects;
+        QTC_ASSERT(container, return);
+        // Sanity check: Aspects in option pages should not autoapply.
+        if (!container->aspects().isEmpty()) {
+            BaseAspect *aspect = container->aspects().first();
+            QTC_ASSERT(aspect, return);
+            QTC_ASSERT(!aspect->isAutoApply(), return);
+        }
+        if (container->isDirty()) {
+            container->apply();
+            container->writeSettings();
+        }
+        return;
+    }
 }
 
 void IOptionsPageWidget::cancel()
 {
-    if (d->m_onCancel)
+    if (d->m_onCancel) {
         d->m_onCancel();
+        return;
+    }
+
+    if (d->m_aspects) {
+        AspectContainer *container = d->m_aspects;
+        if (container->isDirty())
+            container->cancel();
+        return;
+    }
 }
 
-/*!
-    Calls the finish function, if set.
-    \sa setOnFinish
-*/
-void IOptionsPageWidget::finish()
+bool IOptionsPageWidget::isDirty() const
 {
-    if (d->m_onFinish)
-        d->m_onFinish();
+    if (d->m_dirtyChecker)
+        return d->m_dirtyChecker();
+
+    if (d->m_aspects)
+        return d->m_aspects->isDirty();
+
+    return true;
+}
+
+void IOptionsPageWidgetPrivate::setAspects(AspectContainer *aspects)
+{
+    m_aspects = aspects;
+    connect(m_aspects, &AspectContainer::volatileValueChanged, [] {
+        checkSettingsDirty();
+    });
 }
 
 /*!
@@ -150,38 +201,22 @@ void IOptionsPageWidget::finish()
 */
 FilePath IOptionsPage::categoryIconPath() const
 {
-    return d->m_categoryIconPath;
+    return g_categories.value(category()).second;
+}
+
+std::optional<AspectContainer *> IOptionsPage::aspects() const
+{
+    return d->m_settingsProvider ? std::make_optional(d->m_settingsProvider()) : std::nullopt;
 }
 
 /*!
     Sets the \a widgetCreator callback to create page widgets on demand. The
-    widget will be destroyed on finish().
+    widget will be owned by the settings mode.
  */
 void IOptionsPage::setWidgetCreator(const WidgetCreator &widgetCreator)
 {
     d->m_widgetCreator = widgetCreator;
-}
-
-/*!
-    Returns a list of ui strings that are used inside the widget.
-*/
-QStringList IOptionsPage::keywords() const
-{
-    auto that = const_cast<IOptionsPage *>(this);
-    QWidget *widget = that->widget();
-    if (!widget)
-        return {};
-    // find common subwidgets
-    for (const QLabel *label : widget->findChildren<QLabel *>())
-        d->m_keywords << label->text();
-    for (const QCheckBox *checkbox : widget->findChildren<QCheckBox *>())
-        d->m_keywords << checkbox->text();
-    for (const QPushButton *pushButton : widget->findChildren<QPushButton *>())
-        d->m_keywords << pushButton->text();
-    for (const QGroupBox *groupBox : widget->findChildren<QGroupBox *>())
-        d->m_keywords << groupBox->title();
-
-    return d->m_keywords;
+    d->m_recreateOnCancel = true;
 }
 
 /*!
@@ -205,120 +240,10 @@ void IOptionsPage::setCategory(Id category)
     d->m_category = category;
 }
 
-void IOptionsPage::setDisplayCategory(const QString &displayCategory)
-{
-    d->m_displayCategory = displayCategory;
-}
-
-/*!
-    Returns the widget to show in the \uicontrol Options dialog. You should create a widget lazily here,
-    and delete it again in the finish() method. This method can be called multiple times, so you
-    should only create a new widget if the old one was deleted.
-
-    Alternatively, use setWidgetCreator() to set a callback function that is used to
-    lazily create a widget in time.
-
-    Either override this function in a derived class, or set a widget creator.
-*/
-
-QWidget *IOptionsPage::widget()
-{
-    if (!d->m_widget) {
-        if (d->m_widgetCreator) {
-            d->m_widget = d->m_widgetCreator();
-            QTC_CHECK(d->m_widget);
-        } else if (d->m_settingsProvider) {
-            d->m_widget = new IOptionsPageWidget;
-            AspectContainer *container = d->m_settingsProvider();
-            if (auto layouter = container->layouter()) {
-                layouter().attachTo(d->m_widget);
-            } else {
-                QTC_CHECK(false);
-            }
-        } else {
-            QTC_CHECK(false);
-        }
-    }
-    return d->m_widget;
-}
-
-/*!
-    Called when selecting the \uicontrol Apply button on the options page dialog.
-    Should detect whether any changes were made and store those.
-
-    Either override this function in a derived class, or set a widget creator.
-
-    \sa setWidgetCreator()
-*/
-
-void IOptionsPage::apply()
-{
-    if (auto widget = qobject_cast<IOptionsPageWidget *>(d->m_widget))
-        widget->apply();
-
-    if (d->m_settingsProvider) {
-        AspectContainer *container = d->m_settingsProvider();
-        QTC_ASSERT(container, return);
-        // Sanity check: Aspects in option pages should not autoapply.
-        if (!container->aspects().isEmpty()) {
-            BaseAspect *aspect = container->aspects().first();
-            QTC_ASSERT(aspect, return);
-            QTC_ASSERT(!aspect->isAutoApply(), container->setAutoApply(false));
-        }
-        if (container->isDirty()) {
-            container->apply();
-            container->writeSettings();
-         }
-    }
-}
-
-void IOptionsPage::cancel()
-{
-    if (auto widget = qobject_cast<IOptionsPageWidget *>(d->m_widget))
-         widget->cancel();
-
-    if (d->m_settingsProvider) {
-         AspectContainer *container = d->m_settingsProvider();
-         QTC_ASSERT(container, return);
-         if (container->isDirty())
-            container->cancel();
-    }
-}
-
-/*!
-    Called directly before the \uicontrol Options dialog closes. Here you should
-    delete the widget that was created in widget() to free resources.
-
-    Either override this function in a derived class, or set a widget creator.
-
-    \sa setWidgetCreator()
-*/
-
-void IOptionsPage::finish()
-{
-    if (auto widget = qobject_cast<IOptionsPageWidget *>(d->m_widget))
-        widget->finish();
-
-    if (d->m_settingsProvider) {
-        AspectContainer *container = d->m_settingsProvider();
-        container->finish();
-    }
-
-    delete d->m_widget;
-}
-
-/*!
-    Sets \a categoryIconPath as the path to the category icon of the options
-    page.
-*/
-void IOptionsPage::setCategoryIconPath(const FilePath &categoryIconPath)
-{
-    d->m_categoryIconPath = categoryIconPath;
-}
-
 void IOptionsPage::setSettingsProvider(const std::function<AspectContainer *()> &provider)
 {
     d->m_settingsProvider = provider;
+    d->m_recreateOnCancel = false;
 }
 
 static QList<IOptionsPage *> &optionsPages()
@@ -344,6 +269,16 @@ IOptionsPage::IOptionsPage(bool registerGlobally)
 IOptionsPage::~IOptionsPage()
 {
     optionsPages().removeOne(this);
+}
+
+/*!
+    Registers a category with the ID \a id, user-visible name \a displayName, and
+    icon specified by \a iconPath.
+ */
+void IOptionsPage::registerCategory(
+    Utils::Id id, const QString &displayName, const Utils::FilePath &iconPath)
+{
+    g_categories.insert(id, std::make_pair(displayName, iconPath));
 }
 
 /*!
@@ -385,25 +320,67 @@ Id IOptionsPage::category() const
 */
 QString IOptionsPage::displayCategory() const
 {
-    return d->m_displayCategory;
+    return g_categories.value(category()).first;
+}
+
+bool IOptionsPage::recreateOnCancel() const
+{
+    return d->m_recreateOnCancel;
+}
+
+void IOptionsPage::setAutoApply()
+{
+    d->m_autoApply = true;
 }
 
 /*!
     Is used by the \uicontrol Options dialog search filter to match \a regexp to this options
-    page. This defaults to take the widget and then looks for all child labels, check boxes, push
+    page. If not set,  it takes the widget and then looks for all child labels, check boxes, push
     buttons, and group boxes. Should return \c true when a match is found.
 */
-bool IOptionsPage::matches(const QRegularExpression &regexp) const
-{
-    if (!d->m_keywordsInitialized) {
-        d->m_keywords = transform(keywords(), stripAccelerator);
-        d->m_keywordsInitialized = true;
-    }
 
-    for (const QString &keyword : d->m_keywords)
-        if (keyword.contains(regexp))
-            return true;
-    return false;
+static QStringList scrapeKeywords(QWidget *widget)
+{
+    QStringList keywords;
+
+    QTC_ASSERT(widget, return keywords);
+
+    // find common subwidgets
+    for (const QLabel *label : widget->findChildren<QLabel *>())
+        keywords << label->text();
+    for (const QCheckBox *checkbox : widget->findChildren<QCheckBox *>())
+        keywords << checkbox->text();
+    for (const QPushButton *pushButton : widget->findChildren<QPushButton *>())
+        keywords << pushButton->text();
+    for (const QGroupBox *groupBox : widget->findChildren<QGroupBox *>())
+        keywords << groupBox->title();
+
+    return transform(keywords, stripAccelerator);
+}
+
+QStringList Internal::IOptionsPagePrivate::keywords()
+{
+    if (m_keywordsInitialized)
+        return m_keywords;
+
+    m_keywordsInitialized = true;
+
+    createWidget();
+    QTC_ASSERT(m_widget, return {});
+
+    m_keywords = scrapeKeywords(m_widget);
+    return m_keywords;
+}
+
+void IOptionsPage::setFixedKeywords(const QStringList &keywords)
+{
+    d->m_keywords = keywords;
+    d->m_keywordsInitialized = true;
+}
+
+void IOptionsPage::setRecreateOnCancel(bool on)
+{
+    d->m_recreateOnCancel = on;
 }
 
 static QList<IOptionsPageProvider *> g_optionsPagesProviders;
@@ -458,6 +435,49 @@ void IOptionsPageProvider::setDisplayCategory(const QString &displayCategory)
 void IOptionsPageProvider::setCategoryIconPath(const FilePath &iconPath)
 {
     d->m_categoryIconPath = iconPath;
+}
+
+IOptionsPageWidget *IOptionsPage::createWidget()
+{
+    return d->createWidget();
+}
+
+IOptionsPageWidget *IOptionsPagePrivate::createWidget()
+{
+    if (m_widget)
+        return m_widget;
+
+    if (m_widgetCreator) {
+        m_widget = m_widgetCreator();
+        QTC_ASSERT(m_widget, return nullptr);
+        return m_widget;
+    }
+
+    if (m_settingsProvider) {
+        AspectContainer *container = m_settingsProvider();
+        QTC_ASSERT(container, return nullptr);
+        std::function<Layouting::Layout()> layouter = container->layouter();
+        QTC_ASSERT(layouter, return nullptr);
+        m_widget = new IOptionsPageWidget;
+        m_widget->d->setAspects(container);
+        layouter().attachTo(m_widget);
+        return m_widget;
+    }
+
+    QTC_CHECK(false);
+    return nullptr;
+}
+
+bool IOptionsPage::matches(const QRegularExpression &regexp) const
+{
+    const QStringList keywords = d->keywords();
+
+    for (const QString &keyword : keywords) {
+        if (keyword.contains(regexp))
+            return true;
+    }
+
+    return false;
 }
 
 static QHash<Id, Id> g_preselectedOptionPageItems;

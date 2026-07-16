@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include <projectexplorer/itaskhandler.h>
+#include <projectexplorer/taskhandlers.h>
 
 QT_BEGIN_NAMESPACE
 class QUrl;
@@ -17,12 +17,15 @@ class SearchTaskHandler : public ProjectExplorer::ITaskHandler
     Q_OBJECT
 
 public:
-    bool canHandle(const ProjectExplorer::Task &task) const override;
-    void handle(const ProjectExplorer::Task &task) override;
-    QAction *createAction(QObject *parent) const override;
+    SearchTaskHandler() : ProjectExplorer::ITaskHandler(createAction()) {}
 
 signals:
     void search(const QUrl &url);
+
+private:
+    bool canHandle(const ProjectExplorer::Task &task) const override;
+    void handle(const ProjectExplorer::Task &task) override;
+    QAction *createAction() const;
 };
 
 } // namespace Internal

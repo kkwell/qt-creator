@@ -43,6 +43,17 @@ void DiagnosticMessage::setLine(int line)
     _line = line;
 }
 
+DiagnosticMessage::Location DiagnosticMessage::location() const
+{
+    return _location;
+}
+
+void DiagnosticMessage::setLocation(const Location &location)
+{
+    _location = location;
+    _line = location.line;
+}
+
 QString DiagnosticMessage::message() const
 {
     return _message;
@@ -145,6 +156,11 @@ const SamplerType *Engine::samplerType(int kind)
     return _samplerTypes.intern(SamplerType(kind));
 }
 
+const ImageType *Engine::imageType(int kind)
+{
+    return _imageTypes.intern(ImageType(kind));
+}
+
 const VectorType *Engine::vectorType(const Type *elementType, int dimension)
 {
     VectorType *type = const_cast<VectorType *>
@@ -180,20 +196,20 @@ void Engine::addDiagnosticMessage(const DiagnosticMessage &m)
         _diagnosticMessages.append(m);
 }
 
-void Engine::warning(int line, const QString &message)
+void Engine::warning(const DiagnosticMessage::Location &location, const QString &message)
 {
     DiagnosticMessage m;
     m.setKind(DiagnosticMessage::Warning);
-    m.setLine(line);
+    m.setLocation(location);
     m.setMessage(message);
     addDiagnosticMessage(m);
 }
 
-void Engine::error(int line, const QString &message)
+void Engine::error(const DiagnosticMessage::Location &location, const QString &message)
 {
     DiagnosticMessage m;
     m.setKind(DiagnosticMessage::Error);
-    m.setLine(line);
+    m.setLocation(location);
     m.setMessage(message);
     addDiagnosticMessage(m);
 }
@@ -236,6 +252,13 @@ Function *Engine::newFunction(Scope *scope)
     return s;
 }
 
+InterfaceBlock *Engine::newInterfaceBlock(Scope *scope)
+{
+    InterfaceBlock *iBlock = new InterfaceBlock(scope);
+    _symbols.append(iBlock);
+    return iBlock;
+}
+
 Argument *Engine::newArgument(Function *function, const QString &name, const Type *type)
 {
     Argument *a = new Argument(function);
@@ -244,6 +267,14 @@ Argument *Engine::newArgument(Function *function, const QString &name, const Typ
     _symbols.append(a);
     return a;
 }
+
+SubroutineType *Engine::newSubroutineType(Scope *scope)
+{
+    SubroutineType *subroutine = new SubroutineType(scope);
+    _symbols.append(subroutine);
+    return subroutine;
+}
+
 
 Variable *Engine::newVariable(Scope *scope, const QString &name, const Type *type, int qualifiers)
 {

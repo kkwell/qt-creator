@@ -7,8 +7,6 @@
 
 #include <coreplugin/icore.h>
 
-#include <cppeditor/cppcodestylepreferences.h>
-#include <cppeditor/cppcodestylepreferencesfactory.h>
 #include <cppeditor/cppqtstyleindenter.h>
 #include <cppeditor/cpptoolssettings.h>
 
@@ -33,13 +31,7 @@ namespace ClangFormat {
 
 static bool isBeautifierPluginActivated()
 {
-    const ExtensionSystem::PluginSpecs specs = ExtensionSystem::PluginManager::plugins();
-    return std::find_if(specs.begin(),
-                        specs.end(),
-                        [](ExtensionSystem::PluginSpec *spec) {
-                            return spec->name() == "Beautifier" && spec->isEffectivelyEnabled();
-                        })
-           != specs.end();
+    return ExtensionSystem::PluginManager::specExistsAndIsEnabled("beautifier");
 }
 
 static bool isBeautifierOnSaveActivated()
@@ -74,6 +66,10 @@ bool ClangFormatIndenter::formatCodeInsteadOfIndent() const
 
 std::optional<TabSettings> ClangFormatIndenter::tabSettings() const
 {
+    // FIXME: Why don't we have a valid file path from the beginning?
+    if (m_fileName.isEmpty())
+        return {};
+
     FormatStyle style = styleForFile();
     TabSettings tabSettings;
 
@@ -81,20 +77,25 @@ std::optional<TabSettings> ClangFormatIndenter::tabSettings() const
     case FormatStyle::UT_Never:
         tabSettings.m_tabPolicy = TabSettings::SpacesOnlyTabPolicy;
         break;
-    case FormatStyle::UT_Always:
-        tabSettings.m_tabPolicy = TabSettings::TabsOnlyTabPolicy;
-        break;
     default:
-        tabSettings.m_tabPolicy = TabSettings::MixedTabPolicy;
+        tabSettings.m_tabPolicy = TabSettings::TabsOnlyTabPolicy;
     }
 
     tabSettings.m_tabSize = static_cast<int>(style.TabWidth);
     tabSettings.m_indentSize = static_cast<int>(style.IndentWidth);
 
-    if (style.AlignAfterOpenBracket == FormatStyle::BAS_DontAlign)
-        tabSettings.m_continuationAlignBehavior = TabSettings::NoContinuationAlign;
-    else
+    const auto alignAfterOpenBracket = [](const FormatStyle &style) {
+#if LLVM_VERSION_MAJOR >= 22
+        return style.AlignAfterOpenBracket;
+#else
+        return style.AlignAfterOpenBracket == FormatStyle::BAS_Align;
+#endif
+    };
+
+    if (alignAfterOpenBracket(style))
         tabSettings.m_continuationAlignBehavior = TabSettings::ContinuationAlignWithIndent;
+    else
+        tabSettings.m_continuationAlignBehavior = TabSettings::NoContinuationAlign;
 
     return tabSettings;
 }
@@ -133,14 +134,18 @@ void ClangFormatForwardingIndenter::setFileName(const Utils::FilePath &fileName)
     m_fileName = fileName;
     m_clangFormatIndenter->setFileName(fileName);
     m_cppIndenter->setFileName(fileName);
+    m_fileSize.reset();
 }
 
 TextEditor::Indenter *ClangFormatForwardingIndenter::currentIndenter() const
 {
     ClangFormatSettings::Mode mode = getCurrentIndentationOrFormattingSettings(m_fileName);
 
-    if (mode == ClangFormatSettings::Disable
-        || m_fileName.fileSize() >= ClangFormatSettings::instance().fileSizeThreshold() * 1024)
+    if (mode == ClangFormatSettings::Disable)
+        return m_cppIndenter.get();
+    if (!m_fileSize)
+        m_fileSize = m_fileName.fileSize();
+    if (*m_fileSize >= ClangFormatSettings::instance().fileSizeThreshold() * 1024)
         return m_cppIndenter.get();
 
     return m_clangFormatIndenter.get();
@@ -195,7 +200,7 @@ bool ClangFormatForwardingIndenter::formatOnSave() const
 }
 
 TextEditor::IndentationForBlock ClangFormatForwardingIndenter::indentationForBlocks(
-    const QVector<QTextBlock> &blocks,
+    const QList<QTextBlock> &blocks,
     const TextEditor::TabSettings &tabSettings,
     int cursorPositionInEditor)
 {
@@ -233,6 +238,11 @@ void ClangFormatForwardingIndenter::reindent(const QTextCursor &cursor,
 std::optional<int> ClangFormatForwardingIndenter::margin() const
 {
     return currentIndenter()->margin();
+}
+
+bool ClangFormatForwardingIndenter::respectsTabSettings() const
+{
+    return currentIndenter()->respectsTabSettings();
 }
 
 } // namespace ClangFormat

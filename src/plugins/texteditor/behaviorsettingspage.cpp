@@ -67,7 +67,11 @@ class BehaviorSettingsWidgetImpl : public Core::IOptionsPageWidget
 public:
     BehaviorSettingsWidgetImpl(BehaviorSettingsPagePrivate *d) : d(d)
     {
-        d->m_behaviorWidget = new BehaviorSettingsWidget(this);
+        d->m_behaviorWidget = new BehaviorSettingsWidget(&globalTypingSettings(),
+                                                         &globalStorageSettings(),
+                                                         &globalBehaviorSettings(),
+                                                         &globalExtraEncodingSettings(),
+                                                         this);
 
         auto verticalSpacer = new QSpacerItem(20, 13, QSizePolicy::Minimum, QSizePolicy::Expanding);
 
@@ -89,22 +93,25 @@ public:
                 this, [] (TabSettingsWidget::CodingStyleLink link) {
             switch (link) {
             case TabSettingsWidget::CppLink:
-                Core::ICore::showOptionsDialog(CppEditor::Constants::CPP_CODE_STYLE_SETTINGS_ID);
+                Core::ICore::showSettings(CppEditor::Constants::CPP_CODE_STYLE_SETTINGS_ID);
                 break;
             case TabSettingsWidget::QtQuickLink:
-                Core::ICore::showOptionsDialog(QmlJSTools::Constants::QML_JS_CODE_STYLE_SETTINGS_ID);
+                Core::ICore::showSettings(QmlJSTools::Constants::QML_JS_CODE_STYLE_SETTINGS_ID);
                 break;
             }
         });
 
-        d->m_behaviorWidget->setAssignedTypingSettings(globalTypingSettings());
-        d->m_behaviorWidget->setAssignedStorageSettings(globalStorageSettings());
-        d->m_behaviorWidget->setAssignedBehaviorSettings(globalBehaviorSettings());
-        d->m_behaviorWidget->setAssignedExtraEncodingSettings(globalExtraEncodingSettings());
-        d->m_behaviorWidget->setAssignedCodec(Core::EditorManager::defaultTextCodec());
-        d->m_behaviorWidget->setAssignedLineEnding(Core::EditorManager::defaultLineEnding());
+        connect(d->m_pageCodeStyle, &ICodeStylePreferences::tabSettingsChanged,
+                this, [] { checkSettingsDirty(); });
+        connect(d->m_pageCodeStyle, &ICodeStylePreferences::currentDelegateChanged,
+                this, [] { checkSettingsDirty(); });
+        installCheckSettingsDirtyTrigger(&globalTypingSettings());
+        installCheckSettingsDirtyTrigger(&globalStorageSettings());
+        installCheckSettingsDirtyTrigger(&globalBehaviorSettings());
+        installCheckSettingsDirtyTrigger(&globalExtraEncodingSettings());
     }
 
+    bool isDirty() const;
     void apply() final;
 
     BehaviorSettingsPagePrivate *d;
@@ -118,8 +125,6 @@ BehaviorSettingsPage::BehaviorSettingsPage()
     setDisplayName(Tr::tr("Behavior"));
 
     setCategory(TextEditor::Constants::TEXT_EDITOR_SETTINGS_CATEGORY);
-    setDisplayCategory(Tr::tr("Text Editor"));
-    setCategoryIconPath(TextEditor::Constants::TEXT_EDITOR_SETTINGS_CATEGORY_ICON_PATH);
     setWidgetCreator([this] { return new BehaviorSettingsWidgetImpl(d); });
 }
 
@@ -128,20 +133,34 @@ BehaviorSettingsPage::~BehaviorSettingsPage()
     delete d;
 }
 
+bool BehaviorSettingsWidgetImpl::isDirty() const
+{
+    if (globalTypingSettings().isDirty())
+        return true;
+    if (globalStorageSettings().isDirty())
+        return true;
+    if (globalBehaviorSettings().isDirty())
+        return true;
+    if (globalExtraEncodingSettings().isDirty())
+        return true;
+
+    if (d->m_codeStyle->tabSettings() != d->m_pageCodeStyle->tabSettings())
+        return true;
+    if (d->m_codeStyle->currentDelegate() != d->m_pageCodeStyle->currentDelegate())
+        return true;
+
+    return false;
+}
+
 void BehaviorSettingsWidgetImpl::apply()
 {
     if (!d->m_behaviorWidget) // page was never shown
         return;
 
-    TypingSettings newTypingSettings;
-    StorageSettings newStorageSettings;
-    BehaviorSettings newBehaviorSettings;
-    ExtraEncodingSettings newExtraEncodingSettings;
-
-    d->m_behaviorWidget->assignedTypingSettings(&newTypingSettings);
-    d->m_behaviorWidget->assignedStorageSettings(&newStorageSettings);
-    d->m_behaviorWidget->assignedBehaviorSettings(&newBehaviorSettings);
-    d->m_behaviorWidget->assignedExtraEncodingSettings(&newExtraEncodingSettings);
+    globalTypingSettings().apply();
+    globalBehaviorSettings().apply();
+    globalStorageSettings().apply();
+    globalExtraEncodingSettings().apply();
 
     if (d->m_codeStyle->tabSettings() != d->m_pageCodeStyle->tabSettings()) {
         d->m_codeStyle->setTabSettings(d->m_pageCodeStyle->tabSettings());
@@ -152,17 +171,6 @@ void BehaviorSettingsWidgetImpl::apply()
         d->m_codeStyle->setCurrentDelegate(d->m_pageCodeStyle->currentDelegate());
         d->m_codeStyle->toSettings(d->m_settingsPrefix);
     }
-
-    updateGlobalTypingSettings(newTypingSettings);
-    updateGlobalStorageSettings(newStorageSettings);
-    updateGlobalBehaviorSettings(newBehaviorSettings);
-    updateGlobalExtraEncodingSettings(newExtraEncodingSettings);
-
-    QtcSettings *s = Core::ICore::settings();
-    s->setValue(Core::Constants::SETTINGS_DEFAULTTEXTENCODING,
-                d->m_behaviorWidget->assignedCodecName());
-    s->setValue(Core::Constants::SETTINGS_DEFAULT_LINE_TERMINATOR,
-                d->m_behaviorWidget->assignedLineEnding());
 }
 
 ICodeStylePreferences *BehaviorSettingsPage::codeStyle() const
@@ -174,26 +182,5 @@ CodeStylePool *BehaviorSettingsPage::codeStylePool() const
 {
     return d->m_defaultCodeStylePool;
 }
-
-const TypingSettings &BehaviorSettingsPage::typingSettings() const
-{
-    return globalTypingSettings();
-}
-
-const StorageSettings &BehaviorSettingsPage::storageSettings() const
-{
-    return globalStorageSettings();
-}
-
-const BehaviorSettings &BehaviorSettingsPage::behaviorSettings() const
-{
-    return globalBehaviorSettings();
-}
-
-const ExtraEncodingSettings &BehaviorSettingsPage::extraEncodingSettings() const
-{
-    return globalExtraEncodingSettings();
-}
-
 
 } // namespace TextEditor

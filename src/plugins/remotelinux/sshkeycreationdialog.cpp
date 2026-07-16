@@ -98,7 +98,7 @@ void SshKeyCreationDialog::keyTypeChanged()
 
 void SshKeyCreationDialog::generateKeys()
 {
-    if (SshSettings::keygenFilePath().isEmpty()) {
+    if (sshSettings().keygenFilePath().isEmpty()) {
         showError(Tr::tr("The ssh-keygen tool was not found."));
         return;
     }
@@ -110,18 +110,18 @@ void SshKeyCreationDialog::generateKeys()
     const QString keyTypeString = QLatin1String(m_rsa->isChecked() ? "rsa": "ecdsa");
     QApplication::setOverrideCursor(Qt::BusyCursor);
     Process keygen;
-    keygen.setCommand({SshSettings::keygenFilePath(),
+    keygen.setCommand({sshSettings().keygenFilePath(),
         {"-t", keyTypeString, "-b", m_comboBox->currentText(), "-N", QString(), "-f",
          privateKeyFilePath().path()}});
     keygen.start();
-    QString errorMsg;
+    Result<> result = ResultOk;
     if (!keygen.waitForFinished())
-        errorMsg = keygen.errorString();
+        result = ResultError(keygen.errorString().isEmpty() ? Tr::tr("Unknown error") : keygen.errorString());
     else if (keygen.exitCode() != 0)
-        errorMsg = QString::fromLocal8Bit(keygen.rawStdErr());
-    if (!errorMsg.isEmpty()) {
+        result = ResultError(QString::fromLocal8Bit(keygen.rawStdErr()));
+    if (!result) {
         showError(Tr::tr("The ssh-keygen tool at \"%1\" failed: %2")
-                  .arg(SshSettings::keygenFilePath().toUserOutput(), errorMsg));
+                  .arg(sshSettings().keygenFilePath().toUserOutput(), result.error()));
     }
     QApplication::restoreOverrideCursor();
     accept();
@@ -129,7 +129,7 @@ void SshKeyCreationDialog::generateKeys()
 
 void SshKeyCreationDialog::handleBrowseButtonClicked()
 {
-    const FilePath filePath = FileUtils::getSaveFilePath(this, Tr::tr("Choose Private Key File Name"));
+    const FilePath filePath = FileUtils::getSaveFilePath(Tr::tr("Choose Private Key File Name"));
     if (!filePath.isEmpty())
         setPrivateKeyFile(filePath);
 }

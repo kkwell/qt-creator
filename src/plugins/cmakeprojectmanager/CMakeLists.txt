@@ -1,6 +1,5 @@
 add_qtc_plugin(CMakeProjectManager
   PLUGIN_CLASS CMakeProjectPlugin
-  DEPENDS QmlJS
   PLUGIN_DEPENDS Core CppEditor Debugger ProjectExplorer TextEditor QtSupport
   SYSTEM_INCLUDES 3dparty/cmake
   SOURCES
@@ -8,6 +7,7 @@ add_qtc_plugin(CMakeProjectManager
     cmake_global.h
     cmakeabstractprocessstep.cpp cmakeabstractprocessstep.h
     cmakeautocompleter.cpp cmakeautocompleter.h
+    cmakeautogenparser.cpp cmakeautogenparser.h
     cmakebuildconfiguration.cpp cmakebuildconfiguration.h
     cmakebuildsystem.cpp cmakebuildsystem.h
     cmakebuildstep.cpp cmakebuildstep.h
@@ -20,7 +20,7 @@ add_qtc_plugin(CMakeProjectManager
     cmakeinstallstep.cpp cmakeinstallstep.h
     cmakekitaspect.cpp cmakekitaspect.h
     cmakelocatorfilter.cpp cmakelocatorfilter.h
-    cmakeparser.cpp cmakeparser.h
+    cmakeoutputparser.cpp cmakeoutputparser.h
     cmakeprocess.cpp cmakeprocess.h
     cmakeproject.cpp cmakeproject.h
     cmakeproject.qrc
@@ -43,8 +43,36 @@ add_qtc_plugin(CMakeProjectManager
     presetsparser.cpp presetsparser.h
     presetsmacros.cpp presetsmacros.h
     projecttreehelper.cpp projecttreehelper.h
+    targethelper.cpp targethelper.h
+    testpresetshelper.cpp testpresetshelper.h
     3rdparty/cmake/cmListFileCache.cxx
     3rdparty/cmake/cmListFileLexer.cxx
     3rdparty/cmake/cmListFileCache.h
     3rdparty/rstparser/rstparser.cc 3rdparty/rstparser/rstparser.h
+  SBOM_ARGS
+    USE_ATTRIBUTION_FILES
+    CREATE_SBOM_FOR_EACH_ATTRIBUTION
+    ATTRIBUTION_FILE_PATHS
+      "${QtCreator_SOURCE_DIR}/qt_attributions.json"
+    ATTRIBUTION_IDS
+      cmake-lexer
+      vitaut-rstparser
+)
+
+add_qtc_test(tst_cmake_test_presets
+  CONDITION WITH_TESTS
+  DEPENDS Utils ProjectExplorer CMakeProjectManager
+  SOURCES
+    tests/tst_cmake_test_presets.cpp
+    presetsparser.cpp
+    presetsmacros.cpp
+    testpresetshelper.cpp
+)
+
+file(GLOB_RECURSE test_cases RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} testcases/*)
+qtc_add_resources(CMakeProjectManager "testcases"
+  CONDITION WITH_TESTS
+  PREFIX "/cmakeprojectmanager"
+  BASE "."
+  FILES ${test_cases}
 )

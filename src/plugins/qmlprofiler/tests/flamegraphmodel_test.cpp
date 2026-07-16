@@ -6,15 +6,14 @@
 
 #include <qmlprofiler/qmlprofilerrangemodel.h>
 
-#include <QtTest>
+#include <QTest>
 
-namespace QmlProfiler {
-namespace Internal {
+using namespace QmlDebug;
+namespace QmlProfiler::Internal {
 
-FlameGraphModelTest::FlameGraphModelTest(QObject *parent) :
-    QObject(parent), model(&manager)
-{
-}
+FlameGraphModelTest::FlameGraphModelTest()
+    : model(&manager)
+{}
 
 int FlameGraphModelTest::generateData(QmlProfilerModelManager *manager,
                                       Timeline::TimelineModelAggregator *aggregator)
@@ -72,7 +71,7 @@ int FlameGraphModelTest::generateData(QmlProfilerModelManager *manager,
     manager->finalize();
 
     static_cast<QmlProfilerNotesModel *>(manager->notesModel())
-            ->setNotes(QVector<QmlNote>({
+            ->setNotes(QList<QmlNote>({
                                             // row 2 on purpose to test the range heuristic
                                             QmlNote(0, 2, 1, 21, "dings"),
                                             QmlNote(0, 3, 12, 1, "weg")
@@ -111,7 +110,7 @@ void FlameGraphModelTest::testCounts()
 
 void FlameGraphModelTest::testData()
 {
-    const QVector<QString> typeRoles({
+    const QStringList typeRoles({
         Tr::tr("JavaScript"),
         Tr::tr("Signal"),
         Tr::tr("Binding"),
@@ -216,5 +215,4 @@ void FlameGraphModelTest::cleanupTestCase()
     QCOMPARE(model.rowCount(), 0);
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

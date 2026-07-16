@@ -44,9 +44,9 @@ QQuickWidget *QdsLandingPageWidget::widget()
         m_widget = new QQuickWidget();
 
         const QString resourcePath
-            = Core::ICore::resourcePath(QmlProjectManager::Constants::QML_RESOURCE_PATH).toString();
+            = Core::ICore::resourcePath(QmlProjectManager::Constants::QML_RESOURCE_PATH).toUrlishString();
         const QString landingPath
-            = Core::ICore::resourcePath(QmlProjectManager::Constants::LANDING_PAGE_PATH).toString();
+            = Core::ICore::resourcePath(QmlProjectManager::Constants::LANDING_PAGE_PATH).toUrlishString();
 
         QdsLandingPageTheme::setupTheme(m_widget->engine());
 
@@ -87,7 +87,7 @@ void QdsLandingPage::openQds(bool rememberSelection)
 
     auto editor = Core::EditorManager::currentEditor();
     if (editor)
-        openInQDSWithProject(editor->document()->filePath());
+        openInQds(editor->document()->filePath());
 }
 
 void QdsLandingPage::installQds()

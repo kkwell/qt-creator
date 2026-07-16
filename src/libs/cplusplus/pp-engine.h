@@ -31,7 +31,6 @@
 
 #include <utils/guard.h>
 
-#include <QVector>
 #include <QBitArray>
 #include <QByteArray>
 #include <QPair>
@@ -62,8 +61,6 @@ public:
     Preprocessor(Client *client, Environment *env);
 
     QByteArray run(const Utils::FilePath &filePath, const QByteArray &source,
-                   bool noLines = false, bool markGeneratedTokens = true);
-    QByteArray run(const QString &filename, const QByteArray &source,
                    bool noLines = false, bool markGeneratedTokens = true);
 
     using CancelChecker = std::function<bool()>;
@@ -128,7 +125,7 @@ private:
         QByteArray *m_currentExpansion;
 
         QByteArray m_expansionResult;
-        QVector<QPair<unsigned, unsigned> > m_expandedTokensInfo;
+        QList<QPair<unsigned, unsigned>> m_expandedTokensInfo;
 
         enum {
             /// State to indicate that no guard is possible anymore.
@@ -192,20 +189,20 @@ private:
     void skipPreprocesorDirective(PPToken *tk);
     bool handleIdentifier(PPToken *tk);
     bool handleFunctionLikeMacro(const Macro *macro,
-                                 QVector<PPToken> &body,
-                                 const QVector<QVector<PPToken> > &actuals,
+                                 QList<PPToken> &body,
+                                 const QList<QList<PPToken> > &actuals,
                                  unsigned lineRef);
 
     bool skipping() const
     { return m_state.m_skipping[m_state.m_ifLevel]; }
 
-    QVector<CPlusPlus::Token> tokenize(const QByteArray &text) const;
+    QList<CPlusPlus::Token> tokenize(const QByteArray &text) const;
 
     bool scanComment(PPToken *tk);
     bool consumeComments(PPToken *tk);
-    bool collectActualArguments(PPToken *tk, QVector<QVector<PPToken> > *actuals,
+    bool collectActualArguments(PPToken *tk, QList<QList<PPToken> > *actuals,
                                 const QByteArray &parentMacroName);
-    void scanActualArgument(PPToken *tk, QVector<PPToken> *tokens);
+    void scanActualArgument(PPToken *tk, QList<PPToken> *tokens);
 
     void handlePreprocessorDirective(PPToken *tk);
     void handleIncludeDirective(PPToken *tk, bool includeNext);
@@ -218,6 +215,7 @@ private:
     void handleElseDirective(PPToken *tk, const PPToken &poundToken);
     void handleEndIfDirective(PPToken *tk, const PPToken &poundToken);
     void handleIfDefDirective(bool checkUndefined, PPToken *tk);
+    void handleElifDefDirective(bool checkUndefined, PPToken *tk, PPToken &poundToken);
     void handleUndefDirective(PPToken *tk);
     void trackExpansionCycles(PPToken *tk);
 

@@ -1,0 +1,151 @@
+// Copyright (C) 2025 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
+
+/*!
+    \page quick-signals.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-design-qtquick-components
+
+    \title Connect components to signals
+
+    A signal and handler mechanism enables components to respond to application
+    events, which are represented by \e signals. When a signal is emitted, the
+    corresponding \e {signal handler} is invoked to respond to the event by
+    using scripts or other operations placed in the handler.
+
+    To receive a notification when a particular signal is emitted for a
+    particular component, the component definition should declare a signal handler
+    named \e {on<Signal>} where \e {<Signal>} is the name of the signal, with
+    the first letter capitalized. The signal handler should contain the
+    JavaScript code to be executed when the signal handler is invoked.
+
+    Components have predefined signals that are emitted when users interact with
+    the application. For example, the \l {Create mouse areas}{Mouse Area}
+    component has a \c clicked signal that is emitted whenever the mouse is
+    clicked within the area. Since the signal name is \c clicked, the signal
+    handler for receiving this signal is named \c onClicked.
+
+    A signal is automatically emitted when the value of a property changes.
+    This type of signal is a \e{property change signal} and signal handlers
+    for these signals are written in the form \c on<Property>Changed, where
+    \e <Property> is the name of the property, with the first letter
+    capitalized.
+
+    For example, the Mouse Area component has a \c pressed property. To receive
+    a notification whenever this property changes, you would use a signal handler
+    called \c onPressedChanged.
+
+    For more information about signals and signal handlers, see
+    \l{Signal and Handler Event System}.
+
+    \section1 Create a connection
+
+    You can use the context menu to connect the selected component to a signal
+    that you connect to an action:
+
+    \list 1
+        \li Select the component you want to connect in the \uicontrol Navigator
+            or \uicontrol 2D view.
+        \li In the context menu, select \uicontrol Connections >
+            \uicontrol {Add New Connection}, and then select an available
+            signal, action, and action property.
+    \endlist
+
+    \section1 Add connections
+
+    You can also add connections in the \uicontrol Connections tab in the
+    \uicontrol Connections view.
+
+    To connect components to signals that are available to them:
+
+    \list 1
+        \li Select the component you want to connect in the \uicontrol Navigator
+            or \uicontrol 2D view.
+        \li Go to the \uicontrol Connections tab in the \uicontrol Connections view.
+            \image {qmldesigner-connections-advanced.webp} {The Connections tab in the Connections view.}
+        \li Select \imageplus (\uicontrol Add) to create a connection in the
+            connection editor.
+    \endlist
+
+    \section1 Connect signals to actions
+
+    To connect a signal to an action:
+
+    \list 1
+        \li Select or create a connection to open the connection editor.
+            \image {qmldesigner-connections-editor.webp} {The connection editor.}
+            \caption The connection editor.
+        \li In \uicontrol Target, select a component.
+        \li In \uicontrol Signal, select the signal to emit.
+        \li In \uicontrol Action, select the action to apply when the signal is
+            emitted.
+    \endlist
+
+    The properties of the connection depend on the selected action:
+
+    \list
+        \li \uicontrol {Call Function} sets the function to call.
+        \li \uicontrol {Assign} sets the source and target properties.
+        \li \uicontrol {Change State} sets a target state within a state group.
+        \li \uicontrol {Set Property} sets a component property.
+        \li \uicontrol {Print Message} sets a text to show.
+    \endlist
+
+    \section2 Add conditions
+
+    Use the connection editor to create the JavaScript expressions for actions
+    with conditions. An action connects a component to a signal, whereas
+    conditions fetch property values from other components and compare them to
+    each other. You can then use JavaScript expressions to change the components.
+
+    Select \uicontrol {Add Condition} to add logic to the selected action.
+
+    \image {qmldesigner-connections-editor-else.webp} {Adding a connection in the connection editor.}
+
+    To include an \c else statement, select \uicontrol {Add Else Statement}.
+
+    To use complex conditional statements:
+
+    \list 1
+        \li Select \uicontrol {{}} to open \uicontrol {Action Editor}.
+        \li Enter JavaScript statements.
+        \li Close the dialog to apply the changes.
+    \endlist
+
+    For more information about the logical operators that you can use to
+    construct conditional expressions, see \l {Summary of logical operators}.
+
+    \section2 Create JavaScript expressions
+
+    To create JavaScript expressions for actions in the connection editor:
+
+    \list
+      \li Connect component signals to actions.
+          \image {qmldesigner-connections-ConditionalAction-Autometic.webp} {The connection editor showing a JavaScript expression.}
+      \li Select \uicontrol {{}} to open the \uicontrol {Action Editor} view and
+            write JavaScript expressions with components and logical expressions.
+          \image {qmldesigner-connections-ConditionalAction-Manual.webp} {A JavaScript code snippet in Action Editor.}
+    \endlist
+
+    \note In the connection editor, you can only create single-level
+    \e {if-else} expressions. To create nested expressions, select \uicontrol {{}}.
+
+    \section2 Jump to the code
+
+    To go to the code in the \uicontrol Code view, select \imagejumptocode16px
+    (\uicontrol {Jump to the code}) in the connection editor.
+
+    \section1 Remove connections
+
+    To delete a connection, select it in \uicontrol Connections and then select
+    \imageminus (\uicontrol Remove).
+
+    \section1 See connections in action
+
+    Watch this video for practical examples of the \uicontrol {Connection} view workflow:
+    \youtube KDxnMQzgmIY
+
+    \sa {Use UI components}{How to: Use UI components}, {Qt Quick UI design},
+    {Designing Qt Quick UIs}
+*/

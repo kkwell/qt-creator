@@ -119,7 +119,7 @@ QString VectorType::toString() const
     if (elementType()->asBoolType() != nullptr)
         prefix = "b";
     else if (elementType()->asIntType() != nullptr)
-        prefix = "i'";
+        prefix = "i";
     else if (elementType()->asUIntType() != nullptr)
         prefix = "u";
     else if (elementType()->asDoubleType() != nullptr)
@@ -341,6 +341,41 @@ bool Struct::isLessThan(const Type *other) const
     return false;
 }
 
+QList<Symbol *> InterfaceBlock::members() const
+{
+    QList<Symbol *> m;
+    for (Symbol *s : _members) {
+        if (! s->name().isEmpty())
+            m.append(s);
+    }
+    return m;
+}
+
+void InterfaceBlock::add(Symbol *member)
+{
+    _members.append(member);
+}
+
+Symbol *InterfaceBlock::find(const QString &name) const
+{
+    for (Symbol *s : _members) {
+        if (s->name() == name)
+            return s;
+    }
+    return nullptr;
+}
+
+bool InterfaceBlock::isEqualTo(const Type *other) const
+{
+    Q_UNUSED(other)
+    return false;
+}
+
+bool InterfaceBlock::isLessThan(const Type *other) const
+{
+    Q_UNUSED(other)
+    return false;
+}
 
 QString Function::toString() const
 {
@@ -447,6 +482,46 @@ bool SamplerType::isLessThan(const Type *other) const
     const SamplerType *samp = other->asSamplerType();
     Q_ASSERT(samp != nullptr);
     return _kind < samp->kind();
+}
+
+QString ImageType::toString() const
+{
+    return QLatin1String(Parser::spell[_kind]);
+}
+
+bool ImageType::isEqualTo(const Type *other) const
+{
+    if (other) {
+        if (const ImageType *img = other->asImageType())
+            return _kind == img->kind();
+    }
+    return false;
+}
+
+bool ImageType::isLessThan(const Type *other) const
+{
+    Q_ASSERT(other != nullptr);
+    const ImageType *img = other->asImageType();
+    Q_ASSERT(img != nullptr);
+    return _kind < img->kind();
+}
+
+bool SubroutineType::isEqualTo(const Type *other) const
+{
+    if (other) {
+        if (const SubroutineType *sub = other->asSubroutineType()) {
+            return _name == sub->_name;
+        }
+    }
+    return false;
+}
+
+bool SubroutineType::isLessThan(const Type *other) const
+{
+    Q_ASSERT(other != nullptr);
+    const SubroutineType *sub = other->asSubroutineType();
+    Q_ASSERT(sub != nullptr);
+    return _name < sub->_name;
 }
 
 OverloadSet::OverloadSet(Scope *enclosingScope)

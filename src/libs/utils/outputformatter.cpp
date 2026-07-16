@@ -19,6 +19,10 @@
 #include <QRegularExpressionMatch>
 #include <QTextCursor>
 
+#ifdef WITH_TESTS
+#include <QTest>
+#endif
+
 #include <numeric>
 
 namespace Utils {
@@ -42,23 +46,27 @@ Q_GLOBAL_STATIC_WITH_ARGS(QString, linkSep, {"::"})
 
 QString OutputLineParser::createLinkTarget(const FilePath &filePath, int line = -1, int column = -1)
 {
-    return *linkPrefix() + filePath.toString() + *linkSep() + QString::number(line)
+    return *linkPrefix() + filePath.toUrlishString() + *linkSep() + QString::number(line)
             + *linkSep() + QString::number(column);
 }
 
 bool OutputLineParser::isLinkTarget(const QString &target)
 {
-    return target.startsWith(*linkPrefix());
+    // TODO: Can we use the generic file scheme for our internal links as well?
+    return target.startsWith(*linkPrefix()) || target.startsWith("file://");
 }
 
 Link OutputLineParser::parseLinkTarget(const QString &target)
 {
-    const QStringList parts = target.mid(linkPrefix()->length()).split(*linkSep());
+    const QStringList parts = target.startsWith(*linkPrefix)
+        ? target.mid(linkPrefix()->size()).split(*linkSep())
+        : target.mid(7).split(':');
     if (parts.isEmpty())
         return {};
-    return Link(FilePath::fromString(parts.first()),
-                parts.length() > 1 ? parts.at(1).toInt() : 0,
-                parts.length() > 2 ? parts.at(2).toInt() - 1 : 0);
+    return Link(
+        FilePath::fromString(parts.first()),
+        parts.length() > 1 ? parts.at(1).toInt() : 0,
+        parts.length() > 2 ? parts.at(2).toInt() - 1 : 0);
 }
 
 // The redirection mechanism is needed for broken build tools (e.g. xcodebuild) that get invoked
@@ -130,7 +138,7 @@ FilePath OutputLineParser::absoluteFilePath(const FilePath &filePath) const
     if (candidates.count() == 1)
         return candidates.first();
 
-    QString fp = filePath.toString();
+    QString fp = filePath.toUrlishString();
     while (fp.startsWith("../"))
         fp.remove(0, 3);
     bool found = false;
@@ -149,7 +157,7 @@ void OutputLineParser::addLinkSpecForAbsoluteFilePath(
     int pos,
     int len)
 {
-    if (filePath.toFileInfo().isAbsolute())
+    if (filePath.isAbsolutePath())
         linkSpecs.append({pos, len, createLinkTarget(filePath, lineNo, column)});
 }
 
@@ -187,7 +195,7 @@ bool Utils::OutputLineParser::fileExists(const FilePath &fp) const
 
 QString OutputLineParser::rightTrimmed(const QString &in)
 {
-    int pos = in.length();
+    int pos = in.size();
     for (; pos > 0; --pos) {
         if (!in.at(pos - 1).isSpace())
             break;
@@ -218,8 +226,8 @@ public:
     PostPrintAction postPrintAction;
     bool boldFontEnabled = true;
     bool prependCarriageReturn = false;
-    bool prependLineFeed = false;
     bool forwardStdOutToStdError = false;
+    QColor explicitBackground;
 };
 
 OutputFormatter::OutputFormatter() : d(new Private) { }
@@ -287,17 +295,26 @@ void OutputFormatter::overridePostPrintAction(const PostPrintAction &postPrintAc
     d->postPrintAction = postPrintAction;
 }
 
-static void checkAndFineTuneColors(QTextCharFormat *format)
+static void checkAndFineTuneColors(QTextCharFormat *format, const QColor &background)
 {
     QTC_ASSERT(format, return);
-    const QColor fgColor = StyleHelper::ensureReadableOn(format->background().color(),
+    const QColor bgColor = background.isValid()
+            ? background
+            : (format->hasProperty(QTextCharFormat::BackgroundBrush)
+               ? format->background().color()
+               : Utils::creatorColor(Theme::PaletteBase));
+    const QColor fgColor = StyleHelper::ensureReadableOn(bgColor,
                                                          format->foreground().color());
     format->setForeground(fgColor);
 }
 
-void OutputFormatter::doAppendMessage(const QString &text, OutputFormat format)
+void OutputFormatter::doAppendMessage(const QString &text, OutputFormat format, LineStatus lineStatus)
 {
     QTextCharFormat charFmt = charFormat(format);
+    const auto addNewlineIfApplicable = [&] {
+        if (lineStatus == LineStatus::Complete)
+            append("\n", charFmt);
+    };
 
     QList<FormattedText> formattedText = parseAnsi(text, charFmt);
     const QString cleanLine = std::accumulate(formattedText.begin(), formattedText.end(), QString(),
@@ -314,23 +331,24 @@ void OutputFormatter::doAppendMessage(const QString &text, OutputFormat format)
                 ? *res.formatOverride : outputTypeForParser(involvedParsers.last(), format);
         if (formatForParser != format && cleanLine == text && formattedText.length() == 1) {
             charFmt = charFormat(formatForParser);
-            checkAndFineTuneColors(&charFmt);
+            checkAndFineTuneColors(&charFmt, d->explicitBackground);
             formattedText.first().format = charFmt;
         }
     }
 
     if (res.newContent) {
-        append(res.newContent.value(), charFmt);
+        append(*res.newContent, charFmt);
+        addNewlineIfApplicable();
         return;
     }
 
     const QList<FormattedText> linkified = linkifiedText(formattedText, res.linkSpecs);
     for (FormattedText output : linkified) {
-        checkAndFineTuneColors(&output.format);
+        checkAndFineTuneColors(&output.format, d->explicitBackground);
         append(output.text, output.format);
+        charFmt = output.format;
     }
-    if (linkified.isEmpty())
-        append({}, charFmt); // This might cause insertion of a newline character.
+    addNewlineIfApplicable();
 
     for (OutputLineParser * const p : std::as_const(involvedParsers)) {
         if (d->postPrintAction)
@@ -419,7 +437,7 @@ const QList<FormattedText> OutputFormatter::linkifiedText(
         for (int nextLocalTextPos = 0; nextLocalTextPos < t.text.size(); ) {
             const auto copyRestOfSegmentAsIs = [&] {
                 linkified << FormattedText(t.text.mid(nextLocalTextPos), t.format);
-                totalTextLengthSoFar += t.text.length() - nextLocalTextPos;
+                totalTextLengthSoFar += t.text.size() - nextLocalTextPos;
             };
 
             // We are out of links.
@@ -441,7 +459,7 @@ const QList<FormattedText> OutputFormatter::linkifiedText(
 
             // We ignore links that would cross format boundaries.
             if (localLinkStartPos < nextLocalTextPos
-                    || localLinkStartPos + linkSpec.length > t.text.length()) {
+                    || localLinkStartPos + linkSpec.length > t.text.size()) {
                 copyRestOfSegmentAsIs();
                 break;
             }
@@ -464,7 +482,6 @@ void OutputFormatter::append(const QString &text, const QTextCharFormat &format)
 {
     if (!plainTextEdit())
         return;
-    flushTrailingNewline();
     int startPos = 0;
     int crPos = -1;
     while ((crPos = text.indexOf('\r', startPos)) >= 0)  {
@@ -497,6 +514,98 @@ QList<OutputLineParser *> OutputFormatter::lineParsers() const
 {
     return d->lineParsers;
 }
+
+// Handles all lines starting with "A" and the following ones up to and including the next
+// one starting with "A".
+class TestFormatterA : public OutputLineParser
+{
+private:
+    Result handleLine(const QString &text, OutputFormat) override
+    {
+        static const QString replacement = "handled by A";
+        if (m_handling) {
+            if (text.startsWith("A")) {
+                m_handling = false;
+                return {Status::Done, {}, replacement};
+            }
+            return {Status::InProgress, {}, replacement};
+        }
+        if (text.startsWith("A")) {
+            m_handling = true;
+            return {Status::InProgress, {}, replacement};
+        }
+        return Status::NotHandled;
+    }
+
+    bool m_handling = false;
+};
+
+// Handles all lines starting with "B". No continuation logic.
+class TestFormatterB : public OutputLineParser
+{
+private:
+    Result handleLine(const QString &text, OutputFormat) override
+    {
+        if (text.startsWith("B"))
+            return {Status::Done, {}, QString("handled by B")};
+        return Status::NotHandled;
+    }
+};
+
+class OutputFormatterTest final : public QObject
+{
+    Q_OBJECT
+
+private slots:
+    void testOutputFormatter();
+};
+
+void OutputFormatterTest::testOutputFormatter()
+{
+    const QString input =
+            "B to be handled by B\r\r\n"
+            "not to be handled\n\n\n\n"
+            "A to be handled by A\n"
+            "continuation for A\r\n"
+            "B looks like B, but still continuation for A\r\n"
+            "A end of A\n"
+            "A next A\n"
+            "A end of next A\n"
+            " A trick\r\n"
+            "line with \r embedded carriage return\n"
+            "B to be handled by B\n";
+    const QString output =
+            "handled by B\n"
+            "not to be handled\n\n\n\n"
+            "handled by A\n"
+            "handled by A\n"
+            "handled by A\n"
+            "handled by A\n"
+            "handled by A\n"
+            "handled by A\n"
+            " A trick\n"
+            " embedded carriage return\n"
+            "handled by B\n";
+
+    // Stress-test the implementation by providing the input in chunks, splitting at all possible
+    // offsets.
+    for (int i = 0; i < input.size(); ++i) {
+        OutputFormatter formatter;
+        QPlainTextEdit textEdit;
+        formatter.setPlainTextEdit(&textEdit);
+        formatter.setLineParsers({new TestFormatterB, new TestFormatterA});
+        formatter.appendMessage(input.left(i), StdOutFormat);
+        formatter.appendMessage(input.mid(i), StdOutFormat);
+        formatter.flush();
+        QCOMPARE(textEdit.toPlainText(), output);
+    }
+}
+
+QObject *createOutputFormatterTest()
+{
+    return new OutputFormatterTest;
+}
+
 #endif // WITH_TESTS
 
 void OutputFormatter::clearLastLine()
@@ -528,16 +637,8 @@ void OutputFormatter::initFormats()
 void OutputFormatter::flushIncompleteLine()
 {
     clearLastLine();
-    doAppendMessage(d->incompleteLine.first, d->incompleteLine.second);
+    doAppendMessage(d->incompleteLine.first, d->incompleteLine.second, LineStatus::Incomplete);
     d->incompleteLine.first.clear();
-}
-
-void Utils::OutputFormatter::flushTrailingNewline()
-{
-    if (d->prependLineFeed) {
-        d->cursor.insertText("\n");
-        d->prependLineFeed = false;
-    }
 }
 
 void OutputFormatter::dumpIncompleteLine(const QString &line, OutputFormat format)
@@ -604,11 +705,15 @@ void OutputFormatter::setForwardStdOutToStdError(bool enabled)
     d->forwardStdOutToStdError = enabled;
 }
 
+void Utils::OutputFormatter::setExplicitBackgroundColor(const QColor &color)
+{
+    d->explicitBackground = color;
+}
+
 void OutputFormatter::flush()
 {
     if (!d->incompleteLine.first.isEmpty())
         flushIncompleteLine();
-    flushTrailingNewline();
     d->escapeCodeHandler.endFormatScope();
     for (OutputLineParser * const p : std::as_const(d->lineParsers))
         p->flush();
@@ -684,16 +789,19 @@ void OutputFormatter::appendMessage(const QString &text, OutputFormat format)
 
     // Forward all complete lines to the specialized formatting code, and handle a
     // potential trailing incomplete line the same way as above.
+    d->cursor.beginEditBlock();
     for (int startPos = 0; ;) {
         const int eolPos = out.indexOf('\n', startPos);
         if (eolPos == -1) {
             dumpIncompleteLine(out.mid(startPos), format);
             break;
         }
-        doAppendMessage(out.mid(startPos, eolPos - startPos), format);
-        d->prependLineFeed = true;
+        doAppendMessage(out.mid(startPos, eolPos - startPos), format, LineStatus::Complete);
         startPos = eolPos + 1;
     }
+    d->cursor.endEditBlock();
 }
 
 } // namespace Utils
+
+#include "outputformatter.moc"

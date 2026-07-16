@@ -28,6 +28,7 @@ add_qtc_library(TestMocks OBJECT
     projectstorageobservermock.h
     projectstoragepathwatchermock.h
     projectstoragepathwatchernotifiermock.h
+    projectstoragetriggerupdatemock.h
     qmldocumentparsermock.h
     qmltypesparsermock.h
     sourcepathcachemock.h sourcepathcachemock.cpp
@@ -40,4 +41,5 @@ add_qtc_library(TestMocks OBJECT
     sqlitetransactionbackendmock.h
     sqlitewritestatementmock.cpp
     sqlitewritestatementmock.h
+    textmodifiermock.h
 )

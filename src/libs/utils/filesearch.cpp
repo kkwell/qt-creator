@@ -13,7 +13,8 @@
 #include <QLoggingCategory>
 #include <QRegularExpression>
 #include <QScopeGuard>
-#include <QTextCodec>
+#include <QStack>
+#include <QTimer>
 
 Q_LOGGING_CATEGORY(searchLog, "qtc.utils.filesearch", QtWarningMsg)
 
@@ -23,7 +24,7 @@ const int MAX_LINE_SIZE = 400;
 
 static QString clippedText(const QString &text, int maxLength)
 {
-    if (text.length() > maxLength)
+    if (text.size() > maxLength)
         return text.left(maxLength) + QChar(0x2026); // '...'
     return text;
 }
@@ -48,7 +49,7 @@ static SearchResultItems searchWithoutRegExp(const QFuture<void> &future, const 
     const bool wholeWord = (flags & QTextDocument::FindWholeWords);
     const QString searchTermLower = searchTerm.toLower();
     const QString searchTermUpper = searchTerm.toUpper();
-    const int termMaxIndex = searchTerm.length() - 1;
+    const int termMaxIndex = searchTerm.size() - 1;
     const QChar *termData = searchTerm.constData();
     const QChar *termDataLower = searchTermLower.constData();
     const QChar *termDataUpper = searchTermUpper.constData();
@@ -61,7 +62,7 @@ static SearchResultItems searchWithoutRegExp(const QFuture<void> &future, const 
     while (!stream.atEnd()) {
         ++lineNr;
         const QString chunk = stream.readLine();
-        const int chunkLength = chunk.length();
+        const int chunkLength = chunk.size();
         const QChar *chunkPtr = chunk.constData();
         const QChar *chunkEnd = chunkPtr + chunkLength - 1;
         for (const QChar *regionPtr = chunkPtr; regionPtr + termMaxIndex <= chunkEnd; ++regionPtr) {
@@ -116,7 +117,7 @@ static SearchResultItems searchWithoutRegExp(const QFuture<void> &future, const 
                     SearchResultItem result;
                     result.setFilePath(filePath);
                     result.setMainRange(lineNr, regionPtr - chunkPtr, termMaxIndex + 1);
-                    result.setDisplayText(clippedText(chunk, MAX_LINE_SIZE));
+                    result.setLineText(clippedText(chunk, MAX_LINE_SIZE));
                     result.setUserData(QStringList());
                     result.setUseTextEditorFont(true);
                     results << result;
@@ -164,7 +165,7 @@ static SearchResultItems searchWithRegExp(const QFuture<void> &future, const QSt
             SearchResultItem result;
             result.setFilePath(filePath);
             result.setMainRange(lineNr, pos, match.capturedLength());
-            result.setDisplayText(resultItemText);
+            result.setLineText(resultItemText);
             result.setUserData(match.capturedTexts());
             result.setUseTextEditorFont(true);
             results << result;
@@ -212,29 +213,30 @@ void searchInContents(QPromise<SearchResultItems> &promise, const QString &searc
         promise.addResult(results);
 }
 
-static inline QString msgCanceled(const QString &searchTerm, int numMatches, int numFilesSearched)
+static QString msgCanceled(const QString &searchTerm, int numMatches, int numFilesSearched)
 {
     return Tr::tr("%1: canceled. %n occurrences found in %2 files.",
                   nullptr, numMatches).arg(searchTerm).arg(numFilesSearched);
 }
 
-static inline QString msgFound(const QString &searchTerm, int numMatches, int numFilesSearched)
+static QString msgFound(const QString &searchTerm, int numMatches, int numFilesSearched)
 {
     return Tr::tr("%1: %n occurrences found in %2 files.",
                   nullptr, numMatches).arg(searchTerm).arg(numFilesSearched);
 }
 
-static bool getFileContent(const FilePath &filePath, QTextCodec *encoding,
+static bool getFileContent(const FilePath &filePath, const TextEncoding &encoding,
                            QString *tempString, const QMap<FilePath, QString> &fileToContentsMap)
 {
     if (fileToContentsMap.contains(filePath)) {
         *tempString = fileToContentsMap.value(filePath);
     } else {
-        const expected_str<QByteArray> content = filePath.fileContents();
+        const Result<QByteArray> content = filePath.fileContents();
         if (!content)
             return false;
-        *tempString = QTC_GUARD(encoding) ? encoding->toUnicode(*content)
-                                          : QTextCodec::codecForLocale()->toUnicode(*content);
+        QTC_CHECK(encoding.isValid());
+        TextEncoding enc = encoding.isValid() ? encoding : TextEncoding::encodingForLocale();
+        *tempString = enc.decode(*content);
     }
     return true;
 }
@@ -370,7 +372,7 @@ QString expandRegExpReplacement(const QString &replaceText, const QStringList &c
     // handles \1 \\ \& \t \n $1 $$ $&
     QString result;
     const int numCaptures = capturedTexts.size() - 1;
-    const int replaceLength = replaceText.length();
+    const int replaceLength = replaceText.size();
     for (int i = 0; i < replaceLength; ++i) {
         QChar c = replaceText.at(i);
         if (c == QLatin1Char('\\') && i < replaceLength - 1) {
@@ -425,7 +427,7 @@ static QString matchCaseReplacementHelper(const QString &originalText, const QSt
     bool restIsLowerCase = true; // to be verified
     bool restIsUpperCase = true; // to be verified
 
-    for (int i = 1; i < originalText.length(); ++i) {
+    for (int i = 1; i < originalText.size(); ++i) {
         if (originalText.at(i).isUpper())
             restIsLowerCase = false;
         else if (originalText.at(i).isLower())
@@ -461,7 +463,7 @@ static QList<QRegularExpression> filtersToRegExps(const QStringList &filters)
 static bool matches(const QList<QRegularExpression> &exprList, const FilePath &filePath)
 {
     return Utils::anyOf(exprList, [&filePath](const QRegularExpression &reg) {
-        return (reg.match(filePath.toString()).hasMatch()
+        return (reg.match(filePath.toUrlishString()).hasMatch()
                 || reg.match(filePath.fileName()).hasMatch());
     });
 }
@@ -522,8 +524,8 @@ QString matchCaseReplacement(const QString &originalText, const QString &replace
         return replaceText;
 
     //Find common prefix & suffix: these will be unaffected
-    const int replaceTextLen = replaceText.length();
-    const int originalTextLen = originalText.length();
+    const int replaceTextLen = replaceText.size();
+    const int originalTextLen = originalText.size();
 
     int prefixLen = 0;
     for (; prefixLen < replaceTextLen && prefixLen < originalTextLen; ++prefixLen)
@@ -556,11 +558,11 @@ int FileContainerIterator::progressMaximum() const
 }
 
 static QList<FileContainerIterator::Item> toFileListCache(const FilePaths &fileList,
-                                                          const QList<QTextCodec *> &encodings)
+                                                          const QList<TextEncoding> &encodings)
 {
     QList<FileContainerIterator::Item> items;
     items.reserve(fileList.size());
-    QTextCodec *defaultEncoding = QTextCodec::codecForLocale();
+    const TextEncoding defaultEncoding = TextEncoding::encodingForLocale();
     for (int i = 0; i < fileList.size(); ++i)
         items.append({fileList.at(i), encodings.value(i, defaultEncoding)});
     return items;
@@ -583,15 +585,15 @@ static FileContainerIterator::Advancer fileListAdvancer(
 }
 
 static FileContainer::AdvancerProvider fileListAdvancerProvider(const FilePaths &fileList,
-    const QList<QTextCodec *> &encodings)
+    const QList<TextEncoding> &encodings)
 {
-    const auto initialCache = toFileListCache(fileList, encodings);
-    return [=] { return fileListAdvancer(initialCache); };
+    return [initCache = toFileListCache(fileList, encodings)] { return fileListAdvancer(initCache); };
 }
 
 FileListContainer::FileListContainer(const FilePaths &fileList,
-                                     const QList<QTextCodec *> &encodings)
-    : FileContainer(fileListAdvancerProvider(fileList, encodings), fileList.size()) {}
+                                     const QList<TextEncoding> &encoding)
+    : FileContainer(fileListAdvancerProvider(fileList, encoding), fileList.size())
+{}
 
 const int s_progressMaximum = 1000;
 
@@ -599,14 +601,14 @@ struct SubDirCache
 {
     SubDirCache(const FilePaths &directories, const QStringList &filters,
                 const QStringList &exclusionFilters,
-                const FilterFileFunction &filterFileFuntion, QTextCodec *encoding);
+                const FilterFileFunction &filterFileFuntion, const TextEncoding &encoding);
 
     std::optional<FileContainerIterator::Item> updateCache(int advanceIntoIndex,
                                                            const SubDirCache &initialCache);
 
     FilterFilesFunction m_filterFilesFunction;
     FilterFileFunction m_filterFileFunction;
-    QTextCodec *m_encoding = nullptr;
+    TextEncoding m_encoding;
     QStack<FilePath> m_dirs;
     QSet<FilePath> m_knownDirs;
     QStack<qreal> m_progressValues;
@@ -624,10 +626,11 @@ struct SubDirCache
 
 SubDirCache::SubDirCache(const FilePaths &directories, const QStringList &filters,
                          const QStringList &exclusionFilters,
-                         const FilterFileFunction &filterFileFuntion, QTextCodec *encoding)
+                         const FilterFileFunction &filterFileFuntion,
+                         const TextEncoding &encoding)
     : m_filterFilesFunction(filterFilesFunction(filters, exclusionFilters, filterFileFuntion))
     , m_filterFileFunction(filterFileFuntion)
-    , m_encoding(encoding == nullptr ? QTextCodec::codecForLocale() : encoding)
+    , m_encoding(encoding.isValid() ? encoding : TextEncoding::encodingForLocale())
 {
     const qreal maxPer = qreal(s_progressMaximum) / directories.count();
     for (const FilePath &directoryEntry : directories) {
@@ -708,8 +711,8 @@ std::optional<FileContainerIterator::Item> SubDirCache::updateCache(int advanceI
 
 static FileContainerIterator::Advancer subDirAdvancer(const SubDirCache &initialCache)
 {
-    const std::shared_ptr<SubDirCache> sharedCache(new SubDirCache(initialCache));
-    return [=](FileContainerIterator::Data *iterator) {
+    return [initialCache, sharedCache = std::make_shared<SubDirCache>(initialCache)]
+        (FileContainerIterator::Data *iterator) {
         ++iterator->m_index;
         const std::optional<FileContainerIterator::Item> item
             = sharedCache->updateCache(iterator->m_index, initialCache);
@@ -726,7 +729,7 @@ static FileContainerIterator::Advancer subDirAdvancer(const SubDirCache &initial
 
 static FileContainer::AdvancerProvider subDirAdvancerProvider(const FilePaths &directories,
     const QStringList &filters, const QStringList &exclusionFilters,
-    const FilterFileFunction &filterFileFuntion, QTextCodec *encoding)
+    const FilterFileFunction &filterFileFuntion, const TextEncoding &encoding)
 {
     const SubDirCache initialCache(directories, filters, exclusionFilters, filterFileFuntion,
                                    encoding);
@@ -734,14 +737,14 @@ static FileContainer::AdvancerProvider subDirAdvancerProvider(const FilePaths &d
 }
 
 SubDirFileContainer::SubDirFileContainer(const FilePaths &directories, const QStringList &filters,
-                                         const QStringList &exclusionFilters, QTextCodec *encoding)
+                                         const QStringList &exclusionFilters, const TextEncoding &encoding)
     : FileContainer(subDirAdvancerProvider(directories, filters, exclusionFilters, {}, encoding),
                     s_progressMaximum)
 {}
 
 SubDirFileContainer::SubDirFileContainer(const FilePaths &directories,
                                          const FilterFileFunction &filterFileFuntion,
-                                         QTextCodec *encoding)
+                                         const TextEncoding &encoding)
     : FileContainer(subDirAdvancerProvider(directories, {}, {}, filterFileFuntion, encoding),
                     s_progressMaximum)
 {}

@@ -19,6 +19,7 @@
 #include <QXmlStreamWriter>
 
 #ifdef QT_GUI_LIB
+#include "guiutils.h"
 #include <QMessageBox>
 #endif
 
@@ -39,7 +40,7 @@ static QString rectangleToString(const QRect &r)
 
 static QRect stringToRectangle(const QString &v)
 {
-    static QRegularExpression pattern("^(\\d+)x(\\d+)([-+]\\d+)([-+]\\d+)$");
+    static const QRegularExpression pattern("^(\\d+)x(\\d+)([-+]\\d+)([-+]\\d+)$");
     Q_ASSERT(pattern.isValid());
     const QRegularExpressionMatch match = pattern.match(v);
     return match.hasMatch() ?
@@ -122,7 +123,6 @@ struct ParseValueStackEntry
 ParseValueStackEntry::ParseValueStackEntry(const QVariant &aSimpleValue, const QString &k)
     : typeId(QMetaType::Type(aSimpleValue.typeId())), key(k), simpleValue(aSimpleValue)
 {
-    QTC_ASSERT(simpleValue.isValid(), return);
 }
 
 QVariant ParseValueStackEntry::value() const
@@ -162,7 +162,8 @@ public:
     QVariantMap parse(const FilePath &file);
 
 private:
-    QVariant readSimpleValue(QXmlStreamReader &r, const QXmlStreamAttributes &attributes) const;
+    std::optional<QVariant> readSimpleValue(
+        QXmlStreamReader &r, const QXmlStreamAttributes &attributes) const;
 
     bool handleStartElement(QXmlStreamReader &r);
     bool handleEndElement(const QStringView name);
@@ -214,12 +215,12 @@ bool ParseContext::handleStartElement(QXmlStreamReader &r)
         const QString key = attributes.hasAttribute(keyAttribute) ?
                     attributes.value(keyAttribute).toString() : QString();
         // This reads away the end element, so, handle end element right here.
-        const QVariant v = readSimpleValue(r, attributes);
-        if (!v.isValid()) {
+        const std::optional<QVariant> v = readSimpleValue(r, attributes);
+        if (!v.has_value()) {
             qWarning() << ParseContext::formatWarning(r, QString::fromLatin1("Failed to read element \"%1\".").arg(name.toString()));
             return false;
         }
-        m_valueStack.push_back(ParseValueStackEntry(v, key));
+        m_valueStack.push_back(ParseValueStackEntry(*v, key));
         return handleEndElement(name);
     }
     if (name == valueListElement) {
@@ -268,11 +269,16 @@ QString ParseContext::formatWarning(const QXmlStreamReader &r, const QString &me
     return result;
 }
 
-QVariant ParseContext::readSimpleValue(QXmlStreamReader &r, const QXmlStreamAttributes &attributes) const
+std::optional<QVariant> ParseContext::readSimpleValue(
+    QXmlStreamReader &r, const QXmlStreamAttributes &attributes) const
 {
     // Simple value
     const QStringView type = attributes.value(typeAttribute);
     const QString text = r.readElementText();
+    if (type.isEmpty() || type == QLatin1String("UnknownType")) {
+        QTC_CHECK(text.isEmpty());
+        return QVariant();
+    }
     if (type == QLatin1String("QChar")) { // Workaround: QTBUG-12345
         QTC_ASSERT(text.size() == 1, return QVariant());
         return QVariant(QChar(text.at(0)));
@@ -284,7 +290,7 @@ QVariant ParseContext::readSimpleValue(QXmlStreamReader &r, const QXmlStreamAttr
     QVariant value;
     value.setValue(text);
     value.convert(QMetaType::fromName(type.toLatin1().constData()));
-    return value;
+    return value.isValid() ? std::make_optional(value) : std::nullopt;
 }
 
 // =================================== PersistentSettingsReader
@@ -330,11 +336,7 @@ FilePath PersistentSettingsReader::filePath()
     \sa Utils::PersistentSettingsReader
 */
 
-#if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
 static QString xmlAttrFromKey(const QString &key) { return key; }
-#else
-static QString xmlAttrFromKey(const QString &key) { return key; }
-#endif
 
 static void writeVariantValue(QXmlStreamWriter &w, const QVariant &variant, const QString &key = {})
 {
@@ -366,7 +368,8 @@ static void writeVariantValue(QXmlStreamWriter &w, const QVariant &variant, cons
         // ignore void pointers
     } else {
         w.writeStartElement(valueElement);
-        w.writeAttribute(typeAttribute, QLatin1String(variant.typeName()));
+        const auto typeName = QLatin1String(variant.isValid() ? variant.typeName() : "UnknownType");
+        w.writeAttribute(typeAttribute, QLatin1String(typeName));
         if (!key.isEmpty())
             w.writeAttribute(keyAttribute, xmlAttrFromKey(key));
         switch (variant.typeId()) {
@@ -385,23 +388,20 @@ PersistentSettingsWriter::PersistentSettingsWriter(const FilePath &fileName, con
     m_fileName(fileName), m_docType(docType)
 { }
 
-bool PersistentSettingsWriter::save(const Store &data, QString *errorString) const
+Result<> PersistentSettingsWriter::save(const Store &data, [[maybe_unused]] bool showErrorInMessageBox) const
 {
     if (data == m_savedData)
-        return true;
-    return write(data, errorString);
-}
+        return ResultOk;
+
+    const Result<> res = write(data);
 
 #ifdef QT_GUI_LIB
-bool PersistentSettingsWriter::save(const Store &data, QWidget *parent) const
-{
-    QString errorString;
-    const bool success = save(data, &errorString);
-    if (!success)
-        QMessageBox::critical(parent, Tr::tr("File Error"), errorString);
-    return success;
-}
+    if (showErrorInMessageBox && !res)
+        QMessageBox::critical(dialogParent(), Tr::tr("File Error"), res.error());
 #endif // QT_GUI_LIB
+
+    return res;
+}
 
 FilePath PersistentSettingsWriter::fileName() const
 { return m_fileName; }
@@ -412,9 +412,11 @@ void PersistentSettingsWriter::setContents(const Store &data)
     m_savedData = data;
 }
 
-bool PersistentSettingsWriter::write(const Store &data, QString *errorString) const
+Result<> PersistentSettingsWriter::write(const Store &data) const
 {
-    m_fileName.parentDir().ensureWritableDir();
+    const Result<> result = m_fileName.parentDir().ensureWritableDir();
+    if (!result)
+        return result;
     FileSaver saver(m_fileName, QIODevice::Text);
     if (!saver.hasError()) {
         QXmlStreamWriter w(saver.file());
@@ -438,15 +440,14 @@ bool PersistentSettingsWriter::write(const Store &data, QString *errorString) co
 
         saver.setResult(&w);
     }
-    bool ok = saver.finalize();
-    if (ok) {
-        m_savedData = data;
-    } else if (errorString) {
+
+    if (const Result<> res = saver.finalize(); !res) {
         m_savedData.clear();
-        *errorString = saver.errorString();
+        return res;
     }
 
-    return ok;
+    m_savedData = data;
+    return ResultOk;
 }
 
 } // namespace Utils

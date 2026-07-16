@@ -7,9 +7,9 @@
 
 #include <coreplugin/editormanager/editormanager.h>
 
-#include <debugger/analyzer/diagnosticlocation.h>
+#include <utils/link.h>
 
-using namespace Debugger;
+using namespace Utils;
 
 namespace Cppcheck::Internal {
 
@@ -79,10 +79,10 @@ DiagnosticView::~DiagnosticView() = default;
 
 void DiagnosticView::openEditorForCurrentIndex()
 {
-    const QVariant v = model()->data(currentIndex(), Debugger::DetailedErrorView::LocationRole);
-    const auto loc = v.value<Debugger::DiagnosticLocation>();
-    if (loc.isValid())
-        Core::EditorManager::openEditorAt(Utils::Link(loc.filePath, loc.line, loc.column - 1));
+    const QVariant v = model()->data(currentIndex(), ProjectExplorer::DetailedErrorView::LocationRole);
+    Link loc = v.value<Link>();
+    if (loc.hasValidTarget())
+        Core::EditorManager::openEditorAt(loc);
 }
 
 void DiagnosticView::mouseDoubleClickEvent(QMouseEvent *event)

@@ -13,7 +13,9 @@
 #include <cppeditor/cppmodelmanager.h>
 #include <cppeditor/projectpart.h>
 
+#include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/projectmanager.h>
+#include <projectexplorer/target.h>
 
 #include <qmljs/parser/qmljsast_p.h>
 #include <qmljs/qmljsdialect.h>
@@ -157,7 +159,6 @@ QString QuickTestParser::quickTestName(const CPlusPlus::Document::Ptr &doc) cons
 QList<Document::Ptr> QuickTestParser::scanDirectoryForQuickTestQmlFiles(const FilePath &srcDir)
 {
     FilePaths dirs({srcDir});
-    QStringList dirsStr({srcDir.toString()});
     ModelManagerInterface *qmlJsMM = QmlJSTools::Internal::ModelManager::instance();
     // make sure even files not listed in pro file are available inside the snapshot
     PathsAndLanguages paths;
@@ -165,18 +166,16 @@ QList<Document::Ptr> QuickTestParser::scanDirectoryForQuickTestQmlFiles(const Fi
     ModelManagerInterface::importScan(ModelManagerInterface::workingCopy(), paths, qmlJsMM,
         false /*emitDocumentChanges*/, false /*onlyTheLib*/, true /*forceRescan*/ );
 
-    QDirIterator it(srcDir.toString(),
-                    QDir::Dirs | QDir::NoDotAndDotDot,
-                    QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        it.next();
-        auto subDir = FilePath::fromFileInfo(it.fileInfo()).canonicalPath();
-        dirs.append(subDir);
-        dirsStr.append(subDir.toString());
-    }
+    srcDir.iterateDirectory(
+        [&dirs](const FilePath &p) {
+            dirs.append(p.canonicalPath());
+            return IterationPolicy::Continue;
+        },
+        FileFilter{{}, QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories});
+
     QMetaObject::invokeMethod(
         this,
-        [this, dirsStr] { QuickTestParser::doUpdateWatchPaths(dirsStr); },
+        [this, dirs] { QuickTestParser::doUpdateWatchPaths(dirs); },
         Qt::QueuedConnection);
 
     QList<Document::Ptr> foundDocs;
@@ -186,7 +185,6 @@ QList<Document::Ptr> QuickTestParser::scanDirectoryForQuickTestQmlFiles(const Fi
         const QList<Document::Ptr> docs = snapshot.documentsInDirectory(path);
         for (const Document::Ptr &doc : docs) {
             const FilePath fi = doc->fileName();
-            //const QFileInfo fi(doc->fileName());
             // using working copy above might provide no more existing files
             if (!fi.exists())
                 continue;
@@ -215,7 +213,7 @@ static bool checkQmlDocumentForQuickTestCode(QPromise<TestParseResultPtr> &promi
     if (!qmlVisitor.isValid())
         return false;
 
-    const QVector<QuickTestCaseSpec> &testCases = qmlVisitor.testCases();
+    const QList<QuickTestCaseSpec> &testCases = qmlVisitor.testCases();
 
     for (const QuickTestCaseSpec &testCase : testCases) {
         const QString testCaseName = testCase.m_caseName;
@@ -260,7 +258,7 @@ bool QuickTestParser::handleQtQuickTest(QPromise<TestParseResultPtr> &promise,
     if (ppList.isEmpty()) // happens if shutting down while parsing
         return false;
     const FilePath cppFileName = document->filePath();
-    const FilePath proFile = FilePath::fromString(ppList.at(0)->projectFile);
+    const FilePath proFile = ppList.at(0)->projectFile;
     {
         QWriteLocker lock(&m_parseLock);
         m_mainCppFiles.insert(cppFileName, proFile);
@@ -282,21 +280,20 @@ bool QuickTestParser::handleQtQuickTest(QPromise<TestParseResultPtr> &promise,
     return result;
 }
 
-static QMap<QString, QDateTime> qmlFilesWithMTime(const QString &directory)
+static QMap<QString, QDateTime> qmlFilesWithMTime(const FilePath &directory)
 {
-    const QFileInfoList &qmlFiles = QDir(directory).entryInfoList({ "*.qml" },
-                                                                  QDir::Files, QDir::Name);
+    const FilePaths qmlFiles = directory.dirEntries({{ "*.qml" }, QDir::Files}, QDir::Name);
     QMap<QString, QDateTime> filesAndDates;
-    for (const QFileInfo &info : qmlFiles)
+    for (const FilePath &info : qmlFiles)
         filesAndDates.insert(info.fileName(), info.lastModified());
     return filesAndDates;
 }
 
-void QuickTestParser::handleDirectoryChanged(const QString &directory)
+void QuickTestParser::handleDirectoryChanged(const FilePath &directory)
 {
     const QMap<QString, QDateTime> &filesAndDates = qmlFilesWithMTime(directory);
     const QMap<QString, QDateTime> &watched = m_watchedFiles.value(directory);
-    const QList<QString> &keys = watched.keys();
+    const QStringList &keys = watched.keys();
     if (filesAndDates.keys() != keys) { // removed or added files
         m_watchedFiles[directory] = filesAndDates;
         TestTreeModel::instance()->parser()->emitUpdateTestTree(this);
@@ -307,7 +304,7 @@ void QuickTestParser::handleDirectoryChanged(const QString &directory)
         if (timestampChanged) {
             m_watchedFiles[directory] = filesAndDates;
             PathsAndLanguages paths;
-            paths.maybeInsert(FilePath::fromString(directory), Dialect::Qml);
+            paths.maybeInsert(directory, Dialect::Qml);
             ModelManagerInterface *qmlJsMM = ModelManagerInterface::instance();
             ModelManagerInterface::importScan(ModelManagerInterface::workingCopy(), paths,
                                               qmlJsMM,
@@ -318,10 +315,29 @@ void QuickTestParser::handleDirectoryChanged(const QString &directory)
     }
 }
 
-void QuickTestParser::doUpdateWatchPaths(const QStringList &directories)
+void QuickTestParser::doUpdateWatchPaths(const FilePaths &directories)
 {
-    for (const QString &dir : directories) {
-        m_directoryWatcher.addPath(dir);
+    FilePaths builddirs;
+    if (const ProjectExplorer::Project *project = ProjectExplorer::ProjectManager::startupProject()) {
+        for (const ProjectExplorer::Target *target : project->targets()) {
+            for (const ProjectExplorer::BuildConfiguration *bc : target->buildConfigurations()) {
+                FilePath builddir = bc->buildDirectory();
+                if (!builddir.isEmpty())
+                    builddirs.append(bc->buildDirectory());
+            }
+        }
+    }
+
+    for (const FilePath &dir : directories) {
+        if (m_directoryWatcher.watchesDirectory(dir))
+            continue;
+        // do not watch any build dir or any of the content
+        if (Utils::anyOf(builddirs, [dir](const FilePath &builddir) {
+                return dir.isChildOf(builddir);
+            })) {
+            continue;
+        }
+        m_directoryWatcher.addDirectory(dir, FileSystemWatcher::WatchAllChanges);
         m_watchedFiles[dir] = qmlFilesWithMTime(dir);
     }
 }
@@ -331,12 +347,12 @@ QuickTestParser::QuickTestParser(ITestFramework *framework)
 {
     connect(ProjectExplorer::ProjectManager::instance(),
             &ProjectExplorer::ProjectManager::startupProjectChanged, this, [this] {
-        const QStringList &dirs = m_directoryWatcher.directories();
+        const FilePaths &dirs = m_directoryWatcher.directories();
         if (!dirs.isEmpty())
-            m_directoryWatcher.removePaths(dirs);
+            m_directoryWatcher.removeDirectories(dirs);
         m_watchedFiles.clear();
     });
-    connect(&m_directoryWatcher, &QFileSystemWatcher::directoryChanged,
+    connect(&m_directoryWatcher, &FileSystemWatcher::directoryChanged,
             this, &QuickTestParser::handleDirectoryChanged);
 }
 

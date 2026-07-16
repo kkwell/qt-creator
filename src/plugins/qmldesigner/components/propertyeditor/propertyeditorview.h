@@ -4,6 +4,7 @@
 #pragma once
 
 #include "abstractview.h"
+#include "qmldesigner_global.h"
 
 #include <QHash>
 #include <QObject>
@@ -21,28 +22,45 @@ QT_END_NAMESPACE
 namespace QmlDesigner {
 
 class CollapseButton;
+class DynamicPropertiesModel;
 class ModelNode;
 class PropertyEditorQmlBackend;
 class PropertyEditorView;
 class PropertyEditorWidget;
+class QmlObjectNode;
 
-class PropertyEditorView : public AbstractView
+class QMLDESIGNER_EXPORT PropertyEditorView : public AbstractView
 {
     Q_OBJECT
 
 public:
+    struct ExtraPropertyViewsCallbacks
+    {
+        using RegistrationFunc = std::function<void(PropertyEditorView *editor)>;
+        using AddFunc = std::function<void(const QString &parentName)>;
+        using TargetSelectionFunc = std::function<void(const ModelNode &node)>;
+
+        AddFunc addEditor = [](...) {};
+        RegistrationFunc registerEditor = [](...) {};
+        RegistrationFunc unregisterEditor = [](...) {};
+        TargetSelectionFunc setTargetNode = [](...) {};
+    };
+
     PropertyEditorView(class AsynchronousImageCache &imageCache,
                        ExternalDependenciesInterface &externalDependencies);
     ~PropertyEditorView() override;
 
     bool hasWidget() const override;
     WidgetInfo widgetInfo() override;
-
+    void setWidgetInfo(WidgetInfo info);
     void selectedNodesChanged(const QList<ModelNode> &selectedNodeList,
                               const QList<ModelNode> &lastSelectedNodeList) override;
     void nodeAboutToBeRemoved(const ModelNode &removedNode) override;
-
+    void nodeRemoved(const ModelNode &removedNode,
+                     const NodeAbstractProperty &parentProperty,
+                     PropertyChangeFlags propertyChange) override;
     void propertiesRemoved(const QList<AbstractProperty>& propertyList) override;
+    void propertiesAboutToBeRemoved(const QList<AbstractProperty> &propertyList) override;
 
     void modelAttached(Model *model) override;
 
@@ -53,6 +71,9 @@ public:
     void auxiliaryDataChanged(const ModelNode &node,
                               AuxiliaryDataKeyView key,
                               const QVariant &data) override;
+
+    void signalDeclarationPropertiesChanged(const QVector<SignalDeclarationProperty> &propertyList,
+                                            PropertyChangeFlags propertyChange) override;
 
     void instanceInformationsChanged(const QMultiHash<ModelNode, InformationName> &informationChangedHash) override;
 
@@ -70,6 +91,16 @@ public:
                         const NodeAbstractProperty &oldPropertyParent,
                         AbstractView::PropertyChangeFlags propertyChange) override;
 
+    void modelNodePreviewPixmapChanged(const ModelNode &node,
+                                       const QPixmap &pixmap,
+                                       const QByteArray &requestId) override;
+
+    void importsChanged(const Imports &addedImports, const Imports &removedImports) override;
+    void customNotification(const AbstractView *view,
+                            const QString &identifier,
+                            const QList<ModelNode> &nodeList,
+                            const QList<QVariant> &data) override;
+
     void dragStarted(QMimeData *mimeData) override;
     void dragEnded() override;
 
@@ -77,15 +108,35 @@ public:
     void changeExpression(const QString &name);
     void exportPropertyAsAlias(const QString &name);
     void removeAliasExport(const QString &name);
+    void demoteCustomManagerRole();
+    void setExtraPropertyViewsCallbacks(const ExtraPropertyViewsCallbacks &callbacks);
 
     bool locked() const;
+    bool isSelectionLocked() const { return m_isSelectionLocked; }
 
     void currentTimelineChanged(const ModelNode &node) override;
 
     void refreshMetaInfos(const TypeIds &deletedTypeIds) override;
 
+    DynamicPropertiesModel *dynamicPropertiesModel() const;
+
+    void setUnifiedAction(QAction *unifiedAction);
+    QAction *unifiedAction() const;
+
+    ModelNode activeNode() const;
+    void setTargetNode(const ModelNode &node);
+
+    void setInstancesCount(int n);
+    int instancesCount() const;
+
+    virtual void registerWidgetInfo() override;
+    virtual void deregisterWidgetInfo() override;
+
+    void showExtraWidget();
+    void closeExtraWidget();
+
     static void setExpressionOnObjectNode(const QmlObjectNode &objectNode,
-                                          const PropertyName &name,
+                                          PropertyNameView name,
                                           const QString &expression);
 
     static void generateAliasForProperty(const ModelNode &modelNode,
@@ -94,43 +145,72 @@ public:
     static void removeAliasForProperty(const ModelNode &modelNode,
                                          const QString &propertyName);
 
+public slots:
+    void handleToolBarAction(int action);
+
 protected:
-    void timerEvent(QTimerEvent *event) override;
-    void setupPane(const TypeName &typeName);
-    void setValue(const QmlObjectNode &fxObjectNode, const PropertyName &name, const QVariant &value);
+    void setValue(const QmlObjectNode &fxObjectNode, PropertyNameView name, const QVariant &value);
     bool eventFilter(QObject *obj, QEvent *event) override;
 
 private: //functions
     void reloadQml();
     void updateSize();
-    void setupPanes();
 
     void select();
-    void setSelelectedModelNode();
+    void loadLockedNode();
+    void saveLockedNode();
+    void setActiveNodeToSelection();
 
     void delayedResetView();
     void setupQmlBackend();
 
-    void commitVariantValueToModel(const PropertyName &propertyName, const QVariant &value);
-    void commitAuxValueToModel(const PropertyName &propertyName, const QVariant &value);
-    void removePropertyFromModel(const PropertyName &propertyName);
+    void commitVariantValueToModel(PropertyNameView propertyName, const QVariant &value);
+    void commitAuxValueToModel(PropertyNameView propertyName, const QVariant &value);
+    void removePropertyFromModel(PropertyNameView propertyName);
 
     bool noValidSelection() const;
+    void highlightTextureProperties(bool highlight = true);
+
+    void setActiveNode(const ModelNode &node);
+    QList<ModelNode> currentNodes() const;
+
+    void setSelectionUnlocked();
+    void setIsSelectionLocked(bool locked);
+
+    bool isNodeOrChildSelected(const ModelNode &node) const;
+    void setSelectionUnlockedIfNodeRemoved(const ModelNode &removedNode);
+
+    static PropertyEditorView *instance(); // TODO: remove
+
+    NodeMetaInfo findCommonAncestor(const ModelNode &node);
+    AuxiliaryDataKey activeNodeAuxKey() const;
+
+    void showAsExtraWidget();
 
 private: //variables
+    enum class ManageCustomNotifications { No, Yes };
     AsynchronousImageCache &m_imageCache;
-    ModelNode m_selectedNode;
+    ModelNode m_activeNode;
     QShortcut *m_updateShortcut;
-    int m_timerId;
+    QPointer<QAction> m_unifiedAction;
+    std::unique_ptr<DynamicPropertiesModel> m_dynamicPropertiesModel;
     PropertyEditorWidget* m_stackedWidget;
     QString m_qmlDir;
     QHash<QString, PropertyEditorQmlBackend *> m_qmlBackendHash;
-    PropertyEditorQmlBackend *m_qmlBackEndForCurrentType;
+    PropertyEditorQmlBackend *m_qmlBackEndForCurrentType = nullptr;
     PropertyComponentGenerator m_propertyComponentGenerator;
     PropertyEditorComponentGenerator m_propertyEditorComponentGenerator{m_propertyComponentGenerator};
     bool m_locked;
-    bool m_setupCompleted;
-    QTimer *m_singleShotTimer;
+    bool m_textureAboutToBeRemoved = false;
+    bool m_isSelectionLocked = false;
+    int m_instancesCount = 0;
+    QString m_parentWidgetId = "";
+    QString m_uniqueWidgetId = "Properties";
+    QString m_widgetTabName = tr("Properties");
+    ManageCustomNotifications m_manageNotifications;
+    ExtraPropertyViewsCallbacks m_extraPropertyViewsCallbacks;
+
+    friend class PropertyEditorDynamicPropertiesProxyModel;
 };
 
 } //QmlDesigner

@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "androidconstants.h"
-#include "androidglobal.h"
 #include "androidrunconfiguration.h"
-#include "androidtoolchain.h"
 #include "androidtr.h"
 
+#include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/buildsystem.h>
-#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/environmentkitaspect.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/runconfigurationaspects.h>
 #include <projectexplorer/target.h>
@@ -23,7 +22,7 @@
 using namespace ProjectExplorer;
 using namespace Utils;
 
-namespace Android {
+namespace Android::Internal {
 
 class BaseStringListAspect final : public Utils::StringAspect
 {
@@ -48,16 +47,15 @@ public:
 class AndroidRunConfiguration : public RunConfiguration
 {
 public:
-    AndroidRunConfiguration(Target *target, Id id)
-        : RunConfiguration(target, id)
+    AndroidRunConfiguration(BuildConfiguration *bc, Id id)
+        : RunConfiguration(bc, id)
     {
         environment.addSupportedBaseEnvironment(Tr::tr("Clean Environment"), {});
 
-        extraAppArgs.setMacroExpander(macroExpander());
-        extraAppArgs.addOnChanged(this, [this, target] {
-            if (target->buildConfigurations().first()->buildType() == BuildConfiguration::BuildType::Release) {
-                const QString buildKey = target->activeBuildKey();
-                target->buildSystem()->setExtraData(buildKey,
+        extraAppArgs.addOnChanged(this, [this, bc] {
+            if (bc->target()->buildConfigurations().first()->buildType() == BuildConfiguration::BuildType::Release) {
+                const QString buildKey = bc->activeBuildKey();
+                bc->buildSystem()->setExtraData(buildKey,
                                                     Android::Constants::AndroidApplicationArgs,
                                                     extraAppArgs());
             }
@@ -84,8 +82,6 @@ public:
             setDisplayName(bti.displayName);
             setDefaultDisplayName(bti.displayName);
         });
-
-        connect(target, &Target::buildSystemUpdated, this, &RunConfiguration::update);
     }
 
     EnvironmentAspect environment{this};
@@ -100,8 +96,9 @@ class AndroidRunConfigurationFactory : public RunConfigurationFactory
 public:
     AndroidRunConfigurationFactory()
     {
-        registerRunConfiguration<AndroidRunConfiguration>("Qt4ProjectManager.AndroidRunConfiguration:");
+        registerRunConfiguration<AndroidRunConfiguration>(Android::Constants::ANDROID_RUNCONFIG_ID);
         addSupportedTargetDeviceType(Android::Constants::ANDROID_DEVICE_TYPE);
+        setExecutionTypeId(Constants::ANDROID_EXECUTION_TYPE_ID);
     }
 };
 
@@ -110,4 +107,4 @@ void setupAndroidRunConfiguration()
     static AndroidRunConfigurationFactory theAndroidRunConfigurationFactory;
 }
 
-} // namespace Android
+} // namespace Android::Internal

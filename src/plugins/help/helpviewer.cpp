@@ -6,8 +6,6 @@
 #include "helptr.h"
 #include "localhelpmanager.h"
 
-#include <coreplugin/icore.h>
-
 #include <utils/fadingindicator.h>
 #include <utils/fileutils.h>
 #include <utils/temporarydirectory.h>
@@ -15,13 +13,16 @@
 #include <QFileInfo>
 #include <QUrl>
 
-#include <QGuiApplication>
 #include <QDesktopServices>
+#include <QGuiApplication>
 #include <QMouseEvent>
+#include <QNativeGestureEvent>
 
 #include <QHelpEngine>
 
-using namespace Help::Internal;
+using namespace Utils;
+
+namespace Help::Internal {
 
 struct ExtensionMap {
     const char *extension;
@@ -142,13 +143,15 @@ bool HelpViewer::launchWithExternalApp(const QUrl &url)
 
         const QString& path = resolvedUrl.path();
         if (!canOpenPage(path)) {
-            Utils::TempFileSaver saver(Utils::TemporaryDirectory::masterDirectoryPath()
+            TempFileSaver saver(TemporaryDirectory::masterDirectoryPath()
                 + "/qtchelp_XXXXXX." + QFileInfo(path).completeSuffix());
             saver.setAutoRemove(false);
             if (!saver.hasError())
                 saver.write(helpEngine.fileData(resolvedUrl));
-            if (saver.finalize(Core::ICore::dialogParent()))
-                QDesktopServices::openUrl(QUrl(saver.filePath().toString()));
+            if (const Result<> res = saver.finalize())
+                QDesktopServices::openUrl(QUrl(saver.filePath().toUrlishString()));
+            else
+                FileUtils::showError(res.error());
             return true;
         }
         return false;
@@ -159,7 +162,7 @@ bool HelpViewer::launchWithExternalApp(const QUrl &url)
 
 void HelpViewer::home()
 {
-    setSource(LocalHelpManager::homePage());
+    setSource(helpSettings().homePage());
 }
 
 void HelpViewer::scaleUp()
@@ -189,19 +192,35 @@ void HelpViewer::wheelEvent(QWheelEvent *event)
     QWidget::wheelEvent(event);
 }
 
+bool HelpViewer::event(QEvent *e)
+{
+    if (e->type() == QEvent::NativeGesture) {
+        auto ev = static_cast<QNativeGestureEvent *>(e);
+        if (ev->gestureType() == Qt::SwipeNativeGesture) {
+            if (ev->value() > 0 && isBackwardAvailable()) { // swipe from right to left == go back
+                backward();
+                return true;
+            } else if (ev->value() <= 0 && isForwardAvailable()) {
+                forward();
+                return true;
+            }
+        }
+    }
+    return QWidget::event(e);
+}
+
 void HelpViewer::incrementZoom(int steps)
 {
     const int incrementPercentage = 10 * steps; // 10 percent increase by single step
-    const int previousZoom = LocalHelpManager::fontZoom();
+    const int previousZoom = helpSettings().fontZoom();
     applyZoom(previousZoom + incrementPercentage);
 }
 
 void HelpViewer::applyZoom(int percentage)
 {
-    const int newZoom = LocalHelpManager::setFontZoom(percentage);
-    Utils::FadingIndicator::showText(this,
-                                     Tr::tr("Zoom: %1%").arg(newZoom),
-                                     Utils::FadingIndicator::SmallText);
+    helpSettings().fontZoom.setValue(percentage);
+    FadingIndicator::showText(this, Tr::tr("Zoom: %1%").arg(helpSettings().fontZoom()),
+                              FadingIndicator::SmallText);
 }
 
 void HelpViewer::slotLoadStarted()
@@ -238,3 +257,5 @@ bool HelpViewer::handleForwardBackwardMouseButtons(QMouseEvent *event)
 
     return false;
 }
+
+} // Help::Internal

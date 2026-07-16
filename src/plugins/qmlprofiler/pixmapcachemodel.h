@@ -5,16 +5,16 @@
 
 #include "qmlprofilertimelinemodel.h"
 
-#include <QStringList>
 #include <QColor>
 #include <QSize>
+#include <QStringList>
 
-namespace QmlProfiler {
-namespace Internal {
+namespace QmlProfiler::Internal {
 
 class PixmapCacheModel : public QmlProfilerTimelineModel
 {
     Q_OBJECT
+
 public:
     enum CacheState {
         Uncached,    // After loading started (or some other proof of existence) or after uncaching
@@ -49,7 +49,7 @@ public:
         Pixmap() = default;
         Pixmap(const QString &url) : url(url), sizes(1) {}
         QString url;
-        QVector<PixmapState> sizes;
+        QList<PixmapState> sizes;
     };
 
     enum PixmapEventType {
@@ -86,7 +86,7 @@ public:
 
     QVariantMap details(int index) const override;
 
-    void loadEvent(const QmlEvent &event, const QmlEventType &type) override;
+    void loadEvent(const QmlDebug::QmlEvent &event, const QmlDebug::QmlEventType &type) override;
     void finalize() override;
     void clear() override;
 
@@ -103,8 +103,8 @@ private:
     int updateCacheCount(int m_lastCacheSizeEvent, qint64 startTime, qint64 pixSize,
                          Item &newEvent, int typeId);
 
-    QVector<Item> m_data;
-    QVector<Pixmap> m_pixmaps;
+    QList<Item> m_data;
+    QList<Pixmap> m_pixmaps;
 
     qint64 m_maxCacheSize = 1;
     int m_lastCacheSizeEvent = -1;
@@ -113,5 +113,4 @@ private:
     static const int s_pixmapCacheCountHue = 240;
 };
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

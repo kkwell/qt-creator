@@ -1,7 +1,7 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include <QtTest>
+#include <QTest>
 
 #include <array>
 #include <deque>
@@ -28,6 +28,7 @@ private slots:
     void findOrDefault();
     void toReferences();
     void take();
+    void takeAll();
     void sorted();
 };
 
@@ -61,7 +62,7 @@ struct Struct : public BaseStruct
 void tst_Algorithm::anyOf()
 {
     {
-        const QList<QString> strings({"1", "3", "132"});
+        const QStringList strings({"1", "3", "132"});
         QVERIFY(Utils::anyOf(strings, [](const QString &s) { return s == "132"; }));
         QVERIFY(!Utils::anyOf(strings, [](const QString &s) { return s == "1324"; }));
     }
@@ -86,7 +87,7 @@ void tst_Algorithm::transform()
     // same container type
     {
         // QList has standard inserter
-        const QList<QString> strings({"1", "3", "132"});
+        const QStringList strings({"1", "3", "132"});
         const QList<int> i1 = Utils::transform(strings, [](const QString &s) { return s.toInt(); });
         QCOMPARE(i1, QList<int>({1, 3, 132}));
         const QList<int> i2 = Utils::transform(strings, stringToInt);
@@ -118,7 +119,7 @@ void tst_Algorithm::transform()
     // different container types
     {
         // QList to QSet
-        const QList<QString> strings({"1", "3", "132"});
+        const QStringList strings({"1", "3", "132"});
         const QSet<int> i1 = Utils::transform<QSet>(strings, [](const QString &s) { return s.toInt(); });
         QCOMPARE(i1, QSet<int>({1, 3, 132}));
         const QSet<int> i2 = Utils::transform<QSet>(strings, stringToInt);
@@ -238,9 +239,9 @@ void tst_Algorithm::transform()
         QCOMPARE(trans, QList<double>({1.5, 7.5, 17.5}));
     }
     {
-        // specific result container with one template parameter (QVector)
+        // specific result container with one template parameter (QList)
         std::vector<int> v({1, 2, 3, 4});
-        const QVector<BaseStruct *> trans = Utils::transform<QVector<BaseStruct *>>(v, [](int i) {
+        const QList<BaseStruct *> trans = Utils::transform<QList<BaseStruct *>>(v, [](int i) {
             return new Struct(i);
         });
         QCOMPARE(trans.size(), 4);
@@ -279,14 +280,14 @@ void tst_Algorithm::transform()
     {
         // specific result container with member function
         QList<Struct> v({1, 2, 3, 4});
-        const QVector<double> trans = Utils::transform<QVector<double>>(v, &Struct::getMember);
-        QCOMPARE(trans, QVector<double>({1.0, 2.0, 3.0, 4.0}));
+        const QList<double> trans = Utils::transform<QList<double>>(v, &Struct::getMember);
+        QCOMPARE(trans, QList<double>({1.0, 2.0, 3.0, 4.0}));
     }
     {
         // specific result container with member
         QList<Struct> v({1, 2, 3, 4});
-        const QVector<double> trans = Utils::transform<QVector<double>>(v, &Struct::member);
-        QCOMPARE(trans, QVector<double>({1.0, 2.0, 3.0, 4.0}));
+        const QList<double> trans = Utils::transform<QList<double>>(v, &Struct::member);
+        QCOMPARE(trans, QList<double>({1.0, 2.0, 3.0, 4.0}));
     }
     {
         // non-const container and function parameter
@@ -295,7 +296,7 @@ void tst_Algorithm::transform()
         const std::vector<std::reference_wrapper<Struct>> trans
             = Utils::transform(v, [](Struct &s) { return std::ref(s); });
         // different container type
-        QVector<Struct> v2({1, 2, 3, 4});
+        QList<Struct> v2({1, 2, 3, 4});
         const std::vector<std::reference_wrapper<Struct>> trans2
             = Utils::transform<std::vector>(v, [](Struct &s) { return std::ref(s); });
         // temporaries
@@ -430,14 +431,14 @@ void tst_Algorithm::sort()
     QStringList s2({"13", "31", "22"});
     Utils::sort(s2, [](const QString &a, const QString &b) { return a[1] < b[1]; });
     QCOMPARE(s2, QStringList({"31", "22", "13"}));
-    QList<QString> s3({"12345", "3333", "22"});
+    QStringList s3({"12345", "3333", "22"});
     Utils::sort(s3, &QString::size);
-    QCOMPARE(s3, QList<QString>({"22", "3333", "12345"}));
+    QCOMPARE(s3, QStringList({"22", "3333", "12345"}));
     QList<Struct> s4({4, 3, 2, 1});
     Utils::sort(s4, &Struct::member);
     QCOMPARE(s4, QList<Struct>({1, 2, 3, 4}));
     // member function with pointers
-    QList<QString> arr1({"12345", "3333", "22"});
+    QStringList arr1({"12345", "3333", "22"});
     QList<QString *> s5({&arr1[0], &arr1[1], &arr1[2]});
     QCOMPARE(Utils::sorted(s5, &QString::size), QList<QString *>({&arr1[2], &arr1[1], &arr1[0]}));
     // member with pointers
@@ -569,6 +570,80 @@ void tst_Algorithm::take()
         std::optional<Struct> r1 = Utils::take(v, &Struct::member);
         QVERIFY(static_cast<bool>(r1));
         QCOMPARE(r1.value().member, 1);
+    }
+}
+
+void tst_Algorithm::takeAll()
+{
+    // lambda predicate
+    {
+        QList<Struct> v{1, 2, 3, 4, 5, 6, 7, 8};
+        const QList<Struct> taken = Utils::takeAll(v, [](const Struct &s) { return s.member > 5; });
+        QCOMPARE(taken, QList<Struct>({6, 7, 8}));
+        QCOMPARE(v, QList<Struct>({1, 2, 3, 4, 5}));
+    }
+    // no matches - returns empty, container unchanged
+    {
+        QList<Struct> v{1, 2, 3};
+        const QList<Struct> taken = Utils::takeAll(v, [](const Struct &s) { return s.member > 10; });
+        QVERIFY(taken.isEmpty());
+        QCOMPARE(v, QList<Struct>({1, 2, 3}));
+    }
+    // all match - returns all, container becomes empty
+    {
+        QList<Struct> v{2, 4, 6};
+        const QList<Struct> taken = Utils::takeAll(v, [](const Struct &s) { return s.isEven(); });
+        QCOMPARE(taken, QList<Struct>({2, 4, 6}));
+        QVERIFY(v.isEmpty());
+    }
+    // empty container
+    {
+        QList<Struct> v;
+        const QList<Struct> taken = Utils::takeAll(v, [](const Struct &) { return true; });
+        QVERIFY(taken.isEmpty());
+        QVERIFY(v.isEmpty());
+    }
+    // pointer to member function
+    {
+        QList<Struct> v{1, 2, 3, 4, 5, 6};
+        const QList<Struct> taken = Utils::takeAll(v, &Struct::isOdd);
+        QCOMPARE(taken, QList<Struct>({1, 3, 5}));
+        QCOMPARE(v, QList<Struct>({2, 4, 6}));
+    }
+    // pointer to member
+    {
+        QList<Struct> v{0, 0, 1, 0, 2, 0, 3};
+        const QList<Struct> taken = Utils::takeAll(v, &Struct::member);
+        QCOMPARE(taken, QList<Struct>({1, 2, 3}));
+        QCOMPARE(v, QList<Struct>({0, 0, 0, 0}));
+    }
+    // std::vector
+    {
+        std::vector<Struct> v{1, 2, 3, 4, 5, 6};
+        const std::vector<Struct> taken = Utils::takeAll(v, &Struct::isEven);
+        QCOMPARE(taken, std::vector<Struct>({2, 4, 6}));
+        QCOMPARE(v, std::vector<Struct>({1, 3, 5}));
+    }
+    // move-only types (unique_ptr)
+    {
+        std::vector<std::unique_ptr<Struct>> v;
+        v.push_back(std::make_unique<Struct>(1));
+        v.push_back(std::make_unique<Struct>(2));
+        v.push_back(std::make_unique<Struct>(3));
+        v.push_back(std::make_unique<Struct>(4));
+        v.push_back(std::make_unique<Struct>(5));
+        v.push_back(std::make_unique<Struct>(6));
+        const auto taken = Utils::takeAll(v, [](const std::unique_ptr<Struct> &s) {
+            return s->isEven();
+        });
+        QCOMPARE(taken.size(), static_cast<size_t>(3));
+        QCOMPARE(taken[0]->member, 2);
+        QCOMPARE(taken[1]->member, 4);
+        QCOMPARE(taken[2]->member, 6);
+        QCOMPARE(v.size(), static_cast<size_t>(3));
+        QCOMPARE(v[0]->member, 1);
+        QCOMPARE(v[1]->member, 3);
+        QCOMPARE(v[2]->member, 5);
     }
 }
 

@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <utils/fileutils.h>
+
 #include <QList>
 #include <QStackedWidget>
 
@@ -15,8 +17,7 @@ QT_END_NAMESPACE
 
 namespace TextEditor { class TextEditorWidget; }
 
-namespace Android {
-namespace Internal {
+namespace Android::Internal {
 
 class SplashScreenWidget;
 
@@ -24,8 +25,9 @@ class SplashScreenContainerWidget : public QStackedWidget
 {
     Q_OBJECT
 public:
-    explicit SplashScreenContainerWidget(QWidget *parent,
-                                         TextEditor::TextEditorWidget *textEditorWidget);
+    explicit SplashScreenContainerWidget(QWidget *parent);
+    bool initialize(TextEditor::TextEditorWidget *textEditorWidget);
+    void refresh();
     void loadImages();
     bool hasImages() const;
     bool hasPortraitImages() const;
@@ -37,6 +39,8 @@ public:
     QString landscapeImageName() const;
     void checkSplashscreenImage(const QString &name);
     bool isSplashscreenEnabled();
+    Utils::FilePath manifestDirectory() const;
+
 signals:
     void splashScreensModified();
 
@@ -62,5 +66,4 @@ private:
     QToolButton *m_convertSplashscreen = nullptr;
 };
 
-} // namespace Internal
-} // namespace Android
+} // namespace Android::Internal

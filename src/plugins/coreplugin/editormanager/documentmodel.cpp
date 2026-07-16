@@ -4,17 +4,20 @@
 #include "documentmodel.h"
 #include "documentmodel_p.h"
 
-#include "ieditor.h"
 #include "../coreplugintr.h"
 #include "../documentmanager.h"
 #include "../idocument.h"
+#include "../vcsmanager.h"
+#include "ieditor.h"
 
 #include <utils/algorithm.h>
 #include <utils/dropsupport.h>
+#include <utils/environment.h>
 #include <utils/filepath.h>
 #include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
 #include <utils/qtcassert.h>
+#include <utils/treemodel.h>
 #include <utils/utilsicons.h>
 
 #include <QAbstractItemModel>
@@ -62,6 +65,40 @@ std::pair<int, int> positionEntry(const QList<DocumentModel::Entry *> &list,
     return {to_remove, to_insert};
 }
 } // namespace
+
+DocumentModelPrivate::DocumentModelPrivate()
+{
+    connect(
+        VcsManager::instance(),
+        &VcsManager::updateFileState,
+        this,
+        &DocumentModelPrivate::handleUpdateFileState);
+    connect(
+        VcsManager::instance(),
+        &VcsManager::clearFileState,
+        this,
+        &DocumentModelPrivate::handleClearFileState);
+}
+
+void DocumentModelPrivate::handleUpdateFileState(const FilePath &repository, const QStringList &files)
+{
+    for (const QString &fileName : files) {
+        const FilePath fullPath = repository.pathAppended(fileName);
+        const std::optional<int> entryIndex = DocumentModel::indexOfFilePath(fullPath);
+        if (!entryIndex)
+            continue;
+
+        const QModelIndex idx = index(*entryIndex + 1 /*<no document>*/, 0);
+        if (QTC_GUARD(idx.isValid()))
+            emit dataChanged(idx, idx, {Qt::ForegroundRole});
+    }
+}
+
+void DocumentModelPrivate::handleClearFileState(const FilePath &repository)
+{
+    Q_UNUSED(repository);
+    emit dataChanged(index(0, 0), index(m_entries.count(), 0), {Qt::ForegroundRole});
+}
 
 DocumentModelPrivate::~DocumentModelPrivate()
 {
@@ -155,7 +192,7 @@ bool DocumentModelPrivate::disambiguateDisplayNames(DocumentModel::Entry *entry)
         return false;
     }
 
-    const FilePath commonAncestor = FileUtils::commonPath(paths);
+    const FilePath commonAncestor = paths.commonPath();
 
     int countWithoutFilePath = 0;
     for (DocumentModel::Entry *e : std::as_const(dups)) {
@@ -166,7 +203,7 @@ bool DocumentModelPrivate::disambiguateDisplayNames(DocumentModel::Entry *entry)
                                                   .arg(++countWithoutFilePath));
             continue;
         }
-        const QString uniqueDisplayName = path.relativeChildPath(commonAncestor).toString();
+        const QString uniqueDisplayName = path.relativeChildPath(commonAncestor).toUserOutput();
         if (uniqueDisplayName != "" && e->document->uniqueDisplayName() != uniqueDisplayName) {
             e->document->setUniqueDisplayName(uniqueDisplayName);
         }
@@ -209,11 +246,14 @@ std::optional<int> DocumentModelPrivate::indexOfFilePath(const Utils::FilePath &
     return index;
 }
 
-void DocumentModelPrivate::removeDocument(int idx)
+/*!
+    Returns the entry to be deleted. The caller has to take responsibility of that.
+*/
+DocumentModel::Entry *DocumentModelPrivate::removeDocument(int idx)
 {
     if (idx < 0)
-        return;
-    QTC_ASSERT(idx < m_entries.size(), return);
+        return nullptr;
+    QTC_ASSERT(idx < m_entries.size(), return nullptr);
     int row = idx + 1/*<no document>*/;
     beginRemoveRows(QModelIndex(), row, row);
     DocumentModel::Entry *entry = m_entries.takeAt(idx);
@@ -225,7 +265,7 @@ void DocumentModelPrivate::removeDocument(int idx)
         m_entryByFixedPath.remove(fixedPath);
     disconnect(entry->document, &IDocument::changed, this, nullptr);
     disambiguateDisplayNames(entry);
-    delete entry;
+    return entry;
 }
 
 std::optional<int> DocumentModelPrivate::indexOfDocument(IDocument *document) const
@@ -306,8 +346,8 @@ QVariant DocumentModelPrivate::data(const QModelIndex &index, int role) const
             return pinnedIcon();
         return QVariant();
     case Qt::ToolTipRole:
-        return entry->filePath().isEmpty() ? entry->displayName() : entry->filePath().toUserOutput();
-    case DocumentModel::FilePathRole:
+        return entry->document->toolTip();
+    case FilePathRole:
         return entry->filePath().toVariant();
     default:
         break;
@@ -322,7 +362,7 @@ void DocumentModelPrivate::itemChanged(IDocument *document)
         return;
     const FilePath fixedPath = DocumentManager::filePathKey(document->filePath(),
                                                             DocumentManager::ResolveLinks);
-    DocumentModel::Entry *entry = m_entries.at(idx.value());
+    DocumentModel::Entry *entry = m_entries.at(*idx);
     bool found = false;
     // The entry's fileName might have changed, so find the previous fileName that was associated
     // with it and remove it, then add the new fileName.
@@ -340,8 +380,8 @@ void DocumentModelPrivate::itemChanged(IDocument *document)
     if (!found && !fixedPath.isEmpty())
         m_entryByFixedPath[fixedPath] = entry;
 
-    if (!disambiguateDisplayNames(m_entries.at(idx.value()))) {
-        QModelIndex mindex = index(idx.value() + 1/*<no document>*/, 0);
+    if (!disambiguateDisplayNames(m_entries.at(*idx))) {
+        QModelIndex mindex = index(*idx + 1 /*<no document>*/, 0);
         emit dataChanged(mindex, mindex);
     }
 
@@ -357,10 +397,9 @@ void DocumentModelPrivate::itemChanged(IDocument *document)
         // Account for the weird requirements of beginMoveRows().
         const int effectiveToIndex = toIndex > fromIndex ? toIndex + 1 : toIndex;
         beginMoveRows(QModelIndex(), fromIndex, fromIndex, QModelIndex(), effectiveToIndex);
-
         m_entries.move(fromIndex - 1, toIndex - 1);
-
         endMoveRows();
+        emit dataChanged(index(toIndex, 0), index(toIndex, 0));
     } else {
         // Nothing to remove or add: The entry did not move.
         QTC_CHECK(positions.first == -1 && positions.second == -1);
@@ -428,7 +467,9 @@ DocumentModel::Entry *DocumentModelPrivate::removeEditor(IEditor *editor)
     const auto it = d->m_editors.find(document);
     QTC_ASSERT(it != d->m_editors.end(), return nullptr);
     it->removeAll(editor);
-    DocumentModel::Entry *entry = DocumentModel::entryForDocument(document);
+    const std::optional<int> idx = d->indexOfDocument(document);
+    QTC_ASSERT(idx, return nullptr);
+    DocumentModel::Entry *entry = d->m_entries.at(*idx);
     QTC_ASSERT(entry, return nullptr);
     if (it->isEmpty()) {
         d->m_editors.erase(it);
@@ -438,16 +479,21 @@ DocumentModel::Entry *DocumentModelPrivate::removeEditor(IEditor *editor)
         entry->document->setUniqueDisplayName(document->uniqueDisplayName());
         entry->document->setId(document->id());
         entry->isSuspended = true;
+        const QModelIndex midx = d->index(*idx + 1 /*<no document>*/, 0);
+        emit d->dataChanged(midx, midx);
     }
     return entry;
 }
 
-void DocumentModelPrivate::removeEntry(DocumentModel::Entry *entry)
+/*!
+    Returns the entry to be deleted. The caller has to take responsibility of that.
+*/
+DocumentModel::Entry *DocumentModelPrivate::removeEntry(DocumentModel::Entry *entry)
 {
     // For non suspended entries, we wouldn't know what to do with the associated editors
-    QTC_ASSERT(entry->isSuspended, return);
+    QTC_ASSERT(entry->isSuspended, return nullptr);
     int index = d->m_entries.indexOf(entry);
-    d->removeDocument(index);
+    return d->removeDocument(index);
 }
 
 void DocumentModelPrivate::removeAllSuspendedEntries(PinnedFileRemovalPolicy pinnedFileRemovalPolicy)
@@ -522,6 +568,8 @@ Utils::FilePath DocumentModel::Entry::filePath() const
 
 QString DocumentModel::Entry::displayName() const
 {
+    if (isSuspended && qtcEnvironmentVariableIsSet("QTC_DEBUG_DOCUMENTMODEL"))
+        return document->displayName() + " (s)";
     return document->displayName();
 }
 

@@ -27,17 +27,14 @@ namespace Qnx::Internal {
 class QnxToolchainConfigWidget : public ToolchainConfigWidget
 {
 public:
-    QnxToolchainConfigWidget(QnxToolchain *tc);
+    QnxToolchainConfigWidget(const ToolchainBundle &bundle);
 
 private:
     void applyImpl() override;
-    void discardImpl() override;
-    bool isDirtyImpl() const override;
     void makeReadOnlyImpl() override { }
 
     void handleSdpPathChange();
 
-    PathChooser *m_compilerCommand;
     PathChooser *m_sdpPath;
     ProjectExplorer::AbiWidget *m_abiWidget;
 };
@@ -58,7 +55,7 @@ static Abis detectTargetAbis(const FilePath &sdpPath)
     if (qnxTarget.isEmpty())
         return result;
 
-    QList<QnxTarget> targets = QnxUtils::findTargets(qnxTarget);
+    const QList<QnxTarget> targets = QnxUtils::findTargets(qnxTarget);
     for (const auto &target : targets) {
         if (!result.contains(target.m_abi))
             result.append(target.m_abi);
@@ -116,11 +113,6 @@ QnxToolchain::QnxToolchain()
     });
 }
 
-std::unique_ptr<ToolchainConfigWidget> QnxToolchain::createConfigurationWidget()
-{
-    return std::make_unique<QnxToolchainConfigWidget>(this);
-}
-
 void QnxToolchain::addToEnvironment(Environment &env) const
 {
     if (env.expandedValueForKey("QNX_HOST").isEmpty() ||
@@ -143,13 +135,22 @@ QStringList QnxToolchain::suggestedMkspecList() const
 
 GccToolchain::DetectedAbisResult QnxToolchain::detectSupportedAbis() const
 {
-    // "unknown-qnx-gnu"is needed to get the "--target=xxx" parameter sent code model,
-    // which gets translated as "x86_64-qnx-gnu", which gets Clang to happily parse
-    // the QNX code.
-    //
-    // Without it on Windows Clang defaults to a MSVC mode, which breaks with
-    // the QNX code, which is mostly GNU based.
-    return GccToolchain::DetectedAbisResult{detectTargetAbis(sdpPath()), "unknown-qnx-gnu"};
+    static const QHash<QString, Abi> qnxTargets {
+        {"arm-qnx-gnu",
+         Abi(Abi::ArmArchitecture, Abi::QnxOS, Abi::GenericFlavor, Abi::ElfFormat, 32)},
+        {"i686-qnx-gnu",
+         Abi(Abi::X86Architecture, Abi::QnxOS, Abi::GenericFlavor, Abi::ElfFormat, 32)},
+        {"x86_64-qnx-gnu",
+         Abi(Abi::X86Architecture, Abi::QnxOS, Abi::GenericFlavor, Abi::ElfFormat, 64)},
+        {"aarch64-qnx-gnu",
+         Abi(Abi::ArmArchitecture, Abi::QnxOS, Abi::GenericFlavor, Abi::ElfFormat, 64)}
+    };
+
+    for (auto itr = qnxTargets.constBegin(); itr != qnxTargets.constEnd(); ++itr) {
+        if (itr.value() == targetAbi())
+            return GccToolchain::DetectedAbisResult({targetAbi()}, itr.key());
+    }
+    return GccToolchain::DetectedAbisResult({targetAbi()}, "");
 }
 
 bool QnxToolchain::operator ==(const Toolchain &other) const
@@ -166,32 +167,24 @@ bool QnxToolchain::operator ==(const Toolchain &other) const
 // QnxToolChainConfigWidget
 //---------------------------------------------------------------------------------
 
-QnxToolchainConfigWidget::QnxToolchainConfigWidget(QnxToolchain *tc)
-    : ToolchainConfigWidget(tc)
-    , m_compilerCommand(new PathChooser)
+QnxToolchainConfigWidget::QnxToolchainConfigWidget(const ToolchainBundle &bundle)
+    : ToolchainConfigWidget(bundle)
     , m_sdpPath(new PathChooser)
     , m_abiWidget(new AbiWidget)
 {
-    m_compilerCommand->setExpectedKind(PathChooser::ExistingCommand);
-    m_compilerCommand->setHistoryCompleter("Qnx.ToolChain.History");
-    m_compilerCommand->setFilePath(tc->compilerCommand());
-    m_compilerCommand->setEnabled(!tc->isAutoDetected());
-
     m_sdpPath->setExpectedKind(PathChooser::ExistingDirectory);
     m_sdpPath->setHistoryCompleter("Qnx.Sdp.History");
-    m_sdpPath->setFilePath(tc->sdpPath());
-    m_sdpPath->setEnabled(!tc->isAutoDetected());
+    m_sdpPath->setFilePath(bundle.get<QnxToolchain>(&QnxToolchain::sdpPath)());
+    m_sdpPath->setEnabled(!bundle.detectionSource().isAutoDetected());
 
     const Abis abiList = detectTargetAbis(m_sdpPath->filePath());
-    m_abiWidget->setAbis(abiList, tc->targetAbi());
-    m_abiWidget->setEnabled(!tc->isAutoDetected() && !abiList.isEmpty());
+    m_abiWidget->setAbis(abiList, bundle.targetAbi());
+    m_abiWidget->setEnabled(!bundle.detectionSource().isAutoDetected() && !abiList.isEmpty());
 
-    m_mainLayout->addRow(Tr::tr("&Compiler path:"), m_compilerCommand);
     //: SDP refers to 'Software Development Platform'.
     m_mainLayout->addRow(Tr::tr("SDP path:"), m_sdpPath);
     m_mainLayout->addRow(Tr::tr("&ABI:"), m_abiWidget);
 
-    connect(m_compilerCommand, &PathChooser::rawPathChanged, this, &ToolchainConfigWidget::dirty);
     connect(m_sdpPath, &PathChooser::rawPathChanged,
             this, &QnxToolchainConfigWidget::handleSdpPathChange);
     connect(m_abiWidget, &AbiWidget::abiChanged, this, &ToolchainConfigWidget::dirty);
@@ -199,37 +192,14 @@ QnxToolchainConfigWidget::QnxToolchainConfigWidget(QnxToolchain *tc)
 
 void QnxToolchainConfigWidget::applyImpl()
 {
-    if (toolchain()->isAutoDetected())
+    if (bundle().detectionSource().isAutoDetected())
         return;
 
-    auto tc = static_cast<QnxToolchain *>(toolchain());
-    Q_ASSERT(tc);
-    QString displayName = tc->displayName();
-    tc->setDisplayName(displayName); // reset display name
-    tc->sdpPath.setValue(m_sdpPath->filePath());
-    tc->setTargetAbi(m_abiWidget->currentAbi());
-    tc->resetToolchain(m_compilerCommand->filePath());
-}
-
-void QnxToolchainConfigWidget::discardImpl()
-{
-    // subwidgets are not yet connected!
-    QSignalBlocker blocker(this);
-    auto tc = static_cast<const QnxToolchain *>(toolchain());
-    m_compilerCommand->setFilePath(tc->compilerCommand());
-    m_sdpPath->setFilePath(tc->sdpPath());
-    m_abiWidget->setAbis(tc->supportedAbis(), tc->targetAbi());
-    if (!m_compilerCommand->filePath().toString().isEmpty())
-        m_abiWidget->setEnabled(true);
-}
-
-bool QnxToolchainConfigWidget::isDirtyImpl() const
-{
-    auto tc = static_cast<const QnxToolchain *>(toolchain());
-    Q_ASSERT(tc);
-    return m_compilerCommand->filePath() != tc->compilerCommand()
-            || m_sdpPath->filePath() != tc->sdpPath()
-            || m_abiWidget->currentAbi() != tc->targetAbi();
+    bundle().setTargetAbi(m_abiWidget->currentAbi());
+    bundle().forEach<QnxToolchain>([this](QnxToolchain &tc) {
+        tc.sdpPath.setValue(m_sdpPath->filePath());
+        tc.resetToolchain(compilerCommand(tc.language()));
+    });
 }
 
 void QnxToolchainConfigWidget::handleSdpPathChange()
@@ -274,6 +244,12 @@ public:
 
         Toolchains tcs = autoDetectHelper(detector.alreadyKnown);
         return tcs;
+    }
+
+    std::unique_ptr<ProjectExplorer::ToolchainConfigWidget> createConfigurationWidget(
+        const ToolchainBundle &bundle) const override
+    {
+        return std::make_unique<QnxToolchainConfigWidget>(bundle);
     }
 };
 

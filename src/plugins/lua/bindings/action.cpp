@@ -3,9 +3,13 @@
 
 #include "../luaengine.h"
 
+#include "utils.h"
+
 #include <coreplugin/actionmanager/actionmanager.h>
+#include <coreplugin/modemanager.h>
 
 using namespace Utils;
+using namespace Core;
 
 namespace Lua::Internal {
 
@@ -14,19 +18,54 @@ void setupActionModule()
     registerProvider("Action", [](sol::state_view lua) -> sol::object {
         sol::table result = lua.create_table();
 
-        result.new_enum("CommandAttribute",
-                        "CA_Hide",
-                        Core::Command::CA_Hide,
-                        "CA_UpdateText",
-                        Core::Command::CA_UpdateText,
-                        "CA_UpdateIcon",
-                        Core::Command::CA_UpdateIcon,
-                        "CA_NonConfigurable",
-                        Core::Command::CA_NonConfigurable);
+        result.new_enum(
+            "CommandAttribute",
+            "CA_Hide",
+            Command::CA_Hide,
+            "CA_UpdateText",
+            Command::CA_UpdateText,
+            "CA_UpdateIcon",
+            Command::CA_UpdateIcon,
+            "CA_NonConfigurable",
+            Command::CA_NonConfigurable);
+
+        struct ScriptCommand
+        {
+            Command *m_cmd;
+            QAction *m_contextAction;
+        };
+
+        result.new_usertype<ScriptCommand>(
+            "Command",
+            sol::no_constructor,
+            "enabled",
+            sol::property(
+                [](ScriptCommand *cmd) { return cmd->m_contextAction->isEnabled(); },
+                [](ScriptCommand *cmd, bool enabled) { cmd->m_contextAction->setEnabled(enabled); }),
+            "keySequences",
+            sol::property([](ScriptCommand* cmd) -> QList<QKeySequence> {
+                return cmd->m_cmd->keySequences();
+            }),
+            "toolTip",
+            sol::property(
+                [](ScriptCommand *cmd) { return cmd->m_contextAction->toolTip(); },
+                [](ScriptCommand *cmd, const QString &toolTip) {
+                    cmd->m_contextAction->setToolTip(toolTip);
+                }),
+            "text",
+            sol::property(
+                [](ScriptCommand *cmd) { return cmd->m_contextAction->text(); },
+                [](ScriptCommand *cmd, const QString &text) {
+                    cmd->m_contextAction->setText(text);
+                }),
+            "icon",
+            sol::property([](ScriptCommand *cmd, const IconFilePathOrString &&icon) {
+                cmd->m_contextAction->setIcon(toIcon(icon)->icon());
+            }));
 
         result["create"] = [parent = std::make_unique<QObject>()](
                                const std::string &actionId, const sol::table &options) mutable {
-            Core::ActionBuilder b(parent.get(), Id::fromString(QString::fromStdString(actionId)));
+            ActionBuilder b(parent.get(), Id::fromString(QString::fromStdString(actionId)));
 
             for (const auto &[k, v] : options) {
                 QString key = k.as<QString>();
@@ -34,9 +73,9 @@ void setupActionModule()
                 if (key == "context")
                     b.setContext(Id::fromString(v.as<QString>()));
                 else if (key == "onTrigger")
-                    b.addOnTriggered([f = v.as<sol::function>()]() {
+                    b.addOnTriggered([f = v.as<sol::main_function>()]() {
                         auto res = void_safe_call(f);
-                        QTC_CHECK_EXPECTED(res);
+                        QTC_CHECK_RESULT(res);
                     });
                 else if (key == "text")
                     b.setText(v.as<QString>());
@@ -45,7 +84,7 @@ void setupActionModule()
                 else if (key == "toolTip")
                     b.setToolTip(v.as<QString>());
                 else if (key == "commandAttributes")
-                    b.setCommandAttribute((Core::Command::CommandAttribute) v.as<int>());
+                    b.setCommandAttributes(Command::CommandAttributes::fromInt(v.as<int>()));
                 else if (key == "commandDescription")
                     b.setCommandDescription(v.as<QString>());
                 else if (key == "defaultKeySequence")
@@ -57,9 +96,65 @@ void setupActionModule()
                     for (const auto &[_, v] : t)
                         sequences.push_back(QKeySequence(v.as<QString>()));
                     b.setDefaultKeySequences(sequences);
+                } else if (key == "asModeAction") {
+                    if (v.is<int>()) {
+                        ModeManager::addAction(b.commandAction(), v.as<int>());
+                    } else {
+                        throw std::runtime_error(
+                            "asMode needs an integer argument for the priority");
+                    }
+                } else if (key == "icon") {
+                    b.setIcon(toIcon(v.as<IconFilePathOrString>())->icon());
+                } else if (key == "containers") {
+                    v.as<sol::table>().for_each([&b](sol::object, sol::object value) {
+                        if (value.is<sol::table>()) {
+                            const sol::table t = value.as<sol::table>();
+                            const auto containerId = t.get<std::string>("containerId");
+                            const auto groupId = t.get_or<std::string>("groupId", {});
+                            b.addToContainer(
+                                Id::fromString(QString::fromStdString(containerId)),
+                                Id::fromString(QString::fromStdString(groupId)));
+                        } else if (value.is<QString>()) {
+                            b.addToContainer(Id::fromString(value.as<QString>()));
+                        }
+                    });
                 } else
                     throw std::runtime_error("Unknown key: " + key.toStdString());
             }
+
+            return ScriptCommand{b.command(), b.contextAction()};
+        };
+
+        result["trigger"] = [](const std::string &actionId) mutable {
+            Command *command = ActionManager::command(
+                Id::fromString(QString::fromStdString(actionId)));
+            if (!command)
+                throw std::runtime_error("Action not found: " + actionId);
+            if (!command->action())
+                throw std::runtime_error("Action not assigned: " + actionId);
+            if (!command->action()->isEnabled())
+                throw std::runtime_error("Action not enabled: " + actionId);
+            command->action()->trigger();
+        };
+
+        result["setChecked"] = [](const std::string &actionId, bool checked) mutable {
+            Command *command = ActionManager::command(
+                Id::fromString(QString::fromStdString(actionId)));
+            if (!command)
+                throw std::runtime_error("Action not found: " + actionId);
+            if (!command->action())
+                throw std::runtime_error("Action not assigned: " + actionId);
+            if (!command->action()->isEnabled())
+                throw std::runtime_error("Action not enabled: " + actionId);
+            if (!command->action()->isCheckable())
+                throw std::runtime_error("Action not checkable: " + actionId);
+
+            // We won't use "setChecked", as many Actions are (incorrectly) connected only
+            // to "triggered", which is not emitted when just setting the checked state.
+            // So we simulate a user click here if the state does not match the requested one.
+            if (command->action()->isChecked() == checked)
+                return;
+            command->action()->trigger();
         };
 
         return result;

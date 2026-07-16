@@ -52,9 +52,6 @@ public:
     void accept(VersionControlBase *plugin);
     bool promptSubmit(VersionControlBase *plugin);
 
-    QAbstractItemView::SelectionMode fileListSelectionMode() const;
-    void setFileListSelectionMode(QAbstractItemView::SelectionMode sm);
-
     // 'Commit' action enabled despite empty file list
     bool isEmptyFileListEnabled() const;
     void setEmptyFileListEnabled(bool e);
@@ -98,7 +95,7 @@ protected:
      * the file. The default implementation uses the text
      * of the description editor. */
     virtual QByteArray fileContents() const;
-    virtual bool setFileContents(const QByteArray &contents);
+    virtual Utils::Result<> setFileContents(const QByteArray &contents);
 
     QString description() const;
     void setDescription(const QString &text);
@@ -117,7 +114,7 @@ private:
     void slotUpdateEditorSettings();
 
     void createUserFields(const Utils::FilePath &fieldConfigFile);
-    bool checkSubmitMessage(QString *errorMessage) const;
+    Utils::Result<> checkSubmitMessage() const;
     bool runSubmitMessageCheckScript(const Utils::FilePath &script, QString *errorMessage) const;
     QString promptForNickName();
     void close();

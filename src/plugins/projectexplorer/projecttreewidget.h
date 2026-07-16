@@ -39,7 +39,7 @@ public:
     void sync(ProjectExplorer::Node *node);
     void showMessage(ProjectExplorer::Node *node, const QString &message);
 
-    static Node *nodeForFile(const Utils::FilePath &fileName);
+    static Node *nodeForFile(const Utils::FilePath &fileName, const Node *currentNode = nullptr);
 
     void toggleAutoSynchronization();
     void editCurrentItem();
@@ -80,7 +80,7 @@ private:
 
     QString m_modelId;
     bool m_autoSync = true;
-    QList<Utils::FilePath> m_delayedRename;
+    Utils::FilePaths m_delayedRename;
 
     static QList<ProjectTreeWidget *> m_projectTreeWidgets;
     friend class ProjectTreeWidgetFactory;

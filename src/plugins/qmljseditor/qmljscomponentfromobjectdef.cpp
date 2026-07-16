@@ -19,6 +19,7 @@
 #include <qmljs/qmljsrewriter.h>
 #include <qmljstools/qmljsrefactoringchanges.h>
 #include <projectexplorer/project.h>
+#include <projectexplorer/projectmanager.h>
 #include <projectexplorer/projectnodes.h>
 #include <projectexplorer/projecttree.h>
 
@@ -78,9 +79,9 @@ public:
         init();
     }
 
-    void performChanges(QmlJSRefactoringFilePtr currentFile,
-                        const QmlJSRefactoringChanges &refactoring,
-                        const QString &imports = QString()) override
+    QString performChanges(QmlJSRefactoringFilePtr currentFile,
+                           const QmlJSRefactoringChanges &refactoring,
+                           const QString &imports = QString()) override
     {
         QString componentName = m_componentName;
 
@@ -120,11 +121,11 @@ public:
                                                      &result,
                                                      Core::ICore::dialogParent());
         if (!confirm)
-            return;
+            return {};
 
         path = Utils::FilePath::fromUserInput(pathStr);
         if (componentName.isEmpty() || path.isEmpty())
-            return;
+            return {};
 
         const Utils::FilePath newFileName = path.pathAppended(componentName + QLatin1String(".")
                                                               + suffix);
@@ -167,16 +168,26 @@ public:
         const bool openEditor = false;
         const Utils::FilePath newFilePath = newFileName;
         if (!refactoring.file(newFileName)->create(newComponentSource, reindent, openEditor))
-            return;
+            return {};
 
-        if (path.toString() == currentFileName.toFileInfo().path()) {
+        if (path.toUrlishString() == currentFileName.toFileInfo().path()) {
             // hack for the common case, next version should use the wizard
-            ProjectExplorer::Node *oldFileNode = ProjectExplorer::ProjectTree::nodeForFile(
-                currentFileName);
-            if (oldFileNode) {
-                ProjectExplorer::FolderNode *containingFolder = oldFileNode->parentFolderNode();
-                if (containingFolder)
-                    containingFolder->addFiles({newFileName});
+            using namespace ProjectExplorer;
+            bool fileAdded = false;
+            if (Project *const project = ProjectManager::projectForFile(currentFileName)) {
+                if (ProjectNode *const product = project->productNodeForFilePath(currentFileName)) {
+                    if (product->addFiles({newFileName}))
+                        fileAdded = true;
+                }
+            }
+            if (!fileAdded) {
+                ProjectExplorer::Node *oldFileNode = ProjectExplorer::ProjectTree::nodeForFile(
+                    currentFileName);
+                if (oldFileNode) {
+                    ProjectExplorer::FolderNode *containingFolder = oldFileNode->parentFolderNode();
+                    if (containingFolder)
+                        containingFolder->addFiles({newFileName});
+                }
             }
         }
 
@@ -196,16 +207,18 @@ public:
             const QMessageBox::StandardButton button = QMessageBox::question(
                 Core::ICore::dialogParent(),
                 Core::VcsManager::msgAddToVcsTitle(),
-                Core::VcsManager::msgPromptToAddToVcs(QStringList(newFileName.toString()),
+                Core::VcsManager::msgPromptToAddToVcs(QStringList(newFileName.toUrlishString()),
                                                       versionControl),
                 QMessageBox::Yes | QMessageBox::No);
             if (button == QMessageBox::Yes && !versionControl->vcsAdd(newFileName)) {
                 QMessageBox::warning(Core::ICore::dialogParent(),
                                      Core::VcsManager::msgAddToVcsFailedTitle(),
-                                     Core::VcsManager::msgToAddToVcsFailed(
-                                         QStringList(newFileName.toString()), versionControl));
+                                     Core::VcsManager::msgAddToVcsFailed(
+                                         QStringList(newFileName.toUrlishString()), versionControl));
             }
         }
+
+        return newFilePath.toFSPathString();
     }
 };
 
@@ -237,10 +250,10 @@ void matchComponentFromObjectDefQuickFix(const QmlJSQuickFixAssistInterface *int
     }
 }
 
-void performComponentFromObjectDef(QmlJSEditorWidget *editor,
-                                   const QString &fileName,
-                                   QmlJS::AST::UiObjectDefinition *objDef,
-                                   const QString &importData)
+QString performComponentFromObjectDef(QmlJSEditorWidget *editor,
+                                      const QString &fileName,
+                                      QmlJS::AST::UiObjectDefinition *objDef,
+                                      const QString &importData)
 {
     QmlJSRefactoringChanges refactoring(QmlJS::ModelManagerInterface::instance(),
                                         QmlJS::ModelManagerInterface::instance()->snapshot());
@@ -249,7 +262,7 @@ void performComponentFromObjectDef(QmlJSEditorWidget *editor,
     QmlJSQuickFixAssistInterface interface(editor, TextEditor::AssistReason::ExplicitlyInvoked);
     Operation operation(&interface, objDef);
 
-    operation.performChanges(current, refactoring, importData);
+    return operation.performChanges(current, refactoring, importData);
 }
 
 } //namespace QmlJSEditor

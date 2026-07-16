@@ -4,6 +4,7 @@
 #include "storagesettings.h"
 
 #include "texteditorsettings.h"
+#include "texteditortr.h"
 
 #include <coreplugin/icore.h>
 
@@ -15,58 +16,111 @@ using namespace Utils;
 
 namespace TextEditor {
 
-static const char cleanWhitespaceKey[] = "cleanWhitespace";
-static const char inEntireDocumentKey[] = "inEntireDocument";
-static const char addFinalNewLineKey[] = "addFinalNewLine";
-static const char cleanIndentationKey[] = "cleanIndentation";
-static const char skipTrailingWhitespaceKey[] = "skipTrailingWhitespace";
-static const char ignoreFileTypesKey[] = "ignoreFileTypes";
-static const char defaultTrailingWhitespaceBlacklist[] = "*.md, *.MD, Makefile";
+
+void StorageSettings::setData(const StorageSettingsData &data)
+{
+    cleanWhitespace.setValue(data.m_cleanWhitespace);
+    inEntireDocument.setValue(data.m_inEntireDocument);
+    addFinalNewLine.setValue(data.m_addFinalNewLine);
+    cleanIndentation.setValue(data.m_cleanIndentation);
+    skipTrailingWhitespace.setValue(data.m_skipTrailingWhitespace);
+    ignoreFileTypes.setValue(data.m_ignoreFileTypes);
+}
+
+void StorageSettings::apply()
+{
+    AspectContainer::apply();
+    AspectContainer::writeSettings();
+    emit TextEditorSettings::instance()->storageSettingsChanged(data());
+}
 
 StorageSettings::StorageSettings()
-    : m_ignoreFileTypes(defaultTrailingWhitespaceBlacklist),
-      m_cleanWhitespace(true),
-      m_inEntireDocument(false),
-      m_addFinalNewLine(true),
-      m_cleanIndentation(true),
-      m_skipTrailingWhitespace(true)
 {
-}
+    setAutoApply(false);
 
-Store StorageSettings::toMap() const
-{
-    return {
-        {cleanWhitespaceKey, m_cleanWhitespace},
-        {inEntireDocumentKey, m_inEntireDocument},
-        {addFinalNewLineKey, m_addFinalNewLine},
-        {cleanIndentationKey, m_cleanIndentation},
-        {skipTrailingWhitespaceKey, m_skipTrailingWhitespace},
-        {ignoreFileTypesKey, m_ignoreFileTypes}
+    setSettingsGroup("textStorageSettings");
+
+    cleanWhitespace.setSettingsKey("cleanWhitespace");
+    cleanWhitespace.setDefaultValue(true);
+    cleanWhitespace.setLabelText(Tr::tr("&Clean whitespace"));
+    cleanWhitespace.setToolTip(Tr::tr("Removes trailing whitespace upon saving."));
+
+    inEntireDocument.setSettingsKey("inEntireDocument");
+    inEntireDocument.setDefaultValue(false);
+    inEntireDocument.setEnabled(false);
+    inEntireDocument.setLabelText(Tr::tr("In entire &document"));
+    inEntireDocument.setToolTip(Tr::tr("Cleans whitespace in entire document instead of only for changed parts."));
+
+    addFinalNewLine.setSettingsKey("addFinalNewLine");
+    addFinalNewLine.setDefaultValue(false);
+    addFinalNewLine.setLabelText(Tr::tr("&Ensure newline at end of file"));
+    addFinalNewLine.setToolTip(Tr::tr("Always writes a newline character at the end of the file."));
+
+    cleanIndentation.setSettingsKey("cleanIndentation");
+    cleanIndentation.setDefaultValue(true);
+    cleanIndentation.setEnabled(false);
+    cleanIndentation.setLabelText(Tr::tr("Clean indentation"));
+    cleanIndentation.setToolTip(Tr::tr("Corrects leading whitespace according to tab settings."));
+
+    skipTrailingWhitespace.setSettingsKey("skipTrailingWhitespace");
+    skipTrailingWhitespace.setDefaultValue(true);
+    skipTrailingWhitespace.setEnabled(false);
+    skipTrailingWhitespace.setLabelText(Tr::tr("Skip clean whitespace for file types:"));
+    skipTrailingWhitespace.setToolTip(Tr::tr("For the file patterns listed, do not trim trailing whitespace."));
+
+    ignoreFileTypes.setSettingsKey("ignoreFileTypes");
+    ignoreFileTypes.setDefaultValue("*.md, *.MD, Makefile");
+    ignoreFileTypes.setDisplayStyle(StringAspect::LineEditDisplay);
+    ignoreFileTypes.setEnabled(false);
+    ignoreFileTypes.setToolTip(Tr::tr("List of wildcard-aware file patterns, separated by commas or semicolons."));
+
+    readSettings();
+
+    cleanIndentation.setEnabler(&cleanWhitespace);
+    inEntireDocument.setEnabler(&cleanWhitespace);
+    skipTrailingWhitespace.setEnabler(&cleanWhitespace);
+
+    ignoreFileTypes.setEnabler(&cleanWhitespace);
+
+    auto update = [this] {
+        ignoreFileTypes.setEnabled(cleanWhitespace.volatileValue()
+                                && skipTrailingWhitespace.volatileValue());
     };
+
+    update();
+
+    connect(&cleanWhitespace, &BoolAspect::volatileValueChanged, this, update);
+    connect(&cleanWhitespace, &BoolAspect::changed, this, update);
+    connect(&cleanWhitespace, &BaseAspect::enabledChanged, this, update);
+
+    connect(&skipTrailingWhitespace, &BoolAspect::volatileValueChanged, this, update);
+    connect(&skipTrailingWhitespace, &BoolAspect::changed, this, update);
+    connect(&skipTrailingWhitespace, &BaseAspect::enabledChanged, this, update);
 }
 
-void StorageSettings::fromMap(const Store &map)
+StorageSettingsData StorageSettings::data() const
 {
-    m_cleanWhitespace = map.value(cleanWhitespaceKey, m_cleanWhitespace).toBool();
-    m_inEntireDocument = map.value(inEntireDocumentKey, m_inEntireDocument).toBool();
-    m_addFinalNewLine = map.value(addFinalNewLineKey, m_addFinalNewLine).toBool();
-    m_cleanIndentation = map.value(cleanIndentationKey, m_cleanIndentation).toBool();
-    m_skipTrailingWhitespace = map.value(skipTrailingWhitespaceKey, m_skipTrailingWhitespace).toBool();
-    m_ignoreFileTypes = map.value(ignoreFileTypesKey, m_ignoreFileTypes).toString();
+    StorageSettingsData d;
+    d.m_cleanWhitespace = cleanWhitespace();
+    d.m_inEntireDocument = inEntireDocument();
+    d.m_addFinalNewLine = addFinalNewLine();
+    d.m_cleanIndentation = cleanIndentation();
+    d.m_skipTrailingWhitespace = skipTrailingWhitespace();
+    d.m_ignoreFileTypes = ignoreFileTypes();
+    return d;
 }
 
-bool StorageSettings::removeTrailingWhitespace(const QString &fileName) const
+bool StorageSettingsData::removeTrailingWhitespace(const QString &fileName) const
 {
     // if the user has elected not to trim trailing whitespace altogether, then
     // early out here
-    if (!m_skipTrailingWhitespace) {
+    if (!m_skipTrailingWhitespace)
         return true;
-    }
 
     const QString ignoreFileTypesRegExp(R"(\s*((?>\*\.)?[\w\d\.\*]+)[,;]?\s*)");
 
     // use the ignore-files regex to extract the specified file patterns
-    QRegularExpression re(ignoreFileTypesRegExp);
+    static const QRegularExpression re(ignoreFileTypesRegExp);
     QRegularExpressionMatchIterator iter = re.globalMatch(m_ignoreFileTypes);
 
     while (iter.hasNext()) {
@@ -86,38 +140,15 @@ bool StorageSettings::removeTrailingWhitespace(const QString &fileName) const
     return true;
 }
 
-bool StorageSettings::equals(const StorageSettings &ts) const
-{
-    return m_addFinalNewLine == ts.m_addFinalNewLine
-        && m_cleanWhitespace == ts.m_cleanWhitespace
-        && m_inEntireDocument == ts.m_inEntireDocument
-        && m_cleanIndentation == ts.m_cleanIndentation
-        && m_skipTrailingWhitespace == ts.m_skipTrailingWhitespace
-        && m_ignoreFileTypes == ts.m_ignoreFileTypes;
-}
-
 StorageSettings &globalStorageSettings()
 {
     static StorageSettings theGlobalStorageSettings;
     return theGlobalStorageSettings;
 }
 
-const char storageGroup[] = "textStorageSettings";
-
-void updateGlobalStorageSettings(const StorageSettings &newStorageSettings)
-{
-    if (newStorageSettings.equals(globalStorageSettings()))
-        return;
-
-    globalStorageSettings() = newStorageSettings;
-    storeToSettings(storageGroup, Core::ICore::settings(), globalStorageSettings().toMap());
-
-    emit TextEditorSettings::instance()->storageSettingsChanged(newStorageSettings);
-}
-
 void setupStorageSettings()
 {
-    globalStorageSettings().fromMap(storeFromSettings(storageGroup, Core::ICore::settings()));
+    globalStorageSettings().readSettings();
 }
 
 } // namespace TextEditor

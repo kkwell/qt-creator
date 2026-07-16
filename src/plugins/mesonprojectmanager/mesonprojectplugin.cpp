@@ -3,15 +3,20 @@
 
 #include "mesonactionsmanager.h"
 #include "mesonbuildconfiguration.h"
+#include "mesonbuildstep.h"
 #include "mesonbuildsystem.h"
 #include "mesonpluginconstants.h"
 #include "mesonproject.h"
+#include "mesonprojectmanagertr.h"
 #include "mesonrunconfiguration.h"
-#include "ninjabuildstep.h"
 #include "toolssettingsaccessor.h"
 #include "toolssettingspage.h"
 
+#include <coreplugin/dialogs/ioptionspage.h>
+
 #include <extensionsystem/iplugin.h>
+
+#include <projectexplorer/devicesupport/idevice.h>
 
 #include <utils/fsengine/fileiconprovider.h>
 
@@ -20,6 +25,23 @@ using namespace Utils;
 
 namespace MesonProjectManager::Internal {
 
+class MesonToolAspectFactory : public DeviceToolAspectFactory
+{
+public:
+    MesonToolAspectFactory()
+    {
+        setToolId(Constants::ToolsSettings::TOOL_TYPE_MESON);
+        setToolType(DeviceToolAspect::BuildTool);
+        setFilePattern({"meson"});
+        setLabelText(Tr::tr("Meson executable:"));
+    }
+};
+
+void setupMesonTools()
+{
+    static MesonToolAspectFactory theMesonToolAspectFactory;
+}
+
 class MesonProjectPlugin final : public ExtensionSystem::IPlugin
 {
     Q_OBJECT
@@ -27,12 +49,17 @@ class MesonProjectPlugin final : public ExtensionSystem::IPlugin
 
     void initialize() final
     {
+        Core::IOptionsPage::registerCategory(
+            Constants::SettingsPage::CATEGORY, Tr::tr("Meson"), Constants::Icons::MESON_BW);
+
+        setupMesonTools();
+
         setupToolsSettingsPage();
         setupToolsSettingsAccessor();
 
         setupMesonBuildSystem();
         setupMesonBuildConfiguration();
-        setupNinjaBuildStep();
+        setupMesonBuildStep();
 
         setupMesonRunConfiguration();
         setupMesonRunAndDebugWorkers();

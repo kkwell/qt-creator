@@ -4,18 +4,13 @@
 #include <effectcomposerview.h>
 
 #include <qmldesignerplugin.h>
+#include <coreplugin/icore.h>
 
 #include <extensionsystem/iplugin.h>
 
-
 namespace EffectComposer {
 
-static bool enableEffectComposer()
-{
-    return true;
-}
-
-class EffectComposerPlugin : public ExtensionSystem::IPlugin
+class EffectComposerPlugin final : public ExtensionSystem::IPlugin
 {
     Q_OBJECT
     Q_PLUGIN_METADATA(IID "org.qt-project.Qt.QtCreatorPlugin" FILE "EffectComposer.json")
@@ -24,26 +19,20 @@ public:
     EffectComposerPlugin() {}
     ~EffectComposerPlugin() override {}
 
-    bool delayedInitialize() override
+    void initialize() final
     {
-        if (m_delayedInitialized)
-            return true;
-
-        if (enableEffectComposer()) {
-            auto *designerPlugin = QmlDesigner::QmlDesignerPlugin::instance();
-            auto &viewManager = designerPlugin->viewManager();
-
-            viewManager.registerView(std::make_unique<EffectComposerView>(
-                QmlDesigner::QmlDesignerPlugin::externalDependenciesForPluginInitializationOnly()));
-        }
-
-        m_delayedInitialized = true;
-
-        return true;
+        EffectComposerView::registerDeclarativeTypes();
     }
 
-private:
-    bool m_delayedInitialized = false;
+    bool delayedInitialize() override
+    {
+        auto *designerPlugin = QmlDesigner::QmlDesignerPlugin::instance();
+        auto &viewManager = designerPlugin->viewManager();
+
+        viewManager.registerView(std::make_unique<EffectComposerView>(
+            QmlDesigner::QmlDesignerPlugin::externalDependenciesForPluginInitializationOnly()));
+        return true;
+    }
 };
 
 } // namespace EffectComposer

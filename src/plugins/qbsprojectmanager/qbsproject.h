@@ -10,11 +10,13 @@
 #include <projectexplorer/extracompiler.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectnodes.h>
+#include <projectexplorer/task.h>
+
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <utils/environment.h>
 #include <utils/id.h>
 
-#include <QFutureWatcher>
 #include <QHash>
 #include <QJsonObject>
 
@@ -37,16 +39,9 @@ class QbsProject : public ProjectExplorer::Project
 
 public:
     explicit QbsProject(const Utils::FilePath &filename);
-    ~QbsProject();
-
-    ProjectExplorer::ProjectImporter *projectImporter() const override;
-
-    ProjectExplorer::DeploymentKnowledge deploymentKnowledge() const override;
-
-    void configureAsExampleProject(ProjectExplorer::Kit *kit) final;
 
 private:
-    mutable ProjectExplorer::ProjectImporter *m_importer = nullptr;
+    ProjectExplorer::DeploymentKnowledge deploymentKnowledge() const override;
 };
 
 class QbsBuildSystem final : public ProjectExplorer::BuildSystem
@@ -54,9 +49,10 @@ class QbsBuildSystem final : public ProjectExplorer::BuildSystem
     Q_OBJECT
 
 public:
-    explicit QbsBuildSystem(QbsBuildConfiguration *bc);
+    explicit QbsBuildSystem(ProjectExplorer::BuildConfiguration *bc);
     ~QbsBuildSystem() final;
 
+    static QString name() { return "qbs"; }
     void triggerParsing() final;
     bool supportsAction(ProjectExplorer::Node *context,
                         ProjectExplorer::ProjectAction action,
@@ -67,11 +63,13 @@ public:
     ProjectExplorer::RemovedFilesFromProject removeFiles(ProjectExplorer::Node *context,
                                                          const Utils::FilePaths &filePaths,
                                                          Utils::FilePaths *notRemoved = nullptr) final;
-    bool renameFile(ProjectExplorer::Node *context,
-                    const Utils::FilePath &oldFilePath, const Utils::FilePath &newFilePath) final;
+    bool renameFiles(
+        ProjectExplorer::Node *context,
+        const Utils::FilePairs &filesToRename,
+        Utils::FilePaths *notRenamed) final;
+    bool addDependencies(ProjectExplorer::Node *context, const QStringList &dependencies) final;
     Utils::FilePaths filesGeneratedFrom(const Utils::FilePath &sourceFile) const final;
     QVariant additionalData(Utils::Id id) const final;
-    QString name() const final { return QLatin1String("qbs"); }
 
     bool isProjectEditable() const;
     bool addFilesToProduct(const Utils::FilePaths &filePaths,
@@ -85,11 +83,18 @@ public:
     bool renameFileInProduct(const QString &oldPath,
             const QString &newPath, const QJsonObject &product,
             const QJsonObject &group);
+    bool renameFilesInProduct(
+        const Utils::FilePairs &files,
+        const QJsonObject &product,
+        const QJsonObject &group,
+        Utils::FilePaths *notRenamed);
+    bool addDependenciesToProduct(
+        const QStringList &deps, const QJsonObject &product, const QJsonObject &group);
 
     static ProjectExplorer::FileType fileTypeFor(const QSet<QString> &tags);
 
     QString profile() const;
-    void scheduleParsing();
+    void scheduleParsing(const QVariantMap &extraConfig);
     void updateAfterBuild();
 
     QbsSession *session() const { return m_session; }
@@ -103,18 +108,16 @@ private:
     friend class QbsProject;
     friend class QbsRequestObject;
 
-    void startParsing();
+    void startParsing(const QVariantMap &extraConfig);
     void cancelParsing();
 
     ProjectExplorer::ExtraCompiler *findExtraCompiler(
             const ExtraCompilerFilter &filter) const override;
 
     void handleQbsParsingDone(bool success);
-    void changeActiveTarget(ProjectExplorer::Target *t);
     void prepareForParsing();
     void updateDocuments();
     void updateCppCodeModel();
-    void updateQmlJsCodeModel();
     void updateExtraCompilers();
     void updateApplicationTargets();
     void updateDeploymentInfo();
@@ -122,16 +125,23 @@ private:
     void updateAfterParse();
     void updateProjectNodes(const std::function<void()> &continuation);
     Utils::FilePath installRoot();
+    Utils::FilePath locationFilePath(const QJsonObject &loc) const;
+    Utils::FilePath groupFilePath(const QJsonObject &group) const;
+    QbsBuildConfiguration *qbsBuildConfig() const;
 
-    static bool ensureWriteableQbsFile(const QString &file);
+    void updateQmlCodeModelInfo(ProjectExplorer::QmlCodeModelInfo &projectInfo) final;
+
+    static bool ensureWriteableQbsFile(const Utils::FilePath &file);
+
+    void clearFileUpdateError();
+    void setFileUpdateError(const QString &reason);
 
     QbsSession * const m_session;
     QSet<Core::IDocument *> m_qbsDocuments;
     QJsonObject m_projectData; // TODO: Perhaps store this in the root project node instead?
 
     QbsProjectParser *m_qbsProjectParser = nullptr;
-    using TreeCreationWatcher = QFutureWatcher<QbsProjectNode *>;
-    TreeCreationWatcher *m_treeCreationWatcher = nullptr;
+    QtTaskTree::QSingleTaskTreeRunner m_taskTreeRunner;
     Utils::Environment m_lastParseEnv;
     std::unique_ptr<QbsRequest> m_parseRequest;
 
@@ -143,7 +153,7 @@ private:
     QHash<QString, Utils::Environment> m_envCache;
 
     ProjectExplorer::BuildSystem::ParseGuard m_guard;
-    QbsBuildConfiguration *m_buildConfiguration = nullptr;
+    ProjectExplorer::Task m_fileUpdateError;
 };
 
 } // namespace Internal

@@ -61,6 +61,10 @@ void ClangCompletionContextAnalyzer::analyze()
                 m_document, m_position, m_languageFeatures);
     m_completionOperator = activationSequenceContextProcessor.completionKind();
     int afterOperatorPosition = activationSequenceContextProcessor.startOfNamePosition();
+    if (afterOperatorPosition == INT_MIN) {
+        m_completionAction = AbortExisting;
+        return;
+    }
     m_positionEndOfExpression = activationSequenceContextProcessor.operatorStartPosition();
     m_positionForProposal = activationSequenceContextProcessor.startOfNamePosition();
 
@@ -150,7 +154,7 @@ void ClangCompletionContextAnalyzer::handleFunctionCall(int afterOperatorPositio
         const QString expression = expressionUnderCursor(textCursor);
         const QString trimmedExpression = expression.trimmed();
         const QChar lastExprChar = trimmedExpression.isEmpty()
-                ? QChar() : trimmedExpression.at(trimmedExpression.length() - 1);
+                ? QChar() : trimmedExpression.at(trimmedExpression.size() - 1);
         const bool mightBeConstructorCall = lastExprChar != ')';
 
         if (expression.endsWith(QLatin1String("SIGNAL"))) {

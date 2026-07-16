@@ -77,7 +77,7 @@ def checkCompile(expectToFail=False):
         return False
 
 def compileSucceeded(compileOutput):
-    return None != re.match(".*exited normally\.\n\d\d:\d\d:\d\d: Elapsed time: "
+    return None != re.match(".*finished successfully\.\n\d\d:\d\d:\d\d: Elapsed time: "
                             "(\d:)?\d{2}:\d\d\.$", str(compileOutput), re.S)
 
 def waitForCompile(timeout=60000):
@@ -121,7 +121,7 @@ def selectBuildConfig(wantedKit, configName, afterSwitchTo=ViewConstants.EDIT):
     switchViewTo(ViewConstants.PROJECTS)
     if any((switchToBuildOrRunSettingsFor(wantedKit, ProjectSettings.BUILD),
             selectFromCombo(":scrollArea.Edit build configuration:_QComboBox", configName))):
-        waitForProjectParsing(5000, 30000, 0)
+        progressBarWait(30000)
     if afterSwitchTo:
         if ViewConstants.FIRST_AVAILABLE <= afterSwitchTo <= ViewConstants.LAST_AVAILABLE:
             switchViewTo(afterSwitchTo)
@@ -140,43 +140,17 @@ def verifyBuildConfig(currentTarget, configName, shouldBeDebug=False, enableShad
                       "type='QCheckBox' unnamed='1' visible='1' "
                       "window=':Qt Creator_Core::Internal::MainWindow'}", enableShadowBuild)
 
-    buildCfCombo = waitForObject("{leftWidget=':scrollArea.Edit build configuration:_QLabel' "
-                                 "type='QComboBox' unnamed='1' visible='1'}")
-    if shouldBeDebug:
-        test.compare(buildCfCombo.currentText, 'Debug', "Verifying whether it's a debug build")
-    else:
-        test.compare(buildCfCombo.currentText, 'Release', "Verifying whether it's a release build")
-    if enableQmlDebug:
-        try:
-            libLabel = waitForObject(":scrollArea.Library not available_QLabel", 2000)
-            mouseClick(libLabel, libLabel.width - 10, libLabel.height / 2, 0, Qt.LeftButton)
-        except:
-            pass
-        # Since waitForObject waits for the object to be enabled,
-        # it will wait here until compilation of the debug libraries has finished.
-        runCMakeButton = ("{type='QPushButton' text='Run CMake' unnamed='1' "
-                          "window=':Qt Creator_Core::Internal::MainWindow'}")
-        qmlDebuggingCombo = findObject(':Qt Creator.QML debugging and profiling:_QComboBox')
-        if selectFromCombo(qmlDebuggingCombo, 'Enable'):
-            if buildSystem is None or buildSystem == "CMake": # re-run cmake to apply
-                clickButton(waitForObject(runCMakeButton))
-            elif buildSystem == "qmake": # Don't rebuild now
-                clickButton(waitForObject(":QML Debugging.No_QPushButton", 5000))
-        try:
-            problemFound = waitForObject("{window=':Qt Creator_Core::Internal::MainWindow' "
-                                         "type='QLabel' name='problemLabel' visible='1'}", 1000)
-            if problemFound:
-                test.warning('%s' % problemFound.text)
-        except:
-            pass
-    else:
-        qmlDebuggingCombo = findObject(':Qt Creator.QML debugging and profiling:_QComboBox')
-        if selectFromCombo(qmlDebuggingCombo, "Disable"):
-            test.log("Qml debugging libraries are available - unchecked qml debugging.")
-            if buildSystem is None or buildSystem == "CMake": # re-run cmake to apply
-                clickButton(waitForObject(runCMakeButton))
-            elif buildSystem == "qmake": # Don't rebuild now
-                clickButton(waitForObject(":QML Debugging.No_QPushButton", 5000))
+    buildCfCombo = waitForObject(":scrollArea.Edit build configuration:_QComboBox")
+    buildType = "Debug" if shouldBeDebug else "Release"
+    test.compare(buildCfCombo.currentText, buildType,
+                 "Verifying whether it's a %s build" % buildType)
+    qmlDebuggingCombo = waitForObject(':Qt Creator.QML debugging and profiling:_QComboBox')
+    if (selectFromCombo(qmlDebuggingCombo, "Enable" if enableQmlDebug else "Disable")
+        and buildSystem == "qmake"):
+        # Don't rebuild now
+        clickButton(waitForObject(":QML Debugging.No_QPushButton", 5000))
+        # Wait for parsing to finish
+        progressBarWait(14000)
     clickButton(waitForObject(":scrollArea.Details_Utils::DetailsButton"))
     switchViewTo(ViewConstants.EDIT)
 
@@ -187,10 +161,13 @@ def verifyBuildAndRun(expectCompileToFail=False):
     # check application output log
     appOutput = logApplicationOutput()
     if appOutput:
-        test.verify((re.search(".* exited with code \d+", str(appOutput)) or
-                     re.search(".* crashed\.", str(appOutput)) or
-                     re.search(".* was ended forcefully\.", str(appOutput))) and
-                    re.search('[Ss]tarting.*', str(appOutput)),
+        strOutput = str(appOutput)
+        test.verify((re.search(".* exited with code \d+", strOutput) or
+                     re.search(".* crashed\.", strOutput) or
+                     re.search(".* was ended forcefully\.", strOutput) or
+                     re.search(".* finished successfully\.", strOutput) or
+                     re.search(".* was canceled after \d+ ms\.", strOutput)) and
+                    re.search('[Ss]tarting.*', strOutput),
                     "Verifying if built app started and closed successfully.")
 
 # run project for debug and release

@@ -216,7 +216,7 @@ function(qtc_docs_dir varName)
     set(${varName} "${QtCreator_SOURCE_DIR}/doc" PARENT_SCOPE)
   elseif(QtCreatorDocumentation_LIST_DIR MATCHES /lib/cmake/QtCreator$)
     # Dev package
-    file(RELATIVE_PATH relative_header_path "/${IDE_CMAKE_INSTALL_PATH}/QtCreator" "/${IDE_HEADER_INSTALL_PATH}")
+    file(RELATIVE_PATH relative_header_path "/${IDE_DEVEL_CMAKE_INSTALL_PATH}/QtCreator" "/${IDE_DEVEL_HEADER_INSTALL_PATH}")
     set(${varName}
         "${QtCreatorDocumentation_LIST_DIR}/${relative_header_path}/doc"
         PARENT_SCOPE)
@@ -265,8 +265,8 @@ function(add_qtc_documentation qdocconf_file)
 
   # Set up environment for qdoc:
   set(QTC_VERSION "${IDE_VERSION_DISPLAY}")
-  set(QTCREATOR_COPYRIGHT_YEAR "${IDE_COPYRIGHT_YEAR}")
   string(REPLACE "." "" QTC_VERSION_TAG "${IDE_VERSION}")
+  string(REPLACE "(C)" "<acronym title=\"Copyright\">&copy\\\;</acronym>" QTCREATOR_COPYRIGHT "${IDE_COPYRIGHT}")
   set(QDOC_INDEX_DIR "${QT_INSTALL_DOCS}")
   if (QT_INSTALL_DOCS_src)
     set(QT_INSTALL_DOCS "${QT_INSTALL_DOCS_src}")
@@ -274,7 +274,7 @@ function(add_qtc_documentation qdocconf_file)
   list(APPEND _qdoc_params ENVIRONMENT_EXPORTS
     IDE_ID IDE_CASED_ID IDE_DISPLAY_NAME
     QTC_DOCS_DIR QTC_VERSION QTC_VERSION_TAG
-    QTCREATOR_COPYRIGHT_YEAR
+    QTCREATOR_COPYRIGHT
     QT_INSTALL_DOCS QDOC_INDEX_DIR
     ${_arg_ENVIRONMENT_EXPORTS}
   )
@@ -283,6 +283,55 @@ function(add_qtc_documentation qdocconf_file)
     INCLUDE_DIRECTORIES ${_arg_INCLUDE_DIRECTORIES}
     FRAMEWORK_PATHS ${_arg_FRAMEWORK_PATHS}
   )
+endfunction()
+
+function(qtc_prepare_attribution_file attribution_file_src attribution_file_dest)
+  if(NOT EXISTS "${attribution_file_src}")
+    message(FATAL_ERROR "Attribution file ${attribution_file_src} not found.")
+  endif()
+
+  # Replace @SOURCE_DIR@ in the json file with the absolute path of the json file parent directory.
+  # We do this, so that the attribution scanner can find the license files and paths even when
+  # the attribution file is in the build dir, not the source dir.
+  get_filename_component(SOURCE_DIR ${attribution_file_src} DIRECTORY)
+
+  if(Qt6_VERSION VERSION_GREATER_EQUAL 6.8.0)
+    # The attribution scanner is new enough, just copy the file.
+    configure_file("${attribution_file_src}" "${attribution_file_dest}" @ONLY)
+    return()
+  endif()
+
+  # Otherwise remove unsupported keys.
+  # Read the file
+  file(READ "${attribution_file_src}" file_content)
+
+  # Replace square brackets, to avoid issue with unbalanced square brackets when iterating lists.
+  # https://gitlab.kitware.com/cmake/cmake/-/issues/9317
+  string(REPLACE "[" "QT_ATTRIBUTION_LEFT_SQUARE" lines "${file_content}")
+  string(REPLACE "]" "QT_ATTRIBUTION_RIGHT_SQUARE" lines "${lines}")
+
+  # Transform newlines into semicolons to get a list.
+  string(REPLACE "\n" ";" lines "${lines}")
+
+  # Remove all CPE and PURL entries of the form "PURL": "foo", so that the attribution scanner of
+  # older Qts does not complain about them.
+  set(result_lines "")
+  foreach(one_line IN ITEMS ${lines})
+    if(one_line MATCHES "\"PURL\":.+\"," OR one_line MATCHES "\"CPE\":.+\",")
+      continue()
+    else()
+      list(APPEND result_lines "${one_line}")
+    endif()
+  endforeach()
+
+  # Turn the list back into a string.
+  list(JOIN result_lines "\n" content)
+
+  # Reverse the transformation.
+  string(REPLACE "QT_ATTRIBUTION_LEFT_SQUARE" "[" content "${content}")
+  string(REPLACE "QT_ATTRIBUTION_RIGHT_SQUARE" "]" content "${content}")
+
+  file(CONFIGURE OUTPUT "${attribution_file_dest}" CONTENT "${content}" @ONLY)
 endfunction()
 
 function(add_qtc_doc_attribution target attribution_file output_file qdocconf_file)

@@ -8,15 +8,16 @@
 #include "debuggertr.h"
 
 #include <projectexplorer/buildconfiguration.h>
+#include <projectexplorer/devicesupport/devicekitaspects.h>
 #include <projectexplorer/kit.h>
 #include <projectexplorer/kitchooser.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projecttree.h>
 #include <projectexplorer/runconfiguration.h>
 #include <projectexplorer/target.h>
+#include <projectexplorer/toolchainkitaspect.h>
 
 #include <utils/fileutils.h>
 #include <utils/pathchooser.h>
@@ -38,9 +39,8 @@ namespace Debugger::Internal {
 
 static bool isLocal(RunConfiguration *runConfiguration)
 {
-    Target *target = runConfiguration ? runConfiguration->target() : nullptr;
-    Kit *kit = target ? target->kit() : nullptr;
-    return DeviceTypeKitAspect::deviceTypeId(kit) == ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE;
+    Kit *kit = runConfiguration ? runConfiguration->kit() : nullptr;
+    return RunDeviceTypeKitAspect::deviceTypeId(kit) == ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE;
 }
 
 /*!
@@ -64,9 +64,12 @@ static bool isLocal(RunConfiguration *runConfiguration)
     scripts can restart application several times during tests.
 */
 
-UnstartedAppWatcherDialog::UnstartedAppWatcherDialog(QWidget *parent)
+UnstartedAppWatcherDialog::UnstartedAppWatcherDialog(std::optional<QPoint> pos, QWidget *parent)
     : QDialog(parent)
+    , m_lastPosition(pos)
 {
+    if (pos)
+        move(*pos);
     setWindowTitle(Tr::tr("Attach to Process Not Yet Started"));
 
     m_kitChooser = new KitChooser(this);
@@ -77,10 +80,7 @@ UnstartedAppWatcherDialog::UnstartedAppWatcherDialog(QWidget *parent)
     m_kitChooser->populate();
     m_kitChooser->setVisible(true);
 
-    Project *project = ProjectTree::currentProject();
-    Target *activeTarget = project ? project->activeTarget() : nullptr;
-    Kit *kit = activeTarget ? activeTarget->kit() : nullptr;
-
+    Kit *kit = activeKitForCurrentProject();
     if (kit)
         m_kitChooser->setCurrentKitId(kit->id());
     else if (KitManager::waitForLoaded() && KitManager::defaultKit())
@@ -96,15 +96,13 @@ UnstartedAppWatcherDialog::UnstartedAppWatcherDialog(QWidget *parent)
     resetExecutable->setEnabled(false);
     pathLayout->addWidget(m_pathChooser);
     pathLayout->addWidget(resetExecutable);
-    if (activeTarget) {
-        if (RunConfiguration *runConfig = activeTarget->activeRunConfiguration()) {
-            const ProcessRunData runnable = runConfig->runnable();
-            if (isLocal(runConfig)) {
-                resetExecutable->setEnabled(true);
-                connect(resetExecutable, &QPushButton::clicked, this, [this, runnable] {
-                    m_pathChooser->setFilePath(runnable.command.executable());
-                });
-            }
+    if (RunConfiguration *runConfig = activeRunConfigForCurrentProject()) {
+        const ProcessRunData runnable = runConfig->runnable();
+        if (isLocal(runConfig)) {
+            resetExecutable->setEnabled(true);
+            connect(resetExecutable, &QPushButton::clicked, this, [this, runnable] {
+                m_pathChooser->setFilePath(runnable.command.executable());
+            });
         }
     }
 
@@ -175,19 +173,15 @@ void UnstartedAppWatcherDialog::selectExecutable()
     Utils::FilePath path;
 
     Project *project = ProjectTree::currentProject();
-    Target *activeTarget = project ? project->activeTarget() : nullptr;
-
-    if (activeTarget) {
-        if (RunConfiguration *runConfig = activeTarget->activeRunConfiguration()) {
-            const ProcessRunData runnable = runConfig->runnable();
-            if (isLocal(runConfig))
-                path = runnable.command.executable().parentDir();
-        }
+    if (RunConfiguration *runConfig = activeRunConfig(project)) {
+        const ProcessRunData runnable = runConfig->runnable();
+        if (isLocal(runConfig))
+            path = runnable.command.executable().parentDir();
     }
 
     if (path.isEmpty()) {
-        if (activeTarget && activeTarget->activeBuildConfiguration())
-            path = activeTarget->activeBuildConfiguration()->buildDirectory();
+        if (const BuildConfiguration * const bc = activeBuildConfig(project))
+            path = bc->buildDirectory();
         else if (project)
             path = project->projectDirectory();
     }
@@ -196,6 +190,8 @@ void UnstartedAppWatcherDialog::selectExecutable()
 
 void UnstartedAppWatcherDialog::startWatching()
 {
+    if (m_lastPosition)
+        move(*m_lastPosition);
     show();
     if (checkExecutableString()) {
         setWaitingState(WatchingState);
@@ -211,10 +207,12 @@ void UnstartedAppWatcherDialog::pidFound(const ProcessInfo &p)
     startStopTimer(false);
     m_process = p;
 
-    if (hideOnAttach())
+    if (hideOnAttach()) {
+        m_lastPosition = pos();
         hide();
-    else
+    } else {
         accept();
+    }
 
     emit processFound();
 }
@@ -236,9 +234,10 @@ void UnstartedAppWatcherDialog::startStopTimer(bool start)
 
 void UnstartedAppWatcherDialog::findProcess()
 {
-    const QString &appName = m_pathChooser->filePath().normalizedPathName().toString();
+    const QString appName = m_pathChooser->filePath().normalizedPathName().path();
     ProcessInfo fallback;
-    const QList<ProcessInfo> processInfoList = ProcessInfo::processInfoList();
+    const QList<ProcessInfo> processInfoList = ProcessInfo::processInfoList().value_or(
+        QList<ProcessInfo>());
     for (const ProcessInfo &processInfo : processInfoList) {
         if (m_excluded.contains(processInfo.processId))
             continue;
@@ -261,10 +260,10 @@ void UnstartedAppWatcherDialog::stopAndCheckExecutable()
 
 void UnstartedAppWatcherDialog::kitChanged()
 {
-    const DebuggerItem *debugger = DebuggerKitAspect::debugger(m_kitChooser->currentKit());
+    const DebuggerItem debugger = DebuggerKitAspect::debugger(m_kitChooser->currentKit());
     if (!debugger)
         return;
-    if (debugger->engineType() == Debugger::CdbEngineType) {
+    if (debugger.engineType() == Debugger::CdbEngineType) {
         m_continueOnAttachCheckBox->setEnabled(false);
         m_continueOnAttachCheckBox->setChecked(true);
     } else {
@@ -274,11 +273,7 @@ void UnstartedAppWatcherDialog::kitChanged()
 
 bool UnstartedAppWatcherDialog::checkExecutableString() const
 {
-    if (!m_pathChooser->filePath().toString().isEmpty()) {
-        QFileInfo fileInfo(m_pathChooser->filePath().toString());
-        return (fileInfo.exists() && fileInfo.isFile());
-    }
-    return false;
+    return m_pathChooser->filePath().isFile();
 }
 
 Kit *UnstartedAppWatcherDialog::currentKit() const
@@ -327,7 +322,8 @@ void UnstartedAppWatcherDialog::setWaitingState(UnstartedAppWacherState state)
         m_pathChooser->setEnabled(false);
         m_kitChooser->setEnabled(false);
         m_excluded.clear();
-        const QList<ProcessInfo> processInfoList = ProcessInfo::processInfoList();
+        const QList<ProcessInfo> processInfoList = ProcessInfo::processInfoList().value_or(
+            QList<ProcessInfo>());
         for (const ProcessInfo &processInfo : processInfoList)
             m_excluded.insert(processInfo.processId);
         break;

@@ -23,6 +23,10 @@ def main():
     issuesView = waitForObject(":Qt Creator.Issues_QListView")
     clickButton(waitForObject(":*Qt Creator.Clear_QToolButton"))
 
+    fileNameCombo = waitForObject(":Qt Creator_FilenameQComboBox")
+    docIsMarkedAsModified = lambda: str(fileNameCombo.currentText).endswith('*')
+    if test.verify(waitFor(lambda: docIsMarkedAsModified(), 2000), "File is marked modified."):
+        invokeMenuItem('File', 'Save "main.qml"')
     # invoke QML parsing
     invokeMenuItem("Tools", "QML/JS", "Run Checks")
     # verify that error properly reported
@@ -34,6 +38,9 @@ def main():
         type(editorArea, "<Left>")
     markText(editorArea, "Right")
     type(editorArea, "c")
+
+    waitFor(lambda: docIsMarkedAsModified(), 2000)
+    invokeMenuItem('File', 'Save "main.qml"')
     # invoke QML parsing
     invokeMenuItem("Tools", "QML/JS", "Run Checks")
     # verify that there is no error/errors cleared
@@ -42,5 +49,5 @@ def main():
     # wait for issues
     test.verify(waitFor("issuesModel.rowCount() == 0", 3000),
                 "Verifying if error was properly cleared after code fix")
-    saveAndExit()
+    invokeMenuItem("File", "Exit")
 

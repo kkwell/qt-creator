@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <utils/osspecificaspects.h>
+#include <utils/filepath.h>
+
 #include <QAbstractListModel>
 
 namespace ExtensionSystem {
@@ -10,13 +13,6 @@ class PluginSpec;
 }
 
 namespace ExtensionManager::Internal {
-
-using QPairList = QList<QPair<QString, QString> >;
-
-using ImagesData = QPairList; // { <caption, url>, ... }
-using LinksData = QPairList; // { <name, url>, ... }
-using PluginsData = QPairList; // { <name, url>, ... }
-using TextData = QList<QPair<QString, QStringList> >; // { <header, text>, ... }
 
 enum ItemType {
     ItemTypePack,
@@ -32,25 +28,28 @@ enum ExtensionState {
 
 enum Role {
     RoleName = Qt::UserRole,
-    RoleCompatVersion,
+    RoleBadge,
     RoleCopyright,
+    RoleDateUpdated,
     RoleDependencies,
-    RoleDescriptionImages,
-    RoleDescriptionLinks,
-    RoleDescriptionText,
+    RoleDescriptionLong,
+    RoleDescriptionShort,
     RoleDownloadCount,
+    RoleDownloadUrl,
     RoleExtensionState,
     RoleId,
     RoleItemType,
     RoleLicense,
-    RoleLocation,
     RolePlatforms,
     RolePlugins,
     RoleSearchText,
-    RoleSize,
+    RoleStatus,
     RoleTags,
     RoleVendor,
+    RoleVendorId,
     RoleVersion,
+    RoleFullId,
+    RoleSpec,
 };
 
 class ExtensionsModel : public QAbstractListModel
@@ -62,19 +61,20 @@ public:
     int rowCount(const QModelIndex &parent = {}) const;
     QVariant data(const QModelIndex &index, int role) const;
 
-    void setExtensionsJson(const QByteArray &json);
+    QModelIndex indexOfId(const QString &extensionId) const;
+    void setRepositoryPaths(const Utils::FilePaths &paths);
 
 private:
     class ExtensionsModelPrivate *d = nullptr;
 };
 
-ExtensionSystem::PluginSpec *pluginSpecForName(const QString &pluginName);
+QString customOsTypeToString(Utils::OsType osType);
+QString customOsArchToString(Utils::OsArch osArch);
+ExtensionSystem::PluginSpec *pluginSpecForId(const QString &pluginId);
+QString statusDisplayString(const QModelIndex &index);
 
 #ifdef WITH_TESTS
 QObject *createExtensionsModelTest();
 #endif
 
 } // ExtensionManager::Internal
-
-Q_DECLARE_METATYPE(ExtensionManager::Internal::QPairList)
-Q_DECLARE_METATYPE(ExtensionManager::Internal::TextData)

@@ -27,7 +27,7 @@ struct NotesGeometry
     static const int maxNotes;
     static const QSGGeometry::AttributeSet &point2DWithDistanceFromTop();
 
-    static QSGGeometry *createGeometry(QVector<int> &ids, const TimelineModel *model,
+    static QSGGeometry *createGeometry(QList<int> &ids, const TimelineModel *model,
                                        const TimelineRenderState *parentState, bool collapsed);
 };
 
@@ -41,7 +41,7 @@ public:
 
     QSGNode *expandedRow(int row) const { return m_expandedRows[row]; }
     QSGNode *collapsedOverlay() const final { return m_collapsedOverlay; }
-    const QVector<QSGNode *> &expandedRows() const final { return m_expandedRows; }
+    const QList<QSGNode *> &expandedRows() const final { return m_expandedRows; }
 
     QSGGeometry *nullGeometry() { return &m_nullGeometry; }
     NotesMaterial *material() { return &m_material; }
@@ -52,7 +52,7 @@ private:
     NotesMaterial m_material;
     QSGGeometry m_nullGeometry;
     QSGGeometryNode *m_collapsedOverlay;
-    QVector<QSGNode *> m_expandedRows;
+    QList<QSGNode *> m_expandedRows;
 };
 
 const QSGGeometry::AttributeSet &NotesGeometry::point2DWithDistanceFromTop()
@@ -108,15 +108,15 @@ TimelineRenderPass::State *TimelineNotesRenderPass::update(const TimelineAbstrac
         state = static_cast<TimelineNotesRenderPassState *>(oldState);
     }
 
-    QVector<QVector<int> > expanded(model->expandedRowCount());
-    QVector<int> collapsed;
+    QList<QList<int> > expanded(model->expandedRowCount());
+    QList<int> collapsed;
 
     for (int i = 0; i < qMin(notes->count(), NotesGeometry::maxNotes); ++i) {
         if (notes->timelineModel(i) != model->modelId())
             continue;
         int timelineIndex = notes->timelineIndex(i);
-        if (model->startTime(timelineIndex) > parentState->end() ||
-                model->endTime(timelineIndex) < parentState->start())
+        if (model->startTime(timelineIndex) > parentState->end ||
+                model->endTime(timelineIndex) < parentState->start)
             continue;
         expanded[model->expandedRow(timelineIndex)] << timelineIndex;
         collapsed << timelineIndex;
@@ -174,7 +174,7 @@ QSGGeometryNode *TimelineNotesRenderPassState::createNode()
     return node;
 }
 
-QSGGeometry *NotesGeometry::createGeometry(QVector<int> &ids, const TimelineModel *model,
+QSGGeometry *NotesGeometry::createGeometry(QList<int> &ids, const TimelineModel *model,
                                            const TimelineRenderState *parentState, bool collapsed)
 {
     float rowHeight = TimelineModel::defaultRowHeight();
@@ -189,7 +189,7 @@ QSGGeometry *NotesGeometry::createGeometry(QVector<int> &ids, const TimelineMode
         int timelineIndex = ids[i];
         float horizontalCenter = ((model->startTime(timelineIndex) +
                                    model->endTime(timelineIndex)) / (qint64)2 -
-                                  parentState->start()) * parentState->scale();
+                                  parentState->start) * parentState->scale;
         float verticalStart = (collapsed ? (model->collapsedRow(timelineIndex) + 0.1) : 0.1) *
                 rowHeight;
         float verticalEnd = verticalStart + 0.8 * rowHeight;

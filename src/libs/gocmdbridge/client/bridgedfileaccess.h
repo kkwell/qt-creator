@@ -11,7 +11,8 @@
 #include <utils/processinterface.h>
 #include <utils/qtcprocess.h>
 
-#include <QFuture>
+#include <functional>
+#include <memory>
 
 class tst_CmdBridge;
 
@@ -19,75 +20,120 @@ namespace CmdBridge {
 
 class Client;
 
+// RAII handle returned by forwardLocalSocketServer().  Keep it alive for as
+// long as the forwarding should remain active; destroying it tears down the
+// Go-side socket server and all associated connections.
+class QTCREATOR_CMDBRIDGE_EXPORT LocalSocketForward
+{
+public:
+    virtual ~LocalSocketForward() = default;
+
+    // Path of the Unix socket server that was created on the remote device by
+    // the Go bridge.  Remote processes should connect to this path.
+    virtual Utils::FilePath path() const = 0;
+};
+
 class QTCREATOR_CMDBRIDGE_EXPORT FileAccess : public Utils::DeviceFileAccess
 {
     friend class ::tst_CmdBridge;
     friend class GoFilePathWatcher;
 
 public:
+    FileAccess(const std::function<void()> &errorExitHandler = {});
     ~FileAccess() override;
 
-    Utils::expected_str<void> deployAndInit(
-        const Utils::FilePath &libExecPath, const Utils::FilePath &remoteRootPath);
+    struct DeployError
+    {
+        QString message;
+        enum Code { Disabled, EchoTestFailed, Other } code;
+    };
+    using DeployResult = Utils::expected<void, DeployError>;
+    DeployResult deployAndInit(
+        const Utils::FilePath &libExecPath,
+        const Utils::FilePath &remoteRootPath,
+        const Utils::Environment &environment);
 
-    Utils::expected_str<void> init(const Utils::FilePath &pathToBridge);
+    Utils::Result<> init(
+        const Utils::FilePath &pathToBridge,
+        const Utils::Environment &environment,
+        bool deleteOnExit);
 
-    Utils::expected_str<void> signalProcess(int pid, Utils::ControlSignal signal) const;
+    Utils::Result<> signalProcess(int pid, Utils::ControlSignal signal) const;
 
-    Utils::Environment deviceEnvironment() const override;
+    // Connects a local QLocalSocket to the Unix socket server at
+    // localSocketServerPath, then asks the Go bridge to create a new socket
+    // server on the remote device.  Remote processes connecting to that server
+    // have their data tunneled through the cmdbridge to the local App.
+    // Returns a handle; path() gives the remote server path.  Drop the handle
+    // to stop forwarding.
+    Utils::Result<std::unique_ptr<LocalSocketForward>> forwardLocalSocketServer(
+        const QString &localSocketServerPath);
+
+    Utils::Result<Utils::Environment> deviceEnvironment() const override;
 
 protected:
-    Utils::expected_str<void> reinit();
+    Utils::Result<> reinit();
 
-    void iterateDirectory(const Utils::FilePath &filePath,
+    Utils::Result<> iterateDirectory(const Utils::FilePath &filePath,
                           const Utils::FilePath::IterateDirCallback &callBack,
                           const Utils::FileFilter &filter) const override;
 
-    bool isExecutableFile(const Utils::FilePath &filePath) const override;
-    bool isReadableFile(const Utils::FilePath &filePath) const override;
-    bool isWritableFile(const Utils::FilePath &filePath) const override;
-    bool isReadableDirectory(const Utils::FilePath &filePath) const override;
-    bool isWritableDirectory(const Utils::FilePath &filePath) const override;
-    bool isFile(const Utils::FilePath &filePath) const override;
-    bool isDirectory(const Utils::FilePath &filePath) const override;
-    bool isSymLink(const Utils::FilePath &filePath) const override;
-    bool exists(const Utils::FilePath &filePath) const override;
+    Utils::Result<bool> isExecutableFile(const Utils::FilePath &filePath) const override;
+    Utils::Result<bool> isReadableFile(const Utils::FilePath &filePath) const override;
+    Utils::Result<bool> isWritableFile(const Utils::FilePath &filePath) const override;
+    Utils::Result<bool> isReadableDirectory(const Utils::FilePath &filePath) const override;
+    Utils::Result<bool> isWritableDirectory(const Utils::FilePath &filePath) const override;
+    Utils::Result<bool> isFile(const Utils::FilePath &filePath) const override;
+    Utils::Result<bool> isDirectory(const Utils::FilePath &filePath) const override;
+    Utils::Result<bool> isSymLink(const Utils::FilePath &filePath) const override;
+    Utils::Result<bool> exists(const Utils::FilePath &filePath) const override;
 
-    bool hasHardLinks(const Utils::FilePath &filePath) const override;
-    Utils::FilePathInfo filePathInfo(const Utils::FilePath &filePath) const override;
-    Utils::FilePath symLinkTarget(const Utils::FilePath &filePath) const override;
-    QDateTime lastModified(const Utils::FilePath &filePath) const override;
-    QFile::Permissions permissions(const Utils::FilePath &filePath) const override;
-    bool setPermissions(const Utils::FilePath &filePath, QFile::Permissions) const override;
-    qint64 fileSize(const Utils::FilePath &filePath) const override;
-    qint64 bytesAvailable(const Utils::FilePath &filePath) const override;
-    QByteArray fileId(const Utils::FilePath &filePath) const override;
+    Utils::Result<bool> hasHardLinks(const Utils::FilePath &filePath) const override;
+    Utils::Result<Utils::FilePathInfo> filePathInfo(const Utils::FilePath &filePath) const override;
+    Utils::Result<Utils::FilePath> symLinkTarget(const Utils::FilePath &filePath) const override;
+    Utils::Result<QDateTime> lastModified(const Utils::FilePath &filePath) const override;
+    Utils::Result<QFile::Permissions> permissions(const Utils::FilePath &filePath) const override;
+    Utils::Result<> setPermissions(const Utils::FilePath &filePath, QFile::Permissions) const override;
+    Utils::Result<qint64> fileSize(const Utils::FilePath &filePath) const override;
+    Utils::Result<QString> owner(const Utils::FilePath &filePath) const override;
+    Utils::Result<uint> ownerId(const Utils::FilePath &filePath) const override;
+    Utils::Result<QString> group(const Utils::FilePath &filePath) const override;
+    Utils::Result<uint> groupId(const Utils::FilePath &filePath) const override;
+    Utils::Result<qint64> bytesAvailable(const Utils::FilePath &filePath) const override;
+    Utils::Result<QByteArray> fileId(const Utils::FilePath &filePath) const override;
+    Utils::Result<bool> isSameFile(const Utils::FilePath &lhs, const Utils::FilePath &rhs) const override;
 
-    Utils::expected_str<QByteArray> fileContents(const Utils::FilePath &filePath,
+    Utils::Result<QByteArray> fileContents(const Utils::FilePath &filePath,
                                                  qint64 limit,
                                                  qint64 offset) const override;
-    Utils::expected_str<qint64> writeFileContents(const Utils::FilePath &filePath,
+    Utils::Result<qint64> writeFileContents(const Utils::FilePath &filePath,
                                                   const QByteArray &data) const override;
 
-    bool removeFile(const Utils::FilePath &filePath) const override;
-    bool removeRecursively(const Utils::FilePath &filePath, QString *error) const override;
+    Utils::Result<> removeFile(const Utils::FilePath &filePath) const override;
+    Utils::Result<> removeRecursively(const Utils::FilePath &filePath) const override;
 
-    bool ensureExistingFile(const Utils::FilePath &filePath) const override;
-    bool createDirectory(const Utils::FilePath &filePath) const override;
+    Utils::Result<> ensureExistingFile(const Utils::FilePath &filePath) const override;
+    Utils::Result<> createDirectory(const Utils::FilePath &filePath) const override;
 
-    Utils::expected_str<void> copyFile(const Utils::FilePath &filePath,
-                                       const Utils::FilePath &target) const override;
+    Utils::Result<> copyFile(const Utils::FilePath &filePath,
+                           const Utils::FilePath &target) const override;
+    Utils::Result<> createSymLink(
+        const Utils::FilePath &filePath, const Utils::FilePath &symLink) const override;
 
-    bool renameFile(const Utils::FilePath &filePath, const Utils::FilePath &target) const override;
+    Utils::Result<> renameFile(
+        const Utils::FilePath &filePath, const Utils::FilePath &target) const override;
 
-    Utils::expected_str<Utils::FilePath> createTempFile(const Utils::FilePath &filePath) override;
+    Utils::Result<Utils::FilePath> createTempFile(const Utils::FilePath &filePath) override;
+    Utils::Result<Utils::FilePath> createTempDir(const Utils::FilePath &filePath) override;
+    Utils::Result<Utils::FilePath> createTemp(const Utils::FilePath &filePath, bool dir);
 
-    Utils::expected_str<std::unique_ptr<Utils::FilePathWatcher>> watch(
-        const Utils::FilePath &filePath) const override;
+    std::vector<Utils::Result<std::unique_ptr<Utils::FilePathWatcher>>> watch(
+        const Utils::FilePaths &filePaths) const override;
 
 private:
     std::unique_ptr<CmdBridge::Client> m_client;
     Utils::Environment m_environment;
+    const std::function<void()> m_errorExitHandler;
 };
 
 } // namespace CmdBridge

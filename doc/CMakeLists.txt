@@ -14,7 +14,9 @@ function(_find_all_includes _ret_includes _ret_framework_paths)
       string(FIND "${_include}" "/src/plugins/" _in_plugins)
       string(FIND "${_include}" "/src/libs/" _in_libs)
       string(FIND "${_include}" "${CMAKE_BINARY_DIR}" _in_build)
-      if(_in_plugins LESS 0 AND _in_libs LESS 0 AND _in_build LESS 0)
+      string(REGEX MATCH "\\$<TARGET_PROPERTY:([^,]+).*>" _property_match "${_include}")
+      set(_property_target "${CMAKE_MATCH_1}")
+      if(_in_plugins LESS 0 AND _in_libs LESS 0 AND _in_build LESS 0 AND (NOT _property_target OR TARGET ${_property_target}))
         list(APPEND _all_includes ${_include})
       endif()
     endforeach()
@@ -46,18 +48,25 @@ function(_add_doc _doc_file _dev_doc_file)
   add_qtc_documentation(${_doc_file}
     ENVIRONMENT_EXPORTS GENERATED_ATTRIBUTIONS_DIR
   )
+  set(attribution_src "${CMAKE_CURRENT_SOURCE_DIR}/../qt_attributions.json")
+  set(attribution_dest "${CMAKE_CURRENT_BINARY_DIR}/qt_attributions.json")
+  qtc_prepare_attribution_file("${attribution_src}" "${attribution_dest}")
   add_qtc_doc_attribution(doc_attributions
-    "${CMAKE_CURRENT_SOURCE_DIR}/../qt_attributions.json"
+    "${attribution_dest}"
     "${GENERATED_ATTRIBUTIONS_DIR}/creator-attributions.qdoc"
     ${_doc_file}
   )
-  set(litehtml_attributions "${CMAKE_CURRENT_SOURCE_DIR}/../src/libs/qlitehtml/src/3rdparty/qt_attribution.json")
-  if(EXISTS "${litehtml_attributions}")
-    add_qtc_doc_attribution(doc_attributions_litehtml
-      "${litehtml_attributions}"
-      "${GENERATED_ATTRIBUTIONS_DIR}/creator-attributions-litehtml.qdoc"
-      ${_doc_file}
-    )
+  if (Qt6_VERSION VERSION_GREATER_EQUAL 6.8.0)
+    set(litehtml_attributions "${CMAKE_CURRENT_SOURCE_DIR}/../src/libs/qlitehtml/src/3rdparty/qt_attribution.json")
+    if(EXISTS "${litehtml_attributions}")
+      add_qtc_doc_attribution(doc_attributions_litehtml
+        "${litehtml_attributions}"
+        "${GENERATED_ATTRIBUTIONS_DIR}/creator-attributions-litehtml.qdoc"
+        ${_doc_file}
+      )
+    endif()
+  else()
+    message(WARNING "Disabling qt_attribution.json handling for qlitehtml for Qt < 6.8.0")
   endif()
   if (BUILD_DEVELOPER_DOCS)
     _find_all_includes(_all_includes _framework_paths)
@@ -82,7 +91,7 @@ set(EXCLUDE_DOCS_FROM_ALL "EXCLUDE_FROM_ALL")
 endif()
 
 install(DIRECTORY config
-  DESTINATION ${IDE_HEADER_INSTALL_PATH}/doc
+  DESTINATION ${IDE_DEVEL_HEADER_INSTALL_PATH}/doc
   COMPONENT Devel
   ${EXCLUDE_DOCS_FROM_ALL}
 )

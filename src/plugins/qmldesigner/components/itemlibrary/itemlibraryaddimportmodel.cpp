@@ -3,9 +3,12 @@
 
 #include "itemlibraryaddimportmodel.h"
 #include "itemlibraryconstants.h"
+#include "itemlibrarytracing.h"
 
 #include <designermcumanager.h>
 #include <utils/algorithm.h>
+
+#include <qmldesigner/qmldesignerplugin.h>
 
 #include <QDebug>
 #include <QVariant>
@@ -13,9 +16,13 @@
 
 namespace QmlDesigner {
 
+using ItemLibraryTracing::category;
+
 ItemLibraryAddImportModel::ItemLibraryAddImportModel(QObject *parent)
     : QAbstractListModel(parent)
 {
+    NanotraceHR::Tracer tracer{"item library add import model constructor", category()};
+
     // add role names
     m_roleNames.insert(Qt::UserRole + 1, "importUrl");
     m_roleNames.insert(Qt::UserRole + 2, "importVisible");
@@ -24,16 +31,20 @@ ItemLibraryAddImportModel::ItemLibraryAddImportModel(QObject *parent)
 
 ItemLibraryAddImportModel::~ItemLibraryAddImportModel()
 {
-
+    NanotraceHR::Tracer tracer{"item library add import model destructor", category()};
 }
 
 int ItemLibraryAddImportModel::rowCount(const QModelIndex & /*parent*/) const
 {
+    NanotraceHR::Tracer tracer{"item library add import model row count", category()};
+
     return m_importList.size();
 }
 
 QVariant ItemLibraryAddImportModel::data(const QModelIndex &index, int role) const
 {
+    NanotraceHR::Tracer tracer{"item library add import model data", category()};
+
     if (!index.isValid() || index.row() >= m_importList.size())
         return {};
 
@@ -54,6 +65,8 @@ QVariant ItemLibraryAddImportModel::data(const QModelIndex &index, int role) con
 
 QHash<int, QByteArray> ItemLibraryAddImportModel::roleNames() const
 {
+    NanotraceHR::Tracer tracer{"item library add import model role names", category()};
+
     return m_roleNames;
 }
 
@@ -67,12 +80,15 @@ bool isPriorityImport(QStringView importUrl)
 
 void ItemLibraryAddImportModel::update(const Imports &possibleImports)
 {
+    NanotraceHR::Tracer tracer{"item library add import model update", category()};
+
     beginResetModel();
     m_importList.clear();
 
     const DesignerMcuManager &mcuManager = DesignerMcuManager::instance();
     const bool isQtForMCUs = mcuManager.isMCUProject();
     Imports filteredImports;
+
     if (isQtForMCUs) {
         const QStringList mcuAllowedList = mcuManager.allowedImports();
         const QStringList mcuBannedList = mcuManager.bannedImports();
@@ -130,6 +146,8 @@ void ItemLibraryAddImportModel::update(const Imports &possibleImports)
 
 Import ItemLibraryAddImportModel::getImport(const QString &importUrl) const
 {
+    NanotraceHR::Tracer tracer{"item library add import model get import", category()};
+
     for (const Import &import : std::as_const(m_importList))
         if (import.url() == importUrl)
             return import;
@@ -139,6 +157,8 @@ Import ItemLibraryAddImportModel::getImport(const QString &importUrl) const
 
 void ItemLibraryAddImportModel::setSearchText(const QString &searchText)
 {
+    NanotraceHR::Tracer tracer{"item library add import model set search text", category()};
+
     QString lowerSearchText = searchText.toLower();
 
     if (m_searchText != lowerSearchText) {
@@ -157,6 +177,8 @@ void ItemLibraryAddImportModel::setSearchText(const QString &searchText)
 
 Import ItemLibraryAddImportModel::getImportAt(int index) const
 {
+    NanotraceHR::Tracer tracer{"item library add import model get import at", category()};
+
     return m_importList.at(index);
 }
 

@@ -9,8 +9,9 @@
 #include <cplusplus/CppDocument.h>
 #include <cplusplus/TranslationUnit.h>
 
+#include <QtTaskTree/QSingleTaskTreeRunner>
+
 #include <utils/async.h>
-#include <utils/futuresynchronizer.h>
 #include <utils/qtcassert.h>
 
 #include <QLoggingCategory>
@@ -18,6 +19,7 @@
 enum { debug = 0 };
 
 using namespace CPlusPlus;
+using namespace QtTaskTree;
 using namespace Utils;
 
 static Q_LOGGING_CATEGORY(log, "qtc.cppeditor.semanticinfoupdater", QtWarningMsg)
@@ -27,22 +29,9 @@ namespace CppEditor {
 class SemanticInfoUpdaterPrivate
 {
 public:
-    ~SemanticInfoUpdaterPrivate() { cancelFuture(); }
-
-    void cancelFuture();
-
     SemanticInfo m_semanticInfo;
-    std::unique_ptr<QFutureWatcher<SemanticInfo>> m_watcher;
+    QSingleTaskTreeRunner m_taskTreeRunner;
 };
-
-void SemanticInfoUpdaterPrivate::cancelFuture()
-{
-    if (!m_watcher)
-        return;
-
-    m_watcher->cancel();
-    m_watcher.reset();
-}
 
 class FuturizedTopLevelDeclarationProcessor: public TopLevelDeclarationProcessor
 {
@@ -59,8 +48,7 @@ static void doUpdate(QPromise<SemanticInfo> &promise, const SemanticInfo::Source
     newSemanticInfo.revision = source.revision;
     newSemanticInfo.snapshot = source.snapshot;
 
-    Document::Ptr doc = newSemanticInfo.snapshot.preprocessedDocument(
-        source.code, FilePath::fromString(source.fileName));
+    Document::Ptr doc = newSemanticInfo.snapshot.preprocessedDocument(source.code, source.filePath);
 
     FuturizedTopLevelDeclarationProcessor processor(QFuture<void>(promise.future()));
     doc->control()->setTopLevelDeclarationProcessor(&processor);
@@ -83,7 +71,7 @@ static std::optional<SemanticInfo> canReuseSemanticInfo(
             && currentSemanticInfo.revision == source.revision
             && currentSemanticInfo.doc
             && currentSemanticInfo.doc->translationUnit()->ast()
-            && currentSemanticInfo.doc->filePath().toString() == source.fileName
+            && currentSemanticInfo.doc->filePath() == source.filePath
             && !currentSemanticInfo.snapshot.isEmpty()
             && currentSemanticInfo.snapshot == source.snapshot) {
         SemanticInfo newSemanticInfo;
@@ -105,7 +93,7 @@ SemanticInfoUpdater::~SemanticInfoUpdater() = default;
 SemanticInfo SemanticInfoUpdater::update(const SemanticInfo::Source &source)
 {
     qCDebug(log) << "update() - synchronous";
-    d->cancelFuture();
+    d->m_taskTreeRunner.reset();
 
     const auto info = canReuseSemanticInfo(d->m_semanticInfo, source);
     if (info) {
@@ -124,7 +112,7 @@ SemanticInfo SemanticInfoUpdater::update(const SemanticInfo::Source &source)
 void SemanticInfoUpdater::updateDetached(const SemanticInfo::Source &source)
 {
     qCDebug(log) << "updateDetached() - asynchronous";
-    d->cancelFuture();
+    d->m_taskTreeRunner.reset();
 
     const auto info = canReuseSemanticInfo(d->m_semanticInfo, source);
     if (info) {
@@ -133,15 +121,15 @@ void SemanticInfoUpdater::updateDetached(const SemanticInfo::Source &source)
         return;
     }
 
-    d->m_watcher.reset(new QFutureWatcher<SemanticInfo>);
-    connect(d->m_watcher.get(), &QFutureWatcherBase::finished, this, [this] {
-        d->m_semanticInfo = d->m_watcher->result();
+    const auto onSetup = [source](Async<SemanticInfo> &task) {
+        task.setConcurrentCallData(&doUpdate, source);
+        task.setThreadPool(CppModelManager::sharedThreadPool());
+    };
+    const auto onDone = [this](const Async<SemanticInfo> &task) {
+        d->m_semanticInfo = task.result();
         emit updated(d->m_semanticInfo);
-        d->m_watcher.release()->deleteLater();
-    });
-    const auto future = Utils::asyncRun(CppModelManager::sharedThreadPool(), doUpdate, source);
-    d->m_watcher->setFuture(future);
-    Utils::futureSynchronizer()->addFuture(future);
+    };
+    d->m_taskTreeRunner.start({AsyncTask<SemanticInfo>(onSetup, onDone)});
 }
 
 SemanticInfo SemanticInfoUpdater::semanticInfo() const

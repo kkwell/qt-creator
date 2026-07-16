@@ -28,6 +28,22 @@ class QmlJSEditorDocument;
 class QuickToolBar;
 class FindReferences;
 
+class QMLJSEDITOR_EXPORT QdsSettings : public QObject
+{
+    Q_OBJECT
+
+public:
+    QdsSettings();
+
+    void setQdsSettingVisible(bool visible);
+    Utils::FilePath qdsCommand();
+
+signals:
+    void changed();
+};
+
+QMLJSEDITOR_EXPORT QdsSettings &qdsSettings();
+
 class QMLJSEDITOR_EXPORT QmlJSEditorWidget : public TextEditor::TextEditorWidget
 {
     Q_OBJECT
@@ -93,7 +109,6 @@ private:
     QModelIndex indexForPosition(unsigned cursorPosition, const QModelIndex &rootIndex = QModelIndex()) const;
     bool hideContextPane();
 
-    QmlJSEditorDocument *m_qmlJsEditorDocument = nullptr;
     QTimer m_updateUsesTimer; // to wait for multiple text cursor position changes
     QTimer m_updateOutlineIndexTimer;
     QTimer m_contextPaneTimer;

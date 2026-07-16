@@ -115,7 +115,7 @@ bool lightColored(const QWidget *widget)
 
 static bool isDarkFusionStyle(const QStyle *style)
 {
-    return creatorTheme()->flag(Theme::DarkUserInterface)
+    return creatorTheme()->colorScheme() == Qt::ColorScheme::Dark
             && strcmp(style->metaObject()->className(), "QFusionStyle") == 0;
 }
 
@@ -140,7 +140,9 @@ ManhattanStyle::ManhattanStyle(const QString &baseStyleName)
     : QProxyStyle(QStyleFactory::create(baseStyleName))
     , d(new ManhattanStylePrivate())
 {
-    Core::Internal::GeneralSettings::applyToolbarStyleFromSettings();
+    // Make sure the general settings are read and applied, so that the style is
+    // correctly initialized based on them
+    Core::Internal::generalSettings();
 }
 
 ManhattanStyle::~ManhattanStyle()
@@ -223,6 +225,9 @@ int ManhattanStyle::pixelMetric(PixelMetric metric, const QStyleOption *option, 
     case PM_SmallIconSize:
         retval = 16;
         break;
+#ifndef Q_OS_MACOS
+    case PM_DockWidgetFrameWidth:
+#endif
     case PM_DockWidgetHandleExtent:
     case PM_DockWidgetSeparatorExtent:
         retval = 1;
@@ -245,6 +250,11 @@ int ManhattanStyle::pixelMetric(PixelMetric metric, const QStyleOption *option, 
     case PM_DefaultFrameWidth:
         if (qobject_cast<const QLineEdit*>(widget) && panelWidget(widget))
             return 1;
+        break;
+    case PM_TabCloseIndicatorWidth:
+    case PM_TabCloseIndicatorHeight:
+        if (widget && widget->property(StyleHelper::C_TABBAR_PINNED_DOCUMENT).toBool())
+            return 18;
         break;
     default:
         break;
@@ -294,7 +304,8 @@ void ManhattanStyle::polish(QWidget *widget)
             widget->setContentsMargins(0, 0, 0, 0);
         }
     }
-    if (panelWidget(widget)) {
+    const bool isPanelWidget = panelWidget(widget);
+    if (isPanelWidget) {
 
         // Oxygen and possibly other styles override this
         if (qobject_cast<QDockWidget*>(widget))
@@ -302,25 +313,26 @@ void ManhattanStyle::polish(QWidget *widget)
 
         widget->setAttribute(Qt::WA_LayoutUsesWidgetRect, true);
         // So that text isn't cutoff in line-edits, comboboxes... etc.
-        const int height = qMax(StyleHelper::navigationWidgetHeight(), QApplication::fontMetrics().height());
+        const int height = qMax(StyleHelper::navigationWidgetHeight(),
+                                QFontMetrics(QApplication::font()).height());
         if (qobject_cast<QToolButton*>(widget)) {
             widget->setMinimumWidth(
-                StyleHelper::toolbarStyle() == StyleHelper::ToolbarStyleCompact ? 24 : 28);
+                StyleHelper::toolbarStyle() == StyleHelper::ToolbarStyle::Compact ? 24 : 28);
             widget->setAttribute(Qt::WA_Hover);
             widget->setMaximumHeight(height - 2);
         } else if (qobject_cast<QLineEdit*>(widget)) {
             widget->setAttribute(Qt::WA_Hover);
             widget->setFixedHeight(height - (StyleHelper::toolbarStyle()
-                                                     == StyleHelper::ToolbarStyleCompact ? 1 : 3));
+                                             == StyleHelper::ToolbarStyle::Compact ? 1 : 3));
         } else if (qobject_cast<QLabel*>(widget) || qobject_cast<QSpinBox*>(widget)
                    || qobject_cast<QCheckBox*>(widget)) {
             widget->setPalette(panelPalette(widget->palette(), lightColored(widget)));
-        } else if ((qobject_cast<QToolBar*>(widget) && !StyleHelper::isQDSTheme())
+        } else if (qobject_cast<QToolBar*>(widget)
                    || widget->property(StyleHelper::C_PANEL_WIDGET_SINGLE_ROW).toBool()) {
             widget->setFixedHeight(height);
         } else if (qobject_cast<QStatusBar*>(widget)) {
             const bool flatAndNotCompact =
-                StyleHelper::toolbarStyle() != StyleHelper::ToolbarStyleCompact
+                StyleHelper::toolbarStyle() != StyleHelper::ToolbarStyle::Compact
                                            && creatorTheme()->flag(Theme::FlatToolBars);
             widget->setFixedHeight(height + (flatAndNotCompact ? 3 : 2));
         } else if (qobject_cast<QComboBox*>(widget)) {
@@ -335,6 +347,17 @@ void ManhattanStyle::polish(QWidget *widget)
         } else if (qobject_cast<QScrollArea*>(widget)
                    && widget->property(StyleHelper::C_PANEL_WIDGET_SINGLE_ROW).toBool()) {
             widget->setFixedHeight(height);
+        }
+    }
+
+    // QTCREATORBUG-32549: Design requires distinguishable QPalette::Highlight for QAbstractButton
+    if (!isPanelWidget && qobject_cast<QAbstractButton*>(widget)) {
+        QPalette pal = widget->palette();
+        const QColor highlight = pal.color(QPalette::Highlight);
+        const QColor accent = pal.color(QPalette::Accent);
+        if (highlight == creatorColor(Theme::Token_Foreground_Muted) && highlight != accent) {
+            pal.setColor(QPalette::Highlight, accent);
+            widget->setPalette(pal);
         }
     }
 }
@@ -433,6 +456,10 @@ int ManhattanStyle::styleHint(StyleHint hint, const QStyleOption *option, const 
         // Make QSlider jump on left mouse click
         ret = Qt::LeftButton | Qt::MiddleButton | Qt::RightButton;
         break;
+    case QStyle::SH_TabBar_AllowWheelScrolling:
+        if (widget && widget->property(StyleHelper::C_TABBAR_WHEELSCROLLING).toBool())
+            ret = true;
+        break;
     default:
         break;
     }
@@ -483,9 +510,11 @@ static void drawPrimitiveTweakedForDarkTheme(QStyle::PrimitiveElement element,
     case QStyle::PE_FrameGroupBox: {
         QRect groupBoxFrame = option->rect;
         int topMargin = 0;
-        if (widget) {
+        if (auto control = dynamic_cast<const QGroupBox *>(widget)) {
+            const bool emptyTitle = !control->isCheckable() && control->title().isEmpty();
             // Before Qt 6.6.3, QStyle::subControlRect() returned wrong QRect for SC_GroupBoxFrame
-            static const bool validSCRect = QLibraryInfo::version() >= QVersionNumber(6, 6, 3);
+            const bool validSCRect = QLibraryInfo::version() >= QVersionNumber(6, 6, 3)
+                                     && !emptyTitle; // QTCREATORBUG-31960
             if (validSCRect) {
                 QStyleOptionGroupBox opt;
                 opt.initFrom(widget);
@@ -496,8 +525,7 @@ static void drawPrimitiveTweakedForDarkTheme(QStyle::PrimitiveElement element,
             } else {
                 // Snippet from pre-6.6.3 FusionStyle::drawPrimitive - BEGIN
                 static const int groupBoxTopMargin =  3;
-                auto control = dynamic_cast<const QGroupBox *>(widget);
-                if (!control->isCheckable() && control->title().isEmpty()) {
+                if (emptyTitle) {
                     // Shrinking the topMargin if Not checkable AND title is empty
                     topMargin = groupBoxTopMargin;
                 } else {
@@ -575,6 +603,12 @@ static void drawPrimitiveTweakedForDarkTheme(QStyle::PrimitiveElement element,
         painter->drawPixmap(iconRect, iconPx);
         break;
     }
+    case QStyle::PE_PanelButtonTool: {
+        // QTCREATORBUG-32968 Only for the checked QToolButton
+        StyleHelper::drawCardBg(painter, option->rect.adjusted(1, 1, -1, -1),
+                                creatorColor(Theme::BackgroundColorSelected), frameColor, 2.5);
+        break;
+    }
     default:
         QTC_ASSERT_STRING("Unhandled QStyle::PrimitiveElement case");
         break;
@@ -587,6 +621,31 @@ void ManhattanStyle::drawPrimitive(PrimitiveElement element, const QStyleOption 
 {
     if (panelWidget(widget)) {
         drawPrimitiveForPanelWidget(element, option, painter, widget);
+    } else if (
+        element == PE_IndicatorTabClose && widget
+        && widget->property(StyleHelper::C_TABBAR_PINNED_DOCUMENT).toBool()) {
+        // pinned documents in editor tab bar
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+
+        const bool hover = (option->state & State_MouseOver);
+        const qreal devicePixelRatio = painter->device()->devicePixelRatio();
+        QRect iconRect = option->rect.adjusted(1, 1, -1, -1);
+        iconRect.moveCenter(option->rect.center());
+        if (hover) {
+            QColor hoverColor = creatorColor(Theme::PanelTextColorLight);
+            hoverColor.setAlphaF(.2f);
+            painter->setPen(hoverColor);
+            hoverColor.setAlphaF(.1f);
+            painter->setBrush(hoverColor);
+            painter->drawRoundedRect(option->rect.adjusted(1, 1, -1, -1), 2, 2);
+        }
+        const static QIcon closeIcon = Utils::Icons::PINNED.icon();
+        const QPixmap iconPx
+            = closeIcon.pixmap(iconRect.size() * devicePixelRatio, devicePixelRatio, QIcon::Normal);
+        painter->drawPixmap(iconRect, iconPx);
+
+        painter->restore();
     } else {
         const bool tweakDarkTheme =
                 (element == PE_Frame
@@ -594,7 +653,8 @@ void ManhattanStyle::drawPrimitive(PrimitiveElement element, const QStyleOption 
                  || element == PE_FrameGroupBox
                  || element == PE_IndicatorRadioButton
                  || element == PE_IndicatorCheckBox
-                 || element == PE_IndicatorTabClose)
+                 || element == PE_IndicatorTabClose
+                 || (element == PE_PanelButtonTool && (option->state & State_On)))
                 && isDarkFusionStyle(baseStyle());
         if (tweakDarkTheme)
             drawPrimitiveTweakedForDarkTheme(element, option, painter, widget);
@@ -629,8 +689,6 @@ void ManhattanStyle::drawPrimitiveForPanelWidget(PrimitiveElement element,
                 if (!enabled)
                     painter->setOpacity(0.75);
                 QBrush baseBrush = option->palette.base();
-                if (widget && qobject_cast<const QSpinBox *>(widget->parentWidget()))
-                    baseBrush = creatorColor(Theme::DScontrolBackgroundDisabled);
                 painter->fillRect(backgroundRect, baseBrush);
                 painter->restore();
             } else {
@@ -725,7 +783,7 @@ void ManhattanStyle::drawPrimitiveForPanelWidget(PrimitiveElement element,
                 if (pressed) {
                     StyleHelper::drawPanelBgRect(
                         painter, rect, creatorColor(Theme::FancyToolButtonSelectedColor));
-                    if (StyleHelper::toolbarStyle() == StyleHelper::ToolbarStyleCompact
+                    if (StyleHelper::toolbarStyle() == StyleHelper::ToolbarStyle::Compact
                         && !creatorTheme()->flag(Theme::FlatToolBars)) {
                         const QRectF borderRect = QRectF(rect).adjusted(0.5, 0.5, -0.5, -0.5);
                         painter->drawLine(borderRect.topLeft() + QPointF(1, 0), borderRect.topRight() - QPointF(1, 0));
@@ -784,7 +842,7 @@ void ManhattanStyle::drawPrimitiveForPanelWidget(PrimitiveElement element,
         break;
 
     case PE_IndicatorToolBarSeparator:
-        if (!StyleHelper::isQDSTheme()) {
+        {
             QRect separatorRect = rect;
             separatorRect.setLeft(rect.width() / 2);
             separatorRect.setWidth(1);
@@ -856,6 +914,39 @@ void ManhattanStyle::drawControl(
         const QWidget *widget) const
 {
     if (!panelWidget(widget) && !qobject_cast<const QMenu *>(widget)) {
+        // Workaround for QTBUG-136215
+        if constexpr (HostOsInfo::isMacHost()) {
+            if (element == CE_MenuItem) {
+                if (const QStyleOptionMenuItem *mi
+                    = qstyleoption_cast<const QStyleOptionMenuItem *>(option)) {
+                    if (mi->font.strikeOut()) {
+                        const bool active = mi->state & State_Selected;
+                        if (active)
+                            painter->fillRect(mi->rect, mi->palette.highlight());
+
+                        painter->save();
+                        painter->setFont(mi->font);
+                        int xpos = mi->rect.x() + 18;
+                        int yPos = mi->rect.y();
+                        const int xm = 2 /*macItemFrame*/ + mi->maxIconWidth + 3 /*macItemHMargin*/;
+                        const int tabwidth = mi->reservedShortcutWidth;
+                        const auto text_flags = Qt::AlignVCenter | Qt::TextHideMnemonic
+                                                | Qt::TextSingleLine | Qt::AlignAbsolute;
+
+                        painter->drawText(
+                            xpos,
+                            yPos,
+                            mi->rect.width() - xm - tabwidth + 1,
+                            mi->rect.height(),
+                            text_flags,
+                            mi->text);
+                        painter->restore();
+
+                        return;
+                    }
+                }
+            }
+        }
         QProxyStyle::drawControl(element, option, painter, widget);
         return;
     }
@@ -1160,6 +1251,8 @@ void ManhattanStyle::drawComplexControl(ComplexControl control, const QStyleOpti
             int fw = pixelMetric(PM_DefaultFrameWidth, option, widget);
             label.rect = button.adjusted(fw, fw, -fw, -fw);
 
+            if (toolbutton->state.testAnyFlags(State_Sunken))
+                label.state.setFlag(State_On);
             drawControl(CE_ToolButtonLabel, &label, painter, widget);
 
             if (toolbutton->subControls & SC_ToolButtonMenu) {

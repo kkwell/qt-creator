@@ -1,0 +1,52 @@
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
+
+#pragma once
+
+#include "projectexplorer_export.h"
+
+#include <utils/basetreeview.h>
+#include <utils/itemviews.h>
+
+namespace Utils { class Link; }
+
+namespace ProjectExplorer {
+
+class PROJECTEXPLORER_EXPORT DetailedErrorView : public Utils::BaseTreeView
+{
+public:
+    DetailedErrorView(QWidget *parent = nullptr);
+    ~DetailedErrorView() override;
+
+    virtual void goNext();
+    virtual void goBack();
+
+    void selectIndex(const QModelIndex &index);
+
+    enum ItemRole {
+        LocationRole = Qt::UserRole,
+        FullTextRole
+    };
+
+    enum Column {
+        DiagnosticColumn,
+        LocationColumn,
+    };
+
+    static QVariant locationData(int role, const Utils::Link &location);
+
+private:
+    void contextMenuEvent(QContextMenuEvent *e) override;
+    void currentChanged(const QModelIndex &current, const QModelIndex &previous) override;
+
+    int currentRow() const;
+    void setCurrentRow(int row);
+    int rowCount() const;
+
+    QList<QAction *> commonActions() const;
+    virtual QList<QAction *> customActions() const;
+
+    QAction * const m_copyAction;
+};
+
+} // namespace ProjectExplorer

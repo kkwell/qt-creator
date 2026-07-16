@@ -5,14 +5,31 @@
 
 #include "core_global.h"
 
+#include "envvarseparatoraspect.h"
+
 #include <utils/aspects.h>
+#include <utils/environment.h>
+#include <utils/terminalcommand.h>
 
 namespace Core::Internal {
+
+const char kEnvironmentChanges[] = "Core/EnvironmentChanges";
+const char kEnvVarSeparators[] = "Core/EnvVarSeparators";
+
+class EnvChangeAspect : public Utils::EnvironmentChangesAspect
+{
+public:
+    using EnvironmentChangesAspect::EnvironmentChangesAspect;
+    void addToLayoutImpl(Layouting::Layout &parent);
+};
 
 class CORE_TEST_EXPORT SystemSettings final : public Utils::AspectContainer
 {
 public:
     SystemSettings();
+
+    Utils::BoolAspect useDbusFileManagers{this};
+    Utils::StringAspect externalFileBrowser{this};
 
     Utils::FilePathAspect patchCommand{this};
 
@@ -31,14 +48,18 @@ public:
 
     Utils::SelectionAspect reloadSetting{this};
 
-#ifdef ENABLE_CRASHPAD
-    Utils::BoolAspect enableCrashReporting{this};
-    Utils::BoolAspect showCrashButton{this};
-#endif
-
     Utils::BoolAspect askBeforeExit{this};
+
+    EnvChangeAspect environmentChangesAspect{this};
+    EnvVarSeparatorAspect envVarSeparatorAspect{this};
+
+    Utils::TerminalCommandAspect terminalCommand{this};
+
+    Utils::BoolAspect enableCrashReports{this};
+
+    void delayedInitialize();
 };
 
 CORE_TEST_EXPORT SystemSettings &systemSettings();
 
-} // Core::Internal
+} // namespace Core::Internal

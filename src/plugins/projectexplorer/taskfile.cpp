@@ -18,7 +18,6 @@
 #include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
-#include <QAction>
 #include <QMessageBox>
 
 using namespace Core;
@@ -45,15 +44,17 @@ Core::IDocument::ReloadBehavior TaskFile::reloadBehavior(ChangeTrigger state, Ch
     return BehaviorSilent;
 }
 
-bool TaskFile::reload(QString *errorString, ReloadFlag flag, ChangeType type)
+Result<> TaskFile::reload(ReloadFlag flag, ChangeType type)
 {
     Q_UNUSED(flag)
 
     if (type == TypeRemoved) {
         deleteLater();
-        return true;
+        return ResultOk;
     }
-    return load(errorString, filePath());
+    QString errorString;
+    bool success = load(&errorString, filePath());
+    return makeResult(success, errorString);
 }
 
 static Task::TaskType typeFrom(const QString &typeName)
@@ -105,7 +106,7 @@ static QString unescape(const QString &input)
 
 static bool parseTaskFile(QString *errorString, const FilePath &name)
 {
-    QFile tf(name.toString());
+    QFile tf(name.toUrlishString());
     if (!tf.open(QIODevice::ReadOnly)) {
         *errorString = Tr::tr("Cannot open task file %1: %2")
                            .arg(name.toUserOutput(), tf.errorString());
@@ -145,7 +146,7 @@ static bool parseTaskFile(QString *errorString, const FilePath &name)
             file = QDir::fromNativeSeparators(file);
             QFileInfo fi(file);
             if (fi.isRelative())
-                file = parentDir.pathAppended(file).toString();
+                file = parentDir.pathAppended(file).toUrlishString();
         }
         description = unescape(description);
 
@@ -214,7 +215,7 @@ TaskFile *TaskFile::openTasks(const FilePath &filePath)
 
 bool StopMonitoringHandler::canHandle(const ProjectExplorer::Task &task) const
 {
-    return task.category == Constants::TASK_CATEGORY_TASKLIST_ID;
+    return task.category() == Constants::TASK_CATEGORY_TASKLIST_ID;
 }
 
 void StopMonitoringHandler::handle(const ProjectExplorer::Task &task)
@@ -224,11 +225,11 @@ void StopMonitoringHandler::handle(const ProjectExplorer::Task &task)
     TaskFile::stopMonitoring();
 }
 
-QAction *StopMonitoringHandler::createAction(QObject *parent) const
+QAction *StopMonitoringHandler::createAction() const
 {
     const QString text = Tr::tr("Stop Monitoring");
     const QString toolTip = Tr::tr("Stop monitoring task files.");
-    auto stopMonitoringAction = new QAction(text, parent);
+    auto stopMonitoringAction = new QAction(text);
     stopMonitoringAction->setToolTip(toolTip);
     return stopMonitoringAction;
 }

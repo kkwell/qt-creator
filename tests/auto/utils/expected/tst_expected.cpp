@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include <QtTest/qtestcase.h>
-#include <QtTest>
+#include <QTest>
 
 #include <utils/expected.h>
 #include <utils/filepath.h>
@@ -21,9 +21,9 @@ private slots:
         FilePath p = "idontexists.ne";
 
         auto result = p.fileContents()
-                          .and_then([](auto) { return expected_str<QByteArray>{}; })
+                          .and_then([](auto) { return Result<QByteArray>{}; })
                           .or_else([](auto error) {
-                              return expected_str<QByteArray>(
+                              return Result<QByteArray>(
                                   make_unexpected(QString("Error: " + error)));
                           })
                           .transform_error([](auto error) -> QString {
@@ -54,11 +54,11 @@ private slots:
 
     void defaultConstructorHasValue()
     {
-        expected_str<QString> e1;
+        Result<QString> e1;
         QVERIFY(e1.has_value());
         QVERIFY(e1->isEmpty());
 
-        expected_str<QString> e2{};
+        Result<QString> e2{};
         QVERIFY(e2.has_value());
         QVERIFY(e2->isEmpty());
     }

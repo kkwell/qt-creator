@@ -6,6 +6,7 @@
 #include "proitems.h"
 
 #include <utils/algorithm.h>
+#include <utils/filepath.h>
 
 #include <QDir>
 #include <QLoggingCategory>
@@ -237,14 +238,14 @@ struct LineInfo
 static LineInfo lineInfo(const QString &line)
 {
     LineInfo li;
-    li.continuationPos = line.length();
+    li.continuationPos = line.size();
     const int idx = line.indexOf('#');
     li.hasComment = idx >= 0;
     if (li.hasComment)
         li.continuationPos = idx;
     for (int i = idx - 1; i >= 0 && (line.at(i) == ' ' || line.at(i) == '\t'); --i)
         --li.continuationPos;
-    for (int i = 0; i < line.length() && (line.at(i) == ' ' || line.at(i) == '\t'); ++i)
+    for (int i = 0; i < line.size() && (line.at(i) == ' ' || line.at(i) == '\t'); ++i)
         li.indent += line.at(i);
     return li;
 }
@@ -350,7 +351,7 @@ void ProWriter::putVarValues(ProFile *profile, QStringList *lines, const QString
                 const QRegularExpressionMatch match(rx.match(lines->at(scopeStart)));
                 if (match.hasMatch()) {
                     qCDebug(prowriterLog) << 3 << "old line value:" << (*lines)[scopeStart];
-                    (*lines)[scopeStart].replace(0, match.captured(1).length(),
+                    (*lines)[scopeStart].replace(0, match.captured(1).size(),
                                                  scope + " {\n" + continuationIndent);
                     qCDebug(prowriterLog) << "new line value:" << (*lines)[scopeStart];
                     contInfo = skipContLines(lines, scopeStart, false);
@@ -394,13 +395,28 @@ void ProWriter::putVarValues(ProFile *profile, QStringList *lines, const QString
 void ProWriter::addFiles(ProFile *profile, QStringList *lines, const QStringList &values,
                          const QString &var, const QString &continuationIndent)
 {
+    qCDebug(prowriterLog) << Q_FUNC_INFO << values;
+
+    using namespace Utils;
     QStringList valuesToWrite;
     QString prefixPwd;
-    QDir baseDir = QFileInfo(profile->fileName()).absoluteDir();
+    FilePath baseDir = FilePath::fromString(profile->fileName()).parentDir();
+    qCDebug(prowriterLog) << "base dir:" << baseDir;
     if (profile->fileName().endsWith(".pri"))
         prefixPwd = "$$PWD/";
-    for (const QString &v : values)
-        valuesToWrite << (prefixPwd + baseDir.relativeFilePath(v));
+    for (const QString &v : values) {
+        // v may contain a device prefix, that needs to be handled by FilePath.
+        FilePath tmp = FilePath::fromString(v);
+        /* If v does not have a prefix while baseDir does, or if they somehow have
+         * different prefixes we try using prefix of baseDir assuming it is the right one.
+         * Prefixes should be the same for relativePathFromDir to work properly.
+         */
+        if (!tmp.isSameDevice(baseDir))
+            tmp = FilePath::fromParts(baseDir.scheme(), baseDir.host(), tmp.path());
+        const QString relPath = tmp.relativePathFromDir(baseDir);
+        qCDebug(prowriterLog) << "relative path from" << baseDir << "to" << tmp << "is" << relPath;
+        valuesToWrite << (prefixPwd + relPath);
+    }
 
     putVarValues(profile, lines, valuesToWrite, var, AppendValues | MultiLine | AppendOperator,
                  QString(), continuationIndent);
@@ -462,7 +478,7 @@ QList<int> ProWriter::removeVarValues(ProFile *profile, QStringList *lines,
        };
        while (lineNo < nextSegmentStart()) {
            QString &line = (*lines)[lineNo];
-           int lineLen = line.length();
+           int lineLen = line.size();
            bool killed = false;
            bool saved = false;
            int idx = line.indexOf('#');
@@ -537,7 +553,7 @@ QList<int> ProWriter::removeVarValues(ProFile *profile, QStringList *lines,
                        for (const ContPos &pos : std::as_const(contPos)) {
                            QString &bline = (*lines)[pos.first];
                            bline.remove(pos.second, 1);
-                           if (pos.second == bline.length())
+                           if (pos.second == bline.size())
                                while (bline.endsWith(' ') || bline.endsWith('\t'))
                                    bline.chop(1);
                        }
@@ -564,20 +580,22 @@ QList<int> ProWriter::removeVarValues(ProFile *profile, QStringList *lines,
 QStringList ProWriter::removeFiles(
         ProFile *profile,
         QStringList *lines,
-        const QDir &proFileDir,
-        const QStringList &values,
+        const Utils::FilePath &proFileDir,
+        const Utils::FilePaths &values,
         const QStringList &vars,
         VarLocations *removedLocations)
 {
+    using namespace Utils;
     // This is a tad stupid - basically, it can remove only entries which
     // the above code added.
     QStringList valuesToFind;
-    for (const QString &absoluteFilePath : values)
-        valuesToFind << proFileDir.relativeFilePath(absoluteFilePath);
+    for (const FilePath &absoluteFilePath : values) {
+        valuesToFind << absoluteFilePath.relativePathFromDir(proFileDir);
+    }
 
     const QStringList notYetChanged =
             Utils::transform(removeVarValues(profile, lines, valuesToFind, vars, removedLocations),
-                             [values](int i) { return values.at(i); });
+                             [values](int i) { return values.at(i).toFSPathString(); });
 
     if (!profile->fileName().endsWith(".pri"))
         return notYetChanged;
@@ -586,10 +604,12 @@ QStringList ProWriter::removeFiles(
     // maybe those files can be found via $$PWD/relativeToPriFile
 
     valuesToFind.clear();
-    const QDir baseDir = QFileInfo(profile->fileName()).absoluteDir();
+    const FilePath baseDir = FilePath::fromString(profile->fileName()).parentDir();
     const QString prefixPwd = "$$PWD/";
-    for (const QString &absoluteFilePath : notYetChanged)
-        valuesToFind << (prefixPwd + baseDir.relativeFilePath(absoluteFilePath));
+    for (const QString &absoluteFilePath : notYetChanged) {
+        auto tmp = FilePath::fromString(absoluteFilePath);
+        valuesToFind << (prefixPwd + tmp.relativePathFromDir(baseDir));
+    }
 
     const QStringList notChanged =
             Utils::transform(removeVarValues(profile, lines, valuesToFind, vars, removedLocations),

@@ -12,9 +12,10 @@
 #include <cplusplus/Overview.h>
 #include <cplusplus/TypeOfExpression.h>
 
+#include <functional>
+
 #ifdef WITH_TESTS
 #include "cppquickfix_test.h"
-#include <QTest>
 #endif
 
 using namespace CPlusPlus;
@@ -40,17 +41,17 @@ template<typename Statement> Statement *asControlStatement(AST *node)
 }
 
 template<typename Statement>
-int triggerToken(const Statement *statement)
+QList<int> triggerTokens(const Statement *statement)
 {
     if constexpr (std::is_same_v<Statement, IfStatementAST>)
-        return statement->if_token;
+        return {statement->if_token, statement->else_token};
     if constexpr (std::is_same_v<Statement, WhileStatementAST>)
-        return statement->while_token;
+        return {statement->while_token};
     if constexpr (std::is_same_v<Statement, DoStatementAST>)
-        return statement->do_token;
+        return {statement->do_token};
     if constexpr (std::is_same_v<Statement, ForStatementAST>
                   || std::is_same_v<Statement, RangeBasedForStatementAST>) {
-        return statement->for_token;
+        return {statement->for_token};
     }
 }
 
@@ -112,18 +113,95 @@ private:
     const int m_elseToken;
 };
 
-template<typename Statement>
-bool checkControlStatementsHelper(const CppQuickFixInterface &interface, QuickFixOperations &result)
+template<typename Statement> class RemoveBracesFromControlStatementOp : public CppQuickFixOperation
+{
+public:
+    RemoveBracesFromControlStatementOp(const CppQuickFixInterface &interface,
+                                       const QList<Statement *> &statements,
+                                       StatementAST *elseStatement,
+                                       int elseToken)
+        : CppQuickFixOperation(interface, 0)
+        , m_statements(statements), m_elseStatement(elseStatement)
+    {
+        Q_UNUSED(elseToken)
+
+        setDescription(Tr::tr("Remove Curly Braces"));
+    }
+
+    void perform() override
+    {
+        ChangeSet changes;
+        const auto findNewline = [&](int bracePos, int diff, int &newlinePos, int *nextNonSpacePos) {
+            for (int i = bracePos + diff; true; i += diff) {
+                const QChar &c = currentFile()->charAt(i);
+                if (c == '\n' || c == QChar::ParagraphSeparator) {
+                    newlinePos = i;
+                    break;
+                }
+                if (!c.isSpace())
+                    break;
+                if (nextNonSpacePos)
+                    ++*nextNonSpacePos;
+            }
+        };
+        const auto removeBraceAndPossiblyLine = [&](int braceToken, bool removeTrailingSpace) {
+            const int bracePos = currentFile()->startOf(braceToken);
+            int prevNewline = -1;
+            int nextNewline = -1;
+            int start = bracePos;
+            int end = bracePos + 1;
+            findNewline(bracePos, -1, prevNewline, nullptr);
+            findNewline(bracePos, 1, nextNewline, removeTrailingSpace ? &end : nullptr);
+            if (prevNewline != -1 && nextNewline != -1) {
+                start = prevNewline;
+                end = nextNewline;
+            }
+            changes.remove(start, end);
+        };
+        const auto apply = [&](const CompoundStatementAST *stmt) {
+            QTC_ASSERT(stmt, return);
+            removeBraceAndPossiblyLine(stmt->lbrace_token, false);
+            removeBraceAndPossiblyLine(stmt->rbrace_token,
+                                       std::is_same_v<Statement, DoStatementAST>
+                                       || std::is_same_v<Statement, IfStatementAST>);
+            if (!stmt->statement_list)
+                changes.insert(currentFile()->endOf(stmt), "\n;");
+
+        };
+        for (Statement * const statement : m_statements)
+            apply(statement->statement->asCompoundStatement());
+        if (m_elseStatement)
+            apply(m_elseStatement->asCompoundStatement());
+
+        currentFile()->setChangeSet(changes);
+        currentFile()->apply();
+    }
+
+private:
+    const QList<Statement *> m_statements;
+    StatementAST * const m_elseStatement;
+};
+
+using StmtConstraint = std::function<bool(AST *, bool &)>;
+template<template<typename> typename Op, typename Statement>
+bool checkControlStatementsHelper(
+    const CppQuickFixInterface &interface,
+    const StmtConstraint &constraint,
+    QuickFixOperations &result)
 {
     Statement * const statement = asControlStatement<Statement>(interface.path().last());
     if (!statement)
         return false;
 
     QList<Statement *> statements;
-    if (interface.isCursorOn(triggerToken(statement)) && statement->statement
-        && !statement->statement->asCompoundStatement()) {
+    if (!Utils::anyOf(triggerTokens(statement), [&](int tok) { return interface.isCursorOn(tok); }))
+        return false;
+
+    bool abort = false;
+    if (statement->statement && constraint(statement->statement, abort))
         statements << statement;
-    }
+    if (abort)
+        return false;
 
     StatementAST *elseStmt = nullptr;
     int elseToken = 0;
@@ -132,24 +210,33 @@ bool checkControlStatementsHelper(const CppQuickFixInterface &interface, QuickFi
         for (elseStmt = currentIfStmt->else_statement, elseToken = currentIfStmt->else_token;
              elseStmt && (currentIfStmt = elseStmt->asIfStatement());
              elseStmt = currentIfStmt->else_statement, elseToken = currentIfStmt->else_token) {
-            if (currentIfStmt->statement && !currentIfStmt->statement->asCompoundStatement())
+            if (currentIfStmt->statement && constraint(currentIfStmt->statement, abort))
                 statements << currentIfStmt;
+            if (abort)
+                return false;
         }
-        if (elseStmt && (elseStmt->asIfStatement() || elseStmt->asCompoundStatement())) {
+        if (elseStmt && (elseStmt->asIfStatement() || !constraint(elseStmt, abort))) {
+            if (abort)
+                return false;
             elseStmt = nullptr;
             elseToken = 0;
         }
     }
 
-    if (!statements.isEmpty() || elseStmt)
-        result << new AddBracesToControlStatementOp(interface, statements, elseStmt, elseToken);
+    if (!statements.isEmpty() || elseStmt) {
+        result << new Op<Statement>(interface, statements, elseStmt, elseToken);
+        return false;
+    }
     return true;
 }
 
-template<typename ...Statements>
-void checkControlStatements(const CppQuickFixInterface &interface, QuickFixOperations &result)
+template<template<typename> typename Op, typename... Statements>
+void checkControlStatements(
+    const CppQuickFixInterface &interface,
+    const StmtConstraint &constraint,
+    QuickFixOperations &result)
 {
-    (... || checkControlStatementsHelper<Statements>(interface, result));
+    (... || checkControlStatementsHelper<Op, Statements>(interface, constraint, result));
 }
 
 class MoveDeclarationOutOfIfOp: public CppQuickFixOperation
@@ -334,10 +421,10 @@ public:
         if (m_expression) {
             QString varName = QLatin1String("total");
 
-            if (file->textOf(m_forAst->initializer).length() == 1) {
+            if (file->textOf(m_forAst->initializer).size() == 1) {
                 Overview oo = CppCodeStyleSettings::currentProjectCodeStyleOverview();
                 const QString typeAndName = oo.prettyType(m_type, varName);
-                renamePos = file->endOf(m_forAst->initializer) - 1 + typeAndName.length();
+                renamePos = file->endOf(m_forAst->initializer) - 1 + typeAndName.size();
                 change.insert(file->endOf(m_forAst->initializer) - 1, // "-1" because of ";"
                               typeAndName + QLatin1String(" = ") + file->textOf(m_expression));
             } else {
@@ -404,12 +491,6 @@ private:
 */
 class MoveDeclarationOutOfIf: public CppQuickFixFactory
 {
-#ifdef WITH_TESTS
-public:
-    static QObject *createTest();
-#endif
-
-private:
     void doMatch(const CppQuickFixInterface &interface, QuickFixOperations &result) override
     {
         const QList<AST *> &path = interface.path();
@@ -450,12 +531,6 @@ private:
 */
 class MoveDeclarationOutOfWhile: public CppQuickFixFactory
 {
-#ifdef WITH_TESTS
-public:
-    static QObject *createTest();
-#endif
-
-private:
     void doMatch(const CppQuickFixInterface &interface, QuickFixOperations &result) override
     {
         const QList<AST *> &path = interface.path();
@@ -582,21 +657,57 @@ private:
 */
 class AddBracesToControlStatement : public CppQuickFixFactory
 {
-#ifdef WITH_TESTS
-public:
-    static QObject *createTest();
-#endif
-
-private:
     void doMatch(const CppQuickFixInterface &interface, QuickFixOperations &result) override
     {
         if (interface.path().isEmpty())
             return;
-        checkControlStatements<IfStatementAST,
+        const auto constraint = [](AST *ast, bool &) { return !ast->asCompoundStatement(); };
+        checkControlStatements<AddBracesToControlStatementOp,
+                               IfStatementAST,
                                WhileStatementAST,
                                ForStatementAST,
                                RangeBasedForStatementAST,
-                               DoStatementAST>(interface, result);
+                               DoStatementAST>(interface, constraint, result);
+    }
+};
+
+/*!
+ * The reverse of AddBracesToControlStatement
+ */
+class RemoveBracesFromControlStatement : public CppQuickFixFactory
+{
+    void doMatch(const CppQuickFixInterface &interface, QuickFixOperations &result) override
+    {
+        if (interface.path().isEmpty())
+            return;
+        const auto constraint = [&](AST *ast, bool &abort) {
+            if (const auto compoundStmt = ast->asCompoundStatement()) {
+                if (!compoundStmt->statement_list || !compoundStmt->statement_list->value)
+                    return true;  // No statements.
+                if (compoundStmt->statement_list->next) {
+                    abort = true;
+                    return false; // More than one statement.
+                }
+
+                // We have exactly one statement. Check whether it spans more than one line.
+                const CppRefactoringFilePtr file = interface.currentFile();
+                const ChangeSet::Range stmtRange = file->range(compoundStmt->statement_list->value);
+                int startLine, startColumn, endLine, endColumn;
+                file->lineAndColumn(stmtRange.start, &startLine, &startColumn);
+                file->lineAndColumn(stmtRange.end, &endLine, &endColumn);
+                if (startLine == endLine)
+                    return true;
+                abort = true;
+                return false;
+            }
+            return false;
+        };
+        checkControlStatements<RemoveBracesFromControlStatementOp,
+                               IfStatementAST,
+                               WhileStatementAST,
+                               ForStatementAST,
+                               RangeBasedForStatementAST,
+                               DoStatementAST>(interface, constraint, result);
     }
 };
 
@@ -606,12 +717,6 @@ private:
  */
 class OptimizeForLoop : public CppQuickFixFactory
 {
-#ifdef WITH_TESTS
-public:
-    static QObject *createTest();
-#endif
-
-private:
     void doMatch(const CppQuickFixInterface &interface, QuickFixOperations &result) override
     {
         const QList<AST *> path = interface.path();
@@ -694,625 +799,47 @@ private:
 };
 
 #ifdef WITH_TESTS
-using namespace Tests;
-
-class MoveDeclarationOutOfIfTest : public QObject
+class AddBracesToControlStatementTest : public Tests::CppQuickFixTestObject
 {
     Q_OBJECT
-
-private slots:
-    void test_data()
-    {
-        QTest::addColumn<QByteArray>("original");
-        QTest::addColumn<QByteArray>("expected");
-
-        QTest::newRow("ifOnly")
-            << QByteArray(
-                   "void f()\n"
-                   "{\n"
-                   "    if (Foo *@foo = g())\n"
-                   "        h();\n"
-                   "}\n")
-            << QByteArray(
-                   "void f()\n"
-                   "{\n"
-                   "    Foo *foo = g();\n"
-                   "    if (foo)\n"
-                   "        h();\n"
-                   "}\n");
-        QTest::newRow("ifElse")
-            << QByteArray(
-                   "void f()\n"
-                   "{\n"
-                   "    if (Foo *@foo = g())\n"
-                   "        h();\n"
-                   "    else\n"
-                   "        i();\n"
-                   "}\n")
-            << QByteArray(
-                   "void f()\n"
-                   "{\n"
-                   "    Foo *foo = g();\n"
-                   "    if (foo)\n"
-                   "        h();\n"
-                   "    else\n"
-                   "        i();\n"
-                   "}\n");
-
-        QTest::newRow("MoveDeclarationOutOfIf_ifElseIf")
-            << QByteArray(
-                   "void f()\n"
-                   "{\n"
-                   "    if (Foo *foo = g()) {\n"
-                   "        if (Bar *@bar = x()) {\n"
-                   "            h();\n"
-                   "            j();\n"
-                   "        }\n"
-                   "    } else {\n"
-                   "        i();\n"
-                   "    }\n"
-                   "}\n")
-            << QByteArray(
-                   "void f()\n"
-                   "{\n"
-                   "    if (Foo *foo = g()) {\n"
-                   "        Bar *bar = x();\n"
-                   "        if (bar) {\n"
-                   "            h();\n"
-                   "            j();\n"
-                   "        }\n"
-                   "    } else {\n"
-                   "        i();\n"
-                   "    }\n"
-                   "}\n");
-    }
-
-    void test()
-    {
-        QFETCH(QByteArray, original);
-        QFETCH(QByteArray, expected);
-        MoveDeclarationOutOfIf factory;
-        QuickFixOperationTest(singleDocument(original, expected), &factory);
-    }
+public:
+    using CppQuickFixTestObject::CppQuickFixTestObject;
 };
-
-class MoveDeclarationOutOfWhileTest : public QObject
+class RemoveBracesFromControlStatementTest : public Tests::CppQuickFixTestObject
 {
     Q_OBJECT
-
-private slots:
-    void test_data()
-    {
-        QTest::addColumn<QByteArray>("original");
-        QTest::addColumn<QByteArray>("expected");
-
-        QTest::newRow("singleWhile")
-            << QByteArray(
-                   "void f()\n"
-                   "{\n"
-                   "    while (Foo *@foo = g())\n"
-                   "        j();\n"
-                   "}\n")
-            << QByteArray(
-                   "void f()\n"
-                   "{\n"
-                   "    Foo *foo;\n"
-                   "    while ((foo = g()) != 0)\n"
-                   "        j();\n"
-                   "}\n");
-        QTest::newRow("whileInWhile")
-            << QByteArray(
-                   "void f()\n"
-                   "{\n"
-                   "    while (Foo *foo = g()) {\n"
-                   "        while (Bar *@bar = h()) {\n"
-                   "            i();\n"
-                   "            j();\n"
-                   "        }\n"
-                   "    }\n"
-                   "}\n")
-            << QByteArray(
-                   "void f()\n"
-                   "{\n"
-                   "    while (Foo *foo = g()) {\n"
-                   "        Bar *bar;\n"
-                   "        while ((bar = h()) != 0) {\n"
-                   "            i();\n"
-                   "            j();\n"
-                   "        }\n"
-                   "    }\n"
-                   "}\n"
-                   );
-
-    }
-
-    void test()
-    {
-        QFETCH(QByteArray, original);
-        QFETCH(QByteArray, expected);
-        MoveDeclarationOutOfWhile factory;
-        QuickFixOperationTest(singleDocument(original, expected), &factory);
-    }
+public:
+    using CppQuickFixTestObject::CppQuickFixTestObject;
 };
-
-class OptimizeForLoopTest : public QObject
+class MoveDeclarationOutOfIfTest : public Tests::CppQuickFixTestObject
 {
     Q_OBJECT
-
-private slots:
-    void test_data()
-    {
-        QTest::addColumn<QByteArray>("original");
-        QTest::addColumn<QByteArray>("expected");
-
-        // Check: optimize postcrement
-        QTest::newRow("OptimizeForLoop_postcrement")
-            << QByteArray("void foo() {f@or (int i = 0; i < 3; i++) {}}\n")
-            << QByteArray("void foo() {for (int i = 0; i < 3; ++i) {}}\n");
-
-        // Check: optimize condition
-        QTest::newRow("OptimizeForLoop_condition")
-            << QByteArray("void foo() {f@or (int i = 0; i < 3 + 5; ++i) {}}\n")
-            << QByteArray("void foo() {for (int i = 0, total = 3 + 5; i < total; ++i) {}}\n");
-
-        // Check: optimize fliped condition
-        QTest::newRow("OptimizeForLoop_flipedCondition")
-            << QByteArray("void foo() {f@or (int i = 0; 3 + 5 > i; ++i) {}}\n")
-            << QByteArray("void foo() {for (int i = 0, total = 3 + 5; total > i; ++i) {}}\n");
-
-        // Check: if "total" used, create other name.
-        QTest::newRow("OptimizeForLoop_alterVariableName")
-            << QByteArray("void foo() {f@or (int i = 0, total = 0; i < 3 + 5; ++i) {}}\n")
-            << QByteArray("void foo() {for (int i = 0, total = 0, totalX = 3 + 5; i < totalX; ++i) {}}\n");
-
-        // Check: optimize postcrement and condition
-        QTest::newRow("OptimizeForLoop_optimizeBoth")
-            << QByteArray("void foo() {f@or (int i = 0; i < 3 + 5; i++) {}}\n")
-            << QByteArray("void foo() {for (int i = 0, total = 3 + 5; i < total; ++i) {}}\n");
-
-        // Check: empty initializier
-        QTest::newRow("OptimizeForLoop_emptyInitializer")
-            << QByteArray("int i; void foo() {f@or (; i < 3 + 5; ++i) {}}\n")
-            << QByteArray("int i; void foo() {for (int total = 3 + 5; i < total; ++i) {}}\n");
-
-        // Check: wrong initializier type -> no trigger
-        QTest::newRow("OptimizeForLoop_wrongInitializer")
-            << QByteArray("int i; void foo() {f@or (double a = 0; i < 3 + 5; ++i) {}}\n")
-            << QByteArray();
-
-        // Check: No trigger when numeric
-        QTest::newRow("OptimizeForLoop_noTriggerNumeric1")
-            << QByteArray("void foo() {fo@r (int i = 0; i < 3; ++i) {}}\n")
-            << QByteArray();
-
-        // Check: No trigger when numeric
-        QTest::newRow("OptimizeForLoop_noTriggerNumeric2")
-            << QByteArray("void foo() {fo@r (int i = 0; i < -3; ++i) {}}\n")
-            << QByteArray();
-    }
-
-    void test()
-    {
-        QFETCH(QByteArray, original);
-        QFETCH(QByteArray, expected);
-        OptimizeForLoop factory;
-        QuickFixOperationTest(singleDocument(original, expected), &factory);
-    }
+public:
+    using CppQuickFixTestObject::CppQuickFixTestObject;
 };
-
-class AddBracesToControlStatementTest : public QObject
+class MoveDeclarationOutOfWhileTest : public Tests::CppQuickFixTestObject
 {
     Q_OBJECT
-
-private slots:
-    void test_data()
-    {
-        QTest::addColumn<QByteArray>("original");
-        QTest::addColumn<QByteArray>("expected");
-
-        QByteArray original = R"delim(
-void MyObject::f()
-{
-    @if (true)
-        emit mySig();
-})delim";
-        QByteArray expected = R"delim(
-void MyObject::f()
-{
-    if (true) {
-        emit mySig();
-    }
-})delim";
-        QTest::newRow("if") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @if (true)
-        emit mySig();
-    else
-        emit otherSig();
-})delim";
-        expected = R"delim(
-void MyObject::f()
-{
-    @if (true) {
-        emit mySig();
-    } else {
-        emit otherSig();
-    }
-})delim";
-        QTest::newRow("if with one else, unbraced") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @if (true) {
-        emit mySig();
-    } else
-        emit otherSig();
-})delim";
-        expected = R"delim(
-void MyObject::f()
-{
-    @if (true) {
-        emit mySig();
-    } else {
-        emit otherSig();
-    }
-})delim";
-        QTest::newRow("if with one else, if braced") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @if (true)
-        emit mySig();
-    else {
-        emit otherSig();
-    }
-})delim";
-        expected = R"delim(
-void MyObject::f()
-{
-    @if (true) {
-        emit mySig();
-    } else {
-        emit otherSig();
-    }
-})delim";
-        QTest::newRow("if with one else, else braced") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @if (true) {
-        emit mySig();
-    } else {
-        emit otherSig();
-    }
-})delim";
-        expected.clear();
-        QTest::newRow("if with one else, both braced") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @if (x == 1)
-        emit sig1();
-    else if (x == 2)
-        emit sig2();
-})delim";
-        expected = R"delim(
-void MyObject::f()
-{
-    if (x == 1) {
-        emit sig1();
-    } else if (x == 2) {
-        emit sig2();
-    }
-})delim";
-        QTest::newRow("if-else chain without final else, unbraced") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @if (x == 1) {
-        emit sig1();
-    } else if (x == 2)
-        emit sig2();
-})delim";
-        expected = R"delim(
-void MyObject::f()
-{
-    if (x == 1) {
-        emit sig1();
-    } else if (x == 2) {
-        emit sig2();
-    }
-})delim";
-        QTest::newRow("if-else chain without final else, partially braced 1") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @if (x == 1)
-        emit sig1();
-    else if (x == 2) {
-        emit sig2();
-    }
-})delim";
-        expected = R"delim(
-void MyObject::f()
-{
-    if (x == 1) {
-        emit sig1();
-    } else if (x == 2) {
-        emit sig2();
-    }
-})delim";
-        QTest::newRow("if-else chain without final else, partially braced 2") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @if (x == 1) {
-        emit sig1();
-    } else if (x == 2) {
-        emit sig2();
-    }
-})delim";
-        expected.clear();
-        QTest::newRow("if-else chain without final else, fully braced") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @if (x == 1)
-        emit sig1();
-    else if (x == 2)
-        emit sig2();
-    else if (x == 3)
-        emit sig3();
-    else
-        emit otherSig();
-})delim";
-        expected = R"delim(
-void MyObject::f()
-{
-    if (x == 1) {
-        emit sig1();
-    } else if (x == 2) {
-        emit sig2();
-    } else if (x == 3) {
-        emit sig3();
-    } else {
-        emit otherSig();
-    }
-})delim";
-        QTest::newRow("if-else chain, unbraced") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @if (x == 1) {
-        emit sig1();
-    } else if (x == 2)
-        emit sig2();
-    else if (x == 3)
-        emit sig3();
-    else
-        emit otherSig();
-})delim";
-        expected = R"delim(
-void MyObject::f()
-{
-    if (x == 1) {
-        emit sig1();
-    } else if (x == 2) {
-        emit sig2();
-    } else if (x == 3) {
-        emit sig3();
-    } else {
-        emit otherSig();
-    }
-})delim";
-        QTest::newRow("if-else chain, partially braced 1") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @if (x == 1)
-        emit sig1();
-    else if (x == 2) {
-        emit sig2();
-    } else if (x == 3)
-        emit sig3();
-    else
-        emit otherSig();
-})delim";
-        expected = R"delim(
-void MyObject::f()
-{
-    if (x == 1) {
-        emit sig1();
-    } else if (x == 2) {
-        emit sig2();
-    } else if (x == 3) {
-        emit sig3();
-    } else {
-        emit otherSig();
-    }
-})delim";
-        QTest::newRow("if-else chain, partially braced 2") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @if (x == 1)
-        emit sig1();
-    else if (x == 2)
-        emit sig2();
-    else if (x == 3) {
-        emit sig3();
-    } else
-        emit otherSig();
-})delim";
-        expected = R"delim(
-void MyObject::f()
-{
-    if (x == 1) {
-        emit sig1();
-    } else if (x == 2) {
-        emit sig2();
-    } else if (x == 3) {
-        emit sig3();
-    } else {
-        emit otherSig();
-    }
-})delim";
-        QTest::newRow("if-else chain, partially braced 3") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @if (x == 1)
-        emit sig1();
-    else if (x == 2)
-        emit sig2();
-    else if (x == 3)
-        emit sig3();
-    else {
-        emit otherSig();
-    }
-})delim";
-        expected = R"delim(
-void MyObject::f()
-{
-    if (x == 1) {
-        emit sig1();
-    } else if (x == 2) {
-        emit sig2();
-    } else if (x == 3) {
-        emit sig3();
-    } else {
-        emit otherSig();
-    }
-})delim";
-        QTest::newRow("if-else chain, partially braced 4") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @if (x == 1) {
-        emit sig1();
-    } else if (x == 2) {
-        emit sig2();
-    } else if (x == 3) {
-        emit sig3();
-    } else {
-        emit otherSig();
-    }
-})delim";
-        expected.clear();
-        QTest::newRow("if-else chain, fully braced") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @while (true)
-        emit mySig();
-})delim";
-        expected = R"delim(
-void MyObject::f()
-{
-    while (true) {
-        emit mySig();
-    }
-})delim";
-        QTest::newRow("while") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @for (int i = 0; i < 10; ++i)
-        emit mySig();
-})delim";
-        expected = R"delim(
-void MyObject::f()
-{
-    for (int i = 0; i < 10; ++i) {
-        emit mySig();
-    }
-})delim";
-        QTest::newRow("for") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @for (int i : list)
-        emit mySig();
-})delim";
-        expected = R"delim(
-void MyObject::f()
-{
-    for (int i : list) {
-        emit mySig();
-    }
-})delim";
-        QTest::newRow("range-based for") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @do
-        emit mySig();
-    while (true);
-})delim";
-        expected = R"delim(
-void MyObject::f()
-{
-    do {
-        emit mySig();
-    } while (true);
-})delim";
-        QTest::newRow("do") << original << expected;
-
-        original = R"delim(
-void MyObject::f()
-{
-    @do {
-        emit mySig();
-    } while (true);
-})delim";
-        expected.clear();
-        QTest::newRow("already has braces") << original << expected;
-    }
-
-    void test()
-    {
-        QFETCH(QByteArray, original);
-        QFETCH(QByteArray, expected);
-
-        AddBracesToControlStatement factory;
-        QuickFixOperationTest({CppTestDocument::create("file.cpp", original, expected)}, &factory);
-    }
+public:
+    using CppQuickFixTestObject::CppQuickFixTestObject;
 };
+class OptimizeForLoopTest : public Tests::CppQuickFixTestObject
+{
+    Q_OBJECT
+public:
+    using CppQuickFixTestObject::CppQuickFixTestObject;
+};
+#endif
 
-QObject *MoveDeclarationOutOfIf::createTest() { return new MoveDeclarationOutOfIfTest; }
-QObject *MoveDeclarationOutOfWhile::createTest() { return new MoveDeclarationOutOfWhileTest; }
-QObject *OptimizeForLoop::createTest() { return new OptimizeForLoopTest; }
-QObject *AddBracesToControlStatement::createTest() { return new AddBracesToControlStatementTest; }
-
-#endif // WITH_TESTS
 } // namespace
 
 void registerRewriteControlStatementQuickfixes()
 {
-    CppQuickFixFactory::registerFactory<AddBracesToControlStatement>();
-    CppQuickFixFactory::registerFactory<MoveDeclarationOutOfIf>();
-    CppQuickFixFactory::registerFactory<MoveDeclarationOutOfWhile>();
-    CppQuickFixFactory::registerFactory<OptimizeForLoop>();
+    REGISTER_QUICKFIX_FACTORY_WITH_STANDARD_TEST(AddBracesToControlStatement);
+    REGISTER_QUICKFIX_FACTORY_WITH_STANDARD_TEST(RemoveBracesFromControlStatement);
+    REGISTER_QUICKFIX_FACTORY_WITH_STANDARD_TEST(MoveDeclarationOutOfIf);
+    REGISTER_QUICKFIX_FACTORY_WITH_STANDARD_TEST(MoveDeclarationOutOfWhile);
+    REGISTER_QUICKFIX_FACTORY_WITH_STANDARD_TEST(OptimizeForLoop);
     CppQuickFixFactory::registerFactory<SplitIfStatement>();
 }
 

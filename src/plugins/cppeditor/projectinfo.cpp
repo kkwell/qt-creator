@@ -4,7 +4,7 @@
 #include "projectinfo.h"
 
 #include <projectexplorer/abi.h>
-#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/environmentkitaspect.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projectmanager.h>
 #include <projectexplorer/rawprojectpart.h>
@@ -15,20 +15,20 @@ using namespace Utils;
 namespace CppEditor {
 
 ProjectInfo::ConstPtr ProjectInfo::create(const ProjectExplorer::ProjectUpdateInfo &updateInfo,
-                                     const QVector<ProjectPart::ConstPtr> &projectParts)
+                                     const QList<ProjectPart::ConstPtr> &projectParts)
 {
     return ConstPtr(new ProjectInfo(updateInfo, projectParts));
 }
 
 ProjectInfo::ConstPtr ProjectInfo::cloneWithNewSettings(const ConstPtr &pi,
-                                                        const CppCodeModelSettings &settings)
+                                                        const CppCodeModelSettingsData &settings)
 {
     return ConstPtr(new ProjectInfo(pi, settings));
 }
 
 ProjectExplorer::Project *ProjectInfo::project() const
 {
-    return ProjectExplorer::ProjectManager::projectWithProjectFilePath(projectFilePath());
+    return ProjectExplorer::ProjectManager::projectWithProjectFile(projectFilePath(), false);
 }
 
 bool ProjectInfo::operator ==(const ProjectInfo &other) const
@@ -64,7 +64,7 @@ bool ProjectInfo::configurationOrFilesChanged(const ProjectInfo &other) const
     return configurationChanged(other) || m_sourceFiles != other.m_sourceFiles;
 }
 
-static QSet<FilePath> getSourceFiles(const QVector<ProjectPart::ConstPtr> &projectParts)
+static QSet<FilePath> getSourceFiles(const QList<ProjectPart::ConstPtr> &projectParts)
 {
     QSet<FilePath> sourceFiles;
     for (const ProjectPart::ConstPtr &part : projectParts) {
@@ -74,7 +74,7 @@ static QSet<FilePath> getSourceFiles(const QVector<ProjectPart::ConstPtr> &proje
     return sourceFiles;
 }
 
-static ProjectExplorer::Macros getDefines(const QVector<ProjectPart::ConstPtr> &projectParts)
+static ProjectExplorer::Macros getDefines(const QList<ProjectPart::ConstPtr> &projectParts)
 {
     ProjectExplorer::Macros defines;
     for (const ProjectPart::ConstPtr &part : projectParts) {
@@ -85,7 +85,7 @@ static ProjectExplorer::Macros getDefines(const QVector<ProjectPart::ConstPtr> &
 }
 
 static ProjectExplorer::HeaderPaths getHeaderPaths(
-        const QVector<ProjectPart::ConstPtr> &projectParts)
+        const QList<ProjectPart::ConstPtr> &projectParts)
 {
     QSet<ProjectExplorer::HeaderPath> uniqueHeaderPaths;
     for (const ProjectPart::ConstPtr &part : projectParts) {
@@ -96,7 +96,7 @@ static ProjectExplorer::HeaderPaths getHeaderPaths(
 }
 
 ProjectInfo::ProjectInfo(const ProjectExplorer::ProjectUpdateInfo &updateInfo,
-                         const QVector<ProjectPart::ConstPtr> &projectParts)
+                         const QList<ProjectPart::ConstPtr> &projectParts)
     : m_projectParts(projectParts),
       m_projectName(updateInfo.projectName),
       m_projectFilePath(updateInfo.projectFilePath),
@@ -104,11 +104,11 @@ ProjectInfo::ProjectInfo(const ProjectExplorer::ProjectUpdateInfo &updateInfo,
       m_headerPaths(getHeaderPaths(projectParts)),
       m_sourceFiles(getSourceFiles(projectParts)),
       m_defines(getDefines(projectParts)),
-      m_settings(updateInfo.cppSettings)
+      m_settings(updateInfo.cppSettings.value<CppCodeModelSettingsData>())
 {
 }
 
-ProjectInfo::ProjectInfo(const ConstPtr &pi, const CppCodeModelSettings &settings)
+ProjectInfo::ProjectInfo(const ConstPtr &pi, const CppCodeModelSettingsData &settings)
     : m_projectParts(pi->projectParts()),
     m_projectName(pi->projectName()),
     m_projectFilePath(pi->projectFilePath()),

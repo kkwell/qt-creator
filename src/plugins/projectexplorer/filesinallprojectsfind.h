@@ -5,8 +5,7 @@
 
 #include "allprojectsfind.h"
 
-namespace ProjectExplorer {
-namespace Internal {
+namespace ProjectExplorer::Internal {
 
 class FilesInAllProjectsFind : public AllProjectsFind
 {
@@ -24,9 +23,9 @@ public:
 
 protected:
     TextEditor::FileContainerProvider fileContainerProvider() const override;
+    Utils::FindFlags supportedFindFlags() const override;
     QString label() const override;
 };
 
-} // namespace Internal
-} // namespace ProjectExplorer
+} // namespace ProjectExplorer::Internal
 

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "cppeditor/compilationdb.h"
 #include <cplusplus/Icons.h>
 
 #include <cppeditor/projectinfo.h>
@@ -35,15 +36,6 @@ CppEditor::CompilerOptionsBuilder clangOptionsBuilder(
         const CppEditor::ClangDiagnosticConfig &warningsConfig,
         const Utils::FilePath &clangIncludeDir,
         const ProjectExplorer::Macros &extraMacros);
-QJsonArray projectPartOptions(const CppEditor::CompilerOptionsBuilder &optionsBuilder);
-QJsonArray fullProjectPartOptions(const CppEditor::CompilerOptionsBuilder &optionsBuilder,
-                                  const QStringList &projectOptions);
-QJsonArray fullProjectPartOptions(const QJsonArray &projectPartOptions,
-                                  const QJsonArray &projectOptions);
-QJsonArray clangOptionsForFile(const CppEditor::ProjectFile &file,
-                               const CppEditor::ProjectPart &projectPart,
-                               const QJsonArray &generalOptions,
-                               CppEditor::UsePrecompiledHeaders usePch, bool clStyle);
 
 CppEditor::ProjectPart::ConstPtr projectPartForFile(const Utils::FilePath &filePath);
 
@@ -51,13 +43,11 @@ Utils::FilePath currentCppEditorDocumentFilePath();
 
 QString diagnosticCategoryPrefixRemoved(const QString &text);
 
-using GenerateCompilationDbResult = Utils::expected_str<Utils::FilePath>;
-enum class CompilationDbPurpose { Project, CodeModel };
 void generateCompilationDB(
-    QPromise<GenerateCompilationDbResult> &promise,
+    QPromise<CppEditor::GenerateCompilationDbResult> &promise,
     const QList<CppEditor::ProjectInfo::ConstPtr> &projectInfoList,
     const Utils::FilePath &baseDir,
-    CompilationDbPurpose purpose,
+    CppEditor::CompilationDbPurpose purpose,
     const CppEditor::ClangDiagnosticConfig &warningsConfig,
     const QStringList &projectOptions,
     const Utils::FilePath &clangIncludeDir);
@@ -75,8 +65,10 @@ public:
     static QString clazyCheckName(const QString &option);
 
 private:
+    int getSquareBracketStartIndex() const;
+
     const QString m_text;
-    const int m_squareBracketStartIndex;
+    const int m_squareBracketStartIndex = getSquareBracketStartIndex();
 };
 
 class ClangSourceRange
@@ -86,18 +78,18 @@ public:
 
     bool contains(int line, int column) const
     {
-        if (line < start.targetLine || line > end.targetLine)
+        if (line < start.target.line || line > end.target.line)
             return false;
-        if (line == start.targetLine && column < start.targetLine)
+        if (line == start.target.line && column < start.target.line)
             return false;
-        if (line == end.targetLine && column > end.targetColumn)
+        if (line == end.target.line && column > end.target.column)
             return false;
         return true;
     }
 
     bool contains(const Utils::Link &sourceLocation) const
     {
-        return contains(sourceLocation.targetLine, sourceLocation.targetColumn);
+        return contains(sourceLocation.target.line, sourceLocation.target.column);
     }
 
     Utils::Link start;

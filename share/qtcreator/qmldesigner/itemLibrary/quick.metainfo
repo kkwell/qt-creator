@@ -99,8 +99,7 @@ MetaInfo {
             libraryIcon: "images/mouse-area-icon.png"
             version: "2.0"
 
-            Property { name: "width"; type: "int"; value: 100; }
-            Property { name: "height"; type: "int"; value: 100; }
+            Property { name: "anchors.fill"; type: "enum"; value: parent; }
             toolTip: qsTr("An area with mouse functionality.")
         }
     }
@@ -203,7 +202,7 @@ MetaInfo {
             libraryIcon: "images/gridview-icon.png"
             version: "2.0"
 
-            QmlSource { source: "source/gridviewv2.qml" }
+            QmlSource { source: "source/gridview.qml" }
             toolTip: qsTr("Organizes dynamic data sets in a grid.")
         }
     }
@@ -218,7 +217,7 @@ MetaInfo {
             libraryIcon: "images/listview-icon.png"
             version: "2.0"
 
-            QmlSource { source: "source/listviewv2.qml" }
+            QmlSource { source: "source/listview.qml" }
             toolTip: qsTr("Organizes dynamic data sets in a list.")
         }
     }
@@ -233,7 +232,7 @@ MetaInfo {
             libraryIcon: "images/pathview-icon.png"
             version: "2.0"
 
-            QmlSource { source: "source/pathviewv2.qml" }
+            QmlSource { source: "source/pathview.qml" }
             toolTip: qsTr("Organizes dynamic data sets along a path.")
         }
     }
@@ -386,7 +385,7 @@ MetaInfo {
        }
 
         ItemLibraryEntry {
-            name: "Property Animation"
+            name: "Property"
             category: "d.Qt Quick - Animation"
             libraryIcon: "images/item-icon.png"
             version: "2.0"
@@ -406,7 +405,7 @@ MetaInfo {
        }
 
         ItemLibraryEntry {
-            name: "Pause Animation"
+            name: "Pause"
             category: "d.Qt Quick - Animation"
             libraryIcon: "images/item-icon.png"
             version: "2.0"
@@ -425,7 +424,7 @@ MetaInfo {
        }
 
         ItemLibraryEntry {
-            name: "Sequential Animation"
+            name: "Sequential"
             category: "d.Qt Quick - Animation"
             libraryIcon: "images/item-icon.png"
             version: "2.0"
@@ -444,7 +443,7 @@ MetaInfo {
        }
 
         ItemLibraryEntry {
-            name: "Parallel Animation"
+            name: "Parallel"
             category: "d.Qt Quick - Animation"
             libraryIcon: "images/item-icon.png"
             version: "2.0"
@@ -504,7 +503,7 @@ MetaInfo {
        }
 
         ItemLibraryEntry {
-            name: "Color Animation"
+            name: "Color"
             category: "d.Qt Quick - Animation"
             libraryIcon: "images/item-icon.png"
             version: "2.0"
@@ -524,13 +523,33 @@ MetaInfo {
         }
 
         ItemLibraryEntry {
-            name: "Number Animation"
+            name: "Number"
             category: "d.Qt Quick - Animation"
             libraryIcon: "images/item-icon.png"
             version: "2.0"
             Property { name: "to"; type: "int"; value: 0; }
             Property { name: "from"; type: "int"; value: 0; }
             toolTip: qsTr("Animates a numerical property of an item.")
+        }
+    }
+
+    Type {
+        name: "QtQuick.FrameAnimation"
+        icon: "images/frame-animation-16px.png"
+
+        Hints {
+            visibleInNavigator: true
+            canBeDroppedInNavigator: true
+            canBeDroppedInFormEditor: false
+            canBeContainer: false
+        }
+
+        ItemLibraryEntry {
+            name: "Frame"
+            category: "d.Qt Quick - Animation"
+            libraryIcon: "images/frame-animation-24px.png"
+            version: "2.0"
+            toolTip: qsTr("Triggers a handler at every animation frame update.")
         }
     }
 

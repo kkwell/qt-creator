@@ -21,10 +21,17 @@
 
     \section1 \QOI
 
-    \QOI has both the latest released version of \QC and a beta version or a
-    release candidate of the upcoming release, depending on the release cycle.
+    \l{\QOI} has both the latest released
+    version of \QC and a beta version or a release candidate of the upcoming
+    release, depending on the release cycle.
 
-    \note You need a Qt Account to use \QOI.
+    Search for \QC in the \QOI to find the available versions.
+
+    \image {qt-online-installer.webp} {Qt Creator installers filtered in Qt Online Installer}
+
+    \note You need a \l{Qt Account} to use \QOI.
+
+    If you develop Qt Quick applications, consider also installing \QDS.
 
     \section1 Standalone \QC
 
@@ -40,9 +47,9 @@
     instructions to install \QC.
 
     To develop with Qt, you also need a Qt version. You can register Qt versions
-    in the stand-alone \QC to use them in \l{Kits}{kits}.
+    in the stand-alone \QC to use them in \l{Managing kits}{kits}.
 
-    \section2 Using Package Managers
+    \section2 Using package managers
 
     The \QC packages that package managers offer are not
     officially supported. For links to official releases, see
@@ -54,39 +61,36 @@
 
     For example, on Windows, enter:
 
-    \badcode
+    \code [shell]
     choco install qtcreator
     \endcode
 
     And on \macos, enter:
 
-    \badcode
+    \code [shell]
     brew install --cask qt-creator
     \endcode
 
     \note Linux distributions might have old \QC versions, so you might want to
     download and install the latest version.
 
-    \section2 Downloading Installation Packages
+    \section2 Downloading installation packages
 
     You can download \QC installation packages from:
 
     \list
-        \li \l{https://download.qt.io/official_releases/qtcreator/}
-            {Official releases}
+        \li \l{Official releases}
         \li Your \l{Qt Account} (open source and commercial)
-        \li \l{https://download.qt.io/snapshots/qtcreator/}
-            {Snapshots of the current and upcoming release}
-        \li \l{https://github.com/qt-creator/qt-creator/releases}{GitHub}
+        \li \l{Snapshots of the current and upcoming release}
+        \li \l{GitHub: Qt Creator releases}{GitHub}
     \endlist
 
-    \section2 Building from Sources
+    \section2 Building from sources
 
     To test the very latest \QC version, maybe with your own changes,
     you can build it from sources. For more information, see
-    \l{https://github.com/qt-creator/qt-creator/#compiling-qt-creator}
-    {Compiling \QC} and \l{https://wiki.qt.io/Building_Qt_Creator_from_Git}
-    {Building Qt Creator from Git}.
+    \l{Compiling \QC} and \l{Building \QC from Git}.
 
-    \sa {Manage Kits}{How To: Manage Kits}, {Register installed Qt versions}
+    \sa {Manage kits}{How to: Manage kits}, {Register installed Qt versions},
+    {Install plugins}, {Licenses and acknowledgments}
 */

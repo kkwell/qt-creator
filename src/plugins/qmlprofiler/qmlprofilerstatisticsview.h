@@ -6,7 +6,8 @@
 #include "qmlprofilermodelmanager.h"
 #include "qmlprofilerstatisticsmodel.h"
 #include "qmlprofilereventsview.h"
-#include "qmlprofilereventtypes.h"
+
+#include <qmldebug/qmlprofilereventtypes.h>
 
 #include <utils/itemviews.h>
 
@@ -14,8 +15,7 @@
 
 #include <memory>
 
-namespace QmlProfiler {
-namespace Internal {
+namespace QmlProfiler::Internal {
 
 class QmlProfilerStatisticsMainView;
 class QmlProfilerStatisticsRelativesView;
@@ -23,12 +23,13 @@ class QmlProfilerStatisticsRelativesView;
 class QmlProfilerStatisticsView : public QmlProfilerEventsView
 {
     Q_OBJECT
+
 public:
     explicit QmlProfilerStatisticsView(QmlProfilerModelManager *profilerModelManager,
                                        QWidget *parent = nullptr);
     ~QmlProfilerStatisticsView() override = default;
 
-    QString summary(const QVector<int> &typeIds) const;
+    QString summary(const QList<int> &typeIds) const;
     QStringList details(int typeId) const;
 
     void selectByTypeId(int typeIndex) override;
@@ -51,6 +52,7 @@ private:
 class QmlProfilerStatisticsMainView : public Utils::TreeView
 {
     Q_OBJECT
+
 public:
     explicit QmlProfilerStatisticsMainView(QmlProfilerStatisticsModel *model);
     ~QmlProfilerStatisticsMainView() override;
@@ -68,7 +70,7 @@ public:
     void restrictToFeatures(quint64 features);
     bool isRestrictedToRange() const;
 
-    QString summary(const QVector<int> &typeIds) const;
+    QString summary(const QList<int> &typeIds) const;
     QStringList details(int typeId) const;
 
 signals:
@@ -86,6 +88,7 @@ private:
 class QmlProfilerStatisticsRelativesView : public Utils::TreeView
 {
     Q_OBJECT
+
 public:
     explicit QmlProfilerStatisticsRelativesView(QmlProfilerStatisticsRelativesModel *model);
     ~QmlProfilerStatisticsRelativesView() override;
@@ -101,5 +104,4 @@ private:
     std::unique_ptr<QmlProfilerStatisticsRelativesModel> m_model;
 };
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

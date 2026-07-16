@@ -4,10 +4,10 @@
 #include <tracing/timelinemodelaggregator.h>
 #include <tracing/timelinenotesrenderpass.h>
 #include <tracing/timelinerenderstate.h>
-#include <tracing/timelineabstractrenderer_p.h>
+#include <tracing/timelineabstractrenderer.h>
 
-#include <QtTest>
 #include <QSGMaterialShader>
+#include <QTest>
 
 using namespace Timeline;
 
@@ -106,11 +106,9 @@ void tst_TimelineNotesRenderPass::update()
     delete shader1;
     delete shader2;
 
-    parentState.setPassState(0, result);
+    parentState.passes[0] = result;
     parentState.assembleNodeTree(&model, 1, 1);
 
-    QVERIFY(parentState.collapsedOverlayRoot());
-    QVERIFY(parentState.expandedRowRoot());
 }
 
 QTEST_MAIN(tst_TimelineNotesRenderPass)

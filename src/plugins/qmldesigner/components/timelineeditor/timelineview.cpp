@@ -42,12 +42,13 @@
 
 namespace QmlDesigner {
 
-TimelineView::TimelineView(ExternalDependenciesInterface &externalDepoendencies)
+TimelineView::TimelineView(ExternalDependenciesInterface &externalDepoendencies,
+                           ModulesStorage &modulesStorage)
     : AbstractView{externalDepoendencies}
     , m_timelineWidget(nullptr)
+    , m_modulesStorage(modulesStorage)
 {
     EasingCurve::registerStreamOperators();
-    setEnabled(false);
 }
 
 TimelineView::~TimelineView() = default;
@@ -55,9 +56,6 @@ TimelineView::~TimelineView() = default;
 void TimelineView::modelAttached(Model *model)
 {
     AbstractView::modelAttached(model);
-
-    if (!isEnabled())
-        return;
 
     if (m_timelineWidget)
         m_timelineWidget->init();
@@ -151,7 +149,7 @@ void TimelineView::nodeReparented(const ModelNode &node,
 
 void TimelineView::instancePropertyChanged(const QList<QPair<ModelNode, PropertyName>> &propertyList)
 {
-    QmlTimeline timeline = currentTimeline();
+    QmlTimeline timeline = currentTimelineNode();
     bool updated = false;
     bool keyframeChangeFlag = false;
     for (const auto &pair : propertyList) {
@@ -181,7 +179,7 @@ void TimelineView::variantPropertiesChanged(const QList<VariantProperty> &proper
 {
     for (const auto &property : propertyList) {
         if ((property.name() == "frame" || property.name() == "value")
-            && property.parentModelNode().type() == "QtQuick.Timeline.Keyframe"
+            && property.parentModelNode().metaInfo().isQtQuickTimelineKeyframe()
             && property.parentModelNode().hasParentProperty()) {
             const ModelNode framesNode
                 = property.parentModelNode().parentProperty().parentModelNode();
@@ -285,14 +283,13 @@ QList<QmlModelState> getAllStates(TimelineView* view)
 
 QString getStateName(TimelineView* view, bool& enableInBaseState)
 {
-    QString currentStateName;
-    if (QmlModelState state = view->currentState(); state.isValid()) {
+    if (QmlModelState state = view->currentStateNode(); state.isValid()) {
         if (!state.isBaseState()) {
             enableInBaseState = false;
             return state.name();
         }
     }
-    return QString();
+    return {};
 }
 
 void enableInCurrentState(
@@ -302,7 +299,7 @@ void enableInCurrentState(
     if (!stateName.isEmpty()) {
         for (auto& state : getAllStates(view)) {
             if (state.isValid()) {
-                QmlPropertyChanges propertyChanges(state.propertyChanges(node));
+                QmlPropertyChanges propertyChanges(state.ensurePropertyChangesForTarget(node));
                 if (state.name() == stateName)
                     propertyChanges.modelNode().variantProperty(propertyName).setValue(true);
                 else
@@ -315,8 +312,6 @@ void enableInCurrentState(
 
 const QmlTimeline TimelineView::addNewTimeline()
 {
-    const TypeName timelineType = "QtQuick.Timeline.Timeline";
-
     QTC_ASSERT(isAttached(), return QmlTimeline());
 
     QmlDesignerPlugin::emitUsageStatistics(Constants::EVENT_TIMELINE_ADDED);
@@ -327,6 +322,7 @@ const QmlTimeline TimelineView::addNewTimeline()
         e.showException();
     }
 #ifndef QDS_USE_PROJECTSTORAGE
+    const TypeName timelineType = "QtQuick.Timeline.Timeline";
     NodeMetaInfo metaInfo = model()->metaInfo(timelineType);
 
     QTC_ASSERT(metaInfo.isValid(), return QmlTimeline());
@@ -344,7 +340,7 @@ const QmlTimeline TimelineView::addNewTimeline()
                                        metaInfo.majorVersion(),
                                        metaInfo.minorVersion());
 #endif
-        timelineNode.validId();
+        timelineNode.ensureIdExists();
 
         timelineNode.variantProperty("startFrame").setValue(0);
         timelineNode.variantProperty("endFrame").setValue(1000);
@@ -360,13 +356,12 @@ const QmlTimeline TimelineView::addNewTimeline()
 
 ModelNode TimelineView::addAnimation(QmlTimeline timeline)
 {
-    const TypeName animationType = "QtQuick.Timeline.TimelineAnimation";
-
     QTC_ASSERT(timeline.isValid(), return ModelNode());
 
     QTC_ASSERT(isAttached(), return ModelNode());
 
 #ifndef QDS_USE_PROJECTSTORAGE
+    const TypeName animationType = "QtQuick.Timeline.TimelineAnimation";
     NodeMetaInfo metaInfo = model()->metaInfo(animationType);
 
     QTC_ASSERT(metaInfo.isValid(), return ModelNode());
@@ -385,7 +380,7 @@ ModelNode TimelineView::addAnimation(QmlTimeline timeline)
                                         metaInfo.minorVersion());
         animationNode.variantProperty("duration").setValue(timeline.duration());
 #endif
-        animationNode.validId();
+        animationNode.ensureIdExists();
 
         animationNode.variantProperty("from").setValue(timeline.startKeyframe());
         animationNode.variantProperty("to").setValue(timeline.endKeyframe());
@@ -434,9 +429,28 @@ void TimelineView::openSettingsDialog()
     dialog->show();
 }
 
+void TimelineView::activateTimelineRecording(const ModelNode &timeline)
+{
+    if (QmlTimeline currentTimeline = currentTimelineNode())
+        currentTimeline.toogleRecording(true);
+
+    if (isAttached())
+        model()->setCurrentTimelineNode(timeline);
+}
+
+void TimelineView::deactivateTimelineRecording()
+{
+    if (QmlTimeline currentTimeline = currentTimelineNode()) {
+        currentTimeline.toogleRecording(false);
+        currentTimeline.resetGroupRecording();
+    }
+    if (isAttached())
+        model()->setCurrentTimelineNode({});
+}
+
 void TimelineView::setTimelineRecording(bool value)
 {
-    const ModelNode node = timelineForState(currentState()).modelNode();
+    const ModelNode node = timelineForState(currentStateNode()).modelNode();
 
     if (value && node.isValid()) {
         activateTimelineRecording(node);
@@ -444,6 +458,15 @@ void TimelineView::setTimelineRecording(bool value)
         deactivateTimelineRecording();
         setCurrentTimeline(node);
     }
+}
+
+void TimelineView::setCurrentTimeline(const ModelNode &timeline)
+{
+    if (QmlTimeline currentTimeline = currentTimelineNode())
+        currentTimeline.toogleRecording(false);
+
+    if (isAttached())
+        model()->setCurrentTimelineNode(timeline);
 }
 
 void TimelineView::customNotification(const AbstractView * /*view*/,
@@ -460,9 +483,9 @@ void TimelineView::customNotification(const AbstractView * /*view*/,
 
 void TimelineView::insertKeyframe(const ModelNode &target, const PropertyName &propertyName)
 {
-    QmlTimeline timeline = currentTimeline();
+    QmlTimeline timeline = currentTimelineNode();
 
-    if (timeline.isValid() && target.isValid() && QmlObjectNode::isValidQmlObjectNode(target)) {
+    if (timeline && target && QmlObjectNode::isValidQmlObjectNode(target)) {
         executeInTransaction("TimelineView::insertKeyframe", [=, &timeline, &target]() {
             timeline.insertKeyframe(target, propertyName);
         });
@@ -520,11 +543,11 @@ QmlTimeline TimelineView::timelineForState(const ModelNode &state) const
 
     for (const auto &timeline : timelines) {
         if (modelState.affectsModelNode(timeline)) {
-            QmlPropertyChanges propertyChanges(modelState.propertyChanges(timeline));
-
-            if (propertyChanges.isValid() && propertyChanges.modelNode().hasProperty("enabled")
-                && propertyChanges.modelNode().variantProperty("enabled").value().toBool())
-                return timeline;
+            if (QmlPropertyChanges propertyChanges = modelState.ensurePropertyChangesForTarget(
+                    timeline)) {
+                if (propertyChanges.modelNode().variantProperty("enabled").value().toBool())
+                    return timeline;
+            }
         }
     }
     return QmlTimeline();
@@ -586,7 +609,9 @@ void TimelineView::registerActions()
     SelectionContextOperation pasteKeyframes = [this](const SelectionContext &context) {
         auto mutator = widget()->graphicsScene()->currentTimeline();
         if (mutator.isValid())
-            TimelineActions::pasteKeyframesToTarget(context.currentSingleSelectedNode(), mutator);
+            TimelineActions::pasteKeyframesToTarget(context.currentSingleSelectedNode(),
+                                                    mutator,
+                                                    m_modulesStorage);
     };
 
     actionManager.addDesignerAction(new ActionGroup(TimelineConstants::timelineCategoryDisplayName,
@@ -640,7 +665,7 @@ void TimelineView::registerActions()
 TimelineWidget *TimelineView::createWidget()
 {
     if (!m_timelineWidget)
-        m_timelineWidget = new TimelineWidget(this);
+        m_timelineWidget = new TimelineWidget(this, m_modulesStorage);
 
     return m_timelineWidget;
 }
@@ -650,7 +675,6 @@ WidgetInfo TimelineView::widgetInfo()
     return createWidgetInfo(createWidget(),
                             QStringLiteral("Timelines"),
                             WidgetInfo::BottomPane,
-                            0,
                             tr("Timeline"),
                             tr("Timeline view"));
 }
@@ -678,7 +702,7 @@ void TimelineView::updateAnimationCurveEditor()
     if (!m_timelineWidget)
         return;
 
-    QmlTimeline currentTimeline = timelineForState(currentState());
+    QmlTimeline currentTimeline = timelineForState(currentStateNode());
     if (currentTimeline.isValid())
         m_timelineWidget->toolBar()->setCurrentTimeline(currentTimeline);
     else

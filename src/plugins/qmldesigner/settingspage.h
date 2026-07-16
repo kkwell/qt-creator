@@ -5,16 +5,12 @@
 
 #include <coreplugin/dialogs/ioptionspage.h>
 
-namespace QmlDesigner {
-class ExternalDependencies;
-
-namespace Internal {
+namespace QmlDesigner::Internal {
 
 class SettingsPage final : public Core::IOptionsPage
 {
 public:
-    SettingsPage(ExternalDependencies &externalDependencies);
+    SettingsPage();
 };
 
-} // namespace Internal
-} // namespace QmlDesigner
+} // namespace QmlDesigner::Internal

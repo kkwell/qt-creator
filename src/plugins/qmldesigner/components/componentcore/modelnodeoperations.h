@@ -8,6 +8,8 @@
 
 #include <utils/filepath.h>
 
+#include <QVector3D>
+
 namespace QmlDesigner {
 
 class AddFilesResult
@@ -71,6 +73,8 @@ void paste(const SelectionContext &selectionState);
 void undo(const SelectionContext &selectionState);
 void redo(const SelectionContext &selectionState);
 void setVisible(const SelectionContext &selectionState);
+void isolateSelectedNodes(const SelectionContext &selectionState);
+void showAllNodes(const SelectionContext &selectionState);
 void setFillWidth(const SelectionContext &selectionState);
 void setFillHeight(const SelectionContext &selectionState);
 void resetSize(const SelectionContext &selectionState);
@@ -90,12 +94,15 @@ void layoutRowLayout(const SelectionContext &selectionState);
 void layoutColumnLayout(const SelectionContext &selectionState);
 void layoutGridLayout(const SelectionContext &selectionState);
 void goImplementation(const SelectionContext &selectionState);
+void addToGroupItem(const SelectionContext &selectionContext);
 void addNewSignalHandler(const SelectionContext &selectionState);
 void editMaterial(const SelectionContext &selectionContext);
 void addSignalHandlerOrGotoImplementation(const SelectionContext &selectionState, bool addAlwaysNewSlot);
 void removeLayout(const SelectionContext &selectionContext);
 void removePositioner(const SelectionContext &selectionContext);
 void moveToComponent(const SelectionContext &selectionContext);
+void extractComponent(const SelectionContext &selectionContext);
+void addNodeToContentLibrary(const SelectionContext &selectionContext);
 PropertyName getIndexPropertyName(const ModelNode &modelNode);
 void addItemToStackedContainer(const SelectionContext &selectionContext);
 void increaseIndexOfStackedContainer(const SelectionContext &selectionContext);
@@ -109,14 +116,9 @@ AddFilesResult addFontToProject(const QStringList &fileNames, const QString &dir
 AddFilesResult addSoundToProject(const QStringList &fileNames, const QString &directory, bool showDialog = true);
 AddFilesResult addShaderToProject(const QStringList &fileNames, const QString &directory, bool showDialog = true);
 AddFilesResult addVideoToProject(const QStringList &fileNames, const QString &directory, bool showDialog = true);
-void createFlowActionArea(const SelectionContext &selectionContext);
-void addTransition(const SelectionContext &selectionState);
-void addFlowEffect(const SelectionContext &selectionState, const TypeName &typeName);
-void addCustomFlowEffect(const SelectionContext &selectionState);
-void setFlowStartItem(const SelectionContext &selectionContext);
-void addToGroupItem(const SelectionContext &selectionContext);
-void selectFlowEffect(const SelectionContext &selectionContext);
-void mergeWithTemplate(const SelectionContext &selectionContext, ExternalDependenciesInterface &externalDependencies);
+void mergeWithTemplate(const SelectionContext &selectionContext,
+                       ExternalDependenciesInterface &externalDependencies,
+                       ModulesStorage &modulesStorage);
 void removeGroup(const SelectionContext &selectionContext);
 void editAnnotation(const SelectionContext &selectionContext);
 void addMouseAreaFill(const SelectionContext &selectionContext);
@@ -124,6 +126,8 @@ void addMouseAreaFill(const SelectionContext &selectionContext);
 void openSignalDialog(const SelectionContext &selectionContext);
 void updateImported3DAsset(const SelectionContext &selectionContext);
 void editIn3dView(const SelectionContext &selectionContext);
+QMLDESIGNERCOMPONENTS_EXPORT Utils::FilePath findEffectFile(const ModelNode &effectNode);
+void editInEffectComposer(const SelectionContext &selectionContext);
 
 QMLDESIGNERCOMPONENTS_EXPORT Utils::FilePath getEffectsImportDirectory();
 QMLDESIGNERCOMPONENTS_EXPORT QString getEffectsDefaultDirectory(const QString &defaultDir = {});
@@ -134,11 +138,15 @@ bool useLayerEffect();
 bool validateEffect(const QString &effectPath);
 bool isEffectComposerActivated();
 
-Utils::FilePath getImagesDefaultDirectory();
+QMLDESIGNERCOMPONENTS_EXPORT Utils::FilePath getImagesDefaultDirectory();
+Utils::FilePath getImported3dDefaultDirectory();
 
 //Item Library and Assets related drop operations
 QMLDESIGNERCOMPONENTS_EXPORT ModelNode handleItemLibraryEffectDrop(const QString &effectPath,
                                                                    const ModelNode &targetNode);
+ModelNode handleImported3dAssetDrop(const QString &assetPath,
+                                    const ModelNode &targetNode,
+                                    const QVector3D &position = {});
 void handleTextureDrop(const QMimeData *mimeData, const ModelNode &targetModelNode);
 void handleMaterialDrop(const QMimeData *mimeData, const ModelNode &targetNode);
 ModelNode handleItemLibraryImageDrop(const QString &imagePath,
@@ -157,7 +165,6 @@ ModelNode handleItemLibrarySoundDrop(const QString &soundPath,
                                      NodeAbstractProperty targetProperty,
                                      const ModelNode &targetNode);
 ModelNode handleItemLibraryTexture3dDrop(const QString &tex3DPath,
-                                         NodeAbstractProperty targetProperty,
                                          const ModelNode &targetNode,
                                          bool &outMoveNodesAfter);
 

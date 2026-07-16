@@ -41,8 +41,7 @@ private:
 class ConfigureEnvironmentAspect final: public ProjectExplorer::EnvironmentAspect
 {
 public:
-    ConfigureEnvironmentAspect(Utils::AspectContainer *container,
-                               ProjectExplorer::BuildConfiguration *buildConfig);
+    ConfigureEnvironmentAspect(ProjectExplorer::BuildConfiguration *buildConfig);
 
     void fromMap(const Utils::Store &map) override;
     void toMap(Utils::Store &map) const override;
@@ -58,17 +57,23 @@ public:
     CMakeBuildConfiguration(ProjectExplorer::Target *target, Utils::Id id);
     ~CMakeBuildConfiguration() override;
 
-    static Utils::FilePath
-    shadowBuildDirectory(const Utils::FilePath &projectFilePath, const ProjectExplorer::Kit *k,
-                         const QString &bcName, BuildConfiguration::BuildType buildType);
+    static Utils::FilePath shadowBuildDirectory(
+        const Utils::FilePath &projectFilePath,
+        const ProjectExplorer::Kit *k,
+        const QString &bcName,
+        BuildConfiguration::BuildType buildType,
+        bool expand);
     static bool isIos(const ProjectExplorer::Kit *k);
     static bool hasQmlDebugging(const CMakeConfig &config);
 
     // Context menu action:
     void buildTarget(const QString &buildTarget);
-    ProjectExplorer::BuildSystem *buildSystem() const final;
+    void reBuildTarget(const QString &cleanTarget, const QString &buildTarget);
 
     void addToEnvironment(Utils::Environment &env) const override;
+
+    void restrictNextBuild(const ProjectExplorer::RunConfiguration *rc) override;
+    void setRestrictedBuildTarget(const QString &buildTarget);
 
     Utils::Environment configureEnvironment() const;
     Internal::CMakeBuildSystem *cmakeBuildSystem() const;
@@ -84,7 +89,17 @@ public:
     Utils::FilePathAspect sourceDirectory{this};
     Utils::StringAspect buildTypeAspect{this};
     QtSupport::QmlDebuggingAspect qmlDebugging{this};
-    Internal::ConfigureEnvironmentAspect configureEnv{this, this};
+    Internal::ConfigureEnvironmentAspect configureEnv{this};
+
+    QStringList initialCMakeOptions() const;
+
+    static CMakeConfig updateCMakeHelperConfig(const CMakeConfig &config);
+
+    void setInitialArgs(const QStringList &args) override;
+    QStringList initialArgs() const override;
+    QStringList additionalArgs() const override;
+    void reconfigure() override;
+    void stopReconfigure() override;
 
 signals:
     void signingFlagsChanged();
@@ -92,16 +107,15 @@ signals:
 
 private:
     BuildType buildType() const override;
-
-    ProjectExplorer::NamedWidget *createConfigWidget() override;
-
+    QWidget *createConfigWidget() override;
     virtual CMakeConfig signingFlags() const;
 
-    void setInitialBuildAndCleanSteps(const ProjectExplorer::Target *target);
-    void setBuildPresetToBuildSteps(const ProjectExplorer::Target *target);
+    void setInitialBuildAndCleanSteps();
+    void setBuildPresetToBuildSteps();
     void filterConfigArgumentsFromAdditionalCMakeArguments();
 
-    Internal::CMakeBuildSystem *m_buildSystem = nullptr;
+    QStringList m_unrestrictedBuildTargets;
+    Internal::CMakeBuildSettingsWidget *m_configWidget = nullptr;
 
     friend class Internal::CMakeBuildSettingsWidget;
     friend class Internal::CMakeBuildSystem;
@@ -124,11 +138,7 @@ public:
     };
     static BuildType buildTypeFromByteArray(const QByteArray &in);
     static ProjectExplorer::BuildConfiguration::BuildType cmakeBuildTypeToBuildType(const BuildType &in);
-
-private:
     static ProjectExplorer::BuildInfo createBuildInfo(BuildType buildType);
-
-    friend class Internal::CMakeProjectImporter;
 };
 
 namespace Internal { void setupCMakeBuildConfiguration(); }

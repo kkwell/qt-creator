@@ -153,7 +153,7 @@ BuildStepsWidgetData::BuildStepsWidgetData(BuildStep *s) :
     detailsWidget->setWidget(widget);
 
     toolWidget = new ToolWidget(detailsWidget);
-    toolWidget->setBuildStepEnabled(step->enabled());
+    toolWidget->setBuildStepEnabled(step->stepEnabled());
 
     detailsWidget->setToolWidget(toolWidget);
     detailsWidget->setContentsMargins(0, 0, 0, 0);
@@ -167,10 +167,12 @@ BuildStepsWidgetData::~BuildStepsWidgetData()
 }
 
 BuildStepListWidget::BuildStepListWidget(BuildStepList *bsl)
-    //: %1 is the name returned by BuildStepList::displayName
-    : NamedWidget(Tr::tr("%1 Steps").arg(bsl->displayName())), m_buildStepList(bsl)
+    : m_buildStepList(bsl)
 {
     setupUi();
+
+    //: %1 is the name returned by BuildStepList::displayName
+    setWindowTitle(Tr::tr("%1 Steps").arg(bsl->displayName()));
 
     connect(bsl, &BuildStepList::stepInserted, this, &BuildStepListWidget::addBuildStep);
     connect(bsl, &BuildStepList::stepRemoved, this, &BuildStepListWidget::removeBuildStep);
@@ -239,8 +241,8 @@ void BuildStepListWidget::addBuildStep(int pos)
         s->detailsWidget->setSummaryText(s->step->summaryText());
     });
 
-    connect(s->step, &BuildStep::enabledChanged, this, [s] {
-        s->toolWidget->setBuildStepEnabled(s->step->enabled());
+    connect(s->step, &BuildStep::stepEnabledChanged, this, [s] {
+        s->toolWidget->setBuildStepEnabled(s->step->stepEnabled());
     });
 
 
@@ -314,8 +316,8 @@ void BuildStepListWidget::updateBuildStepButtonsState()
         connect(s->toolWidget, &ToolWidget::disabledClicked,
                 this, [s] {
             BuildStep *bs = s->step;
-            bs->setEnabled(!bs->enabled());
-            s->toolWidget->setBuildStepEnabled(bs->enabled());
+            bs->setStepEnabled(!bs->stepEnabled());
+            s->toolWidget->setBuildStepEnabled(bs->stepEnabled());
         });
         s->toolWidget->setRemoveEnabled(!m_buildStepList->at(i)->isImmutable());
         connect(s->toolWidget, &ToolWidget::removeClicked,

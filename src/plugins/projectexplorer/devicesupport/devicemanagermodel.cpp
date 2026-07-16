@@ -4,9 +4,12 @@
 #include "devicemanagermodel.h"
 
 #include "devicemanager.h"
+#include "../kitaspect.h"
 #include "../projectexplorertr.h"
 
+#include <utils/guiutils.h>
 #include <utils/qtcassert.h>
+#include <utils/treemodel.h>
 
 using namespace Utils;
 
@@ -16,27 +19,23 @@ namespace Internal {
 class DeviceManagerModelPrivate
 {
 public:
-    const DeviceManager *deviceManager;
-    QList<IDevice::ConstPtr> devices;
+    QList<IDevice::Ptr> devices;
     QList<Id> filter;
     Id typeToKeep;
 };
 
 } // namespace Internal
 
-DeviceManagerModel::DeviceManagerModel(const DeviceManager *deviceManager, QObject *parent) :
-    QAbstractListModel(parent), d(std::make_unique<Internal::DeviceManagerModelPrivate>())
+DeviceManagerModel::DeviceManagerModel()
+    : d(std::make_unique<Internal::DeviceManagerModelPrivate>())
 {
-    d->deviceManager = deviceManager;
     handleDeviceListChanged();
-    connect(deviceManager, &DeviceManager::deviceAdded,
+    connect(DeviceManager::instance(), &DeviceManager::deviceAdded,
             this, &DeviceManagerModel::handleDeviceAdded);
-    connect(deviceManager, &DeviceManager::deviceRemoved,
+    connect(DeviceManager::instance(), &DeviceManager::deviceRemoved,
             this, &DeviceManagerModel::handleDeviceRemoved);
-    connect(deviceManager, &DeviceManager::deviceUpdated,
+    connect(DeviceManager::instance(), &DeviceManager::deviceUpdated,
             this, &DeviceManagerModel::handleDeviceUpdated);
-    connect(deviceManager, &DeviceManager::deviceListReplaced,
-            this, &DeviceManagerModel::handleDeviceListChanged);
 }
 
 DeviceManagerModel::~DeviceManagerModel() = default;
@@ -55,15 +54,21 @@ void DeviceManagerModel::setTypeFilter(Id type)
     handleDeviceListChanged();
 }
 
+void DeviceManagerModel::showAllEntry()
+{
+    QTC_ASSERT(d->devices.isEmpty() || d->devices.first(), return);
+    d->devices.prepend({});
+}
+
 void DeviceManagerModel::updateDevice(Id id)
 {
     handleDeviceUpdated(id);
 }
 
-IDevice::ConstPtr DeviceManagerModel::device(int pos) const
+IDevice::Ptr DeviceManagerModel::device(int pos) const
 {
     if (pos < 0 || pos >= d->devices.count())
-        return IDevice::ConstPtr();
+        return nullptr;
     return d->devices.at(pos);
 }
 
@@ -75,11 +80,9 @@ Id DeviceManagerModel::deviceId(int pos) const
 
 int DeviceManagerModel::indexOf(IDevice::ConstPtr dev) const
 {
-    if (!dev)
-        return -1;
     for (int i = 0; i < d->devices.count(); ++i) {
         IDevice::ConstPtr current = d->devices.at(i);
-        if (current->id() == dev->id())
+        if (current == dev || current->id() == dev->id())
             return i;
     }
     return -1;
@@ -89,7 +92,7 @@ void DeviceManagerModel::handleDeviceAdded(Id id)
 {
     if (d->filter.contains(id))
         return;
-    IDevice::ConstPtr dev = d->deviceManager->find(id);
+    IDevice::Ptr dev = DeviceManager::find(id);
     if (!matchesTypeFilter(dev))
         return;
 
@@ -112,18 +115,21 @@ void DeviceManagerModel::handleDeviceUpdated(Id id)
     const int idx = indexForId(id);
     if (idx < 0) // This occurs when a device not matching the type filter is updated
         return;
-    d->devices[idx] = d->deviceManager->find(id);
+    d->devices[idx] = DeviceManager::find(id);
     const QModelIndex changedIndex = index(idx, 0);
     emit dataChanged(changedIndex, changedIndex);
 }
 
 void DeviceManagerModel::handleDeviceListChanged()
 {
+    const bool showAllEntry = !d->devices.isEmpty() && !d->devices.first();
     beginResetModel();
     d->devices.clear();
 
-    for (int i = 0; i < d->deviceManager->deviceCount(); ++i) {
-        IDevice::ConstPtr dev = d->deviceManager->deviceAt(i);
+    if (showAllEntry)
+        d->devices << IDevicePtr();
+    for (int i = 0; i < DeviceManager::deviceCount(); ++i) {
+        IDevice::Ptr dev = DeviceManager::deviceAt(i);
         if (d->filter.contains(dev->id()))
             continue;
         if (!matchesTypeFilter(dev))
@@ -144,13 +150,17 @@ QVariant DeviceManagerModel::data(const QModelIndex &index, int role) const
     if (!index.isValid() || index.row() >= rowCount())
         return {};
     const IDevice::ConstPtr dev = device(index.row());
+    QTC_ASSERT(dev || index.row() == 0, return {});
     switch (role) {
     case Qt::DecorationRole:
-        return dev->deviceStateIcon();
-    case Qt::UserRole:
-        return dev->id().toSetting();
+        return dev ? dev->deviceStateIcon() : QVariant();
+    case Qt::UserRole: // TODO: Any callers?
+    case KitAspect::IdRole:
+        return dev ? dev->id().toSetting() : QVariant();
     case Qt::DisplayRole:
-        if (d->deviceManager->defaultDevice(dev->type()) == dev)
+        if (!dev)
+            return Tr::tr("All", "All devices");
+        if (DeviceManager::defaultDevice(dev->type()) == dev)
             return Tr::tr("%1 (default for %2)").arg(dev->displayName(), dev->displayType());
         return dev->displayName();
     }
@@ -159,17 +169,93 @@ QVariant DeviceManagerModel::data(const QModelIndex &index, int role) const
 
 bool DeviceManagerModel::matchesTypeFilter(const IDevice::ConstPtr &dev) const
 {
-    return !d->typeToKeep.isValid() || dev->type() == d->typeToKeep;
+    return !d->typeToKeep.isValid() || (!dev || dev->type() == d->typeToKeep);
 }
 
 int DeviceManagerModel::indexForId(Id id) const
 {
+    if (!id.isValid() && !d->devices.isEmpty() && !d->devices.first())
+        return 0;
+
     for (int i = 0; i < d->devices.count(); ++i) {
-        if (d->devices.at(i)->id() == id)
+        if (d->devices.at(i) && d->devices.at(i)->id() == id)
             return i;
     }
 
     return -1;
+}
+
+void DeviceFilterModel::setDevice(const IDeviceConstPtr &device)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
+    beginFilterChange();
+    if (!device)
+        m_deviceRoot.clear();
+    else
+        m_deviceRoot = device->rootPath();
+    endFilterChange(Direction::Rows);
+#else
+    if (!device)
+        m_deviceRoot.clear();
+    else
+        m_deviceRoot = device->rootPath();
+    invalidate();
+#endif
+}
+
+bool DeviceFilterModel::filterAcceptsRow(int source_row, const QModelIndex &source_parent) const
+{
+    QTC_ASSERT(sourceModel(), return false);
+
+    if (m_deviceRoot.isEmpty())
+        return true;
+
+    const QModelIndex idx = sourceModel()->index(source_row, 0, source_parent);
+    const FilePath path = FilePath::fromVariant(sourceModel()->data(idx, FilePathRole));
+    if (path.isEmpty())
+        return true;
+    return path.isSameDevice(m_deviceRoot);
+}
+
+// DeviceComboBox
+
+DeviceComboBox::DeviceComboBox()
+{
+    setIgnoreForDirtyHook(this);
+    m_model.showAllEntry();
+    setModel(&m_model);
+    connect(this, &QComboBox::currentIndexChanged, this, [this](int idx) {
+        if (m_onDeviceChanged)
+            m_onDeviceChanged(m_model.device(idx));
+    });
+}
+
+void DeviceComboBox::setOnDeviceChanged(const std::function<void(const FilePath &)> &callback)
+{
+    m_onDeviceChanged = [callback](const IDeviceConstPtr &device) {
+        callback(device ? device->rootPath() : FilePath{});
+    };
+    m_onDeviceChanged(currentDevice());
+}
+
+IDeviceConstPtr DeviceComboBox::currentDevice() const
+{
+    return m_model.device(currentIndex());
+}
+
+QList<IDeviceConstPtr> DeviceComboBox::selectedDevices() const
+{
+    if (const IDeviceConstPtr dev = currentDevice())
+        return {dev};
+    QList<IDeviceConstPtr> devices;
+    for (int i = 0; i < DeviceManager::deviceCount(); ++i)
+        devices << DeviceManager::deviceAt(i);
+    return devices;
+}
+
+int DeviceComboBox::indexForId(Id id) const
+{
+    return m_model.indexForId(id);
 }
 
 } // namespace ProjectExplorer

@@ -5,23 +5,28 @@
 
 #include "autotestconstants.h"
 #include "autotestplugin.h"
+#include "autotesttr.h"
 #include "testcodeparser.h"
+#include "testconfiguration.h"
 #include "testframeworkmanager.h"
 #include "testprojectsettings.h"
+#include "testrunner.h"
+
+#include <coreplugin/messagemanager.h>
 
 #include <cppeditor/cppmodelmanager.h>
 
+#include <extensionsystem/pluginmanager.h>
+
+#include <projectexplorer/buildconfiguration.h>
+#include <projectexplorer/buildmanager.h>
 #include <projectexplorer/buildsystem.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectmanager.h>
-#include <projectexplorer/target.h>
 
 #include <qmljs/qmljsmodelmanagerinterface.h>
 
-#include <texteditor/texteditor.h>
-
 #include <utils/algorithm.h>
-#include <utils/fileutils.h>
 #include <utils/qtcassert.h>
 
 using namespace Autotest::Internal;
@@ -74,8 +79,8 @@ void TestTreeModel::setupParsingConnections()
     m_parser->setDirty();
     m_parser->setState(TestCodeParser::Idle);
 
-    ProjectManager *sm = ProjectManager::instance();
-    connect(sm, &ProjectManager::startupProjectChanged, this, [this, sm](Project *project) {
+    connect(ProjectManager::instance(), &ProjectManager::startupProjectChanged, this,
+            [this](Project *project) {
         synchronizeTestFrameworks(); // we might have project settings
         m_parser->onStartupProjectChanged(project);
         removeAllTestToolItems();
@@ -84,12 +89,14 @@ void TestTreeModel::setupParsingConnections()
         onBuildSystemTestsUpdated(); // we may have old results if project was open before switching
         m_failedStateCache.clear();
         if (project) {
-            if (sm->startupBuildSystem()) {
-                connect(sm->startupBuildSystem(), &BuildSystem::testInformationUpdated,
+            if (auto buildSystem = activeBuildSystemForActiveProject()) {
+                connect(buildSystem, &BuildSystem::testInformationUpdated,
                         this, &TestTreeModel::onBuildSystemTestsUpdated, Qt::UniqueConnection);
+                connect(buildSystem, &BuildSystem::testRunRequested,
+                        this, &TestTreeModel::onTestRunRequested, Qt::UniqueConnection);
             } else {
-                connect(project, &Project::activeTargetChanged,
-                        this, &TestTreeModel::onTargetChanged);
+                connect(project, &Project::activeBuildConfigurationChanged,
+                        this, &TestTreeModel::onBuildConfigChanged);
             }
         }
     });
@@ -98,8 +105,8 @@ void TestTreeModel::setupParsingConnections()
     connect(cppMM, &CppEditor::CppModelManager::documentUpdated,
             m_parser, &TestCodeParser::onCppDocumentUpdated, Qt::QueuedConnection);
     connect(cppMM, &CppEditor::CppModelManager::aboutToRemoveFiles,
-            this, [this](const QStringList &files) {
-                markForRemoval(transform<QSet>(files, &FilePath::fromString));
+            this, [this](const FilePaths &filePaths) {
+                markForRemoval(Utils::toSet(filePaths));
                 sweep();
             }, Qt::QueuedConnection);
     connect(cppMM, &CppEditor::CppModelManager::projectPartsUpdated,
@@ -226,27 +233,28 @@ static QList<ITestTreeItem *> testItemsByName(TestTreeItem *root, const QString 
     return result;
 }
 
-void TestTreeModel::onTargetChanged(Target *target)
+void TestTreeModel::onBuildConfigChanged(BuildConfiguration *bc)
 {
-    if (target && target->buildSystem()) {
-        const Target *topLevelTarget = ProjectManager::startupProject()->targets().first();
-        connect(topLevelTarget->buildSystem(), &BuildSystem::testInformationUpdated,
+    if (bc) {
+        connect(bc->buildSystem(), &BuildSystem::testInformationUpdated,
                 this, &TestTreeModel::onBuildSystemTestsUpdated, Qt::UniqueConnection);
-        disconnect(target->project(), &Project::activeTargetChanged,
-                   this, &TestTreeModel::onTargetChanged);
+        connect(bc->buildSystem(), &BuildSystem::testRunRequested,
+                this, &TestTreeModel::onTestRunRequested, Qt::UniqueConnection);
+        disconnect(bc->project(), &Project::activeBuildConfigurationChanged,
+                   this, &TestTreeModel::onBuildConfigChanged);
     }
 }
 
 void TestTreeModel::onBuildSystemTestsUpdated()
 {
-    const BuildSystem *bs = ProjectManager::startupBuildSystem();
+    const BuildSystem *bs = activeBuildSystemForActiveProject();
     if (!bs || !bs->project())
         return;
 
     QTC_ASSERT(m_checkStateCache, return);
     m_checkStateCache->evolve(ITestBase::Tool);
 
-    ITestTool *testTool = TestFrameworkManager::testToolForBuildSystemId(bs->project()->id());
+    ITestTool *testTool = TestFrameworkManager::testToolForBuildSystemId(bs->project()->type());
     if (!testTool)
         return;
     // FIXME
@@ -269,6 +277,50 @@ void TestTreeModel::onBuildSystemTestsUpdated()
     }
     revalidateCheckState(rootNode);
     emit testTreeModelChanged();
+}
+
+void TestTreeModel::onTestRunRequested(const TestCaseInfo &testInfo,
+                                       const QStringList &additionalOptions,
+                                       const TestCaseEnvironment &testEnvironment)
+{
+    // this should be avoided already on the caller side, but we need to ensure this anyway
+    if (BuildManager::isBuilding()  || TestRunner::instance()->isTestRunning()) {
+        Core::MessageManager::writeFlashing(
+                    Tr::tr("Test run requests from the build system get processed only if there "
+                           "is no running build or test run."));
+        return;
+    }
+
+    BuildSystem *bs = qobject_cast<BuildSystem *>(sender());
+    QTC_ASSERT(bs, return);
+    QTC_ASSERT(bs->project(), return);
+    ITestTool *testTool = TestFrameworkManager::testToolForBuildSystemId(bs->project()->type());
+    if (!testTool)
+        return;
+
+    ITestTreeItem *tmpItem = testTool->createItemFromTestCaseInfo(testInfo);
+    QTC_ASSERT(tmpItem, return);
+    ITestConfiguration *config = tmpItem->testConfiguration();
+    delete tmpItem;
+    QTC_ASSERT(config, return);
+    // apply options, working directory and environment changes requested by the build system
+    if (!testEnvironment.workingDirectory.isEmpty())
+        config->setWorkingDirectory(testEnvironment.workingDirectory);
+    if (!additionalOptions.isEmpty())
+        config->runnable().command.addArgs(additionalOptions);
+    config->setEnvironment(
+                testEnvironment.environment.appliedToEnvironment(config->runnable().environment));
+
+    connect(
+        TestRunner::instance(), &TestRunner::testRunFinished,
+        this, [testEnvironment] {
+            if (testEnvironment.onTestsRunFinished)
+                testEnvironment.onTestsRunFinished();
+        },
+        Qt::SingleShotConnection
+    );
+
+    TestRunner::instance()->runTests(TestRunMode::Run, {config});
 }
 
 const QList<TestTreeItem *> TestTreeModel::frameworkRootNodes() const
@@ -302,8 +354,12 @@ QList<ITestTreeItem *> TestTreeModel::testItemsByName(const QString &testName)
 
 void TestTreeModel::synchronizeTestFrameworks()
 {
+    // we may get triggered by the timer during shutdown - avoid crash in that case
+    if (ExtensionSystem::PluginManager::isShuttingDown())
+        return;
+
     const TestFrameworks sorted = activeTestFrameworks();
-    qCDebug(LOG) << "Active frameworks sorted by priority" << sorted;
+    qCDebug(LOG) << "Active frameworks sorted by priority" << Utils::transform(sorted, &ITestBase::displayName);
     const auto sortedParsers = Utils::transform(sorted, &ITestFramework::testParser);
     // pre-check to avoid further processing when frameworks are unchanged
     TreeItem *invisibleRoot = rootItem();
@@ -341,7 +397,7 @@ void TestTreeModel::synchronizeTestTools()
     if (!project || Internal::projectSettings(project)->useGlobalSettings()) {
         tools = Utils::filtered(TestFrameworkManager::registeredTestTools(),
                                 &ITestFramework::active);
-        qCDebug(LOG) << "Active test tools" << tools; // FIXME tools aren't sorted
+        qCDebug(LOG) << "Active test tools" << Utils::transform(tools, &ITestBase::displayName); // FIXME tools aren't sorted
     } else { // we've got custom project settings
         const TestProjectSettings *settings = Internal::projectSettings(project);
         const QHash<ITestTool *, bool> active = settings->activeTestTools();
@@ -372,10 +428,9 @@ void TestTreeModel::synchronizeTestTools()
     }
 
     if (project) {
-        const QList<Target *> &allTargets = project->targets();
-        auto target = allTargets.empty() ? nullptr : allTargets.first();
-        if (target) {
-            auto bs = target->buildSystem();
+        BuildConfiguration * const bc = project->activeBuildConfiguration();
+        if (bc) {
+            auto bs = bc->buildSystem();
             for (ITestTool *testTool : newlyAdded) {
                 ITestTreeItem *rootNode = testTool->rootNode();
                 QTC_ASSERT(rootNode, return);
@@ -511,8 +566,7 @@ QString TestTreeModel::report(bool full) const
         result.append(" > ");
 
         if (full) {
-            TestTreeSortFilterModel sortFilterModel(const_cast<TestTreeModel *>(this));
-            sortFilterModel.setDynamicSortFilter(true);
+            TestTreeSortFilterModel sortFilterModel;
             sortFilterModel.sort(0);
             tree = "\n" + sortFilterModel.report();
             rootNode->forAllChildren([&itemsPerRoot](TreeItem *) {
@@ -691,7 +745,7 @@ void TestTreeModel::onParseResultsReady(const QList<TestParseResultPtr> &results
 
 void Autotest::TestTreeModel::onDataChanged(const QModelIndex &topLeft,
                                             const QModelIndex &bottomRight,
-                                            const QVector<int> &roles)
+                                            const QList<int> &roles)
 {
     const QModelIndex parent = topLeft.parent();
     QTC_ASSERT(parent == bottomRight.parent(), return);
@@ -879,7 +933,7 @@ QMap<QString, int> TestTreeModel::boostTestSuitesAndTests() const
 
     if (TestTreeItem *rootNode = boostTestRootNode()) {
         rootNode->forFirstLevelChildItems([&result](TestTreeItem *child) {
-            result.insert(child->name() + '|' + child->proFile().toString(), child->childCount());
+            result.insert(child->name() + '|' + child->proFile().toUrlishString(), child->childCount());
         });
     }
     return result;
@@ -889,16 +943,22 @@ QMap<QString, int> TestTreeModel::boostTestSuitesAndTests() const
 
 /***************************** Sort/Filter Model **********************************/
 
-TestTreeSortFilterModel::TestTreeSortFilterModel(TestTreeModel *sourceModel, QObject *parent)
-    : QSortFilterProxyModel(parent)
+TestTreeSortFilterModel::TestTreeSortFilterModel()
 {
-    setSourceModel(sourceModel);
+    setSourceModel(TestTreeModel::instance());
+    setDynamicSortFilter(true);
 }
 
 void TestTreeSortFilterModel::setSortMode(ITestTreeItem::SortMode sortMode)
 {
     m_sortMode = sortMode;
     invalidate();
+}
+
+void TestTreeSortFilterModel::updateFilterString(const QString &filter)
+{
+    m_filterString = filter;
+    invalidateFilter();
 }
 
 void TestTreeSortFilterModel::toggleFilter(FilterMode filterMode)
@@ -916,6 +976,8 @@ TestTreeSortFilterModel::FilterMode TestTreeSortFilterModel::toFilterMode(int f)
         return TestTreeSortFilterModel::ShowTestData;
     case TestTreeSortFilterModel::ShowAll:
         return TestTreeSortFilterModel::ShowAll;
+    case TestTreeSortFilterModel::FilterByText:
+        return TestTreeSortFilterModel::FilterByText;
     default:
         return TestTreeSortFilterModel::Basic;
     }
@@ -960,14 +1022,26 @@ bool TestTreeSortFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex 
 
     const ITestTreeItem *item = static_cast<ITestTreeItem *>(index.internalPointer());
 
+    bool accept = true;
     switch (item->type()) {
-    case ITestTreeItem::TestDataFunction:
-        return m_filterMode & ShowTestData;
-    case ITestTreeItem::TestSpecialFunction:
-        return m_filterMode & ShowInitAndCleanup;
-    default:
+    case Autotest::ITestTreeItem::Root:
         return true;
+    case ITestTreeItem::TestDataFunction:
+        accept = m_filterMode & ShowTestData;
+        break;
+    case ITestTreeItem::TestSpecialFunction:
+        accept = m_filterMode & ShowInitAndCleanup;
+        break;
+    default:
+        break;
     }
+
+    if (!accept)
+        return false;
+    if ((m_filterMode & FilterByText) == 0)
+        return accept;
+    const QString display = item->data(0, Qt::DisplayRole).toString();
+    return m_filterString.isEmpty() || display.contains(m_filterString, Qt::CaseInsensitive);
 }
 
 } // namespace Autotest

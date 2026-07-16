@@ -8,7 +8,8 @@
 
 #include <QDebug>
 #include <QFileSystemModel>
-#include <QtTest>
+#include <QTemporaryFile>
+#include <QTest>
 
 using namespace Utils;
 
@@ -28,7 +29,6 @@ private slots:
     void testCreateDir();
     void testWindowsPaths();
     void testUrl();
-    void testBrokenWindowsPath();
     void testRead();
     void testWrite();
     void testRootFromDotDot();
@@ -158,32 +158,19 @@ void tst_fsengine::testListDir()
 void tst_fsengine::testWindowsPaths()
 {
     // Test upper-case "C:"
-    QVERIFY(FilePath::fromString("C:/__qtc_devices__/device/{cd6c7e4b-12fd-43ca-9bb2-053a38e6b7c5}")
-                .needsDevice());
+    QVERIFY(!FilePath::fromString("C:/__qtc_devices__/device/{cd6c7e4b-12fd-43ca-9bb2-053a38e6b7c5}")
+                .isLocal());
 
     // Test lower-case "C:"
-    QVERIFY(FilePath::fromString("c:/__qtc_devices__/device/{cd6c7e4b-12fd-43ca-9bb2-053a38e6b7c5}")
-                .needsDevice());
+    QVERIFY(!FilePath::fromString("c:/__qtc_devices__/device/{cd6c7e4b-12fd-43ca-9bb2-053a38e6b7c5}")
+                .isLocal());
 }
 
 void tst_fsengine::testUrl()
 {
     FilePath p = FilePath::fromString(makeTestPath("", true));
 
-    QVERIFY(p.needsDevice());
-}
-
-void tst_fsengine::testBrokenWindowsPath()
-{
-    QTemporaryFile tmp;
-    QVERIFY(tmp.open());
-
-    QString localFileName = tmp.fileName();
-    localFileName.insert(HostOsInfo::isWindowsHost() ? 2 : 0, '/');
-
-    QFile file(localFileName);
-    QVERIFY(file.open(QIODevice::ReadOnly));
-    QCOMPARE(tmp.fileName(), QFileInfo(localFileName).canonicalFilePath());
+    QVERIFY(!p.isLocal());
 }
 
 void tst_fsengine::testRead()

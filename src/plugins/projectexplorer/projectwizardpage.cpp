@@ -81,7 +81,7 @@ AddNewTree::AddNewTree(FolderNode *node, QList<AddNewTree *> children, const QSt
     m_canAdd(false)
 {
     if (node)
-        m_toolTip = node->directory().toString();
+        m_toolTip = node->directory().toUrlishString();
     for (AddNewTree *child : std::as_const(children))
         appendChild(child);
 }
@@ -93,7 +93,7 @@ AddNewTree::AddNewTree(FolderNode *node, QList<AddNewTree *> children,
     m_priority(info.priority)
 {
     if (node)
-        m_toolTip = node->directory().toString();
+        m_toolTip = node->directory().toUrlishString();
     for (AddNewTree *child : std::as_const(children))
         appendChild(child);
 }
@@ -158,7 +158,7 @@ void BestNodeSelector::inspect(AddNewTree *tree, bool isContextNode)
 {
     FolderNode *node = tree->node();
     if (node->isProjectNodeType()) {
-        if (static_cast<ProjectNode *>(node)->deploysFolder(m_commonDirectory.toString())) {
+        if (static_cast<ProjectNode *>(node)->deploysFolder(m_commonDirectory)) {
             m_deploys = true;
             m_deployText += tree->displayName() + QLatin1Char('\n');
         }
@@ -167,10 +167,10 @@ void BestNodeSelector::inspect(AddNewTree *tree, bool isContextNode)
         return;
 
     const FilePath projectDirectory = node->directory();
-    const int projectDirectorySize = projectDirectory.toString().size();
+    const int projectDirectorySize = projectDirectory.toUrlishString().size();
     if (m_commonDirectory != projectDirectory
-            && !m_commonDirectory.toString().startsWith(
-                projectDirectory.toString() + QLatin1Char('/')) // TODO: still required?
+            && !m_commonDirectory.toUrlishString().startsWith(
+                projectDirectory.toUrlishString() + QLatin1Char('/')) // TODO: still required?
             && !isContextNode)
         return;
 
@@ -281,8 +281,9 @@ ProjectWizardPage::ProjectWizardPage(QWidget *parent)
     m_addToVersionControlLabel = new QLabel(Tr::tr("Add to &version control:"));
     m_addToVersionControlComboBox = new QComboBox;
     m_addToVersionControlComboBox->setObjectName("addToVersionControlComboBox");
-    m_vcsManageButton = new QPushButton(ICore::msgShowOptionsDialog());
-    m_vcsManageButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+    m_vcsManageButton = new QPushButton(ICore::msgShowSettings());
+    m_vcsManageButton
+        ->setSizePolicy(QSizePolicy::Maximum, m_vcsManageButton->sizePolicy().verticalPolicy());
     m_filesLabel = new QLabel;
     m_filesLabel->setObjectName("filesLabel");
     m_filesLabel->setAlignment(Qt::AlignBottom);
@@ -378,7 +379,8 @@ void ProjectWizardPage::initializeVersionControls()
     // 2) Directory is managed and VCS does not support "Add" -> None available
     // 3) Directory is not managed -> Offer all VCS that support "CreateRepository"
 
-    m_addToVersionControlComboBox->disconnect();
+    disconnect(m_addToVersionControlComboBox, &QComboBox::currentIndexChanged,
+               this, &ProjectWizardPage::versionControlChanged);
     QList<IVersionControl *> versionControls = VcsManager::versionControls();
     if (versionControls.isEmpty())
         setVersionControlUiElementsVisible(false);
@@ -427,43 +429,42 @@ void ProjectWizardPage::initializeVersionControls()
             this, &ProjectWizardPage::versionControlChanged);
 }
 
-bool ProjectWizardPage::runVersionControl(const QList<GeneratedFile> &files, QString *errorMessage)
+Result<> ProjectWizardPage::runVersionControl(const QList<GeneratedFile> &files)
 {
     // Add files to  version control (Entry at 0 is 'None').
     const int vcsIndex = versionControlIndex() - 1;
     if (vcsIndex < 0 || vcsIndex >= m_activeVersionControls.size())
-        return true;
-    QTC_ASSERT(!m_commonDirectory.isEmpty(), return false);
+        return ResultOk;
+    QTC_ASSERT(!m_commonDirectory.isEmpty(), return ResultError(ResultAssert));
 
     IVersionControl *versionControl = m_activeVersionControls.at(vcsIndex);
     // Create repository?
     if (!m_repositoryExists) {
-        QTC_ASSERT(versionControl->supportsOperation(IVersionControl::CreateRepositoryOperation), return false);
+        QTC_ASSERT(versionControl->supportsOperation(IVersionControl::CreateRepositoryOperation),
+                   return ResultError(ResultAssert));
         if (!versionControl->vcsCreateRepository(m_commonDirectory)) {
-            *errorMessage =
-                    Tr::tr("A version control system repository could not be created in \"%1\".").
-                    arg(m_commonDirectory.toUserOutput());
-            return false;
+            return ResultError(Tr::tr("A version control system repository could not be created in \"%1\".").
+                               arg(m_commonDirectory.toUserOutput()));
         }
     }
     // Add files if supported.
     if (versionControl->supportsOperation(IVersionControl::AddOperation)) {
         for (const GeneratedFile &generatedFile : files) {
             if (!versionControl->vcsAdd(generatedFile.filePath())) {
-                *errorMessage = Tr::tr("Failed to add \"%1\" to the version control system.").
-                        arg(generatedFile.filePath().toUserOutput());
-                return false;
+                return ResultError(Tr::tr("Failed to add \"%1\" to the version control system.").
+                        arg(generatedFile.filePath().toUserOutput()));
             }
         }
     }
-    return true;
+    return ResultOk;
 }
 
 void ProjectWizardPage::initializeProjectTree(Node *context, const FilePaths &paths,
                                               IWizardFactory::WizardKind kind,
                                               ProjectAction action, bool limitToSubproject)
 {
-    m_projectComboBox->disconnect();
+    disconnect(m_projectComboBox, &QComboBox::currentIndexChanged,
+               this, &ProjectWizardPage::projectChanged);
     Internal::BestNodeSelector selector(m_commonDirectory, paths);
     Project *parentProject = static_cast<Project *>(
                 wizard()->property(Constants::PROJECT_POINTER).value<void *>());
@@ -544,38 +545,36 @@ IVersionControl *ProjectWizardPage::currentVersionControl()
 
 void ProjectWizardPage::setFiles(const FilePaths &files)
 {
-    m_commonDirectory = FileUtils::commonPath(files);
-    const bool hasNoCommonDirectory = m_commonDirectory.isEmpty() || files.size() < 2;
+    m_commonDirectory = files.commonPath();
+    const bool hasCommonDirectory = !m_commonDirectory.isEmpty() && files.size() > 1;
 
     QString fileMessage;
     {
         QTextStream str(&fileMessage);
         str << "<qt>"
-            << (hasNoCommonDirectory ? Tr::tr("Files to be added:") : Tr::tr("Files to be added in"))
+            << (hasCommonDirectory ? Tr::tr("Files to be added in") : Tr::tr("Files to be added:"))
             << "<pre>";
 
-        QStringList formattedFiles;
-        if (hasNoCommonDirectory) {
-            formattedFiles = Utils::transform(files, &FilePath::toString);
-        } else {
+        FilePaths formattedFiles = files;
+        if (hasCommonDirectory) {
             str << m_commonDirectory.toUserOutput() << ":\n\n";
-            int prefixSize = m_commonDirectory.toUserOutput().size();
-            formattedFiles = Utils::transform(files, [prefixSize] (const FilePath &f) {
-                return f.toString().mid(prefixSize + 1); // +1 skips the initial dir separator
+            const QDir commonDir(m_commonDirectory.path());
+            formattedFiles = transform(files, [&](const FilePath &f) {
+                return FilePath::fromString(commonDir.relativeFilePath(f.path()));
             });
         }
         // Alphabetically, and files in sub-directories first
-        Utils::sort(formattedFiles, [](const QString &filePath1, const QString &filePath2) -> bool {
-            const bool filePath1HasDir = filePath1.contains(QLatin1Char('/'));
-            const bool filePath2HasDir = filePath2.contains(QLatin1Char('/'));
+        Utils::sort(formattedFiles, [](const FilePath &filePath1, const FilePath &filePath2) -> bool {
+            const bool filePath1HasDir = filePath1.path().contains('/');
+            const bool filePath2HasDir = filePath2.path().contains('/');
 
             if (filePath1HasDir == filePath2HasDir)
-                return FilePath::fromString(filePath1) < FilePath::fromString(filePath2);
+                return filePath1 < filePath2;
             return filePath1HasDir;
         });
 
-        for (const QString &f : std::as_const(formattedFiles))
-            str << QDir::toNativeSeparators(f) << '\n';
+        for (const FilePath &f : std::as_const(formattedFiles))
+            str << f.toUserOutput() << '\n';
 
         str << "</pre>";
     }
@@ -597,7 +596,7 @@ void ProjectWizardPage::projectChanged(int index)
 
 void ProjectWizardPage::manageVcs()
 {
-    ICore::showOptionsDialog(VcsBase::Constants::VCS_COMMON_SETTINGS_ID, this);
+    ICore::showSettings(VcsBase::Constants::VCS_COMMON_SETTINGS_ID);
 }
 
 void ProjectWizardPage::setVersionControlUiElementsVisible(bool visible)

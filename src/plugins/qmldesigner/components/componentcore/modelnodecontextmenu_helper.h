@@ -3,15 +3,17 @@
 
 #pragma once
 
-#include "modelnodeoperations.h"
 #include "abstractaction.h"
-#include "bindingproperty.h"
 #include "abstractactiongroup.h"
-#include "qmlitemnode.h"
-#include <qmldesignerplugin.h>
-#include <nodemetainfo.h>
+#include "utils3d.h"
 
+#include <bindingproperty.h>
 #include <coreplugin/actionmanager/command.h>
+#include <coreplugin/icore.h>
+#include <modelutils.h>
+#include <nodemetainfo.h>
+#include <qmldesignerplugin.h>
+#include <qmlitemnode.h>
 
 #include <utils/proxyaction.h>
 
@@ -47,6 +49,18 @@ inline bool inBaseState(const SelectionContext &selectionState)
     return selectionState.isInBaseState();
 }
 
+inline bool isFileComponent(const SelectionContext &selectionContext)
+{
+    if (selectionContext.isValid() && selectionContext.singleNodeIsSelected()) {
+        ModelNode node = selectionContext.currentSingleSelectedNode();
+        if (node.hasMetaInfo()) {
+            NodeMetaInfo nodeInfo = node.metaInfo();
+            return nodeInfo.isFileComponent();
+        }
+    }
+    return false;
+}
+
 inline bool singleSelection(const SelectionContext &selectionState)
 {
     return selectionState.singleNodeIsSelected();
@@ -70,6 +84,43 @@ inline bool isModelOrMaterial(const SelectionContext &selectionState)
     return node.metaInfo().isQtQuick3DModel() || node.metaInfo().isQtQuick3DMaterial();
 }
 
+inline bool enableAddToContentLib(const SelectionContext &selectionState)
+{
+    const QList<ModelNode> nodes = selectionState.selectedModelNodes();
+    if (nodes.isEmpty())
+        return false;
+
+    auto compUtils = QmlDesignerPlugin::instance()->documentManager().generatedComponentUtils();
+
+    QString user2DBundlePath = compUtils.userBundlePath(compUtils.user2DBundleId())
+                                 .toFSPathString();
+    QString user3DBundlePath = compUtils.userBundlePath(compUtils.user3DBundleId())
+                                 .toFSPathString();
+
+    return std::all_of(nodes.cbegin(), nodes.cend(), [&](const ModelNode &node) {
+        QString nodePath = ModelUtils::componentFilePath(node);
+
+        if (nodePath.isEmpty())
+            return true;
+
+        bool isIn2DBundle = nodePath.startsWith(user2DBundlePath);
+        bool isIn3DBundle = nodePath.startsWith(user3DBundlePath);
+
+        return !isIn2DBundle && !isIn3DBundle;
+    });
+}
+
+inline bool are3DNodes(const SelectionContext &selectionState)
+{
+    const QList<ModelNode> nodes = selectionState.selectedModelNodes();
+    if (nodes.isEmpty())
+        return false;
+
+    return std::all_of(nodes.cbegin(), nodes.cend(), [](const ModelNode &node) {
+        return node.metaInfo().isQtQuick3DNode();
+    });
+}
+
 inline bool hasEditableMaterial(const SelectionContext &selectionState)
 {
     ModelNode node = selectionState.currentSingleSelectedNode();
@@ -79,7 +130,7 @@ inline bool hasEditableMaterial(const SelectionContext &selectionState)
 
     BindingProperty prop = node.bindingProperty("materials");
 
-    return prop.exists() && (!prop.expression().isEmpty() || !prop.resolveToModelNodeList().empty());
+    return prop.exists() && (!prop.expression().isEmpty() || !prop.resolveListToModelNodes().empty());
 }
 
 inline bool selectionEnabled(const SelectionContext &selectionState)
@@ -90,6 +141,23 @@ inline bool selectionEnabled(const SelectionContext &selectionState)
 inline bool selectionNotEmpty(const SelectionContext &selectionState)
 {
     return !selectionState.selectedModelNodes().isEmpty();
+}
+
+inline bool selectionNot2D3DMix(const SelectionContext &selectionState)
+{
+    const QList<ModelNode> selectedNodes = selectionState.view()->selectedModelNodes();
+    if (selectedNodes.size() <= 1)
+        return true;
+
+    ModelNode active3DScene = Utils3D::active3DSceneNode(selectionState.view());
+    bool isFirstNode3D = active3DScene.isAncestorOf(selectedNodes.first());
+
+    for (const ModelNode &node : selectedNodes) {
+        if (active3DScene.isAncestorOf(node) != isFirstNode3D)
+            return false;
+    }
+
+    return true;
 }
 
 inline bool singleSelectionNotRoot(const SelectionContext &selectionState)
@@ -115,6 +183,11 @@ inline bool singleSelectionView3D(const SelectionContext &selectionState)
         }
     }
 
+    return false;
+}
+
+inline bool singleSelectionEffectComposer(const SelectionContext &)
+{
     return false;
 }
 
@@ -149,6 +222,7 @@ bool selectionIsEditableComponent(const SelectionContext &selectionState);
 bool singleSelectionItemIsAnchored(const SelectionContext &selectionState);
 bool singleSelectionItemIsNotAnchored(const SelectionContext &selectionState);
 bool selectionIsImported3DAsset(const SelectionContext &selectionState);
+bool singleSelectionItemHasAnchor(const SelectionContext &selectionState, AnchorLineType anchor);
 
 } // namespace SelectionStateFunctors
 

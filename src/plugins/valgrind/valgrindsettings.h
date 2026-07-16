@@ -4,7 +4,8 @@
 #pragma once
 
 #include <projectexplorer/runconfiguration.h>
-#include <projectexplorer/runconfigurationaspects.h>
+
+#include <utils/aspects.h>
 
 namespace Valgrind::Internal {
 
@@ -28,10 +29,15 @@ public:
     void addSuppressionFile(const Utils::FilePath &suppressionFile);
 
 private:
-    void bufferToGui() override;
-    bool guiToBuffer() override;
+    void volatileValueToGui() override;
+    bool guiToVolatileValue() override;
+
+    QVariant variantValue() const override;
+    void setVariantValue(const QVariant &value, Announcement howToAnnounce) override;
+    QVariant volatileVariantValue() const override;
 
     friend class ValgrindSettings;
+    friend class SuppressionAspectPrivate;
     SuppressionAspectPrivate *d = nullptr;
 };
 
@@ -62,7 +68,7 @@ public:
     // Generic valgrind settings
     Utils::FilePathAspect valgrindExecutable{this};
     Utils::StringAspect valgrindArguments{this};
-    Utils::SelectionAspect selfModifyingCodeDetection{this};
+    Utils::TypedSelectionAspect<ValgrindSettings::SelfModifyingCodeDetection> selfModifyingCodeDetection{this};
 
     SuppressionAspect suppressions;
 
@@ -70,6 +76,7 @@ public:
     Utils::StringAspect memcheckArguments{this};
     Utils::IntegerAspect numCallers{this};
     Utils::SelectionAspect leakCheckOnFinish{this};
+    QString leakCheckOnFinishOptionString() const;
     Utils::BoolAspect showReachable{this};
     Utils::BoolAspect trackOrigins{this};
     Utils::BoolAspect filterExternalIssues{this};

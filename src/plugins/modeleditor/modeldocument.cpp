@@ -11,20 +11,18 @@
 
 #include "qmt/config/configcontroller.h"
 #include "qmt/infrastructure/ioexceptions.h"
-#include "qmt/model_controller/modelcontroller.h"
-#include "qmt/model/mdiagram.h"
 #include "qmt/project_controller/projectcontroller.h"
 #include "qmt/project/project.h"
 
 #include <utils/id.h>
 #include <utils/fileutils.h>
 
-using Utils::FilePath;
+using namespace Utils;
 
-namespace ModelEditor {
-namespace Internal {
+namespace ModelEditor::Internal {
 
-class ModelDocument::ModelDocumentPrivate {
+class ModelDocument::ModelDocumentPrivate
+{
 public:
     ExtDocumentController *documentController = nullptr;
 };
@@ -44,39 +42,32 @@ ModelDocument::~ModelDocument()
     delete d;
 }
 
-Core::IDocument::OpenResult ModelDocument::open(QString *errorString,
-                                                const FilePath &filePath,
-                                                const FilePath &realFilePath)
+Result<> ModelDocument::open(const FilePath &filePath, const FilePath &realFilePath)
 {
     Q_UNUSED(filePath)
-
-    OpenResult result = load(errorString, realFilePath);
-    return result;
+    return load(realFilePath);
 }
 
-bool ModelDocument::saveImpl(QString *errorString, const FilePath &filePath, bool autoSave)
+Result<> ModelDocument::saveImpl(const FilePath &filePath, SaveOption option)
 {
-    if (!d->documentController) {
-        *errorString = Tr::tr("No model loaded. Cannot save.");
-        return false;
-    }
+    if (!d->documentController)
+        return ResultError(Tr::tr("No model loaded. Cannot save."));
 
     d->documentController->projectController()->setFileName(filePath);
     try {
         d->documentController->projectController()->save();
     } catch (const qmt::Exception &ex) {
-        *errorString = ex.errorMessage();
-        return false;
+        return ResultError(ex.errorMessage());
     }
 
-    if (autoSave) {
+    if (option == SaveOption::AutoSave) {
         d->documentController->projectController()->setModified();
     } else {
         setFilePath(d->documentController->projectController()->project()->fileName());
         emit changed();
     }
 
-    return true;
+    return ResultOk;
 }
 
 bool ModelDocument::shouldAutoSave() const
@@ -94,24 +85,22 @@ bool ModelDocument::isSaveAsAllowed() const
     return true;
 }
 
-bool ModelDocument::reload(QString *errorString, Core::IDocument::ReloadFlag flag,
-                           Core::IDocument::ChangeType type)
+Result<> ModelDocument::reload(Core::IDocument::ReloadFlag flag,
+                             Core::IDocument::ChangeType type)
 {
     Q_UNUSED(type)
     if (flag == FlagIgnore)
-        return true;
+        return ResultOk;
     try {
         d->documentController->loadProject(filePath());
     } catch (const qmt::FileNotFoundException &ex) {
-        *errorString = ex.errorMessage();
-        return false;
+        return ResultError(ex.errorMessage());
     } catch (const qmt::Exception &ex) {
-        *errorString = Tr::tr("Could not open \"%1\" for reading: %2.")
-                           .arg(filePath().toUserOutput(), ex.errorMessage());
-        return false;
+        return ResultError(Tr::tr("Could not open \"%1\" for reading: %2.")
+                           .arg(filePath().toUserOutput(), ex.errorMessage()));
     }
     emit contentSet();
-    return true;
+    return ResultOk;
 }
 
 ExtDocumentController *ModelDocument::documentController() const
@@ -119,7 +108,7 @@ ExtDocumentController *ModelDocument::documentController() const
     return d->documentController;
 }
 
-Core::IDocument::OpenResult ModelDocument::load(QString *errorString, const FilePath &fileName)
+Result<> ModelDocument::load(const FilePath &fileName)
 {
     d->documentController = ModelEditorPlugin::modelsManager()->createModel(this);
     connect(d->documentController, &qmt::DocumentController::changed, this, &IDocument::changed);
@@ -128,14 +117,13 @@ Core::IDocument::OpenResult ModelDocument::load(QString *errorString, const File
         d->documentController->loadProject(fileName);
         setFilePath(d->documentController->projectController()->project()->fileName());
     } catch (const qmt::FileNotFoundException &ex) {
-        *errorString = ex.errorMessage();
-        return OpenResult::ReadError;
+        return ResultError(ex.errorMessage());
     } catch (const qmt::Exception &ex) {
-        *errorString = Tr::tr("Could not open \"%1\" for reading: %2.").arg(fileName.toUserOutput(), ex.errorMessage());
-        return OpenResult::CannotHandle;
+        return ResultError(Tr::tr("Could not open \"%1\" for reading: %2.")
+                    .arg(fileName.toUserOutput(), ex.errorMessage()));
     }
 
-    FilePath configPath = d->documentController->projectController()->project()->configPath();
+    QString configPath = d->documentController->projectController()->project()->configPath();
     if (!configPath.isEmpty()) {
         FilePath canonicalPath =fileName.absolutePath().resolvePath(configPath);
         if (!canonicalPath.isEmpty()) {
@@ -147,8 +135,7 @@ Core::IDocument::OpenResult ModelDocument::load(QString *errorString, const File
     }
 
     emit contentSet();
-    return OpenResult::Success;
+    return ResultOk;
 }
 
-} // namespace Internal
-} // namespace ModelEditor
+} // namespace ModelEditor::Internal

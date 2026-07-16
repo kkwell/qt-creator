@@ -13,8 +13,9 @@
 #include <utils/hostosinfo.h>
 #include <utils/layoutbuilder.h>
 #include <utils/pathchooser.h>
-#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcprocess.h>
+#include <utils/qtcsettings.h>
 #include <utils/variablechooser.h>
 
 #include <QFileDialog>
@@ -142,7 +143,7 @@ SourcePathMap SourcePathMappingModel::sourcePathMap() const
     for (int r = 0; r < rows; ++r) {
         const Mapping m = mappingAt(r); // Skip placeholders.
         if (!m.first.isEmpty() && !m.second.isEmpty())
-            rc.insert(m.first.toString(), m.second.toString());
+            rc.insert(m.first.toUrlishString(), m.second.toUrlishString());
     }
     return rc;
 }
@@ -152,12 +153,12 @@ bool SourcePathMappingModel::isNewPlaceHolder(const Mapping &m) const
 {
     const QChar lessThan('<');
     const QChar greaterThan('>');
-    return m.first.isEmpty() || m.first.startsWith(lessThan)
+    return m.first.isEmpty() || m.first.pathView().startsWith(lessThan)
            || m.first.endsWith(greaterThan)
-           || m.first.toString() == m_newSourcePlaceHolder
-           || m.second.isEmpty() || m.second.startsWith(lessThan)
+           || m.first.toUrlishString() == m_newSourcePlaceHolder
+           || m.second.isEmpty() || m.second.pathView().startsWith(lessThan)
            || m.second.endsWith(greaterThan)
-           || m.second.toString() == m_newTargetPlaceHolder;
+           || m.second.toUrlishString() == m_newTargetPlaceHolder;
 }
 
 // Return raw, unfixed mapping
@@ -301,6 +302,9 @@ DebuggerSourcePathMappingWidget::DebuggerSourcePathMappingWidget() :
     mainLayout->addLayout(editLayout);
     setLayout(mainLayout);
     updateEnabled();
+
+    connect(m_sourceLineEdit, &QLineEdit::textEdited, this, markSettingsDirty);
+    connect(m_targetChooser->lineEdit(), &QLineEdit::textEdited, this, markSettingsDirty);
 }
 
 QString DebuggerSourcePathMappingWidget::editSourceField() const
@@ -310,7 +314,7 @@ QString DebuggerSourcePathMappingWidget::editSourceField() const
 
 QString DebuggerSourcePathMappingWidget::editTargetField() const
 {
-    return m_targetChooser->unexpandedFilePath().toString();
+    return m_targetChooser->unexpandedFilePath().toUrlishString();
 }
 
 void DebuggerSourcePathMappingWidget::setEditFieldMapping(const Mapping &m)
@@ -376,25 +380,29 @@ void DebuggerSourcePathMappingWidget::slotAdd()
 {
     m_model->addNewMappingPlaceHolder();
     setCurrentRow(m_model->rowCount() - 1);
+    markSettingsDirty();
 }
 
 void DebuggerSourcePathMappingWidget::slotAddQt()
 {
     // Add a mapping for various Qt build locations in case of unpatched builds.
-    const FilePath qtSourcesPath = FileUtils::getExistingDirectory(this, Tr::tr("Qt Sources"));
+    const FilePath qtSourcesPath = FileUtils::getExistingDirectory(Tr::tr("Qt Sources"));
     if (qtSourcesPath.isEmpty())
         return;
     for (const QString &buildPath : qtBuildPaths())
-        m_model->addMapping(buildPath, qtSourcesPath.toString());
+        m_model->addMapping(buildPath, qtSourcesPath.toUrlishString());
     resizeColumns();
     setCurrentRow(m_model->rowCount() - 1);
+    markSettingsDirty();
 }
 
 void DebuggerSourcePathMappingWidget::slotRemove()
 {
     const int row = currentRow();
-    if (row >= 0)
+    if (row >= 0) {
         m_model->removeRow(row);
+        markSettingsDirty();
+    }
 }
 
 void DebuggerSourcePathMappingWidget::slotEditSourceFieldChanged()
@@ -419,7 +427,7 @@ void DebuggerSourcePathMappingWidget::slotEditTargetFieldChanged()
 SourcePathMap mergePlatformQtPath(const DebuggerRunParameters &sp, const SourcePathMap &in)
 {
     static const QString qglobal = "qtbase/src/corelib/global/qglobal.h";
-    const FilePath sourceLocation = sp.qtSourceLocation;
+    const FilePath sourceLocation = sp.qtSourceLocation();
     if (!(sourceLocation / qglobal).exists())
         return in;
 
@@ -462,10 +470,10 @@ void SourcePathMapAspect::toMap(Store &) const
     QTC_CHECK(false);
 }
 
-bool SourcePathMapAspect::isDirty()
+bool SourcePathMapAspect::isDirty() const
 {
-    guiToBuffer();
-    return m_internal != m_buffer;
+    const_cast<SourcePathMapAspect *>(this)->guiToVolatileValue();
+    return m_value != m_volatileValue;
 }
 
 void SourcePathMapAspect::addToLayoutImpl(Layouting::Layout &parent)
@@ -476,18 +484,18 @@ void SourcePathMapAspect::addToLayoutImpl(Layouting::Layout &parent)
     parent.addItem(d->m_widget.data());
 }
 
-bool SourcePathMapAspect::guiToBuffer()
+bool SourcePathMapAspect::guiToVolatileValue()
 {
-    const SourcePathMap old = m_buffer;
+    const SourcePathMap old = m_volatileValue;
     if (d->m_widget)
-        m_buffer = d->m_widget->sourcePathMap();
-    return m_buffer != old;
+        m_volatileValue = d->m_widget->sourcePathMap();
+    return m_volatileValue != old;
 }
 
-void SourcePathMapAspect::bufferToGui()
+void SourcePathMapAspect::volatileValueToGui()
 {
     if (d->m_widget)
-        d->m_widget->setSourcePathMap(m_buffer);
+        d->m_widget->setSourcePathMap(m_volatileValue);
 }
 
 const char sourcePathMappingArrayNameC[] = "SourcePathMappings";
@@ -497,8 +505,8 @@ const char sourcePathMappingTargetKeyC[] = "Target";
 void SourcePathMapAspect::writeSettings() const
 {
     const SourcePathMap sourcePathMap = value();
-    QtcSettings *s = qtcSettings();
-    s->beginWriteArray(sourcePathMappingArrayNameC);
+    QtcSettings &s = userSettings();
+    s.beginWriteArray(sourcePathMappingArrayNameC);
     if (!sourcePathMap.isEmpty()) {
         const Key sourcePathMappingSourceKey(sourcePathMappingSourceKeyC);
         const Key sourcePathMappingTargetKey(sourcePathMappingTargetKeyC);
@@ -506,29 +514,29 @@ void SourcePathMapAspect::writeSettings() const
         for (auto it = sourcePathMap.constBegin(), cend = sourcePathMap.constEnd();
              it != cend;
              ++it, ++i) {
-            s->setArrayIndex(i);
-            s->setValue(sourcePathMappingSourceKey, it.key());
-            s->setValue(sourcePathMappingTargetKey, it.value());
+            s.setArrayIndex(i);
+            s.setValue(sourcePathMappingSourceKey, it.key());
+            s.setValue(sourcePathMappingTargetKey, it.value());
         }
     }
-    s->endArray();
+    s.endArray();
 }
 
 void SourcePathMapAspect::readSettings()
 {
-    QtcSettings *s = qtcSettings();
+    QtcSettings &s = userSettings();
     SourcePathMap sourcePathMap;
-    if (const int count = s->beginReadArray(sourcePathMappingArrayNameC)) {
+    if (const int count = s.beginReadArray(sourcePathMappingArrayNameC)) {
         const Key sourcePathMappingSourceKey(sourcePathMappingSourceKeyC);
         const Key sourcePathMappingTargetKey(sourcePathMappingTargetKeyC);
         for (int i = 0; i < count; ++i) {
-             s->setArrayIndex(i);
-             const QString key = s->value(sourcePathMappingSourceKey).toString();
-             const QString value = s->value(sourcePathMappingTargetKey).toString();
+             s.setArrayIndex(i);
+             const QString key = s.value(sourcePathMappingSourceKey).toString();
+             const QString value = s.value(sourcePathMappingTargetKey).toString();
              sourcePathMap.insert(key, value);
         }
     }
-    s->endArray();
+    s.endArray();
     setValue(sourcePathMap);
 }
 

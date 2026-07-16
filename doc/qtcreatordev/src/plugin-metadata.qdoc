@@ -17,7 +17,7 @@
     \section2 Main Keys
 
     The main keys that are used to identify your your plugin and define default loading behavior,
-    consist of the mandatory keys \c Name and \c Version, and the optional keys \c CompatVersion,
+    consist of the mandatory keys \c Id and \c Version, and the optional keys \c CompatVersion,
     \c Experimental, \c DisabledByDefault, \c Required and \c Platform.
     \table
         \header
@@ -25,10 +25,18 @@
             \li Value Type
             \li Meaning
         \row
-            \li Name
-            \li String
+            \li Id
+            \li String (must be lowercase)
             \li This is used as an identifier for the plugin and can e.g.
                 be referenced in other plugin's dependencies.
+        \row
+            \li Name
+            \li String
+            \li This is used as the display name of your plugin in the UI.
+       \row
+            \li VendorId
+            \li String (must be lowercase)
+            \li A unique identifier for the vendor, like \c{mycompany}.
         \row
             \li Version
             \li String
@@ -131,7 +139,19 @@
             \li Url
             \li String
             \li Link to further information about the plugin, like
-                \c{http://www.mycompany-online.com/products/greatplugin}.
+                \c{https://www.mycompany-online.com/products/greatplugin}.
+        \row
+            \li DocumentationUrl
+            \li String
+            \li Link to online documentation for the plugin, like
+                \c{https://www.mycompany-online.com/docs/greatplugin/manual.html}.
+        \row
+            \li Recommends
+            \li String or array of strings
+            \li A list of plugin IDs that are enabled (if they are installed) when this plugin is
+                enabled. This can be useful when a plugin that is disabled by default is extended
+                by other pre-installed plugins (that are also disabled by default, since they would
+                indirectly enable this plugin otherwise).
     \endtable
 
     \section2 Dependencies
@@ -141,36 +161,37 @@
     these other plugins are loaded before this plugin.
 
     Dependencies are declared with the key \c Dependency, which contains an array of JSON objects
-    with required keys \c Name and \c Version, and optional key \c Type.
+    with required keys \c Id and \c Version, and optional key \c Type.
 
     The following formulas illustrate how the dependency information is matched.
-    In the formulas the name of the required plugin (as defined in the \c Name of the dependency
-    object) is denoted as \c DependencyName
+    In the formulas the Id of the required plugin (as defined in the \c Id of the dependency
+    object) is denoted as \c DependencyId
     and the required version of the plugin is denoted as \c DependencyVersion.
-    A plugin with given \c Name, \c Version and \c CompatVersion
+    A plugin with given \c Id, \c Version and \c CompatVersion
     as defined in the plugin meta data matches
     the dependency if
     \list
-        \li its \c Name matches \c DependencyName, and
+        \li its \c Id matches \c DependencyId, and
         \li \c {CompatVersion <= DependencyVersion <= Version}.
     \endlist
     For example a dependency
     \code
         {
-            "Name" : "SomeOtherPlugin",
+            "Id" : "someotherplugin",
             "Version" : "2.3.0_2"
         }
     \endcode
     would be matched by a plugin with
     \code
         {
+            "Id" : "someotherplugin",
             "Name" : "SomeOtherPlugin",
             "Version" : "3.1.0",
             "CompatVersion" : "2.2.0",
             ...
         }
     \endcode
-    since the name matches, and the version \c{2.3.0_2} given in the dependency tag
+    since the id matches, and the version \c{2.3.0_2} given in the dependency tag
     lies in the range of \c{2.2.0} and \c{3.1.0}.
 
     \table
@@ -191,9 +212,9 @@
             \li Value Type
             \li Meaning
         \row
-            \li Name
+            \li Id
             \li String
-            \li The name of the plugin, on which this plugin relies.
+            \li The Id of the plugin, on which this plugin relies.
         \row
             \li Version
             \li String
@@ -203,19 +224,19 @@
         \row
             \li Type
             \li String
-            \li Optional. Value \c Required, \c Optional, or \c Test. Defines if the dependency is
+            \li Optional. Value \c required, \c optional, or \c test. Defines if the dependency is
                 a hard requirement, optional, or required for running the plugin's tests.
-                Defaults to \c{Required}.
+                Defaults to \c{required}.
     \endtable
 
     \section3 Optional Dependencies
 
     A plugin can specify that a dependency on another plugin is optional, by adding
-    \c {"Type" : "Optional"} to the dependency object:
+    \c {"Type" : "optional"} to the dependency object:
 
     \list
         \li If the dependency can be resolved, the plugin and
-            its dependency are loaded and initialized as for \c Required dependencies.
+            its dependency are loaded and initialized as for \c required dependencies.
         \li If the dependency cannot be resolved, the plugin is loaded and initialized
             as if the dependency was not declared at all.
     \endlist
@@ -235,7 +256,7 @@
 
     A plugin can specify additional dependencies that are required for running its
     tests, but not for its normal execution, by declaring dependencies with
-    \c {"Type" : "Test"}. Test dependencies are force loaded, and do not affect load order.
+    \c {"Type" : "test"}. Test dependencies are force loaded, and do not affect load order.
 
     This type of dependency is not transitive.
 
@@ -293,9 +314,11 @@
 
     \code
     {
+        "Id" : "test",
         "Name" : "Test",
         "Version" : "1.0.1",
         "CompatVersion" : "1.0.0",
+        "VendorId" : "mycompany",
         "Vendor" : "My Company",
         "Copyright" : "(C) 2016 MyCompany",
         "License" : [
@@ -308,7 +331,8 @@
             "This plugin is just a test.",
             "It demonstrates the great use of the plugin meta data."
         ],
-        "Url" : "http://www.mycompany-online.com/products/greatplugin",
+        "Url" : "https://www.mycompany-online.com/products/greatplugin",
+        "DocumentationUrl" : "https://www.mycompany-online.com/docs/greatplugin/manual.html",
         "Arguments" : [
             {
                 "Name" : "-variant",
@@ -317,13 +341,16 @@
             }
         ],
         "Dependencies" : [
-            { "Name" : "SomeOtherPlugin", "Version" : "2.3.0_2" },
-            { "Name" : "EvenOther", "Version" : "1.0.0" }
+            { "Id" : "someotherplugin", "Version" : "2.3.0_2" },
+            { "Id" : "evenother", "Version" : "1.0.0" }
         ]
     }
     \endcode
 
     \section2 Other Meta Data
+
+    A \c key of the form \c {FirstKey > SecondKey} means that the value for the \c FirstKey
+    is a JSON object that includes \c SecondKey.
 
     \table
         \header
@@ -333,15 +360,33 @@
         \row
             \li Mimetypes
             \li String or array of strings
-            \li Possibly multiple lines of
-                \l{https://www.freedesktop.org/wiki/Specifications/shared-mime-info-spec/}{XML MIME-info}
-                used for registering additional or adapting built-in MIME types.
+            \li Possibly multiple lines of \l{Shared MIME-info Database}{XML MIME-info}
+                used for registering additional MIME types or adapting built-in ones.
         \row
-            \li JsonWizardPaths
+            \li core > VcsDetectionFiles
+            \li Array of strings
+            \li A list of file names. If one of these is found in the parent directories of an
+                opened file or project, and this plugin or extension is disabled, the user is
+                informed that the file or project seems to be under version control and that they
+                can enable this plugin or extension to enable specific support for that version
+                control system.
+        \row
+            \li core > ProjectFileMimeTypes
+            \li Array of strings
+            \li A list of mime type names. If a file with that mime type is opened by the user,
+                and this plugin or extension is disabled, the user is informed that they
+                can enable this plugin or extension to enable specific support for that project type.
+        \row
+            \li languageclient > WorkspaceConfig
+            \li Object
+            \li Merges the given JSON object into the data sent to language servers for
+                the \c {workspace/didChangeConfiguration} notification.
+        \row
+            \li projectexplorer > JsonWizardPaths
             \li Array of strings
             \li A list of paths relative to the plugin location or paths to the
                 \l{The Qt Resource System}{Qt resource system} that are searched for
-                \l{http://doc.qt.io/qtcreator/creator-project-wizards.html}{template-based wizards}.
+                \l{\QC: Custom Wizards}{template-based wizards}.
     \endtable
 
     \section2 A Note on Plugin Versions

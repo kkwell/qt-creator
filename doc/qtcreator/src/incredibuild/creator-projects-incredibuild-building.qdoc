@@ -4,15 +4,14 @@
     \page creator-build-settings-incredibuild.html
     \previouspage creator-reference.html
 
-    \ingroup creator-reference-build-configurations
+    \ingroup creator-reference-build-systems
 
-    \title IncrediBuild Build Configuration
+    \title IncrediBuild build configuration
 
     \brief Build and clean steps for Incredibuild.
 
-    Specify build settings for the selected \l{Kits}{kit} in
-    \uicontrol Projects > \uicontrol {Build & Run} > \uicontrol Build >
-    \uicontrol {Build Settings}.
+    To specify build settings for the selected \l{Managing kits}{kit}, go to
+    \uicontrol Projects > \uicontrol {Build Settings}.
 
     You can specify build steps and clean steps for IncrediBuild.
 
@@ -22,7 +21,7 @@
     \uicontrol {IncrediBuild for Linux} or
     \uicontrol {IncrediBuild for Windows}.
 
-    \image qtcreator-incredibuild-build-steps-general.png
+    \image {qtcreator-incredibuild-build-steps-general.png} {IncrediBuild build steps}
 
     IncrediBuild automatically detects the build step by iterating over the
     build steps you already defined. The initial build step settings will
@@ -35,7 +34,7 @@
 
     The build errors and warnings are parsed and displayed in \l Issues.
 
-    Select the \uicontrol {Keep original jobs number} check box to stop
+    Select \uicontrol {Keep original jobs number} to stop
     IncrediBuild from overriding the \c {-j} command-line switch, which
     controls the number of processes that the build tools executed by
     \QC run in parallel. The default value set by IncrediBuild is 200.
@@ -43,9 +42,9 @@
     The distribution control settings to specify depend on whether you are using
     Linux or Windows.
 
-    \section2 Distribution Control Settings on Linux
+    \section2 Distribution control settings on Linux
 
-    \image qtcreator-incredibuild-build-steps-linux.png
+    \image {qtcreator-incredibuild-build-steps-linux.png} {IncrediBuild build steps for Linux}
 
     You can specify the following settings for Linux builds:
 
@@ -56,9 +55,9 @@
         \li \uicontrol {Alternate tasks preference}
     \endlist
 
-    \section2 Distribution Control Settings on Windows
+    \section2 Distribution control settings on Windows
 
-    \image qtcreator-incredibuild-build-steps-windows.png
+    \image {qtcreator-incredibuild-build-steps-windows.png} {IncrediBuild build steps for Windows}
 
     You can specify the following settings for Windows builds:
 
@@ -156,5 +155,5 @@
 
     \sa {Activate kits for a project}, {Add clean steps},
     {Configure projects for building}, {Configure projects for running},
-    {Open projects}, {Configuring projects}, {IncrediBuild}
+    {Open projects}, {Building and running projects}, {IncrediBuild}
 */

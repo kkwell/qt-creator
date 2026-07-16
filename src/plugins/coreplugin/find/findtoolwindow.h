@@ -28,7 +28,6 @@ class FindToolWindow : public QWidget
 public:
     explicit FindToolWindow(QWidget *parent = nullptr);
     ~FindToolWindow() override;
-    static FindToolWindow *instance();
 
     void setFindFilters(const QList<IFindFilter *> &filters);
     QList<IFindFilter *> findFilters() const;
@@ -38,10 +37,6 @@ public:
 
     void restore(const Utils::Store &s);
     Utils::Store save() const;
-
-    // TODO deprecated since QtC 14.0
-    void readSettings();
-    void writeSettings();
 
 protected:
     bool event(QEvent *event) override;
@@ -73,6 +68,7 @@ private:
     QCheckBox *m_matchCase;
     QCheckBox *m_wholeWords;
     QCheckBox *m_ignoreBinaryFiles;
+    QCheckBox *m_ignoreGeneratedFiles;
     QCheckBox *m_regExp;
     Utils::FancyLineEdit *m_searchTerm;
 };

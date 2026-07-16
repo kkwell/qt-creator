@@ -103,7 +103,7 @@ private:
     void updateBreakpointData(const Breakpoint &bp, const GdbMi &bkpt, bool added);
     void fetchStack(int limit, bool alsoQml = false);
 
-    void runCommand(const DebuggerCommand &cmd) override;
+    void runCommand(const DebuggerCommand &cmd);
     void debugLastCommand() override;
     void handleAttachedToCore();
     void executeCommand(const QString &command);
@@ -111,14 +111,12 @@ private:
 private:
     DebuggerCommand m_lastDebuggableCommand;
 
-    QByteArray m_inbuffer;
+    QString m_inbuffer;
     QString m_scriptFileName;
     Utils::Process m_lldbProc;
 
     // FIXME: Make generic.
-    int m_lastAgentId = 0;
     int m_continueAtNextSpontaneousStop = false;
-    QMap<QPointer<DisassemblerAgent>, int> m_disassemblerAgents;
 
     QHash<int, DebuggerCommand> m_commandForToken;
     DebuggerCommandSequence m_onStop;

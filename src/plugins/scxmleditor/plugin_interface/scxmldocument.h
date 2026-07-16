@@ -3,20 +3,20 @@
 
 #pragma once
 
+#include <utils/filepath.h>
+
 #include <QFileInfo>
 #include <QHash>
+#include <QList>
 #include <QMap>
 #include <QObject>
 #include <QPointF>
 #include <QString>
-#include <QVector>
 
 QT_FORWARD_DECLARE_CLASS(QUndoStack)
 QT_FORWARD_DECLARE_CLASS(QXmlStreamReader)
 
-namespace ScxmlEditor {
-
-namespace PluginInterface {
+namespace ScxmlEditor::PluginInterface {
 
 class ScxmlNamespace;
 class ScxmlTag;
@@ -55,8 +55,8 @@ public:
         TagChangeFullNameSpace
     };
 
-    explicit ScxmlDocument(const QString &fileName = QString(), QObject *parent = nullptr);
-    explicit ScxmlDocument(const QByteArray &data, QObject *parent = nullptr);
+    explicit ScxmlDocument(const Utils::FilePath &filePath = {}, QObject *parent = nullptr);
+    // explicit ScxmlDocument(const QByteArray &data, QObject *parent = nullptr);
     ~ScxmlDocument() override;
 
     void addNamespace(ScxmlNamespace *ns);
@@ -106,7 +106,7 @@ public:
      * @param child
      */
     void addTag(ScxmlTag *parent, ScxmlTag *child);
-    void addTags(ScxmlTag *parent, const QVector<ScxmlTag*> tags);
+    void addTags(ScxmlTag *parent, const QList<ScxmlTag*> tags);
 
     /**
      * @brief removeTag - inform views that tag will be removed
@@ -146,11 +146,11 @@ public:
     ScxmlTag *popRootTag();
 
     /**
-     * @brief fileName - return current filename of the document
+     * @brief filePath - return current filename of the document
      * @return
      */
-    QString fileName() const;
-    void setFileName(const QString &filename);
+    Utils::FilePath filePath() const;
+    void setFilePath(const Utils::FilePath &filePath);
 
     /**
      * @brief undoStack - return undo-stack of the document (see UndoStack)
@@ -160,12 +160,12 @@ public:
 
     /**
      * @brief save - save document with given filename
-     * @param fileName -
+     * @param filePath -
      * @return return true if file has successfully wrote
      */
-    bool save(const QString &fileName);
+    bool save(const Utils::FilePath &filePath);
     bool save();
-    void load(const QString &fileName);
+    void load(const Utils::FilePath &filePath);
     bool pasteData(const QByteArray &data, const QPointF &minPos = QPointF(0, 0), const QPointF &pastePos = QPointF(0, 0));
     bool load(QIODevice *io);
 
@@ -183,7 +183,7 @@ public:
      */
     bool hasLayouted() const;
 
-    void setLevelColors(const QVector<QColor> &colors);
+    void setLevelColors(const QList<QColor> &colors);
     QColor getColor(int depth) const;
 
     bool hasError() const
@@ -196,7 +196,7 @@ public:
         return m_lastError;
     }
 
-    QByteArray content(const QVector<ScxmlTag*> &tags) const;
+    QByteArray content(const QList<ScxmlTag*> &tags) const;
     QByteArray content(ScxmlTag *tag = nullptr) const;
     void clear(bool createRoot = true);
 
@@ -254,16 +254,16 @@ private:
     void removeTagRecursive(ScxmlTag *tag);
 
     ScxmlTag *createScxmlTag();
-    QString m_fileName;
+    Utils::FilePath m_filePath;
     QUndoStack *m_undoStack;
-    QVector<ScxmlTag*> m_tags;
+    QList<ScxmlTag*> m_tags;
     QHash<QString, int> m_nextIdHash;
     QHash<QString, QString> m_idMap;
     bool m_hasError = false;
     QString m_lastError;
-    QVector<ScxmlTag*> m_rootTags;
+    QList<ScxmlTag*> m_rootTags;
     QMap<QString, ScxmlNamespace*> m_namespaces;
-    QVector<QColor> m_colors;
+    QList<QColor> m_colors;
     bool m_hasLayouted = false;
     QString m_idDelimiter;
     bool m_useFullNameSpace = false;
@@ -272,5 +272,4 @@ private:
     QFileInfo m_qtBinDir;
 };
 
-} // namespace PluginInterface
-} // namespace ScxmlEditor
+} // namespace ScxmlEditor::PluginInterface

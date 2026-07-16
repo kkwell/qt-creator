@@ -25,7 +25,7 @@ inline void MesonOutputParser::addTask(ProjectExplorer::Task task)
 #ifndef MESONPARSER_DISABLE_TASKS_FOR_TESTS // small hack to allow unit testing without the banana/monkey/jungle
     ProjectExplorer::TaskHub::addTask(task);
 #else
-    Q_UNUSED(task);
+    Q_UNUSED(task)
 #endif
 }
 
@@ -35,8 +35,8 @@ inline void MesonOutputParser::addTask(ProjectExplorer::Task::TaskType type, con
     auto task = ProjectExplorer::BuildSystemTask(type, QString("Meson build:%1").arg(line));
     addTask(task);
 #else
-    Q_UNUSED(type);
-    Q_UNUSED(line);
+    Q_UNUSED(type)
+    Q_UNUSED(line)
 #endif
 }
 
@@ -55,13 +55,13 @@ inline Utils::OutputLineParser::LinkSpecs MesonOutputParser::addTask(
                                                  fileName,
                                                  match.captured(lineNumberCapIndex).toInt());
     addTask(task);
-    addLinkSpecForAbsoluteFilePath(linkSpecs, task.file, task.line, task.column, match, 1);
+    addLinkSpecForAbsoluteFilePath(linkSpecs, task.file(), task.line(), task.column(), match, 1);
 #else
-    Q_UNUSED(type);
-    Q_UNUSED(line);
-    Q_UNUSED(match);
-    Q_UNUSED(fileCapIndex);
-    Q_UNUSED(lineNumberCapIndex);
+    Q_UNUSED(type)
+    Q_UNUSED(line)
+    Q_UNUSED(match)
+    Q_UNUSED(fileCapIndex)
+    Q_UNUSED(lineNumberCapIndex)
 #endif
     return linkSpecs;
 }
@@ -132,7 +132,12 @@ void MesonOutputParser::readStdo(const QByteArray &data)
 
 void MesonOutputParser::setSourceDirectory(const Utils::FilePath &sourceDir)
 {
-    emit newSearchDirFound(sourceDir);
+    addSearchDir(sourceDir);
+}
+
+void MesonOutputParser::setBuildDirectory(const Utils::FilePath &buildDir)
+{
+    addSearchDir(buildDir);
 }
 
 } // namespace MesonProjectManager::Internal

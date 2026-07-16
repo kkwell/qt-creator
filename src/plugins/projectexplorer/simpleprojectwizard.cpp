@@ -28,6 +28,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
+#include <QLabel>
 #include <QLineEdit>
 #include <QPainter>
 #include <QPixmap>
@@ -38,8 +39,7 @@
 using namespace Core;
 using namespace Utils;
 
-namespace ProjectExplorer {
-namespace Internal {
+namespace ProjectExplorer::Internal {
 
 class SimpleProjectWizardDialog;
 
@@ -110,8 +110,8 @@ class SimpleProjectWizardDialog : public BaseFileWizard
     Q_OBJECT
 
 public:
-    SimpleProjectWizardDialog(const BaseFileWizardFactory *factory, QWidget *parent)
-        : BaseFileWizard(factory, QVariantMap(), parent)
+    explicit SimpleProjectWizardDialog(const BaseFileWizardFactory *factory)
+        : BaseFileWizard(factory, QVariantMap())
     {
         setWindowTitle(Tr::tr("Import Existing Project"));
 
@@ -162,10 +162,9 @@ SimpleProjectWizard::SimpleProjectWizard()
     setFlags(IWizardFactory::PlatformIndependent);
 }
 
-BaseFileWizard *SimpleProjectWizard::create(QWidget *parent,
-                                            const WizardDialogParameters &parameters) const
+BaseFileWizard *SimpleProjectWizard::create(const WizardDialogParameters &parameters) const
 {
-    auto wizard = new SimpleProjectWizardDialog(this, parent);
+    auto wizard = new SimpleProjectWizardDialog(this);
     wizard->setProjectDir(parameters.defaultPath());
 
     for (QWizardPage *p : wizard->extensionPages())
@@ -174,15 +173,13 @@ BaseFileWizard *SimpleProjectWizard::create(QWidget *parent,
     return wizard;
 }
 
-GeneratedFiles generateQmakeFiles(const SimpleProjectWizardDialog *wizard,
-                                  QString *errorMessage)
+static GeneratedFiles generateQmakeFiles(const SimpleProjectWizardDialog *wizard)
 {
-    Q_UNUSED(errorMessage)
-    const QString projectPath = wizard->projectDir().toString();
+    const QString projectPath = wizard->projectDir().toUrlishString();
     const QDir dir(projectPath);
     const QString projectName = wizard->projectName();
     const FilePath proFileName = Utils::FilePath::fromString(QFileInfo(dir, projectName + ".pro").absoluteFilePath());
-    const QStringList paths = Utils::transform(wizard->selectedPaths(), &FilePath::toString);
+    const QStringList paths = Utils::transform(wizard->selectedPaths(), &FilePath::toUrlishString);
 
     MimeType headerType = Utils::mimeTypeForName(Utils::Constants::C_HEADER_MIMETYPE);
 
@@ -203,7 +200,7 @@ GeneratedFiles generateQmakeFiles(const SimpleProjectWizardDialog *wizard,
     QString proHeaders = "HEADERS = \\\n";
 
     for (const FilePath &fileName : wizard->selectedFiles()) {
-        QString source = dir.relativeFilePath(fileName.toString());
+        QString source = dir.relativeFilePath(fileName.toUrlishString());
         MimeType mimeType = Utils::mimeTypeForFile(fileName);
         if (mimeType.matchesName(Utils::Constants::C_HEADER_MIMETYPE)
             || mimeType.matchesName(Utils::Constants::CPP_HEADER_MIMETYPE))
@@ -233,14 +230,12 @@ GeneratedFiles generateQmakeFiles(const SimpleProjectWizardDialog *wizard,
     return GeneratedFiles{generatedProFile};
 }
 
-GeneratedFiles generateCmakeFiles(const SimpleProjectWizardDialog *wizard,
-                                  QString *errorMessage)
+static GeneratedFiles generateCmakeFiles(const SimpleProjectWizardDialog *wizard)
 {
-    Q_UNUSED(errorMessage)
-    const QDir dir(wizard->projectDir().toString());
+    const QDir dir(wizard->projectDir().toUrlishString());
     const QString projectName = wizard->projectName();
     const FilePath projectFileName = Utils::FilePath::fromString(QFileInfo(dir, "CMakeLists.txt").absoluteFilePath());
-    const QStringList paths = Utils::transform(wizard->selectedPaths(), &FilePath::toString);
+    const QStringList paths = Utils::transform(wizard->selectedPaths(), &FilePath::toUrlishString);
 
     MimeType headerType = Utils::mimeTypeForName(Utils::Constants::C_HEADER_MIMETYPE);
 
@@ -266,7 +261,7 @@ GeneratedFiles generateCmakeFiles(const SimpleProjectWizardDialog *wizard,
 
     QString srcs = "set (SRCS\n";
     for (const FilePath &fileName : wizard->selectedFiles())
-        srcs += "    " + dir.relativeFilePath(fileName.toString()) + "\n";
+        srcs += "    " + dir.relativeFilePath(fileName.toUrlishString()) + "\n";
     srcs += ")\n";
 
     QString components = "find_package(Qt5 COMPONENTS";
@@ -287,7 +282,6 @@ GeneratedFiles generateCmakeFiles(const SimpleProjectWizardDialog *wizard,
         libs.clear();
         components.clear();
     }
-
 
     GeneratedFile generatedProFile(projectFileName);
     generatedProFile.setAttributes(Core::GeneratedFile::OpenProjectAttribute);
@@ -311,30 +305,23 @@ GeneratedFiles generateCmakeFiles(const SimpleProjectWizardDialog *wizard,
     return GeneratedFiles{generatedProFile};
 }
 
-GeneratedFiles SimpleProjectWizard::generateFiles(const QWizard *w,
-                                                  QString *errorMessage) const
+Result<GeneratedFiles> SimpleProjectWizard::generateFiles(const QWizard *w) const
 {
-    Q_UNUSED(errorMessage)
-
     auto wizard = qobject_cast<const SimpleProjectWizardDialog *>(w);
     if (wizard->buildSystem() == "qmake")
-        return generateQmakeFiles(wizard, errorMessage);
-    else if (wizard->buildSystem() == "cmake")
-        return generateCmakeFiles(wizard, errorMessage);
+        return generateQmakeFiles(wizard);
+    if (wizard->buildSystem() == "cmake")
+        return generateCmakeFiles(wizard);
 
-    if (errorMessage)
-        *errorMessage = Tr::tr("Unknown build system \"%1\"").arg(wizard->buildSystem());
-    return {};
+    return ResultError(Tr::tr("Unknown build system \"%1\"").arg(wizard->buildSystem()));
 }
 
-bool SimpleProjectWizard::postGenerateFiles(const QWizard *w, const GeneratedFiles &l,
-                                             QString *errorMessage) const
+Result<> SimpleProjectWizard::postGenerateFiles(const QWizard *w, const GeneratedFiles &l) const
 {
     Q_UNUSED(w)
-    return CustomProjectWizard::postGenerateOpen(l, errorMessage);
+    return CustomProjectWizard::postGenerateOpen(l);
 }
 
-} // namespace Internal
-} // namespace GenericProjectManager
+} // namespace ProjectExplorer::Internal
 
 #include "simpleprojectwizard.moc"

@@ -24,10 +24,13 @@
 #include <utils/layoutbuilder.h>
 #include <utils/pathchooser.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcwidgets.h>
+#include <utils/shutdownguard.h>
 #include <utils/stylehelper.h>
 #include <utils/theme/theme.h>
 #include <utils/winutils.h>
 
+#include <qapplicationstatic.h>
 #include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QElapsedTimer>
@@ -47,7 +50,7 @@ namespace QtSupport::Internal {
 
 const char C_FALLBACK_ROOT[] = "ProjectsFallbackRoot";
 
-Q_GLOBAL_STATIC(ExampleSetModel, s_exampleSetModel)
+Q_APPLICATION_STATIC(ExampleSetModel, s_exampleSetModel)
 
 class ExamplesWelcomePage final : public Core::IWelcomePage
 {
@@ -77,7 +80,7 @@ int ExamplesWelcomePage::priority() const
 
 Id ExamplesWelcomePage::id() const
 {
-    return m_showExamples ? "Examples" : "Tutorials";
+    return m_showExamples ? Id("Examples") : Id("Tutorials");
 }
 
 static FilePath copyToAlternativeLocation(const FilePath &proFile,
@@ -139,7 +142,7 @@ static FilePath copyToAlternativeLocation(const FilePath &proFile,
                                  QMessageBox::NoButton);
             return {};
         } else {
-            expected_str<void> result = projectDir.copyRecursively(targetDir);
+            Result<> result = projectDir.copyRecursively(targetDir);
 
             if (result) {
                 // set vars to new location
@@ -173,22 +176,47 @@ static FilePath copyToAlternativeLocation(const FilePath &proFile,
     return {};
 }
 
-static void openProject(const ExampleItem *item)
+static QUrl exampleItemUrl(const ExampleItem &item)
+{
+    // The following is more like a hack for qtcreator_tutorials.xml,
+    // to support multiple Qt versions. See QTCREATORBUG-32772
+    const QStringList identifiers = item.metaData.value("keyword");
+    for (const QString &identifier : identifiers) {
+        const QMultiMap<QString, QUrl> links = HelpManager::linksForIdentifier(identifier);
+        if (!links.isEmpty())
+            return links.first();
+    }
+    return QUrl::fromUserInput(item.docUrl);
+}
+
+void openExampleProject(const ExampleItem &item)
 {
     using namespace ProjectExplorer;
-    FilePath proFile = item->projectPath;
+    const auto docUrl = exampleItemUrl(item);
+    FilePath proFile = item.projectPath;
     if (proFile.isEmpty())
         return;
 
-    FilePaths filesToOpen = item->filesToOpen;
-    if (!item->mainFile.isEmpty()) {
-        // ensure that the main file is opened on top (i.e. opened last)
-        filesToOpen.removeAll(item->mainFile);
-        filesToOpen.append(item->mainFile);
-    }
-
     if (!proFile.exists())
         return;
+
+    FilePaths filesToOpen = item.filesToOpen;
+    if (!item.mainFile.isEmpty()) {
+        // Ensure that the main file is opened on top.
+        // ICore::openFiles actually only opens the first file,
+        // the others are added as suspended documents.
+        filesToOpen.removeAll(item.mainFile);
+        filesToOpen.prepend(item.mainFile);
+    }
+    // Check that the file that is opened actually exists
+    // Works around e.g. broken mainFile in Qt Quick Gallery example in Qt < 6.9
+    while (!filesToOpen.isEmpty()) {
+        if (filesToOpen.constFirst().exists())
+            break;
+        qWarning() << qPrintable(QString("Example \"%1\" refers to invalid file \"%2\"")
+                                     .arg(item.name, filesToOpen.constFirst().toUserOutput()));
+        filesToOpen.removeFirst();
+    }
 
     // If the Qt is a distro Qt on Linux, it will not be writable, hence compilation will fail
     // Same if it is installed in non-writable location for other reasons
@@ -198,7 +226,7 @@ static void openProject(const ExampleItem *item)
                || !proFile.parentDir().parentDir().isWritableDir() /* shadow build directory */;
     });
     if (needsCopy)
-        proFile = copyToAlternativeLocation(proFile, filesToOpen, item->dependencies);
+        proFile = copyToAlternativeLocation(proFile, filesToOpen, item.dependencies);
 
     // don't try to load help and files if loading the help request is being cancelled
     if (proFile.isEmpty())
@@ -208,7 +236,6 @@ static void openProject(const ExampleItem *item)
     if (result) {
         ICore::openFiles(filesToOpen);
         ModeManager::activateMode(Core::Constants::MODE_EDIT);
-        QUrl docUrl = QUrl::fromUserInput(item->docUrl);
         if (docUrl.isValid())
             HelpManager::showHelpUrl(docUrl, HelpManager::ExternalHelpAlways);
         ModeManager::activateMode(ProjectExplorer::Constants::MODE_SESSION);
@@ -229,13 +256,13 @@ protected:
         QTC_ASSERT(item, return);
         const auto exampleItem = static_cast<const ExampleItem *>(item);
 
-        if (exampleItem->isVideo)
+        if (exampleItem->isVideo) {
             QDesktopServices::openUrl(QUrl::fromUserInput(exampleItem->videoUrl));
-        else if (exampleItem->hasSourceCode)
-            openProject(exampleItem);
-        else
-            HelpManager::showHelpUrl(QUrl::fromUserInput(exampleItem->docUrl),
-                                     HelpManager::ExternalHelpAlways);
+        } else if (exampleItem->hasSourceCode) {
+            openExampleProject(*exampleItem);
+        } else {
+            HelpManager::showHelpUrl(exampleItemUrl(*exampleItem), HelpManager::ExternalHelpAlways);
+        }
     }
 
     void drawPixmapOverlay(const ListItem *item, QPainter *painter,
@@ -250,7 +277,7 @@ protected:
             painter->setCompositionMode(QPainter::CompositionMode_Difference);
             painter->setPen(Qt::white);
             painter->drawText(
-                currentPixmapRect.translated(0, -StyleHelper::SpacingTokens::VPaddingXxs),
+                currentPixmapRect.translated(0, -StyleHelper::SpacingTokens::PaddingVXs),
                 exampleItem->videoLength, Qt::AlignBottom | Qt::AlignHCenter);
             painter->restore();
             static const QPixmap playOverlay =
@@ -276,28 +303,31 @@ public:
         m_exampleDelegate.setShowExamples(isExamples);
 
         using namespace StyleHelper::SpacingTokens;
-
         using namespace Layouting;
         Row titleRow {
-            customMargins(0, 0, ExVPaddingGapXl, 0),
-            spacing(ExVPaddingGapXl),
+            customMargins(0, 0, PaddingHXxl, 0),
+            spacing(GapHXxl),
         };
 
-        m_searcher = new SearchBox;
+        m_searcher = new QtcSearchBox;
         if (m_isExamples) {
             m_searcher->setPlaceholderText(Tr::tr("Search in Examples..."));
 
-            auto exampleSetSelector = new ComboBox;
+            auto exampleSetSelector = new QtcComboBox;
             exampleSetSelector->setSizeAdjustPolicy(QComboBox::AdjustToContents);
             exampleSetSelector->setMinimumWidth(ListItemDelegate::itemSize().width()
-                                                - ExVPaddingGapXl);
+                                                - PaddingVXxl);
             exampleSetSelector->setModel(s_exampleSetModel);
             exampleSetSelector->setCurrentIndex(s_exampleSetModel->selectedExampleSet());
             titleRow.addItem(exampleSetSelector);
             connect(exampleSetSelector,
                     &QComboBox::activated,
                     s_exampleSetModel,
-                    &ExampleSetModel::selectExampleSet);
+                    [this](int index) {
+                s_exampleSetModel->selectExampleSet(index);
+                QTC_ASSERT(m_viewController, return);
+                m_viewController->zoomOut();
+            });
             connect(s_exampleSetModel,
                     &ExampleSetModel::selectedExampleSetChanged,
                     exampleSetSelector,
@@ -316,8 +346,8 @@ public:
         Column {
             titleRow,
             gridView,
-            spacing(ExVPaddingGapXl),
-            customMargins(ExVPaddingGapXl, ExVPaddingGapXl, 0, 0),
+            spacing(GapVXxl),
+            customMargins(PaddingHXxl, PaddingVXxl, 0, 0),
         }.attachTo(this);
 
         connect(&m_exampleDelegate, &ExampleDelegate::tagClicked,
@@ -356,8 +386,8 @@ QWidget *ExamplesWelcomePage::createWidget() const
 
 void setupGettingStartedWelcomePage()
 {
-    static ExamplesWelcomePage examplesPage{true};
-    static ExamplesWelcomePage tutorialPage{false};
+    static GuardedObject<ExamplesWelcomePage> examplesPage{true};
+    static GuardedObject<ExamplesWelcomePage> tutorialPage{false};
 }
 
 } // QtSupport::Internal

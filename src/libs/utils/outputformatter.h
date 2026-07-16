@@ -75,7 +75,7 @@ public:
     // The input is to be considered "complete" for parsing purposes.
     virtual Result handleLine(const QString &line, OutputFormat format) = 0;
 
-    virtual bool handleLink(const QString &href) { Q_UNUSED(href); return false; }
+    virtual bool handleLink(const QString &href) { Q_UNUSED(href) return false; }
     virtual bool hasFatalErrors() const { return false; }
     virtual void flush() {}
     virtual void runPostPrintActions(QPlainTextEdit *) {}
@@ -145,16 +145,12 @@ public:
     void handleLink(const QString &href);
     void setBoldFontEnabled(bool enabled);
     void setForwardStdOutToStdError(bool enabled);
+    void setExplicitBackgroundColor(const QColor &color);
 
     bool hasFatalErrors() const;
 
     static const QList<Utils::FormattedText> linkifiedText(const QList<FormattedText> &text,
             const OutputLineParser::LinkSpecs &linkSpecs);
-
-#ifdef WITH_TESTS
-    void overrideTextCharFormat(const QTextCharFormat &fmt);
-    QList<OutputLineParser *> lineParsers() const;
-#endif
 
 #ifndef WITH_TESTS
 private:
@@ -162,11 +158,17 @@ private:
     QTextCharFormat charFormat(OutputFormat format) const;
     static QTextCharFormat linkFormat(const QTextCharFormat &inputFormat, const QString &href);
 
+#ifdef WITH_TESTS
+    void overrideTextCharFormat(const QTextCharFormat &fmt);
+    QList<OutputLineParser *> lineParsers() const;
+#endif
+
 signals:
     void openInEditorRequested(const Utils::Link &link);
 
 private:
-    void doAppendMessage(const QString &text, OutputFormat format);
+    enum class LineStatus {Complete, Incomplete};
+    void doAppendMessage(const QString &text, OutputFormat format, LineStatus lineStatus);
 
     OutputLineParser::Result handleMessage(const QString &text, OutputFormat format,
                                            QList<OutputLineParser *> &involvedParsers);
@@ -174,7 +176,6 @@ private:
     void append(const QString &text, const QTextCharFormat &format);
     void initFormats();
     void flushIncompleteLine();
-    void flushTrailingNewline();
     void dumpIncompleteLine(const QString &line, OutputFormat format);
     void clearLastLine();
     QList<FormattedText> parseAnsi(const QString &text, const QTextCharFormat &format);
@@ -184,6 +185,13 @@ private:
     class Private;
     Private * const d;
 };
+
+
+#ifdef WITH_TESTS
+
+QTCREATOR_UTILS_EXPORT QObject *createOutputFormatterTest();
+
+#endif
 
 
 } // namespace Utils

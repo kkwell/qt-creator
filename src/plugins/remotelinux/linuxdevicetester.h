@@ -7,7 +7,9 @@
 
 #include <projectexplorer/devicesupport/idevice.h>
 
-namespace Tasking { class GroupItem; }
+QT_BEGIN_NAMESPACE
+namespace QtTaskTree { class GroupItem; }
+QT_END_NAMESPACE
 
 namespace RemoteLinux {
 
@@ -18,12 +20,13 @@ class REMOTELINUX_EXPORT GenericLinuxDeviceTester : public ProjectExplorer::Devi
     Q_OBJECT
 
 public:
-    explicit GenericLinuxDeviceTester(QObject *parent = nullptr);
+    explicit GenericLinuxDeviceTester(
+        const ProjectExplorer::IDevice::Ptr &device, QObject *parent = nullptr);
     ~GenericLinuxDeviceTester() override;
 
     void setExtraCommandsToTest(const QStringList &extraCommands);
-    void setExtraTests(const QList<Tasking::GroupItem> &extraTests);
-    void testDevice(const ProjectExplorer::IDevice::Ptr &deviceConfiguration) override;
+    void setExtraTests(const QList<QtTaskTree::GroupItem> &extraTests);
+    void testDevice() override;
     void stopTest() override;
 
 private:

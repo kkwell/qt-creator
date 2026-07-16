@@ -30,8 +30,6 @@
 
 #include <QDateTime>
 #include <QDebug>
-#include <QDir>
-#include <QFileInfo>
 #include <QTimer>
 #include <QVariant>
 #include <QJsonArray>
@@ -95,15 +93,15 @@ void PdbEngine::setupEngine()
 {
     QTC_ASSERT(state() == EngineSetupRequested, qDebug() << state());
 
-    m_interpreter = runParameters().interpreter;
-    QString bridge = ICore::resourcePath("debugger/pdbbridge.py").toString();
+    m_interpreter = runParameters().interpreter();
+    const FilePath bridge = ICore::resourcePath("debugger/pdbbridge.py");
 
     connect(&m_proc, &Process::started, this, &PdbEngine::handlePdbStarted);
     connect(&m_proc, &Process::done, this, &PdbEngine::handlePdbDone);
     connect(&m_proc, &Process::readyReadStandardOutput, this, &PdbEngine::readPdbStandardOutput);
     connect(&m_proc, &Process::readyReadStandardError, this, &PdbEngine::readPdbStandardError);
 
-    const FilePath scriptFile = runParameters().mainScript;
+    const FilePath scriptFile = runParameters().mainScript();
     if (!scriptFile.isReadableFile()) {
         AsynchronousMessageBox::critical(Tr::tr("Python Error"),
                                          QString("Cannot open script file %1")
@@ -111,17 +109,18 @@ void PdbEngine::setupEngine()
         notifyEngineSetupFailed();
     }
 
-    CommandLine cmd{m_interpreter, {bridge, scriptFile.path()}};
-    cmd.addArg(runParameters().inferior.workingDirectory.path());
+    CommandLine cmd{m_interpreter, {bridge.path(), scriptFile.path()}};
+    const DebuggerRunParameters &rp = runParameters();
+    cmd.addArg(rp.inferior().workingDirectory.path());
     cmd.addArg("--");
-    QStringList arguments = runParameters().inferior.command.splitArguments();
+    QStringList arguments = rp.inferior().command.splitArguments();
     if (!arguments.isEmpty() && arguments.constFirst() == "-u")
         arguments.removeFirst(); // unbuffered added by run config
     if (!arguments.isEmpty())
         arguments.removeFirst(); // file added by run config
     cmd.addArgs(arguments);
     showMessage("STARTING " + cmd.toUserOutput());
-    m_proc.setEnvironment(runParameters().debugger.environment);
+    m_proc.setEnvironment(runParameters().debugger().environment);
     m_proc.setCommand(cmd);
     m_proc.start();
 }
@@ -134,7 +133,7 @@ void PdbEngine::handlePdbStarted()
     showStatusMessage(Tr::tr("Running requested..."), 5000);
     BreakpointManager::claimBreakpointsForEngine(this);
     notifyEngineRunAndInferiorStopOk();
-    if (runParameters().breakOnMain)
+    if (runParameters().breakOnMain())
         updateAll();
     else
         continueInferior();
@@ -226,7 +225,7 @@ void PdbEngine::insertBreakpoint(const Breakpoint &bp)
     if (params.type  == BreakpointByFunction)
         loc = params.functionName;
     else
-        loc = params.fileName.toString() + ':' + QString::number(params.textPosition.line);
+        loc = params.fileName.path() + ':' + QString::number(params.textPosition.line);
 
     postDirectCommand("break " + loc);
 }
@@ -347,7 +346,7 @@ void PdbEngine::refreshSymbols(const GdbMi &symbols)
         symbol.name = item["name"].data();
         syms.append(symbol);
     }
-    showModuleSymbols(runParameters().inferior.command.executable().withNewPath(moduleName), syms);
+    showModuleSymbols(runParameters().inferior().command.executable().withNewPath(moduleName), syms);
 }
 
 bool PdbEngine::canHandleToolTip(const DebuggerToolTipContext &) const
@@ -449,9 +448,10 @@ void PdbEngine::handleOutput(const QString &data)
 void PdbEngine::handleOutput2(const QString &data)
 {
     const QStringList lines = data.split('\n');
+    QStringDecoder decoder(QStringEncoder::System);
     for (const QString &line : lines) {
         GdbMi item;
-        item.fromString(line);
+        item.fromString(line, decoder);
 
         showMessage(line, LogOutput);
 

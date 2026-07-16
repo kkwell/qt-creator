@@ -1,9 +1,13 @@
 add_qtc_library(Utils
-  DEPENDS Tasking Qt::Qml Qt::Xml Spinner
+  DEPENDS Qt::Qml Qt::Sql Qt::Xml Spinner QtCLibArchive
   PUBLIC_DEPENDS
-    Qt::Concurrent Qt::Core Qt::Network Qt::Gui Qt::Widgets
-    Qt::Core5Compat
-    $<$<BOOL:${QTC_STATIC_BUILD}>:Tasking>
+    Qt::Concurrent
+    Qt::Core
+    Qt::Gui
+    Qt::Network
+    Qt::PrintSupport
+    QtTaskTree
+    Qt::Widgets
     $<$<BOOL:${QTC_STATIC_BUILD}>:Spinner>
   SOURCES
     ../3rdparty/span/span.hpp
@@ -30,16 +34,19 @@ add_qtc_library(Utils
     commandline.cpp commandline.h
     completinglineedit.cpp completinglineedit.h
     completingtextedit.cpp completingtextedit.h
+    covariantcallback.h
     cpplanguage_details.h
+    crashreporting.cpp crashreporting.h
     crumblepath.cpp crumblepath.h
-    datafromprocess.h
+    datafromprocess.cpp datafromprocess.h
     delegates.cpp delegates.h
     detailsbutton.cpp detailsbutton.h
     detailswidget.cpp detailswidget.h
     devicefileaccess.cpp devicefileaccess.h
-    deviceshell.cpp deviceshell.h
     differ.cpp differ.h
     displayname.cpp displayname.h
+    documenttabbar.cpp
+    documenttabbar.h
     dropsupport.cpp dropsupport.h
     elfreader.cpp elfreader.h
     elidinglabel.cpp elidinglabel.h
@@ -52,6 +59,7 @@ add_qtc_library(Utils
     externalterminalprocessimpl.cpp externalterminalprocessimpl.h
     fadingindicator.cpp fadingindicator.h
     faketooltip.cpp faketooltip.h
+    fancyiconbutton.cpp fancyiconbutton.h
     fancylineedit.cpp fancylineedit.h
     fancymainwindow.cpp fancymainwindow.h
     filecrumblabel.cpp filecrumblabel.h
@@ -62,18 +70,19 @@ add_qtc_library(Utils
     filesearch.cpp filesearch.h
     filestreamer.cpp filestreamer.h
     filestreamermanager.cpp filestreamermanager.h
-    filesystemmodel.cpp filesystemmodel.h
     filesystemwatcher.cpp filesystemwatcher.h
     fileutils.cpp fileutils.h
     filewizardpage.cpp filewizardpage.h
-    flowlayout.cpp flowlayout.h
     fsengine/fsengine.cpp fsengine/fsengine.h
     fsengine/fileiconprovider.cpp fsengine/fileiconprovider.h
     futuresynchronizer.cpp futuresynchronizer.h
     fuzzymatcher.cpp fuzzymatcher.h
     genericconstants.h
     globalfilechangeblocker.cpp globalfilechangeblocker.h
+    globaltasktree.cpp globaltasktree.h
+    groupedmodel.cpp groupedmodel.h
     guard.cpp guard.h
+    guardedcallback.h
     guiutils.cpp guiutils.h
     headerviewstretcher.cpp headerviewstretcher.h
     highlightingitemdelegate.cpp highlightingitemdelegate.h
@@ -81,22 +90,20 @@ add_qtc_library(Utils
     hostosinfo.cpp hostosinfo.h
     htmldocextractor.cpp htmldocextractor.h
     icon.cpp icon.h
-    iconbutton.cpp iconbutton.h
     id.cpp id.h
     indexedcontainerproxyconstiterator.h
     infobar.cpp infobar.h
     infolabel.cpp infolabel.h
     itemviews.cpp itemviews.h
     jsontreeitem.cpp jsontreeitem.h
-    launcherinterface.cpp launcherinterface.h
-    launcherpackets.cpp launcherpackets.h
-    launchersocket.cpp launchersocket.h
     layoutbuilder.cpp layoutbuilder.h
+    lazy.h
     link.cpp link.h
     listmodel.h
     listutils.h
     lua.cpp lua.h
     macroexpander.cpp macroexpander.h
+    markdownbrowser.cpp markdownbrowser.h
     mathutils.cpp mathutils.h
     mimeconstants.h
     mimeutils.h
@@ -112,14 +119,16 @@ add_qtc_library(Utils
     networkaccessmanager.cpp networkaccessmanager.h
     optionpushbutton.h
     optionpushbutton.cpp
-    osspecificaspects.h
+    osspecificaspects.cpp osspecificaspects.h
     outputformat.h
     outputformatter.cpp outputformatter.h
     overlaywidget.cpp overlaywidget.h
+    overloaded.h
     overridecursor.cpp overridecursor.h
     passworddialog.cpp passworddialog.h
     pathchooser.cpp pathchooser.h
     pathlisteditor.cpp pathlisteditor.h
+    patternvalidator.h
     persistentsettings.cpp persistentsettings.h
     pointeralgorithm.h
     port.cpp port.h
@@ -131,6 +140,7 @@ add_qtc_library(Utils
     processinfo.cpp processinfo.h
     processinterface.cpp processinterface.h
     processreaper.cpp processreaper.h
+    progressdialog.cpp progressdialog.h
     progressindicator.cpp progressindicator.h
     projectintropage.cpp projectintropage.h
     proxyaction.cpp proxyaction.h
@@ -138,18 +148,21 @@ add_qtc_library(Utils
     qtcassert.cpp qtcassert.h
     qtcolorbutton.cpp qtcolorbutton.h
     qtcprocess.cpp qtcprocess.h
-    qtcsettings.cpp qtcsettings.h
+    qtcsettings.cpp qtcsettings.h qtcsettings_p.h
+    qtcwidgets.cpp qtcwidgets.h
+    qtdesignsystemstyle.cpp qtdesignsystemstyle.h
     ranges.h
     reloadpromptutils.cpp reloadpromptutils.h
     removefiledialog.cpp removefiledialog.h
+    result.cpp result.h
     savefile.cpp savefile.h
     scopedswap.h
     scopedtimer.cpp scopedtimer.h
     searchresultitem.cpp searchresultitem.h
     set_algorithm.h
     settingsaccessor.cpp settingsaccessor.h
-    settingsselector.cpp settingsselector.h
-    singleton.cpp singleton.h
+    settingsdatabase.cpp settingsdatabase.h
+    shutdownguard.cpp shutdownguard.h
     sizedarray.h
     smallstring.h
     smallstringfwd.h
@@ -170,6 +183,7 @@ add_qtc_library(Utils
     styleanimator.cpp styleanimator.h
     styledbar.cpp styledbar.h
     stylehelper.cpp stylehelper.h
+    summarywidget.cpp summarywidget.h
     synchronizedvalue.h
     templateengine.cpp templateengine.h
     temporarydirectory.cpp temporarydirectory.h
@@ -177,12 +191,12 @@ add_qtc_library(Utils
     terminalcommand.cpp terminalcommand.h
     terminalhooks.cpp terminalhooks.h
     terminalinterface.cpp terminalinterface.h
+    textcodec.cpp textcodec.h
     textfieldcheckbox.cpp textfieldcheckbox.h
     textfieldcombobox.cpp textfieldcombobox.h
     textfileformat.cpp textfileformat.h
     textutils.cpp textutils.h
     theme/theme.cpp theme/theme.h theme/theme_p.h
-    threadutils.cpp threadutils.h
     tooltip/effects.h
     tooltip/tips.cpp tooltip/tips.h
     tooltip/tooltip.cpp tooltip/tooltip.h
@@ -193,7 +207,6 @@ add_qtc_library(Utils
     unarchiver.cpp unarchiver.h
     uncommentselection.cpp uncommentselection.h
     uniqueobjectptr.h
-    unixutils.cpp unixutils.h
     url.cpp url.h
     utils.qrc
     utils_global.h
@@ -205,6 +218,16 @@ add_qtc_library(Utils
     winutils.cpp winutils.h
     wizard.cpp wizard.h
     wizardpage.cpp wizardpage.h
+    movie.cpp movie.h
+  SBOM_ARGS
+    USE_ATTRIBUTION_FILES
+    CREATE_SBOM_FOR_EACH_ATTRIBUTION
+    ATTRIBUTION_FILE_PATHS
+      "${QtCreator_SOURCE_DIR}/qt_attributions.json"
+    ATTRIBUTION_IDS
+      std-span-martinmoene
+      tartanllama-expected
+      tika-mimetypes
 )
 
 extend_qtc_library(Utils
@@ -230,12 +253,29 @@ extend_qtc_library(Utils
     mimeutils.cpp
 )
 
+extend_qtc_library(Utils
+  SOURCES_PREFIX plaintextedit
+  PUBLIC_INCLUDES plaintextedit
+  SOURCES
+    inputcontrol.cpp
+    inputcontrol.h
+    plaintextedit.cpp
+    plaintextedit.h
+    plaintexteditaccessibility.cpp
+    plaintexteditaccessibility.h
+    texteditorlayout.cpp
+    texteditorlayout.h
+    widgettextcontrol.cpp
+    widgettextcontrol.h
+)
+
 if (MSVC)
     find_library(DbgHelpLib dbghelp)
 endif()
 
 extend_qtc_library(Utils CONDITION MSVC
   DEPENDS ${DbgHelpLib}
+  DEFINES HAVE_DBGHELP
 )
 
 extend_qtc_library(Utils CONDITION WIN32
@@ -253,6 +293,7 @@ extend_qtc_library(Utils CONDITION APPLE
   SOURCES
     fileutils_mac.mm fileutils_mac.h
     processhandle_mac.mm
+    pathchooser.mm
     theme/theme_mac.mm theme/theme_mac.h
     touchbar/touchbar_appdelegate_mac.mm touchbar/touchbar_appdelegate_mac_p.h
     touchbar/touchbar_mac.mm touchbar/touchbar_mac_p.h
@@ -275,6 +316,21 @@ extend_qtc_library(Utils
           fsengine/fsenginehandler.cpp
           fsengine/fsenginehandler.h
           fsengine/filepathinfocache.h
+  SBOM_ARGS
+    ATTRIBUTION_FILE_PATHS
+      "${QtCreator_SOURCE_DIR}/qt_attributions.json"
+    ATTRIBUTION_IDS
+      ptyqt
+      ptyqt-conpty
+)
+
+extend_qtc_library(Utils
+  CONDITION BUILD_WITH_SENTRY
+  DEFINES
+    SENTRY_DSN="${SENTRY_DSN}"
+    SENTRY_PROJECT="${SENTRY_PROJECT}"
+    ENABLE_SENTRY
+  DEPENDS sentry::sentry
 )
 
 extend_qtc_library(Utils

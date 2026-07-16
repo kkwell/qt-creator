@@ -44,6 +44,8 @@
         <file>completion/exampleIncludeDir/mylib/mylib.h</file>
         <file>completion/dotToArrowCorrection.cpp</file>
         <file>completion/noDotToArrowCorrectionForFloats.cpp</file>
+        <file>completion/lambdacompletion.cpp</file>
+        <file>completion/macrocompletion.cpp</file>
         <file>completion/main.cpp</file>
         <file>completion/mainwindow.cpp</file>
         <file>completion/mainwindow.h</file>
@@ -64,5 +66,8 @@
         <file>indirect-changes/indirectheader.h</file>
         <file>indirect-changes/main.cpp</file>
         <file>indirect-changes/unrelatedheader.h</file>
+        <file>tooltips/main.cpp</file>
+        <file>tooltips/tooltipfromindex.cpp</file>
+        <file>tooltips/tooltipfromindex.h</file>
     </qresource>
 </RCC>

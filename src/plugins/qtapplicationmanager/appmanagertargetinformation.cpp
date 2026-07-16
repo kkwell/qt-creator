@@ -7,35 +7,35 @@
 
 #include "appmanagerconstants.h"
 
-#include <projectexplorer/kitaspects.h>
-#include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/buildconfiguration.h>
+#include <projectexplorer/buildsystem.h>
+#include <projectexplorer/environmentkitaspect.h>
+#include <projectexplorer/project.h>
 #include <projectexplorer/runconfiguration.h>
 #include <projectexplorer/runcontrol.h>
 #include <projectexplorer/target.h>
-
-#include <utils/qtcassert.h>
-
-#include <qmakeprojectmanager/qmakeproject.h>
-
-#include <qtsupport/profilereader.h>
+#include <projectexplorer/taskhub.h>
 
 #include <yaml-cpp/yaml.h>
 
 using namespace ProjectExplorer;
-using namespace QmakeProjectManager;
-using namespace QtSupport;
 using namespace Utils;
 
 namespace AppManager {
 namespace Internal {
 
-QList<TargetInformation> TargetInformation::readFromProject(const Target *target , const QString &buildKey)
+QList<TargetInformation> TargetInformation::readFromProject(
+    const BuildConfiguration *bc, const QString &buildKey)
 {
+    if (!bc)
+        return {};
+
     QList<TargetInformation> result;
-    if (!target->project()->rootProjectNode())
+    if (!bc->project()->rootProjectNode())
         return result;
 
-    QVariantList packageTargets = target->project()->extraData(AppManager::Constants::APPMAN_PACKAGE_TARGETS).toList();
+    const QVariantList packageTargets
+        = bc->extraData(AppManager::Constants::APPMAN_PACKAGE_TARGETS).toList();
 //        qDebug() << "APPMAN TARGETS" << packageTargets;
 
     for (const auto &packageTarget : packageTargets) {
@@ -44,12 +44,6 @@ QList<TargetInformation> TargetInformation::readFromProject(const Target *target
         const QString cmakeTarget = packageTargetMap.value("cmakeTarget").toString();
         const FilePath packageFilePath = packageTargetMap.value("packageFilePath").value<FilePath>();
         const bool isBuiltinPackage = packageTargetMap.value("isBuiltinPackage").toBool();
-
-        const Utils::expected_str<QByteArray> localFileContents = manifestFilePath.fileContents();
-        if (!localFileContents.has_value()) {
-            qWarning() << "NOPE:" << localFileContents.error();
-            continue;
-        }
 
         auto createTargetInformation = [buildKey, manifestFilePath, cmakeTarget, packageFilePath, isBuiltinPackage, &result](const YAML::Node &document) {
             const QString id = QString::fromStdString(document["id"].as<std::string>());
@@ -77,9 +71,13 @@ QList<TargetInformation> TargetInformation::readFromProject(const Target *target
         };
 
         try {
+            const Utils::Result<QByteArray> localFileContents = manifestFilePath.fileContents();
+            if (!localFileContents.has_value())
+                throw std::runtime_error("Invalid empty file");
+
             std::vector<YAML::Node> documents = YAML::LoadAll(*localFileContents);
             if (documents.size() != 2)
-                throw std::runtime_error("Must contain two documents");
+                throw std::runtime_error("Must contain exactly two documents");
             YAML::Node header = documents[0];
             YAML::Node document = documents[1];
 
@@ -94,23 +92,24 @@ QList<TargetInformation> TargetInformation::readFromProject(const Target *target
             }
 
         } catch (const std::exception &e) {
-            qWarning() << "NOPE:" << e.what();
+            const QString error = QString("Error parsing package manifest: %1").arg(QString::fromUtf8(e.what()));
+            TaskHub::addTask<BuildSystemTask>(Task::Error, error, manifestFilePath);
         }
     }
     return result;
 }
 
-TargetInformation::TargetInformation(const Target *target)
+TargetInformation::TargetInformation(const BuildConfiguration *bc)
 {
-    if (!target)
+    if (!bc)
         return;
-    if (target->buildSystem()->isParsing())
+    if (bc->buildSystem()->isParsing())
         return;
-    auto project = target->project();
+    auto project = bc->project();
     if (!project)
         return;
 
-    const RunConfiguration *rc = target->activeRunConfiguration();
+    const RunConfiguration *rc = bc->activeRunConfiguration();
     if (!rc)
         return;
     if (rc->id() != Constants::RUNCONFIGURATION_ID &&
@@ -121,7 +120,7 @@ TargetInformation::TargetInformation(const Target *target)
     if (buildKey.isEmpty())
         return;
 
-    const auto targetInfoList = TargetInformation::readFromProject(target, buildKey);
+    const auto targetInfoList = TargetInformation::readFromProject(bc, buildKey);
     if (targetInfoList.isEmpty())
         return;
 

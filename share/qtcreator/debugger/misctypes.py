@@ -1,7 +1,7 @@
 # Copyright (C) 2016 The Qt Company Ltd.
 # SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-from dumper import Children, SubItem
+from dumper import Children, SubItem, DumperBase
 from utils import TypeCode, DisplayFormat
 import re
 
@@ -586,3 +586,78 @@ def qdump__QtcDumperTest_String(d, value):
         second = d.hexdecode(d.putSubItem('second', value['second']).value)
         third = d.hexdecode(d.putSubItem('third', value['third']).value)[:-1]
     d.putValue(first + ', ' + second + ', ' + third)
+
+
+def qdump__tl__expected(d: DumperBase, value: DumperBase.Value):
+    # There are issues with correct type handling for enums and pointer in CDB
+    # preventing type cast from working as expected in these cases
+
+    has_value = False
+    val = {}
+
+    try:
+        has_value = value["m_has_val"].integer() != 0
+        val = value["m_val"] if has_value else value["m_unexpect"]["m_val"]
+    except:
+        okType = value.type[0]
+        errType = value.type[1]
+
+        # Result and error (and a initialized flag) are packed into a union storage
+        largerType = max(okType, errType, key=lambda t: t.size())
+        storage, has_value = value.split('{{{}}}b'.format(largerType.name))
+        val = storage.cast(okType.name) if has_value else storage.cast(errType.name)
+
+    if has_value:
+        if val.type.name != 'void':
+            d.putExpandable()
+        d.putValue('Expected')
+    else:
+        d.putExpandable()
+        d.putValue('Unexpected')
+
+    if d.isExpanded():
+        with Children(d):
+            d.putSubItem('inner', val)
+
+
+#######################################################################
+#
+# GNUstep Objective-C Foundation types
+#
+#######################################################################
+
+def qdump__NXConstantString(d, value):
+    # GNUstep NXConstantString memory layout:
+    #   offset 0:         isa pointer  (ptrSize bytes)
+    #   offset ptrSize:   const char  *c_string
+    #   offset 2*ptrSize: unsigned int len
+    ptr_size = d.ptrSize()
+    obj_addr = value.address()
+    if not obj_addr:
+        d.putSpecialValue('notaccessible')
+        d.putNumChild(0)
+        return
+    c_string_ptr = d.extractPointer(obj_addr + ptr_size)
+    length = d.extractUInt(obj_addr + 2 * ptr_size)
+    shown = d.computeLimit(length, d.displayStringLimit)
+    if c_string_ptr and shown > 0:
+        d.putValue(d.readMemory(c_string_ptr, shown), 'latin1', length=length)
+    else:
+        # length == 0 (empty string) or null pointer: report as empty latin1
+        # string so the UI shows "" rather than a bare empty value.
+        d.putValue('', 'latin1', length=0)
+    d.putNumChild(0)
+
+
+# GNUstep uses the same layout for NSConstantString (the class registered
+# under that name in some configurations).
+qdump__NSConstantString = qdump__NXConstantString
+
+# On Linux/GNUstep, LLDB reports ObjC constant strings with their static type
+# NSString rather than the dynamic subtype, so we need a dumper for that name
+# too.  On macOS, LLDB's built-in ObjC formatters handle NSString via the
+# GetSummary() path, and the internal layout is completely different, so we
+# must not attempt to read GNUstep-style offsets there.
+import sys as _sys
+if _sys.platform != 'darwin':
+    qdump__NSString = qdump__NXConstantString

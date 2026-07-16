@@ -3,7 +3,6 @@
 
 #include "plugindialog.h"
 
-#include "coreplugin.h"
 #include "coreplugintr.h"
 #include "icore.h"
 #include "plugininstallwizard.h"
@@ -25,11 +24,31 @@
 using namespace ExtensionSystem;
 using namespace Utils;
 
-namespace Core {
-namespace Internal {
+namespace Core::Internal {
 
-PluginDialog::PluginDialog(QWidget *parent)
-    : QDialog(parent),
+class PluginDialog final : public QDialog
+{
+public:
+    explicit PluginDialog();
+
+private:
+    void updateButtons();
+    void openDetails(ExtensionSystem::PluginSpec *spec);
+    void openErrorDetails();
+    void closeDialog();
+    void showInstallWizard();
+
+    ExtensionSystem::PluginView *m_view;
+
+    QPushButton *m_detailsButton;
+    QPushButton *m_errorDetailsButton;
+    QPushButton *m_installButton;
+    bool m_isRestartRequired = false;
+    QSet<ExtensionSystem::PluginSpec *> m_softLoad;
+};
+
+PluginDialog::PluginDialog()
+    : QDialog(ICore::dialogParent()),
       m_view(new ExtensionSystem::PluginView(this))
 {
     auto filterEdit = new Utils::FancyLineEdit(this);
@@ -64,7 +83,7 @@ PluginDialog::PluginDialog(QWidget *parent)
     connect(m_view, &ExtensionSystem::PluginView::pluginsChanged,
             this, [this](const QSet<PluginSpec *> &plugins, bool enable) {
         for (PluginSpec *plugin : plugins) {
-            if (enable && plugin->isSoftLoadable()) {
+            if (enable && plugin->isEffectivelySoftloadable()) {
                 m_softLoad.insert(plugin);
             } else {
                 m_softLoad.remove(plugin); // In case it was added, harmless otherwise.
@@ -88,17 +107,15 @@ void PluginDialog::closeDialog()
     PluginManager::writeSettings();
 
     PluginManager::loadPluginsAtRuntime(m_softLoad);
-    for (PluginSpec *plugin : std::as_const(m_softLoad))
-        CorePlugin::loadMimeFromPlugin(plugin);
 
     if (m_isRestartRequired)
-        ICore::askForRestart(Tr::tr("Plugin changes will take effect after restart."));
+        ICore::askForRestart(msgPluginChangesRequireRestart());
     accept();
 }
 
 void PluginDialog::showInstallWizard()
 {
-    if (executePluginInstallWizard())
+    if (executePluginInstallWizard() == InstallResult::NeedsRestart)
         m_isRestartRequired = true;
 }
 
@@ -144,5 +161,10 @@ void PluginDialog::openErrorDetails()
     dialog.exec();
 }
 
-} // namespace Internal
-} // namespace Core
+void showAboutPlugins()
+{
+    PluginDialog dialog;
+    dialog.exec();
+}
+
+} // Core::Internal

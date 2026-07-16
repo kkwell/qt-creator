@@ -147,7 +147,7 @@ CppOutlineWidget::CppOutlineWidget(CppEditorWidget *editor) :
 
     connect(m_treeView, &QAbstractItemView::activated,
             this, &CppOutlineWidget::onItemActivated);
-    connect(editor, &QPlainTextEdit::cursorPositionChanged, this, [this] {
+    connect(editor, &Utils::PlainTextEdit::cursorPositionChanged, this, [this] {
         if (m_model->rootItem()->hasChildren())
             updateIndex();
     });
@@ -213,18 +213,13 @@ void CppOutlineWidget::updateIndexNow()
 
     m_updateIndexTimer.stop();
 
-    int line = 0, column = 0;
-    m_editor->convertPosition(m_editor->position(), &line, &column);
-    QModelIndex index = m_model->indexForPosition(line, column);
-
-    if (index.isValid()) {
+    if (QModelIndex index = m_model->indexForPosition(m_editor->lineColumn()); index.isValid()) {
         m_blockCursorSync = true;
         QModelIndex proxyIndex = m_proxyModel->mapFromSource(index);
         m_treeView->setCurrentIndex(proxyIndex);
         m_treeView->scrollTo(proxyIndex);
         m_blockCursorSync = false;
     }
-
 }
 
 void CppOutlineWidget::updateTextCursor(const QModelIndex &proxyIndex)

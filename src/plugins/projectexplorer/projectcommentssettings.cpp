@@ -9,6 +9,7 @@
 #include "projectpanelfactory.h"
 #include "projectsettingswidget.h"
 
+#include <texteditor/commentssettings.h>
 #include <texteditor/texteditorconstants.h>
 #include <texteditor/texteditorsettings.h>
 
@@ -21,11 +22,31 @@ namespace ProjectExplorer::Internal {
 
 const char kUseGlobalKey[] = "UseGlobalKey";
 
-ProjectCommentsSettings::ProjectCommentsSettings(Project *project)
-    : m_project(project)
+class ProjectCommentsSettings
 {
-    loadSettings();
-}
+public:
+    // Passing a null ptr is allowed and yields the global settings, so you can use
+    // this class transparently for both cases.
+    ProjectCommentsSettings(Project *project)
+        : m_project(project)
+    {
+        loadSettings();
+    }
+
+    TextEditor::CommentsSettings::Data settings() const;
+    void setSettings(const TextEditor::CommentsSettings::Data &settings);
+    bool useGlobalSettings() const { return m_useGlobalSettings; }
+    void setUseGlobalSettings(bool useGlobal);
+
+private:
+    void loadSettings();
+    void saveSettings();
+
+    ProjectExplorer::Project * const m_project;
+    TextEditor::CommentsSettings::Data m_customSettings;
+    bool m_useGlobalSettings = true;
+};
+
 
 CommentsSettings::Data ProjectCommentsSettings::settings() const
 {
@@ -61,15 +82,7 @@ void ProjectCommentsSettings::loadSettings()
 
     const Store data = storeFromVariant(entry);
     m_useGlobalSettings = data.value(kUseGlobalKey, true).toBool();
-    m_customSettings.enableDoxygen = data.value(CommentsSettings::enableDoxygenSettingsKey(),
-                                                m_customSettings.enableDoxygen).toBool();
-    m_customSettings.generateBrief = data.value(CommentsSettings::generateBriefSettingsKey(),
-                                                m_customSettings.generateBrief).toBool();
-    m_customSettings.leadingAsterisks = data.value(CommentsSettings::leadingAsterisksSettingsKey(),
-                                                   m_customSettings.leadingAsterisks).toBool();
-    m_customSettings.commandPrefix = static_cast<CommentsSettings::CommandPrefix>(
-        data.value(CommentsSettings::commandPrefixKey(),
-                   int(m_customSettings.commandPrefix)).toInt());
+    m_customSettings.fromMap(data);
 }
 
 void ProjectCommentsSettings::saveSettings()
@@ -85,10 +98,7 @@ void ProjectCommentsSettings::saveSettings()
 
     Store data;
     data.insert(kUseGlobalKey, m_useGlobalSettings);
-    data.insert(CommentsSettings::enableDoxygenSettingsKey(), m_customSettings.enableDoxygen);
-    data.insert(CommentsSettings::generateBriefSettingsKey(), m_customSettings.generateBrief);
-    data.insert(CommentsSettings::leadingAsterisksSettingsKey(), m_customSettings.leadingAsterisks);
-    data.insert(CommentsSettings::commandPrefixKey(), int(m_customSettings.commandPrefix));
+    m_customSettings.toMap(data);
     m_project->setNamedSettings(CommentsSettings::mainSettingsKey(), variantFromStore(data));
 }
 
@@ -99,6 +109,7 @@ public:
         : m_settings(project)
     {
         setGlobalSettingsId(TextEditor::Constants::TEXT_EDITOR_COMMENTS_SETTINGS);
+
         const auto layout = new QVBoxLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
         layout->addWidget(&m_widget);
@@ -140,7 +151,21 @@ public:
         });
 
         TextEditor::TextEditorSettings::setCommentsSettingsRetriever([](const FilePath &filePath) {
-            return ProjectCommentsSettings(ProjectManager::projectForFile(filePath)).settings();
+            Project * const project = ProjectManager::projectForFile(filePath);
+            if (!project)
+                return CommentsSettings::data();
+
+            const QVariant entry = project->namedSettings(CommentsSettings::mainSettingsKey());
+            if (!entry.isValid())
+                return CommentsSettings::data();
+
+            const Store data = storeFromVariant(entry);
+            if (data.value(kUseGlobalKey, true).toBool())
+                return CommentsSettings::data();
+
+            TextEditor::CommentsSettings::Data customSettings;
+            customSettings.fromMap(data);
+            return customSettings;
         });
     }
 };

@@ -4,6 +4,7 @@
 #include "selectabletexteditorwidget.h"
 
 #include <texteditor/displaysettings.h>
+#include <texteditor/tabsettings.h>
 #include <texteditor/textdocument.h>
 #include <texteditor/textdocumentlayout.h>
 #include <texteditor/texteditorsettings.h>
@@ -21,13 +22,22 @@ SelectableTextEditorWidget::SelectableTextEditorWidget(Utils::Id id, QWidget *pa
     setFrameStyle(QFrame::NoFrame);
     setupFallBackEditor(id);
 
+    auto disableTabAutodetection = [this] {
+        TabSettings tabSettings = textDocument()->tabSettings();
+        tabSettings.m_autoDetect = false;
+        textDocument()->setTabSettings(tabSettings);
+    };
+    disableTabAutodetection();
+    connect(textDocument(), &TextDocument::tabSettingsChanged, this, disableTabAutodetection);
+
     setReadOnly(true);
 
-    connect(TextEditorSettings::instance(), &TextEditorSettings::displaySettingsChanged,
-            this, &SelectableTextEditorWidget::setDisplaySettings);
-    SelectableTextEditorWidget::setDisplaySettings(TextEditorSettings::displaySettings());
+    connect(&TextEditor::displaySettings(), &DisplaySettings::changed, this, [this](){
+        setDisplaySettings(TextEditor::displaySettings().data());
+    });
+    SelectableTextEditorWidget::setDisplaySettings(displaySettings());
 
-    setCodeStyle(TextEditorSettings::codeStyle());
+    textDocument()->setCodeStyle(TextEditorSettings::codeStyle());
     setCodeFoldingSupported(true);
 }
 
@@ -38,13 +48,14 @@ void SelectableTextEditorWidget::setSelections(const DiffSelections &selections)
     m_diffSelections = selections;
 }
 
-void SelectableTextEditorWidget::setDisplaySettings(const DisplaySettings &displaySettings)
+void SelectableTextEditorWidget::setDisplaySettings(const DisplaySettingsData &displaySettings)
 {
-    DisplaySettings settings = displaySettings;
+    DisplaySettingsData settings = displaySettings;
     settings.m_textWrapping = false;
     settings.m_displayLineNumbers = true;
     settings.m_markTextChanges = false;
     settings.m_highlightBlocks = false;
+    settings.m_displayMinimap = false;
     TextEditorWidget::setDisplaySettings(settings);
 }
 
@@ -52,7 +63,7 @@ static QList<DiffSelection> subtractSelection(
         const DiffSelection &minuendSelection,
         const DiffSelection &subtrahendSelection)
 {
-    // tha case that whole minuend is before the whole subtrahend
+    // the case that whole minuend is before the whole subtrahend
     if (minuendSelection.end >= 0 && minuendSelection.end <= subtrahendSelection.start)
         return {minuendSelection};
 
@@ -107,8 +118,7 @@ DiffSelections SelectableTextEditorWidget::polishedSelections(const DiffSelectio
 
 void SelectableTextEditorWidget::setFoldingIndent(const QTextBlock &block, int indent)
 {
-    if (TextBlockUserData *userData = TextDocumentLayout::userData(block))
-         userData->setFoldingIndent(indent);
+    TextBlockUserData::setFoldingIndent(block, indent);
 }
 
 void SelectableTextEditorWidget::paintBlock(QPainter *painter,

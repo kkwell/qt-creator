@@ -4,6 +4,8 @@
 #include "breakpoint.h"
 
 #include "debuggerprotocol.h"
+#include "debuggerengine.h"
+
 
 #include <projectexplorer/abi.h>
 
@@ -15,6 +17,8 @@
 #include <QDebug>
 #include <QFileInfo>
 #include <QDir>
+
+using namespace Utils;
 
 namespace Debugger {
 namespace Internal {
@@ -112,7 +116,7 @@ bool BreakpointParameters::conditionsMatch(const QString &other) const
     return s1 == s2;
 }
 
-void BreakpointParameters::updateLocation(const QString &location)
+void BreakpointParameters::updateLocation(const DebuggerRunParameters &rp, const QString &location)
 {
     if (!location.isEmpty()) {
         int pos = location.indexOf(':');
@@ -120,9 +124,7 @@ void BreakpointParameters::updateLocation(const QString &location)
         QString file = location.left(pos);
         if (file.startsWith('"') && file.endsWith('"'))
             file = file.mid(1, file.size() - 2);
-        QFileInfo fi(file);
-        if (fi.isReadable())
-            fileName = Utils::FilePath::fromFileInfo(fi);
+        fileName  = rp.mapToProjectPath(file);
     }
 }
 
@@ -136,7 +138,7 @@ bool BreakpointParameters::isQmlFileAndLineBreakpoint() const
         qmlExtensionString = ".qml;.js;.mjs";
 
     const auto qmlFileExtensions = qmlExtensionString.split(';', Qt::SkipEmptyParts);
-    const QString file = fileName.toString();
+    const QString file = fileName.path();
     for (const QString &extension : qmlFileExtensions) {
         if (file.endsWith(extension, Qt::CaseInsensitive))
             return true;
@@ -267,11 +269,12 @@ static QString cleanupFullName(const QString &fileName)
     return cleanFilePath;
 }
 
-void BreakpointParameters::updateFromGdbOutput(const GdbMi &bkpt, const Utils::FilePath &fileRoot)
+void BreakpointParameters::updateFromGdbOutput(const GdbMi &bkpt, const DebuggerRunParameters &rp)
 {
     QTC_ASSERT(bkpt.isValid(), return);
 
     QString originalLocation;
+    QString reportedLocation;
     QString file;
     QString fullName;
 
@@ -308,7 +311,7 @@ void BreakpointParameters::updateFromGdbOutput(const GdbMi &bkpt, const Utils::F
             // Any content here would be interesting only if we did accept
             // spontaneously appearing breakpoints (user using gdb commands).
             if (file.isEmpty())
-                file = child.data();
+                reportedLocation = child.data();
             pending = true;
         } else if (child.hasName("at")) {
             // Happens with gdb 6.4 symbianelf.
@@ -360,7 +363,7 @@ void BreakpointParameters::updateFromGdbOutput(const GdbMi &bkpt, const Utils::F
     QString name;
     if (!fullName.isEmpty()) {
         name = cleanupFullName(fullName);
-        fileName = fileRoot.withNewPath(name);
+        fileName = rp.mapToProjectPath(name);
         //if (data->markerFileName().isEmpty())
         //    data->setMarkerFileName(name);
     } else {
@@ -369,10 +372,13 @@ void BreakpointParameters::updateFromGdbOutput(const GdbMi &bkpt, const Utils::F
         // gdb's own. No point in assigning markerFileName for now.
     }
     if (!name.isEmpty())
-        fileName = fileRoot.withNewPath(name);
+        fileName = rp.mapToProjectPath(name);
 
     if (fileName.isEmpty())
-        updateLocation(originalLocation);
+        updateLocation(rp, reportedLocation);
+
+    if (fileName.isEmpty())
+        updateLocation(rp, originalLocation);
 }
 
 } // namespace Internal

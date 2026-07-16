@@ -10,6 +10,7 @@
 #include "testcodeparser.h"
 #include "testframeworkmanager.h"
 #include "testrunner.h"
+#include "testsettings.h"
 #include "testtreeitem.h"
 #include "testtreeitemdelegate.h"
 #include "testtreemodel.h"
@@ -64,14 +65,16 @@ private:
     void reapplyCachedExpandedState();
 
     TestTreeModel *m_model;
-    TestTreeSortFilterModel *m_sortFilterModel;
+    TestTreeSortFilterModel m_sortFilterModel;
     TestTreeView *m_view;
+    FancyLineEdit *m_filterLineEdit;
     QToolButton *m_sort;
     QToolButton *m_filterButton;
     QMenu *m_filterMenu;
     bool m_sortAlphabetically;
     Utils::ProgressIndicator *m_progressIndicator;
     QTimer *m_progressTimer;
+    QTimer *m_filterTimer;
     QFrame *m_missingFrameworksWidget;
     ItemDataCache<bool> m_expandedStateCache;
 };
@@ -80,12 +83,21 @@ TestNavigationWidget::TestNavigationWidget()
 {
     setWindowTitle(Tr::tr("Tests"));
     m_model = TestTreeModel::instance();
-    m_sortFilterModel = new TestTreeSortFilterModel(m_model, m_model);
-    m_sortFilterModel->setDynamicSortFilter(true);
+    m_sortFilterModel.setRecursiveFilteringEnabled(true);
+    m_sortFilterModel.toggleFilter(TestTreeSortFilterModel::FilterByText);
+
     m_view = new TestTreeView(this);
-    m_view->setModel(m_sortFilterModel);
+    m_view->setModel(&m_sortFilterModel);
     m_view->setSortingEnabled(true);
     m_view->setItemDelegate(new TestTreeItemDelegate(this));
+
+    m_filterLineEdit = new FancyLineEdit(this);
+    m_filterLineEdit->setPlaceholderText(Tr::tr("Filter output..."));
+    m_filterLineEdit->setFiltering(true);
+    m_filterLineEdit->setHistoryCompleter("AutoTest.TestTreeFilter");
+    m_filterLineEdit->setAttribute(Qt::WA_MacShowFocusRect, false);
+    if (!testSettings().showTreeFilterTextInput())
+        m_filterLineEdit->setVisible(false);
 
     QPalette pal;
     pal.setColor(QPalette::Window, creatorColor(Theme::InfoBarBackground));
@@ -103,6 +115,7 @@ TestNavigationWidget::TestNavigationWidget()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     layout->addWidget(m_missingFrameworksWidget);
+    layout->addWidget(m_filterLineEdit);
     layout->addWidget(ItemViewFind::createSearchableWrapper(m_view));
     setLayout(layout);
 
@@ -115,6 +128,10 @@ TestNavigationWidget::TestNavigationWidget()
     m_progressTimer = new QTimer(this);
     m_progressTimer->setSingleShot(true);
     m_progressTimer->setInterval(1000); // don't display indicator if progress takes less than 1s
+
+    m_filterTimer = new QTimer(this);
+    m_filterTimer->setSingleShot(true);
+    m_filterTimer->setInterval(150); // join filter typing events
 
     connect(m_model->parser(), &TestCodeParser::parsingStarted,
             this, &TestNavigationWidget::onParsingStarted);
@@ -135,6 +152,17 @@ TestNavigationWidget::TestNavigationWidget()
     connect(m_progressTimer, &QTimer::timeout, m_progressIndicator, &ProgressIndicator::show);
     connect(m_view, &TestTreeView::expanded, this, &TestNavigationWidget::updateExpandedStateCache);
     connect(m_view, &TestTreeView::collapsed, this, &TestNavigationWidget::updateExpandedStateCache);
+
+    connect(m_filterLineEdit, &FancyLineEdit::textChanged, this, [this]{ m_filterTimer->start(); });
+    connect(m_filterTimer, &QTimer::timeout, this, [this]{
+        const QString text = m_filterLineEdit->text();
+        m_sortFilterModel.updateFilterString(text);
+        if (!text.isEmpty()) {
+            m_view->blockSignals(true);
+            m_view->expandAll();
+            m_view->blockSignals(false);
+        }
+    });
 }
 
 void TestNavigationWidget::contextMenuEvent(QContextMenuEvent *event)
@@ -151,37 +179,34 @@ void TestNavigationWidget::contextMenuEvent(QContextMenuEvent *event)
     const QModelIndexList list = m_view->selectionModel()->selectedIndexes();
     if (list.size() == 1) {
         const QModelIndex index = list.first();
-        QRect rect(m_view->visualRect(index));
-        if (rect.contains(event->pos())) {
-            ITestTreeItem *item = static_cast<ITestTreeItem *>(
-                        m_model->itemForIndex(m_sortFilterModel->mapToSource(index)));
-            if (item->canProvideTestConfiguration()) {
-                runThisTest = new QAction(Tr::tr("Run This Test"), &menu);
-                runThisTest->setEnabled(enabled);
-                connect(runThisTest, &QAction::triggered, this, [this] {
-                    onRunThisTestTriggered(TestRunMode::Run);
-                });
-                runWithoutDeploy = new QAction(Tr::tr("Run Without Deployment"), &menu);
-                runWithoutDeploy->setEnabled(enabled);
-                connect(runWithoutDeploy, &QAction::triggered, this, [this] {
-                    onRunThisTestTriggered(TestRunMode::RunWithoutDeploy);
-                });
-            }
-            auto ttitem = item->testBase()->type() == ITestBase::Framework
-                              ? static_cast<TestTreeItem *>(item)
-                              : nullptr;
-            if (ttitem && ttitem->canProvideDebugConfiguration()) {
-                debugThisTest = new QAction(Tr::tr("Debug This Test"), &menu);
-                debugThisTest->setEnabled(enabled);
-                connect(debugThisTest, &QAction::triggered, this, [this] {
-                    onRunThisTestTriggered(TestRunMode::Debug);
-                });
-                debugWithoutDeploy = new QAction(Tr::tr("Debug Without Deployment"), &menu);
-                debugWithoutDeploy->setEnabled(enabled);
-                connect(debugWithoutDeploy, &QAction::triggered, this, [this] {
-                    onRunThisTestTriggered(TestRunMode::DebugWithoutDeploy);
-                });
-            }
+        ITestTreeItem *item = static_cast<ITestTreeItem *>(
+                    m_model->itemForIndex(m_sortFilterModel.mapToSource(index)));
+        if (item->canProvideTestConfiguration()) {
+            runThisTest = new QAction(Tr::tr("Run This Test"), &menu);
+            runThisTest->setEnabled(enabled);
+            connect(runThisTest, &QAction::triggered, this, [this] {
+                onRunThisTestTriggered(TestRunMode::Run);
+            });
+            runWithoutDeploy = new QAction(Tr::tr("Run Without Deployment"), &menu);
+            runWithoutDeploy->setEnabled(enabled);
+            connect(runWithoutDeploy, &QAction::triggered, this, [this] {
+                onRunThisTestTriggered(TestRunMode::RunWithoutDeploy);
+            });
+        }
+        auto ttitem = item->testBase()->type() == ITestBase::Framework
+                ? static_cast<TestTreeItem *>(item)
+                : nullptr;
+        if (ttitem && ttitem->canProvideDebugConfiguration()) {
+            debugThisTest = new QAction(Tr::tr("Debug This Test"), &menu);
+            debugThisTest->setEnabled(enabled);
+            connect(debugThisTest, &QAction::triggered, this, [this] {
+                onRunThisTestTriggered(TestRunMode::Debug);
+            });
+            debugWithoutDeploy = new QAction(Tr::tr("Debug Without Deployment"), &menu);
+            debugWithoutDeploy->setEnabled(enabled);
+            connect(debugWithoutDeploy, &QAction::triggered, this, [this] {
+                onRunThisTestTriggered(TestRunMode::DebugWithoutDeploy);
+            });
         }
     }
 
@@ -191,11 +216,26 @@ void TestNavigationWidget::contextMenuEvent(QContextMenuEvent *event)
     QAction *runSelectedNoDeploy = ActionManager::command(Constants::ACTION_RUN_SELECTED_NODEPLOY_ID)->action();
     QAction *selectAll = new QAction(Tr::tr("Select All"), &menu);
     QAction *deselectAll = new QAction(Tr::tr("Deselect All"), &menu);
+    QAction *expandAll = new QAction(Tr::tr("Expand All"), &menu);
+    QAction *collapseAll = new QAction(Tr::tr("Collapse All"), &menu);
     QAction *rescan = ActionManager::command(Constants::ACTION_SCAN_ID)->action();
     QAction *disable = ActionManager::command(Constants::ACTION_DISABLE_TMP)->action();
 
     connect(selectAll, &QAction::triggered, m_view, &TestTreeView::selectAll);
     connect(deselectAll, &QAction::triggered, m_view, &TestTreeView::deselectAll);
+
+    connect(expandAll, &QAction::triggered, m_view, [this] {
+        m_view->blockSignals(true);
+        m_view->expandAll();
+        m_view->blockSignals(false);
+        updateExpandedStateCache();
+    });
+    connect(collapseAll, &QAction::triggered, m_view, [this] {
+        m_view->blockSignals(true);
+        m_view->collapseAll();
+        m_view->blockSignals(false);
+        updateExpandedStateCache();
+    });
 
     if (runThisTest) {
         menu.addAction(runThisTest);
@@ -215,6 +255,8 @@ void TestNavigationWidget::contextMenuEvent(QContextMenuEvent *event)
     menu.addSeparator();
     menu.addAction(selectAll);
     menu.addAction(deselectAll);
+    menu.addAction(expandAll);
+    menu.addAction(collapseAll);
     menu.addSeparator();
     menu.addAction(rescan);
     menu.addSeparator();
@@ -242,29 +284,9 @@ QList<QToolButton *> TestNavigationWidget::createToolButtons()
     m_sort->setIcon(Icons::SORT_NATURALLY.icon());
     m_sort->setToolTip(Tr::tr("Sort Naturally"));
 
-    QToolButton *expand = new QToolButton(this);
-    expand->setIcon(Utils::Icons::EXPAND_TOOLBAR.icon());
-    expand->setToolTip(Tr::tr("Expand All"));
-
-    QToolButton *collapse = new QToolButton(this);
-    collapse->setIcon(Utils::Icons::COLLAPSE_TOOLBAR.icon());
-    collapse->setToolTip(Tr::tr("Collapse All"));
-
-    connect(expand, &QToolButton::clicked, m_view, [this] {
-        m_view->blockSignals(true);
-        m_view->expandAll();
-        m_view->blockSignals(false);
-        updateExpandedStateCache();
-    });
-    connect(collapse, &QToolButton::clicked, m_view, [this] {
-        m_view->blockSignals(true);
-        m_view->collapseAll();
-        m_view->blockSignals(false);
-        updateExpandedStateCache();
-    });
     connect(m_sort, &QToolButton::clicked, this, &TestNavigationWidget::onSortClicked);
 
-    list << m_filterButton << m_sort << expand << collapse;
+    list << m_filterButton << m_sort;
     return list;
 }
 
@@ -292,18 +314,18 @@ void TestNavigationWidget::onSortClicked()
     if (m_sortAlphabetically) {
         m_sort->setIcon(Utils::Icons::SORT_ALPHABETICALLY_TOOLBAR.icon());
         m_sort->setToolTip(Tr::tr("Sort Alphabetically"));
-        m_sortFilterModel->setSortMode(TestTreeItem::Naturally);
+        m_sortFilterModel.setSortMode(TestTreeItem::Naturally);
     } else {
         m_sort->setIcon(Icons::SORT_NATURALLY.icon());
         m_sort->setToolTip(Tr::tr("Sort Naturally"));
-        m_sortFilterModel->setSortMode(TestTreeItem::Alphabetically);
+        m_sortFilterModel.setSortMode(TestTreeItem::Alphabetically);
     }
     m_sortAlphabetically = !m_sortAlphabetically;
 }
 
 void TestNavigationWidget::onFilterMenuTriggered(QAction *action)
 {
-    m_sortFilterModel->toggleFilter(
+    m_sortFilterModel.toggleFilter(
         TestTreeSortFilterModel::toFilterMode(action->data().value<int>()));
 }
 
@@ -332,6 +354,18 @@ void TestNavigationWidget::initializeFilterMenu()
     action->setChecked(false);
     action->setData(TestTreeSortFilterModel::ShowTestData);
     m_filterMenu->addAction(action);
+    m_filterMenu->addSeparator();
+    action = new QAction(m_filterMenu);
+    action->setText(Tr::tr("Show Text Filter"));
+    action->setCheckable(true);
+    action->setChecked(testSettings().showTreeFilterTextInput());
+    action->setData(TestTreeSortFilterModel::FilterByText);
+    m_filterMenu->addAction(action);
+    connect(action, &QAction::toggled, m_filterLineEdit, [this](bool checked) {
+        m_filterLineEdit->setVisible(checked);
+        testSettings().showTreeFilterTextInput.setValue(checked);
+        testSettings().writeSettings();
+    });
 }
 
 void TestNavigationWidget::onRunThisTestTriggered(TestRunMode runMode)
@@ -339,7 +373,7 @@ void TestNavigationWidget::onRunThisTestTriggered(TestRunMode runMode)
     const QModelIndexList selected = m_view->selectionModel()->selectedIndexes();
     if (selected.isEmpty())
         return;
-    const QModelIndex &sourceIndex = m_sortFilterModel->mapToSource(selected.first());
+    const QModelIndex &sourceIndex = m_sortFilterModel.mapToSource(selected.first());
     if (!sourceIndex.isValid())
         return;
 

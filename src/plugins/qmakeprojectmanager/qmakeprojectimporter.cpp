@@ -12,9 +12,10 @@
 #include "qmakestep.h"
 
 #include <projectexplorer/buildinfo.h>
-#include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/kitmanager.h>
+#include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/toolchainkitaspect.h>
 #include <projectexplorer/toolchainmanager.h>
 
 #include <qtsupport/qtkitaspect.h>
@@ -86,7 +87,7 @@ QList<void *> QmakeProjectImporter::examineDirectory(const FilePath &importPath,
     QList<void *> result;
     const QLoggingCategory &logs = MakeFileParse::logging();
 
-    const QStringList makefiles = QDir(importPath.toString()).entryList(QStringList(("Makefile*")));
+    const QStringList makefiles = QDir(importPath.toUrlishString()).entryList(QStringList(("Makefile*")));
     qCDebug(logs) << "  Makefiles:" << makefiles;
 
     for (const QString &file : makefiles) {
@@ -182,18 +183,19 @@ Kit *QmakeProjectImporter::createKit(void *directoryData) const
     return createTemporaryKit(data->qtVersionData, data->parsedSpec, data->osType);
 }
 
-const QList<BuildInfo> QmakeProjectImporter::buildInfoList(void *directoryData) const
+BuildInfo QmakeProjectImporter::buildInfo(void *directoryData) const
 {
     auto *data = static_cast<DirectoryData *>(directoryData);
 
     // create info:
     BuildInfo info;
+    info.buildSystemName = QmakeBuildSystem::name();
     if (data->buildConfig & QtVersion::DebugBuild) {
         info.buildType = BuildConfiguration::Debug;
-        info.displayName = Tr::tr("Debug");
+        info.displayName = msgBuildConfigurationDebug();
     } else {
         info.buildType = BuildConfiguration::Release;
-        info.displayName = Tr::tr("Release");
+        info.displayName = msgBuildConfigurationRelease();
     }
     info.buildDirectory = data->buildDirectory;
 
@@ -201,9 +203,10 @@ const QList<BuildInfo> QmakeProjectImporter::buildInfoList(void *directoryData) 
     extra.additionalArguments = data->additionalArguments;
     extra.config = data->config;
     extra.makefile = data->makefile;
+    extra.isImported = true;
     info.extraInfo = QVariant::fromValue(extra);
 
-    return {info};
+    return info;
 }
 
 void QmakeProjectImporter::deleteDirectoryData(void *directoryData) const

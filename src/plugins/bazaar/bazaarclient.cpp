@@ -86,17 +86,17 @@ BazaarClient::BazaarClient() : VcsBaseClient(&Internal::settings())
 
 BranchInfo BazaarClient::synchronousBranchQuery(const FilePath &repositoryRoot) const
 {
-    QFile branchConfFile(repositoryRoot.toString() + QLatin1Char('/') +
-                         QLatin1String(Constants::BAZAARREPO) +
-                         QLatin1String("/branch/branch.conf"));
+    QFile branchConfFile(repositoryRoot.pathAppended(Constants::BAZAARREPO)
+                             .pathAppended("branch/branch.conf")
+                             .toFSPathString());
     if (!branchConfFile.open(QIODevice::ReadOnly))
         return BranchInfo(QString(), false);
 
     QTextStream ts(&branchConfFile);
     QString branchLocation;
     QString isBranchBound;
-    QRegularExpression branchLocationRx("bound_location\\s*=\\s*(.+)$");
-    QRegularExpression isBranchBoundRx("bound\\s*=\\s*(.+)$");
+    static const QRegularExpression branchLocationRx("bound_location\\s*=\\s*(.+)$");
+    static const QRegularExpression isBranchBoundRx("bound\\s*=\\s*(.+)$");
     while (!ts.atEnd() && (branchLocation.isEmpty() || isBranchBound.isEmpty())) {
         const QString line = ts.readLine();
         QRegularExpressionMatch match = branchLocationRx.match(line);
@@ -110,7 +110,7 @@ BranchInfo BazaarClient::synchronousBranchQuery(const FilePath &repositoryRoot) 
     }
     if (isBranchBound.simplified().toLower() == QLatin1String("true"))
         return BranchInfo(branchLocation, true);
-    return BranchInfo(repositoryRoot.toString(), false);
+    return BranchInfo(repositoryRoot.path(), false);
 }
 
 //! Removes the last committed revision(s)
@@ -126,7 +126,7 @@ bool BazaarClient::synchronousUncommit(const FilePath &workingDir,
          << extraOptions;
 
     const CommandResult result = vcsSynchronousExec(workingDir, args);
-    VcsOutputWindow::append(result.cleanedStdOut());
+    VcsOutputWindow::appendSilently(workingDir, result.cleanedStdOut());
     return result.result() == ProcessResult::FinishedWithSuccess;
 }
 
@@ -147,15 +147,7 @@ void BazaarClient::annotate(const Utils::FilePath &workingDir, const QString &fi
 
 bool BazaarClient::isVcsDirectory(const FilePath &filePath) const
 {
-    return !filePath.fileName().compare(Constants::BAZAARREPO, HostOsInfo::fileNameCaseSensitivity())
-           && filePath.isDir();
-}
-
-FilePath BazaarClient::findTopLevelForFile(const FilePath &file) const
-{
-    const QString repositoryCheckFile =
-            QLatin1String(Constants::BAZAARREPO) + QLatin1String("/branch-format");
-    return VcsBase::findRepositoryForFile(file, repositoryCheckFile);
+    return filePath.isDir() && filePath == filePath.withNewFileName(Constants::BAZAARREPO);
 }
 
 bool BazaarClient::managesFile(const FilePath &workingDirectory, const QString &fileName) const
@@ -210,10 +202,7 @@ ExitCodeInterpreter BazaarClient::exitCodeInterpreter(VcsCommandTag cmd) const
 
 QStringList BazaarClient::revisionSpec(const QString &revision) const
 {
-    QStringList args;
-    if (!revision.isEmpty())
-        args << QLatin1String("-r") << revision;
-    return args;
+    return revision.isEmpty() ? QStringList{} : QStringList{"-r", revision};
 }
 
 BazaarClient::StatusItem BazaarClient::parseStatusLine(const QString &line) const
@@ -236,7 +225,7 @@ BazaarClient::StatusItem BazaarClient::parseStatusLine(const QString &line) cons
         else if (flagVersion == QLatin1Char('P'))
             item.flags = QLatin1String("PendingMerge");
 
-        const int lineLength = line.length();
+        const int lineLength = line.size();
         if (lineLength >= 2) {
             const QChar flagContents = line[1];
             if (flagContents == QLatin1Char('N'))

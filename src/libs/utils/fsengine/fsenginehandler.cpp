@@ -51,7 +51,6 @@ public:
     bool setSize(qint64 size) final;
     bool caseSensitive() const final;
     bool isRelativePath() const final;
-    QStringList entryList(QDir::Filters filters, const QStringList &filterNames) const final;
     FileFlags fileFlags(FileFlags type) const final;
     bool setPermissions(uint perms) final;
     QByteArray id() const final;
@@ -60,23 +59,17 @@ public:
     QString owner(FileOwner) const final;
 
     // The FileTime change in QAbstractFileEngine, in qtbase, is in since Qt 6.7.1
-#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 1)
     using FileTime = QFile::FileTime;
-#endif
     bool setFileTime(const QDateTime &newDate, FileTime time) final;
     QDateTime fileTime(FileTime time) const final;
     void setFileName(const QString &file) final;
     int handle() const final;
-    bool cloneTo(QAbstractFileEngine *target) final;
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
-    IteratorUniquePtr beginEntryList(const QString &path, QDir::Filters filters,
-                                     const QStringList &filterNames) final;
+    IteratorUniquePtr beginEntryList(
+        const QString &path,
+        QDirListing::IteratorFlags filters,
+        const QStringList &filterNames) final;
     IteratorUniquePtr endEntryList() final { return {}; }
-#else
-    Iterator *beginEntryList(QDir::Filters filters, const QStringList &filterNames) final;
-    Iterator *endEntryList() final { return nullptr; }
-#endif
 
     qint64 read(char *data, qint64 maxlen) final;
     qint64 readLine(char *data, qint64 maxlen) final;
@@ -104,6 +97,11 @@ FilePathInfoCache::CachedData createCacheData(const FilePath &filePath) {
     data.timeout = QDateTime::currentDateTime().addSecs(60);
     return data;
 };
+
+void invalidateFileInfoCache(const Utils::FilePath &path)
+{
+    g_filePathInfoCache.invalidate(path);
+}
 
 FSEngineImpl::FSEngineImpl(FilePath filePath)
     : m_filePath(std::move(filePath))
@@ -141,11 +139,11 @@ bool FSEngineImpl::open(QIODeviceBase::OpenMode openMode, std::optional<QFile::P
         return false;
 
     if (read || append) {
-        const expected_str<QByteArray> readResult = m_filePath.fileContents();
-        QTC_ASSERT_EXPECTED(readResult, return false);
+        const Result<QByteArray> readResult = m_filePath.fileContents();
+        QTC_ASSERT_RESULT(readResult, return false);
 
-        const expected_str<qint64> writeResult = m_tempStorage->write(*readResult);
-        QTC_ASSERT_EXPECTED(writeResult, return false);
+        const Result<qint64> writeResult = m_tempStorage->write(*readResult);
+        QTC_ASSERT_RESULT(writeResult, return false);
 
         if (!append)
             m_tempStorage->seek(0);
@@ -210,19 +208,26 @@ bool FSEngineImpl::isSequential() const
 
 bool FSEngineImpl::remove()
 {
-    return m_filePath.removeRecursively();
+    Result<> result = m_filePath.removeRecursively();
+    if (!result)
+        setError(QFile::RemoveError, result.error());
+    return result.has_value();
 }
 
 bool FSEngineImpl::copy(const QString &newName)
 {
-    expected_str<void> result = m_filePath.copyFile(FilePath::fromString(newName));
-    QTC_ASSERT_EXPECTED(result, return false);
-    return true;
+    Result<> result = m_filePath.copyFile(FilePath::fromString(newName));
+    if (!result)
+        setError(QFile::CopyError, result.error());
+    return bool(result);
 }
 
 bool FSEngineImpl::rename(const QString &newName)
 {
-    return m_filePath.renameFile(FilePath::fromString(newName));
+    Result<> result = m_filePath.renameFile(FilePath::fromString(newName));
+    if (!result)
+        setError(QFile::RenameError, result.error());
+    return bool(result);
 }
 
 bool FSEngineImpl::renameOverwrite(const QString &newName)
@@ -249,7 +254,7 @@ bool FSEngineImpl::rmdir(const QString &dirName, bool recurseParentDirectories) 
     if (recurseParentDirectories)
         return false;
 
-    return m_filePath.pathAppended(dirName).removeRecursively();
+    return m_filePath.pathAppended(dirName).removeRecursively().has_value();
 }
 
 bool FSEngineImpl::setSize(qint64 size)
@@ -269,25 +274,9 @@ bool FSEngineImpl::isRelativePath() const
     return false;
 }
 
-QStringList FSEngineImpl::entryList(QDir::Filters filters, const QStringList &filterNames) const
-{
-    QStringList result;
-    m_filePath.iterateDirectory(
-        [&result](const FilePath &p, const FilePathInfo &fi) {
-            result.append(p.toFSPathString());
-            g_filePathInfoCache
-                .cache(p,
-                       new FilePathInfoCache::CachedData{fi,
-                                                         QDateTime::currentDateTime().addSecs(60)});
-            return IterationPolicy::Continue;
-        },
-        {filterNames, filters});
-    return result;
-}
-
 QAbstractFileEngine::FileFlags FSEngineImpl::fileFlags(FileFlags type) const
 {
-    Q_UNUSED(type);
+    Q_UNUSED(type)
     return {g_filePathInfoCache.cached(m_filePath, createCacheData).filePathInfo.fileFlags.toInt()};
 }
 
@@ -307,29 +296,22 @@ QString FSEngineImpl::fileName(FileName file) const
     case QAbstractFileEngine::AbsoluteName:
     case QAbstractFileEngine::DefaultName:
         return m_filePath.toFSPathString();
-        break;
     case QAbstractFileEngine::BaseName:
         if (m_filePath.fileName().isEmpty())
             return m_filePath.host().toString();
         return m_filePath.fileName();
-        break;
     case QAbstractFileEngine::PathName:
     case QAbstractFileEngine::AbsolutePathName:
         return m_filePath.parentDir().toFSPathString();
-        break;
     case QAbstractFileEngine::CanonicalName:
         return m_filePath.canonicalPath().toFSPathString();
-        break;
     case QAbstractFileEngine::CanonicalPathName:
         return m_filePath.canonicalPath().parentDir().toFSPathString();
-        break;
     default:
     // case QAbstractFileEngine::LinkName:
     // case QAbstractFileEngine::BundleName:
     // case QAbstractFileEngine::JunctionName:
         return {};
-        break;
-
     }
 
     return QAbstractFileEngine::fileName(file);
@@ -369,37 +351,23 @@ int FSEngineImpl::handle() const
     return 0;
 }
 
-bool FSEngineImpl::cloneTo(QAbstractFileEngine *target)
+QAbstractFileEngine::IteratorUniquePtr FSEngineImpl::beginEntryList(
+    const QString &path, QDirListing::IteratorFlags itFlags, const QStringList &filterNames)
 {
-    return QAbstractFileEngine::cloneTo(target);
-}
+    const auto [filters, iteratorFlags] = convertQDirListingIteratorFlags(itFlags);
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
-QAbstractFileEngine::IteratorUniquePtr FSEngineImpl::beginEntryList(const QString &path,
-                                                                    QDir::Filters filters,
-                                                                    const QStringList &filterNames)
-#else
-QAbstractFileEngine::Iterator *FSEngineImpl::beginEntryList(QDir::Filters filters,
-                                                            const QStringList &filterNames)
-#endif
-{
     FilePaths paths{m_filePath.pathAppended(".")};
     m_filePath.iterateDirectory(
         [&paths](const FilePath &p, const FilePathInfo &fi) {
             paths.append(p);
             FilePathInfoCache::CachedData *data
-                = new FilePathInfoCache::CachedData{fi,
-                                                    QDateTime::currentDateTime().addSecs(60)};
+                = new FilePathInfoCache::CachedData{fi, QDateTime::currentDateTime().addSecs(60)};
             g_filePathInfoCache.cache(p, data);
             return IterationPolicy::Continue;
         },
-        {filterNames, filters});
+        {filterNames, filters, iteratorFlags});
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     return std::make_unique<DirIterator>(std::move(paths), path, filters, filterNames);
-#else
-    return new DirIterator(std::move(paths));
-#endif
 }
 
 qint64 FSEngineImpl::read(char *data, qint64 maxlen)
@@ -450,22 +418,14 @@ public:
     using QFSFileEngine::QFSFileEngine;
 
 public:
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
-    IteratorUniquePtr beginEntryList(const QString &path,
-                                     QDir::Filters filters,
-                                     const QStringList &filterNames) final
+    IteratorUniquePtr beginEntryList(
+        const QString &path,
+        QDirListing::IteratorFlags filters,
+        const QStringList &filterNames) override
     {
         return std::make_unique<FileIteratorWrapper>(
             QFSFileEngine::beginEntryList(path, filters, filterNames));
     }
-#else
-    Iterator *beginEntryList(QDir::Filters filters, const QStringList &filterNames) final
-    {
-        std::unique_ptr<QAbstractFileEngineIterator> baseIterator(
-            QFSFileEngine::beginEntryList(filters, filterNames));
-        return new FileIteratorWrapper(std::move(baseIterator));
-    }
-#endif
 };
 
 static FilePath removeDoubleSlash(const QString &fileName)
@@ -500,11 +460,7 @@ static bool isRootPath(const QString &fileName)
      return fileName.size() == 1 && fileName[0] == '/';
 }
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
 std::unique_ptr<QAbstractFileEngine>
-#else
-QAbstractFileEngine *
-#endif
 FSEngineHandler::create(const QString &fileName) const
 {
     if (fileName.startsWith(':'))
@@ -521,49 +477,31 @@ FSEngineHandler::create(const QString &fileName) const
                   return rootFilePath.pathAppended(scheme);
               });
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
         return std::make_unique<FixedListFSEngine>(removeDoubleSlash(fileName), paths);
-#else
-        return new FixedListFSEngine(removeDoubleSlash(fileName), paths);
-#endif
     }
 
     if (fixedFileName.startsWith(rootPath)) {
         const QStringList deviceSchemes = FSEngine::registeredDeviceSchemes();
         for (const QString &scheme : deviceSchemes) {
-            if (fixedFileName == rootFilePath.pathAppended(scheme).toString()) {
+            if (fixedFileName == rootFilePath.pathAppended(scheme).toUrlishString()) {
                 const FilePaths filteredRoots = Utils::filtered(FSEngine::registeredDeviceRoots(),
                                                                 [scheme](const FilePath &root) {
                                                                     return root.scheme() == scheme;
                                                                 });
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
                 return std::make_unique<FixedListFSEngine>(removeDoubleSlash(fileName),
                                                            filteredRoots);
-#else
-                return new FixedListFSEngine(removeDoubleSlash(fileName), filteredRoots);
-#endif
             }
         }
 
         FilePath fixedPath = FilePath::fromString(fixedFileName);
 
-        if (fixedPath.needsDevice()) {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+        if (!fixedPath.isLocal())
             return std::make_unique<FSEngineImpl>(removeDoubleSlash(fileName));
-#else
-            return new FSEngineImpl(removeDoubleSlash(fileName));
-#endif
-        }
     }
 
-    if (isRootPath(fixedFileName)) {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    if (isRootPath(fixedFileName))
         return std::make_unique<RootInjectFSEngine>(fileName);
-#else
-        return new RootInjectFSEngine(fileName);
-#endif
-    }
 
     return {};
 }

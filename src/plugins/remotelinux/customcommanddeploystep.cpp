@@ -14,7 +14,7 @@
 #include <utils/qtcprocess.h>
 
 using namespace ProjectExplorer;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace RemoteLinux::Internal {
@@ -33,7 +33,7 @@ public:
         setInternalInitializer([this] { return isDeploymentPossible(); });
     }
 
-    expected_str<void> isDeploymentPossible() const final;
+    Result<> isDeploymentPossible() const final;
 
 private:
     GroupItem deployRecipe() final;
@@ -41,7 +41,7 @@ private:
     StringAspect commandLine{this};
 };
 
-expected_str<void> CustomCommandDeployStep::isDeploymentPossible() const
+Result<> CustomCommandDeployStep::isDeploymentPossible() const
 {
     if (commandLine().isEmpty())
         return make_unexpected(Tr::tr("No command line given."));

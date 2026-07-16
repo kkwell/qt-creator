@@ -14,8 +14,8 @@ class PROJECTEXPLORER_EXPORT CustomExecutableRunConfiguration : public RunConfig
     Q_OBJECT
 
 public:
-    CustomExecutableRunConfiguration(Target *target, Utils::Id id);
-    explicit CustomExecutableRunConfiguration(Target *target);
+    CustomExecutableRunConfiguration(BuildConfiguration *bc, Utils::Id id);
+    explicit CustomExecutableRunConfiguration(BuildConfiguration *bc);
 
     QString defaultDisplayName() const;
 
@@ -29,6 +29,7 @@ private:
     ExecutableAspect executable{this};
     ArgumentsAspect arguments{this};
     WorkingDirectoryAspect workingDir{this};
+    RunAsAspect runAs{this};
     TerminalAspect terminal{this};
 };
 
@@ -36,12 +37,6 @@ class CustomExecutableRunConfigurationFactory : public FixedRunConfigurationFact
 {
 public:
     CustomExecutableRunConfigurationFactory();
-};
-
-class CustomExecutableRunWorkerFactory : public RunWorkerFactory
-{
-public:
-    CustomExecutableRunWorkerFactory();
 };
 
 } // namespace ProjectExplorer

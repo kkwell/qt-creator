@@ -5,16 +5,16 @@
 
 #include <QtCore/private/qabstractfileengine_p.h>
 
+#include "../filepath.h"
+
 namespace Utils::Internal {
 
 class FSEngineHandler : public QAbstractFileEngineHandler
 {
 public:
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     std::unique_ptr<QAbstractFileEngine> create(const QString &fileName) const override;
-#else
-    QAbstractFileEngine *create(const QString &fileName) const override;
-#endif
 };
+
+void invalidateFileInfoCache(const Utils::FilePath &path);
 
 } // Utils::Internal

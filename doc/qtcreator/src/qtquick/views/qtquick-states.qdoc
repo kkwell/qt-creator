@@ -1,0 +1,158 @@
+// Copyright (C) 2026 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
+
+/*!
+    \page quick-states.html
+    \previouspage creator-how-tos.html
+
+    \title Working with states
+
+    \quotation
+    \l {Work with states}{How to: Work with states}
+    \endquotation
+
+    To set states for components and component instances, go to \uicontrol {View}
+    > \uicontrol {Views} > \uicontrol {States} and then select \imageplus.
+
+    \image {qmldesigner-transitions.png} {States view}
+
+    Select the new state to switch to it in the \uicontrol {2D} view, and
+    then modify the values of the properties of components or component
+    instances in \uicontrol {Properties}.
+
+    For example, to change the appearance of a button, you can define states in
+    the button component to hide the button image and show another image in its
+    place or to change the button background or text color. When you use
+    instances of the button in other components, you can define states to
+    create different screens by hiding or showing button component instances.
+    The preset \l Button control in \uicontrol Components
+    > \uicontrol {Qt Quick Controls} > \uicontrol Controls has predefined
+    \e normal and \e down states.
+
+    To add motion to a screen, you can change the position of a component
+    instance in the \uicontrol {2D} view and then add animation to the change
+    between the states.
+
+    The properties that you change in a state are highlighted with blue color.
+    In the the \uicontrol {Code} view or \uicontrol Edit mode, you can see the
+    changes recorded as changes to the base state.
+
+    \image {qmldesigner-states.png} {States and Properties views.}
+
+    \note If you have \l{Lock components}{locked a component} in
+    \uicontrol {Navigator}, and you attempt to remove states where you change
+    the values of its properties, you are prompted to confirm the removal.
+
+    For more information about working with states, watch the following video:
+
+    \youtube FzmLuRHQXaw
+
+    \sa {Design Qt Quick UIs}{How to: Design Qt Quick UIs},
+    {Work with states}{How to: Work with states}, {Qt Quick UI design},
+    {Designing Qt Quick UIs}
+*/
+
+/*!
+    \page qtquick-states-set-default.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-design-qtquick-states
+
+    \title Set the default state
+
+    The default state determines the startup state of the application.
+
+    To set a state to the default state:
+
+    \list 1
+        \li Go to \uicontrol {View} > \uicontrol {Views} > \uicontrol {States}.
+            \image {qmldesigner-transitions.png} {States view.}
+        \li Select \uicontrol Default.
+    \endlist
+
+    \sa {Work with states}{How to: Work with states}, {Qt Quick UI design},
+    {Designing Qt Quick UIs}
+*/
+
+/*!
+    \page qtquick-states-base-state.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-design-qtquick-states
+
+    \title Create a base state
+
+    To keep the code clean, create a base state that contains all
+    the components you will need in the application. You can then create states,
+    in which you hide and show a set of components and modify their properties.
+    This lets you:
+
+    \list
+        \li Align components on different views with each other.
+        \li Avoid excessive property changes. If a component is invisible in
+            the base state, you must define all changes to its child components
+            as property changes, which leads to complicated code.
+        \li Minimize the differences between the base state and the other states
+            to keep the code short and readable and to improve performance.
+        \li Avoid problems when using transitions and animation when changing
+            states.
+    \endlist
+
+    \section1 Use states to create application views
+
+    To create views for an application by using states:
+
+    \list 1
+        \li Go to \uicontrol {View} > \uicontrol {Views} > \uicontrol {States}.
+        \li In the base state, add all components you will need in the
+            application (1). While you work on one view, you can select
+            \imageeyeopen
+            in \uicontrol {Navigator} to hide components on the canvas that are
+            not part of a view.
+        \li In \uicontrol States, select the \uicontrol + symbol to create
+            a new state and give it a name. For example, \c Normal.
+        \li In \uicontrol {Properties} (2), clear \uicontrol Visibility
+            or set \uicontrol Opacity to 0 for each component that
+            is not needed in this view. If you specify the setting for the
+            parent component, all child components inherit it and are also
+            hidden.
+        \li Create additional states for each view and set the visibility
+            or opacity of the components in the view.
+        \li To determine which state is applied when the application starts,
+            select \uicontrol Default.
+    \endlist
+
+    \image {qmldesigner-base-state.webp} {Using states to show and hide components.}
+
+    \section1 Group states
+
+    With state groups, you can change the state of certain components
+    independently of other components and their states in the same view.
+
+    Each state group has its own property changes and transitions.
+
+    By default, there is one default state group.
+
+    \section1 Extend states
+
+    When a state extends another state, it inherits all the changes of that
+    state. The state being extended is treated as the base state in regards to
+    the changes specified by the extending state.
+
+    Using extended states can make the user interface and your QML code
+    cleaner.
+
+    In the following example, the only change between \c State1 and \c State2
+    is the brightness of \c directionalLight.
+
+    Here, extended states are not used:
+
+    \image {no-extended-state.webp} {Three states in the States view with no extended state.}
+
+    Here, \c State2 is extended from \c State1:
+
+    \image {extended-state.webp} {Three states in the States view with State2 extended from State1.}
+
+    \sa {Work with states}{How to: Work with states}, {Qt Quick UI design},
+    {Designing Qt Quick UIs}
+*/

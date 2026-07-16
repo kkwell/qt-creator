@@ -19,7 +19,6 @@
 #include <QCryptographicHash>
 #include <QDir>
 #include <QLoggingCategory>
-#include <QTextCodec>
 
 /*!
  * \class CppEditor::Internal::CppSourceProcessor
@@ -33,6 +32,7 @@
  */
 
 using namespace CPlusPlus;
+using namespace ProjectExplorer;
 using namespace Utils;
 
 using Message = Document::DiagnosticMessage;
@@ -41,9 +41,7 @@ namespace CppEditor::Internal {
 
 static Q_LOGGING_CATEGORY(log, "qtc.cppeditor.sourceprocessor", QtWarningMsg)
 
-namespace {
-
-inline QByteArray generateFingerPrint(const QList<CPlusPlus::Macro> &definedMacros,
+static QByteArray generateFingerPrint(const QList<CPlusPlus::Macro> &definedMacros,
                                       const QByteArray &code)
 {
     QCryptographicHash hash(QCryptographicHash::Sha1);
@@ -65,20 +63,20 @@ inline QByteArray generateFingerPrint(const QList<CPlusPlus::Macro> &definedMacr
     return hash.result();
 }
 
-inline Message messageNoSuchFile(Document::Ptr &document, const FilePath &filePath, unsigned line)
+static Message messageNoSuchFile(Document::Ptr &document, const FilePath &filePath, unsigned line)
 {
     const QString text = Tr::tr("%1: No such file or directory").arg(filePath.displayName());
     return Message(Message::Warning, document->filePath(), line, /*column =*/ 0, text);
 }
 
-inline Message messageNoFileContents(Document::Ptr &document, const FilePath &filePath,
+static Message messageNoFileContents(Document::Ptr &document, const FilePath &filePath,
                                      unsigned line)
 {
     const QString text = Tr::tr("%1: Could not get file contents").arg(filePath.displayName());
     return Message(Message::Warning, document->filePath(), line, /*column =*/ 0, text);
 }
 
-inline const CPlusPlus::Macro revision(const WorkingCopy &workingCopy,
+static const CPlusPlus::Macro revision(const WorkingCopy &workingCopy,
                                        const CPlusPlus::Macro &macro)
 {
     CPlusPlus::Macro newMacro(macro);
@@ -87,14 +85,12 @@ inline const CPlusPlus::Macro revision(const WorkingCopy &workingCopy,
     return newMacro;
 }
 
-} // anonymous namespace
-
 CppSourceProcessor::CppSourceProcessor(const Snapshot &snapshot, DocumentCallback documentFinished)
     : m_snapshot(snapshot),
       m_documentFinished(documentFinished),
       m_preprocess(this, &m_env),
       m_languageFeatures(LanguageFeatures::defaultFeatures()),
-      m_defaultCodec(Core::EditorManager::defaultTextCodec())
+      m_defaultEncoding(Core::EditorManager::defaultTextEncoding())
 {
     m_preprocess.setKeepComments(true);
 }
@@ -109,9 +105,8 @@ void CppSourceProcessor::setCancelChecker(const CppSourceProcessor::CancelChecke
 void CppSourceProcessor::setWorkingCopy(const WorkingCopy &workingCopy)
 { m_workingCopy = workingCopy; }
 
-void CppSourceProcessor::setHeaderPaths(const ProjectExplorer::HeaderPaths &headerPaths)
+void CppSourceProcessor::setHeaderPaths(const HeaderPaths &headerPaths)
 {
-    using ProjectExplorer::HeaderPathType;
     m_headerPaths.clear();
 
     for (const auto &path : headerPaths) {
@@ -134,19 +129,18 @@ void CppSourceProcessor::setLanguageFeatures(const LanguageFeatures languageFeat
 // has private frameworks in:
 //  <framework-path>/ApplicationServices.framework/Frameworks
 // if the "Frameworks" folder exists inside the top level framework.
-void CppSourceProcessor::addFrameworkPath(const ProjectExplorer::HeaderPath &frameworkPath)
+void CppSourceProcessor::addFrameworkPath(const HeaderPath &frameworkPath)
 {
-    QTC_ASSERT(frameworkPath.type == ProjectExplorer::HeaderPathType::Framework, return);
+    QTC_ASSERT(frameworkPath.type == HeaderPathType::Framework, return);
 
     // The algorithm below is a bit too eager, but that's because we're not getting
     // in the frameworks we're linking against. If we would have that, then we could
     // add only those private frameworks.
-    const auto cleanFrameworkPath = ProjectExplorer::HeaderPath::makeFramework(
-                frameworkPath.path);
+    const HeaderPath cleanFrameworkPath = HeaderPath::makeFramework(frameworkPath.path);
     if (!m_headerPaths.contains(cleanFrameworkPath))
         m_headerPaths.append(cleanFrameworkPath);
 
-    const QDir frameworkDir(cleanFrameworkPath.path);
+    const QDir frameworkDir(cleanFrameworkPath.path.path());
     const QStringList filter = QStringList("*.framework");
     const QList<QFileInfo> frameworks = frameworkDir.entryInfoList(filter);
     for (const QFileInfo &framework : frameworks) {
@@ -154,13 +148,14 @@ void CppSourceProcessor::addFrameworkPath(const ProjectExplorer::HeaderPath &fra
             continue;
         const QFileInfo privateFrameworks(framework.absoluteFilePath(),
                                           QLatin1String("Frameworks"));
-        if (privateFrameworks.exists() && privateFrameworks.isDir())
-            addFrameworkPath(ProjectExplorer::HeaderPath::makeFramework(
-                                 privateFrameworks.absoluteFilePath()));
+        if (privateFrameworks.exists() && privateFrameworks.isDir()) {
+            addFrameworkPath(HeaderPath::makeFramework(
+                FilePath::fromUserInput(privateFrameworks.absoluteFilePath())));
+        }
     }
 }
 
-void CppSourceProcessor::setTodo(const QSet<QString> &files)
+void CppSourceProcessor::setTodo(const QSet<FilePath> &files)
 {
     m_todo = files;
 }
@@ -199,14 +194,11 @@ bool CppSourceProcessor::getFileContents(const FilePath &absoluteFilePath,
 
     // Get from file
     *revision = 0;
-    QString error;
-    if (Utils::TextFileFormat::readFileUTF8(absoluteFilePath,
-                                            m_defaultCodec,
-                                            contents,
-                                            &error)
-        != Utils::TextFileFormat::ReadSuccess) {
-        qWarning("Error reading file \"%s\": \"%s\".", qPrintable(absoluteFilePath.toString()),
-                 qPrintable(error));
+    const Result<> result =
+            TextFileFormat::readFileUtf8(absoluteFilePath, m_defaultEncoding, contents);
+    if (!result) {
+        qWarning("Error reading file \"%s\": \"%s\".", qPrintable(absoluteFilePath.toUserOutput()),
+                 qPrintable(result.error()));
         return false;
     }
     contents->replace("\r\n", "\n");
@@ -227,7 +219,7 @@ bool CppSourceProcessor::checkFile(const FilePath &absoluteFilePath) const
 /// Resolve the given file name to its absolute path w.r.t. the include type.
 FilePath CppSourceProcessor::resolveFile(const FilePath &filePath, IncludeType type)
 {
-    if (isInjectedFile(filePath.path()))
+    if (isInjectedFile(filePath))
         return filePath;
 
     if (filePath.isAbsolutePath())
@@ -248,7 +240,7 @@ FilePath CppSourceProcessor::resolveFile(const FilePath &filePath, IncludeType t
             auto headerPathsEnd = m_headerPaths.end();
             auto headerPathsIt = m_headerPaths.begin();
             for (; headerPathsIt != headerPathsEnd; ++headerPathsIt) {
-                if (headerPathsIt->path == currentDirPath.path()) {
+                if (headerPathsIt->path.path() == currentDirPath.path()) {
                     ++headerPathsIt;
                     return resolveFile_helper(filePath, headerPathsIt);
                 }
@@ -266,21 +258,21 @@ FilePath CppSourceProcessor::resolveFile(const FilePath &filePath, IncludeType t
 }
 
 FilePath CppSourceProcessor::resolveFile_helper(const FilePath &filePath,
-                                                ProjectExplorer::HeaderPaths::Iterator headerPathsIt)
+                                                HeaderPaths::Iterator headerPathsIt)
 {
     const QString fileName = filePath.path();
     auto headerPathsEnd = m_headerPaths.end();
     const int index = fileName.indexOf(QLatin1Char('/'));
     for (; headerPathsIt != headerPathsEnd; ++headerPathsIt) {
-        if (!headerPathsIt->path.isNull()) {
+        if (!headerPathsIt->path.isEmpty()) {
             FilePath path;
-            if (headerPathsIt->type == ProjectExplorer::HeaderPathType::Framework) {
+            if (headerPathsIt->type == HeaderPathType::Framework) {
                 if (index == -1)
                     continue;
-                path = FilePath::fromString(headerPathsIt->path).pathAppended(fileName.left(index)
+                path = headerPathsIt->path.pathAppended(fileName.left(index)
                        + QLatin1String(".framework/Headers/") + fileName.mid(index + 1));
             } else {
-                path = FilePath::fromString(headerPathsIt->path) /  fileName;
+                path = headerPathsIt->path /  fileName;
             }
             if (m_workingCopy.get(path) || checkFile(path))
                 return path;
@@ -314,7 +306,7 @@ void CppSourceProcessor::passedMacroDefinitionCheck(int bytesOffset, int utf16ch
     m_currentDoc->addMacroUse(revision(m_workingCopy, macro),
                               bytesOffset, macro.name().length(),
                               utf16charsOffset, macro.nameToQString().size(),
-                              line, QVector<MacroArgumentReference>());
+                              line, QList<MacroArgumentReference>());
 }
 
 void CppSourceProcessor::failedMacroDefinitionCheck(int bytesOffset, int utf16charOffset,
@@ -336,12 +328,12 @@ void CppSourceProcessor::notifyMacroReference(int bytesOffset, int utf16charOffs
     m_currentDoc->addMacroUse(revision(m_workingCopy, macro),
                               bytesOffset, macro.name().length(),
                               utf16charOffset, macro.nameToQString().size(),
-                              line, QVector<MacroArgumentReference>());
+                              line, QList<MacroArgumentReference>());
 }
 
 void CppSourceProcessor::startExpandingMacro(int bytesOffset, int utf16charOffset,
                                              int line, const CPlusPlus::Macro &macro,
-                                             const QVector<MacroArgumentReference> &actuals)
+                                             const QList<MacroArgumentReference> &actuals)
 {
     if (!m_currentDoc)
         return;
@@ -407,8 +399,11 @@ void CppSourceProcessor::sourceNeeded(int line, const FilePath &filePath, Includ
 
     const FilePath absoluteFilePath = resolveFile(filePath, type);
 
+    if (absoluteFilePath.isDir())
+        return;
+
     if (m_currentDoc) {
-        m_currentDoc->addIncludeFile(Document::Include(filePath.toString(), absoluteFilePath, line, type));
+        m_currentDoc->addIncludeFile(Document::Include(filePath.path(), absoluteFilePath, line, type));
         if (absoluteFilePath.isEmpty()) {
             m_currentDoc->addDiagnosticMessage(messageNoSuchFile(m_currentDoc, filePath, line));
             return;
@@ -416,7 +411,7 @@ void CppSourceProcessor::sourceNeeded(int line, const FilePath &filePath, Includ
     }
     if (m_included.contains(absoluteFilePath))
         return; // We've already seen this file.
-    if (!isInjectedFile(absoluteFilePath.path()))
+    if (!isInjectedFile(absoluteFilePath))
         m_included.insert(absoluteFilePath);
 
     // Already in snapshot? Use it!
@@ -437,14 +432,14 @@ void CppSourceProcessor::sourceNeeded(int line, const FilePath &filePath, Includ
         return;
     }
 
-    qCDebug(log) << "Parsing:" << absoluteFilePath.toString() << "contents:" << contents.size() << "bytes";
+    qCDebug(log) << "Parsing:" << absoluteFilePath.toUserOutput() << "contents:" << contents.size() << "bytes";
 
     Document::Ptr document = Document::create(absoluteFilePath);
     document->setEditorRevision(editorRevision);
     document->setLanguageFeatures(m_languageFeatures);
     for (const FilePath &include : initialIncludes) {
         m_included.insert(include);
-        Document::Include inc(include.toString(), include, 0, IncludeLocal);
+        Document::Include inc(include.path(), include, 0, IncludeLocal);
         document->addIncludeFile(inc);
     }
     if (absoluteFilePath.exists())
@@ -464,7 +459,7 @@ void CppSourceProcessor::sourceNeeded(int line, const FilePath &filePath, Includ
         switchCurrentDocument(previousDocument);
         mergeEnvironment(globalDocument);
         m_snapshot.insert(globalDocument);
-        m_todo.remove(absoluteFilePath.toString());
+        m_todo.remove(absoluteFilePath);
         return;
     }
 
@@ -478,7 +473,7 @@ void CppSourceProcessor::sourceNeeded(int line, const FilePath &filePath, Includ
     m_documentFinished(document);
 
     m_snapshot.insert(document);
-    m_todo.remove(absoluteFilePath.toString());
+    m_todo.remove(absoluteFilePath);
     switchCurrentDocument(previousDocument);
 }
 

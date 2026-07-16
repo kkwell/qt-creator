@@ -17,11 +17,17 @@ Item {
     // and set the ads focus on it.
     objectName: "__mainSrollView"
 
+    enum TabIndex {
+        MaterialsTab,
+        TexturesTab,
+        EffectsTab,
+        UserAssetsTab
+    }
+
     // Called also from C++ to close context menu on focus out
     function closeContextMenu() {
         materialsView.closeContextMenu()
         texturesView.closeContextMenu()
-        environmentsView.closeContextMenu()
         effectsView.closeContextMenu()
         userView.closeContextMenu()
         HelperWidgets.Controller.closeContextMenu()
@@ -53,7 +59,6 @@ Item {
 
         let maxItems = Math.max(materialsView.count,
                                 texturesView.count,
-                                environmentsView.count,
                                 effectsView.count)
 
         if (numColumns > maxItems)
@@ -65,6 +70,13 @@ Item {
         root.thumbnailSize = Math.min(root.minThumbSize + (rest / numColumns),
                                       root.maxThumbSize)
         root.numColumns = numColumns
+    }
+
+    Connections {
+        target: ContentLibraryBackend.rootView
+        function onRequestTab(tabIndex) {
+            tabBar.currIndex = tabIndex
+        }
     }
 
     Column {
@@ -90,12 +102,20 @@ Item {
                     width: parent.width
                     style: StudioTheme.Values.searchControlStyle
                     enabled: {
-                        if (tabBar.currIndex === 0) { // Materials tab
-                            ContentLibraryBackend.materialsModel.matBundleExists
-                                && ContentLibraryBackend.rootView.hasMaterialLibrary
-                                && ContentLibraryBackend.materialsModel.hasRequiredQuick3DImport
-                        } else { // Textures / Environments tabs
-                            ContentLibraryBackend.texturesModel.texBundleExists
+                        switch (tabBar.currIndex) {
+                            case ContentLibrary.TabIndex.MaterialsTab:
+                                return ContentLibraryBackend.materialsModel.hasRequiredQuick3DImport
+                                    && ContentLibraryBackend.rootView.hasMaterialLibrary
+                                    && ContentLibraryBackend.materialsModel.bundleExists
+                            case ContentLibrary.TabIndex.TexturesTab:
+                                return ContentLibraryBackend.texturesModel.bundleExists
+                            case ContentLibrary.TabIndex.EffectsTab:
+                                return ContentLibraryBackend.effectsModel.hasRequiredQuick3DImport
+                                    && ContentLibraryBackend.effectsModel.bundleExists
+                            case ContentLibrary.TabIndex.UserAssetsTab:
+                                return !ContentLibraryBackend.userModel.isEmpty
+                            default:
+                                return false
                         }
                     }
 
@@ -105,7 +125,6 @@ Item {
                         // make sure categories with matches are expanded
                         materialsView.expandVisibleSections()
                         texturesView.expandVisibleSections()
-                        environmentsView.expandVisibleSections()
                         effectsView.expandVisibleSections()
                     }
                 }
@@ -118,9 +137,8 @@ Item {
                     tabsModel: [
                         { name: qsTr("Materials"),    icon: StudioTheme.Constants.material_medium },
                         { name: qsTr("Textures"),     icon: StudioTheme.Constants.textures_medium },
-                        { name: qsTr("Environments"), icon: StudioTheme.Constants.languageList_medium },
-                        { name: qsTr("Effects"),      icon: StudioTheme.Constants.effects },
-                        { name: qsTr("User Assets"),  icon: StudioTheme.Constants.effects } // TODO: update icon
+                        { name: qsTr("Effects"),      icon: StudioTheme.Constants.effects_medium },
+                        { name: qsTr("User Assets"),  icon: StudioTheme.Constants.userAssets_medium }
                     ]
                 }
             }
@@ -184,25 +202,6 @@ Item {
                 onCountChanged: root.responsiveResize(stackLayout.width, stackLayout.height)
             }
 
-            ContentLibraryTexturesView {
-                id: environmentsView
-
-                adsFocus: root.adsFocus
-                width: root.width
-
-                cellWidth: root.thumbnailSize
-                cellHeight: root.thumbnailSize
-                numColumns: root.numColumns
-                hideHorizontalScrollBar: true
-
-                model: ContentLibraryBackend.environmentsModel
-                sectionCategory: "ContentLib_Env"
-
-                searchBox: searchBox
-
-                onCountChanged: root.responsiveResize(stackLayout.width, stackLayout.height)
-            }
-
             ContentLibraryEffectsView {
                 id: effectsView
 
@@ -235,20 +234,21 @@ Item {
                 cellWidth: root.thumbnailSize
                 cellHeight: root.thumbnailSize + 20
                 numColumns: root.numColumns
-                hideHorizontalScrollBar: true
 
                 searchBox: searchBox
 
                 onUnimport: (bundleItem) => {
                     confirmUnimportDialog.targetBundleItem = bundleItem
-                    confirmUnimportDialog.targetBundleLabel = "material"
+                    confirmUnimportDialog.targetBundleLabel = bundleItem.bundleId === "MaterialBundle"
+                                                                ? qsTr("material") : qsTr("item")
                     confirmUnimportDialog.targetBundleModel = ContentLibraryBackend.userModel
                     confirmUnimportDialog.open()
                 }
 
                 onRemoveFromContentLib: (bundleItem) => {
                     confirmDeleteDialog.targetBundleItem = bundleItem
-                    confirmDeleteDialog.targetBundleLabel = "material"
+                    confirmDeleteDialog.targetBundleLabel = bundleItem.bundleId === "MaterialBundle"
+                                                                ? qsTr("material") : qsTr("item")
                     confirmDeleteDialog.open()
                 }
 

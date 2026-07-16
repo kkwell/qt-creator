@@ -3,8 +3,8 @@
 
 #pragma once
 
-#include "abstractview.h"
-#include "modelnode.h"
+#include <abstractview.h>
+#include <modelnode.h>
 
 #include <generatedcomponentutils.h>
 
@@ -29,6 +29,13 @@ public:
     void modelAboutToBeDetached(QmlDesigner::Model *model) override;
     void selectedNodesChanged(const QList<QmlDesigner::ModelNode> &selectedNodeList,
                               const QList<QmlDesigner::ModelNode> &lastSelectedNodeList) override;
+
+    void dragStarted(QMimeData *mimeData) override;
+    void dragEnded() override;
+
+    void highlightSupportedProperties(bool highlight, const QString &suffix = {});
+
+    static void registerDeclarativeTypes();
 
 private:
     void customNotification(const AbstractView *view, const QString &identifier,

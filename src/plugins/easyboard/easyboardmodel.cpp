@@ -152,7 +152,7 @@ void EasyBoardModelPrivate::setBoards(const Boards &boards)
 
 void EasyBoardModelPrivate::addUnlistedLocalBoards()
 {
-    const QStringList listedModelBoards = transform(boards, &Board::name);
+    const QStringList listedModelBoards = Utils::transform(boards, &Board::name);
     // for (const PluginSpec *plugin : PluginManager::plugins())
     //     if (!listedModelExtensions.contains(plugin->name()))
     //         extensions.append(extensionFromPluginSpec(plugin));

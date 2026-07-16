@@ -7,14 +7,15 @@
 
 #include <coreplugin/icontext.h>
 #include <coreplugin/iversioncontrol.h>
-#include <coreplugin/vcsmanager.h>
 
-#include <extensionsystem/iplugin.h>
+#include <utils/processenums.h>
 
 #include <QSharedDataPointer>
 
 QT_BEGIN_NAMESPACE
 class QAction;
+
+namespace QtTaskTree { class ExecutableItem; }
 QT_END_NAMESPACE
 
 namespace Utils { class Environment; }
@@ -32,7 +33,6 @@ namespace Internal { class State; }
 class VcsBaseSubmitEditor;
 class VersionControlBase;
 class VcsBasePluginStateData;
-class VcsCommand;
 
 // Documentation inside.
 class VCSBASE_EXPORT VcsBasePluginState
@@ -42,8 +42,6 @@ public:
     VcsBasePluginState(const VcsBasePluginState &);
     VcsBasePluginState &operator=(const VcsBasePluginState &);
     ~VcsBasePluginState();
-
-    void clear();
 
     bool isEmpty() const;
     bool hasFile() const;
@@ -77,14 +75,7 @@ public:
     // the file one.
     Utils::FilePath topLevel() const;
 
-    bool equals(const VcsBasePluginState &rhs) const;
-
     friend VCSBASE_EXPORT QDebug operator<<(QDebug in, const VcsBasePluginState &state);
-
-    friend bool operator==(const VcsBasePluginState &s1, const VcsBasePluginState &s2)
-    { return s1.equals(s2); }
-    friend bool operator!=(const VcsBasePluginState &s1, const VcsBasePluginState &s2)
-    { return !s1.equals(s2); }
 
 private:
     friend class VersionControlBase;
@@ -93,13 +84,6 @@ private:
 
     QSharedDataPointer<VcsBasePluginStateData> data;
 };
-
-// Convenience that searches for the repository specifically for version control
-// systems that do not have directories like "CVS" in each managed subdirectory
-// but have a directory at the top of the repository like ".git" containing
-// a well known file. See implementation for gory details.
-VCSBASE_EXPORT Utils::FilePath findRepositoryForFile(const Utils::FilePath &fileOrDir,
-                                                     const QString &checkFile);
 
 // Set up the environment for a version control command line call.
 // Sets up SSH graphical password prompting (note that the latter
@@ -110,6 +94,17 @@ VCSBASE_EXPORT void setProcessEnvironment(Utils::Environment *e);
 VCSBASE_EXPORT void setSource(Core::IDocument *document, const Utils::FilePath &source);
 // Returns the source of editor contents.
 VCSBASE_EXPORT Utils::FilePath source(Core::IDocument *document);
+
+class VCSBASE_EXPORT CloneTaskData
+{
+public:
+    QString url;
+    Utils::FilePath baseDirectory;
+    QString localName;
+    QStringList extraArgs;
+    Utils::TextChannelCallback stdOutHandler = {};
+    Utils::TextChannelCallback stdErrHandler = {};
+};
 
 class VCSBASE_EXPORT VersionControlBase : public Core::IVersionControl
 {
@@ -124,15 +119,13 @@ public:
     const VcsBasePluginState &currentState() const;
 
     /*!
-     * Return a VcsCommand capable of checking out \a url into \a baseDirectory, where
+     * Return a Task capable of checking out \a url into \a baseDirectory, where
      * a new subdirectory with \a localName will be created.
      *
      * \a extraArgs are passed on to the command being run.
      */
-    virtual VcsCommand *createInitialCheckoutCommand(const QString &url,
-                                                     const Utils::FilePath &baseDirectory,
-                                                     const QString &localName,
-                                                     const QStringList &extraArgs);
+    virtual QtTaskTree::ExecutableItem cloneTask(const CloneTaskData &data) const;
+
     // Display name of the commit action
     virtual QString commitDisplayName() const;
     virtual QString commitAbortTitle() const;
@@ -150,8 +143,9 @@ protected:
     // delete the file via VcsManager.
     void promptToDeleteCurrentFile();
     // Prompt to initialize version control in a directory, initially
-    // pointing to the current project.
-    void createRepository();
+    // pointing to the current project. The optional parameter
+    // repoDirectory is filled with the new repository toplevel dir.
+    void createRepository(Utils::FilePath *repoDirectory = nullptr);
 
     enum ActionState { NoVcsEnabled, OtherVcsEnabled, VcsEnabled };
 

@@ -13,6 +13,7 @@
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projectmacro.h>
+#include <projectexplorer/toolchainconfigwidget.h>
 #include <projectexplorer/toolchainmanager.h>
 
 #include <qtsupport/qtkitaspect.h>
@@ -108,7 +109,7 @@ public:
 static Toolchains doAutoDetect(const ToolchainDetector &detector)
 {
     const FilePath sdk = settings().emSdk();
-    if (!WebAssemblyEmSdk::isValid(sdk))
+    if (!WebAssemblyEmSdk::version(sdk))
         return {};
 
     if (detector.device
@@ -123,19 +124,18 @@ static Toolchains doAutoDetect(const ToolchainDetector &detector)
     WebAssemblyEmSdk::addToEnvironment(sdk, env);
 
     Toolchains result;
-    for (auto languageId : {ProjectExplorer::Constants::C_LANGUAGE_ID,
-                            ProjectExplorer::Constants::CXX_LANGUAGE_ID}) {
+    for (auto languageId : {Id(ProjectExplorer::Constants::C_LANGUAGE_ID),
+                            Id(ProjectExplorer::Constants::CXX_LANGUAGE_ID)}) {
         auto toolChain = new WebAssemblyToolChain;
         toolChain->setLanguage(languageId);
-        toolChain->setDetection(Toolchain::AutoDetection);
+        toolChain->setDetectionSource(DetectionSource::FromSystem);
         const bool cLanguage = languageId == ProjectExplorer::Constants::C_LANGUAGE_ID;
         const QString script = QLatin1String(cLanguage ? "emcc" : "em++")
                 + QLatin1String(sdk.osType() == OsTypeWindows ? ".bat" : "");
         const FilePath scriptFile = sdk.withNewPath(script).searchInDirectories(env.path());
         toolChain->setCompilerCommand(scriptFile);
 
-        const QString displayName = Tr::tr("Emscripten Compiler %1 for %2")
-                .arg(toolChain->version(), QLatin1String(cLanguage ? "C" : "C++"));
+        const QString displayName = Tr::tr("Emscripten Compiler %1").arg(toolChain->version());
         toolChain->setDisplayName(displayName);
         result.append(toolChain);
     }
@@ -147,22 +147,28 @@ void registerToolChains()
 {
     // Remove old toolchains
     const Toolchains oldToolchains = Utils::filtered(
-        ToolchainManager::findToolchains(toolChainAbi()),
-        Utils::equal(&Toolchain::detection, Toolchain::AutoDetection));
+        ToolchainManager::findToolchains(toolChainAbi()), [](Toolchain *tc) {
+            return tc->detectionSource().type == DetectionSource::FromSystem;
+        });
     ToolchainManager::deregisterToolchains(oldToolchains);
 
     // Create new toolchains and register them
-    ToolchainManager::registerToolchains(doAutoDetect(ToolchainDetector({}, {}, {})));
+    ToolchainManager::registerToolchains(
+        doAutoDetect(ToolchainDetector({}, DeviceManager::defaultDesktopDevice(), {})));
 
     // Let kits pick up the new toolchains
     for (Kit *kit : KitManager::kits()) {
-        if (!kit->isAutoDetected())
+        if (!kit->detectionSource().isAutoDetected())
             continue;
         const QtVersion *qtVersion = QtKitAspect::qtVersion(kit);
         if (!qtVersion || qtVersion->type() != Constants::WEBASSEMBLY_QT_VERSION)
             continue;
         kit->fix();
     }
+
+    DeviceManager::setDeviceState(
+        Constants::WEBASSEMBLY_DEVICE_DEVICE_ID,
+        areToolChainsRegistered() ? IDevice::DeviceReadyToUse : IDevice::DeviceDisconnected);
 }
 
 bool areToolChainsRegistered()
@@ -183,9 +189,21 @@ public:
         setUserCreatable(true);
     }
 
-    Toolchains autoDetect(const ToolchainDetector &detector) const
+private:
+    Toolchains autoDetect(const ToolchainDetector &detector) const override
     {
         return doAutoDetect(detector);
+    }
+
+    std::unique_ptr<ToolchainConfigWidget> createConfigurationWidget(
+        const ToolchainBundle &bundle) const override
+    {
+        return GccToolchain::createConfigurationWidget(bundle);
+    }
+
+    FilePath correspondingCompilerCommand(const FilePath &srcPath, Id targetLang) const override
+    {
+        return GccToolchain::correspondingCompilerCommand(srcPath, targetLang, "emcc", "em++");
     }
 };
 

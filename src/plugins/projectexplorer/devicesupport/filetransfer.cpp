@@ -12,13 +12,14 @@
 
 #include <QProcess>
 
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace ProjectExplorer {
 
 QString FileTransferSetupData::defaultRsyncFlags()
 {
-    return "-av";
+    return "-rltv";
 }
 
 static IDeviceConstPtr matchedDevice(const FilesToTransfer &files)
@@ -193,14 +194,26 @@ QString FileTransfer::transferMethodName(FileTransferMethod method)
     return {};
 }
 
-FileTransferTaskAdapter::FileTransferTaskAdapter()
+static void setupTransfer(FileTransfer *transfer, QTaskInterface *iface)
 {
-    connect(task(), &FileTransfer::done, this, [this](const ProcessResultData &result) {
+    QObject::connect(transfer, &FileTransfer::done, iface, [iface](const ProcessResultData &result) {
         const bool success = result.m_exitStatus == QProcess::NormalExit
                              && result.m_error == QProcess::UnknownError
                              && result.m_exitCode == 0;
-        emit done(Tasking::toDoneResult(success));
-    });
+        iface->reportDone(toDoneResult(success));
+    }, Qt::SingleShotConnection);
+}
+
+void FileTransferTaskAdapter::operator()(FileTransfer *task, QTaskInterface *iface)
+{
+    setupTransfer(task, iface);
+    task->start();
+}
+
+void FileTransferTestTaskAdapter::operator()(FileTransfer *task, QTaskInterface *iface)
+{
+    setupTransfer(task, iface);
+    task->test();
 }
 
 } // namespace ProjectExplorer

@@ -17,13 +17,15 @@
     wiki, and built-in web server. Fossil is available for Linux, Windows,
     and \macos.
 
+    \note Enable the Fossil plugin to use it.
+
     To use Fossil from \QC, you must install and configure it, as described in
     the following sections.
 
     \section1 Configuring Fossil
 
     \list 1
-        \li Download the \l{http://fossil-scm.org}{Fossil SCM client} and
+        \li Download the \l{Fossil SCM client} and
             install the \c fossil executable file in your \c PATH.
 
         \li Create or designate a directory to store local Fossil repositories
@@ -33,8 +35,7 @@
             \uicontrol {Version Control} > \uicontrol Fossil, and set the
             designated directory in the \uicontrol {Default path} field.
 
-            \image qtcreator-preferences-vcs-fossil.webp {Fossil preferences}
-
+            \image {qtcreator-preferences-vcs-fossil.webp} {Fossil tab in Version Control preferences}
     \endlist
 
     To create a local Fossil repository, select \uicontrol Tools >
@@ -44,11 +45,11 @@
     \uicontrol {New Project} > \uicontrol {Import Project} >
     \uicontrol {Fossil Clone}.
 
-    \section1 Additional Fossil Functions
+    \section1 Additional Fossil functions
 
     In addition to the standard version control system functions described in
-    \l {Version Control Systems}, the \uicontrol Fossil submenu has
-    the following items:
+    \l {Use common VCS functions}, the \uicontrol Fossil submenu has
+    the following items.
 
     \table
         \header
@@ -69,30 +70,46 @@
             \li Configure the settings of the local repository.
     \endtable
 
-    \section1 Fossil Preferences
+    \section1 Fossil preferences
 
     To set Fossil preferences, select \preferences >
-    \uicontrol {Version Control} > \uicontrol Fossil:
+    \uicontrol {Version Control} > \uicontrol Fossil.
 
-    \list
-        \li \uicontrol Command specifies the path to the command-line client
-            executable.
-        \li \uicontrol {Default path} sets the path to the directory to store
-            local repositories by default.
-        \li \uicontrol {Default user} specifies an existing user who becomes the
-            author of changes made to the repository.
-        \li \uicontrol {SSL/TLS identity} sets the SSL/TLS client identity key
-            to use for authentication if the server requests it.
-        \li \uicontrol {Log count} sets the maximum number of lines the log can
-            have.
-        \li \uicontrol {Log width} sets the width of log entry lines to 20 or
-            above. The value 0 shows a single line per entry.
-        \li \uicontrol {Timeout} sets a timeout for version control operations.
-        \li \uicontrol {Disable auto sync} disables automatic pull before
-            a commit or update and automatic push after a commit or tag or branch
-            creation.
-    \endlist
+    \table
+        \header
+            \li Preference
+            \li Description
+        \row
+            \li \uicontrol {Command}
+            \li Specifies the path to the command-line client executable.
+        \row
+            \li \uicontrol {Default path}
+            \li Sets the path to the directory to store local repositories
+                by default.
+        \row
+            \li \uicontrol {Default user}
+            \li Specifies an existing user who becomes the author of changes
+                made to the repository.
+        \row
+            \li \uicontrol {SSL/TLS identity}
+            \li Sets the SSL/TLS client identity key to use for authentication
+                if the server requests it.
+        \row
+            \li \uicontrol {Log count}
+            \li Sets the maximum number of lines the log can have.
+        \row
+            \li \uicontrol {Log width}
+            \li Sets the width of log entry lines to 20 or above. The value 0
+                shows a single line per entry.
+        \row
+            \li \uicontrol {Timeout}
+            \li Sets a timeout for version control operations.
+        \row
+            \li \uicontrol {Disable auto sync}
+            \li Disables automatic pull before a commit or update and automatic
+                push after a commit or tag or branch creation.
+    \endtable
 
-    \sa {Set up version control systems}, {Use common VCS functions},
-    {Version Control Systems}
+    \sa {Enable and disable plugins}, {Set up version control systems},
+    {Use common VCS functions}, {Version control systems}
 */

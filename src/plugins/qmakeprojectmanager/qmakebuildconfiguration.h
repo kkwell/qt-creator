@@ -7,6 +7,8 @@
 
 #include <projectexplorer/buildaspects.h>
 #include <projectexplorer/buildconfiguration.h>
+#include <projectexplorer/buildsteplist.h>
+#include <projectexplorer/projectexplorerconstants.h>
 #include <qtsupport/baseqtversion.h>
 #include <qtsupport/qtbuildaspects.h>
 
@@ -29,15 +31,15 @@ class QMAKEPROJECTMANAGER_EXPORT QmakeBuildConfiguration : public ProjectExplore
 
 public:
     QmakeBuildConfiguration(ProjectExplorer::Target *target, Utils::Id id);
-    ~QmakeBuildConfiguration() override;
-
-    ProjectExplorer::BuildSystem *buildSystem() const final;
+    ~QmakeBuildConfiguration();
 
     void setSubNodeBuild(QmakeProFileNode *node);
     QmakeProFileNode *subNodeBuild() const;
 
     ProjectExplorer::FileNode *fileNodeBuild() const;
     void setFileNodeBuild(ProjectExplorer::FileNode *node);
+
+    ProjectExplorer::BuildStepList *makeStepOnlyList();
 
     QtSupport::QtVersion::QmakeBuildConfigs qmakeBuildConfiguration() const;
     void setQMakeBuildConfiguration(QtSupport::QtVersion::QmakeBuildConfigs config);
@@ -61,7 +63,13 @@ public:
 
     Utils::FilePath makefile() const;
 
-    enum MakefileState { MakefileMatches, MakefileForWrongProject, MakefileIncompatible, MakefileMissing };
+    enum MakefileState {
+        MakefileMatches,
+        MakefileForWrongProject,
+        MakefileIncompatible,
+        MakefileMissing,
+        InvalidArguments
+    };
     MakefileState compareToImportFrom(const Utils::FilePath &makefile, QString *errorString = nullptr);
     static QString extractSpecFromArguments(
             QString *arguments, const Utils::FilePath &directory, const QtSupport::QtVersion *version,
@@ -78,16 +86,15 @@ public:
                                          const Utils::FilePath &buildDir);
     bool isBuildDirAtSafeLocation() const;
 
-    void forceSeparateDebugInfo(bool sepDebugInfo);
-    void forceQmlDebugging(bool enable);
-    void forceQtQuickCompiler(bool enable);
-
     ProjectExplorer::SeparateDebugInfoAspect separateDebugInfo{this};
     QtSupport::QmlDebuggingAspect qmlDebugging{this};
     QtSupport::QtQuickCompilerAspect useQtQuickCompiler{this};
     Utils::SelectionAspect runSystemFunctions{this};
 
     bool runQmakeSystemFunctions() const;
+
+    void setInitialArgs(const QStringList &) override;
+    QStringList initialArgs() const override;
 
 signals:
     /// emitted for setQMakeBuildConfig, not emitted for Qt version changes, even
@@ -105,7 +112,7 @@ protected:
 private:
     void restrictNextBuild(const ProjectExplorer::RunConfiguration *rc) override;
 
-    void kitChanged();
+    void kitChangedSlot();
     void toolChainUpdated(ProjectExplorer::Toolchain *tc);
     void qtVersionsChanged(const QList<int> &, const QList<int> &, const QList<int> &changed);
     void updateProblemLabel();
@@ -130,7 +137,10 @@ private:
     QtSupport::QtVersion::QmakeBuildConfigs m_qmakeBuildConfiguration;
     QmakeProFileNode *m_subNodeBuild = nullptr;
     ProjectExplorer::FileNode *m_fileNodeBuild = nullptr;
-    QmakeBuildSystem *m_buildSystem = nullptr;
+    ProjectExplorer::BuildStepList
+        m_makeStepOnlyList{this, ProjectExplorer::Constants::BUILDSTEPS_BUILD};
+
+    QMetaObject::Connection m_bsParsingFinishedConnection;
 };
 
 class QMAKEPROJECTMANAGER_EXPORT QmakeBuildConfigurationFactory : public ProjectExplorer::BuildConfigurationFactory

@@ -2,16 +2,15 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "qmlprofilerattachdialog_test.h"
-#include "projectexplorer/kitmanager.h"
-#include "projectexplorer/kit.h"
-#include <QtTest>
 
-namespace QmlProfiler {
-namespace Internal {
+#include <projectexplorer/kitmanager.h>
+#include <projectexplorer/kit.h>
 
-QmlProfilerAttachDialogTest::QmlProfilerAttachDialogTest(QObject *parent) : QObject(parent)
-{
-}
+#include <QTest>
+
+namespace QmlProfiler::Internal {
+
+QmlProfilerAttachDialogTest::QmlProfilerAttachDialogTest() = default;
 
 void QmlProfilerAttachDialogTest::testAccessors()
 {
@@ -35,5 +34,4 @@ void QmlProfilerAttachDialogTest::testAccessors()
     ProjectExplorer::KitManager::deregisterKit(newKit);
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

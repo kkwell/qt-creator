@@ -55,8 +55,10 @@ private:
     QMap<McuPackagePtr, QWidget *> m_packageWidgets;
     QMap<McuTargetPtr, QWidget *> m_mcuTargetPacketWidgets;
     QFormLayout *m_packagesLayout = nullptr;
+    QFormLayout *m_optionalPackagesLayout = nullptr;
     QGroupBox *m_qtForMCUsSdkGroupBox = nullptr;
     QGroupBox *m_packagesGroupBox = nullptr;
+    QGroupBox *m_optionalPackagesGroupBox = nullptr;
     QGroupBox *m_mcuTargetsGroupBox = nullptr;
     QComboBox *m_mcuTargetsComboBox = nullptr;
     QGroupBox *m_kitCreationGroupBox = nullptr;
@@ -81,7 +83,7 @@ McuSupportOptionsWidget::McuSupportOptionsWidget(McuSupportOptions &options,
         m_statusInfoLabel->setOpenExternalLinks(false);
         mainLayout->addWidget(m_statusInfoLabel);
         connect(m_statusInfoLabel, &QLabel::linkActivated, this, [] {
-            Core::ICore::showOptionsDialog(CMakeProjectManager::Constants::Settings::TOOLS_ID);
+            Core::ICore::showSettings(CMakeProjectManager::Constants::Settings::TOOLS_ID);
         });
     }
 
@@ -123,6 +125,14 @@ McuSupportOptionsWidget::McuSupportOptionsWidget(McuSupportOptions &options,
     }
 
     {
+        m_optionalPackagesGroupBox = new QGroupBox(Tr::tr("Optional"));
+        m_optionalPackagesGroupBox->setFlat(true);
+        mainLayout->addWidget(m_optionalPackagesGroupBox);
+        m_optionalPackagesLayout = new QFormLayout;
+        m_optionalPackagesGroupBox->setLayout(m_optionalPackagesLayout);
+    }
+
+    {
         m_mcuTargetsInfoLabel = new Utils::InfoLabel;
         mainLayout->addWidget(m_mcuTargetsInfoLabel);
     }
@@ -130,9 +140,6 @@ McuSupportOptionsWidget::McuSupportOptionsWidget(McuSupportOptions &options,
     {
         m_kitAutomaticCreationCheckBox = new QCheckBox(
             Tr::tr("Automatically create kits for all available targets on start"));
-        connect(m_kitAutomaticCreationCheckBox, &QCheckBox::stateChanged, this, [this](int state) {
-            m_options.setAutomaticKitCreationEnabled(state == Qt::CheckState::Checked);
-        });
         mainLayout->addWidget(m_kitAutomaticCreationCheckBox);
     }
 
@@ -172,6 +179,9 @@ McuSupportOptionsWidget::McuSupportOptionsWidget(McuSupportOptions &options,
             &McuSupportOptionsWidget::updateStatus);
 
     showMcuTargetPackages();
+
+    Utils::installMarkSettingsDirtyTrigger(m_kitAutomaticCreationCheckBox);
+    Utils::installMarkSettingsDirtyTriggerRecursively(m_qtForMCUsSdkGroupBox);
 }
 
 void McuSupportOptionsWidget::updateStatus()
@@ -187,6 +197,10 @@ void McuSupportOptionsWidget::updateStatus()
         const bool ready = valid && mcuTarget;
         m_mcuTargetsGroupBox->setVisible(ready);
         m_packagesGroupBox->setVisible(ready && !mcuTarget->packages().isEmpty());
+        m_optionalPackagesGroupBox->setVisible(
+            ready && std::ranges::any_of(mcuTarget->packages(), [](McuPackagePtr p) {
+                return p->isOptional();
+            }));
         m_kitCreationGroupBox->setVisible(ready);
         m_mcuTargetsInfoLabel->setVisible(valid && m_options.sdkRepository.mcuTargets.isEmpty());
         if (m_mcuTargetsInfoLabel->isVisible()) {
@@ -266,6 +280,10 @@ void McuSupportOptionsWidget::showMcuTargetPackages()
         m_packagesLayout->removeRow(0);
     }
 
+    while (m_optionalPackagesLayout->rowCount() > 0) {
+        m_optionalPackagesLayout->removeRow(0);
+    }
+
     std::set<McuPackagePtr, McuPackageSort> packages;
 
     for (const auto &package : mcuTarget->packages()) {
@@ -285,7 +303,10 @@ void McuSupportOptionsWidget::showMcuTargetPackages()
                 package->setPath(macroExpander->expand(package->defaultPath()));
             }
         });
-        m_packagesLayout->addRow(package->label(), packageWidget);
+        if (package->isOptional())
+            m_optionalPackagesLayout->addRow(package->label(), packageWidget);
+        else
+            m_packagesLayout->addRow(package->label(), packageWidget);
         packageWidget->show();
     }
 
@@ -310,6 +331,8 @@ void McuSupportOptionsWidget::showEvent(QShowEvent *event)
 
 void McuSupportOptionsWidget::apply()
 {
+    m_options.setAutomaticKitCreationEnabled(m_kitAutomaticCreationCheckBox->isChecked());
+
     bool pathsChanged = false;
 
     m_settingsHandler->setAutomaticKitCreation(m_options.automaticKitCreationEnabled());
@@ -320,7 +343,7 @@ void McuSupportOptionsWidget::apply()
 
     QMessageBox warningPopup(QMessageBox::Icon::Warning,
                              Tr::tr("Warning"),
-                             Tr::tr("Cannot apply changes in Devices > MCU."),
+                             Tr::tr("Cannot apply changes in SDKs > MCU."),
                              QMessageBox::Ok,
                              this);
 
@@ -371,7 +394,7 @@ McuSupportOptionsPage::McuSupportOptionsPage(McuSupportOptions &options,
 {
     setId(Utils::Id(Constants::SETTINGS_ID));
     setDisplayName(Tr::tr("MCU"));
-    setCategory(ProjectExplorer::Constants::DEVICE_SETTINGS_CATEGORY);
+    setCategory(ProjectExplorer::Constants::SDK_SETTINGS_CATEGORY);
     setWidgetCreator([&options, &settingsHandler] {
         return new McuSupportOptionsWidget(options, settingsHandler);
     });

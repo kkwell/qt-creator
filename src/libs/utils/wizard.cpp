@@ -4,6 +4,7 @@
 #include "wizard.h"
 
 #include "algorithm.h"
+#include "guiutils.h"
 #include "hostosinfo.h"
 #include "icon.h"
 #include "qtcassert.h"
@@ -281,8 +282,8 @@ public:
     bool m_skipForSubproject = false;
 };
 
-Wizard::Wizard(QWidget *parent, Qt::WindowFlags flags) :
-    QWizard(parent, flags), d_ptr(new WizardPrivate)
+Wizard::Wizard(Qt::WindowFlags flags)
+    : QWizard(dialogParent(), flags), d_ptr(new WizardPrivate)
 {
     d_ptr->m_wizardProgress = new WizardProgress(this);
     connect(this, &QWizard::currentIdChanged, this, &Wizard::_q_currentPageChanged);
@@ -382,7 +383,7 @@ void Wizard::showVariables()
 {
     QString result = QLatin1String("<table>\n  <tr><td>Key</td><td>Type</td><td>Value</td><td>Eval</td></tr>\n");
     QHash<QString, QVariant> vars = variables();
-    const QList<QString> keys = sorted(vars.keys());
+    const QStringList keys = sorted(vars.keys());
     for (const QString &key : keys) {
         const QVariant &v = vars.value(key);
         result += QLatin1String("  <tr><td>")

@@ -3,20 +3,20 @@
 
 #include "taskwindow.h"
 
-#include "itaskhandler.h"
+#include "taskhandlers.h"
+#include "parseissuesdialog.h"
 #include "projectexplorericons.h"
 #include "projectexplorertr.h"
 #include "task.h"
 #include "taskhub.h"
 #include "taskmodel.h"
 
-#include <aggregation/aggregate.h>
-
-#include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
+#include <coreplugin/coreconstants.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/find/itemviewfind.h>
 #include <coreplugin/icontext.h>
+#include <coreplugin/icore.h>
 #include <coreplugin/session.h>
 
 #include <utils/algorithm.h>
@@ -32,6 +32,7 @@
 #include <utils/utilsicons.h>
 
 #include <QAbstractTextDocumentLayout>
+#include <QDesktopServices>
 #include <QLabel>
 #include <QMenu>
 #include <QPainter>
@@ -47,42 +48,6 @@ const char SESSION_FILTER_CATEGORIES[] = "TaskWindow.Categories";
 const char SESSION_FILTER_WARNINGS[] = "TaskWindow.IncludeWarnings";
 
 namespace ProjectExplorer {
-
-static QList<ITaskHandler *> g_taskHandlers;
-
-ITaskHandler::ITaskHandler(bool isMultiHandler) : m_isMultiHandler(isMultiHandler)
-{
-    g_taskHandlers.append(this);
-}
-
-ITaskHandler::~ITaskHandler()
-{
-    g_taskHandlers.removeOne(this);
-}
-
-void ITaskHandler::handle(const Task &task)
-{
-    QTC_ASSERT(m_isMultiHandler, return);
-    handle(Tasks{task});
-}
-
-void ITaskHandler::handle(const Tasks &tasks)
-{
-    QTC_ASSERT(canHandle(tasks), return);
-    QTC_ASSERT(!m_isMultiHandler, return);
-    handle(tasks.first());
-}
-
-bool ITaskHandler::canHandle(const Tasks &tasks) const
-{
-    if (tasks.isEmpty())
-        return false;
-    if (m_isMultiHandler)
-        return true;
-    if (tasks.size() > 1)
-        return false;
-    return canHandle(tasks.first());
-}
 
 namespace Internal {
 
@@ -130,22 +95,14 @@ private:
 class TaskWindowPrivate
 {
 public:
-    ITaskHandler *handler(const QAction *action)
-    {
-        ITaskHandler *handler = m_actionToHandlerMap.value(action, nullptr);
-        return g_taskHandlers.contains(handler) ? handler : nullptr;
-    }
-
     Internal::TaskModel *m_model;
     Internal::TaskFilterModel *m_filter;
     TaskView m_treeView;
     const Core::Context m_taskWindowContext{Core::Context(Core::Constants::C_PROBLEM_PANE)};
-    QHash<const QAction *, ITaskHandler *> m_actionToHandlerMap;
-    ITaskHandler *m_defaultHandler = nullptr;
     QToolButton *m_filterWarningsButton;
     QToolButton *m_categoriesButton;
+    QToolButton *m_externalButton = nullptr;
     QMenu *m_categoriesMenu;
-    QList<QAction *> m_actions;
     int m_visibleIssuesCount = 0;
 };
 
@@ -195,11 +152,8 @@ TaskWindow::TaskWindow() : d(std::make_unique<TaskWindowPrivate>())
             this, &TaskWindow::triggerDefaultHandler);
     connect(d->m_treeView.selectionModel(), &QItemSelectionModel::selectionChanged,
             this, [this] {
-        const Tasks tasks = d->m_filter->tasks(d->m_treeView.selectionModel()->selectedIndexes());
-        for (QAction * const action : std::as_const(d->m_actions)) {
-            ITaskHandler * const h = d->handler(action);
-            action->setEnabled(h && h->canHandle(tasks));
-        }
+        delayedInitialization();
+        updateTaskHandlerActionsState();
     });
 
     d->m_treeView.setContextMenuPolicy(Qt::ActionsContextMenu);
@@ -207,6 +161,11 @@ TaskWindow::TaskWindow() : d(std::make_unique<TaskWindowPrivate>())
     d->m_filterWarningsButton = createFilterButton(
                 Utils::Icons::WARNING_TOOLBAR.icon(),
                 Tr::tr("Show Warnings"), this, [this](bool show) { setShowWarnings(show); });
+
+    d->m_externalButton = new QToolButton;
+    d->m_externalButton->setIcon(Utils::Icons::OPENFILE_TOOLBAR.icon());
+    d->m_externalButton->setToolTip(Tr::tr("Create Issues From External Build Output..."));
+    connect(d->m_externalButton, &QToolButton::clicked, this, &executeParseIssuesDialog);
 
     d->m_categoriesButton = new QToolButton;
     d->m_categoriesButton->setIcon(Utils::Icons::FILTER.icon());
@@ -220,7 +179,7 @@ TaskWindow::TaskWindow() : d(std::make_unique<TaskWindowPrivate>())
 
     d->m_categoriesButton->setMenu(d->m_categoriesMenu);
 
-    setupFilterUi("IssuesPane.Filter");
+    setupFilterUi("IssuesPane.Filter", "ProjectExplorer::Internal::TaskWindow");
     setFilteringEnabled(true);
 
     TaskHub *hub = &taskHub();
@@ -228,10 +187,10 @@ TaskWindow::TaskWindow() : d(std::make_unique<TaskWindowPrivate>())
     connect(hub, &TaskHub::taskAdded, this, &TaskWindow::addTask);
     connect(hub, &TaskHub::taskRemoved, this, &TaskWindow::removeTask);
     connect(hub, &TaskHub::taskLineNumberUpdated, this, &TaskWindow::updatedTaskLineNumber);
-    connect(hub, &TaskHub::taskFileNameUpdated, this, &TaskWindow::updatedTaskFileName);
+    connect(hub, &TaskHub::taskFilePathUpdated, this, &TaskWindow::updatedTaskFilePath);
     connect(hub, &TaskHub::tasksCleared, this, &TaskWindow::clearTasks);
     connect(hub, &TaskHub::categoryVisibilityChanged, this, &TaskWindow::setCategoryVisibility);
-    connect(hub, &TaskHub::popupRequested, this, &TaskWindow::popup);
+    connect(hub, &TaskHub::popupRequested, this, &TaskWindow::popup, Qt::QueuedConnection);
     connect(hub, &TaskHub::showTask, this, &TaskWindow::showTask);
     connect(hub, &TaskHub::openTask, this, &TaskWindow::openTask);
 
@@ -257,6 +216,7 @@ TaskWindow::TaskWindow() : d(std::make_unique<TaskWindowPrivate>())
 
 TaskWindow::~TaskWindow()
 {
+    delete d->m_externalButton;
     delete d->m_filterWarningsButton;
     delete d->m_filter;
     delete d->m_model;
@@ -270,34 +230,20 @@ void TaskWindow::delayedInitialization()
 
     alreadyDone = true;
 
-    for (ITaskHandler *h : std::as_const(g_taskHandlers)) {
-        if (h->isDefaultHandler() && !d->m_defaultHandler)
-            d->m_defaultHandler = h;
-
-        QAction *action = h->createAction(this);
+    const auto registerTaskHandlerAction = [this](QAction *action) {
+        action->setParent(this);
         action->setEnabled(false);
-        QTC_ASSERT(action, continue);
-        d->m_actionToHandlerMap.insert(action, h);
-        connect(action, &QAction::triggered, this, [this, action] {
-            ITaskHandler *h = d->handler(action);
-            if (h)
-                h->handle(d->m_filter->tasks(d->m_treeView.selectionModel()->selectedIndexes()));
-        });
-        d->m_actions << action;
-
-        Id id = h->actionManagerId();
-        if (id.isValid()) {
-            Core::Command *cmd =
-                Core::ActionManager::registerAction(action, id, d->m_taskWindowContext, true);
-            action = cmd->action();
-        }
         d->m_treeView.addAction(action);
-    }
+    };
+    const auto getTasksForHandler = [this] {
+        return d->m_filter->tasks(d->m_treeView.selectionModel()->selectedIndexes());
+    };
+    setupTaskHandlers(this, d->m_taskWindowContext, registerTaskHandlerAction, getTasksForHandler);
 }
 
 QList<QWidget*> TaskWindow::toolBarWidgets() const
 {
-    return {d->m_filterWarningsButton, d->m_categoriesButton, filterWidget()};
+    return {d->m_externalButton, d->m_filterWarningsButton, d->m_categoriesButton, filterWidget()};
 }
 
 QWidget *TaskWindow::outputWidget(QWidget *)
@@ -375,25 +321,25 @@ void TaskWindow::addTask(const Task &task)
     emit tasksChanged();
     navigateStateChanged();
 
-    if ((task.options & Task::FlashWorthy)
-         && task.type == Task::Error
+    if (task.isFlashworthy()
+         && task.isError()
          && d->m_filter->filterIncludesErrors()
-         && !d->m_filter->filteredCategories().contains(task.category)) {
+         && !d->m_filter->filteredCategories().contains(task.category())) {
         flash();
     }
 }
 
 void TaskWindow::removeTask(const Task &task)
 {
-    d->m_model->removeTask(task.taskId);
+    d->m_model->removeTask(task.id());
 
     emit tasksChanged();
     navigateStateChanged();
 }
 
-void TaskWindow::updatedTaskFileName(const Task &task, const QString &fileName)
+void TaskWindow::updatedTaskFilePath(const Task &task, const FilePath &filePath)
 {
-    d->m_model->updateTaskFileName(task, fileName);
+    d->m_model->updateTaskFilePath(task, filePath);
     emit tasksChanged();
 }
 
@@ -422,7 +368,8 @@ void TaskWindow::openTask(const Task &task)
 
 void TaskWindow::triggerDefaultHandler(const QModelIndex &index)
 {
-    if (!index.isValid() || !d->m_defaultHandler)
+    ITaskHandler * const defaultHandler = defaultTaskHandler();
+    if (!index.isValid() || !defaultHandler)
         return;
 
     QModelIndex taskIndex = index;
@@ -434,19 +381,19 @@ void TaskWindow::triggerDefaultHandler(const QModelIndex &index)
     if (task.isNull())
         return;
 
-    if (!task.file.isEmpty() && !task.file.toFileInfo().isAbsolute()
-            && !task.fileCandidates.empty()) {
-        const FilePath userChoice = Utils::chooseFileFromList(task.fileCandidates);
+    if (task.hasFile() && !task.file().isAbsolutePath()
+            && !task.fileCandidates().empty()) {
+        const FilePath userChoice = Utils::chooseFileFromList(task.fileCandidates());
         if (!userChoice.isEmpty()) {
-            task.file = userChoice;
-            updatedTaskFileName(task, task.file.toString());
+            task.setFile(userChoice);
+            updatedTaskFilePath(task, task.file());
         }
     }
 
-    if (d->m_defaultHandler->canHandle(task)) {
-        d->m_defaultHandler->handle(task);
+    if (defaultHandler->canHandle(task)) {
+        defaultHandler->handle(task);
     } else {
-        if (!task.file.exists())
+        if (!task.file().exists())
             d->m_model->setFileNotFound(taskIndex, true);
     }
 }
@@ -534,46 +481,46 @@ bool TaskWindow::canPrevious() const
 
 void TaskWindow::goToNext()
 {
-    if (!canNext())
-        return;
-    QModelIndex startIndex = d->m_treeView.currentIndex();
-    QModelIndex currentIndex = startIndex;
-
-    if (startIndex.isValid()) {
-        do {
-            int row = currentIndex.row() + 1;
-            if (row == d->m_filter->rowCount())
-                row = 0;
-            currentIndex = d->m_filter->index(row, 0);
-            if (d->m_filter->hasFile(currentIndex))
-                break;
-        } while (startIndex != currentIndex);
-    } else {
-        currentIndex = d->m_filter->index(0, 0);
-    }
-    d->m_treeView.setCurrentIndex(currentIndex);
-    triggerDefaultHandler(currentIndex);
+    if (canNext())
+        goToNextOrPrev(1);
 }
 
 void TaskWindow::goToPrev()
 {
-    if (!canPrevious())
-        return;
+    if (canPrevious())
+        goToNextOrPrev(-1);
+}
+
+void TaskWindow::goToNextOrPrev(int offset)
+{
     QModelIndex startIndex = d->m_treeView.currentIndex();
     QModelIndex currentIndex = startIndex;
+    QModelIndex actualNeighbor;
 
     if (startIndex.isValid()) {
         do {
-            int row = currentIndex.row() - 1;
-            if (row < 0)
+            int row = currentIndex.row() + offset;
+            if (row == d->m_filter->rowCount())
+                row = 0;
+            else if (row < 0)
                 row = d->m_filter->rowCount() - 1;
             currentIndex = d->m_filter->index(row, 0);
+            if (!actualNeighbor.isValid())
+                actualNeighbor = currentIndex;
             if (d->m_filter->hasFile(currentIndex))
                 break;
         } while (startIndex != currentIndex);
     } else {
         currentIndex = d->m_filter->index(0, 0);
     }
+
+    // We only consider elements with files, except if there are none at all, in which case
+    // we don't skip anything.
+    if (currentIndex == startIndex && actualNeighbor.isValid()
+        && !d->m_filter->hasFile(currentIndex)) {
+        currentIndex = actualNeighbor;
+    }
+
     d->m_treeView.setCurrentIndex(currentIndex);
     triggerDefaultHandler(currentIndex);
 }
@@ -695,8 +642,14 @@ void TaskView::mouseReleaseEvent(QMouseEvent *e)
 
     const QString anchor = anchorAt(e->pos());
     if (anchor == m_clickAnchor) {
-        Core::EditorManager::openEditorAt(OutputLineParser::parseLinkTarget(m_clickAnchor), {},
-                                          Core::EditorManager::SwitchSplitIfAlreadyVisible);
+        if (OutputLineParser::isLinkTarget(m_clickAnchor)) {
+            EditorManager::openEditorAt(
+                OutputLineParser::parseLinkTarget(m_clickAnchor),
+                {},
+                EditorManager::SwitchSplitIfAlreadyVisible);
+        } else {
+            QDesktopServices::openUrl(QUrl(m_clickAnchor));
+        }
     }
     m_clickAnchor.clear();
 }
@@ -730,7 +683,7 @@ bool TaskView::event(QEvent *e)
 
 void TaskView::showToolTip(const Task &task, const QPoint &pos)
 {
-    if (task.details.isEmpty()) {
+    if (!task.hasDetails()) {
         ToolTip::hideImmediately();
         return;
     }

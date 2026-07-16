@@ -5,6 +5,7 @@
 
 #include "webassemblyconstants.h"
 #include "webassemblyqtversion.h"
+#include "webassemblysettings.h"
 #include "webassemblytoolchain.h"
 #include "webassemblytr.h"
 
@@ -35,12 +36,22 @@ public:
         setupId(IDevice::AutoDetected, Constants::WEBASSEMBLY_DEVICE_DEVICE_ID);
         setType(Constants::WEBASSEMBLY_DEVICE_TYPE);
         const QString displayNameAndType = Tr::tr("Web Browser");
-        settings()->displayName.setDefaultValue(displayNameAndType);
+        setDefaultDisplayName(displayNameAndType);
         setDisplayType(displayNameAndType);
-        setDeviceState(IDevice::DeviceStateUnknown);
         setMachineType(IDevice::Hardware);
         setOsType(OsTypeOther);
         setFileAccess(nullptr);
+        setDeviceState(IDevice::DeviceStateUnknown);
+    }
+
+    bool canCreateProcessModel() const override
+    {
+        return false;
+    }
+
+    Utils::Result<> handlesFile(const Utils::FilePath &) const final
+    {
+        return Utils::ResultError(Tr::tr("File handling is not supported."));
     }
 };
 
@@ -53,7 +64,8 @@ static void askUserAboutEmSdkSetup()
 {
     const char setupWebAssemblyEmSdk[] = "SetupWebAssemblyEmSdk";
 
-    if (!ICore::infoBar()->canInfoBeAdded(setupWebAssemblyEmSdk)
+    InfoBar *infoBar = ICore::popupInfoBar();
+    if (!infoBar->canInfoBeAdded(setupWebAssemblyEmSdk)
             || !WebAssemblyQtVersion::isQtVersionInstalled()
             || areToolChainsRegistered())
         return;
@@ -62,11 +74,14 @@ static void askUserAboutEmSdkSetup()
                       Tr::tr("Setup Emscripten SDK for WebAssembly? "
                              "To do it later, select Edit > Preferences > Devices > WebAssembly."),
                       InfoBarEntry::GlobalSuppression::Enabled);
-    info.addCustomButton(Tr::tr("Setup Emscripten SDK"), [setupWebAssemblyEmSdk] {
-        ICore::infoBar()->removeInfo(setupWebAssemblyEmSdk);
-        QTimer::singleShot(0, []() { ICore::showOptionsDialog(Constants::SETTINGS_ID); });
-    });
-    ICore::infoBar()->addInfo(info);
+    info.setTitle(Tr::tr("Set up WebAssembly?"));
+    info.setInfoType(InfoLabel::Information);
+    info.addCustomButton(
+        Tr::tr("Setup Emscripten SDK"),
+        [] { QTimer::singleShot(0, []() { ICore::showSettings(Constants::SETTINGS_ID); }); },
+        {},
+        InfoBarEntry::ButtonAction::Hide);
+    infoBar->addInfo(info);
 }
 
 class WebAssemblyDeviceFactory final : public IDeviceFactory
@@ -88,8 +103,11 @@ void setupWebAssemblyDevice()
     static WebAssemblyDeviceFactory theWebAssemblyDeviceFactory;
 
     QObject::connect(KitManager::instance(), &KitManager::kitsLoaded, [] {
-        DeviceManager::instance()->addDevice(createWebAssemblyDevice());
+        DeviceManager::addDevice(createWebAssemblyDevice());
         askUserAboutEmSdkSetup();
+        DeviceManager::setDeviceState(
+            Constants::WEBASSEMBLY_DEVICE_DEVICE_ID,
+            areToolChainsRegistered() ? IDevice::DeviceReadyToUse : IDevice::DeviceDisconnected);
     });
 }
 

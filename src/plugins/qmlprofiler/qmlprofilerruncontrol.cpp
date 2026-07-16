@@ -3,218 +3,77 @@
 
 #include "qmlprofilerruncontrol.h"
 
+#include "qmlprofilerclientmanager.h"
+#include "qmlprofilerstatemanager.h"
 #include "qmlprofilertool.h"
 
-#include <coreplugin/icore.h>
-#include <coreplugin/helpmanager.h>
-
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projectexplorericons.h>
-#include <projectexplorer/runconfiguration.h>
-#include <projectexplorer/target.h>
+#include <projectexplorer/qmldebugcommandlinearguments.h>
+#include <projectexplorer/runcontrol.h>
 
-#include <qtsupport/baseqtversion.h>
-#include <qtsupport/qtkitaspect.h>
-#include <qtsupport/qtsupportconstants.h>
+#include <QtTaskTree/QBarrier>
 
-#include <qmldebug/qmldebugcommandlinearguments.h>
-
-#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcprocess.h>
 #include <utils/url.h>
 
-#include <QMessageBox>
-
-using namespace Core;
 using namespace ProjectExplorer;
+using namespace QtTaskTree;
+using namespace Utils;
 
 namespace QmlProfiler::Internal {
 
-const char QmlServerUrl[] = "QmlServerUrl";
-
-//
-// QmlProfilerRunControlPrivate
-//
-
-class QmlProfilerRunner::QmlProfilerRunnerPrivate
+Group qmlProfilerRecipe(RunControl *runControl)
 {
-public:
-    QPointer<QmlProfilerStateManager> m_profilerState;
-};
-
-//
-// QmlProfilerRunControl
-//
-
-QmlProfilerRunner::QmlProfilerRunner(RunControl *runControl)
-    : RunWorker(runControl)
-    , d(new QmlProfilerRunnerPrivate)
-{
-    setId("QmlProfilerRunner");
     runControl->setIcon(ProjectExplorer::Icons::ANALYZER_START_SMALL_TOOLBAR);
-    setSupportsReRunning(false);
+
+    const auto onSetup = [runControl](QBarrier &barrier) {
+        QmlProfilerTool::instance()->finalizeRunControl(runControl);
+        QmlProfilerClientManager *clientManager = QmlProfilerTool::instance()->clientManager();
+        QObject::connect(clientManager, &QmlProfilerClientManager::connectionFailed,
+                         &barrier, [barrier = &barrier] { barrier->stopWithResult(DoneResult::Error); });
+        QObject::connect(clientManager, &QmlProfilerClientManager::connectionClosed,
+                         &barrier, &QBarrier::advance);
+        QObject::connect(runControl, &RunControl::canceled, &barrier, [barrier = &barrier] {
+            if (QmlProfilerTool::instance() == nullptr) {
+                barrier->stopWithResult(DoneResult::Error);
+                return;
+            }
+            QmlProfilerStateManager *stateManager = QmlProfilerTool::instance()->stateManager();
+            if (stateManager) {
+                if (stateManager->currentState() == QmlProfilerStateManager::AppRunning)
+                    stateManager->setCurrentState(QmlProfilerStateManager::AppStopRequested);
+                QObject::connect(stateManager, &QmlProfilerStateManager::stateChanged,
+                                 barrier, [stateManager, barrier] {
+                    if (stateManager->currentState() == QmlProfilerStateManager::Idle) {
+                        QmlProfilerTool::instance()->handleStop();
+                        barrier->stopWithResult(DoneResult::Error);
+                    }
+                });
+            }
+        });
+        clientManager->setServer(runControl->qmlChannel());
+        clientManager->connectToServer();
+        runControl->reportStarted();
+    };
+    const auto onDone = [] {
+        if (QmlProfilerTool::instance() == nullptr)
+            return;
+        QmlProfilerTool::instance()->handleStop();
+        QmlProfilerStateManager *stateManager = QmlProfilerTool::instance()->stateManager();
+        if (stateManager && stateManager->currentState() == QmlProfilerStateManager::AppRunning)
+            stateManager->setCurrentState(QmlProfilerStateManager::AppStopRequested);
+    };
+    return { QBarrierTask(onSetup, onDone) };
 }
 
-QmlProfilerRunner::~QmlProfilerRunner()
+Group localQmlProfilerRecipe(RunControl *runControl)
 {
-    delete d;
-}
+    runControl->requestQmlChannel();
 
-void QmlProfilerRunner::start()
-{
-    if (!d->m_profilerState)
-        QmlProfilerTool::instance()->finalizeRunControl(this);
-    QTC_ASSERT(d->m_profilerState, return);
-    reportStarted();
-}
-
-void QmlProfilerRunner::stop()
-{
-    if (!d->m_profilerState) {
-        reportStopped();
-        return;
-    }
-
-    switch (d->m_profilerState->currentState()) {
-    case QmlProfilerStateManager::AppRunning:
-        d->m_profilerState->setCurrentState(QmlProfilerStateManager::AppStopRequested);
-        break;
-    case QmlProfilerStateManager::AppStopRequested:
-        // Pressed "stop" a second time. Kill the application without collecting data
-        d->m_profilerState->setCurrentState(QmlProfilerStateManager::Idle);
-        reportStopped();
-        break;
-    case QmlProfilerStateManager::Idle:
-    case QmlProfilerStateManager::AppDying:
-        // valid, but no further action is needed
-        break;
-    default: {
-        const QString message = QString::fromLatin1("Unexpected engine stop from state %1 in %2:%3")
-            .arg(d->m_profilerState->currentStateAsString(), QString::fromLatin1(__FILE__), QString::number(__LINE__));
-        qWarning("%s", qPrintable(message));
-    }
-        break;
-    }
-}
-
-void QmlProfilerRunner::notifyRemoteFinished()
-{
-    QTC_ASSERT(d->m_profilerState, return);
-
-    switch (d->m_profilerState->currentState()) {
-    case QmlProfilerStateManager::AppRunning:
-        d->m_profilerState->setCurrentState(QmlProfilerStateManager::AppDying);
-        break;
-    case QmlProfilerStateManager::Idle:
-        break;
-    default:
-        const QString message = QString::fromLatin1("Process died unexpectedly from state %1 in %2:%3")
-            .arg(d->m_profilerState->currentStateAsString(), QString::fromLatin1(__FILE__), QString::number(__LINE__));
-        qWarning("%s", qPrintable(message));
-        break;
-    }
-}
-
-void QmlProfilerRunner::cancelProcess()
-{
-    QTC_ASSERT(d->m_profilerState, return);
-
-    switch (d->m_profilerState->currentState()) {
-    case QmlProfilerStateManager::Idle:
-        break;
-    case QmlProfilerStateManager::AppRunning:
-        d->m_profilerState->setCurrentState(QmlProfilerStateManager::AppDying);
-        break;
-    default: {
-        const QString message = QString::fromLatin1("Unexpected process termination requested with state %1 in %2:%3")
-            .arg(d->m_profilerState->currentStateAsString(), QString::fromLatin1(__FILE__), QString::number(__LINE__));
-        qWarning("%s", qPrintable(message));
-        return;
-    }
-    }
-    runControl()->initiateStop();
-}
-
-void QmlProfilerRunner::registerProfilerStateManager( QmlProfilerStateManager *profilerState )
-{
-    // disconnect old
-    if (d->m_profilerState)
-        disconnect(d->m_profilerState, &QmlProfilerStateManager::stateChanged,
-                   this, &QmlProfilerRunner::profilerStateChanged);
-
-    d->m_profilerState = profilerState;
-
-    // connect
-    if (d->m_profilerState)
-        connect(d->m_profilerState, &QmlProfilerStateManager::stateChanged,
-                this, &QmlProfilerRunner::profilerStateChanged);
-}
-
-void QmlProfilerRunner::profilerStateChanged()
-{
-    switch (d->m_profilerState->currentState()) {
-    case QmlProfilerStateManager::Idle:
-        reportStopped();
-        break;
-    default:
-        break;
-    }
-}
-
-void QmlProfilerRunner::setServerUrl(const QUrl &serverUrl)
-{
-    recordData(QmlServerUrl, serverUrl);
-}
-
-QUrl QmlProfilerRunner::serverUrl() const
-{
-    QVariant recordedServer = recordedData(QmlServerUrl);
-    return recordedServer.toUrl();
-}
-
-//
-// LocalQmlProfilerSupport
-//
-
-static QUrl localServerUrl(RunControl *runControl)
-{
-    QUrl serverUrl;
-    Kit *kit = runControl->kit();
-    const QtSupport::QtVersion *version = QtSupport::QtKitAspect::qtVersion(kit);
-    if (version) {
-        if (version->qtVersion() >= QVersionNumber(5, 6, 0))
-            serverUrl = Utils::urlFromLocalSocket();
-        else
-            serverUrl = Utils::urlFromLocalHostAndFreePort();
-    } else {
-        qWarning("Running QML profiler on Kit without Qt version?");
-        serverUrl = Utils::urlFromLocalHostAndFreePort();
-    }
-    return serverUrl;
-}
-
-LocalQmlProfilerSupport::LocalQmlProfilerSupport(RunControl *runControl)
-    : LocalQmlProfilerSupport(runControl, localServerUrl(runControl))
-{
-}
-
-LocalQmlProfilerSupport::LocalQmlProfilerSupport(RunControl *runControl, const QUrl &serverUrl)
-    : SimpleTargetRunner(runControl)
-{
-    setId("LocalQmlProfilerSupport");
-
-    auto profiler = new QmlProfilerRunner(runControl);
-    profiler->setServerUrl(serverUrl);
-
-    addStopDependency(profiler);
-    // We need to open the local server before the application tries to connect.
-    // In the TCP case, it doesn't hurt either to start the profiler before.
-    addStartDependency(profiler);
-
-    setStartModifier([this, profiler, serverUrl] {
-
-        QUrl serverUrl = profiler->serverUrl();
+    const auto modifier = [runControl](Process &process) {
+        const QUrl serverUrl = runControl->qmlChannel();
         QString code;
         if (serverUrl.scheme() == Utils::urlSocketScheme())
             code = QString("file:%1").arg(serverUrl.path());
@@ -223,17 +82,22 @@ LocalQmlProfilerSupport::LocalQmlProfilerSupport(RunControl *runControl, const Q
         else
             QTC_CHECK(false);
 
-        QString arguments = Utils::ProcessArgs::quoteArg(
-                                QmlDebug::qmlDebugCommandLineArguments(QmlDebug::QmlProfilerServices, code, true));
+        const QString arguments = ProcessArgs::quoteArg(
+            qmlDebugCommandLineArguments(QmlProfilerServices, code, true));
 
-        Utils::CommandLine cmd = commandLine();
-        const QString oldArgs = cmd.arguments();
-        cmd.setArguments(arguments);
-        cmd.addArgs(oldArgs, Utils::CommandLine::Raw);
-        setCommandLine(cmd);
+        CommandLine cmd = runControl->commandLine();
+        cmd.prependArgs(arguments, CommandLine::Raw);
+        process.setCommand(cmd.toLocal());
+    };
 
-        forceRunOnHost();
-    });
+    const ProcessTask processTask = runControl->processTaskWithModifier(modifier,
+                                                                        {.setupCanceler = false});
+
+    return {
+        When (processTask, &Process::started, WorkflowPolicy::StopOnSuccessOrError) >> Do {
+            qmlProfilerRecipe(runControl)
+        }
+    };
 }
 
 // Factories
@@ -244,7 +108,8 @@ class QmlProfilerRunWorkerFactory final : public RunWorkerFactory
 public:
     QmlProfilerRunWorkerFactory()
     {
-        setProduct<QmlProfilerRunner>();
+        setId("QmlProfilerRunWorkerFactory");
+        setRecipeProducer(qmlProfilerRecipe);
         addSupportedRunMode(ProjectExplorer::Constants::QML_PROFILER_RUNNER);
     }
 };
@@ -256,7 +121,7 @@ public:
     LocalQmlProfilerRunWorkerFactory()
     {
         setId(ProjectExplorer::Constants::QML_PROFILER_RUN_FACTORY);
-        setProduct<LocalQmlProfilerSupport>();
+        setRecipeProducer(&localQmlProfilerRecipe);
         addSupportedRunMode(ProjectExplorer::Constants::QML_PROFILER_RUN_MODE);
         addSupportedDeviceType(ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE);
 
@@ -269,6 +134,5 @@ void setupQmlProfilerRunning()
     static QmlProfilerRunWorkerFactory theQmlProfilerRunWorkerFactory;
     static LocalQmlProfilerRunWorkerFactory theLocalQmlProfilerRunWorkerFactory;
 }
-
 
 } // QmlProfiler::Internal

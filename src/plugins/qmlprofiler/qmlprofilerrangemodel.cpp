@@ -12,14 +12,13 @@
 #include <tracing/timelineformattime.h>
 
 #include <QCoreApplication>
-#include <QVector>
 #include <QHash>
-#include <QUrl>
-#include <QString>
 #include <QStack>
+#include <QString>
+#include <QUrl>
 
-namespace QmlProfiler {
-namespace Internal {
+using namespace QmlDebug;
+namespace QmlProfiler::Internal {
 
 QmlProfilerRangeModel::QmlProfilerRangeModel(QmlProfilerModelManager *manager, RangeType range,
                                              Timeline::TimelineModelAggregator *parent) :
@@ -93,7 +92,7 @@ void QmlProfilerRangeModel::computeNestingContracted()
 
     int nestingLevels = Constants::QML_MIN_LEVEL;
     int collapsedRowCount = nestingLevels + 1;
-    QVector<qint64> nestingEndTimes;
+    QList<qint64> nestingEndTimes;
     nestingEndTimes.fill(0, nestingLevels + 1);
 
     for (i = 0; i < eventCount; i++) {
@@ -237,5 +236,4 @@ QList<const Timeline::TimelineRenderPass *> QmlProfilerRangeModel::supportedRend
 
 }
 
-} // namespace Internal
-} // namespaec QmlProfiler
+} // namespaec QmlProfiler::Internal

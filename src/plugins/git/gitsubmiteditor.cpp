@@ -9,18 +9,28 @@
 #include "gittr.h"
 
 #include <coreplugin/editormanager/editormanager.h>
+#include <coreplugin/fileutils.h>
 #include <coreplugin/iversioncontrol.h>
-#include <coreplugin/progressmanager/progressmanager.h>
+#include <coreplugin/progressmanager/taskprogress.h>
+
 #include <utils/async.h>
+#include <utils/environment.h>
+#include <utils/fileutils.h>
 #include <utils/qtcassert.h>
+#include <utils/stringutils.h>
+
 #include <vcsbase/submitfilemodel.h>
+#include <vcsbase/vcsbaseeditor.h>
 #include <vcsbase/vcsoutputwindow.h>
 
+#include <QApplication>
+#include <QClipboard>
 #include <QDebug>
 #include <QStringList>
-#include <QTextCodec>
 #include <QTimer>
 
+using namespace Core;
+using namespace QtTaskTree;
 using namespace Utils;
 using namespace VcsBase;
 
@@ -63,14 +73,9 @@ private:
     }
 };
 
-CommitDataFetchResult CommitDataFetchResult::fetch(CommitType commitType, const FilePath &workingDirectory)
+static Result<CommitData> fetchCommitData(CommitType commitType, const FilePath &workingDirectory)
 {
-    CommitDataFetchResult result;
-    result.commitData.commitType = commitType;
-    QString commitTemplate;
-    result.success = gitClient().getCommitData(
-                workingDirectory, &commitTemplate, result.commitData, &result.errorMessage);
-    return result;
+    return gitClient().getCommitData(commitType, workingDirectory);
 }
 
 /* The problem with git is that no diff can be obtained to for a random
@@ -83,10 +88,11 @@ GitSubmitEditor::GitSubmitEditor() :
 {
     connect(this, &VcsBaseSubmitEditor::diffSelectedRows, this, &GitSubmitEditor::slotDiffSelected);
     connect(submitEditorWidget(), &GitSubmitEditorWidget::showRequested, this, &GitSubmitEditor::showCommit);
-    connect(versionControl(), &Core::IVersionControl::repositoryChanged,
+    connect(submitEditorWidget(), &GitSubmitEditorWidget::logRequested, this, &GitSubmitEditor::showLog);
+    connect(submitEditorWidget(), &GitSubmitEditorWidget::fileActionRequested,
+            this, &GitSubmitEditor::performFileAction);
+    connect(versionControl(), &IVersionControl::repositoryChanged,
             this, &GitSubmitEditor::forceUpdateFileModel);
-    connect(&m_fetchWatcher, &QFutureWatcher<CommitDataFetchResult>::finished,
-            this, &GitSubmitEditor::commitDataRetrieved);
 }
 
 GitSubmitEditor::~GitSubmitEditor() = default;
@@ -103,10 +109,12 @@ const GitSubmitEditorWidget *GitSubmitEditor::submitEditorWidget() const
 
 void GitSubmitEditor::setCommitData(const CommitData &d)
 {
+    using FileState = Core::VcsFileState;
+
     m_commitEncoding = d.commitEncoding;
     m_workingDirectory = d.panelInfo.repository;
     m_commitType = d.commitType;
-    m_amendSHA1 = d.amendSHA1;
+    m_amenHash = d.amendHash;
 
     GitSubmitEditorWidget *w = submitEditorWidget();
     w->initialize(m_workingDirectory, d);
@@ -119,16 +127,18 @@ void GitSubmitEditor::setCommitData(const CommitData &d)
     m_model->setFileStatusQualifier([](const QString &, const QVariant &extraData) {
         const FileStates state = static_cast<FileStates>(extraData.toInt());
         if (state & (UnmergedFile | UnmergedThem | UnmergedUs))
-            return SubmitFileModel::FileUnmerged;
-        if (state.testFlag(AddedFile) || state.testFlag(UntrackedFile))
-            return SubmitFileModel::FileAdded;
+            return FileState::Unmerged;
+        if (state.testFlag(UntrackedFile))
+            return FileState::Untracked;
+        if (state.testFlag(AddedFile))
+            return FileState::Added;
         if (state.testFlag(ModifiedFile) || state.testFlag(TypeChangedFile))
-            return SubmitFileModel::FileModified;
+            return FileState::Modified;
         if (state.testFlag(DeletedFile))
-            return SubmitFileModel::FileDeleted;
+            return FileState::Deleted;
         if (state.testFlag(RenamedFile))
-            return SubmitFileModel::FileRenamed;
-        return SubmitFileModel::FileStatusUnknown;
+            return FileState::Renamed;
+        return FileState::Unknown;
     } );
 
     if (!d.files.isEmpty()) {
@@ -165,16 +175,16 @@ void GitSubmitEditor::slotDiffSelected(const QList<int> &rows)
             unmergedFiles.push_back(fileName);
         } else if (state & StagedFile) {
             if (state & (RenamedFile | CopiedFile)) {
-                const int arrow = fileName.indexOf(" -> ");
-                if (arrow != -1) {
-                    stagedFiles.push_back(fileName.left(arrow));
-                    stagedFiles.push_back(fileName.mid(arrow + 4));
+                const QStringList files = gitClient().splitRenamedFilePattern(fileName);
+                if (files.size() == 2) {
+                    stagedFiles.push_back(files.at(0));
+                    stagedFiles.push_back(files.at(1));
                     continue;
                 }
             }
             stagedFiles.push_back(fileName);
         } else if (state == UntrackedFile) {
-            Core::EditorManager::openEditor(m_workingDirectory.pathAppended(fileName));
+            EditorManager::openEditor(m_workingDirectory.pathAppended(fileName));
         } else {
             unstagedFiles.push_back(fileName);
         }
@@ -191,6 +201,19 @@ void GitSubmitEditor::showCommit(const QString &commit)
         gitClient().show(m_workingDirectory, commit);
 }
 
+void GitSubmitEditor::showLog(const QStringList &range)
+{
+    if (!m_workingDirectory.isEmpty())
+        gitClient().log(m_workingDirectory, {}, false, range);
+}
+
+void GitSubmitEditor::performFileAction(const Utils::FilePath &filePath, IVersionControl::FileAction action)
+{
+    const bool refresh = Git::Internal::performFileAction(m_workingDirectory, filePath, action);
+    if (refresh)
+        QTimer::singleShot(100, this, &GitSubmitEditor::forceUpdateFileModel);
+}
+
 void GitSubmitEditor::updateFileModel()
 {
     // Commit data is set when the editor is initialized, and updateFileModel immediately follows,
@@ -203,13 +226,36 @@ void GitSubmitEditor::updateFileModel()
     if (w->updateInProgress() || m_workingDirectory.isEmpty())
         return;
     w->setUpdateInProgress(true);
-    // TODO: Check if fetch works OK from separate thread, refactor otherwise
-    m_fetchWatcher.setFuture(Utils::asyncRun(&CommitDataFetchResult::fetch,
-                                             m_commitType, m_workingDirectory));
-    Core::ProgressManager::addTask(m_fetchWatcher.future(), Tr::tr("Refreshing Commit Data"),
-                                   TASK_UPDATE_COMMIT);
 
-    Utils::futureSynchronizer()->addFuture(m_fetchWatcher.future());
+    using ResultType = Result<CommitData>;
+    // TODO: Check if fetch works OK from separate thread, refactor otherwise
+    const auto onSetup = [this](Async<ResultType> &task) {
+        task.setConcurrentCallData(&fetchCommitData,m_commitType,
+                                   m_workingDirectory);
+    };
+    const auto onDone = [this](const Async<ResultType> &task) {
+        const ResultType result = task.result();
+        GitSubmitEditorWidget *w = submitEditorWidget();
+        if (result) {
+            setCommitData(result.value());
+            w->refreshLog(m_workingDirectory);
+            w->setEnabled(true);
+        } else {
+            // Nothing to commit left!
+            VcsOutputWindow::appendError(m_workingDirectory, result.error());
+            m_model->clear();
+            w->setEnabled(false);
+        }
+        w->setUpdateInProgress(false);
+    };
+    const auto onTreeSetup = [](QTaskTree &taskTree) {
+        auto progress = new TaskProgress(&taskTree);
+        progress->setDisplayName(Tr::tr("Refreshing Commit Data"));
+        progress->setId(TASK_UPDATE_COMMIT);
+    };
+    m_taskTreeRunner.start(
+        {AsyncTask<ResultType>(onSetup, onDone, CallDoneFlag::OnSuccess)},
+        onTreeSetup);
 }
 
 void GitSubmitEditor::forceUpdateFileModel()
@@ -221,32 +267,15 @@ void GitSubmitEditor::forceUpdateFileModel()
         updateFileModel();
 }
 
-void GitSubmitEditor::commitDataRetrieved()
-{
-    CommitDataFetchResult result = m_fetchWatcher.result();
-    GitSubmitEditorWidget *w = submitEditorWidget();
-    if (result.success) {
-        setCommitData(result.commitData);
-        w->refreshLog(m_workingDirectory);
-        w->setEnabled(true);
-    } else {
-        // Nothing to commit left!
-        VcsOutputWindow::appendError(result.errorMessage);
-        m_model->clear();
-        w->setEnabled(false);
-    }
-    w->setUpdateInProgress(false);
-}
-
 GitSubmitEditorPanelData GitSubmitEditor::panelData() const
 {
     return submitEditorWidget()->panelData();
 }
 
-QString GitSubmitEditor::amendSHA1() const
+QString GitSubmitEditor::amendHash() const
 {
-    const QString commit = submitEditorWidget()->amendSHA1();
-    return commit.isEmpty() ? m_amendSHA1 : commit;
+    const QString commit = submitEditorWidget()->amendHash();
+    return commit.isEmpty() ? m_amenHash : commit;
 }
 
 QByteArray GitSubmitEditor::fileContents() const
@@ -255,8 +284,8 @@ QByteArray GitSubmitEditor::fileContents() const
 
     // Do the encoding convert, When use user-defined encoding
     // e.g. git config --global i18n.commitencoding utf-8
-    if (m_commitEncoding)
-        return m_commitEncoding->fromUnicode(text);
+    if (m_commitEncoding.isValid())
+        return m_commitEncoding.encode(text);
 
     // Using utf-8 as the default encoding
     return text.toUtf8();

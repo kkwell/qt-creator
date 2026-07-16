@@ -6,7 +6,6 @@
 #include "qmljseditordocument.h"
 #include <utils/changeset.h>
 #include <qmljs/qmljsdocument.h>
-#include <qmljs/qmljsicons.h>
 
 #include <QStandardItemModel>
 
@@ -57,12 +56,7 @@ public:
     QmlOutlineModel(QmlJSEditorDocument *document);
 
     // QStandardItemModel
-    QStringList mimeTypes() const override;
-    QMimeData *mimeData(const QModelIndexList &indexes) const override;
-    bool dropMimeData(const QMimeData *data, Qt::DropAction action, int row, int column, const QModelIndex  &parent) override;
     Qt::ItemFlags flags(const QModelIndex &index) const override;
-    Qt::DropActions supportedDragActions() const override;
-    Qt::DropActions supportedDropActions() const override;
 
     QmlJS::Document::Ptr document() const;
     void update(const QmlJSTools::SemanticInfo &semanticInfo);
@@ -134,7 +128,6 @@ private:
     QmlJSTools::SemanticInfo m_semanticInfo;
     QList<int> m_treePos;
     QStandardItem *m_currentItem;
-    QmlJS::Icons *m_icons;
 
     QHash<QString, QIcon> m_typeToIcon;
     QHash<QmlOutlineItem*,QIcon> m_itemToIcon;

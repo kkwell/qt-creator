@@ -4,12 +4,13 @@
 #include "nimblebuildstep.h"
 
 #include "nimconstants.h"
-#include "nimbuildsystem.h"
 #include "nimoutputtaskparser.h"
+#include "nimproject.h"
 #include "nimtr.h"
 
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/processparameters.h>
+#include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/runconfigurationaspects.h>
 
@@ -24,7 +25,6 @@ public:
     NimbleBuildStep(BuildStepList *parentList, Id id)
         : AbstractProcessStep(parentList, id)
     {
-        arguments.setMacroExpander(macroExpander());
         arguments.setSettingsKey(Constants::C_NIMBLEBUILDSTEP_ARGUMENTS);
         arguments.setResetter([this] { return defaultArguments(); });
         arguments.setArguments(defaultArguments());

@@ -8,26 +8,18 @@
 
 #include <coreplugin/progressmanager/processprogress.h>
 
+#include <QtTaskTree/QTaskTree>
+
 #include <utils/filepath.h>
-#include <utils/processenums.h>
+#include <utils/processinterface.h>
+#include <utils/qtcprocess.h>
+#include <utils/textcodec.h>
 
 #include <QObject>
-
-QT_BEGIN_NAMESPACE
-class QTextCodec;
-QT_END_NAMESPACE
-
-namespace Utils {
-class CommandLine;
-class Environment;
-class Process;
-}
 
 namespace VcsBase {
 
 namespace Internal { class VcsCommandPrivate; }
-
-class VcsCommand;
 
 using ExitCodeInterpreter = std::function<Utils::ProcessResult(int /*exitCode*/)>;
 
@@ -36,7 +28,7 @@ class VCSBASE_EXPORT CommandResult
 public:
     CommandResult() = default;
     CommandResult(const Utils::Process &process);
-    CommandResult(const VcsCommand &command);
+    CommandResult(const Utils::Process &process, Utils::ProcessResult result);
     CommandResult(Utils::ProcessResult result, const QString &exitMessage)
         : m_result(result), m_exitMessage(exitMessage) {}
 
@@ -49,6 +41,8 @@ public:
 
     QByteArray rawStdOut() const { return m_rawStdOut; }
 
+    Utils::FilePath workingDirectory() const { return m_workingDirectory; }
+
 private:
     Utils::ProcessResult m_result = Utils::ProcessResult::StartFailed;
     int m_exitCode = 0;
@@ -58,51 +52,30 @@ private:
     QString m_cleanedStdErr;
 
     QByteArray m_rawStdOut;
+
+    Utils::FilePath m_workingDirectory;
 };
 
-class VCSBASE_EXPORT VcsCommand final : public QObject
+class VCSBASE_EXPORT VcsProcessData
 {
-    Q_OBJECT
-
 public:
-    // TODO: For master, make c'tor private and make it a friend to VcsBaseClientImpl.
-    VcsCommand(const Utils::FilePath &workingDirectory, const Utils::Environment &environment);
-    ~VcsCommand() override;
-
-    void setDisplayName(const QString &name);
-
-    void addJob(const Utils::CommandLine &command, int timeoutS,
-                const Utils::FilePath &workingDirectory = {},
-                const ExitCodeInterpreter &interpreter = {});
-    void start();
-
-    void addFlags(RunFlags f);
-
-    void setCodec(QTextCodec *codec);
-
-    void setProgressParser(const Core::ProgressParser &parser);
-
-    static CommandResult runBlocking(const Utils::FilePath &workingDirectory,
-                                     const Utils::Environment &environment,
-                                     const Utils::CommandLine &command,
-                                     RunFlags flags,
-                                     int timeoutS,
-                                     QTextCodec *codec);
-    void cancel();
-
-    QString cleanedStdOut() const;
-    QString cleanedStdErr() const;
-    Utils::ProcessResult result() const;
-
-signals:
-    void stdOutText(const QString &);
-    void stdErrText(const QString &);
-    void done();
-
-private:
-    CommandResult runBlockingHelper(const Utils::CommandLine &command, int timeoutS);
-
-    class Internal::VcsCommandPrivate *const d;
+    Utils::ProcessRunData runData;
+    RunFlags flags = RunFlag::None;
+    ExitCodeInterpreter interpreter = {};
+    Core::ProgressParser progressParser = {};
+    Utils::TextEncoding encoding = {};
+    Utils::TextChannelCallback stdOutHandler = {};
+    Utils::TextChannelCallback stdErrHandler = {};
 };
+
+VCSBASE_EXPORT QtTaskTree::ExecutableItem errorTask(const Utils::FilePath &workingDir,
+                                                 const QString &errorMessage);
+
+VCSBASE_EXPORT Utils::ProcessTask vcsProcessTask(const VcsProcessData &data,
+    const std::optional<QtTaskTree::Storage<CommandResult>> &resultStorage = {});
+
+// TODO: Avoid, migrate to asynchronous task tree recipes.
+VCSBASE_EXPORT CommandResult vcsRunBlocking(const VcsProcessData &data,
+    const std::chrono::seconds timeout = std::chrono::seconds(10));
 
 } // namespace Utils

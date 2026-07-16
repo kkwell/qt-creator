@@ -6,8 +6,7 @@
 #include "cppchecktextmark.h"
 #include "cppchecktr.h"
 
-#include <texteditor/texteditortr.h>
-
+#include <coreplugin/actionmanager/command.h>
 #include <utils/stringutils.h>
 #include <utils/utilsicons.h>
 
@@ -66,7 +65,7 @@ CppcheckTextMark::CppcheckTextMark(const Diagnostic &diagnostic)
         // Copy to clipboard action
         QAction *action = new QAction;
         action->setIcon(Icon::fromTheme("edit-copy"));
-        action->setToolTip(TextEditor::Tr::tr("Copy to Clipboard"));
+        action->setToolTip(Core::msgCopyToClipboard());
         QObject::connect(action, &QAction::triggered, [diagnostic]() {
             const QString text = QString("%1:%2: %3")
                     .arg(diagnostic.fileName.toUserOutput())
@@ -89,7 +88,7 @@ QString CppcheckTextMark::toolTipText(const QString &severityText) const
                 "  <tr>"
                 "    <td colspan='2' align='left' style='padding-left:10px'>%3</td>"
                 "  </tr>"
-                "</table>").arg(m_checkId, severityText, m_message);
+                "</table>").arg(m_checkId, severityText, m_message.toHtmlEscaped());
 }
 
 } // Cppcheck::Internal

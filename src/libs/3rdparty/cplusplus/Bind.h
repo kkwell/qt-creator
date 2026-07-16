@@ -220,6 +220,7 @@ protected:
     bool visit(QtInterfacesDeclarationAST *ast) override;
     bool visit(AliasDeclarationAST *ast) override;
     bool visit(AsmDefinitionAST *ast) override;
+    bool visit(ConceptDeclarationAST *ast) override;
     bool visit(ExceptionDeclarationAST *ast) override;
     bool visit(FunctionDefinitionAST *ast) override;
     bool visit(LinkageBodyAST *ast) override;
@@ -265,6 +266,7 @@ protected:
     bool visit(NamedTypeSpecifierAST *ast) override;
     bool visit(ElaboratedTypeSpecifierAST *ast) override;
     bool visit(EnumSpecifierAST *ast) override;
+    bool visit(PlaceholderTypeSpecifierAST *ast) override;
 
     // PtrOperatorAST
     bool visit(PointerToMemberAST *ast) override;
@@ -290,6 +292,7 @@ private:
     static const int kMaxDepth;
 
     void ensureValidClassName(const Name **name, int sourceLocation);
+    std::vector<TemplateArgument> visitTemplateArgs(ExpressionListAST *ast);
 
     Scope *_scope;
     ExpressionTy _expression;

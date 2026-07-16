@@ -3,16 +3,13 @@
 
 /*!
     \page creator-how-to-get-help.html
-    \if defined(qtdesignstudio)
-    \previouspage studio-help.html
-    \nextpage studio-faq.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
-    \ingroup creator-how-to-get-help
+    \title Getting help
 
-    \title Get help
+    \quotation
+    \l {Read documentation}{How to: Read documentation}
+    \endquotation
 
     \QC comes fully integrated with Qt documentation and examples using the Qt
     Help plugin.
@@ -27,9 +24,9 @@
             symbol.
 
         \li To show tooltips for function signatures regardless of the
-            cursor position in the function call, press \key {Ctrl+Shift+D}.
+            cursor position in the function call, select \key {Ctrl+Shift+D}.
 
-        \li To show the full help on a Qt class or function, press \key F1 or
+        \li To show the full help on a Qt class or function, select \key F1 or
             select \uicontrol {Context Help} in the context menu.
             The documentation is shown in a
             view next to the code editor, or, if there is not enough vertical
@@ -39,24 +36,18 @@
             \uicontrol Help mode, go to \preferences > \uicontrol Help.
     \endlist
 
-    \if defined(qtdesignstudio)
-    The following image shows the context sensitive help in the \l Code view.
-
-    \image qds-help-in-code-view.webp {Context-sensitive help in the Code view.}
-    \else
     The following image shows the context sensitive help in the \uicontrol Edit
     mode.
 
-    \image qtcreator-context-sensitive-help.webp {Context-sensitive help in Edit mode}
-    \endif
+    \image {qtcreator-context-sensitive-help.webp} {Context-sensitive help in Edit mode}
 
     \section1 Change the font
 
     If the help HTML file does not use a style sheet, you can change the font
-    family, style, and size in \preferences > \uicontrol Help >
+    family and size in \preferences > \uicontrol Help >
     \uicontrol General.
 
-    \image qtcreator-preferences-help-general.webp {General tab in Help preferences}
+    \image {qtcreator-preferences-help-general.webp} {General tab in Help preferences}
 
     Set the default zoom level in \uicontrol Zoom. When viewing help pages, use
     the mouse scroll wheel to zoom them. To turn off this feature, clear
@@ -74,8 +65,7 @@
     The help viewer backend determines the style sheet that is used to show
     the help files. The default help viewer backend that is based on litehtml
     is recommended for viewing Qt documentation. You can choose another help
-    viewer backend in the \uicontrol {Viewer backend}. To take the new
-    backend to use, reload the help page.
+    viewer backend in the \uicontrol {Viewer backend}.
 
     \section1 View function tooltips
 
@@ -83,41 +73,32 @@
 
     \list 1
         \li Go to \preferences > \uicontrol {Text Editor} > \uicontrol Behavior.
-        \image qtcreator-preferences-texteditor-behavior.webp {Text Editor Behavior preferences}
+        \image {qtcreator-preferences-texteditor-behavior.webp} {Behavior tab in Text Editor preferences}
         \li In \uicontrol {Show help tooltips using the mouse}, select
             \uicontrol {On Shift+Mouseover}.
     \endlist
 
-    You can still view the tooltips by pressing and holding down the \key Shift
+    You can still view the tooltips by selecting and holding down the \key Shift
     key.
 
     To use a keyboard shortcut for viewing help tooltips, select
     \uicontrol {Show help tooltips using keyboard shortcut (Alt)}.
 
-    \if defined(qtdesignstudio)
-    \section1 See Also
-
-    \generatelist creator-how-to-get-help
-    \else
-    \sa {Read Documentation}{How To: Read Documentation}
-    \endif
+    \sa {Read documentation}{How to: Read documentation}
 */
 
 /*!
     \page creator-how-to-find-info-in-documentation.html
-    \if defined(qtdesignstudio)
-    \previouspage creator-how-to-get-help.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-get-help
 
     \title Find information in Qt documentation
 
-    \QC installer, \QOI, and other Qt deliverables install documentation as .qch
-    files. View the documentation in the \uicontrol Help mode. To view the
-    currently open document online, select \inlineimage icons/online.png
+    \QC installer, \QOI, and other Qt deliverables install documentation as
+    \c {.qch} files. View the documentation in the \uicontrol Help mode.
+    To view the currently open document online, select
+    \inlineimage {icons/online.png} {Open Online Documentation}
     (\uicontrol {Open Online Documentation}).
 
     By default, \QC registers only the latest available version of the
@@ -126,11 +107,11 @@
     \uicontrol {Qt Versions} and select an option in
     \uicontrol {Register documentation}.
 
-    \image qtcreator-qt-versions.png {Register documentation in Qt Versions preferences}
+    \image {qtcreator-qt-versions.webp} {Register documentation in the Qt Versions tab in Kits preferences}
 
     \section1 Help mode sidebar views
 
-    \image qtcreator-sidebar-help-mode.webp {Sidebar views in the Help mode}
+    \image {qtcreator-sidebar-help-mode.webp} {Sidebar views in the Help mode}
 
     To find information in the documentation in the \uicontrol Help mode, select:
 
@@ -152,18 +133,13 @@
 
     \endlist
 
-    \if defined(qtcreator)
-    \sa {Read Documentation}{How To: Read Documentation}
-    \endif
+    \sa {Read documentation}{How to: Read documentation}, {Installation},
+    {Get and Install Qt}
 */
 
 /*!
     \page creator-how-to-add-bookmarks-to-help-pages.html
-    \if defined(qtdesignstudio)
-    \previouspage creator-how-to-get-help.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-get-help
 
@@ -174,14 +150,14 @@
     bookmark or change it to any text. You can organize the bookmarks in
     folders in the view.
 
-    \image qtcreator-help-add-bookmark-dlg.png {Add Bookmark dialog}
+    \image {qtcreator-help-add-bookmark-dlg.png} {Add Bookmark dialog}
 
     To add a bookmark to an open help page:
 
     \list 1
 
-        \li Select \inlineimage icons/bookmark.png (\uicontrol {Add Bookmark})
-            on the toolbar.
+        \li Select \inlineimage {icons/bookmark.png} {Add Bookmark}
+            (\uicontrol {Add Bookmark}) on the toolbar.
 
         \li In the \uicontrol {Add Bookmark} dialog, select \uicontrol OK to save the
             page title as a bookmark in the selected folder.
@@ -194,18 +170,12 @@
     \uicontrol General and select \uicontrol {Import Bookmarks} or
     \uicontrol {Export Bookmarks}.
 
-    \if defined(qtcreator)
-    \sa {Read Documentation}{How To: Read Documentation}
-    \endif
+    \sa {Read documentation}{How to: Read documentation}
 */
 
 /*!
     \page creator-how-to-search-from-docs.html
-    \if defined(qtdesignstudio)
-    \previouspage creator-how-to-get-help.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-get-help
 
@@ -220,7 +190,7 @@
     the number of search hits that the documents have. Select a document in
     the list to open it.
 
-    \image qtcreator-help-search.png {Help mode Search pane}
+    \image {qtcreator-help-search.png} {Help mode Search pane}
 
     The following are examples of common search patterns:
 
@@ -245,25 +215,18 @@
     \QC recreates the index.
 
     If you cannot find words that you know are there, the index might not be
-    complete. To recreate it, select \inlineimage icons/reload_gray.png
-    (\uicontrol {Regenerate Index}).
+    complete. To recreate it, select \imagereload (\uicontrol {Regenerate Index}).
 
     Punctuation is not included in indexed terms. To find terms that have
     punctuation, such as domain names, use the asterisk as a wild card. For
     example, to find \c {Pastebin.Com}, enter the search term \c {Pastebin*}.
 
-    \if defined(qtcreator)
-    \sa {Read Documentation}{How To: Read Documentation}
-    \endif
+    \sa {Read documentation}{How to: Read documentation}
 */
 
 /*!
     \page creator-how-to-add-external-documentation.html
-    \if defined(qtdesignstudio)
-    \previouspage creator-how-to-get-help.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-get-help
 
@@ -282,60 +245,45 @@
         \li To add the .qch file to \QC, go to \preferences >
             \uicontrol Help > \uicontrol Documentation > \uicontrol Add.
 
-            \image qtcreator-preferences-help-documentation.webp {Documentation tab in Help Preferences}
+            \image {qtcreator-preferences-help-documentation.webp} {Documentation tab in Help preferences}
 
     \endlist
 
-    \if defined(qtcreator)
-    \sa {Read Documentation}{How To: Read Documentation}
-    \endif
+    \sa {Read documentation}{How to: Read documentation}
 */
 
 /*!
     \page creator-how-to-detach-help-window.html
-    \if defined(qtdesignstudio)
-    \previouspage creator-how-to-get-help.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-get-help
 
     \title Detach the help window
 
     By default, context-sensitive help opens in a window next to the
-    code editor when you press \key F1. If there is not enough vertical
+    code editor when you select \key F1. If there is not enough vertical
     space, the help opens in the full-screen help mode.
 
-    \if defined(qtdesignstudio)
-    \image qds-help-in-code-view.webp {Context-sensitive help in the Code view.}
-    \else
-    \image qtcreator-context-sensitive-help.webp {Context-sensitive help in Edit mode}
-    \endif
+    \image {qtcreator-context-sensitive-help.webp} {Context-sensitive help in Edit mode}
 
     To specify that the help always opens in full-screen mode or in an external
     window, go to \preferences > \uicontrol Help > \uicontrol General.
 
-    \image qtcreator-preferences-help-general.webp {General tab in Help preferences}
+    \image {qtcreator-preferences-help-general.webp} {General tab in Help preferences}
 
     Set preferences for viewing context-sensitive help
     in \uicontrol {On context help}. To detach the help window, select
     \uicontrol {Always Show in External Window}.
 
-    To change this setting in a help view, select \inlineimage icons/linkicon.png.
+    To change this setting in a help view, select
+    \inlineimage {icons/linkicon.png} {Show Context Help menu}.
 
-    \if defined(qtcreator)
-    \sa {Read Documentation}{How To: Read Documentation}
-    \endif
+    \sa {Read documentation}{How to: Read documentation}
 */
 
 /*!
     \page creator-how-to-set-help-start-page.html
-    \if defined(qtdesignstudio)
-    \previouspage creator-how-to-get-help.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-get-help
 
@@ -345,7 +293,7 @@
     \preferences > \uicontrol Help > \uicontrol General and select
     \uicontrol {On help start}.
 
-    \image qtcreator-preferences-help-general.webp {General tab in Help preferences}
+    \image {qtcreator-preferences-help-general.webp} {General tab in Help preferences}
 
     \list
         \li To show the page and help views that were open when you exited the mode,
@@ -361,18 +309,12 @@
             home page.
     \endlist
 
-    \if defined(qtcreator)
-    \sa {Read Documentation}{How To: Read Documentation}
-    \endif
+    \sa {Read documentation}{How to: Read documentation}
 */
 
 /*!
     \page creator-how-to-filter-documentation.html
-    \if defined(qtdesignstudio)
-    \previouspage creator-how-to-get-help.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-get-help
 
@@ -383,7 +325,7 @@
     contents of the \uicontrol Index and \uicontrol Contents
     view in the sidebar change accordingly.
 
-    \image qtcreator-help-filters.png {Filters on the Help mode toolbar}
+    \image {qtcreator-help-filters.png} {Filters on the Help mode toolbar}
 
     \section1 Add filters
 
@@ -396,10 +338,10 @@
 
         \li Go to \preferences > \uicontrol Help > \uicontrol Filters.
 
-            \image qtcreator-help-filter-attributes.png {Filters tab in Help preferences}
+            \image {qtcreator-help-filter-attributes.png} {Filters tab in Help preferences}
 
-        \li Select \inlineimage icons/plus.png
-            to add a new filter in the \uicontrol {Add Filter} dialog.
+        \li Select \imageplus (\uicontrol {Add Filter}) to add a new filter in
+            the \uicontrol {Add Filter} dialog.
 
         \li In \uicontrol {Filter name}, enter a name for the filter,
             and then select \uicontrol {OK} to return to the \uicontrol Filters
@@ -427,9 +369,8 @@
 
     \section1 Remove filters
 
-    To remove the selected filter, select \inlineimage icons/minus.png.
+    To remove the selected filter, select \imageminus
+    (\uicontrol {Remove Filter}).
 
-    \if defined(qtcreator)
-    \sa {Read Documentation}{How To: Read Documentation}
-    \endif
+    \sa {Read documentation}{How to: Read documentation}
 */

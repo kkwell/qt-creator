@@ -7,11 +7,13 @@
 #include <QFormLayout>
 #include <QMessageBox>
 
+#include <utils/infobar.h>
 #include <utils/infolabel.h>
 
 #include <coreplugin/manhattanstyle.h>
 
 using namespace Utils;
+using namespace Qt::StringLiterals;
 
 int main(int argc, char *argv[])
 {
@@ -94,15 +96,40 @@ int main(int argc, char *argv[])
     elideMid->setAdditionalToolTipSeparator(" -> ");
     mainLayout->addWidget(elideMid);
 
-
     auto elideNone = new Utils::InfoLabel("Qt::ElideNone: " + lorem, InfoLabel::Information);
     elideNone->setElideMode(Qt::ElideNone);
     elideNone->setWordWrap(true);
     elideNone->setAdditionalToolTip("This control is never elided due to setElideMode(Qt::ElideNone) being used");
     mainLayout->addWidget(elideNone);
 
-    widget->resize(350, 500);
+    auto infoBarLayout = new QVBoxLayout;
+    infoBarLayout->setSpacing(0);
+    mainLayout->addLayout(infoBarLayout);
+
+    InfoBar infoBar;
+    InfoBarDisplay infoBarDisplay;
+    infoBarDisplay.setTarget(infoBarLayout, 0);
+    infoBarDisplay.setInfoBar(&infoBar);
+    QList<InfoBarEntry*> infoBarEntries;
+    for (auto label : labels) {
+        auto infoBarEntry = new InfoBarEntry(Id::generate(),
+                                             "%1 - %2 %2"_L1.arg(label.text).arg(label.tooltip));
+        infoBarEntries.append(infoBarEntry);
+        infoBarEntry->setInfoType(label.type);
+        infoBarEntry->addCustomButton("Button 1", []{});
+        infoBarEntry->addCustomButton("Button 2", []{});
+        if (label.type != InfoLabel::None)
+            infoBarEntry->setTitle(label.text);
+        infoBar.addInfo(*infoBarEntry);
+    }
+
+    widget->resize(600, 500);
     widget->show();
 
-    return app.exec();
+    const int returnCode = app.exec();
+
+    qDeleteAll(infoBarEntries);
+    infoBarEntries.clear();
+
+    return returnCode;
 }

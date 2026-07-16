@@ -5,9 +5,9 @@
 #include <cplusplus/CppDocument.h>
 #include <cplusplus/LookupContext.h>
 
-#include <QtTest>
 #include <QObject>
 #include <QFile>
+#include <QTest>
 
 //TESTED_COMPONENT=src/libs/cplusplus
 using namespace CPlusPlus;
@@ -79,11 +79,11 @@ class tst_c99: public QObject
             LanguageFeatures features;
             features.c99Enabled = true;
             Client client(errors);
-            doc->control()->setDiagnosticClient(&client);
+            doc->control()->setDiagnosticClient(&client, true);
             doc->setUtf8Source(QTextStream(&file).readAll().toUtf8());
             doc->translationUnit()->setLanguageFeatures(features);
             doc->check();
-            doc->control()->setDiagnosticClient(0);
+            doc->control()->setDiagnosticClient(0, false);
         } else {
             qWarning() << "could not read file" << fileName;
         }
@@ -107,6 +107,8 @@ void tst_c99::parse_data()
     QTest::newRow("designatedInitializer.1") << "designatedInitializer.1.c" << "";
     QTest::newRow("designatedInitializer.2") << "designatedInitializer.2.c" << "";
     QTest::newRow("limits-caselabels (QTCREATORBUG-12673)") << "limits-caselabels.c" << "";
+    QTest::newRow("compoundLiterals.1") << "compoundLiterals.1.c" << "";
+    QTest::newRow("compoundLiterals.2") << "compoundLiterals.2.c" << "";
 }
 
 void tst_c99::parse()

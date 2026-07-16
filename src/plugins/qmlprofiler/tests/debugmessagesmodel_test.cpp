@@ -6,15 +6,14 @@
 
 #include <tracing/timelineformattime.h>
 
-#include <QtTest>
+#include <QTest>
 
-namespace QmlProfiler {
-namespace Internal {
+using namespace QmlDebug;
+namespace QmlProfiler::Internal {
 
-DebugMessagesModelTest::DebugMessagesModelTest(QObject *parent) :
-    QObject(parent), model(&manager, &aggregator)
-{
-}
+DebugMessagesModelTest::DebugMessagesModelTest()
+    : model(&manager, &aggregator)
+{}
 
 void DebugMessagesModelTest::initTestCase()
 {
@@ -114,5 +113,4 @@ void DebugMessagesModelTest::cleanupTestCase()
     QCOMPARE(model.collapsedRowCount(), 1);
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

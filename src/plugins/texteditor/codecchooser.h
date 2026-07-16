@@ -5,11 +5,9 @@
 
 #include "texteditor_global.h"
 
-#include <QComboBox>
+#include <utils/textcodec.h>
 
-QT_BEGIN_NAMESPACE
-class QTextCodec;
-QT_END_NAMESPACE
+#include <QComboBox>
 
 namespace TextEditor {
 
@@ -18,19 +16,18 @@ class TEXTEDITOR_EXPORT CodecChooser : public QComboBox
     Q_OBJECT
 
 public:
-    enum class Filter { All, SingleByte };
-    explicit CodecChooser(Filter filter = Filter::All);
+    CodecChooser();
+
     void prependNone();
-    QTextCodec *currentCodec() const;
-    QTextCodec *codecAt(int index) const;
-    void setAssignedCodec(QTextCodec *codec, const QString &name = {});
-    QByteArray assignedCodecName() const;
+    Utils::TextEncoding currentEncoding() const;
+    void setAssignedEncoding(const Utils::TextEncoding &encoding);
 
 signals:
-    void codecChanged(QTextCodec *codec);
+    void encodingChanged(const Utils::TextEncoding &encoding);
 
 private:
-    QList<QTextCodec *> m_codecs;
+    Utils::TextEncoding encodingAt(int index) const;
+    QList<Utils::TextEncoding> m_encodings;
 };
 
 } // namespace TextEditor

@@ -1,4 +1,4 @@
-// Copyright (C) 2023 The Qt Company Ltd.
+// Copyright (C) 2025 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
 
 // **********************************************************************
@@ -12,74 +12,249 @@
     \page creator-how-tos.html
     \nextpage creator-reference.html
 
-    \title How To
+    \title How to
 
     The following topics describe how to use \QC to perform a particular task.
 
+    \section1 Adapt the UI
+
+    \quotation
+    \l {Adapting the UI}
+    \endquotation
+
+    Navigate the \QC UI or change its appearance and behavior.
+
+    \details {How to adapt the UI}
+    \generatelist creator-how-to-ui
+    \enddetails
+
     \section1 Analyze
+
+    \quotation
+    \l {Analyzing code}
+    \endquotation
 
     Use integrated code analysis tools to detect memory leaks, profile
     function execution, analyze CPU use, and eliminate unnecessary
     complexity of code. Other integrated tools provide code coverage and
     visualize trace events.
 
+    \details {How to analyze code}
     \generatelist creator-how-to-analyze
+    \enddetails
 
-    \section1 Build and Run
+    \section1 Build and run
+
+    \quotation
+    \l {Building and running projects}
+    \endquotation
 
     Use integrated cross-platform systems for build automation to compile your
     source code for different target platforms or with different compilers,
     debuggers, or Qt versions. Deploy applications to the target platforms
     and run them there.
 
+    \details {How to build and run applications}
     \generatelist creator-how-to-build
+    \enddetails
 
     \section2 Build with CMake
 
-    CMake controls the software compilation process by using simple configuration
-    files, called \e CMakeLists.txt files.
+    \quotation
+    \l {Building projects with CMake}
+    \endquotation
 
+    CMake controls the software compilation process by using simple configuration
+    files, called \c CMakeLists.txt files.
+
+    \details {How to build with CMake}
     \generatelist creator-how-to-build-with-cmake
+    \enddetails
 
     \section2 Build with qmake
 
+    \quotation
+    \l {Building projects with qmake}
+    \endquotation
+
     qmake automates the generation of Makefiles based on the information in a
-    project file that has the extension \e .pro.
+    project file that has the extension \c .pro.
 
+    \details {How to build with qmake}
     \generatelist creator-how-to-build-with-qmake
+    \enddetails
 
-    \section2 Run applications
+    \section2 Manage kits
+
+    \quotation
+    \l {Managing kits}
+    \endquotation
+
+    \QC groups build and run specific settings as kits to make cross-platform
+    development easier. Each kit consists of a set of values that define one
+    environment, such as a device, toolchain, Qt version, and debugger command
+    to use.
+
+    \details {How to manage kits}
+    \generatelist creator-how-to-manage-kits
+    \enddetails
+
+    \section2 Run projects
+
+    \quotation
+    \l {Running applications}
+    \endquotation
 
     Run applications on local and remote desktop systems, as well as on
     embedded and mobile devices that you connect to the computer.
 
+    \details {How to run applications}
     \generatelist creator-how-to-run
+    \enddetails
 
-    \section1 Create Models and Diagrams
+    \section1 Configure \QC
 
-    Create Universal Modeling Language (UML) style models with structured and
-    behavioral diagrams that offer different views to your system. Or, use a
-    file wizard to create State Chart XML (SCXML) files with boilerplate code
-    and edit them with an SCXML editor.
+    \quotation
+    \l {Configuring \QC}
+    \endquotation
 
-    \generatelist creator-how-to-models
+    Use basic \QC features and preinstalled extensions and plugins. Install more
+    extensions and plugins and configure external tools for use.
+
+    \details {How to configure \QC}
+    \generatelist creator-how-to-use
+    \enddetails
+
+    \section1 Create projects
+
+    \quotation
+    \l {Creating projects}
+    \endquotation
+
+    Create projects for developing applications and libraries using preset
+    wizards or your own wizards. Then configure the projects for building and
+    running the applications on target platforms.
+
+    \details {How to create projects}
+    \generatelist creator-how-to-projects-create
+    \enddetails
+
+    \section2 Add files
+
+    \quotation
+    \l {Adding files}
+    \endquotation
+
+    Add files to projects.
+
+    \details {How to add files to projects}
+    \generatelist creator-how-to-projects-files
+    \enddetails
+
+    \section2 Configure projects
+
+    \quotation
+    \l {Configuring projects locally}
+    \endquotation
+
+    Change the default configurations that installation programs and project
+    wizards create and override global preferences for a particular project.
+
+    \details {How to configure projects}
+    \generatelist creator-how-to-projects-configure
+    \enddetails
 
     \section1 Debug
 
+    \quotation
+    \l {Debugging}
+    \endquotation
+
     Use debuggers to inspect the state of your application while it is running.
 
+    \details {How to debug applications}
     \generatelist creator-how-to-debug
+    \enddetails
 
     \section1 Design UIs
 
-    Design UIs with either \l{User Interfaces}{Qt Quick or Qt Widgets}.
-    \QC integrates a visual editor, \QD, for designing widget-based UIs
-    in the \uicontrol Design mode. For Qt Quick UIs, use a separate visual
-    editor, \l{\QDS Manual}{\QDS}, or the \uicontrol Edit mode.
+    \quotation
+    \l {Designing UIs}
+    \endquotation
 
+    Design UIs with either \l{User Interfaces}{Qt Quick or Qt Widgets} using
+    integrated visual editors in the \uicontrol Design mode.
+
+    \details {How to design UIs}
     \generatelist creator-how-to-design
+    \enddetails
 
-    \section1 Develop for Devices
+    \section2 Design Qt Quick UIs
+
+    \quotation
+    \l {Designing Qt Quick UIs}
+    \endquotation
+
+    \QC automatically opens UI forms (\c .ui.qml) files in the integrated \QMLD,
+    in \uicontrol Design mode.
+
+    \details {How to design Qt Quick UIs}
+    \generatelist creator-how-to-design-qtquick
+    \enddetails
+
+    \section3 Use UI components
+
+    \quotation
+    \l {Using UI components}
+    \endquotation
+
+    Import Qt QML modules to use instances of their QML types in applications.
+
+    \details {How to use UI components}
+    \generatelist creator-how-to-design-qtquick-components
+    \enddetails
+
+    \section3 Add animation
+
+    \quotation
+    \l {Adding animation}
+    \endquotation
+
+    Pick from a selection of animation techniques that are suitable for different
+    purposes
+
+    \details {How to animate UI components}
+    \generatelist creator-how-to-design-qtquick-animation
+    \enddetails
+
+    \section3 Work with states
+
+    \quotation
+    \l {Working with states}
+    \endquotation
+
+    \details {How to apply states}
+    \generatelist creator-how-to-design-qtquick-states
+    \enddetails
+
+    \section2 Design widget-based UIs
+
+    \quotation
+    \l {Designing widget-based UIs}
+    \endquotation
+
+    \QC automatically opens all \c .ui files in the integrated \QD, in \uicontrol Design
+    mode.
+
+    \details {How to design widget-based UIs}
+    \generatelist creator-how-to-design-widgets
+    \enddetails
+
+    \section1 Develop for devices
+
+    \quotation
+    \l {Developing for devices}
+    \endquotation
 
     Install the toolchain for building applications for the targeted
     embedded or mobile platform on the computer, and use \QOI to
@@ -90,65 +265,149 @@
 
     \section2 Android
 
+    \quotation
+    \l {Developing for Android}
+    \endquotation
+
     Install \l {Qt for Android} and Android tools, and connect Android devices to
     the computer.
 
+    \details {How to to develop for Android}
     \generatelist creator-how-to-android
+    \enddetails
 
     \section2 Bare Metal
+
+    \quotation
+    \l {Developing for Bare Metal devices}
+    \endquotation
 
     Run and debug applications on small Linux devices that are not supported
     by the remote Linux device plugin by using GDB or a hardware debugger.
 
+    \details {How to develop for bare metal devices}
     \generatelist creator-how-to-bare-metal
+    \enddetails
 
     \section2 \B2Q
+
+    \quotation
+    \l {Developing for \B2Q devices}
+    \endquotation
 
     Run, debug, and analyze applications on \l{\B2Q: Documentation}{\B2Q}
     devices.
 
+    \details {How to develop for \B2Q devices}
     \generatelist creator-how-to-b2qt
+    \enddetails
 
     \section2 Docker
+
+    \quotation
+    \l {Developing for Docker}
+    \endquotation
 
     Create \e {Docker devices} from \e {Docker images} and use them to build,
     run, and debug applications.
 
+    \details {How to develop for Docker devices}
     \generatelist creator-how-to-docker
+    \enddetails
 
     \section2 iOS
 
+    \quotation
+    \l {Developing for iOS}
+    \endquotation
+
     Install \l {Qt for iOS} and Xcode, and connect iOS devices to the computer.
 
+    \details {How to develop for iOS devices}
     \generatelist creator-how-to-ios
+    \enddetails
 
     \section2 MCUs
 
+    \quotation
+    \l {Developing for MCUs}
+    \endquotation
+
     Install \l {Qt for MCUs}, and connect microcontrollers to the computer.
 
+    \details {How to develop for microcontrollers}
     \generatelist creator-how-to-mcu
+    \enddetails
 
     \section2 QNX Neutrino
 
+    \quotation
+    \l {Developing for QNX Neutrino devices}
+    \endquotation
+
     Install \l {Qt for QNX}, and connect QNX Neutrino devices to the computer.
 
+    \details {How to develop for QNX Neutrino devices}
     \generatelist creator-how-to-qnx
+    \enddetails
 
     \section2 Remote Linux
+
+    \quotation
+    \l {Developing for remote Linux devices}
+    \endquotation
 
     Add kits for toolchains for building applications for generic Linux
     devices, and connect the devices to the computer.
 
+    \details {How to develop for remote Linux devices}
     \generatelist creator-how-to-remote-linux
+    \enddetails
+
+    \target how-to-vxworks
+    \section2 VxWorks
+
+    \quotation
+    \l {Developing for VxWorks}
+    \endquotation
+
+    Build \l {Qt for VxWorks}, and create VxWorks build and run kits.
+
+    \details {How to build application for VxWorks}
+    \generatelist creator-how-to-vxworks
+    \enddetails
 
     \section2 WebAssembly
+
+    \quotation
+    \l {Building applications for the web}
+    \endquotation
 
     Install \l{Qt for WebAssembly} to build applications for the web and run them
     in a web browser.
 
+    \details {How to build application for the web}
     \generatelist creator-how-to-webassembly
+    \enddetails
 
-    \section1 Edit Code
+    \section2 Windows desktop
+
+    \quotation
+    \l {Developing for the Windows desktop}
+    \endquotation
+
+    Develop applications using the components and tools of the
+    Windows App SDK.
+
+    \details {How to develop for Windows desktop}
+    \generatelist creator-how-to-winapp-sdks
+    \enddetails
+
+    \section1 Edit code
+
+    \quotation
+    \l {Editing code}
+    \endquotation
 
     The code editor offers useful features for editing C++ and QML code, such
     as semantic highlighting, checking code syntax, code completion, and quick
@@ -156,73 +415,93 @@
     as Python, for which a \e {language server} is available that provides
     information about the code to IDEs.
 
+    \details {How to edit code}
     \generatelist creator-how-to-edit
+    \enddetails
 
-    \section2 Configure Editors
+    \section2 Configure editors
+
+    \quotation
+    \l {Configuring editors}
+    \endquotation
 
     Configure the code and text editor to suit your specific needs by
     changing the fonts, colors, highlighting, and indentation.
 
+    \details {How to configure editors}
     \generatelist creator-how-to-configure-editors
+    \enddetails
 
-    \section2 Manage Language Servers
+    \section2 Manage language servers
+
+    \quotation
+    \l {Managing language servers}
+    \endquotation
 
     Configure language servers that \QC adds by default or add more of them.
 
+    \details {How to manage language servers}
     \generatelist creator-how-to-lsp
+    \enddetails
 
     \section2 Search
+
+    \quotation
+    \l {Searching}
+    \endquotation
 
     Use the incremental and advanced search to search in currently open projects
     or files on the file system or use the locator to browse through projects,
     files, classes, functions, documentation, and file systems.
 
+    \details {How to search}
     \generatelist creator-how-to-search
+    \enddetails
 
-    \section1 Manage Kits
+    \section1 Edit state charts
 
-    \QC groups build and run specific settings as kits to make cross-platform
-    development easier. Each kit consists of a set of values that define one
-    environment, such as a device, toolchain, Qt version, and debugger command
-    to use.
+    \quotation
+    \l {Editing SCXML state charts}
+    \endquotation
 
-    \generatelist creator-how-to-manage-kits
+    Use a file wizard to create State Chart XML (SCXML) files with boilerplate
+    code and edit them with an SCXML editor.
 
-    \section1 Manage Projects
+    \details {How to edit state charts}
+    \generatelist creator-how-to-scxml
+    \enddetails
 
-    Create projects for developing applications and libraries. Then configure
-    the projects for building and running the applications on target platforms.
+    \section1 Edit UML-style models
 
-    \generatelist creator-how-to-projects
+    \quotation
+    \l {Editing UML-style models}
+    \endquotation
 
-    \section2 Create Projects
+    Create Universal Modeling Language (UML) style models with structured and
+    behavioral diagrams that offer different views to your system.
 
-    Use preset wizards to create projects or add custom wizards. You can also
-    import projects from version control systems.
+    \details {How to edit models and diagrams}
+    \generatelist creator-how-to-models
+    \enddetails
 
-    \generatelist creator-how-to-projects-create
+    \section1 Read documentation
 
-    \section2 Add Files
-
-    Add files to projects.
-
-    \generatelist creator-how-to-projects-files
-
-    \section2 Configure Projects
-
-    Change the default configurations that installation programs and project
-    wizards create.
-
-    \generatelist creator-how-to-projects-configure
-
-    \section1 Read Documentation
+    \quotation
+    \l {Getting help}
+    \endquotation
 
     \QC integrates the reference documentation for the Qt versions that you
     install. You can add documentation from other sources.
 
+    \details {How to get help}
     \generatelist creator-how-to-get-help
+    \enddetails
 
     \section1 Test
+
+    \quotation
+    \l {Testing}
+    \endquotation
 
     Create and run \e {code based tests} and \e {build system based tests}.
     Code based testing offers special handling for particular testing
@@ -232,20 +511,66 @@
     build system and uses it or even the build system as such to execute the
     respective tests.
 
+    \details {How to test applications}
     \generatelist creator-how-to-test
+    \enddetails
 
-    \section1 Use \QC
+    \section1 Use AI
 
-    Use basic \QC features and preinstalled plugins. Install more plugins and
-    configure external tools for use.
+    \quotation
+    \l {Using AI}
+    \endquotation
 
-    \generatelist creator-how-to-use
+    Chat with AI agents that understand your codebase and perform actions on your
+    behalf, such as editing files, running commands, or triggering builds.
 
-    \section1 Use the UI
+    \details {How to use AI}
+    \generatelist creator-how-to-ai
+    \enddetails
 
-    Navigate the UI or change its appearance and behavior.
+    \section1 Use Git
 
-    \generatelist creator-how-to-ui
+    \quotation
+    \l {Using Git}
+    \endquotation
+
+    Git is a fast decentralized version control system
+    that is available for Windows, Linux, and \macos. You can use the
+    \l {Gerrit Code Review} tool for projects that use Git.
+
+    \details {How to use Git}
+    \generatelist creator-how-to-git
+    \enddetails
+
+    \section2 Current file
+
+    \details {How to handle changes in the current file}
+    \generatelist creator-how-to-git-current-file
+    \enddetails
+
+    \section2 Current project
+
+    \details {How to handle changes in the current project}
+    \generatelist creator-how-to-git-current-project
+    \enddetails
+
+    \section2 Local repositories
+
+    \details {How to manage local repositories}
+    \generatelist creator-how-to-git-local-repository
+    \enddetails
+
+    \section2 Commits
+
+    \details {How to handle commits}
+    \generatelist creator-how-to-git-commits
+    \enddetails
+
+    \section2 Remote repositories
+
+    \details {How to manage remote repositories}
+    \generatelist creator-how-to-git-remote-repository
+    \enddetails
 */
 
 /*!
@@ -256,20 +581,20 @@
 
     \title Switch to Edit mode
 
-    To move to the \uicontrol Edit mode and currently active file, press
+    To move to the \uicontrol Edit mode and currently active file, select
     \key Esc.
 
     If you already are in the \uicontrol Edit mode:
 
     \list
 
-        \li The first press moves focus to the editor
+        \li The first time you select \key Esc, the focus moves to the editor
 
-        \li The second press closes secondary windows
+        \li The second time you select \key Esc, secondary windows are closed
 
     \endlist
 
-    \sa {Edit Code}{How To: Edit Code}, {Edit Mode}
+    \sa {Edit code}{How to: Edit code}, {Editing code}
 */
 
 /*!
@@ -287,7 +612,7 @@
     directory that contains the \QC executable or specify the path to
     \QC as a part of the command:
 
-    \badcode
+    \code [shell]
     qtcreator [option] [filename[:line_number[:column_number]]]
     \endcode
 
@@ -297,15 +622,31 @@
 
     \section1 Examples of CLI commands
 
+    The following are examples of the commands on supported platforms when you
+    install \QC with \l{Get and Install Qt}{\QOI} to the default location. Change
+    the paths as necessary.
+
     On Windows:
 
     \list
 
-        \li \c {C:\qtcreator\bin>qtcreator -help}
+        \li \c {C:\Qt\Tools\QtCreator\bin\qtcreator -help}
 
-        \li \c {C:\qtcreator\bin>qtcreator C:\TextFinder\textfinder.cpp:100:2}
+        \li \c {C:\Qt\Tools\QtCreator\bin\qtcreator C:\TextFinder\textfinder.cpp:100:2}
 
-        \li \c {C:\qtcreator\bin>qtcreator C:\TextFinder\textfinder.cpp +100+2}
+        \li \c {C:\Qt\Tools\QtCreator\bin\qtcreator C:\TextFinder\textfinder.cpp +100+2}
+
+    \endlist
+
+    On Linux:
+
+    \list
+
+        \li \c {~/Qt/Tools/QtCreator/bin/qtcreator -help}
+
+        \li \c {~/Qt/Tools/QtCreator/bin/qtcreator /src/TextFinder/textfinder.cpp:100:2}
+
+        \li \c {~/Qt/Tools/QtCreator/bin/qtcreator /src/TextFinder/textfinder.cpp+100+2}
 
     \endlist
 
@@ -313,7 +654,7 @@
 
     \list
 
-        \li \c {Qt\ Creator.app/Contents/MacOS/Qt\ Creator -help}
+        \li \c {~/Qt/Qt\ Creator.app/Contents/MacOS/Qt\ Creator -help}
 
     \endlist
 
@@ -328,7 +669,7 @@
 
     \c {C:\qtcreator\bin>qtcreator.exe C:\Examples\alarms}
 
-    \sa {Command-Line Options}
+    \sa {Command-line options}
 */
 
 /*!
@@ -342,7 +683,7 @@
     Use the \uicontrol Locator to browse
     through projects, files, classes, functions, documentation, and file systems.
 
-    \image qtcreator-locator-open.webp "List of found files"
+    \image {qtcreator-locator-open.webp} {List of found files in the locator}
 
     To quickly access files not directly mentioned in your project, you can
     create your own locator filters. That way you can locate files in a
@@ -351,9 +692,9 @@
     To create locator filters, select \preferences >
     \uicontrol Environment > \uicontrol Locator > \uicontrol Add.
 
-    \image qtcreator-locator-customize.webp "Locator preferences"
+    \image {qtcreator-locator-customize.webp} {Locator tab in Environment preferences}
 
-    \sa {Creating Locator Filters}, {Edit Code}{How To: Edit Code}, {Edit Mode}
+    \sa {Create locator filters}, {Edit code}{How to: Edit code}, {Editing code}
 */
 
 /*!
@@ -367,13 +708,13 @@
     To do basic calculations in the locator:
 
     \list 1
-        \li Press \key {Ctrl+K} (\key {Cmd+K} on \macos) to activate the locator.
+        \li Select \key {Ctrl+K} (\key {Cmd+K} on \macos) to activate the locator.
         \li Enter \c =, followed by a space.
-        \image qtcreator-locator.webp {List of locator filters}
+        \image {qtcreator-locator.webp} {List of locator filters}
         \li Perform calculations.
     \endlist
 
-    Navigate through the entries and press \key {Enter} to copy the results to
+    Navigate through the entries and select \key {Enter} to copy the results to
     the clipboard
 
     \section1 Built-in functions
@@ -456,7 +797,7 @@
             \li  Returns the tangent of x (x is in radians)
         \endtable
 
-    \sa {Navigate with locator}, {Locator}
+    \sa {Navigate with locator}, {Configure the locator}
 */
 
 /*!
@@ -474,9 +815,9 @@
     To locate a QML method:
 
     \list 1
-        \li Press \key {Ctrl+K} to activate the locator.
+        \li Select \key {Ctrl+K} to activate the locator.
         \li Type m, followed by a space.
-            \image qtcreator-locator-m-filter.webp {The m filter in the locator}
+            \image {qtcreator-locator-m-filter.webp} {The m filter in the locator}
         \li Double-click a QML method in the list to move to it in the editor.
     \endlist
 
@@ -486,7 +827,7 @@
     the type and and do one of the following:
 
     \list
-        \li Press \key {Ctrl+Shift+U}.
+        \li Select \key {Ctrl+Shift+U}.
         \li Go to \uicontrol Tools > \uicontrol {QML/JS} >
             \uicontrol {Find References to Symbol Under Cursor}.
     \endlist
@@ -503,11 +844,11 @@
     cursor on the type and do one of the following:
 
     \list
-        \li Press \key F2.
+        \li Select \key F2.
         \li Go to \uicontrol {Follow Symbol Under Cursor} in the context menu.
     \endlist
 
-    \sa {Edit Code}{How To: Edit Code}, {Clangd}, {Edit Mode},
+    \sa {Edit code}{How to: Edit code}, {Clangd}, {Editing code},
     {Navigate with locator}
 */
 
@@ -522,7 +863,7 @@
     Specify a file that has a license header for C++ in \preferences >
     \uicontrol C++ > \uicontrol {File Naming} > \uicontrol {License template}.
 
-    \image qtcreator-options-cpp-files.png "File Naming preferences"
+    \image {qtcreator-options-cpp-files.png} {File Naming tab in C++ preferences}
 
     The license file may have special placeholders enclosed
     in \c{%%} that are replaced when generating a new file:
@@ -539,6 +880,11 @@
         \li \c %$VARIABLE%: Contents of environment variable \c{VARIABLE}.
 
     \endlist
+
+    In addition, placeholders in the form %{..} are replaced by the
+    value of the corresponding \QC variable.
+
+    \sa {Use \QC variables}
 */
 
 /*!
@@ -550,10 +896,10 @@
     \title Paste text from clipboard history
 
     \QC stores copied text in clipboard history. To retrieve clips from the
-    history, press \key {Ctrl+Shift+V} until the clip appears.
+    history, select \key {Ctrl+Shift+V} until the clip appears.
     The number of clips in the history is fixed to 10.
 
-    \sa {Edit Code}{How To: Edit Code}, {Edit Mode}
+    \sa {Edit code}{How to: Edit code}, {Editing code}
 */
 
 /*!
@@ -577,11 +923,15 @@
     \endlist
 
     To specify whether to automatically insert matching characters,
-    select \preferences > \uicontrol {Text Editor} > \uicontrol Completion.
+    go to \preferences > \uicontrol {Text Editor} > \uicontrol Completion
+    and select options in \uicontrol {Automatically Insert Matching Characters}.
 
-    \image qtcreator-preferences-texteditor-completion.webp "Completion preferences"
+    \image {qtcreator-preferences-texteditor-completion.webp} {Completion tab in Text Editor preferences}
 
-    \sa {Completion}, {Edit Code}{How To: Edit Code}, {Edit Mode}
+    Also, \QC automatically inserts the closing character of a raw string literal
+    prefix.
+
+    \sa {Completion}, {Edit code}{How to: Edit code}, {Editing code}
 */
 
 /*!
@@ -592,12 +942,12 @@
 
     \title Select the current code block
 
-    To select the current block of C++ code in the code editor, press
+    To select the current block of C++ code in the code editor, select
     \key Ctrl+U.
 
-    Press \key Ctrl+U a second time to extend the selection to the parent block.
+    Select \key Ctrl+U a second time to extend the selection to the parent block.
 
-    To undo the last selection, press \key {Ctrl+Alt+Shift+U}.
+    To undo the last selection, select \key {Ctrl+Alt+Shift+U}.
 
     \section1 Turn on smart block selection
 
@@ -605,9 +955,9 @@
     > \uicontrol {Text Editor} > \uicontrol Behavior and select
     \uicontrol {Enable smart selection changing}.
 
-    \image qtcreator-preferences-texteditor-behavior.webp {Text Editor Behavior preferences}
+    \image {qtcreator-preferences-texteditor-behavior.webp} {Behavior tab in Text Editor preferences}
 
-    \sa {Edit Code}{How To: Edit Code}, {Edit Mode}
+    \sa {Edit code}{How to: Edit code}, {Editing code}
 */
 
 /*!
@@ -622,14 +972,14 @@
     later, create a new empty text file and save it to a temporary directory
     on your machine.
 
-    \image qtcreator-scratch-buffer.webp {Scratch file open in the text editor}
+    \image {qtcreator-scratch-buffer.webp} {Scratch file open in the text editor}
 
     To create a scratch file and open it in the text editor:
 
     \list
         \li Select \uicontrol File > \uicontrol {New File} > \uicontrol General >
             \uicontrol {Scratch Buffer}.
-        \li Press \key {Ctrl+N}.
+        \li Select \key {Ctrl+N}.
     \endlist
 
     Use the up and down arrow keys and the tab key to navigate in the editor.
@@ -652,10 +1002,12 @@
 
     \list 1
         \li Select \preferences > \uicontrol Environment > \uicontrol System.
-            \image qtcreator-preferences-environment-system.webp {System preferences}
+            \image {qtcreator-preferences-environment-system.webp} {System tab in Environment preferences}
         \li In \uicontrol {Maximum number of entries in "Recent Files"}, set
             the number of files to show.
     \endlist
+
+    \sa {Adapt the UI}{How to: Adapt the UI}, {Adapting the UI}
 */
 
 /*!
@@ -679,24 +1031,50 @@
     \list 1
     \li Commit your changes to version control, as you cannot undo the
         replace action.
-    \li Press \key {Ctrl+Shift+F} or go to \uicontrol Edit >
+    \li Select \key {Ctrl+Shift+F} or go to \uicontrol Edit >
         \uicontrol {Find/Replace} > \uicontrol {Advanced Find} >
         \uicontrol {Open Advanced Find} to open \uicontrol {Search Results}.
-        \image qtcreator-search-reg-exp.webp {Regular expression in Search Results view}
+        \image {qtcreator-search-reg-exp.webp} {Regular expression in Search Results view}
     \li In \uicontrol Scope, select whatever is appropriate for your search.
     \li Select \uicontrol {Use regular expressions}.
     \li Enter the following text in \uicontrol {Search for}:
-        \badcode
+        \code [text]
         if \((.*) == (.*)\)
         \endcode
     \li Select \uicontrol {Search & Replace} to see a list of search results.
-        \image qtcreator-search-results-reg-exp.webp {Search results for the regular expression}
+        \image {qtcreator-search-results-reg-exp.webp} {Search results for the regular expression}
     \li In \uicontrol {Replace with}, enter the following text:
-        \badcode
+        \code [text]
         if (\1.strictlyEquals(\2))
         \endcode
     \li Select \uicontrol Replace to replace all instances of the text.
     \endlist
 
-    \sa {Edit Code}{How To: Edit Code}, {Search}{How To: Search}, {Edit Mode}
+    \sa {Edit code}{How to: Edit code}, {Search}{How to: Search}, {Editing code}
+*/
+
+/*!
+    \page creator-how-to-preview-images.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-edit
+    \ingroup creator-how-to-ui
+    \ingroup creator-how-to-design
+
+    \title Preview images
+
+    When you hover the mouse cursor over an image reference in C++ or QML code,
+    \QC shows a thumbnail preview of the image in a tooltip. This helps you
+    verify that you are using the correct image without leaving the editor.
+
+    \image {qtcreator-image-preview.webp}{Preview of an image in an QML file}
+
+    To open the image in an external image viewer, select the file path in
+    the tooltip.
+
+    \QC shows the image preview when the image is referenced via a resource file
+    (\c .qrc) or directly by its absolute file path.
+
+    \sa {Create resource files}, {Edit code}{How to: Edit code}, {Editing code},
+    {Adapt the UI}{How to: Adapt the UI}, {Adapting the UI}
 */

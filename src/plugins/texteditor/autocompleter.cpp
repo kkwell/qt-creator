@@ -40,8 +40,8 @@ static void countBrackets(QTextCursor cursor, int from, int end, QChar open, QCh
     cursor.setPosition(from);
     QTextBlock block = cursor.block();
     while (block.isValid() && block.position() < end) {
-        Parentheses parenList = TextDocumentLayout::parentheses(block);
-        if (!parenList.isEmpty() && !TextDocumentLayout::ifdefedOut(block)) {
+        Parentheses parenList = TextBlockUserData::parentheses(block);
+        if (!parenList.isEmpty() && !TextBlockUserData::ifdefedOut(block)) {
             for (int i = 0; i < parenList.count(); ++i) {
                 Parenthesis paren = parenList.at(i);
                 int position = block.position() + paren.pos;
@@ -148,7 +148,7 @@ bool AutoCompleter::isNextBlockIndented(const QTextBlock &currentBlock) const
     return false;
 }
 
-QString AutoCompleter::replaceSelection(QTextCursor &cursor, const QString &textToInsert) const
+QString AutoCompleter::replaceSelection(const QTextCursor &cursor, const QString &textToInsert) const
 {
     if (!cursor.hasSelection())
         return QString();
@@ -187,7 +187,7 @@ QString AutoCompleter::autoComplete(QTextCursor &cursor, const QString &textToIn
         autoText = insertMatchingBrace(cursor, textToInsert, lookAhead, skipChars, &skippedChars);
 
         if (checkBlockEnd && textToInsert.at(0) == QLatin1Char('}')) {
-            if (textToInsert.length() > 1)
+            if (textToInsert.size() > 1)
                 qWarning() << "*** handle event compression";
 
             int startPos = cursor.selectionEnd(), pos = startPos;
@@ -289,7 +289,7 @@ int AutoCompleter::paragraphSeparatorAboutToBeInserted(QTextCursor &cursor)
     // verify that we indeed do have an extra opening brace in the document
     QTextBlock block = cursor.block();
     const QString textFromCusror = block.text().mid(cursor.positionInBlock()).trimmed();
-    int braceDepth = TextDocumentLayout::braceDepth(doc->lastBlock());
+    int braceDepth = TextBlockUserData::braceDepth(doc->lastBlock());
 
     if (braceDepth <= 0 && (textFromCusror.isEmpty() || textFromCusror.at(0) != QLatin1Char('}')))
         return 0; // braces are all balanced or worse, no need to do anything and separator inserted not between '{' and '}'

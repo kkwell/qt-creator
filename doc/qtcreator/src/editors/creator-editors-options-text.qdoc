@@ -9,61 +9,52 @@
 
 /*!
     \page creator-preferences-text-editor-font-colors.html
-    \if defined(qtdesignstudio)
-    \previouspage qtquick-text-editor.html
-    \else
     \previouspage creator-reference.html
-    \endif
 
-    \ingroup creator-reference-preferences-text-editor
-    \ingroup studio-preferences-code
+    \title Configuring editors
 
-    \title Font & Colors
+    \quotation
+    \l {Configure editors}{How to: Configure editors}
+    \endquotation
 
-    \brief Set the font preferences and apply color schemes for syntax
-    highlighting, diff editor, and code analysis results.
+    \summary {Set editor preferences.}
 
     To set editor font and colors, select \preferences >
     \uicontrol {Text Editor} > \uicontrol {Font & Colors}.
 
-    \image qtcreator-font-colors.png {Font & Colors tab in Text Editor preferences}
+    \image {qtcreator-font-colors.png} {Font & Colors tab in Text Editor preferences}
 
-    \section1 Configuring Fonts
+    \section1 Configuring fonts
 
     You can select the font family and size. You can specify a zoom setting in
-    percentage for viewing the text. You can also zoom in or out by pressing
-    \key {Ctrl++} or \key {Ctrl+-}, or by pressing \key Ctrl and rolling
-    the mouse button up or down. To disable the mouse wheel function, select
-    \preferences > \uicontrol {Text Editor} > \uicontrol Behavior and deselect
-    the \uicontrol {Enable scroll wheel zooming} check box.
+    percentage for viewing the text. You can also zoom in or out by selecting
+    \key {Ctrl} + \key {+} or \key {Ctrl+-}, or by selecting \key Ctrl while
+    rotating the mouse wheel. To disable the mouse wheel function, select
+    \preferences > \uicontrol {Text Editor} > \uicontrol Behavior and clear
+    \uicontrol {Enable scroll wheel zooming}.
 
     To improve the readability of text in the editor, adjust the line spacing in
     the \uicontrol {Line spacing} field.
 
     Antialiasing is used by default to make text look smoother and more readable
-    on the screen. Deselect the \uicontrol Antialias check box to turn off
+    on the screen. Clear \uicontrol Antialias to turn off
     antialiasing.
 
-    \sa {Behavior}, {Change editor colors}
+    \sa {Configure editors}{How to: Configure editors}, {Editors}
 */
 
 /*!
     \page creator-how-to-change-editor-colors.html
-    \if defined(qtdesignstudio)
-    \previouspage qtquick-text-editor.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-configure-editors
-    \ingroup studio-how-to-code
 
     \title Change editor colors
 
     You can select one of the predefined color schemes for the text editor
     or create customized color schemes.
 
-    \image qtcreator-font-colors.png {Font & Colors tab in Text Editor preferences}
+    \image {qtcreator-font-colors.png} {Font & Colors tab in Text Editor preferences}
 
     To create a color scheme:
 
@@ -72,7 +63,7 @@
         \li Select \preferences > \uicontrol {Text Editor} >
             \uicontrol {Font & Colors} > \uicontrol Copy.
 
-        \li Enter a name for the color scheme and click \uicontrol OK.
+        \li Enter a name for the color scheme and select \uicontrol OK.
 
         \li In the \uicontrol Foreground field, specify the color of the selected
             code element or message.
@@ -107,10 +98,11 @@
     file to import. In the \uicontrol {Import Color Scheme} dialog, enter a name
     for the color scheme in \uicontrol {Color scheme name}:
 
-    \image qtcreator-import-color-scheme.png "Import Color Scheme dialog"
+    \image {qtcreator-import-color-scheme.png} {Import Color Scheme dialog}
 
     When you select \uicontrol OK, the color scheme is added to the list of
     color schemes in the \uicontrol {Font & Colors} tab.
 
-    \sa {Behavior}, {Font & Colors}
+    \sa {Configure editors}{How to: Configure editors}, {Configuring editors},
+    {Editors}
 */

@@ -9,8 +9,7 @@
 #include <QColor>
 #include <QStack>
 
-namespace QmlProfiler {
-namespace Internal {
+namespace QmlProfiler::Internal {
 
 class MemoryUsageModel : public QmlProfilerTimelineModel
 {
@@ -44,7 +43,7 @@ public:
     QVariantList labels() const override;
     QVariantMap details(int index) const override;
 
-    void loadEvent(const QmlEvent &event, const QmlEventType &type) override;
+    void loadEvent(const QmlDebug::QmlEvent &event, const QmlDebug::QmlEventType &type) override;
     void finalize() override;
     void clear() override;
     bool handlesTypeId(int typeId) const override;
@@ -64,7 +63,7 @@ private:
         ContinueUsage      = 0x2
     };
 
-    QVector<Item> m_data;
+    QList<Item> m_data;
     QStack<RangeStackFrame> m_rangeStack;
     qint64 m_maxSize = 1;
     qint64 m_currentSize = 0;
@@ -75,5 +74,4 @@ private:
     int m_continuation = ContinueNothing;
 };
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

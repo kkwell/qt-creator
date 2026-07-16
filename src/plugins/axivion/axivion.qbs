@@ -4,31 +4,35 @@ QtcPlugin {
     name: "Axivion"
 
     Depends { name: "Core" }
+    Depends { name: "Debugger" }
     Depends { name: "ExtensionSystem" }
     Depends { name: "ProjectExplorer" }
     Depends { name: "TextEditor" }
     Depends { name: "Utils" }
-    Depends { name: "qtkeychain" }
-    Depends { name: "Qt.widgets" }
-    Depends { name: "Qt.network" }
+    Depends { name: "Qt"; submodules: ["network", "sql", "widgets"] }
 
     files: [
-        "axivion.qrc",
-        "axivionoutputpane.cpp",
-        "axivionoutputpane.h",
+        "axivionperspective.cpp",
+        "axivionperspective.h",
         "axivionplugin.cpp",
         "axivionplugin.h",
-        "axivionprojectsettings.h",
-        "axivionprojectsettings.cpp",
         "axivionsettings.cpp",
         "axivionsettings.h",
+        "axiviontextmarks.cpp",
+        "axiviontextmarks.h",
         "axiviontr.h",
-        "credentialquery.cpp",
-        "credentialquery.h",
+        "axivionutils.cpp",
+        "axivionutils.h",
         "dynamiclistmodel.cpp",
         "dynamiclistmodel.h",
         "issueheaderview.cpp",
         "issueheaderview.h",
+        "localbuild.cpp",
+        "localbuild.h",
+        "pluginarserver.cpp",
+        "pluginarserver.h",
+        "singlefileanalysis.cpp",
+        "singlefileanalysis.h",
     ]
 
     cpp.includePaths: base.concat(["."]) // needed for the generated stuff below
@@ -45,5 +49,17 @@ QtcPlugin {
             "error.cpp",
             "error.h",
         ]
+    }
+
+    Group {
+        name: "long description"
+        files: "AxivionDescription.md"
+        fileTags: "pluginjson.longDescription"
+    }
+
+    Group {
+        name: "images"
+        files: "images/*.png"
+        fileTags: "qt.core.resource_data"
     }
 }

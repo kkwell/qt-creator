@@ -5,14 +5,14 @@
 
 #include <coreplugin/iversioncontrol.h>
 
-#include <functional>
-
 #include <vcsbase/vcsbaseplugin.h>
 
 namespace VcsBase { class VcsBasePluginState; }
 
 namespace Git::Internal {
 
+bool performFileAction(const Utils::FilePath &topLevel, const Utils::FilePath &relativePath,
+                       Core::IVersionControl::FileAction action);
 Core::IVersionControl *versionControl();
 const VcsBase::VcsBasePluginState &currentState();
 
@@ -20,14 +20,16 @@ QString msgRepositoryLabel(const Utils::FilePath &repository);
 QString invalidBranchAndRemoteNamePattern();
 bool isCommitEditorOpen();
 
-void emitFilesChanged(const QStringList &);
-void emitRepositoryChanged(const Utils::FilePath &);
+void emitFilesChanged(const Utils::FilePaths &files);
+void emitRepositoryChanged(const Utils::FilePath &repository);
 void startRebaseFromCommit(const Utils::FilePath &workingDirectory, const QString &commit);
+void editCommitMessage(const Utils::FilePath &workingDirectory, const QString &commit);
 void manageRemotes();
 void initRepository();
 void startCommit();
 void updateCurrentBranch();
 void updateBranches(const Utils::FilePath &repository);
 void gerritPush(const Utils::FilePath &topLevel);
+void cherryPickCommits(const QString &branch);
 
 } // Git::Internal

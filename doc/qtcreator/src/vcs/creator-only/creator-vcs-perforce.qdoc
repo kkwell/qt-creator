@@ -27,7 +27,7 @@
     To set Perforce preferences, select \preferences >
     \uicontrol {Version Control} > \uicontrol Perforce:
 
-    \image qtcreator-preferences-vcs-perforce.webp {Perforce preferences}
+    \image {qtcreator-preferences-vcs-perforce.webp} {Perforce tab in Version Control preferences}
 
     In \uicontrol {P4 command}, set the path to the command-line client
     executable.
@@ -35,7 +35,7 @@
     Set workspace details in \uicontrol {P4 user}, \uicontrol {P4 client}, and
     \uicontrol {P4 port}.
 
-    \section1 Using Configuration Files
+    \section1 Using configuration files
 
     To specify workspace details individually for several projects, use
     configuration files:
@@ -48,7 +48,7 @@
         \li Clear \uicontrol {Environment Variables}.
         \li To set \c P4CONFIG to use the file that you created, run the
             following command from the command line once:
-            \badcode
+            \code [shell]
             p4 set P4CONFIG=p4config.txt
             \endcode
     \endlist
@@ -56,26 +56,30 @@
     For more information about using the \c P4CONFIG variable, see
     \l{Perforce: P4CONFIG}.
 
-    \section1 Editing Files
+    \section1 Additional Perforce functions
 
     In addition to the standard version control system functions described in
-    \l {Use common VCS Functions}, you can select \uicontrol Tools >
-    \uicontrol Perforce > \uicontrol {Edit File} to open a file for editing
-    within the client workspace. By default, files are automatically opened for
-    editing. To disable this feature, select \preferences >
-    \uicontrol {Version Control} > \uicontrol Perforce,
-    and then deselect the \uicontrol {Automatically open files when editing}
-    check box.
+    \l {Use common VCS functions}, you can access additional functions in
+    \uicontrol Tools > \uicontrol Perforce.
 
-    To list files that are open for editing, select \uicontrol Tools >
-    \uicontrol Perforce > \uicontrol Opened.
-
-    To group files for commit, select \uicontrol Tools > \uicontrol Perforce >
-    \uicontrol {Pending Changes}.
-
-    To view information about change lists and the files in them, select
-    \uicontrol Tools > \uicontrol Perforce > \uicontrol Describe.
+    \table
+    \header
+        \li Menu Item
+        \li Description
+    \row
+        \li \uicontrol {Edit File}
+        \li Open a file for editing within the client workspace.
+    \row
+        \li \uicontrol {Opened}
+        \li List files that are open for editing.
+    \row
+        \li \uicontrol {Pending Changes}
+        \li Group files for commit.
+    \row
+        \li \uicontrol {Describe}
+        \li View information about change lists and the files in them.
+    \endtable
 
     \sa {Enable and disable plugins}, {Set up version control systems},
-    {Use common VCS functions}, {Version Control Systems}
+    {Use common VCS functions}, {Version control systems}
 */

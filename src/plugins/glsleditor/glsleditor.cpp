@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "glsleditor.h"
-#include "glsleditorconstants.h"
-#include "glslhighlighter.h"
+
 #include "glslautocompleter.h"
 #include "glslcompletionassist.h"
+#include "glsleditorconstants.h"
+#include "glsleditortr.h"
+#include "glslhighlighter.h"
 #include "glslindenter.h"
 
+#include <glsl/glslastdump.h>
 #include <glsl/glsllexer.h>
 #include <glsl/glslparser.h>
 #include <glsl/glslengine.h>
@@ -17,7 +20,6 @@
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
-#include <coreplugin/coreplugintr.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/icore.h>
 
@@ -36,6 +38,7 @@
 
 #include <utils/algorithm.h>
 #include <utils/changeset.h>
+#include <utils/icon.h>
 #include <utils/mimeconstants.h>
 #include <utils/qtcassert.h>
 #include <utils/tooltip/tooltip.h>
@@ -106,7 +109,8 @@ enum {
 class InitFile final
 {
 public:
-    explicit InitFile(const QString &fileName) : m_fileName(fileName) {}
+    explicit InitFile(const QString &fileName, bool cutVulkanRemoved = false)
+        : m_fileName(fileName), m_cutVulkanRemoved(cutVulkanRemoved) {}
 
     ~InitFile() { delete m_engine; }
 
@@ -128,21 +132,31 @@ private:
     void initialize() const
     {
         // Parse the builtins for any language variant so we can use all keywords.
-        const int variant = GLSL::Lexer::Variant_All;
+        const int variant = m_cutVulkanRemoved
+                       ? GLSL::Lexer::Variant_All
+                       : (GLSL::Lexer::Variant_All & ~GLSL::Lexer::Variant_Vulkan);
 
         QByteArray code;
-        QFile file(Core::ICore::resourcePath("glsl").pathAppended(m_fileName).toString());
+        QFile file(Core::ICore::resourcePath("glsl").pathAppended(m_fileName).toUrlishString());
         if (file.open(QFile::ReadOnly))
             code = file.readAll();
+
+        if (m_cutVulkanRemoved) {
+            const int index = code.indexOf("//// Vulkan removed variables and functions");
+            if (index != -1)
+                code.truncate(index);
+        }
 
         m_engine = new GLSL::Engine();
         GLSL::Parser parser(m_engine, code.constData(), code.size(), variant);
         m_ast = parser.parse();
+        QTC_CHECK(m_ast);
     }
 
     QString m_fileName;
     mutable GLSL::Engine *m_engine = nullptr;
     mutable GLSL::TranslationUnitAST *m_ast = nullptr;
+    bool m_cutVulkanRemoved = false;
 };
 
 static const InitFile *fragmentShaderInit(int variant)
@@ -150,6 +164,10 @@ static const InitFile *fragmentShaderInit(int variant)
     static InitFile glsl_es_100_frag{"glsl_es_100.frag"};
     static InitFile glsl_120_frag{"glsl_120.frag"};
     static InitFile glsl_330_frag{"glsl_330.frag"};
+    static InitFile glsl_460_frag{"glsl_460.frag"};
+
+    if (variant & GLSL::Lexer::Variant_GLSL_460)
+        return &glsl_460_frag;
 
     if (variant & GLSL::Lexer::Variant_GLSL_400)
         return &glsl_330_frag;
@@ -165,9 +183,21 @@ static const InitFile *vertexShaderInit(int variant)
     static InitFile glsl_es_100_vert{"glsl_es_100.vert"};
     static InitFile glsl_120_vert{"glsl_120.vert"};
     static InitFile glsl_330_vert{"glsl_330.vert"};
+    static InitFile glsl_330_vert_modified{"glsl_330.vert", true};
+    static InitFile glsl_460_vert{"glsl_460.vert"};
+    static InitFile glsl_460_vert_modified{"glsl_460.vert", true};
 
-    if (variant & GLSL::Lexer::Variant_GLSL_400)
+    if (variant & GLSL::Lexer::Variant_GLSL_460) {
+        if (variant & GLSL::Lexer::Variant_Vulkan)
+            return &glsl_460_vert_modified;
+        return &glsl_460_vert;
+    }
+
+    if (variant & GLSL::Lexer::Variant_GLSL_400) {
+        if (variant & GLSL::Lexer::Variant_Vulkan)
+            return &glsl_330_vert_modified;
         return &glsl_330_vert;
+    }
 
     if (variant & GLSL::Lexer::Variant_GLSL_120)
         return &glsl_120_vert;
@@ -180,9 +210,21 @@ static const InitFile *shaderInit(int variant)
     static InitFile glsl_es_100_common{"glsl_es_100_common.glsl"};
     static InitFile glsl_120_common{"glsl_120_common.glsl"};
     static InitFile glsl_330_common{"glsl_330_common.glsl"};
+    static InitFile glsl_330_common_modified{"glsl_330_common.glsl", true};
+    static InitFile glsl_460_common{"glsl_460_common.glsl"};
+    static InitFile glsl_460_common_modified{"glsl_460_common.glsl", true};
 
-    if (variant & GLSL::Lexer::Variant_GLSL_400)
+    if (variant & GLSL::Lexer::Variant_GLSL_460) {
+        if (variant & GLSL::Lexer::Variant_Vulkan)
+            return &glsl_460_common_modified;
+        return &glsl_460_common;
+    }
+
+    if (variant & GLSL::Lexer::Variant_GLSL_400) {
+        if (variant & GLSL::Lexer::Variant_Vulkan)
+            return &glsl_330_common_modified;
         return &glsl_330_common;
+    }
 
     if (variant & GLSL::Lexer::Variant_GLSL_120)
         return &glsl_120_common;
@@ -190,16 +232,39 @@ static const InitFile *shaderInit(int variant)
     return &glsl_es_100_common;
 }
 
-class CreateRanges: protected Visitor
+static const InitFile *vulkanInit(int /*variant*/)
+{
+    static InitFile glsl_vulkan{"glsl_vulkan.glsl"};
+    return &glsl_vulkan;
+}
+
+class CreateRangesMarkSemanticDetails: protected Visitor
 {
     QTextDocument *textDocument;
     Document::Ptr glslDocument;
+    Namespace *globalNamespace;
+    QList<QTextEdit::ExtraSelection> marked;
+    QTextCharFormat functionCallFormat;
+    QTextCharFormat memberFormat;
+    QTextCharFormat globalVarFormat;
+    QTextCharFormat layoutIdFormat;
 
 public:
-    CreateRanges(QTextDocument *textDocument, Document::Ptr glslDocument)
-        : textDocument(textDocument), glslDocument(glslDocument) {}
+    CreateRangesMarkSemanticDetails(QTextDocument *textDocument, Document::Ptr glslDocument,
+                                    Namespace *global)
+        : textDocument(textDocument), glslDocument(glslDocument), globalNamespace(global)
+    {
+        const TextEditor::FontSettings &fontSettings
+                = TextEditor::TextEditorSettings::fontSettings();
+        functionCallFormat = fontSettings.toTextCharFormat(TextEditor::C_FUNCTION);
+        memberFormat = fontSettings.toTextCharFormat(TextEditor::C_FIELD);
+        globalVarFormat = fontSettings.toTextCharFormat(TextEditor::C_GLOBAL);
+        layoutIdFormat = fontSettings.toTextCharFormat(TextEditor::C_ENUMERATION);
+    }
 
     void operator()(AST *ast) { accept(ast); }
+
+    const QList<QTextEdit::ExtraSelection> markedSemantics() const { return marked; }
 
 protected:
     using GLSL::Visitor::visit;
@@ -207,13 +272,92 @@ protected:
     void endVisit(CompoundStatementAST *ast) override
     {
         if (ast->symbol) {
+            QTC_ASSERT(ast->length != -1, return);
             QTextCursor tc(textDocument);
-            tc.setPosition(ast->start);
-            tc.setPosition(ast->end, QTextCursor::KeepAnchor);
+            tc.setPosition(ast->position);
+            tc.setPosition(ast->position + ast->length, QTextCursor::KeepAnchor);
             glslDocument->addRange(tc, ast->symbol);
         }
     }
+
+    void endVisit(FunctionCallExpressionAST *ast) override
+    {
+        if (auto id = ast->id) {
+            if (auto name = id->name) {
+                if (globalNamespace->find(*name))
+                    createGlobalMemberEntry(id, functionCallFormat);
+            }
+        }
+    }
+
+    void endVisit(MemberAccessExpressionAST *ast) override
+    {
+        if (auto member = ast->field) {
+            QTC_ASSERT(ast->length != -1, return);
+            QTextCursor tc(textDocument);
+            const int position = ast->position + ast->length + - member->length();
+            tc.setPosition(position);
+            tc.setPosition(position + member->length(), QTextCursor::KeepAnchor);
+            QTextEdit::ExtraSelection sel;
+            sel.cursor = tc;
+            sel.format = memberFormat;
+            marked.append(sel);
+        }
+    }
+
+    void endVisit(IdentifierExpressionAST *ast) override
+    {
+        if (auto name = ast->name; name && name->startsWith("gl_")) {
+            if (globalNamespace->find(*name))
+                createGlobalMemberEntry(ast, globalVarFormat);
+        }
+    }
+
+    void endVisit(StructTypeAST::Field *ast) override
+    {
+        if (auto name = ast->name; name && name->startsWith("gl_")) {
+            if (globalNamespace->find(*name))
+                createGlobalMemberEntry(ast, globalVarFormat);
+        }
+    }
+
+    void endVisit(InterfaceBlockAST *ast) override
+    {
+        if (auto name = ast->name; name && name->startsWith("gl_")) {
+            if (globalNamespace->find(*name))
+                createGlobalMemberEntry(ast, globalVarFormat);
+        }
+    }
+
+    void endVisit(LayoutQualifierAST *ast) override
+    {
+        if (ast->name) {
+            QTC_ASSERT(ast->length != -1, return);
+            QTextCursor tc(textDocument);
+            tc.setPosition(ast->position);
+            tc.setPosition(ast->position + ast->name->length(), QTextCursor::KeepAnchor);
+            QTextEdit::ExtraSelection sel;
+            sel.cursor = tc;
+            sel.format = layoutIdFormat;
+            marked.append(sel);
+        }
+    }
+
+private:
+    void createGlobalMemberEntry(AST *ast, const QTextCharFormat &format)
+    {
+        QTC_ASSERT(ast->length != -1, return);
+        QTextCursor tc(textDocument);
+        tc.setPosition(ast->position);
+        tc.setPosition(ast->position + ast->length, QTextCursor::KeepAnchor);
+        QTextEdit::ExtraSelection sel;
+        sel.cursor = tc;
+        sel.format = format;
+        marked.append(sel);
+    }
 };
+
+static Utils::Icon vulkanIcon({{":/glsleditor/images/vulkan.png", Utils::Theme::IconsBaseColor}});
 
 //
 //  GlslEditorWidget
@@ -237,9 +381,11 @@ private:
     void setSelectedElements();
     void onTooltipRequested(const QPoint &point, int pos);
     QString wordUnderCursor() const;
+    QTextCursor cursorForDiagnosticMessage(const DiagnosticMessage &message) const;
 
     QTimer m_updateDocumentTimer;
     QComboBox *m_outlineCombo = nullptr;
+    QToolButton *m_vulkanSupport = nullptr;
     Document::Ptr m_glslDocument;
 };
 
@@ -252,7 +398,7 @@ GlslEditorWidget::GlslEditorWidget()
     connect(&m_updateDocumentTimer, &QTimer::timeout,
             this, &GlslEditorWidget::updateDocumentNow);
 
-    connect(this, &QPlainTextEdit::textChanged, [this] { m_updateDocumentTimer.start(); });
+    connect(this, &PlainTextEdit::textChanged, [this] { m_updateDocumentTimer.start(); });
 
     m_outlineCombo = new QComboBox;
     m_outlineCombo->setMinimumContentsLength(22);
@@ -273,8 +419,24 @@ GlslEditorWidget::GlslEditorWidget()
     policy.setHorizontalPolicy(QSizePolicy::Expanding);
     m_outlineCombo->setSizePolicy(policy);
 
-    insertExtraToolBarWidget(TextEditorWidget::Left, m_outlineCombo);
+    m_vulkanSupport = new QToolButton;
+    m_vulkanSupport->setCheckable(true);
+    m_vulkanSupport->setChecked(true);
+    m_vulkanSupport->setIcon(vulkanIcon.icon());
+    const auto updateVulkanToolTip = [this] {
+        m_vulkanSupport->setToolTip(
+            m_vulkanSupport->isChecked() ? Tr::tr("Vulkan support is enabled.")
+                                         : Tr::tr("Vulkan support is disabled."));
+    };
+    updateVulkanToolTip();
 
+    insertExtraToolBarWidget(TextEditorWidget::Left, m_outlineCombo);
+    insertExtraToolBarWidget(TextEditorWidget::Right, m_vulkanSupport);
+
+    connect(m_vulkanSupport, &QToolButton::clicked, this, [this, updateVulkanToolTip] {
+        updateVulkanToolTip();
+        m_updateDocumentTimer.start();
+    });
     connect(this, &TextEditorWidget::tooltipRequested, this, &GlslEditorWidget::onTooltipRequested);
 }
 
@@ -305,6 +467,26 @@ QString GlslEditorWidget::wordUnderCursor() const
     return word;
 }
 
+QTextCursor GlslEditorWidget::cursorForDiagnosticMessage(const DiagnosticMessage &message) const
+{
+    const DiagnosticMessage::Location &location = message.location();
+    if (location.length >= 0) {
+        QTextCursor cursor(document());
+        cursor.setPosition(location.position);
+        cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, location.length);
+        return cursor;
+    }
+    QTC_CHECK(false);
+    // we only have a line number
+    QTextCursor cursor(document()->findBlockByNumber(message.line() - 1));
+    static const QRegularExpression ws("^(\\s+)");
+    const QRegularExpressionMatch match = ws.match(cursor.block().text());
+    if (match.hasMatch())
+        cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::MoveAnchor, match.capturedLength(1));
+    cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+    return cursor;
+}
+
 void GlslEditorWidget::updateDocumentNow()
 {
     m_updateDocumentTimer.stop();
@@ -312,12 +494,20 @@ void GlslEditorWidget::updateDocumentNow()
     int variant = languageVariant(textDocument()->mimeType());
     const QString contents = toPlainText(); // get the code from the editor
     int version = versionFor(contents);
-    if (version >= 330)
-        variant |= GLSL::Lexer::Variant_GLSL_400;
+    if (version >= 330) {
+        if (version >= 420)
+            variant |= GLSL::Lexer::Variant_GLSL_460;
+        else
+            variant |= GLSL::Lexer::Variant_GLSL_400;
+        if (m_vulkanSupport->isChecked())
+            variant |= GLSL::Lexer::Variant_Vulkan;
+    }
 
     const QByteArray preprocessedCode = contents.toLatin1(); // ### use the QtCreator C++ preprocessor.
 
     Document::Ptr doc(new Document());
+    doc->_currentGlslVersion = version;
+    doc->_vulkanEnabled = m_vulkanSupport->isChecked();
     doc->_engine = new Engine();
     Parser parser(doc->_engine, preprocessedCode.constData(), preprocessedCode.size(), variant);
 
@@ -336,11 +526,20 @@ void GlslEditorWidget::updateDocumentNow()
             file = fragmentShaderInit(variant);
             sem.translationUnit(file->ast(), globalScope, file->engine());
         }
+        if (variant & Lexer::Variant_Vulkan) {
+            file = vulkanInit(variant);
+            sem.translationUnit(file->ast(), globalScope, file->engine());
+        }
         sem.translationUnit(ast, globalScope, doc->_engine);
 
-        CreateRanges createRanges(document(), doc);
+        CreateRangesMarkSemanticDetails createRanges(document(), doc, globalScope->asNamespace());
         createRanges(ast);
 
+#if 0
+        QTextStream qout(stdout, QIODevice::WriteOnly);
+        GLSL::ASTDump dump(qout);
+        dump(ast);
+#endif
         const TextEditor::FontSettings &fontSettings = TextEditor::TextEditorSettings::fontSettings();
 
         QTextCharFormat warningFormat = fontSettings.toTextCharFormat(TextEditor::C_WARNING);
@@ -348,43 +547,55 @@ void GlslEditorWidget::updateDocumentNow()
 
         QList<QTextEdit::ExtraSelection> sels;
         QSet<int> errors;
+        QSet<DiagnosticMessage::Location> errorsWithLocations;
 
         const QList<DiagnosticMessage> messages = doc->_engine->diagnosticMessages();
         for (const DiagnosticMessage &m : messages) {
             if (! m.line())
                 continue;
-            if (!Utils::insert(errors, m.line()))
-                continue;
-
-            QTextCursor cursor(document()->findBlockByNumber(m.line() - 1));
-            cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+            if (!Utils::insert(errorsWithLocations, m.location())) {
+                if (!Utils::insert(errors, m.line()))
+                    continue;
+            }
 
             QTextEdit::ExtraSelection sel;
-            sel.cursor = cursor;
+            sel.cursor = cursorForDiagnosticMessage(m);
             sel.format = m.isError() ? errorFormat : warningFormat;
             sel.format.setToolTip(m.message());
             sels.append(sel);
         }
 
         setExtraSelections(CodeWarningsSelection, sels);
+        setExtraSelections(OtherSelection, createRanges.markedSemantics());
         m_glslDocument = doc;
     }
+}
+
+static QStringList diagnosticMessagesToStringList(const QList<DiagnosticMessage> &dMessages,
+                                                  int lineNo, int pos)
+{
+    QStringList fullLine;
+    QStringList specific;
+    for (const DiagnosticMessage &msg : dMessages) {
+        if (lineNo != msg.line())
+            continue;
+        const DiagnosticMessage::Location &loc = msg.location();
+        if (loc.length == -1)
+            fullLine.append(msg.message());
+        else if (loc.position <= pos && loc.position + loc.length >= pos)
+            specific.append(msg.message());
+    }
+    if (fullLine.isEmpty())
+        return specific;
+    return specific + fullLine;
 }
 
 void GlslEditorWidget::onTooltipRequested(const QPoint &point, int pos)
 {
     QTC_ASSERT(m_glslDocument && m_glslDocument->engine(), return);
     const int lineno = document()->findBlock(pos).blockNumber() + 1;
-    const QStringList messages
-            = Utils::transform<QStringList>(
-                Utils::filtered(m_glslDocument->engine()->diagnosticMessages(),
-                                [lineno](const DiagnosticMessage &msg) {
-                    return msg.line() == lineno;
-                }),
-                [](const DiagnosticMessage &msg) {
-        return msg.message();
-    });
-
+    const QStringList messages = diagnosticMessagesToStringList(
+                m_glslDocument->engine()->diagnosticMessages(), lineno, pos);
     if (!messages.isEmpty())
         Utils::ToolTip::show(point, messages.join("<hr/>"), this);
     else
@@ -416,6 +627,12 @@ int languageVariant(const QString &type)
         isVertex = true;
     } else if (type == QLatin1String(Utils::Constants::GLSL_ES_FRAG_MIMETYPE)) {
         isFragment = true;
+    } else if (type == QLatin1String(Utils::Constants::GLSL_COMP_MIMETYPE)) {
+        isFragment = true; // not really, but we define the respective variables/functions there
+    } else if (type == QLatin1String(Utils::Constants::GLSL_TESS_MIMETYPE)) {
+        isVertex = true; // not really, but we define the respective variables/functions there
+    } else if (type == QLatin1String(Utils::Constants::GLSL_GEOM_MIMETYPE)) {
+        isVertex = true; // not really, but we define the respective variables/functions there
     }
     if (isDesktop)
         variant |= Lexer::Variant_GLSL_120;
@@ -449,12 +666,15 @@ public:
     GlslEditorFactory()
     {
         setId(Constants::C_GLSLEDITOR_ID);
-        setDisplayName(::Core::Tr::tr(Constants::C_GLSLEDITOR_DISPLAY_NAME));
+        setDisplayName(Tr::tr("GLSL Editor"));
         addMimeType(Utils::Constants::GLSL_MIMETYPE);
         addMimeType(Utils::Constants::GLSL_VERT_MIMETYPE);
         addMimeType(Utils::Constants::GLSL_FRAG_MIMETYPE);
         addMimeType(Utils::Constants::GLSL_ES_VERT_MIMETYPE);
         addMimeType(Utils::Constants::GLSL_ES_FRAG_MIMETYPE);
+        addMimeType(Utils::Constants::GLSL_COMP_MIMETYPE);
+        addMimeType(Utils::Constants::GLSL_TESS_MIMETYPE);
+        addMimeType(Utils::Constants::GLSL_GEOM_MIMETYPE);
 
         setDocumentCreator([]() { return new TextDocument(Constants::C_GLSLEDITOR_ID); });
         setEditorWidgetCreator([]() { return new GlslEditorWidget; });

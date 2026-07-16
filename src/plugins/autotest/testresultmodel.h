@@ -7,6 +7,7 @@
 
 #include <QAbstractItemModel>
 #include <QFont>
+#include <QRegularExpression>
 #include <QSet>
 #include <QSortFilterProxyModel>
 
@@ -14,8 +15,7 @@
 
 #include <optional>
 
-namespace Autotest {
-namespace Internal {
+namespace Autotest::Internal {
 
 class TestResultItem : public Utils::TypedTreeItem<TestResultItem, TestResultItem>
 {
@@ -36,8 +36,11 @@ public:
         { return !(*this == other); }
     };
 
+    void addTestResult(const TestResult &testResult, bool autoExpand);
+
     void updateResult(bool &changed, ResultType addedChildType,
-                      const std::optional<SummaryEvaluation> &summary);
+                      const std::optional<SummaryEvaluation> &summary,
+                      const std::optional<QString> duration);
 
     TestResultItem *intermediateFor(const TestResultItem *item) const;
     TestResultItem *createAndAddIntermediateFor(const TestResultItem *child);
@@ -69,16 +72,19 @@ public:
 
     int resultTypeCount(ResultType type) const;
     int disabledTests() const { return m_disabled; }
+    std::optional<int> reportedDuration() const { return m_reportedDurations; }
     void raiseDisabledTests(int amount) { m_disabled += amount; }
+    void raiseTestResultCount(const QString &id, ResultType type);
+
+    void setRootItem(TestResultItem *root);
 
 private:
-    void recalculateMaxWidthOfFileName(const QFont &font);
     void addFileName(const QString &fileName);
-    TestResultItem *findParentItemFor(const TestResultItem *item,
-                                      const TestResultItem *startItem = nullptr) const;
-    void updateParent(const TestResultItem *item);
+    void recalculateMaxWidthOfFileName(const QFont &font);
+
     QHash<QString, QMap<ResultType, int>> m_testResultCount;
     QHash<QString, QHash<ResultType, int>> m_reportedSummary;
+    std::optional<int> m_reportedDurations = std::nullopt;
     int m_widthOfLineNumber = 0;
     int m_maxWidthOfFileName = 0;
     int m_disabled = 0;
@@ -90,7 +96,7 @@ class TestResultFilterModel : public QSortFilterProxyModel
 {
     Q_OBJECT
 public:
-    explicit TestResultFilterModel(TestResultModel *sourceModel, QObject *parent = nullptr);
+    explicit TestResultFilterModel(QObject *parent = nullptr);
 
     void enableAllResultTypes(bool enabled);
     void toggleTestResultType(ResultType type);
@@ -98,14 +104,26 @@ public:
     bool hasResults();
     TestResult testResult(const QModelIndex &index) const;
     TestResultItem *itemForIndex(const QModelIndex &index) const;
+    const QSet<ResultType> enabledFilters() const { return m_enabled; }
+    const QVariantList enabledFiltersAsSetting() const;
+    void setEnabledFiltersFromSetting(const QVariantList &enabled);
+    void setSourceModel(QAbstractItemModel *sourceModel) override;
+
+    void updateFilterProperties(const QString &filterText, Qt::CaseSensitivity caseSensitivity,
+                                bool isRegexp, bool isInverted);
 
 protected:
     bool filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const override;
 
 private:
-    TestResultModel *m_sourceModel;
+    TestResultModel *m_sourceModel = nullptr;
     QSet<ResultType> m_enabled;
+    // filter properties
+    QString m_filterText;
+    QRegularExpression m_filterRegex;
+    Qt::CaseSensitivity m_caseSensitivity = Qt::CaseInsensitive;
+    bool m_regex = false;
+    bool m_inverted = false;
 };
 
-} // namespace Internal
-} // namespace Autotest
+} // namespace Autotest::Internal

@@ -11,8 +11,8 @@
 
 #include <utils/filepath.h>
 
-#include <QtTest>
 #include <QDebug>
+#include <QTest>
 
 #ifdef Q_OS_WIN
     #include <cctype>  // std:isspace
@@ -73,7 +73,7 @@ private:
         Document()
             : m_translationUnit(&m_control, m_control.stringLiteral("testFile"))
         {
-            m_control.setDiagnosticClient(&m_diagnosticClient);
+            m_control.setDiagnosticClient(&m_diagnosticClient, true);
         }
 
         TranslationUnit *translationUnit()
@@ -95,7 +95,7 @@ private:
             Environment env;
             Preprocessor preprocess(client, &env);
             preprocess.setKeepComments(true);
-            return preprocess.run(QLatin1String("<stdin>"), source);
+            return preprocess.run("<stdin>", source);
         }
 
     private:

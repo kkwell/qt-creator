@@ -6,29 +6,37 @@
 #include "clangdiagnosticconfig.h"
 #include "cppeditor_global.h"
 
+#include <utils/aspects.h>
 #include <utils/filepath.h>
 #include <utils/store.h>
 
-namespace ProjectExplorer { class Project; }
+namespace ProjectExplorer {
+class BuildConfiguration;
+class Kit;
+class Project;
+} // ProjectExplorer
+
 namespace Utils { class MacroExpander; }
 
 namespace CppEditor {
 class ClangDiagnosticConfigsModel;
 
 // TODO: Can we move this to ClangCodeModel?
-class CPPEDITOR_EXPORT ClangdSettings : public QObject
+class CPPEDITOR_EXPORT ClangdSettings : public Utils::AspectContainer
 {
-    Q_OBJECT
 public:
     enum class IndexingPriority { Off, Background, Normal, Low, };
     enum class HeaderSourceSwitchMode { BuiltinOnly, ClangdOnly, Both };
     enum class CompletionRankingModel { Default, DecisionForest, Heuristics };
+    enum class CompletionStyle { Default, Detailed, Bundled };
 
     static QString priorityToString(const IndexingPriority &priority);
     static QString priorityToDisplayString(const IndexingPriority &priority);
     static QString headerSourceSwitchModeToDisplayString(HeaderSourceSwitchMode mode);
     static QString rankingModelToCmdLineString(CompletionRankingModel model);
     static QString rankingModelToDisplayString(CompletionRankingModel model);
+    static QString completionStyleToCmdLineString(CompletionStyle style);
+    static QString completionStyleToDisplayString(CompletionStyle style);
     static QString defaultProjectIndexPathTemplate();
     static QString defaultSessionIndexPathTemplate();
 
@@ -51,7 +59,9 @@ public:
                    && s1.indexingPriority == s2.indexingPriority
                    && s1.headerSourceSwitchMode == s2.headerSourceSwitchMode
                    && s1.completionRankingModel == s2.completionRankingModel
+                   && s1.completionStyle == s2.completionStyle
                    && s1.autoIncludeHeaders == s2.autoIncludeHeaders
+                   && s1.useExternalCompilationDb == s2.useExternalCompilationDb
                    && s1.documentUpdateThreshold == s2.documentUpdateThreshold
                    && s1.sizeThresholdEnabled == s2.sizeThresholdEnabled
                    && s1.sizeThresholdInKb == s2.sizeThresholdInKb
@@ -60,6 +70,20 @@ public:
                    && s1.completionResults == s2.completionResults;
         }
         friend bool operator!=(const Data &s1, const Data &s2) { return !(s1 == s2); }
+
+        Utils::FilePath clangdFilePath(const ProjectExplorer::Kit *kit) const;
+        bool useGoodClangd(const ProjectExplorer::Kit *kit) const;
+        Utils::FilePath clangdIncludePath(const ProjectExplorer::Kit *kit) const;
+        bool sizeIsOkay(const Utils::FilePath &fp) const;
+        ClangDiagnosticConfig diagnosticConfig() const;
+        Utils::Id diagnosticConfigIdOrDefault() const;
+
+        Utils::FilePath projectIndexPath(const Utils::MacroExpander &expander) const;
+        Utils::FilePath sessionIndexPath(const Utils::MacroExpander &expander) const;
+
+        enum class Granularity { Project, Session };
+        Granularity granularity() const;
+        bool isSessionMode() const;
 
         Utils::FilePath executableFilePath;
         QStringList sessionsWithOneClangd;
@@ -75,10 +99,12 @@ public:
         QString sessionIndexPathTemplate = defaultSessionIndexPathTemplate();
         HeaderSourceSwitchMode headerSourceSwitchMode = HeaderSourceSwitchMode::Both;
         CompletionRankingModel completionRankingModel = CompletionRankingModel::Default;
+        CompletionStyle completionStyle = CompletionStyle::Default;
         bool autoIncludeHeaders = false;
         bool sizeThresholdEnabled = false;
         bool haveCheckedHardwareReqirements = false;
         bool updateDependentSources = false;
+        bool useExternalCompilationDb = false;
         int completionResults = defaultCompletionResults();
 
     private:
@@ -88,7 +114,6 @@ public:
     ClangdSettings(const Data &data) : m_data(data) {}
 
     static ClangdSettings &instance();
-    bool useClangd() const;
     static void setUseClangd(bool use);
     static void setUseClangdAndSave(bool use);
 
@@ -99,39 +124,14 @@ public:
     static void setCustomDiagnosticConfigs(const ClangDiagnosticConfigs &configs);
     static ClangDiagnosticConfigsModel diagnosticConfigsModel();
 
-    Utils::FilePath clangdFilePath() const;
-    IndexingPriority indexingPriority() const { return m_data.indexingPriority; }
-    Utils::FilePath projectIndexPath(const Utils::MacroExpander &expander) const;
-    Utils::FilePath sessionIndexPath(const Utils::MacroExpander &expander) const;
-    HeaderSourceSwitchMode headerSourceSwitchMode() const { return m_data.headerSourceSwitchMode; }
-    CompletionRankingModel completionRankingModel() const { return m_data.completionRankingModel; }
-    bool autoIncludeHeaders() const { return m_data.autoIncludeHeaders; }
-    bool updateDependentSources() const { return m_data.updateDependentSources; }
-    int workerThreadLimit() const { return m_data.workerThreadLimit; }
-    int documentUpdateThreshold() const { return m_data.documentUpdateThreshold; }
-    qint64 sizeThresholdInKb() const { return m_data.sizeThresholdInKb; }
-    bool sizeThresholdEnabled() const { return m_data.sizeThresholdEnabled; }
-    int completionResults() const { return m_data.completionResults; }
-    bool sizeIsOkay(const Utils::FilePath &fp) const;
-    ClangDiagnosticConfigs customDiagnosticConfigs() const;
-    Utils::Id diagnosticConfigId() const;
-    ClangDiagnosticConfig diagnosticConfig() const;
-
-    enum class Granularity { Project, Session };
-    Granularity granularity() const;
-
     void setData(const Data &data, bool saveAndEmitSignal = true);
     Data data() const { return m_data; }
 
-    Utils::FilePath clangdIncludePath() const;
     static Utils::FilePath clangdUserConfigFilePath();
 
 #ifdef WITH_TESTS
     static void setClangdFilePath(const Utils::FilePath &filePath);
 #endif
-
-signals:
-    void changed();
 
 private:
     ClangdSettings();
@@ -142,28 +142,12 @@ private:
     Data m_data;
 };
 
-class CPPEDITOR_EXPORT ClangdProjectSettings
-{
-public:
-    ClangdProjectSettings(ProjectExplorer::Project *project);
+CPPEDITOR_EXPORT ClangdSettings::Data clangdProjectSettings(ProjectExplorer::BuildConfiguration *bc);
+CPPEDITOR_EXPORT ClangdSettings::Data clangdProjectSettings(ProjectExplorer::Project *project);
 
-    ClangdSettings::Data settings() const;
-    void setSettings(const ClangdSettings::Data &data);
-    bool useGlobalSettings() const { return m_useGlobalSettings; }
-    void setUseGlobalSettings(bool useGlobal);
-    void setDiagnosticConfigId(Utils::Id configId);
-    void blockIndexing();
-    void unblockIndexing();
-
-private:
-    void loadSettings();
-    void saveSettings();
-
-    ProjectExplorer::Project * const m_project;
-    ClangdSettings::Data m_customSettings;
-    bool m_useGlobalSettings = true;
-    bool m_blockIndexing = false;
-};
+CPPEDITOR_EXPORT void clangdBlockIndexingForProject(ProjectExplorer::Project *project);
+CPPEDITOR_EXPORT void clangdUnblockIndexingForProject(ProjectExplorer::Project *project);
+CPPEDITOR_EXPORT void clangdSetDiagnosticConfigId(ProjectExplorer::Project *project, Utils::Id id);
 
 namespace Internal {
 void setupClangdProjectSettingsPanel();

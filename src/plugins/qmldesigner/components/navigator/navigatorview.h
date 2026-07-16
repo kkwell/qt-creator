@@ -83,7 +83,9 @@ public:
     void disableWidget() override;
     void enableWidget() override;
 
-    void modelNodePreviewPixmapChanged(const ModelNode &node, const QPixmap &pixmap) override;
+    void modelNodePreviewPixmapChanged(const ModelNode &node,
+                                       const QPixmap &pixmap,
+                                       const QByteArray &requestId) override;
 
 private:
     ModelNode modelNodeForIndex(const QModelIndex &modelIndex) const;
@@ -98,6 +100,8 @@ private:
     void rightButtonClicked();
     void upButtonClicked();
     void downButtonClicked();
+    void colorizeToggled(bool);
+    void referenceToggled(bool);
     void filterToggled(bool);
     void reverseOrderToggled(bool);
 
@@ -110,7 +114,6 @@ protected: //functions
     void expandAncestors(const QModelIndex &index);
     void reparentAndCatch(NodeAbstractProperty property, const ModelNode &modelNode);
     void setupWidget();
-    void addNodeAndSubModelNodesToList(const ModelNode &node, QList<ModelNode> &nodes);
     void clearExplorerWarnings();
     const ProjectExplorer::FileNode *fileNodeForModelNode(const ModelNode &node) const;
     const ProjectExplorer::FileNode *fileNodeForIndex(const QModelIndex &index) const;

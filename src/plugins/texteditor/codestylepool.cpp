@@ -8,7 +8,6 @@
 
 #include <coreplugin/icore.h>
 
-#include <utils/filepath.h>
 #include <utils/persistentsettings.h>
 
 #include <QMap>
@@ -189,6 +188,20 @@ void CodeStylePool::removeCodeStyle(ICodeStylePreferences *codeStyle)
     delete codeStyle;
 }
 
+void CodeStylePool::removeAutoImportedCodeStyle(Id id)
+{
+    const auto style = std::find_if(
+        d->m_builtInPool.begin(),
+        d->m_builtInPool.end(),
+        [id = id.toByteArray()](const ICodeStylePreferences *style) { return style->id() == id; });
+    QTC_ASSERT(style != d->m_builtInPool.end(), return);
+    emit codeStyleRemoved(*style);
+    d->m_builtInPool.erase(style);
+    d->m_pool.removeOne(*style);
+    d->m_idToCodeStyle.remove((*style)->id());
+    delete *style;
+}
+
 ICodeStylePreferences *CodeStylePool::codeStyle(const QByteArray &id) const
 {
     return d->m_idToCodeStyle.value(id);
@@ -213,7 +226,8 @@ ICodeStylePreferences *CodeStylePool::importCodeStyle(const FilePath &fileName)
     return codeStyle;
 }
 
-ICodeStylePreferences *CodeStylePool::loadCodeStyle(const FilePath &fileName)
+ICodeStylePreferences *CodeStylePool::loadCodeStyle(
+    const FilePath &fileName, bool readOnly, const FilePath &projectFile)
 {
     ICodeStylePreferences *codeStyle = nullptr;
     PersistentSettingsReader reader;
@@ -228,6 +242,8 @@ ICodeStylePreferences *CodeStylePool::loadCodeStyle(const FilePath &fileName)
             codeStyle->setId(id);
             codeStyle->setDisplayName(displayName);
             codeStyle->fromMap(map);
+            codeStyle->setReadOnly(readOnly);
+            codeStyle->setProject(projectFile);
 
             addCodeStyle(codeStyle);
         }
@@ -256,13 +272,14 @@ void CodeStylePool::saveCodeStyle(ICodeStylePreferences *codeStyle) const
 
 void CodeStylePool::exportCodeStyle(const FilePath &fileName, ICodeStylePreferences *codeStyle) const
 {
-    const Store map = codeStyle->toMap();
+    Store map;
+    codeStyle->toMap(map);
     const Store tmp = {
         {displayNameKey, codeStyle->displayName()},
         {codeStyleDataKey, variantFromStore(map)}
     };
     PersistentSettingsWriter writer(fileName, QLatin1String(codeStyleDocKey));
-    writer.save(tmp, Core::ICore::dialogParent());
+    writer.save(tmp);
 }
 
 } // TextEditor

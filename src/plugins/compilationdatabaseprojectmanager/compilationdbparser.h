@@ -7,14 +7,11 @@
 
 #include <projectexplorer/buildsystem.h>
 
-#include <QFutureWatcher>
-#include <QObject>
-#include <QStringList>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
-namespace ProjectExplorer {
-class FileNode;
-class TreeScanner;
-}
+#include <QObject>
+
+namespace ProjectExplorer { class FileNode; }
 
 namespace CompilationDatabaseProjectManager::Internal {
 
@@ -23,15 +20,13 @@ enum class ParseResult { Success, Failure, Cached };
 class CompilationDbParser : public QObject
 {
     Q_OBJECT
+
 public:
     explicit CompilationDbParser(const QString &projectName,
                                  const Utils::FilePath &projectPath,
                                  const Utils::FilePath &rootPath,
-                                 MimeBinaryCache &mimeBinaryCache,
                                  ProjectExplorer::BuildSystem::ParseGuard &&guard,
                                  QObject *parent = nullptr);
-    ~CompilationDbParser();
-
 
     void setPreviousProjectFileHash(const QByteArray &fileHash) { m_projectFileHash = fileHash; }
     QByteArray projectFileHash() const { return m_projectFileHash; }
@@ -39,31 +34,27 @@ public:
     void start();
     void stop();
 
-    QList<ProjectExplorer::FileNode *> scannedFiles() const;
-    DbContents dbContents() const
-    {
-        return m_dbContents;
+    std::vector<std::unique_ptr<ProjectExplorer::FileNode>> takeScannedFiles() {
+        return std::exchange(m_scannedFiles, {});
     }
+    DbContents dbContents() const { return m_dbContents; }
 
 signals:
     void finished(ParseResult result);
 
 private:
-    void parserJobFinished();
     void finish(ParseResult result);
 
     const QString m_projectName;
     const Utils::FilePath m_projectFilePath;
     const Utils::FilePath m_rootPath;
-    MimeBinaryCache &m_mimeBinaryCache;
-    ProjectExplorer::TreeScanner *m_treeScanner = nullptr;
-    QFutureWatcher<DbContents> m_parserWatcher;
+    std::vector<std::unique_ptr<ProjectExplorer::FileNode>> m_scannedFiles;
     DbContents m_dbContents;
     QByteArray m_projectFileContents;
     QByteArray m_projectFileHash;
-    int m_runningParserJobs = 0;
 
     ProjectExplorer::BuildSystem::ParseGuard m_guard;
+    QtTaskTree::QSingleTaskTreeRunner m_taskTreeRunner;
 };
 
 } // namespace CompilationDatabaseProjectManager::Internal

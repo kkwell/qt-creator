@@ -1,7 +1,4 @@
 %{Cpp:LicenseTemplate}\
-%{JS: QtSupport.qtIncludes([ 'QtCore/QCoreApplication' ],
-                           [ 'QtCore/QCoreApplication' ]) }\
-
 #include <QtSafeRenderer/qsafelayout.h>
 #include <QtSafeRenderer/qsafelayoutresourcereader.h>
 #include <QtSafeRenderer/statemanager.h>
@@ -22,8 +19,8 @@
 
 int main(int argc, char *argv[])
 {
-    Q_UNUSED(argc);
-    Q_UNUSED(argv);
+    (void)argc;
+    (void)argv;
 
     static SafeRenderer::QSafeLayoutResourceReader layout("/layoutData/main/main.srl");
 

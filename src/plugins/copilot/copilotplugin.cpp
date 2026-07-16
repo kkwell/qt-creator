@@ -6,7 +6,6 @@
 #include "copiloticons.h"
 #include "copilotprojectpanel.h"
 #include "copilotsettings.h"
-#include "copilotsuggestion.h"
 #include "copilottr.h"
 
 #include <coreplugin/actionmanager/actionmanager.h>
@@ -35,21 +34,19 @@ enum Direction { Previous, Next };
 static void cycleSuggestion(TextEditor::TextEditorWidget *editor, Direction direction)
 {
     QTextBlock block = editor->textCursor().block();
-    if (auto suggestion = dynamic_cast<CopilotSuggestion *>(
-            TextEditor::TextDocumentLayout::suggestion(block))) {
-        int index = suggestion->currentCompletion();
+    if (auto suggestion = dynamic_cast<TextEditor::CyclicSuggestion *>(
+            TextEditor::TextBlockUserData::suggestion(block))) {
+        int index = suggestion->currentSuggestion();
         if (direction == Previous)
             --index;
         else
             ++index;
         if (index < 0)
-            index = suggestion->completions().count() - 1;
-        else if (index >= suggestion->completions().count())
+            index = suggestion->suggestions().count() - 1;
+        else if (index >= suggestion->suggestions().count())
             index = 0;
-        suggestion->reset();
-        editor->insertSuggestion(std::make_unique<CopilotSuggestion>(suggestion->completions(),
-                                                                     editor->document(),
-                                                                     index));
+        editor->insertSuggestion(std::make_unique<TextEditor::CyclicSuggestion>(
+            suggestion->suggestions(), editor->document(), index));
     }
 }
 
@@ -94,16 +91,18 @@ public:
         disableAction.setText(Tr::tr("Disable Copilot"));
         disableAction.setToolTip(Tr::tr("Disable Copilot."));
         disableAction.addOnTriggered(this, [] {
-            settings().enableCopilot.setValue(true);
+            settings().enableCopilot.setValue(false);
             settings().apply();
+            settings().writeSettings();
         });
 
         ActionBuilder enableAction(this, Constants::COPILOT_ENABLE);
         enableAction.setText(Tr::tr("Enable Copilot"));
         enableAction.setToolTip(Tr::tr("Enable Copilot."));
         enableAction.addOnTriggered(this, [] {
-            settings().enableCopilot.setValue(false);
+            settings().enableCopilot.setValue(true);
             settings().apply();
+            settings().writeSettings();
         });
 
         ActionBuilder toggleAction(this, Constants::COPILOT_TOGGLE);
@@ -114,6 +113,7 @@ public:
         toggleAction.addOnTriggered(this, [](bool checked) {
             settings().enableCopilot.setValue(checked);
             settings().apply();
+            settings().writeSettings();
         });
 
         QAction *toggleAct = toggleAction.contextAction();

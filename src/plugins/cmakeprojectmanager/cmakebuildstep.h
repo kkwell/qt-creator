@@ -58,8 +58,8 @@ public:
     void setBuildPreset(const QString &preset);
 
     Utils::Environment environment() const;
-    void setUserEnvironmentChanges(const Utils::EnvironmentItems &diff);
-    Utils::EnvironmentItems userEnvironmentChanges() const;
+    void setUserEnvironmentChanges(const Utils::EnvironmentChanges &diff);
+    Utils::EnvironmentChanges userEnvironmentChanges() const;
     bool useClearEnvironment() const;
     void setUseClearEnvironment(bool b);
     void updateAndEmitEnvironmentChanged();
@@ -89,7 +89,7 @@ private:
 
     bool init() override;
     void setupOutputFormatter(Utils::OutputFormatter *formatter) override;
-    Tasking::GroupItem runRecipe() final;
+    QtTaskTree::GroupItem runRecipe() final;
     QWidget *createConfigWidget() override;
 
     Utils::FilePath cmakeExecutable() const;
@@ -103,6 +103,8 @@ private:
     void updateBuildTargetsModel();
     void updateDeploymentData();
 
+    QStringList processSubDirStagingSingleTarget(const QStringList &targets);
+
     friend class CMakeBuildStepConfigWidget;
     QStringList m_buildTargets; // Convention: Empty string member signifies "Current executable"
 
@@ -112,7 +114,7 @@ private:
     Utils::TreeModel<Utils::TreeItem, CMakeTargetItem> m_buildTargetModel;
 
     Utils::Environment m_environment;
-    Utils::EnvironmentItems  m_userEnvironmentChanges;
+    Utils::EnvironmentChanges m_userEnvironmentChanges;
     bool m_clearSystemEnvironment = false;
     QString m_buildPreset;
     std::optional<QString> m_configuration;

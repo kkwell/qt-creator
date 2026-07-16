@@ -1,10 +1,10 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include <QtTest>
 #include <QDebug>
-#include <QTextDocument>
+#include <QTest>
 #include <QTextCursor>
+#include <QTextDocument>
 
 #include <cplusplus/AST.h>
 #include <cplusplus/ASTVisitor.h>
@@ -40,7 +40,7 @@ class tst_Semantic: public QObject
 public:
     tst_Semantic()
         : control(new Control)
-    { control->setDiagnosticClient(&diag); }
+    { control->setDiagnosticClient(&diag, true); }
 
     TranslationUnit *parse(const QByteArray &source,
                            TranslationUnit::ParseMode mode,
@@ -122,7 +122,7 @@ public:
         features.cxx11Enabled = enableCxx11;
         features.cxxEnabled = true;
         diag.errorCount = 0; // reset the error count.
-        TranslationUnit *unit = parse(source, TranslationUnit::ParseTranlationUnit, features);
+        TranslationUnit *unit = parse(source, TranslationUnit::ParseTranslationUnit, features);
         QSharedPointer<Document> doc(new Document(unit));
         doc->check();
         doc->errorCount = diag.errorCount;

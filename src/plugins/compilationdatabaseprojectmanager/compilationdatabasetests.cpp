@@ -9,7 +9,7 @@
 #include <cppeditor/cpptoolstestcase.h>
 #include <cppeditor/projectinfo.h>
 
-#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/environmentkitaspect.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
@@ -19,7 +19,7 @@
 #include <utils/algorithm.h>
 #include <utils/hostosinfo.h>
 
-#include <QtTest>
+#include <QTest>
 
 using namespace CppEditor;
 using namespace ProjectExplorer;
@@ -59,7 +59,7 @@ void CompilationDatabaseTests::testProject()
     QFETCH(FilePath, projectFilePath);
 
     CppEditor::Tests::ProjectOpenerAndCloser projectManager;
-    const CppEditor::ProjectInfo::ConstPtr projectInfo = projectManager.open(projectFilePath, true);
+    const CppEditor::ProjectInfo::ConstPtr projectInfo = projectManager.open(projectFilePath);
     QVERIFY(projectInfo);
 
     QVector<CppEditor::ProjectPart::ConstPtr> projectParts = projectInfo->projectParts();
@@ -120,11 +120,11 @@ void CompilationDatabaseTests::testFilterFromFilename()
 
 void CompilationDatabaseTests::testFilterArguments()
 {
-    using Utils::HostOsInfo;
-    const char winPath1[] = "C:\\Qt\\5.9.2\\mingw53_32\\include";
-    const char otherPath1[] = "/Qt/5.9.2/mingw53_32/include";
-    const char winPath2[] = "C:\\Qt\\5.9.2\\mingw53_32\\include\\QtWidgets";
-    const char otherPath2[] = "/Qt/5.9.2/mingw53_32/include/QtWidgets";
+    const FilePath winPath1 = "C:\\Qt\\5.9.2\\mingw53_32\\include";
+    const FilePath otherPath1 = "/Qt/5.9.2/mingw53_32/include";
+    const FilePath winPath2 = "C:\\Qt\\5.9.2\\mingw53_32\\include\\QtWidgets";
+    const FilePath otherPath2 = "/Qt/5.9.2/mingw53_32/include/QtWidgets";
+
     CompilationDatabaseUtilsTestData testData;
     testData.fileName = "compileroptionsbuilder.cpp";
     testData.workingDir = "C:/build-qtcreator-MinGW_32bit-Debug";
@@ -141,9 +141,9 @@ void CompilationDatabaseTests::testFilterArguments()
                     "-DRELATIVE_PLUGIN_PATH=\"../lib/qtcreator/plugins\"",
                     "-DQT_CREATOR",
                     "-I",
-                    QString::fromUtf8(HostOsInfo::isWindowsHost() ? winPath1 : otherPath1),
+                    HostOsInfo::isWindowsHost() ? winPath1.path() : otherPath1.path(),
                     "-I",
-                    QString::fromUtf8(HostOsInfo::isWindowsHost() ? winPath2 : otherPath2),
+                    HostOsInfo::isWindowsHost() ? winPath2.path() : otherPath2.path(),
                     "-x",
                     "c++",
                     QString("--sysroot=") + (HostOsInfo::isWindowsHost()
@@ -157,10 +157,10 @@ void CompilationDatabaseTests::testFilterArguments()
 
     QCOMPARE(testData.flags, (QStringList{"-m32", "-target", "i686-w64-mingw32", "-std=gnu++14",
                                           "-fcxx-exceptions", "-fexceptions"}));
-    QCOMPARE(testData.headerPaths,
-             toUserHeaderPaths(QStringList{
-                 QString::fromUtf8(HostOsInfo::isWindowsHost() ? winPath1 : otherPath1),
-                 QString::fromUtf8(HostOsInfo::isWindowsHost() ? winPath2 : otherPath2)}));
+    QCOMPARE(testData.headerPaths, (HeaderPaths{
+                HeaderPath(HostOsInfo::isWindowsHost() ? winPath1 : otherPath1, HeaderPathType::User),
+                HeaderPath(HostOsInfo::isWindowsHost() ? winPath2 : otherPath2, HeaderPathType::User)
+            }));
     QCOMPARE(testData.macros, (Macros{{"UNICODE", "1"},
                                       {"RELATIVE_PLUGIN_PATH", "\"../lib/qtcreator/plugins\""},
                                       {"QT_CREATOR", "1"}}));
@@ -228,8 +228,11 @@ void CompilationDatabaseTests::testFilterCommand()
     if (Utils::HostOsInfo::isWindowsHost()) {
         QCOMPARE(testData.flags,
                  (QStringList{"/Zc:inline", "/Zc:strictStrings", "/Zc:rvalueCast", "/Zi"}));
-        QCOMPARE(testData.headerPaths,
-                 toUserHeaderPaths(QStringList{"C:/build-qt_llvm-msvc2017_64bit-Debug/tools\\clang\\lib\\Sema"}));
+
+        const HeaderPath hp(FilePath("C:/build-qt_llvm-msvc2017_64bit-Debug/tools\\clang\\lib\\Sema"),
+                            HeaderPathType::User);
+        QCOMPARE(testData.headerPaths, HeaderPaths{hp});
+
         QCOMPARE(testData.macros, (Macros{{"UNICODE", "1"}, {"_HAS_EXCEPTIONS", "0"}, {"WIN32", "1"},
                                           {"_WINDOWS", "1"}}));
         QCOMPARE(testData.fileKind, CppEditor::ProjectFile::Kind::CXXSource);

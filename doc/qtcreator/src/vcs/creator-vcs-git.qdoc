@@ -1,4 +1,4 @@
-// Copyright (C) 2023 The Qt Company Ltd.
+// Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
 
 // **********************************************************************
@@ -9,263 +9,943 @@
 
 /*!
     \page creator-vcs-git.html
-    \if defined(qtdesignstudio)
-    \previouspage studio-finding-the-qt-runtime-version.html
-    \nextpage studio-porting-projects.html
-
-    \title Using Git
-    \else
     \previouspage creator-reference.html
+    \nextpage
 
     \ingroup creator-reference-vcs
 
-    \title Git
+    \title Using Git
 
-    \brief Additional Git functions.
-    \endif
+    \quotation
+    \l {Use Git}{How to: Use Git}
+    \endquotation
 
-    \l{http://git-scm.com/}{Git} is a fast decentralized version control system.
+    \brief {Additional Git functions.}
+
+    \l{Git Downloads}{Git} is a fast decentralized version control system.
     Git is available for Windows, Linux, and \macos.
 
-    You can use the \l{http://code.google.com/p/gerrit/}{Gerrit} code review
-    tool for projects that use Git.
+    You can use the \l{Gerrit Code Review} tool for projects that use Git.
 
-    \if defined(qtcreator)
-    \section1 Using Git for Windows
+    \section1 Getting started with Git
 
-    If you configure Git for use with \c {git bash}, only, and use SSH
-    authorization, Git looks for the SSH keys in the directory where the
-    \c HOME environment points to. The variable is always set by \c {git bash}.
+    \generatelist creator-how-to-git-general
 
-    However, the variable is typically not set in a Windows command prompt. When
-    you run Git from a Windows command prompt, it looks for the SSH keys in its
-    installation directory, and therefore, the authorization fails.
+    \section1 Working with the current file
 
-    You can set the \c HOME environment variable from \QC. Select \preferences >
-    \uicontrol {Version Control} > \uicontrol Git, and then select the
-    \uicontrol {Set "HOME" environment variable} check box. \c HOME is
-    set to \c %HOMEDRIVE%%HOMEPATH% when the Git executable is run and
-    authorization works as it would with \c {git bash}.
+    To work with the current file, go to \uicontrol Tools >
+    \uicontrol Git > \uicontrol {Current File}.
 
-    \image qtcreator-preferences-vcs-git.webp {Git preferences}
-    \endif
+    \generatelist creator-how-to-git-current-file
 
-    \section1 Initializing Git Repositories
+    \section1 Working with the current project
+
+    To work with the current project, go to \uicontrol Tools >
+    \uicontrol Git > \uicontrol {Current Project Directory}.
+
+    \generatelist creator-how-to-git-current-project
+
+    \section1 Working with local repositories
+
+    To work with the local repository, go to \uicontrol Tools >
+    \uicontrol Git > \uicontrol {Local Repository}.
+
+    \generatelist creator-how-to-git-local-repository
+
+    \section1 Working with remote repositories
+
+    To work with remote repositories, go to \uicontrol Tools >
+    \uicontrol Git > \uicontrol {Remote Repository}.
+
+    \generatelist creator-how-to-git-remote-repository
+
+    \sa {Use Git}{How to: Use Git}, {Compare files},
+    {Version control systems}
+*/
+
+/*!
+    \page creator-how-to-manage-git-remote-repositories.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-remote-repository
+
+    \title Manage remote repositories
+
+    To manage remote repositories available in Git, go to \uicontrol Tools >
+    \uicontrol Git > \uicontrol {Remote Repository} >
+    \uicontrol {Manage Remotes}. Double-click the names and URLs of the remote
+    repositories to edit them.
+
+    The following table describes the supported operations.
+
+    \table
+        \header
+            \li Menu Item
+            \li Description
+        \row
+            \li \uicontrol{Refresh}
+            \li Refresh the list of remote repositories.
+        \row
+            \li \uicontrol{Add}
+            \li Add a new remote repository.
+        \row
+            \li \uicontrol{Fetch}
+            \li Fetch all the branches and change information from a remote
+                repository.
+        \row
+            \li \uicontrol Push
+            \li Push committed changes to the remote repository.
+        \row
+            \li \uicontrol{Remove}
+            \li Remove a remote repository.
+    \endtable
+
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
+
+/*!
+    \page creator-how-to-setup-git.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-general
+
+    \title Set up Git
+
+    To set up Git, go to \preferences > \uicontrol {Version Control} > \uicontrol {General}.
+
+    \image {qtcreator-preferences-vcs-git.webp} {Git tab in Version Control preferences}
+    \caption Git tab in Version Control preferences
+
+    You can set the following preferences:
+
+    \list
+        \li When the Git executable is not in the \c PATH variable, specify the
+            full path to the executable in \uicontrol {Git command}.
+        \li Alternatively, add the folder containing the Git executable to
+            \uicontrol {Prepend to PATH}.
+        \li In Windows, Git needs to know the \c HOME directory for its own settings
+            and for \c SSH to find the keys. If the \c HOME directory is not correctly
+            set, select \uicontrol {Set HOME environment variable} to set it.
+            For more information, see \l {Use Git for Windows}.
+        \li To limit the entries in the \l {git log}, change \uicontrol {Log count}.
+        \li To avoid that Git commands run forever (for example on network problems),
+            set \uicontrol {Timeout}.
+        \li To rebase local commits instead of merging them during \l {git pull},
+            select \uicontrol {Pull with rebase}.
+        \li To allow rebasing merges during \l {Interactive rebase}, select
+            \uicontrol {Allow rebasing merges}. This is an advanced option and
+            requires Git version 2.18 or later.
+        \li To allow updating references during \l {Interactive rebase}, select
+            \uicontrol {Allow updating references}. This is an advanced option
+            and requires Git version 2.38 or later.
+        \li To specify additional arguments when running \uicontrol {Gitk}, add them
+            to \uicontrol {Gitk} > \uicontrol {Arguments}.
+        \li To use another application for viewing Git history, such as GitX or QGit,
+            specify the path to the executable in \uicontrol {Repository Browser}
+            > \uicontrol {Command}. See \l {Other repository browsers} for more information.
+        \li For the Instant Blame settings, see \l {Show instant blame}.
+    \endlist
+
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
+
+/*!
+    \page creator-how-to-git-first-commit.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-general
+
+    \title Commit your first change
+
+    When working with Git, you typically check and stage you local changes,
+    commit them to the local repository, and then push them to a remote
+    repository (\e origin).
+
+    Before you start, set up Git in \preferences > \uicontrol {Version Control}
+    > \uicontrol {General}. For more information, see \l {Set up Git}.
+
+    \section1 Configure your user credentials
+
+    Git needs to know your user name and email, so configure them first:
+    \code [shell]
+        git config --global user.name "Jon Doe"
+        git config --global user.email "Jon.Doe@company.com"
+    \endcode
+
+    \section1 Commit to a new repository
+
+    To commit and push your first change to a new repository:
+
+    \list 1
+        \li To start tracking changes, go to \uicontrol Tools > \uicontrol Git,
+            and then select \uicontrol {Create Repository}.
+        \li To view local changes, go to \uicontrol Tools > \uicontrol Git >
+            \uicontrol {Local Repository} and select \uicontrol {Diff}.
+            \image {qtcreator-git-diff-repository.webp} {Git Diff Repository view}
+            \caption Git Diff Repository view
+        \li Right-click a changed line and select \uicontrol {Stage Chunk} to add
+            the \e {chunk} to the staging area or \uicontrol {Stage Selection}
+            to add the selected lines there.
+        \li To commit the staged changes to the local repository, go to
+            \uicontrol Tools > \uicontrol Git > \uicontrol {Local Repository}
+            and select \uicontrol Commit.
+            \image {qtcreator-git-commit.webp} {Git Commit view}
+            \caption Git Commit view
+        \li Select the files to commit, and then select
+            \uicontrol {Commit <n/m> File(s)} to commit the changes to the local
+            repository.
+        \li To push the committed changes to a remote repository, go to
+            \uicontrol Tools > \uicontrol Git > \uicontrol {Remote Repository}
+            and select \uicontrol Push.
+
+            If the local branch does not have an upstream branch in the remote
+            repository, \QC prompts you to create it and set it as \e origin.
+    \endlist
+
+    \section1 Commit to an existing repository
+
+    To commit and push your first change to an existing repository:
+
+    \list 1
+        \li To pull changes from a remote repository, go to \uicontrol Tools >
+            \uicontrol Git > \uicontrol {Remote Repository} and select
+            \uicontrol Pull.
+        \li Select \uicontrol {Stash & Pop} to stash all local changes before
+            pulling and to apply your stash on top of the pulled working tree
+            state.
+        \li To commit the changes to the local repository, go to \uicontrol Tools
+            > \uicontrol Git > \uicontrol {Local Repository} and select
+            \uicontrol Commit.
+        \li To push the committed changes to a remote repository, go to
+            \uicontrol Tools > \uicontrol Git > \uicontrol {Remote Repository}
+            and select \uicontrol Push.
+    \endlist
+
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
+
+/*!
+    \page creator-how-to-initialize-git-repo.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-general
+
+    \title Initialize Git repositories
 
     To start controlling a project directory that is currently not under
-    version control, select \uicontrol Tools > \uicontrol Git >
-    \uicontrol {Create Repository}. \QC creates a new subdirectory named .git
-    that has all the necessary repository files. However, Git does not track
-    anything in the project yet, so you will need to create an initial commit to
-    start tracking the project files.
+    version control, go to \uicontrol Tools > \uicontrol Git, and then select
+    \uicontrol {Create Repository}.
 
-    \section1 Working with the Current File
+    \QC creates a new subdirectory named \c {.git} that has all the necessary
+    repository files. \QC also creates a file named \c {.gitignore} that
+    contains patterns of files that should not be tracked by Git (such as
+    build directories).
 
-    To work with the current file, select the commands in \uicontrol Tools >
-    \uicontrol Git > \uicontrol {Current File}. Some of the commands are also
-    available for the project or local repository that has the file.
+    Git does not track anything in the project yet, so you need to
+    create an \l{Commit your first change}{initial commit} to start tracking
+    the project files.
 
-    \section2 Viewing Git Diff
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
 
-    You can \e{diff} the current file or project to compare it with the latest
-    version stored in the repository and to display the differences. To display
-    the diff in a read-only editor, select \uicontrol {Diff of}. If the file is
-    accessible, you can double-click on a selected diff chunk and \QC opens an
-    editor displaying the file, scrolled to the line in question.
+/*!
+    \page creator-how-to-git-diff.html
+    \previouspage creator-how-tos.html
 
-    \image qtcreator-vcs-diff.png
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-current-file
+    \ingroup creator-how-to-git-current-project
+    \ingroup creator-how-to-git-local-repository
 
-    The diff editor displays the diff side-by-side. To use
+    \title git diff
+
+    You can \e {diff} the current file or project to compare it with the latest
+    version stored in the repository and to display the differences.
+
+    \list
+        \li To view changes in the current file, go to \uicontrol Tools >
+            \uicontrol Git > \uicontrol {Current File} and select
+            \uicontrol {Diff of <file>}.
+        \li To view changes in a specific file, right-click it in \l {Projects} or
+            \l {File System} and select \uicontrol Git > \uicontrol Diff.
+        \li To view changes in the current project directory, go to
+            \uicontrol Tools > \uicontrol Git >
+            \uicontrol {Current Project Directory} and select
+            \uicontrol {Diff Directory of <project directory>}.
+        \li To view changes in the local repository, go to \uicontrol Tools >
+            \uicontrol Git > \uicontrol {Local Repository} and select
+            \uicontrol {Diff}.
+    \endlist
+
+    The \uicontrol {Git Diff} view shows the diff in a read-only editor. If \QC
+    can access the file, you can double-click a diff chunk to open an editor
+    that displays the file and line.
+
+    \image {qtcreator-git-diff-repository.webp} {Git Diff Repository view}
+    \caption Git Diff Repository view
+
+    \section1 Fold diff chunks
+
+    To fold all diff chunks, select \inlineimage {icons/qtcreator-expand.png} {Fold All}
+    (\uicontrol {Fold All}) from the toolbar. This collapses all diff chunks in
+    the \uicontrol {Git Diff} view, making it easier to navigate large diffs.
+
+    \section1 Toggle unified and side-by-side views
+
+    The \uicontrol {Git Diff} view displays the diff side-by-side. To use
     the unified diff view instead, select the
-    \uicontrol {Switch to Unified Diff Editor} (1) option from the toolbar.
-    In both views, you can use context menu commands to apply, revert, stage,
-    and unstage chunks or selected lines, as well as send chunks to a code
-    pasting service.
+    \inlineimage {icons/unifieddiff.png} {Switch to Unified Diff Editor}
+    (\uicontrol {Switch to Unified Diff Editor}) option from the toolbar. To switch
+    back to side-by-side diff view, use
+    \inlineimage {icons/sidebysidediff.png} {Switch to Side-by-Side Diff Editor}
+    (\uicontrol {Switch to Side-by-Side Diff Editor}).
 
-    \section2 Viewing Git Log
+    For more information, see \l {Compare files}.
 
-    To display the versioning history of a file, select \uicontrol{Log of}.
-    The log output has the date, the commit message, and a commit
-    identifier.
+    \section1 Stage and unstage changes
 
-    You can set the maximum number of log entries to show in \preferences >
+    Stage your changes to commit them, so that you can push them to the remote
+    repository or send them to Gerrit for review. To stage changes for a commit
+    chunk-by-chunk or line-by-line, right-click a chunk or line in the
+    \uicontrol {Git Diff} view and select context menu commands to stage or
+    unstage it.
+
+    \table
+        \header
+            \li Context Menu Item
+            \li Description
+        \row
+            \li \uicontrol {Revert Chunk}
+            \li Resets the changes in the chunk.
+        \row
+            \li \uicontrol {Stage Chunk}
+            \li Adds the chunk to the staging area.
+        \row
+            \li \uicontrol {Stage Selection}
+            \li Adds the selected lines to the staging area.
+        \row
+            \li \uicontrol {Unstage Chunk}
+            \li Removes the chunk from the staging area.
+        \row
+            \li \uicontrol {Unstage Selection}
+            \li Removes the selected lines from the staging area.
+    \endtable
+
+    To view a diff of staged changes:
+
+    \list
+        \li To view staged changes in the current file, go to \uicontrol Tools >
+            \uicontrol Git > \uicontrol {Current File} and select
+            \uicontrol {Diff Staged Changes in <file>}.
+        \li To view staged changes in the current project directory, go to
+            \uicontrol Tools > \uicontrol Git >
+            \uicontrol {Current Project Directory} and select
+            \uicontrol {Diff Staged Directory of <project directory> Changes}.
+        \li To view staged changes in the local repository, go to
+            \uicontrol Tools > \uicontrol Git > \uicontrol {Local Repository} and
+            select \uicontrol {Diff Staged}.
+    \endlist
+
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
+
+/*!
+    \page creator-how-to-git-log.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-current-file
+    \ingroup creator-how-to-git-current-project
+    \ingroup creator-how-to-git-local-repository
+
+    \title git log
+
+    You can view the versioning history of the current file or project directory
+    or local repository.
+
+    \list
+        \li To view the versioning history of the current file, go to
+            \uicontrol Tools > \uicontrol Git > \uicontrol {Current File} and
+            select \uicontrol {Log of <file>}.
+        \li To view the versioning history of a selection of the current file, go
+            to \uicontrol Tools > \uicontrol Git > \uicontrol {Current File} and
+            select \uicontrol {Log of <file> Selection}.
+        \li To view the versioning history of the current project directory, go
+            to \uicontrol Tools > \uicontrol Git >
+            \uicontrol {Current Project Directory} and select
+            \uicontrol {Log of <project directory name>}.
+        \li To view the versioning history of the local repository, go to
+            \uicontrol Tools > \uicontrol Git > \uicontrol {Local Repository} and
+            select \uicontrol {Log}.
+        \li To view the log of a directory and its subdirectories or a specific
+            file, right-click it in \l Projects or \l {File System} and select
+            \uicontrol Git > \uicontrol Log.
+    \endlist
+
+    The \uicontrol {Git Log} view shows the commit identifier, author, date, and
+    commit message.
+
+    \image {qtcreator-git-log.webp} {Commit details in Git log}
+    \caption Commit details in Git log
+
+    To set the maximum number of log entries to show, go to \preferences >
     \uicontrol {Version Control} > \uicontrol Git > \uicontrol {Log count}.
 
-    Click on the commit identifier to view commit details.
+    Select \imagereload (\uicontrol {Reload}) to rescan the files.
 
-    \image qtcreator-git-log.png {Commit details in Git log}
+    \section1 View log entry details
 
-    Right-clicking on a commit identifier brings up a context menu that lets
-    you apply actions on the commit, such as view annotations or cherry-pick
-    or revert a commit. For more information, see \l{Working with Branches}.
+    In the \uicontrol {Git Log} view, select a commit identifier to view commit
+    details.
 
-    To toggle the diff view, select \uicontrol Diff. To use the patience
-    algorithm for calculating the differences, select \uicontrol Patience.
+    Right-click a commit identifier to apply actions to the commit.
+
+    \table
+        \header
+            \li Menu Item
+            \li Description
+            \li Learn More
+        \row
+            \li \uicontrol {Add Tag for <hash>}
+            \li Add a tag reference to the change. You can add an annotation to
+                the tag.
+            \li
+        \row
+            \li \uicontrol {Checkout <hash>}
+            \li Check out the commit in a detached HEAD state.
+            \li
+        \row
+            \li \uicontrol {Cherry-Pick <hash>}
+            \li Cherry-pick the selected commit to the current branch.
+            \li
+        \row
+            \li \uicontrol {Create branch from <hash>}
+            \li Create a branch based on the commit.
+            \li \l {git branch}
+        \row
+            \li \uicontrol {Copy <hash>}
+            \li Copy the commit <hash> to the clipboard.
+            \li
+        \row
+            \li \uicontrol {Describe Change <hash>}
+            \li View a description of the change including the diff in the
+                \uicontrol {Git Show} view.
+            \li
+        \row
+            \li \uicontrol {Diff Against <hash>}
+            \li Show the changes between the commit and the current HEAD.
+            \li \l {git diff}
+        \row
+            \li \uicontrol {Interactive Rebase from <hash>}
+            \li Rebase the current branch on top of <hash>, and choose what to do
+                with each commit.
+            \li \l {Interactive rebase}
+        \row
+            \li \uicontrol {Log for <hash>}
+            \li Show the versioning history the commit.
+            \li
+        \row
+            \li \uicontrol {Reset to Change <hash>}
+            \li Reset the working directory to the commit.
+            \li \l {git reset}
+        \row
+            \li \uicontrol {Revert <hash>}
+            \li Revert the changes introduced by this commit. All other commits
+                remain unchanged.
+            \li
+        \row
+            \li \uicontrol {Save for Diff}
+            \li Save to the current commit to prepare for
+                \uicontrol {Diff Against Saved <hash>}.
+            \li
+\row
+            \li \uicontrol {Diff Against Saved <hash>}
+            \li Show the changes between the commit and the saved <hash>.
+            \li \l {git diff}
+    \endtable
+
+
+    \section1 Toggle the diff view
+
+    To toggle the diff view, select \uicontrol Diff.
+
+    \section1 Use the patience diff algorithm
+
+    To use the patience diff algorithm for calculating the differences, select
+    \uicontrol Patience.
+
+    \section1 Ignore whitespace changes
+
     To only show text changes, select \uicontrol {Ignore Whitespace}.
 
+    \section1 Filter log entries
+
     To filter log entries by the text in the commit message, by strings that
-    were added or removed, or by author, select \uicontrol Filter. Enter a
-    search sting in the \uicontrol {Filter by message},
-    \uicontrol {Filter by content}, or \uicontrol {Filter by author} field.
-    Select \uicontrol {Case Sensitive} to make filtering consider case.
+    were added or removed, or by author:
+
+    \list 1
+        \li In the \uicontrol {Git Log} view, select \uicontrol Filter.
+        \li Enter a search string in \uicontrol {Filter by message},
+            \uicontrol {Filter by content}, or \uicontrol {Filter by author}.
+        \li Select \uicontrol {Case Sensitive} to make filtering consider case.
+    \endlist
+
+    \section1 Show log for all local branches
+
+    To show the log for all local branches (for example, to see all commits
+    that touch a file), select \uicontrol All.
+
+    \section1 Follow only the first parent
 
     To follow only the first parent on merge commits, select
     \uicontrol {First Parent}.
 
+    \section1 Toggle text and graph
+
     To toggle between textual and visual representation of the log, select
     \uicontrol Graph.
+
+    \section1 Toggle colors
 
     To toggle color coding of different parts of the log entries, select
     \uicontrol Color.
 
+    \section1 Show log for previous names of the file
+
     To show log also for previous names of the file, select \uicontrol Follow.
 
-    Select \inlineimage icons/reload_gray.png
-    (\uicontrol Reload) to rescan the files.
+    \section1 Show details
 
     To display a description of the change including the diff in the
-    \uicontrol {Git Show} view, select \uicontrol {Describe Change} in the
+    \uicontrol {Git Show} view, select \uicontrol {Describe Change <hash>} in the
     context menu.
 
-    \image qtcreator-vcs-show.png {Commit description in Git show}
+    \image {qtcreator-vcs-show.png} {Commit description in Git Show}
+    \caption Commit description in Git Show
 
-    \section2 Viewing Annotations
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
 
-    To view annotations, select \uicontrol {Blame}. The \uicontrol {Git Blame}
-    view displays the lines of the file prepended by the commit identifier they
-    originate from.
+/*!
+    \page creator-how-to-git-blame.html
+    \previouspage creator-how-tos.html
 
-    \image qtcreator-git-blame.webp {Git Blame view}
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-current-file
 
-    By default, each line is annotated in the editor when you scroll through
-    the file. To disable this feature, select \preferences >
-    \uicontrol {Version Control} > \uicontrol Git, and
-    deselect \uicontrol {Instant Blame}. To find the commit that introduced
-    the last real code change, select \uicontrol {Ignore whitespace changes}.
-    To find the commit that introduced a line before it was moved, select
-    \uicontrol {Ignore line moves}.
+    \title git blame
 
-    To view annotations for the current line, select \uicontrol Tools >
-    \uicontrol Git > \uicontrol {Current File} > \uicontrol {Instant Blame}.
+    By default, each line is annotated in the editor when you move the cursor
+    through a file. Hover over the annotation to view commit details and to apply
+    actions to the commit.
 
-    Click the commit identifier to show a detailed description of the change.
+    \image {qtcreator-git-instant-blame.webp} {Instant blame in the code editor}
+    \caption Instant blame in the code editor
 
-    To show the annotation of a previous version, right-click on the commit
+    When you hover over the annotation, a tooltip with additional information is shown.
+    From the tooltip, several actions are available. For more information, see
+    \l {Show instant blame}.
+
+    \section1 Hide blame in the editor
+
+    To hide blame in the editor, go to \preferences >
+    \uicontrol {Version Control} > \uicontrol Git and
+    clear \uicontrol {Instant Blame}.
+    For more information, see \l {Instant blame settings}.
+
+    When instant blame is off, you can go to \uicontrol Tools > \uicontrol Git >
+    \uicontrol {Current File} > \uicontrol {Instant Blame} to view blame for the
+    current line.
+
+    \section1 View blame for the whole file
+
+    To view blame for all lines in the file in the \uicontrol {Git Blame} view,
+    go to \uicontrol Tools > \uicontrol Git > \uicontrol {Current File} and
+    select \uicontrol {Blame for <file>}. Before each line, you can see
+    the identifier of the commit it originates from.
+
+    \image {qtcreator-git-blame.webp} {Git Blame view}
+    \caption Git Blame view
+
+    \list
+    \li To hide the path information in the view, select \uicontrol {Omit Path}.
+
+    \li To hide the author information in the view, select \uicontrol {Omit Author}.
+
+    \li To hide the date and time information in the view, select
+        \uicontrol {Omit Date}.
+
+    \li To find the commit that introduced the last real code change, select
+        \uicontrol {Ignore Whitespace}.
+
+    \li To find the commit that introduced a line before it was moved, select
+        \uicontrol {No Move Detection}. To view moved or copied lines within a file
+        or between files, select \uicontrol {Detect Moves Within File},
+        \uicontrol {Detect Moves Between Files},
+        or \uicontrol {Detect Moves and Copies Between Files}.
+
+    \li To rescan the files, select \imagereload (\uicontrol {Reload}).
+    \endlist
+
+    Select the commit identifier to show a detailed description of the change
+    in the \uicontrol {Git Show} view.
+
+    Right-click the commit identifier to \l{Apply actions to commits}
+    {apply other actions to the commit}, such as cherry-pick, checkout,
+    or revert it.
+
+    \section1 View blame in previous versions
+
+    To show the annotation of a previous version, right-click the commit
     identifier and select \uicontrol {Blame Parent Revision}. This allows you
     to navigate through the history of the file and obtain previous versions
     of it.
 
-    To view moved or copied lines within a file or between files, select
-    \uicontrol {Detect Moves Within File}, \uicontrol {Detect Moves Between Files},
-    or \uicontrol {Detect Moves and Copies Between Files}.
+    \sa {Use Git}{How to: Use Git}, {Show instant blame}, {Using Git}
+*/
 
-    To hide the date and time information in the view, select
-    \uicontrol {Omit Date}.
+/*!
+    \page creator-how-to-git-stage-changes.html
+    \previouspage creator-how-tos.html
 
-    The other actions in the context-menu enable you to apply actions to the
-    commit, such as cherry-pick, checkout, or revert it.
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-current-file
+    \ingroup creator-how-to-git-current-project
 
-    To rescan the files, select \inlineimage icons/reload_gray.png
-    (\uicontrol Reload).
+    \title Stage changes
 
-    \section2 Staging Changes
+    Stage your changes to commit them, so that you can push them to the remote
+    repository or send them to Gerrit for review.
 
-    To mark a new or modified file for committing it to the repository,
-    select \uicontrol {Stage File for Commit}. To undo this function,
-    select \uicontrol {Unstage File from Commit}.
+    \section1 Stage the current file
 
-    \section2 Resetting Changes
+    To mark a new or modified file for committing it to the repository, stage
+    the file in one of the following ways:
+
+    \list
+        \li Go to \uicontrol Tools > \uicontrol Git > \uicontrol {Current File}
+            and select \uicontrol {Stage <file> for Commit}.
+        \li Right-click the file in \l {Projects} or \l {File System}
+            and select \uicontrol Git > \uicontrol Stage.
+        \li Go to \uicontrol Tools > \uicontrol Git >
+            \uicontrol {Local Repository} > \uicontrol Commit, right-click
+            the file in \uicontrol Files and select \uicontrol Stage.
+    \endlist
+
+    \section1 Unstage the current file
+
+    To remove the current file from the staged changes, unstage the file in
+    one of the following ways:
+
+    \list
+        \li Go to \uicontrol Tools > \uicontrol Git > \uicontrol {Current File}
+            and select \uicontrol {Unstage <file> from Commit}.
+        \li Right-click the file in \l {Projects} or \l {File System}
+            and select \uicontrol Git > \uicontrol Unstage.
+        \li Go to \uicontrol Tools > \uicontrol Git >
+            \uicontrol {Local Repository} > \uicontrol Commit, right-click
+            the file in \uicontrol Files and select \uicontrol Unstage.
+    \endlist
+
+    \section1 Stage chunks or lines
+
+    You can stage changes for a commit chunk-by-chunk or line-by-line in the
+    \l{git diff}{Git Diff} view.
+
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
+
+/*!
+    \page creator-how-to-git-reset.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-current-file
+    \ingroup creator-how-to-git-local-repository
+
+    \title git reset
 
     Git uses an index to stage changes. The index is committed on
     the next commit. Git allows you to revert back to the state of the last
     commit as well as to the state staged in the index.
 
-    To revert all changes and reset the current file to the state of the index,
-    select \uicontrol{Undo Unstaged Changes}.
+    \section1 Reset all uncommitted changes in the current file
+
+    To undo all unstaged changes and reset the current file to the state of the
+    index, go to \uicontrol Tools > \uicontrol Git > \uicontrol {Current File}
+    and select \uicontrol {Undo Unstaged Changes for <file>}.
 
     To return the current file to the state it was in right after the last
-    commit, select \uicontrol {Undo Uncommitted Changes}. This reverts all
-    changes, discarding the index.
+    commit, select \uicontrol {Undo All Changes for <file>}. This reverts
+    all changes, discarding the index.
 
-    \section1 Working with the Current Project
+    \section1 Reset changes in the local repository
 
-    To work with the current project, select the commands in \uicontrol Tools >
-    \uicontrol Git > \uicontrol {Current Project}. The \uicontrol {Diff Project}
-    and \uicontrol {Log Project} commands, which are also available for the
-    current file, are described above.
+    To reset changes in the local repository, go to \uicontrol Tools >
+    \uicontrol Git > \uicontrol {Local Repository} and select \uicontrol Reset.
 
-    \section2 Cleaning Projects
+    Select the commit to reset the working directory to. This is useful
+    after applying patches for review, for example.
 
-    To clean the working directory, select \uicontrol {Clean Project}.
-    All files that are not under version control are displayed in
-    the \uicontrol {Clean Repository} dialog. Ignored files are deselected by
-    default. Select the files to delete, and then select \uicontrol Delete.
+    Select the reset type:
 
-    \section1 Working with Local Repositories
+    \list
+        \li \uicontrol Hard reset discards all changes to tracked
+            files in the working tree.
 
-    To work with the local repository, select the commands in \uicontrol Tools >
-    \uicontrol Git > \uicontrol {Local Repository}. The commands that are also
-    available for the current file or project are described above.
+            For more information about how to recover accidentally removed commits,
+            see \l{git reflog}.
+        \li \uicontrol Mixed reset undoes the selected commits and unstages all
+            changes, but keeps the working tree unchanged.
+        \li \uicontrol Soft reset undoes the selected commits but keeps all
+            staged changes and the working tree unchanged.
+    \endlist
 
-    \section2 Viewing Reference Log
+    To recover removed files, select \uicontrol {Recover Deleted Files}.
 
-    Reference logs record when the tips of branches and other references were
-    updated in the local repository. To view the reference log, select
+    \section1 Revert commits in the editor
+
+    To revert the commit you are currently hovering over, select
+    \uicontrol {Revert <hash>} in the annotation view.
+
+    \image {qtcreator-git-instant-blame.webp} {Instant blame in the code editor}
+    \caption Actions in the annotation view for instant blame
+
+    You are asked to confirm the reversion.
+
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
+
+/*!
+    \page creator-how-to-git-clean.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-current-project
+    \ingroup creator-how-to-git-local-repository
+
+    \title git clean
+
+    You can remove files that are not under version control from the project
+    or local repository.
+
+    \list
+        \li To clean the current project directory, go to \uicontrol Tools >
+            \uicontrol Git > \uicontrol {Clean Directory of Project <name>}
+            and select \uicontrol {Current Project Directory}.
+        \li To clean the local repository, go to \uicontrol Tools >
+            \uicontrol Git > \uicontrol {Local Repository} and select
+            \uicontrol Clean.
+    \endlist
+
+    To clean the directory or repository:
+
+    \list 1
+        \li In the \uicontrol {Clean Repository} dialog, select the files to
+            delete.
+            \image {qtcreator-git-clean-repository.webp} {Clean Repository dialog}
+            \caption Clean Repository dialog
+            By default, ignored files are not selected.
+        \li Select \uicontrol Delete to remove the selected files.
+    \endlist
+
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
+
+/*!
+    \page creator-how-to-git-reflog.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-local-repository
+
+    \title git reflog
+
+    Reference logs record the time when the tips of branches and other references
+    were updated in the local repository. To view the reference log, go to
+    \uicontrol Tools > \uicontrol Git > \uicontrol {Local Repository} and select
     \uicontrol Reflog.
 
-    \section2 Viewing Git Status
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
 
-    To view the status of the repository in \uicontrol {Version Control},
-    select \uicontrol Status. The context menu has additional
-    actions, such as selecting and clearing all entries, copying
-    text, and opening files.
+/*!
+    \page creator-how-to-git-status.html
+    \previouspage creator-how-tos.html
 
-    \section2 Committing Changes to Git
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-local-repository
 
-    To submit your changes to Git, select \uicontrol Commit. \QC displays a
-    commit page containing a text editor where you can enter your commit
-    message and a checkable list of modified files to include.
+    \title git status
 
-    \image qtcreator-vcs-commit.png {Committing changes with Git}
+    \section1 Show file status
 
-    \uicontrol {General Information} displays the names of the
-    repository and branch for the commit.
+    By default, \QC displays the file status in the \l {Projects}, \l {File System},
+    and \l {Open Documents} views. Changed files are shown with different colors.
+    The status is refreshed automatically every 10 seconds.
 
-    In \uicontrol {Commit Information}, you can edit information about the
-    author of the commit. To bypass re-commit and commit message hooks,
-    select \uicontrol {Bypass hooks}. If your project uses signoffs,
-    select \uicontrol {Sign off} to add a \e signed-off-by trailer by the
-    author at the end of the commit log message.
+    To customize how often the file status is updated:
 
-    In \uicontrol Description, edit the commit message.
+    \list 1
+        \li Go to \preferences > \uicontrol {Version Control} >
+            \uicontrol General.
+        \li Ensure \uicontrol {Show VCS file status with refresh interval}
+            is selected.
+        \li Set the interval (in seconds) at which \QC requests file status
+            updates from Git.
+    \endlist
 
-    In \uicontrol Files, select the files to include in the commit.
+    \section1 Show git status
 
-    When you have finished filling out the commit page information, select
-    \uicontrol Commit to start committing.
+    To view the status of the repository in \uicontrol {Version Control}, go to
+    \uicontrol Tools > \uicontrol Git > \uicontrol {Local Repository} and select
+    \uicontrol Status.
 
-    The \uicontrol {Diff Selected Files} button opens a \l{Viewing Git Diff}
-    {diff view} of the files selected in the file list. Select
-    \uicontrol {Stage Chunk} in the context menu to stage a chunk or
-    \uicontrol {Stage Selection} to stage the selected lines.
+    To include untracked files, select
+    \uicontrol {Status (Include All Untracked)}.
 
-    To unstage chunks or selected lines, select \uicontrol {Unstage Chunk} or
-    \uicontrol {Unstage Selection} in the context menu. To revert the changes
-    in a chunk, select \uicontrol {Revert Chunk}.
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
 
-    The commit page is just another editor, and therefore you return to it when
-    you close the diff view. You can also switch to an open diff view by
-    selecting it in the \uicontrol {Open Documents} view in the sidebar.
+/*!
+    \page creator-how-to-git-commit.html
+    \previouspage creator-how-tos.html
 
-    \section2 Amending Commits
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-local-repository
 
-    To apply latest changes to the last commit, select \uicontrol Tools >
+    \title git commit
+
+    To submit your changes to Git:
+
+    \list 1
+        \li Go to \uicontrol Tools > \uicontrol Git >
+            \uicontrol {Local Repository} and select \uicontrol Commit.
+            \image {qtcreator-git-commit.webp} {Git Commit view}
+            \caption Git Commit view
+            \uicontrol {General Information} shows the names of the
+            repository and branch for the commit.
+        \li In \uicontrol {Commit Information}, check and edit information about
+            the author of the changes.
+        \li To bypass pre-commit and commit message hooks, select
+            \uicontrol {Bypass hooks}.
+        \li If your project uses signoffs, select \uicontrol {Sign off} to add a
+            \e signed-off-by trailer by the author at the end of the commit log
+            message.
+        \li In \uicontrol Description, enter a commit message.
+        \li In \uicontrol Files, select the files to include in the commit.
+        \li Select \uicontrol {Diff Selected Files} to open the \l{git diff}
+            {Git Diff Files} view, where you can view the changes and stage them
+            chunk-by-chunk or line-by-line.
+        \li Select \uicontrol Commit to start committing.
+    \endlist
+
+    To view the log of the current branch, select the branch name in
+    \uicontrol {Branch}.
+
+    \section1 Apply actions to files
+
+    Open the context menu in \uicontrol Files to apply actions to files. Actions like
+    \uicontrol {Open in Editor} and \uicontrol {Show in File System} are provided for all
+    files. The availability of other actions depends on the state of the selected file.
+
+    \note You can apply these actions also from the context menu in
+    \l {Projects}, \l {File System}, and \l {Open Documents}.
+
+    \table
+    \header
+        \li Menu Item
+        \li Description
+    \row
+        \li \uicontrol Add
+        \li Add untracked files to version control.
+    \row
+        \li \uicontrol Stage
+        \li Stage a modified file for commit.
+    \row
+        \li \uicontrol Unstage
+        \li Unstage a modified file.
+    \row
+        \li \uicontrol Remove
+        \li Delete untracked files.
+    \row
+        \li \uicontrol {Add to .gitignore}
+        \li Add untracked files to the ignore list.
+    \row
+        \li \uicontrol {Mark Untracked}
+        \li Mark added files as untracked.
+    \row
+        \li \uicontrol {Revert Unstaged Changes to <file>}
+        \li Revert unstaged changes in modified files to the previous state.
+    \row
+        \li \uicontrol {Revert All Changes to <file>}
+        \li Revert all changes in modified files to the previous state.
+    \row
+        \li \uicontrol {Recover <file>}
+        \li Restore files deleted from version control.
+    \row
+        \li \uicontrol {Run Merge Tool}
+        \li Launch the merge tool to resolve conflicts in the file.
+    \row
+        \li \uicontrol {Revert Renaming}
+        \li Revert renamed files to their previous names.
+    \endtable
+
+    \section2 Resolve conflicts
+
+    To resolve conflicts, select \uicontrol {Run Merge Tool} in the context
+    menu of a conflicted file to resolve the conflicts with help of the
+    \l {Configure merge tools}{merge tool}.
+    You can also select one of the following options:
+
+    \table
+    \header
+        \li Menu Item
+        \li Description
+    \row
+        \li \uicontrol {Resolve by Recovering}
+        \li Restore deleted files from version control.
+    \row
+        \li \uicontrol {Resolve by Removing}
+        \li Delete files from version control.
+    \row
+        \li \uicontrol {Resolve Conflicts with Ours}
+        \li Choose \e our version of the file to resolve merge conflicts.
+    \row
+        \li \uicontrol {Resolve Conflicts with Theirs}
+        \li Choose \e their version of the file to resolve merge conflicts.
+    \row
+        \li \uicontrol {Mark Conflicts Resolved}
+        \li Mark the file as resolved after manually resolving the conflicts.
+    \endtable
+
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
+
+/*!
+    \page creator-how-to-git-amend.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-local-repository
+
+    \title git amend
+
+    To apply latest changes to the last commit, go to \uicontrol Tools >
     \uicontrol Git > \uicontrol {Local Repository} >
     \uicontrol {Amend Last Commit}.
 
-    \image qtcreator-git-amend.png {Amending a Git commit}
+    \image {qtcreator-git-amend.webp} {Amending a Git commit}
+    \caption Amending a Git commit
 
-    To view the commit in its current form, before amending, select
+    To view the log of the current branch, select the branch name in
+    \uicontrol Branch.
+
+    To view the commit in its current form before amending, select
     \uicontrol {Show HEAD}.
 
     To view a diff of the changes in the selected files, select
@@ -273,52 +953,76 @@
 
     Select \uicontrol Commit to amend the commit.
 
+    \section1 Amend related commits
+
     To amend an earlier comment in a series of related commits, select
     \uicontrol Tools > \uicontrol Git > \uicontrol {Local Repository} >
     \uicontrol {Fixup Previous Commit}. This operation uses interactive
     rebase. In case of conflicts, a merge tool is suggested.
 
-    \section2 Resetting Local Repository
+    To modify the commit message of the final commit, select
+    \uicontrol {Edit commit message}. When the rebase is performed,
+    an editor to edit the commit message appears.
 
-    To reset changes, select \uicontrol Reset. This opens a dialog where you
-    can select the commit to reset the working directory to. This is useful
-    after applying patches for review, for example. You can choose between a
-    \uicontrol Soft reset that does not touch the index file nor the working
-    tree at all, a \uicontrol Hard reset that discards all changes to tracked
-    files in the working tree, and a \uicontrol Mixed reset that resets HEAD
-    and the index (nothing remains staged) without touching the working
-    directory.
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
 
-    To recover removed files, select \uicontrol {Recover Deleted Files}.
+/*!
+    \page creator-how-to-git-interactive-rebase.html
+    \previouspage creator-how-tos.html
 
-    To change a series of commits in the local repository, select
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-local-repository
+
+    \title Interactive rebase
+
+    To change a series of commits in the local repository, go to \uicontrol Tools
+    > \uicontrol Git > \uicontrol {Local Repository} and select
     \uicontrol {Interactive Rebase}. You can reorder or discard commits, squash
     them into a single commit, or edit the commit messages.
 
-    If you already pushed the local changes to a remote, \QC refuses
-    the interactive rebase because the local commits are missing. To
-    start the interactive rebase from the change log, select
-    \uicontrol Branches > \uicontrol Log. Select the change, and then
-    select > \uicontrol {Interactive Rebase from Change} in the context
+    \section1 Rebase from the change log
+
+    If you already pushed the local changes to a remote repository, \QC refuses
+    the interactive rebase because the local commits are missing.
+
+    To start the interactive rebase from the change log, go to \uicontrol Tools
+    > \uicontrol Git > \uicontrol Branches > \uicontrol Log. Select the change,
+    and then select \uicontrol {Interactive Rebase from <hash>} in the context
     menu.
 
-    \section2 Working with Branches
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
 
-    To work with Git branches, select \uicontrol {Branches}. The
-    \uicontrol {Git Branches} view shows a list of branches, as well
+/*!
+    \page creator-how-to-git-branch.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-local-repository
+
+    \title git branch
+
+    To work with Git branches, go to \uicontrol Tools > \uicontrol Git >
+    \uicontrol {Local Repository} and select \uicontrol {Branches}.
+
+    The \uicontrol {Git Branches} view shows a list of branches, as well
     as the differences between your local branches and their origin.
     The branch you checked out is shown in bold and underlined.
 
-    \image qtcreator-git-branches.webp {Git Branches view}
+    \image {qtcreator-git-branches.webp} {Git Branches view}
+    \caption Git Branches view
+
+    \section1 Filter entries and tags
 
     Old entries and tags are filtered out of the list of branches
-    by default. To include them, select \inlineimage icons/filtericon.png
-    (\uicontrol {Filter Tree}), and then select
+    by default. To include them, select \inlineimage {icons/filtericon.png} {Filter}
+    (\uicontrol {Filter}), and then select
     \uicontrol {Include Old Entries} and \uicontrol {Include Tags}.
 
     To add a tag to a change in the change log, select \uicontrol Branches >
     \uicontrol Log. Select the change, and then select \uicontrol {Add Tag
-    for Change} in the context menu.
+    for <hash>} in the context menu.
 
     If you checked out a specific commit, the list of branches displays a
     \e {Detached HEAD} entry.
@@ -326,22 +1030,22 @@
     For local and remote branches, double-click the branch name to view the
     change log.
 
-    To refresh the list of branches, select \inlineimage icons/reload_gray.png
-    (\uicontrol Refresh).
+    To refresh the list of branches, select \imagereload (\uicontrol Refresh).
 
-    \section3 Adding Branches
+    \section1 Add branches
 
     To create a new tracking or non-tracking branch, select
-    \inlineimage icons/plus.png.
+    \imageplus (\uicontrol {Add Branch}).
 
-    \image qtcreator-git-add-branch.webp {Add Branch dialog}
+    \image {qtcreator-git-add-branch.webp} {Add Branch dialog}
+    \caption Add Branch dialog
 
     To check out the branch when creating it, select
     \uicontrol {Checkout new branch}.
 
     To track the selected branch, select \uicontrol {Track local branch}.
 
-    \section3 Managing Branches
+    \section1 Manage branches
 
     The context menu for a branch has the following functions:
 
@@ -375,24 +1079,17 @@
             \li Reset the active branch to the selected branch. You
                 can choose between a \uicontrol Hard, \uicontrol Mixed,
                 and \uicontrol Soft reset. For more information, see
-                \l{Resetting Local Repository}.
+                \l{git reset}.
         \row
             \li \uicontrol Merge
             \li Join the development histories in two branches together.
-
-                If the commit you are merging can be reached by following the
-                first commit's history, there is no divergent work to merge
-                together. To allow Git to move the branch pointer forward,
-                select \uicontrol {Merge (Fast-Forward)}. If you do not want to
-                fast-forward the branch, select
-                \uicontrol {Merge (No Fast-Forward)}.
         \row
             \li \uicontrol Rebase
             \li Copy local commits to the updated upstream head.
 
         \row
-            \li \uicontrol {Cherry Pick}
-            \li Cherry pick the top commit from the selected branch.
+            \li \uicontrol {Cherry-Pick}
+            \li Select commits to cherry-pick from the selected branch.
         \row
             \li \uicontrol Track
             \li Set the current branch to track the selected one.
@@ -419,56 +1116,138 @@
             \li Open the \uicontrol Remotes dialog.
     \endtable
 
-    \section3 Configuring Merge Tools
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
+
+/*!
+    \page creator-how-to-git-merge.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-local-repository
+
+    \title git merge
+
+    To join the development histories in two branches together, go to
+    \uicontrol Tools > \uicontrol Git > \uicontrol {Local Repository}
+    and select \uicontrol {Branches}.
+
+    In the \uicontrol {Git Branches} view, right-click a remote branch, and
+    then select a merge option in the context menu. If the commit you are merging
+    can be reached by following the history of the first commit, there is no divergent
+    work to merge together. To allow Git to move the branch pointer forward,
+    select \uicontrol {Merge <remote branch> into <local branch> (Fast-Forward)}.
+    If you do not want to fast-forward the branch, select
+    \uicontrol {Merge <remote branch> into <local branch> (No Fast-Forward)}.
+
+    \section1 Configure merge tools
 
     Only graphical merge tools are supported. You can configure the
     merge tool to use on the command line. For example, to use the
-    \l{http://kdiff3.sourceforge.net/}{KDiff3} merge tool, enter the
-    following command:
+    \l{KDiff3} merge tool, enter the following command:
 
-    \badcode
+    \code [shell]
     git config --global merge.tool kdiff3
     \endcode
 
-    \section2 Applying Patches
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
+
+/*!
+    \page creator-how-to-git-apply-patch.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-local-repository
+
+    \title Create and apply patches
 
     Patches are rewriting instructions that Git can apply to a set of files.
-    To apply a patch file that is open in \QC, select \uicontrol Patch >
+
+    To generate patch files from local commits:
+    \list 1
+        \li Go to \uicontrol Tools > \uicontrol Git > \uicontrol {Local Repository}.
+        \li Select \uicontrol Patch > \uicontrol {Create from Commits}.
+        \li Select the commits for patch file creation in the dialog.
+        \li Select \uicontrol OK.
+    \endlist
+
+    The patch files are generated in the root directory of the local repository and
+    follow the scheme \e {NNNN-Title-of-Commit.patch}, where \e {NNNN} is a four digit
+    number starting with \e {0000}.
+
+    To apply a patch file that is open in \QC, go to \uicontrol Tools >
+    \uicontrol Git > \uicontrol {Local Repository} and select \uicontrol Patch >
     \uicontrol {Apply from Editor}.
 
     To select the patch file to apply from the file system, select
     \uicontrol {Apply from File}.
 
-    \section2 Using Stashes
+    To apply a patch from the clipboard, select \uicontrol {Apply from Clipboard}.
+
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
+
+/*!
+    \page creator-how-to-git-stash.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-local-repository
+
+    \title git stash
 
     With Git, you can put your current set of changes onto a virtual shelf
     called a \e stash. Stashes are useful, for example, to put aside a set of
     changes to work on higher priority tasks or to pull in new changes from
     another repository.
 
-    To stash all local changes, select \uicontrol Stash > \uicontrol Stash. The
-    working copy is reset to the state it had after the last commit. To save the
-    current state of your unstaged files and reset the repository to its staged
-    state, select \uicontrol {Stash Unstaged Files}.
+    \section1 Stash local changes
+
+    To stash all local changes, go to \uicontrol Tools > \uicontrol Git >
+    \uicontrol {Local Repository} > \uicontrol Stash and select \uicontrol Stash.
+    The working copy is reset to the state it had after the last commit.
+
+    To save the current state of your unstaged files and reset the repository to
+    its staged state, select \uicontrol {Stash Unstaged Files}.
+
+    \section1 Manage stashed changes
 
     To display a dialog that shows all known stashes with options to restore,
     display or delete them, select \uicontrol Stashes.
+
+    \section1 Take a snapshot
 
     To save a snapshot of your current work under a name for later reference,
     select \uicontrol {Take Snapshot}. The working copy is not changed. For
     example, if you want to try something and find out later that it does not
     work, you can discard the changes and return to the state of the snapshot.
 
-    To remove a single stashed state from the stash list and apply it on top of
-    the current working tree state, select \uicontrol {Stash Pop}.
+    \section1 Pop stashes
 
-    \section1 Applying Actions to Commits
+    To remove a single stashed state from the stash list and apply it on top of
+    the current working tree state, go to \uicontrol Tools > \uicontrol Git >
+    \uicontrol {Local Repository} > \uicontrol Stash and select
+    \uicontrol {Stash Pop}.
+
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
+
+/*!
+    \page creator-how-to-git-commits.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-commits
+
+    \title Apply actions to commits
 
     To browse a directory or the commit history and to apply actions on the
-    commits, select \uicontrol Tools > \uicontrol Git >
+    commits, go to \uicontrol Tools > \uicontrol Git >
     \uicontrol {Actions on Commits}.
 
-    \image creator-git-commit-actions.png {Select a Git Commit dialog}
+    \image {creator-git-commit-actions.png} {Select a Git Commit dialog}
+    \caption Select a Git Commit dialog
 
     You can apply the following actions on commits:
 
@@ -481,105 +1260,259 @@
             \li Package the commit as a ZIP or tarball.
         \row
             \li \uicontrol Checkout
-            \li Check out the change in a headless state.
+            \li Check out the change in a detached HEAD state.
         \row
             \li \uicontrol {Cherry Pick}
             \li Cherry-pick the selected change to the local repository.
         \row
             \li \uicontrol Revert
-            \li Revert back to the state of the last commit.
+            \li Revert the changes introduced by the commit. All other commits
+                remain unchanged.
         \row
             \li \uicontrol Show
             \li Show the commit in the diff editor.
     \endtable
 
-    \section1 Working with Remote Repositories
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
 
-    To work with remote repositories, select the commands in \uicontrol Tools >
-    \uicontrol Git > \uicontrol {Remote Repository}.
+/*!
+    \page creator-how-to-git-fetch.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-remote-repository
+
+    \title git fetch
 
     To fetch all the branches and change information from a remote repository,
+    go to \uicontrol Tools > \uicontrol Git > \uicontrol {Remote Repository} and
     select \uicontrol Fetch.
 
-    To pull changes from the remote repository, select \uicontrol Pull. If there
-    are locally modified files, you are prompted to stash the changes. Select
-    \preferences > \uicontrol {Version Control} >
-    \uicontrol Git and then select the \uicontrol {Pull with rebase} check box
-    to perform a rebase operation while pulling.
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
 
-    To push committed changes to the remote repository, select \uicontrol Push.
-    If the local branch does not have an upstream branch in the remote
-    repository, \QC prompts you to create it and set it as upstream.
+/*!
+    \page creator-how-to-git-pull.html
+    \previouspage creator-how-tos.html
 
-    \section2 Managing Remote Repositories
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-remote-repository
 
-    To manage remote repositories available in Git, select \uicontrol Tools >
-    \uicontrol Git > \uicontrol {Remote Repository} >
-    \uicontrol{Manage Remotes}. Double-click the names and URLs of the remote
-    repositories to edit them.
+    \title git pull
 
-    The following operations are supported:
+    To pull changes from a remote repository, go to \uicontrol Tools >
+    \uicontrol Git > \uicontrol {Remote Repository} and select \uicontrol Pull.
+
+    If you have modified files, you are asked how to handle them.
+
+    \section1 Manage uncommitted changes
+
+    \image {qtcreator-git-uncommitted-changes-found.webp} {Uncommitted Changes Found dialog}
+    \caption Uncommitted Changes Found dialog
+
+    You can apply the following actions to uncommitted changes:
 
     \table
         \header
             \li Menu Item
             \li Description
         \row
-            \li \uicontrol{Refresh}
-            \li Refresh the list of remote repositories.
+            \li \uicontrol {Diff & Cancel}
+            \li View a diff of the changes and cancel \c {git pull}.
         \row
-            \li \uicontrol{Add}
-            \li Add a new remote repository.
+            \li \uicontrol {Discard}
+            \li Reset local changes and execute \c {git pull}. The changes will
+                be lost.
         \row
-            \li \uicontrol{Fetch}
-            \li Fetch all the branches and change information from a remote
-                repository.
+            \li \uicontrol {Ignore}
+            \li Execute \c {git pull} with local changes in the working
+                directory.
         \row
-            \li \uicontrol Push
-            \li Push committed changes to the remote repository.
+            \li \uicontrol {Show/Hide Details}
+            \li Show or hide details of the local changes.
         \row
-            \li \uicontrol{Remove}
-            \li Remove a remote repository.
-
+            \li \uicontrol {Stash}
+            \li Stash the local changes and execute \c {git pull}.
+        \row
+            \li \uicontrol {Stash & Pop}
+            \li Stash the local changes, execute \c {git pull}, and then pop
+                the changes.
     \endtable
 
-    \section2 Using Git with Subversion
+    \section1 Pull with rebase
+
+    Go to \preferences > \uicontrol {Version Control} > \uicontrol Git, and then
+    select \uicontrol {Pull with rebase} to perform a rebase operation while
+    pulling.
+
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
+
+/*!
+    \page creator-how-to-git-push.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-remote-repository
+
+    \title git push
+
+    To push committed changes to the remote repository, go to \uicontrol Tools >
+    \uicontrol Git > \uicontrol {Remote Repository} and select \uicontrol Push.
+
+    If the local branch does not have an upstream branch in the remote
+    repository, \QC prompts you to create it and set it as upstream.
+
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
+
+/*!
+    \page creator-how-to-git-instant-blame.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-current-file
+
+    \title Show instant blame
+
+    Instant blame annotates the current editor line with its author and the date
+    this line was last changed. Optionally, the annotation shows the commit
+    subject.
+
+    \image {qtcreator-git-instant-blame.webp} {Instant blame in the code editor}
+    \caption Instant blame in the code editor
+
+    To show instant blame for the current file, go to \uicontrol Tools >
+    \uicontrol Git > \uicontrol {Current File} and select
+    \uicontrol {Instant Blame for <file>}.
+
+    \note Instant blame is not available for unsaved files.
+
+    To show the latest real changes to the line, configure instant blame to ignore
+    whitespace changes and line moves. For more information, see
+    \l {Instant blame settings}.
+
+    \section1 Instant blame tooltip
+
+    When you hover over the annotation, a tooltip with additional information is shown.
+    From the tooltip, the following actions are available:
+
+    \table
+        \header
+            \li Menu Item
+            \li Description
+        \row
+            \li Blame <hash>
+            \li Opens the full file {git blame}{blame} for the revision of \e hash.
+        \row
+            \li Blame Parent
+            \li Opens the full file {git blame}{blame} for the parent revision of \e hash.
+        \row
+            \li File at <hash>
+            \li Opens the file contents at the revision of \e hash.
+        \row
+            \li {git log}{Log} for line <line>
+            \li Shows a log with all the commits that touched the \e line.
+        \row
+            \li \inlineimage {icons/copy.png} {Copy Hash to Clipboard}
+                (\uicontrol {Copy Hash to Clipboard})
+            \li Copies the full \e hash to the clipboard.
+        \row
+            \li commit <hash>
+            \li Opens the commit \e hash with full description and diff.
+    \endtable
+
+    \note Most of these actions have no meaning for uncommitted changes.
+
+    \section1 Instant blame settings
+
+    To change the instant blame settings, go to \preferences
+    > \uicontrol {Version Control} > \uicontrol Git.
+
+    \image {qtcreator-preferences-vcs-git.webp} {Git tab in Version Control preferences}
+    \caption Git tab in Version Control preferences
+
+    \list
+    \li To hide blame in the editor, clear \uicontrol {Instant Blame}.
+    \li To only show text changes, select \uicontrol {Ignore whitespace changes}
+    \li To show the original author and date before a line was moved, select
+        \uicontrol {Ignore line moves}.
+    \li To show the commit subject in the editor next to date and author,
+        select \uicontrol {Show commit subject}.
+    \endlist
+
+    \sa {Use Git}{How to: Use Git}, {Using Git}, {git blame}
+*/
+
+/*!
+    \page creator-how-to-git-with-subversion.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-general
+
+    \title Use Git with Subversion
 
     You can use Git as a client for a Subversion server. To fetch changes from a
-    Subversion repository to a Git repository, select \uicontrol Tools >
+    Subversion repository to a Git repository, go to \uicontrol Tools >
     \uicontrol Git > \uicontrol {Remote Repository} > \uicontrol Subversion >
     \uicontrol Fetch.
 
+    \section1 View Git Subversion log
+
     To view the Git Subversion log, select \uicontrol Log.
+
+    \section1 Publish commits to Subversion
 
     To publish the commits from the current branch to the Subversion server,
     select \uicontrol DCommit. This will create a revision in Subversion for
     every local Git commit. Afterwards, the branch is rebased or reset
-    (depending on whether or not there is a diff between Subversion and head).
+    depending on whether or not there is a diff between Subversion and head.
 
-    \section2 Reviewing Code with Gerrit
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
+
+/*!
+    \page creator-how-to-gerrit.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-remote-repository
+
+    \title Review code with Gerrit
 
     If your Git project uses Gerrit for code reviews, you can view your changes
     in \QC.
 
-    To push committed changes to Gerrit, select \uicontrol Tools >
+    To push committed changes to Gerrit, go to \uicontrol Tools >
     \uicontrol Git > \uicontrol {Remote Repository} >
     \uicontrol {Push to Gerrit}.
 
-    \image qtcreator-gerrit-push.png
+    \image {qtcreator-gerrit-push.png} {Push to Gerrit dialog}
+    \caption Push to Gerrit dialog
 
-    Select the \uicontrol {Draft/private} check box to push changes that are
+    \section1 Push drafts to Gerrit
+
+    Select \uicontrol {Draft/private} to push changes that are
     only visible to you and the reviewers. If you are using Gerrit 2.15 or
-    later, you can select the \uicontrol {Work-in-progress} check box to push
+    later, you can select \uicontrol {Work-in-progress} to push
     changes that do not generate email notifications.
 
+    \section1 View changes as in Gerrit
+
     To view the same information about each change as in the Gerrit
-    web interface, select \uicontrol Tools > \uicontrol Git >
+    web interface, go to \uicontrol Tools > \uicontrol Git >
     \uicontrol {Remote Repository} > \uicontrol Gerrit.
 
-    \image qtcreator-gerrit.png
+    \image {qtcreator-gerrit.png} {Gerrit view}
+    \caption Gerrit view
+
+    \section1 View details of changes
 
     To view details of the selected change, select \uicontrol Show.
+
+    \section1 Cherry-pick changes
 
     To cherry-pick the selected change to the local repository, select
     \uicontrol {Cherry Pick}. To remove the change after testing it, select
@@ -587,54 +1520,81 @@
     \uicontrol Reset. In the \uicontrol {Undo Changes to} dialog, select the
     state to reset the working directory to, and then select \uicontrol OK.
 
-    To check out the change in a headless state, select \uicontrol Checkout.
+    \section1 Checkout changes
+
+    To check out the change in a detached HEAD state, select \uicontrol Checkout.
+
+    \section1 Refresh changes
 
     To refresh the list of changes, select \uicontrol Refresh.
 
-    The \uicontrol Remote field lists the remotes of the current repository that
-    are detected as Gerrit servers. Select \preferences >
+    \uicontrol Remote lists the remotes of the current repository that
+    are detected as Gerrit servers. Go to \preferences >
     \uicontrol {Version Control} > \uicontrol Gerrit to specify a fallback
     connection to a Gerrit server over SSH. The Gerrit REST interface and the
-    \l{https://curl.haxx.se/}{curl} tool are used for HTTP connections.
+    \l{curl} tool are used for HTTP connections.
 
-    Select the \uicontrol HTTPS check box to prepend \c https to the Gerrit URL
+    Select \uicontrol HTTPS to prepend \c https to the Gerrit URL
     if Gerrit does not add it.
 
-    \image qtcreator-preferences-vcs-gerrit.webp {Gerrit preferences}
+    \image {qtcreator-preferences-vcs-gerrit.webp} {Gerrit tab in Version Control preferences}
+    \caption Gerrit tab in Version Control preferences
 
-    \section1 Working with Git Tools
+    \sa {Use Git}{How to: Use Git}, {Using Git}
+*/
 
-    To start a graphical interface to Git, select \uicontrol Tools >
+/*!
+    \page creator-how-to-git-tools.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-git
+    \ingroup creator-how-to-git-general
+
+    \title Git Tools
+
+    \section1 Git Gui
+
+    To start a graphical interface to Git, go to \uicontrol Tools >
     \uicontrol Git > \uicontrol {Git Tools} > \uicontrol {Git Gui}.
 
     \note On \macos, the default Git installation does not have Git Gui. To
-    use Git Gui, install it separately. To start Git Gui from \QC, select
+    use Git Gui, install it separately. To start Git Gui from \QC, go to
     \preferences > \uicontrol {Version Control} > \uicontrol Git, and
-    set the path to the environment that has Git Gui in the
-    \uicontrol {Prepend to PATH} field.
+    set the path to the environment that has Git Gui in
+    \uicontrol {Prepend to PATH}.
 
-    To start the commit viewer for Git, select \uicontrol Tools >
+    \section1 Gitk
+
+    To start the commit viewer for Git, go to \uicontrol Tools >
     \uicontrol Git > \uicontrol {Git Tools} > \uicontrol Gitk. You can also
     start the tool to view commits in the current document or in the folder that
-    has the current document. To specify arguments for running Gitk, select
+    has the current document. To specify arguments for running Gitk, go to
     \preferences > \uicontrol {Version Control} > \uicontrol Git.
 
+    \section1 Other repository browsers
+
     To use some other application for viewing Git history, such as GitX or
-    QGit viewer, select \preferences > \uicontrol {Version Control} >
-    \uicontrol Git and specify the path to the
-    application executable in the \uicontrol {Command} field. To start the
-    application, select \uicontrol Tools > \uicontrol Git
+    QGit viewer:
+
+    \list 1
+        \li Go to \preferences > \uicontrol {Version Control} > \uicontrol Git.
+        \li In \uicontrol {Command}, specify the path to the application
+            executable.
+    \endlist
+
+     To start the application, go to \uicontrol Tools > \uicontrol Git
     > \uicontrol {Git Tools} > \uicontrol {Repository Browser}.
 
-    To start \c {git bash}, select \uicontrol Tools > \uicontrol Git >
+    \section1 Git Bash
+
+    To start Git Bash, go to \uicontrol Tools > \uicontrol Git >
     \uicontrol {Git Tools} > \uicontrol {Git Bash}.
 
-    To resolve merge conflicts, select \uicontrol Tools > \uicontrol Git >
+    \section1 Merge tools
+
+    To resolve merge conflicts, go to \uicontrol Tools > \uicontrol Git >
     \uicontrol {Git Tools} > \uicontrol {Merge Tool}. This menu item is
     visible only when you have merge conflicts to resolve.
 
-    \if defined(qtcreator)
-    \sa {Compare files}, {Set up version control systems},
-        {Version Control Systems}
-    \endif
+    \sa {Use Git}{How to: Use Git}, {Using Git}
 */

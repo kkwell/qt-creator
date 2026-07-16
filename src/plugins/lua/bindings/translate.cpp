@@ -5,14 +5,16 @@
 
 #include <QCoreApplication>
 
+using namespace std::string_view_literals;
+
 namespace Lua::Internal {
 
 void setupTranslateModule()
 {
     autoRegister([](sol::state_view lua) {
-        const ScriptPluginSpec *pluginSpec = lua.get<ScriptPluginSpec *>("PluginSpec");
-        const QString trContext
-            = QString(pluginSpec->name).replace(QRegularExpression("[^a-zA-Z]"), "_");
+        const ScriptPluginSpec *pluginSpec = lua.get<ScriptPluginSpec *>("PluginSpec"sv);
+        static const QRegularExpression regexp("[^a-zA-Z]");
+        const QString trContext = QString(pluginSpec->name).replace(regexp, "_");
 
         lua["tr"] = [trContext](const char *text) -> QString {
             return QCoreApplication::translate(trContext.toUtf8().constData(), text);

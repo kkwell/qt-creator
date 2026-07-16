@@ -4,22 +4,32 @@
 #include "componentview.h"
 #include "componentaction.h"
 
+#include <designeractionmanager.h>
+#include <import3ddialog.h>
+#include <nodeabstractproperty.h>
+#include <nodelistproperty.h>
 #include <nodemetainfo.h>
+#include <qmldesignerplugin.h>
+#include <utils3d.h>
+
+#include <coreplugin/icore.h>
 
 #include <QDebug>
-
-#include <nodeabstractproperty.h>
 #include <QStandardItemModel>
 
 // silence gcc warnings about unused parameters
 
 namespace QmlDesigner {
 
-ComponentView::ComponentView(ExternalDependenciesInterface &externalDependencies)
+ComponentView::ComponentView(ExternalDependenciesInterface &externalDependencies,
+                             ModulesStorage &modulesStorage)
     : AbstractView{externalDependencies}
     , m_standardItemModel(new QStandardItemModel(this))
     , m_componentAction(new ComponentAction(this))
+    , m_modulesStorage(modulesStorage)
 {
+    connect(&m_ensureMatLibTimer, &QTimer::timeout, this, &ComponentView::ensureMatLibTriggered);
+    m_ensureMatLibTimer.setInterval(500);
 }
 
 void ComponentView::nodeAboutToBeRemoved(const ModelNode &removedNode)
@@ -155,6 +165,24 @@ bool ComponentView::isSubComponentNode(const ModelNode &node) const
                 && node.metaInfo().isGraphicalItem());
 }
 
+void ComponentView::ensureMatLibTriggered()
+{
+    if (!model() || !model()->rewriterView()
+        || model()->rewriterView()->hasIncompleteTypeInformation()
+        || !model()->rewriterView()->errors().isEmpty()) {
+        return;
+    }
+
+    m_ensureMatLibTimer.stop();
+    ModelNode matLib = Utils3D::materialLibraryNode(this);
+    if (matLib.isValid())
+        return;
+
+    DesignDocument *doc = QmlDesignerPlugin::instance()->currentDesignDocument();
+    if (doc && !doc->inFileComponentModelActive())
+        Utils3D::ensureMaterialLibraryNode(this);
+}
+
 void ComponentView::modelAttached(Model *model)
 {
     if (AbstractView::model() == model)
@@ -166,12 +194,19 @@ void ComponentView::modelAttached(Model *model)
     AbstractView::modelAttached(model);
 
     searchForComponentAndAddToList(rootModelNode());
+
+    if (model->hasImport("QtQuick3D")) {
+        // Creating the material library node on model attach causes errors as long as the type
+        // information is not complete yet, so we keep checking until type info is complete.
+        m_ensureMatLibTimer.start();
+    }
 }
 
 void ComponentView::modelAboutToBeDetached(Model *model)
 {
     QSignalBlocker blocker(m_componentAction);
     m_standardItemModel->clear();
+    m_ensureMatLibTimer.stop();
     AbstractView::modelAboutToBeDetached(model);
 }
 
@@ -215,7 +250,9 @@ void ComponentView::nodeReparented(const ModelNode &node, const NodeAbstractProp
     updateDescription(node);
 }
 
-void ComponentView::nodeIdChanged(const ModelNode& node, const QString& /*newId*/, const QString& /*oldId*/)
+void ComponentView::nodeIdChanged(const ModelNode &node,
+                                  [[maybe_unused]] const QString &newId,
+                                  [[maybe_unused]] const QString &oldId)
 {
     updateDescription(node);
 }
@@ -232,4 +269,131 @@ void ComponentView::nodeSourceChanged(const ModelNode &node, const QString &/*ne
         maybeRemoveMasterDocument();
     }
 }
+
+void ComponentView::customNotification(const AbstractView *,
+                                       const QString &identifier,
+                                       const QList<ModelNode> &nodeList,
+                                       const QList<QVariant> &data)
+{
+    if (identifier == "UpdateImported3DAsset") {
+        Utils::FilePath import3dQml;
+        if (!data.isEmpty())
+            import3dQml = Utils::FilePath::fromString(data[0].toString());
+
+        ModelNode node;
+        if (!nodeList.isEmpty())
+            node = nodeList[0];
+
+        Import3dDialog::updateImport(this,
+                                     m_modulesStorage,
+                                     import3dQml,
+                                     node,
+                                     m_importableExtensions3DMap,
+                                     m_importOptions3DMap);
+    }
+}
+
+void ComponentView::updateImport3DSupport(const QVariantMap &supportMap)
+{
+    QVariantMap extMap = qvariant_cast<QVariantMap>(supportMap.value("extensions"));
+    if (m_importableExtensions3DMap != extMap) {
+        DesignerActionManager *actionManager =
+            &QmlDesignerPlugin::instance()->viewManager().designerActionManager();
+
+        if (!m_importableExtensions3DMap.isEmpty())
+            actionManager->unregisterAddResourceHandlers(ComponentCoreConstants::add3DAssetsDisplayString);
+
+        m_importableExtensions3DMap = extMap;
+
+        AddResourceOperation import3DModelOperation = [this](const QStringList &fileNames,
+                                                             const QString &,
+                                                             bool showDialog) -> AddFilesResult {
+            Q_UNUSED(showDialog)
+
+            auto importDlg = new Import3dDialog(fileNames,
+                                                m_importableExtensions3DMap,
+                                                m_importOptions3DMap,
+                                                {},
+                                                {},
+                                                this,
+                                                m_modulesStorage,
+                                                Core::ICore::dialogParent());
+            int result = importDlg->exec();
+
+            return result == QDialog::Accepted ? AddFilesResult::succeeded() : AddFilesResult::cancelled();
+        };
+
+        auto add3DHandler = [&](const QString &group, const QString &ext) {
+            const QString filter = QStringLiteral("*.%1").arg(ext);
+            actionManager->registerAddResourceHandler(
+                AddResourceHandler(group, filter,
+                                   import3DModelOperation, 10));
+        };
+
+        const QHash<QString, QString> groupNames {
+            {"3D Scene",                  ComponentCoreConstants::add3DAssetsDisplayString},
+            {"Qt 3D Studio Presentation", ComponentCoreConstants::addQt3DSPresentationsDisplayString}
+        };
+
+        const auto groups = extMap.keys();
+        for (const auto &group : groups) {
+            const QStringList exts = extMap[group].toStringList();
+            const QString grp = groupNames.contains(group) ? groupNames.value(group) : group;
+            for (const auto &ext : exts)
+                add3DHandler(grp, ext);
+        }
+    }
+
+    m_importOptions3DMap = qvariant_cast<QVariantMap>(supportMap.value("options"));
+}
+
+void ComponentView::importsChanged(const Imports &addedImports, const Imports &removedImports)
+{
+#ifndef QDS_USE_PROJECTSTORAGE
+    DesignDocument *document = QmlDesignerPlugin::instance()->currentDesignDocument();
+    for (const auto &import : addedImports)
+        document->addSubcomponentManagerImport(import);
+#endif
+
+    // TODO: generalize the logic below to allow adding/removing any Qml component when its import is added/removed
+    bool simulinkImportAdded = std::any_of(addedImports.cbegin(), addedImports.cend(), [](const Import &import) {
+        return import.url() == "SimulinkConnector";
+    });
+    if (simulinkImportAdded) {
+        // add SLConnector component when SimulinkConnector import is added
+        ModelNode node = createModelNode("SLConnector", 1, 0);
+        node.bindingProperty("root").setExpression(rootModelNode().validId());
+        rootModelNode().defaultNodeListProperty().reparentHere(node);
+    } else {
+        bool simulinkImportRemoved = std::any_of(removedImports.cbegin(), removedImports.cend(), [](const Import &import) {
+            return import.url() == "SimulinkConnector";
+        });
+
+        if (simulinkImportRemoved) {
+            // remove SLConnector component when SimulinkConnector import is removed
+            const QList<ModelNode> slConnectors = Utils::filtered(rootModelNode().directSubModelNodes(),
+                                                                  [](const ModelNode &node) {
+                                                                      return node.type() == "SLConnector" || node.type() == "SimulinkConnector.SLConnector";
+                                                                  });
+
+            for (ModelNode node : slConnectors)
+                node.destroy();
+
+            resetPuppet();
+        }
+    }
+
+    if (model()->hasImport("QtQuick3D"))
+        m_ensureMatLibTimer.start();
+}
+
+void ComponentView::possibleImportsChanged([[maybe_unused]] const Imports &possibleImports)
+{
+#ifndef QDS_USE_PROJECTSTORAGE
+    DesignDocument *document = QmlDesignerPlugin::instance()->currentDesignDocument();
+    for (const auto &import : possibleImports)
+        document->addSubcomponentManagerImport(import);
+#endif
+}
+
 } // namespace QmlDesigner

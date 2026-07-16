@@ -56,14 +56,13 @@ private:
     void loadAllSymbols() override;
     void requestModuleSymbols(const Utils::FilePath &moduleName) override;
     void reloadModules() override;
-    void reloadRegisters() override {}
     void reloadSourceFiles() override {}
     void reloadFullStack() override {}
 
     bool supportsThreads() const { return true; }
     void updateItem(const QString &iname) override;
 
-    void runCommand(const DebuggerCommand &cmd) override;
+    void runCommand(const DebuggerCommand &cmd);
     void postDirectCommand(const QString &command);
 
     void refreshLocation(const GdbMi &reportedLocation);

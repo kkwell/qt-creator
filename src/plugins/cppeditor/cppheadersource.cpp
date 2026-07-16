@@ -22,7 +22,7 @@
 
 #ifdef WITH_TESTS
 #include "cpptoolstestcase.h"
-#include <QtTest>
+#include <QTest>
 #endif
 
 using namespace CppEditor::Internal;
@@ -98,12 +98,12 @@ static QStringList baseNameWithAllSuffixes(const QString &baseName, const QStrin
     return result;
 }
 
-static QStringList baseNamesWithAllPrefixes(const CppFileSettings &settings,
+static QStringList baseNamesWithAllPrefixes(const CppFileSettingsData &settings,
                                             const QStringList &baseNames, bool isHeader)
 {
     QStringList result;
-    const QStringList &sourcePrefixes = settings.sourcePrefixes;
-    const QStringList &headerPrefixes = settings.headerPrefixes;
+    const QStringList sourcePrefixes = settings.sourcePrefixes;
+    const QStringList headerPrefixes = settings.headerPrefixes;
 
     for (const QString &name : baseNames) {
         for (const QString &prefix : isHeader ? headerPrefixes : sourcePrefixes) {
@@ -129,20 +129,6 @@ static QStringList baseDirWithAllDirectories(const QDir &baseDir, const QStringL
     return result;
 }
 
-static int commonFilePathLength(const QString &s1, const QString &s2)
-{
-    int length = qMin(s1.length(), s2.length());
-    for (int i = 0; i < length; ++i)
-        if (HostOsInfo::fileNameCaseSensitivity() == Qt::CaseSensitive) {
-            if (s1[i] != s2[i])
-                return i;
-        } else {
-            if (s1[i].toLower() != s2[i].toLower())
-                return i;
-        }
-    return length;
-}
-
 static FilePath correspondingHeaderOrSourceInProject(const FilePath &filePath,
                                                      const QStringList &candidateFileNames,
                                                      const Project *project,
@@ -155,12 +141,14 @@ static FilePath correspondingHeaderOrSourceInProject(const FilePath &filePath,
     FilePath bestFilePath;
     int compareValue = 0;
     for (const FilePath &projectFile : projectFiles) {
-        int value = commonFilePathLength(filePath.toString(), projectFile.toString());
-        if (value > compareValue) {
-            compareValue = value;
-            bestFilePath = projectFile;
-        }
+        const FilePath common = FilePaths{projectFile, filePath}.commonPath();
+        if (common.path().length() < compareValue)
+            continue;
+
+        compareValue = common.path().length();
+        bestFilePath = projectFile;
     }
+
     if (!bestFilePath.isEmpty()) {
         QTC_ASSERT(bestFilePath.isFile(), return {});
         if (cacheUsage == CacheUsage::ReadWrite) {
@@ -175,7 +163,7 @@ static FilePath correspondingHeaderOrSourceInProject(const FilePath &filePath,
 
 FilePath correspondingHeaderOrSource(const FilePath &filePath, bool *wasHeader, CacheUsage cacheUsage)
 {
-    ProjectFile::Kind kind = ProjectFile::classify(filePath.fileName());
+    ProjectFile::Kind kind = ProjectFile::classify(filePath);
     const bool isHeader = ProjectFile::isHeader(kind);
     if (wasHeader)
         *wasHeader = isHeader;
@@ -185,7 +173,7 @@ FilePath correspondingHeaderOrSource(const FilePath &filePath, bool *wasHeader, 
     }
 
     Project * const projectForFile = ProjectManager::projectForFile(filePath);
-    const CppFileSettings settings = cppFileSettingsForProject(projectForFile);
+    const CppFileSettingsData settings = cppFileSettingsForProject(projectForFile);
 
     if (debug)
         qDebug() << Q_FUNC_INFO << filePath.fileName() <<  kind;
@@ -272,13 +260,12 @@ namespace CppEditor::Internal {
 
 static inline QString _(const QByteArray &ba) { return QString::fromLatin1(ba, ba.size()); }
 
-static void createTempFile(const FilePath &filePath)
+static bool createTempFile(const FilePath &filePath)
 {
-    QString fileName = filePath.toString();
+    QString fileName = filePath.toUrlishString();
     QFile file(fileName);
     QDir(QFileInfo(fileName).absolutePath()).mkpath(_("."));
-    file.open(QFile::WriteOnly);
-    file.close();
+    return file.open(QFile::WriteOnly);
 }
 
 static QString baseTestDir()
@@ -309,8 +296,8 @@ void HeaderSourceTest::test()
     const QDir path = QDir(temporaryDir.path() + QLatin1Char('/') + _(QTest::currentDataTag()));
     const FilePath sourcePath = FilePath::fromString(path.absoluteFilePath(sourceFileName));
     const FilePath headerPath = FilePath::fromString(path.absoluteFilePath(headerFileName));
-    createTempFile(sourcePath);
-    createTempFile(headerPath);
+    QVERIFY2(createTempFile(sourcePath), qPrintable(sourcePath.toUserOutput()));
+    QVERIFY2(createTempFile(headerPath), qPrintable(headerPath.toUserOutput()));
 
     bool wasHeader;
     clearHeaderSourceCache();
@@ -336,24 +323,25 @@ void HeaderSourceTest::initTestCase()
 {
     QDir(baseTestDir()).mkpath(_("."));
     CppFileSettings &fs = globalCppFileSettings();
-    fs.headerSearchPaths.append(QLatin1String("include"));
-    fs.headerSearchPaths.append(QLatin1String("../include"));
-    fs.sourceSearchPaths.append(QLatin1String("src"));
-    fs.sourceSearchPaths.append(QLatin1String("../src"));
-    fs.headerPrefixes.append(QLatin1String("testh_"));
-    fs.sourcePrefixes.append(QLatin1String("testc_"));
+    fs.headerSearchPaths.push("include");
+    fs.headerSearchPaths.push("../include");
+    fs.sourceSearchPaths.push("src");
+    fs.sourceSearchPaths.push("../src");
+    fs.headerPrefixes.push("testh_");
+    fs.sourcePrefixes.push("testc_");
 }
 
 void HeaderSourceTest::cleanupTestCase()
 {
     Utils::FilePath::fromString(baseTestDir()).removeRecursively();
     CppFileSettings &fs = globalCppFileSettings();
-    fs.headerSearchPaths.removeLast();
-    fs.headerSearchPaths.removeLast();
-    fs.sourceSearchPaths.removeLast();
-    fs.sourceSearchPaths.removeLast();
-    fs.headerPrefixes.removeLast();
-    fs.sourcePrefixes.removeLast();
+
+    fs.headerSearchPaths.pop();
+    fs.headerSearchPaths.pop();
+    fs.sourceSearchPaths.pop();
+    fs.sourceSearchPaths.pop();
+    fs.headerPrefixes.pop();
+    fs.sourcePrefixes.pop();
 }
 
 QObject *createCppHeaderSourceTest()

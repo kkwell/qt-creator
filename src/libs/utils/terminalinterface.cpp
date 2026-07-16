@@ -56,7 +56,8 @@ static QString msgCannotExecute(const FilePath &p, const QString &why)
 static QString msgPromptToClose()
 {
     // Shown in a terminal which might have a different character set on Windows.
-    return Tr::tr("Press <RETURN> to close this window...");
+    return Tr::tr("\nProcess exited with code %1.\n"
+                  "Press Return to close this window...");
 }
 
 class TerminalInterfacePrivate : public QObject
@@ -64,27 +65,35 @@ class TerminalInterfacePrivate : public QObject
     Q_OBJECT
 public:
     TerminalInterfacePrivate(TerminalInterface *p, bool waitOnExit)
-        : q(p)
+        : QObject(p)
+        , q(p)
         , waitOnExit(waitOnExit)
     {
         connect(&stubServer,
                 &QLocalServer::newConnection,
                 q,
                 &TerminalInterface::onNewStubConnection);
+
+        stubConnectTimeoutTimer.setSingleShot(true);
+        connect(&stubConnectTimeoutTimer, &QTimer::timeout, this, [this] {
+            q->killInferiorProcess();
+            q->killStubProcess();
+            q->emitFinished(-1, QProcess::ExitStatus::CrashExit);
+        });
     }
 
 public:
-    QLocalServer stubServer;
+    QLocalServer stubServer{this};
     QLocalSocket *stubSocket = nullptr;
 
     int stubProcessId = 0;
     int inferiorProcessId = 0;
     int inferiorThreadId = 0;
 
-    std::unique_ptr<QTemporaryFile> envListFile;
+    QTemporaryFile envListFile{this};
     QTemporaryDir tempDir;
 
-    std::unique_ptr<QTimer> stubConnectTimeoutTimer;
+    QTimer stubConnectTimeoutTimer{this};
 
     ProcessResultData processResultData;
     TerminalInterface *q;
@@ -133,7 +142,7 @@ static QString errnoToString(int code)
 
 void TerminalInterface::onNewStubConnection()
 {
-    d->stubConnectTimeoutTimer.reset();
+    d->stubConnectTimeoutTimer.stop();
 
     d->stubSocket = d->stubServer.nextPendingConnection();
     if (!d->stubSocket)
@@ -153,7 +162,7 @@ void TerminalInterface::onStubExited()
         d->stubSocket->waitForDisconnected();
 
     shutdownStubServer();
-    d->envListFile.reset();
+    d->envListFile.close();
 
     if (d->inferiorProcessId)
         emitFinished(-1, QProcess::CrashExit);
@@ -171,15 +180,14 @@ void TerminalInterface::onStubReadyRead()
         out.chop(1); // remove newline
         if (out.startsWith("err:chdir ")) {
             emitError(QProcess::FailedToStart,
-                      msgCannotChangeToWorkDir(m_setup.m_workingDirectory,
+                      msgCannotChangeToWorkDir(m_setup.rawWorkingDirectory(),
                                                errnoToString(out.mid(10).toInt())));
         } else if (out.startsWith("err:exec ")) {
             emitError(QProcess::FailedToStart,
                       msgCannotExecute(m_setup.m_commandLine.executable(),
                                        errnoToString(out.mid(9).toInt())));
         } else if (out.startsWith("spid ")) {
-            d->envListFile.reset();
-            d->envListFile = nullptr;
+            d->envListFile.close();
         } else if (out.startsWith("pid ")) {
             d->inferiorProcessId = out.mid(4).toInt();
             d->didInferiorRun = true;
@@ -199,34 +207,34 @@ void TerminalInterface::onStubReadyRead()
     }
 }
 
-expected_str<void> TerminalInterface::startStubServer()
+Result<> TerminalInterface::startStubServer()
 {
     if (HostOsInfo::isWindowsHost()) {
         if (d->stubServer.listen(QString::fromLatin1("creator-%1-%2")
                                      .arg(QCoreApplication::applicationPid())
                                      .arg(rand())))
             return {};
-        return make_unexpected(d->stubServer.errorString());
+        return ResultError(d->stubServer.errorString());
     }
 
     // We need to put the socket in a private directory, as some systems simply do not
     // check the file permissions of sockets.
     if (!QDir(d->tempDir.path())
              .mkdir("socket")) { //  QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner
-        return make_unexpected(msgCannotCreateTempDir(d->tempDir.filePath("socket"),
+        return ResultError(msgCannotCreateTempDir(d->tempDir.filePath("socket"),
                                                       QString::fromLocal8Bit(strerror(errno))));
     }
 
     if (!QFile::setPermissions(d->tempDir.filePath("socket"),
                                QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner)) {
-        return make_unexpected(Tr::tr("Cannot set permissions on temporary directory \"%1\": %2")
+        return ResultError(Tr::tr("Cannot set permissions on temporary directory \"%1\": %2")
                                    .arg(d->tempDir.filePath("socket"))
                                    .arg(QString::fromLocal8Bit(strerror(errno))));
     }
 
     const QString socketPath = d->tempDir.filePath("socket/stub-socket");
     if (!d->stubServer.listen(socketPath)) {
-        return make_unexpected(
+        return ResultError(
             Tr::tr("Cannot create socket \"%1\": %2").arg(socketPath, d->stubServer.errorString()));
     }
     return {};
@@ -273,7 +281,7 @@ void TerminalInterface::cleanupAfterStartFailure(const QString &errorMessage)
 {
     shutdownStubServer();
     emitError(QProcess::FailedToStart, errorMessage);
-    d->envListFile.reset();
+    d->envListFile.close();
 }
 
 void TerminalInterface::sendCommand(char c)
@@ -310,7 +318,7 @@ void TerminalInterface::start()
         return;
 
     if (m_setup.m_terminalMode == TerminalMode::Detached) {
-        expected_str<qint64> result;
+        Result<qint64> result;
         QMetaObject::invokeMethod(
             d->stubCreator,
             [this, &result] { result = d->stubCreator->startStubProcess(m_setup); },
@@ -326,7 +334,7 @@ void TerminalInterface::start()
         return;
     }
 
-    const expected_str<void> result = startStubServer();
+    const Result<> result = startStubServer();
     if (!result) {
         emitError(QProcess::FailedToStart, msgCommChannelFailed(result.error()));
         return;
@@ -340,18 +348,17 @@ void TerminalInterface::start()
     if (finalEnv.hasChanges()) {
         finalEnv = finalEnv.appliedToEnvironment(Environment::systemEnvironment());
 
-        d->envListFile = std::make_unique<QTemporaryFile>(this);
-        if (!d->envListFile->open()) {
-            cleanupAfterStartFailure(msgCannotCreateTempFile(d->envListFile->errorString()));
+        if (!d->envListFile.open()) {
+            cleanupAfterStartFailure(msgCannotCreateTempFile(d->envListFile.errorString()));
             return;
         }
-        QTextStream stream(d->envListFile.get());
+        QTextStream stream(&d->envListFile);
         finalEnv.forEachEntry([&stream](const QString &key, const QString &value, bool enabled) {
             if (enabled)
                 stream << key << '=' << value << '\0';
         });
 
-        if (d->envListFile->error() != QFile::NoError) {
+        if (d->envListFile.error() != QFile::NoError) {
             cleanupAfterStartFailure(msgCannotWriteTempFile());
             return;
         }
@@ -365,8 +372,8 @@ void TerminalInterface::start()
 
     CommandLine cmd{stubPath, {"-s", d->stubServer.fullServerName()}};
 
-    if (!m_setup.m_workingDirectory.isEmpty())
-        cmd.addArgs({"-w", m_setup.m_workingDirectory.nativePath()});
+    if (!m_setup.rawWorkingDirectory().isEmpty())
+        cmd.addArgs({"-w", m_setup.rawWorkingDirectory().nativePath()});
 
     if (m_setup.m_terminalMode == TerminalMode::Debug)
         cmd.addArg("-d");
@@ -374,10 +381,10 @@ void TerminalInterface::start()
     if (terminalInterfaceLog().isDebugEnabled())
         cmd.addArg("-v");
 
-    if (d->envListFile)
-        cmd.addArgs({"-e", d->envListFile->fileName()});
+    if (d->envListFile.isOpen())
+        cmd.addArgs({"-e", d->envListFile.fileName()});
 
-    cmd.addArgs({"--wait", d->waitOnExit ? msgPromptToClose() : ""});
+    cmd.addArgs({"--wait", d->waitOnExit ? msgPromptToClose() : QString()});
 
     cmd.addArgs({"--", m_setup.m_commandLine.executable().nativePath()});
     cmd.addArgs(m_setup.m_commandLine.arguments(), CommandLine::Raw);
@@ -386,13 +393,16 @@ void TerminalInterface::start()
 
     ProcessSetupData stubSetupData;
     stubSetupData.m_commandLine = cmd;
+    stubSetupData.m_environment = Environment::originalSystemEnvironment();
 
     stubSetupData.m_extraData[TERMINAL_SHELL_NAME]
         = m_setup.m_extraData.value(TERMINAL_SHELL_NAME,
                                     m_setup.m_commandLine.executable().fileName());
 
-    if (m_setup.m_runAsRoot && !HostOsInfo::isWindowsHost()) {
+    if (!m_setup.m_runAsUser.isEmpty() && !HostOsInfo::isWindowsHost()) {
         CommandLine rootCommand("sudo");
+        if (m_setup.m_runAsUser != "root")
+            rootCommand.addArgs({"-u", m_setup.m_runAsUser});
         rootCommand.addCommandLineAsArgs(cmd);
         stubSetupData.m_commandLine = rootCommand;
     } else {
@@ -405,20 +415,12 @@ void TerminalInterface::start()
         d->stubCreator->thread() == QThread::currentThread() ? Qt::DirectConnection
                                                              : Qt::BlockingQueuedConnection);
 
-    d->stubConnectTimeoutTimer = std::make_unique<QTimer>();
-
-    connect(d->stubConnectTimeoutTimer.get(), &QTimer::timeout, this, [this] {
-        killInferiorProcess();
-        killStubProcess();
-        emitFinished(-1, QProcess::ExitStatus::CrashExit);
-    });
-    d->stubConnectTimeoutTimer->setSingleShot(true);
-    d->stubConnectTimeoutTimer->start(10000);
+    d->stubConnectTimeoutTimer.start(10000);
 }
 
 qint64 TerminalInterface::write(const QByteArray &data)
 {
-    Q_UNUSED(data);
+    Q_UNUSED(data)
     QTC_CHECK(false);
     return -1;
 }

@@ -3,47 +3,34 @@
 
 #include "urlopenprotocol.h"
 
-#include <utils/qtcassert.h>
+#include <utils/networkaccessmanager.h>
 
-#include <QNetworkReply>
+#include <QtTaskTree/QNetworkReplyWrapper>
+
+using namespace QtTaskTree;
 
 namespace CodePaster {
 
-QString UrlOpenProtocol::name() const
-{
-    return QLatin1String("Open URL"); // unused
-}
+UrlOpenProtocol::UrlOpenProtocol() : Protocol({"Open URL"})
+{}
 
-unsigned UrlOpenProtocol::capabilities() const
+ExecutableItem UrlOpenProtocol::fetchRecipe(const QString &id, const FetchHandler &handler) const
 {
-    return 0;
-}
+    const auto onSetup = [id](QNetworkReplyWrapper &task) {
+        task.setNetworkAccessManager(Utils::NetworkAccessManager::instance());
+        task.setRequest(QNetworkRequest(QUrl(id)));
+    };
+    const auto onDone = [this, handler](const QNetworkReplyWrapper &task, DoneWith result) {
+        QNetworkReply *reply = task.reply();
+        if (result == DoneWith::Error) {
+            reportError(reply->errorString());
+            return;
+        }
+        if (handler)
+            handler(reply->url().toString(), QString::fromUtf8(reply->readAll()));
+    };
 
-void UrlOpenProtocol::fetch(const QString &url)
-{
-    QTC_ASSERT(!m_fetchReply, return);
-    m_fetchReply = httpGet(url);
-    connect(m_fetchReply, &QNetworkReply::finished,
-            this, &UrlOpenProtocol::fetchFinished);
-}
-
-void UrlOpenProtocol::fetchFinished()
-{
-    const QString title = m_fetchReply->url().toString();
-    QString content;
-    const bool error = m_fetchReply->error();
-    if (error)
-        content = m_fetchReply->errorString();
-    else
-        content = QString::fromUtf8(m_fetchReply->readAll());
-    m_fetchReply->deleteLater();
-    m_fetchReply = nullptr;
-    emit fetchDone(title, content, error);
-}
-
-void UrlOpenProtocol::paste(const QString &, ContentType, int, const QString &,
-                            const QString &, const QString &)
-{
+    return QNetworkReplyWrapperTask(onSetup, onDone);
 }
 
 } // CodePaster

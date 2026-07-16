@@ -6,6 +6,7 @@
 #include "texteditor_global.h"
 
 #include "codeassist/assistenums.h"
+#include "completionsettings.h"
 #include "indenter.h"
 #include "refactoroverlay.h"
 #include "snippets/snippetparser.h"
@@ -18,6 +19,7 @@
 #include <utils/elidinglabel.h>
 #include <utils/link.h>
 #include <utils/multitextcursor.h>
+#include <utils/plaintextedit/plaintextedit.h>
 #include <utils/textutils.h>
 #include <utils/uncommentselection.h>
 
@@ -40,6 +42,7 @@ QT_END_NAMESPACE
 
 namespace Core {
 class HighlightScrollBarController;
+class MinimapController;
 }
 
 namespace TextEditor {
@@ -70,14 +73,13 @@ class TextEditorFactory;
 class TextEditorWidget;
 class PlainTextEditorFactory;
 
-class BehaviorSettings;
-class CompletionSettings;
-class DisplaySettings;
-class ExtraEncodingSettings;
+class BehaviorSettingsData;
+class DisplaySettingsData;
+class ExtraEncodingSettingsData;
 class FontSettings;
-class MarginSettings;
-class StorageSettings;
-class TypingSettings;
+class MarginSettingsData;
+class StorageSettingsData;
+class TypingSettingsData;
 
 enum TextMarkRequestKind
 {
@@ -102,6 +104,20 @@ enum Mask {
 };
 } // namespace OptionalActions
 
+class TEXTEDITOR_EXPORT EmbeddedWidgetInterface : public QObject
+{
+    Q_OBJECT
+public:
+    ~EmbeddedWidgetInterface() override;
+    void resize();
+    void close();
+
+signals:
+    void resized();
+    void closed();
+    void shouldClose();
+};
+
 class TEXTEDITOR_EXPORT BaseTextEditor : public Core::IEditor
 {
     Q_OBJECT
@@ -113,7 +129,9 @@ public:
     virtual void finalizeInitialization() {}
 
     static BaseTextEditor *currentTextEditor();
-    static QVector<BaseTextEditor *> textEditorsForDocument(TextDocument *textDocument);
+    static QList<BaseTextEditor *> openedTextEditors();
+    static QList<BaseTextEditor *> textEditorsForDocument(TextDocument *textDocument);
+    static QList<BaseTextEditor *> textEditorsForFilePath(const Utils::FilePath &path);
 
     TextEditorWidget *editorWidget() const;
     TextDocument *textDocument() const;
@@ -175,7 +193,7 @@ private:
     Internal::BaseTextEditorPrivate *d;
 };
 
-class TEXTEDITOR_EXPORT TextEditorWidget : public QPlainTextEdit
+class TEXTEDITOR_EXPORT TextEditorWidget : public Utils::PlainTextEdit
 {
     Q_OBJECT
 public:
@@ -197,7 +215,7 @@ public:
     QTextCursor textCursorAt(int position) const;
     Utils::Text::Position lineColumn() const;
     void convertPosition(int pos, int *line, int *column) const;
-    using QPlainTextEdit::cursorRect;
+    using PlainTextEdit::cursorRect;
     QRect cursorRect(int pos) const;
     void setCursorPosition(int pos);
     QWidget *toolBarWidget() const;
@@ -251,14 +269,14 @@ public:
     void setScrollWheelZoomingEnabled(bool b);
     bool scrollWheelZoomingEnabled() const;
 
-    void setConstrainTooltips(bool b);
-    bool constrainTooltips() const;
-
     void setCamelCaseNavigationEnabled(bool b);
     bool camelCaseNavigationEnabled() const;
 
     void setRevisionsVisible(bool b);
     bool revisionsVisible() const;
+
+    void setMinimapVisible(bool visible);
+    bool minimapVisible() const;
 
     void setVisibleWrapColumn(int column);
     int visibleWrapColumn() const;
@@ -283,6 +301,7 @@ public:
                               const TextMark *mainTextMark = nullptr) const;
 
     void invokeAssist(AssistKind assistKind, IAssistProvider *provider = nullptr);
+    void setCompletionTriggerOverride(CompletionTrigger trigger);
 
     virtual std::unique_ptr<AssistInterface> createAssistInterface(AssistKind assistKind,
                                                                    AssistReason assistReason) const;
@@ -298,17 +317,16 @@ public:
     virtual void extraAreaLeaveEvent(QEvent *);
     virtual void extraAreaContextMenuEvent(QContextMenuEvent *);
     virtual void extraAreaMouseEvent(QMouseEvent *);
+    virtual void extraAreaToolTipEvent(QHelpEvent *e);
     void updateFoldingHighlight(const QPoint &pos);
     void updateFoldingHighlight(const QTextCursor &cursor);
 
     void setLanguageSettingsId(Utils::Id settingsId);
     Utils::Id languageSettingsId() const;
 
-    void setCodeStyle(ICodeStylePreferences *settings);
-
-    const DisplaySettings &displaySettings() const;
-    const MarginSettings &marginSettings() const;
-    const BehaviorSettings &behaviorSettings() const;
+    const DisplaySettingsData &displaySettings() const;
+    const MarginSettingsData &marginSettings() const;
+    const BehaviorSettingsData &behaviorSettings() const;
 
     void ensureCursorVisible();
     void ensureBlockIsUnfolded(QTextBlock block);
@@ -338,6 +356,7 @@ public:
 
     enum Side { Left, Right };
     QAction *insertExtraToolBarWidget(Side side, QWidget *widget);
+    void insertExtraToolBarAction(Side side, QAction *action);
     void setToolbarOutline(QWidget* widget);
     const QWidget *toolbarOutlineWidget();
 
@@ -358,13 +377,13 @@ public:
 
     virtual void encourageApply();
 
-    virtual void setDisplaySettings(const TextEditor::DisplaySettings &);
-    virtual void setMarginSettings(const TextEditor::MarginSettings &);
-    void setBehaviorSettings(const TextEditor::BehaviorSettings &);
-    void setTypingSettings(const TextEditor::TypingSettings &);
-    void setStorageSettings(const TextEditor::StorageSettings &);
-    void setCompletionSettings(const TextEditor::CompletionSettings &);
-    void setExtraEncodingSettings(const TextEditor::ExtraEncodingSettings &);
+    virtual void setDisplaySettings(const TextEditor::DisplaySettingsData &);
+    virtual void setMarginSettings(const TextEditor::MarginSettingsData &);
+    void setBehaviorSettings(const TextEditor::BehaviorSettingsData &);
+    void setTypingSettings(const TextEditor::TypingSettingsData &);
+    void setStorageSettings(const TextEditor::StorageSettingsData &);
+    void setExtraEncodingSettings(const TextEditor::ExtraEncodingSettingsData &);
+    void updateCompletionSettings();
 
     void circularPaste();
     void pasteWithoutFormat();
@@ -387,10 +406,11 @@ public:
     void deleteStartOfLine();
     void deleteStartOfWord();
     void deleteStartOfWordCamelCase();
-    void unfoldAll();
-    void fold(const QTextBlock &block);
+    void toggleFoldAll();
+    void unfoldAll(bool unfold);
+    void fold(const QTextBlock &block, bool recursive = false);
     void foldCurrentBlock();
-    void unfold(const QTextBlock &block);
+    void unfold(const QTextBlock &block, bool recursive = false);
     void unfoldCurrentBlock();
     void selectEncoding();
     void updateTextCodecLabel();
@@ -485,7 +505,7 @@ public:
     void configureGenericHighlighter(const Utils::MimeType &mimeType);
 
     /// Overwrite the current highlighter with a new generic highlighter based on the given definition
-    Utils::expected_str<void> configureGenericHighlighter(const QString &definitionName);
+    Utils::Result<> configureGenericHighlighter(const QString &definitionName);
 
     Q_INVOKABLE void inSnippetMode(bool *active); // Used by FakeVim.
 
@@ -505,6 +525,7 @@ public:
     int centerVisibleBlockNumber() const;
 
     Core::HighlightScrollBarController *highlightScrollBarController() const;
+    Core::MinimapController *minimapController() const;
 
     void addHoverHandler(BaseHoverHandler *handler);
     void removeHoverHandler(BaseHoverHandler *handler);
@@ -519,7 +540,9 @@ public:
     // Returns an object that blocks suggestions until it is destroyed.
     SuggestionBlocker blockSuggestions();
 
-    QList<QTextCursor> autoCompleteHighlightPositions() const;
+    std::unique_ptr<EmbeddedWidgetInterface> insertWidget(QWidget *widget, int pos);
+
+    QTextCursor autoCompleteHighlightPosition() const;
 
 #ifdef WITH_TESTS
     void processTooltipRequest(const QTextCursor &c);
@@ -538,11 +561,15 @@ signals:
     void requestRename(const QTextCursor &cursor);
     void requestCallHierarchy(const QTextCursor &cursor);
     void toolbarOutlineChanged(QWidget *newOutline);
+    void tabSettingsChanged();
 
     // used by the IEditor
     void saveCurrentStateForNavigationHistory();
     void addSavedStateToNavigationHistory();
     void addCurrentStateToNavigationHistory();
+
+    void resized();
+    void embeddedWidgetsShouldClose();
 
 protected:
     QTextBlock blockForVisibleRow(int row) const;
@@ -561,7 +588,7 @@ protected:
     virtual void paintBlock(QPainter *painter,
                             const QTextBlock &block,
                             const QPointF &offset,
-                            const QVector<QTextLayout::FormatRange> &selections,
+                            const QList<QTextLayout::FormatRange> &selections,
                             const QRect &clipRect) const;
     void timerEvent(QTimerEvent *) override;
     void mouseMoveEvent(QMouseEvent *) override;
@@ -667,7 +694,6 @@ signals:
 
 protected:
     virtual void slotCursorPositionChanged(); // Used in VcsBase
-    virtual void slotCodeStyleSettingsChanged(const QVariant &); // Used in CppEditor
 
 private:
     std::unique_ptr<Internal::TextEditorWidgetPrivate> d;

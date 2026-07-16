@@ -5,8 +5,9 @@
 #include <abstractaction.h>
 
 #include <QAction>
-#include <QWidgetAction>
 #include <QIcon>
+#include <QMap>
+#include <QWidgetAction>
 
 QT_BEGIN_NAMESPACE
 class QWidgetAction;
@@ -17,6 +18,7 @@ namespace QmlDesigner {
 using SelectionContextOperation = std::function<void(const SelectionContext &)>;
 class Edit3DView;
 class SeekerSliderAction;
+class IndicatorButtonAction;
 
 class Edit3DActionTemplate : public DefaultAction
 {
@@ -40,8 +42,39 @@ class Edit3DWidgetActionTemplate : public PureActionInterface
     Q_DISABLE_COPY(Edit3DWidgetActionTemplate)
 
 public:
-    explicit Edit3DWidgetActionTemplate(QWidgetAction *widget);
-    virtual void setSelectionContext(const SelectionContext &) {}
+    explicit Edit3DWidgetActionTemplate(QWidgetAction *widget, SelectionContextOperation action = {});
+
+    void setSelectionContext(const SelectionContext &selectionContext) override;
+    virtual void actionTriggered(bool b);
+
+    SelectionContextOperation m_action;
+    SelectionContext m_selectionContext;
+};
+
+class Edit3DSingleSelectionAction : public DefaultAction
+{
+    Q_OBJECT
+    Q_DISABLE_COPY(Edit3DSingleSelectionAction)
+
+public:
+    struct Option
+    {
+        QString name;
+        QString tooltip;
+        QByteArray data;
+    };
+
+    explicit Edit3DSingleSelectionAction(const QString &description, const QList<Option> &options);
+
+    void selectOption(const QByteArray &data);
+    QByteArray currentData() const;
+
+signals:
+    void dataChanged(const QByteArray &data);
+
+private:
+    QActionGroup *m_group = nullptr;
+    QMap<QByteArray, QAction *> m_dataAction;
 };
 
 class Edit3DAction : public AbstractAction
@@ -108,6 +141,27 @@ private:
     SeekerSliderAction *m_seeker = nullptr;
 };
 
+class Edit3DIndicatorButtonAction : public Edit3DAction
+{
+public:
+    Edit3DIndicatorButtonAction(const QByteArray &menuId,
+                                View3DActionType type,
+                                const QString &description,
+                                const QIcon &icon,
+                                SelectionContextOperation customAction,
+                                Edit3DView *view);
+
+    IndicatorButtonAction *buttonAction();
+    void setIndicator(bool indicator);
+
+protected:
+    bool isVisible(const SelectionContext &) const override;
+    bool isEnabled(const SelectionContext &) const override;
+
+private:
+    IndicatorButtonAction *m_buttonAction = nullptr;
+};
+
 class Edit3DBakeLightsAction : public Edit3DAction
 {
 public:
@@ -121,6 +175,19 @@ protected:
 
 private:
     Edit3DView *m_view = nullptr;
+};
+
+class Edit3DCameraViewAction : public Edit3DAction
+{
+    Q_DECLARE_TR_FUNCTIONS(Edit3DCameraViewAction)
+
+public:
+    Edit3DCameraViewAction(const QByteArray &menuId, View3DActionType type, Edit3DView *view);
+
+    void setMode(const QByteArray &mode);
+
+private:
+    QList<Edit3DSingleSelectionAction::Option> options() const;
 };
 
 } // namespace QmlDesigner

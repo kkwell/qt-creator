@@ -15,13 +15,6 @@ enum class ProcessMode {
     Writer  // This opens in ReadWrite mode and doesn't close the write channel
 };
 
-enum class ProcessImpl {
-    QProcess,
-    ProcessLauncher,
-    Default // Defaults to ProcessLauncherImpl, if QTC_USE_QPROCESS env var is set
-            // it equals to QProcessImpl.
-};
-
 enum class TerminalMode {
     Off,
     Run,      // Start with process stub enabled
@@ -30,11 +23,6 @@ enum class TerminalMode {
 };
 
 // Miscellaneous, not process core
-
-enum class EventLoopMode {
-    Off,
-    On // Avoid
-};
 
 enum class Channel {
     Output,

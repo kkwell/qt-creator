@@ -116,7 +116,8 @@ QStringList identifierWordsUnderCursor(const QTextCursor &tc)
             break;
         QTextCursor temp(endCursor);
         temp.setPosition(startCursor.position(), QTextCursor::KeepAnchor);
-        results.append(temp.selectedText().remove(QRegularExpression("\\s")));
+        static const QRegularExpression rexgexp("\\s");
+        results.append(temp.selectedText().remove(rexgexp));
         // possibly skip ::
         temp = startCursor;
         skipCharsBackward(&temp, isSpace);
@@ -157,7 +158,7 @@ bool isValidIdentifierChar(const QChar &ch)
 
 bool isValidIdentifier(const QString &s)
 {
-    const int length = s.length();
+    const int length = s.size();
     for (int i = 0; i < length; ++i) {
         const QChar &c = s.at(i);
         if (i == 0) {
@@ -171,10 +172,11 @@ bool isValidIdentifier(const QString &s)
     return true;
 }
 
-int activeArgumenForPrefix(const QString &prefix)
+int activeArgumentForPrefix(const QString &prefix)
 {
     int argnr = 0;
     int parcount = 0;
+    int braceCount = 0;
     SimpleLexer tokenize;
     Tokens tokens = tokenize(prefix);
     for (int i = 0; i < tokens.count(); ++i) {
@@ -183,11 +185,15 @@ int activeArgumenForPrefix(const QString &prefix)
             ++parcount;
         else if (tk.is(T_RPAREN))
             --parcount;
-        else if (!parcount && tk.is(T_COMMA))
+        else if (tk.is(T_LBRACE))
+            ++braceCount;
+        else if (tk.is(T_RBRACE))
+            --braceCount;
+        else if (!parcount && !braceCount && tk.is(T_COMMA))
             ++argnr;
     }
 
-    if (parcount < 0)
+    if (parcount < 0 || braceCount < 0)
         return -1;
 
     return argnr;
@@ -311,7 +317,7 @@ CppCompletionAssistProcessor *getCppCompletionAssistProcessor()
 
 QString deriveHeaderGuard(const Utils::FilePath &filePath, ProjectExplorer::Project *project)
 {
-    return Internal::cppFileSettingsForProject(project).headerGuard(filePath);
+    return Internal::headerGuardForProject(project, filePath);
 }
 
 bool fileSizeExceedsLimit(const FilePath &filePath, int sizeLimitInMb)
@@ -382,10 +388,12 @@ SearchResultItems symbolOccurrencesInDeclarationComments(
                 doc = textDoc->document();
             } else {
                 std::unique_ptr<QTextDocument> newDoc = std::make_unique<QTextDocument>();
-                if (const auto content = TextFileFormat::readFile(
-                        filePath, Core::EditorManager::defaultTextCodec())) {
-                    newDoc->setPlainText(content.value());
-                }
+                TextFileFormat format;
+                const TextFileFormat::ReadResult result = format.readFile(
+                        filePath, Core::EditorManager::defaultTextEncoding());
+                if (result.code == TextFileFormat::ReadSuccess)
+                    newDoc->setPlainText(result.content);
+
                 doc = newDoc.get();
                 docPool.push_back(std::move(newDoc));
             }
@@ -412,23 +420,17 @@ SearchResultItems symbolOccurrencesInDeclarationComments(
     // Collect comment blocks associated with replace locations.
     for (const SearchResultItem &item : symbolOccurrencesInCode) {
         const FilePath filePath = FilePath::fromUserInput(item.path().last());
-        auto &[doc, content, cppDoc, allCommentTokens] = fileData(filePath);
+        auto &[doc, _, cppDoc, allCommentTokens] = fileData(filePath);
         const Text::Range &range = item.mainRange();
-        if (symbolName.isEmpty()) {
-            const int symbolStartPos = Utils::Text::positionInText(doc, range.begin.line,
-                                                                   range.begin.column + 1);
-            const int symbolEndPos = Utils::Text::positionInText(doc, range.end.line,
-                                                                 range.end.column + 1);
-            symbolName = content.mid(symbolStartPos, symbolEndPos - symbolStartPos);
-        }
+        if (symbolName.isEmpty())
+            symbolName = range.text(doc);
         const QList<Token> commentTokens = commentsForDeclaration(symbolName, range.begin,
                                                                   *doc, cppDoc);
         for (const Token &tok : commentTokens)
             addToken(allCommentTokens, tok);
 
         if (!classInfo) {
-            QTextCursor cursor(doc);
-            cursor.setPosition(Text::positionInText(doc, range.begin.line, range.begin.column + 1));
+            QTextCursor cursor = range.begin.toTextCursor(doc);
             Internal::CanonicalSymbol cs(cppDoc, snapshot);
             Symbol * const canonicalSymbol = cs(cursor);
             if (canonicalSymbol) {
@@ -510,18 +512,18 @@ QList<Text::Range> symbolOccurrencesInText(const QTextDocument &doc, QStringView
                 return true;
             const QChar c = text.at(i);
             if (c.isLetterOrNumber() || c == '_') {
-                index += symbolName.length();
+                index += symbolName.size();
                 return false;
             }
             return true;
         };
         if (!checkAdjacent(index - 1))
             continue;
-        if (!checkAdjacent(index + symbolName.length()))
+        if (!checkAdjacent(index + symbolName.size()))
             continue;
 
         const Text::Position startPos = Text::Position::fromPositionInDocument(&doc, offset + index);
-        index += symbolName.length();
+        index += symbolName.size();
         const Text::Position endPos = Text::Position::fromPositionInDocument(&doc, offset + index);
         ranges << Text::Range{startPos, endPos};
     }

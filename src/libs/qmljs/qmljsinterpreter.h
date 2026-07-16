@@ -721,8 +721,8 @@ public:
     static BuiltinObjects loadQmlTypes(const QFileInfoList &qmltypesFiles,
                              QStringList *errors, QStringList *warnings);
 
-    static BuiltinObjects &defaultQtObjects();
-    static BuiltinObjects &defaultLibraryObjects();
+    static const BuiltinObjects &defaultQtObjects();
+    static const BuiltinObjects &defaultLibraryObjects();
 
     // parses the contents of a qmltypes file and fills the newObjects map
     static void parseQmlTypeDescriptions(const QByteArray &contents,
@@ -733,7 +733,9 @@ public:
                                          QString *warningMessage,
                                          const QString &fileName);
 
-    static std::function<void()> defaultObjectsInitializer;
+    using Initializer
+        = std::function<void(BuiltinObjects & /*qtObjects*/, BuiltinObjects & /*libraryObjects*/)>;
+    static void setDefaultObjectsInitializer(const Initializer &init);
 };
 
 class QMLJS_EXPORT FakeMetaObjectWithOrigin
@@ -909,7 +911,7 @@ class QMLJS_EXPORT ASTFunctionValue: public FunctionValue
 {
     AST::FunctionExpression *m_ast;
     const Document *m_doc;
-    QList<QString> m_argumentNames;
+    QStringList m_argumentNames;
     bool m_isVariadic;
 
 public:
@@ -1161,6 +1163,9 @@ public:
     {
         return importPaths;
     }
+    // Called on the GUI thread before the (worker-thread) link runs, so providers can
+    // precompute data that relies on thread-unsafe APIs.
+    virtual void prepare([[maybe_unused]] const Document *context) {}
 };
 
 } // namespace QmlJS

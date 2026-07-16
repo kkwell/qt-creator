@@ -109,7 +109,7 @@ void ClassItem::update()
     MClass *klass = modelController->findElement<MClass>(diagramClass->modelUid());
     if (klass) {
         // TODO cache relation's Uids and check for change
-        QList<QString> baseClasses;
+        QStringList baseClasses;
         for (const auto &handle : klass->relations()) {
             if (MInheritance *mInheritance = dynamic_cast<MInheritance *>(handle.target())) {
                 if (mInheritance->base() != klass->uid()) {
@@ -324,9 +324,10 @@ void ClassItem::relationDrawn(const QString &id, ObjectItem *targetItem, const Q
                 if (assoziatedClass) {
                     auto derivedClass = dynamic_cast<DClass *>(object());
                     QMT_ASSERT(derivedClass, return);
-                    diagramSceneController->createAssociation(
-                                derivedClass, assoziatedClass, intermediatePoints, diagramSceneModel()->diagram(),
-                                [=] (MAssociation *mAssociation, DAssociation *dAssociation) {
+                    diagramSceneController->createAssociation(derivedClass, assoziatedClass,
+                                intermediatePoints, diagramSceneModel()->diagram(),
+                                [diagramSceneController, customRelation]
+                                (MAssociation *mAssociation, DAssociation *dAssociation) {
                         if (mAssociation && dAssociation) {
                             static const QHash<CustomRelation::Relationship, MAssociationEnd::Kind> relationship2KindMap = {
                                 { CustomRelation::Relationship::Association, MAssociationEnd::Association },

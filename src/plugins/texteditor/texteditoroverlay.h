@@ -3,11 +3,10 @@
 
 #pragma once
 
-#include <QObject>
-#include <QList>
-#include <QVector>
-#include <QTextCursor>
 #include <QColor>
+#include <QList>
+#include <QObject>
+#include <QTextCursor>
 
 QT_FORWARD_DECLARE_CLASS(QWidget)
 QT_FORWARD_DECLARE_CLASS(QPainterPath)
@@ -29,11 +28,10 @@ struct OverlaySelection
     bool m_dropShadow = false;
 };
 
-class TextEditorOverlay : public QObject
+class TextEditorOverlay
 {
-    Q_OBJECT
 public:
-    TextEditorOverlay(TextEditorWidget *editor);
+    explicit TextEditorOverlay(TextEditorWidget *editor);
 
     QRect rect() const;
     void paint(QPainter *painter, const QRect &clip);

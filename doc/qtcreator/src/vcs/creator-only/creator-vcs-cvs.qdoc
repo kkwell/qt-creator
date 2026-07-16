@@ -19,8 +19,10 @@
 
     CVS is an open source version control system.
 
+    \note Enable the CVS plugin to use it.
+
     In addition to the standard version control system functions described in
-    \l {Use common VCS Functions}, you can select \uicontrol Tools >
+    \l {Use common VCS functions}, you can select \uicontrol Tools >
     \uicontrol CVS > \uicontrol Edit to set a file as writable, notify
     watchers that the file is being edited, and watch for actions performed
      on the file by other users.
@@ -32,23 +34,34 @@
     To unedit files in the local directory, as well as recursively in all
     subdirectories, select \uicontrol {Unedit Repository}.
 
-    \section1 CVS Preferences
+    \section1 CVS preferences
 
     To set CVS preferences, select \preferences >
-    \uicontrol {Version Control} > \uicontrol CVS:
+    \uicontrol {Version Control} > \uicontrol CVS.
 
-    \image qtcreator-preferences-vcs-cvs.webp {CVS preferences}
+    \image {qtcreator-preferences-vcs-cvs.webp} {CVS tab in Version Control preferences}
 
-    \list
-        \li \uicontrol {CVS Command} specifies the path to the command-line
-            client executable.
-        \li \uicontrol {CVS root} specifies the CVS root.
-        \li \uicontrol Timeout sets a timeout for version control operations.
-        \li \uicontrol {Diff options} sets preferences for viewing diff output.
-        \li \uicontrol {Describe all files matching commit id} annotates all
-            files that belong to the commit.
-    \endlist
+    \table
+        \header
+            \li Preference
+            \li Description
+        \row
+            \li \uicontrol {CVS Command}
+            \li Specifies the path to the command-line client executable.
+        \row
+            \li \uicontrol {CVS root}
+            \li Specifies the CVS root.
+        \row
+            \li \uicontrol {Timeout}
+            \li Sets a timeout for version control operations.
+        \row
+            \li \uicontrol {Diff options}
+            \li Sets preferences for viewing diff output.
+        \row
+            \li \uicontrol {Describe all files matching commit id}
+            \li Annotates all files that belong to the commit.
+    \endtable
 
-    \sa {Set up version control systems}, {Use common VCS functions},
-    {Version Control Systems}
+    \sa {Enable and disable plugins}, {Set up version control systems},
+    {Use common VCS functions}, {Version control systems}
 */

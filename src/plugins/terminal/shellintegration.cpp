@@ -58,10 +58,10 @@ struct
 
 bool ShellIntegration::canIntegrate(const Utils::CommandLine &cmdLine)
 {
-    if (cmdLine.executable().needsDevice())
-        return false; // TODO: Allow integration for remote shells
-
     if (cmdLine.executable().baseName() == "zsh")
+        return true;
+
+    if (cmdLine.executable().baseName() == "cmd")
         return true;
 
     if (!cmdLine.arguments().isEmpty() && cmdLine.arguments() != "-l")
@@ -74,9 +74,6 @@ bool ShellIntegration::canIntegrate(const Utils::CommandLine &cmdLine)
         || cmdLine.executable().baseName() == "powershell") {
         return true;
     }
-
-    if (cmdLine.executable().baseName() == "cmd")
-        return true;
 
     if (cmdLine.executable().baseName() == "fish")
         return true;
@@ -123,24 +120,29 @@ void ShellIntegration::onOsc(int cmd, std::string_view str, bool initial, bool f
 
     if (cmd == 1337) {
         const auto [key, value] = Utils::splitAtFirst(command, '=');
-        if (key == QStringView(u"CurrentDir"))
-            emit currentDirChanged(FilePath::fromUserInput(value.toString()).path());
+        if (key == QStringView(u"CurrentDir")) {
+            const FilePath cwd = m_shell.withNewPath(value.toString());
+            emit currentDirChanged(cwd);
+        }
 
     } else if (cmd == 7) {
         const QString decoded = QUrl::fromPercentEncoding(d.toUtf8());
-        emit currentDirChanged(FilePath::fromUserInput(decoded).path());
+        const FilePath cwd = m_shell.withNewPath(decoded);
+        emit currentDirChanged(cwd);
     } else if (cmd == 133) {
         qCDebug(integrationLog) << "OSC 133:" << data;
     } else if (cmd == 633 && command.length() == 1) {
         if (command[0] == 'E') {
-            const CommandLine cmdLine = CommandLine::fromUserInput(data.toString());
+            const CommandLine cmdLine = CommandLine::fromUserInput(data.chopped(1).toString());
             emit commandChanged(cmdLine);
         } else if (command[0] == 'D') {
             emit commandChanged({});
         } else if (command[0] == 'P') {
             const auto [key, value] = Utils::splitAtFirst(data, '=');
-            if (key == QStringView(u"Cwd"))
-                emit currentDirChanged(unescape(value.toString()));
+            if (key == QStringView(u"Cwd")) {
+                const FilePath cwd = m_shell.withNewPath(unescape(value.toString()));
+                emit currentDirChanged(cwd);
+            }
         }
     }
 }
@@ -162,42 +164,59 @@ void ShellIntegration::prepareProcess(Utils::Process &process)
                                                          : Environment::systemEnvironment();
     CommandLine cmd = process.commandLine();
 
+    m_shell = cmd.executable();
+
+    const Result<FilePath> tmpDir = cmd.executable().tmpDir();
+    QTC_CHECK_RESULT(tmpDir);
+    if (!tmpDir)
+        return;
+
     if (!canIntegrate(cmd))
         return;
 
     env.set("VSCODE_INJECTION", "1");
     env.set("TERM_PROGRAM", "vscode");
 
+    if (m_shell.isLocal()) {
+        env.set("QT_CREATOR_EXECUTABLE_PATH", QCoreApplication::applicationFilePath());
+        env.set("QT_CREATOR_PID", QString::number(QCoreApplication::applicationPid()));
+    }
+
+    Result<std::unique_ptr<TemporaryFilePath>> tempDir
+        = TemporaryFilePath::create(*tmpDir / "shellintegration-XXXXXXXX", true);
+    QTC_CHECK_RESULT(tempDir);
+    if (!tempDir)
+        return;
+
+    m_tempDir = std::move(*tempDir);
+
     if (cmd.executable().baseName() == "bash") {
         const FilePath rcPath = filesToCopy.bash.rcFile;
-        const FilePath tmpRc = FilePath::fromUserInput(
-            m_tempDir.filePath(filesToCopy.bash.rcFile.fileName()));
-        expected_str<void> copyResult = rcPath.copyFile(tmpRc);
-        QTC_ASSERT_EXPECTED(copyResult, return);
+        const FilePath tmpRc = m_tempDir->filePath() / filesToCopy.bash.rcFile.fileName();
+        const Result<> copyResult = rcPath.copyFile(tmpRc);
+        QTC_ASSERT_RESULT(copyResult, return);
 
         if (cmd.arguments() == "-l")
             env.set("VSCODE_SHELL_LOGIN", "1");
 
         cmd = {cmd.executable(), {"--init-file", tmpRc.nativePath()}};
     } else if (cmd.executable().baseName() == "zsh") {
-        for (const FileToCopy &file : filesToCopy.zsh.files) {
-            const expected_str<void> copyResult = file.source.copyFile(
-                FilePath::fromUserInput(m_tempDir.filePath(file.destName)));
-            QTC_ASSERT_EXPECTED(copyResult, return);
+        for (const FileToCopy &file : std::as_const(filesToCopy.zsh.files)) {
+            const Result<> copyResult = file.source.copyFile(m_tempDir->filePath() / file.destName);
+            QTC_ASSERT_RESULT(copyResult, return);
         }
 
         const Utils::FilePath originalZdotDir = FilePath::fromUserInput(
             env.value_or("ZDOTDIR", QDir::homePath()));
 
-        env.set("ZDOTDIR", m_tempDir.path());
+        env.set("ZDOTDIR", m_tempDir->filePath().nativePath());
         env.set("USER_ZDOTDIR", originalZdotDir.nativePath());
     } else if (cmd.executable().baseName() == "pwsh"
                || cmd.executable().baseName() == "powershell") {
         const FilePath rcPath = filesToCopy.pwsh.script;
-        const FilePath tmpRc = FilePath::fromUserInput(
-            m_tempDir.filePath(filesToCopy.pwsh.script.fileName()));
-        expected_str<void> copyResult = rcPath.copyFile(tmpRc);
-        QTC_ASSERT_EXPECTED(copyResult, return);
+        const FilePath tmpRc = m_tempDir->filePath() / filesToCopy.pwsh.script.fileName();
+        const Result<> copyResult = rcPath.copyFile(tmpRc);
+        QTC_ASSERT_RESULT(copyResult, return);
 
         cmd.addArgs(QString("-noexit -command try { . '%1' } catch {Write-Host \"Shell "
                             "integration error:\" $_}")
@@ -205,20 +224,39 @@ void ShellIntegration::prepareProcess(Utils::Process &process)
                     CommandLine::Raw);
     } else if (cmd.executable().baseName() == "cmd") {
         const FilePath rcPath = filesToCopy.clink.script;
-        const FilePath tmpRc = FilePath::fromUserInput(
-            m_tempDir.filePath(filesToCopy.clink.script.fileName()));
-        expected_str<void> copyResult = rcPath.copyFile(tmpRc);
-        QTC_ASSERT_EXPECTED(copyResult, return);
+        const FilePath tmpRc = m_tempDir->filePath() / filesToCopy.clink.script.fileName();
+        const Result<> copyResult = rcPath.copyFile(tmpRc);
+        QTC_ASSERT_RESULT(copyResult, return);
 
         env.set("CLINK_HISTORY_LABEL", "QtCreator");
         env.appendOrSet("CLINK_PATH", tmpRc.parentDir().nativePath());
+
+        if (cmd.executable().isLocal()) {
+            const FilePath binPath = (m_tempDir->filePath() / "bin");
+            if (binPath.ensureWritableDir()) {
+                env.appendOrSetPath(binPath);
+                const FilePath bat = binPath / "qtc.bat";
+
+                const QString batContents = QString("@echo off\r\n\"%1\" -client -pid %2 %*\r\n")
+                                                .arg(QCoreApplication::applicationFilePath())
+                                                .arg(QCoreApplication::applicationPid());
+                if (!bat.writeFileContents(batContents.toLocal8Bit())) {
+                    qCWarning(integrationLog)
+                        << "Failed to create qtc.bat file at" << bat.toUserOutput();
+                }
+            } else {
+                qCWarning(integrationLog)
+                    << "Failed to create Clink bin directory at" << binPath.toUserOutput();
+            }
+        }
+
     } else if (cmd.executable().baseName() == "fish") {
-        FilePath xdgDir = FilePath::fromUserInput(m_tempDir.filePath("fish_xdg_data"));
+        FilePath xdgDir = m_tempDir->filePath() / "fish_xdg_data";
         FilePath subDir = xdgDir.resolvePath(QString("fish/vendor_conf.d"));
         QTC_ASSERT(subDir.createDir(), return);
-        expected_str<void> copyResult = filesToCopy.fish.script.copyFile(
+        const Result<> copyResult = filesToCopy.fish.script.copyFile(
             subDir.resolvePath(filesToCopy.fish.script.fileName()));
-        QTC_ASSERT_EXPECTED(copyResult, return);
+        QTC_ASSERT_RESULT(copyResult, return);
 
         env.appendOrSet("XDG_DATA_DIRS", xdgDir.toUserOutput());
     }

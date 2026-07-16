@@ -32,9 +32,10 @@ void HeaderPathFilter::process()
         tweakHeaderPaths();
 }
 
-bool HeaderPathFilter::isProjectHeaderPath(const QString &path) const
+bool HeaderPathFilter::isProjectHeaderPath(const FilePath &path) const
 {
-    return path.startsWith(projectDirectory) || path.startsWith(buildDirectory);
+    return path == projectDirectory || path.isChildOf(projectDirectory) || projectDirectory.isEmpty()
+        || path == buildDirectory || path.isChildOf(buildDirectory) || buildDirectory.isEmpty();
 }
 
 void HeaderPathFilter::removeGccInternalIncludePaths()
@@ -47,11 +48,10 @@ void HeaderPathFilter::removeGccInternalIncludePaths()
     if (projectPart.toolchainInstallDir.isEmpty())
         return;
 
-    const Utils::FilePath gccInstallDir = projectPart.toolchainInstallDir;
+    const FilePath gccInstallDir = projectPart.toolchainInstallDir;
     auto isGccInternalInclude = [gccInstallDir](const HeaderPath &headerPath) {
-        const auto filePath = Utils::FilePath::fromString(headerPath.path);
-        return filePath == gccInstallDir.pathAppended("include")
-               || filePath == gccInstallDir.pathAppended("include-fixed");
+        return headerPath.path == gccInstallDir.pathAppended("include")
+               || headerPath.path == gccInstallDir.pathAppended("include-fixed");
     };
 
     Utils::erase(builtInHeaderPaths, isGccInternalInclude);
@@ -93,7 +93,7 @@ HeaderPaths::iterator resourceIterator(HeaderPaths &headerPaths)
     return std::stable_partition(headerPaths.begin(),
                                  headerPaths.end(),
                                  [&](const HeaderPath &headerPath) {
-                                     return includeRegExp.match(headerPath.path).hasMatch();
+                                     return includeRegExp.match(headerPath.path.path()).hasMatch();
                                  });
 }
 
@@ -105,7 +105,7 @@ bool isClangSystemHeaderPath(const HeaderPath &headerPath)
     // include incorrect system headers.
     static const QRegularExpression clangIncludeDir(
         R"(\A.*/lib\d*/clang/\d+(\.\d+){0,2}/include\z)");
-    return clangIncludeDir.match(headerPath.path).hasMatch();
+    return clangIncludeDir.match(headerPath.path.path()).hasMatch();
 }
 
 void removeClangSystemHeaderPaths(HeaderPaths &headerPaths)
@@ -124,25 +124,15 @@ void HeaderPathFilter::tweakHeaderPaths()
     auto split = resourceIterator(builtInHeaderPaths);
 
     if (!clangIncludeDirectory.isEmpty())
-        builtInHeaderPaths.insert(split, HeaderPath::makeBuiltIn(clangIncludeDirectory.path()));
+        builtInHeaderPaths.insert(split, HeaderPath::makeBuiltIn(clangIncludeDirectory));
 }
 
 void HeaderPathFilter::addPreIncludesPath()
 {
     if (!projectDirectory.isEmpty()) {
-        const Utils::FilePath rootProjectDirectory = Utils::FilePath::fromString(projectDirectory)
-                .pathAppended(".pre_includes");
-        systemHeaderPaths.push_back(ProjectExplorer::HeaderPath::makeSystem(rootProjectDirectory));
+        const FilePath rootProjectDirectory = projectDirectory / ".pre_includes";
+        systemHeaderPaths.push_back(HeaderPath::makeSystem(rootProjectDirectory));
     }
-}
-
-QString HeaderPathFilter::ensurePathWithSlashEnding(const QString &path)
-{
-    QString pathWithSlashEnding = path;
-    if (!pathWithSlashEnding.isEmpty() && *pathWithSlashEnding.rbegin() != '/')
-        pathWithSlashEnding.push_back('/');
-
-    return pathWithSlashEnding;
 }
 
 } // namespace CppEditor::Internal

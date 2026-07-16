@@ -4,22 +4,21 @@
 #include "texteditoroverlay.h"
 #include "texteditor.h"
 
-#include <QDebug>
 #include <QMap>
 #include <QPainter>
 #include <QPainterPath>
 #include <QTextBlock>
 
-#include <algorithm>
+#include <utils/plaintextedit/texteditorlayout.h>
 #include <utils/qtcassert.h>
 
-using namespace TextEditor;
-using namespace TextEditor::Internal;
+#include <algorithm>
+
+namespace TextEditor::Internal {
 
 constexpr int borderWidth = 1;
 
 TextEditorOverlay::TextEditorOverlay(TextEditorWidget *editor) :
-    QObject(editor),
     m_visible(false),
     m_alpha(true),
     m_dropShadowWidth(2),
@@ -34,7 +33,6 @@ void TextEditorOverlay::update()
     if (m_visible)
         m_viewport->update();
 }
-
 
 void TextEditorOverlay::setVisible(bool b)
 {
@@ -126,12 +124,15 @@ QPainterPath TextEditorOverlay::createSelectionPath(const QTextCursor &begin, co
     if (block.blockNumber() < m_editor->firstVisibleBlock().blockNumber() - 1)
         block = document->findBlockByNumber(m_editor->firstVisibleBlock().blockNumber() - 1);
 
+    auto layout = [this](const QTextBlock &block){
+        return m_editor->editorLayout()->blockLayout(block);
+    };
+
     if (begin.position() == end.position()) {
         // special case empty selections
         const QRectF blockGeometry = m_editor->blockBoundingGeometry(block);
-        QTextLayout *blockLayout = block.layout();
         int pos = begin.position() - begin.block().position();
-        QTextLine line = blockLayout->lineForTextPosition(pos);
+        QTextLine line = layout(block)->lineForTextPosition(pos);
         QTC_ASSERT(line.isValid(), return {});
         QRectF lineRect = line.naturalTextRect();
         lineRect = lineRect.translated(blockGeometry.topLeft());
@@ -155,16 +156,17 @@ QPainterPath TextEditorOverlay::createSelectionPath(const QTextCursor &begin, co
             continue;
 
         const QRectF blockGeometry = m_editor->blockBoundingGeometry(block);
-        QTextLayout *blockLayout = block.layout();
+        QTextLayout *blockLayout = layout(block);
 
         int firstLine = 0;
 
         int beginChar = 0;
         if (block == begin.block()) {
             beginChar = begin.positionInBlock();
-            const QString preeditAreaText = begin.block().layout()->preeditAreaText();
-            if (!preeditAreaText.isEmpty() && beginChar >= begin.block().layout()->preeditAreaPosition())
-                beginChar += preeditAreaText.length();
+            QTextLayout *beginLayout = layout(begin.block());
+            const QString preeditAreaText = beginLayout->preeditAreaText();
+            if (!preeditAreaText.isEmpty() && beginChar >= beginLayout->preeditAreaPosition())
+                beginChar += preeditAreaText.size();
             QTextLine line = blockLayout->lineForTextPosition(beginChar);
             QTC_ASSERT(line.isValid(), return {});
             firstLine = line.lineNumber();
@@ -177,9 +179,10 @@ QPainterPath TextEditorOverlay::createSelectionPath(const QTextCursor &begin, co
         int endChar = -1;
         if (block == end.block()) {
             endChar = end.positionInBlock();
-            const QString preeditAreaText = end.block().layout()->preeditAreaText();
-            if (!preeditAreaText.isEmpty() && endChar >= end.block().layout()->preeditAreaPosition())
-                endChar += preeditAreaText.length();
+            QTextLayout *endLayout = layout(end.block());
+            const QString preeditAreaText = endLayout->preeditAreaText();
+            if (!preeditAreaText.isEmpty() && endChar >= endLayout->preeditAreaPosition())
+                endChar += preeditAreaText.size();
             QTextLine line = blockLayout->lineForTextPosition(endChar);
             QTC_ASSERT(line.isValid(), return {});
             lastLine = line.lineNumber();
@@ -419,3 +422,5 @@ bool TextEditorOverlay::hasFirstSelectionBeginMoved() const
         return false;
     return m_selections.at(0).m_cursor_begin.position() != m_firstSelectionOriginalBegin;
 }
+
+} // namespace TextEditor::Internal

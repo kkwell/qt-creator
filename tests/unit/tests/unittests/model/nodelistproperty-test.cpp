@@ -4,6 +4,7 @@
 #include <abstractviewmock.h>
 #include <googletest.h>
 #include <projectstoragemock.h>
+#include <projectstoragetriggerupdatemock.h>
 #include <sourcepathcachemock.h>
 
 #include <model.h>
@@ -23,6 +24,16 @@ namespace Info = QmlDesigner::Storage::Info;
 class NodeListProperty : public testing::Test
 {
 protected:
+    struct StaticData
+    {
+        Sqlite::Database modulesDatabase{":memory:", Sqlite::JournalMode::Memory};
+        QmlDesigner::ModulesStorage modulesStorage{modulesDatabase, modulesDatabase.isInitialized()};
+    };
+
+    static void SetUpTestSuite() { staticData = std::make_unique<StaticData>(); }
+
+    static void TearDownTestSuite() { staticData.reset(); }
+
     using iterator = QmlDesigner::NodeListProperty::iterator;
     NodeListProperty()
     {
@@ -73,14 +84,19 @@ protected:
     }
 
 protected:
+    inline static std::unique_ptr<StaticData> staticData;
+    QmlDesigner::ModulesStorage &modulesStorage = staticData->modulesStorage;
+    NiceMock<ProjectStorageTriggerUpdateMock> projectStorageTriggerUpdateMock;
     NiceMock<SourcePathCacheMockWithPaths> pathCache{"/path/foo.qml"};
-    NiceMock<ProjectStorageMockWithQtQtuick> projectStorageMock{pathCache.sourceId};
-    QmlDesigner::ModelPointer model{
-        QmlDesigner::Model::create(QmlDesigner::ProjectStorageDependencies{projectStorageMock,
-                                                                           pathCache},
-                                   "Item",
-                                   {QmlDesigner::Import::createLibraryImport("QtQuick")},
-                                   QUrl::fromLocalFile(pathCache.path.toQString()))};
+    NiceMock<ProjectStorageMockWithQtQuick> projectStorageMock{pathCache.sourceId,
+                                                               "/path",
+                                                               modulesStorage};
+    QmlDesigner::ModelPointer model{QmlDesigner::Model::create(
+        QmlDesigner::ProjectStorageDependencies{
+            projectStorageMock, pathCache, modulesStorage, projectStorageTriggerUpdateMock},
+        "Item",
+        {QmlDesigner::Import::createLibraryImport("QtQuick")},
+        QUrl::fromLocalFile(pathCache.path.toQString()))};
     NiceMock<AbstractViewMock> abstractViewMock;
     QmlDesigner::NodeListProperty nodeListProperty;
     ModelNode node1;

@@ -5,21 +5,26 @@
 
 #include "projectexplorer_export.h"
 
+#include <QtTaskTree/QSingleTaskTreeRunner>
+
 #include <utils/filepath.h>
 #include <utils/storekey.h>
 
 #include <QAbstractItemModel>
 #include <QDialog>
-#include <QFutureWatcher>
-#include <QLabel>
 #include <QRegularExpression>
 #include <QSet>
-#include <QTreeView>
 
 namespace Utils {
 class FancyLineEdit;
 class PathChooser;
 }
+
+QT_BEGIN_NAMESPACE
+class QLabel;
+class QPushButton;
+class QTreeView;
+QT_END_NAMESPACE
 
 namespace ProjectExplorer {
 
@@ -66,7 +71,7 @@ public:
         return false;
     }
 
-    bool operator == (const Glob &other) const
+    bool operator==(const Glob &other) const
     {
         return (mode == other.mode)
                 && (matchString == other.matchString)
@@ -80,7 +85,6 @@ class PROJECTEXPLORER_EXPORT SelectableFilesModel : public QAbstractItemModel
 
 public:
     SelectableFilesModel(QObject *parent);
-    ~SelectableFilesModel() override;
 
     void setInitialMarkedFiles(const Utils::FilePaths &files);
 
@@ -104,7 +108,17 @@ public:
     void selectAllFiles();
 
     enum class FilterState { HIDDEN, SHOWN, CHECKED };
-    FilterState filter(Tree *t);
+
+    struct FilterData
+    {
+        QSet<Utils::FilePath> files;
+        QList<Glob> hideFilesFilter;
+        QList<Glob> selectFilesFilter;
+    };
+
+    FilterData filterData() const { return {m_files, m_hideFilesFilter, m_selectFilesFilter}; }
+    static FilterState filter(const FilterData &filterData, Tree *t);
+    FilterState filter(Tree *t) const;
 
 signals:
     void checkedFilesChanged();
@@ -123,7 +137,7 @@ private:
 protected:
     QSet<Utils::FilePath> m_outOfBaseDirFiles;
     QSet<Utils::FilePath> m_files;
-    Tree *m_root = nullptr;
+    std::shared_ptr<Tree> m_root;
 
 private:
     QList<Glob> m_hideFilesFilter;
@@ -136,26 +150,16 @@ class PROJECTEXPLORER_EXPORT SelectableFilesFromDirModel : public SelectableFile
 
 public:
     SelectableFilesFromDirModel(QObject *parent);
-    ~SelectableFilesFromDirModel() override;
 
     void startParsing(const Utils::FilePath &baseDir);
     void cancel();
 
 signals:
     void parsingFinished();
-    void parsingProgress(const Utils::FilePath &fileName);
+    void parsingProgress(const QString &progress);
 
 private:
-    void buildTree(const Utils::FilePath &baseDir, Tree *tree, QPromise<void> &promise,
-                   int symlinkDepth);
-    void run(QPromise<void> &promise);
-    void buildTreeFinished();
-
-    // Used in the future thread need to all not used after calling startParsing
-    Utils::FilePath m_baseDir;
-    QFutureWatcher<void> m_watcher;
-    Tree *m_rootForFuture = nullptr;
-    int m_futureCount = 0;
+    QtTaskTree::QSingleTaskTreeRunner m_taskTreeRunner;
 };
 
 class PROJECTEXPLORER_EXPORT SelectableFilesWidget : public QWidget
@@ -189,7 +193,7 @@ private:
     void baseDirectoryChanged(bool validState);
 
     void startParsing(const Utils::FilePath &baseDir);
-    void parsingProgress(const Utils::FilePath &fileName);
+    void parsingProgress(const QString &progress);
     void parsingFinished();
 
     void smartExpand(const QModelIndex &idx);

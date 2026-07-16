@@ -38,14 +38,13 @@
 #include <utils/icon.h>
 #include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
+#include <utils/stringutils.h>
 #include <utils/temporarydirectory.h>
 #include <utils/theme/theme.h>
 
 #include <QAction>
 #include <QApplication>
 #include <QCompleter>
-#include <QDir>
-#include <QFileInfo>
 #include <QMessageBox>
 #include <QPointer>
 #include <QProcess>
@@ -54,10 +53,6 @@
 #include <QStringListModel>
 #include <QStyle>
 #include <QToolBar>
-
-#include <cstring>
-
-enum { debug = 0 };
 
 // Return true if word is meaningful and can be added to a completion model
 static bool acceptsWordForCompletion(const QString &word)
@@ -113,9 +108,8 @@ public:
     VcsBaseSubmitEditorPrivate(SubmitEditorWidget *editorWidget,
                                VcsBaseSubmitEditor *q);
 
-    SubmitEditorWidget *m_widget;
+    SubmitEditorWidget *m_widget = nullptr;
     VcsBaseSubmitEditorParameters m_parameters;
-    QString m_displayName;
     FilePath m_checkScriptWorkingDirectory;
     SubmitEditorFile m_file;
 
@@ -212,8 +206,13 @@ void VcsBaseSubmitEditor::setParameters(const VcsBaseSubmitEditorParameters &par
         if (state == Qt::ApplicationActive)
             updateFileModel();
     });
+    connect(d->m_widget, &SubmitEditorWidget::updateFileListRequested, this, [this] {
+        updateFileModel();
+    });
 
-    Aggregation::aggregate({this, new BaseTextFind(descriptionEdit)});
+    auto textFind = new BaseTextFind(descriptionEdit);
+    textFind->setResultHighlightingEnabled(false);
+    Aggregation::aggregate({this, textFind});
 }
 
 VcsBaseSubmitEditor::~VcsBaseSubmitEditor()
@@ -232,7 +231,7 @@ void VcsBaseSubmitEditor::slotUpdateEditorSettings()
 static inline QStringList fieldTexts(const QString &fileContents)
 {
     QStringList rc;
-    const QStringList rawFields = fileContents.trimmed().split(QLatin1Char('\n'));
+    const QStringList rawFields = fileContents.trimmed().split('\n');
     for (const QString &field : rawFields) {
         const QString trimmedField = field.trimmed();
         if (!trimmedField.isEmpty())
@@ -243,12 +242,14 @@ static inline QStringList fieldTexts(const QString &fileContents)
 
 void VcsBaseSubmitEditor::createUserFields(const FilePath &fieldConfigFile)
 {
-    FileReader reader;
-    if (!reader.fetch(fieldConfigFile, QIODevice::Text, ICore::dialogParent()))
+    const Result<QByteArray> config = fieldConfigFile.fileContents();
+    if (!config) {
+        QMessageBox::critical(ICore::dialogParent(), Tr::tr("File Error"), config.error());
         return;
+    }
 
     // Parse into fields
-    const QStringList fields = fieldTexts(QString::fromUtf8(reader.data()));
+    const QStringList fields = fieldTexts(QString::fromUtf8(normalizeNewlines(config.value())));
     if (fields.empty())
         return;
     // Create a completer on user names
@@ -271,16 +272,6 @@ void VcsBaseSubmitEditor::registerActions(QAction *editorUndoAction, QAction *ed
     d->m_widget->registerActions(editorUndoAction, editorRedoAction, submitAction, diffAction);
     d->m_diffAction = diffAction;
     d->m_submitAction = submitAction;
-}
-
-QAbstractItemView::SelectionMode VcsBaseSubmitEditor::fileListSelectionMode() const
-{
-    return d->m_widget->fileListSelectionMode();
-}
-
-void VcsBaseSubmitEditor::setFileListSelectionMode(QAbstractItemView::SelectionMode sm)
-{
-    d->m_widget->setFileListSelectionMode(sm);
 }
 
 bool VcsBaseSubmitEditor::isEmptyFileListEnabled() const
@@ -408,10 +399,10 @@ QByteArray VcsBaseSubmitEditor::fileContents() const
     return description().toLocal8Bit();
 }
 
-bool VcsBaseSubmitEditor::setFileContents(const QByteArray &contents)
+Result<> VcsBaseSubmitEditor::setFileContents(const QByteArray &contents)
 {
     setDescription(QString::fromUtf8(contents));
-    return true;
+    return ResultOk;
 }
 
 QString VcsBaseSubmitEditor::description() const
@@ -434,21 +425,18 @@ void VcsBaseSubmitEditor::setDescriptionMandatory(bool v)
     d->m_widget->setDescriptionMandatory(v);
 }
 
-enum { checkDialogMinimumWidth = 500 };
-
 void VcsBaseSubmitEditor::accept(VersionControlBase *plugin)
 {
     auto submitWidget = static_cast<SubmitEditorWidget *>(this->widget());
 
     EditorManager::activateEditor(this, EditorManager::IgnoreNavigationHistory);
 
-    QString errorMessage;
-    const bool canCommit = checkSubmitMessage(&errorMessage) && submitWidget->canSubmit(&errorMessage);
-    if (!canCommit) {
-        VcsOutputWindow::appendError(plugin->commitErrorMessage(errorMessage));
-    } else if (plugin->activateCommit()) {
+    if (const Result<> res = checkSubmitMessage(); !res)
+        VcsOutputWindow::appendError({}, plugin->commitErrorMessage(res.error()));
+    else if (const Result<> res = submitWidget->canSubmit(); !res)
+        VcsOutputWindow::appendError({}, plugin->commitErrorMessage(res.error()));
+    else if (plugin->activateCommit())
         close();
-    }
 }
 
 void VcsBaseSubmitEditor::close()
@@ -507,24 +495,27 @@ void VcsBaseSubmitEditor::slotSetFieldNickName(int i)
 
 void VcsBaseSubmitEditor::slotCheckSubmitMessage()
 {
-    QString errorMessage;
-    if (!checkSubmitMessage(&errorMessage)) {
+    const Result<> res = checkSubmitMessage();
+    if (!res) {
         QMessageBox msgBox(QMessageBox::Warning, Tr::tr("Submit Message Check Failed"),
-                           errorMessage, QMessageBox::Ok, d->m_widget);
-        msgBox.setMinimumWidth(checkDialogMinimumWidth);
+                           res.error(), QMessageBox::Ok, d->m_widget);
+        msgBox.setMinimumWidth(500);
         msgBox.exec();
     }
 }
 
-bool VcsBaseSubmitEditor::checkSubmitMessage(QString *errorMessage) const
+Result<> VcsBaseSubmitEditor::checkSubmitMessage() const
 {
     const FilePath checkScript = commonSettings().submitMessageCheckScript();
     if (checkScript.isEmpty())
-        return true;
+        return ResultOk;
     QApplication::setOverrideCursor(Qt::WaitCursor);
-    const bool rc = runSubmitMessageCheckScript(checkScript, errorMessage);
+    QString errorMessage;
+    const bool rc = runSubmitMessageCheckScript(checkScript, &errorMessage);
     QApplication::restoreOverrideCursor();
-    return rc;
+    if (!rc)
+        return ResultError(errorMessage);
+    return ResultOk;
 }
 
 static QString msgCheckScript(const FilePath &workingDir, const FilePath &cmd)
@@ -537,15 +528,18 @@ static QString msgCheckScript(const FilePath &workingDir, const FilePath &cmd)
 
 bool VcsBaseSubmitEditor::runSubmitMessageCheckScript(const FilePath &checkScript, QString *errorMessage) const
 {
-    QTC_ASSERT(!checkScript.needsDevice(), return false); // Not supported below.
+    QTC_ASSERT(checkScript.isLocal(), return false); // Not supported below.
     // Write out message
     TempFileSaver saver(TemporaryDirectory::masterDirectoryPath() + "/msgXXXXXX.txt");
     saver.write(fileContents());
-    if (!saver.finalize(errorMessage))
+    if (const Result<> res = saver.finalize(); !res) {
+        if (errorMessage)
+            *errorMessage = res.error();
         return false;
+    }
     // Run check process
-    VcsOutputWindow::appendShellCommandLine(msgCheckScript(d->m_checkScriptWorkingDirectory,
-                                                           checkScript));
+    VcsOutputWindow::appendShellCommandLine(d->m_checkScriptWorkingDirectory,
+        msgCheckScript(d->m_checkScriptWorkingDirectory, checkScript));
     Process checkProcess;
     if (!d->m_checkScriptWorkingDirectory.isEmpty())
         checkProcess.setWorkingDirectory(d->m_checkScriptWorkingDirectory);
@@ -555,10 +549,10 @@ bool VcsBaseSubmitEditor::runSubmitMessageCheckScript(const FilePath &checkScrip
 
     const QString stdOut = checkProcess.stdOut();
     if (!stdOut.isEmpty())
-        VcsOutputWindow::appendSilently(stdOut);
+        VcsOutputWindow::appendSilently(d->m_checkScriptWorkingDirectory, stdOut);
     const QString stdErr = checkProcess.stdErr();
     if (!stdErr.isEmpty())
-        VcsOutputWindow::appendSilently(stdErr);
+        VcsOutputWindow::appendSilently(d->m_checkScriptWorkingDirectory, stdErr);
 
     if (!succeeded)
         *errorMessage = checkProcess.exitMessage();
@@ -581,7 +575,7 @@ QIcon VcsBaseSubmitEditor::submitIcon()
     return Icon({
         {":/vcsbase/images/submit_db.png", Theme::PanelTextColorDark},
         {":/vcsbase/images/submit_arrow.png", Theme::IconsRunColor}
-    }, Icon::Tint | Icon::PunchEdges).icon();
+    }, Icon::MenuTintedStyle).icon();
 }
 
 // Reduce a list of untracked files reported by a VCS down to the files

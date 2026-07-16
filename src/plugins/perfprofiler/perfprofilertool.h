@@ -7,14 +7,14 @@
 #include "perfprofilerflamegraphview.h"
 #include "perfprofilerstatisticsview.h"
 #include "perfprofilertraceview.h"
-#include "perftimelinemodelmanager.h"
 
-#include <debugger/debuggermainwindow.h>
-#include <tracing/timelinezoomcontrol.h>
+#include <coreplugin/perspective.h>
+
 #include <utils/fileinprojectfinder.h>
 
 #include <QCoreApplication>
 #include <QLabel>
+#include <QMenu>
 #include <QToolButton>
 
 namespace ProjectExplorer {
@@ -23,14 +23,14 @@ class Project;
 class RunControl;
 }
 
-namespace PerfProfiler {
-namespace Internal {
+namespace Timeline { class TimelineZoomControl; }
 
-class PerfProfilerRunner;
+namespace PerfProfiler::Internal {
 
 class PerfProfilerTool  : public QObject
 {
     Q_OBJECT
+
 public:
     PerfProfilerTool();
     ~PerfProfilerTool();
@@ -42,7 +42,7 @@ public:
     bool isRecording() const;
     void onReaderFinished();
 
-    QAction *stopAction() const { return m_stopAction; }
+    const QAction *stopAction() const { return &m_stopAction; }
 
     void onRunControlStarted();
     void onRunControlFinished();
@@ -70,7 +70,6 @@ private:
     void clearData();
     void clear();
 
-    friend class PerfProfilerRunner;
     void populateFileFinder(const ProjectExplorer::Project *project,
                             const ProjectExplorer::Kit *kit);
     void updateFilterMenu();
@@ -81,26 +80,26 @@ private:
     void initialize();
     void finalize();
 
-    Utils::Perspective m_perspective{Constants::PerfProfilerPerspectiveId,
-                                     QCoreApplication::translate("QtC::PerfProfiler",
-                                                                 "Performance Analyzer")};
+    Core::Perspective m_perspective {
+        Constants::PerfProfilerPerspectiveId,
+        QCoreApplication::translate("QtC::PerfProfiler", "Performance Analyzer")
+    };
 
-    QAction *m_startAction = nullptr;
-    QAction *m_stopAction = nullptr;
-    QAction *m_loadPerfData = nullptr;
-    QAction *m_loadTrace = nullptr;
-    QAction *m_saveTrace = nullptr;
-    QAction *m_limitToRange = nullptr;
-    QAction *m_showFullRange = nullptr;
-    QToolButton *m_clearButton = nullptr;
-    QToolButton *m_recordButton = nullptr;
-    QLabel *m_recordedLabel = nullptr;
-    QLabel *m_delayLabel = nullptr;
-    QToolButton *m_filterButton = nullptr;
-    QMenu *m_filterMenu = nullptr;
-    QToolButton *m_aggregateButton = nullptr;
-    QToolButton *m_tracePointsButton = nullptr;
-    QObjectList m_objectsToDelete;
+    QAction m_startAction;
+    QAction m_stopAction;
+    QAction *m_loadPerfData = nullptr; // not owned
+    QAction *m_loadTrace = nullptr; // not owned
+    QAction *m_saveTrace = nullptr; // not owned
+    QAction *m_limitToRange = nullptr; // not owned
+    QAction *m_showFullRange = nullptr; // not owned
+    QToolButton m_clearButton;
+    QToolButton m_recordButton;
+    QLabel m_recordedLabel;
+    QLabel m_delayLabel;
+    QMenu m_filterMenu;
+    QToolButton m_filterButton;
+    QToolButton m_aggregateButton;
+    QToolButton m_tracePointsButton;
 
     PerfProfilerTraceView *m_traceView = nullptr;
     PerfProfilerStatisticsView *m_statisticsView = nullptr;
@@ -115,5 +114,4 @@ private:
 void setupPerfProfilerTool();
 void destroyPerfProfilerTool();
 
-} // namespace Internal
-} // namespace PerfProfiler
+} // namespace PerfProfiler::Internal

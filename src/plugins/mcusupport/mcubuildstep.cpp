@@ -6,6 +6,7 @@
 #include "mcukitmanager.h"
 #include "mculegacyconstants.h"
 #include "mcusupportconstants.h"
+#include "mcusupporttr.h"
 
 #include <coreplugin/icore.h>
 
@@ -23,8 +24,6 @@
 #include <projectexplorer/task.h>
 #include <projectexplorer/taskhub.h>
 
-#include <qmlprojectmanager/qmlprojectmanagertr.h>
-
 #include <qtsupport/qtsupportconstants.h>
 
 #include <utils/aspects.h>
@@ -36,24 +35,6 @@
 using namespace Utils;
 
 namespace McuSupport::Internal {
-
-class DeployMcuProcessStep : public ProjectExplorer::AbstractProcessStep
-{
-public:
-    static const Id id;
-    static void showError(const QString &text);
-
-    DeployMcuProcessStep(ProjectExplorer::BuildStepList *bc, Id id);
-
-private:
-    QString findKitInformation(ProjectExplorer::Kit *kit, const QString &key);
-    QTemporaryDir m_tmpDir;
-
-    FilePathAspect cmd{this};
-    StringAspect args{this};
-    FilePathAspect outDir{this};
-};
-
 const Id DeployMcuProcessStep::id = "QmlProject.Mcu.DeployStep";
 
 void DeployMcuProcessStep::showError(const QString &text)
@@ -67,12 +48,12 @@ DeployMcuProcessStep::DeployMcuProcessStep(ProjectExplorer::BuildStepList *bc, I
     , m_tmpDir()
 {
     if (!buildSystem()) {
-        showError(QmlProjectManager::Tr::tr("Cannot find a valid build system."));
+        showError(Tr::tr("Cannot find a valid build system."));
         return;
     }
 
     if (!m_tmpDir.isValid()) {
-        showError(QmlProjectManager::Tr::tr("Cannot create a valid build directory."));
+        showError(Tr::tr("Cannot create a valid build directory."));
         return;
     }
 
@@ -85,33 +66,26 @@ DeployMcuProcessStep::DeployMcuProcessStep(ProjectExplorer::BuildStepList *bc, I
 
     cmd.setSettingsKey("QmlProject.Mcu.ProcessStep.Command");
     cmd.setExpectedKind(PathChooser::Command);
-    cmd.setLabelText(QmlProjectManager::Tr::tr("Command:"));
+    cmd.setLabelText(Tr::tr("Command:"));
     cmd.setValue(rootPath.pathAppended("/bin/qmlprojectexporter"));
 
-    const char *importPathConstant = QtSupport::Constants::KIT_QML_IMPORT_PATH;
-    const FilePath qulIncludeDir = FilePath::fromVariant(kit->value(importPathConstant));
-    QStringList includeDirs {
-        ProcessArgs::quoteArg(qulIncludeDir.toString()),
-        ProcessArgs::quoteArg(qulIncludeDir.pathAppended("Timeline").toString()),
-        ProcessArgs::quoteArg(qulIncludeDir.pathAppended("Shapes").toString())
-    };
-
-    const char *toolChainConstant = Internal::Constants::KIT_MCUTARGET_TOOLCHAIN_KEY;
-    QStringList arguments = {
-        ProcessArgs::quoteArg(buildSystem()->projectFilePath().toString()),
-        "--platform", findKitInformation(kit, "QUL_PLATFORM"),
-        "--toolchain", kit->value(toolChainConstant).toString(),
-        "--include-dirs", includeDirs.join(","),
-    };
+    const Id toolChainConstant = Internal::Constants::KIT_MCUTARGET_TOOLCHAIN_KEY;
+    arguments
+        = {ProcessArgs::quoteArg(buildSystem()->projectFilePath().path()),
+           "--platform",
+           findKitInformation(kit, "QUL_PLATFORM"),
+           "--toolchain",
+           kit->value(toolChainConstant).toString()};
 
     args.setSettingsKey("QmlProject.Mcu.ProcessStep.Arguments");
     args.setDisplayStyle(StringAspect::LineEditDisplay);
-    args.setLabelText(QmlProjectManager::Tr::tr("Arguments:"));
+    args.setLabelText(Tr::tr("Arguments:"));
     args.setValue(ProcessArgs::joinArgs(arguments));
+    updateIncludeDirArgs();
 
     outDir.setSettingsKey("QmlProject.Mcu.ProcessStep.BuildDirectory");
     outDir.setExpectedKind(PathChooser::Directory);
-    outDir.setLabelText(QmlProjectManager::Tr::tr("Build directory:"));
+    outDir.setLabelText(Tr::tr("Build directory:"));
     outDir.setPlaceHolderText(m_tmpDir.path());
 
     setCommandLineProvider([this] {
@@ -125,7 +99,58 @@ DeployMcuProcessStep::DeployMcuProcessStep(ProjectExplorer::BuildStepList *bc, I
         cmdLine.addArg(directory);
         return cmdLine;
     });
+
+    connect(this, &BuildStep::addOutput, this, [](const QString &str, OutputFormat fmt) {
+        if (fmt == OutputFormat::ErrorMessage)
+            showError(str);
+    });
 }
+
+// Workaround for QDS-13763, when UL-10456 is completed this can be removed with the next LTS
+void DeployMcuProcessStep::updateIncludeDirArgs()
+{
+    ProjectExplorer::Kit *kit = MCUBuildStepFactory::findMostRecentQulKit();
+    if (!kit)
+        return;
+
+    // Remove the old include dirs (if any)
+    bool removeMode = false;
+    arguments.erase(
+        std::remove_if(
+            arguments.begin(),
+            arguments.end(),
+            [&](const QString &s) {
+                if (s == "--include-dirs")
+                    return removeMode = true;
+                if (removeMode && s.startsWith("--"))
+                    return removeMode = false;
+                return removeMode;
+            }),
+        arguments.end());
+
+    const Id importPathConstant = QtSupport::Constants::KIT_QML_IMPORT_PATH;
+    const FilePath qulIncludeDir = FilePath::fromVariant(kit->value(importPathConstant));
+
+    QStringList includeDirs = {ProcessArgs::quoteArg(qulIncludeDir.path())};
+    QStringList subDirs
+        = {"Controls",
+           "ControlsTemplates",
+           "Extras",
+           "Layers",
+           "Layouts",
+           "Profiling",
+           "SafeRenderer",
+           "Shapes",
+           "StudioComponents",
+           "Timeline",
+           "VirtualKeyboard"};
+    std::transform(
+        subDirs.begin(), subDirs.end(), std::back_inserter(includeDirs), [&](const QString &subDir) {
+            return ProcessArgs::quoteArg(qulIncludeDir.pathAppended(subDir).path());
+        });
+    arguments.append({"--include-dirs", includeDirs.join(",")});
+    args.setValue(ProcessArgs::joinArgs(arguments));
+};
 
 QString DeployMcuProcessStep::findKitInformation(ProjectExplorer::Kit *kit, const QString &key)
 {
@@ -159,30 +184,29 @@ ProjectExplorer::Kit *MCUBuildStepFactory::findMostRecentQulKit()
     return mcuKit;
 }
 
-void MCUBuildStepFactory::updateDeployStep(ProjectExplorer::Target *target, bool enabled)
+void MCUBuildStepFactory::updateDeployStep(ProjectExplorer::BuildConfiguration *bc, bool enabled)
 {
-    if (!target)
+    if (!bc)
         return;
 
-    ProjectExplorer::DeployConfiguration *deployConfiguration = target->activeDeployConfiguration();
+    ProjectExplorer::DeployConfiguration *deployConfiguration = bc->activeDeployConfiguration();
 
     // Return if the kit is currupted or is an MCU kit (unsupported in Design Studio)
     if (!deployConfiguration
-        || (target->kit() && target->kit()->hasValue(Constants::KIT_MCUTARGET_KITVERSION_KEY))) {
+        || (bc->kit() && bc->kit()->hasValue(Constants::KIT_MCUTARGET_KITVERSION_KEY))) {
         // This branch is called multiple times when selecting the run configuration
         // Show the message only once when the kit changes (avoid repitition)
         static ProjectExplorer::Kit *previousSelectedKit = nullptr;
-        if (previousSelectedKit && previousSelectedKit == target->kit())
+        if (previousSelectedKit && previousSelectedKit == bc->kit())
             return;
-        previousSelectedKit = target->kit();
+        previousSelectedKit = bc->kit();
 
         //TODO use DeployMcuProcessStep::showError instead when the Issues panel
         // supports poping up on new entries
         QMessageBox::warning(
             Core::ICore::dialogParent(),
-            QmlProjectManager::Tr::tr("The Selected Kit Is Not Supported"),
-            QmlProjectManager::Tr::tr(
-                "You cannot use the selected kit to preview Qt for MCUs applications."));
+            Tr::tr("The Selected Kit Is Not Supported"),
+            Tr::tr("You cannot use the selected kit to preview Qt for MCUs applications."));
         return;
     }
 
@@ -192,20 +216,21 @@ void MCUBuildStepFactory::updateDeployStep(ProjectExplorer::Target *target, bool
         if (findMostRecentQulKit()) {
             stepList->appendStep(DeployMcuProcessStep::id);
         } else {
-            DeployMcuProcessStep::showError(
-                QmlProjectManager::Tr::tr("Cannot find a valid Qt for MCUs kit."));
+            DeployMcuProcessStep::showError(Tr::tr("Cannot find a valid Qt for MCUs kit."));
         }
     } else {
         if (!step)
             return;
-        step->setEnabled(enabled);
+        auto mcuStep = qobject_cast<DeployMcuProcessStep *>(step);
+        if (mcuStep)
+            mcuStep->updateIncludeDirArgs();
+        step->setStepEnabled(enabled);
     }
 }
 
-
 MCUBuildStepFactory::MCUBuildStepFactory()
 {
-    setDisplayName(QmlProjectManager::Tr::tr("Qt for MCUs Deploy Step"));
+    setDisplayName(Tr::tr("Qt for MCUs Deploy Step"));
     registerStep<DeployMcuProcessStep>(DeployMcuProcessStep::id);
 }
 

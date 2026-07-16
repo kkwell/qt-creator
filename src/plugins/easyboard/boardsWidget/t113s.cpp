@@ -15,10 +15,6 @@
 #include <extensionsystem/pluginspec.h>
 #include <extensionsystem/pluginview.h>
 
-#include <solutions/tasking/networkquery.h>
-#include <solutions/tasking/tasktree.h>
-#include <solutions/tasking/tasktreerunner.h>
-
 #include <utils/algorithm.h>
 #include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
@@ -33,7 +29,7 @@
 
 using namespace Core;
 using namespace Utils;
-using namespace StyleHelper;
+using namespace Utils::StyleHelper;
 using namespace WelcomePageHelpers;
 
 
@@ -60,13 +56,13 @@ t113s::t113s(QWidget *parent):QWidget(parent)
     Column {
         m_description,
         st,
-        noMargin, spacing(SpacingTokens::ExVPaddingGapXl),
+        noMargin, spacing(SpacingTokens::GapVXxl),
     }.attachTo(leftWidget);
 
     Column {
         m_right,
         st,
-        noMargin, spacing(SpacingTokens::ExVPaddingGapXl),
+        noMargin, spacing(SpacingTokens::GapVXxl),
     }.attachTo(rightWidget);
 
 

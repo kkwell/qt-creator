@@ -4,15 +4,18 @@
 #include "makestep.h"
 
 #include "buildconfiguration.h"
+#include "buildsystem.h"
+#include "devicesupport/devicekitaspects.h"
 #include "devicesupport/idevice.h"
 #include "gnumakeparser.h"
-#include "kitaspects.h"
+#include "kit.h"
 #include "processparameters.h"
-#include "projectexplorer.h"
 #include "projectexplorerconstants.h"
+#include "projectexplorersettings.h"
 #include "projectexplorertr.h"
 #include "target.h"
 #include "toolchain.h"
+#include "toolchainkitaspect.h"
 
 #include <utils/aspects.h>
 #include <utils/environment.h>
@@ -21,7 +24,6 @@
 #include <utils/pathchooser.h>
 #include <utils/qtcprocess.h>
 #include <utils/utilsicons.h>
-#include <utils/variablechooser.h>
 
 #include <QThread>
 
@@ -50,7 +52,7 @@ MakeStep::MakeStep(BuildStepList *parent, Id id)
     // FIXME: Replace with  id.name() + MAKE_COMMAND_SUFFIX  after the Key/Store transition
     m_makeCommandAspect.setSettingsKey(id.toKey() + MAKE_COMMAND_SUFFIX);
     m_makeCommandAspect.setExpectedKind(PathChooser::ExistingCommand);
-    m_makeCommandAspect.setBaseFileName(PathChooser::homePath());
+    m_makeCommandAspect.setBaseDirectory(PathChooser::homePath());
     m_makeCommandAspect.setHistoryCompleter("PE.MakeCommand.History");
 
     m_userArgumentsAspect.setSettingsKey(id.toKey() + MAKE_ARGUMENTS_SUFFIX);
@@ -236,7 +238,7 @@ Environment MakeStep::makeEnvironment() const
     env.setupEnglishOutput();
     if (makeCommand().isEmpty()) {
         // We also prepend "L" to the MAKEFLAGS, so that nmake / jom are less verbose
-        const QList<Toolchain *> tcs = preferredToolchains(target()->kit());
+        const QList<Toolchain *> tcs = preferredToolchains(kit());
         const Toolchain *tc = tcs.isEmpty() ? nullptr : tcs.constFirst();
         if (tc && tc->targetAbi().os() == Abi::WindowsOS
                 && tc->targetAbi().osFlavor() != Abi::WindowsMSysFlavor) {
@@ -313,15 +315,11 @@ QWidget *MakeStep::createConfigWidget()
     if (m_disablingForSubDirsSupported)
         builder.addRow({m_disabledForSubdirsAspect});
     builder.addRow({m_buildTargetsAspect});
-    if (m_runAsRootAspect.isVisible()) {
-        m_runAsRootAspect.setLabelPlacement(BoolAspect::LabelPlacement::InExtraLabel);
-        builder.addRow({m_runAsRootAspect});
-    }
+    if (m_runAsAspect.isVisible())
+        builder.addRow({m_runAsAspect});
     builder.setNoMargins();
 
     auto widget = builder.emerge();
-
-    VariableChooser::addSupportForChildWidgets(widget, macroExpander());
 
     setSummaryUpdater([this] {
         const CommandLine make = effectiveMakeCommand(MakeStep::Display);
@@ -379,14 +377,12 @@ QWidget *MakeStep::createConfigWidget()
     connect(&m_overrideMakeflagsAspect, &BoolAspect::changed, widget, updateDetails);
     connect(&m_buildTargetsAspect, &BaseAspect::changed, widget, updateDetails);
 
-    connect(ProjectExplorerPlugin::instance(), &ProjectExplorerPlugin::settingsChanged,
-            widget, updateDetails);
+    globalProjectExplorerSettings().useJom.addOnChanged(widget, updateDetails);
 
-    connect(target(), &Target::kitChanged, widget, updateDetails);
-
+    connect(buildConfiguration(), &BuildConfiguration::kitChanged, widget, updateDetails);
     connect(buildConfiguration(), &BuildConfiguration::environmentChanged, widget, updateDetails);
     connect(buildConfiguration(), &BuildConfiguration::buildDirectoryChanged, widget, updateDetails);
-    connect(target(), &Target::parsingFinished, widget, updateDetails);
+    connect(buildSystem(), &BuildSystem::parsingFinished, widget, updateDetails);
 
     return widget;
 }

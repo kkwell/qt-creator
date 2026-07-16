@@ -1,0 +1,18 @@
+{
+    "Id" : "easyboard",
+    "DisplayName" : "Easy Board",
+    "Name" : "EasyBoard",
+    "Version" : "${IDE_VERSION}",
+    "CompatVersion" : "${IDE_VERSION_COMPAT}",
+    "VendorId" : "kvell",
+    "Vendor" : "Kvell",
+    "Copyright" : "(C) Kvell",
+    "License" : [ "Commercial Usage",
+                  "",
+                  "The current plugin is in beta"
+    ],
+    "Category" : "EasyBoard Support",
+    "Description" : "Support for deployment to and execution on a easyboard.Use ssdp auto find easyboard.Group Ip:239.255.255.250,Group Port:1901",
+    "Url" : "https://kvell.dscloud.me:70",
+    ${IDE_PLUGIN_DEPENDENCIES}
+}

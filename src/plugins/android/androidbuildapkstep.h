@@ -60,11 +60,12 @@ private:
     bool verifyKeystorePassword();
     bool verifyCertificatePassword();
 
-    Tasking::GroupItem runRecipe() final;
+    QtTaskTree::GroupItem runRecipe() final;
     void stdError(const QString &output);
 
     void reportWarningOrError(const QString &message, ProjectExplorer::Task::TaskType type);
     void updateBuildToolsVersionInJsonFile();
+    bool isApkUpToDate() const;
 
     bool m_signPackage = false;
     bool m_openPackageLocationForRun = false;

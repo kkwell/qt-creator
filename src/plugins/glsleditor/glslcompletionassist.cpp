@@ -360,6 +360,9 @@ IAssistProposal *GlslCompletionAssistProcessor::performAsync()
                     } else if (const GLSL::Struct *structTy = exprTy.type->asStructType()) {
                         members = structTy->members();
 
+                    } else if (const GLSL::InterfaceBlock *interfaceBlockTy = exprTy.type->asInterfaceBlockType()) {
+                        members += interfaceBlockTy->members();
+
                     } else {
                         // some other type
                     }
@@ -394,6 +397,15 @@ IAssistProposal *GlslCompletionAssistProcessor::performAsync()
             for (; currentScope; currentScope = currentScope->scope())
                 members += currentScope->members();
 
+            // add interface block fields
+            if (auto globalScope = doc->globalScope()) {
+                const QList<GLSL::Symbol *> globalMembers = globalScope->members();
+                for (GLSL::Symbol *sym : globalMembers) {
+                    if (GLSL::InterfaceBlock *iBlock = sym->asInterfaceBlock())
+                        members += iBlock->members();
+                }
+            }
+
             // if this is the global scope, then add some standard Qt attribute
             // and uniform names for autocompleting variable declarations
             // this isn't a complete list, just the most common
@@ -426,7 +438,17 @@ IAssistProposal *GlslCompletionAssistProcessor::performAsync()
         }
 
  //       if (m_keywordVariant != languageVariant(interface->mimeType())) {
-            QStringList keywords = GLSL::Lexer::keywords(languageVariant(interface->mimeType()));
+            int langVar = languageVariant(interface->mimeType());
+            const int currentGLSLVersion = interface->glslDocument()->currentGlslVersion();
+            if (currentGLSLVersion >= 330) {
+                if (currentGLSLVersion >= 420)
+                    langVar |= GLSL::Lexer::Variant_GLSL_460;
+                else
+                    langVar |= GLSL::Lexer::Variant_GLSL_400;
+                if (interface->glslDocument()->vulkanEnabled())
+                    langVar |= GLSL::Lexer::Variant_Vulkan;
+            }
+            QStringList keywords = GLSL::Lexer::keywords(langVar);
 //            m_keywordCompletions.clear();
             for (int index = 0; index < keywords.size(); ++index)
                 m_completions << createCompletionItem(keywords.at(index), glslIcon(IconTypeKeyword));
@@ -497,7 +519,7 @@ bool GlslCompletionAssistProcessor::acceptsIdleEditor() const
         ++pos;
 
         const QString word = interface()->textAt(pos, cursorPosition - pos);
-        if (word.length() >= TextEditorSettings::completionSettings().m_characterThreshold
+        if (word.size() >= completionSettings().characterThreshold()
                 && checkStartOfIdentifier(word)) {
             for (auto character : word) {
                 if (!isIdentifierChar(character))

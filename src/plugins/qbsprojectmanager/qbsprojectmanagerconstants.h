@@ -5,8 +5,7 @@
 
 #include <QtGlobal>
 
-namespace QbsProjectManager {
-namespace Constants {
+namespace QbsProjectManager::Constants {
 
 // Contexts
 const char PROJECT_ID[] = "Qbs.QbsProject";
@@ -48,13 +47,13 @@ const char QBS_CONFIG_QUICK_DEBUG_KEY[] = "modules.Qt.quick.qmlDebugging";
 const char QBS_CONFIG_QUICK_COMPILER_KEY[] = "modules.Qt.quick.useCompiler";
 const char QBS_CONFIG_SEPARATE_DEBUG_INFO_KEY[] = "modules.cpp.separateDebugInformation";
 const char QBS_FORCE_PROBES_KEY[] = "qbspm.forceProbes";
+const char QBS_RESTORE_BEHAVIOR_KEY[] = "restore-behavior";
 
 // Toolchain related settings:
 const char QBS_TARGETPLATFORM[] = "qbs.targetPlatform";
 const char QBS_SYSROOT[] = "qbs.sysroot";
 const char QBS_ARCHITECTURES[] = "qbs.architectures";
 const char QBS_ARCHITECTURE[] = "qbs.architecture";
-const char QBS_TOOLCHAIN[] = "qbs.toolchain";
 const char CPP_TOOLCHAINPATH[] = "cpp.toolchainInstallPath";
 const char CPP_TOOLCHAINPREFIX[] = "cpp.toolchainPrefix";
 const char CPP_COMPILERNAME[] = "cpp.compilerName";
@@ -74,5 +73,6 @@ const char QBS_SETTINGS_CATEGORY_ICON[]  = ":/projectexplorer/images/build.png";
 
 const char QBS_PROFILING_ENV[] = "QTC_QBS_PROFILING";
 
-} // namespace Constants
-} // namespace QbsProjectManager
+const char QBS_TOOL_ID[] = "QbsExecutable";
+
+} // namespace QbsProjectManager::Constants

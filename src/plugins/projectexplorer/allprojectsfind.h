@@ -33,15 +33,17 @@ public:
     // deprecated
     QByteArray settingsKey() const override;
 
-protected:
     static Utils::FileContainer filesForProjects(const QStringList &nameFilters,
                                                  const QStringList &exclusionFilters,
                                                  const QList<Project *> &projects);
+protected:
     QString label() const override;
     QString toolTip() const override;
 
 private:
     TextEditor::FileContainerProvider fileContainerProvider() const override;
+    Utils::FindFlags supportedFindFlags() const override;
+
     void handleFileListChanged();
 
     QPointer<QWidget> m_configWidget;

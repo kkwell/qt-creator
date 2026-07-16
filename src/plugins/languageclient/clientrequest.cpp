@@ -4,20 +4,17 @@
 #include "clientrequest.h"
 
 using namespace LanguageServerProtocol;
-using namespace Tasking;
+using namespace QtTaskTree;
 
 namespace LanguageClient {
 
-ClientWorkspaceSymbolRequestTaskAdapter::ClientWorkspaceSymbolRequestTaskAdapter()
+void ClientWorkspaceSymbolRequestTaskAdapter::operator()(ClientWorkspaceSymbolRequest *task,
+                                                         QTaskInterface *iface)
 {
-    task()->setResponseCallback([this](const WorkspaceSymbolRequest::Response &response){
-        emit done(toDoneResult(response.result().has_value()));
+    task->setResponseCallback([iface](const WorkspaceSymbolRequest::Response &response) {
+        iface->reportDone(toDoneResult(response.result().has_value()));
     });
-}
-
-void ClientWorkspaceSymbolRequestTaskAdapter::start()
-{
-    task()->start();
+    task->start();
 }
 
 bool ClientWorkspaceSymbolRequest::preStartCheck()

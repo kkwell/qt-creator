@@ -112,10 +112,25 @@ template<typename C, typename F>
 Q_REQUIRED_RESULT int indexOf(const C &container, F function);
 
 /////////////////////////
-// maxElementOr
+// {min,max}ElementOr
 /////////////////////////
-template<typename T>
-typename T::value_type maxElementOr(const T &container, typename T::value_type other);
+template<typename C>
+typename C::value_type maxElementOr(const C &container, typename C::value_type other);
+template<typename C>
+typename C::value_type maxElementOrDefault(const C &container);
+template<typename C, typename Cmp>
+typename C::value_type maxElementOr(const C &container, const Cmp &cmp, typename C::value_type other);
+template<typename C, typename Cmp>
+typename C::value_type maxElementOrDefault(const C &container, const Cmp &cmp);
+
+template<typename C>
+typename C::value_type minElementOr(const C &container, typename C::value_type other);
+template<typename C>
+typename C::value_type minElementOrDefault(const C &container);
+template<typename C, typename Cmp>
+typename C::value_type minElementOr(const C &container, const Cmp &cmp, typename C::value_type other);
+template<typename C, typename Cmp>
+typename C::value_type minElementOrDefault(const C &container, const Cmp &cmp);
 
 /////////////////////////
 // filtered
@@ -258,7 +273,7 @@ template<template<typename> class C, // result container type
          typename Result = std::decay_t<std::invoke_result_t<F, Value&>>,
          typename ResultContainer = C<Result>>
 Q_REQUIRED_RESULT decltype(auto) transform(SC &&container, F function);
-#ifdef Q_CC_CLANG
+#if __cpp_template_template_args < 201611L
 // "Matching of template template-arguments excludes compatible templates"
 // http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0522r0.html (P0522R0)
 // in C++17 makes the above match e.g. C=std::vector even though that takes two
@@ -457,6 +472,45 @@ bool contains(const C &container, R S::*member)
     return anyOf(container, std::mem_fn(member));
 }
 
+template<std::indirectly_readable Iterator, std::indirectly_regular_unary_invocable<Iterator> Projection>
+using projected_value_t = std::remove_cvref_t<
+    std::invoke_result_t<Projection &, std::iter_value_t<Iterator> &>>;
+
+template<std::ranges::input_range Range,
+         typename Projection = std::identity,
+         class Value = projected_value_t<std::ranges::iterator_t<Range>, Projection>>
+    requires std::indirect_binary_predicate<std::ranges::equal_to,
+                                            std::projected<std::ranges::iterator_t<Range>, Projection>,
+                                            const Value *>
+bool contains(Range &&range, const Value &value, Projection projection = {})
+{
+    return std::ranges::find(std::forward<Range>(range), value, projection) != std::ranges::end(range);
+}
+
+template<typename T, std::size_t Size, typename V>
+[[nodiscard]] bool contains(const T (&array)[Size], const V &value)
+{
+    auto begin = std::begin(array);
+    auto end = std::end(array);
+
+    auto found = std::find(begin, end, value);
+
+    return found != end;
+}
+
+//////////////////
+// containsInSorted
+/////////////////
+
+template<typename C, typename V>
+[[nodiscard]] bool containsInSorted(const C &container, const V &value)
+{
+    auto begin = std::begin(container);
+    auto end = std::end(container);
+
+    return std::binary_search(begin, end, value);
+}
+
 //////////////////
 // findOr
 /////////////////
@@ -545,21 +599,72 @@ int indexOf(const C& container, F function)
 
 
 //////////////////
-// max element
+// min/max element
 //////////////////
 
-template<typename T>
-typename T::value_type maxElementOr(const T &container, typename T::value_type other)
+template<typename C>
+typename C::value_type maxElementOr(const C &container, typename C::value_type other)
 {
-    typename T::const_iterator begin = std::begin(container);
-    typename T::const_iterator end = std::end(container);
-
-    typename T::const_iterator it = std::max_element(begin, end);
-    if (it == end)
-        return other;
-    return *it;
+    const auto begin = std::begin(container);
+    const auto end = std::end(container);
+    if (const auto it = std::max_element(begin, end); it != end)
+        return *it;
+    return other;
 }
 
+template<typename C>
+typename C::value_type maxElementOrDefault(const C &container)
+{
+    return maxElementOr(container, typename C::value_type());
+}
+
+template<typename C, typename Cmp>
+typename C::value_type maxElementOr(const C &container, const Cmp &cmp, typename C::value_type other)
+{
+    const auto begin = std::begin(container);
+    const auto end = std::end(container);
+    if (const auto it = std::max_element(begin, end, cmp); it != end)
+        return *it;
+    return other;
+}
+
+template<typename C, typename Cmp>
+typename C::value_type maxElementOrDefault(const C &container, const Cmp &cmp)
+{
+    return maxElementOr(container, cmp, typename C::value_type());
+}
+
+template<typename C>
+typename C::value_type minElementOr(const C &container, typename C::value_type other)
+{
+    const auto begin = std::begin(container);
+    const auto end = std::end(container);
+    if (const auto it = std::min_element(begin, end); it != end)
+        return *it;
+    return other;
+}
+
+template<typename C>
+typename C::value_type minElementOrDefault(const C &container)
+{
+    return minElementOr(container, typename C::value_type());
+}
+
+template<typename C, typename Cmp>
+typename C::value_type minElementOr(const C &container, const Cmp &cmp, typename C::value_type other)
+{
+    const auto begin = std::begin(container);
+    const auto end = std::end(container);
+    if (const auto it = std::min_element(begin, end, cmp); it != end)
+        return *it;
+    return other;
+}
+
+template<typename C, typename Cmp>
+typename C::value_type minElementOrDefault(const C &container, const Cmp &cmp)
+{
+    return minElementOr(container, cmp, typename C::value_type());
+}
 
 //////////////////
 // transform
@@ -809,7 +914,7 @@ Q_REQUIRED_RESULT decltype(auto) transform(SC &&container, F function)
     return transform<ResultContainer>(std::forward<SC>(container), function);
 }
 
-#ifdef Q_CC_CLANG
+#if __cpp_template_template_args < 201611L
 template<template<typename, typename> class C, // result container type
          typename SC,                          // input container type
          typename F,                           // function type
@@ -941,7 +1046,7 @@ template<template<typename...> class C = QList, // result container
 Q_REQUIRED_RESULT
 auto transform(const QStringList &container, F function)
 {
-    return transform<C, const QList<QString> &>(static_cast<QList<QString>>(container), function);
+    return transform<C, const QStringList &>(static_cast<QStringList>(container), function);
 }
 
 // member function:
@@ -951,7 +1056,7 @@ template<template<typename...> class C = QList, // result container type
 Q_REQUIRED_RESULT
 decltype(auto) transform(const QStringList &container, R (S::*p)() const)
 {
-    return transform<C, const QList<QString> &>(static_cast<QList<QString>>(container), std::mem_fn(p));
+    return transform<C, const QStringList &>(static_cast<QStringList>(container), std::mem_fn(p));
 }
 
 // members:
@@ -961,7 +1066,7 @@ template<template<typename...> class C = QList, // result container
 Q_REQUIRED_RESULT
 decltype(auto) transform(const QStringList &container, R S::*p)
 {
-    return transform<C, const QList<QString> &>(static_cast<QList<QString>>(container), std::mem_fn(p));
+    return transform<C, const QStringList &>(static_cast<QStringList>(container), std::mem_fn(p));
 }
 
 //////////////////
@@ -1011,9 +1116,7 @@ Q_REQUIRED_RESULT R filteredCast(const C &container, F predicate)
 /////////////////
 
 // Recommended usage:
-// C hit;
-// C miss;
-// std::tie(hit, miss) = Utils::partition(container, predicate);
+// const auto [hit, miss] = Utils::partition(container, predicate);
 
 template<typename C, typename F>
 Q_REQUIRED_RESULT
@@ -1347,6 +1450,38 @@ template <typename C, typename R, typename S>
 Q_REQUIRED_RESULT decltype(auto) take(C &container, R (S::*function)() const)
 {
     return take(container, std::mem_fn(function));
+}
+
+//////////////////
+// takeAll:
+/////////////////
+
+template<class C, typename P>
+Q_REQUIRED_RESULT C takeAll(C &container, P predicate)
+{
+    const auto end = std::end(container);
+
+    const auto it = std::stable_partition(std::begin(container), end, std::not_fn(predicate));
+    if (it == end)
+        return {};
+
+    C result(std::make_move_iterator(it), std::make_move_iterator(end));
+    container.erase(it, end);
+    return result;
+}
+
+// pointer to member
+template <typename C, typename R, typename S>
+Q_REQUIRED_RESULT decltype(auto) takeAll(C &container, R S::*member)
+{
+    return takeAll(container, std::mem_fn(member));
+}
+
+// pointer to member function
+template <typename C, typename R, typename S>
+Q_REQUIRED_RESULT decltype(auto) takeAll(C &container, R (S::*function)() const)
+{
+    return takeAll(container, std::mem_fn(function));
 }
 
 //////////////////

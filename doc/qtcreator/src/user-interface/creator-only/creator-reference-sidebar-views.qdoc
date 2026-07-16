@@ -3,46 +3,49 @@
 
 /*!
     \page creator-outline-view.html
-    \previouspage creator-reference.html
-    \ingroup creator-reference-sidebar-views
+    \previouspage creator-how-tos.html
 
-    \title Outline
+    \ingroup creator-how-to-ui
 
-    \brief Shows an overview of defined types and other symbols, as well as
-    their properties and hierarchy in a source file.
+    \target Outline
+    \title View outline
 
-    To move the code for types and symbols around in the source file, drag
-    them in the outline.
+    Use the \uicontrol Outline view to see an overview of defined types and other
+    symbols, as well as their properties and hierarchy in a source file.
 
-    \image qtcreator-outline-view.png {Outline view}
+    \image {qtcreator-outline-view.webp} {Outline view}
 
     \list
         \li To see a complete list of all bindings, select
-            \inlineimage icons/filtericon.png
+            \inlineimage {icons/filtericon.png} {Filter Tree}
             (\uicontrol {Filter Tree}) > \uicontrol {Show All Bindings}.
         \li To sort types or symbols alphabetically, select
-            \inlineimage icons/sort_alphabetically.png
+            \inlineimage {icons/sort_alphabetically.png} {Sort Alphabetically}
             (\uicontrol {Sort Alphabetically}).
         \li To stop the synchronization with the type or symbol selected in the
-            editor, deselect \inlineimage icons/linkicon.png
+            editor, clear
+            \inlineimage {icons/linkicon.png} {Synchronize with Editor}
             (\uicontrol {Synchronize with Editor}).
     \endlist
 */
 
 /*!
     \page creator-class-view.html
-    \previouspage creator-reference.html
-    \ingroup creator-reference-sidebar-views
+    \previouspage creator-how-tos.html
 
-    \title Class View
+    \ingroup creator-how-to-ui
 
-    \brief Shows the class hierarchy of the currently open projects.
+    \target {Class View}
+    \title View class hierarchy
 
-    \image qtcreator-class-view.png {Class View}
+    Use \uicontrol Class View to see the class hierarchy of the currently open
+    projects.
+
+    \image {qtcreator-class-view.webp} {Class View}
 
     \list
         \li To organize the view by subprojects, click
-            \inlineimage icons/qtcreator-show-subprojects.png
+            \inlineimage {icons/qtcreator-show-subprojects.png} {Show Subprojects}
             (\uicontrol {Show Subprojects}).
         \li To visit all parts of a namespace, double-click on the
             namespace item multiple times.
@@ -51,79 +54,79 @@
 
 /*!
     \page creator-call-hierarchy-view.html
-    \previouspage creator-reference.html
-    \ingroup creator-reference-sidebar-views
+    \previouspage creator-how-tos.html
 
-    \title Call Hierarchy
+    \ingroup creator-how-to-ui
 
-    \brief Shows information about incoming and outgoing function calls from a
-    \l{Language Servers}{language server}.
+    \target {Call Hierarchy}
+    \title View call hierarchy
+
+    Use the \uicontrol {Call Hierarchy} view to see incoming and outgoing function calls
+    from a language server.
 
     Place the cursor on a function definition in the code editor to see lists
     of functions that call it and the functions it calls. This works recursively,
     so you can also see the caller of the caller. However, Clangd only lists
     incoming calls.
 
-    Select the \inlineimage icons/languageclient.png
-    button on the \l{Edit Mode}{editor toolbar}, and then select
+    Select \inlineimage {icons/languageclient.png} {Language Client menu}
+    on the \l{Editing code}{editor toolbar}, and then select
     \uicontrol {Restart} to collect call hierarchy information for the function.
 
-    \image qtcreator-call-hierarchy-view.png {Call Hierarchy view}
+    \image {qtcreator-call-hierarchy-view.webp} {Call Hierarchy view}
+
+    \sa {Managing language servers}
 */
 
 /*!
     \page creator-type-hierarchy.html
-    \previouspage creator-reference.html
-    \ingroup creator-reference-sidebar-views
+    \previouspage creator-how-tos.html
 
-    \title Type Hierarchy
+    \ingroup creator-how-to-ui
 
-    \brief Shows the base classes and derived classes of a class.
+    \target {Type Hierarchy}
+    \title View type hierarchy
 
-    To view type hierarchy of a class:
+    Use the \uicontrol {Type Hierarchy} view to see the type hierarchy of a class.
+
+    To view the type hierarchy of a class:
 
     \list 1
         \li Right-click a class in the code editor.
-        \li Select \uicontrol {Open Type Hierarchy} or press \key {Ctrl+Shift+T}.
+        \li Select \uicontrol {Open Type Hierarchy} or select \key {Ctrl+Shift+T}.
     \endlist
 
-    \image qtcreator-type-hierarchy-view.png {Type Hierarchy view}
+    \image {qtcreator-type-hierarchy-view.webp} {Type Hierarchy view}
 
-    To navigate in the type hierarchy:
+    To navigate in the type hierarchy, double-click a class or select it.
+    The definition of the selected class opens in the code editor.
 
-    \list
-        \li Double-click a class or select it.
-        \li Select \uicontrol {Open Type Hierarchy} in the context menu.
-    \endlist
-
-    The view highlights the previous class.
-
-    The definition of the selected class opens in the code editor. You
-    can also select \uicontrol {Open in Editor} in the context menu to open
-    it.
+    The view highlights instances of the selected class.
 */
 
 /*!
     \page creator-include-hierarchy-view.html
-    \previouspage creator-reference.html
-    \ingroup creator-reference-sidebar-views
+    \previouspage creator-how-tos.html
 
-    \title Include Hierarchy
+    \ingroup creator-how-to-ui
 
-    \brief Shows the files that the current file includes and those that include
-    the current file.
+    \target {Include Hierarchy}
+    \title View include hierarchy
+
+    Use the \uicontrol {Include Hierarchy} view to see the files that the
+    current file includes and those that include the current file.
 
     To view the include hierarchy of a file:
 
     \list 1
         \li Right-click a file in the editor.
         \li Select \uicontrol {Open Include Hierarchy}
-            or press \key {Ctrl+Shift+I}.
+            or select \key {Ctrl+Shift+I}.
     \endlist
 
-    \image qtcreator-include-hierarchy-view.png {Include Hierarchy view}
+    \image {qtcreator-include-hierarchy-view.webp} {Include Hierarchy view}
 
     To keep the view synchronized with the file currently open in the editor,
-    select \inlineimage icons/linkicon.png
+    select \inlineimage {icons/linkicon.png} {Synchronize with Editor}
     (\uicontrol {Synchronize with Editor}).
 */

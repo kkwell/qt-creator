@@ -3,9 +3,11 @@
 
 #include "ilocatorfilter.h"
 
+#include "locator.h"
+
 #include "../coreplugintr.h"
 
-#include <solutions/tasking/tasktreerunner.h>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <utils/algorithm.h>
 #include <utils/async.h>
@@ -15,7 +17,6 @@
 #include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
-#include <QFutureWatcher>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
@@ -25,7 +26,7 @@
 
 #include <unordered_set>
 
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 /*!
@@ -124,7 +125,7 @@ public:
 
     void reportOutput(int index, const LocatorFilterEntries &outputData)
     // Called directly by running filters. The calls may come from main thread in case of
-    // e.g. Sync task or directly from other threads when AsyncTask was used.
+    // e.g. QSyncTask or directly from other threads when AsyncTask was used.
     {
         QTC_ASSERT(index >= 0, return);
 
@@ -291,6 +292,14 @@ void LocatorStorage::reportOutput(const LocatorFilterEntries &outputData) const
     d->reportOutput(outputData);
 }
 
+// Please note the thread_local keyword below guarantees a separate instance per thread.
+static thread_local Storage<LocatorStorage> s_locatorStorage = {};
+
+Storage<LocatorStorage> &LocatorStorage::storage()
+{
+    return s_locatorStorage;
+}
+
 void LocatorStorage::finalize() const
 {
     QTC_ASSERT(d, return);
@@ -304,7 +313,7 @@ public:
     QString m_input;
     LocatorFilterEntries m_output;
     int m_parallelLimit = 0;
-    TaskTreeRunner m_taskTreeRunner;
+    QSingleTaskTreeRunner m_taskTreeRunner;
 };
 
 LocatorMatcher::LocatorMatcher()
@@ -347,7 +356,7 @@ void LocatorMatcher::start()
     };
 
     const Storage<ResultsCollector> collectorStorage;
-    const LoopList iterator(d->m_tasks);
+    const ListIterator iterator(d->m_tasks);
 
     const auto onCollectorSetup = [this, filterCount, collectorStorage](
                                       Async<LocatorFilterEntries> &async) {
@@ -364,32 +373,31 @@ void LocatorMatcher::start()
     };
     const auto onCollectorDone = [collectorStorage] { collectorStorage->m_deduplicator->cancel(); };
 
-    const auto onTaskTreeSetup = [iterator, input = d->m_input, collectorStorage](TaskTree &taskTree) {
+    const auto onTaskTreeSetup = [iterator, input = d->m_input, collectorStorage](QTaskTree &taskTree) {
         const std::shared_ptr<ResultsDeduplicator> deduplicator = collectorStorage->m_deduplicator;
-        const Storage<LocatorStorage> storage = iterator->storage;
-        const auto onSetup = [storage, input, index = iterator.iteration(), deduplicator] {
-            *storage = std::make_shared<LocatorStoragePrivate>(input, index, deduplicator);
+        const auto onSetup = [input, index = iterator.iteration(), deduplicator] {
+            *LocatorStorage::storage()
+                = std::make_shared<LocatorStoragePrivate>(input, index, deduplicator);
         };
         taskTree.setRecipe({
             finishAllAndSuccess,
-            storage,
+            LocatorStorage::storage(),
             onGroupSetup(onSetup),
-            iterator->task,
-            onGroupDone([storage] { storage->finalize(); })
+            *iterator,
+            onGroupDone([] { LocatorStorage::storage()->finalize(); })
         });
     };
 
-    const Group root {
+    const Group recipe {
         parallel,
         collectorStorage,
         AsyncTask<LocatorFilterEntries>(onCollectorSetup, onCollectorDone),
-        For {
-            iterator,
-            parallelLimit(d->m_parallelLimit),
-            TaskTreeTask(onTaskTreeSetup)
+        For (iterator) >> Do {
+            ParallelLimit(d->m_parallelLimit),
+            QTaskTreeTask(onTaskTreeSetup)
         }
     };
-    d->m_taskTreeRunner.start(root, {}, [this](DoneWith result) {
+    d->m_taskTreeRunner.start(recipe, {}, [this](DoneWith result) {
         emit done(result == DoneWith::Success);
     });
 }
@@ -446,6 +454,9 @@ ILocatorFilter::ILocatorFilter(QObject *parent)
     : QObject(parent)
 {
     g_locatorFilters.append(this);
+    Internal::locatorSettings().ignoreGeneratedFiles.addOnChanged(this, [this] {
+        emit ignoreGeneratedFilesChanged();
+    });
 }
 
 ILocatorFilter::~ILocatorFilter()
@@ -678,6 +689,14 @@ QString ILocatorFilter::msgIncludeByDefaultToolTip()
 }
 
 /*!
+    Returns if the user requests to ignore generated files in project related searches.
+*/
+bool ILocatorFilter::ignoreGeneratedFiles()
+{
+    return Internal::locatorSettings().ignoreGeneratedFiles();
+}
+
+/*!
     Returns whether a configuration dialog is available for this filter.
 
     The default is \c true.
@@ -884,7 +903,8 @@ void ILocatorFilter::setConfigurable(bool configurable)
 
 /*!
     Shows the standard configuration dialog with options for the prefix string
-    and for isIncludedByDefault(). The \a additionalWidget is added at the top.
+    and for isIncludedByDefault(). \a parent is used as the dialog's parent.
+    The \a additionalWidget is added at the top.
     Ownership of \a additionalWidget stays with the caller, but its parent is
     reset to \c nullptr.
 
@@ -1086,7 +1106,7 @@ LocatorFilterEntries LocatorFileCachePrivate::generate(const QFuture<void> &futu
     // If search string contains spaces, treat them as wildcard '*' and search in full path
     const QString wildcardInput = QDir::fromNativeSeparators(input).replace(' ', '*');
     const Link inputLink = Link::fromString(wildcardInput, true);
-    const QString newInput = inputLink.targetFilePath.toString();
+    const QString newInput = inputLink.targetFilePath.toUrlishString();
     const QRegularExpression regExp = ILocatorFilter::createRegExp(newInput);
     if (!regExp.isValid())
         return {}; // Don't clear the cache - still remember the cache for the last valid input.
@@ -1305,7 +1325,7 @@ FilePaths LocatorFileCache::processFilePaths(const QFuture<void> &future,
         if (future.isCanceled())
             return {};
 
-        const QString matchText = hasPathSeparator ? path.toString() : path.fileName();
+        const QString matchText = hasPathSeparator ? path.toUrlishString() : path.fileName();
         const QRegularExpressionMatch match = regExp.match(matchText);
 
         if (match.hasMatch()) {
@@ -1313,7 +1333,7 @@ FilePaths LocatorFileCache::processFilePaths(const QFuture<void> &future,
             filterEntry.displayName = path.fileName();
             filterEntry.filePath = path;
             filterEntry.extraInfo = path.shortNativePath();
-            filterEntry.linkForEditor = Link(path, inputLink.targetLine, inputLink.targetColumn);
+            filterEntry.linkForEditor = Link(path, inputLink.target.line, inputLink.target.column);
             filterEntry.highlightInfo = hasPathSeparator
                 ? ILocatorFilter::highlightInfo(regExp.match(filterEntry.extraInfo),
                                                 LocatorFilterEntry::HighlightInfo::ExtraInfo)
@@ -1357,12 +1377,11 @@ static void filter(QPromise<LocatorFileCachePrivate> &promise, const LocatorStor
     When this cache started a new search in meantime, the cache was invalidated or even deleted,
     the update of the cache after a successful run of the task is ignored.
 */
-LocatorMatcherTask LocatorFileCache::matcher() const
+ExecutableItem LocatorFileCache::matcher() const
 {
-    Storage<LocatorStorage> storage;
     std::weak_ptr<LocatorFileCachePrivate> weak = d;
 
-    const auto onSetup = [storage, weak](Async<LocatorFileCachePrivate> &async) {
+    const auto onSetup = [weak](Async<LocatorFileCachePrivate> &async) {
         auto that = weak.lock();
         if (!that) // LocatorMatcher is running after *this LocatorFileCache was destructed.
             return SetupResult::StopWithSuccess;
@@ -1372,7 +1391,7 @@ LocatorMatcherTask LocatorFileCache::matcher() const
                                              // no provider is set or it returned empty generator
         that->bumpExecutionId();
 
-        async.setConcurrentCallData(&filter, *storage, *that);
+        async.setConcurrentCallData(&filter, *LocatorStorage::storage(), *that);
         return SetupResult::Continue;
     };
     const auto onDone = [weak](const Async<LocatorFileCachePrivate> &async) {
@@ -1392,7 +1411,7 @@ LocatorMatcherTask LocatorFileCache::matcher() const
         that->update(async.result());
     };
 
-    return {AsyncTask<LocatorFileCachePrivate>(onSetup, onDone, CallDoneIf::Success), storage};
+    return AsyncTask<LocatorFileCachePrivate>(onSetup, onDone, CallDoneFlag::OnSuccess);
 }
 
 } // Core

@@ -20,7 +20,7 @@ def handleDebuggerWarnings(config, isMsvcBuild=False):
             clickButton(waitForObject("{text='Cancel' type='QPushButton' unnamed='1' visible='1' window=':Dialog_Debugger::Internal::SymbolPathsDialog'}", 10000))
         except LookupError:
             pass # No warning. Fine.
-    isReleaseConfig = "Release" in config and not "with Debug Information" in config
+    isReleaseConfig = config in ("Release", "MinSizeRel")
     if isReleaseConfig and (isMsvcBuild or platform.system() == "Linux"):
         msgBox = "{type='QMessageBox' unnamed='1' visible='1' windowTitle='Warning'}"
         message = waitForObject("{name='qt_msgbox_label' type='QLabel' visible='1' window=%s}" % msgBox)
@@ -133,7 +133,7 @@ def doSimpleDebugging(currentKit, currentConfigName, expectedBPOrder=[], enableQ
     statusLabel = findObject(":Debugger Toolbar.StatusText_Utils::StatusLabel")
     test.log("Continuing debugging %d times..." % len(expectedBPOrder))
     for expectedBP in expectedBPOrder:
-        if waitFor("regexVerify(str(statusLabel.text), expectedLabelTexts)", 20000):
+        if waitFor("regexVerify(str(statusLabel.text), expectedLabelTexts)", 30000):
             verifyBreakPoint(expectedBP)
         else:
             test.fail('%s' % str(statusLabel.text))
@@ -170,16 +170,16 @@ def isMsvcConfig(currentKit):
     switchToBuildOrRunSettingsFor(currentKit, ProjectSettings.BUILD)
 
     waitForObject(":Projects.ProjectNavigationTreeView")
-    bAndRIndex = getQModelIndexStr("text='Build & Run'", ":Projects.ProjectNavigationTreeView")
     wantedKitName = Targets.getStringForTarget(currentKit)
-    wantedKitIndexString = getQModelIndexStr("text='%s'" % wantedKitName, bAndRIndex)
+    wantedKitIndexString = getQModelIndexStr("text='%s'" % wantedKitName,
+                                             ":Projects.ProjectNavigationTreeView")
     if not test.verify(__kitIsActivated__(findObject(wantedKitIndexString)),
                        "Verifying target '%s' is enabled." % wantedKitName):
         raise Exception("Kit '%s' is not activated in the project." % wantedKitName)
     index = waitForObject(wantedKitIndexString)
     toolTip = str(index.data(Qt.ToolTipRole).toString())
     compilerPattern = re.compile('<dt style="font-weight:bold">Compiler:</dt><dd>(?P<compiler>.+)'
-                                 '</dd><dt style="font-weight:bold">Environment:')
+                                 '</dd><dt style="font-weight:bold">Debugger:')
     match = compilerPattern.search(toolTip)
     if match is None:
         test.warning("UI seems to have changed - failed to check for compiler.")

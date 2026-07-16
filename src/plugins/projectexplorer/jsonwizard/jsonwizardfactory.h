@@ -17,12 +17,12 @@ namespace ProjectExplorer {
 
 class ProjectExplorerPlugin;
 class ProjectExplorerPluginPrivate;
-namespace Internal { class ProjectExplorerTest; }
+namespace Internal { class JsonWizardTest; }
 
 // Documentation inside.
 class PROJECTEXPLORER_EXPORT JsonWizardFactory : public Core::IWizardFactory
 {
-    Q_OBJECT
+    Q_OBJECT // needed for qobject_cast
 
 public:
     // Add search paths for wizard.json files. All subdirs are going to be checked.
@@ -50,7 +50,7 @@ public:
         QVariant data;
     };
 
-    static QList<QVariant> objectOrList(const QVariant &data, QString *errorMessage);
+    static Utils::Result<QVariantList> objectOrList(const QVariant &data);
 
     static QString localizedString(const QVariant &value);
 
@@ -62,24 +62,23 @@ public:
     static void setInstalledWizardsPath(const Utils::FilePath &path);
 
 private:
-    Utils::Wizard *runWizardImpl(const Utils::FilePath &path, QWidget *parent, Utils::Id platform,
+    Utils::Wizard *runWizardImpl(const Utils::FilePath &path, Utils::Id platform,
                                  const QVariantMap &variables, bool showWizard = true) override;
 
     // Create all wizards. As other plugins might register factories for derived
     // classes. Called when the new file dialog is shown for the first time.
     static QList<IWizardFactory *> createWizardFactories();
-    static JsonWizardFactory *createWizardFactory(const QVariantMap &data,
-                                                  const Utils::FilePath &baseDir,
-                                                  QString *errorMessage);
+    static Utils::Result<JsonWizardFactory *> createWizardFactory(const QVariantMap &data,
+                                                                  const Utils::FilePath &baseDir);
     static Utils::FilePaths &searchPaths();
     static void resetSearchPaths();
 
     static void setVerbose(int level);
     static int verbose();
 
-    bool initialize(const QVariantMap &data, const Utils::FilePath &baseDir, QString *errorMessage);
+    Utils::Result<> initialize(const QVariantMap &data, const Utils::FilePath &baseDir);
 
-    JsonWizardFactory::Page parsePage(const QVariant &value, QString *errorMessage);
+    Utils::Result<JsonWizardFactory::Page> parsePage(const QVariant &value);
     QVariantMap loadDefaultValues(const QString &fileName);
     QVariant getDataValue(const QLatin1String &key, const QVariantMap &valueSet,
                           const QVariantMap &defaultValueSet, const QVariant &notExistValue={});
@@ -98,7 +97,7 @@ private:
 
     friend class ProjectExplorerPlugin;
     friend class ProjectExplorerPluginPrivate;
-    friend class Internal::ProjectExplorerTest;
+    friend class Internal::JsonWizardTest;
 };
 
 } // namespace ProjectExplorer

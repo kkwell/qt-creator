@@ -15,6 +15,7 @@
 #include <utils/qtcassert.h>
 
 using namespace ProjectExplorer;
+using namespace Utils;
 
 namespace CMakeProjectManager::Internal {
 
@@ -23,7 +24,23 @@ bool defaultCMakeSourceGroupFolder(const QString &displayName)
     return displayName == "Source Files" || displayName == "Header Files"
            || displayName == "Resources" || displayName == ""
            || displayName == "Precompile Header File" || displayName == "CMake Rules"
-           || displayName == "Object Files";
+           || displayName == "Object Files" || displayName == "Forms"
+           || displayName == "State charts";
+}
+
+static QIcon iconForSourceGroup(const QString &sourceGroup)
+{
+    static const QHash<QString, QString> sourceGroupToOverlay = {
+        {"Forms", ProjectExplorer::Constants::FILEOVERLAY_UI},
+        {"Header Files", ProjectExplorer::Constants::FILEOVERLAY_H},
+        {"Resources", ProjectExplorer::Constants::FILEOVERLAY_QRC},
+        {"State charts", ProjectExplorer::Constants::FILEOVERLAY_SCXML},
+        {"Source Files", ProjectExplorer::Constants::FILEOVERLAY_CPP},
+    };
+
+    return sourceGroupToOverlay.contains(sourceGroup)
+               ? FileIconProvider::directoryIcon(sourceGroupToOverlay.value(sourceGroup))
+               : FileIconProvider::icon(QFileIconProvider::Folder);
 }
 
 std::unique_ptr<FolderNode> createCMakeVFolder(const Utils::FilePath &basePath,
@@ -33,6 +50,7 @@ std::unique_ptr<FolderNode> createCMakeVFolder(const Utils::FilePath &basePath,
     auto newFolder = std::make_unique<VirtualFolderNode>(basePath);
     newFolder->setPriority(priority);
     newFolder->setDisplayName(displayName);
+    newFolder->setIcon([displayName] { return iconForSourceGroup(displayName); });
     newFolder->setIsSourcesOrHeaders(defaultCMakeSourceGroupFolder(displayName));
     return newFolder;
 }
@@ -57,7 +75,6 @@ void addCMakeVFolder(FolderNode *base,
             (*it)->setListInProject(false);
     }
     folder->addNestedNodes(std::move(files));
-    folder->forEachFolderNode([] (FolderNode *fn) { fn->compress(); });
 }
 
 std::vector<std::unique_ptr<FileNode>> &&removeKnownNodes(
@@ -107,14 +124,15 @@ void addCMakePresets(FolderNode *root, const Utils::FilePath &sourceDir)
     presetFileNames << "CMakePresets.json";
     presetFileNames << "CMakeUserPresets.json";
 
-    const CMakeProject *cp = static_cast<const CMakeProject *>(
+    const auto cmakeProject = qobject_cast<const CMakeProject *>(
         ProjectManager::projectForFile(sourceDir.pathAppended(Constants::CMAKE_LISTS_TXT)));
+    QTC_ASSERT(cmakeProject, return);
 
-    if (cp && cp->presetsData().include)
-        presetFileNames.append(cp->presetsData().include.value());
+    if (cmakeProject->presetsData().include)
+        presetFileNames.append(cmakeProject->presetsData().include.value());
 
     std::vector<std::unique_ptr<FileNode>> presets;
-    for (const auto &fileName : presetFileNames) {
+    for (const auto &fileName : std::as_const(presetFileNames)) {
         Utils::FilePath file = sourceDir.pathAppended(fileName);
         if (file.exists())
             presets.push_back(std::make_unique<FileNode>(file, Node::fileTypeForFileName(file)));
@@ -151,7 +169,6 @@ QHash<Utils::FilePath, ProjectNode *> addCMakeLists(
 
                              return std::make_unique<FolderNode>(fp);
                          });
-    root->compress();
     return cmakeListsNodes;
 }
 
@@ -171,43 +188,6 @@ void createProjectNode(const QHash<Utils::FilePath, ProjectNode *> &cmakeListsNo
         cmln->addNode(std::move(newNode));
     }
     pn->setDisplayName(displayName);
-}
-
-template<typename Result>
-static std::unique_ptr<Result> cloneFolderNode(FolderNode *node)
-{
-    auto folderNode = std::make_unique<Result>(node->filePath());
-    folderNode->setDisplayName(node->displayName());
-    for (Node *node : node->nodes()) {
-        if (FileNode *fn = node->asFileNode()) {
-            folderNode->addNode(std::unique_ptr<FileNode>(fn->clone()));
-        } else if (FolderNode *fn = node->asFolderNode()) {
-            folderNode->addNode(cloneFolderNode<FolderNode>(fn));
-        } else {
-            QTC_CHECK(false);
-        }
-    }
-    return folderNode;
-}
-
-void addFileSystemNodes(ProjectNode *root, const std::shared_ptr<FolderNode> &folderNode)
-{
-    QTC_ASSERT(root, return );
-
-    auto fileSystemNode = cloneFolderNode<VirtualFolderNode>(folderNode.get());
-    // just before special nodes like "CMake Modules"
-    fileSystemNode->setPriority(Node::DefaultPriority - 6);
-    fileSystemNode->setDisplayName(Tr::tr("<File System>"));
-    fileSystemNode->setIcon(DirectoryIcon(ProjectExplorer::Constants::FILEOVERLAY_UNKNOWN));
-
-    if (!fileSystemNode->isEmpty()) {
-        // make file system nodes less probable to be selected when syncing with the current document
-        fileSystemNode->forEachGenericNode([](Node *n) {
-            n->setPriority(n->priority() + Node::DefaultProjectFilePriority + 1);
-            n->setEnabled(false);
-        });
-        root->addNode(std::move(fileSystemNode));
-    }
 }
 
 } // CMakeProjectManager::Internal

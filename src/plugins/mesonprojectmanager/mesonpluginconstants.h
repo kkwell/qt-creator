@@ -26,9 +26,9 @@ namespace ToolsSettings {
 const char FILENAME[] = "mesontools.xml";
 const char ENTRY_KEY[] = "Tool.";
 const char ENTRY_COUNT[] = "Tools.Count";
+const char DEFAULT_TOOL_KEY[] = "MesonTools.Default";
 const char TOOL_TYPE_KEY[] = "type";
 const char TOOL_TYPE_MESON[] = "meson";
-const char TOOL_TYPE_NINJA[] = "ninja";
 const char EXE_KEY[] = "exe";
 const char AUTO_DETECTED_KEY[] = "autodetected";
 const char NAME_KEY[] = "name";
@@ -62,8 +62,6 @@ const char clean[] = "clean";
 const char install[] = "install";
 const char tests[] = "test";
 const char benchmark[] = "benchmark";
-const char clang_format[] = "clang-format";
-const char scan_build[] = "scan-build";
 } // namespace Targets
 const char MESON_BUILD_CONFIG_ID[] = "MesonProjectManager.BuildConfiguration";
 

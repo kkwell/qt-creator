@@ -6,6 +6,7 @@
 #include "../gitclient.h"
 #include "../gittr.h"
 
+#include <coreplugin/icore.h>
 #include <coreplugin/progressmanager/processprogress.h>
 #include <vcsbase/vcsoutputwindow.h>
 
@@ -27,8 +28,6 @@
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
-
-enum { debug = 0 };
 
 using namespace Utils;
 using namespace VcsBase;
@@ -255,7 +254,7 @@ QueryContext::QueryContext(const QString &query,
     }
     connect(&m_process, &Process::readyReadStandardError, this, [this] {
         const QString text = QString::fromLocal8Bit(m_process.readAllRawStandardError());
-        VcsOutputWindow::appendError(text);
+        VcsOutputWindow::appendError(m_process.workingDirectory(), text);
         m_error.append(text);
     });
     connect(&m_process, &Process::readyReadStandardOutput, this, [this] {
@@ -304,7 +303,7 @@ void QueryContext::processDone()
     if (m_process.result() == ProcessResult::FinishedWithSuccess)
         emit resultRetrieved(m_output);
     else if (m_process.result() != ProcessResult::Canceled)
-        VcsOutputWindow::appendError(m_process.exitMessage());
+        VcsOutputWindow::appendError(m_process.workingDirectory(), m_process.exitMessage());
 
     emit finished();
 }
@@ -314,14 +313,11 @@ void QueryContext::timeout()
     if (m_process.state() != QProcess::Running)
         return;
 
-    QWidget *parent = QApplication::activeModalWidget();
-    if (!parent)
-        parent = QApplication::activeWindow();
     QMessageBox box(QMessageBox::Question, Git::Tr::tr("Timeout"),
                     Git::Tr::tr("The gerrit process has not responded within %1 s.\n"
                        "Most likely this is caused by problems with SSH authentication.\n"
                        "Would you like to terminate it?").
-                    arg(timeOutMS / 1000), QMessageBox::NoButton, parent);
+                    arg(timeOutMS / 1000), QMessageBox::NoButton, Core::ICore::dialogParent());
     QPushButton *terminateButton = box.addButton(Git::Tr::tr("Terminate"), QMessageBox::YesRole);
     box.addButton(Git::Tr::tr("Keep Running"), QMessageBox::NoRole);
     connect(&m_process, &Process::done, &box, &QDialog::reject);
@@ -367,14 +363,14 @@ GerritChangePtr GerritModel::change(const QModelIndex &index) const
 }
 
 QString GerritModel::dependencyHtml(const QString &header, const int changeNumber,
-                                    const QString &serverPrefix) const
+                                    const QString &projectPrefix) const
 {
     QString res;
     if (!changeNumber)
         return res;
     QTextStream str(&res);
     str << "<tr><td>" << header << "</td><td><a href="
-        << serverPrefix << "r/" << changeNumber << '>' << changeNumber << "</a>";
+        << projectPrefix << changeNumber << '>' << changeNumber << "</a>";
     if (const QStandardItem *item = itemForNumber(changeNumber))
         str << " (" << changeFromItem(item)->fullTitle() << ')';
     str << "</td></tr>";
@@ -396,7 +392,7 @@ QString GerritModel::toHtml(const QModelIndex& index) const
     if (!index.isValid())
         return {};
     const GerritChangePtr c = change(index);
-    const QString serverPrefix = c->url.left(c->url.lastIndexOf('/') + 1);
+    const QString projectPrefix = c->url.left(c->url.lastIndexOf('/') + 1);
     QString result;
     QTextStream str(&result);
     str << "<html><head/><body><table>"
@@ -405,8 +401,8 @@ QString GerritModel::toHtml(const QModelIndex& index) const
         << "<tr><td>" << ownerHeader << "</td><td>" << c->owner.fullName << ' '
         << "<a href=\"mailto:" << c->owner.email << "\">" << c->owner.email << "</a></td></tr>"
         << "<tr><td>" << projectHeader << "</td><td>" << c->project << " (" << c->branch << ")</td></tr>"
-        << dependencyHtml(dependsOnHeader, c->dependsOnNumber, serverPrefix)
-        << dependencyHtml(neededByHeader, c->neededByNumber, serverPrefix)
+        << dependencyHtml(dependsOnHeader, c->dependsOnNumber, projectPrefix)
+        << dependencyHtml(neededByHeader, c->neededByNumber, projectPrefix)
         << "<tr><td>" << statusHeader << "</td><td>" << c->status
         << ", " << QLocale::system().toString(c->lastUpdated, QLocale::ShortFormat) << "</td></tr>"
         << "<tr><td>" << patchSetHeader << "</td><td>" << "</td></tr>" << c->currentPatchSet.patchSetNumber << "</td></tr>"
@@ -753,7 +749,7 @@ static bool parseOutput(const GerritServer &server,
         const QString errorMessage = Git::Tr::tr("Parse error: \"%1\" -> %2")
                                          .arg(QString::fromUtf8(output), error.errorString());
         qWarning() << errorMessage;
-        VcsOutputWindow::appendError(errorMessage);
+        VcsOutputWindow::appendError({}, errorMessage);
         res = false;
     }
     const QJsonArray rootArray = doc.array();
@@ -774,7 +770,7 @@ static bool parseOutput(const GerritServer &server,
         } else {
             const QByteArray jsonObject = QJsonDocument(object).toJson();
             qWarning("%s: Parse error: '%s'.", Q_FUNC_INFO, jsonObject.constData());
-            VcsOutputWindow::appendError(Git::Tr::tr("Parse error: \"%1\"")
+            VcsOutputWindow::appendError({}, Git::Tr::tr("Parse error: \"%1\"")
                                   .arg(QString::fromUtf8(jsonObject)));
             res = false;
         }

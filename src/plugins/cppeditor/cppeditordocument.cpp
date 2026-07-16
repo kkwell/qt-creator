@@ -1,21 +1,33 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include "cppeditordocument.h"
-
 #include "baseeditordocumentparser.h"
+#include "baseeditordocumentprocessor.h"
 #include "cppcodeformatter.h"
+#include "cppcompletionassistprovider.h"
 #include "cppeditorconstants.h"
+#include "cppeditorconstants.h"
+#include "cppeditordocument.h"
 #include "cppeditorlogging.h"
 #include "cppeditortr.h"
-#include "cppmodelmanager.h"
-#include "cppeditorconstants.h"
-#include "cppeditortr.h"
+#include "cppeditorwidget.h"
 #include "cpphighlighter.h"
+#include "cppmodelmanager.h"
+#include "cppoutlinemodel.h"
+#include "cppparsecontext.h"
+#include "editordocumenthandle.h"
 #include "quickfixes/cppquickfixassistant.h"
 
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/session.h>
+
+#include <cplusplus/ASTPath.h>
+
+#include <projectexplorer/projectexplorer.h>
+#include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/projectmanager.h>
+#include <projectexplorer/projecttree.h>
+#include <projectexplorer/projectwizardpage.h>
 
 #include <texteditor/icodestylepreferencesfactory.h>
 #include <texteditor/storagesettings.h>
@@ -28,27 +40,124 @@
 #include <utils/minimizableinfobars.h>
 #include <utils/qtcassert.h>
 #include <utils/utilsicons.h>
+#include <utils/wizard.h>
 
 #include <QApplication>
 #include <QScopeGuard>
 #include <QTextDocument>
 
+#include <memory>
+
 const char NO_PROJECT_CONFIGURATION[] = "NoProject";
 
+using namespace ProjectExplorer;
 using namespace TextEditor;
 using namespace Utils;
 
 namespace CppEditor {
-namespace Internal {
+
+using namespace Internal;
+
+static InfoBarEntry createInfoBarEntry(const FilePath &filePath)
+{
+    InfoBarEntry infoBarEntry(
+        NO_PROJECT_CONFIGURATION,
+        Tr::tr(
+            "<b>Warning</b>: This file is not part of any project. "
+            "The code model might have issues parsing this file properly."));
+    InfoBarEntry::CallBack addToProject = [filePath] {
+        Wizard wizard;
+        const std::unique_ptr<ProjectWizardPage> wizardPage = std::make_unique<ProjectWizardPage>(
+            dialogParent());
+        wizard.setWindowTitle(Tr::tr("Add File to Project"));
+        wizard.setProperty(
+            ProjectExplorer::Constants::PROJECT_POINTER,
+            QVariant::fromValue(static_cast<void *>(ProjectManager::startupProject())));
+        wizard.addPage(wizardPage.get());
+        wizardPage->setFiles({filePath});
+        wizardPage->initializeVersionControls();
+        wizardPage->initializeProjectTree(
+            nullptr, {}, Core::IWizardFactory::FileWizard, ProjectExplorer::AddExistingFile, false);
+        if (wizard.exec() == QDialog::Accepted && wizardPage->currentNode())
+            ProjectExplorerPlugin::addExistingFiles(wizardPage->currentNode(), {filePath});
+    };
+    const bool enableAddToProjectButton = !ProjectManager::isAnyProjectParsing()
+                                          && !ProjectManager::isKnownFile(filePath);
+    infoBarEntry.addCustomButton(Tr::tr("Add to Project..."), addToProject, {}, {},
+                                 enableAddToProjectButton);
+    return infoBarEntry;
+}
 
 enum { processDocumentIntervalInMs = 150 };
+
+class CppEditorDocument::Private
+{
+public:
+    explicit Private(CppEditorDocument *parent)
+        : q(parent)
+    {}
+
+    void invalidateFormatterCache();
+    void onFilePathChanged(const Utils::FilePath &oldPath, const Utils::FilePath &newPath);
+    void onMimeTypeChanged();
+
+    void onAboutToReload();
+    void onReloadFinished();
+    void onDiagnosticsChanged(const Utils::FilePath &fileName, const QString &kind);
+
+    void updateInfoBarEntryIfVisible();
+
+    void reparseWithPreferredParseContext(const QString &id);
+
+    void processDocument();
+
+    QByteArray contentsText() const;
+    unsigned contentsRevision() const;
+
+    BaseEditorDocumentProcessor *processor();
+    void resetProcessor();
+    void applyPreferredParseContextFromSettings();
+    void applyExtraPreprocessorDirectivesFromSettings();
+    void releaseResources();
+
+    void showHideInfoBarAboutMultipleParseContexts(bool show);
+    void applyIfdefedOutBlocks();
+
+    void initializeTimer();
+
+    FilePath filePath() const { return q->filePath(); }
+    QTextDocument *document() const { return q->document(); }
+
+    bool m_fileIsBeingReloaded = false;
+    bool m_isObjCEnabled = false;
+
+    // Caching contents
+    mutable QMutex m_cachedContentsLock;
+    mutable QByteArray m_cachedContents;
+    mutable int m_cachedContentsRevision = -1;
+
+    unsigned m_processorRevision = 0;
+    QTimer m_processorTimer;
+    QScopedPointer<BaseEditorDocumentProcessor> m_processor;
+
+    CppCompletionAssistProvider *m_completionAssistProvider = nullptr;
+
+    // (Un)Registration in CppModelManager
+    QScopedPointer<CppEditorDocumentHandle> m_editorDocumentHandle;
+
+    Internal::ParseContextModel m_parseContextModel;
+    Internal::OutlineModel m_overviewModel;
+    QList<TextEditor::BlockRange> m_ifdefedOutBlocks;
+
+    CppEditorDocument *q = nullptr;
+};
 
 class CppEditorDocumentHandleImpl : public CppEditorDocumentHandle
 {
 public:
-    CppEditorDocumentHandleImpl(CppEditorDocument *cppEditorDocument)
-        : m_cppEditorDocument(cppEditorDocument)
-        , m_registrationFilePath(cppEditorDocument->filePath().toString())
+    CppEditorDocumentHandleImpl(CppEditorDocument::Private *cppEditorDocumentPrivate)
+        : m_cppEditorDocumentPrivate(cppEditorDocumentPrivate)
+        , m_registrationFilePath(cppEditorDocumentPrivate->filePath())
     {
         CppModelManager::registerCppEditorDocument(this);
     }
@@ -58,74 +167,104 @@ public:
         CppModelManager::unregisterCppEditorDocument(m_registrationFilePath);
     }
 
-    FilePath filePath() const override { return m_cppEditorDocument->filePath(); }
-    QByteArray contents() const override { return m_cppEditorDocument->contentsText(); }
-    unsigned revision() const override { return m_cppEditorDocument->contentsRevision(); }
+    FilePath filePath() const override { return m_cppEditorDocumentPrivate->filePath(); }
+    QByteArray contents() const override { return m_cppEditorDocumentPrivate->contentsText(); }
+    unsigned revision() const override { return m_cppEditorDocumentPrivate->contentsRevision(); }
 
     BaseEditorDocumentProcessor *processor() const override
-    { return m_cppEditorDocument->processor(); }
+    { return m_cppEditorDocumentPrivate->processor(); }
 
     void resetProcessor() override
-    { m_cppEditorDocument->resetProcessor(); }
+    { m_cppEditorDocumentPrivate->resetProcessor(); }
 
 private:
-    CppEditor::Internal::CppEditorDocument * const m_cppEditorDocument;
+    CppEditorDocument::Private * const m_cppEditorDocumentPrivate;
     // The file path of the editor document can change (e.g. by "Save As..."), so make sure
     // that un-registration happens with the path the document was registered.
-    const QString m_registrationFilePath;
+    const FilePath m_registrationFilePath;
 };
 
 CppEditorDocument::CppEditorDocument()
+    : d(new CppEditorDocument::Private(this))
 {
     setId(CppEditor::Constants::CPPEDITOR_ID);
     resetSyntaxHighlighter([] { return new CppHighlighter(); });
+    connect(syntaxHighlighter(), &SyntaxHighlighter::finished,
+            this, [this]{ d->applyIfdefedOutBlocks(); });
 
     ICodeStylePreferencesFactory *factory
         = TextEditorSettings::codeStyleFactory(Constants::CPP_SETTINGS_ID);
     setIndenter(factory->createIndenter(document()));
 
-    connect(this, &TextEditor::TextDocument::tabSettingsChanged,
-            this, &CppEditorDocument::invalidateFormatterCache);
-    connect(this, &Core::IDocument::mimeTypeChanged,
-            this, &CppEditorDocument::onMimeTypeChanged);
+    connect(this, &TextEditor::TextDocument::tabSettingsChanged, this, [this] {
+        d->invalidateFormatterCache();
+    });
+    connect(this, &Core::IDocument::mimeTypeChanged, this, [this] { d->onMimeTypeChanged(); });
 
-    connect(this, &Core::IDocument::aboutToReload,
-            this, &CppEditorDocument::onAboutToReload);
-    connect(this, &Core::IDocument::reloadFinished,
-            this, &CppEditorDocument::onReloadFinished);
-    connect(this, &IDocument::filePathChanged,
-            this, &CppEditorDocument::onFilePathChanged);
+    connect(this, &Core::IDocument::aboutToReload, this, [this] { d->onAboutToReload(); });
+    connect(this, &Core::IDocument::reloadFinished, this, [this] { d->onReloadFinished(); });
+    connect(
+        this,
+        &IDocument::filePathChanged,
+        this,
+        [this](const Utils::FilePath &oldName, const Utils::FilePath &newName) {
+            d->onFilePathChanged(oldName, newName);
+        });
 
-    connect(CppModelManager::instance(), &CppModelManager::diagnosticsChanged,
-            this, &CppEditorDocument::onDiagnosticsChanged);
+    connect(
+        CppModelManager::instance(),
+        &CppModelManager::diagnosticsChanged,
+        this,
+        [this](const Utils::FilePath &filePath, const QString &kind) {
+            d->onDiagnosticsChanged(filePath, kind);
+        });
 
-    connect(&m_parseContextModel, &ParseContextModel::preferredParseContextChanged,
-            this, &CppEditorDocument::reparseWithPreferredParseContext);
+    connect(
+        &d->m_parseContextModel,
+        &ParseContextModel::preferredParseContextChanged,
+        this,
+        [this](const QString &id) { d->reparseWithPreferredParseContext(id); });
 
     minimizableInfoBars()->setSettingsGroup(Constants::CPPEDITOR_SETTINGSGROUP);
-    minimizableInfoBars()->setPossibleInfoBarEntries(
-        {{NO_PROJECT_CONFIGURATION,
-          Tr::tr("<b>Warning</b>: This file is not part of any project. "
-                 "The code model might have issues parsing this file properly.")}});
+    minimizableInfoBars()->setPossibleInfoBarEntries({createInfoBarEntry(filePath())});
+    connect(ProjectManager::instance(), &ProjectManager::projectAdded, this, [this] {
+        d->updateInfoBarEntryIfVisible();
+    });
+    connect(ProjectManager::instance(), &ProjectManager::projectRemoved, this, [this] {
+        d->updateInfoBarEntryIfVisible();
+    });
+    connect(ProjectManager::instance(), &ProjectManager::projectStartedParsing, this, [this] {
+        d->updateInfoBarEntryIfVisible();
+    });
+    connect(ProjectManager::instance(), &ProjectManager::projectFinishedParsing, this, [this] {
+        d->updateInfoBarEntryIfVisible();
+    });
+    connect(ProjectTree::instance(), &ProjectTree::currentNodeChanged,
+            this, &CppEditorDocument::updateSoftPreferredParseContext);
 
     // See also onFilePathChanged() for more initialization
 }
 
+CppEditorDocument::~CppEditorDocument()
+{
+    delete d;
+}
+
 bool CppEditorDocument::isObjCEnabled() const
 {
-    return m_isObjCEnabled;
+    return d->m_isObjCEnabled;
 }
 
 void CppEditorDocument::setCompletionAssistProvider(TextEditor::CompletionAssistProvider *provider)
 {
     TextDocument::setCompletionAssistProvider(provider);
-    m_completionAssistProvider = nullptr;
+    d->m_completionAssistProvider = nullptr;
 }
 
 CompletionAssistProvider *CppEditorDocument::completionAssistProvider() const
 {
-    return m_completionAssistProvider
-            ? m_completionAssistProvider : TextDocument::completionAssistProvider();
+    return d->m_completionAssistProvider
+            ? d->m_completionAssistProvider : TextDocument::completionAssistProvider();
 }
 
 TextEditor::IAssistProvider *CppEditorDocument::quickFixAssistProvider() const
@@ -137,26 +276,26 @@ TextEditor::IAssistProvider *CppEditorDocument::quickFixAssistProvider() const
 
 void CppEditorDocument::recalculateSemanticInfoDetached()
 {
-    BaseEditorDocumentProcessor *p = processor();
+    BaseEditorDocumentProcessor *p = d->processor();
     QTC_ASSERT(p, return);
     p->recalculateSemanticInfoDetached(true);
 }
 
 SemanticInfo CppEditorDocument::recalculateSemanticInfo()
 {
-    BaseEditorDocumentProcessor *p = processor();
+    BaseEditorDocumentProcessor *p = d->processor();
     QTC_ASSERT(p, return SemanticInfo());
     return p->recalculateSemanticInfo();
 }
 
-QByteArray CppEditorDocument::contentsText() const
+QByteArray CppEditorDocument::Private::contentsText() const
 {
     QMutexLocker locker(&m_cachedContentsLock);
 
     const int currentRevision = document()->revision();
     if (m_cachedContentsRevision != currentRevision && !m_fileIsBeingReloaded) {
         m_cachedContentsRevision = currentRevision;
-        m_cachedContents = plainText().toUtf8();
+        m_cachedContents = q->plainText().toUtf8();
     }
 
     return m_cachedContents;
@@ -167,19 +306,55 @@ void CppEditorDocument::applyFontSettings()
     if (TextEditor::SyntaxHighlighter *highlighter = syntaxHighlighter())
         highlighter->clearAllExtraFormats(); // Clear all additional formats since they may have changed
     TextDocument::applyFontSettings(); // rehighlights and updates additional formats
-    if (m_processor)
-        m_processor->semanticRehighlight();
+    if (d->m_processor)
+        d->m_processor->semanticRehighlight();
 }
 
-void CppEditorDocument::invalidateFormatterCache()
+void CppEditorDocument::slotCodeStyleSettingsChanged()
 {
     QtStyleCodeFormatter formatter;
     formatter.invalidateCache(document());
 }
 
-void CppEditorDocument::onMimeTypeChanged()
+void CppEditorDocument::removeTrailingWhitespace(const QTextBlock &block)
 {
-    const QString &mt = mimeType();
+    const auto baseImpl = [&] { TextDocument::removeTrailingWhitespace(block); };
+
+    CPlusPlus::Document::Ptr doc;
+    for (CppEditorWidget * const editorWidget : CppEditorWidget::editorWidgetsForDocument(this)) {
+        if (editorWidget->isSemanticInfoValidExceptLocalUses()) {
+            doc = editorWidget->semanticInfo().doc;
+            QTC_ASSERT(doc, continue);
+            break;
+        }
+    }
+    if (!doc)
+        return baseImpl();
+
+    QTextCursor cursor(block);
+    cursor.setPosition(block.position() + block.length() - 1);
+    const QList<CPlusPlus::AST*> astPath = CPlusPlus::ASTPath(doc)(cursor);
+    if (astPath.isEmpty())
+        return baseImpl();
+    const CPlusPlus::Token &tok = doc->translationUnit()->tokenAt(astPath.last()->firstToken());
+    if (!tok.isRawStringLiteral())
+        baseImpl();
+}
+
+void CppEditorDocument::processDocument()
+{
+    d->processDocument();
+}
+
+void CppEditorDocument::Private::invalidateFormatterCache()
+{
+    QtStyleCodeFormatter formatter;
+    formatter.invalidateCache(document());
+}
+
+void CppEditorDocument::Private::onMimeTypeChanged()
+{
+    const QString &mt = q->mimeType();
     m_isObjCEnabled = (mt == QLatin1String(Utils::Constants::OBJECTIVE_C_SOURCE_MIMETYPE)
                        || mt == QLatin1String(Utils::Constants::OBJECTIVE_CPP_SOURCE_MIMETYPE));
     m_completionAssistProvider = CppModelManager::completionAssistProvider();
@@ -187,7 +362,7 @@ void CppEditorDocument::onMimeTypeChanged()
     initializeTimer();
 }
 
-void CppEditorDocument::onAboutToReload()
+void CppEditorDocument::Private::onAboutToReload()
 {
     QTC_CHECK(!m_fileIsBeingReloaded);
     m_fileIsBeingReloaded = true;
@@ -195,7 +370,7 @@ void CppEditorDocument::onAboutToReload()
     processor()->invalidateDiagnostics();
 }
 
-void CppEditorDocument::onReloadFinished()
+void CppEditorDocument::Private::onReloadFinished()
 {
     QTC_CHECK(m_fileIsBeingReloaded);
     m_fileIsBeingReloaded = false;
@@ -204,29 +379,28 @@ void CppEditorDocument::onReloadFinished()
     processDocument();
 }
 
-void CppEditorDocument::reparseWithPreferredParseContext(const QString &parseContextId)
+void CppEditorDocument::Private::reparseWithPreferredParseContext(const QString &parseContextId)
 {
     // Update parser
-    setPreferredParseContext(parseContextId);
+    q->setPreferredParseContext(parseContextId);
 
     // Remember the setting
-    const Key key = Constants::PREFERRED_PARSE_CONTEXT + keyFromString(filePath().toString());
+    const Key key = Constants::PREFERRED_PARSE_CONTEXT + keyFromString(filePath().toUrlishString());
     Core::SessionManager::setValue(key, parseContextId);
 
     // Reprocess
-    scheduleProcessDocument();
+    q->scheduleProcessDocument();
 }
 
-void CppEditorDocument::onFilePathChanged(const FilePath &oldPath, const FilePath &newPath)
+void CppEditorDocument::Private::onFilePathChanged(const FilePath &oldPath, const FilePath &newPath)
 {
     Q_UNUSED(oldPath)
 
     if (!newPath.isEmpty()) {
-        indenter()->setFileName(newPath);
-        setMimeType(mimeTypeForFile(newPath).name());
+        q->setMimeType(mimeTypeForFile(newPath).name());
 
-        connect(this, &Core::IDocument::contentsChanged,
-                this, &CppEditorDocument::scheduleProcessDocument,
+        connect(q, &Core::IDocument::contentsChanged,
+                q, &CppEditorDocument::scheduleProcessDocument,
                 Qt::UniqueConnection);
 
         // Un-Register/Register in ModelManager
@@ -243,14 +417,14 @@ void CppEditorDocument::onFilePathChanged(const FilePath &oldPath, const FilePat
 
 void CppEditorDocument::scheduleProcessDocument()
 {
-    if (m_fileIsBeingReloaded)
+    if (d->m_fileIsBeingReloaded)
         return;
 
-    m_processorRevision = document()->revision();
-    m_processorTimer.start();
+    d->m_processorRevision = document()->revision();
+    d->m_processorTimer.start();
 }
 
-void CppEditorDocument::processDocument()
+void CppEditorDocument::Private::processDocument()
 {
     processor()->invalidateDiagnostics();
 
@@ -266,58 +440,56 @@ void CppEditorDocument::processDocument()
     processor()->run();
 }
 
-void CppEditorDocument::resetProcessor()
+void CppEditorDocument::Private::resetProcessor()
 {
     releaseResources();
     processor(); // creates a new processor
 }
 
-void CppEditorDocument::applyPreferredParseContextFromSettings()
+void CppEditorDocument::Private::applyPreferredParseContextFromSettings()
 {
     if (filePath().isEmpty())
         return;
 
-    const Key key = Constants::PREFERRED_PARSE_CONTEXT + keyFromString(filePath().toString());
+    const Key key = Constants::PREFERRED_PARSE_CONTEXT + keyFromString(filePath().toUrlishString());
     const QString parseContextId = Core::SessionManager::value(key).toString();
 
-    setPreferredParseContext(parseContextId);
+    q->setPreferredParseContext(parseContextId);
 }
 
-void CppEditorDocument::applyExtraPreprocessorDirectivesFromSettings()
+void CppEditorDocument::Private::applyExtraPreprocessorDirectivesFromSettings()
 {
     if (filePath().isEmpty())
         return;
 
-    const Key key = Constants::EXTRA_PREPROCESSOR_DIRECTIVES + keyFromString(filePath().toString());
+    const Key key = Constants::EXTRA_PREPROCESSOR_DIRECTIVES + keyFromString(filePath().toUrlishString());
     const QByteArray directives = Core::SessionManager::value(key).toString().toUtf8();
 
-    setExtraPreprocessorDirectives(directives);
+    q->setExtraPreprocessorDirectives(directives);
 }
 
 void CppEditorDocument::setExtraPreprocessorDirectives(const QByteArray &directives)
 {
-    const auto parser = processor()->parser();
+    const auto parser = d->processor()->parser();
     QTC_ASSERT(parser, return);
 
     BaseEditorDocumentParser::Configuration config = parser->configuration();
-    if (config.editorDefines != directives) {
-        config.editorDefines = directives;
-        processor()->setParserConfig(config);
-
+    if (config.setEditorDefines(directives)) {
+        d->processor()->setParserConfig(config);
         emit preprocessorSettingsChanged(!directives.trimmed().isEmpty());
     }
 }
 
 void CppEditorDocument::setIfdefedOutBlocks(const QList<TextEditor::BlockRange> &blocks)
 {
-    if (syntaxHighlighter() && !syntaxHighlighter()->syntaxHighlighterUpToDate()) {
-        connect(syntaxHighlighter(),
-            &SyntaxHighlighter::finished,
-            this,
-            [this, blocks] { setIfdefedOutBlocks(blocks); },
-            Qt::SingleShotConnection);
+    d->m_ifdefedOutBlocks = blocks;
+    d->applyIfdefedOutBlocks();
+}
+
+void CppEditorDocument::Private::applyIfdefedOutBlocks()
+{
+    if (!q->syntaxHighlighter() || !q->syntaxHighlighter()->syntaxHighlighterUpToDate())
         return;
-    }
 
     auto documentLayout = qobject_cast<TextDocumentLayout*>(document()->documentLayout());
     QTC_ASSERT(documentLayout, return);
@@ -328,32 +500,33 @@ void CppEditorDocument::setIfdefedOutBlocks(const QList<TextEditor::BlockRange> 
     int previousBraceDepth = 0;
     while (block.isValid()) {
         bool resetToPrevious = false;
-        if (rangeNumber < blocks.size()) {
-            const BlockRange &range = blocks.at(rangeNumber);
+        if (rangeNumber < m_ifdefedOutBlocks.size()) {
+            const BlockRange &range = m_ifdefedOutBlocks.at(rangeNumber);
             if (block.position() >= range.first()
                 && ((block.position() + block.length() - 1) <= range.last() || !range.last())) {
-                TextDocumentLayout::setIfdefedOut(block);
+                TextBlockUserData::setIfdefedOut(block);
                 resetToPrevious = true;
             } else {
-                TextDocumentLayout::clearIfdefedOut(block);
-                previousBraceDepth = TextDocumentLayout::braceDepth(block);
+                TextBlockUserData::clearIfdefedOut(block);
+                previousBraceDepth = TextBlockUserData::braceDepth(block);
                 resetToPrevious = false;
             }
             if (block.contains(range.last()))
                 ++rangeNumber;
         } else {
-            TextDocumentLayout::clearIfdefedOut(block);
+            TextBlockUserData::clearIfdefedOut(block);
             resetToPrevious = false;
         }
 
         // Do not change brace depth and folding indent in ifdefed-out code.
         if (resetToPrevious) {
-            const int currentBraceDepth = TextDocumentLayout::braceDepth(block);
-            const int currentFoldingIndent = TextDocumentLayout::foldingIndent(block);
+            const int currentBraceDepth = TextBlockUserData::braceDepth(block);
+            const int currentFoldingIndent = TextBlockUserData::foldingIndent(block);
             if (currentBraceDepth != previousBraceDepth
                 || currentFoldingIndent != previousBraceDepth) {
-                TextDocumentLayout::setBraceDepth(block, previousBraceDepth);
-                TextDocumentLayout::setFoldingIndent(block, previousBraceDepth);
+                TextBlockUserData::setBraceDepth(block, previousBraceDepth);
+                if (!q->syntaxHighlighter()->ignoresFolding())
+                    TextBlockUserData::setFoldingIndent(block, previousBraceDepth);
                 needUpdate = true;
                 qCDebug(highlighterLog)
                     << "changing brace depth and folding indent to" << previousBraceDepth
@@ -366,33 +539,66 @@ void CppEditorDocument::setIfdefedOutBlocks(const QList<TextEditor::BlockRange> 
 
     if (needUpdate)
         documentLayout->requestUpdate();
+
+#ifdef WITH_TESTS
+    emit q->ifdefedOutBlocksApplied();
+#endif
 }
 
 void CppEditorDocument::setPreferredParseContext(const QString &parseContextId)
 {
-    const BaseEditorDocumentParser::Ptr parser = processor()->parser();
+    const BaseEditorDocumentParser::Ptr parser = d->processor()->parser();
     QTC_ASSERT(parser, return);
 
     BaseEditorDocumentParser::Configuration config = parser->configuration();
-    if (config.preferredProjectPartId != parseContextId) {
-        config.preferredProjectPartId = parseContextId;
-        processor()->setParserConfig(config);
+    if (config.setPreferredProjectPartId(parseContextId))
+        d->processor()->setParserConfig(config);
+}
+
+void CppEditorDocument::updateSoftPreferredParseContext(const Node *currentNode)
+{
+    if (!currentNode || filePath().isEmpty() || filePath() != currentNode->filePath())
+        return;
+
+    const BaseEditorDocumentParser::Ptr parser = d->processor()->parser();
+    QTC_ASSERT(parser, return);
+
+    const ProjectPartInfo projectPartInfo = parser->projectPartInfo();
+    if (projectPartInfo.projectParts.size() < 2)
+        return;
+
+    const ProjectNode *projectNode = nullptr;
+    for (projectNode = currentNode->parentProjectNode(); projectNode && !projectNode->isProduct();
+         projectNode = projectNode->parentProjectNode()) {
+        ;
+    }
+    if (!projectNode)
+        return;
+    QTC_ASSERT(projectNode->isProduct(), return);
+
+    for (const auto &pp : projectPartInfo.projectParts) {
+        if (!pp->buildSystemTarget.isEmpty() && pp->buildSystemTarget == projectNode->buildKey()) {
+            BaseEditorDocumentParser::Configuration config = parser->configuration();
+            if (config.setSoftPreferredProjectPartId(pp->id()))
+                d->processor()->setParserConfig(config);
+            break;
+        }
     }
 }
 
-unsigned CppEditorDocument::contentsRevision() const
+unsigned CppEditorDocument::Private::contentsRevision() const
 {
     return document()->revision();
 }
 
-void CppEditorDocument::releaseResources()
+void CppEditorDocument::Private::releaseResources()
 {
     if (m_processor)
-        disconnect(m_processor.data(), nullptr, this, nullptr);
+        disconnect(m_processor.data(), nullptr, q, nullptr);
     m_processor.reset();
 }
 
-void CppEditorDocument::showHideInfoBarAboutMultipleParseContexts(bool show)
+void CppEditorDocument::Private::showHideInfoBarAboutMultipleParseContexts(bool show)
 {
     const Id id = Constants::MULTIPLE_PARSE_CONTEXTS_AVAILABLE;
 
@@ -402,33 +608,30 @@ void CppEditorDocument::showHideInfoBarAboutMultipleParseContexts(bool show)
                                  "Choose the preferred one from the editor toolbar."),
                           InfoBarEntry::GlobalSuppression::Enabled);
         info.removeCancelButton();
-        if (infoBar()->canInfoBeAdded(id))
-            infoBar()->addInfo(info);
+        if (q->infoBar()->canInfoBeAdded(id))
+            q->infoBar()->addInfo(info);
     } else {
-        infoBar()->removeInfo(id);
+        q->infoBar()->removeInfo(id);
     }
 }
 
-void CppEditorDocument::initializeTimer()
+void CppEditorDocument::Private::initializeTimer()
 {
     m_processorTimer.setSingleShot(true);
     m_processorTimer.setInterval(processDocumentIntervalInMs);
 
-    connect(&m_processorTimer,
-            &QTimer::timeout,
-            this,
-            &CppEditorDocument::processDocument,
-            Qt::UniqueConnection);
+    connect(&m_processorTimer, &QTimer::timeout,
+            q, &CppEditorDocument::processDocument, Qt::UniqueConnection);
 }
 
 ParseContextModel &CppEditorDocument::parseContextModel()
 {
-    return m_parseContextModel;
+    return d->m_parseContextModel;
 }
 
 OutlineModel &CppEditorDocument::outlineModel()
 {
-    return m_overviewModel;
+    return d->m_overviewModel;
 }
 
 void CppEditorDocument::updateOutline()
@@ -436,49 +639,56 @@ void CppEditorDocument::updateOutline()
     CPlusPlus::Document::Ptr document;
     if (!usesClangd())
         document = CppModelManager::snapshot().document(filePath());
-    m_overviewModel.update(document);
+    d->m_overviewModel.update(document);
 }
 
 QFuture<CursorInfo> CppEditorDocument::cursorInfo(const CursorInfoParams &params)
 {
-    return processor()->cursorInfo(params);
+    return d->processor()->cursorInfo(params);
 }
 
-BaseEditorDocumentProcessor *CppEditorDocument::processor()
+BaseEditorDocumentProcessor *CppEditorDocument::Private::processor()
 {
     if (!m_processor) {
-        m_processor.reset(CppModelManager::createEditorDocumentProcessor(this));
-        connect(m_processor.data(), &BaseEditorDocumentProcessor::projectPartInfoUpdated, this,
+        m_processor.reset(CppModelManager::createEditorDocumentProcessor(q));
+        connect(m_processor.data(), &BaseEditorDocumentProcessor::projectPartInfoUpdated, q,
                 [this](const ProjectPartInfo &info) {
                     const bool hasProjectPart = !(info.hints & ProjectPartInfo::IsFallbackMatch);
-                    minimizableInfoBars()->setInfoVisible(NO_PROJECT_CONFIGURATION, !hasProjectPart);
+                    q->minimizableInfoBars()->setInfoVisible(NO_PROJECT_CONFIGURATION, !hasProjectPart);
+                    updateInfoBarEntryIfVisible();
                     m_parseContextModel.update(info);
                     const bool isAmbiguous = info.hints & ProjectPartInfo::IsAmbiguousMatch;
                     const bool isProjectFile = info.hints & ProjectPartInfo::IsFromProjectMatch;
                     showHideInfoBarAboutMultipleParseContexts(isAmbiguous && isProjectFile);
                 });
-        connect(m_processor.data(), &BaseEditorDocumentProcessor::codeWarningsUpdated, this,
+        connect(m_processor.data(), &BaseEditorDocumentProcessor::codeWarningsUpdated, q,
                 [this](unsigned revision,
                        const QList<QTextEdit::ExtraSelection> selections,
                        const TextEditor::RefactorMarkers &refactorMarkers) {
-            emit codeWarningsUpdated(revision, selections, refactorMarkers);
+            emit q->codeWarningsUpdated(revision, selections, refactorMarkers);
         });
-        connect(m_processor.data(), &BaseEditorDocumentProcessor::ifdefedOutBlocksUpdated,
-                this, &CppEditorDocument::ifdefedOutBlocksUpdated);
-        connect(m_processor.data(), &BaseEditorDocumentProcessor::cppDocumentUpdated, this,
+        connect(
+            m_processor.data(),
+            &BaseEditorDocumentProcessor::ifdefedOutBlocksUpdated,
+            q,
+            [this](unsigned revision, const QList<TextEditor::BlockRange> &ifdefedOutBlocks) {
+                if (int(revision) == document()->revision())
+                    q->setIfdefedOutBlocks(ifdefedOutBlocks);
+            });
+        connect(m_processor.data(), &BaseEditorDocumentProcessor::cppDocumentUpdated, q,
                 [this](const CPlusPlus::Document::Ptr document) {
                     // Update syntax highlighter
-                    if (SyntaxHighlighter *highlighter = syntaxHighlighter())
+                    if (SyntaxHighlighter *highlighter = q->syntaxHighlighter())
                         highlighter->setLanguageFeaturesFlags(document->languageFeatures().flags);
 
-                    m_overviewModel.update(usesClangd() ? nullptr : document);
+                    m_overviewModel.update(q->usesClangd() ? nullptr : document);
 
                     // Forward signal
-                    emit cppDocumentUpdated(document);
+                    emit q->cppDocumentUpdated(document);
 
         });
         connect(m_processor.data(), &BaseEditorDocumentProcessor::semanticInfoUpdated,
-                this, &CppEditorDocument::semanticInfoUpdated);
+                q, &CppEditorDocument::semanticInfoUpdated);
     }
 
     return m_processor.data();
@@ -489,10 +699,10 @@ TextEditor::TabSettings CppEditorDocument::tabSettings() const
     return indenter()->tabSettings().value_or(TextEditor::TextDocument::tabSettings());
 }
 
-bool CppEditorDocument::saveImpl(QString *errorString, const FilePath &filePath, bool autoSave)
+Result<> CppEditorDocument::saveImpl(const FilePath &filePath, SaveOption option)
 {
-    if (!indenter()->formatOnSave() || autoSave)
-        return TextEditor::TextDocument::saveImpl(errorString, filePath, autoSave);
+    if (!indenter()->formatOnSave() || option != SaveOption::None)
+        return TextEditor::TextDocument::saveImpl(filePath, option);
 
     auto *layout = qobject_cast<TextEditor::TextDocumentLayout *>(document()->documentLayout());
     const int documentRevision = layout->lastSaveRevision;
@@ -525,12 +735,12 @@ bool CppEditorDocument::saveImpl(QString *errorString, const FilePath &filePath,
         cursor.endEditBlock();
     }
 
-    TextEditor::StorageSettings settings = storageSettings();
+    TextEditor::StorageSettingsData settings = storageSettings();
     const QScopeGuard cleanup([this, settings] { setStorageSettings(settings); });
     settings.m_cleanWhitespace = false;
     setStorageSettings(settings);
 
-    return TextEditor::TextDocument::saveImpl(errorString, filePath, autoSave);
+    return TextEditor::TextDocument::saveImpl(filePath, option);
 }
 
 bool CppEditorDocument::usesClangd() const
@@ -538,12 +748,12 @@ bool CppEditorDocument::usesClangd() const
     return CppModelManager::usesClangd(this).has_value();
 }
 
-void CppEditorDocument::onDiagnosticsChanged(const FilePath &fileName, const QString &kind)
+void CppEditorDocument::Private::onDiagnosticsChanged(const FilePath &fileName, const QString &kind)
 {
     if (fileName != filePath())
         return;
 
-    TextMarks removedMarks = marks();
+    TextMarks removedMarks = q->marks();
 
     const Utils::Id category = Utils::Id::fromString(kind);
 
@@ -574,17 +784,31 @@ void CppEditorDocument::onDiagnosticsChanged(const FilePath &fileName, const QSt
                                                   : Utils::Theme::CodeModel_Error_TextMarkColor);
             mark->setPriority(diagnostic.isWarning() ? TextEditor::TextMark::NormalPriority
                                                      : TextEditor::TextMark::HighPriority);
-            addMark(mark);
+            q->addMark(mark);
         }
     }
 
     for (auto it = removedMarks.begin(); it != removedMarks.end(); ++it) {
         if ((*it)->category().id == category) {
-            removeMark(*it);
+            q->removeMark(*it);
             delete *it;
         }
     }
 }
 
-} // namespace Internal
+void CppEditorDocument::Private::updateInfoBarEntryIfVisible()
+{
+    if (q->minimizableInfoBars()->isShownInInfoBar(NO_PROJECT_CONFIGURATION))
+        q->minimizableInfoBars()->updateEntry(createInfoBarEntry(filePath()));
+}
+
+#ifdef WITH_TESTS
+
+QList<BlockRange> CppEditorDocument::ifdefedOutBlocks() const
+{
+    return d->m_ifdefedOutBlocks;
+}
+
+#endif
+
 } // namespace CppEditor

@@ -7,7 +7,6 @@
 
 #include <coreplugin/icore.h>
 
-#include <cppeditor/cppcodestylepreferences.h>
 #include <cppeditor/cppcodestylesettings.h>
 
 #include <texteditor/icodestylepreferences.h>
@@ -18,9 +17,8 @@
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectmanager.h>
 
-#include <utils/qtcassert.h>
-#include <utils/expected.h>
 #include <utils/fileutils.h>
+#include <utils/qtcassert.h>
 
 #include <QCryptographicHash>
 #include <QLoggingCategory>
@@ -40,8 +38,18 @@ clang::format::FormatStyle calculateQtcStyle()
     clang::format::FormatStyle style = getLLVMStyle();
     style.Language = FormatStyle::LK_Cpp;
     style.AccessModifierOffset = -4;
+#if LLVM_VERSION_MAJOR >= 22
+    style.AlignAfterOpenBracket = true;
+#else
     style.AlignAfterOpenBracket = FormatStyle::BAS_Align;
-#if LLVM_VERSION_MAJOR >= 15
+#endif
+#if LLVM_VERSION_MAJOR >= 20
+    style.AlignConsecutiveAssignments = {false, false, false, false, false, false, false};
+    style.AlignConsecutiveDeclarations = {false, false, false, false, false, false, false};
+#elif LLVM_VERSION_MAJOR >= 18
+    style.AlignConsecutiveAssignments = {false, false, false, false, false, false};
+    style.AlignConsecutiveDeclarations = {false, false, false, false, false, false};
+#elif LLVM_VERSION_MAJOR >= 15
     style.AlignConsecutiveAssignments = {false, false, false, false, false};
     style.AlignConsecutiveDeclarations = {false, false, false, false, false};
 #else
@@ -58,7 +66,11 @@ clang::format::FormatStyle calculateQtcStyle()
     style.AllowAllParametersOfDeclarationOnNextLine = true;
     style.AllowShortBlocksOnASingleLine = FormatStyle::SBS_Never;
     style.AllowShortCaseLabelsOnASingleLine = false;
+#if LLVM_VERSION_MAJOR >= 23
+    style.AllowShortFunctionsOnASingleLine = {false, true, false};
+#else
     style.AllowShortFunctionsOnASingleLine = FormatStyle::SFS_Inline;
+#endif
     style.AllowShortIfStatementsOnASingleLine = FormatStyle::SIS_Never;
     style.AllowShortLoopsOnASingleLine = false;
     style.AlwaysBreakBeforeMultilineStrings = false;
@@ -69,8 +81,18 @@ clang::format::FormatStyle calculateQtcStyle()
     style.AlwaysBreakAfterReturnType = FormatStyle::RTBS_None;
     style.AlwaysBreakTemplateDeclarations = FormatStyle::BTDS_Yes;
 #endif
+#if LLVM_VERSION_MAJOR >= 23
+    style.PackArguments = { FormatStyle::BPAS_OnePerLine };
+#else
     style.BinPackArguments = false;
+#endif
+#if LLVM_VERSION_MAJOR >= 23
+    style.PackParameters = { FormatStyle::BPPS_OnePerLine };
+#elif LLVM_VERSION_MAJOR >= 20
+    style.BinPackParameters = FormatStyle::BPPS_OnePerLine;
+#else
     style.BinPackParameters = false;
+#endif
     style.BraceWrapping.AfterClass = true;
     style.BraceWrapping.AfterControlStatement = FormatStyle::BWACS_Never;
     style.BraceWrapping.AfterEnum = false;
@@ -101,7 +123,11 @@ clang::format::FormatStyle calculateQtcStyle()
 #endif
     style.ConstructorInitializerIndentWidth = 4;
     style.ContinuationIndentWidth = 4;
+#if LLVM_VERSION_MAJOR >= 22
+    style.Cpp11BracedListStyle = FormatStyle::BLS_FunctionCall;
+#else
     style.Cpp11BracedListStyle = true;
+#endif
     style.DerivePointerAlignment = false;
     style.DisableFormat = false;
     style.ExperimentalAutoDetectBinPacking = false;
@@ -135,8 +161,16 @@ clang::format::FormatStyle calculateQtcStyle()
     style.PenaltyExcessCharacter = 50;
     style.PenaltyReturnTypeOnItsOwnLine = 300;
     style.PointerAlignment = FormatStyle::PAS_Right;
+#if LLVM_VERSION_MAJOR >= 20
+    style.ReflowComments = FormatStyle::RCS_Never;
+#else
     style.ReflowComments = false;
+#endif
+#if LLVM_VERSION_MAJOR > 20
+    style.SortIncludes = {.Enabled = true, .IgnoreCase = false};
+#else
     style.SortIncludes = FormatStyle::SI_CaseSensitive;
+#endif
 #if LLVM_VERSION_MAJOR >= 16
     style.SortUsingDeclarations = FormatStyle::SUD_Lexicographic;
 #else
@@ -235,24 +269,21 @@ void fromTabSettings(clang::format::FormatStyle &style, const TextEditor::TabSet
     style.TabWidth = settings.m_tabSize;
 
     switch (settings.m_tabPolicy) {
-    case TextEditor::TabSettings::TabPolicy::MixedTabPolicy:
-        style.UseTab = FormatStyle::UT_ForContinuationAndIndentation;
-        break;
-    case TextEditor::TabSettings::TabPolicy::SpacesOnlyTabPolicy:
+    case TextEditor::TabSettings::SpacesOnlyTabPolicy:
         style.UseTab = FormatStyle::UT_Never;
         break;
-    case TextEditor::TabSettings::TabPolicy::TabsOnlyTabPolicy:
+    case TextEditor::TabSettings::TabsOnlyTabPolicy:
         style.UseTab = FormatStyle::UT_Always;
         break;
     }
 }
 
-QString projectUniqueId(ProjectExplorer::Project *project)
+QString projectUniqueId(const ProjectExplorer::Project *project)
 {
     if (!project)
         return QString();
 
-    return QString::fromUtf8(QCryptographicHash::hash(project->projectFilePath().toString().toUtf8(),
+    return QString::fromUtf8(QCryptographicHash::hash(project->projectFilePath().toUrlishString().toUtf8(),
                                                       QCryptographicHash::Md5)
                                  .toHex(0));
 }
@@ -309,36 +340,28 @@ ClangFormatSettings::Mode getCurrentIndentationOrFormattingSettings(const Utils:
                : getProjectIndentationOrFormattingSettings(project);
 }
 
-Utils::FilePath findConfig(const Utils::FilePath &fileName)
+Utils::FilePath findConfig(const Utils::FilePath &filePath)
 {
-    Utils::FilePath parentDirectory = fileName.parentDir();
-    while (parentDirectory.exists()) {
-        Utils::FilePath settingsFilePath = parentDirectory / Constants::SETTINGS_FILE_NAME;
-        if (settingsFilePath.exists())
-            return settingsFilePath;
-
-        Utils::FilePath settingsAltFilePath = parentDirectory / Constants::SETTINGS_FILE_ALT_NAME;
-        if (settingsAltFilePath.exists())
-            return settingsAltFilePath;
-
-        parentDirectory = parentDirectory.parentDir();
-    }
-    return {};
+    return filePath.searchHereAndInParents(
+        {Constants::SETTINGS_FILE_NAME, Constants::SETTINGS_FILE_ALT_NAME}, QDir::Files);
 }
 
-Utils::FilePath configForFile(const Utils::FilePath &fileName)
+ICodeStylePreferences *preferencesForFile(const FilePath &filePath)
 {
-    if (!getCurrentCustomSettings(fileName))
-        return findConfig(fileName);
+    const ProjectExplorer::Project *project = ProjectExplorer::ProjectManager::projectForFile(
+        filePath);
 
-    const ProjectExplorer::Project *projectForFile
-        = ProjectExplorer::ProjectManager::projectForFile(fileName);
+    return !getProjectUseGlobalSettings(project) && project
+               ? project->editorConfiguration()->codeStyle("Cpp")->currentPreferences()
+               : TextEditor::TextEditorSettings::codeStyle("Cpp")->currentPreferences();
+}
 
-    const TextEditor::ICodeStylePreferences *preferences
-        = projectForFile
-              ? projectForFile->editorConfiguration()->codeStyle("Cpp")->currentPreferences()
-              : TextEditor::TextEditorSettings::codeStyle("Cpp")->currentPreferences();
+FilePath configForFile(const FilePath &filePath)
+{
+    if (!getCurrentCustomSettings(filePath))
+        return findConfig(filePath);
 
+    const TextEditor::ICodeStylePreferences *preferences = preferencesForFile(filePath);
     return filePathToCurrentSettings(preferences);
 }
 
@@ -388,18 +411,28 @@ void addQtcStatementMacros(clang::format::FormatStyle &style)
             == style.StatementMacros.end())
             style.StatementMacros.emplace_back(macro);
     }
+
+    const std::vector<std::string> emitMacros = {"emit", "Q_EMIT"};
+    for (const std::string &emitMacro : emitMacros) {
+        if (std::find(
+                style.StatementAttributeLikeMacros.begin(),
+                style.StatementAttributeLikeMacros.end(),
+                emitMacro)
+            == style.StatementAttributeLikeMacros.end())
+            style.StatementAttributeLikeMacros.push_back(emitMacro);
+    }
 }
 
-Utils::FilePath filePathToCurrentSettings(const TextEditor::ICodeStylePreferences *codeStyle)
+FilePath filePathToCurrentSettings(const TextEditor::ICodeStylePreferences *codeStyle)
 {
     return Core::ICore::userResourcePath() / "clang-format/"
            / Utils::FileUtils::fileSystemFriendlyName(codeStyle->displayName())
            / QLatin1String(Constants::SETTINGS_FILE_NAME);
 }
 
-Utils::expected_str<void> parseConfigurationContent(const std::string &fileContent,
-                                                    clang::format::FormatStyle &style,
-                                                    bool allowUnknownOptions)
+Result<> parseConfigurationContent(const std::string &fileContent,
+                                   clang::format::FormatStyle &style,
+                                   bool allowUnknownOptions)
 {
     llvm::SourceMgr::DiagHandlerTy diagHandler = [](const llvm::SMDiagnostic &diag, void *context) {
         QString *errorMessage = reinterpret_cast<QString *>(context);
@@ -420,12 +453,11 @@ Utils::expected_str<void> parseConfigurationContent(const std::string &fileConte
     errorMessage = errorMessage.trimmed().isEmpty() ? QString::fromStdString(error.message())
                                                     : errorMessage;
     if (error)
-        return make_unexpected(errorMessage);
-    return {};
+        return ResultError(errorMessage);
+    return ResultOk;
 }
 
-Utils::expected_str<void> parseConfigurationFile(const Utils::FilePath &filePath,
-                                                 clang::format::FormatStyle &style)
+Result<> parseConfigurationFile(const FilePath &filePath, clang::format::FormatStyle &style)
 {
     return parseConfigurationContent(filePath.fileContents().value_or(QByteArray()).toStdString(),
                                      style, true);

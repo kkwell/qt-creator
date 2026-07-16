@@ -1,9 +1,9 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include <QtTest>
 #include <QObject>
 #include <QList>
+#include <QTest>
 #include <QTextDocument>
 #include <QTextBlock>
 
@@ -17,6 +17,7 @@ class tst_CodeFormatter: public QObject
 private Q_SLOTS:
     void ifStatementWithoutBraces1();
     void ifStatementWithoutBraces2();
+    void ifStatementWithoutBraces3();
     void ifStatementWithBraces1();
     void ifStatementWithBraces2();
     void ifStatementMixed();
@@ -47,6 +48,7 @@ private Q_SLOTS:
     void bug2();
     void bug3();
     void bug4();
+    void bug5();
     void switch1();
     void switch2();
     void switch3();
@@ -108,8 +110,10 @@ private Q_SLOTS:
     void lambdaWithReturnType();
     void structuredBinding();
     void subscriptOperatorInFunctionCall();
+    void pseudoFunctionCall();
     void statementMacros();
     void tryCatchClause();
+    void bracedInitialization();
 };
 
 struct Line {
@@ -264,6 +268,19 @@ void tst_CodeFormatter::ifStatementWithoutBraces2()
          << Line("        foo;")
          << Line("}")
          ;
+    checkIndent(data);
+}
+
+void tst_CodeFormatter::ifStatementWithoutBraces3()
+{
+    QList<Line> data;
+    data << Line("template <typename T> void foo() {")
+         << Line("    if constexpr (true)")
+         << Line("        return;")
+         << Line("    if constexpr (sizeof(T) == 0)")
+         << Line("        return;")
+         << Line("}")
+        ;
     checkIndent(data);
 }
 
@@ -810,6 +827,29 @@ void tst_CodeFormatter::bug4()
          << Line("}")
          << Line("int c;")
             ;
+    checkIndent(data);
+}
+
+// QTCREATORBUG-15156
+void tst_CodeFormatter::bug5()
+{
+    QList<Line> data;
+    data << Line("void test()")
+         << Line("{")
+         << Line("    std::thread")
+         << Line("    (", -1)
+         << Line("        []()")
+         << Line("        {")
+         << Line("            try")
+         << Line("            {")
+         << Line("            }")
+         << Line("            catch()")
+         << Line("            {")
+         << Line("            }")
+         << Line("        }")
+         << Line("    ).detach();")
+         << Line("}")
+        ;
     checkIndent(data);
 }
 
@@ -2215,6 +2255,18 @@ void tst_CodeFormatter::subscriptOperatorInFunctionCall()
     checkIndent(data);
 }
 
+void tst_CodeFormatter::pseudoFunctionCall()
+{
+    QList<Line> data;
+    data << Line("template <typename T>")
+         << Line("void foo() {")
+         << Line("    static_assert(sizeof(T) > 0,")
+         << Line("    ~             \"incomplete type\");")
+         << Line("}")
+        ;
+    checkIndent(data);
+}
+
 void tst_CodeFormatter::statementMacros()
 {
     QList<Line> data;
@@ -2267,6 +2319,19 @@ void tst_CodeFormatter::tryCatchClause()
          << Line("    } catch (...) {")
          << Line("        handle();")
          << Line("    }")
+         << Line("}");
+    checkIndent(data);
+}
+
+void tst_CodeFormatter::bracedInitialization()
+{
+    QList<Line> data;
+    data << Line("struct MyPoint{ int m_X{}; int m_Y{}; };")
+         << Line("struct MySize { int m_Width{}; int m_Height{}; };")
+         << Line("struct MyRect { MyPoint m_TopLeft{}; MySize m_Size{}; };")
+         << Line("int main() {")
+         << Line("    auto r = MyRect{.m_TopLeft = {.m_X = 5, .m_Y = 10}")
+         << Line("    ~       };")
          << Line("}");
     checkIndent(data);
 }

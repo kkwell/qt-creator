@@ -7,6 +7,7 @@
 #include "qtcprocess.h"
 #include "utilstr.h"
 
+#include <QMutex>
 #include <QVersionNumber>
 
 namespace Utils {
@@ -16,18 +17,23 @@ static QVersionNumber getClangdVersion(const FilePath &clangdFilePath)
     Process clangdProc;
     clangdProc.setCommand({clangdFilePath, {"--version"}});
     clangdProc.runBlocking();
-    if (clangdProc.result() != ProcessResult::FinishedWithSuccess)
+    if (clangdProc.result() != ProcessResult::FinishedWithSuccess) {
+        if (clangdProc.stdErr().contains("Unknown command line argument")) // Intel oneAPI
+            return minimumClangdVersion();
         return {};
+    }
     const QString output = clangdProc.allOutput();
     static const QString versionPrefix = "clangd version ";
     const int prefixOffset = output.indexOf(versionPrefix);
     if (prefixOffset == -1)
         return {};
-    return QVersionNumber::fromString(output.mid(prefixOffset + versionPrefix.length()));
+    return QVersionNumber::fromString(output.mid(prefixOffset + versionPrefix.size()));
 }
 
 QVersionNumber clangdVersion(const FilePath &clangd)
 {
+    static QMutex versionCacheMutex;
+    QMutexLocker locker(&versionCacheMutex);
     static QHash<FilePath, QPair<QDateTime, QVersionNumber>> versionCache;
     const QDateTime timeStamp = clangd.lastModified();
     const auto it = versionCache.find(clangd);
@@ -43,24 +49,20 @@ QVersionNumber clangdVersion(const FilePath &clangd)
     return it->second;
 }
 
-bool checkClangdVersion(const FilePath &clangd, QString *error)
+Result<> checkClangdVersion(const FilePath &clangd)
 {
-    if (clangd.isEmpty()) {
-        *error = Tr::tr("No clangd executable specified.");
-        return false;
-    }
+    if (clangd.isEmpty())
+        return ResultError(Tr::tr("No clangd executable specified."));
 
     const QVersionNumber version = clangdVersion(clangd);
     if (version >= minimumClangdVersion())
-        return true;
-    if (error) {
-        *error = version.isNull()
+        return ResultOk;
+
+    return ResultError(version.isNull()
                      ? Tr::tr("Failed to retrieve clangd version: Unexpected clangd output.")
                      : Tr::tr("The clangd version is %1, but %2 or greater is required.")
                            .arg(version.toString())
-                           .arg(minimumClangdVersion().majorVersion());
-    }
-    return false;
+                           .arg(minimumClangdVersion().majorVersion()));
 }
 
 QVersionNumber minimumClangdVersion()

@@ -7,7 +7,7 @@
 
 #include <projectexplorer/projectmacro.h>
 #include <projectexplorer/projectnodes.h>
-#include <projectexplorer/runconfigurationaspects.h>
+#include <projectexplorer/runconfiguration.h>
 
 namespace CMakeProjectManager {
 
@@ -19,13 +19,14 @@ enum TargetType {
     UtilityType
 };
 
-using Backtrace = QVector<ProjectExplorer::FolderNode::LocationInfo>;
-using Backtraces = QVector<Backtrace>;
+using Backtrace = QList<ProjectExplorer::FolderNode::LocationInfo>;
+using Backtraces = QList<Backtrace>;
 
 class CMAKE_EXPORT CMakeBuildTarget
 {
 public:
     QString title;
+    QString targetFolder;
     Utils::FilePath executable; // TODO: rename to output?
     QList<ProjectExplorer::Launcher> launchers;
     TargetType targetType = UtilityType;
@@ -46,10 +47,10 @@ public:
     Backtraces installDefinitions;
 
     // code model
-    QList<Utils::FilePath> includeFiles;
+    Utils::FilePaths includeFiles;
     QStringList compilerOptions;
     ProjectExplorer::Macros macros;
-    QList<Utils::FilePath> files;
+    Utils::FilePaths files;
 };
 
 } // namespace CMakeProjectManager

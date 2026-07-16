@@ -3,11 +3,14 @@
 
 #pragma once
 
+#include "kitaspect.h"
 #include "projectexplorer_export.h"
 #include "task.h"
 
 #include <coreplugin/featureprovider.h>
 
+#include <utils/fileutils.h>
+#include <utils/id.h>
 #include <utils/store.h>
 
 #include <QSet>
@@ -21,6 +24,8 @@ class OutputLineParser;
 } // namespace Utils
 
 namespace ProjectExplorer {
+class KitData;
+class Project;
 
 namespace Internal {
 class KitManagerPrivate;
@@ -65,9 +70,11 @@ public:
     QString customFileSystemFriendlyName() const;
     void setCustomFileSystemFriendlyName(const QString &fileSystemFriendlyName);
 
-    bool isAutoDetected() const;
-    QString autoDetectionSource() const;
-    bool isSdkProvided() const;
+    [[deprecated("Use detectionSource().isAutoDetected() instead")]] bool isAutoDetected() const;
+    [[deprecated("Use detectionSource().id instead")]] QString autoDetectionSource() const;
+    [[deprecated("Use detectionSource().isSdkProvided() instead")]] bool isSdkProvided() const;
+    DetectionSource detectionSource() const;
+
     Utils::Id id() const;
 
     // The higher the weight, the more aspects have sensible values for this kit.
@@ -92,6 +99,7 @@ public:
     bool isSticky(Utils::Id id) const;
 
     bool isDataEqual(const Kit *other) const;
+    bool isMetaDataEqual(const Kit *other) const;
     bool isEqual(const Kit *other) const;
 
     void addToBuildEnvironment(Utils::Environment &env) const;
@@ -101,14 +109,21 @@ public:
     Utils::Environment runEnvironment() const;
 
     QList<Utils::OutputLineParser *> createOutputParsers() const;
+    QString moduleForHeader(const QString &className) const;
+    bool supportsQtCategoryFilter() const;
 
     QString toHtml(const Tasks &additional = Tasks(), const QString &extraText = QString()) const;
     Kit *clone(bool keepName = false) const;
     void copyFrom(const Kit *k);
+    void copyFrom(const KitData &src);
+
+    KitData kitData() const;
 
     // Note: Stickyness is *not* saved!
-    void setAutoDetected(bool detected);
-    void setAutoDetectionSource(const QString &autoDetectionSource);
+    void setDetectionSource(const DetectionSource &source);
+    [[deprecated("Use setDetectionSource() instead")]] void setAutoDetected(bool detected);
+    [[deprecated("Use setDetectionSource() instead")]] void setAutoDetectionSource(const QString &autoDetectionSource);
+
     void makeSticky();
     void setSticky(Utils::Id id, bool b);
     void makeUnSticky();
@@ -129,19 +144,15 @@ public:
     bool hasFeatures(const QSet<Utils::Id> &features) const;
     Utils::MacroExpander *macroExpander() const;
 
-    QString newKitName(const QList<Kit *> &allKits) const;
-    static QString newKitName(const QString &name, const QList<Kit *> &allKits);
+    void toMap(Utils::Store &data) const;
 
 private:
     static void copyKitCommon(Kit *target, const Kit *source);
-    void setSdkProvided(bool sdkProvided);
 
     Kit(const Kit &other) = delete;
     void operator=(const Kit &other) = delete;
 
     void kitUpdated();
-
-    Utils::Store toMap() const;
 
     const std::unique_ptr<Internal::KitPrivate> d;
 
@@ -163,6 +174,10 @@ private:
 };
 
 using TasksGenerator = std::function<Tasks(const Kit *)>;
+
+PROJECTEXPLORER_EXPORT Kit *activeKit(const Project *project);
+PROJECTEXPLORER_EXPORT Kit *activeKitForActiveProject();
+PROJECTEXPLORER_EXPORT Kit *activeKitForCurrentProject();
 
 } // namespace ProjectExplorer
 

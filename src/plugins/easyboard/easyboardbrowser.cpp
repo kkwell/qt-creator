@@ -18,9 +18,6 @@
 #include <coreplugin/welcomepagehelper.h>
 
 #include <solutions/spinner/spinner.h>
-#include <solutions/tasking/networkquery.h>
-#include <solutions/tasking/tasktree.h>
-#include <solutions/tasking/tasktreerunner.h>
 
 #include <utils/algorithm.h>
 #include <utils/elidinglabel.h>
@@ -29,6 +26,7 @@
 #include <utils/icon.h>
 #include <utils/layoutbuilder.h>
 #include <utils/networkaccessmanager.h>
+#include <utils/qtcwidgets.h>
 #include <utils/stylehelper.h>
 
 #include <QApplication>
@@ -45,15 +43,15 @@
 
 using namespace Core;
 using namespace Utils;
-using namespace StyleHelper;
-using namespace SpacingTokens;
+using namespace Utils::StyleHelper;
+using namespace Utils::StyleHelper::SpacingTokens;
 using namespace WelcomePageHelpers;
 
 namespace EasyBoard::Internal {
 
 Q_LOGGING_CATEGORY(browserLog, "qtc.easyboard.browser", QtWarningMsg)
 
-constexpr int gapSize = HGapL;
+constexpr int gapSize = GapHXl;
 constexpr int itemWidth = 330;
 constexpr int cellWidth = itemWidth + gapSize;
 
@@ -85,10 +83,10 @@ protected:
         const bool hover = underMouse();
         const TextFormat &tF = (active || hover) ? m_itemActiveTf : m_itemDefaultTf;
 
-        const QRect iconRect(HPaddingXs, 0, m_iconSize.width(), height());
-        const int textX = iconRect.right() + 1 + HGapXxs;
-        const QRect textRect(textX, VPaddingXs,
-                             width() - HPaddingXs - textX, tF.lineHeight());
+        const QRect iconRect(PaddingHM, 0, m_iconSize.width(), height());
+        const int textX = iconRect.right() + 1 + GapHXs;
+        const QRect textRect(textX, PaddingVM,
+                             width() - PaddingHM - textX, tF.lineHeight());
 
         QPainter p(this);
         (active ? m_iconActive : m_iconDefault).paint(&p, iconRect);
@@ -96,7 +94,7 @@ protected:
         p.setFont(tF.font());
         const QString elidedText = p.fontMetrics().elidedText(currentFormattedText(),
                                                               Qt::ElideRight,
-                                                              textRect.width() + HPaddingXs);
+                                                              textRect.width() + PaddingHM);
         p.drawText(textRect, tF.drawTextFlags, elidedText);
     }
 
@@ -118,15 +116,15 @@ private:
         const QFontMetrics fm(m_itemDefaultTf.font());
         const int textWidth = fm.horizontalAdvance(currentFormattedText());
         const int width =
-            HPaddingXs
+            PaddingHM
             + m_iconSize.width()
-            + HGapXxs
+            + GapHXs
             + textWidth
-            + HPaddingXs;
+            + PaddingHM;
         const int height =
-            VPaddingXs
+            PaddingVM
             + m_itemDefaultTf.lineHeight()
-            + VPaddingXs;
+            + PaddingVM;
         return {width, height};
     }
 
@@ -220,16 +218,16 @@ public:
         const QRect bgRGlobal = option.rect.adjusted(0, 0, -gapSize, -gapSize);
         const QRect bgR = bgRGlobal.translated(-option.rect.topLeft());
 
-        const int middleColumnW = bgR.width() - ExPaddingGapL - iconBgSizeSmall.width()
-                - ExPaddingGapL - ExPaddingGapL;
+        const int middleColumnW = bgR.width() - PaddingHL - iconBgSizeSmall.width()
+                - GapHL - PaddingHL;
 
         int x = bgR.x();
         int y = bgR.y();
-        x += ExPaddingGapL;
+        x += PaddingHL;
         const QRect iconBgR(x, y + (bgR.height() - iconBgSizeSmall.height()) / 2,
                             iconBgSizeSmall.width(), iconBgSizeSmall.height());
-        x += iconBgSizeSmall.width() + ExPaddingGapL;
-        y += ExPaddingGapL;
+        x += iconBgSizeSmall.width() + GapHL;
+        y += PaddingVL;
         const QRect itemNameR(x, y, middleColumnW, itemNameTF.lineHeight());
         const QString itemDisName = index.data(EasyBoardModel::RoleDisplayName).toString();
 
@@ -249,17 +247,17 @@ public:
         const QFont stateFont = stateTF.font();
         const QFontMetrics stateFM(stateFont);
         const int stateStringWidth = stateFM.horizontalAdvance(stateString);
-        const QRect stateR(checkmarkR.x() - HGapXxs - stateStringWidth, y,
+        const QRect stateR(checkmarkR.x() - GapHXs - stateStringWidth, y,
                            stateStringWidth, stateTF.lineHeight());
 
-        y += itemNameR.height() + VGapXxs;
+        y += itemNameR.height() + GapVXs;
         const QRect vendorRowR(x, y, middleColumnW, vendorRowHeight());
         QRect vendorR = vendorRowR;
 
-        y += vendorRowR.height() + VGapXxs;
+        y += vendorRowR.height() + GapVXs;
         const QRect tagsR(x, y, middleColumnW, tagsTF.lineHeight());
 
-        QTC_CHECK(option.rect.height() - 1 == tagsR.bottom() + ExPaddingGapL + gapSize);
+        QTC_CHECK(option.rect.height() - 1 == tagsR.bottom() + PaddingVL + gapSize);
 
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing);
@@ -270,13 +268,13 @@ public:
             const bool selected = option.state & QStyle::State_Selected;
             const bool hovered = option.state & QStyle::State_MouseOver;
             const QColor fillColor =
-                creatorColor(hovered ? WelcomePageHelpers::cardHoverBackground
-                                              : WelcomePageHelpers::cardDefaultBackground);
+                Utils::creatorColor(hovered ? WelcomePageHelpers::cardHoverBackground
+                                            : WelcomePageHelpers::cardDefaultBackground);
             const QColor strokeColor =
-                creatorColor(selected ? Theme::Token_Stroke_Strong
-                                      : hovered ? WelcomePageHelpers::cardHoverStroke
-                                                : WelcomePageHelpers::cardDefaultStroke);
-            WelcomePageHelpers::drawCardBackground(painter, bgR, fillColor, strokeColor);
+                Utils::creatorColor(selected ? Theme::Token_Stroke_Strong
+                                            : hovered ? WelcomePageHelpers::cardHoverStroke
+                                                      : WelcomePageHelpers::cardDefaultStroke);
+            Utils::StyleHelper::drawCardBg(painter, bgR, fillColor, strokeColor);
             // if(selected){
             //     QAbstractButton *installButton = new Button(Tr::tr("Default"), Button::MediumPrimary);
             //     installButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
@@ -293,7 +291,7 @@ public:
         {
             QRect effectiveR = itemNameR;
             if (showState)
-                effectiveR.setRight(stateR.left() - HGapXxs - 1);
+                effectiveR.setRight(stateR.left() - GapHXs - 1);
             painter->setPen(itemNameTF.color());
             painter->setFont(itemNameTF.font());
             const QString titleElided
@@ -308,7 +306,7 @@ public:
         }
 
         if(state == Online){
-            painter->setPen(qRgb(156, 219, 166));//qRgb(239, 90, 111),stateTF.color()
+            painter->setPen(Utils::creatorColor(Theme::Token_Notification_Success_Default));
             painter->setFont(stateTF.font());
             painter->drawText(stateR, stateTF.drawTextFlags, stateString);
         }
@@ -348,14 +346,14 @@ public:
     {
         const int middleColumnH =
             itemNameTF.lineHeight()
-            + VGapXxs
+            + GapVXs
             + vendorRowHeight()
-            + VGapXxs
+            + GapVXs
             + tagsTF.lineHeight();
         const int height =
-            ExPaddingGapL
+            PaddingVL
             + qMax(iconBgSizeSmall.height(), middleColumnH)
-            + ExPaddingGapL;
+            + PaddingVL;
         return {cellWidth, height + gapSize};
     }
 
@@ -526,7 +524,6 @@ public:
     QSortFilterProxyModel *searchProxyModel;
     SortFilterProxyModel *sortFilterProxyModel;
     int columnsCount = 2;
-    Tasking::TaskTreeRunner taskTreeRunner;
     SpinnerSolution::Spinner *m_spinner;
     QAbstractButton *addButton;
     QAbstractButton *updateButton;
@@ -546,7 +543,7 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
     // QLabel *titleLabel = tfLabel(titleTF);
     // titleLabel->setText(Tr::tr("Easy Board Configs"));
 
-    d->searchBox = new SearchBox;
+    d->searchBox = new QtcSearchBox;
     d->searchBox->setPlaceholderText(Tr::tr("Search"));
 
     d->model = new EasyBoardModel(this);
@@ -569,11 +566,11 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
                                               &SortFilterProxyModel::SortOption::displayName));
 
 
-    d->addButton = new Button(Tr::tr("Add New"), Button::SmallPrimary);
+    d->addButton = new QtcButton(Tr::tr("Add New"), QtcButton::SmallPrimary);
     d->addButton->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
     d->addButton->setToolTip(Tr::tr("Add remote board"));
 
-    d->updateButton = new Button(Tr::tr("Auto Search"), Button::SmallPrimary);
+    d->updateButton = new QtcButton(Tr::tr("Auto Search"), QtcButton::SmallPrimary);
     d->updateButton->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
     d->updateButton->setToolTip(Tr::tr("Auto search local network board"));
 
@@ -603,18 +600,18 @@ EasyBoardBrowser::EasyBoardBrowser(QWidget *parent)
         Row {
             d->searchBox,
             spacing(gapSize),
-            customMargins(0, VPaddingM, extraListViewWidth() + gapSize, VPaddingM),
+            customMargins(0, PaddingVXl, extraListViewWidth() + gapSize, PaddingVXl),
         },
         Row {
             d->addButton,
             spacing(gapSize*2),
             d->updateButton,
             spacing(gapSize),
-            customMargins(0, VPaddingM, extraListViewWidth() + gapSize, VPaddingM),
+            customMargins(0, PaddingVXl, extraListViewWidth() + gapSize, PaddingVXl),
         },
         Row {
             d->filterChooser,
-            Space(HGapS),
+            Space(GapHM),
             d->sortChooser,
             st,
             customMargins(0, 0, extraListViewWidth() + gapSize, 0),
@@ -802,7 +799,7 @@ QSize EasyBoardBrowser::sizeHint() const
 int EasyBoardBrowser::extraListViewWidth() const
 {
     // TODO: Investigate "transient" scrollbar, just for this list view.
-    constexpr int extraPadding = qMax(0, ExVPaddingGapXl - gapSize);
+    constexpr int extraPadding = qMax(0, PaddingHXxl - gapSize);
     return d->boardsView->style()->pixelMetric(QStyle::PM_ScrollBarExtent)
            + extraPadding
            + 1; // Needed
@@ -917,19 +914,11 @@ void EasyBoardBrowser::udpConnectOut()
                         QMessageBox::Ok);
 }
 
-QLabel *tfLabel(const TextFormat &tf, bool singleLine)
+QLabel *tfLabel(const Utils::StyleHelper::TextFormat &tf, bool singleLine)
 {
     QLabel *label = singleLine ? new Utils::ElidingLabel : new QLabel;
-    if (singleLine)
-        label->setFixedHeight(tf.lineHeight());
-    label->setFont(tf.font());
-    label->setAlignment(Qt::Alignment(tf.drawTextFlags));
+    Utils::StyleHelper::applyTf(label, tf, singleLine);
     label->setTextInteractionFlags(Qt::TextSelectableByMouse);
-
-    QPalette pal = label->palette();
-    pal.setColor(QPalette::WindowText, tf.color());
-    label->setPalette(pal);
-
     return label;
 }
 
@@ -945,10 +934,12 @@ QPixmap itemIcon(const QModelIndex &index, Size size)
     // const PluginSpec *ps = pluginSpecForName(index.data(RoleName).toString());
     const bool isEnabled = true;//= ps == nullptr || ps->isEffectivelyEnabled();
     const QGradientStops gradientStops = {
-                                          {0, creatorColor(isEnabled ? Theme::Token_Gradient01_Start
-                                                                     : Theme::Token_Gradient02_Start)},
-                                          {1, creatorColor(isEnabled ? Theme::Token_Gradient01_End
-                                                                     : Theme::Token_Gradient02_End)},
+                                          {0, Utils::creatorColor(
+                                                  isEnabled ? Theme::Token_Gradient01_Start
+                                                            : Theme::Token_Gradient02_Start)},
+                                          {1, Utils::creatorColor(
+                                                  isEnabled ? Theme::Token_Gradient01_End
+                                                            : Theme::Token_Gradient02_End)},
                                           };
 
     const Theme::Color color = Theme::Token_Basic_White;
@@ -958,13 +949,13 @@ QPixmap itemIcon(const QModelIndex &index, Size size)
     // const ItemType itemType = index.data(RoleItemType).value<ItemType>();
     const QIcon &icon = (size == SizeSmall ? board : board);
 
-    const int iconRectRounding = 4;
+    constexpr int iconRectRounding = SpacingTokens::RadiusS;
     const qreal iconOpacityDisabled = 0.6;
 
     QPainter p(&pixmap);
     QLinearGradient gradient(iconBgR.topRight(), iconBgR.bottomLeft());
     gradient.setStops(gradientStops);
-    WelcomePageHelpers::drawCardBackground(&p, iconBgR, gradient, Qt::NoPen, iconRectRounding);
+    Utils::StyleHelper::drawCardBg(&p, iconBgR, gradient, Qt::NoPen, iconRectRounding);
     if (!isEnabled)
         p.setOpacity(iconOpacityDisabled);
     icon.paint(&p, iconBgR);
@@ -983,10 +974,12 @@ QPixmap boardIcon(const QModelIndex &index, Size size)
 
     const bool isEnabled = true;
     const QGradientStops gradientStops = {
-                                          {0, creatorColor(isEnabled ? Theme::Token_Gradient01_Start
-                                                                     : Theme::Token_Gradient02_Start)},
-                                          {1, creatorColor(isEnabled ? Theme::Token_Gradient01_End
-                                                                     : Theme::Token_Gradient02_End)},
+                                          {0, Utils::creatorColor(
+                                                  isEnabled ? Theme::Token_Gradient01_Start
+                                                            : Theme::Token_Gradient02_Start)},
+                                          {1, Utils::creatorColor(
+                                                  isEnabled ? Theme::Token_Gradient01_End
+                                                            : Theme::Token_Gradient02_End)},
                                           };
 
     const Theme::Color color = Theme::Token_Background_Default;

@@ -12,10 +12,10 @@
     To reset all \QC settings, remove the settings files that it creates:
 
     \list
-        \li QtCreator.db
-        \li QtCreator.ini
-        \li qtversion.xml
-        \li qtcreator
+        \li \c QtCreator.db
+        \li \c QtCreator.ini
+        \li \c qtversion.xml
+        \li \c qtcreator
     \endlist
 
     The location of the above files and directories depends on the platform:
@@ -37,14 +37,14 @@
 
     To override the default path where user settings are stored, enter:
 
-    \badcode
+    \code [shell]
     qtcreator -settingspath <path>
     \endcode
 
     To override the default path from where user-independent settings are read
     (for example, those written by the installer), enter:
 
-    \badcode
+    \code [shell]
     qtcreator -installsettingspath <path>
     \endcode
 
@@ -52,9 +52,9 @@
 
     To use clean settings that are deleted when you quit \QC, enter:
 
-    \badcode
+    \code [shell]
     qtcreator -tcs
     \endcode
 
-    \sa {Run Qt Creator from the command line}
+    \sa {Run \QC from the command line}
 */

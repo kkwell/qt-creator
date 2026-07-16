@@ -4,33 +4,31 @@
 #pragma once
 
 #include <cppeditor/cppprojectfile.h>
-#include <utils/synchronizedvalue.h>
 
-#include <QHash>
+#include <utils/filepath.h>
 
 namespace ProjectExplorer {
 class HeaderPath;
 class Macro;
 }
 
-namespace CompilationDatabaseProjectManager {
-namespace Internal {
+namespace CompilationDatabaseProjectManager::Internal {
 
-class DbEntry {
+class DbEntry
+{
 public:
     QStringList flags;
     Utils::FilePath fileName;
     Utils::FilePath workingDir;
 };
 
-class DbContents {
+class DbContents
+{
 public:
     std::vector<DbEntry> entries;
-    QString extraFileName;
+    Utils::FilePath extraFileName;
     QStringList extras;
 };
-
-using MimeBinaryCache = Utils::SynchronizedValue<QHash<QString, bool>>;
 
 QStringList filterFromFileName(const QStringList &flags, const QString &fileName);
 
@@ -44,5 +42,4 @@ void filteredFlags(const Utils::FilePath &filePath,
 
 QStringList splitCommandLine(QString commandLine, QSet<QString> &flagsCache);
 
-} // namespace Internal
-} // namespace CompilationDatabaseProjectManager
+} // namespace CompilationDatabaseProjectManager::Internal

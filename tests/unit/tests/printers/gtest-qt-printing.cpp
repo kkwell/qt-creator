@@ -1,8 +1,11 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
+#include "gtest-qt-printing.h"
+
 #include <QDebug>
 #include <QIcon>
+#include <QLatin1StringView>
 #include <QString>
 #include <QTextCharFormat>
 
@@ -12,10 +15,10 @@
 
 QT_BEGIN_NAMESPACE
 
-std::ostream &operator<<(std::ostream &out, const QByteArray &byteArray)
+std::ostream &operator<<(std::ostream &out, QByteArrayView byteArray)
 {
     if (byteArray.contains('\n')) {
-        QByteArray formattedArray = byteArray;
+        QByteArray formattedArray = byteArray.toByteArray();
         formattedArray.replace("\n", "\n\t");
         out << "\n\t";
         out.write(formattedArray.data(), formattedArray.size());
@@ -26,6 +29,16 @@ std::ostream &operator<<(std::ostream &out, const QByteArray &byteArray)
     }
 
     return out;
+}
+
+std::ostream &operator<<(std::ostream &out, const QByteArray &byteArray)
+{
+    return out << QByteArrayView{byteArray};
+}
+
+std::ostream &operator<<(std::ostream &out, QLatin1String text)
+{
+    return out << QByteArrayView{text};
 }
 
 std::ostream &operator<<(std::ostream &out, const QString &text)
@@ -53,7 +66,7 @@ std::ostream &operator<<(std::ostream &out, const QVariant &variant)
 std::ostream &operator<<(std::ostream &out, const QTextCharFormat &format)
 {
     out << "("
-        << format.fontFamily();
+        << format.fontFamilies();
 
     if (format.fontItalic())
         out << ", italic";
@@ -84,6 +97,19 @@ std::ostream &operator<<(std::ostream &out, const QIcon &icon)
     out << icon.cacheKey() << ")";
 }
 
+std::ostream &operator<<(std::ostream &out, const QStringList &list)
+{
+    if (list.isEmpty())
+        return out << "[]";
+
+    return out << "[" << list.join("\", \"") << "]";
+}
+
+void PrintTo(QStringView text, std::ostream *os)
+{
+    *os << text;
+}
+
 void PrintTo(const QString &text, std::ostream *os)
 {
     *os << text;
@@ -95,6 +121,16 @@ void PrintTo(const QVariant &variant, std::ostream *os)
 }
 
 void PrintTo(const QByteArray &text, std::ostream *os)
+{
+    *os << text;
+}
+
+void PrintTo(QByteArrayView text, std::ostream *os)
+{
+    *os << text;
+}
+
+void PrintTo(QLatin1String text, std::ostream *os)
 {
     *os << text;
 }

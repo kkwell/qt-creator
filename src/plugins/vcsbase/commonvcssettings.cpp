@@ -74,15 +74,27 @@ CommonVcsSettings::CommonVcsSettings()
 
     lineWrap.setSettingsKey("LineWrap");
     lineWrap.setDefaultValue(true);
-    lineWrap.setLabelText(Tr::tr("Wrap submit message at:"));
+    lineWrap.setLabelText(Tr::tr("Wrap submit message at"));
 
     lineWrapWidth.setSettingsKey("LineWrapWidth");
     lineWrapWidth.setSuffix(Tr::tr(" characters"));
     lineWrapWidth.setDefaultValue(72);
 
+    vcsShowStatus.setSettingsKey("ShowVcsStatus");
+    vcsShowStatus.setDefaultValue(true);
+    vcsShowStatus.setLabelText(Tr::tr("Show VCS file status with refresh interval"));
+    vcsShowStatus.setToolTip(Tr::tr("Request file status updates from files and reflect them "
+                                    "on the project tree."));
+    vcsShowStatusInterval.setSettingsKey("ShowVcsStatusInterval");
+    vcsShowStatusInterval.setSuffix(Tr::tr(" seconds"));
+    vcsShowStatusInterval.setDefaultValue(10);
+    vcsShowStatusInterval.setRange(1, 20);
+    vcsShowStatusInterval.setToolTip(Tr::tr("Specifies the file status update refresh interval."));
+
     setLayouter([this] {
         using namespace Layouting;
         return Column {
+            Row { vcsShowStatus, vcsShowStatusInterval, st },
             Row { lineWrap, lineWrapWidth, st },
             Form {
                 submitMessageCheckScript, br,
@@ -94,7 +106,7 @@ CommonVcsSettings::CommonVcsSettings()
                     text(Tr::tr("Reset VCS Cache")),
                     Layouting::toolTip(Tr::tr("Reset information about which "
                                               "version control system handles which directory.")),
-                    onClicked(&VcsManager::clearVersionControlCache, this)
+                    onClicked(this, &VcsManager::clearVersionControlCache)
                 }
             }
         };
@@ -122,9 +134,6 @@ public:
         setId(Constants::VCS_COMMON_SETTINGS_ID);
         setDisplayName(Tr::tr("General"));
         setCategory(Constants::VCS_SETTINGS_CATEGORY);
-        // The following act as blueprint for other pages in the same category:
-        setDisplayCategory(Tr::tr("Version Control"));
-        setCategoryIconPath(":/vcsbase/images/settingscategory_vcs.png");
         setSettingsProvider([] { return &commonSettings(); });
     }
 };

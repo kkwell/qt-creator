@@ -63,8 +63,9 @@ public:
     bool event(QEvent *event) override;
 
     void paintEvent(QPaintEvent *event) override;
-    void paintTab(QPainter *painter, int tabIndex, int visibleIndex) const;
+    void paintTab(QPainter *painter, int tabIndex, int visibleIndex, QIcon::State iconState) const;
     void mousePressEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void enterEvent(QEnterEvent *event) override;
     void leaveEvent(QEvent *event) override;
@@ -96,6 +97,7 @@ public:
         delete tab;
         updateGeometry();
     }
+    void moveTab(int fromIndex, int toIndex);
     void setCurrentIndex(int index);
     int currentIndex() const { return m_currentIndex; }
 
@@ -110,14 +112,27 @@ public:
     int visibleIndex(int index) const;
 
 signals:
-    void currentAboutToChange(int index);
+    void currentAboutToChange(int index, bool *okToSwitch);
     void currentChanged(int index);
     void menuTriggered(int index, QMouseEvent *event);
+    void tabDragged(int fromIndex, int toIndex);
 
 private:
-    QRect m_hoverRect;
+    struct TabAtInfo
+    {
+        int index = -1;
+        int dragToIndex = -1;
+        bool openMenu = false;
+    };
+    TabAtInfo tabAt(const QPoint &position) const;
+    void resetDragging();
+
     int m_hoverIndex = -1;
     int m_currentIndex = -1;
+    int m_draggedIndex = -1;
+    int m_dragToIndex = -1;
+    QPoint m_dragStartPos;
+    bool m_isDragging = false;
     bool m_iconsOnly = false;
     QList<FancyTab *> m_tabs;
     QSize tabSizeHint(bool minimum = false) const;
@@ -132,11 +147,13 @@ public:
 
     void insertTab(int index, QWidget *tab, const QIcon &icon, const QString &label, bool hasMenu);
     void removeTab(int index);
+    void moveTab(int fromIndex, int toIndex);
     void setBackgroundBrush(const QBrush &brush);
     void addCornerWidget(QWidget *widget);
     void insertCornerWidget(int pos, QWidget *widget);
     int cornerWidgetCount() const;
     void setTabToolTip(int index, const QString &toolTip);
+    void setInfoBar(Utils::InfoBar *infoBar);
 
     void paintEvent(QPaintEvent *event) override;
 
@@ -153,10 +170,11 @@ public:
     bool isSelectionWidgetVisible() const;
 
 signals:
-    void currentAboutToShow(int index);
+    void currentAboutToShow(int index, bool *okToSwitch);
     void currentChanged(int index);
     void menuTriggered(int index, QMouseEvent *event);
     void topAreaClicked(QMouseEvent *event);
+    void tabDragged(int fromIndex, int toIndex);
 
 public slots:
     void setCurrentIndex(int index);
@@ -171,7 +189,6 @@ private:
     QWidget *m_selectionWidget;
     QStatusBar *m_statusBar;
     Utils::InfoBarDisplay m_infoBarDisplay;
-    Utils::InfoBar m_infoBar;
 };
 
 } // namespace Internal

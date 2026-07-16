@@ -5,6 +5,8 @@
 #include <qmlitemnode.h>
 #include "abstractformeditortool.h"
 
+#include <utils/span.h>
+
 #include <QGraphicsScene>
 #include <QPointer>
 #include <QHash>
@@ -29,16 +31,7 @@ class QMLDESIGNERCOMPONENTS_EXPORT FormEditorScene : public QGraphicsScene
     friend FormEditorView;
 
 public:
-
-    enum ItemType {
-        Default,
-        Flow,
-        FlowAction,
-        FlowTransition,
-        FlowDecision,
-        FlowWildcard,
-        Preview3d
-    };
+    enum ItemType { Default, Preview3d };
 
     FormEditorScene(FormEditorWidget *widget, FormEditorView *editorView);
     ~FormEditorScene() override;
@@ -46,7 +39,7 @@ public:
 
     FormEditorItem* itemForQmlItemNode(const QmlItemNode &qmlItemNode) const;
 
-    QList<FormEditorItem*> itemsForQmlItemNodes(const QList<QmlItemNode> &nodeList) const;
+    QList<FormEditorItem *> itemsForQmlItemNodes(const Utils::span<const QmlItemNode> &nodeList) const;
     QList<FormEditorItem*> allFormEditorItems() const;
 
     void updateAllFormEditorItems();
@@ -59,7 +52,7 @@ public:
 
     void synchronizeTransformation(FormEditorItem *item);
     void synchronizeParent(const QmlItemNode &qmlItemNode);
-    void synchronizeOtherProperty(FormEditorItem *item, const QByteArray &propertyName);
+    void synchronizeOtherProperty(FormEditorItem *item, PropertyNameView propertyName);
 
     FormEditorItem* calulateNewParent(FormEditorItem *widget);
     LayerItem* manipulatorLayerItem() const;

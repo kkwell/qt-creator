@@ -6,7 +6,6 @@
 #include <coreplugin/sidebar.h>
 
 #include <QFutureInterface>
-#include <QFutureWatcher>
 #include <QWidget>
 
 QT_BEGIN_NAMESPACE
@@ -42,10 +41,6 @@ public:
     SearchWidget();
     ~SearchWidget() override;
 
-    void zoomIn();
-    void zoomOut();
-    void resetZoom();
-
     void reindexDocumentation();
 
 signals:
@@ -67,10 +62,7 @@ private:
     void contextMenuEvent(QContextMenuEvent *contextMenuEvent) override;
     QStringList currentSearchTerms() const;
 
-    int zoomCount = 0;
-
-    QFutureWatcher<void> m_watcher;
-    QFutureInterface<void> *m_progress = nullptr;
+    QFutureInterface<void> m_progress;
 
     QHelpSearchEngine *searchEngine = nullptr;
     QHelpSearchResultWidget *resultWidget = nullptr;

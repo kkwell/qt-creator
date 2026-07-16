@@ -18,13 +18,15 @@ class ToolchainSettingsAccessor : public Utils::UpgradingSettingsAccessor
 public:
     ToolchainSettingsAccessor();
 
-    QList<Toolchain *> restoreToolchains(QWidget *parent) const;
+    QList<Toolchain *> restoreToolchains() const;
 
-    void saveToolchains(const QList<Toolchain *> &toolchains, QWidget *parent);
+    void saveToolchains(const QList<Toolchain *> &toolchains);
 
 private:
     QList<Toolchain *> toolChains(const Utils::Store &data) const;
 };
+
+QObject *createToolchainSettingsTest();
 
 } // namespace Internal
 } // namespace ProjectExplorer

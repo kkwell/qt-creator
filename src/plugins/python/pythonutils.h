@@ -11,18 +11,17 @@ enum class ReplType { Unmodified, Import, ImportToplevel };
 void openPythonRepl(QObject *parent, const Utils::FilePath &file, ReplType type);
 Utils::FilePath detectPython(const Utils::FilePath &documentPath);
 void definePythonForDocument(const Utils::FilePath &documentPath, const Utils::FilePath &python);
-QString pythonName(const Utils::FilePath &pythonPath);
 
 class PythonProject;
 PythonProject *pythonProjectForFile(const Utils::FilePath &pythonFile);
 
-void createVenv(const Utils::FilePath &python,
-                const Utils::FilePath &venvPath,
-                const std::function<void(bool)> &callback);
-
 bool isVenvPython(const Utils::FilePath &python);
-bool venvIsUsable(const Utils::FilePath &python);
-bool pipIsUsable(const Utils::FilePath &python);
+bool venvIsUsable(
+    const Utils::FilePath &python, const std::function<void(const bool)> &changedHandler = {});
+bool pipIsUsable(
+    const Utils::FilePath &python, const std::function<void(const bool)> &changedHandler = {});
+void pipIsUsableAsync(
+    const Utils::FilePath &python, const std::function<void(const bool)> &callback);
 
 QString pythonVersion(const Utils::FilePath &python);
 

@@ -8,8 +8,8 @@
 
 #include <utils/qtcassert.h>
 
-namespace QmlProfiler {
-namespace Internal {
+using namespace QmlDebug;
+namespace QmlProfiler::Internal {
 
 QmlProfilerClientManager::QmlProfilerClientManager(QObject *parent) :
     QmlDebug::QmlDebugConnectionManager(parent)
@@ -62,8 +62,11 @@ void QmlProfilerClientManager::createClients()
     // false by default (will be set to true when connected)
     m_profilerState->setServerRecording(false);
     m_profilerState->setRecordedFeatures(0);
-    m_clientPlugin = new QmlProfilerTraceClient(connection(), m_modelManager,
-                                                m_profilerState->requestedFeatures());
+    m_clientPlugin = new QmlProfilerTraceClient(
+        connection(),
+        std::bind(&QmlProfilerModelManager::appendEventType, m_modelManager, std::placeholders::_1),
+        std::bind(&QmlProfilerModelManager::appendEvent, m_modelManager, std::placeholders::_1),
+        m_profilerState->requestedFeatures());
     QTC_ASSERT(m_clientPlugin, return);
 
     m_clientPlugin->setFlushInterval(m_flushInterval);
@@ -119,5 +122,4 @@ void QmlProfilerClientManager::logState(const QString &message)
     QmlProfilerTool::logState(QLatin1String("QML Profiler: ") + message);
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

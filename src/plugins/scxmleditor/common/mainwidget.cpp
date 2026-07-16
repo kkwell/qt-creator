@@ -45,6 +45,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
+#include <QPalette>
 #include <QProgressBar>
 #include <QProgressDialog>
 #include <QStackedWidget>
@@ -61,10 +62,10 @@
 #include <iostream>
 
 using namespace ScxmlEditor::PluginInterface;
-using namespace ScxmlEditor::Common;
 using namespace ScxmlEditor::OutputPane;
-
 using namespace Utils;
+
+namespace ScxmlEditor::Common {
 
 void msgHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
 {
@@ -325,8 +326,11 @@ void MainWidget::init()
     });
 
     // Init ToolButtons
-    auto stateColorButton = new ColorToolButton("StateColor", ":/scxmleditor/images/state_color.png", Tr::tr("State Color"));
-    auto fontColorButton = new ColorToolButton("FontColor", ":/scxmleditor/images/font_color.png", Tr::tr("Font Color"));
+    const Icon stateColor({{":/scxmleditor/images/fill.png", Theme::IconsBaseColor}}, Icon::Tint);
+    const Icon fontColor({{":/scxmleditor/images/font_color.png", Theme::IconsBaseColor}}, Icon::Tint);
+
+    auto stateColorButton = new ColorToolButton("StateColor", stateColor.icon(), Tr::tr("State Color"));
+    auto fontColorButton = new ColorToolButton("FontColor", fontColor.icon(), Tr::tr("Font Color"));
     QToolButton *alignToolButton = createToolButton(toolButtonIcon(ActionAlignLeft), Tr::tr("Align Left"), QToolButton::MenuButtonPopup);
     QToolButton *adjustToolButton = createToolButton(toolButtonIcon(ActionAdjustWidth), Tr::tr("Adjust Width"), QToolButton::MenuButtonPopup);
 
@@ -408,7 +412,7 @@ void MainWidget::exportToImage()
     if (!view)
         return;
 
-    QString suggestedFileName = QFileInfo(m_document->fileName()).baseName();
+    QString suggestedFileName = m_document->filePath().baseName();
     if (suggestedFileName.isEmpty())
         suggestedFileName = Tr::tr("Untitled");
 
@@ -420,20 +424,19 @@ void MainWidget::exportToImage()
             .arg(lastFolder)
             .arg(suggestedFileName)
             .arg(QDateTime::currentDateTime().toString("yyyyMMddhhmmss"));
-    const FilePath filePath = FileUtils::getSaveFilePath(this,
-                                                         Tr::tr("Export Canvas to Image"),
+    const FilePath filePath = FileUtils::getSaveFilePath(Tr::tr("Export Canvas to Image"),
                                                          FilePath::fromString(suggestedFileName),
                                                          saveImageFileFilter());
     if (!filePath.isEmpty()) {
         const QRectF r = view->scene()->itemsBoundingRect();
         QImage image(r.size().toSize(), QImage::Format_ARGB32);
-        image.fill(QColor(0xef, 0xef, 0xef));
+        image.fill(palette().color(QPalette::Window));
 
         QPainter painter(&image);
         view->scene()->render(&painter, QRectF(), r);
 
-        if (image.save(filePath.toString())) {
-            s->setValue(Constants::C_SETTINGS_LASTEXPORTFOLDER, filePath.parentDir().toString());
+        if (image.save(filePath.toUrlishString())) {
+            s->setValue(Constants::C_SETTINGS_LASTEXPORTFOLDER, filePath.parentDir().toUrlishString());
         } else {
             QMessageBox::warning(this, Tr::tr("Export Failed"), Tr::tr("Could not export to image."));
         }
@@ -450,14 +453,13 @@ void MainWidget::saveScreenShot()
     const QString documentsLocation = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
     const FilePath lastFolder = FilePath::fromSettings(
             s->value(Constants::C_SETTINGS_LASTSAVESCREENSHOTFOLDER, documentsLocation));
-    const FilePath filePath = FileUtils::getSaveFilePath(this,
-                                                         Tr::tr("Save Screenshot"),
+    const FilePath filePath = FileUtils::getSaveFilePath(Tr::tr("Save Screenshot"),
                                                          lastFolder / "scxml_screenshot.png",
                                                          saveImageFileFilter());
     if (!filePath.isEmpty()) {
         const QImage image = view->view()->grabView();
 
-        if (image.save(filePath.toString())) {
+        if (image.save(filePath.toUrlishString())) {
             s->setValue(Constants::C_SETTINGS_LASTSAVESCREENSHOTFOLDER, filePath.parentDir().toSettings());
         } else {
             QMessageBox::warning(this, Tr::tr("Saving Failed"), Tr::tr("Could not save the screenshot."));
@@ -495,7 +497,7 @@ void MainWidget::addStateView(BaseItem *item)
             // Update transitions
             auto scene = static_cast<GraphicsScene*>(it->scene());
             if (scene) {
-                QVector<ScxmlTag*> childTransitionTags;
+                QList<ScxmlTag*> childTransitionTags;
                 TagUtils::findAllTransitionChildren(it->tag(), childTransitionTags);
                 for (int i = 0; i < childTransitionTags.count(); ++i) {
                     BaseItem *item = scene->findItem(childTransitionTags[i]);
@@ -569,7 +571,7 @@ void MainWidget::newDocument()
 {
     clear();
     addStateView();
-    m_document->setFileName(QString());
+    m_document->setFilePath({});
     m_uiFactory->documentChanged(NewDocument, m_document);
     documentChanged();
 }
@@ -619,11 +621,11 @@ void MainWidget::handleTabVisibilityChanged(bool visible)
     }
 }
 
-bool MainWidget::load(const QString &fileName)
+bool MainWidget::load(const FilePath &filePath)
 {
     clear();
     addStateView();
-    m_document->load(fileName);
+    m_document->load(filePath);
     m_uiFactory->documentChanged(AfterLoad, m_document);
     documentChanged();
     return !m_document->hasError();
@@ -811,14 +813,14 @@ QString MainWidget::errorMessage() const
     return m_document->lastError();
 }
 
-QString MainWidget::fileName() const
+FilePath MainWidget::filePath() const
 {
-    return m_document->fileName();
+    return m_document->filePath();
 }
 
-void MainWidget::setFileName(const QString &filename)
+void MainWidget::setFilePath(const FilePath &filePath)
 {
-    m_document->setFileName(filename);
+    m_document->setFilePath(filePath);
 }
 
 bool MainWidget::isDirty() const
@@ -856,3 +858,5 @@ bool MainWidget::event(QEvent *e)
 
     return QWidget::event(e);
 }
+
+} // namespace ScxmlEditor::Common

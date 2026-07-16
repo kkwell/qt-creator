@@ -13,6 +13,7 @@ T.Label {
 
     property bool blockedByContext: false
     property bool blockedByTemplate: false // MCU
+    property bool searchNoMatch: false
 
     width: StudioTheme.Values.propertyLabelWidth
     color: StudioTheme.Values.themeTextColor
@@ -34,6 +35,14 @@ T.Label {
     }
 
     states: [
+        State {
+            name: "searchNoMatch"
+            when: searchNoMatch
+            PropertyChanges {
+                target: label
+                visible: false
+            }
+        },
         State {
             name: "disabled"
             when: !label.enabled && !(label.blockedByContext || label.blockedByTemplate)

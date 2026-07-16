@@ -4,12 +4,14 @@
 #pragma once
 
 #include "vcsbase_global.h"
-#include "vcsbaseclientsettings.h"
 #include "vcscommand.h"
 #include "vcsenums.h"
 
+#include <QtTaskTree/QSequentialTaskTreeRunner>
+
 #include <utils/id.h>
 #include <utils/processenums.h>
+#include <utils/textcodec.h>
 
 #include <QStringList>
 #include <QVariant>
@@ -17,21 +19,29 @@
 #include <functional>
 
 QT_BEGIN_NAMESPACE
-class QTextCodec;
 class QToolBar;
 QT_END_NAMESPACE
 
-namespace Utils {
-class Process;
-}
+namespace Utils { class Process; }
 
 namespace VcsBase {
 
-class CommandResult;
 class VcsBaseEditorConfig;
 class VcsBaseEditorWidget;
+class VcsBaseSettings;
 
 using CommandHandler = std::function<void(const CommandResult &)>;
+
+class VCSBASE_EXPORT VcsCommandData
+{
+public:
+    Utils::FilePath workingDirectory;
+    QStringList arguments;
+    RunFlags flags = RunFlag::None;
+    Core::ProgressParser progressParser = {};
+    Utils::TextEncoding encoding = {};
+    CommandHandler commandHandler = {};
+};
 
 class VCSBASE_EXPORT VcsBaseClientImpl : public QObject
 {
@@ -42,28 +52,15 @@ public:
     virtual Utils::FilePath vcsBinary(const Utils::FilePath &forDirectory) const;
     int vcsTimeoutS() const;
 
-    // TODO: For master: remove this overload.
-    static VcsCommand *createVcsCommand(const Utils::FilePath &defaultWorkingDir,
-                                        const Utils::Environment &environment);
-    static VcsCommand *createVcsCommand(QObject *parent, const Utils::FilePath &defaultWorkingDir,
-                                        const Utils::Environment &environment);
-
     VcsBaseEditorWidget *createVcsEditor(Utils::Id kind, QString title,
-                                         const Utils::FilePath &source, QTextCodec *codec,
+                                         const Utils::FilePath &source,
+                                         const Utils::TextEncoding &encoding,
                                          const char *registerDynamicProperty,
                                          const QString &dynamicPropertyValue) const;
-
-    VcsCommand *createCommand(const Utils::FilePath &workingDirectory,
-                              VcsBaseEditorWidget *editor = nullptr) const;
 
     void setupCommand(Utils::Process &process,
                       const Utils::FilePath &workingDirectory,
                       const QStringList &args) const;
-
-    void enqueueJob(VcsCommand *cmd,
-                    const QStringList &args,
-                    const Utils::FilePath &forDirectory,
-                    const ExitCodeInterpreter &interpreter = {}) const;
 
     virtual Utils::Environment processEnvironment(const Utils::FilePath &appliedTo) const;
 
@@ -78,25 +75,22 @@ public:
 
     // Fully synchronous VCS execution (QProcess-based)
     CommandResult vcsSynchronousExec(const Utils::FilePath &workingDir,
-                                     const QStringList &args, RunFlags flags = RunFlags::None,
-                                     int timeoutS = -1, QTextCodec *codec = nullptr) const;
+                                     const QStringList &args, RunFlags flags = RunFlag::None,
+                                     int timeoutS = -1, const Utils::TextEncoding &encoding = {}) const;
     CommandResult vcsSynchronousExec(const Utils::FilePath &workingDir,
                                      const Utils::CommandLine &cmdLine,
-                                     RunFlags flags = RunFlags::None,
-                                     int timeoutS = -1, QTextCodec *codec = nullptr) const;
+                                     RunFlags flags = RunFlag::None,
+                                     int timeoutS = -1, const Utils::TextEncoding &encoding = {}) const;
 
-    void vcsExecWithHandler(const Utils::FilePath &workingDirectory,
-                            const QStringList &arguments,
-                            const QObject *context,
-                            const CommandHandler &handler,
-                            RunFlags additionalFlags = RunFlags::None,
-                            QTextCodec *codec = nullptr) const;
-    void vcsExec(const Utils::FilePath &workingDirectory,
-                 const QStringList &arguments,
-                 RunFlags additionalFlags = RunFlags::None) const;
-    void vcsExecWithEditor(const Utils::FilePath &workingDirectory,
-                           const QStringList &arguments,
-                           VcsBaseEditorWidget *editor) const;
+    void executeInEditor(const Utils::FilePath &workingDirectory,
+                         const QStringList &arguments,
+                         VcsBaseEditorWidget *editor) const;
+    void executeInEditor(const Utils::FilePath &workingDirectory,
+                         const Utils::CommandLine &command,
+                         VcsBaseEditorWidget *editor) const;
+    void enqueueTask(const QtTaskTree::ExecutableItem &task);
+    QtTaskTree::ExecutableItem commandTask(const VcsCommandData &data) const;
+    void enqueueCommand(const VcsCommandData &data);
 
 protected:
     void resetCachedVcsInfo(const Utils::FilePath &workingDir);
@@ -107,6 +101,7 @@ private:
     void saveSettings();
 
     VcsBaseSettings *m_baseSettings = nullptr; // Aspect based.
+    QtTaskTree::QSequentialTaskTreeRunner m_taskTreeRunner;
 };
 
 class VCSBASE_EXPORT VcsBaseClient : public VcsBaseClientImpl
@@ -126,10 +121,6 @@ public:
 
     virtual bool synchronousCreateRepository(const Utils::FilePath &workingDir,
                                              const QStringList &extraOptions = {});
-    virtual bool synchronousClone(const Utils::FilePath &workingDir,
-                                  const QString &srcLocation,
-                                  const QString &dstLocation,
-                                  const QStringList &extraOptions = {});
     virtual bool synchronousAdd(const Utils::FilePath &workingDir,
                                 const QString &relFileName,
                                 const QStringList &extraOptions = {});
@@ -137,14 +128,12 @@ public:
                                    const QString &fileName,
                                    const QStringList &extraOptions = {});
     virtual bool synchronousMove(const Utils::FilePath &workingDir,
-                                 const QString &from, const QString &to,
+                                 const Utils::FilePath &from, const Utils::FilePath &to,
                                  const QStringList &extraOptions = {});
-    virtual bool synchronousPull(const Utils::FilePath &workingDir,
-                                 const QString &srcLocation,
-                                 const QStringList &extraOptions = {});
-    virtual bool synchronousPush(const Utils::FilePath &workingDir,
-                                 const QString &dstLocation,
-                                 const QStringList &extraOptions = {});
+    void pull(const Utils::FilePath &workingDir, const QString &srcLocation,
+              const QStringList &extraOptions = {}, const CommandHandler &commandHandler = {});
+    void push(const Utils::FilePath &workingDir, const QString &dstLocation,
+              const QStringList &extraOptions = {});
     void annotate(const Utils::FilePath &workingDir, const QString &file,
                   int lineNumber = -1, const QString &revision = {},
                   const QStringList &extraOptions = {}, int firstLine = -1) override;
@@ -177,15 +166,14 @@ public:
                         const QString &commitMessageFile,
                         const QStringList &extraOptions = {});
 
-    virtual Utils::FilePath findTopLevelForFile(const Utils::FilePath &/*file*/) const { return {}; }
-
     virtual void view(const Utils::FilePath &source, const QString &id,
                       const QStringList &extraOptions = QStringList());
 
 signals:
     void parsedStatus(const QList<VcsBase::VcsBaseClient::StatusItem> &statusList);
     // Passes on changed signals from VcsJob to Control
-    void changed(const QVariant &v);
+    void repositoryChanged(const Utils::FilePath &repository);
+    void filesChanged(const Utils::FilePaths &files);
 
 public:
     enum VcsCommandTag

@@ -29,13 +29,14 @@
 #include <extensionsystem/iplugin.h>
 
 #include <projectexplorer/buildmanager.h>
+#include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projectexplorericons.h>
 #include <projectexplorer/projectmanager.h>
-#include <projectexplorer/projecttree.h>
 #include <projectexplorer/projectmanager.h>
+#include <projectexplorer/projecttree.h>
 #include <projectexplorer/target.h>
 
 #include <utils/action.h>
@@ -61,6 +62,18 @@ static QbsProject *currentEditorProject()
     return doc ? qobject_cast<QbsProject *>(ProjectManager::projectForFile(doc->filePath())) : nullptr;
 }
 
+class QbsToolFactory : public DeviceToolAspectFactory
+{
+public:
+    QbsToolFactory()
+    {
+        setToolId(Constants::QBS_TOOL_ID);
+        setToolType(DeviceToolAspect::BuildTool);
+        setFilePattern({"qbs"});
+        setLabelText(Tr::tr("Qbs executable:"));
+    }
+};
+
 class QbsProjectManagerPluginPrivate
 {
 public:
@@ -71,6 +84,7 @@ public:
     QbsSettingsPage settingsPage;
     QbsProfilesSettingsPage profilesSetttingsPage;
     QbsEditorFactory editorFactory;
+    QbsToolFactory toolFactory;
 };
 
 class QbsProjectManagerPlugin final : public ExtensionSystem::IPlugin
@@ -88,7 +102,6 @@ private:
 
     void initialize() final;
 
-    void targetWasAdded(ProjectExplorer::Target *target);
     void projectChanged(QbsProject *project);
 
     void buildFileContextMenu();
@@ -142,6 +155,11 @@ QbsProjectManagerPlugin::~QbsProjectManagerPlugin()
 void QbsProjectManagerPlugin::initialize()
 {
     d = new QbsProjectManagerPluginPrivate;
+
+    Core::IOptionsPage::registerCategory(
+        Constants::QBS_SETTINGS_CATEGORY,
+        Tr::tr(Constants::QBS_SETTINGS_TR_CATEGORY),
+        ":/qbsprojectmanager/images/settingscategory_qbsprojectmanager.png");
 
     const Core::Context projectContext(::QbsProjectManager::Constants::PROJECT_ID);
 
@@ -284,9 +302,7 @@ void QbsProjectManagerPlugin::initialize()
     connect(Core::EditorManager::instance(), &Core::EditorManager::currentEditorChanged,
             this, &QbsProjectManagerPlugin::updateBuildActions);
 
-    connect(ProjectManager::instance(), &ProjectManager::targetAdded,
-            this, &QbsProjectManagerPlugin::targetWasAdded);
-    connect(ProjectManager::instance(), &ProjectManager::targetRemoved,
+    connect(ProjectManager::instance(), &ProjectManager::currentBuildConfigurationChanged,
             this, &QbsProjectManagerPlugin::updateBuildActions);
     connect(ProjectManager::instance(), &ProjectManager::startupProjectChanged,
             this, &QbsProjectManagerPlugin::updateReparseQbsAction);
@@ -305,23 +321,12 @@ void QbsProjectManagerPlugin::initialize()
     updateBuildActions();
 }
 
-void QbsProjectManagerPlugin::targetWasAdded(Target *target)
-{
-    if (!qobject_cast<QbsProject *>(target->project()))
-        return;
-
-    connect(target, &Target::parsingStarted,
-            this, std::bind(&QbsProjectManagerPlugin::projectChanged, this, nullptr));
-    connect(target, &Target::parsingFinished,
-            this, std::bind(&QbsProjectManagerPlugin::projectChanged, this, nullptr));
-}
-
 void QbsProjectManagerPlugin::updateContextActions(Node *node)
 {
     auto project = qobject_cast<Internal::QbsProject *>(ProjectTree::currentProject());
     bool isEnabled = !BuildManager::isBuilding(project)
-            && project && project->activeTarget()
-            && !project->activeTarget()->buildSystem()->isParsing()
+            && project && project->activeBuildSystem()
+            && !project->activeBuildSystem()->isParsing()
             && node && node->isEnabled();
 
     const bool isFile = project && node && node->asFileNode();
@@ -344,8 +349,8 @@ void QbsProjectManagerPlugin::updateReparseQbsAction()
     auto project = qobject_cast<QbsProject *>(ProjectManager::startupProject());
     m_reparseQbs->setEnabled(project
                              && !BuildManager::isBuilding(project)
-                             && project && project->activeTarget()
-                             && !project->activeTarget()->buildSystem()->isParsing());
+                             && project && project->activeBuildSystem()
+                             && !project->activeBuildSystem()->isParsing());
 }
 
 void QbsProjectManagerPlugin::updateBuildActions()
@@ -375,8 +380,8 @@ void QbsProjectManagerPlugin::updateBuildActions()
 
         if (QbsProject *editorProject = currentEditorProject()) {
             enabled = !BuildManager::isBuilding(editorProject)
-                    && editorProject->activeTarget()
-                    && !editorProject->activeTarget()->buildSystem()->isParsing();
+                    && editorProject->activeBuildSystem()
+                    && !editorProject->activeBuildSystem()->isParsing();
             fileVisible = productNode
                     || dynamic_cast<QbsProjectNode *>(parentProjectNode)
                     || dynamic_cast<QbsGroupNode *>(parentProjectNode);
@@ -416,7 +421,7 @@ void QbsProjectManagerPlugin::buildFileContextMenu()
     QTC_ASSERT(node, return);
     auto project = qobject_cast<QbsProject *>(ProjectTree::currentProject());
     QTC_ASSERT(project, return);
-    buildSingleFile(project, node->filePath().toString());
+    buildSingleFile(project, node->filePath().toUrlishString());
 }
 
 void QbsProjectManagerPlugin::buildFile()
@@ -426,7 +431,7 @@ void QbsProjectManagerPlugin::buildFile()
     if (!project || !node)
         return;
 
-    buildSingleFile(project, node->filePath().toString());
+    buildSingleFile(project, node->filePath().toUrlishString());
 }
 
 void QbsProjectManagerPlugin::buildProductContextMenu()
@@ -531,10 +536,7 @@ void QbsProjectManagerPlugin::buildFiles(QbsProject *project, const QStringList 
     QTC_ASSERT(project, return);
     QTC_ASSERT(!files.isEmpty(), return);
 
-    Target *t = project->activeTarget();
-    if (!t)
-        return;
-    auto bc = qobject_cast<QbsBuildConfiguration *>(t->activeBuildConfiguration());
+    auto bc = qobject_cast<QbsBuildConfiguration *>(project->activeBuildConfiguration());
     if (!bc)
         return;
 
@@ -563,10 +565,7 @@ void QbsProjectManagerPlugin::runStepsForProducts(QbsProject *project,
     QTC_ASSERT(project, return);
     QTC_ASSERT(!products.isEmpty(), return);
 
-    Target *t = project->activeTarget();
-    if (!t)
-        return;
-    auto bc = qobject_cast<QbsBuildConfiguration *>(t->activeBuildConfiguration());
+    auto bc = qobject_cast<QbsBuildConfiguration *>(project->activeBuildConfiguration());
     if (!bc)
         return;
 
@@ -603,12 +602,10 @@ void QbsProjectManagerPlugin::reparseProject(QbsProject *project)
     if (!project)
         return;
 
-    Target *t = project->activeTarget();
-    if (!t)
-        return;
-
-    if (auto bs = qobject_cast<QbsBuildSystem *>(t->buildSystem()))
-        bs->scheduleParsing();
+    if (auto bs = qobject_cast<QbsBuildSystem *>(project->activeBuildSystem());
+        bs && bs->session()->apiLevel() >= 8) {
+        bs->scheduleParsing({{Constants::QBS_RESTORE_BEHAVIOR_KEY, "restore-and-resolve"}});
+    }
 }
 
 void buildNamedProduct(QbsProject *project, const QString &product)

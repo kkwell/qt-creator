@@ -3,6 +3,7 @@
 
 #include "kitchooser.h"
 
+#include "kitaspect.h"
 #include "kitmanager.h"
 #include "projectexplorerconstants.h"
 #include "projectexplorertr.h"
@@ -44,7 +45,7 @@ KitChooser::KitChooser(QWidget *parent) :
 
 void KitChooser::onManageButtonClicked()
 {
-    Core::ICore::showOptionsDialog(Constants::KITS_SETTINGS_PAGE_ID, this);
+    Core::ICore::showSettings(Constants::KITS_SETTINGS_PAGE_ID);
 }
 
 void KitChooser::setShowIcons(bool showIcons)
@@ -87,8 +88,7 @@ void KitChooser::populate()
     const Id lastKit = Id::fromSetting(ICore::settings()->value(lastKitKey));
     bool didActivate = false;
 
-    if (Target *target = ProjectManager::startupTarget()) {
-        Kit *kit = target->kit();
+    if (Kit *kit = activeKitForActiveProject()) {
         if (m_kitPredicate(kit)) {
             QString display = Tr::tr("Kit of Active Project: %1").arg(kitText(kit));
             m_chooser->addItem(display, kit->id().toSetting());

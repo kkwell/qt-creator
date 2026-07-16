@@ -3,23 +3,23 @@
 
 #include "buildsystem.h"
 
+#include "buildaspects.h"
 #include "buildconfiguration.h"
+#include "buildsteplist.h"
+#include "deployconfiguration.h"
 #include "extracompiler.h"
+#include "makestep.h"
 #include "projectexplorer.h"
 #include "projectexplorertr.h"
 #include "projectmanager.h"
+#include "projecttree.h"
 #include "runconfiguration.h"
 #include "target.h"
 
 #include <coreplugin/messagemanager.h>
 #include <coreplugin/outputwindow.h>
 
-#include <projectexplorer/buildaspects.h>
-#include <projectexplorer/buildsteplist.h>
-#include <projectexplorer/makestep.h>
-
 #include <utils/algorithm.h>
-#include <utils/processinterface.h>
 #include <utils/qtcassert.h>
 
 #include <QTimer>
@@ -35,7 +35,6 @@ namespace ProjectExplorer {
 class BuildSystemPrivate
 {
 public:
-    Target *m_target = nullptr;
     BuildConfiguration *m_buildConfiguration = nullptr;
 
     QTimer m_delayedParsingTimer;
@@ -47,17 +46,10 @@ public:
     QList<BuildTargetInfo> m_appTargets;
 };
 
-BuildSystem::BuildSystem(BuildConfiguration *bc)
-    : BuildSystem(bc->target())
+BuildSystem::BuildSystem(BuildConfiguration *bc) : d(new BuildSystemPrivate)
 {
+    QTC_CHECK(bc);
     d->m_buildConfiguration = bc;
-}
-
-BuildSystem::BuildSystem(Target *target)
-    : d(new BuildSystemPrivate)
-{
-    QTC_CHECK(target);
-    d->m_target = target;
 
     // Timer:
     d->m_delayedParsingTimer.setSingleShot(true);
@@ -75,19 +67,24 @@ BuildSystem::~BuildSystem()
     delete d;
 }
 
+QString BuildSystem::name() const
+{
+    return project()->buildSystemName();
+}
+
 Project *BuildSystem::project() const
 {
-    return d->m_target->project();
+    return d->m_buildConfiguration->project();
 }
 
 Target *BuildSystem::target() const
 {
-    return d->m_target;
+    return d->m_buildConfiguration->target();
 }
 
 Kit *BuildSystem::kit() const
 {
-    return d->m_target->kit();
+    return d->m_buildConfiguration->kit();
 }
 
 BuildConfiguration *BuildSystem::buildConfiguration() const
@@ -101,7 +98,12 @@ void BuildSystem::emitParsingStarted()
 
     d->m_isParsing = true;
     emit parsingStarted();
-    emit d->m_target->parsingStarted();
+    emit project()->anyParsingStarted();
+    emit ProjectManager::instance()->projectStartedParsing(project());
+    if (this == activeBuildSystemForActiveProject())
+        emit ProjectManager::instance()->parsingStartedActive(this);
+    if (this == activeBuildSystemForCurrentProject())
+        emit ProjectManager::instance()->parsingStartedCurrent(this);
 }
 
 void BuildSystem::emitParsingFinished(bool success)
@@ -113,17 +115,22 @@ void BuildSystem::emitParsingFinished(bool success)
     d->m_isParsing = false;
     d->m_hasParsingData = success;
     emit parsingFinished(success);
-    emit d->m_target->parsingFinished(success);
+    emit project()->anyParsingFinished(success);
+    emit ProjectManager::instance()->projectFinishedParsing(project());
+    if (this == activeBuildSystemForActiveProject())
+        emit ProjectManager::instance()->parsingFinishedActive(success, this);
+    if (this == activeBuildSystemForCurrentProject())
+        emit ProjectManager::instance()->parsingFinishedCurrent(success, this);
 }
 
 FilePath BuildSystem::projectFilePath() const
 {
-    return d->m_target->project()->projectFilePath();
+    return project()->projectFilePath();
 }
 
 FilePath BuildSystem::projectDirectory() const
 {
-    return d->m_target->project()->projectDirectory();
+    return project()->projectDirectory();
 }
 
 bool BuildSystem::isWaitingForParse() const
@@ -141,24 +148,9 @@ void BuildSystem::requestDelayedParse()
     requestParseHelper(1000);
 }
 
-void BuildSystem::requestParseWithCustomDelay(int delayInMs)
-{
-    requestParseHelper(delayInMs);
-}
-
 void BuildSystem::cancelDelayedParseRequest()
 {
     d->m_delayedParsingTimer.stop();
-}
-
-void BuildSystem::setParseDelay(int delayInMs)
-{
-    d->m_delayedParsingTimer.setInterval(delayInMs);
-}
-
-int BuildSystem::parseDelay() const
-{
-    return d->m_delayedParsingTimer.interval();
 }
 
 bool BuildSystem::isParsing() const
@@ -173,15 +165,8 @@ bool BuildSystem::hasParsingData() const
 
 Environment BuildSystem::activeParseEnvironment() const
 {
-    const BuildConfiguration *const bc = d->m_target->activeBuildConfiguration();
-    if (bc)
-        return bc->environment();
-
-    const RunConfiguration *const rc = d->m_target->activeRunConfiguration();
-    if (rc)
-        return rc->runnable().environment;
-
-    return d->m_target->kit()->buildEnvironment();
+    QTC_ASSERT(d->m_buildConfiguration, return {});
+    return d->m_buildConfiguration->environment();
 }
 
 void BuildSystem::requestParseHelper(int delay)
@@ -200,6 +185,16 @@ bool BuildSystem::addFiles(Node *, const FilePaths &filePaths, FilePaths *notAdd
 {
     Q_UNUSED(filePaths)
     Q_UNUSED(notAdded)
+    return false;
+}
+
+bool BuildSystem::addTargetProperty(ProjectExplorer::Node *context, const QString &property,
+                                    const QString &value, const std::string &condition)
+{
+    Q_UNUSED(context);
+    Q_UNUSED(property);
+    Q_UNUSED(value);
+    Q_UNUSED(condition);
     return false;
 }
 
@@ -224,10 +219,10 @@ bool BuildSystem::canRenameFile(Node *, const FilePath &oldFilePath, const FileP
     return true;
 }
 
-bool BuildSystem::renameFile(Node *, const FilePath &oldFilePath, const FilePath &newFilePath)
+bool BuildSystem::renameFiles(Node *, const FilePairs &filesToRename, FilePaths *notRenamed)
 {
-    Q_UNUSED(oldFilePath)
-    Q_UNUSED(newFilePath)
+    if (notRenamed)
+        *notRenamed = firstPaths(filesToRename);
     return false;
 }
 
@@ -256,7 +251,8 @@ ExtraCompiler *BuildSystem::extraCompilerForTarget(const Utils::FilePath &target
 
 MakeInstallCommand BuildSystem::makeInstallCommand(const FilePath &installRoot) const
 {
-    QTC_ASSERT(target()->project()->hasMakeInstallEquivalent(), return {});
+    QTC_ASSERT(project()->hasMakeInstallEquivalent(), return {});
+    QTC_ASSERT(buildConfiguration(), return {});
 
     BuildStepList *buildSteps = buildConfiguration()->buildSteps();
     QTC_ASSERT(buildSteps, return {});
@@ -323,12 +319,15 @@ void BuildSystem::setDeploymentData(const DeploymentData &deploymentData)
 {
     if (d->m_deploymentData != deploymentData) {
         d->m_deploymentData = deploymentData;
-        emit target()->deploymentDataChanged();
+        emit deploymentDataChanged();
     }
 }
 
 DeploymentData BuildSystem::deploymentData() const
 {
+    const DeployConfiguration * const dc = buildConfiguration()->activeDeployConfiguration();
+    if (dc && dc->usesCustomDeploymentData())
+        return dc->customDeploymentData();
     return d->m_deploymentData;
 }
 
@@ -351,24 +350,34 @@ BuildTargetInfo BuildSystem::buildTarget(const QString &buildKey) const
 
 void BuildSystem::setRootProjectNode(std::unique_ptr<ProjectNode> &&root)
 {
-    d->m_target->project()->setRootProjectNode(std::move(root));
+    project()->setRootProjectNode(std::move(root));
+}
+
+void BuildSystem::updateQmlCodeModel()
+{
+    project()->updateQmlCodeModel(kit(), buildConfiguration());
+}
+
+void BuildSystem::updateQmlCodeModelInfo(QmlCodeModelInfo &)
+{
+    // Nothing by default.
 }
 
 void BuildSystem::emitBuildSystemUpdated()
 {
-    emit target()->buildSystemUpdated(this);
+    emit updated();
 }
 
 void BuildSystem::setExtraData(const QString &buildKey, Utils::Id dataKey, const QVariant &data)
 {
-    const ProjectNode *node = d->m_target->project()->findNodeForBuildKey(buildKey);
+    const ProjectNode *node = project()->findNodeForBuildKey(buildKey);
     QTC_ASSERT(node, return);
     node->setData(dataKey, data);
 }
 
 QVariant BuildSystem::extraData(const QString &buildKey, Utils::Id dataKey) const
 {
-    const ProjectNode *node = d->m_target->project()->findNodeForBuildKey(buildKey);
+    const ProjectNode *node = project()->findNodeForBuildKey(buildKey);
     QTC_ASSERT(node, return {});
     return node->data(dataKey);
 }
@@ -395,16 +404,31 @@ QString BuildSystem::disabledReason(const QString &buildKey) const
                                   : Tr::tr("The project could not be fully parsed.");
         const FilePath projectFilePath = buildTarget(buildKey).projectFilePath;
         if (!projectFilePath.isEmpty() && !projectFilePath.exists())
-            msg += '\n' + Tr::tr("The project file \"%1\" does not exist.").arg(projectFilePath.toString());
+            msg += '\n' + Tr::tr("The project file \"%1\" does not exist.").arg(projectFilePath.toUrlishString());
         return msg;
     }
     return {};
 }
 
-CommandLine BuildSystem::commandLineForTests(const QList<QString> & /*tests*/,
+CommandLine BuildSystem::commandLineForTests(const QStringList & /*tests*/,
                                              const QStringList & /*options*/) const
 {
     return {};
+}
+
+BuildSystem *activeBuildSystem(const Project *project)
+{
+    return project ? project->activeBuildSystem() : nullptr;
+}
+
+BuildSystem *activeBuildSystemForActiveProject()
+{
+    return activeBuildSystem(ProjectManager::startupProject());
+}
+
+BuildSystem *activeBuildSystemForCurrentProject()
+{
+    return activeBuildSystem(ProjectTree::currentProject());
 }
 
 } // namespace ProjectExplorer

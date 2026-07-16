@@ -3,29 +3,33 @@
 
 #include "customparser.h"
 
-#include "projectexplorer.h"
 #include "projectexplorerconstants.h"
 #include "projectexplorertr.h"
+#include "projectmanager.h"
 #include "task.h"
 
 #include <coreplugin/icore.h>
+#include <coreplugin/messagemanager.h>
 
 #include <utils/algorithm.h>
+#include <utils/layoutbuilder.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcsettings.h>
+#include <utils/stylehelper.h>
 
 #include <QCheckBox>
+#include <QJsonArray>
 #include <QLabel>
 #include <QPair>
 #include <QString>
 #include <QVBoxLayout>
 
 #ifdef WITH_TESTS
-#   include <QTest>
-
-#   include "projectexplorer_test.h"
-#   include "outputparser_test.h"
+#include "outputparser_test.h"
+#include <QTest>
 #endif
 
+using namespace ProjectExplorer::Internal;
 using namespace Utils;
 
 const char idKey[] = "Id";
@@ -38,8 +42,17 @@ const char fileNameCapKey[] = "FileNameCap";
 const char messageCapKey[] = "MessageCap";
 const char channelKey[] = "Channel";
 const char exampleKey[] = "Example";
+const char buildDefaultKey[] = "BuildDefault";
+const char runDefaultKey[] = "RunDefault";
+
+const char CUSTOM_PARSER_COUNT_KEY[] = "ProjectExplorer/Settings/CustomParserCount";
+const char CUSTOM_PARSER_PREFIX_KEY[] = "ProjectExplorer/Settings/CustomParser";
+
+const char importFileName[] = "customparsers.json";
 
 namespace ProjectExplorer {
+
+static QList<CustomParserSettings> g_parsers;
 
 bool CustomParserExpression::operator ==(const CustomParserExpression &other) const
 {
@@ -136,7 +149,9 @@ void CustomParserExpression::setFileNameCap(int fileNameCap)
 bool CustomParserSettings::operator ==(const CustomParserSettings &other) const
 {
     return id == other.id && displayName == other.displayName
-            && error == other.error && warning == other.warning;
+            && error == other.error && warning == other.warning
+            && buildDefault == other.buildDefault
+            && runDefault == other.runDefault;
 }
 
 Store CustomParserSettings::toMap() const
@@ -146,6 +161,8 @@ Store CustomParserSettings::toMap() const
     map.insert(nameKey, displayName);
     map.insert(errorKey, variantFromStore(error.toMap()));
     map.insert(warningKey, variantFromStore(warning.toMap()));
+    map.insert(buildDefaultKey, buildDefault);
+    map.insert(runDefaultKey, runDefault);
     return map;
 }
 
@@ -155,17 +172,35 @@ void CustomParserSettings::fromMap(const Store &map)
     displayName = map.value(nameKey).toString();
     error.fromMap(storeFromVariant(map.value(errorKey)));
     warning.fromMap(storeFromVariant(map.value(warningKey)));
+    buildDefault = map.value(buildDefaultKey).toBool();
+    runDefault = map.value(runDefaultKey).toBool();
 }
 
-CustomParsersAspect::CustomParsersAspect(Target *target)
+QJsonObject CustomParserSettings::toJson() const
 {
-    Q_UNUSED(target)
+    return QJsonObject::fromVariantMap(mapFromStore(toMap()));
+}
+
+CustomParserSettings CustomParserSettings::fromJson(const QJsonObject &obj)
+{
+    CustomParserSettings settings;
+    settings.fromMap(storeFromMap(obj.toVariantMap()));
+    return settings;
+}
+
+CustomParsersAspect::CustomParsersAspect(BuildConfiguration *bc)
+{
     setId("CustomOutputParsers");
     setSettingsKey("CustomOutputParsers");
     setDisplayName(Tr::tr("Custom Output Parsers"));
     addDataExtractor(this, &CustomParsersAspect::parsers, &Data::parsers);
-    setConfigWidgetCreator([this] {
-        const auto widget = new Internal::CustomParsersSelectionWidget;
+    setConfigWidgetCreator([this, bc] {
+        const auto widget = new CustomParsersSelectionWidget(
+            CustomParsersSelectionWidget::InRunConfig, bc->project());
+        for (const auto &s : CustomParsers::parsersAvailableInProject(bc->project())) {
+            if (s.runDefault && !m_parsers.contains(s.id))
+                m_parsers.append(s.id);
+        }
         widget->setSelectedParsers(m_parsers);
         connect(widget, &Internal::CustomParsersSelectionWidget::selectionChanged,
                 this, [this, widget] { m_parsers = widget->selectedParsers(); });
@@ -175,7 +210,7 @@ CustomParsersAspect::CustomParsersAspect(Target *target)
 
 OutputTaskParser *createCustomParserFromId(Utils::Id id)
 {
-    const CustomParserSettings parser = findOrDefault(ProjectExplorerPlugin::customParsers(),
+    const CustomParserSettings parser = findOrDefault(CustomParsers::get(),
             [id](const CustomParserSettings &p) { return p.id == id; });
     if (parser.id.isValid())
         return new Internal::CustomParser(parser);
@@ -255,25 +290,176 @@ OutputLineParser::Result CustomParser::parseLine(
     return hasMatch(line, channel, m_warning, Task::Warning);
 }
 
+void CustomParsers::set(const QList<CustomParserSettings> &settings)
+{
+    if (g_parsers != settings) {
+        g_parsers = settings;
+        emit instance().changed();
+    }
+}
+
+void CustomParsers::add(const CustomParserSettings &settings)
+{
+    QTC_ASSERT(canAdd(settings, g_parsers), return);
+    g_parsers << settings;
+    emit instance().changed();
+}
+
+void CustomParsers::remove(Utils::Id id)
+{
+    Utils::erase(g_parsers, [id](const CustomParserSettings &s) { return s.id == id; });
+    emit instance().changed();
+}
+
+const QList<CustomParserSettings> CustomParsers::get() { return g_parsers; }
+
+const QList<CustomParserSettings> CustomParsers::parsersAvailableInProject(const Project *project)
+{
+    return Utils::filtered(g_parsers, [project](const CustomParserSettings &s) {
+        return !s.project || s.project == project;
+    });
+}
+
+const QList<CustomParserSettings> CustomParsers::modifiableParsers()
+{
+    return Utils::filtered(g_parsers, [](const CustomParserSettings &p) { return !p.readOnly; });
+}
+
+void CustomParsers::load(const Utils::QtcSettings &s)
+{
+    const int customParserCount = s.value(CUSTOM_PARSER_COUNT_KEY).toInt();
+    for (int i = 0; i < customParserCount; ++i) {
+        CustomParserSettings settings;
+        settings.fromMap(storeFromVariant(s.value(numberedKey(CUSTOM_PARSER_PREFIX_KEY, i))));
+        g_parsers << settings;
+    }
+
+    for (const FilePath &importFile :
+         {Core::ICore::installerResourcePath(importFileName),
+          Core::ICore::userResourcePath(importFileName)}) {
+        if (!importFile.exists())
+            continue;
+        const auto parsers = parsersFromFile(importFile);
+        if (!parsers) {
+            Core::MessageManager::writeFlashing(
+                Tr::tr("Failed to read custom output parsers from \"%1\": %2")
+                    .arg(importFile.toUserOutput(), parsers.error()));
+            return;
+        }
+        for (const CustomParserSettings &parser: *parsers) {
+            if (canAdd(parser, g_parsers)) {
+                CustomParserSettings p = parser;
+                p.readOnly = true;
+                add(p);
+            }
+        }
+    }
+
+    const auto projectSettingsLoader = [](const FilePath &jsonFile,
+                                          const Project &project) -> Result<QVariant> {
+        const auto parsers = parsersFromFile(jsonFile);
+        if (!parsers)
+            return ResultError(parsers.error());
+        QVariantList ids;
+        for (const CustomParserSettings &parser: *parsers) {
+            if (canAdd(parser, g_parsers)) {
+                CustomParserSettings p = parser;
+                p.readOnly = true;
+                p.project = &project;
+                add(p);
+                ids << p.id.toSetting();
+            }
+        }
+        return ids;
+    };
+    const auto projectSettingsUnloader = [](const QVariant &data) {
+        const QVariantList l = data.toList();
+        for (const QVariant &v : l)
+            remove(Id::fromSetting(v));
+    };
+    ProjectManager::registerCustomProjectSettingsHandler(
+        {importFileName,
+         CustomProjectSettingsHandler::FileType::File,
+         projectSettingsLoader,
+         projectSettingsUnloader});
+}
+
+void CustomParsers::save(Utils::QtcSettings &s)
+{
+    const QList<CustomParserSettings> modifiable = modifiableParsers();
+    s.setValueWithDefault(CUSTOM_PARSER_COUNT_KEY, int(modifiable.count()), 0);
+    for (int i = 0; i < modifiable.count(); ++i) {
+        s.setValue(
+            numberedKey(CUSTOM_PARSER_PREFIX_KEY, i), variantFromStore(modifiable.at(i).toMap()));
+    }
+}
+
+bool CustomParsers::canAdd(
+    const CustomParserSettings &parser, const QList<CustomParserSettings> &parsers)
+{
+    return parser.id.isValid()
+           && !Utils::contains(parsers, [&parser](const CustomParserSettings &p) {
+                  return p.id == parser.id;
+              });
+}
+
+Result<QList<CustomParserSettings>> CustomParsers::parsersFromFile(const FilePath &jsonFile)
+{
+    const auto content = jsonFile.fileContents();
+    if (!content)
+        return ResultError(content.error());
+    QJsonParseError jsonError;
+    QJsonDocument doc = QJsonDocument::fromJson(*content, &jsonError);
+    if (jsonError.error != QJsonParseError::NoError)
+        return ResultError(jsonError.errorString());
+    const QJsonArray jsonArray = doc.array();
+    QList<CustomParserSettings> parsers;
+    for (const QJsonValue &v : jsonArray) {
+        const CustomParserSettings parser = CustomParserSettings::fromJson(v.toObject());
+        if (canAdd(parser, parsers))
+            parsers << parser;
+    }
+    return parsers;
+}
+
+CustomParsers &CustomParsers::instance()
+{
+    static CustomParsers theInstance;
+    return theInstance;
+}
+
 namespace {
 class SelectionWidget : public QWidget
 {
     Q_OBJECT
 public:
-    SelectionWidget(QWidget *parent = nullptr) : QWidget(parent)
+    SelectionWidget(CustomParsersSelectionWidget::Embedded where, Project *project, QWidget *parent)
+        : QWidget(parent), m_project(project), m_where(where)
     {
-        const auto layout = new QVBoxLayout(this);
         const auto explanatoryLabel = new QLabel(Tr::tr(
             "Custom output parsers scan command line output for user-provided error patterns<br>"
             "to create entries in Issues.<br>"
             "The parsers can be configured <a href=\"dummy\">here</a>."));
-        layout->addWidget(explanatoryLabel);
-        layout->setContentsMargins(0, 0, 0, 0);
+
+        using namespace Layouting;
+        Column {
+            noMargin,
+            spacing(StyleHelper::SpacingTokens::GapVL),
+            Column {
+                bindTo(&m_extraWidgetsLayout),
+            },
+            explanatoryLabel,
+            Column {
+                bindTo(&m_checkBoxesLayout),
+                spacing(StyleHelper::SpacingTokens::GapVXxs),
+            },
+        }.attachTo(this);
+
         connect(explanatoryLabel, &QLabel::linkActivated, [] {
-            Core::ICore::showOptionsDialog(Constants::CUSTOM_PARSERS_SETTINGS_PAGE_ID);
+            Core::ICore::showSettings(Constants::CUSTOM_PARSERS_SETTINGS_PAGE_ID);
         });
         updateUi();
-        connect(ProjectExplorerPlugin::instance(), &ProjectExplorerPlugin::customParsersChanged,
+        connect(&CustomParsers::instance(), &CustomParsers::changed,
                 this, &SelectionWidget::updateUi);
     }
 
@@ -294,34 +480,54 @@ public:
         return parsers;
     }
 
+    void addExtraWidget(QWidget *widget)
+    {
+        m_extraWidgetsLayout->addWidget(widget);
+    }
+
 signals:
     void selectionChanged();
 
 private:
     void updateUi()
     {
-        const auto layout = qobject_cast<QVBoxLayout *>(this->layout());
-        QTC_ASSERT(layout, return);
-        const QList<Utils::Id> parsers = selectedParsers();
+        QList<Utils::Id> parsers = selectedParsers();
         for (const auto &p : std::as_const(parserCheckBoxes))
             delete p.first;
         parserCheckBoxes.clear();
-        for (const CustomParserSettings &s : ProjectExplorerPlugin::customParsers()) {
+        for (const CustomParserSettings &s : CustomParsers::parsersAvailableInProject(m_project)) {
             const auto checkBox = new QCheckBox(s.displayName, this);
+            bool isSelected = parsers.contains(s.id);
+            bool projectDefault =
+                       (m_where == CustomParsersSelectionWidget::InBuildConfig && s.buildDefault)
+                    || (m_where == CustomParsersSelectionWidget::InRunConfig  && s.runDefault);
+            if (projectDefault) {
+                //: %1 = parser display name
+                checkBox->setText(Tr::tr("%1 (project default)").arg(s.displayName));
+                if (!isSelected)
+                     parsers.append(s.id);
+            }
+            checkBox->setCheckState(parsers.contains(s.id) ? Qt::Checked : Qt::Unchecked);
             connect(checkBox, &QCheckBox::stateChanged, this, &SelectionWidget::selectionChanged);
             parserCheckBoxes.push_back({checkBox, s.id});
-            layout->addWidget(checkBox);
+            m_checkBoxesLayout->addWidget(checkBox);
         }
         setSelectedParsers(parsers);
     }
 
+    const Project * const m_project;
     QList<QPair<QCheckBox *, Utils::Id>> parserCheckBoxes;
+    const CustomParsersSelectionWidget::Embedded m_where;
+    QVBoxLayout *m_extraWidgetsLayout;
+    QVBoxLayout *m_checkBoxesLayout;
 };
 } // anonymous namespace
 
-CustomParsersSelectionWidget::CustomParsersSelectionWidget(QWidget *parent) : DetailsWidget(parent)
+CustomParsersSelectionWidget::CustomParsersSelectionWidget(
+    Embedded where, Project *project, QWidget *parent)
+    : DetailsWidget(parent)
 {
-    const auto widget = new SelectionWidget(this);
+    const auto widget = new SelectionWidget(where, project, this);
     connect(widget, &SelectionWidget::selectionChanged, this, [this] {
         updateSummary();
         emit selectionChanged();
@@ -340,6 +546,11 @@ QList<Utils::Id> CustomParsersSelectionWidget::selectedParsers() const
     return qobject_cast<SelectionWidget *>(widget())->selectedParsers();
 }
 
+void CustomParsersSelectionWidget::addExtraWidget(QWidget *widget)
+{
+    qobject_cast<SelectionWidget *>(this->widget())->addExtraWidget(widget);
+}
+
 void CustomParsersSelectionWidget::updateSummary()
 {
     const QList<Utils::Id> parsers
@@ -350,267 +561,246 @@ void CustomParsersSelectionWidget::updateSummary()
         setSummaryText(Tr::tr("There are %n custom parsers active", nullptr, parsers.count()));
 }
 
-} // namespace Internal
-
 // Unit tests:
 
 #ifdef WITH_TESTS
-
-using namespace Internal;
-
-void ProjectExplorerTest::testCustomOutputParsers_data()
+class CustomParserTest : public QObject
 {
-    QTest::addColumn<QString>("input");
-    QTest::addColumn<QString>("workDir");
-    QTest::addColumn<OutputParserTester::Channel>("inputChannel");
-    QTest::addColumn<CustomParserExpression::CustomParserChannel>("filterErrorChannel");
-    QTest::addColumn<CustomParserExpression::CustomParserChannel>("filterWarningChannel");
-    QTest::addColumn<QString>("errorPattern");
-    QTest::addColumn<int>("errorFileNameCap");
-    QTest::addColumn<int>("errorLineNumberCap");
-    QTest::addColumn<int>("errorMessageCap");
-    QTest::addColumn<QString>("warningPattern");
-    QTest::addColumn<int>("warningFileNameCap");
-    QTest::addColumn<int>("warningLineNumberCap");
-    QTest::addColumn<int>("warningMessageCap");
-    QTest::addColumn<QString>("childStdOutLines");
-    QTest::addColumn<QString>("childStdErrLines");
-    QTest::addColumn<Tasks >("tasks");
-    QTest::addColumn<QString>("outputLines");
+    Q_OBJECT
 
-    const QString simplePattern = "^([a-z]+\\.[a-z]+):(\\d+): error: ([^\\s].+)$";
-    const FilePath fileName = FilePath::fromUserInput("main.c");
+private slots:
+    void test_data()
+    {
+        QTest::addColumn<QString>("input");
+        QTest::addColumn<QString>("workDir");
+        QTest::addColumn<OutputParserTester::Channel>("inputChannel");
+        QTest::addColumn<CustomParserExpression::CustomParserChannel>("filterErrorChannel");
+        QTest::addColumn<CustomParserExpression::CustomParserChannel>("filterWarningChannel");
+        QTest::addColumn<QString>("errorPattern");
+        QTest::addColumn<int>("errorFileNameCap");
+        QTest::addColumn<int>("errorLineNumberCap");
+        QTest::addColumn<int>("errorMessageCap");
+        QTest::addColumn<QString>("warningPattern");
+        QTest::addColumn<int>("warningFileNameCap");
+        QTest::addColumn<int>("warningLineNumberCap");
+        QTest::addColumn<int>("warningMessageCap");
+        QTest::addColumn<QStringList>("childStdOutLines");
+        QTest::addColumn<QStringList>("childStdErrLines");
+        QTest::addColumn<Tasks>("tasks");
 
-    QTest::newRow("empty patterns")
+        const QString simplePattern = "^([a-z]+\\.[a-z]+):(\\d+): error: ([^\\s].+)$";
+        const FilePath fileName = FilePath::fromUserInput("main.c");
+
+        QTest::newRow("empty patterns")
             << QString::fromLatin1("Sometext")
             << QString()
             << OutputParserTester::STDOUT
             << CustomParserExpression::ParseBothChannels << CustomParserExpression::ParseBothChannels
             << QString() << 1 << 2 << 3
             << QString() << 1 << 2 << 3
-            << QString::fromLatin1("Sometext\n") << QString()
-            << Tasks()
-            << QString();
+            << QStringList("Sometext") << QStringList()
+            << Tasks();
 
-    QTest::newRow("pass-through stdout")
+        QTest::newRow("pass-through stdout")
             << QString::fromLatin1("Sometext")
             << QString()
             << OutputParserTester::STDOUT
             << CustomParserExpression::ParseBothChannels << CustomParserExpression::ParseBothChannels
             << simplePattern << 1 << 2 << 3
             << QString() << 1 << 2 << 3
-            << QString::fromLatin1("Sometext\n") << QString()
-            << Tasks()
-            << QString();
+            << QStringList("Sometext") << QStringList()
+            << Tasks();
 
-    QTest::newRow("pass-through stderr")
+        QTest::newRow("pass-through stderr")
             << QString::fromLatin1("Sometext")
             << QString()
             << OutputParserTester::STDERR
             << CustomParserExpression::ParseBothChannels << CustomParserExpression::ParseBothChannels
             << simplePattern << 1 << 2 << 3
             << QString() << 1 << 2 << 3
-            << QString() << QString::fromLatin1("Sometext\n")
-            << Tasks()
-            << QString();
+            << QStringList() << QStringList("Sometext")
+            << Tasks();
 
-    const QString simpleError = "main.c:9: error: `sfasdf' undeclared (first use this function)";
-    const QString simpleErrorPassThrough = simpleError + '\n';
-    const QString message = "`sfasdf' undeclared (first use this function)";
+        const QString simpleError = "main.c:9: error: `sfasdf' undeclared (first use this function)";
+        const QString message = "`sfasdf' undeclared (first use this function)";
 
-    QTest::newRow("simple error")
+        QTest::newRow("simple error")
             << simpleError
             << QString()
             << OutputParserTester::STDERR
             << CustomParserExpression::ParseBothChannels << CustomParserExpression::ParseBothChannels
             << simplePattern << 1 << 2 << 3
             << QString() << 0 << 0 << 0
-            << QString() << QString()
-            << Tasks({CompileTask(Task::Error, message, fileName, 9)})
-            << QString();
+            << QStringList() << QStringList()
+            << Tasks({CompileTask(Task::Error, message, fileName, 9)});
 
-    const QString pathPattern = "^([a-z\\./]+):(\\d+): error: ([^\\s].+)$";
-    QString workingDir = "/home/src/project";
-    FilePath expandedFileName = "/home/src/project/main.c";
+        const QString pathPattern = "^([a-z\\./]+):(\\d+): error: ([^\\s].+)$";
+        QString workingDir = "/home/src/project";
+        FilePath expandedFileName = "/home/src/project/main.c";
 
-    QTest::newRow("simple error with expanded path")
+        QTest::newRow("simple error with expanded path")
             << "main.c:9: error: `sfasdf' undeclared (first use this function)"
             << workingDir
             << OutputParserTester::STDERR
             << CustomParserExpression::ParseBothChannels << CustomParserExpression::ParseBothChannels
             << pathPattern << 1 << 2 << 3
             << QString() << 0 << 0 << 0
-            << QString() << QString()
-            << Tasks({CompileTask(Task::Error, message, expandedFileName, 9)})
-            << QString();
+            << QStringList() << QStringList()
+            << Tasks({CompileTask(Task::Error, message, expandedFileName, 9)});
 
-    expandedFileName = "/home/src/project/subdir/main.c";
-    QTest::newRow("simple error with subdir path")
+        expandedFileName = "/home/src/project/subdir/main.c";
+        QTest::newRow("simple error with subdir path")
             << "subdir/main.c:9: error: `sfasdf' undeclared (first use this function)"
             << workingDir
             << OutputParserTester::STDERR
             << CustomParserExpression::ParseBothChannels << CustomParserExpression::ParseBothChannels
             << pathPattern << 1 << 2 << 3
             << QString() << 0 << 0 << 0
-            << QString() << QString()
-            << Tasks({CompileTask(Task::Error, message, expandedFileName, 9)})
-            << QString();
+            << QStringList() << QStringList()
+            << Tasks({CompileTask(Task::Error, message, expandedFileName, 9)});
 
-    workingDir = "/home/src/build-project";
-    QTest::newRow("simple error with buildir path")
+        workingDir = "/home/src/build-project";
+        QTest::newRow("simple error with buildir path")
             << "../project/subdir/main.c:9: error: `sfasdf' undeclared (first use this function)"
             << workingDir
             << OutputParserTester::STDERR
             << CustomParserExpression::ParseBothChannels << CustomParserExpression::ParseBothChannels
             << pathPattern << 1 << 2 << 3
             << QString() << 0 << 0 << 0
-            << QString() << QString()
-            << Tasks({CompileTask(Task::Error, message, expandedFileName, 9)})
-            << QString();
+            << QStringList() << QStringList()
+            << Tasks({CompileTask(Task::Error, message, expandedFileName, 9)});
 
-    QTest::newRow("simple error on wrong channel")
+        QTest::newRow("simple error on wrong channel")
             << simpleError
             << QString()
             << OutputParserTester::STDOUT
             << CustomParserExpression::ParseStdErrChannel << CustomParserExpression::ParseBothChannels
             << simplePattern << 1 << 2 << 3
             << QString() << 0 << 0 << 0
-            << simpleErrorPassThrough << QString()
-            << Tasks()
-            << QString();
+            << QStringList(simpleError) << QStringList()
+            << Tasks();
 
-    QTest::newRow("simple error on other wrong channel")
+        QTest::newRow("simple error on other wrong channel")
             << simpleError
             << QString()
             << OutputParserTester::STDERR
             << CustomParserExpression::ParseStdOutChannel << CustomParserExpression::ParseBothChannels
             << simplePattern << 1 << 2 << 3
             << QString() << 0 << 0 << 0
-            << QString() << simpleErrorPassThrough
-            << Tasks()
-            << QString();
+            << QStringList() << QStringList(simpleError)
+            << Tasks();
 
-    const QString simpleError2 = "Error: Line 19 in main.c: `sfasdf' undeclared (first use this function)";
-    const QString simplePattern2 = "^Error: Line (\\d+) in ([a-z]+\\.[a-z]+): ([^\\s].+)$";
-    const int lineNumber2 = 19;
+        const QString simpleError2 = "Error: Line 19 in main.c: `sfasdf' undeclared (first use this function)";
+        const QString simplePattern2 = "^Error: Line (\\d+) in ([a-z]+\\.[a-z]+): ([^\\s].+)$";
+        const int lineNumber2 = 19;
 
-    QTest::newRow("another simple error on stderr")
+        QTest::newRow("another simple error on stderr")
             << simpleError2
             << QString()
             << OutputParserTester::STDERR
             << CustomParserExpression::ParseBothChannels << CustomParserExpression::ParseBothChannels
             << simplePattern2 << 2 << 1 << 3
             << QString() << 1 << 2 << 3
-            << QString() << QString()
-            << Tasks({CompileTask(Task::Error, message, fileName, lineNumber2)})
-            << QString();
+            << QStringList() << QStringList()
+            << Tasks({CompileTask(Task::Error, message, fileName, lineNumber2)});
 
-    QTest::newRow("another simple error on stdout")
+        QTest::newRow("another simple error on stdout")
             << simpleError2
             << QString()
             << OutputParserTester::STDOUT
             << CustomParserExpression::ParseBothChannels << CustomParserExpression::ParseBothChannels
             << simplePattern2 << 2 << 1 << 3
             << QString() << 1 << 2 << 3
-            << QString() << QString()
-            << Tasks({CompileTask(Task::Error, message, fileName, lineNumber2)})
-            << QString();
+            << QStringList() << QStringList()
+            << Tasks({CompileTask(Task::Error, message, fileName, lineNumber2)});
 
-    const QString simpleWarningPattern = "^([a-z]+\\.[a-z]+):(\\d+): warning: ([^\\s].+)$";
-    const QString simpleWarning = "main.c:1234: warning: `helloWorld' declared but not used";
-    const QString warningMessage = "`helloWorld' declared but not used";
+        const QString simpleWarningPattern = "^([a-z]+\\.[a-z]+):(\\d+): warning: ([^\\s].+)$";
+        const QString simpleWarning = "main.c:1234: warning: `helloWorld' declared but not used";
+        const QString warningMessage = "`helloWorld' declared but not used";
 
-    QTest::newRow("simple warning")
+        QTest::newRow("simple warning")
             << simpleWarning
             << QString()
             << OutputParserTester::STDERR
             << CustomParserExpression::ParseBothChannels << CustomParserExpression::ParseBothChannels
             << QString() << 1 << 2 << 3
             << simpleWarningPattern << 1 << 2 << 3
-            << QString() << QString()
-            << Tasks({CompileTask(Task::Warning, warningMessage, fileName, 1234)})
-            << QString();
+            << QStringList() << QStringList()
+            << Tasks({CompileTask(Task::Warning, warningMessage, fileName, 1234)});
 
-    const QString simpleWarning2 = "Warning: `helloWorld' declared but not used (main.c:19)";
-    const QString simpleWarningPassThrough2 = simpleWarning2 + '\n';
-    const QString simpleWarningPattern2 = "^Warning: (.*) \\(([a-z]+\\.[a-z]+):(\\d+)\\)$";
+        const QString simpleWarning2 = "Warning: `helloWorld' declared but not used (main.c:19)";
+        const QString simpleWarningPattern2 = "^Warning: (.*) \\(([a-z]+\\.[a-z]+):(\\d+)\\)$";
 
-    QTest::newRow("another simple warning on stdout")
+        QTest::newRow("another simple warning on stdout")
             << simpleWarning2
             << QString()
             << OutputParserTester::STDOUT
             << CustomParserExpression::ParseBothChannels << CustomParserExpression::ParseStdOutChannel
             << simplePattern2 << 1 << 2 << 3
             << simpleWarningPattern2 << 2 << 3 << 1
-            << QString() << QString()
-            << Tasks({CompileTask(Task::Warning, warningMessage, fileName, lineNumber2)})
-            << QString();
+            << QStringList() << QStringList()
+            << Tasks({CompileTask(Task::Warning, warningMessage, fileName, lineNumber2)});
 
-    QTest::newRow("warning on wrong channel")
+        QTest::newRow("warning on wrong channel")
             << simpleWarning2
             << QString()
             << OutputParserTester::STDOUT
             << CustomParserExpression::ParseBothChannels << CustomParserExpression::ParseStdErrChannel
             << QString() << 1 << 2 << 3
             << simpleWarningPattern2 << 2 << 3 << 1
-            << simpleWarningPassThrough2 << QString()
-            << Tasks()
-            << QString();
+            << QStringList(simpleWarning2) << QStringList()
+            << Tasks();
 
-    QTest::newRow("warning on other wrong channel")
+        QTest::newRow("warning on other wrong channel")
             << simpleWarning2
             << QString()
             << OutputParserTester::STDERR
             << CustomParserExpression::ParseBothChannels << CustomParserExpression::ParseStdOutChannel
             << QString() << 1 << 2 << 3
             << simpleWarningPattern2 << 2 << 3 << 1
-            << QString() << simpleWarningPassThrough2
-            << Tasks()
-            << QString();
+            << QStringList() << QStringList(simpleWarning2)
+            << Tasks();
 
-    QTest::newRow("error and *warning*")
+        QTest::newRow("error and *warning*")
             << simpleWarning
             << QString()
             << OutputParserTester::STDERR
             << CustomParserExpression::ParseBothChannels << CustomParserExpression::ParseBothChannels
             << simplePattern << 1 << 2 << 3
             << simpleWarningPattern << 1 << 2 << 3
-            << QString() << QString()
-            << Tasks({CompileTask(Task::Warning, warningMessage, fileName, 1234)})
-            << QString();
+            << QStringList() << QStringList()
+            << Tasks({CompileTask(Task::Warning, warningMessage, fileName, 1234)});
 
-    QTest::newRow("*error* when equal pattern")
+        QTest::newRow("*error* when equal pattern")
             << simpleError
             << QString()
             << OutputParserTester::STDERR
             << CustomParserExpression::ParseBothChannels << CustomParserExpression::ParseBothChannels
             << simplePattern << 1 << 2 << 3
             << simplePattern << 1 << 2 << 3
-            << QString() << QString()
-            << Tasks({CompileTask(Task::Error, message, fileName, 9)})
-            << QString();
+            << QStringList() << QStringList()
+            << Tasks({CompileTask(Task::Error, message, fileName, 9)});
 
-    const QString unitTestError = "../LedDriver/LedDriverTest.c:63: FAIL: Expected 0x0080 Was 0xffff";
-    const FilePath unitTestFileName = FilePath::fromUserInput("../LedDriver/LedDriverTest.c");
-    const QString unitTestMessage = "Expected 0x0080 Was 0xffff";
-    const QString unitTestPattern = "^([^:]+):(\\d+): FAIL: ([^\\s].+)$";
-    const int unitTestLineNumber = 63;
+        const QString unitTestError = "../LedDriver/LedDriverTest.c:63: FAIL: Expected 0x0080 Was 0xffff";
+        const FilePath unitTestFileName = FilePath::fromUserInput("../LedDriver/LedDriverTest.c");
+        const QString unitTestMessage = "Expected 0x0080 Was 0xffff";
+        const QString unitTestPattern = "^([^:]+):(\\d+): FAIL: ([^\\s].+)$";
+        const int unitTestLineNumber = 63;
 
-    QTest::newRow("unit test error")
+        QTest::newRow("unit test error")
             << unitTestError
             << QString()
             << OutputParserTester::STDOUT
             << CustomParserExpression::ParseBothChannels << CustomParserExpression::ParseBothChannels
             << unitTestPattern << 1 << 2 << 3
             << QString() << 1 << 2 << 3
-            << QString() << QString()
-            << Tasks({CompileTask(Task::Error, unitTestMessage, unitTestFileName, unitTestLineNumber)})
-            << QString();
+            << QStringList() << QStringList()
+            << Tasks({CompileTask(Task::Error, unitTestMessage, unitTestFileName, unitTestLineNumber)});
 
-    const QString leadingSpacesPattern = "^    MESSAGE:(.+)";
-    const QString leadingSpacesMessage = "    MESSAGE:Error";
-    const QString noLeadingSpacesMessage = "MESSAGE:Error";
-    QTest::newRow("leading spaces: match")
+        const QString leadingSpacesPattern = "^    MESSAGE:(.+)";
+        const QString leadingSpacesMessage = "    MESSAGE:Error";
+        const QString noLeadingSpacesMessage = "MESSAGE:Error";
+        QTest::newRow("leading spaces: match")
             << leadingSpacesMessage
             << QString()
             << OutputParserTester::STDOUT
@@ -618,10 +808,9 @@ void ProjectExplorerTest::testCustomOutputParsers_data()
             << CustomParserExpression::ParseBothChannels
             << leadingSpacesPattern << 2 << 3 << 1
             << QString() << 1 << 2 << 3
-            << QString() << QString()
-            << Tasks({CompileTask(Task::Error, "Error", {}, -1)})
-            << QString();
-    QTest::newRow("leading spaces: no match")
+            << QStringList() << QStringList()
+            << Tasks({CompileTask(Task::Error, "Error", {}, -1)});
+        QTest::newRow("leading spaces: no match")
             << noLeadingSpacesMessage
             << QString()
             << OutputParserTester::STDOUT
@@ -629,11 +818,10 @@ void ProjectExplorerTest::testCustomOutputParsers_data()
             << CustomParserExpression::ParseBothChannels
             << leadingSpacesPattern << 2 << 3 << 1
             << QString() << 1 << 2 << 3
-            << (noLeadingSpacesMessage + '\n') << QString()
-            << Tasks()
-            << QString();
-    const QString noLeadingSpacesPattern = "^MESSAGE:(.+)";
-    QTest::newRow("no leading spaces: match")
+            << QStringList(noLeadingSpacesMessage) << QStringList()
+            << Tasks();
+        const QString noLeadingSpacesPattern = "^MESSAGE:(.+)";
+        QTest::newRow("no leading spaces: match")
             << noLeadingSpacesMessage
             << QString()
             << OutputParserTester::STDOUT
@@ -641,10 +829,9 @@ void ProjectExplorerTest::testCustomOutputParsers_data()
             << CustomParserExpression::ParseBothChannels
             << noLeadingSpacesPattern << 2 << 3 << 1
             << QString() << 1 << 2 << 3
-            << QString() << QString()
-            << Tasks({CompileTask(Task::Error, "Error", {}, -1)})
-            << QString();
-    QTest::newRow("no leading spaces: no match")
+            << QStringList() << QStringList()
+            << Tasks({CompileTask(Task::Error, "Error", {}, -1)});
+        QTest::newRow("no leading spaces: no match")
             << leadingSpacesMessage
             << QString()
             << OutputParserTester::STDOUT
@@ -652,57 +839,60 @@ void ProjectExplorerTest::testCustomOutputParsers_data()
             << CustomParserExpression::ParseBothChannels
             << noLeadingSpacesPattern << 3 << 2 << 1
             << QString() << 1 << 2 << 3
-            << (leadingSpacesMessage + '\n') << QString()
-            << Tasks()
-            << QString();
-}
+            << QStringList(leadingSpacesMessage) << QStringList()
+            << Tasks();
+    }
 
-void ProjectExplorerTest::testCustomOutputParsers()
+    void test()
+    {
+        QFETCH(QString, input);
+        QFETCH(QString, workDir);
+        QFETCH(OutputParserTester::Channel, inputChannel);
+        QFETCH(CustomParserExpression::CustomParserChannel, filterErrorChannel);
+        QFETCH(CustomParserExpression::CustomParserChannel, filterWarningChannel);
+        QFETCH(QString, errorPattern);
+        QFETCH(int,     errorFileNameCap);
+        QFETCH(int,     errorLineNumberCap);
+        QFETCH(int,     errorMessageCap);
+        QFETCH(QString, warningPattern);
+        QFETCH(int,     warningFileNameCap);
+        QFETCH(int,     warningLineNumberCap);
+        QFETCH(int,     warningMessageCap);
+        QFETCH(QStringList, childStdOutLines);
+        QFETCH(QStringList, childStdErrLines);
+        QFETCH(Tasks, tasks);
+
+        CustomParserSettings settings;
+        settings.error.setPattern(errorPattern);
+        settings.error.setFileNameCap(errorFileNameCap);
+        settings.error.setLineNumberCap(errorLineNumberCap);
+        settings.error.setMessageCap(errorMessageCap);
+        settings.error.setChannel(filterErrorChannel);
+        settings.warning.setPattern(warningPattern);
+        settings.warning.setFileNameCap(warningFileNameCap);
+        settings.warning.setLineNumberCap(warningLineNumberCap);
+        settings.warning.setMessageCap(warningMessageCap);
+        settings.warning.setChannel(filterWarningChannel);
+
+        CustomParser *parser = new CustomParser;
+        parser->setSettings(settings);
+        parser->addSearchDir(FilePath::fromString(workDir));
+        parser->skipFileExistsCheck();
+
+        OutputParserTester testbench;
+        testbench.addLineParser(parser);
+        testbench.testParsing(input, inputChannel, tasks, childStdOutLines, childStdErrLines);
+    }
+};
+
+QObject *createCustomParserTest()
 {
-    QFETCH(QString, input);
-    QFETCH(QString, workDir);
-    QFETCH(OutputParserTester::Channel, inputChannel);
-    QFETCH(CustomParserExpression::CustomParserChannel, filterErrorChannel);
-    QFETCH(CustomParserExpression::CustomParserChannel, filterWarningChannel);
-    QFETCH(QString, errorPattern);
-    QFETCH(int,     errorFileNameCap);
-    QFETCH(int,     errorLineNumberCap);
-    QFETCH(int,     errorMessageCap);
-    QFETCH(QString, warningPattern);
-    QFETCH(int,     warningFileNameCap);
-    QFETCH(int,     warningLineNumberCap);
-    QFETCH(int,     warningMessageCap);
-    QFETCH(QString, childStdOutLines);
-    QFETCH(QString, childStdErrLines);
-    QFETCH(Tasks, tasks);
-    QFETCH(QString, outputLines);
-
-    CustomParserSettings settings;
-    settings.error.setPattern(errorPattern);
-    settings.error.setFileNameCap(errorFileNameCap);
-    settings.error.setLineNumberCap(errorLineNumberCap);
-    settings.error.setMessageCap(errorMessageCap);
-    settings.error.setChannel(filterErrorChannel);
-    settings.warning.setPattern(warningPattern);
-    settings.warning.setFileNameCap(warningFileNameCap);
-    settings.warning.setLineNumberCap(warningLineNumberCap);
-    settings.warning.setMessageCap(warningMessageCap);
-    settings.warning.setChannel(filterWarningChannel);
-
-    CustomParser *parser = new CustomParser;
-    parser->setSettings(settings);
-    parser->addSearchDir(FilePath::fromString(workDir));
-    parser->skipFileExistsCheck();
-
-    OutputParserTester testbench;
-    testbench.addLineParser(parser);
-    testbench.testParsing(input, inputChannel,
-                          tasks, childStdOutLines, childStdErrLines,
-                          outputLines);
+    return new CustomParserTest;
 }
 
-#endif
+#endif // WITH_TESTS
 
+} // namespace Internal
 } // namespace ProjectExplorer
 
 #include <customparser.moc>

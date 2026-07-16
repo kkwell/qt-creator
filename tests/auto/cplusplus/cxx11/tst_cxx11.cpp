@@ -6,24 +6,13 @@
 #include <cplusplus/LookupContext.h>
 #include <cplusplus/Overview.h>
 
-#include <QtTest>
-#include <QObject>
 #include <QFile>
+#include <QObject>
+#include <QTest>
 
 //TESTED_COMPONENT=src/libs/cplusplus
 using namespace CPlusPlus;
 using namespace Utils;
-
-#define VERIFY_ERRORS() \
-    do { \
-      QByteArray expectedErrors; \
-      if (!errorFile.isEmpty()) { \
-        QFile e(testdata(errorFile)); \
-        if (e.open(QFile::ReadOnly)) \
-          expectedErrors = QTextStream(&e).readAll().toUtf8(); \
-      } \
-      QCOMPARE(QString::fromLatin1(errors), QString::fromLatin1(expectedErrors)); \
-    } while (0)
 
 inline QString _(const QByteArray &ba) { return QString::fromUtf8(ba, ba.size()); }
 
@@ -105,26 +94,38 @@ class tst_cxx11: public QObject
                                 LanguageFeatures languageFeatures, QByteArray *errors)
     {
         Client client(errors);
-        doc->control()->setDiagnosticClient(&client);
+        doc->control()->setDiagnosticClient(&client, true);
         doc->setUtf8Source(source);
         doc->translationUnit()->setLanguageFeatures(languageFeatures);
         doc->check();
-        doc->control()->setDiagnosticClient(0);
+        doc->control()->setDiagnosticClient(0, false);
     }
 
-    Document::Ptr document(const QString &fileName, QByteArray *errors = 0, bool c99Enabled = false)
+    Document::Ptr document(
+        const QString &fileName,
+        int cxxVersion = 2011,
+        QByteArray *errors = 0,
+        bool c99Enabled = false)
     {
-        Document::Ptr doc = Document::create(FilePath::fromString(fileName));
         QFile file(testdata(fileName));
-        if (file.open(QFile::ReadOnly)) {
-            LanguageFeatures features;
-            features.cxx11Enabled = true;
-            features.cxxEnabled = true;
-            features.c99Enabled = c99Enabled;
-            processDocument(doc, QTextStream(&file).readAll().toUtf8(), features, errors);
-        } else {
-            qWarning() << "could not read file" << fileName;
+        if (!file.open(QFile::ReadOnly)) {
+            qDebug() << file.errorString() << fileName;
+            return {};
         }
+        const Document::Ptr doc = Document::create(FilePath::fromString(fileName));
+        LanguageFeatures features;
+        features.cxxEnabled = true;
+        features.cxx11Enabled = true;
+        if (cxxVersion >= 2014)
+            features.cxx14Enabled = true;
+        if (cxxVersion >= 2017)
+            features.cxx17Enabled = true;
+        if (cxxVersion >= 2020)
+            features.cxx20Enabled = true;
+        if (cxxVersion >= 2023)
+            features.cxx23Enabled = true;
+        features.c99Enabled = c99Enabled;
+        processDocument(doc, QTextStream(&file).readAll().toUtf8(), features, errors);
         return doc;
     }
 
@@ -145,78 +146,90 @@ private Q_SLOTS:
 
     void lambdaType_data();
     void lambdaType();
-
-    void concepts();
-    void requiresClause();
-    void coroutines();
-    void genericLambdas();
-    void ifStatementWithInitialization();
 };
 
 
 void tst_cxx11::parse_data()
 {
-    QTest::addColumn<QString>("file");
-    QTest::addColumn<QString>("errorFile");
+    QTest::addColumn<int>("cxxVersion");
 
-    QTest::newRow("inlineNamespace.1") << "inlineNamespace.1.cpp" << "inlineNamespace.1.errors.txt";
-    QTest::newRow("nestedNamespace.1") << "nestedNamespace.1.cpp" << "nestedNamespace.1.errors.txt";
-    QTest::newRow("staticAssert.1") << "staticAssert.1.cpp" << "staticAssert.1.errors.txt";
-    QTest::newRow("noExcept.1") << "noExcept.1.cpp" << "noExcept.1.errors.txt";
-    QTest::newRow("braceInitializers.1") << "braceInitializers.1.cpp" << "braceInitializers.1.errors.txt";
-    QTest::newRow("braceInitializers.2") << "braceInitializers.2.cpp" << "";
-    QTest::newRow("braceInitializers.3") << "braceInitializers.3.cpp" << "";
-    QTest::newRow("defaultdeleteInitializer.1") << "defaultdeleteInitializer.1.cpp" << "";
-    QTest::newRow("refQualifier.1") << "refQualifier.1.cpp" << "";
-    QTest::newRow("alignofAlignas.1") << "alignofAlignas.1.cpp" << "";
-    QTest::newRow("rangeFor.1") << "rangeFor.1.cpp" << "";
-    QTest::newRow("aliasDecl.1") << "aliasDecl.1.cpp" << "";
-    QTest::newRow("enums.1") << "enums.1.cpp" << "";
-    QTest::newRow("templateGreaterGreater.1") << "templateGreaterGreater.1.cpp" << "";
-    QTest::newRow("packExpansion.1") << "packExpansion.1.cpp" << "";
-    QTest::newRow("declType.1") << "declType.1.cpp" << "";
-    QTest::newRow("threadLocal.1") << "threadLocal.1.cpp" << "";
-    QTest::newRow("trailingtypespec.1") << "trailingtypespec.1.cpp" << "";
-    QTest::newRow("lambda.2") << "lambda.2.cpp" << "";
-    QTest::newRow("userDefinedLiterals.1") << "userDefinedLiterals.1.cpp" << "";
-    QTest::newRow("rawstringliterals") << "rawstringliterals.cpp" << "";
+    QTest::newRow("inlineNamespace.1") << 2011;
+    QTest::newRow("nestedNamespace.1") << 2011;
+    QTest::newRow("staticAssert.1") << 2011;
+    QTest::newRow("noExcept.1") << 2011;
+    QTest::newRow("braceInitializers.1") << 2011;
+    QTest::newRow("braceInitializers.2") << 2011;
+    QTest::newRow("braceInitializers.3") << 2011;
+    QTest::newRow("defaultdeleteInitializer.1") << 2011;
+    QTest::newRow("refQualifier.1") << 2011;
+    QTest::newRow("alignofAlignas.1") << 2011;
+    QTest::newRow("rangeFor.1") << 2011;
+    QTest::newRow("rangeFor.2") << 2011;
+    QTest::newRow("rangeFor.3") << 2020;
+    QTest::newRow("aliasDecl.1") << 2011;
+    QTest::newRow("enums.1") << 2011;
+    QTest::newRow("templateGreaterGreater.1") << 2011;
+    QTest::newRow("packExpansion.1") << 2011;
+    QTest::newRow("declType.1") << 2011;
+    QTest::newRow("threadLocal.1") << 2011;
+    QTest::newRow("trailingtypespec.1") << 2011;
+    QTest::newRow("lambda.2") << 2011;
+    QTest::newRow("userDefinedLiterals.1") << 2011;
+    QTest::newRow("userDefinedLiterals.2") << 2011;
+    QTest::newRow("rawstringliterals") << 2011;
+    QTest::newRow("friends") << 2011;
+    QTest::newRow("attributes") << 2011;
+    QTest::newRow("foldExpressions") << 2017;
+    QTest::newRow("explicitObjParam") << 2023;
+    QTest::newRow("placeholderReturnType") << 2014;
+    QTest::newRow("builtinTypeTraits") << 2020;
+    QTest::newRow("templateTemplateTypeInDependentName")<< 2011;
+    QTest::newRow("constevalIf") << 2023;
+    QTest::newRow("int128") << 2011;
+    QTest::newRow("namedConstantTemplateParam")<< 2020;
+    QTest::newRow("declTypeInBaseClause.1") << 2020;
+    QTest::newRow("declTypeInBaseClause.2") << 2020;
+    QTest::newRow("ifWithInit") << 2020;
+    QTest::newRow("genericLambdas") << 2020;
+    QTest::newRow("coroutines") << 2020;
+    QTest::newRow("requiresClause") << 2020;
+    QTest::newRow("concepts.1") << 2020;
+    QTest::newRow("concepts.2") << 2020;
+    QTest::newRow("templatetemplate.1") << 2011;
+    QTest::newRow("templatetemplate.2") << 2017;
+    QTest::newRow("notatemplate") << 2011;
+    QTest::newRow("binaryExprAsTemplateArg") << 2011;
+    QTest::newRow("statementAttributes") << 2020;
+    QTest::newRow("constinitconsteval") << 2020;
 }
 
 void tst_cxx11::parse()
 {
-    QFETCH(QString, file);
-    QFETCH(QString, errorFile);
+    QFETCH(int, cxxVersion);
 
+    const QString file = QLatin1String(QTest::currentDataTag()) + ".cpp";
     QByteArray errors;
-    Document::Ptr doc = document(file, &errors);
-
-    if (! qgetenv("DEBUG").isNull())
-        printf("%s\n", errors.constData());
-
-    VERIFY_ERRORS();
+    Document::Ptr doc = document(file, cxxVersion, &errors);
+    QVERIFY(doc);
+    QVERIFY2(errors.isEmpty(), errors.constData());
 }
 
 void tst_cxx11::parseWithC99Enabled_data()
 {
     QTest::addColumn<QString>("file");
-    QTest::addColumn<QString>("errorFile");
 
-    QTest::newRow("lambda.1") << "lambda.1.cpp" << "";
+    QTest::newRow("lambda.1") << "lambda.1.cpp";
 }
 
 void tst_cxx11::parseWithC99Enabled()
 {
     QFETCH(QString, file);
-    QFETCH(QString, errorFile);
 
     const bool c99Enabled = true;
     QByteArray errors;
-    Document::Ptr doc = document(file, &errors, c99Enabled);
-
-    if (! qgetenv("DEBUG").isNull())
-        printf("%s\n", errors.constData());
-
-    VERIFY_ERRORS();
+    Document::Ptr doc = document(file, 2011, &errors, c99Enabled);
+    QVERIFY(doc);
+    QVERIFY2(errors.isEmpty(), errors.constData());
 }
 
 //
@@ -225,6 +238,7 @@ void tst_cxx11::parseWithC99Enabled()
 void tst_cxx11::inlineNamespaceLookup()
 {
     Document::Ptr doc = document("inlineNamespace.1.cpp");
+    QVERIFY(doc);
     Snapshot snapshot;
     snapshot.insert(doc);
 
@@ -297,280 +311,6 @@ void tst_cxx11::lambdaType()
 
     QEXPECT_FAIL("return expression", "Not implemented", Abort);
     QCOMPARE(oo.prettyType(function->type()), expectedType);
-}
-
-void tst_cxx11::concepts()
-{
-    LanguageFeatures features;
-    features.cxxEnabled = true;
-    features.cxx11Enabled = features.cxx14Enabled = features.cxx20Enabled = true;
-
-    const QString source = R"(
-template<typename T> concept IsPointer = requires(T p) { *p; };
-template<IsPointer T> void* func(T p) { return p; }
-void *func2(IsPointer auto p)
-{
-    return p;
-}
-)";
-    QByteArray errors;
-    Document::Ptr doc = Document::create(FilePath::fromPathPart(u"testFile"));
-    processDocument(doc, source.toUtf8(), features, &errors);
-    const bool hasErrors = !errors.isEmpty();
-    if (hasErrors)
-        qDebug().noquote() << errors;
-    QVERIFY(!hasErrors);
-}
-
-void tst_cxx11::requiresClause()
-{
-    LanguageFeatures features;
-    features.cxxEnabled = true;
-    features.cxx11Enabled = features.cxx14Enabled = features.cxx20Enabled = true;
-
-    const QString source = R"(
-template<class T> constexpr bool is_meowable = true;
-template<class T> constexpr bool is_purrable() { return true; }
-template<class T> void f(T) requires is_meowable<T>;
-template<class T> requires is_meowable<T> void g(T) ;
-template<class T> void h(T) requires (is_purrable<T>());
-)";
-    QByteArray errors;
-    Document::Ptr doc = Document::create(FilePath::fromPathPart(u"testFile"));
-    processDocument(doc, source.toUtf8(), features, &errors);
-    const bool hasErrors = !errors.isEmpty();
-    if (hasErrors)
-        qDebug().noquote() << errors;
-    QVERIFY(!hasErrors);
-}
-
-void tst_cxx11::coroutines()
-{
-    LanguageFeatures features;
-    features.cxxEnabled = true;
-    features.cxx11Enabled = features.cxx14Enabled = features.cxx20Enabled = true;
-
-    const QString source = R"(
-struct promise;
-struct coroutine : std::coroutine_handle<promise>
-{
-    using promise_type = struct promise;
-};
-struct promise
-{
-    coroutine get_return_object() { return {coroutine::from_promise(*this)}; }
-    std::suspend_always initial_suspend() noexcept { return {}; }
-    std::suspend_always final_suspend() noexcept { return {}; }
-    void return_void() {}
-    void unhandled_exception() {}
-};
-struct S
-{
-    int i;
-    coroutine f()
-    {
-        std::cout << i;
-        co_return;
-    }
-};
-void good()
-{
-    coroutine h = [](int i) -> coroutine
-    {
-        std::cout << i;
-        co_return;
-    }(0);
-    h.resume();
-    h.destroy();
-}
-auto switch_to_new_thread(std::jthread& out)
-{
-    struct awaitable
-    {
-        std::jthread* p_out;
-        bool await_ready() { return false; }
-        void await_suspend(std::coroutine_handle<> h)
-        {
-            std::jthread& out = *p_out;
-            if (out.joinable())
-                throw std::runtime_error("Output jthread parameter not empty");
-            out = std::jthread([h] { h.resume(); });
-            std::cout << "New thread ID: " << out.get_id() << '\n'; // this is OK
-        }
-        void await_resume() {}
-    };
-    return awaitable{&out};
-}
-struct task
-{
-    struct promise_type
-    {
-        task get_return_object() { return {}; }
-        std::suspend_never initial_suspend() { return {}; }
-        std::suspend_never final_suspend() noexcept { return {}; }
-        void return_void() {}
-        void unhandled_exception() {}
-    };
-};
-task resuming_on_new_thread(std::jthread& out)
-{
-    std::cout << "Coroutine started on thread: " << std::this_thread::get_id() << '\n';
-    co_await switch_to_new_thread(out);
-    std::cout << "Coroutine resumed on thread: " << std::this_thread::get_id() << '\n';
-}
-void run()
-{
-    std::jthread out;
-    resuming_on_new_thread(out);
-}
-template <typename T>
-struct Generator
-{
-    struct promise_type;
-    using handle_type = std::coroutine_handle<promise_type>;
-    struct promise_type // required
-    {
-        T value_;
-        std::exception_ptr exception_;
-
-        Generator get_return_object()
-        {
-            return Generator(handle_type::from_promise(*this));
-        }
-        std::suspend_always initial_suspend() { return {}; }
-        std::suspend_always final_suspend() noexcept { return {}; }
-        void unhandled_exception() { exception_ = std::current_exception(); }
-        template <std::convertible_to<T> From>
-        std::suspend_always yield_value(From&& from)
-        {
-            value_ = std::forward<From>(from);
-            return {};
-        }
-        void return_void() { }
-    };
-    handle_type h_;
-    Generator(handle_type h) : h_(h) {}
-    ~Generator() { h_.destroy(); }
-    explicit operator bool()
-    {
-        fill();
-        return !h_.done();
-    }
-    T operator()()
-    {
-        fill();
-        full_ = false;
-        return std::move(h_.promise().value_);
-    }
-private:
-    bool full_ = false;
-    void fill()
-    {
-        if (!full_)
-        {
-            h_();
-            if (h_.promise().exception_)
-                std::rethrow_exception(h_.promise().exception_);
-            full_ = true;
-        }
-    }
-};
-Generator<std::uint64_t>
-fibonacci_sequence(unsigned n)
-{
-    if (n == 0)
-        co_return;
-    if (n > 94)
-        throw std::runtime_error("Too big Fibonacci sequence. Elements would overflow.");
-    co_yield 0;
-    if (n == 1)
-        co_return;
-    co_yield 1;
-    if (n == 2)
-        co_return;
-    std::uint64_t a = 0;
-    std::uint64_t b = 1;
-    for (unsigned i = 2; i < n; i++)
-    {
-        std::uint64_t s = a + b;
-        co_yield s;
-        a = b;
-        b = s;
-    }
-}
-int main()
-{
-    try
-    {
-        auto gen = fibonacci_sequence(10); // max 94 before uint64_t overflows
-        for (int j = 0; gen; j++)
-            std::cout << "fib(" << j << ")=" << gen() << '\n';
-    } catch (const std::exception& ex) {
-        std::cerr << "Exception: " << ex.what() << '\n';
-    }
-    catch (...)
-    {
-        std::cerr << "Unknown exception.\n";
-    }
-}
-)";
-    QByteArray errors;
-    Document::Ptr doc = Document::create(FilePath::fromPathPart(u"testFile"));
-    processDocument(doc, source.toUtf8(), features, &errors);
-    const bool hasErrors = !errors.isEmpty();
-    if (hasErrors)
-        qDebug().noquote() << errors;
-    QVERIFY(!hasErrors);
-}
-
-void tst_cxx11::genericLambdas()
-{
-    LanguageFeatures features;
-    features.cxxEnabled = true;
-    features.cxx11Enabled = features.cxx14Enabled = features.cxx20Enabled = true;
-
-    const QString source = R"(
-template <typename T> concept C1 = true;
-template <std::size_t N> concept C2 = true;
-template <typename A, typename B> concept C3 = true;
-int main()
-{
-    auto f = []<class T>(T a, auto&& b) { return a < b; };
-    auto g = []<typename... Ts>(Ts&&... ts) { return foo(std::forward<Ts>(ts)...); };
-    auto h = []<typename T1, C1 T2> requires C2<sizeof(T1) + sizeof(T2)>
-         (T1 a1, T1 b1, T2 a2, auto a3, auto a4) requires C3<decltype(a4), T2> {
-    };
-}
-)";
-    QByteArray errors;
-    Document::Ptr doc = Document::create(FilePath::fromPathPart(u"testFile"));
-    processDocument(doc, source.toUtf8(), features, &errors);
-    const bool hasErrors = !errors.isEmpty();
-    if (hasErrors)
-        qDebug().noquote() << errors;
-    QVERIFY(!hasErrors);
-}
-
-void tst_cxx11::ifStatementWithInitialization()
-{
-    LanguageFeatures features;
-    features.cxxEnabled = true;
-    features.cxx11Enabled = features.cxx14Enabled = features.cxx17Enabled = true;
-
-    const QString source = R"(
-int main()
-{
-    if (bool b = true; b)
-        b = false;
-}
-)";
-    QByteArray errors;
-    Document::Ptr doc = Document::create(FilePath::fromPathPart(u"testFile"));
-    processDocument(doc, source.toUtf8(), features, &errors);
-    const bool hasErrors = !errors.isEmpty();
-    if (hasErrors)
-        qDebug().noquote() << errors;
-    QVERIFY(!hasErrors);
 }
 
 QTEST_APPLESS_MAIN(tst_cxx11)

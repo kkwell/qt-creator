@@ -13,7 +13,7 @@
 #include <texteditor/textdocument.h>
 #include <texteditor/texteditor.h>
 
-#include <QtTest>
+#include <QTest>
 #include <QTextEdit>
 #include <QTextDocument>
 #include <QTextBlock>
@@ -3011,7 +3011,6 @@ void FakeVimTester::test_vim_code_folding()
          "}" N
          "");
 
-    NOT_IMPLEMENTED
     // Opening folds recursively isn't supported (previous position in fold isn't restored).
 }
 
@@ -3459,6 +3458,13 @@ void FakeVimTester::test_advanced_commands()
     // bar character in regular expression is not command separator
     data.setText("abc");
     COMMAND("%s/a\\|b\\||/X/g|%s/[^X]/Y/g", "XXY");
+
+    // :global command
+    data.setText("abc" N "def" N "ghi");
+    COMMAND("g/def/d", "abc" N X "ghi");
+
+    data.setText("abc" N "def" N "ghi" N "def" N "jkl");
+    COMMAND("g/def/d", "abc" N "ghi" N X "jkl");
 }
 
 void FakeVimTester::test_map()
@@ -5059,5 +5065,7 @@ void FakeVimTester::test_vim_qtcreator()
 
 } // FakeVim::Internal
 
-#include "fakevim_test.moc"
+#undef N
+#undef X
 
+#include "fakevim_test.moc"

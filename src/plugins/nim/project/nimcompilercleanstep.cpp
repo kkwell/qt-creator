@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "nimcompilercleanstep.h"
-#include "nimbuildconfiguration.h"
+#include "nimproject.h"
 
 #include "../nimconstants.h"
 #include "../nimtr.h"
 
 #include <projectexplorer/projectexplorerconstants.h>
 
-#include <solutions/tasking/tasktree.h>
+#include <QtTaskTree/QTaskTree>
 
 #include <utils/aspects.h>
 #include <utils/qtcassert.h>
@@ -18,7 +18,7 @@
 #include <QDateTime>
 
 using namespace ProjectExplorer;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace Nim {
@@ -77,7 +77,7 @@ GroupItem NimCompilerCleanStep::runRecipe()
         emit addOutput(Tr::tr("Clean step completed successfully."), OutputFormat::NormalMessage);
         return DoneResult::Success;
     };
-    return Sync(onSetup);
+    return QSyncTask(onSetup);
 }
 
 bool NimCompilerCleanStep::removeCacheDirectory()
@@ -86,7 +86,7 @@ bool NimCompilerCleanStep::removeCacheDirectory()
     QTC_ASSERT(bc, return false);
     if (!bc->cacheDirectory().exists())
         return true;
-    QDir dir = QDir::fromNativeSeparators(bc->cacheDirectory().toString());
+    QDir dir = bc->cacheDirectory().toFSPathString();
     const QString dirName = dir.dirName();
     if (!dir.cdUp())
         return false;
@@ -100,7 +100,7 @@ bool NimCompilerCleanStep::removeOutFilePath()
     QTC_ASSERT(bc, return false);
     if (!bc->outFilePath().exists())
         return true;
-    return QFile(bc->outFilePath().toFileInfo().absoluteFilePath()).remove();
+    return bc->outFilePath().removeFile().has_value();
 }
 
 // NimCompilerCleanStepFactory

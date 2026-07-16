@@ -26,7 +26,7 @@
 #include <QLoggingCategory>
 
 using namespace Core;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace Autotest {
@@ -38,7 +38,7 @@ using namespace ProjectExplorer;
 
 static bool isProjectParsing()
 {
-    const BuildSystem *bs = ProjectManager::startupBuildSystem();
+    const BuildSystem *bs = activeBuildSystemForActiveProject();
     return bs && (bs->isParsing() || bs->isWaitingForParse());
 }
 
@@ -59,17 +59,6 @@ TestCodeParser::TestCodeParser()
     m_reparseTimer.setSingleShot(true);
     m_reparseTimer.setInterval(1000);
     connect(&m_reparseTimer, &QTimer::timeout, this, &TestCodeParser::parsePostponedFiles);
-    connect(&m_taskTreeRunner, &TaskTreeRunner::aboutToStart, this, [this](TaskTree *taskTree) {
-        if (m_withTaskProgress) {
-            auto progress = new TaskProgress(taskTree);
-            progress->setDisplayName(Tr::tr("Scanning for Tests"));
-            progress->setId(Constants::TASK_PARSE);
-        }
-        emit parsingStarted();
-    });
-    connect(&m_taskTreeRunner, &TaskTreeRunner::done, this, [this](DoneWith result) {
-        onFinished(result == DoneWith::Success);
-    });
 }
 
 TestCodeParser::~TestCodeParser() = default;
@@ -417,14 +406,24 @@ void TestCodeParser::scanForTests(const QSet<FilePath> &filePaths,
         if (!results.isEmpty())
             emit testParseResultsReady(results);
     };
-    const For recipe {
-        LoopRepeat(filteredFiles.size()),
-        parallelLimit(limit),
+    const Group recipe = For (RepeatIterator(filteredFiles.size())) >> Do {
+        ParallelLimit(limit),
         storage,
         onGroupSetup([storage, filteredFiles] { *storage = filteredFiles.cbegin(); }),
-        AsyncTask<TestParseResultPtr>(onSetup, onDone, CallDoneIf::Success)
+        AsyncTask<TestParseResultPtr>(onSetup, onDone, CallDoneFlag::OnSuccess)
     };
-    m_taskTreeRunner.start(recipe);
+    const auto onTaskTreeSetup = [this](QTaskTree &taskTree) {
+        if (m_withTaskProgress) {
+            auto progress = new TaskProgress(&taskTree);
+            progress->setDisplayName(Tr::tr("Scanning for Tests"));
+            progress->setId(Constants::TASK_PARSE);
+        }
+        emit parsingStarted();
+    };
+    const auto onTaskTreeDone = [this](DoneWith result) {
+        onFinished(result == DoneWith::Success);
+    };
+    m_taskTreeRunner.start(recipe, onTaskTreeSetup, onTaskTreeDone);
 }
 
 void TestCodeParser::onTaskStarted(Id type)

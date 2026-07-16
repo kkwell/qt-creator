@@ -4,18 +4,66 @@
 #include "dockerapi.h"
 #include "dockerconstants.h"
 #include "dockerdevice.h"
+#ifdef WITH_TESTS
+#include "dockerdebuggertest.h"
+#endif
+
+#include <projectexplorer/devicesupport/idevice.h>
+#include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/qmldebugcommandlinearguments.h>
+#include <projectexplorer/runcontrol.h>
 
 #include <extensionsystem/iplugin.h>
 
-#include <projectexplorer/projectexplorerconstants.h>
-
 #include <utils/fsengine/fsengine.h>
+
+#include <QtTaskTree/QBarrier>
 
 using namespace Core;
 using namespace ProjectExplorer;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace Docker::Internal {
+
+class DockerQmlToolingWorkerFactory final : public RunWorkerFactory
+{
+public:
+    DockerQmlToolingWorkerFactory()
+    {
+        setId("DockerQmlToolingWorkerFactory");
+        setRecipeProducer([](RunControl *runControl) {
+            runControl->requestQmlChannel();
+
+            const auto modifier = [runControl](Process &process) {
+                const QmlDebugServicesPreset services =
+                    servicesForRunMode(runControl->runMode());
+                CommandLine cmd = runControl->commandLine();
+                QUrl bindServer = runControl->qmlChannel();
+                const QString bindHost = runControl->device()->qmlDebugServerBindHost();
+                if (!bindHost.isEmpty())
+                    bindServer.setHost(bindHost);
+                cmd.addArg(qmlDebugTcpArguments(services, bindServer));
+                process.setCommand(cmd);
+            };
+            const ProcessTask processTask(
+                runControl->processTaskWithModifier(modifier, {.setupCanceler = false}));
+            return Group {
+                When (processTask, &Process::started, WorkflowPolicy::StopOnError) >> Do {
+                    runControl->createRecipe(runnerIdForRunMode(runControl->runMode()))
+                }
+            };
+        });
+        addSupportedRunMode(ProjectExplorer::Constants::QML_PROFILER_RUN_MODE);
+        addSupportedRunMode(ProjectExplorer::Constants::QML_PREVIEW_RUN_MODE);
+        addSupportedDeviceType(Constants::DOCKER_DEVICE_TYPE);
+    }
+};
+
+void setupDockerRunAndDebugSupport()
+{
+    static DockerQmlToolingWorkerFactory qmlToolingWorkerFactory;
+}
 
 class DockerPlugin final : public ExtensionSystem::IPlugin
 {
@@ -39,6 +87,11 @@ private:
     {
         m_deviceFactory = std::make_unique<DockerDeviceFactory>();
         m_dockerApi = std::make_unique<DockerApi>();
+        setupDockerRunAndDebugSupport();
+#ifdef WITH_TESTS
+        addTestCreator(createDockerQmlChannelTest);
+        addTestCreator(createDockerPortsGatheringTest);
+#endif
     }
 
     std::unique_ptr<DockerDeviceFactory> m_deviceFactory;

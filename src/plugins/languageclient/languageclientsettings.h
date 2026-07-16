@@ -4,6 +4,7 @@
 #pragma once
 
 #include "languageclient_global.h"
+#include "mimetypesaspect.h"
 
 #include <coreplugin/dialogs/ioptionspage.h>
 
@@ -12,7 +13,6 @@
 #include <QAbstractItemModel>
 #include <QCoreApplication>
 #include <QJsonObject>
-#include <QLabel>
 #include <QPointer>
 #include <QUuid>
 #include <QWidget>
@@ -30,7 +30,12 @@ class FancyLineEdit;
 } // namespace Utils
 
 namespace Core { class IDocument; }
-namespace ProjectExplorer { class Project; }
+
+namespace ProjectExplorer {
+class BuildConfiguration;
+class Project;
+}
+
 namespace TextEditor { class BaseTextEditor; }
 
 namespace LanguageClient {
@@ -49,10 +54,10 @@ public:
     bool operator!=(const LanguageFilter &other) const;
 };
 
-class LANGUAGECLIENT_EXPORT BaseSettings
+class LANGUAGECLIENT_EXPORT BaseSettings : public Utils::AspectContainer
 {
 public:
-    BaseSettings() = default;
+    BaseSettings();
 
     virtual ~BaseSettings() = default;
 
@@ -63,62 +68,61 @@ public:
         LastSentinel
     };
 
-    QString m_name = QString("New Language Server");
-    QString m_id = QUuid::createUuid().toString();
-    Utils::Id m_settingsTypeId;
-    bool m_enabled = true;
-    StartBehavior m_startBehavior = RequiresFile;
-    LanguageFilter m_languageFilter;
-    QString m_initializationOptions;
-    QString m_configuration;
+    Utils::StringAspect name{this};
+    MimeTypesAspect mimeTypes{this};
+    Utils::StringAspect filePattern{this};
+    Utils::StringAspect id{this};
+    Utils::IdAspect settingsTypeId{this};
+    Utils::TypedSelectionAspect<StartBehavior> startBehavior{this};
+    Utils::BoolAspect enabled{this};
 
-    QJsonObject initializationOptions() const;
-    QJsonValue configuration() const;
+    Utils::StringAspect initializationOptions{this};
+    Utils::StringAspect configuration{this};
+    Utils::BoolAspect showInSettings{this};
+    // controls whether the resulting client can be used for completions/highlight/outline etc.
+    Utils::BoolAspect activatable{this};
+
+    QJsonObject initializationOptionsAsJson() const;
+    QJsonValue configurationAsJson() const;
 
     virtual bool applyFromSettingsWidget(QWidget *widget);
-    virtual QWidget *createSettingsWidget(QWidget *parent = nullptr) const;
-    virtual BaseSettings *copy() const = 0;
+    virtual QWidget *createSettingsWidget(QWidget *parent = nullptr);
+    virtual BaseSettings *copy() const;
+    virtual BaseSettings *create() const = 0;
     virtual bool isValid() const;
+    virtual bool isValidOnBuildConfiguration(ProjectExplorer::BuildConfiguration *bc) const;
+    virtual void attachProjectSpecificSettingsToLayout(ProjectExplorer::Project *, QLayout *) const
+    {}
     Client *createClient() const;
-    Client *createClient(ProjectExplorer::Project *project) const;
-    virtual Utils::Store toMap() const;
-    virtual void fromMap(const Utils::Store &map);
+    Client *createClient(ProjectExplorer::BuildConfiguration *bc) const;
+    bool isEnabledOnProject(ProjectExplorer::Project *project) const;
+    const LanguageFilter languageFilter() const;
 
 protected:
-    virtual BaseClientInterface *createInterface(ProjectExplorer::Project *) const = 0;
+    virtual BaseClientInterface *createInterface(ProjectExplorer::BuildConfiguration *) const = 0;
     virtual Client *createClient(BaseClientInterface *interface) const;
 
-    BaseSettings(const BaseSettings &other) = default;
-    BaseSettings(BaseSettings &&other) = default;
-    BaseSettings &operator=(const BaseSettings &other) = default;
-    BaseSettings &operator=(BaseSettings &&other) = default;
+private:
+    static constexpr char filterSeparator = ';';
 };
 
 class LANGUAGECLIENT_EXPORT StdIOSettings : public BaseSettings
 {
 public:
-    StdIOSettings() = default;
-    ~StdIOSettings() override = default;
+    StdIOSettings();
+    ~StdIOSettings() override;
 
-    Utils::FilePath m_executable;
-    QString m_arguments;
-
-    bool applyFromSettingsWidget(QWidget *widget) override;
-    QWidget *createSettingsWidget(QWidget *parent = nullptr) const override;
-    BaseSettings *copy() const override { return new StdIOSettings(*this); }
+    QWidget *createSettingsWidget(QWidget *parent = nullptr) override;
+    BaseSettings *create() const override { return new StdIOSettings; }
     bool isValid() const override;
-    Utils::Store toMap() const override;
-    void fromMap(const Utils::Store &map) override;
-    QString arguments() const;
+
     Utils::CommandLine command() const;
 
-protected:
-    BaseClientInterface *createInterface(ProjectExplorer::Project *project) const override;
+    Utils::StringAspect arguments{this};
+    Utils::FilePathAspect executable{this};
 
-    StdIOSettings(const StdIOSettings &other) = default;
-    StdIOSettings(StdIOSettings &&other) = default;
-    StdIOSettings &operator=(const StdIOSettings &other) = default;
-    StdIOSettings &operator=(StdIOSettings &&other) = default;
+protected:
+    BaseClientInterface *createInterface(ProjectExplorer::BuildConfiguration *bc) const override;
 };
 
 struct ClientType {
@@ -133,9 +137,12 @@ class LANGUAGECLIENT_EXPORT LanguageClientSettings
 {
 public:
     static void init();
+    static bool initialized();
+
     static QList<BaseSettings *> fromSettings(Utils::QtcSettings *settings);
     static QList<BaseSettings *> pageSettings();
     static QList<BaseSettings *> changedSettings();
+    static BaseSettings *settingById(QList<BaseSettings *> settings, const QString &id);
 
     static QList<Utils::Store> storesBySettingsType(Utils::Id settingsTypeId);
 
@@ -162,39 +169,6 @@ public:
         Layouting::LayoutModifier additionalItems = {});
 
     ~BaseSettingsWidget() override = default;
-
-    QString name() const;
-    LanguageFilter filter() const;
-    BaseSettings::StartBehavior startupBehavior() const;
-    bool alwaysOn() const;
-    bool requiresProject() const;
-    QString initializationOptions() const;
-
-private:
-    void showAddMimeTypeDialog();
-
-    QLineEdit *m_name = nullptr;
-    QLabel *m_mimeTypes = nullptr;
-    QLineEdit *m_filePattern = nullptr;
-    QComboBox *m_startupBehavior = nullptr;
-    Utils::FancyLineEdit *m_initializationOptions = nullptr;
-
-    static constexpr char filterSeparator = ';';
-};
-
-class LANGUAGECLIENT_EXPORT StdIOSettingsWidget : public BaseSettingsWidget
-{
-    Q_OBJECT
-public:
-    explicit StdIOSettingsWidget(const StdIOSettings* settings, QWidget *parent = nullptr);
-    ~StdIOSettingsWidget() override = default;
-
-    Utils::FilePath executable() const;
-    QString arguments() const;
-
-private:
-    Utils::PathChooser *m_executable = nullptr;
-    QLineEdit *m_arguments = nullptr;
 };
 
 class ProjectSettings
@@ -207,9 +181,18 @@ public:
     QByteArray json() const;
     void setJson(const QByteArray &json);
 
+    void enableSetting(const QString &id);
+    void disableSetting(const QString &id);
+    void clearOverride(const QString &id);
+
+    QStringList enabledSettings();
+    QStringList disabledSettings();
+
 private:
     ProjectExplorer::Project *m_project = nullptr;
     QByteArray m_json;
+    QStringList m_enabledSettings;
+    QStringList m_disabledSettings;
 };
 
 LANGUAGECLIENT_EXPORT TextEditor::BaseTextEditor *createJsonEditor(QObject *parent = nullptr);

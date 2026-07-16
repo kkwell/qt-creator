@@ -14,6 +14,7 @@
 #include <stdlib.h>
 
 #else
+#include <utils/filepath.h>
 #include <utils/temporaryfile.h>
 
 #include <QSocketNotifier>
@@ -61,7 +62,7 @@ bool OutputCollector::listen()
                 m_serverPath.clear();
                 return false;
             }
-            m_serverPath = tf.fileName();
+            m_serverPath = tf.filePath().path();
         }
         // By now the temp file was deleted again
         codedServerPath = QFile::encodeName(m_serverPath);
@@ -138,8 +139,10 @@ void OutputCollector::bytesAvailable()
     if (m_socket)
         emit byteDelivery(m_socket->readAll());
 #else
-    size_t nbytes = 0;
+    unsigned int nbytes = 0;
     if (::ioctl(m_serverFd, FIONREAD, (char *) &nbytes) < 0)
+        return;
+    if (!nbytes)
         return;
     QVarLengthArray<char, 8192> buff(nbytes);
     if (::read(m_serverFd, buff.data(), nbytes) != (int)nbytes)

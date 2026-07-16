@@ -6,8 +6,9 @@
 #include "core_global.h"
 #include "icontext.h"
 
-#include <utils/storekey.h>
+#include <utils/filesearch.h>
 #include <utils/outputformat.h>
+#include <utils/storekey.h>
 
 #include <QPlainTextEdit>
 
@@ -41,19 +42,22 @@ public:
 
     void appendMessage(const QString &out, Utils::OutputFormat format);
 
-    void registerPositionOf(unsigned taskId, int linkedOutputLines, int skipLines, int offset = 0);
+    enum class TaskSource { Direct, Parsed };
+    void registerPositionOf(
+        unsigned taskId, int linkedOutputLines, int skipLines, int offset, TaskSource taskSource);
     bool knowsPositionOf(unsigned taskId) const;
     void showPositionOf(unsigned taskId);
 
     void grayOutOldContent();
     void clear();
+    void clearLinesPrefixedWith(const QString& prefix, bool deleteTrailingLineBreak);
     void flush();
     void reset();
 
     void scrollToBottom();
 
-    void setMaxCharCount(int count);
-    int maxCharCount() const;
+    void setMaxCharCount(qsizetype count);
+    qsizetype maxCharCount() const;
 
     void setBaseFont(const QFont &newFont);
     float fontZoom() const;
@@ -61,25 +65,36 @@ public:
     void resetZoom() { setFontZoom(0); }
     void setWheelZoomEnabled(bool enabled);
 
-    void updateFilterProperties(
-            const QString &filterText,
-            Qt::CaseSensitivity caseSensitivity,
-            bool regexp,
-            bool isInverted,
-            int beforeContext,
-            int afterContext);
+    bool updateFilterProperties(
+        const QString &filterText,
+        Qt::CaseSensitivity caseSensitivity,
+        bool regexp,
+        bool isInverted,
+        int beforeContext,
+        int afterContext);
 
     void setOutputFileNameHint(const QString &fileName);
 
+    void filterNewContent();
+
 signals:
     void wheelZoom();
+    void outputDiscarded();
+    void cleanOldOutput();
 
 public slots:
     void setWordWrapEnabled(bool wrap);
+    void setDiscardExcessiveOutput(bool discard);
 
 protected:
     virtual void handleLink(const QPoint &pos);
     virtual void adaptContextMenu(QMenu *menu, const QPoint &pos);
+
+    using TextMatchingFunction = std::function<bool(const QString &text)>;
+    virtual TextMatchingFunction makeMatchingFilterFunction() const;
+    void resetLastFilteredBlockNumber();
+
+    virtual bool shouldFilterNewContentOnBlockCountChanged() const;
 
 private:
     QMimeData *createMimeDataFromSelection() const override;
@@ -94,13 +109,17 @@ private:
 
     using QPlainTextEdit::setFont; // call setBaseFont instead, which respects the zoom factor
     void enableUndoRedo();
-    void filterNewContent();
     void handleNextOutputChunk();
-    void handleOutputChunk(const QString &output, Utils::OutputFormat format);
-    void updateAutoScroll();
 
-    using TextMatchingFunction = std::function<bool(const QString &text)>;
-    TextMatchingFunction makeMatchingFunction() const;
+    enum class ChunkCompleteness { Complete, Split };
+    void handleOutputChunk(
+        const QString &output, Utils::OutputFormat format, ChunkCompleteness completeness);
+
+    void discardExcessiveOutput();
+    void discardPendingToolOutput();
+    void updateAutoScroll();
+    qsizetype totalQueuedSize() const;
+    qsizetype totalQueuedLines() const;
 
     Internal::OutputWindowPrivate *d = nullptr;
 };

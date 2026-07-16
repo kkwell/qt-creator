@@ -1,18 +1,18 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include "qmlprofilereventtypes.h"
 #include "qmlprofilermodelmanager.h"
 #include "qmlprofilertr.h"
 #include "scenegraphtimelinemodel.h"
 
+#include <qmldebug/qmlprofilereventtypes.h>
 #include <tracing/timelineformattime.h>
 
 #include <QCoreApplication>
 #include <QDebug>
 
-namespace QmlProfiler {
-namespace Internal {
+using namespace QmlDebug;
+namespace QmlProfiler::Internal {
 
 static const char *ThreadLabels[] = {
     QT_TRANSLATE_NOOP("QtC::QmlProfiler", "GUI Thread"),
@@ -206,7 +206,7 @@ void SceneGraphTimelineModel::flattenLoads()
     int collapsedRowCount = 0;
 
     // computes "compressed row"
-    QVector <qint64> eventEndTimes;
+    QList<qint64> eventEndTimes;
 
     for (int i = 0; i < count(); i++) {
         Item &event = m_data[i];
@@ -277,5 +277,4 @@ SceneGraphTimelineModel::Item::Item(int typeId, int glyphCount) :
 {
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

@@ -29,7 +29,7 @@ func numberOfHardLinks(path string) int {
 func fileIdFromHandle(handle windows.Handle) string {
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(handle, &info); err == nil {
-		buffer := fmt.Sprintf("%lx:%08lx%08lx", info.VolumeSerialNumber, info.FileIndexHigh, info.FileIndexLow)
+		buffer := fmt.Sprintf("%x:%08x%08x", info.VolumeSerialNumber, info.FileIndexHigh, info.FileIndexLow)
 		return buffer
 	}
 	return ""
@@ -71,4 +71,20 @@ func freeSpace(path string) uint64 {
 	var freeBytes uint64
 	windows.GetDiskFreeSpaceEx(windows.StringToUTF16Ptr(path), &freeBytes, nil, nil)
 	return freeBytes
+}
+
+func owner(path string) string {
+	return ""
+}
+
+func ownerId(path string) int {
+	return -2
+}
+
+func group(path string) string {
+	return ""
+}
+
+func groupId(path string) int {
+	return -2
 }

@@ -178,6 +178,7 @@ class DumperBase():
 
         self.isBigEndian = False
         self.packCode = '<'
+        self.byteorder = 'little'
 
         self.resetCaches()
         self.resetStats()
@@ -227,6 +228,7 @@ class DumperBase():
         self.watchers = args.get('watchers', {})
         self.useDynamicType = int(args.get('dyntype', '0'))
         self.useFancy = int(args.get('fancy', '0'))
+        self.allowInferiorCalls = int(args.get('allowinferiorcalls', '0'))
         self.forceQtNamespace = int(args.get('forcens', '0'))
         self.passExceptions = int(args.get('passexceptions', '0'))
         self.isTesting = int(args.get('testing', '0'))
@@ -288,8 +290,6 @@ class DumperBase():
         # A hack to cover most of the changes from Qt 5 to 6
         if version == 0x60000 and self.qtversionAtLeast6 is not None:
             return self.qtversionAtLeast6
-        if version == 0x50000: # FIXME: This drops unknown 4.x for now
-            return True
         return self.qtVersion() >= version
 
     def qtVersionPing(self, typeid, size_for_qt5=-1):
@@ -496,7 +496,7 @@ class DumperBase():
             native_type = self.lookupNativeType(typename)
             if native_type is None:
                 #sCANNOT DETERMINE SIZE FOR TYelf.dump_location()
-                self.dump_location()
+                #self.dump_location()
                 self.warn("TYPEIDS: %s" % self.typeid_cache)
                 self.warn("COULD NOT FIND TYPE '%s'" % typename)
                 return None
@@ -967,7 +967,10 @@ class DumperBase():
                 children = [('error', error)]
                 self.putSpecialValue("notcallable", children=children)
             else:
-                self.putItem(result)
+                if result is None:
+                    self.putSpecialValue("notcallable")
+                else:
+                    self.putItem(result)
 
     def call(self, rettype, value, func, *args):
         return self.callHelper(rettype, value, func, args)
@@ -1070,7 +1073,7 @@ class DumperBase():
     def check(self, exp):
         if not exp:
             self.warn('Check failed: %s' % exp)
-            self.dump_location()
+            #self.dump_location()
             raise RuntimeError('Check failed: %s' % exp)
 
     def check_typeid(self, typeid):
@@ -1765,17 +1768,17 @@ class DumperBase():
             primaryOpcode = data[0]
             if primaryOpcode == relativeJumpCode:
                 # relative jump on 32 and 64 bit with a 32bit offset
-                offset = int.from_bytes(data[1:5], byteorder='little')
+                offset = int.from_bytes(data[1:5], byteorder=self.byteorder)
                 return address + 5 + offset
             if primaryOpcode == jumpCode:
                 if data[1] != 0x25:  # check for known extended opcode
                     return 0
                 # 0xff25 is a relative jump on 64bit and an absolute jump on 32 bit
                 if self.ptrSize() == 8:
-                    offset = int.from_bytes(data[2:6], byteorder='little')
+                    offset = int.from_bytes(data[2:6], byteorder=self.byteorder)
                     return address + 6 + offset
                 else:
-                    return int.from_bytes(data[2:6], byteorder='little')
+                    return int.from_bytes(data[2:6], byteorder=self.byteorder)
             return 0
 
         # Do not try to extract a function pointer if there are no values to compare with
@@ -2312,7 +2315,7 @@ typename))
                                 with SubItem(self, propertyCount + dynamicPropertyCount):
                                     if not self.isCli:
                                         self.putField('key', self.encodeByteArray(k))
-                                        self.putField('keyencoded', 'latin1')
+                                        self.putField('keyencoded', 'latin1:1:0')
                                     self.putItem(v)
                                     dynamicPropertyCount += 1
                     self.putItemCount(propertyCount + dynamicPropertyCount)
@@ -2530,7 +2533,7 @@ typename))
 
     def extract_pointer_at_address(self, address):
         blob = self.value_data_from_address(address, self.ptrSize())
-        return int.from_bytes(blob, byteorder='little')
+        return int.from_bytes(blob, byteorder=self.byteorder)
 
     def value_extract_integer(self, value, size, signed):
         if isinstance(value.lvalue, int):
@@ -2540,7 +2543,7 @@ typename))
         #with self.dumper.timer('extractInt'):
         value.check()
         blob = self.value_data(value, size)
-        return int.from_bytes(blob, byteorder='little', signed=signed)
+        return int.from_bytes(blob, byteorder=self.byteorder, signed=signed)
 
     def value_extract_something(self, valuish, size, signed=False):
         if isinstance(valuish, int):
@@ -2549,7 +2552,7 @@ typename))
             blob = self.value_data(valuish, size)
         else:
             raise RuntimeError('CANT EXTRACT FROM %s' % type(valuish))
-        res = int.from_bytes(blob, byteorder='little', signed=signed)
+        res = int.from_bytes(blob, byteorder=self.byteorder, signed=signed)
         #self.warn("EXTRACTED %s SIZE %s FROM %s" % (res, size, blob))
         return res
 
@@ -3001,6 +3004,8 @@ typename))
             return
 
         self.putAddress(value.address())
+        if value.size is not None:
+            self.putField('size', value.size // 8)
 
         if typecode == TypeCode.Function:
             #self.warn('FUNCTION VALUE: %s' % value)
@@ -3202,8 +3207,8 @@ typename))
             return "Value(name='%s',typeid=%s, type=%s,data=%s,address=%s)" \
                 % (self.name, self.typeid, self.type.name, data, addr)
 
-        def displayEnum(self, form='%d', bitsize=None):
-            return self.dumper.value_display_enum(self, form, bitsize)
+        def displayEnum(self, form='%d'):
+            return self.dumper.value_display_enum(self, form)
 
         def display(self):
             if self.ldisplay is not None:
@@ -3716,7 +3721,7 @@ typename))
                 return size, typeid
 
         typeobj = self.lookupType(typename)
-        self.warn("LOOKUP FIELD TYPE: %s TYPEOBJ: %s" % (typename, typeobj))
+        #self.warn("LOOKUP FIELD TYPE: %s TYPEOBJ: %s" % (typename, typeobj))
         if typeobj is not None:
             typeid = typeobj.typeid
             size = self.type_size(typeid)
@@ -3914,18 +3919,8 @@ typename))
                 alignment = self.type_size(typeid)
         elif code in (TypeCode.Pointer, TypeCode.Reference, TypeCode.RValueReference):
             alignment = self.ptrSize()
-        elif self.isCdb:
-            alignment = self.nativeStructAlignment(self.type_nativetype(typeid))
         else:
-            size = self.type_size(typeid)
-            if size is None:
-                self.dump_type_cache()
-                self.warn("NO ALIGNMENT FOUND FOR SIZE OF TYPE %s" % str(typeid))
-                return 1
-            if size >= self.ptrSize():
-                alignment = self.ptrSize()
-            else:
-                alignment = size
+            alignment = self.nativeStructAlignment(self.type_nativetype(typeid))
             #self.warn("GUESSING ALIGNMENT %s FOR TYPEID %s" % (alignment, typeid))
         self.type_alignment_cache[typeid] = alignment
         return alignment
@@ -4053,7 +4048,7 @@ typename))
             #self.warn('SEARCHING FOR MEMBER: %s IN %s' % (name, value.type.name))
             members = self.value_members(value, True)
             #self.warn('MEMBERS: %s' % ', '.join(str(m.name) for m in members))
-            base = None
+            bases = []
             for member in members:
                 #self.warn('CHECKING FIELD %s' % member.name)
                 if member.type.code == TypeCode.Typedef:
@@ -4062,9 +4057,9 @@ typename))
                     #self.warn('FOUND MEMBER 1: %s IN %s' % (name, value.type.name))
                     return member
                 if member.isBaseClass:
-                    base = member
+                    bases.append(member)
             if self.isCdb:
-                if base is not None:
+                for base in bases:
                     # self.warn("CHECKING BASE CLASS '%s' for '%s'" % (base.type.name, name))
                     res = self.value_member_by_name(base, name)
                     if res is not None:
@@ -4117,7 +4112,7 @@ typename))
         fdata = fdata[::-1]
         return int(fdata, 2)
 
-    def value_display_enum(self, value, form='%d', bitsize=None):
+    def value_display_enum(self, value, form='%d'):
         size = value.type.size()
         intval = self.value_extract_integer(value, size, False)
         dd = self.type_enum_display_cache.get(value.typeid, None)

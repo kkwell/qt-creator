@@ -12,6 +12,7 @@
 #include <utils/algorithm.h>
 
 using namespace Core;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace TextEditor::Internal {
@@ -36,12 +37,11 @@ private:
 
 LocatorMatcherTasks BookmarkFilter::matchers()
 {
-    using namespace Tasking;
-
-    Storage<LocatorStorage> storage;
-
-    const auto onSetup = [this, storage] { storage->reportOutput(match(storage->input())); };
-    return {{Sync(onSetup), storage}};
+    const auto onSetup = [this] {
+        const LocatorStorage &storage = *LocatorStorage::storage();
+        storage.reportOutput(match(storage.input()));
+    };
+    return {QSyncTask(onSetup)};
 }
 
 LocatorFilterEntries BookmarkFilter::match(const QString &input) const
@@ -93,14 +93,14 @@ LocatorFilterEntries BookmarkFilter::match(const QString &input) const
         else if (!bookmark->lineText().isEmpty())
             entry.extraInfo = bookmark->lineText();
         else
-            entry.extraInfo = bookmark->filePath().toString();
+            entry.extraInfo = bookmark->filePath().toUrlishString();
         int highlightIndex = entry.displayName.indexOf(input, 0, Qt::CaseInsensitive);
         if (highlightIndex >= 0) {
-            entry.highlightInfo = {highlightIndex, int(input.length())};
+            entry.highlightInfo = {highlightIndex, int(input.size())};
         } else  {
             highlightIndex = entry.extraInfo.indexOf(input, 0, Qt::CaseInsensitive);
             if (highlightIndex >= 0) {
-                entry.highlightInfo = {highlightIndex, int(input.length()),
+                entry.highlightInfo = {highlightIndex, int(input.size()),
                                        LocatorFilterEntry::HighlightInfo::ExtraInfo};
             } else if (colonIndex >= 0) {
                 const QString fileName = input.left(colonIndex);
@@ -108,12 +108,12 @@ LocatorFilterEntries BookmarkFilter::match(const QString &input) const
                 highlightIndex = entry.displayName.indexOf(fileName, 0,
                                                            Qt::CaseInsensitive);
                 if (highlightIndex >= 0) {
-                    entry.highlightInfo = {highlightIndex, int(fileName.length())};
+                    entry.highlightInfo = {highlightIndex, int(fileName.size())};
                     highlightIndex = entry.displayName.indexOf(
                         lineNumber, highlightIndex, Qt::CaseInsensitive);
                     if (highlightIndex >= 0) {
                         entry.highlightInfo.startsDisplay += highlightIndex;
-                        entry.highlightInfo.lengthsDisplay += lineNumber.length();
+                        entry.highlightInfo.lengthsDisplay += lineNumber.size();
                     }
                 }
             }

@@ -3,6 +3,7 @@ QtcPlugin {
 
     Depends { name: "Qt"; submodules: ["widgets", "xml", "network", "qml"] }
     Depends { name: "Aggregation" }
+    Depends { name: "McpServerLib" }
     Depends { name: "Utils" }
 
     Depends { name: "Core" }
@@ -19,14 +20,13 @@ QtcPlugin {
             "abi.cpp", "abi.h",
             "abiwidget.cpp", "abiwidget.h",
             "abstractprocessstep.cpp", "abstractprocessstep.h",
-            "addrunconfigdialog.cpp", "addrunconfigdialog.h",
             "allprojectsfilter.cpp", "allprojectsfilter.h",
             "allprojectsfind.cpp", "allprojectsfind.h",
             "appoutputpane.cpp", "appoutputpane.h",
             "baseprojectwizarddialog.cpp", "baseprojectwizarddialog.h",
             "buildaspects.cpp", "buildaspects.h",
             "buildconfiguration.cpp", "buildconfiguration.h",
-            "buildinfo.cpp", "buildinfo.h",
+            "buildinfo.h",
             "buildmanager.cpp", "buildmanager.h",
             "buildpropertiessettings.cpp", "buildpropertiessettings.h",
             "buildsettingspropertiespage.cpp", "buildsettingspropertiespage.h",
@@ -39,9 +39,7 @@ QtcPlugin {
             "clangparser.cpp", "clangparser.h",
             "codestylesettingspropertiespage.cpp", "codestylesettingspropertiespage.h",
             "compileoutputwindow.cpp", "compileoutputwindow.h",
-            "configtaskhandler.cpp", "configtaskhandler.h",
             "copystep.cpp", "copystep.h",
-            "copytaskhandler.cpp", "copytaskhandler.h",
             "currentprojectfilter.cpp", "currentprojectfilter.h",
             "currentprojectfind.cpp", "currentprojectfind.h",
             "customexecutablerunconfiguration.cpp", "customexecutablerunconfiguration.h",
@@ -57,10 +55,12 @@ QtcPlugin {
             "deploymentdataview.cpp",
             "deploymentdataview.h",
             "desktoprunconfiguration.cpp", "desktoprunconfiguration.h",
+            "detailederrorview.cpp", "detailederrorview.h",
             "editorconfiguration.cpp", "editorconfiguration.h",
             "editorsettingspropertiespage.cpp", "editorsettingspropertiespage.h",
             "environmentaspect.cpp", "environmentaspect.h",
             "environmentaspectwidget.cpp", "environmentaspectwidget.h",
+            "environmentkitaspect.cpp", "environmentkitaspect.h",
             "environmentwidget.cpp", "environmentwidget.h",
             "expanddata.cpp", "expanddata.h",
             "extraabi.cpp", "extraabi.h",
@@ -74,25 +74,23 @@ QtcPlugin {
             "headerpath.h",
             "importwidget.cpp", "importwidget.h",
             "ioutputparser.cpp", "ioutputparser.h",
-            "ipotentialkit.h",
-            "itaskhandler.h",
+            "issuesmanager.cpp", "issuesmanager.h",
             "kit.cpp", "kit.h",
-            "kitaspects.cpp", "kitaspects.h",
+            "kitdata.cpp", "kitdata.h",
+            "kitaspect.cpp", "kitaspect.h",
             "kitchooser.cpp", "kitchooser.h",
             "kitfeatureprovider.h",
             "kitmanager.cpp", "kitmanager.h",
-            "kitmanagerconfigwidget.cpp", "kitmanagerconfigwidget.h",
             "kitoptionspage.cpp", "kitoptionspage.h",
             "ldparser.cpp", "ldparser.h",
             "lldparser.cpp", "lldparser.h",
             "linuxiccparser.cpp", "linuxiccparser.h",
             "makestep.cpp", "makestep.h",
+            "mcpsupport.cpp",
             "miniprojecttargetselector.cpp", "miniprojecttargetselector.h",
             "msvcparser.cpp", "msvcparser.h",
             "msvctoolchain.cpp", "msvctoolchain.h",
-            "namedwidget.cpp", "namedwidget.h",
-            "osparser.cpp", "osparser.h",
-            "panelswidget.cpp", "panelswidget.h",
+            "outputparsers.cpp", "outputparsers.h",
             "parseissuesdialog.cpp", "parseissuesdialog.h",
             "processparameters.cpp", "processparameters.h",
             "processstep.cpp", "processstep.h",
@@ -103,7 +101,6 @@ QtcPlugin {
             "projectexplorer.cpp", "projectexplorer.h",
             "projectexplorer.qrc",
             "projectexplorer_export.h",
-            "projectexplorer_test.h",
             "projectexplorerconstants.cpp",
             "projectexplorerconstants.h",
             "projectexplorericons.h", "projectexplorericons.cpp",
@@ -123,39 +120,42 @@ QtcPlugin {
             "projectupdater.cpp", "projectupdater.h",
             "projectwindow.cpp", "projectwindow.h",
             "projectwizardpage.cpp", "projectwizardpage.h",
+            "qmldebugcommandlinearguments.cpp", "qmldebugcommandlinearguments.h",
             "rawprojectpart.cpp", "rawprojectpart.h",
-            "removetaskhandler.cpp", "removetaskhandler.h",
+            "resourcepreviewhoverhandler.cpp", "resourcepreviewhoverhandler.h",
+            "runconfigdialogs.cpp", "runconfigdialogs.h",
             "runconfiguration.cpp", "runconfiguration.h",
             "runcontrol.cpp", "runcontrol.h",
             "runconfigurationaspects.cpp", "runconfigurationaspects.h",
             "runsettingspropertiespage.cpp", "runsettingspropertiespage.h",
             "sanitizerparser.cpp", "sanitizerparser.h",
             "selectablefilesmodel.cpp", "selectablefilesmodel.h",
-            "showineditortaskhandler.cpp", "showineditortaskhandler.h",
             "showoutputtaskhandler.cpp", "showoutputtaskhandler.h",
             "simpleprojectwizard.cpp", "simpleprojectwizard.h",
+            "sysrootkitaspect.cpp", "sysrootkitaspect.h",
             "target.cpp", "target.h",
-            "targetsettingspanel.cpp", "targetsettingspanel.h",
             "targetsetuppage.cpp", "targetsetuppage.h",
             "targetsetupwidget.cpp", "targetsetupwidget.h",
             "task.cpp", "task.h",
             "taskfile.cpp", "taskfile.h",
+            "taskhandlers.cpp", "taskhandlers.h",
             "taskhub.cpp", "taskhub.h",
             "taskmodel.cpp", "taskmodel.h",
             "taskwindow.cpp", "taskwindow.h",
             "toolchain.cpp", "toolchain.h",
             "toolchaincache.h",
             "toolchainconfigwidget.cpp", "toolchainconfigwidget.h",
+            "toolchainkitaspect.cpp", "toolchainkitaspect.h",
             "toolchainmanager.cpp", "toolchainmanager.h",
             "toolchainoptionspage.cpp", "toolchainoptionspage.h",
             "toolchainsettingsaccessor.cpp", "toolchainsettingsaccessor.h",
             "treescanner.cpp", "treescanner.h",
             "userfileaccessor.cpp", "userfileaccessor.h",
-            "vcsannotatetaskhandler.cpp", "vcsannotatetaskhandler.h",
             "waitforstopdialog.cpp", "waitforstopdialog.h",
             "windebuginterface.cpp", "windebuginterface.h",
             "workspaceproject.cpp", "workspaceproject.h",
-            "xcodebuildparser.cpp", "xcodebuildparser.h"
+            "xcodebuildparser.cpp", "xcodebuildparser.h",
+            "windowsappsdksettings.cpp", "windowsappsdksettings.h",
         ]
     }
 
@@ -206,12 +206,12 @@ QtcPlugin {
             "desktopdevicefactory.cpp", "desktopdevicefactory.h",
             "devicecheckbuildstep.cpp", "devicecheckbuildstep.h",
             "devicefactoryselectiondialog.cpp", "devicefactoryselectiondialog.h",
+            "devicekitaspects.cpp", "devicekitaspects.h",
             "devicemanager.cpp", "devicemanager.h",
             "devicemanagermodel.cpp", "devicemanagermodel.h",
             "deviceprocessesdialog.cpp", "deviceprocessesdialog.h",
             "devicesettingspage.cpp", "devicesettingspage.h",
             "devicetestdialog.cpp", "devicetestdialog.h",
-            "deviceusedportsgatherer.cpp", "deviceusedportsgatherer.h",
             "filetransfer.cpp", "filetransfer.h",
             "filetransferinterface.h",
             "idevice.cpp", "idevice.h",
@@ -221,8 +221,6 @@ QtcPlugin {
             "processlist.cpp", "processlist.h",
             "sshparameters.cpp", "sshparameters.h",
             "sshsettings.cpp", "sshsettings.h",
-            "sshsettingspage.cpp", "sshsettingspage.h",
-            "desktopprocesssignaloperation.cpp", "desktopprocesssignaloperation.h"
         ]
     }
 
@@ -233,19 +231,18 @@ QtcPlugin {
     }
 
     QtcTestFiles {
-        files: ["outputparser_test.h", "outputparser_test.cpp"]
+        files: [
+            "jsonwizard/jsonwizard_test.cpp",
+            "jsonwizard/jsonwizard_test.h",
+            "outputparser_test.cpp",
+            "outputparser_test.h",
+        ]
     }
 
-    Group {
-        name: "Test resources"
-        condition: qtc.withPluginTests
-        files: ["testdata/**"]
-        fileTags: ["qt.core.resource_data"]
-        Qt.core.resourcePrefix: "/projectexplorer"
-        Qt.core.resourceSourceBase: path
-    }
+    QtcTestResources { files: ["testdata/**"] }
 
     Export {
+        Depends { name: "QtTaskTree" }
         Depends { name: "Qt.network" }
     }
 }

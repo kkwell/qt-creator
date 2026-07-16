@@ -1,13 +1,13 @@
 add_qtc_plugin(RemoteLinux
-  DEPENDS QmlDebug
+  DEPENDS QmlDebug CmdBridgeClient
   PLUGIN_DEPENDS Core Debugger ProjectExplorer
   SOURCES
     abstractremotelinuxdeploystep.cpp abstractremotelinuxdeploystep.h
+    connectdevicestep.cpp connectdevicestep.h
     customcommanddeploystep.cpp customcommanddeploystep.h
     deploymenttimeinfo.cpp deploymenttimeinfo.h
     genericdeploystep.cpp genericdeploystep.h
     genericdirectuploadstep.cpp genericdirectuploadstep.h
-    genericlinuxdeviceconfigurationwidget.cpp genericlinuxdeviceconfigurationwidget.h
     killappstep.cpp killappstep.h
     linuxdevice.cpp linuxdevice.h
     linuxdevicetester.cpp linuxdevicetester.h
@@ -21,9 +21,9 @@ add_qtc_plugin(RemoteLinux
     remotelinuxdebugsupport.cpp remotelinuxdebugsupport.h
     remotelinuxdeploysupport.cpp remotelinuxdeploysupport.h
     remotelinuxenvironmentaspect.cpp remotelinuxenvironmentaspect.h
+    remotelinuxfiletransfer.cpp remotelinuxfiletransfer.h
     remotelinuxplugin.cpp
     remotelinuxrunconfiguration.cpp remotelinuxrunconfiguration.h
-    remotelinuxsignaloperation.cpp remotelinuxsignaloperation.h
     remotelinuxtr.h
     sshdevicewizard.cpp sshdevicewizard.h
     sshkeycreationdialog.cpp sshkeycreationdialog.h

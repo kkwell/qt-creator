@@ -65,38 +65,49 @@ public:
 
     static void startProfiling();
     // Plugin operations
-    static QVector<PluginSpec *> loadQueue();
+    static QList<PluginSpec *> loadQueue();
     static void loadPlugins();
     static void loadPluginsAtRuntime(const QSet<PluginSpec *> &plugins);
     static Utils::FilePaths pluginPaths();
     static void setPluginPaths(const Utils::FilePaths &paths);
     static QString pluginIID();
     static void setPluginIID(const QString &iid);
-    static const QVector<PluginSpec *> plugins();
-    static QHash<QString, QVector<PluginSpec *>> pluginCollections();
+    static const QList<PluginSpec *> plugins();
+    static QHash<QString, QList<PluginSpec *>> pluginCollections();
     static bool hasError();
     static const QStringList allErrors();
     static const QSet<PluginSpec *> pluginsRequiringPlugin(PluginSpec *spec);
-    static const QSet<PluginSpec *> pluginsRequiredByPlugin(PluginSpec *spec);
+    static const QSet<PluginSpec *> pluginsToEnableForPlugin(PluginSpec *spec);
     static void checkForProblematicPlugins();
     static PluginSpec *specForPlugin(IPlugin *plugin);
+    static PluginSpec *specById(const QString &id);
+    static bool specExists(const QString &id);
+    static bool specExistsAndIsEnabled(const QString &id);
 
-    static void addPlugins(const QVector<PluginSpec *> &specs);
+    static void addPlugins(const QList<PluginSpec *> &specs);
+
+    static void reInstallPlugins();
+
+    static Utils::Result<> removePluginOnRestart(const QString &id);
+    static void installPluginOnRestart(
+        const Utils::FilePath &source, const Utils::FilePath &destination);
+
+    static void removePluginsAfterRestart();
+    static void installPluginsAfterRestart();
+
+    // UI
+    static std::optional<QSet<PluginSpec *>> askForEnablingPlugins(
+        QWidget *dialogParent, const QSet<PluginSpec *> &plugins, bool enable);
 
     // Settings
-    static void setSettings(Utils::QtcSettings *settings);
-    static Utils::QtcSettings *settings();
-    static void setInstallSettings(Utils::QtcSettings *settings);
-    static Utils::QtcSettings *globalSettings();
     static void writeSettings();
 
     // command line arguments
     static QStringList arguments();
     static QStringList argumentsForRestart();
-    static bool parseOptions(const QStringList &args,
+    static Utils::Result<> parseOptions(const QStringList &args,
         const QMap<QString, bool> &appOptions,
-        QMap<QString, QString> *foundAppOptions,
-        QString *errorString);
+        QMap<QString, QString> *foundAppOptions);
     static void formatOptions(QTextStream &str, int optionIndentation, int descriptionIndentation);
     static void formatPluginOptions(QTextStream &str, int optionIndentation, int descriptionIndentation);
     static void formatPluginVersions(QTextStream &str);
@@ -104,28 +115,6 @@ public:
     static QString serializedArguments();
 
     static bool testRunRequested();
-
-#ifdef EXTENSIONSYSTEM_WITH_TESTOPTION
-    static bool registerScenario(const QString &scenarioId, std::function<bool()> scenarioStarter);
-    static bool isScenarioRequested();
-    static bool runScenario();
-    static bool isScenarioRunning(const QString &scenarioId);
-    // static void triggerScenarioPoint(const QVariant pointData); // ?? called from scenario point
-    static bool finishScenario();
-    static void waitForScenarioFullyInitialized();
-    // signals:
-    // void scenarioPointTriggered(const QVariant pointData); // ?? e.g. in StringTable::GC() -> post a call to quit into main thread and sleep for 5 seconds in the GC thread
-#endif
-
-    struct ProcessData {
-        QString m_executable;
-        QStringList m_args;
-        QString m_workingPath;
-        QString m_settingsPath;
-    };
-
-    static void setCreatorProcessData(const ProcessData &data);
-    static ProcessData creatorProcessData();
 
     static QString platformName();
 
@@ -137,6 +126,8 @@ public:
 
     static QString systemInformation();
 
+    static void setTermsAndConditionsAccepted(PluginSpec *spec);
+
 signals:
     void objectAdded(QObject *obj);
     void aboutToRemoveObject(QObject *obj);
@@ -144,7 +135,6 @@ signals:
     void pluginsChanged();
     void initializationDone();
     void testsFinished(int failedTests);
-    void scenarioFinished(int exitCode);
 
     friend class Internal::PluginManagerPrivate;
 };

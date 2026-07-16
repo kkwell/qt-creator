@@ -9,12 +9,12 @@
 #include "cmakefilecompletionassist.h"
 #include "cmakeindenter.h"
 #include "cmakeprojectconstants.h"
+#include "cmakeprojectmanagertr.h"
 
 #include "3rdparty/cmake/cmListFileCache.h"
 
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
-#include <coreplugin/coreplugintr.h>
 
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/buildsystem.h>
@@ -50,14 +50,12 @@ public:
     CMakeEditor();
 
 private:
-    CMakeKeywords m_keywords;
+    const CMakeKeywords m_keywords;
 };
 
 CMakeEditor::CMakeEditor()
+    : m_keywords(CMakeToolManager::defaultProjectOrDefaultCMakeKeyWords())
 {
-    if (auto tool = CMakeToolManager::defaultProjectOrDefaultCMakeTool())
-        m_keywords = tool->keywords();
-
     setContextHelpProvider([this](const HelpCallback &callback) {
         auto helpPrefix = [this](const QString &word) {
             if (m_keywords.includeStandardModules.contains(word))
@@ -190,8 +188,8 @@ static QHash<QString, Link> getLocalSymbolsHash(const QByteArray &content,
 
         Link link;
         link.targetFilePath = filePath;
-        link.targetLine = arg.Line;
-        link.targetColumn = arg.Column - 1;
+        link.target.line = arg.Line;
+        link.target.column = arg.Column - 1;
         hash.insert(QString::fromUtf8(arg.Value), link);
     }
     return hash;
@@ -328,7 +326,7 @@ void CMakeEditorWidget::findLinkAt(const QTextCursor &cursor,
 
     if (auto project = ProjectTree::currentProject()) {
         buffer.replace("${CMAKE_SOURCE_DIR}", project->projectDirectory().path());
-        auto bs = ProjectTree::currentBuildSystem();
+        auto bs = activeBuildSystemForCurrentProject();
         if (bs && bs->buildConfiguration()) {
             buffer.replace("${CMAKE_BINARY_DIR}", bs->buildConfiguration()->buildDirectory().path());
 
@@ -337,8 +335,7 @@ void CMakeEditorWidget::findLinkAt(const QTextCursor &cursor,
             const QString relativePathSuffix = textDocument()
                                                    ->filePath()
                                                    .parentDir()
-                                                   .relativePathFrom(project->projectDirectory())
-                                                   .path();
+                                                   .relativePathFromDir(project->projectDirectory());
             buffer.replace("${CMAKE_CURRENT_BINARY_DIR}",
                            bs->buildConfiguration()
                                ->buildDirectory()
@@ -400,9 +397,7 @@ void CMakeEditorWidget::findLinkAt(const QTextCursor &cursor,
         return processLinkCallback(link);
     }
 
-    FilePath fileName = dir.withNewPath(unescape(buffer));
-    if (fileName.isRelativePath())
-        fileName = dir.pathAppended(fileName.path());
+    FilePath fileName = dir.resolvePath(unescape(buffer));
     if (fileName.exists()) {
         if (fileName.isDir()) {
             FilePath subProject = fileName.pathAppended(Constants::CMAKE_LISTS_TXT);
@@ -448,8 +443,7 @@ public:
 const CMakeKeywords &CMakeHoverHandler::keywords() const
 {
     if (m_keywords.functions.isEmpty())
-        if (auto tool = CMakeToolManager::defaultProjectOrDefaultCMakeTool())
-            m_keywords = tool->keywords();
+        m_keywords = CMakeToolManager::defaultProjectOrDefaultCMakeKeyWords();
 
     return m_keywords;
 }
@@ -508,6 +502,12 @@ void CMakeHoverHandler::operateTooltip(TextEditorWidget *editorWidget, const QPo
     setToolTip(m_helpToolTip);
 }
 
+static BaseHoverHandler &cmakeHoverHandler()
+{
+    static CMakeHoverHandler theCMakeHoverHandler;
+    return theCMakeHoverHandler;
+}
+
 // CMakeEditorFactory
 
 class CMakeEditorFactory final : public TextEditorFactory
@@ -516,7 +516,7 @@ public:
     CMakeEditorFactory()
     {
         setId(Constants::CMAKE_EDITOR_ID);
-        setDisplayName(::Core::Tr::tr("CMake Editor"));
+        setDisplayName(Tr::tr("CMake Editor"));
         addMimeType(Utils::Constants::CMAKE_MIMETYPE);
         addMimeType(Utils::Constants::CMAKE_PROJECT_MIMETYPE);
 
@@ -535,7 +535,7 @@ public:
                                 | OptionalActions::FollowSymbolUnderCursor
                                 | OptionalActions::Format);
 
-        addHoverHandler(new CMakeHoverHandler);
+        addHoverHandler(&cmakeHoverHandler());
 
         ActionContainer *contextMenu = ActionManager::createMenu(Constants::M_CONTEXT);
         contextMenu->addAction(ActionManager::command(TextEditor::Constants::FOLLOW_SYMBOL_UNDER_CURSOR));

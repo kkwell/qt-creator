@@ -39,6 +39,9 @@ static QByteArray overwrittenToolchainDefines(const ProjectPart &projectPart)
 BuiltinEditorDocumentParser::BuiltinEditorDocumentParser(const FilePath &filePath,
                                                          int fileSizeLimitInMb)
     : BaseEditorDocumentParser(filePath)
+    , m_defaultFeatures(ProjectFile::isC(ProjectFile::classify(filePath))
+                            ? LanguageFeatures::cFeatures()
+                            : LanguageFeatures::defaultFeatures())
     , m_fileSizeLimitInMb(fileSizeLimitInMb)
 {
     qRegisterMetaType<CPlusPlus::Snapshot>("CPlusPlus::Snapshot");
@@ -63,11 +66,11 @@ void BuiltinEditorDocumentParser::updateImpl(const QPromise<void> &promise,
     ProjectExplorer::HeaderPaths headerPaths;
     FilePaths includedFiles;
     FilePaths precompiledHeaders;
-    QString projectConfigFile;
-    LanguageFeatures features = LanguageFeatures::defaultFeatures();
+    FilePath projectConfigFile;
+    LanguageFeatures features = m_defaultFeatures;
 
-    baseState.projectPartInfo = determineProjectPart(filePath().toString(),
-                                                     baseConfig.preferredProjectPartId,
+    baseState.projectPartInfo = determineProjectPart(filePath(),
+                                                     baseConfig.effectivePreferredProjectPartId(),
                                                      baseState.projectPartInfo,
                                                      updateParams.activeProject,
                                                      updateParams.languagePreference,
@@ -87,10 +90,11 @@ void BuiltinEditorDocumentParser::updateImpl(const QPromise<void> &promise,
             configFile += ProjectPart::readProjectConfigFile(part->projectConfigFile);
         headerPaths = part->headerPaths;
         projectConfigFile = part->projectConfigFile;
-        includedFiles = Utils::transform(part->includedFiles, &FilePath::fromString);
-        if (baseConfig.usePrecompiledHeaders)
-            precompiledHeaders = Utils::transform(part->precompiledHeaders, &FilePath::fromString);
-        features = part->languageFeatures;
+        includedFiles = part->includedFiles;
+        if (baseConfig.usePrecompiledHeaders())
+            precompiledHeaders = part->precompiledHeaders;
+        if (part->hasProject())
+            features = part->languageFeatures;
     }
 
     if (configFile != state.configFile) {
@@ -99,8 +103,8 @@ void BuiltinEditorDocumentParser::updateImpl(const QPromise<void> &promise,
         invalidateConfig = true;
     }
 
-    if (baseConfig.editorDefines != baseState.editorDefines) {
-        baseState.editorDefines = baseConfig.editorDefines;
+    if (baseConfig.editorDefines() != baseState.editorDefines) {
+        baseState.editorDefines = baseConfig.editorDefines();
         invalidateSnapshot = true;
     }
 
@@ -190,14 +194,14 @@ void BuiltinEditorDocumentParser::updateImpl(const QPromise<void> &promise,
         sourceProcessor.setHeaderPaths(state.headerPaths);
         sourceProcessor.setLanguageFeatures(features);
         sourceProcessor.run(configurationFileName);
-        if (baseConfig.usePrecompiledHeaders) {
+        if (baseConfig.usePrecompiledHeaders()) {
             for (const FilePath &precompiledHeader : std::as_const(state.precompiledHeaders))
                 sourceProcessor.run(precompiledHeader);
         }
         if (!baseState.editorDefines.isEmpty())
             sourceProcessor.run(CppModelManager::editorConfigurationFileName());
         FilePaths includedFiles = state.includedFiles;
-        if (baseConfig.usePrecompiledHeaders)
+        if (baseConfig.usePrecompiledHeaders())
             includedFiles << state.precompiledHeaders;
         FilePath::removeDuplicates(includedFiles);
         sourceProcessor.run(filePath(), includedFiles);
@@ -206,7 +210,7 @@ void BuiltinEditorDocumentParser::updateImpl(const QPromise<void> &promise,
         for (Snapshot::const_iterator i = state.snapshot.begin(), ei = state.snapshot.end();
              i != ei;
              ++i) {
-            if (Client::isInjectedFile(i.key().toString()))
+            if (Client::isInjectedFile(i.key()))
                 newSnapshot.insert(i.value());
         }
         state.snapshot = newSnapshot;

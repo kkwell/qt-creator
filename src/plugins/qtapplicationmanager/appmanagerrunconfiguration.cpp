@@ -11,12 +11,13 @@
 #include "appmanagertr.h"
 #include "appmanagerutilities.h"
 
+#include <projectexplorer/devicesupport/devicekitaspects.h>
+#include <projectexplorer/buildconfiguration.h>
+#include <projectexplorer/buildsystem.h>
 #include <projectexplorer/environmentaspect.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/target.h>
 
-#include <boot2qt/qdbconstants.h>
 #include <remotelinux/remotelinux_constants.h>
 
 #include <utils/algorithm.h>
@@ -30,41 +31,39 @@ namespace AppManager::Internal {
 class AppManagerRunConfiguration : public RunConfiguration
 {
 public:
-    AppManagerRunConfiguration(Target *target, Id id)
-        : RunConfiguration(target, id)
+    AppManagerRunConfiguration(BuildConfiguration *bc, Id id)
+        : RunConfiguration(bc, id)
     {
         setDefaultDisplayName(Tr::tr("Run an Application Manager Package"));
 
-        setUpdater([this, target] {
-            QList<TargetInformation> tis = TargetInformation::readFromProject(target, buildKey());
+        setUpdater([this, bc] {
+            QList<TargetInformation> tis = TargetInformation::readFromProject(bc, buildKey());
             if (tis.isEmpty())
                 return;
             const TargetInformation targetInformation = tis.at(0);
 
             controller.setValue(getToolFilePath(Constants::APPMAN_CONTROLLER, kit(),
-                                                DeviceKitAspect::device(kit())));
+                                                RunDeviceKitAspect::device(kit())));
 
             appId.setValue(targetInformation.manifest.id);
             appId.setReadOnly(true);
         });
 
-        connect(target, &Target::parsingFinished, this, &RunConfiguration::update);
-        connect(target, &Target::buildSystemUpdated, this, &RunConfiguration::update);
-        connect(target, &Target::deploymentDataChanged, this, &RunConfiguration::update);
-        connect(target, &Target::kitChanged, this, &RunConfiguration::update);
+        connect(buildSystem(), &BuildSystem::parsingFinished, this, &RunConfiguration::update);
     }
 
     AppManagerControllerAspect controller{this};
     AppManagerIdAspect appId{this};
     AppManagerDocumentUrlAspect documentUrl{this};
+    AppManagerRestartIfRunningAspect restartIfRunning{this};
     AppManagerInstanceIdAspect instanceId{this};
 };
 
 class AppManagerRunAndDebugConfiguration final : public AppManagerRunConfiguration
 {
 public:
-    AppManagerRunAndDebugConfiguration(Target *target, Id id)
-        : AppManagerRunConfiguration(target, id)
+    AppManagerRunAndDebugConfiguration(BuildConfiguration *bc, Id id)
+        : AppManagerRunConfiguration(bc, id)
     {
         setDefaultDisplayName(Tr::tr("Run and Debug an Application Manager Package"));
         environment.addPreferredBaseEnvironment(Tr::tr("Clean Environment"), {});
@@ -81,47 +80,44 @@ public:
         registerRunConfiguration<AppManagerRunConfiguration>(Constants::RUNCONFIGURATION_ID);
         addSupportedTargetDeviceType(ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE);
         addSupportedTargetDeviceType(RemoteLinux::Constants::GenericLinuxOsType);
-        addSupportedTargetDeviceType(Qdb::Constants::QdbLinuxOsType);
+        addSupportedTargetDeviceType(ProjectExplorer::Constants::BOOT2QT_DEVICE_TYPE);
     }
 
-    virtual bool supportsBuildKey(Target *target, const QString &key) const final
+    bool supportsBuildKey(BuildConfiguration *bc, const QString &key) const final
     {
-        QList<TargetInformation> tis = TargetInformation::readFromProject(target, key);
-        return !tis.isEmpty();
+        return !TargetInformation::readFromProject(bc, key).isEmpty();
     }
 
-    virtual bool filterTarget(Target *target, const TargetInformation &ti) const
+    virtual bool filterTarget(Kit *kit, const TargetInformation &ti) const
     {
         return !ti.manifest.supportsDebugging() ||
-               DeviceKitAspect::device(target->kit())->osType() != OsType::OsTypeLinux;
+               RunDeviceKitAspect::device(kit)->osType() != OsType::OsTypeLinux;
     }
 
-    QList<RunConfigurationCreationInfo> availableCreators(Target *target) const
+    QList<RunConfigurationCreationInfo> availableCreators(BuildConfiguration *bc) const final
     {
         QObject::connect(&m_fileSystemWatcher, &FileSystemWatcher::fileChanged,
-                         target->project(), &Project::displayNameChanged,
+                         bc->project(), &Project::displayNameChanged,
                          Qt::UniqueConnection);
 
-        const auto buildTargets = TargetInformation::readFromProject(target);
-        const auto filteredTargets = Utils::filtered(buildTargets, [this, target](const TargetInformation &ti) {
-            return filterTarget(target, ti);
+        const auto buildTargets = TargetInformation::readFromProject(bc);
+        const auto filteredTargets = Utils::filtered(buildTargets, [this, bc](const TargetInformation &ti) {
+            const auto device = RunDeviceKitAspect::device(bc->kit());
+            if (!device)
+                return false;
+
+            return filterTarget(bc->kit(), ti);
         });
-        auto result = Utils::transform(filteredTargets, [this, target](const TargetInformation &ti) {
-
-            QVariantMap settings;
-            // ti.buildKey is currently our app id
-            settings.insert("id", ti.buildKey);
-            target->setNamedSettings("runConfigurationSettings", settings);
-
+        auto result = Utils::transform(filteredTargets, [this, bc](const TargetInformation &ti) {
             RunConfigurationCreationInfo rci;
             rci.factory = this;
             rci.buildKey = ti.buildKey;
-            rci.displayName = decoratedTargetName(ti.displayName, target);
+            rci.displayName = decoratedTargetName(ti.displayName, bc->kit());
             rci.displayNameUniquifier = ti.displayNameUniquifier;
             rci.creationMode = RunConfigurationCreationInfo::AlwaysCreate;
             rci.projectFilePath = ti.manifest.filePath;
             rci.useTerminal = false;
-            if (!m_fileSystemWatcher.files().contains(ti.manifest.filePath.toFSPathString())) {
+            if (!m_fileSystemWatcher.files().contains(ti.manifest.filePath)) {
                 m_fileSystemWatcher.addFile(ti.manifest.filePath, FileSystemWatcher::WatchAllChanges);
             }
             return rci;
@@ -141,12 +137,12 @@ public:
         registerRunConfiguration<AppManagerRunAndDebugConfiguration>(Constants::RUNANDDEBUGCONFIGURATION_ID);
         addSupportedTargetDeviceType(ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE);
         addSupportedTargetDeviceType(RemoteLinux::Constants::GenericLinuxOsType);
-        addSupportedTargetDeviceType(Qdb::Constants::QdbLinuxOsType);
+        addSupportedTargetDeviceType(ProjectExplorer::Constants::BOOT2QT_DEVICE_TYPE);
     }
 
-    virtual bool filterTarget(Target *target, const TargetInformation &ti) const final
+    virtual bool filterTarget(Kit *kit, const TargetInformation &ti) const final
     {
-        return !AppManagerRunConfigurationFactory::filterTarget(target, ti);
+        return !AppManagerRunConfigurationFactory::filterTarget(kit, ti);
     }
 };
 

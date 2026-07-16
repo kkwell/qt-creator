@@ -4,7 +4,8 @@
 #pragma once
 
 #include <qtsupport/baseqtversion.h>
-#include <qtsupport/qtversionfactory.h>
+
+namespace ProjectExplorer { class BuildConfiguration; }
 
 namespace Android::Internal {
 
@@ -19,25 +20,30 @@ public:
     bool supportsMultipleQtAbis() const override;
     ProjectExplorer::Abis detectQtAbis() const override;
 
-    void addToEnvironment(const ProjectExplorer::Kit *k, Utils::Environment &env) const override;
+    void addToBuildEnvironment(const ProjectExplorer::Kit *k, Utils::Environment &env) const override;
     void setupQmakeRunEnvironment(Utils::Environment &env) const override;
 
     QSet<Utils::Id> availableFeatures() const override;
     QSet<Utils::Id> targetDeviceTypes() const override;
 
     QString description() const override;
-    const QStringList &androidAbis() const;
+    const QStringList androidAbis() const;
     int minimumNDK() const;
+    int defaultMinimumSDK() const;
 
-    static QString androidDeploymentSettingsFileName(const ProjectExplorer::Target *target);
-    static Utils::FilePath androidDeploymentSettings(const ProjectExplorer::Target *target);
+    static QString androidDeploymentSettingsFileName(const ProjectExplorer::BuildConfiguration *bc);
+    static Utils::FilePath androidDeploymentSettings(const ProjectExplorer::BuildConfiguration *bc);
 
     struct BuiltWith {
         int apiVersion = -1;
         QVersionNumber ndkVersion;
+        int androidPlatform = -1;
     };
-    static BuiltWith parseBuiltWith(const QByteArray &modulesCoreJsonData, bool *ok = nullptr);
+    static BuiltWith parseModulesCoreJson(const QByteArray &modulesCoreJsonData,
+                                          bool *ok = nullptr);
     BuiltWith builtWith(bool *ok = nullptr) const;
+
+    bool isAndroidQtVersion() const override { return true; };
 
 protected:
     void parseMkSpec(ProFileEvaluator *) const override;

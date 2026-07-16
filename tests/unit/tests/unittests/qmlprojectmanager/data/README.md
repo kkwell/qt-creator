@@ -38,6 +38,9 @@ that QDS and QUL are aligned on the qmlproject format and that new features in Q
 qmlproject files for MCU projects. The test set will be tested in the Qt for MCUs repositories
 to make sure both the original and the converted qmlprojects build correctly.
 
+The test set also includes some dummy qmlproject files to test that the converter correctly picks up
+qmlproject modules in the same way Qt for MCUs does.
+
 The qmlproject files in the test set aim to cover all the possible contents of a Qt for MCUs qmlproject,
 but since new features are added with every release, it is not guaranteed to be exhaustive.
 
@@ -67,3 +70,13 @@ Some main points for qmlproject files for MCU projects:
 Test data contains an example project folders that file filters will be initialized and tested.
 
 * **filelist.txt**: List of the files need to be found by the file filters.
+
+## Qml to qmlproject test data
+Input data for the McuModuleProjectItem tests. McuModuleProjectItem represents the MCU module and can be generated from a regular QML module (based on qmldir).
+
+* **existing_qmlproject**: read and process valid .qmlproject module
+* **incorrect_module_name_qmldir**: generate .qmlproject based on qmldir (failure - module name is wrong)
+* **invalid_qmlproject**: read and process invalid .qmlproject module
+* **missing_module_name_qmldir**: generate .qmlproject based on qmldir (failure -  missing module name)
+* **missing_qml_files_qmldir**: generate .qmlproject based on qmldir (failure - missing qml files)
+* **missing_qmlproject**: generate .qmlproject based on qmldir (success)

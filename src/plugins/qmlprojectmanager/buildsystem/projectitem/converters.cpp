@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0+ OR GPL-3.0 WITH Qt-GPL-exception-1.0
 
 #include "converters.h"
+#include "utils/algorithm.h"
+#include "../../qmlprojectconstants.h"
+#include "../../qmlprojectexporter/filetypes.h"
 
 #include <QJsonDocument>
 
@@ -9,17 +12,10 @@ namespace QmlProjectManager::Converters {
 
 const static QStringList qmlFilesFilter{QStringLiteral("*.qml")};
 const static QStringList javaScriptFilesFilter{QStringLiteral("*.js"), QStringLiteral("*.ts")};
-const static QStringList imageFilesFilter{QStringLiteral("*.jpeg"),
-                                          QStringLiteral("*.jpg"),
-                                          QStringLiteral("*.png"),
-                                          QStringLiteral("*.svg"),
-                                          QStringLiteral("*.hdr"),
-                                          QStringLiteral("*.ktx"),
-                                          QStringLiteral("*.bmp"),
-                                          QStringLiteral("*.ttf"),
-                                          QStringLiteral("*.tiff"),
-                                          QStringLiteral("*.webp"),
-                                          QStringLiteral("*.gif")};
+
+const QStringList imageFilesFilter() {
+    return imageFiles([](const QString& suffix) { return "*." + suffix; });
+}
 
 QString jsonValueToString(const QJsonValue &val, int indentationLevel, bool indented);
 
@@ -34,7 +30,7 @@ QString jsonToQmlProject(const QJsonObject &rootObject)
     QJsonObject versionConfig = rootObject["versions"].toObject();
     QJsonObject environmentConfig = rootObject["environment"].toObject();
     QJsonObject deploymentConfig = rootObject["deployment"].toObject();
-    QJsonArray filesConfig = rootObject["fileGroups"].toArray();
+    const QJsonArray filesConfig = rootObject["fileGroups"].toArray();
     QJsonObject otherProperties = rootObject["otherProperties"].toObject();
 
     QJsonObject mcuObject = rootObject["mcu"].toObject();
@@ -65,6 +61,13 @@ QString jsonToQmlProject(const QJsonObject &rootObject)
         appendItem(key, QString::fromStdString(val ? "true" : "false"), false);
     };
 
+    auto appendBoolOpt = [&appendBool](const QString &key, const QJsonObject &source) {
+        if (!source.keys().contains(key)) {
+            return;
+        }
+        appendBool(key, source[key].toBool());
+    };
+
     auto appendStringArray = [&appendItem](const QString &key, const QStringList &vals) {
         if (vals.isEmpty())
             return;
@@ -72,7 +75,7 @@ QString jsonToQmlProject(const QJsonObject &rootObject)
         for (const QString &value : vals)
             finalString.append("\"").append(value).append("\"").append(",");
 
-        finalString.remove(finalString.length() - 1, 1);
+        finalString.remove(finalString.size() - 1, 1);
         finalString.prepend("[ ").append(" ]");
         appendItem(key, finalString, false);
     };
@@ -122,11 +125,11 @@ QString jsonToQmlProject(const QJsonObject &rootObject)
         if (nodeName.toLower() == "qmlfiles") {
             filter = qmlFilesFilter;
         } else if (nodeName.toLower() == "imagefiles") {
-            filter = imageFilesFilter;
+            filter = imageFilesFilter();
         } else if (nodeName.toLower() == "javascriptfiles") {
             filter = javaScriptFilesFilter;
         }
-        for (const QString &entry : filter) {
+        for (const QString &entry : std::as_const(filter)) {
             filters.removeOne(entry);
         }
         appendString("filter", filters.join(";"));
@@ -148,9 +151,12 @@ QString jsonToQmlProject(const QJsonObject &rootObject)
         appendString("mainFile", runConfig["mainFile"].toString());
         appendString("mainUiFile", runConfig["mainUiFile"].toString());
         appendString("targetDirectory", deploymentConfig["targetDirectory"].toString());
-        appendBool("enableCMakeGeneration", deploymentConfig["enableCMakeGeneration"].toBool());
+        appendBoolOpt("enableCMakeGeneration", deploymentConfig);
+        appendBoolOpt("enablePythonGeneration", deploymentConfig);
+        appendBoolOpt("standaloneApp", deploymentConfig);
         appendBool("widgetApp", runConfig["widgetApp"].toBool());
         appendStringArray("importPaths", rootObject["importPaths"].toVariant().toStringList());
+        appendStringArray("mockImports", rootObject["mockImports"].toVariant().toStringList());
         appendBreak();
         appendString("qdsVersion", versionConfig["designStudio"].toString());
         appendString("quickVersion", versionConfig["qtQuick"].toString());
@@ -224,11 +230,133 @@ QString jsonToQmlProject(const QJsonObject &rootObject)
     return qmlProjectString;
 }
 
+QStringList qmlprojectsFromFilesNodes(const QJsonArray &fileGroups,
+                                      const Utils::FilePath &projectRootPath)
+{
+    QStringList qmlProjectFiles;
+    for (const QJsonValue &fileGroup : fileGroups) {
+        if (fileGroup["type"].toString() != "Module") {
+            continue;
+        }
+        // In Qul, paths are relative to the project root directory, not the "directory" entry
+        qmlProjectFiles.append(fileGroup["files"].toVariant().toStringList());
+
+        // If the "directory" property is set, all qmlproject files in the directory are also added
+        // as relative paths from the project root directory, in addition to explicitly added files
+        const QString directoryProp = fileGroup["directory"].toString("");
+        if (directoryProp.isEmpty()) {
+            continue;
+        }
+        const Utils::FilePath dir = projectRootPath / directoryProp;
+        qmlProjectFiles.append(Utils::transform<QStringList>(
+            dir.dirEntries(Utils::FileFilter({"*.qmlproject"}, QDir::Files)),
+            [&projectRootPath](Utils::FilePath file) {
+                return file.absoluteFilePath().relativePathFromDir(projectRootPath);
+            }));
+    }
+
+    return qmlProjectFiles;
+}
+
+QString moduleUriFromQmlProject(const QString &qmlProjectFilePath)
+{
+    QmlJS::SimpleReader simpleReader;
+    const auto rootNode = simpleReader.readFile(qmlProjectFilePath);
+    // Since the file wasn't explicitly added, skip qmlproject files with errors
+    if (!rootNode || !simpleReader.errors().isEmpty()) {
+        return QString();
+    }
+
+    for (const auto &child : rootNode->children()) {
+        if (child->name() == "MCU.Module") {
+            const auto prop = child->property("uri").isValid() ? child->property("uri")
+                                                               : child->property("MCU.uri");
+            if (prop.isValid()) {
+                return prop.value.toString();
+            }
+            break;
+        }
+    }
+
+    return QString();
+}
+
+QJsonObject nodeToJsonObject(const QmlJS::SimpleReaderNode::Ptr &node)
+{
+    QJsonObject tObj;
+    for (const QString &childPropName : node->propertyNames())
+        tObj.insert(childPropName, node->property(childPropName).value.toJsonValue());
+
+    for (const auto &childNode : node->children())
+        tObj.insert(childNode->name(), nodeToJsonObject(childNode));
+
+    return tObj;
+};
+
+// Returns a list of qmlproject files in currentSearchPath which are valid modules,
+// with URIs matching the relative path from importPathBase.
+QStringList getModuleQmlProjectFiles(const Utils::FilePath &importPath,
+                                     const Utils::FilePath &projectRootPath)
+{
+    QStringList qmlProjectFiles;
+
+    QDirIterator it(importPath.toFSPathString(),
+                    QDir::NoDotAndDotDot | QDir::Files,
+                    QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString file = it.next();
+        if (!file.endsWith(".qmlproject")) {
+            continue;
+        }
+
+        // Add if matching
+        QString uri = moduleUriFromQmlProject(file);
+        if (uri.isEmpty()) {
+            // If the qmlproject file is not a valid module, skip it
+            continue;
+        }
+
+        const auto filePath = Utils::FilePath::fromUserInput(file);
+        const bool isBaseImportPath = filePath.parentDir() == importPath;
+
+        // Check the URI against the original import path before adding
+        // If we look directly in the search path, the URI doesn't matter
+        const QString relativePath = filePath.parentDir().relativePathFromDir(importPath);
+        if (isBaseImportPath || uri.replace(".", "/") == relativePath) {
+            // If the URI matches the path or the file is directly in the import path, add it
+            qmlProjectFiles.emplace_back(filePath.relativePathFromDir(projectRootPath));
+        }
+    }
+    return qmlProjectFiles;
+}
+
+QStringList qmlprojectsFromImportPaths(const QStringList &importPaths,
+                                       const Utils::FilePath &projectRootPath)
+{
+    return Utils::transform<QStringList>(importPaths, [&projectRootPath](const QString &importPath) {
+        const auto importDir = projectRootPath / importPath;
+        return getModuleQmlProjectFiles(importDir, projectRootPath);
+    });
+}
+
 QJsonObject qmlProjectTojson(const Utils::FilePath &projectFile)
 {
     QmlJS::SimpleReader simpleQmlJSReader;
 
-    const QmlJS::SimpleReaderNode::Ptr rootNode = simpleQmlJSReader.readFile(projectFile.toFSPathString());
+    QmlJS::SimpleReaderNode::Ptr rootNode;
+
+    if (!projectFile.isEmpty()) {
+        rootNode = simpleQmlJSReader.readFile(projectFile.toFSPathString());
+    } else {
+        rootNode = simpleQmlJSReader.readFromSource("import QmlProject 1.1\n"
+
+                                                    "Project {\n"
+                                                    "QmlFiles {\n"
+                                                    "directory: \".\"\n"
+                                                    "}\n"
+                                                    "qt6Project: true\n"
+                                                    "}\n");
+    }
 
     if (!simpleQmlJSReader.errors().isEmpty() || !rootNode->isValid()) {
         qCritical() << "Unable to parse:" << projectFile;
@@ -240,14 +368,6 @@ QJsonObject qmlProjectTojson(const Utils::FilePath &projectFile)
         qCritical() << "Cannot find root 'Project' item in the project file: " << projectFile;
         return {};
     }
-
-    auto nodeToJsonObject = [](const QmlJS::SimpleReaderNode::Ptr &node) {
-        QJsonObject tObj;
-        for (const QString &childPropName : node->propertyNames())
-            tObj.insert(childPropName, node->property(childPropName).value.toJsonValue());
-
-        return tObj;
-    };
 
     auto toCamelCase = [](const QString &s) { return QString(s).replace(0, 1, s[0].toLower()); };
 
@@ -264,6 +384,9 @@ QJsonObject qmlProjectTojson(const Utils::FilePath &projectFile)
     QJsonObject otherProperties;
 
     bool qtForMCUs = false;
+
+    QStringList importPaths;
+    Utils::FilePath projectRootPath = projectFile.parentDir();
 
     // convert the non-object props
     for (const QString &propName : rootNode->propertyNames()) {
@@ -289,7 +412,9 @@ QJsonObject qmlProjectTojson(const Utils::FilePath &projectFile)
                    || propName.contains("forcefreetype", Qt::CaseInsensitive)) {
             currentObj = &runConfigObject;
         } else if (propName.contains("targetdirectory", Qt::CaseInsensitive)
-                || propName.contains("enableCMakeGeneration", Qt::CaseInsensitive)) {
+                   || propName.contains("enableCMakeGeneration", Qt::CaseInsensitive)
+                   || propName.contains("enablePythonGeneration", Qt::CaseInsensitive)
+                   || propName.contains("standaloneApp", Qt::CaseInsensitive)) {
             currentObj = &deploymentObject;
         } else if (propName.contains("qtformcus", Qt::CaseInsensitive)) {
             qtForMCUs = value.toBool();
@@ -300,6 +425,9 @@ QJsonObject qmlProjectTojson(const Utils::FilePath &projectFile)
             value = rootNode->property(propName).value.toBool() ? "6" : "5";
         } else if (propName.contains("importpaths", Qt::CaseInsensitive)) {
             objKey = "importPaths";
+            importPaths = value.toVariant().toStringList();
+        } else if (propName.contains("mockImports", Qt::CaseInsensitive)) {
+            objKey = "mockImports";
         } else {
             currentObj = &otherProperties;
             objKey = propName; // With prefix
@@ -338,9 +466,12 @@ QJsonObject qmlProjectTojson(const Utils::FilePath &projectFile)
             // and all files are prefixed such as "directory/<filename>".
             // if directory is empty, then the files are prefixed with the project directory
             if (childNodeFiles.empty()) {
-                auto inserter = [&childNodeFilters](const QStringList &filterSource) {
-                    std::for_each(filterSource.begin(),
-                                  filterSource.end(),
+                auto inserter = [&childNodeFilters](auto &filterSource) {
+                    if (!childNodeFilters.empty())
+                        return;
+
+                    std::for_each(std::cbegin(filterSource),
+                                  std::cend(filterSource),
                                   [&childNodeFilters](const auto &value) {
                                       if (!childNodeFilters.contains(value)) {
                                           childNodeFilters << value;
@@ -348,7 +479,7 @@ QJsonObject qmlProjectTojson(const Utils::FilePath &projectFile)
                                   });
                 };
 
-                // Those 3 file groups are the special ones
+                // Those 4 file groups are the special ones
                 // that have a default set of filters.
                 // The default filters are written to the
                 // qmlproject file after conversion
@@ -357,7 +488,9 @@ QJsonObject qmlProjectTojson(const Utils::FilePath &projectFile)
                 } else if (childNodeName == "javascriptfiles") {
                     inserter(javaScriptFilesFilter);
                 } else if (childNodeName == "imagefiles") {
-                    inserter(imageFilesFilter);
+                    inserter(imageFilesFilter());
+                } else if (childNodeName == "fontfiles") {
+                    inserter(QmlProjectManager::Constants::QDS_FONT_FILES_FILTERS);
                 }
             }
 
@@ -405,6 +538,16 @@ QJsonObject qmlProjectTojson(const Utils::FilePath &projectFile)
             shaderToolObject.insert("files", childNode->property("files").value.toJsonValue());
         } else if (childNode->name().contains("config", Qt::CaseInsensitive)) {
             mcuConfigObject = nodeToJsonObject(childNode);
+            if (const auto fileSelector = childNode->property("fileSelector"); fileSelector.isValid()) {
+                auto currentSelectors = runConfigObject.value("fileSelectors").toArray();
+                const auto mcuSelectors = fileSelector.value.toJsonArray();
+                for (const auto &elem : mcuSelectors) {
+                    if (!currentSelectors.contains(elem)) {
+                        currentSelectors.append(elem);
+                    }
+                }
+                runConfigObject.insert("fileSelectors", currentSelectors);
+            }
         } else if (childNode->name().contains("module", Qt::CaseInsensitive)) {
             mcuModuleObject = nodeToJsonObject(childNode);
         } else {
@@ -412,6 +555,13 @@ QJsonObject qmlProjectTojson(const Utils::FilePath &projectFile)
                               nodeToJsonObject(childNode));
         }
     }
+
+    QStringList qmlProjectDependencies;
+    qmlProjectDependencies.append(qmlprojectsFromImportPaths(importPaths, projectRootPath));
+    qmlProjectDependencies.append(qmlprojectsFromFilesNodes(fileGroupsObject, projectRootPath));
+    qmlProjectDependencies.removeDuplicates();
+    qmlProjectDependencies.sort();
+    rootObject.insert("qmlprojectDependencies", QJsonArray::fromStringList(qmlProjectDependencies));
 
     mcuObject.insert("config", mcuConfigObject);
     mcuObject.insert("module", mcuModuleObject);
@@ -445,6 +595,15 @@ QString jsonValueToString(const QJsonValue &val, int indentationLevel, bool inde
         return val.toBool() ? QString("true") : QString("false");
     } else if (val.isDouble()) {
         return QString("%1").arg(val.toDouble());
+    } else if (val.isObject()) {
+        QString nodeContent = "{\n";
+        QJsonObject obj = val.toObject();
+        for (QString key : obj.keys()) {
+            QJsonValue val = obj[key];
+            nodeContent += key.append(": ").prepend(QString(" ").repeated((indentationLevel + 1) * 4));
+            nodeContent += jsonValueToString(val, indentationLevel + 1, indented) + "\n";
+        }
+        return nodeContent + QString(" ").repeated(indentationLevel * 4).append("}");
     } else {
         return val.toString().prepend("\"").append("\"");
     }

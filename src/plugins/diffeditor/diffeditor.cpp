@@ -3,12 +3,13 @@
 
 #include "diffeditor.h"
 
-#include "diffenums.h"
 #include "diffeditorconstants.h"
 #include "diffeditordocument.h"
 #include "diffeditoricons.h"
 #include "diffeditortr.h"
-#include "diffview.h"
+#include "diffenums.h"
+#include "sidebysidediffeditorwidget.h"
+#include "unifieddiffeditorwidget.h"
 
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/icore.h>
@@ -26,6 +27,7 @@
 #include <texteditor/texteditorsettings.h>
 
 #include <utils/algorithm.h>
+#include <utils/ansiescapecodehandler.h>
 #include <utils/fileutils.h>
 #include <utils/guard.h>
 #include <utils/qtcassert.h>
@@ -39,7 +41,6 @@
 #include <QStackedWidget>
 #include <QStyle>
 #include <QTextBlock>
-#include <QTextCodec>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
@@ -59,21 +60,158 @@ using namespace Utils;
 
 namespace DiffEditor::Internal {
 
-class DescriptionEditorWidget : public TextEditorWidget
+class IDiffView : public QObject
+{
+    Q_OBJECT
+
+public:
+    IDiffView() = default;
+
+    QIcon icon() const { return m_icon; }
+    QString toolTip() const { return m_toolTip; }
+    bool supportsSync() const { return m_supportsSync; }
+    QString syncToolTip() const { return m_syncToolTip; }
+    Utils::Id id() const { return m_id; }
+
+    virtual QWidget *widget() = 0;
+    virtual void setDocument(DiffEditorDocument *document) = 0;
+
+    virtual void beginOperation() = 0;
+    virtual void setCurrentDiffFileIndex(int index) = 0;
+    virtual void setDiff(const QList<FileData> &diffFileList) = 0;
+    virtual void setMessage(const QString &message) = 0;
+    virtual void endOperation() = 0;
+
+    virtual void setSync(bool) = 0;
+
+signals:
+    void currentDiffFileIndexChanged(int index);
+
+protected:
+    void setIcon(const QIcon &icon) { m_icon = icon; }
+    void setToolTip(const QString &toolTip) { m_toolTip = toolTip; }
+    void setId(const Utils::Id &id) { m_id = id; }
+    void setSupportsSync(bool sync) { m_supportsSync = sync; }
+    void setSyncToolTip(const QString &text) { m_syncToolTip = text; }
+
+private:
+    QIcon m_icon;
+    QString m_toolTip;
+    Utils::Id m_id;
+    bool m_supportsSync = false;
+    QString m_syncToolTip;
+};
+
+template <typename Widget>
+class DiffView final : public IDiffView
+{
+public:
+    DiffView()
+    {
+        if constexpr (std::is_same_v<Widget, UnifiedDiffEditorWidget>) {
+            setId(Constants::UNIFIED_VIEW_ID);
+            setIcon(Icons::UNIFIED_DIFF.icon());
+            setToolTip(Tr::tr("Switch to Unified Diff Editor"));
+        } else if constexpr (std::is_same_v<Widget, SideBySideDiffEditorWidget>) {
+            setId(Constants::SIDE_BY_SIDE_VIEW_ID);
+            setIcon(Icons::SIDEBYSIDE_DIFF.icon());
+            setToolTip(Tr::tr("Switch to Side By Side Diff Editor"));
+            setSupportsSync(true);
+            setSyncToolTip(Tr::tr("Synchronize Horizontal Scroll Bars"));
+        }
+    }
+
+    Widget *widget() final
+    {
+        if (!m_widget) {
+            m_widget = new Widget;
+            connect(m_widget, &Widget::currentDiffFileIndexChanged,
+                    this, &DiffView::currentDiffFileIndexChanged);
+        }
+        return m_widget;
+    }
+
+    void setDocument(DiffEditorDocument *document) final
+    {
+        QTC_ASSERT(m_widget, return);
+        m_widget->setDocument(document);
+        if (!document)
+            return;
+
+        switch (document->state()) {
+        case DiffEditorDocument::Reloading:
+            m_widget->clear(Tr::tr("Waiting for data..."));
+            break;
+        case DiffEditorDocument::LoadFailed:
+            m_widget->clear(Tr::tr("Retrieving data failed."));
+            break;
+        default:
+            break;
+        }
+    }
+
+    void beginOperation() final
+    {
+        QTC_ASSERT(m_widget, return);
+        DiffEditorDocument *document = m_widget->diffDocument();
+        if (document && document->state() == DiffEditorDocument::LoadOK)
+            m_widget->saveState();
+    }
+
+    void setCurrentDiffFileIndex(int index) final
+    {
+        QTC_ASSERT(m_widget, return);
+        m_widget->setCurrentDiffFileIndex(index);
+    }
+
+    void setDiff(const QList<FileData> &diffFileList) final
+    {
+        QTC_ASSERT(m_widget, return);
+        m_widget->setDiff(diffFileList);
+    }
+
+    void setMessage(const QString &message) final
+    {
+        QTC_ASSERT(m_widget, return);
+        m_widget->clear(message);
+    }
+
+    void endOperation() final
+    {
+        QTC_ASSERT(m_widget, return);
+        m_widget->restoreState();
+    }
+
+    void setSync(bool sync) final
+    {
+        if constexpr (std::is_same_v<Widget, SideBySideDiffEditorWidget>) {
+            QTC_ASSERT(m_widget, return);
+            m_widget->setHorizontalSync(sync);
+        }
+    }
+
+private:
+    Widget *m_widget = nullptr;
+};
+
+using UnifiedView = DiffView<UnifiedDiffEditorWidget>;
+using SideBySideView = DiffView<SideBySideDiffEditorWidget>;
+
+class DescriptionEditorWidget final : public TextEditorWidget
 {
     Q_OBJECT
 public:
     DescriptionEditorWidget(QWidget *parent = nullptr);
 
-    QSize sizeHint() const override;
+    QSize sizeHint() const final;
 
 signals:
     void requestResize();
 
 protected:
-    void setDisplaySettings(const DisplaySettings &ds) override;
-    void setMarginSettings(const MarginSettings &ms) override;
-    void applyFontSettings() override;
+    void setDisplaySettings(const DisplaySettingsData &ds) final;
+    void setMarginSettings(const MarginSettingsData &ms) final;
+    void applyFontSettings() final;
 };
 
 DescriptionEditorWidget::DescriptionEditorWidget(QWidget *parent)
@@ -81,7 +219,7 @@ DescriptionEditorWidget::DescriptionEditorWidget(QWidget *parent)
 {
     setupFallBackEditor("DiffEditor.DescriptionEditor");
 
-    DisplaySettings settings = displaySettings();
+    DisplaySettingsData settings = displaySettings();
     settings.m_textWrapping = false;
     settings.m_displayLineNumbers = false;
     settings.m_displayFoldingMarkers = false;
@@ -106,16 +244,17 @@ QSize DescriptionEditorWidget::sizeHint() const
     return size;
 }
 
-void DescriptionEditorWidget::setDisplaySettings(const DisplaySettings &ds)
+void DescriptionEditorWidget::setDisplaySettings(const DisplaySettingsData &ds)
 {
-    DisplaySettings settings = displaySettings();
+    DisplaySettingsData settings = displaySettings();
     settings.m_visualizeWhitespace = ds.m_visualizeWhitespace;
     settings.m_scrollBarHighlights = ds.m_scrollBarHighlights;
     settings.m_highlightCurrentLine = ds.m_highlightCurrentLine;
+    settings.m_displayMinimap = false;
     TextEditorWidget::setDisplaySettings(settings);
 }
 
-void DescriptionEditorWidget::setMarginSettings(const MarginSettings &ms)
+void DescriptionEditorWidget::setMarginSettings(const MarginSettingsData &ms)
 {
     Q_UNUSED(ms)
     TextEditorWidget::setMarginSettings({});
@@ -129,15 +268,15 @@ void DescriptionEditorWidget::applyFontSettings()
 
 ///////////////////////////////// DiffEditor //////////////////////////////////
 
-class DiffEditor : public Core::IEditor
+class DiffEditor final : public IEditor
 {
 public:
-    DiffEditor(DiffEditorDocument *doc);
-    ~DiffEditor() override;
+    explicit DiffEditor(DiffEditorDocument *doc);
+    ~DiffEditor() final;
 
-    Core::IEditor *duplicate() override;
-    Core::IDocument *document() const override;
-    QWidget *toolBar() override;
+    IEditor *duplicate() final;
+    IDocument *document() const final;
+    QWidget *toolBar() final;
 
 private:
     DiffEditor();
@@ -146,6 +285,7 @@ private:
     void documentHasChanged();
     void toggleDescription();
     void updateDescription();
+    void foldAllHasChanged();
     void contextLineCountHasChanged(int lines);
     void ignoreWhitespaceHasChanged();
     void prepareForReload();
@@ -179,6 +319,7 @@ private:
     QAction *m_contextSpinBoxAction = nullptr;
     QAction *m_toggleSyncAction = nullptr;
     QAction *m_whitespaceButtonAction = nullptr;
+    QAction *m_foldAllAction = nullptr;
     QAction *m_toggleDescriptionAction = nullptr;
     QAction *m_reloadAction = nullptr;
     QAction *m_contextLabelAction = nullptr;
@@ -267,17 +408,24 @@ DiffEditor::DiffEditor()
     m_whitespaceButtonAction = m_toolBar->addAction(Tr::tr("Ignore Whitespace"));
     m_whitespaceButtonAction->setCheckable(true);
 
+    m_foldAllAction
+        = m_toolBar->addAction(Utils::Icons::EXPAND_ALL_TOOLBAR.icon(), Tr::tr("Fold All"));
+    m_foldAllAction->setToolTip(m_foldAllAction->text());
+    m_foldAllAction->setCheckable(true);
+
     m_toggleDescriptionAction = m_toolBar->addAction(Icons::TOP_BAR.icon(), {});
     m_toggleDescriptionAction->setCheckable(true);
 
     m_reloadAction = m_toolBar->addAction(Utils::Icons::RELOAD_TOOLBAR.icon(), Tr::tr("Reload Diff"));
-    m_reloadAction->setToolTip(Tr::tr("Reload Diff"));
+    m_reloadAction->setToolTip(m_reloadAction->text());
 
     m_toggleSyncAction = m_toolBar->addAction(Utils::Icons::LINK_TOOLBAR.icon(), {});
     m_toggleSyncAction->setCheckable(true);
 
     m_viewSwitcherAction = m_toolBar->addAction(QIcon(), {});
 
+    connect(m_foldAllAction, &QAction::toggled,
+            this, &DiffEditor::foldAllHasChanged);
     connect(m_whitespaceButtonAction, &QAction::toggled,
             this, &DiffEditor::ignoreWhitespaceHasChanged);
     connect(m_contextSpinBox, &QSpinBox::valueChanged,
@@ -303,7 +451,10 @@ void DiffEditor::setDocument(std::shared_ptr<DiffEditorDocument> doc)
     connect(m_document.get(), &DiffEditorDocument::reloadFinished,
             this, &DiffEditor::reloadHasFinished);
 
-    connect(m_reloadAction, &QAction::triggered, this, [this] { m_document->reload(); });
+    connect(m_reloadAction, &QAction::triggered, this, [this] {
+        m_foldAllAction->setChecked(false);
+        m_document->reload();
+    });
     connect(m_document.get(), &DiffEditorDocument::temporaryStateChanged,
             this, &DiffEditor::documentStateChanged);
 
@@ -439,7 +590,11 @@ void DiffEditor::updateDescription()
     QTC_ASSERT(m_toolBar, return);
 
     const QString description = m_document->description();
-    m_descriptionWidget->setPlainText(description);
+
+    if (m_document->isDescriptionAnsiEnabled())
+        AnsiEscapeCodeHandler::setTextInDocument(m_descriptionWidget->document(), description);
+    else
+        m_descriptionWidget->setPlainText(description);
     m_descriptionWidget->setVisible(m_showDescription && !description.isEmpty());
 
     const QString actionText = m_showDescription ? Tr::tr("Hide Change Description")
@@ -449,6 +604,22 @@ void DiffEditor::updateDescription()
     m_toggleDescriptionAction->setToolTip(actionText);
     m_toggleDescriptionAction->setText(actionText);
     m_toggleDescriptionAction->setVisible(!description.isEmpty());
+}
+
+void DiffEditor::foldAllHasChanged()
+{
+    const bool fold = m_foldAllAction->isChecked();
+    const QString actionText = fold ? Tr::tr("Unfold All") : Tr::tr("Fold All");
+    m_foldAllAction->setText(actionText);
+    m_foldAllAction->setToolTip(actionText);
+
+    auto sideWidget = m_sideBySideView->widget();
+    if (sideWidget)
+        sideWidget->unfoldAll(!fold);
+
+    auto unifiedWidget = m_unifiedView->widget();
+    if (unifiedWidget)
+        unifiedWidget->unfoldAll(!fold);
 }
 
 void DiffEditor::contextLineCountHasChanged(int lines)

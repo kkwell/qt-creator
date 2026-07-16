@@ -3,9 +3,9 @@
 
 #include "idataprovider.h"
 
-#include <utils/expected.h>
 #include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
+#include <utils/result.h>
 
 #include <QByteArray>
 #include <QRegularExpression>
@@ -84,7 +84,7 @@ public:
     {
         const FilePath statusMemory = FilePath::fromString(
             QStringLiteral("/proc/%1/status").arg(m_pid));
-        const expected_str<QByteArray> statusMemoryContent = statusMemory.fileContents();
+        const Result<QByteArray> statusMemoryContent = statusMemory.fileContents();
 
         if (!statusMemoryContent)
             return 0;
@@ -99,7 +99,7 @@ public:
         }
 
         const FilePath meminfoFile("/proc/meminfo");
-        const expected_str<QByteArray> meminfoContent = meminfoFile.fileContents();
+        const Result<QByteArray> meminfoContent = meminfoFile.fileContents();
         if (!meminfoContent)
             return 0;
 
@@ -120,8 +120,8 @@ public:
         const FilePath status = FilePath::fromString(QStringLiteral("/proc/%1/stat").arg(m_pid));
         const FilePath uptimeFile = FilePath::fromString(QStringLiteral("/proc/uptime"));
         const double clkTck = static_cast<double>(sysconf(_SC_CLK_TCK));
-        const expected_str<QByteArray> statusFileContent = status.fileContents();
-        const expected_str<QByteArray> uptimeFileContent = uptimeFile.fileContents();
+        const Result<QByteArray> statusFileContent = status.fileContents();
+        const Result<QByteArray> uptimeFileContent = uptimeFile.fileContents();
 
         if (!statusFileContent.has_value() || !uptimeFileContent.has_value() || clkTck == 0)
             return 0;
@@ -329,14 +329,36 @@ private:
 };
 #endif
 
+// ------------------------- NullDataProvider --------------------------------
+
+class NullDataProvider : public IDataProvider
+{
+public:
+    NullDataProvider(qint64 pid, QObject *parent = nullptr)
+        : IDataProvider(pid, parent)
+    {}
+
+    double getCpuConsumption()
+    {
+        return 0.0;
+    }
+
+    double getMemoryConsumption()
+    {
+        return 0.0;
+    }
+};
+
 IDataProvider *createDataProvider(qint64 pid)
 {
 #ifdef Q_OS_WIN
     return new WindowsDataProvider(pid);
 #elif defined(Q_OS_MACOS)
     return new MacDataProvider(pid);
-#else // Q_OS_LINUX
+#elif defined(Q_OS_LINUX)
     return new LinuxDataProvider(pid);
+#else
+    return new NullDataProvider(pid);
 #endif
 }
 

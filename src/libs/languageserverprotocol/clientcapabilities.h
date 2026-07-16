@@ -76,16 +76,16 @@ public:
     void setRequests(const Requests &requests) { insert(requestsKey, requests); }
 
     /// The token types that the client supports.
-    QList<QString> tokenTypes() const { return array<QString>(tokenTypesKey); }
-    void setTokenTypes(const QList<QString> &value) { insertArray(tokenTypesKey, value); }
+    QStringList tokenTypes() const { return array<QString>(tokenTypesKey); }
+    void setTokenTypes(const QStringList &value) { insertArray(tokenTypesKey, value); }
 
     /// The token modifiers that the client supports.
-    QList<QString> tokenModifiers() const { return array<QString>(tokenModifiersKey); }
-    void setTokenModifiers(const QList<QString> &value) { insertArray(tokenModifiersKey, value); }
+    QStringList tokenModifiers() const { return array<QString>(tokenModifiersKey); }
+    void setTokenModifiers(const QStringList &value) { insertArray(tokenModifiersKey, value); }
 
     /// The formats the clients supports.
-    QList<QString> formats() const { return array<QString>(formatsKey); }
-    void setFormats(const QList<QString> &value) { insertArray(formatsKey, value); }
+    QStringList formats() const { return array<QString>(formatsKey); }
+    void setFormats(const QStringList &value) { insertArray(formatsKey, value); }
 
     /// Whether the client supports tokens that can overlap each other.
     std::optional<bool> overlappingTokenSupport() const
@@ -437,11 +437,11 @@ public:
             {
             public:
                 using JsonObject::JsonObject;
-                CodeActionKind() : CodeActionKind(QList<QString>()) {}
-                explicit CodeActionKind(const QList<QString> &kinds) { setValueSet(kinds); }
+                CodeActionKind() : CodeActionKind(QStringList()) {}
+                explicit CodeActionKind(const QStringList &kinds) { setValueSet(kinds); }
 
-                QList<QString> valueSet() const { return array<QString>(valueSetKey); }
-                void setValueSet(const QList<QString> &valueSet)
+                QStringList valueSet() const { return array<QString>(valueSetKey); }
+                void setValueSet(const QStringList &valueSet)
                 { insertArray(valueSetKey, valueSet); }
 
                 bool isValid() const override { return contains(valueSetKey); }
@@ -520,6 +520,104 @@ public:
     { insert(renameKey, rename); }
     void clearRename() { remove(renameKey); }
 
+    class LANGUAGESERVERPROTOCOL_EXPORT FoldingRangeClientCapabilities
+        : public DynamicRegistrationCapabilities
+    {
+    public:
+        using DynamicRegistrationCapabilities::DynamicRegistrationCapabilities;
+
+        class LANGUAGESERVERPROTOCOL_EXPORT KindCapabilities : public JsonObject
+        {
+        public:
+            using JsonObject::JsonObject;
+
+            /**
+             * The folding range kind values the client supports. When this
+             * property exists the client also guarantees that it will
+             * handle values outside its set gracefully and falls back
+             * to a default value when unknown.
+            */
+            std::optional<QStringList> valueSet() const
+            {
+                return optionalArray<QString>(valueSetKey);
+            }
+            void setValueSet(const QStringList &valueSet) { insertArray(valueSetKey, valueSet); }
+        };
+
+        class LANGUAGESERVERPROTOCOL_EXPORT Capabilities : public JsonObject
+        {
+        public:
+            using JsonObject::JsonObject;
+
+            /**
+             * If set, the client signals that it supports setting collapsedText on
+             * folding ranges to display custom labels instead of the default text.
+             *
+             * @since 3.17.0
+             */
+            std::optional<bool> collapsedText() const
+            {
+                return optionalValue<bool>(collapsedTextKey);
+            }
+            void setCollapsedText(bool collapsedText) { insert(collapsedTextKey, collapsedText); }
+        };
+
+        /**
+         * The maximum number of folding ranges that the client prefers to receive
+         * per document. The value serves as a hint, servers are free to follow the
+         * limit.
+         */
+        std::optional<int> rangeLimit() const { return optionalValue<int>(rangeLimitKey); }
+        void setRangeLimit(int limit) { insert(rangeLimitKey, limit); }
+
+        /**
+         * If set, the client signals that it only supports folding complete lines.
+         * If set, client will ignore specified `startCharacter` and `endCharacter`
+         * properties in a FoldingRange.
+         */
+        std::optional<bool> lineFoldingOnly() const
+        {
+            return optionalValue<bool>(lineFoldingOnlyKey);
+        }
+        void setLineFoldingOnly(bool lineFolding) { insert(lineFoldingOnlyKey, lineFolding); }
+
+        /**
+         * Specific options for the folding range kind.
+         *
+         * @since 3.17.0
+         */
+        std::optional<KindCapabilities> foldingRangeKind() const
+        {
+            return optionalValue<KindCapabilities>(foldingRangeKindKey);
+        }
+        void setFoldingRangeKind(const KindCapabilities &foldingRangeKind)
+        {
+            insert(foldingRangeKindKey, foldingRangeKind);
+        }
+
+        /**
+         * Specific options for the folding range.
+         * @since 3.17.0
+         */
+        std::optional<Capabilities> foldingRange() const
+        {
+            return optionalValue<Capabilities>(foldingRangeKey);
+        }
+        void setFoldingRange(const Capabilities &foldingRange)
+        {
+            insert(foldingRangeKey, foldingRange);
+        }
+    };
+
+    std::optional<FoldingRangeClientCapabilities> foldingRange() const
+    {
+        return optionalValue<FoldingRangeClientCapabilities>(foldingRangeKey);
+    }
+    void setFoldingRange(const FoldingRangeClientCapabilities &foldingRange)
+    {
+        insert(foldingRangeKey, foldingRange);
+    }
+
     std::optional<SemanticTokensClientCapabilities> semanticTokens() const;
     void setSemanticTokens(const SemanticTokensClientCapabilities &semanticTokens);
     void clearSemanticTokens() { remove(semanticTokensKey); }
@@ -549,6 +647,27 @@ public:
      * semantic tokens currently shown. It should be used with absolute care
      * and is useful for situation where a server for example detect a project
      * wide change that requires such a calculation.
+     */
+    std::optional<bool> refreshSupport() const { return optionalValue<bool>(refreshSupportKey); }
+    void setRefreshSupport(bool refreshSupport) { insert(refreshSupportKey, refreshSupport); }
+    void clearRefreshSupport() { remove(refreshSupportKey); }
+};
+
+class LANGUAGESERVERPROTOCOL_EXPORT FoldingRangeWorkspaceClientCapabilities : public JsonObject
+{
+public:
+    using JsonObject::JsonObject;
+    /**
+     * Whether the client implementation supports a refresh request sent from the
+     * server to the client.
+     *
+     * Note that this event is global and will force the client to refresh all
+     * folding ranges currently shown. It should be used with absolute care and is
+     * useful for situation where a server, for example, detects a project wide
+     * change that requires such a calculation.
+     *
+     * @since 3.18.0
+     * @proposed
      */
     std::optional<bool> refreshSupport() const { return optionalValue<bool>(refreshSupportKey); }
     void setRefreshSupport(bool refreshSupport) { insert(refreshSupportKey, refreshSupport); }
@@ -641,6 +760,12 @@ public:
     void setSemanticTokens(const SemanticTokensWorkspaceClientCapabilities &semanticTokens)
     { insert(semanticTokensKey, semanticTokens); }
     void clearSemanticTokens() { remove(semanticTokensKey); }
+
+    std::optional<FoldingRangeWorkspaceClientCapabilities> foldingRange() const
+    { return optionalValue<FoldingRangeWorkspaceClientCapabilities>(foldingRangeKey); }
+    void setFoldingRange(const FoldingRangeWorkspaceClientCapabilities &foldingRange)
+    { insert(foldingRangeKey, foldingRange); }
+    void clearFoldingRange() { remove(foldingRangeKey); }
 };
 
 class WindowClientClientCapabilities : public JsonObject

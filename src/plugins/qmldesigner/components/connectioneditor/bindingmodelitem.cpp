@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "bindingmodelitem.h"
-#include "connectioneditorutils.h"
+#include <scripteditorutils.h>
 
 #include <modelnode.h>
 #include <qmldesignertr.h>
@@ -42,7 +42,7 @@ void BindingModelItem::updateProperty(const BindingProperty &property)
 {
     setData(property.parentModelNode().internalId(), InternalIdRole);
     setData(idOrTypeName(property.parentModelNode()), TargetNameRole);
-    setData(property.name(), TargetPropertyNameRole);
+    setData(property.name().toByteArray(), TargetPropertyNameRole);
 
     // TODO: Make this safe when the new codemodel allows it.
     if (auto expression = property.expression(); !expression.isEmpty()) {

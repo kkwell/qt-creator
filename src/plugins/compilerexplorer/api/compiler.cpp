@@ -5,7 +5,6 @@
 
 #include "request.h"
 
-#include <QFutureWatcher>
 #include <QUrlQuery>
 
 namespace CompilerExplorer::Api {
@@ -33,7 +32,7 @@ QFuture<Compilers> compilers(const Config &config,
         url.setQuery(QUrlQuery{{"fields", fieldParam}});
 
     auto fromJson = [extraFields](const QJsonDocument &doc) {
-        QJsonArray compilers = doc.array();
+        const QJsonArray compilers = doc.array();
         Compilers result;
 
         for (const auto &compiler : compilers) {

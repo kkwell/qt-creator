@@ -8,7 +8,34 @@
 #include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/devicesupport/idevicefactory.h>
 
+#include <utils/synchronizedvalue.h>
+
+namespace Utils { class ProcessResultData; }
+
 namespace RemoteLinux {
+namespace Internal {
+
+class SshConnectionHandle : public QObject
+{
+    Q_OBJECT
+
+public:
+    SshConnectionHandle(const ProjectExplorer::DeviceConstRef &device) : m_device(device) {}
+    ~SshConnectionHandle() override { emit detachFromSharedConnection(); }
+
+signals:
+    void connected(const QString &socketFilePath);
+    void disconnected(const Utils::ProcessResultData &result);
+
+    void detachFromSharedConnection();
+
+private:
+    ProjectExplorer::DeviceConstRef m_device;
+};
+
+} // Internal
+
+using KillCommandForPathFunction = std::function<QString(const Utils::FilePath &)>;
 
 class REMOTELINUX_EXPORT LinuxDevice : public ProjectExplorer::IDevice
 {
@@ -20,50 +47,72 @@ public:
 
     static Ptr create() { return Ptr(new LinuxDevice); }
 
-    IDevice::Ptr clone() const override;
-
     ProjectExplorer::IDeviceWidget *createWidget() override;
 
     bool canCreateProcessModel() const override { return true; }
     bool hasDeviceTester() const override { return true; }
-    ProjectExplorer::DeviceTester *createDeviceTester() const override;
-    ProjectExplorer::DeviceProcessSignalOperation::Ptr signalOperation() const override;
-    bool usableAsBuildDevice() const override;
+    ProjectExplorer::DeviceTester *createDeviceTester() override;
+    QtTaskTree::ExecutableItem signalOperationRecipe(
+        const ProjectExplorer::SignalOperationData &data,
+        const QtTaskTree::Storage<Utils::Result<>> &resultStorage) const final;
 
     QString userAtHost() const;
     QString userAtHostAndPort() const;
 
     Utils::FilePath rootPath() const override;
 
-    bool handlesFile(const Utils::FilePath &filePath) const override;
+    Utils::Result<> handlesFile(const Utils::FilePath &filePath) const override;
+    Utils::Result<> ensureReachable(const Utils::FilePath &other) const override;
+    Utils::Result<> supportsBuildingProject(const Utils::FilePath &projectDir) const override;
+    bool prepareForBuild(const ProjectExplorer::Target *target) override;
 
     Utils::ProcessInterface *createProcessInterface() const override;
     ProjectExplorer::FileTransferInterface *createFileTransferInterface(
             const ProjectExplorer::FileTransferSetupData &setup) const override;
+    Utils::Result<Utils::Environment> sourcedEnvironment(
+        const Utils::FilePath &script) const override;
 
-    class LinuxDevicePrivate *connectionAccess() const;
     void checkOsType() override;
 
-    DeviceState deviceState() const override;
     QString deviceStateToString() const override;
 
     bool isDisconnected() const;
-    void setDisconnected(bool disconnected);
+    void tryToConnect(const Utils::Continuation<> &cont) const override;
+    void closeConnection(bool announce) const;
 
-    bool tryToConnect();
+    void attachToSharedConnection(Internal::SshConnectionHandle *sshConnectionHandle,
+                                  const ProjectExplorer::SshParameters &sshParams) const;
+
+    void fromMap(const Utils::Store &map) override;
+    void toMap(Utils::Store &map) const override;
+    void postLoad() override;
+
+public:
+    Utils::BoolAspect sourceProfile{this};
+    Utils::BoolAspect autoConnectOnStartup{this};
+    Utils::FilePathListAspect mounts{this};
 
 protected:
     LinuxDevice();
-
-    void fromMap(const Utils::Store &map) override;
-    Utils::Store toMap() const override;
-
-    void _setOsType(Utils::OsType osType);
+    void setKillCommandForPathFunction(const KillCommandForPathFunction &handler);
 
     class LinuxDevicePrivate *d;
     friend class LinuxDevicePrivate;
 };
 
-namespace Internal { void setupLinuxDevice(); }
+namespace Internal {
+
+class LinuxDeviceFactory final : public ProjectExplorer::IDeviceFactory
+{
+public:
+    LinuxDeviceFactory();
+    ~LinuxDeviceFactory() override;
+
+private:
+    Utils::SynchronizedValue<std::vector<std::weak_ptr<LinuxDevice>>> m_existingDevices;
+    void shutdownExistingDevices();
+};
+
+} // namespace Internal
 
 } // namespace RemoteLinux

@@ -23,8 +23,13 @@
 #include <debugger/debuggeritemmanager.h>
 #include <debugger/debuggerkitaspect.h>
 
+#include <projectexplorer/devicesupport/devicekitaspects.h>
+#include <projectexplorer/environmentkitaspect.h>
+#include <projectexplorer/kitmanager.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/sysrootkitaspect.h>
+#include <projectexplorer/toolchainkitaspect.h>
 
 #include <qtsupport/qtkitaspect.h>
 #include <qtsupport/qtsupportconstants.h>
@@ -51,11 +56,9 @@ namespace McuSupport::Internal {
 // Utils for managing CMake Configurations
 static QMap<QByteArray, QByteArray> cMakeConfigToMap(const CMakeConfig &config)
 {
-    QMap<QByteArray, QByteArray> map;
-    for (const auto &configItem : std::as_const(config.toList())) {
-        map.insert(configItem.key, configItem.value);
-    }
-    return map;
+    return Utils::transform<QMap<QByteArray, QByteArray>>(config, [](const CMakeConfigItem &i) {
+        return std::make_pair(i.key, i.value);
+    });
 }
 
 static CMakeConfig mapToCMakeConfig(const QMap<QByteArray, QByteArray> &map)
@@ -117,13 +120,13 @@ public:
         k->setValue(KIT_MCUTARGET_KITVERSION_KEY, KIT_VERSION);
         k->setValue(KIT_MCUTARGET_OS_KEY, static_cast<int>(mcuTarget->os()));
         k->setValue(KIT_MCUTARGET_TOOLCHAIN_KEY, mcuTarget->toolChainPackage()->toolchainName());
-        k->setAutoDetected(false);
+        k->setDetectionSource(DetectionSource::Manual);
         k->makeSticky();
         if (mcuTarget->toolChainPackage()->isDesktopToolchain())
             k->setDeviceTypeForIcon(DEVICE_TYPE);
         k->setValue(QtSupport::Constants::FLAGS_SUPPLIES_QTQUICK_IMPORT_PATH, true);
         // FIXME: This is treated as a pathlist in CMakeBuildSystem::updateQmlJSCodeModel
-        k->setValue(QtSupport::Constants::KIT_QML_IMPORT_PATH, (sdkPath / "include/qul").toString());
+        k->setValue(QtSupport::Constants::KIT_QML_IMPORT_PATH, (sdkPath / "include/qul").toUrlishString());
         k->setValue(QtSupport::Constants::KIT_HAS_MERGED_HEADER_PATHS_WITH_QML_IMPORT_PATHS, true);
         QSet<Id> irrelevant = {
             SysRootKitAspect::id(),
@@ -173,7 +176,7 @@ public:
         if (mcuTarget->toolChainPackage()->isDesktopToolchain())
             return;
 
-        DeviceTypeKitAspect::setDeviceTypeId(k, Constants::DEVICE_TYPE);
+        RunDeviceTypeKitAspect::setDeviceTypeId(k, Constants::DEVICE_TYPE);
     }
 
     static void setKitDependencies(Kit *k,
@@ -242,7 +245,7 @@ public:
         if (McuSupportOptions::kitsNeedQtVersion())
             changes.append({QLatin1String("LD_LIBRARY_PATH"), "%{Qt:QT_INSTALL_LIBS}"});
 
-        EnvironmentKitAspect::setEnvironmentChanges(k, changes);
+        EnvironmentKitAspect::setBuildEnvChanges(k, {changes, {}});
     }
 
     static void setKitCMakeOptions(Kit *k,
@@ -273,9 +276,9 @@ public:
                 if (!cxxToolchain->compilerCommand().isEmpty()
                     && !cToolchain->compilerCommand().isEmpty()) {
                     configMap.insert("CMAKE_CXX_COMPILER",
-                                     cxxToolchain->compilerCommand().toString().toLatin1());
+                                     cxxToolchain->compilerCommand().toUrlishString().toLatin1());
                     configMap.insert("CMAKE_C_COMPILER",
-                                     cToolchain->compilerCommand().toString().toLatin1());
+                                     cToolchain->compilerCommand().toUrlishString().toLatin1());
                 }
             } else {
                 printMessage(Tr::tr("Warning for target %1: invalid toolchain path (%2). "
@@ -295,7 +298,7 @@ public:
             const FilePath cMakeToolchainFile = mcuTarget->toolChainFilePackage()->path();
 
             configMap.insert(Legacy::Constants::TOOLCHAIN_FILE_CMAKE_VARIABLE,
-                             cMakeToolchainFile.toString().toUtf8());
+                             cMakeToolchainFile.toUrlishString().toUtf8());
             if (!cMakeToolchainFile.exists()) {
                 printMessage(
                     Tr::tr("Warning for target %1: missing CMake toolchain file expected at %2.")
@@ -307,7 +310,7 @@ public:
 
         const FilePath generatorsPath = qtForMCUsSdkPackage->path().pathAppended(
             "/lib/cmake/Qul/QulGenerators.cmake");
-        configMap.insert("QUL_GENERATORS", generatorsPath.toString().toUtf8());
+        configMap.insert("QUL_GENERATORS", generatorsPath.toUrlishString().toUtf8());
         if (!generatorsPath.exists()) {
             printMessage(Tr::tr("Warning for target %1: missing QulGenerators expected at %2.")
                              .arg(generateKitNameFromTarget(mcuTarget),
@@ -502,12 +505,14 @@ static void askUserAboutMcuSupportKitsUpgrade(const SettingsHandler::Ptr &settin
 {
     const char upgradeMcuSupportKits[] = "UpgradeMcuSupportKits";
 
-    if (!ICore::infoBar()->canInfoBeAdded(upgradeMcuSupportKits))
+    InfoBar *infoBar = ICore::popupInfoBar();
+    if (!infoBar->canInfoBeAdded(upgradeMcuSupportKits))
         return;
 
     InfoBarEntry info(upgradeMcuSupportKits,
                       Tr::tr("New version of Qt for MCUs detected. Upgrade existing kits?"),
                       InfoBarEntry::GlobalSuppression::Enabled);
+    info.setInfoType(InfoLabel::Information);
     using McuKitManager::UpgradeOption;
     static UpgradeOption selectedOption = UpgradeOption::Keep;
 
@@ -519,14 +524,17 @@ static void askUserAboutMcuSupportKitsUpgrade(const SettingsHandler::Ptr &settin
         selectedOption = selected.data.value<UpgradeOption>();
     });
 
-    info.addCustomButton(Tr::tr("Proceed"), [upgradeMcuSupportKits, settingsHandler] {
-        ICore::infoBar()->removeInfo(upgradeMcuSupportKits);
-        QTimer::singleShot(0, [settingsHandler]() {
-            McuKitManager::upgradeKitsByCreatingNewPackage(settingsHandler, selectedOption);
-        });
-    });
+    info.addCustomButton(
+        Tr::tr("Proceed"),
+        [settingsHandler] {
+            QTimer::singleShot(0, [settingsHandler]() {
+                McuKitManager::upgradeKitsByCreatingNewPackage(settingsHandler, selectedOption);
+            });
+        },
+        {},
+        InfoBarEntry::ButtonAction::Hide);
 
-    ICore::infoBar()->addInfo(info);
+    infoBar->addInfo(info);
 }
 
 void createAutomaticKits(const SettingsHandler::Ptr &settingsHandler)
@@ -552,7 +560,7 @@ void createAutomaticKits(const SettingsHandler::Ptr &settingsHandler)
                 case McuAbstractPackage::Status::InvalidPath: {
                     const QString message
                         = Tr::tr("Path %1 does not exist. Add the path in Edit > Preferences > "
-                                 "Devices > MCU.")
+                                 "SDKs > MCU.")
                               .arg(qtForMCUsPackage->path().toUserOutput());
                     autoGenerationMessages.push_back({qtForMCUsPackage->label(), "", message});
                     printMessage(message, true);
@@ -560,7 +568,7 @@ void createAutomaticKits(const SettingsHandler::Ptr &settingsHandler)
                 }
                 case McuAbstractPackage::Status::EmptyPath: {
                     const QString message
-                        = Tr::tr("Missing %1. Add the path in Edit > Preferences > Devices > MCU.")
+                        = Tr::tr("Missing %1. Add the path in Edit > Preferences > SDKs > MCU.")
                               .arg(qtForMCUsPackage->detectionPathsToString());
                     autoGenerationMessages.push_back({qtForMCUsPackage->label(), "", message});
                     printMessage(message, true);
@@ -710,9 +718,8 @@ void fixExistingKits(const SettingsHandler::Ptr &settingsHandler)
         if (!kit->hasValue(Constants::KIT_MCUTARGET_KITVERSION_KEY))
             continue;
 
-        if (kit->isAutoDetected()) {
-            kit->setAutoDetected(false);
-        }
+        if (kit->detectionSource().isAutoDetected())
+            kit->setDetectionSource(DetectionSource::Manual);
 
         // Check if the MCU kits are flagged as supplying a QtQuick import path, in order
         // to tell the QMLJS code-model that it won't need to add a fall-back import

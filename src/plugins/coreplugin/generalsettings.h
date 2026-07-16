@@ -7,6 +7,55 @@
 
 namespace Core::Internal {
 
+class CodecForLocaleAspect : public Utils::StringSelectionAspect
+{
+public:
+    using StringSelectionAspect::StringSelectionAspect;
+
+    void fixupComboBox(QComboBox *comboBox) override
+    {
+        comboBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        comboBox->setMinimumContentsLength(20);
+    }
+};
+
+class LanguageSelectionAspect : public Utils::StringSelectionAspect
+{
+public:
+    using StringSelectionAspect::StringSelectionAspect;
+
+    static inline const QString kSystemLanguage = "__system__";
+
+    void fixupComboBox(QComboBox *comboBox) override
+    {
+        comboBox->setObjectName("languageBox");
+        comboBox->setMinimumContentsLength(20);
+    }
+
+    QVariant toSettingsValue(const QVariant &valueToSave) const override
+    {
+        const QString v = valueToSave.toString();
+        return v == kSystemLanguage ? QString() : v;
+    }
+
+    QVariant fromSettingsValue(const QVariant &savedValue) const override
+    {
+        const QString v = savedValue.toString();
+        return v.isEmpty() ? kSystemLanguage : v;
+    }
+};
+
+class ThemeSelectionAspect : public Utils::StringSelectionAspect
+{
+public:
+    using StringSelectionAspect::StringSelectionAspect;
+
+    void fixupComboBox(QComboBox *comboBox) override
+    {
+        comboBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    }
+};
+
 class GeneralSettings : public Utils::AspectContainer
 {
 public:
@@ -14,8 +63,17 @@ public:
 
     Utils::BoolAspect showShortcutsInContextMenus{this};
     Utils::BoolAspect provideSplitterCursors{this};
+    Utils::BoolAspect preferInfoBarOverPopup{this};
+    Utils::BoolAspect useTabsInEditorViews{this};
+    Utils::BoolAspect showOkAndCancelInSettingsMode{this};
 
-    static void applyToolbarStyleFromSettings();
+    Utils::SelectionAspect toolbarStyle{this};
+    Utils::SelectionAspect highDpiScaleFactorRoundingPolicy{this};
+
+    CodecForLocaleAspect codecForLocale{this};
+    LanguageSelectionAspect language{this};
+    Utils::ColorAspect color{this};
+    ThemeSelectionAspect theme{this};
 };
 
 GeneralSettings &generalSettings();

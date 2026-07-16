@@ -13,7 +13,6 @@ class Task;
 
 class PROJECTEXPLORER_EXPORT OutputTaskParser : public Utils::OutputLineParser
 {
-    Q_OBJECT
 public:
     OutputTaskParser();
     ~OutputTaskParser() override;
@@ -31,8 +30,10 @@ public:
 protected:
     void flush() override;
 
+    void setOrigin(const QString &source);
     void scheduleTask(const Task &task, int outputLines, int skippedLines = 0);
     void setDetailsFormat(Task &task, const LinkSpecs &linkSpecs = {});
+    void addDetailsFormat(Task &task, const LinkSpecs &linkSpecs = {});
     void fixTargetLink();
     void createOrAmendTask(
         Task::TaskType type,

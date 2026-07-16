@@ -6,11 +6,11 @@
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/buildinfo.h>
 #include <projectexplorer/customexecutablerunconfiguration.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectmanager.h>
 #include <projectexplorer/projectnodes.h>
+#include <projectexplorer/sysrootkitaspect.h>
 #include <projectexplorer/target.h>
 
 #include <utils/filepath.h>
@@ -20,28 +20,27 @@
 
 using namespace ProjectExplorer;
 using namespace Utils;
+using namespace QmlDebug;
 
-namespace QmlProfiler {
-namespace Internal {
+namespace QmlProfiler::Internal {
 
-class DummyProject : public ProjectExplorer::Project
+class DummyProject : public Project
 {
 public:
-    DummyProject(const Utils::FilePath &file)
-        : ProjectExplorer::Project(QString(), file)
+    DummyProject(const FilePath &file)
+        : Project(QString(), file)
     {
-        auto fileNode
-                = std::make_unique<ProjectExplorer::FileNode>(file, ProjectExplorer::FileType::Source);
-        auto root = std::make_unique<ProjectExplorer::ProjectNode>(file);
+        auto fileNode = std::make_unique<FileNode>(file, FileType::Source);
+        auto root = std::make_unique<ProjectNode>(file);
         root->addNode(std::move(fileNode));
-        fileNode = std::make_unique<ProjectExplorer::FileNode>(
+        fileNode = std::make_unique<FileNode>(
                     Utils::FilePath::fromString(
                         ":/qmlprofiler/tests/qmlprofilerdetailsrewriter_test.cpp"),
-                    ProjectExplorer::FileType::Source);
+                    FileType::Source);
         root->addNode(std::move(fileNode));
         setRootProjectNode(std::move(root));
-        setDisplayName(file.toString());
-        setId("QmlProfilerDetailsRewriterTest.DummyProject");
+        setDisplayName(file.toUrlishString());
+        setType("QmlProfilerDetailsRewriterTest.DummyProject");
     }
 
     bool needsConfiguration() const final { return false; }
@@ -56,10 +55,9 @@ public:
     }
 };
 
-QmlProfilerDetailsRewriterTest::QmlProfilerDetailsRewriterTest(QObject *parent) : QObject(parent)
+QmlProfilerDetailsRewriterTest::QmlProfilerDetailsRewriterTest()
 {
-    connect(&m_rewriter, &QmlProfilerDetailsRewriter::eventDetailsChanged,
-                this, [this]() {
+    connect(&m_rewriter, &QmlProfilerDetailsRewriter::eventDetailsChanged, this, [this] {
         m_rewriterDone = true;
     });
 }
@@ -158,15 +156,15 @@ void QmlProfilerDetailsRewriterTest::testPopulateFileFinder()
 
     // Test that the rewriter will populate from available projects if given nullptr as parameter.
     DummyProject *project1 = new DummyProject(":/nix.nix");
-    ProjectExplorer::ProjectManager::addProject(project1);
+    ProjectManager::addProject(project1);
     DummyProject *project2 = new DummyProject(":/qmlprofiler/tests/Test.qml");
-    ProjectExplorer::ProjectManager::addProject(project2);
+    ProjectManager::addProject(project2);
     m_rewriter.populateFileFinder(nullptr);
     QCOMPARE(m_rewriter.getLocalFile("Test.qml"),
              Utils::FilePath::fromString(":/qmlprofiler/tests/Test.qml"));
 
-    ProjectExplorer::ProjectManager::removeProject(project1);
-    ProjectExplorer::ProjectManager::removeProject(project2);
+    ProjectManager::removeProject(project1);
+    ProjectManager::removeProject(project2);
 }
 
 void QmlProfilerDetailsRewriterTest::seedRewriter()
@@ -183,7 +181,7 @@ void QmlProfilerDetailsRewriterTest::seedRewriter()
                                              lPaths, m_modelManager, false);
 
     QFile file(filename);
-    file.open(QFile::ReadOnly | QFile::Text);
+    QTC_CHECK(file.open(QFile::ReadOnly | QFile::Text));
     const QString content = QString::fromUtf8(file.readAll());
     file.close();
 
@@ -192,16 +190,16 @@ void QmlProfilerDetailsRewriterTest::seedRewriter()
     doc->parse();
     QVERIFY(!doc->source().isEmpty());
 
-    auto kit = std::make_unique<ProjectExplorer::Kit>();
-    ProjectExplorer::SysRootKitAspect::setSysRoot(kit.get(), "/nowhere");
+    auto kit = std::make_unique<Kit>();
+    SysRootKitAspect::setSysRoot(kit.get(), "/nowhere");
 
     DummyProject *project = new DummyProject(Utils::FilePath::fromString(filename));
-    ProjectExplorer::ProjectManager::addProject(project);
+    ProjectManager::addProject(project);
 
-    m_rewriter.populateFileFinder(project->addTargetForKit(kit.get()));
+    project->addTargetForKit(kit.get());
+    m_rewriter.populateFileFinder(project->activeBuildConfiguration());
 
-    ProjectExplorer::ProjectManager::removeProject(project);
+    ProjectManager::removeProject(project);
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

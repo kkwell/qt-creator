@@ -13,10 +13,10 @@
 #include <utils/icon.h>
 #include <utils/qtcassert.h>
 
+#include <QApplication>
 #include <QStyle>
 
-namespace ProjectExplorer {
-namespace Internal {
+namespace ProjectExplorer::Internal {
 
 DesktopDeviceFactory::DesktopDeviceFactory()
     : IDeviceFactory(Constants::DESKTOP_DEVICE_TYPE)
@@ -27,7 +27,7 @@ DesktopDeviceFactory::DesktopDeviceFactory()
                 ? Utils::Icon::combinedIcon(
                     {Icons::DESKTOP_DEVICE.icon(), Core::Icons::DESKTOP_DEVICE_SMALL.icon()})
                 : QApplication::style()->standardIcon(QStyle::SP_ComputerIcon));
+    setExecutionTypeId(Constants::STDPROCESS_EXECUTION_TYPE_ID);
 }
 
-} // namespace Internal
-} // namespace ProjectExplorer
+} // namespace ProjectExplorer::Internal

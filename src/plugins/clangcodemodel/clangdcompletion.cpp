@@ -25,6 +25,7 @@
 #include <projectexplorer/headerpath.h>
 
 #include <texteditor/codeassist/assistinterface.h>
+#include <texteditor/codeassist/functionhintproposal.h>
 #include <texteditor/codeassist/genericproposal.h>
 #include <texteditor/codeassist/genericproposalmodel.h>
 #include <texteditor/texteditor.h>
@@ -66,7 +67,7 @@ static bool matchPreviousWord(TextEditor::TextEditorWidget *editorWidget, QTextC
 
     pattern = pattern.simplified();
     while (!pattern.isEmpty() && pattern.endsWith(toMatch)) {
-        pattern.chop(toMatch.length());
+        pattern.chop(toMatch.size());
         if (pattern.endsWith(' '))
             pattern.chop(1);
         if (!pattern.isEmpty()) {
@@ -188,7 +189,7 @@ public:
 private:
     int activeArgument(const QString &prefix) const override
     {
-        const int arg = activeArgumenForPrefix(prefix);
+        const int arg = activeArgumentForPrefix(prefix);
         if (arg < 0)
             return -1;
         m_currentArg = arg;
@@ -203,14 +204,14 @@ private:
         const SignatureInformation signature = m_sigis.signatures().at(index);
         QString label = signature.label();
 
-        const QList<QString> parameters = Utils::transform(signature.parameters().value_or(Parameters()),
-                                                           &ParameterInformation::label);
+        const QStringList parameters = Utils::transform(signature.parameters().value_or(Parameters()),
+                                                        &ParameterInformation::label);
         if (parameters.size() <= m_currentArg)
             return label;
 
         const QString &parameterText = parameters.at(m_currentArg);
         const int start = label.indexOf(parameterText);
-        const int end = start + parameterText.length();
+        const int end = start + parameterText.size();
         return label.mid(0, start).toHtmlEscaped() + "<b>" + parameterText.toHtmlEscaped() + "</b>"
                + label.mid(end).toHtmlEscaped();
     }
@@ -221,13 +222,14 @@ private:
 class ClangdFunctionHintProcessor : public FunctionHintProcessor
 {
 public:
-    ClangdFunctionHintProcessor(ClangdClient *client, int basePosition);
+    ClangdFunctionHintProcessor(ClangdClient *client, int basePosition, bool abortExisting);
 
 private:
     IAssistProposal *perform() override;
     IFunctionHintProposalModel *createModel(const SignatureHelp &signatureHelp) const override;
 
     ClangdClient * const m_client;
+    const bool m_abortExisting;
 };
 
 ClangdCompletionAssistProvider::ClangdCompletionAssistProvider(ClangdClient *client)
@@ -256,7 +258,7 @@ IAssistProcessor *ClangdCompletionAssistProvider::createProcessor(
     case ClangCompletionContextAnalyzer::PassThroughToLibClangAfterLeftParen:
         qCDebug(clangdLogCompletion) << "creating function hint processor";
         return new ClangdFunctionHintProcessor(m_client,
-                                               contextAnalyzer.positionForProposal());
+                                               contextAnalyzer.positionForProposal(), false);
     case ClangCompletionContextAnalyzer::CompletePreprocessorDirective:
         qCDebug(clangdLogCompletion) << "creating macro processor";
         return new CustomAssistProcessor(m_client,
@@ -264,6 +266,10 @@ IAssistProcessor *ClangdCompletionAssistProvider::createProcessor(
                                          contextAnalyzer.positionEndOfExpression(),
                                          contextAnalyzer.completionOperator(),
                                          CustomAssistMode::Preprocessor);
+    case ClangCompletionContextAnalyzer::AbortExisting:
+        qCDebug(clangdLogCompletion) << "aborting existing proposal";
+        return new ClangdFunctionHintProcessor(m_client,
+                                               contextAnalyzer.positionForProposal(), true);
     default:
         break;
     }
@@ -321,7 +327,7 @@ bool ClangdCompletionAssistProvider::isContinuationChar(const QChar &c) const
 bool ClangdCompletionAssistProvider::isInCommentOrString(const AssistInterface *interface) const
 {
     LanguageFeatures features = LanguageFeatures::defaultFeatures();
-    features.objCEnabled = ProjectFile::isObjC(interface->filePath().toString());
+    features.objCEnabled = ProjectFile::isObjC(interface->filePath());
     return CppEditor::isInCommentOrString(interface, features);
 }
 
@@ -342,9 +348,11 @@ void ClangdCompletionItem::apply(TextEditorWidget *editorWidget,
                 item.kind().value_or(CompletionItemKind::Text));
     const bool isMacroCall = kind == CompletionItemKind::Text && labelOpenParenOffset != -1
             && labelClosingParenOffset > labelOpenParenOffset; // Heuristic
+    const bool isLambdaCall = kind == CompletionItemKind::Variable && labelOpenParenOffset != -1
+                             && labelClosingParenOffset > labelOpenParenOffset;
     const bool isFunctionLike = kind == CompletionItemKind::Function
             || kind == CompletionItemKind::Method || kind == CompletionItemKind::Constructor
-            || isMacroCall;
+            || isMacroCall || isLambdaCall;
 
     QString rawInsertText = edit->newText();
 
@@ -362,7 +370,6 @@ void ClangdCompletionItem::apply(TextEditorWidget *editorWidget,
     const int firstParenOffset = rawInsertText.indexOf('(');
     const int lastParenOffset = rawInsertText.lastIndexOf(')');
     const QString detail = item.detail().value_or(QString());
-    const CompletionSettings &completionSettings = TextEditorSettings::completionSettings();
     QString textToBeInserted = rawInsertText.left(firstParenOffset);
     QString extraCharacters;
     int extraLength = 0;
@@ -372,7 +379,7 @@ void ClangdCompletionItem::apply(TextEditorWidget *editorWidget,
     const QTextDocument * const doc = editorWidget->document();
     const Range range = edit->range();
     const int rangeStart = range.start().toPositionInDocument(doc);
-    if (isFunctionLike && completionSettings.m_autoInsertBrackets) {
+    if (isFunctionLike && completionSettings().autoInsertBrackets()) {
         // If the user typed the opening parenthesis, they'll likely also type the closing one,
         // in which case it would be annoying if we put the cursor after the already automatically
         // inserted closing parenthesis.
@@ -389,10 +396,12 @@ void ClangdCompletionItem::apply(TextEditorWidget *editorWidget,
         }
         if (!abandonParen)
             abandonParen = isAtUsingDeclaration(editorWidget, rangeStart);
-        if (!abandonParen && !isMacroCall && matchPreviousWord(editorWidget, cursor, detail))
+        if (!abandonParen && !isMacroCall && !isLambdaCall && !detail.isEmpty()
+            && matchPreviousWord(editorWidget, cursor, detail)) {
             abandonParen = true; // function definition
+        }
         if (!abandonParen) {
-            if (completionSettings.m_spaceAfterFunctionName)
+            if (completionSettings().spaceAfterFunctionName())
                 extraCharacters += ' ';
             extraCharacters += '(';
             if (typedChar == '(')
@@ -453,7 +462,7 @@ void ClangdCompletionItem::apply(TextEditorWidget *editorWidget,
             && textToBeInserted.indexOf(textAfterCursor, currentPos - rangeStart) >= 0) {
         currentPos = cursor.position();
     }
-    for (int i = 0; i < extraCharacters.length(); ++i) {
+    for (int i = 0; i < extraCharacters.size(); ++i) {
         const QChar a = extraCharacters.at(i);
         const QChar b = editorWidget->characterAt(currentPos + i);
         if (a == b)
@@ -466,7 +475,7 @@ void ClangdCompletionItem::apply(TextEditorWidget *editorWidget,
     const int length = currentPos - rangeStart + extraLength;
     const int oldRevision = editorWidget->document()->revision();
     editorWidget->replace(rangeStart, length, textToBeInserted);
-    editorWidget->setCursorPosition(rangeStart + textToBeInserted.length());
+    editorWidget->setCursorPosition(rangeStart + textToBeInserted.size());
     if (editorWidget->document()->revision() != oldRevision) {
         if (cursorOffset)
             editorWidget->setCursorPosition(editorWidget->position() + cursorOffset);
@@ -474,7 +483,7 @@ void ClangdCompletionItem::apply(TextEditorWidget *editorWidget,
             editorWidget->setAutoCompleteSkipPosition(editorWidget->textCursor());
     }
 
-    if (auto additionalEdits = item.additionalTextEdits()) {
+    if (const auto additionalEdits = item.additionalTextEdits()) {
         for (const auto &edit : *additionalEdits)
             applyTextEdit(editorWidget, edit);
     }
@@ -543,7 +552,7 @@ IAssistProposal *CustomAssistProcessor::perform()
              : CppCompletionAssistProcessor::preprocessorCompletions()) {
             completions << createItem(completion, macroIcon);
         }
-        if (ProjectFile::isObjC(interface()->filePath().toString()))
+        if (ProjectFile::isObjC(interface()->filePath()))
             completions << createItem("import", macroIcon);
         break;
     }
@@ -603,13 +612,12 @@ QList<AssistProposalItemInterface *> CustomAssistProcessor::completeInclude(
             completionOperator = T_STRING_LITERAL;
         }
         if (startCharPos != -1)
-            directoryPrefix = sel.mid(startCharPos + 1, sel.length() - 1);
+            directoryPrefix = sel.mid(startCharPos + 1, sel.size() - 1);
     }
 
     // Make completion for all relevant includes
     HeaderPaths allHeaderPaths = headerPaths;
-    const auto currentFilePath = HeaderPath::makeUser(
-                interface->filePath().toFileInfo().path());
+    const HeaderPath currentFilePath = HeaderPath::makeUser(interface->filePath());
     if (!allHeaderPaths.contains(currentFilePath))
         allHeaderPaths.append(currentFilePath);
 
@@ -618,7 +626,7 @@ QList<AssistProposalItemInterface *> CustomAssistProcessor::completeInclude(
 
     QList<AssistProposalItemInterface *> completions;
     for (const HeaderPath &headerPath : std::as_const(allHeaderPaths)) {
-        QString realPath = headerPath.path;
+        QString realPath = headerPath.path.path();
         if (!directoryPrefix.isEmpty()) {
             realPath += QLatin1Char('/');
             realPath += directoryPrefix;
@@ -662,7 +670,7 @@ QList<AssistProposalItemInterface *> CustomAssistProcessor::completeIncludePath(
         const QFileInfo fileInfo = i.fileInfo();
         const QString suffix = fileInfo.suffix();
         if (suffix.isEmpty() || suffixes.contains(suffix)) {
-            QString text = fileName.mid(realPath.length() + 1);
+            QString text = fileName.mid(realPath.size() + 1);
             if (fileInfo.isDir())
                 text += QLatin1Char('/');
 
@@ -720,22 +728,24 @@ QList<AssistProposalItemInterface *> ClangdCompletionAssistProcessor::generateCo
     static const auto criterion = [](const CompletionItem &ci) {
         return ClangdCompletionItem::getQtType(ci) == ClangdCompletionItem::SpecialQtType::Signal;
     };
-    const QTextDocument *doc = document();
+    QTextDocument *doc = document();
     const int pos = basePos();
     if (!doc || pos < 0 || !Utils::anyOf(items, criterion))
         return itemGenerator(items);
-    const QString content = doc->toPlainText();
-    const bool requiresSignal = CppModelManager::getSignalSlotType(
-                filePath(), content.toUtf8(), pos)
-            == SignalSlotType::NewStyleSignal;
+    QTextCursor cursor(document());
+    cursor.setPosition(pos);
+    const bool requiresSignal = CppModelManager::getSignalSlotType(filePath(), cursor)
+                                == SignalSlotType::NewStyleSignal;
     if (requiresSignal)
         return itemGenerator(Utils::filtered(items, criterion));
     return itemGenerator(items);
 }
 
-ClangdFunctionHintProcessor::ClangdFunctionHintProcessor(ClangdClient *client, int basePosition)
+ClangdFunctionHintProcessor::ClangdFunctionHintProcessor(ClangdClient *client, int basePosition,
+                                                         bool abortExisting)
     : FunctionHintProcessor(client, basePosition)
     , m_client(client)
+    , m_abortExisting(abortExisting)
 {}
 
 IAssistProposal *ClangdFunctionHintProcessor::perform()
@@ -744,6 +754,10 @@ IAssistProposal *ClangdFunctionHintProcessor::perform()
         setAsyncCompletionAvailableHandler([this](IAssistProposal *proposal) {
             emit m_client->proposalReady(proposal);
         });
+    }
+    if (m_abortExisting) {
+        FunctionHintProposalModelPtr model(new ClangdFunctionHintProposalModel(SignatureHelp()));
+        return new FunctionHintProposal(0, model);
     }
     return FunctionHintProcessor::perform();
 }
@@ -775,7 +789,10 @@ IAssistProcessor *ClangdFunctionHintProvider::createProcessor(
     ClangCompletionContextAnalyzer contextAnalyzer(interface->textDocument(),
                                                    interface->position(), false, {});
     contextAnalyzer.analyze();
-    return new ClangdFunctionHintProcessor(m_client, contextAnalyzer.positionForProposal());
+    const bool abortExisting
+        = contextAnalyzer.completionAction() == ClangCompletionContextAnalyzer::AbortExisting;
+    return new ClangdFunctionHintProcessor(m_client, contextAnalyzer.positionForProposal(),
+                                           abortExisting);
 }
 
 } // namespace ClangCodeModel::Internal

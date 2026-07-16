@@ -61,9 +61,10 @@ public:
     }
 
 private:
-    Tasking::GroupItem runRecipe() final
+    using GroupItem = QtTaskTree::GroupItem; // trick lupdate, QTBUG-140636
+    GroupItem runRecipe() final
     {
-        using namespace Tasking;
+        using namespace QtTaskTree;
 
         const auto onSetup = [this] {
             // Check whether we need to run autoreconf
@@ -82,7 +83,7 @@ private:
 
         return Group {
             onGroupSetup(onSetup),
-            onGroupDone([this] { m_runAutoreconf = false; }, CallDoneIf::Success),
+            onGroupDone([this] { m_runAutoreconf = false; }, CallDoneFlag::OnSuccess),
             defaultProcessTask()
         };
     }

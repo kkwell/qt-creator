@@ -5,23 +5,25 @@
 
 #include "ioutputparser.h"
 
-#include <QRegularExpression>
+#include <optional>
 
-namespace ProjectExplorer {
+namespace ProjectExplorer::Internal {
 
 class LdParser : public ProjectExplorer::OutputTaskParser
 {
-    Q_OBJECT
-
 public:
     LdParser();
 private:
     Result handleLine(const QString &line, Utils::OutputFormat type) override;
     bool isContinuation(const QString &line) const override;
 
-    QRegularExpression m_ranlib;
-    QRegularExpression m_regExpLinker;
-    QRegularExpression m_regExpGccNames;
+    std::optional<Result> checkMainRegex(const QString &trimmedLine, const QString &originalLine);
+    std::optional<Result> checkRanlib(const QString &trimmedLine, const QString &originalLine);
+    Status getStatus(const QString &line);
 };
 
-} // namespace ProjectExplorer
+#ifdef WITH_TESTS
+QObject *createLdOutputParserTest();
+#endif
+
+} // namespace ProjectExplorer::Internal

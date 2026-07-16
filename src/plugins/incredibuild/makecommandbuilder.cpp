@@ -7,11 +7,11 @@
 
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/buildstep.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/target.h>
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/toolchainkitaspect.h>
 
 #include <qmakeprojectmanager/qmakeprojectmanagerconstants.h> // Compile-time only
 
@@ -36,10 +36,8 @@ QString MakeCommandBuilder::displayName() const
 FilePath MakeCommandBuilder::defaultCommand() const
 {
     if (BuildConfiguration *buildConfig = buildStep()->buildConfiguration()) {
-        if (Target *target = buildStep()->target()) {
-            if (Toolchain *toolChain = ToolchainKitAspect::cxxToolchain(target->kit()))
-                return toolChain->makeCommand(buildConfig->environment());
-        }
+        if (Toolchain *toolChain = ToolchainKitAspect::cxxToolchain(buildConfig->kit()))
+            return toolChain->makeCommand(buildConfig->environment());
     }
 
     return {};
@@ -51,14 +49,14 @@ QString MakeCommandBuilder::setMultiProcessArg(QString args)
 
     // jom -j 200
     if (cmd.baseName().compare("jom", Qt::CaseSensitivity::CaseInsensitive) == 0) {
-        QRegularExpression regExp("\\s*\\-j\\s+\\d+");
+        static const QRegularExpression regExp("\\s*\\-j\\s+\\d+");
         args.remove(regExp);
         args.append(" -j 200");
      }
     // make -j200
     else if ((cmd.baseName().compare("make", Qt::CaseSensitivity::CaseInsensitive) == 0)
           || (cmd.baseName().compare("gmake", Qt::CaseSensitivity::CaseInsensitive) == 0)) {
-        QRegularExpression regExp("\\s*\\-j\\d+");
+        static const QRegularExpression regExp("\\s*\\-j\\d+");
         args.remove(regExp);
         args.append(" -j200");
     }

@@ -5,17 +5,18 @@ QtcPlugin {
     name: "Core"
     Depends {
         name: "Qt"
-        submodules: ["widgets", "xml", "network", "qml", "sql", "printsupport"]
-    }
-
-    Depends {
-        name: "Qt.gui-private"
-        condition: qbs.targetOS.contains("windows")
+        submodules: ["gui-private", "network", "printsupport", "qml", "widgets", "xml"]
     }
 
     Depends { name: "Utils" }
     Depends { name: "Aggregation" }
+    Depends { name: "Spinner" }
     Depends { name: "TerminalLib" }
+    Depends { name: "qtkeychain" }
+
+    pluginTestDepends: [
+        "TextEditor"
+    ]
 
     cpp.dynamicLibraries: {
         if (qbs.targetOS.contains("windows"))
@@ -43,6 +44,10 @@ QtcPlugin {
             "coreplugin.cpp",
             "coreplugin.h",
             "coreplugintr.h",
+            "credentialquery.cpp",
+            "credentialquery.h",
+            "customlanguagemodels.cpp",
+            "customlanguagemodels.h",
             "designmode.cpp",
             "designmode.h",
             "diffservice.cpp",
@@ -53,6 +58,8 @@ QtcPlugin {
             "editmode.h",
             "editortoolbar.cpp",
             "editortoolbar.h",
+            "envvarseparatoraspect.cpp",
+            "envvarseparatoraspect.h",
             "externaltool.cpp",
             "externaltool.h",
             "externaltoolmanager.cpp",
@@ -96,6 +103,8 @@ QtcPlugin {
             "ioutputpane.h",
             "iversioncontrol.cpp",
             "iversioncontrol.h",
+            "ieasyboardpage.cpp",
+            "ieasyboardpage.h",
             "iwelcomepage.cpp",
             "iwelcomepage.h",
             "iwizardfactory.cpp",
@@ -110,8 +119,6 @@ QtcPlugin {
             "messagebox.h",
             "messagemanager.cpp",
             "messagemanager.h",
-            "messageoutputwindow.cpp",
-            "messageoutputwindow.h",
             "mimetypemagicdialog.cpp",
             "mimetypemagicdialog.h",
             "mimetypesettings.cpp",
@@ -126,7 +133,6 @@ QtcPlugin {
             "navigationwidget.h",
             "opendocumentstreeview.cpp",
             "opendocumentstreeview.h",
-            "outputpane.cpp",
             "outputpane.h",
             "outputpanemanager.cpp",
             "outputpanemanager.h",
@@ -134,6 +140,8 @@ QtcPlugin {
             "outputwindow.h",
             "patchtool.cpp",
             "patchtool.h",
+            "perspective.cpp",
+            "perspective.h",
             "plugindialog.cpp",
             "plugindialog.h",
             "plugininstallwizard.cpp",
@@ -148,8 +156,10 @@ QtcPlugin {
             "sessionmodel.h",
             "sessionview.cpp",
             "sessionview.h",
-            "settingsdatabase.cpp",
-            "settingsdatabase.h",
+            "secretaspect.cpp",
+            "secretaspect.h",
+            "settingsmode.cpp",
+            "settingsmode.h",
             "sidebar.cpp",
             "sidebar.h",
             "sidebarwidget.cpp",
@@ -187,7 +197,6 @@ QtcPlugin {
             "actionmanager.cpp", "actionmanager.h", "actionmanager_p.h",
             "command.cpp", "command.h", "command_p.h",
             "commandmappings.cpp", "commandmappings.h",
-            "commandsfile.cpp", "commandsfile.h",
         ]
     }
 
@@ -195,18 +204,15 @@ QtcPlugin {
         name: "Dialogs"
         prefix: "dialogs/"
         files: [
-            "addtovcsdialog.cpp", "addtovcsdialog.h",
             "codecselector.cpp", "codecselector.h",
             "externaltoolconfig.cpp", "externaltoolconfig.h",
             "filepropertiesdialog.cpp", "filepropertiesdialog.h",
             "ioptionspage.cpp", "ioptionspage.h",
             "newdialog.cpp", "newdialog.h",
-            "newdialogwidget.cpp", "newdialogwidget.h",
             "openwithdialog.cpp", "openwithdialog.h",
             "promptoverwritedialog.cpp", "promptoverwritedialog.h",
             "readonlyfilesdialog.cpp", "readonlyfilesdialog.h",
             "saveitemsdialog.cpp", "saveitemsdialog.h",
-            "settingsdialog.cpp", "settingsdialog.h",
             "shortcutsettings.cpp", "shortcutsettings.h",
         ]
     }
@@ -225,6 +231,17 @@ QtcPlugin {
             "openeditorsview.cpp", "openeditorsview.h",
             "openeditorswindow.cpp", "openeditorswindow.h",
             "systemeditor.cpp", "systemeditor.h",
+        ]
+    }
+
+    Group {
+        name: "MCP"
+        prefix: "mcp/"
+        files: [
+            "mcpmanager.cpp",
+            "mcpmanager.h",
+            "mcpregistry.cpp",
+            "mcpregistry.h",
         ]
     }
 
@@ -267,11 +284,11 @@ QtcPlugin {
 
     QtcTestFiles {
         files: [
-            "testdatadir.cpp",
-            "testdatadir.h",
+            "editormanager/editormanager_test.cpp",
             "locator/locatorfiltertest.cpp",
             "locator/locatorfiltertest.h",
-            "locator/locator_test.cpp"
+            "locator/locator_test.cpp",
+            "locator/locator_test.h"
         ]
 
         cpp.defines: outer.concat(['SRCDIR="' + path + '"'])
@@ -300,8 +317,14 @@ QtcPlugin {
             "ifindsupport.h",
             "itemviewfind.cpp",
             "itemviewfind.h",
+            "minimapcontroller.cpp",
+            "minimapcontroller.h",
+            "minimapoverlay.cpp",
+            "minimapoverlay.h",
             "optionspopup.cpp",
             "optionspopup.h",
+            "searchresulthighlighter.cpp",
+            "searchresulthighlighter.h",
             "searchresulttreeitemdelegate.cpp",
             "searchresulttreeitemdelegate.h",
             "searchresulttreeitemroles.h",

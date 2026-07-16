@@ -17,7 +17,7 @@
 #include <utils/qtcprocess.h>
 
 using namespace ProjectExplorer;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace Qdb::Internal {
@@ -29,8 +29,8 @@ public:
         : AbstractRemoteLinuxDeployStep(bsl, id)
     {
         selection.setSettingsKey("QdbMakeDefaultDeployStep.MakeDefault");
-        selection.addOption(Tr::tr("Set this application to start by default"));
-        selection.addOption(Tr::tr("Reset default application"));
+        selection.addOption(Tr::tr("Set This Application to Start by Default"));
+        selection.addOption(Tr::tr("Reset Default Application"));
 
         setInternalInitializer([this] { return isDeploymentPossible(); });
     }
@@ -40,7 +40,7 @@ private:
     {
         const auto onSetup = [this](Process &process) {
             QString remoteExe;
-            if (RunConfiguration *rc = target()->activeRunConfiguration()) {
+            if (RunConfiguration *rc = buildConfiguration()->activeRunConfiguration()) {
                 if (auto exeAspect = rc->aspect<ExecutableAspect>())
                     remoteExe = exeAspect->executable().nativePath();
             }
@@ -75,7 +75,7 @@ QdbMakeDefaultAppStepFactory::QdbMakeDefaultAppStepFactory()
 {
     registerStep<QdbMakeDefaultAppStep>(Constants::QdbMakeDefaultAppStepId);
     setDisplayName(Tr::tr("Change default application"));
-    setSupportedDeviceType(Qdb::Constants::QdbLinuxOsType);
+    setSupportedDeviceType(ProjectExplorer::Constants::BOOT2QT_DEVICE_TYPE);
     setSupportedStepList(ProjectExplorer::Constants::BUILDSTEPS_DEPLOY);
 }
 

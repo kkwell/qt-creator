@@ -1,6 +1,7 @@
 ---@meta Settings
 
 ---@module 'Qt'
+---@module 'SimpleTypes'
 
 local settings = {}
 
@@ -12,13 +13,14 @@ settings.BaseAspect = {}
 function settings.BaseAspect:apply() end
 
 ---@class AspectCreate
----@field settingsKey? string The settings key of the aspect.
+---@field settingsKey? string The settings key of the aspect. If not set, the aspect will not be saved to the settings persistently.
 ---@field displayName? string The display name of the aspect.
 ---@field labelText? string The label text of the aspect.
 ---@field toolTip? string The tool tip of the aspect.
 ---@field enabler? BoolAspect Enable / Disable this aspect based on the state of the `enabler`.
 ---@field onValueChanged? function () Called when the value of the aspect changes.
 ---@field onVolatileValueChanged? function () Called when the volatile value of the aspect changes.
+---@field macroExpander? MacroExpander|NullType The macro expander to use, or nil to disable macro expansion.
 local AspectCreate = {}
 
 ---The base class of most typed aspects.
@@ -75,7 +77,10 @@ function settings.ColorAspect.create(options) end
 
 ---@class SelectionAspect : TypedAspect<int>
 ---@field stringValue string The string value of the aspect.
+---@field dataValue any The data value of the aspect.
+---@field volatileValue integer The currently highlighted option index.
 settings.SelectionAspect = {}
+
 ---@enum SelectionDisplayStyle
 settings.SelectionDisplayStyle = {
     RadioButtons = 0,
@@ -84,7 +89,7 @@ settings.SelectionDisplayStyle = {
 
 ---@class SelectionOption
 ---@field name string The name of the option.
----@field tooltip? string The tooltip of the option.
+---@field toolTip? string The toolTip of the option.
 ---@field data? any The data of the option.
 SelectionOption = {}
 
@@ -100,7 +105,13 @@ function settings.SelectionAspect.create(options) end
 
 function settings.SelectionAspect:addOption(option) end
 
-function settings.SelectionAspect:addOption(option, tooltip) end
+function settings.SelectionAspect:addOption(option, toolTip) end
+
+---Return the data stored for the option at the given index.
+---@param index integer
+---@return any
+function settings.SelectionAspect:itemValueForIndex(index) end
+
 settings.MultiSelectionAspect = {}
 function settings.MultiSelectionAspect.create(options) end
 
@@ -122,6 +133,9 @@ settings.StringDisplayStyle = {
 ---@field acceptRichText? boolean
 ---@field autoApplyOnEditingFinished? boolean
 ---@field elideMode? Qt.TextElideMode The elide mode of the aspect.
+---@field rightSideIconPath? string Path to the icon
+---@field minimumHeight? int
+---@field completer QCompleter? A QCompleter object.
 StringAspectCreate = {}
 
 ---@class StringAspect : TypedAspect<string>
@@ -211,4 +225,17 @@ OptionsPageCreate = {}
 ---@return OptionsPage
 function settings.OptionsPage.create(options) end
 
+---Shows options page.
+function settings.OptionsPage:show() end
+
+---@class ExtensionOptionsPage
+settings.extensionOptionsPage = {}
+
+---Create an ExtensionOptionsPage.
+---@param aspectContainer AspectContainer
+---@return ExtensionOptionsPage
+function settings.extensionOptionsPage.create(aspectContainer) end
+
+---Show the options page.
+function settings.extensionOptionsPage:show() end
 return settings

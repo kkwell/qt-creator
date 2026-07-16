@@ -5,6 +5,7 @@
 
 #include "edit3dactions.h"
 #include "edit3dcanvas.h"
+#include "edit3dmaterialsaction.h"
 #include "edit3dtoolbarmenu.h"
 #include "edit3dview.h"
 
@@ -13,12 +14,10 @@
 #include <designdocument.h>
 #include <designericons.h>
 #include <designermcumanager.h>
+#include <designmodewidget.h>
 #include <externaldependenciesinterface.h>
 #include <generatedcomponentutils.h>
-#include <import.h>
-#include <materialutils.h>
 #include <metainfo.h>
-#include <modelnodeoperations.h>
 #include <nodeabstractproperty.h>
 #include <nodehints.h>
 #include <nodeinstanceview.h>
@@ -35,9 +34,9 @@
 #include <coreplugin/actionmanager/command.h>
 #include <coreplugin/icore.h>
 
-#include <model/modelutils.h>
+#include <modelutils.h>
 
-#include <utils/asset.h>
+#include <qmldesignerutils/asset.h>
 #include <utils/fileutils.h>
 #include <utils/qtcassert.h>
 #include <utils/utilsicons.h>
@@ -45,6 +44,8 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QClipboard>
+#include <QLabel>
+#include <QMenu>
 #include <QMimeData>
 #include <QVBoxLayout>
 
@@ -84,10 +85,10 @@ Edit3DWidget::Edit3DWidget(Edit3DView *view)
 {
     setAcceptDrops(true);
 
-    QByteArray sheet = Utils::FileReader::fetchQrc(":/qmldesigner/stylesheet.css");
-    setStyleSheet(Theme::replaceCssColors(QString::fromUtf8(sheet)));
+    QString sheet = Utils::FileUtils::fetchQrc(":/qmldesigner/stylesheet.css");
+    setStyleSheet(Theme::replaceCssColors(sheet));
 
-    Core::Context context(Constants::C_QMLEDITOR3D);
+    Core::Context context(Constants::qml3DEditorContextId);
     m_context = new Core::IContext(this);
     m_context->setContext(context);
     m_context->setWidget(this);
@@ -128,7 +129,7 @@ Edit3DWidget::Edit3DWidget(Edit3DView *view)
 
                 // Register action as creator command to make it configurable
                 Core::Command *command = Core::ActionManager::registerAction(
-                            a, action->menuId().constData(), context);
+                            a, Utils::Id::fromName(action->menuId()), context);
                 m_actionToCommandHash.insert(a, command);
                 command->setDefaultKeySequence(a->shortcut());
                 if (proxyGroup)
@@ -177,11 +178,16 @@ Edit3DWidget::Edit3DWidget(Edit3DView *view)
 
     handleActions(view->backgroundColorActions(), m_backgroundColorMenu, false);
 
+    m_viewportPresetsMenu = new QMenu(this);
+    m_viewportPresetsMenu->setToolTipsVisible(true);
+    handleActions(view->viewportPresetActions(), m_viewportPresetsMenu, false);
+
     createContextMenu();
 
     // Onboarding label contains instructions for new users how to get 3D content into the project
     m_onboardingLabel = new QLabel(this);
     m_onboardingLabel->setAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
+    m_onboardingLabel->setWordWrap(true);
     connect(m_onboardingLabel, &QLabel::linkActivated, this, &Edit3DWidget::linkActivated);
     fillLayout->addWidget(m_onboardingLabel.data());
 
@@ -191,7 +197,7 @@ Edit3DWidget::Edit3DWidget(Edit3DView *view)
     showCanvas(false);
 
     IContext::attach(this,
-                     Context(Constants::C_QMLEDITOR3D, Constants::C_QT_QUICK_TOOLS_MENU),
+                     Context(Constants::qml3DEditorContextId, Constants::qtQuickToolsMenuContextId),
                      [this](const IContext::HelpCallback &callback) { contextHelp(callback); });
 }
 
@@ -205,13 +211,8 @@ void Edit3DWidget::createContextMenu()
         DocumentManager::goIntoComponent(m_view->singleSelectedModelNode());
     });
 
-    m_editMaterialAction = m_contextMenu->addAction(
-                contextIcon(DesignerIcons::MaterialIcon),
-                tr("Edit Material"), [&] {
-        SelectionContext selCtx(m_view);
-        selCtx.setTargetNode(m_contextMenuTarget);
-        ModelNodeOperations::editMaterial(selCtx);
-    });
+    m_materialsAction = new Edit3DMaterialsAction(contextIcon(DesignerIcons::MaterialIcon), this);
+    m_contextMenu->addAction(m_materialsAction);
 
     m_contextMenu->addSeparator();
 
@@ -374,7 +375,8 @@ void Edit3DWidget::createContextMenu()
     m_addToContentLibAction = m_contextMenu->addAction(
         contextIcon(DesignerIcons::CreateIcon),  // TODO: placeholder icon
         tr("Add to Content Library"), [&] {
-            view()->emitCustomNotification("add_3d_to_content_lib", {m_contextMenuTarget});
+            QmlDesignerPlugin::instance()->mainWidget()->showDockWidget("ContentLibrary");
+            view()->emitCustomNotification("add_node_to_content_lib", {}); // To ContentLibrary
         });
 
     m_contextMenu->addSeparator();
@@ -408,22 +410,14 @@ void Edit3DWidget::showOnboardingLabel()
     if (text.isEmpty()) {
         if (m_view->externalDependencies().isQt6Project()) {
             QString labelText =
-                tr("Your file does not import Qt Quick 3D.<br><br>"
-                   "To create a 3D view, add the"
-                   " <b>QtQuick3D</b>"
-                   " module in the"
-                   " <b>Components</b>"
-                   " view or click"
+                tr("To use the <b>3D</b> view, add the <b>QtQuick3D</b> module and the <b>View3D</b>"
+                   " component in the <b>Components</b> view or click"
                    " <a href=\"#add_import\"><span style=\"text-decoration:none;color:%1\">here</span></a>"
                    ".<br><br>"
-                   "To import 3D assets, select"
-                   " <b>+</b>"
-                   " in the"
-                   " <b>Assets</b>"
-                   " view.");
+                   "To import 3D assets, select <b>+</b> in the <b>Assets</b> view.");
             text = labelText.arg(Utils::creatorColor(Utils::Theme::TextColorLink).name());
         } else {
-            text = tr("3D view is not supported in Qt5 projects.");
+            text = tr("3D view is only supported in Qt6 qmlprojects.");
         }
     }
 
@@ -442,13 +436,14 @@ void Edit3DWidget::updateCreateSubMenu(const QList<ItemLibraryDetails> &entriesL
         m_createSubMenu->deleteLater();
     }
 
+    m_nameToImport.clear();
     m_nameToEntry.clear();
 
     m_createSubMenu = new QmlEditorMenu(tr("Create"), m_contextMenu);
     m_createSubMenu->setIcon(contextIcon(DesignerIcons::CreateIcon));
     m_contextMenu->addMenu(m_createSubMenu);
 
-    const QString docPath = QmlDesignerPlugin::instance()->currentDesignDocument()->fileName().toString();
+    const QString docPath = QmlDesignerPlugin::instance()->currentDesignDocument()->fileName().toUrlishString();
 
     auto isEntryValid = [&](const ItemLibraryEntry &entry) -> bool {
         // Don't allow entries that match current document
@@ -480,7 +475,41 @@ void Edit3DWidget::updateCreateSubMenu(const QList<ItemLibraryDetails> &entriesL
             QAction *action = catMenu->addAction(getEntryIcon(entry), entry.name());
             connect(action, &QAction::triggered, this, [this, action] { onCreateAction(action); });
             action->setData(entry.name());
+            Import import = Import::createLibraryImport(entry.requiredImport(),
+                                                 QString::number(entry.majorVersion())
+                                                     + QLatin1Char('.')
+                                                     + QString::number(entry.minorVersion()));
+            m_nameToImport.insert(entry.name(), import);
             m_nameToEntry.insert(entry.name(), entry);
+        }
+    }
+
+    // Create menu for imported 3d models, which don't have ItemLibraryEntries
+    const GeneratedComponentUtils &compUtils
+        = QmlDesignerPlugin::instance()->documentManager().generatedComponentUtils();
+    Utils::FilePaths qmlFiles = compUtils.imported3dComponents();
+    QMenu *catMenu = nullptr;
+
+    if (!qmlFiles.isEmpty()) {
+        catMenu = new QmlEditorMenu(tr("Imported Models"), m_createSubMenu);
+        catMenu->setIcon(contextIcon(DesignerIcons::ImportedModelsIcon));
+        m_createSubMenu->addMenu(catMenu);
+
+        std::ranges::sort(qmlFiles, {}, &Utils::FilePath::baseName);
+
+        const QIcon icon = QIcon(":/edit3d/images/item-3D_model-icon.png");
+
+        for (const Utils::FilePath &qmlFile : std::as_const(qmlFiles)) {
+            QString qmlName = qmlFile.baseName();
+            QAction *action = catMenu->addAction(icon, qmlName);
+            connect(action, &QAction::triggered, this, [this, action] { onCreateAction(action); });
+            action->setData(qmlName);
+
+            QString importName = compUtils.getImported3dImportName(qmlFile);
+            if (!importName.isEmpty()) {
+                Import import = Import::createLibraryImport(importName);
+                m_nameToImport.insert(qmlName, import);
+            }
         }
     }
 }
@@ -492,23 +521,35 @@ void Edit3DWidget::onCreateAction(QAction *action)
         return;
 
     m_view->executeInTransaction(__FUNCTION__, [&] {
-        ItemLibraryEntry entry = m_nameToEntry.value(action->data().toString());
-        Import import = Import::createLibraryImport(entry.requiredImport(),
-                                                    QString::number(entry.majorVersion())
-                                                    + QLatin1Char('.')
-                                                    + QString::number(entry.minorVersion()));
+        const QString actionName = action->data().toString();
+        Import import = m_nameToImport.value(actionName);
+
         if (!m_view->model()->hasImport(import, true, true))
             m_view->model()->changeImports({import}, {});
 
-        int activeScene = Utils3D::active3DSceneId(m_view->model());
-        auto modelNode = QmlVisualNode::createQml3DNode(m_view, entry,
-                                                        activeScene, m_contextMenuPos3d).modelNode();
+        ModelNode modelNode;
+        if (m_nameToEntry.contains(actionName)) {
+            int activeScene = Utils3D::active3DSceneId(m_view->model());
+            ItemLibraryEntry entry = m_nameToEntry.value(actionName);
+
+            modelNode = QmlVisualNode::createQml3DNode(m_view, entry, activeScene,
+                                                       m_contextMenuPos3d).modelNode();
+        } else {
+            ModelNode sceneNode = Utils3D::active3DSceneNode(m_view);
+            if (!sceneNode.isValid())
+                sceneNode = m_view->rootModelNode();
+
+            modelNode = QmlVisualNode::QmlVisualNode::createQml3DNode(
+                            m_view, actionName.toUtf8(), sceneNode, import.url(),
+                            m_contextMenuPos3d).modelNode();
+        }
+
         QTC_ASSERT(modelNode.isValid(), return);
         m_view->setSelectedModelNode(modelNode);
 
         // if added node is a Model, assign it a material
         if (modelNode.metaInfo().isQtQuick3DModel())
-            MaterialUtils::assignMaterialTo3dModel(m_view, modelNode);
+            Utils3D::assignMaterialTo3dModel(m_view, modelNode);
     });
 }
 
@@ -518,11 +559,11 @@ void Edit3DWidget::onMatOverrideAction(QAction *action)
         return;
 
     QVariantList list;
-    for (int i = 0; i < m_view->splitToolStates().size(); ++i) {
-        Edit3DView::SplitToolState state = m_view->splitToolStates()[i];
-        if (i == m_view->activeSplit()) {
+    for (int i = 0; i < m_view->viewportToolStates().size(); ++i) {
+        Edit3DView::ViewportToolState state = m_view->viewportToolStates()[i];
+        if (i == m_view->activeViewport()) {
             state.matOverride = action->data().toInt();
-            m_view->setSplitToolState(i, state);
+            m_view->setViewportToolState(i, state);
             list.append(action->data());
         } else {
             list.append(state.matOverride);
@@ -538,11 +579,11 @@ void Edit3DWidget::onWireframeAction()
         return;
 
     QVariantList list;
-    for (int i = 0; i < m_view->splitToolStates().size(); ++i) {
-        Edit3DView::SplitToolState state = m_view->splitToolStates()[i];
-        if (i == m_view->activeSplit()) {
+    for (int i = 0; i < m_view->viewportToolStates().size(); ++i) {
+        Edit3DView::ViewportToolState state = m_view->viewportToolStates()[i];
+        if (i == m_view->activeViewport()) {
             state.showWireframe = m_wireFrameAction->isChecked();
-            m_view->setSplitToolState(i, state);
+            m_view->setViewportToolState(i, state);
             list.append(m_wireFrameAction->isChecked());
         } else {
             list.append(state.showWireframe);
@@ -560,11 +601,11 @@ void Edit3DWidget::onResetAllOverridesAction()
     QVariantList wList;
     QVariantList mList;
 
-    for (int i = 0; i < m_view->splitToolStates().size(); ++i) {
-        Edit3DView::SplitToolState state;
+    for (int i = 0; i < m_view->viewportToolStates().size(); ++i) {
+        Edit3DView::ViewportToolState state;
         state.showWireframe = false;
         state.matOverride = 0;
-        m_view->setSplitToolState(i, state);
+        m_view->setViewportToolState(i, state);
         wList.append(state.showWireframe);
         mList.append(state.matOverride);
     }
@@ -593,6 +634,7 @@ void Edit3DWidget::showCanvas(bool show)
         m_onboardingLabel->setVisible(false);
     else
         showOnboardingLabel();
+    m_toolBox->setVisible(show);
 }
 
 QMenu *Edit3DWidget::visibilityTogglesMenu() const
@@ -625,6 +667,21 @@ void Edit3DWidget::showBackgroundColorMenu(bool show, const QPoint &pos)
         m_backgroundColorMenu->close();
 }
 
+QMenu *Edit3DWidget::viewportPresetsMenu() const
+{
+    return m_viewportPresetsMenu.data();
+}
+
+void Edit3DWidget::showViewportPresetsMenu(bool show, const QPoint &pos)
+{
+    if (m_viewportPresetsMenu.isNull())
+        return;
+    if (show)
+        m_viewportPresetsMenu->popup(pos);
+    else
+        m_viewportPresetsMenu->close();
+}
+
 void Edit3DWidget::showContextMenu(const QPoint &pos, const ModelNode &modelNode, const QVector3D &pos3d)
 {
     auto compUtils = QmlDesignerPlugin::instance()->documentManager().generatedComponentUtils();
@@ -644,7 +701,7 @@ void Edit3DWidget::showContextMenu(const QPoint &pos, const ModelNode &modelNode
         m_createSubMenu->setEnabled(!isSceneLocked());
 
     m_editComponentAction->setEnabled(isSingleComponent);
-    m_editMaterialAction->setEnabled(isModel);
+    m_materialsAction->setEnabled(isModel);
     m_duplicateAction->setEnabled(selectionExcludingRoot);
     m_copyAction->setEnabled(selectionExcludingRoot);
     m_pasteAction->setEnabled(isPasteAvailable());
@@ -657,13 +714,14 @@ void Edit3DWidget::showContextMenu(const QPoint &pos, const ModelNode &modelNode
     m_bakeLightsAction->setVisible(view()->bakeLightsAction()->action()->isVisible());
     m_bakeLightsAction->setEnabled(view()->bakeLightsAction()->action()->isEnabled());
     m_addToContentLibAction->setEnabled(isNode && !isInBundle);
+    m_materialsAction->updateMenu(view()->selectedModelNodes());
 
     if (m_view) {
-        int idx = m_view->activeSplit();
-        m_wireFrameAction->setChecked(m_view->splitToolStates()[idx].showWireframe);
+        int idx = m_view->activeViewport();
+        m_wireFrameAction->setChecked(m_view->viewportToolStates()[idx].showWireframe);
         for (QAction *a : std::as_const(m_matOverrideActions))
             a->setChecked(false);
-        int type = m_view->splitToolStates()[idx].matOverride;
+        int type = m_view->viewportToolStates()[idx].matOverride;
         m_matOverrideActions[type]->setChecked(true);
     }
 
@@ -672,8 +730,7 @@ void Edit3DWidget::showContextMenu(const QPoint &pos, const ModelNode &modelNode
 
 void Edit3DWidget::linkActivated([[maybe_unused]] const QString &link)
 {
-    if (m_view)
-        m_view->addQuick3DImport();
+    Utils3D::addQuick3DImportAndView3D(m_view);
 }
 
 Edit3DCanvas *Edit3DWidget::canvas() const
@@ -702,14 +759,17 @@ void Edit3DWidget::dragEnterEvent(QDragEnterEvent *dragEnterEvent)
     if (dragEnterEvent->mimeData()->hasFormat(Constants::MIME_TYPE_ASSETS)
         || dragEnterEvent->mimeData()->hasFormat(Constants::MIME_TYPE_BUNDLE_TEXTURE)) {
         const auto urls = dragEnterEvent->mimeData()->urls();
-        if (!urls.isEmpty()) {
-            if (Asset(urls.first().toLocalFile()).isValidTextureSource())
+        for (const QUrl &url : urls) {
+            Asset asset(url.toLocalFile());
+            if (asset.isImported3D() || asset.isTexture3D()) {
                 dragEnterEvent->acceptProposedAction();
+                break;
+            }
         }
     } else if (actionManager.externalDragHasSupportedAssets(dragEnterEvent->mimeData())
                || dragEnterEvent->mimeData()->hasFormat(Constants::MIME_TYPE_MATERIAL)
                || dragEnterEvent->mimeData()->hasFormat(Constants::MIME_TYPE_BUNDLE_MATERIAL)
-               || dragEnterEvent->mimeData()->hasFormat(Constants::MIME_TYPE_BUNDLE_ITEM)
+               || dragEnterEvent->mimeData()->hasFormat(Constants::MIME_TYPE_BUNDLE_ITEM_3D)
                || dragEnterEvent->mimeData()->hasFormat(Constants::MIME_TYPE_TEXTURE)) {
         if (Utils3D::active3DSceneNode(m_view).isValid())
             dragEnterEvent->acceptProposedAction();
@@ -755,8 +815,8 @@ void Edit3DWidget::dropEvent(QDropEvent *dropEvent)
     }
 
     // handle dropping bundle items
-    if (dropEvent->mimeData()->hasFormat(Constants::MIME_TYPE_BUNDLE_ITEM)) {
-        m_view->dropBundleEffect(pos);
+    if (dropEvent->mimeData()->hasFormat(Constants::MIME_TYPE_BUNDLE_ITEM_3D)) {
+        m_view->dropBundleItem(pos);
         m_view->model()->endDrag();
         return;
     }
@@ -772,7 +832,7 @@ void Edit3DWidget::dropEvent(QDropEvent *dropEvent)
     // handle dropping image assets
     if (dropEvent->mimeData()->hasFormat(Constants::MIME_TYPE_ASSETS)
         || dropEvent->mimeData()->hasFormat(Constants::MIME_TYPE_BUNDLE_TEXTURE)) {
-        m_view->dropAsset(dropEvent->mimeData()->urls().first().toLocalFile(), pos);
+        m_view->dropAssets(dropEvent->mimeData()->urls(), pos);
         m_view->model()->endDrag();
         return;
     }
@@ -797,7 +857,7 @@ void Edit3DWidget::dropEvent(QDropEvent *dropEvent)
             auto moduleId = model->module(import3dTypePrefix, Storage::ModuleKind::QmlLibrary);
             auto metaInfo = model->metaInfo(moduleId, fileName.toUtf8());
             if (auto entries = metaInfo.itemLibrariesEntries(); entries.size()) {
-                auto entry = ItemLibraryEntry{entries.front()};
+                auto entry = ItemLibraryEntry::create(m_view->model()->pathCache(), entries.front());
                 QmlVisualNode::createQml3DNode(view(), entry, m_canvas->activeScene(), {}, false);
             }
         }

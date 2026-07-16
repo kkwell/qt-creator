@@ -30,11 +30,11 @@ public:
     void readSettings() override;
     void writeSettings() const override;
 
-    bool isDirty() override;
+    bool isDirty() const override;
 
 private:
-    bool guiToBuffer() override;
-    void bufferToGui() override;
+    bool guiToVolatileValue() override;
+    void volatileValueToGui() override;
 
     SourcePathMapAspectPrivate *d = nullptr;
 };
@@ -60,6 +60,7 @@ public:
     Utils::BoolAspect showQmlObjectTree{this};
     Utils::BoolAspect stationaryEditorWhileStepping{this};
     Utils::BoolAspect forceLoggingToConsole{this};
+    Utils::BoolAspect showUnsupportedBreakpointWarning{this};
 
     SourcePathMapAspect sourcePathMap{this};
 
@@ -75,6 +76,7 @@ public:
     LocalsAndExpressionsSettings();
 
     Utils::BoolAspect useDebuggingHelpers{this};
+    Utils::BoolAspect allowInferiorCalls{this};
     Utils::BoolAspect useCodeModel{this};
     Utils::BoolAspect showThreadNames{this};
     Utils::FilePathAspect extraDumperFile{this};   // For loading a file. Recommended.

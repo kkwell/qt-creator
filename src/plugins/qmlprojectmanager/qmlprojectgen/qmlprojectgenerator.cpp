@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "qmlprojectgenerator.h"
-#include "../cmakegen/cmakewriter.h"
+#include "../qmlprojectexporter/cmakewriter.h"
 #include "../qmlprojectmanagertr.h"
 
 #include <coreplugin/documentmanager.h>
@@ -61,12 +61,11 @@ bool QmlProjectFileGenerator::execute()
     importDirs.removeAll("content");
     const QString importPaths = createDirArrayEntry("importPaths", importDirs);
 
-    const QString fileContent = GenerateCmake::CMakeWriter::readTemplate(QMLPROJECT_FILE_TEMPLATE_PATH)
+    const QString fileContent = QmlProjectExporter::CMakeWriter::readTemplate(QMLPROJECT_FILE_TEMPLATE_PATH)
             .arg(contentEntry, imageEntry, jsEntry, assetEntry, importPaths);
 
-    QFile file(m_targetFile.toString());
-    file.open(QIODevice::WriteOnly);
-    if (!file.isOpen())
+    QFile file(m_targetFile.toUrlishString());
+    if (!file.open(QIODevice::WriteOnly))
         return false;
 
     file.reset();
@@ -75,7 +74,7 @@ bool QmlProjectFileGenerator::execute()
 
     QMessageBox::information(Core::ICore::dialogParent(),
                              Tr::tr("Project File Generated"),
-                             Tr::tr("File created:\n\n%1").arg(m_targetFile.toString()),
+                             Tr::tr("File created:") + "\n\n" + m_targetFile.toUrlishString(),
                              QMessageBox::Ok);
 
     return true;
@@ -175,7 +174,7 @@ bool QmlProjectFileGenerator::isDirAcceptable(const FilePath &dir, const FilePat
 
     if (uiFileParentDir.isChildOf(dir)) {
         const FilePath relativePath = uiFileParentDir.relativeChildPath(dir);
-        QStringList components = relativePath.toString().split("/");
+        QStringList components = relativePath.toUrlishString().split("/");
         if (components.size() > 2) {
             QMessageBox::StandardButton sel = QMessageBox::question(Core::ICore::dialogParent(),
                                                   Tr::tr("Problem"),
@@ -204,7 +203,7 @@ const FilePath QmlProjectFileGenerator::findInDirTree(const FilePath &dir, const
     if (!files.isEmpty())
         return dir;
 
-    FilePaths subdirs = dir.dirEntries(DIRS_ONLY);
+    const FilePaths subdirs = dir.dirEntries(DIRS_ONLY);
     for (const FilePath &subdir : subdirs) {
         const FilePath result = findInDirTree(subdir, suffixes, currentSearchDepth);
         if (!result.isEmpty())
@@ -234,7 +233,7 @@ const QStringList QmlProjectFileGenerator::findContentDirs(const QStringList &su
         if (fullPath == m_targetDir)
             relativePaths.append(".");
         else
-            relativePaths.append(fullPath.relativeChildPath(m_targetDir).toString().split('/').first());
+            relativePaths.append(fullPath.relativeChildPath(m_targetDir).toUrlishString().split('/').first());
     }
 
     return relativePaths;

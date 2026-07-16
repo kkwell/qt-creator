@@ -15,7 +15,7 @@
 #include <utils/mimeconstants.h>
 #include <utils/mimeutils.h>
 
-#include <QtTest/QtTest>
+#include <QTest>
 
 namespace TextEditor::Internal {
 
@@ -74,6 +74,10 @@ QTextCharFormat toFormat(const TextStyle &style)
     if (style == C_TEXT) {
         format = QTextCharFormat();
         format.setFontWeight(QFont::Bold); // is explicitly set by the ksyntax format definition
+    }
+    if (style == C_INFO_CONTEXT) {
+        format.setUnderlineStyle(QTextCharFormat::DotLine); // explicitly set by ksyntax format
+        format.setFontWeight(QFont::Bold);
     }
     return format;
 };

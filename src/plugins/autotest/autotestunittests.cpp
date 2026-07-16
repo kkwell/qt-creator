@@ -4,7 +4,6 @@
 #include "autotestunittests.h"
 
 #include "testcodeparser.h"
-#include "testframeworkmanager.h"
 #include "testtreemodel.h"
 
 #include "qtest/qttestframework.h"
@@ -15,10 +14,10 @@
 
 #include <extensionsystem/pluginmanager.h>
 
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/toolchainkitaspect.h>
 
 #include <qtsupport/qtkitaspect.h>
 
@@ -56,7 +55,6 @@ private slots:
     void testCodeParserGTest_data();
     void testCodeParserBoostTest();
     void testCodeParserBoostTest_data();
-    void testModelManagerInterface();
 
 private:
     TestTreeModel *m_model = nullptr;
@@ -118,7 +116,7 @@ void AutotestUnitTests::testCodeParser()
     QFETCH(int, expectedDataTagsCount);
 
     CppEditor::Tests::ProjectOpenerAndCloser projectManager;
-    QVERIFY(projectManager.open(projectFilePath, true, m_kit));
+    QVERIFY(projectManager.open(projectFilePath, m_kit));
 
     QSignalSpy parserSpy(m_model->parser(), &TestCodeParser::parsingFinished);
     QSignalSpy modelUpdateSpy(m_model, &TestTreeModel::sweepingDone);
@@ -168,7 +166,7 @@ void AutotestUnitTests::testCodeParserSwitchStartup()
     CppEditor::Tests::ProjectOpenerAndCloser projectManager;
     for (int i = 0; i < projectFilePaths.size(); ++i) {
         qDebug() << "Opening project" << projectFilePaths.at(i);
-        QVERIFY(projectManager.open(projectFilePaths.at(i), true, m_kit));
+        QVERIFY(projectManager.open(projectFilePaths.at(i), m_kit));
 
         QSignalSpy parserSpy(m_model->parser(), &TestCodeParser::parsingFinished);
         QSignalSpy modelUpdateSpy(m_model, &TestTreeModel::sweepingDone);
@@ -213,12 +211,22 @@ void AutotestUnitTests::testCodeParserSwitchStartup_data()
 
 void AutotestUnitTests::testCodeParserGTest()
 {
-    if (qtcEnvironmentVariableIsEmpty("GOOGLETEST_DIR"))
-        QSKIP("This test needs googletest - set GOOGLETEST_DIR (point to googletest repository)");
+    if (qtcEnvironmentVariableIsEmpty("GOOGLETEST_DIR")) {
+        const QString qcSource = QString(QTCREATORDIR);
+        const FilePath gtestSrc = FilePath::fromUserInput(qcSource)
+                                      .pathAppended("src/libs/3rdparty/googletest");
+        if (gtestSrc.exists()) {
+            qDebug() << "Trying to use googletest submodule in" << gtestSrc.toUserOutput() << ".";
+            Environment::modifySystemEnvironment({EnvironmentItem{"GOOGLETEST_DIR",
+                                                                  gtestSrc.toUserOutput()}});
+        } else {
+            QSKIP("This test needs googletest - set GOOGLETEST_DIR (point to googletest repository)");
+        }
+    }
 
     QFETCH(FilePath, projectFilePath);
     CppEditor::Tests::ProjectOpenerAndCloser projectManager;
-    QVERIFY(projectManager.open(projectFilePath, true, m_kit));
+    QVERIFY(projectManager.open(projectFilePath, m_kit));
 
     QSignalSpy parserSpy(m_model->parser(), &TestCodeParser::parsingFinished);
     QSignalSpy modelUpdateSpy(m_model, &TestTreeModel::sweepingDone);
@@ -268,7 +276,7 @@ void AutotestUnitTests::testCodeParserBoostTest()
     QFETCH(QString, extension);
     CppEditor::Tests::ProjectOpenerAndCloser projectManager;
     const CppEditor::ProjectInfo::ConstPtr projectInfo
-            = projectManager.open(projectFilePath, true, m_kit);
+            = projectManager.open(projectFilePath, m_kit);
     QVERIFY(projectInfo);
 
     QSignalSpy parserSpy(m_model->parser(), &TestCodeParser::parsingFinished);
@@ -284,7 +292,7 @@ void AutotestUnitTests::testCodeParserBoostTest()
     QMap<QString, int> expectedSuitesAndTests;
 
     auto pathConstructor = [basePath, extension](const QString &name, const QString &subPath) {
-        return QString(name + '|' + basePath.pathAppended(subPath + extension).toString());
+        return QString(name + '|' + basePath.pathAppended(subPath + extension).toUrlishString());
     };
     expectedSuitesAndTests.insert(pathConstructor("Master Test Suite", "tests/deco/deco"), 2); // decorators w/o suite
     expectedSuitesAndTests.insert(pathConstructor("Master Test Suite", "tests/fix/fix"), 2); // fixtures
@@ -313,20 +321,6 @@ void AutotestUnitTests::testCodeParserBoostTest_data()
         << m_tmpDir->filePath() / "simple_boost/simple_boost.pro" << QString(".pro");
     QTest::newRow("simpleBoostTestQbs")
         << m_tmpDir->filePath() / "simple_boost/simple_boost.qbs" << QString(".qbs");
-}
-
-static int executeScenario(const QString &scenario)
-{
-    const PluginManager::ProcessData data = PluginManager::creatorProcessData();
-    QStringList additionalArgs{ "-scenario", scenario };
-    if (!data.m_args.contains("-settingspath") && !data.m_settingsPath.isEmpty())
-        additionalArgs << "-settingspath" << data.m_settingsPath;
-    return QProcess::execute(data.m_executable, data.m_args + additionalArgs);
-}
-
-void AutotestUnitTests::testModelManagerInterface()
-{
-    QCOMPARE(executeScenario("TestModelManagerInterface"), 0);
 }
 
 QObject *createAutotestUnitTests()

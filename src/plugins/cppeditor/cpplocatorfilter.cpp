@@ -19,13 +19,16 @@
 
 using namespace Core;
 using namespace CPlusPlus;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace CppEditor {
 
+using namespace Internal;
+
 using EntryFromIndex = std::function<LocatorFilterEntry(const IndexItem::Ptr &)>;
 
-void matchesFor(QPromise<void> &promise, const LocatorStorage &storage,
+static void matchesFor(QPromise<void> &promise, const LocatorStorage &storage,
                 IndexItem::ItemType wantedType, const EntryFromIndex &converter)
 {
     const QString input = storage.input();
@@ -99,19 +102,15 @@ void matchesFor(QPromise<void> &promise, const LocatorStorage &storage,
                                       LocatorFilterEntries()));
 }
 
-LocatorMatcherTask locatorMatcher(IndexItem::ItemType type, const EntryFromIndex &converter)
+static ExecutableItem locatorMatcher(IndexItem::ItemType type, const EntryFromIndex &converter)
 {
-    using namespace Tasking;
-
-    Storage<LocatorStorage> storage;
-
-    const auto onSetup = [=](Async<void> &async) {
-        async.setConcurrentCallData(matchesFor, *storage, type, converter);
+    const auto onSetup = [type, converter](Async<void> &async) {
+        async.setConcurrentCallData(matchesFor, *LocatorStorage::storage(), type, converter);
     };
-    return {AsyncTask<void>(onSetup), storage};
+    return AsyncTask<void>(onSetup);
 }
 
-LocatorMatcherTask allSymbolsMatcher()
+static ExecutableItem allSymbolsMatcher()
 {
     const auto converter = [](const IndexItem::Ptr &info) {
         LocatorFilterEntry filterEntry;
@@ -129,7 +128,7 @@ LocatorMatcherTask allSymbolsMatcher()
     return locatorMatcher(IndexItem::All, converter);
 }
 
-LocatorMatcherTask classMatcher()
+static ExecutableItem classMatcher()
 {
     const auto converter = [](const IndexItem::Ptr &info) {
         LocatorFilterEntry filterEntry;
@@ -145,7 +144,7 @@ LocatorMatcherTask classMatcher()
     return locatorMatcher(IndexItem::Class, converter);
 }
 
-LocatorMatcherTask functionMatcher()
+static ExecutableItem functionMatcher()
 {
     const auto converter = [](const IndexItem::Ptr &info) {
         QString name = info->symbolName();
@@ -166,7 +165,7 @@ LocatorMatcherTask functionMatcher()
     return locatorMatcher(IndexItem::Function, converter);
 }
 
-QList<IndexItem::Ptr> itemsOfCurrentDocument(const FilePath &currentFileName)
+static QList<IndexItem::Ptr> itemsOfCurrentDocument(const FilePath &currentFileName)
 {
     if (currentFileName.isEmpty())
         return {};
@@ -175,10 +174,7 @@ QList<IndexItem::Ptr> itemsOfCurrentDocument(const FilePath &currentFileName)
     const Snapshot snapshot = CppModelManager::snapshot();
     if (const Document::Ptr thisDocument = snapshot.document(currentFileName)) {
         SearchSymbols search;
-        search.setSymbolsToSearchFor(SymbolSearcher::Declarations |
-                                     SymbolSearcher::Enums |
-                                     SymbolSearcher::Functions |
-                                     SymbolSearcher::Classes);
+        search.setSymbolsToSearchFor(SymbolType::AllTypes);
         IndexItem::Ptr rootNode = search(thisDocument);
         rootNode->visitAllChildren([&](const IndexItem::Ptr &info) {
             results.append(info);
@@ -188,7 +184,7 @@ QList<IndexItem::Ptr> itemsOfCurrentDocument(const FilePath &currentFileName)
     return results;
 }
 
-LocatorFilterEntry::HighlightInfo highlightInfo(const QRegularExpressionMatch &match,
+static LocatorFilterEntry::HighlightInfo highlightInfo(const QRegularExpressionMatch &match,
                                   LocatorFilterEntry::HighlightInfo::DataType dataType)
 {
     const FuzzyMatcher::HighlightingPositions positions =
@@ -197,7 +193,7 @@ LocatorFilterEntry::HighlightInfo highlightInfo(const QRegularExpressionMatch &m
     return LocatorFilterEntry::HighlightInfo(positions.starts, positions.lengths, dataType);
 }
 
-void matchesForCurrentDocument(QPromise<void> &promise, const LocatorStorage &storage,
+static void matchesForCurrentDocument(QPromise<void> &promise, const LocatorStorage &storage,
                                const FilePath &currentFileName)
 {
     const QString input = storage.input();
@@ -290,25 +286,21 @@ void matchesForCurrentDocument(QPromise<void> &promise, const LocatorStorage &st
                                        [](const Entry &entry) { return entry.entry; }));
 }
 
-FilePath currentFileName()
+static FilePath currentFileName()
 {
     IEditor *currentEditor = EditorManager::currentEditor();
     return currentEditor ? currentEditor->document()->filePath() : FilePath();
 }
 
-LocatorMatcherTask currentDocumentMatcher()
+static ExecutableItem currentDocumentMatcher()
 {
-    using namespace Tasking;
-
-    Storage<LocatorStorage> storage;
-
-    const auto onSetup = [=](Async<void> &async) {
-        async.setConcurrentCallData(matchesForCurrentDocument, *storage, currentFileName());
+    const auto onSetup = [](Async<void> &async) {
+        async.setConcurrentCallData(matchesForCurrentDocument, *LocatorStorage::storage(), currentFileName());
     };
-    return {AsyncTask<void>(onSetup), storage};
+    return AsyncTask<void>(onSetup);
 }
 
-using MatcherCreator = std::function<Core::LocatorMatcherTask()>;
+using MatcherCreator = std::function<ExecutableItem()>;
 
 static MatcherCreator creatorForType(MatcherType type)
 {
@@ -332,8 +324,8 @@ LocatorMatcherTasks cppMatchers(MatcherType type)
 CppAllSymbolsFilter::CppAllSymbolsFilter()
 {
     setId(Constants::LOCATOR_FILTER_ID);
-    setDisplayName(Tr::tr(Constants::LOCATOR_FILTER_DISPLAY_NAME));
-    setDescription(Tr::tr(Constants::LOCATOR_FILTER_DESCRIPTION));
+    setDisplayName(msgSymbolsFilterDisplayName());
+    setDescription(msgSymbolsFilterDescription());
     setDefaultShortcutString(":");
 }
 
@@ -346,8 +338,8 @@ LocatorMatcherTasks CppAllSymbolsFilter::matchers()
 CppClassesFilter::CppClassesFilter()
 {
     setId(Constants::CLASSES_FILTER_ID);
-    setDisplayName(Tr::tr(Constants::CLASSES_FILTER_DISPLAY_NAME));
-    setDescription(Tr::tr(Constants::CLASSES_FILTER_DESCRIPTION));
+    setDisplayName(msgClassesFilterDisplayName());
+    setDescription(msgClassesFilterDescription());
     setDefaultShortcutString("c");
 }
 
@@ -359,8 +351,8 @@ LocatorMatcherTasks CppClassesFilter::matchers()
 CppFunctionsFilter::CppFunctionsFilter()
 {
     setId(Constants::FUNCTIONS_FILTER_ID);
-    setDisplayName(Tr::tr(Constants::FUNCTIONS_FILTER_DISPLAY_NAME));
-    setDescription(Tr::tr(Constants::FUNCTIONS_FILTER_DESCRIPTION));
+    setDisplayName(msgFunctionsFilterDisplayName());
+    setDescription(msgFunctionsFilterDescription());
     setDefaultShortcutString("m");
 }
 
@@ -372,8 +364,8 @@ LocatorMatcherTasks CppFunctionsFilter::matchers()
 CppCurrentDocumentFilter::CppCurrentDocumentFilter()
 {
     setId(Constants::CURRENT_DOCUMENT_FILTER_ID);
-    setDisplayName(Tr::tr(Constants::CURRENT_DOCUMENT_FILTER_DISPLAY_NAME));
-    setDescription(Tr::tr(Constants::CURRENT_DOCUMENT_FILTER_DESCRIPTION));
+    setDisplayName(msgDocumentFilterDisplayName());
+    setDescription(msgDocumentFilterDescription());
     setDefaultShortcutString(".");
     setPriority(High);
 }
@@ -381,6 +373,46 @@ CppCurrentDocumentFilter::CppCurrentDocumentFilter()
 LocatorMatcherTasks CppCurrentDocumentFilter::matchers()
 {
     return {currentDocumentMatcher()};
+}
+
+QString msgSymbolsFilterDisplayName()
+{
+    return Tr::tr("C++ Classes, Enums, Functions and Type Aliases");
+}
+
+QString msgSymbolsFilterDescription()
+{
+    return Tr::tr("Locates C++ classes, enums, functions and type aliases in any open project.");
+}
+
+QString msgClassesFilterDisplayName()
+{
+    return Tr::tr("C++ Classes");
+}
+
+QString msgClassesFilterDescription()
+{
+    return Tr::tr("Locates C++ classes in any open project.");
+}
+
+QString msgFunctionsFilterDisplayName()
+{
+    return Tr::tr("C++ Functions");
+}
+
+QString msgFunctionsFilterDescription()
+{
+    return Tr::tr("Locates C++ functions in any open project.");
+}
+
+QString msgDocumentFilterDisplayName()
+{
+    return Tr::tr("C++ Symbols in Current Document");
+}
+
+QString msgDocumentFilterDescription()
+{
+    return Tr::tr("Locates C++ symbols in the current document.");
 }
 
 } // namespace CppEditor

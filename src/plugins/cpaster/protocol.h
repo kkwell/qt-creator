@@ -3,96 +3,83 @@
 
 #pragma once
 
-#include <QObject>
+#include <utils/result.h>
 
-QT_BEGIN_NAMESPACE
-class QNetworkReply;
-class QWidget;
-QT_END_NAMESPACE
+#include <QObject>
+#include <QtTaskTree/QTaskTree>
 
 namespace Core { class IOptionsPage; }
 
 namespace CodePaster {
 
-class Protocol : public QObject
+enum class Capability
 {
-    Q_OBJECT
-
-public:
-    enum ContentType {
-        Text, C, Cpp, JavaScript, Diff, Xml
-    };
-
-    enum Capabilities  {
-        ListCapability = 0x1,
-        PostCommentCapability = 0x2,
-        PostDescriptionCapability = 0x4,
-        PostUserNameCapability = 0x8
-    };
-
-    ~Protocol() override;
-
-    virtual QString name() const = 0;
-
-    virtual unsigned capabilities() const = 0;
-    virtual bool hasSettings() const;
-    virtual const Core::IOptionsPage *settingsPage() const;
-
-    virtual bool checkConfiguration(QString *errorMessage = nullptr);
-    virtual void fetch(const QString &id) = 0;
-    virtual void list();
-    virtual void paste(const QString &text,
-                       ContentType ct = Text,
-                       int expiryDays = 1,
-                       const QString &username = QString(),
-                       const QString &comment = QString(),
-                       const QString &description = QString()) = 0;
-
-    // Convenience to determine content type from mime type
-    static ContentType contentType(const QString &mimeType);
-
-    // Show a configuration error and point user to settings.
-    // Return true when settings changed.
-    static bool showConfigurationError(const Protocol *p,
-                                       const QString &message,
-                                       QWidget *parent = nullptr,
-                                       bool showConfig = true);
-    // Ensure configuration is correct
-    static bool ensureConfiguration(Protocol *p,
-                                    QWidget *parent = nullptr);
-
-signals:
-    void pasteDone(const QString &link);
-    void fetchDone(const QString &titleDescription,
-                   const QString &content,
-                   bool error);
-    void listDone(const QString &name, const QStringList &result);
-
-protected:
-    Protocol();
-    static QString textFromHtml(QString data);
-    static QString fixNewLines(QString in);
+    None            = 0,
+    List            = 1 << 0,
+    PostDescription = 1 << 1,
+    PostUserName    = 1 << 2
 };
 
-/* Network-based protocol: Provides access with delayed
- * initialization to a QNetworkAccessManager and conveniences
- * for HTTP-requests. */
+Q_DECLARE_FLAGS(Capabilities, Capability)
+Q_DECLARE_OPERATORS_FOR_FLAGS(Capabilities)
 
-class NetworkProtocol : public Protocol
+using ConfigChecker = std::function<Utils::Result<>()>;
+
+class ProtocolData
 {
 public:
-    NetworkProtocol() = default;
+    QString name;
+    Capabilities capabilities = Capability::None;
+    ConfigChecker configChecker = {};
+    Core::IOptionsPage *settingsPage = nullptr;
+};
 
-    ~NetworkProtocol() override;
+enum ContentType {
+    Text, C, Cpp, JavaScript, Diff, Xml
+};
+
+class PasteInputData
+{
+public:
+    QString text;
+    ContentType ct = Text;
+    int expiryDays = 1;
+    QString username = {};
+    QString description = {};
+};
+
+using FetchHandler = std::function<void(const QString &, const QString &)>;
+using ListHandler = std::function<void(const QStringList &)>;
+using PasteHandler = std::function<void(const QString &)>;
+
+class Protocol : public QObject
+{
+public:
+    ~Protocol() override;
+
+    QString name() const { return m_protocolData.name; }
+    Capabilities capabilities() const { return m_protocolData.capabilities; };
+    Utils::Result<> checkConfiguration() const {
+        return m_protocolData.configChecker ? m_protocolData.configChecker() : Utils::ResultOk;
+    }
+    const Core::IOptionsPage *settingsPage() const { return m_protocolData.settingsPage; }
+
+    virtual QtTaskTree::ExecutableItem fetchRecipe(const QString &id,
+                                                   const FetchHandler &handler) const;
+    virtual QtTaskTree::ExecutableItem listRecipe(const ListHandler &handler) const;
+    virtual QtTaskTree::ExecutableItem pasteRecipe(const PasteInputData &inputData,
+                                                   const PasteHandler &handler) const;
+
+    // Ensure configuration is correct
+    static bool ensureConfiguration(Protocol *p);
 
 protected:
-    QNetworkReply *httpGet(const QString &url, bool handleCookies = false);
+    Protocol(const ProtocolData &data);
+    void reportError(const QString &message) const;
+    static QString fixNewLines(QString in);
 
-    QNetworkReply *httpPost(const QString &link, const QByteArray &data,
-                            bool handleCookies = false);
-
-    // Check connectivity of host, displaying a message box.
-    bool httpStatus(QString url, QString *errorMessage, bool useHttps = false);
+private:
+    ProtocolData m_protocolData;
 };
 
 } //namespace CodePaster

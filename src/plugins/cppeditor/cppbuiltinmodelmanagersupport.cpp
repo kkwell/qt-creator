@@ -14,7 +14,10 @@
 #include "symbolfinder.h"
 
 #include <coreplugin/messagemanager.h>
+#include <cplusplus/CppDocument.h>
+#include <cplusplus/TranslationUnit.h>
 #include <texteditor/basehoverhandler.h>
+#include <texteditor/textdocumentlayout.h>
 #include <utils/qtcassert.h>
 #include <utils/textutils.h>
 
@@ -24,6 +27,7 @@
 #include <QTextDocument>
 
 using namespace Core;
+using namespace CPlusPlus;
 using namespace TextEditor;
 using namespace Utils;
 
@@ -95,9 +99,10 @@ CppCompletionAssistProvider *BuiltinModelManagerSupport::completionAssistProvide
 }
 
 
-TextEditor::BaseHoverHandler *BuiltinModelManagerSupport::createHoverHandler()
+TextEditor::BaseHoverHandler &BuiltinModelManagerSupport::cppHoverHandler()
 {
-    return new CppHoverHandler;
+    static CppHoverHandler theCppHoverHandler;
+    return theCppHoverHandler;
 }
 
 void BuiltinModelManagerSupport::followSymbol(const CursorInEditor &data,
@@ -125,6 +130,18 @@ void BuiltinModelManagerSupport::followSymbolToType(const CursorInEditor &data,
     Q_UNUSED(inNextSplit)
     MessageManager::writeDisrupting(
                 Tr::tr("Follow Symbol to Type is only available when using clangd"));
+}
+
+void BuiltinModelManagerSupport::followFunctionToParentImpl(
+    const CursorInEditor &data, const Utils::LinkHandler &processLinkCallback)
+{
+    SymbolFinder finder;
+    m_followSymbol->findParentImpl(
+        data,
+        processLinkCallback,
+        CppModelManager::snapshot(),
+        data.editorWidget()->semanticInfo().doc,
+        &finder);
 }
 
 void BuiltinModelManagerSupport::switchDeclDef(const CursorInEditor &data,
@@ -195,11 +212,60 @@ void BuiltinModelManagerSupport::switchHeaderSource(const FilePath &filePath,
         openEditor(otherFile, inNextSplit);
 }
 
-void BuiltinModelManagerSupport::checkUnused(const Utils::Link &link, SearchResult *search,
-                                             const Utils::LinkHandler &callback)
+void BuiltinModelManagerSupport::foldOrUnfoldComments(BaseTextEditor *editor, bool fold)
+{
+    const auto editorWidget = qobject_cast<CppEditorWidget*>(editor->widget());
+    if (!editorWidget)
+        return;
+    TextEditor::TextDocument * const textDoc = editorWidget->textDocument();
+    QTC_ASSERT(textDoc, return);
+
+    const Document::Ptr cppDoc = CppModelManager::snapshot().preprocessedDocument(
+        textDoc->contents(), textDoc->filePath());
+    QTC_ASSERT(cppDoc, return);
+    cppDoc->tokenize();
+    TranslationUnit * const tu = cppDoc->translationUnit();
+    if (!tu || !tu->isTokenized())
+        return;
+
+    for (int commentTokIndex = 0; commentTokIndex < tu->commentCount(); ++commentTokIndex) {
+        const Token &tok = tu->commentAt(commentTokIndex);
+        if (tok.kind() != T_COMMENT && tok.kind() != T_DOXY_COMMENT)
+            continue;
+        const int tokenPos = tu->getTokenPositionInDocument(tok, textDoc->document());
+        const int tokenEndPos = tu->getTokenEndPositionInDocument(tok, textDoc->document());
+        const QTextBlock tokenBlock = textDoc->document()->findBlock(tokenPos);
+        if (!tokenBlock.isValid())
+            continue;
+        const QTextBlock nextBlock = tokenBlock.next();
+        if (!nextBlock.isValid())
+            continue;
+        if (tokenEndPos < nextBlock.position())
+            continue;
+        if (TextEditor::TextBlockUserData::foldingIndent(tokenBlock)
+            >= TextEditor::TextBlockUserData::foldingIndent(nextBlock)) {
+            continue;
+        }
+        if (fold)
+            editorWidget->fold(tokenBlock);
+        else
+            editorWidget->unfold(tokenBlock);
+    }
+}
+
+void BuiltinModelManagerSupport::foldOrUnfoldInactiveRegions(
+    TextEditor::BaseTextEditor *editor, bool fold)
+{
+    Q_UNUSED(editor)
+    Q_UNUSED(fold)
+    MessageManager::writeDisrupting(Tr::tr("Folding inactive code is only available with clangd."));
+}
+
+void BuiltinModelManagerSupport::checkUnused(const Link &link, SearchResult *search,
+                                             const LinkHandler &callback)
 {
     CPlusPlus::Snapshot snapshot = CppModelManager::snapshot();
-    QFile file(link.targetFilePath.toString());
+    QFile file(link.targetFilePath.toFSPathString());
     if (!file.open(QIODevice::ReadOnly))
         return callback(link);
     const QByteArray &contents = file.readAll();
@@ -209,8 +275,7 @@ void BuiltinModelManagerSupport::checkUnused(const Utils::Link &link, SearchResu
     cppDoc->check();
     snapshot.insert(cppDoc);
     QTextDocument doc(QString::fromUtf8(contents));
-    QTextCursor cursor(&doc);
-    cursor.setPosition(Utils::Text::positionInText(&doc, link.targetLine, link.targetColumn + 1));
+    const QTextCursor cursor = link.target.toTextCursor(&doc);
     Internal::CanonicalSymbol cs(cppDoc, snapshot);
     CPlusPlus::Symbol *canonicalSymbol = cs(cursor);
     if (!canonicalSymbol || !canonicalSymbol->identifier())

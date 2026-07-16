@@ -2,6 +2,8 @@ QtcPlugin {
     name: "RemoteLinux"
 
     Depends { name: "Qt.widgets" }
+
+    Depends { name: "CmdBridgeClient" }
     Depends { name: "QmlDebug" }
     Depends { name: "Utils" }
 
@@ -14,14 +16,14 @@ QtcPlugin {
         "abstractremotelinuxdeploystep.h",
         "deploymenttimeinfo.cpp",
         "deploymenttimeinfo.h",
+        "connectdevicestep.cpp",
+        "connectdevicestep.h",
         "customcommanddeploystep.cpp",
         "customcommanddeploystep.h",
         "genericdeploystep.cpp",
         "genericdeploystep.h",
         "genericdirectuploadstep.cpp",
         "genericdirectuploadstep.h",
-        "genericlinuxdeviceconfigurationwidget.cpp",
-        "genericlinuxdeviceconfigurationwidget.h",
         "killappstep.cpp",
         "killappstep.h",
         "linuxdevice.cpp",
@@ -44,11 +46,11 @@ QtcPlugin {
         "remotelinuxdeploysupport.h",
         "remotelinuxenvironmentaspect.cpp",
         "remotelinuxenvironmentaspect.h",
+        "remotelinuxfiletransfer.cpp",
+        "remotelinuxfiletransfer.h",
         "remotelinuxplugin.cpp",
         "remotelinuxrunconfiguration.cpp",
         "remotelinuxrunconfiguration.h",
-        "remotelinuxsignaloperation.cpp",
-        "remotelinuxsignaloperation.h",
         "remotelinuxtr.h",
         "sshdevicewizard.cpp",
         "sshdevicewizard.h",

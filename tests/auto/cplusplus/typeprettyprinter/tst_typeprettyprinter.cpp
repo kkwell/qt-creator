@@ -10,7 +10,7 @@
 #include <cplusplus/TypePrettyPrinter.h>
 
 #include <QObject>
-#include <QtTest>
+#include <QTest>
 
 //TESTED_COMPONENT=src/libs/cplusplus
 using namespace CPlusPlus;
@@ -44,6 +44,13 @@ static TypenameArgument *typenameArg(const QString &name, bool isClassDeclarator
     return arg;
 }
 
+static TemplateTypeArgument *tempTypeArg(const QString &name, const QString &conceptName)
+{
+    TemplateTypeArgument *arg = new TemplateTypeArgument(0, 0, nameId(name));
+    arg->setConceptName(nameId(conceptName));
+    return arg;
+}
+
 static Declaration *decl(const FullySpecifiedType &ty)
 {
     Declaration *d = new Declaration(0, 0, nameId(""));
@@ -52,7 +59,7 @@ static Declaration *decl(const FullySpecifiedType &ty)
 }
 
 static FullySpecifiedType voidTy()
-{ return FullySpecifiedType(new VoidType); }
+{ return FullySpecifiedType(&VoidType::instance); }
 
 static FullySpecifiedType intTy()
 { return FullySpecifiedType(new IntegerType(IntegerType::Int)); }
@@ -89,6 +96,7 @@ static FullySpecifiedType templTy(FullySpecifiedType declTy, bool isClassDeclara
 {
     Template *templ = new Template(0, 0, nameId(""));
     templ->addMember(typenameArg("T", isClassDeclarator));
+    templ->addMember(tempTypeArg("C", "ConceptType"));
     templ->addMember(decl(declTy));
     if (Function *func = declTy->asFunctionType())
         func->setEnclosingScope(templ);
@@ -432,8 +440,8 @@ void tst_TypePrettyPrinter::basic_data()
     addRow(fnTy("foo", ref(voidTy()), ptr(voidTy())), Overview::BindToTypeName, "void& foo(void*)", "foo");
     addRow(fnTy("foo", ref(voidTy()), ptr(voidTy())), bindToAll, "void&foo(void*)", "foo");
 
-    addRow(templTy(fnTy("foo", voidTy(), voidTy()), true), bindToNothing, "template<class T>\nvoid foo()", "foo");
-    addRow(templTy(fnTy("foo", voidTy(), voidTy()), false), bindToNothing, "template<typename T>\nvoid foo()", "foo");
+    addRow(templTy(fnTy("foo", voidTy(), voidTy()), true), bindToNothing, "template<class T, ConceptType C>\nvoid foo()", "foo");
+    addRow(templTy(fnTy("foo", voidTy(), voidTy()), false), bindToNothing, "template<typename T, ConceptType C>\nvoid foo()", "foo");
 }
 
 void tst_TypePrettyPrinter::basic()

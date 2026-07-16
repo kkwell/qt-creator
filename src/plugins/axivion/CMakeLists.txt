@@ -1,19 +1,29 @@
 add_qtc_plugin(Axivion
   PLUGIN_DEPENDS
-    Core ProjectExplorer TextEditor
-  DEPENDS Qt::Network Qt::Widgets ExtensionSystem Utils qtkeychain
+    Core Debugger ProjectExplorer TextEditor
+  DEPENDS Qt::Network Qt::Sql Qt::Widgets ExtensionSystem Utils
+  LONG_DESCRIPTION_MD AxivionDescription.md
   SOURCES
-    axivion.qrc
-    axivionoutputpane.cpp axivionoutputpane.h
+    axivionperspective.cpp axivionperspective.h
     axivionplugin.cpp axivionplugin.h
-    axivionprojectsettings.cpp axivionprojectsettings.h
     axivionsettings.cpp axivionsettings.h
+    axiviontextmarks.cpp axiviontextmarks.h
     axiviontr.h
-    credentialquery.h credentialquery.cpp
+    axivionutils.cpp axivionutils.h
     dashboard/dto.cpp dashboard/dto.h
     dashboard/concat.cpp dashboard/concat.h
     dashboard/error.h dashboard/error.cpp
     dashboard/error.cpp dashboard/error.h
     dynamiclistmodel.cpp dynamiclistmodel.h
     issueheaderview.cpp issueheaderview.h
+    localbuild.cpp localbuild.h
+    pluginarserver.cpp pluginarserver.h
+    singlefileanalysis.cpp singlefileanalysis.h
+)
+
+file(GLOB_RECURSE images RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} images/*)
+qtc_add_resources(Axivion "images"
+  PREFIX "/axivion"
+  BASE "."
+  FILES ${images}
 )

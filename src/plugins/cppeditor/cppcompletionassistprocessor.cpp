@@ -33,7 +33,7 @@ const QStringList CppCompletionAssistProcessor::preprocessorCompletions()
                             "pragma omp sections", "pragma omp parallel sections", "pragma omp single",
                             "pragma omp master", "pragma omp critical", "pragma omp barrier",
                             "pragma omp flush", "pragma omp threadprivate", "undef", "if", "ifdef",
-                            "ifndef", "elif", "else", "endif"};
+                            "ifndef", "elif", "elifdef", "elifndef", "else", "endif"};
     return list;
 }
 
@@ -81,7 +81,7 @@ void CppCompletionAssistProcessor::startOfOperator(QTextDocument *textDocument,
             QTextCursor s = tc;
             s.movePosition(QTextCursor::StartOfLine, QTextCursor::KeepAnchor);
             QString sel = s.selectedText();
-            if (sel.indexOf(QLatin1Char('"')) < sel.length() - 1) {
+            if (sel.indexOf(QLatin1Char('"')) < sel.size() - 1) {
                 *kind = T_EOF_SYMBOL;
                 start = positionInDocument;
             }
@@ -135,6 +135,15 @@ void CppCompletionAssistProcessor::startOfOperator(QTextDocument *textDocument,
                 case T_SIGNAL:
                 case T_SLOT:
                     break; // good
+
+                // For lambdas (both calls and definitions), we don't want a function hint,
+                // and we want to abort an existing one if the lambda is a function parameter,
+                // as it introduces a new context.
+                case T_RBRACKET:
+                case T_RBRACE:
+                    *kind = T_EOF_SYMBOL;
+                    start = INT_MIN;
+                    break;
 
                 default:
                     // that's a bad token :)

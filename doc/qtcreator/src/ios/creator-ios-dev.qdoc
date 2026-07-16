@@ -5,30 +5,30 @@
     \page creator-developing-ios.html
     \previouspage creator-reference.html
 
-    \ingroup creator-reference-devices
-
     \title Developing for iOS
 
-    \brief Connect iOS devices to your local machine with a USB cable to
-    run applications on them.
+    \quotation
+    \l {iOS}{How to: Develop for iOS}
+    \endquotation
+
+    \summary {Connect iOS devices to your local machine with a USB cable to
+    run applications on them.}
 
     After you install Xcode, \QC automatically detects the toolchain and creates
-    the necessary \l{Kits}{kits} to build applications for and run them on
+    the necessary \l{Managing kits}{kits} to build applications for and run them on
     configured iOS devices.
 
     You only need Qt libraries that are built for iOS. You can install Qt for iOS
-    with \QOI.
+    with \l{Get and Install Qt}{\QOI}.
 
-    \section1 iOS 17 Devices
+    \section1 iOS 17 devices
 
     \QC detects iOS devices, and you can deploy and run applications on them.
 
-    For iOS devices with iOS 16 or earlier, \QC also supports accessing the application
-    output, debugging, and profiling. However, these features are not supported for
-    physical devices with iOS 17 or later because of limitations of the Apple tool for
-    accessing these devices.
+    Only C++ debugging is supported for devices with iOS 17 and later, and it
+    requires Xcode 16 or later.
 
-    \section1 Specifying Supported iOS Versions
+    \section1 Specifying supported iOS versions
 
     You can build applications for the latest iOS version and deploy them to
     previous versions. For the most part, this works automatically. However,
@@ -38,8 +38,7 @@
     that matches the value of \l{CMake: CMAKE_OSX_DEPLOYMENT_TARGET}
     {CMAKE_OSX_DEPLOYMENT_TARGET} (when using CMake),
     \l QMAKE_IOS_DEPLOYMENT_TARGET (when using qmake), or
-    \l{https://doc.qt.io/qbs/qml-qbsmodules-cpp.html#minimumIosVersion-prop}
-    {cpp.minimumIosVersion} (when using Qbs) because iOS (and the App Store)
+    \l{cpp.minimumIosVersion} (when using Qbs) because iOS (and the App Store)
     will use the \c LSMinimumSystemVersion value as the authoritative one.
 
     If you specify a deployment target value lower than what Qt requires, your
@@ -48,7 +47,7 @@
     actual build system code reflects the minimum iOS version that is actually
     required.
 
-    \sa {iOS}{How To: Develop for iOS}, {Expressing Supported iOS Versions}
+    \sa {iOS}{How to: Develop for iOS}, {Expressing Supported iOS Versions}
 */
 
 /*!
@@ -61,14 +60,14 @@
 
     The connections between \QC and an iOS device are protected by using a
     certificate that you receive from Apple when you
-    \l{https://developer.apple.com/programs/enroll/}
+    \l{Enroll in the Apple Developer Program}
     {enroll in the Apple Developer Program}. The certificate is copied to
     the device when you configure the device.
 
     The first time you connect the device to your local machine, you are asked to enable
     developer mode on the device. The next time you connect the device, \QC
     detects it automatically. To disable automatic connections to a device that
-    you do not use for development, go to preferences > \uicontrol iOS
+    you do not use for development, go to \preferences > \uicontrol iOS
     and clear \uicontrol {Ask about devices not in developer mode}.
 
     \note The process of configuring devices and the UI varies slightly
@@ -88,7 +87,7 @@
         \li Start Xcode to configure the device.
 
             For example, in Xcode version 15, go to \uicontrol Window >
-            \uicontrol Devices and Simulators > \uicontrol Devices, and select
+            \uicontrol {Devices and Simulators} > \uicontrol Devices, and select
             \uicontrol + to add the connected device.
 
         \li To specify build settings:
@@ -101,14 +100,16 @@
             \li Go to \uicontrol Projects > \uicontrol {Build & Run} to select
                 the kit for building applications for and running them on iOS.
 
-                \image qtcreator-ios-add-kit.png "Build & Run Settings"
+                \image {qtcreator-ios-add-kit.png} {iOS kit selected for a project in Build & Run}
+
+            \li Go to \uicontrol {Build Settings}.
 
             \li In \uicontrol {iOS Settings}, select the development team to use
                 for signing and provisioning applications. You must configure
                 development teams and provisioning profiles in Xcode using an
                 Apple developer account.
 
-                \image qtcreator-build-settings-ios.png "iOS build settings"
+                \image {qtcreator-build-settings-ios.png} {iOS build settings}
 
             \li Select \uicontrol {Automatically manage signing}
                 to automatically select the provisioning profile and signing
@@ -117,7 +118,7 @@
 
         \endlist
 
-        \li Select \uicontrol Run to specify run settings.
+        \li Go to \uicontrol {Run Settings} to specify run settings.
 
             Usually, you can use the default settings.
 
@@ -133,7 +134,7 @@
     missing, check that provisioning profiles are listed in Xcode by going to
     \uicontrol Xcode > \uicontrol Preferences > \uicontrol Accounts. For more
     information about how to acquire and install a provisioning profile, see
-    Apple documentation.
+    \l {Apple documentation: Create a development provisioning profile}.
 
     \section1 View device connection status
 
@@ -142,12 +143,26 @@
     To view information about the connected device, go to \uicontrol Preferences >
     \uicontrol Devices.
 
-    \image qtcreator-ios-device-configurations.png {Devices dialog}
+    \image {qtcreator-ios-device-configurations.png} {Devices tab in Devices preferences}
 
     If the current device state is \uicontrol Connected, (the traffic light icon is
     orange), you need to configure the device using Xcode.
 
-    \sa {Activate kits for a project}, {iOS}{How To: Develop for iOS},
+    \section1 Access files on iOS devices
+
+    You can access files on a connected iOS device, including the crash
+    reports directory and the developer's application directories.
+
+    Access these files in one of the following ways:
+
+    \list
+        \li Go to \uicontrol File > \uicontrol {Open From Device}.
+        \li Go to the \l {File System} view and select the
+            device in the menu.
+        \li Use the \l {Navigate with locator}{locator}.
+    \endlist
+
+    \sa {Activate kits for a project}, {iOS}{How to: Develop for iOS},
     {Developing for iOS}
 */
 
@@ -161,15 +176,14 @@
 
     If you do not have an iOS device or you do not want to create an account,
     you can test applications on
-    \l{http://developer.apple.com/library/ios/documentation/IDEs/Conceptual/iOS_Simulator_Guide/Introduction/Introduction.html}
-    {Simulator}, which is installed as part of Xcode. Each Xcode version
-    simulates a predefined set of hardware devices and software versions.
+    \l{Simulator Help}{Simulator}, which is installed as part of Xcode. Each Xcode
+    version simulates a predefined set of hardware devices and software versions.
 
-    You can change the simulated hardware and software version in the run
-    settings for the project. Go to \uicontrol Projects > \uicontrol Run, and then select
+    To change the simulated hardware and software version, go to
+    \uicontrol Projects > \uicontrol {Run Settings} and select
     the device to simulate in the \uicontrol {Device type} field.
 
-    \image qtcreator-ios-simulator-deploy.png
+    \image {qtcreator-ios-simulator-deploy.png} {Deployment settings for iOS Simulator}
 
     The simulator starts automatically when you run the application.
     To start the simulator manually, either start the Simulator application
@@ -177,8 +191,7 @@
     in Xcode.
 
     Manage the available simulator devices
-    \l{https://developer.apple.com/documentation/xcode/running-your-app-in-simulator-or-on-a-device/#Configure-the-list-of-simulated-devices}
-    {in Xcode}.
+    \l{Xcode documentation: Configure the list of simulated devices}{in Xcode}.
 
-    \sa {iOS}{How To: Develop for iOS}, {Developing for iOS}
+    \sa {iOS}{How to: Develop for iOS}, {Developing for iOS}
 */

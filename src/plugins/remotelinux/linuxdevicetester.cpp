@@ -5,13 +5,11 @@
 
 #include "linuxdevice.h"
 #include "remotelinuxtr.h"
-#include "utils/async.h"
 
-#include <projectexplorer/devicesupport/deviceusedportsgatherer.h>
 #include <projectexplorer/devicesupport/filetransfer.h>
 #include <projectexplorer/projectexplorerconstants.h>
 
-#include <solutions/tasking/tasktreerunner.h>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <utils/algorithm.h>
 #include <utils/async.h>
@@ -21,7 +19,7 @@
 #include <utils/stringutils.h>
 
 using namespace ProjectExplorer;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace RemoteLinux {
@@ -44,9 +42,9 @@ public:
 
     GenericLinuxDeviceTester *q = nullptr;
     LinuxDevice::Ptr m_device;
-    TaskTreeRunner m_taskTreeRunner;
+    QSingleTaskTreeRunner m_taskTreeRunner;
     QStringList m_extraCommands;
-    QList<GroupItem> m_extraTests;
+    GroupItems m_extraTests;
 };
 
 QStringList GenericLinuxDeviceTesterPrivate::commandsToTest() const
@@ -59,6 +57,7 @@ QStringList GenericLinuxDeviceTesterPrivate::commandsToTest() const
                                                  "dd",
                                                  "df",
                                                  "echo",
+                                                 "env",
                                                  "eval",
                                                  "exit",
                                                  "kill",
@@ -89,24 +88,51 @@ QStringList GenericLinuxDeviceTesterPrivate::commandsToTest() const
     return commands;
 }
 
+class ConnectionData
+{
+public:
+    LinuxDevice::ConstPtr device;
+    QPointer<QObject> guard;
+    Result<> result;
+};
+
+class ConnectionTaskAdapter final
+{
+public:
+    void operator()(ConnectionData *data, QTaskInterface *iface)
+    {
+        data->device->closeConnection(true);
+        data->device->tryToConnect(Continuation<>(data->guard, [data, iface](const Result<> &res) {
+            if (data->guard) {
+                data->result = res;
+                iface->reportDone(DoneResult::Success); // The test itself finished.
+            }
+        }));
+    }
+};
+
+using ConnectionTask = QCustomTask<ConnectionData, ConnectionTaskAdapter>;
+
 GroupItem GenericLinuxDeviceTesterPrivate::connectionTask() const
 {
-    const auto onSetup = [this](Async<bool> &task) {
+    const auto onSetup = [this](ConnectionData &data) {
+        data.device = m_device;
+        data.guard = q;
         emit q->progressMessage(Tr::tr("Connecting to device..."));
-        task.setConcurrentCallData([device = m_device] { return device->tryToConnect(); });
     };
-    const auto onDone = [this](const Async<bool> &task) {
-        const bool success = task.isResultAvailable() && task.result();
+    const auto onDone = [this](const ConnectionData &data) {
+        const bool success = data.result.has_value();
         if (success) {
-            // TODO: For master: move the '\n' outside of Tr().
             emit q->progressMessage(Tr::tr("Connected. Now doing extended checks.") + "\n");
         } else {
+            emit q->errorMessage(data.result.error());
             emit q->errorMessage(
-                Tr::tr("Basic connectivity test failed, device is considered unusable.") + '\n');
+                Tr::tr("Basic connectivity test failed, device is considered unusable.") + '\n'
+            );
         }
         return toDoneResult(success);
     };
-    return AsyncTask<bool>(onSetup, onDone);
+    return ConnectionTask(onSetup, onDone);
 }
 
 GroupItem GenericLinuxDeviceTesterPrivate::echoTask(const QString &contents) const
@@ -161,28 +187,33 @@ GroupItem GenericLinuxDeviceTesterPrivate::unameTask() const
 
 GroupItem GenericLinuxDeviceTesterPrivate::gathererTask() const
 {
-    const auto onSetup = [this](DeviceUsedPortsGatherer &gatherer) {
+    const Storage<PortsOutputData> portsStorage;
+
+    const auto onSetup = [this] {
         emit q->progressMessage(Tr::tr("Checking if specified ports are available..."));
-        gatherer.setDevice(m_device);
     };
-    const auto onDone = [this](const DeviceUsedPortsGatherer &gatherer, DoneWith result) {
-        if (result != DoneWith::Success) {
-            emit q->errorMessage(Tr::tr("Error gathering ports: %1").arg(gatherer.errorString()) + '\n'
+    const auto onDone = [this, portsStorage] {
+        const auto ports = *portsStorage;
+        if (!ports) {
+            emit q->errorMessage(Tr::tr("Error gathering ports: %1").arg(ports.error()) + '\n'
                                  + Tr::tr("Some tools will not work out of the box.\n"));
-        } else if (gatherer.usedPorts().isEmpty()) {
+        } else if (ports->isEmpty()) {
             emit q->progressMessage(Tr::tr("All specified ports are available.") + '\n');
         } else {
-            const QString portList = transform(gatherer.usedPorts(), [](const Port &port) {
+            const QString portList = transform(*ports, [](const Port &port) {
                 return QString::number(port.number());
             }).join(", ");
             emit q->errorMessage(Tr::tr("The following specified ports are currently in use: %1")
                 .arg(portList) + '\n');
         }
+        return true;
     };
 
     return Group {
-        finishAllAndSuccess,
-        DeviceUsedPortsGathererTask(onSetup, onDone)
+        portsStorage,
+        onGroupSetup(onSetup),
+        m_device->portsGatheringRecipe(portsStorage),
+        onGroupDone(onDone)
     };
 }
 
@@ -250,13 +281,13 @@ GroupItem GenericLinuxDeviceTesterPrivate::transferTasks() const
         onGroupDone([this] {
             emit q->errorMessage(Tr::tr("Deployment to this device will not work out of the box.")
                                  + "\n");
-        }, CallDoneIf::Error)
+        }, CallDoneFlag::OnError)
     };
 }
 
 GroupItem GenericLinuxDeviceTesterPrivate::commandTasks() const
 {
-    const LoopList iterator(commandsToTest());
+    const ListIterator iterator(commandsToTest());
 
     const auto onSetup = [this, iterator](Process &process) {
         const QString &commandName = *iterator;
@@ -278,8 +309,7 @@ GroupItem GenericLinuxDeviceTesterPrivate::commandTasks() const
         emit q->errorMessage(message);
     };
 
-    return For {
-        iterator,
+    return For (iterator) >> Do {
         continueOnError,
         onGroupSetup([this] {
             emit q->progressMessage(Tr::tr("Checking if required commands are available..."));
@@ -292,13 +322,9 @@ GroupItem GenericLinuxDeviceTesterPrivate::commandTasks() const
 
 using namespace Internal;
 
-GenericLinuxDeviceTester::GenericLinuxDeviceTester(QObject *parent)
-    : DeviceTester(parent), d(new GenericLinuxDeviceTesterPrivate(this))
-{
-    connect(&d->m_taskTreeRunner, &TaskTreeRunner::done, this, [this](DoneWith result) {
-        emit finished(result == DoneWith::Success ? TestSuccess : TestFailure);
-    });
-}
+GenericLinuxDeviceTester::GenericLinuxDeviceTester(const IDevice::Ptr &device, QObject *parent)
+    : DeviceTester(device, parent), d(new GenericLinuxDeviceTesterPrivate(this))
+{}
 
 GenericLinuxDeviceTester::~GenericLinuxDeviceTester() = default;
 
@@ -307,18 +333,18 @@ void GenericLinuxDeviceTester::setExtraCommandsToTest(const QStringList &extraCo
     d->m_extraCommands = extraCommands;
 }
 
-void GenericLinuxDeviceTester::setExtraTests(const QList<GroupItem> &extraTests)
+void GenericLinuxDeviceTester::setExtraTests(const GroupItems &extraTests)
 {
     d->m_extraTests = extraTests;
 }
 
-void GenericLinuxDeviceTester::testDevice(const IDevice::Ptr &deviceConfiguration)
+void GenericLinuxDeviceTester::testDevice()
 {
     QTC_ASSERT(!d->m_taskTreeRunner.isRunning(), return);
 
-    d->m_device = std::static_pointer_cast<LinuxDevice>(deviceConfiguration);
+    d->m_device = std::static_pointer_cast<LinuxDevice>(device());
 
-    const Group root {
+    const Group recipe {
         d->connectionTask(),
         d->echoTask("Hello"), // No quoting necessary
         d->echoTask("Hello Remote World!"), // Checks quoting, too.
@@ -328,7 +354,9 @@ void GenericLinuxDeviceTester::testDevice(const IDevice::Ptr &deviceConfiguratio
         d->m_extraTests,
         d->commandTasks()
     };
-    d->m_taskTreeRunner.start(root);
+    d->m_taskTreeRunner.start(recipe, {}, [this](DoneWith result) {
+        emit finished(result == DoneWith::Success ? TestSuccess : TestFailure);
+    });
 }
 
 void GenericLinuxDeviceTester::stopTest()

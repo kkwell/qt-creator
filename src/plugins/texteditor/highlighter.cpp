@@ -42,51 +42,39 @@ TextStyle categoryForTextStyle(int style)
     case KSyntaxHighlighting::Theme::BuiltIn: return C_PRIMITIVE_TYPE;
     case KSyntaxHighlighting::Theme::Extension: return C_GLOBAL;
     case KSyntaxHighlighting::Theme::Preprocessor: return C_PREPROCESSOR;
-    case KSyntaxHighlighting::Theme::Attribute: return C_LOCAL;
+    case KSyntaxHighlighting::Theme::Attribute: return C_ATTRIBUTE;
     case KSyntaxHighlighting::Theme::Char: return C_STRING;
     case KSyntaxHighlighting::Theme::SpecialChar: return C_STRING;
     case KSyntaxHighlighting::Theme::String: return C_STRING;
     case KSyntaxHighlighting::Theme::VerbatimString: return C_STRING;
     case KSyntaxHighlighting::Theme::SpecialString: return C_STRING;
-    case KSyntaxHighlighting::Theme::Import: return C_PREPROCESSOR;
+    case KSyntaxHighlighting::Theme::Import: return C_MACRO;
     case KSyntaxHighlighting::Theme::DataType: return C_TYPE;
     case KSyntaxHighlighting::Theme::DecVal: return C_NUMBER;
     case KSyntaxHighlighting::Theme::BaseN: return C_NUMBER;
     case KSyntaxHighlighting::Theme::Float: return C_NUMBER;
-    case KSyntaxHighlighting::Theme::Constant: return C_KEYWORD;
+    case KSyntaxHighlighting::Theme::Constant: return C_ENUMERATION;
     case KSyntaxHighlighting::Theme::Comment: return C_COMMENT;
     case KSyntaxHighlighting::Theme::Documentation: return C_DOXYGEN_COMMENT;
     case KSyntaxHighlighting::Theme::Annotation: return C_DOXYGEN_TAG;
     case KSyntaxHighlighting::Theme::CommentVar: return C_DOXYGEN_TAG;
     case KSyntaxHighlighting::Theme::RegionMarker: return C_PREPROCESSOR;
-    case KSyntaxHighlighting::Theme::Information: return C_WARNING;
+    case KSyntaxHighlighting::Theme::Information: return C_INFO;
     case KSyntaxHighlighting::Theme::Warning: return C_WARNING;
-    case KSyntaxHighlighting::Theme::Alert: return C_ERROR;
+    case KSyntaxHighlighting::Theme::Alert: return C_ERROR_CONTEXT;
     case KSyntaxHighlighting::Theme::Error: return C_ERROR;
     case KSyntaxHighlighting::Theme::Others: return C_TEXT;
     }
     return C_TEXT;
 }
 
-Highlighter::Highlighter(const QString &definitionFilesPath)
-    : m_repository(new KSyntaxHighlighting::Repository())
+Highlighter::Highlighter()
 {
-    m_repository->addCustomSearchPath(definitionFilesPath);
-    const Utils::FilePath dir = Core::ICore::resourcePath("generic-highlighter/syntax");
-    if (dir.exists())
-        m_repository->addCustomSearchPath(dir.parentDir().path());
-    m_repository->reload();
-
     setTextFormatCategories(QMetaEnum::fromType<KSyntaxHighlighting::Theme::TextStyle>().keyCount(),
                             &categoryForTextStyle);
 }
 
 Highlighter::~Highlighter() = default;
-
-void Highlighter::setDefinitionName(const QString &name)
-{
-    KSyntaxHighlighting::AbstractHighlighter::setDefinition(m_repository->definitionForName(name));
-}
 
 static bool isOpeningParenthesis(QChar c)
 {
@@ -106,20 +94,14 @@ void Highlighter::highlightBlock(const QString &text)
     }
     QTextBlock block = currentBlock();
     const QTextBlock previousBlock = block.previous();
-    TextDocumentLayout::setBraceDepth(block, TextDocumentLayout::braceDepth(previousBlock));
-    KSyntaxHighlighting::State previousLineState;
-    if (TextBlockUserData *data = TextDocumentLayout::textUserData(previousBlock))
-        previousLineState = data->syntaxState();
-    KSyntaxHighlighting::State oldState;
-    if (TextBlockUserData *data = TextDocumentLayout::textUserData(block)) {
-        oldState = data->syntaxState();
-        data->setFoldingStartIncluded(false);
-        data->setFoldingEndIncluded(false);
-    }
+    TextBlockUserData::setBraceDepth(block, TextBlockUserData::braceDepth(previousBlock));
+    KSyntaxHighlighting::State previousLineState = TextBlockUserData::syntaxState(previousBlock);
+    KSyntaxHighlighting::State oldState = TextBlockUserData::syntaxState(block);
+    setFoldingStartIncluded(block, false);
+    setFoldingEndIncluded(block, false);
     KSyntaxHighlighting::State state = highlightLine(text, previousLineState);
     if (oldState != state) {
-        TextBlockUserData *data = TextDocumentLayout::userData(block);
-        data->setSyntaxState(state);
+        TextBlockUserData::setSyntaxState(block, state);
         // Toggles the LSB of current block's userState. It forces rehighlight of next block.
         setCurrentBlockState(currentBlockState() ^ 1);
     }
@@ -133,13 +115,11 @@ void Highlighter::highlightBlock(const QString &text)
             parentheses.push_back(Parenthesis(Parenthesis::Closed, c, pos));
         pos++;
     }
-    TextDocumentLayout::setParentheses(currentBlock(), parentheses);
+    TextBlockUserData::setParentheses(currentBlock(), parentheses);
 
     const QTextBlock nextBlock = block.next();
-    if (nextBlock.isValid()) {
-        TextBlockUserData *data = TextDocumentLayout::userData(nextBlock);
-        data->setFoldingIndent(TextDocumentLayout::braceDepth(block));
-    }
+    if (nextBlock.isValid())
+        setFoldingIndent(nextBlock, TextBlockUserData::braceDepth(block));
 
     formatSpaces(text);
 }
@@ -190,31 +170,30 @@ void Highlighter::applyFolding(int offset,
         return;
     QTextBlock block = currentBlock();
     const QString &text = block.text();
-    TextBlockUserData *data = TextDocumentLayout::userData(currentBlock());
     const bool fromStart = TabSettings::firstNonSpace(text) == offset;
-    const bool toEnd = (offset + length) == (text.length() - TabSettings::trailingWhitespaces(text));
+    const bool toEnd = (offset + length) == (text.size() - TabSettings::trailingWhitespaces(text));
     if (region.type() == KSyntaxHighlighting::FoldingRegion::Begin) {
-        const int newBraceDepth = TextDocumentLayout::braceDepth(block) + 1;
-        TextDocumentLayout::setBraceDepth(block, newBraceDepth);
+        const int newBraceDepth = TextBlockUserData::braceDepth(block) + 1;
+        TextBlockUserData::setBraceDepth(block, newBraceDepth);
         qCDebug(highlighterLog) << "Found folding start from '" << offset << "' to '" << length
                                 << "' resulting in the bracedepth '" << newBraceDepth << "' in :";
         qCDebug(highlighterLog) << text;
         // if there is only a folding begin marker in the line move the current block into the fold
         if (fromStart && toEnd && length <= 1) {
-            data->setFoldingIndent(TextDocumentLayout::braceDepth(block));
-            data->setFoldingStartIncluded(true);
+            setFoldingIndent(block, TextBlockUserData::braceDepth(block));
+            setFoldingStartIncluded(block, true);
         }
     } else if (region.type() == KSyntaxHighlighting::FoldingRegion::End) {
-        const int newBraceDepth = qMax(0, TextDocumentLayout::braceDepth(block) - 1);
+        const int newBraceDepth = qMax(0, TextBlockUserData::braceDepth(block) - 1);
         qCDebug(highlighterLog) << "Found folding end from '" << offset << "' to '" << length
                                 << "' resulting in the bracedepth '" << newBraceDepth << "' in :";
         qCDebug(highlighterLog) << text;
-        TextDocumentLayout::setBraceDepth(block, newBraceDepth);
+        TextBlockUserData::setBraceDepth(block, newBraceDepth);
         // if the folding end is at the end of the line move the current block into the fold
         if (toEnd)
-            data->setFoldingEndIncluded(true);
+            setFoldingEndIncluded(block, true);
         else
-            data->setFoldingIndent(TextDocumentLayout::braceDepth(block));
+            setFoldingIndent(block, TextBlockUserData::braceDepth(block));
     }
 }
 

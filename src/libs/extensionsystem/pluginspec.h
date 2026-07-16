@@ -7,13 +7,11 @@
 
 #include "iplugin.h"
 
-#include <utils/expected.h>
 #include <utils/filepath.h>
 
 #include <QHash>
 #include <QStaticPlugin>
 #include <QString>
-#include <QVector>
 
 QT_BEGIN_NAMESPACE
 class QRegularExpression;
@@ -34,18 +32,24 @@ class PluginSpecPrivate;
 
 class PluginView;
 
+struct EXTENSIONSYSTEM_EXPORT TermsAndConditions
+{
+    int version;
+    QString text;
+};
+
 struct EXTENSIONSYSTEM_EXPORT PluginDependency
 {
     enum Type { Required, Optional, Test };
 
     PluginDependency() : type(Required) {}
-    PluginDependency(const QString &name, const QString &version, Type type = Required)
-        : name(name)
+    PluginDependency(const QString &id, const QString &version, Type type = Required)
+        : id(id)
         , version(version)
         , type(type)
     {}
 
-    QString name;
+    QString id;
     QString version;
     Type type;
     bool operator==(const PluginDependency &other) const;
@@ -91,22 +95,29 @@ public:
     PluginSpec();
     virtual ~PluginSpec();
 
-    using PluginArgumentDescriptions = QVector<PluginArgumentDescription>;
+    using PluginArgumentDescriptions = QList<PluginArgumentDescription>;
     enum State { Invalid, Read, Resolved, Loaded, Initialized, Running, Stopped, Deleted};
 
     // information read from the plugin, valid after 'Read' state is reached
     virtual QString name() const;
+    virtual QString id() const;
     virtual QString version() const;
     virtual QString compatVersion() const;
     virtual QString vendor() const;
+    virtual QString vendorId() const;
     virtual QString copyright() const;
     virtual QString license() const;
     virtual QString description() const;
     virtual QString longDescription() const;
     virtual QString url() const;
+    virtual QString documentationUrl() const;
+    virtual QStringList recommends() const;
     virtual QString category() const;
     virtual QString revision() const;
     virtual QRegularExpression platformSpecification() const;
+    virtual std::optional<TermsAndConditions> termsAndConditions() const;
+
+    virtual QString displayName() const;
 
     virtual bool isAvailableForHostPlatform() const;
     virtual bool isRequired() const;
@@ -119,8 +130,9 @@ public:
     virtual bool isForceEnabled() const;
     virtual bool isForceDisabled() const;
     virtual bool isSoftLoadable() const;
+    virtual bool isEffectivelySoftloadable() const;
 
-    virtual QVector<PluginDependency> dependencies() const;
+    virtual QList<PluginDependency> dependencies() const;
     virtual QJsonObject metaData() const;
     virtual PerformanceData &performanceData() const;
     virtual PluginArgumentDescriptions argumentDescriptions() const;
@@ -130,6 +142,7 @@ public:
     virtual void setArguments(const QStringList &arguments);
     virtual void addArgument(const QString &argument);
     virtual QHash<PluginDependency, PluginSpec *> dependencySpecs() const;
+    virtual QSet<PluginSpec *> recommendsSpecs() const;
 
     virtual bool provides(PluginSpec *spec, const PluginDependency &dependency) const;
     virtual bool requiresAny(const QSet<PluginSpec *> &plugins) const;
@@ -145,6 +158,11 @@ public:
     static int versionCompare(const QString &version1, const QString &version2);
 
     virtual void setEnabledBySettings(bool value);
+
+    virtual Utils::FilePath installLocation(bool inUserFolder) const = 0;
+
+    virtual Utils::Result<Utils::FilePaths> filesToUninstall() const;
+    virtual bool isSystemPlugin() const;
 
 protected:
     virtual void setEnabledByDefault(bool value);
@@ -166,23 +184,27 @@ protected:
 
     virtual void setLocation(const Utils::FilePath &location);
     virtual void setFilePath(const Utils::FilePath &filePath);
-    virtual Utils::expected_str<void> readMetaData(const QJsonObject &metaData);
-    Utils::expected_str<void> reportError(const QString &error);
+    virtual Utils::Result<> readMetaData(const QJsonObject &metaData);
+    Utils::Result<> reportError(const QString &error);
 
 private:
     std::unique_ptr<Internal::PluginSpecPrivate> d;
 };
 
-EXTENSIONSYSTEM_EXPORT Utils::expected_str<PluginSpec *> readCppPluginSpec(
+using PluginFromArchiveFactory = std::function<QList<PluginSpec *>(const Utils::FilePath &path)>;
+EXTENSIONSYSTEM_EXPORT QList<PluginFromArchiveFactory> &pluginSpecsFromArchiveFactories();
+EXTENSIONSYSTEM_EXPORT QList<PluginSpec *> pluginSpecsFromArchive(const Utils::FilePath &path);
+
+EXTENSIONSYSTEM_EXPORT Utils::Result<std::unique_ptr<PluginSpec>> readCppPluginSpec(
     const Utils::FilePath &filePath);
-EXTENSIONSYSTEM_EXPORT Utils::expected_str<PluginSpec *> readCppPluginSpec(
+EXTENSIONSYSTEM_EXPORT Utils::Result<std::unique_ptr<PluginSpec>> readCppPluginSpec(
     const QStaticPlugin &plugin);
 
 class EXTENSIONSYSTEM_TEST_EXPORT CppPluginSpec : public PluginSpec
 {
-    friend EXTENSIONSYSTEM_EXPORT Utils::expected_str<PluginSpec *> readCppPluginSpec(
+    friend EXTENSIONSYSTEM_EXPORT Utils::Result<std::unique_ptr<PluginSpec>> readCppPluginSpec(
         const Utils::FilePath &filePath);
-    friend EXTENSIONSYSTEM_EXPORT Utils::expected_str<PluginSpec *> readCppPluginSpec(
+    friend EXTENSIONSYSTEM_EXPORT Utils::Result<std::unique_ptr<PluginSpec>> readCppPluginSpec(
         const QStaticPlugin &plugin);
 
 public:
@@ -198,7 +220,9 @@ public:
     IPlugin::ShutdownFlag stop() override;
     void kill() override;
 
-    Utils::expected_str<void> readMetaData(const QJsonObject &pluginMetaData) override;
+    Utils::Result<> readMetaData(const QJsonObject &pluginMetaData) override;
+
+    Utils::FilePath installLocation(bool inUserFolder) const override;
 
 protected:
     CppPluginSpec();
@@ -213,3 +237,5 @@ private:
 };
 
 } // namespace ExtensionSystem
+
+Q_DECLARE_METATYPE(ExtensionSystem::PluginSpec);

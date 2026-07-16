@@ -8,27 +8,31 @@
 
 #include <coreplugin/icore.h>
 
-#include <solutions/tasking/tasktreerunner.h>
+#include <solutions/spinner/spinner.h>
+#include <QtTaskTree/QConditional>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <utils/algorithm.h>
 #include <utils/layoutbuilder.h>
 #include <utils/outputformatter.h>
 #include <utils/qtcprocess.h>
+#include <utils/textcodec.h>
 
 #include <QDialogButtonBox>
 #include <QLabel>
 #include <QLoggingCategory>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QProgressBar>
 #include <QRegularExpression>
-#include <QTextCodec>
 
 namespace {
 Q_LOGGING_CATEGORY(sdkManagerLog, "qtc.android.sdkManager", QtWarningMsg)
 }
 
-using namespace Tasking;
+using namespace SpinnerSolution;
+using namespace QtTaskTree;
 using namespace Utils;
 
 using namespace std::chrono;
@@ -41,8 +45,8 @@ class QuestionProgressDialog : public QDialog
     Q_OBJECT
 
 public:
-    QuestionProgressDialog(QWidget *parent)
-        : QDialog(parent)
+    QuestionProgressDialog()
+        : QDialog(Core::ICore::dialogParent())
         , m_outputTextEdit(new QPlainTextEdit)
         , m_questionLabel(new QLabel(Tr::tr("Do you want to accept the Android SDK license?")))
         , m_answerButtonBox(new QDialogButtonBox)
@@ -77,6 +81,7 @@ public:
             emit answerClicked(true);
         });
         connect(m_dialogButtonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        connect(m_dialogButtonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
 
         // GUI tuning
         setModal(true);
@@ -100,6 +105,10 @@ public:
         m_outputTextEdit->ensureCursorVisible();
     }
     void setProgress(int value) { m_progressBar->setValue(value); }
+    void setDone()
+    {
+        m_dialogButtonBox->setStandardButtons(QDialogButtonBox::Close);
+    }
 
 signals:
     void answerClicked(bool accepted);
@@ -115,7 +124,7 @@ private:
 
 static QString sdkRootArg()
 {
-    return "--sdk_root=" + AndroidConfig::sdkLocation().toString();
+    return "--sdk_root=" + AndroidConfig::sdkLocation().path();
 }
 
 const QRegularExpression &assertionRegExp()
@@ -149,7 +158,7 @@ static std::optional<int> parseProgress(const QString &out)
 
 struct DialogStorage
 {
-    DialogStorage() { m_dialog.reset(new QuestionProgressDialog(Core::ICore::dialogParent())); };
+    DialogStorage() { m_dialog.reset(new QuestionProgressDialog); };
     std::unique_ptr<QuestionProgressDialog> m_dialog;
 };
 
@@ -181,8 +190,7 @@ static GroupItem licensesRecipe(const Storage<DialogStorage> &dialogStorage)
         OutputData *outputPtr = outputStorage.activeStorage();
         QObject::connect(processPtr, &Process::readyReadStandardOutput, dialog,
                          [processPtr, outputPtr, dialog] {
-            QTextCodec *codec = QTextCodec::codecForLocale();
-            const QString stdOut = codec->toUnicode(processPtr->readAllRawStandardOutput());
+            const QString stdOut = processPtr->readAllStandardOutput();
             outputPtr->buffer += stdOut;
             dialog->appendMessage(stdOut, StdOutFormat);
             const auto progress = parseProgress(stdOut);
@@ -232,15 +240,13 @@ static void setupSdkProcess(const QStringList &args, Process *process,
                          args + AndroidConfig::sdkManagerToolArgs()});
     QObject::connect(process, &Process::readyReadStandardOutput, dialog,
                      [process, dialog, current, total] {
-        QTextCodec *codec = QTextCodec::codecForLocale();
-        const auto progress = parseProgress(codec->toUnicode(process->readAllRawStandardOutput()));
+        const auto progress = parseProgress(process->readAllStandardOutput());
         if (!progress)
             return;
         dialog->setProgress((current * 100.0 + *progress) / total);
     });
     QObject::connect(process, &Process::readyReadStandardError, dialog, [process, dialog] {
-        QTextCodec *codec = QTextCodec::codecForLocale();
-        dialog->appendMessage(codec->toUnicode(process->readAllRawStandardError()), StdErrFormat);
+        dialog->appendMessage(process->readAllStandardError(), StdErrFormat);
     });
 };
 
@@ -267,7 +273,7 @@ static GroupItem installationRecipe(const Storage<DialogStorage> &dialogStorage,
     };
 
     const int total = change.count();
-    const LoopList uninstallIterator(change.toUninstall);
+    const ListIterator uninstallIterator(change.toUninstall);
     const auto onUninstallSetup = [dialogStorage, uninstallIterator, total](Process &process) {
         const QStringList args = {"--uninstall", *uninstallIterator, sdkRootArg()};
         QuestionProgressDialog *dialog = dialogStorage->m_dialog.get();
@@ -277,7 +283,7 @@ static GroupItem installationRecipe(const Storage<DialogStorage> &dialogStorage,
         dialog->setProgress(uninstallIterator.iteration() * 100.0 / total);
     };
 
-    const LoopList installIterator(change.toInstall);
+    const ListIterator installIterator(change.toInstall);
     const int offset = change.toUninstall.count();
     const auto onInstallSetup = [dialogStorage, installIterator, offset, total](Process &process) {
         const QStringList args = {*installIterator, sdkRootArg()};
@@ -293,23 +299,23 @@ static GroupItem installationRecipe(const Storage<DialogStorage> &dialogStorage,
     };
 
     return Group {
+        continueOnError,
         onGroupSetup(onSetup),
-        For {
-            uninstallIterator,
-            finishAllAndSuccess,
+        For (uninstallIterator) >> Do {
+            continueOnError,
             ProcessTask(onUninstallSetup, onDone)
         },
-        For {
-            installIterator,
-            finishAllAndSuccess,
+        For (installIterator) >> Do {
+            continueOnError,
             ProcessTask(onInstallSetup, onDone)
-        }
+        },
+        onGroupDone([dialogStorage] { dialogStorage->m_dialog->setProgress(100); })
     };
 }
 
 static GroupItem updateRecipe(const Storage<DialogStorage> &dialogStorage)
 {
-    const auto onUpdateSetup = [dialogStorage](Process &process) {
+    const auto onSetup = [dialogStorage](Process &process) {
         const QStringList args = {"--update", sdkRootArg()};
         QuestionProgressDialog *dialog = dialogStorage->m_dialog.get();
         setupSdkProcess(args, &process, dialog, 0, 1);
@@ -320,7 +326,7 @@ static GroupItem updateRecipe(const Storage<DialogStorage> &dialogStorage)
         handleSdkProcess(dialogStorage->m_dialog.get(), result);
     };
 
-    return ProcessTask(onUpdateSetup, onDone);
+    return ProcessTask(onSetup, onDone);
 }
 
 class AndroidSdkManagerPrivate
@@ -344,16 +350,22 @@ public:
     void runDialogRecipe(const Storage<DialogStorage> &dialogStorage,
                          const GroupItem &licenseRecipe, const GroupItem &continuationRecipe);
 
+    QPointer<QWidget> m_spinnerTarget;
     AndroidSdkManager &m_sdkManager;
     AndroidSdkPackageList m_allPackages;
     FilePath lastSdkManagerPath;
     bool m_packageListingSuccessful = false;
-    TaskTreeRunner m_taskTreeRunner;
+    QSingleTaskTreeRunner m_taskTreeRunner;
 };
 
 AndroidSdkManager::AndroidSdkManager() : m_d(new AndroidSdkManagerPrivate(*this)) {}
 
 AndroidSdkManager::~AndroidSdkManager() = default;
+
+void AndroidSdkManager::setSpinnerTarget(QWidget *spinnerTarget)
+{
+    m_d->m_spinnerTarget = spinnerTarget;
+}
 
 SdkPlatformList AndroidSdkManager::installedSdkPlatforms()
 {
@@ -485,11 +497,10 @@ static bool sdkManagerCommand(const QStringList &args, QString *output)
     newArgs.append(sdkRootArg());
     Process proc;
     proc.setEnvironment(AndroidConfig::toolsEnvironment());
-    proc.setTimeOutMessageBoxEnabled(true);
     proc.setCommand({AndroidConfig::sdkManagerToolPath(), newArgs});
     qCDebug(sdkManagerLog).noquote() << "Running SDK Manager command (sync):"
                                      << proc.commandLine().toUserOutput();
-    proc.runBlocking(60s, EventLoopMode::On);
+    proc.runBlocking(60s);
     if (output)
         *output = proc.allOutput();
     return proc.result() == ProcessResult::FinishedWithSuccess;
@@ -512,16 +523,20 @@ const AndroidSdkPackageList &AndroidSdkManagerPrivate::allPackages()
 
 void AndroidSdkManagerPrivate::reloadSdkPackages()
 {
-    emit m_sdkManager.packageReloadBegin();
-    qDeleteAll(m_allPackages);
-    m_allPackages.clear();
+    std::unique_ptr<Spinner> spinner;
+    if (m_spinnerTarget) {
+        spinner.reset(new Spinner(SpinnerSize::Medium, m_spinnerTarget));
+        spinner->show();
+    }
 
     lastSdkManagerPath = AndroidConfig::sdkManagerToolPath();
     m_packageListingSuccessful = false;
 
     if (AndroidConfig::sdkToolsVersion().isNull()) {
         // Configuration has invalid sdk path or corrupt installation.
-        emit m_sdkManager.packageReloadFinished();
+        qDeleteAll(m_allPackages);
+        m_allPackages.clear();
+        emit m_sdkManager.packagesReloaded();
         return;
     }
 
@@ -529,6 +544,8 @@ void AndroidSdkManagerPrivate::reloadSdkPackages()
     QStringList args({"--list", "--verbose"});
     args << AndroidConfig::sdkManagerToolArgs();
     m_packageListingSuccessful = sdkManagerCommand(args, &packageListing);
+    qDeleteAll(m_allPackages); // Must be done after the blocking command execution. See QTCREATORBUG-31920.
+    m_allPackages.clear();
     if (m_packageListingSuccessful) {
         SdkManagerOutputParser parser(m_allPackages);
         parser.parsePackageListing(packageListing);
@@ -536,7 +553,7 @@ void AndroidSdkManagerPrivate::reloadSdkPackages()
         qCWarning(sdkManagerLog) << "Failed parsing packages:" << packageListing;
     }
 
-    emit m_sdkManager.packageReloadFinished();
+    emit m_sdkManager.packagesReloaded();
 }
 
 void AndroidSdkManagerPrivate::runDialogRecipe(const Storage<DialogStorage> &dialogStorage,
@@ -544,17 +561,25 @@ void AndroidSdkManagerPrivate::runDialogRecipe(const Storage<DialogStorage> &dia
                                                const GroupItem &continuationRecipe)
 {
     const auto onCancelSetup = [dialogStorage] {
-        return std::make_pair(dialogStorage->m_dialog.get(), &QDialog::rejected);
+        return makeObjectSignal(dialogStorage->m_dialog.get(), &QDialog::rejected);
     };
-    const Group root {
+    const auto onAcceptSetup = [dialogStorage] {
+        return makeObjectSignal(dialogStorage->m_dialog.get(), &QDialog::accepted);
+    };
+    const auto onError = [dialogStorage] { dialogStorage->m_dialog->setDone(); };
+    const Group recipe {
         dialogStorage,
         Group {
-            licensesRecipe,
-            Sync([dialogStorage] { dialogStorage->m_dialog->setQuestionVisible(false); }),
-            continuationRecipe
+            If (!Group {
+                licensesRecipe,
+                QSyncTask([dialogStorage] { dialogStorage->m_dialog->setQuestionVisible(false); }),
+                continuationRecipe
+            }) >> Then {
+                QSyncTask(onError).withAccept(onAcceptSetup)
+            }
         }.withCancel(onCancelSetup)
     };
-    m_taskTreeRunner.start(root, {}, [this](DoneWith) {
+    m_taskTreeRunner.start(recipe, {}, [this] {
         QMetaObject::invokeMethod(&m_sdkManager, &AndroidSdkManager::reloadPackages,
                                   Qt::QueuedConnection);
     });
@@ -563,6 +588,9 @@ void AndroidSdkManagerPrivate::runDialogRecipe(const Storage<DialogStorage> &dia
 void AndroidSdkManager::runInstallationChange(const InstallationChange &change,
                                               const QString &extraMessage)
 {
+    if (change.count() == 0)
+        return;
+
     QString message = Tr::tr("%n Android SDK packages shall be updated.", "", change.count());
     if (!extraMessage.isEmpty())
         message.prepend(extraMessage + "\n\n");
@@ -598,6 +626,12 @@ void AndroidSdkManager::runUpdate()
 {
     const Storage<DialogStorage> dialogStorage;
     m_d->runDialogRecipe(dialogStorage, licensesRecipe(dialogStorage), updateRecipe(dialogStorage));
+}
+
+AndroidSdkManager &sdkManager()
+{
+    static AndroidSdkManager theAndroidSdkManager;
+    return theAndroidSdkManager;
 }
 
 } // namespace Android::Internal

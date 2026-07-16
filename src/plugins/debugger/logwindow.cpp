@@ -68,16 +68,16 @@ QChar static charForChannel(int channel)
     }
 }
 
-static bool writeLogContents(const QPlainTextEdit *editor, QWidget *parent)
+static bool writeLogContents(const QPlainTextEdit *editor)
 {
     bool success = false;
     while (!success) {
-        const FilePath filePath = FileUtils::getSaveFilePath(parent, Tr::tr("Log File"));
+        const FilePath filePath = FileUtils::getSaveFilePath(Tr::tr("Log File"));
         if (filePath.isEmpty())
             break;
         FileSaver saver(filePath, QIODevice::Text);
         saver.write(editor->toPlainText().toUtf8());
-        if (saver.finalize(parent))
+        if (saver.finalize())
             success = true;
     }
     return success;
@@ -228,7 +228,7 @@ public:
     QAction *clearContentsAction() const { return m_clearContentsAction; }
 
 private:
-    void saveContents() { writeLogContents(this, this); }
+    void saveContents() { writeLogContents(this); }
 
     QAction *m_clearContentsAction;
     QAction *m_saveContentsAction;
@@ -291,7 +291,10 @@ private:
 
     void focusInEvent(QFocusEvent *ev) override
     {
-        emit statusMessageRequested(Tr::tr("Type Ctrl-<Return> to execute a line."), -1);
+        emit statusMessageRequested(
+            Tr::tr("Press %1 to execute a line.")
+                .arg(QKeySequence("Ctrl+Return").toString(QKeySequence::NativeText)),
+            -1);
         QPlainTextEdit::focusInEvent(ev);
     }
 
@@ -469,10 +472,7 @@ DebuggerEngine *LogWindow::engine() const
 
 void LogWindow::sendCommand()
 {
-    if (m_engine->acceptsDebuggerCommands())
-        m_engine->executeDebuggerCommand(m_commandEdit->text());
-    else
-        showOutput(LogError, Tr::tr("User commands are not accepted in the current state."));
+    m_engine->executeDebuggerCommand(m_commandEdit->text());
 }
 
 void LogWindow::showOutput(int channel, const QString &output)

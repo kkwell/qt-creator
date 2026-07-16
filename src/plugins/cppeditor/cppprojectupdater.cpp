@@ -15,7 +15,7 @@
 #include <projectexplorer/projectupdater.h>
 #include <projectexplorer/rawprojectpart.h>
 
-#include <solutions/tasking/tasktreerunner.h>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <utils/algorithm.h>
 #include <utils/async.h>
@@ -23,7 +23,7 @@
 #include <utils/qtcassert.h>
 
 using namespace ProjectExplorer;
-using namespace Tasking;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace CppEditor::Internal {
@@ -37,7 +37,7 @@ public:
 
 private:
     FutureSynchronizer m_futureSynchronizer;
-    TaskTreeRunner m_taskTreeRunner;
+    QSingleTaskTreeRunner m_taskTreeRunner;
 };
 
 void CppProjectUpdater::update(const ProjectUpdateInfo &projectUpdateInfo,
@@ -52,7 +52,7 @@ void CppProjectUpdater::update(const ProjectUpdateInfo &projectUpdateInfo,
         });
 
     // Run the project info generator in a worker thread and continue if that one is finished.
-    const auto infoGenerator = [=](QPromise<ProjectInfo::ConstPtr> &promise) {
+    const auto infoGenerator = [projectUpdateInfo](QPromise<ProjectInfo::ConstPtr> &promise) {
         ProjectUpdateInfo fullProjectUpdateInfo = projectUpdateInfo;
         if (fullProjectUpdateInfo.rppGenerator)
             fullProjectUpdateInfo.rawProjectParts = fullProjectUpdateInfo.rppGenerator();
@@ -72,9 +72,9 @@ void CppProjectUpdater::update(const ProjectUpdateInfo &projectUpdateInfo,
         if (async.isResultAvailable())
             storage->projectInfo = async.result();
     };
-    QList<GroupItem> tasks{parallel};
+    GroupItems tasks{parallel};
     tasks.append(AsyncTask<ProjectInfo::ConstPtr>(onInfoGeneratorSetup, onInfoGeneratorDone,
-                                                  CallDoneIf::Success));
+                                                  CallDoneFlag::OnSuccess));
     for (QPointer<ExtraCompiler> compiler : compilers) {
         if (compiler && compiler->isDirty())
             tasks.append(compiler->compileFileItem());
@@ -89,18 +89,18 @@ void CppProjectUpdater::update(const ProjectUpdateInfo &projectUpdateInfo,
                 compilerFiles += Utils::toSet(compiler->targets());
             }
         }
-        GeneratedCodeModelSupport::update(extraCompilers);
+        GeneratedFileSupport::update(extraCompilers);
         auto updateFuture = CppModelManager::updateProjectInfo(storage->projectInfo, compilerFiles);
         m_futureSynchronizer.addFuture(updateFuture);
     };
 
-    const Group root {
+    const Group recipe {
         storage,
         Group(tasks),
-        onGroupDone(onDone, CallDoneIf::Success)
+        onGroupDone(onDone, CallDoneFlag::OnSuccess)
     };
-    m_taskTreeRunner.start(root, [](TaskTree *taskTree) {
-        auto progress = new Core::TaskProgress(taskTree);
+    m_taskTreeRunner.start(recipe, [](QTaskTree &taskTree) {
+        auto progress = new Core::TaskProgress(&taskTree);
         progress->setDisplayName(Tr::tr("Preparing C++ Code Model"));
     });
 }

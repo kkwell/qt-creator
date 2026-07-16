@@ -9,7 +9,6 @@
 #include "debuggerdialogs.h"
 #include "debuggerengine.h"
 #include "debuggerinternalconstants.h"
-#include "debuggermainwindow.h"
 #include "debuggerprotocol.h"
 #include "debuggertooltipmanager.h"
 #include "debuggertr.h"
@@ -24,14 +23,21 @@
 #include <coreplugin/helpmanager.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/messagebox.h>
+#include <coreplugin/perspective.h>
 #include <coreplugin/session.h>
 
-#include <texteditor/syntaxhighlighter.h>
+#include <cplusplus/ExpressionUnderCursor.h>
+#include <cplusplus/CppDocument.h>
 
+#include <texteditor/syntaxhighlighter.h>
+#include <texteditor/texteditor.h>
+
+#include <cppeditor/cppmodelmanager.h>
 #include <utils/algorithm.h>
 #include <utils/basetreeview.h>
 #include <utils/checkablemessagebox.h>
 #include <utils/fancylineedit.h>
+#include <utils/fancymainwindow.h>
 #include <utils/qtcassert.h>
 #include <utils/stringutils.h>
 #include <utils/theme/theme.h>
@@ -49,6 +55,7 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QPainter>
+#include <QPointer>
 #include <QSet>
 #include <QStringDecoder>
 #include <QTabWidget>
@@ -65,8 +72,11 @@
 
 #include <ctype.h>
 
+using namespace CPlusPlus;
 using namespace Core;
 using namespace ProjectExplorer;
+using namespace TextEditor;
+using namespace Utils;
 using namespace Utils;
 
 namespace Debugger {
@@ -97,7 +107,7 @@ using MemoryMarkupList = QList<MemoryMarkup>;
 // over the children.
 
 using ColorNumberToolTip = QPair<int, QString>;
-using ColorNumberToolTips = QVector<ColorNumberToolTip>;
+using ColorNumberToolTips = QList<ColorNumberToolTip>;
 
 struct TypeInfo
 {
@@ -250,6 +260,47 @@ static void loadSessionData()
     // Handled by loadSesseionDataForEngine.
 }
 
+//
+// Annotations
+//
+class DebuggerValueMark : public TextEditor::TextMark
+{
+public:
+    DebuggerValueMark(const FilePath &fileName, int lineNumber, const QString &value)
+        : TextMark(fileName,
+                   lineNumber,
+                   {Tr::tr("Debugger Value"), Constants::TEXT_MARK_CATEGORY_VALUE})
+    {
+        setPriority(TextEditor::TextMark::HighPriority);
+        setToolTipProvider([] { return QString(); });
+        setLineAnnotation(value);
+        setAnnotationTextFormat(Qt::PlainText);
+    }
+};
+
+// Stolen from CPlusPlus::Document::functionAt(...)
+static int firstRelevantLine(const Document::Ptr document, int line, int column)
+{
+    QTC_ASSERT(line > 0 && column > 0, return 0);
+    CPlusPlus::Symbol *symbol = document->lastVisibleSymbolAt(line, column);
+    if (!symbol)
+        return 0;
+
+    // Find the enclosing function scope (which might be several levels up,
+    // or we might be standing on it)
+    Scope *scope = symbol->asScope();
+    if (!scope)
+        scope = symbol->enclosingScope();
+
+    while (scope && !scope->asFunction() )
+        scope = scope->enclosingScope();
+
+    if (!scope)
+        return 0;
+
+    return scope->line();
+}
+
 ///////////////////////////////////////////////////////////////////////
 //
 // SeparatedView
@@ -260,7 +311,7 @@ class SeparatedView : public QTabWidget
 {
     Q_OBJECT
 public:
-    SeparatedView() : QTabWidget(DebuggerMainWindow::instance())
+    SeparatedView() : QTabWidget(PerspectivesView::mainWindow())
     {
         setTabsClosable(true);
         connect(this, &QTabWidget::tabCloseRequested, this, &SeparatedView::closeTab);
@@ -400,6 +451,12 @@ class WatchModel : public WatchModelBase
 public:
     WatchModel(WatchHandler *handler, DebuggerEngine *engine);
 
+    ~WatchModel()
+    {
+        qDeleteAll(m_valueMarks);
+        m_valueMarks.clear();
+    }
+
     static QString nameForFormat(int format);
 
     QVariant data(const QModelIndex &idx, int role) const override;
@@ -447,15 +504,68 @@ public:
     void grabWidget();
     void ungrabWidget();
     void timerEvent(QTimerEvent *event) override;
+
+    void setValueAnnotationsHelper(BaseTextEditor *textEditor,
+                                   const Location &loc,
+                                   QMap<QString, QString> values)
+    {
+        TextEditorWidget *widget = textEditor->editorWidget();
+        TextDocument *textDocument = widget->textDocument();
+        const FilePath filePath = loc.fileName();
+        const Snapshot snapshot = CppEditor::CppModelManager::snapshot();
+        const Document::Ptr cppDocument = snapshot.document(filePath);
+        if (!cppDocument) // For non-C++ documents.
+            return;
+
+        const int firstLine = firstRelevantLine(cppDocument, loc.textPosition().line, 1);
+        if (firstLine < 1)
+            return;
+
+        CPlusPlus::ExpressionUnderCursor expressionUnderCursor(cppDocument->languageFeatures());
+        QTextCursor tc = widget->textCursor();
+        for (int lineNumber = loc.textPosition().line; lineNumber >= firstLine; --lineNumber) {
+            const QTextBlock block = textDocument->document()->findBlockByNumber(lineNumber - 1);
+            tc.setPosition(block.position());
+            for (; !tc.atBlockEnd(); tc.movePosition(QTextCursor::NextCharacter)) {
+                const QString expression = expressionUnderCursor(tc);
+                if (expression.isEmpty())
+                    continue;
+                const QString value = escapeUnprintable(values.take(expression)); // Show value one only once.
+                if (value.isEmpty())
+                    continue;
+                const QString annotation = QString("%1: %2").arg(expression, value);
+                m_valueMarks.append(new DebuggerValueMark(filePath, lineNumber, annotation));
+            }
+        }
+    }
+
+    void setValueAnnotations(const QMap<QString, QString> &values)
+    {
+        qDeleteAll(m_valueMarks);
+        m_valueMarks.clear();
+        if (values.isEmpty())
+            return;
+
+        const QList<Core::IEditor *> editors = Core::EditorManager::visibleEditors();
+        for (Core::IEditor *editor : editors) {
+            if (auto textEditor = qobject_cast<BaseTextEditor *>(editor)) {
+                if (textEditor->textDocument()->filePath() == m_location.fileName())
+                    setValueAnnotationsHelper(textEditor, m_location, values);
+            }
+        }
+    }
+
 private:
     QMenu *createFormatMenuForManySelected(const WatchItemSet &item, QWidget *parent);
     void setItemsFormat(const WatchItemSet &items, const DisplayFormat &format);
     void addCharsPrintableMenu(QMenu *menu);
 
+    void separatedViewTabBarContextMenuRequested(const QPoint &point, const QString &iname);
+
 public:
     int m_grabWidgetTimerId = -1;
     WatchHandler *m_handler; // Not owned.
-    DebuggerEngine *m_engine; // Not owned.
+    QPointer<DebuggerEngine> m_engine; // Not owned.
 
     bool m_contentsValid;
 
@@ -465,7 +575,7 @@ public:
     WatchItem *m_returnRoot; // Not owned.
     WatchItem *m_tooltipRoot; // Not owned.
 
-    SeparatedView *m_separatedView; // Not owned.
+    QPointer<SeparatedView> m_separatedView; // Parented to DebuggerMainWindow; may be destroyed first.
 
     QSet<QString> m_expandedINames;
     QHash<QString, int> m_maxArrayCount;
@@ -477,8 +587,7 @@ public:
 
     Location m_location;
 
-private:
-    void separatedViewTabBarContextMenuRequested(const QPoint &point, const QString &iname);
+    QList<DebuggerValueMark *> m_valueMarks;
 };
 
 WatchModel::WatchModel(WatchHandler *handler, DebuggerEngine *engine)
@@ -586,119 +695,6 @@ QString WatchModel::removeNamespaces(QString str) const
     return str;
 }
 
-static int formatToIntegerBase(int format)
-{
-    switch (format) {
-        case HexadecimalIntegerFormat:
-            return 16;
-        case BinaryIntegerFormat:
-            return 2;
-        case OctalIntegerFormat:
-            return 8;
-    }
-    return 10;
-}
-
-template <class IntType> QString reformatInteger(IntType value, int format)
-{
-    switch (format) {
-        case HexadecimalIntegerFormat:
-            return "(hex) " + QString::number(value, 16);
-        case BinaryIntegerFormat:
-            return "(bin) " + QString::number(value, 2);
-        case OctalIntegerFormat:
-            return "(oct) " + QString::number(value, 8);
-        case CharCodeIntegerFormat: {
-            QString res = "\"";
-            while (value > 0) {
-                res = QChar(ushort(value & 255)) + res;
-                value >>= 8;
-            }
-            return "\"" + res;
-        }
-    }
-    return QString::number(value, 10); // not reached
-}
-
-static QString reformatInteger(quint64 value, int format, int size, bool isSigned)
-{
-    // Follow convention and don't show negative non-decimal numbers.
-    if (format != AutomaticFormat && format != DecimalIntegerFormat)
-        isSigned = false;
-
-    switch (size) {
-    case 1:
-        value = value & 0xff;
-        break;
-    case 2:
-        value = value & 0xffff;
-        break;
-    case 4:
-        value = value & 0xffffffff;
-        break;
-    default:
-        break;
-    }
-    return isSigned
-                ? reformatInteger<qint64>(value, format)
-                : reformatInteger<quint64>(value, format);
-}
-
-// Format printable (char-type) characters
-static QString reformatCharacter(int code, int size, bool isSigned)
-{
-    if (uint32_t(code) > 0xffff) {
-        std::array<char, sizeof(char32_t)> buf;
-        memcpy(buf.data(), &code, sizeof(char32_t));
-        QByteArrayView view(buf);
-        const QString encoded = QStringDecoder(QStringDecoder::Utf32)(view);
-        return QString("'%1'\t%2\t0x%3").arg(encoded).arg(unsigned(code)).arg(uint(code & ((1ULL << (8*size)) - 1)),
-                2 * size, 16, QLatin1Char('0'));
-    }
-
-    QChar c;
-    switch (size) {
-        case 1: c = QChar(uchar(code)); break;
-        case 2: c = QChar(uint16_t(code)); break;
-        case 4: c = QChar(uint32_t(code)); break;
-        default: c = QChar(uint(code)); break;
-    }
-
-    QString out;
-    if (c.isPrint())
-        out = QString("'") + c + "' ";
-    else if (code == 0)
-        out = "'\\0'";
-    else if (code == '\r')
-        out = "'\\r'";
-    else if (code == '\n')
-        out = "'\\n'";
-    else if (code == '\t')
-        out = "'\\t'";
-    else
-        out = "    ";
-
-    out += '\t';
-
-    if (isSigned) {
-        out += QString::number(code);
-        if (code < 0)
-            out += QString("/%1    ").arg((1ULL << (8*size)) + code).left(2 + 2 * size);
-        else
-            out += QString(2 + 2 * size, ' ');
-    } else {
-        if (size == 2)
-            out += QString::number(char16_t(code));
-        else
-            out += QString::number(unsigned(code));
-    }
-
-    out += '\t';
-
-    out += QString("0x%1").arg(uint(code & ((1ULL << (8*size)) - 1)),
-                               2 * size, 16, QLatin1Char('0'));
-    return out;
-}
 
 static QString quoteUnprintable(const QString &str)
 {
@@ -725,8 +721,8 @@ static QString formattedValue(const WatchItem *item)
 
     const int format = itemFormat(item);
 
-    // Append quoted, printable character also for decimal.
-    // FIXME: This is unreliable.
+    // Append quoted, printable character also for decimal, unless the user
+    // has explicitly chosen a different display format.
     const QString type = item->type;
     if (type == "char8_t" || type.endsWith("char") || type.endsWith("int8_t")) {
         bool ok;
@@ -736,25 +732,25 @@ static QString formattedValue(const WatchItem *item)
                 || type == "uchar"
                 || type == "uint8_t";
         if (ok)
-            return reformatCharacter(code, 1, !isUnsigned);
+            return reformatCharacterWithFormat(code, 1, !isUnsigned, format);
     } else if (type == "qint8" || type == "quint8") {
         bool ok = false;
         const int code = item->value.toInt(&ok);
         bool isUnsigned = type == "quint8";
         if (ok)
-            return reformatCharacter(code, 1, !isUnsigned);
+            return reformatCharacterWithFormat(code, 1, !isUnsigned, format);
     } else if (type == "char32_t" || type.endsWith("wchar_t")) {
         bool ok;
         const int code = item->value.toInt(&ok);
         bool isUnsigned = type == "char32_t";
         if (ok)
-            return reformatCharacter(code, 4, !isUnsigned);
+            return reformatCharacterWithFormat(code, 4, !isUnsigned, format);
     } else if (type == "char16_t" || type.endsWith("QChar")) {
         bool ok;
         const int code = item->value.toInt(&ok);
         bool isUnsigned = type == "char16_t";
         if (ok)
-            return reformatCharacter(code, 2, !isUnsigned);
+            return reformatCharacterWithFormat(code, 2, !isUnsigned, format);
     }
 
     if (format == HexadecimalIntegerFormat
@@ -763,6 +759,24 @@ static QString formattedValue(const WatchItem *item)
             || format == BinaryIntegerFormat
             || format == CharCodeIntegerFormat) {
         bool isSigned = item->value.startsWith('-');
+#if defined(__SIZEOF_INT128__)
+        if (item->size == 16) {
+            if (format == DecimalIntegerFormat)
+                return item->value;
+            // Parse decimal string to unsigned __int128 (two's complement for negatives)
+            unsigned __int128 uval = 0;
+            const QString &str = item->value;
+            if (isSigned) {
+                for (int i = 1; i < str.size(); ++i)
+                    uval = uval * 10 + unsigned(str.at(i).unicode() - '0');
+                uval = ~uval + 1;
+            } else {
+                for (QChar c : str)
+                    uval = uval * 10 + unsigned(c.unicode() - '0');
+            }
+            return reformatUnsignedInteger128(uval, format);
+        }
+#endif
         quint64 raw = isSigned ? quint64(item->value.toLongLong()) : item->value.toULongLong();
         return reformatInteger(raw, format, item->size, isSigned);
     }
@@ -910,7 +924,7 @@ static QString displayName(const WatchItem *item)
     // prepend '*'s to indicate where autodereferencing has taken place
     if (item->autoDerefCount > 0) {
         // add parentheses for everything except simple variable names (e.g. pointer arithmetics,...)
-        QRegularExpression variableNameRegex("^[a-zA-Z0-9_]+$");
+        static const QRegularExpression variableNameRegex("^[a-zA-Z0-9_]+$");
         bool addParanthesis = !variableNameRegex.match(result).hasMatch();
         if (addParanthesis)
             result = "(" + result;
@@ -1044,6 +1058,9 @@ static DisplayFormats typeFormatList(const WatchItem *item)
         v.toULongLong(&ok, 16);
     if (!ok)
         v.toULongLong(&ok, 8);
+    // 128-bit integers exceed ULLONG_MAX; accept them if the value is all decimal digits.
+    if (!ok && item->size == 16)
+        ok = !v.isEmpty() && std::all_of(v.cbegin(), v.cend(), [](QChar c) { return c.isDigit(); });
     if (ok) {
         formats.append(DecimalIntegerFormat);
         formats.append(HexadecimalIntegerFormat);
@@ -1754,7 +1771,7 @@ bool WatchModel::contextMenuEvent(const ItemViewEvent &ev)
               [this] { grabWidget(); });
 
     menu->addSeparator();
-    QModelIndexList mil = ev.currentOrSelectedRows();
+    const QModelIndexList mil = ev.currentOrSelectedRows();
     if (mil.size() > 1) {
         WatchItemSet wis;
         for (const QModelIndex &i : mil)
@@ -1827,11 +1844,12 @@ bool WatchModel::contextMenuEvent(const ItemViewEvent &ev)
     menu->addAction(s.settingsDialog.action());
 
     // useDebuggingHelpers/useDynamicType have no auto-apply, but need to be persisted on triggered
+    connect(this, &WatchModel::dataChanged, menu, &QMenu::close);
     connect(debugHelperAction, &QAction::triggered,
             &s.useDebuggingHelpers, &BoolAspect::writeSettings, Qt::UniqueConnection);
     connect(dynamicTypeAction, &QAction::triggered,
             &s.useDynamicType, &BoolAspect::writeSettings, Qt::UniqueConnection);
-    connect(menu, &QMenu::aboutToHide, menu, &QObject::deleteLater);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
     menu->popup(ev.globalPos());
     return true;
 }
@@ -1925,12 +1943,9 @@ QMenu *WatchModel::createMemoryMenu(WatchItem *item, QWidget *parent)
     addAction(this, menu, Tr::tr("Open Memory Editor..."),
               true,
               [this, item] {
-                    AddressDialog dialog;
-                    if (item->address)
-                        dialog.setAddress(item->address);
-                    if (dialog.exec() == QDialog::Accepted) {
+                    if (std::optional<quint64> result = runAddressDialog(item->address)) {
                         MemoryViewSetupData data;
-                        data.startAddress = dialog.address();
+                        data.startAddress = *result;
                         m_engine->openMemoryView(data);
                     }
                });
@@ -2176,9 +2191,10 @@ void WatchHandler::cleanup()
     theTemporaryWatchers.clear();
     saveWatchers();
     m_model->reinitialize();
-    Internal::setValueAnnotations(m_model->m_location, {});
+    m_model->setValueAnnotations({});
     emit m_model->updateFinished();
-    m_model->m_separatedView->hide();
+    if (m_model->m_separatedView)
+        m_model->m_separatedView->hide();
 }
 
 static bool sortByName(const WatchItem *a, const WatchItem *b)
@@ -2243,7 +2259,7 @@ bool WatchHandler::insertItem(WatchItem *item)
 void WatchModel::reexpandItems()
 {
     m_engine->reexpandItems(m_expandedINames);
-    for (const QString &iname: m_expandedINames) {
+    for (const QString &iname: std::as_const(m_expandedINames)) {
         if (WatchItem *item = findItem(iname)) {
             emit itemIsExpanded(indexForItem(item));
             emit inameIsExpanded(iname);
@@ -2340,7 +2356,7 @@ void WatchHandler::notifyUpdateFinished()
                 values[expr] = item->value;
         });
     }
-    Internal::setValueAnnotations(m_model->m_location, values);
+    m_model->setValueAnnotations(values);
 
     m_model->m_contentsValid = true;
     updateLocalsWindow();
@@ -2572,7 +2588,6 @@ void WatchModel::clearWatches()
         return;
 
     const QMessageBox::StandardButton ret = CheckableMessageBox::question(
-        ICore::dialogParent(),
         Tr::tr("Remove All Expression Evaluators"),
         Tr::tr("Are you sure you want to remove all expression evaluators?"),
         Key("RemoveAllWatchers"));

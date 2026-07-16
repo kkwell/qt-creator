@@ -271,7 +271,7 @@ class Node
 {
 public:
     Node() = default;
-    Node(const QString &name, const QVector<Node> &children = QVector<Node>())
+    Node(const QString &name, const QList<Node> &children = {})
         : name(name)
         , children(children)
     {}
@@ -279,7 +279,7 @@ public:
     static Node fromCheckList(const QStringList &checks);
 
     QString name;
-    QVector<Node> children;
+    QList<Node> children;
 };
 
 class PrefixGroupIterator
@@ -401,7 +401,7 @@ static void buildTree(ProjectExplorer::Tree *parent,
     current->name = node.name;
     current->isDir = node.children.size();
     if (parent) {
-        current->fullPath = Utils::FilePath::fromString(parent->fullPath.toString()
+        current->fullPath = Utils::FilePath::fromString(parent->fullPath.toUrlishString()
                                                         + current->name);
         parent->childDirectories.push_back(current);
     } else {
@@ -413,9 +413,9 @@ static void buildTree(ProjectExplorer::Tree *parent,
 }
 
 static bool needsLink(ProjectExplorer::Tree *node) {
-    if (node->fullPath.toString() == "clang-analyzer-")
+    if (node->fullPath.toUrlishString() == "clang-analyzer-")
         return true;
-    return !node->isDir && !node->fullPath.toString().startsWith("clang-analyzer-");
+    return !node->isDir && !node->fullPath.toUrlishString().startsWith("clang-analyzer-");
 }
 
 class BaseChecksTreeModel : public ProjectExplorer::SelectableFilesModel // FIXME: This isn't about files.
@@ -501,7 +501,7 @@ public:
         for (QString &check : checksList) {
             Qt::CheckState state;
             if (check.startsWith("-")) {
-                check = check.right(check.length() - 1);
+                check = check.right(check.size() - 1);
                 state = Qt::Unchecked;
             } else {
                 state = Qt::Checked;
@@ -533,7 +533,7 @@ private:
                 if (!nodeName.contains("Level"))
                     return {};
             } else {
-                remainingName = name.mid(nodeName.length());
+                remainingName = name.mid(nodeName.size());
             }
         }
         const int childCount = rowCount(current);
@@ -566,13 +566,13 @@ class TidyChecksTreeModel final : public BaseChecksTreeModel
 public:
     TidyChecksTreeModel(const QStringList &supportedChecks)
     {
-        buildTree(nullptr, m_root, ClangTidyPrefixTree::Node::fromCheckList(supportedChecks));
+        buildTree(nullptr, m_root.get(), ClangTidyPrefixTree::Node::fromCheckList(supportedChecks));
     }
 
     QString selectedChecks() const override
     {
         QString checks;
-        collectChecks(m_root, checks);
+        collectChecks(m_root.get(), checks);
         return "-*" + checks;
     }
 
@@ -591,7 +591,7 @@ public:
                 // 'clang-analyzer-' group
                 if (node->isDir)
                     return CppEditor::Constants::CLANG_STATIC_ANALYZER_DOCUMENTATION_URL;
-                return clangTidyDocUrl(node->fullPath.toString());
+                return clangTidyDocUrl(node->fullPath.toUrlishString());
             }
 
             return BaseChecksTreeModel::data(fullIndex, role);
@@ -629,8 +629,8 @@ private:
                 return false;
 
             auto *node = static_cast<Tree *>(index.internalPointer());
-            const QString nodeName = node->fullPath.toString();
-            if ((check.endsWith("*") && nodeName.startsWith(check.left(check.length() - 1)))
+            const QString nodeName = node->fullPath.toUrlishString();
+            if ((check.endsWith("*") && nodeName.startsWith(check.left(check.size() - 1)))
                     || (!node->isDir && nodeName == check)) {
                 result = index;
                 return false;
@@ -646,7 +646,7 @@ private:
         if (root->checked == Qt::Unchecked)
             return;
         if (root->checked == Qt::Checked) {
-            checks += "," + root->fullPath.toString();
+            checks += "," + root->fullPath.toUrlishString();
             if (root->isDir)
                 checks += "*";
             return;
@@ -685,7 +685,7 @@ public:
     ClazyChecksTreeModel(const ClazyChecks &supportedClazyChecks)
     {
         // Top level node
-        m_root = new ClazyChecksTree("*", ClazyChecksTree::TopLevelNode);
+        m_root.reset(new ClazyChecksTree("*", ClazyChecksTree::TopLevelNode));
 
         for (const ClazyCheck &check : supportedClazyChecks) {
             // Level node
@@ -693,7 +693,7 @@ public:
             if (!levelNode) {
                 levelNode = new ClazyChecksTree(levelDescription(check.level),
                                                 ClazyChecksTree::LevelNode);
-                levelNode->parent = m_root;
+                levelNode->parent = m_root.get();
                 levelNode->check.level = check.level; // Pass on the level for sorting
                 m_root->childDirectories << levelNode;
             }
@@ -712,7 +712,7 @@ public:
     QStringList enabledChecks() const
     {
         QStringList checks;
-        collectChecks(m_root, checks);
+        collectChecks(m_root.get(), checks);
         return checks;
     }
 
@@ -1264,7 +1264,7 @@ QString removeClazyCheck(const QString &checks, const QString &check)
     const ClazyStandaloneInfo clazyInfo = ClazyStandaloneInfo(toolExecutable(ClangToolType::Clazy));
     ClazyChecksTreeModel model(clazyInfo.supportedChecks);
     model.enableChecks(checks.split(',', Qt::SkipEmptyParts));
-    const QModelIndex index = model.indexForName(check.mid(QString("clazy-").length()));
+    const QModelIndex index = model.indexForName(check.mid(QString("clazy-").size()));
     if (!index.isValid())
         return checks;
     model.setData(index, false, Qt::CheckStateRole);
@@ -1278,14 +1278,14 @@ void disableChecks(const QList<Diagnostic> &diagnostics)
 
     ClangToolsSettings * const settings = ClangToolsSettings::instance();
     ClangDiagnosticConfigs configs = settings->diagnosticConfigs();
-    Utils::Id activeConfigId = settings->runSettings().diagnosticConfigId();
+    Utils::Id activeConfigId = settings->runSettings.diagnosticConfigId();
     ClangToolsProjectSettings::ClangToolsProjectSettingsPtr projectSettings;
 
     if (ProjectExplorer::Project *project = ProjectExplorer::ProjectManager::projectForFile(
-            diagnostics.first().location.filePath)) {
+            diagnostics.first().location.targetFilePath)) {
         projectSettings = ClangToolsProjectSettings::getSettings(project);
         if (!projectSettings->useGlobalSettings())
-            activeConfigId = projectSettings->runSettings().diagnosticConfigId();
+            activeConfigId = projectSettings->runSettings.diagnosticConfigId();
     }
     ClangDiagnosticConfig config = Utils::findOrDefault(configs,
         [activeConfigId](const ClangDiagnosticConfig &c) { return c.id() == activeConfigId; });
@@ -1297,14 +1297,9 @@ void disableChecks(const QList<Diagnostic> &diagnostics)
         config.setId(Id::generate());
         config.setDisplayName(Tr::tr("Custom Configuration"));
         configs << config;
-        RunSettings runSettings = settings->runSettings();
-        runSettings.setDiagnosticConfigId(config.id());
-        settings->setRunSettings(runSettings);
-        if (projectSettings && !projectSettings->useGlobalSettings()) {
-            runSettings = projectSettings->runSettings();
-            runSettings.setDiagnosticConfigId(config.id());
-            projectSettings->setRunSettings(runSettings);
-        }
+        settings->runSettings.diagnosticConfigId.setValue(config.id());
+        if (projectSettings && !projectSettings->useGlobalSettings())
+            settings->runSettings.diagnosticConfigId.setValue(config.id());
     }
 
     for (const Diagnostic &diag : diagnostics) {
@@ -1317,7 +1312,7 @@ void disableChecks(const QList<Diagnostic> &diagnostics)
             }
             config.setChecks(ClangToolType::Clazy,
                              removeClazyCheck(config.checks(ClangToolType::Clazy), diag.name));
-        } else if (!settings->runSettings().preferConfigFile()){
+        } else if (!settings->runSettings.preferConfigFile()){
             if (config.clangTidyMode() == ClangDiagnosticConfig::TidyMode::UseDefaultChecks) {
                 config.setClangTidyMode(ClangDiagnosticConfig::TidyMode::UseCustomChecks);
                 const ClangTidyInfo tidyInfo(toolExecutable(ClangToolType::Tidy));

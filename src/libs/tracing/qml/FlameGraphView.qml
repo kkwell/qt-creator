@@ -6,7 +6,6 @@ import QtCreator.Tracing
 import QtQml
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Controls.Material
 
 ScrollView {
     id: root
@@ -252,8 +251,6 @@ ScrollView {
             minimumY: flickable.contentY
             maximumY: flickable.contentY + flickable.height
             noteReadonly: true
-
-            borderWidth: 0
 
             property var hoveredNode: null;
             property var selectedNode: null;

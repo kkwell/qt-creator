@@ -151,7 +151,7 @@ BuiltinEditorDocumentProcessor::BuiltinEditorDocumentProcessor(TextEditor::TextD
     using namespace Internal;
 
     BaseEditorDocumentParser::Configuration config = m_parser->configuration();
-    config.usePrecompiledHeaders = settings().pchUsage != CppCodeModelSettings::PchUse_None;
+    config.setUsePrecompiledHeaders(settings().pchUsage != PchUsage::PchUse_None);
     m_parser->setConfiguration(config);
 
     m_semanticHighlighter->setHighlightingRunner(
@@ -270,7 +270,7 @@ void BuiltinEditorDocumentProcessor::onParserFinished(CPlusPlus::Document::Ptr d
 
     const QList<Core::IDocument *> openDocuments = Core::DocumentModel::openedDocuments();
     for (Core::IDocument * const openDocument : openDocuments) {
-        const auto cppEditorDoc = qobject_cast<Internal::CppEditorDocument *>(openDocument);
+        const auto cppEditorDoc = qobject_cast<CppEditorDocument *>(openDocument);
         if (!cppEditorDoc)
             continue;
         if (cppEditorDoc->filePath() == document->filePath())
@@ -327,7 +327,7 @@ SemanticInfo::Source BuiltinEditorDocumentProcessor::createSemanticInfoSource(bo
         source = entry->first;
         revision = entry->second;
     }
-    return SemanticInfo::Source(filePath().toString(), source, revision, m_documentSnapshot, force);
+    return SemanticInfo::Source(filePath(), source, revision, m_documentSnapshot, force);
 }
 
 } // namespace CppEditor

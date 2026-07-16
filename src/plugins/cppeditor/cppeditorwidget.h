@@ -20,11 +20,11 @@ class IAssistProvider;
 }
 
 namespace CppEditor {
-class SemanticInfo;
+class CppEditorDocument;
 class ProjectPart;
+class SemanticInfo;
 
 namespace Internal {
-class CppEditorDocument;
 class CppEditorOutline;
 class CppEditorWidgetPrivate;
 class FunctionDeclDefLink;
@@ -38,9 +38,9 @@ public:
     CppEditorWidget();
     ~CppEditorWidget() override;
 
-    static CppEditorWidget *fromTextDocument(TextEditor::TextDocument *doc);
+    static const QList<CppEditorWidget *> editorWidgetsForDocument(TextEditor::TextDocument *doc);
 
-    Internal::CppEditorDocument *cppEditorDocument() const;
+    CppEditorDocument *cppEditorDocument() const;
 
     bool isSemanticInfoValidExceptLocalUses() const;
     bool isSemanticInfoValid() const;
@@ -60,6 +60,7 @@ public:
     void selectAll() override;
 
     void switchDeclarationDefinition(bool inNextSplit);
+    void goToParentImpl(bool inNextSplit);
     void showPreProcessorWidget();
 
     void findUsages() override;
@@ -86,8 +87,6 @@ public:
     static const QList<QTextEdit::ExtraSelection>
     unselectLeadingWhitespace(const QList<QTextEdit::ExtraSelection> &selections);
 
-    void setIfdefedOutBlocks(const QList<TextEditor::BlockRange> &blocks);
-
     bool isInTestMode() const;
     void setProposals(const TextEditor::IAssistProposal *immediateProposal,
                       const TextEditor::IAssistProposal *finalProposal);
@@ -96,7 +95,6 @@ public:
 signals:
     void proposalsReady(const TextEditor::IAssistProposal *immediateProposal,
                         const TextEditor::IAssistProposal *finalProposal);
-    void ifdefedOutBlocksChanged(const QList<TextEditor::BlockRange> &blocks);
 #endif
 
 protected:
@@ -115,8 +113,6 @@ protected:
                     bool resolveTarget = true,
                     bool inNextSplit = false) override;
 
-    void slotCodeStyleSettingsChanged(const QVariant &) override;
-
 private:
     void updateFunctionDeclDefLink();
     void updateFunctionDeclDefLinkNow();
@@ -126,8 +122,6 @@ private:
     void onCodeWarningsUpdated(unsigned revision,
                                const QList<QTextEdit::ExtraSelection> selections,
                                const TextEditor::RefactorMarkers &refactorMarkers);
-    void onIfdefedOutBlocksUpdated(unsigned revision,
-                                   const QList<TextEditor::BlockRange> ifdefedOutBlocks);
 
     void updateSemanticInfo(const SemanticInfo &semanticInfo,
                             bool updateUseSelectionSynchronously = false);

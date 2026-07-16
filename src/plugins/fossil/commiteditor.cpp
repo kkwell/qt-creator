@@ -31,6 +31,7 @@ void CommitEditor::setFields(const Utils::FilePath &repositoryRoot, const Branch
                              const QStringList &tags, const QString &userName,
                              const QList<VcsBase::VcsBaseClient::StatusItem> &repoStatus)
 {
+    using FileState = Core::VcsFileState;
     FossilCommitWidget *fossilWidget = commitWidget();
     QTC_ASSERT(fossilWidget, return);
 
@@ -39,20 +40,22 @@ void CommitEditor::setFields(const Utils::FilePath &repositoryRoot, const Branch
     m_fileModel = new VcsBase::SubmitFileModel(this);
     m_fileModel->setRepositoryRoot(repositoryRoot);
     m_fileModel->setFileStatusQualifier([](const QString &status, const QVariant &) {
-        if (status == Constants::FSTATUS_ADDED
+        if (status == Constants::FSTATUS_NEW) {
+            return FileState::Untracked;
+        } else if (status == Constants::FSTATUS_ADDED
             || status == Constants::FSTATUS_ADDED_BY_MERGE
             || status == Constants::FSTATUS_ADDED_BY_INTEGRATE) {
-            return VcsBase::SubmitFileModel::FileAdded;
+            return FileState::Added;
         } else if (status == Constants::FSTATUS_EDITED
             || status == Constants::FSTATUS_UPDATED_BY_MERGE
             || status == Constants::FSTATUS_UPDATED_BY_INTEGRATE) {
-            return VcsBase::SubmitFileModel::FileModified;
+            return FileState::Modified;
         } else if (status == Constants::FSTATUS_DELETED) {
-            return VcsBase::SubmitFileModel::FileDeleted;
+            return FileState::Deleted;
         } else if (status == Constants::FSTATUS_RENAMED) {
-            return VcsBase::SubmitFileModel::FileRenamed;
+            return FileState::Renamed;
         }
-        return VcsBase::SubmitFileModel::FileStatusUnknown;
+        return FileState::Unknown;
     });
 
     const QList<VcsBase::VcsBaseClient::StatusItem> toAdd = Utils::filtered(repoStatus,

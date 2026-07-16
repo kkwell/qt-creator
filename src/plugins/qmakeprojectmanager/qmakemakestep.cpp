@@ -14,12 +14,12 @@
 
 #include <projectexplorer/buildsteplist.h>
 #include <projectexplorer/gnumakeparser.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/processparameters.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/target.h>
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/toolchainkitaspect.h>
 #include <projectexplorer/xcodebuildparser.h>
 
 #include <utils/qtcprocess.h>
@@ -42,7 +42,7 @@ public:
 private:
     bool init() override;
     void setupOutputFormatter(OutputFormatter *formatter) override;
-    Tasking::GroupItem runRecipe() final;
+    QtTaskTree::GroupItem runRecipe() final;
     QStringList displayArguments() const override;
 
     bool m_scriptTarget = false;
@@ -128,7 +128,7 @@ bool QmakeMakeStep::init()
     if (bc->fileNodeBuild() && subProFile) {
         QString objectsDir = subProFile->objectsDirectory();
         if (objectsDir.isEmpty()) {
-            objectsDir = bc->qmakeBuildSystem()->buildDir(subProFile->filePath()).toString();
+            objectsDir = bc->qmakeBuildSystem()->buildDir(subProFile->filePath()).toUrlishString();
             if (subProFile->isDebugAndRelease()) {
                 if (bc->buildType() == QmakeBuildConfiguration::Debug)
                     objectsDir += "/debug";
@@ -142,11 +142,11 @@ bool QmakeMakeStep::init()
             const FilePath proFileDir = subProFile->proFile()->sourceDir().canonicalPath();
             if (!objectsDir.endsWith('/'))
                 objectsDir += QLatin1Char('/');
-            objectsDir += sourceFileDir.relativeChildPath(proFileDir).toString();
+            objectsDir += sourceFileDir.relativeChildPath(proFileDir).toUrlishString();
             objectsDir = QDir::cleanPath(objectsDir);
         }
 
-        QString relObjectsDir = QDir(pp->workingDirectory().toString())
+        QString relObjectsDir = QDir(pp->workingDirectory().toUrlishString())
                 .relativeFilePath(objectsDir);
         if (relObjectsDir == ".")
             relObjectsDir.clear();
@@ -200,9 +200,9 @@ void QmakeMakeStep::setupOutputFormatter(OutputFormatter *formatter)
     AbstractProcessStep::setupOutputFormatter(formatter);
 }
 
-Tasking::GroupItem QmakeMakeStep::runRecipe()
+QtTaskTree::GroupItem QmakeMakeStep::runRecipe()
 {
-    using namespace Tasking;
+    using namespace QtTaskTree;
 
     const auto onSetup = [this] {
         if (m_scriptTarget || m_ignoredNonTopLevelBuild)
@@ -229,8 +229,8 @@ Tasking::GroupItem QmakeMakeStep::runRecipe()
     return Group {
         ignoreReturnValue() ? finishAllAndSuccess : stopOnError,
         onGroupSetup(onSetup),
-        onGroupDone(onError, CallDoneIf::Error),
-        defaultProcessTask()
+        defaultProcessTask(),
+        onGroupDone(onError, CallDoneFlag::OnError)
     };
 }
 

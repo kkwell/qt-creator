@@ -21,8 +21,8 @@ WinPtyProcess::WinPtyProcess()
     : IPtyProcess()
     , m_ptyHandler(nullptr)
     , m_innerHandle(nullptr)
-    , m_inSocket(nullptr)
-    , m_outSocket(nullptr)
+    , m_inSocket(new QLocalSocket())
+    , m_outSocket(new QLocalSocket())
 {
 #ifdef PTYQT_DEBUG
     m_trace = true;
@@ -31,7 +31,6 @@ WinPtyProcess::WinPtyProcess()
 
 WinPtyProcess::~WinPtyProcess()
 {
-    kill();
 }
 
 bool WinPtyProcess::startProcess(const QString &executable,
@@ -135,8 +134,6 @@ bool WinPtyProcess::startProcess(const QString &executable,
 
     m_pid = (int)GetProcessId(m_innerHandle);
 
-    m_outSocket = new QLocalSocket();
-
     // Notify when the shell process has been terminated
     m_shellCloseWaitNotifier = new QWinEventNotifier(m_innerHandle, notifier());
     QObject::connect(m_shellCloseWaitNotifier,
@@ -155,7 +152,6 @@ bool WinPtyProcess::startProcess(const QString &executable,
     //get pipe names
     LPCWSTR conInPipeName = winpty_conin_name(m_ptyHandler);
     m_conInName = QString::fromStdWString(std::wstring(conInPipeName));
-    m_inSocket = new QLocalSocket();
     m_inSocket->connectToServer(m_conInName, QIODevice::WriteOnly);
     m_inSocket->waitForConnected();
 

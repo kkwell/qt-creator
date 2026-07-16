@@ -4,26 +4,55 @@
 #pragma once
 
 #include "projectexplorer_export.h"
+#include "task.h"
+
+#include <utils/storekey.h>
 
 #include <QString>
 #include <QObject>
-
-namespace Core { class IEditor; }
 
 #include <functional>
 
 namespace Utils {
 class FilePath;
-using FilePaths = QList<FilePath>;
+class FilePaths;
 class MimeType;
 } // Utils
 
 namespace ProjectExplorer {
 
+class BuildConfiguration;
 class BuildSystem;
+class QmlCodeModelInfo;
+class Kit;
 class Project;
-class RunConfiguration;
 class Target;
+
+class CustomProjectSettingsHandler
+{
+public:
+    enum class FileType { File, Dir };
+    using Loader = std::function<Utils::Result<QVariant>(const Utils::FilePath &, const Project &)>;
+    using Unloader = std::function<void(const QVariant &)>;
+
+    CustomProjectSettingsHandler(
+        const QString &fileName, FileType fileType, const Loader &loader, const Unloader &unloader)
+        : m_fileName(fileName)
+        , m_fileType(fileType)
+        , m_loader(loader)
+        , m_unloader(unloader)
+    {}
+
+    void load(Project &project) const;
+    void unload(const Project &project) const;
+
+private:
+    Utils::Key m_key = Utils::Id::generate().toKey();
+    QString m_fileName;
+    FileType m_fileType;
+    Loader m_loader;
+    Unloader m_unloader;
+};
 
 class PROJECTEXPLORER_EXPORT ProjectManager : public QObject
 {
@@ -37,15 +66,28 @@ public:
 
 public:
     static bool canOpenProjectForMimeType(const Utils::MimeType &mt);
+    static bool ensurePluginForProjectIsLoaded(const Utils::MimeType &mt);
     static Project *openProject(const Utils::MimeType &mt, const Utils::FilePath &fileName);
 
-    template <typename T>
-    static void registerProjectType(const QString &mimeType)
+    using IssuesGenerator = std::function<Tasks(const Kit *)>;
+    template<typename T>
+    static void registerProjectType(const QString &mimeType,
+                                    const IssuesGenerator &issuesGenerator = {})
     {
-        ProjectManager::registerProjectCreator(mimeType, [](const Utils::FilePath &fileName) {
-            return new T(fileName);
-        });
+        registerProjectCreator(
+            mimeType,
+            [issuesGenerator](const Utils::FilePath &fileName) {
+                auto * const p = new T(fileName);
+                p->setIssuesGenerator(issuesGenerator);
+                return p;
+            },
+            issuesGenerator);
     }
+    static IssuesGenerator getIssuesGenerator(const Utils::FilePath &projectFilePath);
+
+    static void registerCustomProjectSettingsHandler(const CustomProjectSettingsHandler &handler);
+    static void loadCustomProjectSettings(Project &project);
+    static void unloadCustomProjectSettings(const Project &project);
 
     static void closeAllProjects();
 
@@ -69,8 +111,6 @@ public:
 
     static Project *startupProject();
     static Target *startupTarget();
-    static BuildSystem *startupBuildSystem();
-    static RunConfiguration *startupRunConfiguration();
 
     static const QList<Project *> projects();
     static bool hasProjects();
@@ -80,14 +120,17 @@ public:
     static QList<Project *> projectOrder(const Project *project = nullptr);
 
     static Project *projectForFile(const Utils::FilePath &fileName);
+    static QList<Project *> projectsForFile(const Utils::FilePath &fileName);
+    static bool isInProjectBuildDir(const Utils::FilePath &filePath, const Project &project);
     static bool isInProjectSourceDir(const Utils::FilePath &filePath, const Project &project);
-    static Project *projectWithProjectFilePath(const Utils::FilePath &filePath);
+    static Project *projectWithProjectFile(const Utils::FilePath &projectFile, bool shouldExist);
+    static bool isKnownFile(const Utils::FilePath &filePath);
 
     static Utils::FilePaths projectsForSessionName(const QString &session);
 
+    static bool isAnyProjectParsing();
+
 signals:
-    void targetAdded(ProjectExplorer::Target *target);
-    void targetRemoved(ProjectExplorer::Target *target);
     void projectAdded(ProjectExplorer::Project *project);
     void aboutToRemoveProject(ProjectExplorer::Project *project);
     void projectDisplayNameChanged(ProjectExplorer::Project *project);
@@ -95,17 +138,38 @@ signals:
 
     void startupProjectChanged(ProjectExplorer::Project *project);
 
+    void buildConfigurationAdded(ProjectExplorer::BuildConfiguration *bc);
+    void aboutToRemoveBuildConfiguration(ProjectExplorer::BuildConfiguration *bc);
+    void buildConfigurationRemoved(ProjectExplorer::BuildConfiguration *bc);
+    // bc == activeBuildConfigForActiveProject()
+    void activeBuildConfigurationChanged(BuildConfiguration *bc);
+
+    // bc == activeBuildConfigForCurrentProject()
+    void currentBuildConfigurationChanged(BuildConfiguration *bc);
+
+    // bs = activeBuildSystemForActiveProject()
+    void parsingStartedActive(BuildSystem *bs);
+    void parsingFinishedActive(bool success, BuildSystem *bs);
+
+    // bs = activeBuildSystemForCurrentProject()
+    void parsingStartedCurrent(BuildSystem *bs);
+    void parsingFinishedCurrent(bool success, BuildSystem *bs);
+
     void dependencyChanged(ProjectExplorer::Project *a, ProjectExplorer::Project *b);
 
-    // for tests only
+    void projectStartedParsing(ProjectExplorer::Project *project);
     void projectFinishedParsing(ProjectExplorer::Project *project);
 
-private:
-    static void configureEditor(Core::IEditor *editor, const Utils::FilePath &filePath);
-    static void configureEditors(Project *project);
+    void extraProjectInfoChanged(ProjectExplorer::BuildConfiguration *bc,
+                                 const ProjectExplorer::QmlCodeModelInfo &extra);
+    void requestCodeModelReset();
 
+private:
     static void registerProjectCreator(const QString &mimeType,
-                                       const std::function<Project *(const Utils::FilePath &)> &);
+                                       const std::function<Project *(const Utils::FilePath &)> &,
+                                       const IssuesGenerator &issuesGenerator);
 };
+
+namespace Internal { QObject *createSessionTest(); }
 
 } // namespace ProjectExplorer

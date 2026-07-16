@@ -3,7 +3,7 @@
 
 #include "cppcodestylesettings.h"
 
-#include "cppcodestylepreferences.h"
+#include "cppcodestylesettings.h"
 #include "cppeditorconstants.h"
 #include "cpptoolssettings.h"
 
@@ -48,32 +48,30 @@ namespace CppEditor {
 
 CppCodeStyleSettings::CppCodeStyleSettings() = default;
 
-Store CppCodeStyleSettings::toMap() const
+void CppCodeStyleSettings::toMap(Store &map) const
 {
-    return {
-        {statementMacrosKey, statementMacros},
-        {indentBlockBracesKey, indentBlockBraces},
-        {indentBlockBodyKey, indentBlockBody},
-        {indentClassBracesKey, indentClassBraces},
-        {indentEnumBracesKey, indentEnumBraces},
-        {indentNamespaceBracesKey, indentNamespaceBraces},
-        {indentNamespaceBodyKey, indentNamespaceBody},
-        {indentAccessSpecifiersKey, indentAccessSpecifiers},
-        {indentDeclarationsRelativeToAccessSpecifiersKey, indentDeclarationsRelativeToAccessSpecifiers},
-        {indentFunctionBodyKey, indentFunctionBody},
-        {indentFunctionBracesKey, indentFunctionBraces},
-        {indentSwitchLabelsKey, indentSwitchLabels},
-        {indentStatementsRelativeToSwitchLabelsKey, indentStatementsRelativeToSwitchLabels},
-        {indentBlocksRelativeToSwitchLabelsKey, indentBlocksRelativeToSwitchLabels},
-        {indentControlFlowRelativeToSwitchLabelsKey, indentControlFlowRelativeToSwitchLabels},
-        {bindStarToIdentifierKey, bindStarToIdentifier},
-        {bindStarToTypeNameKey, bindStarToTypeName},
-        {bindStarToLeftSpecifierKey, bindStarToLeftSpecifier},
-        {bindStarToRightSpecifierKey, bindStarToRightSpecifier},
-        {extraPaddingForConditionsIfConfusingAlignKey, extraPaddingForConditionsIfConfusingAlign},
-        {alignAssignmentsKey, alignAssignments},
-        {shortGetterNameKey, preferGetterNameWithoutGetPrefix}
-    };
+    map.insert(statementMacrosKey, statementMacros);
+    map.insert(indentBlockBracesKey, indentBlockBraces);
+    map.insert(indentBlockBodyKey, indentBlockBody);
+    map.insert(indentClassBracesKey, indentClassBraces);
+    map.insert(indentEnumBracesKey, indentEnumBraces);
+    map.insert(indentNamespaceBracesKey, indentNamespaceBraces);
+    map.insert(indentNamespaceBodyKey, indentNamespaceBody);
+    map.insert(indentAccessSpecifiersKey, indentAccessSpecifiers);
+    map.insert(indentDeclarationsRelativeToAccessSpecifiersKey, indentDeclarationsRelativeToAccessSpecifiers);
+    map.insert(indentFunctionBodyKey, indentFunctionBody);
+    map.insert(indentFunctionBracesKey, indentFunctionBraces);
+    map.insert(indentSwitchLabelsKey, indentSwitchLabels);
+    map.insert(indentStatementsRelativeToSwitchLabelsKey, indentStatementsRelativeToSwitchLabels);
+    map.insert(indentBlocksRelativeToSwitchLabelsKey, indentBlocksRelativeToSwitchLabels);
+    map.insert(indentControlFlowRelativeToSwitchLabelsKey, indentControlFlowRelativeToSwitchLabels);
+    map.insert(bindStarToIdentifierKey, bindStarToIdentifier);
+    map.insert(bindStarToTypeNameKey, bindStarToTypeName);
+    map.insert(bindStarToLeftSpecifierKey, bindStarToLeftSpecifier);
+    map.insert(bindStarToRightSpecifierKey, bindStarToRightSpecifier);
+    map.insert(extraPaddingForConditionsIfConfusingAlignKey, extraPaddingForConditionsIfConfusingAlign);
+    map.insert(alignAssignmentsKey, alignAssignments);
+    map.insert(shortGetterNameKey, preferGetterNameWithoutGetPrefix);
 }
 
 void CppCodeStyleSettings::fromMap(const Store &map)
@@ -172,34 +170,6 @@ CppCodeStyleSettings CppCodeStyleSettings::currentGlobalCodeStyle()
     return cppCodeStylePreferences->currentCodeStyleSettings();
 }
 
-TextEditor::TabSettings CppCodeStyleSettings::getProjectTabSettings(ProjectExplorer::Project *project)
-{
-    if (!project)
-        return currentGlobalTabSettings();
-
-    ProjectExplorer::EditorConfiguration *editorConfiguration = project->editorConfiguration();
-    QTC_ASSERT(editorConfiguration, return currentGlobalTabSettings());
-
-    TextEditor::ICodeStylePreferences *codeStylePreferences
-        = editorConfiguration->codeStyle(Constants::CPP_SETTINGS_ID);
-    QTC_ASSERT(codeStylePreferences, return currentGlobalTabSettings());
-    return codeStylePreferences->currentTabSettings();
-}
-
-TextEditor::TabSettings CppCodeStyleSettings::currentProjectTabSettings()
-{
-    return getProjectTabSettings(ProjectExplorer::ProjectTree::currentProject());
-}
-
-TextEditor::TabSettings CppCodeStyleSettings::currentGlobalTabSettings()
-{
-    CppCodeStylePreferences *cppCodeStylePreferences = CppToolsSettings::cppCodeStyle();
-    QTC_ASSERT(cppCodeStylePreferences, return TextEditor::TabSettings());
-
-    return cppCodeStylePreferences->currentTabSettings();
-}
-
-
 static void configureOverviewWithCodeStyleSettings(CPlusPlus::Overview &overview,
                                                    const CppCodeStyleSettings &settings)
 {
@@ -228,6 +198,11 @@ CPlusPlus::Overview CppCodeStyleSettings::currentGlobalCodeStyleOverview()
     CPlusPlus::Overview overview;
     configureOverviewWithCodeStyleSettings(overview, currentGlobalCodeStyle());
     return overview;
+}
+
+Id CppCodeStyleSettings::settingsId()
+{
+    return Constants::CPP_CODE_STYLE_SETTINGS_ID;
 }
 
 } // namespace CppEditor

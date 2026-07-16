@@ -13,36 +13,37 @@
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectmanager.h>
 
-#include <solutions/tasking/tasktree.h>
+#include <QtTaskTree/QTaskTree>
+
+using namespace Core;
+using namespace QtTaskTree;
+using namespace Utils;
 
 namespace Autotest::Internal {
 
-static void linkAcceptor(const Utils::Link &link)
+static void linkAcceptor(const Link &link)
 {
     if (link.hasValidTarget())
-        Core::EditorManager::openEditorAt(link);
+        EditorManager::openEditorAt(link);
 }
 
-using LinkAcceptor = std::function<void(const Utils::Link &)>;
+using LinkAcceptor = std::function<void(const Link &)>;
 
-static Core::LocatorMatcherTasks dataTagMatchers(const LinkAcceptor &acceptor)
+static LocatorMatcherTasks dataTagMatchers(const LinkAcceptor &acceptor)
 {
-    using namespace Tasking;
-
-    Storage<Core::LocatorStorage> storage;
-
-    const auto onSetup = [storage, acceptor] {
-        const QString input = storage->input();
+    const auto onSetup = [acceptor] {
+        const LocatorStorage &storage = *LocatorStorage::storage();
+        const QString input = storage.input();
         const TestTreeItem *qtTestRoot = theQtTestFramework().rootNode();
         if (!qtTestRoot)
             return;
 
-        Core::LocatorFilterEntries entries;
+        LocatorFilterEntries entries;
         qtTestRoot->forAllChildItems([&entries, &input, acceptor = acceptor](TestTreeItem *it) {
             if (it->type() != TestTreeItem::TestDataTag)
                 return;
             if (it->name().contains(input)) {
-                Core::LocatorFilterEntry entry;
+                LocatorFilterEntry entry;
                 entry.displayName = it->data(0, Qt::DisplayRole).toString();
                 {
                     const TestTreeItem *parent = it->parentItem();
@@ -52,25 +53,25 @@ static Core::LocatorMatcherTasks dataTagMatchers(const LinkAcceptor &acceptor)
                             entry.displayExtra = grandParent->name() + "::" + parent->name();
                     }
                 }
-                entry.linkForEditor = std::make_optional(it->data(0, LinkRole).value<Utils::Link>());
+                entry.linkForEditor = std::make_optional(it->data(0, LinkRole).value<Link>());
                 entry.acceptor = [link = entry.linkForEditor, acceptor = acceptor] {
                     if (link)
                         acceptor(*link);
-                    return Core::AcceptResult();
+                    return AcceptResult();
                 };
                 entries.append(entry);
             }
         });
-        storage->reportOutput(entries);
+        storage.reportOutput(entries);
     };
-    return {{Sync(onSetup), storage}};
+    return {QSyncTask(onSetup)};
 }
 
 DataTagLocatorFilter::DataTagLocatorFilter()
 {
     setId("Locate Qt Test data tags");
-    setDisplayName(Tr::tr("Locate Qt Test data tags"));
-    setDescription(Tr::tr("Locates Qt Test data tags found inside the active project."));
+    setDisplayName(Tr::tr("Qt Test Data Tags"));
+    setDescription(Tr::tr("Locates Qt Test data tags inside the active project."));
     setDefaultShortcutString("qdt");
     setPriority(Medium);
     using namespace ProjectExplorer;
@@ -79,7 +80,7 @@ DataTagLocatorFilter::DataTagLocatorFilter()
     setEnabled(ProjectManager::startupProject());
 }
 
-Core::LocatorMatcherTasks DataTagLocatorFilter::matchers()
+LocatorMatcherTasks DataTagLocatorFilter::matchers()
 {
     return dataTagMatchers(&linkAcceptor);
 }

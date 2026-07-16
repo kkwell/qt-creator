@@ -8,11 +8,17 @@
 // **********************************************************************
 
 /*!
-    \previouspage creator-testing.html
+    \previouspage creator-running-targets.html
     \page creator-debugging.html
     \nextpage creator-debugger-engines.html
 
     \title Debugging
+
+    \quotation
+    \l {Debug}{How to: Debug}
+    \endquotation
+
+    \brief Inspect the state of your application while it is running.
 
     You can use debuggers to:
 
@@ -20,19 +26,19 @@
         \li Debug executable binary files - GNU Symbolic Debugger (GDB),
             the Microsoft Console Debugger (CDB), and the debugger of the
             low level virtual machine (LLVM) project, LLDB.
-        \li Debug QML and Java code and Qt Quick applications -
+        \li Debug QML and JavaScript code and Qt Quick applications -
             QML/JavaScript debugger.
         \li Debug Python source code - PDB.
     \endlist
 
-    \section1 Setting Up the Debugger
+    \section1 Setting up the debugger
 
     \QC automatically selects a suitable debugger for
-    each \l{Kits}{kit} from the ones found on your system. You can select
+    each \l{Managing kits}{kit} from the ones found on your system. You can select
     another kit. To specify the debugger and compiler to use for each kit, go to
     \preferences > \uicontrol Kits.
 
-    \image qtcreator-kits.png {Kits preferences}
+    \image {qtcreator-preferences-kits.webp} {Kits preferences}
 
     You need to set up the debugger only if the automatic setup fails because
     the debugger is missing (for example, you must install the CDB
@@ -47,19 +53,24 @@
     parameters in the cloned kit. Make sure to enable the cloned kit
     for your project.
 
+    \section2 Showing more debuggers
+
     If the debugger you want to use is not automatically detected, go to
     \preferences > \uicontrol Kits >
     \uicontrol Debuggers > \uicontrol Add to add it.
 
-    \image qtcreator-preferences-kits-debuggers.webp {Debuggers tab in Kits preferences}
+    \image {qtcreator-preferences-kits-debuggers.webp} {Debuggers tab in Kits preferences}
+
+    To refresh the list of automatically detected debuggers, select
+    \uicontrol {Re-detect}.
 
     To use the debugging tools for Windows, you must install them.
     Optionally, you can set up the Microsoft Symbol Server if you need
     symbol information from Microsoft modules that is not found locally.
 
-    For more information, see \l{Supported Debuggers} and \l{CDB Paths}.
+    For more information, see \l{Supported debuggers} and \l{CDB Paths}.
 
-    \section1 Launching the Debugger
+    \section1 Launching the debugger
 
     The debuggers run in various operating modes
     depending on where and how you start and run the debugged process. Some of
@@ -90,7 +101,7 @@
     options from the \uicontrol Debug > \uicontrol {Start Debugging} menu to
     select other modes of operation.
 
-    \section2 GDB Run Modes
+    \section2 GDB run modes
 
     The GDB debugger runs in different modes to cope with the variety of
     supported platforms and environments:
@@ -105,7 +116,7 @@
         \li \e{Remote mode} interacts with the GDB server running on Linux.
     \endlist
 
-    \section1 Stopping Applications
+    \section1 Stopping applications
 
     You can interrupt a running application before it terminates
     or to find out why the application does not work correctly.
@@ -118,22 +129,22 @@
 
     To interrupt a running C++ application, go to \uicontrol Debug >
     \uicontrol Interrupt. The debugger automatically interrupts
-    the application when it hits a \l {Setting Breakpoints}{breakpoint}.
+    the application when it hits a \l {Setting breakpoints}{breakpoint}.
 
     Once the application stops, \QC:
 
     \list
 
-        \li Retrieves data representing the \l{Viewing Call Stack Trace}
+        \li Retrieves data representing the \l{Viewing call stack trace}
             {call stack} at the application's current position.
 
-        \li Retrieves the contents of \l{Local Variables and Function Parameters}
+        \li Retrieves the contents of \l{Local variables and function parameters}
             {local variables}.
 
-        \li Examines \l{Evaluating Expressions}{expressions}.
+        \li Examines \l{Evaluating expressions}{expressions}.
 
-        \li Updates the \l{Viewing and Editing Register State}{Registers},
-            \l{Viewing Modules}{Modules}, and \l{Viewing Disassembled Code}
+        \li Updates the \l{Viewing and editing register state}{Registers},
+            \l{Viewing modules}{Modules}, and \l{Viewing disassembled code}
             {Disassembler} views if you are debugging C++ based applications.
 
     \endlist
@@ -141,7 +152,7 @@
     You can examine and change variables, set or remove breakpoints, and then
     continue running the application.
 
-    \section1 Examining Data
+    \section1 Examining data
 
     When the application stops, you can examine certain data in the debugger. The
     availability of data depends on the compiler settings when compiling the
@@ -161,35 +172,27 @@
 
     \youtube EhJ1eV_6RH8
 
-    \section1 Remote Debugging
+    \section1 Remote debugging
 
-    \QC makes remote debugging easy. In general, the remote debugging setup
-    consist of a probe running on the remote computer and a counterpart running
-    on the host. The probe is either integrated into the running
-    process (for example, for QML debugging) or runs a separate process
-    (for example, when using GDB server on embedded Linux). The host
-    side typically consists of \QC itself, often with the help of an external
-    process, such as GDB or CDB.
+    \QC makes remote debugging easy. In the common case where the remote machine
+    already has a debug server like GDBserver installed and remote execution
+    of an application is already set up and works by selecting the \uicontrol
+    Run button (or \key{Ctrl+R}), debugging can be started by selecting the
+    \uicontrol Debug button (or \key{F5}).
 
-    While this setup might look daunting, it is mostly invisible to the user of
-    \QC. To start debugging on a remote target with the necessary helper
-    processes running, activate the corresponding \l{Activate kits for a project}
-    {kit} in \uicontrol Projects > \uicontrol {Build & Run}, and then select a
-    function to start remote debugging in the \uicontrol Debug >
-    \uicontrol {Start Debugging} menu.
+    In this case, \QC launches and connects the debug server and the application
+    on the remote machine and the actual debugger on the development host
+    in the right order automatically.
 
-    Special use cases, such as attaching to a running process on the target,
-    might still require manual setup. You can debug an application that runs on
-    a remote target with the necessary helper processes also running.
+    For some exceptional cases where this fully automated setup and execution
+    of remote debugging is not possible, \QC offers semi-automatic solutions,
+    see \l{Debug remotely with GDB} and \l{Debug remotely with CDB}.
 
-    For more information, see \l{Debug remotely with GDB} and
-    \l{Debug remotely with CDB}.
-
-    \section1 Using Debugging Helpers
+    \section1 Using debugging helpers
 
     To show complex structures, such as \c QObjects or associative containers,
     in a clear and concise manner, \QC uses Python scripts that are called
-    \l{Debugging Helpers}{debugging helpers}.
+    \l{Debugging helpers}{debugging helpers}.
 
     \QC ships with debugging helpers for more than 200 of the most popular Qt
     classes, standard C++ containers, and smart pointers, covering the usual
@@ -206,11 +209,11 @@
     objects and user interfaces, as well as execute JavaScript
     expressions.
 
-    For more information, see \l{Debugging Qt Quick Projects} and
+    For more information, see \l{Debugging Qt Quick projects} and
     \l{Tutorial: Qt Quick debugging}.
 
-    \sa {Tutorial: C++ debugging}, {Debug}{How To: Debug}, {Debuggers},
-    {Debugger}, {Kits}
+    \sa {Tutorial: C++ debugging}, {Debug}{How to: Debug}, {Debuggers},
+    {Managing kits}
 */
 
 /*!
@@ -225,9 +228,10 @@
     debugger in the following ways:
 
     \list
-        \li Select \inlineimage icons/qtcreator-debug-button.png
+        \li Select
+            \inlineimage {icons/qtcreator-debug-button.png} {Start Debugging of Startup Project}
             (\uicontrol {Start Debugging of Startup Project}).
-        \li Press \key F5.
+        \li Select \key F5.
         \li Enter \c {dr} in the locator, and select the project to debug.
         \li Go to \uicontrol Debug > \uicontrol {Start Debugging} >
             \uicontrol {Start Debugging of Startup Project}.
@@ -245,7 +249,7 @@
     parameters.
 
     You can specify breakpoints before or after launching the debugger.
-    For more information, see \l{Setting Breakpoints}.
+    For more information, see \l{Setting breakpoints}.
 
     \section1 Execute GDB or CDB commands
 
@@ -269,9 +273,7 @@
 
     \QC does not support mixed-mode debugging, but you can attach GDB to the
     Python interpreter to debug the C++ implementation of the corresponding
-    Python code. For more information, see
-    \l{https://doc.qt.io/qtforpython-6/tutorials/debugging/qtcreator/qtcreator.html}
-    {Debugging PySide with Qt Creator (Linux)}.
+    Python code. For more information, see \l{Debugging PySide with \QC (Linux)}.
 
     \section1 Debug console applications
 
@@ -282,12 +284,12 @@
 
     If a console application does not start up properly in the configured
     console and the subsequent attach fails, you can diagnose the issue by
-    using CDB's native console. Go to \preferences >
+    using the native CDB console. Go to \preferences >
     \uicontrol Debugger > \uicontrol CDB > \uicontrol {Use CDB console} to
     override the console set in the Windows system environment variables.
     Note that the native console does not prompt on application exit.
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */
 
 /*!
@@ -299,7 +301,7 @@
     \title Start and debug an external application
 
     To debug any executable on your local or on a remote
-    machine without using a project, specify a build and run \l{Kits}{kit} that
+    machine without using a project, specify a build and run \l{Managing kits}{kit} that
     identifies the device to debug the application on.
 
     While the \e{start external} debugger mode does not strictly require a
@@ -311,7 +313,7 @@
     \list 1
         \li Go to \uicontrol Debug > \uicontrol {Start Debugging} >
             \uicontrol {Start and Debug External Application}.
-        \image qtcreator-debugger-start-external.png
+        \image {qtcreator-debugger-start-external.png} {Start and Debug External Application dialog}
         \li In \uicontrol Kit, select the build and run kit to
             use for building the project.
         \li In \uicontrol {Local executable}, specify the path to the
@@ -340,8 +342,8 @@
             configuration to use.
     \endlist
 
-    \sa {Activate kits for a project}, {Debug}{How To: Debug}, {Debugging},
-    {Debuggers}, {Debugger}
+    \sa {Activate kits for a project}, {Debug}{How to: Debug}, {Debugging},
+    {Debuggers}
 */
 
 /*!
@@ -358,7 +360,7 @@
     \list 1
         \li Go to \uicontrol Debug > \uicontrol {Start Debugging} >
             \uicontrol {Attach to Running Application}.
-            \image qtcreator-debugger-attach-to-running.png
+            \image {qtcreator-debugger-attach-to-running.png} {Attach to Running Application dialog}
         \li In \uicontrol Filter, enter a string to filter processes
             by their process ID or name.
         \li Select a process in the list, and then select
@@ -373,9 +375,9 @@
     opening it makes setting breakpoints and stepping through the code easier.
 
     You can specify breakpoints before or after attaching the debugger to the
-    application. For more information, see \l{Setting Breakpoints}.
+    application. For more information, see \l{Setting breakpoints}.
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */
 
 /*!
@@ -392,7 +394,7 @@
     \list 1
         \li Go to \uicontrol Debug > \uicontrol {Start Debugging} >
             \uicontrol {Attach to Unstarted Application}.
-            \image qtcreator-debugger-attach-to-process-not-yet-started.png
+            \image {qtcreator-debugger-attach-to-process-not-yet-started.png} {Attach to Unstarted Application dialog}
         \li In \uicontrol Kit, select the build and run kit to
             use for building the project.
         \li In \uicontrol Executable, specify the path to the
@@ -405,8 +407,8 @@
             process to start.
     \endlist
 
-    \sa {Activate kits for a project}, {Debug}{How To: Debug}, {Debugging},
-    {Debuggers}, {Debugger}
+    \sa {Activate kits for a project}, {Debug}{How to: Debug}, {Debugging},
+    {Debuggers}
 */
 
 /*!
@@ -421,6 +423,8 @@
     generated from crashed processes on Linux and Unix systems if the system is
     set up to allow this.
 
+    \section1 Get core files
+
     To enable the dumping of core files on a Unix system, enter the following
     command in the shell from which the application is launched:
 
@@ -428,12 +432,14 @@
     ulimit -c unlimited
     \endcode
 
+    \section1 Attach to a core file
+
     To launch the debugger in the core mode:
 
     \list 1
-        \li Go to \uicontrol Debug > \uicontrol {Start Debugging} >
-            \uicontrol {Load Core File}.
-            \image qtcreator-debugger-load-core-file.png
+        \li Go to \uicontrol Debug > \uicontrol {Start Debugging}, and then
+            select \uicontrol {Load Core File}.
+            \image {qtcreator-debugger-load-core-file.png} {Load Core File dialog}
         \li In \uicontrol Kit, select a build and run kit that was
             used for building the binary for which the core file was created.
             If the core file stems from a binary not built by \QC or a process
@@ -452,10 +458,19 @@
             the \c sysroot to use instead of the default \c sysroot.
     \endlist
 
-    Even though using a properly configured project that has the sources of the
-    crashed application is not strictly necessary, it is helpful.
+    For better results, use a properly configured project that has the sources of
+    the crashed application.
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger}, {Kits}
+    \section1 Attach to the latest core file
+
+    On Linux systems, \QC uses the \c coredumpctl command provided by the
+    \c systemd crash handling to get core files. For more information, see
+    \l {systemd-coredump}.
+
+    To attach to the latest core file, go to \uicontrol Debug >
+    \uicontrol {Start Debugging}, and then select \uicontrol {Load Last Core File}.
+
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}, {Managing kits}
 */
 
 /*!
@@ -466,19 +481,20 @@
 
     \title Debug crashed processes on Windows
 
-    The \e{post-mortem} debugger operating mode is available only on Windows,
-    if you installed the debugging tools for Windows.
+    You can launch the debugger in the \e {post-mortem} debugger operating mode
+    if an application crashes on Windows. Select \uicontrol {Debug in \QC} in the
+    error message from the Windows operating system.
 
-    The \QC installation program asks you whether you want to register \QC as a
-    post-mortem debugger. To change the setting, go to
-    \preferences > \uicontrol Debugger >
-    \uicontrol General > \uicontrol {Use \QC for post-mortem debugging}.
+    You can use the post-mortem debugger only on Windows, and you must first
+    install the debugging tools for Windows.
 
-    You can launch the debugger in the post-mortem mode if an application
-    crashes on Windows. Click the \uicontrol {Debug in \QC} button in the error
-    message from the Windows operating system.
+    To register \QC as a post-mortem debugger, go to \preferences >
+    \uicontrol Debugger > \uicontrol General, and then select
+    \uicontrol {Use \QC for post-mortem debugging}.
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger}
+    \image {qtcreator-preferences-debugger-general.webp} {General tab in Debugger preferences}
+
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */
 
 /*!
@@ -507,8 +523,8 @@
 
     \endlist
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger},
-    {Command-Line Options}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers},
+    {Command-line options}
 */
 
 /*!
@@ -516,23 +532,51 @@
     \previouspage creator-how-tos.html
 
     \ingroup creator-how-to-debug
+    \ingroup creator-how-to-b2qt
+    \ingroup creator-how-to-remote-linux
+    \ingroup creator-how-to-qnx
 
     \title Debug remotely with GDB
 
-    When debugging on a target supported by GDB server, a local GDB process
-    talks to a GDB server running on the remote machine that controls the
-    process to be debugged.
+    In the common case where the remote machine or container already has GDBserver
+    installed and remote execution of an application is already set up
+    and works by selecting the \uicontrol Run button (or \key{Ctrl+R}), you can
+    start remote debugging by selecting the \uicontrol Debug button (or \key{F5}).
 
-    The GDB server process is started on the remote machines by passing a port
-    number and the executable:
+    In this case, \QC launches and connects the debug server and the application
+    on the remote machine and the actual debugger on the development host
+    in the right order automatically.
+
+    This is the preferred method.
+
+    If the requirements for this automated setup are not met but your remote
+    machine is capable of running GDB server (or any compatible probe using the
+    GDB serial protocol), you can still use \QC to debug your application.
+
+    \section1 Application running, SSH access to remote machine available
+
+    If you want to attach to an application that is already running
+    on the remote machine and a debug server can be started via SSH from the
+    local machine host, go to \uicontrol Debug > \uicontrol {Start Debugging}
+    > \uicontrol {Attach to running applications}.
+
+    \section1 Application not running, terminal access to remote machine available
+
+    If a debug server cannot be started via SSH from the local machine,
+    check your device documentation for alternative means to start a debug
+    server.
+
+    If you have some terminal access to the remote machine, and a GDB server
+    installed there, you can manually transfer the executable to the remote
+    machine and start \c {gdbserver} by passing a port number and the executable:
 
     \code
-    gdbserver :1234 <executable>
+    gdbserver :1234 /path/to/executable
     \endcode
 
     It then typically responds:
     \code
-    Process bin/qtcreator created; pid = 5159
+    Process /path/to/executable created; pid = 5159
     Listening on port 1234
     \endcode
 
@@ -542,7 +586,7 @@
 
         \li Go to \uicontrol Debug > \uicontrol {Start Debugging} >
             \uicontrol {Attach to Running Debug Server}.
-            \image qtcreator-debugger-attach-to-running-debug-server.png
+            \image {qtcreator-debugger-attach-to-running-debug-server.png} {Attach to Running Debug Server dialog}
         \li In \uicontrol Kit, select the build and run kit to
             use for building the project.
         \li In \uicontrol {Server port}, enter the name of the remote
@@ -586,10 +630,18 @@
     \uicontrol Debugger > \uicontrol GDB.
 
     For more information about connecting with \c {target extended-remote} mode
-    in GDB, see \l{https://sourceware.org/gdb/onlinedocs/gdb/Connecting.html}
-    {Debugging with GDB: Connecting to a Remote Target}.
+    in GDB, see \l{Debugging with GDB: Connecting to a Remote Target}.
 
-    \section1 Use SSH port forwarding
+    \section1 Application running, terminal access to remote machine and gdbserver available
+
+    This case is almost identical to the previous section, except that
+    \c {gdbserver} is started differently:
+
+    \code
+    gdbserver --attach :1234 <PID of running application>
+    \endcode
+
+    \section2 Use SSH port forwarding
 
     To enable debugging on remote targets that cannot expose GDB server ports,
     map the remote ports to local ports using SSH tunneling. \QC automatically
@@ -599,23 +651,59 @@
 
     \list 1
         \li Go to \preferences > \uicontrol Devices.
-            \image qtcreator-preferences-devices-remote-linux.webp {Remote Linux device preferences}
+            \image {qtcreator-preferences-devices-remote-linux.webp} {Remote Linux device in Devices preferences}
         \li In \uicontrol Device, select \uicontrol {Remote Linux Device}.
         \li Select \uicontrol {Use SSH port forwarding for debugging}.
-        \li Select \uicontrol OK.
+        \li Select \uicontrol Apply.
     \endlist
 
-    \sa {Debug}{How To: Debug}, {Remote Linux}{How To: Develop for remote Linux},
-    {GDB}, {Debugging}, {Debuggers}, {Debugger}, {Kits}
+    \section1 GDB server started by a command
+
+    If you want to automate and persist the GDB server setup as part of your
+    project (for example, you have a script that starts \c {gdbserver} on a
+    remote device), add a \uicontrol {Remote Debugger} run configuration. The
+    launcher command runs automatically each time you start debugging, so you
+    do not need to set up the connection manually.
+
+    To add a Remote Debugger run configuration:
+
+    \list 1
+        \li Go to \uicontrol Projects > \uicontrol {Run Settings}.
+        \li Select \uicontrol Add > \uicontrol {Remote Debugger} >
+            \uicontrol {Create}.
+        \li In \uicontrol {Command}, specify a script or command
+            that sets up the GDB server connection.
+        \li In \uicontrol {Command line arguments}, specify any arguments
+            to pass to the launcher command.
+        \li In \uicontrol {Symbol file (local executable)}, specify the
+            path to the application executable on the local machine.
+        \li In \uicontrol {Server channel}, specify the communication
+            channel to use. The default is \c {tcp://127.0.0.1:1234}.
+        \li Select \uicontrol {Break at "main"} to stop the debugger
+            at the main function.
+        \li Select \uicontrol {Run in terminal} for console applications.
+        \li Select \uicontrol {Use "target extended-remote" to connect}
+            to connect in extended-remote mode.
+        \li Select the run configuration in the kit selector and press
+            \key {F5} to start debugging.
+    \endlist
+
+    \sa {Debug}{How to: Debug}, {Remote Linux}{How to: Develop for remote Linux},
+    {GDB}, {Debugging}, {Debuggers}, {Managing kits}
 */
 
 /*!
     \page creator-how-to-debug-remotely-cdb.html
     \previouspage creator-how-tos.html
-
     \ingroup creator-how-to-debug
-
     \title Debug remotely with CDB
+
+    If your remote machine or container runs Windows and your application was
+    compiled using MSVC, you can use CDB for remote debugging.
+
+    If remote execution of an application is already set up and works by selecting
+    the \uicontrol Run button (or \key{Ctrl+R}), you can start remote debugging
+    by selecting the \uicontrol Debug button (or \key{F5}).
 
     In remote mode, the local CDB process talks to a CDB process that runs on
     the remote machine. The process is started with special command-line options
@@ -676,14 +764,14 @@
             ssl:proto=Protocol,{certuser=Cert|machuser=Cert},clicon=Server,port=Socket[,password=Password]
             \endcode
 
-            \li  Click \uicontrol OK to start debugging.
+            \li  Select \uicontrol OK to start debugging.
 
     \endlist
 
     To specify settings for managing the CDB process, go to \preferences >
     \uicontrol Debugger > \uicontrol CDB.
 
-    \sa {Debug}{How To: Debug}, {CDB}, {Debugging}, {Debuggers}, {Debugger}
+    \sa {Debug}{How to: Debug}, {CDB}, {Debugging}, {Debuggers}
 */
 
 
@@ -691,16 +779,16 @@
     \page creator-debug-mode.html
     \previouspage creator-reference.html
 
-    \ingroup creator-reference-debugger-views
+    \ingroup creator-reference-debugger
 
-    \title Debug Mode Views
+    \title Debug mode views
 
     \brief Inspect the state of your application while debugging.
 
     In the \uicontrol Debug mode, you can inspect the state of your
     application while debugging.
 
-    \image qtcreator-debugger-views.webp {Debug mode views while debugging}
+    \image {qtcreator-debugger-views.webp} {Debug mode views while debugging}
 
     You can interact with the debugger in many ways:
 
@@ -737,7 +825,7 @@
         \li Stack
         \li Examine the nested function calls leading to the current position
             as a call stack trace.
-        \li \l {Viewing Call Stack Trace}
+        \li \l {Viewing call stack trace}
     \row
         \li Breakpoint Preset
 
@@ -745,33 +833,33 @@
         \li Set \e {breakpoints} with conditions to make the application stop in
             a controlled way. A \e {watchpoint} stops the application when the
             value of an expression changes.
-        \li \l {Setting Breakpoints}
+        \li \l {Setting breakpoints}
     \row
         \li Threads
         \li Switch between threads.
-        \li \l {Viewing Threads}
+        \li \l {Viewing threads}
     \row
         \li Modules
         \li View information about modules included in the application.
-        \li \l {Viewing Modules}
+        \li \l {Viewing modules}
     \row
         \li Source Files
         \li View a list of source files included in the project.
-        \li \l {Viewing Source Files}
+        \li \l {Viewing source files}
     \row
         \li Locals
         \li View information about the parameters of the function in the topmost
             stack frame and local variables.
-        \li \l {Local Variables and Function Parameters}
+        \li \l {Local variables and function parameters}
     \row
         \li Expressions
         \li Compute values of arithmetic expressions or function calls.
-        \li \l {Evaluating Expressions}
+        \li \l {Evaluating expressions}
     \row
         \li Registers
         \li View the current state of the CPU registers to examine the
             application at the machine level.
-        \li \l {Viewing and Editing Register State}
+        \li \l {Viewing and editing register state}
     \row
         \li Peripheral Registers
         \li View the current state of peripheral registers.
@@ -785,28 +873,28 @@
             The log view acts as a console, so you can send the contents
             of the line under the text cursor in the log directly to the
             debugger.
-        \li \l{Troubleshooting Debugger}
+        \li \l{Troubleshooting debugger}
 
             \l {Debugger Log}
      \row
         \li Disassembler
         \li View disassembled code for the current function.
-        \li \l {Viewing Disassembled Code}
+        \li \l {Viewing disassembled code}
      \row
         \li Editor
         \li Open the current source file in the text editor for changing it.
-        \li \l {Edit Mode}
+        \li \l {Editing code}
     \endtable
 
     \note The \uicontrol Views menu shows some views only while you are
     debugging.
 
-    \section1 Managing Debug Views
+    \section1 Managing Debug views
 
     When you are not debugging, the \uicontrol Debug mode shows the
     \uicontrol {Debugger Preset} perspective:
 
-    \image qtcreator-debugger-views-initial.webp {Initial Debug mode views}
+    \image {qtcreator-debugger-views-initial.webp} {Initial Debug mode views}
 
     During debugging, the mode shows the views that you usually need to
     debug C++ or QML applications. To show other views or to hide views,
@@ -820,12 +908,12 @@
     To show and hide columns in views, toggle \uicontrol {Show Column} in
     the context menu.
 
-    \section1 Customizing Debug Views
+    \section1 Customizing Debug views
 
     To change the appearance and behavior of the debug views, set preferences
     in \preferences > \uicontrol Debugger > \uicontrol General.
 
-    \image qtcreator-debugger-general-options.png {General tab in Debugger preferences}
+    \image {qtcreator-preferences-debugger-general.webp} {General tab in Debugger preferences}
 
     For example, you can:
 
@@ -839,8 +927,7 @@
             interrupted.
     \endlist
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger},
-    {Debugger Views}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */
 
 /*!
@@ -854,9 +941,9 @@
     To display the value of a simple variable, hover the mouse pointer over its
     name in the code editor.
 
-    \image qtcreator-debugger-value-tooltips.webp {Value tooltip in code editor}
+    \image {qtcreator-debugger-value-tooltips.webp} {Value tooltip in code editor}
 
-    To keep the tooltip visible, click the pin button.
+    To keep the tooltip visible, select the pin button.
     You can expand pinned tooltips to view their full content.
 
     Pinned tooltips are stored in the session. To close all pinned tooltips,
@@ -867,8 +954,7 @@
     \uicontrol Debugger > \uicontrol General >
     \uicontrol {Use tooltips in main editor when debugging}.
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger},
-    {Debugger Views}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */
 
 /*!
@@ -883,10 +969,10 @@
     concise manner to simplify the debugging process without losing the power
     of the debuggers.
 
-    \image qtcreator-locals.png {Locals view}
+    \image {qtcreator-locals.png} {Locals view}
 
-    The \l {Local Variables and Function Parameters}{Locals} and
-    \l {Evaluating Expressions}{Expressions} views show structured
+    The \l {Local variables and function parameters}{Locals} and
+    \l {Evaluating expressions}{Expressions} views show structured
     data, such as objects of \c class, \c struct, or \c union types, as a tree.
     To access sub-structures of the objects, expand the tree nodes.
     The tree shows the sub-structures in their in-memory order. To show them
@@ -908,11 +994,11 @@
 
     To show complex structures, such as \c QObjects or associative containers,
     in a clear and concise manner, \QC uses Python scripts that are called
-    \l{Debugging Helpers}{debugging helpers}.
+    \l{Debugging helpers}{debugging helpers}.
 
     In addition to the generic IDE functionality of the
-    \l {Viewing Call Stack Trace}{Stack}, \uicontrol {Locals},
-    \uicontrol {Expressions}, \l {Viewing and Editing Register State}{Registers},
+    \l {Viewing call stack trace}{Stack}, \uicontrol {Locals},
+    \uicontrol {Expressions}, \l {Viewing and editing register state}{Registers},
     and other views, \QC makes debugging Qt-based applications easy. The debugger
     plugin understands the internal layout of several Qt classes, for example,
     QString, the Qt containers, and most importantly QObject (and classes derived
@@ -921,12 +1007,10 @@
     classes in a useful way.
 
     To change the number of array elements that are
-    requested when expanding entries, go to \preferences > \uicontrol {Debugging}
+    requested when expanding entries, go to \preferences > \uicontrol {Debugger}
     > \uicontrol {Locals & Expressions} > \uicontrol {Default array size}.
 
-
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger},
-    {Debugger Views}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */
 
 /*!
@@ -947,25 +1031,25 @@
             \li Keyboard Shortcut
             \li Description
         \row
-            \li \inlineimage icons/qtcreator-debug-button-stop.png
+            \li \inlineimage {icons/qtcreator-debug-button-stop.png} {Stop Debugger}
             \li \uicontrol {Stop Debugger}
             \li \key {Shift+F5}
             \li Stops the debugger.
         \row
-            \li \inlineimage icons/debugger_stepover_small.png
+            \li \inlineimage {icons/debugger_stepover_small.png} {Step Over}
             \li \uicontrol {Step Over}
             \li \key F10 (\key {Command+Shift+O} on \macos)
             \li Steps over the next line inside the function being debugged. It
                 executes the call and moves to the next line to be executed in
                 the function.
         \row
-            \li \inlineimage icons/debugger_stepinto_small.png
+            \li \inlineimage {icons/debugger_stepinto_small.png} {Step Into}
             \li \uicontrol {Step Into}
             \li \key F11 (\key {Command+Shift+I} on \macos)
             \li Steps into the line that it is currently on. For a function call,
                 goes into the function and is ready to continue.
         \row
-            \li \inlineimage icons/debugger_stepout_small.png
+            \li \inlineimage {icons/debugger_stepout_small.png} {Step Out}
             \li \uicontrol {Step Out}
             \li \key {Shift+F11} (\key {Command+Shift+T} on \macos)
             \li Finishes executing the function and exits to the function that
@@ -986,7 +1070,7 @@
             \li Runs to the selected function when you are stepping into a nested
                 function.
         \row
-            \li \inlineimage icons/qtcreator-debugging-continue.png
+            \li \inlineimage {icons/qtcreator-debugging-continue.png} {Continue}
             \li \uicontrol {Continue}
             \li \key F5
             \li Resumes application execution at the address where it last
@@ -1012,8 +1096,7 @@
     \uicontrol {Use debug versions of Frameworks} option in the project run
     settings.
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger},
-    {Debugger Views}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */
 
 /*!
@@ -1039,11 +1122,15 @@
     In the \uicontrol {Locals} or the \uicontrol {Expressions} view, select
     \uicontrol {Change Value Display Format} in the context menu to change the
     value display format. The available options depend on the type of the
-    current items, and are provided by \l{Debugging Helpers}{debugging helpers}.
+    current items, and are provided by \l{Debugging helpers}{debugging helpers}.
 
     To force a plain C-like display of structures, go to \preferences >
     \uicontrol Debugger > \uicontrol {Locals & Expressions}, and then clear
-    \uicontrol {Use Debugging Helpers}. This still uses the
+    \uicontrol {Use Debugging Helpers}.
+
+    \image {qtcreator-debugging-helper-options.webp} {Locals & Expressions tab in Debugger preferences}
+
+    This still uses the
     Python scripts, but generates more basic output. To force the plain display
     for a single object or for all objects of a given type, select
     \uicontrol {Change Value Display Format} > \uicontrol Raw in the context
@@ -1069,8 +1156,8 @@
     You can use the \uicontrol {Locals} and \uicontrol {Expressions} view to change
     the contents of variables of simple data types, for example, \c int, \c float,
     \c QString and \c std::string when the application is interrupted. To do so,
-    click the \uicontrol Value column, modify the value with the inplace editor,
-    and press \key Enter.
+    select the \uicontrol Value column, modify the value with the inplace editor,
+    and select \key Enter.
 
     To change the complete contents of QVector or \c std::vector values, type
     all values separated by commas into the \uicontrol Value column of the main
@@ -1082,10 +1169,8 @@
 
     If an instance of a class is derived from QObject, you can find all other
     objects connected to this object's slots with Qt's signals and slots
-    mechanism. Go to \preferences > \uicontrol {Debugging} >
+    mechanism. Go to \preferences > \uicontrol {Debugger} >
     \uicontrol {Locals & Expressions} > \uicontrol {Use Debugging Helpers}.
-
-    \image qtcreator-debugging-helper-options.webp {Locals & Expressions preferences}
 
     In the \uicontrol Locals view, expand the object's entry and open the slot
     in the \e slots subitem. The view shows the objects connected to this slot
@@ -1096,7 +1181,7 @@
     If you cannot debug Qt objects because their data is corrupted, you can
     switch off the debugging helpers to make low-level structures visible.
 
-    To switch off the debugging helpers, deselect
+    To switch off the debugging helpers, clear
     \uicontrol {Use Debugging Helpers} in \preferences >
     \uicontrol Debugger > \uicontrol {Locals & Expressions}.
 
@@ -1115,20 +1200,20 @@
 
     \note Creating snapshots involves creating core files of the debugged process,
     requiring significant amount of disk space. For details, see
-    \l{https://sourceware.org/gdb/onlinedocs/gdb/Core-File-Generation.html}.
+    \l{Debugging with GDB: How to Produce a Core File from Your Program}.
 
     \endomit
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */
 
 /*!
     \page creator-threads-view.html
     \previouspage creator-debug-mode.html
 
-    \ingroup creator-reference-debugger-views
+    \ingroup creator-reference-debugger
 
-    \title Viewing Threads
+    \title Viewing threads
 
     \brief View the threads currently active in a multi-threaded application.
 
@@ -1141,26 +1226,26 @@
     currently active in the application and switch between them in the
     \uicontrol Threads view (1):
 
-    \image qtcreator-debugger-threads.webp {Threads view}
+    \image {qtcreator-debugger-threads.webp} {Threads view}
 
     You can also select a thread in the \uicontrol Threads field (2) on the
     debugger toolbar.
 
     This allows you to select the thread that is in the focus of the debugger.
 
-    The \l {Viewing Call Stack Trace}{Stack} view adjusts its contents
+    The \l {Viewing call stack trace}{Stack} view adjusts its contents
     accordingly.
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */
 
 /*!
     \page creator-modules-view.html
     \previouspage creator-debug-mode.html
 
-    \ingroup creator-reference-debugger-views
+    \ingroup creator-reference-debugger
 
-    \title Viewing Modules
+    \title Viewing modules
 
     \brief View information about the modules included in a debugged application.
 
@@ -1175,7 +1260,7 @@
         \li A dynamic shared library (\c {.dylib}) in \macos
     \endlist
 
-    \image qtcreator-debugger-modules.webp {Modules view}
+    \image {qtcreator-debugger-modules.webp} {Modules view}
 
     In addition, the view displays symbols within the modules and indicates
     where each module was loaded. Right-click column headers to show and
@@ -1201,34 +1286,34 @@
 
         \li Show sections in modules
 
-        \li Set \l{Debugger}{debugger preferences}
+        \li Set \l{Debuggers}{debugger preferences}
 
     \endlist
 
     By default, the \uicontrol Modules view is hidden. To show it, select it in
     \uicontrol Views on the debugger toolbar.
 
-    \section1 Breaking on Loading Modules in CDB
+    \section1 Breaking on loading modules in CDB
 
     When using CDB as debug backend, you can specify that the debugger should
     break when application modules are loaded or unloaded. To enable breaking
     for the specified modules, go to \preferences > \uicontrol Debugger >
     \uicontrol CDB.
 
-    \image qtcreator-cdb-options.png {CDB tab in Debugger preferences}
+    \image {qtcreator-preferences-debugger-cdb.webp} {CDB tab in Debugger preferences}
 
     For more information, see \l{CDB}.
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */
 
 /*!
     \page creator-source-files-view.html
     \previouspage creator-debug-mode.html
 
-    \ingroup creator-reference-debugger-views
+    \ingroup creator-reference-debugger
 
-    \title Viewing Source Files
+    \title Viewing source files
 
     \brief View source files included in a debugged project.
 
@@ -1237,40 +1322,40 @@
     the source file is actually part of the project, or whether it was compiled
     elsewhere. The view shows the path to each file in the file system.
 
-    \image qtcreator-debugger-source-files.webp {Source Files view}
+    \image {qtcreator-debugger-source-files.webp} {Source Files view}
 
     Right-click the view to select the following actions:
 
     \list
         \li Reload data
         \li Open the selected file
-        \li Set \l{Debugger}{debugger preferences}
+        \li Set \l{Debuggers}{debugger preferences}
     \endlist
 
     By default, the \uicontrol {Source Files} view is hidden. To show it, select
     it in \uicontrol Views on the debugger toolbar.
 
-    \section1 External Sources
+    \section1 External sources
 
     To enable the debugger to step into the code and display the source code
     when using a copy of the source tree at a location different from the one
     at which the libraries were built, you can map source paths to target
     paths in \preferences > \uicontrol Debugger > \uicontrol General.
 
-    \image qtcreator-debugger-general-options.png {General tab in Debugger preferences}
+    \image {qtcreator-preferences-debugger-general.webp} {General tab in Debugger preferences}
 
-    For more information, see \l{Source Paths Mapping}.
+    For more information, see \l{Source paths mapping}.
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */
 
 /*!
     \page creator-registers-view.html
     \previouspage creator-debug-mode.html
 
-    \ingroup creator-reference-debugger-views
+    \ingroup creator-reference-debugger
 
-    \title Viewing and Editing Register State
+    \title Viewing and editing register state
 
     \brief View the current state of general-purpose and special-purpose CPU
     registers.
@@ -1283,7 +1368,7 @@
     and special-purpose CPU registers. The available registers depend on the CPU
     type.
 
-    \image qtcreator-debugger-registers-view.webp {Registers view}
+    \image {qtcreator-debugger-registers-view.webp} {Registers view}
 
     You can view register values when the application stops. Double-click
     register values to edit them.
@@ -1298,16 +1383,16 @@
 
     \list
         \li Reload register list.
-        \li Open \l {Examining Memory}{Memory Editor} at the selected value.
-        \li Open the \l {Viewing Disassembled Code}{Disassembler} view.
+        \li Open \l {Examining memory}{Memory Editor} at the selected value.
+        \li Open the \l {Viewing disassembled code}{Disassembler} view.
         \li Display a value in hexadecimal, decimal, octal, or binary format.
-        \li Set \l{Debugger}{debugger preferences}.
+        \li Set \l{Debuggers}{debugger preferences}.
     \endlist
 
     By default, the \uicontrol Registers view is hidden. To show it, select it in
     \uicontrol Views on the debugger toolbar.
 
-    \section1 Examining Memory
+    \section1 Examining memory
 
     You can examine memory in many formats, independently of the application's
     data types.
@@ -1316,7 +1401,7 @@
     and then select \uicontrol {Open Memory Editor at <value>} or
     \uicontrol {Open Memory View at <value>} in the context menu:
 
-    \image qtcreator-debugger-memory-editor.webp {Memory Editor}
+    \image {qtcreator-debugger-memory-editor.webp} {Memory Editor}
 
     Hover the mouse pointer on a value to see details as a tooltip.
 
@@ -1328,14 +1413,14 @@
         \li Jump to the selected address in the current data view or a new one.
     \endlist
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */
 
 /*!
     \page creator-peripheral-registers-view.html
     \previouspage creator-debug-mode.html
 
-    \ingroup creator-reference-debugger-views
+    \ingroup creator-reference-debugger
 
     \title Peripheral Registers
 
@@ -1349,7 +1434,7 @@
     peripheral device, the application accesses its I/O addresses with a load
     or store instruction that the CPU issues.
 
-    \image qtcreator-debugger-peripheral-registers-view.webp {Peripheral Registers view}
+    \image {qtcreator-debugger-peripheral-registers-view.webp} {Peripheral Registers view}
 
     The \uicontrol Access column shows whether the register is read-and-write
     (\uicontrol RW), read-only (\uicontrol RO), or write-only (\uicontrol WO).
@@ -1361,20 +1446,20 @@
 
     \list
         \li View register groups.
-        \li Set \l{Debugger}{debugger preferences}.
+        \li Set \l{Debuggers}{debugger preferences}.
     \endlist
 
     By default, the \uicontrol {Peripheral Registers} view is hidden. To show it,
     select it in \uicontrol Views on the debugger toolbar.
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */
 
 /*!
     \page creator-debugger-log-view.html
     \previouspage creator-debug-mode.html
 
-    \ingroup creator-reference-debugger-views
+    \ingroup creator-reference-debugger
 
     \title Debugger Log
 
@@ -1383,7 +1468,7 @@
     You can view debug output in the \uicontrol {Debugger Log} view to
     \l {Debugger Does Not Work}{troubleshoot the debugger}.
 
-    \image qtcreator-debugger-log-view.webp {Debugger Log view}
+    \image {qtcreator-debugger-log-view.webp} {Debugger Log view}
 
     If debug output is sent to the system log, go to \preferences >
     \uicontrol Debugger > \uicontrol General and select
@@ -1398,17 +1483,17 @@
         \li Clear log contents.
         \li Save log contents as a file.
         \li Log time stamps.
-        \li Reload debugging helpers after \l{Adding Custom Debugging Helpers}
+        \li Reload debugging helpers after \l{Adding custom debugging helpers}
             {adding custom debugging helpers}.
-        \li Set \l{Debugger}{debugger preferences}.
+        \li Set \l{Debuggers}{debugger preferences}.
     \endlist
 
-    \section1 Directly Interacting with Debuggers
+    \section1 Directly interacting with debuggers
 
     You can use the left pane of the \uicontrol {Debugger Log} view to directly
     interact with the command line of the debugger.
 
-    Press \key {Ctrl+Enter} to send the contents of the line under the
+    Select \key {Ctrl+Enter} to send the contents of the line under the
     text cursor to the debugger. Or, enter the command in the
     \uicontrol Command field. The right side pane of the
     \uicontrol {Debugger Log} view shows the command output.
@@ -1416,18 +1501,18 @@
     \note Usually, you do not need this feature because \QC offers better ways to
     handle the task. For example, instead of using the GDB
     \c print command from the command line, you can evaluate an expression in
-    the \l {Evaluating Expressions}{Expressions} view.
+    the \l {Evaluating expressions}{Expressions} view.
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */
 
 /*!
     \page creator-disassembler-view.html
     \previouspage creator-debug-mode.html
 
-    \ingroup creator-reference-debugger-views
+    \ingroup creator-reference-debugger
 
-    \title Viewing Disassembled Code
+    \title Viewing disassembled code
 
     \brief View disassembled code for the current function.
 
@@ -1438,7 +1523,7 @@
     function. It is useful for low-level commands for checking single
     instructions, such as \uicontrol {Step Into} and \uicontrol {Step Over}.
 
-    \image qtcreator-debugger-disassembler-view.webp {Disassembler view}
+    \image {qtcreator-debugger-disassembler-view.webp} {Disassembler view}
 
     By default, GDB shows AT&T style disassembly. To switch to the Intel style,
     go to \preferences > \uicontrol Debugger >
@@ -1449,22 +1534,22 @@
     \list
         \li Go to \uicontrol Debug > \uicontrol {Operate by Instruction} while
             the debugger is running.
-        \li Select the \inlineimage icons/debugger_singleinstructionmode.png
-            (\uicontrol {Operate by Instruction}) tool button on the debugger
-            toolbar.
-        \li In the \l {Viewing and Editing Register State}{Registers} view,
+        \li Select
+            \inlineimage {icons/debugger_singleinstructionmode.png} {Operate by Instruction}
+            (\uicontrol {Operate by Instruction}) on the debugger toolbar.
+        \li In the \l {Viewing and editing register state}{Registers} view,
             select a value, and then select \uicontrol {Open Disassembler at <value>}
             in the context menu.
     \endlist
 
-    \section1 Starting Disassembler
+    \section1 Starting disassembler
 
     To start a disassembler from the \uicontrol Registers view, select
-    \uicontrol {Open Disassembler} and  set the disassembler address:
+    \uicontrol {Open Disassembler} and set the disassembler address:
 
-    \image qcreator-debugger-select-start-address.webp {Select Start Address dialog}
+    \image {qcreator-debugger-select-start-address.webp} {Select Start Address dialog}
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */
 
 /*!
@@ -1473,20 +1558,19 @@
 
     \ingroup creator-reference-debugger
 
-    \title Debugging Helpers
+    \title Debugging helpers
 
     \brief Load, customize, and add debugging helpers.
 
     \QC uses Python scripts to translate raw memory contents and type information
     data from debugger backends (GDB, LLDB, and CDB are currently supported)
     into the form presented to the user in the
-    \l {Local Variables and Function Parameters}{Locals}
-    and \l {Evaluating Expressions}{Expressions} views.
+    \l {Local variables and function parameters}{Locals}
+    and \l {Evaluating expressions}{Expressions} views.
 
-    Unlike GDB's
-    \l{https://sourceware.org/gdb/onlinedocs/gdb/Pretty-Printing.html#Pretty-Printing}
-    {pretty printers} and LLDB's \l{http://lldb.llvm.org/varformats.html}
-    {data formatters}, \QC's debugging helpers are independent of the
+    Unlike GDB's \l{Debugging with GDB: Pretty Printing}{pretty printers}
+    and LLDB's \l{Variable Formatting}{data formatters},
+    \QC's debugging helpers are independent of the
     native debugging backend. That is, the same code can be used with GDB on
     Linux, LLDB on macOS, and CDB on Windows, or any other platform on which at
     least one of the three supported backends is available.
@@ -1496,9 +1580,9 @@
     \uicontrol Debugger > \uicontrol GDB > \uicontrol {Load system GDB pretty
     printers}. For more information, see \l{GDB}.
 
-    \image qtcreator-preferences-debugger-gdb.webp {GDB preferences}
+    \image {qtcreator-preferences-debugger-gdb.webp} {GDB tab in Debugger preferences}
 
-    \section1 Customizing Built-In Debugging Helpers
+    \section1 Customizing built-in debugging helpers
 
     You can have commands executed after built-in debugging helpers have
     been loaded and fully initialized. To load additional debugging helpers or
@@ -1506,19 +1590,19 @@
     \uicontrol {Locals & Expressions}, and enter the commands in the
     \uicontrol {Debugging Helper Customization} field.
 
-    \image qtcreator-debugging-helper-options.webp {Locals & Expressions preferences}
+    \image {qtcreator-debugging-helper-options.webp} {Locals & Expressions tab in Debugger preferences}
 
     If you receive error messages about receiving signals when using GDB, you
-    can specify \l{https://sourceware.org/gdb/onlinedocs/gdb/Signals.html}
-    {GDB commands} for handling the signals. For example, you can tell GDB to
+    can specify \l{Debugging with GDB: Signals}{GDB commands}
+    for handling the signals. For example, you can tell GDB to
     ignore the \c SIGSTOP signal if you receive the following error message:
-    \c {The inferior stopped because it received a signal from the operating
+    \c {The debugged process stopped because it received a signal from the operating
     system. Signal name: SIGSTOP}.
 
     To stop GDB from handling the \c SIGSTOP signal, add the following commands
     to the \uicontrol {Debugging Helper Customization} field:
 
-    \badcode
+    \code [text]
     handle SIGSTOP nopass
     handle SIGSTOP nostop
     \endcode
@@ -1527,7 +1611,7 @@
     during debugging, go to \preferences > \uicontrol Debugger > \uicontrol GDB >
     \uicontrol {Show a message box when receiving a signal}.
 
-    \section1 Adding Custom Debugging Helpers
+    \section1 Adding custom debugging helpers
 
     To add debugging helpers for your own types, no compilation is required,
     just adding a few lines of Python. The scripts can address multiple versions
@@ -1557,10 +1641,9 @@
     \list 1
 
         \li Open the \c share/qtcreator/debugger/personaltypes.py file for
-            editing. For example, if your Qt installation is located in the
-            \c Qt5 directory on Windows, look in
-            \c C:\Qt5\Tools\QtCreator\share\qtcreator\debugger. On \macos, look
-            in \c {Qt5/Qt Creator.app/Contents/resources/debugger}.
+            editing. For example, on Windows look in
+            \c C:\Qt\Tools\QtCreator\share\qtcreator\debugger. On \macos, look
+            in \c {Qt Creator.app/Contents/resources/debugger}.
 
         \li Add your dumper implementation to the end of the \c personaltypes.py
             file.  For more information about implementing debugging helpers,
@@ -1579,7 +1662,7 @@
     \uicontrol {Reload Debugging Helpers} from the context menu of the
     \l {Debugger Log} view.
 
-    \section1 Debugging Helper Overview
+    \section1 Debugging helper overview
 
     The implementation of a debugging helper typically consists of a single
     Python function, which needs to be named \c{qdump__NS__Foo}, where
@@ -1613,10 +1696,8 @@
             the \uicontrol Locals and \uicontrol Expressions views.
 
         \li \c value of type \c Value, wrapping either a
-            \l{https://sourceware.org/gdb/onlinedocs/gdb/Values-From-Inferior.html}
-            {gdb.Value} or an
-            \l{https://lldb.llvm.org/cpp_reference/classlldb_1_1SBValue.html}
-            {lldb.SBValue}.
+            \l{Debugging with GDB: Values From Inferior}{gdb.Value} or an
+            \l{LLDB: SBValue Class Reference}{lldb.SBValue}.
 
     \endlist
 
@@ -1667,7 +1748,7 @@
         d.putArrayData(base, size, typeobj)
     \endcode
 
-    \section1 Debugging Helper Implementation
+    \section1 Debugging helper implementation
 
     A debugging helper creates a description of the displayed data item
     in a format that is similar to GDB/MI and JSON.
@@ -1715,13 +1796,13 @@
     selecting \preferences > \uicontrol Debugger >
     \uicontrol CDB > \uicontrol {Use Python dumper}.
 
-    \image qtcreator-cdb-options.png {CDB preferences}
+    \image {qtcreator-preferences-debugger-cdb.webp} {CDB tab in Debugger preferences}
 
     The following sections describe some of the widely-used Dumper classes and
     members specified in \c qtcreator\share\qtcreator\debugger\dumper.py.
 
 
-    \section2 Dumper Class
+    \section2 Dumper class
 
     The \c Dumper class has generic bookkeeping, low-level, and convenience
     functions:
@@ -1887,7 +1968,7 @@
 
     \endlist
 
-    \section2 Dumper.Type Class
+    \section2 Dumper.Type class
 
     The \c{Dumper.Type} class describes the type of a piece of data, typically
     a C++ class or struct, a pointer to a struct, or a primitive type, such as
@@ -1942,7 +2023,7 @@
     \endlist
 
 
-    \section2 Dumper.Field Class
+    \section2 Dumper.Field class
 
     The \c{Dumper.Field} class describes a base class or a data member of a type
     object:
@@ -1965,7 +2046,7 @@
     \endlist
 
 
-    \section2 Dumper.Value Class
+    \section2 Dumper.Value class
 
     The \c{Dumper.Value} class describes a piece of data, such as instances of
     C++ classes or primitive data types. It can also be used to describe
@@ -2027,7 +2108,7 @@
 
     \endlist
 
-    \section2 Children and SubItem Class
+    \section2 Children and SubItem class
 
     The attempt to create child items might lead to errors if data is
     uninitialized or corrupted. To gracefully recover in such situations, use
@@ -2067,7 +2148,7 @@
             d.putSubItem("value", value)
     \endcode
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */
 
 
@@ -2077,33 +2158,26 @@
 
     \ingroup creator-reference-debugger
 
-    \title Troubleshooting Debugger
+    \title Troubleshooting debugger
 
     \brief Solve problems that you might encounter while debugging.
 
     This section lists some typical problems that you might encounter while
     debugging and solutions to them.
 
-    \section1 Cannot Launch Debugger
+    \section1 Cannot launch debugger
 
     Some anti-virus applications do not allow debuggers to retrieve data. For
     example, on Windows, launching the debugger might fail with the following
-    message if the Avira AntiVir is installed on the development PC: \e{The
-    inferior stopped because it received a signal from the operating system.
-    Signal name:? signal meaning: Unknown signal.}
-
-    Some versions of Avira AntiVir Desktop-Products have known issues in
-    various development environments, including \QC. To fix the problem,
-    Avira instructs you to update to version \c {avipbb.sys 10.0.22.22}. For
-    more information, see
-    \l{http://www.avira.com/en/support-for-business-knowledgebase-detail/kbid/805}
-    {Restricted Usability of IDE/Debuggers since 2010-12-08}.
+    message if Avira Antivirus is installed on the development PC: \e{The
+    debugged process stopped because it received a signal from the operating
+    system. Signal name:? signal meaning: Unknown signal.}
 
     On some devices, such as Wacom Tablets, running processes might stop the
     debugger from launching. Stop all running processes and then relaunch the
     debugger.
 
-    \section1 Debugger Does Not Hit Breakpoints
+    \section1 Debugger does not hit breakpoints
 
     You might have created a release build that does not have debug
     information. A GNU Compiler Collection (GCC) debug build has the \c {-g}
@@ -2111,20 +2185,17 @@
     the \l {Compile Output}. If it is not, adjust your build
     settings in the \uicontrol Projects mode.
 
-    \section1 Debugger Does Not Work
+    \section1 Debugger does not work
 
     If the debugger does not work properly, try the following:
 
     \list 1
 
-        \li Make sure you use at least \QC 3.0.1
-
-        \li Select the \inlineimage icons/run_small.png
-            (\uicontrol Run) button to verify that the
-            \l {Run on many platforms}{build and run kit selector}
+        \li Select \imagerunsmall (\uicontrol Run) to
+            check that the \l {Running applications}{build and run kit selector}
             picked a runnable target and you can run the application.
 
-        \li Make sure the debugger is \l{Supported Debuggers}{set up properly}.
+        \li Make sure the debugger is \l{Supported debuggers}{set up properly}.
 
         \li In the \uicontrol Debug mode, go to \uicontrol View >
             \uicontrol Views > \uicontrol {Debugger Log} to open the
@@ -2139,7 +2210,7 @@
 
     \endlist
 
-    \section1 Pointer Variable Members Are Not Displayed Directly
+    \section1 Pointer variable members are not displayed directly
 
     When you use the \uicontrol Locals and \uicontrol Expressions views to inspect a
     pointer variable and expand the variable tree item, another tree item level
@@ -2150,28 +2221,28 @@
     If you cannot view variables at all, check that you selected a \e debug build
     configuration.
 
-    \section1 Structure Members Are Not Sorted According to Structure Layout
+    \section1 Structure members are not sorted according to structure layout
 
     By default, structure members are displayed in alphabetic order. To inspect
-    the real layout in memory, deselect
+    the real layout in memory, clear
     \uicontrol {Sort Members of Classes and Structs Alphabetically} in the
     context menu in the \uicontrol Locals and \uicontrol Expressions views.
 
-    \section1 Built-in Debugger Is Slow During Startup and Runtime
+    \section1 Built-in debugger is slow during startup and runtime
 
     Slowness that is related to the loading of debug information is hard to
     avoid. The following sections describe some possible solutions.
 
-    \section2 Caching GDB Symbol Index
+    \section2 Caching GDB symbol index
 
     When using GDB as backend, you can automatically save a copy of
     its symbol index in a cache on disk and retrieve it from there
     when loading the same binary in the future. Go to \preferences >
     \uicontrol Debugger > \uicontrol GDB > \uicontrol {Use automatic symbol cache}.
 
-    \image qtcreator-preferences-debugger-gdb.webp {GDB preferences}
+    \image {qtcreator-preferences-debugger-gdb.webp} {GDB tab in Debugger preferences}
 
-    \section2 Minimizing Number of Breakpoints
+    \section2 Minimizing number of breakpoints
 
     Some debugging slowness stems from maintaining breakpoints inside
     the debugger (under some circumstances all breakpoints need to be inserted
@@ -2179,48 +2250,47 @@
     each step. We recommend that you minimize the number of breakpoints and
     watched expressions.
 
-    \section2 Cleaning Builds
+    \section2 Cleaning builds
 
-    If out-of-date .pdb files make debugging slower, try a clean build.
+    If out-of-date \c .pdb files make debugging slower, try a clean build.
 
-    \section2 Disabling Incremental Linking
+    \section2 Disabling incremental linking
 
     Incremental linking can affect debugging. If the \l {Debugger Log} view shows
     the \e {Unable to verify checksum of module} message, disable incremental
     linking.
 
     When using CMake as the build system, add the following line to the project
-    CMakeLists.txt file:
+    \c CMakeLists.txt file:
 
-    \badcode
+    \code [cmake]
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /INCREMENTAL:NO" )
     \endcode
 
     When using qmake as the build system, add the following line to the project
-    .pro file:
+    \c .pro file:
 
-    \badcode
+    \code [text]
     QMAKE_LFLAGS_DEBUG += /INCREMENTAL:NO
     \endcode
 
-     \section1 Debugger Cannot Attach to Running Process on Linux
+    \section1 Debugger cannot attach to running process on Linux
 
     GDB uses \c ptrace to attach to running processes. Some Linux distributions
     do not allow this, which stops all attempts to either directly attach to an
     existing process or use the \uicontrol {Run in terminal} option in \QC.
 
-    The reasons for this are described in
-    \l{http://wiki.ubuntu.com/SecurityTeam/Roadmap/KernelHardening#ptrace%20Protection}
-    {KernelHardening}.
+    The reasons for this are described in \l{KernelHardening}.
 
     However, the usefulness of this security measure seems dubious because this
     feature can be easily disabled. With root permissions, you can disable the
     feature temporarily by writing \c{0} into
     \c{/proc/sys/kernel/yama/ptrace_scope} or permanently by changing the value
     in \c{/etc/sysctl.d/10-ptrace.conf}. Even if you do not have elevated
-    permissions, you can disable the feature later by adding a library that
-    calls \c{prctl(0x59616d61, getppid(), 0, 0, 0);}, such as the one in
-    \c{$QTCREATORDIR/lib/libptracepreload.so} to the LD_PRELOAD environment.
+    permissions, you can disable the feature by preloading a library that
+    calls \c{prctl(0x59616d61, getppid(), 0, 0, 0);}. \QC ships such a
+    library: add \c{$QTCREATORDIR/lib/qtcreator/libptracepreload.so} to the
+    \c{LD_PRELOAD} environment variable.
 
-    \sa {Debug}{How To: Debug}, {Debugging}, {Debuggers}, {Debugger}
+    \sa {Debug}{How to: Debug}, {Debugging}, {Debuggers}
 */

@@ -6,10 +6,10 @@
 
 #include <utils/commandline.h>
 #include <utils/qtcprocess.h>
+#include <utils/temporaryfile.h>
 
 #include <solutions/terminal/surfaceintegration.h>
 
-#include <QTemporaryDir>
 
 namespace Terminal {
 
@@ -29,11 +29,12 @@ public:
 
 signals:
     void commandChanged(const Utils::CommandLine &command);
-    void currentDirChanged(const QString &dir);
+    void currentDirChanged(const Utils::FilePath &dir);
     void titleChanged(const QString &title);
 
 private:
-    QTemporaryDir m_tempDir;
+    std::unique_ptr<Utils::TemporaryFilePath> m_tempDir;
+    Utils::FilePath m_shell;
     QByteArray m_oscBuffer;
 };
 

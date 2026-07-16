@@ -83,7 +83,7 @@ LineInfo::~LineInfo()
 QChar LineInfo::firstNonWhiteSpace(const QString &t) const
 {
     int i = 0;
-    while (i < t.length()) {
+    while (i < t.size()) {
         if (!t.at(i).isSpace())
             return t.at(i);
         i++;
@@ -100,7 +100,7 @@ QString LineInfo::trimmedCodeLine(const QString &t)
     Scanner scanner;
 
     QTextBlock currentLine = yyLinizerState.iter;
-    int startState = qMax(0, currentLine.previous().userState()) & 0xff;
+    int startState = qMax(0, currentLine.previous().userState());
 
     yyLinizerState.tokens = scanner(t, startState);
     QString trimmed;
@@ -295,7 +295,7 @@ bool LineInfo::readLine()
         /*
             Remove trailing spaces.
         */
-        k = yyLinizerState.line.length();
+        k = yyLinizerState.line.size();
         while (k > 0 && yyLinizerState.line.at(k - 1).isSpace())
             k--;
         yyLinizerState.line.truncate(k);
@@ -359,7 +359,7 @@ bool LineInfo::bottomLineStartsInMultilineComment()
     QTextBlock currentLine = yyProgram.lastBlock().previous();
     QTextBlock previousLine = currentLine.previous();
 
-    int startState = qMax(0, previousLine.userState()) & 0xff;
+    int startState = qMax(0, previousLine.userState());
     if (startState > 0)
         return true;
 
@@ -517,7 +517,7 @@ bool LineInfo::isUnfinishedLine()
     if (yyLine->isEmpty())
         return false;
 
-    const QChar lastCh = yyLine->at(yyLine->length() - 1);
+    const QChar lastCh = yyLine->at(yyLine->size() - 1);
 
     if (QString::fromLatin1("{};[]").indexOf(lastCh) == -1) {
         /*

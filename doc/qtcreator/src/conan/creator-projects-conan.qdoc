@@ -7,22 +7,22 @@
 
     \ingroup creator-reference-build-systems
 
-    \title Conan Package Manager
+    \title Conan package manager
 
-    \brief The experimental Conan plugin integrates the Conan package manager.
+    \summary {The experimental Conan plugin integrates the Conan package manager.}
 
-    \l {https://conan.io}{Conan} is a C/C++ package manager that speeds up the
+    \l{Conan} is a C/C++ package manager that speeds up the
     integration of C or C++ libraries into your own project. It's available on
-    all the \l{Supported Platforms}{supported development platforms}.
+    all the \l{Supported platforms}{supported development platforms}.
 
     Conan can be integrated into most build systems that are integrated into
     \QC:
 
     \list
-        \li \l{https://docs.conan.io/en/latest/integrations/cmake.html}{CMake}
-        \li \l{https://docs.conan.io/en/latest/integrations/qbs.html}{Qbs}
-        \li \l{https://docs.conan.io/en/latest/integrations/qmake.html}{qmake}
-        \li \l{https://docs.conan.io/en/latest/integrations/meson.html}{Meson}
+        \li \l{Conan integration with Autotools}{Autotools}
+        \li \l{Conan integration with CMake}{CMake}
+        \li \l{Conan integration with Meson}{Meson}
+        \li \l{Conan integration with Qbs}{Qbs}
     \endlist
 
     The client-server architecture of Conan enables the client to fetch packages
@@ -31,20 +31,19 @@
     sources. Because the client has a local cache for package storage, you can
     work offline, as long as no new packages are needed from remote servers.
 
-    To use Conan, install it by using \QOI or the tools that
-    your operating system has. For example, on Windows, you can use the
+    To use Conan, install it by using \l{Get and Install Qt}{\QOI} or the tools
+    that your operating system has. For example, on Windows, you can use the
     \c {choco install conan} or \c {pip install conan} command.
 
     \note Enable the Conan plugin to use it.
 
     For each project, you must write a
-    \l{https://docs.conan.io/en/latest/reference/conanfile.html}{conanfile.py}
-    or \l{https://docs.conan.io/en/latest/reference/conanfile_txt.html}
-    {conanfile.txt} file that specifies the needed libraries and packages.
+    \l{conanfile.py}{\c conanfile.py} or \l{conanfile.txt}{\c conanfile.txt}
+    file that specifies the needed libraries and packages.
     Then, you must edit the build settings of the project to specify the
     location of the file and the contents of the Conan install command.
 
-    \section1 Automatic Package Manager Setup
+    \section1 Automatic package manager setup
 
     To automatically set up the Conan package manager for use with CMake,
     go to \uicontrol Projects > \uicontrol {Project Settings} > \uicontrol CMake,
@@ -52,8 +51,8 @@
 
     To turn off the automatic package manager setup, set
     \c PackageManagerAutoSetup to \c false in \l{Configure Presets}
-    {CMake presets} or a \l{Share project settings}{CMakeLists.txt.shared} file.
+    {CMake presets} or a \l{Share project settings}{\c CMakeLists.txt.shared} file.
 
-    \sa {Conan Build Configuration}, {Enable and disable plugins},
-    {Override CMake settings for a project}, {Using CMake with Package Managers}
+    \sa {Conan build configuration}, {Enable and disable plugins},
+    {Override CMake settings for a project}, {Using CMake with package managers}
 */

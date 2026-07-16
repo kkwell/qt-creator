@@ -8,7 +8,7 @@
 #include "cpptoolstestcase.h"
 
 #include <QElapsedTimer>
-#include <QtTest>
+#include <QTest>
 
 // Uses 1-based line and 0-based column.
 struct Selection
@@ -93,14 +93,14 @@ UseSelectionsTestCase::UseSelectionsTestCase(CppTestDocument &testFile,
                      "clangd does not support document highlights for macros", Abort);
         QEXPECT_FAIL("macro use 4",
                      "clangd does not support document highlights for macros", Abort);
-    } else {
-        QEXPECT_FAIL("non-local use as macro argument - argument expanded 1", "TODO", Abort);
     }
     QVERIFY(!hasTimedOut);
 //    for (const Selection &selection : selections)
 //        qDebug() << QTest::toString(selection);
     QEXPECT_FAIL("non-local use as macro argument - argument expanded 2",
                  clangCodeModel ? "FIXME: One occurrence comes in twice" : "TODO", Abort);
+    QEXPECT_FAIL("local use as macro argument 2 - argument eaten",
+                 "expansion takes away the original token", Abort);
     QCOMPARE(selections, expectedSelections);
 }
 
@@ -112,7 +112,7 @@ SelectionList UseSelectionsTestCase::toSelectionList(
         int line, column;
         const int position = qMin(selection.cursor.position(), selection.cursor.anchor());
         m_editorWidget->convertPosition(position, &line, &column);
-        result << Selection(line, column, selection.cursor.selectedText().length());
+        result << Selection(line, column, selection.cursor.selectedText().size());
     }
     return result;
 }

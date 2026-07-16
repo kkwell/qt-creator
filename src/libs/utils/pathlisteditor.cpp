@@ -10,6 +10,7 @@
 #include <QMimeData>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QTextBlock>
 #include <QVBoxLayout>
 
@@ -62,7 +63,11 @@ void PathListPlainTextEdit::insertFromMimeData(const QMimeData *source)
     if (source->hasText()) {
         // replace separator
         QString text = source->text().trimmed();
-        text.replace(HostOsInfo::pathListSeparator(), QLatin1Char('\n'));
+
+        constexpr QChar sep = HostOsInfo::pathListSeparator();
+        // Matches any 'sep' not enclosed in %{...}
+        static const QRegularExpression re(R"(%\{[^}]*\}(*SKIP)(*FAIL)|)" + sep);
+        text = text.replace(re, "\n");
         QMimeData *fixed = new QMimeData;
         fixed->setText(text);
         QPlainTextEdit::insertFromMimeData(fixed);
@@ -99,7 +104,7 @@ PathListEditor::PathListEditor(QWidget *parent) :
 {
     setLayout(d->layout);
     addButton(Tr::tr("Insert..."), this, [this] {
-        const FilePath dir = FileUtils::getExistingDirectory(this, d->fileDialogTitle);
+        const FilePath dir = FileUtils::getExistingDirectory(d->fileDialogTitle);
         if (!dir.isEmpty())
             insertPathAtCursor(dir.toUserOutput());
     });

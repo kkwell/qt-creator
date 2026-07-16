@@ -1,13 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include <QScopedPointer>
-#include <QLatin1String>
-#include <QGraphicsObject>
-#include <QApplication>
-#include <QSettings>
-#include <QFileInfo>
-
 #include <qmljs/qmljsinterpreter.h>
 #include <qmljs/qmljsdocument.h>
 #include <qmljs/qmljsbind.h>
@@ -20,7 +13,15 @@
 #include <qmljs/parser/qmljssourcelocation_p.h>
 #include <extensionsystem/pluginmanager.h>
 
-#include <QtTest>
+#include <QApplication>
+#include <QFileInfo>
+#include <QGraphicsObject>
+#include <QLatin1String>
+#include <QLibraryInfo>
+#include <QScopedPointer>
+#include <QSettings>
+#include <QTest>
+
 #include <algorithm>
 
 using namespace QmlJS;
@@ -48,11 +49,7 @@ tst_Check::tst_Check()
 }
 
 
-#ifdef Q_OS_MAC
-#  define SHARE_PATH "/Resources"
-#else
-#  define SHARE_PATH "/share/qtcreator"
-#endif
+#define SHARE_PATH "/share/qtcreator"
 
 QString resourcePath()
 {
@@ -62,11 +59,12 @@ QString resourcePath()
 void tst_Check::initTestCase()
 {
     // the resource path is wrong, have to load things manually
-    QFileInfo builtins(resourcePath() + "/qml-type-descriptions/builtins.qmltypes");
-    QStringList errors, warnings;
-    CppQmlTypesLoader::defaultQtObjects()
-        = CppQmlTypesLoader::loadQmlTypes(QFileInfoList() << builtins, &errors, &warnings);
-
+    CppQmlTypesLoader::setDefaultObjectsInitializer(
+        [](CppQmlTypesLoader::BuiltinObjects &qtObjects, CppQmlTypesLoader::BuiltinObjects &) {
+            const QFileInfo builtins(resourcePath() + "/qml-type-descriptions/builtins.qmltypes");
+            QStringList errors, warnings;
+            qtObjects = CppQmlTypesLoader::loadQmlTypes({builtins}, &errors, &warnings);
+        });
     if (!ModelManagerInterface::instance())
         new ModelManagerInterface;
     if (!ExtensionSystem::PluginManager::instance())
@@ -74,8 +72,8 @@ void tst_Check::initTestCase()
     ModelManagerInterface *modelManager = ModelManagerInterface::instance();
 
     PathsAndLanguages lPaths;
-    QStringList paths(QLibraryInfo::path(QLibraryInfo::Qml2ImportsPath));
-    for (auto p: paths)
+    const QStringList paths(QLibraryInfo::path(QLibraryInfo::Qml2ImportsPath));
+    for (const auto &p : paths)
         lPaths.maybeInsert(Utils::FilePath::fromString(p), Dialect::Qml);
     ModelManagerInterface::importScan(ModelManagerInterface::workingCopy(), lPaths,
                                       modelManager, false);
@@ -94,7 +92,8 @@ void tst_Check::test_data()
 {
     QTest::addColumn<QString>("path");
 
-    for (QFileInfo it : QDir(TESTSRCDIR).entryInfoList(QStringList("*.qml"), QDir::Files, QDir::Name)) {
+    for (const QFileInfo &it :
+         QDir(TESTSRCDIR).entryInfoList(QStringList("*.qml"), QDir::Files, QDir::Name)) {
         QTest::newRow(it.fileName().toUtf8()) << it.filePath();
     }
 }
@@ -106,8 +105,8 @@ void tst_Check::test()
     auto mm = ModelManagerInterface::instance();
     Snapshot snapshot =  mm->snapshot();
     Document::MutablePtr doc = Document::create(pathPath, Dialect::Qml);
-    QFile file(doc->fileName().toString());
-    file.open(QFile::ReadOnly | QFile::Text);
+    QFile file(doc->fileName().toUrlishString());
+    QVERIFY2(file.open(QFile::ReadOnly | QFile::Text), qPrintable(file.fileName()));
     doc->setSource(QString::fromUtf8(file.readAll()));
     file.close();
     doc->parse();

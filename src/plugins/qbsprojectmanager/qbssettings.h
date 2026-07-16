@@ -5,48 +5,40 @@
 
 #include <coreplugin/dialogs/ioptionspage.h>
 
-#include <utils/filepath.h>
+#include <projectexplorer/devicesupport/idevicefwd.h>
+
+#include <utils/aspects.h>
 
 #include <QVersionNumber>
 
+namespace ProjectExplorer { class Kit; }
+namespace Utils { class Environment; }
+
 namespace QbsProjectManager::Internal {
 
-class QbsSettingsData
+class QbsSettings : public Utils::AspectContainer
 {
-public:
-    Utils::FilePath qbsExecutableFilePath;
-    QString defaultInstallDirTemplate;
-    QVersionNumber qbsVersion; // Ephemeral
-    bool useCreatorSettings = true;
-};
+    QbsSettings();
 
-class QbsSettings : public QObject
-{
-    Q_OBJECT
 public:
     static QbsSettings &instance();
 
-    static Utils::FilePath qbsExecutableFilePath();
+    static Utils::FilePath qbsExecutableFilePathForKit(const ProjectExplorer::Kit &kit);
+    static Utils::FilePath qbsExecutableFilePathForDevice(const ProjectExplorer::IDeviceConstPtr &device);
     static Utils::FilePath defaultQbsExecutableFilePath();
-    static Utils::FilePath qbsConfigFilePath();
-    static bool hasQbsExecutable();
-    static QString defaultInstallDirTemplate();
-    static bool useCreatorSettingsDirForQbs();
-    static QString qbsSettingsBaseDir();
-    static QVersionNumber qbsVersion();
+    static Utils::FilePath qbsConfigFilePath(const ProjectExplorer::IDeviceConstPtr &device);
+    static Utils::Environment qbsProcessEnvironment(const ProjectExplorer::IDeviceConstPtr &device);
 
-    static void setSettingsData(const QbsSettingsData &settings);
-    static QbsSettingsData rawSettingsData();
+    static bool useCreatorSettingsDirForQbs(const ProjectExplorer::IDeviceConstPtr &device);
+    static Utils::FilePath qbsSettingsBaseDir(const ProjectExplorer::IDeviceConstPtr &device);
+    static QVersionNumber qbsVersion(const ProjectExplorer::IDeviceConstPtr &device);
 
-signals:
-    void settingsChanged();
+    Utils::FilePathAspect qbsExecutableFilePath{this};
+    Utils::StringAspect defaultInstallDirTemplate{this};
+    Utils::BoolAspect useCreatorSettings{this};
 
 private:
-    QbsSettings();
-    void loadSettings();
-    void storeSettings() const;
-
-    QbsSettingsData m_settings;
+    Utils::TextDisplay m_versionLabel;
 };
 
 class QbsSettingsPage : public Core::IOptionsPage

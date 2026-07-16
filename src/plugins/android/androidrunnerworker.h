@@ -1,109 +1,61 @@
 // Copyright (C) 2018 BogDan Vatra <bog_dan_ro@yahoo.com>
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-
 #pragma once
 
-#include <qmldebug/qmldebugcommandlinearguments.h>
+#include <QtTaskTree/QTaskTree>
 
-#include <solutions/tasking/tasktreerunner.h>
+#include <projectexplorer/qmldebugcommandlinearguments.h>
 
-#include <utils/environment.h>
-#include <utils/port.h>
+namespace ProjectExplorer { class RunControl; }
+namespace Utils { class Port; }
 
-namespace Utils {
-class FilePath;
-class Process;
-}
-namespace ProjectExplorer { class RunWorker; }
+QT_BEGIN_NAMESPACE
+class QUrl;
+QT_END_NAMESPACE
 
-namespace Android {
+namespace Android::Internal {
 
-class AndroidDeviceInfo;
-
-namespace Internal {
-
-const int MIN_SOCKET_HANDSHAKE_PORT = 20001;
-
-using PidUserPair = std::pair<qint64, qint64>;
-
-class AndroidRunnerWorker : public QObject
+class RunnerInterface : public QObject
 {
     Q_OBJECT
-public:
-    AndroidRunnerWorker(ProjectExplorer::RunWorker *runner, const QString &packageName);
-    ~AndroidRunnerWorker() override;
 
-    void setAndroidDeviceInfo(const AndroidDeviceInfo &info);
-    void asyncStart();
-    void asyncStop();
-    void setIntentName(const QString &intentName) { m_intentName = intentName; }
+public:
+    // Gui init setters
+    void setRunControl(ProjectExplorer::RunControl *runControl) { m_runControl = runControl; }
+    void setDeviceSerialNumber(const QString &deviceSerialNumber) { m_deviceSerialNumber = deviceSerialNumber; }
+    void setApiLevel(int apiLevel) { m_apiLevel = apiLevel; }
+    void setQmlDebugServicesPreset(ProjectExplorer::QmlDebugServicesPreset services) { m_qmlDebugServices = services; }
+
+    // business logic init getters
+    ProjectExplorer::RunControl *runControl() const { return m_runControl; }
+    QString deviceSerialNumber() const { return m_deviceSerialNumber; }
+    int apiLevel() const { return m_apiLevel; }
+    bool wasCancelled() const { return m_wasCancelled; };
+    ProjectExplorer::QmlDebugServicesPreset qmlDebugServicesPreset() const { return m_qmlDebugServices; }
+
+    // business logic -> GUI
+    void setStartData(qint64 pid, const QString &packageDir);
+
+    // GUI -> business logic
+    void cancel();
 
 signals:
-    void remoteProcessStarted(Utils::Port debugServerPort, const QUrl &qmlServer, qint64 pid);
-    void remoteProcessFinished(const QString &errString = QString());
+    // GUI -> business logic
+    void canceled();
 
-    void remoteOutput(const QString &output);
-    void remoteErrorOutput(const QString &output);
+    // business logic -> GUI
+    void started();
+    void finished(const QString &errorMessage);
 
 private:
-    bool runAdb(const QStringList &args, QString *stdOut = nullptr, QString *stdErr = nullptr);
-    QStringList selector() const;
-    void forceStop();
-    void logcatReadStandardError();
-    void logcatReadStandardOutput();
-    void logcatProcess(const QByteArray &text, QByteArray &buffer, bool onlyError);
-
-    void handleJdbWaiting();
-    void handleJdbSettled();
-
-    bool removeForwardPort(const QString &port, const QString &adbArg, const QString &portType);
-
-    void asyncStartHelper();
-    void startNativeDebugging();
-    void startDebuggerServer(const QString &packageDir, const QString &debugServerFile);
-    bool deviceFileExists(const QString &filePath);
-    bool packageFileExists(const QString& filePath);
-    bool uploadDebugServer(const QString &debugServerFileName);
-    void asyncStartLogcat();
-
-    enum class JDBState {
-        Idle,
-        Waiting,
-        Settled
-    };
-    void onProcessIdChanged(const PidUserPair &pidUser);
-    bool isPreNougat() const { return m_apiLevel > 0 && m_apiLevel <= 23; }
-
-    // Create the processes and timer in the worker thread, for correct thread affinity
-    QString m_packageName;
-    QString m_intentName;
-    QStringList m_beforeStartAdbCommands;
-    QStringList m_afterFinishAdbCommands;
-    QStringList m_amStartExtraArgs;
-    qint64 m_processPID = -1;
-    qint64 m_processUser = -1;
-    std::unique_ptr<Utils::Process> m_adbLogcatProcess;
-    std::unique_ptr<Utils::Process> m_psIsAlive;
-    QByteArray m_stdoutBuffer;
-    QByteArray m_stderrBuffer;
-    Tasking::TaskTreeRunner m_pidRunner;
-    bool m_useCppDebugger = false;
-    bool m_useLldb = false; // FIXME: Un-implemented currently.
-    QmlDebug::QmlDebugServicesPreset m_qmlDebugServices;
-    Utils::Port m_localDebugServerPort; // Local end of forwarded debug socket.
-    QUrl m_qmlServer;
-    JDBState m_jdbState = JDBState::Idle;
-    Utils::Port m_localJdbServerPort;
-    std::unique_ptr<Utils::Process> m_debugServerProcess; // gdbserver or lldb-server
-    std::unique_ptr<Utils::Process> m_jdbProcess;
+    ProjectExplorer::RunControl *m_runControl = nullptr;
     QString m_deviceSerialNumber;
+    bool m_wasCancelled = false;
     int m_apiLevel = -1;
-    QString m_extraAppParams;
-    Utils::Environment m_extraEnvVars;
-    Utils::FilePath m_debugServerPath; // On build device, typically as part of ndk
-    bool m_useAppParamsForQmlDebugger = false;
+    ProjectExplorer::QmlDebugServicesPreset m_qmlDebugServices = ProjectExplorer::NoQmlDebugServices;
 };
 
-} // namespace Internal
-} // namespace Android
+QtTaskTree::ExecutableItem runnerRecipe(const QtTaskTree::Storage<RunnerInterface> &storage);
+
+} // namespace Android::Internal

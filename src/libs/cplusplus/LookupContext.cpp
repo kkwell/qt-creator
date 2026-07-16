@@ -46,7 +46,8 @@ static void path_helper(Symbol *symbol,
     if (! symbol)
         return;
 
-    path_helper(symbol->enclosingScope(), names, policy);
+    path_helper(
+        symbol->isFriend() ? symbol->enclosingNamespace() : symbol->enclosingScope(), names, policy);
 
     if (symbol->name()) {
         if (symbol->asClass() || symbol->asNamespace()) {
@@ -185,9 +186,11 @@ LookupContext &LookupContext::operator=(const LookupContext &other)
 
 QList<const Name *> LookupContext::fullyQualifiedName(Symbol *symbol, InlineNamespacePolicy policy)
 {
-    if (symbol->asTypenameArgument())
+    if (symbol->asTypenameArgument() || symbol->asTemplateTypeArgument())
         return {symbol->name()};
-    QList<const Name *> qualifiedName = path(symbol->enclosingScope(), policy);
+    Scope * const scope = symbol->isFriend() ? symbol->enclosingNamespace()
+                                             : symbol->enclosingScope();
+    QList<const Name *> qualifiedName = path(scope, policy);
     addNames(symbol->name(), &qualifiedName, /*add all names*/ true);
     return qualifiedName;
 }
@@ -214,13 +217,12 @@ static bool symbolIdentical(Symbol *s1, Symbol *s2)
 static bool isInlineNamespace(ClassOrNamespace *con, const Name *name)
 {
     const QList<LookupItem> items = con->find(name);
-    if (!items.isEmpty()) {
-        if (const Symbol *declaration = items.first().declaration() ) {
-            if (const Namespace *ns = declaration->asNamespace())
-                return ns->isInline();
+    for (const LookupItem &item : items) {
+        if (const Symbol * const declaration = item.declaration()) {
+            if (const Namespace *ns = declaration->asNamespace(); ns && ns->isInline())
+                return true;
         }
     }
-
     return false;
 }
 
@@ -1028,9 +1030,10 @@ static ClassOrNamespace *findSpecializationWithMatchingTemplateArgument(const Na
                 const int argumentCountOfSpecialization
                                     = templateSpecialization->templateParameterCount();
                 for (int i = 0; i < argumentCountOfSpecialization; ++i) {
-                    if (TypenameArgument *tParam
-                            = templateSpecialization->templateParameterAt(i)->asTypenameArgument()) {
-                        if (const Name *name = tParam->name()) {
+                    if (Symbol *param = templateSpecialization->templateParameterAt(i);
+                        param->asTypenameArgument() ||
+                        param->asTemplateTypeArgument()) {
+                        if (const Name *name = param->name()) {
                             if (compareName(name, argumentName))
                                 return reference;
                         }
@@ -1274,9 +1277,10 @@ ClassOrNamespace *ClassOrNamespace::nestedType(const Name *name,
                             templSpecId->templateArgumentCount() : 0;
                 Clone cloner(_control.get());
                 for (int i = 0; i < argumentCountOfSpecialization; ++i) {
-                    const TypenameArgument *tParam
-                            = templateSpecialization->templateParameterAt(i)->asTypenameArgument();
-                    if (!tParam)
+
+                    Symbol *tParam = templateSpecialization->templateParameterAt(i);
+                    if (!tParam->asTypenameArgument() &&
+                        !tParam->asTemplateTypeArgument())
                         continue;
                     const Name *name = tParam->name();
                     if (!name)
@@ -2026,8 +2030,11 @@ Symbol *CreateBindings::instantiateTemplateFunction(const Name *instantiationNam
         // check if all template parameters have default arguments (only check first parameter)
         if (specialization->templateParameterCount() == 0)
             return nullptr;
-        TypenameArgument *parameter = specialization->templateParameterAt(0)->asTypenameArgument();
-        if (!parameter || !parameter->type().isValid())
+
+        if (Symbol *tParam = specialization->templateParameterAt(0);
+            (!tParam->asTypenameArgument() &&
+             !tParam->asTemplateTypeArgument()) ||
+            !tParam->type().isValid())
             return nullptr;
     }
 
@@ -2036,11 +2043,15 @@ Symbol *CreateBindings::instantiateTemplateFunction(const Name *instantiationNam
     Clone cloner(_control.get());
     Subst subst(_control.get());
     for (int i = 0; i < argumentCountOfSpecialization; ++i) {
-        const TypenameArgument *tParam
-                = specialization->templateParameterAt(i)->asTypenameArgument();
-        if (!tParam)
+
+
+        Symbol *tParam = specialization->templateParameterAt(i);
+        if (!tParam->asTypenameArgument() &&
+            !tParam->asTemplateTypeArgument())
             continue;
+
         const Name *name = tParam->name();
+
         if (!name)
             continue;
 

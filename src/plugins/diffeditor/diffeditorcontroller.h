@@ -6,8 +6,8 @@
 #include "diffeditor_global.h"
 #include "diffutils.h"
 
-#include <solutions/tasking/tasktree.h>
-#include <solutions/tasking/tasktreerunner.h>
+#include <QtTaskTree/QTaskTree>
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 #include <QObject>
 
@@ -29,7 +29,6 @@ class ChunkSelection;
 
 class DIFFEDITOR_EXPORT DiffEditorController : public QObject
 {
-    Q_OBJECT
 public:
     explicit DiffEditorController(Core::IDocument *document);
 
@@ -58,10 +57,11 @@ protected:
                       PatchOptions options) const;
 
     // Core functions:
-    void setReloadRecipe(const Tasking::Group &recipe) { m_reloadRecipe = recipe; }
+    void setReloadRecipe(const QtTaskTree::Group &recipe) { m_reloadRecipe = recipe; }
     void setDiffFiles(const QList<FileData> &diffFileList);
     // Optional:
     void setDisplayName(const QString &name) { m_displayName = name; }
+    void setAnsiEnabled(bool enabled);
     void setDescription(const QString &description);
     void setStartupFile(const QString &startupFile);
     void forceContextLineCount(int lines);
@@ -70,11 +70,14 @@ private:
     friend class Internal::DiffEditorWidgetController;
     virtual void addExtraActions(QMenu *menu, int fileIndex, int chunkIndex,
                                  const ChunkSelection &selection);
+    virtual void resolveCurrentLine(const QString &relativeFilePath,
+                                    int originalLine,
+                                    const std::function<void(int)> &callback);
 
     Internal::DiffEditorDocument *const m_document;
     QString m_displayName;
-    Tasking::TaskTreeRunner m_taskTreeRunner;
-    Tasking::Group m_reloadRecipe;
+    QtTaskTree::QSingleTaskTreeRunner m_taskTreeRunner;
+    QtTaskTree::Group m_reloadRecipe;
 };
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(DiffEditorController::PatchOptions)

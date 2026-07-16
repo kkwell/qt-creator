@@ -4,6 +4,7 @@ QtcPlugin {
     Depends { name: "Core" }
     Depends { name: "CppEditor" }
     Depends { name: "CPlusPlus" }
+    Depends { name: "McpServerLib" }
     Depends { name: "ProjectExplorer" }
     Depends { name: "QmlJS" }
     Depends { name: "QmlJSTools" }
@@ -21,13 +22,14 @@ QtcPlugin {
     Depends { name: "Qt.widgets" }
 
     files: [
-        "autotest.qrc",
         "autotesticons.h",
         "autotest_global.h", "autotesttr.h",
         "autotestconstants.h",
         "autotestplugin.cpp",
         "autotestplugin.h",
         "itemdatacache.h",
+        "mcptools.cpp",
+        "mcptools.h",
         "projectsettingswidget.cpp",
         "projectsettingswidget.h",
         "testcodeparser.cpp",
@@ -44,14 +46,14 @@ QtcPlugin {
         "testresultdelegate.h",
         "testresultmodel.cpp",
         "testresultmodel.h",
+        "testresultsmanager.cpp",
+        "testresultsmanager.h",
         "testresultspane.cpp",
         "testresultspane.h",
         "testrunner.cpp",
         "testrunner.h",
         "testsettings.cpp",
         "testsettings.h",
-        "testsettingspage.cpp",
-        "testsettingspage.h",
         "testtreeitem.cpp",
         "testtreeitem.h",
         "testtreeitemdelegate.cpp",
@@ -119,10 +121,19 @@ QtcPlugin {
         files: [
             "autotestunittests.cpp",
             "autotestunittests.h",
-            "autotestunittests.qrc",
-            "loadprojectscenario.cpp",
-            "loadprojectscenario.h",
         ]
+        cpp.defines: outer.concat([ 'QTCREATORDIR="' + project.ide_source_tree + '"' ])
+    }
+
+    QtcTestResources {
+        files: "unit_test/**/*"
+        Qt.core.resourcePrefix: ""
+    }
+
+    Group {
+        name: "images"
+        files: "images/*.png"
+        fileTags: "qt.core.resource_data"
     }
 
     Group {

@@ -3,33 +3,41 @@
 
 #include "idevice.h"
 
+#include "devicekitaspects.h"
 #include "devicemanager.h"
+#include "idevice.h"
 #include "idevicefactory.h"
 #include "sshparameters.h"
 
 #include "../kit.h"
-#include "../kitaspects.h"
+#include "../kitmanager.h"
+#include "../projectexplorerconstants.h"
 #include "../projectexplorericons.h"
 #include "../projectexplorertr.h"
 #include "../target.h"
 
-#include <coreplugin/icore.h>
-
+#include <utils/algorithm.h>
+#include <utils/async.h>
 #include <utils/commandline.h>
 #include <utils/devicefileaccess.h>
-#include <utils/displayname.h>
+#include <utils/environment.h>
 #include <utils/icon.h>
+#include <utils/layoutbuilder.h>
 #include <utils/portlist.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcprocess.h>
 #include <utils/synchronizedvalue.h>
 #include <utils/url.h>
+#include <utils/fsengine/fsengine.h>
 
 #include <QCoreApplication>
 #include <QStandardPaths>
 
 #include <QDateTime>
 #include <QReadWriteLock>
+#include <QStandardItem>
 #include <QString>
+#include <QVersionNumber>
 
 /*!
  * \class ProjectExplorer::IDevice::DeviceAction
@@ -82,6 +90,7 @@
  * Creates an identical copy of a device object.
  */
 
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace ProjectExplorer {
@@ -91,7 +100,6 @@ static Id newId()
     return Id::generate();
 }
 
-const char DisplayNameKey[] = "Name";
 const char TypeKey[] = "OsType";
 const char ClientOsTypeKey[] = "ClientOsType";
 const char IdKey[] = "InternalId";
@@ -110,8 +118,8 @@ const char KeyFileKey[] = "KeyFile";
 const char TimeoutKey[] = "Timeout";
 const char HostKeyCheckingKey[] = "HostKeyChecking";
 
-const char DebugServerKey[] = "DebugServerKey";
-const char QmlRuntimeKey[] = "QmlsceneKey";
+const char SshForwardDebugServerPortKey[] = "SshForwardDebugServerPort";
+const char LinkDeviceKey[] = "LinkDevice";
 
 using AuthType = SshParameters::AuthenticationType;
 const AuthType DefaultAuthType = SshParameters::AuthenticationTypeAll;
@@ -120,78 +128,451 @@ const IDevice::MachineType DefaultMachineType = IDevice::Hardware;
 const int DefaultTimeout = 10;
 
 namespace Internal {
+
 class IDevicePrivate
 {
 public:
-    IDevicePrivate(std::unique_ptr<DeviceSettings> s)
-        : settings(std::move(s))
+    IDevicePrivate(IDevice *q)
+        : q(q),
+          displayName(q),
+          sshParametersAspectContainer(q),
+          autoDetectInPath(q),
+          autoDetectInQtInstallation(q),
+          autoDetectQtInstallation(q),
+          autoDetectInDirectories(q),
+          autoDetectDirectories(q),
+          autoCreateKits(q)
     {
-        if (!settings)
-            settings = std::make_unique<DeviceSettings>();
+        displayName.setSettingsKey("Name");
+        displayName.setDisplayStyle(StringAspect::DisplayStyle::LineEditDisplay);
+
+        autoDetectInPath.setSettingsKey("AutoDetectInPath");
+        autoDetectInPath.setDefaultValue(true);
+        autoDetectInPath.setLabelText(Tr::tr("Search in PATH"));
+        autoDetectInPath.setLabelPlacement(BoolAspect::LabelPlacement::Compact);
+
+        autoDetectInQtInstallation.setSettingsKey("AutoDetectInQtInstallation");
+        autoDetectInQtInstallation.setDefaultValue(true);
+        autoDetectInQtInstallation.setLabelText(Tr::tr("Search in Qt installation"));
+        autoDetectInQtInstallation.setLabelPlacement(BoolAspect::LabelPlacement::Compact);
+
+        autoDetectQtInstallation.setSettingsKey("AutoDetectQtInstallation");
+        autoDetectQtInstallation.setHistoryCompleter("QtInstallation");
+        autoDetectQtInstallation.setPlaceHolderText("Leave empty to search in $HOME/Qt");
+        autoDetectQtInstallation.setExpectedKind(PathChooser::ExistingDirectory);
+        autoDetectQtInstallation.setEnabler(&autoDetectInQtInstallation);
+
+        autoDetectInDirectories.setSettingsKey("AutoDetectInDirectories");
+        autoDetectInDirectories.setDefaultValue(false);
+        autoDetectInDirectories.setLabelText(Tr::tr("Search in directories"));
+        autoDetectInDirectories.setLabelPlacement(BoolAspect::LabelPlacement::Compact);
+
+        autoDetectDirectories.setSettingsKey("AutoDetectDirectories");
+        autoDetectDirectories.setDisplayStyle(StringAspect::LineEditDisplay);
+        autoDetectDirectories.setPlaceHolderText(Tr::tr("Semicolon-separated list of directories"));
+        autoDetectDirectories.setToolTip(
+            Tr::tr("Select the paths on the device that should be scanned for binaries."));
+        autoDetectDirectories.setHistoryCompleter("Directories");
+        autoDetectDirectories.setEnabler(&autoDetectInDirectories);
+
+        autoCreateKits.setSettingsKey("AutoCreateKits");
+        autoCreateKits.setDefaultValue(true);
+        autoCreateKits.setLabelText(Tr::tr("Create kits"));
+        autoCreateKits.setToolTip(Tr::tr("Set up kits for this device's toolchains."));
+        autoCreateKits.setLabelPlacement(BoolAspect::LabelPlacement::Compact);
+        autoCreateKits.setVisible(false);
+
+        QObject::connect(&sshParametersAspectContainer, &AspectContainer::applied, q, [this] {
+            *sshParameters.writeLocked() = sshParametersAspectContainer.sshParameters();
+        });
     }
+
+    FilePaths autoDetectionPaths() const;
+
+    IDevice *q;
 
     QString displayType;
     Id type;
     IDevice::Origin origin = IDevice::AutoDetected;
     Id id;
-    IDevice::DeviceState deviceState = IDevice::DeviceStateUnknown;
     IDevice::MachineType machineType = IDevice::Hardware;
-    OsType osType = OsTypeOther;
-    DeviceFileAccess *fileAccess = nullptr;
-    std::function<DeviceFileAccess *()> fileAccessFactory;
+    SynchronizedValue<OsType> osType = OsTypeOther;
+    SynchronizedValue<DeviceFileAccessPtr> fileAccess;
+    std::function<DeviceFileAccessPtr()> fileAccessFactory;
     int version = 0; // This is used by devices that have been added by the SDK.
 
-    Utils::SynchronizedValue<SshParameters> sshParameters;
-
-    PortList freePorts;
-    FilePath debugServerPath;
-    FilePath debugDumperPath = Core::ICore::resourcePath("debugger/");
-    FilePath qmlRunCommand;
-    bool emptyCommandAllowed = false;
+    SynchronizedValue<SshParameters> sshParameters;
 
     QList<Icon> deviceIcons;
     QList<IDevice::DeviceAction> deviceActions;
     Store extraData;
     IDevice::OpenTerminal openTerminal;
 
-    std::unique_ptr<DeviceSettings> settings;
+    StringAspect displayName;
+
+    SshParametersAspectContainer sshParametersAspectContainer;
+
+    QHash<Id, DeviceToolAspect *> deviceToolAspects;
+
+    quint64 toolDetectionToken = 0;
+    int toolDetectionTaskCount = 0;
+
+    bool isTesting = false;
+
+    BoolAspect autoDetectInPath;
+    BoolAspect autoDetectInQtInstallation;
+    FilePathAspect autoDetectQtInstallation;
+    BoolAspect autoDetectInDirectories;
+    StringAspect autoDetectDirectories;
+    BoolAspect autoCreateKits;
 };
+
 } // namespace Internal
 
-DeviceSettings::DeviceSettings()
+
+// DeviceToolAspect
+
+Id DeviceToolAspect::toolId() const
+{
+    return m_toolId;
+}
+
+void DeviceToolAspect::setToolId(const Id toolId)
+{
+    m_toolId = toolId;
+}
+
+DeviceToolAspect::ToolType DeviceToolAspect::toolType() const
+{
+    return m_toolType;
+}
+
+void DeviceToolAspect::setToolType(ToolType toolType)
+{
+    m_toolType = toolType;
+}
+
+void DeviceToolAspect::addToLayoutImpl(Layouting::Layout &parent)
+{
+    FilePathAspect::addToLayoutImpl(parent);
+    parent.flush();
+}
+
+// DeviceToolFactory
+
+static QList<DeviceToolAspectFactory *> theDeviceToolFactories;
+
+DeviceToolAspectFactory::DeviceToolAspectFactory()
+{
+    theDeviceToolFactories.append(this);
+}
+
+DeviceToolAspectFactory::~DeviceToolAspectFactory()
+{
+    theDeviceToolFactories.removeOne(this);
+}
+
+Id DeviceToolAspectFactory::toolId() const
+{
+    return m_toolId;
+}
+
+QStringList DeviceToolAspectFactory::filePattern() const
+{
+    return m_filePattern;
+}
+
+Result<> DeviceToolAspectFactory::check(const DeviceConstRef &device, const FilePath &candidate) const
+{
+    if (!m_checker)
+        return ResultOk;
+
+    return m_checker(device, candidate);
+}
+
+/*!
+    Returns if the device supports the file transfer \a method.
+    The device must set the corresponding SUPPORTS_RSYNC or SUPPORTS_SFTP values, or have a path
+    for the rsync tool set.
+*/
+bool IDevice::supportsFileTransferMethod(FileTransferMethod method) const
+{
+    switch (method) {
+    case FileTransferMethod::Sftp:
+        return extraData(Constants::SUPPORTS_SFTP).toBool();
+    case FileTransferMethod::Rsync:
+        return extraData(Constants::SUPPORTS_RSYNC).toBool();
+    case FileTransferMethod::GenericCopy:
+        return true;
+    }
+    QTC_CHECK(false);
+    return false;
+}
+
+void IDevice::offerKitCreation()
+{
+    d->autoCreateKits.setVisible(true);
+}
+
+bool IDevice::kitCreationEnabled() const
+{
+    return d->autoCreateKits.isVisible() && d->autoCreateKits.volatileValue();
+}
+
+void IDevice::registerToolDetectionTask(quint64 token)
+{
+    if (token && token == d->toolDetectionToken)
+        ++d->toolDetectionTaskCount;
+}
+
+void IDevice::deregisterToolDetectionTask(quint64 token)
+{
+    if (token && token == d->toolDetectionToken) {
+        if (--d->toolDetectionTaskCount == 0)
+            KitManager::createKitsForBuildDevice(shared_from_this());
+    }
+}
+
+Result<Environment> IDevice::getUnixEnvironment(const FilePath &scriptToSource) const
+{
+    if (deviceState() == IDevice::DeviceDisconnected && !isTesting())
+        return ResultError(Tr::tr("Device is not connected."));
+    return Utils::getUnixEnvironment(filePath("env"), osType(), scriptToSource);
+}
+
+void IDevice::requestToolDetection(const FilePaths &searchPaths)
+{
+    const quint64 token = kitCreationEnabled() ? ++d->toolDetectionToken : 0;
+    d->toolDetectionTaskCount = 0;
+    registerToolDetectionTask(token);
+    emit DeviceManager::instance()->toolDetectionRequested(id(), searchPaths, token);
+    deregisterToolDetectionTask(token);
+}
+
+FilePaths IDevice::toolSearchPaths() const
+{
+    return d->autoDetectionPaths();
+}
+
+Group IDevice::autoDetectDeviceToolsRecipe()
+{
+    struct Data
+    {
+        DeviceToolAspectFactory *factory;
+        FilePaths patterns;
+        FilePath currentValue;
+        FilePaths candidates = {};
+    };
+
+    QList<Data> datas;
+
+    for (DeviceToolAspectFactory *factory : std::as_const(theDeviceToolFactories)) {
+        FilePaths patterns = FilePaths::fromStrings(factory->filePattern());
+        patterns.setSchemeAndHost(rootPath());
+
+        DeviceToolAspect *toolAspect = d->deviceToolAspects.value(factory->toolId());
+        QTC_ASSERT(toolAspect, continue);
+        datas << Data{factory, patterns, toolAspect->expandedValue()};
+    }
+
+    const ListIterator iterator(datas);
+
+    std::weak_ptr<IDevice> weakDevice = shared_from_this();
+
+    const auto onSetupSearch = [weakDevice, iterator](Async<Data> &task) {
+        std::shared_ptr<IDevice> device = weakDevice.lock();
+        if (!device)
+            return;
+        const FilePaths detectionPaths = device->toolSearchPaths();
+        const FilePath deviceRootPath = device->rootPath();
+        const auto searchForTools = [deviceRootPath,
+                                     detectionPaths](Data data, IDeviceConstPtr device) -> Data {
+            for (const FilePath &pattern : std::as_const(data.patterns)) {
+                FilePaths candidates = Utils::filtered(
+                    pattern.searchAllInDirectories(detectionPaths), [&](const FilePath &toolPath) {
+                        // We assume that check() is thread safe to call.
+                        QTC_ASSERT_RESULT(data.factory->check(device, toolPath), return false);
+                        return true;
+                    });
+                candidates = Utils::transform(candidates, [deviceRootPath](const FilePath &path) {
+                    if (path.isChildOf(deviceRootPath))
+                        return FilePath::fromPathPart(path.path());
+                    return path;
+                });
+                data.candidates.append(candidates);
+            }
+            if (!data.currentValue.isEmpty()) {
+                if (!data.currentValue.isExecutableFile())
+                    data.currentValue.clear();
+            }
+            return data;
+        };
+
+        task.setConcurrentCallData(searchForTools, *iterator, device);
+    };
+
+    const auto onSearchDone = [weakDevice, iterator](const Async<Data> &task) {
+        std::shared_ptr<IDevice> device = weakDevice.lock();
+        if (!device)
+            return;
+
+        const Data data = task.result();
+
+        DeviceToolAspect *toolAspect = device->d->deviceToolAspects.value(
+            iterator->factory->toolId());
+        QTC_ASSERT(toolAspect, return);
+        toolAspect->setValueAlternatives(data.candidates);
+
+        const FilePath newValue = [&] {
+            if (!data.currentValue.isEmpty())
+                return data.currentValue;
+            if (!data.candidates.isEmpty())
+                return data.candidates.front();
+            return FilePath{};
+        }();
+
+        toolAspect->setValue(newValue);
+    };
+
+    // clang-format off
+    return For (iterator) >> Do {
+        AsyncTask<Data>(onSetupSearch, onSearchDone)
+    };
+    // clang-format on
+}
+
+DeviceToolAspect *DeviceToolAspectFactory::createAspect(const DeviceConstRef &device) const
+{
+    auto toolAspect = new DeviceToolAspect;
+    toolAspect->setToolId(m_toolId);
+    toolAspect->setSettingsKey(m_toolId.name());
+    toolAspect->setLabelText(m_labelText);
+    toolAspect->setToolTip(m_toolTip);
+    toolAspect->setPlaceHolderText(Tr::tr("Leave empty to look up executable in $PATH"));
+    toolAspect->setHistoryCompleter(m_toolId.name());
+    toolAspect->setValidationFunction(
+        [device, checker = m_checker](const QString &newValue) -> FancyLineEdit::AsyncValidationFuture {
+            return asyncRun([device, checker, newValue]() -> Result<QString> {
+                if (!checker)
+                    return newValue;
+                FilePath path = FilePath::fromUserInput(newValue);
+                Result<> result = checker(device, path);
+                return result ? newValue : result.error();
+            });
+        });
+
+    toolAspect->setAllowPathFromDevice(true);
+    toolAspect->setExpectedKind(PathChooser::ExistingCommand);
+    toolAspect->setBaseDirectory(device.lock()->rootPath());
+    toolAspect->setToolType(m_toolType);
+    return toolAspect;
+}
+
+void DeviceToolAspectFactory::setToolId(const Id &toolId)
+{
+    m_toolId = toolId;
+}
+
+void DeviceToolAspectFactory::setLabelText(const QString &labelText)
+{
+    m_labelText = labelText;
+}
+
+void DeviceToolAspectFactory::setToolTip(const QString &toolTip)
+{
+    m_toolTip = toolTip;
+}
+
+void DeviceToolAspectFactory::setVariablePrefix(const QByteArray &variablePrefix)
+{
+    m_variablePrefix = variablePrefix;
+}
+
+void DeviceToolAspectFactory::setChecker(const Checker &checker)
+{
+    m_checker = checker;
+}
+
+void DeviceToolAspectFactory::setFilePattern(const QStringList &filePattern)
+{
+    m_filePattern = filePattern;
+}
+
+void DeviceToolAspectFactory::setToolType(DeviceToolAspect::ToolType toolType)
+{
+    m_toolType = toolType;
+}
+
+// DeviceTester
+
+DeviceTester::DeviceTester(const IDevice::Ptr &device, QObject *parent)
+    : QObject(parent)
+    , m_device(device)
+{
+    m_device->setIsTesting(true);
+}
+
+DeviceTester::~DeviceTester()
+{
+    m_device->setIsTesting(false);
+}
+
+IDevice::IDevice()
+    : d(new Internal::IDevicePrivate(this))
 {
     setAutoApply(false);
 
-    displayName.setSettingsKey(DisplayNameKey);
-    displayName.setDisplayStyle(StringAspect::DisplayStyle::LineEditDisplay);
+    // allowEmptyCommand.setSettingsKey() intentionally omitted, this is not persisted.
 
-    auto validateDisplayName = [](const QString &old,
-                                  const QString &newValue) -> expected_str<void> {
+    sshForwardDebugServerPort.setSettingsKey(SshForwardDebugServerPortKey);
+    sshForwardDebugServerPort.setLabelText(Tr::tr("Use SSH port forwarding for debugging"));
+    sshForwardDebugServerPort.setToolTip(
+        Tr::tr("Enable debugging on remote targets that cannot expose GDB server ports.\n"
+               "The SSH tunneling is used to map the remote GDB server port to localhost.\n"
+               "The local and remote ports are determined automatically."));
+    sshForwardDebugServerPort.setDefaultValue(false);
+    sshForwardDebugServerPort.setLabelPlacement(BoolAspect::LabelPlacement::AtCheckBox);
+
+    linkDevice.setSettingsKey(LinkDeviceKey);
+    linkDevice.setLabelText(Tr::tr("Access via:"));
+    linkDevice.setToolTip(Tr::tr("Select the device to connect through."));
+    linkDevice.setDefaultValue("direct");
+    linkDevice.setComboBoxEditable(false);
+    linkDevice.setFillCallback([this](const StringSelectionAspect::ResultCallback &cb) {
+        QList<QStandardItem *> items;
+        auto defaultItem = new QStandardItem(Tr::tr("Direct"));
+        defaultItem->setData("direct");
+        items.append(defaultItem);
+        for (int i = 0, n = DeviceManager::deviceCount(); i < n; ++i) {
+            const auto device = DeviceManager::deviceAt(i);
+            if (device->id() == this->id())
+                continue;
+            QStandardItem *newItem = new QStandardItem(device->displayName());
+            newItem->setData(device->id().toSetting());
+            items.append(newItem);
+        }
+        cb(items);
+    });
+
+    auto validateDisplayName = [](const QString &old, const QString &newValue) -> Result<> {
         if (old == newValue)
-            return {};
+            return ResultOk;
 
         if (newValue.trimmed().isEmpty())
-            return make_unexpected(Tr::tr("The device name cannot be empty."));
+            return ResultError(Tr::tr("The device name cannot be empty."));
 
-        if (DeviceManager::clonedInstance()->hasDevice(newValue))
-            return make_unexpected(Tr::tr("A device with this name already exists."));
+        if (DeviceManager::hasDevice(newValue))
+            return ResultError(Tr::tr("A device with this name already exists."));
 
-        return {};
+        return ResultOk;
     };
 
-    displayName.setValidationFunction(
-        [this, validateDisplayName](FancyLineEdit *edit, QString *errorMsg) -> bool {
-            auto result = validateDisplayName(displayName.value(), edit->text());
-            if (result)
-                return true;
-
-            if (errorMsg)
-                *errorMsg = result.error();
-
-            return false;
+    d->displayName.setValidationFunction(
+        [this, validateDisplayName](const QString &text) -> Result<> {
+            return validateDisplayName(d->displayName.value(), text);
         });
 
-    displayName.setValueAcceptor(
+    d->displayName.setValueAcceptor(
         [validateDisplayName](const QString &old,
                               const QString &newValue) -> std::optional<QString> {
             if (!validateDisplayName(old, newValue))
@@ -199,16 +580,26 @@ DeviceSettings::DeviceSettings()
 
             return newValue;
         });
-}
 
-DeviceTester::DeviceTester(QObject *parent) : QObject(parent) { }
-
-IDevice::IDevice(std::unique_ptr<DeviceSettings> settings)
-    : d(new Internal::IDevicePrivate(std::move(settings)))
-{
+    freePortsAspect.setSettingsKey(PortsSpecKey);
+    freePortsAspect.setLabelText(Tr::tr("Free ports:"));
+    freePortsAspect.setToolTip(
+        Tr::tr("Enter lists and ranges like this: \"1024,1026-1028,1030\"."));
+    freePortsAspect.setHistoryCompleter("PortRange");
 }
 
 IDevice::~IDevice() = default;
+
+void IDevice::initDeviceToolAspects()
+{
+    // shared_from_this doesn't work in the ctor.
+    for (const DeviceToolAspectFactory *factory : theDeviceToolFactories) {
+        DeviceToolAspect *toolAspect = factory->createAspect(shared_from_this());
+        registerAspect(toolAspect, true);
+        toolAspect->setBaseDirectory([this] { return rootPath(); });
+        d->deviceToolAspects.insert(factory->toolId(), toolAspect);
+    }
+}
 
 void IDevice::setOpenTerminal(const IDevice::OpenTerminal &openTerminal)
 {
@@ -227,21 +618,18 @@ bool IDevice::canOpenTerminal() const
     return bool(d->openTerminal);
 }
 
-expected_str<void> IDevice::openTerminal(const Environment &env, const FilePath &workingDir) const
+void IDevice::openTerminal(const Environment &env,
+                           const FilePath &workingDir,
+                           const Continuation<> &cont) const
 {
     QTC_ASSERT(canOpenTerminal(),
-               return make_unexpected(Tr::tr("Opening a terminal is not supported.")));
-    return d->openTerminal(env, workingDir);
-}
-
-bool IDevice::isEmptyCommandAllowed() const
-{
-    return d->emptyCommandAllowed;
-}
-
-void IDevice::setAllowEmptyCommand(bool allow)
-{
-    d->emptyCommandAllowed = allow;
+               cont(ResultError(Tr::tr("Opening a terminal is not supported."))); return);
+    tryToConnect(Continuation<>([=, this](const Result<> &res) {
+        if (res)
+            d->openTerminal(env, workingDir, cont);
+        else
+            cont(ResultError(res.error()));
+    }));
 }
 
 bool IDevice::isAnyUnixDevice() const
@@ -249,25 +637,37 @@ bool IDevice::isAnyUnixDevice() const
     return d->osType == OsTypeLinux || d->osType == OsTypeMac || d->osType == OsTypeOtherUnix;
 }
 
-DeviceFileAccess *IDevice::fileAccess() const
+DeviceFileAccessPtr IDevice::fileAccess() const
 {
     if (d->fileAccessFactory)
         return d->fileAccessFactory();
 
-    return d->fileAccess;
+    return *d->fileAccess.readLocked();
+}
+
+bool IDevice::supportsFileAccess() const
+{
+    return d->fileAccessFactory || *d->fileAccess.readLocked();
+}
+
+void IDevice::tryToConnect(const Continuation<> &cont) const
+{
+    cont(ResultOk);
 }
 
 FilePath IDevice::filePath(const QString &pathOnDevice) const
 {
-    // match DeviceManager::deviceForPath
-    return FilePath::fromParts(u"device", id().toString(), pathOnDevice);
+    return rootPath().withNewPath(pathOnDevice);
 }
 
-bool IDevice::handlesFile(const FilePath &filePath) const
+Result<> IDevice::handlesFile(const FilePath &filePath) const
 {
     if (filePath.scheme() == u"device" && filePath.host() == id().toString())
-        return true;
-    return false;
+        return ResultOk;
+    return ResultError(
+        Tr::tr("The file \"%1\" cannot be handled by the device \"%2\".")
+            .arg(filePath.toUserOutput())
+            .arg(displayName()));
 }
 
 FilePath IDevice::searchExecutableInPath(const QString &fileName) const
@@ -307,21 +707,22 @@ FileTransferInterface *IDevice::createFileTransferInterface(
 
 Environment IDevice::systemEnvironment() const
 {
-    expected_str<Environment> env = systemEnvironmentWithError();
-    QTC_ASSERT_EXPECTED(env, return {});
+    Result<Environment> env = systemEnvironmentWithError();
+    QTC_ASSERT_RESULT(env, return {});
     return *env;
 }
 
-expected_str<Environment> IDevice::systemEnvironmentWithError() const
+Result<Environment> IDevice::systemEnvironmentWithError() const
 {
-    DeviceFileAccess *access = fileAccess();
+    DeviceFileAccessPtr access = fileAccess();
     QTC_ASSERT(access, return Environment::systemEnvironment());
     return access->deviceEnvironment();
 }
 
-QString IDevice::displayName() const
+Utils::Result<Environment> IDevice::sourcedEnvironment(const Utils::FilePath &script) const
 {
-    return d->settings->displayName();
+    Q_UNUSED(script)
+    return ResultError(Tr::tr("Sourcing a script is not supported on this platform."));
 }
 
 QString IDevice::displayType() const
@@ -339,12 +740,15 @@ void IDevice::setOsType(OsType osType)
     d->osType = osType;
 }
 
-void IDevice::setFileAccess(DeviceFileAccess *fileAccess)
+void IDevice::setFileAccess(DeviceFileAccessPtr fileAccess, bool announce)
 {
-    d->fileAccess = fileAccess;
+    d->fileAccess.writeLocked()->swap(fileAccess);
+    Utils::FSEngine::invalidateFileInfoCache();
+    if (announce)
+        emit DeviceManager::instance()->deviceUpdated(id());
 }
 
-void IDevice::setFileAccess(std::function<Utils::DeviceFileAccess *()> fileAccessFactory)
+void IDevice::setFileAccessFactory(std::function<DeviceFileAccessPtr()> fileAccessFactory)
 {
     d->fileAccessFactory = fileAccessFactory;
 }
@@ -382,7 +786,16 @@ void IDevice::setType(Id type)
 
 bool IDevice::isAutoDetected() const
 {
-    return d->origin == AutoDetected;
+    return d->origin == AutoDetected || isFromSdk();
+}
+
+/*!
+    Returns \c true if the device has been added by the sdktool. This normally implies it was
+    set up by the installer aka Qt Maintenance tool.
+*/
+bool IDevice::isFromSdk() const
+{
+    return d->origin == AddedBySdk;
 }
 
 /*!
@@ -396,16 +809,6 @@ bool IDevice::isAutoDetected() const
 Id IDevice::id() const
 {
     return d->id;
-}
-
-/*!
-    Tests whether a device can be compatible with the given kit. The default
-    implementation will match the device type specified in the kit against
-    the device's own type.
-*/
-bool IDevice::isCompatibleWith(const Kit *k) const
-{
-    return DeviceTypeKitAspect::deviceTypeId(k) == type();
 }
 
 QList<Task> IDevice::validate() const
@@ -423,58 +826,91 @@ const QList<IDevice::DeviceAction> IDevice::deviceActions() const
     return d->deviceActions;
 }
 
-PortsGatheringMethod IDevice::portsGatheringMethod() const
+ExecutableItem IDevice::portsGatheringRecipe(const Storage<PortsOutputData> &output) const
 {
-    return {[this](QAbstractSocket::NetworkLayerProtocol protocol) -> CommandLine {
-                // We might encounter the situation that protocol is given IPv6
-                // but the consumer of the free port information decides to open
-                // an IPv4(only) port. As a result the next IPv6 scan will
-                // report the port again as open (in IPv6 namespace), while the
-                // same port in IPv4 namespace might still be blocked, and
-                // re-use of this port fails.
-                // GDBserver behaves exactly like this.
+    const Storage<PortsInputData> input;
 
-                Q_UNUSED(protocol)
+    const auto onSetup = [this, input] {
+        const CommandLine cmd = filePath("/proc/net").isReadableDir()
+                              ? CommandLine{filePath("/bin/sh"), {"-c", "cat /proc/net/tcp*"}}
+                              : CommandLine{filePath("netstat"), {"-a", "-n"}};
+        *input = {freePorts(), cmd};
+    };
 
-                if (filePath("/proc/net").isReadableDir())
-                    return {filePath("/bin/sh"), {"-c", "cat /proc/net/tcp*"}};
-
-                return {filePath("netstat"), {"-a", "-n"}};
-            },
-            &Port::parseFromCommandOutput};
+    return Group {
+        input,
+        onGroupSetup(onSetup),
+        portsFromProcessRecipe(input, output)
+    };
 }
 
-DeviceTester *IDevice::createDeviceTester() const
+DeviceTester *IDevice::createDeviceTester()
 {
     QTC_ASSERT(false, qDebug("This should not have been called..."));
     return nullptr;
 }
 
-bool IDevice::canMount(const Utils::FilePath &) const
+void IDevice::setIsTesting(bool isTesting)
+{
+    d->isTesting = isTesting;
+}
+
+bool IDevice::isTesting() const
+{
+    return d->isTesting;
+}
+
+bool IDevice::canMount(const FilePath &) const
 {
     return false;
 }
 
 OsType IDevice::osType() const
 {
-    return d->osType;
+    return d->osType.get();
 }
 
-DeviceProcessSignalOperation::Ptr IDevice::signalOperation() const
+ExecutableItem IDevice::signalOperationRecipe(
+    const SignalOperationData &data,
+    const Storage<Utils::Result<>> &resultStorage) const
 {
-    return {};
+    Q_UNUSED(data)
+    return QSyncTask([resultStorage] {
+        *resultStorage = ResultError(
+            Tr::tr("No signal operation recipe is available for this device."));
+        return DoneResult::Error;
+    });
+}
+
+void IDevice::setDeviceState(DeviceState deviceState)
+{
+    DeviceManager::setDeviceState(id(), deviceState);
 }
 
 IDevice::DeviceState IDevice::deviceState() const
 {
-    return d->deviceState;
+    return DeviceManager::deviceState(id());
 }
 
-void IDevice::setDeviceState(const IDevice::DeviceState state)
+QIcon IDevice::overlayIcon() const
 {
-    if (d->deviceState == state)
-        return;
-    d->deviceState = state;
+    switch (deviceState()) {
+    case IDevice::DeviceStateUnknown:
+        return QIcon();
+    case IDevice::DeviceReadyToUse: {
+        static const QIcon ready = Icons::DEVICE_READY_INDICATOR_OVERLAY.icon();
+        return ready;
+    }
+    case IDevice::DeviceConnected: {
+        static const QIcon connected = Icons::DEVICE_CONNECTED_INDICATOR_OVERLAY.icon();
+        return connected;
+    }
+    case IDevice::DeviceDisconnected: {
+        static const QIcon disconnected = Icons::DEVICE_DISCONNECTED_INDICATOR_OVERLAY.icon();
+        return disconnected;
+    }
+    }
+    return QIcon();
 }
 
 Id IDevice::typeFromMap(const Store &map)
@@ -487,16 +923,39 @@ Id IDevice::idFromMap(const Store &map)
     return Id::fromSetting(map.value(IdKey));
 }
 
+// Backwards compatibility: Pre 17.0 a bunch of settings were stored in the extra data
+namespace {
+
+static const char LinkDevice[] = "RemoteLinux.LinkDevice";
+static const char SSH_FORWARD_DEBUGSERVER_PORT[] = "RemoteLinux.SshForwardDebugServerPort";
+
+static void backwardsFromExtraData(IDevice *device, const Store &map)
+{
+    if (map.contains(LinkDevice))
+        device->linkDevice.setValue(Id::fromSetting(map.value(LinkDevice)).toString());
+
+    if (map.contains(SSH_FORWARD_DEBUGSERVER_PORT))
+        device->sshForwardDebugServerPort.setValue(map.value(SSH_FORWARD_DEBUGSERVER_PORT).toBool());
+}
+
+static void backwardsToExtraData(const IDevice *const device, Store &map)
+{
+    if (device->linkDevice() != "direct")
+        map.insert(LinkDevice, QVariant::fromValue(device->linkDevice()));
+    map.insert(SSH_FORWARD_DEBUGSERVER_PORT, device->sshForwardDebugServerPort());
+}
+
+} // namespace
+
 /*!
     Restores a device object from a serialized state as written by toMap().
     If subclasses override this to restore additional state, they must call the
     base class implementation.
 */
-
 void IDevice::fromMap(const Store &map)
 {
+    AspectContainer::fromMap(map);
     d->type = typeFromMap(map);
-    settings()->fromMap(map);
 
     d->id = Id::fromSetting(map.value(IdKey));
     d->osType = osTypeFromString(map.value(ClientOsTypeKey).toString()).value_or(OsTypeLinux);
@@ -504,35 +963,36 @@ void IDevice::fromMap(const Store &map)
         d->id = newId();
     d->origin = static_cast<Origin>(map.value(OriginKey, ManuallyAdded).toInt());
 
-    d->sshParameters.write([&map](SshParameters &ssh) {
-        ssh.setHost(map.value(HostKey).toString());
-        ssh.setPort(map.value(SshPortKey, 22).toInt());
-        ssh.setUserName(map.value(UserNameKey).toString());
-
-        // Pre-4.9, the authentication enum used to have more values
-        const int storedAuthType = map.value(AuthKey, DefaultAuthType).toInt();
-        const bool outdatedAuthType = storedAuthType > SshParameters::AuthenticationTypeSpecificKey;
-        ssh.authenticationType = outdatedAuthType ? SshParameters::AuthenticationTypeAll
-                                                  : static_cast<AuthType>(storedAuthType);
-
-        ssh.privateKeyFile = FilePath::fromSettings(
-            map.value(KeyFileKey, defaultPrivateKeyFilePath()));
-        ssh.timeout = map.value(TimeoutKey, DefaultTimeout).toInt();
-        ssh.hostKeyCheckingMode = static_cast<SshHostKeyCheckingMode>(
-            map.value(HostKeyCheckingKey, SshHostKeyCheckingNone).toInt());
-    });
-
-    QString portsSpec = map.value(PortsSpecKey).toString();
-    if (portsSpec.isEmpty())
-        portsSpec = "10000-10100";
-    d->freePorts = PortList::fromString(portsSpec);
     d->machineType = static_cast<MachineType>(map.value(MachineTypeKey, DefaultMachineType).toInt());
     d->version = map.value(VersionKey, 0).toInt();
 
-    d->debugServerPath = FilePath::fromSettings(map.value(DebugServerKey));
-    const FilePath qmlRunCmd = FilePath::fromSettings(map.value(QmlRuntimeKey));
-    d->qmlRunCommand = qmlRunCmd;
     d->extraData = storeFromVariant(map.value(ExtraDataKey));
+
+    backwardsFromExtraData(this, d->extraData);
+
+    SshParameters ssh;
+    ssh.setHost(map.value(HostKey).toString());
+    ssh.setPort(map.value(SshPortKey, 22).toInt());
+    ssh.setUserName(map.value(UserNameKey).toString());
+
+    // Pre-4.9, the authentication enum used to have more values
+    const int storedAuthType = map.value(AuthKey, DefaultAuthType).toInt();
+    const bool outdatedAuthType = storedAuthType > SshParameters::AuthenticationTypeSpecificKey;
+    ssh.setAuthenticationType(
+        outdatedAuthType ? SshParameters::AuthenticationTypeAll
+                         : static_cast<AuthType>(storedAuthType));
+
+    ssh.setPrivateKeyFile(
+        FilePath::fromSettings(map.value(KeyFileKey, defaultPrivateKeyFilePath())));
+    ssh.setTimeout(map.value(TimeoutKey, DefaultTimeout).toInt());
+    SshHostKeyCheckingMode hostKeyCheckingMode = static_cast<SshHostKeyCheckingMode>(
+            map.value(HostKeyCheckingKey, SshHostKeyCheckingNone).toInt());
+    if (hostKeyCheckingMode < SshHostKeyCheckingNone || hostKeyCheckingMode > SshHostKeyCheckingAllowNoMatch)
+        hostKeyCheckingMode = SshHostKeyCheckingNone;
+    ssh.setHostKeyCheckingMode(hostKeyCheckingMode);
+
+
+    d->sshParametersAspectContainer.setSshParameters(ssh);
 }
 
 /*!
@@ -541,61 +1001,61 @@ void IDevice::fromMap(const Store &map)
     call the base class implementation.
 */
 
-Store IDevice::toMap() const
+void IDevice::toMap(Store &map) const
 {
-    Store map;
-    d->settings->toMap(map);
+    AspectContainer::toMap(map);
 
     map.insert(TypeKey, d->type.toString());
-    map.insert(ClientOsTypeKey, osTypeToString(d->osType));
+    map.insert(ClientOsTypeKey, osTypeToString(d->osType.get()));
     map.insert(IdKey, d->id.toSetting());
     map.insert(OriginKey, d->origin);
 
     map.insert(MachineTypeKey, d->machineType);
-
-    d->sshParameters.read([&map](const auto &ssh) {
-        map.insert(HostKey, ssh.host());
-        map.insert(SshPortKey, ssh.port());
-        map.insert(UserNameKey, ssh.userName());
-        map.insert(AuthKey, ssh.authenticationType);
-        map.insert(KeyFileKey, ssh.privateKeyFile.toSettings());
-        map.insert(TimeoutKey, ssh.timeout);
-        map.insert(HostKeyCheckingKey, ssh.hostKeyCheckingMode);
-    });
-
-    map.insert(PortsSpecKey, d->freePorts.toString());
     map.insert(VersionKey, d->version);
 
-    map.insert(DebugServerKey, d->debugServerPath.toSettings());
-    map.insert(QmlRuntimeKey, d->qmlRunCommand.toSettings());
+    Store extraData = d->extraData;
+    backwardsToExtraData(this, extraData);
 
-    map.insert(ExtraDataKey, variantFromStore(d->extraData));
+    map.insert(ExtraDataKey, variantFromStore(extraData));
 
-    return map;
+    SshParameters ssh = d->sshParametersAspectContainer.sshParameters();
+    map.insert(HostKey, ssh.host());
+    map.insert(SshPortKey, ssh.port());
+    map.insert(UserNameKey, ssh.userName());
+    map.insert(AuthKey, ssh.authenticationType());
+    map.insert(KeyFileKey, ssh.privateKeyFile().toSettings());
+    map.insert(TimeoutKey, ssh.timeout());
+    map.insert(HostKeyCheckingKey, ssh.hostKeyCheckingMode());
 }
 
-IDevice::Ptr IDevice::clone() const
+QString IDevice::displayName() const
 {
-    IDeviceFactory *factory = IDeviceFactory::find(d->type);
-    QTC_ASSERT(factory, return {});
-    IDevice::Ptr device = factory->construct();
-    QTC_ASSERT(device, return {});
-    device->d->deviceState = d->deviceState;
-    device->d->deviceActions = d->deviceActions;
-    device->d->deviceIcons = d->deviceIcons;
-    device->d->osType = d->osType;
-    device->fromMap(toMap());
-    return device;
+    return d->displayName();
 }
 
-DeviceSettings *IDevice::settings() const
+void IDevice::setDisplayName(const QString &name)
 {
-    return d->settings.get();
+    d->displayName.setValue(name);
+}
+
+QString IDevice::defaultDisplayName() const
+{
+    return d->displayName.defaultValue();
+}
+
+void IDevice::setDefaultDisplayName(const QString &name)
+{
+    d->displayName.setDefaultValue(name);
+}
+
+void IDevice::addDisplayNameToLayout(Layouting::Layout &layout) const
+{
+    d->displayName.addToLayout(layout);
 }
 
 QString IDevice::deviceStateToString() const
 {
-    switch (d->deviceState) {
+    switch (deviceState()) {
     case IDevice::DeviceReadyToUse: return Tr::tr("Ready to use");
     case IDevice::DeviceConnected: return Tr::tr("Connected");
     case IDevice::DeviceDisconnected: return Tr::tr("Disconnected");
@@ -620,9 +1080,22 @@ SshParameters IDevice::sshParameters() const
     return *d->sshParameters.readLocked();
 }
 
-void IDevice::setSshParameters(const SshParameters &sshParameters)
+void IDevice::setDefaultSshParameters(const SshParameters &sshParameters)
 {
-    *d->sshParameters.writeLocked() = sshParameters;
+    QTC_ASSERT(QThread::isMainThread(), return);
+
+    sshParametersAspectContainer().host.setDefaultValue(sshParameters.host());
+    sshParametersAspectContainer().port.setDefaultValue(sshParameters.port());
+    sshParametersAspectContainer().userName.setDefaultValue(sshParameters.userName());
+    sshParametersAspectContainer().privateKeyFile.setDefaultPathValue(
+        sshParameters.privateKeyFile());
+    sshParametersAspectContainer().timeout.setDefaultValue(sshParameters.timeout());
+    sshParametersAspectContainer().useKeyFile.setDefaultValue(
+        sshParameters.authenticationType() == SshParameters::AuthenticationTypeSpecificKey);
+    sshParametersAspectContainer().hostKeyCheckingMode.setDefaultValue(
+        sshParameters.hostKeyCheckingMode());
+
+    *d->sshParameters.writeLocked() = sshParametersAspectContainer().sshParameters();
 }
 
 QUrl IDevice::toolControlChannel(const ControlChannelHint &) const
@@ -635,12 +1108,12 @@ QUrl IDevice::toolControlChannel(const ControlChannelHint &) const
 
 void IDevice::setFreePorts(const PortList &freePorts)
 {
-    d->freePorts = freePorts;
+    freePortsAspect.setPortList(freePorts);
 }
 
 PortList IDevice::freePorts() const
 {
-    return d->freePorts;
+    return freePortsAspect.portList();
 }
 
 IDevice::MachineType IDevice::machineType() const
@@ -653,29 +1126,75 @@ void IDevice::setMachineType(MachineType machineType)
     d->machineType = machineType;
 }
 
+FilePath IDevice::deviceToolPath(Id toolId) const
+{
+    DeviceToolAspect *toolAspect = d->deviceToolAspects.value(toolId);
+    QTC_ASSERT(toolAspect, return {});
+    FilePath filePath = (*toolAspect)();
+    if (filePath.isEmpty())
+        return {};
+    if (filePath.isLocal())
+        return rootPath().withNewMappedPath(filePath);
+    return filePath;
+}
+
+FilePath IDevice::deviceToolPath(Id toolId, const FilePath &deviceHint)
+{
+    IDevice::ConstPtr dev = DeviceManager::deviceForPath(deviceHint);
+    QTC_ASSERT(dev, return {});
+    return dev->deviceToolPath(toolId);
+}
+
+QList<DeviceToolAspect *> IDevice::deviceToolAspects(DeviceToolAspect::ToolType supportType) const
+{
+    const QList<DeviceToolAspect *> list =
+        filtered(d->deviceToolAspects.values(), [supportType](DeviceToolAspect *aspect) {
+            return aspect->toolType() & supportType;
+        });
+
+    return Utils::sorted(list, [](DeviceToolAspect *left, DeviceToolAspect *right) {
+        return left->labelText().toCaseFolded() < right->labelText().toCaseFolded();
+    });
+}
+
+std::function<void(Layouting::Layout *)> IDevice::deviceToolsGui()
+{
+    using namespace Layouting;
+    return [this](Layout *layout) {
+        layout->addItems({
+            Column { Space(20) }, br,
+            Layouting::Group {
+                title(Tr::tr("Run Tools on This Device")),
+                Form {
+                    deviceToolAspects(DeviceToolAspect::RunTool)
+                }
+            }, br,
+            Layouting::Group {
+                title(Tr::tr("Source and Build Tools on This Device")),
+                Form {
+                    deviceToolAspects(DeviceToolAspect::ToolType(
+                        DeviceToolAspect::SourceTool | DeviceToolAspect::BuildTool))
+                }
+            }, br,
+            Layouting::Group {
+                title(Tr::tr("Auto-Detection")),
+                Column {
+                    Grid {
+                        d->autoDetectInPath, br,
+                        d->autoDetectInQtInstallation, d->autoDetectQtInstallation, br,
+                        d->autoDetectInDirectories, d->autoDetectDirectories, br,
+                        d->autoCreateKits, br,
+                    },
+                }
+            }, br,
+        });
+    };
+}
+
 FilePath IDevice::rootPath() const
 {
+    // match DeviceManager::deviceForPath
     return FilePath::fromParts(u"device", id().toString(), u"/");
-}
-
-FilePath IDevice::debugServerPath() const
-{
-    return d->debugServerPath;
-}
-
-void IDevice::setDebugServerPath(const FilePath &path)
-{
-    d->debugServerPath = path;
-}
-
-FilePath IDevice::qmlRunCommand() const
-{
-    return d->qmlRunCommand;
-}
-
-void IDevice::setQmlRunCommand(const FilePath &path)
-{
-    d->qmlRunCommand = path;
 }
 
 void IDevice::setExtraData(Id kind, const QVariant &data)
@@ -693,6 +1212,11 @@ int IDevice::version() const
     return d->version;
 }
 
+void IDevice::setFromSdk()
+{
+    d->origin = AddedBySdk;
+}
+
 QString IDevice::defaultPrivateKeyFilePath()
 {
     return QStandardPaths::writableLocation(QStandardPaths::HomeLocation)
@@ -704,14 +1228,14 @@ QString IDevice::defaultPublicKeyFilePath()
     return defaultPrivateKeyFilePath() + QLatin1String(".pub");
 }
 
-bool IDevice::ensureReachable(const FilePath &other) const
+Utils::Result<> IDevice::ensureReachable(const FilePath &other) const
 {
     return handlesFile(other); // Some first approximation.
 }
 
-expected_str<FilePath> IDevice::localSource(const Utils::FilePath &other) const
+Result<FilePath> IDevice::localSource(const FilePath &other) const
 {
-    Q_UNUSED(other);
+    Q_UNUSED(other)
     return make_unexpected(Tr::tr("localSource() not implemented for this device type."));
 }
 
@@ -721,57 +1245,170 @@ bool IDevice::prepareForBuild(const Target *target)
     return true;
 }
 
-std::optional<Utils::FilePath> IDevice::clangdExecutable() const
+void IDevice::doApply() const
 {
-    return std::nullopt;
+    const_cast<IDevice *>(this)->apply();
 }
 
-void DeviceProcessSignalOperation::setDebuggerCommand(const FilePath &cmd)
+Result<> SignalOperationData::isValid() const
 {
-    m_debuggerCommand = cmd;
+    switch (mode) {
+    case SignalOperationMode::KillByPath:
+        if (filePath.isEmpty())
+            return ResultError(Tr::tr("No path specified for SignalOperationData."));
+        break;
+    case SignalOperationMode::KillByPid:
+    case SignalOperationMode::InterruptByPid:
+        if (pid <= 0)
+            return ResultError(Tr::tr("No valid PID specified for SignalOperationData."));
+        break;
+    }
+    return ResultOk;
 }
 
-DeviceProcessSignalOperation::DeviceProcessSignalOperation() = default;
+// DeviceConstRef
 
-using namespace Tasking;
+DeviceConstRef::DeviceConstRef(const IDevice::ConstPtr &device)
+    : m_constDevice(device)
+{}
 
-void DeviceProcessKiller::start()
+DeviceConstRef::DeviceConstRef(const IDevice::Ptr &device)
+    : m_constDevice(device)
+{}
+
+IDevice::ConstPtr DeviceConstRef::lock() const
 {
-    m_signalOperation.reset();
-    m_errorString.clear();
+    return m_constDevice.lock();
+}
 
-    const IDevice::ConstPtr device = DeviceManager::deviceForPath(m_processPath);
-    if (!device) {
-        m_errorString = Tr::tr("No device for given path: \"%1\".").arg(m_processPath.toUserOutput());
-        emit done(DoneResult::Error);
-        return;
+DeviceConstRef::~DeviceConstRef() = default;
+
+Id DeviceConstRef::id() const
+{
+    const IDevice::ConstPtr device = m_constDevice.lock();
+    QTC_ASSERT(device, return {});
+    return device->id();
+}
+
+QString DeviceConstRef::displayName() const
+{
+    const IDevice::ConstPtr device = m_constDevice.lock();
+    QTC_ASSERT(device, return {});
+    return device->displayName();
+}
+
+SshParameters DeviceConstRef::sshParameters() const
+{
+    const IDevice::ConstPtr device = m_constDevice.lock();
+    QTC_ASSERT(device, return {});
+    return device->sshParameters();
+}
+
+QVariant DeviceConstRef::extraData(Id kind) const
+{
+    const IDevice::ConstPtr device = m_constDevice.lock();
+    QTC_ASSERT(device, return {});
+    return device->extraData(kind);
+}
+
+Id DeviceConstRef::linkDeviceId() const
+{
+    const IDevice::ConstPtr device = m_constDevice.lock();
+    QTC_ASSERT(device, return {});
+    return Id::fromString(device->linkDevice.value());
+}
+
+FilePath DeviceConstRef::filePath(const QString &pathOnDevice) const
+{
+    const IDevice::ConstPtr device = m_constDevice.lock();
+    QTC_ASSERT(device, return {});
+    return device->filePath(pathOnDevice);
+}
+
+// DeviceRef, mutable
+
+DeviceRef::DeviceRef(const IDevice::Ptr &device)
+    : DeviceConstRef(device), m_mutableDevice(device)
+{}
+
+IDevice::Ptr DeviceRef::lock() const
+{
+    return m_mutableDevice.lock();
+}
+
+void DeviceRef::setDisplayName(const QString &displayName)
+{
+    const IDevice::Ptr device = m_mutableDevice.lock();
+    QTC_ASSERT(device, return);
+    device->setDisplayName(displayName);
+}
+
+void DeviceRef::setSshParameters(const SshParameters &params)
+{
+    const IDevice::Ptr device = m_mutableDevice.lock();
+    QTC_ASSERT(device, return);
+    device->sshParametersAspectContainer().setSshParameters(params);
+}
+
+SshParametersAspectContainer &IDevice::sshParametersAspectContainer() const
+{
+    return d->sshParametersAspectContainer;
+}
+
+bool IDevice::supportsQtTargetDeviceType(const QSet<Id> &targetDeviceTypes) const
+{
+    return targetDeviceTypes.contains(type());
+}
+
+FilePaths Internal::IDevicePrivate::autoDetectionPaths() const
+{
+    FilePaths paths;
+    if (autoDetectInPath.volatileValue())
+        paths += q->systemEnvironment().path();
+
+    if (autoDetectInQtInstallation.volatileValue()) {
+        QString qtPath = autoDetectQtInstallation.volatileValue();
+        if (qtPath.isEmpty())
+            qtPath = q->systemEnvironment().value("HOME") + "/Qt";
+
+        using VersionAndPath = QPair<QVersionNumber, FilePath>;
+        QList<VersionAndPath> qtBinPaths;
+
+        // We are looking for something like ~/Qt/6.6.3/gcc_64/bin/
+        const FilePath qtInstallation = q->filePath(qtPath);
+        for (const FilePath &qtVersion : qtInstallation.dirEntries(QDir::Dirs | QDir::NoDotAndDotDot)) {
+            if (qtVersion.fileName().count(".") == 2) {
+                const QVersionNumber qtVersionNumber = QVersionNumber::fromString(qtVersion.fileName());
+                for (const FilePath &qtArch : qtVersion.dirEntries(QDir::Dirs | QDir::NoDotAndDotDot)) {
+                    const FilePath qtBinPath = qtArch.pathAppended("bin");
+                    if (qtBinPath.exists())
+                        qtBinPaths += std::make_pair(qtVersionNumber, qtBinPath);
+                }
+            }
+        }
+
+        // Prefer higher Qt versions.
+        sort(qtBinPaths, [](const VersionAndPath &a, const VersionAndPath &b) {
+            return a.first > b.first;
+        });
+
+        for (const VersionAndPath &vp : qtBinPaths)
+            paths += vp.second;
     }
 
-    m_signalOperation = device->signalOperation();
-    if (!m_signalOperation) {
-        m_errorString = Tr::tr("Device for path \"%1\" does not support killing processes.")
-                       .arg(m_processPath.toUserOutput());
-        emit done(DoneResult::Error);
-        return;
+    if (autoDetectInDirectories.volatileValue()) {
+        for (const QString &path : autoDetectDirectories.volatileValue().split(';'))
+            paths.append(FilePath::fromString(path.trimmed()));
     }
 
-    connect(m_signalOperation.get(), &DeviceProcessSignalOperation::finished,
-            this, [this](const QString &errorMessage) {
-        m_errorString = errorMessage;
-        emit done(toDoneResult(m_errorString.isEmpty()));
-    });
+    paths = transform(paths, [this](const FilePath &path) { return q->filePath(path.path()); });
 
-    m_signalOperation->killProcess(m_processPath.path());
+    return paths;
 }
 
-DeviceProcessKillerTaskAdapter::DeviceProcessKillerTaskAdapter()
+Result<> IDevice::supportsBuildingProject(const FilePath &projectDir) const
 {
-    connect(task(), &DeviceProcessKiller::done, this, &TaskInterface::done);
-}
-
-void DeviceProcessKillerTaskAdapter::start()
-{
-    task()->start();
+    return handlesFile(projectDir);
 }
 
 } // namespace ProjectExplorer

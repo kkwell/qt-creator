@@ -1,26 +1,52 @@
-Qt Creator 13
+Qt Creator 20
 =============
 
-Qt Creator version 13 contains bug fixes and new features.
+Qt Creator version 20 contains bug fixes and new features.
+It is a free upgrade for all users.
 
 The most important changes are listed in this document. For a complete list of
 changes, see the Git log for the Qt Creator sources that you can check out from
-the public Git repository. For example:
+the public Git repository or view online at
 
-    git clone git://code.qt.io/qt-creator/qt-creator.git
-    git log --cherry-pick --pretty=oneline origin/12.0..v13.0.0
+<https://code.qt.io/cgit/qt-creator/qt-creator.git/log/?id=19.0..v20.0.0>
 
 New plugins
 -----------
 
+### Plugin 1
+
+Description of the plugin.
+
+([Documentation](<URL>))
+
 General
 -------
+
+Added
+
+Changed
+
+Fixed
+
+### Model Context Protocol
 
 Help
 ----
 
+Added
+
+Changed
+
+Fixed
+
 Editing
 -------
+
+Added
+
+Changed
+
+Fixed
 
 ### C++
 
@@ -29,6 +55,8 @@ Editing
 ### Python
 
 ### Language Server Protocol
+
+### Diff Viewer
 
 ### Widget Designer
 
@@ -46,12 +74,24 @@ Editing
 
 ### SCXML
 
+### FakeVim
+
+### GLSL
+
 ### Binary Files
 
 Projects
 --------
 
+Added
+
+Changed
+
+Fixed
+
 ### CMake
+
+* vcpkg
 
 ### qmake
 
@@ -61,12 +101,22 @@ Projects
 
 ### Workspace
 
-### vcpkg
+### Compilation Database
+
+### Autotools
+
+### Meson
 
 ### Qt Safe Renderer
 
 Debugging
 ---------
+
+Added
+
+Changed
+
+Fixed
 
 ### C++
 
@@ -77,19 +127,45 @@ Debugging
 Analyzer
 --------
 
+Added
+
+Changed
+
+Fixed
+
 ### Clang
+
+### QML Profiler
 
 ### Axivion
 
+### Coco
+
 ### CTF Visualizer
+
+### Valgrind
+
+### Perf
 
 ### Cppcheck
 
 Terminal
 --------
 
+Added
+
+Changed
+
+Fixed
+
 Version Control Systems
 -----------------------
+
+Added
+
+Changed
+
+Fixed
 
 ### Git
 
@@ -98,14 +174,30 @@ Version Control Systems
 Test Integration
 ----------------
 
+Added
+
+Changed
+
+Fixed
+
 ### Qt Test
 
+### Boost
+
 ### Catch2
+
+### GoogleTest
 
 ### CTest
 
 Platforms
 ---------
+
+Added
+
+Changed
+
+Fixed
 
 ### Windows
 
@@ -119,6 +211,8 @@ Platforms
 
 ### Remote Linux
 
+### Development Container
+
 ### Docker
 
 ### Boot to Qt
@@ -130,6 +224,10 @@ Platforms
 ### QNX
 
 ### Bare Metal
+
+### WebAssembly
+
+### VxWorks
 
 Credits for these changes go to:
 --------------------------------

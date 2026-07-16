@@ -1,15 +1,13 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include "clangtoolsplugin.h"
-
 #include "clangtool.h"
 #include "clangtoolsconstants.h"
 #include "clangtoolsprojectsettingswidget.h"
 #include "clangtoolstr.h"
+#include "diagnosticmark.h"
 #include "documentclangtoolrunner.h"
-#include "documentquickfixfactory.h"
-#include "settingswidget.h"
+#include "runsettingswidget.h"
 
 #ifdef WITH_TESTS
 #include "clangtoolspreconfiguredsessiontests.h"
@@ -18,115 +16,219 @@
 #include "readexporteddiagnosticstest.h"
 #endif
 
-#include <utils/icon.h>
-#include <utils/mimeutils.h>
-#include <utils/qtcassert.h>
-#include <utils/stylehelper.h>
+#include <extensionsystem/iplugin.h>
 
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
-#include <coreplugin/coreconstants.h>
 #include <coreplugin/editormanager/editormanager.h>
-#include <coreplugin/icontext.h>
 #include <coreplugin/icore.h>
 
 #include <cppeditor/cppeditorconstants.h>
 #include <cppeditor/cppmodelmanager.h>
+#include <cppeditor/quickfixes/cppquickfix.h>
 
-#include <texteditor/texteditor.h>
-
-#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/environmentkitaspect.h>
 #include <projectexplorer/target.h>
 #include <projectexplorer/taskhub.h>
+
+#include <texteditor/refactoringchanges.h>
+#include <texteditor/textdocument.h>
+#include <texteditor/texteditor.h>
+
+#include <utils/algorithm.h>
+#include <utils/icon.h>
+#include <utils/mimeutils.h>
+#include <utils/stylehelper.h>
 
 #include <QAction>
 #include <QDebug>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMessageBox>
+#include <QSet>
 #include <QToolBar>
 
 using namespace Core;
 using namespace ProjectExplorer;
+using namespace Utils;
 
 namespace ClangTools::Internal {
+
+class ClangToolsPluginPrivate;
+
+class DocumentQuickFixFactory : public CppEditor::CppQuickFixFactory
+{
+public:
+    DocumentQuickFixFactory(ClangToolsPluginPrivate *pluginPrivate)
+        : m_pluginPrivate(pluginPrivate)
+    {}
+
+    void doMatch(const CppEditor::Internal::CppQuickFixInterface &interface,
+                 QuickFixOperations &result) override;
+
+private:
+    ClangToolsPluginPrivate *m_pluginPrivate;
+};
 
 class ClangToolsPluginPrivate
 {
 public:
-    ClangToolsPluginPrivate()
-        : quickFixFactory(
-            [this](const Utils::FilePath &filePath) { return runnerForFilePath(filePath); })
-    {}
+    ClangToolsPluginPrivate() : quickFixFactory(this) {}
 
-    DocumentClangToolRunner *runnerForFilePath(const Utils::FilePath &filePath)
+    TextEditor::TextDocument *documentForFilePath(const FilePath &filePath) const
     {
-        for (DocumentClangToolRunner *runner : std::as_const(documentRunners)) {
-            if (runner->filePath() == filePath)
-                return runner;
+        for (IDocument *doc : documentsWithRunners) {
+           if (doc->filePath() == filePath)
+                return qobject_cast<TextEditor::TextDocument *>(doc);
         }
         return nullptr;
     }
 
     ClangTidyTool clangTidyTool;
     ClazyTool clazyTool;
-    ClangToolsOptionsPage optionsPage;
-    QHash<Core::IDocument *, DocumentClangToolRunner *> documentRunners;
+    QSet<TextEditor::TextDocument *> documentsWithRunners;
     DocumentQuickFixFactory quickFixFactory;
 };
 
-ClangToolsPlugin::~ClangToolsPlugin()
+class ClangToolQuickFixOperation : public TextEditor::QuickFixOperation
 {
-    delete d;
+public:
+    explicit ClangToolQuickFixOperation(const Diagnostic &diagnostic)
+        : m_diagnostic(diagnostic)
+    {}
+
+    QString description() const override { return m_diagnostic.description; }
+    void perform() override;
+
+private:
+    const Diagnostic m_diagnostic;
+};
+
+using Range = TextEditor::RefactoringFile::Range;
+using DiagnosticRange = QPair<Link, Link>;
+
+static Range toRange(const QTextDocument *doc, DiagnosticRange locations)
+{
+    Range range;
+    range.start = locations.first.target.toPositionInDocument(doc);
+    range.end = locations.second.target.toPositionInDocument(doc);
+    return range;
 }
 
-void ClangToolsPlugin::initialize()
+void ClangToolQuickFixOperation::perform()
 {
-    TaskHub::addCategory({taskCategory(),
-                          Tr::tr("Clang Tools"),
-                          Tr::tr("Issues that Clang-Tidy and Clazy found when analyzing code.")});
+    TextEditor::PlainRefactoringFileFactory changes;
+    QMap<FilePath, TextEditor::RefactoringFilePtr> refactoringFiles;
 
-    // Import tidy/clazy diagnostic configs from CppEditor now
-    // instead of at opening time of the settings page
-    ClangToolsSettings::instance();
+    for (const ExplainingStep &step : m_diagnostic.explainingSteps) {
+        if (!step.isFixIt)
+            continue;
+        TextEditor::RefactoringFilePtr &refactoringFile =
+            refactoringFiles[step.location.targetFilePath];
+        if (refactoringFile.isNull())
+            refactoringFile = changes.file(step.location.targetFilePath);
+        ChangeSet changeSet = refactoringFile->changeSet();
+        Range range = toRange(refactoringFile->document(), {step.ranges.first(), step.ranges.last()});
+        changeSet.replace(range, step.message);
+        refactoringFile->setChangeSet(changeSet);
+    }
 
-    d = new ClangToolsPluginPrivate;
+    for (const TextEditor::RefactoringFilePtr &refactoringFile : std::as_const(refactoringFiles))
+        refactoringFile->apply();
+}
 
-    registerAnalyzeActions();
+static Diagnostics diagnosticsAtLine(TextEditor::TextDocument *textDocument, int lineNumber)
+{
+    Diagnostics diagnostics;
+    for (auto mark : textDocument->marksAt(lineNumber)) {
+        if (mark->category().id == Constants::DIAGNOSTIC_MARK_ID)
+            diagnostics << static_cast<DiagnosticMark *>(mark)->diagnostic();
+    }
+    return diagnostics;
+}
 
-    setupClangToolsProjectPanel();
+void DocumentQuickFixFactory::doMatch(const CppEditor::Internal::CppQuickFixInterface &interface,
+                                      QuickFixOperations &result)
+{
+    if (TextEditor::TextDocument *textDocument = m_pluginPrivate->documentForFilePath(interface.filePath())) {
+        const QTextBlock &block = interface.textDocument()->findBlock(interface.position());
+        if (!block.isValid())
+            return;
 
-    connect(Core::EditorManager::instance(),
-            &Core::EditorManager::currentEditorChanged,
-            this,
-            &ClangToolsPlugin::onCurrentEditorChanged);
+        const int lineNumber = block.blockNumber() + 1;
+        for (const Diagnostic &diagnostic : diagnosticsAtLine(textDocument, lineNumber)) {
+            if (diagnostic.hasFixits)
+                result << new ClangToolQuickFixOperation(diagnostic);
+        }
+    }
+}
+
+class ClangToolsPlugin final : public ExtensionSystem::IPlugin
+{
+    Q_OBJECT
+    Q_PLUGIN_METADATA(IID "org.qt-project.Qt.QtCreatorPlugin" FILE "ClangTools.json")
+
+public:
+    ~ClangToolsPlugin() final
+    {
+        delete d;
+    }
+
+private:
+    void initialize() final
+    {
+        TaskHub::addCategory({taskCategory(),
+                              Tr::tr("Clang Tools"),
+                              Tr::tr("Issues that Clang-Tidy and Clazy found when analyzing code.")});
+
+        // Import tidy/clazy diagnostic configs from CppEditor now
+        // instead of at opening time of the settings page
+        ClangToolsSettings::instance();
+
+        d = new ClangToolsPluginPrivate;
+
+        setupClangToolsOptionsPage();
+
+        registerAnalyzeActions();
+
+        setupClangToolsProjectPanel();
+
+        connect(Core::EditorManager::instance(),
+                &Core::EditorManager::currentEditorChanged,
+                this,
+                &ClangToolsPlugin::onCurrentEditorChanged);
 
 #ifdef WITH_TESTS
-    addTestCreator(createInlineSuppressedDiagnosticsTest);
-    addTest<PreconfiguredSessionTests>();
-    addTest<ClangToolsUnitTests>();
-    addTest<ReadExportedDiagnosticsTest>();
+        addTestCreator(createInlineSuppressedDiagnosticsTest);
+        addTest<PreconfiguredSessionTests>();
+        addTest<ClangToolsUnitTests>();
+        addTest<ReadExportedDiagnosticsTest>();
 #endif
-}
+    }
+
+    void registerAnalyzeActions();
+    void onCurrentEditorChanged();
+
+    class ClangToolsPluginPrivate *d = nullptr;
+};
 
 void ClangToolsPlugin::onCurrentEditorChanged()
 {
     for (Core::IEditor *editor : Core::EditorManager::visibleEditors()) {
-        IDocument *document = editor->document();
-        if (d->documentRunners.contains(document))
+        const auto document = qobject_cast<TextEditor::TextDocument *>(editor->document());
+        if (!document || !Utils::insert(d->documentsWithRunners, document))
             continue;
         auto runner = new DocumentClangToolRunner(document);
         connect(runner, &DocumentClangToolRunner::destroyed, this, [this, document] {
-            d->documentRunners.remove(document);
+            d->documentsWithRunners.remove(document);
         });
-        d->documentRunners[document] = runner;
     }
 }
 
 void ClangToolsPlugin::registerAnalyzeActions()
 {
-    const char * const menuGroupId = "ClangToolsCppGroup";
+    const Id menuGroupId = "ClangToolsCppGroup";
     ActionContainer * const mtoolscpp
         = ActionManager::actionContainer(CppEditor::Constants::M_TOOLS_CPP);
     if (mtoolscpp) {
@@ -141,11 +243,11 @@ void ClangToolsPlugin::registerAnalyzeActions()
     }
 
     for (const auto &toolInfo : {std::make_tuple(ClangTidyTool::instance(),
-                                                 Constants::RUN_CLANGTIDY_ON_PROJECT,
-                                                 Constants::RUN_CLANGTIDY_ON_CURRENT_FILE),
+                                                 Id(Constants::RUN_CLANGTIDY_ON_PROJECT),
+                                                 Id(Constants::RUN_CLANGTIDY_ON_CURRENT_FILE)),
                                  std::make_tuple(ClazyTool::instance(),
-                                                 Constants::RUN_CLAZY_ON_PROJECT,
-                                                 Constants::RUN_CLAZY_ON_CURRENT_FILE)}) {
+                                                 Id(Constants::RUN_CLAZY_ON_PROJECT),
+                                                 Id(Constants::RUN_CLAZY_ON_CURRENT_FILE))}) {
         ClangTool * const tool = std::get<0>(toolInfo);
         ActionManager::registerAction(tool->startAction(), std::get<1>(toolInfo));
         Command *cmd = ActionManager::registerAction(tool->startOnCurrentFileAction(),
@@ -193,3 +295,5 @@ void ClangToolsPlugin::registerAnalyzeActions()
 }
 
 } // ClangTools::Internal
+
+#include "clangtoolsplugin.moc"

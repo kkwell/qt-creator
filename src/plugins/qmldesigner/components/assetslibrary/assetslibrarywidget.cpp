@@ -6,9 +6,14 @@
 #include "assetslibraryiconprovider.h"
 #include "assetslibrarymodel.h"
 #include "assetslibraryview.h"
+#include <qmldesignertr.h>
 
+#include <asynchronousimagecache.h>
+#include <createtexture.h>
 #include <designeractionmanager.h>
+#include <designermcumanager.h>
 #include <designerpaths.h>
+#include <designmodewidget.h>
 #include <hdrimage.h>
 #include <import.h>
 #include <modelnodeoperations.h>
@@ -20,12 +25,13 @@
 #include <uniquename.h>
 #include <utils3d.h>
 
+#include <coreplugin/documentmanager.h>
 #include <coreplugin/fileutils.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/messagebox.h>
 
 #include <utils/algorithm.h>
-#include <utils/asset.h>
+#include <qmldesignerutils/asset.h>
 #include <utils/environment.h>
 #include <utils/fileutils.h>
 #include <utils/qtcassert.h>
@@ -43,6 +49,8 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <memory>
+
 using namespace Core;
 
 namespace QmlDesigner {
@@ -53,7 +61,7 @@ static QString propertyEditorResourcesPath()
     if (Utils::qtcEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
         return QLatin1String(SHARE_QML_PATH) + "/propertyEditorQmlSources";
 #endif
-    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toString();
+    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toUrlishString();
 }
 
 bool AssetsLibraryWidget::eventFilter(QObject *obj, QEvent *event)
@@ -64,20 +72,23 @@ bool AssetsLibraryWidget::eventFilter(QObject *obj, QEvent *event)
     } else if (event->type() == QMouseEvent::MouseMove) {
         if (!m_assetsToDrag.isEmpty() && m_assetsView->model()) {
             QMouseEvent *me = static_cast<QMouseEvent *>(event);
+
             if ((me->globalPosition().toPoint() - m_dragStartPoint).manhattanLength() > 10) {
-                QMimeData *mimeData = new QMimeData;
+                auto mimeData = std::make_unique<QMimeData>();
                 mimeData->setData(Constants::MIME_TYPE_ASSETS, m_assetsToDrag.join(',').toUtf8());
 
-                QList<QUrl> urlsToDrag = Utils::transform(m_assetsToDrag, [](const QString &path) {
-                    return QUrl::fromLocalFile(path);
-                });
+                QList<QUrl> urlsToDrag = Utils::transform(m_assetsToDrag, &QUrl::fromLocalFile);
 
-                mimeData->setUrls(urlsToDrag);
-
-                m_assetsView->model()->startDrag(mimeData, m_assetsIconProvider->requestPixmap(
-                                                     m_assetsToDrag[0], nullptr, {128, 128}));
+                QString draggedAsset = m_assetsToDrag[0];
 
                 m_assetsToDrag.clear();
+                mimeData->setUrls(urlsToDrag);
+
+                m_assetsView->model()->startDrag(std::move(mimeData),
+                                                 m_assetsIconProvider->requestPixmap(draggedAsset,
+                                                                                     nullptr,
+                                                                                     {128, 128}),
+                                                 this);
             }
         }
     } else if (event->type() == QMouseEvent::MouseButtonRelease) {
@@ -88,19 +99,58 @@ bool AssetsLibraryWidget::eventFilter(QObject *obj, QEvent *event)
     return QObject::eventFilter(obj, event);
 }
 
-AssetsLibraryWidget::AssetsLibraryWidget(AsynchronousImageCache &asynchronousFontImageCache,
+AssetsLibraryWidget::AssetsLibraryWidget(AsynchronousImageCache &mainImageCache,
+                                         AsynchronousImageCache &asynchronousFontImageCache,
                                          SynchronousImageCache &synchronousFontImageCache,
                                          AssetsLibraryView *view)
     : m_itemIconSize{24, 24}
+    , m_mainImageCache{mainImageCache}
     , m_fontImageCache{synchronousFontImageCache}
     , m_assetsIconProvider{new AssetsLibraryIconProvider(synchronousFontImageCache)}
     , m_assetsModel{new AssetsLibraryModel(this)}
     , m_assetsView{view}
-    , m_createTextures{view}
     , m_assetsWidget{Utils::makeUniqueObjectPtr<StudioQuickWidget>(this)}
 {
-    setWindowTitle(tr("Assets Library", "Title of assets library widget"));
+    setWindowTitle(Tr::tr("Assets Library", "Title of assets library widget"));
     setMinimumWidth(250);
+
+    connect(m_assetsIconProvider, &AssetsLibraryIconProvider::asyncAssetPreviewRequested,
+            this, [this](const QString &assetId, const QString &assetFile) {
+        Asset asset{assetFile};
+        if (!asset.isImported3D())
+            return;
+
+        Utils::FilePath fullPath = QmlDesignerPlugin::instance()->documentManager()
+                                       .generatedComponentUtils().getImported3dQml(assetFile);
+
+        if (!fullPath.exists())
+            return;
+
+        m_mainImageCache.requestImage(
+            Utils::PathString{fullPath.toFSPathString()},
+            [this, assetId](const QImage &image) {
+                QMetaObject::invokeMethod(this, [this, assetId, image] {
+                    updateAssetPreview(assetId, QPixmap::fromImage(image), "q3d");
+                }, Qt::QueuedConnection);
+            },
+            [assetFile](ImageCache::AbortReason abortReason) {
+                if (abortReason == ImageCache::AbortReason::Abort) {
+                    qWarning() << QLatin1String(
+                                      "AssetsLibraryIconProvider::asyncAssetPreviewRequested(): preview generation "
+                                      "failed for path %1, reason: Abort").arg(assetFile);
+                } else if (abortReason == ImageCache::AbortReason::Failed) {
+                    qWarning() << QLatin1String(
+                                      "AssetsLibraryIconProvider::asyncAssetPreviewRequested(): preview generation "
+                                      "failed for path %1, reason: Failed").arg(assetFile);
+                } else if (abortReason == ImageCache::AbortReason::NoEntry) {
+                    qWarning() << QLatin1String(
+                                      "AssetsLibraryIconProvider::asyncAssetPreviewRequested(): preview generation "
+                                      "failed for path %1, reason: NoEntry").arg(assetFile);
+                }
+            },
+            "libIcon",
+            ImageCache::LibraryIconAuxiliaryData{true});
+    });
 
     m_assetsWidget->quickWidget()->installEventFilter(this);
 
@@ -124,11 +174,8 @@ AssetsLibraryWidget::AssetsLibraryWidget(AsynchronousImageCache &asynchronousFon
     m_assetsWidget->setClearColor(Theme::getColor(Theme::Color::QmlDesigner_BackgroundColorDarkAlternate));
     m_assetsWidget->engine()->addImageProvider("qmldesigner_assets", m_assetsIconProvider);
 
-    connect(m_assetsModel, &AssetsLibraryModel::fileChanged,
-            QmlDesignerPlugin::instance(), &QmlDesignerPlugin::assetChanged);
-
-    connect(m_assetsModel, &AssetsLibraryModel::effectsDeleted,
-            this, &AssetsLibraryWidget::handleDeleteEffects);
+    connect(m_assetsModel, &AssetsLibraryModel::generatedAssetsDeleted,
+            this, &AssetsLibraryWidget::handleDeletedGeneratedAssets);
 
     auto layout = new QVBoxLayout(this);
     layout->setContentsMargins({});
@@ -138,7 +185,7 @@ AssetsLibraryWidget::AssetsLibraryWidget(AsynchronousImageCache &asynchronousFon
     updateSearch();
 
     setStyleSheet(Theme::replaceCssColors(
-        QString::fromUtf8(Utils::FileReader::fetchQrc(":/qmldesigner/stylesheet.css"))));
+        Utils::FileUtils::fetchQrc(":/qmldesigner/stylesheet.css")));
 
     m_qmlSourceUpdateShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F6), this);
     connect(m_qmlSourceUpdateShortcut, &QShortcut::activated, this, &AssetsLibraryWidget::reloadQmlSource);
@@ -162,9 +209,11 @@ AssetsLibraryWidget::AssetsLibraryWidget(AsynchronousImageCache &asynchronousFon
     setFocusProxy(m_assetsWidget->quickWidget());
 
     IContext::attach(this,
-                     Context(Constants::C_QMLASSETSLIBRARY, Constants::C_QT_QUICK_TOOLS_MENU),
+                     Context(Constants::qmlAssetsLibraryContextId, Constants::qtQuickToolsMenuContextId),
                      [this](const IContext::HelpCallback &callback) { contextHelp(callback); });
 }
+
+AssetsLibraryWidget::~AssetsLibraryWidget() = default;
 
 void AssetsLibraryWidget::contextHelp(const Core::IContext::HelpCallback &callback) const
 {
@@ -199,18 +248,14 @@ bool AssetsLibraryWidget::createNewEffect(const QString &effectPath, bool openIn
     return created;
 }
 
-bool AssetsLibraryWidget::canCreateEffects() const
+bool AssetsLibraryWidget::isEffectsCreationAllowed() const
 {
-#ifdef LICENSECHECKER
-    return checkLicense() == FoundLicense::enterprise;
-#else
-    return true;
-#endif
+    return false;
 }
 
 void AssetsLibraryWidget::showInGraphicalShell(const QString &path)
 {
-    Core::FileUtils::showInGraphicalShell(Core::ICore::dialogParent(), Utils::FilePath::fromString(path));
+    Core::FileUtils::showInGraphicalShell(Utils::FilePath::fromString(path));
 }
 
 QString AssetsLibraryWidget::showInGraphicalShellMsg() const
@@ -226,18 +271,20 @@ int AssetsLibraryWidget::qtVersion() const
 void AssetsLibraryWidget::addTextures(const QStringList &filePaths)
 {
     m_assetsView->executeInTransaction(__FUNCTION__, [&] {
-        m_createTextures.execute(filePaths,
-                                 AddTextureMode::Texture,
-                                 Utils3D::active3DSceneId(m_assetsView->model()));
+        CreateTexture(m_assetsView)
+            .execute(filePaths,
+                     AddTextureMode::Texture,
+                     Utils3D::active3DSceneId(m_assetsView->model()));
     });
 }
 
 void AssetsLibraryWidget::addLightProbe(const QString &filePath)
 {
     m_assetsView->executeInTransaction(__FUNCTION__, [&] {
-        m_createTextures.execute({filePath},
-                                 AddTextureMode::LightProbe,
-                                 Utils3D::active3DSceneId(m_assetsView->model()));
+        CreateTexture(m_assetsView)
+            .execute(filePath,
+                     AddTextureMode::LightProbe,
+                     Utils3D::active3DSceneId(m_assetsView->model()));
     });
 }
 
@@ -246,9 +293,12 @@ void AssetsLibraryWidget::updateContextMenuActionsEnableState()
     setHasMaterialLibrary(Utils3D::materialLibraryNode(m_assetsView).isValid()
                           && m_assetsView->model()->hasImport("QtQuick3D"));
 
-    ModelNode activeSceneEnv = m_createTextures.resolveSceneEnv(
-        Utils3D::active3DSceneId(m_assetsView->model()));
+    ModelNode activeSceneEnv = Utils3D::resolveSceneEnv(m_assetsView,
+                                                        Utils3D::active3DSceneId(
+                                                            m_assetsView->model()));
     setHasSceneEnv(activeSceneEnv.isValid());
+
+    setCanCreateEffects(isEffectsCreationAllowed());
 }
 
 void AssetsLibraryWidget::setHasMaterialLibrary(bool enable)
@@ -260,6 +310,11 @@ void AssetsLibraryWidget::setHasMaterialLibrary(bool enable)
     emit hasMaterialLibraryChanged();
 }
 
+bool AssetsLibraryWidget::hasMaterialLibrary() const
+{
+    return m_hasMaterialLibrary;
+}
+
 void AssetsLibraryWidget::setHasSceneEnv(bool b)
 {
     if (b == m_hasSceneEnv)
@@ -269,43 +324,63 @@ void AssetsLibraryWidget::setHasSceneEnv(bool b)
     emit hasSceneEnvChanged();
 }
 
-void AssetsLibraryWidget::handleDeleteEffects([[maybe_unused]] const QStringList &effectNames)
+void AssetsLibraryWidget::handleDeletedGeneratedAssets(const QHash<QString, Utils::FilePath> &assetData)
 {
-#ifdef QDS_USE_PROJECTSTORAGE
-// That code has to rewritten with modules. Seem try to find all effects nodes.
-#else
+    // assetData key: full type name including import, value: import dir
+
+    // This method removes all nodes of the deleted type (assetData.keys())
+    // and removes the import statement for that type
+
     DesignDocument *document = QmlDesignerPlugin::instance()->currentDesignDocument();
     if (!document)
         return;
 
     bool clearStacks = false;
 
-    // Remove usages of deleted effects from the current document
+    const Imports imports = m_assetsView->model()->imports();
+    const GeneratedComponentUtils &compUtils = QmlDesignerPlugin::instance()->documentManager()
+                                             .generatedComponentUtils();
+    QString effectPrefix = compUtils.composedEffectsTypePrefix();
+    QStringList effectNames;
+
+    // Remove usages of deleted assets from the current document
     m_assetsView->executeInTransaction(__FUNCTION__, [&]() {
         QList<ModelNode> allNodes = m_assetsView->allModelNodes();
-        const QString typeTemplate = "%1.%2.%2";
-        const QString importUrlTemplate = "%1.%2";
-        const Imports imports = m_assetsView->model()->imports();
-        Imports removedImports;
-        const QString typePrefix = QmlDesignerPlugin::instance()->documentManager()
-                                       .generatedComponentUtils().composedEffectsTypePrefix();
-        for (const QString &effectName : effectNames) {
-            if (effectName.isEmpty())
-                continue;
-            const TypeName type = typeTemplate.arg(typePrefix, effectName).toUtf8();
-            for (ModelNode &node : allNodes) {
-                if (node.metaInfo().typeName() == type) {
-                    clearStacks = true;
-                    node.destroy();
+
+        QList<Import> removedImports;
+
+        const QStringList assetTypes = assetData.keys();
+        for (const QString &assetType : assetTypes) {
+            QString removedImportUrl;
+            int idx = assetType.lastIndexOf('.');
+            if (idx >= 0) {
+                if (assetType.startsWith(effectPrefix))
+                    effectNames.append(assetType.sliced(idx + 1));
+                removedImportUrl = assetType.first(idx);
+#ifdef QDS_USE_PROJECTSTORAGE
+                auto module = m_assetsView->model()->module(removedImportUrl.toUtf8(),
+                                                            Storage::ModuleKind::QmlLibrary);
+                auto metaInfo = m_assetsView->model()->metaInfo(module, assetType.sliced(idx + 1).toUtf8());
+                for (ModelNode &node : allNodes) {
+                    if (node.metaInfo() == metaInfo) {
+#else
+                TypeName type = assetType.toUtf8();
+                for (ModelNode &node : allNodes) {
+                    if (node.metaInfo().typeName() == type) {
+#endif
+                        clearStacks = true;
+                        node.destroy();
+                    }
+                }
+                if (!removedImportUrl.isEmpty()) {
+                    Import removedImport = Utils::findOrDefault(imports,
+                                                                [&removedImportUrl](const Import &import) {
+                        return import.url() == removedImportUrl;
+                    });
+                    if (!removedImport.isEmpty())
+                        removedImports.append(removedImport);
                 }
             }
-
-            const QString importPath = importUrlTemplate.arg(typePrefix, effectName);
-            Import removedImport = Utils::findOrDefault(imports, [&importPath](const Import &import) {
-                return import.url() == importPath;
-            });
-            if (!removedImport.isEmpty())
-                removedImports.append(removedImport);
         }
 
         if (!removedImports.isEmpty()) {
@@ -315,22 +390,19 @@ void AssetsLibraryWidget::handleDeleteEffects([[maybe_unused]] const QStringList
     });
 
     // The size check here is to weed out cases where project path somehow resolves
-    // to just slash. Shortest legal currentProjectDirPath() would be "/a/".
-    if (m_assetsModel->currentProjectDirPath().size() < 3)
+    // to just slash or drive + slash. (Shortest legal currentProjectDirPath() would be "/a/")
+    if (m_assetsModel->currentProjectDirPath().size() < 4)
         return;
 
     Utils::FilePath effectsDir = ModelNodeOperations::getEffectsImportDirectory();
 
-    // Delete the effect modules
-    for (const QString &effectName : effectNames) {
-        Utils::FilePath eDir = effectsDir.pathAppended(effectName);
-        if (eDir.exists() && eDir.toString().startsWith(m_assetsModel->currentProjectDirPath())) {
-            QString error;
-            eDir.removeRecursively(&error);
-            if (!error.isEmpty()) {
+    // Delete the asset modules
+    for (const Utils::FilePath &dir : assetData) {
+        if (dir.exists() && dir.toFSPathString().startsWith(m_assetsModel->currentProjectDirPath())) {
+            if (!dir.removeRecursively()) {
                 QMessageBox::warning(Core::ICore::dialogParent(),
-                                     tr("Failed to Delete Effect Resources"),
-                                     tr("Could not delete \"%1\".").arg(eDir.toString()));
+                                     Tr::tr("Failed to Delete Effect Resources"),
+                                     Tr::tr("Could not delete \"%1\".").arg(dir.toUserOutput()));
             }
         }
     }
@@ -341,7 +413,18 @@ void AssetsLibraryWidget::handleDeleteEffects([[maybe_unused]] const QStringList
         document->clearUndoRedoStacks();
 
     m_assetsView->emitCustomNotification("effectcomposer_effects_deleted", {}, {effectNames});
+#ifndef QDS_USE_PROJECTSTORAGE
+    m_assetsView->emitCustomNotification("assets_deleted");
 #endif
+}
+
+void AssetsLibraryWidget::updateAssetPreview(const QString &id, const QPixmap &pixmap,
+                                             const QString &suffix)
+{
+    const QString thumb = m_assetsIconProvider->setPixmap(id, pixmap, suffix);
+
+    if (!thumb.isEmpty())
+        emit m_assetsModel->fileChanged(thumb);
 }
 
 void AssetsLibraryWidget::invalidateThumbnail(const QString &id)
@@ -365,6 +448,77 @@ bool AssetsLibraryWidget::assetIsImageOrTexture(const QString &id)
     return Asset(id).isValidTextureSource();
 }
 
+bool AssetsLibraryWidget::assetIsImported3d(const QString &id)
+{
+    return Asset(id).isImported3D();
+}
+
+// needed to deal with "Object 0xXXXX destroyed while one of its QML signal handlers is in progress..." error which would lead to a crash
+void AssetsLibraryWidget::invokeAssetsDrop(const QList<QUrl> &urls, const QString &targetDir)
+{
+    QMetaObject::invokeMethod(this, "handleAssetsDrop", Qt::QueuedConnection, Q_ARG(QList<QUrl>, urls), Q_ARG(QString, targetDir));
+}
+
+void AssetsLibraryWidget::handleAssetsDrop(const QList<QUrl> &urls, const QString &targetDir)
+{
+    if (urls.isEmpty() || targetDir.isEmpty())
+        return;
+
+    Utils::FilePath destDir = Utils::FilePath::fromUserInput(targetDir);
+
+    const Utils::FilePath resourceFolder = DocumentManager::currentResourcePath();
+
+    if (destDir.isFile())
+        destDir = destDir.parentDir();
+
+    QMessageBox msgBox;
+    msgBox.setInformativeText("What would you like to do with the existing asset?");
+    msgBox.addButton("Keep Both", QMessageBox::AcceptRole);
+    msgBox.addButton("Replace", QMessageBox::ResetRole);
+    msgBox.addButton("Cancel", QMessageBox::RejectRole);
+
+    for (const QUrl &url : urls) {
+        Utils::FilePath src = Utils::FilePath::fromUrl(url);
+        Utils::FilePath dest = destDir.pathAppended(src.fileName());
+
+        if (destDir == src.parentDir() || !src.isChildOf(resourceFolder))
+            continue;
+
+        if (dest.exists()) {
+            msgBox.setText("An asset named " + dest.fileName() + " already exists.");
+            msgBox.exec();
+            int userAction = msgBox.buttonRole(msgBox.clickedButton());
+
+            if (userAction == QMessageBox::AcceptRole) { // "Keep Both"
+                dest = Utils::FilePath::fromString(UniqueName::generatePath(dest.toUrlishString()));
+            } else if (userAction == QMessageBox::ResetRole && dest.exists()) { // "Replace"
+                if (!dest.removeFile()) {
+                    qWarning() << __FUNCTION__ << "Failed to remove existing file" << dest;
+                    continue;
+                }
+            } else if (userAction == QMessageBox::RejectRole) { // "Cancel"
+                continue;
+            }
+        }
+
+        bool isDir = src.isDir();
+
+        if (src.renameFile(dest)) {
+            if (isDir)
+                m_assetsModel->updateExpandPath(src, dest);
+        } else if (isDir) {
+            Core::AsynchronousMessageBox::warning(
+                Tr::tr("Failed to Move Folder"),
+                Tr::tr("Failed to move folder \"%1\". The folder might contain subfolders or one "
+                       "of its files is in use.")
+                    .arg(src.fileName()));
+        }
+    }
+
+    if (m_assetsView->model())
+        m_assetsView->model()->endDrag();
+}
+
 QList<QToolButton *> AssetsLibraryWidget::createToolBarWidgets()
 {
     return {};
@@ -372,7 +526,7 @@ QList<QToolButton *> AssetsLibraryWidget::createToolBarWidgets()
 
 void AssetsLibraryWidget::handleSearchFilterChanged(const QString &filterText)
 {
-    if (filterText == m_filterText || (!m_assetsModel->hasFiles()
+    if (filterText == m_filterText || (m_assetsModel->isEmpty()
                                        && filterText.contains(m_filterText, Qt::CaseInsensitive)))
         return;
 
@@ -399,29 +553,32 @@ void AssetsLibraryWidget::handleExtFilesDrop(const QList<QUrl> &simpleFilePaths,
                                              const QList<QUrl> &complexFilePaths,
                                              const QString &targetDirPath)
 {
-    auto toLocalFile = [](const QUrl &url) { return url.toLocalFile(); };
-
-    QStringList simpleFilePathStrings = Utils::transform<QStringList>(simpleFilePaths, toLocalFile);
-    QStringList complexFilePathStrings = Utils::transform<QStringList>(complexFilePaths, toLocalFile);
+    QStringList simpleFilePathStrings = Utils::transform<QStringList>(simpleFilePaths,
+                                                                      &QUrl::toLocalFile);
+    QStringList complexFilePathStrings = Utils::transform<QStringList>(complexFilePaths,
+                                                                       &QUrl::toLocalFile);
 
     if (!simpleFilePathStrings.isEmpty()) {
         if (targetDirPath.isEmpty()) {
-            addResources(simpleFilePathStrings);
+            addResources(simpleFilePathStrings, false);
         } else {
-            bool isDropOnRoot = m_assetsModel->rootPath() == targetDirPath;
             AddFilesResult result = ModelNodeOperations::addFilesToProject(simpleFilePathStrings,
                                                                            targetDirPath,
-                                                                           isDropOnRoot);
+                                                                           false);
             if (result.status() == AddFilesResult::Failed) {
-                Core::AsynchronousMessageBox::warning(tr("Failed to Add Files"),
-                                                      tr("Could not add %1 to project.")
-                                                          .arg(simpleFilePathStrings.join(' ')));
+                QWidget *w = Core::AsynchronousMessageBox::warning(
+                    Tr::tr("Failed to Add Files"),
+                    Tr::tr("Could not add %1 to project.").arg(simpleFilePathStrings.join(' ')));
+                // Avoid multiple modal dialogs open at the same time
+                auto mb = qobject_cast<QMessageBox *>(w);
+                if (mb && !complexFilePathStrings.empty())
+                    mb->exec();
             }
         }
     }
 
     if (!complexFilePathStrings.empty())
-        addResources(complexFilePathStrings);
+        addResources(complexFilePathStrings, false);
 
     m_assetsView->model()->endDrag();
 }
@@ -445,13 +602,29 @@ void AssetsLibraryWidget::openEffectComposer(const QString &filePath)
     ModelNodeOperations::openEffectComposer(filePath);
 }
 
+void AssetsLibraryWidget::editAssetComponent(const QString &filePath)
+{
+    Utils::FilePath fullPath = QmlDesignerPlugin::instance()->documentManager()
+                                   .generatedComponentUtils().getImported3dQml(filePath);
+    if (fullPath.exists())
+        DocumentManager::goIntoComponent(fullPath.toFSPathString());
+}
+
+void AssetsLibraryWidget::updateAssetComponent(const QString &filePath)
+{
+    Utils::FilePath qml = QmlDesignerPlugin::instance()->documentManager()
+                              .generatedComponentUtils().getImported3dQml(filePath);
+    if (qml.exists())
+        m_assetsView->emitCustomNotification("UpdateImported3DAsset", {}, {qml.toFSPathString()});
+}
+
 QString AssetsLibraryWidget::qmlSourcesPath()
 {
 #ifdef SHARE_QML_PATH
     if (Utils::qtcEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
         return QLatin1String(SHARE_QML_PATH) + "/assetsLibraryQmlSources";
 #endif
-    return Core::ICore::resourcePath("qmldesigner/assetsLibraryQmlSources").toString();
+    return Core::ICore::resourcePath("qmldesigner/assetsLibraryQmlSources").toUrlishString();
 }
 
 void AssetsLibraryWidget::clearSearchFilter()
@@ -523,6 +696,9 @@ QPair<QString, QByteArray> AssetsLibraryWidget::getAssetTypeAndData(const QStrin
         } else if (asset.isEffect()) {
             // Data: Effect Composer format (suffix)
             return {Constants::MIME_TYPE_ASSET_EFFECT, asset.suffix().toUtf8()};
+        } else if (asset.isImported3D()) {
+            // Data: Imported 3D component (suffix)
+            return {Constants::MIME_TYPE_ASSET_IMPORTED3D, asset.suffix().toUtf8()};
         }
     }
     return {};
@@ -566,7 +742,7 @@ void AssetsLibraryWidget::addResources(const QStringList &files, bool showDialog
             return priorities.value(first) < priorities.value(second);
         });
 
-        QStringList filters { tr("All Files (%1)").arg("*.*") };
+        QStringList filters{Core::DocumentManager::allFilesFilterString()};
         QString filterTemplate = "%1 (%2)";
         for (const QString &key : std::as_const(sortedKeys)) {
             const QStringList values = map.values(key);
@@ -583,10 +759,10 @@ void AssetsLibraryWidget::addResources(const QStringList &files, bool showDialog
         }
 
         static QString lastDir;
-        const QString currentDir = lastDir.isEmpty() ? document->fileName().parentDir().toString() : lastDir;
+        const QString currentDir = lastDir.isEmpty() ? document->fileName().parentDir().toUrlishString() : lastDir;
 
         fileNames = QFileDialog::getOpenFileNames(Core::ICore::dialogParent(),
-                                                  tr("Add Assets"),
+                                                  Tr::tr("Add Assets"),
                                                   currentDir,
                                                   filters.join(";;"));
 
@@ -609,17 +785,18 @@ void AssetsLibraryWidget::addResources(const QStringList &files, bool showDialog
         categoryFileNames.insert(category, fileName);
     }
 
+    QStringList unsupportedFiles;
+    QStringList failedOpsFiles;
+
     for (const QString &category : categoryFileNames.uniqueKeys()) {
         QStringList fileNames = categoryFileNames.values(category);
         AddResourceOperation operation = categoryToOperation.value(category);
         QmlDesignerPlugin::emitUsageStatistics(Constants::EVENT_RESOURCE_IMPORTED + category);
         if (operation) {
             AddFilesResult result = operation(fileNames,
-                                              document->fileName().parentDir().toString(), showDialog);
+                                              document->fileName().parentDir().toUrlishString(), showDialog);
             if (result.status() == AddFilesResult::Failed) {
-                Core::AsynchronousMessageBox::warning(tr("Failed to Add Files"),
-                                                      tr("Could not add %1 to project.")
-                                                          .arg(fileNames.join(' ')));
+                failedOpsFiles.append(fileNames);
             } else {
                 if (!result.directory().isEmpty()) {
                     emit directoryCreated(result.directory());
@@ -634,16 +811,45 @@ void AssetsLibraryWidget::addResources(const QStringList &files, bool showDialog
                 }
             }
         } else {
-            Core::AsynchronousMessageBox::warning(tr("Failed to Add Files"),
-                                                  tr("Could not add %1 to project. Unsupported file format.")
-                                                      .arg(fileNames.join(' ')));
+            unsupportedFiles.append(fileNames);
         }
+    }
+
+    if (!failedOpsFiles.isEmpty()) {
+        QWidget *w = Core::AsynchronousMessageBox::warning(Tr::tr("Failed to Add Files"),
+                                                           Tr::tr("Could not add %1 to project.")
+                                                               .arg(failedOpsFiles.join(' ')));
+        // Avoid multiple modal dialogs open at the same time
+        auto mb = qobject_cast<QMessageBox *>(w);
+        if (mb && !unsupportedFiles.isEmpty())
+            mb->exec();
+    }
+    if (!unsupportedFiles.isEmpty()) {
+        Core::AsynchronousMessageBox::warning(
+            Tr::tr("Failed to Add Files"),
+            Tr::tr("Could not add %1 to project. Unsupported file format.")
+                .arg(unsupportedFiles.join(' ')));
     }
 }
 
 void AssetsLibraryWidget::addAssetsToContentLibrary(const QStringList &assetPaths)
 {
+    QmlDesignerPlugin::instance()->mainWidget()->showDockWidget("ContentLibrary");
     m_assetsView->emitCustomNotification("add_assets_to_content_lib", {}, {assetPaths});
+}
+
+void AssetsLibraryWidget::setCanCreateEffects(bool newVal)
+{
+    if (m_canCreateEffects == newVal)
+        return;
+
+    m_canCreateEffects = newVal;
+    emit canCreateEffectsChanged();
+}
+
+bool AssetsLibraryWidget::canCreateEffects() const
+{
+    return m_canCreateEffects;
 }
 
 } // namespace QmlDesigner

@@ -4,7 +4,10 @@
 #include "futuresynchronizer.h"
 
 #include "qtcassert.h"
-#include "threadutils.h"
+
+#include <qapplicationstatic.h>
+
+#include <QThread>
 
 /*!
   \class Utils::FutureSynchronizer
@@ -31,18 +34,13 @@ void FutureSynchronizer::waitForFinished()
         cancelAllFutures();
     for (QFuture<void> &future : m_futures)
         future.waitForFinished();
-    clearFutures();
+    m_futures.clear();
 }
 
 void FutureSynchronizer::cancelAllFutures()
 {
     for (QFuture<void> &future : m_futures)
         future.cancel();
-}
-
-void FutureSynchronizer::clearFutures()
-{
-    m_futures.clear();
 }
 
 void FutureSynchronizer::setCancelOnWait(bool enabled)
@@ -65,17 +63,23 @@ void FutureSynchronizer::flushFinishedFutures()
     m_futures = newFutures;
 }
 
-Q_GLOBAL_STATIC(FutureSynchronizer, s_futureSynchronizer);
+void FutureSynchronizer::addFutureImpl(const QFuture<void> &future)
+{
+    m_futures.append(future);
+    flushFinishedFutures();
+}
+
+Q_APPLICATION_STATIC(FutureSynchronizer, s_futureSynchronizer);
 
 /*!
     Returns a global FutureSynchronizer.
     The application should cancel and wait for the tasks in this synchronizer before actually
-    unloading any libraries. This is for example done by the plugin manager in Qt Creator.
+    unloading any libraries. This is for example done by the plugin manager in \QC.
     May only be accessed by the main thread.
 */
 FutureSynchronizer *futureSynchronizer()
 {
-    QTC_ASSERT(isMainThread(), return nullptr);
+    QTC_ASSERT(QThread::isMainThread(), return nullptr);
     return s_futureSynchronizer;
 }
 

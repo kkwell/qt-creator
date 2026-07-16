@@ -89,32 +89,40 @@ QString CMakeAutoCompleter::insertMatchingQuote(const QTextCursor &cursor,
 int CMakeAutoCompleter::paragraphSeparatorAboutToBeInserted(QTextCursor &cursor)
 {
     const QString line = cursor.block().text().trimmed();
-    if (line.contains(QRegularExpression(QStringLiteral("^(endfunction|endmacro|endif|endforeach|endwhile|endblock)\\w*\\("))))
+    static const QRegularExpression regexp("^(endfunction|endmacro|endif|endforeach|endwhile|endblock)\\w*\\(");
+    if (line.contains(regexp))
         tabSettings().indentLine(cursor.block(), tabSettings().indentationColumn(cursor.block().text()));
     return 0;
+}
+
+bool CMakeAutoCompleter::contextAllowsAutoInsertion(
+    const QTextCursor &cursor, const QString &textToInsert, const QString &allowedCharacters) const
+{
+    if (textToInsert.isEmpty())
+        return false;
+
+    if (!allowedCharacters.contains(textToInsert.at(0)))
+        return false;
+
+    if (isInComment(cursor))
+        return false;
+
+    if (cursor.atBlockEnd())
+        return true;
+
+    const QChar nextChar = cursor.block().text().at(cursor.positionInBlock());
+    return nextChar.isSpace();
 }
 
 bool CMakeAutoCompleter::contextAllowsAutoBrackets(const QTextCursor &cursor,
                                                    const QString &textToInsert) const
 {
-    if (textToInsert.isEmpty())
-        return false;
-
-    const QChar c = textToInsert.at(0);
-    if (c == QLatin1Char('(') || c == QLatin1Char(')'))
-        return !isInComment(cursor);
-    return false;
+    return contextAllowsAutoInsertion(cursor, textToInsert, QStringLiteral("()"));
 }
 
 bool CMakeAutoCompleter::contextAllowsAutoQuotes(const QTextCursor &cursor, const QString &textToInsert) const
 {
-    if (textToInsert.isEmpty())
-        return false;
-
-    const QChar c = textToInsert.at(0);
-    if (c == QLatin1Char('"'))
-        return !isInComment(cursor);
-    return false;
+    return contextAllowsAutoInsertion(cursor, textToInsert, QStringLiteral("\""));
 }
 
 bool CMakeAutoCompleter::contextAllowsElectricCharacters(const QTextCursor &cursor) const

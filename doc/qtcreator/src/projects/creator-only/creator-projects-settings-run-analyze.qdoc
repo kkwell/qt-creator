@@ -9,9 +9,8 @@
 
     \title Specify Valgrind settings for a project
 
-    Specify settings for running applications on the \l {Kits}{Run device} that
-    you select for a kit in \uicontrol Projects > \uicontrol {Build & Run} >
-    \uicontrol Run > \uicontrol {Run Settings}.
+    To specify settings for running applications on the \l {Managing kits}{Run device} that
+    you select for a kit, go to \uicontrol Projects > \uicontrol {Run Settings}.
 
     With \l{Valgrind's Tool Suite}, you can detect memory leaks and profile
     function execution.
@@ -24,7 +23,7 @@
 
         \li Specify Valgrind settings for the project.
 
-            \image qtcreator-analyzer-settings.png {Valgrind Settings}
+            \image {qtcreator-analyzer-settings.png} {Valgrind Settings section in Run Settings}
 
         \li In \uicontrol {Valgrind executable}, specify the path to the
             Valgrind executable.
@@ -44,6 +43,6 @@
     \uicontrol Analyzer.
 
     \sa {Detect memory leaks with Memcheck}, {Profile function execution},
-    {Run Valgrind tools on external applications}, {Configuring Projects},
+    {Run Valgrind tools on external applications}, {Building and running projects},
     {Valgrind Callgrind}, {Valgrind Memcheck}
 */

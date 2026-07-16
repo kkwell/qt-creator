@@ -9,20 +9,20 @@
 
     \title FAQ
 
-    \brief Answers to some frequently asked questions about \QC.
+    \summary {Answers to some frequently asked questions about \QC.}
 
     You might also find answers to your questions in the
-    \l{Known Issues} and \l{How To} sections, or the Troubleshooting
+    \l{Known issues} and \l{How to} sections, or the Troubleshooting
     sections for a special area, such as
-    \l{Troubleshooting Debugger}{debugging}.
+    \l{Troubleshooting debugger}{Debugging}.
 
-    \section1 General Questions
+    \section1 General questions
 
     \b {\QC comes with \MinGW, should I use this version with Qt?}
 
     Use the version that was built against the Qt version.
 
-    \b {\QC does not find a helper application, such as Git or a
+    \b {\QC does not find a helper application, such as Git, Ninja, or a
     compiler. What should I do?}
 
     Make sure that the application is in your system PATH when starting \QC.
@@ -30,17 +30,28 @@
     specified for the application. Many plugins specify either the path to the
     tool they need or the environment they run in.
 
-    This is especially relevant for the \macos where \c {/usr/local/bin} might
-    not be in the path when \QC is started.
+    You can also specify the environment for finding and running tools globally
+    or for a particular project or kit, as described in
+    \l{Edit environment settings}.
+
+    This is especially relevant when you start \QC from your desktop
+    and not from a terminal application, like from Finder, Dock, or
+    Spotlight on \macos, or from Dock, Dash, or the Activities overview on
+    Gnome. In that case, the started application does not inherit the
+    environment that you set up for your shell (that your terminal application
+    uses), but instead from \c launchd (\macos) or \c gnome-shell (Gnome).
+    That means that paths that you have set up for your terminal, such as
+    \c{/usr/local/bin} or \c{/opt/homebrew/bin} for Homebrew on \macos, are not
+    automatically available to \QC if you started it from your desktop.
 
     \b {Has a reported issue been addressed?}
 
     You can look up any issue in the
-    \l{https://bugreports.qt.io/}{Qt Project Bug Tracker}.
+    \l{Qt Project Bug Tracker}.
 
     \include widgets/creator-faq-qtdesigner.qdocinc qt designer faq
 
-    \section1 QML and Qt Quick Questions
+    \section1 QML and Qt Quick questions
 
     \b {Why is there a red line below my QML import, even though I have the module?}
 
@@ -48,12 +59,12 @@
     Sometimes, it does not get it right and you need to tell it where the
     modules are. When using qmake as the build system, specify the
     \c{QML_IMPORT_PATH} in the \c{.pro} file of your application. When
-    using CMake, add the \c set command to the CMakeLists.txt file.
+    using CMake, add the \c set command to the \c CMakeLists.txt file.
 
     This also enables code completion of QML code and removes error messages.
 
     The following example illustrates how to specify the import path for qmake
-    projects so that it works when switching between build and run \l{Kits}{kits}
+    projects so that it works when switching between build and run \l{Managing kits}{kits}
     for different target platforms:
 
     \code
@@ -64,7 +75,7 @@
     \endcode
 
     For more information about how to set the import path for CMake projects,
-    see \l {Importing QML Modules}.
+    see \l {Importing QML modules}.
 
     \b {What should I do when \QC complains about missing OpenGL support?}
 
@@ -116,22 +127,22 @@
 
     \endlist
 
-    \section1 Help Questions
+    \section1 Help questions
 
     \b {The Qt API Reference Documentation is missing and context help does
     not find topics. What can I do?}
 
-    Install a Qt version and Qt documentation with \QOI.
+    Install a Qt version and Qt documentation with \l{Get and Install Qt}{\QOI}.
 
     To view the installed documentation (.qch files) and to add documentation,
     go to \preferences > \uicontrol Help >
     \uicontrol Documentation. For more information, see
     \l{Add external documentation}.
 
-    \section1 Debugger Questions
+    \section1 Debugger questions
 
     For information on troubleshooting debugger, see
-    \l{Troubleshooting Debugger}.
+    \l{Troubleshooting debugger}.
 
     \b {If I have a choice of GDB versions, which should I use?}
 
@@ -139,17 +150,17 @@
     installed when you install \QC and \QSDK. On \macos, GDB is no longer
     officially supported. To build your own Python-enabled GDB, follow the
     instructions in
-    \l{https://wiki.qt.io/QtCreator_Build_Gdb}{Building GDB}.
+    \l{QtCreator Build Gdb}.
 
     You must use Python version 2.6 or 2.7.
 
-    For more information, see \l{Supported Debuggers}.
+    For more information, see \l{Supported debuggers}.
 
     \b {How do I generate a core file in \QC?}
 
     To trigger the GDB command that generates a core file while debugging,
     go to \uicontrol View > \uicontrol Views > \l {Debugger Log}.
-    In the \uicontrol Command field, type \c gcore and press \key Enter. The
+    In the \uicontrol Command field, enter \c gcore and select \key Enter. The
     core file is created in the current working directory. You can specify
     another location for the file, including a relative or absolute path, as an
     argument of the command.
@@ -160,7 +171,7 @@
     stop debugging.
     \endomit
 
-    \section1 Compiler Questions
+    \section1 Compiler questions
 
     \b {How can I make use of my multi-core CPU with \QC?}
 
@@ -171,22 +182,21 @@
 
     On Windows, nmake does not support the \c{-j} parameter. Instead, you can use
     \e jom. You can download a precompiled
-    version of jom from \l{https://download.qt.io/official_releases/jom/}{Qt Downloads}.
-    Put jom.exe in a location in the %PATH%. Go to the \uicontrol {Build Settings}
-    and set jom.exe as the make command.
+    version of jom from \l{Qt Downloads: jom}.
+    Put \c jom.exe in a location in the %PATH%. Go to the \uicontrol {Build Settings}
+    and set \c jom.exe as the make command.
 
     \note Unlike GNU make, jom automatically detects your cores and spawns as
     many parallel processes as your CPU has cores. You can override this
     behavior by using the \c{-j} parameter as described above.
 
-    \section1 Qt Installation Questions
+    \section1 Qt installation questions
 
     \b {I cannot use QSslSocket with the Qt I installed from binary packages.
         What should I do?}
 
     The Qt in the binary packages is built with QT_NO_OPENSSL defined. Rebuilding it
-     is possible. For more information, see
-     \l{http://www.qtcentre.org/threads/19222-Qssl}.
+    is possible. For more information, see \l{Qt Centre: QSsl}.
 
     \b {Which development packages from the distribution are needed on
     Ubuntu or Debian?}
@@ -201,7 +211,7 @@
     sudo apt-get install libgl-dev libglu-dev
     \endcode
 
-    \section1 Platform Related Questions
+    \section1 Platform related questions
 
     \b {Where is application output shown in \QC?}
 
@@ -212,27 +222,26 @@
     For console applications that require input, select \uicontrol Projects >
     \uicontrol {Run Settings} > \uicontrol {Run in terminal}. To specify the
     terminal to use, select \preferences >
-    \uicontrol Environment > \uicontrol System. To use an \l{Terminal}
+    \uicontrol Environment > \uicontrol System. To use an \l{Open a terminal}
     {internal terminal}, select \preferences
     > \uicontrol Terminal > \uicontrol {Use internal terminal}.
 
     \b {On Windows:} Output is displayed differently for \e{console
     applications} and \e{GUI applications}.
 
-    For qmake projects, the \c {CONFIG += console} setting in the .pro file
+    For qmake projects, the \c {CONFIG += console} setting in the \c .pro file
     specifies that the application is built as a console application using
     some other runtime.
 
     This is the standard behavior for CMake projects. To create a GUI
     application on Windows or an application bundle on \macos, you must
     specify the \c WIN32 or \c MACOSX_BUNDLE property for the
-    \l{https://doc.qt.io/qt-6/qt-add-executable.html}{qt_add_executable}
-    command in the CMakeLists.txt file.
+    \l{qt_add_executable} command in the \c CMakeLists.txt file.
 
     When you run a console application, you can view the output in the console
     window of the calling application. If the
     calling application is a GUI application (for example, a release-built
-    version of \QC), a new console window is opened.  For this
+    version of \QC), a new console window is opened. For this
     type of application, \c qDebug() and related functions use standard output
     and error output.
 
@@ -244,22 +253,19 @@
     \uicontrol{Application Output}. However, \QC can show output from only one
     source at the time for it to be displayed correctly. You can use an
     external debug output viewer, such as the
-    \l{https://technet.microsoft.com/en-us/sysinternals/bb896647}
-    {DebugView for Windows} to display output from GUI applications.
+    \l{DebugView for Windows} to display output from GUI applications.
 
-    \section1 Questions about New Features
+    \section1 Questions about new features
 
     \b {Will a requested feature be implemented?}
 
     If it is a scheduled feature, you can see this in the task tracker. If a
     feature already has been implemented, it is mentioned in the
-    \l{https://code.qt.io/cgit/qt-creator/qt-creator.git/tree/dist}{changes file}
-    for the upcoming release.
+    \l{\QC changelog}{changes file} for the upcoming release.
 
-    \b {Why does \QC not use tabs for editors?}
+    \b {Why does \QC not use tabs for editors by default?}
 
-    This question comes up from time to time, so we have considered it
-    carefully. Here are our main reasons for not using tabs:
+    Here are our main reasons for not using tabs by default:
 
     \list
 
@@ -270,7 +276,7 @@
         \li Tabs do not adapt to your working set.
 
         \li The common solution is to give the user the ability to reorder
-            tabs. Now user has to manage tabs instead of writing code.
+            tabs. Now the user has to manage tabs instead of writing code.
 
         \li Tabs force you to limit the amount of open editors because
             otherwise you get confused.
@@ -285,7 +291,7 @@
 
     One common factor in many use cases is switching editors while working on a
     set of open files. While working on files A and B, users sometimes need to
-    look at file C. They can press \key Ctrl+Tab to move between the files and
+    look at file C. They can select \key Ctrl+Tab to move between the files and
     have the files open in the correct editor according to file type. The list
     is sorted by last used.
 
@@ -298,9 +304,9 @@
 
     \list
 
-        \li Press \key F4 to switch between header and source.
+        \li Select \key F4 to switch between header and source.
 
-        \li Press \key Alt+Left to move backwards in the navigation history.
+        \li Select \key Alt+Left to move backwards in the navigation history.
 
         \li Use the locator (Ctrl+K) to simply tell \QC where to go.
 
@@ -311,18 +317,24 @@
     use case: \e {Fix AFunction in SomeClass which comes from
     someclass.cpp/someclass.h}.
 
-    With a tabbed user interface, developers would search for someclass.cpp in
+    With a tabbed user interface, developers would search for \c someclass.cpp in
     the tab bar, and then search for \c {::AFunction}, only to find out that the
-    function is not located in that file. They would then search for someclass.h
+    function is not located in that file. They would then search for \c someclass.h
     in the tab bar, find our that the function is inline, fix the problem, and
     forget where they came from.
 
-    With \QC, developers can type \c {Ctrl+K m AFun} to find the function.
-    Typically, they only need to type 3 to 4 characters of the function name.
-    They can then fix the problem and press \key Alt+Back to go back to where
+    With \QC, developers can enter \c {Ctrl+K m AFun} to find the function.
+    Typically, they only need to enter 3 to 4 characters of the function name.
+    They can then fix the problem and select \key Alt+Back to go back to where
     they were.
 
     Other locator filters include \c c for classes, \c : for all symbols, and
-    (thanks to a community contribution) \c . for symbols in the current file.
+    \c . for symbols in the current file.
 
+    Another way to switch between open documents is to select the document in
+    the \uicontrol {Open Documents} view.
+
+    If you still want to use tabs in editors, go to \preferences >
+    \uicontrol Environment > \uicontrol Interface, and then select
+    \uicontrol {Use tabbed editors}.
 */

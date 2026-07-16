@@ -26,6 +26,8 @@
 #include <projectexplorer/runconfiguration.h>
 #include <projectexplorer/runcontrol.h>
 
+using namespace Utils;
+
 namespace QmlPreview {
 using QmlPreviewRunControlList = QList<ProjectExplorer::RunControl *>;
 }
@@ -66,9 +68,9 @@ QmlPreviewWidgetPlugin::QmlPreviewWidgetPlugin()
 
     Core::Context globalContext;
     auto registerCommand = [&globalContext](ActionInterface *action) {
-        const QString id = QStringView(u"QmlPreview.%1").arg(QString::fromLatin1(action->menuId()));
+        const Id id = Id("QmlPreview.").withSuffix(action->menuId());
         Core::Command *cmd = Core::ActionManager::registerAction(action->action(),
-                                                                 id.toLatin1().constData(),
+                                                                 id,
                                                                  globalContext);
 
         cmd->setDefaultKeySequence(action->action()->shortcut());
@@ -134,7 +136,7 @@ void QmlPreviewWidgetPlugin::setQmlFile()
         const Utils::FilePath qmlFileName =
                 QmlDesignerPlugin::instance()->currentDesignDocument()->fileName();
         bool hasPreviewedFile =
-            s_previewPlugin->setProperty("previewedFile", qmlFileName.toString());
+            s_previewPlugin->setProperty("previewedFile", qmlFileName.toUrlishString());
         QTC_CHECK(hasPreviewedFile);
     }
 }
@@ -165,16 +167,9 @@ void QmlPreviewWidgetPlugin::setLanguageLocale(const QString &locale)
 
 QObject *QmlPreviewWidgetPlugin::getPreviewPlugin()
 {
-    const ExtensionSystem::PluginSpecs &specs = ExtensionSystem::PluginManager::plugins();
-    const auto pluginIt = std::find_if(specs.cbegin(), specs.cend(),
-                                 [](const ExtensionSystem::PluginSpec *p) {
-        return p->name() == "QmlPreview";
-    });
-
-    if (pluginIt != specs.cend())
-        return (*pluginIt)->plugin();
-
-    return nullptr;
+    using namespace ExtensionSystem;
+    const PluginSpec *spec = PluginManager::specById("qmlpreview");
+    return spec ? spec->plugin() : nullptr;
 }
 
 } // namespace QmlDesigner

@@ -102,7 +102,7 @@ QString Utils::toString(::Utils::LanguageVersion languageVersion)
         CASE_LANGUAGEVERSION(CXX14);
         CASE_LANGUAGEVERSION(CXX17);
         CASE_LANGUAGEVERSION(CXX20);
-        CASE_LANGUAGEVERSION(CXX2b);
+        CASE_LANGUAGEVERSION(CXX23);
         // no default to get a compiler warning if anything is added
     }
 #undef CASE_LANGUAGEVERSION
@@ -259,6 +259,7 @@ QString Utils::toString(CPlusPlus::Kind kind)
     TOKEN(T_CHAR8_T);
     TOKEN(T_CHAR16_T);
     TOKEN(T_CHAR32_T);
+    TOKEN_AND_ALIASES(T___INT128, T___INT128_T);
     TOKEN(T_CLASS);
     TOKEN(T_CO_AWAIT);
     TOKEN(T_CO_RETURN);
@@ -415,20 +416,12 @@ QString Utils::unresolvedFileNameWithDelimiters(const CPlusPlus::Document::Inclu
     return QLatin1Char('<') + unresolvedFileName + QLatin1Char('>');
 }
 
-QString Utils::pathListToString(const QStringList &pathList)
-{
-    QStringList result;
-    for (const QString &path : pathList)
-        result << QDir::toNativeSeparators(path);
-    return result.join(QLatin1Char('\n'));
-}
-
 QString Utils::pathListToString(const ProjectExplorer::HeaderPaths &pathList)
 {
     QStringList result;
     for (const ProjectExplorer::HeaderPath &path : pathList)
         result << QString(QLatin1String("%1 (%2 path)")).arg(
-                      QDir::toNativeSeparators(path.path), toString(path.type));
+                      path.path.nativePath(), toString(path.type));
 
     return result.join(QLatin1Char('\n'));
 }
@@ -502,7 +495,7 @@ void Dumper::dumpProjectInfos(const QList<ProjectInfo::ConstPtr> &projectInfos)
         m_out << i1 << "Project " << info->projectName()
               << " (" << info->projectFilePath().toUserOutput() << "){{{2\n";
 
-        const QVector<ProjectPart::ConstPtr> projectParts = info->projectParts();
+        const QList<ProjectPart::ConstPtr> projectParts = info->projectParts();
         for (const ProjectPart::ConstPtr &part : projectParts) {
             QString projectName = QLatin1String("<None>");
             QString projectFilePath = "<None>";
@@ -566,7 +559,7 @@ void Dumper::dumpProjectInfos(const QList<ProjectInfo::ConstPtr> &projectInfos)
 
             if (!part->precompiledHeaders.isEmpty()) {
                 m_out << i3 << "Precompiled Headers:{{{4\n";
-                for (const QString &precompiledHeader : std::as_const(part->precompiledHeaders))
+                for (const ::Utils::FilePath &precompiledHeader : std::as_const(part->precompiledHeaders))
                     m_out << i4 << precompiledHeader << "\n";
             }
         } // for part

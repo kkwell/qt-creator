@@ -14,7 +14,11 @@
 #include <coreplugin/editormanager/documentmodel.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/editormanager/ieditor.h>
+#include <coreplugin/icore.h>
 #include <coreplugin/messagemanager.h>
+
+#include <extensionsystem/pluginmanager.h>
+#include <extensionsystem/pluginspec.h>
 
 #include <utils/algorithm.h>
 #include <utils/itemviews.h>
@@ -26,16 +30,11 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFileInfo>
-#include <QJSEngine>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QVariant>
-
-#ifdef WITH_TESTS
-#include "jsonwizard_test.cpp"
-#endif
 
 using namespace Utils;
 
@@ -125,24 +124,29 @@ private:
 
 } // namespace Internal
 
-JsonWizard::JsonWizard(QWidget *parent)
-    : Wizard(parent)
+JsonWizard::JsonWizard()
 {
     setMinimumSize(800, 500);
     m_expander.registerExtraResolver([this](const QString &name, QString *ret) -> bool {
         *ret = stringValue(name);
         return !ret->isNull();
     });
-    m_expander.registerPrefix("Exists", Tr::tr("Check whether a variable exists.<br>"
-                                           "Returns \"true\" if it does and an empty string if not."),
-                   [this](const QString &value) -> QString
-    {
-        const QString key = QString::fromLatin1("%{") + value + QLatin1Char('}');
-        return m_expander.expand(key) == key ? QString() : QLatin1String("true");
-    });
+    m_expander.registerPrefix(
+        "Exists",
+        "",
+        Tr::tr(
+            "Check whether a variable exists.<br>"
+            "Returns \"true\" if it does and an empty string if not."),
+        [this](const QString &value) -> QString {
+            const QString key = QString::fromLatin1("%{") + value + QLatin1Char('}');
+            return m_expander.expand(key) == key ? QString() : QLatin1String("true");
+        });
     // override default JS macro by custom one that adds Wizard specific features
     m_jsExpander.registerObject("Wizard", new Internal::JsonWizardJsExtension(this));
-    m_jsExpander.engine().evaluate("var value = Wizard.value");
+    m_jsExpander.evaluate("var value = Wizard.value");
+    m_jsExpander.evaluate("var isPluginRunning = Wizard.isPluginRunning");
+    m_jsExpander.evaluate("var isAnyPluginRunning = Wizard.isAnyPluginRunning");
+
     m_jsExpander.registerForExpander(&m_expander);
 }
 
@@ -237,14 +241,14 @@ void JsonWizard::setValue(const QString &key, const QVariant &value)
     setProperty(key.toUtf8(), value);
 }
 
-QList<JsonWizard::OptionDefinition> JsonWizard::parseOptions(const QVariant &v, QString *errorMessage)
+Result<JsonWizard::OptionDefinitions> JsonWizard::parseOptions(const QVariant &v)
 {
-    QTC_ASSERT(errorMessage, return { });
-
-    QList<JsonWizard::OptionDefinition> result;
+    JsonWizard::OptionDefinitions result;
     if (!v.isNull()) {
-        const QVariantList optList = JsonWizardFactory::objectOrList(v, errorMessage);
-        for (const QVariant &o : optList) {
+        const Result<QVariantList> optList = JsonWizardFactory::objectOrList(v);
+        if (!optList)
+            return ResultError(optList.error());
+        for (const QVariant &o : *optList) {
             QVariantMap optionObject = o.toMap();
             JsonWizard::OptionDefinition odef;
             odef.m_key = optionObject.value(QLatin1String("key")).toString();
@@ -252,16 +256,12 @@ QList<JsonWizard::OptionDefinition> JsonWizard::parseOptions(const QVariant &v, 
             odef.m_condition = optionObject.value(QLatin1String("condition"), true);
             odef.m_evaluate = optionObject.value(QLatin1String("evaluate"), false);
 
-            if (odef.m_key.isEmpty()) {
-                *errorMessage = Tr::tr("No 'key' in options object.");
-                result.clear();
-                break;
-            }
+            if (odef.m_key.isEmpty())
+                return ResultError(Tr::tr("No 'key' in options object."));
+
             result.append(odef);
         }
     }
-
-    QTC_ASSERT(errorMessage->isEmpty() || (!errorMessage->isEmpty() && result.isEmpty()), return result);
     return result;
 }
 
@@ -346,9 +346,8 @@ void JsonWizard::accept()
     }
 
     emit preFormatFiles(m_files);
-    if (!JsonWizardGenerator::formatFiles(this, &m_files, &errorMessage)) {
-        if (!errorMessage.isEmpty())
-            QMessageBox::warning(this, Tr::tr("Failed to Format Files"), errorMessage);
+    if (const Result<> res = JsonWizardGenerator::formatFiles(this, &m_files); !res) {
+        QMessageBox::warning(this, Tr::tr("Failed to Format Files"), res.error());
         return;
     }
 
@@ -361,28 +360,24 @@ void JsonWizard::accept()
     Core::EditorManager::closeDocuments(documentsToClose, /*askAboutModifiedEditors=*/false);
 
     emit preWriteFiles(m_files);
-    if (!JsonWizardGenerator::writeFiles(this, &m_files, &errorMessage)) {
-        if (!errorMessage.isEmpty())
-            QMessageBox::warning(this, Tr::tr("Failed to Write Files"), errorMessage);
+    if (const Result<> res = JsonWizardGenerator::writeFiles(this, &m_files); !res) {
+        QMessageBox::warning(this, Tr::tr("Failed to Write Files"), res.error());
         return;
     }
 
     emit postProcessFiles(m_files);
-    if (!JsonWizardGenerator::postWrite(this, &m_files, &errorMessage)) {
-        if (!errorMessage.isEmpty())
-            QMessageBox::warning(this, Tr::tr("Failed to Post-Process Files"), errorMessage);
+    if (const Result<> res = JsonWizardGenerator::postWrite(this, &m_files); !res) {
+        QMessageBox::warning(this, Tr::tr("Failed to Post-Process Files"), res.error());
         return;
     }
     emit filesReady(m_files);
-    if (!JsonWizardGenerator::polish(this, &m_files, &errorMessage)) {
-        if (!errorMessage.isEmpty())
-            QMessageBox::warning(this, Tr::tr("Failed to Polish Files"), errorMessage);
+    if (const Result<> res = JsonWizardGenerator::polish(this, &m_files); !res) {
+        QMessageBox::warning(this, Tr::tr("Failed to Polish Files"), res.error());
         return;
     }
     emit filesPolished(m_files);
-    if (!JsonWizardGenerator::allDone(this, &m_files, &errorMessage)) {
-        if (!errorMessage.isEmpty())
-            QMessageBox::warning(this, Tr::tr("Failed to Open Files"), errorMessage);
+    if (const Result<> res = JsonWizardGenerator::allDone(this, &m_files); !res) {
+        QMessageBox::warning(this, Tr::tr("Failed to Open Files"), res.error());
         return;
     }
     emit allDone(m_files);
@@ -435,7 +430,7 @@ void JsonWizard::openFiles(const JsonWizard::GeneratorFiles &files)
     bool openedSomething = stringValue("DoNotOpenFile") == "true";
     static const auto formatFile = [](Core::IEditor *editor) {
         editor->document()->formatContents();
-        editor->document()->save(nullptr);
+        editor->document()->save();
     };
     for (const JsonWizard::GeneratorFile &f : files) {
         const Core::GeneratedFile &file = f.file;
@@ -508,7 +503,7 @@ void JsonWizard::openProjectForNode(Node *node)
 
     if (projFilePath && !Core::EditorManager::openEditor(projFilePath.value())) {
             auto errorMessage = Tr::tr("Failed to open an editor for \"%1\".")
-                    .arg(QDir::toNativeSeparators(projFilePath.value().toString()));
+                    .arg(QDir::toNativeSeparators(projFilePath.value().toUrlishString()));
             QMessageBox::warning(nullptr, Tr::tr("Cannot Open Project"), errorMessage);
     }
 }
@@ -534,6 +529,25 @@ JsonWizardJsExtension::JsonWizardJsExtension(JsonWizard *wizard)
 QVariant JsonWizardJsExtension::value(const QString &name) const
 {
     return m_wizard->expander()->expandVariant(m_wizard->value(name));
+}
+
+bool JsonWizardJsExtension::isPluginRunning(const QString &id) const
+{
+    return Internal::isAnyPluginRunning({id});
+}
+bool JsonWizardJsExtension::isAnyPluginRunning(const QStringList &ids) const
+{
+    return Internal::isAnyPluginRunning(ids);
+}
+
+bool isAnyPluginRunning(const QStringList &ids)
+{
+    QTC_CHECK(Utils::allOf(ids, [](const QString &id) { return id.isLower(); }));
+
+    return Utils::anyOf(
+        ExtensionSystem::PluginManager::plugins(), [ids](const ExtensionSystem::PluginSpec *s) {
+            return s->state() == ExtensionSystem::PluginSpec::Running && ids.contains(s->id());
+        });
 }
 
 } // namespace Internal

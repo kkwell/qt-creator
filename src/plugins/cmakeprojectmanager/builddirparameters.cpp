@@ -5,11 +5,12 @@
 
 #include "cmakebuildconfiguration.h"
 #include "cmakebuildsystem.h"
+#include "cmakeprojectconstants.h"
 #include "cmakekitaspect.h"
 #include "cmaketoolmanager.h"
 
 #include <projectexplorer/customparser.h>
-#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/environmentkitaspect.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/target.h>
 #include <projectexplorer/toolchain.h>
@@ -90,10 +91,9 @@ BuildDirParameters::BuildDirParameters(CMakeBuildSystem *buildSystem)
                                                 [this](const QString &s) {
                                                     return expander->expand(s);
                                                 });
-    const Target *t = bc->target();
-    const Kit *k = t->kit();
+    const Kit *k = bc->kit();
 
-    project = t->project();
+    project = bc->project();
     projectName = project->displayName();
 
     sourceDirectory = bc->sourceDirectory();
@@ -111,10 +111,9 @@ BuildDirParameters::BuildDirParameters(CMakeBuildSystem *buildSystem)
         environment.set("ICECC", "no");
 
     environment.set("QTC_RUN", "1");
-    environment.setFallback("CMAKE_COLOR_DIAGNOSTICS", "1");
     environment.setFallback("CLICOLOR_FORCE", "1");
 
-    cmakeToolId = CMakeKitAspect::cmakeToolId(k);
+    cmakeExecutable = CMakeKitAspect::cmakeExecutable(k);
 
     outputParserGenerator = [k, bc]() {
         QList<OutputLineParser *> outputParsers = k->createOutputParsers();
@@ -128,12 +127,7 @@ BuildDirParameters::BuildDirParameters(CMakeBuildSystem *buildSystem)
 
 bool BuildDirParameters::isValid() const
 {
-    return cmakeTool();
-}
-
-CMakeTool *BuildDirParameters::cmakeTool() const
-{
-    return CMakeToolManager::findById(cmakeToolId);
+    return !cmakeExecutable.isEmpty();
 }
 
 QList<OutputLineParser *> BuildDirParameters::outputParsers() const

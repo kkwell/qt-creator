@@ -39,7 +39,7 @@ public:
     AutogenStep(BuildStepList *bsl, Id id);
 
 private:
-    Tasking::GroupItem runRecipe() final;
+    QtTaskTree::GroupItem runRecipe() final;
 
     bool m_runAutogen = false;
     StringAspect m_arguments{this};
@@ -68,9 +68,9 @@ AutogenStep::AutogenStep(BuildStepList *bsl, Id id) : AbstractProcessStep(bsl, i
     });
 }
 
-Tasking::GroupItem AutogenStep::runRecipe()
+QtTaskTree::GroupItem AutogenStep::runRecipe()
 {
-    using namespace Tasking;
+    using namespace QtTaskTree;
 
     const auto onSetup = [this] {
         // Check whether we need to run autogen.sh
@@ -95,7 +95,7 @@ Tasking::GroupItem AutogenStep::runRecipe()
 
     return Group {
         onGroupSetup(onSetup),
-        onGroupDone([this] { m_runAutogen = false; }, CallDoneIf::Success),
+        onGroupDone([this] { m_runAutogen = false; }, CallDoneFlag::OnSuccess),
         defaultProcessTask()
     };
 }

@@ -1,7 +1,3 @@
-env_with_default("QTC_ENABLE_SQLITE_TRACING" ENV_QTC_ENABLE_SQLITE_TRACING OFF)
-option(ENABLE_SQLITE_TRACING "Enable sqlite tarcing" ${ENV_QTC_ENABLE_SQLITE_TRACING})
-add_feature_info("Sqlite tracing" ${ENABLE_SQLITE_TRACING} "")
-
 add_qtc_library(SqliteInternal OBJECT
     PROPERTIES AUTOMOC OFF AUTOUIC OFF QT_COMPILE_OPTIONS_DISABLE_WARNINGS ON
     DEFINES SQLITE_CORE SQLITE_CUSTOM_INCLUDE=config.h $<$<CONFIG:Debug>:SQLITE_DEBUG>
@@ -16,11 +12,18 @@ add_qtc_library(SqliteInternal OBJECT
       ../3rdparty/sqlite/config.h
       ../3rdparty/sqlite/sqlite_static_config.h
       ../3rdparty/sqlite/sqlite.h
+  SBOM_ARGS
+    USE_ATTRIBUTION_FILES
+    CREATE_SBOM_FOR_EACH_ATTRIBUTION
+    ATTRIBUTION_FILE_PATHS
+      "${QtCreator_SOURCE_DIR}/qt_attributions.json"
+    ATTRIBUTION_IDS
+      sqlite
 )
 
 extend_qtc_library(SqliteInternal
   CONDITION QTC_STATIC_BUILD
-  PROPERTIES COMPILE_OPTIONS $<IF:$<CXX_COMPILER_ID:MSVC>,/FIsqlite_static_config.h,-includesqlite_static_config.h>
+  PRIVATE_COMPILE_OPTIONS $<IF:$<CXX_COMPILER_ID:MSVC>,/FIsqlite_static_config.h,-includesqlite_static_config.h>
 )
 
 if (APPLE)
@@ -41,6 +44,7 @@ add_qtc_library(Sqlite
     constraints.h
     createtablesqlstatementbuilder.h
     lastchangedrowid.h
+    sourcelocation.h
     sqlite3_fwd.h
     sqlitealgorithms.h
     sqlitebasestatement.cpp sqlitebasestatement.h
@@ -80,7 +84,7 @@ extend_qtc_library(Sqlite
 
 extend_qtc_library(Sqlite
   CONDITION QTC_STATIC_BUILD
+  PRIVATE_COMPILE_OPTIONS $<IF:$<CXX_COMPILER_ID:MSVC>,/FIsqlite_static_config.h,-includesqlite_static_config.h>
   PROPERTIES
-    COMPILE_OPTIONS $<IF:$<CXX_COMPILER_ID:MSVC>,/FIsqlite_static_config.h,-includesqlite_static_config.h>
     INTERFACE_COMPILE_OPTIONS $<IF:$<CXX_COMPILER_ID:MSVC>,/FI../3rdparty/sqlite/sqlite_static_config.h,-include../3rdparty/sqlite/sqlite_static_config.h>
 )

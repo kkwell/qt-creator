@@ -110,18 +110,19 @@ void QdbWatcher::handleWatchMessage()
 void QdbWatcher::forkHostServer()
 {
     Utils::FilePath qdbFilePath = findTool(QdbTool::Qdb);
-    QFile executable(qdbFilePath.toString());
-    if (!executable.exists()) {
+    if (!qdbFilePath.exists()) {
         const QString message = Tr::tr("Could not find QDB host server executable. "
                                    "You can set the location with environment variable %1.")
                                     .arg(overridingEnvironmentVariable(QdbTool::Qdb));
         showMessage(message, true);
         return;
     }
-    if (Utils::Process::startDetached({qdbFilePath, {"server"}}))
+    if (Utils::Process::startDetached({qdbFilePath, {"server"}}, qdbFilePath.parentDir()))
         showMessage(Tr::tr("QDB host server started."), false);
     else
-        showMessage(Tr::tr("Could not start QDB host server in %1").arg(qdbFilePath.toString()), true);
+        showMessage(
+            Tr::tr("Could not start QDB host server in \"%1\".").arg(qdbFilePath.toUserOutput()),
+            true);
 }
 
 void QdbWatcher::retry()

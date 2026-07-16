@@ -25,6 +25,8 @@
 
 static Q_LOGGING_CATEGORY(LOG, "qtc.clangtools.model", QtWarningMsg)
 
+using namespace Utils;
+
 namespace ClangTools {
 namespace Internal {
 
@@ -40,7 +42,7 @@ QVariant FilePathItem::data(int column, int role) const
             return m_filePath.toUserOutput();
         case Qt::DecorationRole:
             return Utils::FileIconProvider::icon(m_filePath);
-        case Debugger::DetailedErrorView::FullTextRole:
+        case ProjectExplorer::DetailedErrorView::FullTextRole:
             return m_filePath.toUserOutput();
         default:
             return QVariant();
@@ -68,7 +70,7 @@ ClangToolsDiagnosticModel::ClangToolsDiagnosticModel(CppEditor::ClangToolType ty
     , m_filesWatcher(std::make_unique<Utils::FileSystemWatcher>())
     , m_type(type)
 {
-    setRootItem(new Utils::StaticTreeItem(QString()));
+    setRootItem(createRootItem());
     connectFileWatcher();
 }
 
@@ -84,13 +86,9 @@ QDebug operator<<(QDebug debug, const Diagnostic &d)
                  ;
 }
 
-void ClangToolsDiagnosticModel::addDiagnostics(const Diagnostics &diagnostics, bool generateMarks)
+void ClangToolsDiagnosticModel::addDiagnostics(
+    const Diagnostics &diagnostics, bool generateMarks, TreeItem *rootItem)
 {
-    const auto onFixitStatusChanged =
-        [this](const QModelIndex &index, FixitStatus oldStatus, FixitStatus newStatus) {
-            emit fixitStatusChanged(index, oldStatus, newStatus);
-        };
-
     for (const Diagnostic &d : diagnostics) {
         // Check for duplicates
         const int previousItemCount = m_diagnostics.count();
@@ -101,17 +99,17 @@ void ClangToolsDiagnosticModel::addDiagnostics(const Diagnostics &diagnostics, b
         }
 
         // Create file path item if necessary
-        const Utils::FilePath &filePath = d.location.filePath;
+        const FilePath &filePath = d.location.targetFilePath;
         FilePathItem *&filePathItem = m_filePathToItem[filePath];
         if (!filePathItem) {
             filePathItem = new FilePathItem(filePath);
-            rootItem()->appendChild(filePathItem);
+            rootItem->appendChild(filePathItem);
             addWatchedPath(filePath);
         }
 
         // Add to file path item
         qCDebug(LOG) << "Adding diagnostic:" << d;
-        filePathItem->appendChild(new DiagnosticItem(d, onFixitStatusChanged, generateMarks, this));
+        filePathItem->appendChild(new DiagnosticItem(d, generateMarks, this));
     }
 }
 
@@ -140,14 +138,6 @@ void ClangToolsDiagnosticModel::clear()
     endResetModel();
 }
 
-void ClangToolsDiagnosticModel::updateItems(const DiagnosticItem *changedItem)
-{
-    for (auto item : std::as_const(stepsToItemsCache[changedItem->diagnostic().explainingSteps])) {
-        if (item != changedItem)
-            item->setFixItStatus(changedItem->fixItStatus());
-    }
-}
-
 void ClangToolsDiagnosticModel::connectFileWatcher()
 {
     connect(m_filesWatcher.get(),
@@ -160,14 +150,14 @@ void ClangToolsDiagnosticModel::clearAndSetupCache()
 {
     m_filesWatcher = std::make_unique<Utils::FileSystemWatcher>();
     connectFileWatcher();
-    stepsToItemsCache.clear();
+    m_stepsToItemsCache.clear();
 }
 
-void ClangToolsDiagnosticModel::onFileChanged(const QString &path)
+void ClangToolsDiagnosticModel::onFileChanged(const FilePath &path)
 {
     forItemsAtLevel<2>([&](DiagnosticItem *item){
-        if (item->diagnostic().location.filePath == Utils::FilePath::fromString(path))
-            item->setFixItStatus(FixitStatus::Invalidated);
+        if (item->diagnostic().location.targetFilePath == path)
+            item->setFixItStatus(FixitStatus::Invalidated, true);
     });
     m_filesWatcher->removeFile(path);
 }
@@ -182,6 +172,11 @@ void ClangToolsDiagnosticModel::addWatchedPath(const Utils::FilePath &path)
     m_filesWatcher->addFile(path, Utils::FileSystemWatcher::WatchAllChanges);
 }
 
+TreeItem *ClangToolsDiagnosticModel::createRootItem() const
+{
+    return new StaticTreeItem(QString());
+}
+
 std::unique_ptr<InlineSuppressedDiagnostics> ClangToolsDiagnosticModel::createInlineSuppressedDiagnostics()
 {
     switch (m_type) {
@@ -193,9 +188,15 @@ std::unique_ptr<InlineSuppressedDiagnostics> ClangToolsDiagnosticModel::createIn
     QTC_ASSERT(false, return {});
 }
 
-static QString lineColumnString(const Debugger::DiagnosticLocation &location)
+const QList<DiagnosticItem *> &ClangToolsDiagnosticModel::itemsWithSameFixits(
+    const DiagnosticItem *item)
 {
-    return QString("%1:%2").arg(QString::number(location.line), QString::number(location.column));
+    return m_stepsToItemsCache[item->diagnostic().explainingSteps];
+}
+
+static QString lineColumnString(const Link &location)
+{
+    return QString("%1:%2").arg(location.target.line).arg(location.target.column + 1);
 }
 
 static QString createExplainingStepToolTipString(const ExplainingStep &step)
@@ -227,10 +228,10 @@ static QString createExplainingStepToolTipString(const ExplainingStep &step)
     return html;
 }
 
-static QString createLocationString(const Debugger::DiagnosticLocation &location)
+static QString createLocationString(const Link &location)
 {
-    const QString filePath = location.filePath.toUserOutput();
-    const QString lineNumber = QString::number(location.line);
+    const QString filePath = location.targetFilePath.toUserOutput();
+    const QString lineNumber = QString::number(location.target.line);
     const QString fileAndLine = filePath + QLatin1Char(':') + lineNumber;
     return QLatin1String("in ") + fileAndLine;
 }
@@ -253,7 +254,7 @@ static QString createExplainingStepString(const ExplainingStep &explainingStep, 
 
 static QString fullText(const Diagnostic &diagnostic)
 {
-    QString text = diagnostic.location.filePath.toUserOutput() + QLatin1Char(':');
+    QString text = diagnostic.location.targetFilePath.toUserOutput() + QLatin1Char(':');
     text += lineColumnString(diagnostic.location) + QLatin1String(": ");
     if (!diagnostic.category.isEmpty())
         text += diagnostic.category + QLatin1String(": ");
@@ -274,12 +275,9 @@ static QString fullText(const Diagnostic &diagnostic)
 }
 
 DiagnosticItem::DiagnosticItem(const Diagnostic &diag,
-                               const OnFixitStatusChanged &onFixitStatusChanged,
                                bool generateMark,
-                               ClangToolsDiagnosticModel *parent)
+                               ClangToolsDiagnosticModel *model)
     : m_diagnostic(diag)
-    , m_onFixitStatusChanged(onFixitStatusChanged)
-    , m_parentModel(parent)
     , m_mark(generateMark ? new DiagnosticMark(diag) : nullptr)
 {
     if (diag.hasFixits)
@@ -293,7 +291,7 @@ DiagnosticItem::DiagnosticItem(const Diagnostic &diag,
     }
 
     if (!diag.explainingSteps.isEmpty())
-        m_parentModel->stepsToItemsCache[diag.explainingSteps].push_back(this);
+        model->m_stepsToItemsCache[diag.explainingSteps].push_back(this);
 
     for (int i = 0; i < diag.explainingSteps.size(); ++i )
         appendChild(new ExplainingStepItem(diag.explainingSteps[i], i));
@@ -301,7 +299,6 @@ DiagnosticItem::DiagnosticItem(const Diagnostic &diag,
 
 DiagnosticItem::~DiagnosticItem()
 {
-    setFixitOperations(ReplacementOperations());
     delete m_mark;
 }
 
@@ -329,9 +326,9 @@ QVariant DiagnosticItem::data(int column, int role) const
 {
     if (column == DiagnosticView::DiagnosticColumn) {
         switch (role) {
-        case Debugger::DetailedErrorView::LocationRole:
+        case ProjectExplorer::DetailedErrorView::LocationRole:
             return QVariant::fromValue(m_diagnostic.location);
-        case Debugger::DetailedErrorView::FullTextRole:
+        case ProjectExplorer::DetailedErrorView::FullTextRole:
             return fullText(m_diagnostic);
         case ClangToolsDiagnosticModel::DiagnosticRole:
             return QVariant::fromValue(m_diagnostic);
@@ -391,41 +388,51 @@ QVariant DiagnosticItem::data(int column, int role) const
     return QVariant();
 }
 
+ClangToolsDiagnosticModel *DiagnosticItem::diagModel() const
+{
+    return qobject_cast<ClangToolsDiagnosticModel *>(model());
+}
+
 bool DiagnosticItem::setData(int column, const QVariant &data, int role)
 {
     if (column == DiagnosticView::DiagnosticColumn && role == Qt::CheckStateRole) {
-        if (m_fixitStatus != FixitStatus::Scheduled && m_fixitStatus != FixitStatus::NotScheduled)
-            return false;
-
         const FixitStatus newStatus = data.value<Qt::CheckState>() == Qt::Checked
-                                          ? FixitStatus::Scheduled
-                                          : FixitStatus::NotScheduled;
-
-        setFixItStatus(newStatus);
-        m_parentModel->updateItems(this);
-        return true;
+            ? FixitStatus::Scheduled
+            : FixitStatus::NotScheduled;
+        if (scheduleOrUnscheduleFixit(newStatus, true)) {
+            for (auto item : diagModel()->itemsWithSameFixits(this)) {
+                if (item != this)
+                    item->setFixItStatus(newStatus, true);
+            }
+        }
+        return false; // We already called update().
     }
 
     return Utils::TreeItem::setData(column, data, role);
 }
 
-void DiagnosticItem::setFixItStatus(const FixitStatus &status)
+void DiagnosticItem::setFixItStatus(const FixitStatus &status, bool updateUi)
 {
     const FixitStatus oldStatus = m_fixitStatus;
+    if (oldStatus == status)
+        return;
     m_fixitStatus = status;
-    update();
-    if (m_onFixitStatusChanged && status != oldStatus)
-        m_onFixitStatusChanged(index(), oldStatus, status);
+    updateColumn(DiagnosticView::DiagnosticColumn);
+    emit diagModel()->fixitStatusChanged(this, oldStatus, status, updateUi);
     if (status == FixitStatus::Applied || status == FixitStatus::Invalidated) {
         delete m_mark;
         m_mark = nullptr;
     }
 }
 
-void DiagnosticItem::setFixitOperations(const ReplacementOperations &replacements)
+bool DiagnosticItem::scheduleOrUnscheduleFixit(FixitStatus status, bool updateUi)
 {
-    qDeleteAll(m_fixitOperations);
-    m_fixitOperations = replacements;
+    QTC_ASSERT(status == FixitStatus::Scheduled || status == FixitStatus::NotScheduled, return false);
+    if (m_fixitStatus == FixitStatus::Scheduled || m_fixitStatus == FixitStatus::NotScheduled) {
+        setFixItStatus(status, updateUi);
+        return true;
+    }
+    return false;
 }
 
 bool DiagnosticItem::hasNewFixIts() const
@@ -433,7 +440,7 @@ bool DiagnosticItem::hasNewFixIts() const
     if (m_diagnostic.explainingSteps.empty())
         return false;
 
-    return m_parentModel->stepsToItemsCache[m_diagnostic.explainingSteps].front() == this;
+    return diagModel()->itemsWithSameFixits(this).front() == this;
 }
 
 ExplainingStepItem::ExplainingStepItem(const ExplainingStep &step, int index)
@@ -441,7 +448,7 @@ ExplainingStepItem::ExplainingStepItem(const ExplainingStep &step, int index)
     , m_index(index)
 {}
 
-static QString rangeString(const QVector<Debugger::DiagnosticLocation> &ranges)
+static QString rangeString(const Links &ranges)
 {
     return QString("%1-%2").arg(lineColumnString(ranges[0]), lineColumnString(ranges[1]));
 }
@@ -451,11 +458,11 @@ QVariant ExplainingStepItem::data(int column, int role) const
     if (column == DiagnosticView::DiagnosticColumn) {
         // DiagnosticColumn
         switch (role) {
-        case Debugger::DetailedErrorView::LocationRole:
+        case ProjectExplorer::DetailedErrorView::LocationRole:
             return QVariant::fromValue(m_step.location);
-        case Debugger::DetailedErrorView::FullTextRole: {
+        case ProjectExplorer::DetailedErrorView::FullTextRole: {
             return QString("%1:%2: %3")
-                .arg(m_step.location.filePath.toUserOutput(),
+                .arg(m_step.location.targetFilePath.toUserOutput(),
                      lineColumnString(m_step.location),
                      m_step.message);
         }
@@ -467,11 +474,11 @@ QVariant ExplainingStepItem::data(int column, int role) const
             return parent()->data(column, role);
         case Qt::DisplayRole: {
             const Utils::FilePath mainFilePath
-                = static_cast<DiagnosticItem *>(parent())->diagnostic().location.filePath;
+                = static_cast<DiagnosticItem *>(parent())->diagnostic().location.targetFilePath;
             const QString locationString
-                = m_step.location.filePath == mainFilePath
+                = m_step.location.targetFilePath == mainFilePath
                       ? lineColumnString(m_step.location)
-                      : QString("%1:%2").arg(m_step.location.filePath.fileName(),
+                      : QString("%1:%2").arg(m_step.location.targetFilePath.fileName(),
                                              lineColumnString(m_step.location));
 
             if (m_step.isFixIt) {
@@ -517,21 +524,24 @@ DiagnosticFilterModel::DiagnosticFilterModel(QObject *parent)
             });
     connect(this, &QAbstractItemModel::modelReset, this, [this] {
         reset();
-        emit fixitCountersChanged(m_fixitsScheduled, m_fixitsScheduable);
+        const Counters counters = countDiagnostics(QModelIndex(), 0, rowCount());
+        m_diagnostics = counters.diagnostics;
+        m_fixitsSchedulable = counters.fixits;
+        emit fixitCountersChanged();
     });
     connect(this, &QAbstractItemModel::rowsInserted,
             this, [this](const QModelIndex &parent, int first, int last) {
         const Counters counters = countDiagnostics(parent, first, last);
         m_diagnostics += counters.diagnostics;
-        m_fixitsScheduable += counters.fixits;
-        emit fixitCountersChanged(m_fixitsScheduled, m_fixitsScheduable);
+        m_fixitsSchedulable += counters.fixits;
+        emit fixitCountersChanged();
     });
     connect(this, &QAbstractItemModel::rowsAboutToBeRemoved,
             this, [this](const QModelIndex &parent, int first, int last) {
         const Counters counters = countDiagnostics(parent, first, last);
         m_diagnostics -= counters.diagnostics;
-        m_fixitsScheduable -= counters.fixits;
-        emit fixitCountersChanged(m_fixitsScheduled, m_fixitsScheduable);
+        m_fixitsSchedulable -= counters.fixits;
+        emit fixitCountersChanged();
     });
 }
 
@@ -564,11 +574,12 @@ void DiagnosticFilterModel::addSuppressedDiagnostic(const SuppressedDiagnostic &
     invalidate();
 }
 
-void DiagnosticFilterModel::onFixitStatusChanged(const QModelIndex &sourceIndex,
+void DiagnosticFilterModel::onFixitStatusChanged(const DiagnosticItem *item,
                                                  FixitStatus oldStatus,
-                                                 FixitStatus newStatus)
+                                                 FixitStatus newStatus,
+                                                 bool updateUi)
 {
-    if (!mapFromSource(sourceIndex).isValid())
+    if (!filterAcceptsItem(item))
         return;
 
     if (newStatus == FixitStatus::Scheduled)
@@ -576,10 +587,11 @@ void DiagnosticFilterModel::onFixitStatusChanged(const QModelIndex &sourceIndex,
     else if (oldStatus == FixitStatus::Scheduled) {
         --m_fixitsScheduled;
         if (newStatus != FixitStatus::NotScheduled)
-            --m_fixitsScheduable;
+            --m_fixitsSchedulable;
     }
 
-    emit fixitCountersChanged(m_fixitsScheduled, m_fixitsScheduable);
+    if (updateUi)
+        emit fixitCountersChanged();
 }
 
 void DiagnosticFilterModel::reset()
@@ -587,7 +599,7 @@ void DiagnosticFilterModel::reset()
     m_filterOptions.reset();
 
     m_fixitsScheduled = 0;
-    m_fixitsScheduable = 0;
+    m_fixitsSchedulable = 0;
     m_diagnostics = 0;
 }
 
@@ -639,28 +651,9 @@ bool DiagnosticFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex &s
     if (parentItem->level() == 1) {
         auto filePathItem = static_cast<FilePathItem *>(parentItem);
         auto diagnosticItem = static_cast<DiagnosticItem *>(filePathItem->childAt(sourceRow));
-        const Diagnostic &diag = diagnosticItem->diagnostic();
-
-        // Filtered out?
-        if (m_filterOptions && !m_filterOptions->checks.contains(diag.name)) {
-            diagnosticItem->setTextMarkVisible(false);
-            return false;
-        }
-
-        // Explicitly suppressed?
-        for (const SuppressedDiagnostic &d : std::as_const(m_suppressedDiagnostics)) {
-            if (d.description != diag.description)
-                continue;
-            Utils::FilePath filePath = d.filePath;
-            if (d.filePath.toFileInfo().isRelative())
-                filePath = m_lastProjectDirectory.pathAppended(filePath.toString());
-            if (filePath == diag.location.filePath) {
-                diagnosticItem->setTextMarkVisible(false);
-                return false;
-            }
-        }
-        diagnosticItem->setTextMarkVisible(true);
-        return true;
+        const bool accepted = filterAcceptsItem(diagnosticItem);
+        diagnosticItem->setTextMarkVisible(accepted);
+        return accepted;
     }
 
     return true; // ExplainingStepItem
@@ -673,22 +666,21 @@ bool DiagnosticFilterModel::lessThan(const QModelIndex &l, const QModelIndex &r)
     QTC_ASSERT(itemLeft, return QSortFilterProxyModel::lessThan(l, r));
     const bool isComparingDiagnostics = itemLeft->level() > 1;
 
-    if (sortColumn() == Debugger::DetailedErrorView::DiagnosticColumn && isComparingDiagnostics) {
+    if (sortColumn() == ProjectExplorer::DetailedErrorView::DiagnosticColumn && isComparingDiagnostics) {
         bool result = false;
         if (itemLeft->level() == 2) {
-            using Debugger::DiagnosticLocation;
-            const int role = Debugger::DetailedErrorView::LocationRole;
+            const int role = ProjectExplorer::DetailedErrorView::LocationRole;
 
-            const auto leftLoc = sourceModel()->data(l, role).value<DiagnosticLocation>();
+            const auto leftLoc = sourceModel()->data(l, role).value<Link>();
             const auto leftText
                 = sourceModel()->data(l, ClangToolsDiagnosticModel::TextRole).toString();
 
-            const auto rightLoc = sourceModel()->data(r, role).value<DiagnosticLocation>();
+            const auto rightLoc = sourceModel()->data(r, role).value<Link>();
             const auto rightText
                 = sourceModel()->data(r, ClangToolsDiagnosticModel::TextRole).toString();
 
-            result = std::tie(leftLoc.line, leftLoc.column, leftText)
-                     < std::tie(rightLoc.line, rightLoc.column, rightText);
+            result = std::tie(leftLoc.target.line, leftLoc.target.column, leftText)
+                     < std::tie(rightLoc.target.line, rightLoc.target.column, rightText);
         } else if (itemLeft->level() == 3) {
             Utils::TreeItem *itemRight = model->itemForIndex(r);
             QTC_ASSERT(itemRight, QSortFilterProxyModel::lessThan(l, r));
@@ -714,6 +706,27 @@ void DiagnosticFilterModel::handleSuppressedDiagnosticsChanged()
     m_suppressedDiagnostics
             = ClangToolsProjectSettings::getSettings(m_project)->suppressedDiagnostics();
     invalidate();
+}
+
+bool DiagnosticFilterModel::filterAcceptsItem(const DiagnosticItem *item) const
+{
+    const Diagnostic &diag = item->diagnostic();
+
+    // Filtered out?
+    if (m_filterOptions && !m_filterOptions->checks.contains(diag.name))
+        return false;
+
+    // Explicitly suppressed?
+    for (const SuppressedDiagnostic &d : std::as_const(m_suppressedDiagnostics)) {
+        if (d.description != diag.description)
+            continue;
+        Utils::FilePath filePath = d.filePath;
+        if (d.filePath.isRelativePath())
+            filePath = m_lastProjectDirectory.resolvePath(filePath);
+        if (filePath == diag.location.targetFilePath)
+            return false;
+    }
+    return true;
 }
 
 OptionalFilterOptions DiagnosticFilterModel::filterOptions() const

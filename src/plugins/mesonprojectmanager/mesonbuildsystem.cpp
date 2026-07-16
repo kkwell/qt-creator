@@ -13,7 +13,7 @@
 #include <coreplugin/icore.h>
 
 #include <projectexplorer/buildconfiguration.h>
-#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/environmentkitaspect.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/projectupdater.h>
 #include <projectexplorer/taskhub.h>
@@ -65,22 +65,24 @@ static KitData createKitData(const Kit *kit)
     data.cxxCompilerPath = expander->expand(QString("%{Compiler:Executable:Cxx}"));
     data.cmakePath = expander->expand(QString("%{CMake:Executable:FilePath}"));
     data.qmakePath = expander->expand(QString("%{Qt:qmakeExecutable}"));
+    data.qtPrefixPath = expander->expand(QString("%{Qt:QT_INSTALL_PREFIX}"));
     data.qtVersionStr = expander->expand(QString("%{Qt:Version}"));
-    data.qtVersion = Utils::QtMajorVersion::None;
+    data.pythonPath = expander->expand(QString("%{Python:Path}"));
+    data.qtVersion = QtMajorVersion::None;
     auto version = QVersionNumber::fromString(data.qtVersionStr);
     if (!version.isNull()) {
         switch (version.majorVersion()) {
         case 4:
-            data.qtVersion = Utils::QtMajorVersion::Qt4;
+            data.qtVersion = QtMajorVersion::Qt4;
             break;
         case 5:
-            data.qtVersion = Utils::QtMajorVersion::Qt5;
+            data.qtVersion = QtMajorVersion::Qt5;
             break;
         case 6:
-            data.qtVersion = Utils::QtMajorVersion::Qt6;
+            data.qtVersion = QtMajorVersion::Qt6;
             break;
         default:
-            data.qtVersion = Utils::QtMajorVersion::Unknown;
+            data.qtVersion = QtMajorVersion::Unknown;
         }
     }
     return data;
@@ -140,6 +142,10 @@ void MachineFileManager::addMachineFile(const Kit *kit)
     ba += entry("c", kitData.cCompilerPath);
     ba += entry("cpp", kitData.cxxCompilerPath);
     ba += entry("qmake", kitData.qmakePath);
+    if (!kitData.pythonPath.isEmpty()){
+        ba += entry("python3", kitData.pythonPath);
+        ba += entry("python", kitData.pythonPath);
+    }
     if (kitData.qtVersion == QtMajorVersion::Qt4)
         ba += entry("qmake-qt4", kitData.qmakePath);
     else if (kitData.qtVersion == QtMajorVersion::Qt5)
@@ -147,6 +153,10 @@ void MachineFileManager::addMachineFile(const Kit *kit)
     else if (kitData.qtVersion == QtMajorVersion::Qt6)
         ba += entry("qmake-qt6", kitData.qmakePath);
     ba += entry("cmake", kitData.cmakePath);
+    ba += "\n[cmake]\n";
+    ba += entry("CMAKE_C_COMPILER", kitData.cCompilerPath);
+    ba += entry("CMAKE_CXX_COMPILER", kitData.cxxCompilerPath);
+    ba += entry("CMAKE_PREFIX_PATH", kitData.qtPrefixPath);
 
     filePath.writeFileContents(ba);
 }
@@ -187,20 +197,19 @@ void MachineFileManager::cleanupMachineFiles()
 
 // MesonBuildSystem
 
-MesonBuildSystem::MesonBuildSystem(MesonBuildConfiguration *bc)
+MesonBuildSystem::MesonBuildSystem(BuildConfiguration *bc)
     : BuildSystem(bc)
     , m_parser(MesonToolKitAspect::mesonToolId(bc->kit()), bc->environment(), project())
     , m_cppCodeModelUpdater(ProjectUpdaterFactory::createCppProjectUpdater())
 {
     qCDebug(mesonBuildSystemLog) << "Init";
-    connect(bc->target(), &ProjectExplorer::Target::kitChanged, this, [this] {
+    connect(bc, &BuildConfiguration::kitChanged, this, [this] {
         updateKit(kit());
     });
-    connect(bc, &MesonBuildConfiguration::buildDirectoryChanged, this, [this] {
-        updateKit(kit());
-        this->triggerParsing();
-    });
-    connect(bc, &MesonBuildConfiguration::parametersChanged, this, [this] {
+    connect(bc, &MesonBuildConfiguration::buildDirectoryChanged, this,
+            &MesonBuildSystem::buildDirectoryChanged);
+    connect(static_cast<MesonBuildConfiguration *>(bc),
+            &MesonBuildConfiguration::parametersChanged, this, [this] {
         updateKit(kit());
         wipe();
     });
@@ -214,24 +223,18 @@ MesonBuildSystem::MesonBuildSystem(MesonBuildConfiguration *bc)
     });
     connect(&m_parser, &MesonProjectParser::parsingCompleted, this, &MesonBuildSystem::parsingCompleted);
 
-    connect(&m_IntroWatcher, &Utils::FileSystemWatcher::fileChanged, this, [this] {
+    connect(&m_introWatcher, &FileSystemWatcher::fileChanged, this, [this] {
         if (buildConfiguration()->isActive())
             parseProject();
     });
 
     updateKit(kit());
-    // as specified here https://mesonbuild.com/IDE-integration.html#ide-integration
-    // meson-info.json is the last written file, which ensure that all others introspection
-    // files are ready when a modification is detected on this one.
-    m_IntroWatcher.addFile(buildConfiguration()
-                               ->buildDirectory()
-                               .pathAppended(Constants::MESON_INFO_DIR)
-                               .pathAppended(Constants::MESON_INFO),
-                           Utils::FileSystemWatcher::WatchModifiedDate);
 }
 
 MesonBuildSystem::~MesonBuildSystem()
 {
+    // Trigger any pending parsingFinished signals before destroying any other build system part:
+    m_parseGuard = {};
     qCDebug(mesonBuildSystemLog) << "dtor";
 }
 
@@ -243,9 +246,9 @@ void MesonBuildSystem::triggerParsing()
 
 bool MesonBuildSystem::needsSetup()
 {
-    const Utils::FilePath &buildDir = buildConfiguration()->buildDirectory();
-    return (!isSetup(buildDir) || !m_parser.usesSameMesonVersion(buildDir)
-            || !m_parser.matchesKit(m_kitData));
+    const FilePath buildDir = buildConfiguration()->buildDirectory();
+    return !isSetup(buildDir) || !m_parser.usesSameMesonVersion(buildDir)
+            || !m_parser.matchesKit(m_kitData);
 }
 
 void MesonBuildSystem::parsingCompleted(bool success)
@@ -264,7 +267,7 @@ void MesonBuildSystem::parsingCompleted(bool success)
         UNLOCK(true);
         emitBuildSystemUpdated();
     } else {
-        TaskHub::addTask(BuildSystemTask(Task::Error, Tr::tr("Meson build: Parsing failed")));
+        TaskHub::addTask<BuildSystemTask>(Task::Error, Tr::tr("Meson build: Parsing failed"));
         UNLOCK(false);
         emitBuildSystemUpdated();
     }
@@ -281,8 +284,26 @@ QStringList MesonBuildSystem::configArgs(bool isSetup)
     if (!isSetup || params.contains("--cross-file") || params.contains("--native-file"))
         return m_pendingConfigArgs + bc->mesonConfigArgs();
 
-    return QStringList{QString("--native-file=%1").arg(machineFile(kit()).toString())}
+    return QStringList{QString("--native-file=%1").arg(machineFile(kit()).toUrlishString())}
            + m_pendingConfigArgs + bc->mesonConfigArgs();
+}
+
+void MesonBuildSystem::buildDirectoryChanged()
+{
+    updateKit(kit());
+
+    m_introWatcher.clear();
+    if (buildConfiguration()->isActive()) {
+        // as specified here https://mesonbuild.com/IDE-integration.html#ide-integration
+        // meson-info.json is the last written file, which ensure that all others introspection
+        // files are ready when a modification is detected on this one.
+        m_introWatcher.addFile(buildConfiguration()->buildDirectory()
+                                   .pathAppended(Constants::MESON_INFO_DIR)
+                                   .pathAppended(Constants::MESON_INFO),
+                              FileSystemWatcher::WatchModifiedDate);
+    }
+
+    triggerParsing();
 }
 
 bool MesonBuildSystem::configure()
@@ -326,6 +347,8 @@ bool MesonBuildSystem::wipe()
 bool MesonBuildSystem::parseProject()
 {
     QTC_ASSERT(buildConfiguration(), return false);
+    if (!buildConfiguration()->isActive()) // Never parse if not active
+        return false;
     if (!isSetup(buildConfiguration()->buildDirectory()) && settings().autorunMeson())
         return configure();
     LEAVE_IF_BUSY();

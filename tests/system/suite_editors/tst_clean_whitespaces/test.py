@@ -34,7 +34,7 @@ def main():
         test.verify(preparedContent.find('\t') != -1, "Added at least one tab.")
         test.log("Expecting file to be cleaned (trailing whitespace): %s" % str(not isIgnored))
 
-        invokeMenuItem("File", "Open File or Project...")
+        invokeMenuItem("File", "Open File...")
         selectFromFileDialog(fileName, True)
         editor = getEditorForFileSuffix(fileName)
         if editor == None:
@@ -47,7 +47,7 @@ def main():
         if emptyLine or (trailingWS and not isIgnored):
             waitFor("str(fileCombo.currentText).endswith('*')", 2500)
 
-        currentContent = str(editor.toPlainText())
+        currentContent = str(editor.plainText)
         if trailingWS and not isIgnored:
             test.verify(currentContent.find(TabBlankTab) == -1, "Trailing whitespace cleaned.")
             expectedContent = preparedContent.replace(TabBlankTab, '')
@@ -78,7 +78,7 @@ def prepareFileExternal(fileName, content):
 
     for currentLine in lines:
         if not emptyLine:
-            if len(currentLine) == 1:  # just the line break
+            if currentLine in ('\n', '\r\n'):  # just the line break
                 currentLine = TripleTab + '\n'
                 emptyLine = True
                 test.log("Replaced empty line by 3 tabs.")

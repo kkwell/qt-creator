@@ -3,14 +3,9 @@
 
 /*!
     \page creator-completing-code.html
-    \if defined(qtdesignstudio)
-    \previouspage qtquick-text-editor.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-edit
-    \ingroup studio-how-to-code
 
     \title Complete code
 
@@ -18,21 +13,19 @@
     complete the code. It shows a list of suggestions to
     the statement currently under your cursor.
 
-    Press \key Tab or \key Enter to accept the selected suggestion and complete
+    Select \key Tab or \key Enter to accept the selected suggestion and complete
     the code.
 
-    \if defined(qtcreator)
-    \image qtcreator-codecompletion.png
+    \image {qtcreator-codecompletion.png} {Suggestions for completing C++ code}
     \caption Suggestions for completing C++ code.
-    \endif
 
-    \image qml-code-completion.png
+    \image {qml-code-completion.png} {Suggestions for completing QML code}
     \caption Suggestions for completing QML code.
 
-    To open the list of suggestions at any time, press \key {Ctrl+Space}.
+    To open the list of suggestions at any time, select \key {Ctrl+Space}.
     If only one option is available, \QC inserts it automatically.
 
-    \section1 Summary of Available Types
+    \section1 Summary of available types
 
     The following table lists available types for code completion and icon used
     for each.
@@ -41,102 +34,88 @@
         \header
             \li  Icon
             \li  Description
-        \if defined(qtcreator)
         \row
-            \li \inlineimage completion/class.png
+            \li \inlineimage {completion/class.png} {Class icon}
             \li A class
         \row
-            \li \inlineimage completion/enum.png
+            \li \inlineimage {completion/enum.png} {Enum icon}
             \li An enum
         \row
-            \li \inlineimage completion/enumerator.png
+            \li \inlineimage {completion/enumerator.png} {Enum value icon}
             \li An enumerator (value of an enum)
         \row
-            \li \inlineimage completion/func.png
+            \li \inlineimage {completion/func.png} {Function icon}
             \li A function
         \row
-            \li \inlineimage completion/func_priv.png
+            \li \inlineimage {completion/func_priv.png} {Private function icon}
             \li A private function
         \row
-            \li \inlineimage completion/func_prot.png
+            \li \inlineimage {completion/func_prot.png} {Protected function icon}
             \li A protected function
         \row
-            \li \inlineimage completion/var.png
+            \li \inlineimage {completion/var.png} {Variable icon}
             \li A variable
         \row
-            \li \inlineimage completion/var_priv.png
+            \li \inlineimage {completion/var_priv.png} {Private variable icon}
             \li A private variable
         \row
-            \li \inlineimage completion/var_prot.png
+            \li \inlineimage {completion/var_prot.png} {Protected variable icon}
             \li A protected variable
         \row
-            \li \inlineimage completion/signal.png
+            \li \inlineimage {completion/signal.png} {Signal icon}
             \li A signal
         \row
-            \li \inlineimage completion/slot.png
+            \li \inlineimage {completion/slot.png} {Slot icon}
             \li A slot
         \row
-            \li \inlineimage completion/slot_priv.png
+            \li \inlineimage {completion/slot_priv.png} {Private slot icon}
             \li A private slot
         \row
-            \li \inlineimage completion/slot_prot.png
+            \li \inlineimage {completion/slot_prot.png} {Protected slot icon}
             \li A protected slot
         \row
-            \li \inlineimage completion/keyword.png
+            \li \inlineimage {completion/keyword.png} {C++ keyword icon}
             \li A C++ keyword
         \row
-            \li \inlineimage completion/snippet.png
+            \li \inlineimage {completion/snippet.png} {C++ code snippet icon}
             \li A C++ code snippet
-        \endif
         \row
-            \li \inlineimage completion/element.png
+            \li \inlineimage {completion/element.png} {QML type icon}
             \li A QML type
         \row
-            \li \inlineimage completion/qmlsnippet.png
+            \li \inlineimage {completion/qmlsnippet.png} {QML code snippet icon}
             \li A QML code snippet
-        \if defined(qtcreator)
         \row
-            \li \inlineimage completion/macro.png
+            \li \inlineimage {completion/macro.png} {Macro icon}
             \li A macro
         \row
-            \li \inlineimage completion/namespace.png
+            \li \inlineimage {completion/namespace.png} {Namespace icon}
             \li A namespace
-        \endif
     \endtable
 
     \section1 Complete code snippets
 
     Code snippets can consist of multiple variables that you specify values for.
-    Select an item in the list and press \key Tab or \key Enter to complete the
-    code. Press \key Tab to move between the variables and specify values for
+    Select an item in the list and select \key Tab or \key Enter to complete the
+    code. Select \key Tab to move between the variables and specify values for
     them. When you specify a value for a variable, all instances of the variable
     within the snippet are renamed.
 
-    \if defined(qtcreator)
-    \image qmldesigner-code-completion.png "Completing C++ code"
+    \image {qmldesigner-code-completion.png } {C++ code snippet}
     \caption C++ code snippet.
-    \endif
 
-    \image qml-code-snippet.png
+    \image {qml-code-snippet.png}{QML code snippet}
     \caption QML code snippet.
 
-    \if defined(qtcreator)
-    \sa {Complete CMake code}, {Nim}
-    \endif
-
-    \sa {Add code snippets to the auto-complete menu}, {Completion}, {Snippets}
+    \sa {Add code snippets to the auto-complete menu}, {Complete CMake code},
+    {Completion}, {Nim}, {Snippets}
 */
 
 /*!
     \page creator-preferences-text-editor-completion.html
-    \if defined(qtdesignstudio)
-    \previouspage qtquick-text-editor.html
-    \else
     \previouspage creator-reference.html
-    \endif
 
-    \ingroup creator-reference-preferences-text-editor
-    \ingroup studio-preferences-code
+    \ingroup creator-reference-editors
 
     \title Completion
 
@@ -146,9 +125,9 @@
     To set preferences for code completion, select \preferences >
     \uicontrol {Text Editor} > \uicontrol Completion.
 
-    \image qtcreator-preferences-texteditor-completion.webp {Text Editor Completion preferences}
+    \image {qtcreator-preferences-texteditor-completion.webp} {Completion tab in Text Editor preferences}
 
-    \section1 Code Completion Behavior
+    \section1 Code completion behavior
 
     By default, code completion does not consider case. To apply full or
     first-letter case-sensitivity, select \uicontrol Full or
@@ -166,41 +145,33 @@
 
     When completion is invoked manually, \QC completes the common prefix of the
     list of suggestions. This is especially useful for classes with several
-    similarly named members. To disable this functionality, deselect the
-    \uicontrol {Autocomplete common prefix} check box.
+    similarly named members. To disable this functionality, clear
+    \uicontrol {Autocomplete common prefix}.
 
-    Select the \uicontrol {Automatically split strings} check box to split
+    Select \uicontrol {Automatically split strings} to split
     a string to two lines by adding an end quote at the cursor position when
-    you press \key Enter and a start quote at the beginning of the next line,
-    before the rest of the string. In addition, pressing \key {Shift+Enter}
+    you select \key Enter and a start quote at the beginning of the next line,
+    before the rest of the string. In addition, selecting \key {Shift+Enter}
     inserts an escape character at the cursor position and moves the rest of
     the string to the next line.
 
-    \section1 Automatically Inserting Matching Characters
+    \section1 Automatically inserting matching characters
 
     When you have selected code and enter brackets or quotes, the matching
     closing character is added automatically at the end of the selection.
 
     By default, the automatically inserted text is highlighted and animated,
-    skipped when you type, and removed when you press \key Backspace.
+    skipped when you type, and removed when you select \key Backspace.
 
-    \if defined(qtcreator)
-    \sa {Complete CMake code}, {Enclose code in brackets or quotes}, {Nim}
-    \endif
-
-    \sa {Complete code}, {Snippets}
+    \sa {Configure editors}{How to: Configure editors}, {Complete CMake code},
+    {Complete code}, {Enclose code in brackets or quotes}, {Nim}
 */
 
 /*!
     \page creator-preferences-text-editor-shippets.html
-    \if defined(qtdesignstudio)
-    \previouspage qtquick-text-editor.html
-    \else
     \previouspage creator-reference.html
-    \endif
 
-    \ingroup creator-reference-preferences-text-editor
-    \ingroup studio-preferences-code
+    \ingroup creator-reference-editors
 
     \title Snippets
 
@@ -214,26 +185,20 @@
     \list
         \li Text snippets, which can have any text string. For example, code
             comments
-        \if defined(qtcreator)
         \li C++ code snippets, which specify C++ code constructs
         \li CMake code snippets that you can use when editing \c CMakeLists.txt
             files in the CMake editor
-        \endif
         \li QML code snippets, which specify QML code constructs
-        \if defined(qtcreator)
         \li Nim code snippets, which specify Nim code constructs
-        \endif
     \endlist
 
-    \if defined(qtcreator)
-    \image qtcreator-edit-code-snippets.png {C++ snippet preferences}
+    \image {qtcreator-edit-code-snippets.png} {Built in C++ code snippets in the Snippets tab in Text Editor preferences}
     \caption Built-in C++ code snippets.
-    \endif
 
-    \image qml-snippet-editor.png
+    \image {qml-snippet-editor.png} {Built-in QML code snippets in the Snippets tab in Text Editor preferences}
     \caption Built-in QML code snippets.
 
-    \section1 Editing Snippets
+    \section1 Editing snippets
 
     Select a snippet in the list to edit it in the snippet editor.
 
@@ -257,7 +222,6 @@
     $variable$
     \endcode
 
-    \if defined(qtcreator)
     Specify \QC variables in the following format:
 
     \code
@@ -292,8 +256,7 @@
         void $name:l$() {}
     \endcode
 
-    \image qtcreator-snippet-modifiers.png
-    \endif
+    \image {qtcreator-snippet-modifiers.png} {Snippet modifiers in the snippet editor}
 
     The snippet editor does not check the syntax of the snippets that you edit
     or add. However, when you use the snippets, the code editor marks any
@@ -302,7 +265,7 @@
     To discard the changes you made to a built-in snippet, select
     \uicontrol {Revert Built-in}.
 
-    \section1 Removing Snippets
+    \section1 Removing snippets
 
     The list of suggestions might show several similar built-in snippets for
     different use cases. To make it shorter when you write code, remove the
@@ -313,33 +276,25 @@
     \uicontrol Remove. To restore the removed snippets, select
     \uicontrol {Restore Removed Built-ins}.
 
-    \section1 Resetting Snippets
+    \section1 Resetting snippets
 
     To remove all added snippets and to restore all removed snippets, select
     \uicontrol {Reset All}.
 
-    \note If you now select \uicontrol OK or \uicontrol Apply, you permanently
+    \note If you now select \uicontrol Apply, you permanently
     lose all your own snippets.
 
-    \if defined(qtcreator)
-    \sa {Complete CMake code}, {Document code}, {Use Qt Creator variables},
-    {Nim}
-    \endif
-
-    \sa {Add code snippets to the auto-complete menu}, {Complete code},
-    {Completion}
+    \sa {Add code snippets to the auto-complete menu}, {Complete CMake code},
+    {Complete code}, {Document code},
+    {Configure editors}{How to: Configure editors}, {Use \QC variables},
+    {Completion}, {Nim}
 */
 
 /*!
     \page creator-how-to-add-code-snippets.html
-    \if defined(qtdesignstudio)
-    \previouspage qtquick-text-editor.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-configure-editors
-    \ingroup studio-how-to-code
 
     \title Add code snippets to the auto-complete menu
 
@@ -347,26 +302,18 @@
 
     \list 1
         \li Select \preferences > \uicontrol {Text Editor} > \uicontrol Snippets.
-            \image qtcreator-snippet-modifiers.png {Snippets preferences}
+            \image {qtcreator-snippet-modifiers.png} {Snippets tab in Text Editor preferences}
         \li In \uicontrol Group, select the type of snippet to add.
         \li Select \uicontrol Add.
         \li Specify a trigger. If the trigger is already in use, add an optional
             variant. They appear in the list of suggestions when you write code.
-            \if defined(qtcreator)
             Also specify a text string or C++ or QML code construct
             in the snippet editor, depending on the snippet category.
 
-            You can use \l{Use Qt Creator variables}{predefined variables} in
+            You can use \l{Use \QC variables}{predefined variables} in
             snippets.
-            \else
-            Also specify a text string or QML code in the snippet editor, depending on
-            the snippet category.
-            \endif
     \endlist
 
-    \if defined(qtcreator)
-    \sa {Complete CMake code}, {Complete code}, {Use Qt Creator variables},
-    {Nim}
-    \endif
-    \sa {Completion}, {Snippets}
+    \sa {Complete CMake code}, {Complete code}, {Use \QC variables},
+    {Completion}, {Nim}, {Snippets}
 */

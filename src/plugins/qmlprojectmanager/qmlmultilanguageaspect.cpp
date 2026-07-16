@@ -3,6 +3,7 @@
 
 #include "qmlmultilanguageaspect.h"
 
+#include "qmlprojectconstants.h"
 #include "qmlprojectmanagertr.h"
 
 #include <extensionsystem/pluginmanager.h>
@@ -21,36 +22,13 @@ namespace QmlProjectManager {
 
 static bool isMultilanguagePresent()
 {
-    const ExtensionSystem::PluginSpecs &specs = ExtensionSystem::PluginManager::plugins();
-    return std::find_if(specs.cbegin(), specs.cend(),
-                        [](ExtensionSystem::PluginSpec *spec) {
-                            return spec->name() == "MultiLanguage";
-                        })
-           != specs.cend();
+    return ExtensionSystem::PluginManager::specExists("multilanguage");
 }
 
-static FilePath getMultilanguageDatabaseFilePath(ProjectExplorer::Target *target)
+static QObject *getPlugin(const QString &pluginId)
 {
-    if (target) {
-        auto filePath = target->project()->projectDirectory().pathAppended("translations.db");
-        if (filePath.exists())
-            return filePath;
-    }
-    return {};
-}
-
-static QObject *getPreviewPlugin()
-{
-    const ExtensionSystem::PluginSpecs &specs = ExtensionSystem::PluginManager::plugins();
-    const auto pluginIt = std::find_if(specs.cbegin(), specs.cend(),
-                                 [](const ExtensionSystem::PluginSpec *p) {
-                                     return p->name() == "QmlPreview";
-                                 });
-
-    if (pluginIt != specs.cend())
-        return (*pluginIt)->plugin();
-
-    return nullptr;
+    const auto spec = ExtensionSystem::PluginManager::specById(pluginId);
+    return spec ? spec->plugin() : nullptr;
 }
 
 QmlMultiLanguageAspect::QmlMultiLanguageAspect(AspectContainer *container)
@@ -77,21 +55,12 @@ QmlMultiLanguageAspect::QmlMultiLanguageAspect(AspectContainer *container)
     });
 }
 
-QmlMultiLanguageAspect::~QmlMultiLanguageAspect()
-{
-}
-
-void QmlMultiLanguageAspect::setTarget(Target *target)
-{
-    m_target = target;
-}
-
 void QmlMultiLanguageAspect::setCurrentLocale(const QString &locale)
 {
     if (m_currentLocale == locale)
         return;
     m_currentLocale = locale;
-    if (auto previewPlugin = getPreviewPlugin())
+    if (auto previewPlugin = getPlugin("qmlpreview"))
         previewPlugin->setProperty("localeIsoCode", locale);
 }
 
@@ -102,9 +71,11 @@ QString QmlMultiLanguageAspect::currentLocale() const
 
 Utils::FilePath QmlMultiLanguageAspect::databaseFilePath() const
 {
-    if (m_databaseFilePath.isEmpty())
-        m_databaseFilePath = getMultilanguageDatabaseFilePath(m_target);
-    return m_databaseFilePath;
+    if (auto previewPlugin = getPlugin("multilanguage")) {
+        const auto multilanguageDatabaseFilePath = previewPlugin->property("multilanguageDatabaseFilePath");
+        return Utils::FilePath::fromString(multilanguageDatabaseFilePath.toString());
+    }
+    return {};
 }
 
 void QmlMultiLanguageAspect::toMap(Store &map) const

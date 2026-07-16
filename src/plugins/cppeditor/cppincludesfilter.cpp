@@ -15,6 +15,7 @@
 
 using namespace Core;
 using namespace ProjectExplorer;
+using namespace QtTaskTree;
 using namespace Utils;
 
 namespace CppEditor::Internal {
@@ -59,7 +60,7 @@ CppIncludesFilter::CppIncludesFilter()
     setDefaultShortcutString("ai");
     setDefaultIncludedByDefault(true);
     const auto invalidate = [this] { m_cache.invalidate(); };
-    setRefreshRecipe(Tasking::Sync([invalidate] { invalidate(); }));
+    setRefreshRecipe(QSyncTask([invalidate] { invalidate(); }));
     setPriority(ILocatorFilter::Low);
 
     connect(ProjectExplorerPlugin::instance(), &ProjectExplorerPlugin::fileListChanged,

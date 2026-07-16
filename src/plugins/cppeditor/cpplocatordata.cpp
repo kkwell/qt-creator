@@ -9,14 +9,16 @@ using namespace Utils;
 
 namespace CppEditor {
 
+using namespace Internal;
+
 enum { MaxPendingDocuments = 10 };
 
 CppLocatorData::CppLocatorData()
 {
-    m_search.setSymbolsToSearchFor(SymbolSearcher::Enums |
-                                   SymbolSearcher::Classes |
-                                   SymbolSearcher::Functions |
-                                   SymbolSearcher::TypeAliases);
+    m_search.setSymbolsToSearchFor(SymbolType::Enums |
+                                   SymbolType::Classes |
+                                   SymbolType::Functions |
+                                   SymbolType::TypeAliases);
     m_pendingDocuments.reserve(MaxPendingDocuments);
 }
 
@@ -57,18 +59,18 @@ void CppLocatorData::onDocumentUpdated(const CPlusPlus::Document::Ptr &document)
     flushPendingDocument(false);
 }
 
-void CppLocatorData::onAboutToRemoveFiles(const QStringList &files)
+void CppLocatorData::onAboutToRemoveFiles(const FilePaths &files)
 {
     if (files.isEmpty())
         return;
 
     QMutexLocker locker(&m_pendingDocumentsMutex);
 
-    for (const QString &file : files) {
+    for (const FilePath &file : files) {
         m_infosByFile.remove(file);
 
         for (int i = 0; i < m_pendingDocuments.size(); ++i) {
-            if (m_pendingDocuments.at(i)->filePath().path() == file) {
+            if (m_pendingDocuments.at(i)->filePath() == file) {
                 m_pendingDocuments.remove(i);
                 break;
             }
@@ -88,7 +90,7 @@ void CppLocatorData::flushPendingDocument(bool force) const
         return;
 
     for (CPlusPlus::Document::Ptr doc : std::as_const(m_pendingDocuments))
-        m_infosByFile.insert(StringTable::insert(doc->filePath().toString()), m_search(doc));
+        m_infosByFile.insert(doc->filePath().intern(), m_search(doc));
 
     m_pendingDocuments.clear();
     m_pendingDocuments.reserve(MaxPendingDocuments);

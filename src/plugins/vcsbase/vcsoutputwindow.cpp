@@ -27,7 +27,6 @@
 #include <QTextBlock>
 #include <QTextBlockUserData>
 #include <QTextCharFormat>
-#include <QTextCodec>
 #include <QTextStream>
 #include <QTime>
 
@@ -229,7 +228,6 @@ class VcsOutputWindowPrivate
 {
 public:
     Internal::OutputWindowPlainTextEdit widget;
-    FilePath repository;
     const QRegularExpression passwordRegExp = QRegularExpression("://([^@:]+):([^@]+)@");
 };
 
@@ -247,8 +245,7 @@ VcsOutputWindow::VcsOutputWindow()
     m_instance = this;
 
     auto updateBehaviorSettings = [] {
-        d->widget.setWheelZoomEnabled(
-                    TextEditor::globalBehaviorSettings().m_scrollWheelZooming);
+        d->widget.setWheelZoomEnabled(TextEditor::globalBehaviorSettings().scrollWheelZooming());
     };
 
     auto updateFontSettings = [] {
@@ -336,30 +333,42 @@ void VcsOutputWindow::setText(const QString &text)
 
 void VcsOutputWindow::setData(const QByteArray &data)
 {
-    setText(QTextCodec::codecForLocale()->toUnicode(data));
+    setText(TextEncoding::encodingForLocale().decode(data));
 }
 
-void VcsOutputWindow::appendSilently(const QString &text)
+void VcsOutputWindow::append(const Utils::FilePath &workingDirectory, const QString &text,
+                             MessageStyle style, bool silently)
 {
-    append((text.endsWith('\n') || text.endsWith('\r')) ? text : text + '\n', None, true);
-}
-
-void VcsOutputWindow::append(const QString &text, MessageStyle style, bool silently)
-{
-    d->widget.appendLines(text, style, d->repository);
+    const QString lines = (text.endsWith('\n') || text.endsWith('\r')) ? text : text + '\n';
+    d->widget.appendLines(lines, style, workingDirectory);
 
     if (!silently && !d->widget.isVisible())
         m_instance->popup(IOutputPane::NoModeSwitch);
 }
 
-void VcsOutputWindow::appendError(const QString &text)
+void VcsOutputWindow::appendSilently(const FilePath &workingDirectory, const QString &text)
 {
-    append((text.endsWith('\n') || text.endsWith('\r')) ? text : text + '\n', Error, false);
+    append(workingDirectory, text, None, true);
 }
 
-void VcsOutputWindow::appendWarning(const QString &text)
+void VcsOutputWindow::appendText(const Utils::FilePath &workingDirectory, const QString &text)
 {
-    append(text + '\n', Warning, false);
+    append(workingDirectory, text, None, false);
+}
+
+void VcsOutputWindow::appendMessage(const FilePath &workingDirectory, const QString &text)
+{
+    append(workingDirectory, text, Message, true);
+}
+
+void VcsOutputWindow::appendWarning(const FilePath &workingDirectory, const QString &text)
+{
+    append(workingDirectory, text, Warning, false);
+}
+
+void VcsOutputWindow::appendError(const FilePath &workingDirectory, const QString &text)
+{
+    append(workingDirectory, text, Error, false);
 }
 
 // Helper to format arguments for log windows hiding common password options.
@@ -396,19 +405,14 @@ QString VcsOutputWindow::msgExecutionLogEntry(const FilePath &workingDir, const 
     return Tr::tr("Running in \"%1\": %2").arg(workingDir.toUserOutput(), maskedCmdline) + '\n';
 }
 
-void VcsOutputWindow::appendShellCommandLine(const QString &text)
+void VcsOutputWindow::appendShellCommandLine(const FilePath &workingDirectory, const QString &text)
 {
-    append(filterPasswordFromUrls(text), Command, true);
+    append(workingDirectory, filterPasswordFromUrls(text), Command, true);
 }
 
 void VcsOutputWindow::appendCommand(const FilePath &workingDirectory, const CommandLine &command)
 {
-    appendShellCommandLine(msgExecutionLogEntry(workingDirectory, command));
-}
-
-void VcsOutputWindow::appendMessage(const QString &text)
-{
-    append(text + '\n', Message, true);
+    appendShellCommandLine(workingDirectory, msgExecutionLogEntry(workingDirectory, command));
 }
 
 void VcsOutputWindow::destroy()
@@ -422,16 +426,6 @@ VcsOutputWindow *VcsOutputWindow::instance()
     if (!m_instance)
         (void) new VcsOutputWindow;
     return m_instance;
-}
-
-void VcsOutputWindow::setRepository(const FilePath &repository)
-{
-    d->repository = repository;
-}
-
-void VcsOutputWindow::clearRepository()
-{
-    d->repository.clear();
 }
 
 } // namespace VcsBase

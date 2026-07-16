@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "cppeditorwidget.h"
+#include "cppparsecontext.h"
 
 #include "cppcodeformatter.h"
 #include "cppcompletionassistprovider.h"
@@ -260,45 +261,48 @@ bool handleDoxygenContinuation(QTextCursor &cursor,
         // Ok, so the line started with an '*' or '/*'
         int followinPos = blockPos;
         // Now search for the first non-whitespace character to align to:
-        for (; followinPos < currentLine.length(); ++followinPos) {
+        for (; followinPos < currentLine.size(); ++followinPos) {
             if (!currentLine.at(followinPos).isSpace())
                 break;
         }
-        if (followinPos == currentLine.length() // a)
-                || currentLine.at(followinPos) != QLatin1Char('*')) { // b)
-            // So either a) the line ended after a '*' and we need to insert a continuation, or
-            // b) we found the start of some text and we want to align the continuation to that.
-            QString newLine(QLatin1Char('\n'));
-            QTextCursor c(cursor);
-            c.movePosition(QTextCursor::StartOfBlock);
-            c.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor, offset);
-            newLine.append(c.selectedText());
-            if (currentLine.at(offset) == QLatin1Char('/')) {
-                if (leadingAsterisks)
-                    newLine.append(QLatin1String(" * "));
+        QString newLine(QLatin1Char('\n'));
+        QTextCursor c(cursor);
+        c.movePosition(QTextCursor::StartOfBlock);
+        c.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor, offset);
+        newLine.append(c.selectedText());
+        const bool isAtAsterisk = followinPos < currentLine.size()
+                                  && currentLine.at(followinPos) == '*';
+        if (currentLine.at(offset) == QLatin1Char('/')) {
+            if (leadingAsterisks) {
+                if (isAtAsterisk)
+                    newLine.append(" ");
                 else
-                    newLine.append(QLatin1String("   "));
-                offset += 3;
+                    newLine.append(QLatin1String(" * "));
             } else {
-                // If '*' is not within a comment, skip.
-                QTextCursor cursorOnFirstNonWhiteSpace(cursor);
-                const int positionOnFirstNonWhiteSpace = cursor.position() - blockPos + offset;
-                cursorOnFirstNonWhiteSpace.setPosition(positionOnFirstNonWhiteSpace);
-                if (!CPlusPlus::MatchingText::isInCommentHelper(cursorOnFirstNonWhiteSpace))
-                    return false;
+                newLine.append(QLatin1String("   "));
+            }
+            offset += 3;
+        } else {
+            // If '*' is not within a comment, skip.
+            QTextCursor cursorOnFirstNonWhiteSpace(cursor);
+            const int positionOnFirstNonWhiteSpace = cursor.position() - blockPos + offset;
+            cursorOnFirstNonWhiteSpace.setPosition(positionOnFirstNonWhiteSpace);
+            if (!CPlusPlus::MatchingText::isInCommentHelper(cursorOnFirstNonWhiteSpace))
+                return false;
 
-                // ...otherwise do the continuation
+            // ...otherwise do the continuation
+            if (!isAtAsterisk) {
                 int start = offset;
                 while (offset < blockPos && currentLine.at(offset) == QLatin1Char('*'))
                     ++offset;
                 const QChar ch = leadingAsterisks ? QLatin1Char('*') : QLatin1Char(' ');
                 newLine.append(QString(offset - start, ch));
             }
-            for (; offset < blockPos && currentLine.at(offset) == ' '; ++offset)
-                newLine.append(QLatin1Char(' '));
-            cursor.insertText(newLine);
-            return true;
         }
+        for (; offset < blockPos && currentLine.at(offset) == ' '; ++offset)
+            newLine.append(QLatin1Char(' '));
+        cursor.insertText(newLine);
+        return true;
     }
 
     return false;
@@ -420,15 +424,13 @@ CppEditorWidget::CppEditorWidget()
     qRegisterMetaType<SemanticInfo>("SemanticInfo");
 }
 
-CppEditorWidget *CppEditorWidget::fromTextDocument(TextEditor::TextDocument *doc)
+const QList<CppEditorWidget *> CppEditorWidget::editorWidgetsForDocument(
+    TextEditor::TextDocument *doc)
 {
-    const QVector<BaseTextEditor *> editors = BaseTextEditor::textEditorsForDocument(doc);
-    for (BaseTextEditor * const editor : editors) {
-        if (const auto editorWidget = qobject_cast<CppEditor::CppEditorWidget *>(
-                editor->editorWidget()))
-            return editorWidget;
-    }
-    return nullptr;
+    const QList<BaseTextEditor *> editors = BaseTextEditor::textEditorsForDocument(doc);
+    const QList<TextEditorWidget *> editorWidgets
+        = Utils::transform(editors, &BaseTextEditor::editorWidget);
+    return Utils::qobject_container_cast<CppEditorWidget *>(editorWidgets);
 }
 
 void CppEditorWidget::finalizeInitialization()
@@ -443,8 +445,6 @@ void CppEditorWidget::finalizeInitialization()
 
     connect(d->m_cppEditorDocument, &CppEditorDocument::codeWarningsUpdated,
             this, &CppEditorWidget::onCodeWarningsUpdated);
-    connect(d->m_cppEditorDocument, &CppEditorDocument::ifdefedOutBlocksUpdated,
-            this, &CppEditorWidget::onIfdefedOutBlocksUpdated);
     connect(d->m_cppEditorDocument, &CppEditorDocument::semanticInfoUpdated,
             this, [this](const SemanticInfo &info) { updateSemanticInfo(info); });
 
@@ -471,7 +471,7 @@ void CppEditorWidget::finalizeInitialization()
     });
     connect(&d->m_localRenaming, &CppLocalRenaming::processKeyPressNormally,
             this, &CppEditorWidget::processKeyNormally);
-    connect(this, &QPlainTextEdit::cursorPositionChanged, this, [this] {
+    connect(this, &PlainTextEdit::cursorPositionChanged, this, [this] {
         if (d->m_cppEditorOutline)
             d->m_cppEditorOutline->updateIndex();
     });
@@ -486,8 +486,8 @@ void CppEditorWidget::finalizeInitialization()
     d->m_updateFunctionDeclDefLinkTimer.setInterval(UPDATE_FUNCTION_DECL_DEF_LINK_INTERVAL);
     connect(&d->m_updateFunctionDeclDefLinkTimer, &QTimer::timeout,
             this, &CppEditorWidget::updateFunctionDeclDefLinkNow);
-    connect(this, &QPlainTextEdit::cursorPositionChanged, this, &CppEditorWidget::updateFunctionDeclDefLink);
-    connect(this, &QPlainTextEdit::textChanged, this, &CppEditorWidget::updateFunctionDeclDefLink);
+    connect(this, &PlainTextEdit::cursorPositionChanged, this, &CppEditorWidget::updateFunctionDeclDefLink);
+    connect(this, &PlainTextEdit::textChanged, this, &CppEditorWidget::updateFunctionDeclDefLink);
 
     // set up the use highlighitng
     connect(this, &CppEditorWidget::cursorPositionChanged, this, [this] {
@@ -599,14 +599,6 @@ void CppEditorWidget::onCodeWarningsUpdated(unsigned revision,
     setExtraSelections(TextEditorWidget::CodeWarningsSelection,
                        unselectLeadingWhitespace(selections));
     setRefactorMarkers(refactorMarkers, Constants::CPP_CLANG_FIXIT_AVAILABLE_MARKER_ID);
-}
-
-void CppEditorWidget::onIfdefedOutBlocksUpdated(unsigned revision,
-                                                const QList<BlockRange> ifdefedOutBlocks)
-{
-    if (revision != documentRevision())
-        return;
-    setIfdefedOutBlocks(ifdefedOutBlocks);
 }
 
 void CppEditorWidget::findUsages()
@@ -779,10 +771,8 @@ void CppEditorWidget::showRenameWarningIfFileIsGenerated(const Utils::FilePath &
                     "This is normally not a good idea, as the file will likely get "
                     "overwritten during the build process.")
                 .arg(filePath.toUserOutput());
-        if (const Target * const target = project->activeTarget()) {
-            if (const BuildSystem * const bs = target->buildSystem())
-                ec = bs->extraCompilerForTarget(filePath);
-        }
+        if (const BuildSystem * const bs = project->activeBuildSystem())
+            ec = bs->extraCompilerForTarget(filePath);
         if (ec) {
             warning.append('\n').append(CppEditor::Tr::tr(
                                             "Do you want to edit \"%1\" instead?")
@@ -790,14 +780,16 @@ void CppEditorWidget::showRenameWarningIfFileIsGenerated(const Utils::FilePath &
         }
         static const Id infoId("cppeditor.renameWarning");
         InfoBarEntry info(infoId, warning);
+        info.setTitle(Tr::tr("Renamed Symbol Will Be Overwritten"));
+        info.setInfoType(InfoLabel::Warning);
         if (ec) {
-            info.addCustomButton(CppEditor::Tr::tr("Open \"%1\"").arg(ec->source().fileName()),
-                                 [source = ec->source()] {
-                                     EditorManager::openEditor(source);
-                                     ICore::infoBar()->removeInfo(infoId);
-                                 });
+            info.addCustomButton(
+                CppEditor::Tr::tr("Open \"%1\"").arg(ec->source().fileName()),
+                [source = ec->source()] { EditorManager::openEditor(source); },
+                {},
+                InfoBarEntry::ButtonAction::Hide);
         }
-        ICore::infoBar()->addInfo(info);
+        ICore::popupInfoBar()->addInfo(info);
         return;
     }
 }
@@ -827,8 +819,8 @@ QList<QTextEdit::ExtraSelection> sourceLocationsToExtraSelections(
         QTextEdit::ExtraSelection selection;
 
         selection.cursor = selectAt(cppEditorWidget->textCursor(),
-                                    sourceLocation.targetLine,
-                                    sourceLocation.targetColumn,
+                                    sourceLocation.target.line,
+                                    sourceLocation.target.column,
                                     selectionLength);
         selection.format = textCharFormat;
 
@@ -912,6 +904,20 @@ void CppEditorWidget::switchDeclarationDefinition(bool inNextSplit)
     CppModelManager::switchDeclDef(cursor, std::move(callback));
 }
 
+void CppEditorWidget::goToParentImpl(bool inNextSplit)
+{
+    if (!CppModelManager::instance())
+        return;
+
+    const CursorInEditor cursor(textCursor(), textDocument()->filePath(), this, textDocument());
+    auto callback = [self = QPointer(this),
+                     split = inNextSplit != alwaysOpenLinksInNextSplit()](const Link &link) {
+        if (self && link.hasValidTarget())
+            self->openLink(link, split);
+    };
+    CppModelManager::followFunctionToParentImpl(cursor, callback);
+}
+
 bool CppEditorWidget::followUrl(const QTextCursor &cursor,
                                    const Utils::LinkHandler &processLinkCallback)
 {
@@ -982,18 +988,19 @@ void CppEditorWidget::findLinkAt(const QTextCursor &cursor,
     LinkHandler callbackWrapper = [start = c.selectionStart(), end = c.selectionEnd(),
             doc = QPointer(cursor.document()), callback = processLinkCallback,
             filePath](const Link &link) {
-        const int linkPos = doc ? Text::positionInText(doc, link.targetLine, link.targetColumn + 1)
-                                : -1;
+        const int linkPos = doc ? link.target.toPositionInDocument(doc) : -1;
         if (link.targetFilePath == filePath && linkPos >= start && linkPos < end) {
             const QString fileName = filePath.fileName();
             if (fileName.startsWith("ui_") && fileName.endsWith(".h")) {
-                const QString uiFileName = fileName.mid(3, fileName.length() - 4) + "ui";
+                const QString uiFileName = fileName.mid(3, fileName.size() - 4) + "ui";
                 for (const Project * const project : ProjectManager::projects()) {
                     const auto nodeMatcher = [uiFileName](Node *n) {
                         return n->filePath().fileName() == uiFileName;
                     };
-                    if (const Node * const uiNode = project->rootProjectNode()
-                            ->findNode(nodeMatcher)) {
+                    ProjectNode *rootNode = project->rootProjectNode();
+                    if (!rootNode)
+                        continue;
+                    if (const Node * const uiNode = rootNode->findNode(nodeMatcher)) {
                         EditorManager::openEditor(uiNode->filePath());
                         return;
                     }
@@ -1212,7 +1219,7 @@ void CppEditorWidget::keyPressEvent(QKeyEvent *e)
 
 bool CppEditorWidget::handleStringSplitting(QKeyEvent *e) const
 {
-    if (!TextEditorSettings::completionSettings().m_autoSplitStrings)
+    if (!completionSettings().autoSplitStrings())
         return false;
 
     if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) {
@@ -1243,12 +1250,6 @@ bool CppEditorWidget::handleStringSplitting(QKeyEvent *e) const
     return false;
 }
 
-void CppEditorWidget::slotCodeStyleSettingsChanged(const QVariant &)
-{
-    QtStyleCodeFormatter formatter;
-    formatter.invalidateCache(document());
-}
-
 void CppEditorWidget::updateSemanticInfo()
 {
     updateSemanticInfo(d->m_cppEditorDocument->recalculateSemanticInfo(),
@@ -1274,11 +1275,8 @@ void CppEditorWidget::updateSemanticInfo(const SemanticInfo &semanticInfo,
 
 bool CppEditorWidget::isOldStyleSignalOrSlot() const
 {
-    QTextCursor tc(textCursor());
-    const QString content = textDocument()->plainText();
-
     return CppEditor::CppModelManager::instance()
-               ->getSignalSlotType(textDocument()->filePath(), content.toUtf8(), tc.position())
+               ->getSignalSlotType(textDocument()->filePath(), textCursor())
            == CppEditor::SignalSlotType::OldStyleSignal;
 }
 
@@ -1494,14 +1492,6 @@ const QList<QTextEdit::ExtraSelection> CppEditorWidget::unselectLeadingWhitespac
         filtered << splitSelections;
     }
     return filtered;
-}
-
-void CppEditorWidget::setIfdefedOutBlocks(const QList<TextEditor::BlockRange> &blocks)
-{
-    cppEditorDocument()->setIfdefedOutBlocks(blocks);
-#ifdef WITH_TESTS
-    emit ifdefedOutBlocksChanged(blocks);
-#endif
 }
 
 bool CppEditorWidget::isInTestMode() const { return d->inTestMode; }

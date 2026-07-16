@@ -46,6 +46,9 @@ public:
 
     virtual void invalidateCache() {}
 
+    // needed for preview in project mode
+    virtual void setOverriddenPreferences(ICodeStylePreferences */*preferences*/) {}
+
     virtual int indentFor(const QTextBlock & /*block*/,
                           const TabSettings & /*tabSettings*/,
                           int /*cursorPositionInEditor*/ = -1)
@@ -76,7 +79,7 @@ public:
     virtual bool formatOnSave() const { return false; }
 
     // Expects a list of blocks in order of occurrence in the document.
-    virtual IndentationForBlock indentationForBlocks(const QVector<QTextBlock> &blocks,
+    virtual IndentationForBlock indentationForBlocks(const QList<QTextBlock> &blocks,
                                                      const TabSettings &tabSettings,
                                                      int cursorPositionInEditor = -1)
         = 0;
@@ -104,6 +107,8 @@ public:
         = 0;
 
     virtual std::optional<int> margin() const { return std::nullopt; }
+
+    virtual bool respectsTabSettings() const { return true; }
 
 protected:
     QTextDocument *m_doc;

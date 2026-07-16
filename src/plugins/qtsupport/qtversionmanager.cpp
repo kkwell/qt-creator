@@ -5,14 +5,16 @@
 
 #include "baseqtversion.h"
 #include "exampleslistmodel.h"
+#include "examplesparser.h"
+#include "gettingstartedwelcomepage.h"
 #include "qtsupportconstants.h"
 #include "qtversionfactory.h"
 
 #include <coreplugin/icore.h>
 #include <coreplugin/helpmanager.h>
 
-#include <extensionsystem/pluginmanager.h>
-
+#include <projectexplorer/devicesupport/devicemanager.h>
+#include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/toolchainmanager.h>
 
 #include <utils/algorithm.h>
@@ -21,8 +23,8 @@
 #include <utils/filesystemwatcher.h>
 #include <utils/hostosinfo.h>
 #include <utils/persistentsettings.h>
-#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcprocess.h>
 
 #include <nanotrace/nanotrace.h>
 
@@ -33,6 +35,7 @@
 #include <QStringList>
 #include <QTextStream>
 #include <QTimer>
+#include <QtConcurrentMap>
 
 using namespace ProjectExplorer;
 using namespace Utils;
@@ -116,7 +119,9 @@ public:
     void triggerQtVersionRestore();
 
     bool restoreQtVersions();
-    void findSystemQt();
+    void findSystemQt(const IDeviceConstPtr &device);
+    void addQtVersionsFromFilePaths(const FilePaths &filePaths);
+    void handleDeviceToolDetectionRequest(Id deviceId, const FilePaths &searchPaths, quint64 token);
     void saveQtVersions();
 
     void updateDocumentation(const QtVersions &added,
@@ -164,7 +169,7 @@ void QtVersionManagerImpl::triggerQtVersionRestore()
         // We did neither restore our settings or upgraded
         // in that case figure out if there's a qt in path
         // and add it to the Qt versions
-        findSystemQt();
+        findSystemQt(DeviceManager::defaultDesktopDevice());
         if (m_versions.size())
             saveQtVersions();
     }
@@ -185,6 +190,9 @@ void QtVersionManagerImpl::triggerQtVersionRestore()
 
     const QtVersions vs = QtVersionManager::versions();
     updateDocumentation(vs, {}, vs, /*updateBlockedDocumentation=*/true);
+
+    connect(DeviceManager::instance(), &DeviceManager::toolDetectionRequested,
+            this, &QtVersionManagerImpl::handleDeviceToolDetectionRequest);
 }
 
 bool QtVersionManager::isLoaded()
@@ -278,6 +286,7 @@ void QtVersionManagerImpl::updateFromInstaller(bool emitSignal)
     QList<int> added;
     QList<int> removed;
     QList<int> changed;
+    QList<QtVersion *> toDelete;
 
     const QList<QtVersionFactory *> factories = QtVersionFactory::allQtVersionFactories();
     PersistentSettingsReader reader;
@@ -326,16 +335,16 @@ void QtVersionManagerImpl::updateFromInstaller(bool emitSignal)
         bool restored = false;
         const VersionMap versionsCopy = m_versions; // m_versions is modified in loop
         for (QtVersion *v : versionsCopy) {
-            if (v->detectionSource() == autoDetectionSource) {
+            if (v->detectionSource().id == autoDetectionSource) {
                 id = v->uniqueId();
                 qCDebug(log) << " Qt version found with same autodetection source" << autoDetectionSource << " => Migrating id:" << id;
                 m_versions.remove(id);
                 qtversionMap[Constants::QTVERSIONID] = id;
                 qtversionMap[Constants::QTVERSIONNAME] = v->unexpandedDisplayName();
-                delete v;
+                toDelete << v;
 
                 if (QtVersion *qtv = factory->restore(type, qtversionMap, reader.filePath())) {
-                    Q_ASSERT(qtv->isAutodetected());
+                    Q_ASSERT(qtv->detectionSource().isAutoDetected());
                     m_versions.insert(id, qtv);
                     restored = true;
                 }
@@ -349,7 +358,7 @@ void QtVersionManagerImpl::updateFromInstaller(bool emitSignal)
         if (!restored) { // didn't replace any existing versions
             qCDebug(log) << " No Qt version found matching" << autoDetectionSource << " => Creating new version";
             if (QtVersion *qtv = factory->restore(type, qtversionMap, reader.filePath())) {
-                Q_ASSERT(qtv->isAutodetected());
+                Q_ASSERT(qtv->detectionSource().isAutoDetected());
                 m_versions.insert(qtv->uniqueId(), qtv);
                 added << qtv->uniqueId();
                 restored = true;
@@ -371,11 +380,12 @@ void QtVersionManagerImpl::updateFromInstaller(bool emitSignal)
     }
     const VersionMap versionsCopy = m_versions; // m_versions is modified in loop
     for (QtVersion *qtVersion : versionsCopy) {
-        if (qtVersion->detectionSource().startsWith("SDK.")) {
-            if (!sdkVersions.contains(qtVersion->detectionSource())) {
+        if (qtVersion->detectionSource().id.startsWith("SDK.")) {
+            if (!sdkVersions.contains(qtVersion->detectionSource().id)) {
                 qCDebug(log) << "  removing version" << qtVersion->detectionSource();
                 m_versions.remove(qtVersion->uniqueId());
                 removed << qtVersion->uniqueId();
+                toDelete << qtVersion;
             }
         }
     }
@@ -390,6 +400,7 @@ void QtVersionManagerImpl::updateFromInstaller(bool emitSignal)
     }
     if (emitSignal)
         emit QtVersionManager::instance()->qtVersionsChanged(added, removed, changed);
+    qDeleteAll(toDelete);
 }
 
 void QtVersionManagerImpl::saveQtVersions()
@@ -402,6 +413,8 @@ void QtVersionManagerImpl::saveQtVersions()
 
     int count = 0;
     for (QtVersion *qtv : std::as_const(m_versions)) {
+        if (qtv->detectionSource().isTemporary())
+            continue; // don't save temporary versions
         Store tmp = qtv->toMap();
         if (tmp.isEmpty())
             continue;
@@ -409,7 +422,7 @@ void QtVersionManagerImpl::saveQtVersions()
         data.insert(numberedKey(QTVERSION_DATA_KEY, count), variantFromStore(tmp));
         ++count;
     }
-    m_writer->save(data, Core::ICore::dialogParent());
+    m_writer->save(data);
 }
 
 // Executes qtchooser with arguments in a process and returns its output
@@ -442,6 +455,7 @@ QString QtVersionManagerImpl::qmakePath(const QString &qtchooser, const QString 
 
 FilePaths QtVersionManagerImpl::gatherQmakePathsFromQtChooser()
 {
+    // FIXME: Desktop-only
     const QString qtchooser = QStandardPaths::findExecutable(QStringLiteral("qtchooser"));
     if (qtchooser.isEmpty())
         return {};
@@ -457,12 +471,19 @@ FilePaths QtVersionManagerImpl::gatherQmakePathsFromQtChooser()
     return Utils::toList(foundQMakes);
 }
 
-void QtVersionManagerImpl::findSystemQt()
+void QtVersionManagerImpl::findSystemQt(const IDeviceConstPtr &device)
 {
-    FilePaths systemQMakes
-            = BuildableHelperLibrary::findQtsInEnvironment(Environment::systemEnvironment());
+    QTC_ASSERT(device, return);
+
+    FilePaths systemQMakes = BuildableHelperLibrary::findQtsInEnvironment(
+        device->systemEnvironment(), device->rootPath());
     systemQMakes.append(gatherQmakePathsFromQtChooser());
-    for (const FilePath &qmakePath : std::as_const(systemQMakes)) {
+    addQtVersionsFromFilePaths(systemQMakes);
+}
+
+void QtVersionManagerImpl::addQtVersionsFromFilePaths(const FilePaths &filePaths)
+{
+    for (const FilePath &qmakePath : filePaths) {
         if (BuildableHelperLibrary::isQtChooser(qmakePath))
             continue;
         const auto isSameQmake = [qmakePath](const QtVersion *version) {
@@ -470,12 +491,27 @@ void QtVersionManagerImpl::findSystemQt()
         };
         if (contains(m_versions, isSameQmake))
             continue;
-        QtVersion *version = QtVersionFactory::createQtVersionFromQMakePath(qmakePath,
-                                                                                false,
-                                                                                "PATH");
+        QtVersion *version = QtVersionFactory::createQtVersionFromQMakePath(
+            qmakePath, {DetectionSource::Manual, "PATH"});
         if (version)
             m_versions.insert(version->uniqueId(), version);
     }
+}
+
+void QtVersionManagerImpl::handleDeviceToolDetectionRequest(
+    Id deviceId, const FilePaths &searchPaths, quint64 token)
+{
+    const IDevicePtr dev = DeviceManager::find(deviceId);
+    QTC_ASSERT(dev, return);
+
+    dev->registerToolDetectionTask(token);
+    const VersionMap qtVersions = m_versions;
+    addQtVersionsFromFilePaths(BuildableHelperLibrary::findQtsInPaths(searchPaths));
+    if (qtVersions != m_versions) {
+        saveQtVersions();
+        emit QtVersionManager::instance()->qtVersionsChanged(m_versions.keys());
+    }
+    dev->deregisterToolDetectionTask(token);
 }
 
 void QtVersionManager::addVersion(QtVersion *version)
@@ -507,17 +543,51 @@ void QtVersionManager::registerExampleSet(const QString &displayName,
     m_pluginRegisteredExampleSets.append({displayName, manifestPath, examplesPath});
 }
 
+static std::optional<ExampleItem> findExampleItem(const QString &manifestPath, const QString &name)
+{
+    for (const QtVersion *version : qtVersionsToConsiderForExamples()) {
+        const Utils::Result<ParsedExamples> parsed = parseExamples(
+            version->docsPath().pathAppended(manifestPath),
+            version->examplesPath(),
+            version->demosPath(),
+            /*examples=*/true);
+        if (!parsed)
+            continue;
+        ExampleItem *itemPtr = findOrDefault(parsed->items, Utils::equal(&ExampleItem::name, name));
+        const ExampleItem item = itemPtr ? *itemPtr : ExampleItem();
+        qDeleteAll(parsed->items);
+        if (!item.name.isEmpty())
+            return item;
+    }
+    return {};
+}
+
+void QtVersionManager::openExampleProject(const QString &manifestPath, const QString &name)
+{
+    const std::optional<ExampleItem> item = findExampleItem(manifestPath, name);
+    if (item)
+        Internal::openExampleProject(*item);
+}
+
+std::optional<QString> QtVersionManager::getExampleDescription(
+    const QString &manifestPath, const QString &name)
+{
+    const std::optional<ExampleItem> item = findExampleItem(manifestPath, name);
+    if (item)
+        return item->description;
+    return {};
+}
+
 using Path = QString;
 using FileName = QString;
 using DocumentationFile = std::pair<Path, FileName>;
 using DocumentationFiles = QList<DocumentationFile>;
 using AllDocumentationFiles = QHash<QtVersion *, DocumentationFiles>;
 
-static DocumentationFiles allDocumentationFiles(QtVersion *v)
+static DocumentationFiles allDocumentationFiles(const QString &docsPath)
 {
     DocumentationFiles files;
-    const QStringList docPaths = QStringList(
-        {v->docsPath().toString() + QChar('/'), v->docsPath().toString() + "/qch/"});
+    const QStringList docPaths{docsPath + QChar('/'), docsPath + "/qch/"};
     for (const QString &docPath : docPaths) {
         const QDir versionHelpDir(docPath);
         for (const QString &helpFile : versionHelpDir.entryList(QStringList("q*.qch"), QDir::Files))
@@ -528,10 +598,18 @@ static DocumentationFiles allDocumentationFiles(QtVersion *v)
 
 static AllDocumentationFiles allDocumentationFiles(const QtVersions &versions)
 {
-    AllDocumentationFiles result;
-    for (QtVersion *v : versions)
-        result.insert(v, allDocumentationFiles(v));
-    return result;
+    QList<QPair<QtVersion *, QString>> versionsWithDocPath;
+    for (QtVersion *v : versions) {
+        if (v->hasDocs())
+            versionsWithDocPath << qMakePair(v, v->docsPath().path());
+    }
+    QFuture<QPair<QtVersion *, DocumentationFiles>> future = QtConcurrent::mapped(
+        versionsWithDocPath, [](const QPair<QtVersion *, QString> &versionWithDoc) {
+            return qMakePair(versionWithDoc.first, allDocumentationFiles(versionWithDoc.second));
+        });
+    future.waitForFinished();
+    return Utils::transform<AllDocumentationFiles>(
+        future.results(), [](const QPair<QtVersion *, DocumentationFiles> &r) { return r; });
 }
 
 static QStringList documentationFiles(const QtVersions &vs,
@@ -562,18 +640,25 @@ static QStringList documentationFiles(const QtVersions &vs)
     return documentationFiles(vs, allDocumentationFiles(vs));
 }
 
-void QtVersionManagerImpl::updateDocumentation(const QtVersions &added,
-                                               const QtVersions &removed,
-                                               const QtVersions &allNew,
-                                               bool updateBlockedDocumentation)
+void QtVersionManagerImpl::updateDocumentation(
+    const QtVersions &allAdded,
+    const QtVersions &allRemoved,
+    const QtVersions &allNew,
+    bool updateBlockedDocumentation)
 {
+    const auto filterLocal = [](const QtVersions &versions) {
+        return Utils::filtered(versions, [](QtVersion *v) { return v->qmakeFilePath().isLocal(); });
+    };
+    const QtVersions added = filterLocal(allAdded);
+    const QtVersions removed = filterLocal(allRemoved);
+    const QtVersions newDoc = filterLocal(allNew);
     using DocumentationSetting = QtVersionManager::DocumentationSetting;
     const DocumentationSetting setting = QtVersionManager::documentationSetting();
-    const AllDocumentationFiles allNewDocFiles = allDocumentationFiles(allNew);
+    const AllDocumentationFiles newDocFiles = allDocumentationFiles(newDoc);
     const QStringList docsOfAll = setting == DocumentationSetting::None
                                       ? QStringList()
-                                      : documentationFiles(allNew,
-                                                           allNewDocFiles,
+                                      : documentationFiles(newDoc,
+                                                           newDocFiles,
                                                            setting
                                                                == DocumentationSetting::HighestOnly);
     const QStringList docsToRemove = Utils::filtered(documentationFiles(removed),
@@ -590,7 +675,7 @@ void QtVersionManagerImpl::updateDocumentation(const QtVersions &added,
         // setting, which defeats that we only register the Qt versions matching the setting.
         // So the Qt support explicitly blocks the files that we do _not_ want to register, so the
         // Help plugin knows about this.
-        const QSet<QString> reallyAllFiles = toSet(documentationFiles(allNew, allNewDocFiles));
+        const QSet<QString> reallyAllFiles = toSet(documentationFiles(newDoc, newDocFiles));
         const QSet<QString> toBlock = reallyAllFiles - toSet(docsOfAll);
         Core::HelpManager::setBlockedDocumentation(toList(toBlock));
     }
@@ -707,14 +792,13 @@ void QtVersionManagerImpl::setNewQtVersions(const QtVersions &newVersions)
                                                        return v.first->uniqueId();
                                                    });
 
-    qDeleteAll(m_versions);
+    const QList<QtVersion *> toDelete = m_versions.values();
     m_versions = Utils::transform<VersionMap>(sortedNewVersions, [](QtVersion *v) {
         return std::make_pair(v->uniqueId(), v);
     });
     saveQtVersions();
-
-    if (!changedVersions.isEmpty() || !addedVersions.isEmpty() || !removedVersions.isEmpty())
-        emit QtVersionManager::instance()->qtVersionsChanged(addedIds, removedIds, changedIds);
+    emit QtVersionManager::instance()->qtVersionsChanged(addedIds, removedIds, changedIds);
+    qDeleteAll(toDelete);
 }
 
 void QtVersionManager::setDocumentationSetting(const QtVersionManager::DocumentationSetting &setting)

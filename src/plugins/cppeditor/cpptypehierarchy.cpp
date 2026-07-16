@@ -201,11 +201,11 @@ CppTypeHierarchyWidget::CppTypeHierarchyWidget()
     connect(&m_futureWatcher, &QFutureWatcher<void>::finished,
             this, &CppTypeHierarchyWidget::displayHierarchy);
 
-    connect(ProgressManager::instance(), &ProgressManager::taskStarted, [this](Id type) {
+    connect(ProgressManager::instance(), &ProgressManager::taskStarted, this, [this](Id type) {
         if (type == Constants::TASK_INDEX)
             ++m_runningIndexers;
     });
-    connect(ProgressManager::instance(), &ProgressManager::allTasksFinished, [this](Id type) {
+    connect(ProgressManager::instance(), &ProgressManager::allTasksFinished, this, [this](Id type) {
         if (type == Constants::TASK_INDEX)
             --m_runningIndexers;
     });
@@ -405,7 +405,7 @@ QMimeData *CppTypeHierarchyModel::mimeData(const QModelIndexList &indexes) const
     for (const QModelIndex &index : indexes) {
         auto link = index.data(LinkRole).value<Link>();
         if (link.hasValidTarget())
-            data->addFile(link.targetFilePath, link.targetLine, link.targetColumn);
+            data->addFile(link.targetFilePath, link.target.line, link.target.column);
     }
     return data;
 }

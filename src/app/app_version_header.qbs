@@ -42,10 +42,12 @@ Product {
                         product.moduleProperty("qtc", "ide_version_minor"));
                 content = content.replace("${PROJECT_VERSION_PATCH}",
                         product.moduleProperty("qtc", "ide_version_release"));
-                content = content.replace("${IDE_COPYRIGHT_YEAR}",
-                        product.moduleProperty("qtc", "qtcreator_copyright_year"));
                 content = content.replace("${IDE_DISPLAY_NAME}",
                         product.moduleProperty("qtc", "ide_display_name"));
+                content = content.replace("${IDE_AUTHOR}",
+                        product.moduleProperty("qtc", "ide_author"));
+                content = content.replace("${IDE_COPYRIGHT}",
+                        product.moduleProperty("qtc", "ide_copyright_string"));
                 content = content.replace("${IDE_ID}",
                         product.moduleProperty("qtc", "ide_id"));
                 content = content.replace("${IDE_CASED_ID}",
@@ -55,7 +57,8 @@ Product {
                 content = content.replace("${IDE_REVISION_URL}", "");
                 content = content.replace("${PROJECT_USER_FILE_EXTENSION}",
                         product.moduleProperty("qtc", "ide_user_file_extension"));
-                content = content.replace("${IDE_SETTINGSVARIANT}", "QtProject");
+                content = content.replace("${IDE_SETTINGSVARIANT}",
+                        product.moduleProperty("qtc", "ide_settingsvariant"));
                 file = new TextFile(output.filePath, TextFile.WriteOnly);
                 file.truncate();
                 file.write(content);

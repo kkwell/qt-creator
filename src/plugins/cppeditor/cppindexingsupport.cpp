@@ -21,30 +21,22 @@
 #include <utils/stringutils.h>
 #include <utils/temporarydirectory.h>
 
+#include <QElapsedTimer>
 #include <QLoggingCategory>
 #include <QRegularExpression>
 
 using namespace Utils;
 
-namespace CppEditor {
+namespace CppEditor::Internal {
 
 static Q_LOGGING_CATEGORY(indexerLog, "qtc.cppeditor.indexer", QtWarningMsg)
-
-SymbolSearcher::SymbolSearcher(const SymbolSearcher::Parameters &parameters,
-                               const QSet<FilePath> &filePaths)
-    : m_snapshot(CppModelManager::snapshot())
-    , m_parameters(parameters)
-    , m_filePaths(filePaths)
-{}
-
-namespace {
 
 class ParseParams
 {
 public:
     ProjectExplorer::HeaderPaths headerPaths;
     WorkingCopy workingCopy;
-    QSet<QString> sourceFiles;
+    QSet<FilePath> sourceFiles;
 };
 
 class WriteTaskFileForDiagnostics
@@ -75,7 +67,7 @@ public:
     void process(const CPlusPlus::Document::Ptr document)
     {
         using namespace CPlusPlus;
-        const QString fileName = document->filePath().toString();
+        const QString fileName = document->filePath().toUrlishString();
 
         const QList<Document::DiagnosticMessage> messages = document->diagnosticMessages();
         for (const Document::DiagnosticMessage &message : messages) {
@@ -106,23 +98,27 @@ private:
     int m_processedDiagnostics = 0;
 };
 
-static void classifyFiles(const QSet<QString> &files, QStringList *headers, QStringList *sources)
+static void classifyFiles(const QSet<FilePath> &files, ProjectFiles *headers, ProjectFiles *sources)
 {
-    for (const QString &file : files) {
-        if (ProjectFile::isSource(ProjectFile::classify(file)))
-            sources->append(file);
+    for (const FilePath &file : files) {
+        const ProjectFile projectFile(file, ProjectFile::classify(file));
+        if (projectFile.isSource())
+            sources->append(projectFile);
         else
-            headers->append(file);
+            headers->append(projectFile);
     }
 }
 
 static void indexFindErrors(QPromise<void> &promise, const ParseParams params)
 {
-    QStringList sources, headers;
+    ProjectFiles sources, headers;
     classifyFiles(params.sourceFiles, &headers, &sources);
-    sources.sort();
-    headers.sort();
-    QStringList files = sources + headers;
+    static const auto cmp = [](const ProjectFile &pf1, const ProjectFile &pf2) {
+        return pf1.path < pf2.path;
+    };
+    Utils::sort(sources, cmp);
+    Utils::sort(headers, cmp);
+    ProjectFiles files = sources + headers;
 
     WriteTaskFileForDiagnostics taskFileWriter;
     QElapsedTimer timer;
@@ -132,11 +128,11 @@ static void indexFindErrors(QPromise<void> &promise, const ParseParams params)
         if (promise.isCanceled())
             break;
 
-        const QString file = files.at(i);
-        qDebug("FindErrorsIndexing: \"%s\"", qPrintable(file));
+        const FilePath file = files.at(i).path;
+        qDebug("FindErrorsIndexing: \"%s\"", qPrintable(file.toUserOutput()));
 
         // Parse the file as precisely as possible
-        BuiltinEditorDocumentParser parser(FilePath::fromString(file));
+        BuiltinEditorDocumentParser parser(file);
         parser.setReleaseSourceAndAST(false);
         parser.update({CppModelManager::workingCopy(), nullptr, Language::Cxx, false});
         CPlusPlus::Document::Ptr document = parser.document();
@@ -164,17 +160,17 @@ static void index(QPromise<void> &promise, const ParseParams params)
     sourceProcessor->setHeaderPaths(params.headerPaths);
     sourceProcessor->setWorkingCopy(params.workingCopy);
 
-    QStringList sources;
-    QStringList headers;
+    ProjectFiles sources;
+    ProjectFiles headers;
     classifyFiles(params.sourceFiles, &headers, &sources);
 
-    for (const QString &file : std::as_const(params.sourceFiles))
-        sourceProcessor->removeFromCache(FilePath::fromString(file));
+    for (const FilePath &file : std::as_const(params.sourceFiles))
+        sourceProcessor->removeFromCache(file);
 
     const int sourceCount = sources.size();
-    QStringList files = sources + headers;
+    ProjectFiles files = sources + headers;
 
-    sourceProcessor->setTodo(Utils::toSet(files));
+    sourceProcessor->setTodo(params.sourceFiles);
 
     const FilePath &conf = CppModelManager::configurationFileName();
     bool processingHeaders = false;
@@ -182,17 +178,19 @@ static void index(QPromise<void> &promise, const ParseParams params)
     const ProjectExplorer::HeaderPaths fallbackHeaderPaths = CppModelManager::headerPaths();
     const CPlusPlus::LanguageFeatures defaultFeatures =
         CPlusPlus::LanguageFeatures::defaultFeatures();
+    const CPlusPlus::LanguageFeatures cFeatures = CPlusPlus::LanguageFeatures::cFeatures();
 
     qCDebug(indexerLog) << "About to index" << files.size() << "files.";
     for (int i = 0; i < files.size(); ++i) {
         if (promise.isCanceled())
             break;
 
-        const QString fileName = files.at(i);
-        const QList<ProjectPart::ConstPtr> parts = CppModelManager::projectPart(fileName);
+        const ProjectFile &projectFile = files.at(i);
+        const FilePath &filePath = projectFile.path;
+        const QList<ProjectPart::ConstPtr> parts = CppModelManager::projectPart(filePath);
         const CPlusPlus::LanguageFeatures languageFeatures = parts.isEmpty()
-                                                                 ? defaultFeatures
-                                                                 : parts.first()->languageFeatures;
+            ? projectFile.isC() ? cFeatures : defaultFeatures
+            : parts.first()->languageFeatures;
         sourceProcessor->setLanguageFeatures(languageFeatures);
 
         const bool isSourceFile = i < sourceCount;
@@ -204,12 +202,12 @@ static void index(QPromise<void> &promise, const ParseParams params)
             processingHeaders = true;
         }
 
-        qCDebug(indexerLog) << "  Indexing" << i + 1 << "of" << files.size() << ":" << fileName;
+        qCDebug(indexerLog) << "  Indexing" << i + 1 << "of" << files.size() << ":" << filePath;
         ProjectExplorer::HeaderPaths headerPaths = parts.isEmpty()
                                                        ? fallbackHeaderPaths
                                                        : parts.first()->headerPaths;
         sourceProcessor->setHeaderPaths(headerPaths);
-        sourceProcessor->run(FilePath::fromString(fileName));
+        sourceProcessor->run(filePath);
 
         promise.setProgressValue(files.size() - sourceProcessor->todo().size());
 
@@ -219,16 +217,15 @@ static void index(QPromise<void> &promise, const ParseParams params)
     qCDebug(indexerLog) << "Indexing finished.";
 }
 
-static void parse(
-    QPromise<void> &promise,
-    const std::function<QSet<QString>()> &sourceFiles,
-    const ProjectExplorer::HeaderPaths &headerPaths,
-    const WorkingCopy &workingCopy)
+static void parse(QPromise<void> &promise,
+                  const std::function<QSet<FilePath>()> &sourceFiles,
+                  const ProjectExplorer::HeaderPaths &headerPaths,
+                  const WorkingCopy &workingCopy)
 {
     ParseParams params{headerPaths, workingCopy, sourceFiles()};
     promise.setProgressRange(0, params.sourceFiles.size());
 
-    if (CppIndexingSupport::isFindErrorsIndexingActive())
+    if (isFindErrorsIndexingActive())
         indexFindErrors(promise, params);
     else
         index(promise, params);
@@ -237,31 +234,32 @@ static void parse(
     CppModelManager::finishedRefreshingSourceFiles(params.sourceFiles);
 }
 
-} // anonymous namespace
-
-void SymbolSearcher::runSearch(QPromise<SearchResultItem> &promise)
+void searchForSymbols(QPromise<SearchResultItem> &promise,
+                      const CPlusPlus::Snapshot &snapshot,
+                      const SearchParameters &parameters,
+                      const QSet<Utils::FilePath> &filePaths)
 {
-    promise.setProgressRange(0, m_snapshot.size());
+    promise.setProgressRange(0, snapshot.size());
     promise.setProgressValue(0);
     int progress = 0;
 
-    SearchSymbols search;
-    search.setSymbolsToSearchFor(m_parameters.types);
-    CPlusPlus::Snapshot::const_iterator it = m_snapshot.begin();
+    SearchSymbols symbolSearch;
+    symbolSearch.setSymbolsToSearchFor(parameters.types);
+    CPlusPlus::Snapshot::const_iterator it = snapshot.begin();
 
-    QString findString = (m_parameters.flags & FindRegularExpression
-                              ? m_parameters.text : QRegularExpression::escape(m_parameters.text));
-    if (m_parameters.flags & FindWholeWords)
+    QString findString = (parameters.flags & FindRegularExpression
+                              ? parameters.text : QRegularExpression::escape(parameters.text));
+    if (parameters.flags & FindWholeWords)
         findString = QString::fromLatin1("\\b%1\\b").arg(findString);
-    QRegularExpression matcher(findString, (m_parameters.flags & FindCaseSensitively
+    QRegularExpression matcher(findString, (parameters.flags & FindCaseSensitively
                                                 ? QRegularExpression::NoPatternOption
                                                 : QRegularExpression::CaseInsensitiveOption));
     matcher.optimize();
-    while (it != m_snapshot.end()) {
+    while (it != snapshot.end()) {
         promise.suspendIfRequested();
         if (promise.isCanceled())
             break;
-        if (m_filePaths.isEmpty() || m_filePaths.contains(it.value()->filePath())) {
+        if (filePaths.isEmpty() || filePaths.contains(it.value()->filePath())) {
             SearchResultItems resultItems;
             auto filter = [&](const IndexItem::Ptr &info) -> IndexItem::VisitorResult {
                 if (matcher.match(info->symbolName()).hasMatch()) {
@@ -285,7 +283,7 @@ void SymbolSearcher::runSearch(QPromise<SearchResultItem> &promise)
 
                 return IndexItem::Recurse;
             };
-            search(it.value())->visitAllChildren(filter);
+            symbolSearch(it.value())->visitAllChildren(filter);
             for (const SearchResultItem &item : std::as_const(resultItems))
                 promise.addResult(item);
         }
@@ -296,14 +294,13 @@ void SymbolSearcher::runSearch(QPromise<SearchResultItem> &promise)
     promise.suspendIfRequested();
 }
 
-bool CppIndexingSupport::isFindErrorsIndexingActive()
+bool isFindErrorsIndexingActive()
 {
     return Utils::qtcEnvironmentVariable("QTC_FIND_ERRORS_INDEXING") == "1";
 }
 
-QFuture<void> CppIndexingSupport::refreshSourceFiles(
-    const std::function<QSet<QString>()> &sourceFiles,
-    CppModelManager::ProgressNotificationMode mode)
+QFuture<void> refreshSourceFiles(const std::function<QSet<FilePath>()> &sourceFiles,
+                                 CppModelManager::ProgressNotificationMode mode)
 {
     QFuture<void> result = Utils::asyncRun(
         CppModelManager::sharedThreadPool(),
@@ -311,7 +308,6 @@ QFuture<void> CppIndexingSupport::refreshSourceFiles(
         sourceFiles,
         CppModelManager::headerPaths(),
         CppModelManager::workingCopy());
-    m_synchronizer.addFuture(result);
 
     if (mode == CppModelManager::ForcedProgressNotification) {
         Core::ProgressManager::addTask(result, Tr::tr("Parsing C/C++ Files"),
@@ -321,4 +317,4 @@ QFuture<void> CppIndexingSupport::refreshSourceFiles(
     return result;
 }
 
-} // namespace CppEditor
+} // namespace CppEditor::Internal

@@ -3,8 +3,6 @@
 
 #include "copilotclient.h"
 #include "copilotsettings.h"
-#include "copilotsuggestion.h"
-#include "copilottr.h"
 
 #include <languageclient/languageclientinterface.h>
 #include <languageclient/languageclientmanager.h>
@@ -43,7 +41,7 @@ namespace Copilot::Internal {
 static LanguageClient::BaseClientInterface *clientInterface(const FilePath &nodePath,
                                                             const FilePath &distPath)
 {
-    CommandLine cmd{nodePath, {distPath.toFSPathString()}};
+    CommandLine cmd{nodePath, {distPath.toFSPathString(), "--stdio"}};
 
     const auto interface = new LanguageClient::StdIOClientInterface;
     interface->setCommandLine(cmd);
@@ -59,22 +57,31 @@ CopilotClient::CopilotClient(const FilePath &nodePath, const FilePath &distPath)
     langFilter.filePattern = {"*"};
 
     setSupportedLanguage(langFilter);
+    setActivatable(false);
+    setInitializationOptions({
+        {"editorInfo",
+         QJsonObject{{"name", qApp->applicationName()}, {"version", qApp->applicationVersion()}}},
+        {"editorPluginInfo",
+         QJsonObject{{"name", "Copilot"}, {"version", qApp->applicationVersion()}}},
+    });
 
-    registerCustomMethod("LogMessage", [this](const LanguageServerProtocol::JsonRpcMessage &message) {
-        QString msg = message.toJsonObject().value("params").toObject().value("message").toString();
+    registerCustomMethod("LogMessage", [](const LanguageServerProtocol::JsonRpcMessage &message) {
         qCDebug(copilotClientLog) << message.toJsonObject()
                                          .value("params")
                                          .toObject()
                                          .value("message")
                                          .toString();
-
-        if (msg.contains("Socket Connect returned status code,407")) {
-            qCWarning(copilotClientLog) << "Proxy authentication required";
-            QMetaObject::invokeMethod(this,
-                                      &CopilotClient::proxyAuthenticationFailed,
-                                      Qt::QueuedConnection);
-        }
+        return true;
     });
+
+    const QString p = settings().proxy();
+
+    QJsonObject settingsRoot{
+        {"github-enterprise", QJsonObject{{"uri", settings().githubEnterpriseUrl()}}},
+        {"http",
+         QJsonObject{{"proxyStrictSSL", settings().proxyRejectUnauthorized()}, {"proxy", p}}}};
+
+    updateConfiguration(settingsRoot);
 
     start();
 
@@ -92,19 +99,11 @@ CopilotClient::CopilotClient(const FilePath &nodePath, const FilePath &distPath)
                     closeDocument(textDocument);
             });
 
-    connect(this, &LanguageClient::Client::initialized, this, &CopilotClient::requestSetEditorInfo);
-
     for (IDocument *doc : DocumentModel::openedDocuments())
         openDoc(doc);
 }
 
-CopilotClient::~CopilotClient()
-{
-    for (IEditor *editor : DocumentModel::editorsForOpenedDocuments()) {
-        if (auto textEditor = qobject_cast<BaseTextEditor *>(editor))
-            textEditor->editorWidget()->removeHoverHandler(&m_hoverHandler);
-    }
-}
+CopilotClient::~CopilotClient() = default;
 
 void CopilotClient::openDocument(TextDocument *document)
 {
@@ -228,11 +227,19 @@ void CopilotClient::handleCompletions(const GetCompletionRequest::Response &resp
             if (delta > 0)
                 completion.setText(completionText.chopped(delta));
         }
+        auto suggestions = Utils::transform(completions, [](const Completion &c){
+            auto toTextPos = [](const LanguageServerProtocol::Position pos){
+                return Text::Position{pos.line() + 1, pos.character()};
+            };
+
+            Text::Range range{toTextPos(c.range().start()), toTextPos(c.range().end())};
+            Text::Position pos{toTextPos(c.position())};
+            return TextSuggestion::Data{range, pos, c.text()};
+        });
         if (completions.isEmpty())
             return;
         editor->insertSuggestion(
-            std::make_unique<CopilotSuggestion>(completions, editor->document()));
-        editor->addHoverHandler(&m_hoverHandler);
+            std::make_unique<TextEditor::CyclicSuggestion>(suggestions, editor->document()));
     }
 }
 
@@ -243,33 +250,6 @@ void CopilotClient::cancelRunningRequest(TextEditor::TextEditorWidget *editor)
         return;
     cancelRequest(it->id());
     m_runningRequests.erase(it);
-}
-
-static QString currentProxyPassword;
-
-void CopilotClient::requestSetEditorInfo()
-{
-    if (settings().saveProxyPassword())
-        currentProxyPassword = settings().proxyPassword();
-
-    const EditorInfo editorInfo{QCoreApplication::applicationVersion(),
-                                QGuiApplication::applicationDisplayName()};
-    const EditorPluginInfo editorPluginInfo{QCoreApplication::applicationVersion(),
-                                            "Qt Creator Copilot plugin"};
-
-    SetEditorInfoParams params(editorInfo, editorPluginInfo);
-
-    if (settings().useProxy()) {
-        params.setNetworkProxy(
-            Copilot::NetworkProxy{settings().proxyHost(),
-                                  static_cast<int>(settings().proxyPort()),
-                                  settings().proxyUser(),
-                                  currentProxyPassword,
-                                  settings().proxyRejectUnauthorized()});
-    }
-
-    SetEditorInfoRequest request(params);
-    sendMessage(request);
 }
 
 void CopilotClient::requestCheckStatus(
@@ -321,38 +301,6 @@ bool CopilotClient::isEnabled(Project *project)
 
     CopilotProjectSettings settings(project);
     return settings.isEnabled();
-}
-
-void CopilotClient::proxyAuthenticationFailed()
-{
-    static bool doNotAskAgain = false;
-
-    if (m_isAskingForPassword || !settings().enableCopilot())
-        return;
-
-    m_isAskingForPassword = true;
-
-    auto answer = PasswordDialog::getUserAndPassword(
-        Tr::tr("Copilot"),
-        Tr::tr("Proxy username and password required:"),
-        Tr::tr("Do not ask again. This will disable Copilot for now."),
-        settings().proxyUser(),
-        &doNotAskAgain,
-        Core::ICore::dialogParent());
-
-    if (answer) {
-        settings().proxyUser.setValue(answer->first);
-        currentProxyPassword = answer->second;
-    } else {
-        settings().enableCopilot.setValue(false);
-    }
-
-    if (settings().saveProxyPassword())
-        settings().proxyPassword.setValue(currentProxyPassword);
-
-    settings().apply();
-
-    m_isAskingForPassword = false;
 }
 
 } // namespace Copilot::Internal

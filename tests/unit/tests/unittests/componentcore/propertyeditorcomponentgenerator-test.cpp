@@ -18,6 +18,18 @@ using QmlDesigner::Storage::ModuleKind;
 class PropertyEditorComponentGenerator : public ::testing::Test
 {
 protected:
+    struct StaticData
+    {
+        Sqlite::Database modulesDatabase{":memory:", Sqlite::JournalMode::Memory};
+        QmlDesigner::ModulesStorage modulesStorage{modulesDatabase, modulesDatabase.isInitialized()};
+    };
+
+    static void SetUpTestSuite() { staticData = std::make_unique<StaticData>(); }
+
+    static void TearDownTestSuite() { staticData.reset(); }
+
+    ~PropertyEditorComponentGenerator() { modulesStorage.resetForTestsOnly(); }
+
     QmlDesigner::NodeMetaInfo createType(Utils::SmallStringView name,
                                          const QmlDesigner::SmallTypeIds<16> &baseTypeIds = {})
     {
@@ -83,8 +95,10 @@ protected:
     }
 
 protected:
+    inline static std::unique_ptr<StaticData> staticData;
+    QmlDesigner::ModulesStorage &modulesStorage{staticData->modulesStorage};
     QmlDesigner::SourceId sourceId = QmlDesigner::SourceId::create(10);
-    NiceMock<ProjectStorageMockWithQtQtuick> projectStorageMock{sourceId};
+    NiceMock<ProjectStorageMockWithQtQuick> projectStorageMock{sourceId, "/path", modulesStorage};
     NiceMock<PropertyComponentGeneratorMock> propertyGeneratorMock;
     QmlDesigner::PropertyEditorComponentGenerator generator{propertyGeneratorMock};
     QmlDesigner::ModuleId qtQuickModuleId = projectStorageMock.createModule("QtQuick",
@@ -93,53 +107,20 @@ protected:
     QmlDesigner::TypeId dummyTypeId = projectStorageMock.commonTypeCache().builtinTypeId<double>();
 };
 
-TEST_F(PropertyEditorComponentGenerator, no_properties_and_no_imports)
+TEST_F(PropertyEditorComponentGenerator, no_properties_and_no_imports_is_empty)
 {
-    QString expectedText{
-        R"xy(
-      Column {
-        width: parent.width
-        Section {
-          caption: "Exposed Custom Properties"
-          anchors.left: parent.left
-          anchors.right: parent.right
-          leftPadding: 0
-          rightPadding: 0
-          bottomPadding: 0
-          Column {
-            width: parent.width
-          }
-        }
-      })xy"};
-
     auto text = generator.create(fooTypeInfo.selfAndPrototypes(), false);
 
-    ASSERT_THAT(text, StrippedStringEq(expectedText));
+    ASSERT_THAT(text, IsEmpty());
 }
 
 TEST_F(PropertyEditorComponentGenerator, properties_without_component_are_not_shows)
 {
-    QString expectedText{
-        R"xy(
-      Column {
-        width: parent.width
-        Section {
-          caption: "Exposed Custom Properties"
-          anchors.left: parent.left
-          anchors.right: parent.right
-          leftPadding: 0
-          rightPadding: 0
-          bottomPadding: 0
-          Column {
-            width: parent.width
-          }
-        }
-      })xy"};
     createProperty(fooTypeInfo.id(), "x", {}, dummyTypeId);
 
     auto text = generator.create(fooTypeInfo.selfAndPrototypes(), false);
 
-    ASSERT_THAT(text, StrippedStringEq(expectedText));
+    ASSERT_THAT(text, IsEmpty());
 }
 
 TEST_F(PropertyEditorComponentGenerator, show_component_button_for_a_component_node)
@@ -158,9 +139,18 @@ TEST_F(PropertyEditorComponentGenerator, show_component_button_for_a_component_n
           bottomPadding: 0
           Column {
             width: parent.width
+            Column {
+              width: parent.width
+              leftPadding: 8
+              bottomPadding: 10
+              SectionLayout {
+                Double{}
+              }
+            }
           }
         }
       })xy"};
+    createBasicProperty(fooTypeInfo.id(), "value", {}, dummyTypeId, "Double{}");
 
     auto text = generator.create(fooTypeInfo.selfAndPrototypes(), true);
 
@@ -184,10 +174,19 @@ TEST_F(PropertyEditorComponentGenerator, imports)
           bottomPadding: 0
           Column {
             width: parent.width
+            Column {
+              width: parent.width
+              leftPadding: 8
+              bottomPadding: 10
+              SectionLayout {
+                Double{}
+              }
+            }
           }
         }
       })xy"};
     setImports({"import QtQtuick", "import Studio 2.1"});
+    createBasicProperty(fooTypeInfo.id(), "value", {}, dummyTypeId, "Double{}");
 
     auto text = generator.create(fooTypeInfo.selfAndPrototypes(), false);
 

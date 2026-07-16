@@ -2,135 +2,122 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "../luaengine.h"
+#include "../luatr.h"
 
+#include "utils.h"
+
+#include <texteditor/basehoverhandler.h>
+#include <texteditor/fontsettings.h>
+#include <texteditor/refactoroverlay.h>
 #include <texteditor/textdocument.h>
 #include <texteditor/textdocumentlayout.h>
 #include <texteditor/texteditor.h>
+#include <utils/layoutbuilder.h>
 #include <utils/stringutils.h>
+#include <utils/tooltip/tooltip.h>
+#include <utils/utilsicons.h>
+#include <QToolBar>
 
 #include "sol/sol.hpp"
 
 using namespace Utils;
+using namespace Text;
+using namespace TextEditor;
+using namespace std::string_view_literals;
 
 namespace {
 
-class Suggestion
+template<typename Return, typename Argument>
+Return get_or_throw(const Argument &arg, const char *key)
 {
-public:
-    Suggestion(
-        Text::Position start,
-        Text::Position end,
-        Text::Position position,
-        const QString &text)
-        : m_start(start)
-        , m_end(end)
-        , m_position(position)
-        , m_text(text)
-    {}
-
-    Text::Position start() const { return m_start; }
-    Text::Position end() const { return m_end; }
-    Text::Position position() const { return m_position; }
-    QString text() const { return m_text; }
-
-private:
-    Text::Position m_start;
-    Text::Position m_end;
-    Text::Position m_position;
-    QString m_text;
-};
-
-QTextCursor toTextCursor(QTextDocument *doc, const Text::Position &position)
-{
-    QTextCursor cursor(doc);
-    cursor.setPosition(position.toPositionInDocument(doc));
-    return cursor;
+    const auto value = arg.template get<sol::optional<Return>>(key);
+    if (!value) {
+        throw sol::error(std::string("Failed to get value for key: ") + key);
+    }
+    return *value;
 }
 
-QTextCursor toSelection(
-    QTextDocument *doc, const Text::Position &start, const Text::Position &end)
+TextEditor::TextEditorWidget *getSuggestionReadyEditorWidget(TextEditor::TextDocument *document)
 {
-    QTC_ASSERT(doc, return {});
-    QTextCursor cursor = toTextCursor(doc, start);
-    cursor.setPosition(end.toPositionInDocument(doc), QTextCursor::KeepAnchor);
+    const auto textEditor = BaseTextEditor::currentTextEditor();
+    if (!textEditor || textEditor->document() != document)
+        return nullptr;
 
-    return cursor;
+    auto *widget = textEditor->editorWidget();
+    if (widget->isReadOnly() || widget->multiTextCursor().hasMultipleCursors())
+        return nullptr;
+
+    return widget;
 }
 
-class CyclicSuggestion : public TextEditor::TextSuggestion
+std::unique_ptr<EmbeddedWidgetInterface> addEmbeddedWidget(
+    BaseTextEditor *editor, QWidget *widget, std::variant<int, Position> cursorPosition)
 {
-public:
-    CyclicSuggestion(
-        const QList<Suggestion> &suggestions, QTextDocument *origin, int current_suggestion = 0)
-        : m_current_suggestion(current_suggestion)
-        , m_suggestions(suggestions)
-    {
-        QTC_ASSERT(current_suggestion < suggestions.size(), return);
-        const auto &suggestion = m_suggestions.at(m_current_suggestion);
-        const auto start = suggestion.start();
-        const auto end = suggestion.end();
+    if (!widget)
+        throw sol::error("No widget provided");
 
-        QString text = toTextCursor(origin, start).block().text();
-        int length = text.length() - start.column;
-        if (start.line == end.line)
-            length = end.column - start.column;
+    if (!editor)
+        throw sol::error("No editor provided");
 
-        text.replace(start.column, length, suggestion.text());
-        document()->setPlainText(text);
+    if (!editor->textDocument() || !editor->textDocument()->document())
+        throw sol::error("No text document set");
 
-        m_start = toTextCursor(origin, suggestion.position());
-        m_start.setKeepPositionOnInsert(true);
-        setCurrentPosition(m_start.position());
-    }
+    widget->setParent(editor->editorWidget()->viewport());
+    TextEditorWidget *editorWidget = editor->editorWidget();
 
-    virtual bool apply() override
-    {
-        QTC_ASSERT(m_current_suggestion < m_suggestions.size(), return false);
-        reset();
-        const auto &suggestion = m_suggestions.at(m_current_suggestion);
-        QTextCursor cursor = toSelection(m_start.document(), suggestion.start(), suggestion.end());
-        cursor.insertText(suggestion.text());
-        return true;
-    }
+    int pos = cursorPosition.index() == 0
+                  ? std::get<int>(cursorPosition)
+                  : std::get<Position>(cursorPosition)
+                        .toPositionInDocument(editor->textDocument()->document());
 
-    // Returns true if the suggestion was applied completely, false if it was only partially applied.
-    virtual bool applyWord(TextEditor::TextEditorWidget *widget) override
-    {
-        QTC_ASSERT(m_current_suggestion < m_suggestions.size(), return false);
-        const auto &suggestion = m_suggestions.at(m_current_suggestion);
-        QTextCursor cursor = toSelection(m_start.document(), suggestion.start(), suggestion.end());
-        QTextCursor currentCursor = widget->textCursor();
-        const QString text = suggestion.text();
-        const int startPos = currentCursor.positionInBlock() - cursor.positionInBlock()
-                             + (cursor.selectionEnd() - cursor.selectionStart());
-        const int next = Utils::endOfNextWord(text, startPos);
+    std::unique_ptr<EmbeddedWidgetInterface> embed = editorWidget->insertWidget(widget, pos);
+    return embed;
+}
 
-        if (next == -1)
-            return apply();
+void clearRefactorMarkers(BaseTextEditor *editor, const Utils::Id &id)
+{
+    TextEditorWidget *editorWidget = editor->editorWidget();
+    QTC_ASSERT(editorWidget, throw sol::error("TextEditorWidget is not valid"));
 
-        // TODO: Allow adding more than one line
-        QString subText = text.mid(startPos, next - startPos);
-        subText = subText.left(subText.indexOf('\n'));
-        if (subText.isEmpty())
-            return false;
+    editorWidget->clearRefactorMarkers(id);
+}
 
-        currentCursor.insertText(subText);
-        return false;
-    }
+void setRefactorMarker(
+    BaseTextEditor *editor,
+    const Utils::Icon &icon,
+    int position,
+    const Utils::Id &id,
+    bool anchorLeft,
+    sol::main_function callback)
+{
+    TextEditorWidget *editorWidget = editor->editorWidget();
+    QTC_ASSERT(editorWidget, throw sol::error("TextEditorWidget is not valid"));
 
-    virtual void reset() override { m_start.removeSelectedText(); }
+    TextDocument *textDocument = editor->textDocument();
+    QTextCursor cursor = QTextCursor(textDocument->document());
+    cursor.setPosition(position);
 
-    virtual int position() override { return m_start.selectionEnd(); }
+    // Move cursor to start of line
+    if (anchorLeft)
+        cursor.movePosition(QTextCursor::MoveOperation::StartOfBlock);
 
-private:
-    int m_current_suggestion;
-    QTextCursor m_start;
-    QList<Suggestion> m_suggestions;
-};
+    TextEditor::RefactorMarker marker;
+    marker.cursor = cursor;
+    marker.icon = icon.icon();
+    marker.callback = [callback](TextEditorWidget *) {
+        Result<> res = Lua::void_safe_call(callback);
+        QTC_CHECK_RESULT(res);
+    };
+    marker.type = id;
 
+    editorWidget->setRefactorMarkers({std::move(marker)}, id);
+}
 } // namespace
 
 namespace Lua::Internal {
+
+using TextEditorPtr = QPointer<BaseTextEditor>;
+using TextDocumentPtr = QPointer<TextDocument>;
 
 class TextEditorRegistry : public QObject
 {
@@ -162,7 +149,7 @@ public:
                     m_currentTextEditor = nullptr;
                 }
 
-                m_currentTextEditor = qobject_cast<TextEditor::BaseTextEditor *>(editor);
+                m_currentTextEditor = qobject_cast<BaseTextEditor *>(editor);
 
                 if (m_currentTextEditor) {
                     if (!connectTextEditor(m_currentTextEditor))
@@ -171,21 +158,30 @@ public:
 
                 emit currentEditorChanged(m_currentTextEditor);
             });
+        connect(
+            Core::EditorManager::instance(),
+            &Core::EditorManager::editorCreated,
+            this,
+            [this](Core::IEditor *editor) {
+                auto textEditor = qobject_cast<BaseTextEditor *>(editor);
+                if (textEditor)
+                    emit editorCreated(textEditor);
+            });
     }
 
-    bool connectTextEditor(TextEditor::BaseTextEditor *editor)
+    bool connectTextEditor(BaseTextEditor *editor)
     {
         auto textEditorWidget = editor->editorWidget();
         if (!textEditorWidget)
             return false;
 
-        TextEditor::TextDocument *textDocument = editor->textDocument();
+        TextDocument *textDocument = editor->textDocument();
         if (!textDocument)
             return false;
 
         connect(
             textEditorWidget,
-            &TextEditor::TextEditorWidget::cursorPositionChanged,
+            &TextEditorWidget::cursorPositionChanged,
             this,
             [editor, textEditorWidget, this]() {
                 emit currentCursorChanged(editor, textEditorWidget->multiTextCursor());
@@ -193,7 +189,7 @@ public:
 
         connect(
             textDocument,
-            &TextEditor::TextDocument::contentsChangedWithPosition,
+            &TextDocument::contentsChangedWithPosition,
             this,
             [this, textDocument](int position, int charsRemoved, int charsAdded) {
                 emit documentContentsChanged(textDocument, position, charsRemoved, charsAdded);
@@ -203,14 +199,15 @@ public:
     }
 
 signals:
-    void currentEditorChanged(TextEditor::BaseTextEditor *editor);
+    void currentEditorChanged(BaseTextEditor *editor);
+    void editorCreated(BaseTextEditor *editor);
     void documentContentsChanged(
-        TextEditor::TextDocument *document, int position, int charsRemoved, int charsAdded);
+        TextDocument *document, int position, int charsRemoved, int charsAdded);
 
-    void currentCursorChanged(TextEditor::BaseTextEditor *editor, MultiTextCursor cursor);
+    void currentCursorChanged(BaseTextEditor *editor, MultiTextCursor cursor);
 
 protected:
-    QPointer<TextEditor::BaseTextEditor> m_currentTextEditor = nullptr;
+    TextEditorPtr m_currentTextEditor = nullptr;
 };
 
 void setupTextEditorModule()
@@ -218,10 +215,22 @@ void setupTextEditorModule()
     TextEditorRegistry::instance();
 
     registerProvider("TextEditor", [](sol::state_view lua) -> sol::object {
+        const ScriptPluginSpec *pluginSpec = lua.get<ScriptPluginSpec *>("PluginSpec"sv);
+        QObject *guard = pluginSpec->connectionGuard.get();
+
         sol::table result = lua.create_table();
 
-        result["currentEditor"] = []() -> TextEditor::BaseTextEditor * {
-            return TextEditor::BaseTextEditor::currentTextEditor();
+        result["currentEditor"] = []() -> TextEditorPtr {
+            return BaseTextEditor::currentTextEditor();
+        };
+
+        result["openedEditors"] = [lua]() mutable -> sol::table {
+            QList<BaseTextEditor *> editors = BaseTextEditor::openedTextEditors();
+            sol::table result = lua.create_table();
+            for (auto& editor : editors) {
+                result.add(TextEditorPtr(editor));
+            }
+            return result;
         };
 
         result.new_usertype<MultiTextCursor>(
@@ -229,12 +238,70 @@ void setupTextEditorModule()
             sol::no_constructor,
             "mainCursor",
             &MultiTextCursor::mainCursor,
+            "setMainCursor",
+            [](MultiTextCursor *self, QTextCursor *cursor) { self->replaceMainCursor(*cursor); },
             "cursors",
-            &MultiTextCursor::cursors);
+            [](MultiTextCursor *self) { return sol::as_table(self->cursors()); },
+            "setCursors",
+            [](MultiTextCursor *self, const sol::table &cursors) {
+                QList<QTextCursor> textCursors;
+                for (const auto &[k, cursor] : cursors) {
+                    if (QTC_GUARD(cursor.is<QTextCursor>()))
+                        textCursors.append(cursor.as<QTextCursor>());
+                }
+                self->setCursors(textCursors);
+            },
+            "insertText",
+            [](MultiTextCursor *self, const QString &text) { self->insertText(text); });
 
-        result.new_usertype<QTextCursor>(
+        result.new_usertype<Position>(
+            "Position",
+            sol::no_constructor,
+            "line",
+            sol::property(
+                [](const Position &pos) { return pos.line; },
+                [](Position &pos, int line) { pos.line = line; }),
+            "column",
+            sol::property(
+                [](const Position &pos) { return pos.column; },
+                [](Position &pos, int column) { pos.column = column; }),
+            "toPositionInDocument",
+            sol::overload(
+                &Position::toPositionInDocument,
+                [](const Position &pos, TextDocument *doc) {
+                    return pos.toPositionInDocument(doc->document());
+                }),
+            "toTextCursor",
+            sol::overload(&Position::toTextCursor, [](const Position &pos, TextDocument *doc) {
+                return pos.toTextCursor(doc->document());
+            }));
+
+        // In range can't use begin/end as "end" is a reserved word for LUA scripts
+        result.new_usertype<Range>(
+            "Range",
+            sol::no_constructor,
+            "from",
+            sol::property(
+                [](const Range &range) { return range.begin; },
+                [](Range &range, const Position &begin) { range.begin = begin; }),
+            "to",
+            sol::property(
+                [](const Range &range) { return range.end; },
+                [](Range &range, const Position &end) { range.end = end; }),
+            "toTextCursor",
+            sol::overload(&Range::toTextCursor, [](const Range &range, TextDocument *doc) {
+                return range.toTextCursor(doc->document());
+            }));
+
+        auto textCursorType = result.new_usertype<QTextCursor>(
             "TextCursor",
             sol::no_constructor,
+            "create",
+            sol::overload(
+                []() { return QTextCursor(); },
+                [](QTextDocument *doc) { return QTextCursor(doc); },
+                [](const QTextCursor &other) { return QTextCursor(other); },
+                [](TextDocument *doc) { return QTextCursor(doc->document()); }),
             "position",
             &QTextCursor::position,
             "blockNumber",
@@ -242,40 +309,281 @@ void setupTextEditorModule()
             "columnNumber",
             &QTextCursor::columnNumber,
             "hasSelection",
-            &QTextCursor::hasSelection);
+            &QTextCursor::hasSelection,
+            "selectedText",
+            [](QTextCursor *cursor) {
+                return cursor->selectedText().replace(QChar::ParagraphSeparator, '\n');
+            },
+            "selectionRange",
+            [](const QTextCursor &textCursor) -> Range {
+                Range ret;
+                if (!textCursor.hasSelection())
+                    throw sol::error("Cursor has no selection");
 
-        result.new_usertype<TextEditor::BaseTextEditor>(
+                int startPos = textCursor.selectionStart();
+                int endPos = textCursor.selectionEnd();
+
+                QTextDocument *doc = textCursor.document();
+                if (!doc)
+                    throw sol::error("Cursor has no document");
+
+                QTextBlock startBlock = doc->findBlock(startPos);
+                QTextBlock endBlock = doc->findBlock(endPos);
+
+                ret.begin.line = startBlock.blockNumber();
+                ret.begin.column = startPos - startBlock.position() - 1;
+
+                ret.end.line = endBlock.blockNumber();
+                ret.end.column = endPos - endBlock.position() - 1;
+                return ret;
+            },
+            "insertText",
+            [](QTextCursor *textCursor, const QString &text) { textCursor->insertText(text); },
+            "movePosition",
+            sol::overload(
+                [](QTextCursor *cursor, QTextCursor::MoveOperation op) { cursor->movePosition(op); },
+                [](QTextCursor *cursor, QTextCursor::MoveOperation op, QTextCursor::MoveMode mode) {
+                    cursor->movePosition(op, mode);
+                },
+                [](QTextCursor *cursor,
+                   QTextCursor::MoveOperation op,
+                   QTextCursor::MoveMode mode,
+                   int n) { cursor->movePosition(op, mode, n); }),
+            "setPosition",
+            sol::overload(&QTextCursor::setPosition, [](QTextCursor *cursor, int pos) {
+                cursor->setPosition(pos);
+            }));
+
+        textCursorType["MoveMode"] = lua.create_table_with(
+            "MoveAnchor", QTextCursor::MoveAnchor,
+            "KeepAnchor", QTextCursor::KeepAnchor
+        );
+
+        textCursorType["MoveOperation"] = lua.create_table_with(
+            "NoMove",            QTextCursor::NoMove,
+
+            "Start",            QTextCursor::Start,
+            "Up",               QTextCursor::Up,
+            "StartOfLine",      QTextCursor::StartOfLine,
+            "StartOfBlock",     QTextCursor::StartOfBlock,
+            "StartOfWord",      QTextCursor::StartOfWord,
+            "PreviousBlock",    QTextCursor::PreviousBlock,
+            "PreviousCharacter",QTextCursor::PreviousCharacter,
+            "PreviousWord",     QTextCursor::PreviousWord,
+            "Left",             QTextCursor::Left,
+            "WordLeft",         QTextCursor::WordLeft,
+
+            "End",              QTextCursor::End,
+            "Down",             QTextCursor::Down,
+            "EndOfLine",        QTextCursor::EndOfLine,
+            "EndOfWord",        QTextCursor::EndOfWord,
+            "EndOfBlock",       QTextCursor::EndOfBlock,
+            "NextBlock",        QTextCursor::NextBlock,
+            "NextCharacter",    QTextCursor::NextCharacter,
+            "NextWord",         QTextCursor::NextWord,
+            "Right",            QTextCursor::Right,
+            "WordRight",        QTextCursor::WordRight,
+
+            "NextCell",         QTextCursor::NextCell,
+            "PreviousCell",     QTextCursor::PreviousCell,
+            "NextRow",          QTextCursor::NextRow,
+            "PreviousRow",      QTextCursor::PreviousRow
+        );
+
+        using LayoutOrWidget = std::variant<Layouting::Layout *, Layouting::Widget *, QWidget *>;
+
+        static auto toWidget = [](LayoutOrWidget &arg) {
+            return std::visit(
+                [](auto &&arg) -> QWidget * {
+                    using T = std::decay_t<decltype(arg)>;
+                    if constexpr (std::is_same_v<T, Layouting::Widget *>)
+                        return arg->emerge();
+                    else if constexpr (std::is_same_v<T, QWidget *>)
+                        return arg;
+                    else if constexpr (std::is_same_v<T, Layouting::Layout *>)
+                        return arg->emerge();
+                    else
+                        return nullptr;
+                },
+                arg);
+        };
+
+        result.new_usertype<EmbeddedWidgetInterface>(
+            "EmbeddedWidgetInterface",
+            sol::no_constructor,
+            "resize",
+            &EmbeddedWidgetInterface::resize,
+            "close",
+            &EmbeddedWidgetInterface::close,
+            "onShouldClose",
+            [guard](EmbeddedWidgetInterface *widget, sol::main_function func) {
+                QObject::connect(widget, &EmbeddedWidgetInterface::shouldClose, guard, [func]() {
+                    Result<> res = void_safe_call(func);
+                    QTC_CHECK_RESULT(res);
+                });
+            });
+
+        std::shared_ptr<QMap<TextEditorPtr, QSet<Utils::Id>>> activeMarkers
+            = std::make_shared<QMap<TextEditorPtr, QSet<Utils::Id>>>();
+
+        QObject::connect(guard, &QObject::destroyed, [activeMarkers] {
+            for (const auto &[k, v] : activeMarkers->asKeyValueRange()) {
+                if (k) {
+                    for (const auto &id : std::as_const(v))
+                        k->editorWidget()->clearRefactorMarkers(id);
+                }
+            }
+        });
+
+        result.new_usertype<BaseTextEditor>(
             "TextEditor",
             sol::no_constructor,
             "document",
-            &TextEditor::BaseTextEditor::textDocument,
+            [](const TextEditorPtr &textEditor) -> TextDocumentPtr {
+                QTC_ASSERT(textEditor, throw sol::error("TextEditor is not valid"));
+                return textEditor->textDocument();
+            },
+            "addEmbeddedWidget",
+            [](const TextEditorPtr &textEditor,
+               LayoutOrWidget widget,
+               std::variant<int, Position> position) {
+                QTC_ASSERT(textEditor, throw sol::error("TextEditor is not valid"));
+                return addEmbeddedWidget(textEditor, toWidget(widget), position);
+            },
+            "insertExtraToolBarWidget",
+            [](const TextEditorPtr &textEditor, TextEditorWidget::Side side, LayoutOrWidget widget) {
+                QTC_ASSERT(textEditor, throw sol::error("TextEditor is not valid"));
+                textEditor->editorWidget()->insertExtraToolBarWidget(side, toWidget(widget));
+            },
+            "insertExtraToolBarAction",
+            [](const TextEditorPtr &textEditor, TextEditorWidget::Side side, QAction *action) {
+                QTC_ASSERT(textEditor, throw sol::error("TextEditor is not valid"));
+                textEditor->editorWidget()->insertExtraToolBarAction(side, action);
+            },
+            "setRefactorMarker",
+            [pluginSpec, activeMarkers](
+                const TextEditorPtr &textEditor,
+                const IconFilePathOrString &icon,
+                int position,
+                const QString &id,
+                bool anchorLeft,
+                sol::main_function callback) {
+                QTC_ASSERT(textEditor, throw sol::error("TextEditor is not valid"));
+                QTC_ASSERT(!id.isEmpty(), throw sol::error("Id is empty"));
+                QTC_ASSERT(!icon.valueless_by_exception(), throw sol::error("Icon is invalid"));
+
+                Id finalId = Utils::Id::fromString(QString(pluginSpec->id + "." + id));
+                (*activeMarkers)[textEditor].insert(finalId);
+
+                setRefactorMarker(textEditor, *toIcon(icon), position, finalId, anchorLeft, callback);
+            },
+            "clearRefactorMarkers",
+            [pluginSpec, activeMarkers](const TextEditorPtr &textEditor, const QString &id) {
+                QTC_ASSERT(textEditor, throw sol::error("TextEditor is not valid"));
+                QTC_ASSERT(!id.isEmpty(), throw sol::error("Id is empty"));
+
+                Id finalId = Utils::Id::fromString(QString(pluginSpec->id + "." + id));
+                (*activeMarkers)[textEditor].remove(finalId);
+
+                clearRefactorMarkers(textEditor, finalId);
+            },
             "cursor",
-            [](TextEditor::BaseTextEditor *textEditor) {
+            [](const TextEditorPtr &textEditor) {
+                QTC_ASSERT(textEditor, throw sol::error("TextEditor is not valid"));
                 return textEditor->editorWidget()->multiTextCursor();
+            },
+            "setCursor",
+            [](const TextEditorPtr &textEditor, MultiTextCursor *cursor) {
+                QTC_ASSERT(textEditor, throw sol::error("TextEditor is not valid"));
+                textEditor->editorWidget()->setMultiTextCursor(*cursor);
+            },
+            "hasLockedSuggestion",
+            [](const TextEditorPtr &textEditor) {
+                QTC_ASSERT(textEditor, throw sol::error("TextEditor is not valid"));
+                return textEditor->editorWidget()->suggestionVisible();
+            },
+            "insertText",
+            [](TextEditorPtr editor, const QString &text) {
+                editor->editorWidget()->multiTextCursor().insertText(text);
+            },
+            "hasFocus",
+            [](const TextEditorPtr &textEditor) {
+                QTC_ASSERT(
+                    textEditor && textEditor->editorWidget(),
+                    throw sol::error("TextEditor is not valid"));
+                return textEditor->editorWidget()->hasFocus();
+            },
+            "setFocus",
+            [](const TextEditorPtr &textEditor) {
+                QTC_ASSERT(
+                    textEditor && textEditor->editorWidget(),
+                    throw sol::error("TextEditor is not valid"));
+                textEditor->editorWidget()->setFocus();
+            },
+            "firstVisibleBlockNumber",
+            [](const TextEditorPtr &textEditor) -> int {
+                QTC_ASSERT(
+                    textEditor && textEditor->editorWidget(),
+                    throw sol::error("TextEditor is not valid"));
+                return textEditor->editorWidget()->firstVisibleBlockNumber();
+            },
+            "lastVisibleBlockNumber",
+            [](const TextEditorPtr &textEditor) -> int {
+                QTC_ASSERT(
+                    textEditor && textEditor->editorWidget(),
+                    throw sol::error("TextEditor is not valid"));
+                return textEditor->editorWidget()->lastVisibleBlockNumber();
             });
 
-        result.new_usertype<Suggestion>(
+        result["Side"] = lua.create_table_with(
+                "Left", TextEditorWidget::Left,
+                "Right", TextEditorWidget::Right
+            );
+
+        result.new_usertype<TextSuggestion::Data>(
             "Suggestion",
             "create",
-            [](int start_line,
-               int start_character,
-               int end_line,
-               int end_character,
-               const QString &text) -> Suggestion {
-                auto one_based = [](int zero_based) { return zero_based + 1; };
-                Text::Position start_pos = {one_based(start_line), start_character};
-                Text::Position end_pos = {one_based(end_line), end_character};
-                return {start_pos, end_pos, start_pos, text};
+            [](const sol::table &suggestion) -> TextEditor::TextSuggestion::Data {
+                const auto one_based = [](int zero_based) { return zero_based + 1; };
+                const auto position = get_or_throw<sol::table>(suggestion, "position");
+                const auto position_line = get_or_throw<int>(position, "line");
+                const auto position_column = get_or_throw<int>(position, "column");
+
+                const auto range = get_or_throw<sol::table>(suggestion, "range");
+
+                const auto from = get_or_throw<sol::table>(range, "from");
+                const auto from_line = get_or_throw<int>(from, "line");
+                const auto from_column = get_or_throw<int>(from, "column");
+
+                const auto to = get_or_throw<sol::table>(range, "to");
+                const auto to_line = get_or_throw<int>(to, "line");
+                const auto to_column = get_or_throw<int>(to, "column");
+
+                const auto text = get_or_throw<QString>(suggestion, "text");
+
+                const Position cursor_pos = {one_based(position_line), position_column};
+                const Position from_pos = {one_based(from_line), from_column};
+                const Position to_pos = {one_based(to_line), to_column};
+
+                return {Range{from_pos, to_pos}, cursor_pos, text};
             });
 
-        result.new_usertype<TextEditor::TextDocument>(
+        result.new_usertype<TextDocument>(
             "TextDocument",
             sol::no_constructor,
             "file",
-            &TextEditor::TextDocument::filePath,
+            [](const TextDocumentPtr &document) {
+                QTC_ASSERT(document, throw sol::error("TextDocument is not valid"));
+                return document->filePath();
+            },
+            "font",
+            [](const TextDocumentPtr &document) {
+                QTC_ASSERT(document, throw sol::error("TextDocument is not valid"));
+                return document->fontSettings().font();
+            },
             "blockAndColumn",
-            [](TextEditor::TextDocument *document,
-               int position) -> std::optional<std::pair<int, int>> {
+            [](const TextDocumentPtr &document, int position) -> std::optional<std::pair<int, int>> {
+                QTC_ASSERT(document, throw sol::error("TextDocument is not valid"));
                 QTextBlock block = document->document()->findBlock(position);
                 if (!block.isValid())
                     return std::nullopt;
@@ -285,61 +593,70 @@ void setupTextEditorModule()
                 return std::make_pair(block.blockNumber() + 1, column + 1);
             },
             "blockCount",
-            [](TextEditor::TextDocument *document) { return document->document()->blockCount(); },
-
+            [](const TextDocumentPtr &document) {
+                QTC_ASSERT(document, throw sol::error("TextDocument is not valid"));
+                return document->document()->blockCount();
+            },
             "setSuggestions",
-            [](TextEditor::TextDocument *document, QList<Suggestion> suggestions) {
+            [](const TextDocumentPtr &document, QList<TextSuggestion::Data> suggestions) {
+                QTC_ASSERT(document, throw sol::error("TextDocument is not valid"));
+
                 if (suggestions.isEmpty())
                     return;
 
-                const auto textEditor = TextEditor::BaseTextEditor::currentTextEditor();
-                if (!textEditor || textEditor->document() != document)
-                    return;
-
-                auto *widget = textEditor->editorWidget();
-                if (widget->isReadOnly() || widget->multiTextCursor().hasMultipleCursors())
+                auto widget = getSuggestionReadyEditorWidget(document);
+                if (!widget)
                     return;
 
                 widget->insertSuggestion(
                     std::make_unique<CyclicSuggestion>(suggestions, document->document()));
-            }
-
-        );
+            });
 
         return result;
     });
 
-    registerHook("editors.text.currentChanged", [](sol::function func, QObject *guard) {
+    registerHook("editors.text.currentChanged", [](sol::main_function func, QObject *guard) {
         QObject::connect(
             TextEditorRegistry::instance(),
             &TextEditorRegistry::currentEditorChanged,
             guard,
-            [func](TextEditor::BaseTextEditor *editor) {
-                Utils::expected_str<void> res = void_safe_call(func, editor);
-                QTC_CHECK_EXPECTED(res);
+            [func](BaseTextEditor *editor) {
+                Result<> res = void_safe_call(func, editor);
+                QTC_CHECK_RESULT(res);
             });
     });
 
-    registerHook("editors.text.contentsChanged", [](sol::function func, QObject *guard) {
+    registerHook("editors.text.editorCreated", [](sol::main_function func, QObject *guard) {
+        QObject::connect(
+            TextEditorRegistry::instance(),
+            &TextEditorRegistry::editorCreated,
+            guard,
+            [func](TextEditorPtr editor) {
+                Result<> res = void_safe_call(func, editor);
+                QTC_CHECK_RESULT(res);
+            });
+    });
+
+    registerHook("editors.text.contentsChanged", [](sol::main_function func, QObject *guard) {
         QObject::connect(
             TextEditorRegistry::instance(),
             &TextEditorRegistry::documentContentsChanged,
             guard,
-            [func](TextEditor::TextDocument *document, int position, int charsRemoved, int charsAdded) {
-                Utils::expected_str<void> res
+            [func](TextDocument *document, int position, int charsRemoved, int charsAdded) {
+                Result<> res
                     = void_safe_call(func, document, position, charsRemoved, charsAdded);
-                QTC_CHECK_EXPECTED(res);
+                QTC_CHECK_RESULT(res);
             });
     });
 
-    registerHook("editors.text.cursorChanged", [](sol::function func, QObject *guard) {
+    registerHook("editors.text.cursorChanged", [](sol::main_function func, QObject *guard) {
         QObject::connect(
             TextEditorRegistry::instance(),
             &TextEditorRegistry::currentCursorChanged,
             guard,
-            [func](TextEditor::BaseTextEditor *editor, const MultiTextCursor &cursor) {
-                Utils::expected_str<void> res = void_safe_call(func, editor, cursor);
-                QTC_CHECK_EXPECTED(res);
+            [func](BaseTextEditor *editor, const MultiTextCursor &cursor) {
+                Result<> res = void_safe_call(func, editor, cursor);
+                QTC_CHECK_RESULT(res);
             });
     });
 }

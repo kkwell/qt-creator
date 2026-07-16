@@ -3,6 +3,8 @@
 
 #include "pythonrunconfiguration.h"
 
+#include "pyside.h"
+#include "pythonbuildconfiguration.h"
 #include "pythonconstants.h"
 #include "pythonproject.h"
 #include "pythontr.h"
@@ -23,17 +25,31 @@
 #include <utils/fileutils.h>
 #include <utils/outputformatter.h>
 
+#include <QUrl>
+
 using namespace ProjectExplorer;
 using namespace Utils;
 
 namespace Python::Internal {
 
+static const QRegularExpression &tracebackFilePattern()
+{
+    static const QRegularExpression s_filePattern("^(\\s*)(File \"([^\"]+)\", line (\\d+), .*$)");
+    return s_filePattern;
+}
+
+static const QRegularExpression &moduleNotFoundPattern()
+{
+    static const QRegularExpression s_functionPattern(
+        "^ModuleNotFoundError: No module named '([_a-zA-Z][_a-zA-Z0-9]*)'$");
+    return s_functionPattern;
+}
+
 class PythonOutputLineParser : public OutputLineParser
 {
 public:
-    PythonOutputLineParser()
-        // Note that moc dislikes raw string literals.
-        : filePattern("^(\\s*)(File \"([^\"]+)\", line (\\d+), .*$)")
+    PythonOutputLineParser(const FilePath &python)
+        : m_python(python)
     {
         TaskHub::clearTasks(PythonErrorTaskCategory);
     }
@@ -41,62 +57,81 @@ public:
 private:
     Result handleLine(const QString &text, OutputFormat format) final
     {
-        if (!m_inTraceBack) {
-            m_inTraceBack = format == StdErrFormat
-                    && text.startsWith("Traceback (most recent call last):");
+        const Id category(PythonErrorTaskCategory);
+
+        if (m_inTraceBack) {
+            const QRegularExpressionMatch match = tracebackFilePattern().match(text);
+            if (match.hasMatch()) {
+                const LinkSpec link(match.capturedStart(2), match.capturedLength(2), match.captured(2));
+                const auto fileName = FilePath::fromUserInput(match.captured(3));
+                const int lineNumber = match.captured(4).toInt();
+                m_tasks.append({Task::Warning, QString(), fileName, lineNumber, category});
+                return {Status::InProgress, {link}};
+            }
+
+            if (text.startsWith(' ')) {
+                // Neither traceback start, nor file, nor error message line.
+                // Not sure if that can actually happen.
+                if (m_tasks.isEmpty()) {
+                    m_tasks.append({Task::Warning, text.trimmed(), {}, -1, category});
+                } else {
+                    Task &task = m_tasks.back();
+                    if (!task.summary().isEmpty())
+                        task.addToSummary(QChar(' '));
+                    task.addToSummary(text.trimmed());
+                }
+            } else {
+                // The actual exception. This ends the traceback.
+                Task exception{Task::Error, text, {}, -1, category};
+                const QString detail = Tr::tr("👉 Click here to install %1 (requires pip)");
+                const QString pySide6Text = Tr::tr("PySide6");
+                const QString link = QString("pysideinstall:")
+                                     + QUrl::toPercentEncoding(m_python.toFSPathString());
+                exception.addLinkDetail(link, detail.arg(pySide6Text));
+                TaskHub::addTask(exception);
+                for (auto rit = m_tasks.crbegin(), rend = m_tasks.crend(); rit != rend; ++rit)
+                    TaskHub::addTask(*rit);
+                m_inTraceBack = false;
+                const QRegularExpressionMatch match = moduleNotFoundPattern().match(text);
+                if (match.hasMatch()) {
+                    const QString moduleName = match.captured(1);
+                    if (moduleName == "PySide6") {
+                        const LinkSpec
+                            link(match.capturedStart(1), match.capturedLength(1), moduleName);
+                        return {Status::Done, {link}};
+                    }
+                }
+                return Status::Done;
+            }
+            return Status::InProgress;
+        }
+
+        if (format == StdErrFormat) {
+            m_inTraceBack = text.startsWith("Traceback (most recent call last):");
             if (m_inTraceBack)
                 return Status::InProgress;
-            return Status::NotHandled;
         }
 
-        const Id category(PythonErrorTaskCategory);
-        const QRegularExpressionMatch match = filePattern.match(text);
-        if (match.hasMatch()) {
-            const LinkSpec link(match.capturedStart(2), match.capturedLength(2), match.captured(2));
-            const auto fileName = FilePath::fromString(match.captured(3));
-            const int lineNumber = match.captured(4).toInt();
-            m_tasks.append({Task::Warning, QString(), fileName, lineNumber, category});
-            return {Status::InProgress, {link}};
-        }
-
-        Status status = Status::InProgress;
-        if (text.startsWith(' ')) {
-            // Neither traceback start, nor file, nor error message line.
-            // Not sure if that can actually happen.
-            if (m_tasks.isEmpty()) {
-                m_tasks.append({Task::Warning, text.trimmed(), {}, -1, category});
-            } else {
-                Task &task = m_tasks.back();
-                if (!task.summary.isEmpty())
-                    task.summary += ' ';
-                task.summary += text.trimmed();
-            }
-        } else {
-            // The actual exception. This ends the traceback.
-            TaskHub::addTask({Task::Error, text, {}, -1, category});
-            for (auto rit = m_tasks.crbegin(), rend = m_tasks.crend(); rit != rend; ++rit)
-                TaskHub::addTask(*rit);
-            m_tasks.clear();
-            m_inTraceBack = false;
-            status = Status::Done;
-        }
-        return status;
+        return Status::NotHandled;
     }
 
     bool handleLink(const QString &href) final
     {
-        const QRegularExpressionMatch match = filePattern.match(href);
-        if (!match.hasMatch())
-            return false;
-        const QString fileName = match.captured(3);
-        const int lineNumber = match.captured(4).toInt();
-        Core::EditorManager::openEditorAt({FilePath::fromString(fileName), lineNumber});
-        return true;
+        if (const QRegularExpressionMatch match = tracebackFilePattern().match(href);
+            match.hasMatch()) {
+            const QString fileName = match.captured(3);
+            const int lineNumber = match.captured(4).toInt();
+            Core::EditorManager::openEditorAt({FilePath::fromString(fileName), lineNumber});
+            return true;
+        }
+        if (href == "PySide6")
+            PySideInstaller::instance().installPySide(m_python, href);
+        return false;
     }
 
-    const QRegularExpression filePattern;
     QList<Task> m_tasks;
-    bool m_inTraceBack;
+    bool m_inTraceBack = false;
+    const FilePath m_python;
 };
 
 // RunConfiguration
@@ -104,8 +139,8 @@ private:
 class PythonRunConfiguration : public RunConfiguration
 {
 public:
-    PythonRunConfiguration(Target *target, Id id)
-        : RunConfiguration(target, id)
+    PythonRunConfiguration(BuildConfiguration *bc, Id id)
+        : RunConfiguration(bc, id)
     {
         buffered.setSettingsKey("PythonEditor.RunConfiguation.Buffered");
         buffered.setLabelText(Tr::tr("Buffered output"));
@@ -117,13 +152,8 @@ public:
         mainScript.setLabelText(Tr::tr("Script:"));
         mainScript.setReadOnly(true);
 
-        environment.setSupportForBuildEnvironment(target);
+        environment.setSupportForBuildEnvironment(bc);
 
-        arguments.setMacroExpander(macroExpander());
-
-        workingDir.setMacroExpander(macroExpander());
-
-        x11Forwarding.setMacroExpander(macroExpander());
         x11Forwarding.setVisible(HostOsInfo::isAnyUnixHost());
 
         interpreter.setLabelText(Tr::tr("Python:"));
@@ -150,8 +180,6 @@ public:
             mainScript.setValue(bti.targetFilePath);
             workingDir.setDefaultWorkingDirectory(bti.targetFilePath.parentDir());
         });
-
-        connect(target, &Target::buildSystemUpdated, this, &RunConfiguration::update);
     }
 
     FilePathAspect interpreter{this};
@@ -183,7 +211,7 @@ void setupPythonRunConfiguration()
 
 void setupPythonRunWorker()
 {
-    static SimpleTargetRunnerFactory thePythonRunWorkerFactory(
+    static ProcessRunnerFactory thePythonRunWorkerFactory(
         {Constants::C_PYTHONRUNCONFIGURATION_ID}
     );
 }
@@ -198,11 +226,20 @@ void setupPythonDebugWorker()
 
 void setupPythonOutputParser()
 {
-    addOutputParserFactory([](Target *t) -> OutputLineParser * {
-        if (t && t->project()->mimeType() == Constants::C_PY_PROJECT_MIME_TYPE)
-            return new PythonOutputLineParser;
+    addOutputParserFactory([](BuildConfiguration *bc) -> OutputLineParser * {
+        auto *pythonBuildConfig = qobject_cast<PythonBuildConfiguration *>(bc);
+        if (!pythonBuildConfig)
+            return nullptr;
+
+        Target *t = pythonBuildConfig->target();
+        QTC_ASSERT(t, return nullptr);
+
+        if (t->project()->mimeType() == Constants::C_PY_PROJECT_MIME_TYPE
+            || t->project()->mimeType() == Constants::C_PY_PROJECT_MIME_TYPE_TOML) {
+            return new PythonOutputLineParser(pythonBuildConfig->python());
+        }
         return nullptr;
     });
 }
 
-} // Python::Internal
+} // namespace Python::Internal

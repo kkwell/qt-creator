@@ -4,18 +4,18 @@
 #pragma once
 
 #include <projectexplorer/task.h>
+
 #include <qmljs/qmljsdocument.h>
 #include <qmljs/qmljsmodelmanagerinterface.h>
 
-#include <QObject>
-#include <QList>
+#include <QtTaskTree/QSingleTaskTreeRunner>
+
 #include <QHash>
-#include <QString>
-#include <QFutureWatcher>
+#include <QList>
+#include <QObject>
 #include <QTimer>
 
-namespace QmlJSEditor {
-namespace Internal {
+namespace QmlJSEditor::Internal {
 
 class QmlTaskManager : public QObject
 {
@@ -27,11 +27,9 @@ public:
 
     void updateMessages();
     void updateSemanticMessagesNow();
-    void documentsRemoved(const Utils::FilePaths &path);
+    void documentsRemoved(const Utils::FilePaths &paths);
 
 private:
-    void displayResults(int begin, int end);
-    void displayAllResults();
     void updateMessagesNow(bool updateSemantic = false);
 
     void insertTask(const ProjectExplorer::Task &task);
@@ -46,17 +44,16 @@ private:
         ProjectExplorer::Tasks tasks;
     };
     static void collectMessages(QPromise<FileErrorMessages> &promise,
-                                QmlJS::Snapshot snapshot,
+                                const QmlJS::Snapshot &snapshot,
                                 const QList<QmlJS::ModelManagerInterface::ProjectInfo> &projectInfos,
-                                QmlJS::ViewerContext vContext,
+                                const QmlJS::ViewerContext &vContext,
                                 bool updateSemantic);
 
 private:
     QHash<Utils::FilePath, ProjectExplorer::Tasks> m_docsWithTasks;
-    QFutureWatcher<FileErrorMessages> m_messageCollector;
     QTimer m_updateDelay;
     bool m_updatingSemantic = false;
+    QtTaskTree::QSingleTaskTreeRunner m_taskTreeRunner;
 };
 
-} // Internal
-} // QmlJSEditor
+} // QmlJSEditor::Internal

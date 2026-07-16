@@ -15,11 +15,10 @@
 #include "qmlobjectnode.h"
 #include "variantproperty.h"
 
-#include <model/modelutils.h>
+#include <modelutils.h>
 
 #include <utils3d.h>
 
-#include <utils/expected.h>
 #include <utils/filepath.h>
 #include <utils/qtcassert.h>
 
@@ -234,7 +233,7 @@ bool BakeLightsDataModel::reset()
                         PropertyName dotName = mi.name() + '.';
                         for (const AbstractProperty &prop : props) {
                             if (prop.name().startsWith(dotName)) {
-                                PropertyName subName = prop.name().mid(dotName.size());
+                                PropertyNameView subName = prop.name().mid(dotName.size());
                                 if (subName == "bakedLightmap") {
                                     ModelNode blm = prop.toBindingProperty().resolveToModelNode();
                                     if (blm.isValid()) {
@@ -269,7 +268,7 @@ bool BakeLightsDataModel::reset()
                         PropertyName dotName = mi.name() + '.';
                         for (const AbstractProperty &prop : props) {
                             if (prop.name().startsWith(dotName)) {
-                                PropertyName subName = prop.name().mid(dotName.size());
+                                PropertyNameView subName = prop.name().mid(dotName.size());
                                 if (subName == "bakeMode") {
                                     if (prop.isVariantProperty()) {
                                         QString bakeModeStr = prop.toVariantProperty().value()

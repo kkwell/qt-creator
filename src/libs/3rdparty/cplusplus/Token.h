@@ -233,6 +233,7 @@ enum Kind {
     T_CHAR8_T,
     T_CHAR16_T,
     T_CHAR32_T,
+    T___INT128,
     T_DOUBLE,
     T_FLOAT,
     T_INT,
@@ -287,6 +288,7 @@ enum Kind {
 
     T___ASM = T_ASM,
     T___ASM__ = T_ASM,
+    T___INT128_T = T___INT128,
 
     T_TYPEOF = T___TYPEOF__,
     T___TYPEOF = T___TYPEOF__,
@@ -346,6 +348,9 @@ public:
 
     inline bool isStringLiteral() const
     { return f.kind >= T_FIRST_STRING_LITERAL && f.kind <= T_LAST_STRING_LITERAL; }
+
+    inline bool isRawStringLiteral() const
+    { return f.kind >= T_FIRST_RAW_STRING_LITERAL && f.kind <= T_LAST_RAW_STRING_LITERAL; }
 
     inline bool isOperator() const
     { return f.kind >= T_FIRST_OPERATOR && f.kind <= T_LAST_OPERATOR; }
@@ -436,6 +441,13 @@ struct LanguageFeatures
         return features;
     }
 
+    static LanguageFeatures cFeatures()
+    {
+        LanguageFeatures features;
+        features.c99Enabled = true;
+        return features;
+    }
+
     bool operator==(const LanguageFeatures &other) const
     {
         return flags == other.flags;
@@ -457,6 +469,7 @@ struct LanguageFeatures
             unsigned int cxx14Enabled : 1;
             unsigned int cxx17Enabled : 1;
             unsigned int cxx20Enabled : 1;
+            unsigned int cxx23Enabled : 1; // TODO: Use a single version number instead.
             unsigned int objCEnabled : 1;
             unsigned int c99Enabled : 1;
         };

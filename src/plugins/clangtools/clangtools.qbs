@@ -6,13 +6,12 @@ QtcPlugin {
 
     Depends { name: "Core" }
     Depends { name: "CppEditor" }
-    Depends { name: "Debugger" }
     Depends { name: "ProjectExplorer" }
     Depends { name: "QtSupport"; condition: qtc.withPluginTests }
     Depends { name: "TextEditor" }
     Depends { name: "Utils" }
 
-    Depends { name: "yaml-cpp" }
+    Depends { name: "YamlCpp" }
     Depends { name: "clang_defines" }
 
     Depends { name: "Qt.widgets" }
@@ -24,8 +23,6 @@ QtcPlugin {
 
     files: [
         "clangfileinfo.h",
-        "clangfixitsrefactoringchanges.cpp",
-        "clangfixitsrefactoringchanges.h",
         "clangselectablefilesdialog.cpp",
         "clangselectablefilesdialog.h",
         "clangtool.cpp",
@@ -33,6 +30,8 @@ QtcPlugin {
         "clangtoolrunner.cpp",
         "clangtoolrunner.h",
         "clangtools_global.h",
+        "clangtoolscompilationdb.cpp",
+        "clangtoolscompilationdb.h",
         "clangtoolstr.h",
         "clangtoolsconstants.h",
         "clangtoolsdiagnostic.cpp",
@@ -44,7 +43,6 @@ QtcPlugin {
         "clangtoolslogfilereader.cpp",
         "clangtoolslogfilereader.h",
         "clangtoolsplugin.cpp",
-        "clangtoolsplugin.h",
         "clangtoolsprojectsettings.cpp",
         "clangtoolsprojectsettings.h",
         "clangtoolsprojectsettingswidget.cpp",
@@ -59,8 +57,6 @@ QtcPlugin {
         "diagnosticmark.h",
         "documentclangtoolrunner.cpp",
         "documentclangtoolrunner.h",
-        "documentquickfixfactory.cpp",
-        "documentquickfixfactory.h",
         "executableinfo.cpp",
         "executableinfo.h",
         "filterdialog.cpp",
@@ -69,8 +65,6 @@ QtcPlugin {
         "inlinesuppresseddiagnostics.h",
         "runsettingswidget.cpp",
         "runsettingswidget.h",
-        "settingswidget.cpp",
-        "settingswidget.h",
         "virtualfilesystemoverlay.cpp",
         "virtualfilesystemoverlay.h",
     ]

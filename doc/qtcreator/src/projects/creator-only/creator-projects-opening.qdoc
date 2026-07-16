@@ -14,36 +14,68 @@
 
     \ingroup creator-how-to-projects-configure
     \ingroup creator-how-to-manage-kits
-    \ingroup creator-how-to-projects
 
     \title Open projects
 
-    To open a project, open the project file for the project:
-    \e {CMakeLists.txt} (CMake), \e {.pro} (qmake), \e {.qbs} (Qbs),
-    \e {meson.build} (Meson), \e {pyproject} (Python), or \e {Makefile.am}
-    (Autotools, experimental).
+    To open a project, open the configuration file for the project:
+
+    \list
+        \li \c {CMakeLists.txt} or \c {CMakeCache.txt} (CMake)
+        \li \c {.pro} (qmake)
+        \li \c {.qbs} (Qbs)
+        \li \c {meson.build} (Meson)
+        \li \c {pyproject.toml} (Python)
+        \li \c {BUILD.gn} (Generate Ninja (GN))
+        \li \c {Makefile.am} (Autotools, experimental)
+    \endlist
+
+    \section1 Partially supported project types
+
+    Some project types have limited support. To open them, activate the corresponding
+    extension. \QC suggests the required extension when you open a project for the
+    first time.
+
+    To open a partially supported project, open the configuration file for the project:
+
+    \list
+        \li \c {build.xml} (\l{Ant})
+        \li \c {cargo.toml} (\l{Rust: cargo-build}{Cargo})
+        \li \c {.csproj} (\l{dotnet build}{.NET/C#})
+        \li \c {.gradle} or \c {.gradle.kts} (\l{Gradle})
+        \li \c {Package.swift} (\l{Swift})
+    \endlist
+
+    To build and run these projects, use the custom configuration \QC automatically
+    creates, set up your own build and run configurations, or use the terminal
+    as you would outside of \QC.
+
+    \section1 Open project files
 
     You can open a project in the following ways:
 
     \list
-        \li Select \uicontrol File > \uicontrol {Open File or Project}.
+        \li Select \uicontrol File > \uicontrol {Open Project}.
         \li In the \uicontrol Welcome mode, \uicontrol Projects tab, select
             \uicontrol {Open Project} (1).
-            \image qtcreator-welcome-open-projects.webp {Ways to open projects in the Welcome mode Projects tab}
+            \image {qtcreator-welcome-open-projects.webp} {Ways to open projects in the Welcome mode Projects tab}
         \li In the \uicontrol Projects tab, select a project in the list of
             recently opened projects (2).
+        \li In the \uicontrol Welcome mode, \uicontrol Overview tab, select a
+            recently opened project in \uicontrol {Recent Projects}.
         \li In the \l Projects view, right-click to open a context
             menu and select \uicontrol {Load Project} to open the
-            \uicontrol {Load Project} dialog, where you can select
+            \uicontrol {Open Project} dialog, where you can select
             a project file.
+            \image {qtcreator-projects-view.webp} {CMake project in Projects view}
         \li Use the following keyboard shortcuts, depending on the mode you are
             currently in:
             \list
-                \li In all modes, press \key Ctrl+O (\key Cmd+O on \macos) to open the
+                \li In all modes, select \key Ctrl+O (\key Cmd+O on \macos) to open the
                     \uicontrol {Open File} dialog, where you can select a project file.
                 \li On Windows and Linux, in all modes except the \uicontrol Help mode,
-                    press \key Ctrl+Shift+O to open the \uicontrol {Load Project} dialog.
-                \li In the \uicontrol Welcome mode, \uicontrol Projects tab, press
+                    select \key Ctrl+Shift+O to open the \uicontrol {Open Project} dialog,
+                    where you can select a project file.
+                \li In the \uicontrol Welcome mode, \uicontrol Projects tab, select
                     \key Ctrl+Shift+number (\key Cmd+Shift+number on \macos), where
                     the number is the number of a project in the list of recently opened
                     projects (3).
@@ -55,13 +87,35 @@
     To open a directory as a project, go to \uicontrol File >
     \uicontrol {Open Workspace}.
 
-    \QC generates the \e .qtcreator/project.json project file in the directory
-    for setting a project name and file exclusion filters. You can open either
-    the JSON file or the workspace to open the project the next time.
+    \QC uses the default kit to automatically add a build configuration for the
+    workspace. It generates the \c .qtcreator/project.json project file in the
+    directory for setting a project name and file exclusion filters. You can add
+    build and run settings to the file, as defined by its \l{project.json}
+    {JSON schema}.
+
+    You can open either the JSON file or the workspace to open the project the
+    next time.
+
+    When you add files to the directory or remove them from there, the contents
+    of the \l Projects view are updated automatically.
+
+    To add build configurations to the workspace:
+
+    \list 1
+        \li Go to \uicontrol Projects > \uicontrol {Build Settings}.
+        \li Select \uicontrol Add > \uicontrol Build.
+        \li Specify build settings.
+    \endlist
+
+    To specify deploy settings for the workspace, go to \uicontrol Projects >
+    \uicontrol {Deploy Settings}.
+
+    To specify run settings for the workspace, go to \uicontrol Projects >
+    \uicontrol {Run Settings}.
 
     \section1 Re-configure projects
 
-    \QC stores information that it needs to build projects in a .user file. If
+    \QC stores information that it needs to build projects in a \c .user file. If
     \QC cannot find the file when you open an existing project, it prompts you
     to enter the information.
 
@@ -75,9 +129,11 @@
 
     \list 1
         \li In \uicontrol {Configure Project}, select
-            \l{Kits}{kits} for building
+            \l{Managing kits}{kits} for building
             and running your project.
-            \image qtcreator-configure-project.webp {Configure Project view}
+            \image {qtcreator-configure-project.webp} {Configure Project view}
+        \li For each kit, select the build configurations to create for the
+            project.
         \li Select \uicontrol {Configure Project}.
     \endlist
 
@@ -89,7 +145,7 @@
     select the \uicontrol Preferences link, or select \preferences >
     \uicontrol Kits.
 
-    Qt for Python projects rely on the \l{Language Servers}
+    Qt for Python projects rely on the \l{Managing language servers}
     {language server client} for code completion, highlighting, and
     other useful features.
 
@@ -117,11 +173,12 @@
     To show or hide detailed progress information, select
     \uicontrol {Toggle Progress Details} (1).
 
-    \image qtcreator-toggle-progress-bar.webp {Toggle Progress Details button}
+    \image {qtcreator-toggle-progress-bar.webp} {Toggle Progress Details}
 
     You can drag the progress bar to another position. The position is saved for
-    later. Select the \inlineimage icons/pin.png
-    (\uicontrol Pin) button to pin the progress bar back to the toggle button.
+    later. Select \imagepin (\uicontrol Pin) to pin the progress bar back to the
+    toggle button.
 
-    \sa {Manage Kits}{How To: Manage Kits}, {Kits},
+    \sa {Activate extensions}, {Build and run}{How to: Build and run},
+    {Manage kits}{How to: Manage kits}, {Managing kits}
 */

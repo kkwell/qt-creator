@@ -3,57 +3,77 @@
 
 /*!
     \page creator-indenting-code.html
-    \if defined(qtdesignstudio)
-    \previouspage qtquick-text-editor.html
-    \else
     \previouspage creator-how-tos.html
-    \endif
 
     \ingroup creator-how-to-edit
-    \ingroup studio-how-to-code
 
     \title Indent text or code
 
     When you type text or code, it is indented automatically according to the
     selected text editor or code style preferences. Select a block to indent it when
-    you press \key Tab. Press \key {Shift+Tab} to decrease the indentation. You
-    can disable automatic indentation.
+    you select \key Tab. Select \key {Shift+Tab} to decrease the indentation.
 
-    To fix the indentation in the file currently open in the editor,
-    select options in the \uicontrol Edit > \uicontrol Advanced menu
-    or use \l{Keyboard Shortcuts}{keyboard shortcuts}:
+    \section1 Don't detect indentation settings
+
+    When you open a document, the editor tries to automatically detect if it uses tabs or
+    spaces for indentation and the indentation width, by inspecting its contents.
+    If the automatic detection fails, the default setting is used.
+
+    To turn off the automatic detection of indentation settings, go to
+    \preferences > \uicontrol {Text Editor} > \uicontrol Behavior
+    and clear \uicontrol {Auto detect}.
+
+    \image {qtcreator-preferences-texteditor-behavior-indentation.webp} {Indentation in the Behavior tab in Text Editor preferences}
+
+    \section1 Fix indentation in an open file
+
+    To fix the indentation settings for the file currently open in the editor, select a
+    different setting with \uicontrol {Spaces} > \uicontrol {Document Settings} or
+    \uicontrol {Tabs} > \uicontrol {Document Settings} on the editor toolbar.
+
+    To fix the indentation in the file currently open in the editor:
+
+    \list
+        \li On the editor toolbar, select \uicontrol {Spaces} or \uicontrol {Tabs}, and then select
+            \uicontrol {Auto-indent Selection} to automatically indent the
+            selected text using the current settings.
+        \li Go to \uicontrol Edit > \uicontrol Advanced, and select an
+            indentation option or use \l{Keyboard shortcuts}{keyboard shortcuts}.
+    \endlist
+
+    \section2 Indentation options
 
     \list
         \li To automatically indent the highlighted text, select
-            \uicontrol {Auto-indent Selection} or press \key {Ctrl+I}.
+            \uicontrol {Auto-indent Selection} or select \key {Ctrl+I}.
         \li To automatically format the highlighted text, select
-            \uicontrol {Auto-format Selection} or press \key {Ctrl+;}.
+            \uicontrol {Auto-format Selection} or select \key {Ctrl+;}.
         \li To adjust the wrapping of the selected paragraph, select
-            \uicontrol {Rewrap Paragraph} or press \key {Ctrl+E}
+            \uicontrol {Rewrap Paragraph} or select \key {Ctrl+E}
             followed by \key R.
         \li To toggle text wrapping, select \uicontrol {Enable Text Wrapping}
-             or press \key {Ctrl+E} followed by \key {Ctrl+W}.
+             or select \key {Ctrl+E} followed by \key {Ctrl+W}.
         \li To visualize whitespace in the editor, select
-            \uicontrol {Visualize Whitespace} or press \key {Ctrl+E}
+            \uicontrol {Visualize Whitespace} or select \key {Ctrl+E}
             followed by \key {Ctrl+V}.
         \li To clear all whitespace characters from the currently open file,
             select \uicontrol {Clean Whitespace}.
     \endlist
 
-    \section1 Automatically fix indentation
+    \section1 Automatically fix indentation upon file save
 
     To automatically fix indentation according to the indentation settings
-    when you save the file, select \preferences > \uicontrol {Text Editor} >
-    \uicontrol Behavior > \uicontrol {Clean whitespace} >
+    when you save the file, go to \preferences > \uicontrol {Text Editor} >
+    \uicontrol Behavior > \uicontrol {Clean whitespace} and select
     \uicontrol {Clean indentation}. Select
-    the \uicontrol {Skip clean whitespace for file types} check box to
+    \uicontrol {Skip clean whitespace for file types} to
     exclude the specified file types.
 
-    \image qtcreator-preferences-texteditor-behavior.webp {Text Editor Behavior preferences}
+    \image {qtcreator-preferences-texteditor-behavior.webp} {Behavior tab in Text Editor preferences}
 
     \section1 Show whitespace in editor
 
-    To visualize whitespace in the editor, select \preferences >
+    To visualize whitespace in the editor, go to \preferences >
     \uicontrol {Text Editor} > \uicontrol Display >
     \uicontrol {Visualize whitespace}.
 
@@ -61,24 +81,21 @@
     color of the visualization, change the value of the Visual Whitespace setting
     of the editor color scheme in \uicontrol {Font & Colors}.
 
-    \image qtcreator-options-text-editor-display.png {Text Editor Display preferences}
+    \image {qtcreator-preferences-text-editor-display.webp} {Display tab in Text Editor preferences}
 
     \section1 Display right margin
 
     To help you keep line length at a particular number of characters, set the
-    number of characters in the \uicontrol {Display right margin at column}
-    field. To use a different color for the margin area, select the
-    \uicontrol {Tint whole margin area} check box. Deselect the check box to show
+    number of characters in \uicontrol {Display right margin at column}.
+    To use a different color for the margin area, select
+    \uicontrol {Tint whole margin area}. Clear it to show
     the margin as a vertical line.
 
-    To use a context-specific margin when available, select the
-    \uicontrol {Use context-specific margin} check box.
-    \if defined(qtcreator)
-    Then, use the ClangFormat \c ColumnLimit option to set the margin, for
-    example.
+    To use a context-specific margin when available, select
+    \uicontrol {Use context-specific margin}.
+    Then, use the \l{ClangFormat Style Options}{ClangFormat} \c ColumnLimit
+    option to set the margin, for example.
 
-    \sa {C++ Code Style}
-    \endif
-
-    \sa {Behavior}, {Qt Quick Code Style}, {Keyboard Shortcuts}
+    \sa {C++ code style}, {Specify Qt Quick code style}, {Behavior},
+    {Keyboard shortcuts}
 */

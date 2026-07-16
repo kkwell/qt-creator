@@ -185,6 +185,31 @@ private:
     bool _isClassDeclarator;
 };
 
+class CPLUSPLUS_EXPORT TemplateTypeArgument final : public Scope
+{
+public:
+    TemplateTypeArgument(TranslationUnit *translationUnit, int sourceLocation, const Name *name);
+    TemplateTypeArgument(Clone *clone, Subst *subst, TemplateTypeArgument *original);
+    ~TemplateTypeArgument() = default;
+    void setType(const FullySpecifiedType &type) { _type = type; }
+    void setClassDeclarator(bool isClassDecl) { _isClassDeclarator = isClassDecl; }
+    bool isClassDeclarator() const { return _isClassDeclarator; }
+
+    const TemplateTypeArgument *asTemplateTypeArgument() const override { return this; }
+    TemplateTypeArgument *asTemplateTypeArgument() override { return this; }
+    FullySpecifiedType type() const override { return _type; }
+
+    const Name *conceptName() const { return _conceptName; }
+    void setConceptName(const Name *conceptName) { _conceptName = conceptName; }
+
+private:
+    void visitSymbol0(SymbolVisitor *visitor) override;
+
+    FullySpecifiedType _type;
+    const Name *_conceptName = nullptr;
+    bool _isClassDeclarator = true;
+};
+
 class CPLUSPLUS_EXPORT Block final : public Scope
 {
 public:

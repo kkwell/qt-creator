@@ -79,6 +79,7 @@ class Column;
 class Flow;
 class Form;
 class Grid;
+class Preview;
 
 class Widget;
 class Group;
@@ -87,7 +88,6 @@ class Row;
 class SpinBox;
 class Splitter;
 class Stack;
-class Tab;
 class TabWidget;
 class TextEdit;
 class ToolBar;
@@ -99,9 +99,9 @@ SOL_BASE_CLASSES(Layouting::Row, Layouting::Layout);
 SOL_BASE_CLASSES(Layouting::Flow, Layouting::Layout);
 SOL_BASE_CLASSES(Layouting::Grid, Layouting::Layout);
 SOL_BASE_CLASSES(Layouting::Form, Layouting::Layout);
+SOL_BASE_CLASSES(Layouting::Preview, Layouting::Column, Layouting::Layout, Layouting::Object);
 SOL_BASE_CLASSES(Layouting::Widget, Layouting::Object);
 SOL_BASE_CLASSES(Layouting::Stack, Layouting::Widget);
-SOL_BASE_CLASSES(Layouting::Tab, Layouting::Widget);
 SOL_BASE_CLASSES(Layouting::Group, Layouting::Widget);
 SOL_BASE_CLASSES(Layouting::TextEdit, Layouting::Widget);
 SOL_BASE_CLASSES(Layouting::PushButton, Layouting::Widget);
@@ -118,9 +118,9 @@ SOL_DERIVED_CLASSES(
     Layouting::Flow,
     Layouting::Grid,
     Layouting::Form,
+    Layouting::Preview,
     Layouting::Widget,
     Layouting::Stack,
-    Layouting::Tab,
     Layouting::Group,
     Layouting::TextEdit,
     Layouting::PushButton,
@@ -128,4 +128,3 @@ SOL_DERIVED_CLASSES(
     Layouting::Splitter,
     Layouting::ToolBar,
     Layouting::TabWidget);
-

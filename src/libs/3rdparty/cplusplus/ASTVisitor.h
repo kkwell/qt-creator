@@ -84,6 +84,7 @@ public:
     virtual bool visit(AwaitExpressionAST *) { return true; }
     virtual bool visit(BaseSpecifierAST *) { return true; }
     virtual bool visit(BinaryExpressionAST *) { return true; }
+    virtual bool visit(BinaryFoldExpressionAST *) { return true; }
     virtual bool visit(BoolLiteralAST *) { return true; }
     virtual bool visit(BracedInitializerAST *) { return true; }
     virtual bool visit(BracketDesignatorAST *) { return true; }
@@ -109,6 +110,7 @@ public:
     virtual bool visit(DeclaratorIdAST *) { return true; }
     virtual bool visit(DecompositionDeclaratorAST *) { return true; }
     virtual bool visit(DecltypeSpecifierAST *) { return true; }
+    virtual bool visit(DeductionGuideAST *) { return true; }
     virtual bool visit(DeleteExpressionAST *) { return true; }
     virtual bool visit(DesignatedInitializerAST *) { return true; }
     virtual bool visit(DestructorNameAST *) { return true; }
@@ -228,6 +230,7 @@ public:
     virtual bool visit(TypenameTypeParameterAST *) { return true; }
     virtual bool visit(TypeofSpecifierAST *) { return true; }
     virtual bool visit(UnaryExpressionAST *) { return true; }
+    virtual bool visit(UnaryFoldExpressionAST *) { return true; }
     virtual bool visit(UsingAST *) { return true; }
     virtual bool visit(UsingDirectiveAST *) { return true; }
     virtual bool visit(WhileStatementAST *) { return true; }
@@ -245,6 +248,7 @@ public:
     virtual void endVisit(AwaitExpressionAST *) {}
     virtual void endVisit(BaseSpecifierAST *) {}
     virtual void endVisit(BinaryExpressionAST *) {}
+    virtual void endVisit(BinaryFoldExpressionAST *) {}
     virtual void endVisit(BoolLiteralAST *) {}
     virtual void endVisit(BracedInitializerAST *) {}
     virtual void endVisit(BracketDesignatorAST *) {}
@@ -270,6 +274,7 @@ public:
     virtual void endVisit(DeclaratorIdAST *) {}
     virtual void endVisit(DecompositionDeclaratorAST *) {}
     virtual void endVisit(DecltypeSpecifierAST *) {}
+    virtual void endVisit(DeductionGuideAST *) {}
     virtual void endVisit(DeleteExpressionAST *) {}
     virtual void endVisit(DesignatedInitializerAST *) {}
     virtual void endVisit(DestructorNameAST *) {}
@@ -389,6 +394,7 @@ public:
     virtual void endVisit(TypenameTypeParameterAST *) {}
     virtual void endVisit(TypeofSpecifierAST *) {}
     virtual void endVisit(UnaryExpressionAST *) {}
+    virtual void endVisit(UnaryFoldExpressionAST *) {}
     virtual void endVisit(UsingAST *) {}
     virtual void endVisit(UsingDirectiveAST *) {}
     virtual void endVisit(WhileStatementAST *) {}

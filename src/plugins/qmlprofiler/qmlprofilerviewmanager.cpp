@@ -6,19 +6,16 @@
 #include "qmlprofilertr.h"
 #include "qmlprofilerviewmanager.h"
 
-#include <debugger/analyzer/analyzermanager.h>
+#include <coreplugin/perspective.h>
 
 #include <projectexplorer/projectexplorerconstants.h>
 
 #include <utils/qtcassert.h>
 
-#include <QDockWidget>
-
-using namespace Debugger;
+using namespace Core;
 using namespace Utils;
 
-namespace QmlProfiler {
-namespace Internal {
+namespace QmlProfiler::Internal {
 
 QmlProfilerViewManager::QmlProfilerViewManager(QObject *parent,
                                                QmlProfilerModelManager *modelManager,
@@ -101,5 +98,4 @@ void QmlProfilerViewManager::clear()
         m_traceView->clear();
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

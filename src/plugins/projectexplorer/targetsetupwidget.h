@@ -3,8 +3,6 @@
 
 #pragma once
 
-#include "projectexplorer_export.h"
-
 #include "buildinfo.h"
 #include "kit.h"
 #include "task.h"
@@ -23,6 +21,7 @@ QT_END_NAMESPACE
 
 namespace Utils {
 class DetailsWidget;
+class MacroExpander;
 class PathChooser;
 } // namespace Utils
 
@@ -43,8 +42,9 @@ public:
 
     bool isKitSelected() const;
     void setKitSelected(bool b);
+    bool isValid() const { return m_isValid; }
 
-    void addBuildInfo(const BuildInfo &info, bool isImport);
+    void addBuildInfos(const QList<BuildInfo> &infos, bool isImport);
 
     const QList<BuildInfo> selectedBuildInfoList() const;
     void setProjectPath(const Utils::FilePath &projectPath);
@@ -53,23 +53,48 @@ public:
 
 signals:
     void selectedToggled() const;
+    void validToggled() const;
 
 private:
+    struct BuildInfoStore {
+        ~BuildInfoStore();
+        BuildInfoStore() = default;
+        BuildInfoStore(const BuildInfoStore &other) = delete;
+        BuildInfoStore(BuildInfoStore &&other);
+        BuildInfoStore &operator=(const BuildInfoStore &other) = delete;
+        BuildInfoStore &operator=(BuildInfoStore &&other);
+
+        Utils::FilePath expandedBuildDir(const Kit *kit) const;
+
+        BuildInfo buildInfo;
+        QCheckBox *checkbox = nullptr;
+        QLabel *label = nullptr;
+        QLabel *issuesLabel = nullptr;
+        Utils::PathChooser *pathChooser = nullptr;
+        Utils::MacroExpander *expander = nullptr;
+
+        bool isEnabled = false;
+        bool hasIssues = false;
+        bool customBuildDir = false;
+        bool isImported = false;
+    };
+
     static const QList<BuildInfo> buildInfoList(const Kit *k, const Utils::FilePath &projectPath);
 
-    bool hasSelectedBuildConfigurations() const;
+    bool hasSelectableBuildConfigurations() const;
 
-    void toggleEnabled(bool enabled);
+    void setValid(bool valid);
     void checkBoxToggled(QCheckBox *checkBox, bool b);
     void pathChanged(Utils::PathChooser *pathChooser);
     void targetCheckBoxToggled(bool b);
     void manageKit();
 
     void reportIssues(int index);
-    QPair<Task::TaskType, QString> findIssues(const BuildInfo &info);
+    QPair<Task::TaskType, QString> findIssues(const BuildInfoStore &store);
     void clear();
     void updateDefaultBuildDirectories();
 
+    bool m_isValid = false;
     Kit *m_kit;
     Utils::FilePath m_projectPath;
     bool m_haveImported = false;
@@ -77,23 +102,6 @@ private:
     QPushButton *m_manageButton;
     QGridLayout *m_newBuildsLayout;
 
-    struct BuildInfoStore {
-        ~BuildInfoStore();
-        BuildInfoStore() = default;
-        BuildInfoStore(const BuildInfoStore &other) = delete;
-        BuildInfoStore(BuildInfoStore &&other);
-        BuildInfoStore &operator=(const BuildInfoStore &other) = delete;
-        BuildInfoStore &operator=(BuildInfoStore &&other) = delete;
-
-        BuildInfo buildInfo;
-        QCheckBox *checkbox = nullptr;
-        QLabel *label = nullptr;
-        QLabel *issuesLabel = nullptr;
-        Utils::PathChooser *pathChooser = nullptr;
-        bool isEnabled = false;
-        bool hasIssues = false;
-        bool customBuildDir = false;
-    };
     std::vector<BuildInfoStore> m_infoStore;
 
     Utils::Guard m_ignoreChanges;

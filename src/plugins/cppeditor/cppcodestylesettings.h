@@ -5,11 +5,14 @@
 
 #include "cppeditor_global.h"
 
+#include <texteditor/icodestylepreferences.h>
+
 #include <utils/store.h>
 
 namespace CPlusPlus { class Overview; }
-namespace TextEditor { class TabSettings; }
 namespace ProjectExplorer { class Project; }
+namespace TextEditor { class TabSettings; }
+namespace Utils { class Id; }
 
 namespace CppEditor {
 
@@ -65,7 +68,7 @@ public:
     bool forceFormatting = false;
 #endif
 
-    Utils::Store toMap() const;
+    void toMap(Utils::Store &map) const;
     void fromMap(const Utils::Store &map);
 
     bool equals(const CppCodeStyleSettings &rhs) const;
@@ -75,9 +78,6 @@ public:
     static CppCodeStyleSettings getProjectCodeStyle(ProjectExplorer::Project *project);
     static CppCodeStyleSettings currentProjectCodeStyle();
     static CppCodeStyleSettings currentGlobalCodeStyle();
-    static TextEditor::TabSettings getProjectTabSettings(ProjectExplorer::Project *project);
-    static TextEditor::TabSettings currentProjectTabSettings();
-    static TextEditor::TabSettings currentGlobalTabSettings();
 
     /*! Returns an Overview configured by the current project's code style.
 
@@ -93,7 +93,10 @@ public:
         default constructed Overview is returned.
         */
     static CPlusPlus::Overview currentGlobalCodeStyleOverview();
+    static Utils::Id settingsId();
 };
+
+using CppCodeStylePreferences = TextEditor::TypedCodeStylePreferences<CppCodeStyleSettings>;
 
 } // namespace CppEditor
 

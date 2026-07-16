@@ -21,7 +21,7 @@ namespace ProjectExplorer {
 // --------------------------------------------------------------------------
 
 class Abi;
-using Abis = QVector<Abi>;
+using Abis = QList<Abi>;
 
 class PROJECTEXPLORER_EXPORT Abi
 {
@@ -54,6 +54,7 @@ public:
         R32CArchitecture,
         CR16Architecture,
         RiscVArchitecture,
+        LoongArchArchitecture,
         UnknownArchitecture
     };
 
@@ -77,6 +78,7 @@ public:
 
         // Linux
         AndroidLinuxFlavor,
+        OpenHarmonyLinuxFlavor,
 
         // Unix
         SolarisUnixFlavor,
@@ -91,7 +93,8 @@ public:
         WindowsMsvc2017Flavor,
         WindowsMsvc2019Flavor,
         WindowsMsvc2022Flavor,
-        WindowsLastMsvcFlavor = WindowsMsvc2022Flavor,
+        WindowsMsvc2026Flavor,
+        WindowsLastMsvcFlavor = WindowsMsvc2026Flavor,
         WindowsMSysFlavor,
         WindowsCEFlavor,
 
@@ -143,6 +146,8 @@ public:
     QString toString() const;
     QString param() const;
 
+    QString toAndroidAbi() const;
+
     static QString toString(const Architecture &a);
     static QString toString(const OS &o);
     static QString toString(const OSFlavor &of);
@@ -165,7 +170,7 @@ public:
     static Abi hostAbi();
     static Abis abisOfBinary(const Utils::FilePath &path);
 
-    friend auto qHash(const ProjectExplorer::Abi &abi)
+    friend size_t qHash(const ProjectExplorer::Abi &abi)
     {
         int h = abi.architecture()
                 + (abi.os() << 3)
@@ -183,5 +188,9 @@ private:
     unsigned char m_wordWidth;
     QString m_param;
 };
+
+#ifdef WITH_TESTS
+namespace Internal { QObject *createAbiTest(); }
+#endif
 
 } // namespace ProjectExplorer

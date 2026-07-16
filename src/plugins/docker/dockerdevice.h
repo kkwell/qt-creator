@@ -3,57 +3,48 @@
 
 #pragma once
 
+#include "dockerdeviceenvironmentaspect.h"
+
 #include <coreplugin/documentmanager.h>
 
 #include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/devicesupport/idevicefactory.h>
 
-#include <QMutex>
+#include <utils/synchronizedvalue.h>
 
-namespace Docker::Internal {
+namespace Docker {
+namespace Internal {
 
-class DockerDeviceSettings : public ProjectExplorer::DeviceSettings
+class DockerDevicePrivate;
+class DockerDeviceSetupWizard;
+class DockerDeviceWidget;
+
+class PortMappings final : public Utils::AspectList
 {
 public:
-    DockerDeviceSettings();
+    explicit PortMappings(Utils::AspectContainer *container);
 
-    void fromMap(const Utils::Store &map) override;
-
-    QString repoAndTag() const;
-    QString repoAndTagEncoded() const;
-    Utils::FilePath rootPath() const;
-
-    Utils::StringAspect imageId{this};
-    Utils::StringAspect repo{this};
-    Utils::StringAspect tag{this};
-    Utils::BoolAspect useLocalUidGid{this};
-    Utils::FilePathListAspect mounts{this};
-    Utils::BoolAspect keepEntryPoint{this};
-    Utils::BoolAspect enableLldbFlags{this};
-    Utils::FilePathAspect clangdExecutable{this};
-    Utils::StringSelectionAspect network{this};
-    Utils::StringAspect extraArgs{this};
-
-    Utils::TextDisplay containerStatus{this};
+    QStringList createArguments() const;
+    QSet<int> usedContainerPorts() const;
 };
 
-class DockerDevice : public ProjectExplorer::IDevice
+} // namespace Internal
+
+class DOCKER_EXPORT DockerDevice : public ProjectExplorer::IDevice
 {
 public:
     using Ptr = std::shared_ptr<DockerDevice>;
     using ConstPtr = std::shared_ptr<const DockerDevice>;
 
-    explicit DockerDevice(std::unique_ptr<DockerDeviceSettings> settings);
+    DockerDevice();
     ~DockerDevice();
 
     void shutdown();
 
-    static Ptr create(std::unique_ptr<DockerDeviceSettings> settings)
-    {
-        return Ptr(new DockerDevice(std::move(settings)));
-    }
+    static Ptr create() { return Ptr(new DockerDevice); }
 
     Utils::CommandLine createCommandLine() const;
+    Utils::CommandLine createCommandLineForDisplay() const;
 
     ProjectExplorer::IDeviceWidget *createWidget() override;
     QList<ProjectExplorer::Task> validate() const override;
@@ -62,41 +53,69 @@ public:
 
     bool canCreateProcessModel() const override { return true; }
     bool hasDeviceTester() const override { return false; }
-    ProjectExplorer::DeviceTester *createDeviceTester() const override;
-    bool usableAsBuildDevice() const override;
+    ProjectExplorer::DeviceTester *createDeviceTester() override;
 
     Utils::FilePath rootPath() const override;
-    Utils::FilePath filePath(const QString &pathOnDevice) const override;
 
     bool canMount(const Utils::FilePath &filePath) const override
     {
-        return !filePath.needsDevice() || filePath.isSameDevice(rootPath());
+        return filePath.isLocal() || filePath.isSameDevice(rootPath());
     }
 
-    bool handlesFile(const Utils::FilePath &filePath) const override;
-    bool ensureReachable(const Utils::FilePath &other) const override;
-    Utils::expected_str<Utils::FilePath> localSource(const Utils::FilePath &other) const override;
+    bool supportsQtTargetDeviceType(const QSet<Utils::Id> &targetDeviceTypes) const override;
 
-    Utils::expected_str<Utils::Environment> systemEnvironmentWithError() const override;
+    Utils::Result<> supportsBuildingProject(const Utils::FilePath &projectDir) const override;
+    Utils::Result<> handlesFile(const Utils::FilePath &filePath) const override;
+    Utils::Result<> ensureReachable(const Utils::FilePath &other) const override;
+    Utils::Result<Utils::FilePath> localSource(const Utils::FilePath &other) const override;
 
-    Utils::expected_str<void> updateContainerAccess() const;
-    void setMounts(const QStringList &mounts) const;
+    Utils::Result<Utils::Environment> systemEnvironmentWithError() const override;
+
+    Utils::Result<> updateContainerAccess() const;
 
     bool prepareForBuild(const ProjectExplorer::Target *target) override;
-    std::optional<Utils::FilePath> clangdExecutable() const override;
+
+    QString repoAndTag() const;
+    QString repoAndTagEncoded() const;
+
+    QString deviceStateToString() const override;
+    QPixmap deviceStateIcon() const override;
+
+    QUrl toolControlChannel(const ControlChannelHint &) const override;
+    QString qmlDebugServerBindHost() const override;
+
+    QtTaskTree::ExecutableItem signalOperationRecipe(
+        const ProjectExplorer::SignalOperationData &data,
+        const QtTaskTree::Storage<Utils::Result<>> &resultStorage) const final;
+
+    Utils::StringAspect imageId{this};
+    Utils::StringAspect repo{this};
+    Utils::StringAspect tag{this};
+    Utils::BoolAspect useLocalUidGid{this};
+    Utils::FilePathListAspect mounts{this};
+    Utils::BoolAspect keepEntryPoint{this};
+    Utils::BoolAspect enableLldbFlags{this};
+    Utils::StringSelectionAspect network{this};
+    Utils::StringAspect extraArgs{this};
+    DockerDeviceEnvironmentAspect environment{this};
+    Internal::PortMappings portMappings{this};
+    Utils::BoolAspect mountCmdBridge{this};
+    Utils::BoolAspect enableX11Forwarding{this};
 
 protected:
     void fromMap(const Utils::Store &map) final;
-    Utils::Store toMap() const final;
+    void toMap(Utils::Store &map) const final;
 
 private:
     void aboutToBeRemoved() const final;
 
-    class DockerDevicePrivate *d = nullptr;
+    Internal::DockerDevicePrivate *d = nullptr;
 
-    friend class DockerDeviceSetupWizard;
-    friend class DockerDeviceWidget;
+    friend class Internal::DockerDeviceSetupWizard;
+    friend class Internal::DockerDeviceWidget;
 };
+
+namespace Internal {
 
 class DockerDeviceFactory final : public ProjectExplorer::IDeviceFactory
 {
@@ -106,8 +125,8 @@ public:
     void shutdownExistingDevices();
 
 private:
-    QMutex m_deviceListMutex;
-    std::vector<std::weak_ptr<DockerDevice>> m_existingDevices;
+    Utils::SynchronizedValue<std::vector<std::weak_ptr<DockerDevice>>> m_existingDevices;
 };
 
-} // namespace Docker::Internal
+} // namespace Internal
+} // namespace Docker

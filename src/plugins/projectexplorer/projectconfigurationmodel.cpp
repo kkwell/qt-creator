@@ -3,14 +3,10 @@
 
 #include "projectconfigurationmodel.h"
 
-#include "buildconfiguration.h"
-#include "deployconfiguration.h"
 #include "projectconfiguration.h"
 #include "projectexplorertr.h"
 #include "runconfiguration.h"
-#include "target.h"
 
-#include <utils/algorithm.h>
 #include <utils/stringutils.h>
 
 /*!
@@ -26,14 +22,6 @@ namespace ProjectExplorer {
 static bool isOrderedBefore(const ProjectConfiguration *a, const ProjectConfiguration *b)
 {
     return Utils::caseFriendlyCompare(a->displayName(), b->displayName()) < 0;
-}
-
-ProjectConfigurationModel::ProjectConfigurationModel(Target *target) :
-    m_target(target)
-{
-    connect(target, &Target::runConfigurationsUpdated, this, [this] {
-        emit dataChanged(index(0, 0), index(rowCount(), 0));
-    });
 }
 
 int ProjectConfigurationModel::rowCount(const QModelIndex &parent) const
@@ -96,10 +84,7 @@ QVariant ProjectConfigurationModel::data(const QModelIndex &index, int role) con
 
     if (role == Qt::DisplayRole) {
         ProjectConfiguration * const config = m_projectConfigurations.at(index.row());
-        QString displayName = config->expandedDisplayName();
-        if (const auto rc = qobject_cast<RunConfiguration *>(config); rc && !rc->hasCreator())
-            displayName += QString(" [%1]").arg(Tr::tr("unavailable"));
-        return displayName;
+        return config->expandedDisplayName();
     }
     return {};
 }
@@ -141,6 +126,11 @@ void ProjectConfigurationModel::removeProjectConfiguration(ProjectConfiguration 
     beginRemoveRows(QModelIndex(), i, i);
     m_projectConfigurations.removeAt(i);
     endRemoveRows();
+}
+
+void ProjectConfigurationModel::triggerUpdate()
+{
+    emit dataChanged(index(0, 0), index(rowCount(), 0));
 }
 
 } // ProjectExplorer

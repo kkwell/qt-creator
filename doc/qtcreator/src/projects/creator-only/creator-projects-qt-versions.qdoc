@@ -22,7 +22,7 @@
     To view the installed Qt versions, select \preferences > \uicontrol Kits >
     \uicontrol {Qt Versions}.
 
-    \image qtcreator-qt-versions.png {Qt Versions tab in Kit preferences}
+    \image {qtcreator-qt-versions.webp} {Qt Versions tab in Kits preferences}
 
     To view detailed information about each Qt version, select it in the list and
     select \uicontrol Details in the \uicontrol {Qt version for} section.
@@ -31,7 +31,7 @@
 
     \section1 Register installed Qt versions
 
-    You can link to a Qt that \QOI installed to
+    You can link to a Qt that \l{Get and Install Qt}{\QOI} installed to
     automatically detect the installed Qt versions. However, you cannot link
     to a Qt that the system installed with some other package
     manager, such as your Linux distribution, brew on \macos, or Chocolatey on
@@ -44,7 +44,7 @@
     \list 1
         \li Select \preferences > \uicontrol Kits > \uicontrol {Qt Versions} >
             \uicontrol {Link with Qt}.
-            \image qtcreator-link-with-qt.png {Choose Qt Installation dialog}
+            \image {qtcreator-link-with-qt.png} {Choose Qt Installation dialog}
         \li In the \uicontrol {Qt installation path} field, enter the path to
             the directory where you installed Qt.
         \li Select \uicontrol {Link with Qt} to automatically register Qt
@@ -52,17 +52,23 @@
         \li Select \uicontrol {Restart Now} to restart \QC.
     \endlist
 
+    To refresh the list of automatically detected Qt versions, select
+    \uicontrol {Re-detect}.
+
     To remove the automatically detected Qt versions from the list, select
     \uicontrol {Remove Link}.
 
     If the \uicontrol {Qt Versions} tab does not show a Qt version
-    under \uicontrol Auto-detected, set it up manually.
+    under \uicontrol {Automatically Managed}, set it up manually.
 
     You specify the Qt version to use for each \l{glossary-buildandrun-kit}
     {kit} for building and running your projects in \preferences >
     \uicontrol Kits.
 
     \section1 Set up new Qt versions
+
+    To register a Qt version, set the path to the directory that contains the
+    qmake or \c {qtpaths} executable for that Qt version.
 
     To add a Qt version:
 
@@ -71,15 +77,19 @@
             \li Select \preferences > \uicontrol Kits >
                 \uicontrol {Qt Versions} > \uicontrol Add.
 
-            \li Select the qmake executable for the Qt version to add.
+                To add a Qt version on a remote Linux device or in Docker,
+                select \key Shift and then select \uicontrol Add.
+
+            \li Select the qmake or \c {qtpaths} executable for the Qt version
+                to add.
 
             \li Select the Qt version to view and edit it.
 
             \li In the \uicontrol{Name} field, edit the name that \QC
                 suggests for the Qt version.
 
-            \li In the \uicontrol{qmake path} field, you can change the qmake
-                location.
+            \li In the \uicontrol{qmake path} field, you can change the location
+                of qmake or \c {qtpaths}.
 
             \li If the Qt version is for QNX, enter the path to the QNX SDK in the
                 \uicontrol{QNX SDK} field.
@@ -145,8 +155,7 @@
             to the location where you installed Qt.
     \endlist
 
-    \image qtcreator-edit-cmake-configuration-self-built-qt.webp {Setting the path to a self-built Qt}
+    \image {qtcreator-edit-cmake-configuration-self-built-qt.webp} {Setting the path to a self-built Qt}
 
-    \sa {Manage Kits}{How To: Manage Kits}, {kits-tab}{Kits}
+    \sa {Manage kits}{How to: Manage kits}, {Managing kits}
 */
-

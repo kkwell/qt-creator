@@ -14,9 +14,7 @@
 #include <debugger/debuggercore.h>
 #include <debugger/debuggerdialogs.h>
 #include <debugger/debuggerinternalconstants.h>
-#include <debugger/debuggermainwindow.h>
 #include <debugger/debuggerprotocol.h>
-#include <debugger/debuggerruncontrol.h>
 #include <debugger/debuggertooltipmanager.h>
 #include <debugger/debuggertr.h>
 #include <debugger/moduleshandler.h>
@@ -41,6 +39,7 @@
 #include <coreplugin/icore.h>
 #include <coreplugin/idocument.h>
 #include <coreplugin/messagebox.h>
+#include <coreplugin/perspective.h>
 
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/buildsystem.h>
@@ -49,8 +48,6 @@
 
 #include <QDateTime>
 #include <QDebug>
-#include <QDir>
-#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocalSocket>
@@ -195,7 +192,7 @@ void DapEngine::handleDapInitialize()
 {
     QTC_ASSERT(state() == EngineRunRequested, qCDebug(logCategory()) << state());
 
-    m_dapClient->sendLaunch(runParameters().inferior.command);
+    m_dapClient->sendLaunch(runParameters().inferior().command);
 
     qCDebug(logCategory()) << "handleDapLaunch";
 }
@@ -503,7 +500,7 @@ void DapEngine::refreshModules(const GdbMi &modules)
                    && path.endsWith("' (built-in)>")) {
             path = "(builtin)";
         }
-        module.modulePath = FilePath::fromString(path);
+        module.modulePath = FilePath::fromUserInput(path);
         handler->updateModule(module);
     }
     handler->endUpdateAll();
@@ -523,7 +520,7 @@ void DapEngine::refreshState(const GdbMi &reportedState)
 void DapEngine::refreshLocation(const GdbMi &reportedLocation)
 {
     StackFrame frame;
-    frame.file = FilePath::fromString(reportedLocation["file"].data());
+    frame.file = FilePath::fromUserInput(reportedLocation["file"].data());
     frame.line = reportedLocation["line"].toInt();
     frame.usable = frame.file.isReadableFile();
     if (state() == InferiorRunOk) {
@@ -543,7 +540,7 @@ void DapEngine::refreshSymbols(const GdbMi &symbols)
         symbol.name = item["name"].data();
         syms.append(symbol);
     }
-    showModuleSymbols(FilePath::fromString(moduleName), syms);
+    showModuleSymbols(FilePath::fromUserInput(moduleName), syms);
 }
 
 bool DapEngine::canHandleToolTip(const DebuggerToolTipContext &) const
@@ -566,7 +563,7 @@ void DapEngine::reexpandItems(const QSet<QString> &inames)
     for (auto it = watcherNames.begin(); it != watcherNames.end(); ++it)
         expandedInames.insert(watchHandler()->watcherName(it.key()));
 
-    QList<QString> inamesVector = expandedInames.values();
+    QStringList inamesVector = expandedInames.values();
     inamesVector.sort();
 
     for (const QString &iname : std::as_const(inamesVector)) {
@@ -699,7 +696,7 @@ void DapEngine::handleResponse(DapResponseType type, const QJsonObject &response
             AsynchronousMessageBox::critical(
                 Tr::tr("Failed to Start Application"),
                 Tr::tr("\"%1\" could not be started. Error message: %2")
-                    .arg(runParameters().inferior.command.toUserOutput())
+                    .arg(runParameters().inferior().command.toUserOutput())
                     .arg(response.value("message").toString()));
         }
         break;
@@ -721,7 +718,7 @@ void DapEngine::handleStackTraceResponse(const QJsonObject &response)
         return;
 
     QJsonObject stackFrame = stackFrames[0].toObject();
-    const FilePath file = FilePath::fromString(
+    const FilePath file = FilePath::fromUserInput(
         stackFrame.value("source").toObject().value("path").toString());
     const int line = stackFrame.value("line").toInt();
     qCDebug(logCategory()) << "stackTrace success" << file << line;
@@ -740,8 +737,8 @@ void DapEngine::handleScopesResponse(const QJsonObject &response)
     watchHandler()->resetValueCache();
     watchHandler()->notifyUpdateStarted();
 
-    QJsonArray scopes = response.value("body").toObject().value("scopes").toArray();
-    for (const QJsonValueRef &scope : scopes) {
+    const QJsonArray scopes = response.value("body").toObject().value("scopes").toArray();
+    for (const QJsonValueConstRef &scope : scopes) {
         const QString name = scope.toObject().value("name").toString();
         if (name == "Registers")
             continue;
@@ -755,13 +752,13 @@ void DapEngine::handleScopesResponse(const QJsonObject &response)
 
 void DapEngine::handleThreadsResponse(const QJsonObject &response)
 {
-    QJsonArray threads = response.value("body").toObject().value("threads").toArray();
+    const QJsonArray threads = response.value("body").toObject().value("threads").toArray();
 
     if (threads.isEmpty())
         return;
 
     ThreadsHandler *handler = threadsHandler();
-    for (const QJsonValueRef &thread : threads) {
+    for (const QJsonValueConstRef &thread : threads) {
         ThreadData threadData;
         threadData.id = QString::number(thread.toObject().value("id").toInt());
         threadData.name = thread.toObject().value("name").toString();
@@ -800,10 +797,10 @@ void DapEngine::handleEvaluateResponse(const QJsonObject &response)
 void DapEngine::handleBreakpointResponse(const QJsonObject &response)
 {
     const QJsonObject body = response.value("body").toObject();
-    QJsonArray breakpoints = body.value("breakpoints").toArray();
+    const QJsonArray breakpoints = body.value("breakpoints").toArray();
 
     QHash<QString, QJsonObject> map;
-    for (QJsonValueRef jsonbp : breakpoints) {
+    for (const QJsonValueConstRef &jsonbp : breakpoints) {
         QJsonObject breakpoint = jsonbp.toObject();
         QString fileName = breakpoint.value("source").toObject().value("path").toString();
         int line = breakpoint.value("line").toInt();
@@ -814,7 +811,7 @@ void DapEngine::handleBreakpointResponse(const QJsonObject &response)
     const Breakpoints bps = breakHandler()->breakpoints();
     for (const Breakpoint &bp : bps) {
         BreakpointParameters parameters = bp->requestedParameters();
-        QString mapKey = parameters.fileName.toString() + ":"
+        QString mapKey = parameters.fileName.toUrlishString() + ":"
                          + QString::number(parameters.textPosition.line);
         if (map.find(mapKey) != map.end()) {
             if (bp->state() == BreakpointRemoveProceeding) {
@@ -854,14 +851,14 @@ void DapEngine::handleBreakpointResponse(const QJsonObject &response)
             if (!bp->isEnabled())
                 continue;
 
-            QString path = bp->requestedParameters().fileName.toString();
+            FilePath path = bp->requestedParameters().fileName;
             int line = bp->requestedParameters().textPosition.line;
 
             QJsonObject jsonBreakpoint;
             QString key;
             for (auto it = map.cbegin(); it != map.cend(); ++it) {
                 const QJsonObject breakpoint = *it;
-                if (path == bp->requestedParameters().fileName.toString()
+                if (path == bp->requestedParameters().fileName
                     && abs(breakpoint.value("line").toInt() - line)
                            < abs(jsonBreakpoint.value("line").toInt() - line)) {
                     jsonBreakpoint = breakpoint;
@@ -1003,7 +1000,7 @@ void DapEngine::refreshStack(const QJsonArray &stackFrames)
         frame.function = item.value("name").toString();
         frame.line = item.value("line").toInt();
         QJsonObject source = item.value("source").toObject();
-        frame.file = FilePath::fromString(source.value("path").toString());
+        frame.file = FilePath::fromUserInput(source.value("path").toString());
         frame.address = item.value("instructionPointerReference").toInt();
         frame.usable = frame.file.isReadableFile();
         frame.debuggerId = item.value("id").toInt();

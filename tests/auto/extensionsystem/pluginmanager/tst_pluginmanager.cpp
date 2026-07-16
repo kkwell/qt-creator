@@ -5,11 +5,15 @@
 #include <extensionsystem/pluginspec.h>
 #include <extensionsystem/iplugin.h>
 
-#include <QtTest>
+#include <utils/qtcsettings_p.h>
 
 #include <QObject>
+#include <QSignalSpy>
+#include <QTest>
 
 using namespace ExtensionSystem;
+using namespace Utils;
+using namespace Utils::Internal;
 
 class SignalReceiver;
 
@@ -55,7 +59,7 @@ static Utils::FilePath pluginFolder(const QLatin1String &folder)
 void tst_PluginManager::init()
 {
     m_pm = new PluginManager;
-    PluginManager::setSettings(new Utils::QtcSettings);
+    SettingsSetup::setupSettings(new QtcSettings, new QtcSettings);
     PluginManager::setPluginIID(QLatin1String("plugin"));
     m_objectAdded = new QSignalSpy(m_pm, &PluginManager::objectAdded);
     m_aboutToRemoveObject = new QSignalSpy(m_pm, &PluginManager::aboutToRemoveObject);
@@ -65,6 +69,7 @@ void tst_PluginManager::init()
 void tst_PluginManager::cleanup()
 {
     PluginManager::shutdown();
+    SettingsSetup::destroySettings();
     delete m_pm;
     delete m_objectAdded;
     delete m_aboutToRemoveObject;
@@ -143,14 +148,14 @@ void tst_PluginManager::circularPlugins()
     const PluginSpecs plugins = PluginManager::plugins();
     QCOMPARE(plugins.count(), 3);
     for (PluginSpec *spec : plugins) {
-        if (spec->name() == "plugin1") {
+        if (spec->id() == "plugin1") {
             QVERIFY(spec->hasError());
             QCOMPARE(spec->state(), PluginSpec::Resolved);
             QCOMPARE(spec->plugin(), static_cast<IPlugin *>(0));
-        } else if (spec->name() == "plugin2") {
+        } else if (spec->id() == "plugin2") {
             QVERIFY2(!spec->hasError(), qPrintable(spec->errorString()));
             QCOMPARE(spec->state(), PluginSpec::Running);
-        } else if (spec->name() == "plugin3") {
+        } else if (spec->id() == "plugin3") {
             QVERIFY(spec->hasError());
             QCOMPARE(spec->state(), PluginSpec::Resolved);
             QCOMPARE(spec->plugin(), static_cast<IPlugin *>(0));
@@ -178,7 +183,7 @@ void tst_PluginManager::correctPlugins1()
     bool plugin1running = false;
     bool plugin2running = false;
     bool plugin3running = false;
-    const QVector<QObject *> objs = PluginManager::allObjects();
+    const QList<QObject *> objs = PluginManager::allObjects();
     for (QObject *obj : objs) {
         if (obj->objectName() == "MyPlugin1_running")
             plugin1running = true;

@@ -3,6 +3,7 @@
 
 #include "stlinkuvscserverprovider.h"
 
+#include "uvscserverprovider.h"
 #include "uvproject.h"
 #include "uvprojectwriter.h"
 
@@ -90,7 +91,7 @@ public:
     void fromMap(const Store &data) final;
 
     bool operator==(const IDebugServerProvider &other) const final;
-    Utils::FilePath optionsFilePath(Debugger::DebuggerRunTool *runTool,
+    Utils::FilePath optionsFilePath(ProjectExplorer::RunControl *runControl,
                                     QString &errorMessage) const final;
 private:
     explicit StLinkUvscServerProvider();
@@ -221,11 +222,11 @@ bool StLinkUvscServerProvider::operator==(const IDebugServerProvider &other) con
     return true;
 }
 
-FilePath StLinkUvscServerProvider::optionsFilePath(DebuggerRunTool *runTool,
+FilePath StLinkUvscServerProvider::optionsFilePath(RunControl *runControl,
                                                    QString &errorMessage) const
 {
-    const FilePath optionsPath = buildOptionsFilePath(runTool);
-    std::ofstream ofs(optionsPath.toString().toStdString(), std::ofstream::out);
+    const FilePath optionsPath = buildOptionsFilePath(runControl);
+    std::ofstream ofs(optionsPath.path().toStdString(), std::ofstream::out);
     Uv::ProjectOptionsWriter writer(&ofs);
     const StLinkUvProjectOptions projectOptions(this);
     if (!writer.write(&projectOptions)) {
@@ -233,15 +234,6 @@ FilePath StLinkUvscServerProvider::optionsFilePath(DebuggerRunTool *runTool,
         return {};
     }
     return optionsPath;
-}
-
-// StLinkUvscServerProviderFactory
-
-StLinkUvscServerProviderFactory::StLinkUvscServerProviderFactory()
-{
-    setId(Constants::UVSC_STLINK_PROVIDER_ID);
-    setDisplayName(Tr::tr("uVision St-Link"));
-    setCreator([] { return new StLinkUvscServerProvider; });
 }
 
 // StLinkUvscServerProviderConfigWidget
@@ -390,6 +382,24 @@ void StLinkUvscAdapterOptionsWidget::populateSpeeds()
         m_speedBox->addItem(Tr::tr("15kHz"), StLinkUvscAdapterOptions::Speed_15kHz);
         m_speedBox->addItem(Tr::tr("5kHz"), StLinkUvscAdapterOptions::Speed_5kHz);
     }
+}
+
+// StLinkUvscServerProviderFactory
+
+class StLinkUvscServerProviderFactory final : public IDebugServerProviderFactory
+{
+public:
+    StLinkUvscServerProviderFactory()
+    {
+        setId(Constants::UVSC_STLINK_PROVIDER_ID);
+        setDisplayName(Tr::tr("uVision St-Link"));
+        setCreator([] { return new StLinkUvscServerProvider; });
+    }
+};
+
+void setupStLinkUvscServerProvider()
+{
+    static StLinkUvscServerProviderFactory theStLinkUvscServerProviderFactory;
 }
 
 } // BareMetal::Internal

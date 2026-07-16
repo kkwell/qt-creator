@@ -84,7 +84,7 @@ StdIOClientInterface::StdIOClientInterface()
     : m_logFile("lspclient.XXXXXX.log")
 {
     m_logFile.setAutoRemove(false);
-    m_logFile.open();
+    QTC_CHECK(m_logFile.open());
 }
 
 StdIOClientInterface::~StdIOClientInterface()
@@ -110,14 +110,17 @@ void StdIOClientInterface::startImpl()
         if (m_process->result() != ProcessResult::FinishedWithSuccess)
             emit error(QString("%1 (see logs in \"%2\")")
                            .arg(m_process->exitMessage())
-                           .arg(m_logFile.fileName()));
+                           .arg(m_logFile.filePath().toUserOutput()));
         emit finished();
     });
     m_logFile.write(QString("Starting server: %1\nOutput:\n\n").arg(m_cmd.toUserOutput()).toUtf8());
     m_process->setCommand(m_cmd);
     m_process->setWorkingDirectory(m_workingDirectory);
-    if (m_env.hasChanges())
-        m_process->setEnvironment(m_env);
+    if (m_env)
+        m_process->setEnvironment(*m_env);
+    else
+        m_process->setEnvironment(m_cmd.executable().deviceEnvironment());
+    m_process->setAllowCoreDumps(m_allowCoreDumps);
     m_process->start();
 }
 
@@ -134,6 +137,11 @@ void StdIOClientInterface::setWorkingDirectory(const FilePath &workingDirectory)
 void StdIOClientInterface::setEnvironment(const Environment &environment)
 {
     m_env = environment;
+}
+
+void StdIOClientInterface::setAllowCoreDumps(bool enable)
+{
+    m_allowCoreDumps = enable;
 }
 
 FilePath StdIOClientInterface::serverDeviceTemplate() const

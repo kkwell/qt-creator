@@ -3,16 +3,20 @@
 
 #include "deployconfiguration.h"
 
+#include "buildconfiguration.h"
 #include "buildsteplist.h"
+#include "buildsystem.h"
 #include "deploymentdataview.h"
-#include "kitaspects.h"
+#include "devicesupport/devicekitaspects.h"
 #include "project.h"
 #include "projectexplorerconstants.h"
 #include "projectexplorertr.h"
 #include "target.h"
 
 #include <utils/algorithm.h>
+#include <utils/macroexpander.h>
 #include <utils/qtcassert.h>
+#include <utils/variablechooser.h>
 
 #include <QDebug>
 
@@ -25,12 +29,19 @@ const char BUILD_STEP_LIST_PREFIX[] = "ProjectExplorer.BuildConfiguration.BuildS
 const char USES_DEPLOYMENT_DATA[] = "ProjectExplorer.DeployConfiguration.CustomDataEnabled";
 const char DEPLOYMENT_DATA[] = "ProjectExplorer.DeployConfiguration.CustomData";
 
-DeployConfiguration::DeployConfiguration(Target *target, Id id)
-    : ProjectConfiguration(target, id)
+DeployConfiguration::DeployConfiguration(BuildConfiguration *bc, Id id)
+    : ProjectConfiguration(bc->target(), id)
+    , m_buildConfiguration(bc)
     , m_stepList(this, Constants::BUILDSTEPS_DEPLOY)
 {
     //: Default DeployConfiguration display name
     setDefaultDisplayName(Tr::tr("Deploy locally"));
+
+    // Allow to use Device::SshPort, KeyFile and so on on the custom deployment steps
+    MacroExpander &expander = *macroExpander();
+    expander.setDisplayName(Tr::tr("Run Settings"));
+    expander.setAccumulating(true);
+    expander.registerSubProvider({bc, [bc] { return bc->macroExpander(); }});
 }
 
 BuildStepList *DeployConfiguration::stepList()
@@ -47,7 +58,9 @@ QWidget *DeployConfiguration::createConfigWidget()
 {
     if (!m_configWidgetCreator)
         return nullptr;
-    return m_configWidgetCreator(this);
+    QWidget *widget = m_configWidgetCreator(this);
+    VariableChooser::addSupportForChildWidgets(widget, {this, macroExpander()});
+    return widget;
 }
 
 void DeployConfiguration::toMap(Store &map) const
@@ -57,10 +70,9 @@ void DeployConfiguration::toMap(Store &map) const
     map.insert(Key(BUILD_STEP_LIST_PREFIX) + '0', variantFromStore(m_stepList.toMap()));
     map.insert(USES_DEPLOYMENT_DATA, usesCustomDeploymentData());
     Store deployData;
-    for (int i = 0; i < m_customDeploymentData.fileCount(); ++i) {
-        const DeployableFile &f = m_customDeploymentData.fileAt(i);
-        deployData.insert(keyFromString(f.localFilePath().toString()), f.remoteDirectory());
-    }
+    const auto allFiles = m_customDeploymentData.allFiles();
+    for (const DeployableFile &f : allFiles)
+        deployData.insert(keyFromString(f.localFilePath().toUrlishString()), f.remoteDirectory());
     map.insert(DEPLOYMENT_DATA, variantFromStore(deployData));
 }
 
@@ -98,7 +110,23 @@ void DeployConfiguration::fromMap(const Store &map)
 
 bool DeployConfiguration::isActive() const
 {
-    return target()->isActive() && target()->activeDeployConfiguration() == this;
+    return project()->activeDeployConfiguration() == this;
+}
+void DeployConfiguration::setUseCustomDeploymentData(bool enabled)
+{
+    m_usesCustomDeploymentData = enabled;
+    emit buildSystem()->deploymentDataChanged();
+}
+
+void DeployConfiguration::setCustomDeploymentData(const DeploymentData &data)
+{
+    m_customDeploymentData = data;
+    emit buildSystem()->deploymentDataChanged();
+}
+
+BuildSystem *DeployConfiguration::buildSystem() const
+{
+    return buildConfiguration()->buildSystem();
 }
 
 
@@ -131,7 +159,7 @@ QString DeployConfigurationFactory::defaultDisplayName() const
 bool DeployConfigurationFactory::canHandle(Target *target) const
 {
     if (m_supportedProjectType.isValid()) {
-        if (target->project()->id() != m_supportedProjectType)
+        if (target->project()->type() != m_supportedProjectType)
             return false;
     }
 
@@ -140,7 +168,7 @@ bool DeployConfigurationFactory::canHandle(Target *target) const
 
     if (!m_supportedTargetDeviceTypes.isEmpty()) {
         if (!m_supportedTargetDeviceTypes.contains(
-                    DeviceTypeKitAspect::deviceTypeId(target->kit())))
+                    RunDeviceTypeKitAspect::deviceTypeId(target->kit())))
             return false;
     }
 
@@ -164,47 +192,47 @@ void DeployConfigurationFactory::setConfigBaseId(Id deployConfigBaseId)
     m_deployConfigBaseId = deployConfigBaseId;
 }
 
-DeployConfiguration *DeployConfigurationFactory::createDeployConfiguration(Target *t)
+DeployConfiguration *DeployConfigurationFactory::createDeployConfiguration(BuildConfiguration *bc)
 {
-    auto dc = new DeployConfiguration(t, m_deployConfigBaseId);
+    auto dc = new DeployConfiguration(bc, m_deployConfigBaseId);
     dc->setDefaultDisplayName(m_defaultDisplayName);
     dc->m_configWidgetCreator = m_configWidgetCreator;
     return dc;
 }
 
-DeployConfiguration *DeployConfigurationFactory::create(Target *parent)
+DeployConfiguration *DeployConfigurationFactory::create(BuildConfiguration *bc)
 {
-    QTC_ASSERT(canHandle(parent), return nullptr);
-    DeployConfiguration *dc = createDeployConfiguration(parent);
+    QTC_ASSERT(canHandle(bc->target()), return nullptr);
+    DeployConfiguration *dc = createDeployConfiguration(bc);
     QTC_ASSERT(dc, return nullptr);
     BuildStepList *stepList = dc->stepList();
     for (const BuildStepList::StepCreationInfo &info : std::as_const(m_initialSteps)) {
-        if (!info.condition || info.condition(parent))
+        if (!info.condition || info.condition(bc))
             stepList->appendStep(info.stepId);
     }
     return dc;
 }
 
-DeployConfiguration *DeployConfigurationFactory::clone(Target *parent,
+DeployConfiguration *DeployConfigurationFactory::clone(BuildConfiguration *bc,
                                                        const DeployConfiguration *source)
 {
     Store map;
     source->toMap(map);
-    return restore(parent, map);
+    return restore(bc, map);
 }
 
-DeployConfiguration *DeployConfigurationFactory::restore(Target *parent, const Store &map)
+DeployConfiguration *DeployConfigurationFactory::restore(BuildConfiguration *bc, const Store &map)
 {
     const Id id = idFromMap(map);
     DeployConfigurationFactory *factory = Utils::findOrDefault(g_deployConfigurationFactories,
-        [parent, id](DeployConfigurationFactory *f) {
-            if (!f->canHandle(parent))
+        [bc, id](DeployConfigurationFactory *f) {
+            if (!f->canHandle(bc->target()))
                 return false;
             return id.name().startsWith(f->m_deployConfigBaseId.name());
         });
     if (!factory)
         return nullptr;
-    DeployConfiguration *dc = factory->createDeployConfiguration(parent);
+    DeployConfiguration *dc = factory->createDeployConfiguration(bc);
     QTC_ASSERT(dc, return nullptr);
     dc->fromMap(map);
     if (dc->hasError()) {
@@ -230,6 +258,11 @@ void DeployConfigurationFactory::addSupportedTargetDeviceType(Utils::Id id)
     m_supportedTargetDeviceTypes.append(id);
 }
 
+QList<Id> DeployConfigurationFactory::supportedTargetDeviceTypes() const
+{
+    return m_supportedTargetDeviceTypes;
+}
+
 void DeployConfigurationFactory::setDefaultDisplayName(const QString &defaultDisplayName)
 {
     m_defaultDisplayName = defaultDisplayName;
@@ -240,7 +273,8 @@ void DeployConfigurationFactory::setSupportedProjectType(Utils::Id id)
     m_supportedProjectType = id;
 }
 
-void DeployConfigurationFactory::addInitialStep(Utils::Id stepId, const std::function<bool (Target *)> &condition)
+void DeployConfigurationFactory::addInitialStep(
+    Utils::Id stepId, const std::function<bool(BuildConfiguration *)> &condition)
 {
     m_initialSteps.append({stepId, condition});
 }

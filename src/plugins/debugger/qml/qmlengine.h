@@ -6,7 +6,6 @@
 #include <debugger/debuggerengine.h>
 
 #include <qmldebug/qdebugmessageclient.h>
-#include <qmldebug/qmloutputparser.h>
 #include <qmljs/qmljsdocument.h>
 
 namespace Debugger::Internal {
@@ -79,7 +78,6 @@ private:
     void loadAllSymbols() override;
     void requestModuleSymbols(const Utils::FilePath &moduleName) override;
     void reloadModules() override;
-    void reloadRegisters() override {}
     void reloadSourceFiles() override;
     void reloadFullStack() override {}
 

@@ -4,6 +4,7 @@
 #include "toolchainmanager.h"
 
 #include "abi.h"
+#include "devicesupport/devicemanager.h"
 #include "msvctoolchain.h"
 #include "projectexplorertr.h"
 #include "toolchain.h"
@@ -11,10 +12,11 @@
 
 #include <coreplugin/icore.h>
 
+#include <utils/algorithm.h>
+#include <utils/environment.h>
 #include <utils/fileutils.h>
 #include <utils/persistentsettings.h>
 #include <utils/qtcassert.h>
-#include <utils/algorithm.h>
 
 #include <nanotrace/nanotrace.h>
 
@@ -27,12 +29,6 @@ namespace Internal {
 // ToolchainManagerPrivate
 // --------------------------------------------------------------------------
 
-struct LanguageDisplayPair
-{
-    Utils::Id id;
-    QString displayName;
-};
-
 class ToolchainManagerPrivate
 {
 public:
@@ -42,7 +38,13 @@ public:
 
     Toolchains m_toolChains; // prioritized List
     BadToolchains m_badToolchains;   // to be skipped when auto-detecting
-    QVector<LanguageDisplayPair> m_languages;
+
+    QList<Id> m_languages;
+    QHash<Id, QString> m_displayNameForLanguage;
+
+    QList<LanguageCategory> m_languageCategories;
+    QHash<LanguageCategory, QString> m_displayNameForCategory;
+
     ToolchainDetectionSettings m_detectionSettings;
     bool m_loaded = false;
 };
@@ -107,17 +109,36 @@ void ToolchainManager::restoreToolchains()
     QTC_ASSERT(!d->m_accessor, return);
     d->m_accessor = std::make_unique<Internal::ToolchainSettingsAccessor>();
 
-    registerToolchains(d->m_accessor->restoreToolchains(Core::ICore::dialogParent()));
+    registerToolchains(d->m_accessor->restoreToolchains());
 
     d->m_loaded = true;
     emit m_instance->toolchainsLoaded();
+
+    connect(DeviceManager::instance(), &DeviceManager::toolDetectionRequested,
+            m_instance, [](Id devId, const FilePaths &searchPaths, quint64 token) {
+        const IDevice::Ptr device = DeviceManager::find(devId);
+        QTC_ASSERT(device, return);
+        device->registerToolDetectionTask(token);
+        ToolchainDetector detector(m_instance->toolchains(), device, searchPaths);
+        Toolchains toRegister;
+        for (ToolchainFactory *f : ToolchainFactory::allToolchainFactories()) {
+            for (Toolchain * const tc : f->autoDetect(detector)) {
+                if (!m_instance->toolchains().contains(tc)) {
+                    toRegister << tc;
+                    tc->setDetectionSource(DetectionSource::Manual);
+                }
+            }
+        }
+        registerToolchains(toRegister);
+        device->deregisterToolDetectionTask(token);
+    });
 }
 
 void ToolchainManager::saveToolchains()
 {
     QTC_ASSERT(d->m_accessor, return);
 
-    d->m_accessor->saveToolchains(d->m_toolChains, Core::ICore::dialogParent());
+    d->m_accessor->saveToolchains(d->m_toolChains);
     QtcSettings *const s = Core::ICore::settings();
     s->setValueWithDefault(DETECT_X64_AS_X32_KEY,
                            d->m_detectionSettings.detectX64AsX32,
@@ -201,7 +222,7 @@ Toolchains ToolchainManager::registerToolchains(const Toolchains &toolchains)
         QTC_ASSERT(isLanguageSupported(tc->language()),
                    qDebug() << qPrintable("language \"" + tc->language().toString()
                                           + "\" unknown while registering \""
-                                          + tc->compilerCommand().toString() + "\"");
+                                          + tc->compilerCommand().toUrlishString() + "\"");
                    notRegistered << tc;
                    continue);
         QTC_ASSERT(d->m_accessor, notRegistered << tc; continue);
@@ -209,7 +230,7 @@ Toolchains ToolchainManager::registerToolchains(const Toolchains &toolchains)
         QTC_ASSERT(!Utils::contains(d->m_toolChains, Utils::equal(&Toolchain::id, tc->id())),
                    notRegistered << tc;
                    continue);
-        if (!tc->isAutoDetected()
+        if (!tc->detectionSource().isAutoDetected()
             && Utils::contains(d->m_toolChains, [tc](const Toolchain *existing) {
                    return *tc == *existing;
                })) {
@@ -243,7 +264,7 @@ void ToolchainManager::deregisterToolchains(const Toolchains &toolchains)
 
 QList<Id> ToolchainManager::allLanguages()
 {
-    return Utils::transform<QList>(d->m_languages, &LanguageDisplayPair::id);
+    return d->m_languages;
 }
 
 bool ToolchainManager::registerLanguage(const Utils::Id &language, const QString &displayName)
@@ -251,21 +272,53 @@ bool ToolchainManager::registerLanguage(const Utils::Id &language, const QString
     QTC_ASSERT(language.isValid(), return false);
     QTC_ASSERT(!isLanguageSupported(language), return false);
     QTC_ASSERT(!displayName.isEmpty(), return false);
-    d->m_languages.push_back({language, displayName});
+    d->m_languages.push_back(language);
+    d->m_displayNameForLanguage.insert(language, displayName);
     return true;
+}
+
+void ToolchainManager::registerLanguageCategory(const LanguageCategory &languages, const QString &displayName)
+{
+    d->m_languageCategories.push_back(languages);
+    d->m_displayNameForCategory.insert(languages, displayName);
 }
 
 QString ToolchainManager::displayNameOfLanguageId(const Utils::Id &id)
 {
-    QTC_ASSERT(id.isValid(), return Tr::tr("None"));
-    auto entry = Utils::findOrDefault(d->m_languages, Utils::equal(&LanguageDisplayPair::id, id));
-    QTC_ASSERT(entry.id.isValid(), return Tr::tr("None"));
-    return entry.displayName;
+    QTC_ASSERT(id.isValid(), return Tr::tr("None", "No compiler language"));
+    QString display = d->m_displayNameForLanguage.value(id);
+    QTC_ASSERT(!display.isEmpty(), return Tr::tr("None", "No compiler language"));
+    return display;
+}
+
+QString ToolchainManager::displayNameOfLanguageCategory(const LanguageCategory &category)
+{
+    if (int(category.size()) == 1)
+        return displayNameOfLanguageId(*category.begin());
+    QString name = d->m_displayNameForCategory.value(category);
+    QTC_ASSERT(!name.isEmpty(), return Tr::tr("None", "No compiler category"));
+    return name;
+}
+
+const QList<LanguageCategory> ToolchainManager::languageCategories()
+{
+    QList<LanguageCategory> categories = d->m_languageCategories;
+    const QList<Utils::Id> languages = allLanguages();
+    for (const Utils::Id &l : languages) {
+        if (Utils::contains(categories, [l](const LanguageCategory &lc) {
+                return lc.contains(l);
+            })) {
+            continue;
+        }
+        categories.push_back({l});
+    }
+
+    return categories;
 }
 
 bool ToolchainManager::isLanguageSupported(const Utils::Id &id)
 {
-    return Utils::contains(d->m_languages, Utils::equal(&LanguageDisplayPair::id, id));
+    return d->m_languages.contains(id);
 }
 
 void ToolchainManager::aboutToShutdown()
@@ -297,6 +350,78 @@ bool ToolchainManager::isBadToolchain(const Utils::FilePath &toolchain)
 void ToolchainManager::addBadToolchain(const Utils::FilePath &toolchain)
 {
     d->m_badToolchains.toolchains << toolchain;
+}
+
+// Use as a tie-breaker for toolchains that match the strong requirements like toolchain type
+// and ABI.
+// For toolchains with the same priority, gives precedence to icecc and ccache,
+// prefers the higher version and otherwise simply chooses the one with the shortest path.
+bool ToolchainManager::isBetterToolchain(
+    const ToolchainBundle &bundle1, const ToolchainBundle &bundle2)
+{
+    if (const ToolchainBundle::Valid valid1 = bundle1.validity(), valid2 = bundle2.validity();
+        valid1 != valid2) {
+        return valid1 == ToolchainBundle::Valid::All || valid2 == ToolchainBundle::Valid::None;
+    }
+
+    const int priority1 = bundle1.get(&Toolchain::priority);
+    const int priority2 = bundle2.get(&Toolchain::priority);
+    if (priority1 > priority2)
+        return true;
+    if (priority1 < priority2)
+        return false;
+
+    const FilePath path1 = bundle1.get(&Toolchain::compilerCommand);
+    const FilePath path2 = bundle2.get(&Toolchain::compilerCommand);
+    const QString pathString1 = path1.path();
+    const QString pathString2 = path2.path();
+
+    const bool b1IsIcecc = pathString1.contains("icecc");
+    const bool b2IsIcecc = pathString2.contains("icecc");
+    if (b1IsIcecc)
+        return !b2IsIcecc;
+    if (b2IsIcecc)
+        return false;
+
+    const bool b1IsCCache = pathString1.contains("ccache");
+    const bool b2IsCcache = pathString2.contains("ccache");
+    if (b1IsCCache)
+        return !b2IsCcache;
+    if (b2IsCcache)
+        return false;
+
+    // Hack to prefer a tool chain from PATH (e.g. autodetected) over other matches.
+    // This improves the situation a bit if a cross-compilation tool chain has the
+    // same ABI as the host.
+    if (bundle1.get(&Toolchain::compilerCommand).isLocal()) {
+        const FilePaths envPathVar = Environment::systemEnvironment().path();
+        const auto toolchainIsInPath = [&envPathVar](const ToolchainBundle &b) {
+            return Utils::contains(b.toolchains(), [&envPathVar](const Toolchain *tc) {
+                return envPathVar.contains(tc->compilerCommand().parentDir());
+            });
+        };
+        const bool tc1IsInPath = toolchainIsInPath(bundle1);
+        const bool tc2IsInPath = toolchainIsInPath(bundle2);
+        if (tc1IsInPath) {
+            if (!tc2IsInPath)
+                return true;
+        } else if (tc2IsInPath) {
+            return false;
+        }
+    }
+
+    if (path1.isLocal() && path2.isLocal()) {
+        const QVersionNumber v1 = bundle1.get(&Toolchain::version);
+        const QVersionNumber v2 = bundle2.get(&Toolchain::version);
+        if (!v1.isNull() && !v2.isNull()) {
+            if (v1 > v2)
+                return true;
+            if (v1 < v2)
+                return false;
+        }
+    }
+
+    return pathString1.size() < pathString2.size();
 }
 
 } // namespace ProjectExplorer

@@ -11,6 +11,8 @@
 
 #include <QRegularExpression>
 
+using namespace Utils;
+
 namespace Perforce::Internal {
 
 enum { FileSpecRole = Qt::UserRole + 1 };
@@ -38,17 +40,17 @@ QByteArray PerforceSubmitEditor::fileContents() const
     return text.toLocal8Bit();
 }
 
-bool PerforceSubmitEditor::setFileContents(const QByteArray &contents)
+Result<> PerforceSubmitEditor::setFileContents(const QByteArray &contents)
 {
     if (!parseText(QString::fromUtf8(contents)))
-        return false;
+        return ResultError(ResultAssert); // FIXME: parseText always returns true, why?
     updateFields();
-    return true;
+    return ResultOk;
 }
 
 bool PerforceSubmitEditor::parseText(QString text)
 {
-    QRegularExpression formField(QLatin1String("^\\S+:"));
+    static const QRegularExpression formField("^\\S+:");
     const QString newLine = QString(QLatin1Char('\n'));
 
     int matchLen;
@@ -94,7 +96,7 @@ void PerforceSubmitEditor::updateFields()
     lines.removeFirst(); // that is the line break after 'Description:'
     lines.removeLast(); // that is the empty line at the end
 
-    const QRegularExpression leadingTabPattern("^\\t");
+    static const QRegularExpression leadingTabPattern("^\\t");
     QTC_CHECK(leadingTabPattern.isValid());
 
     lines.replaceInStrings(leadingTabPattern, QString());
@@ -122,7 +124,8 @@ void PerforceSubmitEditor::updateEntries()
     while (!lines.empty() && lines.last().isEmpty())
             lines.removeLast();
     // Description
-    lines.replaceInStrings(QRegularExpression("^"), tab);
+    static const QRegularExpression regexp("^");
+    lines.replaceInStrings(regexp, tab);
     m_entries.insert(QLatin1String("Description"), newLine + lines.join(newLine) + QLatin1String("\n\n"));
     QString files = newLine;
     // Re-build the file spec '<tab>file#add' from the user data

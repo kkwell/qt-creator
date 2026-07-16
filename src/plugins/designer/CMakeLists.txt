@@ -29,7 +29,6 @@ add_qtc_plugin(Designer
   CONDITION TARGET Qt::DesignerComponentsPrivate AND TARGET Qt::Designer
   DEPENDS designerintegrationv2
     Qt::Designer Qt::PrintSupport Qt::DesignerComponentsPrivate
-  DEFINES CPP_ENABLED
   PLUGIN_DEPENDS Core CppEditor ProjectExplorer QtSupport ResourceEditor TextEditor
   PLUGIN_TEST_DEPENDS CppEditor
   SOURCES
@@ -64,9 +63,7 @@ extend_qtc_plugin(Designer
 )
 
 if (QTC_STATIC_BUILD AND TARGET Designer)
-  # version-less target Qt::Designer is an interface library that links to QtX::Designer
-  get_target_property(_designer Qt::Designer INTERFACE_LINK_LIBRARIES)
-  get_target_property(_designerType ${_designer} TYPE)
+  get_target_property(_designerType Qt::Designer TYPE)
   if (${_designerType} STREQUAL "STATIC_LIBRARY")
     extend_qtc_target(Designer PUBLIC_DEFINES QT_DESIGNER_STATIC)
   endif()

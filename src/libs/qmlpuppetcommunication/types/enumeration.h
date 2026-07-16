@@ -20,7 +20,7 @@ using EnumerationNameView = QByteArrayView;
 class Enumeration
 {
 public:
-    Enumeration() = default;
+    constexpr Enumeration() = default;
     Enumeration(EnumerationName enumerationName)
         : m_enumerationName{std::move(enumerationName)}
     {}
@@ -29,7 +29,7 @@ public:
         : m_enumerationName{text, static_cast<qsizetype>(std::strlen(text))}
     {}
 
-    Enumeration(const QString &enumerationName)
+    Enumeration(QStringView enumerationName)
         : m_enumerationName(enumerationName.toUtf8())
     {}
 

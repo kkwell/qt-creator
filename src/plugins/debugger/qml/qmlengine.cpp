@@ -25,6 +25,7 @@
 #include <coreplugin/helpmanager.h>
 #include <coreplugin/icore.h>
 
+#include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/projectnodes.h>
 #include <projectexplorer/projecttree.h>
 
@@ -37,15 +38,13 @@
 #include <texteditor/texteditor.h>
 
 #include <utils/basetreeview.h>
-#include <utils/fileinprojectfinder.h>
-#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcprocess.h>
 #include <utils/treemodel.h>
+#include <utils/url.h>
 
 #include <QDebug>
-#include <QDir>
 #include <QDockWidget>
-#include <QFileInfo>
 #include <QGuiApplication>
 #include <QHostAddress>
 #include <QJsonArray>
@@ -185,7 +184,7 @@ public:
     int sequence = -1;
     QmlEngine *engine;
     QHash<int, Breakpoint> breakpointsSync;
-    QList<QString> breakpointsTemp;
+    QStringList breakpointsTemp;
 
     LookupItems currentlyLookingUp; // Id -> inames
 
@@ -213,8 +212,6 @@ public:
     QmlDebug::QDebugMessageClient *msgClient = nullptr;
 
     QHash<int, QmlCallback> callbackForToken;
-
-    FileInProjectFinder fileFinder;
 
     bool skipFocusOnNextHandleFrame = false;
 
@@ -347,34 +344,45 @@ void QmlEngine::beginConnection()
 
     QTC_ASSERT(state() == EngineRunRequested, return);
 
-
-    QString host = runParameters().qmlServer.host();
-    // Use localhost as default
-    if (host.isEmpty())
-        host = QHostAddress(QHostAddress::LocalHost).toString();
-
-    // FIXME: Not needed?
-    /*
-     * Let plugin-specific code override the port printed by the application. This is necessary
-     * in the case of port forwarding, when the port the application listens on is not the same that
-     * we want to connect to.
-     * NOTE: It is still necessary to wait for the output in that case, because otherwise we cannot
-     * be sure that the port is already open. The usual method of trying to connect repeatedly
-     * will not work, because the intermediate port is already open. So the connection
-     * will be accepted on that port but the forwarding to the target port will fail and
-     * the connection will be closed again (instead of returning the "connection refused"
-     * error that we expect).
-     */
-    int port = runParameters().qmlServer.port();
-
     QmlDebugConnection *connection = d->connection();
     if (!connection || connection->isConnected())
         return;
 
-    connection->connectToHost(host, port);
+    const QUrl server = runParameters().qmlServer();
+    if (server.scheme() == Utils::urlSocketScheme()) {
+        // Act as a local socket server: Qt Creator listens and the remote QML runtime connects.
+        // Do NOT start the connection timer here — the server must keep listening until the
+        // QML runtime in the container connects (which may take longer than the TCP timeout).
+        // connectionFailed() fires if listen() fails; connected() fires on success.
+        if (connection->isListening())
+            return; // already listening; a second beginConnection() call is harmless but wasteful
+        connection->startLocalServer(server.path());
+    } else {
+        if (connection->isConnecting())
+            return;
+        QString host = server.host();
+        // Use localhost as default
+        if (host.isEmpty())
+            host = QHostAddress(QHostAddress::LocalHost).toString();
 
-    //A timeout to check the connection state
-    d->connectionTimer.start();
+        // FIXME: Not needed?
+        /*
+         * Let plugin-specific code override the port printed by the application. This is necessary
+         * in the case of port forwarding, when the port the application listens on is not the same
+         * that we want to connect to.
+         * NOTE: It is still necessary to wait for the output in that case, because otherwise we
+         * cannot be sure that the port is already open. The usual method of trying to connect
+         * repeatedly will not work, because the intermediate port is already open. So the connection
+         * will be accepted on that port but the forwarding to the target port will fail and the
+         * connection will be closed again (instead of returning the "connection refused" error that
+         * we expect).
+         */
+        const int port = server.port();
+        connection->connectToHost(host, port);
+
+        //A timeout to check the connection state
+        d->connectionTimer.start();
+    }
 }
 
 void QmlEngine::connectionStartupFailed()
@@ -449,8 +457,8 @@ void QmlEngine::errorMessageBoxFinished(int result)
 
 void QmlEngine::gotoLocation(const Location &location)
 {
-    if (QUrl(location.fileName().toString()).isLocalFile()) { // create QUrl to ensure validity
-        const QString fileName = location.fileName().toString();
+    if (QUrl(location.fileName().toUrlishString()).isLocalFile()) { // create QUrl to ensure validity
+        const QString fileName = location.fileName().toUrlishString();
         // internal file from source files -> show generated .js
         QTC_ASSERT(d->sourceDocuments.contains(fileName), return);
 
@@ -490,9 +498,9 @@ void QmlEngine::startProcess()
     if (d->process.isRunning())
         return;
 
-    d->process.setCommand(runParameters().inferior.command);
-    d->process.setWorkingDirectory(runParameters().inferior.workingDirectory);
-    d->process.setEnvironment(runParameters().inferior.environment);
+    d->process.setCommand(runParameters().inferior().command);
+    d->process.setWorkingDirectory(runParameters().inferior().workingDirectory);
+    d->process.setEnvironment(runParameters().inferior().environment);
     showMessage(Tr::tr("Starting %1").arg(d->process.commandLine().toUserOutput()),
         NormalMessageFormat);
     d->process.start();
@@ -537,7 +545,7 @@ void QmlEngine::setupEngine()
     notifyEngineSetupOk();
 
     // we won't get any debug output
-    if (!terminal()) {
+    if (!usesTerminal()) {
         d->retryOnConnectFail = true;
         d->automaticConnect = true;
     }
@@ -546,7 +554,7 @@ void QmlEngine::setupEngine()
 
     if (isPrimaryEngine()) {
         // QML only.
-        const DebuggerStartMode startMode = runParameters().startMode;
+        const DebuggerStartMode startMode = runParameters().startMode();
         if (startMode == AttachToQmlServer || startMode == AttachToRemoteServer)
             tryToConnect();
         else if (startMode == AttachToRemoteProcess)
@@ -611,9 +619,9 @@ void QmlEngine::executeRunToLine(const ContextData &data)
     QTC_ASSERT(state() == InferiorStopOk, qDebug() << state());
     showStatusMessage(Tr::tr("Run to line %1 (%2) requested...")
                           .arg(data.textPosition.line)
-                          .arg(data.fileName.toString()),
+                          .arg(data.fileName.toUserOutput()),
                       5000);
-    d->setBreakpoint(SCRIPTREGEXP, data.fileName.toString(), true, data.textPosition.line);
+    d->setBreakpoint(SCRIPTREGEXP, data.fileName.toUrlishString(), true, data.textPosition.line);
     clearExceptionSelection();
     d->continueDebugging(Continue);
 
@@ -664,7 +672,7 @@ void QmlEngine::insertBreakpoint(const Breakpoint &bp)
         d->setExceptionBreak(AllExceptions, requested.enabled);
 
     } else if (requested.type == BreakpointByFileAndLine) {
-        d->setBreakpoint(SCRIPTREGEXP, requested.fileName.toString(),
+        d->setBreakpoint(SCRIPTREGEXP, requested.fileName.toUrlishString(),
                          requested.enabled, requested.textPosition.line, 0,
                          requested.condition, requested.ignoreCount);
 
@@ -720,9 +728,10 @@ void QmlEngine::updateBreakpoint(const Breakpoint &bp)
         bp->setEnabled(requested.enabled);
     } else if (d->canChangeBreakpoint()) {
         d->changeBreakpoint(bp, requested.enabled);
+        d->breakpointsSync.insert(d->sequence, bp);
     } else {
         d->clearBreakpoint(bp);
-        d->setBreakpoint(SCRIPTREGEXP, requested.fileName.toString(),
+        d->setBreakpoint(SCRIPTREGEXP, requested.fileName.toUrlishString(),
                          requested.enabled, requested.textPosition.line, 0,
                          requested.condition, requested.ignoreCount);
         d->breakpointsSync.insert(d->sequence, bp);
@@ -944,9 +953,9 @@ void QmlEngine::doUpdateLocals(const UpdateParameters &params)
     d->updateLocals(params.qmlFocusOnFrame);
 }
 
-Context QmlEngine::languageContext() const
+Core::Context QmlEngine::languageContext() const
 {
-    return Context(Constants::C_QMLDEBUGGER);
+    return Core::Context(Constants::C_QMLDEBUGGER);
 }
 
 void QmlEngine::disconnected()
@@ -1112,7 +1121,9 @@ void QmlEngine::connectionFailed()
 void QmlEngine::checkConnectionState()
 {
     if (!isConnected()) {
-        closeConnection();
+        d->connectionTimer.stop();
+        if (QmlDebugConnection *connection = d->connection())
+            connection->close();
         connectionStartupFailed();
     }
 }
@@ -1230,6 +1241,7 @@ void QmlEnginePrivate::handleEvaluateExpression(const QVariantMap &response,
     QVariant bodyVal = response.value(BODY).toMap();
     QmlV8ObjectData body = extractData(bodyVal);
     WatchHandler *watchHandler = engine->watchHandler();
+    watchHandler->resetValueCache();
 
     auto item = new WatchItem;
     item->iname = iname;
@@ -1683,12 +1695,12 @@ void QmlEnginePrivate::messageReceived(const QByteArray &data)
 
                 memorizeRefs(resp.value(REFS));
 
-                bool success = resp.value("success").toBool();
+                const bool success = resp.value("success").toBool();
                 if (!success) {
                     SDEBUG("Request was unsuccessful");
                 }
 
-                int requestSeq = resp.value("request_seq").toInt();
+                const int requestSeq = resp.value("request_seq").toInt();
                 if (callbackForToken.contains(requestSeq)) {
                     callbackForToken[requestSeq](resp);
 
@@ -1710,12 +1722,12 @@ void QmlEnginePrivate::messageReceived(const QByteArray &data)
                     //                  "success"     : true
                     //                }
 
-                    int seq = resp.value("request_seq").toInt();
+                    const int seq = resp.value("request_seq").toInt();
                     const QVariantMap breakpointData = resp.value(BODY).toMap();
                     const QString index = QString::number(breakpointData.value("breakpoint").toInt());
 
                     if (breakpointsSync.contains(seq)) {
-                        Breakpoint bp = breakpointsSync.take(seq);
+                        const Breakpoint bp = breakpointsSync.take(seq);
                         QTC_ASSERT(bp, return);
                         bp->setParameters(bp->requestedParameters()); // Assume it worked.
                         bp->setResponseId(index);
@@ -1740,6 +1752,16 @@ void QmlEnginePrivate::messageReceived(const QByteArray &data)
                         breakpointsTemp.append(index);
                     }
 
+                } else if (debugCommand == CHANGEBREAKPOINT) {
+                    // v8message {"body":{"breakpoint":2,"type":"scriptRegExp"},"command":"changebreakpoint","request_seq":8,"running":true,"seq":9,"success":true,"type":"response"}
+                    const int seq = resp.value("request_seq").toInt();
+                    if (breakpointsSync.contains(seq)) {
+                        Breakpoint bp = breakpointsSync.take(seq);
+                        QTC_ASSERT(bp, return);
+                        if (resp.value("success").toBool())
+                            bp->setEnabled(!bp->isEnabled());
+                        bp->update();
+                    }
 
                 } else if (debugCommand == CLEARBREAKPOINT) {
                     // DO NOTHING
@@ -1865,7 +1887,7 @@ void QmlEnginePrivate::messageReceived(const QByteArray &data)
 
                             clearBreakpoint(bp);
                             setBreakpoint(SCRIPTREGEXP,
-                                          params.fileName.toString(),
+                                          params.fileName.toUrlishString(),
                                           params.enabled,
                                           params.textPosition.line,
                                           newColumn,
@@ -2449,14 +2471,8 @@ void QmlEnginePrivate::flushSendBuffer()
 
 FilePath QmlEngine::toFileInProject(const QUrl &fileUrl)
 {
-    // make sure file finder is properly initialized
-    const DebuggerRunParameters &rp = runParameters();
-    d->fileFinder.setProjectDirectory(rp.projectSourceDirectory);
-    d->fileFinder.setProjectFiles(rp.projectSourceFiles);
-    d->fileFinder.setAdditionalSearchDirectories(rp.additionalSearchDirectories);
-    d->fileFinder.setSysroot(rp.sysRoot);
-
-    return d->fileFinder.findFile(fileUrl).constFirst();
+    const FilePaths paths = runParameters().findQmlFile(fileUrl);
+    return paths.isEmpty() ? FilePath() : paths.first();
 }
 
 DebuggerEngine *createQmlEngine()

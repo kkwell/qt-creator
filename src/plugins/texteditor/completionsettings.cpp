@@ -3,111 +3,199 @@
 
 #include "completionsettings.h"
 
-#include <utils/qtcsettings.h>
+#include "texteditorsettings.h"
+#include "texteditorconstants.h"
+#include "texteditortr.h"
 
+#include <cppeditor/cpptoolssettings.h>
+
+#include <coreplugin/dialogs/ioptionspage.h>
+#include <coreplugin/icore.h>
+
+#include <utils/layoutbuilder.h>
+
+using namespace CppEditor;
 using namespace Utils;
 
 namespace TextEditor {
 
-const char settingsGroup[]               = "CppTools/Completion";
-const char caseSensitivityKey[]          = "CaseSensitivity";
-const char completionTriggerKey[]        = "CompletionTrigger";
-const char automaticProposalTimeoutKey[] = "AutomaticProposalTimeout";
-const char characterThresholdKey[]       = "CharacterThreshold";
-const char autoInsertBracesKey[]         = "AutoInsertBraces";
-const char surroundingAutoBracketsKey[]  = "SurroundingAutoBrackets";
-const char autoInsertQuotesKey[]         = "AutoInsertQuotes";
-const char surroundingAutoQuotesKey[]    = "SurroundingAutoQuotes";
-const char partiallyCompleteKey[]        = "PartiallyComplete";
-const char spaceAfterFunctionNameKey[]   = "SpaceAfterFunctionName";
-const char autoSplitStringsKey[]         = "AutoSplitStrings";
-const char animateAutoCompleteKey[]      = "AnimateAutoComplete";
-const char highlightAutoCompleteKey[]    = "HighlightAutoComplete";
-const char skipAutoCompleteKey[]         = "SkipAutoComplete";
-const char autoRemoveKey[]               = "AutoRemove";
-const char overwriteClosingCharsKey[]    = "OverwriteClosingChars";
-
-void CompletionSettings::toSettings(QtcSettings *s) const
+CompletionSettings &completionSettings()
 {
-    s->beginGroup(settingsGroup);
-    s->setValue(caseSensitivityKey, (int) m_caseSensitivity);
-    s->setValue(completionTriggerKey, (int) m_completionTrigger);
-    s->setValue(automaticProposalTimeoutKey, m_automaticProposalTimeoutInMs);
-    s->setValue(characterThresholdKey, m_characterThreshold);
-    s->setValue(autoInsertBracesKey, m_autoInsertBrackets);
-    s->setValue(surroundingAutoBracketsKey, m_surroundingAutoBrackets);
-    s->setValue(autoInsertQuotesKey, m_autoInsertQuotes);
-    s->setValue(surroundingAutoQuotesKey, m_surroundingAutoQuotes);
-    s->setValue(partiallyCompleteKey, m_partiallyComplete);
-    s->setValue(spaceAfterFunctionNameKey, m_spaceAfterFunctionName);
-    s->setValue(autoSplitStringsKey, m_autoSplitStrings);
-    s->setValue(animateAutoCompleteKey, m_animateAutoComplete);
-    s->setValue(highlightAutoCompleteKey, m_highlightAutoComplete);
-    s->setValue(skipAutoCompleteKey, m_skipAutoCompletedText);
-    s->setValue(autoRemoveKey, m_autoRemove);
-    s->setValue(overwriteClosingCharsKey, m_overwriteClosingChars);
-    s->endGroup();
+    static CompletionSettings theCompletionSettings;
+    return theCompletionSettings;
 }
 
-void CompletionSettings::fromSettings(QtcSettings *s)
+CompletionSettings::CompletionSettings()
 {
-    *this = CompletionSettings(); // Assign defaults
+    setAutoApply(false);
+    setSettingsGroup("CppTools/Completion");
 
-    s->beginGroup(settingsGroup);
-    m_caseSensitivity = (CaseSensitivity)
-            s->value(caseSensitivityKey, m_caseSensitivity).toInt();
-    m_completionTrigger = (CompletionTrigger)
-            s->value(completionTriggerKey, m_completionTrigger).toInt();
-    m_automaticProposalTimeoutInMs =
-            s->value(automaticProposalTimeoutKey, m_automaticProposalTimeoutInMs).toInt();
-    m_characterThreshold =
-            s->value(characterThresholdKey, m_characterThreshold).toInt();
-    m_autoInsertBrackets =
-            s->value(autoInsertBracesKey, m_autoInsertBrackets).toBool();
-    m_surroundingAutoBrackets =
-            s->value(surroundingAutoBracketsKey, m_surroundingAutoBrackets).toBool();
-    m_autoInsertQuotes =
-            s->value(autoInsertQuotesKey, m_autoInsertQuotes).toBool();
-    m_surroundingAutoQuotes =
-            s->value(surroundingAutoQuotesKey, m_surroundingAutoQuotes).toBool();
-    m_partiallyComplete =
-            s->value(partiallyCompleteKey, m_partiallyComplete).toBool();
-    m_spaceAfterFunctionName =
-            s->value(spaceAfterFunctionNameKey, m_spaceAfterFunctionName).toBool();
-    m_autoSplitStrings =
-            s->value(autoSplitStringsKey, m_autoSplitStrings).toBool();
-    m_animateAutoComplete =
-            s->value(animateAutoCompleteKey, m_animateAutoComplete).toBool();
-    m_highlightAutoComplete =
-            s->value(highlightAutoCompleteKey, m_highlightAutoComplete).toBool();
-    m_skipAutoCompletedText =
-            s->value(skipAutoCompleteKey, m_skipAutoCompletedText).toBool();
-    m_autoRemove =
-            s->value(autoRemoveKey, m_autoRemove).toBool();
-    m_overwriteClosingChars =
-            s->value(overwriteClosingCharsKey, m_overwriteClosingChars).toBool();
-    s->endGroup();
+    caseSensitivity.setSettingsKey("CaseSensitivity");
+    caseSensitivity.setDisplayStyle(SelectionAspect::DisplayStyle::ComboBox);
+    caseSensitivity.addOption(Tr::tr("Full"));
+    caseSensitivity.addOption(Tr::tr("None", "Case-sensitivity: None"));
+    caseSensitivity.addOption(Tr::tr("First Letter"));
+    caseSensitivity.setDefaultValue(CaseInsensitive);
+    caseSensitivity.setLabelText(Tr::tr("&Case-sensitivity:"));
+
+    completionTrigger.setSettingsKey("CompletionTrigger");
+    completionTrigger.setDisplayStyle(SelectionAspect::DisplayStyle::ComboBox);
+    completionTrigger.addOption(Tr::tr("Manually"));
+    completionTrigger.addOption(Tr::tr("When Triggered"));
+    completionTrigger.addOption(Tr::tr("Always"));
+    completionTrigger.setDefaultValue(AutomaticCompletion);
+    completionTrigger.setLabelText(Tr::tr("Activate completion:"));
+
+    automaticProposalTimeoutInMs.setSettingsKey("AutomaticProposalTimeout");
+    automaticProposalTimeoutInMs.setRange(0, 2000);
+    automaticProposalTimeoutInMs.setSingleStep(50);
+    automaticProposalTimeoutInMs.setDefaultValue(400);
+    automaticProposalTimeoutInMs.setLabelText(Tr::tr("Timeout in ms:"));
+
+    characterThreshold.setSettingsKey("CharacterThreshold");
+    characterThreshold.setRange(1, 20);
+    characterThreshold.setDefaultValue(3);
+    characterThreshold.setLabelText(Tr::tr("Character threshold:"));
+
+    autoInsertBrackets.setSettingsKey("AutoInsertBraces");
+    autoInsertBrackets.setDefaultValue(true);
+    autoInsertBrackets.setLabelText(Tr::tr("Insert opening or closing brackets"));
+
+    surroundingAutoBrackets.setSettingsKey("SurroundingAutoBrackets");
+    surroundingAutoBrackets.setDefaultValue(true);
+    surroundingAutoBrackets.setLabelText(Tr::tr("Surround text selection with brackets"));
+    surroundingAutoBrackets.setToolTip(
+        Tr::tr("When typing a matching bracket and there is a text selection, instead of "
+           "removing the selection, surrounds it with the corresponding characters."));
+
+    autoInsertQuotes.setSettingsKey("AutoInsertQuotes");
+    autoInsertQuotes.setDefaultValue(true);
+    autoInsertQuotes.setLabelText(Tr::tr("Insert closing quote"));
+
+    surroundingAutoQuotes.setSettingsKey("SurroundingAutoQuotes");
+    surroundingAutoQuotes.setDefaultValue(true);
+    surroundingAutoQuotes.setLabelText(Tr::tr("Surround text selection with quotes"));
+    surroundingAutoQuotes.setToolTip(
+        Tr::tr("When typing a matching quote and there is a text selection, instead of "
+           "removing the selection, surrounds it with the corresponding characters."));
+
+    partiallyComplete.setSettingsKey("PartiallyComplete");
+    partiallyComplete.setDefaultValue(true);
+    partiallyComplete.setLabelText(Tr::tr("Autocomplete common &prefix"));
+    partiallyComplete.setLabelPlacement(BoolAspect::LabelPlacement::Compact);
+    partiallyComplete.setToolTip(Tr::tr("Inserts the common prefix of available completion items."));
+
+    spaceAfterFunctionName.setSettingsKey("SpaceAfterFunctionName");
+    spaceAfterFunctionName.setDefaultValue(false);
+    spaceAfterFunctionName.setLabelText(Tr::tr("Insert &space after function name"));
+
+    autoSplitStrings.setSettingsKey("AutoSplitStrings");
+    autoSplitStrings.setDefaultValue(true);
+    autoSplitStrings.setLabelText(Tr::tr("Automatically split strings"));
+    autoSplitStrings.setLabelPlacement(BoolAspect::LabelPlacement::Compact);
+    autoSplitStrings.setToolTip(
+        Tr::tr("Splits a string into two lines by adding an end quote at the cursor position "
+           "when you press Enter and a start quote to the next line, before the rest "
+           "of the string.\n\n"
+           "In addition, Shift+Enter inserts an escape character at the cursor position "
+           "and moves the rest of the string to the next line."));
+
+    animateAutoComplete.setSettingsKey("AnimateAutoComplete");
+    animateAutoComplete.setDefaultValue(true);
+    animateAutoComplete.setLabelText(Tr::tr("Animate automatically inserted text"));
+    animateAutoComplete.setToolTip(Tr::tr("Show a visual hint when for example a brace or a quote "
+                                       "is automatically inserted by the editor."));
+
+    highlightAutoComplete.setSettingsKey("HighlightAutoComplete");
+    highlightAutoComplete.setDefaultValue(true);
+    highlightAutoComplete.setLabelText(Tr::tr("Highlight automatically inserted text"));
+
+    skipAutoCompletedText.setSettingsKey("SkipAutoComplete");
+    skipAutoCompletedText.setDefaultValue(true);
+    skipAutoCompletedText.setLabelText(Tr::tr("Skip automatically inserted character when typing"));
+    skipAutoCompletedText.setToolTip(Tr::tr("Skip automatically inserted character if re-typed manually "
+                                            "after completion or by pressing tab."));
+
+    autoRemove.setSettingsKey("AutoRemove");
+    autoRemove.setDefaultValue(true);
+    autoRemove.setLabelText(Tr::tr("Remove automatically inserted text on backspace"));
+    autoRemove.setToolTip(Tr::tr("Remove the automatically inserted character if the trigger "
+                                 "is deleted by backspace after the completion."));
+
+    overwriteClosingChars.setSettingsKey("OverwriteClosingChars");
+    overwriteClosingChars.setDefaultValue(false);
+    overwriteClosingChars.setLabelText(Tr::tr("Overwrite closing punctuation"));
+    overwriteClosingChars.setToolTip(Tr::tr("Automatically overwrite closing parentheses and quotes."));
+
+    setLayouter([this] {
+        using namespace Layouting;
+        return Column {
+            Group {
+                title(Tr::tr("Behavior")),
+                Form {
+                    caseSensitivity, st, br,
+                    completionTrigger, st, br,
+                    automaticProposalTimeoutInMs, st, br,
+                    characterThreshold, st, br,
+                    Span(2, partiallyComplete), br,
+                    Span(2, autoSplitStrings), br,
+                }
+            },
+            Group {
+                title(Tr::tr("&Automatically Insert Matching Characters")),
+                Row {
+                    Column {
+                        autoInsertBrackets,
+                        surroundingAutoBrackets,
+                        spaceAfterFunctionName,
+                        highlightAutoComplete,
+                        Row { Space(30), skipAutoCompletedText },
+                        Row { Space(30), autoRemove },
+                    },
+                    Column {
+                        autoInsertQuotes,
+                        surroundingAutoQuotes,
+                        animateAutoComplete,
+                        overwriteClosingChars,
+                        st,
+                    }
+                }
+            },
+            st
+        };
+    });
+
+    readSettings();
+
+    skipAutoCompletedText.setEnabler(&highlightAutoComplete);
+    autoRemove.setEnabler(&highlightAutoComplete);
+
+    auto updateTimeout = [this] {
+        automaticProposalTimeoutInMs.setEnabled(completionTrigger.volatileValue() == AutomaticCompletion);
+    };
+
+    completionTrigger.addOnVolatileValueChanged(this, updateTimeout);
+    updateTimeout();
 }
 
-bool CompletionSettings::equals(const CompletionSettings &cs) const
+namespace Internal {
+
+class CompletionSettingsPage final : public Core::IOptionsPage
 {
-    return m_caseSensitivity                == cs.m_caseSensitivity
-        && m_completionTrigger              == cs.m_completionTrigger
-        && m_automaticProposalTimeoutInMs   == cs.m_automaticProposalTimeoutInMs
-        && m_characterThreshold             == cs.m_characterThreshold
-        && m_autoInsertBrackets             == cs.m_autoInsertBrackets
-        && m_surroundingAutoBrackets        == cs.m_surroundingAutoBrackets
-        && m_autoInsertQuotes               == cs.m_autoInsertQuotes
-        && m_surroundingAutoQuotes          == cs.m_surroundingAutoQuotes
-        && m_partiallyComplete              == cs.m_partiallyComplete
-        && m_spaceAfterFunctionName         == cs.m_spaceAfterFunctionName
-        && m_autoSplitStrings               == cs.m_autoSplitStrings
-        && m_animateAutoComplete            == cs.m_animateAutoComplete
-        && m_highlightAutoComplete          == cs.m_highlightAutoComplete
-        && m_skipAutoCompletedText          == cs.m_skipAutoCompletedText
-        && m_autoRemove                     == cs.m_autoRemove
-        && m_overwriteClosingChars          == cs.m_overwriteClosingChars
-        ;
+public:
+    CompletionSettingsPage()
+    {
+        setId("P.Completion");
+        setDisplayName(Tr::tr("Completion"));
+        setCategory(TextEditor::Constants::TEXT_EDITOR_SETTINGS_CATEGORY);
+        setSettingsProvider([] { return &completionSettings(); });
+    }
+};
+
+void setupCompletionSettings()
+{
+    static CompletionSettingsPage theCompletionSettingsPage;
 }
 
+} // Internal
 } // TextEditor

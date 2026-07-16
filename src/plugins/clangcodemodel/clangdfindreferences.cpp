@@ -47,7 +47,15 @@ namespace ClangCodeModel::Internal {
 
 class ReferencesFileData {
 public:
-    QList<QPair<Range, QString>> rangesAndLineText;
+    struct ItemData {
+        ItemData(const Range &r, const QString &c, const QString &l)
+            : range(r), container(c), lineText(l) {}
+        Range range;
+        QString container;
+        QString lineText;
+    };
+
+    QList<ItemData> itemData;
     QString fileContent;
     ClangdAstNode ast;
 };
@@ -64,7 +72,7 @@ class ClangdFindReferences::CheckUnusedData
 public:
     CheckUnusedData(ClangdFindReferences *q, const Link &link, SearchResult *search,
                     const LinkHandler &callback)
-        : q(q), link(link), linkAsPosition(link.targetLine, link.targetColumn), search(search),
+        : q(q), link(link), linkAsPosition(link.target.line, link.target.column), search(search),
           callback(callback) {}
     ~CheckUnusedData();
 
@@ -191,23 +199,23 @@ ClangdFindReferences::ClangdFindReferences(ClangdClient *client, const Link &lin
     d->categorize = true;
     d->search = search;
 
-    if (!client->documentForFilePath(link.targetFilePath)) {
-        QFile f(link.targetFilePath.toString());
-        if (!f.open(QIODevice::ReadOnly)) {
+    const FilePath &targetFilePath = link.targetFilePath;
+    if (!client->documentForFilePath(targetFilePath)) {
+        Result<QByteArray> fileContents = targetFilePath.fileContents();
+        if (!fileContents) {
             d->finishSearch();
             return;
         }
-        const QString contents = QString::fromUtf8(f.readAll());
+        const QString contents = QString::fromUtf8(*std::move(fileContents));
         QTextDocument doc(contents);
-        QTextCursor cursor(&doc);
-        cursor.setPosition(Text::positionInText(&doc, link.targetLine, link.targetColumn + 1));
+        QTextCursor cursor = link.target.toTextCursor(&doc);
         cursor.select(QTextCursor::WordUnderCursor);
         d->searchTerm = cursor.selectedText();
-        client->openExtraFile(link.targetFilePath, contents);
+        client->openExtraFile(targetFilePath, contents);
         d->checkUnusedData->openedExtraFileForLink = true;
     }
-    const TextDocumentIdentifier documentId(client->hostPathToServerUri(link.targetFilePath));
-    const Position pos(link.targetLine - 1, link.targetColumn);
+    const TextDocumentIdentifier documentId(client->hostPathToServerUri(targetFilePath));
+    const Position pos(link.target.line - 1, link.target.column);
     ReferenceParams params(TextDocumentPositionParams(documentId, pos));
     params.setContext(ReferenceParams::ReferenceContext(true));
     FindReferencesRequest request(params);
@@ -289,8 +297,10 @@ void ClangdFindReferences::Private::handleFindUsagesResult(const QList<Location>
         finishSearch();
     });
 
-    for (const Location &loc : locations)
-        fileData[loc.uri()].rangesAndLineText.push_back({loc.range(), {}});
+    for (const Location &loc : locations) {
+        fileData[loc.uri()].itemData.emplaceBack(
+            loc.range(), QJsonObject(loc).value("containerName").toString(), QString());
+    }
     QSet<FilePath> canonicalFilePaths;
     for (auto it = fileData.begin(); it != fileData.end();) {
         const Utils::FilePath filePath = client()->serverUriToHostPath(it.key());
@@ -304,10 +314,10 @@ void ClangdFindReferences::Private::handleFindUsagesResult(const QList<Location>
         }
         const QStringList lines = SymbolSupport::getFileContents(filePath);
         it->fileContent = lines.join('\n');
-        for (auto &rangeWithText : it.value().rangesAndLineText) {
-            const int lineNo = rangeWithText.first.start().line();
+        for (ReferencesFileData::ItemData &itemData : it.value().itemData) {
+            const int lineNo = itemData.range.start().line();
             if (lineNo >= 0 && lineNo < lines.size())
-                rangeWithText.second = lines.at(lineNo);
+                itemData.lineText = lines.at(lineNo);
         }
         ++it;
     }
@@ -405,8 +415,8 @@ void ClangdFindReferences::Private::addSearchResultsForFile(const FilePath &file
             return {"Function", "CXXMethod"};
         return {};
     }();
-    for (const auto &rangeWithText : fileData.rangesAndLineText) {
-        const Range &range = rangeWithText.first;
+    for (const ReferencesFileData::ItemData &itemData : fileData.itemData) {
+        const Range &range = itemData.range;
         const ClangdAstPath astPath = getAstPath(fileData.ast, range);
         const Usage::Tags usageType = fileData.ast.isValid()
                 ? getUsageType(astPath, searchTerm, expectedDeclTypes)
@@ -432,7 +442,7 @@ void ClangdFindReferences::Private::addSearchResultsForFile(const FilePath &file
                 isProperUsage = !isRecursiveCall;
             }
             if (isProperUsage) {
-                qCDebug(clangdLog) << "proper usage at" << rangeWithText.second;
+                qCDebug(clangdLog) << "proper usage at" << itemData.lineText;
                 canceled = true;
                 finishSearch();
                 return;
@@ -444,19 +454,19 @@ void ClangdFindReferences::Private::addSearchResultsForFile(const FilePath &file
         item.setFilePath(file);
         item.setMainRange(SymbolSupport::convertRange(range));
         item.setUseTextEditorFont(true);
-        item.setLineText(rangeWithText.second);
+        item.setLineText(itemData.lineText);
         if (checkUnusedData) {
-            if (rangeWithText.second.contains("template<>")) {
+            if (itemData.lineText.contains("template<>")) {
                 // Hack: Function specializations are not detectable in the AST.
                 canceled = true;
                 finishSearch();
                 return;
             }
-            qCDebug(clangdLog) << "collecting decl/def" << rangeWithText.second;
+            qCDebug(clangdLog) << "collecting decl/def" << itemData.lineText;
             checkUnusedData->declDefItems << item;
             continue;
         }
-        item.setContainingFunctionName(getContainingFunction(astPath, range).detail());
+        item.setContainingFunctionName(itemData.container);
 
         if (search->supportsReplace()) {
             const Node * const node = ProjectTree::nodeForFile(file);
@@ -728,7 +738,7 @@ void ClangdFindLocalReferences::Private::findDefinition()
 void ClangdFindLocalReferences::Private::getDefinitionAst(const Link &link)
 {
     qCDebug(clangdLog) << "received go to definition response" << link.targetFilePath
-                       << link.targetLine << (link.targetColumn + 1);
+                       << link.target.line << (link.target.column + 1);
 
     if (!link.hasValidTarget() || !document
             || link.targetFilePath.canonicalPath() != document->filePath().canonicalPath()) {
@@ -755,7 +765,7 @@ void ClangdFindLocalReferences::Private::checkDefinitionAst(const ClangdAstNode 
         return;
     }
 
-    const Position linkPos(defLink.targetLine - 1, defLink.targetColumn);
+    const Position linkPos(defLink.target.line - 1, defLink.target.column);
     const ClangdAstPath astPath = getAstPath(ast, linkPos);
     bool isVar = false;
     for (auto it = astPath.rbegin(); it != astPath.rend(); ++it) {
@@ -801,18 +811,16 @@ void ClangdFindLocalReferences::Private::handleReferences(const QList<Location> 
         const Position pos = r.start();
         symbol = QString(r.end().character() - pos.character(), 'x');
         if (editorWidget && document) {
-            QTextCursor cursor(document->document());
-            cursor.setPosition(Text::positionInText(document->document(), pos.line() + 1,
-                                                    pos.character() + 1));
+            const QTextCursor cursor = pos.toTextCursor(document->document());
             const QList<Text::Range> occurrencesInComments
                 = symbolOccurrencesInDeclarationComments(editorWidget, cursor);
             for (const Text::Range &range : occurrencesInComments) {
                 static const auto cmp = [](const Link &l, const Text::Range &r) {
-                    if (l.targetLine < r.begin.line)
+                    if (l.target.line < r.begin.line)
                         return true;
-                    if (l.targetLine > r.begin.line)
+                    if (l.target.line > r.begin.line)
                         return false;
-                    return l.targetColumn < r.begin.column;
+                    return l.target.column < r.begin.column;
                 };
                 const auto it = std::lower_bound(links.begin(), links.end(), range, cmp);
                 links.emplace(it, links.first().targetFilePath, range.begin.line,

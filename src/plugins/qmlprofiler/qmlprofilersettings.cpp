@@ -8,9 +8,6 @@
 
 #include <coreplugin/dialogs/ioptionspage.h>
 
-#include <debugger/analyzer/analyzericons.h>
-#include <debugger/debuggertr.h>
-
 #include <utils/layoutbuilder.h>
 
 using namespace Utils;
@@ -76,8 +73,6 @@ public:
         setId(Constants::SETTINGS);
         setDisplayName(Tr::tr("QML Profiler"));
         setCategory("T.Analyzer");
-        setDisplayCategory(::Debugger::Tr::tr("Analyzer"));
-        setCategoryIconPath(Analyzer::Icons::SETTINGSCATEGORY_ANALYZER);
         setSettingsProvider([] { return &globalSettings(); });
     }
 };

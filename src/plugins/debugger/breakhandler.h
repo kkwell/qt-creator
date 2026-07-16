@@ -39,7 +39,7 @@ public:
 
 using SubBreakpoint = QPointer<SubBreakpointItem>;
 
-class GlobalBreakpointItem : public QObject, public Utils::TreeItem
+class DEBUGGER_EXPORT GlobalBreakpointItem : public QObject, public Utils::TreeItem
 {
 public:
     explicit GlobalBreakpointItem();
@@ -107,10 +107,11 @@ public:
     int markerLineNumber() const;
 
     const BreakpointParameters &requestedParameters() const;
-    void addToCommand(DebuggerCommand *cmd,
-                      BreakpointPathUsage defaultPathUsage
-                      = BreakpointPathUsage::BreakpointUseFullPath) const;
-    void updateFromGdbOutput(const GdbMi &bkpt, const Utils::FilePath &fileRoot);
+    void addToCommand(
+        const Utils::FilePath &buildPath,
+        DebuggerCommand *cmd,
+        BreakpointPathUsage defaultPathUsage = BreakpointPathUsage::BreakpointUseFullPath) const;
+    void updateFromGdbOutput(const GdbMi &bkpt, const DebuggerRunParameters &rp);
 
     int modelId() const;
     QString responseId() const { return m_responseId; }
@@ -199,9 +200,9 @@ using SubBreakpoints = const QList<SubBreakpoint>;
 using BreakHandlerModel = Utils::TreeModel<Utils::TypedTreeItem<BreakpointItem>, BreakpointItem, SubBreakpointItem>;
 using BreakpointManagerModel = Utils::TreeModel<Utils::TypedTreeItem<GlobalBreakpointItem>, GlobalBreakpointItem>;
 
-inline auto qHash(const Debugger::Internal::SubBreakpoint &b) { return qHash(b.data()); }
-inline auto qHash(const Debugger::Internal::Breakpoint &b) { return qHash(b.data()); }
-inline auto qHash(const Debugger::Internal::GlobalBreakpoint &b) { return qHash(b.data()); }
+inline size_t qHash(const Debugger::Internal::SubBreakpoint &b) { return qHash(b.data()); }
+inline size_t qHash(const Debugger::Internal::Breakpoint &b) { return qHash(b.data()); }
+inline size_t qHash(const Debugger::Internal::GlobalBreakpoint &b) { return qHash(b.data()); }
 
 class BreakHandler : public BreakHandlerModel
 {

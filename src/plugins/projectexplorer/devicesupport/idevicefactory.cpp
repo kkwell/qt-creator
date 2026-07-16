@@ -69,6 +69,7 @@ IDevice::Ptr IDeviceFactory::create() const
     IDevice::Ptr device = m_creator();
     if (!device) // e.g. Cancel used on the dialog to create a device
         return {};
+    device->initDeviceToolAspects();
     return device;
 }
 
@@ -79,7 +80,8 @@ IDevice::Ptr IDeviceFactory::construct() const
 
     IDevice::Ptr device = m_constructor();
     QTC_ASSERT(device, return {});
-    device->settings()->displayName.setDefaultValue(displayName());
+    device->setDisplayName(displayName());
+    device->initDeviceToolAspects();
     return device;
 }
 
@@ -135,6 +137,16 @@ void IDeviceFactory::setConstructionFunction(const std::function<IDevice::Ptr ()
 void IDeviceFactory::setDisplayName(const QString &displayName)
 {
     m_displayName = displayName;
+}
+
+void IDeviceFactory::setExecutionTypeId(Utils::Id executionType)
+{
+    m_executionType = executionType;
+}
+
+Utils::Id IDeviceFactory::executionTypeId() const
+{
+    return m_executionType;
 }
 
 IDeviceFactory::~IDeviceFactory()

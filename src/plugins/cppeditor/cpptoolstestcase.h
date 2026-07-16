@@ -84,7 +84,7 @@ public:
     CppEditorWidget *m_editorWidget = nullptr;
 };
 
-using TestDocuments = QVector<CppTestDocument>;
+using TestDocuments = QList<CppTestDocument>;
 
 class VerifyCleanCppModelManager
 {
@@ -130,7 +130,6 @@ public:
 
     static bool closeEditorWithoutGarbageCollectorInvocation(Core::IEditor *editor);
 
-    static bool parseFiles(const QString &filePath);
     static bool parseFiles(const QSet<Utils::FilePath> &filePaths);
 
     static CPlusPlus::Snapshot globalSnapshot();
@@ -142,7 +141,7 @@ public:
     static CPlusPlus::Document::Ptr waitForRehighlightedSemanticDocument(
         CppEditorWidget *editorWidget, int timeoutInMs = defaultTimeOutInMs);
 
-    enum { defaultTimeOutInMs = 30 * 1000 /*= 30 secs*/ };
+    enum { defaultTimeOutInMs = 30 * 1000 /* = 30 secs*/ };
     static bool waitUntilProjectIsFullyOpened(ProjectExplorer::Project *project,
                                               int timeOutInMs = defaultTimeOutInMs);
     static CPlusPlus::Document::Ptr waitForFileInGlobalSnapshot(const Utils::FilePath &filePath,
@@ -167,9 +166,7 @@ public:
     ~ProjectOpenerAndCloser(); // Closes opened projects
 
     ProjectInfo::ConstPtr open(
-            const Utils::FilePath &projectFile,
-            bool configureAsExampleProject = false,
-            ProjectExplorer::Kit *kit = nullptr);
+        const Utils::FilePath &projectFile, ProjectExplorer::Kit *kit = nullptr);
 
     QList<ProjectExplorer::Project *> projects() const { return m_openProjects; };
 
@@ -210,11 +207,11 @@ class SourceFilesRefreshGuard : public QObject
 public:
     SourceFilesRefreshGuard();
 
-    void reset() { m_refreshed = false; }
+    void expect(int refreshCount) { m_missing = refreshCount; }
     bool wait();
 
 private:
-    bool m_refreshed = false;
+    int m_missing = 1;
 };
 
 } // namespace Tests

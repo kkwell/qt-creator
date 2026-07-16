@@ -7,6 +7,7 @@
 
 namespace Utils {
 class FileSystemWatcher;
+class FilePath;
 }
 
 QT_FORWARD_DECLARE_CLASS(QFileSystemModel)
@@ -23,7 +24,7 @@ public:
     void setRootPath(const QString &newPath);
     void setSearchText(const QString &searchText);
 
-    Q_PROPERTY(bool hasFiles READ hasFiles NOTIFY hasFilesChanged)
+    Q_PROPERTY(bool isEmpty READ isEmpty NOTIFY isEmptyChanged)
 
     Q_INVOKABLE QString rootPath() const;
     Q_INVOKABLE QString filePath(const QModelIndex &index) const;
@@ -36,7 +37,7 @@ public:
     Q_INVOKABLE QModelIndex parentDirIndex(const QString &path) const;
     Q_INVOKABLE QModelIndex parentDirIndex(const QModelIndex &index) const;
     Q_INVOKABLE QString parentDirPath(const QString &path) const;
-    Q_INVOKABLE void syncHasFiles();
+    Q_INVOKABLE void syncIsEmpty();
 
     Q_INVOKABLE QList<QModelIndex> parentIndices(const QModelIndex &index) const;
     Q_INVOKABLE bool indexIsValid(const QModelIndex &index) const;
@@ -49,6 +50,14 @@ public:
     Q_INVOKABLE QString addNewFolder(const QString &folderPath);
     Q_INVOKABLE bool deleteFolderRecursively(const QModelIndex &folderIndex);
     Q_INVOKABLE bool allFilePathsAreTextures(const QStringList &filePaths) const;
+    Q_INVOKABLE bool allFilePathsAreComposedEffects(const QStringList &filePaths) const;
+    Q_INVOKABLE bool isSameOrDescendantPath(const QUrl &source, const QString &target) const;
+    Q_INVOKABLE bool folderExpandState(const QString &path) const;
+    Q_INVOKABLE void initializeExpandState(const QString &path);
+    Q_INVOKABLE void saveExpandState(const QString &path, bool expand);
+    Q_INVOKABLE bool isDelegateEmpty(const QString &path) const;
+
+    void updateExpandPath(const Utils::FilePath &oldPath, const Utils::FilePath &newPath);
 
     int columnCount(const QModelIndex &parent = QModelIndex()) const override
     {
@@ -56,29 +65,27 @@ public:
         return std::min(result, 1);
     }
 
-    bool hasFiles() const { return m_hasFiles; }
+    bool isEmpty() const { return m_isEmpty; }
 
 signals:
     void directoryLoaded(const QString &path);
     void rootPathChanged();
-    void hasFilesChanged();
+    void isEmptyChanged();
     void fileChanged(const QString &path);
-    void effectsDeleted(const QStringList &effectNames);
+    void generatedAssetsDeleted(const QHash<QString, Utils::FilePath> &assetData);
 
 private:
-    void setHasFiles(bool value);
+    void setIsEmpty(bool value);
     bool filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const override;
-    void resetModel();
-    void createBackendModel();
-    void destroyBackendModel();
-    bool checkHasFiles(const QModelIndex &parentIdx) const;
-    bool checkHasFiles() const;
+    bool lessThan(const QModelIndex &left, const QModelIndex &right) const override;
+    QFileSystemModel *createFsModel(const QString &path = {});
+    Utils::FileSystemWatcher *createFsWatcher();
 
     QString m_searchText;
-    QString m_rootPath;
     QFileSystemModel *m_sourceFsModel = nullptr;
-    bool m_hasFiles = false;
+    bool m_isEmpty = true;
     Utils::FileSystemWatcher *m_fileWatcher = nullptr;
+    inline static QHash<QString, bool> s_folderExpandStateHash;
 };
 
 } // namespace QmlDesigner

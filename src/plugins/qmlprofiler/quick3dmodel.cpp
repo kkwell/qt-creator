@@ -6,8 +6,8 @@
 #include "quick3dmodel.h"
 #include <tracing/timelineformattime.h>
 
-namespace QmlProfiler {
-namespace Internal {
+using namespace QmlDebug;
+namespace QmlProfiler::Internal {
 
 int Quick3DModel::eventDataId(int id)
 {
@@ -362,7 +362,7 @@ QVariantMap Quick3DModel::locationFromEvent(int index) const
                 return ret;
             lineIdx += 4;
             file = data.mid(nameIdx + 1, lineIdx - nameIdx - 1);
-            line = data.right(data.length() - lineIdx - 1);
+            line = data.right(data.size() - lineIdx - 1);
             QUrl url(file);
             ret.insert(QStringLiteral("file"), url.fileName());
             ret.insert(QStringLiteral("line"), line.toInt());
@@ -392,5 +392,4 @@ int Quick3DModel::typeId(int index) const
     return QmlProfilerTimelineModel::typeId(index);
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+} // namespace QmlProfiler::Internal

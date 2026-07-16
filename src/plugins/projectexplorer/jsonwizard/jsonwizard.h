@@ -22,6 +22,8 @@ class JsonWizardGenerator;
 
 namespace Internal {
 
+bool isAnyPluginRunning(const QStringList &ids);
+
 class JsonWizardJsExtension : public QObject
 {
     Q_OBJECT
@@ -29,6 +31,8 @@ public:
     JsonWizardJsExtension(JsonWizard *wizard);
 
     Q_INVOKABLE QVariant value(const QString &name) const;
+    Q_INVOKABLE bool isPluginRunning(const QString &id) const;
+    Q_INVOKABLE bool isAnyPluginRunning(const QStringList &ids) const;
 
 private:
     JsonWizard *m_wizard;
@@ -57,7 +61,7 @@ public:
     using GeneratorFiles = QList<GeneratorFile>;
     Q_PROPERTY(GeneratorFiles generateFileList READ generateFileList)
 
-    explicit JsonWizard(QWidget *parent = nullptr);
+    JsonWizard();
     ~JsonWizard() override;
 
     void addGenerator(JsonWizardGenerator *gen);
@@ -88,7 +92,8 @@ public:
 
         friend class JsonWizard;
     };
-    static QList<OptionDefinition> parseOptions(const QVariant &v, QString *errorMessage);
+    using OptionDefinitions = QList<OptionDefinition>;
+    static Utils::Result<OptionDefinitions> parseOptions(const QVariant &v);
 
     static bool boolFromVariant(const QVariant &v, Utils::MacroExpander *expander);
     static QString stringListToArrayString(const QStringList &list,

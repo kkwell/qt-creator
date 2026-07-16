@@ -7,8 +7,7 @@
 
 #include <QPair>
 
-namespace Subversion {
-namespace Internal {
+namespace Subversion::Internal {
 
 class SubversionSubmitEditor : public VcsBase::VcsBaseSubmitEditor
 {
@@ -19,13 +18,12 @@ public:
     static QString fileFromStatusLine(const QString &statusLine);
 
     // A list of ( 'A','C','D','M') status indicators and file names.
-    using StatusFilePair = QPair<QString, QString>;
+    using StatusFilePair = QPair<char, QString>;
 
     void setStatusList(const QList<StatusFilePair> &statusOutput);
 
     QByteArray fileContents() const override;
-    bool setFileContents(const QByteArray &contents) override;
+    Utils::Result<> setFileContents(const QByteArray &contents) override;
 };
 
-} // namespace Internal
-} // namespace Subversion
+} // namespace Subversion::Internal

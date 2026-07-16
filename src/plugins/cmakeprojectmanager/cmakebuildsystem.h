@@ -5,13 +5,16 @@
 
 #include "builddirparameters.h"
 #include "cmakebuildtarget.h"
+#include "cmaketool.h"
 #include "fileapireader.h"
 
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/buildsystem.h>
+#include <projectexplorer/task.h>
 
-#include <utils/synchronizedvalue.h>
 #include <utils/temporarydirectory.h>
+
+#include <QtTaskTree/QSingleTaskTreeRunner>
 
 namespace ProjectExplorer {
     class ExtraCompiler;
@@ -40,9 +43,10 @@ class CMakeBuildSystem final : public ProjectExplorer::BuildSystem
     Q_OBJECT
 
 public:
-    explicit CMakeBuildSystem(CMakeBuildConfiguration *bc);
+    explicit CMakeBuildSystem(ProjectExplorer::BuildConfiguration *bc);
     ~CMakeBuildSystem() final;
 
+    static QString name() { return "cmake"; }
     void triggerParsing() final;
     void requestDebugging() final;
 
@@ -53,6 +57,21 @@ public:
     bool addFiles(ProjectExplorer::Node *context,
                   const Utils::FilePaths &filePaths, Utils::FilePaths *) final;
 
+    struct SnippetAndLocation
+    {
+        QString snippet;
+        long line = -1;
+        long column = -1;
+    };
+
+    SnippetAndLocation generateSnippetWithTargetPropertyBlock(const QString &projectName,
+                                                              const QString &snippet,
+                                                              const cmListFile &file);
+
+    bool addTargetProperty(ProjectExplorer::Node *context, const QString &property, const QString &value,
+                           const std::string &condition = std::string{}) final;
+
+
     ProjectExplorer::RemovedFilesFromProject removeFiles(ProjectExplorer::Node *context,
                                                          const Utils::FilePaths &filePaths,
                                                          Utils::FilePaths *notRemoved
@@ -61,12 +80,14 @@ public:
     bool canRenameFile(ProjectExplorer::Node *context,
                        const Utils::FilePath &oldFilePath,
                        const Utils::FilePath &newFilePath) final;
-    bool renameFile(ProjectExplorer::Node *context,
-                    const Utils::FilePath &oldFilePath,
-                    const Utils::FilePath &newFilePath) final;
+    bool renameFiles(ProjectExplorer::Node *context,
+                     const Utils::FilePairs &filesToRename,
+                     Utils::FilePaths *notRenamed) final;
+    void buildNamedTarget(const QString &target) final;
 
     Utils::FilePaths filesGeneratedFrom(const Utils::FilePath &sourceFile) const final;
-    QString name() const final { return QLatin1String("cmake"); }
+
+    bool addDependencies(ProjectExplorer::Node *context, const QStringList &dependencies) final;
 
     // Actions:
     void runCMake();
@@ -77,9 +98,11 @@ public:
 
     bool persistCMakeState();
     void clearCMakeCache();
+    void disableCMakeBuildMenuActions();
 
     // Context menu actions:
     void buildCMakeTarget(const QString &buildTarget);
+    void reBuildCMakeTarget(const QString &cleanTarget, const QString &buildTarget);
 
     // Queries:
     const QList<ProjectExplorer::BuildTargetInfo> appTargets() const;
@@ -90,7 +113,7 @@ public:
     CMakeBuildConfiguration *cmakeBuildConfiguration() const;
 
     QList<ProjectExplorer::TestCaseInfo> const testcasesInfo() const final;
-    Utils::CommandLine commandLineForTests(const QList<QString> &tests,
+    Utils::CommandLine commandLineForTests(const QStringList &tests,
                                            const QStringList &options) const final;
 
     ProjectExplorer::MakeInstallCommand makeInstallCommand(
@@ -127,11 +150,15 @@ public:
     const QHash<QString, Utils::Link> &dotCMakeFilesHash() const { return m_dotCMakeFilesHash; }
     const QHash<QString, Utils::Link> &findPackagesFilesHash() const { return m_findPackagesFilesHash; }
 
+    QString cmakeGenerator() const;
+    bool hasSubprojectBuildSupport() const;
+
+    QVariant additionalData(Utils::Id id) const override;
+
+    bool isDestructing() const { return m_isDestructing; }
 signals:
     void configurationCleared();
     void configurationChanged(const CMakeConfig &config);
-    void errorOccurred(const QString &message);
-    void warningOccurred(const QString &message);
 
 private:
     CMakeConfig initialCMakeConfiguration() const;
@@ -151,6 +178,9 @@ private:
                      Utils::FilePaths *);
     bool addTsFiles(ProjectExplorer::Node *context, const Utils::FilePaths &filePaths,
                     Utils::FilePaths *);
+    bool renameFile(CMakeTargetNode *context,
+                    const Utils::FilePath &oldFilePath,
+                    const Utils::FilePath &newFilePath, bool &shouldRunCMake);
 
     // Actually ask for parsing:
     enum ReparseParameters {
@@ -176,9 +206,6 @@ private:
     void handleParsingSuccess();
     void handleParsingError();
 
-    // Treescanner states:
-    void handleTreeScanningFinished();
-
     // Combining Treescanner and Parser states:
     void combineScanAndParse(bool restoredFromBackup);
     void checkAndReportError(QString &errorMessage);
@@ -188,11 +215,9 @@ private:
     void updateProjectData();
     void updateFallbackProjectData();
     QList<ProjectExplorer::ExtraCompiler *> findExtraCompilers();
-    void updateQmlJSCodeModel(const QStringList &extraHeaderPaths,
-                              const QList<QByteArray> &moduleMappings);
     void updateInitialCMakeExpandableVars();
 
-    void updateFileSystemNodes();
+    void updateFileSystemNodes(std::unique_ptr<ProjectExplorer::FolderNode> &&folderNode);
 
     void handleParsingSucceeded(bool restoredFromBackup);
     void handleParsingFailed(const QString &msg);
@@ -210,6 +235,8 @@ private:
 
     void setupCMakeSymbolsHash();
 
+    void updateQmlCodeModelInfo(ProjectExplorer::QmlCodeModelInfo &projectInfo) final;
+
     struct ProjectFileArgumentPosition
     {
         cmListFileArgument argumentPosition;
@@ -217,12 +244,10 @@ private:
         QString relativeFileName;
         bool fromGlobbing = false;
     };
-    std::optional<ProjectFileArgumentPosition> projectFileArgumentPosition(
+    Utils::Result<ProjectFileArgumentPosition> projectFileArgumentPosition(
         const QString &targetName, const QString &fileName);
 
-    ProjectExplorer::TreeScanner m_treeScanner;
-    std::shared_ptr<ProjectExplorer::FolderNode> m_allFiles;
-    Utils::SynchronizedValue<QHash<QString, bool>> m_mimeBinaryCache;
+    QtTaskTree::QSingleTaskTreeRunner m_taskTreeRunner;
 
     bool m_waitingForParse = false;
     bool m_combinedScanAndParseResult = false;
@@ -242,8 +267,6 @@ private:
     QStringList m_projectImportedTargets;
     QStringList m_projectFindPackageVariables;
 
-    QHash<QString, ProjectFileArgumentPosition> m_filesToBeRenamed;
-
     // Parsing state:
     BuildDirParameters m_parameters;
     int m_reparseParameters = REPARSE_DEFAULT;
@@ -260,7 +283,19 @@ private:
 
     QString m_error;
     QString m_warning;
+
+    QStringList m_extraHeaderPaths;
+    QList<QByteArray> m_moduleMappings;
+    ProjectExplorer::Task m_generatorError;
+
+    bool m_isDestructing = false;
 };
+
+#ifdef WITH_TESTS
+QObject *createAddDependenciesTest();
+#endif
+
+QString quoteString(const QString &fileName);
 
 } // namespace Internal
 } // namespace CMakeProjectManager

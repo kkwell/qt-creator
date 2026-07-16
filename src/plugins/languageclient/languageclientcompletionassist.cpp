@@ -43,7 +43,11 @@ QString LanguageClientCompletionItem::text() const
 { return m_item.label(); }
 
 bool LanguageClientCompletionItem::implicitlyApplies() const
-{ return false; }
+{
+    // only implicitly apply this item if there is no textEdit otherwise the user has to confirm
+    // the completion
+    return !m_item.textEdit();
+}
 
 bool LanguageClientCompletionItem::prematurelyApplies(const QChar &typedCharacter) const
 {
@@ -74,7 +78,7 @@ void LanguageClientCompletionItem::apply(TextEditorWidget *editorWidget,
         QTextCursor cursor = editorWidget->textCursorAt(pos);
         cursor.movePosition(QTextCursor::StartOfLine, QTextCursor::KeepAnchor);
         const QString blockTextUntilPosition = cursor.selectedText();
-        static QRegularExpression identifier("[a-zA-Z_][a-zA-Z0-9_]*$");
+        static const QRegularExpression identifier("[a-zA-Z_][a-zA-Z0-9_]*$");
         QRegularExpressionMatch match = identifier.match(blockTextUntilPosition);
         int matchLength = match.hasMatch() ? match.capturedLength(0) : 0;
         length = qMax(length, matchLength);
@@ -197,15 +201,15 @@ bool LanguageClientCompletionItem::isPerfectMatch(int pos, QTextDocument *doc) c
     if (isSnippet())
         return false;
     if (auto edit = m_item.textEdit()) {
-        auto range = edit->range();
-        const int start = positionInText(doc, range.start().line() + 1, range.start().character() + 1);
-        const int end = positionInText(doc, range.end().line() + 1, range.end().character() + 1);
-        auto text = textAt(QTextCursor(doc), start, end - start);
+        const auto range = edit->range();
+        const int start = range.start().toPositionInDocument(doc);
+        const int end = range.end().toPositionInDocument(doc);
+        auto text = textAt(doc, start, end - start);
         return text == edit->newText();
     }
     const QString textToInsert(m_item.insertText().value_or(text()));
-    const int length = textToInsert.length();
-    return textToInsert == textAt(QTextCursor(doc), pos - length, length);
+    const int length = textToInsert.size();
+    return textToInsert == textAt(doc, pos - length, length);
 }
 
 bool LanguageClientCompletionItem::isDeprecated() const
@@ -268,7 +272,8 @@ public:
     {
         if (m_processor) {
             m_processor->cancel();
-            delete m_processor;
+            if (!m_processor->running())
+                delete m_processor;
             m_processor = nullptr;
         }
     }
@@ -343,10 +348,15 @@ public:
     {}
 
     // IAssistProposal interface
-    bool hasItemsToPropose(const QString &/*text*/, AssistReason reason) const override
+    bool hasItemsToPropose(const QString &prefix, AssistReason reason) const override
     {
         if (m_model->size() <= 0 || m_document.isNull())
             return false;
+
+        if (!prefix.isEmpty()) {
+            m_model->filter(prefix);
+            m_model->setPrefilterPrefix(prefix);
+        }
 
         return m_model->keepPerfectMatch(reason)
                 || !Utils::anyOf(m_model->items(), [this](AssistProposalItemInterface *item){
@@ -404,6 +414,7 @@ static QString assistReasonString(AssistReason reason)
 IAssistProposal *LanguageClientCompletionAssistProcessor::perform()
 {
     QTC_ASSERT(m_client, return nullptr);
+    QTC_ASSERT(!running(), cancel());
     m_pos = interface()->position();
     m_basePos = m_pos;
     auto isIdentifierChar = [](const QChar &c) { return c.isLetterOrNumber() || c == '_'; };
@@ -411,7 +422,7 @@ IAssistProposal *LanguageClientCompletionAssistProcessor::perform()
         --m_basePos;
     if (interface()->reason() == IdleEditor) {
         // Trigger an automatic completion request only when we are on a word with at least n "identifier" characters
-        if (m_pos - m_basePos < TextEditorSettings::completionSettings().m_characterThreshold)
+        if (m_pos - m_basePos < completionSettings().characterThreshold())
             return nullptr;
         if (m_client->documentUpdatePostponed(interface()->filePath())) {
             m_postponedUpdateConnection
@@ -545,13 +556,13 @@ bool LanguageClientCompletionAssistProvider::isActivationCharSequence(const QStr
 }
 
 void LanguageClientCompletionAssistProvider::setTriggerCharacters(
-    const std::optional<QList<QString>> triggerChars)
+    const std::optional<QStringList> triggerChars)
 {
     m_activationCharSequenceLength = 0;
-    m_triggerChars = triggerChars.value_or(QList<QString>());
+    m_triggerChars = triggerChars.value_or(QStringList());
     for (const QString &trigger : std::as_const(m_triggerChars)) {
-        if (trigger.length() > m_activationCharSequenceLength)
-            m_activationCharSequenceLength = trigger.length();
+        if (trigger.size() > m_activationCharSequenceLength)
+            m_activationCharSequenceLength = trigger.size();
     }
 }
 

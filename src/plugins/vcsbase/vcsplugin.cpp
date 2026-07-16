@@ -13,6 +13,7 @@
 #include "wizard/vcsconfigurationpage.h"
 #include "wizard/vcsjsextension.h"
 
+#include <coreplugin/dialogs/ioptionspage.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/editormanager/ieditor.h>
 #include <coreplugin/iversioncontrol.h>
@@ -40,7 +41,7 @@ public:
     explicit VcsPluginPrivate(VcsPlugin *plugin)
         : q(plugin)
     {
-        QObject::connect(&commonSettings(), &AspectContainer::changed,
+        QObject::connect(&commonSettings(), &AspectContainer::changed, q,
                          [this] { slotSettingsChanged(); });
         slotSettingsChanged();
     }
@@ -56,12 +57,11 @@ public:
 
     void populateNickNameModel()
     {
-        QString errorMessage;
-        if (!NickNameDialog::populateModelFromMailCapFile(commonSettings().nickNameMailMap(),
-                                                          m_nickNameModel,
-                                                          &errorMessage)) {
-            qWarning("%s", qPrintable(errorMessage));
-        }
+        const Result<> res =
+                NickNameDialog::populateModelFromMailCapFile(commonSettings().nickNameMailMap(),
+                                                             m_nickNameModel);
+        if (!res)
+            qWarning("%s", qPrintable(res.error()));
     }
 
     void slotSettingsChanged()
@@ -96,6 +96,11 @@ void VcsPlugin::initialize()
 {
     d = new VcsPluginPrivate(this);
 
+    IOptionsPage::registerCategory(
+        Constants::VCS_SETTINGS_CATEGORY,
+        Tr::tr("Version Control"),
+        ":/vcsbase/images/settingscategory_vcs.png");
+
     JsExpander::registerGlobalObject<VcsJsExtension>("Vcs");
 
     MacroExpander *expander = globalMacroExpander();
@@ -120,7 +125,7 @@ void VcsPlugin::initialize()
     expander->registerVariable(Constants::VAR_VCS_TOPLEVELPATH,
         Tr::tr("The top level path to the repository the current project is in."), [] {
             if (Project *project = ProjectTree::currentProject())
-                return VcsManager::findTopLevelForDirectory(project->projectDirectory()).toString();
+                return VcsManager::findTopLevelForDirectory(project->projectDirectory()).toUrlishString();
             return QString();
         });
 

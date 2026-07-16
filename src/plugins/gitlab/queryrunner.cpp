@@ -101,6 +101,7 @@ QueryRunner::QueryRunner(const Query &query, const Id &id, QObject *parent)
             if (m_process.exitStatus() == QProcess::NormalExit
                     && (exitCode == 35 || exitCode == 60) // common ssl certificate issues
                     && handleCertificateIssue(id)) {
+                m_process.close();
                 // prepend -k for re-requesting the same query
                 CommandLine cmdline = m_process.commandLine();
                 cmdline.prependArgs({"-k"});
@@ -108,7 +109,7 @@ QueryRunner::QueryRunner(const Query &query, const Id &id, QObject *parent)
                 start();
                 return;
             }
-            VcsBase::VcsOutputWindow::appendError(m_process.exitMessage());
+            VcsBase::VcsOutputWindow::appendError(m_process.workingDirectory(), m_process.exitMessage());
         } else {
             emit resultRetrieved(m_process.rawStdOut());
         }
