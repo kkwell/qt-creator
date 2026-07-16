@@ -41,16 +41,16 @@ local decisions and easier maintenance.
 | QmakeProjectManager | Required by current Debugger plugin metadata | Required by baseline dependency |
 | EasyBoard | Existing board discovery/deployment mode | Preserve; visibility review pending |
 | EtherCATCore | EtherCAT services and extension points | Stage 1 verified |
+| EtherCATProject | Offline project lifecycle and persistence | Stage 2 verified |
 
 ### Planned EtherCAT additions
 
 Plugins enter the profile only after their preceding serial gate passes:
 
-1. `EtherCATProjectPlugin`
-2. `EtherCATDevicesPlugin`
-3. `EtherCATWorkbenchPlugin`
-4. `EtherCATScanPlugin`
-5. `EtherCATDiagnosticsPlugin`
+1. `EtherCATDevicesPlugin`
+2. `EtherCATWorkbenchPlugin`
+3. `EtherCATScanPlugin`
+4. `EtherCATDiagnosticsPlugin`
 
 ### Hidden or excluded plugins
 
@@ -67,7 +67,7 @@ function is outside the product target and records migration or recovery.
 | Feature | Phase-1 status |
 |---|---|
 | TwinCAT-inspired device tree | Planned in Workbench plugin |
-| Offline EtherCAT project | Planned in Project plugin |
+| Offline EtherCAT project | Stage 2 verified |
 | ESI repository | Planned in Devices plugin |
 | Scan UI and topology comparison | Planned with Mock provider only |
 | WKC/DC/link diagnostics | Planned with Mock provider only |
@@ -80,7 +80,7 @@ function is outside the product target and records migration or recovery.
 
 | Check | Result |
 |---|---|
-| Focused Qt Creator plugin tests | 8 passed, 0 failed |
+| Focused Qt Creator plugin tests | 9 passed, 0 failed |
 | Normal Release product build | Passed with 11-plugin allow-list |
 | Enabled clean-settings startup | Passed; stable until intentional `SIGTERM` |
 | Explicitly disabled startup | Passed with `-noload EtherCATCore` |
@@ -89,12 +89,25 @@ function is outside the product target and records migration or recovery.
 | Direct upstream Core or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 
-## EtherCATProject API qualification
+## EtherCATProject stage-2 qualification
 
 The public Project contract uses immutable `EtherCATData` snapshots and
 `ProjectExplorer::ProjectManager` lifecycle signals. ProjectExplorer objects,
-documents, models, and indexes never cross the plugin boundary. Build and
-behavior evidence is added when the Project implementation completes.
+documents, models, and indexes never cross the plugin boundary.
+
+| Check | Result |
+|---|---|
+| Focused Qt Creator plugin tests | 7 passed, 0 failed |
+| Format round trip and corruption | Passed |
+| Version-0 migration and exact backup | Passed |
+| Undo/Redo and Save All modified state | Passed |
+| Atomic save failure preserves source | Passed |
+| Two-project open/switch/close lifecycle | Passed |
+| Normal Release product build | Passed with 12-plugin allow-list |
+| Enabled and disabled GUI startup | Passed; stable until intentional interrupt |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
+| qbs build | Not run; qbs executable is unavailable |
 
 ## Verification states
 

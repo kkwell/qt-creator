@@ -118,6 +118,11 @@ plugin and `EtherCATData` as its product-owned library. The same Qt 6.11.0
 Release build completes successfully. Stage-0 evidence above remains the
 pre-EtherCAT reference point.
 
+Stage 2 adds the product-owned `EtherCATProject` plugin through public
+ProjectExplorer, document, MIME, and wizard APIs. The qualified Release
+product profile now contains 12 plugins and still has no EtherCAT-specific
+change under Qt Creator Core, ProjectExplorer, or the application bootstrap.
+
 ## Worktree preservation
 
 `AGENTS.md` was untracked when the audit began. It is an authoritative user

@@ -1,0 +1,28 @@
+{
+    "Id" : "ethercatproject",
+    "DisplayName" : "EtherCAT Project",
+    "Name" : "EtherCATProject",
+    "Version" : "${IDE_VERSION}",
+    "CompatVersion" : "${IDE_VERSION_COMPAT}",
+    "VendorId" : "kvell",
+    "Vendor" : "Kvell",
+    "Copyright" : "(C) 2026 Kvell",
+    "License" : [ "Commercial Usage" ],
+    "Category" : "EtherCAT",
+    "Description" : "Offline EtherCAT projects and Qt Creator project lifecycle integration.",
+    "core" : {
+        "ProjectFileMimeTypes" : [ "application/x-ethercat-project" ]
+    },
+    ${IDE_PLUGIN_DEPENDENCIES},
+
+    "Mimetypes" : [
+        "<?xml version='1.0' encoding='UTF-8'?>",
+        "<mime-info xmlns='http://www.freedesktop.org/standards/shared-mime-info'>",
+        "    <mime-type type='application/x-ethercat-project'>",
+        "        <sub-class-of type='application/json'/>",
+        "        <comment>EtherCAT engineering project</comment>",
+        "        <glob pattern='*.ecatproject'/>",
+        "    </mime-type>",
+        "</mime-info>"
+    ]
+}

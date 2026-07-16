@@ -21,7 +21,7 @@ documentation, review, and local-commit gates.
 | 0 | Stage-0 governance | Complete | Baseline, policy, build, and architecture evidence |
 | 1 | `EtherCATData` | Complete | UI-independent stable `NodeId` value type |
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
-| 2 | `EtherCATProjectPlugin` | In progress | ProjectExplorer lifecycle, persistence, undo/redo |
+| 2 | `EtherCATProjectPlugin` | Complete | ProjectExplorer lifecycle, persistence, undo/redo |
 | 3 | `EtherCATDevicesPlugin` | Pending | ESI repository and offline device/PDO/DC models |
 | 4 | `EtherCATWorkbenchPlugin` | Pending | EtherCAT mode, device tree, details container, selection UI |
 | 5 | `EtherCATScanPlugin` | Pending | Mock scan state machine, snapshots, and configuration diff |
@@ -102,6 +102,10 @@ added only by a dedicated Core/API change in the owning serial plugin stage.
 The Workbench plugin will eventually own the EtherCAT mode and its left device
 tree. Project and Devices supply public data. Scan and Diagnostics contribute
 commands, pages, and providers through Workbench/Core extension points.
+
+The completed Project implementation and versioned file contract are recorded
+in `docs/ethercat-project-format.md`. ProjectExplorer owns open/close and
+startup-project state; EtherCATProject owns persistence and its undo stack.
 
 The intended information structure is:
 
