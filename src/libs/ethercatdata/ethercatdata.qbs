@@ -13,5 +13,6 @@ QtcLibrary {
         "nodeid.cpp",
         "nodeid.h",
         "projectsnapshot.h",
+        "scansnapshot.h",
     ]
 }

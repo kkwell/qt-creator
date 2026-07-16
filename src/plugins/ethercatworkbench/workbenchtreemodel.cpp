@@ -44,6 +44,8 @@ static Core::WorkbenchNodeKind workbenchKind(Data::ProjectNodeKind kind)
         return Core::WorkbenchNodeKind::Target;
     case Data::ProjectNodeKind::Master:
         return Core::WorkbenchNodeKind::Master;
+    case Data::ProjectNodeKind::Slave:
+        return Core::WorkbenchNodeKind::ConfiguredSlave;
     }
     return Core::WorkbenchNodeKind::None;
 }
@@ -57,6 +59,8 @@ static QString projectStatus(Core::WorkbenchNodeKind kind)
         return Tr::tr("Offline target");
     case Core::WorkbenchNodeKind::Master:
         return Tr::tr("Not configured");
+    case Core::WorkbenchNodeKind::ConfiguredSlave:
+        return Tr::tr("Offline configured");
     default:
         return {};
     }

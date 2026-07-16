@@ -81,7 +81,7 @@ function is outside the product target and records migration or recovery.
 
 | Check | Result |
 |---|---|
-| Focused Qt Creator plugin tests | 11 passed, 0 failed |
+| Focused Qt Creator plugin tests | 12 passed, 0 failed |
 | Normal Release product build | Passed with 11-plugin allow-list |
 | Enabled clean-settings startup | Passed; stable until intentional `SIGTERM` |
 | Explicitly disabled startup | Passed with `-noload EtherCATCore` |
@@ -127,7 +127,7 @@ transport, or controller type. The repository implementation is documented in
 | Search/vendor filters and asynchronous persisted rebuild | Passed |
 | 300-device ESI library | Passed |
 | Pending-job cancellation and deferred cleanup | Passed |
-| EtherCATCore regression tests | 11 passed, 0 failed |
+| EtherCATCore regression tests | 12 passed, 0 failed |
 | EtherCATProject regression tests | 7 passed, 0 failed |
 | Normal Release product build | Passed with 13-plugin allow-list |
 | Enabled and disabled GUI startup | Passed; stable until intentional interrupt |
@@ -154,7 +154,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Process Data, Startup, and DC pages from imported ESI | Passed |
 | Dynamic property-page provider removal | Passed |
 | Dynamic Scan/Diagnostics availability and removal | Passed |
-| EtherCATCore regression tests | 11 passed, 0 failed |
+| EtherCATCore regression tests | 12 passed, 0 failed |
 | EtherCATProject regression tests | 7 passed, 0 failed |
 | EtherCATDevices regression tests | 8 passed, 0 failed |
 | Normal Release product build | Passed with 14-plugin allow-list |

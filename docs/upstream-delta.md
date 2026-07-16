@@ -24,7 +24,7 @@ relative to that recorded comparison point.
 | Plugin top-level CMake/qbs | 2 | Required to register EasyBoard |
 | Branding/qbs support | 2 | Product identity support |
 | `.gitignore` | 1 | Product repository policy |
-| `src/libs/ethercatdata` | 7 | Product-owned stable identity, project, and device value library |
+| `src/libs/ethercatdata` | 8 | Product-owned stable identity, project, device, and scan value library |
 | `src/plugins/ethercatcore` | 19 | Product-owned Core services and extension points |
 | `src/plugins/ethercatproject` | 18 | Product-owned offline project plugin |
 | `src/plugins/ethercatdevices` | 12 | Product-owned offline ESI repository plugin |
@@ -104,6 +104,11 @@ plugins use standard top-level CMake/qbs registration and public Qt Creator
 extension APIs. Neither stage changes `src/plugins/coreplugin`,
 `src/plugins/projectexplorer`, or `src/app`, so the direct Core patch count
 remains five.
+
+The stage-5 Scan API issue adds only product-owned immutable data types and a
+typed in-process `ScanProvider` contract. Compatibility adjustments remain in
+existing EtherCAT plugin files; no Qt Creator upstream Core or application
+path is added, so the direct Core patch count remains five.
 
 Each completed EtherCAT issue must report:
 

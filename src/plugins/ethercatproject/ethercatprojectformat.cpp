@@ -53,6 +53,7 @@ Data::ProjectSnapshot createProjectSnapshot(const QString &name, const QString &
         true,
         false,
         {},
+        {},
     };
 }
 
@@ -138,6 +139,7 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
         false,
         true,
         false,
+        {},
         {},
     };
     return LoadedProject{snapshot, false};

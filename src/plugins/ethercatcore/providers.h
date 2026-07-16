@@ -6,6 +6,7 @@
 
 #include <ethercatdata/devicedescription.h>
 #include <ethercatdata/projectsnapshot.h>
+#include <ethercatdata/scansnapshot.h>
 
 #include <utils/filepath.h>
 #include <utils/id.h>
@@ -30,6 +31,7 @@ enum class WorkbenchNodeKind {
     Master,
     DeviceRepository,
     Device,
+    ConfiguredSlave,
     Diagnostics,
     Placeholder,
 };
@@ -178,6 +180,21 @@ class ETHERCATCORE_EXPORT ScanProvider : public Provider
 
 public:
     ScanProvider(Utils::Id id, const QString &displayName, QObject *parent = nullptr);
+
+    virtual Data::ScanState scanState() const = 0;
+    virtual Data::ScanProgress scanProgress() const = 0;
+    virtual std::optional<Data::ScanResult> lastScanResult() const = 0;
+    virtual QString lastScanError() const = 0;
+
+    virtual Utils::Result<> startScan(const Data::ScanRequest &request) = 0;
+    virtual void cancelScan() = 0;
+    virtual void clearScanResult() = 0;
+
+signals:
+    void scanStateChanged(EtherCAT::Data::ScanState state);
+    void scanProgressChanged(const EtherCAT::Data::ScanProgress &progress);
+    void scanResultChanged();
+    void scanFinished(EtherCAT::Data::ScanState terminalState);
 };
 
 class ETHERCATCORE_EXPORT DiagnosticsProvider : public Provider

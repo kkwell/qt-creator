@@ -75,6 +75,91 @@ public:
     }
 };
 
+class TestScanProvider final : public ScanProvider
+{
+public:
+    TestScanProvider()
+        : ScanProvider("EtherCAT.Scan.Test", "Test scanner")
+    {}
+
+    Data::ScanState scanState() const final { return m_progress.state; }
+    Data::ScanProgress scanProgress() const final { return m_progress; }
+    std::optional<Data::ScanResult> lastScanResult() const final { return m_result; }
+    QString lastScanError() const final { return m_error; }
+
+    Utils::Result<> startScan(const Data::ScanRequest &request) final
+    {
+        if (request.projectId.isNull() || request.masterId.isNull())
+            return Utils::ResultError("Invalid scan request");
+        if (m_progress.state != Data::ScanState::Idle)
+            return Utils::ResultError("Scanner is busy");
+        m_request = request;
+        m_progress = {Data::ScanState::Preparing, 1, 4, 0, "Preparing"};
+        emit scanStateChanged(m_progress.state);
+        emit scanProgressChanged(m_progress);
+        return Utils::ResultOk;
+    }
+
+    void complete()
+    {
+        Data::ScannedSlave slave;
+        slave.id = Data::NodeId::create();
+        slave.position = 0;
+        slave.identity = {2, 0x1234, 1};
+        slave.serialNumber = 17;
+        slave.name = "Mock Slave";
+
+        Data::ScanResult result;
+        result.snapshot.id = Data::NodeId::create();
+        result.snapshot.projectId = m_request.projectId;
+        result.snapshot.masterId = m_request.masterId;
+        result.snapshot.slaves = {slave};
+        result.snapshot.complete = true;
+        result.snapshot.mock = true;
+        result.comparison.projectId = m_request.projectId;
+        result.comparison.masterId = m_request.masterId;
+        result.comparison.differences = {{Data::TopologyDifferenceKind::Added,
+                                          Data::DifferenceSeverity::Information,
+                                          {},
+                                          slave.id,
+                                          -1,
+                                          0,
+                                          "Added slave",
+                                          "Mock Slave"}};
+        result.comparison.acceptAllowed = true;
+        m_result = result;
+        m_progress = {Data::ScanState::Completed, 4, 4, 1, "Completed"};
+        emit scanProgressChanged(m_progress);
+        emit scanResultChanged();
+        emit scanStateChanged(m_progress.state);
+        emit scanFinished(m_progress.state);
+    }
+
+    void cancelScan() final
+    {
+        if (m_progress.state == Data::ScanState::Idle)
+            return;
+        m_progress.state = Data::ScanState::Cancelled;
+        emit scanStateChanged(m_progress.state);
+        emit scanFinished(m_progress.state);
+    }
+
+    void clearScanResult() final
+    {
+        m_result.reset();
+        m_error.clear();
+        m_progress = {};
+        emit scanResultChanged();
+        emit scanStateChanged(m_progress.state);
+    }
+
+private:
+    Data::ScanProgress m_progress;
+    Data::ScanRequest m_request;
+    std::optional<Data::ScanResult> m_result;
+    QString m_error;
+};
+
 void EtherCATCoreTests::testMetadataAndServices()
 {
     const ExtensionSystem::PluginSpec *spec = ExtensionSystem::PluginManager::specById(
@@ -123,6 +208,7 @@ void EtherCATCoreTests::testProjectSnapshotValueSemantics()
         true,
         false,
         {},
+        {},
     };
 
     const Data::ProjectSnapshot copy = snapshot;
@@ -130,6 +216,15 @@ void EtherCATCoreTests::testProjectSnapshotValueSemantics()
     snapshot.nodes[1].name = "Offline Target";
     QVERIFY(copy != snapshot);
     QCOMPARE(copy.nodes[1].parentId, projectId);
+
+    Data::OfflineSlaveConfiguration slave;
+    slave.id = Data::NodeId::create();
+    slave.masterId = targetId;
+    slave.position = 0;
+    slave.identity = {2, 0x1234, 1};
+    slave.name = "Offline Slave";
+    snapshot.slaves.append(slave);
+    QVERIFY(copy != snapshot);
 }
 
 void EtherCATCoreTests::testDeviceDescriptionAndImportJobContract()
@@ -201,6 +296,43 @@ void EtherCATCoreTests::testPropertyPageProviderContract()
     QVERIFY(provider.pages(projectContext).isEmpty());
 }
 
+void EtherCATCoreTests::testScanProviderContract()
+{
+    TestScanProvider provider;
+    QCOMPARE(provider.kind(), ProviderKind::Scan);
+    QCOMPARE(provider.scanState(), Data::ScanState::Idle);
+    QVERIFY(!provider.lastScanResult());
+
+    QSignalSpy stateSpy(&provider, &ScanProvider::scanStateChanged);
+    QSignalSpy progressSpy(&provider, &ScanProvider::scanProgressChanged);
+    QSignalSpy finishedSpy(&provider, &ScanProvider::scanFinished);
+    const Data::ScanRequest request{
+        Data::NodeId::create(), Data::NodeId::create(), Data::ScanOperation::Slaves, {}};
+    QVERIFY_RESULT(provider.startScan(request));
+    QCOMPARE(provider.scanState(), Data::ScanState::Preparing);
+    QCOMPARE(provider.scanProgress().maximum, 4);
+    QCOMPARE(stateSpy.count(), 1);
+    QCOMPARE(progressSpy.count(), 1);
+
+    QVERIFY(!provider.startScan(request));
+    provider.complete();
+    QCOMPARE(provider.scanState(), Data::ScanState::Completed);
+    QVERIFY(provider.lastScanResult());
+    QVERIFY(provider.lastScanResult()->snapshot.mock);
+    QCOMPARE(provider.lastScanResult()->snapshot.slaves.first().serialNumber, quint32(17));
+    QCOMPARE(provider.lastScanResult()->comparison.differences.size(), 1);
+    QCOMPARE(finishedSpy.count(), 1);
+
+    provider.clearScanResult();
+    QCOMPARE(provider.scanState(), Data::ScanState::Idle);
+    QVERIFY_RESULT(provider.startScan(request));
+    provider.cancelScan();
+    QCOMPARE(provider.scanState(), Data::ScanState::Cancelled);
+    QCOMPARE(finishedSpy.count(), 2);
+    provider.clearScanResult();
+    QCOMPARE(provider.scanState(), Data::ScanState::Idle);
+}
+
 void EtherCATCoreTests::testSelectionServicePublishesStableIds()
 {
     SelectionService *service = ExtensionSystem::PluginManager::getObject<SelectionService>();
@@ -251,7 +383,7 @@ void EtherCATCoreTests::testProviderRegistryTracksObjectPool()
 
     QSignalSpy addedSpy(registry, &ProviderRegistry::providerAdded);
     QSignalSpy removedSpy(registry, &ProviderRegistry::providerAboutToBeRemoved);
-    ScanProvider provider("EtherCAT.Scan.Mock", "Mock scanner");
+    TestScanProvider provider;
 
     ExtensionSystem::PluginManager::addObject(&provider);
     QCOMPARE(registry->provider(provider.id()), &provider);

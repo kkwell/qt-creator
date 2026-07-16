@@ -13,16 +13,21 @@ The API is implemented by:
 - `EtherCATCore`, a Qt Creator plugin that depends only on Core, Utils,
   EtherCATData, and Qt Widgets.
 
-Feature-specific scan operations, diagnostic samples, and property widgets are
-intentionally absent. They may only be added by the owning serial plugin issue,
-with a dedicated Core/API change if the public contract must grow. The Project
-stage adds the first such typed extension: immutable project snapshots and the
-project lifecycle service contract described below.
+The original stage-1 contract intentionally omitted feature-specific scan
+operations, diagnostic samples, and property widgets. They are added only by
+their owning serial plugin issue, with a dedicated Core/API change when the
+public contract must grow. The Project stage added the first typed extension:
+immutable project snapshots and the project lifecycle service contract below.
 
 The Devices stage adds the second typed extension: immutable ESI device
 descriptions, repository filtering, original-XML access, and a cancellable
 import/index job contract. It still contains no wire protocol or controller
 ABI.
+
+The Scan API revision adds typed scan requests, state/progress, immutable Mock
+topology snapshots, comparison records, offline-slave values, and the
+cancellable `ScanProvider` contract. It still defines no transport, controller
+address, message, byte layout, or serialization format.
 
 ## Stable identity
 
@@ -71,6 +76,16 @@ Stage 1 froze discovery and lifecycle only. The Project API revision adds typed
 project methods before the Project implementation. It deliberately does not
 expose generic `QVariant`, byte arrays, network messages, or placeholder methods
 for later feature data.
+
+`ScanProvider` is a GUI-thread capability with one operation at a time. A
+consumer starts a typed request for interface discovery, slave discovery, or a
+selected branch; observes the exact Idle/Preparing/ScanningMaster/
+ScanningSlaves/BuildingSnapshot/Comparing/terminal state; reads bounded
+progress and discovered count; and may cancel or clear the last result.
+Completed results contain immutable topology and comparison values. Cancelled
+and failed operations are terminal until cleared, and must not modify an
+offline project. The Provider contract does not itself accept a result into a
+project; that remains a checked ProjectService command in the owning stage.
 
 ## Project service contract
 
@@ -187,7 +202,7 @@ The plugin owns the `Z.EtherCAT` settings category and the
 reserved public IDs. Workbench owns the EtherCAT mode and visible menu actions;
 Core does not create an empty product mode or an empty menu.
 
-## Stage-1 verification
+## Core API verification
 
 The focused plugin test covers:
 
@@ -196,6 +211,7 @@ The focused plugin test covers:
 - selection change suppression and clearing;
 - state contribution validation and severity aggregation;
 - dynamic Provider addition, availability, and removal;
+- typed scan request, state, progress, cancellation, and reset behavior;
 - settings-page registration.
 
 The focused build target and test execution are limited to Core and

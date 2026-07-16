@@ -51,6 +51,7 @@ static Data::ProjectSnapshot projectSnapshot(const QString &name = "Packaging Li
             false,
             true,
             false,
+            {},
             {}};
 }
 
@@ -154,6 +155,22 @@ public:
     {
         page->setToolTip(context.nodeId.toString());
     }
+};
+
+class AvailableScanProvider final : public Core::ScanProvider
+{
+public:
+    AvailableScanProvider()
+        : ScanProvider("EtherCAT.Workbench.TestScan", "Test scan provider")
+    {}
+
+    Data::ScanState scanState() const final { return Data::ScanState::Idle; }
+    Data::ScanProgress scanProgress() const final { return {}; }
+    std::optional<Data::ScanResult> lastScanResult() const final { return std::nullopt; }
+    QString lastScanError() const final { return {}; }
+    Utils::Result<> startScan(const Data::ScanRequest &) final { return Utils::ResultOk; }
+    void cancelScan() final {}
+    void clearScanResult() final {}
 };
 
 void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
@@ -367,7 +384,7 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
         = controller.treeModel()->contextForIndex(master);
     QCOMPARE(pages.pages(masterContext).size(), 4);
 
-    Core::ScanProvider scan("EtherCAT.Workbench.TestScan", "Test scan provider");
+    AvailableScanProvider scan;
     Core::DiagnosticsProvider diagnosticsProvider(
         "EtherCAT.Workbench.TestDiagnostics", "Test diagnostics provider");
     scan.setAvailable(true);
