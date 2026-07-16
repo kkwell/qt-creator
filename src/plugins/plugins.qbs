@@ -45,6 +45,7 @@ Project {
         "dotnet/dotnet.qbs",
         "easyboard/easyboard.qbs",
         "ethercatcore/ethercatcore.qbs",
+        "ethercatdevices/ethercatdevices.qbs",
         "ethercatproject/ethercatproject.qbs",
         "effectcomposer/effectcomposer.qbs",
         "extensionmanager/extensionmanager.qbs",

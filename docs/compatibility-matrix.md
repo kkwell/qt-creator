@@ -42,15 +42,15 @@ local decisions and easier maintenance.
 | EasyBoard | Existing board discovery/deployment mode | Preserve; visibility review pending |
 | EtherCATCore | EtherCAT services and extension points | Stage 1 verified |
 | EtherCATProject | Offline project lifecycle and persistence | Stage 2 verified |
+| EtherCATDevices | Offline ESI repository and immutable device data | Stage 3 verified |
 
 ### Planned EtherCAT additions
 
 Plugins enter the profile only after their preceding serial gate passes:
 
-1. `EtherCATDevicesPlugin`
-2. `EtherCATWorkbenchPlugin`
-3. `EtherCATScanPlugin`
-4. `EtherCATDiagnosticsPlugin`
+1. `EtherCATWorkbenchPlugin`
+2. `EtherCATScanPlugin`
+3. `EtherCATDiagnosticsPlugin`
 
 ### Hidden or excluded plugins
 
@@ -68,7 +68,7 @@ function is outside the product target and records migration or recovery.
 |---|---|
 | TwinCAT-inspired device tree | Planned in Workbench plugin |
 | Offline EtherCAT project | Stage 2 verified |
-| ESI repository | Planned in Devices plugin |
+| ESI repository | Stage 3 verified |
 | Scan UI and topology comparison | Planned with Mock provider only |
 | WKC/DC/link diagnostics | Planned with Mock provider only |
 | Zynq protocol | Explicitly out of scope |
@@ -109,15 +109,33 @@ documents, models, and indexes never cross the plugin boundary.
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |
 
-## EtherCATDevices API qualification
+## EtherCATDevices stage-3 qualification
 
 The Devices API uses immutable `EtherCATData` values and provider-owned
 cancellable jobs. It contains no XML parser object, item-model index, network
-transport, or controller type. Build and behavior evidence is added when the
-Devices implementation completes.
+transport, or controller type. The repository implementation is documented in
+`docs/ethercat-devices-repository.md`.
 
-The value-object and import-job lifecycle contract is covered by the tenth
-focused EtherCATCore test.
+| Check | Result |
+|---|---|
+| Focused EtherCATDevices plugin tests | 8 passed, 0 failed |
+| Malformed XML and mandatory identity rejection | Passed |
+| Multiple product revisions and deterministic IDs | Passed |
+| SM, RxPDO/TxPDO, CoE startup, DC, and common types | Passed |
+| Exact source XML, SHA-256 integrity, duplicate import | Passed |
+| Search/vendor filters and asynchronous persisted rebuild | Passed |
+| 300-device ESI library | Passed |
+| Pending-job cancellation and deferred cleanup | Passed |
+| EtherCATCore regression tests | 10 passed, 0 failed |
+| EtherCATProject regression tests | 7 passed, 0 failed |
+| Normal Release product build | Passed with 13-plugin allow-list |
+| Enabled and disabled GUI startup | Passed; stable until intentional interrupt |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
+| qbs build | Not run; qbs executable is unavailable |
+
+The value-object and import-job lifecycle contract remains covered by the
+tenth focused EtherCATCore test.
 
 ## Verification states
 

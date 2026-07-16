@@ -22,7 +22,7 @@ documentation, review, and local-commit gates.
 | 1 | `EtherCATData` | Complete | UI-independent stable `NodeId` value type |
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Complete | ProjectExplorer lifecycle, persistence, undo/redo |
-| 3 | `EtherCATDevicesPlugin` | In progress | ESI repository and offline device/PDO/DC models |
+| 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
 | 4 | `EtherCATWorkbenchPlugin` | Pending | EtherCAT mode, device tree, details container, selection UI |
 | 5 | `EtherCATScanPlugin` | Pending | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Pending | Mock WKC/DC/link/event diagnostics and trends |
@@ -106,6 +106,9 @@ commands, pages, and providers through Workbench/Core extension points.
 The completed Project implementation and versioned file contract are recorded
 in `docs/ethercat-project-format.md`. ProjectExplorer owns open/close and
 startup-project state; EtherCATProject owns persistence and its undo stack.
+The completed Devices repository and its parsing, storage, identity, and
+asynchronous-lifecycle boundaries are recorded in
+`docs/ethercat-devices-repository.md`.
 
 The intended information structure is:
 
