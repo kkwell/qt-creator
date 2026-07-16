@@ -77,14 +77,15 @@ provider. All provider-owned widgets are destroyed before the provider leaves
 the object pool. Provider addition, availability changes, and removal rebuild
 the page set without retaining removed pointers.
 
-The built-in provider supplies read-only stage-4 pages:
+The built-in provider supplies these stage-4 pages:
 
 - General for projects, targets, masters, configured slaves, the repository,
   and ESI devices;
 - EtherCAT/SyncManager data for imported devices and the offline master;
-- Process Data with RxPDO, TxPDO, entry, type, bit-width, and SM data;
-- Startup with ESI CoE initialization records;
-- DC with mode and nanosecond timing defaults;
+- an editable Process Data page for configured slaves, with a read-only ESI
+  catalogue view for repository devices;
+- read-only Startup with ESI CoE initialization records;
+- read-only DC with mode and nanosecond timing defaults;
 - explicit Online and Diagnostics unavailable pages while the Diagnostics
   capability is absent.
 
@@ -93,6 +94,48 @@ Alias, and optional stable ESI description ID in the Project snapshot. When
 that ESI entry is available, the same SyncManager, Process Data, Startup, and
 DC read-only pages used by the repository device are reused. A missing ESI
 match is reported explicitly and does not invent PDO or DC data.
+
+### Process Data workflow
+
+The Process Data page follows the TwinCAT 3 information flow without copying
+Beckhoff assets or formats. The workflow was compared with Beckhoff's official
+TwinCAT 3 Process Data page documentation:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html>.
+Its adjustable layout contains:
+
+```text
+Sync Manager                 PDO List
+PDO Assignment               PDO Content
+             Process Image Preview
+```
+
+Selecting a Sync Manager filters PDO Assignment and PDO List. Selecting a PDO
+in either table keeps the two selections synchronized and displays its entries
+in PDO Content. The tables expose SM direction and size, current assignment,
+PDO index and byte.bit size, F/M flags, default selection, optional predefined
+group, entry index/subindex, bit width, requested bit offset, type, and
+direction. The derived process-image table displays output and input entries
+with absolute byte.bit offsets, source PDO, and SM.
+
+Repository-device pages are always read-only. A configured slave whose stored
+Process Data is empty shows a deterministic initial mapping derived from its
+current ESI description without marking the project modified. Fixed and
+mandatory PDOs are selected first; otherwise the first supported PDO for each
+SM is selected. The user must explicitly store that mapping or make an edit
+before it enters the project. Stable SM/PDO/entry IDs are derived from the
+configured slave ID, so the same proposal is regenerated until it is
+persisted. Unsupported or contradictory ESI assignments remain visible but
+cannot be selected silently.
+
+For configured slaves, optional PDO assignments are checkable and non-fixed
+PDO content supports editing index, subindex, name, bit width, bit offset, and
+data type. Fixed content and mandatory assignment constraints remain
+read-only. Every candidate is passed to
+`validateProcessDataConfiguration()` and then to the public
+`ProjectService::setProcessDataConfiguration()` command. A rejected candidate
+shows the first error and preserves the current project and undo history. An
+accepted candidate is one project Undo/Redo command. Store/Restore ESI
+Defaults uses the same checked command path.
 
 When an available Diagnostics provider appears, the built-in Online and
 Diagnostics placeholders are withdrawn so the Diagnostics plugin can
@@ -115,12 +158,12 @@ project state remains owned by `EtherCATProject`.
 
 ## Current limits
 
-This stage deliberately provides no bus scan, interface discovery, online
-state, WKC/DC/link samples, alarm stream, controller connection, network
-protocol, configuration package, PLC language, or code generation. Stage 5
-must add Mock scanning through public Core/Workbench extension points and must
-not include Workbench-private headers. Stage 6 follows the same rule for Mock
-diagnostics.
+The Workbench itself deliberately provides no real bus scan, interface
+discovery, online controller state, controller connection, network protocol,
+configuration package, PLC language, or code generation. Scan and Diagnostics
+remain optional Mock Provider plugins. Startup and DC are still read-only in
+Workbench, and the full Inputs/Outputs/RxPDO/TxPDO/Modules tree branches remain
+pending independent issues.
 
 ## Verification
 
@@ -129,9 +172,15 @@ registration, a 500-device incremental model under
 `QAbstractItemModelTester`, filtering and two-way stable selection, real ESI
 data in Process Data/Startup/DC pages, configured-slave topology and ESI-page
 reuse, dynamic property-page removal, and dynamic Scan/Diagnostics availability
-and removal. It passes 9 tests on the qualified Qt 6.11.0 Release test build.
+and removal. The Process Data workflow additionally covers RxPDO/TxPDO SM
+selection, read-only repository and fixed/mandatory mappings, an empty
+no-ESI state, ESI-derived initial mapping, assignment and entry edits,
+validation rejection, process-image refresh, and real DetailsView plus Project
+Undo/Redo reentrancy. It passes 10 tests on the qualified Qt 6.11.0 Release
+test build.
 
-The normal 14-plugin product build and enabled/disabled startup smoke are
+The normal 16-plugin product build and enabled/disabled startup smoke are
 recorded in `docs/compatibility-matrix.md`. A visual desktop inspection was
-attempted but could not run while the Mac session was locked; automated widget
-and mode tests remain the UI evidence for this stage.
+attempted again for this issue but could not run while the Mac session was
+locked; automated widget, model, DetailsView, and mode tests remain the UI
+evidence. No visual inspection is claimed.

@@ -97,9 +97,11 @@ version 1 with an exact recovery backup, and exposes checked replacement
 commands through `ProjectService`. Each accepted replacement enters the
 project's unified Undo/Redo stack.
 
-The later Workbench issue must consume this API for the TwinCAT-inspired
-Process Data, Startup, and DC pages. It must not duplicate offset, overlap,
-width, Startup, or DC validation inside table widgets.
+The Workbench Process Data page now consumes this API for SM/PDO selection,
+entry editing, validation feedback, and process-image preview. It does not
+duplicate offset, overlap, width, or capacity calculations in table widgets.
+Startup and DC still require later independent Workbench issues and must reuse
+their existing domain validators in the same way.
 
 ## Verification
 
@@ -114,4 +116,5 @@ The focused `EtherCATCore` contract suite covers:
 
 The domain suite passes 16 tests on the qualified Qt 6.11.0 Release test build.
 The Project integration has separate format, migration, service, and Undo/Redo
-coverage. Editable pages remain pending in Workbench.
+coverage. The editable Process Data page has Workbench integration coverage;
+editable Startup and DC pages remain pending.

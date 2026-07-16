@@ -156,6 +156,13 @@ existing public ProjectExplorer and IDocument lifecycle. It changes no Qt
 Creator upstream Core, ProjectExplorer, or application path, so the direct
 Core patch count remains five.
 
+The editable Process Data page issue changes only the product-owned
+`EtherCATWorkbench` plugin and documentation. It uses the existing property
+page extension point, immutable ESI/Project snapshots, public Project service,
+Qt item models, and `Core::MiniSplitter`. It adds no path under upstream Core,
+ProjectExplorer, or the application bootstrap, so the direct Core patch count
+remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

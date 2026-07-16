@@ -4,6 +4,7 @@
 
 #include "ethercatworkbenchconstants.h"
 #include "ethercatworkbenchtr.h"
+#include "processdatapage.h"
 #include "workbenchcontroller.h"
 
 #include <utils/stylehelper.h>
@@ -64,41 +65,6 @@ public:
 static QString hexValue(quint64 value, int width)
 {
     return QString("0x%1").arg(value, width, 16, QLatin1Char('0'));
-}
-
-static QString dataTypeName(Data::EtherCATDataType type, const QString &rawType)
-{
-    switch (type) {
-    case Data::EtherCATDataType::Boolean:
-        return "BOOL";
-    case Data::EtherCATDataType::Integer8:
-        return "INT8";
-    case Data::EtherCATDataType::UnsignedInteger8:
-        return "UINT8";
-    case Data::EtherCATDataType::Integer16:
-        return "INT16";
-    case Data::EtherCATDataType::UnsignedInteger16:
-        return "UINT16";
-    case Data::EtherCATDataType::Integer32:
-        return "INT32";
-    case Data::EtherCATDataType::UnsignedInteger32:
-        return "UINT32";
-    case Data::EtherCATDataType::Integer64:
-        return "INT64";
-    case Data::EtherCATDataType::UnsignedInteger64:
-        return "UINT64";
-    case Data::EtherCATDataType::Real32:
-        return "REAL32";
-    case Data::EtherCATDataType::Real64:
-        return "REAL64";
-    case Data::EtherCATDataType::VisibleString:
-        return "STRING";
-    case Data::EtherCATDataType::OctetString:
-        return "OCTET_STRING";
-    case Data::EtherCATDataType::Unknown:
-        return rawType.isEmpty() ? Tr::tr("Unknown") : rawType;
-    }
-    return rawType;
 }
 
 static BuiltinPageWidget *pageWidget(QWidget *page)
@@ -174,6 +140,11 @@ QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *pare
     };
     if (!knownPages.contains(pageId))
         return nullptr;
+    if (pageId == Utils::Id(Constants::PROCESS_DATA_PAGE_ID)) {
+        auto page = new ProcessDataPage(m_controller, parent);
+        page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
+        return page;
+    }
     auto widget = new BuiltinPageWidget(parent);
     widget->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
     return widget;
@@ -182,6 +153,11 @@ QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *pare
 void BuiltinPropertyPageProvider::updatePage(
     Utils::Id pageId, QWidget *page, const Core::PropertyPageContext &context)
 {
+    if (pageId == Utils::Id(Constants::PROCESS_DATA_PAGE_ID)) {
+        if (auto processDataPage = qobject_cast<ProcessDataPage *>(page))
+            processDataPage->setContext(context);
+        return;
+    }
     BuiltinPageWidget *widget = pageWidget(page);
     if (!widget || !m_controller)
         return;
@@ -326,48 +302,6 @@ void BuiltinPropertyPageProvider::updatePage(
                                 syncManager.enabled ? Tr::tr("Yes") : Tr::tr("No")});
             }
         }
-        return;
-    }
-
-    if (pageId == Utils::Id(Constants::PROCESS_DATA_PAGE_ID)) {
-        widget->reset(
-            device ? Tr::tr("PDO mappings are read-only in the current Workbench stage.")
-                   : Tr::tr("The selected device is not available in the ESI repository."),
-            {Tr::tr("Mapping"),
-             Tr::tr("Index"),
-             Tr::tr("Subindex"),
-             Tr::tr("Bits"),
-             Tr::tr("Type"),
-             Tr::tr("SM")});
-        if (!device)
-            return;
-        const auto appendPdos = [widget](
-                                    const QList<Data::PdoDescription> &pdos,
-                                    const QString &direction) {
-            for (const Data::PdoDescription &pdo : pdos) {
-                auto pdoItem = new QTreeWidgetItem(
-                    {direction + " - " + pdo.name,
-                     hexValue(pdo.index, 4),
-                     {},
-                     {},
-                     {},
-                     QString::number(pdo.syncManager)});
-                widget->tree->addTopLevelItem(pdoItem);
-                for (const Data::PdoEntryDescription &entry : pdo.entries) {
-                    pdoItem->addChild(new QTreeWidgetItem(
-                        {entry.name,
-                         hexValue(entry.index, 4),
-                         QString::number(entry.subIndex),
-                         QString::number(entry.bitLength),
-                         dataTypeName(entry.dataType, entry.rawDataType),
-                         {}}));
-                }
-                pdoItem->setExpanded(true);
-            }
-        };
-        appendPdos(device->rxPdos, Tr::tr("RxPDO"));
-        appendPdos(device->txPdos, Tr::tr("TxPDO"));
-        widget->tree->setRootIsDecorated(true);
         return;
     }
 

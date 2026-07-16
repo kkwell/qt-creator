@@ -51,9 +51,9 @@ local decisions and easier maintenance.
 
 All six planned EtherCAT feature and infrastructure plugins have entered the
 local profile. This proves the plugin profile is assembled, not that every
-Phase-1 requirement is complete. Editable Process Data, Startup and DC pages,
-the full TwinCAT-inspired tree workflow, additional UI coverage, and the
-user-policy-deferred upstream rehearsal remain open.
+Phase-1 requirement is complete. Editable Process Data is now verified;
+editable Startup and DC, the full TwinCAT-inspired tree workflow, additional
+UI coverage, and the user-policy-deferred upstream rehearsal remain open.
 
 ### Hidden or excluded plugins
 
@@ -74,7 +74,8 @@ function is outside the product target and records migration or recovery.
 | Extensible offline property pages | Stage 4 verified |
 | Offline Process Data/Startup/DC domain model | Verified in EtherCATData |
 | Project persistence and Undo/Redo for those models | Verified in format version 2 |
-| Editable Process Data/Startup/DC pages | Pending Workbench issue |
+| Editable Process Data page | Verified in current Workbench issue |
+| Editable Startup/DC pages | Pending Workbench issues |
 | Offline EtherCAT project | Stage 2 verified |
 | ESI repository | Stage 3 verified |
 | Scan UI and topology comparison | Stage 5 verified with Mock provider only |
@@ -184,21 +185,29 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 9 passed, 0 failed |
+| Focused EtherCATWorkbench plugin tests | 10 passed, 0 failed |
+| Six-plugin EtherCAT regression | 59 passed, 0 failed |
 | Metadata, hard dependencies, mode, and actions | Passed |
 | 500-device incremental model with model tester | Passed |
 | Filter, context, and bidirectional stable selection | Passed |
 | Process Data, Startup, and DC pages from imported ESI | Passed |
+| TwinCAT-inspired SM, PDO Assignment, PDO List, PDO Content layout | Passed in widget/model flow test |
+| RxPDO/TxPDO selection and synchronized PDO content | Passed |
+| Read-only ESI/fixed mapping and mandatory assignment constraints | Passed |
+| ESI-derived initial mapping and no-ESI empty state | Passed |
+| Checked assignment, bit-offset, and data-type editing | Passed |
+| Invalid width rejection and process-image refresh | Passed |
+| Real DetailsView, ProjectService, modified state, Undo, and Redo | Passed |
 | Configured-slave tree, empty-placeholder removal, and ESI page reuse | Passed |
 | Dynamic property-page provider removal | Passed |
 | Dynamic Scan/Diagnostics availability and removal | Passed |
 | EtherCATCore regression tests | 12 passed, 0 failed |
 | EtherCATProject regression tests | 8 passed, 0 failed |
 | EtherCATDevices regression tests | 8 passed, 0 failed |
-| Normal Release product build | Passed with 14-plugin allow-list |
-| Enabled GUI startup | Passed; stable for 5 seconds until intentional interrupt |
+| Normal Release product build | Passed with 16-plugin allow-list |
+| Enabled GUI startup | Passed for 5 seconds; one shared-memory warning, then intentional timeout |
 | Explicitly disabled startup | Passed with `-noload EtherCATWorkbench`; one shared-memory warning, then stable for 5 seconds until intentional interrupt |
-| Visual desktop inspection | Blocked by locked Mac session; not claimed as passed |
+| Visual desktop inspection | Retried; blocked by locked Mac session and not claimed as passed |
 | Direct upstream Core, ProjectExplorer, or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |

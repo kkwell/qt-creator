@@ -20,13 +20,21 @@
 #include <extensionsystem/pluginmanager.h>
 #include <extensionsystem/pluginspec.h>
 
+#include <projectexplorer/projectexplorer.h>
+#include <projectexplorer/projectmanager.h>
+
 #include <utils/filepath.h>
 
 #include <QAbstractItemModelTester>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPushButton>
 #include <QSignalSpy>
 #include <QTabWidget>
+#include <QTableView>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTreeView>
@@ -62,6 +70,77 @@ static Data::NodeId masterId(const Data::ProjectSnapshot &project)
             return node.id;
     }
     return {};
+}
+
+struct TestProjectFile
+{
+    Utils::FilePath path;
+    Data::NodeId projectId;
+    Data::NodeId masterId;
+    Data::NodeId slaveId;
+};
+
+static TestProjectFile writeProjectWithSlave(
+    const QTemporaryDir &directory, const Data::DeviceSummary &device)
+{
+    TestProjectFile result;
+    result.path = Utils::FilePath::fromString(directory.path())
+                      .canonicalPath()
+                      .pathAppended("process-data.ecatproject");
+    result.projectId = Data::NodeId::create();
+    const Data::NodeId targetId = Data::NodeId::create();
+    result.masterId = Data::NodeId::create();
+    result.slaveId = Data::NodeId::create();
+
+    const QJsonObject processData{{"syncManagers", QJsonArray()}, {"pdos", QJsonArray()}};
+    const QJsonObject startup{{"parameters", QJsonArray()}};
+    const QJsonObject
+        dc{{"enabled", false},
+           {"modeName", ""},
+           {"assignActivate", 0},
+           {"sync0", QJsonObject{{"enabled", false}, {"cycleTimeNs", 0}, {"shiftTimeNs", 0}}},
+           {"sync1", QJsonObject{{"enabled", false}, {"cycleTimeNs", 0}, {"shiftTimeNs", 0}}},
+           {"potentialReferenceClock", false}};
+    const QJsonObject slave{
+        {"id", result.slaveId.toString()},
+        {"name", "Configured Servo"},
+        {"position", 0},
+        {"vendorId", double(device.identity.vendorId)},
+        {"productCode", double(device.identity.productCode)},
+        {"revisionNumber", double(device.identity.revisionNumber)},
+        {"serialNumber", 17},
+        {"alias", 3},
+        {"deviceDescriptionId", device.id.toString()},
+        {"configuration",
+         QJsonObject{{"processData", processData}, {"startup", startup}, {"dc", dc}}}};
+    const QJsonObject root{
+        {"format", "ethercat-project"},
+        {"formatVersion", 2},
+        {"project",
+         QJsonObject{
+             {"id", result.projectId.toString()},
+             {"name", "Process Data Workflow"},
+             {"createdBy", "Workbench Test"}}},
+        {"target", QJsonObject{{"id", targetId.toString()}, {"name", "Offline Controller"}}},
+        {"master",
+         QJsonObject{
+             {"id", result.masterId.toString()},
+             {"name", "EtherCAT Master"},
+             {"slaves", QJsonArray{slave}}}}};
+    const Utils::Result<qint64> written = result.path.writeFileContents(
+        QJsonDocument(root).toJson(QJsonDocument::Indented));
+    if (!written)
+        return {};
+    return result;
+}
+
+static int columnWithHeader(const QAbstractItemModel *model, const QString &header)
+{
+    for (int column = 0; column < model->columnCount(); ++column) {
+        if (model->headerData(column, Qt::Horizontal).toString() == header)
+            return column;
+    }
+    return -1;
 }
 
 static QList<Data::DeviceSummary> deviceSummaries(int count)
@@ -127,9 +206,13 @@ static QByteArray deviceEsi()
 <Type ProductCode="#x00005678" RevisionNo="#x00000011">AX5000</Type>
 <Name>Workbench Servo</Name><GroupType>Drive</GroupType>
 <Sm StartAddress="#x1000" DefaultSize="32" ControlByte="#x26" Enable="1">Outputs</Sm>
+<Sm StartAddress="#x1100" DefaultSize="32" ControlByte="#x22" Enable="1">Inputs</Sm>
 <RxPdo Sm="0"><Index>#x1600</Index><Name>Command</Name><Entry><Index>#x6040</Index>
 <SubIndex>0</SubIndex><BitLen>16</BitLen><Name>Controlword</Name><DataType>UINT</DataType>
-</Entry></RxPdo><Mailbox><CoE><InitCmds><InitCmd><Transition>PS</Transition>
+</Entry></RxPdo><TxPdo Sm="1" Fixed="1" Mandatory="1"><Index>#x1A00</Index><Name>Status</Name>
+<Entry><Index>#x6041</Index><SubIndex>0</SubIndex><BitLen>16</BitLen>
+<Name>Statusword</Name><DataType>UINT</DataType></Entry></TxPdo>
+<Mailbox><CoE><InitCmds><InitCmd><Transition>PS</Transition>
 <Index>#x6060</Index><SubIndex>0</SubIndex><Data>08</Data><Comment>Mode</Comment>
 </InitCmd></InitCmds></CoE></Mailbox><Dc><OpMode><Name>Sync0</Name>
 <AssignActivate>#x0300</AssignActivate><CycleTimeSync0>125000</CycleTimeSync0>
@@ -363,11 +446,26 @@ void EtherCATWorkbenchTests::testBuiltInDevicePages()
         provider.createPage(Constants::PROCESS_DATA_PAGE_ID, nullptr));
     QVERIFY(processPage);
     provider.updatePage(Constants::PROCESS_DATA_PAGE_ID, processPage.get(), context);
-    QTreeWidget *processTree = processPage->findChild<QTreeWidget *>(
-        "EtherCATWorkbenchPageTree");
-    QVERIFY(processTree);
-    QCOMPARE(processTree->topLevelItemCount(), 1);
-    QCOMPARE(processTree->topLevelItem(0)->childCount(), 1);
+    QTableView *syncManagers = processPage->findChild<QTableView *>(
+        "EtherCATProcessDataSyncManagers");
+    QTableView *pdoAssignments = processPage->findChild<QTableView *>(
+        "EtherCATProcessDataAssignments");
+    QTableView *pdoList = processPage->findChild<QTableView *>("EtherCATProcessDataPdoList");
+    QTableView *pdoContent = processPage->findChild<QTableView *>("EtherCATProcessDataPdoContent");
+    QTableView *processImage = processPage->findChild<QTableView *>("EtherCATProcessDataImage");
+    QVERIFY(syncManagers);
+    QVERIFY(pdoAssignments);
+    QVERIFY(pdoList);
+    QVERIFY(pdoContent);
+    QVERIFY(processImage);
+    QCOMPARE(syncManagers->model()->rowCount(), 2);
+    QCOMPARE(pdoAssignments->model()->rowCount(), 1);
+    QCOMPARE(pdoList->model()->rowCount(), 1);
+    QCOMPARE(pdoContent->model()->rowCount(), 1);
+    QCOMPARE(processImage->model()->rowCount(), 2);
+    QVERIFY(
+        !(pdoAssignments->model()->flags(pdoAssignments->model()->index(0, 0))
+          & Qt::ItemIsUserCheckable));
 
     std::unique_ptr<QWidget> startupPage(provider.createPage(Constants::STARTUP_PAGE_ID, nullptr));
     provider.updatePage(Constants::STARTUP_PAGE_ID, startupPage.get(), context);
@@ -444,9 +542,10 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
     std::unique_ptr<QWidget> processPage(
         pages.createPage(Constants::PROCESS_DATA_PAGE_ID, nullptr));
     pages.updatePage(Constants::PROCESS_DATA_PAGE_ID, processPage.get(), context);
-    QCOMPARE(
-        processPage->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree")->topLevelItemCount(),
-        1);
+    QTableView *syncManagers = processPage->findChild<QTableView *>(
+        "EtherCATProcessDataSyncManagers");
+    QVERIFY(syncManagers);
+    QCOMPARE(syncManagers->model()->rowCount(), 2);
 
     std::unique_ptr<QWidget> generalPage(
         pages.createPage(Constants::GENERAL_PAGE_ID, nullptr));
@@ -455,6 +554,207 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
         "EtherCATWorkbenchPageTree");
     QVERIFY(generalTree);
     QVERIFY(generalTree->topLevelItemCount() >= 8);
+
+    project.slaves.first().deviceDescriptionId = {};
+    controller.treeModel()->setProjects({project});
+    const QModelIndex unreferencedSlave
+        = findByKind(controller.treeModel(), Core::WorkbenchNodeKind::ConfiguredSlave);
+    pages.updatePage(
+        Constants::PROCESS_DATA_PAGE_ID,
+        processPage.get(),
+        controller.treeModel()->contextForIndex(unreferencedSlave));
+    QCOMPARE(syncManagers->model()->rowCount(), 0);
+    QVERIFY(processPage->findChild<QLabel *>("EtherCATProcessDataSummary")
+                ->text()
+                .contains("No Process Data", Qt::CaseInsensitive));
+    QVERIFY(processPage->findChild<QPushButton *>("EtherCATProcessDataRestoreDefaults")->isHidden());
+}
+
+void EtherCATWorkbenchTests::testEditableProcessDataWorkflow()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("editable-process-data.xml");
+    const Utils::Result<qint64> esiWritten = esiPath.writeFileContents(deviceEsi());
+    QVERIFY_RESULT(esiWritten);
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0x5678;
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(directory, *device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    const Core::PropertyPageContext context = controller.treeModel()->contextForNodeId(file.slaveId);
+    QCOMPARE(context.nodeKind, Core::WorkbenchNodeKind::ConfiguredSlave);
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    DetailsView details(&controller);
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::PROCESS_DATA_PAGE_ID).toString());
+    QVERIFY(page);
+
+    QTableView *syncManagers = page->findChild<QTableView *>("EtherCATProcessDataSyncManagers");
+    QTableView *assignments = page->findChild<QTableView *>("EtherCATProcessDataAssignments");
+    QTableView *pdoList = page->findChild<QTableView *>("EtherCATProcessDataPdoList");
+    QTableView *content = page->findChild<QTableView *>("EtherCATProcessDataPdoContent");
+    QTableView *image = page->findChild<QTableView *>("EtherCATProcessDataImage");
+    QLabel *validation = page->findChild<QLabel *>("EtherCATProcessDataValidation");
+    QPushButton *restoreDefaults = page->findChild<QPushButton *>(
+        "EtherCATProcessDataRestoreDefaults");
+    QVERIFY(syncManagers);
+    QVERIFY(assignments);
+    QVERIFY(pdoList);
+    QVERIFY(content);
+    QVERIFY(image);
+    QVERIFY(validation);
+    QVERIFY(restoreDefaults);
+    QCOMPARE(syncManagers->model()->rowCount(), 2);
+    QCOMPARE(assignments->model()->rowCount(), 1);
+    QCOMPARE(
+        assignments->model()->data(assignments->model()->index(0, 0), Qt::CheckStateRole).toInt(),
+        int(Qt::Checked));
+    QVERIFY(
+        assignments->model()->flags(assignments->model()->index(0, 0)) & Qt::ItemIsUserCheckable);
+    QVERIFY(!projectService->project(file.projectId)->modified);
+
+    syncManagers->setCurrentIndex(syncManagers->model()->index(1, 0));
+    QTRY_COMPARE(assignments->model()->rowCount(), 1);
+    QTRY_COMPARE(pdoList->model()->index(0, 2).data().toString(), QString("Status"));
+    QTRY_COMPARE(content->model()->index(0, 4).data().toString(), QString("Statusword"));
+    const int flagsColumn = columnWithHeader(pdoList->model(), "Flags");
+    const int defaultColumn = columnWithHeader(pdoList->model(), "Default");
+    const int typeColumn = columnWithHeader(content->model(), "Type");
+    QVERIFY(flagsColumn >= 0);
+    QVERIFY(defaultColumn >= 0);
+    QVERIFY(typeColumn >= 0);
+    QVERIFY(pdoList->model()->index(0, flagsColumn).data().toString().contains("F"));
+    QVERIFY(pdoList->model()->index(0, flagsColumn).data().toString().contains("M"));
+    QCOMPARE(pdoList->model()->index(0, defaultColumn).data().toString(), QString("Yes"));
+    QVERIFY(!(
+        assignments->model()->flags(assignments->model()->index(0, 0)) & Qt::ItemIsUserCheckable));
+    QVERIFY(!(content->model()->flags(content->model()->index(0, typeColumn)) & Qt::ItemIsEditable));
+    syncManagers->setCurrentIndex(syncManagers->model()->index(0, 0));
+    QTRY_COMPARE(pdoList->model()->index(0, 2).data().toString(), QString("Command"));
+    QVERIFY(content->model()->flags(content->model()->index(0, typeColumn)) & Qt::ItemIsEditable);
+
+    QVERIFY(assignments->model()
+                ->setData(assignments->model()->index(0, 0), Qt::Unchecked, Qt::CheckStateRole));
+    const Data::ProjectSnapshot afterAssignment = *projectService->project(file.projectId);
+    QVERIFY(afterAssignment.modified);
+    QCOMPARE(afterAssignment.slaves.first().processData.pdos.size(), 2);
+    QVERIFY(!afterAssignment.slaves.first().processData.pdos.first().selected);
+    QCOMPARE(image->model()->rowCount(), 1);
+    QVERIFY(projectService->canUndoProject(file.projectId));
+
+    const Utils::Result<> undoAssignment = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoAssignment);
+    QVERIFY(projectService->project(file.projectId)->slaves.first().processData.pdos.isEmpty());
+    QTRY_COMPARE(
+        assignments->model()->data(assignments->model()->index(0, 0), Qt::CheckStateRole).toInt(),
+        int(Qt::Checked));
+
+    restoreDefaults->click();
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().processData.pdos.size(), 2);
+    QVERIFY(projectService->canUndoProject(file.projectId));
+    const Utils::Result<> undoDefaults = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoDefaults);
+    QVERIFY(projectService->project(file.projectId)->slaves.first().processData.pdos.isEmpty());
+    const Utils::Result<> redoDefaults = projectService->redoProject(file.projectId);
+    QVERIFY_RESULT(redoDefaults);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().processData.pdos.size(), 2);
+    QCOMPARE(
+        projectService->project(file.projectId)
+            ->slaves.first()
+            .processData.pdos.first()
+            .entries.first()
+            .requestedBitOffset,
+        -1);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().processData.pdos.size(), 2);
+    QCOMPARE(content->model()->rowCount(), 1);
+    QCOMPARE(image->model()->rowCount(), 2);
+
+    QSignalSpy projectChanged(projectService, &Core::ProjectService::projectChanged);
+
+    const int bitsColumn = columnWithHeader(content->model(), "Bits");
+    const int offsetColumn = columnWithHeader(content->model(), "Bit Offset");
+    QVERIFY(bitsColumn >= 0);
+    QVERIFY(offsetColumn >= 0);
+    QVERIFY(!content->model()->setData(content->model()->index(0, bitsColumn), 8));
+    QVERIFY(validation->text().contains("not applied", Qt::CaseInsensitive));
+    const Data::ProjectSnapshot afterRejectedEdit = *projectService->project(file.projectId);
+    QCOMPARE(afterRejectedEdit.slaves.size(), 1);
+    QCOMPARE(afterRejectedEdit.slaves.first().processData.pdos.size(), 2);
+    QCOMPARE(afterRejectedEdit.slaves.first().processData.pdos.first().entries.size(), 1);
+    QCOMPARE(afterRejectedEdit.slaves.first().processData.pdos.first().entries.first().bitLength, 16);
+
+    const int changedBeforeOffset = projectChanged.count();
+    QVERIFY(content->model()->setData(content->model()->index(0, offsetColumn), 8));
+    QCOMPARE(projectChanged.count(), changedBeforeOffset + 1);
+    const Data::ProjectSnapshot afterOffsetEdit = *projectService->project(file.projectId);
+    QCOMPARE(afterOffsetEdit.slaves.size(), 1);
+    QCOMPARE(afterOffsetEdit.slaves.first().processData.pdos.size(), 2);
+    QCOMPARE(afterOffsetEdit.slaves.first().processData.pdos.first().entries.size(), 1);
+    QCOMPARE(
+        afterOffsetEdit.slaves.first().processData.pdos.first().entries.first().requestedBitOffset,
+        8);
+    const Utils::Result<> undoOffset = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoOffset);
+    const Data::ProjectSnapshot afterUndo = *projectService->project(file.projectId);
+    QCOMPARE(afterUndo.slaves.size(), 1);
+    QCOMPARE(afterUndo.slaves.first().processData.pdos.size(), 2);
+    QCOMPARE(afterUndo.slaves.first().processData.pdos.first().entries.size(), 1);
+    QCOMPARE(afterUndo.slaves.first().processData.pdos.first().entries.first().requestedBitOffset, -1);
+    const Utils::Result<> redoOffset = projectService->redoProject(file.projectId);
+    QVERIFY_RESULT(redoOffset);
+    const Data::ProjectSnapshot afterRedo = *projectService->project(file.projectId);
+    QCOMPARE(afterRedo.slaves.size(), 1);
+    QCOMPARE(afterRedo.slaves.first().processData.pdos.size(), 2);
+    QCOMPARE(afterRedo.slaves.first().processData.pdos.first().entries.size(), 1);
+    QCOMPARE(afterRedo.slaves.first().processData.pdos.first().entries.first().requestedBitOffset, 8);
+
+    QVERIFY(content->model()->setData(
+        content->model()->index(0, typeColumn), int(Data::EtherCATDataType::Integer16)));
+    QCOMPARE(
+        projectService->project(file.projectId)
+            ->slaves.first()
+            .processData.pdos.first()
+            .entries.first()
+            .dataType,
+        Data::EtherCATDataType::Integer16);
+    const Utils::Result<> undoType = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoType);
+    QCOMPARE(
+        projectService->project(file.projectId)
+            ->slaves.first()
+            .processData.pdos.first()
+            .entries.first()
+            .dataType,
+        Data::EtherCATDataType::UnsignedInteger16);
+    const Utils::Result<> redoType = projectService->redoProject(file.projectId);
+    QVERIFY_RESULT(redoType);
+
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
 void EtherCATWorkbenchTests::testDynamicPropertyProviderRemoval()
