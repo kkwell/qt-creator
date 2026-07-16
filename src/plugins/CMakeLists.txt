@@ -25,7 +25,6 @@ add_subdirectory(silversearcher)
 
 # Level 3: (only depends on Level 2 and below)
 add_subdirectory(ethercatproject)
-add_subdirectory(ethercatworkbench)
 add_subdirectory(cargo)
 add_subdirectory(gradle)
 add_subdirectory(ant)
@@ -43,6 +42,7 @@ add_subdirectory(languageclient)
 add_subdirectory(acpclient)
 
 # Level 4: (only depends on Level 3 and below)
+add_subdirectory(ethercatworkbench)
 add_subdirectory(classview)
 add_subdirectory(dotnet)
 add_subdirectory(glsleditor)
@@ -53,6 +53,7 @@ add_subdirectory(todo)
 add_subdirectory(vcsbase)
 
 # Level 5:
+add_subdirectory(ethercatscan)
 add_subdirectory(autotoolsprojectmanager)
 add_subdirectory(bazaar)
 add_subdirectory(beautifier)

@@ -99,6 +99,8 @@ struct ETHERCATDATA_EXPORT ScanSnapshot
     QStringList warnings;
     bool complete = false;
     bool mock = false;
+    ScanOperation operation = ScanOperation::Slaves;
+    NodeId branchNodeId;
 
     friend bool operator==(const ScanSnapshot &, const ScanSnapshot &) = default;
 };

@@ -48,6 +48,7 @@ Project {
         "ethercatdevices/ethercatdevices.qbs",
         "ethercatproject/ethercatproject.qbs",
         "ethercatworkbench/ethercatworkbench.qbs",
+        "ethercatscan/ethercatscan.qbs",
         "effectcomposer/effectcomposer.qbs",
         "extensionmanager/extensionmanager.qbs",
         "fakevim/fakevim.qbs",

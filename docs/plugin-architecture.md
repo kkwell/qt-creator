@@ -24,7 +24,7 @@ documentation, review, and local-commit gates.
 | 2 | `EtherCATProjectPlugin` | Complete | ProjectExplorer lifecycle, persistence, undo/redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
 | 4 | `EtherCATWorkbenchPlugin` | Complete | EtherCAT mode, device tree, details container, selection UI |
-| 5 | `EtherCATScanPlugin` | Pending | Mock scan state machine, snapshots, and configuration diff |
+| 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Pending | Mock WKC/DC/link/event diagnostics and trends |
 
 `EtherCATData` is an infrastructure library, not a feature container. It may
@@ -103,8 +103,8 @@ added only by a dedicated Core/API change in the owning serial plugin stage.
 
 The completed Workbench plugin owns the EtherCAT mode, its left device tree,
 selection linkage, and the details-page host. Project and Devices supply public
-data. Scan and Diagnostics will contribute commands, pages, and providers
-through Workbench/Core extension points.
+data. Scan contributes commands, pages, and a Provider through Workbench/Core
+extension points; Diagnostics will follow the same boundary.
 
 The completed Project implementation and versioned file contract are recorded
 in `docs/ethercat-project-format.md`. ProjectExplorer owns open/close and
@@ -114,7 +114,9 @@ asynchronous-lifecycle boundaries are recorded in
 `docs/ethercat-devices-repository.md`.
 The completed Workbench layout, model, property-page hosting, optional-provider
 lifecycle, and explicit stage limits are recorded in
-`docs/ethercat-workbench.md`.
+`docs/ethercat-workbench.md`. The completed local-only scan state machine,
+comparison, branch merge, stable-ID reconciliation, and Mock boundaries are
+recorded in `docs/ethercat-scan.md`.
 
 The intended information structure is:
 

@@ -29,6 +29,7 @@ relative to that recorded comparison point.
 | `src/plugins/ethercatproject` | 18 | Product-owned offline project plugin |
 | `src/plugins/ethercatdevices` | 12 | Product-owned offline ESI repository plugin |
 | `src/plugins/ethercatworkbench` | 20 | Product-owned EtherCAT engineering-shell plugin |
+| `src/plugins/ethercatscan` | 16 | Product-owned local Mock scan workflow plugin |
 
 ## Direct Core intrusion
 
@@ -118,6 +119,13 @@ path, so the direct Core patch count remains five.
 The matching Workbench adaptation reads those public snapshots, renders
 configured slaves, and reuses public ESI descriptions. It remains entirely in
 the product-owned `EtherCATWorkbench` plugin, so the direct Core patch count
+remains five.
+
+The stage-5 Scan implementation adds one product-owned plugin through the
+standard CMake/qbs lists and extends only the product-owned scan snapshot. It
+uses ActionManager, object-pool Providers, ProjectService commands, and the
+Workbench property-page extension point. It changes no Qt Creator upstream
+Core, ProjectExplorer, or application path, so the direct Core patch count
 remains five.
 
 Each completed EtherCAT issue must report:

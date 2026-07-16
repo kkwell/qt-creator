@@ -44,13 +44,13 @@ local decisions and easier maintenance.
 | EtherCATProject | Offline project lifecycle and persistence | Stage 2 verified |
 | EtherCATDevices | Offline ESI repository and immutable device data | Stage 3 verified |
 | EtherCATWorkbench | EtherCAT mode, device tree, selection, and offline property pages | Stage 4 verified |
+| EtherCATScan | Local Mock scan, topology comparison, and checked acceptance | Stage 5 verified |
 
 ### Planned EtherCAT additions
 
 Plugins enter the profile only after their preceding serial gate passes:
 
-1. `EtherCATScanPlugin`
-2. `EtherCATDiagnosticsPlugin`
+1. `EtherCATDiagnosticsPlugin`
 
 ### Hidden or excluded plugins
 
@@ -70,7 +70,7 @@ function is outside the product target and records migration or recovery.
 | Extensible offline property pages | Stage 4 verified |
 | Offline EtherCAT project | Stage 2 verified |
 | ESI repository | Stage 3 verified |
-| Scan UI and topology comparison | Planned with Mock provider only |
+| Scan UI and topology comparison | Stage 5 verified with Mock provider only |
 | WKC/DC/link diagnostics | Planned with Mock provider only |
 | Zynq protocol | Explicitly out of scope |
 | Real EtherCAT scan | Explicitly out of scope |
@@ -162,6 +162,34 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Normal Release product build | Passed with 14-plugin allow-list |
 | Enabled GUI startup | Passed; stable for 5 seconds until intentional interrupt |
 | Explicitly disabled startup | Passed with `-noload EtherCATWorkbench`; one shared-memory warning, then stable for 5 seconds until intentional interrupt |
+| Visual desktop inspection | Blocked by locked Mac session; not claimed as passed |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
+| qbs build | Not run; qbs executable is unavailable |
+
+## EtherCATScan stage-5 qualification
+
+The Scan plugin is a local simulation. None of this evidence represents a
+physical interface scan, controller connection, EtherCAT frame exchange, or
+hardware result. Its behavior and phase limits are documented in
+`docs/ethercat-scan.md`.
+
+| Check | Result |
+|---|---|
+| Focused EtherCATScan plugin tests | 7 passed, 0 failed |
+| Metadata, dependencies, Providers, commands, and page widgets | Passed |
+| Exact, added, missing, reordered, identity, duplicate, PDO/DC placeholder differences | Passed |
+| Normal, slow, interface-only, cancellation, partial failure, and shutdown paths | Passed |
+| Revision mismatch and selected-branch comparison | Passed |
+| Interface-scan acceptance protection | Passed |
+| Stable-ID branch merge and independent Project Undo/Redo | Passed |
+| EtherCATCore regression tests | 12 passed, 0 failed |
+| EtherCATProject regression tests | 8 passed, 0 failed |
+| EtherCATDevices regression tests | 8 passed, 0 failed |
+| EtherCATWorkbench regression tests | 9 passed, 0 failed |
+| Normal Release product build | Passed with 15-plugin allow-list |
+| Enabled GUI startup | Passed; stable for 5 seconds until intentional interrupt |
+| Explicitly disabled startup | Passed with `-noload EtherCATScan`; one shared-memory warning, then stable for 5 seconds until intentional interrupt |
 | Visual desktop inspection | Blocked by locked Mac session; not claimed as passed |
 | Direct upstream Core, ProjectExplorer, or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |

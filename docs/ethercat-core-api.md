@@ -84,8 +84,11 @@ ScanningSlaves/BuildingSnapshot/Comparing/terminal state; reads bounded
 progress and discovered count; and may cancel or clear the last result.
 Completed results contain immutable topology and comparison values. Cancelled
 and failed operations are terminal until cleared, and must not modify an
-offline project. The Provider contract does not itself accept a result into a
-project; that remains a checked ProjectService command in the owning stage.
+offline project. A snapshot records the originating operation and stable branch
+ID, which keeps compare and accept scopes identical. Interface discovery has no
+slave topology and cannot be accepted as one. The Provider contract does not
+itself accept a result into a project; that remains a checked ProjectService
+command in the owning stage.
 
 ## Project service contract
 
