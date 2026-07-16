@@ -14,6 +14,7 @@ private slots:
     void testMetadataAndServices();
     void testNodeIdRoundTrip();
     void testProjectSnapshotValueSemantics();
+    void testDeviceDescriptionAndImportJobContract();
     void testSelectionServicePublishesStableIds();
     void testStateServiceAggregatesContributions();
     void testProviderRegistryTracksObjectPool();

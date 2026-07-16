@@ -80,7 +80,7 @@ function is outside the product target and records migration or recovery.
 
 | Check | Result |
 |---|---|
-| Focused Qt Creator plugin tests | 9 passed, 0 failed |
+| Focused Qt Creator plugin tests | 10 passed, 0 failed |
 | Normal Release product build | Passed with 11-plugin allow-list |
 | Enabled clean-settings startup | Passed; stable until intentional `SIGTERM` |
 | Explicitly disabled startup | Passed with `-noload EtherCATCore` |
@@ -108,6 +108,16 @@ documents, models, and indexes never cross the plugin boundary.
 | Direct upstream Core, ProjectExplorer, or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |
+
+## EtherCATDevices API qualification
+
+The Devices API uses immutable `EtherCATData` values and provider-owned
+cancellable jobs. It contains no XML parser object, item-model index, network
+transport, or controller type. Build and behavior evidence is added when the
+Devices implementation completes.
+
+The value-object and import-job lifecycle contract is covered by the tenth
+focused EtherCATCore test.
 
 ## Verification states
 

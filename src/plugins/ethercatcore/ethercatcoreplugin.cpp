@@ -50,6 +50,10 @@ EtherCATCorePlugin::~EtherCATCorePlugin()
 void EtherCATCorePlugin::initialize()
 {
     qRegisterMetaType<Data::NodeId>();
+    qRegisterMetaType<Data::DeviceDescription>();
+    qRegisterMetaType<Data::DeviceImportResult>();
+    qRegisterMetaType<Data::DeviceSummary>();
+    qRegisterMetaType<DeviceImportState>();
     qRegisterMetaType<ProviderKind>();
     qRegisterMetaType<StatusEntry>();
     qRegisterMetaType<StatusSeverity>();

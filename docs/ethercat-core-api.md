@@ -13,11 +13,16 @@ The API is implemented by:
 - `EtherCATCore`, a Qt Creator plugin that depends only on Core, Utils,
   EtherCATData, and Qt Widgets.
 
-Feature-specific ESI queries, scan operations, diagnostic samples, and property
-widgets are intentionally absent. They may only be added by the owning serial
-plugin issue, with a dedicated Core/API change if the public contract must
-grow. The Project stage adds the first such typed extension: immutable project
-snapshots and the project lifecycle service contract described below.
+Feature-specific scan operations, diagnostic samples, and property widgets are
+intentionally absent. They may only be added by the owning serial plugin issue,
+with a dedicated Core/API change if the public contract must grow. The Project
+stage adds the first such typed extension: immutable project snapshots and the
+project lifecycle service contract described below.
+
+The Devices stage adds the second typed extension: immutable ESI device
+descriptions, repository filtering, original-XML access, and a cancellable
+import/index job contract. It still contains no wire protocol or controller
+ABI.
 
 ## Stable identity
 
@@ -86,6 +91,35 @@ ProjectExplorer remains the owner of open/close and startup-project lifecycle.
 The service mirrors that state; it does not create a second project registry.
 The project file format, atomic save, migration, and undo stack belong to the
 Project plugin and are not part of this Core API.
+
+## Device repository contract
+
+`DeviceRepositoryProvider` is an abstract, GUI-thread Provider implemented by
+the EtherCATDevices plugin. It exposes immutable summaries and full device
+descriptions containing:
+
+- Vendor ID, Product Code, Revision Number, name, type, and group;
+- SyncManager definitions and directions;
+- RxPDO/TxPDO definitions, entries, bit lengths, and common data types;
+- CoE capability flags and startup parameters;
+- DC operation modes and timing defaults;
+- source path, SHA-256, import time, warnings, and unsupported-feature markers.
+
+Callers search with `DeviceFilter`, resolve a full description by stable
+`NodeId`, and may request the exact original XML for forward compatibility.
+They do not receive repository model indexes or parser objects.
+
+`importFiles()` and `rebuildIndex()` return a provider-owned
+`DeviceImportJob`. Jobs publish Pending, Running, Canceling, and Finished
+states, bounded progress, and one immutable `DeviceImportResult`. `cancel()`
+is idempotent. `finish()` is terminal and can emit only once. The Provider
+emits repository reset/change signals only after worker results have returned
+to the GUI thread.
+
+Job pointers are guarded QObject references. Consumers must stop using a job
+after its `destroyed` signal and must not retain a Provider after object-pool
+removal. XML parsing, repository storage, deduplication, and stable-ID mapping
+belong to EtherCATDevices, not Core.
 
 Providers register themselves with `PluginManager::addObject()` only after
 they are initialized and remove themselves before destruction. Consumers

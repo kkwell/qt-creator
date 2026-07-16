@@ -22,7 +22,7 @@ documentation, review, and local-commit gates.
 | 1 | `EtherCATData` | Complete | UI-independent stable `NodeId` value type |
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Complete | ProjectExplorer lifecycle, persistence, undo/redo |
-| 3 | `EtherCATDevicesPlugin` | Pending | ESI repository and offline device/PDO/DC models |
+| 3 | `EtherCATDevicesPlugin` | In progress | ESI repository and offline device/PDO/DC models |
 | 4 | `EtherCATWorkbenchPlugin` | Pending | EtherCAT mode, device tree, details container, selection UI |
 | 5 | `EtherCATScanPlugin` | Pending | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Pending | Mock WKC/DC/link/event diagnostics and trends |

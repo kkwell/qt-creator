@@ -58,6 +58,61 @@ DeviceRepositoryProvider::DeviceRepositoryProvider(
     : Provider(ProviderKind::DeviceRepository, id, displayName, parent)
 {}
 
+DeviceImportJob::DeviceImportJob(QObject *parent)
+    : QObject(parent)
+{}
+
+DeviceImportState DeviceImportJob::state() const
+{
+    return m_state;
+}
+
+int DeviceImportJob::progressValue() const
+{
+    return m_progressValue;
+}
+
+int DeviceImportJob::progressMaximum() const
+{
+    return m_progressMaximum;
+}
+
+Data::DeviceImportResult DeviceImportJob::result() const
+{
+    return m_result;
+}
+
+void DeviceImportJob::setState(DeviceImportState state)
+{
+    if (m_state == state || m_state == DeviceImportState::Finished)
+        return;
+    m_state = state;
+    emit stateChanged(m_state);
+}
+
+void DeviceImportJob::setProgress(int value, int maximum)
+{
+    if (m_state == DeviceImportState::Finished)
+        return;
+    const int boundedMaximum = qMax(0, maximum);
+    const int boundedValue = qBound(0, value, boundedMaximum);
+    if (m_progressValue == boundedValue && m_progressMaximum == boundedMaximum)
+        return;
+    m_progressValue = boundedValue;
+    m_progressMaximum = boundedMaximum;
+    emit progressChanged(m_progressValue, m_progressMaximum);
+}
+
+void DeviceImportJob::finish(const Data::DeviceImportResult &result)
+{
+    if (m_state == DeviceImportState::Finished)
+        return;
+    m_result = result;
+    m_state = DeviceImportState::Finished;
+    emit stateChanged(m_state);
+    emit finished(m_result);
+}
+
 PropertyPageProvider::PropertyPageProvider(Utils::Id id, const QString &displayName, QObject *parent)
     : Provider(ProviderKind::PropertyPage, id, displayName, parent)
 {}
