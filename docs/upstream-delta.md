@@ -191,6 +191,13 @@ selection and property-page extension points. No upstream Core,
 ProjectExplorer, or application path changes, so the direct Core patch count
 remains five.
 
+The Workbench CoE Online Mock issue changes only the product-owned
+`EtherCATWorkbench` plugin and documentation. It adds a private local object
+model, page, filters, and an explicit call through the existing public Project
+service; CMake and qbs list the same two new source files. It adds no plugin
+dependency, controller transport, upstream Core, ProjectExplorer, or
+application path change, so the direct Core patch count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

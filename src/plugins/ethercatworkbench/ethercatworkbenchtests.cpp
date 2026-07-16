@@ -333,6 +333,20 @@ static QModelIndex findById(
     return {};
 }
 
+static QModelIndex findByDisplayText(
+    const QAbstractItemModel *model, const QString &text, const QModelIndex &parent = {})
+{
+    for (int row = 0; row < model->rowCount(parent); ++row) {
+        const QModelIndex index = model->index(row, 0, parent);
+        if (index.data().toString() == text)
+            return index;
+        const QModelIndex child = findByDisplayText(model, text, index);
+        if (child.isValid())
+            return child;
+    }
+    return {};
+}
+
 static QModelIndex findBySourceId(
     const WorkbenchTreeModel *model,
     const Data::NodeId &sourceId,
@@ -374,7 +388,7 @@ static QByteArray deviceEsi()
 <Mailbox><CoE><InitCmds><InitCmd><Transition>PS</Transition>
 <Index>#x6060</Index><SubIndex>0</SubIndex><Data>08</Data><Comment>Mode</Comment>
 </InitCmd><InitCmd><Transition>SO</Transition><Index>#x6072</Index><SubIndex>0</SubIndex>
-<Data>3412</Data><Comment>Maximum torque</Comment></InitCmd>
+<Data>3412</Data><Comment>最大扭矩 / Maximum torque commissioning limit</Comment></InitCmd>
 <InitCmd><Transition>&lt;PS&gt;</Transition><Index>#x8000</Index><SubIndex>1</SubIndex>
 <Data>00</Data><Comment>Fixed ESI request</Comment></InitCmd></InitCmds></CoE></Mailbox>
 <Dc><OpMode><Name>Sync0</Name>
@@ -597,7 +611,7 @@ void EtherCATWorkbenchTests::testBuiltInDevicePages()
         context{{}, found->id, Core::WorkbenchNodeKind::Device, found->name};
 
     BuiltinPropertyPageProvider provider(&controller);
-    QCOMPARE(provider.pages(context).size(), 6);
+    QCOMPARE(provider.pages(context).size(), 7);
 
     std::unique_ptr<QWidget> processPage(
         provider.createPage(Constants::PROCESS_DATA_PAGE_ID, nullptr));
@@ -732,7 +746,7 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
 
     BuiltinPropertyPageProvider pages(&controller);
     const Core::PropertyPageContext context = controller.treeModel()->contextForIndex(slave);
-    QCOMPARE(pages.pages(context).size(), 6);
+    QCOMPARE(pages.pages(context).size(), 7);
     std::unique_ptr<QWidget> processPage(pages.createPage(Constants::PROCESS_DATA_PAGE_ID, nullptr));
     pages.updatePage(Constants::PROCESS_DATA_PAGE_ID, processPage.get(), context);
     QTableView *syncManagers = processPage->findChild<QTableView *>(
@@ -1165,6 +1179,197 @@ void EtherCATWorkbenchTests::testEditableProcessDataWorkflow()
     QVERIFY(!(
         derivedAssignments->model()->flags(derivedAssignments->model()->index(0, 0))
         & Qt::ItemIsUserCheckable));
+
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+void EtherCATWorkbenchTests::testCoeOnlineMockWorkflow()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("coe-online.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(deviceEsi()));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0x5678;
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(directory, *device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    const Core::PropertyPageContext context = controller.treeModel()->contextForNodeId(file.slaveId);
+    BuiltinPropertyPageProvider provider(&controller);
+    const Utils::Id coePageId(Constants::COE_ONLINE_PAGE_ID);
+    const QList<Core::PropertyPageDescriptor> descriptors = provider.pages(context);
+    const auto coeDescriptor
+        = std::find_if(descriptors.cbegin(), descriptors.cend(), [&coePageId](const auto &entry) {
+              return entry.id == coePageId;
+          });
+    QVERIFY(coeDescriptor != descriptors.cend());
+    QCOMPARE(coeDescriptor->displayName, QString("CoE Online"));
+    QCOMPARE(coeDescriptor->priority, 350);
+
+    std::unique_ptr<QWidget> page(provider.createPage(coePageId, nullptr));
+    QVERIFY(page);
+    provider.updatePage(coePageId, page.get(), context);
+    QLabel *banner = page->findChild<QLabel *>("EtherCATCoeMockBanner");
+    QLabel *source = page->findChild<QLabel *>("EtherCATCoeDataSource");
+    QLineEdit *filter = page->findChild<QLineEdit *>("EtherCATCoeFilter");
+    QTreeView *dictionary = page->findChild<QTreeView *>("EtherCATCoeObjectDictionary");
+    QPushButton *updateList = page->findChild<QPushButton *>("EtherCATCoeUpdateList");
+    QPushButton *advanced = page->findChild<QPushButton *>("EtherCATCoeAdvanced");
+    QPushButton *addToStartup = page->findChild<QPushButton *>("EtherCATCoeAddToStartup");
+    QCheckBox *autoUpdate = page->findChild<QCheckBox *>("EtherCATCoeAutoUpdate");
+    QCheckBox *singleUpdate = page->findChild<QCheckBox *>("EtherCATCoeSingleUpdate");
+    QCheckBox *showOffline = page->findChild<QCheckBox *>("EtherCATCoeShowOffline");
+    QLineEdit *moduleOd = page->findChild<QLineEdit *>("EtherCATCoeModuleOd");
+    QVERIFY(banner);
+    QVERIFY(source);
+    QVERIFY(filter);
+    QVERIFY(dictionary);
+    QAbstractItemModelTester dictionaryTester(
+        dictionary->model(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+    QVERIFY(updateList);
+    QVERIFY(advanced);
+    QVERIFY(addToStartup);
+    QVERIFY(autoUpdate);
+    QVERIFY(singleUpdate);
+    QVERIFY(showOffline);
+    QVERIFY(moduleOd);
+    QVERIFY(banner->text().contains("MOCK", Qt::CaseInsensitive));
+    QVERIFY(banner->text().contains("controller", Qt::CaseInsensitive));
+    QVERIFY(source->text().contains("Mock", Qt::CaseInsensitive));
+    QVERIFY(!autoUpdate->isEnabled());
+    QVERIFY(singleUpdate->isChecked());
+    QVERIFY(!showOffline->isChecked());
+    QCOMPARE(moduleOd->text(), QString("0"));
+    QVERIFY(moduleOd->isReadOnly());
+    QCOMPARE(columnWithHeader(dictionary->model(), "Index"), 0);
+    QCOMPARE(columnWithHeader(dictionary->model(), "Name"), 1);
+    const int flagsColumn = columnWithHeader(dictionary->model(), "Flags");
+    const int valueColumn = columnWithHeader(dictionary->model(), "Value");
+    QCOMPARE(columnWithHeader(dictionary->model(), "Unit"), 4);
+    QVERIFY(flagsColumn >= 0);
+    QVERIFY(valueColumn >= 0);
+    const QModelIndex vendorId = findByDisplayText(dictionary->model(), "1018:01");
+    QVERIFY(vendorId.isValid());
+    QCOMPARE(vendorId.siblingAtColumn(valueColumn).data().toString(), QString("0x00000002 (2)"));
+
+    bool advancedAccepted = false;
+    QTimer::singleShot(0, [&advancedAccepted] {
+        auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog || dialog->objectName() != "EtherCATCoeAdvancedDialog")
+            return;
+        QComboBox *range = dialog->findChild<QComboBox *>("EtherCATCoeAdvancedRange");
+        if (!range)
+            return;
+        const int profileRange = range->findText("Profile-specific", Qt::MatchStartsWith);
+        if (profileRange < 0)
+            return;
+        range->setCurrentIndex(profileRange);
+        advancedAccepted = true;
+        dialog->accept();
+    });
+    QTest::mouseClick(advanced, Qt::LeftButton);
+    QVERIFY(advancedAccepted);
+    QVERIFY(!findByDisplayText(dictionary->model(), "1018:00").isValid());
+
+    QModelIndex mockObject = findByDisplayText(dictionary->model(), "6060:00");
+    QVERIFY(mockObject.isValid());
+    QVERIFY(mockObject.siblingAtColumn(flagsColumn).data().toString().contains("RW"));
+    const QString initialValue = mockObject.siblingAtColumn(valueColumn).data().toString();
+    QVERIFY(!initialValue.isEmpty());
+    dictionary->setCurrentIndex(mockObject);
+    QTRY_VERIFY(addToStartup->isEnabled());
+    QVERIFY(!projectService->project(file.projectId)->modified);
+
+    QTimer::singleShot(0, [] {
+        if (auto messageBox = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+            if (QAbstractButton *no = messageBox->button(QMessageBox::No))
+                no->click();
+        }
+    });
+    QTest::mouseClick(addToStartup, Qt::LeftButton);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 0);
+    QVERIFY(!projectService->project(file.projectId)->modified);
+
+    QSignalSpy reset(dictionary->model(), &QAbstractItemModel::modelReset);
+    QTest::mouseClick(updateList, Qt::LeftButton);
+    QTRY_VERIFY(reset.count() >= 1);
+    mockObject = findByDisplayText(dictionary->model(), "6060:00");
+    QVERIFY(mockObject.isValid());
+    QVERIFY(mockObject.siblingAtColumn(valueColumn).data().toString() != initialValue);
+    QVERIFY(!dictionary->model()
+                 ->setData(mockObject.siblingAtColumn(valueColumn), "not hex", Qt::EditRole));
+    QVERIFY(
+        dictionary->model()->setData(mockObject.siblingAtColumn(valueColumn), "0A", Qt::EditRole));
+    QCOMPARE(mockObject.siblingAtColumn(valueColumn).data(Qt::EditRole).toString(), QString("0A"));
+
+    filter->setText("最大扭矩");
+    QTRY_VERIFY(findByDisplayText(dictionary->model(), "6072:00").isValid());
+    QVERIFY(!findByDisplayText(dictionary->model(), "6060:00").isValid());
+    filter->clear();
+    QTRY_VERIFY(findByDisplayText(dictionary->model(), "6060:00").isValid());
+    mockObject = findByDisplayText(dictionary->model(), "6060:00");
+    dictionary->setCurrentIndex(mockObject);
+    QTRY_VERIFY(addToStartup->isEnabled());
+
+    QTimer::singleShot(0, [] {
+        if (auto messageBox = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+            if (QAbstractButton *yes = messageBox->button(QMessageBox::Yes))
+                yes->click();
+        }
+    });
+    QTest::mouseClick(addToStartup, Qt::LeftButton);
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 1);
+    const Data::StartupParameterConfiguration copied
+        = projectService->project(file.projectId)->slaves.first().startup.parameters.first();
+    QCOMPARE(copied.index, quint16(0x6060));
+    QCOMPARE(copied.subIndex, quint8(0));
+    QCOMPARE(copied.rawValue, QByteArray::fromHex("0A"));
+    QCOMPARE(copied.transition, QString("PS"));
+    QVERIFY(projectService->project(file.projectId)->modified);
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 0);
+
+    showOffline->setChecked(true);
+    QTRY_VERIFY(source->text().contains("Offline", Qt::CaseInsensitive));
+    mockObject = findByDisplayText(dictionary->model(), "6060:00");
+    dictionary->setCurrentIndex(mockObject);
+    QVERIFY(!(
+        dictionary->model()->flags(mockObject.siblingAtColumn(valueColumn)) & Qt::ItemIsEditable));
+    QVERIFY(!addToStartup->isEnabled());
+
+    const Core::PropertyPageContext
+        deviceContext{{}, device->id, Core::WorkbenchNodeKind::Device, device->name};
+    provider.updatePage(coePageId, page.get(), deviceContext);
+    QVERIFY(dictionary->model()->rowCount() > 0);
+    QVERIFY(!addToStartup->isEnabled());
+
+    const Core::PropertyPageContext missingEsiContext{
+        file.projectId, Data::NodeId::create(), Core::WorkbenchNodeKind::ConfiguredSlave, "Missing"};
+    provider.updatePage(coePageId, page.get(), missingEsiContext);
+    QVERIFY(banner->text().contains("no CoE", Qt::CaseInsensitive));
+    QVERIFY(!addToStartup->isEnabled());
 
     controller.selectionService()->clear();
     ProjectExplorer::ProjectManager::removeProject(opened.project());

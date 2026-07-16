@@ -125,6 +125,8 @@ The built-in provider supplies these stage-4 pages:
   catalogue view for repository devices;
 - a read-only, automatically focused Process Data view for Inputs, Outputs,
   RxPDO, TxPDO, PDO, and PDO Entry tree selections;
+- a local-only CoE Online Mock object dictionary with explicit offline view and
+  an undoable Add to Startup path;
 - General information for Modules / Channels, Module, and Channel selections;
 - an editable Startup request list for configured slaves, with a read-only ESI
   catalogue view for repository devices;
@@ -188,6 +190,40 @@ views are intentionally read-only: assignment and entry editing remains on the
 configured-slave Process Data page. This prevents an edit from removing the
 currently selected derived node while its details page is handling the action,
 while preserving one checked Project command path for all mutations.
+
+### CoE Online Mock workflow
+
+The CoE Online page follows the information structure documented for the
+TwinCAT 3 CoE Online tab without copying Beckhoff assets, protocols, or project
+formats. The reference page is:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
+It presents a hierarchical object dictionary with Index, Name, Flags, Value,
+and Unit columns, together with Update List, Advanced, Add to Startup, Auto
+Update, Single Update, Show Offline Data, source, and Module OD controls.
+
+Every displayed online value is visibly marked as `MOCK DATA`. The page builds
+its local dictionary from the configured identity, ESI Startup proposals,
+persisted Startup requests, and PDO entries. Identity values use conventional
+little-endian numeric formatting and subindices appear below their main object.
+The access flags are an engineering interaction prototype, not device access
+rights discovered through SDO information. No controller, network, ADS, AoE,
+or EtherCAT transfer occurs.
+
+Update List advances a deterministic local sample. Auto Update stays disabled
+until a future controller Provider exists, so this Workbench issue introduces
+no polling timer or background task. Advanced switches between local Mock and
+offline device-description values, selects an object-index range, and can hide
+standard or PDO objects. The page also supports recursive text filtering,
+including Unicode engineering names. Offline and repository-device views are
+read-only.
+
+The Value cell of a locally writable Mock object accepts size-checked raw
+hexadecimal edits. Editing only changes the page's transient Mock value. Add to
+Startup requires explicit confirmation, appends a new `PS` request without
+overwriting an existing request, and submits the complete candidate through
+`ProjectService::setStartupConfiguration()`. The resulting project change is
+undoable. Cancel, invalid hex, wrong width, read-only objects, offline data, and
+repository-device contexts leave the project unchanged.
 
 ### Startup workflow
 
@@ -275,7 +311,9 @@ project state remains owned by `EtherCATProject`.
 The Workbench itself deliberately provides no real bus scan, interface
 discovery, online controller state, controller connection, network protocol,
 configuration package, PLC language, or code generation. Scan and Diagnostics
-remain optional Mock Provider plugins. Inputs, Outputs, RxPDO, TxPDO, and their
+remain optional Mock Provider plugins. CoE Online is also a clearly labeled
+local interaction Mock; it does not perform SDO information or object access.
+Inputs, Outputs, RxPDO, TxPDO, and their
 PDO/entry branches now render persisted, validated active process data. Actual
 modular ESI profile parsing and project-side module/channel values remain a
 separate Devices/data-contract issue; until such source data exists, Modules /
@@ -302,11 +340,17 @@ validation rejection, process-image refresh, and real DetailsView plus Project
 Undo/Redo reentrancy. The Startup workflow covers the ESI catalogue, explicit
 defaults storage, fixed requests, New/Edit/Delete dialogs, enable state,
 ordering, type/value validation, manual no-ESI empty state, and real
-ProjectService Undo/Redo reentrancy. The DC workflow covers two ESI operation
+ProjectService Undo/Redo reentrancy. The CoE Online workflow covers the
+TwinCAT-inspired object hierarchy and controls, ESI/offline/Mock sources,
+manual refresh, advanced and Unicode filters, read-only boundaries, raw-value
+editing, cancelled and confirmed Add to Startup, no-overwrite behavior, no-ESI
+state, Project modified state, and Undo. Its model is also checked by
+`QAbstractItemModelTester` and the focused flow passes at `QT_SCALE_FACTOR=2`.
+The DC workflow covers two ESI operation
 modes, explicit Store/Restore, manual no-ESI configuration, AssignActivate,
 SYNC0/SYNC1 enable and nanosecond timing, reference-clock selection, validation
 rejection, dependent disable actions, and ProjectService Undo/Redo reentrancy.
-It passes 13 tests on the qualified Qt 6.11.0 Release test build.
+It passes 14 tests on the qualified Qt 6.11.0 Release test build.
 
 The normal 16-plugin product build and enabled/disabled startup smoke are
 recorded in `docs/compatibility-matrix.md`. A populated real EtherCAT Mode
@@ -316,4 +360,8 @@ Modules / Channels state expanded simultaneously. Node names remained readable
 in the narrow Qt Creator navigation area, icons used the normal Creator visual
 scale, and the complete tree remained visible to macOS accessibility. The
 previous DC desktop inspection also confirmed Cyclic Mode, SYNC0, SYNC1,
-validation, units, and reference-clock controls without clipping.
+validation, units, and reference-clock controls without clipping. A direct
+Qt 6.11 Widget render of the CoE page was inspected at Retina resolution: the
+control grid, object hierarchy, values, and bilingual long name had no overlap
+or clipping. The page could not receive a full desktop interaction inspection
+because macOS was locked; no main-window click result is claimed.

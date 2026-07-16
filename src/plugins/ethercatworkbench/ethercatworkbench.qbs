@@ -14,6 +14,8 @@ QtcPlugin {
     files: [
         "builtinpropertypages.cpp",
         "builtinpropertypages.h",
+        "coeonlinepage.cpp",
+        "coeonlinepage.h",
         "dcpage.cpp",
         "dcpage.h",
         "detailsview.cpp",

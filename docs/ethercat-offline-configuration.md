@@ -65,8 +65,10 @@ configuration.
 
 No Mock or online value overwrites Startup automatically. The Workbench page
 only changes Startup through explicit table, dialog, order, or ESI-default
-actions, and every accepted action is undoable. A later CoE Online Mock copy
-command must follow the same explicit path.
+actions, and every accepted action is undoable. The CoE Online Mock page now
+follows the same path: a confirmed copy appends one new `PS` request through
+the public Project service, never overwrites an existing request, and remains
+undoable.
 
 ## Distributed Clocks values
 

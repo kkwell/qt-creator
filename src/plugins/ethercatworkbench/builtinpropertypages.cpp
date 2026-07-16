@@ -2,6 +2,7 @@
 
 #include "builtinpropertypages.h"
 
+#include "coeonlinepage.h"
 #include "dcpage.h"
 #include "ethercatworkbenchconstants.h"
 #include "ethercatworkbenchtr.h"
@@ -110,12 +111,13 @@ QList<Core::PropertyPageDescriptor> BuiltinPropertyPageProvider::pages(
     case Kind::Device:
     case Kind::ConfiguredSlave:
     {
-        QList<Core::PropertyPageDescriptor> result = {
-            {Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100},
-            {Utils::Id(Constants::ETHERCAT_PAGE_ID), Tr::tr("EtherCAT"), 200},
-            {Utils::Id(Constants::PROCESS_DATA_PAGE_ID), Tr::tr("Process Data"), 300},
-            {Utils::Id(Constants::STARTUP_PAGE_ID), Tr::tr("Startup"), 400},
-            {Utils::Id(Constants::DC_PAGE_ID), Tr::tr("DC"), 500}};
+        QList<Core::PropertyPageDescriptor> result
+            = {{Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100},
+               {Utils::Id(Constants::ETHERCAT_PAGE_ID), Tr::tr("EtherCAT"), 200},
+               {Utils::Id(Constants::PROCESS_DATA_PAGE_ID), Tr::tr("Process Data"), 300},
+               {Utils::Id(Constants::COE_ONLINE_PAGE_ID), Tr::tr("CoE Online"), 350},
+               {Utils::Id(Constants::STARTUP_PAGE_ID), Tr::tr("Startup"), 400},
+               {Utils::Id(Constants::DC_PAGE_ID), Tr::tr("DC"), 500}};
         if (!m_controller || !m_controller->diagnosticsAvailable())
             result.append({Utils::Id(Constants::ONLINE_PAGE_ID), Tr::tr("Online"), 800});
         return result;
@@ -146,6 +148,7 @@ QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *pare
         Constants::GENERAL_PAGE_ID,
         Constants::ETHERCAT_PAGE_ID,
         Constants::PROCESS_DATA_PAGE_ID,
+        Constants::COE_ONLINE_PAGE_ID,
         Constants::STARTUP_PAGE_ID,
         Constants::DC_PAGE_ID,
         Constants::ONLINE_PAGE_ID,
@@ -155,6 +158,11 @@ QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *pare
         return nullptr;
     if (pageId == Utils::Id(Constants::PROCESS_DATA_PAGE_ID)) {
         auto page = new ProcessDataPage(m_controller, parent);
+        page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
+        return page;
+    }
+    if (pageId == Utils::Id(Constants::COE_ONLINE_PAGE_ID)) {
+        auto page = new CoeOnlinePage(m_controller, parent);
         page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
         return page;
     }
@@ -179,6 +187,11 @@ void BuiltinPropertyPageProvider::updatePage(
     if (pageId == Utils::Id(Constants::PROCESS_DATA_PAGE_ID)) {
         if (auto processDataPage = qobject_cast<ProcessDataPage *>(page))
             processDataPage->setContext(context);
+        return;
+    }
+    if (pageId == Utils::Id(Constants::COE_ONLINE_PAGE_ID)) {
+        if (auto coeOnlinePage = qobject_cast<CoeOnlinePage *>(page))
+            coeOnlinePage->setContext(context);
         return;
     }
     if (pageId == Utils::Id(Constants::STARTUP_PAGE_ID)) {

@@ -18,6 +18,7 @@ const char BUILTIN_PAGE_PROVIDER_ID[] = "EtherCAT.Workbench.BuiltinPages";
 const char GENERAL_PAGE_ID[] = "EtherCAT.Workbench.General";
 const char ETHERCAT_PAGE_ID[] = "EtherCAT.Workbench.EtherCAT";
 const char PROCESS_DATA_PAGE_ID[] = "EtherCAT.Workbench.ProcessData";
+const char COE_ONLINE_PAGE_ID[] = "EtherCAT.Workbench.CoEOnline";
 const char STARTUP_PAGE_ID[] = "EtherCAT.Workbench.Startup";
 const char DC_PAGE_ID[] = "EtherCAT.Workbench.DC";
 const char ONLINE_PAGE_ID[] = "EtherCAT.Workbench.Online";

@@ -4,6 +4,8 @@ add_qtc_plugin(EtherCATWorkbench
   SOURCES
     builtinpropertypages.cpp
     builtinpropertypages.h
+    coeonlinepage.cpp
+    coeonlinepage.h
     dcpage.cpp
     dcpage.h
     detailsview.cpp

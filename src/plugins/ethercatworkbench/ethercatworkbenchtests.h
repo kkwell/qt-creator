@@ -18,6 +18,7 @@ private slots:
     void testConfiguredSlaveTreeAndPages();
     void testTwinCatProcessDataTree();
     void testEditableProcessDataWorkflow();
+    void testCoeOnlineMockWorkflow();
     void testEditableStartupWorkflow();
     void testEditableDcWorkflow();
     void testDynamicPropertyProviderRemoval();
