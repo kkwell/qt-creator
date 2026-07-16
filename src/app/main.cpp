@@ -34,30 +34,23 @@
 #include <QDebug>
 #include <QDialogButtonBox>
 #include <QDir>
-#include <QElapsedTimer>
-#include <QEventLoop>
 #include <QFileInfo>
 #include <QFontDatabase>
-#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLibraryInfo>
 #include <QMessageBox>
 #include <QNetworkProxyFactory>
-#include <QPainter>
-#include <QPalette>
 #include <QPixmapCache>
 #include <QProcess>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QSslConfiguration>
-#include <QSplashScreen>
 #include <QStandardPaths>
 #include <QStyle>
 #include <QSurfaceFormat>
 #include <QTextEdit>
 #include <QTextStream>
 #include <QThreadPool>
-#include <QTimer>
 #include <QTranslator>
 #include <QtVersion>
 
@@ -71,40 +64,6 @@ using namespace Utils;
 using namespace Utils::Internal;
 
 enum { OptionIndent = 4, DescriptionIndent = 34 };
-
-constexpr qint64 minimumSplashDurationMs = 1500;
-
-static QPixmap createSplashPixmap(const QApplication &app)
-{
-    const QPixmap logo(":/core/images/app-splash.png");
-    if (logo.isNull())
-        return {};
-
-    const QString displayName = QGuiApplication::applicationDisplayName();
-    const QFont titleFont = Utils::StyleHelper::uiFont(Utils::StyleHelper::UiElementH1);
-    const QFontMetrics titleMetrics(titleFont);
-    const int horizontalPadding = Utils::StyleHelper::SpacingTokens::PaddingHXxl;
-    const int verticalPadding = Utils::StyleHelper::SpacingTokens::PaddingVXxl;
-    const int titleGap = Utils::StyleHelper::SpacingTokens::GapVXl;
-    const int titleWidth = titleMetrics.horizontalAdvance(displayName);
-    const QSize splashSize(qMax(logo.width(), titleWidth) + 2 * horizontalPadding,
-                           logo.height() + titleGap + titleMetrics.height()
-                               + 2 * verticalPadding);
-
-    QPixmap splashPixmap(splashSize);
-    splashPixmap.fill(app.palette().color(QPalette::Window));
-
-    QPainter painter(&splashPixmap);
-    painter.setFont(titleFont);
-    painter.setPen(app.palette().color(QPalette::WindowText));
-    painter.drawPixmap((splashSize.width() - logo.width()) / 2, verticalPadding, logo);
-    const QRect titleRect(horizontalPadding,
-                          verticalPadding + logo.height() + titleGap,
-                          splashSize.width() - 2 * horizontalPadding,
-                          titleMetrics.height());
-    painter.drawText(titleRect, Qt::AlignCenter, displayName);
-    return splashPixmap;
-}
 
 const char corePluginIdC[] = "core";
 const char fixedOptionsC[]
@@ -1026,30 +985,10 @@ int main(int argc, char **argv)
     }
 
     PluginManager::checkForProblematicPlugins();
-
-    QElapsedTimer splashTimer;
-    QSplashScreen splash(createSplashPixmap(app), Qt::WindowStaysOnTopHint);
-    if (!splash.pixmap().isNull()) {
-        splash.show();
-        splashTimer.start();
-        app.processEvents();
-    }
-
     PluginManager::loadPlugins();
     if (coreplugin->hasError()) {
-        splash.close();
         displayError(msgCoreLoadFailure(coreplugin->errorString()));
         return 1;
-    }
-
-    if (splashTimer.isValid()) {
-        const qint64 remainingDuration = minimumSplashDurationMs - splashTimer.elapsed();
-        if (remainingDuration > 0) {
-            QEventLoop splashEventLoop;
-            QTimer::singleShot(remainingDuration, &splashEventLoop, &QEventLoop::quit);
-            splashEventLoop.exec();
-        }
-        splash.close();
     }
 
     // Set up remote arguments.
