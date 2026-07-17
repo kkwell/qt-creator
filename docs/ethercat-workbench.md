@@ -7,7 +7,8 @@ EtherCAT mode, left navigation tree, stable selection linkage, central details
 container, built-in offline property pages, manual offline-topology commands,
 editable project, target, master, and configured-slave General pages, Workbench
 commands, the local ESI repository management page, the dedicated read-only
-General page for individual ESI catalogue devices,
+General page for individual ESI catalogue devices, the master-side ESI device
+insertion workflow,
 the TwinCAT-aligned master EtherCAT settings and local topology view, and the
 presentation of public Scan/Diagnostics snapshots in the device tree. It does
 not parse ESI files, own project persistence, scan a bus, produce diagnostics,
@@ -132,8 +133,9 @@ identity, including provider-supplied difference summaries and details. The
 context menu supports expand, collapse, locating the first topology difference,
 locating the first warning/error, opening the matching Diagnostics branch,
 locating the first unsupported ESI device, adding a supported ESI device to the
-active offline master, removing or moving a configured slave, and copying the
-stable node ID. Keyboard navigation is provided by `QTreeView`.
+active offline master, opening the master-side `Add New Item...` device
+selector, removing or moving a configured slave, and copying the stable node
+ID. Keyboard navigation is provided by `QTreeView`.
 
 Both columns resize to their visible contents and node text is not elided.
 This gives the hierarchical name priority in Qt Creator's narrow navigation
@@ -227,10 +229,47 @@ inapplicable selections cannot enable the corresponding command. These four
 low-frequency commands remain context-only and are deliberately excluded from
 the compact command strip.
 
-This issue does not add drag-and-drop, multi-selection editing, multiple-master
-target selection, a bus scan, controller transport, or online configuration.
-Those require separate issues and must not bypass the same checked Project
-service boundary.
+The repository-side command does not add drag-and-drop, multi-selection
+editing, multiple-master target selection, a bus scan, controller transport,
+or online configuration. The master-side selection workflow is documented
+below; the other capabilities require separate issues and must not bypass the
+same checked Project service boundary.
+
+## TwinCAT-style ESI device insertion
+
+`ISSUE-WB-INSERT-DEVICE-001` adds the primary offline insertion path to the
+selected EtherCAT master. The interaction was compared with Beckhoff's
+documented TwinCAT 3
+[Add New Item workflow](https://infosys.beckhoff.com/content/1033/el331x/1036999947.html)
+and its description of
+[device revision selection](https://infosys.beckhoff.com/content/1033/ethercatsystem/2477595531.html).
+No Beckhoff asset, icon, project format, command ID, or proprietary
+implementation is copied.
+
+Right-clicking the offline Master exposes one registered, context-only
+`Add New Item...` ActionManager command. It opens a Workbench-private ESI
+selection dialog built from an immutable `DeviceSummary` snapshot. The dialog
+supports case-insensitive search across all identity columns. Its default view
+shows only the highest imported revision for each Vendor ID/Product Code pair;
+`Show Previous Revisions` exposes older revisions, and `Extended Information`
+reveals Vendor ID, Product Code, Revision, and Group columns. Limited or
+unsupported entries remain visible with their qualification state but cannot
+be added. An empty repository has an explicit empty state and disabled Add
+button.
+
+Accepting a supported row passes the selected stable device ID and the
+selected stable master ID to the Workbench controller. The existing checked
+Project replacement command still owns validation, modified state,
+persistence, Undo, and Redo. A stale master, missing ESI entry, or unsupported
+entry is rejected without mutation; Cancel likewise leaves the project
+unchanged. This keeps the original repository-side quick-add path and the new
+master-side TwinCAT-style path on the same factory and Project boundary.
+
+The current project contract does not model EtherCAT ports or a physical
+connection graph, so the dialog truthfully appends at the next physical
+position and does not invent a TwinCAT port selector. Drag-and-drop,
+multi-master routing, online descriptions, real controller access, network
+protocols, and public insertion APIs remain outside this issue.
 
 ## ESI Device Repository General page
 
@@ -754,6 +793,11 @@ work. It receives one immutable `DeviceDescription` snapshot from the existing
 Workbench controller, renders it read-only, and clears all presentation state
 when the context is reset or no longer resolves.
 
+The ESI insertion dialog is owned by the lazy Workbench Mode widget and exists
+only for the modal interaction. It retains a copied `DeviceSummary` snapshot
+and stable IDs; it retains no repository Provider, job, timer, model index, or
+cross-plugin object after closing.
+
 The controller watches optional Scan/Diagnostics availability and snapshot
 signals through public Provider contracts. Provider removal is handled before
 the object leaves the registry: the departing object is excluded, its copied
@@ -826,7 +870,7 @@ The command-strip coverage verifies exact shared-action identity, source-menu
 ordering, Open-Workbench exclusion, dynamic add/remove behavior, complete
 tooltips, standard icon metrics, and all optional-plugin load combinations.
 The tree-command coverage opens real popup menus and verifies exact QAction
-identity for the seven navigation commands and four offline-topology commands,
+identity for the seven navigation commands and five offline-topology commands,
 shared Expand/Collapse navigation buttons, context-only exclusion from the
 command strip, unsupported-device location, stable Node ID copying, placeholder
 protection, and enabled-state updates. The topology workflow verifies complete
@@ -853,7 +897,12 @@ Undo/Redo. The configured-slave EtherCAT workflow verifies ESI type,
 Product/Revision, first/second Auto Inc Addr values, configured predecessor,
 bounded Alias editing and disable value, modified state, stable selection,
 Undo/Redo, missing-ESI behavior, read-only repository behavior, retained master
-topology, and retained SyncManager data.
+topology, and retained SyncManager data. The master-side insertion workflow
+verifies the registered command in the real Master popup, latest-revision
+default, previous-revision and extended-information controls, search,
+supported/limited/empty states, explicit stable master/device IDs, cancel and
+error no-mutation paths, append identity/defaults, stable selection, and
+Project Undo/Redo.
 The master EtherCAT workflow verifies the TwinCAT-aligned NetId and four-action
 hierarchy, disabled unsupported actions and accessibility descriptions, all ten
 cyclic-frame headers, the explicit zero-row runtime boundary, current-snapshot
@@ -864,7 +913,7 @@ The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
 match/difference routing, Missing/Added/Revision/Vendor presentation, warning
 and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
 stable locate/open navigation, command registration, and provider-removal
-restoration. It passes 28 tests on the qualified Qt 6.11.0 Release test build.
+restoration. It passes 29 tests on the qualified Qt 6.11.0 Release test build.
 The project, target, and master General flows also pass at
 `QT_SCALE_FACTOR=2`, and direct normal and 2x widget renders show no overlap,
 clipping, or uncontrolled expansion.
@@ -921,6 +970,14 @@ configuration coverage, complete CoE details, qualification warnings,
 unsupported-feature details, source path, SHA-256, and import time without
 overlap, clipping, truncation, or scale drift. These were offscreen Qt Widget
 renders; no manual desktop interaction is claimed for this issue.
+
+Direct normal and `QT_SCALE_FACTOR=2` renders inspected the ESI device
+selection dialog at a 1000 x 640 logical test size. The 1000 x 640 and
+2000 x 1280 outputs retained the description, search field, revision and
+extended-information controls, identity columns, qualification icons, selected
+status, and Add/Cancel actions without overlap, clipping, or scale drift. These
+were offscreen Qt Widget renders; no manual desktop interaction is claimed for
+this issue.
 
 A direct 522 x 472 Retina render inspected the registered configured-slave
 context menu at `QT_SCALE_FACTOR=2`. The original seven tree commands and the

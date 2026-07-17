@@ -4,6 +4,7 @@
 
 #include "builtinpropertypages.h"
 #include "detailsview.h"
+#include "esideviceselectiondialog.h"
 #include "esirepositorypage.h"
 #include "ethercatworkbenchconstants.h"
 #include "generalpage.h"
@@ -956,6 +957,263 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     controller.selectionService()->clear();
     ProjectExplorer::ProjectManager::removeProject(opened.project());
     QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+void EtherCATWorkbenchTests::testTwinCatInsertDeviceWorkflow()
+{
+    ::Core::ModeManager::activateMode(Constants::MODE_ID);
+    QTRY_COMPARE(::Core::ModeManager::currentModeId(), Utils::Id(Constants::MODE_ID));
+
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    EsiDeviceSelectionDialog emptyDialog({});
+    QLabel *emptyStatus
+        = emptyDialog.findChild<QLabel *>("EtherCATEsiDeviceSelectionStatus");
+    QDialogButtonBox *emptyButtons
+        = emptyDialog.findChild<QDialogButtonBox *>("EtherCATEsiDeviceSelectionButtons");
+    QVERIFY(emptyStatus);
+    QVERIFY(emptyButtons);
+    QVERIFY(emptyStatus->text().contains("No ESI devices", Qt::CaseInsensitive));
+    QVERIFY(!emptyButtons->button(QDialogButtonBox::Ok)->isEnabled());
+    QVERIFY(!emptyDialog.accessibleName().isEmpty());
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto writeEsi = [&directory](
+                              const QString &fileName,
+                              quint32 productCode,
+                              quint32 revision,
+                              const QByteArray &name,
+                              bool limited) {
+        QByteArray esi = deviceEsi();
+        const QByteArray productText = QByteArray("#x") + QByteArray::number(productCode, 16);
+        const QByteArray revisionText = QByteArray("#x") + QByteArray::number(revision, 16);
+        esi.replace("#x00005678", productText);
+        esi.replace("#x00000011", revisionText);
+        esi.replace("Workbench Servo", name);
+        if (limited)
+            esi.replace("</Device>", "<Modules/></Device>");
+        const Utils::FilePath path = Utils::FilePath::fromString(directory.path())
+                                         .canonicalPath()
+                                         .pathAppended(fileName);
+        const Utils::Result<qint64> written = path.writeFileContents(esi);
+        return written ? path : Utils::FilePath();
+    };
+    const Utils::FilePath legacyPath = writeEsi(
+        "insert-legacy.xml", 0x7a130001, 0x00000011, "Legacy Catalogue Servo", false);
+    const Utils::FilePath currentPath = writeEsi(
+        "insert-current.xml", 0x7a130001, 0x00000022, "Current Catalogue Servo", false);
+    const Utils::FilePath limitedPath = writeEsi(
+        "insert-limited.xml", 0x7a130002, 0x00000001, "Limited Modular Device", true);
+    QVERIFY(!legacyPath.isEmpty());
+    QVERIFY(!currentPath.isEmpty());
+    QVERIFY(!limitedPath.isEmpty());
+    const Data::DeviceImportResult importResult
+        = waitForJob(repository->importFiles({legacyPath, currentPath, limitedPath}));
+    QCOMPARE(importResult.requestedFiles, 3);
+    QCOMPARE(importResult.importedDevices, 3);
+    QCOMPARE(importResult.failedFiles, 0);
+
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto legacy = std::find_if(devices.cbegin(), devices.cend(), [](const auto &device) {
+        return device.identity.productCode == 0x7a130001
+               && device.identity.revisionNumber == 0x00000011;
+    });
+    const auto current = std::find_if(devices.cbegin(), devices.cend(), [](const auto &device) {
+        return device.identity.productCode == 0x7a130001
+               && device.identity.revisionNumber == 0x00000022;
+    });
+    const auto limited = std::find_if(devices.cbegin(), devices.cend(), [](const auto &device) {
+        return device.identity.productCode == 0x7a130002;
+    });
+    QVERIFY(legacy != devices.cend());
+    QVERIFY(current != devices.cend());
+    QVERIFY(limited != devices.cend());
+    QVERIFY(legacy->supported);
+    QVERIFY(current->supported);
+    QVERIFY(!limited->supported);
+
+    const TestProjectFile file = writeProjectWithSlave(directory, *current);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QVERIFY_RESULT(projectService->activateProject(file.projectId));
+    QTRY_COMPARE(projectService->activeProjectId(), file.projectId);
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+
+    ::Core::Command *insertCommand = ::Core::ActionManager::command(
+        Constants::INSERT_DEVICE_ACTION_ID);
+    QVERIFY(insertCommand);
+    QTRY_VERIFY(insertCommand->action()->isEnabled());
+    QVERIFY(!insertCommand->action()->icon().isNull());
+
+    bool dialogInspected = false;
+    bool limitedSelectionBlocked = false;
+    bool latestRevisionDefault = false;
+    bool previousRevisionShown = false;
+    bool extendedInformationShown = false;
+    QTimer::singleShot(0, [&] {
+        QDialog *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog || dialog->objectName() != "EtherCATEsiDeviceSelectionDialog")
+            return;
+        QLineEdit *filter = dialog->findChild<QLineEdit *>("EtherCATEsiDeviceSelectionFilter");
+        QCheckBox *extended
+            = dialog->findChild<QCheckBox *>("EtherCATEsiDeviceSelectionExtendedInformation");
+        QCheckBox *showPrevious
+            = dialog->findChild<QCheckBox *>("EtherCATEsiDeviceSelectionShowPrevious");
+        QTreeView *tree = dialog->findChild<QTreeView *>("EtherCATEsiDeviceSelectionTree");
+        QLabel *selectionStatus
+            = dialog->findChild<QLabel *>("EtherCATEsiDeviceSelectionStatus");
+        QDialogButtonBox *buttons
+            = dialog->findChild<QDialogButtonBox *>("EtherCATEsiDeviceSelectionButtons");
+        if (!filter || !extended || !showPrevious || !tree || !selectionStatus || !buttons)
+            return;
+        QPushButton *add = buttons->button(QDialogButtonBox::Ok);
+        if (!add)
+            return;
+        dialog->resize(1000, 640);
+
+        const int revisionColumn = columnWithHeader(tree->model(), "Revision");
+        if (revisionColumn < 0)
+            return;
+        const QModelIndex currentIndex
+            = findByDisplayText(tree->model(), "Current Catalogue Servo");
+        latestRevisionDefault = currentIndex.isValid()
+                                && !findByDisplayText(
+                                        tree->model(), "Legacy Catalogue Servo").isValid()
+                                && tree->isColumnHidden(revisionColumn);
+
+        showPrevious->setChecked(true);
+        previousRevisionShown
+            = findByDisplayText(tree->model(), "Legacy Catalogue Servo").isValid();
+        extended->setChecked(true);
+        extendedInformationShown = !tree->isColumnHidden(revisionColumn);
+
+        filter->setText("Limited Modular Device");
+        QModelIndex selection = findByDisplayText(tree->model(), "Limited Modular Device");
+        if (!selection.isValid())
+            return;
+        tree->setCurrentIndex(selection);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        limitedSelectionBlocked = !add->isEnabled()
+                                  && selectionStatus->text().contains(
+                                      "limited", Qt::CaseInsensitive);
+
+        filter->setText("Current Catalogue Servo");
+        selection = findByDisplayText(tree->model(), "Current Catalogue Servo");
+        if (!selection.isValid())
+            return;
+        tree->setCurrentIndex(selection);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        if (!add->isEnabled())
+            return;
+        filter->clear();
+        selection = findByDisplayText(tree->model(), "Current Catalogue Servo");
+        if (!selection.isValid())
+            return;
+        tree->setCurrentIndex(selection);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        const QString renderPath
+            = qEnvironmentVariable("ETHERCAT_WORKBENCH_INSERT_DEVICE_RENDER_PATH");
+        if (!renderPath.isEmpty() && !dialog->grab().save(renderPath))
+            return;
+        dialogInspected = true;
+        add->click();
+    });
+    insertCommand->action()->trigger();
+    QVERIFY(dialogInspected);
+    QVERIFY(limitedSelectionBlocked);
+    QVERIFY(latestRevisionDefault);
+    QVERIFY(previousRevisionShown);
+    QVERIFY(extendedInformationShown);
+
+    const Utils::Result<> limitedResult
+        = controller.addDeviceToMaster(limited->id, file.masterId);
+    QVERIFY(!limitedResult);
+    QVERIFY(limitedResult.error().contains("unsupported", Qt::CaseInsensitive));
+    QCOMPARE(projectService->project(file.projectId)->slaves.size(), 2);
+    const Utils::Result<> missingMasterResult
+        = controller.addDeviceToMaster(current->id, Data::NodeId::create());
+    QVERIFY(!missingMasterResult);
+    QVERIFY(missingMasterResult.error().contains("unavailable", Qt::CaseInsensitive));
+    QCOMPARE(projectService->project(file.projectId)->slaves.size(), 2);
+    const Utils::Result<> nullMasterResult
+        = controller.addDeviceToMaster(current->id, {});
+    QVERIFY(!nullMasterResult);
+    QVERIFY(nullMasterResult.error().contains("unavailable", Qt::CaseInsensitive));
+    QCOMPARE(projectService->project(file.projectId)->slaves.size(), 2);
+
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 2);
+    const Data::ProjectSnapshot afterAdd = *projectService->project(file.projectId);
+    const auto added = std::find_if(
+        afterAdd.slaves.cbegin(), afterAdd.slaves.cend(), [&file](const auto &slave) {
+            return slave.id != file.slaveId;
+        });
+    QVERIFY(added != afterAdd.slaves.cend());
+    QCOMPARE(added->masterId, file.masterId);
+    QCOMPARE(added->position, 1);
+    QCOMPARE(added->name, QString("Current Catalogue Servo"));
+    QCOMPARE(added->deviceDescriptionId, current->id);
+    QCOMPARE(controller.selectionService()->currentNodeId(), added->id);
+    QVERIFY(projectService->canUndoProject(file.projectId));
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 1);
+    QVERIFY_RESULT(projectService->redoProject(file.projectId));
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 2);
+
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    QTRY_VERIFY(insertCommand->action()->isEnabled());
+    bool cancelInspected = false;
+    QTimer::singleShot(0, [&cancelInspected] {
+        QDialog *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog || dialog->objectName() != "EtherCATEsiDeviceSelectionDialog")
+            return;
+        QDialogButtonBox *buttons
+            = dialog->findChild<QDialogButtonBox *>("EtherCATEsiDeviceSelectionButtons");
+        if (!buttons)
+            return;
+        cancelInspected = true;
+        buttons->button(QDialogButtonBox::Cancel)->click();
+    });
+    insertCommand->action()->trigger();
+    QVERIFY(cancelInspected);
+    QCOMPARE(projectService->project(file.projectId)->slaves.size(), 2);
+
+    WorkbenchNavigationWidget navigation(&controller);
+    navigation.resize(900, 600);
+    navigation.show();
+    QTRY_VERIFY(navigation.isVisible());
+    controller.selectionService()->clear();
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        file.masterId);
+    QList<QAction *> masterMenuActions;
+    QTimer::singleShot(0, &navigation, [&masterMenuActions] {
+        auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!popup)
+            return;
+        masterMenuActions = popup->actions();
+        popup->close();
+    });
+    emit navigation.treeView()->customContextMenuRequested(QPoint(-1, -1));
+    QVERIFY(masterMenuActions.contains(insertCommand->action()));
+
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QVERIFY(!insertCommand->action()->isEnabled());
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }

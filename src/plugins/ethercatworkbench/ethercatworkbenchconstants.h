@@ -18,6 +18,7 @@ const char LOCATE_ISSUE_ACTION_ID[] = "EtherCAT.Workbench.LocateIssue";
 const char OPEN_DIAGNOSTICS_ACTION_ID[] = "EtherCAT.Workbench.OpenDiagnostics";
 const char LOCATE_UNSUPPORTED_DEVICE_ACTION_ID[] = "EtherCAT.Workbench.LocateUnsupportedDevice";
 const char COPY_NODE_ID_ACTION_ID[] = "EtherCAT.Workbench.CopyNodeId";
+const char INSERT_DEVICE_ACTION_ID[] = "EtherCAT.Workbench.InsertDevice";
 const char ADD_DEVICE_TO_MASTER_ACTION_ID[] = "EtherCAT.Workbench.AddDeviceToMaster";
 const char REMOVE_OFFLINE_SLAVE_ACTION_ID[] = "EtherCAT.Workbench.RemoveOfflineSlave";
 const char MOVE_OFFLINE_SLAVE_UP_ACTION_ID[] = "EtherCAT.Workbench.MoveOfflineSlaveUp";

@@ -193,6 +193,16 @@ void EtherCATWorkbenchPlugin::setupActions()
         emit m_controller->copyCurrentNodeIdRequested();
     });
 
+    auto insertDeviceAction
+        = new QAction(Utils::Icons::PLUS.icon(), Tr::tr("Add New Item..."), this);
+    ::Core::ActionManager::registerAction(
+        insertDeviceAction,
+        Constants::INSERT_DEVICE_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    connect(insertDeviceAction, &QAction::triggered, m_controller.get(), [this] {
+        emit m_controller->insertDeviceRequested();
+    });
+
     auto addDeviceAction
         = new QAction(Utils::Icons::PLUS.icon(), Tr::tr("Add to Active Offline Master"), this);
     ::Core::ActionManager::registerAction(
@@ -252,6 +262,7 @@ void EtherCATWorkbenchPlugin::setupActions()
          openDiagnosticsAction,
          locateUnsupportedAction,
          copyNodeIdAction,
+         insertDeviceAction,
          addDeviceAction,
          removeSlaveAction,
          moveSlaveUpAction,
@@ -262,6 +273,7 @@ void EtherCATWorkbenchPlugin::setupActions()
                 openDiagnosticsAction->setEnabled(false);
                 locateUnsupportedAction->setEnabled(false);
                 copyNodeIdAction->setEnabled(false);
+                insertDeviceAction->setEnabled(false);
                 addDeviceAction->setEnabled(false);
                 removeSlaveAction->setEnabled(false);
                 moveSlaveUpAction->setEnabled(false);
@@ -278,6 +290,7 @@ void EtherCATWorkbenchPlugin::setupActions()
             copyNodeIdAction->setEnabled(
                 m_controller->selectionService()
                 && !m_controller->selectionService()->currentNodeId().isNull());
+            insertDeviceAction->setEnabled(m_controller->canInsertDeviceOnSelectedMaster());
             addDeviceAction->setEnabled(m_controller->canAddSelectedDeviceToMaster());
             removeSlaveAction->setEnabled(m_controller->canRemoveSelectedOfflineSlave());
             moveSlaveUpAction->setEnabled(m_controller->canMoveSelectedOfflineSlaveUp());

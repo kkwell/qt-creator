@@ -239,6 +239,9 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
         Constants::COPY_NODE_ID_ACTION_ID,
         !context.nodeId.isNull() && context.nodeKind != Core::WorkbenchNodeKind::Placeholder);
     setCommandEnabled(
+        Constants::INSERT_DEVICE_ACTION_ID,
+        m_controller && m_controller->canInsertDeviceOnSelectedMaster());
+    setCommandEnabled(
         Constants::ADD_DEVICE_TO_MASTER_ACTION_ID,
         m_controller && m_controller->canAddSelectedDeviceToMaster());
     setCommandEnabled(
@@ -266,7 +269,10 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
           Utils::Id(Constants::LOCATE_UNSUPPORTED_DEVICE_ACTION_ID)}) {
         addCommand(id);
     }
-    if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
+    if (context.nodeKind == Core::WorkbenchNodeKind::Master) {
+        menu.addSeparator();
+        addCommand(Constants::INSERT_DEVICE_ACTION_ID);
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
         menu.addSeparator();
         addCommand(Constants::ADD_DEVICE_TO_MASTER_ACTION_ID);
     } else if (context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave) {

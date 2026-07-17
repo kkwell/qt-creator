@@ -32,6 +32,7 @@ public:
     Core::ProviderRegistry *providerRegistry() const;
     bool scanAvailable() const;
     bool diagnosticsAvailable() const;
+    bool canInsertDeviceOnSelectedMaster() const;
     bool canAddSelectedDeviceToMaster() const;
     bool canRemoveSelectedOfflineSlave() const;
     bool canMoveSelectedOfflineSlaveUp() const;
@@ -39,6 +40,9 @@ public:
 
     void refresh();
     void shutdown();
+    Data::NodeId selectedOfflineMasterId() const;
+    Utils::Result<> addDeviceToMaster(
+        const Data::NodeId &deviceId, const Data::NodeId &masterId);
     Utils::Result<> addSelectedDeviceToMaster();
     Utils::Result<> removeSelectedOfflineSlave();
     Utils::Result<> moveSelectedOfflineSlaveUp();
@@ -59,6 +63,7 @@ signals:
     void openDiagnosticsRequested();
     void locateUnsupportedDeviceRequested();
     void copyCurrentNodeIdRequested();
+    void insertDeviceRequested();
     void optionalProvidersChanged();
 
 private:

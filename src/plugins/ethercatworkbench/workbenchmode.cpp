@@ -3,6 +3,7 @@
 #include "workbenchmode.h"
 
 #include "detailsview.h"
+#include "esideviceselectiondialog.h"
 #include "ethercatworkbenchconstants.h"
 #include "ethercatworkbenchtr.h"
 #include "workbenchcommandstrip.h"
@@ -14,6 +15,7 @@
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/icontext.h>
 #include <coreplugin/minisplitter.h>
+#include <coreplugin/messagemanager.h>
 #include <coreplugin/modemanager.h>
 #include <coreplugin/navigationwidget.h>
 #include <coreplugin/outputpane.h>
@@ -65,6 +67,22 @@ public:
         layout->addWidget(commandStrip);
         layout->addWidget(mainSplitter, 1);
         ::Core::IContext::attach(this, ::Core::Context(Constants::CONTEXT_ID));
+
+        connect(controller, &WorkbenchController::insertDeviceRequested, this, [this, controller] {
+            const Data::NodeId masterId = controller->selectedOfflineMasterId();
+            Core::DeviceRepositoryProvider *repository = controller->deviceRepository();
+            if (masterId.isNull() || !repository)
+                return;
+            EsiDeviceSelectionDialog dialog(repository->devices(), this);
+            if (dialog.exec() != QDialog::Accepted)
+                return;
+            const Utils::Result<> result
+                = controller->addDeviceToMaster(dialog.selectedDeviceId(), masterId);
+            if (!result) {
+                ::Core::MessageManager::writeFlashing(
+                    Tr::tr("Cannot add the ESI device: %1").arg(result.error()));
+            }
+        });
     }
 };
 

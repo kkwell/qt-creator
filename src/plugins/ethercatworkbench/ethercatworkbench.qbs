@@ -24,6 +24,8 @@ QtcPlugin {
         "esiconfigurationfactory.h",
         "esidevicegeneralpage.cpp",
         "esidevicegeneralpage.h",
+        "esideviceselectiondialog.cpp",
+        "esideviceselectiondialog.h",
         "esirepositorypage.cpp",
         "esirepositorypage.h",
         "ethercatworkbenchconstants.h",

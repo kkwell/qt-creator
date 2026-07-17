@@ -14,6 +14,8 @@ add_qtc_plugin(EtherCATWorkbench
     esiconfigurationfactory.h
     esidevicegeneralpage.cpp
     esidevicegeneralpage.h
+    esideviceselectiondialog.cpp
+    esideviceselectiondialog.h
     esirepositorypage.cpp
     esirepositorypage.h
     ethercatworkbenchconstants.h

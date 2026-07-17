@@ -50,7 +50,8 @@ static void normalizePositions(QList<Data::OfflineSlaveConfiguration> *slaves)
         (*slaves)[position].position = position;
 }
 
-static std::optional<ActiveMasterContext> activeMasterContext(Core::ProjectService *projectService)
+static std::optional<ActiveMasterContext> activeMasterContext(
+    Core::ProjectService *projectService, const Data::NodeId &requestedMasterId = {})
 {
     if (!projectService)
         return std::nullopt;
@@ -59,8 +60,11 @@ static std::optional<ActiveMasterContext> activeMasterContext(Core::ProjectServi
     if (!project || !project->valid)
         return std::nullopt;
     const auto master = std::find_if(
-        project->nodes.cbegin(), project->nodes.cend(), [](const Data::ProjectNodeSnapshot &node) {
-            return node.kind == Data::ProjectNodeKind::Master;
+        project->nodes.cbegin(),
+        project->nodes.cend(),
+        [&requestedMasterId](const Data::ProjectNodeSnapshot &node) {
+            return node.kind == Data::ProjectNodeKind::Master
+                   && (requestedMasterId.isNull() || node.id == requestedMasterId);
         });
     if (master == project->nodes.cend())
         return std::nullopt;
@@ -225,6 +229,11 @@ bool WorkbenchController::diagnosticsAvailable() const
     return m_diagnosticsAvailable;
 }
 
+bool WorkbenchController::canInsertDeviceOnSelectedMaster() const
+{
+    return !m_shuttingDown && !selectedOfflineMasterId().isNull();
+}
+
 bool WorkbenchController::canAddSelectedDeviceToMaster() const
 {
     if (m_shuttingDown || !m_selectionService || !m_deviceRepository)
@@ -269,16 +278,44 @@ Utils::Result<> WorkbenchController::addSelectedDeviceToMaster()
         m_selectionService->currentNodeId());
     if (context.nodeKind != Core::WorkbenchNodeKind::Device)
         return Utils::ResultError(Tr::tr("Select an ESI device before adding it."));
-    const std::optional<Data::DeviceDescription> device = m_deviceRepository->device(context.nodeId);
+    const std::optional<ActiveMasterContext> target = activeMasterContext(m_projectService);
+    if (!target)
+        return Utils::ResultError(Tr::tr("Open and activate an offline EtherCAT project first."));
+    return addDeviceToMaster(context.nodeId, target->masterId);
+}
+
+Data::NodeId WorkbenchController::selectedOfflineMasterId() const
+{
+    if (m_shuttingDown || !m_selectionService || !m_projectService)
+        return {};
+    const Core::PropertyPageContext context = m_treeModel.contextForNodeId(
+        m_selectionService->currentNodeId());
+    if (context.nodeKind != Core::WorkbenchNodeKind::Master)
+        return {};
+    const std::optional<ActiveMasterContext> target = activeMasterContext(
+        m_projectService, context.nodeId);
+    if (!target || target->project.id != context.projectId)
+        return {};
+    return target->masterId;
+}
+
+Utils::Result<> WorkbenchController::addDeviceToMaster(
+    const Data::NodeId &deviceId, const Data::NodeId &masterId)
+{
+    if (m_shuttingDown || !m_selectionService || !m_deviceRepository || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    if (masterId.isNull())
+        return Utils::ResultError(Tr::tr("The selected offline EtherCAT Master is unavailable."));
+    const std::optional<Data::DeviceDescription> device = m_deviceRepository->device(deviceId);
     if (!device)
         return Utils::ResultError(Tr::tr("The selected ESI device is no longer available."));
     if (!device->summary.supported) {
         return Utils::ResultError(
             Tr::tr("The selected ESI device has unsupported structures and cannot be added."));
     }
-    std::optional<ActiveMasterContext> target = activeMasterContext(m_projectService);
+    std::optional<ActiveMasterContext> target = activeMasterContext(m_projectService, masterId);
     if (!target)
-        return Utils::ResultError(Tr::tr("Open and activate an offline EtherCAT project first."));
+        return Utils::ResultError(Tr::tr("The selected offline EtherCAT Master is unavailable."));
 
     const Data::NodeId slaveId = Data::NodeId::create();
     const QString requestedName = device->summary.name.isEmpty() ? device->summary.typeName
