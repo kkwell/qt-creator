@@ -3101,6 +3101,96 @@ void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
     QCOMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
 }
 
+void EtherCATWorkbenchTests::testDetailsEmptyStateLifecycle()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+    QVERIFY(projectService->projects().isEmpty());
+
+    DetailsView details(&controller);
+    details.resize(900, 600);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+
+    QLabel *title = details.findChild<QLabel *>("EtherCATWorkbenchDetailsTitle");
+    QLabel *emptyState = details.findChild<QLabel *>("EtherCATWorkbenchEmptyState");
+    QTabWidget *tabs = details.findChild<QTabWidget *>("EtherCATWorkbenchPropertyTabs");
+    QVERIFY(title);
+    QVERIFY(emptyState);
+    QVERIFY(tabs);
+    QCOMPARE(title->text(), QString("EtherCAT Workbench"));
+    QTRY_COMPARE(
+        emptyState->text(),
+        QString("No EtherCAT project is open. Create or open an EtherCAT project "
+                "(.ecatproject), or select Device Repository to inspect local ESI "
+                "descriptions."));
+    QVERIFY(emptyState->isVisible());
+    QVERIFY(!tabs->isVisible());
+    QVERIFY(!details.accessibleName().isEmpty());
+    QVERIFY(!details.accessibleDescription().isEmpty());
+    QVERIFY(!title->accessibleName().isEmpty());
+    QVERIFY(!title->accessibleDescription().isEmpty());
+    QVERIFY(!emptyState->accessibleName().isEmpty());
+    QVERIFY(!emptyState->accessibleDescription().isEmpty());
+    QVERIFY(!tabs->accessibleName().isEmpty());
+    QVERIFY(!tabs->accessibleDescription().isEmpty());
+
+    const QString noProjectRenderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_DETAILS_NO_PROJECT_RENDER_PATH");
+    if (!noProjectRenderPath.isEmpty()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(details.grab().save(noProjectRenderPath), qPrintable(noProjectRenderPath));
+    }
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const TestProjectFile file = writeProjectWithSlave(directory, deviceSummaries(1).first());
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_COMPARE(
+        emptyState->text(),
+        QString("Select an EtherCAT node in the tree to inspect its offline details."));
+    QVERIFY(emptyState->isVisible());
+    QVERIFY(!tabs->isVisible());
+
+    controller.selectionService()->setCurrentNodeId(file.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.projectId);
+    QTRY_COMPARE(title->accessibleName(), QString("Process Data Workflow"));
+    QTRY_VERIFY(tabs->isVisible());
+    QVERIFY(!emptyState->isVisible());
+
+    controller.selectionService()->setCurrentNodeId({});
+    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QTRY_COMPARE(
+        emptyState->text(),
+        QString("Select an EtherCAT node in the tree to inspect its offline details."));
+    QTRY_VERIFY(emptyState->isVisible());
+    QVERIFY(!tabs->isVisible());
+
+    const QString renderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_DETAILS_EMPTY_RENDER_PATH");
+    if (!renderPath.isEmpty()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(details.grab().save(renderPath), qPrintable(renderPath));
+    }
+
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_VERIFY(projectService->projects().isEmpty());
+    QTRY_COMPARE(
+        emptyState->text(),
+        QString("No EtherCAT project is open. Create or open an EtherCAT project "
+                "(.ecatproject), or select Device Repository to inspect local ESI "
+                "descriptions."));
+    QVERIFY(emptyState->isVisible());
+    QVERIFY(!tabs->isVisible());
+}
+
 void EtherCATWorkbenchTests::testNavigationSetActiveProjectCommand()
 {
     ::Core::ModeManager::activateMode(Constants::MODE_ID);

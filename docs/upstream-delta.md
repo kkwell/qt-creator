@@ -370,6 +370,16 @@ Project replacement command. It adds no dependency, public Core API, or path
 under upstream Core, ProjectExplorer, or the application bootstrap, so the
 direct Core patch count remains five.
 
+The Workbench Details empty-state lifecycle issue changes only existing private
+`EtherCATWorkbench` Details and test files plus documentation. It distinguishes
+zero-project and open-project/no-selection guidance from the public Project
+snapshot list, refreshes after the private tree model lifecycle signal, and
+adds standard translated QWidget accessibility metadata. It adds no source
+file, CMake/qbs entry, dependency, public API, model role, Provider, persistent
+field, QAction, controller transport, or path under upstream Core,
+ProjectExplorer, or the application bootstrap. The Workbench path count remains
+44 and the direct Core patch count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

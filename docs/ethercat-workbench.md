@@ -1148,7 +1148,7 @@ filter/drop-target handoff, real popup-proxy triggering in Workbench and Edit
 mode navigation contexts, active-close fallback, and final cleanup. Its
 recorded direct Qt menu renders are 504 x 376 and 1008 x 752, with the project
 command in a separate group and no clipping or scale drift. The complete
-Workbench suite passes 35 tests on the `QT_QPA_PLATFORM=offscreen`
+Workbench suite passes 36 tests on the `QT_QPA_PLATFORM=offscreen`
 qualification path; no complete-suite 2x run is claimed. Offscreen execution is
 the default automated path so test fixtures do not take desktop focus; no
 desktop interaction is claimed for this issue.
@@ -1260,3 +1260,51 @@ dialog. The NetId field, four-action stack, explicit cyclic-frame state, all ten
 frame headers, and all ten topology columns remained readable without overlap,
 clipping, or scale drift. These were offscreen Qt Widget renders; no manual
 desktop interaction is claimed for this issue.
+
+## Details empty-state lifecycle
+
+`ISSUE-WB-DETAILS-EMPTY-LIFECYCLE-001` makes the integrated right-hand Details
+area distinguish two previously conflated states:
+
+- with no open EtherCAT project, it explains that the user can create or open
+  an EtherCAT `.ecatproject`, or select Device Repository to inspect local ESI
+  descriptions;
+- with an open project but no current tree selection, it asks the user to
+  select an EtherCAT node to inspect its offline details.
+
+The first state intentionally points to Qt Creator's existing project
+workflow. [Qt Creator documents `File > New Project` as the project-wizard
+entry](https://doc.qt.io/qtcreator/creator-how-to-use-project-wizards.html) and
+[`File > Open Project` as an existing-project
+entry](https://doc.qt.io/qtcreator/creator-project-opening.html). Workbench does
+not register duplicate create/open actions or own project files. Device
+Repository remains a local ESI inspection path and does not imply a controller
+connection.
+
+`DetailsView` still consumes only the public `ProjectService::projects()`
+snapshot and stable Selection Service `NodeId`. When the private Workbench tree
+model resets after project add/remove, an empty Details context is rebuilt from
+the current public project list. Selecting a valid node still routes to the
+existing provider pages; clearing the selection restores the open-project
+guidance; closing the last project restores the no-project guidance. The
+provider-unsupported and Diagnostics-unavailable states are unchanged.
+
+The Details container, dynamic title, guidance label, and property tabs now
+carry translated accessible names and descriptions. This uses the standard
+[`QWidget::accessibleName` and `accessibleDescription`
+contract](https://doc.qt.io/qt-6/qwidget.html); no custom accessibility plugin
+or platform-specific implementation is added. Beckhoff's published EtherCAT
+subscriber workflow likewise presents device-dependent property tabs after a
+device selection, including General, EtherCAT, Process Data, and Online for a
+simple terminal, but it does not prescribe this product's empty-state text:
+[Beckhoff EtherCAT subscriber configuration](https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html).
+
+The dedicated lifecycle test covers no project, project open with no
+selection, valid project selection, cleared selection, final project close,
+visibility, and accessibility metadata. It passes with 3 tests at normal scale
+and 3 tests at `QT_SCALE_FACTOR=2`. Direct 1800 x 1200 Retina renders of both
+empty states were inspected without clipping, overlap, or scale drift. The
+complete Workbench suite now passes 36 tests, and the six isolated EtherCAT
+plugin suites pass 87 tests. All executable qualification runs use
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, and `-no-crashcheck`;
+no desktop interaction is claimed.

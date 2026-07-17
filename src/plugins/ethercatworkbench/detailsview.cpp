@@ -4,6 +4,7 @@
 
 #include "ethercatworkbenchtr.h"
 #include "workbenchcontroller.h"
+#include "workbenchtreemodel.h"
 
 #include <ethercatcore/providerregistry.h>
 #include <ethercatcore/selectionservice.h>
@@ -34,15 +35,23 @@ DetailsView::DetailsView(WorkbenchController *controller, QWidget *parent)
     , m_tabs(new QTabWidget(this))
 {
     setObjectName("EtherCATWorkbenchDetails");
+    setAccessibleName(Tr::tr("EtherCAT Workbench details"));
+    setAccessibleDescription(
+        Tr::tr("Shows offline properties for the EtherCAT node selected in the device tree."));
     m_title->setObjectName("EtherCATWorkbenchDetailsTitle");
     m_title->setTextFormat(Qt::PlainText);
     m_title->setFont(Utils::StyleHelper::uiFont(Utils::StyleHelper::UiElementH4));
+    m_title->setAccessibleDescription(Tr::tr("Current EtherCAT Workbench selection"));
 
     m_emptyState->setObjectName("EtherCATWorkbenchEmptyState");
     m_emptyState->setAlignment(Qt::AlignCenter);
     m_emptyState->setWordWrap(true);
+    m_emptyState->setAccessibleName(Tr::tr("EtherCAT Workbench guidance"));
     m_tabs->setObjectName("EtherCATWorkbenchPropertyTabs");
     m_tabs->setDocumentMode(true);
+    m_tabs->setAccessibleName(Tr::tr("EtherCAT property pages"));
+    m_tabs->setAccessibleDescription(
+        Tr::tr("Switch between offline property pages for the selected EtherCAT node."));
 
     auto layout = new QVBoxLayout(this);
     layout->setContentsMargins(
@@ -87,6 +96,10 @@ DetailsView::DetailsView(WorkbenchController *controller, QWidget *parent)
         &WorkbenchController::optionalProvidersChanged,
         this,
         &DetailsView::rebuildPages);
+    connect(controller->treeModel(), &QAbstractItemModel::modelReset, this, [this] {
+        if (m_context.nodeKind == Core::WorkbenchNodeKind::None)
+            rebuildPages();
+    });
     if (controller->deviceRepository()) {
         connect(
             controller->deviceRepository(),
@@ -150,12 +163,14 @@ void DetailsView::rebuildPages()
 
     if (m_context.nodeKind == Core::WorkbenchNodeKind::None) {
         m_title->setText(Tr::tr("EtherCAT Workbench"));
-        m_emptyState->setText(Tr::tr("Select a project, master, or ESI device in the tree."));
+        m_title->setAccessibleName(m_title->text());
+        updateEmptyState();
         m_emptyState->show();
         m_tabs->hide();
         return;
     }
     m_title->setText(m_context.displayName);
+    m_title->setAccessibleName(m_title->text());
 
     QList<PageCandidate> candidates;
     if (m_controller && m_controller->providerRegistry()) {
@@ -210,7 +225,21 @@ void DetailsView::rebuildPages()
             m_context.nodeKind == Core::WorkbenchNodeKind::Diagnostics
                 ? Tr::tr("Diagnostics plugin is not installed.")
                 : Tr::tr("No property page provider supports this node."));
+        m_emptyState->setAccessibleDescription(m_emptyState->text());
     }
+}
+
+void DetailsView::updateEmptyState()
+{
+    const bool haveProjects = m_controller && m_controller->projectService()
+                              && !m_controller->projectService()->projects().isEmpty();
+    m_emptyState->setText(
+        haveProjects
+            ? Tr::tr("Select an EtherCAT node in the tree to inspect its offline details.")
+            : Tr::tr("No EtherCAT project is open. Create or open an EtherCAT project "
+                     "(.ecatproject), or select Device Repository to inspect local ESI "
+                     "descriptions."));
+    m_emptyState->setAccessibleDescription(m_emptyState->text());
 }
 
 void DetailsView::refreshPageContents()
@@ -221,6 +250,7 @@ void DetailsView::refreshPageContents()
         if (current.nodeKind != Core::WorkbenchNodeKind::None) {
             m_context = current;
             m_title->setText(m_context.displayName);
+            m_title->setAccessibleName(m_title->text());
         }
     }
     for (const PageEntry &entry : std::as_const(m_pages)) {

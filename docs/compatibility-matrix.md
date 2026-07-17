@@ -5,7 +5,7 @@
 | Item | Supported or observed baseline | Evidence status |
 |---|---|---|
 | Product branch | `embed-labs` only | Verified |
-| Issue baseline commit | `c58ee59c646ec0d419ffbb52d8152803f1ae6f97` | Verified |
+| Issue baseline commit | `d8bee5eb96e65333f3999f727438bed0cd439a5f` | Verified |
 | Product version | 20.0.1 | Verified |
 | Recorded Qt Creator merge point | `11ba5cec09dce75db4bc948d98055e338ff59576` | Verified |
 | Qualified product Qt | Homebrew 6.11.0 | Clean Release build and GUI smoke verified |
@@ -519,8 +519,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 35 passed, 0 failed on the offscreen qualification path |
-| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 35, Scan 7, Diagnostics 7; 86 passed, 0 failed in isolated offscreen processes |
+| Focused EtherCATWorkbench plugin tests | 36 passed, 0 failed on the offscreen qualification path |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 36, Scan 7, Diagnostics 7; 87 passed, 0 failed in isolated offscreen processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first navigation keyboard test | Compiled and failed because the navigation container focus proxy was null, as expected |
@@ -774,6 +774,34 @@ or a Zynq result. Its boundaries and implementation are documented in
 | Direct upstream Core, ProjectExplorer, or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |
+
+## EtherCATWorkbench Details empty-state qualification
+
+`ISSUE-WB-DETAILS-EMPTY-LIFECYCLE-001` is presentation-only. It does not add a
+controller connection, EtherCAT frame, physical-device result, network access,
+or runtime state.
+
+| Check | Result |
+|---|---|
+| Failure-first focused test | Failed as expected because the zero-project Details area still displayed the generic selection prompt |
+| Zero-project guidance | Passed with project create/open direction and the existing local Device Repository recovery path |
+| Open-project/no-selection guidance | Passed with an explicit offline node-selection prompt |
+| Project lifecycle | Passed for real temporary project open, valid selection, selection clear, final close, and no stale Details page |
+| Accessibility metadata | Passed for the Details container, dynamic title, guidance label, and property tabs |
+| Focused normal-scale test | 3 passed, 0 failed |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed with both 1800 x 1200 empty-state renders inspected |
+| Complete EtherCATWorkbench suite | 36 passed, 0 failed in an isolated offscreen process |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 36, Scan 7, Diagnostics 7; 87 passed, 0 failed in isolated offscreen processes |
+| Product version inventory | All 16 allow-listed plugins present |
+| Normal `WITH_TESTS=OFF` product build | Passed |
+| Enabled offscreen startup | Passed with clean temporary settings for 12 seconds, then exited 143 after intentional SIGTERM |
+| Explicitly disabled offscreen startup | Passed with `-noload EtherCATWorkbench` and clean temporary settings for 12 seconds, then exited 143 after intentional SIGTERM |
+| macOS crash-dialog boundary | One non-qualifying sandboxed offscreen launch still initialized Touch Bar/AppKit and aborted at 21:08:10; every authoritative executable run was then moved to the sandbox-exempt offscreen path, with no newer crash report |
+| Process cleanup | Passed; no product or test process remained after the lifecycle checks |
+| Manual desktop interaction | Not run by design; the user requested background validation without visible application windows |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Public API, dependency, persistence, CMake, or qbs changes | None |
+| Network or physical hardware access | Not performed by design |
 
 ## Verification states
 

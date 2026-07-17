@@ -275,6 +275,24 @@ Details are contributed as General, EtherCAT, Process Data, CoE mock,
 Startup, DC, Online, and Diagnostics pages. Beckhoff assets, ADS, TwinCAT
 project formats, and PLC editors are out of scope.
 
+## Workbench Details lifecycle boundary
+
+The integrated Details host owns presentation for the current stable
+Workbench selection, including its no-project, no-selection, and no-provider
+states. It does not own project creation, project files, navigation data, or
+controller state. Zero-project versus open-project guidance is derived from the
+public immutable `ProjectService::projects()` list; the private Workbench model
+reset is only a refresh trigger after lifecycle changes. Selection continues to
+flow through `SelectionService` as a stable `NodeId`, and contributed property
+pages remain Provider-owned.
+
+The host exposes translated accessibility metadata through standard QWidget
+properties. No accessibility object, QAction, ProjectExplorer object,
+`QModelIndex`, transport, timer, or persistent field crosses a plugin boundary.
+The create/open wording points to Qt Creator's existing File-menu workflows;
+Workbench neither duplicates those actions nor fabricates a project or online
+state.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for
