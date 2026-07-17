@@ -269,6 +269,14 @@ public API, persistent format, controller protocol, upstream Core,
 ProjectExplorer, or application path, so the direct Core patch count remains
 five.
 
+The Workbench ESI drag-and-drop issue changes only existing files in the
+product-owned `EtherCATWorkbench` plugin and documentation. It adds a private
+stable-ID MIME path and a controller-owned callback that reuses the existing
+checked insertion operation. It adds no source file, CMake/qbs entry, plugin
+dependency, public API, persistent format, controller protocol, upstream Core,
+ProjectExplorer, or application path. The Workbench path count remains 44 and
+the direct Core patch count remains five.
+
 The configured-slave General-page issue also changes only the product-owned
 `EtherCATWorkbench` plugin and documentation. It adds two private General-page
 source files with synchronized CMake/qbs entries and routes name changes through

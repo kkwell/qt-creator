@@ -16,6 +16,7 @@ private slots:
     void testNavigationCommandsUseActionManager();
     void testOfflineTopologyEditingWorkflow();
     void testTwinCatInsertDeviceWorkflow();
+    void testEsiDeviceDragDropWorkflow();
     void testEditableProjectGeneralWorkflow();
     void testEsiRepositoryGeneralWorkflow();
     void testEsiDeviceGeneralWorkflow();

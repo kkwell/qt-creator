@@ -43,7 +43,7 @@ local decisions and easier maintenance.
 | EtherCATCore | EtherCAT services and extension points | Stage 1 verified |
 | EtherCATProject | Offline project lifecycle and persistence | Stage 2 verified |
 | EtherCATDevices | Offline ESI repository and immutable device data | Stage 3 verified |
-| EtherCATWorkbench | EtherCAT mode, device tree, selection, master-side ESI insertion, and offline property pages | Stage 4 verified |
+| EtherCATWorkbench | EtherCAT mode, device tree, selection, master-side ESI insertion, supported-device drag-and-drop, and offline property pages | Stage 4 verified |
 | EtherCATScan | Local Mock scan, topology comparison, and checked acceptance | Stage 5 verified |
 | EtherCATDiagnostics | Local Mock state, WKC, DC, alarm, and performance views | Stage 6 verified |
 
@@ -62,7 +62,9 @@ dedicated TwinCAT-aligned read-only General page for identity, offline
 configuration coverage, import qualification, and source provenance. The
 offline Master now exposes a TwinCAT-style `Add New Item...` workflow with an
 ESI-only searchable selector, latest-revision default, optional previous
-revisions, qualification gating, and Project-owned Undo/Redo. The
+revisions, qualification gating, and Project-owned Undo/Redo. Supported ESI
+catalogue devices can also be copy-dragged onto the active offline Master
+through the same checked insertion path. The
 visible EtherCAT-master EtherCAT page now exposes the documented NetId/action/frame
 hierarchy with a real local topology view and explicit unavailable runtime
 boundaries. The visible
@@ -105,6 +107,7 @@ function is outside the product target and records migration or recovery.
 | ESI repository | Devices storage/parser/provider and Workbench import/reload/cancel UI verified; local/offline only |
 | Individual ESI catalogue-device General page | Verified with TwinCAT-aligned identity, configuration coverage, qualification/source details, explicit unavailable state, and no controller access |
 | Master-side ESI device insertion | Verified with context-only `Add New Item...`, ESI search, latest/previous revision handling, qualification gating, stable IDs, and Project Undo/Redo |
+| Supported ESI device drag-and-drop | Verified for private stable-ID CopyAction, exact active-Master targeting, append semantics, rejection boundaries, and Project Undo/Redo |
 | Scan UI and topology comparison | Stage 5 verified with Mock provider only |
 | WKC/DC/link diagnostics | Stage 6 verified with Mock provider only |
 | Zynq protocol | Explicitly out of scope |
@@ -293,6 +296,38 @@ behavior, or real EtherCAT operation.
 | qbs build | Not run; qbs executable is unavailable |
 | Manual desktop interaction | Not run; only automated widget behavior and direct offscreen renders are claimed |
 
+## EtherCATWorkbench ESI drag-and-drop qualification
+
+`ISSUE-WB-DEVICE-DND-001` changes only the existing Workbench navigation,
+tree model, controller, and tests. Beckhoff's official EtherCAT offline
+documentation remains the reference for the primary tree-command and ESI
+selection workflow; this goal-required Qt Creator drag-and-drop path is a local
+convenience that calls the same checked insertion operation. It adds no public
+API, persistence field, controller transport, network behavior, real EtherCAT
+operation, or Beckhoff asset/format.
+
+| Check | Result |
+|---|---|
+| Failure-first Workbench test | Compiled and failed only because the navigation tree had drag disabled; 2 passed and 1 failed as expected |
+| View and proxy integration | Real `WorkbenchNavigationWidget` passed for DragDrop mode, viewport drop acceptance, drop indicator, Copy default, translated accessible guidance, and proxy-model drag/drop actions |
+| Stable MIME contract | One Workbench-private MIME type contains only the bounded stable ESI device `NodeId`; no pointer or model index is serialized |
+| Qualification and target gating | Only Supported catalogue devices are draggable and only the exact active valid offline Master is droppable; Limited, unknown, forged, slave, stale/wrong-target, MoveAction, and between-row paths are rejected |
+| Checked mutation lifecycle | Accepted copy-drop leaves the repository unchanged, appends complete ESI identity/defaults at the next physical position, selects the new stable ID, and passes Project modified state, Undo, and Redo |
+| Focused drag/drop flow | 3 passed, 0 failed |
+| Focused drag/drop flow at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
+| Focused EtherCATWorkbench suite | 30 passed, 0 failed |
+| Six-plugin isolated regression | Core 17, Project 12, Devices 8, Workbench 30, Scan 7, Diagnostics 7; 81 passed, 0 failed |
+| Final isolated regression platform | Separate processes with isolated HOME/settings and `QT_QPA_PLATFORM=offscreen`; high-DPI flow additionally used `QT_SCALE_FACTOR=2` |
+| 16-plugin product build | Passed with the `WITH_TESTS=OFF` allow-list |
+| Enabled product startup | Workbench initialized and delayed-initialized with clean temporary settings and no fatal/error signature before intentional termination |
+| Workbench-disabled startup | Workbench, Scan, and Diagnostics were absent; Core, Devices, and Project initialized and delayed-initialized without fatal/error signatures before intentional termination |
+| Lifecycle ownership | Controller-owned drop handler is cleared before the model; no timer, Provider, worker, background job, or cross-plugin object is retained |
+| CMake/qbs source lists | Unchanged because the implementation adds no source file; no dependency or plugin-metadata change |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct Core patch count remains five |
+| Full product build with `WITH_TESTS=ON` | Still blocked by the existing EasyBoard `extensionmanager_test.h` include defect; outstanding Ninja jobs were intentionally interrupted after the blocker was captured |
+| qbs build | Not run; qbs executable is unavailable |
+| Visual/manual desktop inspection | No new geometry was introduced; widget behavior and normal/2x focused tests are claimed, but no new manual desktop drag is claimed |
+
 ## EtherCATWorkbench project General qualification
 
 `ISSUE-WB-PROJECT-GENERAL-001` consumes the existing checked Project-name
@@ -480,8 +515,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 29 passed, 0 failed |
-| Six-plugin EtherCAT regression | 80 passed, 0 failed in isolated processes |
+| Focused EtherCATWorkbench plugin tests | 30 passed, 0 failed |
+| Six-plugin EtherCAT regression | 81 passed, 0 failed in isolated processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first CoE Online page test | Compiled and failed on the missing `CoE Online` page descriptor before implementation, as expected |
@@ -499,6 +534,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Failure-first ESI repository test | Compiled and failed because `EtherCATEsiRepositoryContent` did not exist before implementation, as expected |
 | Failure-first ESI catalogue-device General test | Compiled and failed because `EtherCATEsiDeviceGeneralContent` did not exist before implementation; 2 passed and 1 failed as expected |
 | Failure-first ESI insertion test | Compiled and failed only because `EtherCAT.Workbench.InsertDevice` was not registered; 2 passed and 1 failed as expected |
+| Failure-first ESI drag/drop test | Compiled and failed only because the navigation tree had drag disabled; 2 passed and 1 failed as expected |
 | Metadata, hard dependencies, mode, and actions | Passed |
 | Shared QAction identity across menu, toolbar, shortcuts, and callbacks | Passed |
 | Dynamic action add/remove and optional Scan/Diagnostics load combinations | Passed with both, either, and neither optional plugin loaded |
@@ -543,6 +579,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 | ESI catalogue-device qualification and source | Passed for Limited status, complete warning/unsupported details, source path, SHA-256, import time, read-only accessibility, scrolling, and missing-description state |
 | Master-side ESI selection dialog | Passed for Master-only registered action, search, extended identity, highest-revision default, previous revisions, empty state, and supported/limited qualification gating |
 | Master-side ESI insertion lifecycle | Passed for explicit stable master/device IDs, append defaults, stable selection, Project Undo/Redo, cancel no-mutation, unsupported-device rejection, stale-master rejection, and command disable after close |
+| ESI device drag/drop lifecycle | Passed for real navigation/proxy configuration, private stable-ID CopyAction, Supported-only source, exact active-Master target, repository-preserving append, stable selection, and Project Undo/Redo |
+| ESI drag/drop rejection boundary | Passed for Limited/unknown/forged device IDs, MoveAction, slave/wrong targets, and between-row drops |
 | Supported ESI device add and repeated-device unique naming | Passed with complete identity, repository reference, Process Data, Startup, and DC defaults |
 | Offline slave remove/reorder workflow | Passed with normalized positions, boundary enablement, stable selection, selection repair, Undo, and Redo |
 | Offline-topology ActionManager identity | Passed for all four context-only commands in real device and configured-slave popup menus |

@@ -8,6 +8,7 @@
 
 #include <utils/utilsicons.h>
 
+#include <QMimeData>
 #include <QSet>
 #include <QUuid>
 
@@ -16,6 +17,8 @@
 #include <vector>
 
 namespace EtherCAT::Workbench::Internal {
+
+static constexpr char deviceMimeType[] = "application/x-embed-labs-ethercat-esi-device";
 
 enum class StateMarker { None, Healthy, Information, Warning, Error };
 
@@ -600,6 +603,15 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
                         .arg(node->device.identity.vendorId, 8, 16, QLatin1Char('0'))
                         .arg(node->device.identity.productCode, 8, 16, QLatin1Char('0'))
                         .arg(node->device.identity.revisionNumber, 8, 16, QLatin1Char('0'));
+            if (node->device.supported) {
+                text += Tr::tr(
+                    "\nDrag this ESI device to the active offline EtherCAT Master to append it.");
+            }
+        } else if (
+            node->kind == Core::WorkbenchNodeKind::Master
+            && node->id == m_dropTargetMasterId) {
+            text += Tr::tr(
+                "\nDrop a supported ESI device here to append it to this offline Master.");
         }
         return text;
     }
@@ -670,7 +682,84 @@ Qt::ItemFlags WorkbenchTreeModel::flags(const QModelIndex &index) const
     Qt::ItemFlags result = Qt::ItemIsEnabled;
     if (node->kind != Core::WorkbenchNodeKind::Placeholder)
         result |= Qt::ItemIsSelectable;
+    if (index.column() == 0 && node->kind == Core::WorkbenchNodeKind::Device
+        && node->device.supported) {
+        result |= Qt::ItemIsDragEnabled;
+    }
+    if (node->kind == Core::WorkbenchNodeKind::Master && node->id == m_dropTargetMasterId)
+        result |= Qt::ItemIsDropEnabled;
     return result;
+}
+
+Qt::DropActions WorkbenchTreeModel::supportedDragActions() const
+{
+    return Qt::CopyAction;
+}
+
+Qt::DropActions WorkbenchTreeModel::supportedDropActions() const
+{
+    return Qt::CopyAction;
+}
+
+QStringList WorkbenchTreeModel::mimeTypes() const
+{
+    return {deviceMimeType};
+}
+
+QMimeData *WorkbenchTreeModel::mimeData(const QModelIndexList &indexes) const
+{
+    auto data = new QMimeData;
+    Data::NodeId deviceId;
+    for (const QModelIndex &index : indexes) {
+        if (!index.isValid() || index.column() != 0)
+            continue;
+        const Node *node = nodeForIndex(index);
+        if (!node || node->kind != Core::WorkbenchNodeKind::Device || !node->device.supported)
+            continue;
+        if (!deviceId.isNull() && deviceId != node->id)
+            return data;
+        deviceId = node->id;
+    }
+    if (!deviceId.isNull())
+        data->setData(deviceMimeType, deviceId.toString().toUtf8());
+    return data;
+}
+
+bool WorkbenchTreeModel::canDropMimeData(
+    const QMimeData *data,
+    Qt::DropAction action,
+    int row,
+    int column,
+    const QModelIndex &parent) const
+{
+    if (!m_deviceDropHandler || action != Qt::CopyAction || row != -1
+        || (column != -1 && column != 0)) {
+        return false;
+    }
+    const Node *target = nodeForIndex(parent);
+    if (!target || target == m_root.get() || target->kind != Core::WorkbenchNodeKind::Master
+        || target->id != m_dropTargetMasterId) {
+        return false;
+    }
+    const Node *device = findNode(deviceIdFromMimeData(data));
+    return device && device->kind == Core::WorkbenchNodeKind::Device && device->device.supported;
+}
+
+bool WorkbenchTreeModel::dropMimeData(
+    const QMimeData *data,
+    Qt::DropAction action,
+    int row,
+    int column,
+    const QModelIndex &parent)
+{
+    if (action == Qt::IgnoreAction)
+        return true;
+    if (!canDropMimeData(data, action, row, column, parent))
+        return false;
+    const Node *target = nodeForIndex(parent);
+    const Data::NodeId deviceId = deviceIdFromMimeData(data);
+    const Data::NodeId masterId = target->id;
+    return m_deviceDropHandler(deviceId, masterId);
 }
 
 QHash<int, QByteArray> WorkbenchTreeModel::roleNames() const
@@ -690,6 +779,24 @@ void WorkbenchTreeModel::setProjects(const QList<Data::ProjectSnapshot> &project
         return;
     m_projects = projects;
     rebuild();
+}
+
+void WorkbenchTreeModel::setDropTargetMasterId(const Data::NodeId &masterId)
+{
+    if (m_dropTargetMasterId == masterId)
+        return;
+    const QModelIndex previous = indexForNodeId(m_dropTargetMasterId);
+    m_dropTargetMasterId = masterId;
+    const QModelIndex current = indexForNodeId(m_dropTargetMasterId);
+    if (previous.isValid())
+        emit dataChanged(previous, previous.siblingAtColumn(columnCount(previous) - 1));
+    if (current.isValid())
+        emit dataChanged(current, current.siblingAtColumn(columnCount(current) - 1));
+}
+
+void WorkbenchTreeModel::setDeviceDropHandler(DeviceDropHandler handler)
+{
+    m_deviceDropHandler = std::move(handler);
 }
 
 void WorkbenchTreeModel::syncDevices(const QList<Data::DeviceSummary> &devices)
@@ -846,6 +953,7 @@ void WorkbenchTreeModel::clear()
 {
     m_projects.clear();
     m_devices.clear();
+    m_dropTargetMasterId = {};
     rebuild();
 }
 
@@ -1013,6 +1121,16 @@ WorkbenchTreeModel::Node *WorkbenchTreeModel::findNode(const Data::NodeId &nodeI
         return nullptr;
     };
     return findRecursive(findRecursive, m_root.get());
+}
+
+Data::NodeId WorkbenchTreeModel::deviceIdFromMimeData(const QMimeData *data) const
+{
+    if (!data || !data->hasFormat(deviceMimeType))
+        return {};
+    const QByteArray encoded = data->data(deviceMimeType);
+    if (encoded.isEmpty() || encoded.size() > 128)
+        return {};
+    return Data::NodeId::fromString(QString::fromUtf8(encoded));
 }
 
 void WorkbenchTreeModel::updateOptionalProviderStatus()

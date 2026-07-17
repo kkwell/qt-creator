@@ -5,6 +5,8 @@
 #include "esiconfigurationfactory.h"
 #include "ethercatworkbenchtr.h"
 
+#include <coreplugin/messagemanager.h>
+
 #include <ethercatcore/providerregistry.h>
 #include <ethercatcore/selectionservice.h>
 
@@ -133,6 +135,16 @@ WorkbenchController::WorkbenchController(QObject *parent)
     QTC_ASSERT(m_projectService, return);
     QTC_ASSERT(m_deviceRepository, return);
     QTC_ASSERT(m_providerRegistry, return);
+
+    m_treeModel.setDeviceDropHandler(
+        [this](const Data::NodeId &deviceId, const Data::NodeId &masterId) {
+            const Utils::Result<> result = addDeviceToMaster(deviceId, masterId);
+            if (result)
+                return true;
+            ::Core::MessageManager::writeFlashing(
+                Tr::tr("Cannot drop the ESI device: %1").arg(result.error()));
+            return false;
+        });
 
     m_connections.append(connect(
         m_projectService,
@@ -481,6 +493,7 @@ void WorkbenchController::shutdown()
     for (const QMetaObject::Connection &connection : std::as_const(m_connections))
         disconnect(connection);
     m_connections.clear();
+    m_treeModel.setDeviceDropHandler({});
     m_treeModel.clear();
 }
 
@@ -491,6 +504,8 @@ void WorkbenchController::refreshProjects()
     const Data::NodeId selectedId = m_selectionService ? m_selectionService->currentNodeId()
                                                        : Data::NodeId();
     m_treeModel.setProjects(m_projectService->projects());
+    const std::optional<ActiveMasterContext> active = activeMasterContext(m_projectService);
+    m_treeModel.setDropTargetMasterId(active ? active->masterId : Data::NodeId());
     if (m_selectionService && !selectedId.isNull()
         && !m_treeModel.indexForNodeId(selectedId).isValid()) {
         m_selectionService->clear();

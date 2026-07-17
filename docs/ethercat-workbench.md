@@ -8,7 +8,8 @@ container, built-in offline property pages, manual offline-topology commands,
 editable project, target, master, and configured-slave General pages, Workbench
 commands, the local ESI repository management page, the dedicated read-only
 General page for individual ESI catalogue devices, the master-side ESI device
-insertion workflow,
+insertion workflow, supported-device drag-and-drop into the active offline
+Master,
 the TwinCAT-aligned master EtherCAT settings and local topology view, and the
 presentation of public Scan/Diagnostics snapshots in the device tree. It does
 not parse ESI files, own project persistence, scan a bus, produce diagnostics,
@@ -149,6 +150,11 @@ read from immutable Project snapshots, appear below their master with stable
 IDs and position-independent selection, and replace the empty scan placeholder.
 Device repository changes use row insert, remove, move, and data-change
 notifications; a 500-device test guards against unnecessary repository resets.
+Supported ESI catalogue devices are copy-draggable to the currently active
+offline Master. Limited entries are not draggable, and no project other than
+the active valid offline project advertises a drop target. This is an append
+shortcut over the same checked insertion path described below; it does not
+move or remove the repository entry.
 
 The slave subtree follows the process-data hierarchy described by Beckhoff for
 TwinCAT 3 I/O devices and process data:
@@ -229,11 +235,11 @@ inapplicable selections cannot enable the corresponding command. These four
 low-frequency commands remain context-only and are deliberately excluded from
 the compact command strip.
 
-The repository-side command does not add drag-and-drop, multi-selection
-editing, multiple-master target selection, a bus scan, controller transport,
-or online configuration. The master-side selection workflow is documented
-below; the other capabilities require separate issues and must not bypass the
-same checked Project service boundary.
+The repository-side command and the drag-and-drop shortcut do not add
+multi-selection editing, multiple-master target selection, a bus scan,
+controller transport, or online configuration. The master-side selection
+workflow is documented below; the other capabilities require separate issues
+and must not bypass the same checked Project service boundary.
 
 ## TwinCAT-style ESI device insertion
 
@@ -267,9 +273,36 @@ master-side TwinCAT-style path on the same factory and Project boundary.
 
 The current project contract does not model EtherCAT ports or a physical
 connection graph, so the dialog truthfully appends at the next physical
-position and does not invent a TwinCAT port selector. Drag-and-drop,
-multi-master routing, online descriptions, real controller access, network
-protocols, and public insertion APIs remain outside this issue.
+position and does not invent a TwinCAT port selector. Multi-master routing,
+online descriptions, real controller access, network protocols, and public
+insertion APIs remain outside this issue.
+
+## ESI device drag-and-drop
+
+`ISSUE-WB-DEVICE-DND-001` adds the goal-required catalogue shortcut without
+claiming it is Beckhoff's primary EtherCAT insertion interaction. Beckhoff's
+official offline EtherCAT documentation describes appending a device through
+the tree command and ESI-backed selection workflow:
+<https://infosys.beckhoff.com/content/1033/ps2001-4810-1001/10832046859.html>.
+The Workbench retains `Add New Item...` as that primary, explicit path; local
+drag-and-drop is a Qt Creator convenience over the same checked operation. No
+Beckhoff asset, project format, MIME format, or proprietary behavior is copied.
+
+Only a Supported ESI catalogue row in the first tree column advertises drag.
+The private MIME payload contains only its stable `NodeId`, is bounded during
+decode, and supports `CopyAction` only. The sole drop target is the exact
+Master of the currently active valid offline project. Drops on slaves,
+inactive or stale masters, between rows, with MoveAction, or with forged
+Limited/unknown IDs are rejected. An accepted drop appends at the next
+physical position through the existing ESI configuration factory and checked
+Project replacement command. The repository is unchanged, the new slave is
+selected by stable ID, and Project modified state, persistence, Undo, and Redo
+retain their existing ownership.
+
+This shortcut does not model a port, physical connection graph, arbitrary drop
+position, multi-master routing, controller/network transport, or a public
+cross-plugin insertion API. Those capabilities require separate data and
+provider contracts rather than reinterpretation of a tree drop position.
 
 ## ESI Device Repository General page
 
@@ -798,6 +831,13 @@ only for the modal interaction. It retains a copied `DeviceSummary` snapshot
 and stable IDs; it retains no repository Provider, job, timer, model index, or
 cross-plugin object after closing.
 
+The ESI drag source and active-Master drop target are likewise Workbench-local.
+The model serializes only a stable device ID into a private MIME payload; it
+does not retain a source index or external object. The controller-owned drop
+handler reuses the checked insertion operation and is cleared before the tree
+model during shutdown. It adds no timer, Provider, background job, public
+contract, or persistent owner.
+
 The controller watches optional Scan/Diagnostics availability and snapshot
 signals through public Provider contracts. Provider removal is handled before
 the object leaves the registry: the departing object is excluded, its copied
@@ -840,7 +880,8 @@ data in Process Data/Startup/DC pages, the repository import/reload/cancel
 workflow, individual ESI catalogue
 identity/configuration/qualification/source details and unavailable state,
 configured-slave topology and ESI-page reuse, manual ESI
-add/remove/reorder operations, dynamic property-page removal, and dynamic
+add/remove/reorder operations, supported ESI drag-and-drop to the active
+offline Master, dynamic property-page removal, and dynamic
 Scan/Diagnostics availability and removal. The process-data tree
 coverage verifies the exact five-branch order, input/output direction,
 active-PDO projection, unique deterministic view IDs, retained source IDs,
@@ -903,6 +944,12 @@ default, previous-revision and extended-information controls, search,
 supported/limited/empty states, explicit stable master/device IDs, cancel and
 error no-mutation paths, append identity/defaults, stable selection, and
 Project Undo/Redo.
+The ESI drag-and-drop workflow verifies the real navigation view and proxy
+model configuration, CopyAction-only stable-ID MIME, Supported/Limited
+qualification, exact active-Master targeting, rejected forged and misplaced
+drops, unchanged repository state, append defaults, stable selection, and
+Project Undo/Redo. The focused flow passes at normal and
+`QT_SCALE_FACTOR=2`.
 The master EtherCAT workflow verifies the TwinCAT-aligned NetId and four-action
 hierarchy, disabled unsupported actions and accessibility descriptions, all ten
 cyclic-frame headers, the explicit zero-row runtime boundary, current-snapshot
@@ -913,7 +960,7 @@ The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
 match/difference routing, Missing/Added/Revision/Vendor presentation, warning
 and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
 stable locate/open navigation, command registration, and provider-removal
-restoration. It passes 29 tests on the qualified Qt 6.11.0 Release test build.
+restoration. It passes 30 tests on the qualified Qt 6.11.0 Release test build.
 The project, target, and master General flows also pass at
 `QT_SCALE_FACTOR=2`, and direct normal and 2x widget renders show no overlap,
 clipping, or uncontrolled expansion.

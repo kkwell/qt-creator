@@ -50,13 +50,19 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_treeView->setObjectName("EtherCATWorkbenchTree");
     m_treeView->setAccessibleName(Tr::tr("EtherCAT device tree"));
     m_treeView->setAccessibleDescription(
-        Tr::tr("Browse offline projects, masters, slaves, process data, and ESI devices."));
+        Tr::tr("Browse offline projects, masters, slaves, process data, and ESI devices. Drag a "
+               "supported ESI device to the active offline Master to append it."));
     m_treeView->setModel(m_proxyModel);
     m_treeView->setAlternatingRowColors(true);
     m_treeView->setUniformRowHeights(true);
     m_treeView->setTextElideMode(Qt::ElideNone);
     m_treeView->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_treeView->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_treeView->setDragEnabled(true);
+    m_treeView->viewport()->setAcceptDrops(true);
+    m_treeView->setDropIndicatorShown(true);
+    m_treeView->setDragDropMode(QAbstractItemView::DragDrop);
+    m_treeView->setDefaultDropAction(Qt::CopyAction);
     m_treeView->setContextMenuPolicy(Qt::CustomContextMenu);
     m_treeView->setHeaderHidden(false);
     m_treeView->header()->setStretchLastSection(false);

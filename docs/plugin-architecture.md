@@ -23,7 +23,7 @@ documentation, review, and local-commit gates.
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Configuration persistence and structural-name API complete | Version-2 project lifecycle, migration, validation, and Undo/Redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
-| 4 | `EtherCATWorkbenchPlugin` | In progress | Project, Target, Master, configured-slave, ESI Repository, individual ESI catalogue-device General, and master-side ESI insertion workflows, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
+| 4 | `EtherCATWorkbenchPlugin` | In progress | Project, Target, Master, configured-slave, ESI Repository, individual ESI catalogue-device General, master-side ESI insertion, and supported-device drag-and-drop workflows, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
 
@@ -126,6 +126,13 @@ device/master IDs rather than model indexes, and the existing Project service
 continues to own validation, mutation, modified state, persistence, and
 Undo/Redo. The dialog retains no Devices Provider, job, timer, or cross-plugin
 object after closing; no new public contract is required.
+The adjacent supported-device drag-and-drop shortcut remains inside the same
+Workbench plugin. Its private, bounded MIME payload contains only the stable
+device ID, and the controller resolves the exact active offline Master before
+calling the same checked insertion path. Neither a `QModelIndex`, widget,
+Devices object, nor mutation callback crosses a plugin boundary. Limited,
+unknown, stale, non-Master, MoveAction, and between-row drops are rejected, so
+this shortcut requires no public API or persistent-format change.
 The project General page mirrors the relevant
 TwinCAT identity hierarchy and adds the goal-required offline summary using
 only public Project snapshots. Its editable name routes through the existing
@@ -160,8 +167,9 @@ CoE Online Mock provides a local object-dictionary interaction prototype and
 an explicit, undoable Add to Startup path without adding a transport or
 background poller. Supported repository devices can now be appended from
 either the repository quick action or the selected Master's searchable
-TwinCAT-style selector, and configured slaves can be removed or reordered
-through the same checked Project service and undo stack. A Workbench-private ESI
+TwinCAT-style selector, or copy-dragged onto the active offline Master, and
+configured slaves can be removed or reordered through the same checked Project
+service and undo stack. A Workbench-private ESI
 factory supplies identical Process Data, Startup, and DC defaults to both the
 creation path and existing property pages. The Workbench also projects the
 shared `EtherCAT.Menu` ActionManager registrations into one compact Mode-level

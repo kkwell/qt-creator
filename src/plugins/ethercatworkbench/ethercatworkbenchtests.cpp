@@ -1218,6 +1218,158 @@ void EtherCATWorkbenchTests::testTwinCatInsertDeviceWorkflow()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
+void EtherCATWorkbenchTests::testEsiDeviceDragDropWorkflow()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto writeEsi = [&directory](
+                              const QString &fileName,
+                              quint32 productCode,
+                              const QByteArray &name,
+                              bool limited) {
+        QByteArray esi = deviceEsi();
+        const QByteArray productText = QByteArray("#x") + QByteArray::number(productCode, 16);
+        esi.replace("#x00005678", productText);
+        esi.replace("Workbench Servo", name);
+        if (limited)
+            esi.replace("</Device>", "<Modules/></Device>");
+        const Utils::FilePath path = Utils::FilePath::fromString(directory.path())
+                                         .canonicalPath()
+                                         .pathAppended(fileName);
+        const Utils::Result<qint64> written = path.writeFileContents(esi);
+        return written ? path : Utils::FilePath();
+    };
+    const Utils::FilePath supportedPath
+        = writeEsi("drag-supported.xml", 0x7a140001, "Drag Supported Servo", false);
+    const Utils::FilePath limitedPath
+        = writeEsi("drag-limited.xml", 0x7a140002, "Drag Limited Device", true);
+    QVERIFY(!supportedPath.isEmpty());
+    QVERIFY(!limitedPath.isEmpty());
+    const Data::DeviceImportResult importResult
+        = waitForJob(repository->importFiles({supportedPath, limitedPath}));
+    QCOMPARE(importResult.requestedFiles, 2);
+    QCOMPARE(importResult.importedDevices, 2);
+    QCOMPARE(importResult.failedFiles, 0);
+
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto supported = std::find_if(devices.cbegin(), devices.cend(), [](const auto &device) {
+        return device.identity.productCode == 0x7a140001;
+    });
+    const auto limited = std::find_if(devices.cbegin(), devices.cend(), [](const auto &device) {
+        return device.identity.productCode == 0x7a140002;
+    });
+    QVERIFY(supported != devices.cend());
+    QVERIFY(limited != devices.cend());
+    QVERIFY(supported->supported);
+    QVERIFY(!limited->supported);
+
+    const TestProjectFile file = writeProjectWithSlave(directory, *supported);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QVERIFY_RESULT(projectService->activateProject(file.projectId));
+    QTRY_COMPARE(projectService->activeProjectId(), file.projectId);
+
+    WorkbenchNavigationWidget navigation(&controller);
+    navigation.resize(900, 600);
+    navigation.show();
+    QTRY_VERIFY(navigation.isVisible());
+    QTreeView *tree = navigation.treeView();
+    QAbstractItemModel *model = tree->model();
+    QVERIFY(tree->accessibleDescription().contains("drag", Qt::CaseInsensitive));
+    QVERIFY(tree->dragEnabled());
+    QVERIFY(tree->viewport()->acceptDrops());
+    QVERIFY(tree->showDropIndicator());
+    QCOMPARE(tree->dragDropMode(), QAbstractItemView::DragDrop);
+    QCOMPARE(tree->defaultDropAction(), Qt::CopyAction);
+    QCOMPARE(model->supportedDragActions(), Qt::CopyAction);
+    QCOMPARE(model->supportedDropActions(), Qt::CopyAction);
+
+    const QModelIndex supportedIndex = findById(model, supported->id);
+    const QModelIndex limitedIndex = findById(model, limited->id);
+    const QModelIndex masterIndex = findById(model, file.masterId);
+    const QModelIndex slaveIndex = findById(model, file.slaveId);
+    QVERIFY(supportedIndex.isValid());
+    QVERIFY(limitedIndex.isValid());
+    QVERIFY(masterIndex.isValid());
+    QVERIFY(slaveIndex.isValid());
+    QVERIFY(model->flags(supportedIndex) & Qt::ItemIsDragEnabled);
+    QVERIFY(!(model->flags(limitedIndex) & Qt::ItemIsDragEnabled));
+    QVERIFY(model->flags(masterIndex) & Qt::ItemIsDropEnabled);
+    QVERIFY(!(model->flags(slaveIndex) & Qt::ItemIsDropEnabled));
+    QVERIFY(masterIndex.data(Qt::ToolTipRole).toString().contains("drop", Qt::CaseInsensitive));
+
+    const QStringList mimeTypes = model->mimeTypes();
+    QCOMPARE(mimeTypes.size(), 1);
+    const QString mimeType = mimeTypes.constFirst();
+    QVERIFY(mimeType.contains("ethercat", Qt::CaseInsensitive));
+    std::unique_ptr<QMimeData> supportedMime(model->mimeData({supportedIndex}));
+    std::unique_ptr<QMimeData> limitedMime(model->mimeData({limitedIndex}));
+    QVERIFY(supportedMime);
+    QVERIFY(limitedMime);
+    QVERIFY(supportedMime->hasFormat(mimeType));
+    QVERIFY(!limitedMime->hasFormat(mimeType));
+    QCOMPARE(
+        Data::NodeId::fromString(QString::fromUtf8(supportedMime->data(mimeType))),
+        supported->id);
+
+    QVERIFY(model->canDropMimeData(
+        supportedMime.get(), Qt::CopyAction, -1, -1, masterIndex));
+    QVERIFY(!model->canDropMimeData(
+        supportedMime.get(), Qt::MoveAction, -1, -1, masterIndex));
+    QVERIFY(!model->canDropMimeData(
+        supportedMime.get(), Qt::CopyAction, -1, -1, slaveIndex));
+    QVERIFY(!model->canDropMimeData(
+        supportedMime.get(), Qt::CopyAction, 0, -1, masterIndex));
+
+    QMimeData forgedLimited;
+    forgedLimited.setData(mimeType, limited->id.toString().toUtf8());
+    QVERIFY(!model->canDropMimeData(
+        &forgedLimited, Qt::CopyAction, -1, -1, masterIndex));
+    QMimeData forgedUnknown;
+    forgedUnknown.setData(mimeType, Data::NodeId::create().toString().toUtf8());
+    QVERIFY(!model->canDropMimeData(
+        &forgedUnknown, Qt::CopyAction, -1, -1, masterIndex));
+
+    const int repositoryCount = repository->devices().size();
+    QCOMPARE(projectService->project(file.projectId)->slaves.size(), 1);
+    QVERIFY(model->dropMimeData(
+        supportedMime.get(), Qt::CopyAction, -1, -1, masterIndex));
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 2);
+    QVERIFY(projectService->project(file.projectId)->modified);
+    QCOMPARE(repository->devices().size(), repositoryCount);
+    const Data::ProjectSnapshot afterDrop = *projectService->project(file.projectId);
+    const auto added = std::find_if(
+        afterDrop.slaves.cbegin(), afterDrop.slaves.cend(), [&file](const auto &slave) {
+            return slave.id != file.slaveId;
+        });
+    QVERIFY(added != afterDrop.slaves.cend());
+    QCOMPARE(added->masterId, file.masterId);
+    QCOMPARE(added->position, 1);
+    QCOMPARE(added->deviceDescriptionId, supported->id);
+    QCOMPARE(added->name, QString("Drag Supported Servo"));
+    QCOMPARE(controller.selectionService()->currentNodeId(), added->id);
+    QVERIFY(projectService->canUndoProject(file.projectId));
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 1);
+    QVERIFY_RESULT(projectService->redoProject(file.projectId));
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 2);
+
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
 void EtherCATWorkbenchTests::testEditableConfiguredSlaveGeneralWorkflow()
 {
     WorkbenchController controller;
