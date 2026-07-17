@@ -23,7 +23,7 @@ documentation, review, and local-commit gates.
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Configuration persistence and structural-name API complete | Version-2 project lifecycle, migration, validation, and Undo/Redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
-| 4 | `EtherCATWorkbenchPlugin` | In progress | Configured-slave General and EtherCAT/Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
+| 4 | `EtherCATWorkbenchPlugin` | In progress | Master and configured-slave General editing, EtherCAT/Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
 
@@ -111,8 +111,12 @@ data. Scan and Diagnostics contribute commands, pages, and Providers through
 Workbench/Core extension points. Configured-slave names, Alias values, Process
 Data, ordered Startup requests, and Distributed Clocks are now editable through
 the checked Project service; their repository views stay read-only. The General
-page maps physical order, stable NodeId, and ESI type into read-only identity
-fields while keeping name changes Project-owned and undoable. The EtherCAT page
+page maps physical order, stable NodeId, and ESI type into read-only slave
+identity fields while keeping name changes Project-owned and undoable. The
+master General page mirrors the TwinCAT field hierarchy, derives Id and status
+from existing snapshots, leaves unsupported Comment/Disabled/symbol settings
+explicitly unavailable, and routes its editable Name through the same checked
+Project undo stack. The EtherCAT page
 maps identity and physical order into the TwinCAT-style offline field hierarchy,
 keeps unsupported fixed-address/identification/port state explicit, and routes
 Alias changes through the same Project-owned undo stack. The Workbench-owned
@@ -148,8 +152,9 @@ an explicit empty state until the Devices and Project contracts contain real
 modular data; no module or channel is fabricated. That data-contract work and
 the remaining UI qualification keep the Workbench completion gate open. A
 dedicated Core/API prerequisite now exposes checked Target/Master name changes
-through `ProjectService`; it does not implement the later Master General page
-or move that state into Workbench.
+through `ProjectService`. The Workbench Master General page now consumes that
+command without moving persistent state into Workbench; the Target General UI
+remains a later independent issue.
 
 The completed Project implementation and versioned file contract are recorded
 in `docs/ethercat-project-format.md`. ProjectExplorer owns open/close and

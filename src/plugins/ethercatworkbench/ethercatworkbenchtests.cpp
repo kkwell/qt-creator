@@ -48,6 +48,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSet>
 #include <QSignalSpy>
@@ -972,6 +973,141 @@ void EtherCATWorkbenchTests::testEditableConfiguredSlaveGeneralWorkflow()
     QVERIFY(QMetaObject::invokeMethod(name, "editingFinished"));
     QTRY_COMPARE(name->text(), renamed);
     QCOMPARE(projectService->project(file.projectId)->slaves.first().name, renamed);
+
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+void EtherCATWorkbenchTests::testEditableMasterGeneralWorkflow()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Data::DeviceSummary
+        device{Data::NodeId::create(), {2, 0x5678, 0x11}, "Mock Servo", "AX5000", "Drives", true};
+    const TestProjectFile file = writeProjectWithSlave(directory, device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.masterId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    DetailsView details(&controller);
+    details.resize(1100, 760);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
+    QVERIFY(page);
+    QWidget *masterForm = page->findChild<QWidget *>("EtherCATMasterGeneralForm");
+    QWidget *summaryForm = page->findChild<QWidget *>("EtherCATMasterConfigurationSummary");
+    QVERIFY(masterForm);
+    QVERIFY(summaryForm);
+
+    QLabel *title = details.findChild<QLabel *>("EtherCATWorkbenchDetailsTitle");
+    QLineEdit *name = page->findChild<QLineEdit *>("EtherCATMasterGeneralName");
+    QLineEdit *id = page->findChild<QLineEdit *>("EtherCATMasterGeneralId");
+    QLineEdit *objectId = page->findChild<QLineEdit *>("EtherCATMasterGeneralObjectId");
+    QLineEdit *type = page->findChild<QLineEdit *>("EtherCATMasterGeneralType");
+    QPlainTextEdit *comment = page->findChild<QPlainTextEdit *>("EtherCATMasterGeneralComment");
+    QCheckBox *disabled = page->findChild<QCheckBox *>("EtherCATMasterGeneralDisabled");
+    QCheckBox *createSymbols = page->findChild<QCheckBox *>("EtherCATMasterGeneralCreateSymbols");
+    QLineEdit *cycle = page->findChild<QLineEdit *>("EtherCATMasterGeneralCycle");
+    QLineEdit *slaveCount = page->findChild<QLineEdit *>("EtherCATMasterGeneralSlaveCount");
+    QLineEdit *status = page->findChild<QLineEdit *>("EtherCATMasterGeneralStatus");
+    QTreeWidget *propertyTree = page->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
+    QVERIFY(title);
+    QVERIFY(name);
+    QVERIFY(id);
+    QVERIFY(objectId);
+    QVERIFY(type);
+    QVERIFY(comment);
+    QVERIFY(disabled);
+    QVERIFY(createSymbols);
+    QVERIFY(cycle);
+    QVERIFY(slaveCount);
+    QVERIFY(status);
+    QVERIFY(propertyTree);
+
+    const QString renderPath = qEnvironmentVariable("ETHERCAT_WORKBENCH_RENDER_PATH");
+    if (!renderPath.isEmpty()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(details.grab().save(renderPath), qPrintable(renderPath));
+    }
+
+    QCOMPARE(name->text(), QString("EtherCAT Master"));
+    QCOMPARE(id->text(), QString("1"));
+    QCOMPARE(objectId->text(), file.masterId.toString());
+    QCOMPARE(type->text(), QString("EtherCAT Master"));
+    QVERIFY(!name->isReadOnly());
+    QVERIFY(id->isReadOnly());
+    QVERIFY(objectId->isReadOnly());
+    QVERIFY(type->isReadOnly());
+    QVERIFY(comment->isReadOnly());
+    QVERIFY(!disabled->isEnabled());
+    QVERIFY(!createSymbols->isEnabled());
+    QCOMPARE(cycle->text(), QString("Not assigned (offline)"));
+    QCOMPARE(slaveCount->text(), QString("1"));
+    QCOMPARE(
+        status->text(),
+        controller.treeModel()
+            ->indexForNodeId(file.masterId)
+            .data(WorkbenchTreeModel::StatusRole)
+            .toString());
+    QVERIFY(!name->accessibleName().isEmpty());
+    QVERIFY(!cycle->accessibleName().isEmpty());
+    QVERIFY(!status->accessibleName().isEmpty());
+    QVERIFY(!comment->accessibleDescription().isEmpty());
+    QVERIFY(!disabled->accessibleDescription().isEmpty());
+    QVERIFY(!createSymbols->accessibleDescription().isEmpty());
+    QVERIFY(masterForm->isVisible());
+    QVERIFY(summaryForm->isVisible());
+    QVERIFY(!propertyTree->isVisible());
+
+    const auto currentMasterName = [&]() {
+        const std::optional<Data::ProjectSnapshot> project = projectService->project(file.projectId);
+        if (!project)
+            return QString();
+        const auto master
+            = std::find_if(project->nodes.cbegin(), project->nodes.cend(), [&file](const auto &node) {
+                  return node.id == file.masterId;
+              });
+        return master == project->nodes.cend() ? QString() : master->name;
+    };
+    const QString renamed = QString::fromUtf8("EtherCAT Device 1 / 主站");
+    name->setText("  " + renamed + "  ");
+    QVERIFY(QMetaObject::invokeMethod(name, "editingFinished"));
+    QTRY_COMPARE(currentMasterName(), renamed);
+    QTRY_COMPARE(controller.treeModel()->indexForNodeId(file.masterId).data().toString(), renamed);
+    QTRY_COMPARE(title->text(), renamed);
+    QTRY_COMPARE(name->text(), renamed);
+    QCOMPARE(controller.selectionService()->currentNodeId(), file.masterId);
+    QVERIFY(projectService->project(file.projectId)->modified);
+    QVERIFY(projectService->canUndoProject(file.projectId));
+
+    const Utils::Result<> undoRename = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoRename);
+    QTRY_COMPARE(currentMasterName(), QString("EtherCAT Master"));
+    QTRY_COMPARE(name->text(), QString("EtherCAT Master"));
+    QTRY_COMPARE(title->text(), QString("EtherCAT Master"));
+    const Utils::Result<> redoRename = projectService->redoProject(file.projectId);
+    QVERIFY_RESULT(redoRename);
+    QTRY_COMPARE(currentMasterName(), renamed);
+    QTRY_COMPARE(name->text(), renamed);
+    QTRY_COMPARE(title->text(), renamed);
+
+    name->setText("   ");
+    QVERIFY(QMetaObject::invokeMethod(name, "editingFinished"));
+    QTRY_COMPARE(name->text(), renamed);
+    QCOMPARE(currentMasterName(), renamed);
 
     controller.selectionService()->clear();
     ProjectExplorer::ProjectManager::removeProject(opened.project());

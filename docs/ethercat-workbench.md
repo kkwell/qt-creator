@@ -5,7 +5,7 @@
 `EtherCATWorkbench` is the stage-4 engineering-shell plugin. It owns the
 EtherCAT mode, left navigation tree, stable selection linkage, central details
 container, built-in offline property pages, manual offline-topology commands,
-an editable configured-slave General page, Workbench commands, and the
+editable master and configured-slave General pages, Workbench commands, and the
 presentation of public Scan/Diagnostics snapshots in the device tree. It does
 not parse ESI files, own project persistence, scan a bus, produce diagnostics,
 or define a controller protocol.
@@ -228,6 +228,42 @@ This issue does not add drag-and-drop, multi-selection editing, multiple-master
 target selection, a bus scan, controller transport, or online configuration.
 Those require separate issues and must not bypass the same checked Project
 service boundary.
+
+## EtherCAT-master General page
+
+`ISSUE-WB-MASTER-GENERAL-001` replaces the master's generic property table with
+a dedicated form. Its tab placement, field order, and interaction hierarchy
+were compared with Beckhoff's documented TwinCAT 3 EtherCAT-master General
+page:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1569945995.html>.
+No Beckhoff asset, trademark, control, project format, or proprietary
+implementation is copied.
+
+The upper form retains the documented `Name` and `Id` first row, followed by
+`Object Id`, `Type`, `Comment`, `Disabled`, and `Create symbols`. An accepted
+`Name` is reflected immediately in the device tree. `Id` is the one-based
+master ordinal from the project snapshot, `Object Id` is the stable project
+`NodeId`, and `Type` explicitly identifies an EtherCAT master. The layout uses
+Qt Creator spacing, palette, font, accessibility, and high-DPI behavior rather
+than fixed styling.
+
+The current project contract does not persist Comment, Disabled, or symbol
+generation. Those controls remain visibly unavailable with explanatory text
+and tooltips; they do not store UI-only state or pretend that configuration was
+accepted. Enabling each setting requires a separate Project/data-contract
+issue. The offline summary below the reference form reports an explicit
+`Not assigned (offline)` cycle-time placeholder, the actual configured-slave
+count, and the shared Workbench master status. It never invents a task cycle or
+online controller value.
+
+Finishing a master-name edit routes through the Workbench controller to the
+checked `ProjectService::renameStructuralNode()` command. Whitespace is
+normalized by Project, empty input is rejected and restored, and accepted
+changes retain modified state, persistence, Undo, Redo, stable selection, and
+synchronized tree, title, and form text. The existing
+`PropertyPageProvider` remains the only page integration point; no public API,
+network protocol, source-list entry, background work, or upstream Qt Creator
+patch is added.
 
 ## Configured-slave General page
 
@@ -613,6 +649,10 @@ position normalization, boundary states, selection repair, and Project
 Undo/Redo. The configured-slave General workflow verifies the four identity
 fields, ESI-derived and missing-ESI type states, Unicode rename trimming, empty
 name rejection, stable selection, synchronized tree/title/form updates, and
+Project Undo/Redo. The master General workflow verifies the TwinCAT-aligned
+field order, one-based Id, stable Object Id, explicit unavailable settings,
+cycle placeholder, actual slave count, shared status, Unicode rename trimming,
+empty rejection, stable selection, synchronized tree/title/form updates, and
 Project Undo/Redo. The configured-slave EtherCAT workflow verifies ESI type,
 Product/Revision, first/second Auto Inc Addr values, configured predecessor,
 bounded Alias editing and disable value, modified state, stable selection,
@@ -622,7 +662,9 @@ The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
 match/difference routing, Missing/Added/Revision/Vendor presentation, warning
 and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
 stable locate/open navigation, command registration, and provider-removal
-restoration. It passes 22 tests on the qualified Qt 6.11.0 Release test build.
+restoration. It passes 23 tests on the qualified Qt 6.11.0 Release test build.
+The master General flow also passes at `QT_SCALE_FACTOR=2`, and direct normal
+and 2x widget renders show no overlap, clipping, or uncontrolled expansion.
 The focused configured-slave General and EtherCAT workflows pass at both normal
 scale and `QT_SCALE_FACTOR=2`; the combined command-strip and offline-topology
 flow also passes at `QT_SCALE_FACTOR=2`.

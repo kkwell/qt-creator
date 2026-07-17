@@ -79,7 +79,8 @@ function is outside the product target and records migration or recovery.
 | Public process/PDO/module/channel node kinds | Core/API contract verified |
 | Extensible offline property pages | Stage 4 verified |
 | Configured-slave General and EtherCAT/Alias pages | Verified; unsupported fixed address, identification, port graph, and Advanced Settings remain explicit unavailable states |
-| Target/Master structural-name command | Core/API and Project persistence verified; Master General UI remains pending Workbench work |
+| Target/Master structural-name command | Core/API and Project persistence verified; Master General UI verified, Target General UI pending |
+| EtherCAT-master General page | Verified with TwinCAT-aligned identity hierarchy, explicit unsupported settings, offline summary, and Project Undo/Redo |
 | Offline Process Data/Startup/DC domain model | Verified in EtherCATData |
 | Project persistence and Undo/Redo for those models | Verified in format version 2 |
 | Editable Process Data page | Verified in current Workbench issue |
@@ -182,6 +183,36 @@ widget or generic node-editing surface.
 | Full product build with `WITH_TESTS=ON` | Blocked by the existing EasyBoard `extensionmanager_test.h` include defect |
 | qbs build | Not run; qbs executable is unavailable |
 
+## EtherCATWorkbench master General qualification
+
+`ISSUE-WB-MASTER-GENERAL-001` consumes the previously qualified structural-name
+command through the existing Workbench controller and property-page provider.
+It adds no new cross-plugin contract or persistent field.
+
+| Check | Result |
+|---|---|
+| Failure-first Workbench test | Compiled and failed because `EtherCATMasterGeneralForm` did not exist; 2 passed and 1 failed as expected |
+| TwinCAT-aligned master hierarchy | Name and Id first row, Object Id, Type, Comment, Disabled, and Create symbols verified against the documented master General page |
+| Checked editable boundary | Name only; routed through `ProjectService::renameStructuralNode()` with normalization, empty rejection, modified state, persistence, Undo, and Redo |
+| Unsupported settings | Comment, Disabled, and Create symbols remain visible but unavailable because the phase-1 project contract does not persist them |
+| Offline summary | Explicit unassigned cycle placeholder, actual configured-slave count, and shared Workbench status verified without fabricated online data |
+| Selection and presentation | Stable master ID and selection, tree label, details title, and form remain synchronized across rename, Undo, and Redo |
+| Focused master General test | 3 passed, 0 failed |
+| Combined master/slave General regression | 4 passed, 0 failed |
+| Focused master General at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
+| Direct widget render | Normal and 2x renders at the 1100 x 760 logical test size passed visual inspection with no overlap, clipping, or uncontrolled expansion |
+| Focused EtherCATWorkbench suite | 23 passed, 0 failed |
+| Six-plugin isolated regression | Core 17, Project 12, Devices 8, Workbench 23, Scan 7, Diagnostics 7; 74 passed, 0 failed |
+| Final isolated regression platform | Isolated HOME/settings and `QT_QPA_PLATFORM=offscreen`; high-DPI flow additionally used `QT_SCALE_FACTOR=2` |
+| 16-plugin product build | Passed with the `WITH_TESTS=OFF` allow-list |
+| Product version inventory | All 16 allow-listed plugins present and recognized at version 20.0.1 |
+| Enabled product startup | All 16 plugins loaded, initialized, extended, and delayed-initialized; stable for 10 seconds until intentional interrupt |
+| Workbench-disabled startup | Workbench, Scan, and Diagnostics were dependency-disabled; remaining 13 plugins were stable for 10 seconds until intentional interrupt |
+| CMake/qbs source lists | No source-list or dependency change required |
+| Direct upstream Core, ProjectExplorer, or app changes | None; direct Core patch count remains five |
+| Full product build with `WITH_TESTS=ON` | Still blocked by the existing EasyBoard `extensionmanager_test.h` include defect |
+| qbs build | Not run; qbs executable is unavailable |
+
 ## EtherCATProject current qualification
 
 The public Project contract uses immutable `EtherCATData` snapshots and
@@ -247,8 +278,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 22 passed, 0 failed |
-| Six-plugin EtherCAT regression | 73 passed, 0 failed in isolated processes |
+| Focused EtherCATWorkbench plugin tests | 23 passed, 0 failed |
+| Six-plugin EtherCAT regression | 74 passed, 0 failed in isolated processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first CoE Online page test | Compiled and failed on the missing `CoE Online` page descriptor before implementation, as expected |
@@ -258,6 +289,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Failure-first context-command test | Failed to compile only on missing Locate Unsupported/Copy Node ID command IDs and Controller requests before implementation, as expected |
 | Failure-first offline-topology test | Failed to compile only on the four missing Add/Remove/Move ActionManager command IDs before implementation, as expected |
 | Failure-first configured-slave General test | Compiled and failed because the editable `EtherCATGeneralName` control did not exist before implementation, as expected |
+| Failure-first master General test | Compiled and failed because `EtherCATMasterGeneralForm` did not exist before implementation, as expected |
 | Failure-first configured-slave EtherCAT test | Compiled and failed because the dedicated `EtherCATEthercatAlias` control did not exist before implementation, as expected |
 | Metadata, hard dependencies, mode, and actions | Passed |
 | Shared QAction identity across menu, toolbar, shortcuts, and callbacks | Passed |
@@ -304,6 +336,9 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Configured-slave General rename workflow | Passed for whitespace trimming, Unicode, empty rejection, Project modified state, tree/title/form synchronization, stable selection, Undo, and Redo |
 | Configured-slave General missing ESI state | Passed with explicit `Unknown ESI device` Type and retained read-only identity details |
 | Focused configured-slave General test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
+| Master General identity form | Passed for TwinCAT-aligned Name/Id, stable Object Id, Type, visible unsupported settings, and offline summary |
+| Master General rename workflow | Passed for whitespace trimming, Unicode, empty rejection, Project modified state, tree/title/form synchronization, stable selection, Undo, and Redo |
+| Focused master General test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed with a visually inspected 2x render |
 | Configured-slave EtherCAT field hierarchy | Passed for Type, Product/Revision, Auto Inc Addr, explicit fixed-address state, Alias, Identification Value, Previous Port, and Advanced Settings |
 | Auto-increment address and predecessor derivation | Passed for first `0x0000`, second `0xffff`, master predecessor, and previous-slave predecessor without inventing a port number |
 | Configured Station Alias workflow | Passed for 0 through 65535 bounds, explicit zero-disable state, Project modified state, stable selection, Undo, and Redo |

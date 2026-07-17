@@ -384,6 +384,14 @@ Utils::Result<> WorkbenchController::renameOfflineSlave(
     return m_projectService->replaceOfflineSlaves(projectId, selected->masterId, slaves);
 }
 
+Utils::Result<> WorkbenchController::renameStructuralNode(
+    const Data::NodeId &projectId, const Data::NodeId &nodeId, const QString &name)
+{
+    if (m_shuttingDown || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    return m_projectService->renameStructuralNode(projectId, nodeId, name);
+}
+
 Utils::Result<> WorkbenchController::setOfflineSlaveAlias(
     const Data::NodeId &projectId, const Data::NodeId &slaveId, quint16 alias)
 {
