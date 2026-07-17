@@ -1602,6 +1602,71 @@ void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
+void EtherCATWorkbenchTests::testEsiRepositoryEmptyGuidance()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    QVERIFY(repository);
+    QTRY_VERIFY(!repository->isIndexing());
+    controller.treeModel()->syncDevices({});
+
+    QAbstractItemModelTester modelTester(
+        controller.treeModel(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+    const QModelIndex repositoryIndex
+        = findByKind(controller.treeModel(), Core::WorkbenchNodeKind::DeviceRepository);
+    QVERIFY(repositoryIndex.isValid());
+    QCOMPARE(controller.treeModel()->rowCount(repositoryIndex), 1);
+    const QModelIndex placeholder = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::Placeholder, repositoryIndex);
+    QVERIFY(placeholder.isValid());
+
+    const QString guidance
+        = QString("Select Device Repository, then choose Import ESI Files...");
+    QCOMPARE(placeholder.data().toString(), QString("No ESI devices imported"));
+    QCOMPARE(placeholder.siblingAtColumn(1).data().toString(), guidance);
+    QCOMPARE(placeholder.data(WorkbenchTreeModel::StatusRole).toString(), guidance);
+    QCOMPARE(
+        placeholder.data(WorkbenchTreeModel::SearchTextRole).toString(),
+        QString("No ESI devices imported ") + guidance);
+    QVERIFY(placeholder.data(Qt::ToolTipRole).toString().contains(guidance));
+    QVERIFY(controller.treeModel()->flags(placeholder) & Qt::ItemIsEnabled);
+    QVERIFY(!(controller.treeModel()->flags(placeholder) & Qt::ItemIsSelectable));
+
+    WorkbenchNavigationWidget navigation(&controller);
+    navigation.resize(720, 360);
+    navigation.show();
+    QTRY_VERIFY(navigation.isVisible());
+    navigation.treeView()->expandAll();
+    QTRY_VERIFY(findByKind(
+                    navigation.treeView()->model(), Core::WorkbenchNodeKind::Placeholder)
+                    .isValid());
+
+    DetailsView details(&controller);
+    details.resize(1100, 760);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    const Data::NodeId repositoryId
+        = repositoryIndex.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    QVERIFY(!repositoryId.isNull());
+    controller.selectionService()->setCurrentNodeId(repositoryId);
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
+    QVERIFY(page);
+    QPushButton *importFiles
+        = page->findChild<QPushButton *>("EtherCATEsiRepositoryImport");
+    QVERIFY(importFiles);
+    QCOMPARE(importFiles->text(), QString("Import ESI Files..."));
+    QVERIFY(importFiles->isEnabled());
+    QVERIFY(!importFiles->accessibleName().isEmpty());
+
+    const QString renderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_ESI_EMPTY_RENDER_PATH");
+    if (!renderPath.isEmpty()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(navigation.grab().save(renderPath), qPrintable(renderPath));
+    }
+}
+
 void EtherCATWorkbenchTests::testEsiRepositoryGeneralWorkflow()
 {
     WorkbenchController controller;

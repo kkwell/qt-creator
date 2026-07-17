@@ -113,6 +113,11 @@ only the public `DeviceRepositoryProvider` import/rebuild/cancel workflow and
 renders its progress and result. Devices continues to own XML parsing, indexed
 data, job lifetime, and cancellation semantics; Workbench retains only guarded
 pointers and adds no protocol, online updater, or private cross-plugin access.
+When that public repository is empty, the Workbench model now points the
+non-selectable placeholder at the selectable `Device Repository` parent and its
+existing `Import ESI Files...` action. This changes only translated model
+presentation; it adds no command, Provider call, service contract, persistence,
+or cross-plugin ownership.
 Selecting an individual repository device routes the existing immutable public
 `DeviceDescription` snapshot into a Workbench-private General-page widget. The
 widget renders identity, offline configuration coverage, qualification, and

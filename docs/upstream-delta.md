@@ -269,6 +269,14 @@ ownership. No plugin dependency, public API, controller protocol, upstream
 Core, ProjectExplorer, or application path is added, so the direct Core patch
 count remains five.
 
+The Workbench ESI empty-guidance issue changes only existing files in the
+product-owned `EtherCATWorkbench` plugin and documentation. It replaces a stale
+placeholder status with a translated pointer to the existing repository page
+and import action. It adds no source-list entry, CMake/qbs change, dependency,
+public API, persistent format, Provider call, controller protocol, upstream
+Core, ProjectExplorer, or application path. The Workbench path count remains 44
+and the direct Core patch count remains five.
+
 The Workbench ESI catalogue-device General issue likewise changes only the
 product-owned `EtherCATWorkbench` plugin and documentation. It adds two private
 page source files with synchronized CMake/qbs entries and renders the existing

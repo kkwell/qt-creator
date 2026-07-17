@@ -833,7 +833,7 @@ void WorkbenchTreeModel::syncDevices(const QList<Data::DeviceSummary> &devices)
             {},
             Core::WorkbenchNodeKind::Placeholder,
             Tr::tr("No ESI devices imported"),
-            Tr::tr("Use the import command in a later UI stage")));
+            Tr::tr("Select Device Repository, then choose Import ESI Files...")));
         endInsertRows();
         return;
     }

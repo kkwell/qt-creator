@@ -361,6 +361,26 @@ position, multi-master routing, controller/network transport, or a public
 cross-plugin insertion API. Those capabilities require separate data and
 provider contracts rather than reinterpretation of a tree drop position.
 
+## ESI repository empty guidance
+
+`ISSUE-WB-ESI-EMPTY-GUIDANCE-001` replaces the repository placeholder's stale
+future-stage message with the current recovery path: select `Device Repository`,
+then choose `Import ESI Files...`. The placeholder stays enabled for readable
+status and tooltip presentation but remains non-selectable; its name and
+guidance also remain available to the existing search role. Selecting the
+parent continues through the stable repository `NodeId` to the existing General
+page and its local import action.
+
+Beckhoff documents that offline device selection is populated from available
+ESI descriptions and that ESI XML contains the device descriptions needed for
+offline configuration:
+<https://infosys.beckhoff.com/content/1033/el331x/1036999947.html> and
+<https://infosys.beckhoff.com/content/1033/ps2001-2420-1001/10831984011.html>.
+That establishes the ESI prerequisite, not this exact empty-state wording or
+navigation. The guidance is an Embed Labs Qt Creator usability correction; it
+does not copy TwinCAT behavior or add online download, automatic update,
+hardware scan, EEPROM description, network, or real EtherCAT behavior.
+
 ## ESI Device Repository General page
 
 `ISSUE-WB-ESI-REPOSITORY-001` replaces the repository's generic two-row table
@@ -1018,7 +1038,7 @@ The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
 match/difference routing, Missing/Added/Revision/Vendor presentation, warning
 and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
 stable locate/open navigation, command registration, and provider-removal
-restoration. It passes 32 tests on the qualified Qt 6.11.0 Release test build.
+restoration. It passes 33 tests on the qualified Qt 6.11.0 Release test build.
 The navigation keyboard-focus test passes at normal scale and
 `QT_SCALE_FACTOR=2`, with 3 passed and 0 failed at each scale. It verifies the
 container focus proxy, actual application focus, a real Down-arrow event, and
@@ -1028,7 +1048,12 @@ the no-match stack, translated accessibility metadata, a real Space-key clear,
 dynamic proxy insertion/removal, visible focus-proxy switching, long Unicode
 input, exact stable selection preservation, and external-selection recovery.
 Its normal 420 x 480 and 2x 840 x 960 direct renders were inspected without
-clipping, overlap, or scale drift. The complete Workbench suite passes 32 tests
+clipping, overlap, or scale drift. The ESI repository empty-guidance test also
+passes with 3 tests at normal scale and `QT_SCALE_FACTOR=2`. It verifies the
+exact Display, Status, Search, and tooltip text, the non-selectable placeholder,
+stable parent routing, and the real enabled `Import ESI Files...` action. Its
+normal 720 x 360 and 2x 1440 x 720 navigation renders were inspected without
+clipping, overlap, or scale drift. The complete Workbench suite passes 33 tests
 at normal scale; no complete-suite 2x run is claimed.
 The project, target, and master General flows also pass at
 `QT_SCALE_FACTOR=2`, and direct normal and 2x widget renders show no overlap,

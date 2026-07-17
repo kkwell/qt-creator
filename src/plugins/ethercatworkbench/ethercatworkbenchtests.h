@@ -18,6 +18,7 @@ private slots:
     void testTwinCatInsertDeviceWorkflow();
     void testEsiDeviceDragDropWorkflow();
     void testEditableProjectGeneralWorkflow();
+    void testEsiRepositoryEmptyGuidance();
     void testEsiRepositoryGeneralWorkflow();
     void testEsiDeviceGeneralWorkflow();
     void testEditableTargetGeneralWorkflow();
