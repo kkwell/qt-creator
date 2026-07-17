@@ -28,7 +28,7 @@ relative to that recorded comparison point.
 | `src/plugins/ethercatcore` | 19 | Product-owned Core services and extension points |
 | `src/plugins/ethercatproject` | 18 | Product-owned offline project plugin |
 | `src/plugins/ethercatdevices` | 12 | Product-owned offline ESI repository plugin |
-| `src/plugins/ethercatworkbench` | 38 | Product-owned EtherCAT engineering-shell plugin |
+| `src/plugins/ethercatworkbench` | 40 | Product-owned EtherCAT engineering-shell plugin |
 | `src/plugins/ethercatscan` | 16 | Product-owned local Mock scan workflow plugin |
 | `src/plugins/ethercatdiagnostics` | 16 | Product-owned local Mock diagnostics plugin |
 
@@ -242,6 +242,15 @@ public Device repository, Selection service, and checked Project replacement
 command for Add/Remove/Move operations. It adds no dependency or path under
 upstream Core, ProjectExplorer, or the application bootstrap, so the direct
 Core patch count remains five.
+
+The Workbench ESI-repository issue also changes only the product-owned
+`EtherCATWorkbench` plugin and documentation. It adds two private page source
+files with synchronized CMake/qbs entries and reuses the existing public
+`DeviceRepositoryProvider` import, rebuild, progress, result, and cancel
+contracts. Devices retains parser, repository-data, and asynchronous-job
+ownership. No plugin dependency, public API, controller protocol, upstream
+Core, ProjectExplorer, or application path is added, so the direct Core patch
+count remains five.
 
 The configured-slave General-page issue also changes only the product-owned
 `EtherCATWorkbench` plugin and documentation. It adds two private General-page

@@ -23,7 +23,7 @@ documentation, review, and local-commit gates.
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Configuration persistence and structural-name API complete | Version-2 project lifecycle, migration, validation, and Undo/Redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
-| 4 | `EtherCATWorkbenchPlugin` | In progress | Project, Target, Master, and configured-slave General editing, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
+| 4 | `EtherCATWorkbenchPlugin` | In progress | Project, Target, Master, configured-slave, and ESI Repository General workflows, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
 
@@ -108,7 +108,12 @@ Mock Diagnostics plugin.
 The Workbench plugin owns the existing EtherCAT mode, left device tree,
 selection linkage, and details-page host. Project and Devices supply public
 data. Scan and Diagnostics contribute commands, pages, and Providers through
-Workbench/Core extension points. The project General page mirrors the relevant
+Workbench/Core extension points. The ESI Device Repository General page calls
+only the public `DeviceRepositoryProvider` import/rebuild/cancel workflow and
+renders its progress and result. Devices continues to own XML parsing, indexed
+data, job lifetime, and cancellation semantics; Workbench retains only guarded
+pointers and adds no protocol, online updater, or private cross-plugin access.
+The project General page mirrors the relevant
 TwinCAT identity hierarchy and adds the goal-required offline summary using
 only public Project snapshots. Its editable name routes through the existing
 `ProjectService::renameProject()` command and remains synchronized with

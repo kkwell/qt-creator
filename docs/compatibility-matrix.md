@@ -55,7 +55,9 @@ Phase-1 requirement is complete. Editable Process Data, CoE Online Mock,
 Startup, and DC are now verified, and the public derived-node kinds are
 reserved. The existing Project-name command, the checked Target/Master name
 command, and the TwinCAT-inspired Project/Target/Master General pages are now
-verified. The visible
+verified. The local ESI Device Repository page now exposes verified batch
+import, reload, cancellation, progress, and partial-failure reporting through
+the public Devices Provider. The visible
 EtherCAT-master EtherCAT page now exposes the documented NetId/action/frame
 hierarchy with a real local topology view and explicit unavailable runtime
 boundaries. The visible
@@ -95,7 +97,7 @@ function is outside the product target and records migration or recovery.
 | Editable Startup page | Verified in current Workbench issue |
 | Editable DC page | Verified in current Workbench issue |
 | Offline EtherCAT project | Stage 2 verified |
-| ESI repository | Stage 3 verified |
+| ESI repository | Devices storage/parser/provider and Workbench import/reload/cancel UI verified; local/offline only |
 | Scan UI and topology comparison | Stage 5 verified with Mock provider only |
 | WKC/DC/link diagnostics | Stage 6 verified with Mock provider only |
 | Zynq protocol | Explicitly out of scope |
@@ -189,6 +191,39 @@ widget or generic node-editing surface.
 | Direct upstream Core, ProjectExplorer, or app changes | None; direct Core patch count remains five |
 | Full product build with `WITH_TESTS=ON` | Blocked by the existing EasyBoard `extensionmanager_test.h` include defect |
 | qbs build | Not run; qbs executable is unavailable |
+
+## EtherCATWorkbench ESI Repository qualification
+
+`ISSUE-WB-ESI-REPOSITORY-001` consumes the existing public
+`DeviceRepositoryProvider`; Devices retains ownership of XML parsing, indexed
+data, asynchronous jobs, and cancellation. Workbench adds only the dedicated
+General-page presentation and guarded Provider/job references. No new public
+contract, persistence, controller transport, or network behavior is added.
+
+| Check | Result |
+|---|---|
+| Failure-first Workbench test | Compiled and failed because `EtherCATEsiRepositoryContent` did not exist; 2 passed and 1 failed as expected |
+| TwinCAT-aligned repository workflow | `Import ESI Files...` and `Reload Device Descriptions` hierarchy checked against Beckhoff's official ESI and reload documentation; no Beckhoff assets or formats copied |
+| Truthful repository summary | Status, indexed/supported/limited device counts, vendors, and distinct referenced source paths verified from the public Provider without fabricating stored-file or online state |
+| Single/batch import entry | Multi-file XML picker boundary and local XML drag/drop implemented; non-local and non-XML drops are rejected |
+| Partial-success import | One unique valid ESI and one malformed XML produced 2 requested, 1 imported, 1 failed, the parser error filename, updated summary, and a new device-tree entry |
+| Reload existing descriptions | Provider rebuild completed, retained the imported device, refreshed counts, and reported zero failed files |
+| Progress and cancellation | Deterministic controlled job verified 1/4 progress, enabled Cancel, one cancel call, synchronous final `Reload canceled` state, and disabled Cancel afterward |
+| Error/result boundary | Requested/imported/updated/duplicate/failed/canceled counts are read-only; detailed errors are bounded to 100 entries |
+| Focused repository flow | 3 passed, 0 failed |
+| Focused repository flow at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
+| Direct widget renders | Normal 1100 x 760 and 2x 2200 x 1520 renders passed visual inspection with no overlap, clipping, or scale drift |
+| Focused EtherCATWorkbench suite | 27 passed, 0 failed |
+| Six-plugin isolated regression | Core 17, Project 12, Devices 8, Workbench 27, Scan 7, Diagnostics 7; 78 passed, 0 failed |
+| Final isolated regression platform | Separate processes with isolated HOME/settings and `QT_QPA_PLATFORM=offscreen`; high-DPI flow additionally used `QT_SCALE_FACTOR=2` |
+| 16-plugin product build | Passed with the `WITH_TESTS=OFF` allow-list |
+| Enabled product startup | Workbench loaded, initialized, extended, and delayed-initialized; product remained stable until the intentional 10-second timeout |
+| Workbench-disabled startup | Workbench, Scan, and Diagnostics were absent as expected; Core, Devices, and Project initialized and the remaining product stayed stable until the intentional 10-second timeout |
+| CMake/qbs source lists | Both list `esirepositorypage.cpp` and `esirepositorypage.h`; no dependency or plugin-metadata change |
+| Direct upstream Core, ProjectExplorer, or app changes | None; direct Core patch count remains five |
+| Full product build with `WITH_TESTS=ON` | Still blocked by the existing EasyBoard `extensionmanager_test.h` include defect; outstanding Ninja jobs were interrupted after the blocker was captured |
+| qbs build | Not run; qbs executable is unavailable |
+| Manual desktop interaction | Not run; only automated widget behavior and direct offscreen renders are claimed |
 
 ## EtherCATWorkbench project General qualification
 
@@ -377,8 +412,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 26 passed, 0 failed |
-| Six-plugin EtherCAT regression | 77 passed, 0 failed in isolated processes |
+| Focused EtherCATWorkbench plugin tests | 27 passed, 0 failed |
+| Six-plugin EtherCAT regression | 78 passed, 0 failed in isolated processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first CoE Online page test | Compiled and failed on the missing `CoE Online` page descriptor before implementation, as expected |
@@ -393,6 +428,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Failure-first master General test | Compiled and failed because `EtherCATMasterGeneralForm` did not exist before implementation, as expected |
 | Failure-first master EtherCAT test | Compiled and failed because `EtherCATMasterEthercatForm` did not exist before implementation, as expected |
 | Failure-first configured-slave EtherCAT test | Compiled and failed because the dedicated `EtherCATEthercatAlias` control did not exist before implementation, as expected |
+| Failure-first ESI repository test | Compiled and failed because `EtherCATEsiRepositoryContent` did not exist before implementation, as expected |
 | Metadata, hard dependencies, mode, and actions | Passed |
 | Shared QAction identity across menu, toolbar, shortcuts, and callbacks | Passed |
 | Dynamic action add/remove and optional Scan/Diagnostics load combinations | Passed with both, either, and neither optional plugin loaded |
@@ -431,6 +467,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Manual no-ESI mode, AssignActivate, cycle/shift, and dependency validation | Passed |
 | DC field, mode, defaults, dependent disable, and reference-clock Undo/Redo | Passed |
 | Configured-slave tree, empty-placeholder removal, and ESI page reuse | Passed |
+| ESI repository summary and actions | Passed for truthful indexed/supported/limited/vendor/referenced-source counts, multi-file import, XML drag/drop, reload, progress, cancel, and bounded results |
+| ESI import partial failure | Passed with one valid and one malformed XML: successful device retained, parser failure named, tree refreshed, and no all-or-nothing claim |
 | Supported ESI device add and repeated-device unique naming | Passed with complete identity, repository reference, Process Data, Startup, and DC defaults |
 | Offline slave remove/reorder workflow | Passed with normalized positions, boundary enablement, stable selection, selection repair, Undo, and Redo |
 | Offline-topology ActionManager identity | Passed for all four context-only commands in real device and configured-slave popup menus |
@@ -478,8 +516,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 | EtherCATDiagnostics regression tests | 7 passed, 0 failed |
 | Product version inventory | All 16 allow-listed plugins present and recognized |
 | Normal Release product build | Passed with 16-plugin allow-list |
-| Enabled GUI startup | Passed with clean temporary settings and all 16 plugins for 5 seconds after delayed initialization; intentionally interrupted after profile output |
-| Explicitly disabled startup | Passed with `-noload EtherCATWorkbench` and clean temporary settings for 5 seconds after delayed initialization; intentionally interrupted after profile output |
+| Enabled GUI startup | Passed with clean temporary settings; Workbench initialized and delayed-initialized, then remained stable until the intentional 10-second timeout |
+| Explicitly disabled startup | Passed with `-noload EtherCATWorkbench` and clean temporary settings; Workbench, Scan, and Diagnostics were absent while Core, Devices, and Project initialized, then the product remained stable until the intentional 10-second timeout |
 | Visual desktop inspection | Passed with all five process-data branches, PDO/Entry descendants, explicit modular empty state, normal Creator icon scale, and readable narrow-sidebar names |
 | CoE direct Qt Widget render | Passed at 2200 x 1520 Retina output with hierarchy, values, Mock banner, and bilingual long name visible without overlap |
 | CoE Online desktop interaction inspection | Not run; macOS was locked, so no CoE screenshot or manual-click result is claimed |
@@ -492,6 +530,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Offline-topology desktop interaction inspection | Not run; Computer Use reported a locked macOS session, so no manual-click result is claimed |
 | Configured-slave General direct Qt render | Passed at 2200 x 1440 Retina output with Unicode title/name, Id, Object Id, Type, and details visible without overlap or clipping |
 | Configured-slave General desktop interaction inspection | Not run; only the direct offscreen render and widget behavior tests are claimed |
+| ESI Device Repository direct Qt renders | Passed at normal 1100 x 760 and 2x 2200 x 1520 output with summary, actions, progress, partial-success result, and parser error visible without overlap, clipping, or scale drift |
+| ESI Device Repository desktop interaction inspection | Not run; only direct offscreen renders and widget behavior tests are claimed |
 | Offline-project General direct Qt renders | Passed at normal 1100 x 720 and 2x 2200 x 1440 output with identity and complete offline summary visible without overlap, clipping, or scale drift |
 | Offline-project General desktop interaction inspection | Not run; only the direct offscreen renders and widget behavior tests are claimed |
 | Configured-slave EtherCAT direct Qt render | Passed at 2200 x 1520 Retina output with all supported and explicit unavailable fields plus two SyncManager rows visible without overlap or clipping |

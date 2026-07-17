@@ -12,6 +12,8 @@ add_qtc_plugin(EtherCATWorkbench
     detailsview.h
     esiconfigurationfactory.cpp
     esiconfigurationfactory.h
+    esirepositorypage.cpp
+    esirepositorypage.h
     ethercatworkbenchconstants.h
     ethercatworkbenchplugin.cpp
     ethercatworkbenchtr.h

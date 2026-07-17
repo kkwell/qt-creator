@@ -4,6 +4,7 @@
 
 #include "builtinpropertypages.h"
 #include "detailsview.h"
+#include "esirepositorypage.h"
 #include "ethercatworkbenchconstants.h"
 #include "workbenchcontroller.h"
 #include "workbenchnavigation.h"
@@ -41,6 +42,8 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QJsonArray>
@@ -50,7 +53,9 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QPlainTextEdit>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QSet>
 #include <QSignalSpy>
@@ -445,6 +450,64 @@ public:
     {
         page->setToolTip(context.nodeId.toString());
     }
+};
+
+class ControlledDeviceImportJob final : public Core::DeviceImportJob
+{
+public:
+    explicit ControlledDeviceImportJob(QObject *parent)
+        : Core::DeviceImportJob(parent)
+    {
+        setState(Core::DeviceImportState::Running);
+        setProgress(1, 4);
+    }
+
+    void cancel() final
+    {
+        ++cancelCalls;
+        setState(Core::DeviceImportState::Canceling);
+        Data::DeviceImportResult result;
+        result.requestedFiles = 4;
+        result.canceled = true;
+        finish(result);
+    }
+
+    int cancelCalls = 0;
+};
+
+class ControlledDeviceRepositoryProvider final : public Core::DeviceRepositoryProvider
+{
+public:
+    ControlledDeviceRepositoryProvider()
+        : DeviceRepositoryProvider("EtherCAT.Workbench.ControlledRepository", "Controlled")
+    {
+        setAvailable(true);
+    }
+
+    QList<Data::DeviceSummary> devices(const Data::DeviceFilter &) const final { return {}; }
+    std::optional<Data::DeviceDescription> device(const Data::NodeId &) const final { return {}; }
+    QByteArray originalXml(const Data::NodeId &) const final { return {}; }
+
+    Core::DeviceImportJob *importFiles(const Utils::FilePaths &) final { return createJob(); }
+    Core::DeviceImportJob *rebuildIndex() final { return createJob(); }
+    bool isIndexing() const final
+    {
+        return job && job->state() != Core::DeviceImportState::Finished;
+    }
+
+    ControlledDeviceImportJob *createJob()
+    {
+        if (isIndexing())
+            return job;
+        job = new ControlledDeviceImportJob(this);
+        emit indexingChanged(true);
+        connect(job, &Core::DeviceImportJob::finished, this, [this] {
+            emit indexingChanged(false);
+        });
+        return job;
+    }
+
+    ControlledDeviceImportJob *job = nullptr;
 };
 
 class AvailableScanProvider final : public Core::ScanProvider
@@ -1122,6 +1185,195 @@ void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
     QVERIFY(staleName->isReadOnly());
     QCOMPARE(staleValidity->text(), QString("Unavailable"));
 
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+void EtherCATWorkbenchTests::testEsiRepositoryGeneralWorkflow()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    QVERIFY(repository);
+    QTRY_VERIFY(!repository->isIndexing());
+
+    const QModelIndex repositoryIndex
+        = findByKind(controller.treeModel(), Core::WorkbenchNodeKind::DeviceRepository);
+    QVERIFY(repositoryIndex.isValid());
+    const Data::NodeId repositoryId
+        = repositoryIndex.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    QVERIFY(!repositoryId.isNull());
+    controller.selectionService()->setCurrentNodeId(repositoryId);
+
+    DetailsView details(&controller);
+    details.resize(1100, 760);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
+    QVERIFY(page);
+    QWidget *content = page->findChild<QWidget *>("EtherCATEsiRepositoryContent");
+    QLabel *title = page->findChild<QLabel *>("EtherCATEsiRepositoryTitle");
+    QLabel *description = page->findChild<QLabel *>("EtherCATEsiRepositoryDescription");
+    QGroupBox *summary = page->findChild<QGroupBox *>("EtherCATEsiRepositorySummary");
+    QLineEdit *status = page->findChild<QLineEdit *>("EtherCATEsiRepositoryStatus");
+    QLineEdit *deviceCount = page->findChild<QLineEdit *>("EtherCATEsiRepositoryDevices");
+    QLineEdit *supportedCount = page->findChild<QLineEdit *>("EtherCATEsiRepositorySupported");
+    QLineEdit *limitedCount = page->findChild<QLineEdit *>("EtherCATEsiRepositoryLimited");
+    QLineEdit *vendorCount = page->findChild<QLineEdit *>("EtherCATEsiRepositoryVendors");
+    QLineEdit *sourceCount = page->findChild<QLineEdit *>("EtherCATEsiRepositorySources");
+    QPushButton *importFiles = page->findChild<QPushButton *>("EtherCATEsiRepositoryImport");
+    QPushButton *reload = page->findChild<QPushButton *>("EtherCATEsiRepositoryReload");
+    QPushButton *cancel = page->findChild<QPushButton *>("EtherCATEsiRepositoryCancel");
+    QProgressBar *progress = page->findChild<QProgressBar *>("EtherCATEsiRepositoryProgress");
+    QLabel *operation = page->findChild<QLabel *>("EtherCATEsiRepositoryOperation");
+    QPlainTextEdit *result = page->findChild<QPlainTextEdit *>("EtherCATEsiRepositoryResult");
+    QTreeWidget *propertyTree = page->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
+    QVERIFY(content);
+    QVERIFY(title);
+    QVERIFY(description);
+    QVERIFY(summary);
+    QVERIFY(status);
+    QVERIFY(deviceCount);
+    QVERIFY(supportedCount);
+    QVERIFY(limitedCount);
+    QVERIFY(vendorCount);
+    QVERIFY(sourceCount);
+    QVERIFY(importFiles);
+    QVERIFY(reload);
+    QVERIFY(cancel);
+    QVERIFY(progress);
+    QVERIFY(operation);
+    QVERIFY(result);
+    QVERIFY(propertyTree);
+
+    const QList<Data::DeviceSummary> initialDevices = repository->devices();
+    QSet<quint32> initialVendors;
+    QSet<QString> initialSources;
+    int initialSupported = 0;
+    for (const Data::DeviceSummary &device : initialDevices) {
+        initialVendors.insert(device.identity.vendorId);
+        initialSupported += device.supported ? 1 : 0;
+        const std::optional<Data::DeviceDescription> description = repository->device(device.id);
+        if (description && !description->sourcePath.isEmpty())
+            initialSources.insert(description->sourcePath);
+    }
+    QCOMPARE(title->text(), QString("ESI Device Repository"));
+    QVERIFY(description->text().contains("offline", Qt::CaseInsensitive));
+    QCOMPARE(status->text(), QString("Ready"));
+    QCOMPARE(deviceCount->text(), QString::number(initialDevices.size()));
+    QCOMPARE(supportedCount->text(), QString::number(initialSupported));
+    QCOMPARE(limitedCount->text(), QString::number(initialDevices.size() - initialSupported));
+    QCOMPARE(vendorCount->text(), QString::number(initialVendors.size()));
+    QCOMPARE(sourceCount->text(), QString::number(initialSources.size()));
+    QCOMPARE(importFiles->text(), QString("Import ESI Files..."));
+    QCOMPARE(reload->text(), QString("Reload Device Descriptions"));
+    QCOMPARE(cancel->text(), QString("Cancel"));
+    QVERIFY(content->acceptDrops());
+    QVERIFY(importFiles->isEnabled());
+    QVERIFY(reload->isEnabled());
+    QVERIFY(!cancel->isEnabled());
+    QVERIFY(result->isReadOnly());
+    QVERIFY(!content->accessibleName().isEmpty());
+    QVERIFY(!importFiles->accessibleName().isEmpty());
+    QVERIFY(!reload->accessibleName().isEmpty());
+    QVERIFY(!cancel->accessibleName().isEmpty());
+    QVERIFY(!progress->accessibleName().isEmpty());
+    QVERIFY(!result->accessibleName().isEmpty());
+    QVERIFY(content->isVisible());
+    QVERIFY(!propertyTree->isVisible());
+    QCOMPARE(propertyTree->topLevelItemCount(), 0);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QByteArray uniqueEsi = deviceEsi();
+    uniqueEsi.replace("#x00005678", "#x7A110001");
+    uniqueEsi.replace("#x00000011", "#x0000A501");
+    uniqueEsi.replace("AX5000", "EL-REPOSITORY");
+    uniqueEsi.replace("Workbench Servo", "Repository Servo / 设备库伺服");
+    const Utils::FilePath validPath = Utils::FilePath::fromString(directory.path())
+                                          .pathAppended("repository-valid.xml");
+    const Utils::FilePath invalidPath = Utils::FilePath::fromString(directory.path())
+                                            .pathAppended("repository-invalid.xml");
+    QVERIFY_RESULT(validPath.writeFileContents(uniqueEsi));
+    QVERIFY_RESULT(invalidPath.writeFileContents("<EtherCATInfo>"));
+
+    QMimeData mimeData;
+    mimeData.setUrls(
+        {QUrl::fromLocalFile(validPath.toFSPathString()),
+         QUrl::fromLocalFile(invalidPath.toFSPathString())});
+    QDragEnterEvent dragEnter(
+        QPoint(8, 8), Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(content, &dragEnter);
+    QVERIFY(dragEnter.isAccepted());
+    QDropEvent drop(
+        QPointF(8, 8), Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(content, &drop);
+    QVERIFY(drop.isAccepted());
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        operation->text().contains("Import complete", Qt::CaseInsensitive), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        result->toPlainText().contains("Requested files: 2"), 15000);
+    QVERIFY(result->toPlainText().contains("Imported devices: 1"));
+    QVERIFY(result->toPlainText().contains("Failed files: 1"));
+    QVERIFY(result->toPlainText().contains("repository-invalid.xml"));
+    QTRY_COMPARE(repository->devices().size(), initialDevices.size() + 1);
+    QTRY_COMPARE(deviceCount->text(), QString::number(initialDevices.size() + 1));
+    QVERIFY(importFiles->isEnabled());
+    QVERIFY(reload->isEnabled());
+    QVERIFY(!cancel->isEnabled());
+    QVERIFY(progress->value() == progress->maximum());
+    QTRY_VERIFY(findByDisplayText(controller.treeModel(), "Repository Servo / 设备库伺服").isValid());
+
+    const QString renderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_REPOSITORY_RENDER_PATH");
+    if (!renderPath.isEmpty()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(details.grab().save(renderPath), qPrintable(renderPath));
+    }
+
+    reload->click();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        operation->text().contains("Reload complete", Qt::CaseInsensitive), 15000);
+    QVERIFY(result->toPlainText().contains("Failed files: 0"));
+    QCOMPARE(repository->devices().size(), initialDevices.size() + 1);
+    QCOMPARE(deviceCount->text(), QString::number(initialDevices.size() + 1));
+    QVERIFY(importFiles->isEnabled());
+    QVERIFY(reload->isEnabled());
+    QVERIFY(!cancel->isEnabled());
+
+    ControlledDeviceRepositoryProvider controlledRepository;
+    EsiRepositoryPage controlledPage(&controlledRepository);
+    QPushButton *controlledReload
+        = controlledPage.findChild<QPushButton *>("EtherCATEsiRepositoryReload");
+    QPushButton *controlledCancel
+        = controlledPage.findChild<QPushButton *>("EtherCATEsiRepositoryCancel");
+    QProgressBar *controlledProgress
+        = controlledPage.findChild<QProgressBar *>("EtherCATEsiRepositoryProgress");
+    QLabel *controlledOperation
+        = controlledPage.findChild<QLabel *>("EtherCATEsiRepositoryOperation");
+    QPlainTextEdit *controlledResult
+        = controlledPage.findChild<QPlainTextEdit *>("EtherCATEsiRepositoryResult");
+    QVERIFY(controlledReload);
+    QVERIFY(controlledCancel);
+    QVERIFY(controlledProgress);
+    QVERIFY(controlledOperation);
+    QVERIFY(controlledResult);
+    controlledReload->click();
+    QVERIFY(controlledRepository.job);
+    QCOMPARE(controlledProgress->minimum(), 0);
+    QCOMPARE(controlledProgress->maximum(), 4);
+    QCOMPARE(controlledProgress->value(), 1);
+    QVERIFY(controlledCancel->isEnabled());
+    controlledCancel->click();
+    QCOMPARE(controlledRepository.job->cancelCalls, 1);
+    QCOMPARE(controlledRepository.job->state(), Core::DeviceImportState::Finished);
+    QCOMPARE(controlledOperation->text(), QString("Reload canceled"));
+    QVERIFY(controlledResult->toPlainText().contains("Canceled: Yes"));
+    QVERIFY(controlledReload->isEnabled());
+    QVERIFY(!controlledCancel->isEnabled());
+
+    controller.selectionService()->clear();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }

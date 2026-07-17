@@ -6,7 +6,7 @@
 EtherCAT mode, left navigation tree, stable selection linkage, central details
 container, built-in offline property pages, manual offline-topology commands,
 editable project, target, master, and configured-slave General pages, Workbench
-commands,
+commands, the local ESI repository management page,
 the TwinCAT-aligned master EtherCAT settings and local topology view, and the
 presentation of public Scan/Diagnostics snapshots in the device tree. It does
 not parse ESI files, own project persistence, scan a bus, produce diagnostics,
@@ -230,6 +230,40 @@ This issue does not add drag-and-drop, multi-selection editing, multiple-master
 target selection, a bus scan, controller transport, or online configuration.
 Those require separate issues and must not bypass the same checked Project
 service boundary.
+
+## ESI Device Repository General page
+
+`ISSUE-WB-ESI-REPOSITORY-001` replaces the repository's generic two-row table
+with a dedicated local device-description workflow. Its action names and
+information flow were compared with Beckhoff's official description of
+[ESI files in TwinCAT](https://infosys.beckhoff.com/content/1033/em7004/1036998411.html)
+and the documented
+[Reload Device Descriptions action](https://infosys.beckhoff.com/content/1033/el2502/19869660683.html).
+No Beckhoff asset, icon, XML extension, project format, or proprietary
+implementation is copied.
+
+The page reports repository status, indexed devices, supported and limited
+devices, vendors, and distinct referenced source paths. `Import ESI Files...`
+opens a multi-file XML picker; local XML files may also be dropped onto the
+page. `Reload Device Descriptions` reparses the descriptions already stored by
+the Devices plugin. Both operations expose progress, session state, and a
+read-only result including requested, imported, updated, duplicate, failed,
+and canceled counts. Partial success remains visible, parser errors identify
+their source file, and detailed error output is bounded to 100 entries. An
+active operation can be canceled explicitly.
+
+Workbench owns only this presentation and retains the repository and active
+job through `QPointer`. The public `DeviceRepositoryProvider` continues to own
+import, indexing, data, job lifetime, and cancellation semantics; repository
+signals refresh the page and the existing device tree. The source-path count
+is deliberately labeled `Referenced source paths`: the public contract does
+not expose a separate stored-file inventory.
+
+This is a local/offline workflow. It does not contact a controller, an ETG or
+vendor website, or an online description service; it does not add XSD
+management, `OnlineDescription`, description deletion/overwrite policy, a
+network protocol, or a Zynq contract. It adds no public API, dependency,
+persistent format, or upstream Qt Creator patch.
 
 ## Offline-project General page
 
@@ -485,8 +519,8 @@ the page set without retaining removed pointers.
 The built-in provider supplies these stage-4 pages:
 
 - dedicated editable General forms for projects, targets, masters, and
-  configured slaves, plus read-only General pages for the repository and ESI
-  devices;
+  configured slaves, a local ESI repository import/reload page, and read-only
+  General pages for individual ESI devices;
 - an editable Alias and read-only offline address form for configured slaves,
   while imported devices retain read-only SyncManager data and the master
   exposes its offline NetId/action hierarchy, local topology dialog, and
@@ -678,6 +712,12 @@ menu event filter and all toolbar associations without deleting or retaining
 the ActionManager-owned actions. It introduces no timer, thread, Provider, or
 cross-plugin object ownership.
 
+The ESI repository page likewise starts work only through the public Devices
+Provider and retains only guarded Provider/job pointers. Its signal receivers
+are page-scoped, while the Devices plugin owns the asynchronous job and stored
+descriptions. Workbench adds no file parser, worker, timer, or repository
+business state.
+
 The controller watches optional Scan/Diagnostics availability and snapshot
 signals through public Provider contracts. Provider removal is handled before
 the object leaves the registry: the departing object is excluded, its copied
@@ -716,9 +756,10 @@ shows those boundaries instead of generating placeholder operational data.
 The focused Workbench suite covers metadata and hard dependencies, mode/action
 registration, a 500-device incremental model under
 `QAbstractItemModelTester`, filtering and two-way stable selection, real ESI
-data in Process Data/Startup/DC pages, configured-slave topology and ESI-page
-reuse, manual ESI add/remove/reorder operations, dynamic property-page removal,
-and dynamic Scan/Diagnostics availability and removal. The process-data tree
+data in Process Data/Startup/DC pages, the repository import/reload/cancel
+workflow, configured-slave topology and ESI-page reuse, manual ESI
+add/remove/reorder operations, dynamic property-page removal, and dynamic
+Scan/Diagnostics availability and removal. The process-data tree
 coverage verifies the exact five-branch order, input/output direction,
 active-PDO projection, unique deterministic view IDs, retained source IDs,
 empty modular state, recursive filtering, derived Details routing, non-elided
@@ -785,7 +826,7 @@ The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
 match/difference routing, Missing/Added/Revision/Vendor presentation, warning
 and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
 stable locate/open navigation, command registration, and provider-removal
-restoration. It passes 26 tests on the qualified Qt 6.11.0 Release test build.
+restoration. It passes 27 tests on the qualified Qt 6.11.0 Release test build.
 The project, target, and master General flows also pass at
 `QT_SCALE_FACTOR=2`, and direct normal and 2x widget renders show no overlap,
 clipping, or uncontrolled expansion.
@@ -827,6 +868,13 @@ difference count, and Added state; configured slaves displayed Revision and
 SAFEOP/Error plus Missing state; the Diagnostics branch displayed Running and
 Error. Standard warning/critical icons aligned with normal tree icons, and the
 full two-column status remained readable without clipping or overlap.
+
+Direct normal and `QT_SCALE_FACTOR=2` renders inspected the ESI Device
+Repository page at a 1100 x 760 logical test size. The 1100 x 760 and
+2200 x 1520 outputs retained the title, truthful offline description, six-row
+summary, import/reload/cancel controls, progress, partial-success counts, and
+parser error without overlap, clipping, or scale drift. These were offscreen Qt
+Widget renders; no manual desktop interaction is claimed for this issue.
 
 A direct 522 x 472 Retina render inspected the registered configured-slave
 context menu at `QT_SCALE_FACTOR=2`. The original seven tree commands and the

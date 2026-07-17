@@ -2,6 +2,7 @@
 
 #include "generalpage.h"
 
+#include "esirepositorypage.h"
 #include "ethercatworkbenchtr.h"
 #include "workbenchcontroller.h"
 #include "workbenchtreemodel.h"
@@ -71,6 +72,8 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     : QWidget(parent)
     , m_controller(controller)
     , m_summary(new QLabel(this))
+    , m_repositoryPage(
+          new EsiRepositoryPage(controller ? controller->deviceRepository() : nullptr, this))
     , m_projectContent(new QWidget(this))
     , m_projectForm(new QWidget(m_projectContent))
     , m_projectName(new QLineEdit(m_projectForm))
@@ -411,6 +414,7 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
         Utils::StyleHelper::SpacingTokens::PaddingVM);
     layout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVM);
     layout->addWidget(m_summary);
+    layout->addWidget(m_repositoryPage, 1);
     layout->addWidget(m_projectContent, 1);
     layout->addWidget(m_targetContent, 1);
     layout->addWidget(m_masterContent, 1);
@@ -464,7 +468,12 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
     reset(Tr::tr("Offline properties for %1").arg(context.displayName));
     const bool configuredSlave = context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave
                                  && offlineSlave.has_value();
-    if (context.nodeKind == Core::WorkbenchNodeKind::Project) {
+    if (context.nodeKind == Core::WorkbenchNodeKind::DeviceRepository) {
+        m_summary->hide();
+        m_repositoryPage->refresh();
+        m_repositoryPage->show();
+        m_tree->hide();
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Project) {
         m_summary->hide();
         m_projectName->setText(project ? project->name : context.displayName);
         m_projectName->setReadOnly(!project || !project->valid);
@@ -576,15 +585,6 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
         addRow({Tr::tr("Source"), device->sourcePath});
         addRow({Tr::tr("Imported"), device->importedAt.toLocalTime().toString(Qt::ISODate)});
     } else if (
-        context.nodeKind == Core::WorkbenchNodeKind::DeviceRepository && m_controller
-        && m_controller->deviceRepository()) {
-        addRow(
-            {Tr::tr("Indexed devices"),
-             QString::number(m_controller->deviceRepository()->devices().size())});
-        addRow(
-            {Tr::tr("Index state"),
-             m_controller->deviceRepository()->isIndexing() ? Tr::tr("Indexing") : Tr::tr("Ready")});
-    } else if (
         project && context.nodeKind != Core::WorkbenchNodeKind::Project
         && context.nodeKind != Core::WorkbenchNodeKind::Master) {
         addRow({Tr::tr("Format version"), QString::number(project->formatVersion)});
@@ -600,6 +600,7 @@ void GeneralPage::reset(const QString &summary)
 {
     m_summary->setText(summary);
     m_summary->show();
+    m_repositoryPage->hide();
     m_projectContent->hide();
     m_projectForm->hide();
     m_projectSummaryForm->hide();
