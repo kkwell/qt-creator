@@ -25,8 +25,8 @@ The Qt Creator integration uses only public plugin mechanisms:
 - `Core::INavigationWidgetFactory` and `NavigationWidgetPlaceHolder` for the
   left navigation area;
 - `Core::OutputPanePlaceHolder` for the lower output area;
-- `Core::ActionManager` for the Workbench, refresh, expand, and collapse
-  commands;
+- `Core::ActionManager` and the shared EtherCAT action container for
+  once-registered Workbench, Scan, and Diagnostics commands;
 - `Core::StatusBarManager` for the mode-scoped engineering status surface;
 - `Core::IContext` for EtherCAT-mode command context;
 - the exported `EtherCATCore::StateService` for shared Scan/Diagnostics status;
@@ -35,6 +35,35 @@ The Qt Creator integration uses only public plugin mechanisms:
 
 No file under Qt Creator Core, ProjectExplorer, or the application bootstrap
 is changed by this plugin.
+
+## Engineering command strip
+
+`ISSUE-WB-TOOLBAR-001` places one compact engineering command strip above the
+device tree and details area. This follows the TwinCAT 3 pattern of keeping
+configuration-state and scan commands at the top of the I/O workspace, while
+remaining a native Qt Creator Mode. The scan placement was compared with
+Beckhoff's documented TwinCAT 3 toolbar and tree-context workflow:
+<https://infosys.beckhoff.com/content/1033/el125x_el2258/2584719371.html>.
+No Beckhoff icon, asset, project format, or proprietary command is copied.
+
+The strip does not create a second set of actions. It mirrors the existing
+`EtherCAT.Menu` `QAction` objects, excluding only `Open Workbench` because the
+user is already inside that Mode. Menu entries, toolbar buttons, shortcuts,
+enabled state, checked state, tooltips, and callbacks therefore share the same
+ActionManager registration. Action-added and action-removed events keep the
+strip synchronized when an optional plugin is present or absent.
+
+Workbench never names or includes Scan or Diagnostics implementation details.
+When either optional plugin is disabled, its actions are simply missing from
+the shared action container and no empty controls are fabricated. When both
+are available, their clearly named Mock commands appear automatically.
+
+The strip uses the active Qt style's standard toolbar icon metric and compact
+icon-only buttons, with complete command names retained in tooltips. This
+keeps all current engineering commands visible in a narrow window and at high
+DPI without hard-coded colors, fonts, icon sizes, or pixels. The Workbench
+expand and collapse commands now use the same standard Creator icons as the
+navigation controls.
 
 ## Unified status surface
 
@@ -321,6 +350,11 @@ ownership order: status control, mode, navigation factory, page provider, then
 controller. The controller disconnects project, repository, and provider
 signals before clearing its model.
 
+The command strip is owned by the lazy Mode widget. Destruction removes its
+menu event filter and all toolbar associations without deleting or retaining
+the ActionManager-owned actions. It introduces no timer, thread, Provider, or
+cross-plugin object ownership.
+
 The plugin owns no background thread, timer, future, file format, or persistent
 business state. Imported ESI data remains owned by `EtherCATDevices`; open
 project state remains owned by `EtherCATProject`.
@@ -372,8 +406,11 @@ rejection, dependent disable actions, and ProjectService Undo/Redo reentrancy.
 The status-surface coverage verifies Offline/Busy/Error priority, Mock labels,
 tooltip and drop-down details, standard icon dimensions, content width,
 Mode-scoped visibility, and the existing configured/unsupported tree icons.
-It passes 16 tests on the qualified Qt 6.11.0 Release test build; the focused
-status flow also passes at `QT_SCALE_FACTOR=2`.
+The command-strip coverage verifies exact shared-action identity, source-menu
+ordering, Open-Workbench exclusion, dynamic add/remove behavior, complete
+tooltips, standard icon metrics, and all optional-plugin load combinations.
+It passes 17 tests on the qualified Qt 6.11.0 Release test build. The focused
+status and command-strip flows also pass at `QT_SCALE_FACTOR=2`.
 
 The normal 16-plugin product build and enabled/disabled startup smoke are
 recorded in `docs/compatibility-matrix.md`. A populated real EtherCAT Mode
@@ -394,3 +431,11 @@ inspected. `MOCK Fault` remained fully visible beside a standard-sized Creator
 critical icon in `LastLeftAligned`, without overlapping the output controls or
 right-corner widgets. Computer Use could not perform desktop clicks because
 macOS remained locked, so only the direct Qt render is claimed for this issue.
+
+A separate 2520 x 1400 direct Qt render loaded both optional plugins and
+inspected the final compact command strip. Refresh, tree expansion, Mock
+Diagnostics, Config/FreeRun/Run, alarm, Mock Scan, comparison, acceptance, and
+cancel commands all remained visible on one row with normal Creator icon
+scale. No text compression or overlap remained. The current desktop was not
+manually clicked, so this is a render inspection rather than a manual
+interaction claim.

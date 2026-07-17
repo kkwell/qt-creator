@@ -205,6 +205,14 @@ dependency, and keeps CMake and qbs source lists synchronized. No upstream
 Core, ProjectExplorer, or application path changes, so the direct Core patch
 count remains five.
 
+The Workbench command-strip issue changes only the product-owned
+`EtherCATWorkbench` plugin and documentation. It uses Qt Creator's public
+`ActionManager`/`ActionContainer` registrations and a standard `QToolBar`,
+reusing the same actions without naming optional plugin commands or accessing
+private UI. CMake and qbs list the same two new source files. No upstream Core,
+ProjectExplorer, or application path changes, so the direct Core patch count
+remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

@@ -5,8 +5,12 @@
 #include "detailsview.h"
 #include "ethercatworkbenchconstants.h"
 #include "ethercatworkbenchtr.h"
+#include "workbenchcommandstrip.h"
 #include "workbenchcontroller.h"
 
+#include <coreplugin/actionmanager/actioncontainer.h>
+#include <coreplugin/actionmanager/actionmanager.h>
+#include <coreplugin/actionmanager/command.h>
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/icontext.h>
 #include <coreplugin/minisplitter.h>
@@ -14,18 +18,24 @@
 #include <coreplugin/navigationwidget.h>
 #include <coreplugin/outputpane.h>
 
+#include <utils/stylehelper.h>
 #include <utils/utilsicons.h>
+
+#include <QMenu>
+#include <QVBoxLayout>
 
 namespace EtherCAT::Workbench::Internal {
 
-class WorkbenchModeWidget final : public ::Core::MiniSplitter
+class WorkbenchModeWidget final : public QWidget
 {
 public:
     explicit WorkbenchModeWidget(WorkbenchController *controller)
     {
         setObjectName("EtherCATWorkbenchModeWidget");
 
-        auto centralSplitter = new ::Core::MiniSplitter(Qt::Vertical);
+        auto mainSplitter = new ::Core::MiniSplitter;
+        mainSplitter->setObjectName("EtherCATWorkbenchMainSplitter");
+        auto centralSplitter = new ::Core::MiniSplitter(Qt::Vertical, mainSplitter);
         centralSplitter->setObjectName("EtherCATWorkbenchCentralSplitter");
         centralSplitter->addWidget(new DetailsView(controller, centralSplitter));
         auto outputPane = new ::Core::OutputPanePlaceHolder(Constants::MODE_ID, centralSplitter);
@@ -34,11 +44,26 @@ public:
         centralSplitter->setStretchFactor(0, 1);
         centralSplitter->setStretchFactor(1, 0);
 
-        addWidget(new ::Core::NavigationWidgetPlaceHolder(
-            Constants::MODE_ID, ::Core::Side::Left, this));
-        addWidget(centralSplitter);
-        setStretchFactor(0, 0);
-        setStretchFactor(1, 1);
+        mainSplitter->addWidget(new ::Core::NavigationWidgetPlaceHolder(
+            Constants::MODE_ID, ::Core::Side::Left, mainSplitter));
+        mainSplitter->addWidget(centralSplitter);
+        mainSplitter->setStretchFactor(0, 0);
+        mainSplitter->setStretchFactor(1, 1);
+
+        ::Core::ActionContainer *menuContainer
+            = ::Core::ActionManager::actionContainer(Constants::MENU_ID);
+        ::Core::Command *openCommand
+            = ::Core::ActionManager::command(Constants::OPEN_ACTION_ID);
+        auto commandStrip = new WorkbenchCommandStrip(
+            menuContainer ? menuContainer->menu() : nullptr,
+            openCommand ? openCommand->action() : nullptr,
+            this);
+
+        auto layout = new QVBoxLayout(this);
+        layout->setContentsMargins(QMargins());
+        layout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVXxs);
+        layout->addWidget(commandStrip);
+        layout->addWidget(mainSplitter, 1);
         ::Core::IContext::attach(this, ::Core::Context(Constants::CONTEXT_ID));
     }
 };

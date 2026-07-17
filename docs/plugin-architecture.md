@@ -23,7 +23,7 @@ documentation, review, and local-commit gates.
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Configuration persistence complete | Version-2 project lifecycle, migration, validation, and Undo/Redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
-| 4 | `EtherCATWorkbenchPlugin` | In progress | Editable pages, CoE Online Mock, process-data tree, and unified status bar are complete; remaining UI qualification is open |
+| 4 | `EtherCATWorkbenchPlugin` | In progress | Editable pages, CoE Online Mock, process-data tree, command strip, and unified status bar are complete; remaining UI qualification is open |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
 
@@ -113,7 +113,10 @@ Distributed Clocks are now editable for configured slaves through the public
 Project service; their repository views stay read-only. The Workbench-owned
 CoE Online Mock provides a local object-dictionary interaction prototype and
 an explicit, undoable Add to Startup path without adding a transport or
-background poller. EtherCATCore now
+background poller. The Workbench also projects the shared `EtherCAT.Menu`
+ActionManager registrations into one compact Mode-level command strip. It
+reuses the same actions and discovers optional Scan/Diagnostics commands
+without reverse dependencies or private UI access. EtherCATCore now
 provides the shared `StateService`; the Workbench renders its highest-severity
 Scan/Diagnostics contribution through one mode-scoped Qt Creator status-bar
 control, while the producer plugins retain ownership of their state. It uses

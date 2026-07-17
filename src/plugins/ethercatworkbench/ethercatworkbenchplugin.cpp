@@ -119,7 +119,8 @@ void EtherCATWorkbenchPlugin::setupActions()
     menu->addAction(refreshCommand);
     connect(refreshAction, &QAction::triggered, m_controller.get(), &WorkbenchController::refresh);
 
-    auto expandAction = new QAction(Tr::tr("Expand Device Tree"), this);
+    auto expandAction = new QAction(
+        Utils::Icons::EXPAND_ALL_TOOLBAR.icon(), Tr::tr("Expand Device Tree"), this);
     ::Core::Command *expandCommand = ::Core::ActionManager::registerAction(
         expandAction,
         Constants::EXPAND_ACTION_ID,
@@ -129,7 +130,8 @@ void EtherCATWorkbenchPlugin::setupActions()
         emit m_controller->expandAllRequested();
     });
 
-    auto collapseAction = new QAction(Tr::tr("Collapse Device Tree"), this);
+    auto collapseAction = new QAction(
+        Utils::Icons::COLLAPSE_TOOLBAR.icon(), Tr::tr("Collapse Device Tree"), this);
     ::Core::Command *collapseCommand = ::Core::ActionManager::registerAction(
         collapseAction,
         Constants::COLLAPSE_ACTION_ID,

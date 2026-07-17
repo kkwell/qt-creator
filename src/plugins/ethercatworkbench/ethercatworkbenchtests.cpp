@@ -9,6 +9,7 @@
 #include "workbenchnavigation.h"
 #include "workbenchtreemodel.h"
 
+#include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
 #include <coreplugin/coreconstants.h>
@@ -32,6 +33,7 @@
 
 #include <QAbstractButton>
 #include <QAbstractItemModelTester>
+#include <QAction>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -55,6 +57,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QToolBar>
 #include <QToolButton>
 #include <QTreeView>
 #include <QTreeWidget>
@@ -517,6 +520,59 @@ void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
     QCOMPARE(
         ::Core::ModeManager::currentMode()->widget()->objectName(),
         QString("EtherCATWorkbenchModeWidget"));
+}
+
+void EtherCATWorkbenchTests::testModeCommandStripMirrorsRegisteredActions()
+{
+    ::Core::ModeManager::activateMode(Constants::MODE_ID);
+    QTRY_COMPARE(::Core::ModeManager::currentModeId(), Utils::Id(Constants::MODE_ID));
+    QWidget *modeWidget = ::Core::ModeManager::currentMode()->widget();
+    QVERIFY(modeWidget);
+
+    QToolBar *commandStrip
+        = modeWidget->findChild<QToolBar *>("EtherCATWorkbenchCommandStrip");
+    QVERIFY(commandStrip);
+    QCOMPARE(commandStrip->toolButtonStyle(), Qt::ToolButtonIconOnly);
+    QVERIFY(!commandStrip->accessibleName().isEmpty());
+    QVERIFY(!commandStrip->accessibleDescription().isEmpty());
+    const int expectedIconSize
+        = commandStrip->style()->pixelMetric(QStyle::PM_ToolBarIconSize, nullptr, commandStrip);
+    QCOMPARE(commandStrip->iconSize(), QSize(expectedIconSize, expectedIconSize));
+
+    ::Core::ActionContainer *menu
+        = ::Core::ActionManager::actionContainer(Constants::MENU_ID);
+    QVERIFY(menu);
+    QVERIFY(menu->menu());
+    QAction *openAction
+        = ::Core::ActionManager::command(Constants::OPEN_ACTION_ID)->action();
+    const QList<QAction *> menuActions = menu->menu()->actions();
+    const QList<QAction *> commandActions = commandStrip->actions();
+    QVERIFY(!commandActions.contains(openAction));
+    QCOMPARE(commandActions.size(), menuActions.size() - 1);
+    for (QAction *action : menuActions) {
+        if (action != openAction)
+            QVERIFY(commandActions.contains(action));
+    }
+    for (QAction *action : commandActions) {
+        QVERIFY(menuActions.contains(action));
+        if (!action->isSeparator())
+            QVERIFY(!action->toolTip().isEmpty());
+    }
+
+    for (const Utils::Id id : {Utils::Id(Constants::REFRESH_ACTION_ID),
+                               Utils::Id(Constants::EXPAND_ACTION_ID),
+                               Utils::Id(Constants::COLLAPSE_ACTION_ID)}) {
+        ::Core::Command *command = ::Core::ActionManager::command(id);
+        QVERIFY(command);
+        QVERIFY(commandActions.contains(command->action()));
+        QVERIFY(!command->action()->icon().isNull());
+    }
+
+    QAction transientAction("Transient engineering command");
+    menu->menu()->addAction(&transientAction);
+    QTRY_VERIFY(commandStrip->actions().contains(&transientAction));
+    menu->menu()->removeAction(&transientAction);
+    QTRY_VERIFY(!commandStrip->actions().contains(&transientAction));
 }
 
 void EtherCATWorkbenchTests::testStatusBarTracksStateService()

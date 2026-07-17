@@ -216,13 +216,18 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 16 passed, 0 failed |
-| Six-plugin EtherCAT regression | 66 passed, 0 failed in isolated processes |
+| Focused EtherCATWorkbench plugin tests | 17 passed, 0 failed |
+| Six-plugin EtherCAT regression | 67 passed, 0 failed in isolated processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first CoE Online page test | Compiled and failed on the missing `CoE Online` page descriptor before implementation, as expected |
 | Failure-first unified-status test | Compiled and failed because no Workbench status-bar control was registered, as expected |
+| Failure-first command-strip test | Compiled and failed because EtherCAT Mode had no engineering command strip, as expected |
 | Metadata, hard dependencies, mode, and actions | Passed |
+| Shared QAction identity across menu, toolbar, shortcuts, and callbacks | Passed |
+| Dynamic action add/remove and optional Scan/Diagnostics load combinations | Passed with both, either, and neither optional plugin loaded |
+| Compact command icons, complete tooltips, and standard toolbar metric | Passed |
+| Focused command-strip test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
 | 500-device incremental model with model tester | Passed |
 | Filter, context, and bidirectional stable selection | Passed |
 | Process Data, Startup, and DC pages from imported ESI | Passed |
@@ -273,13 +278,15 @@ limits are documented in `docs/ethercat-workbench.md`.
 | EtherCATDiagnostics regression tests | 7 passed, 0 failed |
 | Product version inventory | All 16 allow-listed plugins present and recognized |
 | Normal Release product build | Passed with 16-plugin allow-list |
-| Enabled GUI startup | Passed with clean temporary settings for 5 seconds until intentional interrupt; empty output |
-| Explicitly disabled startup | Passed with `-noload EtherCATWorkbench` and clean temporary settings; stable for 5 seconds with empty output until intentional interrupt |
+| Enabled GUI startup | Passed with clean temporary settings and all 16 plugins for 5 seconds after delayed initialization; intentionally interrupted after profile output |
+| Explicitly disabled startup | Passed with `-noload EtherCATWorkbench` and clean temporary settings for 5 seconds after delayed initialization; intentionally interrupted after profile output |
 | Visual desktop inspection | Passed with all five process-data branches, PDO/Entry descendants, explicit modular empty state, normal Creator icon scale, and readable narrow-sidebar names |
 | CoE direct Qt Widget render | Passed at 2200 x 1520 Retina output with hierarchy, values, Mock banner, and bilingual long name visible without overlap |
 | CoE Online desktop interaction inspection | Not run; macOS was locked, so no CoE screenshot or manual-click result is claimed |
 | Unified-status direct Qt main-window render | Passed at 2520 x 1400; `MOCK Fault` and the standard-sized icon remained fully visible without overlap |
 | Unified-status desktop interaction inspection | Not run; Computer Use reported a locked macOS session, so no manual-click result is claimed |
+| Command-strip direct Qt main-window render | Passed at 2520 x 1400 with Workbench, Mock Scan, and Mock Diagnostics actions visible in one compact row without text compression or overlap |
+| Command-strip manual interaction inspection | Not run; the current desktop was not manually clicked, so only direct render and QAction behavior tests are claimed |
 | Direct upstream Core, ProjectExplorer, or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |

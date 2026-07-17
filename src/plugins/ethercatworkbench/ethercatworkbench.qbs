@@ -29,6 +29,8 @@ QtcPlugin {
         "startuppage.h",
         "workbenchcontroller.cpp",
         "workbenchcontroller.h",
+        "workbenchcommandstrip.cpp",
+        "workbenchcommandstrip.h",
         "workbenchmode.cpp",
         "workbenchmode.h",
         "workbenchnavigation.cpp",
