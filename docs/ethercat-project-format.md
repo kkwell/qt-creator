@@ -172,19 +172,24 @@ cycle range, and shift range.
 
 ## Public editing and Undo/Redo
 
-`ProjectService` provides checked commands to replace:
+`ProjectService` provides checked editing commands for:
 
+- one Target or Master display name by stable node ID;
 - one master's offline slave list;
 - one slave's complete Process Data configuration;
 - one slave's complete Startup configuration;
 - one slave's complete DC configuration.
 
-Commands reject unknown project/master/slave IDs, invalid domain data, and
-null or reused configuration IDs. No-op replacements return success without
-creating a command. Accepted changes enter the same project `QUndoStack`. Undo
-and redo publish a new immutable snapshot and update the document's modified
-state. Sorting, navigation, selection, refresh, and snapshot reads do not
-create undo commands or mark the document modified.
+Structural-node rename is intentionally limited to Target and Master. Project
+rename remains a separate command, while Slave names remain part of the
+offline-slave value. Names are trimmed; empty names, unknown IDs, Project IDs,
+and Slave IDs are rejected. Other commands reject unknown
+project/master/slave IDs, invalid domain data, and null or reused configuration
+IDs. No-op changes return success without creating a command. Accepted changes
+enter the same project `QUndoStack`. Undo and redo publish a new immutable
+snapshot and update the document's modified state. Sorting, navigation,
+selection, refresh, and snapshot reads do not create undo commands or mark the
+document modified.
 
 The QUndoStack clean index and pending migration state are the only modified
 sources. A successful atomic save marks the stack clean. Failed validation or
@@ -236,13 +241,13 @@ The focused Project suite covers:
 - version-2 structural and configuration round trips;
 - malformed JSON, unsupported versions, missing configuration, duplicate IDs,
   invalid raw hex, and domain-invalid PDO mapping;
-- Project rename, topology replacement, Process Data, Startup, and DC command
-  validation plus Undo/Redo;
+- Project and Target/Master rename, topology replacement, Process Data,
+  Startup, and DC command validation plus Undo/Redo;
 - Save All registration, Save As rejection, atomic write failure, and success;
 - exact version-0 and version-1 migration backups;
 - two real ProjectExplorer projects, startup-project switching, close-save,
   signal publication, close order, and cleanup.
 
-The qualified Qt 6.11.0 Release run passes 11 tests. macOS runs use an isolated
+The qualified Qt 6.11.0 Release run passes 12 tests. macOS runs use an isolated
 HOME and settings path so prior AppKit saved state cannot introduce an
 unrelated modal prompt.

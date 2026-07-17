@@ -23,6 +23,7 @@
 #include <QWidget>
 
 #include <algorithm>
+#include <type_traits>
 
 namespace EtherCAT::Core::Internal {
 
@@ -357,6 +358,12 @@ void EtherCATCoreTests::testNodeIdRoundTrip()
 
 void EtherCATCoreTests::testProjectSnapshotValueSemantics()
 {
+    using RenameStructuralNodeMethod = Utils::Result<> (ProjectService::*)(
+        const Data::NodeId &, const Data::NodeId &, const QString &);
+    static_assert(
+        std::is_same_v<
+            decltype(&ProjectService::renameStructuralNode), RenameStructuralNodeMethod>);
+
     const Data::NodeId projectId = Data::NodeId::create();
     const Data::NodeId targetId = Data::NodeId::create();
     Data::ProjectSnapshot snapshot{

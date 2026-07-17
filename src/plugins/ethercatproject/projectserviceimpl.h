@@ -49,6 +49,10 @@ public:
         const Data::DcConfiguration &configuration) final;
     bool canUndoProject(const Data::NodeId &projectId) const final;
     bool canRedoProject(const Data::NodeId &projectId) const final;
+    Utils::Result<> renameStructuralNode(
+        const Data::NodeId &projectId,
+        const Data::NodeId &nodeId,
+        const QString &name) final;
 
     void registerProject(ProjectExplorer::Project *project);
     void unregisterProject(ProjectExplorer::Project *project);

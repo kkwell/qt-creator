@@ -23,6 +23,7 @@ public:
     Utils::FilePath migrationBackupPath() const;
 
     Utils::Result<> renameProject(const QString &name);
+    Utils::Result<> renameStructuralNode(const Data::NodeId &nodeId, const QString &name);
     Utils::Result<> replaceOfflineSlaves(
         const Data::NodeId &masterId, const QList<Data::OfflineSlaveConfiguration> &slaves);
     Utils::Result<> setProcessDataConfiguration(
@@ -47,6 +48,7 @@ protected:
 
 private:
     void applyProjectName(const QString &name);
+    void applyStructuralNodeName(const Data::NodeId &nodeId, const QString &name);
     void applyOfflineSlaves(
         const Data::NodeId &masterId, const QList<Data::OfflineSlaveConfiguration> &slaves);
     void applyOfflineSlave(const Data::OfflineSlaveConfiguration &slave);
@@ -61,6 +63,7 @@ private:
     Utils::FilePath m_migrationBackupPath;
 
     friend class RenameProjectCommand;
+    friend class RenameStructuralNodeCommand;
     friend class ReplaceOfflineSlavesCommand;
     friend class UpdateOfflineSlaveCommand;
 };

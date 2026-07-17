@@ -53,7 +53,8 @@ All six planned EtherCAT feature and infrastructure plugins have entered the
 local profile. This proves the plugin profile is assembled, not that every
 Phase-1 requirement is complete. Editable Process Data, CoE Online Mock,
 Startup, and DC are now verified, and the public derived-node kinds are
-reserved. The visible
+reserved. The checked Target/Master name command is now available as a
+Project-owned API prerequisite for later General pages. The visible
 TwinCAT-inspired process-data tree is now verified with stable selection and
 details routing. Real modular-profile data, additional UI coverage, and the
 user-policy-deferred upstream rehearsal remain open.
@@ -78,6 +79,7 @@ function is outside the product target and records migration or recovery.
 | Public process/PDO/module/channel node kinds | Core/API contract verified |
 | Extensible offline property pages | Stage 4 verified |
 | Configured-slave General and EtherCAT/Alias pages | Verified; unsupported fixed address, identification, port graph, and Advanced Settings remain explicit unavailable states |
+| Target/Master structural-name command | Core/API and Project persistence verified; Master General UI remains pending Workbench work |
 | Offline Process Data/Startup/DC domain model | Verified in EtherCATData |
 | Project persistence and Undo/Redo for those models | Verified in format version 2 |
 | Editable Process Data page | Verified in current Workbench issue |
@@ -153,6 +155,33 @@ algorithms. It does not claim project persistence or an editable UI.
 | Project persistence | Verified by the later Project revision below |
 | Editable UI | Pending Workbench issue |
 
+## Project structural-node-name Core/API qualification
+
+`ISSUE-API-PROJECT-NODE-RENAME-001` is an API prerequisite for later
+TwinCAT-inspired Target/Master General pages. It deliberately adds no Workbench
+widget or generic node-editing surface.
+
+| Check | Result |
+|---|---|
+| Failure-first Project build | Failed first on the missing document `renameStructuralNode` method; the same test also required the absent public service call |
+| Public command scope | Existing Target or Master stable ID only; Project and Slave kinds remain owned by their existing commands |
+| Name normalization and rejection | Whitespace trim, empty-name rejection, unknown-ID rejection, Project/Slave rejection, and normalized no-op passed |
+| Project lifecycle | Unified Undo/Redo, modified state, immutable snapshot publication, save, and reload persistence passed |
+| Public contract signature | Covered by the EtherCATCore compile-time contract test |
+| Existing public virtual layout | New method appended after all existing Project service methods; prior method slots do not move |
+| Focused EtherCATProject tests | 12 passed, 0 failed |
+| Six-plugin isolated regression | Core 17, Project 12, Devices 8, Workbench 22, Scan 7, Diagnostics 7; 73 passed, 0 failed |
+| Final isolated regression platform | Isolated HOME/settings and `QT_QPA_PLATFORM=offscreen`, avoiding focus-dependent Cocoa ActionManager context during headless runs |
+| 16-plugin product build | Passed with the `WITH_TESTS=OFF` allow-list |
+| Product version inventory | All 16 allow-listed plugins present and recognized at version 20.0.1 |
+| Enabled product startup | All 16 plugins loaded, initialized, extended, and delayed-initialized; stable for 10 seconds until intentional interrupt |
+| `EtherCATProject` disabled startup | Project, Workbench, Scan, and Diagnostics were dependency-disabled; remaining product stable for 10 seconds until intentional interrupt |
+| User-visible UI | None by design in this Core/API prerequisite issue |
+| CMake/qbs source lists | No source-list or dependency change required |
+| Direct upstream Core, ProjectExplorer, or app changes | None; direct Core patch count remains five |
+| Full product build with `WITH_TESTS=ON` | Blocked by the existing EasyBoard `extensionmanager_test.h` include defect |
+| qbs build | Not run; qbs executable is unavailable |
+
 ## EtherCATProject current qualification
 
 The public Project contract uses immutable `EtherCATData` snapshots and
@@ -161,7 +190,7 @@ documents, models, and indexes never cross the plugin boundary.
 
 | Check | Result |
 |---|---|
-| Focused Qt Creator plugin tests | 11 passed, 0 failed |
+| Focused Qt Creator plugin tests | 12 passed, 0 failed |
 | Format round trip and corruption | Passed |
 | Version-0 and version-1 migration with exact backups | Passed |
 | Version-2 Process Data, Startup, and DC persistence | Passed |
@@ -169,10 +198,11 @@ documents, models, and indexes never cross the plugin boundary.
 | Undo/Redo and Save All modified state | Passed |
 | Atomic save failure preserves source | Passed |
 | Two-project open/switch/close lifecycle | Passed |
+| Target/Master rename validation, persistence, service command, and Undo/Redo | Passed |
 | Offline slave validation, persistence, service command, and Undo/Redo | Passed |
 | Process Data, Startup, and DC service commands and Undo/Redo | Passed |
 | Scan acceptance preserves matched offline configuration | Passed |
-| EtherCAT plugin regressions | Core 16, Project 11, Devices 8, Workbench 9, Scan 7, Diagnostics 7 passed |
+| EtherCAT plugin regressions | Core 17, Project 12, Devices 8, Workbench 22, Scan 7, Diagnostics 7 passed |
 | Normal Release product build | Passed with 16-plugin allow-list |
 | Product version inventory | All 16 allow-listed plugins present and recognized |
 | Clean-settings GUI startup | Passed; stable for 5 seconds until intentional `SIGTERM`; empty log |
@@ -218,7 +248,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Check | Result |
 |---|---|
 | Focused EtherCATWorkbench plugin tests | 22 passed, 0 failed |
-| Six-plugin EtherCAT regression | 72 passed, 0 failed in isolated processes |
+| Six-plugin EtherCAT regression | 73 passed, 0 failed in isolated processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first CoE Online page test | Compiled and failed on the missing `CoE Online` page descriptor before implementation, as expected |
@@ -297,7 +327,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Difference/issue/Diagnostics ActionManager navigation | Passed with stable selection, filter clearing, ancestor expansion, and shared QAction registration |
 | Tree context and navigation ActionManager identity | Passed for seven navigation and four offline-topology commands, shared Expand/Collapse buttons, context-only strip exclusion, enabled state, stable-ID copy, and placeholder protection |
 | EtherCATCore regression tests | 17 passed, 0 failed |
-| EtherCATProject regression tests | 11 passed, 0 failed |
+| EtherCATProject regression tests | 12 passed, 0 failed |
 | EtherCATDevices regression tests | 8 passed, 0 failed |
 | EtherCATScan regression tests | 7 passed, 0 failed |
 | EtherCATDiagnostics regression tests | 7 passed, 0 failed |

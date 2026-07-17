@@ -55,6 +55,24 @@ static Data::NodeId masterId(const Data::ProjectSnapshot &snapshot)
     return {};
 }
 
+static Data::NodeId targetId(const Data::ProjectSnapshot &snapshot)
+{
+    for (const Data::ProjectNodeSnapshot &node : snapshot.nodes) {
+        if (node.kind == Data::ProjectNodeKind::Target)
+            return node.id;
+    }
+    return {};
+}
+
+static QString nodeName(const Data::ProjectSnapshot &snapshot, const Data::NodeId &nodeId)
+{
+    for (const Data::ProjectNodeSnapshot &node : snapshot.nodes) {
+        if (node.id == nodeId)
+            return node.name;
+    }
+    return {};
+}
+
 static QList<Data::OfflineSlaveConfiguration> offlineSlaves(const Data::NodeId &master)
 {
     return {
@@ -272,6 +290,65 @@ void EtherCATProjectTests::testDocumentUndoRedoAndAtomicFailure()
     const Utils::Result<LoadedProject> saved = parseProject(*projectFile.fileContents(), "Fallback");
     QVERIFY_RESULT(saved);
     QCOMPARE(saved->snapshot.name, QString("Renamed"));
+}
+
+void EtherCATProjectTests::testStructuralNodeRenameAndPersistence()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath projectFile = temporaryFilePath(directory, "node-names.ecatproject");
+    Data::ProjectSnapshot source = createProjectSnapshot("Node Names", "Test");
+    const Data::NodeId target = targetId(source);
+    const Data::NodeId master = masterId(source);
+    const QList<Data::OfflineSlaveConfiguration> slaves = offlineSlaves(master);
+    source.slaves = slaves;
+    for (const Data::OfflineSlaveConfiguration &slave : slaves)
+        source.nodes.append({slave.id, slave.masterId, Data::ProjectNodeKind::Slave, slave.name});
+    QVERIFY_RESULT(projectFile.writeFileContents(serializeProject(source)));
+
+    EtherCATProjectDocument document;
+    QVERIFY_RESULT(document.load(projectFile));
+    QVERIFY(!target.isNull());
+    QVERIFY(!master.isNull());
+    const QString originalTargetName = nodeName(document.snapshot(), target);
+    const QString originalMasterName = nodeName(document.snapshot(), master);
+
+    QVERIFY_RESULT(document.renameStructuralNode(master, "  EtherCAT Device 1  "));
+    QCOMPARE(nodeName(document.snapshot(), master), QString("EtherCAT Device 1"));
+    QCOMPARE(document.undoStack()->count(), 1);
+    QVERIFY_RESULT(document.renameStructuralNode(master, "EtherCAT Device 1"));
+    QCOMPARE(document.undoStack()->count(), 1);
+
+    QVERIFY(!document.renameStructuralNode(master, "   "));
+    QVERIFY(!document.renameStructuralNode(source.id, "Project through node API"));
+    QVERIFY(!document.renameStructuralNode(slaves.first().id, "Slave through node API"));
+    QVERIFY(!document.renameStructuralNode(Data::NodeId::create(), "Unknown node"));
+    QCOMPARE(document.undoStack()->count(), 1);
+
+    QVERIFY_RESULT(document.renameStructuralNode(target, "  Industrial PC  "));
+    QCOMPARE(nodeName(document.snapshot(), target), QString("Industrial PC"));
+    QCOMPARE(document.undoStack()->count(), 2);
+    QVERIFY(document.isModified());
+
+    document.undoStack()->undo();
+    QCOMPARE(nodeName(document.snapshot(), target), originalTargetName);
+    document.undoStack()->undo();
+    QCOMPARE(nodeName(document.snapshot(), master), originalMasterName);
+    QVERIFY(!document.isModified());
+
+    document.undoStack()->redo();
+    document.undoStack()->redo();
+    QCOMPARE(nodeName(document.snapshot(), master), QString("EtherCAT Device 1"));
+    QCOMPARE(nodeName(document.snapshot(), target), QString("Industrial PC"));
+    QVERIFY_RESULT(document.save());
+    QVERIFY(!document.isModified());
+
+    const Utils::Result<QByteArray> savedContents = projectFile.fileContents();
+    QVERIFY_RESULT(savedContents);
+    const Utils::Result<LoadedProject> loaded = parseProject(*savedContents, "Fallback");
+    QVERIFY_RESULT(loaded);
+    QCOMPARE(nodeName(loaded->snapshot, master), QString("EtherCAT Device 1"));
+    QCOMPARE(nodeName(loaded->snapshot, target), QString("Industrial PC"));
 }
 
 void EtherCATProjectTests::testOfflineSlavePersistenceAndUndo()
@@ -627,6 +704,16 @@ void EtherCATProjectTests::testProjectExplorerMultiProjectLifecycle()
     QVERIFY(!::Core::DocumentManager::modifiedDocuments().contains(secondProject->document()));
 
     const Data::NodeId secondMaster = masterId(secondProject->snapshot());
+    QVERIFY_RESULT(service->renameStructuralNode(
+        secondProject->snapshot().id, secondMaster, "Motion Master"));
+    QCOMPARE(
+        nodeName(*service->project(secondProject->snapshot().id), secondMaster),
+        QString("Motion Master"));
+    QVERIFY_RESULT(service->undoProject(secondProject->snapshot().id));
+    QCOMPARE(
+        nodeName(*service->project(secondProject->snapshot().id), secondMaster),
+        QString("EtherCAT Master"));
+
     QVERIFY_RESULT(service->replaceOfflineSlaves(
         secondProject->snapshot().id, secondMaster, offlineSlaves(secondMaster)));
     QCOMPARE(service->project(secondProject->snapshot().id)->slaves.size(), 2);

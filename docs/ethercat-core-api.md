@@ -39,6 +39,13 @@ values plus UI-independent validation and process-image preview algorithms.
 The Project format-version-2 revision embeds those values in each offline slave
 snapshot and adds checked replacement commands to `ProjectService`.
 
+The structural-node-name revision adds one checked Project-owned command for
+renaming an existing Target or Master by stable ID. It is the API prerequisite
+for later TwinCAT-inspired General pages; it adds no page, widget, controller
+transport, or generic node-mutation surface. The virtual method is appended
+after the existing Project service methods so their established vtable slots
+do not move.
+
 ## Stable identity
 
 `EtherCAT::Data::NodeId` is the only stage-1 cross-plugin node identity.
@@ -178,13 +185,18 @@ description links. Each offline slave also owns immutable Process Data,
 Startup, and DC configuration values. It does not contain ESI XML, scan
 execution state, online state, or diagnostic data.
 
-The service owns the cross-plugin commands for project activation, rename,
-offline-slave replacement, Process Data replacement, Startup replacement, DC
-replacement, save, undo, and redo. Topology replacement is scoped to a known
-master. Configuration replacement is scoped to a known slave. Both paths
-validate structural and configuration stable IDs plus the shared domain
-validators before entering the same project Undo/Redo stack. Commands return
-`Utils::Result` so a consumer cannot mistake a rejected command for success.
+The service owns the cross-plugin commands for project activation, project
+rename, Target/Master structural-node rename, offline-slave replacement,
+Process Data replacement, Startup replacement, DC replacement, save, undo,
+and redo. Structural-node rename accepts only an existing Target or Master
+stable ID; Project continues to use `renameProject`, and Slave names continue
+to belong to offline-slave replacement. It trims accepted names, rejects an
+empty name or any other node kind, and treats an unchanged normalized name as
+a no-op. Topology replacement is scoped to a known master. Configuration
+replacement is scoped to a known slave. All mutation paths validate stable IDs
+and applicable domain rules before entering the same project Undo/Redo stack.
+Commands return `Utils::Result` so a consumer cannot mistake a rejected command
+for success.
 `projectAdded`,
 `projectAboutToBeRemoved`, `projectChanged`, and `activeProjectChanged` are the
 only cross-plugin lifecycle notifications. Consumers must re-query a snapshot

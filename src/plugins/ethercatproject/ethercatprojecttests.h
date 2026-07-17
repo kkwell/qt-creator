@@ -14,6 +14,7 @@ private slots:
     void testMetadataAndService();
     void testFormatRoundTripAndCorruption();
     void testDocumentUndoRedoAndAtomicFailure();
+    void testStructuralNodeRenameAndPersistence();
     void testOfflineSlavePersistenceAndUndo();
     void testOfflineConfigurationPersistenceAndUndo();
     void testVersionOneConfigurationMigration();

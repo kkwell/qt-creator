@@ -170,6 +170,16 @@ bool ProjectServiceImpl::canRedoProject(const Data::NodeId &projectId) const
     return project && project->document()->undoStack()->canRedo();
 }
 
+Utils::Result<> ProjectServiceImpl::renameStructuralNode(
+    const Data::NodeId &projectId, const Data::NodeId &nodeId, const QString &name)
+{
+    QTC_ASSERT(isGuiThread(), return Utils::ResultError(Tr::tr("Project service thread error.")));
+    EtherCATProject *project = findProject(projectId);
+    if (!project)
+        return Utils::ResultError(Tr::tr("The requested EtherCAT project is not open."));
+    return project->document()->renameStructuralNode(nodeId, name);
+}
+
 void ProjectServiceImpl::registerProject(ProjectExplorer::Project *project)
 {
     QTC_ASSERT(isGuiThread(), return);

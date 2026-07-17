@@ -156,6 +156,13 @@ existing public ProjectExplorer and IDocument lifecycle. It changes no Qt
 Creator upstream Core, ProjectExplorer, or application path, so the direct
 Core patch count remains five.
 
+The Project structural-node-name Core/API issue extends only the product-owned
+`EtherCATCore` service declaration, `EtherCATProject` implementation/tests, and
+documentation. It adds a checked Target/Master rename command to the existing
+Project document and Undo/Redo lifecycle without changing a source list,
+plugin dependency, upstream Core, ProjectExplorer, or application path. The
+direct Core patch count remains five.
+
 The editable Process Data page issue changes only the product-owned
 `EtherCATWorkbench` plugin and documentation. It uses the existing property
 page extension point, immutable ESI/Project snapshots, public Project service,

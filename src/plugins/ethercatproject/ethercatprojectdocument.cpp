@@ -38,6 +38,32 @@ private:
     QString m_newName;
 };
 
+class RenameStructuralNodeCommand final : public QUndoCommand
+{
+public:
+    RenameStructuralNodeCommand(
+        EtherCATProjectDocument *document,
+        const Data::NodeId &nodeId,
+        const QString &oldName,
+        const QString &newName)
+        : m_document(document)
+        , m_nodeId(nodeId)
+        , m_oldName(oldName)
+        , m_newName(newName)
+    {
+        setText(Tr::tr("Rename EtherCAT configuration node"));
+    }
+
+    void undo() final { m_document->applyStructuralNodeName(m_nodeId, m_oldName); }
+    void redo() final { m_document->applyStructuralNodeName(m_nodeId, m_newName); }
+
+private:
+    EtherCATProjectDocument *m_document;
+    Data::NodeId m_nodeId;
+    QString m_oldName;
+    QString m_newName;
+};
+
 class ReplaceOfflineSlavesCommand final : public QUndoCommand
 {
 public:
@@ -298,6 +324,35 @@ Utils::Result<> EtherCATProjectDocument::renameProject(const QString &name)
     return Utils::ResultOk;
 }
 
+Utils::Result<> EtherCATProjectDocument::renameStructuralNode(
+    const Data::NodeId &nodeId, const QString &name)
+{
+    if (!m_snapshot.valid)
+        return Utils::ResultError(Tr::tr("Cannot edit an invalid EtherCAT project."));
+
+    const auto node = std::find_if(
+        m_snapshot.nodes.cbegin(), m_snapshot.nodes.cend(), [&nodeId](const auto &entry) {
+            return entry.id == nodeId;
+        });
+    if (node == m_snapshot.nodes.cend())
+        return Utils::ResultError(Tr::tr("The requested EtherCAT project node does not exist."));
+    if (node->kind != Data::ProjectNodeKind::Target
+        && node->kind != Data::ProjectNodeKind::Master) {
+        return Utils::ResultError(
+            Tr::tr("Only EtherCAT target and master nodes can be renamed by this command."));
+    }
+
+    const QString trimmedName = name.trimmed();
+    if (trimmedName.isEmpty())
+        return Utils::ResultError(Tr::tr("EtherCAT target and master names cannot be empty."));
+    if (trimmedName == node->name)
+        return Utils::ResultOk;
+
+    m_undoStack.push(
+        new RenameStructuralNodeCommand(this, nodeId, node->name, trimmedName));
+    return Utils::ResultOk;
+}
+
 Utils::Result<> EtherCATProjectDocument::replaceOfflineSlaves(
     const Data::NodeId &masterId, const QList<Data::OfflineSlaveConfiguration> &slaves)
 {
@@ -525,6 +580,17 @@ void EtherCATProjectDocument::applyProjectName(const QString &name)
             break;
         }
     }
+}
+
+void EtherCATProjectDocument::applyStructuralNodeName(
+    const Data::NodeId &nodeId, const QString &name)
+{
+    const auto node = std::find_if(
+        m_snapshot.nodes.begin(), m_snapshot.nodes.end(), [&nodeId](const auto &entry) {
+            return entry.id == nodeId;
+        });
+    if (node != m_snapshot.nodes.end())
+        node->name = name;
 }
 
 void EtherCATProjectDocument::applyOfflineSlaves(

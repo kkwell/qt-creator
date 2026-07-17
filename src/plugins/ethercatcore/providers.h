@@ -127,6 +127,10 @@ public:
         const Data::DcConfiguration &configuration) = 0;
     virtual bool canUndoProject(const Data::NodeId &projectId) const = 0;
     virtual bool canRedoProject(const Data::NodeId &projectId) const = 0;
+    virtual Utils::Result<> renameStructuralNode(
+        const Data::NodeId &projectId,
+        const Data::NodeId &nodeId,
+        const QString &name) = 0;
 
 signals:
     void projectAdded(const EtherCAT::Data::ProjectSnapshot &project);

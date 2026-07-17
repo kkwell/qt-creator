@@ -21,7 +21,7 @@ documentation, review, and local-commit gates.
 | 0 | Stage-0 governance | Complete | Baseline, policy, build, and architecture evidence |
 | 1 | `EtherCATData` | Configuration API complete | Stable values, offline validation, and process-image preview |
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
-| 2 | `EtherCATProjectPlugin` | Configuration persistence complete | Version-2 project lifecycle, migration, validation, and Undo/Redo |
+| 2 | `EtherCATProjectPlugin` | Configuration persistence and structural-name API complete | Version-2 project lifecycle, migration, validation, and Undo/Redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
 | 4 | `EtherCATWorkbenchPlugin` | In progress | Configured-slave General and EtherCAT/Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
@@ -146,7 +146,10 @@ validated active Process Data into Inputs, Outputs, RxPDO, TxPDO, PDO, and PDO
 Entry branches with stable view and source identities. Modules / Channels has
 an explicit empty state until the Devices and Project contracts contain real
 modular data; no module or channel is fabricated. That data-contract work and
-the remaining UI qualification keep the Workbench completion gate open.
+the remaining UI qualification keep the Workbench completion gate open. A
+dedicated Core/API prerequisite now exposes checked Target/Master name changes
+through `ProjectService`; it does not implement the later Master General page
+or move that state into Workbench.
 
 The completed Project implementation and versioned file contract are recorded
 in `docs/ethercat-project-format.md`. ProjectExplorer owns open/close and
