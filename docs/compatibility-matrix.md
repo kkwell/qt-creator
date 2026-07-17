@@ -53,8 +53,8 @@ All six planned EtherCAT feature and infrastructure plugins have entered the
 local profile. This proves the plugin profile is assembled, not that every
 Phase-1 requirement is complete. Editable Process Data, CoE Online Mock,
 Startup, and DC are now verified, and the public derived-node kinds are
-reserved. The checked Target/Master name command is now available as a
-Project-owned API prerequisite for later General pages. The visible
+reserved. The checked Target/Master name command and both TwinCAT-inspired
+Target/Master General pages are now verified. The visible
 TwinCAT-inspired process-data tree is now verified with stable selection and
 details routing. Real modular-profile data, additional UI coverage, and the
 user-policy-deferred upstream rehearsal remain open.
@@ -79,7 +79,8 @@ function is outside the product target and records migration or recovery.
 | Public process/PDO/module/channel node kinds | Core/API contract verified |
 | Extensible offline property pages | Stage 4 verified |
 | Configured-slave General and EtherCAT/Alias pages | Verified; unsupported fixed address, identification, port graph, and Advanced Settings remain explicit unavailable states |
-| Target/Master structural-name command | Core/API and Project persistence verified; Master General UI verified, Target General UI pending |
+| Target/Master structural-name command | Core/API, Project persistence, and both Target/Master General UIs verified |
+| Offline-target General page | Verified with TwinCAT-aligned target/version hierarchy, explicit unavailable runtime controls, and Project Undo/Redo |
 | EtherCAT-master General page | Verified with TwinCAT-aligned identity hierarchy, explicit unsupported settings, offline summary, and Project Undo/Redo |
 | Offline Process Data/Startup/DC domain model | Verified in EtherCATData |
 | Project persistence and Undo/Redo for those models | Verified in format version 2 |
@@ -183,6 +184,37 @@ widget or generic node-editing surface.
 | Full product build with `WITH_TESTS=ON` | Blocked by the existing EasyBoard `extensionmanager_test.h` include defect |
 | qbs build | Not run; qbs executable is unavailable |
 
+## EtherCATWorkbench target General qualification
+
+`ISSUE-WB-TARGET-GENERAL-001` consumes the qualified structural-name command
+through the existing Workbench controller and property-page provider. It adds
+no cross-plugin contract, persistent field, target Provider, or transport.
+
+| Check | Result |
+|---|---|
+| Failure-first Workbench test | Compiled and failed because `EtherCATTargetGeneralContent` did not exist; 2 passed and 1 failed as expected |
+| TwinCAT-aligned target hierarchy | Standard target summary and Choose Target action followed by Engineering, Target, Local, Project, and Pin Version verified against the documented target General page |
+| Checked editable boundary | Target name only; routed through `ProjectService::renameStructuralNode()` with normalization, empty rejection, modified state, persistence, Undo, and Redo |
+| Version truthfulness | Engineering uses the running product version; Project uses persisted format/creator values; Target is unassigned offline and Local is unavailable in phase 1 |
+| Unsupported controls | Choose Target and Pin Version remain visible but unavailable with tooltip and accessibility explanations; no target discovery, connection, or runtime pin is simulated |
+| Selection and presentation | Stable target ID and selection, tree label, details title, and form remain synchronized across rename, Undo, and Redo |
+| Focused target General test | 3 passed, 0 failed |
+| Combined Target/Master/slave General regression | 5 passed, 0 failed |
+| Focused target General at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
+| Direct widget render | Normal and 2x renders at the 1100 x 720 logical test size passed visual inspection with no overlap or clipping |
+| Focused EtherCATWorkbench suite | 24 passed, 0 failed |
+| Six-plugin isolated regression | Core 17, Project 12, Devices 8, Workbench 24, Scan 7, Diagnostics 7; 75 passed, 0 failed |
+| Same-process optional-plugin experiment | Not a qualification gate: forcing all six test suites into one process produced four expected isolation conflicts because Core/Workbench tests deliberately exercise optional-provider absence; isolated plugin processes are authoritative |
+| Final isolated regression platform | Isolated HOME/settings and `QT_QPA_PLATFORM=offscreen`; high-DPI flow additionally used `QT_SCALE_FACTOR=2` |
+| 16-plugin product build | Passed with the `WITH_TESTS=OFF` allow-list |
+| Product version inventory | All 16 allow-listed plugins loaded; running product reports version 20.0.1 |
+| Enabled product startup | All 16 plugins loaded, initialized, extended, and delayed-initialized; stable for 10 seconds until intentional interrupt |
+| Workbench-disabled startup | Workbench, Scan, and Diagnostics were dependency-disabled; remaining 13 plugins were stable for 10 seconds until intentional interrupt |
+| CMake/qbs source lists | No source-list or dependency change required |
+| Direct upstream Core, ProjectExplorer, or app changes | None; direct Core patch count remains five |
+| Full product build with `WITH_TESTS=ON` | Still blocked by the existing EasyBoard `extensionmanager_test.h` include defect; outstanding parallel jobs were interrupted after the blocker was captured |
+| qbs build | Not run; qbs executable is unavailable |
+
 ## EtherCATWorkbench master General qualification
 
 `ISSUE-WB-MASTER-GENERAL-001` consumes the previously qualified structural-name
@@ -278,8 +310,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 23 passed, 0 failed |
-| Six-plugin EtherCAT regression | 74 passed, 0 failed in isolated processes |
+| Focused EtherCATWorkbench plugin tests | 24 passed, 0 failed |
+| Six-plugin EtherCAT regression | 75 passed, 0 failed in isolated processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first CoE Online page test | Compiled and failed on the missing `CoE Online` page descriptor before implementation, as expected |
@@ -289,6 +321,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Failure-first context-command test | Failed to compile only on missing Locate Unsupported/Copy Node ID command IDs and Controller requests before implementation, as expected |
 | Failure-first offline-topology test | Failed to compile only on the four missing Add/Remove/Move ActionManager command IDs before implementation, as expected |
 | Failure-first configured-slave General test | Compiled and failed because the editable `EtherCATGeneralName` control did not exist before implementation, as expected |
+| Failure-first target General test | Compiled and failed because `EtherCATTargetGeneralContent` did not exist before implementation, as expected |
 | Failure-first master General test | Compiled and failed because `EtherCATMasterGeneralForm` did not exist before implementation, as expected |
 | Failure-first configured-slave EtherCAT test | Compiled and failed because the dedicated `EtherCATEthercatAlias` control did not exist before implementation, as expected |
 | Metadata, hard dependencies, mode, and actions | Passed |

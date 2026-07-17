@@ -40,6 +40,7 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QGroupBox>
 #include <QHeaderView>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -224,6 +225,7 @@ struct TestProjectFile
 {
     Utils::FilePath path;
     Data::NodeId projectId;
+    Data::NodeId targetId;
     Data::NodeId masterId;
     Data::NodeId slaveId;
 };
@@ -236,7 +238,7 @@ static TestProjectFile writeProjectWithSlave(
                       .canonicalPath()
                       .pathAppended("process-data.ecatproject");
     result.projectId = Data::NodeId::create();
-    const Data::NodeId targetId = Data::NodeId::create();
+    result.targetId = Data::NodeId::create();
     result.masterId = Data::NodeId::create();
     result.slaveId = Data::NodeId::create();
 
@@ -269,7 +271,8 @@ static TestProjectFile writeProjectWithSlave(
              {"id", result.projectId.toString()},
              {"name", "Process Data Workflow"},
              {"createdBy", "Workbench Test"}}},
-        {"target", QJsonObject{{"id", targetId.toString()}, {"name", "Offline Controller"}}},
+        {"target",
+         QJsonObject{{"id", result.targetId.toString()}, {"name", "Offline Controller"}}},
         {"master",
          QJsonObject{
              {"id", result.masterId.toString()},
@@ -973,6 +976,126 @@ void EtherCATWorkbenchTests::testEditableConfiguredSlaveGeneralWorkflow()
     QVERIFY(QMetaObject::invokeMethod(name, "editingFinished"));
     QTRY_COMPARE(name->text(), renamed);
     QCOMPARE(projectService->project(file.projectId)->slaves.first().name, renamed);
+
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+void EtherCATWorkbenchTests::testEditableTargetGeneralWorkflow()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Data::DeviceSummary
+        device{Data::NodeId::create(), {2, 0x5678, 0x11}, "Mock Servo", "AX5000", "Drives", true};
+    const TestProjectFile file = writeProjectWithSlave(directory, device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.targetId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.targetId);
+    DetailsView details(&controller);
+    details.resize(1100, 720);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
+    QVERIFY(page);
+    QWidget *targetContent = page->findChild<QWidget *>("EtherCATTargetGeneralContent");
+    QGroupBox *versionGroup = page->findChild<QGroupBox *>("EtherCATTargetGeneralVersion");
+    QVERIFY(targetContent);
+    QVERIFY(versionGroup);
+
+    QLabel *title = details.findChild<QLabel *>("EtherCATWorkbenchDetailsTitle");
+    QLineEdit *name = page->findChild<QLineEdit *>("EtherCATTargetGeneralName");
+    QLabel *identity = page->findChild<QLabel *>("EtherCATTargetGeneralIdentity");
+    QPushButton *chooseTarget
+        = page->findChild<QPushButton *>("EtherCATTargetGeneralChooseTarget");
+    QLabel *engineering = page->findChild<QLabel *>("EtherCATTargetGeneralEngineering");
+    QLabel *targetRuntime = page->findChild<QLabel *>("EtherCATTargetGeneralTargetRuntime");
+    QLabel *localRuntime = page->findChild<QLabel *>("EtherCATTargetGeneralLocalRuntime");
+    QLabel *projectVersion = page->findChild<QLabel *>("EtherCATTargetGeneralProjectVersion");
+    QCheckBox *pinVersion = page->findChild<QCheckBox *>("EtherCATTargetGeneralPinVersion");
+    QTreeWidget *propertyTree = page->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
+    QVERIFY(title);
+    QVERIFY(name);
+    QVERIFY(identity);
+    QVERIFY(chooseTarget);
+    QVERIFY(engineering);
+    QVERIFY(targetRuntime);
+    QVERIFY(localRuntime);
+    QVERIFY(projectVersion);
+    QVERIFY(pinVersion);
+    QVERIFY(propertyTree);
+
+    QCOMPARE(name->text(), QString("Offline Controller"));
+    QVERIFY(!name->isReadOnly());
+    QVERIFY(identity->text().contains(file.targetId.toString()));
+    QVERIFY(identity->text().contains(QString("Offline / Mock target")));
+    QVERIFY(!chooseTarget->isEnabled());
+    QVERIFY(!chooseTarget->accessibleDescription().isEmpty());
+    QVERIFY(!engineering->text().isEmpty());
+    QCOMPARE(targetRuntime->text(), QString("Not assigned (offline)"));
+    QCOMPARE(localRuntime->text(), QString("Not available (phase 1)"));
+    QCOMPARE(projectVersion->text(), QString("Format 2 · Workbench Test"));
+    QVERIFY(!pinVersion->isEnabled());
+    QVERIFY(!pinVersion->accessibleDescription().isEmpty());
+    QVERIFY(!name->accessibleName().isEmpty());
+    QVERIFY(targetContent->isVisible());
+    QVERIFY(versionGroup->isVisible());
+    QVERIFY(!propertyTree->isVisible());
+
+    const QString renderPath = qEnvironmentVariable("ETHERCAT_WORKBENCH_RENDER_PATH");
+    if (!renderPath.isEmpty()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(details.grab().save(renderPath), qPrintable(renderPath));
+    }
+
+    const auto currentTargetName = [&]() {
+        const std::optional<Data::ProjectSnapshot> project = projectService->project(file.projectId);
+        if (!project)
+            return QString();
+        const auto target
+            = std::find_if(project->nodes.cbegin(), project->nodes.cend(), [&file](const auto &node) {
+                  return node.id == file.targetId;
+              });
+        return target == project->nodes.cend() ? QString() : target->name;
+    };
+    const QString renamed = QString::fromUtf8("Zynq-7020 Target / 控制器");
+    name->setText("  " + renamed + "  ");
+    QVERIFY(QMetaObject::invokeMethod(name, "editingFinished"));
+    QTRY_COMPARE(currentTargetName(), renamed);
+    QTRY_COMPARE(controller.treeModel()->indexForNodeId(file.targetId).data().toString(), renamed);
+    QTRY_COMPARE(title->text(), renamed);
+    QTRY_COMPARE(name->text(), renamed);
+    QCOMPARE(controller.selectionService()->currentNodeId(), file.targetId);
+    QVERIFY(projectService->project(file.projectId)->modified);
+    QVERIFY(projectService->canUndoProject(file.projectId));
+
+    const Utils::Result<> undoRename = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoRename);
+    QTRY_COMPARE(currentTargetName(), QString("Offline Controller"));
+    QTRY_COMPARE(name->text(), QString("Offline Controller"));
+    QTRY_COMPARE(title->text(), QString("Offline Controller"));
+    const Utils::Result<> redoRename = projectService->redoProject(file.projectId);
+    QVERIFY_RESULT(redoRename);
+    QTRY_COMPARE(currentTargetName(), renamed);
+    QTRY_COMPARE(name->text(), renamed);
+    QTRY_COMPARE(title->text(), renamed);
+
+    name->setText("   ");
+    QVERIFY(QMetaObject::invokeMethod(name, "editingFinished"));
+    QTRY_COMPARE(name->text(), renamed);
+    QCOMPARE(currentTargetName(), renamed);
 
     controller.selectionService()->clear();
     ProjectExplorer::ProjectManager::removeProject(opened.project());

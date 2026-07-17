@@ -6,6 +6,7 @@
 #include "workbenchcontroller.h"
 #include "workbenchtreemodel.h"
 
+#include <coreplugin/icore.h>
 #include <coreplugin/messagemanager.h>
 
 #include <utils/stylehelper.h>
@@ -19,6 +20,7 @@
 #include <QLineEdit>
 #include <QMargins>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QSizePolicy>
 #include <QStyle>
 #include <QTreeWidget>
@@ -54,6 +56,18 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     , m_id(new QLineEdit(m_identityForm))
     , m_objectId(new QLineEdit(m_identityForm))
     , m_type(new QLineEdit(m_identityForm))
+    , m_targetContent(new QWidget(this))
+    , m_targetHeader(new QWidget(m_targetContent))
+    , m_targetIcon(new QLabel(m_targetHeader))
+    , m_targetName(new QLineEdit(m_targetHeader))
+    , m_targetIdentity(new QLabel(m_targetHeader))
+    , m_chooseTarget(new QPushButton(Tr::tr("Choose Target..."), m_targetHeader))
+    , m_targetVersionForm(new QGroupBox(Tr::tr("Version"), m_targetContent))
+    , m_targetEngineering(new QLabel(m_targetVersionForm))
+    , m_targetRuntime(new QLabel(m_targetVersionForm))
+    , m_targetLocalRuntime(new QLabel(m_targetVersionForm))
+    , m_targetProjectVersion(new QLabel(m_targetVersionForm))
+    , m_targetPinVersion(new QCheckBox(Tr::tr("Pin Version"), m_targetVersionForm))
     , m_masterContent(new QWidget(this))
     , m_masterForm(new QWidget(m_masterContent))
     , m_masterName(new QLineEdit(m_masterForm))
@@ -96,6 +110,86 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     form->addRow(Tr::tr("Id:"), m_id);
     form->addRow(Tr::tr("Object Id:"), m_objectId);
     form->addRow(Tr::tr("Type:"), m_type);
+
+    m_targetContent->setObjectName("EtherCATTargetGeneralContent");
+    m_targetHeader->setObjectName("EtherCATTargetGeneralHeader");
+    m_targetIcon->setObjectName("EtherCATTargetGeneralIcon");
+    m_targetName->setObjectName("EtherCATTargetGeneralName");
+    m_targetIdentity->setObjectName("EtherCATTargetGeneralIdentity");
+    m_chooseTarget->setObjectName("EtherCATTargetGeneralChooseTarget");
+    m_targetVersionForm->setObjectName("EtherCATTargetGeneralVersion");
+    m_targetEngineering->setObjectName("EtherCATTargetGeneralEngineering");
+    m_targetRuntime->setObjectName("EtherCATTargetGeneralTargetRuntime");
+    m_targetLocalRuntime->setObjectName("EtherCATTargetGeneralLocalRuntime");
+    m_targetProjectVersion->setObjectName("EtherCATTargetGeneralProjectVersion");
+    m_targetPinVersion->setObjectName("EtherCATTargetGeneralPinVersion");
+    m_targetContent->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    m_targetHeader->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    m_targetVersionForm->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    m_targetName->setAccessibleName(Tr::tr("Offline target name"));
+    m_targetIdentity->setAccessibleName(Tr::tr("Offline target identity"));
+    m_targetIcon->setAccessibleName(Tr::tr("Offline target"));
+    m_chooseTarget->setAccessibleName(Tr::tr("Choose target system"));
+    m_targetEngineering->setAccessibleName(Tr::tr("Engineering version"));
+    m_targetRuntime->setAccessibleName(Tr::tr("Target runtime version"));
+    m_targetLocalRuntime->setAccessibleName(Tr::tr("Local runtime version"));
+    m_targetProjectVersion->setAccessibleName(Tr::tr("Project version"));
+    m_targetPinVersion->setAccessibleName(Tr::tr("Pin engineering version"));
+    m_targetIdentity->setWordWrap(true);
+    m_targetIdentity->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    for (QLabel *value :
+         {m_targetEngineering, m_targetRuntime, m_targetLocalRuntime, m_targetProjectVersion}) {
+        value->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        value->setWordWrap(true);
+    }
+    const int targetIconExtent
+        = style()->pixelMetric(QStyle::PM_LargeIconSize, nullptr, m_targetIcon);
+    m_targetIcon->setPixmap(
+        style()->standardIcon(QStyle::SP_ComputerIcon).pixmap(targetIconExtent, targetIconExtent));
+    m_targetIcon->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+    m_targetIcon->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+    const QString targetUnavailableTip = Tr::tr(
+        "Target discovery and runtime selection are not available in the phase 1 local Mock.");
+    m_chooseTarget->setToolTip(targetUnavailableTip);
+    m_chooseTarget->setAccessibleDescription(targetUnavailableTip);
+    m_chooseTarget->setEnabled(false);
+    const QString versionUnavailableTip = Tr::tr(
+        "The phase 1 offline project does not persist or activate a target runtime version.");
+    m_targetPinVersion->setToolTip(versionUnavailableTip);
+    m_targetPinVersion->setAccessibleDescription(versionUnavailableTip);
+    m_targetPinVersion->setEnabled(false);
+
+    auto targetHeaderLayout = new QGridLayout(m_targetHeader);
+    targetHeaderLayout->setContentsMargins(QMargins());
+    targetHeaderLayout->setHorizontalSpacing(Utils::StyleHelper::SpacingTokens::GapHM);
+    targetHeaderLayout->setVerticalSpacing(Utils::StyleHelper::SpacingTokens::GapVS);
+    targetHeaderLayout->setColumnStretch(1, 1);
+    targetHeaderLayout->addWidget(m_targetIcon, 0, 0, 2, 1);
+    targetHeaderLayout->addWidget(m_targetName, 0, 1);
+    targetHeaderLayout->addWidget(m_chooseTarget, 0, 2, Qt::AlignTop);
+    targetHeaderLayout->addWidget(m_targetIdentity, 1, 1, 1, 2);
+
+    auto targetVersionLayout = new QGridLayout(m_targetVersionForm);
+    targetVersionLayout->setHorizontalSpacing(Utils::StyleHelper::SpacingTokens::GapHM);
+    targetVersionLayout->setVerticalSpacing(Utils::StyleHelper::SpacingTokens::GapVS);
+    targetVersionLayout->setColumnStretch(1, 1);
+    targetVersionLayout->setColumnStretch(3, 1);
+    targetVersionLayout->addWidget(new QLabel(Tr::tr("Engineering"), m_targetVersionForm), 0, 0);
+    targetVersionLayout->addWidget(m_targetEngineering, 0, 1, 1, 3);
+    targetVersionLayout->addWidget(new QLabel(Tr::tr("Target"), m_targetVersionForm), 1, 0);
+    targetVersionLayout->addWidget(m_targetRuntime, 1, 1);
+    targetVersionLayout->addWidget(new QLabel(Tr::tr("Local"), m_targetVersionForm), 1, 2);
+    targetVersionLayout->addWidget(m_targetLocalRuntime, 1, 3);
+    targetVersionLayout->addWidget(new QLabel(Tr::tr("Project"), m_targetVersionForm), 2, 0);
+    targetVersionLayout->addWidget(m_targetProjectVersion, 2, 1);
+    targetVersionLayout->addWidget(m_targetPinVersion, 2, 2, 1, 2);
+
+    auto targetContentLayout = new QVBoxLayout(m_targetContent);
+    targetContentLayout->setContentsMargins(QMargins());
+    targetContentLayout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVM);
+    targetContentLayout->addWidget(m_targetHeader);
+    targetContentLayout->addWidget(m_targetVersionForm);
+    targetContentLayout->addStretch(1);
 
     m_masterContent->setObjectName("EtherCATMasterGeneralContent");
     m_masterForm->setObjectName("EtherCATMasterGeneralForm");
@@ -211,11 +305,13 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
         Utils::StyleHelper::SpacingTokens::PaddingVM);
     layout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVM);
     layout->addWidget(m_summary);
+    layout->addWidget(m_targetContent, 1);
     layout->addWidget(m_masterContent, 1);
     layout->addWidget(m_identityForm);
     layout->addWidget(m_tree, 1);
 
     connect(m_name, &QLineEdit::editingFinished, this, &GeneralPage::commitName);
+    connect(m_targetName, &QLineEdit::editingFinished, this, &GeneralPage::commitTargetName);
     connect(m_masterName, &QLineEdit::editingFinished, this, &GeneralPage::commitMasterName);
     if (m_controller) {
         connect(
@@ -269,6 +365,26 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
         m_objectId->setText(offlineSlave->id.toString());
         m_type->setText(typeName);
         m_identityForm->show();
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Target) {
+        m_summary->hide();
+        m_targetName->setText(context.displayName);
+        m_targetName->setReadOnly(!project || !project->valid);
+        m_targetIdentity->setText(
+            Tr::tr("Offline / Mock target\nObject Id: %1").arg(context.nodeId.toString()));
+        m_targetEngineering->setText(::Core::ICore::versionString());
+        m_targetRuntime->setText(Tr::tr("Not assigned (offline)"));
+        m_targetLocalRuntime->setText(Tr::tr("Not available (phase 1)"));
+        if (project) {
+            const QString projectVersion = Tr::tr("Format %1").arg(project->formatVersion);
+            m_targetProjectVersion->setText(
+                project->createdBy.isEmpty()
+                    ? projectVersion
+                    : Tr::tr("%1 · %2").arg(projectVersion, project->createdBy));
+        } else {
+            m_targetProjectVersion->setText(Tr::tr("Unavailable"));
+        }
+        m_targetContent->show();
+        m_tree->hide();
     } else if (context.nodeKind == Core::WorkbenchNodeKind::Master) {
         m_summary->setText(
             Tr::tr("Offline EtherCAT master properties for %1").arg(context.displayName));
@@ -338,7 +454,9 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
 void GeneralPage::reset(const QString &summary)
 {
     m_summary->setText(summary);
+    m_summary->show();
     m_identityForm->hide();
+    m_targetContent->hide();
     m_masterContent->hide();
     m_masterForm->hide();
     m_masterSummaryForm->hide();
@@ -347,6 +465,14 @@ void GeneralPage::reset(const QString &summary)
     m_id->clear();
     m_objectId->clear();
     m_type->clear();
+    m_targetName->clear();
+    m_targetName->setReadOnly(true);
+    m_targetIdentity->clear();
+    m_targetEngineering->clear();
+    m_targetRuntime->clear();
+    m_targetLocalRuntime->clear();
+    m_targetProjectVersion->clear();
+    m_targetPinVersion->setChecked(false);
     m_masterName->clear();
     m_masterName->setReadOnly(true);
     m_masterId->clear();
@@ -379,6 +505,22 @@ void GeneralPage::commitName()
     if (!result) {
         ::Core::MessageManager::writeFlashing(
             Tr::tr("Cannot rename the offline slave: %1").arg(result.error()));
+    }
+    const Core::PropertyPageContext current = m_controller->treeModel()->contextForNodeId(
+        m_context.nodeId);
+    setContext(current.nodeKind == Core::WorkbenchNodeKind::None ? m_context : current);
+}
+
+void GeneralPage::commitTargetName()
+{
+    if (m_updating || !m_controller || m_context.nodeKind != Core::WorkbenchNodeKind::Target)
+        return;
+    const Utils::Result<> result
+        = m_controller
+              ->renameStructuralNode(m_context.projectId, m_context.nodeId, m_targetName->text());
+    if (!result) {
+        ::Core::MessageManager::writeFlashing(
+            Tr::tr("Cannot rename the offline target: %1").arg(result.error()));
     }
     const Core::PropertyPageContext current = m_controller->treeModel()->contextForNodeId(
         m_context.nodeId);

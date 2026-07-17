@@ -5,10 +5,10 @@
 `EtherCATWorkbench` is the stage-4 engineering-shell plugin. It owns the
 EtherCAT mode, left navigation tree, stable selection linkage, central details
 container, built-in offline property pages, manual offline-topology commands,
-editable master and configured-slave General pages, Workbench commands, and the
-presentation of public Scan/Diagnostics snapshots in the device tree. It does
-not parse ESI files, own project persistence, scan a bus, produce diagnostics,
-or define a controller protocol.
+editable target, master, and configured-slave General pages, Workbench commands,
+and the presentation of public Scan/Diagnostics snapshots in the device tree.
+It does not parse ESI files, own project persistence, scan a bus, produce
+diagnostics, or define a controller protocol.
 
 The layout follows the information hierarchy of common EtherCAT engineering
 tools without copying Beckhoff assets, TwinCAT project formats, or proprietary
@@ -228,6 +228,37 @@ This issue does not add drag-and-drop, multi-selection editing, multiple-master
 target selection, a bus scan, controller transport, or online configuration.
 Those require separate issues and must not bypass the same checked Project
 service boundary.
+
+## Offline-target General page
+
+`ISSUE-WB-TARGET-GENERAL-001` replaces the target's generic property table with
+a dedicated form. Its tab placement and information hierarchy were compared
+with Beckhoff's documented TwinCAT 3 target-system General page:
+<https://infosys.beckhoff.com/content/1033/tc3_system/5206507659.html>.
+No Beckhoff logo, trademark, icon, control, project format, or proprietary
+implementation is copied.
+
+The page keeps the documented top target summary, `Choose Target...` action,
+and `Version` group containing Engineering, Target, Local, Project, and
+`Pin Version`. A platform-standard computer icon replaces the vendor artwork.
+Engineering reports the running Qt Creator product version. Project reports
+the persisted local project-format version and its `createdBy` value. Target
+is explicitly `Not assigned (offline)`, while Local is explicitly
+`Not available (phase 1)`; neither value pretends that a runtime was detected.
+
+The target name is the only editable value. Completing an edit routes through
+the Workbench controller to the existing checked
+`ProjectService::renameStructuralNode()` command. Project normalizes
+whitespace, rejects an empty name, and retains modified state, persistence,
+Undo, Redo, the stable target ID and selection, and synchronized tree, title,
+and form text.
+
+`Choose Target...` and `Pin Version` remain visibly unavailable with tooltips
+and accessible descriptions because phase 1 has no target discovery, runtime
+selection, connection, or persisted runtime version. They do not save UI-only
+state. The page uses the existing `PropertyPageProvider`, Qt Creator style
+metrics, and current Project snapshot; it adds no public API, network protocol,
+provider, background work, dependency, source-list entry, or upstream patch.
 
 ## EtherCAT-master General page
 
@@ -646,14 +677,19 @@ command strip, unsupported-device location, stable Node ID copying, placeholder
 protection, and enabled-state updates. The topology workflow verifies complete
 ESI Process Data/Startup/DC defaults, stable IDs, repeated-device unique names,
 position normalization, boundary states, selection repair, and Project
-Undo/Redo. The configured-slave General workflow verifies the four identity
-fields, ESI-derived and missing-ESI type states, Unicode rename trimming, empty
-name rejection, stable selection, synchronized tree/title/form updates, and
-Project Undo/Redo. The master General workflow verifies the TwinCAT-aligned
-field order, one-based Id, stable Object Id, explicit unavailable settings,
-cycle placeholder, actual slave count, shared status, Unicode rename trimming,
-empty rejection, stable selection, synchronized tree/title/form updates, and
-Project Undo/Redo. The configured-slave EtherCAT workflow verifies ESI type,
+Undo/Redo. The target General workflow verifies the TwinCAT-aligned target
+summary and Version hierarchy, actual engineering/project values, explicit
+offline and unavailable runtime values, unavailable target selection/version
+pinning, Unicode rename trimming, empty rejection, stable selection,
+synchronized tree/title/form updates, and Project Undo/Redo. The
+configured-slave General workflow verifies the four identity fields,
+ESI-derived and missing-ESI type states, Unicode rename trimming, empty name
+rejection, stable selection, synchronized tree/title/form updates, and Project
+Undo/Redo. The master General workflow verifies the TwinCAT-aligned field order,
+one-based Id, stable Object Id, explicit unavailable settings, cycle
+placeholder, actual slave count, shared status, Unicode rename trimming, empty
+rejection, stable selection, synchronized tree/title/form updates, and Project
+Undo/Redo. The configured-slave EtherCAT workflow verifies ESI type,
 Product/Revision, first/second Auto Inc Addr values, configured predecessor,
 bounded Alias editing and disable value, modified state, stable selection,
 Undo/Redo, missing-ESI behavior, read-only repository behavior, retained master
@@ -662,9 +698,10 @@ The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
 match/difference routing, Missing/Added/Revision/Vendor presentation, warning
 and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
 stable locate/open navigation, command registration, and provider-removal
-restoration. It passes 23 tests on the qualified Qt 6.11.0 Release test build.
-The master General flow also passes at `QT_SCALE_FACTOR=2`, and direct normal
-and 2x widget renders show no overlap, clipping, or uncontrolled expansion.
+restoration. It passes 24 tests on the qualified Qt 6.11.0 Release test build.
+The target and master General flows also pass at `QT_SCALE_FACTOR=2`, and direct
+normal and 2x widget renders show no overlap, clipping, or uncontrolled
+expansion.
 The focused configured-slave General and EtherCAT workflows pass at both normal
 scale and `QT_SCALE_FACTOR=2`; the combined command-strip and offline-topology
 flow also passes at `QT_SCALE_FACTOR=2`.
@@ -718,6 +755,13 @@ The renamed Unicode title and Name field, one-based Id, stable Object Id,
 ESI-derived Type, and complete read-only property table remained visible
 without overlap or clipping. This was an offscreen Qt Widget render; no manual
 desktop interaction is claimed for this issue.
+
+A direct 2200 x 1440 Retina render inspected the offline-target General page.
+The editable target name, stable Object Id, standard computer icon, disabled
+Choose Target action, Engineering/Target/Local/Project version rows, and
+disabled Pin Version state remained visible without overlap or clipping. The
+same flow was inspected at its normal 1100 x 720 render size. These were
+offscreen Qt Widget renders; no manual desktop interaction is claimed.
 
 A direct 2200 x 1520 Retina render inspected the configured-slave EtherCAT
 page. Type, Product/Revision, Auto Inc Addr, the explicit automatic fixed-address

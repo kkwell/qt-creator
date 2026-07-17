@@ -13,6 +13,7 @@ class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
+class QPushButton;
 class QTreeWidget;
 QT_END_NAMESPACE
 
@@ -33,6 +34,7 @@ private:
     void reset(const QString &summary);
     void addRow(const QStringList &values);
     void commitName();
+    void commitTargetName();
     void commitMasterName();
     void refreshMasterSummary();
 
@@ -44,6 +46,18 @@ private:
     QLineEdit *m_id;
     QLineEdit *m_objectId;
     QLineEdit *m_type;
+    QWidget *m_targetContent;
+    QWidget *m_targetHeader;
+    QLabel *m_targetIcon;
+    QLineEdit *m_targetName;
+    QLabel *m_targetIdentity;
+    QPushButton *m_chooseTarget;
+    QGroupBox *m_targetVersionForm;
+    QLabel *m_targetEngineering;
+    QLabel *m_targetRuntime;
+    QLabel *m_targetLocalRuntime;
+    QLabel *m_targetProjectVersion;
+    QCheckBox *m_targetPinVersion;
     QWidget *m_masterContent;
     QWidget *m_masterForm;
     QLineEdit *m_masterName;

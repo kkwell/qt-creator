@@ -113,6 +113,11 @@ Data, ordered Startup requests, and Distributed Clocks are now editable through
 the checked Project service; their repository views stay read-only. The General
 page maps physical order, stable NodeId, and ESI type into read-only slave
 identity fields while keeping name changes Project-owned and undoable. The
+target General page mirrors the TwinCAT target summary and Version grouping,
+reports only actual engineering/project values, marks runtime selection as
+offline/unavailable, and routes its editable Name through the checked Project
+undo stack. Target discovery and version pinning remain disabled because they
+have no phase-1 provider or persistent contract. The
 master General page mirrors the TwinCAT field hierarchy, derives Id and status
 from existing snapshots, leaves unsupported Comment/Disabled/symbol settings
 explicitly unavailable, and routes its editable Name through the same checked
@@ -152,9 +157,9 @@ an explicit empty state until the Devices and Project contracts contain real
 modular data; no module or channel is fabricated. That data-contract work and
 the remaining UI qualification keep the Workbench completion gate open. A
 dedicated Core/API prerequisite now exposes checked Target/Master name changes
-through `ProjectService`. The Workbench Master General page now consumes that
-command without moving persistent state into Workbench; the Target General UI
-remains a later independent issue.
+through `ProjectService`. The Workbench Target and Master General pages now
+consume that command without moving persistent state into Workbench or adding
+a controller transport.
 
 The completed Project implementation and versioned file contract are recorded
 in `docs/ethercat-project-format.md`. ProjectExplorer owns open/close and

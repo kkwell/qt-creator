@@ -15,6 +15,7 @@ private slots:
     void testModeCommandStripMirrorsRegisteredActions();
     void testNavigationCommandsUseActionManager();
     void testOfflineTopologyEditingWorkflow();
+    void testEditableTargetGeneralWorkflow();
     void testEditableMasterGeneralWorkflow();
     void testEditableConfiguredSlaveGeneralWorkflow();
     void testEditableConfiguredSlaveEtherCATWorkflow();

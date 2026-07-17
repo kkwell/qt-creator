@@ -256,6 +256,15 @@ existing property-page provider and checked structural-name command, adds no
 source, dependency, public API, or path under upstream Core, ProjectExplorer,
 or the application bootstrap, so the direct Core patch count remains five.
 
+The offline-target General-page issue also changes only existing files in the
+product-owned `EtherCATWorkbench` plugin and documentation. It reuses the
+existing property-page provider, checked structural-name command, public
+`Core::ICore` version API, and standard Qt style icon. Unsupported target
+discovery and runtime-version controls remain explicit disabled states. It adds
+no source, dependency, public API, target transport, or path under upstream
+Core, ProjectExplorer, or the application bootstrap, so the direct Core patch
+count remains five.
+
 The configured-slave EtherCAT-page issue also changes only the product-owned
 `EtherCATWorkbench` plugin and documentation. It adds two private EtherCAT-page
 source files with synchronized CMake/qbs entries, preserves the existing master
