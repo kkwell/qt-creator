@@ -447,13 +447,30 @@ public:
         : ScanProvider("EtherCAT.Workbench.TestScan", "Test scan provider")
     {}
 
-    Data::ScanState scanState() const final { return Data::ScanState::Idle; }
-    Data::ScanProgress scanProgress() const final { return {}; }
-    std::optional<Data::ScanResult> lastScanResult() const final { return std::nullopt; }
-    QString lastScanError() const final { return {}; }
+    Data::ScanState scanState() const final { return m_state; }
+    Data::ScanProgress scanProgress() const final { return m_progress; }
+    std::optional<Data::ScanResult> lastScanResult() const final { return m_result; }
+    QString lastScanError() const final { return m_error; }
     Utils::Result<> startScan(const Data::ScanRequest &) final { return Utils::ResultOk; }
     void cancelScan() final {}
     void clearScanResult() final {}
+
+    void publishResult(const Data::ScanResult &result)
+    {
+        m_state = Data::ScanState::Completed;
+        m_progress.state = m_state;
+        m_result = result;
+        m_error.clear();
+        emit scanStateChanged(m_state);
+        emit scanProgressChanged(m_progress);
+        emit scanResultChanged();
+    }
+
+private:
+    Data::ScanState m_state = Data::ScanState::Idle;
+    Data::ScanProgress m_progress;
+    std::optional<Data::ScanResult> m_result;
+    QString m_error;
 };
 
 class AvailableDiagnosticsProvider final : public Core::DiagnosticsProvider
@@ -463,12 +480,9 @@ public:
         : DiagnosticsProvider("EtherCAT.Workbench.TestDiagnostics", "Test diagnostics provider")
     {}
 
-    Data::DiagnosticsStreamState streamState() const final
-    {
-        return Data::DiagnosticsStreamState::Stopped;
-    }
-    Data::DiagnosticsRequest activeRequest() const final { return {}; }
-    std::optional<Data::DiagnosticsSnapshot> latestSnapshot() const final { return std::nullopt; }
+    Data::DiagnosticsStreamState streamState() const final { return m_state; }
+    Data::DiagnosticsRequest activeRequest() const final { return m_request; }
+    std::optional<Data::DiagnosticsSnapshot> latestSnapshot() const final { return m_snapshot; }
     QList<Data::DiagnosticEvent> events() const final { return {}; }
     QList<Data::DiagnosticTrendSample> trendSamples() const final { return {}; }
     Data::DiagnosticsLimits limits() const final { return {}; }
@@ -481,6 +495,26 @@ public:
     Utils::Result<> requestRunMode(Data::DiagnosticsRunMode) final { return Utils::ResultOk; }
     Utils::Result<> acknowledgeAlarm(const Data::NodeId &) final { return Utils::ResultOk; }
     Utils::Result<> clearRecoveredEvents() final { return Utils::ResultOk; }
+
+    void publishSnapshot(const Data::DiagnosticsSnapshot &snapshot)
+    {
+        m_state = Data::DiagnosticsStreamState::Running;
+        m_request = {snapshot.projectId, snapshot.masterId};
+        m_snapshot = snapshot;
+        emit streamStateChanged(m_state);
+        emit diagnosticsSnapshotChanged();
+    }
+
+    void setStreamState(Data::DiagnosticsStreamState state)
+    {
+        m_state = state;
+        emit streamStateChanged(m_state);
+    }
+
+private:
+    Data::DiagnosticsStreamState m_state = Data::DiagnosticsStreamState::Stopped;
+    Data::DiagnosticsRequest m_request;
+    std::optional<Data::DiagnosticsSnapshot> m_snapshot;
 };
 
 void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
@@ -513,6 +547,9 @@ void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
 
     QVERIFY(::Core::ActionManager::command(Constants::OPEN_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::REFRESH_ACTION_ID));
+    QVERIFY(::Core::ActionManager::command(Constants::LOCATE_DIFFERENCE_ACTION_ID));
+    QVERIFY(::Core::ActionManager::command(Constants::LOCATE_ISSUE_ACTION_ID));
+    QVERIFY(::Core::ActionManager::command(Constants::OPEN_DIAGNOSTICS_ACTION_ID));
     ::Core::ActionManager::command(Constants::OPEN_ACTION_ID)->action()->trigger();
     QTRY_COMPARE(::Core::ModeManager::currentModeId(), Utils::Id(Constants::MODE_ID));
     QVERIFY(::Core::ModeManager::currentMode());
@@ -559,9 +596,13 @@ void EtherCATWorkbenchTests::testModeCommandStripMirrorsRegisteredActions()
             QVERIFY(!action->toolTip().isEmpty());
     }
 
-    for (const Utils::Id id : {Utils::Id(Constants::REFRESH_ACTION_ID),
-                               Utils::Id(Constants::EXPAND_ACTION_ID),
-                               Utils::Id(Constants::COLLAPSE_ACTION_ID)}) {
+    for (const Utils::Id id :
+         {Utils::Id(Constants::REFRESH_ACTION_ID),
+          Utils::Id(Constants::EXPAND_ACTION_ID),
+          Utils::Id(Constants::COLLAPSE_ACTION_ID),
+          Utils::Id(Constants::LOCATE_DIFFERENCE_ACTION_ID),
+          Utils::Id(Constants::LOCATE_ISSUE_ACTION_ID),
+          Utils::Id(Constants::OPEN_DIAGNOSTICS_ACTION_ID)}) {
         ::Core::Command *command = ::Core::ActionManager::command(id);
         QVERIFY(command);
         QVERIFY(commandActions.contains(command->action()));
@@ -704,6 +745,201 @@ void EtherCATWorkbenchTests::testConfiguredSlaveStateIcon()
     QCOMPARE(
         unsupported.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
         Utils::Icons::BROKEN.icon().pixmap(iconSize, iconSize).toImage());
+}
+
+void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
+{
+    WorkbenchController controller;
+    QAbstractItemModelTester
+        modelTester(controller.treeModel(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+    ProcessTreeFixture fixture = processTreeFixture();
+    const Data::NodeId secondSlaveId = Data::NodeId::create();
+    fixture.project.slaves.append(
+        {secondSlaveId,
+         masterId(fixture.project),
+         1,
+         {2, 0x6789, 0x21},
+         18,
+         0,
+         "Configured I/O",
+         {},
+         {},
+         {},
+         {}});
+    fixture.project.nodes.append(
+        {secondSlaveId, masterId(fixture.project), Data::ProjectNodeKind::Slave, "Configured I/O"});
+    controller.treeModel()->setProjects({fixture.project});
+
+    AvailableScanProvider scan;
+    AvailableDiagnosticsProvider diagnostics;
+    scan.setAvailable(true);
+    diagnostics.setAvailable(true);
+    ExtensionSystem::PluginManager::addObject(&scan);
+    ExtensionSystem::PluginManager::addObject(&diagnostics);
+
+    Data::ScanResult scanResult;
+    scanResult.snapshot.projectId = fixture.project.id;
+    scanResult.snapshot.masterId = masterId(fixture.project);
+    scanResult.snapshot.mock = true;
+    scanResult.snapshot.complete = true;
+    scanResult.comparison.projectId = fixture.project.id;
+    scanResult.comparison.masterId = masterId(fixture.project);
+    scanResult.comparison.exactMatch = true;
+    scan.publishResult(scanResult);
+
+    const QModelIndex master = controller.treeModel()->indexForNodeId(masterId(fixture.project));
+    const QModelIndex missing = controller.treeModel()->indexForNodeId(fixture.slaveId);
+    const QModelIndex revision = controller.treeModel()->indexForNodeId(secondSlaveId);
+    const int iconSize = QApplication::style()->pixelMetric(QStyle::PM_SmallIconSize);
+    QTRY_VERIFY(master.siblingAtColumn(1).data().toString().contains("topology matches"));
+    QVERIFY(!controller.treeModel()->firstTopologyDifference().isValid());
+    QTRY_COMPARE(
+        master.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
+        Utils::Icons::OK.icon().pixmap(iconSize, iconSize).toImage());
+
+    scanResult.comparison.exactMatch = false;
+    scanResult.comparison.differences = {
+        {Data::TopologyDifferenceKind::Missing,
+         Data::DifferenceSeverity::Warning,
+         fixture.slaveId,
+         {},
+         0,
+         -1,
+         "Missing slave",
+         "Configured Servo"},
+        {Data::TopologyDifferenceKind::RevisionMismatch,
+         Data::DifferenceSeverity::Warning,
+         secondSlaveId,
+         Data::NodeId::create(),
+         1,
+         1,
+         "Revision difference",
+         "Offline 0x21, scanned 0x22"},
+        {Data::TopologyDifferenceKind::VendorMismatch,
+         Data::DifferenceSeverity::Blocking,
+         secondSlaveId,
+         Data::NodeId::create(),
+         1,
+         1,
+         "Vendor mismatch",
+         "Offline 0x2, scanned 0x3"},
+        {Data::TopologyDifferenceKind::Added,
+         Data::DifferenceSeverity::Information,
+         {},
+         Data::NodeId::create(),
+         -1,
+         2,
+         "Added slave",
+         "Unexpected I/O"},
+    };
+    scan.publishResult(scanResult);
+
+    QTRY_VERIFY(master.siblingAtColumn(1).data().toString().contains("MOCK"));
+    QTRY_VERIFY(master.siblingAtColumn(1).data().toString().contains("4"));
+    QTRY_VERIFY(master.siblingAtColumn(1).data().toString().contains("Added"));
+    QTRY_VERIFY(missing.siblingAtColumn(1).data().toString().contains("Missing"));
+    QTRY_VERIFY(revision.siblingAtColumn(1).data().toString().contains("Revision"));
+    QTRY_VERIFY(revision.siblingAtColumn(1).data().toString().contains("Vendor"));
+    QVERIFY(controller.treeModel()->firstTopologyDifference().isValid());
+
+    QTRY_COMPARE(
+        revision.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
+        Utils::Icons::CRITICAL.icon().pixmap(iconSize, iconSize).toImage());
+
+    WorkbenchNavigationWidget navigation(&controller);
+    navigation.filterEdit()->setText("Offline 0x21, scanned 0x22");
+    QTRY_VERIFY(findById(navigation.treeView()->model(), secondSlaveId).isValid());
+    emit controller.locateFirstTopologyDifferenceRequested();
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        fixture.slaveId);
+
+    scanResult.comparison.differences.removeAt(2);
+    scan.publishResult(scanResult);
+    QTRY_VERIFY(master.siblingAtColumn(1).data().toString().contains("3"));
+
+    Data::DiagnosticsSnapshot diagnosticsSnapshot;
+    diagnosticsSnapshot.projectId = fixture.project.id;
+    diagnosticsSnapshot.masterId = masterId(fixture.project);
+    diagnosticsSnapshot.mock = true;
+    diagnosticsSnapshot.runMode = Data::DiagnosticsRunMode::Run;
+    diagnosticsSnapshot.masterState = Data::EtherCATState::Operational;
+    diagnosticsSnapshot.masterHasError = true;
+    diagnosticsSnapshot.masterAlStatusText = "MOCK master fault";
+    diagnosticsSnapshot.activeAlarmCount = 2;
+    diagnosticsSnapshot.slaves = {
+        {fixture.slaveId,
+         0,
+         "Configured Servo",
+         Data::EtherCATState::SafeOperational,
+         true,
+         0x0011,
+         "MOCK slave fault",
+         Data::WorkingCounterState::Incomplete,
+         {},
+         {},
+         {},
+         {}},
+    };
+    diagnostics.publishSnapshot(diagnosticsSnapshot);
+
+    const QModelIndex diagnosticsNode = controller.treeModel()->diagnosticsForProject(
+        fixture.project.id);
+    QTRY_VERIFY(missing.siblingAtColumn(1).data().toString().contains("SAFEOP"));
+    QTRY_VERIFY(missing.siblingAtColumn(1).data().toString().contains("Error"));
+    QTRY_VERIFY(revision.siblingAtColumn(1).data().toString().contains("not present"));
+    QTRY_VERIFY(diagnosticsNode.siblingAtColumn(1).data().toString().contains("2 active"));
+    QTRY_COMPARE(
+        missing.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
+        Utils::Icons::CRITICAL.icon().pixmap(iconSize, iconSize).toImage());
+
+    navigation.filterEdit()->setText("MOCK slave fault");
+    QTRY_VERIFY(findById(navigation.treeView()->model(), fixture.slaveId).isValid());
+    diagnosticsSnapshot.slaves.append(
+        {secondSlaveId,
+         1,
+         "Configured I/O",
+         Data::EtherCATState::Operational,
+         false,
+         0,
+         {},
+         Data::WorkingCounterState::Valid,
+         {},
+         {},
+         {},
+         {}});
+    diagnostics.publishSnapshot(diagnosticsSnapshot);
+    QTRY_VERIFY(revision.siblingAtColumn(1).data().toString().contains("MOCK OP"));
+    QTRY_VERIFY(!revision.siblingAtColumn(1).data().toString().contains("not present"));
+
+    emit controller.locateFirstIssueRequested();
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        fixture.slaveId);
+    emit controller.openDiagnosticsRequested();
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeKindRole)
+            .value<Core::WorkbenchNodeKind>(),
+        Core::WorkbenchNodeKind::Diagnostics);
+    diagnostics.setStreamState(Data::DiagnosticsStreamState::Stopped);
+    QTRY_VERIFY(master.siblingAtColumn(1).data().toString().contains("last"));
+    QTRY_VERIFY(diagnosticsNode.siblingAtColumn(1).data().toString().contains("Stopped"));
+
+    ExtensionSystem::PluginManager::removeObject(&diagnostics);
+    ExtensionSystem::PluginManager::removeObject(&scan);
+    QTRY_VERIFY(missing.siblingAtColumn(1).data().toString().contains("Offline"));
+    QCOMPARE(
+        missing.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
+        ::Core::Icons::DESKTOP_DEVICE_SMALL.icon().pixmap(iconSize, iconSize).toImage());
+    controller.selectionService()->clear();
 }
 
 void EtherCATWorkbenchTests::testNavigationSelectionAndFiltering()

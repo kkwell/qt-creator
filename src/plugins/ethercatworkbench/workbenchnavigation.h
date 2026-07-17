@@ -29,8 +29,12 @@ public:
 
     QTreeView *treeView() const;
     QLineEdit *filterEdit() const;
+    void locateFirstTopologyDifference();
+    void locateFirstIssue();
+    void openDiagnostics();
 
 private:
+    void selectSourceIndex(const QModelIndex &sourceIndex);
     void selectNode(const Data::NodeId &nodeId);
     void showContextMenu(const QPoint &position);
     void locateUnsupportedDevice();

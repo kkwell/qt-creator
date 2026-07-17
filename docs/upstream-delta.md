@@ -213,6 +213,14 @@ private UI. CMake and qbs list the same two new source files. No upstream Core,
 ProjectExplorer, or application path changes, so the direct Core patch count
 remains five.
 
+The Workbench provider-state tree issue changes only existing files in the
+product-owned `EtherCATWorkbench` plugin and documentation. It consumes the
+already exported immutable Scan/Diagnostics Provider values, uses standard
+Creator model roles/icons and ActionManager commands, and adds no source-list
+entry or plugin dependency. It does not change Scan/Diagnostics producers,
+upstream Core, ProjectExplorer, or application paths, so the direct Core patch
+count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

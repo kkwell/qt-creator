@@ -140,6 +140,52 @@ void EtherCATWorkbenchPlugin::setupActions()
     connect(collapseAction, &QAction::triggered, m_controller.get(), [this] {
         emit m_controller->collapseAllRequested();
     });
+
+    auto locateDifferenceAction
+        = new QAction(Utils::Icons::INFO.icon(), Tr::tr("Locate First Topology Difference"), this);
+    ::Core::Command *locateDifferenceCommand = ::Core::ActionManager::registerAction(
+        locateDifferenceAction,
+        Constants::LOCATE_DIFFERENCE_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    menu->addAction(locateDifferenceCommand);
+    connect(locateDifferenceAction, &QAction::triggered, m_controller.get(), [this] {
+        emit m_controller->locateFirstTopologyDifferenceRequested();
+    });
+
+    auto locateIssueAction
+        = new QAction(Utils::Icons::WARNING.icon(), Tr::tr("Locate First Issue"), this);
+    ::Core::Command *locateIssueCommand = ::Core::ActionManager::registerAction(
+        locateIssueAction,
+        Constants::LOCATE_ISSUE_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    menu->addAction(locateIssueCommand);
+    connect(locateIssueAction, &QAction::triggered, m_controller.get(), [this] {
+        emit m_controller->locateFirstIssueRequested();
+    });
+
+    auto openDiagnosticsAction
+        = new QAction(Utils::Icons::INFO.icon(), Tr::tr("Open Diagnostics"), this);
+    ::Core::Command *openDiagnosticsCommand = ::Core::ActionManager::registerAction(
+        openDiagnosticsAction,
+        Constants::OPEN_DIAGNOSTICS_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    menu->addAction(openDiagnosticsCommand);
+    connect(openDiagnosticsAction, &QAction::triggered, m_controller.get(), [this] {
+        emit m_controller->openDiagnosticsRequested();
+    });
+
+    const auto updateNavigationActions =
+        [this, locateDifferenceAction, locateIssueAction, openDiagnosticsAction] {
+            locateDifferenceAction->setEnabled(
+                m_controller->treeModel()->firstTopologyDifference().isValid());
+            locateIssueAction->setEnabled(m_controller->treeModel()->firstIssue().isValid());
+            openDiagnosticsAction->setEnabled(
+                m_controller->treeModel()->diagnosticsForProject({}).isValid());
+        };
+    connect(
+        m_controller->treeModel(), &QAbstractItemModel::dataChanged, this, updateNavigationActions);
+    connect(m_controller->treeModel(), &QAbstractItemModel::modelReset, this, updateNavigationActions);
+    updateNavigationActions();
 }
 
 void EtherCATWorkbenchPlugin::shutdown()

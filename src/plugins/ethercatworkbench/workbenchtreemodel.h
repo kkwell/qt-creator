@@ -41,10 +41,18 @@ public:
     void setProjects(const QList<Data::ProjectSnapshot> &projects);
     void syncDevices(const QList<Data::DeviceSummary> &devices);
     void setOptionalProviders(bool scanAvailable, bool diagnosticsAvailable);
+    void setScanPresentation(const std::optional<Data::ScanResult> &result);
+    void setDiagnosticsPresentation(
+        Data::DiagnosticsStreamState state,
+        const Data::DiagnosticsRequest &request,
+        const std::optional<Data::DiagnosticsSnapshot> &snapshot);
     void clear();
 
     QModelIndex indexForNodeId(const Data::NodeId &nodeId, int column = 0) const;
     QModelIndex firstUnsupportedDevice() const;
+    QModelIndex firstTopologyDifference() const;
+    QModelIndex firstIssue() const;
+    QModelIndex diagnosticsForProject(const Data::NodeId &projectId) const;
     Core::PropertyPageContext contextForIndex(const QModelIndex &index) const;
     Core::PropertyPageContext contextForNodeId(const Data::NodeId &nodeId) const;
     Data::NodeId sourceNodeId(const QModelIndex &index) const;
@@ -59,6 +67,7 @@ private:
     Node *nodeForIndex(const QModelIndex &index) const;
     Node *findNode(const Data::NodeId &nodeId) const;
     void updateOptionalProviderStatus();
+    void updateProviderPresentation();
     void rebuild();
 
     std::unique_ptr<Node> m_root;
@@ -67,6 +76,10 @@ private:
     QList<Data::DeviceSummary> m_devices;
     bool m_scanAvailable = false;
     bool m_diagnosticsAvailable = false;
+    std::optional<Data::ScanResult> m_scanResult;
+    Data::DiagnosticsStreamState m_diagnosticsState = Data::DiagnosticsStreamState::Stopped;
+    Data::DiagnosticsRequest m_diagnosticsRequest;
+    std::optional<Data::DiagnosticsSnapshot> m_diagnosticsSnapshot;
 };
 
 } // namespace EtherCAT::Workbench::Internal

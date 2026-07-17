@@ -16,6 +16,7 @@ private slots:
     void testStatusBarTracksStateService();
     void testTreeModelLargeIncrementalUpdate();
     void testConfiguredSlaveStateIcon();
+    void testProviderStateTreeAndNavigation();
     void testNavigationSelectionAndFiltering();
     void testBuiltInDevicePages();
     void testConfiguredSlaveTreeAndPages();

@@ -37,6 +37,9 @@ public:
 signals:
     void expandAllRequested();
     void collapseAllRequested();
+    void locateFirstTopologyDifferenceRequested();
+    void locateFirstIssueRequested();
+    void openDiagnosticsRequested();
     void optionalProvidersChanged();
 
 private:
@@ -44,7 +47,9 @@ private:
     void refreshDevices();
     void watchOptionalProvider(Core::Provider *provider);
     void refreshOptionalProviders(Core::Provider *excluding = nullptr);
+    void refreshProviderPresentation(Core::Provider *excluding = nullptr);
     void handleOptionalAvailabilityChanged();
+    void handleProviderPresentationChanged();
 
     WorkbenchTreeModel m_treeModel;
     QPointer<Core::SelectionService> m_selectionService;

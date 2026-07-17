@@ -23,7 +23,7 @@ documentation, review, and local-commit gates.
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Configuration persistence complete | Version-2 project lifecycle, migration, validation, and Undo/Redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
-| 4 | `EtherCATWorkbenchPlugin` | In progress | Editable pages, CoE Online Mock, process-data tree, command strip, and unified status bar are complete; remaining UI qualification is open |
+| 4 | `EtherCATWorkbenchPlugin` | In progress | Editable pages, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
 
@@ -120,7 +120,12 @@ without reverse dependencies or private UI access. EtherCATCore now
 provides the shared `StateService`; the Workbench renders its highest-severity
 Scan/Diagnostics contribution through one mode-scoped Qt Creator status-bar
 control, while the producer plugins retain ownership of their state. It uses
-standard icons and preserves explicit `MOCK` labeling. EtherCATCore also
+standard icons and preserves explicit `MOCK` labeling. The same Workbench
+controller now copies public immutable Scan and Diagnostics snapshots into a
+presentation-only tree overlay. It exposes topology differences, live Mock
+state, warnings, errors, and ActionManager navigation without depending on
+producer-private headers, widgets, item indexes, or state machines. Provider
+removal restores the retained offline presentation. EtherCATCore also
 reserves stable, append-only node kinds for Inputs, Outputs, RxPDO, TxPDO, PDO,
 PDO Entry, Modules, Module, and Channel selections. The Workbench now projects
 validated active Process Data into Inputs, Outputs, RxPDO, TxPDO, PDO, and PDO

@@ -4,9 +4,10 @@
 
 `EtherCATWorkbench` is the stage-4 engineering-shell plugin. It owns the
 EtherCAT mode, left navigation tree, stable selection linkage, central details
-container, built-in offline property pages, and Workbench commands. It does not
-parse ESI files, own project persistence, scan a bus, produce diagnostics, or
-define a controller protocol.
+container, built-in offline property pages, Workbench commands, and the
+presentation of public Scan/Diagnostics snapshots in the device tree. It does
+not parse ESI files, own project persistence, scan a bus, produce diagnostics,
+or define a controller protocol.
 
 The layout follows the information hierarchy of common EtherCAT engineering
 tools without copying Beckhoff assets, TwinCAT project formats, or proprietary
@@ -117,9 +118,11 @@ that external selection, the filter is cleared so the selection remains
 visible.
 
 Search covers display name, status, device group, and Vendor/Product/Revision
-identity. The context menu supports expand, collapse, locating the first
-unsupported ESI device, and copying the stable node ID. Keyboard navigation is
-provided by `QTreeView`.
+identity, including provider-supplied difference summaries and details. The
+context menu supports expand, collapse, locating the first topology difference,
+locating the first warning/error, opening the matching Diagnostics branch,
+locating the first unsupported ESI device, and copying the stable node ID.
+Keyboard navigation is provided by `QTreeView`.
 
 Both columns resize to their visible contents and node text is not elided.
 This gives the hierarchical name priority in Qt Creator's narrow navigation
@@ -153,6 +156,48 @@ and it lets Details resolve the owning slave without copying complete slave
 configurations into every tree node. Renaming a slave does not change any child
 view ID. Empty groups have explicit, non-selectable placeholder rows. The model
 is covered with 128 configured slaves as well as the 500-device repository.
+
+## Provider state overlays and issue navigation
+
+`ISSUE-WB-STATE-TREE-001` adds a presentation-only overlay to the existing
+offline device tree. The controller discovers available public
+`ScanProvider` and `DiagnosticsProvider` objects through the Core registry and
+copies only their immutable `ScanResult` and `DiagnosticsSnapshot` values into
+the model. Workbench does not include either producer plugin's private headers,
+invoke its widgets, or own its state machine.
+
+The interaction follows the documented TwinCAT workflow in which a scan is
+compared with the defined offline configuration and identity/revision
+differences remain visible in the I/O tree and correction flow:
+<https://infosys.beckhoff.com/content/1033/ps2001-2420-1001/10832129675.html>.
+The error presentation was also compared with Beckhoff's documented diagnostic
+states for slave error, invalid identity, missing slave, and link error:
+<https://infosys.beckhoff.com/content/1033/el6752/2584310027.html>.
+No Beckhoff icon, asset, binary format, or proprietary behavior is copied.
+
+A completed slave scan displays its source explicitly as `MOCK` or `Online`.
+An exact comparison reports `topology matches`. Otherwise the master reports
+the total difference count, while affected configured slaves report Missing,
+Position, Vendor, Product, Revision, Serial, Alias, Duplicate, PDO, or DC
+differences. Added or otherwise unmapped scanned nodes aggregate at the master.
+The tooltip and search role retain the complete difference summary and detail,
+so a compact status never discards the reason.
+
+A Diagnostics snapshot overlays source, RunMode, EtherCAT state, AL-status
+text, active alarms, and missing-snapshot state on the same master/slave rows.
+Stopped or stale data is labeled as the last observed state rather than current
+online truth. Standard Creator information, warning, critical, and success
+icons distinguish informational, warning, error, and matched/running states.
+The underlying offline status and normal node icon are retained separately and
+are restored immediately when a Provider becomes unavailable or is removed.
+
+`Locate First Topology Difference`, `Locate First Issue`, and
+`Open Diagnostics` are registered once through `Core::ActionManager`. The
+EtherCAT menu, compact command strip, and tree context menu reuse those exact
+actions. Locate commands clear an obstructing filter, expand every ancestor,
+select the source row, and publish its stable ID through the existing selection
+service. Command enabled state follows model changes; no private widget lookup
+or cross-plugin `QModelIndex` is used.
 
 ## Details and property pages
 
@@ -355,6 +400,13 @@ menu event filter and all toolbar associations without deleting or retaining
 the ActionManager-owned actions. It introduces no timer, thread, Provider, or
 cross-plugin object ownership.
 
+The controller watches optional Scan/Diagnostics availability and snapshot
+signals through public Provider contracts. Provider removal is handled before
+the object leaves the registry: the departing object is excluded, its copied
+presentation is cleared or replaced by another available Provider, and no
+pointer is retained by the tree model. Diagnostics publication may be frequent,
+but `dataChanged` is emitted only for rows whose visible presentation changed.
+
 The plugin owns no background thread, timer, future, file format, or persistent
 business state. Imported ESI data remains owned by `EtherCATDevices`; open
 project state remains owned by `EtherCATProject`.
@@ -366,6 +418,8 @@ discovery, online controller state, controller connection, network protocol,
 configuration package, PLC language, or code generation. Scan and Diagnostics
 remain optional Mock Provider plugins. CoE Online is also a clearly labeled
 local interaction Mock; it does not perform SDO information or object access.
+The `Online` label is a presentation contract for a future non-Mock Provider,
+not evidence that this phase contains such a Provider or controller transport.
 Inputs, Outputs, RxPDO, TxPDO, and their
 PDO/entry branches now render persisted, validated active process data. Actual
 modular ESI profile parsing and project-side module/channel values remain a
@@ -409,8 +463,13 @@ Mode-scoped visibility, and the existing configured/unsupported tree icons.
 The command-strip coverage verifies exact shared-action identity, source-menu
 ordering, Open-Workbench exclusion, dynamic add/remove behavior, complete
 tooltips, standard icon metrics, and all optional-plugin load combinations.
-It passes 17 tests on the qualified Qt 6.11.0 Release test build. The focused
-status and command-strip flows also pass at `QT_SCALE_FACTOR=2`.
+The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
+match/difference routing, Missing/Added/Revision/Vendor presentation, warning
+and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
+stable locate/open navigation, command registration, and provider-removal
+restoration. It passes 18 tests on the qualified Qt 6.11.0 Release test build.
+The combined command-strip and provider-state flow also passes at
+`QT_SCALE_FACTOR=2`.
 
 The normal 16-plugin product build and enabled/disabled startup smoke are
 recorded in `docs/compatibility-matrix.md`. A populated real EtherCAT Mode
@@ -439,3 +498,10 @@ cancel commands all remained visible on one row with normal Creator icon
 scale. No text compression or overlap remained. The current desktop was not
 manually clicked, so this is a render inspection rather than a manual
 interaction claim.
+
+A direct 2400 x 1600 Retina render of the provider-state tree was inspected
+with both Mock Providers active. The master displayed Run/OP, error, total
+difference count, and Added state; configured slaves displayed Revision and
+SAFEOP/Error plus Missing state; the Diagnostics branch displayed Running and
+Error. Standard warning/critical icons aligned with normal tree icons, and the
+full two-column status remained readable without clipping or overlap.

@@ -12,9 +12,12 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <limits>
 #include <vector>
 
 namespace EtherCAT::Workbench::Internal {
+
+enum class StateMarker { None, Healthy, Information, Warning, Error };
 
 struct WorkbenchTreeModel::Node
 {
@@ -22,10 +25,17 @@ struct WorkbenchTreeModel::Node
     Data::NodeId projectId;
     Core::WorkbenchNodeKind kind = Core::WorkbenchNodeKind::None;
     QString name;
+    QString baseStatus;
     QString status;
+    QStringList presentationStatus;
+    QStringList presentationDetails;
     Data::DeviceSummary device;
     Data::NodeId ownerSlaveId;
     Data::NodeId sourceId;
+    StateMarker marker = StateMarker::None;
+    bool topologyDifference = false;
+    bool issue = false;
+    int differenceOrder = std::numeric_limits<int>::max();
     Node *parent = nullptr;
     std::vector<std::unique_ptr<Node>> children;
 };
@@ -82,8 +92,137 @@ static std::unique_ptr<WorkbenchTreeModel::Node> makeNode(
     node->projectId = projectId;
     node->kind = kind;
     node->name = name;
+    node->baseStatus = status;
     node->status = status;
     return node;
+}
+
+static int markerPriority(StateMarker marker)
+{
+    switch (marker) {
+    case StateMarker::None:
+        return 0;
+    case StateMarker::Healthy:
+        return 1;
+    case StateMarker::Information:
+        return 2;
+    case StateMarker::Warning:
+        return 3;
+    case StateMarker::Error:
+        return 4;
+    }
+    return 0;
+}
+
+static StateMarker markerForSeverity(Data::DifferenceSeverity severity)
+{
+    switch (severity) {
+    case Data::DifferenceSeverity::Information:
+        return StateMarker::Information;
+    case Data::DifferenceSeverity::Warning:
+        return StateMarker::Warning;
+    case Data::DifferenceSeverity::Blocking:
+        return StateMarker::Error;
+    }
+    return StateMarker::None;
+}
+
+static void raiseMarker(WorkbenchTreeModel::Node *node, StateMarker marker)
+{
+    if (node && markerPriority(marker) > markerPriority(node->marker))
+        node->marker = marker;
+}
+
+static void appendPresentationStatus(WorkbenchTreeModel::Node *node, const QString &status)
+{
+    if (node && !status.isEmpty() && !node->presentationStatus.contains(status))
+        node->presentationStatus.append(status);
+}
+
+static void appendPresentationDetail(WorkbenchTreeModel::Node *node, const QString &detail)
+{
+    if (node && !detail.isEmpty() && !node->presentationDetails.contains(detail))
+        node->presentationDetails.append(detail);
+}
+
+static QString differenceName(Data::TopologyDifferenceKind kind)
+{
+    switch (kind) {
+    case Data::TopologyDifferenceKind::Added:
+        return Tr::tr("Added");
+    case Data::TopologyDifferenceKind::Missing:
+        return Tr::tr("Missing");
+    case Data::TopologyDifferenceKind::PositionChanged:
+        return Tr::tr("Position");
+    case Data::TopologyDifferenceKind::VendorMismatch:
+        return Tr::tr("Vendor");
+    case Data::TopologyDifferenceKind::ProductMismatch:
+        return Tr::tr("Product");
+    case Data::TopologyDifferenceKind::RevisionMismatch:
+        return Tr::tr("Revision");
+    case Data::TopologyDifferenceKind::SerialMismatch:
+        return Tr::tr("Serial Number");
+    case Data::TopologyDifferenceKind::AliasMismatch:
+        return Tr::tr("Alias");
+    case Data::TopologyDifferenceKind::DuplicateDevice:
+        return Tr::tr("Duplicate");
+    case Data::TopologyDifferenceKind::PdoConfiguration:
+        return Tr::tr("PDO");
+    case Data::TopologyDifferenceKind::DcConfiguration:
+        return Tr::tr("DC");
+    }
+    return {};
+}
+
+static QString etherCATStateName(Data::EtherCATState state)
+{
+    switch (state) {
+    case Data::EtherCATState::Unknown:
+        return Tr::tr("Unknown");
+    case Data::EtherCATState::Init:
+        return "INIT";
+    case Data::EtherCATState::PreOperational:
+        return "PREOP";
+    case Data::EtherCATState::SafeOperational:
+        return "SAFEOP";
+    case Data::EtherCATState::Operational:
+        return "OP";
+    case Data::EtherCATState::Bootstrap:
+        return "BOOT";
+    }
+    return Tr::tr("Unknown");
+}
+
+static QString runModeName(Data::DiagnosticsRunMode mode)
+{
+    switch (mode) {
+    case Data::DiagnosticsRunMode::Offline:
+        return Tr::tr("Offline");
+    case Data::DiagnosticsRunMode::Config:
+        return Tr::tr("Config");
+    case Data::DiagnosticsRunMode::FreeRun:
+        return Tr::tr("FreeRun");
+    case Data::DiagnosticsRunMode::Run:
+        return Tr::tr("Run");
+    }
+    return {};
+}
+
+static QString streamStateName(Data::DiagnosticsStreamState state)
+{
+    switch (state) {
+    case Data::DiagnosticsStreamState::Stopped:
+        return Tr::tr("Stopped");
+    case Data::DiagnosticsStreamState::Starting:
+        return Tr::tr("Starting");
+    case Data::DiagnosticsStreamState::Running:
+        return Tr::tr("Running");
+    case Data::DiagnosticsStreamState::Stopping:
+        return Tr::tr("Stopping");
+    case Data::DiagnosticsStreamState::Failed:
+        return Tr::tr("Failed");
+    }
+    return {};
 }
 
 static QString hexValue(quint64 value, int width)
@@ -439,6 +578,8 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
         return node->status;
     if (role == SearchTextRole) {
         QString text = node->name + ' ' + node->status;
+        if (!node->presentationDetails.isEmpty())
+            text += ' ' + node->presentationDetails.join(' ');
         if (node->kind == Core::WorkbenchNodeKind::Device) {
             text += QString(" %1 %2 %3 %4")
                         .arg(node->device.identity.vendorId, 8, 16, QLatin1Char('0'))
@@ -452,6 +593,8 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
         QString text = node->name;
         if (!node->status.isEmpty())
             text += "\n" + node->status;
+        if (!node->presentationDetails.isEmpty())
+            text += "\n" + node->presentationDetails.join("\n");
         if (node->kind == Core::WorkbenchNodeKind::Device) {
             text += Tr::tr("\nVendor: 0x%1\nProduct: 0x%2\nRevision: 0x%3")
                         .arg(node->device.identity.vendorId, 8, 16, QLatin1Char('0'))
@@ -461,6 +604,18 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
         return text;
     }
     if (role == Qt::DecorationRole && index.column() == 0) {
+        switch (node->marker) {
+        case StateMarker::Healthy:
+            return Utils::Icons::OK.icon();
+        case StateMarker::Information:
+            return Utils::Icons::INFO.icon();
+        case StateMarker::Warning:
+            return Utils::Icons::WARNING.icon();
+        case StateMarker::Error:
+            return Utils::Icons::CRITICAL.icon();
+        case StateMarker::None:
+            break;
+        }
         switch (node->kind) {
         case Core::WorkbenchNodeKind::Project:
             return Utils::Icons::PROJECT.icon();
@@ -645,6 +800,7 @@ void WorkbenchTreeModel::syncDevices(const QList<Data::DeviceSummary> &devices)
         const QString status = summary.supported ? Tr::tr("Available") : Tr::tr("Unsupported");
         if (node->name != summary.name || node->status != status || node->device != summary) {
             node->name = summary.name;
+            node->baseStatus = status;
             node->status = status;
             node->device = summary;
             emit dataChanged(
@@ -661,6 +817,29 @@ void WorkbenchTreeModel::setOptionalProviders(bool scanAvailable, bool diagnosti
     m_scanAvailable = scanAvailable;
     m_diagnosticsAvailable = diagnosticsAvailable;
     updateOptionalProviderStatus();
+}
+
+void WorkbenchTreeModel::setScanPresentation(const std::optional<Data::ScanResult> &result)
+{
+    if (m_scanResult == result)
+        return;
+    m_scanResult = result;
+    updateProviderPresentation();
+}
+
+void WorkbenchTreeModel::setDiagnosticsPresentation(
+    Data::DiagnosticsStreamState state,
+    const Data::DiagnosticsRequest &request,
+    const std::optional<Data::DiagnosticsSnapshot> &snapshot)
+{
+    if (m_diagnosticsState == state && m_diagnosticsRequest == request
+        && m_diagnosticsSnapshot == snapshot) {
+        return;
+    }
+    m_diagnosticsState = state;
+    m_diagnosticsRequest = request;
+    m_diagnosticsSnapshot = snapshot;
+    updateProviderPresentation();
 }
 
 void WorkbenchTreeModel::clear()
@@ -686,6 +865,60 @@ QModelIndex WorkbenchTreeModel::firstUnsupportedDevice() const
             return indexForNode(node.get());
     }
     return {};
+}
+
+QModelIndex WorkbenchTreeModel::firstTopologyDifference() const
+{
+    Node *best = nullptr;
+    Node *fallback = nullptr;
+    int bestOrder = std::numeric_limits<int>::max();
+    const auto visit = [&best, &fallback, &bestOrder](const auto &self, Node *parent) -> void {
+        for (const std::unique_ptr<Node> &child : parent->children) {
+            self(self, child.get());
+            if (!child->topologyDifference)
+                continue;
+            if (!fallback)
+                fallback = child.get();
+            if (child->differenceOrder < bestOrder) {
+                best = child.get();
+                bestOrder = child->differenceOrder;
+            }
+        }
+    };
+    visit(visit, m_root.get());
+    return indexForNode(best ? best : fallback);
+}
+
+QModelIndex WorkbenchTreeModel::firstIssue() const
+{
+    const auto findForMarker = [](const auto &self, Node *parent, StateMarker marker) -> Node * {
+        for (const std::unique_ptr<Node> &child : parent->children) {
+            if (Node *descendant = self(self, child.get(), marker))
+                return descendant;
+            if (child->issue && child->marker == marker)
+                return child.get();
+        }
+        return nullptr;
+    };
+    if (Node *error = findForMarker(findForMarker, m_root.get(), StateMarker::Error))
+        return indexForNode(error);
+    return indexForNode(findForMarker(findForMarker, m_root.get(), StateMarker::Warning));
+}
+
+QModelIndex WorkbenchTreeModel::diagnosticsForProject(const Data::NodeId &projectId) const
+{
+    const auto findDiagnostics = [&projectId](const auto &self, Node *parent) -> Node * {
+        for (const std::unique_ptr<Node> &child : parent->children) {
+            if (child->kind == Core::WorkbenchNodeKind::Diagnostics
+                && (projectId.isNull() || child->projectId == projectId)) {
+                return child.get();
+            }
+            if (Node *descendant = self(self, child.get()))
+                return descendant;
+        }
+        return nullptr;
+    };
+    return indexForNode(findDiagnostics(findDiagnostics, m_root.get()));
 }
 
 Core::PropertyPageContext WorkbenchTreeModel::contextForIndex(const QModelIndex &index) const
@@ -786,27 +1019,283 @@ void WorkbenchTreeModel::updateOptionalProviderStatus()
 {
     const auto updateRecursive = [this](const auto &self, Node *parent) -> void {
         for (const std::unique_ptr<Node> &child : parent->children) {
-            QString status = child->status;
+            QString status = child->baseStatus;
             if (child->kind == Core::WorkbenchNodeKind::Diagnostics) {
                 status = m_diagnosticsAvailable ? Tr::tr("Provider available")
                                                 : Tr::tr("Plugin not installed");
-            } else if (child->kind == Core::WorkbenchNodeKind::Placeholder
-                       && child->parent
-                       && child->parent->kind == Core::WorkbenchNodeKind::Master) {
+            } else if (
+                child->kind == Core::WorkbenchNodeKind::Placeholder && child->parent
+                && child->parent->kind == Core::WorkbenchNodeKind::Master) {
                 status = m_scanAvailable ? Tr::tr("Ready to scan")
                                          : Tr::tr("Scan plugin not installed");
             }
-            if (status != child->status) {
-                child->status = status;
-                emit dataChanged(
-                    indexForNode(child.get(), 0),
-                    indexForNode(child.get(), 1),
-                    {Qt::DisplayRole, StatusRole, SearchTextRole, Qt::ToolTipRole});
-            }
+            child->baseStatus = status;
             self(self, child.get());
         }
     };
     updateRecursive(updateRecursive, m_root.get());
+    updateProviderPresentation();
+}
+
+void WorkbenchTreeModel::updateProviderPresentation()
+{
+    if (!m_root)
+        return;
+
+    struct PreviousPresentation
+    {
+        Node *node = nullptr;
+        QString status;
+        QStringList details;
+        StateMarker marker = StateMarker::None;
+        bool topologyDifference = false;
+        bool issue = false;
+        int differenceOrder = std::numeric_limits<int>::max();
+    };
+    QList<PreviousPresentation> previous;
+    const auto reset = [&previous](const auto &self, Node *parent) -> void {
+        for (const std::unique_ptr<Node> &child : parent->children) {
+            previous.append(
+                {child.get(),
+                 child->status,
+                 child->presentationDetails,
+                 child->marker,
+                 child->topologyDifference,
+                 child->issue,
+                 child->differenceOrder});
+            child->status = child->baseStatus;
+            child->presentationStatus.clear();
+            child->presentationDetails.clear();
+            child->marker = StateMarker::None;
+            child->topologyDifference = false;
+            child->issue = false;
+            child->differenceOrder = std::numeric_limits<int>::max();
+            self(self, child.get());
+        }
+    };
+    reset(reset, m_root.get());
+
+    if (m_diagnosticsSnapshot) {
+        const Data::DiagnosticsSnapshot &snapshot = *m_diagnosticsSnapshot;
+        Node *master = findNode(snapshot.masterId);
+        if (master && master->kind == Core::WorkbenchNodeKind::Master
+            && master->projectId == snapshot.projectId) {
+            const QString source = snapshot.mock ? Tr::tr("MOCK") : Tr::tr("Online");
+            QString status = Tr::tr("%1 %2 / %3")
+                                 .arg(
+                                     source,
+                                     runModeName(snapshot.runMode),
+                                     etherCATStateName(snapshot.masterState));
+            if (m_diagnosticsState != Data::DiagnosticsStreamState::Running) {
+                status = Tr::tr("%1 diagnostics %2: last %3 / %4")
+                             .arg(
+                                 source,
+                                 streamStateName(m_diagnosticsState),
+                                 runModeName(snapshot.runMode),
+                                 etherCATStateName(snapshot.masterState));
+            }
+            if (snapshot.masterHasError)
+                status += Tr::tr(" - Error");
+            else if (snapshot.activeAlarmCount > 0)
+                status += Tr::tr(" - %n active alarm(s)", nullptr, snapshot.activeAlarmCount);
+            appendPresentationStatus(master, status);
+            appendPresentationDetail(master, snapshot.masterAlStatusText);
+            const StateMarker masterMarker = snapshot.masterHasError
+                                                     || m_diagnosticsState
+                                                            == Data::DiagnosticsStreamState::Failed
+                                                 ? StateMarker::Error
+                                                 : (m_diagnosticsState
+                                                            == Data::DiagnosticsStreamState::Running
+                                                        ? StateMarker::Healthy
+                                                        : StateMarker::Information);
+            raiseMarker(master, masterMarker);
+            master->issue = masterMarker == StateMarker::Error || snapshot.activeAlarmCount > 0;
+
+            Node *diagnostics = nodeForIndex(diagnosticsForProject(snapshot.projectId));
+            if (diagnostics && diagnostics != m_root.get()) {
+                QString diagnosticsStatus
+                    = Tr::tr("%1 %2 - %n active alarm(s)", nullptr, snapshot.activeAlarmCount)
+                          .arg(source, streamStateName(m_diagnosticsState));
+                if (snapshot.masterHasError)
+                    diagnosticsStatus += Tr::tr(" - Error");
+                appendPresentationStatus(diagnostics, diagnosticsStatus);
+                const StateMarker diagnosticsMarker
+                    = snapshot.masterHasError
+                              || m_diagnosticsState == Data::DiagnosticsStreamState::Failed
+                          ? StateMarker::Error
+                          : (snapshot.activeAlarmCount > 0 ? StateMarker::Warning : masterMarker);
+                raiseMarker(diagnostics, diagnosticsMarker);
+                diagnostics->issue = diagnosticsMarker == StateMarker::Warning
+                                     || diagnosticsMarker == StateMarker::Error;
+            }
+
+            QSet<Data::NodeId> reportedSlaves;
+            for (const Data::SlaveDiagnostics &slave : snapshot.slaves) {
+                Node *node = findNode(slave.nodeId);
+                if (!node || node->kind != Core::WorkbenchNodeKind::ConfiguredSlave
+                    || node->projectId != snapshot.projectId) {
+                    continue;
+                }
+                reportedSlaves.insert(node->id);
+                QString slaveStatus = Tr::tr("%1 %2").arg(source, etherCATStateName(slave.state));
+                if (slave.hasError)
+                    slaveStatus += Tr::tr(" - Error");
+                appendPresentationStatus(node, slaveStatus);
+                appendPresentationDetail(node, slave.alStatusText);
+                raiseMarker(
+                    node,
+                    slave.hasError ? StateMarker::Error
+                                   : (m_diagnosticsState == Data::DiagnosticsStreamState::Running
+                                          ? StateMarker::Healthy
+                                          : StateMarker::Information));
+                node->issue = slave.hasError;
+            }
+            for (const std::unique_ptr<Node> &child : master->children) {
+                if (child->kind != Core::WorkbenchNodeKind::ConfiguredSlave
+                    || reportedSlaves.contains(child->id)) {
+                    continue;
+                }
+                appendPresentationStatus(child.get(), Tr::tr("%1 not present").arg(source));
+                appendPresentationDetail(
+                    child.get(),
+                    Tr::tr("The configured slave is absent from the diagnostics snapshot."));
+                raiseMarker(child.get(), StateMarker::Warning);
+                child->issue = true;
+            }
+        }
+    } else if (
+        !m_diagnosticsRequest.masterId.isNull()
+        && m_diagnosticsState != Data::DiagnosticsStreamState::Stopped) {
+        Node *master = findNode(m_diagnosticsRequest.masterId);
+        if (master && master->projectId == m_diagnosticsRequest.projectId) {
+            const QString status = Tr::tr("Diagnostics %1").arg(streamStateName(m_diagnosticsState));
+            appendPresentationStatus(master, status);
+            raiseMarker(
+                master,
+                m_diagnosticsState == Data::DiagnosticsStreamState::Failed
+                    ? StateMarker::Error
+                    : StateMarker::Information);
+            master->issue = m_diagnosticsState == Data::DiagnosticsStreamState::Failed;
+            Node *diagnostics = nodeForIndex(diagnosticsForProject(m_diagnosticsRequest.projectId));
+            if (diagnostics && diagnostics != m_root.get()) {
+                appendPresentationStatus(diagnostics, status);
+                raiseMarker(diagnostics, master->marker);
+                diagnostics->issue = master->issue;
+            }
+        }
+    }
+
+    if (m_scanResult) {
+        const Data::ScanResult &result = *m_scanResult;
+        Node *master = findNode(result.snapshot.masterId);
+        if (master && master->kind == Core::WorkbenchNodeKind::Master
+            && master->projectId == result.snapshot.projectId) {
+            const QString source = result.snapshot.mock ? Tr::tr("MOCK") : Tr::tr("Online");
+            if (result.snapshot.operation == Data::ScanOperation::Interfaces) {
+                appendPresentationStatus(master, Tr::tr("%1 interface scan").arg(source));
+                raiseMarker(master, StateMarker::Information);
+            } else {
+                QList<const Data::TopologyDifference *> differences;
+                for (const Data::TopologyDifference &difference : result.comparison.differences) {
+                    const bool placeholder
+                        = (difference.kind == Data::TopologyDifferenceKind::PdoConfiguration
+                           || difference.kind == Data::TopologyDifferenceKind::DcConfiguration)
+                          && difference.offlineSlaveId.isNull()
+                          && difference.scannedSlaveId.isNull();
+                    if (!placeholder)
+                        differences.append(&difference);
+                }
+
+                QHash<Node *, QStringList> nodeDifferences;
+                QSet<Data::NodeId> affectedOfflineSlaves;
+                StateMarker aggregateMarker = StateMarker::None;
+                for (int order = 0; order < differences.size(); ++order) {
+                    const Data::TopologyDifference &difference = *differences.at(order);
+                    Node *node = difference.offlineSlaveId.isNull()
+                                     ? master
+                                     : findNode(difference.offlineSlaveId);
+                    if (!node || node->projectId != result.snapshot.projectId)
+                        node = master;
+                    if (!difference.offlineSlaveId.isNull())
+                        affectedOfflineSlaves.insert(difference.offlineSlaveId);
+                    const QString name = differenceName(difference.kind);
+                    if (!nodeDifferences[node].contains(name))
+                        nodeDifferences[node].append(name);
+                    appendPresentationDetail(
+                        node,
+                        difference.detail.isEmpty()
+                            ? difference.summary
+                            : difference.summary + ": " + difference.detail);
+                    node->topologyDifference = true;
+                    node->differenceOrder = qMin(node->differenceOrder, order);
+                    const StateMarker marker = markerForSeverity(difference.severity);
+                    raiseMarker(node, marker);
+                    if (markerPriority(marker) > markerPriority(aggregateMarker))
+                        aggregateMarker = marker;
+                    if (marker == StateMarker::Warning || marker == StateMarker::Error)
+                        node->issue = true;
+                }
+
+                QString masterStatus;
+                if (differences.isEmpty()) {
+                    masterStatus = Tr::tr("%1 scan: topology matches").arg(source);
+                    aggregateMarker = StateMarker::Healthy;
+                } else {
+                    masterStatus
+                        = Tr::tr("%1 scan: %n topology difference(s)", nullptr, differences.size())
+                              .arg(source);
+                    if (nodeDifferences.contains(master)) {
+                        masterStatus += " - " + nodeDifferences.value(master).join(", ");
+                        nodeDifferences.remove(master);
+                    }
+                    master->topologyDifference = true;
+                }
+                appendPresentationStatus(master, masterStatus);
+                raiseMarker(master, aggregateMarker);
+                master->issue = master->issue || aggregateMarker == StateMarker::Warning
+                                || aggregateMarker == StateMarker::Error;
+
+                for (auto iterator = nodeDifferences.cbegin(); iterator != nodeDifferences.cend();
+                     ++iterator) {
+                    appendPresentationStatus(
+                        iterator.key(),
+                        Tr::tr("%1 scan: %2").arg(source, iterator.value().join(", ")));
+                }
+
+                const bool fullMasterScan
+                    = result.snapshot.operation == Data::ScanOperation::Slaves
+                      || (result.snapshot.operation == Data::ScanOperation::SelectedBranch
+                          && result.snapshot.branchNodeId == result.snapshot.masterId);
+                for (const std::unique_ptr<Node> &child : master->children) {
+                    if (child->kind != Core::WorkbenchNodeKind::ConfiguredSlave)
+                        continue;
+                    const bool inScope = fullMasterScan
+                                         || (result.snapshot.operation
+                                                 == Data::ScanOperation::SelectedBranch
+                                             && result.snapshot.branchNodeId == child->id);
+                    if (!inScope || affectedOfflineSlaves.contains(child->id))
+                        continue;
+                    appendPresentationStatus(child.get(), Tr::tr("%1 scan: Matched").arg(source));
+                    raiseMarker(child.get(), StateMarker::Healthy);
+                }
+            }
+        }
+    }
+
+    for (const PreviousPresentation &entry : std::as_const(previous)) {
+        Node *node = entry.node;
+        node->status = node->presentationStatus.isEmpty() ? node->baseStatus
+                                                          : node->presentationStatus.join(" | ");
+        if (entry.status == node->status && entry.details == node->presentationDetails
+            && entry.marker == node->marker && entry.topologyDifference == node->topologyDifference
+            && entry.issue == node->issue && entry.differenceOrder == node->differenceOrder) {
+            continue;
+        }
+        emit dataChanged(
+            indexForNode(node, 0),
+            indexForNode(node, 1),
+            {Qt::DisplayRole, Qt::DecorationRole, Qt::ToolTipRole, StatusRole, SearchTextRole});
+    }
 }
 
 void WorkbenchTreeModel::rebuild()
@@ -882,8 +1371,9 @@ void WorkbenchTreeModel::rebuild()
                             return child->kind == Core::WorkbenchNodeKind::ConfiguredSlave;
                         }));
                     if (slaveCount > 0) {
-                        nodePointer->status = Tr::tr(
-                            "%n configured slave(s)", nullptr, slaveCount);
+                        nodePointer->baseStatus
+                            = Tr::tr("%n configured slave(s)", nullptr, slaveCount);
+                        nodePointer->status = nodePointer->baseStatus;
                     }
                     nodePointer->children.push_back(makeNode(
                         nodePointer,
@@ -923,6 +1413,7 @@ void WorkbenchTreeModel::rebuild()
     const QList<Data::DeviceSummary> devices = m_devices;
     m_devices.clear();
     syncDevices(devices);
+    updateProviderPresentation();
 }
 
 } // namespace EtherCAT::Workbench::Internal

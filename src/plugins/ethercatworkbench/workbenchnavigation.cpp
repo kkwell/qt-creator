@@ -6,6 +6,9 @@
 #include "ethercatworkbenchtr.h"
 #include "workbenchcontroller.h"
 
+#include <coreplugin/actionmanager/actionmanager.h>
+#include <coreplugin/actionmanager/command.h>
+
 #include <ethercatcore/selectionservice.h>
 
 #include <utils/stylehelper.h>
@@ -109,6 +112,21 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
         m_treeView,
         &QTreeView::collapseAll);
     connect(
+        controller,
+        &WorkbenchController::locateFirstTopologyDifferenceRequested,
+        this,
+        &WorkbenchNavigationWidget::locateFirstTopologyDifference);
+    connect(
+        controller,
+        &WorkbenchController::locateFirstIssueRequested,
+        this,
+        &WorkbenchNavigationWidget::locateFirstIssue);
+    connect(
+        controller,
+        &WorkbenchController::openDiagnosticsRequested,
+        this,
+        &WorkbenchNavigationWidget::openDiagnostics);
+    connect(
         m_treeView,
         &QTreeView::customContextMenuRequested,
         this,
@@ -150,6 +168,43 @@ void WorkbenchNavigationWidget::selectNode(const Data::NodeId &nodeId)
     m_treeView->scrollTo(proxyIndex);
 }
 
+void WorkbenchNavigationWidget::selectSourceIndex(const QModelIndex &sourceIndex)
+{
+    if (!sourceIndex.isValid())
+        return;
+    m_filterEdit->clear();
+    const QModelIndex proxyIndex = m_proxyModel->mapFromSource(sourceIndex);
+    if (!proxyIndex.isValid())
+        return;
+    QModelIndex parent = proxyIndex.parent();
+    while (parent.isValid()) {
+        m_treeView->expand(parent);
+        parent = parent.parent();
+    }
+    m_treeView->setCurrentIndex(proxyIndex);
+    m_treeView->scrollTo(proxyIndex);
+}
+
+void WorkbenchNavigationWidget::locateFirstTopologyDifference()
+{
+    selectSourceIndex(m_sourceModel->firstTopologyDifference());
+}
+
+void WorkbenchNavigationWidget::locateFirstIssue()
+{
+    selectSourceIndex(m_sourceModel->firstIssue());
+}
+
+void WorkbenchNavigationWidget::openDiagnostics()
+{
+    const Core::PropertyPageContext current = m_sourceModel->contextForIndex(
+        m_proxyModel->mapToSource(m_treeView->currentIndex()));
+    QModelIndex diagnostics = m_sourceModel->diagnosticsForProject(current.projectId);
+    if (!diagnostics.isValid())
+        diagnostics = m_sourceModel->diagnosticsForProject({});
+    selectSourceIndex(diagnostics);
+}
+
 void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
 {
     const QModelIndex proxyIndex = m_treeView->indexAt(position);
@@ -165,6 +220,14 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
     QAction *collapse = menu.addAction(Tr::tr("Collapse All"));
     collapse->setIcon(Utils::Icons::COLLAPSE_TOOLBAR.icon());
     connect(collapse, &QAction::triggered, m_treeView, &QTreeView::collapseAll);
+    menu.addSeparator();
+    for (const Utils::Id id :
+         {Utils::Id(Constants::LOCATE_DIFFERENCE_ACTION_ID),
+          Utils::Id(Constants::LOCATE_ISSUE_ACTION_ID),
+          Utils::Id(Constants::OPEN_DIAGNOSTICS_ACTION_ID)}) {
+        if (::Core::Command *command = ::Core::ActionManager::command(id))
+            menu.addAction(command->action());
+    }
     QAction *unsupported = menu.addAction(Tr::tr("Locate Unsupported Device"));
     unsupported->setEnabled(m_sourceModel->firstUnsupportedDevice().isValid());
     connect(
@@ -184,13 +247,7 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
 
 void WorkbenchNavigationWidget::locateUnsupportedDevice()
 {
-    m_filterEdit->clear();
-    const QModelIndex sourceIndex = m_sourceModel->firstUnsupportedDevice();
-    if (!sourceIndex.isValid())
-        return;
-    const QModelIndex proxyIndex = m_proxyModel->mapFromSource(sourceIndex);
-    m_treeView->setCurrentIndex(proxyIndex);
-    m_treeView->scrollTo(proxyIndex);
+    selectSourceIndex(m_sourceModel->firstUnsupportedDevice());
 }
 
 WorkbenchNavigationFactory::WorkbenchNavigationFactory(WorkbenchController *controller)
