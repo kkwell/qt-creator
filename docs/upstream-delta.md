@@ -243,6 +243,15 @@ change, dependency, public API, Provider, persistent data, upstream Core,
 ProjectExplorer, or application path, so the Workbench path count remains 44
 and the direct Core patch count remains five.
 
+The Workbench navigation-filter empty-state issue also changes only that
+existing private navigation widget, its tests, and documentation. It adds a
+Workbench-local stacked no-match page, clear action, dynamic proxy-state
+updates, and translated accessibility metadata without changing the model,
+stable-ID service, Project or repository data, or optional Providers. It adds
+no source-list entry, CMake/qbs change, dependency, public API, persistent
+format, upstream Core, ProjectExplorer, or application path, so the Workbench
+path count remains 44 and the direct Core patch count remains five.
+
 The Workbench offline-topology issue changes only the product-owned
 `EtherCATWorkbench` plugin and documentation. It adds two private ESI-default
 factory files with synchronized CMake/qbs entries, then reuses the existing

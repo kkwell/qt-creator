@@ -18,9 +18,12 @@
 #include <QClipboard>
 #include <QHeaderView>
 #include <QItemSelectionModel>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QPushButton>
 #include <QSortFilterProxyModel>
+#include <QStackedWidget>
 #include <QToolButton>
 #include <QTreeView>
 #include <QVBoxLayout>
@@ -38,6 +41,9 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
 {
     setObjectName("EtherCATWorkbenchNavigation");
     m_filterEdit->setObjectName("EtherCATWorkbenchFilter");
+    m_filterEdit->setAccessibleName(Tr::tr("Filter EtherCAT nodes"));
+    m_filterEdit->setAccessibleDescription(
+        Tr::tr("Filter the offline EtherCAT tree by node, status, or identity."));
     m_filterEdit->setPlaceholderText(Tr::tr("Filter nodes, status, or identity"));
     m_filterEdit->setClearButtonEnabled(true);
 
@@ -69,16 +75,76 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_treeView->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     setFocusProxy(m_treeView);
 
+    m_emptyState = new QWidget(this);
+    m_emptyState->setObjectName("EtherCATWorkbenchFilterEmptyState");
+    m_emptyState->setAccessibleName(Tr::tr("No matching EtherCAT nodes"));
+    m_emptyState->setAccessibleDescription(
+        Tr::tr("No offline EtherCAT tree nodes match the current filter."));
+
+    auto emptyMessage = new QLabel(
+        Tr::tr("No EtherCAT nodes match the current filter."), m_emptyState);
+    emptyMessage->setObjectName("EtherCATWorkbenchFilterEmptyMessage");
+    emptyMessage->setAccessibleName(Tr::tr("No matching EtherCAT nodes"));
+    emptyMessage->setAlignment(Qt::AlignCenter);
+    emptyMessage->setWordWrap(true);
+
+    m_clearFilter = new QPushButton(Tr::tr("Clear Filter"), m_emptyState);
+    m_clearFilter->setObjectName("EtherCATWorkbenchClearFilter");
+    m_clearFilter->setAccessibleDescription(
+        Tr::tr("Clear the navigation filter and return to the offline EtherCAT tree."));
+
+    auto emptyLayout = new QVBoxLayout(m_emptyState);
+    emptyLayout->setContentsMargins(
+        Utils::StyleHelper::SpacingTokens::PaddingHM,
+        Utils::StyleHelper::SpacingTokens::PaddingVM,
+        Utils::StyleHelper::SpacingTokens::PaddingHM,
+        Utils::StyleHelper::SpacingTokens::PaddingVM);
+    emptyLayout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVM);
+    emptyLayout->addStretch();
+    emptyLayout->addWidget(emptyMessage);
+    emptyLayout->addWidget(m_clearFilter, 0, Qt::AlignHCenter);
+    emptyLayout->addStretch();
+
+    m_resultsStack = new QStackedWidget(this);
+    m_resultsStack->setObjectName("EtherCATWorkbenchNavigationResults");
+    m_resultsStack->addWidget(m_treeView);
+    m_resultsStack->addWidget(m_emptyState);
+
     auto layout = new QVBoxLayout(this);
     layout->setContentsMargins(QMargins());
     layout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVXxs);
     layout->addWidget(m_filterEdit);
-    layout->addWidget(m_treeView);
+    layout->addWidget(m_resultsStack);
 
     connect(m_filterEdit, &QLineEdit::textChanged, m_proxyModel, [this](const QString &text) {
         m_proxyModel->setFilterFixedString(text);
         if (!text.isEmpty())
             m_treeView->expandAll();
+        updateFilterState();
+    });
+    connect(m_proxyModel, &QAbstractItemModel::rowsInserted, this, [this] {
+        updateFilterState();
+    });
+    connect(m_proxyModel, &QAbstractItemModel::rowsRemoved, this, [this] {
+        updateFilterState();
+    });
+    connect(m_proxyModel, &QAbstractItemModel::modelReset, this, [this] {
+        updateFilterState();
+    });
+    connect(m_proxyModel, &QAbstractItemModel::layoutChanged, this, [this] {
+        updateFilterState();
+    });
+    connect(m_proxyModel, &QAbstractItemModel::dataChanged, this, [this] {
+        updateFilterState();
+    });
+    connect(m_clearFilter, &QPushButton::clicked, this, [this] {
+        const Data::NodeId currentNodeId
+            = m_controller && m_controller->selectionService()
+                  ? m_controller->selectionService()->currentNodeId()
+                  : Data::NodeId{};
+        m_filterEdit->clear();
+        m_treeView->setFocus(Qt::ShortcutFocusReason);
+        selectNode(currentNodeId);
     });
     connect(
         m_treeView->selectionModel(),
@@ -148,6 +214,7 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
         this,
         &WorkbenchNavigationWidget::showContextMenu);
     m_treeView->expandToDepth(2);
+    updateFilterState();
 }
 
 QTreeView *WorkbenchNavigationWidget::treeView() const
@@ -158,6 +225,15 @@ QTreeView *WorkbenchNavigationWidget::treeView() const
 QLineEdit *WorkbenchNavigationWidget::filterEdit() const
 {
     return m_filterEdit;
+}
+
+void WorkbenchNavigationWidget::updateFilterState()
+{
+    const bool noMatches
+        = !m_filterEdit->text().isEmpty() && m_proxyModel->rowCount() == 0;
+    m_resultsStack->setCurrentWidget(noMatches ? m_emptyState : m_treeView);
+    setFocusProxy(noMatches ? static_cast<QWidget *>(m_clearFilter)
+                            : static_cast<QWidget *>(m_treeView));
 }
 
 void WorkbenchNavigationWidget::selectNode(const Data::NodeId &nodeId)

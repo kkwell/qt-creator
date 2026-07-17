@@ -5,7 +5,7 @@
 | Item | Supported or observed baseline | Evidence status |
 |---|---|---|
 | Product branch | `embed-labs` only | Verified |
-| Issue baseline commit | `9fd3c844c3f61557323a1a4f57e668e931c8de09` | Verified |
+| Issue baseline commit | `a546f59cb9b91976f89f2a334f55cd42fe3387bf` | Verified |
 | Product version | 20.0.1 | Verified |
 | Recorded Qt Creator merge point | `11ba5cec09dce75db4bc948d98055e338ff59576` | Verified |
 | Qualified product Qt | Homebrew 6.11.0 | Clean Release build and GUI smoke verified |
@@ -515,13 +515,16 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 31 passed, 0 failed |
-| Six-plugin EtherCAT regression | 82 passed, 0 failed in isolated processes |
+| Focused EtherCATWorkbench plugin tests | 32 passed, 0 failed |
+| Six-plugin EtherCAT regression | 83 passed, 0 failed in isolated processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first navigation keyboard test | Compiled and failed because the navigation container focus proxy was null, as expected |
 | Focused navigation keyboard test | 3 passed, 0 failed at normal scale |
 | Focused navigation keyboard test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
+| Failure-first navigation filter empty-state test | Compiled and failed because the explicit no-match widget did not exist; 2 passed and 1 failed as expected |
+| Focused navigation filter empty-state test | 3 passed, 0 failed at normal scale |
+| Focused navigation filter empty-state test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
 | Failure-first CoE Online page test | Compiled and failed on the missing `CoE Online` page descriptor before implementation, as expected |
 | Failure-first unified-status test | Compiled and failed because no Workbench status-bar control was registered, as expected |
 | Failure-first command-strip test | Compiled and failed because EtherCAT Mode had no engineering command strip, as expected |
@@ -548,6 +551,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Combined command-strip/offline-topology test at `QT_SCALE_FACTOR=2` | 4 passed, 0 failed |
 | 500-device incremental model with model tester | Passed |
 | Filter, context, and bidirectional stable selection | Passed |
+| Navigation filter no-match and recovery | Passed for non-empty zero-row queries, Clear Filter by Space key, visible focus-proxy switching, dynamic proxy insertion/removal, long Unicode input, and exact stable-selection recovery |
+| Navigation filter accessibility | Passed for translated filter name/description, no-match state metadata, and keyboard-reachable clear action |
 | Process Data, Startup, and DC pages from imported ESI | Passed |
 | TwinCAT-inspired SM, PDO Assignment, PDO List, PDO Content layout | Passed in widget/model flow test |
 | RxPDO/TxPDO selection and synchronized PDO content | Passed |
@@ -618,10 +623,11 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Non-elided content-sized tree columns in a narrow navigation area | Passed in widget test and desktop inspection |
 | Accessible tree name, description, and five process-data branches | Passed in widget test and macOS accessibility inspection |
 | Navigation activation focus and arrow-key selection | Passed at normal scale and `QT_SCALE_FACTOR=2` with outer-widget focus transfer, a real Down-arrow event, and stable `NodeId` publication |
+| Navigation filter direct Qt renders | Passed at normal 420 x 480 and 2x 840 x 960 output with the full long Unicode query, centred no-match message, and Clear Filter action visible without overlap, clipping, or scale drift |
 | macOS accessibility lock-transition observation | One Qt 6.11 accessibility crash was captured during a lock transition; a second RxPDO-selection run remained alive until the Mac locked, so the event is not reproduced and remains a qualification risk |
 | Dynamic property-page provider removal | Passed |
 | Dynamic Scan/Diagnostics availability and removal | Passed |
-| Workbench test-process cleanup | Focused normal/2x and full-suite processes exited 0 after widget, controller, selection, and Provider cleanup; this issue adds no thread, timer, future, or Provider |
+| Workbench test-process cleanup | Filter-focused normal/2x and full-suite processes exited 0 after widget, controller, selection, and Provider cleanup; this issue adds no thread, timer, future, or Provider |
 | Scan snapshot overlay | Passed for exact, Missing, Added, Revision, Vendor, source label, full-detail search, and aggregate count/severity |
 | Diagnostics snapshot overlay | Passed for Run/OP, SAFEOP/error, AL detail, missing snapshot, alarm/error marker, stopped state, and cleanup |
 | Difference/issue/Diagnostics ActionManager navigation | Passed with stable selection, filter clearing, ancestor expansion, and shared QAction registration |

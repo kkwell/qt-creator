@@ -2847,6 +2847,103 @@ void EtherCATWorkbenchTests::testNavigationSelectionAndFiltering()
     controller.selectionService()->clear();
 }
 
+void EtherCATWorkbenchTests::testNavigationFilterEmptyState()
+{
+    WorkbenchController controller;
+    const Data::ProjectSnapshot project = projectSnapshot("Filter empty state");
+    QList<Data::DeviceSummary> devices = deviceSummaries(2);
+    controller.treeModel()->setProjects({project});
+    controller.treeModel()->syncDevices(devices);
+
+    WorkbenchNavigationWidget navigation(&controller);
+    navigation.resize(420, 480);
+    navigation.show();
+    QTRY_VERIFY(navigation.isVisible());
+    controller.selectionService()->setCurrentNodeId(devices.first().id);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        devices.first().id);
+
+    QWidget *emptyState
+        = navigation.findChild<QWidget *>("EtherCATWorkbenchFilterEmptyState");
+    QLabel *emptyMessage
+        = navigation.findChild<QLabel *>("EtherCATWorkbenchFilterEmptyMessage");
+    QPushButton *clearFilter
+        = navigation.findChild<QPushButton *>("EtherCATWorkbenchClearFilter");
+    QVERIFY(emptyState);
+    QVERIFY(emptyMessage);
+    QVERIFY(clearFilter);
+    QVERIFY(!navigation.filterEdit()->accessibleName().isEmpty());
+    QVERIFY(!navigation.filterEdit()->accessibleDescription().isEmpty());
+    QVERIFY(!emptyState->accessibleName().isEmpty());
+    QVERIFY(!emptyState->accessibleDescription().isEmpty());
+    QVERIFY(!emptyMessage->accessibleName().isEmpty());
+    QVERIFY(!clearFilter->accessibleDescription().isEmpty());
+    QVERIFY(navigation.treeView()->isVisible());
+    QVERIFY(!emptyState->isVisible());
+
+    const Data::NodeId selectedId = devices.first().id;
+    const QString missingQuery
+        = QString::fromUtf8("未匹配的超长 EtherCAT 设备 Ω — filter remains local and offline");
+    navigation.filterEdit()->setText(missingQuery);
+    QTRY_COMPARE(navigation.treeView()->model()->rowCount(), 0);
+    QTRY_VERIFY(emptyState->isVisible());
+    QVERIFY(!navigation.treeView()->isVisible());
+    QCOMPARE(emptyMessage->text(), QString("No EtherCAT nodes match the current filter."));
+    QCOMPARE(clearFilter->text(), QString("Clear Filter"));
+    QCOMPARE(controller.selectionService()->currentNodeId(), selectedId);
+    QCOMPARE(navigation.focusProxy(), clearFilter);
+    navigation.setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), clearFilter);
+
+    const QString renderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_NAV_FILTER_RENDER_PATH");
+    if (!renderPath.isEmpty())
+        QVERIFY(navigation.grab().save(renderPath));
+
+    QTest::keyClick(clearFilter, Qt::Key_Space);
+    QTRY_VERIFY(navigation.filterEdit()->text().isEmpty());
+    QTRY_VERIFY(navigation.treeView()->isVisible());
+    QVERIFY(!emptyState->isVisible());
+    QCOMPARE(navigation.focusProxy(), navigation.treeView());
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        selectedId);
+    QTRY_COMPARE(QApplication::focusWidget(), navigation.treeView());
+
+    navigation.filterEdit()->setText(missingQuery);
+    QTRY_VERIFY(emptyState->isVisible());
+    Data::DeviceSummary lateMatch = deviceSummaries(1).first();
+    lateMatch.name = missingQuery;
+    devices.append(lateMatch);
+    controller.treeModel()->syncDevices(devices);
+    QTRY_VERIFY(navigation.treeView()->isVisible());
+    QVERIFY(!emptyState->isVisible());
+    QVERIFY(findById(navigation.treeView()->model(), lateMatch.id).isValid());
+    QCOMPARE(controller.selectionService()->currentNodeId(), selectedId);
+
+    devices.removeLast();
+    controller.treeModel()->syncDevices(devices);
+    QTRY_VERIFY(emptyState->isVisible());
+    const Data::NodeId externallySelectedId = devices.last().id;
+    controller.selectionService()->setCurrentNodeId(externallySelectedId);
+    QTRY_VERIFY(navigation.filterEdit()->text().isEmpty());
+    QTRY_VERIFY(navigation.treeView()->isVisible());
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        externallySelectedId);
+    controller.selectionService()->clear();
+}
+
 void EtherCATWorkbenchTests::testNavigationKeyboardFocus()
 {
     WorkbenchController controller;

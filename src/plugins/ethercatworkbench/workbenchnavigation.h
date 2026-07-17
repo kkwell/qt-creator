@@ -11,7 +11,9 @@
 
 QT_BEGIN_NAMESPACE
 class QLineEdit;
+class QPushButton;
 class QSortFilterProxyModel;
+class QStackedWidget;
 class QTreeView;
 QT_END_NAMESPACE
 
@@ -36,6 +38,7 @@ public:
 private:
     void selectSourceIndex(const QModelIndex &sourceIndex);
     void selectNode(const Data::NodeId &nodeId);
+    void updateFilterState();
     void showContextMenu(const QPoint &position);
     void locateUnsupportedDevice();
     void copyCurrentNodeId();
@@ -45,6 +48,9 @@ private:
     QSortFilterProxyModel *m_proxyModel = nullptr;
     QLineEdit *m_filterEdit = nullptr;
     QTreeView *m_treeView = nullptr;
+    QStackedWidget *m_resultsStack = nullptr;
+    QWidget *m_emptyState = nullptr;
+    QPushButton *m_clearFilter = nullptr;
 };
 
 class WorkbenchNavigationFactory final : public ::Core::INavigationWidgetFactory

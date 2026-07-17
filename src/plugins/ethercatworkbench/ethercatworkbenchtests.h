@@ -30,6 +30,7 @@ private slots:
     void testConfiguredSlaveStateIcon();
     void testProviderStateTreeAndNavigation();
     void testNavigationSelectionAndFiltering();
+    void testNavigationFilterEmptyState();
     void testNavigationKeyboardFocus();
     void testBuiltInDevicePages();
     void testConfiguredSlaveTreeAndPages();

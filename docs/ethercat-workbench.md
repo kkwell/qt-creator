@@ -141,8 +141,8 @@ ID.
 ## Navigation keyboard focus
 
 `ISSUE-WB-NAV-KEYBOARD-001` completes the activation path for the existing
-`QTreeView` keyboard navigation. The Workbench navigation container now uses
-the device tree as its focus proxy. When Qt Creator activates the EtherCAT
+`QTreeView` keyboard navigation. The Workbench navigation container normally
+uses the device tree as its focus proxy. When Qt Creator activates the EtherCAT
 navigation page and focuses the factory widget, the tree receives focus
 without an extra mouse click. Up/Down then changes the visible row through
 `QTreeView`, and the existing current-index bridge publishes the selected
@@ -163,6 +163,37 @@ presented as copied TwinCAT behavior.
 The issue adds no shortcut, filter behavior, model role, public API, Provider,
 thread, timer, or persistent state. Destruction remains ordinary QWidget child
 ownership, and the existing selection/provider cleanup paths are unchanged.
+
+## Navigation filter empty state
+
+`ISSUE-WB-NAV-FILTER-EMPTY-001` completes the visible and accessible feedback
+for the existing navigation filter. A non-empty query whose proxy model has no
+top-level rows now swaps the tree page for a centred, word-wrapped
+`No EtherCAT nodes match the current filter.` state and a keyboard-focusable
+`Clear Filter` button. Clearing restores the tree, its current stable `NodeId`,
+and direct arrow-key focus. While the empty state is visible, the navigation
+container uses the visible recovery button as its focus proxy instead of the
+hidden tree.
+
+The filter field, empty state, and recovery action publish translated
+accessible names or descriptions. Proxy row insertion, removal, reset,
+layout, and data changes all re-evaluate the stacked view, so a matching device
+that appears while a query remains active restores the tree. Filtering remains
+presentation-only: it does not mutate a Project, ESI repository, Provider, or
+`SelectionService`. An external stable selection continues to clear a filter
+that hides the selected node and then restores that exact row.
+
+Qt documents a line edit connected to `QSortFilterProxyModel` as the common
+filtering pattern, with source changes dynamically re-filtered by default:
+<https://doc.qt.io/qt-6/qsortfilterproxymodel.html>. The stacked no-result page
+follows Qt Creator's existing Extension Manager pattern. Beckhoff documents a
+tree-centred I/O workflow and searchable/filterable device-selection dialogs:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html>,
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1096103307.html>, and
+<https://infosys.beckhoff.com/content/1033/ps2001-4810-1001/10832046859.html>.
+Those Beckhoff pages do not specify a persistent main-tree no-result state;
+this feedback is a native Qt Creator usability and accessibility completion,
+not copied or claimed TwinCAT behavior.
 
 Both columns resize to their visible contents and node text is not elided.
 This gives the hierarchical name priority in Qt Creator's narrow navigation
@@ -896,11 +927,6 @@ contract and remain explicit read-only or unavailable states. ADS/NetId
 routing, master configuration export, Sync Unit assignment, runtime task
 binding, and cyclic-frame generation are also absent; the master EtherCAT page
 shows those boundaries instead of generating placeholder operational data.
-The navigation filter also still presents an empty tree when a non-empty query
-has no match. `ISSUE-WB-NAV-FILTER-EMPTY-001` remains a separate Workbench UI
-qualification issue: it must provide an explicit no-match state, a clear-filter
-path, and translated accessible name/description for the filter field without
-changing stable selection or filter semantics.
 
 ## Verification
 
@@ -992,12 +1018,18 @@ The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
 match/difference routing, Missing/Added/Revision/Vendor presentation, warning
 and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
 stable locate/open navigation, command registration, and provider-removal
-restoration. It passes 31 tests on the qualified Qt 6.11.0 Release test build.
+restoration. It passes 32 tests on the qualified Qt 6.11.0 Release test build.
 The navigation keyboard-focus test passes at normal scale and
 `QT_SCALE_FACTOR=2`, with 3 passed and 0 failed at each scale. It verifies the
 container focus proxy, actual application focus, a real Down-arrow event, and
-the resulting stable `NodeId` publication. The complete Workbench suite passes
-31 tests at normal scale; no complete-suite 2x run is claimed.
+the resulting stable `NodeId` publication. The navigation-filter empty-state
+test passes with 3 tests at both normal scale and `QT_SCALE_FACTOR=2`. It covers
+the no-match stack, translated accessibility metadata, a real Space-key clear,
+dynamic proxy insertion/removal, visible focus-proxy switching, long Unicode
+input, exact stable selection preservation, and external-selection recovery.
+Its normal 420 x 480 and 2x 840 x 960 direct renders were inspected without
+clipping, overlap, or scale drift. The complete Workbench suite passes 32 tests
+at normal scale; no complete-suite 2x run is claimed.
 The project, target, and master General flows also pass at
 `QT_SCALE_FACTOR=2`, and direct normal and 2x widget renders show no overlap,
 clipping, or uncontrolled expansion.

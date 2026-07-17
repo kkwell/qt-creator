@@ -120,6 +120,15 @@ source provenance read-only, retains no Provider or job, and clears itself when
 the context no longer resolves. `EtherCATDevices` remains the sole owner of
 parsing and source data; no `Internal` header, widget pointer, model index,
 public API, or controller behavior crosses the plugin boundary.
+The Workbench-private navigation filter uses a stacked tree/no-match
+presentation. A non-empty zero-row proxy exposes a translated no-match message
+and keyboard-reachable Clear Filter action; the navigation focus proxy follows
+the visible recovery control and returns to the tree after clearing. Proxy
+changes update that state dynamically, while stable `NodeId` selection,
+Project and repository data, and public service contracts remain unchanged.
+This is a Qt Creator-native accessibility completion consistent with
+Beckhoff's tree-centred engineering flow, not a claim that TwinCAT defines the
+same persistent-tree empty state.
 The Master-side `Add New Item...` command opens a Workbench-private selection
 dialog over a copied immutable `DeviceSummary` list. It retains stable
 device/master IDs rather than model indexes, and the existing Project service
