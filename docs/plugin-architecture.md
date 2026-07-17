@@ -134,6 +134,19 @@ Project and repository data, and public service contracts remain unchanged.
 This is a Qt Creator-native accessibility completion consistent with
 Beckhoff's tree-centred engineering flow, not a claim that TwinCAT defines the
 same persistent-tree empty state.
+
+The Workbench also consumes the existing public project list, active project
+ID, and active-project change signal to derive a private navigation status.
+Only the active `.ecatproject` root is presented as
+`Active project | Offline`; the stored Project snapshot remains `Offline`, so
+Qt Creator startup-project ownership and offline controller state are not
+conflated. An active switch updates model data roles without a reset, while
+stable selection and Details context remain independent. Tree selection never
+activates a project, and the existing active-Master drop target follows the
+same ProjectService state. ProjectExplorer continues to own open, active,
+handoff, and close lifecycle; Workbench adds no command, public role, Provider,
+project pointer, persistent field, controller transport, or online state.
+
 The Master-side `Add New Item...` command opens a Workbench-private selection
 dialog over a copied immutable `DeviceSummary` list. It retains stable
 device/master IDs rather than model indexes, and the existing Project service
@@ -220,7 +233,9 @@ a controller transport.
 
 The completed Project implementation and versioned file contract are recorded
 in `docs/ethercat-project-format.md`. ProjectExplorer owns open/close and
-startup-project state; EtherCATProject owns persistence and its undo stack.
+startup-project state, including handoff after the active project closes;
+EtherCATProject owns persistence and its undo stack. Workbench only observes
+the corresponding public snapshots and stable IDs.
 The completed Devices repository and its parsing, storage, identity, and
 asynchronous-lifecycle boundaries are recorded in
 `docs/ethercat-devices-repository.md`.

@@ -138,6 +138,39 @@ active offline master, opening the master-side `Add New Item...` device
 selector, removing or moving a configured slave, and copying the stable node
 ID.
 
+## Active project navigation state
+
+`ISSUE-WB-NAV-ACTIVE-PROJECT-001` makes the Qt Creator active project visible
+when more than one `.ecatproject` is open. The active project root reports
+`Active project | Offline`; every other project root continues to report
+`Offline`. These are two independent facts: `Active project` identifies Qt
+Creator's current startup/engineering project, while `Offline` confirms that
+the local project has no controller or runtime connection. Selecting or
+focusing an inactive Workbench row does not activate it.
+
+The controller consumes the existing public `ProjectService::projects()`,
+`activeProjectId()`, and `activeProjectChanged` contract. The tree model keeps
+the immutable project status unchanged and derives the visible active prefix
+only for Display, Status, Search, and tooltip roles. An active-project switch
+therefore emits bounded `dataChanged` notifications across the affected root
+rows instead of resetting the model. Stable selection, persistent model
+indexes, and the Details context survive the switch; an existing
+`Active project` filter dynamically moves to the newly active branch. The
+active offline Master's existing drop target and tooltip move through their
+unchanged controller path.
+
+Qt Creator documents one active project among the projects shown in its
+Projects tree:
+<https://doc.qt.io/qtcreator/creator-projects-view.html>. Beckhoff's
+`Active PLC project` describes a different selection inside a TwinCAT project,
+and `Activate Configuration` enables or overwrites a runtime configuration:
+<https://infosys.beckhoff.com/content/1033/tc3_userinterface/3907516043.html>
+and
+<https://infosys.beckhoff.com/content/1033/tc3_plc_intro/2953964811.html>.
+Neither meaning is claimed here. This issue adds no Activate Configuration,
+PLC project, boot project, download, ADS, controller, Config/Run/OP, or online
+behavior, and it adds no Workbench command for changing the active project.
+
 ## Navigation keyboard focus
 
 `ISSUE-WB-NAV-KEYBOARD-001` completes the activation path for the existing
@@ -915,6 +948,13 @@ handler reuses the checked insertion operation and is cleared before the tree
 model during shutdown. It adds no timer, Provider, background job, public
 contract, or persistent owner.
 
+Open-project and active-project lifetime remain owned by ProjectExplorer and
+`EtherCATProject`. Workbench observes copied snapshots and the public active
+ID only. Closing the active project lets ProjectExplorer hand activity to the
+remaining project; closing all projects restores the existing no-project tree
+and clears stale selection. The active marker retains no project pointer,
+model index, Provider, timer, thread, or persistent state.
+
 The controller watches optional Scan/Diagnostics availability and snapshot
 signals through public Provider contracts. Provider removal is handled before
 the object leaves the registry: the departing object is excluded, its copied
@@ -1038,7 +1078,7 @@ The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
 match/difference routing, Missing/Added/Revision/Vendor presentation, warning
 and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
 stable locate/open navigation, command registration, and provider-removal
-restoration. It passes 33 tests on the qualified Qt 6.11.0 Release test build.
+restoration. It passes 34 tests on the qualified Qt 6.11.0 Release test build.
 The navigation keyboard-focus test passes at normal scale and
 `QT_SCALE_FACTOR=2`, with 3 passed and 0 failed at each scale. It verifies the
 container focus proxy, actual application focus, a real Down-arrow event, and
@@ -1053,8 +1093,15 @@ passes with 3 tests at normal scale and `QT_SCALE_FACTOR=2`. It verifies the
 exact Display, Status, Search, and tooltip text, the non-selectable placeholder,
 stable parent routing, and the real enabled `Import ESI Files...` action. Its
 normal 720 x 360 and 2x 1440 x 720 navigation renders were inspected without
-clipping, overlap, or scale drift. The complete Workbench suite passes 33 tests
-at normal scale; no complete-suite 2x run is claimed.
+clipping, overlap, or scale drift. The active-project lifecycle test passes
+with 3 tests at both normal scale and `QT_SCALE_FACTOR=2`. It opens two real
+projects and verifies exact status-role consistency, explicit activation,
+selection/Details preservation without a model reset, dynamic filter handoff,
+active-Master drop-target handoff, active-project close fallback, and final
+no-project cleanup. Its normal 720 x 360 and 2x 1440 x 720 direct navigation
+renders show both project roots and the textual active state without clipping,
+overlap, or scale drift. The complete Workbench suite passes 34 tests at normal
+scale; no complete-suite 2x run is claimed.
 The project, target, and master General flows also pass at
 `QT_SCALE_FACTOR=2`, and direct normal and 2x widget renders show no overlap,
 clipping, or uncontrolled expansion.

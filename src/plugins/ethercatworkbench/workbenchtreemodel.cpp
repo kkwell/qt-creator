@@ -569,8 +569,9 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
     if (!node)
         return {};
 
+    const QString status = visibleStatus(node);
     if (role == Qt::DisplayRole)
-        return index.column() == 0 ? node->name : node->status;
+        return index.column() == 0 ? node->name : status;
     if (role == NodeIdRole)
         return QVariant::fromValue(node->id);
     if (role == NodeKindRole)
@@ -578,9 +579,9 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
     if (role == ProjectIdRole)
         return QVariant::fromValue(node->projectId);
     if (role == StatusRole)
-        return node->status;
+        return status;
     if (role == SearchTextRole) {
-        QString text = node->name + ' ' + node->status;
+        QString text = node->name + ' ' + status;
         if (!node->presentationDetails.isEmpty())
             text += ' ' + node->presentationDetails.join(' ');
         if (node->kind == Core::WorkbenchNodeKind::Device) {
@@ -594,8 +595,8 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
     }
     if (role == Qt::ToolTipRole) {
         QString text = node->name;
-        if (!node->status.isEmpty())
-            text += "\n" + node->status;
+        if (!status.isEmpty())
+            text += "\n" + status;
         if (!node->presentationDetails.isEmpty())
             text += "\n" + node->presentationDetails.join("\n");
         if (node->kind == Core::WorkbenchNodeKind::Device) {
@@ -781,6 +782,36 @@ void WorkbenchTreeModel::setProjects(const QList<Data::ProjectSnapshot> &project
     rebuild();
 }
 
+void WorkbenchTreeModel::setActiveProjectId(const Data::NodeId &projectId)
+{
+    if (m_activeProjectId == projectId)
+        return;
+
+    const auto projectIndex = [this](const Data::NodeId &id) {
+        const QModelIndex index = indexForNodeId(id);
+        if (!index.isValid() || index.parent().isValid())
+            return QModelIndex();
+        const Node *node = nodeForIndex(index);
+        return node && node->kind == Core::WorkbenchNodeKind::Project ? index : QModelIndex();
+    };
+    const QModelIndex previous = projectIndex(m_activeProjectId);
+    m_activeProjectId = projectId;
+    const QModelIndex current = projectIndex(m_activeProjectId);
+    if (!previous.isValid() && !current.isValid())
+        return;
+
+    const int firstRow = previous.isValid() && current.isValid()
+                             ? std::min(previous.row(), current.row())
+                             : (previous.isValid() ? previous.row() : current.row());
+    const int lastRow = previous.isValid() && current.isValid()
+                            ? std::max(previous.row(), current.row())
+                            : firstRow;
+    emit dataChanged(
+        index(firstRow, 0),
+        index(lastRow, columnCount() - 1),
+        {Qt::DisplayRole, Qt::ToolTipRole, StatusRole, SearchTextRole});
+}
+
 void WorkbenchTreeModel::setDropTargetMasterId(const Data::NodeId &masterId)
 {
     if (m_dropTargetMasterId == masterId)
@@ -953,6 +984,7 @@ void WorkbenchTreeModel::clear()
 {
     m_projects.clear();
     m_devices.clear();
+    m_activeProjectId = {};
     m_dropTargetMasterId = {};
     rebuild();
 }
@@ -962,6 +994,15 @@ QModelIndex WorkbenchTreeModel::indexForNodeId(const Data::NodeId &nodeId, int c
     if (nodeId.isNull())
         return {};
     return indexForNode(findNode(nodeId), column);
+}
+
+QString WorkbenchTreeModel::visibleStatus(const Node *node) const
+{
+    if (!node)
+        return {};
+    if (node->kind == Core::WorkbenchNodeKind::Project && node->projectId == m_activeProjectId)
+        return Tr::tr("Active project | %1").arg(node->status);
+    return node->status;
 }
 
 QModelIndex WorkbenchTreeModel::firstUnsupportedDevice() const

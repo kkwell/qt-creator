@@ -241,12 +241,15 @@ struct TestProjectFile
 };
 
 static TestProjectFile writeProjectWithSlave(
-    const QTemporaryDir &directory, const Data::DeviceSummary &device)
+    const QTemporaryDir &directory,
+    const Data::DeviceSummary &device,
+    const QString &fileName = "process-data.ecatproject",
+    const QString &projectName = "Process Data Workflow")
 {
     TestProjectFile result;
     result.path = Utils::FilePath::fromString(directory.path())
                       .canonicalPath()
-                      .pathAppended("process-data.ecatproject");
+                      .pathAppended(fileName);
     result.projectId = Data::NodeId::create();
     result.targetId = Data::NodeId::create();
     result.masterId = Data::NodeId::create();
@@ -279,7 +282,7 @@ static TestProjectFile writeProjectWithSlave(
         {"project",
          QJsonObject{
              {"id", result.projectId.toString()},
-             {"name", "Process Data Workflow"},
+             {"name", projectName},
              {"createdBy", "Workbench Test"}}},
         {"target",
          QJsonObject{{"id", result.targetId.toString()}, {"name", "Offline Controller"}}},
@@ -2910,6 +2913,191 @@ void EtherCATWorkbenchTests::testNavigationSelectionAndFiltering()
     navigation.treeView()->setCurrentIndex(proxyIndex);
     QCOMPARE(controller.selectionService()->currentNodeId(), devices.at(7).id);
     controller.selectionService()->clear();
+}
+
+void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+    QVERIFY(projectService->projects().isEmpty());
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QList<Data::DeviceSummary> devices = deviceSummaries(2);
+    const TestProjectFile first = writeProjectWithSlave(
+        directory, devices.at(0), "alpha.ecatproject", "Alpha EtherCAT Project");
+    const TestProjectFile second = writeProjectWithSlave(
+        directory, devices.at(1), "beta.ecatproject", "Beta EtherCAT Project");
+    QVERIFY(!first.path.isEmpty());
+    QVERIFY(!second.path.isEmpty());
+
+    const ProjectExplorer::OpenProjectResult firstOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(first.path, false);
+    QVERIFY2(firstOpened, qPrintable(firstOpened.errorMessage()));
+    const ProjectExplorer::OpenProjectResult secondOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(second.path, false);
+    QVERIFY2(secondOpened, qPrintable(secondOpened.errorMessage()));
+    QTRY_COMPARE(projectService->projects().size(), 2);
+    QVERIFY_RESULT(projectService->activateProject(first.projectId));
+    QTRY_COMPARE(projectService->activeProjectId(), first.projectId);
+
+    WorkbenchNavigationWidget navigation(&controller);
+    navigation.resize(720, 360);
+    navigation.show();
+    DetailsView details(&controller);
+    details.resize(1100, 760);
+    details.show();
+    QTRY_VERIFY(navigation.isVisible());
+    QTRY_VERIFY(details.isVisible());
+    QAbstractItemModelTester tester(
+        controller.treeModel(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+
+    const auto projectStatus = [&controller](const Data::NodeId &projectId) {
+        return controller.treeModel()
+            ->indexForNodeId(projectId, 1)
+            .data(Qt::DisplayRole)
+            .toString();
+    };
+    QTRY_COMPARE(projectStatus(first.projectId), QString("Active project | Offline"));
+    QCOMPARE(projectStatus(second.projectId), QString("Offline"));
+    QCOMPARE(
+        controller.treeModel()->indexForNodeId(first.projectId).data(WorkbenchTreeModel::StatusRole),
+        QVariant("Active project | Offline"));
+    QVERIFY(
+        controller.treeModel()
+            ->indexForNodeId(first.projectId)
+            .data(WorkbenchTreeModel::SearchTextRole)
+            .toString()
+            .contains("Active project | Offline"));
+    QVERIFY(
+        controller.treeModel()
+            ->indexForNodeId(first.projectId)
+            .data(Qt::ToolTipRole)
+            .toString()
+            .contains("Active project | Offline"));
+    QVERIFY(controller.treeModel()->flags(controller.treeModel()->indexForNodeId(first.masterId))
+            & Qt::ItemIsDropEnabled);
+    QVERIFY(!(controller.treeModel()->flags(controller.treeModel()->indexForNodeId(second.masterId))
+              & Qt::ItemIsDropEnabled));
+    QVERIFY(
+        controller.treeModel()
+            ->indexForNodeId(first.masterId)
+            .data(Qt::ToolTipRole)
+            .toString()
+            .contains("Drop a supported ESI device here"));
+    QVERIFY(
+        !controller.treeModel()
+             ->indexForNodeId(second.masterId)
+             .data(Qt::ToolTipRole)
+             .toString()
+             .contains("Drop a supported ESI device here"));
+
+    navigation.treeView()->collapseAll();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const QString renderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_ACTIVE_PROJECT_RENDER_PATH");
+    if (!renderPath.isEmpty())
+        QVERIFY2(navigation.grab().save(renderPath), qPrintable(renderPath));
+
+    const QModelIndex secondProjectProxy
+        = findById(navigation.treeView()->model(), second.projectId);
+    QVERIFY(secondProjectProxy.isValid());
+    navigation.treeView()->setCurrentIndex(secondProjectProxy);
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), second.projectId);
+    QCOMPARE(projectService->activeProjectId(), first.projectId);
+
+    controller.selectionService()->setCurrentNodeId(second.masterId);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        second.masterId);
+    QTRY_COMPARE(details.currentContext().nodeId, second.masterId);
+    QCOMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::Master);
+
+    QSignalSpy modelResetSpy(controller.treeModel(), &QAbstractItemModel::modelReset);
+    const QPersistentModelIndex firstPersistent(
+        controller.treeModel()->indexForNodeId(first.projectId));
+    const QPersistentModelIndex secondPersistent(
+        controller.treeModel()->indexForNodeId(second.projectId));
+    QVERIFY(firstPersistent.isValid());
+    QVERIFY(secondPersistent.isValid());
+    const int resetCount = modelResetSpy.count();
+
+    QVERIFY_RESULT(projectService->activateProject(second.projectId));
+    QTRY_COMPARE(projectService->activeProjectId(), second.projectId);
+    QTRY_COMPARE(projectStatus(first.projectId), QString("Offline"));
+    QTRY_COMPARE(projectStatus(second.projectId), QString("Active project | Offline"));
+    QCOMPARE(modelResetSpy.count(), resetCount);
+    QVERIFY(firstPersistent.isValid());
+    QVERIFY(secondPersistent.isValid());
+    QCOMPARE(controller.selectionService()->currentNodeId(), second.masterId);
+    QCOMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        second.masterId);
+    QCOMPARE(details.currentContext().nodeId, second.masterId);
+    QVERIFY(!(controller.treeModel()->flags(controller.treeModel()->indexForNodeId(first.masterId))
+              & Qt::ItemIsDropEnabled));
+    QVERIFY(controller.treeModel()->flags(controller.treeModel()->indexForNodeId(second.masterId))
+            & Qt::ItemIsDropEnabled);
+    QVERIFY(
+        !controller.treeModel()
+             ->indexForNodeId(first.masterId)
+             .data(Qt::ToolTipRole)
+             .toString()
+             .contains("Drop a supported ESI device here"));
+    QVERIFY(
+        controller.treeModel()
+            ->indexForNodeId(second.masterId)
+            .data(Qt::ToolTipRole)
+            .toString()
+            .contains("Drop a supported ESI device here"));
+
+    navigation.filterEdit()->setText("Active project");
+    QTRY_VERIFY(!findById(navigation.treeView()->model(), first.projectId).isValid());
+    QTRY_VERIFY(findById(navigation.treeView()->model(), second.projectId).isValid());
+    QVERIFY_RESULT(projectService->activateProject(first.projectId));
+    QTRY_COMPARE(projectService->activeProjectId(), first.projectId);
+    QTRY_VERIFY(findById(navigation.treeView()->model(), first.projectId).isValid());
+    QTRY_VERIFY(!findById(navigation.treeView()->model(), second.projectId).isValid());
+    QCOMPARE(navigation.filterEdit()->text(), QString("Active project"));
+    QCOMPARE(controller.selectionService()->currentNodeId(), second.masterId);
+    QCOMPARE(details.currentContext().nodeId, second.masterId);
+    navigation.filterEdit()->clear();
+    QTRY_VERIFY(findById(navigation.treeView()->model(), second.projectId).isValid());
+
+    QVERIFY_RESULT(projectService->activateProject(second.projectId));
+    QTRY_COMPARE(projectService->activeProjectId(), second.projectId);
+    controller.selectionService()->setCurrentNodeId(second.masterId);
+    QTRY_COMPARE(details.currentContext().nodeId, second.masterId);
+    ProjectExplorer::ProjectManager::removeProject(secondOpened.project());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_VERIFY(!projectService->project(second.projectId).has_value());
+    QTRY_COMPARE(projectService->activeProjectId(), first.projectId);
+    QTRY_VERIFY(!controller.treeModel()->indexForNodeId(second.projectId).isValid());
+    QTRY_VERIFY(controller.selectionService()->currentNodeId().isNull());
+    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QTRY_COMPARE(projectStatus(first.projectId), QString("Active project | Offline"));
+    QTRY_VERIFY(controller.treeModel()->flags(controller.treeModel()->indexForNodeId(first.masterId))
+                & Qt::ItemIsDropEnabled);
+
+    ProjectExplorer::ProjectManager::removeProject(firstOpened.project());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_VERIFY(projectService->projects().isEmpty());
+    QTRY_VERIFY(projectService->activeProjectId().isNull());
+    QTRY_VERIFY(!controller.treeModel()->indexForNodeId(first.projectId).isValid());
+    QCOMPARE(
+        controller.treeModel()->index(0, 0).data().toString(),
+        QString("No EtherCAT project is open"));
+    QVERIFY(controller.selectionService()->currentNodeId().isNull());
+    QCOMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
 }
 
 void EtherCATWorkbenchTests::testNavigationFilterEmptyState()

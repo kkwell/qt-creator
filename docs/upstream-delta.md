@@ -252,6 +252,17 @@ no source-list entry, CMake/qbs change, dependency, public API, persistent
 format, upstream Core, ProjectExplorer, or application path, so the Workbench
 path count remains 44 and the direct Core patch count remains five.
 
+The Workbench active-project navigation issue changes only the existing private
+tree model, controller, tests, and documentation. It derives the visible marker
+from the already public Project snapshots and active project ID, emits bounded
+data changes without resetting stable selection, and reuses the existing
+active-Master drop-target path. ProjectExplorer and EtherCATProject retain
+startup-project, open/close, handoff, and persistence ownership. It adds no
+source file, CMake/qbs entry, dependency, public API, model role, Provider,
+persistent field, controller transport, upstream Core, ProjectExplorer, or
+application path. The Workbench path count remains 44 and the direct Core patch
+count remains five.
+
 The Workbench offline-topology issue changes only the product-owned
 `EtherCATWorkbench` plugin and documentation. It adds two private ESI-default
 factory files with synchronized CMake/qbs entries, then reuses the existing

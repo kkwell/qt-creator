@@ -504,6 +504,7 @@ void WorkbenchController::refreshProjects()
     const Data::NodeId selectedId = m_selectionService ? m_selectionService->currentNodeId()
                                                        : Data::NodeId();
     m_treeModel.setProjects(m_projectService->projects());
+    m_treeModel.setActiveProjectId(m_projectService->activeProjectId());
     const std::optional<ActiveMasterContext> active = activeMasterContext(m_projectService);
     m_treeModel.setDropTargetMasterId(active ? active->masterId : Data::NodeId());
     if (m_selectionService && !selectedId.isNull()

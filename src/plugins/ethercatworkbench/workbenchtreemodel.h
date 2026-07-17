@@ -59,6 +59,7 @@ public:
     QHash<int, QByteArray> roleNames() const final;
 
     void setProjects(const QList<Data::ProjectSnapshot> &projects);
+    void setActiveProjectId(const Data::NodeId &projectId);
     void setDropTargetMasterId(const Data::NodeId &masterId);
     void setDeviceDropHandler(DeviceDropHandler handler);
     void syncDevices(const QList<Data::DeviceSummary> &devices);
@@ -88,6 +89,7 @@ private:
     QModelIndex indexForNode(const Node *node, int column = 0) const;
     Node *nodeForIndex(const QModelIndex &index) const;
     Node *findNode(const Data::NodeId &nodeId) const;
+    QString visibleStatus(const Node *node) const;
     Data::NodeId deviceIdFromMimeData(const QMimeData *data) const;
     void updateOptionalProviderStatus();
     void updateProviderPresentation();
@@ -97,6 +99,7 @@ private:
     Node *m_repositoryNode = nullptr;
     QList<Data::ProjectSnapshot> m_projects;
     QList<Data::DeviceSummary> m_devices;
+    Data::NodeId m_activeProjectId;
     Data::NodeId m_dropTargetMasterId;
     DeviceDropHandler m_deviceDropHandler;
     bool m_scanAvailable = false;
