@@ -193,6 +193,24 @@ void EtherCATWorkbenchPlugin::setupActions()
         emit m_controller->copyCurrentNodeIdRequested();
     });
 
+    auto setActiveProjectAction = new QAction(Tr::tr("Set as Active Project"), this);
+    const QString setActiveProjectDescription = Tr::tr(
+        "Use this open offline EtherCAT project for Workbench engineering commands. "
+        "This does not activate a controller configuration.");
+    setActiveProjectAction->setToolTip(setActiveProjectDescription);
+    setActiveProjectAction->setStatusTip(setActiveProjectDescription);
+    ::Core::Command *setActiveProjectCommand = ::Core::ActionManager::registerAction(
+        setActiveProjectAction,
+        Constants::SET_ACTIVE_PROJECT_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    setActiveProjectCommand->setDescription(setActiveProjectAction->text());
+    connect(setActiveProjectAction, &QAction::triggered, m_controller.get(), [this] {
+        if (const Utils::Result<> result = m_controller->activateSelectedProject(); !result) {
+            ::Core::MessageManager::writeFlashing(
+                Tr::tr("Cannot set the active EtherCAT project: %1").arg(result.error()));
+        }
+    });
+
     auto insertDeviceAction
         = new QAction(Utils::Icons::PLUS.icon(), Tr::tr("Add New Item..."), this);
     ::Core::ActionManager::registerAction(
@@ -262,6 +280,7 @@ void EtherCATWorkbenchPlugin::setupActions()
          openDiagnosticsAction,
          locateUnsupportedAction,
          copyNodeIdAction,
+         setActiveProjectAction,
          insertDeviceAction,
          addDeviceAction,
          removeSlaveAction,
@@ -273,6 +292,7 @@ void EtherCATWorkbenchPlugin::setupActions()
                 openDiagnosticsAction->setEnabled(false);
                 locateUnsupportedAction->setEnabled(false);
                 copyNodeIdAction->setEnabled(false);
+                setActiveProjectAction->setEnabled(false);
                 insertDeviceAction->setEnabled(false);
                 addDeviceAction->setEnabled(false);
                 removeSlaveAction->setEnabled(false);
@@ -290,6 +310,9 @@ void EtherCATWorkbenchPlugin::setupActions()
             copyNodeIdAction->setEnabled(
                 m_controller->selectionService()
                 && !m_controller->selectionService()->currentNodeId().isNull());
+            const bool canActivateSelectedProject
+                = m_controller->canActivateSelectedProject();
+            setActiveProjectAction->setEnabled(canActivateSelectedProject);
             insertDeviceAction->setEnabled(m_controller->canInsertDeviceOnSelectedMaster());
             addDeviceAction->setEnabled(m_controller->canAddSelectedDeviceToMaster());
             removeSlaveAction->setEnabled(m_controller->canRemoveSelectedOfflineSlave());

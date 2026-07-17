@@ -37,6 +37,7 @@ public:
     bool canRemoveSelectedOfflineSlave() const;
     bool canMoveSelectedOfflineSlaveUp() const;
     bool canMoveSelectedOfflineSlaveDown() const;
+    bool canActivateSelectedProject() const;
 
     void refresh();
     void shutdown();
@@ -47,6 +48,7 @@ public:
     Utils::Result<> removeSelectedOfflineSlave();
     Utils::Result<> moveSelectedOfflineSlaveUp();
     Utils::Result<> moveSelectedOfflineSlaveDown();
+    Utils::Result<> activateSelectedProject();
     Utils::Result<> renameProject(const Data::NodeId &projectId, const QString &name);
     Utils::Result<> renameOfflineSlave(
         const Data::NodeId &projectId, const Data::NodeId &slaveId, const QString &name);

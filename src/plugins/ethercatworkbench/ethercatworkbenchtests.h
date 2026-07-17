@@ -32,6 +32,7 @@ private slots:
     void testProviderStateTreeAndNavigation();
     void testNavigationSelectionAndFiltering();
     void testNavigationActiveProjectLifecycle();
+    void testNavigationSetActiveProjectCommand();
     void testNavigationFilterEmptyState();
     void testNavigationKeyboardFocus();
     void testBuiltInDevicePages();

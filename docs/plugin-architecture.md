@@ -23,7 +23,7 @@ documentation, review, and local-commit gates.
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Configuration persistence and structural-name API complete | Version-2 project lifecycle, migration, validation, and Undo/Redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
-| 4 | `EtherCATWorkbenchPlugin` | In progress | Project, Target, Master, configured-slave, ESI Repository, individual ESI catalogue-device General, master-side ESI insertion, and supported-device drag-and-drop workflows, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
+| 4 | `EtherCATWorkbenchPlugin` | In progress | Project, Target, Master, configured-slave, ESI Repository, individual ESI catalogue-device General, master-side ESI insertion, supported-device drag-and-drop, and explicit active-project selection workflows, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
 
@@ -144,7 +144,11 @@ conflated. An active switch updates model data roles without a reset, while
 stable selection and Details context remain independent. Tree selection never
 activates a project, and the existing active-Master drop target follows the
 same ProjectService state. ProjectExplorer continues to own open, active,
-handoff, and close lifecycle; Workbench adds no command, public role, Provider,
+handoff, and close lifecycle. Workbench now adds one context-only
+`Set as Active Project` ActionManager command for an inactive Project root. Its
+controller resolves the selected stable `NodeId` at trigger time and calls the
+existing public `ProjectService::activateProject()` operation. It does not reuse
+ProjectExplorer's private tree-bound QAction and adds no public role, Provider,
 project pointer, persistent field, controller transport, or online state.
 
 The Master-side `Add New Item...` command opens a Workbench-private selection
@@ -215,9 +219,14 @@ removal restores the retained offline presentation. The navigation header and
 device-tree context menu likewise reuse one ActionManager registration per
 command; context-only locate/copy and offline-topology actions remain outside
 the compact strip and derive their enabled state from the current model and
-stable selection. The navigation container now follows Qt Creator's focus-proxy
-pattern, so activating the navigation page gives focus to the device tree and
-arrow-key movement continues through the existing stable-ID selection bridge.
+stable selection. The inactive-Project-only activation action follows the same
+private menu path, remains outside the shared EtherCAT menu and compact strip,
+and keeps selection separate from activation. The navigation widget contributes
+the Workbench action context while focused, so registered menu proxies remain
+live if `EtherCAT Devices` is displayed in another Qt Creator mode. The
+navigation container now follows Qt Creator's focus-proxy pattern, so activating
+the navigation page gives focus to the device tree and arrow-key movement
+continues through the existing stable-ID selection bridge.
 EtherCATCore also reserves stable, append-only node kinds for
 Inputs, Outputs, RxPDO, TxPDO, PDO,
 PDO Entry, Modules, Module, and Channel selections. The Workbench now projects
@@ -235,7 +244,8 @@ The completed Project implementation and versioned file contract are recorded
 in `docs/ethercat-project-format.md`. ProjectExplorer owns open/close and
 startup-project state, including handoff after the active project closes;
 EtherCATProject owns persistence and its undo stack. Workbench only observes
-the corresponding public snapshots and stable IDs.
+the corresponding public snapshots and stable IDs, except that it can request
+an explicit active-project change through the public `ProjectService` contract.
 The completed Devices repository and its parsing, storage, identity, and
 asynchronous-lifecycle boundaries are recorded in
 `docs/ethercat-devices-repository.md`.

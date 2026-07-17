@@ -5,7 +5,7 @@
 | Item | Supported or observed baseline | Evidence status |
 |---|---|---|
 | Product branch | `embed-labs` only | Verified |
-| Issue baseline commit | `854cca06b5add5db62fa87bc695c9a1dacf1c752` | Verified |
+| Issue baseline commit | `c58ee59c646ec0d419ffbb52d8152803f1ae6f97` | Verified |
 | Product version | 20.0.1 | Verified |
 | Recorded Qt Creator merge point | `11ba5cec09dce75db4bc948d98055e338ff59576` | Verified |
 | Qualified product Qt | Homebrew 6.11.0 | Clean Release build and GUI smoke verified |
@@ -69,8 +69,10 @@ visible EtherCAT-master EtherCAT page now exposes the documented NetId/action/fr
 hierarchy with a real local topology view and explicit unavailable runtime
 boundaries. The visible
 TwinCAT-inspired process-data tree is now verified with stable selection and
-details routing. Real modular-profile data, additional UI coverage, and the
-user-policy-deferred upstream rehearsal remain open.
+details routing. Multiple open project roots now expose one explicit
+inactive-root `Set as Active Project` command while retaining independent
+selection and offline state. Real modular-profile data, additional UI coverage,
+and the user-policy-deferred upstream rehearsal remain open.
 
 ### Hidden or excluded plugins
 
@@ -88,6 +90,7 @@ function is outside the product target and records migration or recovery.
 |---|---|
 | TwinCAT-inspired device tree shell | Stage 4 verified |
 | Multiple open project roots and active-project marker | Verified with one textual `Active project \| Offline` marker, inactive `Offline` roots, dynamic filter/drop-target handoff, and real close fallback |
+| Set active project from Workbench | Verified for the inactive project-root context menu, stable-ID activation, active/non-Project exclusion, unchanged Selection/Details/Project snapshots, and no controller or online meaning |
 | Inputs/Outputs/RxPDO/TxPDO tree branches | Verified in current Workbench issue |
 | Modules/Channels tree branch | Explicit empty state verified; real modular data pending Devices/data-contract issue |
 | Public process/PDO/module/channel node kinds | Core/API contract verified |
@@ -516,8 +519,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 34 passed, 0 failed |
-| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 34, Scan 7, Diagnostics 7; 85 passed, 0 failed in isolated processes |
+| Focused EtherCATWorkbench plugin tests | 35 passed, 0 failed on the offscreen qualification path |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 35, Scan 7, Diagnostics 7; 86 passed, 0 failed in isolated offscreen processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first navigation keyboard test | Compiled and failed because the navigation container focus proxy was null, as expected |
@@ -530,6 +533,12 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Focused active-project lifecycle test | 3 passed, 0 failed at normal scale |
 | Focused active-project lifecycle test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
 | Active-project navigation direct Qt renders | Passed at normal 720 x 360 and 2x 1440 x 720 with both project roots, one exact textual active marker, and no clipping, overlap, or scale drift |
+| Failure-first set-active-project command test | Compiled and failed only because `EtherCAT.Workbench.SetActiveProject` was not registered; 2 passed and 1 failed as expected |
+| Focused set-active-project command test | 3 passed, 0 failed at normal scale |
+| Focused set-active-project command test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
+| Set-active-project direct Qt menu renders | Passed at 504 x 376 and 1008 x 752 with separate project/copy groups and no clipping, overlap, or scale drift |
+| Navigation context proxy handoff | Passed by triggering the popup's registered command proxy in both Workbench and Edit-mode navigation contexts |
+| Set-active-project desktop interaction inspection | Not run; only direct menu renders and offscreen widget behavior are claimed |
 | Failure-first ESI repository empty-guidance test | Compiled and failed because the placeholder still said to use an import command in a later UI stage; 2 passed and 1 failed as expected |
 | Focused ESI repository empty-guidance test | 3 passed, 0 failed at normal scale |
 | Focused ESI repository empty-guidance test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
@@ -566,6 +575,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Active switch stability | Passed without model reset or persistent-index invalidation; tree selection did not activate a project and stable selection plus Details context remained unchanged |
 | Active filter and drop-target handoff | Passed for dynamic `Active project` filter rematch and exact active offline Master drop flags/tooltips |
 | Real open/switch/close lifecycle | Passed for two `.ecatproject` files, active-project close fallback to the remaining project, stale-selection cleanup, and final no-project state |
+| Inactive-project context command | Passed for exact ActionManager identity and text, tooltip/status boundary, project-only popup placement, active/non-Project/empty exclusion, shared-menu/command-strip exclusion, and real popup triggering from Workbench and Edit modes |
+| Explicit active-project switch | Passed through the existing public Project service with stable Selection/Details, persistent indexes, no model reset, unchanged Project snapshots, filter/drop-target handoff, and close fallback |
 | Process Data, Startup, and DC pages from imported ESI | Passed |
 | TwinCAT-inspired SM, PDO Assignment, PDO List, PDO Content layout | Passed in widget/model flow test |
 | RxPDO/TxPDO selection and synchronized PDO content | Passed |
@@ -640,11 +651,11 @@ limits are documented in `docs/ethercat-workbench.md`.
 | macOS accessibility lock-transition observation | One Qt 6.11 accessibility crash was captured during a lock transition; a second RxPDO-selection run remained alive until the Mac locked, so the event is not reproduced and remains a qualification risk |
 | Dynamic property-page provider removal | Passed |
 | Dynamic Scan/Diagnostics availability and removal | Passed |
-| Workbench test-process cleanup | Active-project-focused normal/2x and full-suite processes exited 0 after real two-project open/switch/close, widget, controller, selection, and Provider cleanup; this issue adds no thread, timer, future, or Provider |
+| Workbench test-process cleanup | Set-active-project focused normal/2x and the offscreen full-suite process exited 0 after real two-project open/switch/close, widget, controller, selection, and Provider cleanup; this issue adds no thread, timer, future, or Provider |
 | Scan snapshot overlay | Passed for exact, Missing, Added, Revision, Vendor, source label, full-detail search, and aggregate count/severity |
 | Diagnostics snapshot overlay | Passed for Run/OP, SAFEOP/error, AL detail, missing snapshot, alarm/error marker, stopped state, and cleanup |
 | Difference/issue/Diagnostics ActionManager navigation | Passed with stable selection, filter clearing, ancestor expansion, and shared QAction registration |
-| Tree context and navigation ActionManager identity | Passed for seven navigation and five offline-topology commands, shared Expand/Collapse buttons, context-only strip exclusion, enabled state, stable-ID copy, and placeholder protection |
+| Tree context and navigation ActionManager identity | Passed for eight navigation and five offline-topology commands, shared Expand/Collapse buttons, context-only strip exclusion, enabled state, stable-ID copy, and placeholder protection |
 | EtherCATCore regression tests | 17 passed, 0 failed |
 | EtherCATProject regression tests | 12 passed, 0 failed |
 | EtherCATDevices regression tests | 8 passed, 0 failed |
@@ -652,8 +663,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 | EtherCATDiagnostics regression tests | 7 passed, 0 failed |
 | Product version inventory | All 16 allow-listed plugins present and recognized |
 | Normal `WITH_TESTS=OFF` product build | Passed with 16-plugin allow-list |
-| Enabled GUI startup | Passed with clean temporary settings; Workbench initialized and delayed-initialized, remained stable beyond 10 seconds, then exited 143 after intentional SIGTERM |
-| Explicitly disabled startup | Passed with `-noload EtherCATWorkbench` and clean temporary settings; Workbench, Scan, and Diagnostics were absent while Core, Devices, and Project initialized, remained stable beyond 10 seconds, then exited 143 after intentional SIGTERM; no product or test process remained |
+| Enabled offscreen GUI startup | Passed with clean temporary settings; remained stable beyond 10 seconds, then exited 143 after intentional SIGTERM |
+| Explicitly disabled offscreen startup | Passed with `-noload EtherCATWorkbench` and clean temporary settings; remained stable beyond 10 seconds, then exited 143 after intentional SIGTERM; no product or test process remained |
 | Visual desktop inspection | Passed with all five process-data branches, PDO/Entry descendants, explicit modular empty state, normal Creator icon scale, and readable narrow-sidebar names |
 | CoE direct Qt Widget render | Passed at 2200 x 1520 Retina output with hierarchy, values, Mock banner, and bilingual long name visible without overlap |
 | CoE Online desktop interaction inspection | Not run; macOS was locked, so no CoE screenshot or manual-click result is claimed |

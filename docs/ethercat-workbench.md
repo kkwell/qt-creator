@@ -135,8 +135,8 @@ context menu supports expand, collapse, locating the first topology difference,
 locating the first warning/error, opening the matching Diagnostics branch,
 locating the first unsupported ESI device, adding a supported ESI device to the
 active offline master, opening the master-side `Add New Item...` device
-selector, removing or moving a configured slave, and copying the stable node
-ID.
+selector, setting an inactive project as the Qt Creator active project,
+removing or moving a configured slave, and copying the stable node ID.
 
 ## Active project navigation state
 
@@ -169,7 +169,44 @@ and
 <https://infosys.beckhoff.com/content/1033/tc3_plc_intro/2953964811.html>.
 Neither meaning is claimed here. This issue adds no Activate Configuration,
 PLC project, boot project, download, ADS, controller, Config/Run/OP, or online
-behavior, and it adds no Workbench command for changing the active project.
+behavior. The marker issue itself added no Workbench command for changing the
+active project; that explicit interaction is qualified separately below.
+
+## Set the active project from Workbench
+
+`ISSUE-WB-NAV-SET-ACTIVE-PROJECT-001` closes the interaction loop for multiple
+open `.ecatproject` roots. Right-clicking an inactive project root adds the
+context-only `Set as Active Project` command in its own project-operation group,
+before `Copy Node ID`. The current active root, Master, configured-slave, ESI,
+placeholder, and closed-project contexts do not include the command. Merely
+selecting, focusing, or inspecting an inactive project still does not activate
+it.
+
+The command has one Workbench-owned ActionManager identity and is deliberately
+absent from the shared EtherCAT menu and compact command strip. It has no
+default shortcut. The navigation widget contributes the Workbench context while
+it owns focus, so the command proxy remains live when `EtherCAT Devices` is
+shown from another Qt Creator mode such as Edit. Its tooltip and status text say
+that the selected open offline project becomes the Workbench engineering
+context and explicitly state that no controller configuration is activated.
+This follows Qt Creator 20's Projects-tree terminology and
+inactive-project-only visibility rather than reusing ProjectExplorer's private
+action, whose callback depends on ProjectExplorer's own current tree node.
+
+The controller resolves the current stable `NodeId` back to a real open Project
+snapshot, rejects non-Project, active, stale, closed, and shutdown states, then
+calls the existing public `ProjectService::activateProject()` operation. It
+retains no Project pointer or model index. A successful switch keeps Selection
+and Details on the same project root, emits no model reset, does not modify the
+project snapshot or Undo stack, and reuses the active-marker, filter, and
+active-Master drop-target handoff documented above. A failed trigger reports
+through the existing Message Manager path.
+
+This command is Qt Creator active-project selection only. It is not Beckhoff
+`Active PLC project`, `Activate Configuration`, Login, Download, boot-project,
+ADS, controller connection, Config/Run/OP, or any online transition. Replacing
+Qt Creator Run/Debug controls with future Mock or real controller-state controls
+requires a separate issue and a truthful state/transport contract.
 
 ## Navigation keyboard focus
 
@@ -953,7 +990,9 @@ Open-project and active-project lifetime remain owned by ProjectExplorer and
 ID only. Closing the active project lets ProjectExplorer hand activity to the
 remaining project; closing all projects restores the existing no-project tree
 and clears stale selection. The active marker retains no project pointer,
-model index, Provider, timer, thread, or persistent state.
+model index, Provider, timer, thread, or persistent state. The context-only
+activation command resolves the selected stable ID at trigger time, disables
+after handoff or close, and retains no extra lifecycle owner.
 
 The controller watches optional Scan/Diagnostics availability and snapshot
 signals through public Provider contracts. Provider removal is handled before
@@ -1029,7 +1068,7 @@ The command-strip coverage verifies exact shared-action identity, source-menu
 ordering, Open-Workbench exclusion, dynamic add/remove behavior, complete
 tooltips, standard icon metrics, and all optional-plugin load combinations.
 The tree-command coverage opens real popup menus and verifies exact QAction
-identity for the seven navigation commands and five offline-topology commands,
+identity for the eight navigation commands and five offline-topology commands,
 shared Expand/Collapse navigation buttons, context-only exclusion from the
 command strip, unsupported-device location, stable Node ID copying, placeholder
 protection, and enabled-state updates. The topology workflow verifies complete
@@ -1100,8 +1139,19 @@ selection/Details preservation without a model reset, dynamic filter handoff,
 active-Master drop-target handoff, active-project close fallback, and final
 no-project cleanup. Its normal 720 x 360 and 2x 1440 x 720 direct navigation
 renders show both project roots and the textual active state without clipping,
-overlap, or scale drift. The complete Workbench suite passes 34 tests at normal
-scale; no complete-suite 2x run is claimed.
+overlap, or scale drift. The focused set-active-project command test also passes
+with 3 tests at normal scale and `QT_SCALE_FACTOR=2`. It verifies inactive-root
+menu inclusion, active/non-Project/empty exclusion, ActionManager identity,
+menu/command-strip exclusion, stable-ID activation, exact Selection and Details
+preservation, no model reset, persistent indexes, unchanged Project snapshots,
+filter/drop-target handoff, real popup-proxy triggering in Workbench and Edit
+mode navigation contexts, active-close fallback, and final cleanup. Its
+recorded direct Qt menu renders are 504 x 376 and 1008 x 752, with the project
+command in a separate group and no clipping or scale drift. The complete
+Workbench suite passes 35 tests on the `QT_QPA_PLATFORM=offscreen`
+qualification path; no complete-suite 2x run is claimed. Offscreen execution is
+the default automated path so test fixtures do not take desktop focus; no
+desktop interaction is claimed for this issue.
 The project, target, and master General flows also pass at
 `QT_SCALE_FACTOR=2`, and direct normal and 2x widget renders show no overlap,
 clipping, or uncontrolled expansion.

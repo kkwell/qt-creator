@@ -688,6 +688,7 @@ void EtherCATWorkbenchTests::testModeCommandStripMirrorsRegisteredActions()
     for (const Utils::Id id :
          {Utils::Id(Constants::LOCATE_UNSUPPORTED_DEVICE_ACTION_ID),
           Utils::Id(Constants::COPY_NODE_ID_ACTION_ID),
+          Utils::Id(Constants::SET_ACTIVE_PROJECT_ACTION_ID),
           Utils::Id(Constants::ADD_DEVICE_TO_MASTER_ACTION_ID),
           Utils::Id(Constants::REMOVE_OFFLINE_SLAVE_ACTION_ID),
           Utils::Id(Constants::MOVE_OFFLINE_SLAVE_UP_ACTION_ID),
@@ -3098,6 +3099,252 @@ void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
         QString("No EtherCAT project is open"));
     QVERIFY(controller.selectionService()->currentNodeId().isNull());
     QCOMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+}
+
+void EtherCATWorkbenchTests::testNavigationSetActiveProjectCommand()
+{
+    ::Core::ModeManager::activateMode(Constants::MODE_ID);
+    QTRY_COMPARE(::Core::ModeManager::currentModeId(), Utils::Id(Constants::MODE_ID));
+    ::Core::Command *setActiveCommand
+        = ::Core::ActionManager::command(Constants::SET_ACTIVE_PROJECT_ACTION_ID);
+    QVERIFY(setActiveCommand);
+    QAction *setActiveAction = setActiveCommand->action();
+    QVERIFY(setActiveAction);
+    QAction *setActiveContextAction
+        = setActiveCommand->actionForContext(Constants::CONTEXT_ID);
+    QVERIFY(setActiveContextAction);
+
+    QWidget *modeWidget = ::Core::ModeManager::currentMode()->widget();
+    QVERIFY(modeWidget);
+    QToolBar *commandStrip
+        = modeWidget->findChild<QToolBar *>("EtherCATWorkbenchCommandStrip");
+    QVERIFY(commandStrip);
+    QVERIFY(!commandStrip->actions().contains(setActiveAction));
+    ::Core::ActionContainer *ethercatMenu
+        = ::Core::ActionManager::actionContainer(Constants::MENU_ID);
+    QVERIFY(ethercatMenu);
+    QVERIFY(!ethercatMenu->menu()->actions().contains(setActiveAction));
+
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+    QVERIFY(projectService->projects().isEmpty());
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QList<Data::DeviceSummary> devices = deviceSummaries(2);
+    const TestProjectFile first = writeProjectWithSlave(
+        directory, devices.at(0), "alpha-command.ecatproject", "Alpha Command Project");
+    const TestProjectFile second = writeProjectWithSlave(
+        directory, devices.at(1), "beta-command.ecatproject", "Beta Command Project");
+    const ProjectExplorer::OpenProjectResult firstOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(first.path, false);
+    QVERIFY2(firstOpened, qPrintable(firstOpened.errorMessage()));
+    const ProjectExplorer::OpenProjectResult secondOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(second.path, false);
+    QVERIFY2(secondOpened, qPrintable(secondOpened.errorMessage()));
+    QTRY_COMPARE(projectService->projects().size(), 2);
+    QVERIFY_RESULT(projectService->activateProject(first.projectId));
+    QTRY_COMPARE(projectService->activeProjectId(), first.projectId);
+
+    WorkbenchNavigationWidget navigation(&controller);
+    navigation.resize(760, 420);
+    navigation.show();
+    DetailsView details(&controller);
+    details.resize(1100, 760);
+    details.show();
+    QTRY_VERIFY(navigation.isVisible());
+    QTRY_VERIFY(details.isVisible());
+    navigation.activateWindow();
+    navigation.treeView()->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(navigation.treeView()->hasFocus());
+    QTRY_COMPARE(
+        ::Core::ICore::currentContextWidget(), static_cast<QWidget *>(&navigation));
+
+    struct PopupCapture
+    {
+        QList<QAction *> actions;
+        QStringList actionTexts;
+        QList<bool> separators;
+        bool seen = false;
+        bool rendered = true;
+    };
+    const auto capturePopup = [&navigation](
+                                  const QString &renderPath = {},
+                                  const QString &triggerText = {}) {
+        PopupCapture capture;
+        capture.rendered = renderPath.isEmpty();
+        QTimer::singleShot(0, &navigation, [&capture, renderPath, triggerText] {
+            auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (!popup)
+                return;
+            capture.seen = true;
+            QAction *actionToTrigger = nullptr;
+            for (QAction *action : popup->actions()) {
+                const bool separator = action->isSeparator();
+                capture.actionTexts.append(action->text());
+                capture.separators.append(separator);
+                if (!separator) {
+                    capture.actions.append(action);
+                    if (action->text() == triggerText)
+                        actionToTrigger = action;
+                }
+            }
+            if (!renderPath.isEmpty())
+                capture.rendered = popup->grab().save(renderPath);
+            if (actionToTrigger)
+                actionToTrigger->trigger();
+            popup->close();
+        });
+        emit navigation.treeView()->customContextMenuRequested(QPoint(-1, -1));
+        return capture;
+    };
+
+    const QModelIndex firstProject = findById(navigation.treeView()->model(), first.projectId);
+    const QModelIndex secondProject = findById(navigation.treeView()->model(), second.projectId);
+    QVERIFY(firstProject.isValid());
+    QVERIFY(secondProject.isValid());
+
+    navigation.treeView()->setCurrentIndex(firstProject);
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), first.projectId);
+    QCOMPARE(projectService->activeProjectId(), first.projectId);
+    const PopupCapture activePopup = capturePopup();
+    QVERIFY(activePopup.seen);
+    QVERIFY(!activePopup.actions.contains(setActiveAction));
+    QVERIFY(!setActiveAction->isEnabled());
+
+    navigation.treeView()->setCurrentIndex(secondProject);
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), second.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, second.projectId);
+    QCOMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::Project);
+    QCOMPARE(projectService->activeProjectId(), first.projectId);
+
+    const QString renderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_SET_ACTIVE_PROJECT_RENDER_PATH");
+    const PopupCapture inactivePopup = capturePopup(renderPath);
+    QVERIFY(inactivePopup.seen);
+    QVERIFY(inactivePopup.rendered);
+    QVERIFY(setActiveAction->isEnabled());
+    QTRY_VERIFY(setActiveContextAction->isEnabled());
+    QCOMPARE(setActiveAction->text(), QString("Set as Active Project"));
+    QVERIFY(!setActiveAction->toolTip().isEmpty());
+    QVERIFY(!setActiveAction->statusTip().isEmpty());
+    const int setActiveIndex = inactivePopup.actionTexts.indexOf(setActiveAction->text());
+    QVERIFY(setActiveIndex > 0);
+    QAction *popupSetActiveAction = nullptr;
+    for (QAction *action : inactivePopup.actions) {
+        if (action->text() == setActiveAction->text()) {
+            popupSetActiveAction = action;
+            break;
+        }
+    }
+    QCOMPARE(popupSetActiveAction, setActiveAction);
+    QVERIFY(inactivePopup.separators.at(setActiveIndex - 1));
+    QVERIFY(setActiveIndex + 1 < inactivePopup.separators.size());
+    QVERIFY(inactivePopup.separators.at(setActiveIndex + 1));
+    ::Core::Command *copyCommand
+        = ::Core::ActionManager::command(Constants::COPY_NODE_ID_ACTION_ID);
+    QVERIFY(copyCommand);
+    QVERIFY(setActiveIndex < inactivePopup.actionTexts.indexOf(copyCommand->action()->text()));
+
+    QSignalSpy modelResetSpy(controller.treeModel(), &QAbstractItemModel::modelReset);
+    const QPersistentModelIndex firstPersistent(
+        controller.treeModel()->indexForNodeId(first.projectId));
+    const QPersistentModelIndex secondPersistent(
+        controller.treeModel()->indexForNodeId(second.projectId));
+    QVERIFY(firstPersistent.isValid());
+    QVERIFY(secondPersistent.isValid());
+    const int resetCount = modelResetSpy.count();
+    const std::optional<Data::ProjectSnapshot> firstBefore
+        = projectService->project(first.projectId);
+    const std::optional<Data::ProjectSnapshot> secondBefore
+        = projectService->project(second.projectId);
+    QVERIFY(firstBefore);
+    QVERIFY(secondBefore);
+
+    const PopupCapture activationPopup = capturePopup({}, setActiveAction->text());
+    QVERIFY(activationPopup.seen);
+    QVERIFY(activationPopup.actions.contains(setActiveAction));
+    QTRY_COMPARE(projectService->activeProjectId(), second.projectId);
+    QTRY_COMPARE(
+        controller.treeModel()->indexForNodeId(first.projectId, 1).data().toString(),
+        QString("Offline"));
+    QTRY_COMPARE(
+        controller.treeModel()->indexForNodeId(second.projectId, 1).data().toString(),
+        QString("Active project | Offline"));
+    QCOMPARE(modelResetSpy.count(), resetCount);
+    QVERIFY(firstPersistent.isValid());
+    QVERIFY(secondPersistent.isValid());
+    QCOMPARE(controller.selectionService()->currentNodeId(), second.projectId);
+    QCOMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        second.projectId);
+    QCOMPARE(details.currentContext().nodeId, second.projectId);
+    QCOMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::Project);
+    QVERIFY(!(controller.treeModel()->flags(controller.treeModel()->indexForNodeId(first.masterId))
+              & Qt::ItemIsDropEnabled));
+    QVERIFY(controller.treeModel()->flags(controller.treeModel()->indexForNodeId(second.masterId))
+            & Qt::ItemIsDropEnabled);
+    QVERIFY(projectService->project(first.projectId) == firstBefore);
+    QVERIFY(projectService->project(second.projectId) == secondBefore);
+    const PopupCapture newActivePopup = capturePopup();
+    QVERIFY(newActivePopup.seen);
+    QVERIFY(!newActivePopup.actions.contains(setActiveAction));
+    QVERIFY(!setActiveAction->isEnabled());
+
+    navigation.filterEdit()->setText("Active project");
+    QTRY_VERIFY(!findById(navigation.treeView()->model(), first.projectId).isValid());
+    QTRY_VERIFY(findById(navigation.treeView()->model(), second.projectId).isValid());
+    navigation.filterEdit()->clear();
+    QTRY_VERIFY(findById(navigation.treeView()->model(), first.projectId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(second.masterId);
+    QTRY_COMPARE(details.currentContext().nodeId, second.masterId);
+    const PopupCapture masterPopup = capturePopup();
+    QVERIFY(masterPopup.seen);
+    QVERIFY(!masterPopup.actions.contains(setActiveAction));
+    QVERIFY(!setActiveAction->isEnabled());
+
+    controller.selectionService()->setCurrentNodeId(first.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, first.projectId);
+    ::Core::ModeManager::activateMode(::Core::Constants::MODE_EDIT);
+    QTRY_COMPARE(
+        ::Core::ModeManager::currentModeId(), Utils::Id(::Core::Constants::MODE_EDIT));
+    navigation.activateWindow();
+    navigation.treeView()->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(navigation.treeView()->hasFocus());
+    const PopupCapture firstInactivePopup = capturePopup({}, setActiveAction->text());
+    QVERIFY(firstInactivePopup.seen);
+    QVERIFY(firstInactivePopup.actions.contains(setActiveAction));
+    QTRY_COMPARE(projectService->activeProjectId(), first.projectId);
+    QVERIFY(!setActiveAction->isEnabled());
+
+    ProjectExplorer::ProjectManager::removeProject(firstOpened.project());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_VERIFY(!projectService->project(first.projectId).has_value());
+    QTRY_COMPARE(projectService->activeProjectId(), second.projectId);
+    QTRY_VERIFY(controller.selectionService()->currentNodeId() != first.projectId);
+    controller.selectionService()->setCurrentNodeId(second.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, second.projectId);
+    const PopupCapture fallbackActivePopup = capturePopup();
+    QVERIFY(fallbackActivePopup.seen);
+    QVERIFY(!fallbackActivePopup.actions.contains(setActiveAction));
+    QVERIFY(!setActiveAction->isEnabled());
+
+    ProjectExplorer::ProjectManager::removeProject(secondOpened.project());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_VERIFY(projectService->projects().isEmpty());
+    QTRY_VERIFY(projectService->activeProjectId().isNull());
+    QTRY_VERIFY(controller.selectionService()->currentNodeId().isNull());
+    const PopupCapture emptyPopup = capturePopup();
+    QVERIFY(emptyPopup.seen);
+    QVERIFY(!emptyPopup.actions.contains(setActiveAction));
+    QVERIFY(!setActiveAction->isEnabled());
 }
 
 void EtherCATWorkbenchTests::testNavigationFilterEmptyState()

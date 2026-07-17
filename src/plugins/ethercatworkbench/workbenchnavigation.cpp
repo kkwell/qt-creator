@@ -8,6 +8,7 @@
 
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
+#include <coreplugin/icontext.h>
 
 #include <ethercatcore/selectionservice.h>
 
@@ -40,6 +41,7 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     , m_treeView(new QTreeView(this))
 {
     setObjectName("EtherCATWorkbenchNavigation");
+    ::Core::IContext::attach(this, ::Core::Context(Constants::CONTEXT_ID));
     m_filterEdit->setObjectName("EtherCATWorkbenchFilter");
     m_filterEdit->setAccessibleName(Tr::tr("Filter EtherCAT nodes"));
     m_filterEdit->setAccessibleDescription(
@@ -321,6 +323,9 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
     setCommandEnabled(
         Constants::COPY_NODE_ID_ACTION_ID,
         !context.nodeId.isNull() && context.nodeKind != Core::WorkbenchNodeKind::Placeholder);
+    const bool canActivateSelectedProject
+        = m_controller && m_controller->canActivateSelectedProject();
+    setCommandEnabled(Constants::SET_ACTIVE_PROJECT_ACTION_ID, canActivateSelectedProject);
     setCommandEnabled(
         Constants::INSERT_DEVICE_ACTION_ID,
         m_controller && m_controller->canInsertDeviceOnSelectedMaster());
@@ -363,6 +368,10 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
         addCommand(Constants::REMOVE_OFFLINE_SLAVE_ACTION_ID);
         addCommand(Constants::MOVE_OFFLINE_SLAVE_UP_ACTION_ID);
         addCommand(Constants::MOVE_OFFLINE_SLAVE_DOWN_ACTION_ID);
+    }
+    if (context.nodeKind == Core::WorkbenchNodeKind::Project && canActivateSelectedProject) {
+        menu.addSeparator();
+        addCommand(Constants::SET_ACTIVE_PROJECT_ACTION_ID);
     }
     if (!context.nodeId.isNull() && context.nodeKind != Core::WorkbenchNodeKind::Placeholder) {
         menu.addSeparator();

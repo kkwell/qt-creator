@@ -263,6 +263,16 @@ persistent field, controller transport, upstream Core, ProjectExplorer, or
 application path. The Workbench path count remains 44 and the direct Core patch
 count remains five.
 
+The Workbench set-active-project issue also changes only existing private
+Workbench action registration, controller, navigation, tests, and
+documentation. It routes the selected stable Project ID through the already
+public `ProjectService::activateProject()` contract and attaches the existing
+Workbench action context to the navigation widget so its registered proxy stays
+live outside the Workbench mode. It adds no source file, CMake/qbs entry,
+dependency, public API, model role, Provider, persistent field, controller
+transport, upstream Core, ProjectExplorer, or application path. The Workbench
+path count remains 44 and the direct Core patch count remains five.
+
 The Workbench offline-topology issue changes only the product-owned
 `EtherCATWorkbench` plugin and documentation. It adds two private ESI-default
 factory files with synchronized CMake/qbs entries, then reuses the existing

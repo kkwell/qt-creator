@@ -103,6 +103,23 @@ static std::optional<SelectedSlaveContext> selectedSlaveContext(
         {*project, selected->masterId, slaves}, slaveId, int(inMaster - slaves.cbegin())};
 }
 
+static std::optional<Data::ProjectSnapshot> selectedProject(
+    const WorkbenchTreeModel &treeModel,
+    Core::SelectionService *selectionService,
+    Core::ProjectService *projectService)
+{
+    if (!selectionService || !projectService)
+        return std::nullopt;
+    const Core::PropertyPageContext context = treeModel.contextForNodeId(
+        selectionService->currentNodeId());
+    if (context.nodeKind != Core::WorkbenchNodeKind::Project)
+        return std::nullopt;
+    const std::optional<Data::ProjectSnapshot> project = projectService->project(context.projectId);
+    if (!project || project->id != context.nodeId)
+        return std::nullopt;
+    return project;
+}
+
 static QString uniqueSlaveName(
     const QString &requestedName, const QList<Data::OfflineSlaveConfiguration> &slaves)
 {
@@ -282,6 +299,15 @@ bool WorkbenchController::canMoveSelectedOfflineSlaveDown() const
     return selected && selected->index + 1 < selected->slaves.size();
 }
 
+bool WorkbenchController::canActivateSelectedProject() const
+{
+    if (m_shuttingDown)
+        return false;
+    const std::optional<Data::ProjectSnapshot> project
+        = selectedProject(m_treeModel, m_selectionService, m_projectService);
+    return project && project->id != m_projectService->activeProjectId();
+}
+
 Utils::Result<> WorkbenchController::addSelectedDeviceToMaster()
 {
     if (m_shuttingDown || !m_selectionService || !m_deviceRepository || !m_projectService)
@@ -400,6 +426,19 @@ Utils::Result<> WorkbenchController::moveSelectedOfflineSlaveDown()
     normalizePositions(&selected->slaves);
     return m_projectService
         ->replaceOfflineSlaves(selected->project.id, selected->masterId, selected->slaves);
+}
+
+Utils::Result<> WorkbenchController::activateSelectedProject()
+{
+    if (m_shuttingDown || !m_selectionService || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline project service is unavailable."));
+    const std::optional<Data::ProjectSnapshot> project
+        = selectedProject(m_treeModel, m_selectionService, m_projectService);
+    if (!project)
+        return Utils::ResultError(Tr::tr("Select an open EtherCAT project first."));
+    if (project->id == m_projectService->activeProjectId())
+        return Utils::ResultError(Tr::tr("The selected EtherCAT project is already active."));
+    return m_projectService->activateProject(project->id);
 }
 
 Utils::Result<> WorkbenchController::renameProject(
