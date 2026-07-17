@@ -2,6 +2,7 @@
 
 #include "dcpage.h"
 
+#include "esiconfigurationfactory.h"
 #include "ethercatworkbenchtr.h"
 #include "workbenchcontroller.h"
 #include "workbenchtreemodel.h"
@@ -28,21 +29,6 @@ namespace EtherCAT::Workbench::Internal {
 static bool isEmpty(const Data::DcConfiguration &configuration)
 {
     return configuration == Data::DcConfiguration{};
-}
-
-static Data::DcConfiguration configurationFromMode(const Data::DcModeDescription &mode)
-{
-    Data::DcConfiguration configuration;
-    configuration.enabled = true;
-    configuration.modeName = mode.name;
-    configuration.assignActivate = mode.assignActivate;
-    configuration.sync0.enabled = mode.cycleTimeSync0Ns > 0;
-    configuration.sync0.cycleTimeNs = mode.cycleTimeSync0Ns;
-    configuration.sync0.shiftTimeNs = mode.shiftTimeSync0Ns;
-    configuration.sync1.enabled = mode.cycleTimeSync1Ns > 0;
-    configuration.sync1.cycleTimeNs = mode.cycleTimeSync1Ns;
-    configuration.sync1.shiftTimeNs = mode.shiftTimeSync1Ns;
-    return configuration;
 }
 
 static QString hexValue(quint16 value)
@@ -280,7 +266,7 @@ void DcPage::setContext(const Core::PropertyPageContext &context)
     if (device) {
         m_esiModes = device->dcModes;
         if (!m_esiModes.isEmpty())
-            m_esiDefaults = configurationFromMode(m_esiModes.first());
+            m_esiDefaults = dcConfigurationFromMode(m_esiModes.first());
     }
     if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
         m_configuration = m_esiDefaults;
@@ -433,7 +419,7 @@ void DcPage::selectEsiMode(int index)
     const int esiIndex = m_operationMode->itemData(index).toInt();
     if (esiIndex < 0 || esiIndex >= m_esiModes.size())
         return;
-    Data::DcConfiguration candidate = configurationFromMode(m_esiModes.at(esiIndex));
+    Data::DcConfiguration candidate = dcConfigurationFromMode(m_esiModes.at(esiIndex));
     candidate.potentialReferenceClock = m_configuration.potentialReferenceClock;
     submitConfiguration(candidate);
 }

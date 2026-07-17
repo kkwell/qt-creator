@@ -238,6 +238,18 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
     setCommandEnabled(
         Constants::COPY_NODE_ID_ACTION_ID,
         !context.nodeId.isNull() && context.nodeKind != Core::WorkbenchNodeKind::Placeholder);
+    setCommandEnabled(
+        Constants::ADD_DEVICE_TO_MASTER_ACTION_ID,
+        m_controller && m_controller->canAddSelectedDeviceToMaster());
+    setCommandEnabled(
+        Constants::REMOVE_OFFLINE_SLAVE_ACTION_ID,
+        m_controller && m_controller->canRemoveSelectedOfflineSlave());
+    setCommandEnabled(
+        Constants::MOVE_OFFLINE_SLAVE_UP_ACTION_ID,
+        m_controller && m_controller->canMoveSelectedOfflineSlaveUp());
+    setCommandEnabled(
+        Constants::MOVE_OFFLINE_SLAVE_DOWN_ACTION_ID,
+        m_controller && m_controller->canMoveSelectedOfflineSlaveDown());
 
     QMenu menu(this);
     const auto addCommand = [&menu](const Utils::Id &id) {
@@ -253,6 +265,15 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
           Utils::Id(Constants::OPEN_DIAGNOSTICS_ACTION_ID),
           Utils::Id(Constants::LOCATE_UNSUPPORTED_DEVICE_ACTION_ID)}) {
         addCommand(id);
+    }
+    if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
+        menu.addSeparator();
+        addCommand(Constants::ADD_DEVICE_TO_MASTER_ACTION_ID);
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave) {
+        menu.addSeparator();
+        addCommand(Constants::REMOVE_OFFLINE_SLAVE_ACTION_ID);
+        addCommand(Constants::MOVE_OFFLINE_SLAVE_UP_ACTION_ID);
+        addCommand(Constants::MOVE_OFFLINE_SLAVE_DOWN_ACTION_ID);
     }
     if (!context.nodeId.isNull() && context.nodeKind != Core::WorkbenchNodeKind::Placeholder) {
         menu.addSeparator();

@@ -2,6 +2,9 @@
 
 #include "workbenchcontroller.h"
 
+#include "esiconfigurationfactory.h"
+#include "ethercatworkbenchtr.h"
+
 #include <ethercatcore/providerregistry.h>
 #include <ethercatcore/selectionservice.h>
 
@@ -13,6 +16,105 @@
 #include <utility>
 
 namespace EtherCAT::Workbench::Internal {
+
+struct ActiveMasterContext
+{
+    Data::ProjectSnapshot project;
+    Data::NodeId masterId;
+    QList<Data::OfflineSlaveConfiguration> slaves;
+};
+
+struct SelectedSlaveContext : ActiveMasterContext
+{
+    Data::NodeId slaveId;
+    int index = -1;
+};
+
+static QList<Data::OfflineSlaveConfiguration> slavesForMaster(
+    const Data::ProjectSnapshot &project, const Data::NodeId &masterId)
+{
+    QList<Data::OfflineSlaveConfiguration> result;
+    for (const Data::OfflineSlaveConfiguration &slave : project.slaves) {
+        if (slave.masterId == masterId)
+            result.append(slave);
+    }
+    std::sort(result.begin(), result.end(), [](const auto &left, const auto &right) {
+        return left.position < right.position;
+    });
+    return result;
+}
+
+static void normalizePositions(QList<Data::OfflineSlaveConfiguration> *slaves)
+{
+    for (int position = 0; position < slaves->size(); ++position)
+        (*slaves)[position].position = position;
+}
+
+static std::optional<ActiveMasterContext> activeMasterContext(Core::ProjectService *projectService)
+{
+    if (!projectService)
+        return std::nullopt;
+    const std::optional<Data::ProjectSnapshot> project = projectService->project(
+        projectService->activeProjectId());
+    if (!project || !project->valid)
+        return std::nullopt;
+    const auto master = std::find_if(
+        project->nodes.cbegin(), project->nodes.cend(), [](const Data::ProjectNodeSnapshot &node) {
+            return node.kind == Data::ProjectNodeKind::Master;
+        });
+    if (master == project->nodes.cend())
+        return std::nullopt;
+    return ActiveMasterContext{*project, master->id, slavesForMaster(*project, master->id)};
+}
+
+static std::optional<SelectedSlaveContext> selectedSlaveContext(
+    const WorkbenchTreeModel &treeModel,
+    Core::SelectionService *selectionService,
+    Core::ProjectService *projectService)
+{
+    if (!selectionService || !projectService)
+        return std::nullopt;
+    const Data::NodeId slaveId = selectionService->currentNodeId();
+    const Core::PropertyPageContext context = treeModel.contextForNodeId(slaveId);
+    if (context.nodeKind != Core::WorkbenchNodeKind::ConfiguredSlave)
+        return std::nullopt;
+    const std::optional<Data::ProjectSnapshot> project = projectService->project(context.projectId);
+    if (!project || !project->valid)
+        return std::nullopt;
+    const auto selected = std::find_if(
+        project->slaves.cbegin(), project->slaves.cend(), [&slaveId](const auto &slave) {
+            return slave.id == slaveId;
+        });
+    if (selected == project->slaves.cend())
+        return std::nullopt;
+    QList<Data::OfflineSlaveConfiguration> slaves = slavesForMaster(*project, selected->masterId);
+    const auto inMaster = std::find_if(slaves.cbegin(), slaves.cend(), [&slaveId](const auto &slave) {
+        return slave.id == slaveId;
+    });
+    if (inMaster == slaves.cend())
+        return std::nullopt;
+    return SelectedSlaveContext{
+        {*project, selected->masterId, slaves}, slaveId, int(inMaster - slaves.cbegin())};
+}
+
+static QString uniqueSlaveName(
+    const QString &requestedName, const QList<Data::OfflineSlaveConfiguration> &slaves)
+{
+    const QString baseName = requestedName.trimmed().isEmpty() ? Tr::tr("EtherCAT Device")
+                                                               : requestedName.trimmed();
+    const auto isUsed = [&slaves](const QString &candidate) {
+        return std::any_of(slaves.cbegin(), slaves.cend(), [&candidate](const auto &slave) {
+            return slave.name.compare(candidate, Qt::CaseInsensitive) == 0;
+        });
+    };
+    if (!isUsed(baseName))
+        return baseName;
+    for (int suffix = 2;; ++suffix) {
+        const QString candidate = Tr::tr("%1 (%2)").arg(baseName).arg(suffix);
+        if (!isUsed(candidate))
+            return candidate;
+    }
+}
 
 WorkbenchController::WorkbenchController(QObject *parent)
     : QObject(parent)
@@ -121,6 +223,134 @@ bool WorkbenchController::scanAvailable() const
 bool WorkbenchController::diagnosticsAvailable() const
 {
     return m_diagnosticsAvailable;
+}
+
+bool WorkbenchController::canAddSelectedDeviceToMaster() const
+{
+    if (m_shuttingDown || !m_selectionService || !m_deviceRepository)
+        return false;
+    const Core::PropertyPageContext context = m_treeModel.contextForNodeId(
+        m_selectionService->currentNodeId());
+    if (context.nodeKind != Core::WorkbenchNodeKind::Device)
+        return false;
+    const std::optional<Data::DeviceDescription> device = m_deviceRepository->device(context.nodeId);
+    return device && device->summary.supported && activeMasterContext(m_projectService).has_value();
+}
+
+bool WorkbenchController::canRemoveSelectedOfflineSlave() const
+{
+    return !m_shuttingDown
+           && selectedSlaveContext(m_treeModel, m_selectionService, m_projectService).has_value();
+}
+
+bool WorkbenchController::canMoveSelectedOfflineSlaveUp() const
+{
+    if (m_shuttingDown)
+        return false;
+    const std::optional<SelectedSlaveContext> selected
+        = selectedSlaveContext(m_treeModel, m_selectionService, m_projectService);
+    return selected && selected->index > 0;
+}
+
+bool WorkbenchController::canMoveSelectedOfflineSlaveDown() const
+{
+    if (m_shuttingDown)
+        return false;
+    const std::optional<SelectedSlaveContext> selected
+        = selectedSlaveContext(m_treeModel, m_selectionService, m_projectService);
+    return selected && selected->index + 1 < selected->slaves.size();
+}
+
+Utils::Result<> WorkbenchController::addSelectedDeviceToMaster()
+{
+    if (m_shuttingDown || !m_selectionService || !m_deviceRepository || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    const Core::PropertyPageContext context = m_treeModel.contextForNodeId(
+        m_selectionService->currentNodeId());
+    if (context.nodeKind != Core::WorkbenchNodeKind::Device)
+        return Utils::ResultError(Tr::tr("Select an ESI device before adding it."));
+    const std::optional<Data::DeviceDescription> device = m_deviceRepository->device(context.nodeId);
+    if (!device)
+        return Utils::ResultError(Tr::tr("The selected ESI device is no longer available."));
+    if (!device->summary.supported) {
+        return Utils::ResultError(
+            Tr::tr("The selected ESI device has unsupported structures and cannot be added."));
+    }
+    std::optional<ActiveMasterContext> target = activeMasterContext(m_projectService);
+    if (!target)
+        return Utils::ResultError(Tr::tr("Open and activate an offline EtherCAT project first."));
+
+    const Data::NodeId slaveId = Data::NodeId::create();
+    const QString requestedName = device->summary.name.isEmpty() ? device->summary.typeName
+                                                                 : device->summary.name;
+    int nextPosition = 0;
+    for (const Data::OfflineSlaveConfiguration &slave : std::as_const(target->slaves))
+        nextPosition = qMax(nextPosition, slave.position + 1);
+    target->slaves.append(offlineSlaveFromDevice(
+        *device,
+        slaveId,
+        target->masterId,
+        nextPosition,
+        uniqueSlaveName(requestedName, target->slaves)));
+    const Utils::Result<> result
+        = m_projectService
+              ->replaceOfflineSlaves(target->project.id, target->masterId, target->slaves);
+    if (!result)
+        return result;
+    m_selectionService->setCurrentNodeId(slaveId);
+    return Utils::ResultOk;
+}
+
+Utils::Result<> WorkbenchController::removeSelectedOfflineSlave()
+{
+    if (m_shuttingDown || !m_selectionService || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    std::optional<SelectedSlaveContext> selected
+        = selectedSlaveContext(m_treeModel, m_selectionService, m_projectService);
+    if (!selected)
+        return Utils::ResultError(Tr::tr("Select a configured offline slave to remove."));
+
+    selected->slaves.removeAt(selected->index);
+    normalizePositions(&selected->slaves);
+    const Data::NodeId nextSelection
+        = selected->slaves.isEmpty()
+              ? selected->masterId
+              : selected->slaves.at(qMin(selected->index, selected->slaves.size() - 1)).id;
+    const Utils::Result<> result
+        = m_projectService
+              ->replaceOfflineSlaves(selected->project.id, selected->masterId, selected->slaves);
+    if (!result)
+        return result;
+    m_selectionService->setCurrentNodeId(nextSelection);
+    return Utils::ResultOk;
+}
+
+Utils::Result<> WorkbenchController::moveSelectedOfflineSlaveUp()
+{
+    if (m_shuttingDown || !m_selectionService || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    std::optional<SelectedSlaveContext> selected
+        = selectedSlaveContext(m_treeModel, m_selectionService, m_projectService);
+    if (!selected || selected->index <= 0)
+        return Utils::ResultError(Tr::tr("The selected offline slave cannot move up."));
+    selected->slaves.swapItemsAt(selected->index, selected->index - 1);
+    normalizePositions(&selected->slaves);
+    return m_projectService
+        ->replaceOfflineSlaves(selected->project.id, selected->masterId, selected->slaves);
+}
+
+Utils::Result<> WorkbenchController::moveSelectedOfflineSlaveDown()
+{
+    if (m_shuttingDown || !m_selectionService || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    std::optional<SelectedSlaveContext> selected
+        = selectedSlaveContext(m_treeModel, m_selectionService, m_projectService);
+    if (!selected || selected->index + 1 >= selected->slaves.size())
+        return Utils::ResultError(Tr::tr("The selected offline slave cannot move down."));
+    selected->slaves.swapItemsAt(selected->index, selected->index + 1);
+    normalizePositions(&selected->slaves);
+    return m_projectService
+        ->replaceOfflineSlaves(selected->project.id, selected->masterId, selected->slaves);
 }
 
 void WorkbenchController::refresh()

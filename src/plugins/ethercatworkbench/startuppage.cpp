@@ -2,6 +2,7 @@
 
 #include "startuppage.h"
 
+#include "esiconfigurationfactory.h"
 #include "ethercatworkbenchtr.h"
 #include "workbenchcontroller.h"
 
@@ -24,7 +25,6 @@
 #include <QPushButton>
 #include <QStyledItemDelegate>
 #include <QTableView>
-#include <QUuid>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -106,41 +106,6 @@ static bool isFixed(const Data::StartupParameterConfiguration &parameter)
 {
     const QString transition = parameter.transition.trimmed();
     return transition.startsWith('<') && transition.endsWith('>');
-}
-
-static Data::NodeId derivedId(const Data::NodeId &ownerId, const QString &key)
-{
-    static const QUuid namespaceId("{2851c5bd-f1de-5f43-97fa-501589ddf4ad}");
-    const QByteArray name = ownerId.toString().toUtf8() + ':' + key.toUtf8();
-    return Data::NodeId::fromString(QUuid::createUuidV5(namespaceId, name).toString());
-}
-
-static Data::StartupConfiguration configurationFromDevice(
-    const Data::DeviceDescription &device, const Data::NodeId &ownerId)
-{
-    Data::StartupConfiguration configuration;
-    configuration.parameters.reserve(device.startupParameters.size());
-    for (int row = 0; row < device.startupParameters.size(); ++row) {
-        const Data::StartupParameterDescription &source = device.startupParameters.at(row);
-        configuration.parameters.append(
-            {derivedId(
-                 ownerId,
-                 QString("startup:%1:%2:%3:%4")
-                     .arg(row)
-                     .arg(source.transition)
-                     .arg(source.index)
-                     .arg(source.subIndex)),
-             true,
-             row,
-             source.transition,
-             source.index,
-             source.subIndex,
-             Data::EtherCATDataType::Unknown,
-             {},
-             source.data,
-             source.comment});
-    }
-    return configuration;
 }
 
 static bool parseUnsignedValue(const QVariant &value, quint64 maximum, quint64 *result)
@@ -780,7 +745,7 @@ void StartupPage::setContext(const Core::PropertyPageContext &context)
         }
     }
     if (device)
-        m_esiDefaults = configurationFromDevice(*device, context.nodeId);
+        m_esiDefaults = startupDefaultsFromDevice(*device, context.nodeId);
     if (isEmpty(m_configuration) && !isEmpty(m_esiDefaults)) {
         m_configuration = m_esiDefaults;
         m_showingEsiDefaults = true;

@@ -2,6 +2,7 @@
 
 #include "processdatapage.h"
 
+#include "esiconfigurationfactory.h"
 #include "ethercatworkbenchtr.h"
 #include "workbenchcontroller.h"
 
@@ -21,7 +22,6 @@
 #include <QPushButton>
 #include <QStyledItemDelegate>
 #include <QTableView>
-#include <QUuid>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -122,12 +122,6 @@ static QString pdoDirectionName(Data::PdoDirection direction)
                                                : Tr::tr("Inputs (TxPDO)");
 }
 
-static Data::SyncManagerDirection expectedSyncManagerDirection(Data::PdoDirection direction)
-{
-    return direction == Data::PdoDirection::Rx ? Data::SyncManagerDirection::MasterToSlave
-                                               : Data::SyncManagerDirection::SlaveToMaster;
-}
-
 static QString byteBitSize(qint64 bitSize)
 {
     return QString("%1.%2").arg(bitSize / 8).arg(bitSize % 8);
@@ -171,138 +165,6 @@ static std::optional<Data::PdoDirection> directionForNodeKind(Core::WorkbenchNod
     default:
         return std::nullopt;
     }
-}
-
-static Data::NodeId derivedId(const Data::NodeId &ownerId, const QString &key)
-{
-    static const QUuid namespaceId("{fb23a9ad-4932-57e0-b301-9c581ad7a953}");
-    const QByteArray name = ownerId.toString().toUtf8() + ':' + key.toUtf8();
-    return Data::NodeId::fromString(QUuid::createUuidV5(namespaceId, name).toString());
-}
-
-static Data::ProcessDataConfiguration configurationFromDevice(
-    const Data::DeviceDescription &device, const Data::NodeId &ownerId)
-{
-    Data::ProcessDataConfiguration configuration;
-    for (int row = 0; row < device.syncManagers.size(); ++row) {
-        const Data::SyncManagerDescription &source = device.syncManagers.at(row);
-        configuration.syncManagers.append(
-            {derivedId(ownerId, QString("sm:%1:%2").arg(source.index).arg(row)),
-             source.index,
-             source.name,
-             source.direction,
-             source.enabled,
-             source.defaultSize});
-    }
-
-    const auto appendPdos =
-        [&configuration,
-         &ownerId](const QList<Data::PdoDescription> &sources, Data::PdoDirection direction) {
-            for (int pdoRow = 0; pdoRow < sources.size(); ++pdoRow) {
-                const Data::PdoDescription &source = sources.at(pdoRow);
-                Data::PdoConfiguration pdo;
-                pdo.id = derivedId(
-                    ownerId,
-                    QString("pdo:%1:%2:%3")
-                        .arg(direction == Data::PdoDirection::Rx ? "rx" : "tx")
-                        .arg(source.index)
-                        .arg(pdoRow));
-                pdo.index = source.index;
-                pdo.name = source.name;
-                pdo.direction = direction;
-                pdo.syncManager = source.syncManager;
-                pdo.fixed = source.fixed;
-                pdo.mandatory = source.mandatory;
-                for (int entryRow = 0; entryRow < source.entries.size(); ++entryRow) {
-                    const Data::PdoEntryDescription &sourceEntry = source.entries.at(entryRow);
-                    pdo.entries.append(
-                        {derivedId(
-                             ownerId,
-                             QString("entry:%1:%2:%3")
-                                 .arg(pdo.id.toString())
-                                 .arg(sourceEntry.index)
-                                 .arg(entryRow)),
-                         sourceEntry.index,
-                         sourceEntry.subIndex,
-                         sourceEntry.name,
-                         sourceEntry.bitLength,
-                         sourceEntry.dataType,
-                         sourceEntry.rawDataType,
-                         -1,
-                         true,
-                         false});
-                }
-                configuration.pdos.append(pdo);
-            }
-        };
-    appendPdos(device.rxPdos, Data::PdoDirection::Rx);
-    appendPdos(device.txPdos, Data::PdoDirection::Tx);
-
-    const auto findSyncManager = [&configuration](int index) {
-        return std::find_if(
-            configuration.syncManagers.begin(),
-            configuration.syncManagers.end(),
-            [index](const auto &syncManager) { return syncManager.index == index; });
-    };
-    const auto nextSyncManagerIndex = [&configuration] {
-        int result = 0;
-        for (const Data::SyncManagerConfiguration &syncManager : configuration.syncManagers)
-            result = qMax(result, syncManager.index + 1);
-        return result;
-    };
-
-    for (int pdoRow = 0; pdoRow < configuration.pdos.size(); ++pdoRow) {
-        Data::PdoConfiguration &pdo = configuration.pdos[pdoRow];
-        const Data::SyncManagerDirection expected = expectedSyncManagerDirection(pdo.direction);
-        auto syncManager = findSyncManager(pdo.syncManager);
-        if (syncManager != configuration.syncManagers.end()
-            && syncManager->direction == Data::SyncManagerDirection::Unknown) {
-            syncManager->direction = expected;
-        }
-        if (syncManager == configuration.syncManagers.end() || syncManager->direction != expected) {
-            pdo.mappingSupported = false;
-            syncManager = std::find_if(
-                configuration.syncManagers.begin(),
-                configuration.syncManagers.end(),
-                [expected](const auto &candidate) { return candidate.direction == expected; });
-            if (syncManager == configuration.syncManagers.end()) {
-                const int index = nextSyncManagerIndex();
-                configuration.syncManagers.append(
-                    {derivedId(ownerId, QString("synthetic-sm:%1").arg(index)),
-                     index,
-                     expected == Data::SyncManagerDirection::MasterToSlave
-                         ? Tr::tr("Unassigned outputs")
-                         : Tr::tr("Unassigned inputs"),
-                     expected,
-                     true,
-                     0});
-                syncManager = std::prev(configuration.syncManagers.end());
-            }
-            pdo.syncManager = syncManager->index;
-        }
-        syncManager->enabled = true;
-        if (pdo.index == 0 || pdo.entries.isEmpty())
-            pdo.mappingSupported = false;
-        pdo.selected = pdo.mappingSupported && (pdo.fixed || pdo.mandatory);
-    }
-
-    for (const Data::SyncManagerConfiguration &syncManager : configuration.syncManagers) {
-        const auto firstSupported = std::find_if(
-            configuration.pdos.begin(), configuration.pdos.end(), [&syncManager](const auto &pdo) {
-                return pdo.syncManager == syncManager.index && pdo.mappingSupported;
-            });
-        if (firstSupported == configuration.pdos.end())
-            continue;
-        const bool haveDefault = std::any_of(
-            configuration.pdos.cbegin(), configuration.pdos.cend(), [&syncManager](const auto &pdo) {
-                return pdo.syncManager == syncManager.index && pdo.selected;
-            });
-        if (!haveDefault)
-            firstSupported->selected = true;
-    }
-    for (Data::PdoConfiguration &pdo : configuration.pdos)
-        pdo.defaultSelected = pdo.selected;
-    return configuration;
 }
 
 static bool parseUnsignedValue(const QVariant &value, quint64 maximum, quint64 *result)
@@ -1175,8 +1037,7 @@ void ProcessDataPage::setContext(const Core::PropertyPageContext &context)
         }
     }
     if (device)
-        m_esiDefaults = configurationFromDevice(
-            *device, slave ? slave->id : context.nodeId);
+        m_esiDefaults = processDataDefaultsFromDevice(*device, slave ? slave->id : context.nodeId);
     if (isEmpty(m_configuration) && !isEmpty(m_esiDefaults)) {
         m_configuration = m_esiDefaults;
         m_showingEsiDefaults = true;

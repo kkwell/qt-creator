@@ -20,6 +20,8 @@ QtcPlugin {
         "dcpage.h",
         "detailsview.cpp",
         "detailsview.h",
+        "esiconfigurationfactory.cpp",
+        "esiconfigurationfactory.h",
         "ethercatworkbenchconstants.h",
         "ethercatworkbenchplugin.cpp",
         "ethercatworkbenchtr.h",

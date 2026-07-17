@@ -14,6 +14,7 @@ private slots:
     void testMetadataModeActionsAndProvider();
     void testModeCommandStripMirrorsRegisteredActions();
     void testNavigationCommandsUseActionManager();
+    void testOfflineTopologyEditingWorkflow();
     void testStatusBarTracksStateService();
     void testTreeModelLargeIncrementalUpdate();
     void testConfiguredSlaveStateIcon();

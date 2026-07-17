@@ -28,7 +28,7 @@ relative to that recorded comparison point.
 | `src/plugins/ethercatcore` | 19 | Product-owned Core services and extension points |
 | `src/plugins/ethercatproject` | 18 | Product-owned offline project plugin |
 | `src/plugins/ethercatdevices` | 12 | Product-owned offline ESI repository plugin |
-| `src/plugins/ethercatworkbench` | 20 | Product-owned EtherCAT engineering-shell plugin |
+| `src/plugins/ethercatworkbench` | 34 | Product-owned EtherCAT engineering-shell plugin |
 | `src/plugins/ethercatscan` | 16 | Product-owned local Mock scan workflow plugin |
 | `src/plugins/ethercatdiagnostics` | 16 | Product-owned local Mock diagnostics plugin |
 
@@ -227,6 +227,14 @@ transient tree/navigation actions with public ActionManager registrations and
 reuses their QAction objects in the existing navigation factory and context
 menu. It adds no source, dependency, upstream Core, ProjectExplorer, or
 application path, so the direct Core patch count remains five.
+
+The Workbench offline-topology issue changes only the product-owned
+`EtherCATWorkbench` plugin and documentation. It adds two private ESI-default
+factory files with synchronized CMake/qbs entries, then reuses the existing
+public Device repository, Selection service, and checked Project replacement
+command for Add/Remove/Move operations. It adds no dependency or path under
+upstream Core, ProjectExplorer, or the application bootstrap, so the direct
+Core patch count remains five.
 
 Each completed EtherCAT issue must report:
 

@@ -15,6 +15,7 @@
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
 #include <coreplugin/coreconstants.h>
+#include <coreplugin/messagemanager.h>
 #include <coreplugin/modemanager.h>
 #include <coreplugin/statusbarmanager.h>
 
@@ -192,19 +193,79 @@ void EtherCATWorkbenchPlugin::setupActions()
         emit m_controller->copyCurrentNodeIdRequested();
     });
 
+    auto addDeviceAction
+        = new QAction(Utils::Icons::PLUS.icon(), Tr::tr("Add to Active Offline Master"), this);
+    ::Core::ActionManager::registerAction(
+        addDeviceAction,
+        Constants::ADD_DEVICE_TO_MASTER_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    connect(addDeviceAction, &QAction::triggered, m_controller.get(), [this] {
+        if (const Utils::Result<> result = m_controller->addSelectedDeviceToMaster(); !result) {
+            ::Core::MessageManager::writeFlashing(
+                Tr::tr("Cannot add the ESI device: %1").arg(result.error()));
+        }
+    });
+
+    auto removeSlaveAction
+        = new QAction(Utils::Icons::MINUS.icon(), Tr::tr("Remove from Offline Master"), this);
+    ::Core::ActionManager::registerAction(
+        removeSlaveAction,
+        Constants::REMOVE_OFFLINE_SLAVE_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    connect(removeSlaveAction, &QAction::triggered, m_controller.get(), [this] {
+        if (const Utils::Result<> result = m_controller->removeSelectedOfflineSlave(); !result) {
+            ::Core::MessageManager::writeFlashing(
+                Tr::tr("Cannot remove the offline slave: %1").arg(result.error()));
+        }
+    });
+
+    auto moveSlaveUpAction
+        = new QAction(Utils::Icons::ARROW_UP.icon(), Tr::tr("Move Offline Slave Up"), this);
+    ::Core::ActionManager::registerAction(
+        moveSlaveUpAction,
+        Constants::MOVE_OFFLINE_SLAVE_UP_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    connect(moveSlaveUpAction, &QAction::triggered, m_controller.get(), [this] {
+        if (const Utils::Result<> result = m_controller->moveSelectedOfflineSlaveUp(); !result) {
+            ::Core::MessageManager::writeFlashing(
+                Tr::tr("Cannot move the offline slave up: %1").arg(result.error()));
+        }
+    });
+
+    auto moveSlaveDownAction
+        = new QAction(Utils::Icons::ARROW_DOWN.icon(), Tr::tr("Move Offline Slave Down"), this);
+    ::Core::ActionManager::registerAction(
+        moveSlaveDownAction,
+        Constants::MOVE_OFFLINE_SLAVE_DOWN_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    connect(moveSlaveDownAction, &QAction::triggered, m_controller.get(), [this] {
+        if (const Utils::Result<> result = m_controller->moveSelectedOfflineSlaveDown(); !result) {
+            ::Core::MessageManager::writeFlashing(
+                Tr::tr("Cannot move the offline slave down: %1").arg(result.error()));
+        }
+    });
+
     const auto updateNavigationActions =
         [this,
          locateDifferenceAction,
          locateIssueAction,
          openDiagnosticsAction,
          locateUnsupportedAction,
-         copyNodeIdAction] {
+         copyNodeIdAction,
+         addDeviceAction,
+         removeSlaveAction,
+         moveSlaveUpAction,
+         moveSlaveDownAction] {
             if (!m_controller) {
                 locateDifferenceAction->setEnabled(false);
                 locateIssueAction->setEnabled(false);
                 openDiagnosticsAction->setEnabled(false);
                 locateUnsupportedAction->setEnabled(false);
                 copyNodeIdAction->setEnabled(false);
+                addDeviceAction->setEnabled(false);
+                removeSlaveAction->setEnabled(false);
+                moveSlaveUpAction->setEnabled(false);
+                moveSlaveDownAction->setEnabled(false);
                 return;
             }
             locateDifferenceAction->setEnabled(
@@ -217,6 +278,10 @@ void EtherCATWorkbenchPlugin::setupActions()
             copyNodeIdAction->setEnabled(
                 m_controller->selectionService()
                 && !m_controller->selectionService()->currentNodeId().isNull());
+            addDeviceAction->setEnabled(m_controller->canAddSelectedDeviceToMaster());
+            removeSlaveAction->setEnabled(m_controller->canRemoveSelectedOfflineSlave());
+            moveSlaveUpAction->setEnabled(m_controller->canMoveSelectedOfflineSlaveUp());
+            moveSlaveDownAction->setEnabled(m_controller->canMoveSelectedOfflineSlaveDown());
         };
     connect(
         m_controller->treeModel(), &QAbstractItemModel::dataChanged, this, updateNavigationActions);

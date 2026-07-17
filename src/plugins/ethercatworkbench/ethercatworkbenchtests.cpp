@@ -611,7 +611,11 @@ void EtherCATWorkbenchTests::testModeCommandStripMirrorsRegisteredActions()
     }
     for (const Utils::Id id :
          {Utils::Id(Constants::LOCATE_UNSUPPORTED_DEVICE_ACTION_ID),
-          Utils::Id(Constants::COPY_NODE_ID_ACTION_ID)}) {
+          Utils::Id(Constants::COPY_NODE_ID_ACTION_ID),
+          Utils::Id(Constants::ADD_DEVICE_TO_MASTER_ACTION_ID),
+          Utils::Id(Constants::REMOVE_OFFLINE_SLAVE_ACTION_ID),
+          Utils::Id(Constants::MOVE_OFFLINE_SLAVE_UP_ACTION_ID),
+          Utils::Id(Constants::MOVE_OFFLINE_SLAVE_DOWN_ACTION_ID)}) {
         ::Core::Command *command = ::Core::ActionManager::command(id);
         QVERIFY(command);
         QVERIFY(!commandActions.contains(command->action()));
@@ -718,6 +722,170 @@ void EtherCATWorkbenchTests::testNavigationCommandsUseActionManager()
     qDeleteAll(view.dockToolBarWidgets);
     delete navigation;
     controller.selectionService()->clear();
+}
+
+void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
+{
+    ::Core::ModeManager::activateMode(Constants::MODE_ID);
+    QTRY_COMPARE(::Core::ModeManager::currentModeId(), Utils::Id(Constants::MODE_ID));
+
+    ::Core::Command *addCommand = ::Core::ActionManager::command(
+        Constants::ADD_DEVICE_TO_MASTER_ACTION_ID);
+    ::Core::Command *removeCommand = ::Core::ActionManager::command(
+        Constants::REMOVE_OFFLINE_SLAVE_ACTION_ID);
+    ::Core::Command *moveUpCommand = ::Core::ActionManager::command(
+        Constants::MOVE_OFFLINE_SLAVE_UP_ACTION_ID);
+    ::Core::Command *moveDownCommand = ::Core::ActionManager::command(
+        Constants::MOVE_OFFLINE_SLAVE_DOWN_ACTION_ID);
+    QVERIFY(addCommand);
+    QVERIFY(removeCommand);
+    QVERIFY(moveUpCommand);
+    QVERIFY(moveDownCommand);
+    for (::Core::Command *command : {addCommand, removeCommand, moveUpCommand, moveDownCommand})
+        QVERIFY(!command->action()->icon().isNull());
+
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("offline-topology.xml");
+    const Utils::Result<qint64> esiWritten = esiPath.writeFileContents(deviceEsi());
+    QVERIFY_RESULT(esiWritten);
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0x5678;
+    });
+    QVERIFY(device != devices.cend());
+    QVERIFY(device->supported);
+
+    const TestProjectFile file = writeProjectWithSlave(directory, *device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    const Utils::Result<> activated = projectService->activateProject(file.projectId);
+    QVERIFY_RESULT(activated);
+    QTRY_COMPARE(projectService->activeProjectId(), file.projectId);
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(device->id).isValid());
+
+    controller.selectionService()->setCurrentNodeId(device->id);
+    QTRY_VERIFY(addCommand->action()->isEnabled());
+    QVERIFY(!removeCommand->action()->isEnabled());
+    addCommand->action()->trigger();
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 2);
+    const Data::ProjectSnapshot afterAdd = *projectService->project(file.projectId);
+    const auto added
+        = std::find_if(afterAdd.slaves.cbegin(), afterAdd.slaves.cend(), [&file](const auto &slave) {
+              return slave.id != file.slaveId;
+          });
+    QVERIFY(added != afterAdd.slaves.cend());
+    const Data::NodeId addedId = added->id;
+    QCOMPARE(added->masterId, file.masterId);
+    QCOMPARE(added->position, 1);
+    QCOMPARE(added->name, QString("Workbench Servo"));
+    QCOMPARE(added->identity, device->identity);
+    QCOMPARE(added->deviceDescriptionId, device->id);
+    QCOMPARE(added->processData.pdos.size(), 2);
+    QCOMPARE(added->startup.parameters.size(), 3);
+    QVERIFY(added->dc.enabled);
+    QCOMPARE(controller.selectionService()->currentNodeId(), addedId);
+    QVERIFY(projectService->canUndoProject(file.projectId));
+
+    const Utils::Result<> firstUndo = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(firstUndo);
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 1);
+    const Utils::Result<> firstRedo = projectService->redoProject(file.projectId);
+    QVERIFY_RESULT(firstRedo);
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 2);
+
+    controller.selectionService()->setCurrentNodeId(device->id);
+    QTRY_VERIFY(addCommand->action()->isEnabled());
+    addCommand->action()->trigger();
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 3);
+    const Data::ProjectSnapshot afterRepeatedAdd = *projectService->project(file.projectId);
+    const auto repeated = std::find_if(
+        afterRepeatedAdd.slaves.cbegin(),
+        afterRepeatedAdd.slaves.cend(),
+        [&file, &addedId](const auto &slave) {
+            return slave.id != file.slaveId && slave.id != addedId;
+        });
+    QVERIFY(repeated != afterRepeatedAdd.slaves.cend());
+    QCOMPARE(repeated->name, QString("Workbench Servo (2)"));
+    QCOMPARE(repeated->position, 2);
+    const Utils::Result<> repeatedAddUndo = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(repeatedAddUndo);
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 2);
+
+    controller.selectionService()->setCurrentNodeId(addedId);
+    QTRY_VERIFY(moveUpCommand->action()->isEnabled());
+    QVERIFY(!moveDownCommand->action()->isEnabled());
+
+    moveUpCommand->action()->trigger();
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().id, addedId);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().position, 0);
+    QCOMPARE(controller.selectionService()->currentNodeId(), addedId);
+    QVERIFY(!moveUpCommand->action()->isEnabled());
+    QVERIFY(moveDownCommand->action()->isEnabled());
+
+    moveDownCommand->action()->trigger();
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.last().id, addedId);
+    QCOMPARE(projectService->project(file.projectId)->slaves.last().position, 1);
+    QCOMPARE(controller.selectionService()->currentNodeId(), addedId);
+
+    removeCommand->action()->trigger();
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 1);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().id, file.slaveId);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().position, 0);
+    QCOMPARE(controller.selectionService()->currentNodeId(), file.slaveId);
+    const Utils::Result<> removeUndo = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(removeUndo);
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 2);
+
+    WorkbenchNavigationWidget navigation(&controller);
+    navigation.resize(900, 600);
+    navigation.show();
+    QTRY_VERIFY(navigation.isVisible());
+    controller.selectionService()->setCurrentNodeId(device->id);
+    QList<QAction *> deviceMenuActions;
+    QTimer::singleShot(0, &navigation, [&deviceMenuActions] {
+        auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!popup)
+            return;
+        deviceMenuActions = popup->actions();
+        popup->close();
+    });
+    emit navigation.treeView()->customContextMenuRequested(QPoint(-1, -1));
+    QVERIFY(deviceMenuActions.contains(addCommand->action()));
+    QVERIFY(!deviceMenuActions.contains(removeCommand->action()));
+
+    controller.selectionService()->setCurrentNodeId(addedId);
+    QList<QAction *> slaveMenuActions;
+    QTimer::singleShot(0, &navigation, [&slaveMenuActions] {
+        auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!popup)
+            return;
+        slaveMenuActions = popup->actions();
+        popup->close();
+    });
+    emit navigation.treeView()->customContextMenuRequested(QPoint(-1, -1));
+    QVERIFY(!slaveMenuActions.contains(addCommand->action()));
+    QVERIFY(slaveMenuActions.contains(removeCommand->action()));
+    QVERIFY(slaveMenuActions.contains(moveUpCommand->action()));
+    QVERIFY(slaveMenuActions.contains(moveDownCommand->action()));
+
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
 void EtherCATWorkbenchTests::testStatusBarTracksStateService()

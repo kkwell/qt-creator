@@ -4,10 +4,10 @@
 
 `EtherCATWorkbench` is the stage-4 engineering-shell plugin. It owns the
 EtherCAT mode, left navigation tree, stable selection linkage, central details
-container, built-in offline property pages, Workbench commands, and the
-presentation of public Scan/Diagnostics snapshots in the device tree. It does
-not parse ESI files, own project persistence, scan a bus, produce diagnostics,
-or define a controller protocol.
+container, built-in offline property pages, manual offline-topology commands,
+Workbench commands, and the presentation of public Scan/Diagnostics snapshots
+in the device tree. It does not parse ESI files, own project persistence, scan
+a bus, produce diagnostics, or define a controller protocol.
 
 The layout follows the information hierarchy of common EtherCAT engineering
 tools without copying Beckhoff assets, TwinCAT project formats, or proprietary
@@ -54,10 +54,11 @@ enabled state, checked state, tooltips, and callbacks therefore share the same
 ActionManager registration. Action-added and action-removed events keep the
 strip synchronized when an optional plugin is present or absent.
 
-Tree-only commands such as `Locate Unsupported Device` and `Copy Node ID` are
-registered with ActionManager for context and shortcut consistency but are not
-added to `EtherCAT.Menu`. They therefore remain available from the device tree
-without adding low-frequency actions to the compact engineering strip.
+Tree-only commands such as `Locate Unsupported Device`, `Copy Node ID`, and the
+offline-topology Add/Remove/Move commands are registered with ActionManager for
+context and shortcut consistency but are not added to `EtherCAT.Menu`. They
+therefore remain available from the device tree without adding low-frequency
+actions to the compact engineering strip.
 
 Workbench never names or includes Scan or Diagnostics implementation details.
 When either optional plugin is disabled, its actions are simply missing from
@@ -126,8 +127,9 @@ Search covers display name, status, device group, and Vendor/Product/Revision
 identity, including provider-supplied difference summaries and details. The
 context menu supports expand, collapse, locating the first topology difference,
 locating the first warning/error, opening the matching Diagnostics branch,
-locating the first unsupported ESI device, and copying the stable node ID.
-Keyboard navigation is provided by `QTreeView`.
+locating the first unsupported ESI device, adding a supported ESI device to the
+active offline master, removing or moving a configured slave, and copying the
+stable node ID. Keyboard navigation is provided by `QTreeView`.
 
 Both columns resize to their visible contents and node text is not elided.
 This gives the hierarchical name priority in Qt Creator's narrow navigation
@@ -185,6 +187,46 @@ selectable node. Placeholder rows cannot copy a previous selection's ID.
 Outside the popup, model and Selection Service signals keep the same registered
 actions synchronized for shortcuts. The update path disables the actions if
 the Workbench controller has already been destroyed during shutdown.
+
+## Offline topology editing
+
+`ISSUE-WB-OFFLINE-TOPOLOGY-001` adds the first manual configuration path from
+the imported ESI catalogue into the offline EtherCAT master. The interaction
+was compared with Beckhoff's documented TwinCAT 3 offline configuration flow,
+where devices are appended from an ESI-backed tree command:
+<https://infosys.beckhoff.com/content/1033/ps2001-4810-1001/10832046859.html>.
+No Beckhoff asset, project format, command ID, or proprietary implementation is
+copied.
+
+Right-clicking a supported repository device exposes `Add to Active Offline
+Master`. The phase-1 project format contains one master, so the command targets
+that master in the active valid project. A new stable slave ID and the next
+physical position are allocated, and a case-insensitive unique name is derived
+from the ESI device name. The slave keeps the complete identity and repository
+reference and receives ESI-derived Process Data, Startup, and first DC-mode
+defaults. The same private factory supplies those defaults to the existing
+property pages, preventing the creation path and page proposal from drifting.
+
+A configured slave exposes `Remove from Offline Master`, `Move Offline Slave
+Up`, and `Move Offline Slave Down`. Boundary commands are disabled. Moves keep
+the selected stable ID and normalize physical positions. Removal selects the
+nearest remaining slave or the parent master when the list becomes empty. All
+four mutations call the existing public
+`ProjectService::replaceOfflineSlaves()` command, so Project validation,
+modified state, persistence, Undo, and Redo remain owned by
+`EtherCATProject`. Rejected mutations are reported through Qt Creator's Message
+Manager.
+
+Each operation has one ActionManager registration reused by the device-tree
+context menu and any shortcut. Unsupported ESI entries, invalid projects, and
+inapplicable selections cannot enable the corresponding command. These four
+low-frequency commands remain context-only and are deliberately excluded from
+the compact command strip.
+
+This issue does not add drag-and-drop, multi-selection editing, multiple-master
+target selection, a bus scan, controller transport, or online configuration.
+Those require separate issues and must not bypass the same checked Project
+service boundary.
 
 ## Provider state overlays and issue navigation
 
@@ -463,15 +505,15 @@ The focused Workbench suite covers metadata and hard dependencies, mode/action
 registration, a 500-device incremental model under
 `QAbstractItemModelTester`, filtering and two-way stable selection, real ESI
 data in Process Data/Startup/DC pages, configured-slave topology and ESI-page
-reuse, dynamic property-page removal, and dynamic Scan/Diagnostics availability
-and removal. The process-data tree coverage verifies the exact five-branch
-order, input/output direction, active-PDO projection, unique deterministic view
-IDs, retained source IDs, empty modular state, recursive filtering, derived
-Details routing, non-elided content-sized navigation columns, accessible tree
-metadata, and 128 configured slaves. The Process Data workflow
-additionally covers RxPDO/TxPDO SM
-selection, read-only repository and fixed/mandatory mappings, an empty
-no-ESI state, ESI-derived initial mapping, assignment and entry edits,
+reuse, manual ESI add/remove/reorder operations, dynamic property-page removal,
+and dynamic Scan/Diagnostics availability and removal. The process-data tree
+coverage verifies the exact five-branch order, input/output direction,
+active-PDO projection, unique deterministic view IDs, retained source IDs,
+empty modular state, recursive filtering, derived Details routing, non-elided
+content-sized navigation columns, accessible tree metadata, and 128 configured
+slaves. The Process Data workflow additionally covers RxPDO/TxPDO SM selection,
+read-only repository and fixed/mandatory mappings, an empty no-ESI state,
+ESI-derived initial mapping, assignment and entry edits,
 validation rejection, process-image refresh, and real DetailsView plus Project
 Undo/Redo reentrancy. The Startup workflow covers the ESI catalogue, explicit
 defaults storage, fixed requests, New/Edit/Delete dialogs, enable state,
@@ -493,15 +535,19 @@ The command-strip coverage verifies exact shared-action identity, source-menu
 ordering, Open-Workbench exclusion, dynamic add/remove behavior, complete
 tooltips, standard icon metrics, and all optional-plugin load combinations.
 The tree-command coverage opens real popup menus and verifies exact QAction
-identity for all seven commands, shared Expand/Collapse navigation buttons,
-context-only exclusion from the command strip, unsupported-device location,
-stable Node ID copying, placeholder protection, and enabled-state updates.
+identity for the seven navigation commands and four offline-topology commands,
+shared Expand/Collapse navigation buttons, context-only exclusion from the
+command strip, unsupported-device location, stable Node ID copying, placeholder
+protection, and enabled-state updates. The topology workflow verifies complete
+ESI Process Data/Startup/DC defaults, stable IDs, repeated-device unique names,
+position normalization, boundary states, selection repair, and Project
+Undo/Redo.
 The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
 match/difference routing, Missing/Added/Revision/Vendor presentation, warning
 and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
 stable locate/open navigation, command registration, and provider-removal
-restoration. It passes 19 tests on the qualified Qt 6.11.0 Release test build.
-The combined command-strip and tree-command flow also passes at
+restoration. It passes 20 tests on the qualified Qt 6.11.0 Release test build.
+The combined command-strip and offline-topology flow also passes at
 `QT_SCALE_FACTOR=2`.
 
 The normal 16-plugin product build and enabled/disabled startup smoke are
@@ -539,10 +585,11 @@ SAFEOP/Error plus Missing state; the Diagnostics branch displayed Running and
 Error. Standard warning/critical icons aligned with normal tree icons, and the
 full two-column status remained readable without clipping or overlap.
 
-A direct 522 x 330 Retina render inspected the registered tree context menu at
-`QT_SCALE_FACTOR=2`. All seven commands retained their order and grouping;
-the unavailable difference/issue locators were visibly disabled, and Open
-Diagnostics, Locate Unsupported Device, and Copy Node ID remained readable
-without clipping or overlap. The offscreen macOS menu style omitted action
-icons by platform policy; QAction icon presence remains covered by the widget
-test.
+A direct 522 x 472 Retina render inspected the registered configured-slave
+context menu at `QT_SCALE_FACTOR=2`. The original seven tree commands and the
+three slave Remove/Move commands retained their order and grouping; unavailable
+locators and the boundary `Move Offline Slave Down` command were visibly
+disabled. Every label remained readable without clipping or overlap. The
+offscreen macOS menu style omitted action icons by platform policy; QAction icon
+presence remains covered by the widget test. The locked desktop prevented a
+manual click inspection, so no manual-interaction result is claimed.

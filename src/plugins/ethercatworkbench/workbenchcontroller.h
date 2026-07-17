@@ -4,6 +4,8 @@
 
 #include "workbenchtreemodel.h"
 
+#include <utils/result.h>
+
 #include <QList>
 #include <QObject>
 #include <QPointer>
@@ -30,9 +32,17 @@ public:
     Core::ProviderRegistry *providerRegistry() const;
     bool scanAvailable() const;
     bool diagnosticsAvailable() const;
+    bool canAddSelectedDeviceToMaster() const;
+    bool canRemoveSelectedOfflineSlave() const;
+    bool canMoveSelectedOfflineSlaveUp() const;
+    bool canMoveSelectedOfflineSlaveDown() const;
 
     void refresh();
     void shutdown();
+    Utils::Result<> addSelectedDeviceToMaster();
+    Utils::Result<> removeSelectedOfflineSlave();
+    Utils::Result<> moveSelectedOfflineSlaveUp();
+    Utils::Result<> moveSelectedOfflineSlaveDown();
 
 signals:
     void expandAllRequested();
