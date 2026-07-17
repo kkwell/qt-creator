@@ -2847,6 +2847,36 @@ void EtherCATWorkbenchTests::testNavigationSelectionAndFiltering()
     controller.selectionService()->clear();
 }
 
+void EtherCATWorkbenchTests::testNavigationKeyboardFocus()
+{
+    WorkbenchController controller;
+    const Data::ProjectSnapshot project = projectSnapshot("Keyboard navigation");
+    controller.treeModel()->setProjects({project});
+    controller.selectionService()->clear();
+
+    WorkbenchNavigationWidget navigation(&controller);
+    navigation.show();
+    QTRY_VERIFY(navigation.isVisible());
+
+    QCOMPARE(navigation.focusProxy(), navigation.treeView());
+    navigation.setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), navigation.treeView());
+
+    const QModelIndex projectIndex = findById(navigation.treeView()->model(), project.id);
+    QVERIFY(projectIndex.isValid());
+    navigation.treeView()->setCurrentIndex(projectIndex);
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), project.id);
+
+    QTest::keyClick(navigation.treeView(), Qt::Key_Down);
+    const Data::NodeId currentId = navigation.treeView()
+                                       ->currentIndex()
+                                       .data(WorkbenchTreeModel::NodeIdRole)
+                                       .value<Data::NodeId>();
+    QCOMPARE(currentId, project.nodes.at(1).id);
+    QCOMPARE(controller.selectionService()->currentNodeId(), currentId);
+    controller.selectionService()->clear();
+}
+
 void EtherCATWorkbenchTests::testBuiltInDevicePages()
 {
     WorkbenchController controller;

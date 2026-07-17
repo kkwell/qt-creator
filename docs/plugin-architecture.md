@@ -188,7 +188,10 @@ removal restores the retained offline presentation. The navigation header and
 device-tree context menu likewise reuse one ActionManager registration per
 command; context-only locate/copy and offline-topology actions remain outside
 the compact strip and derive their enabled state from the current model and
-stable selection. EtherCATCore also reserves stable, append-only node kinds for
+stable selection. The navigation container now follows Qt Creator's focus-proxy
+pattern, so activating the navigation page gives focus to the device tree and
+arrow-key movement continues through the existing stable-ID selection bridge.
+EtherCATCore also reserves stable, append-only node kinds for
 Inputs, Outputs, RxPDO, TxPDO, PDO,
 PDO Entry, Modules, Module, and Channel selections. The Workbench now projects
 validated active Process Data into Inputs, Outputs, RxPDO, TxPDO, PDO, and PDO

@@ -136,7 +136,33 @@ locating the first warning/error, opening the matching Diagnostics branch,
 locating the first unsupported ESI device, adding a supported ESI device to the
 active offline master, opening the master-side `Add New Item...` device
 selector, removing or moving a configured slave, and copying the stable node
-ID. Keyboard navigation is provided by `QTreeView`.
+ID.
+
+## Navigation keyboard focus
+
+`ISSUE-WB-NAV-KEYBOARD-001` completes the activation path for the existing
+`QTreeView` keyboard navigation. The Workbench navigation container now uses
+the device tree as its focus proxy. When Qt Creator activates the EtherCAT
+navigation page and focuses the factory widget, the tree receives focus
+without an extra mouse click. Up/Down then changes the visible row through
+`QTreeView`, and the existing current-index bridge publishes the selected
+stable `NodeId` through `SelectionService`.
+
+This follows the focus-proxy pattern already used by Qt Creator's Project
+Tree, Class View, and Folder Navigation implementations in
+`src/plugins/projectexplorer/projecttreewidget.cpp`,
+`src/plugins/classview/classviewnavigationwidget.cpp`, and
+`src/plugins/coreplugin/foldernavigationwidget.cpp`. It preserves the
+tree-centred engineering workflow described by Beckhoff for I/O devices and
+EtherCAT master/slave hierarchies:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html> and
+<https://infosys.beckhoff.com/content/1033/b110_ethercat_optioninterface/2335733771.html>.
+The local focus behavior is a native Qt Creator integration detail; it is not
+presented as copied TwinCAT behavior.
+
+The issue adds no shortcut, filter behavior, model role, public API, Provider,
+thread, timer, or persistent state. Destruction remains ordinary QWidget child
+ownership, and the existing selection/provider cleanup paths are unchanged.
 
 Both columns resize to their visible contents and node text is not elided.
 This gives the hierarchical name priority in Qt Creator's narrow navigation
@@ -870,12 +896,18 @@ contract and remain explicit read-only or unavailable states. ADS/NetId
 routing, master configuration export, Sync Unit assignment, runtime task
 binding, and cyclic-frame generation are also absent; the master EtherCAT page
 shows those boundaries instead of generating placeholder operational data.
+The navigation filter also still presents an empty tree when a non-empty query
+has no match. `ISSUE-WB-NAV-FILTER-EMPTY-001` remains a separate Workbench UI
+qualification issue: it must provide an explicit no-match state, a clear-filter
+path, and translated accessible name/description for the filter field without
+changing stable selection or filter semantics.
 
 ## Verification
 
 The focused Workbench suite covers metadata and hard dependencies, mode/action
 registration, a 500-device incremental model under
-`QAbstractItemModelTester`, filtering and two-way stable selection, real ESI
+`QAbstractItemModelTester`, activation focus and Down-arrow stable selection,
+filtering and two-way stable selection, real ESI
 data in Process Data/Startup/DC pages, the repository import/reload/cancel
 workflow, individual ESI catalogue
 identity/configuration/qualification/source details and unavailable state,
@@ -960,7 +992,12 @@ The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
 match/difference routing, Missing/Added/Revision/Vendor presentation, warning
 and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
 stable locate/open navigation, command registration, and provider-removal
-restoration. It passes 30 tests on the qualified Qt 6.11.0 Release test build.
+restoration. It passes 31 tests on the qualified Qt 6.11.0 Release test build.
+The navigation keyboard-focus test passes at normal scale and
+`QT_SCALE_FACTOR=2`, with 3 passed and 0 failed at each scale. It verifies the
+container focus proxy, actual application focus, a real Down-arrow event, and
+the resulting stable `NodeId` publication. The complete Workbench suite passes
+31 tests at normal scale; no complete-suite 2x run is claimed.
 The project, target, and master General flows also pass at
 `QT_SCALE_FACTOR=2`, and direct normal and 2x widget renders show no overlap,
 clipping, or uncontrolled expansion.

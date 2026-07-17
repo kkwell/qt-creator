@@ -67,6 +67,7 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_treeView->setHeaderHidden(false);
     m_treeView->header()->setStretchLastSection(false);
     m_treeView->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    setFocusProxy(m_treeView);
 
     auto layout = new QVBoxLayout(this);
     layout->setContentsMargins(QMargins());

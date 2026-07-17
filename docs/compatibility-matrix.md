@@ -5,7 +5,7 @@
 | Item | Supported or observed baseline | Evidence status |
 |---|---|---|
 | Product branch | `embed-labs` only | Verified |
-| Product commit | `a7a6f4ebdc2d07a8812d717b1c4fc165d1a8df71` | Verified |
+| Issue baseline commit | `9fd3c844c3f61557323a1a4f57e668e931c8de09` | Verified |
 | Product version | 20.0.1 | Verified |
 | Recorded Qt Creator merge point | `11ba5cec09dce75db4bc948d98055e338ff59576` | Verified |
 | Qualified product Qt | Homebrew 6.11.0 | Clean Release build and GUI smoke verified |
@@ -515,10 +515,13 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 30 passed, 0 failed |
-| Six-plugin EtherCAT regression | 81 passed, 0 failed in isolated processes |
+| Focused EtherCATWorkbench plugin tests | 31 passed, 0 failed |
+| Six-plugin EtherCAT regression | 82 passed, 0 failed in isolated processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
+| Failure-first navigation keyboard test | Compiled and failed because the navigation container focus proxy was null, as expected |
+| Focused navigation keyboard test | 3 passed, 0 failed at normal scale |
+| Focused navigation keyboard test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
 | Failure-first CoE Online page test | Compiled and failed on the missing `CoE Online` page descriptor before implementation, as expected |
 | Failure-first unified-status test | Compiled and failed because no Workbench status-bar control was registered, as expected |
 | Failure-first command-strip test | Compiled and failed because EtherCAT Mode had no engineering command strip, as expected |
@@ -614,9 +617,11 @@ limits are documented in `docs/ethercat-workbench.md`.
 | 128 configured slaves under `QAbstractItemModelTester` | Passed |
 | Non-elided content-sized tree columns in a narrow navigation area | Passed in widget test and desktop inspection |
 | Accessible tree name, description, and five process-data branches | Passed in widget test and macOS accessibility inspection |
+| Navigation activation focus and arrow-key selection | Passed at normal scale and `QT_SCALE_FACTOR=2` with outer-widget focus transfer, a real Down-arrow event, and stable `NodeId` publication |
 | macOS accessibility lock-transition observation | One Qt 6.11 accessibility crash was captured during a lock transition; a second RxPDO-selection run remained alive until the Mac locked, so the event is not reproduced and remains a qualification risk |
 | Dynamic property-page provider removal | Passed |
 | Dynamic Scan/Diagnostics availability and removal | Passed |
+| Workbench test-process cleanup | Focused normal/2x and full-suite processes exited 0 after widget, controller, selection, and Provider cleanup; this issue adds no thread, timer, future, or Provider |
 | Scan snapshot overlay | Passed for exact, Missing, Added, Revision, Vendor, source label, full-detail search, and aggregate count/severity |
 | Diagnostics snapshot overlay | Passed for Run/OP, SAFEOP/error, AL detail, missing snapshot, alarm/error marker, stopped state, and cleanup |
 | Difference/issue/Diagnostics ActionManager navigation | Passed with stable selection, filter clearing, ancestor expansion, and shared QAction registration |
@@ -656,7 +661,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | EtherCAT-master EtherCAT desktop interaction inspection | Not run; only direct offscreen renders and widget behavior tests are claimed |
 | Direct upstream Core, ProjectExplorer, or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
-| qbs build | Not run; qbs executable is unavailable |
+| qbs build | Not run; this issue changes no CMake/qbs target description; qbs 3.2.0 was found outside `PATH` |
 
 ## EtherCATScan stage-5 qualification
 

@@ -30,6 +30,7 @@ private slots:
     void testConfiguredSlaveStateIcon();
     void testProviderStateTreeAndNavigation();
     void testNavigationSelectionAndFiltering();
+    void testNavigationKeyboardFocus();
     void testBuiltInDevicePages();
     void testConfiguredSlaveTreeAndPages();
     void testTwinCatProcessDataTree();

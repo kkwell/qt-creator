@@ -235,6 +235,14 @@ reuses their QAction objects in the existing navigation factory and context
 menu. It adds no source, dependency, upstream Core, ProjectExplorer, or
 application path, so the direct Core patch count remains five.
 
+The Workbench navigation-keyboard issue changes only the existing private
+navigation widget, its tests, and documentation. It applies Qt Creator's
+standard QWidget focus-proxy pattern to the existing tree and reuses the
+current stable-ID selection bridge. It adds no source-list entry, CMake/qbs
+change, dependency, public API, Provider, persistent data, upstream Core,
+ProjectExplorer, or application path, so the Workbench path count remains 44
+and the direct Core patch count remains five.
+
 The Workbench offline-topology issue changes only the product-owned
 `EtherCATWorkbench` plugin and documentation. It adds two private ESI-default
 factory files with synchronized CMake/qbs entries, then reuses the existing
