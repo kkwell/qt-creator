@@ -888,6 +888,97 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
+void EtherCATWorkbenchTests::testEditableConfiguredSlaveGeneralWorkflow()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("editable-general.xml");
+    const Utils::Result<qint64> esiWritten = esiPath.writeFileContents(deviceEsi());
+    QVERIFY_RESULT(esiWritten);
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0x5678;
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(directory, *device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    DetailsView details(&controller);
+    details.resize(1100, 720);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
+    QVERIFY(page);
+    QLabel *title = details.findChild<QLabel *>("EtherCATWorkbenchDetailsTitle");
+    QLineEdit *name = page->findChild<QLineEdit *>("EtherCATGeneralName");
+    QLineEdit *id = page->findChild<QLineEdit *>("EtherCATGeneralId");
+    QLineEdit *objectId = page->findChild<QLineEdit *>("EtherCATGeneralObjectId");
+    QLineEdit *type = page->findChild<QLineEdit *>("EtherCATGeneralType");
+    QVERIFY(name);
+    QVERIFY(title);
+    QVERIFY(id);
+    QVERIFY(objectId);
+    QVERIFY(type);
+    QCOMPARE(name->text(), QString("Configured Servo"));
+    QCOMPARE(id->text(), QString("1"));
+    QCOMPARE(objectId->text(), file.slaveId.toString());
+    QCOMPARE(type->text(), QString("AX5000"));
+    QVERIFY(!name->isReadOnly());
+    QVERIFY(id->isReadOnly());
+    QVERIFY(objectId->isReadOnly());
+    QVERIFY(type->isReadOnly());
+    QVERIFY(!name->accessibleName().isEmpty());
+
+    const QString renamed = QString::fromUtf8("Axis X / 主轴");
+    name->setText("  " + renamed + "  ");
+    QVERIFY(QMetaObject::invokeMethod(name, "editingFinished"));
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().name, renamed);
+    QTRY_COMPARE(controller.treeModel()->indexForNodeId(file.slaveId).data().toString(), renamed);
+    QTRY_COMPARE(title->text(), renamed);
+    QCOMPARE(controller.selectionService()->currentNodeId(), file.slaveId);
+    QVERIFY(projectService->canUndoProject(file.projectId));
+
+    const Utils::Result<> undoRename = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoRename);
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().name, QString("Configured Servo"));
+    QTRY_COMPARE(name->text(), QString("Configured Servo"));
+    QTRY_COMPARE(title->text(), QString("Configured Servo"));
+    const Utils::Result<> redoRename = projectService->redoProject(file.projectId);
+    QVERIFY_RESULT(redoRename);
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().name, renamed);
+    QTRY_COMPARE(name->text(), renamed);
+    QTRY_COMPARE(title->text(), renamed);
+
+    name->setText("   ");
+    QVERIFY(QMetaObject::invokeMethod(name, "editingFinished"));
+    QTRY_COMPARE(name->text(), renamed);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().name, renamed);
+
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
 void EtherCATWorkbenchTests::testStatusBarTracksStateService()
 {
     auto statusButton = ::Core::ICore::statusBar()->findChild<QToolButton *>(
@@ -1434,11 +1525,18 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
         Constants::PROCESS_DATA_PAGE_ID,
         processPage.get(),
         controller.treeModel()->contextForIndex(unreferencedSlave));
+    pages.updatePage(
+        Constants::GENERAL_PAGE_ID,
+        generalPage.get(),
+        controller.treeModel()->contextForIndex(unreferencedSlave));
     QCOMPARE(syncManagers->model()->rowCount(), 0);
     QVERIFY(processPage->findChild<QLabel *>("EtherCATProcessDataSummary")
                 ->text()
                 .contains("No Process Data", Qt::CaseInsensitive));
     QVERIFY(processPage->findChild<QPushButton *>("EtherCATProcessDataRestoreDefaults")->isHidden());
+    QCOMPARE(
+        generalPage->findChild<QLineEdit *>("EtherCATGeneralType")->text(),
+        QString("Unknown ESI device"));
 }
 
 void EtherCATWorkbenchTests::testTwinCatProcessDataTree()

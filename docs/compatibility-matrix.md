@@ -216,8 +216,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 20 passed, 0 failed |
-| Six-plugin EtherCAT regression | 70 passed, 0 failed in isolated processes |
+| Focused EtherCATWorkbench plugin tests | 21 passed, 0 failed |
+| Six-plugin EtherCAT regression | 71 passed, 0 failed in isolated processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first CoE Online page test | Compiled and failed on the missing `CoE Online` page descriptor before implementation, as expected |
@@ -226,6 +226,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Failure-first provider-state tree test | Failed to compile on missing difference/issue/diagnostics navigation APIs before implementation, as expected |
 | Failure-first context-command test | Failed to compile only on missing Locate Unsupported/Copy Node ID command IDs and Controller requests before implementation, as expected |
 | Failure-first offline-topology test | Failed to compile only on the four missing Add/Remove/Move ActionManager command IDs before implementation, as expected |
+| Failure-first configured-slave General test | Compiled and failed because the editable `EtherCATGeneralName` control did not exist before implementation, as expected |
 | Metadata, hard dependencies, mode, and actions | Passed |
 | Shared QAction identity across menu, toolbar, shortcuts, and callbacks | Passed |
 | Dynamic action add/remove and optional Scan/Diagnostics load combinations | Passed with both, either, and neither optional plugin loaded |
@@ -267,6 +268,10 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Supported ESI device add and repeated-device unique naming | Passed with complete identity, repository reference, Process Data, Startup, and DC defaults |
 | Offline slave remove/reorder workflow | Passed with normalized positions, boundary enablement, stable selection, selection repair, Undo, and Redo |
 | Offline-topology ActionManager identity | Passed for all four context-only commands in real device and configured-slave popup menus |
+| Configured-slave General identity form | Passed for editable Name and read-only one-based Id, stable Object Id, and ESI-derived Type |
+| Configured-slave General rename workflow | Passed for whitespace trimming, Unicode, empty rejection, Project modified state, tree/title/form synchronization, stable selection, Undo, and Redo |
+| Configured-slave General missing ESI state | Passed with explicit `Unknown ESI device` Type and retained read-only identity details |
+| Focused configured-slave General test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
 | Exact Inputs, Outputs, RxPDO, TxPDO, Modules/Channels branch order | Passed |
 | Inputs from active TxPDO and Outputs from active RxPDO | Passed |
 | Active-PDO projection with PDO and Entry descendants | Passed |
@@ -303,6 +308,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Provider-state tree direct Qt render | Passed at 2400 x 1600 Retina output with MOCK Run/OP, SAFEOP/Error, Missing, Revision, Added, difference count, and Diagnostics state visible without clipping |
 | Tree context-menu direct Qt render | Passed at 522 x 472 Retina output with the original seven commands plus configured-slave Remove/Move commands, correct boundary state, and no clipping at `QT_SCALE_FACTOR=2`; offscreen macOS style omitted menu icons |
 | Offline-topology desktop interaction inspection | Not run; Computer Use reported a locked macOS session, so no manual-click result is claimed |
+| Configured-slave General direct Qt render | Passed at 2200 x 1440 Retina output with Unicode title/name, Id, Object Id, Type, and details visible without overlap or clipping |
+| Configured-slave General desktop interaction inspection | Not run; only the direct offscreen render and widget behavior tests are claimed |
 | Direct upstream Core, ProjectExplorer, or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |

@@ -215,6 +215,14 @@ void DetailsView::rebuildPages()
 
 void DetailsView::refreshPageContents()
 {
+    if (m_controller && !m_context.nodeId.isNull()) {
+        const Core::PropertyPageContext current = m_controller->treeModel()->contextForNodeId(
+            m_context.nodeId);
+        if (current.nodeKind != Core::WorkbenchNodeKind::None) {
+            m_context = current;
+            m_title->setText(m_context.displayName);
+        }
+    }
     for (const PageEntry &entry : std::as_const(m_pages)) {
         if (entry.provider && entry.widget)
             entry.provider->updatePage(entry.pageId, entry.widget, m_context);

@@ -43,6 +43,8 @@ public:
     Utils::Result<> removeSelectedOfflineSlave();
     Utils::Result<> moveSelectedOfflineSlaveUp();
     Utils::Result<> moveSelectedOfflineSlaveDown();
+    Utils::Result<> renameOfflineSlave(
+        const Data::NodeId &projectId, const Data::NodeId &slaveId, const QString &name);
 
 signals:
     void expandAllRequested();

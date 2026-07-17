@@ -5,9 +5,10 @@
 `EtherCATWorkbench` is the stage-4 engineering-shell plugin. It owns the
 EtherCAT mode, left navigation tree, stable selection linkage, central details
 container, built-in offline property pages, manual offline-topology commands,
-Workbench commands, and the presentation of public Scan/Diagnostics snapshots
-in the device tree. It does not parse ESI files, own project persistence, scan
-a bus, produce diagnostics, or define a controller protocol.
+an editable configured-slave General page, Workbench commands, and the
+presentation of public Scan/Diagnostics snapshots in the device tree. It does
+not parse ESI files, own project persistence, scan a bus, produce diagnostics,
+or define a controller protocol.
 
 The layout follows the information hierarchy of common EtherCAT engineering
 tools without copying Beckhoff assets, TwinCAT project formats, or proprietary
@@ -228,6 +229,36 @@ target selection, a bus scan, controller transport, or online configuration.
 Those require separate issues and must not bypass the same checked Project
 service boundary.
 
+## Configured-slave General page
+
+`ISSUE-WB-SLAVE-GENERAL-001` implements the first configured-slave identity
+form. Its field hierarchy was compared with Beckhoff's documented TwinCAT 3
+General page:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1341899531.html>.
+No Beckhoff asset, project format, control, or proprietary implementation is
+copied.
+
+The form exposes `Name`, `Id`, `Object Id`, and `Type`. `Name` is the only
+editable field. `Id` is a one-based presentation of the configured slave's
+offline physical order, `Object Id` is the stable project `NodeId`, and `Type`
+comes from the matching ESI description. A missing ESI description is reported
+as `Unknown ESI device` instead of fabricating a type. The existing identity,
+Alias, ESI source, group, support, and import details remain visible in the
+read-only property table below the form.
+
+Finishing a name edit trims surrounding whitespace and sends the replacement
+through the Workbench controller to the existing checked
+`ProjectService::replaceOfflineSlaves()` command. Empty names are rejected and
+the displayed value is restored. Accepted edits therefore retain Project-owned
+validation, modified state, persistence, Undo, and Redo. The slave's stable ID,
+current tree selection, child-node IDs, details title, tree label, and General
+form stay synchronized across rename, Undo, and Redo.
+
+TwinCAT's Comment, Disabled, and Create symbols fields are not represented by
+the current project contract and are not simulated. Alias remains visible but
+read-only here; editing it belongs to a separate slave EtherCAT-page issue. No
+online value, controller transport, protocol, or public Core API is added.
+
 ## Provider state overlays and issue navigation
 
 `ISSUE-WB-STATE-TREE-001` adds a presentation-only overlay to the existing
@@ -281,8 +312,8 @@ the page set without retaining removed pointers.
 
 The built-in provider supplies these stage-4 pages:
 
-- General for projects, targets, masters, configured slaves, the repository,
-  and ESI devices;
+- General for projects, targets, masters, the repository, and ESI devices, plus
+  the editable identity form for configured slaves;
 - EtherCAT/SyncManager data for imported devices and the offline master;
 - an editable Process Data page for configured slaves, with a read-only ESI
   catalogue view for repository devices;
@@ -541,14 +572,18 @@ command strip, unsupported-device location, stable Node ID copying, placeholder
 protection, and enabled-state updates. The topology workflow verifies complete
 ESI Process Data/Startup/DC defaults, stable IDs, repeated-device unique names,
 position normalization, boundary states, selection repair, and Project
-Undo/Redo.
+Undo/Redo. The configured-slave General workflow verifies the four identity
+fields, ESI-derived and missing-ESI type states, Unicode rename trimming, empty
+name rejection, stable selection, synchronized tree/title/form updates, and
+Project Undo/Redo.
 The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
 match/difference routing, Missing/Added/Revision/Vendor presentation, warning
 and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
 stable locate/open navigation, command registration, and provider-removal
-restoration. It passes 20 tests on the qualified Qt 6.11.0 Release test build.
-The combined command-strip and offline-topology flow also passes at
-`QT_SCALE_FACTOR=2`.
+restoration. It passes 21 tests on the qualified Qt 6.11.0 Release test build.
+The focused configured-slave General workflow passes at both normal scale and
+`QT_SCALE_FACTOR=2`; the combined command-strip and offline-topology flow also
+passes at `QT_SCALE_FACTOR=2`.
 
 The normal 16-plugin product build and enabled/disabled startup smoke are
 recorded in `docs/compatibility-matrix.md`. A populated real EtherCAT Mode
@@ -593,3 +628,9 @@ disabled. Every label remained readable without clipping or overlap. The
 offscreen macOS menu style omitted action icons by platform policy; QAction icon
 presence remains covered by the widget test. The locked desktop prevented a
 manual click inspection, so no manual-interaction result is claimed.
+
+A direct 2200 x 1440 Retina render inspected the configured-slave General page.
+The renamed Unicode title and Name field, one-based Id, stable Object Id,
+ESI-derived Type, and complete read-only property table remained visible
+without overlap or clipping. This was an offscreen Qt Widget render; no manual
+desktop interaction is claimed for this issue.
