@@ -12,7 +12,6 @@
 #include <ethercatcore/selectionservice.h>
 
 #include <utils/stylehelper.h>
-#include <utils/utilsicons.h>
 
 #include <QAction>
 #include <QApplication>
@@ -127,6 +126,16 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
         this,
         &WorkbenchNavigationWidget::openDiagnostics);
     connect(
+        controller,
+        &WorkbenchController::locateUnsupportedDeviceRequested,
+        this,
+        &WorkbenchNavigationWidget::locateUnsupportedDevice);
+    connect(
+        controller,
+        &WorkbenchController::copyCurrentNodeIdRequested,
+        this,
+        &WorkbenchNavigationWidget::copyCurrentNodeId);
+    connect(
         m_treeView,
         &QTreeView::customContextMenuRequested,
         this,
@@ -212,35 +221,42 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
         m_treeView->setCurrentIndex(proxyIndex);
     const Core::PropertyPageContext context = m_sourceModel->contextForIndex(
         m_proxyModel->mapToSource(m_treeView->currentIndex()));
+    const auto setCommandEnabled = [](const Utils::Id &id, bool enabled) {
+        if (::Core::Command *command = ::Core::ActionManager::command(id))
+            command->action()->setEnabled(enabled);
+    };
+    setCommandEnabled(
+        Constants::LOCATE_DIFFERENCE_ACTION_ID, m_sourceModel->firstTopologyDifference().isValid());
+    setCommandEnabled(Constants::LOCATE_ISSUE_ACTION_ID, m_sourceModel->firstIssue().isValid());
+    setCommandEnabled(
+        Constants::OPEN_DIAGNOSTICS_ACTION_ID,
+        m_sourceModel->diagnosticsForProject(context.projectId).isValid()
+            || m_sourceModel->diagnosticsForProject({}).isValid());
+    setCommandEnabled(
+        Constants::LOCATE_UNSUPPORTED_DEVICE_ACTION_ID,
+        m_sourceModel->firstUnsupportedDevice().isValid());
+    setCommandEnabled(
+        Constants::COPY_NODE_ID_ACTION_ID,
+        !context.nodeId.isNull() && context.nodeKind != Core::WorkbenchNodeKind::Placeholder);
 
     QMenu menu(this);
-    QAction *expand = menu.addAction(Tr::tr("Expand All"));
-    expand->setIcon(Utils::Icons::EXPAND_ALL_TOOLBAR.icon());
-    connect(expand, &QAction::triggered, m_treeView, &QTreeView::expandAll);
-    QAction *collapse = menu.addAction(Tr::tr("Collapse All"));
-    collapse->setIcon(Utils::Icons::COLLAPSE_TOOLBAR.icon());
-    connect(collapse, &QAction::triggered, m_treeView, &QTreeView::collapseAll);
+    const auto addCommand = [&menu](const Utils::Id &id) {
+        if (::Core::Command *command = ::Core::ActionManager::command(id))
+            menu.addAction(command->action());
+    };
+    addCommand(Constants::EXPAND_ACTION_ID);
+    addCommand(Constants::COLLAPSE_ACTION_ID);
     menu.addSeparator();
     for (const Utils::Id id :
          {Utils::Id(Constants::LOCATE_DIFFERENCE_ACTION_ID),
           Utils::Id(Constants::LOCATE_ISSUE_ACTION_ID),
-          Utils::Id(Constants::OPEN_DIAGNOSTICS_ACTION_ID)}) {
-        if (::Core::Command *command = ::Core::ActionManager::command(id))
-            menu.addAction(command->action());
+          Utils::Id(Constants::OPEN_DIAGNOSTICS_ACTION_ID),
+          Utils::Id(Constants::LOCATE_UNSUPPORTED_DEVICE_ACTION_ID)}) {
+        addCommand(id);
     }
-    QAction *unsupported = menu.addAction(Tr::tr("Locate Unsupported Device"));
-    unsupported->setEnabled(m_sourceModel->firstUnsupportedDevice().isValid());
-    connect(
-        unsupported,
-        &QAction::triggered,
-        this,
-        &WorkbenchNavigationWidget::locateUnsupportedDevice);
-    if (!context.nodeId.isNull()) {
+    if (!context.nodeId.isNull() && context.nodeKind != Core::WorkbenchNodeKind::Placeholder) {
         menu.addSeparator();
-        QAction *copyId = menu.addAction(Tr::tr("Copy Node ID"));
-        connect(copyId, &QAction::triggered, this, [context] {
-            QApplication::clipboard()->setText(context.nodeId.toString());
-        });
+        addCommand(Constants::COPY_NODE_ID_ACTION_ID);
     }
     menu.exec(m_treeView->viewport()->mapToGlobal(position));
 }
@@ -248,6 +264,14 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
 void WorkbenchNavigationWidget::locateUnsupportedDevice()
 {
     selectSourceIndex(m_sourceModel->firstUnsupportedDevice());
+}
+
+void WorkbenchNavigationWidget::copyCurrentNodeId()
+{
+    const Core::PropertyPageContext context = m_sourceModel->contextForIndex(
+        m_proxyModel->mapToSource(m_treeView->currentIndex()));
+    if (!context.nodeId.isNull())
+        QApplication::clipboard()->setText(context.nodeId.toString());
 }
 
 WorkbenchNavigationFactory::WorkbenchNavigationFactory(WorkbenchController *controller)
@@ -264,14 +288,12 @@ WorkbenchNavigationFactory::WorkbenchNavigationFactory(WorkbenchController *cont
     m_lastCreatedWidget = widget;
 
     auto expandButton = new QToolButton;
-    expandButton->setIcon(Utils::Icons::EXPAND_ALL_TOOLBAR.icon());
-    expandButton->setToolTip(Tr::tr("Expand All"));
-    connect(expandButton, &QToolButton::clicked, widget->treeView(), &QTreeView::expandAll);
+    if (::Core::Command *command = ::Core::ActionManager::command(Constants::EXPAND_ACTION_ID))
+        expandButton->setDefaultAction(command->action());
 
     auto collapseButton = new QToolButton;
-    collapseButton->setIcon(Utils::Icons::COLLAPSE_TOOLBAR.icon());
-    collapseButton->setToolTip(Tr::tr("Collapse All"));
-    connect(collapseButton, &QToolButton::clicked, widget->treeView(), &QTreeView::collapseAll);
+    if (::Core::Command *command = ::Core::ActionManager::command(Constants::COLLAPSE_ACTION_ID))
+        collapseButton->setDefaultAction(command->action());
     return {widget, {expandButton, collapseButton}};
 }
 

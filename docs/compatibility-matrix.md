@@ -216,20 +216,22 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 18 passed, 0 failed |
-| Six-plugin EtherCAT regression | 68 passed, 0 failed in isolated processes |
+| Focused EtherCATWorkbench plugin tests | 19 passed, 0 failed |
+| Six-plugin EtherCAT regression | 69 passed, 0 failed in isolated processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first CoE Online page test | Compiled and failed on the missing `CoE Online` page descriptor before implementation, as expected |
 | Failure-first unified-status test | Compiled and failed because no Workbench status-bar control was registered, as expected |
 | Failure-first command-strip test | Compiled and failed because EtherCAT Mode had no engineering command strip, as expected |
 | Failure-first provider-state tree test | Failed to compile on missing difference/issue/diagnostics navigation APIs before implementation, as expected |
+| Failure-first context-command test | Failed to compile only on missing Locate Unsupported/Copy Node ID command IDs and Controller requests before implementation, as expected |
 | Metadata, hard dependencies, mode, and actions | Passed |
 | Shared QAction identity across menu, toolbar, shortcuts, and callbacks | Passed |
 | Dynamic action add/remove and optional Scan/Diagnostics load combinations | Passed with both, either, and neither optional plugin loaded |
 | Compact command icons, complete tooltips, and standard toolbar metric | Passed |
 | Focused command-strip test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
 | Combined command-strip/provider-state test at `QT_SCALE_FACTOR=2` | 4 passed, 0 failed |
+| Combined command-strip/tree-command test at `QT_SCALE_FACTOR=2` | 4 passed, 0 failed |
 | 500-device incremental model with model tester | Passed |
 | Filter, context, and bidirectional stable selection | Passed |
 | Process Data, Startup, and DC pages from imported ESI | Passed |
@@ -276,6 +278,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Scan snapshot overlay | Passed for exact, Missing, Added, Revision, Vendor, source label, full-detail search, and aggregate count/severity |
 | Diagnostics snapshot overlay | Passed for Run/OP, SAFEOP/error, AL detail, missing snapshot, alarm/error marker, stopped state, and cleanup |
 | Difference/issue/Diagnostics ActionManager navigation | Passed with stable selection, filter clearing, ancestor expansion, and shared QAction registration |
+| Tree context and navigation ActionManager identity | Passed for all seven commands, shared Expand/Collapse buttons, context-only strip exclusion, enabled state, stable-ID copy, and placeholder protection |
 | EtherCATCore regression tests | 17 passed, 0 failed |
 | EtherCATProject regression tests | 11 passed, 0 failed |
 | EtherCATDevices regression tests | 8 passed, 0 failed |
@@ -293,6 +296,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Command-strip direct Qt main-window render | Passed at 2520 x 1400 with Workbench, Mock Scan, and Mock Diagnostics actions visible in one compact row without text compression or overlap |
 | Command-strip manual interaction inspection | Not run; the current desktop was not manually clicked, so only direct render and QAction behavior tests are claimed |
 | Provider-state tree direct Qt render | Passed at 2400 x 1600 Retina output with MOCK Run/OP, SAFEOP/Error, Missing, Revision, Added, difference count, and Diagnostics state visible without clipping |
+| Tree context-menu direct Qt render | Passed at 522 x 330 Retina output with seven ordered/grouped commands, correct disabled states, and no clipping at `QT_SCALE_FACTOR=2`; offscreen macOS style omitted menu icons |
 | Direct upstream Core, ProjectExplorer, or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |

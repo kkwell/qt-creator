@@ -221,6 +221,13 @@ entry or plugin dependency. It does not change Scan/Diagnostics producers,
 upstream Core, ProjectExplorer, or application paths, so the direct Core patch
 count remains five.
 
+The Workbench context-command issue also changes only existing files in the
+product-owned `EtherCATWorkbench` plugin and documentation. It replaces
+transient tree/navigation actions with public ActionManager registrations and
+reuses their QAction objects in the existing navigation factory and context
+menu. It adds no source, dependency, upstream Core, ProjectExplorer, or
+application path, so the direct Core patch count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

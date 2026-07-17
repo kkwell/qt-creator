@@ -16,6 +16,8 @@ const char COLLAPSE_ACTION_ID[] = "EtherCAT.Workbench.CollapseAll";
 const char LOCATE_DIFFERENCE_ACTION_ID[] = "EtherCAT.Workbench.LocateDifference";
 const char LOCATE_ISSUE_ACTION_ID[] = "EtherCAT.Workbench.LocateIssue";
 const char OPEN_DIAGNOSTICS_ACTION_ID[] = "EtherCAT.Workbench.OpenDiagnostics";
+const char LOCATE_UNSUPPORTED_DEVICE_ACTION_ID[] = "EtherCAT.Workbench.LocateUnsupportedDevice";
+const char COPY_NODE_ID_ACTION_ID[] = "EtherCAT.Workbench.CopyNodeId";
 
 const char BUILTIN_PAGE_PROVIDER_ID[] = "EtherCAT.Workbench.BuiltinPages";
 const char GENERAL_PAGE_ID[] = "EtherCAT.Workbench.General";

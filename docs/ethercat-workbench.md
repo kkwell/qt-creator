@@ -54,6 +54,11 @@ enabled state, checked state, tooltips, and callbacks therefore share the same
 ActionManager registration. Action-added and action-removed events keep the
 strip synchronized when an optional plugin is present or absent.
 
+Tree-only commands such as `Locate Unsupported Device` and `Copy Node ID` are
+registered with ActionManager for context and shortcut consistency but are not
+added to `EtherCAT.Menu`. They therefore remain available from the device tree
+without adding low-frequency actions to the compact engineering strip.
+
 Workbench never names or includes Scan or Diagnostics implementation details.
 When either optional plugin is disabled, its actions are simply missing from
 the shared action container and no empty controls are fabricated. When both
@@ -156,6 +161,30 @@ and it lets Details resolve the owning slave without copying complete slave
 configurations into every tree node. Renaming a slave does not change any child
 view ID. Empty groups have explicit, non-selectable placeholder rows. The model
 is covered with 128 configured slaves as well as the 500-device repository.
+
+## Unified tree commands
+
+`ISSUE-WB-CONTEXT-COMMANDS-001` removes the remaining transient device-tree
+actions. Expand Device Tree, Collapse Device Tree, Locate First Topology
+Difference, Locate First Issue, Open Diagnostics, Locate Unsupported Device,
+and Copy Node ID now each have one stable ActionManager command ID. The tree
+context menu adds those registered actions directly, and the navigation-header
+tool buttons use the same Expand/Collapse actions as their `defaultAction()`.
+No page or widget creates an alternative callback or state copy.
+
+This retains the TwinCAT-style left-tree workflow, including the documented
+right-click scan entry on I/O Devices:
+<https://infosys.beckhoff.com/content/1033/twincat_bsd/5624962827.html>, while
+using Qt Creator's native command and context architecture. No Beckhoff menu
+asset, command ID, or proprietary implementation is copied.
+
+Context enablement is recalculated from the current tree snapshot immediately
+before the menu opens. An unsupported-device command is enabled only when such
+a repository entry exists, and Copy Node ID is present only for a real
+selectable node. Placeholder rows cannot copy a previous selection's ID.
+Outside the popup, model and Selection Service signals keep the same registered
+actions synchronized for shortcuts. The update path disables the actions if
+the Workbench controller has already been destroyed during shutdown.
 
 ## Provider state overlays and issue navigation
 
@@ -463,12 +492,16 @@ Mode-scoped visibility, and the existing configured/unsupported tree icons.
 The command-strip coverage verifies exact shared-action identity, source-menu
 ordering, Open-Workbench exclusion, dynamic add/remove behavior, complete
 tooltips, standard icon metrics, and all optional-plugin load combinations.
+The tree-command coverage opens real popup menus and verifies exact QAction
+identity for all seven commands, shared Expand/Collapse navigation buttons,
+context-only exclusion from the command strip, unsupported-device location,
+stable Node ID copying, placeholder protection, and enabled-state updates.
 The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
 match/difference routing, Missing/Added/Revision/Vendor presentation, warning
 and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
 stable locate/open navigation, command registration, and provider-removal
-restoration. It passes 18 tests on the qualified Qt 6.11.0 Release test build.
-The combined command-strip and provider-state flow also passes at
+restoration. It passes 19 tests on the qualified Qt 6.11.0 Release test build.
+The combined command-strip and tree-command flow also passes at
 `QT_SCALE_FACTOR=2`.
 
 The normal 16-plugin product build and enabled/disabled startup smoke are
@@ -505,3 +538,11 @@ difference count, and Added state; configured slaves displayed Revision and
 SAFEOP/Error plus Missing state; the Diagnostics branch displayed Running and
 Error. Standard warning/critical icons aligned with normal tree icons, and the
 full two-column status remained readable without clipping or overlap.
+
+A direct 522 x 330 Retina render inspected the registered tree context menu at
+`QT_SCALE_FACTOR=2`. All seven commands retained their order and grouping;
+the unavailable difference/issue locators were visibly disabled, and Open
+Diagnostics, Locate Unsupported Device, and Copy Node ID remained readable
+without clipping or overlap. The offscreen macOS menu style omitted action
+icons by platform policy; QAction icon presence remains covered by the widget
+test.

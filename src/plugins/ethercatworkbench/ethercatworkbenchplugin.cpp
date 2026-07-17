@@ -18,6 +18,7 @@
 #include <coreplugin/modemanager.h>
 #include <coreplugin/statusbarmanager.h>
 
+#include <ethercatcore/selectionservice.h>
 #include <ethercatcore/stateservice.h>
 
 #include <extensionsystem/iplugin.h>
@@ -174,17 +175,61 @@ void EtherCATWorkbenchPlugin::setupActions()
         emit m_controller->openDiagnosticsRequested();
     });
 
+    auto locateUnsupportedAction
+        = new QAction(Utils::Icons::BROKEN.icon(), Tr::tr("Locate Unsupported Device"), this);
+    ::Core::ActionManager::registerAction(
+        locateUnsupportedAction,
+        Constants::LOCATE_UNSUPPORTED_DEVICE_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    connect(locateUnsupportedAction, &QAction::triggered, m_controller.get(), [this] {
+        emit m_controller->locateUnsupportedDeviceRequested();
+    });
+
+    auto copyNodeIdAction = new QAction(Utils::Icons::COPY.icon(), Tr::tr("Copy Node ID"), this);
+    ::Core::ActionManager::registerAction(
+        copyNodeIdAction, Constants::COPY_NODE_ID_ACTION_ID, ::Core::Context(Constants::CONTEXT_ID));
+    connect(copyNodeIdAction, &QAction::triggered, m_controller.get(), [this] {
+        emit m_controller->copyCurrentNodeIdRequested();
+    });
+
     const auto updateNavigationActions =
-        [this, locateDifferenceAction, locateIssueAction, openDiagnosticsAction] {
+        [this,
+         locateDifferenceAction,
+         locateIssueAction,
+         openDiagnosticsAction,
+         locateUnsupportedAction,
+         copyNodeIdAction] {
+            if (!m_controller) {
+                locateDifferenceAction->setEnabled(false);
+                locateIssueAction->setEnabled(false);
+                openDiagnosticsAction->setEnabled(false);
+                locateUnsupportedAction->setEnabled(false);
+                copyNodeIdAction->setEnabled(false);
+                return;
+            }
             locateDifferenceAction->setEnabled(
                 m_controller->treeModel()->firstTopologyDifference().isValid());
             locateIssueAction->setEnabled(m_controller->treeModel()->firstIssue().isValid());
             openDiagnosticsAction->setEnabled(
                 m_controller->treeModel()->diagnosticsForProject({}).isValid());
+            locateUnsupportedAction->setEnabled(
+                m_controller->treeModel()->firstUnsupportedDevice().isValid());
+            copyNodeIdAction->setEnabled(
+                m_controller->selectionService()
+                && !m_controller->selectionService()->currentNodeId().isNull());
         };
     connect(
         m_controller->treeModel(), &QAbstractItemModel::dataChanged, this, updateNavigationActions);
     connect(m_controller->treeModel(), &QAbstractItemModel::modelReset, this, updateNavigationActions);
+    connect(
+        m_controller->treeModel(), &QAbstractItemModel::rowsInserted, this, updateNavigationActions);
+    connect(
+        m_controller->treeModel(), &QAbstractItemModel::rowsRemoved, this, updateNavigationActions);
+    connect(
+        m_controller->selectionService(),
+        &Core::SelectionService::currentNodeChanged,
+        this,
+        updateNavigationActions);
     updateNavigationActions();
 }
 

@@ -36,6 +36,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -608,12 +609,115 @@ void EtherCATWorkbenchTests::testModeCommandStripMirrorsRegisteredActions()
         QVERIFY(commandActions.contains(command->action()));
         QVERIFY(!command->action()->icon().isNull());
     }
+    for (const Utils::Id id :
+         {Utils::Id(Constants::LOCATE_UNSUPPORTED_DEVICE_ACTION_ID),
+          Utils::Id(Constants::COPY_NODE_ID_ACTION_ID)}) {
+        ::Core::Command *command = ::Core::ActionManager::command(id);
+        QVERIFY(command);
+        QVERIFY(!commandActions.contains(command->action()));
+    }
 
     QAction transientAction("Transient engineering command");
     menu->menu()->addAction(&transientAction);
     QTRY_VERIFY(commandStrip->actions().contains(&transientAction));
     menu->menu()->removeAction(&transientAction);
     QTRY_VERIFY(!commandStrip->actions().contains(&transientAction));
+}
+
+void EtherCATWorkbenchTests::testNavigationCommandsUseActionManager()
+{
+    ::Core::ModeManager::activateMode(Constants::MODE_ID);
+    QTRY_COMPARE(::Core::ModeManager::currentModeId(), Utils::Id(Constants::MODE_ID));
+    ::Core::Command *expandCommand = ::Core::ActionManager::command(Constants::EXPAND_ACTION_ID);
+    ::Core::Command *collapseCommand = ::Core::ActionManager::command(Constants::COLLAPSE_ACTION_ID);
+    ::Core::Command *unsupportedCommand = ::Core::ActionManager::command(
+        Constants::LOCATE_UNSUPPORTED_DEVICE_ACTION_ID);
+    ::Core::Command *copyCommand = ::Core::ActionManager::command(Constants::COPY_NODE_ID_ACTION_ID);
+    QVERIFY(expandCommand);
+    QVERIFY(collapseCommand);
+    QVERIFY(unsupportedCommand);
+    QVERIFY(copyCommand);
+    QVERIFY(!unsupportedCommand->action()->icon().isNull());
+    QVERIFY(!copyCommand->action()->icon().isNull());
+
+    WorkbenchController controller;
+    const Data::ProjectSnapshot project = projectSnapshot("Navigation commands");
+    QList<Data::DeviceSummary> devices = deviceSummaries(2);
+    devices.first().supported = false;
+    controller.treeModel()->setProjects({project});
+    controller.treeModel()->syncDevices(devices);
+
+    WorkbenchNavigationFactory factory(&controller);
+    const ::Core::NavigationView view = factory.createWidget();
+    auto navigation = qobject_cast<WorkbenchNavigationWidget *>(view.widget);
+    QVERIFY(navigation);
+    QCOMPARE(view.dockToolBarWidgets.size(), 2);
+    QCOMPARE(view.dockToolBarWidgets.at(0)->defaultAction(), expandCommand->action());
+    QCOMPARE(view.dockToolBarWidgets.at(1)->defaultAction(), collapseCommand->action());
+
+    emit controller.locateUnsupportedDeviceRequested();
+    QTRY_COMPARE(
+        navigation->treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        devices.first().id);
+    QApplication::clipboard()->clear();
+    emit controller.copyCurrentNodeIdRequested();
+    QTRY_COMPARE(QApplication::clipboard()->text(), devices.first().id.toString());
+
+    navigation->resize(900, 600);
+    navigation->show();
+    QTRY_VERIFY(navigation->isVisible());
+    QList<QAction *> popupActions;
+    bool popupSeen = false;
+    QTimer::singleShot(0, navigation, [&popupActions, &popupSeen] {
+        auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!popup)
+            return;
+        popupSeen = true;
+        popupActions = popup->actions();
+        popup->close();
+    });
+    emit navigation->treeView()->customContextMenuRequested(QPoint(-1, -1));
+    QVERIFY(popupSeen);
+    QVERIFY(unsupportedCommand->action()->isEnabled());
+    QVERIFY(copyCommand->action()->isEnabled());
+    for (const Utils::Id id :
+         {Utils::Id(Constants::EXPAND_ACTION_ID),
+          Utils::Id(Constants::COLLAPSE_ACTION_ID),
+          Utils::Id(Constants::LOCATE_DIFFERENCE_ACTION_ID),
+          Utils::Id(Constants::LOCATE_ISSUE_ACTION_ID),
+          Utils::Id(Constants::OPEN_DIAGNOSTICS_ACTION_ID),
+          Utils::Id(Constants::LOCATE_UNSUPPORTED_DEVICE_ACTION_ID),
+          Utils::Id(Constants::COPY_NODE_ID_ACTION_ID)}) {
+        ::Core::Command *command = ::Core::ActionManager::command(id);
+        QVERIFY(command);
+        QVERIFY(popupActions.contains(command->action()));
+    }
+
+    const QModelIndex placeholder
+        = findByKind(navigation->treeView()->model(), Core::WorkbenchNodeKind::Placeholder);
+    QVERIFY(placeholder.isValid());
+    navigation->treeView()->setCurrentIndex(placeholder);
+    QList<QAction *> placeholderActions;
+    bool placeholderPopupSeen = false;
+    QTimer::singleShot(0, navigation, [&placeholderActions, &placeholderPopupSeen] {
+        auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!popup)
+            return;
+        placeholderPopupSeen = true;
+        placeholderActions = popup->actions();
+        popup->close();
+    });
+    emit navigation->treeView()->customContextMenuRequested(QPoint(-1, -1));
+    QVERIFY(placeholderPopupSeen);
+    QVERIFY(!placeholderActions.contains(copyCommand->action()));
+    QVERIFY(!copyCommand->action()->isEnabled());
+
+    qDeleteAll(view.dockToolBarWidgets);
+    delete navigation;
+    controller.selectionService()->clear();
 }
 
 void EtherCATWorkbenchTests::testStatusBarTracksStateService()

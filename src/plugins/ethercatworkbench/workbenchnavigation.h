@@ -38,6 +38,7 @@ private:
     void selectNode(const Data::NodeId &nodeId);
     void showContextMenu(const QPoint &position);
     void locateUnsupportedDevice();
+    void copyCurrentNodeId();
 
     QPointer<WorkbenchController> m_controller;
     WorkbenchTreeModel *m_sourceModel = nullptr;

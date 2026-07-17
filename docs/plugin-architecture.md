@@ -125,7 +125,11 @@ controller now copies public immutable Scan and Diagnostics snapshots into a
 presentation-only tree overlay. It exposes topology differences, live Mock
 state, warnings, errors, and ActionManager navigation without depending on
 producer-private headers, widgets, item indexes, or state machines. Provider
-removal restores the retained offline presentation. EtherCATCore also
+removal restores the retained offline presentation. The navigation header and
+device-tree context menu likewise reuse one ActionManager registration per
+command; context-only locate/copy actions remain outside the compact strip and
+derive their enabled state from the current model and stable selection.
+EtherCATCore also
 reserves stable, append-only node kinds for Inputs, Outputs, RxPDO, TxPDO, PDO,
 PDO Entry, Modules, Module, and Channel selections. The Workbench now projects
 validated active Process Data into Inputs, Outputs, RxPDO, TxPDO, PDO, and PDO

@@ -40,6 +40,8 @@ signals:
     void locateFirstTopologyDifferenceRequested();
     void locateFirstIssueRequested();
     void openDiagnosticsRequested();
+    void locateUnsupportedDeviceRequested();
+    void copyCurrentNodeIdRequested();
     void optionalProvidersChanged();
 
 private:
