@@ -28,7 +28,7 @@ relative to that recorded comparison point.
 | `src/plugins/ethercatcore` | 19 | Product-owned Core services and extension points |
 | `src/plugins/ethercatproject` | 18 | Product-owned offline project plugin |
 | `src/plugins/ethercatdevices` | 12 | Product-owned offline ESI repository plugin |
-| `src/plugins/ethercatworkbench` | 36 | Product-owned EtherCAT engineering-shell plugin |
+| `src/plugins/ethercatworkbench` | 38 | Product-owned EtherCAT engineering-shell plugin |
 | `src/plugins/ethercatscan` | 16 | Product-owned local Mock scan workflow plugin |
 | `src/plugins/ethercatdiagnostics` | 16 | Product-owned local Mock diagnostics plugin |
 
@@ -242,6 +242,14 @@ source files with synchronized CMake/qbs entries and routes name changes through
 the existing checked Project replacement command. It adds no dependency,
 public Core API, or path under upstream Core, ProjectExplorer, or the application
 bootstrap, so the direct Core patch count remains five.
+
+The configured-slave EtherCAT-page issue also changes only the product-owned
+`EtherCATWorkbench` plugin and documentation. It adds two private EtherCAT-page
+source files with synchronized CMake/qbs entries, preserves the existing master
+and ESI read-only views, and routes Alias changes through the existing checked
+Project replacement command. It adds no dependency, public Core API, or path
+under upstream Core, ProjectExplorer, or the application bootstrap, so the
+direct Core patch count remains five.
 
 Each completed EtherCAT issue must report:
 

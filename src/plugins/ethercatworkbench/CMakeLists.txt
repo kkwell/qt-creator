@@ -15,6 +15,8 @@ add_qtc_plugin(EtherCATWorkbench
     ethercatworkbenchconstants.h
     ethercatworkbenchplugin.cpp
     ethercatworkbenchtr.h
+    ethercatpage.cpp
+    ethercatpage.h
     generalpage.cpp
     generalpage.h
     processdatapage.cpp

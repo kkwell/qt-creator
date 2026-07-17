@@ -384,6 +384,34 @@ Utils::Result<> WorkbenchController::renameOfflineSlave(
     return m_projectService->replaceOfflineSlaves(projectId, selected->masterId, slaves);
 }
 
+Utils::Result<> WorkbenchController::setOfflineSlaveAlias(
+    const Data::NodeId &projectId, const Data::NodeId &slaveId, quint16 alias)
+{
+    if (m_shuttingDown || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    const std::optional<Data::ProjectSnapshot> project = m_projectService->project(projectId);
+    if (!project || !project->valid)
+        return Utils::ResultError(Tr::tr("The EtherCAT project is not available."));
+    const auto selected = std::find_if(
+        project->slaves.cbegin(), project->slaves.cend(), [&slaveId](const auto &slave) {
+            return slave.id == slaveId;
+        });
+    if (selected == project->slaves.cend())
+        return Utils::ResultError(Tr::tr("The offline slave is not available."));
+    if (selected->alias == alias)
+        return Utils::ResultOk;
+
+    QList<Data::OfflineSlaveConfiguration> slaves = slavesForMaster(*project, selected->masterId);
+    const auto editable = std::find_if(slaves.begin(), slaves.end(), [&slaveId](const auto &slave) {
+        return slave.id == slaveId;
+    });
+    QTC_ASSERT(
+        editable != slaves.end(),
+        return Utils::ResultError(Tr::tr("The offline slave is not part of its EtherCAT master.")));
+    editable->alias = alias;
+    return m_projectService->replaceOfflineSlaves(projectId, selected->masterId, slaves);
+}
+
 void WorkbenchController::refresh()
 {
     if (m_shuttingDown)

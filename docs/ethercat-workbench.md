@@ -256,8 +256,42 @@ form stay synchronized across rename, Undo, and Redo.
 
 TwinCAT's Comment, Disabled, and Create symbols fields are not represented by
 the current project contract and are not simulated. Alias remains visible but
-read-only here; editing it belongs to a separate slave EtherCAT-page issue. No
-online value, controller transport, protocol, or public Core API is added.
+read-only here and is edited on the dedicated slave EtherCAT page. No online
+value, controller transport, protocol, or public Core API is added.
+
+## Configured-slave EtherCAT page
+
+`ISSUE-WB-SLAVE-ETHERCAT-001` replaces the configured slave's generic
+SyncManager-only view with a dedicated offline EtherCAT page. Its upper field
+order and address semantics were compared with Beckhoff's documented TwinCAT 3
+EtherCAT tab:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1342524811.html>.
+No Beckhoff asset, dialog, project format, or proprietary implementation is
+copied.
+
+The page displays `Type`, `Product/Revision`, `Auto Inc Addr`, `EtherCAT Addr`,
+`Configured Station Alias`, `Identification Value`, and `Previous Port`,
+followed by the existing ESI SyncManager table. Type comes from the matching
+ESI description, Product/Revision comes from the persisted slave identity, and
+Auto Inc Addr is deterministically derived from physical order: the first slave
+is `0x0000`, the second is `0xffff`, then the value decrements for each further
+slave. Missing ESI data is explicit and never invents a device type or
+SyncManager.
+
+Configured Station Alias is the only editable field. It is bounded to the
+persisted 16-bit range, and zero explicitly disables the Alias. Each completed
+edit routes through the Workbench controller to the existing checked
+`ProjectService::replaceOfflineSlaves()` command, preserving Project validation,
+modified state, persistence, stable selection, Undo, and Redo. Repository-device
+views remain read-only, while the master view retains its ordered topology
+table.
+
+The current project contract does not contain a fixed EtherCAT address,
+identification-check value, or physical port graph. The corresponding fields
+therefore say `Automatic at startup`, `Not configured`, or `port not modeled`.
+Advanced Settings is visibly disabled. These values are not mapped onto Alias
+and no online or controller state is fabricated; enabling them requires a
+separate data-contract issue.
 
 ## Provider state overlays and issue navigation
 
@@ -314,7 +348,9 @@ The built-in provider supplies these stage-4 pages:
 
 - General for projects, targets, masters, the repository, and ESI devices, plus
   the editable identity form for configured slaves;
-- EtherCAT/SyncManager data for imported devices and the offline master;
+- an editable Alias and read-only offline address form for configured slaves,
+  while imported devices retain read-only SyncManager data and the master
+  retains its topology table;
 - an editable Process Data page for configured slaves, with a read-only ESI
   catalogue view for repository devices;
 - a read-only, automatically focused Process Data view for Inputs, Outputs,
@@ -528,7 +564,9 @@ modular ESI profile parsing and project-side module/channel values remain a
 separate Devices/data-contract issue; until such source data exists, Modules /
 Channels shows an explicit empty state instead of fabricated rows. Advanced
 Sync Unit timing semantics also remain pending an independent data-contract
-issue.
+issue. Fixed EtherCAT addresses, identification checks, physical port graphs,
+and Advanced Settings are likewise not represented by the current project
+contract and remain explicit read-only or unavailable states.
 
 ## Verification
 
@@ -575,15 +613,19 @@ position normalization, boundary states, selection repair, and Project
 Undo/Redo. The configured-slave General workflow verifies the four identity
 fields, ESI-derived and missing-ESI type states, Unicode rename trimming, empty
 name rejection, stable selection, synchronized tree/title/form updates, and
-Project Undo/Redo.
+Project Undo/Redo. The configured-slave EtherCAT workflow verifies ESI type,
+Product/Revision, first/second Auto Inc Addr values, configured predecessor,
+bounded Alias editing and disable value, modified state, stable selection,
+Undo/Redo, missing-ESI behavior, read-only repository behavior, retained master
+topology, and retained SyncManager data.
 The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
 match/difference routing, Missing/Added/Revision/Vendor presentation, warning
 and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
 stable locate/open navigation, command registration, and provider-removal
-restoration. It passes 21 tests on the qualified Qt 6.11.0 Release test build.
-The focused configured-slave General workflow passes at both normal scale and
-`QT_SCALE_FACTOR=2`; the combined command-strip and offline-topology flow also
-passes at `QT_SCALE_FACTOR=2`.
+restoration. It passes 22 tests on the qualified Qt 6.11.0 Release test build.
+The focused configured-slave General and EtherCAT workflows pass at both normal
+scale and `QT_SCALE_FACTOR=2`; the combined command-strip and offline-topology
+flow also passes at `QT_SCALE_FACTOR=2`.
 
 The normal 16-plugin product build and enabled/disabled startup smoke are
 recorded in `docs/compatibility-matrix.md`. A populated real EtherCAT Mode
@@ -632,5 +674,12 @@ manual click inspection, so no manual-interaction result is claimed.
 A direct 2200 x 1440 Retina render inspected the configured-slave General page.
 The renamed Unicode title and Name field, one-based Id, stable Object Id,
 ESI-derived Type, and complete read-only property table remained visible
+without overlap or clipping. This was an offscreen Qt Widget render; no manual
+desktop interaction is claimed for this issue.
+
+A direct 2200 x 1520 Retina render inspected the configured-slave EtherCAT
+page. Type, Product/Revision, Auto Inc Addr, the explicit automatic fixed-address
+state, editable Configured Station Alias, unavailable identification/port
+states, disabled Advanced Settings, and both SyncManager rows remained visible
 without overlap or clipping. This was an offscreen Qt Widget render; no manual
 desktop interaction is claimed for this issue.

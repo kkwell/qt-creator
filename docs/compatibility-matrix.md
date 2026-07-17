@@ -77,6 +77,7 @@ function is outside the product target and records migration or recovery.
 | Modules/Channels tree branch | Explicit empty state verified; real modular data pending Devices/data-contract issue |
 | Public process/PDO/module/channel node kinds | Core/API contract verified |
 | Extensible offline property pages | Stage 4 verified |
+| Configured-slave General and EtherCAT/Alias pages | Verified; unsupported fixed address, identification, port graph, and Advanced Settings remain explicit unavailable states |
 | Offline Process Data/Startup/DC domain model | Verified in EtherCATData |
 | Project persistence and Undo/Redo for those models | Verified in format version 2 |
 | Editable Process Data page | Verified in current Workbench issue |
@@ -216,8 +217,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 21 passed, 0 failed |
-| Six-plugin EtherCAT regression | 71 passed, 0 failed in isolated processes |
+| Focused EtherCATWorkbench plugin tests | 22 passed, 0 failed |
+| Six-plugin EtherCAT regression | 72 passed, 0 failed in isolated processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first CoE Online page test | Compiled and failed on the missing `CoE Online` page descriptor before implementation, as expected |
@@ -227,6 +228,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Failure-first context-command test | Failed to compile only on missing Locate Unsupported/Copy Node ID command IDs and Controller requests before implementation, as expected |
 | Failure-first offline-topology test | Failed to compile only on the four missing Add/Remove/Move ActionManager command IDs before implementation, as expected |
 | Failure-first configured-slave General test | Compiled and failed because the editable `EtherCATGeneralName` control did not exist before implementation, as expected |
+| Failure-first configured-slave EtherCAT test | Compiled and failed because the dedicated `EtherCATEthercatAlias` control did not exist before implementation, as expected |
 | Metadata, hard dependencies, mode, and actions | Passed |
 | Shared QAction identity across menu, toolbar, shortcuts, and callbacks | Passed |
 | Dynamic action add/remove and optional Scan/Diagnostics load combinations | Passed with both, either, and neither optional plugin loaded |
@@ -272,6 +274,11 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Configured-slave General rename workflow | Passed for whitespace trimming, Unicode, empty rejection, Project modified state, tree/title/form synchronization, stable selection, Undo, and Redo |
 | Configured-slave General missing ESI state | Passed with explicit `Unknown ESI device` Type and retained read-only identity details |
 | Focused configured-slave General test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
+| Configured-slave EtherCAT field hierarchy | Passed for Type, Product/Revision, Auto Inc Addr, explicit fixed-address state, Alias, Identification Value, Previous Port, and Advanced Settings |
+| Auto-increment address and predecessor derivation | Passed for first `0x0000`, second `0xffff`, master predecessor, and previous-slave predecessor without inventing a port number |
+| Configured Station Alias workflow | Passed for 0 through 65535 bounds, explicit zero-disable state, Project modified state, stable selection, Undo, and Redo |
+| EtherCAT page read-only and missing-data boundaries | Passed for repository ESI view, retained master topology, retained SyncManager table, missing ESI type, and empty missing-ESI table |
+| Focused configured-slave EtherCAT test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
 | Exact Inputs, Outputs, RxPDO, TxPDO, Modules/Channels branch order | Passed |
 | Inputs from active TxPDO and Outputs from active RxPDO | Passed |
 | Active-PDO projection with PDO and Entry descendants | Passed |
@@ -310,6 +317,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Offline-topology desktop interaction inspection | Not run; Computer Use reported a locked macOS session, so no manual-click result is claimed |
 | Configured-slave General direct Qt render | Passed at 2200 x 1440 Retina output with Unicode title/name, Id, Object Id, Type, and details visible without overlap or clipping |
 | Configured-slave General desktop interaction inspection | Not run; only the direct offscreen render and widget behavior tests are claimed |
+| Configured-slave EtherCAT direct Qt render | Passed at 2200 x 1520 Retina output with all supported and explicit unavailable fields plus two SyncManager rows visible without overlap or clipping |
+| Configured-slave EtherCAT desktop interaction inspection | Not run; only the direct offscreen render and widget behavior tests are claimed |
 | Direct upstream Core, ProjectExplorer, or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |

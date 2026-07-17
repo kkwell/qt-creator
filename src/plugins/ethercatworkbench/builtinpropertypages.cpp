@@ -4,6 +4,7 @@
 
 #include "coeonlinepage.h"
 #include "dcpage.h"
+#include "ethercatpage.h"
 #include "ethercatworkbenchconstants.h"
 #include "ethercatworkbenchtr.h"
 #include "generalpage.h"
@@ -65,11 +66,6 @@ public:
     QLabel *summary;
     QTreeWidget *tree;
 };
-
-static QString hexValue(quint64 value, int width)
-{
-    return QString("0x%1").arg(value, width, 16, QLatin1Char('0'));
-}
 
 static BuiltinPageWidget *pageWidget(QWidget *page)
 {
@@ -162,6 +158,11 @@ QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *pare
         page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
         return page;
     }
+    if (pageId == Utils::Id(Constants::ETHERCAT_PAGE_ID)) {
+        auto page = new EtherCATPage(m_controller, parent);
+        page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
+        return page;
+    }
     if (pageId == Utils::Id(Constants::PROCESS_DATA_PAGE_ID)) {
         auto page = new ProcessDataPage(m_controller, parent);
         page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
@@ -195,6 +196,11 @@ void BuiltinPropertyPageProvider::updatePage(
             generalPage->setContext(context);
         return;
     }
+    if (pageId == Utils::Id(Constants::ETHERCAT_PAGE_ID)) {
+        if (auto ethercatPage = qobject_cast<EtherCATPage *>(page))
+            ethercatPage->setContext(context);
+        return;
+    }
     if (pageId == Utils::Id(Constants::PROCESS_DATA_PAGE_ID)) {
         if (auto processDataPage = qobject_cast<ProcessDataPage *>(page))
             processDataPage->setContext(context);
@@ -218,74 +224,6 @@ void BuiltinPropertyPageProvider::updatePage(
     BuiltinPageWidget *widget = pageWidget(page);
     if (!widget || !m_controller)
         return;
-
-    const std::optional<Data::OfflineSlaveConfiguration> offlineSlave
-        = m_controller->treeModel()->offlineSlave(context.nodeId);
-    const std::optional<Data::DeviceDescription> device
-        = [this, &context, &offlineSlave]() -> std::optional<Data::DeviceDescription> {
-        if (!m_controller->deviceRepository())
-            return std::nullopt;
-        if (context.nodeKind == Core::WorkbenchNodeKind::Device)
-            return m_controller->deviceRepository()->device(context.nodeId);
-        if (offlineSlave && !offlineSlave->deviceDescriptionId.isNull())
-            return m_controller->deviceRepository()->device(offlineSlave->deviceDescriptionId);
-        return std::nullopt;
-    }();
-
-    if (pageId == Utils::Id(Constants::ETHERCAT_PAGE_ID)) {
-        if (context.nodeKind == Core::WorkbenchNodeKind::Master) {
-            const QList<Data::OfflineSlaveConfiguration> slaves
-                = m_controller->treeModel()->offlineSlavesForMaster(context.nodeId);
-            widget->reset(
-                slaves.isEmpty() ? Tr::tr("No slaves are configured on this offline master.")
-                                 : Tr::tr("Offline EtherCAT topology"),
-                slaves.isEmpty()
-                    ? QStringList()
-                    : QStringList{Tr::tr("Position"),
-                                  Tr::tr("Name"),
-                                  Tr::tr("Vendor"),
-                                  Tr::tr("Product"),
-                                  Tr::tr("Revision"),
-                                  Tr::tr("Alias")});
-            for (const Data::OfflineSlaveConfiguration &slave : slaves) {
-                widget->addRow({QString::number(slave.position),
-                                slave.name,
-                                hexValue(slave.identity.vendorId, 8),
-                                hexValue(slave.identity.productCode, 8),
-                                hexValue(slave.identity.revisionNumber, 8),
-                                QString::number(slave.alias)});
-            }
-            return;
-        }
-        widget->reset(
-            device ? Tr::tr("SyncManager defaults from the imported ESI file")
-                   : Tr::tr("No matching ESI SyncManager data is available."),
-            device ? QStringList{Tr::tr("SM"),
-                                 Tr::tr("Name"),
-                                 Tr::tr("Direction"),
-                                 Tr::tr("Address"),
-                                 Tr::tr("Size"),
-                                 Tr::tr("Control"),
-                                 Tr::tr("Enabled")}
-                   : QStringList());
-        if (device) {
-            for (const Data::SyncManagerDescription &syncManager : device->syncManagers) {
-                QString direction = Tr::tr("Unknown");
-                if (syncManager.direction == Data::SyncManagerDirection::MasterToSlave)
-                    direction = Tr::tr("Master to slave");
-                else if (syncManager.direction == Data::SyncManagerDirection::SlaveToMaster)
-                    direction = Tr::tr("Slave to master");
-                widget->addRow({QString::number(syncManager.index),
-                                syncManager.name,
-                                direction,
-                                hexValue(syncManager.startAddress, 4),
-                                QString::number(syncManager.defaultSize),
-                                hexValue(syncManager.controlByte, 2),
-                                syncManager.enabled ? Tr::tr("Yes") : Tr::tr("No")});
-            }
-        }
-        return;
-    }
 
     if (pageId == Utils::Id(Constants::ONLINE_PAGE_ID)) {
         widget->reset(

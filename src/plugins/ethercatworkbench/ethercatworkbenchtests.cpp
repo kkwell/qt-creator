@@ -51,6 +51,7 @@
 #include <QPushButton>
 #include <QSet>
 #include <QSignalSpy>
+#include <QSpinBox>
 #include <QStatusBar>
 #include <QStyle>
 #include <QTabWidget>
@@ -979,6 +980,113 @@ void EtherCATWorkbenchTests::testEditableConfiguredSlaveGeneralWorkflow()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
+void EtherCATWorkbenchTests::testEditableConfiguredSlaveEtherCATWorkflow()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("editable-ethercat.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(deviceEsi()));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0x5678;
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(directory, *device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    DetailsView details(&controller);
+    details.resize(1100, 760);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::ETHERCAT_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page);
+    QTRY_VERIFY(page->isVisible());
+    QLineEdit *type = page->findChild<QLineEdit *>("EtherCATEthercatType");
+    QLineEdit *productRevision = page->findChild<QLineEdit *>("EtherCATEthercatProductRevision");
+    QLineEdit *autoIncAddress = page->findChild<QLineEdit *>("EtherCATEthercatAutoIncAddress");
+    QLineEdit *ethercatAddress = page->findChild<QLineEdit *>("EtherCATEthercatAddress");
+    QSpinBox *alias = page->findChild<QSpinBox *>("EtherCATEthercatAlias");
+    QLineEdit *identification = page->findChild<QLineEdit *>("EtherCATEthercatIdentificationValue");
+    QLineEdit *previousPort = page->findChild<QLineEdit *>("EtherCATEthercatPreviousPort");
+    QPushButton *advanced = page->findChild<QPushButton *>("EtherCATEthercatAdvancedSettings");
+    QTreeWidget *syncManagers = page->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
+    QVERIFY(type);
+    QVERIFY(productRevision);
+    QVERIFY(autoIncAddress);
+    QVERIFY(ethercatAddress);
+    QVERIFY(alias);
+    QVERIFY(identification);
+    QVERIFY(previousPort);
+    QVERIFY(advanced);
+    QVERIFY(syncManagers);
+    QCOMPARE(type->text(), QString("AX5000"));
+    QCOMPARE(productRevision->text(), QString("0x00005678 / 0x00000011"));
+    QCOMPARE(autoIncAddress->text(), QString("0x0000"));
+    QCOMPARE(ethercatAddress->text(), QString("Automatic at startup (not stored)"));
+    QCOMPARE(alias->minimum(), 0);
+    QCOMPARE(alias->maximum(), 65535);
+    QCOMPARE(alias->value(), 3);
+    QCOMPARE(identification->text(), QString("Not configured"));
+    QVERIFY(previousPort->text().contains("EtherCAT Master"));
+    QVERIFY(previousPort->text().contains("port not modeled"));
+    QVERIFY(type->isReadOnly());
+    QVERIFY(productRevision->isReadOnly());
+    QVERIFY(autoIncAddress->isReadOnly());
+    QVERIFY(ethercatAddress->isReadOnly());
+    QVERIFY(identification->isReadOnly());
+    QVERIFY(previousPort->isReadOnly());
+    QVERIFY(alias->isEnabled());
+    QVERIFY(!advanced->isEnabled());
+    QVERIFY(!alias->accessibleName().isEmpty());
+    QCOMPARE(syncManagers->topLevelItemCount(), 2);
+
+    alias->setValue(321);
+    QVERIFY(QMetaObject::invokeMethod(alias, "editingFinished"));
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().alias, quint16(321));
+    QTRY_COMPARE(alias->value(), 321);
+    QVERIFY(projectService->project(file.projectId)->modified);
+    QCOMPARE(controller.selectionService()->currentNodeId(), file.slaveId);
+    QVERIFY(projectService->canUndoProject(file.projectId));
+
+    const Utils::Result<> undoAlias = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoAlias);
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().alias, quint16(3));
+    QTRY_COMPARE(alias->value(), 3);
+    const Utils::Result<> redoAlias = projectService->redoProject(file.projectId);
+    QVERIFY_RESULT(redoAlias);
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().alias, quint16(321));
+    QTRY_COMPARE(alias->value(), 321);
+
+    alias->setValue(0);
+    QVERIFY(QMetaObject::invokeMethod(alias, "editingFinished"));
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().alias, quint16(0));
+    QTRY_COMPARE(alias->value(), 0);
+    QVERIFY(alias->specialValueText().contains("disabled", Qt::CaseInsensitive));
+
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
 void EtherCATWorkbenchTests::testStatusBarTracksStateService()
 {
     auto statusButton = ::Core::ICore::statusBar()->findChild<QToolButton *>(
@@ -1370,6 +1478,16 @@ void EtherCATWorkbenchTests::testBuiltInDevicePages()
     BuiltinPropertyPageProvider provider(&controller);
     QCOMPARE(provider.pages(context).size(), 7);
 
+    std::unique_ptr<QWidget> ethercatPage(provider.createPage(Constants::ETHERCAT_PAGE_ID, nullptr));
+    QVERIFY(ethercatPage);
+    provider.updatePage(Constants::ETHERCAT_PAGE_ID, ethercatPage.get(), context);
+    QWidget *slaveForm = ethercatPage->findChild<QWidget *>("EtherCATEthercatSlaveForm");
+    QTreeWidget *ethercatTree = ethercatPage->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
+    QVERIFY(slaveForm);
+    QVERIFY(ethercatTree);
+    QVERIFY(slaveForm->isHidden());
+    QCOMPARE(ethercatTree->topLevelItemCount(), 2);
+
     std::unique_ptr<QWidget> processPage(
         provider.createPage(Constants::PROCESS_DATA_PAGE_ID, nullptr));
     QVERIFY(processPage);
@@ -1517,10 +1635,49 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
     QVERIFY(generalTree);
     QVERIFY(generalTree->topLevelItemCount() >= 8);
 
+    std::unique_ptr<QWidget> ethercatPage(pages.createPage(Constants::ETHERCAT_PAGE_ID, nullptr));
+    pages.updatePage(Constants::ETHERCAT_PAGE_ID, ethercatPage.get(), context);
+    QSpinBox *alias = ethercatPage->findChild<QSpinBox *>("EtherCATEthercatAlias");
+    QLineEdit *ethercatType = ethercatPage->findChild<QLineEdit *>("EtherCATEthercatType");
+    QLineEdit *autoIncAddress = ethercatPage->findChild<QLineEdit *>(
+        "EtherCATEthercatAutoIncAddress");
+    QLineEdit *previousPort = ethercatPage->findChild<QLineEdit *>("EtherCATEthercatPreviousPort");
+    QWidget *slaveForm = ethercatPage->findChild<QWidget *>("EtherCATEthercatSlaveForm");
+    QTreeWidget *ethercatTree = ethercatPage->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
+    QVERIFY(alias);
+    QVERIFY(ethercatType);
+    QVERIFY(autoIncAddress);
+    QVERIFY(previousPort);
+    QVERIFY(slaveForm);
+    QVERIFY(ethercatTree);
+    QCOMPARE(alias->value(), 3);
+    QCOMPARE(ethercatType->text(), QString("AX5000"));
+    QCOMPARE(autoIncAddress->text(), QString("0x0000"));
+    QCOMPARE(ethercatTree->topLevelItemCount(), 2);
+
+    const Data::NodeId secondSlaveId = Data::NodeId::create();
+    project.slaves.append(
+        {secondSlaveId, master, 1, found->identity, 18, 4, "Configured I/O", found->id, {}, {}, {}});
+    project.nodes.append({secondSlaveId, master, Data::ProjectNodeKind::Slave, "Configured I/O"});
+    controller.treeModel()->setProjects({project});
+    const QModelIndex secondSlave = controller.treeModel()->indexForNodeId(secondSlaveId);
+    QVERIFY(secondSlave.isValid());
+    pages.updatePage(
+        Constants::ETHERCAT_PAGE_ID,
+        ethercatPage.get(),
+        controller.treeModel()->contextForIndex(secondSlave));
+    QCOMPARE(autoIncAddress->text(), QString("0xffff"));
+    QVERIFY(previousPort->text().contains("Configured Servo"));
+    pages.updatePage(
+        Constants::ETHERCAT_PAGE_ID,
+        ethercatPage.get(),
+        controller.treeModel()->contextForIndex(controller.treeModel()->indexForNodeId(master)));
+    QVERIFY(slaveForm->isHidden());
+    QCOMPARE(ethercatTree->topLevelItemCount(), 2);
+
     project.slaves.first().deviceDescriptionId = {};
     controller.treeModel()->setProjects({project});
-    const QModelIndex unreferencedSlave
-        = findByKind(controller.treeModel(), Core::WorkbenchNodeKind::ConfiguredSlave);
+    const QModelIndex unreferencedSlave = controller.treeModel()->indexForNodeId(slaveId);
     pages.updatePage(
         Constants::PROCESS_DATA_PAGE_ID,
         processPage.get(),
@@ -1528,6 +1685,10 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
     pages.updatePage(
         Constants::GENERAL_PAGE_ID,
         generalPage.get(),
+        controller.treeModel()->contextForIndex(unreferencedSlave));
+    pages.updatePage(
+        Constants::ETHERCAT_PAGE_ID,
+        ethercatPage.get(),
         controller.treeModel()->contextForIndex(unreferencedSlave));
     QCOMPARE(syncManagers->model()->rowCount(), 0);
     QVERIFY(processPage->findChild<QLabel *>("EtherCATProcessDataSummary")
@@ -1537,6 +1698,8 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
     QCOMPARE(
         generalPage->findChild<QLineEdit *>("EtherCATGeneralType")->text(),
         QString("Unknown ESI device"));
+    QCOMPARE(ethercatType->text(), QString("Unknown ESI device"));
+    QCOMPARE(ethercatTree->topLevelItemCount(), 0);
 }
 
 void EtherCATWorkbenchTests::testTwinCatProcessDataTree()

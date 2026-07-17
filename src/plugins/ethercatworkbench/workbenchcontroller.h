@@ -45,6 +45,8 @@ public:
     Utils::Result<> moveSelectedOfflineSlaveDown();
     Utils::Result<> renameOfflineSlave(
         const Data::NodeId &projectId, const Data::NodeId &slaveId, const QString &name);
+    Utils::Result<> setOfflineSlaveAlias(
+        const Data::NodeId &projectId, const Data::NodeId &slaveId, quint16 alias);
 
 signals:
     void expandAllRequested();

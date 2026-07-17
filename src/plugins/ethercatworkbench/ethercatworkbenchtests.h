@@ -16,6 +16,7 @@ private slots:
     void testNavigationCommandsUseActionManager();
     void testOfflineTopologyEditingWorkflow();
     void testEditableConfiguredSlaveGeneralWorkflow();
+    void testEditableConfiguredSlaveEtherCATWorkflow();
     void testStatusBarTracksStateService();
     void testTreeModelLargeIncrementalUpdate();
     void testConfiguredSlaveStateIcon();
