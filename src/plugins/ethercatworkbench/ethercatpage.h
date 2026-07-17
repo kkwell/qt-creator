@@ -33,11 +33,19 @@ private:
     void addRow(const QStringList &values);
     void addSyncManagers(const Data::DeviceDescription &device);
     void commitAlias();
+    void showMasterTopology();
     QString previousPortText(const Data::OfflineSlaveConfiguration &slave) const;
 
     QPointer<WorkbenchController> m_controller;
     Core::PropertyPageContext m_context;
     QLabel *m_summary;
+    QWidget *m_masterForm;
+    QLineEdit *m_masterNetId;
+    QPushButton *m_masterAdvancedSettings;
+    QPushButton *m_masterExportConfiguration;
+    QPushButton *m_masterSyncUnitAssignment;
+    QPushButton *m_masterTopology;
+    QLabel *m_masterFrameState;
     QWidget *m_slaveForm;
     QLineEdit *m_type;
     QLineEdit *m_productRevision;

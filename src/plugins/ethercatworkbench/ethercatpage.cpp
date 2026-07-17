@@ -10,12 +10,16 @@
 
 #include <utils/stylehelper.h>
 
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QStyle>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -55,6 +59,15 @@ EtherCATPage::EtherCATPage(WorkbenchController *controller, QWidget *parent)
     : QWidget(parent)
     , m_controller(controller)
     , m_summary(new QLabel(this))
+    , m_masterForm(new QWidget(this))
+    , m_masterNetId(new QLineEdit(m_masterForm))
+    , m_masterAdvancedSettings(new QPushButton(Tr::tr("Advanced Settings..."), m_masterForm))
+    , m_masterExportConfiguration(
+          new QPushButton(Tr::tr("Export Configuration File..."), m_masterForm))
+    , m_masterSyncUnitAssignment(
+          new QPushButton(Tr::tr("Sync Unit Assignment..."), m_masterForm))
+    , m_masterTopology(new QPushButton(Tr::tr("Topology..."), m_masterForm))
+    , m_masterFrameState(new QLabel(this))
     , m_slaveForm(new QWidget(this))
     , m_type(new QLineEdit(m_slaveForm))
     , m_productRevision(new QLineEdit(m_slaveForm))
@@ -69,6 +82,64 @@ EtherCATPage::EtherCATPage(WorkbenchController *controller, QWidget *parent)
     m_summary->setObjectName("EtherCATWorkbenchPageSummary");
     m_summary->setWordWrap(true);
     m_summary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    m_masterForm->setObjectName("EtherCATMasterEthercatForm");
+    m_masterNetId->setObjectName("EtherCATMasterEthercatNetId");
+    m_masterAdvancedSettings->setObjectName("EtherCATMasterEthercatAdvancedSettings");
+    m_masterExportConfiguration->setObjectName("EtherCATMasterEthercatExportConfiguration");
+    m_masterSyncUnitAssignment->setObjectName("EtherCATMasterEthercatSyncUnitAssignment");
+    m_masterTopology->setObjectName("EtherCATMasterEthercatTopology");
+    m_masterFrameState->setObjectName("EtherCATMasterEthercatFrameState");
+
+    m_masterForm->setAccessibleName(Tr::tr("EtherCAT master settings"));
+    m_masterNetId->setAccessibleName(Tr::tr("EtherCAT master NetId"));
+    m_masterNetId->setAccessibleDescription(
+        Tr::tr("An ADS NetId is not assigned to the offline phase-1 master."));
+    m_masterNetId->setToolTip(m_masterNetId->accessibleDescription());
+    m_masterNetId->setReadOnly(true);
+
+    const auto setUnavailable = [](QPushButton *button, const QString &description) {
+        button->setAccessibleDescription(description);
+        button->setToolTip(description);
+        button->setEnabled(false);
+    };
+    m_masterAdvancedSettings->setAccessibleName(Tr::tr("EtherCAT master advanced settings"));
+    setUnavailable(
+        m_masterAdvancedSettings,
+        Tr::tr("Advanced master settings require a separate bounded data-contract issue."));
+    m_masterExportConfiguration->setAccessibleName(
+        Tr::tr("Export EtherCAT master configuration"));
+    setUnavailable(
+        m_masterExportConfiguration,
+        Tr::tr("Configuration export is unavailable until a versioned configuration format is "
+               "defined."));
+    m_masterSyncUnitAssignment->setAccessibleName(Tr::tr("EtherCAT Sync Unit assignment"));
+    setUnavailable(
+        m_masterSyncUnitAssignment,
+        Tr::tr("Sync Unit assignment is unavailable because the offline model does not represent "
+               "Sync Units."));
+    m_masterTopology->setAccessibleName(Tr::tr("Open offline EtherCAT topology"));
+    m_masterTopology->setAccessibleDescription(
+        Tr::tr("Opens a read-only topology derived from the current offline project."));
+    m_masterTopology->setToolTip(m_masterTopology->accessibleDescription());
+
+    m_masterFrameState->setAccessibleName(Tr::tr("EtherCAT cyclic frame state"));
+    m_masterFrameState->setWordWrap(true);
+    m_masterFrameState->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    auto masterLayout = new QGridLayout(m_masterForm);
+    masterLayout->setContentsMargins(0, 0, 0, 0);
+    masterLayout->setHorizontalSpacing(Utils::StyleHelper::SpacingTokens::GapHM);
+    masterLayout->setVerticalSpacing(Utils::StyleHelper::SpacingTokens::GapVS);
+    auto netIdLabel = new QLabel(Tr::tr("NetId:"), m_masterForm);
+    netIdLabel->setBuddy(m_masterNetId);
+    masterLayout->addWidget(netIdLabel, 0, 0);
+    masterLayout->addWidget(m_masterNetId, 0, 1);
+    masterLayout->addWidget(m_masterAdvancedSettings, 0, 2);
+    masterLayout->addWidget(m_masterExportConfiguration, 1, 2);
+    masterLayout->addWidget(m_masterSyncUnitAssignment, 2, 2);
+    masterLayout->addWidget(m_masterTopology, 3, 2);
+    masterLayout->setColumnStretch(1, 1);
 
     m_slaveForm->setObjectName("EtherCATEthercatSlaveForm");
     m_type->setObjectName("EtherCATEthercatType");
@@ -130,6 +201,8 @@ EtherCATPage::EtherCATPage(WorkbenchController *controller, QWidget *parent)
     m_tree->setAlternatingRowColors(true);
     m_tree->setRootIsDecorated(false);
     m_tree->setUniformRowHeights(true);
+    m_tree->setTextElideMode(Qt::ElideNone);
+    m_tree->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     m_tree->header()->setStretchLastSection(true);
 
     auto layout = new QVBoxLayout(this);
@@ -140,10 +213,13 @@ EtherCATPage::EtherCATPage(WorkbenchController *controller, QWidget *parent)
         Utils::StyleHelper::SpacingTokens::PaddingVM);
     layout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVM);
     layout->addWidget(m_summary);
+    layout->addWidget(m_masterForm);
     layout->addWidget(m_slaveForm);
+    layout->addWidget(m_masterFrameState);
     layout->addWidget(m_tree, 1);
 
     connect(m_alias, &QSpinBox::editingFinished, this, &EtherCATPage::commitAlias);
+    connect(m_masterTopology, &QPushButton::clicked, this, &EtherCATPage::showMasterTopology);
     reset({}, {});
 }
 
@@ -174,29 +250,39 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
            Tr::tr("Control"),
            Tr::tr("Enabled")};
 
+    const QStringList cyclicFrameHeaders
+        = {Tr::tr("Frame"),
+           Tr::tr("Cmd"),
+           Tr::tr("Addr"),
+           Tr::tr("Len"),
+           Tr::tr("WC"),
+           Tr::tr("Sync Unit"),
+           Tr::tr("Cycle (ms)"),
+           Tr::tr("Utilization (%)"),
+           Tr::tr("Size / Duration (µs)"),
+           Tr::tr("Map Id")};
+
     if (context.nodeKind == Core::WorkbenchNodeKind::Master && m_controller) {
         const QList<Data::OfflineSlaveConfiguration> slaves
             = m_controller->treeModel()->offlineSlavesForMaster(context.nodeId);
         reset(
             slaves.isEmpty() ? Tr::tr("No slaves are configured on this offline master.")
-                             : Tr::tr("Offline EtherCAT topology"),
-            slaves.isEmpty() ? QStringList()
-                             : QStringList{
-                                   Tr::tr("Position"),
-                                   Tr::tr("Name"),
-                                   Tr::tr("Vendor"),
-                                   Tr::tr("Product"),
-                                   Tr::tr("Revision"),
-                                   Tr::tr("Alias")});
-        for (const Data::OfflineSlaveConfiguration &entry : slaves) {
-            addRow(
-                {QString::number(entry.position),
-                 entry.name,
-                 hexValue(entry.identity.vendorId, 8),
-                 hexValue(entry.identity.productCode, 8),
-                 hexValue(entry.identity.revisionNumber, 8),
-                 QString::number(entry.alias)});
-        }
+                             : Tr::tr(
+                                   "Offline EtherCAT master with %n configured slave(s).",
+                                   nullptr,
+                                   slaves.size()),
+            cyclicFrameHeaders);
+        m_masterNetId->setText(Tr::tr("Not assigned (offline)"));
+        m_masterForm->show();
+        m_masterTopology->setEnabled(true);
+        m_masterFrameState->setText(
+            Tr::tr("Cyclic transfer frames are not generated: the offline phase-1 project has no "
+                   "runtime task, frame scheduler, or Sync Unit model."));
+        m_masterFrameState->show();
+        m_tree->setAccessibleName(Tr::tr("EtherCAT cyclic transfer frames"));
+        m_tree->setAccessibleDescription(
+            Tr::tr("The TwinCAT-style frame columns are shown, but no runtime frame rows are "
+                   "generated in the offline phase."));
     } else if (context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave && slave) {
         reset(
             device ? Tr::tr(
@@ -220,6 +306,9 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
         m_identificationValue->setText(Tr::tr("Not configured"));
         m_previousPort->setText(previousPortText(*slave));
         m_slaveForm->show();
+        m_tree->setAccessibleName(Tr::tr("EtherCAT SyncManager defaults"));
+        m_tree->setAccessibleDescription(
+            Tr::tr("Read-only SyncManager defaults from the matched ESI device."));
         if (device)
             addSyncManagers(*device);
     } else if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
@@ -227,6 +316,9 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
             device ? Tr::tr("SyncManager defaults from the imported ESI file")
                    : Tr::tr("No matching ESI SyncManager data is available."),
             device ? syncManagerHeaders : QStringList());
+        m_tree->setAccessibleName(Tr::tr("EtherCAT SyncManager defaults"));
+        m_tree->setAccessibleDescription(
+            Tr::tr("Read-only SyncManager defaults from the imported ESI device."));
         if (device)
             addSyncManagers(*device);
     } else {
@@ -239,6 +331,11 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
 void EtherCATPage::reset(const QString &summary, const QStringList &headers)
 {
     m_summary->setText(summary);
+    m_masterForm->hide();
+    m_masterNetId->clear();
+    m_masterTopology->setEnabled(false);
+    m_masterFrameState->clear();
+    m_masterFrameState->hide();
     m_slaveForm->hide();
     m_type->clear();
     m_productRevision->clear();
@@ -249,6 +346,8 @@ void EtherCATPage::reset(const QString &summary, const QStringList &headers)
     m_identificationValue->clear();
     m_previousPort->clear();
     m_tree->clear();
+    m_tree->setAccessibleName({});
+    m_tree->setAccessibleDescription({});
     m_tree->setColumnCount(qMax(1, headers.size()));
     m_tree->setHeaderLabels(headers);
     m_tree->setVisible(!headers.isEmpty());
@@ -288,6 +387,95 @@ void EtherCATPage::commitAlias()
     const Core::PropertyPageContext current = m_controller->treeModel()->contextForNodeId(
         m_context.nodeId);
     setContext(current.nodeKind == Core::WorkbenchNodeKind::None ? m_context : current);
+}
+
+void EtherCATPage::showMasterTopology()
+{
+    if (!m_controller || m_context.nodeKind != Core::WorkbenchNodeKind::Master)
+        return;
+
+    const QList<Data::OfflineSlaveConfiguration> slaves
+        = m_controller->treeModel()->offlineSlavesForMaster(m_context.nodeId);
+
+    QDialog dialog(this);
+    dialog.setObjectName("EtherCATMasterTopologyDialog");
+    dialog.setWindowTitle(Tr::tr("Offline EtherCAT Topology"));
+    dialog.setSizeGripEnabled(true);
+
+    auto summary = new QLabel(&dialog);
+    summary->setObjectName("EtherCATMasterTopologySummary");
+    summary->setWordWrap(true);
+    summary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    summary->setText(
+        slaves.isEmpty()
+            ? Tr::tr("No configured slaves are available in the current offline project.")
+            : Tr::tr("Read-only offline topology for %n configured slave(s). Physical ports are "
+                     "not modeled.",
+                     nullptr,
+                     slaves.size()));
+
+    auto table = new QTreeWidget(&dialog);
+    table->setObjectName("EtherCATMasterTopologyTable");
+    table->setAccessibleName(Tr::tr("Offline EtherCAT topology"));
+    table->setAccessibleDescription(
+        Tr::tr("Configured slave order and identities from the current offline project."));
+    table->setAlternatingRowColors(true);
+    table->setRootIsDecorated(false);
+    table->setUniformRowHeights(true);
+    table->setTextElideMode(Qt::ElideNone);
+    table->setHeaderLabels(
+        {Tr::tr("Position"),
+         Tr::tr("Name"),
+         Tr::tr("Auto Inc Addr"),
+         Tr::tr("Previous"),
+         Tr::tr("Port"),
+         Tr::tr("Vendor"),
+         Tr::tr("Product"),
+         Tr::tr("Revision"),
+         Tr::tr("Alias"),
+         Tr::tr("Status")});
+    table->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    table->header()->setStretchLastSection(true);
+
+    for (int index = 0; index < slaves.size(); ++index) {
+        const Data::OfflineSlaveConfiguration &slave = slaves.at(index);
+        const QString previous = index == 0 ? Tr::tr("EtherCAT Master")
+                                            : slaves.at(index - 1).name;
+        table->addTopLevelItem(
+            new QTreeWidgetItem(
+                {QString::number(slave.position),
+                 slave.name,
+                 autoIncrementAddress(slave.position),
+                 previous,
+                 Tr::tr("Not modeled"),
+                 hexValue(slave.identity.vendorId, 8),
+                 hexValue(slave.identity.productCode, 8),
+                 hexValue(slave.identity.revisionNumber, 8),
+                 QString::number(slave.alias),
+                 Tr::tr("Offline configured")}));
+    }
+    const int topologyWidth
+        = table->header()->length()
+          + table->style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, table)
+          + table->frameWidth() * 2;
+    table->setMinimumWidth(topologyWidth);
+
+    auto buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    buttons->setObjectName("EtherCATMasterTopologyButtons");
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    auto layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(
+        Utils::StyleHelper::SpacingTokens::PaddingHM,
+        Utils::StyleHelper::SpacingTokens::PaddingVM,
+        Utils::StyleHelper::SpacingTokens::PaddingHM,
+        Utils::StyleHelper::SpacingTokens::PaddingVM);
+    layout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVM);
+    layout->addWidget(summary);
+    layout->addWidget(table, 1);
+    layout->addWidget(buttons);
+
+    dialog.exec();
 }
 
 QString EtherCATPage::previousPortText(const Data::OfflineSlaveConfiguration &slave) const

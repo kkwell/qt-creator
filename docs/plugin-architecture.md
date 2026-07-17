@@ -23,7 +23,7 @@ documentation, review, and local-commit gates.
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Configuration persistence and structural-name API complete | Version-2 project lifecycle, migration, validation, and Undo/Redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
-| 4 | `EtherCATWorkbenchPlugin` | In progress | Master and configured-slave General editing, EtherCAT/Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
+| 4 | `EtherCATWorkbenchPlugin` | In progress | Master and configured-slave General editing, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
 
@@ -121,10 +121,16 @@ have no phase-1 provider or persistent contract. The
 master General page mirrors the TwinCAT field hierarchy, derives Id and status
 from existing snapshots, leaves unsupported Comment/Disabled/symbol settings
 explicitly unavailable, and routes its editable Name through the same checked
-Project undo stack. The EtherCAT page
-maps identity and physical order into the TwinCAT-style offline field hierarchy,
-keeps unsupported fixed-address/identification/port state explicit, and routes
-Alias changes through the same Project-owned undo stack. The Workbench-owned
+Project undo stack. The master EtherCAT page mirrors the TwinCAT NetId,
+master-action, and cyclic-frame hierarchy. It enables only the topology action,
+which rereads the current immutable offline snapshot; ADS/NetId routing,
+advanced settings, export, Sync Unit assignment, runtime task binding, and frame
+generation remain explicit unavailable states. The configured-slave EtherCAT
+page maps identity and physical order into the TwinCAT-style offline field
+hierarchy, keeps unsupported fixed-address/identification/port state explicit,
+and routes Alias changes through the same Project-owned undo stack. Neither
+page adds a protocol, Provider, persistent field, or cross-plugin API. The
+Workbench-owned
 CoE Online Mock provides a local object-dictionary interaction prototype and
 an explicit, undoable Add to Startup path without adding a transport or
 background poller. Supported repository devices can now be appended to the

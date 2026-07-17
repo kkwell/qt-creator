@@ -6,9 +6,10 @@
 EtherCAT mode, left navigation tree, stable selection linkage, central details
 container, built-in offline property pages, manual offline-topology commands,
 editable target, master, and configured-slave General pages, Workbench commands,
-and the presentation of public Scan/Diagnostics snapshots in the device tree.
-It does not parse ESI files, own project persistence, scan a bus, produce
-diagnostics, or define a controller protocol.
+the TwinCAT-aligned master EtherCAT settings and local topology view, and the
+presentation of public Scan/Diagnostics snapshots in the device tree. It does
+not parse ESI files, own project persistence, scan a bus, produce diagnostics,
+or define a controller protocol.
 
 The layout follows the information hierarchy of common EtherCAT engineering
 tools without copying Beckhoff assets, TwinCAT project formats, or proprietary
@@ -296,6 +297,42 @@ synchronized tree, title, and form text. The existing
 network protocol, source-list entry, background work, or upstream Qt Creator
 patch is added.
 
+## EtherCAT-master EtherCAT page
+
+`ISSUE-WB-MASTER-ETHERCAT-001` replaces the master's former inline topology
+table with a dedicated EtherCAT page. Its field placement, action order, and
+cyclic-transfer table were compared with Beckhoff's documented TwinCAT 3
+EtherCAT-master EtherCAT tab:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446515467.html>.
+No Beckhoff asset, dialog, control implementation, project format, or
+proprietary behavior is copied.
+
+The upper region retains the documented `NetId`, `Advanced Settings...`,
+`Export Configuration File...`, `Sync Unit Assignment...`, and `Topology...`
+hierarchy. An ADS NetId is not part of the phase-1 project or any current
+Provider, so the read-only field says `Not assigned (offline)`. Advanced
+Settings, export, and Sync Unit assignment remain visible but unavailable with
+tooltips and accessibility explanations. They do not save UI-only values or
+pretend that an ADS route, export format, runtime task, or Sync Unit contract
+exists.
+
+`Topology...` is the one functional action because its result can be derived
+entirely from the current immutable offline project. Each invocation rereads
+the current master snapshot and opens a read-only table containing Position,
+Name, Auto Inc Addr, Previous, Port, Vendor, Product, Revision, Alias, and
+Status. Predecessors follow configured physical order. Physical ports remain
+explicitly `Not modeled`, and each row is labeled `Offline configured` rather
+than presenting live bus state. Removing every configured slave produces an
+explicit empty dialog instead of retaining stale rows.
+
+The lower table retains the documented Frame, Cmd, Addr, Len, WC, Sync Unit,
+Cycle, Utilization, Size/Duration, and Map Id columns. It intentionally contains
+zero rows and is accompanied by an explicit explanation: phase 1 has no runtime
+task, frame scheduler, or Sync Unit model from which truthful cyclic frames
+could be generated. No command, WKC, timing, utilization, ADS value, controller
+transport, configuration export, network protocol, background worker, public
+API, source-list entry, or upstream Qt Creator patch is added by this issue.
+
 ## Configured-slave General page
 
 `ISSUE-WB-SLAVE-GENERAL-001` implements the first configured-slave identity
@@ -350,8 +387,8 @@ persisted 16-bit range, and zero explicitly disables the Alias. Each completed
 edit routes through the Workbench controller to the existing checked
 `ProjectService::replaceOfflineSlaves()` command, preserving Project validation,
 modified state, persistence, stable selection, Undo, and Redo. Repository-device
-views remain read-only, while the master view retains its ordered topology
-table.
+views remain read-only, while the master uses its dedicated read-only topology
+action and cyclic-frame schema.
 
 The current project contract does not contain a fixed EtherCAT address,
 identification-check value, or physical port graph. The corresponding fields
@@ -417,7 +454,8 @@ The built-in provider supplies these stage-4 pages:
   the editable identity form for configured slaves;
 - an editable Alias and read-only offline address form for configured slaves,
   while imported devices retain read-only SyncManager data and the master
-  retains its topology table;
+  exposes its offline NetId/action hierarchy, local topology dialog, and
+  explicit unavailable cyclic-frame state;
 - an editable Process Data page for configured slaves, with a read-only ESI
   catalogue view for repository devices;
 - a read-only, automatically focused Process Data view for Inputs, Outputs,
@@ -633,7 +671,10 @@ Channels shows an explicit empty state instead of fabricated rows. Advanced
 Sync Unit timing semantics also remain pending an independent data-contract
 issue. Fixed EtherCAT addresses, identification checks, physical port graphs,
 and Advanced Settings are likewise not represented by the current project
-contract and remain explicit read-only or unavailable states.
+contract and remain explicit read-only or unavailable states. ADS/NetId
+routing, master configuration export, Sync Unit assignment, runtime task
+binding, and cyclic-frame generation are also absent; the master EtherCAT page
+shows those boundaries instead of generating placeholder operational data.
 
 ## Verification
 
@@ -694,11 +735,17 @@ Product/Revision, first/second Auto Inc Addr values, configured predecessor,
 bounded Alias editing and disable value, modified state, stable selection,
 Undo/Redo, missing-ESI behavior, read-only repository behavior, retained master
 topology, and retained SyncManager data.
+The master EtherCAT workflow verifies the TwinCAT-aligned NetId and four-action
+hierarchy, disabled unsupported actions and accessibility descriptions, all ten
+cyclic-frame headers, the explicit zero-row runtime boundary, current-snapshot
+topology population, derived auto-increment address and predecessor, explicit
+unmodeled port state, identity/Alias/status values, and the empty topology after
+all slaves are removed.
 The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
 match/difference routing, Missing/Added/Revision/Vendor presentation, warning
 and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
 stable locate/open navigation, command registration, and provider-removal
-restoration. It passes 24 tests on the qualified Qt 6.11.0 Release test build.
+restoration. It passes 25 tests on the qualified Qt 6.11.0 Release test build.
 The target and master General flows also pass at `QT_SCALE_FACTOR=2`, and direct
 normal and 2x widget renders show no overlap, clipping, or uncontrolled
 expansion.
@@ -768,4 +815,11 @@ page. Type, Product/Revision, Auto Inc Addr, the explicit automatic fixed-addres
 state, editable Configured Station Alias, unavailable identification/port
 states, disabled Advanced Settings, and both SyncManager rows remained visible
 without overlap or clipping. This was an offscreen Qt Widget render; no manual
+desktop interaction is claimed for this issue.
+
+Direct normal and `QT_SCALE_FACTOR=2` renders inspected the EtherCAT-master
+EtherCAT page at its 1180 x 760 logical test size and the populated topology
+dialog. The NetId field, four-action stack, explicit cyclic-frame state, all ten
+frame headers, and all ten topology columns remained readable without overlap,
+clipping, or scale drift. These were offscreen Qt Widget renders; no manual
 desktop interaction is claimed for this issue.

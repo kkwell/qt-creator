@@ -1239,6 +1239,152 @@ void EtherCATWorkbenchTests::testEditableMasterGeneralWorkflow()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
+void EtherCATWorkbenchTests::testTwinCatMasterEtherCATWorkflow()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Data::DeviceSummary
+        device{Data::NodeId::create(), {2, 0x5678, 0x11}, "Mock Servo", "AX5000", "Drives", true};
+    const TestProjectFile file = writeProjectWithSlave(directory, device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.masterId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    DetailsView details(&controller);
+    details.resize(1180, 760);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::ETHERCAT_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page);
+    QTRY_VERIFY(page->isVisible());
+
+    QWidget *masterForm = page->findChild<QWidget *>("EtherCATMasterEthercatForm");
+    QLineEdit *netId = page->findChild<QLineEdit *>("EtherCATMasterEthercatNetId");
+    QPushButton *advanced
+        = page->findChild<QPushButton *>("EtherCATMasterEthercatAdvancedSettings");
+    QPushButton *exportConfiguration
+        = page->findChild<QPushButton *>("EtherCATMasterEthercatExportConfiguration");
+    QPushButton *syncUnit
+        = page->findChild<QPushButton *>("EtherCATMasterEthercatSyncUnitAssignment");
+    QPushButton *topology
+        = page->findChild<QPushButton *>("EtherCATMasterEthercatTopology");
+    QLabel *frameState = page->findChild<QLabel *>("EtherCATMasterEthercatFrameState");
+    QWidget *slaveForm = page->findChild<QWidget *>("EtherCATEthercatSlaveForm");
+    QTreeWidget *frames = page->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
+    QVERIFY(masterForm);
+    QVERIFY(netId);
+    QVERIFY(advanced);
+    QVERIFY(exportConfiguration);
+    QVERIFY(syncUnit);
+    QVERIFY(topology);
+    QVERIFY(frameState);
+    QVERIFY(slaveForm);
+    QVERIFY(frames);
+
+    QCOMPARE(netId->text(), QString("Not assigned (offline)"));
+    QVERIFY(netId->isReadOnly());
+    QVERIFY(!netId->accessibleName().isEmpty());
+    QVERIFY(!advanced->isEnabled());
+    QVERIFY(!exportConfiguration->isEnabled());
+    QVERIFY(!syncUnit->isEnabled());
+    QVERIFY(topology->isEnabled());
+    QVERIFY(!advanced->accessibleDescription().isEmpty());
+    QVERIFY(!exportConfiguration->accessibleDescription().isEmpty());
+    QVERIFY(!syncUnit->accessibleDescription().isEmpty());
+    QVERIFY(!topology->accessibleDescription().isEmpty());
+    QVERIFY(masterForm->isVisible());
+    QVERIFY(slaveForm->isHidden());
+    QVERIFY(frames->isVisible());
+    QVERIFY(frameState->isVisible());
+    QVERIFY(frameState->text().contains("not generated", Qt::CaseInsensitive));
+    QVERIFY(!frames->accessibleName().isEmpty());
+    QCOMPARE(frames->topLevelItemCount(), 0);
+    QCOMPARE(frames->columnCount(), 10);
+    const QStringList expectedHeaders = {
+        "Frame",
+        "Cmd",
+        "Addr",
+        "Len",
+        "WC",
+        "Sync Unit",
+        "Cycle (ms)",
+        "Utilization (%)",
+        "Size / Duration (µs)",
+        "Map Id",
+    };
+    QStringList actualHeaders;
+    for (int column = 0; column < frames->columnCount(); ++column)
+        actualHeaders.append(frames->headerItem()->text(column));
+    QCOMPARE(actualHeaders, expectedHeaders);
+
+    const QString renderPath = qEnvironmentVariable("ETHERCAT_WORKBENCH_RENDER_PATH");
+    if (!renderPath.isEmpty()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(details.grab().save(renderPath), qPrintable(renderPath));
+    }
+
+    bool populatedTopologyInspected = false;
+    QTimer::singleShot(0, &details, [&] {
+        auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog)
+            return;
+        QLabel *summary = dialog->findChild<QLabel *>("EtherCATMasterTopologySummary");
+        QTreeWidget *table = dialog->findChild<QTreeWidget *>("EtherCATMasterTopologyTable");
+        if (summary && table && summary->text().contains("offline", Qt::CaseInsensitive)
+            && table->topLevelItemCount() == 1) {
+            const QTreeWidgetItem *row = table->topLevelItem(0);
+            populatedTopologyInspected
+                = row->text(0) == "0" && row->text(1) == "Configured Servo"
+                  && row->text(2) == "0x0000" && row->text(3) == "EtherCAT Master"
+                  && row->text(4) == "Not modeled" && row->text(5) == "0x00000002"
+                  && row->text(6) == "0x00005678" && row->text(7) == "0x00000011"
+                  && row->text(8) == "3" && row->text(9) == "Offline configured";
+        }
+        const QString topologyRenderPath
+            = qEnvironmentVariable("ETHERCAT_WORKBENCH_TOPOLOGY_RENDER_PATH");
+        if (!topologyRenderPath.isEmpty())
+            populatedTopologyInspected &= dialog->grab().save(topologyRenderPath);
+        dialog->accept();
+    });
+    topology->click();
+    QVERIFY(populatedTopologyInspected);
+
+    QVERIFY_RESULT(projectService->replaceOfflineSlaves(file.projectId, file.masterId, {}));
+    QTRY_VERIFY(projectService->project(file.projectId)->slaves.isEmpty());
+    QTRY_VERIFY(topology->isEnabled());
+    bool emptyTopologyInspected = false;
+    QTimer::singleShot(0, &details, [&] {
+        auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog)
+            return;
+        QLabel *summary = dialog->findChild<QLabel *>("EtherCATMasterTopologySummary");
+        QTreeWidget *table = dialog->findChild<QTreeWidget *>("EtherCATMasterTopologyTable");
+        emptyTopologyInspected = summary && table
+                                 && summary->text().contains(
+                                     "No configured slaves", Qt::CaseInsensitive)
+                                 && table->topLevelItemCount() == 0;
+        dialog->accept();
+    });
+    topology->click();
+    QVERIFY(emptyTopologyInspected);
+
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
 void EtherCATWorkbenchTests::testEditableConfiguredSlaveEtherCATWorkflow()
 {
     WorkbenchController controller;
@@ -1932,7 +2078,9 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
         ethercatPage.get(),
         controller.treeModel()->contextForIndex(controller.treeModel()->indexForNodeId(master)));
     QVERIFY(slaveForm->isHidden());
-    QCOMPARE(ethercatTree->topLevelItemCount(), 2);
+    QVERIFY(!ethercatPage->findChild<QWidget *>("EtherCATMasterEthercatForm")->isHidden());
+    QCOMPARE(ethercatTree->topLevelItemCount(), 0);
+    QCOMPARE(ethercatTree->columnCount(), 10);
 
     project.slaves.first().deviceDescriptionId = {};
     controller.treeModel()->setProjects({project});

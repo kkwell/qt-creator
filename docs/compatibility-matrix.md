@@ -55,6 +55,9 @@ Phase-1 requirement is complete. Editable Process Data, CoE Online Mock,
 Startup, and DC are now verified, and the public derived-node kinds are
 reserved. The checked Target/Master name command and both TwinCAT-inspired
 Target/Master General pages are now verified. The visible
+EtherCAT-master EtherCAT page now exposes the documented NetId/action/frame
+hierarchy with a real local topology view and explicit unavailable runtime
+boundaries. The visible
 TwinCAT-inspired process-data tree is now verified with stable selection and
 details routing. Real modular-profile data, additional UI coverage, and the
 user-policy-deferred upstream rehearsal remain open.
@@ -82,6 +85,7 @@ function is outside the product target and records migration or recovery.
 | Target/Master structural-name command | Core/API, Project persistence, and both Target/Master General UIs verified |
 | Offline-target General page | Verified with TwinCAT-aligned target/version hierarchy, explicit unavailable runtime controls, and Project Undo/Redo |
 | EtherCAT-master General page | Verified with TwinCAT-aligned identity hierarchy, explicit unsupported settings, offline summary, and Project Undo/Redo |
+| EtherCAT-master EtherCAT page | Verified with TwinCAT-aligned NetId/actions/frame columns, current-snapshot offline topology, and explicit unavailable ADS/runtime/export/Sync Unit state |
 | Offline Process Data/Startup/DC domain model | Verified in EtherCATData |
 | Project persistence and Undo/Redo for those models | Verified in format version 2 |
 | Editable Process Data page | Verified in current Workbench issue |
@@ -245,6 +249,36 @@ It adds no new cross-plugin contract or persistent field.
 | Full product build with `WITH_TESTS=ON` | Still blocked by the existing EasyBoard `extensionmanager_test.h` include defect |
 | qbs build | Not run; qbs executable is unavailable |
 
+## EtherCATWorkbench master EtherCAT qualification
+
+`ISSUE-WB-MASTER-ETHERCAT-001` changes only the existing Workbench property
+page and its tests. It consumes the immutable offline Project snapshot and adds
+no cross-plugin contract, persistent field, controller Provider, ADS behavior,
+runtime task, or transport.
+
+| Check | Result |
+|---|---|
+| Failure-first Workbench test | Compiled and failed because `EtherCATMasterEthercatForm` did not exist; 2 passed and 1 failed as expected |
+| TwinCAT-aligned master EtherCAT hierarchy | Read-only NetId followed by Advanced Settings, Export Configuration File, Sync Unit Assignment, and Topology actions, plus the ten documented cyclic-frame columns |
+| Truthful unsupported boundary | NetId says `Not assigned (offline)`; Advanced, Export, and Sync Unit actions remain disabled with tooltip/accessibility explanations; no ADS route, export format, runtime task, or Sync Unit state is simulated |
+| Offline topology action | Passed for Position, Name, derived Auto Inc Addr, predecessor, explicit unmodeled Port, Vendor/Product/Revision, Alias, and `Offline configured` status |
+| Current-snapshot and empty behavior | Each dialog invocation rereads the master snapshot; removing all slaves produces zero rows and an explicit `No configured slaves` summary |
+| Cyclic-frame boundary | All ten headers remain visible with zero rows and an explicit explanation that no runtime frame can be generated |
+| Focused master EtherCAT test | 3 passed, 0 failed |
+| Master/slave EtherCAT and master General regression | 6 passed, 0 failed |
+| Focused master EtherCAT at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
+| Direct widget renders | Normal and 2x master-page and topology-dialog renders passed visual inspection with all controls and columns readable and no overlap or clipping |
+| Focused EtherCATWorkbench suite | 25 passed, 0 failed |
+| Six-plugin isolated regression | Core 17, Project 12, Devices 8, Workbench 25, Scan 7, Diagnostics 7; 76 passed, 0 failed |
+| Final isolated regression platform | Isolated HOME/settings and `QT_QPA_PLATFORM=offscreen`; high-DPI flow additionally used `QT_SCALE_FACTOR=2` |
+| 16-plugin product build | Passed with the `WITH_TESTS=OFF` allow-list |
+| Enabled product startup | All 16 plugins loaded, initialized, extended, and delayed-initialized; stable for 10 seconds until intentional timeout |
+| Workbench-disabled startup | Workbench, Scan, and Diagnostics were dependency-disabled; remaining 13 plugins were stable for 10 seconds until intentional timeout |
+| CMake/qbs source lists | No source-list or dependency change required |
+| Direct upstream Core, ProjectExplorer, or app changes | None; direct Core patch count remains five |
+| Full product build with `WITH_TESTS=ON` | Still blocked by the existing EasyBoard `extensionmanager_test.h` include defect; outstanding parallel jobs were interrupted after the blocker was captured |
+| qbs build | Not run; qbs executable is unavailable |
+
 ## EtherCATProject current qualification
 
 The public Project contract uses immutable `EtherCATData` snapshots and
@@ -310,8 +344,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 24 passed, 0 failed |
-| Six-plugin EtherCAT regression | 75 passed, 0 failed in isolated processes |
+| Focused EtherCATWorkbench plugin tests | 25 passed, 0 failed |
+| Six-plugin EtherCAT regression | 76 passed, 0 failed in isolated processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first CoE Online page test | Compiled and failed on the missing `CoE Online` page descriptor before implementation, as expected |
@@ -323,6 +357,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Failure-first configured-slave General test | Compiled and failed because the editable `EtherCATGeneralName` control did not exist before implementation, as expected |
 | Failure-first target General test | Compiled and failed because `EtherCATTargetGeneralContent` did not exist before implementation, as expected |
 | Failure-first master General test | Compiled and failed because `EtherCATMasterGeneralForm` did not exist before implementation, as expected |
+| Failure-first master EtherCAT test | Compiled and failed because `EtherCATMasterEthercatForm` did not exist before implementation, as expected |
 | Failure-first configured-slave EtherCAT test | Compiled and failed because the dedicated `EtherCATEthercatAlias` control did not exist before implementation, as expected |
 | Metadata, hard dependencies, mode, and actions | Passed |
 | Shared QAction identity across menu, toolbar, shortcuts, and callbacks | Passed |
@@ -372,10 +407,14 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Master General identity form | Passed for TwinCAT-aligned Name/Id, stable Object Id, Type, visible unsupported settings, and offline summary |
 | Master General rename workflow | Passed for whitespace trimming, Unicode, empty rejection, Project modified state, tree/title/form synchronization, stable selection, Undo, and Redo |
 | Focused master General test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed with a visually inspected 2x render |
+| Master EtherCAT NetId/action/frame hierarchy | Passed with read-only offline NetId, four documented actions, and all ten cyclic-frame columns |
+| Master EtherCAT unsupported runtime boundary | Passed with disabled Advanced/Export/Sync Unit actions, zero generated frame rows, and complete tooltip/accessibility explanations |
+| Master EtherCAT offline topology | Passed for current-snapshot population, complete identity/order fields, explicit unmodeled port, configured status, and empty topology after slave removal |
+| Focused master EtherCAT test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed with visually inspected master-page and topology-dialog renders |
 | Configured-slave EtherCAT field hierarchy | Passed for Type, Product/Revision, Auto Inc Addr, explicit fixed-address state, Alias, Identification Value, Previous Port, and Advanced Settings |
 | Auto-increment address and predecessor derivation | Passed for first `0x0000`, second `0xffff`, master predecessor, and previous-slave predecessor without inventing a port number |
 | Configured Station Alias workflow | Passed for 0 through 65535 bounds, explicit zero-disable state, Project modified state, stable selection, Undo, and Redo |
-| EtherCAT page read-only and missing-data boundaries | Passed for repository ESI view, retained master topology, retained SyncManager table, missing ESI type, and empty missing-ESI table |
+| EtherCAT page read-only and missing-data boundaries | Passed for repository ESI view, dedicated master topology action/frame schema, retained SyncManager table, missing ESI type, and empty missing-ESI table |
 | Focused configured-slave EtherCAT test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
 | Exact Inputs, Outputs, RxPDO, TxPDO, Modules/Channels branch order | Passed |
 | Inputs from active TxPDO and Outputs from active RxPDO | Passed |
@@ -417,6 +456,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Configured-slave General desktop interaction inspection | Not run; only the direct offscreen render and widget behavior tests are claimed |
 | Configured-slave EtherCAT direct Qt render | Passed at 2200 x 1520 Retina output with all supported and explicit unavailable fields plus two SyncManager rows visible without overlap or clipping |
 | Configured-slave EtherCAT desktop interaction inspection | Not run; only the direct offscreen render and widget behavior tests are claimed |
+| EtherCAT-master EtherCAT direct Qt renders | Passed at normal and 2x scale for the 1180 x 760 logical page and populated topology dialog; all ten frame and topology columns remained readable without overlap or clipping |
+| EtherCAT-master EtherCAT desktop interaction inspection | Not run; only direct offscreen renders and widget behavior tests are claimed |
 | Direct upstream Core, ProjectExplorer, or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |
