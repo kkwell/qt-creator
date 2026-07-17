@@ -27,12 +27,30 @@ The Qt Creator integration uses only public plugin mechanisms:
 - `Core::OutputPanePlaceHolder` for the lower output area;
 - `Core::ActionManager` for the Workbench, refresh, expand, and collapse
   commands;
+- `Core::StatusBarManager` for the mode-scoped engineering status surface;
 - `Core::IContext` for EtherCAT-mode command context;
+- the exported `EtherCATCore::StateService` for shared Scan/Diagnostics status;
 - the ExtensionSystem object pool and `ProviderRegistry` for property pages
   and optional capabilities.
 
 No file under Qt Creator Core, ProjectExplorer, or the application bootstrap
 is changed by this plugin.
+
+## Unified status surface
+
+The Workbench registers one Qt Creator status-bar control in the standard
+`LastLeftAligned` area. It is visible only in EtherCAT Mode and consumes the
+existing `StateService` entries published by the Mock Scan and Diagnostics
+workflows. The highest-severity entry selects a Ready, Busy, Warning, or Fault
+icon and a short textual state. Every active phase-1 state remains explicitly
+labeled `MOCK` in every UI language; an empty service displays `Offline`.
+
+The button tooltip and drop-down list retain every contributing summary and
+detail, so the compact visible state does not discard its source information.
+The control uses Qt Creator icons, the active style's small-icon metric, and
+its current `sizeHint()` rather than hard-coded colors, fonts, or pixels. It
+therefore remains readable in the constrained status bar and at high DPI.
+Switching to another Mode hides the control without clearing shared state.
 
 ## Device tree
 
@@ -297,10 +315,11 @@ optional Diagnostics or Scan providers appear or disappear.
 ## Lifecycle
 
 Initialization creates the controller, registers the built-in page provider,
-registers the navigation factory and mode, then installs actions. Shutdown is
-idempotent and proceeds in reverse UI ownership order: mode, navigation
-factory, page provider, then controller. The controller disconnects project,
-repository, and provider signals before clearing its model.
+registers the navigation factory and mode, then installs actions and the
+mode-scoped status control. Shutdown is idempotent and proceeds in reverse UI
+ownership order: status control, mode, navigation factory, page provider, then
+controller. The controller disconnects project, repository, and provider
+signals before clearing its model.
 
 The plugin owns no background thread, timer, future, file format, or persistent
 business state. Imported ESI data remains owned by `EtherCATDevices`; open
@@ -350,7 +369,11 @@ The DC workflow covers two ESI operation
 modes, explicit Store/Restore, manual no-ESI configuration, AssignActivate,
 SYNC0/SYNC1 enable and nanosecond timing, reference-clock selection, validation
 rejection, dependent disable actions, and ProjectService Undo/Redo reentrancy.
-It passes 14 tests on the qualified Qt 6.11.0 Release test build.
+The status-surface coverage verifies Offline/Busy/Error priority, Mock labels,
+tooltip and drop-down details, standard icon dimensions, content width,
+Mode-scoped visibility, and the existing configured/unsupported tree icons.
+It passes 16 tests on the qualified Qt 6.11.0 Release test build; the focused
+status flow also passes at `QT_SCALE_FACTOR=2`.
 
 The normal 16-plugin product build and enabled/disabled startup smoke are
 recorded in `docs/compatibility-matrix.md`. A populated real EtherCAT Mode
@@ -365,3 +388,9 @@ Qt 6.11 Widget render of the CoE page was inspected at Retina resolution: the
 control grid, object hierarchy, values, and bilingual long name had no overlap
 or clipping. The page could not receive a full desktop interaction inspection
 because macOS was locked; no main-window click result is claimed.
+
+A direct 2520 x 1400 Qt main-window render of the status issue was also
+inspected. `MOCK Fault` remained fully visible beside a standard-sized Creator
+critical icon in `LastLeftAligned`, without overlapping the output controls or
+right-corner widgets. Computer Use could not perform desktop clicks because
+macOS remained locked, so only the direct Qt render is claimed for this issue.

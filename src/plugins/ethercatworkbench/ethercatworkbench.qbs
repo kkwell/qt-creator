@@ -33,6 +33,8 @@ QtcPlugin {
         "workbenchmode.h",
         "workbenchnavigation.cpp",
         "workbenchnavigation.h",
+        "workbenchstatuswidget.cpp",
+        "workbenchstatuswidget.h",
         "workbenchtreemodel.cpp",
         "workbenchtreemodel.h",
     ]

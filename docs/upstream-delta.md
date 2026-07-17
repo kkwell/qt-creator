@@ -198,6 +198,13 @@ service; CMake and qbs list the same two new source files. It adds no plugin
 dependency, controller transport, upstream Core, ProjectExplorer, or
 application path change, so the direct Core patch count remains five.
 
+The Workbench unified-status issue also changes only the product-owned
+`EtherCATWorkbench` plugin and documentation. It uses the existing public
+Qt Creator `StatusBarManager` and product-owned `StateService`, adds no plugin
+dependency, and keeps CMake and qbs source lists synchronized. No upstream
+Core, ProjectExplorer, or application path changes, so the direct Core patch
+count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

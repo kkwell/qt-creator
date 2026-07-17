@@ -23,6 +23,8 @@ add_qtc_plugin(EtherCATWorkbench
     workbenchmode.h
     workbenchnavigation.cpp
     workbenchnavigation.h
+    workbenchstatuswidget.cpp
+    workbenchstatuswidget.h
     workbenchtreemodel.cpp
     workbenchtreemodel.h
 )

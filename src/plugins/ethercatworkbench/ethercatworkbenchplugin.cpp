@@ -9,20 +9,26 @@
 #include "workbenchcontroller.h"
 #include "workbenchmode.h"
 #include "workbenchnavigation.h"
+#include "workbenchstatuswidget.h"
 
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/modemanager.h>
+#include <coreplugin/statusbarmanager.h>
+
+#include <ethercatcore/stateservice.h>
 
 #include <extensionsystem/iplugin.h>
 #include <extensionsystem/pluginmanager.h>
 
+#include <utils/qtcassert.h>
 #include <utils/utilsicons.h>
 
 #include <QAction>
 #include <QMenu>
+#include <QPointer>
 
 #include <memory>
 
@@ -47,6 +53,7 @@ private:
     std::unique_ptr<BuiltinPropertyPageProvider> m_builtinPages;
     std::unique_ptr<WorkbenchNavigationFactory> m_navigationFactory;
     std::unique_ptr<WorkbenchMode> m_mode;
+    QPointer<WorkbenchStatusWidget> m_statusWidget;
     bool m_providerRegistered = false;
     bool m_shuttingDown = false;
 };
@@ -58,6 +65,10 @@ EtherCATWorkbenchPlugin::~EtherCATWorkbenchPlugin()
 
 void EtherCATWorkbenchPlugin::initialize()
 {
+    Core::StateService *stateService
+        = ExtensionSystem::PluginManager::getObject<Core::StateService>();
+    QTC_ASSERT(stateService, return);
+
     m_controller = std::make_unique<WorkbenchController>();
     m_builtinPages = std::make_unique<BuiltinPropertyPageProvider>(m_controller.get());
     ExtensionSystem::PluginManager::addObject(m_builtinPages.get());
@@ -66,6 +77,11 @@ void EtherCATWorkbenchPlugin::initialize()
     m_navigationFactory = std::make_unique<WorkbenchNavigationFactory>(m_controller.get());
     m_mode = std::make_unique<WorkbenchMode>(m_controller.get());
     setupActions();
+    m_statusWidget = new WorkbenchStatusWidget(stateService);
+    ::Core::StatusBarManager::addStatusBarWidget(
+        m_statusWidget,
+        ::Core::StatusBarManager::LastLeftAligned,
+        ::Core::Context(Constants::CONTEXT_ID));
 
 #ifdef WITH_TESTS
     addTest<EtherCATWorkbenchTests>();
@@ -129,6 +145,10 @@ void EtherCATWorkbenchPlugin::shutdown()
     if (m_shuttingDown)
         return;
     m_shuttingDown = true;
+    if (m_statusWidget) {
+        ::Core::StatusBarManager::destroyStatusBarWidget(m_statusWidget);
+        m_statusWidget = nullptr;
+    }
     m_mode.reset();
     m_navigationFactory.reset();
     if (m_providerRegistered) {

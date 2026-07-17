@@ -11,11 +11,15 @@
 
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
+#include <coreplugin/coreconstants.h>
+#include <coreplugin/coreicons.h>
+#include <coreplugin/icore.h>
 #include <coreplugin/imode.h>
 #include <coreplugin/modemanager.h>
 
 #include <ethercatcore/providerregistry.h>
 #include <ethercatcore/selectionservice.h>
+#include <ethercatcore/stateservice.h>
 
 #include <extensionsystem/pluginmanager.h>
 #include <extensionsystem/pluginspec.h>
@@ -24,6 +28,7 @@
 #include <projectexplorer/projectmanager.h>
 
 #include <utils/filepath.h>
+#include <utils/utilsicons.h>
 
 #include <QAbstractButton>
 #include <QAbstractItemModelTester>
@@ -38,15 +43,19 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSet>
 #include <QSignalSpy>
+#include <QStatusBar>
+#include <QStyle>
 #include <QTabWidget>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QToolButton>
 #include <QTreeView>
 #include <QTreeWidget>
 
@@ -510,6 +519,60 @@ void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
         QString("EtherCATWorkbenchModeWidget"));
 }
 
+void EtherCATWorkbenchTests::testStatusBarTracksStateService()
+{
+    auto statusButton = ::Core::ICore::statusBar()->findChild<QToolButton *>(
+        "EtherCATWorkbenchStatus");
+    QVERIFY(statusButton);
+
+    Core::StateService *stateService
+        = ExtensionSystem::PluginManager::getObject<Core::StateService>();
+    QVERIFY(stateService);
+    const Utils::Id testSource("EtherCAT.Workbench.TestStatus");
+    const Utils::Id busySource("EtherCAT.Workbench.TestBusyStatus");
+    stateService->clearStatus(testSource);
+    stateService->clearStatus(busySource);
+
+    ::Core::ModeManager::activateMode(Constants::MODE_ID);
+    QTRY_VERIFY(statusButton->isVisible());
+    QVERIFY(statusButton->text().contains("Offline", Qt::CaseInsensitive));
+    QVERIFY(!statusButton->icon().isNull());
+    QVERIFY(!statusButton->accessibleName().isEmpty());
+    QVERIFY(!statusButton->accessibleDescription().isEmpty());
+    const int expectedIconSize
+        = statusButton->style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, statusButton);
+    QCOMPARE(statusButton->iconSize(), QSize(expectedIconSize, expectedIconSize));
+
+    QVERIFY(stateService->setStatus(
+        {busySource, Core::StatusSeverity::Busy, "Mock scan running", "Building local snapshot"}));
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Busy"));
+
+    QVERIFY(stateService->setStatus(
+        {testSource,
+         Core::StatusSeverity::Error,
+         "Controller fault",
+         "Deterministic local test status"}));
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Fault"));
+    QVERIFY(statusButton->toolTip().contains("Controller fault"));
+    QVERIFY(statusButton->toolTip().contains("Deterministic local test status"));
+    QTRY_VERIFY(statusButton->width() >= statusButton->sizeHint().width());
+    QCOMPARE(
+        statusButton->icon().pixmap(expectedIconSize, expectedIconSize).toImage(),
+        Utils::Icons::CRITICAL_TOOLBAR.icon().pixmap(expectedIconSize, expectedIconSize).toImage());
+    QVERIFY(statusButton->menu());
+    QVERIFY(statusButton->menu()->actions().size() >= 2);
+
+    ::Core::ModeManager::activateMode(::Core::Constants::MODE_EDIT);
+    QTRY_VERIFY(!statusButton->isVisible());
+    ::Core::ModeManager::activateMode(Constants::MODE_ID);
+    QTRY_VERIFY(statusButton->isVisible());
+
+    stateService->clearStatus(testSource);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Busy"));
+    stateService->clearStatus(busySource);
+    QTRY_VERIFY(statusButton->text().contains("Offline", Qt::CaseInsensitive));
+}
+
 void EtherCATWorkbenchTests::testTreeModelLargeIncrementalUpdate()
 {
     WorkbenchTreeModel model;
@@ -546,6 +609,45 @@ void EtherCATWorkbenchTests::testTreeModelLargeIncrementalUpdate()
     QVERIFY(changed.count() >= 1);
     QCOMPARE(model.contextForNodeId(retainedId).displayName, QString("Renamed Device"));
     QCOMPARE(reset.count(), 1);
+}
+
+void EtherCATWorkbenchTests::testConfiguredSlaveStateIcon()
+{
+    WorkbenchTreeModel model;
+    Data::ProjectSnapshot project = projectSnapshot("State Icon");
+    const Data::NodeId master = masterId(project);
+    const Data::NodeId slaveId = Data::NodeId::create();
+    project.slaves = {
+        {slaveId,
+         master,
+         0,
+         {0x00000002, 0x12345678, 0x00000001},
+         7,
+         0,
+         "Configured Servo",
+         Data::NodeId::create(),
+         {},
+         {},
+         {}}};
+    project.nodes.append({slaveId, master, Data::ProjectNodeKind::Slave, "Configured Servo"});
+    model.setProjects({project});
+
+    const QModelIndex slave = model.indexForNodeId(slaveId);
+    QVERIFY(slave.isValid());
+    const QIcon actual = slave.data(Qt::DecorationRole).value<QIcon>();
+    QVERIFY(!actual.isNull());
+    const int iconSize = QApplication::style()->pixelMetric(QStyle::PM_SmallIconSize);
+    QCOMPARE(
+        actual.pixmap(iconSize, iconSize).toImage(),
+        ::Core::Icons::DESKTOP_DEVICE_SMALL.icon().pixmap(iconSize, iconSize).toImage());
+
+    QList<Data::DeviceSummary> repository = deviceSummaries(2);
+    repository.first().supported = false;
+    model.syncDevices(repository);
+    const QModelIndex unsupported = model.indexForNodeId(repository.first().id);
+    QCOMPARE(
+        unsupported.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
+        Utils::Icons::BROKEN.icon().pixmap(iconSize, iconSize).toImage());
 }
 
 void EtherCATWorkbenchTests::testNavigationSelectionAndFiltering()

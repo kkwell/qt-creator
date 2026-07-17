@@ -216,11 +216,12 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 14 passed, 0 failed |
-| Six-plugin EtherCAT regression | 64 passed, 0 failed in isolated processes |
+| Focused EtherCATWorkbench plugin tests | 16 passed, 0 failed |
+| Six-plugin EtherCAT regression | 66 passed, 0 failed in isolated processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first CoE Online page test | Compiled and failed on the missing `CoE Online` page descriptor before implementation, as expected |
+| Failure-first unified-status test | Compiled and failed because no Workbench status-bar control was registered, as expected |
 | Metadata, hard dependencies, mode, and actions | Passed |
 | 500-device incremental model with model tester | Passed |
 | Filter, context, and bidirectional stable selection | Passed |
@@ -238,6 +239,10 @@ limits are documented in `docs/ethercat-workbench.md`.
 | CoE Add to Startup cancel, confirm, append-only, and Undo | Passed |
 | CoE offline, repository, and missing-ESI read-only boundaries | Passed |
 | CoE focused test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
+| Shared StateService Offline/Busy/Error priority and Mock labels | Passed |
+| Status tooltip, drop-down details, Mode visibility, and cleanup ownership | Passed |
+| Status icon style metric and content-width guard | Passed |
+| Focused status test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed after fixing the reproduced width compression |
 | TwinCAT-inspired ordered Startup list and action layout | Passed in widget/model flow test |
 | Startup ESI proposal, explicit Store/Restore, and read-only catalogue | Passed |
 | Startup New/Edit/Delete, enable, Move Up/Down, and fixed request constraints | Passed |
@@ -273,6 +278,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Visual desktop inspection | Passed with all five process-data branches, PDO/Entry descendants, explicit modular empty state, normal Creator icon scale, and readable narrow-sidebar names |
 | CoE direct Qt Widget render | Passed at 2200 x 1520 Retina output with hierarchy, values, Mock banner, and bilingual long name visible without overlap |
 | CoE Online desktop interaction inspection | Not run; macOS was locked, so no CoE screenshot or manual-click result is claimed |
+| Unified-status direct Qt main-window render | Passed at 2520 x 1400; `MOCK Fault` and the standard-sized icon remained fully visible without overlap |
+| Unified-status desktop interaction inspection | Not run; Computer Use reported a locked macOS session, so no manual-click result is claimed |
 | Direct upstream Core, ProjectExplorer, or app changes | None |
 | Full product build with `WITH_TESTS=ON` | Blocked by existing EasyBoard test include defect |
 | qbs build | Not run; qbs executable is unavailable |

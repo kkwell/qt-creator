@@ -12,7 +12,9 @@ class EtherCATWorkbenchTests final : public QObject
 
 private slots:
     void testMetadataModeActionsAndProvider();
+    void testStatusBarTracksStateService();
     void testTreeModelLargeIncrementalUpdate();
+    void testConfiguredSlaveStateIcon();
     void testNavigationSelectionAndFiltering();
     void testBuiltInDevicePages();
     void testConfiguredSlaveTreeAndPages();
