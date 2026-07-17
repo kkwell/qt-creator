@@ -5,7 +5,8 @@
 `EtherCATWorkbench` is the stage-4 engineering-shell plugin. It owns the
 EtherCAT mode, left navigation tree, stable selection linkage, central details
 container, built-in offline property pages, manual offline-topology commands,
-editable target, master, and configured-slave General pages, Workbench commands,
+editable project, target, master, and configured-slave General pages, Workbench
+commands,
 the TwinCAT-aligned master EtherCAT settings and local topology view, and the
 presentation of public Scan/Diagnostics snapshots in the device tree. It does
 not parse ESI files, own project persistence, scan a bus, produce diagnostics,
@@ -230,6 +231,39 @@ target selection, a bus scan, controller transport, or online configuration.
 Those require separate issues and must not bypass the same checked Project
 service boundary.
 
+## Offline-project General page
+
+`ISSUE-WB-PROJECT-GENERAL-001` replaces the project's generic property table
+with a dedicated identity form and offline-configuration summary. Its
+information hierarchy was compared with Beckhoff's documented TwinCAT 3
+Project tab:
+<https://infosys.beckhoff.com/content/1033/tc3_userinterface/3434440203.html>.
+No Beckhoff logo, trademark, icon, project format, control, or proprietary
+implementation is copied.
+
+The identity form displays the editable Project name followed by the stable
+Project ID and the explicit `Offline EtherCAT Engineering Project` type. The
+summary reports the actual persisted format version and creator, validation
+and migration state, modified state, offline target and EtherCAT-master names,
+and configured-slave count. Missing or stale project contexts are labeled
+`Unavailable`; the page never substitutes online or runtime values.
+
+Completing a Project-name edit routes through the Workbench controller to the
+existing checked `ProjectService::renameProject()` command. Project owns
+whitespace normalization, empty-name rejection, modified state, persistence,
+Undo, and Redo. The stable Project ID and selection are retained while the
+Workbench tree, ProjectExplorer display name, details title, and form remain
+synchronized.
+
+TwinCAT fields that depend on a PLC/ADS runtime, including AMS Port, boot-data
+encryption, autostart, symbolic mapping, multi-instance settings, and compiler
+definitions, are intentionally absent. A project path is also omitted because
+the current public Project service and property-page context do not expose it;
+the Workbench does not reach into ProjectExplorer internals or fabricate a
+value. Adding it requires a separate Project/Core contract issue. This page
+adds no public API, protocol, Provider, persistent field, source-list entry,
+dependency, background work, or upstream Qt Creator patch.
+
 ## Offline-target General page
 
 `ISSUE-WB-TARGET-GENERAL-001` replaces the target's generic property table with
@@ -450,8 +484,9 @@ the page set without retaining removed pointers.
 
 The built-in provider supplies these stage-4 pages:
 
-- General for projects, targets, masters, the repository, and ESI devices, plus
-  the editable identity form for configured slaves;
+- dedicated editable General forms for projects, targets, masters, and
+  configured slaves, plus read-only General pages for the repository and ESI
+  devices;
 - an editable Alias and read-only offline address form for configured slaves,
   while imported devices retain read-only SyncManager data and the master
   exposes its offline NetId/action hierarchy, local topology dialog, and
@@ -718,8 +753,13 @@ command strip, unsupported-device location, stable Node ID copying, placeholder
 protection, and enabled-state updates. The topology workflow verifies complete
 ESI Process Data/Startup/DC defaults, stable IDs, repeated-device unique names,
 position normalization, boundary states, selection repair, and Project
-Undo/Redo. The target General workflow verifies the TwinCAT-aligned target
-summary and Version hierarchy, actual engineering/project values, explicit
+Undo/Redo. The project General workflow verifies the TwinCAT-aligned identity
+hierarchy, actual format/creator/validity/migration/modified/topology summary
+values, Unicode rename trimming, empty rejection, stale-context handling,
+stable selection, synchronized Workbench/ProjectExplorer/title/form updates,
+and Project Undo/Redo. The target General workflow verifies the
+TwinCAT-aligned target summary and Version hierarchy, actual
+engineering/project values, explicit
 offline and unavailable runtime values, unavailable target selection/version
 pinning, Unicode rename trimming, empty rejection, stable selection,
 synchronized tree/title/form updates, and Project Undo/Redo. The
@@ -745,10 +785,10 @@ The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
 match/difference routing, Missing/Added/Revision/Vendor presentation, warning
 and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
 stable locate/open navigation, command registration, and provider-removal
-restoration. It passes 25 tests on the qualified Qt 6.11.0 Release test build.
-The target and master General flows also pass at `QT_SCALE_FACTOR=2`, and direct
-normal and 2x widget renders show no overlap, clipping, or uncontrolled
-expansion.
+restoration. It passes 26 tests on the qualified Qt 6.11.0 Release test build.
+The project, target, and master General flows also pass at
+`QT_SCALE_FACTOR=2`, and direct normal and 2x widget renders show no overlap,
+clipping, or uncontrolled expansion.
 The focused configured-slave General and EtherCAT workflows pass at both normal
 scale and `QT_SCALE_FACTOR=2`; the combined command-strip and offline-topology
 flow also passes at `QT_SCALE_FACTOR=2`.
@@ -802,6 +842,14 @@ The renamed Unicode title and Name field, one-based Id, stable Object Id,
 ESI-derived Type, and complete read-only property table remained visible
 without overlap or clipping. This was an offscreen Qt Widget render; no manual
 desktop interaction is claimed for this issue.
+
+A direct 2200 x 1440 Retina render inspected the offline-project General page.
+The editable Project name, stable Project ID, explicit offline project type,
+format and creator values, validation/migration/modified state, target/master
+summary, and configured-slave count remained visible without overlap or
+clipping. The same flow was inspected at its normal 1100 x 720 render size.
+These were offscreen Qt Widget renders; no manual desktop interaction is
+claimed for this issue.
 
 A direct 2200 x 1440 Retina render inspected the offline-target General page.
 The editable target name, stable Object Id, standard computer icon, disabled

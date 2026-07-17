@@ -33,6 +33,7 @@ public:
 private:
     void reset(const QString &summary);
     void addRow(const QStringList &values);
+    void commitProjectName();
     void commitName();
     void commitTargetName();
     void commitMasterName();
@@ -41,6 +42,20 @@ private:
     QPointer<WorkbenchController> m_controller;
     Core::PropertyPageContext m_context;
     QLabel *m_summary;
+    QWidget *m_projectContent;
+    QWidget *m_projectForm;
+    QLineEdit *m_projectName;
+    QLineEdit *m_projectId;
+    QLineEdit *m_projectType;
+    QGroupBox *m_projectSummaryForm;
+    QLineEdit *m_projectFormatVersion;
+    QLineEdit *m_projectCreatedBy;
+    QLineEdit *m_projectValidity;
+    QLineEdit *m_projectMigration;
+    QLineEdit *m_projectModified;
+    QLineEdit *m_projectTarget;
+    QLineEdit *m_projectMaster;
+    QLineEdit *m_projectSlaveCount;
     QWidget *m_identityForm;
     QLineEdit *m_name;
     QLineEdit *m_id;

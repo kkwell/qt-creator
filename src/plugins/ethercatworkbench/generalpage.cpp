@@ -26,6 +26,8 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 namespace EtherCAT::Workbench::Internal {
 
 static QString hexValue(quint64 value, int width)
@@ -47,10 +49,43 @@ static int structuralNodeOrdinal(
     return -1;
 }
 
+static QString firstNodeName(
+    const Data::ProjectSnapshot &project, Data::ProjectNodeKind kind, const QString &fallback)
+{
+    const auto node = std::find_if(
+        project.nodes.cbegin(), project.nodes.cend(), [kind](const auto &entry) {
+            return entry.kind == kind;
+        });
+    return node == project.nodes.cend() ? fallback : node->name;
+}
+
+static QString projectValidityText(const Data::ProjectSnapshot &project)
+{
+    if (project.valid)
+        return Tr::tr("Valid");
+    return project.error.isEmpty() ? Tr::tr("Invalid")
+                                   : Tr::tr("Invalid: %1").arg(project.error);
+}
+
 GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     : QWidget(parent)
     , m_controller(controller)
     , m_summary(new QLabel(this))
+    , m_projectContent(new QWidget(this))
+    , m_projectForm(new QWidget(m_projectContent))
+    , m_projectName(new QLineEdit(m_projectForm))
+    , m_projectId(new QLineEdit(m_projectForm))
+    , m_projectType(new QLineEdit(m_projectForm))
+    , m_projectSummaryForm(
+          new QGroupBox(Tr::tr("Offline project summary"), m_projectContent))
+    , m_projectFormatVersion(new QLineEdit(m_projectSummaryForm))
+    , m_projectCreatedBy(new QLineEdit(m_projectSummaryForm))
+    , m_projectValidity(new QLineEdit(m_projectSummaryForm))
+    , m_projectMigration(new QLineEdit(m_projectSummaryForm))
+    , m_projectModified(new QLineEdit(m_projectSummaryForm))
+    , m_projectTarget(new QLineEdit(m_projectSummaryForm))
+    , m_projectMaster(new QLineEdit(m_projectSummaryForm))
+    , m_projectSlaveCount(new QLineEdit(m_projectSummaryForm))
     , m_identityForm(new QWidget(this))
     , m_name(new QLineEdit(m_identityForm))
     , m_id(new QLineEdit(m_identityForm))
@@ -86,6 +121,77 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     m_summary->setObjectName("EtherCATWorkbenchPageSummary");
     m_summary->setWordWrap(true);
     m_summary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    m_projectContent->setObjectName("EtherCATProjectGeneralContent");
+    m_projectForm->setObjectName("EtherCATProjectGeneralForm");
+    m_projectName->setObjectName("EtherCATProjectGeneralName");
+    m_projectId->setObjectName("EtherCATProjectGeneralId");
+    m_projectType->setObjectName("EtherCATProjectGeneralType");
+    m_projectSummaryForm->setObjectName("EtherCATProjectConfigurationSummary");
+    m_projectFormatVersion->setObjectName("EtherCATProjectGeneralFormatVersion");
+    m_projectCreatedBy->setObjectName("EtherCATProjectGeneralCreatedBy");
+    m_projectValidity->setObjectName("EtherCATProjectGeneralValidity");
+    m_projectMigration->setObjectName("EtherCATProjectGeneralMigration");
+    m_projectModified->setObjectName("EtherCATProjectGeneralModified");
+    m_projectTarget->setObjectName("EtherCATProjectGeneralTarget");
+    m_projectMaster->setObjectName("EtherCATProjectGeneralMaster");
+    m_projectSlaveCount->setObjectName("EtherCATProjectGeneralSlaveCount");
+    m_projectName->setAccessibleName(Tr::tr("EtherCAT project name"));
+    m_projectId->setAccessibleName(Tr::tr("EtherCAT project ID"));
+    m_projectType->setAccessibleName(Tr::tr("EtherCAT project type"));
+    m_projectFormatVersion->setAccessibleName(Tr::tr("EtherCAT project format version"));
+    m_projectCreatedBy->setAccessibleName(Tr::tr("EtherCAT project creation tool"));
+    m_projectValidity->setAccessibleName(Tr::tr("EtherCAT project validity"));
+    m_projectMigration->setAccessibleName(Tr::tr("EtherCAT project migration state"));
+    m_projectModified->setAccessibleName(Tr::tr("EtherCAT project modified state"));
+    m_projectTarget->setAccessibleName(Tr::tr("Offline target name"));
+    m_projectMaster->setAccessibleName(Tr::tr("EtherCAT master name"));
+    m_projectSlaveCount->setAccessibleName(Tr::tr("Configured EtherCAT slave count"));
+    m_projectId->setToolTip(
+        Tr::tr("Stable offline project identifier; this is not an ADS or runtime ID."));
+    m_projectType->setToolTip(
+        Tr::tr("Local engineering project type; no PLC runtime is represented."));
+    for (QLineEdit *field :
+         {m_projectId,
+          m_projectType,
+          m_projectFormatVersion,
+          m_projectCreatedBy,
+          m_projectValidity,
+          m_projectMigration,
+          m_projectModified,
+          m_projectTarget,
+          m_projectMaster,
+          m_projectSlaveCount}) {
+        field->setReadOnly(true);
+    }
+
+    auto projectForm = new QFormLayout(m_projectForm);
+    projectForm->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    projectForm->setHorizontalSpacing(Utils::StyleHelper::SpacingTokens::GapHM);
+    projectForm->setVerticalSpacing(Utils::StyleHelper::SpacingTokens::GapVS);
+    projectForm->addRow(Tr::tr("Project name:"), m_projectName);
+    projectForm->addRow(Tr::tr("Project ID:"), m_projectId);
+    projectForm->addRow(Tr::tr("Project type:"), m_projectType);
+
+    auto projectSummary = new QFormLayout(m_projectSummaryForm);
+    projectSummary->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    projectSummary->setHorizontalSpacing(Utils::StyleHelper::SpacingTokens::GapHM);
+    projectSummary->setVerticalSpacing(Utils::StyleHelper::SpacingTokens::GapVS);
+    projectSummary->addRow(Tr::tr("Format version:"), m_projectFormatVersion);
+    projectSummary->addRow(Tr::tr("Created by:"), m_projectCreatedBy);
+    projectSummary->addRow(Tr::tr("Validity:"), m_projectValidity);
+    projectSummary->addRow(Tr::tr("Migration:"), m_projectMigration);
+    projectSummary->addRow(Tr::tr("Modified:"), m_projectModified);
+    projectSummary->addRow(Tr::tr("Offline target:"), m_projectTarget);
+    projectSummary->addRow(Tr::tr("EtherCAT master:"), m_projectMaster);
+    projectSummary->addRow(Tr::tr("Configured slaves:"), m_projectSlaveCount);
+
+    auto projectContentLayout = new QVBoxLayout(m_projectContent);
+    projectContentLayout->setContentsMargins(QMargins());
+    projectContentLayout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVM);
+    projectContentLayout->addWidget(m_projectForm);
+    projectContentLayout->addWidget(m_projectSummaryForm);
+    projectContentLayout->addStretch(1);
 
     m_identityForm->setObjectName("EtherCATGeneralIdentityForm");
     m_name->setObjectName("EtherCATGeneralName");
@@ -305,11 +411,13 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
         Utils::StyleHelper::SpacingTokens::PaddingVM);
     layout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVM);
     layout->addWidget(m_summary);
+    layout->addWidget(m_projectContent, 1);
     layout->addWidget(m_targetContent, 1);
     layout->addWidget(m_masterContent, 1);
     layout->addWidget(m_identityForm);
     layout->addWidget(m_tree, 1);
 
+    connect(m_projectName, &QLineEdit::editingFinished, this, &GeneralPage::commitProjectName);
     connect(m_name, &QLineEdit::editingFinished, this, &GeneralPage::commitName);
     connect(m_targetName, &QLineEdit::editingFinished, this, &GeneralPage::commitTargetName);
     connect(m_masterName, &QLineEdit::editingFinished, this, &GeneralPage::commitMasterName);
@@ -356,7 +464,42 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
     reset(Tr::tr("Offline properties for %1").arg(context.displayName));
     const bool configuredSlave = context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave
                                  && offlineSlave.has_value();
-    if (configuredSlave) {
+    if (context.nodeKind == Core::WorkbenchNodeKind::Project) {
+        m_summary->hide();
+        m_projectName->setText(project ? project->name : context.displayName);
+        m_projectName->setReadOnly(!project || !project->valid);
+        m_projectId->setText(project ? project->id.toString() : context.nodeId.toString());
+        m_projectType->setText(Tr::tr("Offline EtherCAT Engineering Project"));
+        if (project) {
+            m_projectFormatVersion->setText(QString::number(project->formatVersion));
+            m_projectCreatedBy->setText(
+                project->createdBy.isEmpty() ? Tr::tr("Not recorded") : project->createdBy);
+            m_projectValidity->setText(projectValidityText(*project));
+            m_projectMigration->setText(
+                project->migrated ? Tr::tr("Migrated from an older format")
+                                  : Tr::tr("Current format"));
+            m_projectModified->setText(project->modified ? Tr::tr("Yes") : Tr::tr("No"));
+            m_projectTarget->setText(firstNodeName(
+                *project, Data::ProjectNodeKind::Target, Tr::tr("Not configured")));
+            m_projectMaster->setText(firstNodeName(
+                *project, Data::ProjectNodeKind::Master, Tr::tr("Not configured")));
+            m_projectSlaveCount->setText(QString::number(project->slaves.size()));
+        } else {
+            const QString unavailable = Tr::tr("Unavailable");
+            m_projectFormatVersion->setText(unavailable);
+            m_projectCreatedBy->setText(unavailable);
+            m_projectValidity->setText(unavailable);
+            m_projectMigration->setText(unavailable);
+            m_projectModified->setText(unavailable);
+            m_projectTarget->setText(unavailable);
+            m_projectMaster->setText(unavailable);
+            m_projectSlaveCount->setText(unavailable);
+        }
+        m_projectContent->show();
+        m_projectForm->show();
+        m_projectSummaryForm->show();
+        m_tree->hide();
+    } else if (configuredSlave) {
         const QString typeName = !device ? Tr::tr("Unknown ESI device")
                                  : !device->summary.typeName.isEmpty() ? device->summary.typeName
                                                                        : device->summary.name;
@@ -441,7 +584,9 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
         addRow(
             {Tr::tr("Index state"),
              m_controller->deviceRepository()->isIndexing() ? Tr::tr("Indexing") : Tr::tr("Ready")});
-    } else if (project && context.nodeKind != Core::WorkbenchNodeKind::Master) {
+    } else if (
+        project && context.nodeKind != Core::WorkbenchNodeKind::Project
+        && context.nodeKind != Core::WorkbenchNodeKind::Master) {
         addRow({Tr::tr("Format version"), QString::number(project->formatVersion)});
         addRow({Tr::tr("Created by"), project->createdBy});
         addRow({Tr::tr("Modified"), project->modified ? Tr::tr("Yes") : Tr::tr("No")});
@@ -455,6 +600,21 @@ void GeneralPage::reset(const QString &summary)
 {
     m_summary->setText(summary);
     m_summary->show();
+    m_projectContent->hide();
+    m_projectForm->hide();
+    m_projectSummaryForm->hide();
+    m_projectName->clear();
+    m_projectName->setReadOnly(true);
+    m_projectId->clear();
+    m_projectType->clear();
+    m_projectFormatVersion->clear();
+    m_projectCreatedBy->clear();
+    m_projectValidity->clear();
+    m_projectMigration->clear();
+    m_projectModified->clear();
+    m_projectTarget->clear();
+    m_projectMaster->clear();
+    m_projectSlaveCount->clear();
     m_identityForm->hide();
     m_targetContent->hide();
     m_masterContent->hide();
@@ -492,6 +652,21 @@ void GeneralPage::reset(const QString &summary)
 void GeneralPage::addRow(const QStringList &values)
 {
     m_tree->addTopLevelItem(new QTreeWidgetItem(values));
+}
+
+void GeneralPage::commitProjectName()
+{
+    if (m_updating || !m_controller || m_context.nodeKind != Core::WorkbenchNodeKind::Project)
+        return;
+    const Utils::Result<> result
+        = m_controller->renameProject(m_context.projectId, m_projectName->text());
+    if (!result) {
+        ::Core::MessageManager::writeFlashing(
+            Tr::tr("Cannot rename the EtherCAT project: %1").arg(result.error()));
+    }
+    const Core::PropertyPageContext current = m_controller->treeModel()->contextForNodeId(
+        m_context.nodeId);
+    setContext(current.nodeKind == Core::WorkbenchNodeKind::None ? m_context : current);
 }
 
 void GeneralPage::commitName()

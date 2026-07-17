@@ -53,8 +53,9 @@ All six planned EtherCAT feature and infrastructure plugins have entered the
 local profile. This proves the plugin profile is assembled, not that every
 Phase-1 requirement is complete. Editable Process Data, CoE Online Mock,
 Startup, and DC are now verified, and the public derived-node kinds are
-reserved. The checked Target/Master name command and both TwinCAT-inspired
-Target/Master General pages are now verified. The visible
+reserved. The existing Project-name command, the checked Target/Master name
+command, and the TwinCAT-inspired Project/Target/Master General pages are now
+verified. The visible
 EtherCAT-master EtherCAT page now exposes the documented NetId/action/frame
 hierarchy with a real local topology view and explicit unavailable runtime
 boundaries. The visible
@@ -83,6 +84,7 @@ function is outside the product target and records migration or recovery.
 | Extensible offline property pages | Stage 4 verified |
 | Configured-slave General and EtherCAT/Alias pages | Verified; unsupported fixed address, identification, port graph, and Advanced Settings remain explicit unavailable states |
 | Target/Master structural-name command | Core/API, Project persistence, and both Target/Master General UIs verified |
+| Offline-project General page | Verified with TwinCAT-aligned identity hierarchy, truthful offline summary, synchronized ProjectExplorer/Workbench naming, and Project Undo/Redo |
 | Offline-target General page | Verified with TwinCAT-aligned target/version hierarchy, explicit unavailable runtime controls, and Project Undo/Redo |
 | EtherCAT-master General page | Verified with TwinCAT-aligned identity hierarchy, explicit unsupported settings, offline summary, and Project Undo/Redo |
 | EtherCAT-master EtherCAT page | Verified with TwinCAT-aligned NetId/actions/frame columns, current-snapshot offline topology, and explicit unavailable ADS/runtime/export/Sync Unit state |
@@ -186,6 +188,37 @@ widget or generic node-editing surface.
 | CMake/qbs source lists | No source-list or dependency change required |
 | Direct upstream Core, ProjectExplorer, or app changes | None; direct Core patch count remains five |
 | Full product build with `WITH_TESTS=ON` | Blocked by the existing EasyBoard `extensionmanager_test.h` include defect |
+| qbs build | Not run; qbs executable is unavailable |
+
+## EtherCATWorkbench project General qualification
+
+`ISSUE-WB-PROJECT-GENERAL-001` consumes the existing checked Project-name
+command through the existing Workbench controller and property-page provider.
+It adds no cross-plugin contract, persistent field, runtime Provider, or
+transport.
+
+| Check | Result |
+|---|---|
+| Failure-first Workbench test | Compiled and failed because `EtherCATProjectGeneralContent` did not exist; 2 passed and 1 failed as expected |
+| TwinCAT-aligned project hierarchy | Editable Project name followed by stable Project ID and explicit offline project type verified against the documented Project tab |
+| Truthful offline summary | Actual format version, creator, validation, migration, modified state, target/master names, and configured-slave count verified without fabricated runtime data |
+| Checked editable boundary | Project name only; routed through `ProjectService::renameProject()` with normalization, empty rejection, modified state, persistence, Undo, and Redo |
+| PLC/ADS and path boundary | AMS Port, boot encryption, autostart, symbolic mapping, multi-instance settings, and compiler definitions are absent; project path is omitted because the public contract does not expose it |
+| Selection and presentation | Stable Project ID and selection, Workbench tree, ProjectExplorer display name, details title, and form remain synchronized across rename, Undo, and Redo |
+| Stale-context behavior | Missing project becomes read-only and reports `Unavailable` instead of retaining or inventing values |
+| Focused project General test | 3 passed, 0 failed |
+| Combined Project/Target/Master/slave General regression | 6 passed, 0 failed |
+| Focused project General at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
+| Direct widget render | Normal 1100 x 720 and 2x 2200 x 1440 renders passed visual inspection with no overlap, clipping, or scale drift |
+| Focused EtherCATWorkbench suite | 26 passed, 0 failed |
+| Six-plugin isolated regression | Core 17, Project 12, Devices 8, Workbench 26, Scan 7, Diagnostics 7; 77 passed, 0 failed |
+| Final isolated regression platform | Isolated HOME/settings and `QT_QPA_PLATFORM=offscreen`; high-DPI flow additionally used `QT_SCALE_FACTOR=2` |
+| 16-plugin product build | Passed with the `WITH_TESTS=OFF` allow-list |
+| Enabled product startup | All 16 plugins loaded, initialized, extended, and delayed-initialized; stable for 10 seconds until intentional timeout |
+| Workbench-disabled startup | Workbench, Scan, and Diagnostics were dependency-disabled; remaining product was stable for 10 seconds until intentional timeout |
+| CMake/qbs source lists | No source-list or dependency change required |
+| Direct upstream Core, ProjectExplorer, or app changes | None; direct Core patch count remains five |
+| Full product build with `WITH_TESTS=ON` | Still blocked by the existing EasyBoard `extensionmanager_test.h` include defect; outstanding Ninja jobs were interrupted after the blocker was captured |
 | qbs build | Not run; qbs executable is unavailable |
 
 ## EtherCATWorkbench target General qualification
@@ -344,8 +377,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 25 passed, 0 failed |
-| Six-plugin EtherCAT regression | 76 passed, 0 failed in isolated processes |
+| Focused EtherCATWorkbench plugin tests | 26 passed, 0 failed |
+| Six-plugin EtherCAT regression | 77 passed, 0 failed in isolated processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first CoE Online page test | Compiled and failed on the missing `CoE Online` page descriptor before implementation, as expected |
@@ -355,6 +388,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Failure-first context-command test | Failed to compile only on missing Locate Unsupported/Copy Node ID command IDs and Controller requests before implementation, as expected |
 | Failure-first offline-topology test | Failed to compile only on the four missing Add/Remove/Move ActionManager command IDs before implementation, as expected |
 | Failure-first configured-slave General test | Compiled and failed because the editable `EtherCATGeneralName` control did not exist before implementation, as expected |
+| Failure-first project General test | Compiled and failed because `EtherCATProjectGeneralContent` did not exist before implementation, as expected |
 | Failure-first target General test | Compiled and failed because `EtherCATTargetGeneralContent` did not exist before implementation, as expected |
 | Failure-first master General test | Compiled and failed because `EtherCATMasterGeneralForm` did not exist before implementation, as expected |
 | Failure-first master EtherCAT test | Compiled and failed because `EtherCATMasterEthercatForm` did not exist before implementation, as expected |
@@ -404,6 +438,10 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Configured-slave General rename workflow | Passed for whitespace trimming, Unicode, empty rejection, Project modified state, tree/title/form synchronization, stable selection, Undo, and Redo |
 | Configured-slave General missing ESI state | Passed with explicit `Unknown ESI device` Type and retained read-only identity details |
 | Focused configured-slave General test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
+| Project General identity form | Passed for editable Project name, stable Project ID, explicit offline project type, and the actual format/creator/validity/migration/modified/topology summary |
+| Project General rename workflow | Passed for whitespace trimming, Unicode, empty rejection, Project modified state, Workbench tree/ProjectExplorer/title/form synchronization, stable selection, Undo, and Redo |
+| Project General stale context | Passed with a read-only name and explicit `Unavailable` validity instead of stale or fabricated values |
+| Focused project General test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed with a visually inspected 2x render |
 | Master General identity form | Passed for TwinCAT-aligned Name/Id, stable Object Id, Type, visible unsupported settings, and offline summary |
 | Master General rename workflow | Passed for whitespace trimming, Unicode, empty rejection, Project modified state, tree/title/form synchronization, stable selection, Undo, and Redo |
 | Focused master General test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed with a visually inspected 2x render |
@@ -454,6 +492,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Offline-topology desktop interaction inspection | Not run; Computer Use reported a locked macOS session, so no manual-click result is claimed |
 | Configured-slave General direct Qt render | Passed at 2200 x 1440 Retina output with Unicode title/name, Id, Object Id, Type, and details visible without overlap or clipping |
 | Configured-slave General desktop interaction inspection | Not run; only the direct offscreen render and widget behavior tests are claimed |
+| Offline-project General direct Qt renders | Passed at normal 1100 x 720 and 2x 2200 x 1440 output with identity and complete offline summary visible without overlap, clipping, or scale drift |
+| Offline-project General desktop interaction inspection | Not run; only the direct offscreen renders and widget behavior tests are claimed |
 | Configured-slave EtherCAT direct Qt render | Passed at 2200 x 1520 Retina output with all supported and explicit unavailable fields plus two SyncManager rows visible without overlap or clipping |
 | Configured-slave EtherCAT desktop interaction inspection | Not run; only the direct offscreen render and widget behavior tests are claimed |
 | EtherCAT-master EtherCAT direct Qt renders | Passed at normal and 2x scale for the 1180 x 760 logical page and populated topology dialog; all ten frame and topology columns remained readable without overlap or clipping |

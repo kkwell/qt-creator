@@ -256,6 +256,14 @@ existing property-page provider and checked structural-name command, adds no
 source, dependency, public API, or path under upstream Core, ProjectExplorer,
 or the application bootstrap, so the direct Core patch count remains five.
 
+The offline-project General-page issue changes only existing files in the
+product-owned `EtherCATWorkbench` plugin and documentation. It reuses the
+existing property-page provider, immutable Project snapshot, and public
+`ProjectService::renameProject()` command. It adds no source-list entry,
+dependency, persistent field, public API, controller transport, or path under
+upstream Core, ProjectExplorer, or the application bootstrap, so the direct
+Core patch count remains five.
+
 The EtherCAT-master EtherCAT-page issue also changes only existing files in the
 product-owned `EtherCATWorkbench` plugin and documentation. It reuses the
 existing property-page provider and immutable offline Project snapshot for a

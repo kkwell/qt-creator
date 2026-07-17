@@ -23,7 +23,7 @@ documentation, review, and local-commit gates.
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Configuration persistence and structural-name API complete | Version-2 project lifecycle, migration, validation, and Undo/Redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
-| 4 | `EtherCATWorkbenchPlugin` | In progress | Master and configured-slave General editing, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
+| 4 | `EtherCATWorkbenchPlugin` | In progress | Project, Target, Master, and configured-slave General editing, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
 
@@ -108,9 +108,16 @@ Mock Diagnostics plugin.
 The Workbench plugin owns the existing EtherCAT mode, left device tree,
 selection linkage, and details-page host. Project and Devices supply public
 data. Scan and Diagnostics contribute commands, pages, and Providers through
-Workbench/Core extension points. Configured-slave names, Alias values, Process
-Data, ordered Startup requests, and Distributed Clocks are now editable through
-the checked Project service; their repository views stay read-only. The General
+Workbench/Core extension points. The project General page mirrors the relevant
+TwinCAT identity hierarchy and adds the goal-required offline summary using
+only public Project snapshots. Its editable name routes through the existing
+`ProjectService::renameProject()` command and remains synchronized with
+ProjectExplorer, the Workbench tree, title, Undo, and Redo. PLC/ADS-only fields
+are hidden, and project path is omitted because the public contract does not
+expose it; Workbench neither reaches into ProjectExplorer internals nor
+fabricates a value. Configured-slave names, Alias values, Process Data, ordered
+Startup requests, and Distributed Clocks are now editable through the checked
+Project service; their repository views stay read-only. The General
 page maps physical order, stable NodeId, and ESI type into read-only slave
 identity fields while keeping name changes Project-owned and undoable. The
 target General page mirrors the TwinCAT target summary and Version grouping,

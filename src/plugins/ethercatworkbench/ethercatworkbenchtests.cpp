@@ -25,6 +25,7 @@
 #include <extensionsystem/pluginmanager.h>
 #include <extensionsystem/pluginspec.h>
 
+#include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectmanager.h>
 
@@ -980,6 +981,147 @@ void EtherCATWorkbenchTests::testEditableConfiguredSlaveGeneralWorkflow()
     controller.selectionService()->clear();
     ProjectExplorer::ProjectManager::removeProject(opened.project());
     QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Data::DeviceSummary
+        device{Data::NodeId::create(), {2, 0x5678, 0x11}, "Mock Servo", "AX5000", "Drives", true};
+    const TestProjectFile file = writeProjectWithSlave(directory, device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.projectId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.projectId);
+    DetailsView details(&controller);
+    details.resize(1100, 720);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
+    QVERIFY(page);
+    QWidget *content = page->findChild<QWidget *>("EtherCATProjectGeneralContent");
+    QWidget *identityForm = page->findChild<QWidget *>("EtherCATProjectGeneralForm");
+    QGroupBox *summaryForm
+        = page->findChild<QGroupBox *>("EtherCATProjectConfigurationSummary");
+    QLabel *title = details.findChild<QLabel *>("EtherCATWorkbenchDetailsTitle");
+    QLineEdit *name = page->findChild<QLineEdit *>("EtherCATProjectGeneralName");
+    QLineEdit *id = page->findChild<QLineEdit *>("EtherCATProjectGeneralId");
+    QLineEdit *type = page->findChild<QLineEdit *>("EtherCATProjectGeneralType");
+    QLineEdit *formatVersion
+        = page->findChild<QLineEdit *>("EtherCATProjectGeneralFormatVersion");
+    QLineEdit *createdBy = page->findChild<QLineEdit *>("EtherCATProjectGeneralCreatedBy");
+    QLineEdit *validity = page->findChild<QLineEdit *>("EtherCATProjectGeneralValidity");
+    QLineEdit *migration = page->findChild<QLineEdit *>("EtherCATProjectGeneralMigration");
+    QLineEdit *modified = page->findChild<QLineEdit *>("EtherCATProjectGeneralModified");
+    QLineEdit *target = page->findChild<QLineEdit *>("EtherCATProjectGeneralTarget");
+    QLineEdit *master = page->findChild<QLineEdit *>("EtherCATProjectGeneralMaster");
+    QLineEdit *slaveCount = page->findChild<QLineEdit *>("EtherCATProjectGeneralSlaveCount");
+    QTreeWidget *propertyTree = page->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
+    QVERIFY(content);
+    QVERIFY(identityForm);
+    QVERIFY(summaryForm);
+    QVERIFY(title);
+    QVERIFY(name);
+    QVERIFY(id);
+    QVERIFY(type);
+    QVERIFY(formatVersion);
+    QVERIFY(createdBy);
+    QVERIFY(validity);
+    QVERIFY(migration);
+    QVERIFY(modified);
+    QVERIFY(target);
+    QVERIFY(master);
+    QVERIFY(slaveCount);
+    QVERIFY(propertyTree);
+
+    QCOMPARE(name->text(), QString("Process Data Workflow"));
+    QCOMPARE(id->text(), file.projectId.toString());
+    QCOMPARE(type->text(), QString("Offline EtherCAT Engineering Project"));
+    QCOMPARE(formatVersion->text(), QString("2"));
+    QCOMPARE(createdBy->text(), QString("Workbench Test"));
+    QCOMPARE(validity->text(), QString("Valid"));
+    QCOMPARE(migration->text(), QString("Current format"));
+    QCOMPARE(modified->text(), QString("No"));
+    QCOMPARE(target->text(), QString("Offline Controller"));
+    QCOMPARE(master->text(), QString("EtherCAT Master"));
+    QCOMPARE(slaveCount->text(), QString("1"));
+    QVERIFY(!name->isReadOnly());
+    for (QLineEdit *field :
+         {id, type, formatVersion, createdBy, validity, migration, modified, target, master,
+          slaveCount}) {
+        QVERIFY(field->isReadOnly());
+        QVERIFY(!field->accessibleName().isEmpty());
+    }
+    QVERIFY(!name->accessibleName().isEmpty());
+    QVERIFY(content->isVisible());
+    QVERIFY(identityForm->isVisible());
+    QVERIFY(summaryForm->isVisible());
+    QVERIFY(!propertyTree->isVisible());
+    QCOMPARE(propertyTree->topLevelItemCount(), 0);
+
+    const QString renderPath = qEnvironmentVariable("ETHERCAT_WORKBENCH_RENDER_PATH");
+    if (!renderPath.isEmpty()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(details.grab().save(renderPath), qPrintable(renderPath));
+    }
+
+    const QString renamed = QString::fromUtf8("Packaging Cell / 包装线");
+    name->setText("  " + renamed + "  ");
+    QVERIFY(QMetaObject::invokeMethod(name, "editingFinished"));
+    QTRY_COMPARE(projectService->project(file.projectId)->name, renamed);
+    QTRY_COMPARE(controller.treeModel()->indexForNodeId(file.projectId).data().toString(), renamed);
+    QTRY_COMPARE(opened.project()->displayName(), renamed);
+    QTRY_COMPARE(title->text(), renamed);
+    QTRY_COMPARE(name->text(), renamed);
+    QTRY_COMPARE(modified->text(), QString("Yes"));
+    QCOMPARE(controller.selectionService()->currentNodeId(), file.projectId);
+    QVERIFY(projectService->canUndoProject(file.projectId));
+
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_COMPARE(projectService->project(file.projectId)->name, QString("Process Data Workflow"));
+    QTRY_COMPARE(opened.project()->displayName(), QString("Process Data Workflow"));
+    QTRY_COMPARE(name->text(), QString("Process Data Workflow"));
+    QTRY_COMPARE(title->text(), QString("Process Data Workflow"));
+    QTRY_COMPARE(modified->text(), QString("No"));
+    QVERIFY_RESULT(projectService->redoProject(file.projectId));
+    QTRY_COMPARE(projectService->project(file.projectId)->name, renamed);
+    QTRY_COMPARE(name->text(), renamed);
+    QTRY_COMPARE(title->text(), renamed);
+    QTRY_COMPARE(modified->text(), QString("Yes"));
+
+    name->setText("   ");
+    QVERIFY(QMetaObject::invokeMethod(name, "editingFinished"));
+    QTRY_COMPARE(name->text(), renamed);
+    QCOMPARE(projectService->project(file.projectId)->name, renamed);
+
+    const Core::PropertyPageContext staleContext = details.currentContext();
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    BuiltinPropertyPageProvider pages(&controller);
+    std::unique_ptr<QWidget> stalePage(pages.createPage(Constants::GENERAL_PAGE_ID, nullptr));
+    pages.updatePage(Constants::GENERAL_PAGE_ID, stalePage.get(), staleContext);
+    QLineEdit *staleName
+        = stalePage->findChild<QLineEdit *>("EtherCATProjectGeneralName");
+    QLineEdit *staleValidity
+        = stalePage->findChild<QLineEdit *>("EtherCATProjectGeneralValidity");
+    QVERIFY(staleName);
+    QVERIFY(staleValidity);
+    QVERIFY(staleName->isReadOnly());
+    QCOMPARE(staleValidity->text(), QString("Unavailable"));
+
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }

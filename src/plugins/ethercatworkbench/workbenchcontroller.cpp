@@ -353,6 +353,14 @@ Utils::Result<> WorkbenchController::moveSelectedOfflineSlaveDown()
         ->replaceOfflineSlaves(selected->project.id, selected->masterId, selected->slaves);
 }
 
+Utils::Result<> WorkbenchController::renameProject(
+    const Data::NodeId &projectId, const QString &name)
+{
+    if (m_shuttingDown || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline project service is unavailable."));
+    return m_projectService->renameProject(projectId, name);
+}
+
 Utils::Result<> WorkbenchController::renameOfflineSlave(
     const Data::NodeId &projectId, const Data::NodeId &slaveId, const QString &name)
 {
