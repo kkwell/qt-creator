@@ -22,6 +22,8 @@ QtcPlugin {
         "detailsview.h",
         "esiconfigurationfactory.cpp",
         "esiconfigurationfactory.h",
+        "esidevicegeneralpage.cpp",
+        "esidevicegeneralpage.h",
         "esirepositorypage.cpp",
         "esirepositorypage.h",
         "ethercatworkbenchconstants.h",

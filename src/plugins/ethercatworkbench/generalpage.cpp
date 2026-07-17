@@ -2,6 +2,7 @@
 
 #include "generalpage.h"
 
+#include "esidevicegeneralpage.h"
 #include "esirepositorypage.h"
 #include "ethercatworkbenchtr.h"
 #include "workbenchcontroller.h"
@@ -74,6 +75,7 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     , m_summary(new QLabel(this))
     , m_repositoryPage(
           new EsiRepositoryPage(controller ? controller->deviceRepository() : nullptr, this))
+    , m_esiDevicePage(new EsiDeviceGeneralPage(this))
     , m_projectContent(new QWidget(this))
     , m_projectForm(new QWidget(m_projectContent))
     , m_projectName(new QLineEdit(m_projectForm))
@@ -415,6 +417,7 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     layout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVM);
     layout->addWidget(m_summary);
     layout->addWidget(m_repositoryPage, 1);
+    layout->addWidget(m_esiDevicePage, 1);
     layout->addWidget(m_projectContent, 1);
     layout->addWidget(m_targetContent, 1);
     layout->addWidget(m_masterContent, 1);
@@ -472,6 +475,11 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
         m_summary->hide();
         m_repositoryPage->refresh();
         m_repositoryPage->show();
+        m_tree->hide();
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
+        m_summary->hide();
+        m_esiDevicePage->setDevice(device, context.displayName);
+        m_esiDevicePage->show();
         m_tree->hide();
     } else if (context.nodeKind == Core::WorkbenchNodeKind::Project) {
         m_summary->hide();
@@ -570,12 +578,12 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
         addRow({Tr::tr("Alias"), QString::number(offlineSlave->alias)});
         addRow(
             {Tr::tr("ESI match"), device ? device->summary.name : Tr::tr("No matching ESI device")});
-    } else if (device) {
+    } else if (device && context.nodeKind != Core::WorkbenchNodeKind::Device) {
         addRow({Tr::tr("Vendor ID"), hexValue(device->summary.identity.vendorId, 8)});
         addRow({Tr::tr("Product Code"), hexValue(device->summary.identity.productCode, 8)});
         addRow({Tr::tr("Revision"), hexValue(device->summary.identity.revisionNumber, 8)});
     }
-    if (device) {
+    if (device && context.nodeKind != Core::WorkbenchNodeKind::Device) {
         if (!configuredSlave)
             addRow({Tr::tr("Type"), device->summary.typeName});
         addRow({Tr::tr("Group"), device->summary.group});
@@ -601,6 +609,8 @@ void GeneralPage::reset(const QString &summary)
     m_summary->setText(summary);
     m_summary->show();
     m_repositoryPage->hide();
+    m_esiDevicePage->setDevice(std::nullopt, {});
+    m_esiDevicePage->hide();
     m_projectContent->hide();
     m_projectForm->hide();
     m_projectSummaryForm->hide();

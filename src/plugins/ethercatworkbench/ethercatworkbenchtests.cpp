@@ -6,6 +6,7 @@
 #include "detailsview.h"
 #include "esirepositorypage.h"
 #include "ethercatworkbenchconstants.h"
+#include "generalpage.h"
 #include "workbenchcontroller.h"
 #include "workbenchnavigation.h"
 #include "workbenchtreemodel.h"
@@ -57,6 +58,8 @@
 #include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSet>
 #include <QSignalSpy>
 #include <QSpinBox>
@@ -1372,6 +1375,190 @@ void EtherCATWorkbenchTests::testEsiRepositoryGeneralWorkflow()
     QVERIFY(controlledResult->toPlainText().contains("Canceled: Yes"));
     QVERIFY(controlledReload->isEnabled());
     QVERIFY(!controlledCancel->isEnabled());
+
+    controller.selectionService()->clear();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+void EtherCATWorkbenchTests::testEsiDeviceGeneralWorkflow()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    QVERIFY(repository);
+    QTRY_VERIFY(!repository->isIndexing());
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QByteArray uniqueEsi = deviceEsi();
+    uniqueEsi.replace("#x00005678", "#x7A120001");
+    uniqueEsi.replace("#x00000011", "#x0000A502");
+    uniqueEsi.replace("AX5000", "EL-CATALOGUE");
+    uniqueEsi.replace("Workbench Servo", "ESI Catalogue Servo / 设备说明");
+    uniqueEsi.replace(
+        "<CycleTimeSync0>125000</CycleTimeSync0>",
+        "<CycleTimeSync0 Factor=\"1\">125000</CycleTimeSync0>");
+    uniqueEsi.replace("</Device>", "<Modules/></Device>");
+    const Utils::FilePath sourcePath = Utils::FilePath::fromString(directory.path())
+                                           .pathAppended("esi-device-general.xml");
+    QVERIFY_RESULT(sourcePath.writeFileContents(uniqueEsi));
+    const Data::DeviceImportResult importResult = waitForJob(repository->importFiles({sourcePath}));
+    QCOMPARE(importResult.requestedFiles, 1);
+    QCOMPARE(importResult.importedDevices, 1);
+    QCOMPARE(importResult.failedFiles, 0);
+    QCOMPARE(importResult.affectedDeviceIds.size(), 1);
+
+    const Data::NodeId deviceId = importResult.affectedDeviceIds.first();
+    const std::optional<Data::DeviceDescription> device = repository->device(deviceId);
+    QVERIFY(device);
+    QVERIFY(!device->summary.supported);
+    QCOMPARE(device->warnings.size(), 1);
+    QCOMPARE(device->unsupportedFeatures.size(), 1);
+    QTRY_VERIFY(findById(controller.treeModel(), deviceId).isValid());
+    controller.selectionService()->setCurrentNodeId(deviceId);
+
+    DetailsView details(&controller);
+    details.resize(1100, 760);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
+    QVERIFY(page);
+    QWidget *content = page->findChild<QWidget *>("EtherCATEsiDeviceGeneralContent");
+    QLabel *description = page->findChild<QLabel *>("EtherCATEsiDeviceGeneralDescription");
+    QGroupBox *identity = page->findChild<QGroupBox *>("EtherCATEsiDeviceGeneralIdentity");
+    QLineEdit *name = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralName");
+    QLineEdit *type = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralType");
+    QLineEdit *objectId = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralObjectId");
+    QLineEdit *vendor = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralVendor");
+    QLineEdit *product = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralProduct");
+    QLineEdit *revision = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralRevision");
+    QLineEdit *group = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralGroup");
+    QGroupBox *capabilities
+        = page->findChild<QGroupBox *>("EtherCATEsiDeviceGeneralCapabilities");
+    QLineEdit *syncManagers
+        = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralSyncManagers");
+    QLineEdit *rxPdos = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralRxPdos");
+    QLineEdit *txPdos = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralTxPdos");
+    QLineEdit *coe = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralCoe");
+    QLabel *coeDetails = page->findChild<QLabel *>("EtherCATEsiDeviceGeneralCoeDetails");
+    QLineEdit *startup = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralStartup");
+    QLineEdit *dcModes = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralDcModes");
+    QGroupBox *qualification
+        = page->findChild<QGroupBox *>("EtherCATEsiDeviceGeneralQualification");
+    QLineEdit *support = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralSupport");
+    QLineEdit *warningCount
+        = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralWarningCount");
+    QLineEdit *unsupportedCount
+        = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralUnsupportedCount");
+    QLabel *warningDetails
+        = page->findChild<QLabel *>("EtherCATEsiDeviceGeneralWarningDetails");
+    QLabel *unsupportedDetails
+        = page->findChild<QLabel *>("EtherCATEsiDeviceGeneralUnsupportedDetails");
+    QGroupBox *source = page->findChild<QGroupBox *>("EtherCATEsiDeviceGeneralSource");
+    QScrollArea *scrollArea
+        = page->findChild<QScrollArea *>("EtherCATEsiDeviceGeneralScrollArea");
+    QLineEdit *sourceFile = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralSourceFile");
+    QLineEdit *sourceHash = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralSourceHash");
+    QLineEdit *imported = page->findChild<QLineEdit *>("EtherCATEsiDeviceGeneralImported");
+    QTreeWidget *propertyTree = page->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
+    QVERIFY(content);
+    QVERIFY(description);
+    QVERIFY(identity);
+    QVERIFY(name);
+    QVERIFY(type);
+    QVERIFY(objectId);
+    QVERIFY(vendor);
+    QVERIFY(product);
+    QVERIFY(revision);
+    QVERIFY(group);
+    QVERIFY(capabilities);
+    QVERIFY(syncManagers);
+    QVERIFY(rxPdos);
+    QVERIFY(txPdos);
+    QVERIFY(coe);
+    QVERIFY(coeDetails);
+    QVERIFY(startup);
+    QVERIFY(dcModes);
+    QVERIFY(qualification);
+    QVERIFY(support);
+    QVERIFY(warningCount);
+    QVERIFY(unsupportedCount);
+    QVERIFY(warningDetails);
+    QVERIFY(unsupportedDetails);
+    QVERIFY(source);
+    QVERIFY(scrollArea);
+    QVERIFY(sourceFile);
+    QVERIFY(sourceHash);
+    QVERIFY(imported);
+    QVERIFY(propertyTree);
+
+    QVERIFY(content->isVisible());
+    QVERIFY(description->text().contains("read-only", Qt::CaseInsensitive));
+    QCOMPARE(name->text(), QString("ESI Catalogue Servo / 设备说明"));
+    QCOMPARE(type->text(), QString("EL-CATALOGUE"));
+    QCOMPARE(objectId->text(), deviceId.toString());
+    QCOMPARE(vendor->text(), QString("0x00000002"));
+    QCOMPARE(product->text(), QString("0x7a120001"));
+    QCOMPARE(revision->text(), QString("0x0000a502"));
+    QCOMPARE(group->text(), QString("Drives"));
+    QCOMPARE(syncManagers->text(), QString("2"));
+    QVERIFY(rxPdos->text().contains("1 PDO"));
+    QVERIFY(rxPdos->text().contains("1 entry"));
+    QVERIFY(txPdos->text().contains("1 PDO"));
+    QVERIFY(txPdos->text().contains("1 entry"));
+    QCOMPARE(coe->text(), QString("Supported"));
+    QVERIFY(coeDetails->text().contains("SDO Info: No"));
+    QVERIFY(coeDetails->text().contains("PDO Assignment: No"));
+    QVERIFY(coeDetails->text().contains("PDO Configuration: No"));
+    QVERIFY(coeDetails->text().contains("Complete Access: No"));
+    QCOMPARE(startup->text(), QString("3"));
+    QCOMPARE(dcModes->text(), QString("2"));
+    QCOMPARE(support->text(), QString("Limited"));
+    QCOMPARE(warningCount->text(), QString("1"));
+    QCOMPARE(unsupportedCount->text(), QString("1"));
+    QVERIFY(warningDetails->text().contains("formula attributes"));
+    QVERIFY(warningDetails->text().contains("source XML"));
+    QVERIFY(unsupportedDetails->text().contains("Modules structure"));
+    QVERIFY(unsupportedDetails->text().contains("not expanded"));
+    QCOMPARE(sourceFile->text(), device->sourcePath);
+    QCOMPARE(sourceHash->text(), QString::fromLatin1(device->sourceSha256.toHex()));
+    QCOMPARE(imported->text(), device->importedAt.toLocalTime().toString(Qt::ISODate));
+    QVERIFY(name->isReadOnly());
+    QVERIFY(type->isReadOnly());
+    QVERIFY(sourceFile->isReadOnly());
+    QVERIFY(sourceHash->isReadOnly());
+    QVERIFY(!content->accessibleName().isEmpty());
+    QVERIFY(!name->accessibleName().isEmpty());
+    QVERIFY(!warningDetails->accessibleName().isEmpty());
+    QVERIFY(!propertyTree->isVisible());
+    QCOMPARE(propertyTree->topLevelItemCount(), 0);
+    QVERIFY(scrollArea->verticalScrollBar()->maximum() > 0);
+
+    const QString renderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_ESI_DEVICE_RENDER_PATH");
+    if (!renderPath.isEmpty()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(details.grab().save(renderPath), qPrintable(renderPath));
+    }
+    const QString bottomRenderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_ESI_DEVICE_BOTTOM_RENDER_PATH");
+    if (!bottomRenderPath.isEmpty()) {
+        scrollArea->verticalScrollBar()->setValue(scrollArea->verticalScrollBar()->maximum());
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(details.grab().save(bottomRenderPath), qPrintable(bottomRenderPath));
+        scrollArea->verticalScrollBar()->setValue(0);
+    }
+
+    GeneralPage unavailablePage(&controller);
+    unavailablePage.resize(900, 600);
+    unavailablePage.setContext(
+        {{}, Data::NodeId::create(), Core::WorkbenchNodeKind::Device, "Removed ESI device"});
+    QLabel *unavailable = unavailablePage.findChild<QLabel *>(
+        "EtherCATEsiDeviceGeneralUnavailable");
+    QVERIFY(unavailable);
+    QVERIFY(unavailable->isVisibleTo(&unavailablePage));
+    QVERIFY(unavailable->text().contains("unavailable", Qt::CaseInsensitive));
 
     controller.selectionService()->clear();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);

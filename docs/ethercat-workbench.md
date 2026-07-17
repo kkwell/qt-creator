@@ -6,7 +6,8 @@
 EtherCAT mode, left navigation tree, stable selection linkage, central details
 container, built-in offline property pages, manual offline-topology commands,
 editable project, target, master, and configured-slave General pages, Workbench
-commands, the local ESI repository management page,
+commands, the local ESI repository management page, the dedicated read-only
+General page for individual ESI catalogue devices,
 the TwinCAT-aligned master EtherCAT settings and local topology view, and the
 presentation of public Scan/Diagnostics snapshots in the device tree. It does
 not parse ESI files, own project persistence, scan a bus, produce diagnostics,
@@ -264,6 +265,36 @@ vendor website, or an online description service; it does not add XSD
 management, `OnlineDescription`, description deletion/overwrite policy, a
 network protocol, or a Zynq contract. It adds no public API, dependency,
 persistent format, or upstream Qt Creator patch.
+
+## ESI catalogue-device General page
+
+`ISSUE-WB-ESI-DEVICE-GENERAL-001` replaces the generic two-column property
+table shown for an individual repository device with a dedicated, scrollable,
+read-only General page. Its identity order was compared with Beckhoff's
+documented
+[EtherCAT slave General tab](https://infosys.beckhoff.com/content/1033/tc3_io_intro/1341899531.html),
+while the catalogue/source boundary follows Beckhoff's description of
+[ESI device descriptions](https://infosys.beckhoff.com/content/1033/ps2001-2420-1001/10831984011.html).
+No Beckhoff asset, icon, XML extension, project format, or proprietary
+implementation is copied.
+
+The identity group exposes the imported Name and Type, stable Object Id,
+Vendor ID, Product Code, Revision, and Group. Offline configuration coverage
+summarizes Sync Managers, RxPDOs, TxPDOs, CoE features, Startup parameters,
+and DC modes. Import qualification then reports Supported or Limited status,
+warning and unsupported-feature counts, and their complete details. The final
+source group shows the recorded source file, SHA-256, and import time. Long
+descriptions wrap, immutable values remain selectable, and the complete page
+scrolls at normal and high-DPI sizes. If the selected catalogue description
+has disappeared, the page shows an explicit unavailable state instead of
+retaining stale values.
+
+This is a repository description rather than a configured slave instance, so
+the page does not fabricate TwinCAT instance-only Id, Comment, Disabled, or
+symbol-generation values. It adds no editor, raw XML viewer, online
+description/update workflow, controller access, network protocol, or public
+contract. `EtherCATDevices` continues to own parsing, source preservation, and
+the immutable `DeviceDescription`; Workbench only renders that public snapshot.
 
 ## Offline-project General page
 
@@ -718,6 +749,11 @@ are page-scoped, while the Devices plugin owns the asynchronous job and stored
 descriptions. Workbench adds no file parser, worker, timer, or repository
 business state.
 
+The individual ESI General page retains no Provider, job, timer, or background
+work. It receives one immutable `DeviceDescription` snapshot from the existing
+Workbench controller, renders it read-only, and clears all presentation state
+when the context is reset or no longer resolves.
+
 The controller watches optional Scan/Diagnostics availability and snapshot
 signals through public Provider contracts. Provider removal is handled before
 the object leaves the registry: the departing object is excluded, its copied
@@ -757,7 +793,9 @@ The focused Workbench suite covers metadata and hard dependencies, mode/action
 registration, a 500-device incremental model under
 `QAbstractItemModelTester`, filtering and two-way stable selection, real ESI
 data in Process Data/Startup/DC pages, the repository import/reload/cancel
-workflow, configured-slave topology and ESI-page reuse, manual ESI
+workflow, individual ESI catalogue
+identity/configuration/qualification/source details and unavailable state,
+configured-slave topology and ESI-page reuse, manual ESI
 add/remove/reorder operations, dynamic property-page removal, and dynamic
 Scan/Diagnostics availability and removal. The process-data tree
 coverage verifies the exact five-branch order, input/output direction,
@@ -826,7 +864,7 @@ The provider-state coverage uses `QAbstractItemModelTester` and verifies exact
 match/difference routing, Missing/Added/Revision/Vendor presentation, warning
 and critical icons, full-detail filtering, MOCK Run/OP and SAFEOP/error states,
 stable locate/open navigation, command registration, and provider-removal
-restoration. It passes 27 tests on the qualified Qt 6.11.0 Release test build.
+restoration. It passes 28 tests on the qualified Qt 6.11.0 Release test build.
 The project, target, and master General flows also pass at
 `QT_SCALE_FACTOR=2`, and direct normal and 2x widget renders show no overlap,
 clipping, or uncontrolled expansion.
@@ -875,6 +913,14 @@ Repository page at a 1100 x 760 logical test size. The 1100 x 760 and
 summary, import/reload/cancel controls, progress, partial-success counts, and
 parser error without overlap, clipping, or scale drift. These were offscreen Qt
 Widget renders; no manual desktop interaction is claimed for this issue.
+
+Direct normal and `QT_SCALE_FACTOR=2` renders also inspected the individual
+ESI catalogue-device General page at a 1100 x 760 logical test size. Top and
+bottom captures at 1100 x 760 and 2200 x 1520 retained the identity,
+configuration coverage, complete CoE details, qualification warnings,
+unsupported-feature details, source path, SHA-256, and import time without
+overlap, clipping, truncation, or scale drift. These were offscreen Qt Widget
+renders; no manual desktop interaction is claimed for this issue.
 
 A direct 522 x 472 Retina render inspected the registered configured-slave
 context menu at `QT_SCALE_FACTOR=2`. The original seven tree commands and the

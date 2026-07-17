@@ -20,6 +20,7 @@ QT_END_NAMESPACE
 namespace EtherCAT::Workbench::Internal {
 
 class WorkbenchController;
+class EsiDeviceGeneralPage;
 class EsiRepositoryPage;
 
 class GeneralPage final : public QWidget
@@ -44,6 +45,7 @@ private:
     Core::PropertyPageContext m_context;
     QLabel *m_summary;
     EsiRepositoryPage *m_repositoryPage;
+    EsiDeviceGeneralPage *m_esiDevicePage;
     QWidget *m_projectContent;
     QWidget *m_projectForm;
     QLineEdit *m_projectName;

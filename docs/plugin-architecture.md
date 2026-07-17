@@ -23,7 +23,7 @@ documentation, review, and local-commit gates.
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Configuration persistence and structural-name API complete | Version-2 project lifecycle, migration, validation, and Undo/Redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
-| 4 | `EtherCATWorkbenchPlugin` | In progress | Project, Target, Master, configured-slave, and ESI Repository General workflows, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
+| 4 | `EtherCATWorkbenchPlugin` | In progress | Project, Target, Master, configured-slave, ESI Repository, and individual ESI catalogue-device General workflows, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
 
@@ -113,6 +113,13 @@ only the public `DeviceRepositoryProvider` import/rebuild/cancel workflow and
 renders its progress and result. Devices continues to own XML parsing, indexed
 data, job lifetime, and cancellation semantics; Workbench retains only guarded
 pointers and adds no protocol, online updater, or private cross-plugin access.
+Selecting an individual repository device routes the existing immutable public
+`DeviceDescription` snapshot into a Workbench-private General-page widget. The
+widget renders identity, offline configuration coverage, qualification, and
+source provenance read-only, retains no Provider or job, and clears itself when
+the context no longer resolves. `EtherCATDevices` remains the sole owner of
+parsing and source data; no `Internal` header, widget pointer, model index,
+public API, or controller behavior crosses the plugin boundary.
 The project General page mirrors the relevant
 TwinCAT identity hierarchy and adds the goal-required offline summary using
 only public Project snapshots. Its editable name routes through the existing

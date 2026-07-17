@@ -17,6 +17,7 @@ private slots:
     void testOfflineTopologyEditingWorkflow();
     void testEditableProjectGeneralWorkflow();
     void testEsiRepositoryGeneralWorkflow();
+    void testEsiDeviceGeneralWorkflow();
     void testEditableTargetGeneralWorkflow();
     void testEditableMasterGeneralWorkflow();
     void testEditableConfiguredSlaveGeneralWorkflow();
