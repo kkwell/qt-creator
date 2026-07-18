@@ -1279,6 +1279,55 @@ device:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>.
 The exact close-on-drift rule is an Embed Labs Qt-native completion.
 
+## EtherCATWorkbench navigation expansion-continuity qualification
+
+`ISSUE-WB-NAV-EXPANSION-CONTINUITY-001` is a Workbench-private presentation
+correction based on local baseline
+`d64e159164597d234027fd479288bfc49860685d`. It changes no Project data
+contract, persistence format, online state, controller transport, network
+behavior, or physical-hardware capability.
+
+| Check | Result |
+|---|---|
+| Failure-first focused test | 2 passed, 1 failed because the old unconditional post-reset `expandToDepth(2)` reopened the deliberately collapsed Alpha Project |
+| Surviving collapsed state | Passed; an unrelated Alpha Project remains collapsed after another Project's renamed snapshot resets the model |
+| Surviving deep expansion | Passed; the stable RxPDO group and PDO remain expanded through reset by existing `NodeId` values |
+| Stable selection | Passed; Master `NodeId`, tree current row, and Selection Service remain aligned after reset |
+| New Project default | Passed; a newly introduced Project, Target, and Master retain the established depth-two default expansion |
+| Temporary filter | Passed; matching branches expand without changing normal state, and clearing the filter restores the pre-filter collapsed Project |
+| Dynamic filter match | Passed; a matching ESI device inserted after an empty result has an expanded parent and a visible tree rectangle |
+| External Selection | Passed; choosing a filtered-out stable PDO clears the filter and expands its ancestor path without changing identity |
+| Focused normal-scale test | 3 passed, 0 failed; exit 0 |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; exit 0 |
+| Complete EtherCATWorkbench suite | 40 passed, 0 failed in an isolated LLDB-supervised offscreen process |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 40, Scan 7, Diagnostics 7; 91 passed, 0 failed in isolated LLDB-supervised processes |
+| Qualified Qt and test build | Qt 6.11.0 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build | `WITH_TESTS=OFF` passed in `qt-creator-build-ethercat-product-qt611` |
+| Product version inventory | Exactly the 16 allow-listed plugin dylibs are present |
+| Enabled offscreen startup | Stable for 16 seconds with fresh settings under `/tmp/embed-labs-nav-product-enabled-final.ZyWuX2/settings`; intentional SIGTERM produced LLDB target status 15 |
+| Explicitly disabled startup | Stable for 16 seconds with `-noload EtherCATWorkbench` and fresh settings under `/tmp/embed-labs-nav-product-disabled-final.UiBc9t/settings`; intentional SIGTERM produced LLDB target status 15 |
+| Process and crash-report cleanup | No residual Embed Labs or LLDB process, new DiagnosticReports file, or related ReportCrash event at the final 2026-07-19 01:06:31 +0800 audit |
+| Manual desktop inspection | Not run by design; all executable qualification was offscreen and this issue adds no geometry |
+| `WITH_TESTS=ON` full product build | Not rerun; this private Workbench issue does not touch the known EasyBoard test include blocker |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Public API, dependency, persistence, source-list, CMake, or qbs changes | None |
+| Network or physical hardware access | Not performed by design; Scan and Diagnostics remain local Mock Providers |
+
+Qt exposes tree expansion state through `QTreeView::expanded` and
+`QTreeView::collapsed`:
+<https://doc.qt.io/qt-6/qtreeview.html#expanded>. Qt's reset lifecycle says
+old indexes and selection information become invalid:
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#beginResetModel>. Qt Creator
+20.0's Project tree records expansion changes and requests semantic expansion
+again after its model rebuilds:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projecttreewidget.cpp#L291-L302>,
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectmodels.cpp#L486-L496>,
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectmodels.cpp#L526-L539>.
+Beckhoff documents the device and process/status hierarchy under I/O / Devices:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html>.
+The exact reset/filter restoration rule is an Embed Labs Qt-native completion.
+
 ## Verification states
 
 Use only these evidence labels:

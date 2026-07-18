@@ -23,6 +23,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QPushButton>
+#include <QScopedValueRollback>
 #include <QSignalBlocker>
 #include <QSortFilterProxyModel>
 #include <QStackedWidget>
@@ -67,6 +68,11 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_filterEdit->setPlaceholderText(Tr::tr("Filter nodes, status, or identity"));
     m_filterEdit->setClearButtonEnabled(true);
 
+    connect(
+        m_sourceModel,
+        &QAbstractItemModel::modelAboutToBeReset,
+        this,
+        &WorkbenchNavigationWidget::handleModelAboutToBeReset);
     m_proxyModel->setSourceModel(m_sourceModel);
     m_proxyModel->setFilterRole(WorkbenchTreeModel::SearchTextRole);
     m_proxyModel->setFilterCaseSensitivity(Qt::CaseInsensitive);
@@ -136,27 +142,20 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     layout->addWidget(m_filterEdit);
     layout->addWidget(m_resultsStack);
 
-    connect(m_filterEdit, &QLineEdit::textChanged, m_proxyModel, [this](const QString &text) {
-        m_proxyModel->setFilterFixedString(text);
-        if (!text.isEmpty())
-            m_treeView->expandAll();
+    connect(
+        m_filterEdit,
+        &QLineEdit::textChanged,
+        this,
+        &WorkbenchNavigationWidget::handleFilterTextChanged);
+    const auto refreshFilteredResults = [this] {
+        expandFilteredResults();
         updateFilterState();
-    });
-    connect(m_proxyModel, &QAbstractItemModel::rowsInserted, this, [this] {
-        updateFilterState();
-    });
-    connect(m_proxyModel, &QAbstractItemModel::rowsRemoved, this, [this] {
-        updateFilterState();
-    });
-    connect(m_proxyModel, &QAbstractItemModel::modelReset, this, [this] {
-        updateFilterState();
-    });
-    connect(m_proxyModel, &QAbstractItemModel::layoutChanged, this, [this] {
-        updateFilterState();
-    });
-    connect(m_proxyModel, &QAbstractItemModel::dataChanged, this, [this] {
-        updateFilterState();
-    });
+    };
+    connect(m_proxyModel, &QAbstractItemModel::rowsInserted, this, refreshFilteredResults);
+    connect(m_proxyModel, &QAbstractItemModel::rowsRemoved, this, refreshFilteredResults);
+    connect(m_proxyModel, &QAbstractItemModel::modelReset, this, refreshFilteredResults);
+    connect(m_proxyModel, &QAbstractItemModel::layoutChanged, this, refreshFilteredResults);
+    connect(m_proxyModel, &QAbstractItemModel::dataChanged, this, refreshFilteredResults);
     connect(m_clearFilter, &QPushButton::clicked, this, [this] {
         const Data::NodeId currentNodeId
             = m_controller && m_controller->selectionService()
@@ -185,14 +184,20 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
         this,
         [this](const Data::NodeId &current) { selectNode(current); });
     connect(
+        m_treeView,
+        &QTreeView::expanded,
+        this,
+        [this](const QModelIndex &index) { updateExpansionState(index, true); });
+    connect(
+        m_treeView,
+        &QTreeView::collapsed,
+        this,
+        [this](const QModelIndex &index) { updateExpansionState(index, false); });
+    connect(
         m_sourceModel,
         &QAbstractItemModel::modelReset,
         this,
-        [this] {
-            if (m_controller && m_controller->selectionService())
-                selectNode(m_controller->selectionService()->currentNodeId());
-            m_treeView->expandToDepth(2);
-        });
+        &WorkbenchNavigationWidget::handleModelReset);
     connect(
         controller,
         &WorkbenchController::expandAllRequested,
@@ -233,6 +238,7 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
         &QTreeView::customContextMenuRequested,
         this,
         &WorkbenchNavigationWidget::showContextMenu);
+    m_knownNodeIds = sourceNodeIds();
     m_treeView->expandToDepth(2);
     updateFilterState();
 }
@@ -245,6 +251,110 @@ QTreeView *WorkbenchNavigationWidget::treeView() const
 QLineEdit *WorkbenchNavigationWidget::filterEdit() const
 {
     return m_filterEdit;
+}
+
+QSet<Data::NodeId> WorkbenchNavigationWidget::sourceNodeIds(int maximumDepth) const
+{
+    QSet<Data::NodeId> result;
+    const auto collect = [this, maximumDepth, &result](
+                             const auto &self, const QModelIndex &parent, int depth) -> void {
+        for (int row = 0; row < m_sourceModel->rowCount(parent); ++row) {
+            const QModelIndex index = m_sourceModel->index(row, 0, parent);
+            const Data::NodeId nodeId
+                = index.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+            if (!nodeId.isNull() && (maximumDepth < 0 || depth <= maximumDepth))
+                result.insert(nodeId);
+            if (maximumDepth < 0 || depth < maximumDepth)
+                self(self, index, depth + 1);
+        }
+    };
+    collect(collect, {}, 0);
+    return result;
+}
+
+void WorkbenchNavigationWidget::handleFilterTextChanged(const QString &text)
+{
+    const bool wasFiltering = m_filterActive;
+    m_filterActive = !text.isEmpty();
+    const QScopedValueRollback ignoreChanges(m_ignoreExpansionChanges, true);
+    m_proxyModel->setFilterFixedString(text);
+    if (m_filterActive)
+        m_treeView->expandAll();
+    else if (wasFiltering)
+        restoreExpansionState();
+    updateFilterState();
+}
+
+void WorkbenchNavigationWidget::handleModelAboutToBeReset()
+{
+    m_knownNodeIds = sourceNodeIds();
+    m_sourceModelResetting = true;
+}
+
+void WorkbenchNavigationWidget::handleModelReset()
+{
+    const QSet<Data::NodeId> currentNodeIds = sourceNodeIds();
+    m_expandedNodeIds.intersect(currentNodeIds);
+    const QSet<Data::NodeId> addedNodeIds = currentNodeIds - m_knownNodeIds;
+    const QSet<Data::NodeId> defaultExpandedNodeIds = sourceNodeIds(2);
+    for (const Data::NodeId &nodeId : addedNodeIds) {
+        if (defaultExpandedNodeIds.contains(nodeId))
+            m_expandedNodeIds.insert(nodeId);
+    }
+    m_knownNodeIds = currentNodeIds;
+
+    {
+        const QScopedValueRollback ignoreChanges(m_ignoreExpansionChanges, true);
+        if (m_filterActive)
+            m_treeView->expandAll();
+        else
+            restoreExpansionState();
+    }
+    m_sourceModelResetting = false;
+
+    if (m_controller && m_controller->selectionService())
+        selectNode(m_controller->selectionService()->currentNodeId());
+}
+
+void WorkbenchNavigationWidget::restoreExpansionState()
+{
+    m_treeView->collapseAll();
+    const auto restore = [this](const auto &self, const QModelIndex &parent) -> void {
+        for (int row = 0; row < m_sourceModel->rowCount(parent); ++row) {
+            const QModelIndex sourceIndex = m_sourceModel->index(row, 0, parent);
+            const Data::NodeId nodeId
+                = sourceIndex.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+            const QModelIndex proxyIndex = m_proxyModel->mapFromSource(sourceIndex);
+            if (proxyIndex.isValid() && m_expandedNodeIds.contains(nodeId))
+                m_treeView->expand(proxyIndex);
+            self(self, sourceIndex);
+        }
+    };
+    restore(restore, {});
+}
+
+void WorkbenchNavigationWidget::expandFilteredResults()
+{
+    if (!m_filterActive)
+        return;
+    const QScopedValueRollback ignoreChanges(m_ignoreExpansionChanges, true);
+    m_treeView->expandAll();
+}
+
+void WorkbenchNavigationWidget::updateExpansionState(
+    const QModelIndex &proxyIndex, bool expanded)
+{
+    if (m_filterActive || m_ignoreExpansionChanges || m_sourceModelResetting)
+        return;
+    const QModelIndex sourceIndex = m_proxyModel->mapToSource(proxyIndex);
+    const Data::NodeId nodeId
+        = sourceIndex.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    if (nodeId.isNull())
+        return;
+    if (expanded)
+        m_expandedNodeIds.insert(nodeId);
+    else
+        m_expandedNodeIds.remove(nodeId);
 }
 
 void WorkbenchNavigationWidget::updateFilterState()

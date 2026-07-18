@@ -526,6 +526,35 @@ transport, online or hardware behavior, CMake/qbs entry, or path under
 upstream Core, ProjectExplorer, or the application bootstrap. The Workbench
 path count remains 44 and the direct Core patch count remains five.
 
+The Workbench navigation expansion-continuity issue changes only the existing
+private navigation implementation, Workbench test declaration/implementation,
+and documentation. It records normal expanded branches by the existing stable
+`NodeId`, restores surviving IDs after a source-model reset, preserves the
+depth-two default for newly introduced Project structure, and isolates
+filter-driven expansion from the normal tree state. Selection Service remains
+authoritative and its current node's ancestor path is revealed after
+restoration.
+
+Qt's `QTreeView` expansion signals and model-reset invalidation rules, plus Qt
+Creator 20.0's local Project-tree semantic expansion cache, were inspected as
+read-only precedents:
+<https://doc.qt.io/qt-6/qtreeview.html#expanded>,
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#beginResetModel>,
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projecttreewidget.cpp#L291-L302>,
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectmodels.cpp#L486-L496>,
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectmodels.cpp#L526-L539>.
+No ProjectExplorer file or private API was modified or reused. Beckhoff's I/O
+device tree description is only the Master/Slave/process-data hierarchy
+comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html>.
+The exact reset/filter continuity rule is an Embed Labs Qt-native delta.
+
+The issue adds no public API, model role, QAction, source file, Provider,
+dependency, persistent field, thread, timer, network/controller behavior,
+physical-hardware behavior, CMake/qbs entry, or path under upstream Core,
+ProjectExplorer, or the application bootstrap. The Workbench path count
+remains 44 and the direct Core patch count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

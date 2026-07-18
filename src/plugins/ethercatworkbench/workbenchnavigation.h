@@ -7,6 +7,7 @@
 #include <coreplugin/inavigationwidgetfactory.h>
 
 #include <QPointer>
+#include <QSet>
 #include <QWidget>
 
 QT_BEGIN_NAMESPACE
@@ -36,6 +37,13 @@ public:
     void openDiagnostics();
 
 private:
+    QSet<Data::NodeId> sourceNodeIds(int maximumDepth = -1) const;
+    void handleFilterTextChanged(const QString &text);
+    void handleModelAboutToBeReset();
+    void handleModelReset();
+    void restoreExpansionState();
+    void expandFilteredResults();
+    void updateExpansionState(const QModelIndex &proxyIndex, bool expanded);
     void selectSourceIndex(const QModelIndex &sourceIndex);
     void selectNode(const Data::NodeId &nodeId);
     void updateFilterState();
@@ -51,6 +59,11 @@ private:
     QStackedWidget *m_resultsStack = nullptr;
     QWidget *m_emptyState = nullptr;
     QPushButton *m_clearFilter = nullptr;
+    QSet<Data::NodeId> m_expandedNodeIds;
+    QSet<Data::NodeId> m_knownNodeIds;
+    bool m_filterActive = false;
+    bool m_ignoreExpansionChanges = false;
+    bool m_sourceModelResetting = false;
 };
 
 class WorkbenchNavigationFactory final : public ::Core::INavigationWidgetFactory

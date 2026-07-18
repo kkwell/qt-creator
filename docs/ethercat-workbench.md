@@ -2006,3 +2006,91 @@ documentation. It adds no QAction, public API, source file, model role,
 Provider, production thread or timer, persistence, dependency, CMake/qbs
 entry, network or hardware behavior, or upstream
 Core/ProjectExplorer/application change.
+
+## Navigation expansion continuity
+
+`ISSUE-WB-NAV-EXPANSION-CONTINUITY-001` keeps the user's tree expansion
+context stable while the offline Project snapshot changes and while a text
+filter is temporarily active. Previously every Project-model reset restored
+the stable selection and then unconditionally called `expandToDepth(2)`. A
+rename, offline property edit, Undo/Redo, Project lifecycle event, or topology
+mutation could therefore reopen an unrelated collapsed Project and collapse a
+surviving expanded Slave, RxPDO group, or PDO. Filtering had a second path to
+the same state drift: `expandAll()` exposed matches but clearing the filter
+left that temporary state in the normal tree.
+
+The navigation widget now owns a private set of expanded, value-type stable
+`NodeId` values. It records normal `QTreeView::expanded` and `collapsed`
+changes, enters reset protection before the proxy model observes
+`modelAboutToBeReset`, removes IDs that no longer exist after `modelReset`,
+restores surviving branches, and preserves the established depth-two default
+for newly introduced Project structure. The current Selection Service
+`NodeId` is restored last, so its ancestor path is deliberately revealed and
+the stable selection remains authoritative. No `QModelIndex`, widget, model,
+or Provider pointer is retained across reset.
+
+Filter expansion is temporary presentation state. While a filter is nonempty,
+accepted branches are expanded without updating the normal expansion set;
+this also exposes a matching ESI device that appears after an initial empty
+result. Clearing the line edit, using Clear Filter, or selecting a filtered-out
+stable node restores the normal tree first and then reveals only the selected
+path. The state belongs to one navigation-widget lifetime and is not persisted
+across application restarts.
+
+Qt documents that tree items have expanded/collapsed state and emit the
+corresponding signals when it changes:
+<https://doc.qt.io/qt-6/qtreeview.html#expanded>. Qt also states that a model
+reset invalidates previously retrieved model information, including current
+and selected indexes:
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#beginResetModel>. Qt Creator
+20.0's Project tree wires view expansion signals back to its model and restores
+semantic expansion data after rebuilding:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projecttreewidget.cpp#L291-L302>,
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectmodels.cpp#L486-L496>,
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectmodels.cpp#L526-L539>.
+Workbench follows that identity principle with its existing `NodeId` values;
+it does not include or modify ProjectExplorer internals.
+
+Beckhoff documents its configured I/O tree under I/O / Devices, with devices,
+Process Image, and status/control inputs and outputs exposed below the device:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html>.
+The local Project -> Target -> Master -> Slave -> process-data hierarchy
+continues to provide the same offline navigation shape. Beckhoff does not
+define Qt model-reset or text-filter continuity; stable `NodeId` restoration
+is an Embed Labs Qt-native behavior, not claimed TwinCAT parity.
+
+The failure-first focused run created two Projects, kept Alpha collapsed,
+expanded an unselected deep RxPDO/PDO path, selected the other Master, and
+renamed its snapshot. The old unconditional depth expansion reopened Alpha,
+producing 2 passes and 1 failure. Final focused runs pass 3 tests at normal
+scale and 3 tests at `QT_SCALE_FACTOR=2`. The regression also proves deep
+survivor restoration, new-Project depth-two defaults, temporary-filter
+restoration, dynamic late-match visibility, and external Selection-driven
+ancestor reveal.
+
+The complete Workbench suite passes 40 tests. The six isolated EtherCAT suites
+pass 91 tests: Core 17, Project 12, Devices 8, Workbench 40, Scan 7, and
+Diagnostics 7. The final `WITH_TESTS=OFF` product build contains exactly the
+16 allow-listed plugin dylibs. Enabled startup remained stable for 16 seconds
+with fresh settings under
+`/tmp/embed-labs-nav-product-enabled-final.ZyWuX2/settings`; explicitly disabled
+startup remained stable for 16 seconds with `-noload EtherCATWorkbench` and
+fresh settings under
+`/tmp/embed-labs-nav-product-disabled-final.UiBc9t/settings`. Both were ended
+intentionally with SIGTERM target status 15.
+
+All executable qualification ran offscreen with inherited DYLD variables
+cleared, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, fresh HOME/settings
+directories, and only the process-local Touch Bar LLDB breakpoint. The final
+2026-07-19 01:06:31 +0800 audit found no residual Embed Labs or LLDB process,
+new DiagnosticReports file, or related ReportCrash event. Manual desktop
+inspection was not run by design because this issue adds no geometry and no
+visible test window was permitted.
+
+This issue changes only existing private Workbench navigation/test files and
+documentation. It adds no public API, source file, model role, QAction,
+Provider, production thread or timer, persistence, dependency, network,
+controller transport, physical-hardware behavior, CMake/qbs entry, or upstream
+Core/ProjectExplorer/application change. Scan and Diagnostics remain local
+Mock Providers, the Workbench path count remains 44, and the direct Core patch
+count remains five.

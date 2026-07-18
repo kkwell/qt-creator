@@ -583,6 +583,51 @@ timer, network/controller behavior, CMake/qbs entry, or upstream Core,
 ProjectExplorer, or application path. The Workbench path count remains 44
 and the direct Core patch count remains five.
 
+## Workbench navigation expansion-state boundary
+
+Expansion state belongs entirely to the private
+`EtherCAT::Workbench::Internal::WorkbenchNavigationWidget`. Its identity key is
+the existing value-type `Data::NodeId`; no `QModelIndex`, view, source model,
+proxy model, or Provider pointer crosses a reset. `QTreeView::expanded` and
+`collapsed` update the widget-local normal-state set.
+
+`modelAboutToBeReset` and `modelReset` form the capture and restoration
+boundary. The about-to-reset connection is established before the proxy model
+observes the source model, so reset-generated view changes cannot overwrite
+the saved normal state. After reset, deleted IDs are discarded, surviving IDs
+are restored, new Project structure retains the established depth-two default,
+and Selection Service is applied last. Selection Service remains the only
+authority for which stable node is current; making its ancestor path visible
+is an intentional view effect, not a selection write.
+
+Filtering uses a separate temporary expansion mode. Filter-driven
+`expandAll()` calls and late matching rows do not enter the normal-state set.
+When filtering ends, the widget restores the normal set before revealing any
+externally selected node. The set is neither a cross-plugin service nor a
+persisted application setting and disappears with the navigation widget.
+
+Qt defines the expansion signals and model-reset invalidation boundaries at
+<https://doc.qt.io/qt-6/qtreeview.html#expanded> and
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#beginResetModel>. Qt Creator's
+Project tree provides a local architectural precedent by wiring expansion
+signals to semantic model data and requesting expansion after rebuild:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projecttreewidget.cpp#L291-L302>,
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectmodels.cpp#L486-L496>,
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectmodels.cpp#L526-L539>.
+Workbench reuses no ProjectExplorer class or private API.
+
+Beckhoff's I/O / Devices tree is used only as the user-facing hierarchy
+comparison for devices, Process Image, and status/control inputs and outputs:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html>.
+The actual Workbench tree remains a local offline Project snapshot. Scan and
+Diagnostics remain public local Mock Provider snapshots and do not own or
+persist expansion state.
+
+This boundary adds no service, role, Provider, public API, persistent field,
+thread, timer, dependency, network/controller transport, CMake/qbs entry, or
+path under upstream Core, ProjectExplorer, or the application bootstrap. The
+Workbench path count remains 44 and the direct Core patch count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

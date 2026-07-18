@@ -3680,6 +3680,109 @@ void EtherCATWorkbenchTests::testNavigationSelectionAndFiltering()
     controller.selectionService()->clear();
 }
 
+void EtherCATWorkbenchTests::testNavigationExpansionStateLifecycle()
+{
+    WorkbenchController controller;
+    const Data::ProjectSnapshot alpha = projectSnapshot("Alpha EtherCAT Project");
+    const ProcessTreeFixture fixture = processTreeFixture();
+    controller.treeModel()->setProjects({alpha, fixture.project});
+
+    WorkbenchNavigationWidget navigation(&controller);
+    QTreeView *tree = navigation.treeView();
+    QAbstractItemModel *model = tree->model();
+
+    const Data::NodeId targetId = fixture.project.nodes.at(1).id;
+    const Data::NodeId master = masterId(fixture.project);
+    const QModelIndex sourceRxPdo
+        = findBySourceId(controller.treeModel(), fixture.rxPdoId);
+    QVERIFY(sourceRxPdo.isValid());
+    const Data::NodeId rxPdoViewId
+        = sourceRxPdo.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    const QModelIndex sourceRxPdoGroup = sourceRxPdo.parent();
+    QVERIFY(sourceRxPdoGroup.isValid());
+    const Data::NodeId rxPdoGroupViewId
+        = sourceRxPdoGroup.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+
+    const auto indexForId = [model](const Data::NodeId &id) { return findById(model, id); };
+    const auto expand = [tree, &indexForId](const Data::NodeId &id) {
+        const QModelIndex index = indexForId(id);
+        QVERIFY(index.isValid());
+        tree->expand(index);
+    };
+
+    tree->collapseAll();
+    expand(fixture.project.id);
+    expand(targetId);
+    expand(master);
+    expand(fixture.slaveId);
+    expand(rxPdoGroupViewId);
+    expand(rxPdoViewId);
+    controller.selectionService()->setCurrentNodeId(master);
+    QTRY_COMPARE(
+        tree->currentIndex().data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>(),
+        master);
+    QVERIFY(!tree->isExpanded(indexForId(alpha.id)));
+    QVERIFY(tree->isExpanded(indexForId(rxPdoGroupViewId)));
+    QVERIFY(tree->isExpanded(indexForId(rxPdoViewId)));
+
+    Data::ProjectSnapshot renamed = fixture.project;
+    renamed.name = "Renamed Process Tree";
+    controller.treeModel()->setProjects({alpha, renamed});
+
+    QTRY_VERIFY(indexForId(alpha.id).isValid());
+    QTRY_VERIFY(indexForId(rxPdoViewId).isValid());
+    QVERIFY2(
+        !tree->isExpanded(indexForId(alpha.id)),
+        "An unrelated collapsed project must remain collapsed after a model reset");
+    QVERIFY2(
+        tree->isExpanded(indexForId(rxPdoGroupViewId)),
+        "A surviving expanded process-data group must remain expanded after a model reset");
+    QVERIFY2(
+        tree->isExpanded(indexForId(rxPdoViewId)),
+        "A surviving expanded PDO must remain expanded after a model reset");
+    QCOMPARE(controller.selectionService()->currentNodeId(), master);
+    QCOMPARE(
+        tree->currentIndex().data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>(),
+        master);
+
+    tree->collapse(indexForId(renamed.id));
+    QVERIFY(!tree->isExpanded(indexForId(renamed.id)));
+    navigation.filterEdit()->setText("Drive Command");
+    QTRY_VERIFY(indexForId(rxPdoViewId).isValid());
+    QTRY_VERIFY(tree->isExpanded(indexForId(renamed.id)));
+    navigation.filterEdit()->clear();
+    QTRY_VERIFY(indexForId(renamed.id).isValid());
+    QVERIFY2(
+        !tree->isExpanded(indexForId(renamed.id)),
+        "Clearing a transient filter must restore the pre-filter collapsed state");
+    QVERIFY(tree->isExpanded(indexForId(rxPdoGroupViewId)));
+    QVERIFY(tree->isExpanded(indexForId(rxPdoViewId)));
+
+    const Data::ProjectSnapshot added = projectSnapshot("Zulu EtherCAT Project");
+    const Data::NodeId addedTargetId = added.nodes.at(1).id;
+    const Data::NodeId addedMasterId = masterId(added);
+    controller.treeModel()->setProjects({alpha, renamed, added});
+    QTRY_VERIFY(indexForId(added.id).isValid());
+    QVERIFY(tree->isExpanded(indexForId(added.id)));
+    QVERIFY(tree->isExpanded(indexForId(addedTargetId)));
+    QVERIFY(tree->isExpanded(indexForId(addedMasterId)));
+    QCOMPARE(controller.selectionService()->currentNodeId(), master);
+    QCOMPARE(
+        tree->currentIndex().data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>(),
+        master);
+
+    tree->collapse(indexForId(renamed.id));
+    navigation.filterEdit()->setText("No matching navigation node");
+    QTRY_COMPARE(model->rowCount(), 0);
+    controller.selectionService()->setCurrentNodeId(rxPdoViewId);
+    QTRY_VERIFY(navigation.filterEdit()->text().isEmpty());
+    QTRY_COMPARE(
+        tree->currentIndex().data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>(),
+        rxPdoViewId);
+    QVERIFY(tree->isExpanded(indexForId(renamed.id)));
+    QVERIFY(tree->isExpanded(indexForId(rxPdoGroupViewId)));
+}
+
 void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
 {
     WorkbenchController controller;
@@ -4767,6 +4870,12 @@ void EtherCATWorkbenchTests::testNavigationFilterEmptyState()
             .value<Data::NodeId>(),
         devices.first().id);
 
+    const QModelIndex repositoryIndex = findByKind(
+        navigation.treeView()->model(), Core::WorkbenchNodeKind::DeviceRepository);
+    QVERIFY(repositoryIndex.isValid());
+    navigation.treeView()->collapse(repositoryIndex);
+    QVERIFY(!navigation.treeView()->isExpanded(repositoryIndex));
+
     QWidget *emptyState
         = navigation.findChild<QWidget *>("EtherCATWorkbenchFilterEmptyState");
     QLabel *emptyMessage
@@ -4825,7 +4934,10 @@ void EtherCATWorkbenchTests::testNavigationFilterEmptyState()
     controller.treeModel()->syncDevices(devices);
     QTRY_VERIFY(navigation.treeView()->isVisible());
     QVERIFY(!emptyState->isVisible());
-    QVERIFY(findById(navigation.treeView()->model(), lateMatch.id).isValid());
+    const QModelIndex lateMatchIndex = findById(navigation.treeView()->model(), lateMatch.id);
+    QVERIFY(lateMatchIndex.isValid());
+    QTRY_VERIFY(navigation.treeView()->isExpanded(lateMatchIndex.parent()));
+    QVERIFY(!navigation.treeView()->visualRect(lateMatchIndex).isEmpty());
     QCOMPARE(controller.selectionService()->currentNodeId(), selectedId);
 
     devices.removeLast();
