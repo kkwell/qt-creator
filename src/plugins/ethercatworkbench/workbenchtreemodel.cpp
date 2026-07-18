@@ -81,6 +81,32 @@ static QString projectStatus(Core::WorkbenchNodeKind kind)
     }
 }
 
+QString optionalProviderDisplayName(
+    const OptionalProviderPresentation &provider, Core::ProviderKind kind)
+{
+    QString displayName = provider.displayName;
+    if (displayName.isEmpty()) {
+        displayName = kind == Core::ProviderKind::Scan
+                          ? Tr::tr("Unnamed Scan Provider")
+                          : Tr::tr("Unnamed Diagnostics Provider");
+    }
+    return displayName;
+}
+
+static QString optionalProviderStatus(
+    const OptionalProviderPresentation &provider, Core::ProviderKind kind)
+{
+    if (provider.state == OptionalProviderState::Absent) {
+        return kind == Core::ProviderKind::Scan
+                   ? Tr::tr("No Scan Provider registered | Local Mock only")
+                   : Tr::tr("No Diagnostics Provider registered | Local Mock only");
+    }
+    const QString displayName = optionalProviderDisplayName(provider, kind);
+    return provider.state == OptionalProviderState::Available
+               ? Tr::tr("%1 available").arg(displayName)
+               : Tr::tr("%1 unavailable").arg(displayName);
+}
+
 static std::unique_ptr<WorkbenchTreeModel::Node> makeNode(
     WorkbenchTreeModel::Node *parent,
     const Data::NodeId &id,
@@ -948,35 +974,31 @@ void WorkbenchTreeModel::syncDevices(const QList<Data::DeviceSummary> &devices)
     }
 }
 
-void WorkbenchTreeModel::setOptionalProviders(bool scanAvailable, bool diagnosticsAvailable)
+void WorkbenchTreeModel::setProviderPresentations(
+    const OptionalProviderPresentation &scanProvider,
+    const OptionalProviderPresentation &diagnosticsProvider,
+    const std::optional<Data::ScanResult> &scanResult,
+    Data::DiagnosticsStreamState diagnosticsState,
+    const Data::DiagnosticsRequest &diagnosticsRequest,
+    const std::optional<Data::DiagnosticsSnapshot> &diagnosticsSnapshot)
 {
-    if (m_scanAvailable == scanAvailable && m_diagnosticsAvailable == diagnosticsAvailable)
-        return;
-    m_scanAvailable = scanAvailable;
-    m_diagnosticsAvailable = diagnosticsAvailable;
-    updateOptionalProviderStatus();
-}
-
-void WorkbenchTreeModel::setScanPresentation(const std::optional<Data::ScanResult> &result)
-{
-    if (m_scanResult == result)
-        return;
-    m_scanResult = result;
-    updateProviderPresentation();
-}
-
-void WorkbenchTreeModel::setDiagnosticsPresentation(
-    Data::DiagnosticsStreamState state,
-    const Data::DiagnosticsRequest &request,
-    const std::optional<Data::DiagnosticsSnapshot> &snapshot)
-{
-    if (m_diagnosticsState == state && m_diagnosticsRequest == request
-        && m_diagnosticsSnapshot == snapshot) {
+    const bool optionalProvidersChanged = m_scanProvider != scanProvider
+                                          || m_diagnosticsProvider != diagnosticsProvider;
+    if (!optionalProvidersChanged && m_scanResult == scanResult
+        && m_diagnosticsState == diagnosticsState
+        && m_diagnosticsRequest == diagnosticsRequest
+        && m_diagnosticsSnapshot == diagnosticsSnapshot) {
         return;
     }
-    m_diagnosticsState = state;
-    m_diagnosticsRequest = request;
-    m_diagnosticsSnapshot = snapshot;
+
+    m_scanProvider = scanProvider;
+    m_diagnosticsProvider = diagnosticsProvider;
+    m_scanResult = scanResult;
+    m_diagnosticsState = diagnosticsState;
+    m_diagnosticsRequest = diagnosticsRequest;
+    m_diagnosticsSnapshot = diagnosticsSnapshot;
+    if (optionalProvidersChanged)
+        updateOptionalProviderStatus();
     updateProviderPresentation();
 }
 
@@ -1180,20 +1202,18 @@ void WorkbenchTreeModel::updateOptionalProviderStatus()
         for (const std::unique_ptr<Node> &child : parent->children) {
             QString status = child->baseStatus;
             if (child->kind == Core::WorkbenchNodeKind::Diagnostics) {
-                status = m_diagnosticsAvailable ? Tr::tr("Provider available")
-                                                : Tr::tr("Plugin not installed");
+                status = optionalProviderStatus(
+                    m_diagnosticsProvider, Core::ProviderKind::Diagnostics);
             } else if (
                 child->kind == Core::WorkbenchNodeKind::Placeholder && child->parent
                 && child->parent->kind == Core::WorkbenchNodeKind::Master) {
-                status = m_scanAvailable ? Tr::tr("Ready to scan")
-                                         : Tr::tr("Scan plugin not installed");
+                status = optionalProviderStatus(m_scanProvider, Core::ProviderKind::Scan);
             }
             child->baseStatus = status;
             self(self, child.get());
         }
     };
     updateRecursive(updateRecursive, m_root.get());
-    updateProviderPresentation();
 }
 
 void WorkbenchTreeModel::updateProviderPresentation()
@@ -1239,15 +1259,19 @@ void WorkbenchTreeModel::updateProviderPresentation()
         Node *master = findNode(snapshot.masterId);
         if (master && master->kind == Core::WorkbenchNodeKind::Master
             && master->projectId == snapshot.projectId) {
+            const QString providerName = optionalProviderDisplayName(
+                m_diagnosticsProvider, Core::ProviderKind::Diagnostics);
             const QString source = snapshot.mock ? Tr::tr("MOCK") : Tr::tr("Online");
-            QString status = Tr::tr("%1 %2 / %3")
+            QString status = Tr::tr("%1 | %2 %3 / %4")
                                  .arg(
+                                     providerName,
                                      source,
                                      runModeName(snapshot.runMode),
                                      etherCATStateName(snapshot.masterState));
             if (m_diagnosticsState != Data::DiagnosticsStreamState::Running) {
-                status = Tr::tr("%1 diagnostics %2: last %3 / %4")
+                status = Tr::tr("%1 | %2 diagnostics %3: last %4 / %5")
                              .arg(
+                                 providerName,
                                  source,
                                  streamStateName(m_diagnosticsState),
                                  runModeName(snapshot.runMode),
@@ -1273,8 +1297,11 @@ void WorkbenchTreeModel::updateProviderPresentation()
             Node *diagnostics = nodeForIndex(diagnosticsForProject(snapshot.projectId));
             if (diagnostics && diagnostics != m_root.get()) {
                 QString diagnosticsStatus
-                    = Tr::tr("%1 %2 - %n active alarm(s)", nullptr, snapshot.activeAlarmCount)
-                          .arg(source, streamStateName(m_diagnosticsState));
+                    = Tr::tr(
+                          "%1 | %2 %3 - %n active alarm(s)",
+                          nullptr,
+                          snapshot.activeAlarmCount)
+                          .arg(providerName, source, streamStateName(m_diagnosticsState));
                 if (snapshot.masterHasError)
                     diagnosticsStatus += Tr::tr(" - Error");
                 appendPresentationStatus(diagnostics, diagnosticsStatus);
@@ -1327,7 +1354,12 @@ void WorkbenchTreeModel::updateProviderPresentation()
         && m_diagnosticsState != Data::DiagnosticsStreamState::Stopped) {
         Node *master = findNode(m_diagnosticsRequest.masterId);
         if (master && master->projectId == m_diagnosticsRequest.projectId) {
-            const QString status = Tr::tr("Diagnostics %1").arg(streamStateName(m_diagnosticsState));
+            const QString status
+                = Tr::tr("%1 | Diagnostics %2")
+                      .arg(
+                          optionalProviderDisplayName(
+                              m_diagnosticsProvider, Core::ProviderKind::Diagnostics),
+                          streamStateName(m_diagnosticsState));
             appendPresentationStatus(master, status);
             raiseMarker(
                 master,
@@ -1349,9 +1381,12 @@ void WorkbenchTreeModel::updateProviderPresentation()
         Node *master = findNode(result.snapshot.masterId);
         if (master && master->kind == Core::WorkbenchNodeKind::Master
             && master->projectId == result.snapshot.projectId) {
+            const QString providerName = optionalProviderDisplayName(
+                m_scanProvider, Core::ProviderKind::Scan);
             const QString source = result.snapshot.mock ? Tr::tr("MOCK") : Tr::tr("Online");
             if (result.snapshot.operation == Data::ScanOperation::Interfaces) {
-                appendPresentationStatus(master, Tr::tr("%1 interface scan").arg(source));
+                appendPresentationStatus(
+                    master, Tr::tr("%1 | %2 interface scan").arg(providerName, source));
                 raiseMarker(master, StateMarker::Information);
             } else {
                 QList<const Data::TopologyDifference *> differences;
@@ -1397,12 +1432,15 @@ void WorkbenchTreeModel::updateProviderPresentation()
 
                 QString masterStatus;
                 if (differences.isEmpty()) {
-                    masterStatus = Tr::tr("%1 scan: topology matches").arg(source);
+                    masterStatus = Tr::tr("%1 | %2 scan: topology matches")
+                                       .arg(providerName, source);
                     aggregateMarker = StateMarker::Healthy;
                 } else {
-                    masterStatus
-                        = Tr::tr("%1 scan: %n topology difference(s)", nullptr, differences.size())
-                              .arg(source);
+                    masterStatus = Tr::tr(
+                                       "%1 | %2 scan: %n topology difference(s)",
+                                       nullptr,
+                                       differences.size())
+                                       .arg(providerName, source);
                     if (nodeDifferences.contains(master)) {
                         masterStatus += " - " + nodeDifferences.value(master).join(", ");
                         nodeDifferences.remove(master);
@@ -1540,8 +1578,8 @@ void WorkbenchTreeModel::rebuild()
                         project.id,
                         Core::WorkbenchNodeKind::Diagnostics,
                         Tr::tr("Diagnostics"),
-                        m_diagnosticsAvailable ? Tr::tr("Provider available")
-                                               : Tr::tr("Plugin not installed")));
+                        optionalProviderStatus(
+                            m_diagnosticsProvider, Core::ProviderKind::Diagnostics)));
                     if (slaveCount == 0) {
                         nodePointer->children.push_back(makeNode(
                             nodePointer,
@@ -1549,8 +1587,8 @@ void WorkbenchTreeModel::rebuild()
                             project.id,
                             Core::WorkbenchNodeKind::Placeholder,
                             Tr::tr("No configured slaves"),
-                            m_scanAvailable ? Tr::tr("Ready to scan")
-                                            : Tr::tr("Scan plugin not installed")));
+                            optionalProviderStatus(
+                                m_scanProvider, Core::ProviderKind::Scan)));
                     }
                 }
             }

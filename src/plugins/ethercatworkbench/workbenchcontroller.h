@@ -30,6 +30,8 @@ public:
     Core::ProjectService *projectService() const;
     Core::DeviceRepositoryProvider *deviceRepository() const;
     Core::ProviderRegistry *providerRegistry() const;
+    OptionalProviderPresentation scanProviderPresentation() const;
+    OptionalProviderPresentation diagnosticsProviderPresentation() const;
     bool scanAvailable() const;
     bool diagnosticsAvailable() const;
     bool canInsertDeviceOnSelectedMaster() const;
@@ -66,16 +68,14 @@ signals:
     void locateUnsupportedDeviceRequested();
     void copyCurrentNodeIdRequested();
     void insertDeviceRequested();
-    void optionalProvidersChanged();
+    void diagnosticsProviderChanged(bool availabilityChanged);
 
 private:
     void refreshProjects();
     void refreshDevices();
     void watchOptionalProvider(Core::Provider *provider);
     void refreshOptionalProviders(Core::Provider *excluding = nullptr);
-    void refreshProviderPresentation(Core::Provider *excluding = nullptr);
     void handleOptionalAvailabilityChanged();
-    void handleProviderPresentationChanged();
 
     WorkbenchTreeModel m_treeModel;
     QPointer<Core::SelectionService> m_selectionService;
@@ -84,8 +84,8 @@ private:
     QPointer<Core::ProviderRegistry> m_providerRegistry;
     QList<QMetaObject::Connection> m_connections;
     bool m_shuttingDown = false;
-    bool m_scanAvailable = false;
-    bool m_diagnosticsAvailable = false;
+    OptionalProviderPresentation m_scanProvider;
+    OptionalProviderPresentation m_diagnosticsProvider;
 };
 
 } // namespace EtherCAT::Workbench::Internal

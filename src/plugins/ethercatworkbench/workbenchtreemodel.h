@@ -11,6 +11,23 @@
 
 namespace EtherCAT::Workbench::Internal {
 
+enum class OptionalProviderState { Absent, Unavailable, Available };
+
+struct OptionalProviderPresentation
+{
+    OptionalProviderState state = OptionalProviderState::Absent;
+    QString displayName;
+
+    bool isAvailable() const { return state == OptionalProviderState::Available; }
+
+    friend bool operator==(
+        const OptionalProviderPresentation &, const OptionalProviderPresentation &)
+        = default;
+};
+
+QString optionalProviderDisplayName(
+    const OptionalProviderPresentation &provider, Core::ProviderKind kind);
+
 class WorkbenchTreeModel final : public QAbstractItemModel
 {
     Q_OBJECT
@@ -63,12 +80,13 @@ public:
     void setDropTargetMasterId(const Data::NodeId &masterId);
     void setDeviceDropHandler(DeviceDropHandler handler);
     void syncDevices(const QList<Data::DeviceSummary> &devices);
-    void setOptionalProviders(bool scanAvailable, bool diagnosticsAvailable);
-    void setScanPresentation(const std::optional<Data::ScanResult> &result);
-    void setDiagnosticsPresentation(
-        Data::DiagnosticsStreamState state,
-        const Data::DiagnosticsRequest &request,
-        const std::optional<Data::DiagnosticsSnapshot> &snapshot);
+    void setProviderPresentations(
+        const OptionalProviderPresentation &scanProvider,
+        const OptionalProviderPresentation &diagnosticsProvider,
+        const std::optional<Data::ScanResult> &scanResult,
+        Data::DiagnosticsStreamState diagnosticsState,
+        const Data::DiagnosticsRequest &diagnosticsRequest,
+        const std::optional<Data::DiagnosticsSnapshot> &diagnosticsSnapshot);
     void clear();
 
     QModelIndex indexForNodeId(const Data::NodeId &nodeId, int column = 0) const;
@@ -102,8 +120,8 @@ private:
     Data::NodeId m_activeProjectId;
     Data::NodeId m_dropTargetMasterId;
     DeviceDropHandler m_deviceDropHandler;
-    bool m_scanAvailable = false;
-    bool m_diagnosticsAvailable = false;
+    OptionalProviderPresentation m_scanProvider;
+    OptionalProviderPresentation m_diagnosticsProvider;
     std::optional<Data::ScanResult> m_scanResult;
     Data::DiagnosticsStreamState m_diagnosticsState = Data::DiagnosticsStreamState::Stopped;
     Data::DiagnosticsRequest m_diagnosticsRequest;

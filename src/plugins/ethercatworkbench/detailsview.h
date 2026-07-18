@@ -38,6 +38,7 @@ private:
     void setCurrentNode(const Data::NodeId &nodeId);
     void rebuildPages();
     void updateEmptyState();
+    void updateNoPageState();
     void refreshPageContents();
     void clearPages();
     void handleProviderRemoving(Core::Provider *provider);

@@ -63,6 +63,7 @@
 #include <QScrollBar>
 #include <QSet>
 #include <QSignalSpy>
+#include <QScopeGuard>
 #include <QSpinBox>
 #include <QStatusBar>
 #include <QStyle>
@@ -520,8 +521,10 @@ public:
 class AvailableScanProvider final : public Core::ScanProvider
 {
 public:
-    AvailableScanProvider()
-        : ScanProvider("EtherCAT.Workbench.TestScan", "Test scan provider")
+    explicit AvailableScanProvider(
+        Utils::Id id = Utils::Id("EtherCAT.Workbench.TestScan"),
+        const QString &displayName = "Local Mock test scanner")
+        : ScanProvider(id, displayName)
     {}
 
     Data::ScanState scanState() const final { return m_state; }
@@ -543,6 +546,17 @@ public:
         emit scanResultChanged();
     }
 
+    void clearPublishedResult()
+    {
+        m_state = Data::ScanState::Idle;
+        m_progress = {};
+        m_result.reset();
+        m_error.clear();
+        emit scanStateChanged(m_state);
+        emit scanProgressChanged(m_progress);
+        emit scanResultChanged();
+    }
+
 private:
     Data::ScanState m_state = Data::ScanState::Idle;
     Data::ScanProgress m_progress;
@@ -553,8 +567,10 @@ private:
 class AvailableDiagnosticsProvider final : public Core::DiagnosticsProvider
 {
 public:
-    AvailableDiagnosticsProvider()
-        : DiagnosticsProvider("EtherCAT.Workbench.TestDiagnostics", "Test diagnostics provider")
+    explicit AvailableDiagnosticsProvider(
+        Utils::Id id = Utils::Id("EtherCAT.Workbench.TestDiagnostics"),
+        const QString &displayName = "Local Mock test diagnostics")
+        : DiagnosticsProvider(id, displayName)
     {}
 
     Data::DiagnosticsStreamState streamState() const final { return m_state; }
@@ -586,6 +602,18 @@ public:
     {
         m_state = state;
         emit streamStateChanged(m_state);
+    }
+
+    void beginRequest(
+        const Data::NodeId &projectId,
+        const Data::NodeId &masterId,
+        Data::DiagnosticsStreamState state = Data::DiagnosticsStreamState::Starting)
+    {
+        m_state = state;
+        m_request = {projectId, masterId};
+        m_snapshot.reset();
+        emit streamStateChanged(m_state);
+        emit diagnosticsSnapshotChanged();
     }
 
 private:
@@ -4905,6 +4933,263 @@ void EtherCATWorkbenchTests::testDynamicPropertyProviderRemoval()
     controller.selectionService()->clear();
 }
 
+void EtherCATWorkbenchTests::testOptionalProviderAvailabilityPresentation()
+{
+    WorkbenchController controller;
+    const Data::ProjectSnapshot project = projectSnapshot("Provider Availability");
+    controller.treeModel()->setProjects({project});
+
+    const QModelIndex master = findByKind(controller.treeModel(), Core::WorkbenchNodeKind::Master);
+    const QModelIndex diagnostics
+        = findByKind(controller.treeModel(), Core::WorkbenchNodeKind::Diagnostics);
+    QVERIFY(master.isValid());
+    QVERIFY(diagnostics.isValid());
+    const QModelIndex noSlaves = controller.treeModel()->index(1, 0, master);
+    QVERIFY(noSlaves.isValid());
+    QSignalSpy modelResetSpy(controller.treeModel(), &QAbstractItemModel::modelReset);
+
+    const auto status = [](const QModelIndex &index) {
+        return index.siblingAtColumn(1).data().toString();
+    };
+    QCOMPARE(
+        status(diagnostics), QString("No Diagnostics Provider registered | Local Mock only"));
+    QCOMPARE(status(noSlaves), QString("No Scan Provider registered | Local Mock only"));
+    QVERIFY(!diagnostics.data(WorkbenchTreeModel::SearchTextRole)
+                 .toString()
+                 .contains("installed", Qt::CaseInsensitive));
+    QVERIFY(!noSlaves.data(Qt::ToolTipRole)
+                 .toString()
+                 .contains("installed", Qt::CaseInsensitive));
+
+    controller.selectionService()->setCurrentNodeId(
+        diagnostics.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>());
+    DetailsView details(&controller);
+    details.resize(900, 600);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QLabel *emptyState = details.findChild<QLabel *>("EtherCATWorkbenchEmptyState");
+    QVERIFY(emptyState);
+    QTRY_VERIFY(details.tabWidget()->count() > 0);
+    QLabel *summary = details.findChild<QLabel *>("EtherCATWorkbenchPageSummary");
+    QVERIFY(summary);
+    QVERIFY(summary->text().contains("No Diagnostics Provider is registered"));
+    QVERIFY(summary->text().contains("local Mock"));
+    QVERIFY(!summary->text().contains("installed", Qt::CaseInsensitive));
+    QCOMPARE(summary->accessibleDescription(), summary->text());
+
+    AvailableScanProvider scan;
+    AvailableScanProvider backupScan(
+        Utils::Id("EtherCAT.Workbench.TestScan.Backup"),
+        "Backup Local Mock test scanner");
+    AvailableDiagnosticsProvider diagnosticsProvider;
+    AvailableDiagnosticsProvider backupDiagnostics(
+        Utils::Id("EtherCAT.Workbench.TestDiagnostics.Backup"),
+        "Backup Local Mock diagnostics");
+    scan.setDisplayName("Local Mock test scanner");
+    diagnosticsProvider.setDisplayName("Local Mock test diagnostics");
+    bool scanRegistered = false;
+    bool backupScanRegistered = false;
+    bool diagnosticsRegistered = false;
+    bool backupDiagnosticsRegistered = false;
+    const QScopeGuard cleanup([&] {
+        if (backupDiagnosticsRegistered)
+            ExtensionSystem::PluginManager::removeObject(&backupDiagnostics);
+        if (diagnosticsRegistered)
+            ExtensionSystem::PluginManager::removeObject(&diagnosticsProvider);
+        if (backupScanRegistered)
+            ExtensionSystem::PluginManager::removeObject(&backupScan);
+        if (scanRegistered)
+            ExtensionSystem::PluginManager::removeObject(&scan);
+        controller.selectionService()->clear();
+    });
+
+    ExtensionSystem::PluginManager::addObject(&scan);
+    scanRegistered = true;
+    ExtensionSystem::PluginManager::addObject(&backupScan);
+    backupScanRegistered = true;
+    ExtensionSystem::PluginManager::addObject(&diagnosticsProvider);
+    diagnosticsRegistered = true;
+    ExtensionSystem::PluginManager::addObject(&backupDiagnostics);
+    backupDiagnosticsRegistered = true;
+    QTRY_COMPARE(status(noSlaves), QString("Local Mock test scanner unavailable"));
+    QTRY_COMPARE(status(diagnostics), QString("Local Mock test diagnostics unavailable"));
+    QTRY_VERIFY(details.tabWidget()->count() > 0);
+    summary = details.findChild<QLabel *>("EtherCATWorkbenchPageSummary");
+    QVERIFY(summary);
+    QTRY_VERIFY(summary->text().contains("Local Mock test diagnostics"));
+    QVERIFY(summary->text().contains("registered but unavailable"));
+    QVERIFY(!summary->text().contains("installed", Qt::CaseInsensitive));
+    QCOMPARE(summary->accessibleDescription(), summary->text());
+
+    BuiltinPropertyPageProvider builtinPages(&controller);
+    QWidget onlineOwner;
+    QWidget *onlinePage = builtinPages.createPage(
+        Utils::Id(Constants::ONLINE_PAGE_ID), &onlineOwner);
+    QVERIFY(onlinePage);
+    builtinPages.updatePage(
+        Utils::Id(Constants::ONLINE_PAGE_ID),
+        onlinePage,
+        controller.treeModel()->contextForIndex(master));
+    QLabel *onlineSummary
+        = onlinePage->findChild<QLabel *>("EtherCATWorkbenchPageSummary");
+    QVERIFY(onlineSummary);
+    QVERIFY(onlineSummary->text().contains("Local Mock test diagnostics"));
+    QVERIFY(onlineSummary->text().contains("unavailable", Qt::CaseInsensitive));
+    QVERIFY(!onlineSummary->text().contains("Scan", Qt::CaseInsensitive));
+    QVERIFY(!onlineSummary->text().contains("installed", Qt::CaseInsensitive));
+
+    const QString renderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_PROVIDER_STATE_RENDER_PATH");
+    if (!renderPath.isEmpty()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(details.grab().save(renderPath), qPrintable(renderPath));
+    }
+
+    QPointer<QLabel> retainedSummary(summary);
+    scan.setDisplayName("  ");
+    QTRY_COMPARE(status(noSlaves), QString("Unnamed Scan Provider unavailable"));
+    QVERIFY(retainedSummary);
+    QCOMPARE(details.findChild<QLabel *>("EtherCATWorkbenchPageSummary"), retainedSummary.data());
+    scan.setDisplayName("Renamed Local Mock test scanner");
+    QTRY_COMPARE(status(noSlaves), QString("Renamed Local Mock test scanner unavailable"));
+    QVERIFY(retainedSummary);
+    QCOMPARE(details.findChild<QLabel *>("EtherCATWorkbenchPageSummary"), retainedSummary.data());
+
+    diagnosticsProvider.setDisplayName("\t");
+    QTRY_COMPARE(status(diagnostics), QString("Unnamed Diagnostics Provider unavailable"));
+    QTRY_VERIFY(retainedSummary);
+    QTRY_VERIFY(retainedSummary->text().contains("Unnamed Diagnostics Provider"));
+    QCOMPARE(details.findChild<QLabel *>("EtherCATWorkbenchPageSummary"), retainedSummary.data());
+    diagnosticsProvider.setDisplayName("Renamed Local Mock diagnostics");
+    QTRY_VERIFY(retainedSummary);
+    QTRY_VERIFY(retainedSummary->text().contains("Renamed Local Mock diagnostics"));
+    QCOMPARE(details.findChild<QLabel *>("EtherCATWorkbenchPageSummary"), retainedSummary.data());
+
+    backupScan.setAvailable(true);
+    QTRY_COMPARE(status(noSlaves), QString("Backup Local Mock test scanner available"));
+    scan.setAvailable(true);
+    QTRY_COMPARE(status(noSlaves), QString("Renamed Local Mock test scanner available"));
+
+    Data::ScanResult backupScanResult;
+    backupScanResult.snapshot.projectId = project.id;
+    backupScanResult.snapshot.masterId = masterId(project);
+    backupScanResult.snapshot.mock = true;
+    backupScanResult.snapshot.complete = true;
+    backupScanResult.comparison.projectId = project.id;
+    backupScanResult.comparison.masterId = masterId(project);
+    backupScanResult.comparison.differences = {
+        {Data::TopologyDifferenceKind::Added,
+         Data::DifferenceSeverity::Information,
+         {},
+         Data::NodeId::create(),
+         -1,
+         0,
+         "Backup scan difference",
+         "Local Mock backup result"},
+    };
+    backupScan.publishResult(backupScanResult);
+    QTRY_COMPARE(
+        controller.scanProviderPresentation().displayName,
+        QString("Backup Local Mock test scanner"));
+    QTRY_COMPARE(status(noSlaves), QString("Backup Local Mock test scanner available"));
+    QTRY_VERIFY(status(master).contains("1 topology difference"));
+    backupScan.clearPublishedResult();
+    QTRY_COMPARE(
+        controller.scanProviderPresentation().displayName,
+        QString("Renamed Local Mock test scanner"));
+    QTRY_VERIFY(!status(master).contains("topology difference"));
+
+    backupDiagnostics.setAvailable(true);
+    QTRY_COMPARE(status(diagnostics), QString("Backup Local Mock diagnostics available"));
+    diagnosticsProvider.setAvailable(true);
+    QTRY_COMPARE(status(diagnostics), QString("Renamed Local Mock diagnostics available"));
+    QTRY_COMPARE(details.tabWidget()->count(), 0);
+    QTRY_VERIFY(emptyState->isVisible());
+    QTRY_VERIFY(emptyState->text().contains("Renamed Local Mock diagnostics"));
+    QVERIFY(emptyState->text().contains("available", Qt::CaseInsensitive));
+    QVERIFY(emptyState->text().contains("does not provide", Qt::CaseInsensitive));
+    QVERIFY(!emptyState->text().contains("installed", Qt::CaseInsensitive));
+    QCOMPARE(emptyState->accessibleDescription(), emptyState->text());
+
+    backupDiagnostics.setDisplayName("Backup diagnostics");
+    backupDiagnostics.beginRequest(project.id, masterId(project));
+    QTRY_COMPARE(
+        controller.diagnosticsProviderPresentation().displayName,
+        QString("Backup diagnostics"));
+    QTRY_VERIFY(status(diagnostics).contains("Backup diagnostics"));
+    QVERIFY(status(diagnostics).contains("Diagnostics Starting"));
+    QVERIFY(!status(diagnostics).contains("Mock", Qt::CaseInsensitive));
+    QTRY_VERIFY(emptyState->text().contains("Backup diagnostics"));
+
+    Data::DiagnosticsSnapshot backupSnapshot;
+    backupSnapshot.projectId = project.id;
+    backupSnapshot.masterId = masterId(project);
+    backupSnapshot.mock = true;
+    backupSnapshot.runMode = Data::DiagnosticsRunMode::Run;
+    backupSnapshot.masterState = Data::EtherCATState::Operational;
+    backupSnapshot.activeAlarmCount = 2;
+    backupDiagnostics.publishSnapshot(backupSnapshot);
+    QTRY_COMPARE(
+        controller.diagnosticsProviderPresentation().displayName,
+        QString("Backup diagnostics"));
+    QTRY_VERIFY(status(diagnostics).contains("2 active"));
+    QVERIFY(status(diagnostics).contains("MOCK"));
+
+    Data::DiagnosticsSnapshot primarySnapshot = backupSnapshot;
+    primarySnapshot.activeAlarmCount = 1;
+    diagnosticsProvider.publishSnapshot(primarySnapshot);
+    QTRY_COMPARE(
+        controller.diagnosticsProviderPresentation().displayName,
+        QString("Renamed Local Mock diagnostics"));
+    QTRY_VERIFY(status(diagnostics).contains("1 active"));
+    QVERIFY(!status(diagnostics).contains("2 active"));
+
+    ExtensionSystem::PluginManager::removeObject(&diagnosticsProvider);
+    diagnosticsRegistered = false;
+    QTRY_COMPARE(
+        controller.diagnosticsProviderPresentation().displayName,
+        QString("Backup diagnostics"));
+    QTRY_VERIFY(status(diagnostics).contains("2 active"));
+    ExtensionSystem::PluginManager::addObject(&diagnosticsProvider);
+    diagnosticsRegistered = true;
+    QTRY_COMPARE(
+        controller.diagnosticsProviderPresentation().displayName,
+        QString("Renamed Local Mock diagnostics"));
+    QTRY_VERIFY(status(diagnostics).contains("1 active"));
+
+    diagnosticsProvider.setAvailable(false);
+    QTRY_COMPARE(
+        controller.diagnosticsProviderPresentation().displayName,
+        QString("Backup diagnostics"));
+    QTRY_VERIFY(status(diagnostics).contains("2 active"));
+    backupDiagnostics.setAvailable(false);
+    QTRY_COMPARE(status(diagnostics), QString("Renamed Local Mock diagnostics unavailable"));
+    QVERIFY(!status(diagnostics).contains("active"));
+    QVERIFY(!status(diagnostics).contains("Running"));
+    QTRY_VERIFY(details.tabWidget()->count() > 0);
+    summary = details.findChild<QLabel *>("EtherCATWorkbenchPageSummary");
+    QVERIFY(summary);
+    QTRY_VERIFY(summary->text().contains("Renamed Local Mock diagnostics"));
+    QVERIFY(summary->text().contains("registered but unavailable"));
+
+    ExtensionSystem::PluginManager::removeObject(&diagnosticsProvider);
+    diagnosticsRegistered = false;
+    QTRY_COMPARE(status(diagnostics), QString("Backup diagnostics unavailable"));
+    ExtensionSystem::PluginManager::removeObject(&backupDiagnostics);
+    backupDiagnosticsRegistered = false;
+    QTRY_COMPARE(
+        status(diagnostics), QString("No Diagnostics Provider registered | Local Mock only"));
+    ExtensionSystem::PluginManager::removeObject(&backupScan);
+    backupScanRegistered = false;
+    ExtensionSystem::PluginManager::removeObject(&scan);
+    scanRegistered = false;
+    QTRY_COMPARE(status(noSlaves), QString("No Scan Provider registered | Local Mock only"));
+    QCOMPARE(modelResetSpy.count(), 0);
+    QCOMPARE(
+        controller.selectionService()->currentNodeId(),
+        diagnostics.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>());
+}
+
 void EtherCATWorkbenchTests::testDynamicOptionalProviders()
 {
     WorkbenchController controller;
@@ -4916,10 +5201,12 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
         = findByKind(controller.treeModel(), Core::WorkbenchNodeKind::Diagnostics);
     QVERIFY(master.isValid());
     QVERIFY(diagnostics.isValid());
-    QCOMPARE(diagnostics.siblingAtColumn(1).data().toString(), QString("Plugin not installed"));
+    QCOMPARE(
+        diagnostics.siblingAtColumn(1).data().toString(),
+        QString("No Diagnostics Provider registered | Local Mock only"));
     QCOMPARE(
         controller.treeModel()->index(1, 1, master).data().toString(),
-        QString("Scan plugin not installed"));
+        QString("No Scan Provider registered | Local Mock only"));
 
     BuiltinPropertyPageProvider pages(&controller);
     const Core::PropertyPageContext masterContext = controller.treeModel()->contextForIndex(master);
@@ -4934,12 +5221,19 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
 
     QTRY_VERIFY(controller.scanAvailable());
     QTRY_VERIFY(controller.diagnosticsAvailable());
-    QCOMPARE(diagnostics.siblingAtColumn(1).data().toString(), QString("Provider available"));
-    QCOMPARE(controller.treeModel()->index(1, 1, master).data().toString(), QString("Ready to scan"));
+    QCOMPARE(
+        diagnostics.siblingAtColumn(1).data().toString(),
+        QString("Local Mock test diagnostics available"));
+    QCOMPARE(
+        controller.treeModel()->index(1, 1, master).data().toString(),
+        QString("Local Mock test scanner available"));
     QCOMPARE(pages.pages(masterContext).size(), 2);
 
     diagnosticsProvider.setAvailable(false);
     QTRY_VERIFY(!controller.diagnosticsAvailable());
+    QCOMPARE(
+        diagnostics.siblingAtColumn(1).data().toString(),
+        QString("Local Mock test diagnostics unavailable"));
     QCOMPARE(pages.pages(masterContext).size(), 4);
     diagnosticsProvider.setAvailable(true);
     QTRY_VERIFY(controller.diagnosticsAvailable());
@@ -4948,10 +5242,12 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
     ExtensionSystem::PluginManager::removeObject(&scan);
     QTRY_VERIFY(!controller.diagnosticsAvailable());
     QTRY_VERIFY(!controller.scanAvailable());
-    QCOMPARE(diagnostics.siblingAtColumn(1).data().toString(), QString("Plugin not installed"));
+    QCOMPARE(
+        diagnostics.siblingAtColumn(1).data().toString(),
+        QString("No Diagnostics Provider registered | Local Mock only"));
     QCOMPARE(
         controller.treeModel()->index(1, 1, master).data().toString(),
-        QString("Scan plugin not installed"));
+        QString("No Scan Provider registered | Local Mock only"));
 }
 
 } // namespace EtherCAT::Workbench::Internal

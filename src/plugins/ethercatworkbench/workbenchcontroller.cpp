@@ -139,6 +139,76 @@ static QString uniqueSlaveName(
     }
 }
 
+static int optionalProviderScore(Core::Provider *provider, Core::ProviderKind kind)
+{
+    if (kind == Core::ProviderKind::Scan) {
+        const auto scan = qobject_cast<Core::ScanProvider *>(provider);
+        if (!scan)
+            return -1;
+        if (scan->lastScanResult())
+            return 3;
+        switch (scan->scanState()) {
+        case Data::ScanState::Preparing:
+        case Data::ScanState::ScanningMaster:
+        case Data::ScanState::ScanningSlaves:
+        case Data::ScanState::BuildingSnapshot:
+        case Data::ScanState::Comparing:
+            return 2;
+        case Data::ScanState::Failed:
+            return 1;
+        default:
+            return 0;
+        }
+    }
+
+    const auto diagnostics = qobject_cast<Core::DiagnosticsProvider *>(provider);
+    if (!diagnostics)
+        return -1;
+    if (diagnostics->latestSnapshot())
+        return 2;
+    return diagnostics->streamState() == Data::DiagnosticsStreamState::Stopped ? 0 : 1;
+}
+
+static Core::Provider *preferredOptionalProvider(
+    Core::ProviderRegistry *registry,
+    Core::ProviderKind kind,
+    Core::Provider *excluding)
+{
+    if (!registry)
+        return nullptr;
+
+    QList<Core::Provider *> providers;
+    for (Core::Provider *provider : registry->providers(kind)) {
+        if (provider != excluding)
+            providers.append(provider);
+    }
+    std::sort(providers.begin(), providers.end(), [kind](auto *left, auto *right) {
+        const int leftScore = optionalProviderScore(left, kind);
+        const int rightScore = optionalProviderScore(right, kind);
+        const bool leftUsable = left->isAvailable() && leftScore >= 0;
+        const bool rightUsable = right->isAvailable() && rightScore >= 0;
+        if (leftUsable != rightUsable)
+            return leftUsable;
+        if (leftUsable && leftScore != rightScore)
+            return leftScore > rightScore;
+        return left->id().toString() < right->id().toString();
+    });
+    return providers.isEmpty() ? nullptr : providers.first();
+}
+
+static OptionalProviderPresentation optionalProviderPresentation(
+    Core::Provider *provider, Core::ProviderKind kind)
+{
+    if (!provider)
+        return {};
+    const bool available = provider->isAvailable() && optionalProviderScore(provider, kind) >= 0;
+    OptionalProviderPresentation presentation{
+        available ? OptionalProviderState::Available : OptionalProviderState::Unavailable,
+        provider->displayName().trimmed()};
+    presentation.displayName = optionalProviderDisplayName(presentation, kind);
+    return presentation;
+}
+
 WorkbenchController::WorkbenchController(QObject *parent)
     : QObject(parent)
 {
@@ -201,7 +271,6 @@ WorkbenchController::WorkbenchController(QObject *parent)
         [this](Core::Provider *provider) {
             watchOptionalProvider(provider);
             refreshOptionalProviders();
-            refreshProviderPresentation();
         }));
     m_connections.append(connect(
         m_providerRegistry,
@@ -209,12 +278,10 @@ WorkbenchController::WorkbenchController(QObject *parent)
         this,
         [this](Core::Provider *provider) {
             refreshOptionalProviders(provider);
-            refreshProviderPresentation(provider);
         }));
     for (Core::Provider *provider : m_providerRegistry->providers())
         watchOptionalProvider(provider);
     refreshOptionalProviders();
-    refreshProviderPresentation();
     refresh();
 }
 
@@ -248,14 +315,24 @@ Core::ProviderRegistry *WorkbenchController::providerRegistry() const
     return m_providerRegistry;
 }
 
+OptionalProviderPresentation WorkbenchController::scanProviderPresentation() const
+{
+    return m_scanProvider;
+}
+
+OptionalProviderPresentation WorkbenchController::diagnosticsProviderPresentation() const
+{
+    return m_diagnosticsProvider;
+}
+
 bool WorkbenchController::scanAvailable() const
 {
-    return m_scanAvailable;
+    return m_scanProvider.isAvailable();
 }
 
 bool WorkbenchController::diagnosticsAvailable() const
 {
-    return m_diagnosticsAvailable;
+    return m_diagnosticsProvider.isAvailable();
 }
 
 bool WorkbenchController::canInsertDeviceOnSelectedMaster() const
@@ -580,6 +657,14 @@ void WorkbenchController::watchOptionalProvider(Core::Provider *provider)
         Qt::UniqueConnection);
     if (connection)
         m_connections.append(connection);
+    const QMetaObject::Connection displayNameConnection = connect(
+        provider,
+        &Core::Provider::displayNameChanged,
+        this,
+        &WorkbenchController::handleOptionalAvailabilityChanged,
+        Qt::UniqueConnection);
+    if (displayNameConnection)
+        m_connections.append(displayNameConnection);
 
     if (auto scan = qobject_cast<Core::ScanProvider *>(provider)) {
         for (const QMetaObject::Connection &scanConnection :
@@ -587,19 +672,19 @@ void WorkbenchController::watchOptionalProvider(Core::Provider *provider)
                   scan,
                   &Core::ScanProvider::scanStateChanged,
                   this,
-                  &WorkbenchController::handleProviderPresentationChanged,
+                  &WorkbenchController::handleOptionalAvailabilityChanged,
                   Qt::UniqueConnection),
               connect(
                   scan,
                   &Core::ScanProvider::scanProgressChanged,
                   this,
-                  &WorkbenchController::handleProviderPresentationChanged,
+                  &WorkbenchController::handleOptionalAvailabilityChanged,
                   Qt::UniqueConnection),
               connect(
                   scan,
                   &Core::ScanProvider::scanResultChanged,
                   this,
-                  &WorkbenchController::handleProviderPresentationChanged,
+                  &WorkbenchController::handleOptionalAvailabilityChanged,
                   Qt::UniqueConnection)}) {
             if (scanConnection)
                 m_connections.append(scanConnection);
@@ -611,13 +696,13 @@ void WorkbenchController::watchOptionalProvider(Core::Provider *provider)
                   diagnostics,
                   &Core::DiagnosticsProvider::streamStateChanged,
                   this,
-                  &WorkbenchController::handleProviderPresentationChanged,
+                  &WorkbenchController::handleOptionalAvailabilityChanged,
                   Qt::UniqueConnection),
               connect(
                   diagnostics,
                   &Core::DiagnosticsProvider::diagnosticsSnapshotChanged,
                   this,
-                  &WorkbenchController::handleProviderPresentationChanged,
+                  &WorkbenchController::handleOptionalAvailabilityChanged,
                   Qt::UniqueConnection)}) {
             if (diagnosticsConnection)
                 m_connections.append(diagnosticsConnection);
@@ -629,104 +714,54 @@ void WorkbenchController::refreshOptionalProviders(Core::Provider *excluding)
 {
     if (m_shuttingDown || !m_providerRegistry)
         return;
-    const auto isAvailable = [this, excluding](Core::ProviderKind kind) {
-        for (Core::Provider *provider : m_providerRegistry->providers(kind)) {
-            if (provider != excluding && provider->isAvailable())
-                return true;
-        }
-        return false;
-    };
-    const bool scanAvailable = isAvailable(Core::ProviderKind::Scan);
-    const bool diagnosticsAvailable = isAvailable(Core::ProviderKind::Diagnostics);
-    if (m_scanAvailable == scanAvailable && m_diagnosticsAvailable == diagnosticsAvailable)
-        return;
-    m_scanAvailable = scanAvailable;
-    m_diagnosticsAvailable = diagnosticsAvailable;
-    m_treeModel.setOptionalProviders(m_scanAvailable, m_diagnosticsAvailable);
-    emit optionalProvidersChanged();
-}
 
-void WorkbenchController::refreshProviderPresentation(Core::Provider *excluding)
-{
-    if (m_shuttingDown || !m_providerRegistry)
-        return;
+    Core::Provider *scanObject = preferredOptionalProvider(
+        m_providerRegistry, Core::ProviderKind::Scan, excluding);
+    Core::Provider *diagnosticsObject = preferredOptionalProvider(
+        m_providerRegistry, Core::ProviderKind::Diagnostics, excluding);
+    const OptionalProviderPresentation scan = optionalProviderPresentation(
+        scanObject, Core::ProviderKind::Scan);
+    const OptionalProviderPresentation diagnostics = optionalProviderPresentation(
+        diagnosticsObject, Core::ProviderKind::Diagnostics);
 
-    QList<Core::ScanProvider *> scanProviders;
-    for (Core::Provider *provider : m_providerRegistry->providers(Core::ProviderKind::Scan)) {
-        auto scan = qobject_cast<Core::ScanProvider *>(provider);
-        if (scan && scan != excluding && scan->isAvailable())
-            scanProviders.append(scan);
-    }
-    std::sort(scanProviders.begin(), scanProviders.end(), [](const auto *left, const auto *right) {
-        const auto score = [](const Core::ScanProvider *provider) {
-            if (provider->lastScanResult())
-                return 3;
-            switch (provider->scanState()) {
-            case Data::ScanState::Preparing:
-            case Data::ScanState::ScanningMaster:
-            case Data::ScanState::ScanningSlaves:
-            case Data::ScanState::BuildingSnapshot:
-            case Data::ScanState::Comparing:
-                return 2;
-            case Data::ScanState::Failed:
-                return 1;
-            default:
-                return 0;
-            }
-        };
-        const int leftScore = score(left);
-        const int rightScore = score(right);
-        if (leftScore != rightScore)
-            return leftScore > rightScore;
-        return left->id().toString() < right->id().toString();
-    });
-    if (scanProviders.isEmpty()) {
-        m_treeModel.setScanPresentation(std::nullopt);
-    } else {
-        Core::ScanProvider *scan = scanProviders.first();
-        m_treeModel.setScanPresentation(scan->lastScanResult());
+    std::optional<Data::ScanResult> scanResult;
+    if (scan.isAvailable()) {
+        const auto scanProvider = qobject_cast<Core::ScanProvider *>(scanObject);
+        QTC_ASSERT(scanProvider, return);
+        scanResult = scanProvider->lastScanResult();
     }
 
-    QList<Core::DiagnosticsProvider *> diagnosticsProviders;
-    for (Core::Provider *provider : m_providerRegistry->providers(Core::ProviderKind::Diagnostics)) {
-        auto diagnostics = qobject_cast<Core::DiagnosticsProvider *>(provider);
-        if (diagnostics && diagnostics != excluding && diagnostics->isAvailable())
-            diagnosticsProviders.append(diagnostics);
+    Data::DiagnosticsStreamState diagnosticsState = Data::DiagnosticsStreamState::Stopped;
+    Data::DiagnosticsRequest diagnosticsRequest;
+    std::optional<Data::DiagnosticsSnapshot> diagnosticsSnapshot;
+    if (diagnostics.isAvailable()) {
+        const auto diagnosticsProvider = qobject_cast<Core::DiagnosticsProvider *>(
+            diagnosticsObject);
+        QTC_ASSERT(diagnosticsProvider, return);
+        diagnosticsState = diagnosticsProvider->streamState();
+        diagnosticsRequest = diagnosticsProvider->activeRequest();
+        diagnosticsSnapshot = diagnosticsProvider->latestSnapshot();
     }
-    std::sort(
-        diagnosticsProviders.begin(),
-        diagnosticsProviders.end(),
-        [](const auto *left, const auto *right) {
-            const auto score = [](const Core::DiagnosticsProvider *provider) {
-                if (provider->latestSnapshot())
-                    return 2;
-                return provider->streamState() == Data::DiagnosticsStreamState::Stopped ? 0 : 1;
-            };
-            const int leftScore = score(left);
-            const int rightScore = score(right);
-            if (leftScore != rightScore)
-                return leftScore > rightScore;
-            return left->id().toString() < right->id().toString();
-        });
-    if (diagnosticsProviders.isEmpty()) {
-        m_treeModel
-            .setDiagnosticsPresentation(Data::DiagnosticsStreamState::Stopped, {}, std::nullopt);
-    } else {
-        Core::DiagnosticsProvider *diagnostics = diagnosticsProviders.first();
-        m_treeModel.setDiagnosticsPresentation(
-            diagnostics->streamState(), diagnostics->activeRequest(), diagnostics->latestSnapshot());
-    }
+
+    const bool diagnosticsChanged = m_diagnosticsProvider != diagnostics;
+    const bool diagnosticsAvailabilityChanged
+        = m_diagnosticsProvider.isAvailable() != diagnostics.isAvailable();
+    m_scanProvider = scan;
+    m_diagnosticsProvider = diagnostics;
+    m_treeModel.setProviderPresentations(
+        m_scanProvider,
+        m_diagnosticsProvider,
+        scanResult,
+        diagnosticsState,
+        diagnosticsRequest,
+        diagnosticsSnapshot);
+    if (diagnosticsChanged)
+        emit diagnosticsProviderChanged(diagnosticsAvailabilityChanged);
 }
 
 void WorkbenchController::handleOptionalAvailabilityChanged()
 {
     refreshOptionalProviders();
-    refreshProviderPresentation();
-}
-
-void WorkbenchController::handleProviderPresentationChanged()
-{
-    refreshProviderPresentation();
 }
 
 } // namespace EtherCAT::Workbench::Internal

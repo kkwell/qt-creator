@@ -380,6 +380,21 @@ field, QAction, controller transport, or path under upstream Core,
 ProjectExplorer, or the application bootstrap. The Workbench path count remains
 44 and the direct Core patch count remains five.
 
+The Workbench optional-Provider presentation issue changes only existing
+private controller, tree, built-in page, Details, and test files in the
+product-owned `EtherCATWorkbench` plugin plus documentation. It derives
+absent, registered/unavailable, and available presentation from the existing
+public `ProviderRegistry`, `Provider::isAvailable()`, display name, and object
+pool lifecycle signals. Workbench uses one private, atomic producer selection
+for the copied result/snapshot and normalized displayed name, including blank
+name fallback, activity changes, removal, and re-addition; no producer pointer
+crosses into the tree model. It
+adds no Provider, public API, source file, dependency, persistent field,
+QAction, model role, controller transport, network behavior, CMake/qbs entry,
+or path under upstream Core, ProjectExplorer, or the application bootstrap.
+The Workbench path count remains 44 and the direct Core patch count remains
+five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

@@ -33,6 +33,7 @@ public:
         summary->setObjectName("EtherCATWorkbenchPageSummary");
         summary->setWordWrap(true);
         summary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        summary->setAccessibleName(Tr::tr("EtherCAT page summary"));
         tree->setObjectName("EtherCATWorkbenchPageTree");
         tree->setAlternatingRowColors(true);
         tree->setRootIsDecorated(false);
@@ -52,6 +53,7 @@ public:
     void reset(const QString &text, const QStringList &headers)
     {
         summary->setText(text);
+        summary->setAccessibleDescription(text);
         tree->clear();
         tree->setColumnCount(qMax(1, headers.size()));
         tree->setHeaderLabels(headers);
@@ -226,18 +228,53 @@ void BuiltinPropertyPageProvider::updatePage(
         return;
 
     if (pageId == Utils::Id(Constants::ONLINE_PAGE_ID)) {
-        widget->reset(
-            Tr::tr("Online data is unavailable. The Scan and Diagnostics plugins are not "
-                   "installed, and this stage contains no controller protocol."),
-            {});
+        const OptionalProviderPresentation provider
+            = m_controller->diagnosticsProviderPresentation();
+        QString text;
+        if (provider.state == OptionalProviderState::Absent) {
+            text = Tr::tr(
+                "Online data is unavailable. No Diagnostics Provider is registered. V1 "
+                "provides only local Mock diagnostics and contains no controller protocol.");
+        } else if (provider.state == OptionalProviderState::Unavailable) {
+            text = Tr::tr(
+                       "Online data is unavailable. %1 is registered but unavailable. This V1 "
+                       "stage contains no controller protocol.")
+                       .arg(optionalProviderDisplayName(
+                           provider, Core::ProviderKind::Diagnostics));
+        } else {
+            text = Tr::tr(
+                       "%1 is available, but no Online page is active for this selection. No "
+                       "controller protocol is inferred.")
+                       .arg(optionalProviderDisplayName(
+                           provider, Core::ProviderKind::Diagnostics));
+        }
+        widget->reset(text, {});
         return;
     }
 
     if (pageId == Utils::Id(Constants::DIAGNOSTICS_PAGE_ID)) {
-        widget->reset(
-            Tr::tr("Diagnostics plugin not installed. No WKC, DC, link, alarm, or live state data "
-                   "is produced by Workbench."),
-            {});
+        const OptionalProviderPresentation provider
+            = m_controller->diagnosticsProviderPresentation();
+        QString text;
+        if (provider.state == OptionalProviderState::Absent) {
+            text = Tr::tr(
+                "No Diagnostics Provider is registered. V1 provides only local Mock "
+                "diagnostics; Workbench produces no WKC, DC, link, alarm, or live controller "
+                "state.");
+        } else if (provider.state == OptionalProviderState::Unavailable) {
+            text = Tr::tr(
+                       "%1 is registered but unavailable. Workbench produces no WKC, DC, link, "
+                       "alarm, or live controller state.")
+                       .arg(optionalProviderDisplayName(
+                           provider, Core::ProviderKind::Diagnostics));
+        } else {
+            text = Tr::tr(
+                       "%1 is available, but no Diagnostics page is active for this selection. "
+                       "No controller or hardware state is inferred.")
+                       .arg(optionalProviderDisplayName(
+                           provider, Core::ProviderKind::Diagnostics));
+        }
+        widget->reset(text, {});
     }
 }
 

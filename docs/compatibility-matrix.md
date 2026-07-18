@@ -5,7 +5,7 @@
 | Item | Supported or observed baseline | Evidence status |
 |---|---|---|
 | Product branch | `embed-labs` only | Verified |
-| Issue baseline commit | `d8bee5eb96e65333f3999f727438bed0cd439a5f` | Verified |
+| Issue baseline commit | `c757d4c6757e884e854a04a5f7b06336fb6d7734` | Verified |
 | Product version | 20.0.1 | Verified |
 | Recorded Qt Creator merge point | `11ba5cec09dce75db4bc948d98055e338ff59576` | Verified |
 | Qualified product Qt | Homebrew 6.11.0 | Clean Release build and GUI smoke verified |
@@ -114,6 +114,7 @@ function is outside the product target and records migration or recovery.
 | Supported ESI device drag-and-drop | Verified for private stable-ID CopyAction, exact active-Master targeting, append semantics, rejection boundaries, and Project Undo/Redo |
 | Scan UI and topology comparison | Stage 5 verified with Mock provider only |
 | WKC/DC/link diagnostics | Stage 6 verified with Mock provider only |
+| Optional Scan/Diagnostics Provider state | Verified for absent, registered/unavailable, and available states with public `Local Mock` producer names and no installation inference |
 | Zynq protocol | Explicitly out of scope |
 | Real EtherCAT scan | Explicitly out of scope |
 | ECPKG/ECFG/ETIR | Explicitly out of scope |
@@ -519,8 +520,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 36 passed, 0 failed on the offscreen qualification path |
-| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 36, Scan 7, Diagnostics 7; 87 passed, 0 failed in isolated offscreen processes |
+| Focused EtherCATWorkbench plugin tests | 37 passed, 0 failed on the offscreen qualification path |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 37, Scan 7, Diagnostics 7; 88 passed, 0 failed in isolated offscreen processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first navigation keyboard test | Compiled and failed because the navigation container focus proxy was null, as expected |
@@ -547,6 +548,10 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Failure-first unified-status test | Compiled and failed because no Workbench status-bar control was registered, as expected |
 | Failure-first command-strip test | Compiled and failed because EtherCAT Mode had no engineering command strip, as expected |
 | Failure-first provider-state tree test | Failed to compile on missing difference/issue/diagnostics navigation APIs before implementation, as expected |
+| Failure-first optional-Provider presentation test | Compiled and failed on actual `Plugin not installed` versus the truthful absent/Mock contract; 2 passed and 1 failed as expected |
+| Focused optional-Provider presentation test | 3 passed, 0 failed at normal scale |
+| Focused optional-Provider presentation test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
+| Optional-Provider direct Qt renders | Passed at 900 x 600 and 1800 x 1200 with the complete unavailable Mock explanation visible without clipping, overlap, or scale drift |
 | Failure-first context-command test | Failed to compile only on missing Locate Unsupported/Copy Node ID command IDs and Controller requests before implementation, as expected |
 | Failure-first offline-topology test | Failed to compile only on the four missing Add/Remove/Move ActionManager command IDs before implementation, as expected |
 | Failure-first configured-slave General test | Compiled and failed because the editable `EtherCATGeneralName` control did not exist before implementation, as expected |
@@ -651,6 +656,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | macOS accessibility lock-transition observation | One Qt 6.11 accessibility crash was captured during a lock transition; a second RxPDO-selection run remained alive until the Mac locked, so the event is not reproduced and remains a qualification risk |
 | Dynamic property-page provider removal | Passed |
 | Dynamic Scan/Diagnostics availability and removal | Passed |
+| Optional Provider capability truth | Passed for absent, registered/unavailable, available, public display-name refresh without page reconstruction, scored multi-Provider source/name identity, pre-snapshot source neutrality, removal/re-addition, stale-overlay cleanup, no-page/fallback guidance, Search/ToolTip projection, stable selection, and accessibility text |
 | Workbench test-process cleanup | Set-active-project focused normal/2x and the offscreen full-suite process exited 0 after real two-project open/switch/close, widget, controller, selection, and Provider cleanup; this issue adds no thread, timer, future, or Provider |
 | Scan snapshot overlay | Passed for exact, Missing, Added, Revision, Vendor, source label, full-detail search, and aggregate count/severity |
 | Diagnostics snapshot overlay | Passed for Run/OP, SAFEOP/error, AL detail, missing snapshot, alarm/error marker, stopped state, and cleanup |
@@ -802,6 +808,101 @@ or runtime state.
 | Direct upstream Core, ProjectExplorer, or app changes | None |
 | Public API, dependency, persistence, CMake, or qbs changes | None |
 | Network or physical hardware access | Not performed by design |
+
+## EtherCATWorkbench optional-Provider presentation qualification
+
+`ISSUE-WB-OPTIONAL-PROVIDER-STATE-001` is a Workbench-private presentation
+change. It does not add a Provider, public API, controller connection, online
+scan, EtherCAT frame, WKC/DC sample, network access, or persistent value.
+`Available` means only that an existing public Provider contract currently
+reports available; production names retain the explicit `Local Mock` boundary.
+
+| Check | Result |
+|---|---|
+| Failure-first focused test | 2 passed, 1 failed because the old tree reported `Plugin not installed` |
+| Absent state | Passed with no installation inference and explicit local-Mock-only text |
+| Registered/unavailable state | Passed with the selected public Provider name and unavailable text |
+| Available state | Passed with the selected public Provider name; no snapshot, controller, or online state was fabricated |
+| Public display-name change | Passed with immediate tree/Details refresh, a neutral shared fallback for whitespace-only names, and no Details-page reconstruction |
+| Multi-Provider selection | Passed with the same scored Scan/Diagnostics producer supplying the copied data and visible name; stable ID breaks ties |
+| Pre-snapshot Diagnostics | Passed with the selected Provider name and a source-neutral Diagnostics state; the separate `MOCK` source label appears only after `snapshot.mock` is available |
+| Details and built-in placeholders | Passed for absent, unavailable, available-without-page, restoration, and accessible summary text |
+| Search and tooltip consistency | Passed without the obsolete `installed` wording |
+| Provider lifecycle cleanup | Passed for removal, re-addition, availability fallback, stale-overlay removal, stable selection, and no model reset |
+| Focused normal-scale test | 3 passed, 0 failed; exit 0 |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; exit 0 |
+| Direct offscreen renders | 900 x 600 and 1800 x 1200 inspected without clipping, overlap, or scale drift |
+| Complete EtherCATWorkbench suite | 37 passed, 0 failed in an LLDB-supervised isolated offscreen process |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 37, Scan 7, Diagnostics 7; 88 passed, 0 failed in LLDB-supervised isolated processes |
+| Qualified Qt and test build | Qt 6.11.0 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build | `WITH_TESTS=OFF` passed in `qt-creator-build-ethercat-product-qt611` |
+| Product version inventory | All 16 allow-listed plugin dylibs present |
+| Enabled offscreen startup | Stable beyond 12 seconds with clean settings; the target then exited on the intentional SIGTERM with LLDB status 15 |
+| Explicitly disabled startup | Stable beyond 12 seconds with `-noload EtherCATWorkbench`; the target then exited on the intentional SIGTERM with LLDB status 15 |
+| Headless harness setup | A strong-symbol interposer failed before initialization and a weak-symbol interposer was rejected after its inherited DYLD setting aborted arm64e tool-probe children; qualifying runs instead use a process-local LLDB breakpoint to return from `Utils::TouchBar::setApplicationTouchBar()` |
+| Process and crash-report cleanup | No residual Embed Labs or LLDB process and no ReportCrash event or diagnostic report after the final clean breakpoint qualification began at 08:14:00 on 2026-07-18 |
+| Manual desktop interaction | Not run by design; all qualifying executable checks were sandbox-exempt and offscreen with no visible window |
+| `WITH_TESTS=ON` full product build | Not rerun; this Workbench-only issue does not touch the known EasyBoard test include blocker |
+| qbs execution | Not run; qbs 3.2.0 is installed outside `PATH`, and this issue changes no CMake or qbs file |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Public API, dependency, persistence, source-list, CMake, or qbs changes | None |
+| Network or physical hardware access | Not performed by design |
+
+The implementation build used:
+
+```text
+cmake --build /Users/kvell/kk-project/qt-project/qt-creator-build-ethercat-core-qt611 --target EtherCATWorkbench --parallel 2
+```
+
+Each executable test used the test-build `Embed Labs` binary with
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, and
+`-no-crashcheck` under LLDB supervision. The launcher explicitly removed
+`DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`, and `DYLD_FRAMEWORK_PATH`. A
+process-local breakpoint returned from
+`Utils::TouchBar::setApplicationTouchBar()` and continued the target, because
+the current macOS Core otherwise initializes AppKit even with the offscreen
+QPA. This debugger state is not inherited by child processes and is not a
+repository or product change. The focused test added
+`EtherCATWorkbench,testOptionalProviderAvailabilityPresentation`; the 2x run
+also set `QT_SCALE_FACTOR=2`. The isolated regression command was executed once
+for each of `EtherCATCore`, `EtherCATProject`, `EtherCATDevices`,
+`EtherCATWorkbench`, `EtherCATScan`, and `EtherCATDiagnostics`. The test command
+shape was:
+
+```text
+/usr/bin/env -u DYLD_INSERT_LIBRARIES -u DYLD_LIBRARY_PATH \
+  -u DYLD_FRAMEWORK_PATH /usr/bin/xcrun lldb --batch \
+  -o 'settings set target.env-vars QT_QPA_PLATFORM=offscreen CRASH_REPORTER_DISABLE=1' \
+  -o 'breakpoint set --name _ZN5Utils8TouchBar22setApplicationTouchBarEv' \
+  -o 'breakpoint command add 1 -o "thread return" -o "continue"' \
+  -o run -k 'thread backtrace all' -- \
+  <test-build>/Embed\ Labs.app/Contents/MacOS/Embed\ Labs \
+  -no-crashcheck -test <plugin>[,<test-function>]
+```
+
+The product build used:
+
+```text
+cmake --build /Users/kvell/kk-project/qt-project/qt-creator-build-ethercat-product-qt611 --parallel 2
+```
+
+The enabled and disabled product processes used the same clean LLDB breakpoint
+boundary and fresh temporary settings under
+`/private/tmp/embed-labs-source-neutral-product-enabled.LF8jy5` and
+`/private/tmp/embed-labs-source-neutral-product-disabled.Oi5vJ8`, respectively;
+the disabled command additionally used `-noload EtherCATWorkbench`. Each target
+remained stable beyond 12 seconds, then received SIGTERM directly and exited
+with LLDB status 15. Both LLDB sessions exited normally, left no process, and
+generated no ReportCrash event or diagnostic report.
+
+Two earlier interposer experiments are non-qualifying harness failures. The
+strong-symbol build was rejected before application initialization with exit
+134. The weak-symbol build allowed the arm64 target to start, but its inherited
+`DYLD_INSERT_LIBRARIES` setting reached system `clang` and `clang++` probes,
+which require arm64e. Their dyld reports name Embed Labs as the responsible
+parent, explaining the misleading macOS crash dialog. No qualifying run uses
+that library, and final clean breakpoint runs generated no report after 08:14:00
+on 2026-07-18.
 
 ## Verification states
 

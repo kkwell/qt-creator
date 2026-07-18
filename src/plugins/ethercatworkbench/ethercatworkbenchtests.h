@@ -44,6 +44,7 @@ private slots:
     void testEditableStartupWorkflow();
     void testEditableDcWorkflow();
     void testDynamicPropertyProviderRemoval();
+    void testOptionalProviderAvailabilityPresentation();
     void testDynamicOptionalProviders();
 };
 

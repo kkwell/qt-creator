@@ -293,6 +293,43 @@ The create/open wording points to Qt Creator's existing File-menu workflows;
 Workbench neither duplicates those actions nor fabricates a project or online
 state.
 
+## Workbench optional Provider presentation boundary
+
+Workbench observes optional Scan and Diagnostics capabilities only through the
+existing public `ProviderRegistry` and `Provider` contract. Its private
+presentation copies three facts: whether any Provider is registered, whether
+any registered Provider is available, and the deterministically selected
+Provider's public display name. It does not inspect Qt Creator `PluginSpec`, an
+extension installation directory, or producer-private types, so it cannot and
+does not claim that a missing object means a plugin is not installed.
+
+The private state is `Absent`, `Unavailable`, or `Available`. A typed available
+Provider wins over unavailable alternatives. Among available Providers, the
+same activity/result score that selects the copied Scan result or Diagnostics
+snapshot also selects the public display name; stable Provider ID breaks ties.
+Otherwise stable Provider ID ordering chooses the displayed unavailable name.
+Production Scan and Diagnostics names contain `Local Mock`, keeping the V1
+boundary explicit without introducing a producer ID dependency. Whitespace-only
+names are normalized once to a kind-specific neutral `Unnamed ... Provider`
+fallback before the copied presentation reaches any consumer; Workbench does
+not infer a Mock identity from a missing public name. Availability, display-name,
+activity, result, and snapshot signals enter one atomic refresh.
+Object-pool about-to-remove handling applies the same exclusion to both the
+name and copied data before removal, and re-addition is selected from the
+current retained public state.
+
+This is presentation state only. It does not cross a plugin boundary, add a
+public enum or service, transfer a Provider pointer into the model, or change
+action ownership. `Available` does not mean target connected, hardware online,
+or data current. Scan and Diagnostics retain command, page, state-machine,
+timer/thread, snapshot, and shutdown ownership; Workbench retains only copied
+immutable values plus a copied name/state summary. A pre-snapshot Diagnostics
+request remains source-neutral; a separate `MOCK` or `Online` source label
+appears only after a copied snapshot supplies that source state. A pure
+name/source change refreshes Details text without reconstructing its pages. No
+persistence, network, controller protocol, CMake/qbs entry, or upstream Qt
+Creator path is added.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

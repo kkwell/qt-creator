@@ -1148,7 +1148,7 @@ filter/drop-target handoff, real popup-proxy triggering in Workbench and Edit
 mode navigation contexts, active-close fallback, and final cleanup. Its
 recorded direct Qt menu renders are 504 x 376 and 1008 x 752, with the project
 command in a separate group and no clipping or scale drift. The complete
-Workbench suite passes 36 tests on the `QT_QPA_PLATFORM=offscreen`
+Workbench suite passes 37 tests on the `QT_QPA_PLATFORM=offscreen`
 qualification path; no complete-suite 2x run is claimed. Offscreen execution is
 the default automated path so test fixtures do not take desktop focus; no
 desktop interaction is claimed for this issue.
@@ -1308,3 +1308,108 @@ complete Workbench suite now passes 36 tests, and the six isolated EtherCAT
 plugin suites pass 87 tests. All executable qualification runs use
 `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, and `-no-crashcheck`;
 no desktop interaction is claimed.
+
+## Optional Provider availability and Mock identity
+
+`ISSUE-WB-OPTIONAL-PROVIDER-STATE-001` removes an inaccurate capability state
+from the device tree and integrated Details area. Workbench previously reduced
+each optional Scan or Diagnostics capability to one `available` boolean. Both
+an absent Provider and a registered-but-unavailable Provider therefore appeared
+as `Plugin not installed`, while an available Provider appeared only as
+`Provider available` or `Ready to scan` and discarded the producer's explicit
+Mock name.
+
+The Workbench-private presentation now retains three states for each capability:
+
+- `Absent`: no Provider of that kind is registered; the tree says that no
+  Provider is registered and that V1 is local Mock only;
+- `Unavailable`: a Provider is registered but none is currently available;
+- `Available`: at least one registered Provider is available.
+
+For the latter two states, Workbench displays the deterministically selected
+Provider's public `displayName`. The production providers publish `Local Mock
+EtherCAT scanner` and `Local Mock EtherCAT diagnostics`, so the ready and
+unavailable states remain visibly Mock without teaching Workbench producer IDs
+or private implementation types. A whitespace-only public name is normalized
+to the same neutral `Unnamed Scan Provider` or `Unnamed Diagnostics Provider`
+fallback before any tree, Details, tooltip, search, or accessibility projection;
+Workbench does not invent a Mock identity when the Provider did not publish one.
+If several typed Providers are available,
+Workbench selects the same producer for both the copied result/snapshot and the
+visible name: a Scan result wins over an active scan, failure, or idle state;
+a Diagnostics snapshot wins over an active stream or stopped state; stable
+Provider ID breaks ties. If no typed Provider is available, the lowest stable
+registered Provider ID supplies the unavailable name. The controller commits
+the copied presentation to its private tree model in one refresh, so a removed
+or newly active producer cannot leave another producer's name beside stale
+data. `scanAvailable()` and `diagnosticsAvailable()` remain the existing
+convenience booleans for action and page enablement.
+
+This follows Qt Creator's documented object-pool extension pattern: registered
+objects have distinct add and about-to-remove signals, letting clients stop
+using an object before it is unregistered
+([Qt Creator object pool](https://doc.qt.io/qtcreator-extending/pluginmanager.html)).
+Qt Creator also documents installation and activation as separate extension
+states ([activate extensions](https://doc.qt.io/qtcreator/creator-how-to-load-extensions.html)),
+so Workbench no longer infers installation state from the absence of a public
+Provider. It observes only the existing `ProviderRegistry`, `isAvailable()`,
+`displayName`, and their signals; it does not inspect `PluginSpec` or add an
+installation UI.
+
+The built-in Online and Diagnostics placeholders now distinguish absent and
+unavailable Diagnostics Providers and state that no controller protocol or live
+hardware state is present. An available Diagnostics Provider that contributes
+no property page gets a truthful no-page message rather than an installation
+claim. The tree, status/search roles, tooltip, page summary, and accessibility
+description consistently project the same Provider state and name. A
+Diagnostics request that has started but has not produced a snapshot includes
+the selected Provider name and a source-neutral Diagnostics state. A separate
+`MOCK` or `Online` source label appears only after the copied snapshot supplies
+its `mock` value. Provider availability, activity, result/snapshot,
+display-name, removal, and re-addition changes update the presentation without
+a model reset. A pure name/source refresh updates existing Details text without
+destroying its page widgets; availability changes still rebuild the page set
+when required. Copied scan/diagnostic overlays are atomically replaced or
+cleared through the same refresh path.
+
+Beckhoff's official workflow defines offline configuration as having no physical
+I/O, while `Scan Devices` discovers available I/O. Connecting to a remote target
+is an optional preparation step when the controller is not local
+([offline to online configurations](https://infosys.beckhoff.com/content/1033/tc3_automationinterface/242741643.html)).
+Its Online tab displays actual master/slave and frame state only after a target
+connection ([EtherCAT Online tab](https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446518411.html)).
+The local three-state presentation borrows only that clear information boundary:
+it does not reproduce Beckhoff assets, scan hardware, read frames, or imply that
+`Available` means a controller is online.
+
+The failure-first focused test compiled and reported the old actual value
+`Plugin not installed` against the new absent-state contract, producing 2 passes
+and 1 failure. After implementation, the focused lifecycle test passes 3 tests
+at normal scale and 3 tests at `QT_SCALE_FACTOR=2`. It covers absent,
+registered/unavailable, available without a snapshot, public display-name
+changes and blank-name fallback without Details-page reconstruction,
+available-without-page guidance,
+multi-Provider Scan result and Diagnostics snapshot selection, the
+pre-snapshot source-neutral state, stable-ID tie-breaking, removal and re-addition,
+fallback-page restoration, stale-overlay cleanup, Search/ToolTip text, stable
+selection, and accessibility descriptions. Direct 900 x 600 and 1800 x 1200
+offscreen renders of the unavailable Diagnostics page were inspected without
+clipping, overlap, or scale drift.
+
+The complete Workbench suite now passes 37 tests. The six isolated suites pass
+88 tests: Core 17, Project 12, Devices 8, Workbench 37, Scan 7, and Diagnostics
+7. The 16-plugin `WITH_TESTS=OFF` product build and 12-second enabled/disabled
+lifecycle checks pass, followed by intentional SIGTERM target status 15. Because
+this macOS build's Core initializes Touch Bar even for the offscreen QPA,
+executable qualification explicitly clears inherited DYLD variables and uses a
+process-local LLDB breakpoint to return from
+`Utils::TouchBar::setApplicationTouchBar()`. The breakpoint is debugger state,
+not a repository file, product dependency, or normal-launch change. A discarded
+weak-symbol interposer had propagated to arm64e `clang`/`clang++` child probes;
+their reports named Embed Labs as the responsible parent and caused the
+misleading macOS crash dialog. No qualifying run uses that interposer. The clean
+breakpoint runs left no process and generated no ReportCrash event or diagnostic
+report after 08:14:00 on 2026-07-18. This issue adds no thread, timer, future,
+Provider, public API, persistence, dependency, source file, CMake/qbs change,
+upstream Core/ProjectExplorer/app path, network access, or physical-hardware
+claim.

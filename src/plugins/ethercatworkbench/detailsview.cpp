@@ -27,6 +27,29 @@ struct PageCandidate
     Core::PropertyPageDescriptor descriptor;
 };
 
+static QString diagnosticsEmptyState(const OptionalProviderPresentation &provider)
+{
+    const QString displayName = optionalProviderDisplayName(
+        provider, Core::ProviderKind::Diagnostics);
+    switch (provider.state) {
+    case OptionalProviderState::Absent:
+        return Tr::tr(
+            "No Diagnostics Provider is registered. V1 diagnostics are local Mock only; no "
+            "controller connection or hardware state is represented.");
+    case OptionalProviderState::Unavailable:
+        return Tr::tr(
+                   "%1 is registered but unavailable. No controller or hardware state is "
+                   "available.")
+            .arg(displayName);
+    case OptionalProviderState::Available:
+        return Tr::tr(
+                   "%1 is available but does not provide a Diagnostics page for this selection. "
+                   "No controller or hardware state is inferred.")
+            .arg(displayName);
+    }
+    return {};
+}
+
 DetailsView::DetailsView(WorkbenchController *controller, QWidget *parent)
     : QWidget(parent)
     , m_controller(controller)
@@ -93,9 +116,16 @@ DetailsView::DetailsView(WorkbenchController *controller, QWidget *parent)
     }
     connect(
         controller,
-        &WorkbenchController::optionalProvidersChanged,
+        &WorkbenchController::diagnosticsProviderChanged,
         this,
-        &DetailsView::rebuildPages);
+        [this](bool availabilityChanged) {
+            if (availabilityChanged) {
+                rebuildPages();
+                return;
+            }
+            refreshPageContents();
+            updateNoPageState();
+        });
     connect(controller->treeModel(), &QAbstractItemModel::modelReset, this, [this] {
         if (m_context.nodeKind == Core::WorkbenchNodeKind::None)
             rebuildPages();
@@ -220,13 +250,7 @@ void DetailsView::rebuildPages()
     const bool havePages = !m_pages.isEmpty();
     m_tabs->setVisible(havePages);
     m_emptyState->setVisible(!havePages);
-    if (!havePages) {
-        m_emptyState->setText(
-            m_context.nodeKind == Core::WorkbenchNodeKind::Diagnostics
-                ? Tr::tr("Diagnostics plugin is not installed.")
-                : Tr::tr("No property page provider supports this node."));
-        m_emptyState->setAccessibleDescription(m_emptyState->text());
-    }
+    updateNoPageState();
 }
 
 void DetailsView::updateEmptyState()
@@ -239,6 +263,19 @@ void DetailsView::updateEmptyState()
             : Tr::tr("No EtherCAT project is open. Create or open an EtherCAT project "
                      "(.ecatproject), or select Device Repository to inspect local ESI "
                      "descriptions."));
+    m_emptyState->setAccessibleDescription(m_emptyState->text());
+}
+
+void DetailsView::updateNoPageState()
+{
+    if (!m_pages.isEmpty() || m_context.nodeKind == Core::WorkbenchNodeKind::None)
+        return;
+    m_emptyState->setText(m_context.nodeKind == Core::WorkbenchNodeKind::Diagnostics
+                              ? diagnosticsEmptyState(
+                                    m_controller
+                                        ? m_controller->diagnosticsProviderPresentation()
+                                        : OptionalProviderPresentation())
+                              : Tr::tr("No property page provider supports this node."));
     m_emptyState->setAccessibleDescription(m_emptyState->text());
 }
 
