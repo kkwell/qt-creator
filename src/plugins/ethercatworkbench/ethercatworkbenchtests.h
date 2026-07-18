@@ -27,6 +27,7 @@ private slots:
     void testEditableMasterGeneralWorkflow();
     void testEditableConfiguredSlaveGeneralWorkflow();
     void testTwinCatMasterEtherCATWorkflow();
+    void testMasterTopologyDialogBounds();
     void testEditableConfiguredSlaveEtherCATWorkflow();
     void testStatusBarTracksStateService();
     void testTreeModelLargeIncrementalUpdate();

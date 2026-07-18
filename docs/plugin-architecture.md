@@ -765,6 +765,40 @@ and
 Beckhoff's Process Data table hierarchy remains only the product comparison:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html>.
 
+## Screen-bound offline topology dialog
+
+The private `EtherCATPage` owns the master Topology dialog, its stack lifetime,
+and its read-only table geometry. `ISSUE-WB-TOPOLOGY-DIALOG-BOUNDS-001`, based
+on `9e56cfebbd09766ea7ae326b5741acb95fecb274`, removes the table's unbounded
+full-content minimum width. It does not move the dialog into a Provider or
+introduce a retained dialog object.
+
+The page still calculates the complete ten-column preferred width after
+`ResizeToContents`. It activates the dialog layout, expands the preferred
+width when that complete content fits, and then bounds the initial size to the
+current page screen's `availableGeometry()` with existing `SpacingTokens` as
+work-area insets. The page screen is authoritative because the stack dialog
+has not yet been shown; this follows the local centered Locator popup pattern.
+The resulting rectangle is centered within that same work area. When the full
+content is wider, `ElideNone` and `ScrollBarAsNeeded` preserve it behind the
+ordinary horizontal viewport instead of enlarging the top-level window.
+
+No screen, dialog, table item, model index, Project snapshot, Provider, or
+controller object is stored across calls. The existing modal stack lifetime
+and close path remain authoritative. The change does not alter slave ordering,
+selection, Project mutation, Undo/Redo, persistence, empty topology behavior,
+or the Mock/offline source boundary. It adds no source file, public API,
+dependency, Provider, thread, timer, network/controller transport, online
+state, physical-port model, or hardware behavior. No CMake or qbs description
+changed.
+
+Qt defines the relevant boundaries in
+<https://doc.qt.io/qt-6/qheaderview.html#ResizeMode-enum>,
+<https://doc.qt.io/qt-6/qscreen.html#availableGeometry-prop>, and
+<https://doc.qt.io/qt-6/qabstractscrollarea.html#horizontalScrollBarPolicy-prop>.
+Beckhoff's Topology dialog remains a product comparison only:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446515467.html>.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

@@ -18,6 +18,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScreen>
 #include <QSpinBox>
 #include <QStyle>
 #include <QTreeWidget>
@@ -423,6 +424,7 @@ void EtherCATPage::showMasterTopology()
     table->setRootIsDecorated(false);
     table->setUniformRowHeights(true);
     table->setTextElideMode(Qt::ElideNone);
+    table->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     table->setHeaderLabels(
         {Tr::tr("Position"),
          Tr::tr("Name"),
@@ -454,11 +456,11 @@ void EtherCATPage::showMasterTopology()
                  QString::number(slave.alias),
                  Tr::tr("Offline configured")}));
     }
+    table->header()->resizeSections(QHeaderView::ResizeToContents);
     const int topologyWidth
         = table->header()->length()
           + table->style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, table)
           + table->frameWidth() * 2;
-    table->setMinimumWidth(topologyWidth);
 
     auto buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
     buttons->setObjectName("EtherCATMasterTopologyButtons");
@@ -474,6 +476,25 @@ void EtherCATPage::showMasterTopology()
     layout->addWidget(summary);
     layout->addWidget(table, 1);
     layout->addWidget(buttons);
+
+    layout->activate();
+    QSize preferredSize = dialog.sizeHint();
+    const QMargins layoutMargins = layout->contentsMargins();
+    preferredSize.setWidth(
+        qMax(preferredSize.width(),
+             topologyWidth + layoutMargins.left() + layoutMargins.right()));
+    if (const QScreen *screen = this->screen()) {
+        const QRect availableGeometry = screen->availableGeometry().marginsRemoved(
+            {Utils::StyleHelper::SpacingTokens::PaddingHM,
+             Utils::StyleHelper::SpacingTokens::PaddingVM,
+             Utils::StyleHelper::SpacingTokens::PaddingHM,
+             Utils::StyleHelper::SpacingTokens::PaddingVM});
+        QRect dialogGeometry(QPoint(), preferredSize.boundedTo(availableGeometry.size()));
+        dialogGeometry.moveCenter(availableGeometry.center());
+        dialog.setGeometry(dialogGeometry);
+    } else {
+        dialog.resize(preferredSize);
+    }
 
     dialog.exec();
 }

@@ -640,6 +640,23 @@ direct Core patch budget does not increase and no extension-point exception is
 required. The Workbench path count remains 44 and the direct upstream Core
 patch count remains five.
 
+The Workbench topology dialog bounds issue, based on
+`9e56cfebbd09766ea7ae326b5741acb95fecb274`, changes only the existing
+product-owned `ethercatpage.cpp`, Workbench test declaration/implementation,
+and documentation. It replaces the private table's unbounded full-content
+minimum width with a preferred dialog geometry bounded and centered against
+the current Workbench page screen. The existing full section sizes,
+`ElideNone`, horizontal scrolling, offline values, and modal ownership remain
+inside the Workbench plugin.
+
+No source file, dependency, CMake/qbs entry, public API, Project format,
+Provider, persistence, Project command, controller transport, online data,
+physical-port model, network behavior, or physical-hardware behavior changes.
+No file under Qt Creator's upstream Core, ProjectExplorer, or application
+bootstrap changes, so the direct Core patch budget does not increase and no
+extension-point exception is required. The Workbench path count remains 44
+and the direct upstream Core patch count remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

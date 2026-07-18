@@ -2415,3 +2415,73 @@ dependency, Provider, persistence, Project mutation, thread, timer,
 network/controller transport, or physical-hardware behavior. No CMake or qbs
 file changed, so qbs was not run. The Workbench path count remains 44 and the
 direct upstream Core patch count remains five.
+
+## Offline topology dialog screen-bound qualification
+
+`ISSUE-WB-TOPOLOGY-DIALOG-BOUNDS-001` is based on local baseline
+`9e56cfebbd09766ea7ae326b5741acb95fecb274`. It closes one bounded Workbench
+interaction gap: a valid long Unicode slave name could make the read-only
+Topology dialog wider than the current screen.
+
+The existing table still uses ten `ResizeToContents` columns and `ElideNone`,
+so the Project values are neither rewritten nor truncated. The dialog now
+uses the selected Workbench page's screen and `availableGeometry()` to bound
+and center its initial geometry. Short content keeps its natural preferred
+width when it fits. Long content keeps the full section widths and is
+recovered with the table's horizontal scrollbar. The first and last columns,
+the complete long Name and Previous values, and the Close button therefore
+remain reachable without forcing the top-level window beyond the screen.
+
+Qt documents the full-content section policy in
+[QHeaderView::ResizeToContents](https://doc.qt.io/qt-6/qheaderview.html#ResizeMode-enum),
+the work-area boundary in
+[QScreen::availableGeometry](https://doc.qt.io/qt-6/qscreen.html#availableGeometry-prop),
+and the as-needed scrollbar contract in
+[QAbstractScrollArea](https://doc.qt.io/qt-6/qabstractscrollarea.html#horizontalScrollBarPolicy-prop).
+Qt Creator's local centered Locator popup uses the parent widget's screen
+before the popup is visible. Beckhoff's
+[EtherCAT master page](https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446515467.html)
+remains the product comparison for opening a configured-slave topology view;
+Embed Labs still presents offline Project data only and does not claim online
+values or physical-port modeling.
+
+The failure-first run under
+`/private/tmp/embed-labs-topology-bounds-failure.UNq9D8` passed test setup and
+cleanup but failed the new workflow because the old dialog was 13235 logical
+pixels wide on an 800-pixel available screen. After the implementation, the
+focused normal-scale and `QT_SCALE_FACTOR=2` runs each pass three events under
+`/private/tmp/embed-labs-topology-bounds-qualified-normal.3ci48Z` and
+`/private/tmp/embed-labs-topology-bounds-qualified-2x.RUpPcy`. Their 784-by-279 and
+768-by-558 pixel renders show the horizontally scrolled final columns and an
+available Close button. The regression also proves two Chinese/Unicode names
+with 512-character payloads are preserved verbatim, the second row's Previous
+value retains the first complete name, both scrollbar endpoints expose their
+respective edge column, and both the client and frame geometry stay inside the
+current screen at both scales.
+
+Complete normal-scale and 2x Workbench runs each pass 47 events under
+`/private/tmp/embed-labs-topology-workbench-qualified-normal.P95AUC` and
+`/private/tmp/embed-labs-topology-workbench-qualified-2x.OJXAsW`. The six isolated
+EtherCAT suites pass 98 events: Core 17, Project 12, Devices 8, Workbench 47,
+Scan 7, and Diagnostics 7. The final `WITH_TESTS=OFF` product build passes and
+contains exactly the 16 allow-listed plugin dylibs.
+
+Enabled product startup under
+`/private/tmp/embed-labs-topology-product-enabled-final2.IuIojz` remained alive
+for 33 seconds. Startup with `-noload EtherCATWorkbench` under
+`/private/tmp/embed-labs-topology-product-disabled-final.9EKJ0H` remained alive
+for 32 seconds; one non-fatal shared-memory initialization message did not
+interrupt it. LLDB passed the intentional SIGTERM to each target, which exited
+with status 15. Cleanup found no residual target/LLDB process and no new Embed
+Labs or LLDB DiagnosticReports file.
+
+Every executable used fresh HOME/settings, cleared inherited DYLD variables,
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and
+only the process-local Touch Bar LLDB breakpoint. No visible main window or
+crash dialog was created. This issue changes only the existing private
+`ethercatpage.cpp`, Workbench test declaration/implementation, and
+documentation. It adds no source file, public API, dependency, Provider,
+persistence, Project mutation, thread, timer, network/controller transport,
+online data, physical-port model, or physical-hardware behavior. No CMake or
+qbs file changed, so qbs was not run. The Workbench path count remains 44 and
+the direct upstream Core patch count remains five.

@@ -63,6 +63,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QScreen>
 #include <QSet>
 #include <QSignalSpy>
 #include <QScopeGuard>
@@ -3027,6 +3028,192 @@ void EtherCATWorkbenchTests::testTwinCatMasterEtherCATWorkflow()
     QTRY_VERIFY(!projectService->project(file.projectId).has_value());
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+void EtherCATWorkbenchTests::testMasterTopologyDialogBounds()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Data::DeviceSummary
+        device{Data::NodeId::create(), {2, 0x5678, 0x11}, "Mock Servo", "AX5000", "Drives", true};
+    const TestProjectFile file = writeProjectWithSlave(directory, device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (projectService->project(file.projectId)) {
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        }
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+
+    const QString firstName = QString::fromUtf8("包装线一号轴站 Ω / ")
+                              + QString(512, QChar(u'甲')) + " / First";
+    const QString secondName = QString::fromUtf8("包装线二号轴站 Ω / ")
+                               + QString(512, QLatin1Char('B')) + " / Second";
+    QList<Data::OfflineSlaveConfiguration> slaves = projectService->project(file.projectId)->slaves;
+    QCOMPARE(slaves.size(), 1);
+    slaves[0].name = firstName;
+    Data::OfflineSlaveConfiguration secondSlave = slaves.first();
+    secondSlave.id = Data::NodeId::create();
+    secondSlave.position = 1;
+    secondSlave.serialNumber = 18;
+    secondSlave.alias = 4;
+    secondSlave.name = secondName;
+    slaves.append(secondSlave);
+    QVERIFY_RESULT(projectService->replaceOfflineSlaves(file.projectId, file.masterId, slaves));
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 2);
+
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    DetailsView details(&controller);
+    details.resize(1180, 760);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::ETHERCAT_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page);
+    QTRY_VERIFY(page->isVisible());
+    QPushButton *topology
+        = page->findChild<QPushButton *>("EtherCATMasterEthercatTopology");
+    QVERIFY(topology);
+
+    bool dialogOpened = false;
+    bool rowsPreserved = false;
+    bool firstColumnVisible = false;
+    bool lastColumnVisible = false;
+    bool closeButtonUsable = false;
+    bool dialogTimedOut = false;
+    QSize dialogSize;
+    QRect dialogGeometry;
+    QRect dialogFrameGeometry;
+    QRect availableGeometry;
+    int tableMinimumWidth = -1;
+    int horizontalMaximum = -1;
+    QTimer inspectionTimer;
+    inspectionTimer.setInterval(0);
+    connect(&inspectionTimer, &QTimer::timeout, &details, [&] {
+        auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog)
+            return;
+        inspectionTimer.stop();
+        dialogOpened = true;
+        QTreeWidget *table = dialog->findChild<QTreeWidget *>("EtherCATMasterTopologyTable");
+        QDialogButtonBox *buttons
+            = dialog->findChild<QDialogButtonBox *>("EtherCATMasterTopologyButtons");
+        if (table && buttons) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            const QScreen *screen = dialog->screen();
+            if (screen)
+                availableGeometry = screen->availableGeometry();
+            dialogSize = dialog->size();
+            dialogGeometry = dialog->geometry();
+            dialogFrameGeometry = dialog->frameGeometry();
+            tableMinimumWidth = table->minimumWidth();
+            horizontalMaximum = table->horizontalScrollBar()->maximum();
+            if (table->topLevelItemCount() == 2) {
+                const QTreeWidgetItem *first = table->topLevelItem(0);
+                const QTreeWidgetItem *second = table->topLevelItem(1);
+                rowsPreserved = first->text(0) == "0" && first->text(1) == firstName
+                                && first->text(3) == "EtherCAT Master"
+                                && first->text(4) == "Not modeled"
+                                && first->text(9) == "Offline configured"
+                                && second->text(0) == "1" && second->text(1) == secondName
+                                && second->text(3) == firstName
+                                && second->text(4) == "Not modeled"
+                                && second->text(9) == "Offline configured";
+            }
+
+            table->horizontalScrollBar()->setValue(table->horizontalScrollBar()->minimum());
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            const QModelIndex firstIndex = table->model()->index(0, 0);
+            firstColumnVisible = table->viewport()->rect().contains(table->visualRect(firstIndex));
+            table->horizontalScrollBar()->setValue(table->horizontalScrollBar()->maximum());
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            const QModelIndex lastIndex = table->model()->index(1, 9);
+            lastColumnVisible = table->viewport()->rect().contains(table->visualRect(lastIndex));
+
+            QAbstractButton *closeButton = buttons->button(QDialogButtonBox::Close);
+            closeButtonUsable = closeButton && closeButton->isVisible() && closeButton->isEnabled();
+            const QString renderPath
+                = qEnvironmentVariable("ETHERCAT_WORKBENCH_TOPOLOGY_BOUNDS_RENDER_PATH");
+            if (!renderPath.isEmpty())
+                rowsPreserved &= dialog->grab().save(renderPath);
+        }
+        dialog->reject();
+    });
+    QTimer timeoutTimer;
+    timeoutTimer.setSingleShot(true);
+    connect(&timeoutTimer, &QTimer::timeout, &details, [&] {
+        dialogTimedOut = true;
+        if (auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+            dialog->reject();
+    });
+    inspectionTimer.start();
+    timeoutTimer.start(5000);
+    topology->click();
+    inspectionTimer.stop();
+    timeoutTimer.stop();
+
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+
+    QVERIFY(dialogOpened);
+    QVERIFY(!dialogTimedOut);
+    QVERIFY(rowsPreserved);
+    QVERIFY(availableGeometry.isValid());
+    QVERIFY2(
+        dialogSize.width() <= availableGeometry.width(),
+        qPrintable(
+            QString("Topology dialog width %1 exceeds available screen width %2")
+                .arg(dialogSize.width())
+                .arg(availableGeometry.width())));
+    QVERIFY2(
+        dialogSize.height() <= availableGeometry.height(),
+        qPrintable(
+            QString("Topology dialog height %1 exceeds available screen height %2")
+                .arg(dialogSize.height())
+                .arg(availableGeometry.height())));
+    const auto rectText = [](const QRect &rect) {
+        return QString("(%1,%2 %3x%4)")
+            .arg(rect.x())
+            .arg(rect.y())
+            .arg(rect.width())
+            .arg(rect.height());
+    };
+    QVERIFY2(
+        availableGeometry.contains(dialogGeometry),
+        qPrintable(
+            QString("Topology dialog geometry %1 is outside available geometry %2")
+                .arg(rectText(dialogGeometry))
+                .arg(rectText(availableGeometry))));
+    QVERIFY2(
+        availableGeometry.contains(dialogFrameGeometry),
+        qPrintable(
+            QString("Topology dialog frame %1 is outside available geometry %2")
+                .arg(rectText(dialogFrameGeometry))
+                .arg(rectText(availableGeometry))));
+    QVERIFY2(
+        tableMinimumWidth <= availableGeometry.width(),
+        qPrintable(
+            QString("Topology table minimum width %1 exceeds available screen width %2")
+                .arg(tableMinimumWidth)
+                .arg(availableGeometry.width())));
+    QVERIFY(horizontalMaximum > 0);
+    QVERIFY(firstColumnVisible);
+    QVERIFY(lastColumnVisible);
+    QVERIFY(closeButtonUsable);
 }
 
 void EtherCATWorkbenchTests::testEditableConfiguredSlaveEtherCATWorkflow()

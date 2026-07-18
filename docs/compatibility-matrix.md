@@ -1507,6 +1507,44 @@ and
 Beckhoff's Process Data comparison is
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html>.
 
+## EtherCATWorkbench topology dialog bounds qualification
+
+`ISSUE-WB-TOPOLOGY-DIALOG-BOUNDS-001` uses local baseline
+`9e56cfebbd09766ea7ae326b5741acb95fecb274`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first regression | Setup and cleanup passed; the old implementation failed because a valid long-name topology dialog was 13235 logical pixels wide on an 800-pixel available screen under `/private/tmp/embed-labs-topology-bounds-failure.UNq9D8` |
+| Screen boundary | Initial client and frame geometry stay inside the current Workbench page screen's `availableGeometry()` with token-based work-area insets |
+| Full offline values | Two Chinese/Unicode slave names with 512-character payloads are preserved verbatim in Name; the first complete name is also preserved in the second row's Previous cell |
+| Horizontal recovery | `ResizeToContents` and `ElideNone` remain; the as-needed horizontal scrollbar has a positive range, the first column is visible at minimum, and Status is visible at maximum |
+| Dialog operation | Summary, ten columns, Offline/Not modeled boundaries, and a visible enabled Close button remain intact |
+| Focused normal-scale test | 3 passed, 0 failed under `/private/tmp/embed-labs-topology-bounds-qualified-normal.3ci48Z`; render is 784 by 279 pixels |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed under `/private/tmp/embed-labs-topology-bounds-qualified-2x.RUpPcy`; render is 768 by 558 pixels |
+| Complete EtherCATWorkbench normal scale | 47 passed, 0 failed under `/private/tmp/embed-labs-topology-workbench-qualified-normal.P95AUC` |
+| Complete EtherCATWorkbench 2x scale | 47 passed, 0 failed under `/private/tmp/embed-labs-topology-workbench-qualified-2x.OJXAsW` |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 47, Scan 7, Diagnostics 7; 98 passed, 0 failed in isolated LLDB-supervised offscreen processes |
+| Qualified Qt and test build | Qt 6.11 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build | Full `WITH_TESTS=OFF` build passed in `qt-creator-build-ethercat-product-qt611` |
+| Product inventory | Exactly the 16 allow-listed plugin dylibs are present |
+| Enabled offscreen startup | Process stayed alive for 33 seconds under `/private/tmp/embed-labs-topology-product-enabled-final2.IuIojz`; intentional SIGTERM produced target status 15 |
+| Explicitly disabled startup | Process stayed alive for 32 seconds with `-noload EtherCATWorkbench` under `/private/tmp/embed-labs-topology-product-disabled-final.9EKJ0H`; intentional SIGTERM produced target status 15; one non-fatal shared-memory message did not interrupt startup |
+| Process and crash-report cleanup | No residual target/LLDB process and no new Embed Labs/LLDB DiagnosticReports file |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no visible main window or crash dialog |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, online data, physical-port model, or hardware access | Not performed or added; Topology remains a read-only offline Project view |
+
+Qt's sizing and scrolling contracts are documented at
+<https://doc.qt.io/qt-6/qheaderview.html#ResizeMode-enum>,
+<https://doc.qt.io/qt-6/qscreen.html#availableGeometry-prop>, and
+<https://doc.qt.io/qt-6/qabstractscrollarea.html#horizontalScrollBarPolicy-prop>.
+Qt Creator's local centered Locator popup uses the parent widget's screen when
+the popup is not yet visible. Beckhoff's selected-master Topology entry is
+documented at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446515467.html>.
+
 ## Verification states
 
 Use only these evidence labels:
