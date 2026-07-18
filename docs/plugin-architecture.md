@@ -699,6 +699,37 @@ service, Provider, role, persistence field, source file, dependency, thread,
 timer, SDO/controller transport, network access, or physical-hardware claim.
 No CMake or qbs description changed.
 
+## Workbench insert-device target lifecycle boundary
+
+The private Master-side insert dialog retains only the stable Project and
+Master IDs that identified its target when it opened. ProjectService remains
+the sole Project-lifecycle owner. `projectAboutToBeRemoved`,
+`activeProjectChanged`, and matching `projectChanged` notifications invalidate
+the open dialog when the target Project closes, loses validity or activity, or
+no longer publishes the same Master.
+
+Each notification connection uses the dialog as its QObject context and
+therefore cannot outlive the stack-scoped dialog. A visibility guard makes
+overlapping lifecycle notifications idempotent. Rejection exits before the
+existing add command and retains no Project snapshot, model index, widget, or
+service pointer for later mutation. The accepted path and Project-owned
+revalidation remain unchanged.
+
+Qt's rejected-dialog and context-object connection contracts are documented
+at <https://doc.qt.io/qt-6/qdialog.html> and
+<https://doc.qt.io/qt-6/qobject.html>. Qt Creator 20.0 provides a local
+Project-lifecycle precedent by removing Project-bound UI on
+`aboutToRemoveProject`:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectwindow.cpp#L1509-L1515>.
+Beckhoff's selected-target insertion flow is only the product comparison:
+<https://infosys.beckhoff.com/content/1033/eap/1521664395.html>.
+
+This boundary adds no public service or API, source file, dependency,
+persistence field, Provider, thread, timer, network/controller transport,
+physical-hardware behavior, CMake/qbs entry, or path under upstream Core,
+ProjectExplorer, or the application bootstrap. The Workbench path count
+remains 44 and the direct upstream Core patch count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

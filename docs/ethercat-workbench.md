@@ -2285,3 +2285,53 @@ network access, or physical-hardware behavior. The existing Add-to-Startup
 ProjectService path is unchanged. No CMake or qbs file changed, so qbs was not
 run. The Workbench path count remains 44 and the direct upstream Core patch
 count remains five.
+
+## Insert-device dialog target lifecycle
+
+`ISSUE-WB-INSERT-DIALOG-TARGET-LIFECYCLE-001` is based on local baseline
+`a0b68e7313b80e4292a135966f7ead4c4e131656`. The Master-side `Add New
+Item...` dialog now captures only the selected Project and Master IDs before
+it opens. If that Project starts closing, a different Project becomes active,
+the Project becomes invalid, or its published snapshot no longer contains the
+same Master, the visible dialog rejects immediately. No device is added and no
+late validation error is shown for the stale target.
+
+The three ProjectService notifications are connected with the dialog as the
+QObject context, so every connection disappears with the dialog. Rejection is
+guarded by dialog visibility; overlapping close and active-project
+notifications therefore produce at most one `rejected` signal. The existing
+accepted path still resolves and submits through the Project-owned command.
+
+Qt documents the rejected-dialog result and lifetime-aware connection
+contracts in [QDialog](https://doc.qt.io/qt-6/qdialog.html) and
+[QObject](https://doc.qt.io/qt-6/qobject.html). Qt Creator 20.0 removes
+Project-bound UI as soon as `aboutToRemoveProject` is published in
+[`ProjectWindow`](https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectwindow.cpp#L1509-L1515).
+Beckhoff's comparison flow inserts a device beneath the selected I/O target
+([Add New Item / Insert Device](https://infosys.beckhoff.com/content/1033/eap/1521664395.html)).
+The exact close-on-target-invalidation behavior is an Embed Labs Qt-native
+safety boundary.
+
+The failure-first run reached setup and cleanup but failed the new assertion
+because the old dialog remained open after an active-project switch. Final
+focused normal-scale and `QT_SCALE_FACTOR=2` runs each pass six tests: setup,
+the four target-invalidation rows, and cleanup. The complete Workbench suite
+passes 45 tests. The six isolated EtherCAT suites pass 96 tests: Core 17,
+Project 12, Devices 8, Workbench 45, Scan 7, and Diagnostics 7. The final
+`WITH_TESTS=OFF` product build also passes.
+
+Enabled product startup and startup with `-noload EtherCATWorkbench` each
+remained stable for more than 30 seconds. Both were stopped intentionally
+under LLDB. The disabled run emitted one non-fatal shared-memory initialization
+message and continued through startup. Cleanup found no residual Embed Labs
+process and no new Embed Labs diagnostic report. Every executable used fresh
+HOME/settings, cleared inherited DYLD variables, `QT_QPA_PLATFORM=offscreen`,
+`CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch
+Bar LLDB breakpoint. No main window or crash dialog became visible to the
+user.
+
+This issue changes only existing private Workbench UI/test files and
+documentation. It adds no source file, public API, dependency, persistence,
+Provider, thread, timer, network/controller transport, or physical-hardware
+behavior. No CMake or qbs file changed, so qbs was not run. The Workbench path
+count remains 44 and the direct upstream Core patch count remains five.

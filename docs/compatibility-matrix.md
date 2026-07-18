@@ -1431,6 +1431,40 @@ object-dictionary comparison:
 The atomic clear and address-based restoration are Embed Labs Qt-native
 behavior.
 
+## EtherCATWorkbench insert-device target-lifecycle qualification
+
+`ISSUE-WB-INSERT-DIALOG-TARGET-LIFECYCLE-001` uses local baseline
+`a0b68e7313b80e4292a135966f7ead4c4e131656`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first regression | Setup and cleanup passed; the old implementation failed because an active-project switch did not reject the open insert dialog |
+| Active Project changes | Dialog rejects immediately; neither Project snapshot is mutated |
+| Target Project closes | `projectAboutToBeRemoved` rejects the dialog before the target disappears |
+| Target Master disappears or Project invalidates | The matching `projectChanged` snapshot rejects the dialog when the stable Master is absent or the Project is invalid |
+| Duplicate lifecycle notifications | Visibility guard limits rejection to one `rejected` signal and prevents late error presentation |
+| Focused normal-scale test | Six passed, zero failed: setup, four invalidation rows, and cleanup |
+| Focused 2x-scale test | Six passed, zero failed with `QT_SCALE_FACTOR=2` |
+| Complete EtherCATWorkbench suite | 45 passed, zero failed |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 45, Scan 7, Diagnostics 7; 96 passed, zero failed |
+| Product build | `WITH_TESTS=OFF` passed in `qt-creator-build-ethercat-product-qt611` |
+| Enabled offscreen startup | Stable for more than 30 seconds; stopped intentionally under LLDB |
+| Explicitly disabled startup | Stable for more than 30 seconds with `-noload EtherCATWorkbench`; one non-fatal shared-memory initialization message did not prevent startup; stopped intentionally under LLDB |
+| Process and crash-report cleanup | No residual Embed Labs process and no new Embed Labs DiagnosticReports file |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no main window or crash dialog became visible to the user |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network or physical hardware access | Not performed; the workflow remains an offline Project mutation |
+
+Qt's dialog and connection-lifetime contracts are documented at
+<https://doc.qt.io/qt-6/qdialog.html> and
+<https://doc.qt.io/qt-6/qobject.html>. Qt Creator's Project removal precedent
+is the immediate deregistration in
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectwindow.cpp#L1509-L1515>.
+Beckhoff's selected-target insertion flow is documented at
+<https://infosys.beckhoff.com/content/1033/eap/1521664395.html>.
+
 ## Verification states
 
 Use only these evidence labels:

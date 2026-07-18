@@ -26,6 +26,8 @@
 #include <QMenu>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 namespace EtherCAT::Workbench::Internal {
 
 class WorkbenchModeWidget final : public QWidget
@@ -71,9 +73,53 @@ public:
         connect(controller, &WorkbenchController::insertDeviceRequested, this, [this, controller] {
             const Data::NodeId masterId = controller->selectedOfflineMasterId();
             Core::DeviceRepositoryProvider *repository = controller->deviceRepository();
-            if (masterId.isNull() || !repository)
+            Core::ProjectService *projectService = controller->projectService();
+            const Core::PropertyPageContext targetContext
+                = controller->treeModel()->contextForNodeId(masterId);
+            const Data::NodeId projectId = targetContext.projectId;
+            if (masterId.isNull() || projectId.isNull() || !repository || !projectService)
                 return;
             EsiDeviceSelectionDialog dialog(repository->devices(), this);
+
+            const auto rejectIfVisible = [&dialog] {
+                if (dialog.isVisible())
+                    dialog.reject();
+            };
+            connect(
+                projectService,
+                &Core::ProjectService::projectAboutToBeRemoved,
+                &dialog,
+                [projectId, rejectIfVisible](const Data::NodeId &removedProjectId) {
+                    if (removedProjectId == projectId)
+                        rejectIfVisible();
+                });
+            connect(
+                projectService,
+                &Core::ProjectService::activeProjectChanged,
+                &dialog,
+                [projectId, rejectIfVisible](const Data::NodeId &, const Data::NodeId &currentId) {
+                    if (currentId != projectId)
+                        rejectIfVisible();
+                });
+            connect(
+                projectService,
+                &Core::ProjectService::projectChanged,
+                &dialog,
+                [projectId, masterId, rejectIfVisible](const Data::ProjectSnapshot &project) {
+                    if (project.id != projectId)
+                        return;
+                    const bool masterStillAvailable
+                        = project.valid
+                          && std::any_of(
+                              project.nodes.cbegin(),
+                              project.nodes.cend(),
+                              [masterId](const auto &node) {
+                                  return node.id == masterId
+                                         && node.kind == Data::ProjectNodeKind::Master;
+                              });
+                    if (!masterStillAvailable)
+                        rejectIfVisible();
+                });
             if (dialog.exec() != QDialog::Accepted)
                 return;
             const Utils::Result<> result

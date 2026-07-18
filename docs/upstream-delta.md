@@ -608,6 +608,22 @@ or application bootstrap changes, so the direct Core patch budget does not
 increase and no extension-point exception is required. The Workbench path
 count remains 44 and the direct upstream Core patch count remains five.
 
+The Workbench insert-device dialog target-lifecycle issue, based on
+`a0b68e7313b80e4292a135966f7ead4c4e131656`, changes only the existing
+product-owned `workbenchmode.cpp`, Workbench test declaration/implementation,
+and documentation. It captures the stable Project and Master IDs at dialog
+creation and rejects the dialog when ProjectService reports target closure,
+active-Project drift, Project invalidation, or removal of the target Master.
+The existing accepted Project mutation path is unchanged.
+
+No source file, dependency, CMake/qbs entry, public API, Project format,
+Provider, persistence, controller transport, network behavior, or
+physical-hardware behavior changes. No file under Qt Creator's upstream Core,
+ProjectExplorer, or application bootstrap changes, so the direct Core patch
+budget does not increase and no extension-point exception is required. The
+Workbench path count remains 44 and the direct upstream Core patch count
+remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

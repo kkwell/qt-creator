@@ -1691,6 +1691,121 @@ void EtherCATWorkbenchTests::testTwinCatInsertDeviceWorkflow()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
+void EtherCATWorkbenchTests::testInsertDeviceDialogTargetLifecycle_data()
+{
+    QTest::addColumn<QString>("targetInvalidation");
+    QTest::newRow("active-project-switch") << QString("active-project-switch");
+    QTest::newRow("target-project-close") << QString("target-project-close");
+    QTest::newRow("project-invalidated") << QString("project-invalidated");
+    QTest::newRow("master-removed") << QString("master-removed");
+}
+
+void EtherCATWorkbenchTests::testInsertDeviceDialogTargetLifecycle()
+{
+    QFETCH(QString, targetInvalidation);
+
+    ::Core::ModeManager::activateMode(Constants::MODE_ID);
+    QTRY_COMPARE(::Core::ModeManager::currentModeId(), Utils::Id(Constants::MODE_ID));
+
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QByteArray esi = deviceEsi();
+    esi.replace("#x00005678", "#x7a130003");
+    esi.replace("Workbench Servo", "Lifecycle Catalogue Servo");
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("insert-lifecycle.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(esi));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0x7a130003;
+    });
+    QVERIFY(device != devices.cend());
+    QVERIFY(device->supported);
+
+    const TestProjectFile primary = writeProjectWithSlave(
+        directory, *device, "insert-lifecycle-primary.ecatproject", "Lifecycle Primary");
+    const TestProjectFile alternate = writeProjectWithSlave(
+        directory, *device, "insert-lifecycle-alternate.ecatproject", "Lifecycle Alternate");
+    QVERIFY(!primary.path.isEmpty());
+    QVERIFY(!alternate.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult primaryOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(primary.path, false);
+    const ProjectExplorer::OpenProjectResult alternateOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(alternate.path, false);
+    QVERIFY2(primaryOpened, qPrintable(primaryOpened.errorMessage()));
+    QVERIFY2(alternateOpened, qPrintable(alternateOpened.errorMessage()));
+    auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (projectService->project(alternate.projectId))
+            ProjectExplorer::ProjectManager::removeProject(alternateOpened.project());
+        if (projectService->project(primary.projectId))
+            ProjectExplorer::ProjectManager::removeProject(primaryOpened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(primary.projectId).has_value());
+    QTRY_VERIFY(projectService->project(alternate.projectId).has_value());
+
+    ::Core::Command *insertCommand = ::Core::ActionManager::command(
+        Constants::INSERT_DEVICE_ACTION_ID);
+    QVERIFY(insertCommand);
+    const Data::ProjectSnapshot primaryBefore = *projectService->project(primary.projectId);
+    const Data::ProjectSnapshot alternateBefore = *projectService->project(alternate.projectId);
+
+    QVERIFY_RESULT(projectService->activateProject(primary.projectId));
+    controller.selectionService()->setCurrentNodeId(primary.masterId);
+    QTRY_VERIFY(insertCommand->action()->isEnabled());
+    bool dialogSeen = false;
+    bool invalidationCompleted = false;
+    bool dialogRejected = false;
+    QTimer::singleShot(0, [&] {
+        QDialog *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog || dialog->objectName() != "EtherCATEsiDeviceSelectionDialog")
+            return;
+        dialogSeen = true;
+        QSignalSpy rejected(dialog, &QDialog::rejected);
+        if (targetInvalidation == "target-project-close") {
+            ProjectExplorer::ProjectManager::removeProject(primaryOpened.project());
+            invalidationCompleted = !projectService->project(primary.projectId).has_value();
+        } else if (targetInvalidation == "active-project-switch") {
+            invalidationCompleted = bool(projectService->activateProject(alternate.projectId));
+        } else {
+            Data::ProjectSnapshot invalidatedProject = primaryBefore;
+            if (targetInvalidation == "project-invalidated") {
+                invalidatedProject.valid = false;
+            } else {
+                invalidatedProject.nodes.removeIf(
+                    [&primary](const auto &node) { return node.id == primary.masterId; });
+            }
+            emit projectService->projectChanged(invalidatedProject);
+            invalidationCompleted = true;
+        }
+        dialogRejected = !dialog->isVisible() && rejected.size() == 1;
+        if (dialog->isVisible())
+            dialog->reject();
+    });
+    insertCommand->action()->trigger();
+    QVERIFY(dialogSeen);
+    QVERIFY(invalidationCompleted);
+    QVERIFY(dialogRejected);
+    if (targetInvalidation != "target-project-close")
+        QCOMPARE(*projectService->project(primary.projectId), primaryBefore);
+    QCOMPARE(*projectService->project(alternate.projectId), alternateBefore);
+    if (targetInvalidation == "active-project-switch"
+        || targetInvalidation == "target-project-close") {
+        QTRY_VERIFY(!insertCommand->action()->isEnabled());
+    }
+}
+
 void EtherCATWorkbenchTests::testEsiDeviceDragDropWorkflow()
 {
     WorkbenchController controller;
