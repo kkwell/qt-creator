@@ -500,6 +500,32 @@ behavior, CMake/qbs entry, or path under upstream Core, ProjectExplorer, or
 the application bootstrap. The Workbench path count remains 44 and the direct
 Core patch count remains five.
 
+The Workbench context-menu selection-drift issue changes only the existing
+private navigation implementation, Workbench integration test, and
+documentation. A real popup captures the current stable Selection Service
+`NodeId` and closes when a different ID is published, preventing shared
+ActionManager commands presented for an old row from resolving a later row as
+their mutation target. It preserves the new selection and reuses the existing
+post-menu action-state synchronization; it does not copy actions, change
+shortcuts, or add per-command target parameters.
+
+Qt documents that `QMenu::exec()` emits connected action signals normally
+(<https://doc.qt.io/qt-6/qmenu.html#exec>) and Qt Creator documents that the
+user-facing `Command::action()` is shared by menus and toolbars
+(<https://doc.qt.io/qtcreator-extending/actionmanager.html>). Qt Creator 20.0
+retains Project-tree context-menu focus until the popup hides
+(<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projecttree.cpp#L337-L395>).
+Beckhoff binds its configured-I/O context menu to the selected device
+(<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>).
+Close-on-drift is an Embed Labs Qt-native safety decision, not copied Beckhoff
+behavior.
+
+The issue adds no public API, model role, QAction, source file, Provider,
+dependency, persistent field, production thread or timer, controller
+transport, online or hardware behavior, CMake/qbs entry, or path under
+upstream Core, ProjectExplorer, or the application bootstrap. The Workbench
+path count remains 44 and the direct Core patch count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

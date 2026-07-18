@@ -541,6 +541,48 @@ thread, timer, network/controller behavior, or upstream Core,
 ProjectExplorer, or application path. The Workbench path count remains 44 and
 the direct Core patch count remains five.
 
+## Workbench context-menu selection boundary
+
+The Workbench device-tree popup remains a private view over the existing
+ActionManager commands and stable Selection Service. Each menu captures only
+the opening selection's value-type `NodeId`. If Selection Service publishes a
+different ID while the popup is active, the stack-owned menu closes. The new
+selection remains current, and the existing post-menu synchronization updates
+the tree and shared command state from that value.
+
+This is necessary because the popup contains the same `Command::action()`
+objects used by other Workbench surfaces, while their registered callbacks
+intentionally resolve the current selection at trigger time. Keeping a popup
+from an older selection open would let its presentation and the callback's
+mutation target diverge. Closing it preserves QAction identity, shortcuts,
+toolbars, context registration, and current-selection semantics without adding
+per-popup actions or stable mutation candidates to every controller command.
+
+The connection uses the menu as its QObject context, retains no service or
+widget pointer after the menu is destroyed, and does not block selection
+delivery. A placeholder menu uses the pre-existing stable selection rather
+than the placeholder row as its baseline, preserving the established
+temporary restriction/restoration path. The removal confirmation retains its
+separate stable-candidate revalidation after the popup command is chosen.
+
+Qt documents `QMenu::exec()` and normal action-signal delivery at
+<https://doc.qt.io/qt-6/qmenu.html#exec>, and Qt Creator documents the shared
+ActionManager command action at
+<https://doc.qt.io/qtcreator-extending/actionmanager.html>. Qt Creator 20.0's
+Project tree retains context-menu focus until the popup hides:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projecttree.cpp#L337-L395>.
+Beckhoff documents the selected configured I/O device as the target of its
+right-click context menu:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>.
+The exact close-on-selection-drift behavior is an Embed Labs Qt-native safety
+boundary rather than a copied TwinCAT contract.
+
+This issue changes no public API, model role, QAction registration, source
+list, dependency, metadata, persistence, Provider, production thread or
+timer, network/controller behavior, CMake/qbs entry, or upstream Core,
+ProjectExplorer, or application path. The Workbench path count remains 44
+and the direct Core patch count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

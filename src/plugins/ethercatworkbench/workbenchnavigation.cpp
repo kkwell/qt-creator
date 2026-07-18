@@ -392,6 +392,16 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
         m_controller && m_controller->canMoveSelectedOfflineSlaveDown());
 
     QMenu menu(this);
+    if (selectionService) {
+        connect(
+            selectionService,
+            &Core::SelectionService::currentNodeChanged,
+            &menu,
+            [&menu, currentNodeId](const Data::NodeId &current) {
+                if (current != currentNodeId)
+                    menu.close();
+            });
+    }
     const auto addCommand = [&menu](const Utils::Id &id) {
         if (::Core::Command *command = ::Core::ActionManager::command(id))
             menu.addAction(command->action());

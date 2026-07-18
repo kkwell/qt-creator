@@ -867,10 +867,13 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
         Constants::MOVE_OFFLINE_SLAVE_UP_ACTION_ID);
     ::Core::Command *moveDownCommand = ::Core::ActionManager::command(
         Constants::MOVE_OFFLINE_SLAVE_DOWN_ACTION_ID);
+    ::Core::Command *openDiagnosticsCommand = ::Core::ActionManager::command(
+        Constants::OPEN_DIAGNOSTICS_ACTION_ID);
     QVERIFY(addCommand);
     QVERIFY(removeCommand);
     QVERIFY(moveUpCommand);
     QVERIFY(moveDownCommand);
+    QVERIFY(openDiagnosticsCommand);
     for (::Core::Command *command : {addCommand, removeCommand, moveUpCommand, moveDownCommand})
         QVERIFY(!command->action()->icon().isNull());
 
@@ -1033,6 +1036,132 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     QVERIFY(repeated != afterRepeatedAdd.slaves.cend());
     QCOMPARE(repeated->name, QString("Workbench Servo (2)"));
     QCOMPARE(repeated->position, 2);
+
+    WorkbenchNavigationWidget navigation(&controller);
+    navigation.resize(900, 600);
+    navigation.show();
+    navigation.activateWindow();
+    navigation.treeView()->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(navigation.isVisible());
+    QTRY_VERIFY(navigation.treeView()->hasFocus());
+    QTRY_COMPARE(::Core::ICore::currentContextWidget(), static_cast<QWidget *>(&navigation));
+
+    const auto closeVisibleNavigationMenus = [&navigation] {
+        const QList<QMenu *> menus = navigation.findChildren<QMenu *>();
+        for (QMenu *menu : menus) {
+            if (menu->isVisible())
+                menu->close();
+        }
+    };
+
+    controller.selectionService()->setCurrentNodeId(addedId);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        addedId);
+    const Data::NodeId diagnosticsNodeId
+        = controller.treeModel()
+              ->diagnosticsForProject(file.projectId)
+              .data(WorkbenchTreeModel::NodeIdRole)
+              .value<Data::NodeId>();
+    QVERIFY(!diagnosticsNodeId.isNull());
+    QTRY_VERIFY(openDiagnosticsCommand->action()->isEnabled());
+    QObject::connect(
+        openDiagnosticsCommand->action(),
+        &QAction::triggered,
+        &navigation,
+        &WorkbenchNavigationWidget::openDiagnostics,
+        Qt::SingleShotConnection);
+    bool selectionActionPopupSeen = false;
+    bool selectionActionPresent = false;
+    bool selectionActionEnabled = false;
+    bool selectionActionClosedPopup = false;
+    QTimer selectionActionWatchdog;
+    selectionActionWatchdog.setSingleShot(true);
+    QObject::connect(
+        &selectionActionWatchdog,
+        &QTimer::timeout,
+        &navigation,
+        closeVisibleNavigationMenus);
+    selectionActionWatchdog.start(1000);
+    QTimer::singleShot(0, &navigation, [&] {
+        QPointer<QMenu> popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!popup)
+            return;
+        selectionActionWatchdog.stop();
+        selectionActionPopupSeen = true;
+        selectionActionPresent = popup->actions().contains(openDiagnosticsCommand->action());
+        selectionActionEnabled = openDiagnosticsCommand->action()->isEnabled();
+        openDiagnosticsCommand->action()->trigger();
+        selectionActionClosedPopup = !popup->isVisible();
+        if (popup->isVisible())
+            popup->close();
+    });
+    emit navigation.treeView()->customContextMenuRequested(QPoint(-1, -1));
+    QVERIFY(selectionActionPopupSeen);
+    QVERIFY(selectionActionPresent);
+    QVERIFY(selectionActionEnabled);
+    QVERIFY(selectionActionClosedPopup);
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), diagnosticsNodeId);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        diagnosticsNodeId);
+
+    controller.selectionService()->setCurrentNodeId(addedId);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        addedId);
+    const Data::ProjectSnapshot beforeContextDrift = *projectService->project(file.projectId);
+    const bool couldUndoBeforeContextDrift = projectService->canUndoProject(file.projectId);
+    const bool couldRedoBeforeContextDrift = projectService->canRedoProject(file.projectId);
+    bool driftPopupSeen = false;
+    QTRY_VERIFY(moveDownCommand->action()->isEnabled());
+    bool moveDownPresent = false;
+    bool moveDownEnabledAfterDrift = false;
+    bool driftClosedPopup = false;
+    QTimer driftPopupWatchdog;
+    driftPopupWatchdog.setSingleShot(true);
+    QObject::connect(
+        &driftPopupWatchdog,
+        &QTimer::timeout,
+        &navigation,
+        closeVisibleNavigationMenus);
+    driftPopupWatchdog.start(1000);
+    QTimer::singleShot(0, &navigation, [&] {
+        QPointer<QMenu> popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!popup)
+            return;
+        driftPopupWatchdog.stop();
+        driftPopupSeen = true;
+        moveDownPresent = popup->actions().contains(moveDownCommand->action());
+        controller.selectionService()->setCurrentNodeId(file.slaveId);
+        driftClosedPopup = !popup->isVisible();
+        moveDownEnabledAfterDrift = moveDownCommand->action()->isEnabled();
+        if (popup->isVisible()) {
+            moveDownCommand->action()->trigger();
+            popup->close();
+        }
+    });
+    emit navigation.treeView()->customContextMenuRequested(QPoint(-1, -1));
+    QVERIFY(driftPopupSeen);
+    QVERIFY(moveDownPresent);
+    QVERIFY(moveDownEnabledAfterDrift);
+    QCOMPARE(controller.selectionService()->currentNodeId(), file.slaveId);
+    QCOMPARE(*projectService->project(file.projectId), beforeContextDrift);
+    QCOMPARE(projectService->canUndoProject(file.projectId), couldUndoBeforeContextDrift);
+    QCOMPARE(projectService->canRedoProject(file.projectId), couldRedoBeforeContextDrift);
+    QVERIFY2(
+        driftClosedPopup,
+        "A Workbench context menu must close when the stable selection changes.");
+
     const Utils::Result<> repeatedAddUndo = projectService->undoProject(file.projectId);
     QVERIFY_RESULT(repeatedAddUndo);
     QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 2);
@@ -1059,12 +1188,6 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     QVERIFY_RESULT(renamedForRemoval);
     QTRY_COMPARE(projectService->project(file.projectId)->slaves.last().name, removalName);
 
-    WorkbenchNavigationWidget navigation(&controller);
-    navigation.resize(900, 600);
-    navigation.show();
-    navigation.activateWindow();
-    navigation.treeView()->setFocus(Qt::OtherFocusReason);
-    QTRY_VERIFY(navigation.isVisible());
     controller.selectionService()->clear();
     controller.selectionService()->setCurrentNodeId(addedId);
     QTRY_COMPARE(

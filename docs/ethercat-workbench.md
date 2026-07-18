@@ -1942,3 +1942,67 @@ This issue changes only existing private Details implementation/test files and
 documentation. It adds no public API, source file, Provider, model role,
 thread, timer, persistence, dependency, CMake/qbs entry, network or hardware
 behavior, or upstream Core/ProjectExplorer/application change.
+
+## Context-menu selection-drift safety
+
+`ISSUE-WB-CONTEXT-MENU-SELECTION-DRIFT-001` prevents an already open device-
+tree context menu from acting on a different stable selection. The popup uses
+the existing shared ActionManager commands, while actions such as Move Up and
+Move Down intentionally resolve the current Selection Service value when they
+are triggered. Previously, changing the selection while `QMenu::exec()` was
+active left the old popup open. A command presented for one configured slave
+could therefore reorder another configured slave selected by an intervening
+Workbench interaction, public Selection Service consumer, or project-lifecycle
+event.
+
+The navigation widget now captures the stable Selection Service `NodeId` when
+it builds the popup. If that value changes while the menu is open, the menu
+closes immediately. The new selection remains authoritative; Workbench does
+not write the old value back. The existing post-menu path then synchronizes the
+tree and every shared command with that latest selection. The connection is
+scoped to the stack-owned menu and disappears with it. A placeholder popup
+continues to use the pre-existing stable selection as its baseline, preserving
+its temporary command restriction and restoration behavior.
+
+Qt documents that `QMenu::exec()` runs synchronously and still emits the
+connected action signals normally:
+<https://doc.qt.io/qt-6/qmenu.html#exec>. Qt Creator's ActionManager documents
+that `Command::action()` is the shared user-facing action placed in menus and
+toolbars and delegates triggering to the active registered action:
+<https://doc.qt.io/qtcreator-extending/actionmanager.html>. Qt Creator 20.0's
+Project tree similarly retains the context-menu source widget until the popup
+hides:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projecttree.cpp#L337-L395>.
+Beckhoff describes a right-click menu on the configured I/O device and defines
+Remove against the selected I/O device:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>.
+Closing a stale popup is an Embed Labs Qt-native safety decision; it is not
+claimed as copied TwinCAT behavior.
+
+The failure-first focused run used a real popup and three configured slaves.
+It opened the middle slave's menu, changed the stable selection to the first
+slave, then triggered the still-present Move Down command. The old
+implementation changed the complete Project snapshot, producing 2 passes and
+1 failure. Final focused runs pass 3 tests at normal scale and 3 tests at
+`QT_SCALE_FACTOR=2`; they verify the existing Open Diagnostics action can
+change selection from a real popup without the post-menu path restoring the
+opening row. They also verify external-drift popup closure, preservation of the
+new stable selection, an unchanged Project snapshot, and unchanged Undo/Redo
+availability.
+
+The complete Workbench suite passes 39 tests. The six isolated EtherCAT suites
+pass 90 tests: Core 17, Project 12, Devices 8, Workbench 39, Scan 7, and
+Diagnostics 7. The `WITH_TESTS=OFF` product build contains exactly the 16
+allow-listed plugin dylibs. Enabled and explicitly Workbench-disabled product
+runs each remained stable beyond 16 seconds before intentional SIGTERM target
+status 15. Every executable qualification ran offscreen with inherited DYLD
+variables cleared, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, fresh
+HOME/settings directories, and only the process-local Touch Bar LLDB
+breakpoint. The final 2026-07-19 00:28:45 +0800 audit found no residual Embed
+Labs or LLDB process, new DiagnosticReports file, or related ReportCrash event.
+
+This issue changes only existing private Workbench navigation/test files and
+documentation. It adds no QAction, public API, source file, model role,
+Provider, production thread or timer, persistence, dependency, CMake/qbs
+entry, network or hardware behavior, or upstream
+Core/ProjectExplorer/application change.

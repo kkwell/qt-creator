@@ -1234,6 +1234,51 @@ device:
 <https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html>.
 The value-only PageKey restoration is an Embed Labs Qt-native completion.
 
+## EtherCATWorkbench context-menu selection-drift qualification
+
+`ISSUE-WB-CONTEXT-MENU-SELECTION-DRIFT-001` is a Workbench-private safety
+correction based on local baseline
+`63e692ea08d8989b3911c57474ec10242038fc64`. It changes no Project data
+contract, persistence format, QAction identity, online state, controller
+transport, network behavior, or physical-hardware capability.
+
+| Check | Result |
+|---|---|
+| Failure-first focused test | 2 passed, 1 failed because the real middle-slave popup remained open after Selection Service moved to the first slave and the shared Move Down command changed the complete Project snapshot |
+| Popup selection boundary | Passed; any different stable `NodeId` closes the open menu synchronously while the new selection remains authoritative |
+| Menu-owned selection change | Passed with the existing Open Diagnostics QAction triggered from the real popup; the Diagnostics NodeId remains selected after the menu returns |
+| Shared QAction identity | Passed with the existing ActionManager Move Down command from the real configured-slave popup; no copied, proxy, or per-popup mutation action was added |
+| Project mutation boundary | Passed with the complete Project snapshot and Undo/Redo availability unchanged after selection drift |
+| Post-menu restoration | Passed with the tree row and all shared command states synchronized to the latest selection rather than writing the opening selection back |
+| Placeholder compatibility | Passed through the existing command suite; a placeholder popup retains the prior stable selection as its baseline and restores its command state on close |
+| Focused normal-scale test | 3 passed, 0 failed; exit 0 |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; exit 0 |
+| Complete EtherCATWorkbench suite | 39 passed, 0 failed in an isolated LLDB-supervised offscreen process |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 39, Scan 7, Diagnostics 7; 90 passed, 0 failed in isolated LLDB-supervised processes |
+| Qualified Qt and test build | Qt 6.11.0 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build | `WITH_TESTS=OFF` passed in `qt-creator-build-ethercat-product-qt611` |
+| Product version inventory | Exactly the 16 allow-listed plugin dylibs are present |
+| Enabled offscreen startup | Stable beyond 16 seconds with fresh settings under `/tmp/embed-labs-context-product-enabled-qualified.U1AliL/settings`; intentional SIGTERM produced LLDB target status 15 |
+| Explicitly disabled startup | Stable beyond 16 seconds with `-noload EtherCATWorkbench` and fresh settings under `/tmp/embed-labs-context-product-disabled-qualified.PslMuR/settings`; intentional SIGTERM produced LLDB target status 15 |
+| Process and crash-report cleanup | No residual Embed Labs or LLDB process, new DiagnosticReports file, or related ReportCrash event at the final 2026-07-19 00:28:45 +0800 audit |
+| Visual/manual desktop inspection | Not run by design; the change adds no geometry and all executable qualification was offscreen with no visible main window |
+| `WITH_TESTS=ON` full product build | Not rerun; this private Workbench issue does not touch the known EasyBoard test include blocker |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Public API, dependency, persistence, source-list, CMake, or qbs changes | None |
+| Network or physical hardware access | Not performed by design; Scan and Diagnostics remain local Mock Providers |
+
+Qt documents the synchronous popup and normal action-signal behavior at
+<https://doc.qt.io/qt-6/qmenu.html#exec>. Qt Creator documents the shared
+user-facing `Command::action()` contract at
+<https://doc.qt.io/qtcreator-extending/actionmanager.html> and retains
+Project-tree context-menu focus until its popup hides:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projecttree.cpp#L337-L395>.
+Beckhoff binds its device context menu and Remove behavior to the selected I/O
+device:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>.
+The exact close-on-drift rule is an Embed Labs Qt-native completion.
+
 ## Verification states
 
 Use only these evidence labels:
