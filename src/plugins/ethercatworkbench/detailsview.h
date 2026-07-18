@@ -5,6 +5,7 @@
 #include <ethercatcore/providers.h>
 
 #include <QPointer>
+#include <QSet>
 #include <QWidget>
 
 QT_BEGIN_NAMESPACE
@@ -37,6 +38,7 @@ private:
 
     void setCurrentNode(const Data::NodeId &nodeId);
     void rebuildPages();
+    void rebuildPagesWithPreferredKey(const QString &preferredPageKey);
     void updateEmptyState();
     void updateNoPageState();
     void refreshPageContents();
@@ -50,6 +52,8 @@ private:
     QLabel *m_emptyState = nullptr;
     QTabWidget *m_tabs = nullptr;
     QList<PageEntry> m_pages;
+    QSet<Utils::Id> m_departingPropertyPageProviderIds;
+    quint64 m_rebuildGeneration = 0;
 };
 
 } // namespace EtherCAT::Workbench::Internal

@@ -466,6 +466,40 @@ timer, controller transport, online or hardware behavior, CMake/qbs entry, or
 path under upstream Core, ProjectExplorer, or the application bootstrap. The
 Workbench path count remains 44 and the direct Core patch count remains five.
 
+The Workbench Details Provider-removal continuity issue changes only the
+existing private Details implementation, Workbench integration test, and
+documentation. Before the object pool unregisters a PropertyPage Provider,
+Details marks that Provider's value-only ID as departing, disconnects its
+availability signal, copies the current semantic Provider/Page key, context
+NodeId, and monotonic rebuild generation, then destroys owned pages
+synchronously. Candidate enumeration excludes departing IDs even during direct
+signal re-entry before the registry mutation completes. The queued refresh
+restores the captured key only if no newer rebuild occurred and the
+context/page still exist; otherwise it rebuilds with the newest current key. A
+later providerAdded for the ID clears the marker. Details retains no widget or
+Provider pointer, rejects switch-away/switch-back ABA state, and adds no
+persisted tab state.
+
+Qt Creator 20.0's Project settings widget follows the same general continuity
+principle by saving its current tab index before replacing panels and restoring
+the index afterward
+(<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectwindow.cpp#L1366-L1385>).
+Workbench uses a semantic key because dynamic Provider insertion/removal can
+change numeric indexes. Qt's `QTabWidget` contract and Qt Creator object-pool
+notification order are documented at
+<https://doc.qt.io/qt-6/qtabwidget.html> and
+<https://doc.qt.io/qtcreator-extending/pluginmanager.html>. Beckhoff documents
+selection-dependent EtherCAT terminal property tabs at
+<https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html>,
+but does not specify third-party Provider churn. The exact PageKey/context
+guard is therefore an Embed Labs Qt-native delta, not copied Beckhoff behavior.
+
+The issue adds no public API, model role, source file, Provider, dependency,
+persistent field, thread, timer, controller transport, online or hardware
+behavior, CMake/qbs entry, or path under upstream Core, ProjectExplorer, or
+the application bootstrap. The Workbench path count remains 44 and the direct
+Core patch count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

@@ -1861,3 +1861,84 @@ action-setup, test, and documentation files. It adds no public API, model role,
 source file, Provider, thread, timer, persistence, dependency, CMake/qbs entry,
 network or hardware behavior, or upstream Core/ProjectExplorer/application
 change. Scan and Diagnostics remain explicitly local Mock capabilities.
+
+## Details Provider-removal tab continuity
+
+`ISSUE-WB-DETAILS-PROVIDER-REMOVE-TAB-CONTINUITY-001` keeps a still-valid
+Details page selected when an unrelated dynamic `PropertyPageProvider` is
+removed. Previously the about-to-remove handler synchronously destroyed every
+page and queued a normal rebuild. The rebuild then had no current widget from
+which to recover the private `EtherCAT.PageKey`, so it selected the first
+built-in page, normally General, even though the selected node and current
+Provider B page were both still valid.
+
+Details now records the departing Provider's value-only ID, disconnects its
+availability signal, and captures the current PageKey, stable context NodeId,
+and monotonic rebuild generation before destroying provider-owned widgets.
+Every page rebuild skips IDs in that private departing set, including rebuilds
+re-entered from later direct about-to-remove slots while the registry still
+enumerates the Provider. Page destruction remains synchronous with the
+object-pool about-to-remove phase, so no widget or Provider pointer is retained
+across unregistering. Every PropertyPage Provider removal queues a registry
+refresh; re-registering the ID clears its departing marker. If neither context
+nor generation changed, the refresh may restore the captured key when a current
+Provider still publishes it. After any intervening rebuild it instead preserves
+the newest current key, preventing a switch-away/switch-back ABA from applying
+stale state. Removing the Provider that owns the selected page therefore keeps
+the deterministic first-valid-page fallback. Registered-Provider availability
+changes use the same key-preserving rebuild; signals from an unregistered but
+still-live Provider no longer affect Details. This is in-session continuity,
+not persisted tab state across restart, project close, or a different node.
+
+Qt Creator's own Project settings widget captures the old tab before replacing
+its panels and restores it afterward
+([Qt Creator 20.0 `CentralWidget::setPanels()`](https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectwindow.cpp#L1366-L1385)).
+The Workbench uses its semantic Provider/Page key rather than a numeric index
+because dynamic providers can change page count and sort order. Qt defines the
+current-page and index behavior used here
+([QTabWidget](https://doc.qt.io/qt-6/qtabwidget.html)), while Qt Creator defines
+the object-pool notification order used for safe synchronous page destruction
+([Plugin manager object pool](https://doc.qt.io/qtcreator-extending/pluginmanager.html)).
+Beckhoff documents selection-dependent General, EtherCAT, Process Data, and
+Online tabs for an EtherCAT terminal
+([terminal configuration tabs](https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html)).
+Continuity across Provider churn is an Embed Labs Qt-native usability decision;
+it is not claimed as a Beckhoff behavior or copied implementation.
+
+The failure-first focused run produced 2 passes and 1 expected failure: after
+removing Provider A, the actual current key was the built-in General page while
+Provider B's key was expected. Independent diff review then added lifecycle
+regressions. The first review run produced 2 passes and 1 failure because
+toggling removed Provider A's availability deleted Provider B's saved widget.
+After adding only the signal disconnect, the next run produced 2 passes and 1
+failure because a switch-away/switch-back sequence restored stale Provider B
+over the newer General selection. The generation fix closed that ABA, after
+which reentrant review produced 2 passes and 1 failure because a later direct
+about-to-remove slot rebuilt Provider A before registry removal. The departing
+ID marker closes that same-signal/nested-MetaCall path. Final focused runs pass
+3 tests at normal scale and 3 at `QT_SCALE_FACTOR=2`. The test covers two
+independent providers,
+availability loss/recovery, unrelated-provider removal, selected-provider
+removal fallback to the exact first remaining key, unregistered-Provider signal
+isolation without B widget recreation, switch-away/switch-back ABA rejection,
+same-signal direct-slot re-entry with early MetaCall draining, stable
+Selection/Details context, stale widget cleanup, and a scope guard that removes
+registered test Providers on every assertion path.
+The inspected offscreen renders are 900 x 600 and 1800 x 1200 and show Provider
+B selected without clipping, overlap, or scale drift.
+
+The complete Workbench suite passes 39 tests. The six isolated EtherCAT suites
+pass 90 tests: Core 17, Project 12, Devices 8, Workbench 39, Scan 7, and
+Diagnostics 7. The `WITH_TESTS=OFF` product build contains all 16 allow-listed
+plugin dylibs. Enabled and explicitly Workbench-disabled product runs each
+remained stable for 16 seconds before intentional SIGTERM target status 15.
+Every executable ran offscreen with inherited DYLD variables cleared,
+`CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, fresh settings/home directories,
+and only the process-local Touch Bar LLDB breakpoint. Final cleanup found no
+residual Embed Labs or LLDB process, recent DiagnosticReports file, or
+ReportCrash event.
+
+This issue changes only existing private Details implementation/test files and
+documentation. It adds no public API, source file, Provider, model role,
+thread, timer, persistence, dependency, CMake/qbs entry, network or hardware
+behavior, or upstream Core/ProjectExplorer/application change.

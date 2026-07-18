@@ -502,6 +502,45 @@ timer, network/controller behavior, or upstream Core, ProjectExplorer, or
 application path. The Workbench path count remains 44 and the direct Core patch
 count remains five.
 
+## Workbench Details Provider-removal continuity boundary
+
+Details page continuity remains private to
+`EtherCATWorkbench::Internal::DetailsView`. Each created page carries the
+existing private, value-only `EtherCAT.PageKey`, formed from the publishing
+Provider ID and page ID. The value is presentation identity only; it is not a
+public contract or persisted setting.
+
+During `ProviderRegistry::providerAboutToBeRemoved`, Details first inserts the
+departing Provider's value-only ID into a private exclusion set and disconnects
+its availability signal. It then copies the current PageKey, context NodeId,
+and monotonic rebuild generation before synchronously removing and deleting
+owned pages. Every candidate enumeration skips the exclusion set, so a later
+direct removal slot cannot recreate the page while the registry is still
+dispatching its signal. This preserves the object-pool safety boundary: no page
+widget or `PropertyPageProvider` pointer survives unregistering, and an
+unregistered but still-live Provider cannot request another rebuild.
+
+Every PropertyPage Provider removal queues a callback owned by Details. It
+restores the copied key only if both context and generation are unchanged and
+a currently registered and available Provider still publishes that page. If
+any intervening rebuild occurred, the registry refresh still runs but uses the
+newest current page key, preventing switch-away/switch-back ABA state. The
+value-only departing marker remains authoritative until a later
+`providerAdded` for that ID clears it. If the selected page itself disappeared,
+the normal first-page fallback remains authoritative.
+
+Provider addition and availability changes continue to use the same private
+rebuild pipeline and semantic key. No selection is written, and no Project,
+device, Scan, Diagnostics, controller, or persistence service participates.
+The test Providers are guarded so an early test assertion cannot leave an
+object-pool pointer alive during plugin teardown.
+
+The implementation changes no public service or data type, persistent format,
+metadata, dependency, source list, CMake/qbs entry, Provider implementation,
+thread, timer, network/controller behavior, or upstream Core,
+ProjectExplorer, or application path. The Workbench path count remains 44 and
+the direct Core patch count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

@@ -1182,6 +1182,58 @@ appends a slave beneath the explicitly selected device in the tree:
 The dynamic Project/Master wording and stable-ID stale-target rejection are
 Embed Labs Qt-native completions.
 
+## EtherCATWorkbench Details Provider-removal continuity qualification
+
+`ISSUE-WB-DETAILS-PROVIDER-REMOVE-TAB-CONTINUITY-001` is a Workbench-private
+lifecycle correction based on local baseline
+`fc9dc73c5449935f44446ab3c724e861a04d18a3`. It changes no public Provider
+contract, persistent setting, project data, online state, transport, network,
+or physical-hardware capability.
+
+| Check | Result |
+|---|---|
+| Failure-first focused test | 2 passed, 1 failed because removal of unrelated Provider A reset the actual current key to built-in General instead of the still-valid Provider B key |
+| Independent review signal failure | 2 passed, 1 failed because toggling removed but still-live Provider A deleted Provider B's saved widget before the removal-time disconnect was added |
+| Independent review ABA failure | 2 passed, 1 failed because the disconnect-only implementation restored stale Provider B over a newer General selection after switch away/back |
+| Independent review reentrant failure | 2 passed, 1 failed because a later direct about-to-remove slot rebuilt Provider A while the registry still enumerated it; the departing-ID marker now excludes it even when the queued MetaCall drains inside that signal |
+| Unrelated Provider removal | Passed; Provider B remains the current tab after Provider A's widgets are synchronously destroyed and A is unregistered |
+| Availability lifecycle | Passed for Provider A unavailable, available again, and then removed while Provider B remains current |
+| Selected Provider removal | Passed; removing Provider B removes its widget and falls back to the deterministic first remaining page |
+| Context continuity | Passed; stable Selection and Details NodeId remain unchanged across unrelated removal and queued rebuild |
+| Unregistered Provider isolation | Passed; toggling removed but still-live Provider A's availability does not recreate or replace Provider B's widget |
+| Queued rebuild freshness | Passed; switch away, switch back, and select General before the removal MetaCall drains preserves the newer General selection instead of restoring stale Provider B |
+| Object-pool signal re-entry | Passed; a later direct removal slot switches Master to Project and drains MetaCalls before registry removal, but Provider A is never recreated and the final context/key remain current |
+| Ownership cleanup | Passed; no Provider/widget pointer crosses removal, removed widgets disappear, and scope cleanup unregisters every remaining test Provider |
+| Focused normal-scale test | 3 passed, 0 failed; exit 0 |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; exit 0 |
+| Direct offscreen renders | 900 x 600 and 1800 x 1200 captures inspected with Provider B selected and no clipping, overlap, or scale drift |
+| Complete EtherCATWorkbench suite | 39 passed, 0 failed in an LLDB-supervised isolated offscreen process |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 39, Scan 7, Diagnostics 7; 90 passed, 0 failed in isolated LLDB-supervised processes |
+| Qualified Qt and test build | Qt 6.11.0 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build | `WITH_TESTS=OFF` passed in `qt-creator-build-ethercat-product-qt611` |
+| Product version inventory | Exactly the 16 allow-listed plugin dylibs are present |
+| Enabled offscreen startup | Stable for 16 seconds with fresh settings under `/tmp/embed-labs-product-current-lifecycle.sxy7zN/enabled/settings`; intentional SIGTERM produced LLDB target status 15 |
+| Explicitly disabled startup | Stable for 16 seconds with `-noload EtherCATWorkbench` and fresh settings under `/tmp/embed-labs-product-current-lifecycle.sxy7zN/disabled/settings`; intentional SIGTERM produced LLDB target status 15 |
+| Process and crash-report cleanup | No residual Embed Labs or LLDB process, recent DiagnosticReports file, or ReportCrash event at the final 2026-07-18 23:42:25 +0800 audit |
+| Manual desktop interaction | Not run by design; all executable qualification was offscreen and created no visible main window |
+| `WITH_TESTS=ON` full product build | Not rerun; this private Workbench issue does not touch the known EasyBoard test include blocker |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Public API, dependency, persistence, source-list, CMake, or qbs changes | None |
+| Network or physical hardware access | Not performed by design; Scan and Diagnostics remain local Mock Providers |
+
+Qt Creator demonstrates restoring the current tab while replacing Project
+settings panels:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectwindow.cpp#L1366-L1385>.
+Qt documents the tab contract at
+<https://doc.qt.io/qt-6/qtabwidget.html> and the Qt Creator object-pool removal
+notification at
+<https://doc.qt.io/qtcreator-extending/pluginmanager.html>. Beckhoff documents
+that an EtherCAT terminal's available property tabs depend on the selected
+device:
+<https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html>.
+The value-only PageKey restoration is an Embed Labs Qt-native completion.
+
 ## Verification states
 
 Use only these evidence labels:

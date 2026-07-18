@@ -100,6 +100,7 @@ DetailsView::DetailsView(WorkbenchController *controller, QWidget *parent)
             this,
             [this](Core::Provider *provider) {
                 if (provider->kind() == Core::ProviderKind::PropertyPage) {
+                    m_departingPropertyPageProviderIds.remove(provider->id());
                     watchPropertyPageProvider(provider);
                     rebuildPages();
                 }
@@ -109,8 +110,8 @@ DetailsView::DetailsView(WorkbenchController *controller, QWidget *parent)
             &Core::ProviderRegistry::providerAboutToBeRemoved,
             this,
             &DetailsView::handleProviderRemoving);
-        for (Core::Provider *provider : controller->providerRegistry()->providers(
-                 Core::ProviderKind::PropertyPage)) {
+        for (Core::Provider *provider :
+             controller->providerRegistry()->providers(Core::ProviderKind::PropertyPage)) {
             watchPropertyPageProvider(provider);
         }
     }
@@ -185,10 +186,15 @@ void DetailsView::setCurrentNode(const Data::NodeId &nodeId)
 
 void DetailsView::rebuildPages()
 {
+    ++m_rebuildGeneration;
     const QString previousKey
-        = m_tabs->currentWidget()
-              ? m_tabs->currentWidget()->property("EtherCAT.PageKey").toString()
-              : QString();
+        = m_tabs->currentWidget() ? m_tabs->currentWidget()->property("EtherCAT.PageKey").toString()
+                                  : QString();
+    rebuildPagesWithPreferredKey(previousKey);
+}
+
+void DetailsView::rebuildPagesWithPreferredKey(const QString &preferredPageKey)
+{
     clearPages();
 
     if (m_context.nodeKind == Core::WorkbenchNodeKind::None) {
@@ -204,11 +210,13 @@ void DetailsView::rebuildPages()
 
     QList<PageCandidate> candidates;
     if (m_controller && m_controller->providerRegistry()) {
-        for (Core::Provider *providerObject : m_controller->providerRegistry()->providers(
-                 Core::ProviderKind::PropertyPage)) {
+        for (Core::Provider *providerObject :
+             m_controller->providerRegistry()->providers(Core::ProviderKind::PropertyPage)) {
             auto provider = qobject_cast<Core::PropertyPageProvider *>(providerObject);
-            if (!provider || !provider->isAvailable())
+            if (!provider || m_departingPropertyPageProviderIds.contains(provider->id())
+                || !provider->isAvailable()) {
                 continue;
+            }
             QSet<Utils::Id> pageIds;
             for (const Core::PropertyPageDescriptor &descriptor : provider->pages(m_context)) {
                 if (!descriptor.id.isValid() || descriptor.displayName.isEmpty()
@@ -223,8 +231,9 @@ void DetailsView::rebuildPages()
     std::sort(candidates.begin(), candidates.end(), [](const auto &left, const auto &right) {
         if (left.descriptor.priority != right.descriptor.priority)
             return left.descriptor.priority < right.descriptor.priority;
-        const int providerOrder = left.provider->id().toString().compare(
-            right.provider->id().toString(), Qt::CaseInsensitive);
+        const int providerOrder = left.provider->id()
+                                      .toString()
+                                      .compare(right.provider->id().toString(), Qt::CaseInsensitive);
         if (providerOrder != 0)
             return providerOrder < 0;
         return left.descriptor.id.toString() < right.descriptor.id.toString();
@@ -241,7 +250,7 @@ void DetailsView::rebuildPages()
         candidate.provider->updatePage(candidate.descriptor.id, page, m_context);
         const int index = m_tabs->addTab(page, candidate.descriptor.displayName);
         m_pages.append({candidate.provider, candidate.descriptor.id, page});
-        if (pageKey == previousKey)
+        if (pageKey == preferredPageKey)
             restoredIndex = index;
     }
 
@@ -310,14 +319,30 @@ void DetailsView::handleProviderRemoving(Core::Provider *provider)
 {
     if (provider->kind() != Core::ProviderKind::PropertyPage)
         return;
-    const bool ownsPage = std::any_of(
-        m_pages.cbegin(), m_pages.cend(), [provider](const PageEntry &entry) {
-            return entry.provider == provider;
-        });
-    if (!ownsPage)
-        return;
-    clearPages();
-    QMetaObject::invokeMethod(this, [this] { rebuildPages(); }, Qt::QueuedConnection);
+    m_departingPropertyPageProviderIds.insert(provider->id());
+    disconnect(provider, &Core::Provider::availabilityChanged, this, &DetailsView::rebuildPages);
+    const bool ownsPage
+        = std::any_of(m_pages.cbegin(), m_pages.cend(), [provider](const PageEntry &entry) {
+              return entry.provider == provider;
+          });
+    const QString preferredPageKey
+        = m_tabs->currentWidget() ? m_tabs->currentWidget()->property("EtherCAT.PageKey").toString()
+                                  : QString();
+    const Data::NodeId contextNodeId = m_context.nodeId;
+    const quint64 rebuildGeneration = m_rebuildGeneration;
+    if (ownsPage)
+        clearPages();
+    QMetaObject::invokeMethod(
+        this,
+        [this, contextNodeId, preferredPageKey, rebuildGeneration] {
+            if (m_rebuildGeneration == rebuildGeneration && m_context.nodeId == contextNodeId) {
+                ++m_rebuildGeneration;
+                rebuildPagesWithPreferredKey(preferredPageKey);
+                return;
+            }
+            rebuildPages();
+        },
+        Qt::QueuedConnection);
 }
 
 void DetailsView::watchPropertyPageProvider(Core::Provider *provider)

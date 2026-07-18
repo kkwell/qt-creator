@@ -435,8 +435,17 @@ static QByteArray deviceEsi()
 class TestPageProvider final : public Core::PropertyPageProvider
 {
 public:
-    TestPageProvider()
-        : PropertyPageProvider("EtherCAT.Workbench.TestPages", "Test pages")
+    TestPageProvider(
+        Utils::Id providerId,
+        Utils::Id pageId,
+        const QString &pageDisplayName,
+        const QString &pageObjectName,
+        int priority)
+        : PropertyPageProvider(providerId, pageDisplayName + " provider")
+        , m_pageId(pageId)
+        , m_pageDisplayName(pageDisplayName)
+        , m_pageObjectName(pageObjectName)
+        , m_priority(priority)
     {
         setAvailable(true);
     }
@@ -445,20 +454,29 @@ public:
     {
         if (context.nodeKind != Core::WorkbenchNodeKind::Project)
             return {};
-        return {{Utils::Id("EtherCAT.Workbench.TestPage"), "Test Page", 150}};
+        return {{m_pageId, m_pageDisplayName, m_priority}};
     }
 
-    QWidget *createPage(Utils::Id, QWidget *parent) final
+    QWidget *createPage(Utils::Id pageId, QWidget *parent) final
     {
-        auto label = new QLabel("Dynamic page", parent);
-        label->setObjectName("EtherCATDynamicTestPage");
+        if (pageId != m_pageId)
+            return nullptr;
+        auto label = new QLabel(m_pageDisplayName, parent);
+        label->setObjectName(m_pageObjectName);
         return label;
     }
 
-    void updatePage(Utils::Id, QWidget *page, const Core::PropertyPageContext &context) final
+    void updatePage(Utils::Id pageId, QWidget *page, const Core::PropertyPageContext &context) final
     {
-        page->setToolTip(context.nodeId.toString());
+        if (pageId == m_pageId)
+            page->setToolTip(context.nodeId.toString());
     }
+
+private:
+    const Utils::Id m_pageId;
+    const QString m_pageDisplayName;
+    const QString m_pageObjectName;
+    const int m_priority;
 };
 
 class ControlledDeviceImportJob final : public Core::DeviceImportJob
@@ -6060,18 +6078,147 @@ void EtherCATWorkbenchTests::testDynamicPropertyProviderRemoval()
     controller.selectionService()->setCurrentNodeId(project.id);
 
     DetailsView details(&controller);
+    details.resize(900, 600);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
     const int baselinePages = details.tabWidget()->count();
     QVERIFY(baselinePages >= 1);
+    QWidget *baselineFirstPage = details.tabWidget()->widget(0);
+    QVERIFY(baselineFirstPage);
+    const QString baselineFirstKey = baselineFirstPage->property("EtherCAT.PageKey").toString();
+    QVERIFY(!baselineFirstKey.isEmpty());
 
-    TestPageProvider provider;
-    ExtensionSystem::PluginManager::addObject(&provider);
+    const Utils::Id providerAId("EtherCAT.Workbench.TestPages.A");
+    const Utils::Id providerAPageId("EtherCAT.Workbench.TestPage.A");
+    const Utils::Id providerBId("EtherCAT.Workbench.TestPages.B");
+    const Utils::Id providerBPageId("EtherCAT.Workbench.TestPage.B");
+    TestPageProvider
+        providerA(providerAId, providerAPageId, "Provider A Page", "EtherCATDynamicTestPageA", 150);
+    TestPageProvider
+        providerB(providerBId, providerBPageId, "Provider B Page", "EtherCATDynamicTestPageB", 160);
+    bool providerARegistered = false;
+    bool providerBRegistered = false;
+    const QScopeGuard cleanup([&] {
+        if (providerBRegistered)
+            ExtensionSystem::PluginManager::removeObject(&providerB);
+        if (providerARegistered)
+            ExtensionSystem::PluginManager::removeObject(&providerA);
+        controller.selectionService()->clear();
+    });
+
+    ExtensionSystem::PluginManager::addObject(&providerA);
+    providerARegistered = true;
+    ExtensionSystem::PluginManager::addObject(&providerB);
+    providerBRegistered = true;
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 2);
+    QVERIFY(details.findChild<QWidget *>("EtherCATDynamicTestPageA"));
+    QVERIFY(details.findChild<QWidget *>("EtherCATDynamicTestPageB"));
+
+    const QString providerBKey = providerBId.toString() + '/' + providerBPageId.toString();
+    const auto pageIndexForKey = [&details](const QString &pageKey) {
+        for (int index = 0; index < details.tabWidget()->count(); ++index) {
+            if (details.tabWidget()->widget(index)->property("EtherCAT.PageKey").toString()
+                == pageKey) {
+                return index;
+            }
+        }
+        return -1;
+    };
+    const auto currentPageKey = [&details] {
+        QWidget *currentPage = details.tabWidget()->currentWidget();
+        return currentPage ? currentPage->property("EtherCAT.PageKey").toString() : QString();
+    };
+    const int providerBIndex = pageIndexForKey(providerBKey);
+    QVERIFY(providerBIndex >= 0);
+    details.tabWidget()->setCurrentIndex(providerBIndex);
+    QCOMPARE(currentPageKey(), providerBKey);
+    const Data::NodeId stableContextId = details.currentContext().nodeId;
+    QCOMPARE(stableContextId, project.id);
+
+    providerA.setAvailable(false);
     QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 1);
-    QVERIFY(details.findChild<QWidget *>("EtherCATDynamicTestPage"));
+    QTRY_COMPARE(currentPageKey(), providerBKey);
+    providerA.setAvailable(true);
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 2);
+    QTRY_COMPARE(currentPageKey(), providerBKey);
 
-    ExtensionSystem::PluginManager::removeObject(&provider);
+    ExtensionSystem::PluginManager::removeObject(&providerA);
+    providerARegistered = false;
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 1);
+    QTRY_COMPARE(currentPageKey(), providerBKey);
+    QCOMPARE(details.currentContext().nodeId, stableContextId);
+    QCOMPARE(controller.selectionService()->currentNodeId(), stableContextId);
+    QVERIFY(!details.findChild<QWidget *>("EtherCATDynamicTestPageA"));
+    QVERIFY(details.findChild<QWidget *>("EtherCATDynamicTestPageB"));
+
+    QPointer<QWidget> stableProviderBPage = details.findChild<QWidget *>(
+        "EtherCATDynamicTestPageB");
+    QVERIFY(stableProviderBPage);
+    providerA.setAvailable(false);
+    providerA.setAvailable(true);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QVERIFY(stableProviderBPage);
+    QCOMPARE(details.findChild<QWidget *>("EtherCATDynamicTestPageB"), stableProviderBPage.data());
+    QCOMPARE(currentPageKey(), providerBKey);
+
+    ExtensionSystem::PluginManager::addObject(&providerA);
+    providerARegistered = true;
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 2);
+    QTRY_COMPARE(currentPageKey(), providerBKey);
+
+    const Data::NodeId projectMasterId = masterId(project);
+    QVERIFY(!projectMasterId.isNull());
+    bool reentrantRemovalObserved = false;
+    connect(
+        controller.providerRegistry(),
+        &Core::ProviderRegistry::providerAboutToBeRemoved,
+        &details,
+        [&](Core::Provider *departingProvider) {
+            if (departingProvider != &providerA)
+                return;
+            reentrantRemovalObserved = true;
+            controller.selectionService()->setCurrentNodeId(projectMasterId);
+            controller.selectionService()->setCurrentNodeId(project.id);
+            const int firstPageIndex = pageIndexForKey(baselineFirstKey);
+            if (firstPageIndex >= 0)
+                details.tabWidget()->setCurrentIndex(firstPageIndex);
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        },
+        Qt::DirectConnection);
+    ExtensionSystem::PluginManager::removeObject(&providerA);
+    providerARegistered = false;
+    QVERIFY(reentrantRemovalObserved);
+    QVERIFY(!details.findChild<QWidget *>("EtherCATDynamicTestPageA"));
+    QCOMPARE(details.tabWidget()->count(), baselinePages + 1);
+    QCOMPARE(details.currentContext().nodeId, stableContextId);
+    QCOMPARE(controller.selectionService()->currentNodeId(), stableContextId);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 1);
+    QCOMPARE(currentPageKey(), baselineFirstKey);
+    QCOMPARE(details.currentContext().nodeId, stableContextId);
+    QCOMPARE(controller.selectionService()->currentNodeId(), stableContextId);
+
+    const int providerBAfterRemovalIndex = pageIndexForKey(providerBKey);
+    QVERIFY(providerBAfterRemovalIndex >= 0);
+    details.tabWidget()->setCurrentIndex(providerBAfterRemovalIndex);
+    QCOMPARE(currentPageKey(), providerBKey);
+
+    const QString renderPath = qEnvironmentVariable(
+        "ETHERCAT_WORKBENCH_DETAILS_CONTINUITY_RENDER_PATH");
+    if (!renderPath.isEmpty()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(details.grab().save(renderPath), qPrintable(renderPath));
+    }
+
+    ExtensionSystem::PluginManager::removeObject(&providerB);
+    providerBRegistered = false;
     QTRY_COMPARE(details.tabWidget()->count(), baselinePages);
-    QVERIFY(!details.findChild<QWidget *>("EtherCATDynamicTestPage"));
-    controller.selectionService()->clear();
+    QCOMPARE(details.tabWidget()->currentIndex(), 0);
+    QCOMPARE(currentPageKey(), baselineFirstKey);
+    QVERIFY(!details.findChild<QWidget *>("EtherCATDynamicTestPageB"));
+    QCOMPARE(details.currentContext().nodeId, stableContextId);
 }
 
 void EtherCATWorkbenchTests::testOptionalProviderAvailabilityPresentation()
@@ -6092,8 +6239,7 @@ void EtherCATWorkbenchTests::testOptionalProviderAvailabilityPresentation()
     const auto status = [](const QModelIndex &index) {
         return index.siblingAtColumn(1).data().toString();
     };
-    QCOMPARE(
-        status(diagnostics), QString("No Diagnostics Provider registered | Local Mock only"));
+    QCOMPARE(status(diagnostics), QString("No Diagnostics Provider registered | Local Mock only"));
     QCOMPARE(status(noSlaves), QString("No Scan Provider registered | Local Mock only"));
     QVERIFY(!diagnostics.data(WorkbenchTreeModel::SearchTextRole)
                  .toString()
