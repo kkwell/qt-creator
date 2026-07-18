@@ -1057,13 +1057,16 @@ QModelIndex WorkbenchTreeModel::firstUnsupportedDevice() const
     return {};
 }
 
-QModelIndex WorkbenchTreeModel::firstTopologyDifference() const
+QModelIndex WorkbenchTreeModel::firstTopologyDifference(const Data::NodeId &projectId) const
 {
     Node *best = nullptr;
     Node *fallback = nullptr;
     int bestOrder = std::numeric_limits<int>::max();
-    const auto visit = [&best, &fallback, &bestOrder](const auto &self, Node *parent) -> void {
+    const auto visit = [&best, &fallback, &bestOrder, &projectId](
+                           const auto &self, Node *parent) -> void {
         for (const std::unique_ptr<Node> &child : parent->children) {
+            if (!projectId.isNull() && child->projectId != projectId)
+                continue;
             self(self, child.get());
             if (!child->topologyDifference)
                 continue;
@@ -1079,10 +1082,13 @@ QModelIndex WorkbenchTreeModel::firstTopologyDifference() const
     return indexForNode(best ? best : fallback);
 }
 
-QModelIndex WorkbenchTreeModel::firstIssue() const
+QModelIndex WorkbenchTreeModel::firstIssue(const Data::NodeId &projectId) const
 {
-    const auto findForMarker = [](const auto &self, Node *parent, StateMarker marker) -> Node * {
+    const auto findForMarker = [&projectId](
+                                   const auto &self, Node *parent, StateMarker marker) -> Node * {
         for (const std::unique_ptr<Node> &child : parent->children) {
+            if (!projectId.isNull() && child->projectId != projectId)
+                continue;
             if (Node *descendant = self(self, child.get(), marker))
                 return descendant;
             if (child->issue && child->marker == marker)

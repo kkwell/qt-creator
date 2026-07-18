@@ -91,8 +91,8 @@ public:
 
     QModelIndex indexForNodeId(const Data::NodeId &nodeId, int column = 0) const;
     QModelIndex firstUnsupportedDevice() const;
-    QModelIndex firstTopologyDifference() const;
-    QModelIndex firstIssue() const;
+    QModelIndex firstTopologyDifference(const Data::NodeId &projectId = {}) const;
+    QModelIndex firstIssue(const Data::NodeId &projectId = {}) const;
     QModelIndex diagnosticsForProject(const Data::NodeId &projectId) const;
     Core::PropertyPageContext contextForIndex(const QModelIndex &index) const;
     Core::PropertyPageContext contextForNodeId(const Data::NodeId &nodeId) const;

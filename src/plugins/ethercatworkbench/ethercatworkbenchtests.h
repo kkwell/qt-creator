@@ -30,6 +30,7 @@ private slots:
     void testTreeModelLargeIncrementalUpdate();
     void testConfiguredSlaveStateIcon();
     void testProviderStateTreeAndNavigation();
+    void testProjectScopedLocateNavigation();
     void testNavigationSelectionAndFiltering();
     void testNavigationActiveProjectLifecycle();
     void testInvalidProjectPresentationAndLifecycle();

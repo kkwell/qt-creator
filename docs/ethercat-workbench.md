@@ -1654,3 +1654,65 @@ This issue changes only the existing private tree model, Workbench tests, and
 documentation. It adds no public API, custom role, source file, Provider,
 thread, timer, persistence, dependency, CMake/qbs entry, network or hardware
 behavior, or upstream Core/ProjectExplorer/application change.
+
+## Project-scoped Locate navigation
+
+`ISSUE-WB-LOCATE-CONTEXT-001` keeps `Locate First Topology Difference` and
+`Locate First Issue` inside the project that owns the current stable Workbench
+selection. Previously both commands searched the complete tree. If Alpha had a
+Mock scan difference or issue while the user was inspecting clean project Beta,
+the shared menu, command-strip, and context actions remained enabled and moved
+the tree selection plus integrated Details area from Beta to Alpha.
+
+The private tree queries now accept an optional project ID. A known selection
+with a non-null project ID searches that exact project only. If it has no
+matching result, both the base and Workbench-context actions are disabled and a
+direct controller request is a no-op. A genuinely null selection or a known
+projectless Device Repository/ESI selection retains the existing global
+first-available lookup. An unknown non-null stable ID is not projectless: it
+clears the stale tree row, disables both commands, and remains unchanged after
+direct requests. A placeholder context menu temporarily restricts the actions,
+then restores the stable selection, tree row, and project-scoped action state
+when it closes. A released Selection Service during shutdown also leaves both
+actions disabled.
+
+This follows Qt Creator's documented Projects-view convention that common
+actions come from the selected tree item and project:
+<https://doc.qt.io/qtcreator/creator-projects-view.html>. The local Qt Creator
+20 ProjectExplorer implementation likewise resolves its current project from
+the focused Project tree instead of substituting the startup project. Beckhoff
+documents that its EtherCAT Online tab becomes available for the EtherCAT
+device selected in the I/O tree:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446518411.html>, and
+that comparative scans operate on a specified EtherCAT device:
+<https://infosys.beckhoff.com/content/1033/ps2001-2420-1001/10832129675.html>.
+The exact `projectId` guard is an Embed Labs Qt-native multi-project correction;
+Beckhoff does not define this private action API, and no TwinCAT asset or
+proprietary behavior is copied.
+
+The failure-first focused run produced 2 passes and 1 expected failure because
+the topology-difference action remained enabled while clean Beta was selected.
+Final focused runs pass 3 tests at normal scale and 3 at
+`QT_SCALE_FACTOR=2`. They cover scoped model lookup, disabled base/context
+actions, guarded direct requests, exact Alpha routing, unknown non-null IDs,
+null and known-projectless fallback, placeholder-menu restriction/restoration,
+stable tree/Details context, and real two-project open/close cleanup. Direct
+900 x 600 and 1800 x 1200 offscreen tree and Details renders retain both
+projects, complete Mock/offline status, and the selected clean project without
+clipping, overlap, or scale drift.
+
+The complete Workbench suite passes 39 tests. The six isolated EtherCAT suites
+pass 90 tests: Core 17, Project 12, Devices 8, Workbench 39, Scan 7, and
+Diagnostics 7. The `WITH_TESTS=OFF` product build contains all 16 allow-listed
+plugin dylibs. Enabled and explicitly Workbench-disabled product runs stayed
+stable beyond 15 seconds before intentional SIGTERM target status 15. Every
+qualifying executable ran offscreen, explicitly cleared inherited DYLD
+variables, and used only the process-local Touch Bar LLDB breakpoint. Final
+cleanup found no residual process, DiagnosticReports file, or ReportCrash event
+after 20:45:00 on 2026-07-18.
+
+This issue changes only existing private Workbench tree-model, navigation,
+action-setup, test, and documentation files. It adds no public API, model role,
+source file, Provider, thread, timer, persistence, dependency, CMake/qbs entry,
+network or hardware behavior, or upstream Core/ProjectExplorer/application
+change. Scan and Diagnostics remain explicitly local Mock capabilities.

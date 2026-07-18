@@ -3005,6 +3005,247 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
     controller.selectionService()->clear();
 }
 
+void EtherCATWorkbenchTests::testProjectScopedLocateNavigation()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+    QVERIFY(projectService->projects().isEmpty());
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Data::DeviceSummary device = deviceSummaries(1).first();
+    const TestProjectFile alpha = writeProjectWithSlave(
+        directory, device, "alpha-locate.ecatproject", "Alpha Locate Project");
+    const TestProjectFile beta = writeProjectWithSlave(
+        directory, device, "beta-locate.ecatproject", "Beta Locate Project");
+    QVERIFY(!alpha.path.isEmpty());
+    QVERIFY(!beta.path.isEmpty());
+
+    QPointer<ProjectExplorer::Project> alphaProjectObject;
+    QPointer<ProjectExplorer::Project> betaProjectObject;
+    AvailableScanProvider scan(
+        Utils::Id("EtherCAT.Workbench.ProjectScopedLocateScan"),
+        "Local Mock project-scoped locate scan");
+    bool scanRegistered = false;
+    const QScopeGuard cleanup([&] {
+        controller.selectionService()->clear();
+        if (scanRegistered)
+            ExtensionSystem::PluginManager::removeObject(&scan);
+        if (betaProjectObject
+            && ProjectExplorer::ProjectManager::hasProject(betaProjectObject.data())) {
+            ProjectExplorer::ProjectManager::removeProject(betaProjectObject.data());
+        }
+        if (alphaProjectObject
+            && ProjectExplorer::ProjectManager::hasProject(alphaProjectObject.data())) {
+            ProjectExplorer::ProjectManager::removeProject(alphaProjectObject.data());
+        }
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+
+    const ProjectExplorer::OpenProjectResult alphaOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(alpha.path, false);
+    QVERIFY2(alphaOpened, qPrintable(alphaOpened.errorMessage()));
+    alphaProjectObject = alphaOpened.project();
+    const ProjectExplorer::OpenProjectResult betaOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(beta.path, false);
+    QVERIFY2(betaOpened, qPrintable(betaOpened.errorMessage()));
+    betaProjectObject = betaOpened.project();
+    QTRY_COMPARE(projectService->projects().size(), 2);
+    QVERIFY_RESULT(projectService->replaceOfflineSlaves(beta.projectId, beta.masterId, {}));
+
+    WorkbenchNavigationWidget navigation(&controller);
+    navigation.resize(900, 600);
+    navigation.show();
+    DetailsView details(&controller);
+    details.resize(900, 600);
+    details.show();
+    QTRY_VERIFY(navigation.isVisible());
+    QTRY_VERIFY(details.isVisible());
+    ::Core::ModeManager::activateMode(Constants::MODE_ID);
+    QTRY_COMPARE(::Core::ModeManager::currentModeId(), Utils::Id(Constants::MODE_ID));
+    navigation.activateWindow();
+    navigation.treeView()->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(navigation.treeView()->hasFocus());
+    QTRY_COMPARE(
+        ::Core::ICore::currentContextWidget(), static_cast<QWidget *>(&navigation));
+
+    ::Core::Command *locateDifferenceCommand
+        = ::Core::ActionManager::command(Constants::LOCATE_DIFFERENCE_ACTION_ID);
+    ::Core::Command *locateIssueCommand
+        = ::Core::ActionManager::command(Constants::LOCATE_ISSUE_ACTION_ID);
+    QVERIFY(locateDifferenceCommand);
+    QVERIFY(locateIssueCommand);
+    QAction *locateDifferenceContextAction
+        = locateDifferenceCommand->actionForContext(Constants::CONTEXT_ID);
+    QAction *locateIssueContextAction
+        = locateIssueCommand->actionForContext(Constants::CONTEXT_ID);
+    QVERIFY(locateDifferenceContextAction);
+    QVERIFY(locateIssueContextAction);
+
+    scan.setAvailable(true);
+    ExtensionSystem::PluginManager::addObject(&scan);
+    scanRegistered = true;
+    Data::ScanResult scanResult;
+    scanResult.snapshot.projectId = alpha.projectId;
+    scanResult.snapshot.masterId = alpha.masterId;
+    scanResult.snapshot.mock = true;
+    scanResult.snapshot.complete = true;
+    scanResult.comparison.projectId = alpha.projectId;
+    scanResult.comparison.masterId = alpha.masterId;
+    scanResult.comparison.exactMatch = false;
+    scanResult.comparison.differences = {
+        {Data::TopologyDifferenceKind::Missing,
+         Data::DifferenceSeverity::Warning,
+         alpha.slaveId,
+         {},
+         0,
+         -1,
+         "Missing Alpha slave",
+         "Only Alpha has a local Mock topology difference"},
+    };
+    scan.publishResult(scanResult);
+    QTRY_VERIFY(controller.treeModel()->firstTopologyDifference().isValid());
+    QTRY_VERIFY(controller.treeModel()->firstIssue().isValid());
+    QVERIFY(!controller.treeModel()->firstTopologyDifference(beta.projectId).isValid());
+    QVERIFY(!controller.treeModel()->firstIssue(beta.projectId).isValid());
+    QCOMPARE(
+        controller.treeModel()
+            ->firstTopologyDifference(alpha.projectId)
+            .data(WorkbenchTreeModel::ProjectIdRole)
+            .value<Data::NodeId>(),
+        alpha.projectId);
+    QCOMPARE(
+        controller.treeModel()
+            ->firstIssue(alpha.projectId)
+            .data(WorkbenchTreeModel::ProjectIdRole)
+            .value<Data::NodeId>(),
+        alpha.projectId);
+
+    controller.selectionService()->setCurrentNodeId(beta.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, beta.projectId);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        beta.projectId);
+    QTRY_VERIFY(!locateDifferenceCommand->action()->isEnabled());
+    QTRY_VERIFY(!locateIssueCommand->action()->isEnabled());
+    QTRY_VERIFY(!locateDifferenceContextAction->isEnabled());
+    QTRY_VERIFY(!locateIssueContextAction->isEnabled());
+
+    emit controller.locateFirstTopologyDifferenceRequested();
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), beta.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, beta.projectId);
+    emit controller.locateFirstIssueRequested();
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), beta.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, beta.projectId);
+
+    controller.selectionService()->setCurrentNodeId(alpha.projectId);
+    QTRY_VERIFY(locateDifferenceCommand->action()->isEnabled());
+    QTRY_VERIFY(locateIssueCommand->action()->isEnabled());
+    QTRY_VERIFY(locateDifferenceContextAction->isEnabled());
+    QTRY_VERIFY(locateIssueContextAction->isEnabled());
+
+    const QModelIndex betaMasterProxy = findById(navigation.treeView()->model(), beta.masterId);
+    QVERIFY(betaMasterProxy.isValid());
+    const QModelIndex betaPlaceholderProxy = directChildByKind(
+        navigation.treeView()->model(), Core::WorkbenchNodeKind::Placeholder, betaMasterProxy);
+    QVERIFY(betaPlaceholderProxy.isValid());
+    QCOMPARE(
+        betaPlaceholderProxy.data(WorkbenchTreeModel::NodeKindRole)
+            .value<Core::WorkbenchNodeKind>(),
+        Core::WorkbenchNodeKind::Placeholder);
+    navigation.treeView()->scrollTo(betaPlaceholderProxy);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    bool placeholderPopupSeen = false;
+    bool placeholderDifferenceEnabled = true;
+    bool placeholderIssueEnabled = true;
+    QTimer::singleShot(
+        0,
+        &navigation,
+        [&placeholderPopupSeen,
+         &placeholderDifferenceEnabled,
+         &placeholderIssueEnabled,
+         locateDifferenceCommand,
+         locateIssueCommand] {
+            auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (!popup)
+                return;
+            placeholderPopupSeen = true;
+            placeholderDifferenceEnabled = locateDifferenceCommand->action()->isEnabled();
+            placeholderIssueEnabled = locateIssueCommand->action()->isEnabled();
+            popup->close();
+        });
+    emit navigation.treeView()->customContextMenuRequested(
+        navigation.treeView()->visualRect(betaPlaceholderProxy).center());
+    QVERIFY(placeholderPopupSeen);
+    QVERIFY(!placeholderDifferenceEnabled);
+    QVERIFY(!placeholderIssueEnabled);
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), alpha.projectId);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        alpha.projectId);
+    QTRY_VERIFY(locateDifferenceCommand->action()->isEnabled());
+    QTRY_VERIFY(locateIssueCommand->action()->isEnabled());
+
+    emit controller.locateFirstTopologyDifferenceRequested();
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), alpha.slaveId);
+    QTRY_COMPARE(details.currentContext().projectId, alpha.projectId);
+    controller.selectionService()->setCurrentNodeId(alpha.projectId);
+    emit controller.locateFirstIssueRequested();
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), alpha.slaveId);
+    QTRY_COMPARE(details.currentContext().projectId, alpha.projectId);
+
+    const Data::NodeId unknownNodeId = Data::NodeId::create();
+    controller.selectionService()->setCurrentNodeId(unknownNodeId);
+    QTRY_VERIFY(!navigation.treeView()->currentIndex().isValid());
+    QTRY_VERIFY(!locateDifferenceCommand->action()->isEnabled());
+    QTRY_VERIFY(!locateIssueCommand->action()->isEnabled());
+    emit controller.locateFirstTopologyDifferenceRequested();
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), unknownNodeId);
+    QTRY_VERIFY(!navigation.treeView()->currentIndex().isValid());
+    emit controller.locateFirstIssueRequested();
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), unknownNodeId);
+    QTRY_VERIFY(!navigation.treeView()->currentIndex().isValid());
+
+    controller.selectionService()->clear();
+    QTRY_VERIFY(locateDifferenceCommand->action()->isEnabled());
+    QTRY_VERIFY(locateIssueCommand->action()->isEnabled());
+    emit controller.locateFirstTopologyDifferenceRequested();
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), alpha.slaveId);
+
+    const QModelIndex repositoryProxy = findByKind(
+        navigation.treeView()->model(), Core::WorkbenchNodeKind::DeviceRepository);
+    QVERIFY(repositoryProxy.isValid());
+    const Data::NodeId repositoryId
+        = repositoryProxy.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    QVERIFY(!repositoryId.isNull());
+    controller.selectionService()->setCurrentNodeId(repositoryId);
+    QTRY_VERIFY(locateDifferenceCommand->action()->isEnabled());
+    QTRY_VERIFY(locateIssueCommand->action()->isEnabled());
+    emit controller.locateFirstIssueRequested();
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), alpha.slaveId);
+
+    controller.selectionService()->setCurrentNodeId(beta.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, beta.projectId);
+    navigation.treeView()->expandAll();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const QString treeRenderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_LOCATE_CONTEXT_TREE_RENDER_PATH");
+    if (!treeRenderPath.isEmpty())
+        QVERIFY2(navigation.grab().save(treeRenderPath), qPrintable(treeRenderPath));
+    const QString detailsRenderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_LOCATE_CONTEXT_DETAILS_RENDER_PATH");
+    if (!detailsRenderPath.isEmpty())
+        QVERIFY2(details.grab().save(detailsRenderPath), qPrintable(detailsRenderPath));
+}
+
 void EtherCATWorkbenchTests::testNavigationSelectionAndFiltering()
 {
     WorkbenchController controller;

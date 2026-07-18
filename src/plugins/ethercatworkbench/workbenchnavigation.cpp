@@ -30,7 +30,24 @@
 #include <QTreeView>
 #include <QVBoxLayout>
 
+#include <optional>
+
 namespace EtherCAT::Workbench::Internal {
+
+static std::optional<Data::NodeId> currentLocateProjectId(
+    WorkbenchController *controller, const WorkbenchTreeModel *model)
+{
+    if (!controller || !model)
+        return std::nullopt;
+    Core::SelectionService *selectionService = controller->selectionService();
+    if (!selectionService)
+        return std::nullopt;
+    const Data::NodeId currentNodeId = selectionService->currentNodeId();
+    const Core::PropertyPageContext context = model->contextForNodeId(currentNodeId);
+    if (!currentNodeId.isNull() && context.nodeId.isNull())
+        return std::nullopt;
+    return context.projectId;
+}
 
 WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     WorkbenchController *controller, QWidget *parent)
@@ -287,12 +304,18 @@ void WorkbenchNavigationWidget::selectSourceIndex(const QModelIndex &sourceIndex
 
 void WorkbenchNavigationWidget::locateFirstTopologyDifference()
 {
-    selectSourceIndex(m_sourceModel->firstTopologyDifference());
+    const std::optional<Data::NodeId> projectId
+        = currentLocateProjectId(m_controller.data(), m_sourceModel);
+    if (projectId)
+        selectSourceIndex(m_sourceModel->firstTopologyDifference(*projectId));
 }
 
 void WorkbenchNavigationWidget::locateFirstIssue()
 {
-    selectSourceIndex(m_sourceModel->firstIssue());
+    const std::optional<Data::NodeId> projectId
+        = currentLocateProjectId(m_controller.data(), m_sourceModel);
+    if (projectId)
+        selectSourceIndex(m_sourceModel->firstIssue(*projectId));
 }
 
 void WorkbenchNavigationWidget::openDiagnostics()
@@ -334,8 +357,12 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
             command->action()->setEnabled(enabled);
     };
     setCommandEnabled(
-        Constants::LOCATE_DIFFERENCE_ACTION_ID, m_sourceModel->firstTopologyDifference().isValid());
-    setCommandEnabled(Constants::LOCATE_ISSUE_ACTION_ID, m_sourceModel->firstIssue().isValid());
+        Constants::LOCATE_DIFFERENCE_ACTION_ID,
+        contextMatchesSelection
+            && m_sourceModel->firstTopologyDifference(context.projectId).isValid());
+    setCommandEnabled(
+        Constants::LOCATE_ISSUE_ACTION_ID,
+        contextMatchesSelection && m_sourceModel->firstIssue(context.projectId).isValid());
     setCommandEnabled(
         Constants::OPEN_DIAGNOSTICS_ACTION_ID,
         contextMatchesSelection
@@ -404,6 +431,8 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
     Core::SelectionService *restoredSelectionService
         = m_controller ? m_controller->selectionService() : nullptr;
     if (!restoredSelectionService) {
+        setCommandEnabled(Constants::LOCATE_DIFFERENCE_ACTION_ID, false);
+        setCommandEnabled(Constants::LOCATE_ISSUE_ACTION_ID, false);
         setCommandEnabled(Constants::OPEN_DIAGNOSTICS_ACTION_ID, false);
         return;
     }
@@ -413,6 +442,14 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
     const bool restoredSelectionIsKnown
         = restoredNodeId.isNull() || !restoredContext.nodeId.isNull();
     selectNode(restoredNodeId);
+    setCommandEnabled(
+        Constants::LOCATE_DIFFERENCE_ACTION_ID,
+        restoredSelectionIsKnown
+            && m_sourceModel->firstTopologyDifference(restoredContext.projectId).isValid());
+    setCommandEnabled(
+        Constants::LOCATE_ISSUE_ACTION_ID,
+        restoredSelectionIsKnown
+            && m_sourceModel->firstIssue(restoredContext.projectId).isValid());
     setCommandEnabled(
         Constants::OPEN_DIAGNOSTICS_ACTION_ID,
         restoredSelectionIsKnown

@@ -300,9 +300,6 @@ void EtherCATWorkbenchPlugin::setupActions()
                 moveSlaveDownAction->setEnabled(false);
                 return;
             }
-            locateDifferenceAction->setEnabled(
-                m_controller->treeModel()->firstTopologyDifference().isValid());
-            locateIssueAction->setEnabled(m_controller->treeModel()->firstIssue().isValid());
             Core::SelectionService *selectionService = m_controller->selectionService();
             const Data::NodeId currentNodeId
                 = selectionService ? selectionService->currentNodeId() : Data::NodeId();
@@ -312,6 +309,14 @@ void EtherCATWorkbenchPlugin::setupActions()
                       : Core::PropertyPageContext();
             const bool currentSelectionIsKnown
                 = currentNodeId.isNull() || !currentContext.nodeId.isNull();
+            locateDifferenceAction->setEnabled(
+                selectionService && currentSelectionIsKnown
+                && m_controller->treeModel()
+                       ->firstTopologyDifference(currentContext.projectId)
+                       .isValid());
+            locateIssueAction->setEnabled(
+                selectionService && currentSelectionIsKnown
+                && m_controller->treeModel()->firstIssue(currentContext.projectId).isValid());
             openDiagnosticsAction->setEnabled(
                 selectionService && currentSelectionIsKnown
                 && m_controller->treeModel()

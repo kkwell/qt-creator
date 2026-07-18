@@ -409,6 +409,33 @@ metadata, persistence, QAction, Provider, thread, timer, network or controller
 behavior, or upstream Core, ProjectExplorer, or application path. The
 Workbench path count remains 44 and the direct Core patch count remains five.
 
+## Workbench project-scoped Locate boundary
+
+`Locate First Topology Difference` and `Locate First Issue` remain private
+Workbench presentation commands over copied tree state. The current stable
+selection is resolved through the existing `SelectionService` and private
+`PropertyPageContext`. A known non-null project ID restricts each model lookup
+to that exact project; no matching row means disabled action state and a direct
+request no-op. A genuinely null selection or a known projectless repository
+node retains global lookup, while an unknown non-null ID is rejected instead
+of being reinterpreted as projectless.
+
+The ActionManager source actions, active Workbench-context proxies, tree
+context menu, command strip, and direct navigation slots share this rule. A
+placeholder menu temporarily restricts both commands and restores the stable
+selection's scoped state when it closes. Controller teardown disables the
+actions if the Selection Service has already been released. The tree model
+continues to hold only copied immutable Scan/Diagnostics presentation and
+stable IDs; neither Provider pointer nor `QModelIndex` crosses a plugin
+boundary.
+
+This is an Embed Labs Qt-native multi-project guard inferred from Qt Creator's
+selected-project action convention and Beckhoff's selected-I/O-device
+workflows. It adds no public API, model role, QAction, source file, dependency,
+persistent format, Provider, controller transport, online or hardware behavior,
+CMake/qbs entry, or upstream Core, ProjectExplorer, or application path. The
+Workbench path count remains 44 and the direct Core patch count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

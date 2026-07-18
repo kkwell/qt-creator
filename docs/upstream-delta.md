@@ -430,6 +430,17 @@ online or hardware behavior, CMake/qbs entry, or path under upstream Core,
 ProjectExplorer, or the application bootstrap. The Workbench path count
 remains 44 and the direct Core patch count remains five.
 
+The Workbench project-scoped Locate issue changes only the existing private
+tree model, navigation widget, action setup, Workbench integration test, and
+documentation. It filters first-difference and first-issue lookup by the
+selected stable context's project ID, rejects unknown non-null selections,
+retains the existing null/known-projectless global lookup, and restores scoped
+action state after a placeholder context menu. It adds no public API, model
+role, QAction, source file, dependency, persistent field, Provider, thread,
+timer, controller transport, online or hardware behavior, CMake/qbs entry, or
+path under upstream Core, ProjectExplorer, or the application bootstrap. The
+Workbench path count remains 44 and the direct Core patch count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

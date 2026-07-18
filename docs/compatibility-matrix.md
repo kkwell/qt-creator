@@ -5,7 +5,7 @@
 | Item | Supported or observed baseline | Evidence status |
 |---|---|---|
 | Product branch | `embed-labs` only | Verified |
-| Issue baseline commit | `c757d4c6757e884e854a04a5f7b06336fb6d7734` | Verified |
+| Issue baseline commit | `a820995521aa9c7a4ffa459eef767c7322674680` | Verified |
 | Product version | 20.0.1 | Verified |
 | Recorded Qt Creator merge point | `11ba5cec09dce75db4bc948d98055e338ff59576` | Verified |
 | Qualified product Qt | Homebrew 6.11.0 | Clean Release build and GUI smoke verified |
@@ -520,8 +520,8 @@ limits are documented in `docs/ethercat-workbench.md`.
 
 | Check | Result |
 |---|---|
-| Focused EtherCATWorkbench plugin tests | 37 passed, 0 failed on the offscreen qualification path |
-| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 37, Scan 7, Diagnostics 7; 88 passed, 0 failed in isolated offscreen processes |
+| Focused EtherCATWorkbench plugin tests | 39 passed, 0 failed on the offscreen qualification path |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 39, Scan 7, Diagnostics 7; 90 passed, 0 failed in isolated offscreen processes |
 | Failure-first tree contract test | Failed to compile on missing source-ID routing before implementation, as expected |
 | Failure-first navigation layout test | Failed on `ElideRight`, then on missing accessible metadata, before both fixes |
 | Failure-first navigation keyboard test | Compiled and failed because the navigation container focus proxy was null, as expected |
@@ -1045,6 +1045,47 @@ status/control information and explicit EtherCAT operational/error states, but
 does not define this Qt role mapping:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html> and
 <https://infosys.beckhoff.com/content/1033/el6752/2584310027.html>.
+
+## EtherCATWorkbench project-scoped Locate qualification
+
+`ISSUE-WB-LOCATE-CONTEXT-001` is a Workbench-private navigation correction
+based on local baseline `a820995521aa9c7a4ffa459eef767c7322674680`. It does
+not change Scan or Diagnostics data, Project persistence, controller state,
+network behavior, or physical hardware capability.
+
+| Check | Result |
+|---|---|
+| Failure-first focused test | 2 passed, 1 failed because `Locate First Topology Difference` remained enabled for clean selected project Beta while Alpha owned the only Mock difference |
+| Exact project scope | Passed for project-filtered topology-difference and issue queries, disabled base/context actions on clean Beta, and exact routing inside Alpha |
+| Direct request guard | Passed; both controller signals leave Beta selection, current tree row, and Details context unchanged when Beta has no result |
+| Unknown stable ID | Passed; an unknown non-null ID clears the stale row, disables both actions, and remains unchanged after either direct request |
+| Projectless fallback | Passed for a genuinely null selection and a known Device Repository selection; each retains the existing global first-available lookup |
+| Placeholder context menu | Passed with both actions temporarily disabled and Alpha's stable selection plus enabled scoped state restored when the menu closes |
+| Focused normal-scale test | 3 passed, 0 failed; exit 0 |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; exit 0 |
+| Direct offscreen renders | Tree and Details inspected at 900 x 600 and 1800 x 1200 without clipping, overlap, or scale drift |
+| Complete EtherCATWorkbench suite | 39 passed, 0 failed in an LLDB-supervised isolated offscreen process |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 39, Scan 7, Diagnostics 7; 90 passed, 0 failed in isolated LLDB-supervised processes |
+| Qualified Qt and test build | Qt 6.11.0 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build | `WITH_TESTS=OFF` passed in `qt-creator-build-ethercat-product-qt611` |
+| Product version inventory | All 16 allow-listed plugin dylibs present |
+| Enabled offscreen startup | Stable beyond 15 seconds with fresh settings under `/private/tmp/embed-labs-locate-product-enabled.BzmYPj/settings`; intentional SIGTERM produced LLDB target status 15 |
+| Explicitly disabled startup | Stable beyond 15 seconds with `-noload EtherCATWorkbench` and fresh settings under `/private/tmp/embed-labs-locate-product-disabled.2CLrhS/settings`; intentional SIGTERM produced LLDB target status 15 |
+| Process and crash-report cleanup | No residual Embed Labs or LLDB process and no DiagnosticReports or ReportCrash event after 20:45:00 on 2026-07-18 |
+| Manual desktop interaction | Not run by design; all executable qualification was offscreen and created no visible main window |
+| `WITH_TESTS=ON` full product build | Not rerun; this private Workbench issue does not touch the known EasyBoard test include blocker |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Public API, dependency, persistence, source-list, CMake, or qbs changes | None |
+| Network or physical hardware access | Not performed by design; Scan and Diagnostics remain local Mock Providers |
+
+Qt Creator documents that Projects-view context actions apply to the selected
+tree item and project:
+<https://doc.qt.io/qtcreator/creator-projects-view.html>. Beckhoff documents
+selected-I/O-tree-device context for the EtherCAT Online page and comparative
+scans, but does not define this Workbench-private cross-project guard:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446518411.html> and
+<https://infosys.beckhoff.com/content/1033/ps2001-2420-1001/10832129675.html>.
 
 ## Verification states
 
