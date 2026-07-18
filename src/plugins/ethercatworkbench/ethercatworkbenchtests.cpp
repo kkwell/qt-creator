@@ -5848,6 +5848,134 @@ void EtherCATWorkbenchTests::testTwinCatProcessDataTree()
     QCOMPARE(uniqueNodeIds.size(), nodeIds.size());
 }
 
+void EtherCATWorkbenchTests::testProcessDataTableAccessibility()
+{
+    ProcessTreeFixture fixture = processTreeFixture();
+    const QString longName = QString::fromUtf8(
+                                 "\u8d85\u957f Process Data \u540d\u79f0 \u03a9 \u2014 "
+                                 "\u5b8c\u6574\u5185\u5bb9 \u2014 ")
+                             + QString(256, QLatin1Char('W'));
+    const QString longEntryName = QString::fromUtf8(
+                                      "\u8d85\u957f PDO Entry \u540d\u79f0 \u03a9 \u2014 ")
+                                  + QString(256, QLatin1Char('M'));
+    fixture.project.slaves.first().processData.pdos.first().name = longName;
+    fixture.project.slaves.first().processData.pdos.first().entries.first().name = longEntryName;
+    fixture.project.slaves.first().processData.pdos[2].mappingSupported = false;
+
+    WorkbenchController controller;
+    controller.treeModel()->setProjects({fixture.project});
+    const QModelIndex slave = controller.treeModel()->indexForNodeId(fixture.slaveId);
+    QVERIFY(slave.isValid());
+
+    BuiltinPropertyPageProvider pages(&controller);
+    std::unique_ptr<QWidget> processPage(pages.createPage(Constants::PROCESS_DATA_PAGE_ID, nullptr));
+    QVERIFY(processPage);
+    pages.updatePage(
+        Constants::PROCESS_DATA_PAGE_ID,
+        processPage.get(),
+        controller.treeModel()->contextForIndex(slave));
+
+    const QList<QTableView *> tables = {
+        processPage->findChild<QTableView *>("EtherCATProcessDataSyncManagers"),
+        processPage->findChild<QTableView *>("EtherCATProcessDataAssignments"),
+        processPage->findChild<QTableView *>("EtherCATProcessDataPdoList"),
+        processPage->findChild<QTableView *>("EtherCATProcessDataPdoContent"),
+        processPage->findChild<QTableView *>("EtherCATProcessDataImage"),
+    };
+    QSet<QString> accessibleNames;
+    for (QTableView *table : tables) {
+        QVERIFY(table);
+        QVERIFY2(!table->accessibleName().isEmpty(), qPrintable(table->objectName()));
+        QVERIFY2(!table->accessibleDescription().isEmpty(), qPrintable(table->objectName()));
+        accessibleNames.insert(table->accessibleName());
+
+        const QAbstractItemModel *model = table->model();
+        QVERIFY(model);
+        QVERIFY(model->rowCount() > 0);
+        for (int row = 0; row < model->rowCount(); ++row) {
+            for (int column = 0; column < model->columnCount(); ++column) {
+                const QModelIndex index = model->index(row, column);
+                const QString header
+                    = model->headerData(column, Qt::Horizontal, Qt::DisplayRole).toString();
+                const QString displayed = index.data(Qt::DisplayRole).toString();
+                const QVariant accessibleTextData = index.data(Qt::AccessibleTextRole);
+                const QString accessibleText = accessibleTextData.toString();
+                const QString accessibleDescription
+                    = index.data(Qt::AccessibleDescriptionRole).toString();
+                const QString toolTip = index.data(Qt::ToolTipRole).toString();
+                QVERIFY2(!header.isEmpty(), qPrintable(table->objectName()));
+                QVERIFY2(accessibleTextData.isValid(), qPrintable(table->objectName()));
+                if (!displayed.isEmpty())
+                    QCOMPARE(accessibleText, displayed);
+                QVERIFY2(!accessibleDescription.isEmpty(), qPrintable(table->objectName()));
+                QVERIFY(accessibleDescription.contains(header));
+                if (!accessibleText.isEmpty())
+                    QVERIFY(accessibleDescription.contains(accessibleText));
+                QVERIFY2(!toolTip.isEmpty(), qPrintable(table->objectName()));
+                QVERIFY(toolTip.contains(header));
+                if (!accessibleText.isEmpty())
+                    QVERIFY(toolTip.contains(accessibleText));
+            }
+        }
+    }
+    QCOMPARE(accessibleNames.size(), tables.size());
+
+    QTableView *assignments = tables.at(1);
+    const int assignedColumn = columnWithHeader(assignments->model(), "Assigned");
+    QVERIFY(assignedColumn >= 0);
+    const QModelIndex assigned = assignments->model()->index(0, assignedColumn);
+    QCOMPARE(assigned.data(Qt::AccessibleTextRole).toString(), QString("Assigned"));
+    QVERIFY(assigned.data(Qt::AccessibleDescriptionRole).toString().contains(longName));
+    QVERIFY(assigned.data(Qt::AccessibleDescriptionRole)
+                .toString()
+                .contains("read-only", Qt::CaseInsensitive));
+    QVERIFY(!assigned.data(Qt::AccessibleDescriptionRole)
+                 .toString()
+                 .contains("Select whether", Qt::CaseInsensitive));
+    const QModelIndex notAssigned = assignments->model()->index(1, assignedColumn);
+    QCOMPARE(notAssigned.data(Qt::CheckStateRole).toInt(), int(Qt::Unchecked));
+    QCOMPARE(notAssigned.data(Qt::AccessibleTextRole).toString(), QString("Not assigned"));
+    QVERIFY(notAssigned.data(Qt::AccessibleDescriptionRole)
+                .toString()
+                .contains("cannot be selected", Qt::CaseInsensitive));
+
+    QTableView *syncManagers = tables.at(0);
+    syncManagers->setCurrentIndex(syncManagers->model()->index(1, 0));
+    QCOMPARE(assignments->model()->rowCount(), 1);
+    const QModelIndex mandatory = assignments->model()->index(0, assignedColumn);
+    QVERIFY(mandatory.data(Qt::AccessibleDescriptionRole)
+                .toString()
+                .contains("Mandatory PDOs", Qt::CaseInsensitive));
+    syncManagers->setCurrentIndex(syncManagers->model()->index(0, 0));
+    QCOMPARE(assignments->model()->rowCount(), 2);
+
+    QTableView *pdoList = tables.at(2);
+    const int nameColumn = columnWithHeader(pdoList->model(), "Name");
+    QVERIFY(nameColumn >= 0);
+    const QModelIndex longNameIndex = pdoList->model()->index(0, nameColumn);
+    QCOMPARE(longNameIndex.data(Qt::AccessibleTextRole).toString(), longName);
+    QVERIFY(longNameIndex.data(Qt::AccessibleDescriptionRole).toString().contains(longName));
+    QVERIFY(longNameIndex.data(Qt::ToolTipRole).toString().contains(longName));
+
+    QTableView *pdoContent = tables.at(3);
+    const int entryNameColumn = columnWithHeader(pdoContent->model(), "Name");
+    QVERIFY(entryNameColumn >= 0);
+    const QModelIndex longEntryNameIndex = pdoContent->model()->index(0, entryNameColumn);
+    QCOMPARE(longEntryNameIndex.data(Qt::AccessibleTextRole).toString(), longEntryName);
+    QVERIFY(
+        longEntryNameIndex.data(Qt::AccessibleDescriptionRole).toString().contains(longEntryName));
+    QVERIFY(longEntryNameIndex.data(Qt::ToolTipRole).toString().contains(longEntryName));
+
+    QTableView *processImage = tables.at(4);
+    const int offsetColumn = columnWithHeader(processImage->model(), "Offset (byte.bit)");
+    QVERIFY(offsetColumn >= 0);
+    QVERIFY(processImage->model()
+                ->index(0, offsetColumn)
+                .data(Qt::AccessibleDescriptionRole)
+                .toString()
+                .contains("bit range", Qt::CaseInsensitive));
+}
+
 void EtherCATWorkbenchTests::testEditableProcessDataWorkflow()
 {
     WorkbenchController controller;

@@ -45,6 +45,7 @@ private slots:
     void testBuiltInDevicePages();
     void testConfiguredSlaveTreeAndPages();
     void testTwinCatProcessDataTree();
+    void testProcessDataTableAccessibility();
     void testEditableProcessDataWorkflow();
     void testCoeOnlineMockWorkflow();
     void testEditableStartupWorkflow();

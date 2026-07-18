@@ -147,6 +147,34 @@ static QString pdoFlags(const Data::PdoConfiguration &pdo)
     return flags.join(' ');
 }
 
+static QString tableCellDescription(
+    const QAbstractItemModel *model, const QModelIndex &index, const QString &help = {})
+{
+    const QString header = model->headerData(index.column(), Qt::Horizontal).toString();
+    const QString text = model->data(index, Qt::AccessibleTextRole).toString();
+    int nameColumn = -1;
+    for (int column = 0; column < model->columnCount(); ++column) {
+        if (model->headerData(column, Qt::Horizontal).toString() == Tr::tr("Name")) {
+            nameColumn = column;
+            break;
+        }
+    }
+    const QString rowName
+        = nameColumn >= 0
+              ? model->data(model->index(index.row(), nameColumn), Qt::AccessibleTextRole).toString()
+              : QString();
+
+    QString description;
+    if (!rowName.isEmpty() && index.column() != nameColumn)
+        description = text.isEmpty() ? Tr::tr("%1, %2").arg(rowName, header)
+                                     : Tr::tr("%1, %2: %3").arg(rowName, header, text);
+    else
+        description = text.isEmpty() ? header : Tr::tr("%1: %2").arg(header, text);
+    if (!help.isEmpty())
+        description += '\n' + help;
+    return description;
+}
+
 static bool isEmpty(const Data::ProcessDataConfiguration &configuration)
 {
     return configuration.syncManagers.isEmpty() && configuration.pdos.isEmpty();
@@ -208,10 +236,15 @@ public:
             index.row());
         if (role == StableIdRole)
             return QVariant::fromValue(syncManager.id);
-        if (role == Qt::ToolTipRole) {
-            return Tr::tr(
-                "Selecting this Sync Manager filters PDO Assignment, PDO List, and "
-                "PDO Content below.");
+        if (role == Qt::AccessibleTextRole)
+            return data(index, Qt::DisplayRole).toString();
+        if (role == Qt::AccessibleDescriptionRole || role == Qt::ToolTipRole) {
+            return tableCellDescription(
+                this,
+                index,
+                Tr::tr(
+                    "Selecting this Sync Manager filters PDO Assignment, PDO List, and "
+                    "PDO Content below."));
         }
         if (role != Qt::DisplayRole)
             return {};
@@ -308,13 +341,25 @@ public:
             return QVariant::fromValue(pdo.id);
         if (role == Qt::CheckStateRole && index.column() == Assigned)
             return pdo.selected ? Qt::Checked : Qt::Unchecked;
-        if (role == Qt::ToolTipRole) {
-            if (pdo.mandatory)
-                return Tr::tr("Mandatory PDOs cannot be removed from the assignment.");
-            if (!pdo.mappingSupported)
-                return Tr::tr(
+        if (role == Qt::AccessibleTextRole) {
+            if (index.column() == Assigned)
+                return pdo.selected ? Tr::tr("Assigned") : Tr::tr("Not assigned");
+            return data(index, Qt::DisplayRole).toString();
+        }
+        if (role == Qt::AccessibleDescriptionRole || role == Qt::ToolTipRole) {
+            QString help;
+            if (pdo.mandatory) {
+                help = Tr::tr("Mandatory PDOs cannot be removed from the assignment.");
+            } else if (!pdo.mappingSupported) {
+                help = Tr::tr(
                     "This ESI mapping is preserved for inspection but cannot be selected.");
-            return Tr::tr("Select whether this PDO participates in cyclic process data.");
+            } else if (!m_editable) {
+                help = Tr::tr(
+                    "This PDO assignment is read-only in the current Process Data selection.");
+            } else {
+                help = Tr::tr("Select whether this PDO participates in cyclic process data.");
+            }
+            return tableCellDescription(this, index, help);
         }
         if (role != Qt::DisplayRole)
             return {};
@@ -430,9 +475,13 @@ public:
         const Data::PdoConfiguration &pdo = m_pdos.at(index.row());
         if (role == StableIdRole)
             return QVariant::fromValue(pdo.id);
-        if (role == Qt::ToolTipRole)
-            return pdo.selected ? Tr::tr("Assigned to cyclic process data")
-                                : Tr::tr("Available but not assigned");
+        if (role == Qt::AccessibleTextRole)
+            return data(index, Qt::DisplayRole).toString();
+        if (role == Qt::AccessibleDescriptionRole || role == Qt::ToolTipRole) {
+            const QString help = pdo.selected ? Tr::tr("Assigned to cyclic process data")
+                                              : Tr::tr("Available but not assigned");
+            return tableCellDescription(this, index, help);
+        }
         if (role != Qt::DisplayRole)
             return {};
         switch (index.column()) {
@@ -515,15 +564,24 @@ public:
             return QVariant::fromValue(entry.id);
         if (role == DataTypeRole)
             return int(entry.dataType);
-        if (role == Qt::ToolTipRole && index.column() == BitOffset) {
-            const std::optional<Data::ProcessImageEntry> imageEntry = processImageEntry(entry.id);
-            if (!imageEntry)
-                return Tr::tr("Automatic offset. The entry is not in the active process image.");
-            return entry.requestedBitOffset < 0
-                       ? Tr::tr("Automatic offset: %1 byte(s), bit %2.")
-                             .arg(imageEntry->byteOffset)
-                             .arg(imageEntry->bitOffsetInByte)
-                       : Tr::tr("Requested offset: %1 bit(s).").arg(entry.requestedBitOffset);
+        if (role == Qt::AccessibleTextRole)
+            return data(index, Qt::DisplayRole).toString();
+        if (role == Qt::AccessibleDescriptionRole || role == Qt::ToolTipRole) {
+            QString help;
+            if (index.column() == BitOffset) {
+                const std::optional<Data::ProcessImageEntry> imageEntry = processImageEntry(
+                    entry.id);
+                if (!imageEntry) {
+                    help = Tr::tr("Automatic offset. The entry is not in the active process image.");
+                } else if (entry.requestedBitOffset < 0) {
+                    help = Tr::tr("Automatic offset: %1 byte(s), bit %2.")
+                               .arg(imageEntry->byteOffset)
+                               .arg(imageEntry->bitOffsetInByte);
+                } else {
+                    help = Tr::tr("Requested offset: %1 bit(s).").arg(entry.requestedBitOffset);
+                }
+            }
+            return tableCellDescription(this, index, help);
         }
         if (role != Qt::DisplayRole && role != Qt::EditRole)
             return {};
@@ -738,13 +796,18 @@ public:
         const Data::ProcessImageEntry &entry = m_entries.at(index.row());
         if (role == StableIdRole)
             return QVariant::fromValue(entry.entryId);
-        if (role != Qt::DisplayRole && role != Qt::ToolTipRole)
-            return {};
-        if (role == Qt::ToolTipRole) {
-            return Tr::tr("Absolute process-image bit range [%1, %2).")
-                .arg(entry.bitOffset)
-                .arg(entry.bitOffset + entry.bitLength);
+        if (role == Qt::AccessibleTextRole)
+            return data(index, Qt::DisplayRole).toString();
+        if (role == Qt::AccessibleDescriptionRole || role == Qt::ToolTipRole) {
+            return tableCellDescription(
+                this,
+                index,
+                Tr::tr("Absolute process-image bit range [%1, %2).")
+                    .arg(entry.bitOffset)
+                    .arg(entry.bitOffset + entry.bitLength));
         }
+        if (role != Qt::DisplayRole)
+            return {};
         switch (index.column()) {
         case Direction:
             return pdoDirectionName(entry.direction);
@@ -850,8 +913,14 @@ public:
     }
 };
 
-static void configureTable(QTableView *view, int stretchColumn)
+static void configureTable(
+    QTableView *view,
+    int stretchColumn,
+    const QString &accessibleName,
+    const QString &accessibleDescription)
 {
+    view->setAccessibleName(accessibleName);
+    view->setAccessibleDescription(accessibleDescription);
     view->setAlternatingRowColors(true);
     view->setSelectionBehavior(QAbstractItemView::SelectRows);
     view->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -926,11 +995,39 @@ ProcessDataPage::ProcessDataPage(WorkbenchController *controller, QWidget *paren
     m_pdoList->setModel(m_pdoListModel);
     m_pdoContent->setModel(m_pdoContentModel);
     m_processImage->setModel(m_processImageModel);
-    configureTable(m_syncManagers, SyncManagerTableModel::Name);
-    configureTable(m_assignments, PdoAssignmentTableModel::Name);
-    configureTable(m_pdoList, PdoListTableModel::Name);
-    configureTable(m_pdoContent, PdoContentTableModel::Name);
-    configureTable(m_processImage, ProcessImageTableModel::Name);
+    configureTable(
+        m_syncManagers,
+        SyncManagerTableModel::Name,
+        Tr::tr("Process Data Sync Managers"),
+        Tr::tr(
+            "Sync Managers for the current Process Data selection. Selecting a row filters "
+            "the PDO tables."));
+    configureTable(
+        m_assignments,
+        PdoAssignmentTableModel::Name,
+        Tr::tr("Process Data PDO Assignment"),
+        Tr::tr(
+            "PDOs available for the selected Sync Manager and whether each participates in "
+            "cyclic process data."));
+    configureTable(
+        m_pdoList,
+        PdoListTableModel::Name,
+        Tr::tr("Process Data PDO List"),
+        Tr::tr("PDO catalogue for the selected Sync Manager."));
+    configureTable(
+        m_pdoContent,
+        PdoContentTableModel::Name,
+        Tr::tr("Process Data PDO Content"),
+        Tr::tr(
+            "Entries in the selected PDO, including mapping addresses, sizes, names, and "
+            "types."));
+    configureTable(
+        m_processImage,
+        ProcessImageTableModel::Name,
+        Tr::tr("Process Image Preview"),
+        Tr::tr(
+            "Validated absolute layout of active outputs and inputs in the offline process "
+            "image."));
     m_pdoContent
         ->setItemDelegateForColumn(PdoContentTableModel::Type, new DataTypeDelegate(m_pdoContent));
 

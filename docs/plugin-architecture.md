@@ -730,6 +730,41 @@ physical-hardware behavior, CMake/qbs entry, or path under upstream Core,
 ProjectExplorer, or the application bootstrap. The Workbench path count
 remains 44 and the direct upstream Core patch count remains five.
 
+## Workbench Process Data accessibility boundary
+
+The private `ProcessDataPage` owns the widget and item-model accessibility
+metadata for its five tables. The page assigns each `QTableView` a unique
+translated name and a concise purpose description. Its private table models
+map complete display values to the standard `Qt::AccessibleTextRole` and build
+`Qt::AccessibleDescriptionRole`/tooltip strings from the column heading,
+optional row Name, full cell value, and existing table-specific guidance.
+
+The generic description helper resolves only values from the current valid
+index and its current row. It stores no `QModelIndex`, model item, widget,
+Provider, Project snapshot, or object pointer across calls. Existing model
+reset paths therefore remain the sole lifecycle boundary. The PDO Assignment
+check cell publishes `Assigned` or `Not assigned`, while its existing
+`Qt::CheckStateRole`, mandatory/mapping constraints, and ProjectService command
+path remain authoritative. Mandatory and unsupported mappings retain their
+specific reason before the read-only fallback; only a genuinely editable,
+supported assignment advertises selection.
+
+This boundary does not alter splitter geometry, section-resize policy,
+selection, editing, configuration validation, Undo/Redo, persistence, or the
+Mock/offline source boundary. It adds no public/custom role, API, source file,
+dependency, Provider, Project command, thread, timer, network/controller
+transport, or physical-hardware behavior. No CMake or qbs description changed.
+
+Qt's standard roles and widget accessible properties are documented at
+<https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum> and
+<https://doc.qt.io/qt-6/qwidget.html#accessibleName-prop>. Qt Creator 20.0
+provides explicit widget and model accessibility precedents at
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/libs/utils/fancymainwindow.cpp#L244-L247>
+and
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/terminal/terminalpane.cpp#L586-L597>.
+Beckhoff's Process Data table hierarchy remains only the product comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html>.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

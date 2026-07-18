@@ -2335,3 +2335,83 @@ documentation. It adds no source file, public API, dependency, persistence,
 Provider, thread, timer, network/controller transport, or physical-hardware
 behavior. No CMake or qbs file changed, so qbs was not run. The Workbench path
 count remains 44 and the direct upstream Core patch count remains five.
+
+## Process Data table accessibility
+
+`ISSUE-WB-PROCESS-DATA-TABLE-A11Y-001` is based on local baseline
+`1ce66e3332e17f0ab3e6e4597734d0339dfad230`. It closes the accessibility and
+long-cell recovery gap in the existing Process Data page without changing its
+splitters, selection, editing, validation, or persistence behavior.
+
+The Sync Manager, PDO Assignment, PDO List, PDO Content, and Process Image
+Preview tables now publish unique translated accessible names and concise
+purpose descriptions. Every valid cell exposes the full value through
+`Qt::AccessibleTextRole`. Its `Qt::AccessibleDescriptionRole` and tooltip
+identify the column, retain the full unelided value, include the row's Name
+when available, and preserve the existing selection, editability, automatic
+offset, assignment, or absolute bit-range guidance. The otherwise visually
+empty PDO Assignment checkbox cell reports `Assigned` or `Not assigned`; its
+existing `Qt::CheckStateRole` and edit rules remain authoritative. Assignment
+guidance advertises selection only for an editable, supported optional PDO.
+Mandatory and unsupported mappings retain their specific reasons; other
+derived, catalogue, and read-only contexts report the read-only boundary.
+
+Qt defines the standard item accessibility roles in
+[Qt::ItemDataRole](https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum) and widget
+accessible metadata in
+[QWidget](https://doc.qt.io/qt-6/qwidget.html#accessibleName-prop). Qt Creator
+20.0 provides local source precedents for explicit widget names/descriptions
+in
+[`FancyMainWindow`](https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/libs/utils/fancymainwindow.cpp#L244-L247)
+and model accessibility descriptions in
+[`TerminalPane`](https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/terminal/terminalpane.cpp#L586-L597).
+Beckhoff documents the selection-dependent Sync Manager, PDO Assignment, PDO
+List, and PDO Content hierarchy in
+[Process data](https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html).
+The combined cell description and full-value tooltip are Embed Labs Qt-native
+behavior, not copied TwinCAT implementation.
+
+The failure-first run under
+`/private/tmp/embed-labs-process-a11y-failure.ooJLPR` passed setup and cleanup
+but failed on the first Sync Manager table because its accessible name was
+empty. After the implementation, focused normal-scale and
+`QT_SCALE_FACTOR=2` runs each pass three events under
+`/private/tmp/embed-labs-process-a11y-final3-normal.kZTfM1` and
+`/private/tmp/embed-labs-process-a11y-final3-2x.rpWLPm`. The regression covers all
+five table names/descriptions, every populated cell, the assignment checkbox
+semantics, complete Unicode PDO/PDO Entry values with 256-character suffixes,
+their descriptions and tooltips, valid accessible-text values even for empty
+display cells, both assignment states, truthful read-only guidance, retained
+mandatory/unsupported reasons, and the process-image bit-range context. It
+verifies the standard Qt contract and does not claim a manual VoiceOver
+reading.
+
+Complete normal-scale and 2x Workbench runs each pass 46 events under
+`/private/tmp/embed-labs-workbench-final2-normal.d8z7g7` and
+`/private/tmp/embed-labs-workbench-final2-2x.GACIqx`. The six isolated EtherCAT suites
+pass 97 events: Core 17, Project 12, Devices 8, Workbench 46, Scan 7, and
+Diagnostics 7. The non-Workbench suite logs are under the matching
+`/private/tmp/embed-labs-six-final3-ethercat*` directories. The final
+`WITH_TESTS=OFF` build passes and contains exactly the 16 allow-listed plugin
+dylibs.
+
+Enabled product startup under
+`/private/tmp/embed-labs-product-enabled-final5.G4bRdZ` and startup with
+`-noload EtherCATWorkbench` under
+`/private/tmp/embed-labs-product-disabled-final5.oaSTLm` each completed delayed
+initialization and remained alive for 31 seconds. Both ended through an
+intentional SIGTERM to the LLDB-owned target with status 15. The explicitly
+disabled run reported one non-fatal shared-memory initialization message and
+continued. Cleanup found no residual target or LLDB process and no new Embed
+Labs or LLDB DiagnosticReports file.
+
+Every executable used fresh HOME/settings, cleared inherited DYLD variables,
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and
+only the process-local Touch Bar LLDB breakpoint. No visible main window or
+crash dialog was created. This issue changes only the existing private
+`processdatapage.cpp`, Workbench test declaration/implementation, and
+documentation. It adds no source file, public or custom model role, API,
+dependency, Provider, persistence, Project mutation, thread, timer,
+network/controller transport, or physical-hardware behavior. No CMake or qbs
+file changed, so qbs was not run. The Workbench path count remains 44 and the
+direct upstream Core patch count remains five.

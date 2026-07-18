@@ -1465,6 +1465,48 @@ is the immediate deregistration in
 Beckhoff's selected-target insertion flow is documented at
 <https://infosys.beckhoff.com/content/1033/eap/1521664395.html>.
 
+## EtherCATWorkbench Process Data table accessibility qualification
+
+`ISSUE-WB-PROCESS-DATA-TABLE-A11Y-001` uses local baseline
+`1ce66e3332e17f0ab3e6e4597734d0339dfad230`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first regression | Setup and cleanup passed; the old implementation failed because `EtherCATProcessDataSyncManagers` had an empty accessible name under `/private/tmp/embed-labs-process-a11y-failure.ooJLPR` |
+| Five table widgets | Unique translated accessible names and nonempty purpose descriptions verified for Sync Manager, PDO Assignment, PDO List, PDO Content, and Process Image Preview |
+| Standard item roles | Every populated cell provides `Qt::AccessibleTextRole` and a nonempty `Qt::AccessibleDescriptionRole` containing its column heading and accessible value when nonempty |
+| Row and operation context | Descriptions include the row Name where available and retain selection, assignment, unsupported/mandatory, automatic-offset, and absolute bit-range guidance; mandatory and unsupported reasons take precedence, while ordinary read-only contexts never advertise selection |
+| Assignment checkbox | Passed for both states; the visually empty Assigned column reports `Assigned` or `Not assigned` while `Qt::CheckStateRole` and existing edit flags remain unchanged |
+| Long-cell recovery | Complete Unicode PDO and PDO Entry names with 256-character suffixes are preserved in accessible text, descriptions, and tooltips without changing table geometry or elision policy |
+| Empty display values | Passed; `Qt::AccessibleTextRole` remains a valid `QString` value even when the visual cell is intentionally empty |
+| Focused normal-scale test | 3 passed, 0 failed; target exit 0 under `/private/tmp/embed-labs-process-a11y-final3-normal.kZTfM1` |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; target exit 0 under `/private/tmp/embed-labs-process-a11y-final3-2x.rpWLPm` |
+| Complete EtherCATWorkbench normal scale | 46 passed, 0 failed; target exit 0 under `/private/tmp/embed-labs-workbench-final2-normal.d8z7g7` |
+| Complete EtherCATWorkbench 2x scale | 46 passed, 0 failed; target exit 0 under `/private/tmp/embed-labs-workbench-final2-2x.GACIqx` |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 46, Scan 7, Diagnostics 7; 97 passed, 0 failed in isolated LLDB-supervised processes |
+| Qualified Qt and test build | Qt 6.11 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build | Full `WITH_TESTS=OFF` build passed in `qt-creator-build-ethercat-product-qt611` |
+| Product inventory | Exactly the 16 allow-listed plugin dylibs are present |
+| Enabled offscreen startup | Delayed initialization completed and the process stayed alive for 31 seconds under `/private/tmp/embed-labs-product-enabled-final5.G4bRdZ`; intentional SIGTERM produced target status 15 |
+| Explicitly disabled startup | Delayed initialization completed and the process stayed alive for 31 seconds with `-noload EtherCATWorkbench` under `/private/tmp/embed-labs-product-disabled-final5.oaSTLm`; intentional SIGTERM produced target status 15; one non-fatal shared-memory message did not interrupt startup |
+| Process and crash-report cleanup | No forced kill, residual target/LLDB process, or new Embed Labs/LLDB DiagnosticReports file |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no visible main window or crash dialog |
+| Assistive-technology claim | Standard Qt widget/item-model metadata verified; no manual VoiceOver reading is claimed |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, custom model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network or physical hardware access | Not performed; Process Data remains local Project/ESI configuration and validation |
+
+Qt's standard item accessibility and widget metadata contracts are documented
+at <https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum> and
+<https://doc.qt.io/qt-6/qwidget.html#accessibleName-prop>. Qt Creator 20.0's
+explicit accessibility precedents are
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/libs/utils/fancymainwindow.cpp#L244-L247>
+and
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/terminal/terminalpane.cpp#L586-L597>.
+Beckhoff's Process Data comparison is
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html>.
+
 ## Verification states
 
 Use only these evidence labels:

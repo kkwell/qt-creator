@@ -624,6 +624,22 @@ budget does not increase and no extension-point exception is required. The
 Workbench path count remains 44 and the direct upstream Core patch count
 remains five.
 
+The Workbench Process Data table accessibility issue, based on
+`1ce66e3332e17f0ab3e6e4597734d0339dfad230`, changes only the existing
+product-owned `processdatapage.cpp`, Workbench test declaration/implementation,
+and documentation. It adds unique table widget names/descriptions and consumes
+only Qt's standard `AccessibleTextRole` and `AccessibleDescriptionRole` for
+full current-cell values, row/column context, and existing guidance. It adds no
+custom role or retained model index.
+
+No source file, dependency, CMake/qbs entry, public API, Project format,
+Provider, persistence, Project command, controller transport, network
+behavior, or physical-hardware behavior changes. No file under Qt Creator's
+upstream Core, ProjectExplorer, or application bootstrap changes, so the
+direct Core patch budget does not increase and no extension-point exception is
+required. The Workbench path count remains 44 and the direct upstream Core
+patch count remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit
