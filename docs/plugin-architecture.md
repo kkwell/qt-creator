@@ -330,6 +330,38 @@ name/source change refreshes Details text without reconstructing its pages. No
 persistence, network, controller protocol, CMake/qbs entry, or upstream Qt
 Creator path is added.
 
+## Workbench invalid-project boundary
+
+The Project plugin remains the owner of `.ecatproject` parsing, recovery
+snapshots, project tasks, persistence, and startup-project integration.
+For this invalid-state decision, Workbench uses the existing immutable
+`ProjectSnapshot::valid` and `ProjectSnapshot::error` facts; no new parsing
+contract is introduced. The recovery Project ID remains an existing runtime
+correlation key, but Workbench does not present or copy it as persisted file
+identity; the file-derived name remains display identity. Workbench does not
+repair or reinterpret the file, or persist a generated recovery snapshot.
+
+For an invalid snapshot, the private Workbench tree exposes one Project root
+and one non-selectable recovery placeholder. It deliberately suppresses the
+generated Target, Master, slave, Diagnostics, and drop-target presentation.
+The existing Node-ID copy action is unavailable at the invalid root and its
+execution slot independently rejects the generated recovery ID.
+The private Details page likewise treats every field not established by the
+failed parse as unavailable. This is a presentation qualification, not a new
+Core or Project contract.
+
+ProjectExplorer continues to own startup-project state. Workbench may reject
+its own explicit activation command for an invalid selection, but it does not
+override an invalid project that ProjectExplorer has independently made
+active. Active and invalid are therefore composable presentation facts. Stable
+selection is cleared through the existing controller refresh when the invalid
+project closes.
+
+The implementation changes no public API, model role, service, Provider,
+metadata, dependency, source list, persistence format, CMake/qbs entry, or
+upstream Core, ProjectExplorer, or application path. The Workbench path count
+remains 44 and the direct Core patch count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

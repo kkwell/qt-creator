@@ -483,15 +483,16 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
         m_tree->hide();
     } else if (context.nodeKind == Core::WorkbenchNodeKind::Project) {
         m_summary->hide();
+        const QString unavailable = Tr::tr("Unavailable");
+        const bool validProject = project && project->valid;
         m_projectName->setText(project ? project->name : context.displayName);
-        m_projectName->setReadOnly(!project || !project->valid);
-        m_projectId->setText(project ? project->id.toString() : context.nodeId.toString());
+        m_projectName->setReadOnly(!validProject);
+        m_projectId->setText(validProject ? project->id.toString() : unavailable);
         m_projectType->setText(Tr::tr("Offline EtherCAT Engineering Project"));
-        if (project) {
+        if (validProject) {
             m_projectFormatVersion->setText(QString::number(project->formatVersion));
             m_projectCreatedBy->setText(
                 project->createdBy.isEmpty() ? Tr::tr("Not recorded") : project->createdBy);
-            m_projectValidity->setText(projectValidityText(*project));
             m_projectMigration->setText(
                 project->migrated ? Tr::tr("Migrated from an older format")
                                   : Tr::tr("Current format"));
@@ -502,16 +503,15 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
                 *project, Data::ProjectNodeKind::Master, Tr::tr("Not configured")));
             m_projectSlaveCount->setText(QString::number(project->slaves.size()));
         } else {
-            const QString unavailable = Tr::tr("Unavailable");
             m_projectFormatVersion->setText(unavailable);
             m_projectCreatedBy->setText(unavailable);
-            m_projectValidity->setText(unavailable);
             m_projectMigration->setText(unavailable);
             m_projectModified->setText(unavailable);
             m_projectTarget->setText(unavailable);
             m_projectMaster->setText(unavailable);
             m_projectSlaveCount->setText(unavailable);
         }
+        m_projectValidity->setText(project ? projectValidityText(*project) : unavailable);
         m_projectContent->show();
         m_projectForm->show();
         m_projectSummaryForm->show();

@@ -1413,3 +1413,91 @@ report after 08:14:00 on 2026-07-18. This issue adds no thread, timer, future,
 Provider, public API, persistence, dependency, source file, CMake/qbs change,
 upstream Core/ProjectExplorer/app path, network access, or physical-hardware
 claim.
+
+## Invalid-project presentation and lifecycle
+
+`ISSUE-WB-INVALID-PROJECT-PRESENTATION-001` prevents a corrupt
+`.ecatproject` from appearing as a successfully loaded offline topology.
+`EtherCATProject` already publishes a public `ProjectSnapshot` with
+`valid == false` and the real parser error, but its recovery snapshot also
+contains newly generated Project, Target, and Master IDs. Workbench now treats
+only the file-derived project name as display identity and does not present the
+generated recovery topology as file data.
+
+An invalid project root has the explicit status
+`Invalid project | Offline data unavailable`, a standard Creator critical
+icon, and the real load error in its tooltip and searchable text. It is also an
+eligible result for `Locate First Issue`. Its only child is the enabled but
+non-selectable `Project configuration unavailable` recovery row, with the
+instruction `Fix the project file and reopen it`. No fallback Target, Master,
+slave, Diagnostics node, or drop target is created. `Copy Node ID` is disabled,
+omitted from the invalid-root context menu, and guarded in the copy slot, so
+the generated recovery Project ID cannot be copied through the Workbench
+Node-ID action or shown as a persisted Project ID.
+
+Selection and activation remain separate. Selecting an invalid project still
+opens its General page, but the Workbench `Set as Active Project` command is
+disabled and its direct controller path returns an explicit invalid-project
+error. If ProjectExplorer has independently made the invalid project the
+startup project, Workbench reports both facts as
+`Active project | Invalid project | Offline data unavailable`; it does not
+silently activate another project. Closing the invalid project clears its
+stable selection and Details context while leaving another valid project's
+tree and active state intact.
+
+The General page keeps the file-derived display name read-only and shows the
+full parser error in Validity. Project ID, format, creator, migration,
+modified state, Target, Master, and configured-slave count are `Unavailable`
+because parsing did not establish those values. A later valid selection
+restores the existing editable and read-only field states normally.
+
+This follows Qt Creator's separation between the current project tree and the
+explicit `Set as Active Project` operation
+([Qt Creator Projects view](https://doc.qt.io/qtcreator/creator-projects-view.html)).
+Qt Creator 20.0's own Project model also adds project issues to the tooltip and
+uses a standard issue icon
+([Qt Creator 20.0 Project model](https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectmodels.cpp#L247-L281)).
+The Workbench critical severity and exact recovery wording are local product
+decisions, not upstream requirements.
+
+Beckhoff documents that configured or scanned I/O devices are represented in
+the I/O tree and that device state information is explicit
+([Adding an I/O Device](https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html),
+[EL6752 state](https://infosys.beckhoff.com/content/1033/el6752/2584310027.html)).
+Hiding generated fallback topology is a Workbench inference from that truthful
+information boundary; Beckhoff does not prescribe this product's placeholder
+or text.
+
+The failure-first focused run compiled the new integration test against the
+old implementation and produced 2 passes and 1 failure: the invalid root's
+actual status was `Offline`. After implementation, the focused test passes 3
+tests at normal scale and 3 at `QT_SCALE_FACTOR=2`. It uses
+`QAbstractItemModelTester`, opens one real valid and one corrupt project,
+checks error search/tooltip/icon/first-issue behavior, the absent fallback
+topology and ID-copy path, General invalid-to-valid restoration, activation
+command rejection, external active state, close cleanup, and the unaffected
+valid project. The source model is checked from pre-open through final close;
+the proxy model is checked from construction through filtering, later active
+state, and close changes. Qt documents that the tester checks model
+consistency after changes but does not replace destructive lifecycle tests
+([QAbstractItemModelTester](https://doc.qt.io/qt-6/qabstractitemmodeltester.html)).
+
+The normal and 2x offscreen tree and Details renders are 900 x 600 and
+1800 x 1200. They retain the complete invalid status, recovery instruction,
+parser error, and `Unavailable` fields without overlap, clipping, or scale
+drift. The complete Workbench suite passes 38 tests; the six isolated EtherCAT
+suites pass 89 tests: Core 17, Project 12, Devices 8, Workbench 38, Scan 7,
+and Diagnostics 7. The current 16-plugin `WITH_TESTS=OFF` product build and
+over-15-second enabled/disabled lifecycle checks pass. Every qualifying
+product or test executable run is offscreen, clears inherited DYLD variables,
+and uses only the process-local Touch Bar LLDB breakpoint. The final checks
+found no residual process, DiagnosticReports file, or ReportCrash event after
+09:15:00 on 2026-07-18.
+
+The corrupt-project fixture reaches a pre-existing nonfatal ProjectExplorer
+TaskHub soft assertion because EtherCATProject's existing load-error task has
+an empty TaskHub category. It does not fail or abort the test and is not caused
+or hidden by this Workbench change; Project and TaskHub remain outside this
+frozen issue. This issue adds no thread, timer, future, Provider, public API,
+persistence, dependency, source file, CMake/qbs change, upstream
+Core/ProjectExplorer/app path, network access, or physical-hardware claim.

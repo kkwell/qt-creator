@@ -904,6 +904,53 @@ parent, explaining the misleading macOS crash dialog. No qualifying run uses
 that library, and final clean breakpoint runs generated no report after 08:14:00
 on 2026-07-18.
 
+## EtherCATWorkbench invalid-project presentation qualification
+
+`ISSUE-WB-INVALID-PROJECT-PRESENTATION-001` is a Workbench-private
+truthfulness and lifecycle change based on local baseline
+`53a1ca94ed4b31a9703ecb99fdb7c6f483c44ddd`. It does not modify Project,
+ProjectExplorer, Core, persistence, or hardware behavior.
+
+| Check | Result |
+|---|---|
+| Failure-first focused test | 2 passed, 1 failed because the old invalid-project root reported `Offline` |
+| Invalid tree state | Passed with `Invalid project \| Offline data unavailable`, standard critical icon, real parser error in Search/tooltip, and first-issue routing |
+| Recovery topology boundary | Passed with one enabled/non-selectable recovery row and no generated Target, Master, slave, Diagnostics node, or drop target |
+| Recovery ID boundary | Passed with `Copy Node ID` disabled, absent from the invalid-root context menu, and guarded against direct signal invocation; valid-project copy restores normally |
+| General page | Passed with file-derived display name, full parser error, and unavailable fallback ID/format/creator/migration/modified/Target/Master/count fields |
+| Activation ownership | Passed with the Workbench command disabled/rejected; an externally active invalid project preserves both active and invalid facts |
+| Lifecycle cleanup | Passed for valid/invalid coexistence, invalid close, stable selection and Details cleanup, valid active fallback, and final close |
+| Model consistency | The source model passed under `QAbstractItemModelTester` from pre-open through final close; the proxy model passed from construction through filtering, later active-state, and close changes |
+| Focused normal-scale test | 3 passed, 0 failed; exit 0 |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; exit 0 |
+| Direct offscreen renders | Tree and Details passed visual inspection at 900 x 600 and 1800 x 1200 without clipping, overlap, or scale drift |
+| Complete EtherCATWorkbench suite | 38 passed, 0 failed in an LLDB-supervised isolated offscreen process |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 38, Scan 7, Diagnostics 7; 89 passed, 0 failed in isolated LLDB-supervised processes |
+| Qualified Qt and test build | Qt 6.11.0 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build | `WITH_TESTS=OFF` passed in `qt-creator-build-ethercat-product-qt611` |
+| Product version inventory | All 16 allow-listed plugin dylibs present |
+| Enabled offscreen startup | Stable beyond 15 seconds with fresh settings; intentional SIGTERM produced LLDB target status 15 |
+| Explicitly disabled startup | Stable beyond 15 seconds with `-noload EtherCATWorkbench`; intentional SIGTERM produced LLDB target status 15 |
+| Process and crash-report cleanup | No residual Embed Labs or LLDB process and no new DiagnosticReports or ReportCrash event after 09:15:00 on 2026-07-18 |
+| Corrupt-project Project task | Existing nonfatal ProjectExplorer TaskHub soft assertion remains outside this Workbench-only issue; all qualifying tests still exit 0 |
+| Manual desktop interaction | Not run by design; all qualification is offscreen and creates no on-screen main window |
+| `WITH_TESTS=ON` full product build | Not rerun; this Workbench-only issue does not touch the known EasyBoard test include blocker |
+| qbs execution | Not run; qbs 3.2.0 is installed outside `PATH`, and this issue changes no CMake or qbs file |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Public API, dependency, persistence, source-list, CMake, or qbs changes | None |
+| Network or physical hardware access | Not performed by design |
+
+Every qualifying product or test executable run explicitly removed `DYLD_INSERT_LIBRARIES`,
+`DYLD_LIBRARY_PATH`, and `DYLD_FRAMEWORK_PATH`, set
+`QT_QPA_PLATFORM=offscreen` and `CRASH_REPORTER_DISABLE=1`, and used only a
+process-local LLDB breakpoint to return from
+`Utils::TouchBar::setApplicationTouchBar()`. No interposer, repository hook,
+product dependency, on-screen window, network, or hardware access was used. The
+enabled settings path was
+`/private/tmp/embed-labs-invalid-product-enabled-qualified.qoIsYV`; the
+disabled path was
+`/private/tmp/embed-labs-invalid-product-disabled-qualified.DnhDUc`.
+
 ## Verification states
 
 Use only these evidence labels:

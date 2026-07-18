@@ -174,6 +174,20 @@ static void appendPresentationDetail(WorkbenchTreeModel::Node *node, const QStri
         node->presentationDetails.append(detail);
 }
 
+static void applyInvalidProjectPresentation(
+    WorkbenchTreeModel::Node *node, const Data::ProjectSnapshot &project)
+{
+    if (!node || project.valid)
+        return;
+    appendPresentationDetail(
+        node,
+        project.error.isEmpty()
+            ? Tr::tr("The project file could not be loaded.")
+            : Tr::tr("Project load error: %1").arg(project.error));
+    raiseMarker(node, StateMarker::Error);
+    node->issue = true;
+}
+
 static QString differenceName(Data::TopologyDifferenceKind kind)
 {
     switch (kind) {
@@ -1254,6 +1268,11 @@ void WorkbenchTreeModel::updateProviderPresentation()
     };
     reset(reset, m_root.get());
 
+    for (const Data::ProjectSnapshot &project : std::as_const(m_projects)) {
+        if (!project.valid)
+            applyInvalidProjectPresentation(findNode(project.id), project);
+    }
+
     if (m_diagnosticsSnapshot) {
         const Data::DiagnosticsSnapshot &snapshot = *m_diagnosticsSnapshot;
         Node *master = findNode(snapshot.masterId);
@@ -1516,6 +1535,26 @@ void WorkbenchTreeModel::rebuild()
     }
 
     for (const Data::ProjectSnapshot &project : std::as_const(projects)) {
+        if (!project.valid) {
+            auto projectNode = makeNode(
+                m_root.get(),
+                project.id,
+                project.id,
+                Core::WorkbenchNodeKind::Project,
+                project.name,
+                Tr::tr("Invalid project | Offline data unavailable"));
+            applyInvalidProjectPresentation(projectNode.get(), project);
+            projectNode->children.push_back(makeNode(
+                projectNode.get(),
+                derivedNodeId(project.id.toString() + ":configuration-unavailable"),
+                project.id,
+                Core::WorkbenchNodeKind::Placeholder,
+                Tr::tr("Project configuration unavailable"),
+                Tr::tr("Fix the project file and reopen it")));
+            m_root->children.push_back(std::move(projectNode));
+            continue;
+        }
+
         QHash<Data::NodeId, const Data::ProjectNodeSnapshot *> snapshots;
         for (const Data::ProjectNodeSnapshot &node : project.nodes)
             snapshots.insert(node.id, &node);

@@ -382,7 +382,23 @@ bool WorkbenchController::canActivateSelectedProject() const
         return false;
     const std::optional<Data::ProjectSnapshot> project
         = selectedProject(m_treeModel, m_selectionService, m_projectService);
-    return project && project->id != m_projectService->activeProjectId();
+    return project && project->valid && project->id != m_projectService->activeProjectId();
+}
+
+bool WorkbenchController::canCopyNodeId(const Data::NodeId &nodeId) const
+{
+    if (m_shuttingDown || nodeId.isNull() || !m_projectService)
+        return false;
+    const Core::PropertyPageContext context = m_treeModel.contextForNodeId(nodeId);
+    if (context.nodeKind == Core::WorkbenchNodeKind::None
+        || context.nodeKind == Core::WorkbenchNodeKind::Placeholder) {
+        return false;
+    }
+    if (context.projectId.isNull())
+        return true;
+    const std::optional<Data::ProjectSnapshot> project = m_projectService->project(
+        context.projectId);
+    return project && project->valid;
 }
 
 Utils::Result<> WorkbenchController::addSelectedDeviceToMaster()
@@ -513,6 +529,10 @@ Utils::Result<> WorkbenchController::activateSelectedProject()
         = selectedProject(m_treeModel, m_selectionService, m_projectService);
     if (!project)
         return Utils::ResultError(Tr::tr("Select an open EtherCAT project first."));
+    if (!project->valid) {
+        return Utils::ResultError(
+            Tr::tr("The selected EtherCAT project is invalid and cannot be activated."));
+    }
     if (project->id == m_projectService->activeProjectId())
         return Utils::ResultError(Tr::tr("The selected EtherCAT project is already active."));
     return m_projectService->activateProject(project->id);

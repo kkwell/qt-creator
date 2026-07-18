@@ -32,6 +32,7 @@ private slots:
     void testProviderStateTreeAndNavigation();
     void testNavigationSelectionAndFiltering();
     void testNavigationActiveProjectLifecycle();
+    void testInvalidProjectPresentationAndLifecycle();
     void testDetailsEmptyStateLifecycle();
     void testNavigationSetActiveProjectCommand();
     void testNavigationFilterEmptyState();

@@ -320,9 +320,8 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
     setCommandEnabled(
         Constants::LOCATE_UNSUPPORTED_DEVICE_ACTION_ID,
         m_sourceModel->firstUnsupportedDevice().isValid());
-    setCommandEnabled(
-        Constants::COPY_NODE_ID_ACTION_ID,
-        !context.nodeId.isNull() && context.nodeKind != Core::WorkbenchNodeKind::Placeholder);
+    const bool canCopyNodeId = m_controller && m_controller->canCopyNodeId(context.nodeId);
+    setCommandEnabled(Constants::COPY_NODE_ID_ACTION_ID, canCopyNodeId);
     const bool canActivateSelectedProject
         = m_controller && m_controller->canActivateSelectedProject();
     setCommandEnabled(Constants::SET_ACTIVE_PROJECT_ACTION_ID, canActivateSelectedProject);
@@ -373,7 +372,7 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
         menu.addSeparator();
         addCommand(Constants::SET_ACTIVE_PROJECT_ACTION_ID);
     }
-    if (!context.nodeId.isNull() && context.nodeKind != Core::WorkbenchNodeKind::Placeholder) {
+    if (canCopyNodeId) {
         menu.addSeparator();
         addCommand(Constants::COPY_NODE_ID_ACTION_ID);
     }
@@ -389,7 +388,7 @@ void WorkbenchNavigationWidget::copyCurrentNodeId()
 {
     const Core::PropertyPageContext context = m_sourceModel->contextForIndex(
         m_proxyModel->mapToSource(m_treeView->currentIndex()));
-    if (!context.nodeId.isNull())
+    if (m_controller && m_controller->canCopyNodeId(context.nodeId))
         QApplication::clipboard()->setText(context.nodeId.toString());
 }
 

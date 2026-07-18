@@ -40,6 +40,7 @@ public:
     bool canMoveSelectedOfflineSlaveUp() const;
     bool canMoveSelectedOfflineSlaveDown() const;
     bool canActivateSelectedProject() const;
+    bool canCopyNodeId(const Data::NodeId &nodeId) const;
 
     void refresh();
     void shutdown();

@@ -395,6 +395,18 @@ or path under upstream Core, ProjectExplorer, or the application bootstrap.
 The Workbench path count remains 44 and the direct Core patch count remains
 five.
 
+The Workbench invalid-project presentation issue changes only existing private
+tree-model, controller, navigation/action-setup, General-page, and test files
+in the product-owned `EtherCATWorkbench` plugin plus documentation. It consumes
+the existing public `ProjectSnapshot::valid` and `ProjectSnapshot::error`
+values, hides generated recovery topology and ID-copy path, rejects only the
+Workbench-owned activation command, and preserves ProjectExplorer ownership
+of startup-project state and close fallback. It adds no public API, model role,
+source file, dependency, persistent field, QAction, Provider, controller
+transport, network behavior, CMake/qbs entry, or path under upstream Core,
+ProjectExplorer, or the application bootstrap. The Workbench path count
+remains 44 and the direct Core patch count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

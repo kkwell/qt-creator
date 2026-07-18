@@ -57,6 +57,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
@@ -3127,6 +3128,367 @@ void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
         QString("No EtherCAT project is open"));
     QVERIFY(controller.selectionService()->currentNodeId().isNull());
     QCOMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+}
+
+void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+    QVERIFY(projectService->projects().isEmpty());
+    QAbstractItemModelTester sourceModelTester(
+        controller.treeModel(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QPointer<ProjectExplorer::Project> validProjectObject;
+    QPointer<ProjectExplorer::Project> invalidProjectObject;
+    const QScopeGuard cleanup([&] {
+        controller.selectionService()->clear();
+        if (invalidProjectObject
+            && ProjectExplorer::ProjectManager::hasProject(invalidProjectObject.data())) {
+            ProjectExplorer::ProjectManager::removeProject(invalidProjectObject.data());
+        }
+        if (validProjectObject
+            && ProjectExplorer::ProjectManager::hasProject(validProjectObject.data())) {
+            ProjectExplorer::ProjectManager::removeProject(validProjectObject.data());
+        }
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    const TestProjectFile valid = writeProjectWithSlave(
+        directory,
+        deviceSummaries(1).first(),
+        "valid-project.ecatproject",
+        "Valid EtherCAT Project");
+    QVERIFY(!valid.path.isEmpty());
+    const Utils::FilePath invalidPath = Utils::FilePath::fromString(directory.path())
+                                            .canonicalPath()
+                                            .pathAppended("broken-project.ecatproject");
+    QVERIFY_RESULT(invalidPath.writeFileContents("{broken"));
+
+    const ProjectExplorer::OpenProjectResult validOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(valid.path, false);
+    QVERIFY2(validOpened, qPrintable(validOpened.errorMessage()));
+    validProjectObject = validOpened.project();
+    const ProjectExplorer::OpenProjectResult invalidOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(invalidPath, false);
+    QVERIFY2(invalidOpened, qPrintable(invalidOpened.errorMessage()));
+    invalidProjectObject = invalidOpened.project();
+    QTRY_COMPARE(projectService->projects().size(), 2);
+
+    const QList<Data::ProjectSnapshot> projects = projectService->projects();
+    const auto invalidProject = std::find_if(
+        projects.cbegin(), projects.cend(), [](const Data::ProjectSnapshot &project) {
+            return !project.valid;
+        });
+    QVERIFY(invalidProject != projects.cend());
+    QVERIFY(!invalidProject->id.isNull());
+    QVERIFY(!invalidProject->error.isEmpty());
+    const Data::ProjectSnapshot invalid = *invalidProject;
+
+    QVERIFY_RESULT(projectService->activateProject(valid.projectId));
+    QTRY_COMPARE(projectService->activeProjectId(), valid.projectId);
+
+    WorkbenchNavigationWidget navigation(&controller);
+    navigation.resize(900, 600);
+    navigation.show();
+    DetailsView details(&controller);
+    details.resize(900, 600);
+    details.show();
+    QTRY_VERIFY(navigation.isVisible());
+    QTRY_VERIFY(details.isVisible());
+    QAbstractItemModelTester proxyModelTester(
+        navigation.treeView()->model(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+    ::Core::ModeManager::activateMode(Constants::MODE_ID);
+    QTRY_COMPARE(::Core::ModeManager::currentModeId(), Utils::Id(Constants::MODE_ID));
+    navigation.activateWindow();
+    navigation.treeView()->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(navigation.treeView()->hasFocus());
+    QTRY_COMPARE(
+        ::Core::ICore::currentContextWidget(), static_cast<QWidget *>(&navigation));
+
+    const QModelIndex invalidRoot = controller.treeModel()->indexForNodeId(invalid.id);
+    QVERIFY(invalidRoot.isValid());
+    QCOMPARE(invalidRoot.data().toString(), invalid.name);
+    QCOMPARE(
+        invalidRoot.data(WorkbenchTreeModel::NodeKindRole).value<Core::WorkbenchNodeKind>(),
+        Core::WorkbenchNodeKind::Project);
+    QCOMPARE(
+        invalidRoot.data(WorkbenchTreeModel::ProjectIdRole).value<Data::NodeId>(), invalid.id);
+    QCOMPARE(
+        invalidRoot.siblingAtColumn(1).data().toString(),
+        QString("Invalid project | Offline data unavailable"));
+    QCOMPARE(
+        invalidRoot.data(WorkbenchTreeModel::StatusRole).toString(),
+        QString("Invalid project | Offline data unavailable"));
+    QVERIFY(invalidRoot.data(Qt::ToolTipRole).toString().contains(invalid.error));
+    QVERIFY(invalidRoot.data(WorkbenchTreeModel::SearchTextRole).toString().contains(invalid.error));
+    const int iconSize = QApplication::style()->pixelMetric(QStyle::PM_SmallIconSize);
+    QCOMPARE(
+        invalidRoot.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
+        Utils::Icons::CRITICAL.icon().pixmap(iconSize, iconSize).toImage());
+    QCOMPARE(
+        controller.treeModel()
+            ->firstIssue()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        invalid.id);
+
+    controller.treeModel()->setProviderPresentations(
+        {OptionalProviderState::Unavailable, "Unavailable Scan Probe"},
+        {OptionalProviderState::Unavailable, "Unavailable Diagnostics Probe"},
+        std::nullopt,
+        Data::DiagnosticsStreamState::Stopped,
+        {},
+        std::nullopt);
+    QCOMPARE(
+        invalidRoot.siblingAtColumn(1).data().toString(),
+        QString("Invalid project | Offline data unavailable"));
+    QVERIFY(invalidRoot.data(Qt::ToolTipRole).toString().contains(invalid.error));
+    QCOMPARE(
+        invalidRoot.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
+        Utils::Icons::CRITICAL.icon().pixmap(iconSize, iconSize).toImage());
+
+    QCOMPARE(controller.treeModel()->rowCount(invalidRoot), 1);
+    const QModelIndex recovery = controller.treeModel()->index(0, 0, invalidRoot);
+    QVERIFY(recovery.isValid());
+    QCOMPARE(recovery.data().toString(), QString("Project configuration unavailable"));
+    QCOMPARE(
+        recovery.siblingAtColumn(1).data().toString(),
+        QString("Fix the project file and reopen it"));
+    QCOMPARE(
+        recovery.data(WorkbenchTreeModel::NodeKindRole).value<Core::WorkbenchNodeKind>(),
+        Core::WorkbenchNodeKind::Placeholder);
+    QVERIFY(controller.treeModel()->flags(recovery) & Qt::ItemIsEnabled);
+    QVERIFY(!(controller.treeModel()->flags(recovery) & Qt::ItemIsSelectable));
+    for (const Data::ProjectNodeSnapshot &node : invalid.nodes) {
+        if (node.kind != Data::ProjectNodeKind::Project)
+            QVERIFY(!controller.treeModel()->indexForNodeId(node.id).isValid());
+    }
+    QVERIFY(!controller.treeModel()->diagnosticsForProject(invalid.id).isValid());
+    QVERIFY(controller.treeModel()->indexForNodeId(valid.masterId).isValid());
+
+    navigation.filterEdit()->setText(invalid.error);
+    QTRY_VERIFY(findById(navigation.treeView()->model(), invalid.id).isValid());
+    navigation.filterEdit()->clear();
+    QTRY_VERIFY(findById(navigation.treeView()->model(), valid.projectId).isValid());
+
+    ::Core::Command *copyCommand
+        = ::Core::ActionManager::command(Constants::COPY_NODE_ID_ACTION_ID);
+    ::Core::Command *setActiveCommand
+        = ::Core::ActionManager::command(Constants::SET_ACTIVE_PROJECT_ACTION_ID);
+    QVERIFY(copyCommand);
+    QVERIFY(setActiveCommand);
+    QAction *copyContextAction = copyCommand->actionForContext(Constants::CONTEXT_ID);
+    QAction *setActiveContextAction = setActiveCommand->actionForContext(Constants::CONTEXT_ID);
+    QVERIFY(copyContextAction);
+    QVERIFY(setActiveContextAction);
+
+    controller.selectionService()->setCurrentNodeId(valid.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, valid.projectId);
+    QTRY_VERIFY(copyCommand->action()->isEnabled());
+    QTRY_VERIFY(copyContextAction->isEnabled());
+
+    controller.selectionService()->setCurrentNodeId(invalid.id);
+    QTRY_COMPARE(details.currentContext().nodeId, invalid.id);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        invalid.id);
+    QTRY_VERIFY(!copyCommand->action()->isEnabled());
+    QTRY_VERIFY(!copyContextAction->isEnabled());
+    QTRY_VERIFY(!setActiveCommand->action()->isEnabled());
+    QTRY_VERIFY(!setActiveContextAction->isEnabled());
+    QVERIFY(!controller.canCopyNodeId(invalid.id));
+    QApplication::clipboard()->setText("unchanged-invalid-project-clipboard");
+    emit controller.copyCurrentNodeIdRequested();
+    QTRY_COMPARE(
+        QApplication::clipboard()->text(), QString("unchanged-invalid-project-clipboard"));
+    QList<QAction *> invalidPopupActions;
+    bool invalidPopupSeen = false;
+    QTimer::singleShot(0, &navigation, [&invalidPopupActions, &invalidPopupSeen] {
+        auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!popup)
+            return;
+        invalidPopupSeen = true;
+        invalidPopupActions = popup->actions();
+        popup->close();
+    });
+    emit navigation.treeView()->customContextMenuRequested(QPoint(-1, -1));
+    QVERIFY(invalidPopupSeen);
+    QVERIFY(!invalidPopupActions.contains(copyCommand->action()));
+    QVERIFY(!invalidPopupActions.contains(setActiveCommand->action()));
+    QVERIFY(!controller.canActivateSelectedProject());
+    const Utils::Result<> activation = controller.activateSelectedProject();
+    QVERIFY(!activation);
+    QVERIFY(activation.error().contains("invalid", Qt::CaseInsensitive));
+    QCOMPARE(projectService->activeProjectId(), valid.projectId);
+
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
+    QVERIFY(page);
+    QLineEdit *name = page->findChild<QLineEdit *>("EtherCATProjectGeneralName");
+    QLineEdit *id = page->findChild<QLineEdit *>("EtherCATProjectGeneralId");
+    QLineEdit *type = page->findChild<QLineEdit *>("EtherCATProjectGeneralType");
+    QLineEdit *formatVersion
+        = page->findChild<QLineEdit *>("EtherCATProjectGeneralFormatVersion");
+    QLineEdit *createdBy = page->findChild<QLineEdit *>("EtherCATProjectGeneralCreatedBy");
+    QLineEdit *validity = page->findChild<QLineEdit *>("EtherCATProjectGeneralValidity");
+    QLineEdit *migration = page->findChild<QLineEdit *>("EtherCATProjectGeneralMigration");
+    QLineEdit *modified = page->findChild<QLineEdit *>("EtherCATProjectGeneralModified");
+    QLineEdit *target = page->findChild<QLineEdit *>("EtherCATProjectGeneralTarget");
+    QLineEdit *master = page->findChild<QLineEdit *>("EtherCATProjectGeneralMaster");
+    QLineEdit *slaveCount = page->findChild<QLineEdit *>("EtherCATProjectGeneralSlaveCount");
+    for (QLineEdit *field :
+         {name,
+          id,
+          type,
+          formatVersion,
+          createdBy,
+          validity,
+          migration,
+          modified,
+          target,
+          master,
+          slaveCount}) {
+        QVERIFY(field);
+    }
+    QCOMPARE(name->text(), invalid.name);
+    QVERIFY(name->isReadOnly());
+    QCOMPARE(type->text(), QString("Offline EtherCAT Engineering Project"));
+    QCOMPARE(validity->text(), QString("Invalid: %1").arg(invalid.error));
+    const QString unavailable = "Unavailable";
+    for (QLineEdit *field :
+         {id, formatVersion, createdBy, migration, modified, target, master, slaveCount}) {
+        QCOMPARE(field->text(), unavailable);
+    }
+
+    controller.selectionService()->setCurrentNodeId(valid.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, valid.projectId);
+    page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
+    QVERIFY(page);
+    name = page->findChild<QLineEdit *>("EtherCATProjectGeneralName");
+    id = page->findChild<QLineEdit *>("EtherCATProjectGeneralId");
+    formatVersion = page->findChild<QLineEdit *>("EtherCATProjectGeneralFormatVersion");
+    validity = page->findChild<QLineEdit *>("EtherCATProjectGeneralValidity");
+    target = page->findChild<QLineEdit *>("EtherCATProjectGeneralTarget");
+    master = page->findChild<QLineEdit *>("EtherCATProjectGeneralMaster");
+    slaveCount = page->findChild<QLineEdit *>("EtherCATProjectGeneralSlaveCount");
+    for (QLineEdit *field : {name, id, formatVersion, validity, target, master, slaveCount})
+        QVERIFY(field);
+    QTRY_COMPARE(name->text(), QString("Valid EtherCAT Project"));
+    QVERIFY(!name->isReadOnly());
+    QCOMPARE(id->text(), valid.projectId.toString());
+    QCOMPARE(formatVersion->text(), QString("2"));
+    QCOMPARE(validity->text(), QString("Valid"));
+    QCOMPARE(target->text(), QString("Offline Controller"));
+    QCOMPARE(master->text(), QString("EtherCAT Master"));
+    QCOMPARE(slaveCount->text(), QString("1"));
+    QVERIFY(controller.canCopyNodeId(valid.projectId));
+
+    controller.selectionService()->setCurrentNodeId(invalid.id);
+    QTRY_COMPARE(details.currentContext().nodeId, invalid.id);
+    page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
+    QVERIFY(page);
+    name = page->findChild<QLineEdit *>("EtherCATProjectGeneralName");
+    id = page->findChild<QLineEdit *>("EtherCATProjectGeneralId");
+    validity = page->findChild<QLineEdit *>("EtherCATProjectGeneralValidity");
+    for (QLineEdit *field : {name, id, validity})
+        QVERIFY(field);
+    QTRY_COMPARE(name->text(), invalid.name);
+    QVERIFY(name->isReadOnly());
+    QCOMPARE(id->text(), unavailable);
+    QCOMPARE(validity->text(), QString("Invalid: %1").arg(invalid.error));
+    QVERIFY(!controller.canCopyNodeId(invalid.id));
+
+    ProjectExplorer::ProjectManager::setStartupProject(invalidOpened.project());
+    QTRY_COMPARE(projectService->activeProjectId(), invalid.id);
+    QTRY_COMPARE(
+        controller.treeModel()->indexForNodeId(invalid.id, 1).data().toString(),
+        QString("Active project | Invalid project | Offline data unavailable"));
+    QVERIFY(!controller.canActivateSelectedProject());
+    QTRY_VERIFY(!setActiveCommand->action()->isEnabled());
+    QTRY_VERIFY(!setActiveContextAction->isEnabled());
+    controller.selectionService()->setCurrentNodeId(valid.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, valid.projectId);
+    QTRY_VERIFY(setActiveCommand->action()->isEnabled());
+    QTRY_VERIFY(setActiveContextAction->isEnabled());
+    QVERIFY(controller.canActivateSelectedProject());
+    controller.selectionService()->setCurrentNodeId(invalid.id);
+    QTRY_COMPARE(details.currentContext().nodeId, invalid.id);
+    QTRY_VERIFY(!setActiveCommand->action()->isEnabled());
+    QTRY_VERIFY(!setActiveContextAction->isEnabled());
+    QVERIFY(controller.treeModel()->indexForNodeId(valid.masterId).isValid());
+    for (const Data::ProjectNodeSnapshot &node : invalid.nodes) {
+        if (node.kind == Data::ProjectNodeKind::Master)
+            QVERIFY(!controller.treeModel()->indexForNodeId(node.id).isValid());
+    }
+
+    const QString treeRenderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_INVALID_PROJECT_TREE_RENDER_PATH");
+    if (!treeRenderPath.isEmpty()) {
+        navigation.treeView()->expandAll();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(navigation.grab().save(treeRenderPath), qPrintable(treeRenderPath));
+    }
+    const QString detailsRenderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_INVALID_PROJECT_DETAILS_RENDER_PATH");
+    if (!detailsRenderPath.isEmpty()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(details.grab().save(detailsRenderPath), qPrintable(detailsRenderPath));
+    }
+
+    ProjectExplorer::ProjectManager::removeProject(invalidOpened.project());
+    invalidProjectObject = nullptr;
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_VERIFY(!projectService->project(invalid.id).has_value());
+    QTRY_COMPARE(projectService->activeProjectId(), valid.projectId);
+    QTRY_VERIFY(!controller.treeModel()->indexForNodeId(invalid.id).isValid());
+    QTRY_VERIFY(controller.selectionService()->currentNodeId().isNull());
+    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QCOMPARE(
+        controller.treeModel()->indexForNodeId(valid.projectId, 1).data().toString(),
+        QString("Active project | Offline"));
+    QVERIFY(controller.treeModel()->indexForNodeId(valid.masterId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(valid.projectId);
+    QVERIFY(controller.canCopyNodeId(valid.projectId));
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        valid.projectId);
+    QList<QAction *> validPopupActions;
+    bool validPopupSeen = false;
+    QTimer::singleShot(0, &navigation, [&validPopupActions, &validPopupSeen] {
+        auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!popup)
+            return;
+        validPopupSeen = true;
+        validPopupActions = popup->actions();
+        popup->close();
+    });
+    emit navigation.treeView()->customContextMenuRequested(QPoint(-1, -1));
+    QVERIFY(validPopupSeen);
+    QVERIFY(validPopupActions.contains(copyCommand->action()));
+    QVERIFY(copyCommand->action()->isEnabled());
+    QApplication::clipboard()->clear();
+    emit controller.copyCurrentNodeIdRequested();
+    QTRY_COMPARE(QApplication::clipboard()->text(), valid.projectId.toString());
+
+    ProjectExplorer::ProjectManager::removeProject(validOpened.project());
+    validProjectObject = nullptr;
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_VERIFY(projectService->projects().isEmpty());
+    QTRY_VERIFY(projectService->activeProjectId().isNull());
 }
 
 void EtherCATWorkbenchTests::testDetailsEmptyStateLifecycle()

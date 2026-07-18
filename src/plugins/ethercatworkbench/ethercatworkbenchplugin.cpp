@@ -309,7 +309,8 @@ void EtherCATWorkbenchPlugin::setupActions()
                 m_controller->treeModel()->firstUnsupportedDevice().isValid());
             copyNodeIdAction->setEnabled(
                 m_controller->selectionService()
-                && !m_controller->selectionService()->currentNodeId().isNull());
+                && m_controller->canCopyNodeId(
+                    m_controller->selectionService()->currentNodeId()));
             const bool canActivateSelectedProject
                 = m_controller->canActivateSelectedProject();
             setActiveProjectAction->setEnabled(canActivateSelectedProject);
