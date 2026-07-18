@@ -1135,6 +1135,53 @@ an I/O device deletes it from both the tree and configuration, but does not
 define this product's confirmation interaction:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>.
 
+## EtherCATWorkbench repository quick-add target qualification
+
+`ISSUE-WB-ESI-QUICK-ADD-TARGET-DISCLOSURE-001` is a Workbench-private target
+safety correction based on local baseline
+`b64d0b5f0ac9ae1cf4f5620c942d953301904eed`. It changes no Project data
+contract, persistence format, online state, controller transport, network
+behavior, or physical-hardware capability.
+
+| Check | Result |
+|---|---|
+| Failure-first focused test | 2 passed, 1 failed because the previous fixed `Add to Active Offline Master` text named neither Project nor Master |
+| Target disclosure | Passed with compact `Add to "<Project>" / "<Master>"` menu text and tooltip/status text naming the exact target |
+| Offline boundary disclosure | Passed; tooltip/status state that only the local offline project changes and no controller or physical hardware is contacted |
+| Project lifecycle | Passed for two open projects, active-project switching, Project and Master renames, active close fallback, and final no-project disablement |
+| Special-character safety | Passed for literal `%1`, `%2`, and `&`; visible names are preserved and QAction ampersands are escaped |
+| Stale-target guard | Passed; changing the active Project after presentation rejects the captured stable Project/Master IDs and preserves both complete Project snapshots |
+| Exact mutation target | Passed; the normal QAction changes only the Project and Master named in the action while the other complete Project snapshot remains equal |
+| Project-owned Undo | Passed; Undo restores the displayed target's complete previous slave list and name |
+| QAction and context-menu identity | Passed through the existing ActionManager command and real Device Repository context menu; no parallel callback or QAction was added |
+| Focused normal-scale test | 3 passed, 0 failed; exit 0 |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; exit 0 |
+| Direct offscreen renders | 382 x 190 and 764 x 380 menu captures inspected without clipping, overlap, or scale drift |
+| Complete EtherCATWorkbench suite | 39 passed, 0 failed in an LLDB-supervised isolated offscreen process |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 39, Scan 7, Diagnostics 7; 90 passed, 0 failed in isolated LLDB-supervised processes |
+| Qualified Qt and test build | Qt 6.11.0 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build | `WITH_TESTS=OFF` passed in `qt-creator-build-ethercat-product-qt611` |
+| Product version inventory | Exactly the 16 allow-listed plugin dylibs are present; no missing or extra plugin |
+| Enabled offscreen startup | Stable for 16 seconds with fresh settings under `/private/tmp/embed-labs-quick-add-product-enabled-qualified.6Ym6xU/settings`; intentional SIGTERM produced LLDB target status 15 |
+| Explicitly disabled startup | Stable for 16 seconds with `-noload EtherCATWorkbench` and fresh settings under `/private/tmp/embed-labs-quick-add-product-disabled-qualified.mOI49C/settings`; intentional SIGTERM produced LLDB target status 15 |
+| Process and crash-report cleanup | No residual Embed Labs or LLDB process and no DiagnosticReports or ReportCrash event after 22:40:03 on 2026-07-18 |
+| Manual desktop interaction | Not run by design; all executable qualification was offscreen and created no visible main window |
+| `WITH_TESTS=ON` full product build | Not rerun; this private Workbench issue does not touch the known EasyBoard test include blocker |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Public API, dependency, persistence, source-list, CMake, or qbs changes | None |
+| Network or physical hardware access | Not performed by design; Scan and Diagnostics remain local Mock Providers |
+
+Qt Creator documents dynamic command presentation and the command-owned
+`QAction`: <https://doc.qt.io/qtcreator-extending/actionmanager.html>. Qt
+documents action text, tooltip, status text, and literal ampersand handling:
+<https://doc.qt.io/qt-6/qaction.html>. Beckhoff's offline configuration flow
+appends a slave beneath the explicitly selected device in the tree:
+<https://infosys.beckhoff.com/content/1033/el331x/1036999947.html> and
+<https://infosys.beckhoff.com/content/1033/b110_ethercat_optioninterface/2481604363.html>.
+The dynamic Project/Master wording and stable-ID stale-target rejection are
+Embed Labs Qt-native completions.
+
 ## Verification states
 
 Use only these evidence labels:

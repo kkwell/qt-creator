@@ -861,6 +861,11 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     Core::ProjectService *projectService = controller.projectService();
     QVERIFY(repository);
     QVERIFY(projectService);
+    QVERIFY(projectService->projects().isEmpty());
+    QTRY_COMPARE(addCommand->action()->text(), QString("Add to Active Offline Master"));
+    QVERIFY(addCommand->action()->toolTip().contains(
+        "Activate a valid offline EtherCAT project"));
+    QVERIFY(!addCommand->action()->isEnabled());
 
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
@@ -878,26 +883,97 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     QVERIFY(device->supported);
 
     const TestProjectFile file = writeProjectWithSlave(directory, *device);
+    const TestProjectFile alternate = writeProjectWithSlave(
+        directory,
+        *device,
+        "secondary-offline-topology.ecatproject",
+        "Secondary EtherCAT Project");
     QVERIFY(!file.path.isEmpty());
+    QVERIFY(!alternate.path.isEmpty());
     const ProjectExplorer::OpenProjectResult opened
         = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    const ProjectExplorer::OpenProjectResult alternateOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(alternate.path, false);
     QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QVERIFY2(alternateOpened, qPrintable(alternateOpened.errorMessage()));
     auto projectCleanup = qScopeGuard([&] {
         controller.selectionService()->clear();
+        if (projectService->project(alternate.projectId))
+            ProjectExplorer::ProjectManager::removeProject(alternateOpened.project());
         if (projectService->project(file.projectId))
             ProjectExplorer::ProjectManager::removeProject(opened.project());
         QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     });
     QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(projectService->project(alternate.projectId).has_value());
     const Utils::Result<> activated = projectService->activateProject(file.projectId);
     QVERIFY_RESULT(activated);
     QTRY_COMPARE(projectService->activeProjectId(), file.projectId);
     QTRY_VERIFY(controller.treeModel()->indexForNodeId(device->id).isValid());
 
+    const QString expectedQuickAddText
+        = "Add to \"Process Data Workflow\" / \"EtherCAT Master\"";
+    QTRY_COMPARE(addCommand->action()->text(), expectedQuickAddText);
+    QVERIFY(addCommand->hasAttribute(::Core::Command::CA_UpdateText));
+    QVERIFY(addCommand->action()->toolTip().contains("EtherCAT Master"));
+    QVERIFY(addCommand->action()->toolTip().contains("Process Data Workflow"));
+    QVERIFY(addCommand->action()->toolTip().contains("local offline project"));
+    QVERIFY(addCommand->action()->toolTip().contains("no controller or hardware"));
+    QCOMPARE(addCommand->action()->statusTip(), addCommand->action()->toolTip());
+
     controller.selectionService()->setCurrentNodeId(device->id);
     QTRY_VERIFY(addCommand->action()->isEnabled());
     QVERIFY(!removeCommand->action()->isEnabled());
+    const Data::ProjectSnapshot primaryBeforeQuickAdd = *projectService->project(file.projectId);
+    QVERIFY_RESULT(controller.renameStructuralNode(
+        alternate.projectId, alternate.masterId, "Secondary Master"));
+    const std::optional<OfflineMasterTarget> primaryTarget
+        = controller.activeOfflineMasterTarget();
+    QVERIFY(primaryTarget);
+    QCOMPARE(primaryTarget->projectId, file.projectId);
+    QCOMPARE(primaryTarget->masterId, file.masterId);
+
+    QVERIFY_RESULT(projectService->activateProject(alternate.projectId));
+    QTRY_COMPARE(
+        addCommand->action()->text(),
+        QString(
+            "Add to \"Secondary EtherCAT Project\" / \"Secondary Master\""));
+    const QString placeholderProject = "Secondary %1 & Project";
+    const QString placeholderMaster = "Master %2 & Offline";
+    const QString placeholderQuickAddText
+        = "Add to \"Secondary %1 && Project\" / \"Master %2 && Offline\"";
+    QVERIFY_RESULT(controller.renameProject(alternate.projectId, placeholderProject));
+    QVERIFY_RESULT(controller.renameStructuralNode(
+        alternate.projectId, alternate.masterId, placeholderMaster));
+    QTRY_COMPARE(addCommand->action()->text(), placeholderQuickAddText);
+    QVERIFY(addCommand->action()->toolTip().contains(placeholderProject));
+    QVERIFY(addCommand->action()->toolTip().contains(placeholderMaster));
+    QVERIFY(!addCommand->action()->toolTip().contains("&&"));
+    QCOMPARE(addCommand->action()->statusTip(), addCommand->action()->toolTip());
+    const Data::ProjectSnapshot secondaryBeforeQuickAdd
+        = *projectService->project(alternate.projectId);
+    const Utils::Result<> staleQuickAdd = controller.addSelectedDeviceToMaster(*primaryTarget);
+    QVERIFY(!staleQuickAdd);
+    QVERIFY(staleQuickAdd.error().contains("no longer current"));
+    QCOMPARE(*projectService->project(file.projectId), primaryBeforeQuickAdd);
+    QCOMPARE(*projectService->project(alternate.projectId), secondaryBeforeQuickAdd);
+    QTRY_VERIFY(addCommand->action()->isEnabled());
+    addCommand->action()->trigger();
+    QTRY_COMPARE(projectService->project(alternate.projectId)->slaves.size(), 2);
+    QCOMPARE(*projectService->project(file.projectId), primaryBeforeQuickAdd);
+    QVERIFY_RESULT(projectService->undoProject(alternate.projectId));
+    QTRY_COMPARE(
+        projectService->project(alternate.projectId)->slaves,
+        secondaryBeforeQuickAdd.slaves);
+    QCOMPARE(projectService->project(alternate.projectId)->name, secondaryBeforeQuickAdd.name);
+
+    QVERIFY_RESULT(projectService->activateProject(file.projectId));
+    QTRY_COMPARE(projectService->activeProjectId(), file.projectId);
+    controller.selectionService()->setCurrentNodeId(device->id);
+    QTRY_COMPARE(addCommand->action()->text(), expectedQuickAddText);
+    QTRY_VERIFY(addCommand->action()->isEnabled());
+
     addCommand->action()->trigger();
     QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 2);
     const Data::ProjectSnapshot afterAdd = *projectService->project(file.projectId);
@@ -1098,15 +1174,23 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
 
     controller.selectionService()->setCurrentNodeId(device->id);
     QList<QAction *> deviceMenuActions;
-    QTimer::singleShot(0, &navigation, [&deviceMenuActions] {
+    bool quickAddRenderSaved
+        = qEnvironmentVariableIsEmpty("ETHERCAT_WORKBENCH_QUICK_ADD_RENDER_PATH");
+    QTimer::singleShot(0, &navigation, [&deviceMenuActions, &quickAddRenderSaved] {
         auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
         if (!popup)
             return;
         deviceMenuActions = popup->actions();
+        const QString renderPath
+            = qEnvironmentVariable("ETHERCAT_WORKBENCH_QUICK_ADD_RENDER_PATH");
+        if (!renderPath.isEmpty())
+            quickAddRenderSaved = popup->grab().save(renderPath);
         popup->close();
     });
     emit navigation.treeView()->customContextMenuRequested(QPoint(-1, -1));
+    QVERIFY(quickAddRenderSaved);
     QVERIFY(deviceMenuActions.contains(addCommand->action()));
+    QCOMPARE(addCommand->action()->text(), expectedQuickAddText);
     QVERIFY(!deviceMenuActions.contains(removeCommand->action()));
 
     controller.selectionService()->setCurrentNodeId(addedId);
@@ -1148,6 +1232,26 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     QTRY_VERIFY(controller.selectionService()->currentNodeId() != addedId);
     QTRY_VERIFY(!controller.treeModel()->indexForNodeId(addedId).isValid());
+    QTRY_COMPARE(projectService->activeProjectId(), alternate.projectId);
+    const std::optional<OfflineMasterTarget> fallbackQuickAddTarget
+        = controller.activeOfflineMasterTarget();
+    QVERIFY(fallbackQuickAddTarget);
+    QCOMPARE(fallbackQuickAddTarget->projectName, placeholderProject);
+    QTRY_VERIFY(addCommand->action()->text().contains("Secondary %1 && Project"));
+    QVERIFY(addCommand->action()->toolTip().contains(fallbackQuickAddTarget->projectName));
+    QVERIFY(addCommand->action()->toolTip().contains(fallbackQuickAddTarget->masterName));
+    QVERIFY(!addCommand->action()->isEnabled());
+
+    ProjectExplorer::ProjectManager::removeProject(alternateOpened.project());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_VERIFY(projectService->projects().isEmpty());
+    QTRY_VERIFY(projectService->activeProjectId().isNull());
+    QTRY_COMPARE(addCommand->action()->text(), QString("Add to Active Offline Master"));
+    QVERIFY(addCommand->action()->toolTip().contains(
+        "Activate a valid offline EtherCAT project"));
+    QVERIFY(!addCommand->action()->toolTip().contains(placeholderProject));
+    QVERIFY(!addCommand->action()->isEnabled());
     projectCleanup.dismiss();
 }
 
@@ -3441,6 +3545,7 @@ void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
     Core::ProjectService *projectService = controller.projectService();
     QVERIFY(projectService);
     QVERIFY(projectService->projects().isEmpty());
+    QVERIFY(!controller.activeOfflineMasterTarget());
 
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
@@ -3461,6 +3566,13 @@ void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
     QTRY_COMPARE(projectService->projects().size(), 2);
     QVERIFY_RESULT(projectService->activateProject(first.projectId));
     QTRY_COMPARE(projectService->activeProjectId(), first.projectId);
+    const std::optional<OfflineMasterTarget> firstTarget
+        = controller.activeOfflineMasterTarget();
+    QVERIFY(firstTarget);
+    QCOMPARE(firstTarget->projectId, first.projectId);
+    QCOMPARE(firstTarget->masterId, first.masterId);
+    QCOMPARE(firstTarget->projectName, QString("Alpha EtherCAT Project"));
+    QCOMPARE(firstTarget->masterName, QString("EtherCAT Master"));
 
     WorkbenchNavigationWidget navigation(&controller);
     navigation.resize(720, 360);
@@ -3548,6 +3660,11 @@ void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
 
     QVERIFY_RESULT(projectService->activateProject(second.projectId));
     QTRY_COMPARE(projectService->activeProjectId(), second.projectId);
+    const std::optional<OfflineMasterTarget> secondTarget
+        = controller.activeOfflineMasterTarget();
+    QVERIFY(secondTarget);
+    QCOMPARE(secondTarget->projectId, second.projectId);
+    QCOMPARE(secondTarget->masterId, second.masterId);
     QTRY_COMPARE(projectStatus(first.projectId), QString("Offline"));
     QTRY_COMPARE(projectStatus(second.projectId), QString("Active project | Offline"));
     QCOMPARE(modelResetSpy.count(), resetCount);
@@ -3578,11 +3695,27 @@ void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
             .toString()
             .contains("Drop a supported ESI device here"));
 
+    const QString renamedProject = "Beta %1 & EtherCAT Project";
+    const QString renamedMaster = "Master %2 & Offline";
+    QVERIFY_RESULT(controller.renameProject(second.projectId, renamedProject));
+    QVERIFY_RESULT(controller.renameStructuralNode(
+        second.projectId, second.masterId, renamedMaster));
+    const std::optional<OfflineMasterTarget> renamedTarget
+        = controller.activeOfflineMasterTarget();
+    QVERIFY(renamedTarget);
+    QCOMPARE(renamedTarget->projectName, renamedProject);
+    QCOMPARE(renamedTarget->masterName, renamedMaster);
+
     navigation.filterEdit()->setText("Active project");
     QTRY_VERIFY(!findById(navigation.treeView()->model(), first.projectId).isValid());
     QTRY_VERIFY(findById(navigation.treeView()->model(), second.projectId).isValid());
     QVERIFY_RESULT(projectService->activateProject(first.projectId));
     QTRY_COMPARE(projectService->activeProjectId(), first.projectId);
+    const std::optional<OfflineMasterTarget> firstAgainTarget
+        = controller.activeOfflineMasterTarget();
+    QVERIFY(firstAgainTarget);
+    QCOMPARE(firstAgainTarget->projectId, first.projectId);
+    QCOMPARE(firstAgainTarget->projectName, QString("Alpha EtherCAT Project"));
     QTRY_VERIFY(findById(navigation.treeView()->model(), first.projectId).isValid());
     QTRY_VERIFY(!findById(navigation.treeView()->model(), second.projectId).isValid());
     QCOMPARE(navigation.filterEdit()->text(), QString("Active project"));
@@ -3593,6 +3726,12 @@ void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
 
     QVERIFY_RESULT(projectService->activateProject(second.projectId));
     QTRY_COMPARE(projectService->activeProjectId(), second.projectId);
+    const std::optional<OfflineMasterTarget> secondAgainTarget
+        = controller.activeOfflineMasterTarget();
+    QVERIFY(secondAgainTarget);
+    QCOMPARE(secondAgainTarget->projectId, second.projectId);
+    QCOMPARE(secondAgainTarget->projectName, renamedProject);
+    QCOMPARE(secondAgainTarget->masterName, renamedMaster);
     controller.selectionService()->setCurrentNodeId(second.masterId);
     QTRY_COMPARE(details.currentContext().nodeId, second.masterId);
     ProjectExplorer::ProjectManager::removeProject(secondOpened.project());
@@ -3606,6 +3745,11 @@ void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
     QTRY_COMPARE(projectStatus(first.projectId), QString("Active project | Offline"));
     QTRY_VERIFY(controller.treeModel()->flags(controller.treeModel()->indexForNodeId(first.masterId))
                 & Qt::ItemIsDropEnabled);
+    const std::optional<OfflineMasterTarget> fallbackTarget
+        = controller.activeOfflineMasterTarget();
+    QVERIFY(fallbackTarget);
+    QCOMPARE(fallbackTarget->projectId, first.projectId);
+    QCOMPARE(fallbackTarget->projectName, QString("Alpha EtherCAT Project"));
 
     ProjectExplorer::ProjectManager::removeProject(firstOpened.project());
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
@@ -3618,6 +3762,7 @@ void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
         QString("No EtherCAT project is open"));
     QVERIFY(controller.selectionService()->currentNodeId().isNull());
     QCOMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QVERIFY(!controller.activeOfflineMasterTarget());
 }
 
 void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()

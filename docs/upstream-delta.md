@@ -454,6 +454,18 @@ behavior, CMake/qbs entry, or path under upstream Core, ProjectExplorer, or
 the application bootstrap. The Workbench path count remains 44 and the direct
 Core patch count remains five.
 
+The Workbench repository quick-add target disclosure issue changes only the
+existing private action setup, controller, Workbench integration test, and
+documentation. The action displays copied Project and Master names together
+with their stable IDs, refreshes on active-project lifecycle changes, and
+passes the same displayed target to the controller. The controller resolves
+the current active valid Project and Master again and rejects mismatched IDs
+before calling the existing Project-owned replacement command. It adds no
+public API, source file, dependency, persistent field, Provider, thread,
+timer, controller transport, online or hardware behavior, CMake/qbs entry, or
+path under upstream Core, ProjectExplorer, or the application bootstrap. The
+Workbench path count remains 44 and the direct Core patch count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

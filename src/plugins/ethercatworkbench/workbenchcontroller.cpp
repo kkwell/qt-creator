@@ -349,7 +349,7 @@ bool WorkbenchController::canAddSelectedDeviceToMaster() const
     if (context.nodeKind != Core::WorkbenchNodeKind::Device)
         return false;
     const std::optional<Data::DeviceDescription> device = m_deviceRepository->device(context.nodeId);
-    return device && device->summary.supported && activeMasterContext(m_projectService).has_value();
+    return device && device->summary.supported && activeOfflineMasterTarget().has_value();
 }
 
 bool WorkbenchController::canRemoveSelectedOfflineSlave() const
@@ -401,18 +401,41 @@ bool WorkbenchController::canCopyNodeId(const Data::NodeId &nodeId) const
     return project && project->valid;
 }
 
-Utils::Result<> WorkbenchController::addSelectedDeviceToMaster()
+std::optional<OfflineMasterTarget> WorkbenchController::activeOfflineMasterTarget() const
+{
+    if (m_shuttingDown)
+        return std::nullopt;
+    const std::optional<ActiveMasterContext> target = activeMasterContext(m_projectService);
+    if (!target)
+        return std::nullopt;
+    const auto master = std::find_if(
+        target->project.nodes.cbegin(),
+        target->project.nodes.cend(),
+        [&target](const Data::ProjectNodeSnapshot &node) {
+            return node.kind == Data::ProjectNodeKind::Master && node.id == target->masterId;
+        });
+    QTC_ASSERT(master != target->project.nodes.cend(), return std::nullopt);
+    return OfflineMasterTarget{
+        target->project.id, target->masterId, target->project.name, master->name};
+}
+
+Utils::Result<> WorkbenchController::addSelectedDeviceToMaster(
+    const OfflineMasterTarget &target)
 {
     if (m_shuttingDown || !m_selectionService || !m_deviceRepository || !m_projectService)
         return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    const std::optional<ActiveMasterContext> current = activeMasterContext(
+        m_projectService, target.masterId);
+    if (!current || current->project.id != target.projectId) {
+        return Utils::ResultError(Tr::tr(
+            "The displayed active offline master is no longer current. Review the updated "
+            "target and try again."));
+    }
     const Core::PropertyPageContext context = m_treeModel.contextForNodeId(
         m_selectionService->currentNodeId());
     if (context.nodeKind != Core::WorkbenchNodeKind::Device)
         return Utils::ResultError(Tr::tr("Select an ESI device before adding it."));
-    const std::optional<ActiveMasterContext> target = activeMasterContext(m_projectService);
-    if (!target)
-        return Utils::ResultError(Tr::tr("Open and activate an offline EtherCAT project first."));
-    return addDeviceToMaster(context.nodeId, target->masterId);
+    return addDeviceToMaster(context.nodeId, target.masterId);
 }
 
 Data::NodeId WorkbenchController::selectedOfflineMasterId() const

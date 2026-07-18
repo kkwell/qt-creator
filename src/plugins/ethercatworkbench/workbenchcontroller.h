@@ -29,6 +29,14 @@ struct OfflineSlaveRemovalCandidate
     int position = -1;
 };
 
+struct OfflineMasterTarget
+{
+    Data::NodeId projectId;
+    Data::NodeId masterId;
+    QString projectName;
+    QString masterName;
+};
+
 class WorkbenchController final : public QObject
 {
     Q_OBJECT
@@ -56,10 +64,11 @@ public:
 
     void refresh();
     void shutdown();
+    std::optional<OfflineMasterTarget> activeOfflineMasterTarget() const;
     Data::NodeId selectedOfflineMasterId() const;
     Utils::Result<> addDeviceToMaster(
         const Data::NodeId &deviceId, const Data::NodeId &masterId);
-    Utils::Result<> addSelectedDeviceToMaster();
+    Utils::Result<> addSelectedDeviceToMaster(const OfflineMasterTarget &target);
     std::optional<OfflineSlaveRemovalCandidate> selectedOfflineSlaveRemovalCandidate() const;
     Utils::Result<> removeOfflineSlave(const OfflineSlaveRemovalCandidate &candidate);
     Utils::Result<> moveSelectedOfflineSlaveUp();

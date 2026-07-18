@@ -466,6 +466,42 @@ network/controller behavior, or upstream Core, ProjectExplorer, or application
 path. The Workbench path count remains 44 and the direct Core patch count
 remains five.
 
+## Workbench repository quick-add target boundary
+
+The Device Repository quick-add presentation and its
+`OfflineMasterTarget` value remain private to
+`EtherCATWorkbench::Internal`. The value contains copied Project and Master
+stable IDs plus their display names. It does not retain or pass a Project
+object, Provider pointer, `QModelIndex`, or widget pointer across a plugin
+boundary.
+
+The existing ActionManager action owns the optional target that it currently
+displays. Project open, active-project, rename, and close-fallback events
+replace that copied value and refresh the text, tooltip, status text, and
+enabled state. Triggering the action passes the same displayed value to the
+controller; it does not independently choose a destination from a later UI
+selection.
+
+Immediately before mutation, the controller resolves the current active valid
+Project and its Master from the public Project service again. Both stable IDs
+must match the displayed target. A stale target is rejected without mutation,
+preventing an action that names Project A from writing Project B after an
+intervening active-project change. Names remain presentation data only and are
+not identity keys.
+
+The actual mutation remains the existing checked Project replacement command.
+EtherCATProject therefore continues to own validation, modified state,
+persistence, slave-position normalization, Undo, and Redo. Workbench owns only
+target presentation, stable-context revalidation, and post-command selection
+repair. Optional Scan and Diagnostics Providers do not participate in target
+selection and remain local Mock capabilities.
+
+The implementation changes no public service or public data type, persistent
+format, metadata, dependency, source list, CMake/qbs entry, Provider, thread,
+timer, network/controller behavior, or upstream Core, ProjectExplorer, or
+application path. The Workbench path count remains 44 and the direct Core patch
+count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

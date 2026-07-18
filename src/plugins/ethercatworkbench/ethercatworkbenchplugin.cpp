@@ -20,6 +20,7 @@
 #include <coreplugin/modemanager.h>
 #include <coreplugin/statusbarmanager.h>
 
+#include <ethercatcore/providers.h>
 #include <ethercatcore/selectionservice.h>
 #include <ethercatcore/stateservice.h>
 
@@ -27,6 +28,7 @@
 #include <extensionsystem/pluginmanager.h>
 
 #include <utils/qtcassert.h>
+#include <utils/stringutils.h>
 #include <utils/utilsicons.h>
 
 #include <QAction>
@@ -225,12 +227,22 @@ void EtherCATWorkbenchPlugin::setupActions()
 
     auto addDeviceAction
         = new QAction(Utils::Icons::PLUS.icon(), Tr::tr("Add to Active Offline Master"), this);
-    ::Core::ActionManager::registerAction(
+    ::Core::Command *addDeviceCommand = ::Core::ActionManager::registerAction(
         addDeviceAction,
         Constants::ADD_DEVICE_TO_MASTER_ACTION_ID,
         ::Core::Context(Constants::CONTEXT_ID));
-    connect(addDeviceAction, &QAction::triggered, m_controller.get(), [this] {
-        if (const Utils::Result<> result = m_controller->addSelectedDeviceToMaster(); !result) {
+    addDeviceCommand->setAttribute(::Core::Command::CA_UpdateText);
+    addDeviceCommand->setDescription(Tr::tr("Add ESI Device to Active Offline Master"));
+    const auto quickAddTarget = std::make_shared<std::optional<OfflineMasterTarget>>();
+    connect(addDeviceAction, &QAction::triggered, m_controller.get(), [this, quickAddTarget] {
+        if (!*quickAddTarget) {
+            ::Core::MessageManager::writeFlashing(
+                Tr::tr("Cannot add the ESI device: activate a valid offline EtherCAT project."));
+            return;
+        }
+        const Utils::Result<> result
+            = m_controller->addSelectedDeviceToMaster(**quickAddTarget);
+        if (!result) {
             ::Core::MessageManager::writeFlashing(
                 Tr::tr("Cannot add the ESI device: %1").arg(result.error()));
         }
@@ -314,8 +326,35 @@ void EtherCATWorkbenchPlugin::setupActions()
         }
     });
 
+    const auto updateQuickAddPresentation = [this, addDeviceAction, quickAddTarget] {
+        *quickAddTarget = m_controller ? m_controller->activeOfflineMasterTarget() : std::nullopt;
+        QString description;
+        if (*quickAddTarget) {
+            const OfflineMasterTarget &target = **quickAddTarget;
+            addDeviceAction->setText(
+                Tr::tr("Add to \"%1\" / \"%2\"")
+                    .arg(
+                        Utils::quoteAmpersands(target.projectName),
+                        Utils::quoteAmpersands(target.masterName)));
+            description = Tr::tr(
+                              "Add the selected supported ESI device to offline master \"%1\" "
+                              "in active project \"%2\". This changes only the local offline "
+                              "project; no controller or hardware is contacted.")
+                              .arg(target.masterName, target.projectName);
+        } else {
+            addDeviceAction->setText(Tr::tr("Add to Active Offline Master"));
+            description = Tr::tr(
+                "Activate a valid offline EtherCAT project before adding an ESI device. This "
+                "action changes only a local offline project; it does not contact a controller "
+                "or hardware.");
+        }
+        addDeviceAction->setToolTip(description);
+        addDeviceAction->setStatusTip(description);
+    };
+
     const auto updateNavigationActions =
         [this,
+         updateQuickAddPresentation,
          locateDifferenceAction,
          locateIssueAction,
          openDiagnosticsAction,
@@ -327,6 +366,7 @@ void EtherCATWorkbenchPlugin::setupActions()
          removeSlaveAction,
          moveSlaveUpAction,
          moveSlaveDownAction] {
+            updateQuickAddPresentation();
             if (!m_controller) {
                 locateDifferenceAction->setEnabled(false);
                 locateIssueAction->setEnabled(false);
@@ -387,6 +427,16 @@ void EtherCATWorkbenchPlugin::setupActions()
     connect(
         m_controller->selectionService(),
         &Core::SelectionService::currentNodeChanged,
+        this,
+        updateNavigationActions);
+    connect(
+        m_controller->projectService(),
+        &Core::ProjectService::projectChanged,
+        this,
+        updateNavigationActions);
+    connect(
+        m_controller->projectService(),
+        &Core::ProjectService::activeProjectChanged,
         this,
         updateNavigationActions);
     updateNavigationActions();

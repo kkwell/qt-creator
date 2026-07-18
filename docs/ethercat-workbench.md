@@ -337,14 +337,15 @@ where devices are appended from an ESI-backed tree command:
 No Beckhoff asset, project format, command ID, or proprietary implementation is
 copied.
 
-Right-clicking a supported repository device exposes `Add to Active Offline
-Master`. The phase-1 project format contains one master, so the command targets
-that master in the active valid project. A new stable slave ID and the next
-physical position are allocated, and a case-insensitive unique name is derived
-from the ESI device name. The slave keeps the complete identity and repository
-reference and receives ESI-derived Process Data, Startup, and first DC-mode
-defaults. The same private factory supplies those defaults to the existing
-property pages, preventing the creation path and page proposal from drifting.
+Right-clicking a supported repository device exposes the dynamically targeted
+`Add to "<Project>" / "<Master>"` command described below. The phase-1 project
+format contains one master, so the command targets that master in the active
+valid project. A new stable slave ID and the next physical position are
+allocated, and a case-insensitive unique name is derived from the ESI device
+name. The slave keeps the complete identity and repository reference and
+receives ESI-derived Process Data, Startup, and first DC-mode defaults. The
+same private factory supplies those defaults to the existing property pages,
+preventing the creation path and page proposal from drifting.
 
 A configured slave exposes `Remove from Offline Master...`, `Move Offline Slave
 Up`, and `Move Offline Slave Down`. Boundary commands are disabled. Moves keep
@@ -367,6 +368,75 @@ multi-selection editing, multiple-master target selection, a bus scan,
 controller transport, or online configuration. The master-side selection
 workflow is documented below; the other capabilities require separate issues
 and must not bypass the same checked Project service boundary.
+
+## Repository quick-add target disclosure
+
+`ISSUE-WB-ESI-QUICK-ADD-TARGET-DISCLOSURE-001` makes the global Device
+Repository command disclose the exact offline Project and Master it will
+modify. When a valid active project is available, the compact menu text is
+`Add to "<Project>" / "<Master>"`. Its tooltip and status text name the same
+target and state that the command changes only the local offline project; it
+does not contact a controller or physical hardware. With no valid target, the
+action returns to `Add to Active Offline Master`, explains why no target is
+available, and remains disabled.
+
+The existing ActionManager command is reused by shortcuts and the real Device
+Repository context menu. It has `CA_UpdateText`, while its keyboard description
+remains the stable `Add ESI Device to Active Offline Master`. Project open,
+active-project, rename, and close-fallback signals refresh the presentation.
+`Utils::quoteAmpersands()` preserves literal ampersands in menu names, and the
+formatting path preserves literal `%1` and `%2` in Project or Master names.
+
+The action keeps a copied `OfflineMasterTarget` containing the Project and
+Master stable IDs plus the names that were displayed. The same captured value
+is passed to the trigger path. Immediately before mutation, the Workbench
+controller rereads the active valid Project and its Master and requires both
+stable IDs to match. A target that became stale after an active-project switch
+is rejected without modifying either project. A current target still calls the
+existing Project-owned replacement command, so validation, modified state,
+persistence, Undo, and Redo do not move into Workbench.
+
+Qt Creator documents command attributes for dynamic action presentation and
+exposes the command's `QAction` as the user-facing action:
+<https://doc.qt.io/qtcreator-extending/actionmanager.html>. Qt documents action
+text, tooltip, status text, and doubled ampersands for a literal ampersand:
+<https://doc.qt.io/qt-6/qaction.html>. Beckhoff's offline workflow appends a
+slave beneath the explicitly selected device in the configuration tree:
+<https://infosys.beckhoff.com/content/1033/el331x/1036999947.html> and
+<https://infosys.beckhoff.com/content/1033/b110_ethercat_optioninterface/2481604363.html>.
+Those references establish target visibility and offline-tree context; the
+dynamic wording and stable-ID stale-target guard are Embed Labs Qt-native
+behavior.
+
+The failure-first focused run produced 2 passes and 1 expected failure because
+the previous fixed action text named neither Project nor Master. Final focused
+runs pass 3 tests at normal scale and 3 at `QT_SCALE_FACTOR=2`. They cover no
+project, two open projects, active-project switching, Project and Master
+renames, literal `%1`, `%2`, and `&`, stale-target rejection with identical
+project snapshots, mutation of only the displayed target, Project-owned Undo,
+close fallback, final no-project disablement, shared QAction identity, and the
+real context menu. The inspected offscreen menu renders are 382 x 190 and
+764 x 380 pixels, with no clipping, overlap, or scale drift.
+
+The complete Workbench suite passes 39 tests. The six isolated EtherCAT suites
+pass 90 tests: Core 17, Project 12, Devices 8, Workbench 39, Scan 7, and
+Diagnostics 7. The `WITH_TESTS=OFF` product build passes and contains exactly
+the 16 allow-listed plugin dylibs. Enabled and explicitly Workbench-disabled
+product processes each remained stable for 16 seconds before intentional
+SIGTERM target status 15, using fresh settings under
+`/private/tmp/embed-labs-quick-add-product-enabled-qualified.6Ym6xU/settings`
+and
+`/private/tmp/embed-labs-quick-add-product-disabled-qualified.mOI49C/settings`.
+Every executable qualification was offscreen, explicitly cleared inherited
+DYLD variables, and used only the process-local Touch Bar LLDB breakpoint.
+Final cleanup found no residual Embed Labs or LLDB process, DiagnosticReports
+file, or ReportCrash event after 22:40:03 on 2026-07-18.
+
+This issue changes only existing private Workbench action, controller, test,
+and documentation files. It adds no public API, Provider, thread, timer,
+persistence, dependency, source file, CMake/qbs entry, network or hardware
+behavior, or upstream Core, ProjectExplorer, or application path. Scan and
+Diagnostics remain explicitly local Mock capabilities.
 
 ## Offline-slave removal confirmation
 
