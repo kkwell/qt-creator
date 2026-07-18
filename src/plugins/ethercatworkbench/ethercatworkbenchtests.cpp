@@ -5994,10 +5994,18 @@ void EtherCATWorkbenchTests::testCoeOnlineMockWorkflow()
     std::unique_ptr<QWidget> page(provider.createPage(coePageId, nullptr));
     QVERIFY(page);
     provider.updatePage(coePageId, page.get(), context);
+    page->resize(1100, 760);
+    page->show();
+    QTRY_VERIFY(page->isVisible());
     QLabel *banner = page->findChild<QLabel *>("EtherCATCoeMockBanner");
     QLabel *source = page->findChild<QLabel *>("EtherCATCoeDataSource");
     QLineEdit *filter = page->findChild<QLineEdit *>("EtherCATCoeFilter");
     QTreeView *dictionary = page->findChild<QTreeView *>("EtherCATCoeObjectDictionary");
+    QWidget *filterEmptyState
+        = page->findChild<QWidget *>("EtherCATCoeFilterEmptyState");
+    QLabel *filterEmptyMessage
+        = page->findChild<QLabel *>("EtherCATCoeFilterEmptyMessage");
+    QPushButton *clearFilters = page->findChild<QPushButton *>("EtherCATCoeClearFilters");
     QPushButton *updateList = page->findChild<QPushButton *>("EtherCATCoeUpdateList");
     QPushButton *advanced = page->findChild<QPushButton *>("EtherCATCoeAdvanced");
     QPushButton *addToStartup = page->findChild<QPushButton *>("EtherCATCoeAddToStartup");
@@ -6009,6 +6017,9 @@ void EtherCATWorkbenchTests::testCoeOnlineMockWorkflow()
     QVERIFY(source);
     QVERIFY(filter);
     QVERIFY(dictionary);
+    QVERIFY(filterEmptyState);
+    QVERIFY(filterEmptyMessage);
+    QVERIFY(clearFilters);
     QAbstractItemModelTester dictionaryTester(
         dictionary->model(), QAbstractItemModelTester::FailureReportingMode::QtTest);
     QVERIFY(updateList);
@@ -6018,6 +6029,12 @@ void EtherCATWorkbenchTests::testCoeOnlineMockWorkflow()
     QVERIFY(singleUpdate);
     QVERIFY(showOffline);
     QVERIFY(moduleOd);
+    QVERIFY(!filter->accessibleName().isEmpty());
+    QVERIFY(!filter->accessibleDescription().isEmpty());
+    QVERIFY(!filterEmptyState->accessibleName().isEmpty());
+    QVERIFY(!filterEmptyState->accessibleDescription().isEmpty());
+    QVERIFY(!filterEmptyMessage->accessibleName().isEmpty());
+    QVERIFY(!clearFilters->accessibleDescription().isEmpty());
     QVERIFY(banner->text().contains("MOCK", Qt::CaseInsensitive));
     QVERIFY(banner->text().contains("controller", Qt::CaseInsensitive));
     QVERIFY(source->text().contains("Mock", Qt::CaseInsensitive));
@@ -6084,7 +6101,27 @@ void EtherCATWorkbenchTests::testCoeOnlineMockWorkflow()
     QVERIFY(!dictionary->model()
                  ->setData(mockObject.siblingAtColumn(valueColumn), "not hex", Qt::EditRole));
     QVERIFY(
-        dictionary->model()->setData(mockObject.siblingAtColumn(valueColumn), "0A", Qt::EditRole));
+        dictionary->model()->setData(mockObject.siblingAtColumn(valueColumn), "5A", Qt::EditRole));
+    QCOMPARE(mockObject.siblingAtColumn(valueColumn).data(Qt::EditRole).toString(), QString("5A"));
+
+    dictionary->setCurrentIndex(mockObject);
+    const QString editedValue = mockObject.siblingAtColumn(valueColumn).data().toString();
+    const QString editedAddress = mockObject.data().toString();
+    QVERIFY(!editedValue.isEmpty());
+    filter->setText(editedValue);
+    QTRY_COMPARE(dictionary->model()->rowCount(), 1);
+    QModelIndex filteredMock = findByDisplayText(dictionary->model(), editedAddress);
+    QVERIFY(filteredMock.isValid());
+    QVERIFY(dictionary->model()->setData(
+        filteredMock.siblingAtColumn(valueColumn), "0A", Qt::EditRole));
+    QTRY_COMPARE(dictionary->model()->rowCount(), 0);
+    QTRY_VERIFY(filterEmptyState->isVisible());
+    QVERIFY(!dictionary->isVisible());
+    filter->clear();
+    QTRY_VERIFY(dictionary->isVisible());
+    QTRY_COMPARE(dictionary->currentIndex().data().toString(), editedAddress);
+    mockObject = findByDisplayText(dictionary->model(), editedAddress);
+    QVERIFY(mockObject.isValid());
     QCOMPARE(mockObject.siblingAtColumn(valueColumn).data(Qt::EditRole).toString(), QString("0A"));
 
     filter->setText("最大扭矩");
@@ -6094,6 +6131,58 @@ void EtherCATWorkbenchTests::testCoeOnlineMockWorkflow()
     QTRY_VERIFY(findByDisplayText(dictionary->model(), "6060:00").isValid());
     mockObject = findByDisplayText(dictionary->model(), "6060:00");
     dictionary->setCurrentIndex(mockObject);
+    QTRY_VERIFY(addToStartup->isEnabled());
+
+    const QString selectedAddress = mockObject.data().toString();
+    filter->setText("6060");
+    QTRY_VERIFY(findByDisplayText(dictionary->model(), selectedAddress).isValid());
+    bool combinedAdvancedAccepted = false;
+    QTimer::singleShot(0, [&combinedAdvancedAccepted] {
+        auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog || dialog->objectName() != "EtherCATCoeAdvancedDialog")
+            return;
+        QComboBox *range = dialog->findChild<QComboBox *>("EtherCATCoeAdvancedRange");
+        QCheckBox *hideStandard
+            = dialog->findChild<QCheckBox *>("EtherCATCoeAdvancedHideStandard");
+        QCheckBox *hidePdo = dialog->findChild<QCheckBox *>("EtherCATCoeAdvancedHidePdo");
+        if (!range || !hideStandard || !hidePdo)
+            return;
+        const int communicationRange = range->findText("Communication", Qt::MatchStartsWith);
+        if (communicationRange < 0)
+            return;
+        range->setCurrentIndex(communicationRange);
+        hideStandard->setChecked(true);
+        hidePdo->setChecked(true);
+        combinedAdvancedAccepted = true;
+        dialog->accept();
+    });
+    QTest::mouseClick(advanced, Qt::LeftButton);
+    QVERIFY(combinedAdvancedAccepted);
+    QTRY_COMPARE(dictionary->model()->rowCount(), 0);
+    QTRY_VERIFY(filterEmptyState->isVisible());
+    QVERIFY(!dictionary->isVisible());
+    QCOMPARE(
+        filterEmptyMessage->text(), QString("No CoE objects match the current filters."));
+    QCOMPARE(clearFilters->text(), QString("Clear Filters"));
+    QVERIFY(clearFilters->focusPolicy() & Qt::TabFocus);
+    QVERIFY(!addToStartup->isEnabled());
+    const QString filterEmptyRenderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_COE_FILTER_EMPTY_RENDER_PATH");
+    if (!filterEmptyRenderPath.isEmpty()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(page->grab().save(filterEmptyRenderPath), qPrintable(filterEmptyRenderPath));
+    }
+
+    page->activateWindow();
+    clearFilters->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), clearFilters);
+    QTest::keyClick(clearFilters, Qt::Key_Space);
+    QTRY_VERIFY(filter->text().isEmpty());
+    QTRY_VERIFY(dictionary->isVisible());
+    QVERIFY(!filterEmptyState->isVisible());
+    QTRY_VERIFY(findByDisplayText(dictionary->model(), "1018:00").isValid());
+    QTRY_COMPARE(dictionary->currentIndex().data().toString(), selectedAddress);
+    QTRY_COMPARE(QApplication::focusWidget(), dictionary);
     QTRY_VERIFY(addToStartup->isEnabled());
 
     QTimer::singleShot(0, [] {

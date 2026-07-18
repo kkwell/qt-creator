@@ -1390,6 +1390,47 @@ Beckhoff documents selection-dependent EtherCAT terminal tabs at
 The exact value-only focus token, bounded pump, user-choice priority, and
 re-entry-safe Provider lifecycle are Embed Labs Qt-native completions.
 
+## EtherCATWorkbench CoE filter empty-state qualification
+
+`ISSUE-WB-COE-FILTER-EMPTY-A11Y-001` is based on local baseline
+`6935b103b1adbc3641c28afcd3e683f2772848fb`.
+
+| Check | Result |
+|---|---|
+| Failure-first focused test | 2 passed, 1 failed under `/tmp/embed-labs-coe-filter-failure.UBAZUx` because a zero-result CoE filter still presented a blank tree instead of an explicit empty state |
+| Text and advanced filters | Passed for Unicode/value text, object range, Hide Standard, and Hide PDO filters |
+| Dynamic Value edit | Passed; editing the only matching Mock Value removes the proxy row and immediately presents the empty state |
+| Clear Filters transaction | Passed; text, range, Hide Standard, and Hide PDO are reset together without exposing an intermediate selection as new user intent |
+| Stable selection | Passed using the private numeric `AddressRole`; the previous address is restored when visible and no model index or item pointer is retained |
+| Keyboard recovery | Passed; Space activates `Clear Filters`, the dictionary returns, and focus moves to the restored dictionary row |
+| Empty-state action safety | Passed; `Add to Startup` is disabled with zero matches and returns only for the restored writable Mock object |
+| Accessibility | Passed for nonempty filter name/description, empty-state name/description, message name, and clear-button description |
+| Focused normal-scale test | 3 passed, 0 failed; exit 0 under `/tmp/embed-labs-coe-filter-locked-normal2.vocRvH` |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; exit 0 under `/tmp/embed-labs-coe-filter-locked-2x2.iFfDMA` |
+| Direct offscreen renders | Inspected at 1100 x 760 and 2200 x 1520; no clipping, overlap, or scale drift; SHA-256 `dfcc0dfab520ee5013ea22a561f9f89e1a5b28cbc6c8e11b037db48ebed87440` and `3563edf87c993042cb51139f358937225722d077487509ea749fa11aa5eea55c` |
+| Complete EtherCATWorkbench normal scale | 41 passed, 0 failed; exit 0 under `/tmp/embed-labs-workbench-post-address-normal.1q6GwZ` |
+| Complete EtherCATWorkbench 2x scale | 41 passed, 0 failed; exit 0 under `/tmp/embed-labs-workbench-post-address-2x.FPJYWy` |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 41, Scan 7, Diagnostics 7; 92 passed, 0 failed in isolated LLDB-supervised processes |
+| Qualified Qt and test build | Qt 6.11.0 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build | `WITH_TESTS=OFF` passed in `qt-creator-build-ethercat-product-qt611` |
+| Product version inventory | Exactly the 16 allow-listed plugin dylibs are present |
+| Enabled offscreen startup | Stable for 16 seconds under `/tmp/embed-labs-coe-product-locked-enabled.KY0v5e`; intentional SIGTERM produced LLDB target status 15 |
+| Explicitly disabled startup | Stable for 16 seconds with `-noload EtherCATWorkbench` under `/tmp/embed-labs-coe-product-locked-disabled.YHhQUP`; intentional SIGTERM produced LLDB target status 15 |
+| Process and crash-report cleanup | No residual Embed Labs or LLDB process and no new Embed Labs DiagnosticReports file |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no visible main window or interposer |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network or physical hardware access | Not performed; CoE remains a local Mock/offline page and the existing Add-to-Startup ProjectService path is unchanged |
+
+Qt defines the dynamic proxy and accessibility contracts at
+<https://doc.qt.io/qt-6/qsortfilterproxymodel.html> and
+<https://doc.qt.io/qt-6/qwidget.html>. Beckhoff's CoE Online page remains the
+object-dictionary comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
+The atomic clear and address-based restoration are Embed Labs Qt-native
+behavior.
+
 ## Verification states
 
 Use only these evidence labels:

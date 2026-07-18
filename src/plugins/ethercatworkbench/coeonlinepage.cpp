@@ -26,7 +26,9 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QScopedValueRollback>
 #include <QSortFilterProxyModel>
+#include <QStackedWidget>
 #include <QTreeView>
 #include <QVBoxLayout>
 #include <QtEndian>
@@ -511,6 +513,17 @@ public:
     bool hideStandard() const { return m_hideStandard; }
     bool hidePdo() const { return m_hidePdo; }
     DictionaryRange dictionaryRange() const { return m_range; }
+    bool hasAdvancedFilters() const
+    {
+        return m_range != DictionaryRange::All || m_hideStandard || m_hidePdo;
+    }
+
+    void resetAdvancedFilters()
+    {
+        setDictionaryRange(DictionaryRange::All);
+        setHideStandard(false);
+        setHidePdo(false);
+    }
 
 protected:
     bool filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const final
@@ -545,6 +558,20 @@ private:
     bool m_hideStandard = false;
     bool m_hidePdo = false;
 };
+
+static QModelIndex indexForAddress(
+    const QAbstractItemModel *model, quint32 objectAddress, const QModelIndex &parent = {})
+{
+    for (int row = 0; row < model->rowCount(parent); ++row) {
+        const QModelIndex index = model->index(row, 0, parent);
+        if (index.data(AddressRole).toUInt() == objectAddress)
+            return index;
+        const QModelIndex child = indexForAddress(model, objectAddress, index);
+        if (child.isValid())
+            return child;
+    }
+    return {};
+}
 
 static void addOrReplaceDefinition(
     QList<CoeObjectDefinition> *definitions,
@@ -721,7 +748,10 @@ CoeOnlinePage::CoeOnlinePage(WorkbenchController *controller, QWidget *parent)
     , m_dataSource(new QLabel(this))
     , m_moduleOd(new QLineEdit(this))
     , m_filter(new Utils::FancyLineEdit(this))
-    , m_dictionary(new QTreeView(this))
+    , m_dictionaryStack(new QStackedWidget(this))
+    , m_dictionary(new QTreeView(m_dictionaryStack))
+    , m_filterEmptyState(new QWidget(m_dictionaryStack))
+    , m_clearFilters(new QPushButton(Tr::tr("Clear Filters"), m_filterEmptyState))
     , m_model(new CoeObjectModel(this))
     , m_filterModel(new CoeFilterModel(this))
 {
@@ -754,6 +784,10 @@ CoeOnlinePage::CoeOnlinePage(WorkbenchController *controller, QWidget *parent)
     m_filter->setObjectName("EtherCATCoeFilter");
     m_filter->setFiltering(true);
     m_filter->setPlaceholderText(Tr::tr("Filter object dictionary"));
+    m_filter->setAccessibleName(Tr::tr("Filter CoE object dictionary"));
+    m_filter->setAccessibleDescription(
+        Tr::tr("Filter local Mock and offline CoE objects by index, name, flags, value, or unit."));
+    m_dictionaryStack->setObjectName("EtherCATCoeDictionaryResults");
     m_dictionary->setObjectName("EtherCATCoeObjectDictionary");
     m_dictionary->setAccessibleName(Tr::tr("CoE object dictionary"));
     m_dictionary->setAccessibleDescription(
@@ -767,10 +801,72 @@ CoeOnlinePage::CoeOnlinePage(WorkbenchController *controller, QWidget *parent)
         QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed
         | QAbstractItemView::SelectedClicked);
     m_filterModel->setSourceModel(m_model);
+    const auto beginFilterResultChange = [this] { ++m_filterResultChangeDepth; };
+    const auto finishFilterResultChange = [this] {
+        refreshFilterResults();
+        if (m_filterResultChangeDepth > 0)
+            --m_filterResultChangeDepth;
+    };
+    connect(
+        m_filterModel,
+        &QAbstractItemModel::rowsAboutToBeInserted,
+        this,
+        beginFilterResultChange);
+    connect(m_filterModel, &QAbstractItemModel::rowsInserted, this, finishFilterResultChange);
+    connect(
+        m_filterModel,
+        &QAbstractItemModel::rowsAboutToBeRemoved,
+        this,
+        beginFilterResultChange);
+    connect(m_filterModel, &QAbstractItemModel::rowsRemoved, this, finishFilterResultChange);
+    connect(
+        m_filterModel,
+        &QAbstractItemModel::modelAboutToBeReset,
+        this,
+        beginFilterResultChange);
+    connect(m_filterModel, &QAbstractItemModel::modelReset, this, finishFilterResultChange);
+    connect(
+        m_filterModel,
+        &QAbstractItemModel::layoutAboutToBeChanged,
+        this,
+        beginFilterResultChange);
+    connect(m_filterModel, &QAbstractItemModel::layoutChanged, this, finishFilterResultChange);
+    connect(
+        m_filterModel,
+        &QAbstractItemModel::dataChanged,
+        this,
+        [this] { refreshFilterResults(); });
     m_dictionary->setModel(m_filterModel);
     m_dictionary->header()->setStretchLastSection(false);
     m_dictionary->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     m_dictionary->header()->setSectionResizeMode(CoeObjectModel::Name, QHeaderView::Stretch);
+
+    m_filterEmptyState->setObjectName("EtherCATCoeFilterEmptyState");
+    m_filterEmptyState->setAccessibleName(Tr::tr("No matching CoE objects"));
+    m_filterEmptyState->setAccessibleDescription(
+        Tr::tr("No local Mock or offline CoE objects match the current filters."));
+    auto filterEmptyMessage = new QLabel(
+        Tr::tr("No CoE objects match the current filters."), m_filterEmptyState);
+    filterEmptyMessage->setObjectName("EtherCATCoeFilterEmptyMessage");
+    filterEmptyMessage->setAccessibleName(Tr::tr("No matching CoE objects"));
+    filterEmptyMessage->setAlignment(Qt::AlignCenter);
+    filterEmptyMessage->setWordWrap(true);
+    m_clearFilters->setObjectName("EtherCATCoeClearFilters");
+    m_clearFilters->setAccessibleDescription(
+        Tr::tr("Clear text and advanced CoE filters and return to the object dictionary."));
+    auto filterEmptyLayout = new QVBoxLayout(m_filterEmptyState);
+    filterEmptyLayout->setContentsMargins(
+        Utils::StyleHelper::SpacingTokens::PaddingHM,
+        Utils::StyleHelper::SpacingTokens::PaddingVM,
+        Utils::StyleHelper::SpacingTokens::PaddingHM,
+        Utils::StyleHelper::SpacingTokens::PaddingVM);
+    filterEmptyLayout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVM);
+    filterEmptyLayout->addStretch();
+    filterEmptyLayout->addWidget(filterEmptyMessage);
+    filterEmptyLayout->addWidget(m_clearFilters, 0, Qt::AlignHCenter);
+    filterEmptyLayout->addStretch();
+    m_dictionaryStack->addWidget(m_dictionary);
+    m_dictionaryStack->addWidget(m_filterEmptyState);
 
     auto controls = new QGridLayout;
     controls->setContentsMargins(QMargins());
@@ -798,38 +894,57 @@ CoeOnlinePage::CoeOnlinePage(WorkbenchController *controller, QWidget *parent)
     layout->addWidget(m_banner);
     layout->addLayout(controls);
     layout->addWidget(m_feedback);
-    layout->addWidget(m_dictionary, 1);
+    layout->addWidget(m_dictionaryStack, 1);
 
-    connect(
-        m_filter,
-        &QLineEdit::textChanged,
-        m_filterModel,
-        &QSortFilterProxyModel::setFilterFixedString);
+    connect(m_filter, &QLineEdit::textChanged, this, [this](const QString &text) {
+        QScopedValueRollback resultChange(
+            m_filterResultChangeDepth, m_filterResultChangeDepth + 1);
+        m_filterModel->setFilterFixedString(text);
+        refreshFilterResults();
+    });
+    connect(m_clearFilters, &QPushButton::clicked, this, &CoeOnlinePage::clearFilters);
     connect(m_updateList, &QPushButton::clicked, this, &CoeOnlinePage::updateList);
     connect(m_advanced, &QPushButton::clicked, this, &CoeOnlinePage::showAdvancedSettings);
     connect(m_addToStartup, &QPushButton::clicked, this, &CoeOnlinePage::addSelectedToStartup);
     connect(m_showOffline, &QCheckBox::toggled, this, [this](bool checked) {
+        QScopedValueRollback resultChange(
+            m_filterResultChangeDepth, m_filterResultChangeDepth + 1);
         m_model->setShowOffline(checked);
         m_dataSource->setText(
             checked ? Tr::tr("Offline Data")
                     : Tr::tr("Mock Data - sample %1").arg(m_mockGeneration));
         m_dictionary->expandAll();
-        updateButtonState();
+        refreshFilterResults();
     });
-    connect(m_dictionary->selectionModel(), &QItemSelectionModel::currentRowChanged, this, [this] {
-        updateButtonState();
-    });
+    connect(
+        m_dictionary->selectionModel(),
+        &QItemSelectionModel::currentRowChanged,
+        this,
+        [this](const QModelIndex &current) {
+            if (current.isValid() && m_filterResultChangeDepth == 0)
+                m_selectedObjectAddress = current.siblingAtColumn(0).data(AddressRole).toUInt();
+            updateButtonState();
+        });
 }
 
 void CoeOnlinePage::setContext(const Core::PropertyPageContext &context)
 {
     m_context = context;
     m_mockGeneration = 0;
-    m_filter->clear();
-    m_showOffline->setChecked(false);
+    m_selectedObjectAddress.reset();
+    {
+        QScopedValueRollback resultChange(
+            m_filterResultChangeDepth, m_filterResultChangeDepth + 1);
+        m_filterModel->resetAdvancedFilters();
+        m_filter->clear();
+        m_showOffline->setChecked(false);
+    }
     m_feedback->clear();
     m_feedback->hide();
     rebuildObjects();
+    const QModelIndex current = m_dictionary->currentIndex().siblingAtColumn(0);
+    if (current.isValid())
+        m_selectedObjectAddress = current.data(AddressRole).toUInt();
 }
 
 void CoeOnlinePage::rebuildObjects()
@@ -861,8 +976,8 @@ void CoeOnlinePage::rebuildObjects()
                      "locally derived identity and configuration objects are shown; no controller "
                      "connection occurs."));
     m_dictionary->expandAll();
-    if (m_filterModel->rowCount() > 0)
-        m_dictionary->setCurrentIndex(m_filterModel->index(0, 0));
+    ensureDictionarySelection();
+    updateFilterState();
     updateButtonState();
 }
 
@@ -876,6 +991,8 @@ void CoeOnlinePage::updateList()
         rebuildObjects();
     }
     m_dictionary->expandAll();
+    ensureDictionarySelection();
+    updateFilterState();
     updateButtonState();
 }
 
@@ -893,6 +1010,50 @@ void CoeOnlinePage::updateButtonState()
     m_addToStartup->setEnabled(
         configured && writable && !m_showOffline->isChecked()
         && !sourceIndex.data(RawValueRole).toByteArray().isEmpty());
+}
+
+void CoeOnlinePage::refreshFilterResults()
+{
+    ensureDictionarySelection();
+    updateFilterState();
+    updateButtonState();
+}
+
+void CoeOnlinePage::updateFilterState()
+{
+    const bool filtersActive
+        = !m_filter->text().isEmpty() || m_filterModel->hasAdvancedFilters();
+    const bool noMatches = filtersActive && m_filterModel->rowCount() == 0;
+    m_dictionaryStack->setCurrentWidget(noMatches ? m_filterEmptyState : m_dictionary);
+}
+
+void CoeOnlinePage::ensureDictionarySelection()
+{
+    if (m_filterModel->rowCount() == 0) {
+        m_dictionary->setCurrentIndex({});
+        return;
+    }
+    QModelIndex target;
+    if (m_selectedObjectAddress)
+        target = indexForAddress(m_filterModel, *m_selectedObjectAddress);
+    if (target.isValid()) {
+        const QModelIndex current = m_dictionary->currentIndex().siblingAtColumn(0);
+        if (!current.isValid() || current.data(AddressRole).toUInt() != *m_selectedObjectAddress)
+            m_dictionary->setCurrentIndex(target);
+        return;
+    }
+    if (!m_dictionary->currentIndex().isValid())
+        m_dictionary->setCurrentIndex(m_filterModel->index(0, 0));
+}
+
+void CoeOnlinePage::clearFilters()
+{
+    QScopedValueRollback resultChange(
+        m_filterResultChangeDepth, m_filterResultChangeDepth + 1);
+    m_filterModel->resetAdvancedFilters();
+    m_filter->clear();
+    refreshFilterResults();
+    m_dictionary->setFocus(Qt::ShortcutFocusReason);
 }
 
 void CoeOnlinePage::showAdvancedSettings()
@@ -959,12 +1120,14 @@ void CoeOnlinePage::showAdvancedSettings()
     if (dialog.exec() != QDialog::Accepted)
         return;
 
+    QScopedValueRollback resultChange(
+        m_filterResultChangeDepth, m_filterResultChangeDepth + 1);
     m_filterModel->setDictionaryRange(DictionaryRange(range->currentData().toInt()));
     m_filterModel->setHideStandard(hideStandard->isChecked());
     m_filterModel->setHidePdo(hidePdo->isChecked());
     m_showOffline->setChecked(offline->isChecked());
     m_dictionary->expandAll();
-    updateButtonState();
+    refreshFilterResults();
 }
 
 void CoeOnlinePage::addSelectedToStartup()

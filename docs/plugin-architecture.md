@@ -677,6 +677,28 @@ changed, so qbs was not run. `src/plugins/ethercatcore` is not an upstream Qt
 Creator Core path. The Workbench path count remains 44 and the direct upstream
 Core patch count remains five.
 
+## Workbench CoE filter-result boundary
+
+The CoE empty state, filter model, and Clear Filters action are owned entirely
+by the private `EtherCAT::Workbench::Internal::CoeOnlinePage`. One result
+refresh path follows proxy row insertion/removal, model reset, layout change,
+data change, text filtering, and advanced-filter changes. The stacked result
+area therefore cannot treat a model-driven zero-row transition as an ordinary
+blank dictionary.
+
+Selection continuity stores only the existing private numeric `AddressRole`.
+It retains no `QModelIndex`, source/proxy item, view, or QObject pointer across
+a result mutation. Text, range, Hide Standard, and Hide PDO state are cleared
+as one guarded presentation transaction. The Mock/offline source mode,
+Property-page context, and Project snapshot remain owned by their existing
+components and are not changed by that action.
+
+CoE remains a local Mock/offline prototype. Its existing ProjectService
+Add-to-Startup path is unchanged, and this boundary introduces no public
+service, Provider, role, persistence field, source file, dependency, thread,
+timer, SDO/controller transport, network access, or physical-hardware claim.
+No CMake or qbs description changed.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

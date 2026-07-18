@@ -594,6 +594,20 @@ product plugin and is not counted as an upstream Core patch. No CMake or qbs
 description changes, so qbs was not run. The Workbench path count remains 44
 and the direct upstream Core patch count remains five.
 
+The Workbench CoE filter empty-state and accessibility issue, based on
+`6935b103b1adbc3641c28afcd3e683f2772848fb`, changes only the existing
+product-owned `coeonlinepage.h`, `coeonlinepage.cpp`,
+`ethercatworkbenchtests.cpp`, and documentation. It adds an explicit
+proxy-driven zero-result presentation, accessible filter/result metadata,
+atomic filter clearing, and private value-only object-address restoration.
+
+No source file, dependency, CMake/qbs entry, public API, Project format,
+Provider, controller transport, network behavior, or physical-hardware
+behavior changes. No file under Qt Creator's upstream Core, ProjectExplorer,
+or application bootstrap changes, so the direct Core patch budget does not
+increase and no extension-point exception is required. The Workbench path
+count remains 44 and the direct upstream Core patch count remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

@@ -2211,3 +2211,77 @@ No CMake or qbs file changed, so qbs was not run. No public Provider shape,
 source list, dependency, persistence, controller transport, network, or
 physical-hardware behavior changes. The Workbench path count remains 44 and
 the direct upstream Core patch count remains five.
+
+## CoE filter empty state and accessibility
+
+`ISSUE-WB-COE-FILTER-EMPTY-A11Y-001` is based on local baseline
+`6935b103b1adbc3641c28afcd3e683f2772848fb`. It closes the blank-result gap in
+the existing CoE Online page. Any active text, dictionary-range, Hide Standard,
+or Hide PDO filter that produces zero rows now switches the result area from
+the dictionary to an explicit message and keyboard-reachable `Clear Filters`
+button. `Add to Startup` is disabled while no object is selected.
+
+The result presentation follows the proxy model, not just line-edit changes.
+Rows inserted or removed, model resets, layout changes, and data changes all
+refresh the result state, current selection, and action state. This includes
+editing the Value of the final matching Mock object so that it immediately
+stops matching. The filter field, empty state, message, and clear action expose
+accessible names or descriptions appropriate to their widget roles.
+
+Clearing is one guarded transaction: range, Hide Standard, Hide PDO, and text
+filters are reset without letting an intermediate proxy result replace the
+selection anchor. The page retains only the existing private numeric
+`AddressRole`; it retains no `QModelIndex`, view item, model item, or object
+pointer across the change. When the address is visible again it is restored;
+otherwise the first available row is selected. Keyboard focus returns to the
+dictionary. A new page context clears the old address and advanced-filter
+state, so neither can leak between devices. The Mock/offline source choice,
+current Project context, and Project snapshot are not changed by Clear Filters.
+
+Qt documents dynamic filtering in
+[QSortFilterProxyModel](https://doc.qt.io/qt-6/qsortfilterproxymodel.html) and
+widget accessibility properties in
+[QWidget](https://doc.qt.io/qt-6/qwidget.html). Qt Creator 20.0's private
+Extensions browser provides the local presentation precedent for placing a
+proxy-backed view and empty placeholder in a stacked widget and reacting to
+proxy row changes. Beckhoff's CoE Online object-dictionary presentation remains
+the product comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
+The exact atomic clear, dynamic edit handling, address restoration, and
+accessibility behavior are Embed Labs Qt-native completions.
+
+The failure-first run under
+`/tmp/embed-labs-coe-filter-failure.UBAZUx` passed setup and cleanup but failed
+the focused workflow because no explicit empty state existed. Final focused
+runs pass 3 tests at normal scale and 3 tests at `QT_SCALE_FACTOR=2` under
+`/tmp/embed-labs-coe-filter-locked-normal2.vocRvH` and
+`/tmp/embed-labs-coe-filter-locked-2x2.iFfDMA`. Inspected 1100 x 760 and
+2200 x 1520 renders have SHA-256 values
+`dfcc0dfab520ee5013ea22a561f9f89e1a5b28cbc6c8e11b037db48ebed87440`
+and `3563edf87c993042cb51139f358937225722d077487509ea749fa11aa5eea55c`;
+neither shows clipping, overlap, or scale drift.
+
+Complete normal-scale and 2x Workbench runs each pass 41 tests under
+`/tmp/embed-labs-workbench-post-address-normal.1q6GwZ` and
+`/tmp/embed-labs-workbench-post-address-2x.FPJYWy`. The six isolated EtherCAT suites
+pass 92 tests: Core 17, Project 12, Devices 8, Workbench 41, Scan 7, and
+Diagnostics 7. The final `WITH_TESTS=OFF` product build passes with exactly the
+16 allow-listed plugin dylibs. Enabled startup remained alive for 16 seconds
+under `/tmp/embed-labs-coe-product-locked-enabled.KY0v5e`; explicitly disabled
+startup remained alive for 16 seconds with `-noload EtherCATWorkbench` under
+`/tmp/embed-labs-coe-product-locked-disabled.YHhQUP`. Both were ended intentionally
+with SIGTERM target status 15.
+
+Every executable qualification used fresh HOME/settings, cleared inherited
+DYLD variables, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`,
+`-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint. Cleanup
+found no residual Embed Labs or LLDB process and no new Embed Labs diagnostic
+report. No visible main window was created.
+
+This issue modifies existing private Workbench page/test files and
+documentation only. It adds no source file, public API, model role, Provider,
+dependency, persistence field, thread, timer, SDO/controller transport,
+network access, or physical-hardware behavior. The existing Add-to-Startup
+ProjectService path is unchanged. No CMake or qbs file changed, so qbs was not
+run. The Workbench path count remains 44 and the direct upstream Core patch
+count remains five.

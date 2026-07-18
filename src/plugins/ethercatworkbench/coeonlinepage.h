@@ -6,11 +6,14 @@
 
 #include <QWidget>
 
+#include <optional>
+
 QT_BEGIN_NAMESPACE
 class QCheckBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QStackedWidget;
 class QTreeView;
 QT_END_NAMESPACE
 
@@ -38,6 +41,10 @@ private:
     void rebuildObjects();
     void updateList();
     void updateButtonState();
+    void refreshFilterResults();
+    void updateFilterState();
+    void ensureDictionarySelection();
+    void clearFilters();
     void showAdvancedSettings();
     void addSelectedToStartup();
 
@@ -56,9 +63,14 @@ private:
     QLabel *m_dataSource = nullptr;
     QLineEdit *m_moduleOd = nullptr;
     Utils::FancyLineEdit *m_filter = nullptr;
+    QStackedWidget *m_dictionaryStack = nullptr;
     QTreeView *m_dictionary = nullptr;
+    QWidget *m_filterEmptyState = nullptr;
+    QPushButton *m_clearFilters = nullptr;
     CoeObjectModel *m_model = nullptr;
     CoeFilterModel *m_filterModel = nullptr;
+    std::optional<quint32> m_selectedObjectAddress;
+    int m_filterResultChangeDepth = 0;
 };
 
 } // namespace EtherCAT::Workbench::Internal
