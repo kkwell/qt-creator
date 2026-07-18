@@ -1589,3 +1589,68 @@ DiagnosticReports or ReportCrash event after 18:55 on 2026-07-18. No visible
 main window, interposer, repository hook, network, or hardware access was used.
 This issue adds no public API, model role, persistence, dependency, source
 file, CMake/qbs change, or upstream Core/ProjectExplorer/app path.
+
+## Tree-row accessibility
+
+`ISSUE-WB-TREE-ROW-A11Y-001` completes the standard accessibility contract for
+individual items in the Workbench device tree. The navigation widget already
+had a translated accessible name and description, but its private item model
+returned no row-level `Qt::AccessibleTextRole` or
+`Qt::AccessibleDescriptionRole`. Assistive technology therefore could not rely
+on the model to obtain the focused cell's name, status, parser error, Mock
+Provider state, scan/diagnostic details, or ESI identity.
+
+Each model cell now publishes its current Display text through
+`AccessibleTextRole`. `AccessibleDescriptionRole` reuses the complete truthful
+tooltip projection: node name, current status, presentation details,
+Vendor/Product/Revision identity, and applicable offline drag/drop guidance.
+It does not infer information from an icon or add a controller state. Active
+project changes and Scan/Diagnostics presentation changes explicitly include
+both accessibility roles in `dataChanged`; existing device and drop-target
+updates use an empty roles list, which Qt defines as all roles changed.
+
+This follows Qt's standard item-data roles for screen-reader text and item
+descriptions:
+<https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum>. Qt also documents the
+`dataChanged` empty-role meaning:
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#dataChanged>. Beckhoff's I/O
+documentation keeps device status/control information in the tree and
+documents explicit operational and error states:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html> and
+<https://infosys.beckhoff.com/content/1033/el6752/2584310027.html>. Those pages
+do not prescribe Qt accessibility roles. The role mapping is an Embed Labs
+Qt-native implementation; no Beckhoff asset, wording contract, project format,
+or proprietary behavior is copied.
+
+The failure-first focused run produced 2 passes and 1 expected failure because
+the Master row returned an empty accessible text. That first assertion was
+initially reached after test Providers were registered, so its early return
+skipped their normal removal and LLDB contained a test-fixture shutdown access
+fault. The final test places the base assertion before registration and adds a
+scope cleanup guard, so later assertion failures cannot leave those Providers
+in the object pool. The event generated no DiagnosticReports or ReportCrash
+entry.
+
+Final focused runs pass 3 tests at normal scale and 3 tests at
+`QT_SCALE_FACTOR=2`. They cover name/status cells, full scan and Diagnostics
+details, Provider removal, source-model role notifications, the real navigation
+proxy, and Mock/offline boundaries. The 1200 x 800 and 2400 x 1600 offscreen
+tree renders retain the same readable hierarchy, icons, long textual status,
+and horizontal-scroll behavior without overlap or scale drift. These automated
+checks prove the Qt model contract; no manual VoiceOver speech result is
+claimed.
+
+The complete Workbench suite passes 38 tests and the six isolated EtherCAT
+suites pass 89: Core 17, Project 12, Devices 8, Workbench 38, Scan 7, and
+Diagnostics 7. The `WITH_TESTS=OFF` product build contains all 16 allow-listed
+plugin dylibs. Enabled and explicitly Workbench-disabled product runs stayed
+stable beyond 15 seconds before intentional SIGTERM target status 15. Every
+qualifying executable ran offscreen, cleared inherited DYLD variables, used
+only the process-local Touch Bar LLDB breakpoint, and created no visible
+window. Final cleanup found no residual process, DiagnosticReports file, or
+ReportCrash event after 20:02 on 2026-07-18.
+
+This issue changes only the existing private tree model, Workbench tests, and
+documentation. It adds no public API, custom role, source file, Provider,
+thread, timer, persistence, dependency, CMake/qbs entry, network or hardware
+behavior, or upstream Core/ProjectExplorer/application change.

@@ -2646,8 +2646,21 @@ void EtherCATWorkbenchTests::testTreeModelLargeIncrementalUpdate()
     WorkbenchTreeModel model;
     QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::QtTest);
     QSignalSpy reset(&model, &QAbstractItemModel::modelReset);
-    model.setProjects({projectSnapshot()});
+    const Data::ProjectSnapshot project = projectSnapshot();
+    model.setProjects({project});
     QCOMPARE(reset.count(), 1);
+
+    QSignalSpy activeChanged(&model, &QAbstractItemModel::dataChanged);
+    model.setActiveProjectId(project.id);
+    QCOMPARE(activeChanged.count(), 1);
+    const QList<int> activeRoles = activeChanged.first().at(2).value<QList<int>>();
+    QVERIFY(activeRoles.contains(Qt::AccessibleTextRole));
+    QVERIFY(activeRoles.contains(Qt::AccessibleDescriptionRole));
+    const QModelIndex projectRoot = model.indexForNodeId(project.id);
+    QCOMPARE(projectRoot.data(Qt::AccessibleTextRole), projectRoot.data(Qt::DisplayRole));
+    QVERIFY(projectRoot.data(Qt::AccessibleDescriptionRole)
+                .toString()
+                .contains("Active project | Offline"));
 
     const QModelIndex master = findByKind(&model, Core::WorkbenchNodeKind::Master);
     QVERIFY(master.isValid());
@@ -2666,6 +2679,13 @@ void EtherCATWorkbenchTests::testTreeModelLargeIncrementalUpdate()
     QCOMPARE(reset.count(), 1);
     QVERIFY(model.firstUnsupportedDevice().isValid());
 
+    const QModelIndex retained = model.indexForNodeId(devices.at(42).id);
+    QCOMPARE(retained.data(Qt::AccessibleTextRole).toString(), devices.at(42).name);
+    const QString retainedDescription = retained.data(Qt::AccessibleDescriptionRole).toString();
+    QVERIFY(retainedDescription.contains("Vendor: 0x00000002"));
+    QVERIFY(retainedDescription.contains("Product: 0x0000102a"));
+    QVERIFY(retainedDescription.contains("Revision: 0x00000001"));
+
     const Data::NodeId retainedId = devices.at(42).id;
     devices.removeFirst();
     devices[41].name = "Renamed Device";
@@ -2676,6 +2696,9 @@ void EtherCATWorkbenchTests::testTreeModelLargeIncrementalUpdate()
     QVERIFY(inserted.count() >= 2);
     QVERIFY(changed.count() >= 1);
     QCOMPARE(model.contextForNodeId(retainedId).displayName, QString("Renamed Device"));
+    QCOMPARE(
+        model.indexForNodeId(retainedId).data(Qt::AccessibleTextRole).toString(),
+        QString("Renamed Device"));
     QCOMPARE(reset.count(), 1);
 }
 
@@ -2741,12 +2764,27 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
         {secondSlaveId, masterId(fixture.project), Data::ProjectNodeKind::Slave, "Configured I/O"});
     controller.treeModel()->setProjects({fixture.project});
 
+    const QModelIndex master = controller.treeModel()->indexForNodeId(masterId(fixture.project));
+    const QModelIndex missing = controller.treeModel()->indexForNodeId(fixture.slaveId);
+    const QModelIndex revision = controller.treeModel()->indexForNodeId(secondSlaveId);
+    QCOMPARE(master.data(Qt::AccessibleTextRole).toString(), QString("EtherCAT Master"));
+    QCOMPARE(
+        master.data(Qt::AccessibleDescriptionRole).toString(),
+        master.data(Qt::ToolTipRole).toString());
+
     AvailableScanProvider scan;
     AvailableDiagnosticsProvider diagnostics;
     scan.setAvailable(true);
     diagnostics.setAvailable(true);
     ExtensionSystem::PluginManager::addObject(&scan);
     ExtensionSystem::PluginManager::addObject(&diagnostics);
+    bool providersRegistered = true;
+    const QScopeGuard providerCleanup([&] {
+        if (!providersRegistered)
+            return;
+        ExtensionSystem::PluginManager::removeObject(&diagnostics);
+        ExtensionSystem::PluginManager::removeObject(&scan);
+    });
 
     Data::ScanResult scanResult;
     scanResult.snapshot.projectId = fixture.project.id;
@@ -2758,11 +2796,11 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
     scanResult.comparison.exactMatch = true;
     scan.publishResult(scanResult);
 
-    const QModelIndex master = controller.treeModel()->indexForNodeId(masterId(fixture.project));
-    const QModelIndex missing = controller.treeModel()->indexForNodeId(fixture.slaveId);
-    const QModelIndex revision = controller.treeModel()->indexForNodeId(secondSlaveId);
     const int iconSize = QApplication::style()->pixelMetric(QStyle::PM_SmallIconSize);
     QTRY_VERIFY(master.siblingAtColumn(1).data().toString().contains("topology matches"));
+    QCOMPARE(
+        master.siblingAtColumn(1).data(Qt::AccessibleTextRole),
+        master.siblingAtColumn(1).data(Qt::DisplayRole));
     QVERIFY(!controller.treeModel()->firstTopologyDifference().isValid());
     QTRY_COMPARE(
         master.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
@@ -2803,6 +2841,7 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
          "Added slave",
          "Unexpected I/O"},
     };
+    QSignalSpy providerChanged(controller.treeModel(), &QAbstractItemModel::dataChanged);
     scan.publishResult(scanResult);
 
     QTRY_VERIFY(master.siblingAtColumn(1).data().toString().contains("MOCK"));
@@ -2811,6 +2850,25 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
     QTRY_VERIFY(missing.siblingAtColumn(1).data().toString().contains("Missing"));
     QTRY_VERIFY(revision.siblingAtColumn(1).data().toString().contains("Revision"));
     QTRY_VERIFY(revision.siblingAtColumn(1).data().toString().contains("Vendor"));
+    QTRY_VERIFY(revision.data(Qt::AccessibleDescriptionRole)
+                    .toString()
+                    .contains("Offline 0x21, scanned 0x22"));
+    const auto hasAccessibleRoleUpdate = [](const QSignalSpy &spy, const QModelIndex &target) {
+        for (const QList<QVariant> &arguments : spy) {
+            const QModelIndex topLeft = arguments.at(0).value<QModelIndex>();
+            const QModelIndex bottomRight = arguments.at(1).value<QModelIndex>();
+            const QList<int> roles = arguments.at(2).value<QList<int>>();
+            if (topLeft.parent() == target.parent() && topLeft.row() <= target.row()
+                && bottomRight.row() >= target.row() && topLeft.column() <= target.column()
+                && bottomRight.column() >= target.column()
+                && roles.contains(Qt::AccessibleTextRole)
+                && roles.contains(Qt::AccessibleDescriptionRole)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    QVERIFY(hasAccessibleRoleUpdate(providerChanged, revision));
     QVERIFY(controller.treeModel()->firstTopologyDifference().isValid());
 
     QTRY_COMPARE(
@@ -2819,7 +2877,11 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
 
     WorkbenchNavigationWidget navigation(&controller);
     navigation.filterEdit()->setText("Offline 0x21, scanned 0x22");
-    QTRY_VERIFY(findById(navigation.treeView()->model(), secondSlaveId).isValid());
+    const QModelIndex proxyRevision = findById(navigation.treeView()->model(), secondSlaveId);
+    QTRY_VERIFY(proxyRevision.isValid());
+    QVERIFY(proxyRevision.data(Qt::AccessibleDescriptionRole)
+                .toString()
+                .contains("Offline 0x21, scanned 0x22"));
     emit controller.locateFirstTopologyDifferenceRequested();
     QTRY_COMPARE(
         navigation.treeView()
@@ -2859,10 +2921,24 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
 
     const QModelIndex diagnosticsNode = controller.treeModel()->diagnosticsForProject(
         fixture.project.id);
+    const QModelIndex proxyMissing = findById(navigation.treeView()->model(), fixture.slaveId);
+    const QModelIndex proxyDiagnostics = findByKind(
+        navigation.treeView()->model(), Core::WorkbenchNodeKind::Diagnostics);
+    QVERIFY(proxyMissing.isValid());
+    QVERIFY(proxyDiagnostics.isValid());
     QTRY_VERIFY(missing.siblingAtColumn(1).data().toString().contains("SAFEOP"));
     QTRY_VERIFY(missing.siblingAtColumn(1).data().toString().contains("Error"));
     QTRY_VERIFY(revision.siblingAtColumn(1).data().toString().contains("not present"));
     QTRY_VERIFY(diagnosticsNode.siblingAtColumn(1).data().toString().contains("2 active"));
+    QTRY_VERIFY(missing.data(Qt::AccessibleDescriptionRole)
+                    .toString()
+                    .contains("MOCK slave fault"));
+    QTRY_VERIFY(proxyMissing.data(Qt::AccessibleDescriptionRole)
+                    .toString()
+                    .contains("MOCK slave fault"));
+    QTRY_VERIFY(diagnosticsNode.data(Qt::AccessibleDescriptionRole)
+                    .toString()
+                    .contains("2 active"));
     QTRY_COMPARE(
         missing.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
         Utils::Icons::CRITICAL.icon().pixmap(iconSize, iconSize).toImage());
@@ -2904,9 +2980,25 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
     QTRY_VERIFY(master.siblingAtColumn(1).data().toString().contains("last"));
     QTRY_VERIFY(diagnosticsNode.siblingAtColumn(1).data().toString().contains("Stopped"));
 
+    navigation.resize(1200, 800);
+    const QString renderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_TREE_ROW_A11Y_RENDER_PATH");
+    if (!renderPath.isEmpty())
+        QVERIFY2(navigation.grab().save(renderPath), qPrintable(renderPath));
+
     ExtensionSystem::PluginManager::removeObject(&diagnostics);
     ExtensionSystem::PluginManager::removeObject(&scan);
+    providersRegistered = false;
     QTRY_VERIFY(missing.siblingAtColumn(1).data().toString().contains("Offline"));
+    QTRY_VERIFY(diagnosticsNode.data(Qt::AccessibleDescriptionRole)
+                    .toString()
+                    .contains("No Diagnostics Provider registered"));
+    QTRY_VERIFY(proxyDiagnostics.data(Qt::AccessibleDescriptionRole)
+                    .toString()
+                    .contains("No Diagnostics Provider registered"));
+    QVERIFY(diagnosticsNode.data(Qt::AccessibleDescriptionRole)
+                .toString()
+                .contains("Local Mock only"));
     QCOMPARE(
         missing.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
         ::Core::Icons::DESKTOP_DEVICE_SMALL.icon().pixmap(iconSize, iconSize).toImage());
@@ -3234,6 +3326,8 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
         invalidRoot.data(WorkbenchTreeModel::StatusRole).toString(),
         QString("Invalid project | Offline data unavailable"));
     QVERIFY(invalidRoot.data(Qt::ToolTipRole).toString().contains(invalid.error));
+    QCOMPARE(invalidRoot.data(Qt::AccessibleTextRole), invalidRoot.data(Qt::DisplayRole));
+    QVERIFY(invalidRoot.data(Qt::AccessibleDescriptionRole).toString().contains(invalid.error));
     QVERIFY(invalidRoot.data(WorkbenchTreeModel::SearchTextRole).toString().contains(invalid.error));
     const int iconSize = QApplication::style()->pixelMetric(QStyle::PM_SmallIconSize);
     QCOMPARE(

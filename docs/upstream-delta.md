@@ -420,6 +420,16 @@ online or hardware behavior, CMake/qbs entry, or path under upstream Core,
 ProjectExplorer, or the application bootstrap. The Workbench path count
 remains 44 and the direct Core patch count remains five.
 
+The Workbench tree-row accessibility issue changes only the existing private
+tree model, Workbench integration test, and documentation. It maps existing
+Display and tooltip content onto Qt's standard accessibility item roles and
+includes those roles in active-project and Provider-overlay data-change
+notifications. It adds no custom or public model role, source file, dependency,
+persistent field, Provider, QAction, thread, timer, controller transport,
+online or hardware behavior, CMake/qbs entry, or path under upstream Core,
+ProjectExplorer, or the application bootstrap. The Workbench path count
+remains 44 and the direct Core patch count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

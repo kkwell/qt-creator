@@ -610,7 +610,7 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
         return {};
 
     const QString status = visibleStatus(node);
-    if (role == Qt::DisplayRole)
+    if (role == Qt::DisplayRole || role == Qt::AccessibleTextRole)
         return index.column() == 0 ? node->name : status;
     if (role == NodeIdRole)
         return QVariant::fromValue(node->id);
@@ -633,7 +633,7 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
         }
         return text;
     }
-    if (role == Qt::ToolTipRole) {
+    if (role == Qt::ToolTipRole || role == Qt::AccessibleDescriptionRole) {
         QString text = node->name;
         if (!status.isEmpty())
             text += "\n" + status;
@@ -849,7 +849,12 @@ void WorkbenchTreeModel::setActiveProjectId(const Data::NodeId &projectId)
     emit dataChanged(
         index(firstRow, 0),
         index(lastRow, columnCount() - 1),
-        {Qt::DisplayRole, Qt::ToolTipRole, StatusRole, SearchTextRole});
+        {Qt::DisplayRole,
+         Qt::ToolTipRole,
+         Qt::AccessibleTextRole,
+         Qt::AccessibleDescriptionRole,
+         StatusRole,
+         SearchTextRole});
 }
 
 void WorkbenchTreeModel::setDropTargetMasterId(const Data::NodeId &masterId)
@@ -1510,7 +1515,13 @@ void WorkbenchTreeModel::updateProviderPresentation()
         emit dataChanged(
             indexForNode(node, 0),
             indexForNode(node, 1),
-            {Qt::DisplayRole, Qt::DecorationRole, Qt::ToolTipRole, StatusRole, SearchTextRole});
+            {Qt::DisplayRole,
+             Qt::DecorationRole,
+             Qt::ToolTipRole,
+             Qt::AccessibleTextRole,
+             Qt::AccessibleDescriptionRole,
+             StatusRole,
+             SearchTextRole});
     }
 }
 

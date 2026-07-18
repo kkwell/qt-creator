@@ -388,6 +388,27 @@ dependency, source list, CMake/qbs entry, or upstream Core, ProjectExplorer,
 or application path. The Workbench path count remains 44 and the direct Core
 patch count remains five.
 
+## Workbench tree-row accessibility boundary
+
+The Workbench-private tree model now projects each cell's existing Display text
+through Qt's standard `AccessibleTextRole` and its complete truthful tooltip
+through `AccessibleDescriptionRole`. This makes the current name, status,
+parser error, optional-Provider identity, Mock scan/diagnostic details, ESI
+identity, and offline drag/drop guidance available through the item-model
+contract without adding a custom role or a second presentation state.
+
+Active-project and Provider-overlay updates advertise the two roles in their
+existing explicit `dataChanged` lists. Device identity/name and drop-target
+updates already emit an empty role list, which Qt defines as all roles changed.
+The existing `QSortFilterProxyModel` forwards the roles to the navigation view.
+No accessibility object, Provider pointer, project object, `QModelIndex`,
+widget, or translated string crosses a plugin boundary.
+
+This issue changes no public API, source list, CMake/qbs entry, dependency,
+metadata, persistence, QAction, Provider, thread, timer, network or controller
+behavior, or upstream Core, ProjectExplorer, or application path. The
+Workbench path count remains 44 and the direct Core patch count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

@@ -1002,6 +1002,50 @@ the explicitly disabled settings were under
 No interposer, repository hook, visible window, network, or hardware access
 was used.
 
+## EtherCATWorkbench tree-row accessibility qualification
+
+`ISSUE-WB-TREE-ROW-A11Y-001` is a Workbench-private item-model presentation
+change based on local baseline
+`cf738be9d320ece891b9e07436aed8a4c9563f30`. It adds no controller connection,
+online state, EtherCAT frame, network access, or physical-hardware result.
+
+| Check | Result |
+|---|---|
+| Failure-first focused test | 2 passed, 1 failed because the Master row returned an empty `AccessibleTextRole` |
+| Accessible text | Passed for name and status cells using the exact current Display text |
+| Accessible description | Passed for complete truthful tooltip content, including active-project state, invalid-project parser error, ESI Vendor/Product/Revision identity, scan differences, Diagnostics errors, Provider state, and offline drag/drop guidance |
+| Dynamic role notification | Passed for active-project and Scan/Diagnostics changes with both standard accessibility roles in explicit `dataChanged` role lists; existing empty role lists retain Qt's all-roles meaning |
+| Real view path | Passed through the Workbench `QSortFilterProxyModel`, not only by direct source-model reads |
+| Provider lifecycle | Passed for dynamic data, removal restoration, and a scope guard that removes test Providers even after a future early assertion |
+| Failure-first harness cleanup | LLDB contained the first early-return test-fixture shutdown access fault; no product path changed and no DiagnosticReports or ReportCrash entry was generated |
+| Focused normal-scale test | 3 passed, 0 failed; exit 0 |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; exit 0 |
+| Direct offscreen renders | 1200 x 800 and 2400 x 1600 tree captures inspected without overlap or scale drift; long status remains available through the existing horizontal-scroll contract |
+| Manual screen-reader speech | Not claimed; automated evidence covers the standard Qt item-model roles and notifications |
+| Complete EtherCATWorkbench suite | 38 passed, 0 failed in an LLDB-supervised isolated offscreen process |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 38, Scan 7, Diagnostics 7; 89 passed, 0 failed in isolated LLDB-supervised processes |
+| Qualified Qt and test build | Qt 6.11.0 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build | `WITH_TESTS=OFF` passed in `qt-creator-build-ethercat-product-qt611` |
+| Product version inventory | All 16 allow-listed plugin dylibs present |
+| Enabled offscreen startup | Stable beyond 15 seconds with fresh settings; intentional SIGTERM produced LLDB target status 15 |
+| Explicitly disabled startup | Stable beyond 15 seconds with `-noload EtherCATWorkbench`; intentional SIGTERM produced LLDB target status 15 |
+| Qualified settings | Enabled under `/private/tmp/embed-labs-row-a11y-product-enabled-qualified.mjvPom/settings`; disabled under `/private/tmp/embed-labs-row-a11y-product-disabled-qualified.gHgaZF/settings` |
+| Process and crash-report cleanup | No residual Embed Labs or LLDB process and no DiagnosticReports or ReportCrash event after 20:02 on 2026-07-18 |
+| Manual desktop interaction | Not run by design; all executable qualification was offscreen and created no visible main window |
+| `WITH_TESTS=ON` full product build | Not rerun; this Workbench-only issue does not touch the known EasyBoard test include blocker |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Public API, dependency, persistence, source-list, CMake, or qbs changes | None |
+| Network or physical hardware access | Not performed by design |
+
+Qt defines `AccessibleTextRole` and `AccessibleDescriptionRole` as the
+standard item data for accessibility clients and screen readers:
+<https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum>. Beckhoff documents tree
+status/control information and explicit EtherCAT operational/error states, but
+does not define this Qt role mapping:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html> and
+<https://infosys.beckhoff.com/content/1033/el6752/2584310027.html>.
+
 ## Verification states
 
 Use only these evidence labels:
