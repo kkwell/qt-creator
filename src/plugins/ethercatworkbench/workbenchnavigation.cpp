@@ -23,6 +23,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSortFilterProxyModel>
 #include <QStackedWidget>
 #include <QToolButton>
@@ -241,6 +242,7 @@ void WorkbenchNavigationWidget::updateFilterState()
 void WorkbenchNavigationWidget::selectNode(const Data::NodeId &nodeId)
 {
     if (nodeId.isNull()) {
+        const QSignalBlocker blocker(m_treeView->selectionModel());
         m_treeView->clearSelection();
         m_treeView->setCurrentIndex({});
         return;
@@ -251,8 +253,12 @@ void WorkbenchNavigationWidget::selectNode(const Data::NodeId &nodeId)
         m_filterEdit->clear();
         proxyIndex = m_proxyModel->mapFromSource(sourceIndex);
     }
-    if (!proxyIndex.isValid())
+    if (!proxyIndex.isValid()) {
+        const QSignalBlocker blocker(m_treeView->selectionModel());
+        m_treeView->clearSelection();
+        m_treeView->setCurrentIndex({});
         return;
+    }
     QModelIndex parent = proxyIndex.parent();
     while (parent.isValid()) {
         m_treeView->expand(parent);
@@ -291,21 +297,38 @@ void WorkbenchNavigationWidget::locateFirstIssue()
 
 void WorkbenchNavigationWidget::openDiagnostics()
 {
-    const Core::PropertyPageContext current = m_sourceModel->contextForIndex(
-        m_proxyModel->mapToSource(m_treeView->currentIndex()));
-    QModelIndex diagnostics = m_sourceModel->diagnosticsForProject(current.projectId);
-    if (!diagnostics.isValid())
-        diagnostics = m_sourceModel->diagnosticsForProject({});
-    selectSourceIndex(diagnostics);
+    Core::SelectionService *selectionService
+        = m_controller ? m_controller->selectionService() : nullptr;
+    if (!selectionService)
+        return;
+    const Data::NodeId currentNodeId = selectionService->currentNodeId();
+    const Core::PropertyPageContext current = m_sourceModel->contextForNodeId(currentNodeId);
+    if (!currentNodeId.isNull() && current.nodeId.isNull())
+        return;
+    selectSourceIndex(m_sourceModel->diagnosticsForProject(current.projectId));
 }
 
 void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
 {
     const QModelIndex proxyIndex = m_treeView->indexAt(position);
-    if (proxyIndex.isValid())
+    if (proxyIndex.isValid()) {
         m_treeView->setCurrentIndex(proxyIndex);
+        if (m_controller && m_controller->selectionService()) {
+            const Core::PropertyPageContext clicked = m_sourceModel->contextForIndex(
+                m_proxyModel->mapToSource(proxyIndex));
+            if (clicked.nodeKind != Core::WorkbenchNodeKind::Placeholder)
+                m_controller->selectionService()->setCurrentNodeId(clicked.nodeId);
+        }
+    }
     const Core::PropertyPageContext context = m_sourceModel->contextForIndex(
         m_proxyModel->mapToSource(m_treeView->currentIndex()));
+    Core::SelectionService *selectionService
+        = m_controller ? m_controller->selectionService() : nullptr;
+    const Data::NodeId currentNodeId
+        = selectionService ? selectionService->currentNodeId() : Data::NodeId();
+    const bool contextMatchesSelection
+        = selectionService
+          && (currentNodeId.isNull() ? context.nodeId.isNull() : context.nodeId == currentNodeId);
     const auto setCommandEnabled = [](const Utils::Id &id, bool enabled) {
         if (::Core::Command *command = ::Core::ActionManager::command(id))
             command->action()->setEnabled(enabled);
@@ -315,8 +338,8 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
     setCommandEnabled(Constants::LOCATE_ISSUE_ACTION_ID, m_sourceModel->firstIssue().isValid());
     setCommandEnabled(
         Constants::OPEN_DIAGNOSTICS_ACTION_ID,
-        m_sourceModel->diagnosticsForProject(context.projectId).isValid()
-            || m_sourceModel->diagnosticsForProject({}).isValid());
+        contextMatchesSelection
+            && m_sourceModel->diagnosticsForProject(context.projectId).isValid());
     setCommandEnabled(
         Constants::LOCATE_UNSUPPORTED_DEVICE_ACTION_ID,
         m_sourceModel->firstUnsupportedDevice().isValid());
@@ -377,6 +400,44 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
         addCommand(Constants::COPY_NODE_ID_ACTION_ID);
     }
     menu.exec(m_treeView->viewport()->mapToGlobal(position));
+
+    Core::SelectionService *restoredSelectionService
+        = m_controller ? m_controller->selectionService() : nullptr;
+    if (!restoredSelectionService) {
+        setCommandEnabled(Constants::OPEN_DIAGNOSTICS_ACTION_ID, false);
+        return;
+    }
+    const Data::NodeId restoredNodeId = restoredSelectionService->currentNodeId();
+    const Core::PropertyPageContext restoredContext
+        = m_sourceModel->contextForNodeId(restoredNodeId);
+    const bool restoredSelectionIsKnown
+        = restoredNodeId.isNull() || !restoredContext.nodeId.isNull();
+    selectNode(restoredNodeId);
+    setCommandEnabled(
+        Constants::OPEN_DIAGNOSTICS_ACTION_ID,
+        restoredSelectionIsKnown
+            && m_sourceModel->diagnosticsForProject(restoredContext.projectId).isValid());
+    setCommandEnabled(
+        Constants::COPY_NODE_ID_ACTION_ID,
+        m_controller && m_controller->canCopyNodeId(restoredNodeId));
+    setCommandEnabled(
+        Constants::SET_ACTIVE_PROJECT_ACTION_ID,
+        m_controller && m_controller->canActivateSelectedProject());
+    setCommandEnabled(
+        Constants::INSERT_DEVICE_ACTION_ID,
+        m_controller && m_controller->canInsertDeviceOnSelectedMaster());
+    setCommandEnabled(
+        Constants::ADD_DEVICE_TO_MASTER_ACTION_ID,
+        m_controller && m_controller->canAddSelectedDeviceToMaster());
+    setCommandEnabled(
+        Constants::REMOVE_OFFLINE_SLAVE_ACTION_ID,
+        m_controller && m_controller->canRemoveSelectedOfflineSlave());
+    setCommandEnabled(
+        Constants::MOVE_OFFLINE_SLAVE_UP_ACTION_ID,
+        m_controller && m_controller->canMoveSelectedOfflineSlaveUp());
+    setCommandEnabled(
+        Constants::MOVE_OFFLINE_SLAVE_DOWN_ACTION_ID,
+        m_controller && m_controller->canMoveSelectedOfflineSlaveDown());
 }
 
 void WorkbenchNavigationWidget::locateUnsupportedDevice()

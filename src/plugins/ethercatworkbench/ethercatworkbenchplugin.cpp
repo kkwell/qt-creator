@@ -303,14 +303,25 @@ void EtherCATWorkbenchPlugin::setupActions()
             locateDifferenceAction->setEnabled(
                 m_controller->treeModel()->firstTopologyDifference().isValid());
             locateIssueAction->setEnabled(m_controller->treeModel()->firstIssue().isValid());
+            Core::SelectionService *selectionService = m_controller->selectionService();
+            const Data::NodeId currentNodeId
+                = selectionService ? selectionService->currentNodeId() : Data::NodeId();
+            const Core::PropertyPageContext currentContext
+                = selectionService
+                      ? m_controller->treeModel()->contextForNodeId(currentNodeId)
+                      : Core::PropertyPageContext();
+            const bool currentSelectionIsKnown
+                = currentNodeId.isNull() || !currentContext.nodeId.isNull();
             openDiagnosticsAction->setEnabled(
-                m_controller->treeModel()->diagnosticsForProject({}).isValid());
+                selectionService && currentSelectionIsKnown
+                && m_controller->treeModel()
+                       ->diagnosticsForProject(currentContext.projectId)
+                       .isValid());
             locateUnsupportedAction->setEnabled(
                 m_controller->treeModel()->firstUnsupportedDevice().isValid());
             copyNodeIdAction->setEnabled(
-                m_controller->selectionService()
-                && m_controller->canCopyNodeId(
-                    m_controller->selectionService()->currentNodeId()));
+                selectionService
+                && m_controller->canCopyNodeId(currentNodeId));
             const bool canActivateSelectedProject
                 = m_controller->canActivateSelectedProject();
             setActiveProjectAction->setEnabled(canActivateSelectedProject);

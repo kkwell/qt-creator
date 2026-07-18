@@ -1501,3 +1501,91 @@ or hidden by this Workbench change; Project and TaskHub remain outside this
 frozen issue. This issue adds no thread, timer, future, Provider, public API,
 persistence, dependency, source file, CMake/qbs change, upstream
 Core/ProjectExplorer/app path, network access, or physical-hardware claim.
+
+## Project-scoped Diagnostics navigation
+
+`ISSUE-WB-DIAGNOSTICS-CONTEXT-001` closes a cross-project navigation gap in
+the private Workbench command path. With one valid and one invalid
+`.ecatproject` open, selecting the invalid root used to leave `Open
+Diagnostics` enabled and its direct signal could fall back to the valid
+project's Diagnostics branch. The action therefore presented a result that
+did not belong to the selected project.
+
+The action updater now resolves the current stable `NodeId` through the
+existing `SelectionService` and derives its `PropertyPageContext`. For a
+non-null project ID, it enables the command only when
+`diagnosticsForProject(context.projectId)` has an exact match; a null project
+ID follows the projectless rule below. The tree context menu and direct
+navigation path use the same rule. An invalid project has no Diagnostics
+branch, so the command is disabled and direct execution leaves both selection
+and current tree row unchanged. A valid project opens its own Diagnostics
+branch. A genuinely projectless selection retains the existing null-project
+lookup, which opens the first available Diagnostics branch; this is distinct
+from a non-null invalid project ID. A non-null `NodeId` that is not present in
+the Workbench model is also disabled and cannot reuse a stale tree row; only a
+genuinely null selection or a known projectless node gets projectless
+fallback. A temporary context menu on an unselectable placeholder is disabled
+while open, then restores the stable selection and action state when it
+closes. The action updater also treats a missing `SelectionService` during
+controller teardown as disabled state.
+
+This matches Qt Creator's general rule that actions in the Projects view act
+on the selected tree item and project
+([Qt Creator Projects view](https://doc.qt.io/qtcreator/creator-projects-view.html)).
+Qt Creator 20.0 also keeps current-project action state separate from
+startup-project action state in its local ProjectExplorer implementation.
+Beckhoff exposes its Online tab for the selected EtherCAT device in the I/O
+tree
+([EtherCAT Online tab](https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446518411.html)).
+The exact cross-project guard is a local Workbench inference from those
+context boundaries; it does not add or imply an online target connection.
+
+The failure-first focused run compiled the new assertions against the old
+implementation and produced 2 passes and 1 failure because the base `Open
+Diagnostics` action remained enabled for the invalid project. Final focused
+runs pass 3 tests at normal scale and 3 at `QT_SCALE_FACTOR=2`. They verify
+disabled base/context actions and guarded direct invocation for the invalid
+project, disabled/no-op behavior for an unknown non-model `NodeId`, exact
+routing to the non-first of two valid projects, retained projectless fallback,
+and placeholder-menu state restoration. Direct tree and Details renders at
+900 x 600 and 1800 x 1200 were inspected without clipping, overlap, or scale
+drift.
+
+Independent diff review then found that an unknown non-model `NodeId` could
+leave the old tree row selected. Its added regression first produced 2 passes
+and 1 failure because clearing that row emitted a selection change that rewrote
+the unknown ID as a genuinely null selection. Blocking that feedback only
+while `SelectionService` drives the tree clear preserves the unknown ID for
+the command guard; the final focused runs include this path.
+
+Staged review then extended placeholder-menu restoration from Diagnostics to
+every node-specific navigation action, including `Copy Node ID`. The first
+complete-suite run still contained the older expectation that copy remained
+disabled. That assertion returned before its manual widget cleanup, so the
+next test's selection update reached the leaked test widget after its
+controller model had been destroyed; LLDB caught the resulting
+`EXC_BAD_ACCESS`. Updating the expectation to the restored action and tree row
+lets cleanup complete. The final focused command test and complete suite both
+exit 0, and this test-only early-return path generated no crash report.
+
+The first post-fix focused run passed the functional assertions but LLDB then
+caught an `EXC_BAD_ACCESS` while action state was refreshed during plugin
+shutdown. A null guard for the already-released `SelectionService` was added;
+all final focused and suite tests exit 0. The complete Workbench suite passes
+38 tests and the six isolated EtherCAT suites pass 89: Core 17, Project 12,
+Devices 8, Workbench 38, Scan 7, and Diagnostics 7. The 16-plugin
+`WITH_TESTS=OFF` product build passes. Enabled and explicitly disabled product
+runs had no unexpected crash and each stayed stable beyond 15 seconds before
+intentional SIGTERM target status 15.
+
+All executable qualification remained offscreen, cleared inherited DYLD
+variables, and used only the process-local Touch Bar LLDB breakpoint. The
+enabled settings path was
+`/private/tmp/embed-labs-diag-context-product-enabled-commit.qdSCy8/settings`;
+the disabled path was
+`/private/tmp/embed-labs-diag-context-product-disabled-commit.yzNE4o/settings`.
+Final cleanup found no residual Embed Labs or LLDB process and no new
+DiagnosticReports or ReportCrash event after 18:55 on 2026-07-18. No visible
+main window, interposer, repository hook, network, or hardware access was used.
+This issue adds no public API, model role, persistence, dependency, source
+file, CMake/qbs change, or upstream Core/ProjectExplorer/app path.

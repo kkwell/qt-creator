@@ -951,6 +951,57 @@ enabled settings path was
 disabled path was
 `/private/tmp/embed-labs-invalid-product-disabled-qualified.DnhDUc`.
 
+## EtherCATWorkbench project-scoped Diagnostics qualification
+
+`ISSUE-WB-DIAGNOSTICS-CONTEXT-001` is a Workbench-private action and
+navigation correction based on local baseline
+`db547ec8597c0db0d0cf5d3a0f097405dd24ca71`. It changes no Diagnostics
+Provider, project data, persistence, online state, or hardware behavior.
+
+| Check | Result |
+|---|---|
+| Failure-first focused test | 2 passed, 1 failed because `Open Diagnostics` remained enabled for an invalid selected project |
+| Independent-review failure | The added unknown-selection regression first produced 2 passed, 1 failed because tree clearing rewrote the unknown ID as null; blocking that feedback fixed it |
+| Invalid-project command state | Base action and Workbench context action are disabled while the invalid root is selected |
+| Invalid-project direct execution | Passed; direct `openDiagnosticsRequested` leaves the invalid stable selection and current tree row unchanged |
+| Unknown non-model selection | Passed; a non-null unknown `NodeId` clears the stale tree row, disables base/context actions, and makes direct execution a no-op |
+| Valid-project exact routing | Passed with two valid projects; selecting the non-first project opens its own Diagnostics branch rather than the wildcard result |
+| Projectless fallback | Passed after invalid-project close; a null selection retains the existing first-available Diagnostics lookup |
+| Placeholder context menu | Passed; node actions are restricted while an unselectable placeholder menu is open, then the valid stable selection plus matching Diagnostics and copy action states are restored on close |
+| Staged-review completion | The first full-suite run exposed an obsolete copy-action expectation; its early test return skipped manual widget cleanup and LLDB caught the resulting test-only stale connection, while the corrected focused command test and final suite exit 0 |
+| Command identity and menu context | Passed with the registered command and its Workbench-context action checked in both invalid and valid contexts |
+| Focused normal-scale test | 3 passed, 0 failed; exit 0 |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; exit 0 |
+| Direct offscreen renders | Tree and Details inspected at 900 x 600 and 1800 x 1200 without clipping, overlap, or scale drift |
+| Complete EtherCATWorkbench suite | 38 passed, 0 failed in an LLDB-supervised isolated offscreen process |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 38, Scan 7, Diagnostics 7; 89 passed, 0 failed in isolated LLDB-supervised processes |
+| Qualified Qt and test build | Qt 6.11.0 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build | `WITH_TESTS=OFF` passed in `qt-creator-build-ethercat-product-qt611` |
+| Product version inventory | All 16 allow-listed plugin dylibs present |
+| Enabled offscreen startup | Stable beyond 15 seconds with fresh settings; intentional SIGTERM produced LLDB target status 15 |
+| Explicitly disabled startup | Stable beyond 15 seconds with `-noload EtherCATWorkbench`; intentional SIGTERM produced LLDB target status 15 |
+| Initial shutdown regression | LLDB caught a post-assertion `EXC_BAD_ACCESS`; guarding the released `SelectionService` fixed it, all final tests exit 0, and lifecycle runs end only by intentional SIGTERM status 15 |
+| Process and crash-report cleanup | No residual Embed Labs or LLDB process and no new DiagnosticReports or ReportCrash event after 18:55 on 2026-07-18 |
+| Corrupt-project Project task | Existing nonfatal ProjectExplorer TaskHub soft assertion remains outside this Workbench-only issue; all qualifying tests still exit 0 |
+| Manual desktop interaction | Not run by design; all executable qualification is offscreen and creates no on-screen main window |
+| `WITH_TESTS=ON` full product build | Not rerun; this Workbench-only issue does not touch the known EasyBoard test include blocker |
+| qbs execution | Not run; qbs 3.2.0 is installed outside `PATH`, and this issue changes no CMake or qbs file |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Public API, dependency, persistence, source-list, CMake, or qbs changes | None |
+| Network or physical hardware access | Not performed by design |
+
+Every qualifying executable explicitly removed `DYLD_INSERT_LIBRARIES`,
+`DYLD_LIBRARY_PATH`, and `DYLD_FRAMEWORK_PATH`, set
+`QT_QPA_PLATFORM=offscreen` and `CRASH_REPORTER_DISABLE=1`, and used only a
+process-local LLDB breakpoint to return from
+`Utils::TouchBar::setApplicationTouchBar()`. The enabled product settings were
+under
+`/private/tmp/embed-labs-diag-context-product-enabled-commit.qdSCy8/settings`;
+the explicitly disabled settings were under
+`/private/tmp/embed-labs-diag-context-product-disabled-commit.yzNE4o/settings`.
+No interposer, repository hook, visible window, network, or hardware access
+was used.
+
 ## Verification states
 
 Use only these evidence labels:

@@ -407,6 +407,19 @@ transport, network behavior, CMake/qbs entry, or path under upstream Core,
 ProjectExplorer, or the application bootstrap. The Workbench path count
 remains 44 and the direct Core patch count remains five.
 
+The Workbench project-scoped Diagnostics navigation issue changes only the
+existing private action setup, navigation widget, integration test, and
+documentation. It derives the selected project from the existing stable
+selection context, requires an exact Diagnostics match for a non-null project
+ID, rejects unknown non-null selections, preserves the existing genuinely
+null-selection and known-projectless-node first-available lookup, restores
+stable action state after a placeholder context menu, and guards action refresh
+after `SelectionService` teardown. It adds no public API, model role, QAction,
+source file, dependency, persistent field, Provider, controller transport,
+online or hardware behavior, CMake/qbs entry, or path under upstream Core,
+ProjectExplorer, or the application bootstrap. The Workbench path count
+remains 44 and the direct Core patch count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

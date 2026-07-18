@@ -362,6 +362,32 @@ metadata, dependency, source list, persistence format, CMake/qbs entry, or
 upstream Core, ProjectExplorer, or application path. The Workbench path count
 remains 44 and the direct Core patch count remains five.
 
+## Workbench project-scoped Diagnostics navigation boundary
+
+Workbench remains a private consumer of the existing copied tree and stable
+selection state. `Open Diagnostics` resolves the current `NodeId` through the
+existing `SelectionService`, derives the selected project's context, and
+selects a Diagnostics index only for that exact non-null project ID. An
+invalid project owns no Diagnostics node, so action state and direct execution
+both reject cross-project fallback. A null project ID still means the existing
+projectless first-available lookup only when the stable selection itself is
+null or belongs to a known projectless node. An unknown non-null `NodeId`
+clears the stale tree row and is disabled rather than treated as projectless.
+
+The global action updater, Workbench context menu, and navigation slot share
+this boundary without adding a command, model role, signal, service, or public
+interface. A placeholder context menu temporarily disables the action, then
+restores the stable selection and action state when it closes. The updater
+explicitly disables the action when `SelectionService` has already been
+released during controller shutdown. The Diagnostics plugin continues to own
+Provider state, snapshots, commands, pages, timers, threads, and teardown;
+Workbench only selects an existing copied tree node.
+
+The implementation changes no public API, persistence format, metadata,
+dependency, source list, CMake/qbs entry, or upstream Core, ProjectExplorer,
+or application path. The Workbench path count remains 44 and the direct Core
+patch count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

@@ -823,7 +823,13 @@ void EtherCATWorkbenchTests::testNavigationCommandsUseActionManager()
     emit navigation->treeView()->customContextMenuRequested(QPoint(-1, -1));
     QVERIFY(placeholderPopupSeen);
     QVERIFY(!placeholderActions.contains(copyCommand->action()));
-    QVERIFY(!copyCommand->action()->isEnabled());
+    QVERIFY(copyCommand->action()->isEnabled());
+    QCOMPARE(
+        navigation->treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        devices.first().id);
 
     qDeleteAll(view.dockToolBarWidgets);
     delete navigation;
@@ -3142,12 +3148,17 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     QPointer<ProjectExplorer::Project> validProjectObject;
+    QPointer<ProjectExplorer::Project> secondValidProjectObject;
     QPointer<ProjectExplorer::Project> invalidProjectObject;
     const QScopeGuard cleanup([&] {
         controller.selectionService()->clear();
         if (invalidProjectObject
             && ProjectExplorer::ProjectManager::hasProject(invalidProjectObject.data())) {
             ProjectExplorer::ProjectManager::removeProject(invalidProjectObject.data());
+        }
+        if (secondValidProjectObject
+            && ProjectExplorer::ProjectManager::hasProject(secondValidProjectObject.data())) {
+            ProjectExplorer::ProjectManager::removeProject(secondValidProjectObject.data());
         }
         if (validProjectObject
             && ProjectExplorer::ProjectManager::hasProject(validProjectObject.data())) {
@@ -3276,19 +3287,87 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
 
     ::Core::Command *copyCommand
         = ::Core::ActionManager::command(Constants::COPY_NODE_ID_ACTION_ID);
+    ::Core::Command *openDiagnosticsCommand
+        = ::Core::ActionManager::command(Constants::OPEN_DIAGNOSTICS_ACTION_ID);
     ::Core::Command *setActiveCommand
         = ::Core::ActionManager::command(Constants::SET_ACTIVE_PROJECT_ACTION_ID);
     QVERIFY(copyCommand);
+    QVERIFY(openDiagnosticsCommand);
     QVERIFY(setActiveCommand);
     QAction *copyContextAction = copyCommand->actionForContext(Constants::CONTEXT_ID);
+    QAction *openDiagnosticsContextAction
+        = openDiagnosticsCommand->actionForContext(Constants::CONTEXT_ID);
     QAction *setActiveContextAction = setActiveCommand->actionForContext(Constants::CONTEXT_ID);
     QVERIFY(copyContextAction);
+    QVERIFY(openDiagnosticsContextAction);
     QVERIFY(setActiveContextAction);
 
     controller.selectionService()->setCurrentNodeId(valid.projectId);
     QTRY_COMPARE(details.currentContext().nodeId, valid.projectId);
     QTRY_VERIFY(copyCommand->action()->isEnabled());
     QTRY_VERIFY(copyContextAction->isEnabled());
+    QTRY_VERIFY(openDiagnosticsCommand->action()->isEnabled());
+    QTRY_VERIFY(openDiagnosticsContextAction->isEnabled());
+
+    const QModelIndex invalidRootProxy
+        = findById(navigation.treeView()->model(), invalid.id);
+    QVERIFY(invalidRootProxy.isValid());
+    const QModelIndex recoveryProxy
+        = navigation.treeView()->model()->index(0, 0, invalidRootProxy);
+    QVERIFY(recoveryProxy.isValid());
+    navigation.treeView()->scrollTo(recoveryProxy);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    bool placeholderPopupSeen = false;
+    bool placeholderDiagnosticsEnabled = true;
+    QTimer::singleShot(
+        0,
+        &navigation,
+        [&placeholderPopupSeen, &placeholderDiagnosticsEnabled, openDiagnosticsCommand] {
+            auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (!popup)
+                return;
+            placeholderPopupSeen = true;
+            placeholderDiagnosticsEnabled = openDiagnosticsCommand->action()->isEnabled();
+            popup->close();
+        });
+    emit navigation.treeView()->customContextMenuRequested(
+        navigation.treeView()->visualRect(recoveryProxy).center());
+    QVERIFY(placeholderPopupSeen);
+    QVERIFY(!placeholderDiagnosticsEnabled);
+    QTRY_VERIFY(openDiagnosticsCommand->action()->isEnabled());
+    QTRY_VERIFY(openDiagnosticsContextAction->isEnabled());
+    QTRY_VERIFY(copyCommand->action()->isEnabled());
+    QTRY_VERIFY(copyContextAction->isEnabled());
+    QCOMPARE(controller.selectionService()->currentNodeId(), valid.projectId);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        valid.projectId);
+
+    const Data::NodeId unknownNodeId = Data::NodeId::create();
+    controller.selectionService()->setCurrentNodeId(unknownNodeId);
+    QTRY_VERIFY(!openDiagnosticsCommand->action()->isEnabled());
+    QTRY_VERIFY(!openDiagnosticsContextAction->isEnabled());
+    QTRY_VERIFY(!navigation.treeView()->currentIndex().isValid());
+    QList<QAction *> unknownPopupActions;
+    bool unknownPopupSeen = false;
+    QTimer::singleShot(0, &navigation, [&unknownPopupActions, &unknownPopupSeen] {
+        auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!popup)
+            return;
+        unknownPopupSeen = true;
+        unknownPopupActions = popup->actions();
+        popup->close();
+    });
+    emit navigation.treeView()->customContextMenuRequested(QPoint(-1, -1));
+    QVERIFY(unknownPopupSeen);
+    QVERIFY(unknownPopupActions.contains(openDiagnosticsCommand->action()));
+    QVERIFY(!openDiagnosticsCommand->action()->isEnabled());
+    emit controller.openDiagnosticsRequested();
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), unknownNodeId);
+    QTRY_VERIFY(!navigation.treeView()->currentIndex().isValid());
 
     controller.selectionService()->setCurrentNodeId(invalid.id);
     QTRY_COMPARE(details.currentContext().nodeId, invalid.id);
@@ -3300,6 +3379,8 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
         invalid.id);
     QTRY_VERIFY(!copyCommand->action()->isEnabled());
     QTRY_VERIFY(!copyContextAction->isEnabled());
+    QTRY_VERIFY(!openDiagnosticsCommand->action()->isEnabled());
+    QTRY_VERIFY(!openDiagnosticsContextAction->isEnabled());
     QTRY_VERIFY(!setActiveCommand->action()->isEnabled());
     QTRY_VERIFY(!setActiveContextAction->isEnabled());
     QVERIFY(!controller.canCopyNodeId(invalid.id));
@@ -3321,6 +3402,16 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QVERIFY(invalidPopupSeen);
     QVERIFY(!invalidPopupActions.contains(copyCommand->action()));
     QVERIFY(!invalidPopupActions.contains(setActiveCommand->action()));
+    QVERIFY(invalidPopupActions.contains(openDiagnosticsCommand->action()));
+    QVERIFY(!openDiagnosticsCommand->action()->isEnabled());
+    emit controller.openDiagnosticsRequested();
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), invalid.id);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        invalid.id);
     QVERIFY(!controller.canActivateSelectedProject());
     const Utils::Result<> activation = controller.activateSelectedProject();
     QVERIFY(!activation);
@@ -3457,8 +3548,54 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
         QString("Active project | Offline"));
     QVERIFY(controller.treeModel()->indexForNodeId(valid.masterId).isValid());
 
+    QTRY_VERIFY(openDiagnosticsCommand->action()->isEnabled());
+    QTRY_VERIFY(openDiagnosticsContextAction->isEnabled());
+    emit controller.openDiagnosticsRequested();
+    QTRY_COMPARE(
+        controller.selectionService()->currentNodeId(),
+        controller.treeModel()
+            ->diagnosticsForProject({})
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>());
+
+    const TestProjectFile secondValid = writeProjectWithSlave(
+        directory,
+        deviceSummaries(1).first(),
+        "second-valid-project.ecatproject",
+        "Second Valid EtherCAT Project");
+    QVERIFY(!secondValid.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult secondValidOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(secondValid.path, false);
+    QVERIFY2(secondValidOpened, qPrintable(secondValidOpened.errorMessage()));
+    secondValidProjectObject = secondValidOpened.project();
+    QTRY_COMPARE(projectService->projects().size(), 2);
+    const Data::NodeId firstDiagnosticsProjectId
+        = controller.treeModel()
+              ->diagnosticsForProject({})
+              .data(WorkbenchTreeModel::ProjectIdRole)
+              .value<Data::NodeId>();
+    const Data::NodeId nonFirstProjectId
+        = firstDiagnosticsProjectId == valid.projectId ? secondValid.projectId : valid.projectId;
+    QVERIFY(nonFirstProjectId != firstDiagnosticsProjectId);
+    controller.selectionService()->setCurrentNodeId(nonFirstProjectId);
+    QTRY_VERIFY(openDiagnosticsCommand->action()->isEnabled());
+    emit controller.openDiagnosticsRequested();
+    QTRY_COMPARE(
+        controller.selectionService()->currentNodeId(),
+        controller.treeModel()
+            ->diagnosticsForProject(nonFirstProjectId)
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>());
+    ProjectExplorer::ProjectManager::removeProject(secondValidOpened.project());
+    secondValidProjectObject = nullptr;
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_COMPARE(projectService->projects().size(), 1);
+
     controller.selectionService()->setCurrentNodeId(valid.projectId);
     QVERIFY(controller.canCopyNodeId(valid.projectId));
+    QTRY_VERIFY(openDiagnosticsCommand->action()->isEnabled());
+    QTRY_VERIFY(openDiagnosticsContextAction->isEnabled());
     QTRY_COMPARE(
         navigation.treeView()
             ->currentIndex()
@@ -3478,7 +3615,18 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     emit navigation.treeView()->customContextMenuRequested(QPoint(-1, -1));
     QVERIFY(validPopupSeen);
     QVERIFY(validPopupActions.contains(copyCommand->action()));
+    QVERIFY(validPopupActions.contains(openDiagnosticsCommand->action()));
     QVERIFY(copyCommand->action()->isEnabled());
+    QVERIFY(openDiagnosticsCommand->action()->isEnabled());
+    emit controller.openDiagnosticsRequested();
+    QTRY_COMPARE(
+        controller.selectionService()->currentNodeId(),
+        controller.treeModel()
+            ->diagnosticsForProject(valid.projectId)
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>());
+    controller.selectionService()->setCurrentNodeId(valid.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, valid.projectId);
     QApplication::clipboard()->clear();
     emit controller.copyCurrentNodeIdRequested();
     QTRY_COMPARE(QApplication::clipboard()->text(), valid.projectId.toString());
