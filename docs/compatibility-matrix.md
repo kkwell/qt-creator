@@ -5,7 +5,7 @@
 | Item | Supported or observed baseline | Evidence status |
 |---|---|---|
 | Product branch | `embed-labs` only | Verified |
-| Issue baseline commit | `a820995521aa9c7a4ffa459eef767c7322674680` | Verified |
+| Issue baseline commit | `03a6abd1c696d34acae685bdf0c340a9a471a837` | Verified |
 | Product version | 20.0.1 | Verified |
 | Recorded Qt Creator merge point | `11ba5cec09dce75db4bc948d98055e338ff59576` | Verified |
 | Qualified product Qt | Homebrew 6.11.0 | Clean Release build and GUI smoke verified |
@@ -619,7 +619,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | ESI device drag/drop lifecycle | Passed for real navigation/proxy configuration, private stable-ID CopyAction, Supported-only source, exact active-Master target, repository-preserving append, stable selection, and Project Undo/Redo |
 | ESI drag/drop rejection boundary | Passed for Limited/unknown/forged device IDs, MoveAction, slave/wrong targets, and between-row drops |
 | Supported ESI device add and repeated-device unique naming | Passed with complete identity, repository reference, Process Data, Startup, and DC defaults |
-| Offline slave remove/reorder workflow | Passed with normalized positions, boundary enablement, stable selection, selection repair, Undo, and Redo |
+| Offline slave remove/reorder workflow | Passed with explicit consequence confirmation, default/Escape No, context-drift rejection, normalized positions, stable selection, selection repair, complete Undo restoration, and Redo |
 | Offline-topology ActionManager identity | Passed for all four context-only commands in real device and configured-slave popup menus |
 | Configured-slave General identity form | Passed for editable Name and read-only one-based Id, stable Object Id, and ESI-derived Type |
 | Configured-slave General rename workflow | Passed for whitespace trimming, Unicode, empty rejection, Project modified state, tree/title/form synchronization, stable selection, Undo, and Redo |
@@ -1086,6 +1086,54 @@ selected-I/O-tree-device context for the EtherCAT Online page and comparative
 scans, but does not define this Workbench-private cross-project guard:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446518411.html> and
 <https://infosys.beckhoff.com/content/1033/ps2001-2420-1001/10832129675.html>.
+
+## EtherCATWorkbench offline-slave removal confirmation qualification
+
+`ISSUE-WB-OFFLINE-SLAVE-REMOVE-CONFIRM-001` is a Workbench-private safety
+correction based on local baseline
+`03a6abd1c696d34acae685bdf0c340a9a471a837`. It changes no Project data
+contract, persistence format, online state, controller transport, network
+behavior, or physical-hardware capability.
+
+| Check | Result |
+|---|---|
+| Failure-first focused test | 2 passed, 1 failed because the old `Remove from Offline Master` action deleted immediately and no confirmation appeared |
+| Action disclosure | Passed with `Remove from Offline Master...` plus tooltip/status text naming the included Process Data, Startup, and Distributed Clocks configuration |
+| Confirmation content | Passed with plain text, stable slave name including literal `%1`/`%2`, one-based position, complete consequence text, Undo guidance, and standard Yes/No buttons |
+| Safe default | Passed with `No` as both default and Escape button |
+| Cancel boundary | Passed with an identical complete Project snapshot, stable selection, modified state, Undo/Redo availability, and zero `projectChanged` signals |
+| Context drift | Passed; changing the stable selection while the question is open, then choosing Yes, removes no slave and preserves the new selection |
+| Project close during question | Passed; choosing Yes after the project has closed submits no stale replacement and leaves no stale tree row |
+| Confirmed removal | Passed for the captured slave only, normalized remaining position, nearest-node selection repair, and Project-owned Undo/Redo |
+| Complete Undo/Redo restoration | Passed for remove, complete Undo of the full prior slave list, Redo of the exact removal, and a final complete Undo, including stable IDs, identity, Alias, ESI reference, Process Data, Startup, and DC configuration |
+| QAction and context-menu identity | Passed through the existing ActionManager command and real repository/slave context menus; no parallel callback was added |
+| Focused normal-scale test | 3 passed, 0 failed; exit 0 |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; exit 0 |
+| Direct offscreen renders | 400 x 151 and 552 x 422 question captures inspected without clipping, overlap, or scale drift |
+| Complete EtherCATWorkbench suite | 39 passed, 0 failed in an LLDB-supervised isolated offscreen process |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 39, Scan 7, Diagnostics 7; 90 passed, 0 failed in isolated LLDB-supervised processes |
+| Qualified Qt and test build | Qt 6.11.0 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build | `WITH_TESTS=OFF` passed in `qt-creator-build-ethercat-product-qt611` |
+| Product version inventory | All 16 allow-listed plugin dylibs present |
+| Enabled offscreen startup | Stable for about 42 seconds with fresh settings under `/private/tmp/embed-labs-remove-authoritative-enabled-settings`; intentional SIGTERM produced LLDB target status 15 |
+| Explicitly disabled startup | Stable for about 42 seconds with `-noload EtherCATWorkbench` and fresh settings under `/private/tmp/embed-labs-remove-authoritative-disabled-settings`; intentional SIGTERM produced LLDB target status 15 |
+| Process and crash-report cleanup | No residual Embed Labs or LLDB process and no DiagnosticReports or ReportCrash event after 21:48:00 on 2026-07-18 |
+| Manual desktop interaction | Not run by design; all executable qualification was offscreen and created no visible main window |
+| `WITH_TESTS=ON` full product build | Not rerun; this private Workbench issue does not touch the known EasyBoard test include blocker |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Direct upstream Core, ProjectExplorer, or app changes | None |
+| Public API, dependency, persistence, source-list, CMake, or qbs changes | None |
+| Network or physical hardware access | Not performed by design; Scan and Diagnostics remain local Mock Providers |
+
+Qt documents the standard modal question, default button, Escape button, and
+plain-text controls used by the confirmation:
+<https://doc.qt.io/qt-6/qmessagebox.html>. The dialog uses non-blocking
+`open()` and delete-on-close ownership in accordance with Qt's guidance to
+avoid `exec()`'s nested event loop:
+<https://doc.qt.io/qt-6/qdialog.html#exec>. Beckhoff documents that removing
+an I/O device deletes it from both the tree and configuration, but does not
+define this product's confirmation interaction:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>.
 
 ## Verification states
 

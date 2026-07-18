@@ -436,6 +436,36 @@ persistent format, Provider, controller transport, online or hardware behavior,
 CMake/qbs entry, or upstream Core, ProjectExplorer, or application path. The
 Workbench path count remains 44 and the direct Core patch count remains five.
 
+## Workbench offline-slave removal confirmation boundary
+
+The configured-slave removal question and its stable candidate remain private
+to `EtherCATWorkbench`. The action layer captures copied project, Master, and
+slave IDs together with the displayed name and position before opening a
+standard `QMessageBox`. It retains only a `QPointer` to the controller while
+the modal interaction is active; no Project object, Provider pointer,
+`QModelIndex`, or widget pointer crosses a plugin boundary.
+
+After affirmative confirmation, the controller resolves the current stable
+Selection and latest immutable Project snapshot again. It accepts the command
+only if selection, project, Master, and slave still match the captured IDs.
+Selection drift, project close, slave removal, controller teardown, and stale
+context are rejected without calling the Project mutation service. This keeps
+the consequence described by the question attached to the exact configuration
+candidate and prevents an intervening event from retargeting the removal.
+
+The actual mutation remains the existing checked
+`ProjectService::replaceOfflineSlaves()` command. EtherCATProject therefore
+continues to own validation, modified state, persistence, position
+normalization, Undo, and Redo. Workbench owns only confirmation presentation,
+stable-context validation, and post-command selection repair. `No` and Escape
+are non-mutating; the closed-project path causes no second or stale mutation.
+
+The implementation changes no public service, data type, persistent format,
+metadata, dependency, source list, CMake/qbs entry, Provider, thread, timer,
+network/controller behavior, or upstream Core, ProjectExplorer, or application
+path. The Workbench path count remains 44 and the direct Core patch count
+remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

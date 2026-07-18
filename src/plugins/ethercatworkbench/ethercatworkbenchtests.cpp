@@ -882,6 +882,13 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     const ProjectExplorer::OpenProjectResult opened
         = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
     QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
     QTRY_VERIFY(projectService->project(file.projectId).has_value());
     const Utils::Result<> activated = projectService->activateProject(file.projectId);
     QVERIFY_RESULT(activated);
@@ -952,7 +959,126 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     QCOMPARE(projectService->project(file.projectId)->slaves.last().position, 1);
     QCOMPARE(controller.selectionService()->currentNodeId(), addedId);
 
+    const QString removalName = "Workbench %1 %2 Servo";
+    const Utils::Result<> renamedForRemoval
+        = controller.renameOfflineSlave(file.projectId, addedId, removalName);
+    QVERIFY_RESULT(renamedForRemoval);
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.last().name, removalName);
+
+    WorkbenchNavigationWidget navigation(&controller);
+    navigation.resize(900, 600);
+    navigation.show();
+    navigation.activateWindow();
+    navigation.treeView()->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(navigation.isVisible());
+    controller.selectionService()->clear();
+    controller.selectionService()->setCurrentNodeId(addedId);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        addedId);
+
+    const Data::ProjectSnapshot beforeRemoval = *projectService->project(file.projectId);
+    const bool couldUndoBeforeRemoval = projectService->canUndoProject(file.projectId);
+    const bool couldRedoBeforeRemoval = projectService->canRedoProject(file.projectId);
+    QSignalSpy projectChanges(projectService, &Core::ProjectService::projectChanged);
+    bool cancelPromptSeen = false;
+    QString cancelPromptTitle;
+    QString cancelPromptText;
+    QString cancelPromptObjectName;
+    bool cancelPromptIsPlainText = false;
+    bool cancelDefaultIsNo = false;
+    bool cancelEscapeIsNo = false;
+    bool cancellationRenderSaved = qEnvironmentVariableIsEmpty(
+        "ETHERCAT_WORKBENCH_REMOVE_CONFIRM_RENDER_PATH");
+    QTimer cancelTimer;
+    cancelTimer.setSingleShot(true);
+    connect(&cancelTimer, &QTimer::timeout, removeCommand->action(), [&] {
+        QMessageBox *messageBox = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!messageBox)
+            return;
+        cancelPromptSeen = true;
+        cancelPromptTitle = messageBox->windowTitle();
+        cancelPromptText = messageBox->text() + '\n' + messageBox->informativeText();
+        cancelPromptObjectName = messageBox->objectName();
+        cancelPromptIsPlainText = messageBox->textFormat() == Qt::PlainText;
+        QAbstractButton *no = messageBox->button(QMessageBox::No);
+        cancelDefaultIsNo = messageBox->defaultButton() == no;
+        cancelEscapeIsNo = messageBox->escapeButton() == no;
+        const QString renderPath
+            = qEnvironmentVariable("ETHERCAT_WORKBENCH_REMOVE_CONFIRM_RENDER_PATH");
+        if (!renderPath.isEmpty())
+            cancellationRenderSaved = messageBox->grab().save(renderPath);
+        if (no)
+            no->click();
+    });
+    cancelTimer.start(0);
     removeCommand->action()->trigger();
+    QTRY_VERIFY2(cancelPromptSeen, "Removing an offline slave must ask for confirmation first.");
+    QVERIFY(cancellationRenderSaved);
+    QVERIFY(cancelPromptTitle.isEmpty() || cancelPromptTitle == QString("Remove Offline Slave"));
+    QCOMPARE(cancelPromptObjectName, QString("EtherCATOfflineSlaveRemovalConfirmation"));
+    QVERIFY(cancelPromptIsPlainText);
+    QVERIFY(cancelPromptText.contains(removalName));
+    QVERIFY(cancelPromptText.contains(
+        QString("(position %1)").arg(beforeRemoval.slaves.last().position + 1)));
+    QVERIFY(cancelPromptText.contains("Process Data"));
+    QVERIFY(cancelPromptText.contains("Startup"));
+    QVERIFY(cancelPromptText.contains("Distributed Clocks"));
+    QVERIFY(cancelPromptText.contains("undo", Qt::CaseInsensitive));
+    QVERIFY(cancelDefaultIsNo);
+    QVERIFY(cancelEscapeIsNo);
+    QCOMPARE(removeCommand->action()->text(), QString("Remove from Offline Master..."));
+    QVERIFY(removeCommand->action()->toolTip().contains("Process Data"));
+    QVERIFY(removeCommand->action()->statusTip().contains("Distributed Clocks"));
+    QVERIFY(*projectService->project(file.projectId) == beforeRemoval);
+    QCOMPARE(controller.selectionService()->currentNodeId(), addedId);
+    QCOMPARE(projectService->canUndoProject(file.projectId), couldUndoBeforeRemoval);
+    QCOMPARE(projectService->canRedoProject(file.projectId), couldRedoBeforeRemoval);
+    QCOMPARE(projectChanges.count(), 0);
+
+    navigation.activateWindow();
+    navigation.treeView()->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(removeCommand->action()->isEnabled());
+    bool changedSelectionPromptSeen = false;
+    QTimer changedSelectionTimer;
+    changedSelectionTimer.setSingleShot(true);
+    connect(&changedSelectionTimer, &QTimer::timeout, removeCommand->action(), [&] {
+        QMessageBox *messageBox = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!messageBox)
+            return;
+        changedSelectionPromptSeen = true;
+        controller.selectionService()->setCurrentNodeId(file.slaveId);
+        if (QAbstractButton *yes = messageBox->button(QMessageBox::Yes))
+            yes->click();
+    });
+    changedSelectionTimer.start(0);
+    removeCommand->action()->trigger();
+    QTRY_VERIFY(changedSelectionPromptSeen);
+    QVERIFY(*projectService->project(file.projectId) == beforeRemoval);
+    QCOMPARE(controller.selectionService()->currentNodeId(), file.slaveId);
+    QCOMPARE(projectChanges.count(), 0);
+
+    controller.selectionService()->setCurrentNodeId(addedId);
+    navigation.activateWindow();
+    navigation.treeView()->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(removeCommand->action()->isEnabled());
+    bool confirmationPromptSeen = false;
+    QTimer confirmationTimer;
+    confirmationTimer.setSingleShot(true);
+    connect(&confirmationTimer, &QTimer::timeout, removeCommand->action(), [&] {
+        QMessageBox *messageBox = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!messageBox)
+            return;
+        confirmationPromptSeen = true;
+        if (QAbstractButton *yes = messageBox->button(QMessageBox::Yes))
+            yes->click();
+    });
+    confirmationTimer.start(0);
+    removeCommand->action()->trigger();
+    QTRY_VERIFY(confirmationPromptSeen);
     QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 1);
     QCOMPARE(projectService->project(file.projectId)->slaves.first().id, file.slaveId);
     QCOMPARE(projectService->project(file.projectId)->slaves.first().position, 0);
@@ -960,11 +1086,16 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     const Utils::Result<> removeUndo = projectService->undoProject(file.projectId);
     QVERIFY_RESULT(removeUndo);
     QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 2);
+    QCOMPARE(projectService->project(file.projectId)->slaves, beforeRemoval.slaves);
+    const Utils::Result<> removeRedo = projectService->redoProject(file.projectId);
+    QVERIFY_RESULT(removeRedo);
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 1);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().id, file.slaveId);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().position, 0);
+    const Utils::Result<> removeRedoUndo = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(removeRedoUndo);
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves, beforeRemoval.slaves);
 
-    WorkbenchNavigationWidget navigation(&controller);
-    navigation.resize(900, 600);
-    navigation.show();
-    QTRY_VERIFY(navigation.isVisible());
     controller.selectionService()->setCurrentNodeId(device->id);
     QList<QAction *> deviceMenuActions;
     QTimer::singleShot(0, &navigation, [&deviceMenuActions] {
@@ -993,11 +1124,31 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     QVERIFY(slaveMenuActions.contains(moveUpCommand->action()));
     QVERIFY(slaveMenuActions.contains(moveDownCommand->action()));
 
-    controller.selectionService()->clear();
-    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    controller.selectionService()->setCurrentNodeId(addedId);
+    navigation.activateWindow();
+    navigation.treeView()->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(removeCommand->action()->isEnabled());
+    bool projectClosePromptSeen = false;
+    QTimer projectCloseTimer;
+    projectCloseTimer.setSingleShot(true);
+    connect(&projectCloseTimer, &QTimer::timeout, removeCommand->action(), [&] {
+        QMessageBox *messageBox = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!messageBox)
+            return;
+        projectClosePromptSeen = true;
+        ProjectExplorer::ProjectManager::removeProject(opened.project());
+        if (QAbstractButton *yes = messageBox->button(QMessageBox::Yes))
+            yes->click();
+    });
+    projectCloseTimer.start(0);
+    removeCommand->action()->trigger();
+    QTRY_VERIFY(projectClosePromptSeen);
     QTRY_VERIFY(!projectService->project(file.projectId).has_value());
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_VERIFY(controller.selectionService()->currentNodeId() != addedId);
+    QTRY_VERIFY(!controller.treeModel()->indexForNodeId(addedId).isValid());
+    projectCleanup.dismiss();
 }
 
 void EtherCATWorkbenchTests::testTwinCatInsertDeviceWorkflow()

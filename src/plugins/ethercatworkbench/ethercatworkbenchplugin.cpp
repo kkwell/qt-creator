@@ -15,6 +15,7 @@
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
 #include <coreplugin/coreconstants.h>
+#include <coreplugin/icore.h>
 #include <coreplugin/messagemanager.h>
 #include <coreplugin/modemanager.h>
 #include <coreplugin/statusbarmanager.h>
@@ -30,6 +31,7 @@
 
 #include <QAction>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPointer>
 
 #include <memory>
@@ -235,16 +237,55 @@ void EtherCATWorkbenchPlugin::setupActions()
     });
 
     auto removeSlaveAction
-        = new QAction(Utils::Icons::MINUS.icon(), Tr::tr("Remove from Offline Master"), this);
+        = new QAction(Utils::Icons::MINUS.icon(), Tr::tr("Remove from Offline Master..."), this);
+    const QString removeSlaveDescription = Tr::tr(
+        "Remove the selected slave and its offline Process Data, Startup, and Distributed "
+        "Clocks configuration after confirmation.");
+    removeSlaveAction->setToolTip(removeSlaveDescription);
+    removeSlaveAction->setStatusTip(removeSlaveDescription);
     ::Core::ActionManager::registerAction(
         removeSlaveAction,
         Constants::REMOVE_OFFLINE_SLAVE_ACTION_ID,
         ::Core::Context(Constants::CONTEXT_ID));
     connect(removeSlaveAction, &QAction::triggered, m_controller.get(), [this] {
-        if (const Utils::Result<> result = m_controller->removeSelectedOfflineSlave(); !result) {
+        QPointer<WorkbenchController> controller = m_controller.get();
+        const std::optional<OfflineSlaveRemovalCandidate> candidate
+            = controller ? controller->selectedOfflineSlaveRemovalCandidate() : std::nullopt;
+        if (!candidate) {
             ::Core::MessageManager::writeFlashing(
-                Tr::tr("Cannot remove the offline slave: %1").arg(result.error()));
+                Tr::tr("Cannot remove the offline slave: select a configured offline slave."));
+            return;
         }
+
+        auto *confirmation = new QMessageBox(::Core::ICore::dialogParent());
+        confirmation->setAttribute(Qt::WA_DeleteOnClose);
+        confirmation->setObjectName("EtherCATOfflineSlaveRemovalConfirmation");
+        confirmation->setIcon(QMessageBox::Question);
+        confirmation->setWindowTitle(Tr::tr("Remove Offline Slave"));
+        confirmation->setTextFormat(Qt::PlainText);
+        confirmation->setText(
+            Tr::tr("Remove \"%1\" (position %2) from the offline EtherCAT Master?")
+                .arg(candidate->name, QString::number(candidate->position + 1)));
+        confirmation->setInformativeText(Tr::tr(
+            "Its offline Process Data, Startup, and Distributed Clocks configuration will "
+            "also be removed. You can undo this change."));
+        confirmation->setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+        confirmation->setDefaultButton(QMessageBox::No);
+        confirmation->setEscapeButton(QMessageBox::No);
+        connect(confirmation,
+                &QMessageBox::finished,
+                confirmation,
+                [controller, candidate = *candidate](int result) {
+                    if (result != QMessageBox::Yes || !controller)
+                        return;
+                    if (const Utils::Result<> removal = controller->removeOfflineSlave(candidate);
+                        !removal) {
+                        ::Core::MessageManager::writeFlashing(
+                            Tr::tr("Cannot remove the offline slave: %1")
+                                .arg(removal.error()));
+                    }
+                });
+        confirmation->open();
     });
 
     auto moveSlaveUpAction

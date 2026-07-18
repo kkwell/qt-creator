@@ -9,6 +9,9 @@
 #include <QList>
 #include <QObject>
 #include <QPointer>
+#include <QString>
+
+#include <optional>
 
 namespace EtherCAT::Core {
 class ProviderRegistry;
@@ -16,6 +19,15 @@ class SelectionService;
 }
 
 namespace EtherCAT::Workbench::Internal {
+
+struct OfflineSlaveRemovalCandidate
+{
+    Data::NodeId projectId;
+    Data::NodeId masterId;
+    Data::NodeId slaveId;
+    QString name;
+    int position = -1;
+};
 
 class WorkbenchController final : public QObject
 {
@@ -48,7 +60,8 @@ public:
     Utils::Result<> addDeviceToMaster(
         const Data::NodeId &deviceId, const Data::NodeId &masterId);
     Utils::Result<> addSelectedDeviceToMaster();
-    Utils::Result<> removeSelectedOfflineSlave();
+    std::optional<OfflineSlaveRemovalCandidate> selectedOfflineSlaveRemovalCandidate() const;
+    Utils::Result<> removeOfflineSlave(const OfflineSlaveRemovalCandidate &candidate);
     Utils::Result<> moveSelectedOfflineSlaveUp();
     Utils::Result<> moveSelectedOfflineSlaveDown();
     Utils::Result<> activateSelectedProject();

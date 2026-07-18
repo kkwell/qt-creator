@@ -441,6 +441,19 @@ timer, controller transport, online or hardware behavior, CMake/qbs entry, or
 path under upstream Core, ProjectExplorer, or the application bootstrap. The
 Workbench path count remains 44 and the direct Core patch count remains five.
 
+The Workbench offline-slave removal confirmation issue changes only the
+existing private action setup, controller, Workbench integration test, and
+documentation. It captures copied project, Master, and slave IDs before the
+question opens; uses an explicit non-destructive default and Escape action;
+and revalidates the current stable Selection and latest Project snapshot
+before submitting the existing Project-owned replacement command. Selection
+drift, project close, controller teardown, and a stale slave are rejected
+without mutation. It adds no public API, source file, dependency, persistent
+field, Provider, thread, timer, controller transport, online or hardware
+behavior, CMake/qbs entry, or path under upstream Core, ProjectExplorer, or
+the application bootstrap. The Workbench path count remains 44 and the direct
+Core patch count remains five.
+
 Each completed EtherCAT issue must report:
 
 - Direct upstream files modified.

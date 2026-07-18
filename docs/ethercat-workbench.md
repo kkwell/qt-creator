@@ -346,7 +346,7 @@ reference and receives ESI-derived Process Data, Startup, and first DC-mode
 defaults. The same private factory supplies those defaults to the existing
 property pages, preventing the creation path and page proposal from drifting.
 
-A configured slave exposes `Remove from Offline Master`, `Move Offline Slave
+A configured slave exposes `Remove from Offline Master...`, `Move Offline Slave
 Up`, and `Move Offline Slave Down`. Boundary commands are disabled. Moves keep
 the selected stable ID and normalize physical positions. Removal selects the
 nearest remaining slave or the parent master when the list becomes empty. All
@@ -367,6 +367,81 @@ multi-selection editing, multiple-master target selection, a bus scan,
 controller transport, or online configuration. The master-side selection
 workflow is documented below; the other capabilities require separate issues
 and must not bypass the same checked Project service boundary.
+
+## Offline-slave removal confirmation
+
+`ISSUE-WB-OFFLINE-SLAVE-REMOVE-CONFIRM-001` prevents a single accidental
+activation from immediately deleting a configured slave. The context command
+is now `Remove from Offline Master...`; its tooltip and status text state that
+the slave's offline Process Data, Startup, and Distributed Clocks
+configuration are included. Triggering it opens a plain-text question that
+identifies the slave and its one-based position. `No` is both the default and
+Escape button, and the consequence text explicitly retains the existing Undo
+recovery path.
+
+The Workbench controller captures the stable project, Master, and slave IDs,
+plus the displayed name and position, before the question opens. A guarded
+controller pointer covers plugin teardown. After `Yes`, the controller rereads
+the latest public Project snapshot and requires the current stable selection,
+project, Master, and slave to match the captured candidate. If selection
+changes, the project closes, or the slave disappears while the question is
+open, the request is rejected and no replacement command is submitted. This
+prevents a question about slave A from deleting slave B after an intervening
+event.
+
+While the project remains open, `No`, Escape, and selection drift leave the
+complete Project snapshot, modified state, Selection, and Undo/Redo
+availability unchanged. If the project closes while the question is open, no
+additional or stale replacement is submitted. A valid `Yes` still uses
+`ProjectService::replaceOfflineSlaves()`, so validation, position
+normalization, persistence, nearest-node selection repair, Undo, and Redo
+remain Project-owned. Undo restores the complete prior slave list, including
+stable IDs, identity, Alias, ESI reference, Process Data, Startup, and DC
+configuration.
+
+Qt documents `QMessageBox` as the modal standard dialog for a question, with
+explicit standard, default, and Escape buttons:
+<https://doc.qt.io/qt-6/qmessagebox.html>. The implementation follows the
+existing Qt Creator removal pattern in
+`src/plugins/projectexplorer/buildsettingspropertiespage.cpp` and
+`src/plugins/projectexplorer/runsettingspropertiespage.cpp`, including a
+non-destructive default, while adding the Workbench stable-ID revalidation.
+It uses non-blocking `open()` and delete-on-close ownership rather than
+`exec()`'s nested event loop, following Qt's `QDialog` lifecycle guidance:
+<https://doc.qt.io/qt-6/qdialog.html#exec>.
+Beckhoff documents that `Remove` deletes the selected I/O device from both the
+tree and the configuration:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>.
+That establishes the destructive configuration boundary, not a required
+confirmation design. The question and context guard are an Embed Labs
+Qt-native safety completion; no TwinCAT asset, wording, project format, or
+proprietary behavior is copied.
+
+The failure-first focused run produced 2 passes and 1 expected failure because
+the old action deleted immediately and no question appeared. Final focused
+runs pass 3 tests at normal scale and 3 at `QT_SCALE_FACTOR=2`. They cover the
+plain-text consequence message, names containing literal `%1` and `%2`,
+one-based position, default/Escape `No`, cancel state preservation, selection
+drift, project close during confirmation, confirmed removal, normalized
+position, complete Undo/Redo restoration, shared ActionManager identity, and
+real context menus. The inspected offscreen question renders are 400 x 151 and
+552 x 422 pixels, with no clipping, overlap, or scale drift.
+
+The complete Workbench suite passes 39 tests. The six isolated EtherCAT suites
+pass 90 tests: Core 17, Project 12, Devices 8, Workbench 39, Scan 7, and
+Diagnostics 7. The `WITH_TESTS=OFF` product build contains all 16 allow-listed
+plugin dylibs. Enabled and explicitly Workbench-disabled product processes
+each remained stable far beyond 15 seconds before intentional SIGTERM target
+status 15. Every executable qualification was offscreen, explicitly cleared
+inherited DYLD variables, and used only the process-local Touch Bar LLDB
+breakpoint. Final cleanup found no residual process, DiagnosticReports file,
+or ReportCrash event after 21:48:00 on 2026-07-18.
+
+This issue changes only existing private Workbench action, controller, test,
+and documentation files. It adds no public API, Provider, thread, timer,
+persistence, dependency, source file, CMake/qbs entry, network or hardware
+behavior, or upstream Core, ProjectExplorer, or application path. Scan and
+Diagnostics remain explicitly local Mock capabilities.
 
 ## TwinCAT-style ESI device insertion
 

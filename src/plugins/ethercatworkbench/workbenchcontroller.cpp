@@ -469,14 +469,37 @@ Utils::Result<> WorkbenchController::addDeviceToMaster(
     return Utils::ResultOk;
 }
 
-Utils::Result<> WorkbenchController::removeSelectedOfflineSlave()
+std::optional<OfflineSlaveRemovalCandidate>
+WorkbenchController::selectedOfflineSlaveRemovalCandidate() const
+{
+    if (m_shuttingDown || !m_selectionService || !m_projectService)
+        return std::nullopt;
+    const std::optional<SelectedSlaveContext> selected
+        = selectedSlaveContext(m_treeModel, m_selectionService, m_projectService);
+    if (!selected)
+        return std::nullopt;
+    const Data::OfflineSlaveConfiguration &slave = selected->slaves.at(selected->index);
+    return OfflineSlaveRemovalCandidate{
+        selected->project.id, selected->masterId, slave.id, slave.name, slave.position};
+}
+
+Utils::Result<> WorkbenchController::removeOfflineSlave(
+    const OfflineSlaveRemovalCandidate &candidate)
 {
     if (m_shuttingDown || !m_selectionService || !m_projectService)
         return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    if (m_selectionService->currentNodeId() != candidate.slaveId) {
+        return Utils::ResultError(
+            Tr::tr("The selected offline slave changed while confirmation was open; "
+                   "nothing was removed."));
+    }
     std::optional<SelectedSlaveContext> selected
         = selectedSlaveContext(m_treeModel, m_selectionService, m_projectService);
-    if (!selected)
-        return Utils::ResultError(Tr::tr("Select a configured offline slave to remove."));
+    if (!selected || selected->project.id != candidate.projectId
+        || selected->masterId != candidate.masterId || selected->slaveId != candidate.slaveId) {
+        return Utils::ResultError(
+            Tr::tr("The offline slave is no longer available; nothing was removed."));
+    }
 
     selected->slaves.removeAt(selected->index);
     normalizePositions(&selected->slaves);
