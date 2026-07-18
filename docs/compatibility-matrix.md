@@ -1195,7 +1195,7 @@ or physical-hardware capability.
 | Failure-first focused test | 2 passed, 1 failed because removal of unrelated Provider A reset the actual current key to built-in General instead of the still-valid Provider B key |
 | Independent review signal failure | 2 passed, 1 failed because toggling removed but still-live Provider A deleted Provider B's saved widget before the removal-time disconnect was added |
 | Independent review ABA failure | 2 passed, 1 failed because the disconnect-only implementation restored stale Provider B over a newer General selection after switch away/back |
-| Independent review reentrant failure | 2 passed, 1 failed because a later direct about-to-remove slot rebuilt Provider A while the registry still enumerated it; the departing-ID marker now excludes it even when the queued MetaCall drains inside that signal |
+| Independent review reentrant failure | 2 passed, 1 failed at that historical baseline because a later direct about-to-remove slot could still enumerate Provider A; the current registry now unlinks it before emitting its removal signal, and the departing-ID marker also excludes queued stale work |
 | Unrelated Provider removal | Passed; Provider B remains the current tab after Provider A's widgets are synchronously destroyed and A is unregistered |
 | Availability lifecycle | Passed for Provider A unavailable, available again, and then removed while Provider B remains current |
 | Selected Provider removal | Passed; removing Provider B removes its widget and falls back to the deterministic first remaining page |
@@ -1203,7 +1203,7 @@ or physical-hardware capability.
 | Unregistered Provider isolation | Passed; toggling removed but still-live Provider A's availability does not recreate or replace Provider B's widget |
 | Queued rebuild freshness | Passed; switch away, switch back, and select General before the removal MetaCall drains preserves the newer General selection instead of restoring stale Provider B |
 | Object-pool signal re-entry | Passed; a later direct removal slot switches Master to Project and drains MetaCalls before registry removal, but Provider A is never recreated and the final context/key remain current |
-| Ownership cleanup | Passed; no Provider/widget pointer crosses removal, removed widgets disappear, and scope cleanup unregisters every remaining test Provider |
+| Ownership cleanup | Passed for ordinary removal; no Provider/widget pointer crosses that removal boundary, removed widgets disappear, and scope cleanup unregisters every remaining test Provider |
 | Focused normal-scale test | 3 passed, 0 failed; exit 0 |
 | Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; exit 0 |
 | Direct offscreen renders | 900 x 600 and 1800 x 1200 captures inspected with Provider B selected and no clipping, overlap, or scale drift |
@@ -1233,6 +1233,16 @@ that an EtherCAT terminal's available property tabs depend on the selected
 device:
 <https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html>.
 The value-only PageKey restoration is an Embed Labs Qt-native completion.
+
+The current lifecycle contract supersedes the historical signal-order wording
+above. `ProviderRegistry` unlinks the departing object before it emits
+`providerAboutToBeRemoved`, although PluginManager still retains the object in
+its pool until the notification returns. Ordinary hosted pages are destroyed
+before `removeObject()` returns. A Provider that self-unregisters from its own
+active page callback is removed from the live-page map immediately. An
+already-tabbed active widget may remain attached and alive until callback
+return, when it is destroyed; its plugin must remain loaded, including page
+destructor and meta-object code, through that callback boundary.
 
 ## EtherCATWorkbench context-menu selection-drift qualification
 
@@ -1327,6 +1337,58 @@ again after its model rebuilds:
 Beckhoff documents the device and process/status hierarchy under I/O / Devices:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html>.
 The exact reset/filter restoration rule is an Embed Labs Qt-native completion.
+
+## EtherCATWorkbench Details focus-continuity qualification
+
+`ISSUE-WB-DETAILS-FOCUS-CONTINUITY-001` is a Details lifecycle correction
+based on local baseline
+`0637955df9ab009bb0ee1fcb892dc74e5ede27e7`. The focus token and operation
+anchors are private value types; no public Provider method, project format,
+persistent setting, controller transport, network behavior, or
+physical-hardware capability changes.
+
+| Check | Result |
+|---|---|
+| Failure-first focus regression | Reproduced; a context rebuild recreated the same semantic General page but moved focus from `EtherCATProjectGeneralCreatedBy` to the tab bar |
+| Value-only focus identity | Passed with stable `NodeId`, semantic `PageKey`, child `objectName`, and rebuild generation; no widget, model index, or Provider pointer is retained |
+| Exact recreated-widget focus | Passed for the same PageKey under distinct NodeIds; the old widget is destroyed and the matching child in the new widget receives focus |
+| Focus fallback | Passed for a missing or hidden named target and for the keyboard-reachable empty-state page |
+| External focus | Passed; focus moved outside Details is not stolen by a rebuild, refresh, or posted continuation |
+| Direct tab-bar focus | Passed; explicit tab-bar focus cancels page-child restoration and remains sticky |
+| Unified operation pump | Passed for rebuild/refresh serialization, duplicate request coalescing, refresh self-trigger, nested availability/context/update/clear/delete re-entry, and posted continuation after eight synchronous operations |
+| Yield-time user priority | Passed; real `QTabBar::currentChanged`, `tabBarClicked`, and focus choices made after a yield remain authoritative over the older transaction anchor |
+| Registry removal order | Passed in Core; the departing Provider is already absent from registry enumeration when `providerAboutToBeRemoved` is emitted, while it remains in the PluginManager pool until notification return |
+| Nested Provider removal | Passed for consecutive removal, direct signal re-entry, queued MetaCall draining, page-hide re-entry, and provider removal triggered by another Provider's update |
+| Ordinary page lifetime | Passed; all ordinary hosted pages from a departing Provider are destroyed before `PluginManager::removeObject()` returns |
+| Active-callback self-unregister | Passed; the active widget remains alive through its Provider callback, is not destroyed inside `removeObject()`, and is destroyed after callback return before the next queued MetaCall |
+| Plugin unload boundary | Contract recorded; a self-unregistering Provider/plugin must keep page destructor and Qt meta-object code loaded until its active callback returns |
+| Stale snapshot isolation | Passed; a Provider removed during another callback is not updated later from an earlier registry snapshot |
+| Normal-scale Workbench suite | 41 passed, 0 failed |
+| `QT_SCALE_FACTOR=2` Workbench suite | 41 passed, 0 failed |
+| Direct offscreen renders | Four frozen captures under `/tmp/embed-labs-details-render-final2.wMQmxh` match the inspected normal/2x artifacts exactly and show no clipping, overlap, or scale drift |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 41, Scan 7, Diagnostics 7; 92 passed, 0 failed under `/tmp/embed-labs-six-suites-final2.XeKLz8` |
+| Qualified Qt and test build | Qt 6.11.0 Release; required EtherCAT targets passed in `qt-creator-build-ethercat-core-qt611` |
+| Unrelated all-target tests-on build | Remains blocked by the pre-existing `easyboardbrowser.cpp` include of unavailable `extensionmanager_test.h`; it is not claimed as successful evidence |
+| Product build | `WITH_TESTS=OFF` passed in `qt-creator-build-ethercat-product-qt611` |
+| Product version inventory | Exactly the 16 allow-listed plugin dylibs are present |
+| Enabled offscreen startup | Stayed alive for 16 seconds under `/tmp/embed-labs-product-lifecycle-frozen.NIAjdQ`; intentional SIGTERM produced LLDB target status 15 |
+| Explicitly disabled startup | Stayed alive for 16 seconds with `-noload EtherCATWorkbench` under `/tmp/embed-labs-product-lifecycle-frozen.NIAjdQ`; intentional SIGTERM produced LLDB target status 15 |
+| Process and crash-report cleanup | No residual Embed Labs or LLDB process and no new Embed Labs crash report; the only running ReportCrash agent pre-dated qualification by more than one day and was unrelated |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no visible main window or interposer |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Product-owned files | Existing EtherCATCore ProviderRegistry/tests and EtherCATWorkbench Details/tests only; `src/plugins/ethercatcore` is product-owned |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network or physical hardware access | Not performed; Scan and Diagnostics remain local Mock Providers |
+
+Qt defines the tab and focus behavior used by the regression at
+<https://doc.qt.io/qt-6/qtabwidget.html> and
+<https://doc.qt.io/qt-6/qwidget.html>. Qt Creator 20.0 restores semantic Project
+settings panels after replacing their widgets:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectwindow.cpp#L1366-L1385>.
+Beckhoff documents selection-dependent EtherCAT terminal tabs at
+<https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html>.
+The exact value-only focus token, bounded pump, user-choice priority, and
+re-entry-safe Provider lifecycle are Embed Labs Qt-native completions.
 
 ## Verification states
 

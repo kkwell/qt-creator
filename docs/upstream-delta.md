@@ -466,19 +466,26 @@ timer, controller transport, online or hardware behavior, CMake/qbs entry, or
 path under upstream Core, ProjectExplorer, or the application bootstrap. The
 Workbench path count remains 44 and the direct Core patch count remains five.
 
-The Workbench Details Provider-removal continuity issue changes only the
-existing private Details implementation, Workbench integration test, and
-documentation. Before the object pool unregisters a PropertyPage Provider,
-Details marks that Provider's value-only ID as departing, disconnects its
-availability signal, copies the current semantic Provider/Page key, context
-NodeId, and monotonic rebuild generation, then destroys owned pages
-synchronously. Candidate enumeration excludes departing IDs even during direct
-signal re-entry before the registry mutation completes. The queued refresh
-restores the captured key only if no newer rebuild occurred and the
-context/page still exist; otherwise it rebuilds with the newest current key. A
-later providerAdded for the ID clears the marker. Details retains no widget or
-Provider pointer, rejects switch-away/switch-back ABA state, and adds no
-persisted tab state.
+The historical Workbench Details Provider-removal continuity issue changed
+only the existing private Details implementation, Workbench integration test,
+and documentation. Its semantic Provider/Page key and departing-ID guard
+remain in use, but the current product-owned ProviderRegistry now unlinks a
+departing Provider before emitting `providerAboutToBeRemoved`; the object
+itself remains in the PluginManager pool until that notification returns.
+Registry queries and nested removals therefore cannot rediscover it. Ordinary
+hosted pages are destroyed before `removeObject()` returns. For self-unregister
+inside the Provider's active page callback, the page leaves the live-page map
+immediately. An already-tabbed active widget may remain attached and alive
+until callback return, when it is destroyed; the Provider/plugin must keep the
+page destructor and Qt meta-object code loaded through that boundary.
+
+The unified refresh path restores a captured key only while its context and
+page remain current; otherwise it honors the newest semantic/user state. A
+later `providerAdded` for the same ID clears the departing marker. The semantic
+refresh transaction retains no widget or Provider pointer. Short-lived
+`QPointer` guards are revalidated immediately after callbacks and do not
+outlive the enclosing host operation. Details rejects switch-away/switch-back
+ABA state and adds no persisted tab state.
 
 Qt Creator 20.0's Project settings widget follows the same general continuity
 principle by saving its current tab index before replacing panels and restoring
@@ -561,6 +568,31 @@ Each completed EtherCAT issue must report:
 - Product-owned plugin/library files modified.
 - Whether the Core patch count increased.
 - Why an official extension point was insufficient, if the count increased.
+
+The Workbench Details focus-continuity issue, based on
+`0637955df9ab009bb0ee1fcb892dc74e5ede27e7`, changes existing files in the
+product-owned `EtherCATCore` and `EtherCATWorkbench` plugins plus
+documentation. EtherCATCore unlinks a departing Provider before emitting its
+registry removal signal and tests nested removal. EtherCATWorkbench adds the
+value-only `{NodeId, PageKey, objectName, generation}` focus token, one bounded
+rebuild/refresh pump, user tab/focus priority after a yield, and guarded nested
+page-removal/self-unregister handling.
+
+The Provider object remains in PluginManager's pool until its object-removal
+notification returns, but it is already absent from ProviderRegistry queries
+inside `providerAboutToBeRemoved`. Ordinary hosted pages are destroyed before
+`removeObject()` returns. When a Provider unregisters from its own
+`pages()`, `createPage()`, or `updatePage()` callback, no callback-associated
+widget remains in the live-page map after removal handling. An already-tabbed
+active widget may remain attached and alive until callback return, when it is
+destroyed; the Provider/plugin must keep its page destructor and Qt meta-object
+code loaded through that boundary.
+
+No file under Qt Creator's upstream Core, ProjectExplorer, or application
+bootstrap changes. In particular, `src/plugins/ethercatcore` is an Embed Labs
+product plugin and is not counted as an upstream Core patch. No CMake or qbs
+description changes, so qbs was not run. The Workbench path count remains 44
+and the direct upstream Core patch count remains five.
 
 ## Remote comparison status
 

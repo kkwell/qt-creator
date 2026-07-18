@@ -846,6 +846,7 @@ void EtherCATCoreTests::testProviderRegistryTracksObjectPool()
     QSignalSpy addedSpy(registry, &ProviderRegistry::providerAdded);
     QSignalSpy removedSpy(registry, &ProviderRegistry::providerAboutToBeRemoved);
     TestScanProvider provider;
+    TestPropertyPageProvider reentrantProvider;
 
     ExtensionSystem::PluginManager::addObject(&provider);
     QCOMPARE(registry->provider(provider.id()), &provider);
@@ -855,10 +856,32 @@ void EtherCATCoreTests::testProviderRegistryTracksObjectPool()
     provider.setAvailable(true);
     QVERIFY(provider.isAvailable());
 
-    ExtensionSystem::PluginManager::removeObject(&provider);
+    ExtensionSystem::PluginManager::addObject(&reentrantProvider);
+    QCOMPARE(registry->provider(reentrantProvider.id()), &reentrantProvider);
+    QCOMPARE(addedSpy.count(), 2);
+
+    bool departingProviderUnlinked = false;
+    bool nestedRemovalObserved = false;
+    connect(
+        registry,
+        &ProviderRegistry::providerAboutToBeRemoved,
+        &reentrantProvider,
+        [&](Provider *departingProvider) {
+            if (departingProvider != &reentrantProvider)
+                return;
+            departingProviderUnlinked = !registry->provider(reentrantProvider.id());
+            nestedRemovalObserved = true;
+            ExtensionSystem::PluginManager::removeObject(&provider);
+        },
+        Qt::DirectConnection);
+    ExtensionSystem::PluginManager::removeObject(&reentrantProvider);
+    QVERIFY(departingProviderUnlinked);
+    QVERIFY(nestedRemovalObserved);
     QVERIFY(!registry->provider(provider.id()));
+    QVERIFY(!registry->provider(reentrantProvider.id()));
     QVERIFY(registry->providers(ProviderKind::Scan).isEmpty());
-    QCOMPARE(removedSpy.count(), 1);
+    QVERIFY(!registry->providers(ProviderKind::PropertyPage).contains(&reentrantProvider));
+    QCOMPARE(removedSpy.count(), 2);
 }
 
 void EtherCATCoreTests::testSettingsPageIsRegistered()

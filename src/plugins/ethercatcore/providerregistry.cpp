@@ -87,8 +87,9 @@ void ProviderRegistry::handleObjectAboutToBeRemoved(QObject *object)
         if (m_providers.at(index) != provider)
             continue;
 
-        emit providerAboutToBeRemoved(provider);
+        // Slots may remove other providers, so do not retain an index across the signal.
         m_providers.removeAt(index);
+        emit providerAboutToBeRemoved(provider);
         return;
     }
 }

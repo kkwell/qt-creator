@@ -87,7 +87,7 @@ The plugin registers these owned objects in the Qt Creator object pool during
 |---|---|
 | `SelectionService` | Stores one current `NodeId` and emits old and new IDs only when the value changes. |
 | `StateService` | Stores one status contribution per stable source ID and exposes the highest severity. |
-| `ProviderRegistry` | Tracks typed EtherCAT Providers dynamically as Qt Creator adds and removes them from the object pool. |
+| `ProviderRegistry` | Tracks typed EtherCAT Providers dynamically as Qt Creator adds and removes them from the object pool; removal unlinks the Provider before the registry emits its removal signal. |
 
 Consumers retrieve services with
 `ExtensionSystem::PluginManager::getObject<T>()`. They must not construct a
@@ -239,8 +239,13 @@ belong to EtherCATDevices, not Core.
 Providers register themselves with `PluginManager::addObject()` only after
 they are initialized and remove themselves before destruction. Consumers
 listen to `ProviderRegistry::providerAdded` and
-`providerAboutToBeRemoved`; they do not retain a Provider pointer after the
-removal signal.
+`providerAboutToBeRemoved`. On the PluginManager object-pool removal
+notification, `ProviderRegistry` first unlinks the Provider from its guarded
+list and then emits `providerAboutToBeRemoved`. Registry queries and nested
+removals from that signal therefore cannot rediscover the departing Provider,
+although the object remains in the PluginManager object pool until the
+notification returns. Consumers may use the signal argument only during the
+direct callback and do not retain it afterward.
 
 ## Workbench property-page contract
 
@@ -252,10 +257,17 @@ when the host asks for that page.
 
 The Workbench owns created page widgets. The Provider refreshes a page only
 through `updatePage()` and must not retain the context, a tree index, or a
-pointer to Workbench-private UI. The host destroys all widgets from a Provider
-before that Provider leaves the object pool. Page IDs must be stable and
-unique within one Provider; the effective host key is Provider ID plus page
-ID.
+pointer to Workbench-private UI. For an ordinary unregister, the host detaches
+and destroys every hosted widget from that Provider before
+`PluginManager::removeObject()` returns. If a Provider unregisters itself from
+inside one of its own `pages()`, `createPage()`, or `updatePage()` callbacks,
+no callback-associated widget remains in the host's live-page map after removal
+handling. An already-tabbed active widget may remain attached and alive only
+until the active callback returns, when the host destroys it. The Provider and
+its plugin must therefore remain loaded through callback return; in particular,
+they must not unload code used by the page destructor or Qt meta-object before
+that boundary. Page IDs must be stable and unique within one Provider; the
+effective host key is Provider ID plus page ID.
 
 `WorkbenchNodeKind` is limited to UI-neutral selections used by the Workbench.
 Its numeric values are a public compatibility contract for local plugins:
@@ -293,11 +305,12 @@ contribute pages by subclassing the public interface; they do not modify the
 Workbench tree or include Workbench private headers.
 
 The stage-4 Workbench implementation listens to property-provider addition,
-availability changes, and removal. It destroys provider-owned widgets before
-removal and identifies a hosted page by Provider ID plus page ID. It also
-observes the availability of Scan and Diagnostics capability providers: this
-controls only local placeholder visibility and tree status, and does not add a
-scan algorithm, diagnostic payload, transport, or serialization contract.
+availability changes, and removal. It identifies a hosted page by Provider ID
+plus page ID and applies the ordinary and active-callback destruction
+boundaries above. It also observes the availability of Scan and Diagnostics
+capability providers: this controls only local placeholder visibility and tree
+status, and does not add a scan algorithm, diagnostic payload, transport, or
+serialization contract.
 
 Provider IDs are globally unique across all Provider kinds. If two live
 objects use the same ID, only the first one is published by the registry. Such
@@ -310,8 +323,10 @@ a collision is a plugin defect, not a selection mechanism.
   violation guarded by `QTC_ASSERT`.
 - Background work must deliver immutable data back to the GUI thread before
   changing these services.
-- `ProviderRegistry` stores guarded pointers and removes a Provider on the
-  object-pool removal notification.
+- `ProviderRegistry` stores guarded pointers. On the object-pool removal
+  notification it unlinks the Provider before emitting
+  `providerAboutToBeRemoved`, so registry queries and nested removal are
+  re-entry safe while PluginManager still owns the notification lifetime.
 - `aboutToShutdown()` removes the registry, state service, and selection
   service in reverse registration order, after clearing owned state.
 - Cleanup is idempotent, so normal shutdown followed by plugin destruction
@@ -338,7 +353,8 @@ The focused plugin test covers:
 - `NodeId` generation, parsing, equality, and hashing;
 - selection change suppression and clearing;
 - state contribution validation and severity aggregation;
-- dynamic Provider addition, availability, and removal;
+- dynamic Provider addition, availability, unlink-before-signal removal, and
+  nested removal re-entry;
 - typed scan request, state, progress, cancellation, and reset behavior;
 - typed diagnostics snapshots, stream transitions, mode request, bounded-data
   metadata, alarm acknowledgement/recovery, and stop/failure behavior;
@@ -347,6 +363,16 @@ The focused plugin test covers:
 - Startup order/raw-value validation and nanosecond DC cycle/shift validation;
 - frozen Workbench node-kind values and derived PDO/module selection contexts;
 - settings-page registration.
+
+For `ISSUE-WB-DETAILS-FOCUS-CONTINUITY-001`, based on
+`0637955df9ab009bb0ee1fcb892dc74e5ede27e7`, the focused EtherCATCore suite
+passes all 17 tests as part of the 92-test six-plugin run under
+`/tmp/embed-labs-six-suites-final2.XeKLz8`. Its new coverage proves that the
+Provider is absent from registry queries inside its removal signal and that a
+nested removal does not invalidate the outer operation. The change remains in
+the product-owned EtherCATCore registry/test files; it adds no upstream Qt
+Creator Core patch, public Provider method, source-list entry, or CMake/qbs
+change. qbs was therefore not run.
 
 The focused build target and test execution are limited to Core and
 EtherCATCore. Enabling tests for the complete existing product currently

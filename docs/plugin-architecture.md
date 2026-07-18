@@ -510,22 +510,25 @@ existing private, value-only `EtherCAT.PageKey`, formed from the publishing
 Provider ID and page ID. The value is presentation identity only; it is not a
 public contract or persisted setting.
 
-During `ProviderRegistry::providerAboutToBeRemoved`, Details first inserts the
-departing Provider's value-only ID into a private exclusion set and disconnects
-its availability signal. It then copies the current PageKey, context NodeId,
-and monotonic rebuild generation before synchronously removing and deleting
-owned pages. Every candidate enumeration skips the exclusion set, so a later
-direct removal slot cannot recreate the page while the registry is still
-dispatching its signal. This preserves the object-pool safety boundary: no page
-widget or `PropertyPageProvider` pointer survives unregistering, and an
-unregistered but still-live Provider cannot request another rebuild.
+On object-pool removal, ProviderRegistry first unlinks the departing Provider
+from its guarded registry and then emits `providerAboutToBeRemoved`; the object
+itself remains in the PluginManager pool until that notification returns.
+Details disconnects the Provider's availability signal and retains its
+value-only ID in a private exclusion set for already queued work. Registry
+queries and nested removal therefore cannot recreate the departing page. An
+ordinary hosted page is detached and destroyed before `removeObject()`
+returns. If the Provider self-unregisters inside its own active page callback,
+the page is removed from the live-page map immediately. An already-tabbed
+active widget may remain attached and alive only until that callback returns,
+when it is destroyed. The Provider/plugin must remain loaded, including page
+destructor and Qt meta-object code, through that boundary.
 
-Every PropertyPage Provider removal queues a callback owned by Details. It
-restores the copied key only if both context and generation are unchanged and
-a currently registered and available Provider still publishes that page. If
-any intervening rebuild occurred, the registry refresh still runs but uses the
-newest current page key, preventing switch-away/switch-back ABA state. The
-value-only departing marker remains authoritative until a later
+Every PropertyPage Provider removal enters the Details-owned unified refresh
+path. It restores the copied key only if the context is still current and a
+currently registered and available Provider still publishes that page. If any
+intervening operation or user choice occurred, the refresh uses the newest
+semantic state instead of applying stale switch-away/switch-back ABA state.
+The value-only departing marker remains authoritative until a later
 `providerAdded` for that ID clears it. If the selected page itself disappeared,
 the normal first-page fallback remains authoritative.
 
@@ -627,6 +630,52 @@ This boundary adds no service, role, Provider, public API, persistent field,
 thread, timer, dependency, network/controller transport, CMake/qbs entry, or
 path under upstream Core, ProjectExplorer, or the application bootstrap. The
 Workbench path count remains 44 and the direct Core patch count remains five.
+
+## Workbench Details focus and operation boundary
+
+Details focus continuity remains private to
+`EtherCATWorkbench::Internal::DetailsView`. Its restoration token contains
+only the current context `NodeId`, semantic Provider/Page key, child
+`objectName`, rebuild generation, and active/cancelled state. It never retains
+a page pointer, child pointer, `QModelIndex`, or Provider pointer across a page
+replacement. A recreated semantic page may resolve its new focus child by
+object name; an invalid target uses the normal page focus chain.
+
+One Details-owned bounded operation pump serializes rebuild and refresh work.
+It preserves value-only transaction anchors through nested Provider callbacks,
+coalesces duplicate requests, and yields to one posted continuation after at
+most eight synchronous operations. Page-map transfer happens before tab
+mutation, and internal insertion/restoration signals are suppressed while the
+host owns that mutation. Nested context changes, provider availability,
+`updatePage()`, page hide/destruction, object-pool signals, and early MetaCall
+draining therefore cannot reuse stale tab indexes or delete a page twice.
+
+The saved transaction does not outrank user interaction after a yield. A real
+tab `currentChanged`, `tabBarClicked`, or focus choice updates or cancels the
+anchor. Direct focus on the tab bar remains there, and any focus outside
+Details remains external. The continuation restores only semantic state that
+is still current; it never writes an earlier focus or page choice over a newer
+one.
+
+ProviderRegistry's lifecycle boundary is product-owned Core API. It removes a
+departing Provider from registry enumeration before emitting
+`providerAboutToBeRemoved`, while PluginManager retains the object until the
+notification returns. Registry queries and nested removal cannot rediscover
+the Provider. Details destroys ordinary hosted pages before `removeObject()`
+returns. For self-unregister inside `pages()`, `createPage()`, or
+`updatePage()` callback, no callback-associated widget remains in the live-page
+map after removal handling. An already-tabbed active widget may stay attached
+and alive only until callback return, when it is destroyed. The Provider/plugin
+must keep the page destructor and Qt meta-object code loaded through that
+boundary.
+
+The changes remain within existing product-owned EtherCATCore registry/test
+and private EtherCATWorkbench Details/test files. They add no public Provider
+shape, persistent state, source list, dependency, thread, timer,
+network/controller behavior, or physical-hardware claim. No CMake or qbs file
+changed, so qbs was not run. `src/plugins/ethercatcore` is not an upstream Qt
+Creator Core path. The Workbench path count remains 44 and the direct upstream
+Core patch count remains five.
 
 ## Existing EasyBoard isolation
 

@@ -907,9 +907,11 @@ or cross-plugin `QModelIndex` is used.
 The details container discovers available `PropertyPageProvider` objects from
 the public registry. It sorts pages by priority and stable provider/page IDs,
 restores the selected effective page key, and owns every widget returned by a
-provider. All provider-owned widgets are destroyed before the provider leaves
-the object pool. Provider addition, availability changes, and removal rebuild
-the page set without retaining removed pointers.
+provider. On ordinary unregister, all provider-owned widgets are destroyed
+before `removeObject()` returns. Self-unregister from an active page callback
+uses the bounded callback-return lifetime documented below. Provider addition,
+availability changes, and removal rebuild the page set without retaining
+removed pointers in semantic transaction state.
 
 The built-in provider supplies these stage-4 pages:
 
@@ -1872,23 +1874,28 @@ which to recover the private `EtherCAT.PageKey`, so it selected the first
 built-in page, normally General, even though the selected node and current
 Provider B page were both still valid.
 
-Details now records the departing Provider's value-only ID, disconnects its
-availability signal, and captures the current PageKey, stable context NodeId,
-and monotonic rebuild generation before destroying provider-owned widgets.
-Every page rebuild skips IDs in that private departing set, including rebuilds
-re-entered from later direct about-to-remove slots while the registry still
-enumerates the Provider. Page destruction remains synchronous with the
-object-pool about-to-remove phase, so no widget or Provider pointer is retained
-across unregistering. Every PropertyPage Provider removal queues a registry
-refresh; re-registering the ID clears its departing marker. If neither context
-nor generation changed, the refresh may restore the captured key when a current
-Provider still publishes it. After any intervening rebuild it instead preserves
-the newest current key, preventing a switch-away/switch-back ABA from applying
-stale state. Removing the Provider that owns the selected page therefore keeps
-the deterministic first-valid-page fallback. Registered-Provider availability
-changes use the same key-preserving rebuild; signals from an unregistered but
-still-live Provider no longer affect Details. This is in-session continuity,
-not persisted tab state across restart, project close, or a different node.
+At that issue's baseline, Details recorded the departing Provider's value-only
+ID, disconnected its availability signal, and captured the current PageKey,
+stable context NodeId, and monotonic rebuild generation before destroying
+provider-owned widgets. The current ProviderRegistry contract is stronger: it
+unlinks the Provider from registry enumeration before emitting
+`providerAboutToBeRemoved`, while the object remains in the PluginManager pool
+until that notification returns. The departing ID still protects already
+queued work and later re-registration of the same ID. Ordinary hosted pages are
+detached and destroyed before `removeObject()` returns. If a Provider
+self-unregisters inside its own active page callback, its page is removed from
+the live-page map immediately. An already-tabbed active widget may stay
+attached and alive only until callback return, when it is destroyed; the
+Provider/plugin must not unload its destructor or meta-object code before then.
+
+Every PropertyPage Provider removal enters the unified registry refresh path.
+It restores the semantic key only when its context is still current and the
+page still exists; otherwise the newest user choice or deterministic
+first-valid-page fallback remains authoritative. Registered-Provider
+availability changes use the same key-preserving path, and signals from an
+unregistered but still-live Provider no longer affect Details. This is
+in-session continuity, not persisted tab state across restart, project close,
+or a different node.
 
 Qt Creator's own Project settings widget captures the old tab before replacing
 its panels and restores it afterward
@@ -2094,3 +2101,113 @@ controller transport, physical-hardware behavior, CMake/qbs entry, or upstream
 Core/ProjectExplorer/application change. Scan and Diagnostics remain local
 Mock Providers, the Workbench path count remains 44, and the direct Core patch
 count remains five.
+
+## Details focus and rebuild continuity
+
+`ISSUE-WB-DETAILS-FOCUS-CONTINUITY-001` is based on local baseline
+`0637955df9ab009bb0ee1fcb892dc74e5ede27e7`. It closes the remaining
+continuity and lifecycle gaps in the existing Details host. Before this issue,
+a context rebuild could recover the semantic tab while replacing its widget,
+but keyboard focus from a field such as
+`EtherCATProjectGeneralCreatedBy` fell back to the tab bar. Nested Provider
+callbacks could also request rebuild and refresh work while an earlier page
+mutation was still active, and the old removal order let the registry expose a
+departing Provider to another removal slot.
+
+Details now captures focus with one private, value-only token containing the
+stable context `NodeId`, semantic `PageKey`, child `objectName`, and rebuild
+generation. No `QWidget`, `QModelIndex`, or Provider pointer is stored in that
+token. When the same semantic page is recreated for the same context, the host
+resolves the new child by object name and restores keyboard focus. A missing,
+hidden, disabled, or no-longer-focusable target uses the current page's normal
+focus-chain fallback. The empty-state widget remains keyboard reachable.
+
+A single bounded operation pump serializes page rebuilds and refreshes. It
+coalesces duplicate requests, preserves semantic transaction anchors through
+nested callbacks, and processes at most eight synchronous operations before
+posting a continuation. Provider availability changes, context changes,
+provider addition/removal, and `updatePage()` re-entry all use this same pump.
+Page collections are detached from the live page map before tab mutation, and
+active tab mutation suppresses internal selection signals so nested
+`hideEvent`, removal, or queued MetaCall delivery cannot observe a stale tab
+index or delete the same page twice.
+
+User intent after a bounded-pump yield is newer than the saved transaction.
+An actual `QTabBar::currentChanged`, `tabBarClicked`, or focus choice therefore
+replaces or cancels the older semantic anchor. Direct focus on the tab bar is
+sticky and is not moved back into a page by the continuation. Focus that has
+moved anywhere outside Details is likewise never stolen. Internal tab
+insertion and restoration do not masquerade as user selection, while the
+newest user-selected PageKey remains authoritative across the posted
+continuation.
+
+ProviderRegistry now unlinks a departing Provider from registry enumeration
+before emitting `providerAboutToBeRemoved`; the object remains in the
+PluginManager pool until that notification returns. This makes registry
+queries and nested Provider removal from the signal re-entry safe. Ordinary
+hosted pages are detached and destroyed before `removeObject()` returns. If a
+Provider self-unregisters from its own `pages()`, `createPage()`, or
+`updatePage()` callback, no callback-associated widget remains in the live-page
+map after removal handling. An already-tabbed active widget may stay attached
+and alive only until callback return, when it is destroyed. The Provider/plugin
+must remain loaded, including page destructor and Qt meta-object code, through
+that callback boundary.
+
+Qt documents tab ownership and current-index behavior in
+[QTabWidget](https://doc.qt.io/qt-6/qtabwidget.html), and keyboard-focus
+semantics in [QWidget](https://doc.qt.io/qt-6/qwidget.html). Qt Creator 20.0's
+Project settings widget provides the read-only precedent for retaining the
+semantic current panel while replacing its widgets
+([`CentralWidget::setPanels()`](https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectwindow.cpp#L1366-L1385)).
+Beckhoff documents the selection-dependent General, EtherCAT, Process Data,
+and Online tabs for an EtherCAT terminal
+([terminal configuration tabs](https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html)).
+Exact Qt focus restoration, bounded callback re-entry, and third-party
+Provider lifecycle handling are Embed Labs Qt-native behavior, not copied
+TwinCAT implementation.
+
+The failure-first regression reproduced the lost field focus after replacing
+one Project context with another that published the same PageKey. The focused
+Workbench coverage now exercises exact focus restoration across a new widget,
+same PageKey with distinct NodeIds, missing/hidden focus-target fallback,
+external-focus preservation, direct tab-bar focus cancellation, empty-state
+keyboard focus, nested availability rebuilds, synchronous context/update/
+clear/delete re-entry, max-eight-operation yield, and user tab/focus priority
+after that yield. Provider lifecycle coverage adds refresh self-trigger
+deduplication, consecutive and nested removal, removal from `updatePage()` and
+page-hide re-entry, self-unregister of the active callback Provider, immediate
+ordinary-page destruction, active-callback deferred destruction, and stale
+snapshot exclusion. Core coverage proves unlink-before-signal registry state
+and nested removal.
+
+Both normal-scale and `QT_SCALE_FACTOR=2` Workbench runs pass 41 tests. Four
+frozen offscreen renders under
+`/tmp/embed-labs-details-render-final2.wMQmxh` match the inspected artifacts
+exactly and show no clipping, overlap, or scale drift. The complete six-suite
+run under `/tmp/embed-labs-six-suites-final2.XeKLz8` passes 92 tests: Core 17,
+Project 12, Devices 8, Workbench 41, Scan 7, and Diagnostics 7. The unrelated
+all-target `WITH_TESTS=ON` build remains blocked by the pre-existing
+`easyboardbrowser.cpp` include of unavailable `extensionmanager_test.h`; the
+required EtherCAT targets and suites pass.
+
+The final `WITH_TESTS=OFF` product build passes with exactly the 16 allow-listed
+plugin dylibs. Under `/tmp/embed-labs-product-lifecycle-frozen.NIAjdQ`, enabled
+startup remained alive for 16 seconds and `-noload EtherCATWorkbench` startup
+remained alive for 16 seconds; both ended by intentional SIGTERM with LLDB
+target status 15. Cleanup found no residual Embed Labs or LLDB process and no
+new Embed Labs crash report. The only running ReportCrash agent pre-dated this
+qualification by more than one day and was unrelated.
+
+Every qualified executable above used fresh HOME/settings, cleared inherited
+DYLD variables, `QT_QPA_PLATFORM=offscreen`,
+`CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch
+Bar LLDB breakpoint. No visible main window or interposer was used.
+
+This issue changes existing product-owned EtherCATCore registry/test files,
+private EtherCATWorkbench Details/test files, and documentation only.
+`src/plugins/ethercatcore` is an Embed Labs product plugin, not a direct patch
+under Qt Creator's upstream Core, ProjectExplorer, or application bootstrap.
+No CMake or qbs file changed, so qbs was not run. No public Provider shape,
+source list, dependency, persistence, controller transport, network, or
+physical-hardware behavior changes. The Workbench path count remains 44 and
+the direct upstream Core patch count remains five.

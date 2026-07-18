@@ -22,6 +22,7 @@ public:
 
 signals:
     void providerAdded(EtherCAT::Core::Provider *provider);
+    // The Provider is already unlinked from this registry but remains alive in the object pool.
     void providerAboutToBeRemoved(EtherCAT::Core::Provider *provider);
 
 private:

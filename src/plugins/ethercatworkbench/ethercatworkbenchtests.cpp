@@ -48,6 +48,7 @@
 #include <QDropEvent>
 #include <QGroupBox>
 #include <QHeaderView>
+#include <QHideEvent>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -68,6 +69,7 @@
 #include <QSpinBox>
 #include <QStatusBar>
 #include <QStyle>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTableView>
 #include <QTemporaryDir>
@@ -79,6 +81,8 @@
 #include <QTreeWidget>
 
 #include <algorithm>
+#include <functional>
+#include <utility>
 
 namespace EtherCAT::Workbench::Internal {
 
@@ -432,6 +436,22 @@ static QByteArray deviceEsi()
 </OpMode></Dc></Device></Devices></Descriptions></EtherCATInfo>)";
 }
 
+class TestPageLabel final : public QLabel
+{
+public:
+    using QLabel::QLabel;
+
+    std::function<void()> onHide;
+
+private:
+    void hideEvent(QHideEvent *event) final
+    {
+        QLabel::hideEvent(event);
+        if (onHide)
+            onHide();
+    }
+};
+
 class TestPageProvider final : public Core::PropertyPageProvider
 {
 public:
@@ -461,8 +481,15 @@ public:
     {
         if (pageId != m_pageId)
             return nullptr;
-        auto label = new QLabel(m_pageDisplayName, parent);
+        auto label = new TestPageLabel(m_pageDisplayName, parent);
         label->setObjectName(m_pageObjectName);
+        label->setFocusPolicy(Qt::StrongFocus);
+        label->onHide = [this] {
+            if (onHide) {
+                const std::function<void()> callback = std::exchange(onHide, {});
+                callback();
+            }
+        };
         return label;
     }
 
@@ -470,7 +497,18 @@ public:
     {
         if (pageId == m_pageId)
             page->setToolTip(context.nodeId.toString());
+        if (onUpdate) {
+            const std::function<void()> callback = onUpdate;
+            onUpdate = {};
+            callback();
+        }
+        if (onEveryUpdate)
+            onEveryUpdate();
     }
+
+    std::function<void()> onUpdate;
+    std::function<void()> onEveryUpdate;
+    std::function<void()> onHide;
 
 private:
     const Utils::Id m_pageId;
@@ -4604,6 +4642,267 @@ void EtherCATWorkbenchTests::testDetailsEmptyStateLifecycle()
     QVERIFY(!tabs->isVisible());
 }
 
+void EtherCATWorkbenchTests::testDetailsKeyboardFocusContinuity()
+{
+    WorkbenchController controller;
+    const Data::ProjectSnapshot alpha = projectSnapshot("Focus Alpha");
+    const Data::ProjectSnapshot beta = projectSnapshot("Focus Beta");
+    controller.treeModel()->setProjects({alpha, beta});
+    controller.selectionService()->setCurrentNodeId(alpha.id);
+
+    DetailsView details(&controller);
+    details.resize(900, 600);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QTRY_COMPARE(details.currentContext().nodeId, alpha.id);
+
+    QTabWidget *tabs = details.tabWidget();
+    QVERIFY(tabs);
+    QTRY_VERIFY(tabs->isVisible());
+    QWidget *alphaPage = tabs->currentWidget();
+    QVERIFY(alphaPage);
+    const QString pageKey = alphaPage->property("EtherCAT.PageKey").toString();
+    QVERIFY(!pageKey.isEmpty());
+
+    QLineEdit *alphaName = alphaPage->findChild<QLineEdit *>("EtherCATProjectGeneralName");
+    QLineEdit *alphaCreatedBy
+        = alphaPage->findChild<QLineEdit *>("EtherCATProjectGeneralCreatedBy");
+    QVERIFY(alphaName);
+    QVERIFY(alphaCreatedBy);
+    QCOMPARE(alphaName->text(), alpha.name);
+    QPointer<QLineEdit> destroyedCreatedBy = alphaCreatedBy;
+    alphaCreatedBy->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), alphaCreatedBy);
+
+    controller.selectionService()->setCurrentNodeId(beta.id);
+    QTRY_COMPARE(details.currentContext().nodeId, beta.id);
+    QTRY_VERIFY(destroyedCreatedBy.isNull());
+    QWidget *betaPage = tabs->currentWidget();
+    QVERIFY(betaPage);
+    QCOMPARE(betaPage->property("EtherCAT.PageKey").toString(), pageKey);
+    QLineEdit *betaName = betaPage->findChild<QLineEdit *>("EtherCATProjectGeneralName");
+    QLineEdit *betaCreatedBy
+        = betaPage->findChild<QLineEdit *>("EtherCATProjectGeneralCreatedBy");
+    QVERIFY(betaName);
+    QVERIFY(betaCreatedBy);
+    QCOMPARE(betaName->text(), beta.name);
+    QTRY_COMPARE(QApplication::focusWidget(), betaCreatedBy);
+
+    const QString missingFocusObjectName("EtherCATProjectGeneralMissingFocusTarget");
+    betaCreatedBy->setObjectName(missingFocusObjectName);
+    betaCreatedBy->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), betaCreatedBy);
+    controller.selectionService()->setCurrentNodeId(alpha.id);
+    QTRY_COMPARE(details.currentContext().nodeId, alpha.id);
+    QWidget *missingTargetPage = tabs->currentWidget();
+    QVERIFY(missingTargetPage);
+    QCOMPARE(missingTargetPage->property("EtherCAT.PageKey").toString(), pageKey);
+    QTRY_VERIFY(QApplication::focusWidget());
+    QWidget *missingFallbackFocus = QApplication::focusWidget();
+    QVERIFY(missingTargetPage->isAncestorOf(missingFallbackFocus));
+    QVERIFY(missingFallbackFocus->isVisible());
+    QVERIFY(missingFallbackFocus->isEnabled());
+    QVERIFY(missingFallbackFocus->focusPolicy() & Qt::TabFocus);
+    QVERIFY(missingFallbackFocus->objectName() != missingFocusObjectName);
+    missingFallbackFocus->setObjectName("EtherCATProjectGeneralCreatedBy");
+
+    const Data::NodeId betaTargetId = beta.nodes.at(1).id;
+    controller.selectionService()->setCurrentNodeId(betaTargetId);
+    QTRY_COMPARE(details.currentContext().nodeId, betaTargetId);
+    QWidget *targetPage = tabs->currentWidget();
+    QVERIFY(targetPage);
+    QCOMPARE(targetPage->property("EtherCAT.PageKey").toString(), pageKey);
+    QLineEdit *hiddenCreatedBy
+        = targetPage->findChild<QLineEdit *>("EtherCATProjectGeneralCreatedBy");
+    QVERIFY(hiddenCreatedBy);
+    QVERIFY(!hiddenCreatedBy->isVisible());
+    QTRY_VERIFY(QApplication::focusWidget());
+    QWidget *fallbackFocus = QApplication::focusWidget();
+    QVERIFY(targetPage->isAncestorOf(fallbackFocus));
+    QVERIFY(fallbackFocus->isVisible());
+    QVERIFY(fallbackFocus->isEnabled());
+    QVERIFY(fallbackFocus->focusPolicy() & Qt::TabFocus);
+    QVERIFY(fallbackFocus->objectName() != hiddenCreatedBy->objectName());
+
+    QLabel *title = details.findChild<QLabel *>("EtherCATWorkbenchDetailsTitle");
+    QVERIFY(title);
+    title->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), title);
+    controller.selectionService()->setCurrentNodeId(alpha.id);
+    QTRY_COMPARE(details.currentContext().nodeId, alpha.id);
+    QTRY_COMPARE(QApplication::focusWidget(), title);
+
+    const Utils::Id reentrantProviderId("EtherCAT.Workbench.FocusReentrantPages");
+    const Utils::Id reentrantPageId("EtherCAT.Workbench.FocusReentrantPage");
+    TestPageProvider reentrantProvider(
+        reentrantProviderId,
+        reentrantPageId,
+        "Reentrant Focus Page",
+        "EtherCATFocusReentrantPage",
+        180);
+    bool reentrantProviderRegistered = false;
+    const QScopeGuard providerCleanup([&] {
+        if (reentrantProviderRegistered)
+            ExtensionSystem::PluginManager::removeObject(&reentrantProvider);
+    });
+    ExtensionSystem::PluginManager::addObject(&reentrantProvider);
+    reentrantProviderRegistered = true;
+    QTRY_VERIFY(tabs->count() >= 2);
+    const int reentrantPageCount = tabs->count();
+
+    const QString reentrantPageKey
+        = reentrantProviderId.toString() + '/' + reentrantPageId.toString();
+    const auto pageIndexForKey = [tabs](const QString &key) {
+        for (int index = 0; index < tabs->count(); ++index) {
+            if (tabs->widget(index)->property("EtherCAT.PageKey").toString() == key)
+                return index;
+        }
+        return -1;
+    };
+    QWidget *reentrantAlphaPage = tabs->currentWidget();
+    QVERIFY(reentrantAlphaPage);
+    QLineEdit *reentrantCreatedBy
+        = reentrantAlphaPage->findChild<QLineEdit *>("EtherCATProjectGeneralCreatedBy");
+    QVERIFY(reentrantCreatedBy);
+    reentrantCreatedBy->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), reentrantCreatedBy);
+    bool reentrantUpdateObserved = false;
+    reentrantProvider.onUpdate = [&] {
+        reentrantUpdateObserved = true;
+        controller.selectionService()->setCurrentNodeId(alpha.id);
+        title->setFocus(Qt::OtherFocusReason);
+    };
+    controller.selectionService()->setCurrentNodeId(beta.id);
+    QVERIFY(reentrantUpdateObserved);
+    QCOMPARE(details.currentContext().nodeId, alpha.id);
+    QCOMPARE(tabs->count(), reentrantPageCount);
+    QTRY_COMPARE(QApplication::focusWidget(), title);
+
+    QWidget *reentrantPage
+        = details.findChild<QWidget *>("EtherCATFocusReentrantPage");
+    QVERIFY(reentrantPage);
+    bool clearReentryObserved = false;
+    connect(reentrantPage, &QObject::destroyed, &details, [&] {
+        if (clearReentryObserved)
+            return;
+        clearReentryObserved = true;
+        controller.selectionService()->setCurrentNodeId(alpha.id);
+    });
+    controller.selectionService()->setCurrentNodeId(beta.id);
+    QVERIFY(clearReentryObserved);
+    QCOMPARE(details.currentContext().nodeId, alpha.id);
+    QCOMPARE(tabs->count(), reentrantPageCount);
+
+    QWidget *destroyedFocusPage = tabs->currentWidget();
+    QVERIFY(destroyedFocusPage);
+    QLineEdit *destroyedFocusField
+        = destroyedFocusPage->findChild<QLineEdit *>("EtherCATProjectGeneralCreatedBy");
+    QVERIFY(destroyedFocusField);
+    destroyedFocusField->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), destroyedFocusField);
+    bool destroyedFocusMoved = false;
+    connect(destroyedFocusPage, &QObject::destroyed, &details, [&] {
+        destroyedFocusMoved = true;
+        title->setFocus(Qt::OtherFocusReason);
+    });
+    controller.selectionService()->setCurrentNodeId(beta.id);
+    QVERIFY(destroyedFocusMoved);
+    QCOMPARE(details.currentContext().nodeId, beta.id);
+    QCOMPARE(tabs->count(), reentrantPageCount);
+    QTRY_COMPARE(QApplication::focusWidget(), title);
+    controller.selectionService()->setCurrentNodeId(alpha.id);
+    QCOMPARE(details.currentContext().nodeId, alpha.id);
+    QTRY_COMPARE(QApplication::focusWidget(), title);
+
+    const int reentrantIndex = pageIndexForKey(reentrantPageKey);
+    QVERIFY(reentrantIndex >= 0);
+    tabs->setCurrentIndex(reentrantIndex);
+    QWidget *oldReentrantPage = tabs->currentWidget();
+    QVERIFY(oldReentrantPage);
+    QCOMPARE(oldReentrantPage->property("EtherCAT.PageKey").toString(), reentrantPageKey);
+    oldReentrantPage->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), oldReentrantPage);
+    QPointer<QWidget> destroyedReentrantPage = oldReentrantPage;
+    bool nestedAvailabilityObserved = false;
+    reentrantProvider.onUpdate = [&] {
+        nestedAvailabilityObserved = true;
+        reentrantProvider.setAvailable(false);
+        reentrantProvider.setAvailable(true);
+    };
+    controller.selectionService()->setCurrentNodeId(beta.id);
+    QVERIFY(nestedAvailabilityObserved);
+    QTRY_VERIFY(destroyedReentrantPage.isNull());
+    QCOMPARE(details.currentContext().nodeId, beta.id);
+    QCOMPARE(tabs->count(), reentrantPageCount);
+    QCOMPARE(
+        tabs->currentWidget()->property("EtherCAT.PageKey").toString(), reentrantPageKey);
+    QWidget *restoredReentrantPage = tabs->currentWidget();
+    QVERIFY(restoredReentrantPage);
+    QCOMPARE(restoredReentrantPage->objectName(), QString("EtherCATFocusReentrantPage"));
+    QTRY_COMPARE(QApplication::focusWidget(), restoredReentrantPage);
+
+    bool stickyFocusCancellationObserved = false;
+    reentrantProvider.onUpdate = [&] {
+        stickyFocusCancellationObserved = true;
+        title->setFocus(Qt::OtherFocusReason);
+        tabs->setFocus(Qt::OtherFocusReason);
+        reentrantProvider.setAvailable(false);
+        reentrantProvider.setAvailable(true);
+    };
+    controller.selectionService()->setCurrentNodeId(alpha.id);
+    QVERIFY(stickyFocusCancellationObserved);
+    QCOMPARE(details.currentContext().nodeId, alpha.id);
+    QCOMPARE(tabs->count(), reentrantPageCount);
+    QCOMPARE(
+        tabs->currentWidget()->property("EtherCAT.PageKey").toString(), reentrantPageKey);
+    QWidget *focusAfterCancellation = QApplication::focusWidget();
+    QVERIFY(focusAfterCancellation);
+    QVERIFY(focusAfterCancellation == tabs || tabs->isAncestorOf(focusAfterCancellation));
+    QVERIFY(focusAfterCancellation != tabs->currentWidget());
+
+    const QString renderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_DETAILS_FOCUS_RENDER_PATH");
+    if (!renderPath.isEmpty()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(details.grab().save(renderPath), qPrintable(renderPath));
+    }
+
+    const int stableFocusIndex = pageIndexForKey(pageKey);
+    QVERIFY(stableFocusIndex >= 0);
+    tabs->setCurrentIndex(stableFocusIndex);
+    QWidget *stableFocusPage = tabs->currentWidget();
+    QVERIFY(stableFocusPage);
+    QLineEdit *stableFocusField
+        = stableFocusPage->findChild<QLineEdit *>("EtherCATProjectGeneralCreatedBy");
+    QVERIFY(stableFocusField);
+    stableFocusField->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), stableFocusField);
+    ExtensionSystem::PluginManager::removeObject(&reentrantProvider);
+    reentrantProviderRegistered = false;
+    tabs->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(
+        QApplication::focusWidget() == tabs
+        || tabs->isAncestorOf(QApplication::focusWidget()));
+    QPointer<QWidget> explicitTabFocus = QApplication::focusWidget();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_COMPARE(QApplication::focusWidget(), explicitTabFocus.data());
+
+    QLabel *emptyState = details.findChild<QLabel *>("EtherCATWorkbenchEmptyState");
+    QVERIFY(emptyState);
+    QLineEdit *emptySource = tabs->currentWidget()->findChild<QLineEdit *>(
+        "EtherCATProjectGeneralCreatedBy");
+    QVERIFY(emptySource);
+    emptySource->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), emptySource);
+    controller.selectionService()->clear();
+    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QTRY_VERIFY(emptyState->isVisible());
+    QTRY_VERIFY(!tabs->isVisible());
+    QVERIFY(emptyState->focusPolicy() & Qt::TabFocus);
+    QTRY_COMPARE(QApplication::focusWidget(), emptyState);
+}
+
 void EtherCATWorkbenchTests::testNavigationSetActiveProjectCommand()
 {
     ::Core::ModeManager::activateMode(Constants::MODE_ID);
@@ -6363,12 +6662,95 @@ void EtherCATWorkbenchTests::testDynamicPropertyProviderRemoval()
         QWidget *currentPage = details.tabWidget()->currentWidget();
         return currentPage ? currentPage->property("EtherCAT.PageKey").toString() : QString();
     };
+    const Data::NodeId stableContextId = details.currentContext().nodeId;
+    QCOMPARE(stableContextId, project.id);
+
+    const int stablePageIndex = pageIndexForKey(baselineFirstKey);
+    QVERIFY(stablePageIndex >= 0);
+    details.tabWidget()->setCurrentIndex(stablePageIndex);
+    QWidget *stablePage = details.tabWidget()->currentWidget();
+    QVERIFY(stablePage);
+    QLineEdit *stableFocusField
+        = stablePage->findChild<QLineEdit *>("EtherCATProjectGeneralCreatedBy");
+    QVERIFY(stableFocusField);
+    stableFocusField->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), stableFocusField);
+    ExtensionSystem::PluginManager::removeObject(&providerA);
+    providerARegistered = false;
+    ExtensionSystem::PluginManager::removeObject(&providerB);
+    providerBRegistered = false;
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages);
+    QTRY_COMPARE(currentPageKey(), baselineFirstKey);
+    stablePage = details.tabWidget()->currentWidget();
+    QVERIFY(stablePage);
+    QLineEdit *restoredStableFocusField
+        = stablePage->findChild<QLineEdit *>("EtherCATProjectGeneralCreatedBy");
+    QVERIFY(restoredStableFocusField);
+    QTRY_COMPARE(QApplication::focusWidget(), restoredStableFocusField);
+
+    ExtensionSystem::PluginManager::addObject(&providerA);
+    providerARegistered = true;
+    ExtensionSystem::PluginManager::addObject(&providerB);
+    providerBRegistered = true;
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 2);
     const int providerBIndex = pageIndexForKey(providerBKey);
     QVERIFY(providerBIndex >= 0);
     details.tabWidget()->setCurrentIndex(providerBIndex);
     QCOMPARE(currentPageKey(), providerBKey);
-    const Data::NodeId stableContextId = details.currentContext().nodeId;
-    QCOMPARE(stableContextId, project.id);
+
+    int repeatedRefreshUpdates = 0;
+    providerA.onEveryUpdate = [&] {
+        ++repeatedRefreshUpdates;
+        emit controller.diagnosticsProviderChanged(false);
+    };
+    emit controller.diagnosticsProviderChanged(false);
+    QCOMPARE(repeatedRefreshUpdates, 1);
+    providerA.onEveryUpdate = {};
+
+    int repeatedRebuildUpdates = 0;
+    QWidget *repeatedRebuildFocusPage = details.tabWidget()->currentWidget();
+    QVERIFY(repeatedRebuildFocusPage);
+    repeatedRebuildFocusPage->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), repeatedRebuildFocusPage);
+    providerA.onEveryUpdate = [&] {
+        ++repeatedRebuildUpdates;
+        if (repeatedRebuildUpdates < 20)
+            providerB.setAvailable(!providerB.isAvailable());
+    };
+    providerA.setAvailable(false);
+    providerA.setAvailable(true);
+    QVERIFY(repeatedRebuildUpdates > 0);
+    QVERIFY(repeatedRebuildUpdates < 20);
+    QVERIFY(QApplication::focusWidget());
+    QVERIFY(details.tabWidget()->isAncestorOf(QApplication::focusWidget()));
+    QTabBar *yieldedTabBar = details.tabWidget()->tabBar();
+    QVERIFY(yieldedTabBar);
+    yieldedTabBar->setFocus(Qt::OtherFocusReason);
+    QCOMPARE(QApplication::focusWidget(), yieldedTabBar);
+    QPointer<QWidget> explicitYieldTabFocus = QApplication::focusWidget();
+    const QString yieldedUserPageKey = baselineFirstKey;
+    const int yieldedUserPageIndex = pageIndexForKey(yieldedUserPageKey);
+    QVERIFY(yieldedUserPageIndex >= 0);
+    QTest::mouseClick(
+        yieldedTabBar,
+        Qt::LeftButton,
+        Qt::NoModifier,
+        yieldedTabBar->tabRect(yieldedUserPageIndex).center());
+    QCOMPARE(currentPageKey(), yieldedUserPageKey);
+    QCOMPARE(QApplication::focusWidget(), explicitYieldTabFocus.data());
+    providerA.onEveryUpdate = {};
+    providerB.setAvailable(true);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 2);
+    QTRY_COMPARE(currentPageKey(), yieldedUserPageKey);
+    QTRY_COMPARE(QApplication::focusWidget(), explicitYieldTabFocus.data());
+    const int providerBAfterYieldIndex = pageIndexForKey(providerBKey);
+    QVERIFY(providerBAfterYieldIndex >= 0);
+    details.tabWidget()->setCurrentIndex(providerBAfterYieldIndex);
+    QTRY_COMPARE(currentPageKey(), providerBKey);
 
     providerA.setAvailable(false);
     QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 1);
@@ -6377,14 +6759,178 @@ void EtherCATWorkbenchTests::testDynamicPropertyProviderRemoval()
     QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 2);
     QTRY_COMPARE(currentPageKey(), providerBKey);
 
-    ExtensionSystem::PluginManager::removeObject(&providerA);
-    providerARegistered = false;
+    QPointer<QWidget> nestedClearProviderAPage
+        = details.findChild<QWidget *>("EtherCATDynamicTestPageA");
+    QPointer<QWidget> nestedClearProviderBPage
+        = details.findChild<QWidget *>("EtherCATDynamicTestPageB");
+    QVERIFY(nestedClearProviderAPage);
+    QVERIFY(nestedClearProviderBPage);
+    bool nestedClearRemovalObserved = false;
+    bool nestedClearPageDestroyedBeforeReturn = false;
+    connect(nestedClearProviderAPage, &QObject::destroyed, &details, [&] {
+        nestedClearRemovalObserved = true;
+        ExtensionSystem::PluginManager::removeObject(&providerB);
+        providerBRegistered = false;
+        nestedClearPageDestroyedBeforeReturn = nestedClearProviderBPage.isNull();
+    });
+    providerA.setAvailable(false);
+    QVERIFY(nestedClearRemovalObserved);
+    QVERIFY(nestedClearPageDestroyedBeforeReturn);
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages);
+    providerA.setAvailable(true);
+    ExtensionSystem::PluginManager::addObject(&providerB);
+    providerBRegistered = true;
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 2);
+    const int providerBAfterNestedClearIndex = pageIndexForKey(providerBKey);
+    QVERIFY(providerBAfterNestedClearIndex >= 0);
+    details.tabWidget()->setCurrentIndex(providerBAfterNestedClearIndex);
+    QTRY_COMPARE(currentPageKey(), providerBKey);
+
+    QPointer<QWidget> pageUpdatedDuringRemoval
+        = details.findChild<QWidget *>("EtherCATDynamicTestPageA");
+    QPointer<QWidget> pageOwnedByRemovedProvider
+        = details.findChild<QWidget *>("EtherCATDynamicTestPageB");
+    QVERIFY(pageUpdatedDuringRemoval);
+    QVERIFY(pageOwnedByRemovedProvider);
+    bool updateCallbackActive = false;
+    bool pageDestroyedInUpdateCallback = false;
+    bool pageAliveAfterRemovalRequest = false;
+    bool removedPageDestroyedBeforeReturn = false;
+    connect(pageUpdatedDuringRemoval, &QObject::destroyed, &details, [&] {
+        if (updateCallbackActive)
+            pageDestroyedInUpdateCallback = true;
+    });
+    bool removalDuringUpdateObserved = false;
+    bool removedProviderUpdated = false;
+    providerA.onUpdate = [&] {
+        removalDuringUpdateObserved = true;
+        updateCallbackActive = true;
+        providerB.onUpdate = [&] { removedProviderUpdated = true; };
+        ExtensionSystem::PluginManager::removeObject(&providerB);
+        providerBRegistered = false;
+        pageAliveAfterRemovalRequest = !pageUpdatedDuringRemoval.isNull();
+        removedPageDestroyedBeforeReturn = pageOwnedByRemovedProvider.isNull();
+        if (pageUpdatedDuringRemoval)
+            pageUpdatedDuringRemoval->setProperty("UpdateContinuedAfterReentry", true);
+        updateCallbackActive = false;
+    };
+    emit controller.diagnosticsProviderChanged(false);
+    QVERIFY(removalDuringUpdateObserved);
+    QVERIFY(pageAliveAfterRemovalRequest);
+    QVERIFY(removedPageDestroyedBeforeReturn);
+    QVERIFY(pageOwnedByRemovedProvider.isNull());
+    QVERIFY(!pageDestroyedInUpdateCallback);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_VERIFY(pageUpdatedDuringRemoval.isNull());
+    QVERIFY(!removedProviderUpdated);
+    QCOMPARE(details.tabWidget()->count(), baselinePages + 1);
+    QVERIFY(details.findChild<QWidget *>("EtherCATDynamicTestPageA"));
+    QVERIFY(!details.findChild<QWidget *>("EtherCATDynamicTestPageB"));
+    providerB.onUpdate = {};
+    ExtensionSystem::PluginManager::addObject(&providerB);
+    providerBRegistered = true;
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 2);
+    const int restoredProviderBIndex = pageIndexForKey(providerBKey);
+    QVERIFY(restoredProviderBIndex >= 0);
+    details.tabWidget()->setCurrentIndex(restoredProviderBIndex);
+    QTRY_COMPARE(currentPageKey(), providerBKey);
+
+    QPointer<QWidget> selfRemovingProviderPage
+        = details.findChild<QWidget *>("EtherCATDynamicTestPageA");
+    QVERIFY(selfRemovingProviderPage);
+    bool selfRemovalCallbackActive = false;
+    bool selfRemovalObserved = false;
+    bool selfPageAliveAfterRemoveObject = false;
+    bool selfPageDestroyedInsideCallback = false;
+    connect(selfRemovingProviderPage, &QObject::destroyed, &details, [&] {
+        if (selfRemovalCallbackActive)
+            selfPageDestroyedInsideCallback = true;
+    });
+    providerA.onUpdate = [&] {
+        selfRemovalObserved = true;
+        selfRemovalCallbackActive = true;
+        ExtensionSystem::PluginManager::removeObject(&providerA);
+        providerARegistered = false;
+        selfPageAliveAfterRemoveObject = !selfRemovingProviderPage.isNull();
+        selfRemovalCallbackActive = false;
+    };
+    emit controller.diagnosticsProviderChanged(false);
+    QVERIFY(selfRemovalObserved);
+    QVERIFY(selfPageAliveAfterRemoveObject);
+    QVERIFY(!selfPageDestroyedInsideCallback);
+    QVERIFY(selfRemovingProviderPage.isNull());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 1);
     QTRY_COMPARE(currentPageKey(), providerBKey);
+    ExtensionSystem::PluginManager::addObject(&providerA);
+    providerARegistered = true;
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 2);
+    QTRY_COMPARE(currentPageKey(), providerBKey);
+
+    QWidget *providerBPage = details.tabWidget()->currentWidget();
+    QLabel *detailsTitle = details.findChild<QLabel *>("EtherCATWorkbenchDetailsTitle");
+    QVERIFY(providerBPage);
+    QVERIFY(detailsTitle);
+    providerBPage->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), providerBPage);
+    QPointer<QWidget> destroyedProviderBPage = providerBPage;
+    QWidget *providerAPage
+        = details.findChild<QWidget *>("EtherCATDynamicTestPageA");
+    QVERIFY(providerAPage);
+    bool removalClearReentryObserved = false;
+    connect(providerAPage, &QObject::destroyed, &details, [&] {
+        removalClearReentryObserved = true;
+        providerB.setAvailable(false);
+        providerB.setAvailable(true);
+    });
+    ExtensionSystem::PluginManager::removeObject(&providerA);
+    providerARegistered = false;
+    QTRY_VERIFY(removalClearReentryObserved);
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 1);
+    QTRY_COMPARE(currentPageKey(), providerBKey);
+    QTRY_VERIFY(destroyedProviderBPage.isNull());
+    QWidget *restoredProviderBPage
+        = details.findChild<QWidget *>("EtherCATDynamicTestPageB");
+    QVERIFY(restoredProviderBPage);
+    QTRY_COMPARE(QApplication::focusWidget(), restoredProviderBPage);
+
+    ExtensionSystem::PluginManager::addObject(&providerA);
+    providerARegistered = true;
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 2);
+    QTRY_COMPARE(currentPageKey(), providerBKey);
+    restoredProviderBPage = details.findChild<QWidget *>("EtherCATDynamicTestPageB");
+    QVERIFY(restoredProviderBPage);
+    restoredProviderBPage->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), restoredProviderBPage);
+    bool externalFocusSet = false;
+    const QMetaObject::Connection externalFocusConnection = connect(
+        controller.providerRegistry(),
+        &Core::ProviderRegistry::providerAboutToBeRemoved,
+        &details,
+        [&](Core::Provider *departingProvider) {
+            if (departingProvider == &providerA) {
+                externalFocusSet = true;
+                detailsTitle->setFocus(Qt::OtherFocusReason);
+            }
+        },
+        Qt::DirectConnection);
+    ExtensionSystem::PluginManager::removeObject(&providerA);
+    providerARegistered = false;
+    disconnect(externalFocusConnection);
+    QVERIFY(externalFocusSet);
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 1);
+    QTRY_COMPARE(currentPageKey(), providerBKey);
+    QTRY_COMPARE(QApplication::focusWidget(), detailsTitle);
     QCOMPARE(details.currentContext().nodeId, stableContextId);
     QCOMPARE(controller.selectionService()->currentNodeId(), stableContextId);
     QVERIFY(!details.findChild<QWidget *>("EtherCATDynamicTestPageA"));
     QVERIFY(details.findChild<QWidget *>("EtherCATDynamicTestPageB"));
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 1);
+    QTRY_COMPARE(QApplication::focusWidget(), detailsTitle);
 
     QPointer<QWidget> stableProviderBPage = details.findChild<QWidget *>(
         "EtherCATDynamicTestPageB");
@@ -6424,8 +6970,8 @@ void EtherCATWorkbenchTests::testDynamicPropertyProviderRemoval()
     ExtensionSystem::PluginManager::removeObject(&providerA);
     providerARegistered = false;
     QVERIFY(reentrantRemovalObserved);
-    QVERIFY(!details.findChild<QWidget *>("EtherCATDynamicTestPageA"));
-    QCOMPARE(details.tabWidget()->count(), baselinePages + 1);
+    QTRY_VERIFY(!details.findChild<QWidget *>("EtherCATDynamicTestPageA"));
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 1);
     QCOMPARE(details.currentContext().nodeId, stableContextId);
     QCOMPARE(controller.selectionService()->currentNodeId(), stableContextId);
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
@@ -6447,11 +6993,81 @@ void EtherCATWorkbenchTests::testDynamicPropertyProviderRemoval()
         QVERIFY2(details.grab().save(renderPath), qPrintable(renderPath));
     }
 
+    ExtensionSystem::PluginManager::addObject(&providerA);
+    providerARegistered = true;
+    QTRY_COMPARE(details.tabWidget()->count(), baselinePages + 2);
+    QPointer<QWidget> nestedRemovalPageB
+        = details.findChild<QWidget *>("EtherCATDynamicTestPageB");
+    QPointer<QWidget> nestedRemovalPageA
+        = details.findChild<QWidget *>("EtherCATDynamicTestPageA");
+    QVERIFY(nestedRemovalPageB);
+    QVERIFY(nestedRemovalPageA);
+    bool nestedRegistryRemovalObserved = false;
+    bool nestedHideRemovalObserved = false;
+    bool nestedHidePageDestroyedBeforeReturn = false;
+    bool nestedHideDrainObserved = false;
+    bool outerPageAliveAfterNestedDrain = false;
+    bool nestedProviderPageDestroyedBeforeReturn = false;
+    const QMetaObject::Connection nestedHideDrainConnection = connect(
+        controller.providerRegistry(),
+        &Core::ProviderRegistry::providerAboutToBeRemoved,
+        &details,
+        [&](Core::Provider *departingProvider) {
+            if (departingProvider != &providerA)
+                return;
+            nestedHideDrainObserved = true;
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+            outerPageAliveAfterNestedDrain = !nestedRemovalPageB.isNull();
+        },
+        Qt::DirectConnection);
+    providerB.onHide = [&] {
+        nestedHideRemovalObserved = true;
+        if (providerARegistered) {
+            ExtensionSystem::PluginManager::removeObject(&providerA);
+            providerARegistered = false;
+            nestedHidePageDestroyedBeforeReturn = nestedRemovalPageA.isNull();
+        }
+    };
+    connect(nestedRemovalPageB, &QObject::destroyed, &details, [&] {
+        nestedRegistryRemovalObserved = true;
+        if (providerARegistered) {
+            ExtensionSystem::PluginManager::removeObject(&providerA);
+            providerARegistered = false;
+        }
+        nestedProviderPageDestroyedBeforeReturn = nestedRemovalPageA.isNull();
+    });
+    bool nestedSignalDrainObserved = false;
+    bool nestedRemovalCompletedInsideSignal = false;
+    const QMetaObject::Connection nestedSignalDrainConnection = connect(
+        controller.providerRegistry(),
+        &Core::ProviderRegistry::providerAboutToBeRemoved,
+        &details,
+        [&](Core::Provider *departingProvider) {
+            if (departingProvider != &providerB)
+                return;
+            nestedSignalDrainObserved = true;
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+            nestedRemovalCompletedInsideSignal = nestedRegistryRemovalObserved;
+        },
+        Qt::DirectConnection);
     ExtensionSystem::PluginManager::removeObject(&providerB);
     providerBRegistered = false;
+    disconnect(nestedHideDrainConnection);
+    disconnect(nestedSignalDrainConnection);
+    QVERIFY(nestedSignalDrainObserved);
+    QVERIFY(nestedRemovalCompletedInsideSignal);
+    QVERIFY(nestedHideRemovalObserved);
+    QVERIFY(nestedHidePageDestroyedBeforeReturn);
+    QVERIFY(nestedHideDrainObserved);
+    QVERIFY(outerPageAliveAfterNestedDrain);
+    QVERIFY(nestedProviderPageDestroyedBeforeReturn);
+    QTRY_VERIFY(nestedRegistryRemovalObserved);
     QTRY_COMPARE(details.tabWidget()->count(), baselinePages);
     QCOMPARE(details.tabWidget()->currentIndex(), 0);
     QCOMPARE(currentPageKey(), baselineFirstKey);
+    QVERIFY(!controller.providerRegistry()->provider(providerAId));
+    QVERIFY(!controller.providerRegistry()->provider(providerBId));
+    QVERIFY(!details.findChild<QWidget *>("EtherCATDynamicTestPageA"));
     QVERIFY(!details.findChild<QWidget *>("EtherCATDynamicTestPageB"));
     QCOMPARE(details.currentContext().nodeId, stableContextId);
 }
