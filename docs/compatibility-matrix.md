@@ -1668,6 +1668,47 @@ online object operation from offline device-description values while retaining
 the object's `RW`/`RO` metadata:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
 
+## EtherCATWorkbench ESI selection cell accessibility qualification
+
+`ISSUE-WB-ESI-SELECTION-CELL-A11Y-001` uses local baseline
+`2ffc91065b6d940bd9bc6197eb96d0471dfc4795`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first regression | Setup and cleanup passed; the unchanged implementation returned an invalid `AccessibleTextRole` instead of a `QString`, so the target exited with status 1 under `/private/tmp/embed-labs-esi-selection-cell-a11y-failure.fHPgX3` |
+| Standard item roles | Every Device, Type, Vendor ID, Product Code, Revision, Group, and Support cell returns a `QString` through `AccessibleTextRole` equal to its complete current Display value |
+| Complete contextual recovery | `AccessibleDescriptionRole` and `ToolTipRole` contain the translated column heading, complete value, qualification, append operation, and offline/controller/network boundary |
+| Supported operation | Every Supported cell states that the device can be appended to the selected offline EtherCAT Master without accessing a controller or network |
+| Limited operation | Every Limited cell states that the device cannot be appended until unsupported structures are resolved; selecting the row keeps Add disabled |
+| Long and literal text | Complete 256-character Chinese/Unicode Device, Type, and Group values plus literal `%1`, `%2`, and `%%` text are preserved exactly |
+| Existing dialog behavior | Highest-revision filtering, search, sorting, extended columns, selection, icons, identity roles, Add gating, insertion, and geometry remain unchanged |
+| Focused normal-scale test | 3 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-esi-selection-cell-a11y-pass-1.R4JfjQ` |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-esi-selection-cell-a11y-focused-2x.sgxlpQ` |
+| Complete EtherCATWorkbench normal scale | 51 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-workbench-full-1.pA3kEO` |
+| Complete EtherCATWorkbench 2x scale | 51 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-esi-selection-cell-a11y-full-2x.wgcUmB` |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 51, Scan 7, Diagnostics 7; 102 passed, 0 failed with target status 0 in isolated LLDB-supervised processes under `/private/tmp/embed-labs-six-suite.2xoXwk` |
+| Qualified Qt and test build | Qt 6.11 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed in `qt-creator-build-ethercat-product-qt611`; exactly the 16 allow-listed plugin dylibs are present |
+| Enabled offscreen startup | PID 50789 remained running for 36.011 seconds after observation under `/private/tmp/embed-labs-esi-selection-cell-a11y-lifecycle.2erfTD/enabled`; intentional SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 51907 remained running for 36.002 seconds with `-noload EtherCATWorkbench` under `/private/tmp/embed-labs-esi-selection-cell-a11y-lifecycle.2erfTD/disabled`; intentional SIGTERM produced target status 15 |
+| Process and crash-report cleanup | No residual Embed Labs/LLDB process, new DiagnosticReports file, or matching ReportCrash/CrashReporter unified-log event |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no visible main window or crash dialog |
+| Assistive-technology claim | Standard Qt widget/item-model metadata verified; no manual VoiceOver reading is claimed |
+| Visual/manual desktop inspection | Not run by design; the issue changes no geometry and all executable qualification was offscreen |
+| `WITH_TESTS=ON` all-target build | Not rerun; the known unrelated EasyBoard test include blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, Project command, custom model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, controller transport, online state, or hardware access | Not performed or added; selection remains an offline ESI/Project operation |
+
+Qt's standard item accessibility interfaces are documented at
+<https://doc.qt.io/qt-6/qstandarditem.html> and
+<https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum>. Beckhoff's offline device
+selection, catalogue search, extended information, and revision comparison is
+documented at
+<https://infosys.beckhoff.com/content/1033/el331x/1036999947.html> and
+<https://infosys.beckhoff.com/content/1033/ethercatsystem/2477595531.html>.
+
 ## Verification states
 
 Use only these evidence labels:

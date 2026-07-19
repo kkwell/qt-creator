@@ -1693,6 +1693,104 @@ void EtherCATWorkbenchTests::testTwinCatInsertDeviceWorkflow()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
+void EtherCATWorkbenchTests::testEsiDeviceSelectionCellAccessibility()
+{
+    const QString longName
+        = QString::fromUtf8("支持设备 / Servo ") + QString(256, QChar(0x540d))
+          + QString::fromUtf8(" / 日本語 / %1 / %2 / %%");
+    const QString longType
+        = QString::fromUtf8("EL-Accessible-Type-") + QString(256, QChar(0x578b));
+    const QString longGroup
+        = QString::fromUtf8("长设备组 / Group ") + QString(256, QChar(0x7ec4));
+    const Data::DeviceSummary supported{
+        Data::NodeId::create(),
+        {0x00000002, 0x7a130004, 0x00000022},
+        longName,
+        longType,
+        longGroup,
+        true};
+    const Data::DeviceSummary limited{
+        Data::NodeId::create(),
+        {0x00000003, 0x7a130005, 0x00000011},
+        QString::fromUtf8("受限模块设备 / Limited Module"),
+        QString::fromUtf8("Limited-Type"),
+        QString::fromUtf8("Modules / 模块"),
+        false};
+
+    EsiDeviceSelectionDialog dialog({supported, limited});
+    QTreeView *tree = dialog.findChild<QTreeView *>("EtherCATEsiDeviceSelectionTree");
+    QDialogButtonBox *buttons
+        = dialog.findChild<QDialogButtonBox *>("EtherCATEsiDeviceSelectionButtons");
+    QVERIFY(tree);
+    QVERIFY(buttons);
+    QVERIFY(!tree->accessibleName().isEmpty());
+    QVERIFY(!tree->accessibleDescription().isEmpty());
+    QAbstractItemModelTester modelTester(
+        tree->model(), QAbstractItemModelTester::FailureReportingMode::QtTest, &dialog);
+    Q_UNUSED(modelTester)
+
+    QAbstractItemModel *model = tree->model();
+    QCOMPARE(model->rowCount(), 2);
+    QCOMPARE(model->columnCount(), 7);
+    const QModelIndex supportedRow = findByDisplayText(model, longName);
+    const QModelIndex limitedRow
+        = findByDisplayText(model, QString::fromUtf8("受限模块设备 / Limited Module"));
+    QVERIFY(supportedRow.isValid());
+    QVERIFY(limitedRow.isValid());
+
+    const auto verifyRow = [model](
+                               const QModelIndex &rowIndex,
+                               const QString &qualification,
+                               const QString &operationText) {
+        for (int column = 0; column < model->columnCount(); ++column) {
+            const QModelIndex index = rowIndex.siblingAtColumn(column);
+            const QString heading = model->headerData(column, Qt::Horizontal).toString();
+            const QString display = index.data(Qt::DisplayRole).toString();
+            const QVariant accessibleText = index.data(Qt::AccessibleTextRole);
+            const QVariant accessibleDescription = index.data(Qt::AccessibleDescriptionRole);
+            const QVariant toolTip = index.data(Qt::ToolTipRole);
+            QVERIFY2(!heading.isEmpty(), qPrintable(QString("column %1").arg(column)));
+            QCOMPARE(accessibleText.metaType().id(), int(QMetaType::QString));
+            QCOMPARE(accessibleText.toString(), display);
+            QCOMPARE(accessibleDescription.metaType().id(), int(QMetaType::QString));
+            QVERIFY(accessibleDescription.toString().contains(heading));
+            QVERIFY(accessibleDescription.toString().contains(display));
+            QVERIFY(accessibleDescription.toString().contains(qualification));
+            QVERIFY(accessibleDescription.toString().contains(operationText));
+            QVERIFY(accessibleDescription.toString().contains("offline", Qt::CaseInsensitive));
+            QVERIFY(accessibleDescription.toString().contains("controller", Qt::CaseInsensitive));
+            QVERIFY(accessibleDescription.toString().contains("network", Qt::CaseInsensitive));
+            QCOMPARE(toolTip.metaType().id(), int(QMetaType::QString));
+            QCOMPARE(toolTip.toString(), accessibleDescription.toString());
+        }
+    };
+
+    verifyRow(supportedRow, "Supported", "can be appended");
+    verifyRow(limitedRow, "Limited", "cannot be appended");
+    QCOMPARE(
+        supportedRow.siblingAtColumn(columnWithHeader(model, "Device"))
+            .data(Qt::AccessibleTextRole)
+            .toString(),
+        longName);
+    QCOMPARE(
+        supportedRow.siblingAtColumn(columnWithHeader(model, "Type"))
+            .data(Qt::AccessibleTextRole)
+            .toString(),
+        longType);
+    QCOMPARE(
+        supportedRow.siblingAtColumn(columnWithHeader(model, "Group"))
+            .data(Qt::AccessibleTextRole)
+            .toString(),
+        longGroup);
+
+    tree->setCurrentIndex(limitedRow);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QVERIFY(!buttons->button(QDialogButtonBox::Ok)->isEnabled());
+    tree->setCurrentIndex(supportedRow);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QVERIFY(buttons->button(QDialogButtonBox::Ok)->isEnabled());
+}
+
 void EtherCATWorkbenchTests::testInsertDeviceDialogTargetLifecycle_data()
 {
     QTest::addColumn<QString>("targetInvalidation");

@@ -713,6 +713,24 @@ budget does not increase and no extension-point exception is required. The
 Workbench path count remains 44 and the direct upstream Core patch count
 remains five.
 
+The Workbench ESI device-selection cell accessibility issue, based on
+`2ffc91065b6d940bd9bc6197eb96d0471dfc4795`, changes only the existing
+product-owned `esideviceselectiondialog.cpp`, Workbench test
+declaration/implementation, and documentation. It uses Qt's standard
+`AccessibleTextRole` and `AccessibleDescriptionRole` for complete seven-column
+current values, column context, Supported/Limited qualification, and truthful
+offline append/controller/network guidance. Tooltips expose the same complete
+recovery text without changing the dialog's visual geometry or operation.
+
+No source file, dependency, CMake/qbs entry, public API, Project format,
+Provider, persistence field, Project command, custom model role, thread,
+timer, controller transport, online state, network behavior, or
+physical-hardware behavior changes. No file under Qt Creator's upstream Core,
+ProjectExplorer, or application bootstrap changes, so the direct Core patch
+budget does not increase and no extension-point exception is required. The
+Workbench path count remains 44 and the direct upstream Core patch count
+remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

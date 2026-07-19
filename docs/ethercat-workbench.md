@@ -2752,3 +2752,85 @@ requires editable models to align `flags()` with `setData()`:
 Online object operation from an offline device-description source while
 retaining the object's `RW`/`RO` access metadata:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
+
+## ESI device-selection cell accessibility qualification
+
+`ISSUE-WB-ESI-SELECTION-CELL-A11Y-001` uses local baseline
+`2ffc91065b6d940bd9bc6197eb96d0471dfc4795`. The existing private
+`EsiDeviceSelectionDialog` now publishes complete standard Qt accessibility
+metadata for every Device, Type, Vendor ID, Product Code, Revision, Group, and
+Support cell. `AccessibleTextRole` is an actual `QString` equal to the current
+complete Display value. `AccessibleDescriptionRole` and `ToolTipRole` contain
+the matching column heading and complete value, Supported or Limited
+qualification, whether the row can be appended, and the existing offline
+boundary that accesses no controller or network.
+
+The same translated column-label list supplies the visible headers and the
+cell descriptions. Supported rows state that they can be appended to the
+selected offline EtherCAT Master. Limited rows state that they cannot be
+appended until unsupported structures are resolved. This does not change the
+existing row flags, icons, identity roles, highest-revision filtering,
+sorting, search, extended columns, first-supported selection, Add enablement,
+double-click handling, insertion, or dialog geometry. Complete values remain
+recoverable even when the view elides them visually.
+
+Qt documents the standard data roles at
+<https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum> and the corresponding
+`QStandardItem` setters at
+<https://doc.qt.io/qt-6/qstandarditem.html>. Beckhoff's offline-configuration
+workflow provides the comparison for selecting an ESI-described device,
+searching the catalogue, showing extended information, and choosing latest or
+previous revisions:
+<https://infosys.beckhoff.com/content/1033/el331x/1036999947.html> and
+<https://infosys.beckhoff.com/content/1033/ethercatsystem/2477595531.html>.
+Embed Labs remains an offline Project editor and does not claim TwinCAT
+controller or network behavior.
+
+The frozen test ran first against the unchanged implementation under
+`/private/tmp/embed-labs-esi-selection-cell-a11y-failure.fHPgX3`. Setup and
+cleanup passed, and the test failed because the old cell returned no
+`QString` for `AccessibleTextRole`; the target exited with status 1. After the
+minimal implementation, the focused normal-scale run passed three events
+under `/private/tmp/embed-labs-esi-selection-cell-a11y-pass-1.R4JfjQ`, and the
+explicit `QT_SCALE_FACTOR=2` run passed three events under
+`/private/tmp/embed-labs-esi-selection-cell-a11y-focused-2x.sgxlpQ`. The
+fixture verifies all 14 cells across Supported and Limited rows, exact role
+types, complete Unicode Device/Type/Group values, literal `%1`, `%2`, and `%%`
+recovery, truthful operation boundaries, tooltip equality, and unchanged Add
+enablement. This qualifies standard Qt metadata; no manual VoiceOver reading
+is claimed.
+
+Complete normal-scale and 2x Workbench runs each passed 51 events with target
+status 0 under `/private/tmp/embed-labs-workbench-full-1.pA3kEO` and
+`/private/tmp/embed-labs-esi-selection-cell-a11y-full-2x.wgcUmB`. The six
+isolated EtherCAT suites passed 102 events under
+`/private/tmp/embed-labs-six-suite.2xoXwk`: Core 17, Project 12, Devices 8,
+Workbench 51, Scan 7, and Diagnostics 7. Every target exited with status 0.
+
+The full `WITH_TESTS=OFF` product build passed in
+`qt-creator-build-ethercat-product-qt611`, and exactly the 16 allow-listed
+plugin dylibs are present. Enabled product startup observed PID 50789 and
+remained running for 36.011 seconds after observation. Explicitly disabled
+startup observed PID 51907 and remained running for 36.002 seconds with
+`-noload EtherCATWorkbench`. Evidence for both runs is under
+`/private/tmp/embed-labs-esi-selection-cell-a11y-lifecycle.2erfTD`. Each target
+was still running before LLDB passed intentional SIGTERM and exited with target
+status 15.
+
+Cleanup found no residual target or LLDB process, new DiagnosticReports file,
+or matching ReportCrash/CrashReporter unified-log event. Every executable used
+fresh HOME/settings, cleared inherited DYLD variables,
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and
+only the process-local Touch Bar LLDB breakpoint. No visible main window or
+crash dialog was created. Manual desktop inspection was not run because this
+issue changes no geometry. The unrelated `WITH_TESTS=ON` all-target build was
+not rerun; the known EasyBoard test include blocker remains outside this
+private Workbench issue.
+
+This issue changes only the existing private `esideviceselectiondialog.cpp`,
+Workbench test declaration/implementation, and documentation. It adds no
+source file, public API, dependency, Provider, custom model role, persistence
+field, Project command, thread, timer, controller/network transport, online
+state, or physical-hardware behavior. No CMake or qbs description changed, so
+qbs was not run. The Workbench path count remains 44 and the direct upstream
+Core patch count remains five.

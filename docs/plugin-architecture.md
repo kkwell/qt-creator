@@ -920,6 +920,41 @@ the distinction between `RW`/`RO` object metadata and offline values sourced
 from the device description:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
 
+## Workbench ESI device-selection cell accessibility boundary
+
+The private `EsiDeviceSelectionDialog` owns its `QStandardItemModel`, proxy,
+tree, selection, and Add-button lifecycle. The same translated seven-element
+column-label list supplies the model headers and per-cell descriptions. Every
+new item copies its complete current text into Qt's standard
+`AccessibleTextRole`; `AccessibleDescriptionRole` and `ToolTipRole` are value
+objects derived at row creation from the column label, complete cell value,
+the row's existing Supported/Limited capability, and the offline operation
+boundary. No `QModelIndex`, device object, Project snapshot, or controller
+object is retained by the metadata.
+
+The private Device row remains the only owner of its existing stable device ID,
+support flag, latest-revision flag, icon, and item flags. Supported metadata
+describes the existing append path, while Limited metadata truthfully
+describes the existing rejection path. The proxy still owns filtering and
+sorting, the dialog still selects the first supported visible row, and the
+existing accepted signal remains the only entry to Project mutation.
+
+This boundary does not alter visible layout, header resize modes, elision,
+filtering, revision visibility, selection, insertion, ProjectService,
+persistence, ESI parsing, or dialog ownership. It adds no public/custom role,
+API, source file, dependency, Provider, Project command, thread, timer,
+controller/network transport, online state, or physical-hardware behavior. No
+CMake or qbs description changed. The Workbench path count remains 44 and the
+direct upstream Core patch count remains five.
+
+Qt documents the standard item setters and roles at
+<https://doc.qt.io/qt-6/qstandarditem.html> and
+<https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum>. Beckhoff's offline append,
+search, extended-information, and revision workflow remains only the product
+comparison:
+<https://infosys.beckhoff.com/content/1033/el331x/1036999947.html> and
+<https://infosys.beckhoff.com/content/1033/ethercatsystem/2477595531.html>.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

@@ -21,8 +21,6 @@
 #include <QTreeView>
 #include <QVBoxLayout>
 
-#include <utility>
-
 namespace EtherCAT::Workbench::Internal {
 
 enum DeviceColumn {
@@ -79,15 +77,34 @@ static quint64 productKey(const Data::DeviceIdentity &identity)
     return (quint64(identity.vendorId) << 32) | identity.productCode;
 }
 
+static QStringList deviceColumnLabels()
+{
+    return {Tr::tr("Device"),
+            Tr::tr("Type"),
+            Tr::tr("Vendor ID"),
+            Tr::tr("Product Code"),
+            Tr::tr("Revision"),
+            Tr::tr("Group"),
+            Tr::tr("Support")};
+}
+
+static QString deviceCellDescription(
+    const QString &columnLabel, const QString &value, bool supported)
+{
+    const QString operation
+        = supported
+              ? Tr::tr("Supported ESI description; this device can be appended to the selected "
+                       "offline EtherCAT Master. No controller or network is accessed.")
+              : Tr::tr("Limited ESI description; this device cannot be appended to the selected "
+                       "offline EtherCAT Master until its unsupported structures are resolved. "
+                       "No controller or network is accessed.");
+    return Tr::tr("%1: %2. %3").arg(columnLabel, value, operation);
+}
+
 static QList<QStandardItem *> deviceRow(
     const Data::DeviceSummary &device, bool latestRevision)
 {
     const QString support = device.supported ? Tr::tr("Supported") : Tr::tr("Limited");
-    const QString toolTip
-        = device.supported
-              ? Tr::tr("This ESI description can be appended to the offline EtherCAT Master.")
-              : Tr::tr("This ESI description contains unsupported structures and cannot be "
-                       "appended.");
     const QString name = device.name.isEmpty() ? device.typeName : device.name;
     QList<QStandardItem *> row = {
         new QStandardItem(name),
@@ -99,9 +116,15 @@ static QList<QStandardItem *> deviceRow(
         new QStandardItem(support),
     };
     const Qt::ItemFlags flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
-    for (QStandardItem *item : std::as_const(row)) {
+    const QStringList columnLabels = deviceColumnLabels();
+    for (int column = 0; column < row.size(); ++column) {
+        QStandardItem *item = row.at(column);
+        const QString description
+            = deviceCellDescription(columnLabels.at(column), item->text(), device.supported);
         item->setFlags(flags);
-        item->setToolTip(toolTip);
+        item->setAccessibleText(item->text());
+        item->setAccessibleDescription(description);
+        item->setToolTip(description);
     }
     row.first()->setIcon(
         device.supported ? Utils::Icons::OK.icon() : Utils::Icons::WARNING.icon());
@@ -149,14 +172,7 @@ EsiDeviceSelectionDialog::EsiDeviceSelectionDialog(
     m_showPrevious->setAccessibleDescription(
         Tr::tr("Show every imported revision instead of only the highest revision per product."));
 
-    m_model->setHorizontalHeaderLabels(
-        {Tr::tr("Device"),
-         Tr::tr("Type"),
-         Tr::tr("Vendor ID"),
-         Tr::tr("Product Code"),
-         Tr::tr("Revision"),
-         Tr::tr("Group"),
-         Tr::tr("Support")});
+    m_model->setHorizontalHeaderLabels(deviceColumnLabels());
     QHash<quint64, quint32> highestRevision;
     for (const Data::DeviceSummary &device : devices) {
         const quint64 key = productKey(device.identity);
