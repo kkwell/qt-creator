@@ -3825,3 +3825,97 @@ known EasyBoard test include blocker remains outside this private Workbench
 issue. No upstream Core, ProjectExplorer, or application-bootstrap path
 changed. The Workbench path count remains 44 and the direct upstream Core
 patch count remains five.
+
+## CoE modal repository-refresh lifecycle
+
+`ISSUE-WB-COE-MODAL-REFRESH-001`, based on local commit
+`7395c4ceefe78896496bf3b83d757f5096550e03`, closes a stale-result window in
+the existing CoE Online page. A same-identity ESI re-import can publish
+`devicesChanged` and rebuild the selected Device or configured-slave page
+while either Advanced Settings or Add to Startup is awaiting a response. The
+old blocking dialog path could then apply controls from the pre-refresh
+Advanced dialog, or read a model index that the refresh had already reset.
+
+Both dialogs now use Qt's asynchronous `open()` lifecycle and are owned by the
+private CoE page. Each page context assignment advances a page-local
+generation. A same-context repository refresh leaves the dialog available for
+the user's response, but a response captured before that refresh is discarded:
+Advanced settings cannot restore stale source/range/filter state, and a stale
+Yes response cannot add a Startup request. If selection changes remove the
+page while a dialog is open, parent ownership deletes both page and dialog;
+the page-bound completion connection cannot run afterward.
+
+The valid no-refresh behavior remains unchanged. Accepted Advanced settings
+still update the existing local Mock/offline source and filters. Accepted Add
+to Startup still uses the checked Project path, but the object address, raw
+value, data type, project ID, and slave ID are captured before confirmation.
+After a current-context Yes response, the Project and slave are looked up
+again before the new request is submitted. This is a UI-lifecycle guard, not a
+Provider revision, repository transaction, controller operation, or online
+SDO path.
+
+Qt documents that `QDialog::exec()` creates a nested event loop and recommends
+asynchronous `open()` because parent deletion during the dialog can otherwise
+cause dangerous bugs:
+<https://doc.qt.io/qt-6/qdialog.html#exec>. Qt Creator 20.0 uses the same
+heap-owned, delete-on-close, asynchronous pattern for its font settings dialog:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/fontsettingspage.cpp#L532-L539>.
+Beckhoff's CoE Online Advanced Settings describe only the comparable object
+source, range, and filter controls:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446522251.html>.
+
+Failure-first qualification compiled both new regressions while production
+remained at SHA-256
+`e2d896f08b4872e0385d16f88837da185466e7ebde33b8074fb3e198b73af559` /
+`885e21c1ebd70e60a4ce5cf8c1f73ec7836ee1bdfbb7c98cb7f5006203c1be78`.
+Initialization and cleanup passed. Advanced acceptance after a real second
+same-identity ESI import incorrectly restored Offline state, and Add
+confirmation after the same producer path changed the Project snapshot; both
+targeted runs exited with status 1 under `failure-first-final`.
+
+Final production SHA-256 values are
+`6b8738ff5e7f245ddb2ad746aa2058b8452343471bd86e85cbeee29d66be5478` /
+`542315c7a5ba4f404ec8d2d2edaee15bc519e9f19a7e64e67cf134d2edf53952`;
+final test values are
+`4e99c8e98709136ccc201bbda4f27259a114ccfe6efbcc156bcd95b8bcc2623e` /
+`0cce0d1c7555b037c552a34daf9ff7a248fee30b40d6fcd0efd7fb73917019a6`.
+Advanced and Add focused runs at normal and 2x scale each passed 3 events.
+The existing CoE workflow passed 3 events at both scales. Complete Workbench
+runs passed 62 events at each scale, and the six isolated suites passed 113
+events: Core 17, Project 12, Devices 8, Workbench 62, Scan 7, and Diagnostics
+7. Every final success-path test target exited with status 0 under
+`/private/tmp/embed-labs-coe-advanced-refresh.20260719`.
+
+Each complete Workbench log retains the known pre-existing ProjectExplorer
+TaskHub soft assertion in `testInvalidProjectPresentationAndLifecycle`. It
+does not occur in either new focused test, fail a test, or alter target status.
+The full `WITH_TESTS=OFF` product build passed and contains exactly the 16
+allow-listed plugin dylibs. Its executable SHA-256 is
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`;
+its Workbench plugin SHA-256 is
+`d029befb03a59b8e2c6ef17601b379a988cc87d3607889a31e0d04008545051a`.
+
+Enabled startup observed PID 3445 for 37 consecutive one-second samples, with
+the Workbench plugin loaded for 34 samples after three startup samples.
+Explicitly disabled startup observed PID 3439 for the same 37 samples with
+`-noload EtherCATWorkbench` and zero loaded-plugin samples. Both were ended by
+an intentional passed-through SIGTERM with target status 15. Tests and
+lifecycle acceptance used fresh HOME/settings, cleared inherited DYLD
+variables, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`,
+`-no-crashcheck`, and only the process-local Touch Bar bypass. No visible main
+window was created under this policy. The final crash audit completed at
+2026-07-19 21:53:05 +0800 and found no residual Embed Labs/LLDB process, new
+matching DiagnosticReports file, or matching crash-service event after
+2026-07-19 21:15:56 +0800; this supports the crash-reporter-disabled offscreen
+acceptance boundary, not every possible visible desktop launch environment.
+
+This issue changes only the existing private `coeonlinepage.cpp/.h`, Workbench
+test declaration/implementation, and these four documents. It adds no source
+file, dependency, public API, Provider, persistence field, Project command,
+model role, production thread or timer, controller/network transport, online
+state, SDO execution, or hardware behavior. No CMake or qbs description
+changed, so qbs was not run. The unrelated `WITH_TESTS=ON` all-target build
+was not rerun; the known EasyBoard test include blocker remains outside this
+private Workbench issue. No upstream Core, ProjectExplorer, or
+application-bootstrap path changed. The Workbench path count remains 44 and
+the direct upstream Core patch count remains five.

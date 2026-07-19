@@ -58,6 +58,8 @@ private slots:
     void testCoeOnlineMockWorkflow();
     void testCoeDictionaryCellAccessibility();
     void testCoeRepositoryReadOnlyWorkflow();
+    void testCoeAdvancedDialogRepositoryRefresh();
+    void testCoeAddConfirmationRepositoryRefresh();
     void testStartupTableAccessibility();
     void testStartupRepositoryEmptyState();
     void testEditableStartupWorkflow();

@@ -961,6 +961,7 @@ CoeOnlinePage::CoeOnlinePage(WorkbenchController *controller, QWidget *parent)
 
 void CoeOnlinePage::setContext(const Core::PropertyPageContext &context)
 {
+    ++m_contextGeneration;
     m_context = context;
     m_mockGeneration = 0;
     m_selectedObjectAddress.reset();
@@ -1094,10 +1095,12 @@ void CoeOnlinePage::clearFilters()
 
 void CoeOnlinePage::showAdvancedSettings()
 {
-    QDialog dialog(this);
-    dialog.setObjectName("EtherCATCoeAdvancedDialog");
-    dialog.setWindowTitle(Tr::tr("Advanced CoE Dictionary Settings"));
-    auto sourceGroup = new QGroupBox(Tr::tr("Dictionary source"), &dialog);
+    const quint64 contextGeneration = m_contextGeneration;
+    auto dialog = new QDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setObjectName("EtherCATCoeAdvancedDialog");
+    dialog->setWindowTitle(Tr::tr("Advanced CoE Dictionary Settings"));
+    auto sourceGroup = new QGroupBox(Tr::tr("Dictionary source"), dialog);
     auto mock = new QRadioButton(Tr::tr("Mock object dictionary"), sourceGroup);
     auto offline = new QRadioButton(Tr::tr("Offline from device description"), sourceGroup);
     mock->setObjectName("EtherCATCoeAdvancedMockSource");
@@ -1114,7 +1117,7 @@ void CoeOnlinePage::showAdvancedSettings()
     sourceLayout->addWidget(mock);
     sourceLayout->addWidget(offline);
 
-    auto range = new QComboBox(&dialog);
+    auto range = new QComboBox(dialog);
     range->setObjectName("EtherCATCoeAdvancedRange");
     range->addItem(Tr::tr("All Objects"), int(DictionaryRange::All));
     range->addItem(
@@ -1124,8 +1127,8 @@ void CoeOnlinePage::showAdvancedSettings()
     range->addItem(
         Tr::tr("Profile-specific Objects (0x6000-0x9FFF)"), int(DictionaryRange::ProfileSpecific));
     range->setCurrentIndex(range->findData(int(m_filterModel->dictionaryRange())));
-    auto hideStandard = new QCheckBox(Tr::tr("Hide Standard Objects"), &dialog);
-    auto hidePdo = new QCheckBox(Tr::tr("Hide PDO Objects"), &dialog);
+    auto hideStandard = new QCheckBox(Tr::tr("Hide Standard Objects"), dialog);
+    auto hidePdo = new QCheckBox(Tr::tr("Hide PDO Objects"), dialog);
     hideStandard->setObjectName("EtherCATCoeAdvancedHideStandard");
     hidePdo->setObjectName("EtherCATCoeAdvancedHidePdo");
     hideStandard->setChecked(m_filterModel->hideStandard());
@@ -1139,11 +1142,11 @@ void CoeOnlinePage::showAdvancedSettings()
     options->addRow(QString(), hideStandard);
     options->addRow(QString(), hidePdo);
     auto buttons = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, dialog);
+    connect(buttons, &QDialogButtonBox::accepted, dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
 
-    auto layout = new QVBoxLayout(&dialog);
+    auto layout = new QVBoxLayout(dialog);
     layout->setContentsMargins(
         Utils::StyleHelper::SpacingTokens::PaddingHM,
         Utils::StyleHelper::SpacingTokens::PaddingVM,
@@ -1153,17 +1156,23 @@ void CoeOnlinePage::showAdvancedSettings()
     layout->addWidget(sourceGroup);
     layout->addLayout(options);
     layout->addWidget(buttons);
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-
-    QScopedValueRollback resultChange(
-        m_filterResultChangeDepth, m_filterResultChangeDepth + 1);
-    m_filterModel->setDictionaryRange(DictionaryRange(range->currentData().toInt()));
-    m_filterModel->setHideStandard(hideStandard->isChecked());
-    m_filterModel->setHidePdo(hidePdo->isChecked());
-    m_showOffline->setChecked(offline->isChecked());
-    m_dictionary->expandAll();
-    refreshFilterResults();
+    connect(
+        dialog,
+        &QDialog::finished,
+        this,
+        [this, contextGeneration, range, hideStandard, hidePdo, offline](int result) {
+            if (result != QDialog::Accepted || contextGeneration != m_contextGeneration)
+                return;
+            QScopedValueRollback resultChange(
+                m_filterResultChangeDepth, m_filterResultChangeDepth + 1);
+            m_filterModel->setDictionaryRange(DictionaryRange(range->currentData().toInt()));
+            m_filterModel->setHideStandard(hideStandard->isChecked());
+            m_filterModel->setHidePdo(hidePdo->isChecked());
+            m_showOffline->setChecked(offline->isChecked());
+            m_dictionary->expandAll();
+            refreshFilterResults();
+        });
+    dialog->open();
 }
 
 void CoeOnlinePage::addSelectedToStartup()
@@ -1180,54 +1189,82 @@ void CoeOnlinePage::addSelectedToStartup()
     const QByteArray rawValue = sourceIndex.data(RawValueRole).toByteArray();
     if (rawValue.isEmpty())
         return;
+    const quint64 contextGeneration = m_contextGeneration;
+    const Data::NodeId projectId = m_context.projectId;
+    const Data::NodeId slaveId = m_context.nodeId;
     const QString name = sourceIndex.siblingAtColumn(CoeObjectModel::Name).data().toString();
-    if (QMessageBox::question(
-            this,
-            Tr::tr("Add to Startup"),
-            Tr::tr("Add the selected local Mock value for %1 (%2) as a new PS Startup request? "
-                   "Existing requests are not overwritten.")
-                .arg(name, indexText(quint16(objectAddress >> 8), quint8(objectAddress))))
-        != QMessageBox::Yes) {
-        return;
-    }
-    const std::optional<Data::ProjectSnapshot> project = m_controller->projectService()->project(
-        m_context.projectId);
-    if (!project)
-        return;
-    const auto slave = std::find_if(
-        project->slaves.cbegin(), project->slaves.cend(), [this](const auto &candidate) {
-            return candidate.id == m_context.nodeId;
-        });
-    if (slave == project->slaves.cend())
-        return;
-    Data::StartupConfiguration configuration = slave->startup;
-    int nextOrder = 0;
-    for (const Data::StartupParameterConfiguration &parameter : configuration.parameters)
-        nextOrder = qMax(nextOrder, parameter.order + 1);
-    configuration.parameters.append(
-        {Data::NodeId::create(),
-         true,
-         nextOrder,
-         "PS",
-         quint16(objectAddress >> 8),
-         quint8(objectAddress),
-         sourceIndex.data(DataTypeRole).value<Data::EtherCATDataType>(),
-         sourceIndex.data(RawDataTypeRole).toString(),
+    const Data::EtherCATDataType dataType
+        = sourceIndex.data(DataTypeRole).value<Data::EtherCATDataType>();
+    const QString rawDataType = sourceIndex.data(RawDataTypeRole).toString();
+    auto messageBox = new QMessageBox(
+        QMessageBox::Question,
+        Tr::tr("Add to Startup"),
+        Tr::tr("Add the selected local Mock value for %1 (%2) as a new PS Startup request? "
+               "Existing requests are not overwritten.")
+            .arg(name, indexText(quint16(objectAddress >> 8), quint8(objectAddress))),
+        QMessageBox::Yes | QMessageBox::No,
+        this);
+    messageBox->setAttribute(Qt::WA_DeleteOnClose);
+    messageBox->setDefaultButton(QMessageBox::No);
+    connect(
+        messageBox,
+        &QDialog::finished,
+        this,
+        [this,
+         contextGeneration,
+         projectId,
+         slaveId,
+         objectAddress,
          rawValue,
-         Tr::tr("Copied from CoE Online Mock: %1").arg(name)});
-    const Utils::Result<> result
-        = m_controller->projectService()
-              ->setStartupConfiguration(m_context.projectId, m_context.nodeId, configuration);
-    m_feedback->show();
-    if (!result) {
-        m_feedback->setType(Utils::InfoLabel::Error);
-        m_feedback->setText(Tr::tr("Startup request was not added: %1").arg(result.error()));
-        return;
-    }
-    m_feedback->setType(Utils::InfoLabel::Ok);
-    m_feedback->setText(
-        Tr::tr("Mock value added as Startup order %1. The project Undo command can remove it.")
-            .arg(nextOrder));
+         name,
+         dataType,
+         rawDataType](int result) {
+            if (result != QMessageBox::Yes || contextGeneration != m_contextGeneration
+                || !m_controller || !m_controller->projectService()) {
+                return;
+            }
+            const std::optional<Data::ProjectSnapshot> project
+                = m_controller->projectService()->project(projectId);
+            if (!project)
+                return;
+            const auto slave = std::find_if(
+                project->slaves.cbegin(),
+                project->slaves.cend(),
+                [&slaveId](const auto &candidate) { return candidate.id == slaveId; });
+            if (slave == project->slaves.cend())
+                return;
+            Data::StartupConfiguration configuration = slave->startup;
+            int nextOrder = 0;
+            for (const Data::StartupParameterConfiguration &parameter : configuration.parameters)
+                nextOrder = qMax(nextOrder, parameter.order + 1);
+            configuration.parameters.append(
+                {Data::NodeId::create(),
+                 true,
+                 nextOrder,
+                 "PS",
+                 quint16(objectAddress >> 8),
+                 quint8(objectAddress),
+                 dataType,
+                 rawDataType,
+                 rawValue,
+                 Tr::tr("Copied from CoE Online Mock: %1").arg(name)});
+            const Utils::Result<> updateResult
+                = m_controller->projectService()->setStartupConfiguration(
+                    projectId, slaveId, configuration);
+            m_feedback->show();
+            if (!updateResult) {
+                m_feedback->setType(Utils::InfoLabel::Error);
+                m_feedback->setText(
+                    Tr::tr("Startup request was not added: %1").arg(updateResult.error()));
+                return;
+            }
+            m_feedback->setType(Utils::InfoLabel::Ok);
+            m_feedback->setText(
+                Tr::tr(
+                    "Mock value added as Startup order %1. The project Undo command can remove it.")
+                    .arg(nextOrder));
+        });
+    messageBox->open();
 }
 
 } // namespace EtherCAT::Workbench::Internal

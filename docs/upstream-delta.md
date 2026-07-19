@@ -937,6 +937,24 @@ budget does not increase and no extension-point exception is required. The
 Workbench path count remains 44 and the direct upstream Core patch count
 remains five.
 
+`ISSUE-WB-COE-MODAL-REFRESH-001`, based on
+`7395c4ceefe78896496bf3b83d757f5096550e03`, changes only the existing
+product-owned private `coeonlinepage.cpp/.h`, Workbench test
+declaration/implementation, and documentation. CoE Advanced Settings and Add
+to Startup now use page-owned asynchronous dialogs plus a page-local context
+generation, so a real same-identity ESI refresh cannot apply a result created
+against the prior page context. Add also captures scalar object data and IDs
+before confirmation and never retains a model index across that boundary.
+
+The change introduces no Provider revision, public API, source file,
+dependency, CMake/qbs entry, Project format, persistence field, Project
+command, custom model role, production thread or timer, controller/network
+transport, online state, SDO execution, or hardware behavior. No file under
+Qt Creator's upstream Core, ProjectExplorer, or application bootstrap changes,
+so the direct Core patch budget does not increase and no extension-point
+exception is required. The Workbench path count remains 44 and the direct
+upstream Core patch count remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

@@ -50,6 +50,7 @@ private:
 
     WorkbenchController *m_controller = nullptr;
     Core::PropertyPageContext m_context;
+    quint64 m_contextGeneration = 0;
     int m_mockGeneration = 0;
 
     Utils::InfoLabel *m_banner = nullptr;

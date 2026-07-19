@@ -2111,6 +2111,53 @@ are documented at
 20.0's explicit unavailable-state precedent is visible at
 <https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/typehierarchy.cpp#L63-L72>.
 
+## EtherCATWorkbench CoE modal refresh qualification
+
+`ISSUE-WB-COE-MODAL-REFRESH-001` uses local baseline
+`7395c4ceefe78896496bf3b83d757f5096550e03`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first production identity | Production remained exactly SHA-256 `e2d896f08b4872e0385d16f88837da185466e7ebde33b8074fb3e198b73af559` / `885e21c1ebd70e60a4ce5cf8c1f73ec7836ee1bdfbb7c98cb7f5006203c1be78` and git blobs `8f452a525eac3471e61e85628391d1406611e0a8` / `f12f8a4ab4059c99c7c86f3f82d6b106d7ad2b24` |
+| Advanced failure first | Initialization and cleanup passed; after a real second same-identity ESI import, accepting the old dialog incorrectly restored Offline state and the target exited status 1 under `failure-first-final/advanced.log` |
+| Add failure first | Initialization and cleanup passed; after the same real import path, accepting Yes changed the Project snapshot and the target exited status 1 under `failure-first-final/add.log` |
+| Real repository refresh | Each regression imports a unique real ESI twice; the second import reports exactly one updated Device, the exact stable affected Device ID, and exactly one `devicesChanged` signal |
+| Advanced stale result | The selected Details context remains stable and refresh restores current Mock/all-object state; accepting pre-refresh source/range/filter controls cannot overwrite it |
+| Add stale result | A pre-refresh Yes response cannot add a Startup request; complete structured `ProjectSnapshot` equality is preserved through the refresh and response |
+| Page removal | Clearing selection while either dialog is open deletes both the CoE page and its owned dialog safely; Details becomes the None context and Project state remains unchanged |
+| Current-context behavior | The existing no-refresh Advanced and Add-to-Startup workflows remain accepted; Add captures value/type/IDs before confirmation and re-queries Project/slave before submission |
+| Model and ownership checks | Both new regressions attach `QAbstractItemModelTester`; watchdogs bound each dialog; completion is page-bound and no stale `QModelIndex` crosses confirmation |
+| Focused tests | Advanced normal/2x and Add normal/2x each passed 3, failed 0, target status 0 under `post-review-focused` |
+| Existing CoE workflow | Normal and 2x each passed 3, failed 0, target status 0 under `post-review-regression/existing-*` after asynchronous-dialog adaptation |
+| Complete Workbench | Normal and 2x each passed 62, failed 0, target status 0 under `post-review-regression/workbench-*` |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 62, Scan 7, Diagnostics 7; 113 passed, 0 failed under `post-review-six-suites` |
+| Existing full-suite diagnostic | The known ProjectExplorer TaskHub soft assertion remains confined to the pre-existing invalid-project test; it does not occur in either focused test, fail a test, or alter target status |
+| Final source SHA-256 | Production `6b8738ff5e7f245ddb2ad746aa2058b8452343471bd86e85cbeee29d66be5478` / `542315c7a5ba4f404ec8d2d2edaee15bc519e9f19a7e64e67cf134d2edf53952`; tests `4e99c8e98709136ccc201bbda4f27259a114ccfe6efbcc156bcd95b8bcc2623e` / `0cce0d1c7555b037c552a34daf9ff7a248fee30b40d6fcd0efd7fb73917019a6` |
+| Final git blobs | Production `35ff51e9bcb318a89b1ae31afb238c1bae08fb96` / `e916c21579d01c6558e839632c840c7fc2d2c5af`; tests `fba8651001c7e0a9586042453e3ba75d021fe75e` / `a08d624975edbe81cff4f7f1d11439db2e08a79b` |
+| Test plugin | Workbench SHA-256 `fff5d55102c847fe85a2c5b4d86871383d7bc1f1b344bbe57db9f09b64f9defc` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 allow-listed plugin dylibs; executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; Workbench SHA-256 `d029befb03a59b8e2c6ef17601b379a988cc87d3607889a31e0d04008545051a` |
+| Enabled startup | PID 3445 remained running for 37 seconds; the Workbench plugin was loaded for 34 samples after three startup samples; intentional passed-through SIGTERM produced status 15 under `verified-lifecycle-enabled` |
+| Explicitly disabled startup | PID 3439 remained running for 37 seconds with `-noload EtherCATWorkbench`; zero of 37 samples loaded the plugin; intentional passed-through SIGTERM produced status 15 under `verified-lifecycle-disabled` |
+| Crash-dialog audit | Completed 2026-07-19 21:53:05 +0800; no residual Embed Labs/LLDB process, new matching DiagnosticReports file, or matching crash-service event after 2026-07-19 21:15:56 +0800 |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, offscreen Qt platform, crash reporter disabled, `-no-crashcheck`, and only the process-local Touch Bar bypass; no visible main window under this bounded acceptance policy |
+| Crash-audit interpretation | The audit supports the offscreen, crash-reporter-disabled test/lifecycle environment only; it does not claim that every possible visible desktop launch can never produce a system dialog |
+| Visual/manual desktop inspection | Not run by design; the executable startup acceptance remained active but offscreen |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard test include blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, Project command, model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, SDO, controller transport, online state, or hardware access | Not performed or added; this is a private UI-lifecycle and checked offline-Project path only |
+
+All paths above are relative to
+`/private/tmp/embed-labs-coe-advanced-refresh.20260719`. Qt's asynchronous
+dialog guidance is documented at
+<https://doc.qt.io/qt-6/qdialog.html#exec>. Qt Creator 20.0's matching
+delete-on-close precedent is visible at
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/fontsettingspage.cpp#L532-L539>.
+Beckhoff's CoE Online Advanced Settings supply only the structural source,
+range, and filter comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446522251.html>.
+
 ## Verification states
 
 Use only these evidence labels:

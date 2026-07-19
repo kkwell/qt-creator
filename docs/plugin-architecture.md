@@ -1409,6 +1409,42 @@ description changed. No path under upstream Core, ProjectExplorer, or the
 application bootstrap changed. The Workbench path count remains 44 and the
 direct upstream Core patch count remains five.
 
+## Workbench CoE modal refresh boundary
+
+`ISSUE-WB-COE-MODAL-REFRESH-001` remains inside the product-owned private
+`CoeOnlinePage`. Repository `devicesChanged` handling continues through the
+existing Details context path; no Provider API, repository revision, or
+cross-plugin lifecycle contract is introduced.
+
+Every `setContext()` advances a page-local generation. Advanced Settings and
+Add to Startup use page-owned, delete-on-close dialogs opened asynchronously.
+Their completion receivers are the page itself, so deleting the page also
+deletes the dialog and disconnects its pending completion. A completion from
+an older generation is ignored. Same-identity ESI refresh does not force-close
+the dialog; it invalidates only the result that was based on the old context.
+
+Advanced reads its controls only for an accepted current generation. Add
+captures scalar object data plus Project/slave identifiers before showing its
+confirmation, then re-queries the current Project snapshot after a
+current-generation Yes response. It never carries a `QModelIndex` across the
+asynchronous boundary. Existing Project validation, command submission,
+persistence, Undo/Redo, and local Mock ownership are unchanged.
+
+Qt documents the nested-event-loop and parent-lifetime risks of
+`QDialog::exec()` and recommends asynchronous `open()`:
+<https://doc.qt.io/qt-6/qdialog.html#exec>. Qt Creator 20.0's font settings
+dialog is the host-side heap-owned, delete-on-close precedent:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/fontsettingspage.cpp#L532-L539>.
+Beckhoff documents the comparable CoE source/range/filter vocabulary only:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446522251.html>.
+
+This boundary adds no public API, source file, dependency, Provider,
+persistence field, Project command, custom model role, production thread or
+timer, controller/network transport, online state, SDO execution, or hardware
+behavior. No CMake or qbs description changed. No path under upstream Core,
+ProjectExplorer, or the application bootstrap changed. The Workbench path
+count remains 44 and the direct upstream Core patch count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

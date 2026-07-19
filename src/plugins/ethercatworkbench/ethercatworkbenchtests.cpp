@@ -7992,7 +7992,7 @@ void EtherCATWorkbenchTests::testCoeOnlineMockWorkflow()
         dialog->accept();
     });
     QTest::mouseClick(advanced, Qt::LeftButton);
-    QVERIFY(advancedAccepted);
+    QTRY_VERIFY(advancedAccepted);
     QVERIFY(!findByDisplayText(dictionary->model(), "1018:00").isValid());
 
     QModelIndex mockObject = findByDisplayText(dictionary->model(), "6060:00");
@@ -8004,13 +8004,17 @@ void EtherCATWorkbenchTests::testCoeOnlineMockWorkflow()
     QTRY_VERIFY(addToStartup->isEnabled());
     QVERIFY(!projectService->project(file.projectId)->modified);
 
-    QTimer::singleShot(0, [] {
+    bool confirmationRejected = false;
+    QTimer::singleShot(0, [&confirmationRejected] {
         if (auto messageBox = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
-            if (QAbstractButton *no = messageBox->button(QMessageBox::No))
+            if (QAbstractButton *no = messageBox->button(QMessageBox::No)) {
+                confirmationRejected = true;
                 no->click();
+            }
         }
     });
     QTest::mouseClick(addToStartup, Qt::LeftButton);
+    QTRY_VERIFY(confirmationRejected);
     QCOMPARE(projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 0);
     QVERIFY(!projectService->project(file.projectId)->modified);
 
@@ -8079,7 +8083,7 @@ void EtherCATWorkbenchTests::testCoeOnlineMockWorkflow()
         dialog->accept();
     });
     QTest::mouseClick(advanced, Qt::LeftButton);
-    QVERIFY(combinedAdvancedAccepted);
+    QTRY_VERIFY(combinedAdvancedAccepted);
     QTRY_COMPARE(dictionary->model()->rowCount(), 0);
     QTRY_VERIFY(filterEmptyState->isVisible());
     QVERIFY(!dictionary->isVisible());
@@ -8513,6 +8517,301 @@ void EtherCATWorkbenchTests::testCoeRepositoryReadOnlyWorkflow()
     QVERIFY(!(model->flags(valueCell) & Qt::ItemIsEditable));
     QVERIFY(!model->setData(valueCell, "5A", Qt::EditRole));
     QCOMPARE(*projectService->project(file.projectId), projectBeforeContexts);
+}
+
+void EtherCATWorkbenchTests::testCoeAdvancedDialogRepositoryRefresh()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+    QVERIFY(projectService->projects().isEmpty());
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QByteArray esi = deviceEsi();
+    esi.replace("#x00005678", "#x7A1C0001");
+    esi.replace("#x00000011", "#x0000B401");
+    esi.replace("AX5000", "EL-COE-REFRESH");
+    esi.replace("Workbench Servo", "CoE Refresh Servo / \u5237\u65b0");
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("coe-advanced-refresh.xml");
+    QByteArray updatedEsi = esi;
+    updatedEsi.replace(
+        "CoE Refresh Servo / \u5237\u65b0", "CoE Refresh Servo Updated / \u66f4\u65b0");
+    const Utils::FilePath updatedEsiPath = Utils::FilePath::fromString(directory.path())
+                                               .canonicalPath()
+                                               .pathAppended("coe-advanced-refresh-updated.xml");
+    const Utils::Result<qint64> writeResult = esiPath.writeFileContents(esi);
+    QVERIFY_RESULT(writeResult);
+    const Utils::Result<qint64> updatedWriteResult = updatedEsiPath.writeFileContents(updatedEsi);
+    QVERIFY_RESULT(updatedWriteResult);
+    const Data::DeviceImportResult importResult = waitForJob(repository->importFiles({esiPath}));
+    QCOMPARE(importResult.requestedFiles, 1);
+    QCOMPARE(importResult.importedDevices, 1);
+    QCOMPARE(importResult.failedFiles, 0);
+
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.typeName == "EL-COE-REFRESH";
+    });
+    QVERIFY(device != devices.cend());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(device->id).isValid());
+
+    controller.selectionService()->setCurrentNodeId(device->id);
+    DetailsView details(&controller);
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::COE_ONLINE_PAGE_ID).toString());
+    QVERIFY(page);
+    QTreeView *dictionary = page->findChild<QTreeView *>("EtherCATCoeObjectDictionary");
+    QPushButton *advanced = page->findChild<QPushButton *>("EtherCATCoeAdvanced");
+    QCheckBox *showOffline = page->findChild<QCheckBox *>("EtherCATCoeShowOffline");
+    QLineEdit *filter = page->findChild<QLineEdit *>("EtherCATCoeFilter");
+    QLabel *dataSource = page->findChild<QLabel *>("EtherCATCoeDataSource");
+    QVERIFY(dictionary);
+    QVERIFY(advanced);
+    QVERIFY(showOffline);
+    QVERIFY(filter);
+    QVERIFY(dataSource);
+    QAbstractItemModel *model = dictionary->model();
+    QVERIFY(model);
+    QAbstractItemModelTester modelTester(
+        model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+
+    QCOMPARE(details.currentContext().nodeId, device->id);
+    QCOMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::Device);
+    const int initialTopLevelRows = model->rowCount();
+    QVERIFY(initialTopLevelRows > 0);
+    QVERIFY(dictionary->currentIndex().isValid());
+    QVERIFY(advanced->isEnabled());
+    QVERIFY(!showOffline->isChecked());
+    QVERIFY(filter->text().isEmpty());
+    QVERIFY(dataSource->text().contains("Mock", Qt::CaseInsensitive));
+
+    QSignalSpy devicesChanged(repository, &Core::DeviceRepositoryProvider::devicesChanged);
+    Data::DeviceImportResult refreshResult;
+    bool dialogSeen = false;
+    bool repositoryRefreshSeen = false;
+    bool dialogAcceptedAfterRefresh = false;
+    QTimer dialogWatchdog;
+    dialogWatchdog.setSingleShot(true);
+    connect(&dialogWatchdog, &QTimer::timeout, page, [] {
+        auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (dialog && dialog->objectName() == "EtherCATCoeAdvancedDialog")
+            dialog->reject();
+    });
+    dialogWatchdog.start(5000);
+    QTimer::singleShot(0, page, [&] {
+        QPointer<QDialog> dialog
+            = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog || dialog->objectName() != "EtherCATCoeAdvancedDialog")
+            return;
+        QAbstractButton *offline
+            = dialog->findChild<QAbstractButton *>("EtherCATCoeAdvancedOfflineSource");
+        QComboBox *range = dialog->findChild<QComboBox *>("EtherCATCoeAdvancedRange");
+        QCheckBox *hideStandard
+            = dialog->findChild<QCheckBox *>("EtherCATCoeAdvancedHideStandard");
+        if (!offline || !range || !hideStandard)
+            return;
+        const int communicationRange = range->findText("Communication", Qt::MatchStartsWith);
+        if (communicationRange < 0)
+            return;
+        dialogSeen = true;
+        offline->setChecked(true);
+        range->setCurrentIndex(communicationRange);
+        hideStandard->setChecked(true);
+
+        refreshResult = waitForJob(repository->importFiles({updatedEsiPath}));
+        repositoryRefreshSeen = refreshResult.updatedDevices == 1
+                                && refreshResult.affectedDeviceIds
+                                       == QList<Data::NodeId>{device->id}
+                                && !showOffline->isChecked() && filter->text().isEmpty()
+                                && dataSource->text().contains("Mock", Qt::CaseInsensitive)
+                                && model->rowCount() == initialTopLevelRows;
+        if (!dialog)
+            return;
+        dialogAcceptedAfterRefresh = true;
+        dialog->accept();
+    });
+    advanced->click();
+    QTRY_VERIFY(dialogSeen);
+    QTRY_VERIFY(repositoryRefreshSeen);
+    QTRY_VERIFY(dialogAcceptedAfterRefresh);
+    dialogWatchdog.stop();
+    QCOMPARE(refreshResult.requestedFiles, 1);
+    QCOMPARE(refreshResult.importedDevices, 0);
+    QCOMPARE(refreshResult.updatedDevices, 1);
+    QCOMPARE(refreshResult.failedFiles, 0);
+    QCOMPARE(devicesChanged.count(), 1);
+    const QList<QVariant> changedArguments = devicesChanged.takeFirst();
+    QCOMPARE(changedArguments.size(), 1);
+    QCOMPARE(
+        changedArguments.first().value<QList<Data::NodeId>>(), QList<Data::NodeId>{device->id});
+
+    QCOMPARE(details.currentContext().nodeId, device->id);
+    QVERIFY(!showOffline->isChecked());
+    QVERIFY(filter->text().isEmpty());
+    QVERIFY(dataSource->text().contains("Mock", Qt::CaseInsensitive));
+    QCOMPARE(model->rowCount(), initialTopLevelRows);
+    QVERIFY(findByDisplayText(model, "6060:00").isValid());
+    QVERIFY(projectService->projects().isEmpty());
+
+    QPointer<QWidget> guardedPage(page);
+    QPointer<QDialog> guardedDialog;
+    bool removalDialogSeen = false;
+    QTimer::singleShot(0, page, [&] {
+        guardedDialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!guardedDialog || guardedDialog->objectName() != "EtherCATCoeAdvancedDialog")
+            return;
+        removalDialogSeen = true;
+        controller.selectionService()->clear();
+    });
+    advanced->click();
+    QTRY_VERIFY(removalDialogSeen);
+    QTRY_VERIFY(guardedPage.isNull());
+    QTRY_VERIFY(guardedDialog.isNull());
+    QCOMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+}
+
+void EtherCATWorkbenchTests::testCoeAddConfirmationRepositoryRefresh()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QByteArray esi = deviceEsi();
+    esi.replace("#x00005678", "#x7A1C0002");
+    esi.replace("#x00000011", "#x0000B402");
+    esi.replace("AX5000", "EL-COE-CONFIRM");
+    esi.replace("Workbench Servo", "CoE Confirmation Servo / \u786e\u8ba4");
+    QByteArray updatedEsi = esi;
+    updatedEsi.replace(
+        "CoE Confirmation Servo / \u786e\u8ba4",
+        "CoE Confirmation Servo Updated / \u66f4\u65b0");
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("coe-confirmation-refresh.xml");
+    const Utils::FilePath updatedEsiPath = Utils::FilePath::fromString(directory.path())
+                                               .canonicalPath()
+                                               .pathAppended("coe-confirmation-refresh-updated.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(esi));
+    QVERIFY_RESULT(updatedEsiPath.writeFileContents(updatedEsi));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.typeName == "EL-COE-CONFIRM";
+    });
+    QVERIFY(device != devices.cend());
+    const TestProjectFile file = writeProjectWithSlave(directory, *device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    DetailsView details(&controller);
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::COE_ONLINE_PAGE_ID).toString());
+    QVERIFY(page);
+    QTreeView *dictionary = page->findChild<QTreeView *>("EtherCATCoeObjectDictionary");
+    QPushButton *addToStartup = page->findChild<QPushButton *>("EtherCATCoeAddToStartup");
+    QVERIFY(dictionary);
+    QVERIFY(addToStartup);
+    QAbstractItemModel *model = dictionary->model();
+    QVERIFY(model);
+    QAbstractItemModelTester modelTester(
+        model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    const QModelIndex writableObject = findByDisplayText(model, "6060:00");
+    QVERIFY(writableObject.isValid());
+    dictionary->setCurrentIndex(writableObject);
+    QTRY_VERIFY(addToStartup->isEnabled());
+
+    const Data::ProjectSnapshot projectBeforeConfirmation
+        = *projectService->project(file.projectId);
+    QSignalSpy devicesChanged(repository, &Core::DeviceRepositoryProvider::devicesChanged);
+    Data::DeviceImportResult refreshResult;
+    bool messageSeen = false;
+    bool repositoryRefreshSeen = false;
+    bool confirmationAcceptedAfterRefresh = false;
+    QTimer dialogWatchdog;
+    dialogWatchdog.setSingleShot(true);
+    connect(&dialogWatchdog, &QTimer::timeout, page, [] {
+        if (auto messageBox = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+            messageBox->reject();
+    });
+    dialogWatchdog.start(5000);
+    QTimer::singleShot(0, page, [&] {
+        QPointer<QMessageBox> messageBox
+            = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!messageBox)
+            return;
+        messageSeen = true;
+        refreshResult = waitForJob(repository->importFiles({updatedEsiPath}));
+        repositoryRefreshSeen = refreshResult.updatedDevices == 1
+                                && refreshResult.affectedDeviceIds
+                                       == QList<Data::NodeId>{device->id}
+                                && details.currentContext().nodeId == file.slaveId
+                                && *projectService->project(file.projectId)
+                                       == projectBeforeConfirmation;
+        if (!messageBox)
+            return;
+        if (QAbstractButton *yes = messageBox->button(QMessageBox::Yes)) {
+            confirmationAcceptedAfterRefresh = true;
+            yes->click();
+        }
+    });
+    addToStartup->click();
+    QTRY_VERIFY(messageSeen);
+    QTRY_VERIFY(repositoryRefreshSeen);
+    QTRY_VERIFY(confirmationAcceptedAfterRefresh);
+    dialogWatchdog.stop();
+    QCOMPARE(refreshResult.requestedFiles, 1);
+    QCOMPARE(refreshResult.importedDevices, 0);
+    QCOMPARE(refreshResult.updatedDevices, 1);
+    QCOMPARE(refreshResult.failedFiles, 0);
+    QCOMPARE(devicesChanged.count(), 1);
+    const QList<QVariant> changedArguments = devicesChanged.takeFirst();
+    QCOMPARE(changedArguments.size(), 1);
+    QCOMPARE(
+        changedArguments.first().value<QList<Data::NodeId>>(), QList<Data::NodeId>{device->id});
+    QCOMPARE(*projectService->project(file.projectId), projectBeforeConfirmation);
+
+    const QModelIndex refreshedWritableObject = findByDisplayText(model, "6060:00");
+    QVERIFY(refreshedWritableObject.isValid());
+    dictionary->setCurrentIndex(refreshedWritableObject);
+    QTRY_VERIFY(addToStartup->isEnabled());
+    QPointer<QWidget> guardedPage(page);
+    QPointer<QMessageBox> guardedMessageBox;
+    bool removalMessageSeen = false;
+    QTimer::singleShot(0, page, [&] {
+        guardedMessageBox = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!guardedMessageBox)
+            return;
+        removalMessageSeen = true;
+        controller.selectionService()->clear();
+    });
+    addToStartup->click();
+    QTRY_VERIFY(removalMessageSeen);
+    QTRY_VERIFY(guardedPage.isNull());
+    QTRY_VERIFY(guardedMessageBox.isNull());
+    QCOMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QCOMPARE(*projectService->project(file.projectId), projectBeforeConfirmation);
 }
 
 void EtherCATWorkbenchTests::testStartupTableAccessibility()
