@@ -8488,6 +8488,514 @@ void EtherCATWorkbenchTests::testStartupTableAccessibility()
                  .contains("edit this value", Qt::CaseInsensitive));
 }
 
+void EtherCATWorkbenchTests::testStartupRepositoryEmptyState()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+    QVERIFY(projectService->projects().isEmpty());
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    const auto uniqueDevice = [](QByteArray esi,
+                                 const QByteArray &productCode,
+                                 const QByteArray &revision,
+                                 const QByteArray &typeName,
+                                 const QByteArray &name) {
+        esi.replace("#x00005678", productCode);
+        esi.replace("#x00000011", revision);
+        esi.replace("AX5000", typeName);
+        esi.replace("Workbench Servo", name);
+        return esi;
+    };
+
+    QByteArray supportedEmptyEsi = deviceEsi();
+    QVERIFY(removeFirstXmlElement(&supportedEmptyEsi, "<InitCmds>", "</InitCmds>"));
+    supportedEmptyEsi = uniqueDevice(
+        supportedEmptyEsi,
+        "#x7A190001",
+        "#x0000B101",
+        "EL-STARTUP-EMPTY",
+        "Startup Empty Servo / 无启动请求");
+
+    QByteArray unsupportedEmptyEsi = supportedEmptyEsi;
+    unsupportedEmptyEsi.replace("#x7A190001", "#x7A190002");
+    unsupportedEmptyEsi.replace("#x0000B101", "#x0000B102");
+    unsupportedEmptyEsi.replace("EL-STARTUP-EMPTY", "EL-STARTUP-EMPTY-UNSUPPORTED");
+    unsupportedEmptyEsi.replace("无启动请求", "无启动请求 / 不支持");
+    unsupportedEmptyEsi.replace("</Device>", "<Modules/></Device>");
+
+    QByteArray supportedPopulatedEsi = uniqueDevice(
+        deviceEsi(),
+        "#x7A190003",
+        "#x0000B103",
+        "EL-STARTUP-POPULATED",
+        "Startup Populated Servo / 已解析启动请求");
+
+    QByteArray unsupportedPopulatedEsi = supportedPopulatedEsi;
+    unsupportedPopulatedEsi.replace("#x7A190003", "#x7A190004");
+    unsupportedPopulatedEsi.replace("#x0000B103", "#x0000B104");
+    unsupportedPopulatedEsi.replace("EL-STARTUP-POPULATED", "EL-STARTUP-POPULATED-UNSUPPORTED");
+    unsupportedPopulatedEsi.replace("已解析启动请求", "已解析启动请求 / 不支持");
+    unsupportedPopulatedEsi.replace("</Device>", "<Modules/></Device>");
+
+    QByteArray supportedInvalidEsi = supportedPopulatedEsi;
+    supportedInvalidEsi.replace("#x7A190003", "#x7A190005");
+    supportedInvalidEsi.replace("#x0000B103", "#x0000B105");
+    supportedInvalidEsi.replace("EL-STARTUP-POPULATED", "EL-STARTUP-INVALID");
+    supportedInvalidEsi.replace("已解析启动请求", "启动请求校验错误");
+    QVERIFY(supportedInvalidEsi.contains("<Transition>PS</Transition>"));
+    supportedInvalidEsi.replace("<Transition>PS</Transition>", "<Transition></Transition>");
+
+    QByteArray unsupportedInvalidEsi = unsupportedPopulatedEsi;
+    unsupportedInvalidEsi.replace("#x7A190004", "#x7A190006");
+    unsupportedInvalidEsi.replace("#x0000B104", "#x0000B106");
+    unsupportedInvalidEsi
+        .replace("EL-STARTUP-POPULATED-UNSUPPORTED", "EL-STARTUP-INVALID-UNSUPPORTED");
+    unsupportedInvalidEsi.replace("已解析启动请求 / 不支持", "启动请求校验错误 / 不支持");
+    QVERIFY(unsupportedInvalidEsi.contains("<Transition>PS</Transition>"));
+    unsupportedInvalidEsi.replace("<Transition>PS</Transition>", "<Transition></Transition>");
+
+    struct EsiFixture
+    {
+        QString fileName;
+        QByteArray xml;
+    };
+    const QList<EsiFixture> fixtures = {
+        {"startup-empty.xml", supportedEmptyEsi},
+        {"startup-empty-unsupported.xml", unsupportedEmptyEsi},
+        {"startup-populated.xml", supportedPopulatedEsi},
+        {"startup-populated-unsupported.xml", unsupportedPopulatedEsi},
+        {"startup-invalid.xml", supportedInvalidEsi},
+        {"startup-invalid-unsupported.xml", unsupportedInvalidEsi},
+    };
+    QList<Utils::FilePath> esiPaths;
+    for (const EsiFixture &fixture : fixtures) {
+        const Utils::FilePath path
+            = Utils::FilePath::fromString(directory.path()).pathAppended(fixture.fileName);
+        const Utils::Result<qint64> writeResult = path.writeFileContents(fixture.xml);
+        QVERIFY_RESULT(writeResult);
+        esiPaths.append(path);
+    }
+    const Data::DeviceImportResult importResult = waitForJob(repository->importFiles(esiPaths));
+    QCOMPARE(importResult.requestedFiles, fixtures.size());
+    QCOMPARE(importResult.importedDevices, fixtures.size());
+    QCOMPARE(importResult.failedFiles, 0);
+    QCOMPARE(importResult.affectedDeviceIds.size(), fixtures.size());
+
+    const auto idForType = [repository](const QString &typeName) {
+        const QList<Data::DeviceSummary> devices = repository->devices();
+        const auto found = std::find_if(
+            devices.cbegin(), devices.cend(), [&typeName](const Data::DeviceSummary &device) {
+                return device.typeName == typeName;
+            });
+        return found == devices.cend() ? Data::NodeId() : found->id;
+    };
+    const Data::NodeId supportedEmptyId = idForType("EL-STARTUP-EMPTY");
+    const Data::NodeId unsupportedEmptyId = idForType("EL-STARTUP-EMPTY-UNSUPPORTED");
+    const Data::NodeId supportedPopulatedId = idForType("EL-STARTUP-POPULATED");
+    const Data::NodeId unsupportedPopulatedId = idForType("EL-STARTUP-POPULATED-UNSUPPORTED");
+    const Data::NodeId supportedInvalidId = idForType("EL-STARTUP-INVALID");
+    const Data::NodeId unsupportedInvalidId = idForType("EL-STARTUP-INVALID-UNSUPPORTED");
+    QVERIFY(!supportedEmptyId.isNull());
+    QVERIFY(!unsupportedEmptyId.isNull());
+    QVERIFY(!supportedPopulatedId.isNull());
+    QVERIFY(!unsupportedPopulatedId.isNull());
+    QVERIFY(!supportedInvalidId.isNull());
+    QVERIFY(!unsupportedInvalidId.isNull());
+
+    const std::optional<Data::DeviceDescription> supportedEmpty = repository->device(
+        supportedEmptyId);
+    const std::optional<Data::DeviceDescription> unsupportedEmpty = repository->device(
+        unsupportedEmptyId);
+    const std::optional<Data::DeviceDescription> supportedPopulated = repository->device(
+        supportedPopulatedId);
+    const std::optional<Data::DeviceDescription> unsupportedPopulated = repository->device(
+        unsupportedPopulatedId);
+    const std::optional<Data::DeviceDescription> supportedInvalid = repository->device(
+        supportedInvalidId);
+    const std::optional<Data::DeviceDescription> unsupportedInvalid = repository->device(
+        unsupportedInvalidId);
+    QVERIFY(supportedEmpty);
+    QVERIFY(unsupportedEmpty);
+    QVERIFY(supportedPopulated);
+    QVERIFY(unsupportedPopulated);
+    QVERIFY(supportedInvalid);
+    QVERIFY(unsupportedInvalid);
+    QVERIFY(supportedEmpty->summary.supported);
+    QVERIFY(supportedEmpty->startupParameters.isEmpty());
+    QVERIFY(!unsupportedEmpty->summary.supported);
+    QVERIFY(unsupportedEmpty->startupParameters.isEmpty());
+    QVERIFY(supportedPopulated->summary.supported);
+    QCOMPARE(supportedPopulated->startupParameters.size(), 3);
+    QVERIFY(!unsupportedPopulated->summary.supported);
+    QCOMPARE(unsupportedPopulated->startupParameters.size(), 3);
+    QVERIFY(supportedInvalid->summary.supported);
+    QCOMPARE(supportedInvalid->startupParameters.size(), 3);
+    QVERIFY(supportedInvalid->startupParameters.first().transition.isEmpty());
+    QVERIFY(!unsupportedInvalid->summary.supported);
+    QCOMPARE(unsupportedInvalid->startupParameters.size(), 3);
+    QVERIFY(unsupportedInvalid->startupParameters.first().transition.isEmpty());
+
+    for (const Data::NodeId &deviceId :
+         {supportedEmptyId,
+          unsupportedEmptyId,
+          supportedPopulatedId,
+          unsupportedPopulatedId,
+          supportedInvalidId,
+          unsupportedInvalidId}) {
+        QTRY_VERIFY(controller.treeModel()->indexForNodeId(deviceId).isValid());
+    }
+
+    BuiltinPropertyPageProvider pages(&controller);
+    std::unique_ptr<QWidget> page(pages.createPage(Constants::STARTUP_PAGE_ID, nullptr));
+    QVERIFY(page);
+    QLabel *summary = page->findChild<QLabel *>("EtherCATStartupSummary");
+    Utils::InfoLabel *validation = dynamic_cast<Utils::InfoLabel *>(
+        page->findChild<QLabel *>("EtherCATStartupValidation"));
+    QTableView *table = page->findChild<QTableView *>("EtherCATStartupTable");
+    QPushButton *restoreDefaults = page->findChild<QPushButton *>("EtherCATStartupRestoreDefaults");
+    const QList<QPushButton *> editingButtons = {
+        page->findChild<QPushButton *>("EtherCATStartupMoveUp"),
+        page->findChild<QPushButton *>("EtherCATStartupMoveDown"),
+        page->findChild<QPushButton *>("EtherCATStartupNew"),
+        page->findChild<QPushButton *>("EtherCATStartupDelete"),
+        page->findChild<QPushButton *>("EtherCATStartupEdit"),
+    };
+    QVERIFY(summary);
+    QVERIFY(validation);
+    QVERIFY(table);
+    QVERIFY(restoreDefaults);
+    for (QPushButton *button : editingButtons)
+        QVERIFY(button);
+
+    const auto repositoryTableMutationFailure = [table]() -> QString {
+        bool inspectedCell = false;
+        QAbstractItemModel *model = table->model();
+        for (int row = 0; row < model->rowCount(); ++row) {
+            for (int column = 0; column < model->columnCount(); ++column) {
+                const QModelIndex index = model->index(row, column);
+                if (!index.isValid())
+                    continue;
+                inspectedCell = true;
+                const Qt::ItemFlags flags = model->flags(index);
+                if (flags & (Qt::ItemIsEditable | Qt::ItemIsUserCheckable)) {
+                    return QString("Startup table exposes mutable flags at %1,%2")
+                        .arg(row)
+                        .arg(column);
+                }
+                const QVariant display = model->data(index, Qt::DisplayRole);
+                const QVariant checkState = model->data(index, Qt::CheckStateRole);
+                if (model->setData(index, QString("Repository mutation"), Qt::EditRole)) {
+                    return QString("Startup table accepted EditRole at %1,%2").arg(row).arg(column);
+                }
+                if (model->data(index, Qt::DisplayRole) != display) {
+                    return QString("Startup table changed display data at %1,%2")
+                        .arg(row)
+                        .arg(column);
+                }
+                if (model->setData(index, Qt::Checked, Qt::CheckStateRole)) {
+                    return QString("Startup table accepted CheckStateRole at %1,%2")
+                        .arg(row)
+                        .arg(column);
+                }
+                if (model->data(index, Qt::CheckStateRole) != checkState) {
+                    return QString("Startup table changed check state at %1,%2").arg(row).arg(column);
+                }
+            }
+        }
+        return inspectedCell ? QString()
+                             : QString("No repository Startup table cell was inspected");
+    };
+    const auto verifyRepositoryControls = [&editingButtons, restoreDefaults]() -> QString {
+        if (!restoreDefaults->isHidden())
+            return QString("Restore Defaults is visible for a repository Device");
+        for (QPushButton *button : editingButtons) {
+            if (button->isEnabled())
+                return QString("%1 is enabled for a repository Device").arg(button->objectName());
+        }
+        return {};
+    };
+
+    const QModelIndex supportedEmptyIndex = controller.treeModel()->indexForNodeId(supportedEmptyId);
+    pages.updatePage(
+        Constants::STARTUP_PAGE_ID,
+        page.get(),
+        controller.treeModel()->contextForIndex(supportedEmptyIndex));
+    QCOMPARE(table->model()->rowCount(), 0);
+    QVERIFY(!table->currentIndex().isValid());
+    QVERIFY(summary->text().contains("No ESI Startup", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("can still be added", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("manual", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("Device Repository", Qt::CaseInsensitive));
+    QVERIFY(!validation->text().contains("configuration is valid", Qt::CaseInsensitive));
+    QVERIFY(validation->text().contains("No ESI Startup", Qt::CaseInsensitive));
+    QCOMPARE(validation->type(), Utils::InfoLabel::Information);
+    QVERIFY(table->accessibleDescription().contains("No ESI Startup", Qt::CaseInsensitive));
+    QVERIFY(table->accessibleDescription().contains("read-only", Qt::CaseInsensitive));
+    QVERIFY(table->accessibleDescription().contains("will not fabricate", Qt::CaseInsensitive));
+    QVERIFY(table->accessibleDescription().contains("controller", Qt::CaseInsensitive));
+    QVERIFY(table->accessibleDescription().contains("network", Qt::CaseInsensitive));
+    QVERIFY(table->accessibleDescription().contains("physical hardware", Qt::CaseInsensitive));
+    QCOMPARE(table->toolTip(), table->accessibleDescription());
+    QString controlFailure = verifyRepositoryControls();
+    QVERIFY2(controlFailure.isEmpty(), qPrintable(controlFailure));
+
+    const QModelIndex unsupportedEmptyIndex = controller.treeModel()->indexForNodeId(
+        unsupportedEmptyId);
+    pages.updatePage(
+        Constants::STARTUP_PAGE_ID,
+        page.get(),
+        controller.treeModel()->contextForIndex(unsupportedEmptyIndex));
+    QCOMPARE(table->model()->rowCount(), 0);
+    QVERIFY(summary->text().contains("No ESI Startup", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("Device Repository", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("Add the device", Qt::CaseInsensitive));
+    QVERIFY(validation->text().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(!validation->text().contains("configuration is valid", Qt::CaseInsensitive));
+    QCOMPARE(validation->type(), Utils::InfoLabel::Warning);
+    QVERIFY(table->accessibleDescription().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(table->accessibleDescription().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(table->accessibleDescription().contains("Device Repository", Qt::CaseInsensitive));
+    QCOMPARE(table->toolTip(), table->accessibleDescription());
+    controlFailure = verifyRepositoryControls();
+    QVERIFY2(controlFailure.isEmpty(), qPrintable(controlFailure));
+
+    const QModelIndex unsupportedPopulatedIndex = controller.treeModel()->indexForNodeId(
+        unsupportedPopulatedId);
+    pages.updatePage(
+        Constants::STARTUP_PAGE_ID,
+        page.get(),
+        controller.treeModel()->contextForIndex(unsupportedPopulatedIndex));
+    QCOMPARE(table->model()->rowCount(), 3);
+    QVERIFY(summary->text().contains("read-only preview", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("Device Repository", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("Add the device", Qt::CaseInsensitive));
+    QCOMPARE(validation->type(), Utils::InfoLabel::Warning);
+    QVERIFY(validation->text().contains("data type is unknown", Qt::CaseInsensitive));
+    QVERIFY(validation->text().contains("cannot be added", Qt::CaseInsensitive));
+    QCOMPARE(validation->toolTip().split('\n').size(), 3);
+    QVERIFY(table->accessibleDescription().contains("read-only preview", Qt::CaseInsensitive));
+    QVERIFY(table->accessibleDescription().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(table->accessibleDescription().contains("cannot be added", Qt::CaseInsensitive));
+    QCOMPARE(table->toolTip(), table->accessibleDescription());
+    QString mutationFailure = repositoryTableMutationFailure();
+    QVERIFY2(mutationFailure.isEmpty(), qPrintable(mutationFailure));
+
+    const QModelIndex supportedInvalidIndex = controller.treeModel()->indexForNodeId(
+        supportedInvalidId);
+    pages.updatePage(
+        Constants::STARTUP_PAGE_ID,
+        page.get(),
+        controller.treeModel()->contextForIndex(supportedInvalidIndex));
+    QCOMPARE(table->model()->rowCount(), 3);
+    QVERIFY(summary->text().contains("validation error", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("Device Repository", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("Add the device", Qt::CaseInsensitive));
+    QCOMPARE(validation->type(), Utils::InfoLabel::Error);
+    QVERIFY(validation->text().contains("Startup configuration error", Qt::CaseInsensitive));
+    QVERIFY(validation->text().contains("transition", Qt::CaseInsensitive));
+    QVERIFY(validation->text().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(validation->text().contains("Device Repository", Qt::CaseInsensitive));
+    QCOMPARE(validation->toolTip().split('\n').size(), 4);
+    QVERIFY(validation->toolTip().contains("Startup transition must be specified."));
+    QVERIFY(validation->toolTip().contains("Startup data type is unknown"));
+    QVERIFY(table->accessibleDescription().contains("validation error", Qt::CaseInsensitive));
+    QVERIFY(table->accessibleDescription().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(table->accessibleDescription().contains("Device Repository", Qt::CaseInsensitive));
+    QCOMPARE(table->toolTip(), table->accessibleDescription());
+    mutationFailure = repositoryTableMutationFailure();
+    QVERIFY2(mutationFailure.isEmpty(), qPrintable(mutationFailure));
+
+    const QModelIndex unsupportedInvalidIndex = controller.treeModel()->indexForNodeId(
+        unsupportedInvalidId);
+    pages.updatePage(
+        Constants::STARTUP_PAGE_ID,
+        page.get(),
+        controller.treeModel()->contextForIndex(unsupportedInvalidIndex));
+    QCOMPARE(table->model()->rowCount(), 3);
+    QVERIFY(summary->text().contains("validation error", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("Device Repository", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("Add the device", Qt::CaseInsensitive));
+    QCOMPARE(validation->type(), Utils::InfoLabel::Error);
+    QVERIFY(validation->text().contains("transition", Qt::CaseInsensitive));
+    QVERIFY(validation->text().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(validation->text().contains("cannot be added", Qt::CaseInsensitive));
+    QCOMPARE(validation->toolTip().split('\n').size(), 4);
+    QVERIFY(validation->toolTip().contains("Startup transition must be specified."));
+    QVERIFY(validation->toolTip().contains("Startup data type is unknown"));
+    QVERIFY(table->accessibleDescription().contains("validation error", Qt::CaseInsensitive));
+    QVERIFY(table->accessibleDescription().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(table->accessibleDescription().contains("cannot be added", Qt::CaseInsensitive));
+    QCOMPARE(table->toolTip(), table->accessibleDescription());
+    mutationFailure = repositoryTableMutationFailure();
+    QVERIFY2(mutationFailure.isEmpty(), qPrintable(mutationFailure));
+
+    const Core::PropertyPageContext missingContext{
+        {}, Data::NodeId::create(), Core::WorkbenchNodeKind::Device, "Removed ESI Device"};
+    pages.updatePage(Constants::STARTUP_PAGE_ID, page.get(), missingContext);
+    QCOMPARE(table->model()->rowCount(), 0);
+    QVERIFY(!table->currentIndex().isValid());
+    QVERIFY(summary->text().contains("no longer available", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("Device Repository", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("Add the device", Qt::CaseInsensitive));
+    QCOMPARE(validation->type(), Utils::InfoLabel::Warning);
+    QVERIFY(validation->text().contains("unavailable", Qt::CaseInsensitive));
+    QVERIFY(!validation->text().contains("configuration is valid", Qt::CaseInsensitive));
+    QVERIFY(validation->toolTip().isEmpty());
+    QVERIFY(table->accessibleDescription().contains("unavailable", Qt::CaseInsensitive));
+    QVERIFY(table->accessibleDescription().contains("Device Repository", Qt::CaseInsensitive));
+    QCOMPARE(table->toolTip(), table->accessibleDescription());
+
+    const QModelIndex supportedPopulatedIndex = controller.treeModel()->indexForNodeId(
+        supportedPopulatedId);
+    pages.updatePage(
+        Constants::STARTUP_PAGE_ID,
+        page.get(),
+        controller.treeModel()->contextForIndex(supportedPopulatedIndex));
+    QCOMPARE(table->model()->rowCount(), 3);
+    QVERIFY(summary->text().contains("ESI Startup requests", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("Add the device", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("validation error", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("No ESI Startup", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("no longer available", Qt::CaseInsensitive));
+    QCOMPARE(validation->type(), Utils::InfoLabel::Warning);
+    QVERIFY(validation->text().contains("data type is unknown", Qt::CaseInsensitive));
+    QVERIFY(!validation->text().contains("cannot be added", Qt::CaseInsensitive));
+    QCOMPARE(validation->toolTip().split('\n').size(), 3);
+    QVERIFY(table->accessibleDescription().contains("read-only", Qt::CaseInsensitive));
+    QVERIFY(!table->accessibleDescription().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(!table->accessibleDescription().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(!table->accessibleDescription().contains("validation error", Qt::CaseInsensitive));
+    QVERIFY(!table->accessibleDescription().contains("No ESI Startup", Qt::CaseInsensitive));
+    QVERIFY(!table->accessibleDescription().contains("unavailable", Qt::CaseInsensitive));
+    QCOMPARE(table->toolTip(), table->accessibleDescription());
+    mutationFailure = repositoryTableMutationFailure();
+    QVERIFY2(mutationFailure.isEmpty(), qPrintable(mutationFailure));
+    controlFailure = verifyRepositoryControls();
+    QVERIFY2(controlFailure.isEmpty(), qPrintable(controlFailure));
+    QVERIFY(projectService->projects().isEmpty());
+
+    const TestProjectFile recoveryProject = writeProjectWithSlave(
+        directory,
+        supportedEmpty->summary,
+        "startup-repository-recovery.ecatproject",
+        "Startup Repository Recovery");
+    QVERIFY(!recoveryProject.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(recoveryProject.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(recoveryProject.projectId).has_value());
+    const Utils::Result<> activationResult = projectService->activateProject(
+        recoveryProject.projectId);
+    QVERIFY_RESULT(activationResult);
+    const Data::ProjectSnapshot beforeRecovery = *projectService->project(recoveryProject.projectId);
+    const Data::NodeId activeProjectBeforeBrowsing = projectService->activeProjectId();
+    const bool couldUndoBeforeBrowsing = projectService->canUndoProject(recoveryProject.projectId);
+    const bool couldRedoBeforeBrowsing = projectService->canRedoProject(recoveryProject.projectId);
+    for (const Data::NodeId &repositoryDeviceId :
+         {supportedEmptyId,
+          unsupportedEmptyId,
+          supportedPopulatedId,
+          unsupportedPopulatedId,
+          supportedInvalidId,
+          unsupportedInvalidId}) {
+        const QModelIndex repositoryIndex = controller.treeModel()->indexForNodeId(
+            repositoryDeviceId);
+        QVERIFY(repositoryIndex.isValid());
+        pages.updatePage(
+            Constants::STARTUP_PAGE_ID,
+            page.get(),
+            controller.treeModel()->contextForIndex(repositoryIndex));
+    }
+    QCOMPARE(*projectService->project(recoveryProject.projectId), beforeRecovery);
+    QCOMPARE(projectService->activeProjectId(), activeProjectBeforeBrowsing);
+    QCOMPARE(projectService->canUndoProject(recoveryProject.projectId), couldUndoBeforeBrowsing);
+    QCOMPARE(projectService->canRedoProject(recoveryProject.projectId), couldRedoBeforeBrowsing);
+
+    const Utils::Result<> supportedEmptyAdd
+        = controller.addDeviceToMaster(supportedEmptyId, recoveryProject.masterId);
+    QVERIFY_RESULT(supportedEmptyAdd);
+    QTRY_COMPARE(
+        projectService->project(recoveryProject.projectId)->slaves.size(),
+        beforeRecovery.slaves.size() + 1);
+    const Data::ProjectSnapshot afterSupportedEmptyAdd = *projectService->project(
+        recoveryProject.projectId);
+    const auto added = std::find_if(
+        afterSupportedEmptyAdd.slaves.cbegin(),
+        afterSupportedEmptyAdd.slaves.cend(),
+        [&beforeRecovery](const Data::OfflineSlaveConfiguration &slave) {
+            return std::none_of(
+                beforeRecovery.slaves.cbegin(),
+                beforeRecovery.slaves.cend(),
+                [&slave](const Data::OfflineSlaveConfiguration &existing) {
+                    return existing.id == slave.id;
+                });
+        });
+    QVERIFY(added != afterSupportedEmptyAdd.slaves.cend());
+    QVERIFY(added->startup.parameters.isEmpty());
+    QVERIFY(projectService->canUndoProject(recoveryProject.projectId));
+    const Utils::Result<> undoResult = projectService->undoProject(recoveryProject.projectId);
+    QVERIFY_RESULT(undoResult);
+    QTRY_COMPARE(*projectService->project(recoveryProject.projectId), beforeRecovery);
+    QVERIFY(projectService->canRedoProject(recoveryProject.projectId));
+    const Data::ProjectSnapshot beforeRejectedAdds = *projectService->project(
+        recoveryProject.projectId);
+    const bool canUndoBeforeRejectedAdds = projectService->canUndoProject(recoveryProject.projectId);
+    const bool canRedoBeforeRejectedAdds = projectService->canRedoProject(recoveryProject.projectId);
+
+    const Utils::Result<> unsupportedEmptyAdd
+        = controller.addDeviceToMaster(unsupportedEmptyId, recoveryProject.masterId);
+    QVERIFY(!unsupportedEmptyAdd);
+    QVERIFY(unsupportedEmptyAdd.error().contains("unsupported", Qt::CaseInsensitive));
+    QCOMPARE(*projectService->project(recoveryProject.projectId), beforeRejectedAdds);
+    const Utils::Result<> unsupportedPopulatedAdd
+        = controller.addDeviceToMaster(unsupportedPopulatedId, recoveryProject.masterId);
+    QVERIFY(!unsupportedPopulatedAdd);
+    QVERIFY(unsupportedPopulatedAdd.error().contains("unsupported", Qt::CaseInsensitive));
+    QCOMPARE(*projectService->project(recoveryProject.projectId), beforeRejectedAdds);
+    const Utils::Result<> supportedInvalidAdd
+        = controller.addDeviceToMaster(supportedInvalidId, recoveryProject.masterId);
+    QVERIFY(!supportedInvalidAdd);
+    QVERIFY(supportedInvalidAdd.error().contains("Startup", Qt::CaseInsensitive));
+    QVERIFY(supportedInvalidAdd.error().contains("invalid", Qt::CaseInsensitive));
+    QVERIFY(supportedInvalidAdd.error().contains("transition", Qt::CaseInsensitive));
+    QCOMPARE(*projectService->project(recoveryProject.projectId), beforeRejectedAdds);
+    const Utils::Result<> unsupportedInvalidAdd
+        = controller.addDeviceToMaster(unsupportedInvalidId, recoveryProject.masterId);
+    QVERIFY(!unsupportedInvalidAdd);
+    QVERIFY(unsupportedInvalidAdd.error().contains("unsupported", Qt::CaseInsensitive));
+    QCOMPARE(*projectService->project(recoveryProject.projectId), beforeRejectedAdds);
+    QCOMPARE(projectService->canUndoProject(recoveryProject.projectId), canUndoBeforeRejectedAdds);
+    QCOMPARE(projectService->canRedoProject(recoveryProject.projectId), canRedoBeforeRejectedAdds);
+
+    controller.selectionService()->clear();
+    if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+        ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(recoveryProject.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
 void EtherCATWorkbenchTests::testEditableStartupWorkflow()
 {
     WorkbenchController controller;

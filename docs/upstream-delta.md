@@ -882,6 +882,38 @@ budget does not increase and no extension-point exception is required. The
 Workbench path count remains 44 and the direct upstream Core patch count
 remains five.
 
+`ISSUE-WB-STARTUP-REPOSITORY-EMPTY-001`, based on
+`24576f40eab24825baea29047cda750136a82819`, changes only the existing
+product-owned private `startuppage.cpp` and `startuppage.h`, Workbench test
+declaration/implementation, and documentation. Repository Device Startup now
+distinguishes supported/unsupported empty catalogues,
+supported/unsupported invalid previews, removed descriptions, and the existing
+populated catalogue. A zero-row table exposes a truthful explicit empty state
+instead of generic Add guidance and a false valid-zero-request result.
+
+The existing table remains read-only and receives a context-specific localized
+accessible description and equal tooltip. Empty state uses real zero model
+rows. The page does not fabricate a Startup request, modify a Project, add a
+Device, change validation, send an SDO, or introduce controller/network/
+hardware behavior. Existing checked topology and Project validation paths
+continue to own Add, rejection, Undo, and Redo.
+
+The final regression uses six real imported ESI contexts and a removed Device,
+rejects direct EditRole/CheckStateRole mutation, proves page-reuse cleanup, and
+proves complete Project snapshot plus Undo/Redo isolation. The supported-empty
+recovery uses the existing Add path and is undone; all unsupported and invalid
+cases use the existing rejection paths. The test-only Project scope guard
+ensures cleanup on assertion failure and changes no production ownership.
+
+No source file, dependency, CMake/qbs entry, public API, Project format,
+Provider, persistence field, Project command, custom model role, production
+thread or timer, controller/network transport, online state, or physical
+hardware behavior changes. No file under Qt Creator's upstream Core,
+ProjectExplorer, or application bootstrap changes, so the direct Core patch
+budget does not increase and no extension-point exception is required. The
+Workbench path count remains 44 and the direct upstream Core patch count
+remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

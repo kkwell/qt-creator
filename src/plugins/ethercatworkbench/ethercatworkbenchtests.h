@@ -58,6 +58,7 @@ private slots:
     void testCoeDictionaryCellAccessibility();
     void testCoeRepositoryReadOnlyWorkflow();
     void testStartupTableAccessibility();
+    void testStartupRepositoryEmptyState();
     void testEditableStartupWorkflow();
     void testDcRepositoryModePreview();
     void testDcRepositoryModeEmptyState();

@@ -601,10 +601,10 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Status icon style metric and content-width guard | Passed |
 | Focused status test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed after fixing the reproduced width compression |
 | TwinCAT-inspired ordered Startup list and action layout | Passed in widget/model flow test |
-| Startup ESI proposal, explicit Store/Restore, and read-only catalogue | Passed |
+| Startup ESI proposal, explicit Store/Restore, and populated repository catalogue read-only cells | Passed |
 | Startup New/Edit/Delete, enable, Move Up/Down, and fixed request constraints | Passed |
 | Startup type/raw-value/order rejection and Undo/Redo | Passed |
-| Startup manual no-ESI empty state | Passed |
+| Configured-slave Startup manual no-ESI empty state | Passed |
 | TwinCAT-inspired DC Cyclic Mode, SYNC0, SYNC1, and reference-clock layout | Passed in widget/model flow test |
 | Two ESI DC modes, explicit Store/Restore, and read-only catalogue | Passed |
 | Manual no-ESI mode, AssignActivate, cycle/shift, and dependency validation | Passed |
@@ -2005,6 +2005,60 @@ tables, not an online-capability claim:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html>.
 Qt's model cardinality, mutation, and localized contextual-description
 contracts are documented at
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#rowCount>,
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#setData>, and
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. Qt Creator
+20.0's explicit unavailable-state precedent is visible at
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/typehierarchy.cpp#L63-L72>.
+
+## EtherCATWorkbench repository Device Startup empty-state qualification
+
+`ISSUE-WB-STARTUP-REPOSITORY-EMPTY-001` uses local baseline
+`24576f40eab24825baea29047cda750136a82819`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first state | With production blobs still exactly `9b3052173109daee22678ae12b98f77725947885` / `f1c06438065bf252d7cc903b6c671798ca768f64`, the new supported-empty assertion failed because the old summary did not contain “No ESI Startup”; initialization and cleanup passed and the target exited with status 1 under `/private/tmp/embed-labs-startup-repository-empty.OSpPLZ/failure-first` |
+| Real Provider contexts | Six unique ESI files import through the existing Devices Provider: supported/unsupported empty, supported/unsupported populated-valid, and supported/unsupported populated-invalid |
+| Supported empty | Zero real rows and Information; the repository page fabricates no request, while the existing checked Add path can create one undoable offline Slave with empty Startup for later manual editing |
+| Unsupported empty | Zero real rows and Warning; the existing topology boundary rejects Add and recovery points to Device Repository support details |
+| Supported invalid | Read-only populated preview and Error; the first validation reason stays visible, complete issues stay in the tooltip, Add is rejected, and recovery requires a corrected matching ESI import |
+| Unsupported invalid | The validation Error and support restriction are both preserved; Add is rejected as unsupported and the Project remains unchanged |
+| Unsupported populated-valid | Read-only populated preview and Warning; unsupported structures prevent Project Add without hiding the imported requests |
+| Removed Device | Unavailable Warning, zero rows, Device Repository recovery, and no offline-Project Add instruction |
+| Supported populated-valid | Existing read-only catalogue and its three source data-type warnings remain; no Startup request is sent by preview |
+| Read-only enforcement | Every populated catalogue cell lacks editable/checkable flags; direct EditRole and CheckStateRole `setData()` attempts return false and preserve all display values |
+| Accessibility and page reuse | The contextual table accessible description equals its tooltip and identifies empty/unsupported/invalid/removed/offline/SDO boundaries; reusing one page removes stale context and validation-tooltip text |
+| Repository controls | New, Edit, Delete, Move Up/Down, Store/Restore, and enable mutation remain unavailable for every repository Device state |
+| Existing Project isolation | Repeated repository browsing preserves the complete Project snapshot, active Project, and Undo/Redo availability |
+| Existing checked recovery | Supported-empty Add creates exactly one Slave with zero Startup requests and is undoable to the complete prior snapshot with Redo available; unsupported empty/populated and supported-invalid/unsupported-invalid attempts are rejected with snapshot and Undo/Redo state unchanged |
+| Failure-path test cleanup | A scope guard immediately owns the opened Project, clears selection, removes it when still present, and drains posted events even if a later assertion returns early |
+| Focused tests | Normal and 2x each passed 3, failed 0, target status 0 under `sealed-focused-normal` and `sealed-focused-2x` |
+| Startup companion | Normal and 2x each passed 8, failed 0 under `sealed-startup-companion-normal` and `sealed-startup-companion-2x` |
+| Complete Workbench | Normal and 2x each passed 59, failed 0 under `sealed-workbench-normal` and `sealed-workbench-2x` |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 59, Scan 7, Diagnostics 7; 110 passed, 0 failed under `sealed-six-suites` |
+| Existing full-suite diagnostic | The known ProjectExplorer TaskHub soft assertion remains confined to the pre-existing invalid-project test and does not occur in the new focused test, fail a test, or alter target status |
+| Final source blobs | Production `9a67969dfacba88fe429470b3822330c70dde817` / `2df41415e73ee3506a9cbff1a6b6fa08e59e7746`; tests `5d86453db7cc94fcbf7d8fb2061f772c5e4fedd7` / `e4ff4f2652dee1dd04bb01d8a54325a879f909dd` |
+| Test plugin | Workbench SHA-256 `a78e961f1aa3ee029950201ea9205a6e0f80a5171542ea998eb3f3165e78aed0` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 allow-listed plugin dylibs; Workbench SHA-256 `59715209a6979a974fe3a96403f035bb8c04e57212a070fdcb7e352451a71552` |
+| Enabled startup | PID 69283 remained running for 37 seconds with 37 consecutive samples; intentional passed-through SIGTERM produced target status 15 under `lifecycle-enabled-final` |
+| Explicitly disabled startup | PID 70440 remained running for 37 seconds with 37 consecutive samples and `-noload EtherCATWorkbench`; intentional passed-through SIGTERM produced target status 15 under `lifecycle-disabled-final` |
+| Crash-dialog audit | No residual Embed Labs/LLDB process, new matching DiagnosticReports file, or matching ReportCrash/CrashReporter/diagnosticd event after 2026-07-19 19:31:02 +0800 |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, offscreen Qt platform, crash reporter disabled, `-no-crashcheck`, and only the process-local Touch Bar bypass; no visible main window or system crash dialog |
+| Visual/manual desktop inspection | Not run by design; this issue changes text/state only and executable acceptance remained offscreen |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard test include blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, Project command, model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, SDO, controller transport, online state, or hardware access | Not performed or added; this is imported-ESI presentation and checked offline-Project recovery only |
+
+All paths above are relative to
+`/private/tmp/embed-labs-startup-repository-empty.OSpPLZ`. Beckhoff's Startup
+page supplies only the structural comparison for ordered mailbox download
+requests and their fields; Embed Labs does not execute those requests:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.
+Qt's real model-cardinality, rejected-mutation, and localized contextual
+description contracts are documented at
 <https://doc.qt.io/qt-6/qabstractitemmodel.html#rowCount>,
 <https://doc.qt.io/qt-6/qabstractitemmodel.html#setData>, and
 <https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. Qt Creator

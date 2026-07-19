@@ -1204,10 +1204,11 @@ slaves. The Process Data workflow additionally covers RxPDO/TxPDO SM selection,
 read-only repository and fixed/mandatory mappings, an empty no-ESI state,
 ESI-derived initial mapping, assignment and entry edits,
 validation rejection, process-image refresh, and real DetailsView plus Project
-Undo/Redo reentrancy. The Startup workflow covers the ESI catalogue, explicit
-defaults storage, fixed requests, New/Edit/Delete dialogs, enable state,
-ordering, type/value validation, manual no-ESI empty state, and real
-ProjectService Undo/Redo reentrancy. The CoE Online workflow covers the
+Undo/Redo reentrancy. The Startup workflow covers the populated repository ESI
+catalogue, explicit defaults storage, fixed requests, New/Edit/Delete dialogs,
+enable state, ordering, type/value validation, configured-slave manual no-ESI
+empty state, and real ProjectService Undo/Redo reentrancy. The CoE Online
+workflow covers the
 TwinCAT-inspired object hierarchy and controls, ESI/offline/Mock sources,
 manual refresh, advanced and Unicode filters, offline, object-level, and
 repository-device read-only boundaries, configured-slave raw-value editing,
@@ -2928,6 +2929,7 @@ behavior. No CMake or qbs description changed, so qbs was not run. The
 Workbench path count remains 44 and the direct upstream Core patch count
 remains five.
 
+
 ## General property tree accessibility qualification
 
 `ISSUE-WB-GENERAL-PROPERTY-TREE-A11Y-001` uses local baseline
@@ -3595,3 +3597,124 @@ timer, controller/network transport, online state, or hardware behavior. No
 upstream Core, ProjectExplorer, or application-bootstrap path changed. The
 Workbench path count remains 44 and the direct upstream Core patch count
 remains five.
+
+## Repository Device Startup empty state
+
+`ISSUE-WB-STARTUP-REPOSITORY-EMPTY-001` is based on local commit
+`24576f40eab24825baea29047cda750136a82819`. The repository Device Startup page
+now distinguishes the actual imported ESI state instead of giving every
+zero-row catalogue the generic instruction to add the Device and reporting a
+valid zero-request configuration.
+
+| Repository context | Visible and validation state | Recovery and permission |
+|---|---|---|
+| Supported Device with no parsed Startup request | The table has zero real rows; the summary says no ESI Startup request is available; `InfoLabel` is Information | The existing checked topology path may add the Device to a valid offline Project with empty Startup, where requests can later be entered manually; the repository page fabricates none |
+| Unsupported Device with no parsed Startup request | Zero rows and Warning | Cannot be added; review unsupported structures in Device Repository |
+| Supported Device with invalid parsed Startup | Read-only populated preview and Error; the first validation reason is visible and all existing issues remain in the tooltip | Cannot be added by the checked Project path; import a corrected matching ESI through Device Repository |
+| Unsupported Device with invalid parsed Startup | Read-only populated preview and Error; validation and support restrictions are both visible | Cannot be added; review errors and unsupported structures in Device Repository |
+| Unsupported Device with otherwise populated Startup | Read-only populated preview; existing validation is retained and the support notice is Warning | Cannot be added; the imported catalogue remains inspectable without granting mutation |
+| Removed Device description | Zero rows and unavailable Warning | Return to Device Repository; no Project-add instruction is shown |
+| Supported Device with populated Startup | Existing read-only catalogue and existing validation remain; the qualification fixture retains its three source data-type warnings | Existing inspect and offline-Project Add guidance remains; preview never sends a request |
+
+The table keeps its localized base accessible description. Every Device
+`setContext()` derives a fresh contextual description and equal tooltip from
+that base, so empty, unsupported, invalid, and removed text cannot leak when
+the same page is reused for a valid populated Device. A removed Device also
+clears the prior validation-detail tooltip. Empty state is represented by a
+real zero `rowCount()`; no placeholder row, object address, raw value, stable
+identifier, or request is synthesized.
+
+Repository state remains completely read-only. New, Edit, Delete, Move
+Up/Down, enable toggles, and Store/Restore are unavailable. For every cell in
+both populated-valid and populated-invalid catalogues, editable and checkable
+flags remain absent; direct `EditRole` and `CheckStateRole` `setData()` calls
+return false and leave display/check values unchanged. Selecting a row changes
+only page presentation. The table description and tooltip explicitly disclose
+that the preview does not modify a Project, send an SDO, or access a
+controller, network, or physical hardware.
+
+Repository browsing itself performs no recovery command. The page reads the
+immutable `DeviceDescription`, copies the existing Startup defaults, derives
+private availability/support/data/error facts, and presents them. A regression
+opens a real offline Project and proves that browsing all six imported Device
+states preserves its complete `ProjectSnapshot`, active Project, and Undo/Redo
+availability. It then calls the existing checked controller path separately:
+one supported-empty Device creates exactly one Slave with zero Startup
+requests, Undo restores the complete prior snapshot and establishes Redo;
+unsupported empty/populated Devices and supported-invalid/unsupported-invalid
+Devices are rejected while the complete snapshot and Undo/Redo state remain
+unchanged. A scope guard owns the opened Project immediately so any assertion
+failure also clears selection, removes the Project, and drains posted events.
+
+Beckhoff describes Startup as an ordered list of mailbox download requests and
+documents their fields and actions:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.
+Embed Labs uses that structure only for imported offline ESI presentation and
+configured-slave editing; repository preview does not transmit a request.
+Qt documents that `rowCount()` is the model's real cardinality and that a
+read-only model rejects `setData()`:
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#rowCount> and
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#setData>. Qt's accessible
+description contract requires localized purpose/context text:
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. Qt Creator
+20.0 supplies the host precedent for an explicit unavailable state in Type
+Hierarchy:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/typehierarchy.cpp#L63-L72>.
+
+The failure-first test was compiled while production remained at exact blobs
+`9b3052173109daee22678ae12b98f77725947885` /
+`f1c06438065bf252d7cc903b6c671798ca768f64`. Initialization and cleanup passed,
+and the new assertion failed exactly because the old supported-empty summary
+did not contain “No ESI Startup”; target status was 1 under
+`/private/tmp/embed-labs-startup-repository-empty.OSpPLZ/failure-first`.
+
+Final production blobs are
+`9a67969dfacba88fe429470b3822330c70dde817` /
+`2df41415e73ee3506a9cbff1a6b6fa08e59e7746`; final test blobs are
+`5d86453db7cc94fcbf7d8fb2061f772c5e4fedd7` /
+`e4ff4f2652dee1dd04bb01d8a54325a879f909dd`. The final test-build Workbench
+plugin SHA-256 is
+`a78e961f1aa3ee029950201ea9205a6e0f80a5171542ea998eb3f3165e78aed0`.
+Focused normal and `QT_SCALE_FACTOR=2` runs each passed 3 events under
+`sealed-focused-normal` and `sealed-focused-2x`. Startup companion runs each
+passed 8 events under `sealed-startup-companion-normal` and
+`sealed-startup-companion-2x`. Complete Workbench runs each passed 59 events
+under `sealed-workbench-normal` and `sealed-workbench-2x`. The six isolated
+suites under `sealed-six-suites` passed 110 events: Core 17, Project 12,
+Devices 8, Workbench 59, Scan 7, and Diagnostics 7. Every test target exited
+with status 0; all directories are below the same evidence root.
+
+Each complete Workbench log retains the known pre-existing ProjectExplorer
+TaskHub soft assertion in `testInvalidProjectPresentationAndLifecycle`. It is
+absent from the new focused test, does not fail a test, and does not alter
+target status.
+
+The full `WITH_TESTS=OFF` product build passed and contains exactly the 16
+allow-listed plugin dylibs. Its Workbench plugin SHA-256 is
+`59715209a6979a974fe3a96403f035bb8c04e57212a070fdcb7e352451a71552`.
+Enabled startup observed PID 69283 for 37 consecutive one-second samples;
+explicitly disabled startup observed PID 70440 for the same 37 samples with
+`-noload EtherCATWorkbench`. LLDB passed the intentional final SIGTERM directly
+to each target, and each exited with target status 15 under
+`lifecycle-enabled-final` and `lifecycle-disabled-final`.
+
+The final crash audit found no residual Embed Labs/LLDB process, new matching
+DiagnosticReports file, or matching ReportCrash/CrashReporter/diagnosticd
+event after 2026-07-19 19:31:02 +0800. Every executable used fresh
+HOME/settings, cleared inherited DYLD variables, `QT_QPA_PLATFORM=offscreen`,
+`CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch
+Bar bypass. No visible main window or system crash dialog was created. Manual
+desktop inspection was intentionally not run because this issue changes
+text/state only and all executable acceptance remained offscreen.
+
+This issue changes only the existing private `startuppage.cpp` and
+`startuppage.h`, Workbench test declaration/implementation, and these four
+documents. It adds no source file, dependency, public API, Provider,
+persistence field, Project command, custom model role, production thread or
+timer, controller/network transport, SDO execution, online state, or hardware
+behavior. Configured-slave editing, validation, persistence, and Undo/Redo are
+unchanged. No CMake or qbs description changed, so qbs was not run. The
+unrelated `WITH_TESTS=ON` all-target build was not rerun; the known EasyBoard
+test include blocker remains outside this private Workbench issue. No upstream
+Core, ProjectExplorer, or application-bootstrap path changed. The Workbench
+path count remains 44 and the direct upstream Core patch count remains five.

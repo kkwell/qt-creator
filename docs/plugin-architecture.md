@@ -1292,6 +1292,76 @@ description changed. No path under upstream Core, ProjectExplorer, or the
 application bootstrap changed. The Workbench path count remains 44 and the
 direct upstream Core patch count remains five.
 
+## Workbench repository Device Startup empty-state boundary
+
+`ISSUE-WB-STARTUP-REPOSITORY-EMPTY-001` stays inside the product-owned private
+`StartupPage`. `DeviceRepositoryProvider` continues to own and publish the
+immutable parsed `DeviceDescription`; the page copies the existing Startup
+defaults and derives four private presentation facts only: description
+availability, parser support, parsed-request availability, and whether the
+current copied configuration has validation errors. None crosses a plugin
+interface or enters a shared data or persistence contract.
+
+The repository Device branch remains a view. Empty and populated models expose
+their real copied parameters; no request, object address, raw value, order,
+stable ID, or placeholder row is created. The table's localized base accessible
+description is stored once by the private widget. Each `setContext()` rebuilds
+contextual description and tooltip text from that base, making page reuse the
+cleanup boundary for supported/unsupported empty, supported/unsupported
+invalid, removed, and populated-valid states. Validation details are rebuilt
+from the current configuration and cannot survive a removed or later valid
+context.
+
+Supported empty and invalid Startup are deliberately different. A supported
+empty Device may enter the existing offline topology with an empty Startup
+list; the repository page neither performs that Add nor enables an editing
+control. A supported-invalid Device remains rejected by the existing Project
+validation boundary and points to corrected ESI import. Unsupported empty,
+populated, and invalid Devices retain the existing topology rejection and
+Device Repository support recovery. A removed description cannot advertise an
+offline Project path.
+
+The validation label preserves `validateStartupConfiguration()` output and
+does not alter issue codes, severities, messages, or Project validation.
+Supported empty uses Information; unsupported empty uses Warning; invalid
+preview remains Error; unsupported populated preview adds the support warning
+without hiding existing diagnostics. A supported populated catalogue retains
+its existing Warning state; the qualified three-request fixture preserves all
+three source data-type warnings. The first error remains visible while the full
+existing issue list remains in the validation tooltip.
+
+Repository mutation has two independent private gates. `m_editable` keeps New,
+Edit, Delete, Move Up/Down, enable, and Store/Restore unavailable; the table
+model continues to reject direct EditRole and CheckStateRole mutation. The
+contextual description states that selection affects presentation only and no
+Project, SDO, controller, network, or physical hardware is touched.
+
+The regression's recovery operations prove wording at the existing boundary;
+they do not add a production path. It invokes the existing
+`WorkbenchController::addDeviceToMaster()` and Project Undo command after the
+repository presentation checks. `StartupPage` itself never finds an active
+Master, adds a Slave, creates Undo history, persists repository selection, or
+sends a request. A test-local scope guard owns the opened Project and cleans it
+on every return path; it adds no production ownership or lifecycle object.
+
+Beckhoff's Startup documentation supplies only the ordered-request/field
+comparison and includes mailbox execution that remains excluded:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.
+Qt's model-cardinality, rejected-mutation, and localized contextual-description
+contracts define the view boundary:
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#rowCount>,
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#setData>, and
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>.
+
+This boundary adds no public API, source file, dependency, Provider, Project
+command, persistence field, model role, thread, timer, controller/network
+transport, SDO execution, online state, or physical-hardware behavior.
+Configured-slave editing, validation, Project submission, persistence, and
+Undo/Redo remain the existing path. No CMake or qbs description changed. No
+path under upstream Core, ProjectExplorer, or the application bootstrap
+changed. The Workbench path count remains 44 and the direct upstream Core patch
+count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

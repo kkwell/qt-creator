@@ -38,6 +38,8 @@ enum TableRole {
     DataTypeRole,
 };
 
+static constexpr char baseDescriptionProperty[] = "EtherCAT.Startup.BaseAccessibleDescription";
+
 static QString hexValue(quint64 value, int width)
 {
     return QString("0x%1").arg(value, width, 16, QLatin1Char('0'));
@@ -684,6 +686,7 @@ StartupPage::StartupPage(WorkbenchController *controller, QWidget *parent)
         Tr::tr(
             "Ordered offline CoE Startup requests with transition, object address, data, and "
             "comment details."));
+    m_table->setProperty(baseDescriptionProperty, m_table->accessibleDescription());
     m_moveUp->setObjectName("EtherCATStartupMoveUp");
     m_moveDown->setObjectName("EtherCATStartupMoveDown");
     m_new->setObjectName("EtherCATStartupNew");
@@ -771,6 +774,10 @@ void StartupPage::setContext(const Core::PropertyPageContext &context)
     m_configuration = {};
     m_esiDefaults = {};
     m_showingEsiDefaults = false;
+    m_repositoryDeviceAvailable = false;
+    m_repositoryDeviceSupported = false;
+    m_repositoryStartupAvailable = false;
+    m_repositoryStartupHasErrors = false;
 
     std::optional<Data::OfflineSlaveConfiguration> slave;
     std::optional<Data::DeviceDescription> device;
@@ -790,16 +797,70 @@ void StartupPage::setContext(const Core::PropertyPageContext &context)
     }
     if (device)
         m_esiDefaults = startupDefaultsFromDevice(*device, context.nodeId);
+    m_repositoryDeviceAvailable = context.nodeKind == Core::WorkbenchNodeKind::Device
+                                  && device.has_value();
+    m_repositoryDeviceSupported = m_repositoryDeviceAvailable && device->summary.supported;
+    m_repositoryStartupAvailable = m_repositoryDeviceAvailable
+                                   && !m_esiDefaults.parameters.isEmpty();
     if (isEmpty(m_configuration) && !isEmpty(m_esiDefaults)) {
         m_configuration = m_esiDefaults;
         m_showingEsiDefaults = true;
     }
+    if (m_repositoryStartupAvailable) {
+        const QList<Data::ConfigurationIssue> issues = Data::validateStartupConfiguration(
+            m_configuration);
+        m_repositoryStartupHasErrors
+            = std::any_of(issues.cbegin(), issues.cend(), [](const auto &issue) {
+                  return issue.severity == Data::ConfigurationIssueSeverity::Error;
+              });
+    }
 
-    if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
+    if (context.nodeKind == Core::WorkbenchNodeKind::Device && !m_repositoryDeviceAvailable) {
         m_summary->setText(
-            Tr::tr(
-                "ESI Startup requests. Their transition, object address, raw data, and order "
-                "can be inspected here. Add the device to an offline project before editing."));
+            Tr::tr("The ESI device description is no longer available. Return to Device Repository "
+                   "and select an available device before opening Startup."));
+    } else if (
+        context.nodeKind == Core::WorkbenchNodeKind::Device && !m_repositoryStartupAvailable
+        && !m_repositoryDeviceSupported) {
+        m_summary->setText(
+            Tr::tr("No ESI Startup request is available. This repository device also contains "
+                   "unsupported ESI structures and cannot be added to an offline Project. Review "
+                   "its support details in Device Repository; Workbench will not fabricate Startup "
+                   "requests, and no SDO, controller, network, or physical hardware is accessed."));
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Device && !m_repositoryStartupAvailable) {
+        m_summary->setText(
+            Tr::tr("No ESI Startup request is available for this repository device. The device can "
+                   "still be added to an offline Project, where Startup requests can be created "
+                   "manually, but Workbench will not fabricate requests. Review its source in "
+                   "Device Repository or import a matching ESI description; no SDO, controller, "
+                   "network, or physical hardware is accessed."));
+    } else if (
+        context.nodeKind == Core::WorkbenchNodeKind::Device && m_repositoryStartupHasErrors
+        && !m_repositoryDeviceSupported) {
+        m_summary->setText(Tr::tr(
+            "ESI Startup requests are available for read-only preview, but validation errors "
+            "and unsupported ESI structures mean this repository device cannot be added to "
+            "an offline Project. Review the error and support details, then import a corrected "
+            "matching ESI description through Device Repository; no SDO, controller, network, "
+            "or physical hardware is accessed."));
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Device && m_repositoryStartupHasErrors) {
+        m_summary->setText(Tr::tr(
+            "ESI Startup requests are available for read-only preview, but validation errors "
+            "mean this repository device cannot be added to an offline Project. Review the "
+            "error details below and import a corrected matching ESI description through "
+            "Device Repository; no SDO, controller, network, or physical hardware is "
+            "accessed."));
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Device && !m_repositoryDeviceSupported) {
+        m_summary->setText(
+            Tr::tr("ESI Startup requests are available for read-only preview, but this repository "
+                   "device contains unsupported ESI structures and cannot be added to an offline "
+                   "Project. Review its support details in Device Repository; no SDO, controller, "
+                   "network, or physical hardware is accessed."));
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
+        m_summary->setText(
+            Tr::tr("ESI Startup requests. Their transition, object address, raw data, and order "
+                   "can be inspected here. Add the device to an offline Project before editing; no "
+                   "Startup request is sent from this read-only preview."));
     } else if (m_showingEsiDefaults) {
         m_summary->setText(
             Tr::tr(
@@ -825,6 +886,7 @@ void StartupPage::setContext(const Core::PropertyPageContext &context)
     m_restoreDefaults->setEnabled(m_editable && !isEmpty(m_esiDefaults));
     m_restoreDefaults->setText(
         m_showingEsiDefaults ? Tr::tr("Store ESI Defaults") : Tr::tr("Restore ESI Defaults"));
+    updateTablePresentation();
     rebuildModel();
 }
 
@@ -885,6 +947,77 @@ void StartupPage::updateButtonState()
     m_delete->setEnabled(canChange);
     m_moveUp->setEnabled(canChange && previous && !isFixed(*previous));
     m_moveDown->setEnabled(canChange && next && !isFixed(*next));
+}
+
+void StartupPage::updateTablePresentation()
+{
+    const bool repositoryDeviceMissing = m_context.nodeKind == Core::WorkbenchNodeKind::Device
+                                         && !m_repositoryDeviceAvailable;
+    const bool repositoryStartupEmpty = m_context.nodeKind == Core::WorkbenchNodeKind::Device
+                                        && m_repositoryDeviceAvailable
+                                        && !m_repositoryStartupAvailable;
+    const bool repositoryStartupEmptyUnsupported = repositoryStartupEmpty
+                                                   && !m_repositoryDeviceSupported;
+    const bool repositoryStartupPreview = m_context.nodeKind == Core::WorkbenchNodeKind::Device
+                                          && m_repositoryDeviceAvailable
+                                          && m_repositoryStartupAvailable;
+    const bool repositoryStartupPreviewUnsupported = repositoryStartupPreview
+                                                     && !m_repositoryDeviceSupported;
+    const bool repositoryStartupPreviewInvalid = repositoryStartupPreview
+                                                 && m_repositoryStartupHasErrors;
+
+    QString contextDescription;
+    if (repositoryDeviceMissing) {
+        contextDescription = Tr::tr(
+            "The ESI device description is unavailable, so no Startup requests can be shown. "
+            "Return to Device Repository and select an available device. This read-only page "
+            "does not send an SDO request or access a controller, network, or physical hardware.");
+    } else if (repositoryStartupEmptyUnsupported) {
+        contextDescription = Tr::tr(
+            "No ESI Startup request is available. This repository device contains unsupported "
+            "ESI structures and cannot be added to an offline Project. Review its support details "
+            "in Device Repository. This read-only page will not fabricate requests and does not "
+            "send an SDO request or access a controller, network, or physical hardware.");
+    } else if (repositoryStartupEmpty) {
+        contextDescription = Tr::tr(
+            "No ESI Startup request is available for this repository device. This read-only page "
+            "will not fabricate requests. Add the device to an offline Project to create Startup "
+            "requests manually, or review its source in Device Repository; no SDO request is sent "
+            "and no controller, network, or physical hardware is accessed.");
+    } else if (repositoryStartupPreviewInvalid && repositoryStartupPreviewUnsupported) {
+        contextDescription = Tr::tr(
+            "This is a read-only preview of imported ESI Startup requests. The configuration has "
+            "validation errors and the repository device contains unsupported ESI structures, so "
+            "it cannot be added to an offline Project. Review the error and support details, then "
+            "import a corrected matching ESI description through Device Repository. The preview "
+            "does not modify a Project, send an SDO request, or access a controller, network, or "
+            "physical hardware.");
+    } else if (repositoryStartupPreviewInvalid) {
+        contextDescription = Tr::tr(
+            "This is a read-only preview of imported ESI Startup requests. The configuration has "
+            "validation errors and cannot be added to an offline Project. Review the error details "
+            "and import a corrected matching ESI description through Device Repository. The "
+            "preview does not modify a Project, send an SDO request, or access a controller, "
+            "network, or physical hardware.");
+    } else if (repositoryStartupPreviewUnsupported) {
+        contextDescription = Tr::tr(
+            "This is a read-only preview of imported ESI Startup requests. The repository device "
+            "contains unsupported ESI structures and cannot be added to an offline Project. Review "
+            "its support details in Device Repository. The preview does not modify a Project, send "
+            "an SDO request, or access a controller, network, or physical hardware.");
+    } else if (repositoryStartupPreview) {
+        contextDescription = Tr::tr(
+            "This is a read-only offline preview of imported ESI Startup requests. Add the device "
+            "to an offline Project before editing. Selecting rows changes only this page "
+            "presentation; it does not modify a Project, send an SDO request, or access a "
+            "controller, network, or physical hardware.");
+    }
+
+    QString description = m_table->property(baseDescriptionProperty).toString();
+    if (!contextDescription.isEmpty())
+        description += ' ' + contextDescription;
+    m_table->setAccessibleDescription(description);
+    m_table->setToolTip(contextDescription.isEmpty() ? QString() : description);
 }
 
 void StartupPage::addParameter()
@@ -1013,16 +1146,71 @@ void StartupPage::showValidation(const QList<Data::ConfigurationIssue> &issues, 
     QString text = prefix;
     if (!text.isEmpty() && !details.isEmpty())
         text += ' ';
-    if (errorCount > 0) {
+    const bool repositoryDeviceMissing = m_context.nodeKind == Core::WorkbenchNodeKind::Device
+                                         && !m_repositoryDeviceAvailable;
+    const bool repositoryStartupEmpty = m_context.nodeKind == Core::WorkbenchNodeKind::Device
+                                        && m_repositoryDeviceAvailable
+                                        && !m_repositoryStartupAvailable;
+    const bool repositoryStartupEmptyUnsupported = repositoryStartupEmpty
+                                                   && !m_repositoryDeviceSupported;
+    const bool repositoryStartupPreviewUnsupported = m_context.nodeKind
+                                                         == Core::WorkbenchNodeKind::Device
+                                                     && m_repositoryDeviceAvailable
+                                                     && m_repositoryStartupAvailable
+                                                     && !m_repositoryDeviceSupported;
+    const bool repositoryStartupPreviewInvalid = m_context.nodeKind
+                                                     == Core::WorkbenchNodeKind::Device
+                                                 && m_repositoryDeviceAvailable
+                                                 && m_repositoryStartupAvailable && errorCount > 0;
+    QString repositoryPreviewNotice;
+    if (repositoryStartupPreviewInvalid && repositoryStartupPreviewUnsupported) {
+        repositoryPreviewNotice = Tr::tr(
+            "This Startup configuration has validation errors and the Device contains unsupported "
+            "ESI structures, so it cannot be added to an offline Project. Review the error and "
+            "support details, then import a corrected matching ESI description through Device "
+            "Repository.");
+    } else if (repositoryStartupPreviewInvalid) {
+        repositoryPreviewNotice = Tr::tr(
+            "This Startup configuration cannot be added to an offline Project. Import a corrected "
+            "matching ESI description through Device Repository.");
+    } else if (repositoryStartupPreviewUnsupported) {
+        repositoryPreviewNotice = Tr::tr(
+            "This Device contains unsupported ESI structures and cannot be added to an offline "
+            "Project. Review its support details in Device Repository.");
+    }
+    if (repositoryDeviceMissing) {
+        m_validation->setType(Utils::InfoLabel::Warning);
+        text += Tr::tr(
+            "The ESI device description is unavailable, so no Startup requests can be shown.");
+    } else if (repositoryStartupEmptyUnsupported) {
+        m_validation->setType(Utils::InfoLabel::Warning);
+        text += Tr::tr(
+            "No ESI Startup request is available. This device contains unsupported ESI structures "
+            "and cannot be added to an offline Project. Review its support details in Device "
+            "Repository.");
+    } else if (repositoryStartupEmpty) {
+        m_validation->setType(Utils::InfoLabel::Information);
+        text += Tr::tr(
+            "No ESI Startup request is available to preview; Workbench will not fabricate "
+            "requests.");
+    } else if (errorCount > 0) {
         m_validation->setType(Utils::InfoLabel::Error);
         text += Tr::tr("%n Startup configuration error(s).", nullptr, errorCount);
         if (!details.isEmpty())
             text += ' ' + details.first();
+        if (!repositoryPreviewNotice.isEmpty())
+            text += ' ' + repositoryPreviewNotice;
     } else if (warningCount > 0) {
         m_validation->setType(Utils::InfoLabel::Warning);
         text += Tr::tr("%n Startup configuration warning(s).", nullptr, warningCount);
         if (!details.isEmpty())
             text += ' ' + details.first();
+        if (!repositoryPreviewNotice.isEmpty())
+            text += ' ' + repositoryPreviewNotice;
+    } else if (repositoryStartupPreviewUnsupported) {
+        m_validation->setType(Utils::InfoLabel::Warning);
+        text += Tr::tr("These Startup requests are available only for read-only preview. ");
+        text += repositoryPreviewNotice;
     } else {
         m_validation->setType(Utils::InfoLabel::Ok);
         text

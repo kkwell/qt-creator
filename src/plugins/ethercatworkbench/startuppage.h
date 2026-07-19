@@ -36,6 +36,7 @@ private:
     bool submitConfiguration(const Data::StartupConfiguration &configuration);
     void rebuildModel();
     void updateButtonState();
+    void updateTablePresentation();
     void addParameter();
     void editParameter();
     void deleteParameter();
@@ -50,6 +51,10 @@ private:
     bool m_editable = false;
     bool m_showingEsiDefaults = false;
     bool m_rebuilding = false;
+    bool m_repositoryDeviceAvailable = false;
+    bool m_repositoryDeviceSupported = false;
+    bool m_repositoryStartupAvailable = false;
+    bool m_repositoryStartupHasErrors = false;
 
     QLabel *m_summary = nullptr;
     Utils::InfoLabel *m_validation = nullptr;
