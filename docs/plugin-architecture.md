@@ -173,8 +173,10 @@ are hidden, and project path is omitted because the public contract does not
 expose it; Workbench neither reaches into ProjectExplorer internals nor
 fabricates a value. Configured-slave names, Alias values, Process Data, ordered
 Startup requests, and Distributed Clocks are now editable through the checked
-Project service; their repository views stay read-only. The General
-page maps physical order, stable NodeId, and ESI type into read-only slave
+Project service; their Process Data, Startup, and DC repository catalogue views
+stay read-only. Repository-device CoE editability is separately tracked by
+`ISSUE-WB-COE-REPOSITORY-READONLY-001`. The General page maps physical order,
+stable NodeId, and ESI type into read-only slave
 identity fields while keeping name changes Project-owned and undoable. The
 target General page mirrors the TwinCAT target summary and Version grouping,
 reports only actual engineering/project values, marks runtime selection as
@@ -834,6 +836,46 @@ and
 Beckhoff's Startup ordering, columns, and fixed-request semantics remain only
 the product comparison:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.
+
+## Workbench CoE dictionary cell accessibility boundary
+
+The private `CoeOnlinePage` object model owns the standard item-role metadata
+for its five-column hierarchical object dictionary. Each valid cell maps its
+complete current Display value to Qt's standard `AccessibleTextRole`, including
+a valid empty `QString` for an empty Unit. `AccessibleDescriptionRole` and
+`ToolTipRole` are derived on demand from the current valid index: object
+address, heading, complete value, data type, current Mock/offline source,
+prototype access boundary, and operation guidance.
+
+The guidance derives editability from the current item flags. Within the
+qualified configured-slave context, only a Mock Value cell can advertise a
+temporary local edit; offline cells report read-only. Every description states
+that no controller connection or SDO transfer occurs. A role query retains no
+`QModelIndex` or additional object reference across calls; ownership of the
+existing model object tree is unchanged. Existing model resets remain the
+lifetime boundary, and clients must resolve a new index after the Mock/offline
+source changes.
+
+After a successful Mock Value edit, the private model reports every affected
+standard presentation/accessibility role and its existing raw-value role in
+one `dataChanged` signal. The edit does not become a ProjectService command or
+persistent Project data. Existing selection and Add to Startup behavior remain
+consumers of the current object address; this issue changes neither path.
+
+This boundary does not alter dictionary geometry, hierarchy, filtering,
+selection, editors, Add to Startup, ProjectService, persistence, ESI parsing,
+or the Mock/offline source model. It adds no public/custom role, API, source
+file, dependency, Provider, Project command, thread, timer,
+SDO/network/controller transport, online state, or physical-hardware behavior.
+No CMake or qbs description changed. Repository Device CoE editability is not
+qualified and remains the independent
+`ISSUE-WB-COE-REPOSITORY-READONLY-001` boundary.
+
+Qt's standard roles and role-specific notification contract are documented at
+<https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum> and
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#dataChanged>. Beckhoff's CoE
+Online table remains only the product comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
 
 ## Existing EasyBoard isolation
 

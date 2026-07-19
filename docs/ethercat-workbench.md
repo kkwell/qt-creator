@@ -940,7 +940,9 @@ A configured slave retains its scanned Identity, position, Serial Number,
 Alias, and optional stable ESI description ID in the Project snapshot. When
 that ESI entry is available, the configured slave reuses its SyncManager,
 Process Data, Startup, and DC descriptions as editable offline proposals. The
-repository-device views remain read-only. A missing ESI match is reported
+repository-device Process Data, Startup, and DC catalogue views remain
+read-only. Repository-device CoE editability is the separately tracked
+`ISSUE-WB-COE-REPOSITORY-READONLY-001`. A missing ESI match is reported
 explicitly and does not invent PDO, Startup, or DC data.
 
 ### Process Data workflow
@@ -1015,8 +1017,10 @@ until a future controller Provider exists, so this Workbench issue introduces
 no polling timer or background task. Advanced switches between local Mock and
 offline device-description values, selects an object-index range, and can hide
 standard or PDO objects. The page also supports recursive text filtering,
-including Unicode engineering names. Offline and repository-device views are
-read-only.
+including Unicode engineering names. Offline views are read-only.
+Repository-device CoE Mock Value cells currently remain transiently editable;
+the earlier repository read-only qualification is withdrawn and tracked by
+`ISSUE-WB-COE-REPOSITORY-READONLY-001`.
 
 The Value cell of a locally writable Mock object accepts size-checked raw
 hexadecimal edits. Editing only changes the page's transient Mock value. Add to
@@ -1200,9 +1204,11 @@ defaults storage, fixed requests, New/Edit/Delete dialogs, enable state,
 ordering, type/value validation, manual no-ESI empty state, and real
 ProjectService Undo/Redo reentrancy. The CoE Online workflow covers the
 TwinCAT-inspired object hierarchy and controls, ESI/offline/Mock sources,
-manual refresh, advanced and Unicode filters, read-only boundaries, raw-value
-editing, cancelled and confirmed Add to Startup, no-overwrite behavior, no-ESI
-state, Project modified state, and Undo. Its model is also checked by
+manual refresh, advanced and Unicode filters, offline and object-level
+read-only boundaries, raw-value editing, cancelled and confirmed Add to
+Startup, no-overwrite behavior, no-ESI state, Project modified state, and Undo.
+Repository-device read-only behavior is excluded pending
+`ISSUE-WB-COE-REPOSITORY-READONLY-001`. Its model is also checked by
 `QAbstractItemModelTester` and the focused flow passes at `QT_SCALE_FACTOR=2`.
 The DC workflow covers two ESI operation
 modes, explicit Store/Restore, manual no-ESI configuration, AssignActivate,
@@ -2566,3 +2572,99 @@ SDO/network/controller transport, online state, or physical-hardware behavior.
 No Startup request was sent. No CMake or qbs description changed, so qbs was
 not run. The Workbench path count remains 44 and the direct upstream Core patch
 count remains five.
+
+## CoE dictionary cell accessibility qualification
+
+`ISSUE-WB-COE-DICTIONARY-CELL-A11Y-001` is based on local baseline
+`bc6d2e1b45f521fb962790a19370672bbc7ff687`. It closes one bounded
+accessibility and long-cell recovery gap in the configured-slave CoE object
+dictionary. It does not change the existing table geometry, hierarchy,
+selection, filtering, Mock editor, Add to Startup path, ProjectService,
+persistence, or offline toggle.
+
+Every valid cell in the Index, Name, Flags, Value, and Unit columns now returns
+an actual `QString` through Qt's standard `AccessibleTextRole`, exactly
+matching its complete current Display value. This includes a valid empty
+`QString` for an empty Unit cell. `AccessibleDescriptionRole` and
+`ToolTipRole` provide the object address, column heading, complete unelided
+value, data type, Mock/offline source, local-prototype access boundary, and
+current operation guidance. The descriptions state that no controller
+connection or SDO transfer occurs. Within the qualified configured-slave
+context, only an editable Mock Value cell advertises a temporary local edit;
+offline cells explicitly report read-only.
+
+The model computes complete text only for Display, accessibility, and tooltip
+queries. A successful Mock Value edit now publishes Display, Edit,
+AccessibleText, AccessibleDescription, Tooltip, and the existing private raw
+value role in the same `dataChanged` notification. The edit remains transient
+model state: the selected object, Add to Startup availability, item flags, and
+complete Project snapshot stay unchanged. Switching this test fixture to
+offline resets the model presentation, restores its original ESI fixture
+value, and removes the edit flag; the test resolves a fresh index after that
+reset.
+
+Qt defines the standard roles in
+[Qt::ItemDataRole](https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum), the
+changed-role notification contract in
+[QAbstractItemModel::dataChanged](https://doc.qt.io/qt-6/qabstractitemmodel.html#dataChanged),
+and the item-view elision policy in
+[QAbstractItemView::textElideMode](https://doc.qt.io/qt-6/qabstractitemview.html#textElideMode-prop).
+Beckhoff's
+[CoE Online](https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html)
+page remains only the five-column object-dictionary comparison. Embed Labs
+continues to show local Mock/offline data and does not claim TwinCAT online
+behavior, controller access, or SDO transport.
+
+The frozen final test was run against the unchanged baseline implementation
+under `/private/tmp/embed-labs-coe-cell-a11y-failure-frozen.Ija4nk`. Setup and
+cleanup passed, and the test failed exactly once because the old Index cell did
+not return a `QString` for `AccessibleTextRole`. After restoring the final
+implementation, focused normal-scale and `QT_SCALE_FACTOR=2` runs each pass
+three events under
+`/private/tmp/embed-labs-coe-cell-a11y-focused-frozen-normal.EH7ZAp` and
+`/private/tmp/embed-labs-coe-cell-a11y-focused-frozen-2x.P5UqHe`.
+
+The regression imports a unique temporary ESI device and checks every
+hierarchical row across all five columns. Its fixture includes a complete
+256-byte value and a long Chinese/Japanese/Unicode name containing literal
+`%1`, `%2`, `%5`, and `%%` text. It verifies exact standard-role types, full
+values, empty Unit handling, operation/source boundaries, the complete role
+list after edit, Project immutability, selection and Add to Startup continuity,
+and offline reset behavior. This qualifies Qt model metadata; no manual
+VoiceOver reading is claimed.
+
+Complete normal-scale and 2x Workbench runs each pass 49 events under
+`/private/tmp/embed-labs-coe-cell-a11y-workbench-final-normal.p7cwQT` and
+`/private/tmp/embed-labs-coe-cell-a11y-workbench-final-2x.vs1Nst`. The six
+isolated EtherCAT suites pass 100 events under
+`/private/tmp/embed-labs-coe-cell-a11y-six-suites-final.cmbhBS`: Core 17,
+Project 12, Devices 8, Workbench 49, Scan 7, and Diagnostics 7. Every test
+target exited with status 0. The full `WITH_TESTS=OFF` product build passes and
+contains exactly the 16 allow-listed plugin dylibs.
+
+Enabled product startup under
+`/private/tmp/embed-labs-coe-cell-a11y-product-lifecycle-final.I01hmv/enabled`
+remained alive for 36 seconds after PID 98426 was observed. Startup with
+`-noload EtherCATWorkbench` under the matching `disabled` directory remained
+alive for 37 seconds after PID 443 was observed. Each `lifecycle-evidence.txt`
+records PID and UTC/epoch boundaries. LLDB passed the intentional SIGTERM to
+each target, which exited with status 15. Cleanup found no residual Embed Labs
+or LLDB process, no new DiagnosticReports file, and no matching ReportCrash or
+CrashReporter unified-log event during the run interval.
+
+Every executable used fresh HOME/settings, cleared inherited DYLD variables,
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and
+only the process-local Touch Bar LLDB breakpoint. No visible main window or
+crash dialog was created. This issue changes only the existing private
+`coeonlinepage.cpp`, Workbench test declaration/implementation, and
+documentation. It adds no source file, public or custom model role, API,
+dependency, Provider, persistence field, Project command, thread, timer,
+controller/SDO/network transport, online state, or physical-hardware behavior.
+No CMake or qbs description changed, so qbs was not run. The Workbench path
+count remains 44 and the direct upstream Core patch count remains five.
+
+Device-repository CoE read-only behavior is not qualified here. The adjacent
+audit found that repository Mock Value cells still receive an editable flag;
+that behavior is frozen as the independent follow-up
+`ISSUE-WB-COE-REPOSITORY-READONLY-001` and is neither repaired nor claimed by
+this issue.

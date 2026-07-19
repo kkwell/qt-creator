@@ -594,7 +594,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | CoE manual refresh, search, Unicode, and advanced range filters | Passed |
 | CoE Mock raw-value edit and invalid-width rejection | Passed |
 | CoE Add to Startup cancel, confirm, append-only, and Undo | Passed |
-| CoE offline, repository, and missing-ESI read-only boundaries | Passed |
+| CoE offline and missing-ESI read-only boundaries | Passed; the former repository read-only claim is withdrawn because repository Mock Value cells remain transiently editable, tracked by `ISSUE-WB-COE-REPOSITORY-READONLY-001` |
 | CoE focused test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
 | Shared StateService Offline/Busy/Error priority and Mock labels | Passed |
 | Status tooltip, drop-down details, Mode visibility, and cleanup ownership | Passed |
@@ -1585,6 +1585,46 @@ and
 <https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/terminal/terminalpane.cpp#L586-L597>.
 Beckhoff's ordered Startup request comparison is documented at
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.
+
+## EtherCATWorkbench CoE dictionary cell accessibility qualification
+
+`ISSUE-WB-COE-DICTIONARY-CELL-A11Y-001` uses local baseline
+`bc6d2e1b45f521fb962790a19370672bbc7ff687`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first regression | The frozen final test ran against the unchanged baseline implementation: setup and cleanup passed, and the old Index cell failed exactly once because `Qt::AccessibleTextRole` was not a `QString` under `/private/tmp/embed-labs-coe-cell-a11y-failure-frozen.Ija4nk` |
+| Five standard columns | Every valid hierarchical Index, Name, Flags, Value, and Unit cell returns an actual `QString` through `Qt::AccessibleTextRole`, exactly matching the complete Display value |
+| Empty display value | Empty Unit remains a valid empty `QString`, not an invalid variant |
+| Description and tooltip | Both contain object address, column heading, complete current value or an explicit empty marker, data type, Mock/offline source, and matching operation guidance |
+| Truthful transport boundary | Every description states that access flags are a local engineering prototype and no controller connection or SDO transfer occurs |
+| Long-cell recovery | A unique temporary ESI fixture preserves a 256-byte value and a long Chinese/Japanese/Unicode name containing literal `%1`, `%2`, `%5`, and `%%` in accessible text, description, and tooltip |
+| Configured Mock edit | Only the Value cell advertises temporary local editing; selection, flags, Add to Startup availability, and the complete Project snapshot remain unchanged |
+| Dynamic standard roles | A successful edit publishes Display, Edit, AccessibleText, AccessibleDescription, Tooltip, and the existing private raw value role through `dataChanged` |
+| Offline reset | A fresh index resolves after reset, the original ESI value returns, the description reports offline/read-only, the edit flag is absent, and Project remains unchanged |
+| Focused normal-scale test | 3 passed, 0 failed; target exit 0 under `/private/tmp/embed-labs-coe-cell-a11y-focused-frozen-normal.EH7ZAp` |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; target exit 0 under `/private/tmp/embed-labs-coe-cell-a11y-focused-frozen-2x.P5UqHe` |
+| Complete EtherCATWorkbench normal scale | 49 passed, 0 failed; target exit 0 under `/private/tmp/embed-labs-coe-cell-a11y-workbench-final-normal.p7cwQT` |
+| Complete EtherCATWorkbench 2x scale | 49 passed, 0 failed; target exit 0 under `/private/tmp/embed-labs-coe-cell-a11y-workbench-final-2x.vs1Nst` |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 49, Scan 7, Diagnostics 7; 100 passed, 0 failed with target exit 0 in isolated LLDB-supervised processes under `/private/tmp/embed-labs-coe-cell-a11y-six-suites-final.cmbhBS` |
+| Qualified Qt and test build | Qt 6.11 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed in `qt-creator-build-ethercat-product-qt611`; exactly the 16 allow-listed plugin dylibs are present |
+| Enabled offscreen startup | After PID detection, PID 98426 stayed alive for 36 seconds under `/private/tmp/embed-labs-coe-cell-a11y-product-lifecycle-final.I01hmv/enabled`; intentional SIGTERM produced target status 15 |
+| Explicitly disabled startup | After PID detection, PID 443 stayed alive for 37 seconds with `-noload EtherCATWorkbench` under the matching `disabled` directory; intentional SIGTERM produced target status 15 |
+| Process and crash-report cleanup | No residual Embed Labs/LLDB process, no new DiagnosticReports file, and no matching ReportCrash/CrashReporter unified-log event |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no visible main window or crash dialog |
+| Assistive-technology claim | Standard Qt item-model metadata verified; no manual VoiceOver reading is claimed |
+| Repository Device CoE boundary | Not qualified; editable repository Mock Value flags remain the independent follow-up `ISSUE-WB-COE-REPOSITORY-READONLY-001` |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, Project command, custom model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, SDO/controller transport, online state, or hardware access | Not performed or added; CoE remains a local Mock/offline object dictionary |
+
+Qt's standard roles and role-specific change notification are documented at
+<https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum> and
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#dataChanged>. Beckhoff's
+five-column CoE Online object dictionary remains only the product comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
 
 ## Verification states
 

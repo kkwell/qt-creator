@@ -6661,6 +6661,229 @@ void EtherCATWorkbenchTests::testCoeOnlineMockWorkflow()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
+void EtherCATWorkbenchTests::testCoeDictionaryCellAccessibility()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QByteArray longRawValue(256, char(0xA5));
+    const QString longName = QString::fromUtf8(
+                                 "超长 CoE 对象名称 / 長いオブジェクト名 / Ω — "
+                                 "%1 / %2 / %5 / %% — 完整内容 — ")
+                             + QString(256, QChar(u'界')) + " / End";
+    QByteArray accessibilityEsi = deviceEsi();
+    const QByteArray productCode = "#x00005678";
+    const QByteArray startupObject = "<Data>08</Data><Comment>Mode</Comment>";
+    QCOMPARE(accessibilityEsi.count(productCode), 1);
+    QCOMPARE(accessibilityEsi.count(startupObject), 1);
+    accessibilityEsi.replace(productCode, "#xA11E0001");
+    QByteArray startupReplacement = "<Data>";
+    startupReplacement += longRawValue.toHex().toUpper();
+    startupReplacement += "</Data><Comment>";
+    startupReplacement += longName.toUtf8();
+    startupReplacement += "</Comment>";
+    accessibilityEsi.replace(startupObject, startupReplacement);
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("coe-cell-accessibility.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(accessibilityEsi));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0xA11E0001;
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(directory, *device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    BuiltinPropertyPageProvider pages(&controller);
+    std::unique_ptr<QWidget> page(pages.createPage(Constants::COE_ONLINE_PAGE_ID, nullptr));
+    QVERIFY(page);
+    const QModelIndex configuredSlave = controller.treeModel()->indexForNodeId(file.slaveId);
+    pages.updatePage(
+        Constants::COE_ONLINE_PAGE_ID,
+        page.get(),
+        controller.treeModel()->contextForIndex(configuredSlave));
+
+    QTreeView *dictionary = page->findChild<QTreeView *>("EtherCATCoeObjectDictionary");
+    QCheckBox *showOffline = page->findChild<QCheckBox *>("EtherCATCoeShowOffline");
+    QPushButton *addToStartup = page->findChild<QPushButton *>("EtherCATCoeAddToStartup");
+    QVERIFY(dictionary);
+    QVERIFY(showOffline);
+    QVERIFY(addToStartup);
+    QVERIFY(!dictionary->accessibleName().isEmpty());
+    QVERIFY(!dictionary->accessibleDescription().isEmpty());
+    QAbstractItemModel *model = dictionary->model();
+    QVERIFY(model);
+    QAbstractItemModelTester modelTester(
+        model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+
+    const int indexColumn = columnWithHeader(model, "Index");
+    const int nameColumn = columnWithHeader(model, "Name");
+    const int flagsColumn = columnWithHeader(model, "Flags");
+    const int valueColumn = columnWithHeader(model, "Value");
+    const int unitColumn = columnWithHeader(model, "Unit");
+    QCOMPARE(indexColumn, 0);
+    QCOMPARE(nameColumn, 1);
+    QCOMPARE(flagsColumn, 2);
+    QCOMPARE(valueColumn, 3);
+    QCOMPARE(unitColumn, 4);
+
+    int inspectedCells = 0;
+    const auto verifyCells = [&](const auto &self, const QModelIndex &parent) -> QString {
+        for (int row = 0; row < model->rowCount(parent); ++row) {
+            const QModelIndex addressIndex = model->index(row, indexColumn, parent);
+            const QString objectAddress = addressIndex.data(Qt::DisplayRole).toString();
+            if (objectAddress.isEmpty())
+                return "A CoE object address is empty";
+            for (int column = 0; column < model->columnCount(parent); ++column) {
+                const QModelIndex index = model->index(row, column, parent);
+                const QString header
+                    = model->headerData(column, Qt::Horizontal, Qt::DisplayRole).toString();
+                const QString displayed = index.data(Qt::DisplayRole).toString();
+                const QVariant accessibleTextData = index.data(Qt::AccessibleTextRole);
+                const QVariant accessibleDescriptionData
+                    = index.data(Qt::AccessibleDescriptionRole);
+                const QVariant toolTipData = index.data(Qt::ToolTipRole);
+                const QString accessibleDescription = accessibleDescriptionData.toString();
+                const QString toolTip = toolTipData.toString();
+                const QString cell = objectAddress + " / " + header;
+                if (header.isEmpty())
+                    return objectAddress + " has an empty column heading";
+                if (accessibleTextData.metaType().id() != int(QMetaType::QString))
+                    return cell + " AccessibleTextRole is not a QString";
+                if (accessibleDescriptionData.metaType().id() != int(QMetaType::QString))
+                    return cell + " AccessibleDescriptionRole is not a QString";
+                if (toolTipData.metaType().id() != int(QMetaType::QString))
+                    return cell + " ToolTipRole is not a QString";
+                if (accessibleTextData.toString() != displayed)
+                    return cell + " accessible text does not match DisplayRole";
+                if (!accessibleDescription.contains(objectAddress))
+                    return cell + " description omits the object address";
+                if (!accessibleDescription.contains(header))
+                    return cell + " description omits the column heading";
+                if (!displayed.isEmpty()) {
+                    if (!accessibleDescription.contains(displayed))
+                        return cell + " description omits the complete value";
+                }
+                if (!accessibleDescription.contains("Mock", Qt::CaseInsensitive))
+                    return cell + " description omits the Mock source";
+                if (!accessibleDescription.contains("controller", Qt::CaseInsensitive))
+                    return cell + " description omits the controller boundary";
+                if (!accessibleDescription.contains("SDO", Qt::CaseInsensitive))
+                    return cell + " description omits the SDO boundary";
+                if (toolTip != accessibleDescription)
+                    return cell + " tooltip and accessible description differ";
+                ++inspectedCells;
+            }
+            const QString childError = self(self, addressIndex);
+            if (!childError.isEmpty())
+                return childError;
+        }
+        return {};
+    };
+    const QString cellError = verifyCells(verifyCells, {});
+    QVERIFY2(cellError.isEmpty(), qPrintable(cellError));
+    QVERIFY(inspectedCells > 0);
+
+    QModelIndex longObject = findByDisplayText(model, "6060:00");
+    QVERIFY(longObject.isValid());
+    const QModelIndex longNameCell = longObject.siblingAtColumn(nameColumn);
+    const QModelIndex longValueCell = longObject.siblingAtColumn(valueColumn);
+    const QModelIndex emptyUnitCell = longObject.siblingAtColumn(unitColumn);
+    const QString longValueText
+        = "0x" + QString::fromLatin1(longRawValue.toHex().toUpper());
+    QCOMPARE(longNameCell.data(Qt::AccessibleTextRole).toString(), longName);
+    QVERIFY(longNameCell.data(Qt::AccessibleDescriptionRole).toString().contains(longName));
+    QVERIFY(longNameCell.data(Qt::ToolTipRole).toString().contains(longName));
+    QCOMPARE(longValueCell.data(Qt::AccessibleTextRole).toString(), longValueText);
+    QVERIFY(longValueCell.data(Qt::AccessibleDescriptionRole).toString().contains(longValueText));
+    QVERIFY(longValueCell.data(Qt::ToolTipRole).toString().contains(longValueText));
+    QVERIFY(longValueCell.data(Qt::AccessibleDescriptionRole)
+                .toString()
+                .contains("edit", Qt::CaseInsensitive));
+    QVERIFY(longValueCell.data(Qt::AccessibleDescriptionRole)
+                .toString()
+                .contains("temporarily", Qt::CaseInsensitive));
+    QCOMPARE(emptyUnitCell.data(Qt::AccessibleTextRole).metaType().id(), int(QMetaType::QString));
+    QCOMPARE(emptyUnitCell.data(Qt::AccessibleTextRole).toString(), QString());
+
+    dictionary->setCurrentIndex(longObject);
+    QTRY_VERIFY(addToStartup->isEnabled());
+    const Qt::ItemFlags editableFlags = model->flags(longValueCell);
+    QVERIFY(editableFlags & Qt::ItemIsEditable);
+    const Data::ProjectSnapshot projectBeforeEdit = *projectService->project(file.projectId);
+    QSignalSpy valueChanged(model, &QAbstractItemModel::dataChanged);
+    const QByteArray editedRawValue(256, char(0x5A));
+    const QString editedRawText = QString::fromLatin1(editedRawValue.toHex().toUpper());
+    QVERIFY(model->setData(longValueCell, editedRawText, Qt::EditRole));
+    const QString editedValueText = "0x" + editedRawText;
+    QCOMPARE(longValueCell.data(Qt::AccessibleTextRole).toString(), editedValueText);
+    QVERIFY(longValueCell.data(Qt::AccessibleDescriptionRole).toString().contains(editedValueText));
+    QVERIFY(longValueCell.data(Qt::ToolTipRole).toString().contains(editedValueText));
+    QCOMPARE(model->flags(longValueCell), editableFlags);
+    QCOMPARE(dictionary->currentIndex().siblingAtColumn(indexColumn).data().toString(),
+             QString("6060:00"));
+    QVERIFY(addToStartup->isEnabled());
+    QCOMPARE(*projectService->project(file.projectId), projectBeforeEdit);
+
+    bool foundCompleteRoleUpdate = false;
+    for (const QList<QVariant> &arguments : std::as_const(valueChanged)) {
+        const QModelIndex topLeft = arguments.at(0).value<QModelIndex>();
+        const QModelIndex bottomRight = arguments.at(1).value<QModelIndex>();
+        const QList<int> roles = arguments.at(2).value<QList<int>>();
+        if (topLeft.parent() == longValueCell.parent() && topLeft.row() == longValueCell.row()
+            && topLeft.column() <= valueColumn && bottomRight.column() >= valueColumn
+            && roles.contains(Qt::DisplayRole) && roles.contains(Qt::EditRole)
+            && roles.contains(Qt::AccessibleTextRole)
+            && roles.contains(Qt::AccessibleDescriptionRole)
+            && roles.contains(Qt::ToolTipRole)) {
+            foundCompleteRoleUpdate = true;
+            break;
+        }
+    }
+    QVERIFY(foundCompleteRoleUpdate);
+
+    showOffline->setChecked(true);
+    QTRY_VERIFY(showOffline->isChecked());
+    longObject = findByDisplayText(model, "6060:00");
+    QVERIFY(longObject.isValid());
+    const QModelIndex offlineValueCell = longObject.siblingAtColumn(valueColumn);
+    QCOMPARE(offlineValueCell.data(Qt::AccessibleTextRole).toString(), longValueText);
+    QVERIFY(offlineValueCell.data(Qt::AccessibleDescriptionRole)
+                .toString()
+                .contains("offline", Qt::CaseInsensitive));
+    QVERIFY(offlineValueCell.data(Qt::AccessibleDescriptionRole)
+                .toString()
+                .contains(longValueText));
+    QVERIFY(offlineValueCell.data(Qt::AccessibleDescriptionRole)
+                .toString()
+                .contains("read-only", Qt::CaseInsensitive));
+    QVERIFY(offlineValueCell.data(Qt::ToolTipRole)
+                .toString()
+                .contains("read-only", Qt::CaseInsensitive));
+    QVERIFY(!(model->flags(offlineValueCell) & Qt::ItemIsEditable));
+    QCOMPARE(*projectService->project(file.projectId), projectBeforeEdit);
+}
+
 void EtherCATWorkbenchTests::testStartupTableAccessibility()
 {
     WorkbenchController controller;

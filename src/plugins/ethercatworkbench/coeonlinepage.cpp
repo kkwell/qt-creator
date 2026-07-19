@@ -303,6 +303,24 @@ public:
         if (!object)
             return {};
         const QByteArray value = m_showOffline ? object->offlineValue : object->mockValue;
+        const auto displayText = [&]() -> QString {
+            switch (modelIndex.column()) {
+            case Index:
+                return indexText(object->index, object->subIndex);
+            case Name:
+                return object->name;
+            case Flags:
+                return QString("%1%2").arg(
+                    object->writable && !object->synthetic ? "RW" : "RO",
+                    object->processData ? " P" : "");
+            case Value:
+                return valueText(*object, value);
+            case Unit:
+                return object->unit;
+            default:
+                return {};
+            }
+        };
         if (role == AddressRole)
             return address(object->index, object->subIndex);
         if (role == RawValueRole)
@@ -317,30 +335,32 @@ public:
             return object->processData;
         if (role == Qt::EditRole && modelIndex.column() == Value)
             return QString::fromLatin1(value.toHex().toUpper());
-        if (role == Qt::ToolTipRole) {
-            return Tr::tr("%1; %2 source; access flags are a local engineering prototype.")
+        if (role == Qt::DisplayRole)
+            return displayText();
+        if (role == Qt::AccessibleTextRole)
+            return displayText();
+        if (role == Qt::AccessibleDescriptionRole || role == Qt::ToolTipRole) {
+            const QString displayed = displayText();
+            const QString heading
+                = headerData(modelIndex.column(), Qt::Horizontal, Qt::DisplayRole).toString();
+            const QString operation
+                = flags(modelIndex) & Qt::ItemIsEditable
+                      ? Tr::tr("Edit this local Mock value temporarily; this does not change an "
+                               "offline Project.")
+                      : Tr::tr("This cell is read-only in the current view.");
+            return Tr::tr(
+                       "Object %1, %2 column: %3. Data type: %4. Source: %5. Access flags are "
+                       "a local engineering prototype. No controller connection or SDO transfer "
+                       "occurs. %6")
                 .arg(
+                    indexText(object->index, object->subIndex),
+                    heading,
+                    displayed.isEmpty() ? Tr::tr("empty") : displayed,
                     dataTypeName(object->dataType, object->rawDataType),
-                    m_showOffline ? Tr::tr("offline") : Tr::tr("Mock"));
+                    m_showOffline ? Tr::tr("offline") : Tr::tr("Mock"),
+                    operation);
         }
-        if (role != Qt::DisplayRole)
-            return {};
-        switch (modelIndex.column()) {
-        case Index:
-            return indexText(object->index, object->subIndex);
-        case Name:
-            return object->name;
-        case Flags:
-            return QString("%1%2").arg(
-                object->writable && !object->synthetic ? "RW" : "RO",
-                object->processData ? " P" : "");
-        case Value:
-            return valueText(*object, value);
-        case Unit:
-            return object->unit;
-        default:
-            return {};
-        }
+        return {};
     }
 
     Qt::ItemFlags flags(const QModelIndex &modelIndex) const final
@@ -369,7 +389,15 @@ public:
         if (!parsed || parsed->isEmpty() || (expectedSize > 0 && parsed->size() != expectedSize))
             return false;
         object->mockValue = *parsed;
-        emit dataChanged(modelIndex, modelIndex, {Qt::DisplayRole, Qt::EditRole, RawValueRole});
+        emit dataChanged(
+            modelIndex,
+            modelIndex,
+            {Qt::DisplayRole,
+             Qt::EditRole,
+             Qt::AccessibleTextRole,
+             Qt::AccessibleDescriptionRole,
+             Qt::ToolTipRole,
+             RawValueRole});
         return true;
     }
 
