@@ -3472,3 +3472,126 @@ qualification stayed offscreen. The unrelated `WITH_TESTS=ON` all-target build
 was not rerun; the known EasyBoard test include blocker remains outside this
 private Workbench issue. The Workbench path count remains 44 and the direct
 upstream Core patch count remains five.
+
+## Repository Device Process Data empty state
+
+`ISSUE-WB-PROCESS-DATA-REPOSITORY-EMPTY-001` is based on local commit
+`8818c6c5c48a0e3c7b1e3a770c758401c926e32c`. The repository Device Process
+Data page now distinguishes actual imported ESI states instead of treating
+every zero-row or invalid catalogue as a valid mapping that should be selected
+or added.
+
+| Repository context | Visible and validation state | Recovery and permission |
+|---|---|---|
+| Supported Device with no parsed PDO | Five tables have zero rows; summary says no ESI Process Data mapping; `InfoLabel` is Information | The Device may be added to a valid offline Project with an empty mapping, but Workbench does not fabricate Sync Managers or PDOs; review the source or import a matching ESI in Device Repository |
+| Unsupported Device with no parsed PDO | Zero rows and Warning | Cannot be added; review unsupported structures in Device Repository |
+| Supported Device with invalid parsed PDO | Read-only preview and Error with the first detail visible and all details in the tooltip | Cannot be added by the checked Project path; import a corrected matching ESI through Device Repository |
+| Unsupported Device with parsed PDO | Read-only preview; Warning when valid, original Error/Warning when invalid | Cannot be added; the support recovery is appended without hiding validation details |
+| Removed Device description | Zero rows and unavailable Warning | Return to Device Repository; no Project-add instruction is shown |
+| Supported Device with valid parsed PDO | Existing read-only catalogue and Ok validation | Existing select/inspect and offline-Project add guidance remains unchanged |
+
+The Sync Manager, PDO Assignment, PDO List, PDO Content, and Process Image
+tables retain their existing base accessible descriptions. Each repository
+context appends a localized state, recovery, read-only, and
+no-controller/no-network/no-physical-hardware description and exposes the same
+text as its tooltip. Reusing the page rebuilds each description from the base,
+so empty, unsupported, invalid, and removed text cannot leak into a later valid
+Device. Empty model state is represented by real zero `rowCount()` values; no
+placeholder rows or synthetic identifiers are created.
+
+Repository browsing stays presentation-only. The page reads the immutable
+`DeviceDescription`, derives existing Process Data defaults, and never calls a
+Project command. The regression opens a real valid offline Project after the
+page-state checks and proves that repeated repository browsing preserves the
+complete snapshot, active Project, and Undo/Redo availability. It then proves
+the advertised recovery separately: one supported empty Device adds exactly
+one Slave whose Sync Manager/PDO lists remain empty and the change is undoable;
+unsupported empty/populated Devices and supported-invalid/unsupported-invalid
+Devices are rejected while the Project snapshot remains equal by
+`ProjectSnapshot` field comparison.
+
+Beckhoff describes Sync Manager, PDO Assignment, PDO List, and PDO Content
+views and also documents online download/activation functions:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html>.
+Embed Labs uses only the offline ESI presentation structure; it does not add
+PDO download, controller state transitions, online reads, or physical-device
+access. Qt documents that `rowCount()` is the model's real row cardinality and
+that read-only models reject `setData()`:
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#rowCount> and
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#setData>. Qt documents that an
+accessible description should explain what a widget does and must be
+localized:
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. Qt Creator
+20.0 supplies the host precedent for an explicit unavailable state in Type
+Hierarchy:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/typehierarchy.cpp#L63-L72>.
+
+The first failure-first run compiled the new red assertion against exact
+unchanged production blobs `21c608c1e549e36d364cf2f7cfe5e9c9ccbb774a` /
+`95d882ba1d2ff295865f5198916a3a77328bafba`. Initialization and cleanup passed,
+and the target failed exactly because the old supported-empty summary did not
+contain “No ESI Process Data mapping”; target status was 1 under
+`/private/tmp/embed-labs-process-data-repository-empty.QFzGu0/failure-first`.
+An independent review then identified the supported-but-invalid recovery gap.
+The supplemental red run passed initialization/cleanup and failed because the
+summary did not contain “validation error”; target status was 1 under the same
+root's `review-failure-first` directory.
+
+Final production blobs are
+`94832604f9589ee2acdf8b5133ce9c6c91bf328a` /
+`ad62cb47a8d5c7d92b3057a6577c31d5f901a82a`; final test blobs are
+`f55311d7bcc6fba1b8c178cf5d42d527a07e3c52` /
+`956eed21dd14e4a9c69e2e098d70b2024e694e58`. The test-build Workbench plugin
+SHA-256 is
+`c285a33a68939fac96a638cff311f04ebe6ae433dd0dc040a272d188ac2cacee`.
+Focused normal and `QT_SCALE_FACTOR=2` runs each passed 3 events under
+`focused-sealed-final-normal` and `focused-sealed-final-2x`. Process Data
+companion runs each passed 7 events under `process-data-companion-sealed-normal`
+and `process-data-companion-sealed-2x`. Complete Workbench runs each passed 58
+events under `workbench-sealed-normal` and `workbench-sealed-2x`. The six
+isolated suites under `six-suites-sealed-sequential` passed 109 events: Core
+17, Project 12, Devices 8, Workbench 58, Scan 7, and Diagnostics 7. Every test
+target exited with status 0; all paths are relative to
+`/private/tmp/embed-labs-process-data-repository-empty.QFzGu0`.
+
+Each complete Workbench run retains the known pre-existing ProjectExplorer
+TaskHub soft assertion in `testInvalidProjectPresentationAndLifecycle`. It is
+also present in preceding qualifications, does not occur in the new focused
+test, does not fail a test, and does not change target status.
+
+The full `WITH_TESTS=OFF` product build passed and contains exactly the 16
+allow-listed plugin dylibs. Its Workbench plugin SHA-256 is
+`42e53a365199b9a734bf94ec10a069552259a3f4d612b3b930186df8f4ff204a`.
+Enabled startup observed PID 61420 and disabled startup observed PID 61431
+with `-noload EtherCATWorkbench`; both main programs remained continuously
+running for 37 seconds under `lifecycle-enabled-sealed` and
+`lifecycle-disabled-sealed`. LLDB passed the intentional final SIGTERM directly
+to each target, and both exited with target status 15.
+
+An interim test-harness investigation caught a stale `QModelIndex` after the
+Project tree reset. LLDB intercepted it before system crash handling; the final
+test reacquires every repository index by stable NodeId. The harness also now
+stores the result of the mutating Add and Undo calls before applying
+`QVERIFY_RESULT`, preventing the macro's diagnostic expression from evaluating
+a side effect twice. The final crash audit found no residual Embed Labs/LLDB
+process, new matching DiagnosticReports file, or matching
+ReportCrash/CrashReporter/diagnosticd unified-log event after
+2026-07-19 17:52:11 +0800.
+
+Every executable used fresh HOME/settings, cleared inherited DYLD variables,
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and
+only the process-local Touch Bar bypass. No visible main window or system crash
+dialog was created. Manual desktop inspection was intentionally not run because
+this issue changes text/state only. No CMake or qbs description changed, so qbs
+was not run. The unrelated `WITH_TESTS=ON` all-target build was not rerun; the
+known EasyBoard test include blocker remains outside this private Workbench
+issue.
+
+This issue changes only the existing private `processdatapage.cpp` and
+`processdatapage.h`, Workbench test declaration/implementation, and these four
+documents. It adds no source file, dependency, public API, Provider,
+persistence field, Project command, custom model role, production thread or
+timer, controller/network transport, online state, or hardware behavior. No
+upstream Core, ProjectExplorer, or application-bootstrap path changed. The
+Workbench path count remains 44 and the direct upstream Core patch count
+remains five.

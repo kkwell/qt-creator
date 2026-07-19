@@ -42,6 +42,7 @@ private:
     void rebuildModels();
     void rebuildPdoModels();
     void selectPdo(const Data::NodeId &pdoId);
+    void updateTablePresentation();
     void showValidation(const Data::ConfigurationValidation &validation, const QString &prefix = {});
 
     WorkbenchController *m_controller = nullptr;
@@ -54,6 +55,10 @@ private:
     bool m_editable = false;
     bool m_showingEsiDefaults = false;
     bool m_rebuilding = false;
+    bool m_repositoryDeviceAvailable = false;
+    bool m_repositoryDeviceSupported = false;
+    bool m_repositoryProcessDataAvailable = false;
+    bool m_repositoryProcessDataHasErrors = false;
 
     QLabel *m_summary = nullptr;
     Utils::InfoLabel *m_validation = nullptr;

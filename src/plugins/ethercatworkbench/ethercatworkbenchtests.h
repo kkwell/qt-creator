@@ -52,6 +52,7 @@ private slots:
     void testConfiguredSlaveTreeAndPages();
     void testTwinCatProcessDataTree();
     void testProcessDataTableAccessibility();
+    void testProcessDataRepositoryEmptyState();
     void testEditableProcessDataWorkflow();
     void testCoeOnlineMockWorkflow();
     void testCoeDictionaryCellAccessibility();

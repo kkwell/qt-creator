@@ -858,6 +858,30 @@ or application bootstrap changes, so the direct Core patch budget does not
 increase and no extension-point exception is required. The Workbench path
 count remains 44 and the direct upstream Core patch count remains five.
 
+`ISSUE-WB-PROCESS-DATA-REPOSITORY-EMPTY-001`, based on
+`8818c6c5c48a0e3c7b1e3a770c758401c926e32c`, changes only the existing
+product-owned private `processdatapage.cpp` and `processdatapage.h`, Workbench
+test declaration/implementation, and documentation. Repository Device Process
+Data now distinguishes supported/unsupported empty mappings, supported or
+unsupported invalid previews, removed descriptions, and the existing valid
+catalogue. Zero-row tables expose an explicit empty state rather than select
+guidance or a false valid-configuration result.
+
+The five existing tables remain read-only and receive contextual localized
+accessible descriptions and equal tooltips. The page does not fabricate an
+SM/PDO, mutate a Project, add a Device, change validation, or introduce any
+online/controller/hardware function. Existing checked topology and Project
+validation paths continue to own Add, rejection, and Undo.
+
+No source file, dependency, CMake/qbs entry, public API, Project format,
+Provider, persistence field, Project command, custom model role, production
+thread or timer, controller/network transport, online state, or physical
+hardware behavior changes. No file under Qt Creator's upstream Core,
+ProjectExplorer, or application bootstrap changes, so the direct Core patch
+budget does not increase and no extension-point exception is required. The
+Workbench path count remains 44 and the direct upstream Core patch count
+remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

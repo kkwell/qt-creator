@@ -1965,6 +1965,52 @@ Beckhoff describes operation-mode selection only when the slave offers modes:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>.
 The explicit no-mode/offline boundary is Embed Labs Qt-native behavior.
 
+## EtherCATWorkbench repository Device Process Data empty-state qualification
+
+`ISSUE-WB-PROCESS-DATA-REPOSITORY-EMPTY-001` uses local baseline
+`8818c6c5c48a0e3c7b1e3a770c758401c926e32c`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first empty state | Baseline production blobs `21c608c1e549e36d364cf2f7cfe5e9c9ccbb774a` / `95d882ba1d2ff295865f5198916a3a77328bafba` failed the new supported-empty summary assertion with target status 1 under `/private/tmp/embed-labs-process-data-repository-empty.QFzGu0/failure-first` |
+| Failure-first invalid state | Independent review added a supported-invalid fixture; the pre-fix summary lacked “validation error” and failed with target status 1 under the same root's `review-failure-first` |
+| Real Provider contexts | Six unique ESI files import through the existing Devices Provider: supported/unsupported empty, supported/unsupported populated, and supported/unsupported invalid |
+| Empty mapping | All five Process Data models report zero rows; no placeholder SM/PDO is fabricated |
+| Supported empty recovery | Information status; one real Add to a valid offline Master creates exactly one undoable Slave with empty Sync Manager/PDO lists |
+| Unsupported recovery | Empty and populated unsupported Devices show Warning or preserve Error and are rejected with the Project snapshot unchanged |
+| Supported-invalid recovery | Error and first reason remain visible, complete issues remain in the tooltip, Add is rejected, and recovery points to corrected ESI import through Device Repository |
+| Removed Device | Unavailable Warning, zero rows, Device Repository recovery, and no Project-add instruction |
+| Read-only enforcement | Every cell in all five populated repository tables lacks editable/checkable flags; direct EditRole and CheckStateRole `setData()` attempts return false and preserve values |
+| Accessibility and reuse | Contextual accessible descriptions equal tooltips and identify empty/unsupported/invalid/removed/offline boundaries; valid-page reuse removes every stale phrase and restores Ok |
+| Existing Project isolation | Repository browsing preserves full snapshot, active Project, and Undo/Redo availability |
+| Focused tests | Normal and 2x each 3 passed, 0 failed; target status 0 under `focused-sealed-final-normal` and `focused-sealed-final-2x` |
+| Process Data companion | Normal and 2x each 7 passed, 0 failed under `process-data-companion-sealed-normal` and `process-data-companion-sealed-2x` |
+| Complete Workbench | Normal and 2x each 58 passed, 0 failed under `workbench-sealed-normal` and `workbench-sealed-2x` |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 58, Scan 7, Diagnostics 7; 109 passed, 0 failed under `six-suites-sealed-sequential` |
+| Existing full-suite diagnostic | The known ProjectExplorer TaskHub soft assertion remains confined to the pre-existing invalid-project test and does not fail or affect target status |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 allow-listed plugin dylibs; Workbench SHA-256 `42e53a365199b9a734bf94ec10a069552259a3f4d612b3b930186df8f4ff204a` |
+| Enabled startup | PID 61420 ran continuously for 37 seconds; intentional passed-through SIGTERM produced target status 15 under `lifecycle-enabled-sealed` |
+| Explicitly disabled startup | PID 61431 ran continuously for 37 seconds with `-noload EtherCATWorkbench`; intentional passed-through SIGTERM produced target status 15 under `lifecycle-disabled-sealed` |
+| Crash-dialog audit | No residual process, new matching DiagnosticReports file, or matching crash-service unified-log event after 2026-07-19 17:52:11 +0800 |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, offscreen Qt platform, crash reporter disabled, `-no-crashcheck`, and no visible main window or system crash dialog |
+| Visual/manual desktop inspection | Not run by design; this issue changes text/state only |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard test include blocker remains outside this issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, Project command, model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, controller transport, online state, or hardware access | Not performed or added; this is an offline imported-ESI presentation and checked offline-Project recovery only |
+
+Beckhoff's Process Data page is the structural comparison for the SM/PDO
+tables, not an online-capability claim:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html>.
+Qt's model cardinality, mutation, and localized contextual-description
+contracts are documented at
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#rowCount>,
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#setData>, and
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. Qt Creator
+20.0's explicit unavailable-state precedent is visible at
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/typehierarchy.cpp#L63-L72>.
+
 ## Verification states
 
 Use only these evidence labels:

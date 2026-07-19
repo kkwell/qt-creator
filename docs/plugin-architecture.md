@@ -1231,6 +1231,67 @@ description changed. No path under upstream Core, ProjectExplorer, or the
 application bootstrap changed. The Workbench path count remains 44 and the
 direct upstream Core patch count remains five.
 
+## Workbench repository Device Process Data empty-state boundary
+
+`ISSUE-WB-PROCESS-DATA-REPOSITORY-EMPTY-001` remains inside the
+product-owned private `ProcessDataPage`. `DeviceRepositoryProvider` continues
+to own and publish the immutable parsed `DeviceDescription`. The page copies
+the existing ESI defaults and derives four private presentation facts only:
+description availability, parser support, parsed PDO availability, and whether
+the derived mapping has validation errors. None is added to a public interface,
+Provider contract, shared data type, or persistence format.
+
+The repository Device branch remains read-only. Its five existing models use
+their real empty or populated data; no Sync Manager, PDO, entry, stable ID, or
+placeholder row is synthesized. The base accessible description of each table
+is stored once when the private widget is configured. Every `setContext()`
+rebuilds contextual description and tooltip text from that base, which makes
+page reuse a complete cleanup boundary for empty, unsupported, invalid,
+removed, and valid states.
+
+Supported empty mappings and valid mappings remain distinct. The empty state
+may enter the existing offline topology with an empty configuration, but the
+repository page neither performs that Add nor grants edit permission. Invalid
+Process Data cannot enter the checked Project path even when the ESI parser
+marked the description structurally supported; the page therefore points to a
+corrected ESI import instead of advertising Add. Unsupported and removed
+descriptions retain their existing topology rejection and Device Repository
+recovery.
+
+The validation label continues to present the existing
+`ConfigurationValidation` output. The underlying validator, issue codes,
+problem severities, and Project validation rules do not change. Repository-page
+presentation is intentionally more explicit: empty supported mappings use
+Information, unsupported valid previews use Warning, valid supported mappings
+use Ok, and any configuration error remains Error. Recovery text is appended;
+the first detail stays in the label and the complete existing issue list stays
+in its tooltip.
+
+The regression's Project operations prove the wording but do not add a new
+production path. A real supported empty Device is passed to the existing
+`WorkbenchController::addDeviceToMaster()` and existing Project Undo command.
+Unsupported and invalid inputs are passed to the same checked boundary and are
+rejected. `ProcessDataPage` itself never discovers an active Master, calls the
+controller Add path, submits configuration, creates Undo history, or persists
+repository selection.
+
+Beckhoff's Process Data documentation supplies the SM/PDO presentation
+comparison but includes download and controller state-transition capabilities
+that remain excluded here:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html>.
+Qt's `QAbstractItemModel` and `QWidget::accessibleDescription` contracts supply
+the zero-row, rejected-mutation, and contextual accessibility boundaries:
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#rowCount>,
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#setData>, and
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>.
+
+This boundary adds no public API, source file, dependency, Provider, Project
+command, persistence field, model role, thread, timer, controller/network
+transport, online state, or physical-hardware behavior. No CMake or qbs
+description changed. No path under upstream Core, ProjectExplorer, or the
+application bootstrap changed. The Workbench path count remains 44 and the
+direct upstream Core patch count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

@@ -36,6 +36,9 @@ enum TableRole {
     DataTypeRole,
 };
 
+static constexpr char baseDescriptionProperty[]
+    = "EtherCAT.ProcessData.BaseAccessibleDescription";
+
 static QString hexValue(quint64 value, int width)
 {
     return QString("0x%1").arg(value, width, 16, QLatin1Char('0'));
@@ -921,6 +924,7 @@ static void configureTable(
 {
     view->setAccessibleName(accessibleName);
     view->setAccessibleDescription(accessibleDescription);
+    view->setProperty(baseDescriptionProperty, accessibleDescription);
     view->setAlternatingRowColors(true);
     view->setSelectionBehavior(QAbstractItemView::SelectRows);
     view->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -1114,6 +1118,10 @@ void ProcessDataPage::setContext(const Core::PropertyPageContext &context)
     m_selectedSyncManagerId = {};
     m_selectedPdoId = {};
     m_showingEsiDefaults = false;
+    m_repositoryDeviceAvailable = false;
+    m_repositoryDeviceSupported = false;
+    m_repositoryProcessDataAvailable = false;
+    m_repositoryProcessDataHasErrors = false;
 
     std::optional<Data::OfflineSlaveConfiguration> slave;
     std::optional<Data::DeviceDescription> device;
@@ -1135,10 +1143,19 @@ void ProcessDataPage::setContext(const Core::PropertyPageContext &context)
     }
     if (device)
         m_esiDefaults = processDataDefaultsFromDevice(*device, slave ? slave->id : context.nodeId);
+    m_repositoryDeviceAvailable
+        = context.nodeKind == Core::WorkbenchNodeKind::Device && device.has_value();
+    m_repositoryDeviceSupported
+        = m_repositoryDeviceAvailable && device->summary.supported;
+    m_repositoryProcessDataAvailable
+        = m_repositoryDeviceAvailable && !m_esiDefaults.pdos.isEmpty();
     if (isEmpty(m_configuration) && !isEmpty(m_esiDefaults)) {
         m_configuration = m_esiDefaults;
         m_showingEsiDefaults = true;
     }
+    m_repositoryProcessDataHasErrors
+        = m_repositoryProcessDataAvailable
+          && Data::validateProcessDataConfiguration(m_configuration).hasErrors();
 
     const Data::NodeId sourceId
         = m_controller ? m_controller->treeModel()->sourceNodeId(context.nodeId) : Data::NodeId();
@@ -1169,7 +1186,57 @@ void ProcessDataPage::setContext(const Core::PropertyPageContext &context)
             m_selectedSyncManagerId = syncManager->id;
     }
 
-    if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
+    if (context.nodeKind == Core::WorkbenchNodeKind::Device
+        && !m_repositoryDeviceAvailable) {
+        m_summary->setText(
+            Tr::tr(
+                "The ESI device description is no longer available. Return to Device Repository "
+                "and select an available device before opening Process Data."));
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Device
+               && !m_repositoryProcessDataAvailable && !m_repositoryDeviceSupported) {
+        m_summary->setText(
+            Tr::tr(
+                "No ESI Process Data mapping is available. This repository device also "
+                "contains unsupported ESI structures and cannot be added to an offline "
+                "Project. Review its support details in Device Repository; Workbench will not "
+                "fabricate Sync Managers or PDOs, and no controller, network, or physical "
+                "hardware is accessed."));
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Device
+               && !m_repositoryProcessDataAvailable) {
+        m_summary->setText(
+            Tr::tr(
+                "No ESI Process Data mapping is available for this repository device. The "
+                "device can still be added to an offline Project, but Workbench will not "
+                "fabricate Sync Managers or PDOs. Review its source in Device Repository or "
+                "import a matching ESI description that contains Process Data; no controller, "
+                "network, or physical hardware is accessed."));
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Device
+               && m_repositoryProcessDataHasErrors && !m_repositoryDeviceSupported) {
+        m_summary->setText(
+            Tr::tr(
+                "ESI Process Data is available for read-only preview, but its validation "
+                "errors and unsupported ESI structures mean this repository device cannot be "
+                "added to an offline Project. Review the error and support details, then "
+                "import a corrected matching ESI description through Device Repository; no "
+                "controller, network, or physical hardware is accessed."));
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Device
+               && m_repositoryProcessDataHasErrors) {
+        m_summary->setText(
+            Tr::tr(
+                "ESI Process Data is available for read-only preview, but validation errors "
+                "mean this repository device cannot be added to an offline Project. Review the "
+                "error details below and import a corrected matching ESI description "
+                "through Device Repository; no controller, network, or physical hardware is "
+                "accessed."));
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Device
+               && !m_repositoryDeviceSupported) {
+        m_summary->setText(
+            Tr::tr(
+                "ESI Process Data is available for read-only preview, but this repository "
+                "device contains unsupported ESI structures and cannot be added to an offline "
+                "Project. Review its support details in Device Repository; no controller, "
+                "network, or physical hardware is accessed."));
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
         m_summary->setText(
             Tr::tr(
                 "ESI Process Data catalogue. Select a Sync Manager and PDO to inspect its "
@@ -1204,6 +1271,7 @@ void ProcessDataPage::setContext(const Core::PropertyPageContext &context)
     m_restoreDefaults->setEnabled(m_editable && !isEmpty(m_esiDefaults));
     m_restoreDefaults->setText(
         m_showingEsiDefaults ? Tr::tr("Store ESI Defaults") : Tr::tr("Restore ESI Defaults"));
+    updateTablePresentation();
     rebuildModels();
 }
 
@@ -1298,6 +1366,82 @@ void ProcessDataPage::selectPdo(const Data::NodeId &pdoId)
     m_rebuilding = false;
 }
 
+void ProcessDataPage::updateTablePresentation()
+{
+    const bool repositoryDeviceMissing
+        = m_context.nodeKind == Core::WorkbenchNodeKind::Device
+          && !m_repositoryDeviceAvailable;
+    const bool repositoryProcessDataEmpty
+        = m_context.nodeKind == Core::WorkbenchNodeKind::Device
+          && m_repositoryDeviceAvailable && !m_repositoryProcessDataAvailable;
+    const bool repositoryProcessDataEmptyUnsupported
+        = repositoryProcessDataEmpty && !m_repositoryDeviceSupported;
+    const bool repositoryProcessDataPreview
+        = m_context.nodeKind == Core::WorkbenchNodeKind::Device
+          && m_repositoryDeviceAvailable && m_repositoryProcessDataAvailable;
+    const bool repositoryProcessDataPreviewUnsupported
+        = repositoryProcessDataPreview && !m_repositoryDeviceSupported;
+    const bool repositoryProcessDataPreviewInvalid
+        = repositoryProcessDataPreview && m_repositoryProcessDataHasErrors;
+
+    QString contextDescription;
+    if (repositoryDeviceMissing) {
+        contextDescription = Tr::tr(
+            "The ESI device description is unavailable, so no Process Data can be shown. "
+            "Return to Device Repository and select an available device. This read-only page "
+            "does not access a controller, network, or physical hardware.");
+    } else if (repositoryProcessDataEmptyUnsupported) {
+        contextDescription = Tr::tr(
+            "No ESI Process Data mapping is available. This repository device contains "
+            "unsupported ESI structures and cannot be added to an offline Project. Review its "
+            "support details in Device Repository. This read-only page will not fabricate Sync "
+            "Managers or PDOs and does not access a controller, network, or physical hardware.");
+    } else if (repositoryProcessDataEmpty) {
+        contextDescription = Tr::tr(
+            "No ESI Process Data mapping is available for this repository device. This "
+            "read-only page will not fabricate Sync Managers or PDOs. Review its source in "
+            "Device Repository or import a matching ESI description; no controller, network, "
+            "or physical hardware is accessed.");
+    } else if (repositoryProcessDataPreviewInvalid
+               && repositoryProcessDataPreviewUnsupported) {
+        contextDescription = Tr::tr(
+            "This is a read-only preview of imported ESI Process Data. The mapping has "
+            "validation errors and the repository device contains unsupported ESI structures, "
+            "so it cannot be added to an offline Project. Review the error and support details, "
+            "then import a corrected matching ESI description through Device Repository. The "
+            "preview does not modify a Project or access a controller, network, or physical "
+            "hardware.");
+    } else if (repositoryProcessDataPreviewInvalid) {
+        contextDescription = Tr::tr(
+            "This is a read-only preview of imported ESI Process Data. The mapping has "
+            "validation errors and cannot be added to an offline Project. Review the error "
+            "details and import a corrected matching ESI description through Device Repository. "
+            "The preview does not modify a Project or access a controller, network, or physical "
+            "hardware.");
+    } else if (repositoryProcessDataPreviewUnsupported) {
+        contextDescription = Tr::tr(
+            "This is a read-only preview of imported ESI Process Data. The repository device "
+            "contains unsupported ESI structures and cannot be added to an offline Project. "
+            "Review its support details in Device Repository. The preview does not modify a "
+            "Project or access a controller, network, or physical hardware.");
+    } else if (repositoryProcessDataPreview) {
+        contextDescription = Tr::tr(
+            "This is a read-only offline preview of imported ESI Process Data. Selecting rows "
+            "changes only this page presentation; it does not modify a Project or access a "
+            "controller, network, or physical hardware.");
+    }
+
+    const QList<QTableView *> tables = {
+        m_syncManagers, m_assignments, m_pdoList, m_pdoContent, m_processImage};
+    for (QTableView *table : tables) {
+        QString description = table->property(baseDescriptionProperty).toString();
+        if (!contextDescription.isEmpty())
+            description += ' ' + contextDescription;
+        table->setAccessibleDescription(description);
+        table->setToolTip(contextDescription.isEmpty() ? QString() : description);
+    }
+}
+
 void ProcessDataPage::showValidation(
     const Data::ConfigurationValidation &validation, const QString &prefix)
 {
@@ -1315,16 +1459,70 @@ void ProcessDataPage::showValidation(
     QString text = prefix;
     if (!text.isEmpty() && !details.isEmpty())
         text += ' ';
-    if (errorCount > 0) {
+    const bool repositoryDeviceMissing
+        = m_context.nodeKind == Core::WorkbenchNodeKind::Device
+          && !m_repositoryDeviceAvailable;
+    const bool repositoryProcessDataEmpty
+        = m_context.nodeKind == Core::WorkbenchNodeKind::Device
+          && m_repositoryDeviceAvailable && !m_repositoryProcessDataAvailable;
+    const bool repositoryProcessDataEmptyUnsupported
+        = repositoryProcessDataEmpty && !m_repositoryDeviceSupported;
+    const bool repositoryProcessDataPreviewUnsupported
+        = m_context.nodeKind == Core::WorkbenchNodeKind::Device
+          && m_repositoryDeviceAvailable && m_repositoryProcessDataAvailable
+          && !m_repositoryDeviceSupported;
+    const bool repositoryProcessDataPreviewInvalid
+        = m_context.nodeKind == Core::WorkbenchNodeKind::Device
+          && m_repositoryDeviceAvailable && m_repositoryProcessDataAvailable && errorCount > 0;
+    QString repositoryPreviewNotice;
+    if (repositoryProcessDataPreviewInvalid && repositoryProcessDataPreviewUnsupported) {
+        repositoryPreviewNotice = Tr::tr(
+            "This mapping has validation errors and the Device contains unsupported ESI "
+            "structures, so it cannot be added to an offline Project. Review the error and "
+            "support details, then import a corrected matching ESI description through Device "
+            "Repository.");
+    } else if (repositoryProcessDataPreviewInvalid) {
+        repositoryPreviewNotice = Tr::tr(
+            "This mapping cannot be added to an offline Project. Import a corrected matching ESI "
+            "description through Device Repository.");
+    } else if (repositoryProcessDataPreviewUnsupported) {
+        repositoryPreviewNotice = Tr::tr(
+            "This Device contains unsupported ESI structures and cannot be added to an offline "
+            "Project. Review its support details in Device Repository.");
+    }
+    if (repositoryDeviceMissing) {
+        m_validation->setType(Utils::InfoLabel::Warning);
+        text += Tr::tr(
+            "The ESI device description is unavailable, so no Process Data can be shown.");
+    } else if (repositoryProcessDataEmptyUnsupported) {
+        m_validation->setType(Utils::InfoLabel::Warning);
+        text += Tr::tr(
+            "No ESI Process Data mapping is available. This device contains unsupported ESI "
+            "structures and cannot be added to an offline Project. Review its support details "
+            "in Device Repository.");
+    } else if (repositoryProcessDataEmpty) {
+        m_validation->setType(Utils::InfoLabel::Information);
+        text += Tr::tr(
+            "No ESI Process Data mapping is available to preview; Workbench will not fabricate "
+            "Sync Managers or PDOs.");
+    } else if (errorCount > 0) {
         m_validation->setType(Utils::InfoLabel::Error);
         text += Tr::tr("%n configuration error(s).", nullptr, errorCount);
         if (!details.isEmpty())
             text += ' ' + details.first();
+        if (!repositoryPreviewNotice.isEmpty())
+            text += ' ' + repositoryPreviewNotice;
     } else if (warningCount > 0) {
         m_validation->setType(Utils::InfoLabel::Warning);
         text += Tr::tr("%n configuration warning(s).", nullptr, warningCount);
         if (!details.isEmpty())
             text += ' ' + details.first();
+        if (!repositoryPreviewNotice.isEmpty())
+            text += ' ' + repositoryPreviewNotice;
+    } else if (repositoryProcessDataPreviewUnsupported) {
+        m_validation->setType(Utils::InfoLabel::Warning);
+        text += Tr::tr("This Process Data is available only for read-only preview. ");
+        text += repositoryPreviewNotice;
     } else {
         m_validation->setType(Utils::InfoLabel::Ok);
         text += Tr::tr("Configuration is valid. Outputs: %1 byte(s); inputs: %2 byte(s).")
