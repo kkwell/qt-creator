@@ -914,6 +914,29 @@ budget does not increase and no extension-point exception is required. The
 Workbench path count remains 44 and the direct upstream Core patch count
 remains five.
 
+`ISSUE-WB-ETHERCAT-REPOSITORY-EMPTY-001`, based on
+`5c88012561d3317b6d689f31668a0a31c2bd66d1`, changes only the existing
+product-owned private `ethercatpage.cpp`, Workbench test
+declaration/implementation, and documentation. Repository Device EtherCAT
+pages now distinguish supported/unsupported zero-SyncManager descriptions,
+supported/unsupported populated previews, and unresolved/missing
+descriptions. Empty and unresolved states expose explicit summaries and real
+zero rows without leaving a header-only tree or fabricating a SyncManager.
+
+Current summary and tree accessibility descriptions plus equal tooltips are
+rebuilt on every context update, so page reuse removes stale empty,
+unsupported, and unavailable state. Existing populated cell roles and
+read-only behavior remain unchanged. The page adds no Project operation,
+controller transport, online state, network access, or hardware behavior.
+
+No source file, dependency, CMake/qbs entry, public API, Project format,
+Provider, persistence field, Project command, custom model role, production
+thread, or timer changes. No file under Qt Creator's upstream Core,
+ProjectExplorer, or application bootstrap changes, so the direct Core patch
+budget does not increase and no extension-point exception is required. The
+Workbench path count remains 44 and the direct upstream Core patch count
+remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

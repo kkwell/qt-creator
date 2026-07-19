@@ -3718,3 +3718,110 @@ unrelated `WITH_TESTS=ON` all-target build was not rerun; the known EasyBoard
 test include blocker remains outside this private Workbench issue. No upstream
 Core, ProjectExplorer, or application-bootstrap path changed. The Workbench
 path count remains 44 and the direct upstream Core patch count remains five.
+
+## Repository Device EtherCAT SyncManager empty state
+
+`ISSUE-WB-ETHERCAT-REPOSITORY-EMPTY-001` is based on local commit
+`5c88012561d3317b6d689f31668a0a31c2bd66d1`. The repository Device EtherCAT
+page now distinguishes the actual imported ESI SyncManager state instead of
+describing every existing Device as having defaults and leaving an empty
+seven-column table visible.
+
+| Repository context | Visible state | Recovery and permission |
+|---|---|---|
+| Supported Device with no parsed SyncManager | Explicit no-SyncManager summary; the empty tree is hidden and contains zero rows | Review source and qualification in Device Repository or import a matching ESI; Workbench fabricates no row |
+| Unsupported Device with no parsed SyncManager | Explicit no-SyncManager and unsupported disclosure; zero rows and hidden tree | Cannot be added to an offline Project; review support details in Device Repository |
+| Unsupported Device with parsed SyncManagers | Existing two-row read-only preview remains visible | Cannot be added; the preview retains Device Repository recovery and grants no edit permission |
+| Unresolved/missing Device description | Explicit unavailable summary; zero rows and hidden tree | Return to Device Repository and select an available Device |
+| Supported Device with parsed SyncManagers | Existing seven-column, two-row read-only offline preview remains visible | Inspection only; no Project, controller, network, or physical hardware is touched |
+
+The summary has a translated accessible name. Each `setContext()` publishes
+the current summary as its accessible description and equal tooltip. The
+SyncManager tree receives a fresh localized name, description, and equal
+tooltip for the current repository state. Reusing one page across supported
+empty, unsupported empty, unsupported populated, unresolved, and supported
+populated contexts clears every visible stale row, warning, and recovery
+phrase; empty and unresolved states hide the tree. The populated tree
+continues to expose the previously qualified seven-column cell roles and
+remains non-editable.
+
+This is presentation derived from the existing immutable
+`DeviceDescription::syncManagers` and `DeviceSummary::supported` values. The
+page does not infer a controller configuration, synthesize a SyncManager,
+discover a target, add a Device, or create Project history. The regression
+starts with no Project and proves that browsing every state still leaves the
+Project list empty.
+
+Beckhoff documents the EtherCAT slave page as a view that lists the current
+Sync Manager configuration:
+<https://infosys.beckhoff.com/content/1033/tcsystemmanager/1092536331.html>.
+Embed Labs uses that structure only as an imported offline ESI preview. Qt's
+`QTreeWidget` is an item-model view whose real `topLevelItemCount` reports the
+available rows, and Qt exposes localized purpose/context through QWidget
+accessibility properties:
+<https://doc.qt.io/qt-6/qtreewidget.html#topLevelItemCount-prop> and
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. Qt Creator
+20.0 supplies the host precedent for replacing unavailable content with an
+explicit message in Type Hierarchy:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/typehierarchy.cpp#L63-L72>.
+
+The failure-first test was compiled while production remained at exact blobs
+`c637f6fffa956e3e79be20302911b87e52cf41c061294cdce7aee84f78d55f08` /
+`e414a1557a76ce5150e8a5f1e2b62131787f2548118699c9d45e7d3f2827f011`.
+Initialization and cleanup passed, and the new assertion failed exactly
+because the old supported-empty summary did not contain “No ESI SyncManager”;
+the target exited with status 1 under `failure-first`.
+
+Final production blobs are
+`0f264b16c975d3ae86fddf5d7b979a0b40ab49039a23fd30ea565992460426b3` /
+`e414a1557a76ce5150e8a5f1e2b62131787f2548118699c9d45e7d3f2827f011`;
+final test blobs are
+`944e2ab60c815fd1badf7a453a9acbc10c478ced7ace4c5138e76dda7ba5f5ce` /
+`1250eacb1b82f94aeb8cef4ddb27e439bd1e689b684c04fb8ca152764b863abe`.
+The final test-build Workbench plugin SHA-256 is
+`b5f333199be872e658f7592f070bfac50f76722fe0d4b7b743354902b2bb5b5c`.
+Focused normal and `QT_SCALE_FACTOR=2` runs each passed 3 events under
+`review-final2-focused-normal` and `review-final2-focused-2x`. Complete
+Workbench runs each passed 60 events under `review-final2-workbench-normal`
+and `review-final2-workbench-2x`. The six isolated suites under
+`review-final2-six-suites` passed 111 events: Core 17, Project 12, Devices 8,
+Workbench 60, Scan 7, and Diagnostics 7. Every test target exited with status
+0; all paths are relative to
+`/private/tmp/embed-labs-ethercat-repository-empty.mBBHJJ`.
+
+Each complete Workbench log retains the known pre-existing ProjectExplorer
+TaskHub soft assertion in `testInvalidProjectPresentationAndLifecycle`. It is
+absent from the new focused test, does not fail a test, and does not alter
+target status.
+
+The full `WITH_TESTS=OFF` product build passed and contains exactly the 16
+allow-listed plugin dylibs. Its Workbench plugin SHA-256 is
+`1eee835eec11d74d74b27e0a600306383962040e18391c1cacfbc0adfc7f0835`.
+Enabled startup observed PID 50382 for 37 consecutive one-second samples;
+explicitly disabled startup observed PID 51949 for the same 37 samples with
+`-noload EtherCATWorkbench`. LLDB passed the intentional final SIGTERM directly
+to each target, and each exited with target status 15 under
+`lifecycle-enabled` and `lifecycle-disabled`.
+
+The final crash audit completed at 2026-07-19 20:30:44 +0800 under
+`review-final2-crash-audit`. It found no residual Embed Labs/LLDB process, new
+matching DiagnosticReports file, or matching
+ReportCrash/CrashReporter/diagnosticd event after 2026-07-19 20:07:00 +0800.
+Every final success-path test and lifecycle executable used fresh
+HOME/settings, cleared inherited DYLD variables, `QT_QPA_PLATFORM=offscreen`,
+`CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch
+Bar bypass. No visible main window or system crash dialog was created. Manual
+desktop inspection was intentionally not run because this issue changes
+text/state only and all executable acceptance remained offscreen.
+
+This issue changes only the existing private `ethercatpage.cpp`, Workbench
+test declaration/implementation, and these four documents. It adds no source
+file, dependency, public API, Provider, persistence field, Project command,
+custom model role, production thread or timer, controller/network transport,
+online state, or hardware behavior. Configured-slave editing, persistence,
+and Undo/Redo are unchanged. No CMake or qbs description changed, so qbs was
+not run. The unrelated `WITH_TESTS=ON` all-target build was not rerun; the
+known EasyBoard test include blocker remains outside this private Workbench
+issue. No upstream Core, ProjectExplorer, or application-bootstrap path
+changed. The Workbench path count remains 44 and the direct upstream Core
+patch count remains five.

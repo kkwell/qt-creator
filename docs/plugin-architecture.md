@@ -1362,6 +1362,53 @@ path under upstream Core, ProjectExplorer, or the application bootstrap
 changed. The Workbench path count remains 44 and the direct upstream Core patch
 count remains five.
 
+## Workbench repository Device EtherCAT empty-state boundary
+
+`ISSUE-WB-ETHERCAT-REPOSITORY-EMPTY-001` stays inside the product-owned
+private `EtherCATPage`. `DeviceRepositoryProvider` continues to own and
+publish the immutable parsed `DeviceDescription`; the page reads the existing
+SyncManager list and parser support flag only. Neither fact crosses a plugin
+interface or enters a Project or persistence contract.
+
+The repository Device branch has five presentation states: supported empty,
+unsupported empty, supported populated, unsupported populated, and an
+unresolved/missing description. Empty and unresolved states use an explicit
+summary, keep a real zero row count, and hide the table rather than showing a
+header-only view. Populated states retain the existing seven-column read-only
+ESI table. An unsupported Device remains inspectable but cannot gain topology
+permission; its recovery stays in Device Repository.
+
+Summary and tree metadata are rebuilt from the current context on every
+update. The summary's localized accessible description and tooltip equal its
+visible text. The tree's localized description and tooltip identify the
+read-only offline ESI source plus the Project/controller/network/hardware
+boundary. Reset clears rows and metadata before the new state is applied, and
+empty states hide the table, so one private page instance cannot leak a prior
+unsupported, unavailable, or empty visible state into the next Device.
+
+The page does not synthesize a SyncManager, validate or add a Device, discover
+a target, create Project history, or access a controller. Configured-slave
+Alias editing remains the existing Project-owned path and is outside this
+repository-only issue. The regression begins with no Project and keeps that
+list empty while all repository contexts are browsed.
+
+Beckhoff supplies only the structural comparison that an EtherCAT slave page
+lists its Sync Manager configuration:
+<https://infosys.beckhoff.com/content/1033/tcsystemmanager/1092536331.html>.
+Qt supplies the real row-cardinality and contextual accessibility contracts:
+<https://doc.qt.io/qt-6/qtreewidget.html#topLevelItemCount-prop> and
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. Qt Creator
+20.0's Type Hierarchy unavailable label is the nearest host-side empty-state
+precedent:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/typehierarchy.cpp#L63-L72>.
+
+This boundary adds no public API, source file, dependency, Provider, Project
+command, persistence field, model role, thread, timer, controller/network
+transport, online state, or physical-hardware behavior. No CMake or qbs
+description changed. No path under upstream Core, ProjectExplorer, or the
+application bootstrap changed. The Workbench path count remains 44 and the
+direct upstream Core patch count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

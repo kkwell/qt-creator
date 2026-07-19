@@ -2065,6 +2065,52 @@ description contracts are documented at
 20.0's explicit unavailable-state precedent is visible at
 <https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/typehierarchy.cpp#L63-L72>.
 
+## EtherCATWorkbench repository Device EtherCAT empty-state qualification
+
+`ISSUE-WB-ETHERCAT-REPOSITORY-EMPTY-001` uses local baseline
+`5c88012561d3317b6d689f31668a0a31c2bd66d1`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first state | With production blobs still exactly `c637f6fffa956e3e79be20302911b87e52cf41c061294cdce7aee84f78d55f08` / `e414a1557a76ce5150e8a5f1e2b62131787f2548118699c9d45e7d3f2827f011`, initialization and cleanup passed, the old supported-empty summary failed the new “No ESI SyncManager” assertion, and the target exited with status 1 under `failure-first` |
+| Real Provider contexts | Four unique ESI files import through the existing Devices Provider: supported/unsupported empty and supported/unsupported populated; a fifth context uses an unresolved/missing Device ID |
+| Supported empty | Zero real rows, hidden header-only tree, explicit no-SyncManager summary, no fabricated row, and Device Repository recovery |
+| Unsupported empty | Zero rows, hidden tree, unsupported/cannot-add disclosure, and Device Repository support recovery |
+| Unsupported populated | Existing two-row read-only preview remains visible while the support restriction prevents Project-add guidance |
+| Unresolved/missing Device | Explicit unavailable state, zero rows, hidden tree, and Device Repository recovery |
+| Supported populated | Existing seven-column, two-row read-only offline preview remains visible without stale empty, unsupported, or unavailable text |
+| Accessibility and page reuse | Summary accessible description and tooltip equal current visible text; tree accessible description and tooltip identify current state; supported empty → unsupported empty → unsupported populated → unresolved → supported populated clears all stale visible state |
+| Read-only enforcement | Every restored populated row retains non-editable flags |
+| Project isolation | The Project list is empty before and after all repository browsing |
+| Focused tests | Normal and 2x each passed 3, failed 0, target status 0 under `review-final2-focused-normal` and `review-final2-focused-2x` |
+| Complete Workbench | Normal and 2x each passed 60, failed 0, target status 0 under `review-final2-workbench-normal` and `review-final2-workbench-2x` |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 60, Scan 7, Diagnostics 7; 111 passed, 0 failed under `review-final2-six-suites` |
+| Existing full-suite diagnostic | The known ProjectExplorer TaskHub soft assertion remains confined to the pre-existing invalid-project test and does not occur in the focused test, fail a test, or alter target status |
+| Final source blobs | Production `0f264b16c975d3ae86fddf5d7b979a0b40ab49039a23fd30ea565992460426b3` / `e414a1557a76ce5150e8a5f1e2b62131787f2548118699c9d45e7d3f2827f011`; tests `944e2ab60c815fd1badf7a453a9acbc10c478ced7ace4c5138e76dda7ba5f5ce` / `1250eacb1b82f94aeb8cef4ddb27e439bd1e689b684c04fb8ca152764b863abe` |
+| Test plugin | Workbench SHA-256 `b5f333199be872e658f7592f070bfac50f76722fe0d4b7b743354902b2bb5b5c` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 allow-listed plugin dylibs; Workbench SHA-256 `1eee835eec11d74d74b27e0a600306383962040e18391c1cacfbc0adfc7f0835` |
+| Enabled startup | PID 50382 remained running for 37 seconds with 37 consecutive samples; intentional passed-through SIGTERM produced target status 15 under `lifecycle-enabled` |
+| Explicitly disabled startup | PID 51949 remained running for 37 seconds with 37 consecutive samples and `-noload EtherCATWorkbench`; intentional passed-through SIGTERM produced target status 15 under `lifecycle-disabled` |
+| Crash-dialog audit | Completed at 2026-07-19 20:30:44 +0800 under `review-final2-crash-audit`; no residual Embed Labs/LLDB process, new matching DiagnosticReports file, or matching ReportCrash/CrashReporter/diagnosticd event after 2026-07-19 20:07:00 +0800 |
+| Invisible executable policy | Final success-path tests and lifecycle runs used fresh HOME/settings, inherited DYLD variables cleared, offscreen Qt platform, crash reporter disabled, `-no-crashcheck`, and only the process-local Touch Bar bypass; no visible main window or system crash dialog |
+| Visual/manual desktop inspection | Not run by design; this issue changes text/state only and executable acceptance remained offscreen |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard test include blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, Project command, model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, controller transport, online state, or hardware access | Not performed or added; this is an imported-ESI presentation only |
+
+All paths above are relative to
+`/private/tmp/embed-labs-ethercat-repository-empty.mBBHJJ`. Beckhoff's
+EtherCAT slave page supplies only the structural Sync Manager comparison:
+<https://infosys.beckhoff.com/content/1033/tcsystemmanager/1092536331.html>.
+Qt's real tree-row cardinality and localized contextual-description contracts
+are documented at
+<https://doc.qt.io/qt-6/qtreewidget.html#topLevelItemCount-prop> and
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. Qt Creator
+20.0's explicit unavailable-state precedent is visible at
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/typehierarchy.cpp#L63-L72>.
+
 ## Verification states
 
 Use only these evidence labels:

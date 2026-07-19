@@ -83,6 +83,7 @@ EtherCATPage::EtherCATPage(WorkbenchController *controller, QWidget *parent)
     m_summary->setObjectName("EtherCATWorkbenchPageSummary");
     m_summary->setWordWrap(true);
     m_summary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_summary->setAccessibleName(Tr::tr("EtherCAT page summary"));
 
     m_masterForm->setObjectName("EtherCATMasterEthercatForm");
     m_masterNetId->setObjectName("EtherCATMasterEthercatNetId");
@@ -263,6 +264,12 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
            Tr::tr("Size / Duration (µs)"),
            Tr::tr("Map Id")};
 
+    const auto setTreePresentation = [this](const QString &name, const QString &description) {
+        m_tree->setAccessibleName(name);
+        m_tree->setAccessibleDescription(description);
+        m_tree->setToolTip(description);
+    };
+
     if (context.nodeKind == Core::WorkbenchNodeKind::Master && m_controller) {
         const QList<Data::OfflineSlaveConfiguration> slaves
             = m_controller->treeModel()->offlineSlavesForMaster(context.nodeId);
@@ -280,8 +287,8 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
             Tr::tr("Cyclic transfer frames are not generated: the offline phase-1 project has no "
                    "runtime task, frame scheduler, or Sync Unit model."));
         m_masterFrameState->show();
-        m_tree->setAccessibleName(Tr::tr("EtherCAT cyclic transfer frames"));
-        m_tree->setAccessibleDescription(
+        setTreePresentation(
+            Tr::tr("EtherCAT cyclic transfer frames"),
             Tr::tr("The TwinCAT-style frame columns are shown, but no runtime frame rows are "
                    "generated in the offline phase."));
     } else if (context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave && slave) {
@@ -307,22 +314,56 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
         m_identificationValue->setText(Tr::tr("Not configured"));
         m_previousPort->setText(previousPortText(*slave));
         m_slaveForm->show();
-        m_tree->setAccessibleName(Tr::tr("EtherCAT SyncManager defaults"));
-        m_tree->setAccessibleDescription(
+        setTreePresentation(
+            Tr::tr("EtherCAT SyncManager defaults"),
             Tr::tr("Read-only offline SyncManager defaults from the matched ESI device. No "
                    "controller, network, or physical hardware is accessed."));
         if (device)
             addSyncManagers(*device);
     } else if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
-        reset(
-            device ? Tr::tr("SyncManager defaults from the imported ESI file")
-                   : Tr::tr("No matching ESI SyncManager data is available."),
-            device ? syncManagerHeaders : QStringList());
-        m_tree->setAccessibleName(Tr::tr("EtherCAT SyncManager defaults"));
-        m_tree->setAccessibleDescription(
-            Tr::tr("Read-only offline SyncManager defaults from the imported ESI device. No "
-                   "controller, network, or physical hardware is accessed."));
-        if (device)
+        const bool syncManagersAvailable = device && !device->syncManagers.isEmpty();
+        const bool deviceSupported = device && device->summary.supported;
+        QString summary;
+        QString treeDescription;
+        if (!device) {
+            summary = Tr::tr(
+                "The ESI device description is no longer available. Return to Device Repository "
+                "and select an available device before opening EtherCAT.");
+            treeDescription = Tr::tr(
+                "The ESI device description is unavailable, so no SyncManager configuration can "
+                "be shown. Return to Device Repository and select an available device. This "
+                "read-only page does not access a controller, network, or physical hardware.");
+        } else if (!syncManagersAvailable && !deviceSupported) {
+            summary = Tr::tr(
+                "No ESI SyncManager configuration is available. This repository device also "
+                "contains unsupported ESI structures and cannot be added to an offline Project. "
+                "Review its support details in Device Repository; Workbench will not fabricate "
+                "SyncManager rows, and no controller, network, or physical hardware is accessed.");
+            treeDescription = summary;
+        } else if (!syncManagersAvailable) {
+            summary = Tr::tr(
+                "No ESI SyncManager configuration is available for this repository device. "
+                "Workbench will not fabricate SyncManager rows. Review its source and "
+                "qualification in Device Repository or import a matching ESI description; no "
+                "controller, network, or physical hardware is accessed.");
+            treeDescription = summary;
+        } else if (!deviceSupported) {
+            summary = Tr::tr(
+                "Imported ESI SyncManager configuration is available for read-only offline "
+                "preview, but this repository device contains unsupported ESI structures and "
+                "cannot be added to an offline Project. Review its support details in Device "
+                "Repository; no controller, network, or physical hardware is accessed.");
+            treeDescription = summary;
+        } else {
+            summary = Tr::tr(
+                "Imported ESI SyncManager configuration is available for read-only offline "
+                "preview. No Project is modified, and no controller, network, or physical "
+                "hardware is accessed.");
+            treeDescription = summary;
+        }
+        reset(summary, syncManagersAvailable ? syncManagerHeaders : QStringList());
+        setTreePresentation(Tr::tr("EtherCAT SyncManager defaults"), treeDescription);
+        if (syncManagersAvailable)
             addSyncManagers(*device);
     } else {
         reset(Tr::tr("EtherCAT properties are unavailable for this selection."), {});
@@ -334,6 +375,8 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
 void EtherCATPage::reset(const QString &summary, const QStringList &headers)
 {
     m_summary->setText(summary);
+    m_summary->setAccessibleDescription(summary);
+    m_summary->setToolTip(summary);
     m_masterForm->hide();
     m_masterNetId->clear();
     m_masterTopology->setEnabled(false);
@@ -351,6 +394,7 @@ void EtherCATPage::reset(const QString &summary, const QStringList &headers)
     m_tree->clear();
     m_tree->setAccessibleName({});
     m_tree->setAccessibleDescription({});
+    m_tree->setToolTip({});
     m_tree->setColumnCount(qMax(1, headers.size()));
     m_tree->setHeaderLabels(headers);
     m_tree->setVisible(!headers.isEmpty());

@@ -32,6 +32,7 @@ private slots:
     void testMasterTopologyDialogBounds();
     void testMasterTopologyCellAccessibility();
     void testEtherCATSyncManagerCellAccessibility();
+    void testEtherCATRepositoryEmptyState();
     void testEditableConfiguredSlaveEtherCATWorkflow();
     void testStatusBarTracksStateService();
     void testTreeModelLargeIncrementalUpdate();

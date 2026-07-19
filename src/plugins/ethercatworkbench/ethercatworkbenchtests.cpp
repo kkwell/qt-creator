@@ -3889,6 +3889,225 @@ void EtherCATWorkbenchTests::testEtherCATSyncManagerCellAccessibility()
         QVERIFY2(page->grab().save(renderPath), qPrintable(renderPath));
 }
 
+void EtherCATWorkbenchTests::testEtherCATRepositoryEmptyState()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+    QVERIFY(projectService->projects().isEmpty());
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    const auto uniqueDevice = [](QByteArray esi,
+                                 const QByteArray &productCode,
+                                 const QByteArray &revision,
+                                 const QByteArray &typeName,
+                                 const QByteArray &name) {
+        esi.replace("#x00005678", productCode);
+        esi.replace("#x00000011", revision);
+        esi.replace("AX5000", typeName);
+        esi.replace("Workbench Servo", name);
+        return esi;
+    };
+
+    QByteArray supportedEmptyEsi = deviceEsi();
+    QVERIFY(removeFirstXmlElement(&supportedEmptyEsi, "<Sm ", "</Sm>"));
+    QVERIFY(removeFirstXmlElement(&supportedEmptyEsi, "<Sm ", "</Sm>"));
+    QVERIFY(removeFirstXmlElement(&supportedEmptyEsi, "<RxPdo ", "</RxPdo>"));
+    QVERIFY(removeFirstXmlElement(&supportedEmptyEsi, "<TxPdo ", "</TxPdo>"));
+    supportedEmptyEsi = uniqueDevice(
+        supportedEmptyEsi,
+        "#x7A1A0001",
+        "#x0000B201",
+        "EL-ETHERCAT-EMPTY",
+        "EtherCAT Empty Servo / \u65e0 SyncManager");
+
+    QByteArray unsupportedEmptyEsi = supportedEmptyEsi;
+    unsupportedEmptyEsi.replace("#x7A1A0001", "#x7A1A0002");
+    unsupportedEmptyEsi.replace("#x0000B201", "#x0000B202");
+    unsupportedEmptyEsi.replace("EL-ETHERCAT-EMPTY", "EL-ETHERCAT-EMPTY-UNSUPPORTED");
+    unsupportedEmptyEsi.replace("\u65e0 SyncManager", "\u65e0 SyncManager / \u4e0d\u652f\u6301");
+    unsupportedEmptyEsi.replace("</Device>", "<Modules/></Device>");
+
+    QByteArray supportedPopulatedEsi = uniqueDevice(
+        deviceEsi(),
+        "#x7A1A0003",
+        "#x0000B203",
+        "EL-ETHERCAT-POPULATED",
+        "EtherCAT Populated Servo / \u5df2\u89e3\u6790 SyncManager");
+
+    QByteArray unsupportedPopulatedEsi = supportedPopulatedEsi;
+    unsupportedPopulatedEsi.replace("#x7A1A0003", "#x7A1A0004");
+    unsupportedPopulatedEsi.replace("#x0000B203", "#x0000B204");
+    unsupportedPopulatedEsi.replace("EL-ETHERCAT-POPULATED", "EL-ETHERCAT-POPULATED-UNSUPPORTED");
+    unsupportedPopulatedEsi.replace(
+        "\u5df2\u89e3\u6790 SyncManager", "\u5df2\u89e3\u6790 SyncManager / \u4e0d\u652f\u6301");
+    unsupportedPopulatedEsi.replace("</Device>", "<Modules/></Device>");
+
+    struct EsiFixture
+    {
+        QString fileName;
+        QByteArray xml;
+    };
+    const QList<EsiFixture> fixtures = {
+        {"ethercat-empty.xml", supportedEmptyEsi},
+        {"ethercat-empty-unsupported.xml", unsupportedEmptyEsi},
+        {"ethercat-populated.xml", supportedPopulatedEsi},
+        {"ethercat-populated-unsupported.xml", unsupportedPopulatedEsi},
+    };
+    QList<Utils::FilePath> esiPaths;
+    for (const EsiFixture &fixture : fixtures) {
+        const Utils::FilePath path
+            = Utils::FilePath::fromString(directory.path()).pathAppended(fixture.fileName);
+        const Utils::Result<qint64> writeResult = path.writeFileContents(fixture.xml);
+        QVERIFY_RESULT(writeResult);
+        esiPaths.append(path);
+    }
+    const Data::DeviceImportResult importResult = waitForJob(repository->importFiles(esiPaths));
+    QCOMPARE(importResult.requestedFiles, fixtures.size());
+    QCOMPARE(importResult.importedDevices, fixtures.size());
+    QCOMPARE(importResult.failedFiles, 0);
+
+    const auto idForType = [repository](const QString &typeName) {
+        const QList<Data::DeviceSummary> devices = repository->devices();
+        const auto found = std::find_if(
+            devices.cbegin(), devices.cend(), [&typeName](const Data::DeviceSummary &device) {
+                return device.typeName == typeName;
+            });
+        return found == devices.cend() ? Data::NodeId() : found->id;
+    };
+    const Data::NodeId supportedEmptyId = idForType("EL-ETHERCAT-EMPTY");
+    const Data::NodeId unsupportedEmptyId = idForType("EL-ETHERCAT-EMPTY-UNSUPPORTED");
+    const Data::NodeId supportedPopulatedId = idForType("EL-ETHERCAT-POPULATED");
+    const Data::NodeId unsupportedPopulatedId = idForType("EL-ETHERCAT-POPULATED-UNSUPPORTED");
+    QVERIFY(!supportedEmptyId.isNull());
+    QVERIFY(!unsupportedEmptyId.isNull());
+    QVERIFY(!supportedPopulatedId.isNull());
+    QVERIFY(!unsupportedPopulatedId.isNull());
+
+    const std::optional<Data::DeviceDescription> supportedEmpty = repository->device(
+        supportedEmptyId);
+    const std::optional<Data::DeviceDescription> unsupportedEmpty = repository->device(
+        unsupportedEmptyId);
+    const std::optional<Data::DeviceDescription> supportedPopulated = repository->device(
+        supportedPopulatedId);
+    const std::optional<Data::DeviceDescription> unsupportedPopulated = repository->device(
+        unsupportedPopulatedId);
+    QVERIFY(supportedEmpty);
+    QVERIFY(unsupportedEmpty);
+    QVERIFY(supportedPopulated);
+    QVERIFY(unsupportedPopulated);
+    QVERIFY(supportedEmpty->summary.supported);
+    QVERIFY(supportedEmpty->syncManagers.isEmpty());
+    QVERIFY(!unsupportedEmpty->summary.supported);
+    QVERIFY(unsupportedEmpty->syncManagers.isEmpty());
+    QVERIFY(supportedPopulated->summary.supported);
+    QCOMPARE(supportedPopulated->syncManagers.size(), 2);
+    QVERIFY(!unsupportedPopulated->summary.supported);
+    QCOMPARE(unsupportedPopulated->syncManagers.size(), 2);
+
+    for (const Data::NodeId &deviceId :
+         {supportedEmptyId, unsupportedEmptyId, supportedPopulatedId, unsupportedPopulatedId}) {
+        QTRY_VERIFY(controller.treeModel()->indexForNodeId(deviceId).isValid());
+    }
+
+    BuiltinPropertyPageProvider pages(&controller);
+    std::unique_ptr<QWidget> page(pages.createPage(Constants::ETHERCAT_PAGE_ID, nullptr));
+    QVERIFY(page);
+    QLabel *summary = page->findChild<QLabel *>("EtherCATWorkbenchPageSummary");
+    QTreeWidget *tree = page->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
+    QWidget *slaveForm = page->findChild<QWidget *>("EtherCATEthercatSlaveForm");
+    QVERIFY(summary);
+    QVERIFY(tree);
+    QVERIFY(slaveForm);
+
+    const auto showDevice = [&](const Data::NodeId &deviceId) {
+        const QModelIndex index = controller.treeModel()->indexForNodeId(deviceId);
+        QVERIFY(index.isValid());
+        pages.updatePage(
+            Constants::ETHERCAT_PAGE_ID, page.get(), controller.treeModel()->contextForIndex(index));
+    };
+    const auto verifySummaryMetadata = [summary]() {
+        QVERIFY(!summary->accessibleName().isEmpty());
+        QCOMPARE(summary->accessibleDescription(), summary->text());
+        QCOMPARE(summary->toolTip(), summary->text());
+    };
+
+    showDevice(supportedEmptyId);
+    QVERIFY(summary->text().contains("No ESI SyncManager", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("will not fabricate", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("Device Repository", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("controller", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("network", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("physical hardware", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("defaults from", Qt::CaseInsensitive));
+    QVERIFY(tree->isHidden());
+    QCOMPARE(tree->topLevelItemCount(), 0);
+    QVERIFY(slaveForm->isHidden());
+    verifySummaryMetadata();
+
+    showDevice(unsupportedEmptyId);
+    QVERIFY(summary->text().contains("No ESI SyncManager", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("Device Repository", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("will not fabricate", Qt::CaseInsensitive));
+    QVERIFY(tree->isHidden());
+    QCOMPARE(tree->topLevelItemCount(), 0);
+    verifySummaryMetadata();
+
+    showDevice(unsupportedPopulatedId);
+    QVERIFY(summary->text().contains("read-only", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("Device Repository", Qt::CaseInsensitive));
+    QVERIFY(!tree->isHidden());
+    QCOMPARE(tree->topLevelItemCount(), 2);
+    QVERIFY(tree->accessibleDescription().contains("read-only", Qt::CaseInsensitive));
+    QVERIFY(tree->accessibleDescription().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(tree->accessibleDescription().contains("Device Repository", Qt::CaseInsensitive));
+    QCOMPARE(tree->toolTip(), tree->accessibleDescription());
+    verifySummaryMetadata();
+
+    const Core::PropertyPageContext missingContext{
+        {}, Data::NodeId::create(), Core::WorkbenchNodeKind::Device, "Removed ESI Device"};
+    pages.updatePage(Constants::ETHERCAT_PAGE_ID, page.get(), missingContext);
+    QVERIFY(summary->text().contains("no longer available", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("Device Repository", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("No matching", Qt::CaseInsensitive));
+    QVERIFY(tree->isHidden());
+    QCOMPARE(tree->topLevelItemCount(), 0);
+    QVERIFY(tree->accessibleDescription().contains("unavailable", Qt::CaseInsensitive));
+    QCOMPARE(tree->toolTip(), tree->accessibleDescription());
+    verifySummaryMetadata();
+
+    showDevice(supportedPopulatedId);
+    QVERIFY(summary->text().contains("read-only", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("no longer available", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("No ESI SyncManager", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("will not fabricate", Qt::CaseInsensitive));
+    QVERIFY(!tree->isHidden());
+    QCOMPARE(tree->columnCount(), 7);
+    QCOMPARE(tree->topLevelItemCount(), 2);
+    QVERIFY(tree->accessibleDescription().contains("read-only", Qt::CaseInsensitive));
+    QVERIFY(tree->accessibleDescription().contains("offline", Qt::CaseInsensitive));
+    QVERIFY(tree->accessibleDescription().contains("ESI", Qt::CaseInsensitive));
+    QVERIFY(!tree->accessibleDescription().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(!tree->accessibleDescription().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(!tree->accessibleDescription().contains("unavailable", Qt::CaseInsensitive));
+    QCOMPARE(tree->toolTip(), tree->accessibleDescription());
+    verifySummaryMetadata();
+
+    for (int row = 0; row < tree->topLevelItemCount(); ++row)
+        QVERIFY(!(tree->topLevelItem(row)->flags() & Qt::ItemIsEditable));
+    QVERIFY(projectService->projects().isEmpty());
+}
+
 void EtherCATWorkbenchTests::testEditableConfiguredSlaveEtherCATWorkflow()
 {
     WorkbenchController controller;
