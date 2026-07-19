@@ -767,6 +767,25 @@ budget does not increase and no extension-point exception is required. The
 Workbench path count remains 44 and the direct upstream Core patch count
 remains five.
 
+`ISSUE-WB-ETHERCAT-SYNCMANAGER-CELL-A11Y-001`, based on
+`5cd0bade8355565a07969d97b49965bce93503b2`, changes only the existing
+product-owned private `ethercatpage.cpp` and `ethercatpage.h`, Workbench test
+declaration/implementation, and documentation. The configured-slave and
+repository Device EtherCAT pages now describe their existing SyncManager table
+as read-only offline ESI data. Every seven-column cell uses Qt's standard
+`AccessibleTextRole` and `AccessibleDescriptionRole` for its complete current
+display value, column and SM identity, plus the controller/network/hardware
+boundary. Its equal tooltip provides complete-value recovery without changing
+the existing visible layout, horizontal scrolling, or operation.
+
+No source file, dependency, CMake/qbs entry, public API, Project format,
+Provider, persistence field, Project command, custom model role, thread, timer,
+controller transport, online state, network behavior, or physical-hardware
+behavior changes. No file under Qt Creator's upstream Core, ProjectExplorer,
+or application bootstrap changes, so the direct Core patch budget does not
+increase and no extension-point exception is required. The Workbench path
+count remains 44 and the direct upstream Core patch count remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

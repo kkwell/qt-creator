@@ -1040,6 +1040,49 @@ and
 Beckhoff's selected-terminal General tab remains only the product comparison:
 <https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html>.
 
+## Workbench EtherCAT SyncManager cell accessibility boundary
+
+`ISSUE-WB-ETHERCAT-SYNCMANAGER-CELL-A11Y-001` stays inside the product-owned
+private `EtherCATPage`. The page already owns its `QTreeWidget`, translated
+seven-column header, and ESI-derived rows. Its private
+`addSyncManagerRow()` path now derives standard item metadata from the same
+current strings used to construct each row. It retains
+no model index, ESI object, Project snapshot, slave object, page-context
+pointer, or Provider pointer.
+
+The widget name remains concise. Its configured-slave and repository Device
+descriptions now state the same read-only local/offline ESI and no-controller,
+network, or physical-hardware boundary. Every cell copies its exact display
+string into Qt's standard `AccessibleTextRole`. Its standard
+`AccessibleDescriptionRole` and tooltip are equal value objects derived from
+the current header, SM index/name identity, complete value, and operation
+boundary. Empty visual values retain an empty accessible text while the
+description explicitly says Empty. A configured-slave to repository Device to
+configured-slave test proves that the existing reset/repopulation path owns
+the metadata lifecycle and does not leak a prior context.
+
+This is the ESI defaults table on the EtherCAT page, not the richer Process
+Data Sync Manager selection model. It remains read-only in both real contexts
+and does not adopt Beckhoff's FMMU/SM editing or controller-download behavior.
+It does not change headers, geometry, scrolling, selection, context ownership,
+ESI parsing, ProjectService, persistence, Undo/Redo, or plugin load/unload. It
+adds no public/custom role, API, source file, dependency, Provider, Project
+command, thread, timer, controller/network transport, online state, or
+physical-hardware behavior. No CMake or qbs description changed. The Workbench
+path count remains 44 and the direct upstream Core patch count remains five.
+
+Qt documents the standard item roles and role-specific `QTreeWidgetItem`
+storage at <https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum> and
+<https://doc.qt.io/qt-6/qtreewidgetitem.html#setData>. Qt Creator 20.0's
+`FancyMainWindow` and Terminal model provide local precedents:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/libs/utils/fancymainwindow.cpp#L244-L247>
+and
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/terminal/terminalpane.cpp#L586-L597>.
+Beckhoff's EtherCAT and FMMU/SM pages remain only the information hierarchy and
+field-semantics comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1342524811.html> and
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/4981170059.html>.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

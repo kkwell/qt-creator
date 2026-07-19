@@ -309,7 +309,8 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
         m_slaveForm->show();
         m_tree->setAccessibleName(Tr::tr("EtherCAT SyncManager defaults"));
         m_tree->setAccessibleDescription(
-            Tr::tr("Read-only SyncManager defaults from the matched ESI device."));
+            Tr::tr("Read-only offline SyncManager defaults from the matched ESI device. No "
+                   "controller, network, or physical hardware is accessed."));
         if (device)
             addSyncManagers(*device);
     } else if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
@@ -319,7 +320,8 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
             device ? syncManagerHeaders : QStringList());
         m_tree->setAccessibleName(Tr::tr("EtherCAT SyncManager defaults"));
         m_tree->setAccessibleDescription(
-            Tr::tr("Read-only SyncManager defaults from the imported ESI device."));
+            Tr::tr("Read-only offline SyncManager defaults from the imported ESI device. No "
+                   "controller, network, or physical hardware is accessed."));
         if (device)
             addSyncManagers(*device);
     } else {
@@ -354,15 +356,31 @@ void EtherCATPage::reset(const QString &summary, const QStringList &headers)
     m_tree->setVisible(!headers.isEmpty());
 }
 
-void EtherCATPage::addRow(const QStringList &values)
+void EtherCATPage::addSyncManagerRow(const QStringList &values)
 {
-    m_tree->addTopLevelItem(new QTreeWidgetItem(values));
+    auto item = new QTreeWidgetItem(values);
+    const QString syncManagerName
+        = values.value(1).isEmpty() ? Tr::tr("unnamed") : values.value(1);
+    const QString syncManagerIdentity
+        = Tr::tr("SM %1 (%2)").arg(values.value(0), syncManagerName);
+    for (int column = 0; column < item->columnCount(); ++column) {
+        const QString displayed = item->text(column);
+        const QString completeValue = displayed.isEmpty() ? Tr::tr("Empty") : displayed;
+        const QString description
+            = Tr::tr("%1 column for SyncManager %2. Complete value: %3. Read-only offline ESI "
+                     "default; no controller, network, or physical hardware is accessed.")
+                  .arg(m_tree->headerItem()->text(column), syncManagerIdentity, completeValue);
+        item->setData(column, Qt::AccessibleTextRole, displayed);
+        item->setData(column, Qt::AccessibleDescriptionRole, description);
+        item->setData(column, Qt::ToolTipRole, description);
+    }
+    m_tree->addTopLevelItem(item);
 }
 
 void EtherCATPage::addSyncManagers(const Data::DeviceDescription &device)
 {
     for (const Data::SyncManagerDescription &syncManager : device.syncManagers) {
-        addRow(
+        addSyncManagerRow(
             {QString::number(syncManager.index),
              syncManager.name,
              syncManagerDirection(syncManager.direction),

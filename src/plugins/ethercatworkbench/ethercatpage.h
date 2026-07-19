@@ -30,7 +30,7 @@ public:
 
 private:
     void reset(const QString &summary, const QStringList &headers);
-    void addRow(const QStringList &values);
+    void addSyncManagerRow(const QStringList &values);
     void addSyncManagers(const Data::DeviceDescription &device);
     void commitAlias();
     void showMasterTopology();

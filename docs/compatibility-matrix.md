@@ -1790,6 +1790,47 @@ documented at <https://doc.qt.io/qt-6/qwidget.html#accessibleName-prop> and
 General tab provides the information-hierarchy comparison:
 <https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html>.
 
+## EtherCATWorkbench EtherCAT SyncManager cell accessibility qualification
+
+`ISSUE-WB-ETHERCAT-SYNCMANAGER-CELL-A11Y-001` uses local baseline
+`5cd0bade8355565a07969d97b49965bce93503b2`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first regression | Setup and cleanup passed; the unchanged implementation returned no `QString` through `AccessibleTextRole` for configured-slave row 0 / SM, so the target exited with status 1 under `/private/tmp/embed-labs-syncmanager-a11y-failure-final.eumVVB` |
+| Widget metadata | Configured-slave and repository Device views identify their table as read-only offline ESI defaults with no controller, network, or physical-hardware access |
+| Standard item roles | Every SM, Name, Direction, Address, Size, Control, and Enabled cell returns an actual `QString` through `AccessibleTextRole` equal to its complete current Display value |
+| Complete contextual recovery | `AccessibleDescriptionRole` and `ToolTipRole` are equal and contain the column heading, SM index/name, complete value, ESI source, and read-only/offline/controller/network/physical-hardware boundary |
+| Real contexts and lifecycle | The same actual property page passes ConfiguredSlave to Device to restored ConfiguredSlave context switching without stale values or roles |
+| Long, literal, and empty text | A complete long Chinese/Japanese/Unicode Outputs name plus literal `%1`, `%2`, and `%%` is preserved exactly; a legal empty SM name remains an empty `QString` while its description states `unnamed` and `Empty`; both rows remain non-editable |
+| Existing presentation | Seven headers, two rows, direction/address/size/control/enabled truth, resize modes, horizontal scrolling, and Project/ESI behavior remain unchanged |
+| Focused normal-scale test | 3 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-syncmanager-a11y-focused-final.cR27sE/normal` |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-syncmanager-a11y-focused-final.cR27sE/2x` |
+| Offscreen render inspection | Normal 1100 by 720, SHA-256 `24f70cf9b5fcbaf3d9757b495f553e12ce6b638fd64776ff59af5279c1ba78ba`; 2x 2200 by 1440, SHA-256 `9247cb4e3560c385976f94077a47772182d1520c1fe3e1519ceefb8fc3c519a0`; no overlap or scale drift, with the deliberate long extent reachable through the existing horizontal scroll bar and recoverable through metadata |
+| Complete EtherCATWorkbench normal scale | 54 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-syncmanager-a11y-workbench-final.RVRsLZ/normal` |
+| Complete EtherCATWorkbench 2x scale | 54 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-syncmanager-a11y-workbench-final.RVRsLZ/2x` |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 54, Scan 7, Diagnostics 7; 105 passed, 0 failed with target status 0 in isolated LLDB-supervised processes under `/private/tmp/embed-labs-syncmanager-a11y-six-suites-final.k5a0Wn` |
+| Qualified Qt and test build | Qt 6.11 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed in `qt-creator-build-ethercat-product-qt611`; exactly the 16 allow-listed plugin dylibs are present |
+| Enabled offscreen startup | PID 86456 remained running for 36.004 seconds under `/private/tmp/embed-labs-syncmanager-a11y-lifecycle-final.yshQnN/enabled`; intentional SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 88370 remained running for 36.001 seconds with `-noload EtherCATWorkbench` under `/private/tmp/embed-labs-syncmanager-a11y-lifecycle-final.yshQnN/disabled`; intentional SIGTERM produced target status 15; one non-fatal shared-memory initialization message did not interrupt startup and was not a crash |
+| Process and crash-report cleanup | No residual Embed Labs/LLDB process, new DiagnosticReports file, or matching ReportCrash/CrashReporter unified-log event |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no visible main window or crash dialog |
+| Assistive-technology claim | Standard Qt widget/item metadata verified; no manual VoiceOver reading is claimed |
+| `WITH_TESTS=ON` all-target build | Not rerun; the known unrelated EasyBoard test include blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, Project command, custom model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, controller transport, online state, or hardware access | Not performed or added; the EtherCAT SyncManager table remains local read-only offline ESI presentation |
+
+Qt's standard item roles and `QTreeWidgetItem` role storage are documented at
+<https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum> and
+<https://doc.qt.io/qt-6/qtreewidgetitem.html#setData>. Beckhoff's EtherCAT tab
+and FMMU/SM reference provide only the selected-device hierarchy and field
+semantics comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1342524811.html> and
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/4981170059.html>.
+
 ## Verification states
 
 Use only these evidence labels:

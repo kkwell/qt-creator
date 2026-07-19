@@ -3468,6 +3468,193 @@ void EtherCATWorkbenchTests::testMasterTopologyDialogBounds()
     QVERIFY(closeButtonUsable);
 }
 
+void EtherCATWorkbenchTests::testEtherCATSyncManagerCellAccessibility()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    QVERIFY(repository);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString longName = QString::fromUtf8(
+                                 "Outputs / \u8d85\u957f SyncManager \u540d\u79f0 / "
+                                 "\u9577\u3044\u540d\u524d / \u03a9 / %1 / %2 / %% / ")
+                             + QString(256, QChar(u'\u754c')) + " / End";
+    QByteArray accessibilityEsi = deviceEsi();
+    const QByteArray productCode = "#x00005678";
+    const QByteArray outputName = ">Outputs</Sm>";
+    const QByteArray inputName = ">Inputs</Sm>";
+    QCOMPARE(accessibilityEsi.count(productCode), 1);
+    QCOMPARE(accessibilityEsi.count(outputName), 1);
+    QCOMPARE(accessibilityEsi.count(inputName), 1);
+    accessibilityEsi.replace(productCode, "#xA11E0003");
+    QByteArray replacementName = ">";
+    replacementName += longName.toUtf8();
+    replacementName += "</Sm>";
+    accessibilityEsi.replace(outputName, replacementName);
+    accessibilityEsi.replace(inputName, "></Sm>");
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("syncmanager-cell-accessibility.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(accessibilityEsi));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0xA11E0003;
+    });
+    QVERIFY(device != devices.cend());
+
+    Data::ProjectSnapshot project = projectSnapshot("SyncManager accessibility");
+    const Data::NodeId master = masterId(project);
+    const Data::NodeId slaveId = Data::NodeId::create();
+    project.slaves = {
+        {slaveId,
+         master,
+         0,
+         device->identity,
+         17,
+         3,
+         "Configured accessibility servo",
+         device->id,
+         {},
+         {},
+         {}}};
+    project.nodes.append(
+        {slaveId, master, Data::ProjectNodeKind::Slave, "Configured accessibility servo"});
+    controller.treeModel()->setProjects({project});
+
+    BuiltinPropertyPageProvider pages(&controller);
+    std::unique_ptr<QWidget> page(pages.createPage(Constants::ETHERCAT_PAGE_ID, nullptr));
+    QVERIFY(page);
+    page->resize(1100, 720);
+    page->show();
+
+    QTreeWidget *tree = page->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
+    QVERIFY(tree);
+    const QStringList expectedHeaders = {
+        "SM", "Name", "Direction", "Address", "Size", "Control", "Enabled"};
+    const QStringList firstRow = {
+        "0", longName, "Master to slave", "0x1000", "32", "0x26", "Yes"};
+    const QStringList secondRow = {
+        "1", "", "Unknown", "0x1100", "32", "0x22", "Yes"};
+
+    const auto verifyTree = [&](const QString &contextName) -> QString {
+        if (!tree->isVisible())
+            return contextName + " SyncManager tree is hidden";
+        if (tree->columnCount() != expectedHeaders.size())
+            return contextName + " has the wrong column count";
+        if (tree->topLevelItemCount() != 2)
+            return contextName + " has the wrong row count";
+
+        for (int column = 0; column < tree->columnCount(); ++column) {
+            if (tree->headerItem()->text(column) != expectedHeaders.at(column))
+                return contextName + " has an unexpected column heading";
+        }
+        for (int row = 0; row < tree->topLevelItemCount(); ++row) {
+            const QTreeWidgetItem *item = tree->topLevelItem(row);
+            const QStringList expected = row == 0 ? firstRow : secondRow;
+            if (item->flags() & Qt::ItemIsEditable)
+                return contextName + " exposes an editable SyncManager row";
+            for (int column = 0; column < tree->columnCount(); ++column) {
+                const QString header = tree->headerItem()->text(column);
+                const QString displayed = item->data(column, Qt::DisplayRole).toString();
+                const QVariant accessibleText = item->data(column, Qt::AccessibleTextRole);
+                const QVariant accessibleDescription
+                    = item->data(column, Qt::AccessibleDescriptionRole);
+                const QVariant toolTip = item->data(column, Qt::ToolTipRole);
+                const QString cell = contextName + " row " + QString::number(row) + " / " + header;
+                if (displayed != expected.at(column))
+                    return cell + " has an unexpected DisplayRole";
+                if (accessibleText.metaType().id() != int(QMetaType::QString))
+                    return cell + " AccessibleTextRole is not a QString";
+                if (accessibleDescription.metaType().id() != int(QMetaType::QString))
+                    return cell + " AccessibleDescriptionRole is not a QString";
+                if (toolTip.metaType().id() != int(QMetaType::QString))
+                    return cell + " ToolTipRole is not a QString";
+                if (accessibleText.toString() != displayed)
+                    return cell + " accessible text does not match DisplayRole";
+                const QString description = accessibleDescription.toString();
+                if (!description.contains(header))
+                    return cell + " description omits the column heading";
+                if (item->text(1).isEmpty()) {
+                    if (!description.contains("unnamed", Qt::CaseInsensitive))
+                        return cell + " description omits the unnamed SyncManager identity";
+                } else if (!description.contains(item->text(1))) {
+                    return cell + " description omits the SyncManager identity";
+                }
+                if (displayed.isEmpty()) {
+                    if (!accessibleText.toString().isEmpty())
+                        return cell + " empty accessible text is not empty";
+                    if (!description.contains("Empty", Qt::CaseInsensitive))
+                        return cell + " description omits the explicit empty value";
+                } else if (!description.contains(displayed)) {
+                    return cell + " description omits the complete value";
+                }
+                if (!description.contains("read-only", Qt::CaseInsensitive))
+                    return cell + " description omits the read-only boundary";
+                if (!description.contains("offline", Qt::CaseInsensitive))
+                    return cell + " description omits the offline boundary";
+                if (!description.contains("ESI", Qt::CaseInsensitive))
+                    return cell + " description omits the ESI source";
+                if (!description.contains("controller", Qt::CaseInsensitive))
+                    return cell + " description omits the controller boundary";
+                if (!description.contains("network", Qt::CaseInsensitive))
+                    return cell + " description omits the network boundary";
+                if (!description.contains("physical hardware", Qt::CaseInsensitive))
+                    return cell + " description omits the physical-hardware boundary";
+                if (toolTip.toString() != description)
+                    return cell + " tooltip and accessible description differ";
+            }
+        }
+        if (tree->accessibleName().isEmpty())
+            return contextName + " has an empty accessible name";
+        const QString widgetDescription = tree->accessibleDescription();
+        const QStringList boundaries = {"read-only", "offline", "ESI", "controller", "network"};
+        for (const QString &boundary : boundaries) {
+            if (!widgetDescription.contains(boundary, Qt::CaseInsensitive))
+                return contextName + " widget description omits " + boundary;
+        }
+        if (!widgetDescription.contains("physical hardware", Qt::CaseInsensitive))
+            return contextName + " widget description omits the physical-hardware boundary";
+        return {};
+    };
+
+    const QModelIndex configuredSlave = controller.treeModel()->indexForNodeId(slaveId);
+    QVERIFY(configuredSlave.isValid());
+    pages.updatePage(
+        Constants::ETHERCAT_PAGE_ID,
+        page.get(),
+        controller.treeModel()->contextForIndex(configuredSlave));
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const QString configuredError = verifyTree("Configured slave");
+    QVERIFY2(configuredError.isEmpty(), qPrintable(configuredError));
+
+    const QModelIndex repositoryDevice = controller.treeModel()->indexForNodeId(device->id);
+    QVERIFY(repositoryDevice.isValid());
+    const Core::PropertyPageContext repositoryContext
+        = controller.treeModel()->contextForIndex(repositoryDevice);
+    QCOMPARE(repositoryContext.nodeKind, Core::WorkbenchNodeKind::Device);
+    QVERIFY(repositoryContext.projectId.isNull());
+    pages.updatePage(Constants::ETHERCAT_PAGE_ID, page.get(), repositoryContext);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const QString deviceError = verifyTree("Repository device");
+    QVERIFY2(deviceError.isEmpty(), qPrintable(deviceError));
+
+    pages.updatePage(
+        Constants::ETHERCAT_PAGE_ID,
+        page.get(),
+        controller.treeModel()->contextForIndex(configuredSlave));
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const QString restoredError = verifyTree("Restored configured slave");
+    QVERIFY2(restoredError.isEmpty(), qPrintable(restoredError));
+
+    const QString renderPath
+        = qEnvironmentVariable("ETHERCAT_WORKBENCH_SYNCMANAGER_A11Y_RENDER_PATH");
+    if (!renderPath.isEmpty())
+        QVERIFY2(page->grab().save(renderPath), qPrintable(renderPath));
+}
+
 void EtherCATWorkbenchTests::testEditableConfiguredSlaveEtherCATWorkflow()
 {
     WorkbenchController controller;
