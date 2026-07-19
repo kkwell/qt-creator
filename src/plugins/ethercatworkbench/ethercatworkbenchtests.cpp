@@ -4,6 +4,7 @@
 
 #include "builtinpropertypages.h"
 #include "detailsview.h"
+#include "esiconfigurationfactory.h"
 #include "esideviceselectiondialog.h"
 #include "esirepositorypage.h"
 #include "ethercatworkbenchconstants.h"
@@ -9514,6 +9515,279 @@ void EtherCATWorkbenchTests::testStartupRepositoryEmptyState()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
+void EtherCATWorkbenchTests::testStartupDialogProjectRefresh()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("startup-dialog-refresh.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(deviceEsi()));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0x5678;
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(
+        directory, *device, "startup-dialog-refresh.ecatproject", "Startup Dialog Refresh");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    DetailsView details(&controller);
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::STARTUP_PAGE_ID).toString());
+    QVERIFY(page);
+    QTableView *table = page->findChild<QTableView *>("EtherCATStartupTable");
+    QPushButton *defaults = page->findChild<QPushButton *>("EtherCATStartupRestoreDefaults");
+    QPushButton *add = page->findChild<QPushButton *>("EtherCATStartupNew");
+    QPushButton *remove = page->findChild<QPushButton *>("EtherCATStartupDelete");
+    QPushButton *edit = page->findChild<QPushButton *>("EtherCATStartupEdit");
+    QVERIFY(table);
+    QVERIFY(defaults);
+    QVERIFY(add);
+    QVERIFY(remove);
+    QVERIFY(edit);
+    QAbstractItemModelTester
+        modelTester(table->model(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+
+    QTimer dialogWatchdog;
+    dialogWatchdog.setSingleShot(true);
+    connect(&dialogWatchdog, &QTimer::timeout, &details, [] {
+        if (auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+            dialog->reject();
+    });
+
+    const std::optional<Data::DeviceDescription> deviceDescription = repository->device(device->id);
+    QVERIFY(deviceDescription);
+    const Data::StartupConfiguration esiDefaults
+        = startupDefaultsFromDevice(*deviceDescription, file.slaveId);
+    QVERIFY(!esiDefaults.parameters.isEmpty());
+    QVERIFY(projectService->project(file.projectId)->slaves.first().startup.parameters.isEmpty());
+    QCOMPARE(table->model()->rowCount(), esiDefaults.parameters.size());
+    QCOMPARE(defaults->text(), QString("Store ESI Defaults"));
+
+    bool proposalAddSeen = false;
+    dialogWatchdog.start(5000);
+    QTimer::singleShot(0, page, [&] {
+        QDialog *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog || dialog->objectName() != "EtherCATStartupParameterDialog")
+            return;
+        proposalAddSeen = true;
+        dialog->findChild<QLineEdit *>("EtherCATStartupDialogComment")
+            ->setText("Proposal-only New request");
+        dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+    });
+    add->click();
+    QTRY_VERIFY(proposalAddSeen);
+    dialogWatchdog.stop();
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.size(),
+        esiDefaults.parameters.size() + 1);
+    const Data::StartupConfiguration storedProposal
+        = projectService->project(file.projectId)->slaves.first().startup;
+    for (int row = 0; row < esiDefaults.parameters.size(); ++row)
+        QCOMPARE(storedProposal.parameters.at(row), esiDefaults.parameters.at(row));
+    const Data::StartupParameterConfiguration proposalRequest = storedProposal.parameters.last();
+    QVERIFY(std::none_of(
+        esiDefaults.parameters.cbegin(),
+        esiDefaults.parameters.cend(),
+        [&proposalRequest](const auto &parameter) { return parameter.id == proposalRequest.id; }));
+    QCOMPARE(proposalRequest.order, esiDefaults.parameters.size());
+    QVERIFY(projectService->canUndoProject(file.projectId));
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_VERIFY(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.isEmpty());
+    QTRY_COMPARE(table->model()->rowCount(), esiDefaults.parameters.size());
+    QCOMPARE(defaults->text(), QString("Store ESI Defaults"));
+    QVERIFY(projectService->canRedoProject(file.projectId));
+
+    Data::StartupConfiguration newRefreshConfiguration = esiDefaults;
+    newRefreshConfiguration.parameters.first().comment = "New refresh wins";
+    QSignalSpy newProjectChanges(projectService, &Core::ProjectService::projectChanged);
+    bool newDialogSeen = false;
+    bool newRefreshApplied = false;
+    int changesAfterNewRefresh = 0;
+    QString newRefreshError;
+    dialogWatchdog.start(5000);
+    QTimer::singleShot(0, page, [&] {
+        QPointer<QDialog> dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog || dialog->objectName() != "EtherCATStartupParameterDialog")
+            return;
+        newDialogSeen = true;
+        const Utils::Result<> refresh
+            = projectService
+                  ->setStartupConfiguration(file.projectId, file.slaveId, newRefreshConfiguration);
+        newRefreshApplied = bool(refresh);
+        if (!refresh)
+            newRefreshError = refresh.error();
+        changesAfterNewRefresh = newProjectChanges.count();
+        if (!dialog)
+            return;
+        dialog->findChild<QLineEdit *>("EtherCATStartupDialogComment")->setText("Stale New request");
+        dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+    });
+    add->click();
+    QTRY_VERIFY(newDialogSeen);
+    QVERIFY2(newRefreshApplied, qPrintable(newRefreshError));
+    dialogWatchdog.stop();
+    QVERIFY(changesAfterNewRefresh > 0);
+    QCOMPARE(newProjectChanges.count(), changesAfterNewRefresh);
+    QVERIFY(
+        projectService->project(file.projectId)->slaves.first().startup == newRefreshConfiguration);
+    QVERIFY(projectService->canUndoProject(file.projectId));
+    QVERIFY(!projectService->canRedoProject(file.projectId));
+
+    table->setCurrentIndex(table->model()->index(0, 0));
+    QTRY_VERIFY(edit->isEnabled());
+    Data::StartupConfiguration refreshedConfiguration = newRefreshConfiguration;
+    refreshedConfiguration.parameters.first().comment = "Project refresh wins";
+    bool editDialogSeen = false;
+    bool editRefreshApplied = false;
+    QString editRefreshError;
+    dialogWatchdog.start(5000);
+    QTimer::singleShot(0, page, [&] {
+        QPointer<QDialog> dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog || dialog->objectName() != "EtherCATStartupParameterDialog")
+            return;
+        editDialogSeen = true;
+        const Utils::Result<> refresh
+            = projectService
+                  ->setStartupConfiguration(file.projectId, file.slaveId, refreshedConfiguration);
+        editRefreshApplied = bool(refresh);
+        if (!refresh)
+            editRefreshError = refresh.error();
+        if (!dialog)
+            return;
+        QLineEdit *comment = dialog->findChild<QLineEdit *>("EtherCATStartupDialogComment");
+        QDialogButtonBox *buttons = dialog->findChild<QDialogButtonBox *>();
+        if (!comment || !buttons)
+            return;
+        comment->setText("Stale dialog value");
+        buttons->button(QDialogButtonBox::Ok)->click();
+    });
+    edit->click();
+    QTRY_VERIFY(editDialogSeen);
+    QVERIFY2(editRefreshApplied, qPrintable(editRefreshError));
+    dialogWatchdog.stop();
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.first().comment,
+        QString("Project refresh wins"));
+    QVERIFY(
+        projectService->project(file.projectId)->slaves.first().startup == refreshedConfiguration);
+
+    const Data::NodeId removedParameterId = refreshedConfiguration.parameters.first().id;
+    Data::StartupConfiguration deleteRefresh = refreshedConfiguration;
+    deleteRefresh.parameters.removeFirst();
+    for (int row = 0; row < deleteRefresh.parameters.size(); ++row)
+        deleteRefresh.parameters[row].order = row;
+    table->setCurrentIndex(table->model()->index(0, 0));
+    QTRY_VERIFY(remove->isEnabled());
+    bool deletePromptSeen = false;
+    bool deleteRefreshApplied = false;
+    QString deleteRefreshError;
+    dialogWatchdog.start(5000);
+    QTimer::singleShot(0, page, [&] {
+        QPointer<QMessageBox> messageBox = qobject_cast<QMessageBox *>(
+            QApplication::activeModalWidget());
+        if (!messageBox)
+            return;
+        deletePromptSeen = true;
+        const Utils::Result<> refresh
+            = projectService->setStartupConfiguration(file.projectId, file.slaveId, deleteRefresh);
+        deleteRefreshApplied = bool(refresh);
+        if (!refresh)
+            deleteRefreshError = refresh.error();
+        if (!messageBox)
+            return;
+        if (QAbstractButton *yes = messageBox->button(QMessageBox::Yes))
+            yes->click();
+    });
+    remove->click();
+    QTRY_VERIFY(deletePromptSeen);
+    QVERIFY2(deleteRefreshApplied, qPrintable(deleteRefreshError));
+    dialogWatchdog.stop();
+    const Data::StartupConfiguration afterDeleteRefresh
+        = projectService->project(file.projectId)->slaves.first().startup;
+    QCOMPARE(afterDeleteRefresh.parameters.size(), deleteRefresh.parameters.size());
+    QVERIFY(afterDeleteRefresh == deleteRefresh);
+    QVERIFY(std::none_of(
+        afterDeleteRefresh.parameters.cbegin(),
+        afterDeleteRefresh.parameters.cend(),
+        [&removedParameterId](const auto &parameter) {
+            return parameter.id == removedParameterId;
+        }));
+
+    QPointer<QWidget> guardedPage(page);
+    QPointer<QDialog> guardedDialog;
+    bool removalDialogSeen = false;
+    dialogWatchdog.start(5000);
+    QTimer::singleShot(0, page, [&] {
+        guardedDialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!guardedDialog || guardedDialog->objectName() != "EtherCATStartupParameterDialog") {
+            return;
+        }
+        removalDialogSeen = true;
+        controller.selectionService()->clear();
+    });
+    add->click();
+    QTRY_VERIFY(removalDialogSeen);
+    QTRY_VERIFY(guardedPage.isNull());
+    QTRY_VERIFY(guardedDialog.isNull());
+    dialogWatchdog.stop();
+    QCOMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QVERIFY(projectService->project(file.projectId)->slaves.first().startup == deleteRefresh);
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.slaveId);
+    QWidget *deletePage = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::STARTUP_PAGE_ID).toString());
+    QVERIFY(deletePage);
+    QTableView *deleteTable = deletePage->findChild<QTableView *>("EtherCATStartupTable");
+    QPushButton *deleteButton = deletePage->findChild<QPushButton *>("EtherCATStartupDelete");
+    QVERIFY(deleteTable);
+    QVERIFY(deleteButton);
+    deleteTable->setCurrentIndex(deleteTable->model()->index(0, 0));
+    QTRY_VERIFY(deleteButton->isEnabled());
+    QPointer<QWidget> guardedDeletePage(deletePage);
+    QPointer<QMessageBox> guardedMessageBox;
+    bool removalMessageSeen = false;
+    dialogWatchdog.start(5000);
+    QTimer::singleShot(0, deletePage, [&] {
+        guardedMessageBox = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!guardedMessageBox)
+            return;
+        removalMessageSeen = true;
+        controller.selectionService()->clear();
+    });
+    deleteButton->click();
+    QTRY_VERIFY(removalMessageSeen);
+    QTRY_VERIFY(guardedDeletePage.isNull());
+    QTRY_VERIFY(guardedMessageBox.isNull());
+    dialogWatchdog.stop();
+    QCOMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QVERIFY(projectService->project(file.projectId)->slaves.first().startup == deleteRefresh);
+}
+
 void EtherCATWorkbenchTests::testEditableStartupWorkflow()
 {
     WorkbenchController controller;
@@ -9661,10 +9935,19 @@ void EtherCATWorkbenchTests::testEditableStartupWorkflow()
         dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
     });
     add->click();
-    QVERIFY(addedFromDialog);
-    QCOMPARE(projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 4);
+    QTRY_VERIFY(addedFromDialog);
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 4);
 
-    table->setCurrentIndex(table->model()->index(3, 0));
+    constexpr int startupStableIdRole = Qt::UserRole + 1;
+    const Data::NodeId firstParameterId
+        = table->model()->index(0, 0).data(startupStableIdRole).value<Data::NodeId>();
+    const Data::NodeId deletedParameterId
+        = table->model()->index(1, 0).data(startupStableIdRole).value<Data::NodeId>();
+    const Data::NodeId expectedNextParameterId
+        = table->model()->index(2, 0).data(startupStableIdRole).value<Data::NodeId>();
+    const Data::NodeId addedParameterId
+        = table->model()->index(3, 0).data(startupStableIdRole).value<Data::NodeId>();
+    table->setCurrentIndex(table->model()->index(1, 0));
     bool deletionConfirmed = false;
     QTimer::singleShot(0, page, [&deletionConfirmed] {
         QMessageBox *messageBox = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
@@ -9674,8 +9957,25 @@ void EtherCATWorkbenchTests::testEditableStartupWorkflow()
         messageBox->button(QMessageBox::Yes)->click();
     });
     remove->click();
-    QVERIFY(deletionConfirmed);
-    QCOMPARE(projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 3);
+    QTRY_VERIFY(deletionConfirmed);
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 3);
+    QTRY_COMPARE(
+        table->currentIndex().data(startupStableIdRole).value<Data::NodeId>(),
+        expectedNextParameterId);
+    QList<Data::StartupParameterConfiguration> afterDelete
+        = projectService->project(file.projectId)->slaves.first().startup.parameters;
+    std::stable_sort(afterDelete.begin(), afterDelete.end(), [](const auto &left, const auto &right) {
+        return left.order < right.order;
+    });
+    QCOMPARE(afterDelete.at(0).id, firstParameterId);
+    QCOMPARE(afterDelete.at(1).id, expectedNextParameterId);
+    QCOMPARE(afterDelete.at(2).id, addedParameterId);
+    for (int row = 0; row < afterDelete.size(); ++row)
+        QCOMPARE(afterDelete.at(row).order, row);
+    QVERIFY(std::none_of(
+        afterDelete.cbegin(), afterDelete.cend(), [&deletedParameterId](const auto &parameter) {
+            return parameter.id == deletedParameterId;
+        }));
     const Utils::Result<> undoDelete = projectService->undoProject(file.projectId);
     QVERIFY_RESULT(undoDelete);
     QCOMPARE(projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 4);
@@ -9692,8 +9992,8 @@ void EtherCATWorkbenchTests::testEditableStartupWorkflow()
         dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
     });
     edit->click();
-    QVERIFY(editedFromDialog);
-    QCOMPARE(
+    QTRY_VERIFY(editedFromDialog);
+    QTRY_COMPARE(
         projectService->project(file.projectId)->slaves.first().startup.parameters.first().comment,
         QString("Operation mode request"));
 

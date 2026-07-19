@@ -62,6 +62,7 @@ private slots:
     void testCoeAddConfirmationRepositoryRefresh();
     void testStartupTableAccessibility();
     void testStartupRepositoryEmptyState();
+    void testStartupDialogProjectRefresh();
     void testEditableStartupWorkflow();
     void testDcRepositoryModePreview();
     void testDcRepositoryModeEmptyState();

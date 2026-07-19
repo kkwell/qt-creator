@@ -2158,6 +2158,53 @@ Beckhoff's CoE Online Advanced Settings supply only the structural source,
 range, and filter comparison:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446522251.html>.
 
+## EtherCATWorkbench Startup modal refresh qualification
+
+`ISSUE-WB-STARTUP-MODAL-REFRESH-001` uses local baseline
+`065dfbeac038cb4071336492449292879c69b8ee`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first production identity | Production stayed at SHA-256 `4422c80aac2d1d61f6604bb3635ac18ea3d070bcfcedfdf0a01ad21ddc9d876c` / `a54d0c254dd0460d13e13624cf3e7bc796e17eb09ff3019104081f909279a691` and git blobs `9a67969dfacba88fe429470b3822330c70dde817` / `2df41415e73ee3506a9cbff1a6b6fa08e59e7746` |
+| Failure-first result | Initialization and cleanup passed; after a real ProjectService Startup refresh, accepting the old Edit produced `Stale dialog value` instead of `Project refresh wins`; target status 1 under `/private/tmp/embed-labs-startup-failure-first.GAIxiz` |
+| Edit stale result | The pre-refresh Edit response cannot overwrite the refreshed request or add another Project command |
+| Delete stale result | Removing the original request through ProjectService while confirmation is open cannot make Yes delete the newly selected request |
+| Stable merge | Current responses re-query Project/slave state and merge by captured request ID; no model index, row, pointer, or configuration reference crosses the dialog boundary |
+| New/Edit/Delete lifecycle | All three paths are page-owned, delete-on-close, and asynchronous; every page context assignment invalidates older results |
+| Page removal | Clearing selection while either the Startup parameter dialog or Delete message box is open deletes page and child dialog safely and preserves the Project snapshot |
+| ESI defaults | The effective displayed ESI defaults remain the valid no-refresh merge base until the existing Project submission stores them |
+| Delete order and selection | Current request order determines successor/predecessor selection; remaining requests are renumbered without changing stored list order |
+| Existing workflow | No-refresh New, Edit, Delete, validation, selection, Undo, and Redo remain covered by the complete Workbench run |
+| Model and ownership checks | The regression attaches `QAbstractItemModelTester`, uses bounded dialog watchdogs, and verifies both `QPointer` page/dialog pairs become null |
+| Focused tests | Normal and 2x each passed 3 events, 0 failed, target status 0 under `final5-focused-*` |
+| Complete Workbench | Normal and 2x each passed 63 events, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 63, Scan 7, Diagnostics 7; 114 passed, 0 failed |
+| Existing full-suite diagnostic | The known ProjectExplorer TaskHub soft assertion remains confined to the invalid-project test and does not occur in the focused regression, fail a test, or alter target status |
+| Final source SHA-256 | Production `2cf3ebe16293d99758f0501e89cc83def3b46861d15535f11301aa82b2e653d8` / `a743a90d1dc6e917b1fbc61e474b134b8cd9ca04574373e40a61213c3f76825c`; tests `69aaa4d79313a2e9b226a1f86b3752d2d60319d1252a2fadddb4f773a390ac8a` / `669dbf8a72ee85492f4ed543eeab80d4ce65ef34f938258ac1a0936c4731bd10` |
+| Final git blobs | Production `b5ad8f7cbd052279e76fa895d621854bb3ff1f86` / `ae44af514be94cf15fd1745231cba12b77527236`; tests `78553aeacb40c91db31fafca0c743b1e613b490a` / `aeaca5a8038871827e01eb69c6ec43ba2402f1ce` |
+| Test plugin | Workbench SHA-256 `a645049644badcfe170ed36885cd02c07b1b5994f9b8fe1abf481e755aa74187` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 allow-listed plugin dylibs; executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; Workbench SHA-256 `eca1e11f0ca98aa5675b1ee9340f0fdbdaa1d82b204ab0e93cb87751f724cbe1` |
+| Enabled startup | PID 28144 remained running for 37 samples and loaded Workbench in all 37; intentional passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 30196 remained running for 37 samples with `-noload EtherCATWorkbench`; zero samples loaded the plugin; intentional passed-through SIGTERM produced target status 15 |
+| Crash-dialog audit | At 2026-07-19 22:47:52 +0800 there was no residual Embed Labs/LLDB process, new matching DiagnosticReports file, or matching crash-service event after 2026-07-19 22:15:00 +0800 |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, crash reporter disabled, `-no-crashcheck`, and only the process-local Touch Bar bypass; no visible main window or system crash dialog |
+| Visual/manual desktop inspection | Not run by design; the issue is lifecycle/data integrity and executable acceptance remained offscreen |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard test include blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, Project command, model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, controller transport, online state, SDO, or hardware access | Not performed or added; this is a private UI lifecycle and checked offline-Project path only |
+
+All current success-path evidence above is under
+`/private/tmp/embed-labs-startup-modal-refresh.UStcax`. Qt's asynchronous
+dialog and parent-lifetime contracts are documented at
+<https://doc.qt.io/qt-6/qdialog.html#exec> and
+<https://doc.qt.io/qt-6/qmessagebox.html#question>. Qt Creator 20.0's matching
+delete-on-close precedent is visible at
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/fontsettingspage.cpp#L532-L539>.
+Beckhoff's Startup page supplies only the structural request-list comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.
+
 ## Verification states
 
 Use only these evidence labels:

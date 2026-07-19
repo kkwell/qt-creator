@@ -3919,3 +3919,106 @@ was not rerun; the known EasyBoard test include blocker remains outside this
 private Workbench issue. No upstream Core, ProjectExplorer, or
 application-bootstrap path changed. The Workbench path count remains 44 and
 the direct upstream Core patch count remains five.
+
+## Startup modal Project-refresh lifecycle
+
+`ISSUE-WB-STARTUP-MODAL-REFRESH-001`, based on local commit
+`065dfbeac038cb4071336492449292879c69b8ee`, closes a stale-result and page
+ownership window in the existing configured-slave Startup page. A Project
+change can refresh that page while New, Edit, or Delete is awaiting a user
+response. The old blocking path resumed against the rebuilt table and mutable
+page selection, so an Edit opened for request A could overwrite refreshed
+request B, and a Delete confirmation for A could delete the row selected after
+the refresh. Clearing the Workbench selection could also destroy the parent
+page while its stack dialog remained inside a nested event loop.
+
+New, Edit, and Delete now use page-owned, delete-on-close dialogs opened with
+Qt's asynchronous `open()` lifecycle. Every `setContext()` advances a private
+generation, including same-node Project refreshes. Completion captures only
+value identifiers and rejects a response from an older generation. A current
+completion re-queries the open Project and configured slave, then merges by
+the stable Startup request ID; no `QModelIndex`, table row, request pointer, or
+configuration reference crosses the asynchronous boundary. Edit preserves the
+current request ID and order. Delete recomputes the ordered successor or
+predecessor selection from the current configuration, removes the captured
+request only, and renumbers the remaining order without reordering the stored
+list.
+
+The page's existing ESI-default behavior remains intact. When defaults are
+being previewed for a configured slave but are not yet persisted, an accepted
+current dialog still uses that effective page configuration, so New/Edit/Delete
+continues to store the displayed defaults through the existing validated
+Project path. Current no-refresh New/Edit/Delete operations, validation,
+selection restoration, persistence, and Undo/Redo remain unchanged. A stale
+response is discarded; it does not create a second Project command or alter
+the refreshed snapshot.
+
+Qt documents that `QDialog::exec()` creates a nested event loop and recommends
+asynchronous `open()` because deleting a dialog's parent during execution can
+cause dangerous bugs:
+<https://doc.qt.io/qt-6/qdialog.html#exec>. Qt's static `QMessageBox`
+documentation carries the corresponding parent-lifetime warning:
+<https://doc.qt.io/qt-6/qmessagebox.html#question>. Qt Creator 20.0 uses the
+same heap-owned, delete-on-close pattern for a settings dialog:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/fontsettingspage.cpp#L532-L539>.
+Beckhoff's Startup page supplies only the comparable ordered mailbox-request,
+New/Edit/Delete, and fixed-request vocabulary; Embed Labs still performs no
+SDO transfer:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.
+
+Failure-first qualification compiled the new regression while production
+remained at SHA-256
+`4422c80aac2d1d61f6604bb3635ac18ea3d070bcfcedfdf0a01ad21ddc9d876c` /
+`a54d0c254dd0460d13e13624cf3e7bc796e17eb09ff3019104081f909279a691`
+and git blobs `9a67969dfacba88fe429470b3822330c70dde817` /
+`2df41415e73ee3506a9cbff1a6b6fa08e59e7746`. Initialization and cleanup
+passed, but accepting the old Edit after a real
+`ProjectService::setStartupConfiguration()` refresh produced
+`Stale dialog value` instead of `Project refresh wins`; the target exited with
+status 1 under `/private/tmp/embed-labs-startup-failure-first.GAIxiz`.
+
+Final production SHA-256 values are
+`2cf3ebe16293d99758f0501e89cc83def3b46861d15535f11301aa82b2e653d8` /
+`a743a90d1dc6e917b1fbc61e474b134b8cd9ca04574373e40a61213c3f76825c`;
+final test values are
+`69aaa4d79313a2e9b226a1f86b3752d2d60319d1252a2fadddb4f773a390ac8a` /
+`669dbf8a72ee85492f4ed543eeab80d4ce65ef34f938258ac1a0936c4731bd10`.
+The focused refresh/lifecycle regression passed three events at normal and 2x
+scale. Complete Workbench runs passed 63 events at each scale. The six isolated
+suites passed 114 events: Core 17, Project 12, Devices 8, Workbench 63, Scan 7,
+and Diagnostics 7. Both complete Workbench logs retain the known pre-existing
+ProjectExplorer TaskHub soft assertion in the invalid-project test; it does not
+occur in the focused regression, fail a test, or change target status 0.
+
+The full `WITH_TESTS=OFF` product build passed and contains exactly the 16
+allow-listed plugin dylibs. Its executable SHA-256 remains
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`;
+its Workbench plugin SHA-256 is
+`eca1e11f0ca98aa5675b1ee9340f0fdbdaa1d82b204ab0e93cb87751f724cbe1`.
+Enabled startup observed PID 28144 for 37 consecutive samples and loaded the
+Workbench plugin in all 37. Explicitly disabled startup observed PID 30196 for
+37 samples with `-noload EtherCATWorkbench` and zero loaded-plugin samples.
+Both were ended by an intentional passed-through SIGTERM with target status
+15.
+
+All current success-path tests and lifecycle runs used fresh HOME/settings,
+cleared inherited DYLD variables, `QT_QPA_PLATFORM=offscreen`,
+`CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch
+Bar bypass. No visible main window or system crash dialog was created. The
+2026-07-19 22:47:52 +0800 crash audit found no residual Embed Labs/LLDB
+process, new matching DiagnosticReports file, or matching
+ReportCrash/CrashReporter/diagnosticd event after 2026-07-19 22:15:00 +0800.
+This evidence supports the bounded offscreen, crash-reporter-disabled
+acceptance environment; it does not claim every possible visible desktop
+launch can never report an unrelated crash.
+
+This issue changes only the private `startuppage.cpp/.h`, Workbench test
+declaration/implementation, and these four documents. It adds no source file,
+dependency, public API, Provider, persistence field, Project command, custom
+model role, production thread or timer, controller/network transport, online
+state, SDO execution, or hardware behavior. No CMake or qbs description
+changed, so qbs was not run. The unrelated `WITH_TESTS=ON` all-target build was
+not rerun; the known EasyBoard test include blocker remains outside this
+private Workbench issue. No upstream Core, ProjectExplorer, or
+application-bootstrap path changed. The Workbench path count remains 44 and
+the direct upstream Core patch count remains five.

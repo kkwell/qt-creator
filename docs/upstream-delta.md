@@ -955,6 +955,25 @@ so the direct Core patch budget does not increase and no extension-point
 exception is required. The Workbench path count remains 44 and the direct
 upstream Core patch count remains five.
 
+`ISSUE-WB-STARTUP-MODAL-REFRESH-001`, based on
+`065dfbeac038cb4071336492449292879c69b8ee`, changes only the existing
+product-owned private `startuppage.cpp/.h`, Workbench test
+declaration/implementation, and documentation. Startup New, Edit, and Delete
+now use page-owned asynchronous dialogs plus a page-local context generation,
+so a Project refresh cannot apply a response created against the previous
+page state. Current responses re-query the Project and slave and merge by
+stable request ID; no model index, row, pointer, or snapshot reference crosses
+the dialog boundary.
+
+The change introduces no ProjectService or Provider revision, public API,
+source file, dependency, CMake/qbs entry, Project format, persistence field,
+Project command, custom model role, production thread or timer,
+controller/network transport, online state, SDO execution, or hardware
+behavior. No file under Qt Creator's upstream Core, ProjectExplorer, or
+application bootstrap changes, so the direct Core patch budget does not
+increase and no extension-point exception is required. The Workbench path
+count remains 44 and the direct upstream Core patch count remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

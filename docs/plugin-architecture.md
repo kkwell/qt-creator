@@ -1445,6 +1445,52 @@ behavior. No CMake or qbs description changed. No path under upstream Core,
 ProjectExplorer, or the application bootstrap changed. The Workbench path
 count remains 44 and the direct upstream Core patch count remains five.
 
+## Workbench Startup modal refresh boundary
+
+`ISSUE-WB-STARTUP-MODAL-REFRESH-001` remains inside the product-owned private
+`StartupPage`. `ProjectService` continues to own Project snapshots, validation,
+Undo/Redo, persistence, and `projectChanged`; the page adds no revision token
+or cross-plugin lifecycle API.
+
+Every page context assignment increments a private generation. New, Edit, and
+Delete use page-owned delete-on-close dialogs and page-bound completion
+connections. The page and dialog are destroyed together when Details removes
+the page, and QObject connection ownership prevents a completion from running
+after page destruction. A same-node Project refresh may leave the dialog
+visible, but it invalidates the response derived from the previous context.
+
+A current response re-queries the Project and slave before mutation. New
+appends a fresh stable request ID and recomputes order. Edit and Delete find the
+captured request ID in the current effective Startup configuration and recheck
+the fixed-request rule. Delete derives its next selection from the current
+ordered list. The only page state reused is the existing effective ESI-default
+preview for a current generation; this preserves the established behavior in
+which editing displayed defaults stores them through the Project command path.
+
+No `QModelIndex`, table row, request pointer, Project snapshot reference, or
+configuration reference crosses the asynchronous boundary. No dialog owns a
+Project transaction, and no page-side retry or merge framework is introduced.
+Stale acceptance is a no-op; current acceptance still enters the existing
+validated Project command and Undo/Redo history.
+
+Qt documents the nested-event-loop and parent-lifetime risks of
+`QDialog::exec()` and recommends asynchronous `open()`:
+<https://doc.qt.io/qt-6/qdialog.html#exec>. The static QMessageBox parent
+warning is documented at
+<https://doc.qt.io/qt-6/qmessagebox.html#question>. Qt Creator 20.0 provides
+the heap-owned, delete-on-close host precedent:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/fontsettingspage.cpp#L532-L539>.
+Beckhoff defines the comparable ordered Startup request and fixed-entry
+vocabulary only:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.
+
+This boundary adds no public API, source file, dependency, Provider, Project
+command, persistence field, model role, production thread or timer,
+controller/network transport, online state, SDO execution, or hardware
+behavior. No CMake or qbs description changed. No path under upstream Core,
+ProjectExplorer, or the application bootstrap changed. The Workbench path
+count remains 44 and the direct upstream Core patch count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

@@ -764,6 +764,7 @@ StartupPage::StartupPage(WorkbenchController *controller, QWidget *parent)
 
 void StartupPage::setContext(const Core::PropertyPageContext &context)
 {
+    ++m_contextGeneration;
     m_context = context;
     const std::optional<Data::ProjectSnapshot> project
         = m_controller && m_controller->projectService()
@@ -888,6 +889,28 @@ void StartupPage::setContext(const Core::PropertyPageContext &context)
         m_showingEsiDefaults ? Tr::tr("Store ESI Defaults") : Tr::tr("Restore ESI Defaults"));
     updateTablePresentation();
     rebuildModel();
+}
+
+std::optional<Data::StartupConfiguration> StartupPage::currentConfiguration(
+    quint64 contextGeneration, const Data::NodeId &projectId, const Data::NodeId &slaveId) const
+{
+    if (contextGeneration != m_contextGeneration
+        || m_context.nodeKind != Core::WorkbenchNodeKind::ConfiguredSlave
+        || m_context.projectId != projectId || m_context.nodeId != slaveId || !m_controller
+        || !m_controller->projectService()) {
+        return std::nullopt;
+    }
+    const std::optional<Data::ProjectSnapshot> project = m_controller->projectService()->project(
+        projectId);
+    if (!project || !project->valid)
+        return std::nullopt;
+    const auto slave = std::find_if(
+        project->slaves.cbegin(), project->slaves.cend(), [&slaveId](const auto &candidate) {
+            return candidate.id == slaveId;
+        });
+    if (slave == project->slaves.cend())
+        return std::nullopt;
+    return m_showingEsiDefaults ? m_configuration : slave->startup;
 }
 
 bool StartupPage::submitConfiguration(const Data::StartupConfiguration &configuration)
@@ -1038,14 +1061,35 @@ void StartupPage::addParameter()
         {},
         QByteArray::fromHex("00"),
         {}};
-    StartupParameterDialog dialog(parameter, this);
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-    parameter = dialog.parameter();
-    Data::StartupConfiguration candidate = m_configuration;
-    candidate.parameters.append(parameter);
-    m_selectedParameterId = parameter.id;
-    submitConfiguration(candidate);
+    const quint64 contextGeneration = m_contextGeneration;
+    const Data::NodeId projectId = m_context.projectId;
+    const Data::NodeId slaveId = m_context.nodeId;
+    const Data::NodeId parameterId = parameter.id;
+    auto dialog = new StartupParameterDialog(parameter, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    connect(
+        dialog,
+        &QDialog::finished,
+        this,
+        [this, dialog, contextGeneration, projectId, slaveId, parameterId](int result) {
+            if (result != QDialog::Accepted)
+                return;
+            std::optional<Data::StartupConfiguration> candidate
+                = currentConfiguration(contextGeneration, projectId, slaveId);
+            if (!candidate)
+                return;
+            Data::StartupParameterConfiguration accepted = dialog->parameter();
+            accepted.id = parameterId;
+            accepted.order = 0;
+            for (const Data::StartupParameterConfiguration &existing : candidate->parameters)
+                accepted.order = qMax(accepted.order, existing.order + 1);
+            candidate->parameters.append(accepted);
+            const Data::NodeId previousSelection = m_selectedParameterId;
+            m_selectedParameterId = accepted.id;
+            if (!submitConfiguration(*candidate))
+                m_selectedParameterId = previousSelection;
+        });
+    dialog->open();
 }
 
 void StartupPage::editParameter()
@@ -1054,19 +1098,39 @@ void StartupPage::editParameter()
     const Data::StartupParameterConfiguration *selected = m_model->parameterAt(row);
     if (!m_editable || !selected || isFixed(*selected))
         return;
-    StartupParameterDialog dialog(*selected, this);
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-    const Data::StartupParameterConfiguration parameter = dialog.parameter();
-    Data::StartupConfiguration candidate = m_configuration;
-    const auto found = std::find_if(
-        candidate.parameters.begin(), candidate.parameters.end(), [this](const auto &entry) {
-            return entry.id == m_selectedParameterId;
+    const quint64 contextGeneration = m_contextGeneration;
+    const Data::NodeId projectId = m_context.projectId;
+    const Data::NodeId slaveId = m_context.nodeId;
+    const Data::NodeId parameterId = selected->id;
+    auto dialog = new StartupParameterDialog(*selected, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    connect(
+        dialog,
+        &QDialog::finished,
+        this,
+        [this, dialog, contextGeneration, projectId, slaveId, parameterId](int result) {
+            if (result != QDialog::Accepted)
+                return;
+            std::optional<Data::StartupConfiguration> candidate
+                = currentConfiguration(contextGeneration, projectId, slaveId);
+            if (!candidate)
+                return;
+            const auto found = std::find_if(
+                candidate->parameters.begin(),
+                candidate->parameters.end(),
+                [&parameterId](const auto &entry) { return entry.id == parameterId; });
+            if (found == candidate->parameters.end() || isFixed(*found))
+                return;
+            Data::StartupParameterConfiguration accepted = dialog->parameter();
+            accepted.id = parameterId;
+            accepted.order = found->order;
+            *found = accepted;
+            const Data::NodeId previousSelection = m_selectedParameterId;
+            m_selectedParameterId = parameterId;
+            if (!submitConfiguration(*candidate))
+                m_selectedParameterId = previousSelection;
         });
-    if (found == candidate.parameters.end())
-        return;
-    *found = parameter;
-    submitConfiguration(candidate);
+    dialog->open();
 }
 
 void StartupPage::deleteParameter()
@@ -1075,34 +1139,64 @@ void StartupPage::deleteParameter()
     const Data::StartupParameterConfiguration *selected = m_model->parameterAt(row);
     if (!m_editable || !selected || isFixed(*selected))
         return;
-    if (QMessageBox::question(
-            this,
-            Tr::tr("Delete Startup Request"),
-            Tr::tr("Delete the selected offline Startup request?"),
-            QMessageBox::Yes | QMessageBox::No,
-            QMessageBox::No)
-        != QMessageBox::Yes) {
-        return;
-    }
-    const QList<Data::NodeId> order = m_model->orderedIds();
-    Data::StartupConfiguration candidate = m_configuration;
-    candidate.parameters.removeIf(
-        [this](const auto &entry) { return entry.id == m_selectedParameterId; });
-    int nextOrder = 0;
-    for (const Data::NodeId &id : order) {
-        const auto found = std::find_if(
-            candidate.parameters.begin(), candidate.parameters.end(), [&id](const auto &entry) {
-                return entry.id == id;
+    const quint64 contextGeneration = m_contextGeneration;
+    const Data::NodeId projectId = m_context.projectId;
+    const Data::NodeId slaveId = m_context.nodeId;
+    const Data::NodeId parameterId = selected->id;
+    auto messageBox = new QMessageBox(
+        QMessageBox::Question,
+        Tr::tr("Delete Startup Request"),
+        Tr::tr("Delete the selected offline Startup request?"),
+        QMessageBox::Yes | QMessageBox::No,
+        this);
+    messageBox->setAttribute(Qt::WA_DeleteOnClose);
+    messageBox->setDefaultButton(QMessageBox::No);
+    connect(
+        messageBox,
+        &QDialog::finished,
+        this,
+        [this, contextGeneration, projectId, slaveId, parameterId](int result) {
+            if (result != QMessageBox::Yes)
+                return;
+            std::optional<Data::StartupConfiguration> candidate
+                = currentConfiguration(contextGeneration, projectId, slaveId);
+            if (!candidate)
+                return;
+            QList<Data::StartupParameterConfiguration> ordered = candidate->parameters;
+            std::stable_sort(ordered.begin(), ordered.end(), [](const auto &left, const auto &right) {
+                return left.order < right.order;
             });
-        if (found != candidate.parameters.end())
-            found->order = nextOrder++;
-    }
-    m_selectedParameterId
-        = row + 1 < m_model->rowCount()
-              ? m_model->index(row + 1, 0).data(StableIdRole).value<Data::NodeId>()
-              : (row > 0 ? m_model->index(row - 1, 0).data(StableIdRole).value<Data::NodeId>()
-                         : Data::NodeId());
-    submitConfiguration(candidate);
+            const auto selected
+                = std::find_if(ordered.cbegin(), ordered.cend(), [&parameterId](const auto &entry) {
+                      return entry.id == parameterId;
+                  });
+            if (selected == ordered.cend() || isFixed(*selected))
+                return;
+            const qsizetype selectedPosition = std::distance(ordered.cbegin(), selected);
+            const Data::NodeId nextSelection = selectedPosition + 1 < ordered.size()
+                                                   ? ordered.at(selectedPosition + 1).id
+                                                   : (selectedPosition > 0
+                                                          ? ordered.at(selectedPosition - 1).id
+                                                          : Data::NodeId());
+            candidate->parameters.removeIf(
+                [&parameterId](const auto &entry) { return entry.id == parameterId; });
+            int nextOrder = 0;
+            for (const Data::StartupParameterConfiguration &parameter : std::as_const(ordered)) {
+                if (parameter.id == parameterId)
+                    continue;
+                const auto found = std::find_if(
+                    candidate->parameters.begin(),
+                    candidate->parameters.end(),
+                    [&parameter](const auto &entry) { return entry.id == parameter.id; });
+                if (found != candidate->parameters.end())
+                    found->order = nextOrder++;
+            }
+            const Data::NodeId previousSelection = m_selectedParameterId;
+            m_selectedParameterId = nextSelection;
+            if (!submitConfiguration(*candidate))
+                m_selectedParameterId = previousSelection;
+        });
+    messageBox->open();
 }
 
 void StartupPage::moveParameter(int distance)

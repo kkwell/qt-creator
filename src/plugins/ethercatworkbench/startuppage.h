@@ -6,6 +6,8 @@
 
 #include <QWidget>
 
+#include <optional>
+
 QT_BEGIN_NAMESPACE
 class QLabel;
 class QPushButton;
@@ -33,6 +35,8 @@ public:
 private:
     friend class StartupTableModel;
 
+    std::optional<Data::StartupConfiguration> currentConfiguration(
+        quint64 contextGeneration, const Data::NodeId &projectId, const Data::NodeId &slaveId) const;
     bool submitConfiguration(const Data::StartupConfiguration &configuration);
     void rebuildModel();
     void updateButtonState();
@@ -48,6 +52,7 @@ private:
     Data::StartupConfiguration m_configuration;
     Data::StartupConfiguration m_esiDefaults;
     Data::NodeId m_selectedParameterId;
+    quint64 m_contextGeneration = 0;
     bool m_editable = false;
     bool m_showingEsiDefaults = false;
     bool m_rebuilding = false;
