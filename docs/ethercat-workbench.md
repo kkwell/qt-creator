@@ -1073,10 +1073,14 @@ SYNC0 and SYNC1 separate enable, cycle, and shift controls; and exposes the
 potential-reference-clock choice. Every cycle and shift value is displayed,
 edited, and stored explicitly in nanoseconds.
 
-Repository-device pages list all parsed ESI operation modes but stay
-read-only. An empty configured-slave DC value proposes the first ESI mode
-without marking the project modified. Store/Restore ESI Defaults is explicit,
-and choosing another ESI operation mode applies that mode's AssignActivate and
+Repository-device pages list all parsed ESI operation modes and let the user
+select each mode for a read-only local preview. The preview updates the visible
+AssignActivate and complete SYNC0/SYNC1 timing only; it creates no Project,
+Undo command, persistence, controller request, or network/hardware access.
+Re-entering the Device context starts again from the first ESI mode. An empty
+configured-slave DC value proposes that first mode without marking the project
+modified. Store/Restore ESI Defaults is explicit, and choosing another ESI
+operation mode on a configured slave applies that mode's AssignActivate and
 complete SYNC0/SYNC1 timing as one checked command. A configured slave without
 an ESI match can enter a manual operation-mode name and timing.
 
@@ -3219,3 +3223,109 @@ qbs description changed, so qbs was not run. The unrelated `WITH_TESTS=ON`
 all-target build was not rerun; the known EasyBoard test include blocker
 remains outside this private Workbench issue. The Workbench path count remains
 44 and the direct upstream Core patch count remains five.
+
+## Repository Device DC mode preview
+
+`ISSUE-WB-DC-REPOSITORY-MODE-PREVIEW-001` uses local baseline
+`266325f933f0072c61ccec29ec1059d7e1610a29`. It closes a direct gap between
+the existing DC-page contract and its visible repository behavior. The ESI
+parser already supplied two operation modes and the page already inserted both
+into its `QComboBox`, but every non-editable context disabled the entire
+selector. A repository user could therefore see only the first mode and could
+not inspect the second mode's AssignActivate or SYNC0/SYNC1 values.
+
+The private `DcPage` now enables the operation-mode selector only when the
+current context is an ESI Repository Device with at least one parsed mode, or
+when the existing configured-slave page is genuinely editable. In the
+repository case the combo's line editor remains read-only, and every Enable,
+AssignActivate, SYNC0, SYNC1, and potential-reference-clock control remains
+disabled or read-only. Activating another ESI item copies
+`dcConfigurationFromMode()` into the page's existing transient presentation
+value and rebuilds the controls. It returns before `submitConfiguration()` and
+therefore cannot call `ProjectService`, create Undo history, or persist the
+selection. Clearing and restoring the Device context reconstructs the page
+from the immutable ESI description and returns to the first mode.
+
+The visible summary and the selector's localized accessible description and
+tooltip state that this is a read-only offline preview that does not modify a
+Project or access a controller, network, or physical hardware. Configured-
+slave selection remains on the original checked Project command path. Invalid
+Project and other non-editable contexts remain disabled and gain no preview
+permission.
+
+Qt documents that `QComboBox::activated()` represents a user choice and that
+the combo stores and exposes its items through the model/view framework:
+<https://doc.qt.io/qt-6/qcombobox.html>. Qt also defines a localized widget
+description as contextual information for assistive technology:
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. Qt Creator
+20.0's plugin architecture remains the host boundary; the change stays in the
+existing product plugin and uses no application bootstrap or upstream Core
+patch:
+<https://doc.qt.io/qtcreator-extending/creating-plugins.html>. Beckhoff's
+Distributed Clock page is only the user-facing field and operation-mode
+comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>.
+Embed Labs continues to omit Sync Unit task-cycle derivation and all online
+controller behavior.
+
+The failure-first test was compiled against the exact baseline production
+`dcpage.cpp` blob `487c6d3e368925833d7e907d281c92c250d89fc2`. Initialization
+and cleanup passed, and the target failed exactly because the repository mode
+selector was disabled; target status was 1. Its complete build, source-blob,
+LLDB, and status evidence is under
+`/private/tmp/embed-labs-dc-repository-preview-final.rnvHP6/failure`. After the
+minimal implementation, focused normal-scale and `QT_SCALE_FACTOR=2` runs each
+passed three events with target status 0 under the same root's
+`focused-normal` and `focused-2x` directories. The companion
+`testBuiltInDevicePages` normal and 2x runs also passed under `builtins-normal`
+and `builtins-2x`.
+
+The focused regression imports a real unique ESI Device with `Sync0` and
+`Sync0 + Sync1`, opens its real Details/DC page, focuses the enabled read-only
+selector, and sends an actual keyboard Down event. It verifies the second
+mode's `0x0700` AssignActivate, SYNC0 `250000 / -1000`, and SYNC1
+`500000 / 1000` values; all mutation controls remain read-only or disabled;
+the selector description contains the read-only boundary; no Project exists;
+and re-entering the Device restores `Sync0`. An interim version of the reset
+assertion retained a destroyed test-only combo pointer. LLDB caught that
+regression-harness error in-process; the test now uses `QPointer`, waits for
+destruction, and resolves the recreated control before checking reset. The
+persisted full-turn audit from 13:30 found no new DiagnosticReports file or
+matching ReportCrash/CrashReporter/diagnosticd event, and all subsequent
+focused and complete runs passed.
+
+Complete normal-scale and 2x Workbench runs each passed 56 events with target
+status 0 under `workbench-normal` and `workbench-2x` in the same final evidence
+root. The six isolated EtherCAT suites passed 107 events under `six-suites`:
+Core 17, Project 12, Devices 8, Workbench 56, Scan 7, and Diagnostics 7. Every
+target exited with status 0.
+
+The full `WITH_TESTS=OFF` product build passed in
+`qt-creator-build-ethercat-product-qt611` and contains exactly the 16
+allow-listed plugin dylibs. Enabled product startup observed PID 21400 and
+remained running for 37 seconds. Explicitly disabled startup observed PID
+28526 and remained running for 37 seconds with
+`-noload EtherCATWorkbench`. Evidence is under
+`/private/tmp/embed-labs-dc-repository-preview-final.rnvHP6`; each
+target was running immediately before LLDB passed intentional SIGTERM and
+exited with target status 15. The disabled run emitted one non-fatal shared-
+memory initialization message and remained alive for the complete interval.
+
+Final cleanup found no residual Embed Labs or LLDB process, new
+DiagnosticReports file, or matching ReportCrash/CrashReporter/diagnosticd
+unified-log event after 2026-07-19 13:56:24 +0800; the broader persisted audit
+from 13:30 is also empty. Every executable used fresh
+HOME/settings, cleared inherited DYLD variables,
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and
+only the process-local Touch Bar LLDB breakpoint. No visible main window or
+system crash dialog was created.
+
+This issue changes only the existing private `dcpage.cpp`, Workbench test
+declaration/implementation, and documentation. It adds no source file, public
+API, dependency, Provider, persistence field, Project command, model role,
+production thread or timer, controller/network transport, online state, or
+physical-hardware behavior. No CMake or qbs description changed, so qbs was
+not run. The unrelated `WITH_TESTS=ON` all-target build was not rerun; the
+known EasyBoard test include blocker remains outside this private Workbench
+issue. The Workbench path count remains 44 and the direct upstream Core patch
+count remains five.

@@ -106,7 +106,7 @@ function is outside the product target and records migration or recovery.
 | Editable Process Data page | Verified in current Workbench issue |
 | CoE Online Mock and explicit Add to Startup | Verified in current Workbench issue; no SDO or controller access |
 | Editable Startup page | Verified in current Workbench issue |
-| Editable DC page | Verified in current Workbench issue |
+| Editable DC page | Verified, including keyboard-accessible read-only preview of every parsed ESI mode on repository Device pages and unchanged Project-owned editing on configured slaves |
 | Offline EtherCAT project | Stage 2 verified |
 | ESI repository | Devices storage/parser/provider, Workbench import/reload/cancel UI, and actionable empty guidance verified; local/offline only |
 | Individual ESI catalogue-device General page | Verified with TwinCAT-aligned identity, configuration coverage, qualification/source details, explicit unavailable state, and no controller access |
@@ -1872,6 +1872,49 @@ configured and online capabilities in its larger Topology product:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1277974411.html>.
 The standard metadata and explicit offline exclusion are Embed Labs Qt-native
 behavior.
+
+## EtherCATWorkbench repository Device DC mode-preview qualification
+
+`ISSUE-WB-DC-REPOSITORY-MODE-PREVIEW-001` uses local baseline
+`266325f933f0072c61ccec29ec1059d7e1610a29`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first regression | With only the new regression compiled against baseline `dcpage.cpp` blob `487c6d3e368925833d7e907d281c92c250d89fc2`, initialization and cleanup passed and the unchanged production implementation failed exactly because the repository Device mode selector was disabled; target status 1 with complete build/LLDB/status evidence under `/private/tmp/embed-labs-dc-repository-preview-final.rnvHP6/failure` |
+| Real ESI context | A unique imported ESI Device supplies two real modes, `Sync0` and `Sync0 + Sync1`, through the existing Devices Provider and Details/DC page |
+| Keyboard operation | The real visible DC page focuses the selector and an actual Qt Down key activates the second ESI item |
+| Complete second-mode preview | Passed for AssignActivate `0x0700`, SYNC0 cycle/shift `250000 / -1000`, and SYNC1 cycle/shift `500000 / 1000` |
+| Read-only boundary | The combo line editor stays read-only; Enable, AssignActivate, SYNC0/SYNC1, and potential-reference-clock controls remain disabled or read-only |
+| Project isolation | Repository activation returns before `submitConfiguration()`; no Project exists, no ProjectService mutation or Undo command occurs, and no preview state is persisted |
+| Context reset | Clearing and restoring the repository Device destroys the old page, recreates it from immutable ESI data, and restores the first `Sync0` mode |
+| User and accessibility disclosure | Summary, localized accessible description, and tooltip identify a read-only offline preview with no Project modification or controller/network/physical-hardware access |
+| Configured-slave compatibility | Existing editable configured-slave ESI selection still uses the checked ProjectService command and Undo/Redo path |
+| Focused normal-scale test | 3 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-dc-repository-preview-final.rnvHP6/focused-normal` |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-dc-repository-preview-final.rnvHP6/focused-2x` |
+| Existing built-in Device regression | Normal and 2x each passed 3 events under the same root's `builtins-normal` and `builtins-2x` directories |
+| Complete EtherCATWorkbench normal scale | 56 passed, 0 failed; target status 0 under the same root's `workbench-normal` directory |
+| Complete EtherCATWorkbench 2x scale | 56 passed, 0 failed; target status 0 under the same root's `workbench-2x` directory |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 56, Scan 7, Diagnostics 7; 107 passed, 0 failed with target status 0 in isolated LLDB-supervised processes under the same root's `six-suites` directory |
+| Interim harness fault | A first reset assertion retained a destroyed test-only combo pointer; LLDB caught it before system crash handling, and the final test uses `QPointer`, waits for destruction, and resolves the recreated widget; the persisted full-turn and final lifecycle audits found no diagnostic report or crash-service event |
+| Qualified Qt and test build | Qt 6.11 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed in `qt-creator-build-ethercat-product-qt611`; exactly the 16 allow-listed plugin dylibs are present |
+| Enabled offscreen startup | PID 21400 remained running for 37 seconds under `/private/tmp/embed-labs-dc-repository-preview-final.rnvHP6/lifecycle-enabled`; intentional SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 28526 remained running for 37 seconds with `-noload EtherCATWorkbench` under `/private/tmp/embed-labs-dc-repository-preview-final.rnvHP6/lifecycle-disabled`; intentional SIGTERM produced target status 15 |
+| Process and crash-report cleanup | No residual Embed Labs/LLDB process, new DiagnosticReports file, or matching ReportCrash/CrashReporter/diagnosticd unified-log event after 2026-07-19 13:56:24 +0800; the persisted full-turn audit from 13:30 is also empty |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no visible main window or system crash dialog |
+| `WITH_TESTS=ON` all-target build | Not rerun; the known unrelated EasyBoard test include blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, Project command, model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, controller transport, online state, or hardware access | Not performed or added; the feature is a transient local ESI presentation |
+
+Qt's user-activation and combo model/view contracts are documented at
+<https://doc.qt.io/qt-6/qcombobox.html>, and contextual widget descriptions at
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. Beckhoff's
+Distributed Clock page provides the operation-mode and timing comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>.
+The read-only repository preview and explicit no-Project/no-controller boundary
+are Embed Labs Qt-native behavior.
 
 ## Verification states
 

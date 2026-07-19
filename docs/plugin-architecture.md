@@ -1130,6 +1130,46 @@ behavior, CMake/qbs entry, or path under upstream Core, ProjectExplorer, or
 the application bootstrap. The Workbench path count remains 44 and the direct
 upstream Core patch count remains five.
 
+## Workbench repository Device DC mode-preview boundary
+
+`ISSUE-WB-DC-REPOSITORY-MODE-PREVIEW-001` remains entirely inside the
+product-owned private `DcPage`. `DeviceRepositoryProvider` continues to own
+and publish the immutable ESI description and its parsed DC modes. The page
+copies those values into its existing `m_esiModes` and presentation-only
+`m_configuration`; no new value or object crosses a plugin boundary.
+
+The operation-mode selector is enabled for preview only when the current
+`PropertyPageContext` is a repository `Device` and the current ESI snapshot
+contains a mode. Its line editor remains read-only, and every field that could
+imply configuration remains disabled or read-only. A user activation copies
+`dcConfigurationFromMode()` into the current page value and rebuilds the
+visible fields. The Device branch returns before `submitConfiguration()`, so
+it cannot discover or call `ProjectService`, create Undo history, persist a
+selection, or issue controller/network/hardware work. Page/context teardown
+destroys that transient selection; a recreated Device page derives the first
+mode again from the immutable snapshot.
+
+Configured-slave ownership is unchanged. A valid configured slave remains the
+only editable context, preserves the potential-reference-clock value when an
+ESI mode is selected, validates the candidate, and routes it through the
+existing public checked Project command. Invalid Project and unrelated
+contexts do not acquire repository preview permission.
+
+Qt's `QComboBox::activated()` signal supplies the user-interaction boundary,
+and the existing QObject/page lifetime remains the reset boundary:
+<https://doc.qt.io/qt-6/qcombobox.html>. Qt's localized widget description
+contract is used only to disclose the preview behavior:
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. Beckhoff's
+Distributed Clock page remains only the field and operation-mode comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>.
+
+This boundary adds no public API, source file, dependency, Provider, Project
+command, persistence field, model role, thread, timer, controller/network
+transport, online state, or physical-hardware behavior. No CMake or qbs
+description changed. No path under upstream Core, ProjectExplorer, or the
+application bootstrap changed. The Workbench path count remains 44 and the
+direct upstream Core patch count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

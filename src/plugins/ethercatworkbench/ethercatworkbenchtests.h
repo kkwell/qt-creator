@@ -58,6 +58,7 @@ private slots:
     void testCoeRepositoryReadOnlyWorkflow();
     void testStartupTableAccessibility();
     void testEditableStartupWorkflow();
+    void testDcRepositoryModePreview();
     void testEditableDcWorkflow();
     void testDynamicPropertyProviderRemoval();
     void testOptionalProviderAvailabilityPresentation();

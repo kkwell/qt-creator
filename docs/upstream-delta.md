@@ -806,6 +806,24 @@ so the direct Core patch budget does not increase and no extension-point
 exception is required. The Workbench path count remains 44 and the direct
 upstream Core patch count remains five.
 
+`ISSUE-WB-DC-REPOSITORY-MODE-PREVIEW-001`, based on
+`266325f933f0072c61ccec29ec1059d7e1610a29`, changes only the existing
+product-owned private `dcpage.cpp`, Workbench test declaration/implementation,
+and documentation. The ESI Repository Device DC selector now exposes every
+already-parsed operation mode for a keyboard-accessible read-only preview.
+Selection updates only the page's transient presentation value and returns
+before the existing configured-slave `ProjectService` submission path. All
+actual configuration controls remain read-only or disabled, and recreating the
+Device context restores the first ESI mode.
+
+No source file, dependency, CMake/qbs entry, public API, Project format,
+Provider, persistence field, Project command, model role, production thread or
+timer, controller/network transport, online state, or physical-hardware
+behavior changes. No file under Qt Creator's upstream Core, ProjectExplorer,
+or application bootstrap changes, so the direct Core patch budget does not
+increase and no extension-point exception is required. The Workbench path
+count remains 44 and the direct upstream Core patch count remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

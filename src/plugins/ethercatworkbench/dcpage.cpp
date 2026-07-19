@@ -278,8 +278,9 @@ void DcPage::setContext(const Core::PropertyPageContext &context)
     if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
         m_summary->setText(
             Tr::tr(
-                "ESI Distributed Clocks modes. Add the device to an offline project before "
-                "changing its operation mode or timing."));
+                "ESI Distributed Clocks modes. Select an operation mode to preview its "
+                "read-only timing. Add the device to an offline project before changing or "
+                "storing its operation mode or timing."));
     } else if (m_showingEsiDefaults) {
         m_summary->setText(
             Tr::tr(
@@ -399,8 +400,23 @@ void DcPage::rebuildControls()
 
 void DcPage::updateControlState()
 {
-    m_operationMode->setEnabled(m_editable);
+    const bool repositoryModePreview
+        = m_context.nodeKind == Core::WorkbenchNodeKind::Device && !m_esiModes.isEmpty();
+    m_operationMode->setEnabled(m_editable || repositoryModePreview);
     m_operationMode->lineEdit()->setReadOnly(!m_editable);
+    const QString modeDescription
+        = repositoryModePreview
+              ? Tr::tr("Selects an imported ESI operation mode for read-only offline preview. "
+                       "The preview does not modify a Project or access a controller, network, "
+                       "or physical hardware.")
+              : m_editable
+                    ? Tr::tr("Selects and stores an ESI Distributed Clocks operation mode in "
+                             "the offline Project as one undoable change. No controller, "
+                             "network, or physical hardware is accessed.")
+                    : Tr::tr("No Distributed Clocks operation mode is available for selection "
+                             "in this context.");
+    m_operationMode->setAccessibleDescription(modeDescription);
+    m_operationMode->setToolTip(modeDescription);
     m_enabled->setEnabled(m_editable);
     m_assignActivate->setReadOnly(!m_editable);
     m_sync0Enabled->setEnabled(m_editable);
@@ -414,12 +430,19 @@ void DcPage::updateControlState()
 
 void DcPage::selectEsiMode(int index)
 {
-    if (m_rebuilding || !m_editable || index < 0 || index >= m_operationMode->count())
+    if (m_rebuilding || index < 0 || index >= m_operationMode->count())
         return;
     const int esiIndex = m_operationMode->itemData(index).toInt();
     if (esiIndex < 0 || esiIndex >= m_esiModes.size())
         return;
     Data::DcConfiguration candidate = dcConfigurationFromMode(m_esiModes.at(esiIndex));
+    if (m_context.nodeKind == Core::WorkbenchNodeKind::Device) {
+        m_configuration = candidate;
+        rebuildControls();
+        return;
+    }
+    if (!m_editable)
+        return;
     candidate.potentialReferenceClock = m_configuration.potentialReferenceClock;
     submitConfiguration(candidate);
 }

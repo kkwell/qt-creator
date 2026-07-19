@@ -6441,7 +6441,8 @@ void EtherCATWorkbenchTests::testBuiltInDevicePages()
     QCOMPARE(dcSync0Cycle->text(), QString("125000"));
     QCOMPARE(dcSync0Shift->text(), QString("0"));
     QVERIFY(!dcSync1Enabled->isChecked());
-    QVERIFY(!dcMode->isEnabled());
+    QVERIFY(dcMode->isEnabled());
+    QVERIFY(dcMode->lineEdit()->isReadOnly());
     QVERIFY(!dcEnabled->isEnabled());
     QVERIFY(dcAssignActivate->isReadOnly());
     QVERIFY(dcSync0Cycle->isReadOnly());
@@ -8168,6 +8169,115 @@ void EtherCATWorkbenchTests::testEditableStartupWorkflow()
     controller.selectionService()->clear();
     ProjectExplorer::ProjectManager::removeProject(opened.project());
     QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+void EtherCATWorkbenchTests::testDcRepositoryModePreview()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+    QVERIFY(projectService->projects().isEmpty());
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QByteArray previewEsi = deviceEsi();
+    previewEsi.replace("#x00005678", "#x7A170001");
+    previewEsi.replace("#x00000011", "#x0000A507");
+    previewEsi.replace("AX5000", "EL-DC-PREVIEW");
+    previewEsi.replace("Workbench Servo", "DC Preview Servo / 设备库预览");
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .pathAppended("dc-repository-preview.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(previewEsi));
+    const Data::DeviceImportResult importResult = waitForJob(repository->importFiles({esiPath}));
+    QCOMPARE(importResult.requestedFiles, 1);
+    QCOMPARE(importResult.importedDevices, 1);
+    QCOMPARE(importResult.failedFiles, 0);
+    QCOMPARE(importResult.affectedDeviceIds.size(), 1);
+
+    const Data::NodeId deviceId = importResult.affectedDeviceIds.first();
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(deviceId).isValid());
+    controller.selectionService()->setCurrentNodeId(deviceId);
+
+    DetailsView details(&controller);
+    details.resize(980, 720);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::DC_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page);
+    QTRY_VERIFY(page->isVisible());
+    QLabel *summary = page->findChild<QLabel *>("EtherCATDcSummary");
+    QComboBox *mode = page->findChild<QComboBox *>("EtherCATDcOperationMode");
+    QCheckBox *enabled = page->findChild<QCheckBox *>("EtherCATDcEnabled");
+    QLineEdit *assignActivate = page->findChild<QLineEdit *>("EtherCATDcAssignActivate");
+    QCheckBox *sync0Enabled = page->findChild<QCheckBox *>("EtherCATDcSync0Enabled");
+    QLineEdit *sync0Cycle = page->findChild<QLineEdit *>("EtherCATDcSync0CycleNs");
+    QLineEdit *sync0Shift = page->findChild<QLineEdit *>("EtherCATDcSync0ShiftNs");
+    QCheckBox *sync1Enabled = page->findChild<QCheckBox *>("EtherCATDcSync1Enabled");
+    QLineEdit *sync1Cycle = page->findChild<QLineEdit *>("EtherCATDcSync1CycleNs");
+    QLineEdit *sync1Shift = page->findChild<QLineEdit *>("EtherCATDcSync1ShiftNs");
+    QCheckBox *referenceClock = page->findChild<QCheckBox *>(
+        "EtherCATDcPotentialReferenceClock");
+    QVERIFY(summary);
+    QVERIFY(mode);
+    QVERIFY(enabled);
+    QVERIFY(assignActivate);
+    QVERIFY(sync0Enabled);
+    QVERIFY(sync0Cycle);
+    QVERIFY(sync0Shift);
+    QVERIFY(sync1Enabled);
+    QVERIFY(sync1Cycle);
+    QVERIFY(sync1Shift);
+    QVERIFY(referenceClock);
+
+    QCOMPARE(mode->count(), 2);
+    QCOMPARE(mode->currentText(), QString("Sync0"));
+    QVERIFY(mode->isEnabled());
+    QVERIFY(summary->text().contains("preview", Qt::CaseInsensitive));
+    QVERIFY(mode->lineEdit()->isReadOnly());
+    QVERIFY(!mode->accessibleDescription().isEmpty());
+    QVERIFY(mode->accessibleDescription().contains("read-only", Qt::CaseInsensitive));
+    QVERIFY(!enabled->isEnabled());
+    QVERIFY(assignActivate->isReadOnly());
+    QVERIFY(!sync0Enabled->isEnabled());
+    QVERIFY(sync0Cycle->isReadOnly());
+    QVERIFY(sync0Shift->isReadOnly());
+    QVERIFY(!sync1Enabled->isEnabled());
+    QVERIFY(sync1Cycle->isReadOnly());
+    QVERIFY(sync1Shift->isReadOnly());
+    QVERIFY(!referenceClock->isEnabled());
+
+    mode->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(mode->hasFocus());
+    QTest::keyClick(mode, Qt::Key_Down);
+    QCOMPARE(mode->currentText(), QString("Sync0 + Sync1"));
+    QVERIFY(enabled->isChecked());
+    QCOMPARE(assignActivate->text(), QString("0x0700"));
+    QVERIFY(sync0Enabled->isChecked());
+    QCOMPARE(sync0Cycle->text(), QString("250000"));
+    QCOMPARE(sync0Shift->text(), QString("-1000"));
+    QVERIFY(sync1Enabled->isChecked());
+    QCOMPARE(sync1Cycle->text(), QString("500000"));
+    QCOMPARE(sync1Shift->text(), QString("1000"));
+    QVERIFY(!referenceClock->isChecked());
+    QVERIFY(projectService->projects().isEmpty());
+
+    const QPointer<QComboBox> previousMode = mode;
+    controller.selectionService()->clear();
+    QTRY_VERIFY(previousMode.isNull());
+    controller.selectionService()->setCurrentNodeId(deviceId);
+    QComboBox *resetMode = nullptr;
+    QTRY_VERIFY((resetMode = details.findChild<QComboBox *>("EtherCATDcOperationMode")));
+    QTRY_COMPARE(resetMode->currentText(), QString("Sync0"));
+    QVERIFY(resetMode->isEnabled());
+    QVERIFY(resetMode->lineEdit()->isReadOnly());
+    QVERIFY(projectService->projects().isEmpty());
+    controller.selectionService()->clear();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
