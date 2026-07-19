@@ -49,6 +49,7 @@ private slots:
     void testProcessDataTableAccessibility();
     void testEditableProcessDataWorkflow();
     void testCoeOnlineMockWorkflow();
+    void testStartupTableAccessibility();
     void testEditableStartupWorkflow();
     void testEditableDcWorkflow();
     void testDynamicPropertyProviderRemoval();

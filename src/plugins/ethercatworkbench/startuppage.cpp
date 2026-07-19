@@ -152,6 +152,14 @@ static QString rawValueText(const QByteArray &value)
     return QString::fromLatin1(value.toHex(' ').toUpper());
 }
 
+static QString startupObjectAddress(const Data::StartupParameterConfiguration &parameter)
+{
+    return QString("%1:%2")
+        .arg(
+            hexValue(parameter.index, 4),
+            QString("%1").arg(parameter.subIndex, 2, 16, QLatin1Char('0')).toUpper());
+}
+
 class StartupTableModel final : public QAbstractTableModel
 {
 public:
@@ -194,15 +202,46 @@ public:
             return int(parameter.dataType);
         if (role == Qt::CheckStateRole && index.column() == Enabled)
             return parameter.enabled ? Qt::Checked : Qt::Unchecked;
-        if (role == Qt::ToolTipRole) {
+        if (role == Qt::AccessibleTextRole) {
+            if (index.column() == Enabled)
+                return parameter.enabled ? Tr::tr("Enabled") : Tr::tr("Disabled");
+            return data(index, Qt::DisplayRole).toString();
+        }
+        if (role == Qt::AccessibleDescriptionRole || role == Qt::ToolTipRole) {
+            const QString header = headerData(index.column(), Qt::Horizontal).toString();
+            const QString text = data(index, Qt::AccessibleTextRole).toString();
+            QString description = text.isEmpty()
+                                      ? Tr::tr("Request %1, %2")
+                                            .arg(startupObjectAddress(parameter), header)
+                                      : Tr::tr("Request %1, %2: %3")
+                                            .arg(startupObjectAddress(parameter), header, text);
             if (isFixed(parameter)) {
-                return Tr::tr(
-                    "Angle-bracketed transitions are fixed ESI requests and cannot be edited "
-                    "or deleted.");
+                description += '\n'
+                               + Tr::tr(
+                                   "The angle-bracketed transition identifies a fixed ESI "
+                                   "request. It is read-only and cannot be enabled or disabled, "
+                                   "edited, deleted, or moved.");
+            } else if (!m_editable) {
+                description += '\n'
+                               + Tr::tr(
+                                   "This Startup request is read-only in the current context.");
+            } else if (flags(index) & Qt::ItemIsUserCheckable) {
+                description += '\n'
+                               + Tr::tr(
+                                   "Enable or disable this request in the offline Startup "
+                                   "sequence.");
+            } else if (flags(index) & Qt::ItemIsEditable) {
+                description += '\n'
+                               + Tr::tr(
+                                   "Edit this value directly or with Edit; Project Undo and Redo "
+                                   "remain available.");
+            } else {
+                description += '\n'
+                               + Tr::tr(
+                                   "This value is read-only; other non-fixed request fields "
+                                   "remain editable.");
             }
-            return Tr::tr(
-                "Enabled startup requests are applied according to the displayed order during "
-                "the selected EtherCAT state transition.");
+            return description;
         }
         if (role != Qt::DisplayRole && role != Qt::EditRole)
             return {};
@@ -640,6 +679,11 @@ StartupPage::StartupPage(WorkbenchController *controller, QWidget *parent)
     m_validation->setWordWrap(true);
     m_restoreDefaults->setObjectName("EtherCATStartupRestoreDefaults");
     m_table->setObjectName("EtherCATStartupTable");
+    m_table->setAccessibleName(Tr::tr("Startup requests"));
+    m_table->setAccessibleDescription(
+        Tr::tr(
+            "Ordered offline CoE Startup requests with transition, object address, data, and "
+            "comment details."));
     m_moveUp->setObjectName("EtherCATStartupMoveUp");
     m_moveDown->setObjectName("EtherCATStartupMoveDown");
     m_new->setObjectName("EtherCATStartupNew");

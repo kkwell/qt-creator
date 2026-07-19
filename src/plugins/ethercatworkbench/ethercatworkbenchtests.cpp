@@ -56,6 +56,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QMetaType>
 #include <QMimeData>
 #include <QPlainTextEdit>
 #include <QPointer>
@@ -6658,6 +6659,198 @@ void EtherCATWorkbenchTests::testCoeOnlineMockWorkflow()
     QTRY_VERIFY(!projectService->project(file.projectId).has_value());
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+void EtherCATWorkbenchTests::testStartupTableAccessibility()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("startup-accessibility.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(deviceEsi()));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0x5678;
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(directory, *device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project())) {
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        }
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+
+    const QByteArray longRawValue(256, char(0xA5));
+    const QString longComment = QString::fromUtf8(
+                                    "超长 Startup 注释 / 長い起動コメント / Ω — 完整内容 — ")
+                                + QString(256, QChar(u'甲')) + " / End";
+    const Data::StartupParameterConfiguration enabled{
+        Data::NodeId::create(),
+        true,
+        0,
+        "PS",
+        0x2000,
+        0,
+        Data::EtherCATDataType::OctetString,
+        "OCTET_STRING",
+        longRawValue,
+        longComment};
+    const Data::StartupParameterConfiguration disabled{
+        Data::NodeId::create(),
+        false,
+        1,
+        "SO",
+        0x2001,
+        1,
+        Data::EtherCATDataType::UnsignedInteger8,
+        "UINT8",
+        QByteArray::fromHex("00"),
+        "Disabled request"};
+    const Data::StartupParameterConfiguration fixed{
+        Data::NodeId::create(),
+        true,
+        2,
+        "<PS>",
+        0x8000,
+        1,
+        Data::EtherCATDataType::UnsignedInteger8,
+        "UINT8",
+        QByteArray::fromHex("00"),
+        "Fixed ESI request"};
+    QVERIFY_RESULT(projectService->setStartupConfiguration(
+        file.projectId, file.slaveId, {{enabled, disabled, fixed}}));
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    BuiltinPropertyPageProvider pages(&controller);
+    std::unique_ptr<QWidget> page(pages.createPage(Constants::STARTUP_PAGE_ID, nullptr));
+    QVERIFY(page);
+    const QModelIndex configuredSlave = controller.treeModel()->indexForNodeId(file.slaveId);
+    pages.updatePage(
+        Constants::STARTUP_PAGE_ID,
+        page.get(),
+        controller.treeModel()->contextForIndex(configuredSlave));
+
+    QTableView *table = page->findChild<QTableView *>("EtherCATStartupTable");
+    QVERIFY(table);
+    QVERIFY(!table->accessibleName().isEmpty());
+    QVERIFY(!table->accessibleDescription().isEmpty());
+    QCOMPARE(table->model()->rowCount(), 3);
+
+    const int enabledColumn = columnWithHeader(table->model(), "Enabled");
+    const int protocolColumn = columnWithHeader(table->model(), "Protocol");
+    const int dataColumn = columnWithHeader(table->model(), "Data");
+    const int commentColumn = columnWithHeader(table->model(), "Comment");
+    QVERIFY(enabledColumn >= 0);
+    QVERIFY(protocolColumn >= 0);
+    QVERIFY(dataColumn >= 0);
+    QVERIFY(commentColumn >= 0);
+
+    for (int row = 0; row < table->model()->rowCount(); ++row) {
+        const QString address = row == 0 ? "0x2000:00" : row == 1 ? "0x2001:01" : "0x8000:01";
+        for (int column = 0; column < table->model()->columnCount(); ++column) {
+            const QModelIndex index = table->model()->index(row, column);
+            const QString header
+                = table->model()->headerData(column, Qt::Horizontal).toString();
+            const QString displayed = index.data(Qt::DisplayRole).toString();
+            const QVariant accessibleTextData = index.data(Qt::AccessibleTextRole);
+            const QString accessibleText = accessibleTextData.toString();
+            const QVariant accessibleDescriptionData
+                = index.data(Qt::AccessibleDescriptionRole);
+            const QString accessibleDescription = accessibleDescriptionData.toString();
+            const QVariant toolTipData = index.data(Qt::ToolTipRole);
+            const QString toolTip = toolTipData.toString();
+            QVERIFY(!header.isEmpty());
+            QVERIFY(accessibleTextData.isValid());
+            QCOMPARE(accessibleTextData.metaType().id(), int(QMetaType::QString));
+            QCOMPARE(accessibleDescriptionData.metaType().id(), int(QMetaType::QString));
+            QCOMPARE(toolTipData.metaType().id(), int(QMetaType::QString));
+            if (column != enabledColumn)
+                QCOMPARE(accessibleText, displayed);
+            QVERIFY(!accessibleDescription.isEmpty());
+            QVERIFY(accessibleDescription.contains(address));
+            QVERIFY(accessibleDescription.contains(header));
+            if (!accessibleText.isEmpty())
+                QVERIFY(accessibleDescription.contains(accessibleText));
+            QVERIFY(!toolTip.isEmpty());
+            QVERIFY(toolTip.contains(address));
+            QVERIFY(toolTip.contains(header));
+            if (!accessibleText.isEmpty())
+                QVERIFY(toolTip.contains(accessibleText));
+        }
+    }
+
+    const QModelIndex enabledCell = table->model()->index(0, enabledColumn);
+    const QModelIndex disabledCell = table->model()->index(1, enabledColumn);
+    QCOMPARE(enabledCell.data(Qt::DisplayRole).toString(), QString());
+    QCOMPARE(disabledCell.data(Qt::DisplayRole).toString(), QString());
+    QCOMPARE(enabledCell.data(Qt::CheckStateRole).toInt(), int(Qt::Checked));
+    QCOMPARE(disabledCell.data(Qt::CheckStateRole).toInt(), int(Qt::Unchecked));
+    QCOMPARE(enabledCell.data(Qt::AccessibleTextRole).toString(), QString("Enabled"));
+    QCOMPARE(disabledCell.data(Qt::AccessibleTextRole).toString(), QString("Disabled"));
+    QVERIFY(table->model()->flags(enabledCell) & Qt::ItemIsUserCheckable);
+
+    const QString longRawValueText = QString::fromLatin1(longRawValue.toHex(' ').toUpper());
+    const QModelIndex dataCell = table->model()->index(0, dataColumn);
+    const QModelIndex commentCell = table->model()->index(0, commentColumn);
+    QCOMPARE(dataCell.data(Qt::AccessibleTextRole).toString(), longRawValueText);
+    QVERIFY(dataCell.data(Qt::AccessibleDescriptionRole).toString().contains(longRawValueText));
+    QVERIFY(dataCell.data(Qt::ToolTipRole).toString().contains(longRawValueText));
+    QCOMPARE(commentCell.data(Qt::AccessibleTextRole).toString(), longComment);
+    QVERIFY(commentCell.data(Qt::AccessibleDescriptionRole).toString().contains(longComment));
+    QVERIFY(commentCell.data(Qt::ToolTipRole).toString().contains(longComment));
+    QVERIFY(commentCell.data(Qt::AccessibleDescriptionRole)
+                .toString()
+                .contains("edit this value", Qt::CaseInsensitive));
+
+    const QModelIndex protocolCell = table->model()->index(0, protocolColumn);
+    QVERIFY(!(table->model()->flags(protocolCell) & Qt::ItemIsEditable));
+    QVERIFY(protocolCell.data(Qt::AccessibleDescriptionRole)
+                .toString()
+                .contains("read-only", Qt::CaseInsensitive));
+
+    const QModelIndex fixedEnabled = table->model()->index(2, enabledColumn);
+    const QModelIndex fixedComment = table->model()->index(2, commentColumn);
+    QVERIFY(!(table->model()->flags(fixedEnabled) & Qt::ItemIsUserCheckable));
+    QVERIFY(!(table->model()->flags(fixedComment) & Qt::ItemIsEditable));
+    const QString fixedDescription = fixedComment.data(Qt::AccessibleDescriptionRole).toString();
+    QVERIFY(fixedDescription.contains("fixed ESI", Qt::CaseInsensitive));
+    QVERIFY(fixedDescription.contains("enabled or disabled", Qt::CaseInsensitive));
+    QVERIFY(fixedDescription.contains("edited", Qt::CaseInsensitive));
+    QVERIFY(fixedDescription.contains("deleted", Qt::CaseInsensitive));
+    QVERIFY(fixedDescription.contains("moved", Qt::CaseInsensitive));
+
+    const QModelIndex repositoryDevice = controller.treeModel()->indexForNodeId(device->id);
+    QVERIFY(repositoryDevice.isValid());
+    pages.updatePage(
+        Constants::STARTUP_PAGE_ID,
+        page.get(),
+        controller.treeModel()->contextForIndex(repositoryDevice));
+    QCOMPARE(table->model()->rowCount(), 3);
+    const QModelIndex readOnlyComment = table->model()->index(0, commentColumn);
+    QVERIFY(!(table->model()->flags(readOnlyComment) & Qt::ItemIsEditable));
+    QVERIFY(readOnlyComment.data(Qt::AccessibleDescriptionRole)
+                .toString()
+                .contains("read-only", Qt::CaseInsensitive));
+    QVERIFY(!readOnlyComment.data(Qt::AccessibleDescriptionRole)
+                 .toString()
+                 .contains("edit this value", Qt::CaseInsensitive));
 }
 
 void EtherCATWorkbenchTests::testEditableStartupWorkflow()

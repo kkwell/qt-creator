@@ -1545,6 +1545,47 @@ the popup is not yet visible. Beckhoff's selected-master Topology entry is
 documented at
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446515467.html>.
 
+## EtherCATWorkbench Startup table accessibility qualification
+
+`ISSUE-WB-STARTUP-TABLE-A11Y-001` uses local baseline
+`cf3c437147e816320256c1e75b5c67863de77663`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first regression | Setup and cleanup passed; the old implementation failed because `EtherCATStartupTable` had an empty accessible name under `/private/tmp/embed-labs-startup-a11y-failure.kptBc4` |
+| Table widget | Translated accessible name and nonempty purpose description verified |
+| Standard item roles | All nine columns return an actual `QString` through `Qt::AccessibleTextRole`; non-Enabled text exactly matches the complete Display value; description and tooltip contain object address, heading, and full value |
+| Enabled checkbox | Passed for Enabled and Disabled text while the intentionally empty Display value, `Qt::CheckStateRole`, and checkable flags remain unchanged |
+| Long-cell recovery | Complete 256-byte raw Data and long Chinese/Japanese/Unicode Comment values remain available in accessible text, description, and tooltip without geometry changes |
+| Truthful operation guidance | Passed for editable configured-slave fields, read-only CoE Protocol, read-only repository catalogue requests, and fixed ESI requests that cannot be enabled/disabled, edited, deleted, or moved |
+| Focused normal-scale test | 3 passed, 0 failed; target exit 0 under `/private/tmp/embed-labs-startup-a11y-final-tests.KbokZb/focused-normal` |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; target exit 0 under `/private/tmp/embed-labs-startup-a11y-final-tests.KbokZb/focused-2x` |
+| Complete EtherCATWorkbench normal scale | 48 passed, 0 failed; target exit 0 under `/private/tmp/embed-labs-startup-a11y-final-tests.KbokZb/full-normal` |
+| Complete EtherCATWorkbench 2x scale | 48 passed, 0 failed; target exit 0 under `/private/tmp/embed-labs-startup-a11y-final-tests.KbokZb/full-2x` |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 48, Scan 7, Diagnostics 7; 99 passed, 0 failed with target exit 0 in isolated LLDB-supervised processes under `/private/tmp/embed-labs-startup-a11y-six-final.mI2ZSV` |
+| Qualified Qt and test build | Qt 6.11 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build | Full `WITH_TESTS=OFF` build passed in `qt-creator-build-ethercat-product-qt611` |
+| Product inventory | Exactly the 16 allow-listed plugin dylibs are present |
+| Enabled offscreen startup | After PID detection, the process stayed alive for a measured 35 seconds under `/private/tmp/embed-labs-startup-a11y-product-enabled-final.yjyQ90`; `lifecycle-evidence.txt` records epoch/UTC boundaries and intentional SIGTERM produced target status 15 |
+| Explicitly disabled startup | After PID detection, the process stayed alive for a measured 35 seconds with `-noload EtherCATWorkbench` under `/private/tmp/embed-labs-startup-a11y-product-disabled-final.FFNwfM`; the evidence file records epoch/UTC boundaries, intentional SIGTERM produced target status 15, and one non-fatal shared-memory message did not interrupt startup |
+| Process and crash-report cleanup | No residual target/LLDB process and no new Embed Labs/LLDB DiagnosticReports file |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no visible main window or crash dialog |
+| Assistive-technology claim | Standard Qt widget/item-model metadata verified; no manual VoiceOver reading is claimed |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, Project command, custom model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, SDO/controller transport, online state, or hardware access | Not performed or added; Startup remains offline Project/ESI configuration and no request was sent |
+
+Qt's standard item and widget accessibility contracts are documented at
+<https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum> and
+<https://doc.qt.io/qt-6/qwidget.html#accessibleName-prop>. Qt Creator 20.0's
+local precedents are
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/libs/utils/fancymainwindow.cpp#L244-L247>
+and
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/terminal/terminalpane.cpp#L586-L597>.
+Beckhoff's ordered Startup request comparison is documented at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.
+
 ## Verification states
 
 Use only these evidence labels:

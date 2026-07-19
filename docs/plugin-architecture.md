@@ -799,6 +799,42 @@ Qt defines the relevant boundaries in
 Beckhoff's Topology dialog remains a product comparison only:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446515467.html>.
 
+## Workbench Startup table accessibility boundary
+
+The private `StartupPage` and `StartupTableModel` own the widget and item-model
+accessibility metadata for the ordered offline request table. The table has a
+translated name and purpose description. Every valid cell maps its complete
+current value to Qt's standard `AccessibleTextRole`; the intentionally empty
+Enabled display cell instead publishes `Enabled` or `Disabled`, while its
+existing `CheckStateRole` remains authoritative.
+
+`AccessibleDescriptionRole` and `ToolTipRole` are built only from the current
+valid row: object index/subindex, current column heading, complete cell value,
+and guidance derived from the current item flags. A fixed angle-bracketed ESI
+request advertises all existing restrictions, a catalogue context remains
+read-only, and only a genuinely editable configured-slave cell advertises
+editing. No model index, row object, widget, Project snapshot, Provider, or
+controller object is retained across the call. Existing model resets remain
+the lifecycle boundary.
+
+This boundary does not alter table geometry, section-resize policy, selection,
+editing, validation, ProjectService, Undo/Redo, persistence, ESI parsing, or
+the offline source boundary. It adds no public/custom role, API, source file,
+dependency, Provider, Project command, thread, timer, SDO/network/controller
+transport, online state, or physical-hardware behavior. No CMake or qbs
+description changed.
+
+Qt's standard roles and widget properties are documented at
+<https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum> and
+<https://doc.qt.io/qt-6/qwidget.html#accessibleName-prop>. Qt Creator 20.0
+provides local widget and model precedents at
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/libs/utils/fancymainwindow.cpp#L244-L247>
+and
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/terminal/terminalpane.cpp#L586-L597>.
+Beckhoff's Startup ordering, columns, and fixed-request semantics remain only
+the product comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

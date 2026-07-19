@@ -657,6 +657,23 @@ bootstrap changes, so the direct Core patch budget does not increase and no
 extension-point exception is required. The Workbench path count remains 44
 and the direct upstream Core patch count remains five.
 
+The Workbench Startup table accessibility issue, based on
+`cf3c437147e816320256c1e75b5c67863de77663`, changes only the existing
+product-owned `startuppage.cpp`, Workbench test declaration/implementation,
+and documentation. It adds translated widget metadata and uses only Qt's
+standard `AccessibleTextRole` and `AccessibleDescriptionRole` for complete
+current values, object/column context, and existing fixed/read-only/editable
+guidance. The visual Enabled cell remains empty and its existing
+`CheckStateRole` remains authoritative.
+
+No source file, dependency, CMake/qbs entry, public API, Project format,
+Provider, persistence field, Project command, thread, timer, SDO/controller
+transport, online state, network behavior, or physical-hardware behavior
+changes. No file under Qt Creator's upstream Core, ProjectExplorer, or
+application bootstrap changes, so the direct Core patch budget does not
+increase and no extension-point exception is required. The Workbench path
+count remains 44 and the direct upstream Core patch count remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

@@ -2485,3 +2485,84 @@ persistence, Project mutation, thread, timer, network/controller transport,
 online data, physical-port model, or physical-hardware behavior. No CMake or
 qbs file changed, so qbs was not run. The Workbench path count remains 44 and
 the direct upstream Core patch count remains five.
+
+## Startup table accessibility qualification
+
+`ISSUE-WB-STARTUP-TABLE-A11Y-001` is based on local baseline
+`cf3c437147e816320256c1e75b5c67863de77663`. It closes one bounded
+accessibility and long-cell recovery gap in the existing offline Startup page
+without changing its table geometry, selection, editors, validation,
+ProjectService command path, Undo/Redo, or persistence.
+
+`EtherCATStartupTable` now publishes a translated accessible name and a
+purpose description. Every valid cell provides a real `QString` through
+`Qt::AccessibleTextRole`. `Qt::AccessibleDescriptionRole` and the tooltip
+retain the complete object address, column heading, and current unelided value.
+The visually empty Enabled cell reports `Enabled` or `Disabled`, while the
+existing `Qt::CheckStateRole` and item flags remain authoritative. A 256-byte
+raw value and a long Chinese/Japanese/Unicode Comment are therefore recoverable
+without widening or wrapping the table.
+
+Operation guidance is derived from the current row and cell flags. An
+angle-bracketed fixed ESI request states that it cannot be enabled or disabled,
+edited, deleted, or moved. A repository catalogue request reports the current
+read-only context. Only a genuinely editable configured-slave field advertises
+editing, while the CoE Protocol cell remains explicitly read-only. No
+model index, Project snapshot, widget, Provider, or controller object is
+retained across a call.
+
+Qt defines the standard item roles in
+[Qt::ItemDataRole](https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum) and the
+localized widget metadata contract in
+[QWidget](https://doc.qt.io/qt-6/qwidget.html#accessibleName-prop). Qt Creator
+20.0 provides local precedents for explicit widget accessibility in
+[`FancyMainWindow`](https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/libs/utils/fancymainwindow.cpp#L244-L247)
+and standard model descriptions in
+[`TerminalPane`](https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/terminal/terminalpane.cpp#L586-L597).
+Beckhoff documents the ordered Transition, Protocol, Index, Data, Comment, and
+fixed-request behavior in
+[Startup](https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html).
+The Enabled column and Qt accessibility metadata are Embed Labs Qt-native
+offline behavior rather than a TwinCAT implementation claim.
+
+The failure-first run under
+`/private/tmp/embed-labs-startup-a11y-failure.kptBc4` passed test setup and
+cleanup but failed because the old table's accessible name was empty. After
+the implementation and review corrections, focused normal-scale and
+`QT_SCALE_FACTOR=2` runs each pass three events under
+`/private/tmp/embed-labs-startup-a11y-final-tests.KbokZb`. The regression checks
+all nine columns, exact `QString` role types, complete Display/accessible-text
+agreement outside Enabled, both check states, editable/read-only/fixed
+guidance, complete long raw Data and Unicode Comment values, unchanged flags,
+and Project cleanup. This verifies Qt metadata; no manual VoiceOver reading is
+claimed.
+
+Complete normal-scale and 2x Workbench runs each pass 48 events under the same
+final-test root. The six isolated EtherCAT suites pass 99 events under
+`/private/tmp/embed-labs-startup-a11y-six-final.mI2ZSV`: Core 17, Project 12,
+Devices 8, Workbench 48, Scan 7, and Diagnostics 7. Every target exited with
+status 0. The `WITH_TESTS=OFF` product build passes and contains exactly the 16
+allow-listed plugin dylibs.
+
+Enabled product startup under
+`/private/tmp/embed-labs-startup-a11y-product-enabled-final.yjyQ90` and startup with
+`-noload EtherCATWorkbench` under
+`/private/tmp/embed-labs-startup-a11y-product-disabled-final.FFNwfM` each
+remained alive for a measured 35 seconds after its target PID was observed.
+The evidence files record the PID, UTC/epoch start and termination times, and
+the 35-second difference. LLDB passed the intentional SIGTERM to each target,
+which exited with status 15. The disabled run emitted one non-fatal
+shared-memory initialization message and continued. Cleanup found no residual
+target or LLDB process and no new Embed Labs or LLDB DiagnosticReports file.
+
+Every executable used fresh HOME/settings, cleared inherited DYLD variables,
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and
+only the process-local Touch Bar LLDB breakpoint. No visible main window or
+crash dialog was created. This issue changes only the existing private
+`startuppage.cpp`, Workbench test declaration/implementation, and
+documentation. It adds no source file, public or custom model role, API,
+dependency, Provider, persistence field, Project command, thread, timer,
+SDO/network/controller transport, online state, or physical-hardware behavior.
+No Startup request was sent. No CMake or qbs description changed, so qbs was
+not run. The Workbench path count remains 44 and the direct upstream Core patch
+count remains five.
