@@ -59,6 +59,7 @@ private slots:
     void testStartupTableAccessibility();
     void testEditableStartupWorkflow();
     void testDcRepositoryModePreview();
+    void testDcRepositoryModeEmptyState();
     void testEditableDcWorkflow();
     void testDynamicPropertyProviderRemoval();
     void testOptionalProviderAvailabilityPresentation();

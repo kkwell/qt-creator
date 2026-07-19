@@ -8199,6 +8199,11 @@ void EtherCATWorkbenchTests::testDcRepositoryModePreview()
     QCOMPARE(importResult.affectedDeviceIds.size(), 1);
 
     const Data::NodeId deviceId = importResult.affectedDeviceIds.first();
+    const std::optional<Data::DeviceDescription> supportedPreviewDevice
+        = repository->device(deviceId);
+    QVERIFY(supportedPreviewDevice);
+    QVERIFY(supportedPreviewDevice->summary.supported);
+    QCOMPARE(supportedPreviewDevice->dcModes.size(), 2);
     QTRY_VERIFY(controller.treeModel()->indexForNodeId(deviceId).isValid());
     controller.selectionService()->setCurrentNodeId(deviceId);
 
@@ -8212,6 +8217,7 @@ void EtherCATWorkbenchTests::testDcRepositoryModePreview()
     details.tabWidget()->setCurrentWidget(page);
     QTRY_VERIFY(page->isVisible());
     QLabel *summary = page->findChild<QLabel *>("EtherCATDcSummary");
+    QLabel *validation = page->findChild<QLabel *>("EtherCATDcValidation");
     QComboBox *mode = page->findChild<QComboBox *>("EtherCATDcOperationMode");
     QCheckBox *enabled = page->findChild<QCheckBox *>("EtherCATDcEnabled");
     QLineEdit *assignActivate = page->findChild<QLineEdit *>("EtherCATDcAssignActivate");
@@ -8224,6 +8230,7 @@ void EtherCATWorkbenchTests::testDcRepositoryModePreview()
     QCheckBox *referenceClock = page->findChild<QCheckBox *>(
         "EtherCATDcPotentialReferenceClock");
     QVERIFY(summary);
+    QVERIFY(validation);
     QVERIFY(mode);
     QVERIFY(enabled);
     QVERIFY(assignActivate);
@@ -8239,9 +8246,16 @@ void EtherCATWorkbenchTests::testDcRepositoryModePreview()
     QCOMPARE(mode->currentText(), QString("Sync0"));
     QVERIFY(mode->isEnabled());
     QVERIFY(summary->text().contains("preview", Qt::CaseInsensitive));
+    QVERIFY(summary->text().contains("Add the device to an offline project", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(!validation->text().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(!validation->text().contains("cannot be added", Qt::CaseInsensitive));
     QVERIFY(mode->lineEdit()->isReadOnly());
     QVERIFY(!mode->accessibleDescription().isEmpty());
     QVERIFY(mode->accessibleDescription().contains("read-only", Qt::CaseInsensitive));
+    QVERIFY(!mode->accessibleDescription().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(!mode->accessibleDescription().contains("cannot be added", Qt::CaseInsensitive));
     QVERIFY(!enabled->isEnabled());
     QVERIFY(assignActivate->isReadOnly());
     QVERIFY(!sync0Enabled->isEnabled());
@@ -8280,6 +8294,313 @@ void EtherCATWorkbenchTests::testDcRepositoryModePreview()
     controller.selectionService()->clear();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+void EtherCATWorkbenchTests::testDcRepositoryModeEmptyState()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+    QVERIFY(projectService->projects().isEmpty());
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QByteArray emptyDcEsi = deviceEsi();
+    const qsizetype dcStart = emptyDcEsi.indexOf("<Dc>");
+    const qsizetype dcEnd = emptyDcEsi.indexOf("</Dc>", dcStart);
+    QVERIFY(dcStart >= 0);
+    QVERIFY(dcEnd > dcStart);
+    emptyDcEsi.remove(dcStart, dcEnd + QByteArray("</Dc>").size() - dcStart);
+    emptyDcEsi.replace("#x00005678", "#x7A170002");
+    emptyDcEsi.replace("#x00000011", "#x0000A508");
+    emptyDcEsi.replace("AX5000", "EL-DC-EMPTY");
+    emptyDcEsi.replace("Workbench Servo", "DC Empty Servo / 无 DC 模式");
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .pathAppended("dc-repository-empty.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(emptyDcEsi));
+    const Data::DeviceImportResult importResult = waitForJob(repository->importFiles({esiPath}));
+    QCOMPARE(importResult.requestedFiles, 1);
+    QCOMPARE(importResult.importedDevices, 1);
+    QCOMPARE(importResult.failedFiles, 0);
+    QCOMPARE(importResult.affectedDeviceIds.size(), 1);
+
+    const Data::NodeId deviceId = importResult.affectedDeviceIds.first();
+    const std::optional<Data::DeviceDescription> supportedEmptyDevice
+        = repository->device(deviceId);
+    QVERIFY(supportedEmptyDevice);
+    QVERIFY(supportedEmptyDevice->summary.supported);
+    QVERIFY(supportedEmptyDevice->dcModes.isEmpty());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(deviceId).isValid());
+    controller.selectionService()->setCurrentNodeId(deviceId);
+
+    DetailsView details(&controller);
+    details.resize(980, 720);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::DC_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page);
+    QTRY_VERIFY(page->isVisible());
+    QLabel *summary = page->findChild<QLabel *>("EtherCATDcSummary");
+    QLabel *validation = page->findChild<QLabel *>("EtherCATDcValidation");
+    QComboBox *mode = page->findChild<QComboBox *>("EtherCATDcOperationMode");
+    QCheckBox *enabled = page->findChild<QCheckBox *>("EtherCATDcEnabled");
+    QLineEdit *assignActivate = page->findChild<QLineEdit *>("EtherCATDcAssignActivate");
+    QCheckBox *sync0Enabled = page->findChild<QCheckBox *>("EtherCATDcSync0Enabled");
+    QLineEdit *sync0Cycle = page->findChild<QLineEdit *>("EtherCATDcSync0CycleNs");
+    QLineEdit *sync0Shift = page->findChild<QLineEdit *>("EtherCATDcSync0ShiftNs");
+    QCheckBox *sync1Enabled = page->findChild<QCheckBox *>("EtherCATDcSync1Enabled");
+    QLineEdit *sync1Cycle = page->findChild<QLineEdit *>("EtherCATDcSync1CycleNs");
+    QLineEdit *sync1Shift = page->findChild<QLineEdit *>("EtherCATDcSync1ShiftNs");
+    QCheckBox *referenceClock = page->findChild<QCheckBox *>(
+        "EtherCATDcPotentialReferenceClock");
+    QVERIFY(summary);
+    QVERIFY(validation);
+    QVERIFY(mode);
+    QVERIFY(enabled);
+    QVERIFY(assignActivate);
+    QVERIFY(sync0Enabled);
+    QVERIFY(sync0Cycle);
+    QVERIFY(sync0Shift);
+    QVERIFY(sync1Enabled);
+    QVERIFY(sync1Cycle);
+    QVERIFY(sync1Shift);
+    QVERIFY(referenceClock);
+
+    QVERIFY2(
+        summary->text().contains(
+            "No ESI Distributed Clocks operation mode", Qt::CaseInsensitive),
+        qPrintable(summary->text()));
+    QVERIFY(summary->text().contains("Add the device to an offline Project"));
+    QVERIFY(!summary->text().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(!summary->text().contains("Select an operation mode", Qt::CaseInsensitive));
+    QVERIFY(validation->text().contains(
+        "No ESI Distributed Clocks operation mode", Qt::CaseInsensitive));
+    QVERIFY(!validation->text().contains("configuration is valid", Qt::CaseInsensitive));
+    QCOMPARE(mode->count(), 0);
+    QCOMPARE(mode->currentIndex(), -1);
+    QVERIFY(!mode->isEnabled());
+    QVERIFY(mode->lineEdit()->isReadOnly());
+    QVERIFY(mode->accessibleDescription().contains(
+        "No ESI Distributed Clocks operation mode", Qt::CaseInsensitive));
+    QVERIFY(mode->accessibleDescription().contains("offline Project", Qt::CaseInsensitive));
+    QVERIFY(mode->accessibleDescription().contains("manual timing", Qt::CaseInsensitive));
+    QVERIFY(!mode->accessibleDescription().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(!mode->accessibleDescription().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(mode->accessibleDescription().contains("controller", Qt::CaseInsensitive));
+    QVERIFY(mode->accessibleDescription().contains("network", Qt::CaseInsensitive));
+    QVERIFY(mode->accessibleDescription().contains("physical hardware", Qt::CaseInsensitive));
+    QCOMPARE(mode->toolTip(), mode->accessibleDescription());
+    QVERIFY(!enabled->isEnabled());
+    QVERIFY(assignActivate->isReadOnly());
+    QVERIFY(!sync0Enabled->isEnabled());
+    QVERIFY(sync0Cycle->isReadOnly());
+    QVERIFY(sync0Shift->isReadOnly());
+    QVERIFY(!sync1Enabled->isEnabled());
+    QVERIFY(sync1Cycle->isReadOnly());
+    QVERIFY(sync1Shift->isReadOnly());
+    QVERIFY(!referenceClock->isEnabled());
+    QVERIFY(projectService->projects().isEmpty());
+
+    const QPointer<QComboBox> previousMode = mode;
+    controller.selectionService()->clear();
+    QTRY_VERIFY(previousMode.isNull());
+    controller.selectionService()->setCurrentNodeId(deviceId);
+    QComboBox *resetMode = nullptr;
+    QTRY_VERIFY((resetMode = details.findChild<QComboBox *>("EtherCATDcOperationMode")));
+    QLabel *resetSummary = details.findChild<QLabel *>("EtherCATDcSummary");
+    QLabel *resetValidation = details.findChild<QLabel *>("EtherCATDcValidation");
+    QVERIFY(resetSummary);
+    QVERIFY(resetValidation);
+    QVERIFY(resetSummary->text().contains(
+        "No ESI Distributed Clocks operation mode", Qt::CaseInsensitive));
+    QVERIFY(resetValidation->text().contains(
+        "No ESI Distributed Clocks operation mode", Qt::CaseInsensitive));
+    QCOMPARE(resetMode->count(), 0);
+    QVERIFY(!resetMode->isEnabled());
+    QVERIFY(resetMode->lineEdit()->isReadOnly());
+    QVERIFY(projectService->projects().isEmpty());
+    controller.selectionService()->clear();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+
+    QByteArray unsupportedEmptyDcEsi = emptyDcEsi;
+    unsupportedEmptyDcEsi.replace("#x7A170002", "#x7A170003");
+    unsupportedEmptyDcEsi.replace("#x0000A508", "#x0000A509");
+    unsupportedEmptyDcEsi.replace("EL-DC-EMPTY", "EL-DC-LIMITED");
+    unsupportedEmptyDcEsi.replace(
+        "DC Empty Servo / 无 DC 模式", "DC Limited Servo / 不支持 DC 空态");
+    unsupportedEmptyDcEsi.replace("</Device>", "<Modules/></Device>");
+    const Utils::FilePath unsupportedEsiPath = Utils::FilePath::fromString(directory.path())
+                                                   .pathAppended("dc-repository-limited.xml");
+    QVERIFY_RESULT(unsupportedEsiPath.writeFileContents(unsupportedEmptyDcEsi));
+    const Data::DeviceImportResult unsupportedImportResult
+        = waitForJob(repository->importFiles({unsupportedEsiPath}));
+    QCOMPARE(unsupportedImportResult.requestedFiles, 1);
+    QCOMPARE(unsupportedImportResult.importedDevices, 1);
+    QCOMPARE(unsupportedImportResult.failedFiles, 0);
+    QCOMPARE(unsupportedImportResult.affectedDeviceIds.size(), 1);
+
+    const Data::NodeId unsupportedDeviceId
+        = unsupportedImportResult.affectedDeviceIds.first();
+    const std::optional<Data::DeviceDescription> unsupportedDevice
+        = repository->device(unsupportedDeviceId);
+    QVERIFY(unsupportedDevice);
+    QVERIFY(!unsupportedDevice->summary.supported);
+    QVERIFY(unsupportedDevice->dcModes.isEmpty());
+    controller.selectionService()->setCurrentNodeId(unsupportedDeviceId);
+    QComboBox *unsupportedMode = nullptr;
+    QTRY_VERIFY((unsupportedMode = details.findChild<QComboBox *>(
+                     "EtherCATDcOperationMode")));
+    QLabel *unsupportedSummary = details.findChild<QLabel *>("EtherCATDcSummary");
+    QLabel *unsupportedValidation = details.findChild<QLabel *>("EtherCATDcValidation");
+    QVERIFY(unsupportedSummary);
+    QVERIFY(unsupportedValidation);
+    QVERIFY(unsupportedSummary->text().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(unsupportedSummary->text().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(unsupportedSummary->text().contains("Device Repository", Qt::CaseInsensitive));
+    QVERIFY(unsupportedValidation->text().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(unsupportedValidation->text().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(unsupportedValidation->text().contains("Device Repository", Qt::CaseInsensitive));
+    QCOMPARE(unsupportedMode->count(), 0);
+    QCOMPARE(unsupportedMode->currentIndex(), -1);
+    QVERIFY(!unsupportedMode->isEnabled());
+    QVERIFY(unsupportedMode->lineEdit()->isReadOnly());
+    QVERIFY(unsupportedMode->accessibleDescription().contains(
+        "unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(unsupportedMode->accessibleDescription().contains(
+        "cannot be added", Qt::CaseInsensitive));
+    QVERIFY(unsupportedMode->accessibleDescription().contains(
+        "Device Repository", Qt::CaseInsensitive));
+    QVERIFY(unsupportedMode->accessibleDescription().contains("controller", Qt::CaseInsensitive));
+    QVERIFY(unsupportedMode->accessibleDescription().contains("network", Qt::CaseInsensitive));
+    QVERIFY(unsupportedMode->accessibleDescription().contains(
+        "physical hardware", Qt::CaseInsensitive));
+    QCOMPARE(unsupportedMode->toolTip(), unsupportedMode->accessibleDescription());
+    QVERIFY(projectService->projects().isEmpty());
+    controller.selectionService()->clear();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+
+    QByteArray unsupportedPreviewEsi = deviceEsi();
+    unsupportedPreviewEsi.replace("#x00005678", "#x7A170004");
+    unsupportedPreviewEsi.replace("#x00000011", "#x0000A50A");
+    unsupportedPreviewEsi.replace("AX5000", "EL-DC-LIMITED-PREVIEW");
+    unsupportedPreviewEsi.replace(
+        "Workbench Servo", "DC Limited Preview Servo / 不支持 DC 预览");
+    unsupportedPreviewEsi.replace(
+        "<CycleTimeSync1>500000</CycleTimeSync1>",
+        "<CycleTimeSync1>4294967296</CycleTimeSync1>");
+    unsupportedPreviewEsi.replace("</Device>", "<Modules/></Device>");
+    const Utils::FilePath unsupportedPreviewEsiPath
+        = Utils::FilePath::fromString(directory.path())
+              .pathAppended("dc-repository-limited-preview.xml");
+    QVERIFY_RESULT(unsupportedPreviewEsiPath.writeFileContents(unsupportedPreviewEsi));
+    const Data::DeviceImportResult unsupportedPreviewImportResult
+        = waitForJob(repository->importFiles({unsupportedPreviewEsiPath}));
+    QCOMPARE(unsupportedPreviewImportResult.requestedFiles, 1);
+    QCOMPARE(unsupportedPreviewImportResult.importedDevices, 1);
+    QCOMPARE(unsupportedPreviewImportResult.failedFiles, 0);
+    QCOMPARE(unsupportedPreviewImportResult.affectedDeviceIds.size(), 1);
+
+    const Data::NodeId unsupportedPreviewDeviceId
+        = unsupportedPreviewImportResult.affectedDeviceIds.first();
+    const std::optional<Data::DeviceDescription> unsupportedPreviewDevice
+        = repository->device(unsupportedPreviewDeviceId);
+    QVERIFY(unsupportedPreviewDevice);
+    QVERIFY(!unsupportedPreviewDevice->summary.supported);
+    QCOMPARE(unsupportedPreviewDevice->dcModes.size(), 2);
+    controller.selectionService()->setCurrentNodeId(unsupportedPreviewDeviceId);
+    QComboBox *unsupportedPreviewMode = nullptr;
+    QTRY_VERIFY((unsupportedPreviewMode = details.findChild<QComboBox *>(
+                     "EtherCATDcOperationMode")));
+    QLabel *unsupportedPreviewSummary = details.findChild<QLabel *>("EtherCATDcSummary");
+    QLabel *unsupportedPreviewValidation = details.findChild<QLabel *>("EtherCATDcValidation");
+    QVERIFY(unsupportedPreviewSummary);
+    QVERIFY(unsupportedPreviewValidation);
+    QVERIFY(unsupportedPreviewSummary->text().contains("read-only preview", Qt::CaseInsensitive));
+    QVERIFY(unsupportedPreviewSummary->text().contains("unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(unsupportedPreviewSummary->text().contains("cannot be added", Qt::CaseInsensitive));
+    QVERIFY(unsupportedPreviewSummary->text().contains(
+        "Device Repository", Qt::CaseInsensitive));
+    QVERIFY(!unsupportedPreviewSummary->text().contains(
+        "Add the device to an offline project", Qt::CaseInsensitive));
+    QVERIFY(unsupportedPreviewValidation->text().contains(
+        "read-only preview", Qt::CaseInsensitive));
+    QVERIFY(unsupportedPreviewValidation->text().contains(
+        "unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(unsupportedPreviewValidation->text().contains(
+        "cannot be added", Qt::CaseInsensitive));
+    QVERIFY(unsupportedPreviewValidation->text().contains(
+        "Device Repository", Qt::CaseInsensitive));
+    QCOMPARE(unsupportedPreviewMode->count(), 2);
+    QCOMPARE(unsupportedPreviewMode->currentIndex(), 0);
+    QVERIFY(unsupportedPreviewMode->isEnabled());
+    QVERIFY(unsupportedPreviewMode->lineEdit()->isReadOnly());
+    QVERIFY(unsupportedPreviewMode->accessibleDescription().contains(
+        "read-only", Qt::CaseInsensitive));
+    QVERIFY(unsupportedPreviewMode->accessibleDescription().contains(
+        "unsupported ESI", Qt::CaseInsensitive));
+    QVERIFY(unsupportedPreviewMode->accessibleDescription().contains(
+        "cannot be added", Qt::CaseInsensitive));
+    QVERIFY(unsupportedPreviewMode->accessibleDescription().contains(
+        "Device Repository", Qt::CaseInsensitive));
+    QVERIFY(unsupportedPreviewMode->accessibleDescription().contains(
+        "controller", Qt::CaseInsensitive));
+    QVERIFY(unsupportedPreviewMode->accessibleDescription().contains(
+        "network", Qt::CaseInsensitive));
+    QVERIFY(unsupportedPreviewMode->accessibleDescription().contains(
+        "physical hardware", Qt::CaseInsensitive));
+    QCOMPARE(unsupportedPreviewMode->toolTip(), unsupportedPreviewMode->accessibleDescription());
+    unsupportedPreviewMode->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(unsupportedPreviewMode->hasFocus());
+    QTest::keyClick(unsupportedPreviewMode, Qt::Key_Down);
+    QCOMPARE(unsupportedPreviewMode->currentIndex(), 1);
+    QTRY_VERIFY(unsupportedPreviewValidation->text().contains(
+        "configuration error", Qt::CaseInsensitive));
+    QVERIFY(unsupportedPreviewValidation->text().contains(
+        "cannot be added", Qt::CaseInsensitive));
+    QVERIFY(unsupportedPreviewValidation->text().contains(
+        "Device Repository", Qt::CaseInsensitive));
+    QVERIFY(projectService->projects().isEmpty());
+    controller.selectionService()->clear();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+
+    BuiltinPropertyPageProvider provider(&controller);
+    const Core::PropertyPageContext missingContext{
+        {}, Data::NodeId::create(), Core::WorkbenchNodeKind::Device, "Removed ESI device"};
+    std::unique_ptr<QWidget> missingPage(
+        provider.createPage(Constants::DC_PAGE_ID, nullptr));
+    QVERIFY(missingPage);
+    provider.updatePage(Constants::DC_PAGE_ID, missingPage.get(), missingContext);
+    QLabel *missingSummary = missingPage->findChild<QLabel *>("EtherCATDcSummary");
+    QLabel *missingValidation = missingPage->findChild<QLabel *>("EtherCATDcValidation");
+    QComboBox *missingMode = missingPage->findChild<QComboBox *>("EtherCATDcOperationMode");
+    QVERIFY(missingSummary);
+    QVERIFY(missingValidation);
+    QVERIFY(missingMode);
+    QVERIFY(missingSummary->text().contains("no longer available", Qt::CaseInsensitive));
+    QVERIFY(missingSummary->text().contains("Device Repository", Qt::CaseInsensitive));
+    QVERIFY(!missingSummary->text().contains("offline Project", Qt::CaseInsensitive));
+    QVERIFY(missingValidation->text().contains("unavailable", Qt::CaseInsensitive));
+    QCOMPARE(missingMode->count(), 0);
+    QCOMPARE(missingMode->currentIndex(), -1);
+    QVERIFY(!missingMode->isEnabled());
+    QVERIFY(missingMode->lineEdit()->isReadOnly());
+    QVERIFY(missingMode->accessibleDescription().contains("unavailable", Qt::CaseInsensitive));
+    QVERIFY(missingMode->accessibleDescription().contains(
+        "Device Repository", Qt::CaseInsensitive));
+    QVERIFY(missingMode->accessibleDescription().contains("controller", Qt::CaseInsensitive));
+    QVERIFY(missingMode->accessibleDescription().contains("network", Qt::CaseInsensitive));
+    QVERIFY(missingMode->accessibleDescription().contains(
+        "physical hardware", Qt::CaseInsensitive));
+    QCOMPARE(missingMode->toolTip(), missingMode->accessibleDescription());
+    QVERIFY(projectService->projects().isEmpty());
 }
 
 void EtherCATWorkbenchTests::testEditableDcWorkflow()

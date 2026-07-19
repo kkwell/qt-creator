@@ -1170,6 +1170,67 @@ description changed. No path under upstream Core, ProjectExplorer, or the
 application bootstrap changed. The Workbench path count remains 44 and the
 direct upstream Core patch count remains five.
 
+## Workbench repository Device DC empty-state boundary
+
+`ISSUE-WB-DC-REPOSITORY-EMPTY-001` remains entirely inside the product-owned
+private `DcPage`. `DeviceRepositoryProvider` continues to own the immutable ESI
+description and parsed `dcModes`; the page derives the empty presentation from
+the existing copied list only while private availability and support bits
+confirm whether the repository description still exists and may enter the
+offline topology. No availability/support state, synthetic mode, configuration
+object, or ownership relationship crosses a plugin boundary.
+
+A repository Device with no parsed modes keeps the selector at zero items and
+index `-1`, disabled, and read-only. The visible summary, informational status,
+localized selector description, and tooltip now agree that no ESI Distributed
+Clocks operation mode is available. They disclose that manual timing belongs
+in an offline Project and that the repository page does not access a
+controller, network, or physical hardware. The page does not convert the empty
+state into a validation error or an online-capability claim.
+
+A zero-mode Device whose ESI description contains unsupported structures stays
+separate from that supported recovery. The page shows a warning, states that
+the existing topology gate will not add it to an offline Project, and returns
+the user to Device Repository support details. It does not pretend that manual
+Project entry is available.
+
+An unsupported Device with parsed modes retains local read-only preview but
+does not inherit the supported Project-add instruction. The summary, selector
+accessibility text, and tooltip disclose the topology rejection and Device
+Repository recovery. With a valid mode, validation shows the support warning;
+with an invalid mode, it preserves the configuration Error or Warning and
+appends the same recovery notice. Preview never grants Project mutation.
+
+A removed or unavailable ESI description is kept separate from a valid Device
+with zero modes. That error state shows a warning and Device Repository
+recovery, never an offline Project add instruction. It grants the same zero
+permissions and does not create a placeholder repository object.
+
+Repository-empty state grants no permission. Every configuration control
+remains disabled or read-only, `selectEsiMode()` has no item to activate, and
+the Device context cannot reach `submitConfiguration()` or
+`setDcConfiguration()`; the read-only Project lookup in `setContext()` cannot
+produce a ProjectService mutation or Undo command.
+Page teardown remains the complete presentation-lifetime boundary. A valid
+configured slave remains the only editable context and continues to own manual
+entry, validation, checked Project commands, persistence, and Undo/Redo.
+
+Qt specifies that an empty `QComboBox` has count zero and current index `-1`:
+<https://doc.qt.io/qt-6/qcombobox.html>. Qt Creator 20.0's
+Type Hierarchy widget supplies the host precedent for an explicit unavailable
+state:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/typehierarchy.cpp#L63-L72>.
+Beckhoff's Distributed Clock page remains only the field and operation-mode
+comparison and describes selection when modes are offered:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>.
+
+This boundary adds no public API, source file, dependency, Provider, Project
+command, persistence field, model role, thread, timer, controller/network
+transport, online state, or physical-hardware behavior. No CMake or qbs
+description changed. No path under upstream Core, ProjectExplorer, or the
+application bootstrap changed. The Workbench path count remains 44 and the
+direct upstream Core patch count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

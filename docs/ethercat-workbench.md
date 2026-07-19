@@ -3329,3 +3329,146 @@ not run. The unrelated `WITH_TESTS=ON` all-target build was not rerun; the
 known EasyBoard test include blocker remains outside this private Workbench
 issue. The Workbench path count remains 44 and the direct upstream Core patch
 count remains five.
+
+## Repository Device DC empty state
+
+`ISSUE-WB-DC-REPOSITORY-EMPTY-001` uses local baseline
+`f60f0fc0939b3945c4026851e9f4e86e15e2d9be`. It qualifies the inverse of the
+repository mode-preview path. An imported Device whose valid ESI description
+contains no `<Dc>` modes previously displayed “Select an operation mode” and
+the green “offline configuration is valid” state even though the selector had
+zero items and was disabled. The visible instructions, validation state, and
+actual control state therefore disagreed.
+
+The private `DcPage` now records whether the current repository Device still
+has an ESI description and whether that description is supported. It derives a
+dedicated repository-empty presentation only when the description exists and
+`m_esiModes.isEmpty()`. For a supported Device, the summary says that no ESI
+Distributed Clocks operation mode is available and directs users to an offline
+Project for manual timing. `showValidation()` uses the existing informational
+`InfoLabel` type and says that there is no mode to preview rather than claiming
+that an absent configuration is valid. The selector remains at count zero,
+index `-1`, disabled, and read-only. Its localized accessible description and
+equal tooltip disclose the same empty state and the
+no-controller/no-network/no-physical-hardware boundary. Every configuration
+field remains disabled or read-only.
+
+An imported Device with unsupported ESI structures and zero modes is a warning
+state, not the supported recovery above. Because the existing offline topology
+gate rejects that Device, the summary, validation, accessible description, and
+tooltip explicitly say that it cannot be added to an offline Project and send
+the user to Device Repository to review its support details.
+
+An unsupported Device that still contains DC modes may continue to preview
+them locally, but it receives the same cannot-add and Device Repository
+disclosure in the summary, validation, accessible description, and tooltip. A
+valid mode produces a support warning; an invalid mode retains its configuration
+error or warning and appends the support recovery instead of hiding either
+diagnostic.
+
+A stale Device context whose ESI description was removed is a distinct error
+state. It directs the user back to Device Repository, shows an unavailable
+warning instead of the valid empty-Device recovery, and never suggests adding
+the missing Device to a Project. Its selector and all configuration controls
+remain disabled/read-only with the same no-controller/no-network/no-hardware
+boundary.
+
+The repository-empty branch does not synthesize a mode, create a placeholder
+Project configuration, or grant mutation permission. Adding a supported Device
+to a valid offline Project continues to expose the existing manual
+operation-mode entry path; an unsupported Device remains rejected by the
+existing topology gate. Repository page teardown destroys all presentation
+state; entering the same Device again reconstructs the same empty state from
+the immutable ESI description. The existing repository Device with modes
+remains keyboard-previewable, and configured-slave validation, Project
+submission, Undo/Redo, and persistence are unchanged.
+
+Qt documents that `QComboBox::count()` is zero and its current index is `-1`
+when the combo is empty: <https://doc.qt.io/qt-6/qcombobox.html>. Qt's localized
+contextual description contract is documented at
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. Qt Creator
+20.0 uses an explicit “No type hierarchy available” label for its own empty
+widget state rather than presenting an unavailable action:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/typehierarchy.cpp#L63-L72>.
+Beckhoff says an operation mode can be selected when a slave offers several
+modes:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>.
+Embed Labs therefore keeps selection guidance only for non-empty imported ESI
+mode lists and adds no Sync Unit task-cycle or online-controller behavior.
+
+The final frozen regression at `ethercatworkbenchtests.cpp` blob
+`565efe921bf081d0189e87d7903f789ffb86ddbd` and declaration blob
+`c37bef9044421f46e9e2fca43604065e9d729b7a` was compiled against exact
+baseline production blobs `461e9e9dd8920e38c0583055ea52ee52894a2ab6`
+for `dcpage.cpp` and `6cbde2504622c7676a7f8336844d155ce914e76b`
+for `dcpage.h`. Initialization and cleanup passed, and the target failed
+exactly because the old summary still said “Select an operation mode”; target
+status was 1. Complete source-blob, build, LLDB, and status evidence is under
+`/private/tmp/embed-labs-dc-repository-empty-final.HhJKMu/failure-seal`.
+
+After the minimal implementation, production blobs
+`7038760e04a580e725926ae25a5c0e7ba491cf0c` /
+`a63c58b599ab0ef4327ca7c5322fc3c1fb54fbd1` and the frozen test blobs produced
+test-plugin SHA-256
+`a963dd82d883ffd6d9e43d383aa8f9da6da4b3258088918265497dac6155c939`.
+Focused normal-scale and `QT_SCALE_FACTOR=2` runs each passed three events with
+target status 0 under the same root's `seal-focused-normal` and
+`seal-focused-2x` directories. The companion repository mode-preview
+regression also passed three events at both scales under
+`seal-preview-normal` and `seal-preview-2x`. The empty-state regression
+imports a real unique ESI Device after removing its `<Dc>` element, opens the
+real Details/DC page, and verifies the explicit summary and informational
+status, zero-item disabled/read-only selector, complete tooltip/accessibility
+boundary, all read-only mutation controls, an empty Project list, and context
+teardown and reconstruction. A random removed Device ID additionally verifies
+the separate unavailable warning, Device Repository recovery, and the absence
+of an invalid offline-Project instruction. A second real imported ESI Device
+adds an unsupported `<Modules>` structure and verifies the warning, impossible
+Project-add disclosure, and Device Repository support-review recovery. A third
+unsupported Device retains two real DC modes: its first mode verifies the
+support warning, while its deliberately invalid second mode verifies that the
+configuration error and support recovery are both preserved.
+
+Complete normal-scale and 2x Workbench runs each passed 57 events with target
+status 0 under `seal-workbench-normal` and `seal-workbench-2x`. The six isolated
+EtherCAT suites passed 108 events under `seal-six-suites`: Core
+17, Project 12, Devices 8, Workbench 57, Scan 7, and Diagnostics 7. Every
+target exited with status 0.
+
+Each complete Workbench log retains the pre-existing ProjectExplorer TaskHub
+soft assertion emitted by `testInvalidProjectPresentationAndLifecycle`; the
+same diagnostic is present in the preceding Workbench qualification logs. It
+does not occur in the new DC regression, fail a test, or change target status,
+and remains outside this single-issue DC presentation change.
+
+The full `WITH_TESTS=OFF` product build passed in
+`qt-creator-build-ethercat-product-qt611` and contains exactly the 16
+allow-listed plugin dylibs; its Workbench plugin SHA-256 is
+`0d31da4ed84c640897b00380ff1693549a4347d8070cc3f3bff075db5d06b09f`.
+Enabled product startup observed PID 45433 and remained running for 37 seconds
+under `seal-lifecycle-enabled`. Explicitly disabled startup observed PID 45427
+and remained running for 37 seconds with `-noload EtherCATWorkbench` under
+`seal-lifecycle-disabled`. Evidence is under
+`/private/tmp/embed-labs-dc-repository-empty-final.HhJKMu`; each target was
+running immediately before LLDB passed intentional SIGTERM and exited with
+target status 15.
+
+Final cleanup found no residual Embed Labs or LLDB process, new
+DiagnosticReports file, or matching ReportCrash/CrashReporter/diagnosticd
+unified-log event after 2026-07-19 17:14:35 +0800. Every executable used fresh
+HOME/settings, cleared inherited DYLD variables,
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and
+only the process-local Touch Bar LLDB breakpoint. No visible main window or
+system crash dialog was created.
+
+This issue changes only the existing private `dcpage.cpp` and `dcpage.h`,
+Workbench test declaration/implementation, and documentation. It adds no
+source file, public API, dependency, Provider, persistence field, Project
+command, model role, production thread or timer, controller/network transport,
+online state, or physical-hardware behavior. No CMake or qbs description
+changed, so qbs was not run. Visual/manual desktop inspection was intentionally
+not run because the issue changes text/state only and all executable
+qualification stayed offscreen. The unrelated `WITH_TESTS=ON` all-target build
+was not rerun; the known EasyBoard test include blocker remains outside this
+private Workbench issue. The Workbench path count remains 44 and the direct
+upstream Core patch count remains five.

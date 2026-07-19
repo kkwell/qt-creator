@@ -268,6 +268,10 @@ void DcPage::setContext(const Core::PropertyPageContext &context)
         if (!m_esiModes.isEmpty())
             m_esiDefaults = dcConfigurationFromMode(m_esiModes.first());
     }
+    m_repositoryDeviceAvailable
+        = context.nodeKind == Core::WorkbenchNodeKind::Device && device.has_value();
+    m_repositoryDeviceSupported
+        = m_repositoryDeviceAvailable && device->summary.supported;
     if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
         m_configuration = m_esiDefaults;
     } else if (isEmpty(m_configuration) && !isEmpty(m_esiDefaults)) {
@@ -275,7 +279,34 @@ void DcPage::setContext(const Core::PropertyPageContext &context)
         m_showingEsiDefaults = true;
     }
 
-    if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
+    if (context.nodeKind == Core::WorkbenchNodeKind::Device && !m_repositoryDeviceAvailable) {
+        m_summary->setText(
+            Tr::tr(
+                "The ESI device description is no longer available. Return to Device Repository "
+                "and select an available device."));
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Device && m_esiModes.isEmpty()
+               && !m_repositoryDeviceSupported) {
+        m_summary->setText(
+            Tr::tr(
+                "No ESI Distributed Clocks operation mode is available. This repository device "
+                "also contains unsupported ESI structures and cannot be added to an offline "
+                "Project. Review its support details in Device Repository; no controller, "
+                "network, or physical hardware is accessed."));
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Device && m_esiModes.isEmpty()) {
+        m_summary->setText(
+            Tr::tr(
+                "No ESI Distributed Clocks operation mode is available for this repository "
+                "device. Add the device to an offline Project to enter manual timing; no "
+                "controller, network, or physical hardware is accessed."));
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Device
+               && !m_repositoryDeviceSupported) {
+        m_summary->setText(
+            Tr::tr(
+                "ESI Distributed Clocks modes are available for read-only preview, but this "
+                "repository device contains unsupported ESI structures and cannot be added to "
+                "an offline Project. Review its support details in Device Repository; no "
+                "controller, network, or physical hardware is accessed."));
+    } else if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
         m_summary->setText(
             Tr::tr(
                 "ESI Distributed Clocks modes. Select an operation mode to preview its "
@@ -400,11 +431,22 @@ void DcPage::rebuildControls()
 
 void DcPage::updateControlState()
 {
+    const bool repositoryDeviceMissing
+        = m_context.nodeKind == Core::WorkbenchNodeKind::Device
+          && !m_repositoryDeviceAvailable;
+    const bool repositoryModeEmpty
+        = m_context.nodeKind == Core::WorkbenchNodeKind::Device && m_repositoryDeviceAvailable
+          && m_esiModes.isEmpty();
+    const bool repositoryModeEmptyUnsupported
+        = repositoryModeEmpty && !m_repositoryDeviceSupported;
     const bool repositoryModePreview
-        = m_context.nodeKind == Core::WorkbenchNodeKind::Device && !m_esiModes.isEmpty();
+        = m_context.nodeKind == Core::WorkbenchNodeKind::Device && m_repositoryDeviceAvailable
+          && !m_esiModes.isEmpty();
+    const bool repositoryModePreviewUnsupported
+        = repositoryModePreview && !m_repositoryDeviceSupported;
     m_operationMode->setEnabled(m_editable || repositoryModePreview);
     m_operationMode->lineEdit()->setReadOnly(!m_editable);
-    const QString modeDescription
+    QString modeDescription
         = repositoryModePreview
               ? Tr::tr("Selects an imported ESI operation mode for read-only offline preview. "
                        "The preview does not modify a Project or access a controller, network, "
@@ -415,6 +457,29 @@ void DcPage::updateControlState()
                              "network, or physical hardware is accessed.")
                     : Tr::tr("No Distributed Clocks operation mode is available for selection "
                              "in this context.");
+    if (repositoryModePreviewUnsupported) {
+        modeDescription = Tr::tr(
+            "Selects an imported ESI operation mode for read-only offline preview. This "
+            "repository device contains unsupported ESI structures and cannot be added to an "
+            "offline Project. Review its support details in Device Repository. The preview "
+            "does not access a controller, network, or physical hardware.");
+    } else if (repositoryModeEmptyUnsupported) {
+        modeDescription = Tr::tr(
+            "No ESI Distributed Clocks operation mode is available. This repository device "
+            "contains unsupported ESI structures and cannot be added to an offline Project. "
+            "Review its support details in Device Repository. This read-only page does not "
+            "access a controller, network, or physical hardware.");
+    } else if (repositoryModeEmpty) {
+        modeDescription = Tr::tr(
+            "No ESI Distributed Clocks operation mode is available for this repository device. "
+            "Add it to an offline Project to enter manual timing. This read-only page does not "
+            "access a controller, network, or physical hardware.");
+    } else if (repositoryDeviceMissing) {
+        modeDescription = Tr::tr(
+            "The ESI device description is unavailable, so no Distributed Clocks operation mode "
+            "can be selected. Return to Device Repository and select an available device. This "
+            "read-only page does not access a controller, network, or physical hardware.");
+    }
     m_operationMode->setAccessibleDescription(modeDescription);
     m_operationMode->setToolTip(modeDescription);
     m_enabled->setEnabled(m_editable);
@@ -507,16 +572,54 @@ void DcPage::showValidation(const QList<Data::ConfigurationIssue> &issues, const
     QString text = prefix;
     if (!text.isEmpty() && !details.isEmpty())
         text += ' ';
-    if (errorCount > 0) {
+    const bool repositoryDeviceMissing
+        = m_context.nodeKind == Core::WorkbenchNodeKind::Device
+          && !m_repositoryDeviceAvailable;
+    const bool repositoryModeEmpty
+        = m_context.nodeKind == Core::WorkbenchNodeKind::Device && m_repositoryDeviceAvailable
+          && m_esiModes.isEmpty();
+    const bool repositoryModeEmptyUnsupported
+        = repositoryModeEmpty && !m_repositoryDeviceSupported;
+    const bool repositoryModePreviewUnsupported
+        = m_context.nodeKind == Core::WorkbenchNodeKind::Device && m_repositoryDeviceAvailable
+          && !m_repositoryDeviceSupported && !m_esiModes.isEmpty();
+    const QString unsupportedPreviewNotice
+        = repositoryModePreviewUnsupported
+              ? Tr::tr("This Device contains unsupported ESI structures and cannot be added to "
+                       "an offline Project. Review its support details in Device Repository.")
+              : QString();
+    if (repositoryDeviceMissing) {
+        m_validation->setType(Utils::InfoLabel::Warning);
+        text += Tr::tr(
+            "The ESI device description is unavailable, so no Distributed Clocks data can be "
+            "shown.");
+    } else if (repositoryModeEmptyUnsupported) {
+        m_validation->setType(Utils::InfoLabel::Warning);
+        text += Tr::tr(
+            "No ESI Distributed Clocks operation mode is available. This device contains "
+            "unsupported ESI structures and cannot be added to an offline Project. Review its "
+            "support details in Device Repository.");
+    } else if (repositoryModeEmpty) {
+        m_validation->setType(Utils::InfoLabel::Information);
+        text += Tr::tr("No ESI Distributed Clocks operation mode is available to preview.");
+    } else if (errorCount > 0) {
         m_validation->setType(Utils::InfoLabel::Error);
         text += Tr::tr("%n Distributed Clocks configuration error(s).", nullptr, errorCount);
         if (!details.isEmpty())
             text += ' ' + details.first();
+        if (repositoryModePreviewUnsupported)
+            text += ' ' + unsupportedPreviewNotice;
     } else if (warningCount > 0) {
         m_validation->setType(Utils::InfoLabel::Warning);
         text += Tr::tr("%n Distributed Clocks configuration warning(s).", nullptr, warningCount);
         if (!details.isEmpty())
             text += ' ' + details.first();
+        if (repositoryModePreviewUnsupported)
+            text += ' ' + unsupportedPreviewNotice;
+    } else if (repositoryModePreviewUnsupported) {
+        m_validation->setType(Utils::InfoLabel::Warning);
+        text += Tr::tr("This Distributed Clocks mode is available only for read-only preview. ");
+        text += unsupportedPreviewNotice;
     } else {
         m_validation->setType(Utils::InfoLabel::Ok);
         text += m_configuration.enabled

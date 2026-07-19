@@ -824,6 +824,40 @@ or application bootstrap changes, so the direct Core patch budget does not
 increase and no extension-point exception is required. The Workbench path
 count remains 44 and the direct upstream Core patch count remains five.
 
+`ISSUE-WB-DC-REPOSITORY-EMPTY-001`, based on
+`f60f0fc0939b3945c4026851e9f4e86e15e2d9be`, changes only the existing
+product-owned private `dcpage.cpp` and `dcpage.h`, Workbench test
+declaration/implementation, and documentation. Repository Devices whose
+imported ESI descriptions contain no DC mode now expose a truthful explicit
+empty summary and informational status instead of selection guidance and a
+false valid-configuration state.
+The zero-item selector remains disabled/read-only and its localized
+description/tooltip states the offline Project recovery and no-controller,
+network, or physical-hardware boundary.
+
+The private page also distinguishes a removed ESI description from a valid
+zero-mode Device. The removed-description warning returns the user to Device
+Repository and does not advertise an impossible offline Project add path.
+
+It also distinguishes a supported zero-mode Device from one whose ESI contains
+unsupported structures. The latter receives a warning and Device Repository
+support-review recovery because the existing offline topology gate rejects it;
+the page does not advertise an impossible Project-add path.
+
+Unsupported Devices that still expose DC modes retain local read-only preview,
+but the summary, validation, selector description, and tooltip no longer
+advertise Project addition. A valid preview shows the support warning; an
+invalid preview keeps its configuration diagnostic and appends the cannot-add
+and Device Repository recovery.
+
+No source file, dependency, CMake/qbs entry, public API, Project format,
+Provider, persistence field, Project command, model role, production thread or
+timer, controller/network transport, online state, or physical-hardware
+behavior changes. No file under Qt Creator's upstream Core, ProjectExplorer,
+or application bootstrap changes, so the direct Core patch budget does not
+increase and no extension-point exception is required. The Workbench path
+count remains 44 and the direct upstream Core patch count remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

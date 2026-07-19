@@ -50,6 +50,8 @@ private:
     Data::DcConfiguration m_esiDefaults;
     QList<Data::DcModeDescription> m_esiModes;
     bool m_editable = false;
+    bool m_repositoryDeviceAvailable = false;
+    bool m_repositoryDeviceSupported = false;
     bool m_showingEsiDefaults = false;
     bool m_rebuilding = false;
 

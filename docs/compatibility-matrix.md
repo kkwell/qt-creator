@@ -1916,6 +1916,55 @@ Distributed Clock page provides the operation-mode and timing comparison:
 The read-only repository preview and explicit no-Project/no-controller boundary
 are Embed Labs Qt-native behavior.
 
+## EtherCATWorkbench repository Device DC empty-state qualification
+
+`ISSUE-WB-DC-REPOSITORY-EMPTY-001` uses local baseline
+`f60f0fc0939b3945c4026851e9f4e86e15e2d9be`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first regression | Final test blobs `565efe921bf081d0189e87d7903f789ffb86ddbd` / `c37bef9044421f46e9e2fca43604065e9d729b7a` were compiled against exact baseline production blobs `461e9e9dd8920e38c0583055ea52ee52894a2ab6` / `6cbde2504622c7676a7f8336844d155ce914e76b`; initialization and cleanup passed and the unchanged implementation failed exactly because its summary still instructed the user to select a mode; target status 1 under `/private/tmp/embed-labs-dc-repository-empty-final.HhJKMu/failure-seal` |
+| Real empty ESI context | A valid unique imported ESI Device has its real `<Dc>` element removed before import and reaches the actual Details/DC page through the existing Devices Provider |
+| Unsupported empty ESI context | A second real imported zero-mode Device adds an unsupported `<Modules>` structure; warning, selector accessibility, and tooltip all say that the Device cannot be added to an offline Project and direct the user to Device Repository support details |
+| Unsupported mode-preview context | A third real imported Device combines unsupported `<Modules>` with two DC modes; valid mode preview shows the support warning, while an invalid second mode retains its configuration error and appends cannot-add/Device Repository recovery |
+| Removed-device error state | A random stale Device ID produces an unavailable warning and Device Repository recovery instead of claiming that the missing description is a valid zero-mode Device or can be added to an offline Project |
+| Visible empty state | The summary explicitly says no ESI Distributed Clocks operation mode is available and no longer says “Select an operation mode” |
+| Validation truthfulness | A supported zero-mode Device uses the existing informational `InfoLabel`; unsupported empty or valid-preview states use a warning; unsupported invalid preview retains the configuration Error/Warning and appends cannot-add/Device Repository recovery; no absent configuration is presented as valid |
+| Selector state | Count is zero, current index is `-1`, the combo is disabled, and its line editor remains read-only |
+| User and accessibility disclosure | The localized selector description and equal tooltip identify the empty repository state, supported offline Project recovery or unsupported Device Repository recovery, read-only presentation, and no-controller/no-network/no-physical-hardware boundary |
+| Mutation boundary | Enable, AssignActivate, SYNC0/SYNC1, and potential-reference-clock controls remain disabled or read-only; no Project exists, `setDcConfiguration()` is unreachable, and no ProjectService mutation or Undo command occurs |
+| Context reset | Clearing selection destroys the old page; restoring the same Device recreates the zero-item disabled/read-only state from immutable ESI data |
+| Existing non-empty compatibility | The original supported two-mode keyboard preview regression still passes at both scales without persistence or Project mutation |
+| Current implementation identity | Production blobs `7038760e04a580e725926ae25a5c0e7ba491cf0c` / `a63c58b599ab0ef4327ca7c5322fc3c1fb54fbd1`; frozen test blobs `565efe921bf081d0189e87d7903f789ffb86ddbd` / `c37bef9044421f46e9e2fca43604065e9d729b7a`; test-plugin SHA-256 `a963dd82d883ffd6d9e43d383aa8f9da6da4b3258088918265497dac6155c939` |
+| Focused normal-scale test | 3 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-dc-repository-empty-final.HhJKMu/seal-focused-normal` |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-dc-repository-empty-final.HhJKMu/seal-focused-2x` |
+| Companion mode-preview tests | Normal and 2x each passed 3 events under the same root's `seal-preview-normal` and `seal-preview-2x` directories |
+| Complete EtherCATWorkbench normal scale | 57 passed, 0 failed; target status 0 under the same root's `seal-workbench-normal` directory |
+| Complete EtherCATWorkbench 2x scale | 57 passed, 0 failed; target status 0 under the same root's `seal-workbench-2x` directory |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 57, Scan 7, Diagnostics 7; 108 passed, 0 failed in independent LLDB-supervised processes under the same root's `seal-six-suites` directory |
+| Existing full-suite diagnostic | Each complete Workbench log retains one pre-existing ProjectExplorer TaskHub soft assertion in `testInvalidProjectPresentationAndLifecycle`; the same diagnostic appears in preceding qualification logs, does not occur in the new DC regression, and does not fail a test or change target status |
+| Qualified Qt and test build | Qt 6.11 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed in `qt-creator-build-ethercat-product-qt611`; exactly the 16 allow-listed plugin dylibs are present; Workbench plugin SHA-256 `0d31da4ed84c640897b00380ff1693549a4347d8070cc3f3bff075db5d06b09f` |
+| Enabled offscreen startup | PID 45433 remained running for 37 seconds under `/private/tmp/embed-labs-dc-repository-empty-final.HhJKMu/seal-lifecycle-enabled`; intentional SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 45427 remained running for 37 seconds with `-noload EtherCATWorkbench` under `/private/tmp/embed-labs-dc-repository-empty-final.HhJKMu/seal-lifecycle-disabled`; intentional SIGTERM produced target status 15 |
+| Process and crash-report cleanup | No residual Embed Labs/LLDB process, new DiagnosticReports file, or matching ReportCrash/CrashReporter/diagnosticd unified-log event after 2026-07-19 17:14:35 +0800 |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no visible main window or system crash dialog |
+| Visual/manual desktop inspection | Not run by design; the issue changes text/state only and all executable qualification was offscreen |
+| `WITH_TESTS=ON` all-target build | Not rerun; the known unrelated EasyBoard test include blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, Project command, model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, controller transport, online state, or hardware access | Not performed or added; this remains local read-only ESI presentation with an offline Project recovery path only for supported Devices |
+
+Qt's empty-combo and contextual-description contracts are documented at
+<https://doc.qt.io/qt-6/qcombobox.html> and
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. Qt Creator
+20.0's explicit empty-state label is visible in its Type Hierarchy widget:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/typehierarchy.cpp#L63-L72>.
+Beckhoff describes operation-mode selection only when the slave offers modes:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>.
+The explicit no-mode/offline boundary is Embed Labs Qt-native behavior.
+
 ## Verification states
 
 Use only these evidence labels:
