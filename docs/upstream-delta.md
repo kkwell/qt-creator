@@ -786,6 +786,26 @@ or application bootstrap changes, so the direct Core patch budget does not
 increase and no extension-point exception is required. The Workbench path
 count remains 44 and the direct upstream Core patch count remains five.
 
+`ISSUE-WB-TOPOLOGY-CELL-A11Y-001`, based on
+`23d67736335450d4fce299434f0e13024758cf2f`, changes only the existing
+product-owned private `ethercatpage.cpp`, Workbench test
+declaration/implementation, and documentation. The stack-local master
+Topology table now identifies its current offline Project boundary and uses
+Qt's standard `AccessibleTextRole` and `AccessibleDescriptionRole` for every
+complete ten-column display value, configured slave identity, and truthful
+operation/source context. Its equal tooltip provides the same complete-value
+recovery without changing the previously qualified dialog geometry or
+scrolling.
+
+No source file, dependency, CMake/qbs entry, public API, Project format,
+Provider, persistence field, Project command, custom model role, production
+thread or timer, controller transport, online state, physical-port model,
+network behavior, or physical-hardware behavior changes. No file under Qt
+Creator's upstream Core, ProjectExplorer, or application bootstrap changes,
+so the direct Core patch budget does not increase and no extension-point
+exception is required. The Workbench path count remains 44 and the direct
+upstream Core patch count remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

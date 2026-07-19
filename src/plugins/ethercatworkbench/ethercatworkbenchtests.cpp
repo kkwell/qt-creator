@@ -3468,6 +3468,224 @@ void EtherCATWorkbenchTests::testMasterTopologyDialogBounds()
     QVERIFY(closeButtonUsable);
 }
 
+void EtherCATWorkbenchTests::testMasterTopologyCellAccessibility()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Data::DeviceSummary
+        device{Data::NodeId::create(), {2, 0x5678, 0x11}, "Mock Servo", "AX5000", "Drives", true};
+    const TestProjectFile file = writeProjectWithSlave(directory, device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (projectService->project(file.projectId)) {
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        }
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+
+    const QString firstName
+        = QString::fromUtf8("包装线一号轴站 / 長い名前 / Ω / %1 / %2 / %% / ")
+          + QString(256, QChar(u'甲')) + " / First";
+    const QString secondName
+        = QString::fromUtf8("包装线二号轴站 / 長い名前 / Ω / %1 / %2 / %% / ")
+          + QString(256, QLatin1Char('B')) + " / Second";
+    QList<Data::OfflineSlaveConfiguration> slaves = projectService->project(file.projectId)->slaves;
+    QCOMPARE(slaves.size(), 1);
+    slaves[0].name = firstName;
+    Data::OfflineSlaveConfiguration secondSlave = slaves.first();
+    secondSlave.id = Data::NodeId::create();
+    secondSlave.position = 1;
+    secondSlave.serialNumber = 18;
+    secondSlave.alias = 4;
+    secondSlave.name = secondName;
+    slaves.append(secondSlave);
+    QVERIFY_RESULT(projectService->replaceOfflineSlaves(file.projectId, file.masterId, slaves));
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 2);
+
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    DetailsView details(&controller);
+    details.resize(1180, 760);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::ETHERCAT_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page);
+    QTRY_VERIFY(page->isVisible());
+    QPushButton *topology
+        = page->findChild<QPushButton *>("EtherCATMasterEthercatTopology");
+    QVERIFY(topology);
+
+    const QStringList expectedHeaders = {
+        "Position",
+        "Name",
+        "Auto Inc Addr",
+        "Previous",
+        "Port",
+        "Vendor",
+        "Product",
+        "Revision",
+        "Alias",
+        "Status",
+    };
+    const QList<QStringList> expectedRows = {
+        {"0",
+         firstName,
+         "0x0000",
+         "EtherCAT Master",
+         "Not modeled",
+         "0x00000002",
+         "0x00005678",
+         "0x00000011",
+         "3",
+         "Offline configured"},
+        {"1",
+         secondName,
+         "0xffff",
+         firstName,
+         "Not modeled",
+         "0x00000002",
+         "0x00005678",
+         "0x00000011",
+         "4",
+         "Offline configured"},
+    };
+
+    bool dialogOpened = false;
+    bool dialogTimedOut = false;
+    QString verificationError;
+    QTimer inspectionTimer;
+    inspectionTimer.setInterval(0);
+    connect(&inspectionTimer, &QTimer::timeout, &details, [&] {
+        auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog)
+            return;
+        inspectionTimer.stop();
+        dialogOpened = true;
+        QTreeWidget *table = dialog->findChild<QTreeWidget *>("EtherCATMasterTopologyTable");
+        const auto verifyTable = [&]() -> QString {
+            if (!table)
+                return "Topology table is missing";
+            if (table->topLevelItemCount() != expectedRows.size())
+                return "Topology table has the wrong row count";
+            if (table->columnCount() != expectedHeaders.size())
+                return "Topology table has the wrong column count";
+
+            for (int column = 0; column < table->columnCount(); ++column) {
+                if (table->headerItem()->text(column) != expectedHeaders.at(column))
+                    return "Topology table has an unexpected column heading";
+            }
+            for (int row = 0; row < table->topLevelItemCount(); ++row) {
+                const QTreeWidgetItem *item = table->topLevelItem(row);
+                if (item->flags() & Qt::ItemIsEditable)
+                    return QString("Topology row %1 is editable").arg(row);
+                for (int column = 0; column < table->columnCount(); ++column) {
+                    const QString header = table->headerItem()->text(column);
+                    const QString displayed = item->data(column, Qt::DisplayRole).toString();
+                    const QVariant accessibleText = item->data(column, Qt::AccessibleTextRole);
+                    const QVariant accessibleDescription
+                        = item->data(column, Qt::AccessibleDescriptionRole);
+                    const QVariant toolTip = item->data(column, Qt::ToolTipRole);
+                    const QString cell
+                        = QString("Topology row %1 / %2").arg(row).arg(header);
+                    if (displayed != expectedRows.at(row).at(column))
+                        return cell + " has an unexpected DisplayRole";
+                    if (accessibleText.metaType().id() != int(QMetaType::QString))
+                        return cell + " AccessibleTextRole is not a QString";
+                    if (accessibleDescription.metaType().id() != int(QMetaType::QString))
+                        return cell + " AccessibleDescriptionRole is not a QString";
+                    if (toolTip.metaType().id() != int(QMetaType::QString))
+                        return cell + " ToolTipRole is not a QString";
+                    if (accessibleText.toString() != displayed)
+                        return cell + " accessible text does not match DisplayRole";
+                    const QString description = accessibleDescription.toString();
+                    if (!description.contains(header))
+                        return cell + " description omits the column heading";
+                    const QString configuredSlaveIdentity
+                        = QString("Position %1 (%2)").arg(item->text(0), item->text(1));
+                    if (!description.contains(configuredSlaveIdentity)) {
+                        return cell + " description omits the configured slave identity";
+                    }
+                    if (!description.contains("Complete value: " + displayed))
+                        return cell + " description omits the complete value";
+                    const QStringList boundaries = {
+                        "read-only",
+                        "offline",
+                        "Project",
+                        "physical ports",
+                        "controller",
+                        "network",
+                        "physical hardware",
+                    };
+                    for (const QString &boundary : boundaries) {
+                        if (!description.contains(boundary, Qt::CaseInsensitive))
+                            return cell + " description omits " + boundary;
+                    }
+                    if (toolTip.toString() != description)
+                        return cell + " tooltip and accessible description differ";
+                }
+            }
+            if (table->accessibleName().isEmpty())
+                return "Topology table has an empty accessible name";
+            const QString widgetDescription = table->accessibleDescription();
+            const QStringList widgetBoundaries = {
+                "read-only",
+                "offline",
+                "Project",
+                "physical ports",
+                "controller",
+                "network",
+                "physical hardware",
+            };
+            for (const QString &boundary : widgetBoundaries) {
+                if (!widgetDescription.contains(boundary, Qt::CaseInsensitive))
+                    return "Topology table description omits " + boundary;
+            }
+            return {};
+        };
+        verificationError = verifyTable();
+        const QString renderPath
+            = qEnvironmentVariable("ETHERCAT_WORKBENCH_TOPOLOGY_A11Y_RENDER_PATH");
+        if (verificationError.isEmpty() && !renderPath.isEmpty()
+            && !dialog->grab().save(renderPath)) {
+            verificationError = "Cannot save the topology accessibility render";
+        }
+        dialog->reject();
+    });
+    QTimer timeoutTimer;
+    timeoutTimer.setSingleShot(true);
+    connect(&timeoutTimer, &QTimer::timeout, &details, [&] {
+        dialogTimedOut = true;
+        if (auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+            dialog->reject();
+    });
+    inspectionTimer.start();
+    timeoutTimer.start(5000);
+    topology->click();
+    inspectionTimer.stop();
+    timeoutTimer.stop();
+
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+
+    QVERIFY(dialogOpened);
+    QVERIFY(!dialogTimedOut);
+    QVERIFY2(verificationError.isEmpty(), qPrintable(verificationError));
+}
+
 void EtherCATWorkbenchTests::testEtherCATSyncManagerCellAccessibility()
 {
     WorkbenchController controller;

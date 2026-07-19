@@ -3016,8 +3016,7 @@ API, dependency, Provider, custom model role, persistence field, Project
 command, thread, timer, controller/network transport, online state, or
 physical-hardware behavior. No CMake or qbs description changed, so qbs was
 not run. The Workbench path count remains 44 and the direct upstream Core patch
-count remains five. Topology-cell accessibility remains a separately bounded
-future candidate.
+count remains five.
 
 ## EtherCAT SyncManager cell accessibility qualification
 
@@ -3123,5 +3122,100 @@ public API, dependency, Provider, custom model role, persistence field,
 Project command, thread, timer, controller/network transport, online state, or
 physical-hardware behavior. No CMake or qbs description changed, so qbs was
 not run. The Workbench path count remains 44 and the direct upstream Core patch
-count remains five. Topology-cell accessibility remains a separate future
-candidate.
+count remains five.
+
+## Offline topology cell accessibility
+
+`ISSUE-WB-TOPOLOGY-CELL-A11Y-001` uses local baseline
+`23d67736335450d4fce299434f0e13024758cf2f`. It closes the remaining
+standard-item metadata gap in the existing stack-local master Topology dialog.
+It does not change the separately qualified dialog bounds, horizontal
+scrolling, modal lifetime, configured order, or displayed values.
+
+The Topology table now identifies its contents as read-only configured data
+from the current offline Project. Every Position, Name, Auto Inc Addr,
+Previous, Port, Vendor, Product, Revision, Alias, and Status cell publishes an
+actual `QString` through `AccessibleTextRole` equal to its complete current
+Display value. `AccessibleDescriptionRole` and `ToolTipRole` are equal and
+contain the column heading, configured position, complete slave name, complete
+cell value, and the same offline/controller/network/physical-hardware
+boundary. The Port remains `Not modeled`, Previous remains configured-list
+context rather than verified physical wiring, and `Offline configured` remains
+a configuration status rather than an online EtherCAT state.
+
+Qt defines the three standard string roles in
+[Qt::ItemDataRole](https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum) and lets
+`QTreeWidgetItem` store role-specific values through
+[setData()](https://doc.qt.io/qt-6/qtreewidgetitem.html#setData). Qt Creator
+20.0 provides local widget and model accessibility precedents in
+[`FancyMainWindow`](https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/libs/utils/fancymainwindow.cpp#L244-L247)
+and
+[`TerminalPane`](https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/terminal/terminalpane.cpp#L586-L597).
+Beckhoff documents that the selected master's Topology action displays
+configured slaves and that its larger product can also show online data
+([master EtherCAT page](https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446515467.html),
+[Topology dialog](https://infosys.beckhoff.com/content/1033/tc3_io_intro/1277974411.html)).
+Embed Labs deliberately qualifies only the local offline Project view and does
+not claim found devices, runtime state, controller access, or physical-port
+verification.
+
+The frozen regression ran first against the unchanged production
+implementation under
+`/private/tmp/embed-labs-topology-cell-a11y-failure.z1vqwP`. Initialization and
+cleanup passed, and the test failed exactly once because row 0 / Position did
+not return a `QString` through `AccessibleTextRole`; the target exited with
+test status 1. After the minimal implementation, focused normal-scale and
+`QT_SCALE_FACTOR=2` runs each passed three events with target status 0 under
+`/private/tmp/embed-labs-topology-cell-a11y-focused-final.PDcyTx`.
+
+The focused regression opens a real `.ecatproject`, selects its real Master,
+uses the actual Details page and modal Topology action, and verifies all 20
+cells across two configured slaves. Its long Chinese/Japanese/Unicode names
+contain literal `%1`, `%2`, and `%%`; the second row's Previous cell preserves
+the complete first name. It also verifies exact role types and values, all ten
+headers and displayed values, row identity, tooltip equality, non-editability,
+and every read-only/offline/Project/controller/network/physical-port/hardware
+boundary. The inspected normal render is 784 by 279 with SHA-256
+`e5abaf35897884abea0ed9dd9c582d7aa7fa1746f139c415209675f51c2ba014`;
+the 2x render is 768 by 558 with SHA-256
+`fdedc08c0be16825085bcb03a3b7d962c137b9b4b3df97af2f6b29e994bef7d9`.
+Both retain the existing horizontal recovery and usable Close button without
+overlap or scale drift. This qualifies Qt metadata; no manual VoiceOver
+reading is claimed.
+
+Complete normal-scale and 2x Workbench runs each passed 55 events with target
+status 0 under
+`/private/tmp/embed-labs-topology-cell-a11y-workbench-final.BFPQdu`. The six
+isolated EtherCAT suites passed 106 events under
+`/private/tmp/embed-labs-topology-cell-a11y-six-suites-final.HcMvzr`: Core 17,
+Project 12, Devices 8, Workbench 55, Scan 7, and Diagnostics 7. Every target
+exited with status 0.
+
+The full `WITH_TESTS=OFF` product build passed in
+`qt-creator-build-ethercat-product-qt611`, which contains exactly the 16
+allow-listed plugin dylibs. Enabled product startup observed PID 98032 and
+remained running for 36 seconds after observation under the `enabled-evidence-1310`
+directory. Explicitly disabled startup observed PID 99181 and remained running
+for 36 seconds after observation with `-noload EtherCATWorkbench` under
+`disabled-evidence-1312`. Both directories are under
+`/private/tmp/embed-labs-topology-cell-a11y-product-lifecycle-final.TaMURB`;
+each target was running immediately before LLDB passed intentional SIGTERM and
+exited with target status 15. The disabled run emitted one non-fatal
+shared-memory initialization message and continued through the full interval.
+
+Cleanup found no residual Embed Labs or LLDB process, new DiagnosticReports
+file, or matching ReportCrash/CrashReporter unified-log event after
+2026-07-19 13:09:58 +0800. Every executable used fresh HOME/settings, cleared
+inherited DYLD variables, `QT_QPA_PLATFORM=offscreen`,
+`CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch
+Bar LLDB breakpoint. No visible main window or crash dialog was created.
+
+This issue changes only the existing private `ethercatpage.cpp`, Workbench
+test declaration/implementation, and documentation. It adds no source file,
+public API, dependency, Provider, custom model role, persistence field,
+Project command, production thread or timer, controller/network transport,
+online state, physical-port model, or physical-hardware behavior. No CMake or
+qbs description changed, so qbs was not run. The unrelated `WITH_TESTS=ON`
+all-target build was not rerun; the known EasyBoard test include blocker
+remains outside this private Workbench issue. The Workbench path count remains
+44 and the direct upstream Core patch count remains five.

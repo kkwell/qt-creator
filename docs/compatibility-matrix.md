@@ -1831,6 +1831,48 @@ semantics comparison:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1342524811.html> and
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/4981170059.html>.
 
+## EtherCATWorkbench topology cell accessibility qualification
+
+`ISSUE-WB-TOPOLOGY-CELL-A11Y-001` uses local baseline
+`23d67736335450d4fce299434f0e13024758cf2f`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first regression | Initialization and cleanup passed; the unchanged implementation failed exactly because row 0 / Position returned no `QString` through `AccessibleTextRole` under `/private/tmp/embed-labs-topology-cell-a11y-failure.z1vqwP`; target status 1 |
+| Table widget metadata | The stack-local table identifies read-only configured slave order and identities from the current offline Project, states that physical ports are not modeled, and excludes controller, network, and physical-hardware access |
+| Ten standard columns | Every Position, Name, Auto Inc Addr, Previous, Port, Vendor, Product, Revision, Alias, and Status cell returns an actual `QString` through `AccessibleTextRole` equal to its complete Display value |
+| Complete contextual recovery | `AccessibleDescriptionRole` and `ToolTipRole` are equal and contain the column heading, configured Position, complete slave Name, complete current value, and all offline/Project/controller/network/physical-port/hardware boundaries |
+| Truthful topology boundary | Previous is configured-list context, Port remains `Not modeled`, and Status remains `Offline configured`; none is claimed as scanned topology, verified physical wiring, or runtime EtherCAT state |
+| Long and literal text | Two complete Chinese/Japanese/Unicode names containing literal `%1`, `%2`, and `%%` are preserved; row 1 Previous exactly preserves row 0's complete long Name; both rows remain non-editable |
+| Existing bounds behavior | The ten headers, Display values, slave ordering, `ResizeToContents`, `ElideNone`, horizontal scrolling, screen bounds, centering, modal stack lifetime, and Close path remain unchanged and continue to pass their separate regression |
+| Focused normal-scale test | 3 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-topology-cell-a11y-focused-final.PDcyTx/normal` |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-topology-cell-a11y-focused-final.PDcyTx/2x` |
+| Offscreen render inspection | Normal 784 by 279, SHA-256 `e5abaf35897884abea0ed9dd9c582d7aa7fa1746f139c415209675f51c2ba014`; 2x 768 by 558, SHA-256 `fdedc08c0be16825085bcb03a3b7d962c137b9b4b3df97af2f6b29e994bef7d9`; horizontal recovery and Close remain usable without overlap or scale drift |
+| Complete EtherCATWorkbench normal scale | 55 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-topology-cell-a11y-workbench-final.BFPQdu/normal` |
+| Complete EtherCATWorkbench 2x scale | 55 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-topology-cell-a11y-workbench-final.BFPQdu/2x` |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 55, Scan 7, Diagnostics 7; 106 passed, 0 failed with target status 0 in isolated LLDB-supervised processes under `/private/tmp/embed-labs-topology-cell-a11y-six-suites-final.HcMvzr` |
+| Qualified Qt and test build | Qt 6.11 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed in `qt-creator-build-ethercat-product-qt611`; exactly the 16 allow-listed plugin dylibs are present |
+| Enabled offscreen startup | PID 98032 remained running for 36 seconds after exact PID observation under `/private/tmp/embed-labs-topology-cell-a11y-product-lifecycle-final.TaMURB/enabled-evidence-1310`; intentional SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 99181 remained running for 36 seconds after exact PID observation with `-noload EtherCATWorkbench` under `/private/tmp/embed-labs-topology-cell-a11y-product-lifecycle-final.TaMURB/disabled-evidence-1312`; intentional SIGTERM produced target status 15; one non-fatal shared-memory initialization message did not interrupt startup |
+| Process and crash-report cleanup | No residual Embed Labs/LLDB process, new DiagnosticReports file, or matching ReportCrash/CrashReporter unified-log event after 2026-07-19 13:09:58 +0800 |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no visible main window or crash dialog |
+| Assistive-technology claim | Standard Qt item metadata verified; no manual VoiceOver reading is claimed |
+| `WITH_TESTS=ON` all-target build | Not rerun; the known unrelated EasyBoard test include blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, Project command, custom model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, controller transport, online state, physical-port model, or hardware access | Not performed or added; Topology remains a read-only current offline Project presentation |
+
+Qt's three standard string roles and `QTreeWidgetItem` storage are documented
+at <https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum> and
+<https://doc.qt.io/qt-6/qtreewidgetitem.html#setData>. Beckhoff documents both
+configured and online capabilities in its larger Topology product:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446515467.html> and
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1277974411.html>.
+The standard metadata and explicit offline exclusion are Embed Labs Qt-native
+behavior.
+
 ## Verification states
 
 Use only these evidence labels:

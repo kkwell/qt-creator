@@ -437,23 +437,27 @@ void EtherCATPage::showMasterTopology()
     table->setObjectName("EtherCATMasterTopologyTable");
     table->setAccessibleName(Tr::tr("Offline EtherCAT topology"));
     table->setAccessibleDescription(
-        Tr::tr("Configured slave order and identities from the current offline project."));
+        Tr::tr("Read-only configured slave order and identities from the current offline Project. "
+               "Physical ports are not modeled; no controller, network, or physical hardware is "
+               "accessed."));
     table->setAlternatingRowColors(true);
     table->setRootIsDecorated(false);
     table->setUniformRowHeights(true);
     table->setTextElideMode(Qt::ElideNone);
     table->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    table->setHeaderLabels(
-        {Tr::tr("Position"),
-         Tr::tr("Name"),
-         Tr::tr("Auto Inc Addr"),
-         Tr::tr("Previous"),
-         Tr::tr("Port"),
-         Tr::tr("Vendor"),
-         Tr::tr("Product"),
-         Tr::tr("Revision"),
-         Tr::tr("Alias"),
-         Tr::tr("Status")});
+    const QStringList topologyHeaders = {
+        Tr::tr("Position"),
+        Tr::tr("Name"),
+        Tr::tr("Auto Inc Addr"),
+        Tr::tr("Previous"),
+        Tr::tr("Port"),
+        Tr::tr("Vendor"),
+        Tr::tr("Product"),
+        Tr::tr("Revision"),
+        Tr::tr("Alias"),
+        Tr::tr("Status"),
+    };
+    table->setHeaderLabels(topologyHeaders);
     table->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     table->header()->setStretchLastSection(true);
 
@@ -461,18 +465,32 @@ void EtherCATPage::showMasterTopology()
         const Data::OfflineSlaveConfiguration &slave = slaves.at(index);
         const QString previous = index == 0 ? Tr::tr("EtherCAT Master")
                                             : slaves.at(index - 1).name;
-        table->addTopLevelItem(
-            new QTreeWidgetItem(
-                {QString::number(slave.position),
-                 slave.name,
-                 autoIncrementAddress(slave.position),
-                 previous,
-                 Tr::tr("Not modeled"),
-                 hexValue(slave.identity.vendorId, 8),
-                 hexValue(slave.identity.productCode, 8),
-                 hexValue(slave.identity.revisionNumber, 8),
-                 QString::number(slave.alias),
-                 Tr::tr("Offline configured")}));
+        auto item = new QTreeWidgetItem(
+            {QString::number(slave.position),
+             slave.name,
+             autoIncrementAddress(slave.position),
+             previous,
+             Tr::tr("Not modeled"),
+             hexValue(slave.identity.vendorId, 8),
+             hexValue(slave.identity.productCode, 8),
+             hexValue(slave.identity.revisionNumber, 8),
+             QString::number(slave.alias),
+             Tr::tr("Offline configured")});
+        for (int column = 0; column < item->columnCount(); ++column) {
+            const QString displayed = item->text(column);
+            const QString description
+                = Tr::tr("%1 column for configured slave at Position %2 (%3). Complete value: "
+                         "%4. Read-only offline Project topology; physical ports are not modeled, "
+                         "and no controller, network, or physical hardware is accessed.")
+                      .arg(topologyHeaders.at(column),
+                           QString::number(slave.position),
+                           slave.name,
+                           displayed);
+            item->setData(column, Qt::AccessibleTextRole, displayed);
+            item->setData(column, Qt::AccessibleDescriptionRole, description);
+            item->setData(column, Qt::ToolTipRole, description);
+        }
+        table->addTopLevelItem(item);
     }
     table->header()->resizeSections(QHeaderView::ResizeToContents);
     const int topologyWidth

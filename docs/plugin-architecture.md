@@ -1083,6 +1083,53 @@ field-semantics comparison:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1342524811.html> and
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/4981170059.html>.
 
+## Workbench offline topology cell accessibility boundary
+
+`ISSUE-WB-TOPOLOGY-CELL-A11Y-001` stays inside the product-owned private
+`EtherCATPage::showMasterTopology()` path. The page owns the stack-local
+dialog, `QTreeWidget`, translated ten-column header, and every
+`QTreeWidgetItem`. Each row derives its standard item metadata from the same
+current strings used for Display. No dialog, table, item, model index, Project
+snapshot, slave object, page-context pointer, or Provider pointer is retained
+after the modal call returns.
+
+The widget description identifies read-only configured slave order and
+identities from the current offline Project. Every cell copies its exact
+complete display string into Qt's standard `AccessibleTextRole`.
+`AccessibleDescriptionRole` and `ToolTipRole` are equal value objects derived
+from the translated column heading, configured Position, complete slave Name,
+complete value, and the same offline boundary. The description explicitly
+states that physical ports are not modeled and that no controller, network,
+or physical hardware is accessed.
+
+This table remains distinct from the member SyncManager ESI-defaults tree and
+the richer Process Data models. Position and Auto Inc Addr remain offline
+configuration values or derivations. Previous remains predecessor-list
+context, not verified wiring; Port remains `Not modeled`; Status remains
+`Offline configured`, not an online AL state. No shared accessibility API,
+custom model role, or second data source is introduced.
+
+The earlier screen-bound Topology contract continues to own preferred size,
+`ResizeToContents`, `ElideNone`, horizontal scrolling, available-screen
+geometry, centering, modal stack lifetime, and Close behavior. This issue
+changes none of those paths, nor slave ordering, Project mutation, Undo/Redo,
+persistence, empty-topology behavior, or selection.
+
+Qt documents the standard string roles and role-specific item storage at
+<https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum> and
+<https://doc.qt.io/qt-6/qtreewidgetitem.html#setData>. Beckhoff documents that
+its selected-master Topology can present both configured and online data:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446515467.html> and
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1277974411.html>.
+Embed Labs deliberately retains only the current offline Project presentation.
+
+This boundary adds no public or custom role, API, source file, dependency,
+Provider, Project command, persistence field, production thread or timer,
+network/controller transport, online state, physical-port model, hardware
+behavior, CMake/qbs entry, or path under upstream Core, ProjectExplorer, or
+the application bootstrap. The Workbench path count remains 44 and the direct
+upstream Core patch count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for
