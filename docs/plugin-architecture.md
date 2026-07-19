@@ -997,6 +997,49 @@ settings listeners provide the local ownership precedent:
 Beckhoff's selected-terminal tabs remain only the product comparison:
 <https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html>.
 
+## Workbench General property tree accessibility boundary
+
+`ISSUE-WB-GENERAL-PROPERTY-TREE-A11Y-001` keeps the contract inside the
+product-owned private `GeneralPage`. The page owns the `QTreeWidget`, its
+header, and every `QTreeWidgetItem`; `addRow()` derives all metadata from the
+same two current display strings used to create the row. No model index,
+Project snapshot, device description, slave object, page context, or Provider
+pointer is retained by the metadata.
+
+The widget-level name identifies the General property table, while its
+description states the read-only offline boundary. Every cell copies its exact
+display string into Qt's standard `AccessibleTextRole`. Its standard
+`AccessibleDescriptionRole` and tooltip are equal value objects derived from
+the visible column heading, row property, complete value, and the same offline
+operation boundary. This preserves the existing visible elision while making
+complete ESI match, source, and owner-slave values available without a custom
+role or alternate data model.
+
+The same private path serves configured-slave General and the real Modules /
+Channels context. The latter continues to resolve its owning offline slave
+through the existing `PropertyPageContext`; no second ownership or refresh
+path is added. Registered future Module/Channel contexts will inherit the same
+metadata if those node types are generated later, but this issue claims runtime
+coverage only for configured slave and Modules / Channels.
+
+This boundary does not change visible layout, row order, headers, resize
+modes, elision, selection, page creation, context ownership, ESI parsing,
+ProjectService, persistence, Undo/Redo, or plugin load/unload. It adds no
+public/custom role, API, source file, dependency, Provider, Project command,
+thread, timer, controller/network transport, online state, or physical-hardware
+behavior. No CMake or qbs description changed. The Workbench path count remains
+44 and the direct upstream Core patch count remains five.
+
+Qt documents widget accessibility properties and standard item roles at
+<https://doc.qt.io/qt-6/qwidget.html#accessibleName-prop> and
+<https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum>. Qt Creator 20.0's
+`FancyMainWindow` and Terminal model provide local precedents:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/libs/utils/fancymainwindow.cpp#L244-L247>
+and
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/terminal/terminalpane.cpp#L586-L597>.
+Beckhoff's selected-terminal General tab remains only the product comparison:
+<https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html>.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

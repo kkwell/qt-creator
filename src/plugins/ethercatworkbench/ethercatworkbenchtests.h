@@ -27,6 +27,7 @@ private slots:
     void testEditableTargetGeneralWorkflow();
     void testEditableMasterGeneralWorkflow();
     void testEditableConfiguredSlaveGeneralWorkflow();
+    void testGeneralPropertyTreeAccessibility();
     void testTwinCatMasterEtherCATWorkflow();
     void testMasterTopologyDialogBounds();
     void testEditableConfiguredSlaveEtherCATWorkflow();

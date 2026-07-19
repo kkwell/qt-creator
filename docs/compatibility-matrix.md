@@ -1751,6 +1751,45 @@ Beckhoff's TwinCAT comparison scopes the available configuration tabs to the
 terminal selected in Solution Explorer:
 <https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html>.
 
+## EtherCATWorkbench General property tree accessibility qualification
+
+`ISSUE-WB-GENERAL-PROPERTY-TREE-A11Y-001` uses local baseline
+`2b956da48104c97414da33190b9772e033969ee7`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first regression | Setup and cleanup passed; the unchanged implementation failed exactly because the General property tree accessible name was empty under `/private/tmp/embed-labs-general-property-a11y-failure-frozen.0HPnE7`; target status 1 |
+| Widget metadata | The visible Property/Value tree has a concise accessible name and a contextual description identifying read-only offline data and the controller/network/hardware boundary |
+| Standard item roles | Every Property and Value cell returns an actual `QString` through `AccessibleTextRole` equal to its complete current Display value |
+| Complete contextual recovery | `AccessibleDescriptionRole` and `ToolTipRole` contain the column heading, property name, complete value, read-only/offline status, and controller/network/physical-hardware boundary |
+| Real contexts | Passed through the actual configured-slave General page and its model-generated Modules / Channels General page |
+| Long and literal text | Complete long Unicode ESI match, source path, and owner-slave values plus literal `%1`, `%2`, and `%%` text are preserved exactly |
+| Existing presentation | Row order, headers, selection, resize modes, elision, page geometry, Project data, and context ownership remain unchanged |
+| Focused normal-scale test | 3 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-general-property-a11y-focused-final.E1aBys/normal` |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-general-property-a11y-focused-final.E1aBys/2x` |
+| Offscreen render inspection | Normal 1100 by 720, SHA-256 `b4a03964e53a857323e44dc18a8614260a607c215a3509b8aa057011ebb731d0`; 2x 2200 by 1440, SHA-256 `661d4ac799a3617fc94d8c8c0b3319d2d5731f486b0839628321efc447090afe`; no overlap or scale drift, with intentional visual elision recoverable through metadata |
+| Complete EtherCATWorkbench normal scale | 53 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-general-property-a11y-workbench-final.D2MHZA/normal` |
+| Complete EtherCATWorkbench 2x scale | 53 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-general-property-a11y-workbench-final.D2MHZA/2x` |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 53, Scan 7, Diagnostics 7; 104 passed, 0 failed with target status 0 in isolated LLDB-supervised processes under `/private/tmp/embed-labs-general-property-a11y-six-suites-final.JfEsWm` |
+| Qualified Qt and test build | Qt 6.11 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed in `qt-creator-build-ethercat-product-qt611`; exactly the 16 allow-listed plugin dylibs are present |
+| Enabled offscreen startup | PID 78919 remained running for 36.005 seconds under `/private/tmp/embed-labs-general-property-a11y-lifecycle-final.WKCTbC/enabled`; intentional SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 78918 remained running for 36.006 seconds with `-noload EtherCATWorkbench` under `/private/tmp/embed-labs-general-property-a11y-lifecycle-final.WKCTbC/disabled`; intentional SIGTERM produced target status 15 |
+| Process and crash-report cleanup | No residual Embed Labs/LLDB process, new DiagnosticReports file, or matching ReportCrash/CrashReporter unified-log event |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no visible main window or crash dialog |
+| Assistive-technology claim | Standard Qt widget/item-model metadata verified; no manual VoiceOver reading is claimed |
+| `WITH_TESTS=ON` all-target build | Not rerun; the known unrelated EasyBoard test include blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, Project command, custom model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, controller transport, online state, or hardware access | Not performed or added; General remains local read-only offline Project presentation |
+
+Qt's widget accessibility properties and standard item data roles are
+documented at <https://doc.qt.io/qt-6/qwidget.html#accessibleName-prop> and
+<https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum>. Beckhoff's selected-terminal
+General tab provides the information-hierarchy comparison:
+<https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html>.
+
 ## Verification states
 
 Use only these evidence labels:

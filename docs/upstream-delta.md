@@ -748,6 +748,25 @@ or application bootstrap changes, so the direct Core patch budget does not
 increase and no extension-point exception is required. The Workbench path
 count remains 44 and the direct upstream Core patch count remains five.
 
+`ISSUE-WB-GENERAL-PROPERTY-TREE-A11Y-001`, based on
+`2b956da48104c97414da33190b9772e033969ee7`, changes only the existing
+product-owned `generalpage.cpp`, Workbench test declaration/implementation,
+and documentation. The private General Property/Value tree now publishes a
+widget name/description and uses Qt's standard `AccessibleTextRole` and
+`AccessibleDescriptionRole` for complete current values, column/property
+context, and the existing read-only offline/controller/network/hardware
+boundary. Its equal tooltip provides the same complete-value recovery without
+changing visible elision or geometry.
+
+No source file, dependency, CMake/qbs entry, public API, Project format,
+Provider, persistence field, Project command, custom model role, thread,
+timer, controller transport, online state, network behavior, or
+physical-hardware behavior changes. No file under Qt Creator's upstream Core,
+ProjectExplorer, or application bootstrap changes, so the direct Core patch
+budget does not increase and no extension-point exception is required. The
+Workbench path count remains 44 and the direct upstream Core patch count
+remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

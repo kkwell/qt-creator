@@ -2149,6 +2149,159 @@ void EtherCATWorkbenchTests::testEditableConfiguredSlaveGeneralWorkflow()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
+void EtherCATWorkbenchTests::testGeneralPropertyTreeAccessibility()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    QVERIFY(repository);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString longDeviceName
+        = QString::fromUtf8(
+              "\u8d85\u957f ESI \u8bbe\u5907 / \u9577\u3044\u30c7\u30d0\u30a4\u30b9 / \u03a9 "
+              "/ %1 / %2 / %% \u2014 ")
+          + QString(128, QChar(0x754c)) + QString::fromUtf8(" / \u5b8c\u6574\u5c3e\u90e8");
+    const QString longSlaveName
+        = QString::fromUtf8("\u914d\u7f6e\u4ece\u7ad9 / \u8ef8 / %1 / %2 / %% \u2014 ")
+          + QString(128, QLatin1Char('S')) + QString::fromUtf8(" / \u5b8c\u6574\u5c3e\u90e8");
+    const QString sourceFileName
+        = QString::fromUtf8("general-property-\u8bbe\u5907-%1-%2-%%-")
+          + QString(64, QLatin1Char('p')) + ".xml";
+    const Utils::FilePath sourcePath = Utils::FilePath::fromString(directory.path())
+                                           .canonicalPath()
+                                           .pathAppended(sourceFileName);
+    QByteArray esi = deviceEsi();
+    esi.replace("#x00005678", "#xA11E0002");
+    esi.replace("Workbench Servo", longDeviceName.toUtf8());
+    QVERIFY_RESULT(sourcePath.writeFileContents(esi));
+    QCOMPARE(waitForJob(repository->importFiles({sourcePath})).failedFiles, 0);
+
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0xA11E0002u;
+    });
+    QVERIFY(device != devices.cend());
+    const std::optional<Data::DeviceDescription> description = repository->device(device->id);
+    QVERIFY(description);
+
+    ProcessTreeFixture fixture = processTreeFixture();
+    fixture.project.slaves.first().identity = device->identity;
+    fixture.project.slaves.first().deviceDescriptionId = device->id;
+    fixture.project.slaves.first().name = longSlaveName;
+    for (Data::ProjectNodeSnapshot &node : fixture.project.nodes) {
+        if (node.id == fixture.slaveId)
+            node.name = longSlaveName;
+    }
+    controller.treeModel()->setProjects({fixture.project});
+
+    const QModelIndex slave = controller.treeModel()->indexForNodeId(fixture.slaveId);
+    QVERIFY(slave.isValid());
+    const QModelIndex modules = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::Modules, slave);
+    QVERIFY(modules.isValid());
+
+    BuiltinPropertyPageProvider pages(&controller);
+    std::unique_ptr<QWidget> generalPage(
+        pages.createPage(Constants::GENERAL_PAGE_ID, nullptr));
+    QVERIFY(generalPage);
+    QTreeWidget *propertyTree
+        = generalPage->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
+    QVERIFY(propertyTree);
+    const QStringList offlineBoundaries = {
+        "read-only", "offline", "controller", "network", "hardware"};
+
+    const auto verifyPropertyTree = [&](const QModelIndex &contextIndex) -> QString {
+        pages.updatePage(
+            Constants::GENERAL_PAGE_ID,
+            generalPage.get(),
+            controller.treeModel()->contextForIndex(contextIndex));
+        if (propertyTree->isHidden())
+            return "General property tree is hidden";
+        if (propertyTree->accessibleName().isEmpty())
+            return "General property tree accessible name is empty";
+        const QString treeDescription = propertyTree->accessibleDescription();
+        if (treeDescription.isEmpty())
+            return "General property tree accessible description is empty";
+        for (const QString &boundary : offlineBoundaries) {
+            if (!treeDescription.contains(boundary, Qt::CaseInsensitive))
+                return "General property tree description misses boundary: " + boundary;
+        }
+
+        const QAbstractItemModel *model = propertyTree->model();
+        if (!model || model->rowCount() == 0 || model->columnCount() != 2)
+            return "General property tree does not contain two-column data";
+        for (int row = 0; row < model->rowCount(); ++row) {
+            const QString property = model->index(row, 0).data(Qt::DisplayRole).toString();
+            const QString value = model->index(row, 1).data(Qt::DisplayRole).toString();
+            for (int column = 0; column < model->columnCount(); ++column) {
+                const QModelIndex index = model->index(row, column);
+                const QString header
+                    = model->headerData(column, Qt::Horizontal, Qt::DisplayRole).toString();
+                const QString display = index.data(Qt::DisplayRole).toString();
+                const QVariant accessibleText = index.data(Qt::AccessibleTextRole);
+                const QVariant accessibleDescription
+                    = index.data(Qt::AccessibleDescriptionRole);
+                const QVariant toolTip = index.data(Qt::ToolTipRole);
+                const QString cell = QString("row %1 column %2").arg(row).arg(column);
+                if (accessibleText.metaType().id() != QMetaType::QString)
+                    return cell + " AccessibleTextRole is not a QString";
+                if (accessibleText.toString() != display)
+                    return cell + " accessible text differs from DisplayRole";
+                if (accessibleDescription.metaType().id() != QMetaType::QString)
+                    return cell + " AccessibleDescriptionRole is not a QString";
+                const QString cellDescription = accessibleDescription.toString();
+                if (!cellDescription.contains(header))
+                    return cell + " description misses the column heading";
+                if (!cellDescription.contains(property))
+                    return cell + " description misses the property name";
+                if (!value.isEmpty() && !cellDescription.contains(value))
+                    return cell + " description misses the complete value";
+                for (const QString &boundary : offlineBoundaries) {
+                    if (!cellDescription.contains(boundary, Qt::CaseInsensitive))
+                        return cell + " description misses boundary: " + boundary;
+                }
+                if (toolTip.metaType().id() != QMetaType::QString)
+                    return cell + " ToolTipRole is not a QString";
+                if (toolTip.toString() != cellDescription)
+                    return cell + " tooltip differs from accessible description";
+            }
+        }
+        return {};
+    };
+
+    const auto valueForProperty = [propertyTree](const QString &property) -> QString {
+        for (int row = 0; row < propertyTree->topLevelItemCount(); ++row) {
+            QTreeWidgetItem *item = propertyTree->topLevelItem(row);
+            if (item->text(0) == property)
+                return item->text(1);
+        }
+        return {};
+    };
+
+    QString verificationError = verifyPropertyTree(slave);
+    QVERIFY2(verificationError.isEmpty(), qPrintable(verificationError));
+    QCOMPARE(valueForProperty("ESI match"), longDeviceName);
+    QCOMPARE(valueForProperty("Source"), description->sourcePath);
+
+    verificationError = verifyPropertyTree(modules);
+    QVERIFY2(verificationError.isEmpty(), qPrintable(verificationError));
+    QCOMPARE(valueForProperty("Name"), QString("Modules / Channels"));
+    QCOMPARE(valueForProperty("Owner slave"), longSlaveName);
+    QCOMPARE(valueForProperty("ESI match"), longDeviceName);
+    QCOMPARE(valueForProperty("Source"), description->sourcePath);
+
+    const QString renderPath = qEnvironmentVariable(
+        "ETHERCAT_WORKBENCH_GENERAL_PROPERTY_A11Y_RENDER_PATH");
+    if (!renderPath.isEmpty()) {
+        generalPage->resize(1100, 720);
+        generalPage->show();
+        QTRY_VERIFY(generalPage->isVisible());
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY(generalPage->grab().save(renderPath));
+    }
+}
+
 void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
 {
     WorkbenchController controller;

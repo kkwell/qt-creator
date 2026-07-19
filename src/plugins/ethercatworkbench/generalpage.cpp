@@ -403,6 +403,10 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     masterContentLayout->addStretch(1);
 
     m_tree->setObjectName("EtherCATWorkbenchPageTree");
+    m_tree->setAccessibleName(Tr::tr("EtherCAT General properties"));
+    m_tree->setAccessibleDescription(Tr::tr(
+        "Read-only offline property and value pairs for the selected EtherCAT node. No "
+        "controller, network, or physical hardware is accessed."));
     m_tree->setAlternatingRowColors(true);
     m_tree->setRootIsDecorated(false);
     m_tree->setUniformRowHeights(true);
@@ -662,7 +666,23 @@ void GeneralPage::reset(const QString &summary)
 
 void GeneralPage::addRow(const QStringList &values)
 {
-    m_tree->addTopLevelItem(new QTreeWidgetItem(values));
+    auto item = new QTreeWidgetItem(values);
+    const QString property = values.value(0);
+    const QString value = values.value(1);
+    const QString describedValue = value.isEmpty() ? Tr::tr("Empty") : value;
+    for (int column = 0; column < m_tree->columnCount(); ++column) {
+        const QString display = item->text(column);
+        const QString header = m_tree->headerItem()->text(column);
+        const QString description
+            = Tr::tr(
+                  "%1 column. Property: %2. Complete value: %3. Read-only offline Workbench "
+                  "data. No controller, network, or physical hardware is accessed.")
+                  .arg(header, property, describedValue);
+        item->setData(column, Qt::AccessibleTextRole, display);
+        item->setData(column, Qt::AccessibleDescriptionRole, description);
+        item->setData(column, Qt::ToolTipRole, description);
+    }
+    m_tree->addTopLevelItem(item);
 }
 
 void GeneralPage::commitProjectName()

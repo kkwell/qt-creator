@@ -2923,3 +2923,98 @@ timer, controller/network transport, online state, or physical-hardware
 behavior. No CMake or qbs description changed, so qbs was not run. The
 Workbench path count remains 44 and the direct upstream Core patch count
 remains five.
+
+## General property tree accessibility qualification
+
+`ISSUE-WB-GENERAL-PROPERTY-TREE-A11Y-001` uses local baseline
+`2b956da48104c97414da33190b9772e033969ee7`. Previously, the private General
+page exposed its Property/Value tree visually but gave neither the widget nor
+its cells explicit accessibility metadata. Long ESI names, source paths, and
+owner-slave names could be visually elided without a standard item-role path
+that recovered the complete value and its offline boundary.
+
+The existing private `GeneralPage` tree now has a concise accessible name and
+a description that identifies it as read-only offline data. Every Property and
+Value cell publishes an actual `QString` through `AccessibleTextRole` equal to
+its current display value. `AccessibleDescriptionRole` and `ToolTipRole`
+publish the same complete description, including the visible column heading,
+property name, complete value, and the fact that no controller, network, or
+physical hardware is accessed. Empty values are described explicitly; visual
+layout, elision, row order, context ownership, and Project behavior are
+unchanged.
+
+Qt defines `AccessibleTextRole` and `AccessibleDescriptionRole` as the
+standard item-model accessibility data roles:
+<https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum>. Its QWidget contract
+distinguishes a concise accessible name from a contextual accessible
+description:
+<https://doc.qt.io/qt-6/qwidget.html#accessibleName-prop> and
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. Qt Creator
+20.0 provides both widget-level and model-role precedents:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/libs/utils/fancymainwindow.cpp#L244-L247>
+and
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/terminal/terminalpane.cpp#L586-L597>.
+Beckhoff's selected-terminal General tab documents the comparable information
+hierarchy of Name, Id, Type, Comment, Disabled, and symbol settings:
+<https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html>.
+That comparison guides information context only; Embed Labs remains an offline
+Project editor and does not claim TwinCAT controller or network behavior.
+
+The frozen regression first ran against the unchanged implementation under
+`/private/tmp/embed-labs-general-property-a11y-failure-frozen.0HPnE7`. Setup
+and cleanup passed, and the test failed exactly because the General property
+tree accessible name was empty; the target exited with status 1. After the
+minimal implementation, focused normal-scale and `QT_SCALE_FACTOR=2` runs each
+passed three events with target status 0 under
+`/private/tmp/embed-labs-general-property-a11y-focused-final.E1aBys`.
+
+The focused test imports a real ESI description and exercises both the real
+configured-slave General context and its model-generated Modules / Channels
+context. It verifies every cell's exact role type and value, complete long
+Unicode ESI/source/owner text, literal `%1`, `%2`, and `%%` recovery, header
+and property context, tooltip equality, and read-only/offline/controller/
+network/hardware boundaries. The offscreen normal render is 1100 by 720 with
+SHA-256
+`b4a03964e53a857323e44dc18a8614260a607c215a3509b8aa057011ebb731d0`;
+the 2x render is 2200 by 1440 with SHA-256
+`661d4ac799a3617fc94d8c8c0b3319d2d5731f486b0839628321efc447090afe`.
+Both renders were inspected for readability, overlap, and scale drift. Visual
+elision of intentionally huge values is preserved while the complete value is
+available through standard metadata. This qualifies Qt metadata; no manual
+VoiceOver reading is claimed.
+
+Complete normal-scale and 2x Workbench runs each passed 53 events with target
+status 0 under
+`/private/tmp/embed-labs-general-property-a11y-workbench-final.D2MHZA`. The six
+isolated EtherCAT suites passed 104 events under
+`/private/tmp/embed-labs-general-property-a11y-six-suites-final.JfEsWm`: Core
+17, Project 12, Devices 8, Workbench 53, Scan 7, and Diagnostics 7. Every
+target exited with status 0.
+
+The full `WITH_TESTS=OFF` product build passed in
+`qt-creator-build-ethercat-product-qt611`, which contains exactly the 16
+allow-listed plugin dylibs. Enabled product startup observed PID 78919 and
+remained running for 36.005 seconds. Explicitly disabled startup observed PID
+78918 and remained running for 36.006 seconds with
+`-noload EtherCATWorkbench`. Evidence for both runs is under
+`/private/tmp/embed-labs-general-property-a11y-lifecycle-final.WKCTbC`; each
+target was running immediately before LLDB passed intentional SIGTERM and
+exited with target status 15.
+
+Cleanup found no residual target or LLDB process, new DiagnosticReports file,
+or matching ReportCrash/CrashReporter unified-log event. Every executable used
+fresh HOME/settings, cleared inherited DYLD variables,
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and
+only the process-local Touch Bar LLDB breakpoint. No visible main window or
+crash dialog was created. The unrelated `WITH_TESTS=ON` all-target build was
+not rerun; the known EasyBoard test include blocker remains outside this
+private Workbench issue.
+
+This issue changes only the existing private `generalpage.cpp`, Workbench test
+declaration/implementation, and documentation. It adds no source file, public
+API, dependency, Provider, custom model role, persistence field, Project
+command, thread, timer, controller/network transport, online state, or
+physical-hardware behavior. No CMake or qbs description changed, so qbs was
+not run. The Workbench path count remains 44 and the direct upstream Core patch
+count remains five. EtherCAT SyncManager and topology-cell accessibility
+remain separately bounded future candidates.
