@@ -50,6 +50,7 @@ private slots:
     void testEditableProcessDataWorkflow();
     void testCoeOnlineMockWorkflow();
     void testCoeDictionaryCellAccessibility();
+    void testCoeRepositoryReadOnlyWorkflow();
     void testStartupTableAccessibility();
     void testEditableStartupWorkflow();
     void testEditableDcWorkflow();

@@ -369,8 +369,8 @@ public:
         if (!object)
             return Qt::NoItemFlags;
         Qt::ItemFlags result = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
-        if (!m_showOffline && modelIndex.column() == Value && object->writable
-            && !object->synthetic) {
+        if (m_mockValueEditingEnabled && !m_showOffline && modelIndex.column() == Value
+            && object->writable && !object->synthetic) {
             result |= Qt::ItemIsEditable;
         }
         return result;
@@ -379,8 +379,9 @@ public:
     bool setData(const QModelIndex &modelIndex, const QVariant &value, int role) final
     {
         CoeObjectItem *object = item(modelIndex);
-        if (role != Qt::EditRole || modelIndex.column() != Value || !object || m_showOffline
-            || !object->writable || object->synthetic) {
+        if (role != Qt::EditRole || modelIndex.column() != Value || !object
+            || !m_mockValueEditingEnabled || m_showOffline || !object->writable
+            || object->synthetic) {
             return false;
         }
         const std::optional<QByteArray> parsed = parseRawValue(value.toString());
@@ -401,9 +402,11 @@ public:
         return true;
     }
 
-    void setDefinitions(const QList<CoeObjectDefinition> &definitions)
+    void setDefinitions(
+        const QList<CoeObjectDefinition> &definitions, bool mockValueEditingEnabled)
     {
         beginResetModel();
+        m_mockValueEditingEnabled = mockValueEditingEnabled;
         m_roots.clear();
         QMap<quint16, QList<CoeObjectDefinition>> groups;
         for (const CoeObjectDefinition &definition : definitions)
@@ -499,6 +502,7 @@ private:
     }
 
     std::vector<std::unique_ptr<CoeObjectItem>> m_roots;
+    bool m_mockValueEditingEnabled = false;
     bool m_showOffline = false;
 };
 
@@ -987,7 +991,11 @@ void CoeOnlinePage::rebuildObjects()
             device = m_controller->deviceRepository()->device(slave->deviceDescriptionId);
         }
     }
-    m_model->setDefinitions(objectDefinitions(slave, device));
+    const bool mockValueEditingEnabled
+        = m_context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave && slave.has_value()
+          && !m_context.projectId.isNull() && m_controller && m_controller->projectService()
+          && m_controller->projectService()->project(m_context.projectId).has_value();
+    m_model->setDefinitions(objectDefinitions(slave, device), mockValueEditingEnabled);
     m_model->setShowOffline(m_showOffline->isChecked());
     if (m_mockGeneration > 0)
         m_model->refreshMockValues(m_mockGeneration);

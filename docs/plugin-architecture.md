@@ -173,10 +173,9 @@ are hidden, and project path is omitted because the public contract does not
 expose it; Workbench neither reaches into ProjectExplorer internals nor
 fabricates a value. Configured-slave names, Alias values, Process Data, ordered
 Startup requests, and Distributed Clocks are now editable through the checked
-Project service; their Process Data, Startup, and DC repository catalogue views
-stay read-only. Repository-device CoE editability is separately tracked by
-`ISSUE-WB-COE-REPOSITORY-READONLY-001`. The General page maps physical order,
-stable NodeId, and ESI type into read-only slave
+Project service; their Process Data, CoE, Startup, and DC repository catalogue
+views stay read-only. The General page maps physical order, stable NodeId, and
+ESI type into read-only slave
 identity fields while keeping name changes Project-owned and undoable. The
 target General page mirrors the TwinCAT target summary and Version grouping,
 reports only actual engineering/project values, marks runtime selection as
@@ -867,14 +866,58 @@ selection, editors, Add to Startup, ProjectService, persistence, ESI parsing,
 or the Mock/offline source model. It adds no public/custom role, API, source
 file, dependency, Provider, Project command, thread, timer,
 SDO/network/controller transport, online state, or physical-hardware behavior.
-No CMake or qbs description changed. Repository Device CoE editability is not
-qualified and remains the independent
-`ISSUE-WB-COE-REPOSITORY-READONLY-001` boundary.
+No CMake or qbs description changed. Repository Device CoE editability was not
+qualified by this accessibility boundary and is qualified independently below
+by `ISSUE-WB-COE-REPOSITORY-READONLY-001`.
 
 Qt's standard roles and role-specific notification contract are documented at
 <https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum> and
 <https://doc.qt.io/qt-6/qabstractitemmodel.html#dataChanged>. Beckhoff's CoE
 Online table remains only the product comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
+
+## Workbench repository Device CoE read-only boundary
+
+The private `CoeOnlinePage` remains the owner of the distinction between an
+existing configured slave and a Device Repository catalogue item. Its current
+`PropertyPageContext`, the private tree's current offline-slave copy, and the
+public Project snapshot determine one value-only Mock editing permission. No
+Project, repository object, Provider pointer, `QModelIndex`, or widget crosses
+a plugin boundary to represent that permission.
+
+The permission enters `CoeObjectModel::setDefinitions()` in the same
+`beginResetModel()` / `endResetModel()` transaction that replaces the object
+tree. A repository-to-configured or configured-to-repository context switch
+therefore cannot expose old item flags or operation text after the reset;
+clients must resolve fresh indexes. The existing private proxy forwards the
+new source-model contract and adds no second permission state.
+
+Object capability and view permission remain separate. ESI-derived
+`writable`, `WritableRole`, and the visible `RW` flag continue to describe the
+object. `flags()` advertises `ItemIsEditable`, and `setData()` accepts
+`EditRole`, only when the page supplied configured-slave permission, the Mock
+source is active, and the object/value itself is writable and non-synthetic.
+Repository Device and offline contexts omit that permission, so their
+accessible description and tooltip automatically report read-only through the
+existing flag-derived guidance. The existing Add to Startup context check
+continues to require a configured slave and Project; repository selection stays
+non-mutating.
+
+This is a Workbench-private presentation and transient-edit boundary. It does
+not change ESI parsing, repository ownership, ProjectService, persistence,
+Undo/Redo, filtering, Update List, Show Offline Data, source selection, page
+geometry, public/custom roles, Provider contracts, or any controller, SDO,
+network, online, or physical-hardware behavior. It adds no source file,
+dependency, CMake/qbs entry, or path under upstream Core, ProjectExplorer, or
+the application bootstrap. The Workbench path count remains 44 and the direct
+upstream Core patch count remains five.
+
+Qt defines `ItemIsEditable` as an item capability and requires an editable
+model to implement both `flags()` and `setData()`:
+<https://doc.qt.io/qt-6/qt.html#ItemFlag-enum> and
+<https://doc.qt.io/qt-6/qabstractitemmodel.html>. Beckhoff's CoE page preserves
+the distinction between `RW`/`RO` object metadata and offline values sourced
+from the device description:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
 
 ## Existing EasyBoard isolation

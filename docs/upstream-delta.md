@@ -691,8 +691,27 @@ changes. No file under Qt Creator's upstream Core, ProjectExplorer, or
 application bootstrap changes, so the direct Core patch budget does not
 increase and no extension-point exception is required. The Workbench path
 count remains 44 and the direct upstream Core patch count remains five.
-Repository Device CoE editability remains the independent
-`ISSUE-WB-COE-REPOSITORY-READONLY-001`; it is not included in this delta.
+Repository Device CoE editability was not included in that accessibility
+delta; it is recorded independently below.
+
+The Workbench repository Device CoE read-only issue, based on
+`3f4ea273a559506af663ae1edbb5233d31688565`, changes only the existing
+product-owned `coeonlinepage.cpp`, Workbench test declaration/implementation,
+and documentation. It passes a private context-level Mock editing permission
+into the object model during the existing definition reset. Both item flags
+and direct `EditRole` mutation require that permission. Repository objects
+retain their ESI-derived `RW` capability metadata while their catalogue Value
+cells remain read-only; configured-slave transient Mock editing remains
+available.
+
+No source file, dependency, CMake/qbs entry, public API, Project format,
+Provider, persistence field, Project command, custom model role, thread,
+timer, SDO/controller transport, online state, network behavior, or
+physical-hardware behavior changes. No file under Qt Creator's upstream Core,
+ProjectExplorer, or application bootstrap changes, so the direct Core patch
+budget does not increase and no extension-point exception is required. The
+Workbench path count remains 44 and the direct upstream Core patch count
+remains five.
 
 ## Remote comparison status
 

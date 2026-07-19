@@ -6884,6 +6884,146 @@ void EtherCATWorkbenchTests::testCoeDictionaryCellAccessibility()
     QCOMPARE(*projectService->project(file.projectId), projectBeforeEdit);
 }
 
+void EtherCATWorkbenchTests::testCoeRepositoryReadOnlyWorkflow()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QByteArray repositoryEsi = deviceEsi();
+    const QByteArray originalProductCode = "#x00005678";
+    QCOMPARE(repositoryEsi.count(originalProductCode), 1);
+    repositoryEsi.replace(originalProductCode, "#xC0E00001");
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("coe-repository-read-only.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(repositoryEsi));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0xC0E00001;
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(directory, *device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(device->id).isValid());
+
+    BuiltinPropertyPageProvider pages(&controller);
+    std::unique_ptr<QWidget> page(pages.createPage(Constants::COE_ONLINE_PAGE_ID, nullptr));
+    QVERIFY(page);
+    QTreeView *dictionary = page->findChild<QTreeView *>("EtherCATCoeObjectDictionary");
+    QPushButton *addToStartup = page->findChild<QPushButton *>("EtherCATCoeAddToStartup");
+    QCheckBox *showOffline = page->findChild<QCheckBox *>("EtherCATCoeShowOffline");
+    QLabel *source = page->findChild<QLabel *>("EtherCATCoeDataSource");
+    QVERIFY(dictionary);
+    QVERIFY(addToStartup);
+    QVERIFY(showOffline);
+    QVERIFY(source);
+    QAbstractItemModel *model = dictionary->model();
+    QVERIFY(model);
+    QAbstractItemModelTester modelTester(
+        model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    const int flagsColumn = columnWithHeader(model, "Flags");
+    const int valueColumn = columnWithHeader(model, "Value");
+    QCOMPARE(flagsColumn, 2);
+    QCOMPARE(valueColumn, 3);
+
+    const QModelIndex configuredSlave = controller.treeModel()->indexForNodeId(file.slaveId);
+    const Core::PropertyPageContext configuredContext
+        = controller.treeModel()->contextForIndex(configuredSlave);
+    QCOMPARE(configuredContext.nodeKind, Core::WorkbenchNodeKind::ConfiguredSlave);
+    pages.updatePage(Constants::COE_ONLINE_PAGE_ID, page.get(), configuredContext);
+    QModelIndex object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    QModelIndex valueCell = object.siblingAtColumn(valueColumn);
+    QVERIFY(model->flags(valueCell) & Qt::ItemIsEditable);
+    QVERIFY(valueCell.data(Qt::AccessibleDescriptionRole)
+                .toString()
+                .contains("temporarily", Qt::CaseInsensitive));
+    dictionary->setCurrentIndex(object);
+    QTRY_VERIFY(addToStartup->isEnabled());
+    const Data::ProjectSnapshot projectBeforeContexts
+        = *projectService->project(file.projectId);
+    QVERIFY(model->setData(valueCell, "5A", Qt::EditRole));
+    QCOMPARE(*projectService->project(file.projectId), projectBeforeContexts);
+
+    const QModelIndex repositoryDevice = controller.treeModel()->indexForNodeId(device->id);
+    const Core::PropertyPageContext repositoryContext
+        = controller.treeModel()->contextForIndex(repositoryDevice);
+    QCOMPARE(repositoryContext.nodeKind, Core::WorkbenchNodeKind::Device);
+    QVERIFY(repositoryContext.projectId.isNull());
+    pages.updatePage(Constants::COE_ONLINE_PAGE_ID, page.get(), repositoryContext);
+    QVERIFY(!showOffline->isChecked());
+    QVERIFY(source->text().contains("Mock", Qt::CaseInsensitive));
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    valueCell = object.siblingAtColumn(valueColumn);
+    QVERIFY(object.siblingAtColumn(flagsColumn).data().toString().contains("RW"));
+    dictionary->setCurrentIndex(object);
+    QTRY_VERIFY(!addToStartup->isEnabled());
+
+    QVERIFY2(
+        !(model->flags(valueCell) & Qt::ItemIsEditable),
+        "A repository Device CoE Value must not advertise ItemIsEditable");
+
+    const QString repositoryValue = valueCell.data(Qt::EditRole).toString();
+    const QVariant repositoryDisplay = valueCell.data(Qt::DisplayRole);
+    const QVariant repositoryAccessibleText = valueCell.data(Qt::AccessibleTextRole);
+    const QString repositoryDescription
+        = valueCell.data(Qt::AccessibleDescriptionRole).toString();
+    const QVariant repositoryToolTip = valueCell.data(Qt::ToolTipRole);
+    QVERIFY(repositoryDescription.contains("read-only", Qt::CaseInsensitive));
+    QVERIFY(!repositoryDescription.contains("temporarily", Qt::CaseInsensitive));
+    QVERIFY(repositoryDescription.contains("Mock", Qt::CaseInsensitive));
+    QVERIFY(repositoryDescription.contains("controller", Qt::CaseInsensitive));
+    QVERIFY(repositoryDescription.contains("SDO", Qt::CaseInsensitive));
+    QCOMPARE(repositoryToolTip.toString(), repositoryDescription);
+    QVERIFY(repositoryToolTip.toString().contains("read-only", Qt::CaseInsensitive));
+    QVERIFY(!repositoryToolTip.toString().contains("temporarily", Qt::CaseInsensitive));
+    QVERIFY(!model->setData(valueCell, "5A", Qt::EditRole));
+    QCOMPARE(valueCell.data(Qt::EditRole).toString(), repositoryValue);
+    QCOMPARE(valueCell.data(Qt::DisplayRole), repositoryDisplay);
+    QCOMPARE(valueCell.data(Qt::AccessibleTextRole), repositoryAccessibleText);
+    QCOMPARE(valueCell.data(Qt::AccessibleDescriptionRole).toString(), repositoryDescription);
+    QCOMPARE(valueCell.data(Qt::ToolTipRole), repositoryToolTip);
+    QCOMPARE(*projectService->project(file.projectId), projectBeforeContexts);
+
+    pages.updatePage(Constants::COE_ONLINE_PAGE_ID, page.get(), configuredContext);
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    valueCell = object.siblingAtColumn(valueColumn);
+    QVERIFY(model->flags(valueCell) & Qt::ItemIsEditable);
+    dictionary->setCurrentIndex(object);
+    QTRY_VERIFY(addToStartup->isEnabled());
+    QVERIFY(model->setData(valueCell, "5A", Qt::EditRole));
+    QCOMPARE(*projectService->project(file.projectId), projectBeforeContexts);
+
+    pages.updatePage(Constants::COE_ONLINE_PAGE_ID, page.get(), repositoryContext);
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    valueCell = object.siblingAtColumn(valueColumn);
+    QVERIFY(!(model->flags(valueCell) & Qt::ItemIsEditable));
+    QVERIFY(!model->setData(valueCell, "5A", Qt::EditRole));
+    QCOMPARE(*projectService->project(file.projectId), projectBeforeContexts);
+}
+
 void EtherCATWorkbenchTests::testStartupTableAccessibility()
 {
     WorkbenchController controller;

@@ -594,7 +594,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | CoE manual refresh, search, Unicode, and advanced range filters | Passed |
 | CoE Mock raw-value edit and invalid-width rejection | Passed |
 | CoE Add to Startup cancel, confirm, append-only, and Undo | Passed |
-| CoE offline and missing-ESI read-only boundaries | Passed; the former repository read-only claim is withdrawn because repository Mock Value cells remain transiently editable, tracked by `ISSUE-WB-COE-REPOSITORY-READONLY-001` |
+| CoE offline, missing-ESI, and repository read-only boundaries | Passed; repository `RW` capability metadata remains visible while its Mock Value edit flag and direct model mutation are rejected by the separate current qualification below |
 | CoE focused test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
 | Shared StateService Offline/Busy/Error priority and Mock labels | Passed |
 | Status tooltip, drop-down details, Mode visibility, and cleanup ownership | Passed |
@@ -1614,7 +1614,7 @@ Beckhoff's ordered Startup request comparison is documented at
 | Process and crash-report cleanup | No residual Embed Labs/LLDB process, no new DiagnosticReports file, and no matching ReportCrash/CrashReporter unified-log event |
 | Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no visible main window or crash dialog |
 | Assistive-technology claim | Standard Qt item-model metadata verified; no manual VoiceOver reading is claimed |
-| Repository Device CoE boundary | Not qualified; editable repository Mock Value flags remain the independent follow-up `ISSUE-WB-COE-REPOSITORY-READONLY-001` |
+| Repository Device CoE boundary | Not qualified by this accessibility issue; subsequently passed under the independent `ISSUE-WB-COE-REPOSITORY-READONLY-001` qualification below |
 | qbs execution | Not run; no CMake or qbs file changed |
 | Public API, dependency, persistence, Provider, Project command, custom model role, or source-list changes | None |
 | Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
@@ -1624,6 +1624,48 @@ Qt's standard roles and role-specific change notification are documented at
 <https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum> and
 <https://doc.qt.io/qt-6/qabstractitemmodel.html#dataChanged>. Beckhoff's
 five-column CoE Online object dictionary remains only the product comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
+
+## EtherCATWorkbench repository Device CoE read-only qualification
+
+`ISSUE-WB-COE-REPOSITORY-READONLY-001` uses local baseline
+`3f4ea273a559506af663ae1edbb5233d31688565`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first regression | Setup and cleanup passed; the unchanged old implementation failed exactly once because repository object `6060:00` still advertised `Qt::ItemIsEditable` under `/private/tmp/embed-labs-coe-repository-failure-final.VgDNIm`; target status 1 |
+| Repository object capability | Passed; the ESI-derived Flags cell still displays `RW`, so repository presentation does not falsify device capability metadata |
+| Repository model permission | Passed through the view's actual proxy model; Value flags omit `ItemIsEditable` and direct `setData(..., Qt::EditRole)` returns false |
+| Rejected-edit stability | Passed; Edit, Display, AccessibleText, AccessibleDescription, and Tooltip data remain unchanged after rejection |
+| Truthful operation guidance | Passed; description and tooltip report read-only, retain Mock/controller/SDO boundaries, and do not advertise temporary editing |
+| Add to Startup | Passed; disabled for the repository Device and restored only for the selected writable object in the configured-slave context |
+| Context reset and stale-index boundary | Passed for configured / repository / configured / repository switching, with fresh indexes resolved after every reset and no edit permission leakage |
+| Configured-slave regression | Passed; the same ESI object's Mock Value remains temporarily editable in an existing configured-slave context |
+| Project mutation boundary | Passed; the complete Project snapshot remains unchanged through accepted transient configured edits, rejected repository edits, selection, and context switching |
+| Focused normal-scale test | 3 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-coe-repository-focused-final.3aAeuW/normal` |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-coe-repository-focused-final.3aAeuW/2x` |
+| Complete EtherCATWorkbench normal scale | 50 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-coe-repository-workbench-final.2YRthk/normal` |
+| Complete EtherCATWorkbench 2x scale | 50 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-coe-repository-workbench-final.2YRthk/2x` |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 50, Scan 7, Diagnostics 7; 101 passed, 0 failed with target status 0 in isolated LLDB-supervised processes under `/private/tmp/embed-labs-coe-repository-six-suites-final.jBXs08` |
+| Qualified Qt and test build | Qt 6.11 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed in `qt-creator-build-ethercat-product-qt611`; exactly the 16 allow-listed plugin dylibs are present |
+| Enabled offscreen startup | PID 95408 remained running for 36.006 seconds after observation under `/private/tmp/embed-labs-coe-repository-product-enabled-final2.DrnDXO`; intentional SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 96495 remained running for 36.005 seconds with `-noload EtherCATWorkbench` under `/private/tmp/embed-labs-coe-repository-product-disabled-final2.DKy1uv`; intentional SIGTERM produced target status 15; one non-fatal shared-memory message did not interrupt startup |
+| Process and crash-report cleanup | No residual Embed Labs/LLDB process, new DiagnosticReports file, or matching ReportCrash/CrashReporter unified-log event |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no visible main window or crash dialog |
+| Visual/manual desktop inspection | Not run by design; the issue changes no geometry and all executable qualification was offscreen |
+| `WITH_TESTS=ON` all-target build | Not rerun; the known unrelated EasyBoard test include blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, Project command, custom model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, SDO/controller transport, online state, or hardware access | Not performed or added; CoE remains a local Mock/offline object dictionary |
+
+Qt defines `ItemIsEditable` as an editable item-model capability and requires
+an editable model to align that flag with `setData()`:
+<https://doc.qt.io/qt-6/qt.html#ItemFlag-enum> and
+<https://doc.qt.io/qt-6/qabstractitemmodel.html>. Beckhoff distinguishes its
+online object operation from offline device-description values while retaining
+the object's `RW`/`RO` metadata:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
 
 ## Verification states

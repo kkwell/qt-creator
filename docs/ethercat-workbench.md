@@ -926,8 +926,9 @@ The built-in provider supplies these stage-4 pages:
   catalogue view for repository devices;
 - a read-only, automatically focused Process Data view for Inputs, Outputs,
   RxPDO, TxPDO, PDO, and PDO Entry tree selections;
-- a local-only CoE Online Mock object dictionary with explicit offline view and
-  an undoable Add to Startup path;
+- a local-only CoE Online Mock object dictionary with explicit offline view,
+  temporary configured-slave Value editing, a read-only repository catalogue,
+  and an undoable Add to Startup path;
 - General information for Modules / Channels, Module, and Channel selections;
 - an editable Startup request list for configured slaves, with a read-only ESI
   catalogue view for repository devices;
@@ -940,10 +941,9 @@ A configured slave retains its scanned Identity, position, Serial Number,
 Alias, and optional stable ESI description ID in the Project snapshot. When
 that ESI entry is available, the configured slave reuses its SyncManager,
 Process Data, Startup, and DC descriptions as editable offline proposals. The
-repository-device Process Data, Startup, and DC catalogue views remain
-read-only. Repository-device CoE editability is the separately tracked
-`ISSUE-WB-COE-REPOSITORY-READONLY-001`. A missing ESI match is reported
-explicitly and does not invent PDO, Startup, or DC data.
+repository-device Process Data, CoE, Startup, and DC catalogue views remain
+read-only. A missing ESI match is reported explicitly and does not invent PDO,
+Startup, or DC data.
 
 ### Process Data workflow
 
@@ -1017,15 +1017,16 @@ until a future controller Provider exists, so this Workbench issue introduces
 no polling timer or background task. Advanced switches between local Mock and
 offline device-description values, selects an object-index range, and can hide
 standard or PDO objects. The page also supports recursive text filtering,
-including Unicode engineering names. Offline views are read-only.
-Repository-device CoE Mock Value cells currently remain transiently editable;
-the earlier repository read-only qualification is withdrawn and tracked by
-`ISSUE-WB-COE-REPOSITORY-READONLY-001`.
+including Unicode engineering names. Offline views and repository-device
+catalogue contexts are read-only. The repository still displays the ESI `RW`
+object capability, but its Value cell does not advertise editing and rejects a
+direct model edit.
 
 The Value cell of a locally writable Mock object accepts size-checked raw
-hexadecimal edits. Editing only changes the page's transient Mock value. Add to
-Startup requires explicit confirmation, appends a new `PS` request without
-overwriting an existing request, and submits the complete candidate through
+hexadecimal edits only in an existing configured-slave context. Editing only
+changes the page's transient Mock value. Add to Startup requires explicit
+confirmation, appends a new `PS` request without overwriting an existing
+request, and submits the complete candidate through
 `ProjectService::setStartupConfiguration()`. The resulting project change is
 undoable. Cancel, invalid hex, wrong width, read-only objects, offline data, and
 repository-device contexts leave the project unchanged.
@@ -1204,12 +1205,15 @@ defaults storage, fixed requests, New/Edit/Delete dialogs, enable state,
 ordering, type/value validation, manual no-ESI empty state, and real
 ProjectService Undo/Redo reentrancy. The CoE Online workflow covers the
 TwinCAT-inspired object hierarchy and controls, ESI/offline/Mock sources,
-manual refresh, advanced and Unicode filters, offline and object-level
-read-only boundaries, raw-value editing, cancelled and confirmed Add to
-Startup, no-overwrite behavior, no-ESI state, Project modified state, and Undo.
-Repository-device read-only behavior is excluded pending
-`ISSUE-WB-COE-REPOSITORY-READONLY-001`. Its model is also checked by
-`QAbstractItemModelTester` and the focused flow passes at `QT_SCALE_FACTOR=2`.
+manual refresh, advanced and Unicode filters, offline, object-level, and
+repository-device read-only boundaries, configured-slave raw-value editing,
+cancelled and confirmed Add to Startup, no-overwrite behavior, no-ESI state,
+Project modified state, and Undo. The repository regression preserves ESI `RW`
+metadata while rejecting both the editable item flag and direct proxy-model
+`setData()`, then switches configured-slave / repository contexts in both
+directions to reject stale permissions. Its model is also checked by
+`QAbstractItemModelTester`, and the focused flows pass at
+`QT_SCALE_FACTOR=2`.
 The DC workflow covers two ESI operation
 modes, explicit Store/Restore, manual no-ESI configuration, AssignActivate,
 SYNC0/SYNC1 enable and nanosecond timing, reference-clock selection, validation
@@ -2663,8 +2667,88 @@ controller/SDO/network transport, online state, or physical-hardware behavior.
 No CMake or qbs description changed, so qbs was not run. The Workbench path
 count remains 44 and the direct upstream Core patch count remains five.
 
-Device-repository CoE read-only behavior is not qualified here. The adjacent
-audit found that repository Mock Value cells still receive an editable flag;
-that behavior is frozen as the independent follow-up
-`ISSUE-WB-COE-REPOSITORY-READONLY-001` and is neither repaired nor claimed by
-this issue.
+Device-repository CoE read-only behavior was not qualified by this earlier
+accessibility issue. It is qualified separately below by
+`ISSUE-WB-COE-REPOSITORY-READONLY-001`; the earlier accessibility evidence and
+scope remain unchanged.
+
+## Repository Device CoE read-only qualification
+
+`ISSUE-WB-COE-REPOSITORY-READONLY-001` uses local baseline
+`3f4ea273a559506af663ae1edbb5233d31688565`. The private CoE object model now
+receives its context-level Mock editing permission in the same reset that
+rebuilds object definitions. Only a configured-slave context backed by the
+current slave and Project snapshots receives that permission. Repository
+Device, offline, missing-slave, and missing-Project contexts remain read-only.
+
+Both `flags()` and `setData()` enforce the same private permission. The ESI
+object capability remains independently visible as `RW`; `WritableRole`,
+filtering, Update List, Show Offline Data, selection, object hierarchy, and
+standard accessibility roles are unchanged. The existing Add to Startup
+context gate remains disabled for the repository Device. No controller,
+network, SDO transfer, Project mutation, or persistent repository edit is
+introduced.
+
+The frozen test compiled against the old implementation and ran under
+`/private/tmp/embed-labs-coe-repository-failure-final.VgDNIm`. Initialization and
+cleanup passed, and the only failure was the expected repository `6060:00`
+Value cell still advertising `Qt::ItemIsEditable`; the target exited with test
+status 1. After the minimal implementation, focused normal-scale and
+`QT_SCALE_FACTOR=2` runs each passed three events with target status 0 under
+`/private/tmp/embed-labs-coe-repository-focused-final.3aAeuW/normal` and
+`/private/tmp/embed-labs-coe-repository-focused-final.3aAeuW/2x`.
+
+The regression uses a unique temporary ESI ProductCode and the page's actual
+proxy model. It proves configured-slave editability first, then repository
+`RW` capability plus read-only flags, direct edit rejection, unchanged Display,
+Edit, accessible text, description and tooltip values, disabled Add to Startup,
+and complete Project-snapshot immutability. A configured / repository /
+configured / repository round trip resolves fresh indexes after each reset and
+proves that edit permission neither leaks nor remains stale.
+
+Complete normal-scale and 2x Workbench runs each passed 50 events with target
+status 0 under
+`/private/tmp/embed-labs-coe-repository-workbench-final.2YRthk/normal` and
+`/private/tmp/embed-labs-coe-repository-workbench-final.2YRthk/2x`. The six isolated
+EtherCAT suites passed 101 events under
+`/private/tmp/embed-labs-coe-repository-six-suites-final.jBXs08`: Core 17, Project
+12, Devices 8, Workbench 50, Scan 7, and Diagnostics 7. Every target exited
+with status 0.
+
+The full `WITH_TESTS=OFF` product build passed in
+`qt-creator-build-ethercat-product-qt611`, and exactly the 16 allow-listed
+plugin dylibs are present. Enabled product startup observed PID 95408 and
+remained running for 36.006 seconds under
+`/private/tmp/embed-labs-coe-repository-product-enabled-final2.DrnDXO`.
+Explicitly disabled startup observed PID 96495 and remained running for 36.005
+seconds with `-noload EtherCATWorkbench` under
+`/private/tmp/embed-labs-coe-repository-product-disabled-final2.DKy1uv`. The
+disabled run emitted one non-fatal shared-memory initialization message. Both
+targets were still running immediately before LLDB passed intentional SIGTERM,
+and both exited with target status 15.
+
+Cleanup found no residual Embed Labs or LLDB process, new DiagnosticReports
+file, or matching ReportCrash/CrashReporter unified-log event. Every executable
+used fresh HOME/settings, cleared inherited DYLD variables,
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and
+only the process-local Touch Bar LLDB breakpoint. No visible main window or
+crash dialog was created. Manual desktop inspection was not run because this
+issue changes no geometry. The unrelated `WITH_TESTS=ON` all-target build was
+not rerun; the known EasyBoard test include blocker is outside this private
+Workbench issue.
+
+This issue changes only the existing private `coeonlinepage.cpp`, Workbench
+test declaration/implementation, and documentation. It adds no source file,
+public API, dependency, Provider, custom model role, persistence field, Project
+command, thread, timer, controller/SDO/network transport, online state, or
+physical-hardware behavior. No CMake or qbs description changed, so qbs was not
+run. The Workbench path count remains 44 and the direct upstream Core patch
+count remains five.
+
+Qt defines `ItemIsEditable` as the item-model capability to edit an item and
+requires editable models to align `flags()` with `setData()`:
+<https://doc.qt.io/qt-6/qt.html#ItemFlag-enum> and
+<https://doc.qt.io/qt-6/qabstractitemmodel.html>. Beckhoff distinguishes a CoE
+Online object operation from an offline device-description source while
+retaining the object's `RW`/`RO` access metadata:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
