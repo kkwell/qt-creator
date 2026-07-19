@@ -1709,6 +1709,48 @@ documented at
 <https://infosys.beckhoff.com/content/1033/el331x/1036999947.html> and
 <https://infosys.beckhoff.com/content/1033/ethercatsystem/2477595531.html>.
 
+## EtherCATWorkbench project-scoped Details draft qualification
+
+`ISSUE-WB-DETAILS-UNRELATED-PROJECT-DRAFT-001` uses local baseline
+`e5ded42f8dd3d3d861de830e3408de12f1847334`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first regression | The final frozen test ran against the unchanged implementation; setup and cleanup passed, and Project B's rename replaced Project A's focused Unicode `%1` draft with Project A's persisted name under `/private/tmp/embed-labs-details-draft-failure-final.4j1lxv`; target status 1 |
+| Refresh ownership | `ProjectService::projectChanged` refreshes Details only when the changed snapshot ID equals the current `PropertyPageContext::projectId` |
+| Current-context evaluation | The callback reads `m_context.projectId` when the signal arrives; it does not retain the Project selected when the connection was created |
+| Unrelated Project continuity | Project A draft text, `isModified()`, editor focus, selection, Details context/title, and persisted snapshot remain unchanged after a real Project B rename |
+| Current Project continuity | A real Project A rename still refreshes the same General editor and Details title to the persisted name and clears the modified flag |
+| Repository context | A null Project ID ignores Project changes; repository ownership and device refresh signals are unchanged |
+| Shared page boundary | The filter is at the common Details refresh gate, before General, EtherCAT, Process Data, CoE, Startup, DC, Online, Diagnostics, or dynamic Provider page updates |
+| Same-Project conflict policy | Intentionally unchanged; a current Project change remains authoritative and may replace an in-progress page draft. Dirty/conflict merging is outside this issue |
+| Focused normal-scale test | 3 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-details-draft-focused-frozen-final.Y5vcy2/normal` |
+| Focused `QT_SCALE_FACTOR=2` test | 3 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-details-draft-focused-frozen-final.Y5vcy2/2x` |
+| Complete EtherCATWorkbench normal scale | 52 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-details-draft-workbench-final.ygJUZO/normal` |
+| Complete EtherCATWorkbench 2x scale | 52 passed, 0 failed; target status 0 under `/private/tmp/embed-labs-details-draft-workbench-final.ygJUZO/2x` |
+| Six-plugin EtherCAT regression | Core 17, Project 12, Devices 8, Workbench 52, Scan 7, Diagnostics 7; 103 passed, 0 failed with target status 0 in isolated LLDB-supervised processes under `/private/tmp/embed-labs-details-draft-six-suites-final.MG71MB` |
+| Qualified Qt and test build | Qt 6.11 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed in `qt-creator-build-ethercat-product-qt611`; exactly the 16 allow-listed plugin dylibs are present |
+| Enabled offscreen startup | PID 1913 remained running for 36.010 seconds after observation under `/private/tmp/embed-labs-details-draft-lifecycle-final.Zu4F0t/enabled`; intentional SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 2968 remained running for 36.011 seconds with `-noload EtherCATWorkbench` under `/private/tmp/embed-labs-details-draft-lifecycle-final.Zu4F0t/disabled`; intentional SIGTERM produced target status 15 |
+| Process and crash-report cleanup | No residual Embed Labs/LLDB process, new DiagnosticReports file, or matching ReportCrash/CrashReporter unified-log event |
+| Invisible executable policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no visible main window or crash dialog |
+| Visual/manual desktop inspection | Not run by design; the issue changes no geometry and all executable qualification was offscreen |
+| `WITH_TESTS=ON` all-target build | Not rerun; the known unrelated EasyBoard test include blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, Project command, model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, controller transport, online state, or hardware access | Not performed or added; Details remains a local Mock/offline Project presentation |
+
+Qt documents the modified and `setText()` reset behavior at
+<https://doc.qt.io/qt-6/qlineedit.html#modified-prop> and typed functor
+connections at <https://doc.qt.io/qt-6/qobject.html#connect-5>. Qt Creator
+20.0's Project settings keep listeners on their owning Project items:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectwindow.cpp#L580-L619>.
+Beckhoff's TwinCAT comparison scopes the available configuration tabs to the
+terminal selected in Solution Explorer:
+<https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html>.
+
 ## Verification states
 
 Use only these evidence labels:

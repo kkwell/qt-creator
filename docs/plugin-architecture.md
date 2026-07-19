@@ -955,6 +955,48 @@ comparison:
 <https://infosys.beckhoff.com/content/1033/el331x/1036999947.html> and
 <https://infosys.beckhoff.com/content/1033/ethercatsystem/2477595531.html>.
 
+## Workbench project-scoped Details refresh boundary
+
+`ISSUE-WB-DETAILS-UNRELATED-PROJECT-DRAFT-001` keeps this ownership rule
+inside the product-owned Workbench plugin.
+
+The private `DetailsView` owns the mapping from the current stable selection
+to its `PropertyPageContext` and hosted page set. `ProjectService` continues to
+publish value-only `ProjectSnapshot` changes for every open Project. Details
+now consumes that snapshot ID and invokes its existing bounded page-refresh
+pump only when the ID equals the current context's Project ID. It reads the
+context at delivery time, so the connection stores no stale selection token,
+Project pointer, page pointer, or Provider pointer.
+
+This is intentionally a Project ownership boundary, not a dirty-form merge
+framework. An unrelated Project cannot call the current page Provider's
+`updatePage()` and therefore cannot replace a focused General or DC text draft.
+A change to the current Project remains authoritative and continues through
+the existing refresh path. Repository contexts have a null Project ID and do
+not consume Project changes; their existing DeviceRepository reset/change/
+indexing signals remain separate. Project-tree synchronization still observes
+all Projects, and selection/model-reset handling remains responsible for close
+and invalidation lifecycle.
+
+The filter stays in product-owned `EtherCATWorkbench`. It does not change the
+public `ProjectService` signal, `PropertyPageProvider` contract, page ownership,
+rebuild generation, focus token, operation pump, Project persistence, Undo/
+Redo, or plugin load/unload path. It adds no API, source file, dependency,
+Provider, Project command, model role, thread, timer, network/controller
+transport, online state, or physical-hardware behavior. No CMake or qbs
+description changed. The Workbench path count remains 44 and the direct
+upstream Core patch count remains five.
+
+Qt's `QLineEdit` contract explains why an unnecessary `setText()` destroys
+draft state, and QObject's typed connection lets the private lambda consume
+the changed snapshot:
+<https://doc.qt.io/qt-6/qlineedit.html#modified-prop> and
+<https://doc.qt.io/qt-6/qobject.html#connect-5>. Qt Creator 20.0's per-Project
+settings listeners provide the local ownership precedent:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectwindow.cpp#L580-L619>.
+Beckhoff's selected-terminal tabs remain only the product comparison:
+<https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html>.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

@@ -731,6 +731,23 @@ budget does not increase and no extension-point exception is required. The
 Workbench path count remains 44 and the direct upstream Core patch count
 remains five.
 
+`ISSUE-WB-DETAILS-UNRELATED-PROJECT-DRAFT-001`, based on
+`e5ded42f8dd3d3d861de830e3408de12f1847334`, changes only the existing
+product-owned `detailsview.cpp`, Workbench test declaration/implementation,
+and documentation. The private `ProjectService::projectChanged` connection
+now consumes the signal's value-only snapshot and refreshes hosted pages only
+when that Project owns the current Details context. Unrelated Project changes
+therefore preserve current draft text, modified state, focus, selection, and
+context; current-Project changes still refresh through the existing path.
+
+No source file, dependency, CMake/qbs entry, public API, Project format,
+Provider, persistence field, Project command, model role, thread, timer,
+controller transport, online state, network behavior, or physical-hardware
+behavior changes. No file under Qt Creator's upstream Core, ProjectExplorer,
+or application bootstrap changes, so the direct Core patch budget does not
+increase and no extension-point exception is required. The Workbench path
+count remains 44 and the direct upstream Core patch count remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

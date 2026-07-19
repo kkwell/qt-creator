@@ -5304,6 +5304,93 @@ void EtherCATWorkbenchTests::testDetailsKeyboardFocusContinuity()
     QTRY_COMPARE(QApplication::focusWidget(), emptyState);
 }
 
+void EtherCATWorkbenchTests::testProjectScopedDetailsRefreshPreservesGeneralDraft()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Data::DeviceSummary device = deviceSummaries(1).first();
+    const TestProjectFile alpha = writeProjectWithSlave(
+        directory, device, "details-draft-alpha.ecatproject", "Details Draft Alpha");
+    const TestProjectFile beta = writeProjectWithSlave(
+        directory, device, "details-draft-beta.ecatproject", "Details Draft Beta");
+    QVERIFY(!alpha.path.isEmpty());
+    QVERIFY(!beta.path.isEmpty());
+
+    const ProjectExplorer::OpenProjectResult alphaOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(alpha.path, false);
+    QVERIFY2(alphaOpened, qPrintable(alphaOpened.errorMessage()));
+    const ProjectExplorer::OpenProjectResult betaOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(beta.path, false);
+    QVERIFY2(betaOpened, qPrintable(betaOpened.errorMessage()));
+    auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (projectService->project(beta.projectId))
+            ProjectExplorer::ProjectManager::removeProject(betaOpened.project());
+        if (projectService->project(alpha.projectId))
+            ProjectExplorer::ProjectManager::removeProject(alphaOpened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(alpha.projectId).has_value());
+    QTRY_VERIFY(projectService->project(beta.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(alpha.projectId).isValid());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(beta.projectId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(alpha.projectId);
+    DetailsView details(&controller);
+    details.resize(900, 600);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QTRY_COMPARE(details.currentContext().nodeId, alpha.projectId);
+
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
+    QLabel *title = details.findChild<QLabel *>("EtherCATWorkbenchDetailsTitle");
+    QVERIFY(page);
+    QVERIFY(title);
+    QLineEdit *name = page->findChild<QLineEdit *>("EtherCATProjectGeneralName");
+    QVERIFY(name);
+    QCOMPARE(name->text(), QString("Details Draft Alpha"));
+
+    const QString draft = QString::fromUtf8("Alpha pending draft %1 / 未保存草稿");
+    name->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), name);
+    name->setText(draft);
+    name->setModified(true);
+
+    const QString renamedBeta = QString::fromUtf8("Details Draft Beta / 外部更新");
+    QVERIFY_RESULT(projectService->renameProject(beta.projectId, renamedBeta));
+    QTRY_COMPARE(projectService->project(beta.projectId)->name, renamedBeta);
+    QCOMPARE(projectService->project(alpha.projectId)->name, QString("Details Draft Alpha"));
+    QCOMPARE(controller.selectionService()->currentNodeId(), alpha.projectId);
+    QCOMPARE(details.currentContext().projectId, alpha.projectId);
+    QCOMPARE(details.currentContext().nodeId, alpha.projectId);
+    QCOMPARE(name->text(), draft);
+    QVERIFY(name->isModified());
+    QCOMPARE(QApplication::focusWidget(), name);
+    QCOMPARE(title->text(), QString("Details Draft Alpha"));
+
+    const QString renamedAlpha = QString::fromUtf8("Details Draft Alpha / 已持久化");
+    QVERIFY_RESULT(projectService->renameProject(alpha.projectId, renamedAlpha));
+    QTRY_COMPARE(projectService->project(alpha.projectId)->name, renamedAlpha);
+    QTRY_COMPARE(name->text(), renamedAlpha);
+    QVERIFY(!name->isModified());
+    QTRY_COMPARE(title->text(), renamedAlpha);
+
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(betaOpened.project());
+    ProjectExplorer::ProjectManager::removeProject(alphaOpened.project());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_VERIFY(!projectService->project(alpha.projectId).has_value());
+    QTRY_VERIFY(!projectService->project(beta.projectId).has_value());
+    projectCleanup.dismiss();
+}
+
 void EtherCATWorkbenchTests::testNavigationSetActiveProjectCommand()
 {
     ::Core::ModeManager::activateMode(Constants::MODE_ID);

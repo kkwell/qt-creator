@@ -207,7 +207,10 @@ DetailsView::DetailsView(WorkbenchController *controller, QWidget *parent)
             controller->projectService(),
             &Core::ProjectService::projectChanged,
             this,
-            [this] { refreshPageContents(); });
+            [this](const Data::ProjectSnapshot &project) {
+                if (project.id == m_context.projectId)
+                    refreshPageContents();
+            });
     }
 
     const Data::NodeId initialSelection = controller->selectionService()

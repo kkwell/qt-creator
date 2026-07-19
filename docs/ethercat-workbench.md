@@ -2834,3 +2834,92 @@ field, Project command, thread, timer, controller/network transport, online
 state, or physical-hardware behavior. No CMake or qbs description changed, so
 qbs was not run. The Workbench path count remains 44 and the direct upstream
 Core patch count remains five.
+
+## Project-scoped Details draft continuity qualification
+
+`ISSUE-WB-DETAILS-UNRELATED-PROJECT-DRAFT-001` uses local baseline
+`e5ded42f8dd3d3d861de830e3408de12f1847334`. Previously, the private
+`DetailsView` discarded the `ProjectSnapshot` carried by every
+`ProjectService::projectChanged` signal and refreshed every page for the
+current selection. Editing Project A while Project B changed therefore called
+`GeneralPage::setContext()` and the other current page updates with Project
+A's persisted snapshot. An uncommitted Project A name was silently replaced
+before its `editingFinished` commit path ran.
+
+The Details connection now reads the changed Project ID and refreshes page
+contents only when it equals the current `PropertyPageContext::projectId`.
+The comparison is evaluated when the signal arrives, not captured when the
+connection is created, so selection changes retain the correct ownership
+boundary. Project and configured-slave contexts continue to refresh for their
+own Project changes, including external edits and Undo/Redo. Repository
+contexts have no Project ID and do not refresh merely because an unrelated
+Project changed. Tree synchronization, selection, page ownership, Provider
+lifecycle, and Project close handling remain unchanged.
+
+Qt documents that user edits set `QLineEdit::modified`, while `setText()`
+resets that flag and replaces the text:
+<https://doc.qt.io/qt-6/qlineedit.html#modified-prop>. Qt's typed
+signal/functor connection permits the receiver-context lambda to consume the
+signal argument:
+<https://doc.qt.io/qt-6/qobject.html#connect-5>. Qt Creator 20.0's Project
+settings implementation keeps change listeners on their owning Project item
+rather than treating every Project event as current-page data:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectwindow.cpp#L580-L619>.
+Beckhoff's TwinCAT comparison is likewise selection-scoped: the terminal
+selected in Solution Explorer determines the available configuration tabs:
+<https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10832178955.html>.
+These sources guide event scoping only; Embed Labs remains a local Mock/offline
+Project editor and does not claim TwinCAT runtime behavior.
+
+The final frozen regression ran against the unchanged baseline implementation
+under `/private/tmp/embed-labs-details-draft-failure-final.4j1lxv`. Test setup
+and cleanup passed, and the test failed exactly where a long Unicode Project A
+draft containing literal `%1` had been replaced with Project A's persisted
+name after Project B was renamed. The target exited with test status 1.
+
+After the minimal implementation, focused normal-scale and
+`QT_SCALE_FACTOR=2` runs each passed three events with target status 0 under
+`/private/tmp/embed-labs-details-draft-focused-frozen-final.Y5vcy2`. The test
+opens two real `.ecatproject` files, keeps Project A selected and its General
+name editor focused, changes Project B through the real ProjectService, and
+proves Project A's text, modified flag, focus, selection, context, title, and
+persisted snapshot remain unchanged. It then changes Project A and proves the
+same editor and Details title still refresh to the new persisted value, with
+the modified flag cleared.
+
+Complete normal-scale and 2x Workbench runs each passed 52 events under
+`/private/tmp/embed-labs-details-draft-workbench-final.ygJUZO`. The six
+isolated EtherCAT suites passed 103 events under
+`/private/tmp/embed-labs-details-draft-six-suites-final.MG71MB`: Core 17,
+Project 12, Devices 8, Workbench 52, Scan 7, and Diagnostics 7. Every target
+exited with status 0.
+
+The full `WITH_TESTS=OFF` product build passed in
+`qt-creator-build-ethercat-product-qt611`, which contains exactly the 16
+allow-listed plugin dylibs. Enabled product startup observed PID 1913 and
+remained running for 36.010 seconds. Explicitly disabled startup observed PID
+2968 and remained running for 36.011 seconds with
+`-noload EtherCATWorkbench`. Evidence for both runs is under
+`/private/tmp/embed-labs-details-draft-lifecycle-final.Zu4F0t`; each target was
+running immediately before LLDB passed intentional SIGTERM and exited with
+target status 15.
+
+Cleanup found no residual target or LLDB process, new DiagnosticReports file,
+or matching ReportCrash/CrashReporter unified-log event. Every executable used
+fresh HOME/settings, cleared inherited DYLD variables,
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and
+only the process-local Touch Bar LLDB breakpoint. No visible main window or
+crash dialog was created. Manual desktop inspection was not run because this
+issue changes no geometry. The unrelated `WITH_TESTS=ON` all-target build was
+not rerun; the known EasyBoard test include blocker remains outside this
+private Workbench issue.
+
+This issue changes only the existing private `detailsview.cpp`, Workbench test
+declaration/implementation, and documentation. It intentionally does not add a
+same-Project dirty/conflict merge policy: a current Project change remains
+authoritative and refreshes current pages. It adds no source file, public API,
+dependency, Provider, model role, persistence field, Project command, thread,
+timer, controller/network transport, online state, or physical-hardware
+behavior. No CMake or qbs description changed, so qbs was not run. The
+Workbench path count remains 44 and the direct upstream Core patch count
+remains five.
