@@ -12518,6 +12518,376 @@ void EtherCATWorkbenchTests::testEditableDcWorkflow()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
+void EtherCATWorkbenchTests::testDcDraftsSurviveNonConflictingRefresh()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QByteArray esi = deviceEsi();
+    esi.replace("#x00005678", "#x7A1D0003");
+    esi.replace("#x00000011", "#x0000D003");
+    esi.replace("AX5000", "EL-DC-DRAFT");
+    esi.replace("Workbench Servo", "DC Draft Servo");
+    QByteArray updatedEsi = esi;
+    updatedEsi.replace("EL-DC-DRAFT", "EL-DC-DRAFT-UPDATED");
+    updatedEsi.replace("Sync0 + Sync1", "Sync0");
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("dc-draft-refresh.xml");
+    const Utils::FilePath updatedEsiPath = Utils::FilePath::fromString(directory.path())
+                                               .canonicalPath()
+                                               .pathAppended("dc-draft-refresh-updated.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(esi));
+    QVERIFY_RESULT(updatedEsiPath.writeFileContents(updatedEsi));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.typeName == "EL-DC-DRAFT";
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(
+        directory, *device, "dc-draft-refresh.ecatproject", "DC Draft Project");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+
+    const Data::DcConfiguration authoritative{
+        true,
+        "Sync0",
+        0x0300,
+        {true, 125000, 0},
+        {false, 0, 0},
+        false};
+    QVERIFY_RESULT(
+        projectService->setDcConfiguration(file.projectId, file.slaveId, authoritative));
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().dc, authoritative);
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    DetailsView details(&controller);
+    details.resize(1100, 720);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QTRY_COMPARE(details.currentContext().nodeId, file.slaveId);
+
+    QPointer<QWidget> page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::DC_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page);
+    QTRY_COMPARE(details.tabWidget()->currentWidget(), page.data());
+    QPointer<QComboBox> mode = page->findChild<QComboBox *>("EtherCATDcOperationMode");
+    QPointer<QLineEdit> modeEditor = mode ? mode->lineEdit() : nullptr;
+    QPointer<QLineEdit> assignActivate
+        = page->findChild<QLineEdit *>("EtherCATDcAssignActivate");
+    QPointer<QLineEdit> sync0Cycle = page->findChild<QLineEdit *>("EtherCATDcSync0CycleNs");
+    QPointer<QLineEdit> sync0Shift = page->findChild<QLineEdit *>("EtherCATDcSync0ShiftNs");
+    QPointer<QLineEdit> sync1Cycle = page->findChild<QLineEdit *>("EtherCATDcSync1CycleNs");
+    QPointer<QLineEdit> sync1Shift = page->findChild<QLineEdit *>("EtherCATDcSync1ShiftNs");
+    QPointer<QCheckBox> referenceClock
+        = page->findChild<QCheckBox *>("EtherCATDcPotentialReferenceClock");
+    QPointer<QLabel> validation = page->findChild<QLabel *>("EtherCATDcValidation");
+    QVERIFY(mode);
+    QVERIFY(modeEditor);
+    QVERIFY(assignActivate);
+    QVERIFY(sync0Cycle);
+    QVERIFY(sync0Shift);
+    QVERIFY(sync1Cycle);
+    QVERIFY(sync1Shift);
+    QVERIFY(referenceClock);
+    QVERIFY(validation);
+    QCOMPARE(mode->count(), 2);
+    QCOMPARE(modeEditor->text(), QString("Sync0"));
+    QCOMPARE(assignActivate->text(), QString("0x0300"));
+    QCOMPARE(sync0Cycle->text(), QString("125000"));
+
+    const QString asciiModeDraft = "DC draft %1 / %% / long operation-mode value";
+    const QString modeDraft = QString::fromUtf8(
+        "DC draft %1 / 同步模式 / %% / long operation-mode value");
+    const QString assignDraft = "0x0700";
+    const QString sync0CycleDraft = "130000";
+    const QString sync0ShiftDraft = "-1000";
+    const QString sync1CycleDraft = "260000";
+    const QString sync1ShiftDraft = "1000";
+    const auto setDraft = [](QLineEdit *editor, const QString &text) {
+        editor->setText(text);
+        editor->setModified(true);
+    };
+    setDraft(assignActivate, assignDraft);
+    setDraft(sync0Cycle, sync0CycleDraft);
+    setDraft(sync0Shift, sync0ShiftDraft);
+    setDraft(sync1Cycle, sync1CycleDraft);
+    setDraft(sync1Shift, sync1ShiftDraft);
+    modeEditor->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(modeEditor->hasFocus() || mode->hasFocus());
+    QPointer<QWidget> modeFocus = QApplication::focusWidget();
+    QVERIFY(modeFocus);
+    modeEditor->selectAll();
+    QTest::keyClicks(modeEditor, asciiModeDraft);
+    modeEditor->setCursorPosition(14);
+    modeEditor->insert(QString::fromUtf8("同步模式 / "));
+    QCOMPARE(modeEditor->text(), modeDraft);
+    QVERIFY(modeEditor->isModified());
+    QVERIFY(modeEditor->isUndoAvailable());
+    modeEditor->setSelection(3, 14);
+    const int selectionStart = modeEditor->selectionStart();
+    const int selectionLength = modeEditor->selectedText().size();
+    const int cursorPosition = modeEditor->cursorPosition();
+
+    const auto draftsMatch = [&] {
+        return modeEditor && assignActivate && sync0Cycle && sync0Shift && sync1Cycle
+               && sync1Shift && modeEditor->text() == modeDraft
+               && assignActivate->text() == assignDraft
+               && sync0Cycle->text() == sync0CycleDraft
+               && sync0Shift->text() == sync0ShiftDraft
+               && sync1Cycle->text() == sync1CycleDraft
+               && sync1Shift->text() == sync1ShiftDraft && modeEditor->isModified()
+               && assignActivate->isModified() && sync0Cycle->isModified()
+               && sync0Shift->isModified() && sync1Cycle->isModified()
+               && sync1Shift->isModified();
+    };
+    QVERIFY(draftsMatch());
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().dc, authoritative);
+
+    const QString renamedProject = QString::fromUtf8("DC Draft Project / 同项目刷新");
+    QVERIFY_RESULT(projectService->renameProject(file.projectId, renamedProject));
+    QTRY_COMPARE(projectService->project(file.projectId)->name, renamedProject);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().dc, authoritative);
+    QVERIFY(draftsMatch());
+    QCOMPARE(QApplication::focusWidget(), modeFocus.data());
+    QCOMPARE(modeEditor->selectionStart(), selectionStart);
+    QCOMPARE(modeEditor->selectedText().size(), selectionLength);
+    QCOMPARE(modeEditor->cursorPosition(), cursorPosition);
+    QVERIFY(modeEditor->isUndoAvailable());
+
+    QSignalSpy devicesChanged(repository, &Core::DeviceRepositoryProvider::devicesChanged);
+    const Data::DeviceImportResult refreshResult
+        = waitForJob(repository->importFiles({updatedEsiPath}));
+    QCOMPARE(refreshResult.requestedFiles, 1);
+    QCOMPARE(refreshResult.importedDevices, 0);
+    QCOMPARE(refreshResult.updatedDevices, 1);
+    QCOMPARE(refreshResult.failedFiles, 0);
+    QCOMPARE(refreshResult.affectedDeviceIds, QList<Data::NodeId>{device->id});
+    QCOMPARE(devicesChanged.count(), 1);
+
+    QVERIFY(page);
+    QVERIFY(mode);
+    QVERIFY(modeEditor);
+    QVERIFY(assignActivate);
+    QVERIFY(sync0Cycle);
+    QVERIFY(sync0Shift);
+    QVERIFY(sync1Cycle);
+    QVERIFY(sync1Shift);
+    QVERIFY(referenceClock);
+    QVERIFY(validation);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().dc, authoritative);
+    QVERIFY(draftsMatch());
+    QCOMPARE(QApplication::focusWidget(), modeFocus.data());
+    QCOMPARE(modeEditor->selectionStart(), selectionStart);
+    QCOMPARE(modeEditor->selectedText().size(), selectionLength);
+    QCOMPARE(modeEditor->cursorPosition(), cursorPosition);
+    QVERIFY(modeEditor->isUndoAvailable());
+    const std::optional<Data::DeviceDescription> refreshedDevice
+        = repository->device(device->id);
+    QVERIFY(refreshedDevice);
+    QCOMPARE(refreshedDevice->summary.typeName, QString("EL-DC-DRAFT-UPDATED"));
+    QCOMPARE(mode->itemText(0), QString("Sync0"));
+    QCOMPARE(mode->itemText(1), QString("Sync0 + Sync1"));
+
+    modeEditor->undo();
+    QVERIFY(modeEditor->text() != modeDraft);
+    QVERIFY(modeEditor->isRedoAvailable());
+    modeEditor->redo();
+    QCOMPARE(modeEditor->text(), modeDraft);
+    QVERIFY(modeEditor->isModified());
+    modeEditor->setSelection(selectionStart, selectionLength);
+
+    referenceClock->click();
+    QTRY_VERIFY(
+        projectService->project(file.projectId)->slaves.first().dc.potentialReferenceClock);
+    QVERIFY(draftsMatch());
+    QCOMPARE(QApplication::focusWidget(), modeFocus.data());
+
+    QSignalSpy assignChanges(projectService, &Core::ProjectService::projectChanged);
+    QVERIFY(QMetaObject::invokeMethod(assignActivate, "editingFinished", Qt::DirectConnection));
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.assignActivate,
+        quint16(0x0700));
+    QVERIFY(assignChanges.count() >= 1);
+    QCOMPARE(assignActivate->text(), QString("0x0700"));
+    QVERIFY(!assignActivate->isModified());
+    const Data::DcConfiguration afterAssignCommit
+        = projectService->project(file.projectId)->slaves.first().dc;
+    QCOMPARE(afterAssignCommit.modeName, authoritative.modeName);
+    QCOMPARE(afterAssignCommit.sync0, authoritative.sync0);
+    QCOMPARE(afterAssignCommit.sync1, authoritative.sync1);
+    QVERIFY(afterAssignCommit.potentialReferenceClock);
+    QCOMPARE(modeEditor->text(), modeDraft);
+    QVERIFY(modeEditor->isModified());
+    QCOMPARE(sync0Cycle->text(), sync0CycleDraft);
+    QVERIFY(sync0Cycle->isModified());
+    QCOMPARE(sync0Shift->text(), sync0ShiftDraft);
+    QVERIFY(sync0Shift->isModified());
+    QCOMPARE(sync1Cycle->text(), sync1CycleDraft);
+    QVERIFY(sync1Cycle->isModified());
+    QCOMPARE(sync1Shift->text(), sync1ShiftDraft);
+    QVERIFY(sync1Shift->isModified());
+
+    QVERIFY(QMetaObject::invokeMethod(modeEditor, "editingFinished", Qt::DirectConnection));
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.modeName, modeDraft.trimmed());
+    QCOMPARE(modeEditor->text(), modeDraft.trimmed());
+    QVERIFY(!modeEditor->isModified());
+    QVERIFY(!modeEditor->isUndoAvailable());
+    QCOMPARE(mode->itemText(0), QString("Sync0"));
+    QCOMPARE(mode->itemText(1), QString("Sync0"));
+    const Data::DcConfiguration afterModeCommit
+        = projectService->project(file.projectId)->slaves.first().dc;
+    QCOMPARE(afterModeCommit.assignActivate, quint16(0x0700));
+    QCOMPARE(afterModeCommit.sync0, authoritative.sync0);
+    QCOMPARE(afterModeCommit.sync1, authoritative.sync1);
+    QVERIFY(afterModeCommit.potentialReferenceClock);
+    QCOMPARE(sync0Cycle->text(), sync0CycleDraft);
+    QVERIFY(sync0Cycle->isModified());
+    QCOMPARE(sync0Shift->text(), sync0ShiftDraft);
+    QVERIFY(sync0Shift->isModified());
+    QCOMPARE(sync1Cycle->text(), sync1CycleDraft);
+    QVERIFY(sync1Cycle->isModified());
+    QCOMPARE(sync1Shift->text(), sync1ShiftDraft);
+    QVERIFY(sync1Shift->isModified());
+
+    QSignalSpy noOpChanges(projectService, &Core::ProjectService::projectChanged);
+    setDraft(sync0Cycle, "  125000  ");
+    QVERIFY(QMetaObject::invokeMethod(sync0Cycle, "editingFinished", Qt::DirectConnection));
+    QCOMPARE(noOpChanges.count(), 0);
+    QCOMPARE(sync0Cycle->text(), QString("125000"));
+    QVERIFY(!sync0Cycle->isModified());
+    QVERIFY(!sync0Cycle->isUndoAvailable());
+    QCOMPARE(sync0Shift->text(), sync0ShiftDraft);
+    QVERIFY(sync0Shift->isModified());
+    QCOMPARE(sync1Cycle->text(), sync1CycleDraft);
+    QVERIFY(sync1Cycle->isModified());
+    QCOMPARE(sync1Shift->text(), sync1ShiftDraft);
+    QVERIFY(sync1Shift->isModified());
+
+    setDraft(sync0Shift, "not-a-nanosecond-value");
+    QVERIFY(QMetaObject::invokeMethod(sync0Shift, "editingFinished", Qt::DirectConnection));
+    QCOMPARE(sync0Shift->text(), QString("0"));
+    QVERIFY(!sync0Shift->isModified());
+    QVERIFY(validation->text().contains("not applied", Qt::CaseInsensitive));
+    QCOMPARE(sync1Cycle->text(), sync1CycleDraft);
+    QVERIFY(sync1Cycle->isModified());
+    QCOMPARE(sync1Shift->text(), sync1ShiftDraft);
+    QVERIFY(sync1Shift->isModified());
+
+    Data::DcConfiguration conflicting
+        = projectService->project(file.projectId)->slaves.first().dc;
+    conflicting.sync1.cycleTimeNs = 500000;
+    QVERIFY_RESULT(
+        projectService->setDcConfiguration(file.projectId, file.slaveId, conflicting));
+    QTRY_COMPARE(sync1Cycle->text(), QString("500000"));
+    QVERIFY(!sync1Cycle->isModified());
+    QCOMPARE(sync1Shift->text(), sync1ShiftDraft);
+    QVERIFY(sync1Shift->isModified());
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.sync1.cycleTimeNs,
+        qint64(500000));
+
+    setDraft(sync1Cycle, "600000");
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_COMPARE(sync1Cycle->text(), QString("0"));
+    QVERIFY(!sync1Cycle->isModified());
+    QCOMPARE(sync1Shift->text(), sync1ShiftDraft);
+    QVERIFY(sync1Shift->isModified());
+    setDraft(sync1Cycle, "700000");
+    QVERIFY_RESULT(projectService->redoProject(file.projectId));
+    QTRY_COMPARE(sync1Cycle->text(), QString("500000"));
+    QVERIFY(!sync1Cycle->isModified());
+    QCOMPARE(sync1Shift->text(), sync1ShiftDraft);
+    QVERIFY(sync1Shift->isModified());
+
+    setDraft(modeEditor, "Duplicate-name ESI selection draft");
+    const QString renamedAgain
+        = QString::fromUtf8("DC Draft Project / 重名模式刷新");
+    QVERIFY_RESULT(projectService->renameProject(file.projectId, renamedAgain));
+    QTRY_COMPARE(projectService->project(file.projectId)->name, renamedAgain);
+    QCOMPARE(modeEditor->text(), QString("Duplicate-name ESI selection draft"));
+    QVERIFY(modeEditor->isModified());
+    mode->setCurrentIndex(1);
+    QVERIFY(QMetaObject::invokeMethod(
+        mode, "activated", Qt::DirectConnection, Q_ARG(int, 1)));
+    const Data::DcConfiguration duplicateNameSelection
+        = projectService->project(file.projectId)->slaves.first().dc;
+    QCOMPARE(duplicateNameSelection.modeName, QString("Sync0"));
+    QCOMPARE(duplicateNameSelection.assignActivate, quint16(0x0700));
+    QVERIFY(duplicateNameSelection.sync0.enabled);
+    QCOMPARE(duplicateNameSelection.sync0.cycleTimeNs, qint64(250000));
+    QCOMPARE(duplicateNameSelection.sync0.shiftTimeNs, qint64(-1000));
+    QVERIFY(duplicateNameSelection.sync1.enabled);
+    QCOMPARE(duplicateNameSelection.sync1.cycleTimeNs, qint64(500000));
+    QCOMPARE(duplicateNameSelection.sync1.shiftTimeNs, qint64(1000));
+    QVERIFY(duplicateNameSelection.potentialReferenceClock);
+    QVERIFY(!modeEditor->isModified());
+    QCOMPARE(mode->itemText(0), QString("Sync0"));
+    QCOMPARE(mode->itemText(1), QString("Sync0"));
+    QCOMPARE(mode->currentIndex(), 1);
+    QCOMPARE(sync1Shift->text(), QString("1000"));
+    QVERIFY(!sync1Shift->isModified());
+
+    details.tabWidget()->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(QApplication::focusWidget() != mode.data());
+    QTRY_VERIFY(QApplication::focusWidget() != sync1Shift.data());
+    const QString renamedAfterModeSelection
+        = QString::fromUtf8("DC Draft Project / 重名模式已选择");
+    QVERIFY_RESULT(projectService->renameProject(file.projectId, renamedAfterModeSelection));
+    QTRY_COMPARE(projectService->project(file.projectId)->name, renamedAfterModeSelection);
+    QCOMPARE(mode->currentIndex(), 1);
+    setDraft(sync1Shift, "2222");
+    controller.selectionService()->setCurrentNodeId(file.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.projectId);
+    QTRY_VERIFY(page.isNull());
+    QTRY_VERIFY(mode.isNull());
+    QTRY_VERIFY(modeEditor.isNull());
+    QTRY_VERIFY(assignActivate.isNull());
+    QTRY_VERIFY(sync0Cycle.isNull());
+    QTRY_VERIFY(sync0Shift.isNull());
+    QTRY_VERIFY(sync1Cycle.isNull());
+    QTRY_VERIFY(sync1Shift.isNull());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.slaveId);
+    page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::DC_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page);
+    sync1Shift = page->findChild<QLineEdit *>("EtherCATDcSync1ShiftNs");
+    QVERIFY(sync1Shift);
+    QCOMPARE(sync1Shift->text(), QString("1000"));
+    setDraft(sync1Shift, "3333");
+
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QTRY_VERIFY(page.isNull());
+    QTRY_VERIFY(sync1Shift.isNull());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
 void EtherCATWorkbenchTests::testDynamicPropertyProviderRemoval()
 {
     WorkbenchController controller;

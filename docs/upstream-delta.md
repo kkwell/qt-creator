@@ -1244,3 +1244,47 @@ SIGTERM. No visible main window, remote comparison, fetch, pull, merge,
 rebase, push, PR, or publication occurred. The supported baseline remains the
 local `embed-labs` history. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-status-preferred-diagnostics-001.urIOBN`.
+
+## Local DC non-conflicting refresh draft delta
+
+`ISSUE-WB-DC-NONCONFLICTING-REFRESH-DRAFT-001` is a private Workbench
+correction on local baseline
+`304eaf73d4020b59abba15116868bcb8f50cc9f8`. A modified or focused delayed DC
+editor now survives a same-Project, same-node, configured-slave refresh only
+while its own fresh authority equals its previous baseline. The six fields
+are Operation Mode name, AssignActivate, SYNC0 cycle/shift, and SYNC1
+cycle/shift. Immediate enable and reference-clock commands remain unchanged.
+
+Operation Mode model refresh can be deferred with its draft. A subsequent ESI
+selection maps the complete visible `DcModeDescription` value into the current
+Repository list, so duplicate display names are not treated as identity.
+Rebuild likewise disambiguates multiple same-name rows from the Project's
+mode-owned values and presents a custom value rather than guessing when none
+matches. An explicit commit, no-op normalization, input rejection, external
+field change, Project Undo/Redo, node switch, invalid context, and Project
+close reload or destroy affected draft state from current authority.
+
+The local delta changes only private `dcpage.cpp/.h`, the Workbench test
+declaration/implementation, and four evidence documents. It introduces no new
+path, public API, source file, dependency, CMake/qbs entry, Project format,
+persistence field, Provider/ProjectService contract, Project command, custom
+model role, production thread/timer, direct upstream Core patch, Core or
+ProjectExplorer hook, application bootstrap, network, ADS, scan, online
+state, SDO, ESC/EEPROM, or hardware behavior. The Workbench path count remains
+44 and the direct upstream Core patch count remains five. No CMake or qbs
+description changed, so qbs was not run.
+
+This is not a generic dirty-form, autosave, Repository-signal suppression,
+cross-node cache, Project revision/generation or CAS protocol, merge/conflict
+UI, or operation-mode identity scheme. Qualification used local ESI and
+offline Project data plus offscreen enabled/disabled product lifecycle runs;
+it did not exercise actual Distributed Clocks synchronization, a real-time
+period, controller connection, network transport, or physical hardware.
+
+No visible main window, remote comparison, fetch, pull, merge, rebase, push,
+PR, or publication occurred. The supported baseline remains the local
+`embed-labs` history. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-dc-draft-refresh-001.6ifOHJ`; the failure-first
+proof is under its `failure-first/` directory, the duplicate-mode red proof is
+under `derived-failure/`, and the isolated intermediate test-harness report is
+under `product/quarantined-test-harness-reports/`.

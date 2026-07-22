@@ -76,6 +76,7 @@ private slots:
     void testDcRepositoryModePreview();
     void testDcRepositoryModeEmptyState();
     void testEditableDcWorkflow();
+    void testDcDraftsSurviveNonConflictingRefresh();
     void testDynamicPropertyProviderRemoval();
     void testOptionalProviderAvailabilityPresentation();
     void testDynamicOptionalProviders();

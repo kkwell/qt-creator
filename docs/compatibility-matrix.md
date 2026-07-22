@@ -2672,3 +2672,52 @@ Evidence is under
 Config/FreeRun status-bar and OP descriptions are referenced only for terms
 and interaction at
 <https://infosys.beckhoff.com/content/1033/el6201/1037001483.html>.
+
+## EtherCATWorkbench DC non-conflicting refresh qualification
+
+`ISSUE-WB-DC-NONCONFLICTING-REFRESH-DRAFT-001` is qualified from local
+baseline `304eaf73d4020b59abba15116868bcb8f50cc9f8`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Only the new Workbench test changed; production `dcpage.cpp/.h` retained SHA-256 `b1b8c7992332e690f51324abfad22a95edac5d7835715ae8120e36057478359d` / `eeb96e55cb546187a277e79f4c213148ad153a09ea844bfd1fcfca6540137376` and blobs `7038760e04a580e725926ae25a5c0e7ba491cf0c` / `a63c58b599ab0ef4327ca7c5322fc3c1fb54fbd1`; old UI showed `125000` instead of draft `130000`, target status 1 |
+| Review-derived failure | With intermediate production SHA-256 `c2df72b72419cc6cffaaa61e7343d5d4f9499a6f530e0178f8655af3b312dc7e` / `94ea851d21149b5ce52a07ecfa23ebc7cb0badc145691ae52cf3447bb4002a46` unchanged, the Project stored the second same-name mode but the rebuilt combo reported current index 0 instead of 1; target status 1 |
+| Stable identity gate | Draft eligibility requires the same Project ID, node ID, configured-slave kind, valid Project, and editable page |
+| Six delayed fields | Operation Mode name, AssignActivate, SYNC0 cycle/shift, and SYNC1 cycle/shift survive together when each authority is unchanged; immediate enable/reference-clock controls are excluded |
+| Field-level authority | Each editor compares only its current authority with its last baseline; a conflict in one field does not invalidate eligible sibling drafts |
+| Non-conflicting refresh | Project rename, same-identity ESI update, and immediate reference-clock submission refresh authority without discarding eligible drafts |
+| Sibling isolation | AssignActivate and Operation Mode commits start from latest authority, retain the latest reference-clock value, and do not submit sibling editor text |
+| Commit/no-op/rejection | Explicit field commit, trimmed no-op, parse rejection, validation rejection, and service failure force that field to current canonical authority |
+| External conflict and Undo/Redo | Directly covered for SYNC1 cycle while an unchanged SYNC1 shift draft survives; no claim is made that all six fields were separately conflict-injected |
+| Duplicate mode names | After deferred ESI refresh, the second `Sync0` row resolves by complete mode value to `0x0700`, SYNC0 `250000/-1000`, and SYNC1 `500000/1000`; current index remains 1 after submission and a later Project refresh |
+| Editor state | Operation Mode Unicode and literal `%1` draft, modified state, focus, selection, cursor, and local Undo/Redo survive; native IME composition was not tested |
+| Lifecycle invalidation | Node switch replaces the page from current Project authority; Project close destroys the page and draft; there is no cross-node cache |
+| Focused normal and 2x | Two normal runs and one 2x run each passed 3 events, 0 failed, target status 0 |
+| Related normal and 2x | Two normal runs and one 2x run each passed 9 events, 0 failed, target status 0 |
+| Complete Workbench normal and 2x | Two normal runs and one 2x run each passed 73 events, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 73, Scan 7, Diagnostics 7; 124 passed, 0 failed in six isolated LLDB-supervised processes |
+| Known soft assertion | The existing invalid-project path still emits the pre-existing ProjectExplorer TaskHub category soft assertion; it did not fail a test or target |
+| Final source SHA-256 | DC implementation `db028f1b2dd3d4b7a294c0ae7746e27b7e5d3668987d153f4181b0d671f3c916`; header `94ea851d21149b5ce52a07ecfa23ebc7cb0badc145691ae52cf3447bb4002a46`; tests `99efc702283e57a74cc351db6620fc52da1e57c600b1e9c2ad0d0c0e99bf8548`; test header `938fb1d8ef7a354ece0f4d617d0550fb65c32a252b2fc0d6909bcd65cf453bb9` |
+| Final git blobs | DC implementation `c63bb1a7fba397866adbd2d3646061e116885005`; header `d48787041ad90bb55b08ba517e1650b0e2edc1fc`; tests `6e998f135f0a305f46df0609519fed250c05f606`; test header `cc97dd0ee1abac520a9aaf24dd8e6df909ae4408` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 plugin dylibs; executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `93d405a9393b10057fe992d08c7c883f587bcc68e373513799d00f7636f489c3`; test Workbench `93069046bdf0bbac3c6e67984dcd1a0c85ec61826a15ac527ad7c1198efa9ba4` |
+| Enabled startup | PID 79153 remained alive for 37 samples with Workbench mapped in all 37; intentional passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 81410 remained alive for 37 samples with `-noload EtherCATWorkbench`; Workbench was absent in all 37; intentional passed-through SIGTERM produced target status 15 |
+| Known non-fatal launch message | The disabled run emitted the existing shared-memory initialization message, remained alive for all 37 samples, and produced no crash artifact or service event |
+| Final crash-dialog audit | From 2026-07-22 19:39:27 to 19:44:10 +0800 there was no residual qualification process, new matching DiagnosticReports file, matching crash-service event, visible main window, or system crash dialog; this window includes the final post-documentation focused run |
+| Intermediate harness incident | An ASCII-only QTest key helper was mistakenly used for Unicode and produced one Qt Test assertion report; it was quarantined in the evidence root, and no later run produced another assertion crash report. Expected failure-first and test-development failures returned ordinary nonzero statuses; all final matrices returned 0 |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, crash reporter disabled, `-no-crashcheck`, process-local Touch Bar bypass, and passed-through SIGTERM |
+| Deliberate boundary | Local ESI/offline Project editing only; no actual DC synchronization, real-time period, controller connection, transport, online state, or physical clock was exercised |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard `extensionmanager_test.h` blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, ProjectService, Project command, model role, or source-list changes | None |
+| Core, ProjectExplorer, app, network, ADS, scan, online state, SDO, ESC/EEPROM, or hardware changes | None; this remains a private Workbench interaction correction over local ESI/offline Project data |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-dc-draft-refresh-001.6ifOHJ`. Qt's editor contracts
+are at <https://doc.qt.io/qt-6/qlineedit.html> and
+<https://doc.qt.io/qt-6/qcombobox.html>. Beckhoff's Distributed Clocks pages
+are referenced only for terminology and interaction at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>,
+<https://infosys.beckhoff.com/content/1033/tcsystemmanager/1092594187.html>,
+and
+<https://infosys.beckhoff.com/content/1033/ethercatsystem/2469120395.html>.

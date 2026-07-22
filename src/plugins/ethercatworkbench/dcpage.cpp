@@ -18,6 +18,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScopedValueRollback>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 
@@ -29,6 +30,17 @@ namespace EtherCAT::Workbench::Internal {
 static bool isEmpty(const Data::DcConfiguration &configuration)
 {
     return configuration == Data::DcConfiguration{};
+}
+
+static bool modeMatchesConfiguration(
+    const Data::DcModeDescription &mode, const Data::DcConfiguration &configuration)
+{
+    return mode.name == configuration.modeName
+           && mode.assignActivate == configuration.assignActivate
+           && mode.cycleTimeSync0Ns == configuration.sync0.cycleTimeNs
+           && mode.shiftTimeSync0Ns == configuration.sync0.shiftTimeNs
+           && mode.cycleTimeSync1Ns == configuration.sync1.cycleTimeNs
+           && mode.shiftTimeSync1Ns == configuration.sync1.shiftTimeNs;
 }
 
 static QString hexValue(quint16 value)
@@ -186,8 +198,12 @@ DcPage::DcPage(WorkbenchController *controller, QWidget *parent)
     layout->addStretch();
 
     connect(m_restoreDefaults, &QPushButton::clicked, this, [this] {
-        if (!isEmpty(m_esiDefaults))
+        if (!isEmpty(m_esiDefaults)) {
+            const QScopedValueRollback forceReload(
+                m_forceAuthoritativeDrafts,
+                DraftFields(m_forceAuthoritativeDrafts | AllDrafts));
             submitConfiguration(m_esiDefaults);
+        }
     });
     connect(m_operationMode, &QComboBox::activated, this, &DcPage::selectEsiMode);
     connect(m_operationMode->lineEdit(), &QLineEdit::editingFinished, this, &DcPage::commitModeName);
@@ -234,17 +250,16 @@ DcPage::DcPage(WorkbenchController *controller, QWidget *parent)
 
 void DcPage::setContext(const Core::PropertyPageContext &context)
 {
-    m_context = context;
     const std::optional<Data::ProjectSnapshot> project
         = m_controller && m_controller->projectService()
               ? m_controller->projectService()->project(context.projectId)
               : std::nullopt;
-    m_editable = context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave && project
-                 && project->valid;
-    m_configuration = {};
-    m_esiDefaults = {};
-    m_esiModes.clear();
-    m_showingEsiDefaults = false;
+    const bool editable = context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave && project
+                          && project->valid;
+    Data::DcConfiguration configuration;
+    Data::DcConfiguration esiDefaults;
+    QList<Data::DcModeDescription> esiModes;
+    bool showingEsiDefaults = false;
 
     std::optional<Data::OfflineSlaveConfiguration> slave;
     std::optional<Data::DeviceDescription> device;
@@ -252,7 +267,7 @@ void DcPage::setContext(const Core::PropertyPageContext &context)
         if (context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave) {
             slave = m_controller->treeModel()->offlineSlave(context.nodeId);
             if (slave)
-                m_configuration = slave->dc;
+                configuration = slave->dc;
         }
         if (m_controller->deviceRepository()) {
             if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
@@ -264,20 +279,31 @@ void DcPage::setContext(const Core::PropertyPageContext &context)
     }
 
     if (device) {
-        m_esiModes = device->dcModes;
-        if (!m_esiModes.isEmpty())
-            m_esiDefaults = dcConfigurationFromMode(m_esiModes.first());
+        esiModes = device->dcModes;
+        if (!esiModes.isEmpty())
+            esiDefaults = dcConfigurationFromMode(esiModes.first());
     }
-    m_repositoryDeviceAvailable
+    const bool repositoryDeviceAvailable
         = context.nodeKind == Core::WorkbenchNodeKind::Device && device.has_value();
-    m_repositoryDeviceSupported
-        = m_repositoryDeviceAvailable && device->summary.supported;
+    const bool repositoryDeviceSupported
+        = repositoryDeviceAvailable && device->summary.supported;
     if (context.nodeKind == Core::WorkbenchNodeKind::Device) {
-        m_configuration = m_esiDefaults;
-    } else if (isEmpty(m_configuration) && !isEmpty(m_esiDefaults)) {
-        m_configuration = m_esiDefaults;
-        m_showingEsiDefaults = true;
+        configuration = esiDefaults;
+    } else if (isEmpty(configuration) && !isEmpty(esiDefaults)) {
+        configuration = esiDefaults;
+        showingEsiDefaults = true;
     }
+
+    const DraftFields preservedDrafts = draftsToPreserve(context, configuration, editable);
+    m_context = context;
+    m_editable = editable;
+    m_configuration = configuration;
+    m_esiDefaults = esiDefaults;
+    m_esiModes = esiModes;
+    m_showingEsiDefaults = showingEsiDefaults;
+    m_repositoryDeviceAvailable = repositoryDeviceAvailable;
+    m_repositoryDeviceSupported = repositoryDeviceSupported;
+    updateAuthoritativeBaseline(context, configuration, editable);
 
     if (context.nodeKind == Core::WorkbenchNodeKind::Device && !m_repositoryDeviceAvailable) {
         m_summary->setText(
@@ -339,7 +365,7 @@ void DcPage::setContext(const Core::PropertyPageContext &context)
     m_restoreDefaults->setEnabled(m_editable && !isEmpty(m_esiDefaults));
     m_restoreDefaults->setText(
         m_showingEsiDefaults ? Tr::tr("Store ESI Defaults") : Tr::tr("Restore ESI Defaults"));
-    rebuildControls();
+    rebuildControls(preservedDrafts);
 }
 
 bool DcPage::submitConfiguration(const Data::DcConfiguration &configuration)
@@ -349,12 +375,12 @@ bool DcPage::submitConfiguration(const Data::DcConfiguration &configuration)
         return issue.severity == Data::ConfigurationIssueSeverity::Error;
     });
     if (hasErrors) {
-        rebuildControls();
+        reloadCurrentContext();
         showValidation(issues, Tr::tr("Change not applied."));
         return false;
     }
     if (!m_editable || !m_controller || !m_controller->projectService()) {
-        rebuildControls();
+        reloadCurrentContext();
         showValidation(issues, Tr::tr("Change not applied: this ESI catalogue page is read-only."));
         return false;
     }
@@ -363,19 +389,93 @@ bool DcPage::submitConfiguration(const Data::DcConfiguration &configuration)
         = m_controller->projectService()
               ->setDcConfiguration(m_context.projectId, m_context.nodeId, configuration);
     if (!result) {
-        rebuildControls();
+        reloadCurrentContext();
         showValidation(issues, Tr::tr("Change not applied: %1").arg(result.error()));
         return false;
     }
 
-    m_configuration = configuration;
-    m_showingEsiDefaults = false;
-    m_restoreDefaults->setText(Tr::tr("Restore ESI Defaults"));
-    rebuildControls();
+    reloadCurrentContext();
     return true;
 }
 
-void DcPage::rebuildControls()
+void DcPage::reloadCurrentContext()
+{
+    Core::PropertyPageContext context = m_context;
+    if (m_controller && m_controller->treeModel()) {
+        const Core::PropertyPageContext current
+            = m_controller->treeModel()->contextForNodeId(m_context.nodeId);
+        if (current.nodeKind != Core::WorkbenchNodeKind::None)
+            context = current;
+    }
+    setContext(context);
+}
+
+DcPage::DraftFields DcPage::draftsToPreserve(
+    const Core::PropertyPageContext &context,
+    const Data::DcConfiguration &configuration,
+    bool editable) const
+{
+    if (!editable || !m_dcBaselineValid
+        || context.nodeKind != Core::WorkbenchNodeKind::ConfiguredSlave
+        || m_context.projectId != context.projectId || m_context.nodeId != context.nodeId
+        || m_context.nodeKind != context.nodeKind || m_dcBaselineProjectId != context.projectId
+        || m_dcBaselineNodeId != context.nodeId || m_dcBaselineKind != context.nodeKind) {
+        return NoDraft;
+    }
+
+    const auto activeDraft = [](const QLineEdit *editor) {
+        return editor && !editor->isReadOnly() && (editor->isModified() || editor->hasFocus());
+    };
+    DraftFields drafts = NoDraft;
+    if (!(m_forceAuthoritativeDrafts & ModeNameDraft)
+        && (activeDraft(m_operationMode->lineEdit()) || m_operationMode->hasFocus())
+        && m_dcBaseline.modeName == configuration.modeName) {
+        drafts |= ModeNameDraft;
+    }
+    if (!(m_forceAuthoritativeDrafts & AssignActivateDraft) && activeDraft(m_assignActivate)
+        && m_dcBaseline.assignActivate == configuration.assignActivate) {
+        drafts |= AssignActivateDraft;
+    }
+    if (!(m_forceAuthoritativeDrafts & Sync0CycleDraft) && activeDraft(m_sync0Cycle)
+        && m_dcBaseline.sync0.cycleTimeNs == configuration.sync0.cycleTimeNs) {
+        drafts |= Sync0CycleDraft;
+    }
+    if (!(m_forceAuthoritativeDrafts & Sync0ShiftDraft) && activeDraft(m_sync0Shift)
+        && m_dcBaseline.sync0.shiftTimeNs == configuration.sync0.shiftTimeNs) {
+        drafts |= Sync0ShiftDraft;
+    }
+    if (!(m_forceAuthoritativeDrafts & Sync1CycleDraft) && activeDraft(m_sync1Cycle)
+        && m_dcBaseline.sync1.cycleTimeNs == configuration.sync1.cycleTimeNs) {
+        drafts |= Sync1CycleDraft;
+    }
+    if (!(m_forceAuthoritativeDrafts & Sync1ShiftDraft) && activeDraft(m_sync1Shift)
+        && m_dcBaseline.sync1.shiftTimeNs == configuration.sync1.shiftTimeNs) {
+        drafts |= Sync1ShiftDraft;
+    }
+    return drafts;
+}
+
+void DcPage::updateAuthoritativeBaseline(
+    const Core::PropertyPageContext &context,
+    const Data::DcConfiguration &configuration,
+    bool editable)
+{
+    m_dcBaselineValid
+        = editable && context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave;
+    if (m_dcBaselineValid) {
+        m_dcBaselineProjectId = context.projectId;
+        m_dcBaselineNodeId = context.nodeId;
+        m_dcBaselineKind = context.nodeKind;
+        m_dcBaseline = configuration;
+        return;
+    }
+    m_dcBaselineProjectId = {};
+    m_dcBaselineNodeId = {};
+    m_dcBaselineKind = Core::WorkbenchNodeKind::None;
+    m_dcBaseline = {};
+}
+
+void DcPage::rebuildControls(DraftFields preservedDrafts)
 {
     m_rebuilding = true;
     const QSignalBlocker operationModeBlocker(m_operationMode);
@@ -389,39 +489,62 @@ void DcPage::rebuildControls()
     const QSignalBlocker sync1CycleBlocker(m_sync1Cycle);
     const QSignalBlocker sync1ShiftBlocker(m_sync1Shift);
     const QSignalBlocker referenceClockBlocker(m_potentialReferenceClock);
-    m_operationMode->clear();
-    for (int index = 0; index < m_esiModes.size(); ++index)
-        m_operationMode->addItem(m_esiModes.at(index).name, index);
+    if (!(preservedDrafts & ModeNameDraft)) {
+        m_visibleEsiModes = m_esiModes;
+        m_operationMode->clear();
+        for (int index = 0; index < m_visibleEsiModes.size(); ++index)
+            m_operationMode->addItem(m_visibleEsiModes.at(index).name, index);
 
-    int modeIndex = -1;
-    for (int index = 0; index < m_operationMode->count(); ++index) {
-        if (m_operationMode->itemText(index) == m_configuration.modeName) {
-            modeIndex = index;
-            break;
+        QList<int> namedModeIndexes;
+        for (int index = 0; index < m_visibleEsiModes.size(); ++index) {
+            if (m_visibleEsiModes.at(index).name == m_configuration.modeName)
+                namedModeIndexes.append(index);
         }
+        int modeIndex = namedModeIndexes.size() == 1 ? namedModeIndexes.first() : -1;
+        if (namedModeIndexes.size() > 1) {
+            const auto matchingMode = std::find_if(
+                namedModeIndexes.cbegin(), namedModeIndexes.cend(), [this](int index) {
+                    return modeMatchesConfiguration(m_visibleEsiModes.at(index), m_configuration);
+                });
+            if (matchingMode != namedModeIndexes.cend())
+                modeIndex = *matchingMode;
+        }
+        if (modeIndex < 0 && !m_configuration.modeName.isEmpty()) {
+            m_operationMode->addItem(m_configuration.modeName, -1);
+            modeIndex = m_operationMode->count() - 1;
+        }
+        m_operationMode->setCurrentIndex(modeIndex);
+        if (modeIndex < 0)
+            m_operationMode->setEditText({});
+        m_operationMode->lineEdit()->setModified(false);
+        m_operationModeItemsDeferred = false;
+    } else {
+        m_operationModeItemsDeferred = true;
     }
-    if (modeIndex < 0 && !m_configuration.modeName.isEmpty()) {
-        m_operationMode->addItem(m_configuration.modeName, -1);
-        modeIndex = m_operationMode->count() - 1;
-    }
-    m_operationMode->setCurrentIndex(modeIndex);
-    if (modeIndex < 0)
-        m_operationMode->setEditText({});
-    m_operationMode->lineEdit()->setModified(false);
 
     m_enabled->setChecked(m_configuration.enabled);
-    m_assignActivate->setText(hexValue(m_configuration.assignActivate));
-    m_assignActivate->setModified(false);
+    if (!(preservedDrafts & AssignActivateDraft)) {
+        m_assignActivate->setText(hexValue(m_configuration.assignActivate));
+        m_assignActivate->setModified(false);
+    }
     m_sync0Enabled->setChecked(m_configuration.sync0.enabled);
-    m_sync0Cycle->setText(QString::number(m_configuration.sync0.cycleTimeNs));
-    m_sync0Cycle->setModified(false);
-    m_sync0Shift->setText(QString::number(m_configuration.sync0.shiftTimeNs));
-    m_sync0Shift->setModified(false);
+    if (!(preservedDrafts & Sync0CycleDraft)) {
+        m_sync0Cycle->setText(QString::number(m_configuration.sync0.cycleTimeNs));
+        m_sync0Cycle->setModified(false);
+    }
+    if (!(preservedDrafts & Sync0ShiftDraft)) {
+        m_sync0Shift->setText(QString::number(m_configuration.sync0.shiftTimeNs));
+        m_sync0Shift->setModified(false);
+    }
     m_sync1Enabled->setChecked(m_configuration.sync1.enabled);
-    m_sync1Cycle->setText(QString::number(m_configuration.sync1.cycleTimeNs));
-    m_sync1Cycle->setModified(false);
-    m_sync1Shift->setText(QString::number(m_configuration.sync1.shiftTimeNs));
-    m_sync1Shift->setModified(false);
+    if (!(preservedDrafts & Sync1CycleDraft)) {
+        m_sync1Cycle->setText(QString::number(m_configuration.sync1.cycleTimeNs));
+        m_sync1Cycle->setModified(false);
+    }
+    if (!(preservedDrafts & Sync1ShiftDraft)) {
+        m_sync1Shift->setText(QString::number(m_configuration.sync1.shiftTimeNs));
+        m_sync1Shift->setModified(false);
+    }
     m_potentialReferenceClock->setChecked(m_configuration.potentialReferenceClock);
     m_rebuilding = false;
 
@@ -497,9 +620,41 @@ void DcPage::selectEsiMode(int index)
 {
     if (m_rebuilding || index < 0 || index >= m_operationMode->count())
         return;
-    const int esiIndex = m_operationMode->itemData(index).toInt();
+    int esiIndex = m_operationMode->itemData(index).toInt();
+    if (m_operationModeItemsDeferred) {
+        if (esiIndex < 0) {
+            const QScopedValueRollback forceModeReload(
+                m_forceAuthoritativeDrafts,
+                DraftFields(m_forceAuthoritativeDrafts | ModeNameDraft));
+            Data::DcConfiguration candidate = m_configuration;
+            candidate.modeName = m_operationMode->currentText().trimmed();
+            submitConfiguration(candidate);
+            return;
+        }
+        if (esiIndex >= m_visibleEsiModes.size())
+            return;
+        const Data::DcModeDescription selectedMode = m_visibleEsiModes.at(esiIndex);
+        const auto selected = std::find_if(
+            m_esiModes.cbegin(), m_esiModes.cend(), [&selectedMode](const auto &mode) {
+                return mode == selectedMode;
+            });
+        if (selected == m_esiModes.cend()) {
+            const QScopedValueRollback forceModeReload(
+                m_forceAuthoritativeDrafts,
+                DraftFields(m_forceAuthoritativeDrafts | ModeNameDraft));
+            reloadCurrentContext();
+            showValidation(
+                Data::validateDcConfiguration(m_configuration),
+                Tr::tr("ESI operation modes changed; select a current mode."));
+            return;
+        }
+        esiIndex = int(std::distance(m_esiModes.cbegin(), selected));
+    }
     if (esiIndex < 0 || esiIndex >= m_esiModes.size())
         return;
+    const QScopedValueRollback forceReload(
+        m_forceAuthoritativeDrafts,
+        DraftFields(m_forceAuthoritativeDrafts | AllDrafts));
     Data::DcConfiguration candidate = dcConfigurationFromMode(m_esiModes.at(esiIndex));
     if (m_context.nodeKind == Core::WorkbenchNodeKind::Device) {
         m_configuration = candidate;
@@ -514,8 +669,17 @@ void DcPage::selectEsiMode(int index)
 
 void DcPage::commitModeName()
 {
-    if (m_rebuilding || !m_editable || !m_operationMode->lineEdit()->isModified())
+    if (m_rebuilding || !m_editable
+        || (!m_operationMode->lineEdit()->isModified() && !m_operationModeItemsDeferred)) {
         return;
+    }
+    const QScopedValueRollback forceReload(
+        m_forceAuthoritativeDrafts,
+        DraftFields(m_forceAuthoritativeDrafts | ModeNameDraft));
+    if (!m_operationMode->lineEdit()->isModified()) {
+        reloadCurrentContext();
+        return;
+    }
     m_operationMode->lineEdit()->setModified(false);
     Data::DcConfiguration candidate = m_configuration;
     candidate.modeName = m_operationMode->currentText().trimmed();
@@ -526,6 +690,9 @@ void DcPage::commitAssignActivate()
 {
     if (m_rebuilding || !m_editable || !m_assignActivate->isModified())
         return;
+    const QScopedValueRollback forceReload(
+        m_forceAuthoritativeDrafts,
+        DraftFields(m_forceAuthoritativeDrafts | AssignActivateDraft));
     m_assignActivate->setModified(false);
     quint16 value = 0;
     if (!parseAssignActivate(m_assignActivate->text(), &value)) {
@@ -541,6 +708,13 @@ void DcPage::commitSignalValue(bool sync1, SignalField field, QLineEdit *editor)
 {
     if (m_rebuilding || !m_editable || !editor->isModified())
         return;
+    const DraftField draftField = sync1 ? field == SignalField::CycleTime ? Sync1CycleDraft
+                                                                            : Sync1ShiftDraft
+                                        : field == SignalField::CycleTime ? Sync0CycleDraft
+                                                                            : Sync0ShiftDraft;
+    const QScopedValueRollback forceReload(
+        m_forceAuthoritativeDrafts,
+        DraftFields(m_forceAuthoritativeDrafts | draftField));
     editor->setModified(false);
     qint64 value = 0;
     if (!parseNanoseconds(editor->text(), &value)) {
@@ -632,7 +806,7 @@ void DcPage::showValidation(const QList<Data::ConfigurationIssue> &issues, const
 
 void DcPage::rejectInput(const QString &message)
 {
-    rebuildControls();
+    reloadCurrentContext();
     m_validation->setType(Utils::InfoLabel::Error);
     m_validation->setText(Tr::tr("Change not applied. %1").arg(message));
     m_validation->setToolTip(message);

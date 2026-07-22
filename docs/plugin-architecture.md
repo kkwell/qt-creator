@@ -1966,3 +1966,54 @@ Qualification is local/offline Mock or explicitly Provider-reported data and
 includes normal/2x offscreen tests plus enabled/disabled product lifecycle
 evidence with no visible main window or new crash record. Evidence is under
 `/private/tmp/embed-labs-wb-status-preferred-diagnostics-001.urIOBN`.
+
+## Workbench DC field-authority draft-baseline boundary
+
+`ISSUE-WB-DC-NONCONFLICTING-REFRESH-DRAFT-001`, based on local commit
+`304eaf73d4020b59abba15116868bcb8f50cc9f8`, remains entirely inside the
+product-owned private `DcPage`. `ProjectService` and EtherCATProject continue
+to own validation, persistence, Project modified state, Undo, and Redo.
+
+The page retains the stable Project ID, node ID, configured-slave kind, and
+the last authoritative `DcConfiguration`. On each refresh it independently
+compares Operation Mode name, AssignActivate, SYNC0 cycle/shift, and SYNC1
+cycle/shift with that baseline before replacing the baseline with the fresh
+snapshot. Only an active editor whose own authority is unchanged may retain
+its widget state. The immediate enable and potential-reference controls are
+always rendered from fresh authority.
+
+The private `DraftFields` force mask covers explicit commit, no-op,
+rejection, service failure, ESI mode selection, and Restore Defaults. It
+controls only which widgets must reload; it does not create a public Project
+revision, generation, CAS, merge, or conflict protocol. Synchronous
+ProjectService signals cannot preserve a field that is being explicitly
+committed because the force scope remains active through the complete service
+call and authoritative reload.
+
+When an Operation Mode draft defers a combo-model rebuild,
+`m_visibleEsiModes` keeps page-owned value copies for the currently displayed
+rows. A later selection maps the complete old `DcModeDescription` value to the
+fresh Repository list. This is not a new stable ESI mode ID, and a removed or
+changed value is rejected rather than guessed from a duplicate display name.
+When rebuilding the combo, a unique mode name keeps the established
+presentation. Multiple same-name rows are disambiguated by the Project's
+complete mode-owned name, AssignActivate, and SYNC timing values; enable flags
+and Potential Reference Clock are not members of `DcModeDescription`. With no
+complete match, the Project name is shown as a custom value instead of
+highlighting an unrelated same-name row.
+
+The page retains no Project QObject, Repository object, `QModelIndex`, mutable
+Repository entry, or cross-node draft. Repository Device DC pages remain
+read-only and do not establish an editable baseline. Existing Details and
+Repository signal routing is unchanged; there is no new thread, timer,
+Provider, or service contract.
+
+The boundary changes only private `dcpage.cpp/.h`, the existing Workbench test
+declaration/implementation, and four evidence documents. It adds no public
+API, source file, dependency, Project format, persistence field, Project
+command, model role, Core or ProjectExplorer hook, application-bootstrap
+change, network transport, ADS, scan, online transition, SDO execution,
+ESC/EEPROM write, or hardware behavior. No CMake or qbs entry changed.
+Qualification is local ESI/offline Project data plus offscreen product
+lifecycle evidence. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-dc-draft-refresh-001.6ifOHJ`.

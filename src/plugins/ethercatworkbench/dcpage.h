@@ -33,9 +33,29 @@ public:
 
 private:
     enum class SignalField { CycleTime, ShiftTime };
+    enum DraftField : quint8 {
+        NoDraft = 0x00,
+        ModeNameDraft = 0x01,
+        AssignActivateDraft = 0x02,
+        Sync0CycleDraft = 0x04,
+        Sync0ShiftDraft = 0x08,
+        Sync1CycleDraft = 0x10,
+        Sync1ShiftDraft = 0x20,
+        AllDrafts = 0x3f,
+    };
+    using DraftFields = quint8;
 
     bool submitConfiguration(const Data::DcConfiguration &configuration);
-    void rebuildControls();
+    void reloadCurrentContext();
+    DraftFields draftsToPreserve(
+        const Core::PropertyPageContext &context,
+        const Data::DcConfiguration &configuration,
+        bool editable) const;
+    void updateAuthoritativeBaseline(
+        const Core::PropertyPageContext &context,
+        const Data::DcConfiguration &configuration,
+        bool editable);
+    void rebuildControls(DraftFields preservedDrafts = NoDraft);
     void updateControlState();
     void selectEsiMode(int index);
     void commitModeName();
@@ -49,6 +69,14 @@ private:
     Data::DcConfiguration m_configuration;
     Data::DcConfiguration m_esiDefaults;
     QList<Data::DcModeDescription> m_esiModes;
+    QList<Data::DcModeDescription> m_visibleEsiModes;
+    Data::NodeId m_dcBaselineProjectId;
+    Data::NodeId m_dcBaselineNodeId;
+    Core::WorkbenchNodeKind m_dcBaselineKind = Core::WorkbenchNodeKind::None;
+    Data::DcConfiguration m_dcBaseline;
+    DraftFields m_forceAuthoritativeDrafts = NoDraft;
+    bool m_dcBaselineValid = false;
+    bool m_operationModeItemsDeferred = false;
     bool m_editable = false;
     bool m_repositoryDeviceAvailable = false;
     bool m_repositoryDeviceSupported = false;

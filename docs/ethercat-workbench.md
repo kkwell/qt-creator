@@ -5105,3 +5105,139 @@ state, SDO execution, or hardware behavior. No CMake or qbs description
 changed, so qbs was not run. The unrelated `WITH_TESTS=ON` all-target build
 was not rerun because the known EasyBoard `extensionmanager_test.h` blocker
 remains outside this private Workbench issue.
+
+## Distributed Clocks non-conflicting refresh draft continuity
+
+`ISSUE-WB-DC-NONCONFLICTING-REFRESH-DRAFT-001`, based on local commit
+`304eaf73d4020b59abba15116868bcb8f50cc9f8`, prevents a same-context Project
+or ESI Repository refresh from replacing an uncommitted Distributed Clocks
+editor value when that field's Project authority did not change. The earlier
+page rebuilt every DC control on each refresh, so a configured-slave draft
+could be lost before `editingFinished`.
+
+The delayed editors are Operation Mode name, AssignActivate, SYNC0 cycle and
+shift, and SYNC1 cycle and shift. `Enable DC`, the SYNC0/SYNC1 enable boxes,
+and Potential Reference Clock remain immediate Project commands; they are not
+part of the six-field draft set. Each delayed field independently survives
+only while all of these conditions hold:
+
+- the Project ID, node ID, and configured-slave kind are unchanged;
+- the Project is still valid and the page remains editable;
+- the editor is modified or focused; and
+- the fresh authoritative value for that field equals its last baseline.
+
+This is intentionally a field-level decision, not an equality check over the
+whole `DcConfiguration`. Project rename, a same-identity ESI update, or an
+immediate reference-clock command can therefore refresh other authority while
+preserving non-conflicting drafts. If one field changes externally, that
+field reloads while eligible sibling drafts remain intact. A draft is never
+written to the Project until its own explicit commit.
+
+Every editor commit starts from the latest authoritative configuration and
+forces that field to reload across synchronous Project signals, successful or
+no-op normalization, parse rejection, validation rejection, and service
+failure. Selecting an ESI operation mode and restoring ESI defaults force all
+six delayed fields to authority. External DC changes, Project Undo/Redo, a
+node switch, invalid context, and Project close also reload or destroy drafts
+from current authority. No draft is cached across nodes.
+
+While an Operation Mode draft is retained, its visible combo-box model is
+also retained so focus, selection, cursor, and local line-edit Undo/Redo state
+are not destroyed. After an ESI refresh, selection is resolved against the
+current ESI list by the complete `DcModeDescription` value rather than display
+name. This preserves the distinction between two modes both named `Sync0`.
+After submission and later refresh, duplicate display names are also
+disambiguated from the Project's mode-owned values, so the combo remains on
+the row that supplied the current AssignActivate and timing values. A unique
+name retains the established name-based presentation; multiple same-name rows
+with no complete value match are represented as a custom value rather than
+guessing the first row. If a deferred old value no longer exists, the page
+reloads the current Project mode and asks the user to select a current ESI
+mode. Potential Reference Clock is not part of `DcModeDescription`; an ESI
+mode selection retains its latest Project value.
+
+Qt documents that `QLineEdit::setText()` clears selection and undo/redo,
+moves the cursor, and resets the modified state, which is why a preserved
+editor is not mutated during refresh:
+<https://doc.qt.io/qt-6/qlineedit.html>. The editable combo behavior follows
+Qt's `QComboBox` contract:
+<https://doc.qt.io/qt-6/qcombobox.html>. Beckhoff's Distributed Clocks pages
+are terminology and interaction references only:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>,
+<https://infosys.beckhoff.com/content/1033/tcsystemmanager/1092594187.html>,
+and
+<https://infosys.beckhoff.com/content/1033/ethercatsystem/2469120395.html>.
+
+Failure-first changed only the new Workbench test while `dcpage.cpp/.h`
+retained SHA-256 values
+`b1b8c7992332e690f51324abfad22a95edac5d7835715ae8120e36057478359d`
+and
+`eeb96e55cb546187a277e79f4c213148ad153a09ea844bfd1fcfca6540137376`.
+The old page displayed authoritative SYNC0 cycle `125000` instead of draft
+`130000` and exited with status 1. A review-derived red test then kept the
+intermediate production SHA-256 values
+`c2df72b72419cc6cffaaa61e7343d5d4f9499a6f530e0178f8655af3b312dc7e`
+and
+`94ea851d21149b5ce52a07ecfa23ebc7cb0badc145691ae52cf3447bb4002a46`
+unchanged and proved that a correctly persisted second same-name mode was
+highlighted as index 0 instead of 1; that target also exited with status 1.
+Final focused runs passed three events
+twice at normal scale and once at 2x. Related runs passed nine events on the
+same matrix, and complete Workbench runs passed 73 events on all three runs.
+The six isolated suites passed 124 events: Core 17, Project 12, Devices 8,
+Workbench 73, Scan 7, and Diagnostics 7. Complete Workbench runs retain the
+known pre-existing ProjectExplorer TaskHub soft assertion in the
+invalid-project path; it did not fail a test or target.
+
+The test directly covers all six drafts surviving together; Project rename;
+same-identity ESI refresh; sibling-authority isolation across immediate and
+delayed commits; trim-equivalent no-op normalization; invalid input; duplicate
+mode names; the second same-name row remaining current after submission and a
+later Project refresh; node switch; and Project close. The external conflict
+and Project Undo/Redo assertions directly exercise SYNC1 cycle while a SYNC1
+shift draft survives. The Operation Mode editor additionally verifies Unicode
+and literal `%1` text, focus, selection, cursor, and real line-edit Undo/Redo.
+It does not claim native IME-composition coverage.
+
+The full `WITH_TESTS=OFF` product build passed and contains exactly 16 plugin
+dylibs. The executable SHA-256 is
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`;
+the product and test Workbench plugin SHA-256 values are
+`93d405a9393b10057fe992d08c7c883f587bcc68e373513799d00f7636f489c3`
+and
+`93069046bdf0bbac3c6e67984dcd1a0c85ec61826a15ac527ad7c1198efa9ba4`.
+
+Enabled product PID 79153 remained alive for 37 consecutive samples with
+Workbench mapped in all 37. Explicitly disabled PID 81410 remained alive for
+37 samples with `-noload EtherCATWorkbench` and Workbench absent in all 37.
+LLDB passed intentional SIGTERM without stopping or notifying; both targets
+recorded status 15. Every executable run used fresh HOME/settings, cleared
+inherited DYLD variables, `QT_QPA_PLATFORM=offscreen`,
+`CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch
+Bar bypass. No visible main window was opened.
+
+The explicitly disabled run emitted the existing shared-memory initialization
+message, then remained alive through all 37 samples and produced no crash
+artifact or service event.
+
+An intermediate test-driver mistake used the ASCII-only QTest key helper for
+Unicode and triggered a Qt Test assertion. Its generated report was moved to
+the evidence directory under `quarantined-test-harness-reports/`; this was not
+a product-path failure. After replacing that input path, no later run produced
+another assertion crash report; expected failure-first and test-development
+failures remained ordinary status returns, and the final matrices exited 0.
+The final 2026-07-22 19:39:27 to 19:44:10 +0800 product and post-documentation
+audit
+found no residual qualification process, new matching DiagnosticReports file,
+matching crash-service event, or system crash dialog.
+
+Evidence is under
+`/private/tmp/embed-labs-wb-dc-draft-refresh-001.6ifOHJ`. This issue changes
+only private `dcpage.cpp/.h`, the Workbench test declaration/implementation,
+and these four documents. It adds no public API, source file, dependency,
+Provider or ProjectService contract, Project format, persistence field,
+Project command, model role, Core or ProjectExplorer hook, application
+bootstrap change, production thread or timer, network, ADS, scan, online
+state, SDO execution, ESC/EEPROM write, or hardware behavior. No CMake or qbs
+description changed, so qbs was not run. This is offline Project configuration
+editing continuity, not real-time DC or hardware-clock qualification.
