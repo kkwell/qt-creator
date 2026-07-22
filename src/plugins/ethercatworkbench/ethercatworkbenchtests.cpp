@@ -92,6 +92,7 @@
 #include <algorithm>
 #include <functional>
 #include <limits>
+#include <tuple>
 #include <utility>
 
 namespace EtherCAT::Workbench::Internal {
@@ -473,6 +474,25 @@ static void captureStartupAccessibleUpdate(QAccessibleEvent *event)
     if (s_previousStartupAccessibleUpdateHandler
         && s_previousStartupAccessibleUpdateHandler != &captureStartupAccessibleUpdate) {
         s_previousStartupAccessibleUpdateHandler(event);
+    }
+}
+
+static QPointer<QObject> s_dcAnnouncementObject;
+static QStringList s_dcAnnouncementMessages;
+static QList<QAccessible::AnnouncementPoliteness> s_dcAnnouncementPoliteness;
+static QAccessible::UpdateHandler s_previousDcAccessibleUpdateHandler = nullptr;
+
+static void captureDcAccessibleUpdate(QAccessibleEvent *event)
+{
+    if (event && event->type() == QAccessible::Announcement
+        && event->object() == s_dcAnnouncementObject) {
+        const auto announcement = static_cast<QAccessibleAnnouncementEvent *>(event);
+        s_dcAnnouncementMessages.append(announcement->message());
+        s_dcAnnouncementPoliteness.append(announcement->politeness());
+    }
+    if (s_previousDcAccessibleUpdateHandler
+        && s_previousDcAccessibleUpdateHandler != &captureDcAccessibleUpdate) {
+        s_previousDcAccessibleUpdateHandler(event);
     }
 }
 
@@ -15919,6 +15939,403 @@ void EtherCATWorkbenchTests::testDcRepositoryModeEmptyState()
         "physical hardware", Qt::CaseInsensitive));
     QCOMPARE(missingMode->toolTip(), missingMode->accessibleDescription());
     QVERIFY(projectService->projects().isEmpty());
+}
+
+void EtherCATWorkbenchTests::testDcEditRejectionFeedback()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QByteArray esi = deviceEsi();
+    esi.replace("#x00005678", "#x7A1E0001");
+    esi.replace("#x00000011", "#x0000E001");
+    esi.replace("AX5000", "EL-DC-FEEDBACK");
+    esi.replace("Workbench Servo", "DC Feedback Servo");
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("dc-edit-feedback.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(esi));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0x7A1E0001;
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(
+        directory, *device, "dc-edit-feedback.ecatproject", "DC Edit Feedback");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    DetailsView details(&controller);
+    details.resize(1100, 720);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QPointer<QWidget> page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::DC_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page);
+    QTRY_COMPARE(details.tabWidget()->currentWidget(), page.data());
+
+    QPointer<QLabel> validation = page->findChild<QLabel *>("EtherCATDcValidation");
+    QPointer<QPushButton> defaults = page->findChild<QPushButton *>("EtherCATDcRestoreDefaults");
+    QPointer<QCheckBox> dcEnabled = page->findChild<QCheckBox *>("EtherCATDcEnabled");
+    QPointer<QComboBox> operationMode
+        = page->findChild<QComboBox *>("EtherCATDcOperationMode");
+    QPointer<QLineEdit> assignActivate
+        = page->findChild<QLineEdit *>("EtherCATDcAssignActivate");
+    QPointer<QCheckBox> sync0Enabled
+        = page->findChild<QCheckBox *>("EtherCATDcSync0Enabled");
+    QPointer<QLineEdit> sync0Shift
+        = page->findChild<QLineEdit *>("EtherCATDcSync0ShiftNs");
+    QPointer<QCheckBox> sync1Enabled
+        = page->findChild<QCheckBox *>("EtherCATDcSync1Enabled");
+    QPointer<QLineEdit> sync1Cycle
+        = page->findChild<QLineEdit *>("EtherCATDcSync1CycleNs");
+    QVERIFY(validation);
+    QVERIFY(defaults);
+    QVERIFY(dcEnabled);
+    QVERIFY(operationMode);
+    QVERIFY(operationMode->lineEdit());
+    QVERIFY(assignActivate);
+    QVERIFY(sync0Enabled);
+    QVERIFY(sync0Shift);
+    QVERIFY(sync1Enabled);
+    QVERIFY(sync1Cycle);
+    auto infoValidation = static_cast<Utils::InfoLabel *>(validation.data());
+
+    defaults->click();
+    QTRY_VERIFY(projectService->project(file.projectId)->slaves.first().dc.enabled);
+    QTRY_COMPARE(assignActivate->text(), QString("0x0300"));
+    QTRY_COMPARE(sync0Shift->text(), QString("0"));
+    const QString acceptedModeName = operationMode->currentText();
+    QVERIFY(!acceptedModeName.trimmed().isEmpty());
+    const auto captureAcceptedFeedback = [&] {
+        return std::tuple{
+            infoValidation->type(),
+            validation->text(),
+            validation->accessibleDescription(),
+            infoValidation->additionalToolTip(),
+            validation->toolTip()};
+    };
+    const auto verifyAcceptedFeedback = [&](const auto &accepted) {
+        QCOMPARE(infoValidation->type(), std::get<0>(accepted));
+        QCOMPARE(validation->text(), std::get<1>(accepted));
+        QCOMPARE(validation->accessibleDescription(), std::get<2>(accepted));
+        QCOMPARE(infoValidation->additionalToolTip(), std::get<3>(accepted));
+        QCOMPARE(validation->toolTip(), std::get<4>(accepted));
+    };
+    auto acceptedFeedback = captureAcceptedFeedback();
+    QVERIFY(!std::get<1>(acceptedFeedback).isEmpty());
+
+#if QT_CONFIG(accessibility)
+    s_dcAnnouncementObject = validation;
+    s_dcAnnouncementMessages.clear();
+    s_dcAnnouncementPoliteness.clear();
+    s_previousDcAccessibleUpdateHandler
+        = QAccessible::installUpdateHandler(&captureDcAccessibleUpdate);
+    const auto restoreAccessibleUpdateHandler = qScopeGuard([] {
+        const QAccessible::UpdateHandler previous
+            = std::exchange(s_previousDcAccessibleUpdateHandler, nullptr);
+        QAccessible::installUpdateHandler(previous);
+        s_dcAnnouncementObject = nullptr;
+        s_dcAnnouncementMessages.clear();
+        s_dcAnnouncementPoliteness.clear();
+    });
+    int expectedAnnouncements = 0;
+#endif
+
+    const auto replaceText = [](QLineEdit *editor, const QString &text) {
+        editor->setFocus(Qt::OtherFocusReason);
+        editor->selectAll();
+        QTest::keyClicks(editor, text);
+    };
+    const Data::ProjectSnapshot beforeParseRejection
+        = *projectService->project(file.projectId);
+    const bool canUndoBeforeParseRejection = projectService->canUndoProject(file.projectId);
+    const bool canRedoBeforeParseRejection = projectService->canRedoProject(file.projectId);
+    QSignalSpy projectChanges(projectService, &Core::ProjectService::projectChanged);
+
+    replaceText(assignActivate, "0x10000");
+    QTest::keyClick(assignActivate, Qt::Key_Return);
+    QTRY_COMPARE(assignActivate->text(), QString("0x0300"));
+    const QString assignRejection
+        = "Change not applied. AssignActivate must be a decimal or hexadecimal 16-bit value.";
+    QCOMPARE(validation->text(), assignRejection);
+    QCOMPARE(infoValidation->type(), Utils::InfoLabel::Error);
+    QCOMPARE(validation->accessibleName(), QString("Distributed Clocks edit feedback"));
+    QCOMPARE(validation->accessibleDescription(), assignRejection);
+    QCOMPARE(infoValidation->additionalToolTip(), assignRejection);
+    QCOMPARE(validation->toolTip(), assignRejection);
+    QCOMPARE(*projectService->project(file.projectId), beforeParseRejection);
+    QCOMPARE(projectService->canUndoProject(file.projectId), canUndoBeforeParseRejection);
+    QCOMPARE(projectService->canRedoProject(file.projectId), canRedoBeforeParseRejection);
+    QCOMPARE(projectChanges.count(), 0);
+    QCOMPARE(controller.selectionService()->currentNodeId(), file.slaveId);
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_dcAnnouncementMessages.size(), expectedAnnouncements);
+    QCOMPARE(s_dcAnnouncementMessages.last(), assignRejection);
+    QCOMPARE(
+        s_dcAnnouncementPoliteness.last(),
+        QAccessible::AnnouncementPoliteness::Polite);
+#endif
+
+    replaceText(assignActivate, "0x0700");
+    QTRY_COMPARE(validation->text(), std::get<1>(acceptedFeedback));
+    verifyAcceptedFeedback(acceptedFeedback);
+    QCOMPARE(*projectService->project(file.projectId), beforeParseRejection);
+    QCOMPARE(projectChanges.count(), 0);
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_dcAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+    QTest::keyClick(assignActivate, Qt::Key_Return);
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.assignActivate,
+        quint16(0x0700));
+    QTRY_VERIFY(projectChanges.count() > 0);
+    verifyAcceptedFeedback(acceptedFeedback);
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_dcAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+
+    projectChanges.clear();
+    const Data::ProjectSnapshot beforeModeRejection
+        = *projectService->project(file.projectId);
+    const bool canUndoBeforeModeRejection = projectService->canUndoProject(file.projectId);
+    const bool canRedoBeforeModeRejection = projectService->canRedoProject(file.projectId);
+    operationMode->lineEdit()->setFocus(Qt::OtherFocusReason);
+    operationMode->lineEdit()->selectAll();
+    QTest::keyClick(operationMode->lineEdit(), Qt::Key_Backspace);
+    QTest::keyClick(operationMode->lineEdit(), Qt::Key_Return);
+    QTRY_COMPARE(operationMode->currentText(), acceptedModeName);
+    const QString modeRejection
+        = "Change not applied. 1 Distributed Clocks configuration error(s). An enabled "
+          "Distributed Clocks configuration requires a mode.";
+    QCOMPARE(validation->text(), modeRejection);
+    QCOMPARE(infoValidation->type(), Utils::InfoLabel::Error);
+    QCOMPARE(validation->accessibleDescription(), modeRejection);
+    QCOMPARE(infoValidation->additionalToolTip(), modeRejection);
+    QCOMPARE(validation->toolTip(), modeRejection);
+    QCOMPARE(*projectService->project(file.projectId), beforeModeRejection);
+    QCOMPARE(projectService->canUndoProject(file.projectId), canUndoBeforeModeRejection);
+    QCOMPARE(projectService->canRedoProject(file.projectId), canRedoBeforeModeRejection);
+    QCOMPARE(projectChanges.count(), 0);
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_dcAnnouncementMessages.size(), expectedAnnouncements);
+    QCOMPARE(s_dcAnnouncementMessages.last(), modeRejection);
+#endif
+
+    replaceText(operationMode->lineEdit(), acceptedModeName);
+    QTRY_COMPARE(validation->text(), std::get<1>(acceptedFeedback));
+    verifyAcceptedFeedback(acceptedFeedback);
+    QCOMPARE(*projectService->project(file.projectId), beforeModeRejection);
+    QCOMPARE(projectChanges.count(), 0);
+    QTest::keyClick(operationMode->lineEdit(), Qt::Key_Return);
+    QTRY_COMPARE(operationMode->currentText(), acceptedModeName);
+    verifyAcceptedFeedback(acceptedFeedback);
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_dcAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+
+    projectChanges.clear();
+    const Data::ProjectSnapshot beforeDomainRejection
+        = *projectService->project(file.projectId);
+    const bool canUndoBeforeDomainRejection = projectService->canUndoProject(file.projectId);
+    const bool canRedoBeforeDomainRejection = projectService->canRedoProject(file.projectId);
+    replaceText(sync0Shift, "125001");
+    QTest::keyClick(sync0Shift, Qt::Key_Return);
+    QTRY_COMPARE(sync0Shift->text(), QString("0"));
+    const QString shiftRejection
+        = "Change not applied. 1 Distributed Clocks configuration error(s). SYNC0 shift time "
+          "must stay within one cycle in either direction.";
+    QCOMPARE(validation->text(), shiftRejection);
+    QCOMPARE(infoValidation->type(), Utils::InfoLabel::Error);
+    QCOMPARE(validation->accessibleDescription(), shiftRejection);
+    QCOMPARE(infoValidation->additionalToolTip(), shiftRejection);
+    QCOMPARE(validation->toolTip(), shiftRejection);
+    QCOMPARE(*projectService->project(file.projectId), beforeDomainRejection);
+    QCOMPARE(projectService->canUndoProject(file.projectId), canUndoBeforeDomainRejection);
+    QCOMPARE(projectService->canRedoProject(file.projectId), canRedoBeforeDomainRejection);
+    QCOMPARE(projectChanges.count(), 0);
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_dcAnnouncementMessages.size(), expectedAnnouncements);
+    QCOMPARE(s_dcAnnouncementMessages.last(), shiftRejection);
+#endif
+
+    replaceText(sync0Shift, "-1000");
+    QTRY_COMPARE(validation->text(), std::get<1>(acceptedFeedback));
+    verifyAcceptedFeedback(acceptedFeedback);
+    QTest::keyClick(sync0Shift, Qt::Key_Return);
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.sync0.shiftTimeNs,
+        qint64(-1000));
+    verifyAcceptedFeedback(acceptedFeedback);
+
+    acceptedFeedback = captureAcceptedFeedback();
+    replaceText(sync0Shift, "125001");
+    QTest::keyClick(sync0Shift, Qt::Key_Return);
+    QTRY_COMPARE(validation->text(), shiftRejection);
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_dcAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.sync0.shiftTimeNs,
+        qint64(0));
+    QTRY_COMPARE(validation->text(), std::get<1>(acceptedFeedback));
+    verifyAcceptedFeedback(acceptedFeedback);
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_dcAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+    QVERIFY_RESULT(projectService->redoProject(file.projectId));
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.sync0.shiftTimeNs,
+        qint64(-1000));
+    verifyAcceptedFeedback(acceptedFeedback);
+
+    const auto enabledAcceptedFeedback = acceptedFeedback;
+    dcEnabled->click();
+    QTRY_VERIFY(!projectService->project(file.projectId)->slaves.first().dc.enabled);
+    QTRY_VERIFY(!sync0Enabled->isChecked());
+    acceptedFeedback = captureAcceptedFeedback();
+    projectChanges.clear();
+    const Data::ProjectSnapshot beforeCheckRejection
+        = *projectService->project(file.projectId);
+    const bool canUndoBeforeCheckRejection = projectService->canUndoProject(file.projectId);
+    const bool canRedoBeforeCheckRejection = projectService->canRedoProject(file.projectId);
+    sync0Enabled->click();
+    const QString checkRejection
+        = "Change not applied. 1 Distributed Clocks configuration error(s). SYNC signals "
+          "cannot be enabled while Distributed Clocks are disabled.";
+    QTRY_COMPARE(validation->text(), checkRejection);
+    QCOMPARE(infoValidation->type(), Utils::InfoLabel::Error);
+    QCOMPARE(validation->accessibleDescription(), checkRejection);
+    QCOMPARE(infoValidation->additionalToolTip(), checkRejection);
+    QCOMPARE(validation->toolTip(), checkRejection);
+    QCOMPARE(*projectService->project(file.projectId), beforeCheckRejection);
+    QCOMPARE(projectService->canUndoProject(file.projectId), canUndoBeforeCheckRejection);
+    QCOMPARE(projectService->canRedoProject(file.projectId), canRedoBeforeCheckRejection);
+    QCOMPARE(projectChanges.count(), 0);
+    QVERIFY(!sync0Enabled->isChecked());
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_dcAnnouncementMessages.size(), expectedAnnouncements);
+    QCOMPARE(s_dcAnnouncementMessages.last(), checkRejection);
+#endif
+
+    dcEnabled->click();
+    QTRY_VERIFY(projectService->project(file.projectId)->slaves.first().dc.enabled);
+    QTRY_COMPARE(validation->text(), std::get<1>(enabledAcceptedFeedback));
+    verifyAcceptedFeedback(enabledAcceptedFeedback);
+    acceptedFeedback = enabledAcceptedFeedback;
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_dcAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+
+    replaceText(sync1Cycle, "0");
+    QTest::keyClick(sync1Cycle, Qt::Key_Return);
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.sync1.cycleTimeNs,
+        qint64(0));
+    projectChanges.clear();
+    const Data::ProjectSnapshot beforeMultipleIssueRejection
+        = *projectService->project(file.projectId);
+    const bool canUndoBeforeMultipleIssueRejection
+        = projectService->canUndoProject(file.projectId);
+    const bool canRedoBeforeMultipleIssueRejection
+        = projectService->canRedoProject(file.projectId);
+    sync1Enabled->click();
+    const QString multipleIssueSummary
+        = "Change not applied. 2 Distributed Clocks configuration error(s). SYNC1 requires "
+          "SYNC0 to be enabled.";
+    const QString multipleIssueFeedback
+        = multipleIssueSummary
+          + "\nSYNC1 cycle time must be between 1 and 4294967295 ns.";
+    QTRY_COMPARE(validation->text(), multipleIssueSummary);
+    QCOMPARE(infoValidation->type(), Utils::InfoLabel::Error);
+    QCOMPARE(validation->accessibleDescription(), multipleIssueFeedback);
+    QCOMPARE(infoValidation->additionalToolTip(), multipleIssueFeedback);
+    QCOMPARE(validation->toolTip(), multipleIssueFeedback);
+    QCOMPARE(*projectService->project(file.projectId), beforeMultipleIssueRejection);
+    QCOMPARE(
+        projectService->canUndoProject(file.projectId), canUndoBeforeMultipleIssueRejection);
+    QCOMPARE(
+        projectService->canRedoProject(file.projectId), canRedoBeforeMultipleIssueRejection);
+    QCOMPARE(projectChanges.count(), 0);
+    QVERIFY(!sync1Enabled->isChecked());
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_dcAnnouncementMessages.size(), expectedAnnouncements);
+    QCOMPARE(s_dcAnnouncementMessages.last(), multipleIssueFeedback);
+#endif
+
+    replaceText(sync1Cycle, "500000");
+    QTRY_COMPARE(validation->text(), std::get<1>(acceptedFeedback));
+    verifyAcceptedFeedback(acceptedFeedback);
+    QCOMPARE(*projectService->project(file.projectId), beforeMultipleIssueRejection);
+    QCOMPARE(projectChanges.count(), 0);
+    QTest::keyClick(sync1Cycle, Qt::Key_Return);
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().dc.sync1.cycleTimeNs,
+        qint64(500000));
+    verifyAcceptedFeedback(acceptedFeedback);
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_dcAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+
+    replaceText(assignActivate, "0x10000");
+    QTest::keyClick(assignActivate, Qt::Key_Return);
+    QTRY_COMPARE(validation->text(), assignRejection);
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_dcAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+    QVERIFY_RESULT(projectService->renameProject(
+        file.projectId, QString::fromUtf8("DC Edit Feedback / 同项目刷新")));
+    QTRY_COMPARE(validation->text(), std::get<1>(acceptedFeedback));
+    verifyAcceptedFeedback(acceptedFeedback);
+    QCOMPARE(controller.selectionService()->currentNodeId(), file.slaveId);
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_dcAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+
+    replaceText(assignActivate, "0x10000");
+    QTest::keyClick(assignActivate, Qt::Key_Return);
+    QTRY_COMPARE(validation->text(), assignRejection);
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_dcAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QTRY_VERIFY(page.isNull());
+    QTRY_VERIFY(validation.isNull());
+    QTRY_VERIFY(assignActivate.isNull());
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_dcAnnouncementMessages.size(), expectedAnnouncements);
+#endif
 }
 
 void EtherCATWorkbenchTests::testEditableDcWorkflow()

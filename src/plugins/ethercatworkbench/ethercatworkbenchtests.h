@@ -85,6 +85,7 @@ private slots:
     void testEditableStartupWorkflow();
     void testDcRepositoryModePreview();
     void testDcRepositoryModeEmptyState();
+    void testDcEditRejectionFeedback();
     void testEditableDcWorkflow();
     void testDcDraftsSurviveNonConflictingRefresh();
     void testDynamicPropertyProviderRemoval();

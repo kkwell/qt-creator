@@ -6515,3 +6515,67 @@ hook, application bootstrap, production thread or timer, network, ADS, scan,
 online state, CoE/SDO, PLC, controller, Zynq, or hardware behavior. No CMake
 or qbs description changed, so qbs was not run. No remote comparison, fetch,
 pull, merge, rebase, push, PR, or publication was performed.
+
+## Distributed Clocks edit-rejection feedback
+
+`ISSUE-WB-DC-EDIT-REJECTION-FEEDBACK-001` closes the remaining rejection
+feedback gap on the central Distributed Clocks page. A rejected edit still
+restores the authoritative offline value, but now the complete reason is also
+kept in its accessible description and both tooltip surfaces while the visible
+validation strip keeps the concise existing summary. The strip has the stable
+accessible name `Distributed Clocks edit feedback`; when Qt accessibility
+support is present, each rejection also requests one Polite announcement.
+
+The private page tracks whether its current validation is an edit rejection.
+A real user edit to Operation Mode, AssignActivate, or any SYNC cycle/shift
+field clears that transient state immediately and restores validation from the
+last accepted `DcConfiguration`. Successful submission, Undo/Redo, a same-
+Project refresh, context teardown, and Project close take the existing reload
+path and therefore cannot retain stale rejection metadata. This does not add a
+public model role, change Project persistence, or bypass `ProjectService`.
+
+The failure-first test used real `QLineEdit` key input and Return. With only the
+test added, the unchanged production cpp/header retained SHA-256
+`db028f1b2dd3d4b7a294c0ae7746e27b7e5d3668987d153f4181b0d671f3c916`
+and `94ea851d21149b5ce52a07ecfa23ebc7cb0badc145691ae52cf3447bb4002a46`;
+initialization and cleanup passed, the stable accessible-name assertion failed,
+and the target exited 1. Final coverage exercises an invalid 16-bit
+AssignActivate value, an empty enabled Operation Mode, an out-of-cycle SYNC0
+shift, and an illegal SYNC0 enable while DC is disabled. A staged independent
+review also added the combined `SYNC1 requires SYNC0` plus invalid-cycle case;
+the visible strip keeps its concise two-error summary while the accessible
+description, both tooltips, and announcement retain both complete reasons.
+Each path proves that the complete Project snapshot, Undo/Redo availability,
+selection, and Project change count do not move. Correction, accepted
+submission, Undo/Redo, enable recovery, same-Project rename, and Project close
+cover clearing and teardown.
+
+Focused and five-test DC-related groups passed at normal and 2x scale. The
+complete Workbench suite passed twice at each scale with 84 events per run. Six
+isolated plugin processes passed Core 17, Project 12, Devices 8, Workbench 84,
+Scan 11, and Diagnostics 7: 139 events total and no failures. The final
+`WITH_TESTS=OFF` product build contains exactly 16 plugin dylibs. Its executable
+SHA-256 is
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`;
+the product Workbench SHA-256 is
+`5d22599750f502b408b7d9924b6c4f297570484f1a5d763f48c885d04f3b09ba`.
+
+Enabled and explicit-disabled product starts were both exercised invisibly for
+37/37 live samples. Workbench was mapped in all 37 enabled samples and none of
+the disabled samples. Both processes ended through the expected passed-through
+SIGTERM status 15; residual processes, new Embed Labs DiagnosticReports, and
+matching crash-service events were all zero. Pre/post SHA-256, mtime, size, and
+Mach-O UUID manifests were identical. No visible desktop inspection, manual
+VoiceOver or audible-speech check, physical EtherCAT interface, controller,
+network, ADS, real scan, online CoE/SDO, PLC, Zynq, or hardware behavior is
+claimed. Mock/offline regression remains the qualified boundary.
+
+Evidence is under
+`/private/tmp/embed-labs-wb-dc-edit-feedback-001.SmAI4Q`. Qt's user-edit,
+editing-finished, accessible-description, and announcement contracts are at
+<https://doc.qt.io/qt-6/qlineedit.html#textEdited>,
+<https://doc.qt.io/qt-6/qlineedit.html#editingFinished>,
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>, and
+<https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Beckhoff's
+Distributed Clocks page supplies field and interaction terminology only:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>.

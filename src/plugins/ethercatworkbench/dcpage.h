@@ -63,6 +63,8 @@ private:
     void commitSignalValue(bool sync1, SignalField field, QLineEdit *editor);
     void showValidation(const QList<Data::ConfigurationIssue> &issues, const QString &prefix = {});
     void rejectInput(const QString &message);
+    void setEditRejection(const QString &message, const QString &completeMessage = {});
+    void clearEditRejection();
 
     WorkbenchController *m_controller = nullptr;
     Core::PropertyPageContext m_context;
@@ -82,6 +84,7 @@ private:
     bool m_repositoryDeviceSupported = false;
     bool m_showingEsiDefaults = false;
     bool m_rebuilding = false;
+    bool m_editRejectionActive = false;
 
     QLabel *m_summary = nullptr;
     Utils::InfoLabel *m_validation = nullptr;

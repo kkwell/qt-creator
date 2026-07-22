@@ -10,6 +10,9 @@
 #include <utils/infolabel.h>
 #include <utils/stylehelper.h>
 
+#if QT_CONFIG(accessibility)
+#include <QAccessible>
+#endif
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFormLayout>
@@ -119,6 +122,7 @@ DcPage::DcPage(WorkbenchController *controller, QWidget *parent)
     m_summary->setWordWrap(true);
     m_summary->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_validation->setObjectName("EtherCATDcValidation");
+    m_validation->setAccessibleName(Tr::tr("Distributed Clocks edit feedback"));
     m_validation->setElideMode(Qt::ElideNone);
     m_validation->setWordWrap(true);
     m_units->setObjectName("EtherCATDcUnits");
@@ -246,6 +250,14 @@ DcPage::DcPage(WorkbenchController *controller, QWidget *parent)
         candidate.potentialReferenceClock = checked;
         submitConfiguration(candidate);
     });
+    for (QLineEdit *editor : {m_operationMode->lineEdit(),
+                              m_assignActivate,
+                              m_sync0Cycle,
+                              m_sync0Shift,
+                              m_sync1Cycle,
+                              m_sync1Shift}) {
+        connect(editor, &QLineEdit::textEdited, this, [this] { clearEditRejection(); });
+    }
 }
 
 void DcPage::setContext(const Core::PropertyPageContext &context)
@@ -371,17 +383,24 @@ void DcPage::setContext(const Core::PropertyPageContext &context)
 bool DcPage::submitConfiguration(const Data::DcConfiguration &configuration)
 {
     const QList<Data::ConfigurationIssue> issues = Data::validateDcConfiguration(configuration);
+    const auto completeRejectionMessage = [&issues](QString summary) {
+        for (qsizetype index = 1; index < issues.size(); ++index)
+            summary += '\n' + issues.at(index).message;
+        return summary;
+    };
     const bool hasErrors = std::any_of(issues.cbegin(), issues.cend(), [](const auto &issue) {
         return issue.severity == Data::ConfigurationIssueSeverity::Error;
     });
     if (hasErrors) {
         reloadCurrentContext();
         showValidation(issues, Tr::tr("Change not applied."));
+        setEditRejection(m_validation->text(), completeRejectionMessage(m_validation->text()));
         return false;
     }
     if (!m_editable || !m_controller || !m_controller->projectService()) {
         reloadCurrentContext();
         showValidation(issues, Tr::tr("Change not applied: this ESI catalogue page is read-only."));
+        setEditRejection(m_validation->text(), completeRejectionMessage(m_validation->text()));
         return false;
     }
 
@@ -391,6 +410,7 @@ bool DcPage::submitConfiguration(const Data::DcConfiguration &configuration)
     if (!result) {
         reloadCurrentContext();
         showValidation(issues, Tr::tr("Change not applied: %1").arg(result.error()));
+        setEditRejection(m_validation->text(), completeRejectionMessage(m_validation->text()));
         return false;
     }
 
@@ -732,6 +752,7 @@ void DcPage::commitSignalValue(bool sync1, SignalField field, QLineEdit *editor)
 
 void DcPage::showValidation(const QList<Data::ConfigurationIssue> &issues, const QString &prefix)
 {
+    m_editRejectionActive = false;
     int errorCount = 0;
     int warningCount = 0;
     QStringList details;
@@ -801,15 +822,37 @@ void DcPage::showValidation(const QList<Data::ConfigurationIssue> &issues, const
                     : Tr::tr("Distributed Clocks are disabled; the offline configuration is valid.");
     }
     m_validation->setText(text);
+    m_validation->setAccessibleDescription(text);
+    m_validation->setAdditionalToolTip(details.join('\n'));
     m_validation->setToolTip(details.join('\n'));
 }
 
 void DcPage::rejectInput(const QString &message)
 {
     reloadCurrentContext();
+    setEditRejection(Tr::tr("Change not applied. %1").arg(message));
+}
+
+void DcPage::setEditRejection(const QString &message, const QString &completeMessage)
+{
+    const QString feedback = completeMessage.isEmpty() ? message : completeMessage;
+    m_editRejectionActive = true;
     m_validation->setType(Utils::InfoLabel::Error);
-    m_validation->setText(Tr::tr("Change not applied. %1").arg(message));
-    m_validation->setToolTip(message);
+    m_validation->setText(message);
+    m_validation->setAccessibleDescription(feedback);
+    m_validation->setAdditionalToolTip(feedback);
+    m_validation->setToolTip(feedback);
+#if QT_CONFIG(accessibility)
+    QAccessibleAnnouncementEvent announcement(m_validation, feedback);
+    announcement.setPoliteness(QAccessible::AnnouncementPoliteness::Polite);
+    QAccessible::updateAccessibility(&announcement);
+#endif
+}
+
+void DcPage::clearEditRejection()
+{
+    if (m_editRejectionActive)
+        showValidation(Data::validateDcConfiguration(m_configuration));
 }
 
 } // namespace EtherCAT::Workbench::Internal

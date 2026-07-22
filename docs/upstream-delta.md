@@ -1841,3 +1841,54 @@ No remote comparison, fetch, pull, merge, rebase, push, PR, or publication was
 performed. The supported source of truth remains the local `embed-labs`
 history. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-startup-edit-feedback-001.QUiKKW`.
+
+## Distributed Clocks edit-rejection feedback delta
+
+`ISSUE-WB-DC-EDIT-REJECTION-FEEDBACK-001` adds one bounded local delta to the
+private EtherCAT Workbench DC page:
+
+- the validation strip has a stable accessible name;
+- rejected Operation Mode, AssignActivate, timing, and checkbox candidates
+  publish the concise summary visibly and the complete reason set on accessible
+  and tooltip surfaces;
+- multi-error candidates retain the concise visible summary and append every
+  remaining reason to accessible, tooltip, and announcement feedback;
+- one conditional Polite announcement is requested per rejection;
+- user correction and existing authoritative reload paths clear the transient
+  feedback without changing accepted Project state.
+
+The failure-first executable retained unchanged production hashes and failed
+only the missing accessible-name assertion with target status 1. Final focused
+and DC-related runs passed at normal and 2x scale; the complete Workbench suite
+passed twice per scale with 84 events per run. Six isolated suites passed 139
+events with no failures. The `WITH_TESTS=OFF` Workbench and full product builds
+passed with 16 plugin dylibs. Enabled and explicit-disabled final product runs
+were alive for 37/37 samples, with Workbench mapped 37 and 0 times respectively;
+artifact identity remained unchanged and crash-dialog audit counts were zero.
+An independent staged review found and corrected an intermediate loss of
+second-and-later validation reasons; the final two-error test and every
+affected qualification gate were rerun after that correction.
+
+The delta changes `dcpage.cpp`, `dcpage.h`, the existing Workbench test source
+and header, and the four qualification documents. It does not change CMake or
+qbs, public API/model roles, EtherCATData, EtherCATCore, EtherCATProject,
+Project format/persistence, Provider contracts, commands, ProjectExplorer,
+application bootstrap, networking, scan, ADS, SDO, PLC, controller, or hardware
+behavior. No remote comparison or import was performed; local baseline
+`cf697da20467541b7d01e636e8ae2267969ae24a` is authoritative.
+
+The final evidence intentionally makes no claim for visible UI inspection,
+manual VoiceOver/audible output, real EtherCAT Distributed Clocks behavior, or
+physical hardware. It qualifies only the offline editor feedback and the
+existing Mock regression boundary. Evidence is under
+`/private/tmp/embed-labs-wb-dc-edit-feedback-001.SmAI4Q`.
+
+Qt references:
+
+- <https://doc.qt.io/qt-6/qlineedit.html#editingFinished>
+- <https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>
+- <https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>
+
+Beckhoff terminology reference:
+
+- <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>

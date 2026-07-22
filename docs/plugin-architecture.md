@@ -2611,3 +2611,57 @@ Workbench mapped in 37/37 enabled samples and 0/37 explicit-disabled samples;
 crash-service events, new diagnostic reports, and residual processes were 0.
 Evidence is under
 `/private/tmp/embed-labs-wb-startup-edit-feedback-001.QUiKKW`.
+
+## Distributed Clocks rejection-feedback boundary
+
+`ISSUE-WB-DC-EDIT-REJECTION-FEEDBACK-001` is implemented entirely inside the
+private `EtherCATWorkbench` DC page. `DcPage::submitConfiguration()` remains
+the single boundary between a candidate UI value and `ProjectService`; the Data
+validator and Project command path are unchanged. A rejected candidate reloads
+the authoritative context before the private page decorates its validation
+strip with a one-shot edit-rejection state.
+
+The state carries no configuration data and is not persisted. It controls only
+the validation strip's type, text, accessible description, normal tooltip,
+additional tooltip, and optional `QAccessibleAnnouncementEvent`. Real
+`QLineEdit::textEdited` signals clear the state and recompute ordinary
+validation from the accepted in-memory `DcConfiguration`. Existing reloads
+after accepted submission, Undo/Redo, context updates, and Project close also
+clear or destroy it. The operation-mode combo uses its existing line edit, so
+no parallel editor or alternate commit route was introduced.
+
+The visible strip continues to show the existing concise first-reason summary.
+For a candidate with multiple `ConfigurationIssue` entries, the private
+rejection state appends every remaining reason to the accessible description,
+both tooltip surfaces, and the announcement. This preserves information that
+ordinary validation already exposed without making the central page expand for
+every issue. A staged review identified and a real two-error test seals this
+boundary.
+
+This is deliberately not a Core, Data, Project, Devices, Scan, Diagnostics,
+Provider, command, persistence, public-role, source-list, dependency,
+application-bootstrap, or ProjectExplorer change. CMake and qbs descriptions
+therefore remain unchanged. Test-only accessibility interception is confined to
+the Workbench test translation unit and restores the previous Qt handler with a
+scope guard.
+
+Qualification uses real editor and checkbox events against a real temporary
+offline Project. It proves parse rejection, full-configuration validation,
+authoritative value restoration, Project/Undo/Redo/signal invariants, clearing,
+same-context refresh, and owning-Project teardown. Six isolated plugin suites
+passed 139 events total. The final no-tests product passed both enabled and
+explicit-disabled 37-sample offscreen lifecycle runs with zero residual
+processes, new Embed Labs crash reports, or matching crash-service events.
+
+The architectural boundary remains Mock/offline. No interface enumeration,
+network, ADS, physical scan, online CoE/SDO, controller, PLC, Zynq, Distributed
+Clocks synchronization, or hardware timing is exercised or implied. Manual
+VoiceOver and visible-desktop review were not run.
+
+Evidence is under
+`/private/tmp/embed-labs-wb-dc-edit-feedback-001.SmAI4Q`. Qt contracts are at
+<https://doc.qt.io/qt-6/qlineedit.html#textEdited>,
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>, and
+<https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Beckhoff's DC
+reference is used for UI terminology, not as evidence of live integration:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>.

@@ -3249,3 +3249,41 @@ delegate, and announcement contracts are at
 <https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Beckhoff's
 Startup page supplies ordered-request and fixed-item terminology only:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.
+
+## EtherCATWorkbench Distributed Clocks edit-rejection qualification
+
+`ISSUE-WB-DC-EDIT-REJECTION-FEEDBACK-001` is qualified from local baseline
+`cf697da20467541b7d01e636e8ae2267969ae24a`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| User-visible defect | A rejected DC edit restored the accepted value and showed a reason, but the reason was incomplete on tooltip/accessibility surfaces and remained while the user began correcting the input |
+| Rejection paths | Real editors cover invalid AssignActivate, empty enabled Operation Mode, out-of-cycle SYNC0 shift, and a combined SYNC1-without-SYNC0 plus invalid-cycle candidate; the real SYNC0 checkbox covers the disabled-DC domain rejection |
+| Rejection invariants | Complete Project snapshot, Undo/Redo availability, stable selection, and `projectChanged` count remain unchanged; rejected widgets restore accepted values |
+| Feedback/accessibility | Error type, stable accessible name, exact visible text, accessible description, both tooltips, and one conditional Polite announcement are verified for every covered rejection; the two-error case keeps both reasons outside the concise visible summary |
+| Clearing and teardown | User correction clears before Return; accepted submission, Undo/Redo, DC enable recovery, same-Project refresh, and Project close restore or destroy the complete feedback surface without an extra announcement |
+| Failure-first | Production cpp/header SHA-256 stayed `db028f1b2dd3d4b7a294c0ae7746e27b7e5d3668987d153f4181b0d671f3c916` and `94ea851d21149b5ce52a07ecfa23ebc7cb0badc145691ae52cf3447bb4002a46`; init/cleanup passed, the accessible name was empty, one test failed, target status 1 |
+| Focused normal and 2x | Each final run passed 3 events, 0 failed, target status 0 |
+| DC-related normal and 2x | Each final run passed 7 events, 0 failed, target status 0 |
+| Complete Workbench normal and 2x | Two final runs at each scale passed 84 events per run, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 84, Scan 11, Diagnostics 7; 139 passed, 0 failed in six isolated LLDB-supervised processes |
+| Staged independent review | One P2 found that the initial implementation overwrote multi-error tooltip details with the first visible reason; the final implementation and a real two-error test retain every reason, then all affected gates were rerun |
+| Final source SHA-256 | DC cpp `4863554223909269403b1c52807ec1102b70dcebc45f3dfc4e6f4a77c8289dcf`; header `f99a9385ff826307176132a1a20623b356ef4dd3ade59e57de505af23b0871ee`; tests `97842bb3d4e6886faf52a12b54bfcb1f5fac8f3b2bbe2531e362f2d81f853495`; test header `9d369afd216e5e31bdd8826d56b541dfa8982407571c66f5f2a1b54da9f7141d` |
+| Final git blobs | DC cpp `9de30c17480490200b0a4eef8a8b991ee4834603`; header `5e79d96152ba57ed563a7bb81730fb434667a656`; tests `21c4a2ec5901362a1e1e64e1b2b8c13c296c54e2`; test header `67d6c88d6afd707fbcf3b799ce56ad807a9aae6b` |
+| Qualified build | Qt 6.11.0 Release tests; `WITH_TESTS=OFF` Workbench target and complete product passed with exactly 16 plugin dylibs |
+| Product hashes | Executable `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `5d22599750f502b408b7d9924b6c4f297570484f1a5d763f48c885d04f3b09ba`; test Workbench `83266a924f762747cd21571c0c2c8679fb5cf18410adb325829f6cae98e0c319` |
+| Enabled/disabled lifecycle | Both invisible product runs stayed alive for 37/37 samples; Workbench mapped in 37 enabled and 0 disabled samples; each ended with expected status 15 |
+| Crash-dialog audit | From 2026-07-23 07:17:15–07:19:37 +0800, residual processes, new Embed Labs DiagnosticReports, and matching crash-service events were all 0 |
+| Final-artifact binding | Pre/post SHA-256, mtime, size, and Mach-O UUID manifests are identical |
+| Deliberate exclusions | No visible/manual UI, manual VoiceOver, audible speech, physical interface, network, ADS, real scan, online CoE/SDO, controller, PLC, Zynq, or hardware behavior is claimed |
+| Public/API/system boundary | Private DC page and Workbench tests only; no public API/role, source list, dependency, Project format, persistence, Provider/ProjectService contract, Project command, Core/ProjectExplorer hook, or application bootstrap change |
+| Build descriptions | No CMake or qbs file changed, so qbs was not run |
+| Local-only policy | No remote comparison, fetch, pull, merge, rebase, push, PR, or publication was performed |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-dc-edit-feedback-001.SmAI4Q`. Qt contracts are at
+<https://doc.qt.io/qt-6/qlineedit.html#editingFinished>,
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>, and
+<https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Beckhoff's DC
+reference supplies terminology only:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>.
