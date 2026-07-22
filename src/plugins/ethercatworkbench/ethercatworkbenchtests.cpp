@@ -1230,6 +1230,14 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     moveUpCommand->action()->trigger();
     QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().id, addedId);
     QCOMPARE(projectService->project(file.projectId)->slaves.first().position, 0);
+    const QModelIndex masterAfterMoveUp = controller.treeModel()->indexForNodeId(file.masterId);
+    QVERIFY(masterAfterMoveUp.isValid());
+    QTRY_COMPARE(
+        controller.treeModel()
+            ->index(0, 0, masterAfterMoveUp)
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        addedId);
     QCOMPARE(controller.selectionService()->currentNodeId(), addedId);
     QVERIFY(!moveUpCommand->action()->isEnabled());
     QVERIFY(moveDownCommand->action()->isEnabled());
@@ -1237,6 +1245,14 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     moveDownCommand->action()->trigger();
     QTRY_COMPARE(projectService->project(file.projectId)->slaves.last().id, addedId);
     QCOMPARE(projectService->project(file.projectId)->slaves.last().position, 1);
+    const QModelIndex masterAfterMoveDown = controller.treeModel()->indexForNodeId(file.masterId);
+    QVERIFY(masterAfterMoveDown.isValid());
+    QTRY_COMPARE(
+        controller.treeModel()
+            ->index(1, 0, masterAfterMoveDown)
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        addedId);
     QCOMPARE(controller.selectionService()->currentNodeId(), addedId);
 
     const QString removalName = "Workbench %1 %2 Servo";
@@ -1451,6 +1467,174 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     QVERIFY(!addCommand->action()->toolTip().contains(placeholderProject));
     QVERIFY(!addCommand->action()->isEnabled());
     projectCleanup.dismiss();
+}
+
+void EtherCATWorkbenchTests::testConfiguredSlaveTreePhysicalOrder()
+{
+    WorkbenchController controller;
+    QAbstractItemModelTester modelTester(
+        controller.treeModel(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+    controller.selectionService()->clear();
+    const QScopeGuard selectionCleanup([&controller] {
+        controller.selectionService()->clear();
+    });
+
+    Data::ProjectSnapshot project = projectSnapshot("Configured physical order");
+    const Data::NodeId master = masterId(project);
+    const Data::NodeId physicalFirstId = Data::NodeId::create();
+    const Data::NodeId physicalSecondId = Data::NodeId::create();
+    project.slaves = {
+        {physicalFirstId,
+         master,
+         0,
+         {2, 0x71000001, 1},
+         11,
+         0,
+         "Zulu Physical First",
+         {},
+         {},
+         {},
+         {}},
+        {physicalSecondId,
+         master,
+         1,
+         {2, 0x71000002, 1},
+         12,
+         0,
+         "Alpha Physical Second",
+         {},
+         {},
+         {},
+         {}},
+    };
+    project.nodes.append(
+        {physicalFirstId, master, Data::ProjectNodeKind::Slave, "Zulu Physical First"});
+    project.nodes.append(
+        {physicalSecondId, master, Data::ProjectNodeKind::Slave, "Alpha Physical Second"});
+    controller.treeModel()->setProjects({project});
+
+    const auto configuredChildIds = [](QAbstractItemModel *model,
+                                       const Data::NodeId &masterId) {
+        QList<Data::NodeId> result;
+        const QModelIndex masterIndex = findById(model, masterId);
+        if (!masterIndex.isValid())
+            return result;
+        for (int row = 0; row < model->rowCount(masterIndex); ++row) {
+            const QModelIndex child = model->index(row, 0, masterIndex);
+            if (child.data(WorkbenchTreeModel::NodeKindRole)
+                    .value<Core::WorkbenchNodeKind>()
+                == Core::WorkbenchNodeKind::ConfiguredSlave) {
+                result.append(
+                    child.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>());
+            }
+        }
+        return result;
+    };
+    const auto configuredChildNames = [](QAbstractItemModel *model,
+                                         const Data::NodeId &masterId) {
+        QStringList result;
+        const QModelIndex masterIndex = findById(model, masterId);
+        if (!masterIndex.isValid())
+            return result;
+        for (int row = 0; row < model->rowCount(masterIndex); ++row) {
+            const QModelIndex child = model->index(row, 0, masterIndex);
+            if (child.data(WorkbenchTreeModel::NodeKindRole)
+                    .value<Core::WorkbenchNodeKind>()
+                == Core::WorkbenchNodeKind::ConfiguredSlave) {
+                result.append(child.data(Qt::DisplayRole).toString());
+            }
+        }
+        return result;
+    };
+    const QList<Data::NodeId> initialPhysicalOrder{physicalFirstId, physicalSecondId};
+    QCOMPARE(
+        configuredChildNames(controller.treeModel(), master),
+        QStringList({"Zulu Physical First", "Alpha Physical Second"}));
+    QCOMPARE(configuredChildIds(controller.treeModel(), master), initialPhysicalOrder);
+
+    WorkbenchNavigationWidget navigation(&controller);
+    navigation.resize(720, 480);
+    navigation.show();
+    QTRY_VERIFY(navigation.isVisible());
+    QAbstractItemModel *proxyModel = navigation.treeView()->model();
+    QCOMPARE(configuredChildIds(proxyModel, master), initialPhysicalOrder);
+
+    controller.selectionService()->setCurrentNodeId(physicalFirstId);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        physicalFirstId);
+
+    navigation.filterEdit()->setText("Physical");
+    QTRY_COMPARE(configuredChildIds(proxyModel, master), initialPhysicalOrder);
+
+    Data::ProjectSnapshot renamed = project;
+    for (Data::OfflineSlaveConfiguration &slave : renamed.slaves) {
+        if (slave.id == physicalFirstId)
+            slave.name = "Aardvark Physical First";
+    }
+    for (Data::ProjectNodeSnapshot &node : renamed.nodes) {
+        if (node.id == physicalFirstId)
+            node.name = "Aardvark Physical First";
+    }
+    controller.treeModel()->setProjects({renamed});
+    QTRY_COMPARE(configuredChildIds(controller.treeModel(), master), initialPhysicalOrder);
+    QTRY_COMPARE(configuredChildIds(proxyModel, master), initialPhysicalOrder);
+    QCOMPARE(navigation.filterEdit()->text(), QString("Physical"));
+    QCOMPARE(controller.selectionService()->currentNodeId(), physicalFirstId);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        physicalFirstId);
+
+    Data::ProjectSnapshot reordered = renamed;
+    for (Data::OfflineSlaveConfiguration &slave : reordered.slaves) {
+        if (slave.id == physicalFirstId)
+            slave.position = 1;
+        else if (slave.id == physicalSecondId)
+            slave.position = 0;
+    }
+    controller.treeModel()->setProjects({reordered});
+    const QList<Data::NodeId> reorderedPhysicalOrder{physicalSecondId, physicalFirstId};
+    QTRY_COMPARE(configuredChildIds(controller.treeModel(), master), reorderedPhysicalOrder);
+    QTRY_COMPARE(configuredChildIds(proxyModel, master), reorderedPhysicalOrder);
+    QCOMPARE(navigation.filterEdit()->text(), QString("Physical"));
+    QCOMPARE(controller.selectionService()->currentNodeId(), physicalFirstId);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        physicalFirstId);
+
+    navigation.filterEdit()->clear();
+    QTRY_COMPARE(configuredChildIds(proxyModel, master), reorderedPhysicalOrder);
+    QCOMPARE(controller.selectionService()->currentNodeId(), physicalFirstId);
+
+    Data::ProjectSnapshot duplicatePosition = project;
+    duplicatePosition.slaves[1].position = 0;
+    controller.treeModel()->setProjects({duplicatePosition});
+    const QStringList duplicatePositionFallback{
+        "Alpha Physical Second", "Zulu Physical First"};
+    QCOMPARE(
+        configuredChildNames(controller.treeModel(), master), duplicatePositionFallback);
+    QTRY_COMPARE(configuredChildNames(proxyModel, master), duplicatePositionFallback);
+
+    Data::ProjectSnapshot missingPosition = project;
+    const Data::NodeId missingPositionId = Data::NodeId::create();
+    missingPosition.nodes.append(
+        {missingPositionId, master, Data::ProjectNodeKind::Slave, "Mike Missing Position"});
+    controller.treeModel()->setProjects({missingPosition});
+    const QStringList missingPositionFallback{
+        "Alpha Physical Second", "Mike Missing Position", "Zulu Physical First"};
+    QCOMPARE(
+        configuredChildNames(controller.treeModel(), master), missingPositionFallback);
+    QTRY_COMPARE(configuredChildNames(proxyModel, master), missingPositionFallback);
+    QCOMPARE(controller.selectionService()->currentNodeId(), physicalFirstId);
 }
 
 void EtherCATWorkbenchTests::testTwinCatInsertDeviceWorkflow()

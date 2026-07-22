@@ -4022,3 +4022,90 @@ not rerun; the known EasyBoard test include blocker remains outside this
 private Workbench issue. No upstream Core, ProjectExplorer, or
 application-bootstrap path changed. The Workbench path count remains 44 and
 the direct upstream Core patch count remains five.
+
+## Configured-slave tree physical order
+
+`ISSUE-WB-TREE-PHYSICAL-ORDER-001`, based on local commit
+`a9525adcf39b11704d04e2b65da3488897c43f56`, aligns the master subtree with
+the offline EtherCAT topology already owned by `ProjectService`. Configured
+slave rows now follow `OfflineSlaveConfiguration::position` instead of their
+case-insensitive display names. Renaming a slave therefore does not move its
+row, while Move Up and Move Down immediately produce the same order in the
+Project snapshot, source tree, and filtered navigation proxy.
+
+The physical comparator is enabled only when the complete sibling group
+consists of Slave nodes that all map to offline slave configurations. A group
+with an unmapped Slave preserves the original case-insensitive name ordering.
+Equal physical positions use case-insensitive name and then stable `NodeId` as
+deterministic tie-breakers. Choosing one complete relation for the whole
+sibling group preserves strict weak ordering; the implementation never mixes
+physical and name precedence pair by pair.
+
+`ProjectService` remains the sole owner of positions, validation, persistence,
+Undo, and Redo. The private Workbench model consumes immutable Project
+snapshots and performs no mutation. Stable node IDs continue to restore the
+current selection across model reset and proxy filtering. No new model role,
+public API, or cross-plugin ownership contract is introduced.
+
+Beckhoff describes EtherCAT Auto Increment addresses as a representation of
+physical ring position, with the first, second, and third devices assigned
+`0x0000`, `0xffff`, and `0xfffe` respectively:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1342524811.html>.
+Its configuration workflow also presents boxes beneath the selected EtherCAT
+device:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>.
+Qt's proxy model keeps the source model as the underlying ordering contract:
+<https://doc.qt.io/qt-6/qsortfilterproxymodel.html>. Qt Creator 20.0 likewise
+compares semantic priority before display name in its Project tree:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectmodels.cpp#L88-L103>.
+
+Failure-first qualification kept production at SHA-256
+`31e486b2b074aa4e6c6fa1c629fc8ea55972f9b29ee82c74175d58711eb7945a`
+and git blob `3a901d3c1c2a6a6fa005e66d8f592894050fb6f3`. Initialization and cleanup
+passed, but the alphabetically earlier position-1 slave appeared before the
+position-0 slave, so the focused target exited with status 1 under
+`/private/tmp/embed-labs-tree-physical-order.tIKzsO/failure-first`.
+
+Final source SHA-256 values are
+`3211b55cffb8762f82f22d78e340ce517595b2e39257e038cdd2e9274a0947aa`,
+`e86aa10e468855b00ca5952748260d0a1a2614c3fd9729922cf394d0c9a65e36`,
+and `083670f9dc98e96a2e05f6ededcd842cb7adb1f19f56c4bd3c66783c915e4b15`
+for the tree model, Workbench test implementation, and test declaration. Their
+git blobs are `aa23ee6dfe4e8b4cc6c7b996250592521f3b5c97`,
+`5647490e020596fe38cabc413f169143a275c0bb`, and
+`996d452da5784cab2d282ca49810f32b4936bb72`.
+
+The focused physical-order regression and the existing real topology-editing
+workflow each passed three events at normal and 2x scale. Complete Workbench
+runs passed 64 events at each scale. The six isolated suites passed 115
+events: Core 17, Project 12, Devices 8, Workbench 64, Scan 7, and Diagnostics
+7. The full `WITH_TESTS=OFF` product build passed and contains exactly the 16
+allow-listed plugin dylibs. The executable SHA-256 is
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`;
+the product and test Workbench plugin SHA-256 values are
+`2e182d12b357c467d75b75a406b0cf28344a5eac03e49c514ab5934c272937cd`
+and `b046bbf6d9e4a649d6ada08afc7a722344582adf52c127f27700b952d9b7b697`.
+
+Enabled startup observed PID 75471 alive for 37 consecutive samples with the
+Workbench plugin loaded in every sample. Explicitly disabled startup observed
+PID 78033 alive for 37 samples and a final independent `vmmap` observation
+with the plugin absent. Both were ended by an intentional passed-through
+SIGTERM with target status 15. Every executable run used fresh HOME/settings,
+cleared inherited DYLD variables, `QT_QPA_PLATFORM=offscreen`,
+`CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch
+Bar bypass. No visible main window or crash dialog was created. The
+2026-07-22 08:48:12 +0800 audit found no residual Embed Labs/LLDB process, new
+matching DiagnosticReports file, or matching crash-service event after
+08:44 +0800.
+
+This issue changes only the private `workbenchtreemodel.cpp`, Workbench test
+declaration/implementation, and these four documents. It adds no source file,
+dependency, public API, Provider, persistence field, Project command, custom
+model role, production thread or timer, controller/network transport, online
+state, scan, SDO execution, or hardware behavior. No CMake or qbs description
+changed, so qbs was not run. The unrelated `WITH_TESTS=ON` all-target build was
+not rerun; the known EasyBoard test include blocker remains outside this
+private Workbench issue. No upstream Core, ProjectExplorer, or
+application-bootstrap path changed. The Workbench path count remains 44 and
+the direct upstream Core patch count remains five. All behavior and evidence
+in this qualification remain local/offline Mock behavior.

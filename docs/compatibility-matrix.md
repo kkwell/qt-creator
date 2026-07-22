@@ -2205,6 +2205,50 @@ delete-on-close precedent is visible at
 Beckhoff's Startup page supplies only the structural request-list comparison:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.
 
+## EtherCATWorkbench configured-slave tree physical-order qualification
+
+`ISSUE-WB-TREE-PHYSICAL-ORDER-001` is qualified from local baseline
+`a9525adcf39b11704d04e2b65da3488897c43f56`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Production remained at SHA-256 `31e486b2b074aa4e6c6fa1c629fc8ea55972f9b29ee82c74175d58711eb7945a` / git blob `3a901d3c1c2a6a6fa005e66d8f592894050fb6f3`; initialization and cleanup passed, but row 0 was `Alpha Physical Second` instead of the position-0 `Zulu Physical First`, and the target exited with status 1 under `/private/tmp/embed-labs-tree-physical-order.tIKzsO/failure-first` |
+| Physical source order | A complete configured-Slave sibling group follows `OfflineSlaveConfiguration::position`; renaming a slave does not move it |
+| Navigation proxy | The filtered Workbench navigation proxy preserves the source physical order at normal and 2x scale |
+| Move commands | Existing real Move Up and Move Down commands update the Project position and the matching visible master child row immediately |
+| Reset selection | Stable `NodeId` selection and the current navigation row survive Project-driven model reset and active filtering |
+| Duplicate position | Equal positions fall back deterministically to case-insensitive name and stable `NodeId` |
+| Missing position | If any sibling Slave lacks an offline configuration, the entire sibling group preserves the original case-insensitive name ordering |
+| Model contract | `QAbstractItemModelTester` remains attached throughout the focused source/proxy/reset sequence |
+| Focused physical-order tests | Normal and 2x each passed 3 events, 0 failed, target status 0 under `final2-focused-*` |
+| Existing topology workflow | Normal and 2x each passed 3 events, 0 failed, target status 0 under `final2-topology-*` |
+| Complete Workbench | Normal and 2x each passed 64 events, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 64, Scan 7, Diagnostics 7; 115 passed, 0 failed |
+| Final source SHA-256 | Tree model `3211b55cffb8762f82f22d78e340ce517595b2e39257e038cdd2e9274a0947aa`; test implementation `e86aa10e468855b00ca5952748260d0a1a2614c3fd9729922cf394d0c9a65e36`; test declaration `083670f9dc98e96a2e05f6ededcd842cb7adb1f19f56c4bd3c66783c915e4b15` |
+| Final git blobs | Tree model `aa23ee6dfe4e8b4cc6c7b996250592521f3b5c97`; test implementation `5647490e020596fe38cabc413f169143a275c0bb`; test declaration `996d452da5784cab2d282ca49810f32b4936bb72` |
+| Test plugin | Workbench SHA-256 `b046bbf6d9e4a649d6ada08afc7a722344582adf52c127f27700b952d9b7b697` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 allow-listed plugin dylibs; executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; Workbench SHA-256 `2e182d12b357c467d75b75a406b0cf28344a5eac03e49c514ab5934c272937cd` |
+| Enabled startup | PID 75471 remained running for 37 samples and loaded Workbench in all 37; intentional passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 78033 remained running for 37 samples; an independent final `vmmap` found no Workbench plugin; intentional passed-through SIGTERM produced target status 15 |
+| Crash-dialog audit | At 2026-07-22 08:48:12 +0800 there was no residual Embed Labs/LLDB process, new matching DiagnosticReports file, or matching crash-service event after 08:44 +0800 |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, crash reporter disabled, `-no-crashcheck`, and only the process-local Touch Bar bypass; no visible main window or system crash dialog |
+| Visual/manual desktop inspection | Not run by design; product lifecycle acceptance remained offscreen so it could not interrupt desktop use |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard test include blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, Project command, model role, or source-list changes | None |
+| Direct upstream Core, ProjectExplorer, or app changes | None; Workbench path count remains 44 and direct upstream Core patch count remains five |
+| Network, controller transport, online state, scan, SDO, or hardware access | Not performed or added; this is a private Workbench tree projection over local/offline Mock Project state |
+
+Persisted test, product-build, and lifecycle logs for this issue are under
+`/private/tmp/embed-labs-tree-physical-order.tIKzsO`. Beckhoff's physical-ring
+and Auto Increment address semantics are documented at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1342524811.html>.
+Qt's proxy source-model contract is documented at
+<https://doc.qt.io/qt-6/qsortfilterproxymodel.html>. Qt Creator 20.0's Project
+tree comparator supplies the host-side semantic-priority-before-name
+precedent:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectmodels.cpp#L88-L103>.
+
 ## Verification states
 
 Use only these evidence labels:

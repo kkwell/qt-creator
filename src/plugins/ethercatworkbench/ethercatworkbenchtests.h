@@ -15,6 +15,7 @@ private slots:
     void testModeCommandStripMirrorsRegisteredActions();
     void testNavigationCommandsUseActionManager();
     void testOfflineTopologyEditingWorkflow();
+    void testConfiguredSlaveTreePhysicalOrder();
     void testTwinCatInsertDeviceWorkflow();
     void testEsiDeviceSelectionCellAccessibility();
     void testInsertDeviceDialogTargetLifecycle_data();

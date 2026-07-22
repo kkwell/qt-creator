@@ -1576,7 +1576,11 @@ void WorkbenchTreeModel::rebuild()
         for (const Data::ProjectNodeSnapshot &node : project.nodes)
             snapshots.insert(node.id, &node);
 
-        const auto appendChildren = [this, &project, &snapshots](
+        QHash<Data::NodeId, int> configuredSlavePositions;
+        for (const Data::OfflineSlaveConfiguration &slave : project.slaves)
+            configuredSlavePositions.insert(slave.id, slave.position);
+
+        const auto appendChildren = [this, &project, &snapshots, &configuredSlavePositions](
                                         const auto &self,
                                         Node *parent,
                                         const Data::NodeId &parentId) -> void {
@@ -1585,9 +1589,31 @@ void WorkbenchTreeModel::rebuild()
                 if (candidate->parentId == parentId)
                     children.append(candidate);
             }
-            std::sort(children.begin(), children.end(), [](const auto *left, const auto *right) {
-                return left->name.compare(right->name, Qt::CaseInsensitive) < 0;
-            });
+            const bool usePhysicalSlaveOrder
+                = !children.isEmpty()
+                  && std::all_of(
+                      children.cbegin(),
+                      children.cend(),
+                      [&configuredSlavePositions](const auto *child) {
+                          return child->kind == Data::ProjectNodeKind::Slave
+                                 && configuredSlavePositions.contains(child->id);
+                      });
+            std::sort(
+                children.begin(),
+                children.end(),
+                [&configuredSlavePositions, usePhysicalSlaveOrder](const auto *left,
+                                                                   const auto *right) {
+                    if (usePhysicalSlaveOrder) {
+                        const int leftPosition = configuredSlavePositions.value(left->id);
+                        const int rightPosition = configuredSlavePositions.value(right->id);
+                        if (leftPosition != rightPosition)
+                            return leftPosition < rightPosition;
+                    }
+                    const int nameOrder = left->name.compare(right->name, Qt::CaseInsensitive);
+                    if (nameOrder != 0)
+                        return nameOrder < 0;
+                    return usePhysicalSlaveOrder && left->id.toString() < right->id.toString();
+                });
             for (const Data::ProjectNodeSnapshot *snapshot : std::as_const(children)) {
                 const Core::WorkbenchNodeKind kind = workbenchKind(snapshot->kind);
                 auto node = makeNode(

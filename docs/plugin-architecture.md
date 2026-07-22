@@ -1491,6 +1491,45 @@ behavior. No CMake or qbs description changed. No path under upstream Core,
 ProjectExplorer, or the application bootstrap changed. The Workbench path
 count remains 44 and the direct upstream Core patch count remains five.
 
+## Workbench configured-slave tree order boundary
+
+`ISSUE-WB-TREE-PHYSICAL-ORDER-001` remains inside the product-owned private
+`WorkbenchTreeModel`. `ProjectService` continues to own the authoritative
+`ProjectSnapshot`, configured-slave positions, validation, persistence,
+Undo/Redo, and project change notification. The Workbench layer only projects
+that immutable state into its navigation tree.
+
+During a rebuild, the model creates a private ID-to-position lookup from the
+current snapshot. A sibling set uses the physical-position comparator only if
+the entire set consists of Slave nodes with matching offline configurations.
+That comparator orders by position, case-insensitive name, and stable `NodeId`.
+Any incomplete set uses the original case-insensitive name comparator for the
+whole set. These are two complete comparison modes, so there is no pairwise
+mix of precedence and the sort retains a strict weak ordering.
+
+The existing reset lifecycle, node identities, and navigation proxy remain the
+only update path. Stable IDs restore selection after reset, and filtering
+preserves the source model's physical order. Move Up and Move Down continue to
+enter the existing checked Project command path; the tree does not mutate a
+position, add a command, or own Undo/Redo.
+
+Beckhoff's Auto Increment address description provides the physical-ring
+semantics used for the UI projection:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1342524811.html>.
+Qt documents model reset at
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#beginResetModel> and proxy
+source-model behavior at
+<https://doc.qt.io/qt-6/qsortfilterproxymodel.html>. Qt Creator 20.0's Project
+tree comparator likewise places semantic priority ahead of name:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectmodels.cpp#L88-L103>.
+
+This boundary adds no public API, source file, dependency, Provider, Project
+command, persistence field, model role, production thread or timer,
+controller/network transport, online state, scan, SDO execution, or hardware
+behavior. No CMake or qbs description changed. No path under upstream Core,
+ProjectExplorer, or the application bootstrap changed. The Workbench path
+count remains 44 and the direct upstream Core patch count remains five.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

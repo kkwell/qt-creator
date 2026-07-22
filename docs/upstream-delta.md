@@ -974,6 +974,25 @@ application bootstrap changes, so the direct Core patch budget does not
 increase and no extension-point exception is required. The Workbench path
 count remains 44 and the direct upstream Core patch count remains five.
 
+`ISSUE-WB-TREE-PHYSICAL-ORDER-001`, based on
+`a9525adcf39b11704d04e2b65da3488897c43f56`, changes only the existing
+product-owned private `workbenchtreemodel.cpp`, Workbench test
+declaration/implementation, and documentation. Master children that form a
+complete configured-Slave sibling group now follow the offline Project
+position; rename no longer changes physical display order, and existing Move
+Up/Down commands immediately agree with the visible source and proxy rows.
+Incomplete groups preserve the original name ordering, while equal positions
+use deterministic private tie-breakers.
+
+The change introduces no ProjectService or Provider revision, public API,
+source file, dependency, CMake/qbs entry, Project format, persistence field,
+Project command, custom model role, production thread or timer,
+controller/network transport, online state, scan, SDO execution, or hardware
+behavior. No file under Qt Creator's upstream Core, ProjectExplorer, or
+application bootstrap changes, so the direct Core patch budget does not
+increase and no extension-point exception is required. The Workbench path
+count remains 44 and the direct upstream Core patch count remains five.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit
