@@ -2331,6 +2331,45 @@ settings source is at
 Beckhoff's selected-device Remove semantics are at
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>.
 
+## EtherCATWorkbench asynchronous insertion-dialog qualification
+
+`ISSUE-WB-INSERT-DIALOG-ASYNC-LIFECYCLE-001` is qualified from local baseline
+`617505a08cb2055d6042a2580189182ffd39658a`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Production `workbenchmode.cpp` stayed at SHA-256 `24b27a931b9b66a70b0d777f847ce142db0a7d2b2871e4e1d75d13b6b77210db` and blob `ef98dbeebe74ae26bb8dfca23725cac8e81e3df9`; a real global Add New Item action processed dialog events before returning, so the focused target exited 1 at the intended assertion in `failure-first-semantic/test.log` |
+| Asynchronous ownership | The mode owns one heap dialog through `QPointer`, sets `Qt::WA_DeleteOnClose`, and calls `open()`; no stack dialog or nested `exec()` remains |
+| Repeat action | A second Add New Item action raises the retained selector and leaves exactly one visible selector |
+| Target invalidation | Active-Project switch, target close, Project invalidation, and Master removal reject the selector without mutating either Project |
+| Accepted path | The selected ESI ID enters the existing guarded `addDeviceToMaster()` and `ProjectService` command path; a destroyed controller makes late completion a no-op |
+| Parent teardown | The selector is a mode child and is safely destroyed with that parent; rejection destroys it through delete-on-close |
+| Preserved user contract | Device/revision list, filters, Extended Information, supported-device guard, Add/Cancel behavior, Project selection, and Undo/Redo are unchanged |
+| Focused and related | Normal and 2x focused runs each passed 3 events; normal and 2x related runs each passed 8 events; 0 failed, status 0 |
+| Complete Workbench | Normal and 2x each passed 67 events, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 67, Scan 7, Diagnostics 7; 118 passed, 0 failed |
+| Known soft assertion | The pre-existing ProjectExplorer TaskHub category soft assertion remains confined to the invalid-project path and does not fail a test or target |
+| Final source SHA-256 | Mode implementation `f7c7dec383d780c6ff4808effaac7965769b12887b431b876bec16bcfcf59b82`; tests `fa8b490eef12c856ef2a28227edbbded7a2b3116a5ff118292fd706dbcb28fba`; test header `d1b1edff100e48f0a2954e16371aa5b493edbfdfc690a59cb4824297e0a89b56` |
+| Final git blobs | Mode implementation `43bfa50de23da414ca2f5a64490157c21fc855a7`; tests `95a868337be859661733bf296f151d1c915ae8c8`; test header `da16b5b302abee755cbaf232dcbdca39c00d74ff` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 allow-listed plugin dylibs; executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench SHA-256 `f07f0992512796d39f9326afe973d1098698a8be05cb0b376724765ed24a8742`; test Workbench SHA-256 `90f12f71951615032519130801d54d37c04390ec104b7efa7e0cc39b30001b21` |
+| Enabled startup | PID 94229 remained running for 37 samples; independent `vmmap` confirmed Workbench loaded; intentional passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 98352 remained running for 37 samples with `-noload EtherCATWorkbench`; independent `vmmap` confirmed Workbench absent; intentional passed-through SIGTERM produced target status 15 |
+| Crash-dialog audit | At 2026-07-22 10:58:33 +0800 there was no residual Embed Labs/LLDB process, new matching DiagnosticReports file, or matching crash-service event after 10:52:30 +0800 |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, crash reporter disabled, `-no-crashcheck`, and only the process-local Touch Bar bypass; no visible main window or system crash dialog |
+| Visual/manual desktop inspection | Not run by design; product acceptance stayed offscreen so it did not interrupt desktop use |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard `extensionmanager_test.h` blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, ProjectService, Project command, model role, or source-list changes | None |
+| Core, ProjectExplorer, app, network, scan, online state, SDO, or hardware changes | None; this remains a private Workbench lifecycle change over local/offline Mock state |
+
+Evidence is under
+`/private/tmp/embed-labs-insert-dialog-async.aVAVS1`. Qt's asynchronous dialog
+and nested-loop guidance is at <https://doc.qt.io/qt-6/qdialog.html>. Qt
+Creator's matching ownership precedent is at
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/fontsettingspage.cpp#L527-L540>.
+Beckhoff's Add New Item and revision-selection workflow is at
+<https://infosys.beckhoff.com/content/1033/ethercatsystem/2477595531.html>.
+
 ## Verification states
 
 Use only these evidence labels:

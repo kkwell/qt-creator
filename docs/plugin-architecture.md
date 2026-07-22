@@ -1620,6 +1620,43 @@ No CMake or qbs description changed. Qualification is local/offline Mock and
 the product lifecycle was exercised offscreen with the plugin enabled and
 explicitly disabled, without a visible main window or new crash record.
 
+## Workbench Add New Item dialog ownership boundary
+
+`ISSUE-WB-INSERT-DIALOG-ASYNC-LIFECYCLE-001`, based on
+`617505a08cb2055d6042a2580189182ffd39658a`, remains entirely inside the
+product-owned private `WorkbenchModeWidget`. The mode owns at most one
+`EsiDeviceSelectionDialog` through `QPointer`; it allocates the selector on the
+heap, marks it delete-on-close, and opens it asynchronously. Repeat activation
+raises the same instance. Completion clears only the matching retained
+identity, and mode teardown owns ordinary QObject child destruction without a
+nested event loop.
+
+Project and device repositories remain authoritative. The dialog owns only
+its presentation snapshot and stable target IDs. Existing signals reject it
+when the active Project switches, the target Project closes or becomes
+invalid, or the Master disappears. Accepted selection continues through the
+existing controller revalidation and `ProjectService` command, while a guarded
+controller makes shutdown completion a no-op. This is not a dialog manager,
+Project revision, transaction, live repository refresh, or new service
+contract.
+
+Qt's asynchronous guidance and parent-deletion warning are documented at
+<https://doc.qt.io/qt-6/qdialog.html>. Qt Creator 20.0's local ownership
+precedent is at
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/fontsettingspage.cpp#L527-L540>.
+Beckhoff's device-selection workflow does not prescribe the Qt ownership
+mechanism.
+
+The boundary changes only `workbenchmode.cpp`, the Workbench test
+declaration/implementation, and four evidence documents. It adds no public
+API, source file, dependency, Provider or ProjectService contract, Project
+format, persistence field, Project command, custom model role, production
+thread or timer, Core or ProjectExplorer hook, application-bootstrap path,
+network transport, scan, online state, SDO execution, or hardware behavior.
+No CMake or qbs description changed. Qualification is local/offline Mock and
+the product lifecycle was exercised offscreen with the plugin enabled and
+explicitly disabled, without a visible main window or new crash record.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

@@ -4324,3 +4324,105 @@ not rerun because the known EasyBoard `extensionmanager_test.h` blocker remains
 outside this issue. Qualification is local/offline Mock evidence; visible
 desktop inspection was intentionally not run so acceptance did not interrupt
 desktop use.
+
+## Add New Item asynchronous dialog lifecycle
+
+`ISSUE-WB-INSERT-DIALOG-ASYNC-LIFECYCLE-001` is qualified from local baseline
+`617505a08cb2055d6042a2580189182ffd39658a`. It removes the nested modal event
+loop from the selected-master `Add New Item...` workflow without changing the
+ESI selector's content or the existing Project mutation.
+
+The mode widget now owns one heap-allocated `EsiDeviceSelectionDialog` through
+a guarded pointer. The dialog uses `Qt::WA_DeleteOnClose` and `open()`, so the
+action returns before modal events are processed. A repeated action raises the
+current selector instead of creating a second window. Reject or accept clears
+the retained identity before deferred deletion, and mode teardown can delete
+its child without a stack object or nested event loop remaining active.
+
+The existing target guards remain authoritative. Closing the target Project,
+switching the active Project, invalidating that Project, or removing the target
+Master rejects the selector. Accepted selection still enters
+`WorkbenchController::addDeviceToMaster()`, which revalidates the stable Master
+ID and delegates the checked Project command to `ProjectService`. The guarded
+controller pointer makes a late completion a safe no-op during plugin
+shutdown.
+
+Qt documents `open()` and warns that `exec()` creates a discouraged nested
+event loop whose parent deletion can cause dangerous bugs:
+<https://doc.qt.io/qt-6/qdialog.html#open> and
+<https://doc.qt.io/qt-6/qdialog.html#exec>. Qt Creator 20.0 uses the same
+heap-owned, delete-on-close, asynchronous pattern in
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/fontsettingspage.cpp#L527-L540>.
+Beckhoff documents the offline Add New Item and device/revision selection
+workflow at
+<https://infosys.beckhoff.com/content/1033/ps2001-4810-1001/10832046859.html>
+and
+<https://infosys.beckhoff.com/content/1033/ethercatsystem/2477595531.html>;
+those sources do not prescribe Qt dialog ownership.
+
+Failure-first changed only the Workbench test. Production remained at
+SHA-256 `24b27a931b9b66a70b0d777f847ce142db0a7d2b2871e4e1d75d13b6b77210db`
+and git blob `ef98dbeebe74ae26bb8dfca23725cac8e81e3df9` for
+`workbenchmode.cpp`. The original Workbench test implementation and
+declaration were SHA-256
+`f6727669cf2d44325693853469fa6b5a9fac67fdd09f55e777faebc1293c7700`
+and `b52558c301ddca51c465809597eaad066f68550e9fa889998c4990d7bc500c4e`,
+with git blobs `1076daadd6da7063394f2dc924544f3f0da8cb86` and
+`ec075cfc2d14e2e7aa0a1d3b054fa29b7ce419d8`. With a real Workbench mode,
+Project, Master selection, navigation context, and global action, the old
+`exec()` implementation processed the observer before the action returned.
+Initialization and cleanup passed; the target failed safely with status 1 at
+the intended return-order assertion in
+`/private/tmp/embed-labs-insert-dialog-async.aVAVS1/failure-first-semantic/test.log`.
+
+Final SHA-256 values for `workbenchmode.cpp`, the Workbench test
+implementation, and its declaration are respectively
+`f7c7dec383d780c6ff4808effaac7965769b12887b431b876bec16bcfcf59b82`,
+`fa8b490eef12c856ef2a28227edbbded7a2b3116a5ff118292fd706dbcb28fba`,
+and `d1b1edff100e48f0a2954e16371aa5b493edbfdfc690a59cb4824297e0a89b56`.
+Their git blobs are `43bfa50de23da414ca2f5a64490157c21fc855a7`,
+`95a868337be859661733bf296f151d1c915ae8c8`, and
+`da16b5b302abee755cbaf232dcbdca39c00d74ff`.
+
+The focused lifecycle test passed three events at normal and 2x scale. The
+related insertion, cancellation, four target-invalidation rows, and
+single-instance lifecycle group passed eight events at each scale. Complete
+Workbench runs passed 67 events at each scale. The six isolated suites passed
+118 events: Core 17, Project 12, Devices 8, Workbench 67, Scan 7, and
+Diagnostics 7. The complete Workbench runs retain the known pre-existing
+ProjectExplorer TaskHub soft assertion in the invalid-project path; it is
+absent from the focused test and did not fail a test or target.
+
+The full `WITH_TESTS=OFF` product build passed and contains exactly 16
+allow-listed plugin dylibs. The executable SHA-256 is
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`;
+the product and test Workbench plugin SHA-256 values are
+`f07f0992512796d39f9326afe973d1098698a8be05cb0b376724765ed24a8742`
+and `90f12f71951615032519130801d54d37c04390ec104b7efa7e0cc39b30001b21`.
+
+Enabled product startup observed PID 94229 alive for 37 consecutive samples;
+an independent `vmmap` confirmed the Workbench plugin was loaded. Explicitly
+disabled startup observed PID 98352 alive for 37 samples with
+`-noload EtherCATWorkbench`; an independent `vmmap` confirmed the plugin was
+absent. Each process was ended by an intentional passed-through SIGTERM with
+target status 15. The disabled run's shared-memory initialization message was
+non-fatal. Both used fresh HOME/settings, cleared inherited DYLD variables,
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and
+only the process-local Touch Bar bypass. No visible main window was opened.
+The 2026-07-22 10:58:33 +0800 audit found no residual Embed Labs/LLDB process,
+new matching DiagnosticReports file, or matching crash-service event after
+10:52:30 +0800.
+
+Evidence is under
+`/private/tmp/embed-labs-insert-dialog-async.aVAVS1`. This issue changes only
+the private `workbenchmode.cpp`, Workbench test declaration/implementation,
+and these four documents. It adds no public API, source file, dependency,
+ProjectService or Provider contract, persistence field, Project command,
+model role, Core or ProjectExplorer hook, application-bootstrap change,
+production thread or timer, network transport, scan, online state, SDO
+execution, or hardware behavior. No CMake or qbs description changed, so qbs
+was not run. The unrelated `WITH_TESTS=ON` all-target build was not rerun
+because the known EasyBoard `extensionmanager_test.h` blocker remains outside
+this private Workbench issue. Qualification is local/offline Mock evidence;
+visible desktop inspection was intentionally not run so acceptance did not
+interrupt desktop use.

@@ -21,6 +21,7 @@ private slots:
     void testEsiDeviceSelectionCellAccessibility();
     void testInsertDeviceDialogTargetLifecycle_data();
     void testInsertDeviceDialogTargetLifecycle();
+    void testInsertDeviceDialogAsynchronousLifecycle();
     void testEsiDeviceDragDropWorkflow();
     void testEditableProjectGeneralWorkflow();
     void testEsiRepositoryEmptyGuidance();

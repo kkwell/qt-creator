@@ -1037,6 +1037,25 @@ only local/offline Mock state plus offscreen enabled/disabled product
 lifecycle runs. No visible main window, remote comparison, fetch, pull, merge,
 rebase, push, or publication occurred.
 
+`ISSUE-WB-INSERT-DIALOG-ASYNC-LIFECYCLE-001`, based on
+`617505a08cb2055d6042a2580189182ffd39658a`, changes only the existing
+product-owned private `workbenchmode.cpp`, Workbench test
+declaration/implementation, and documentation. The Master Add New Item
+selector is now mode-owned, delete-on-close, asynchronous, and single-instance.
+Existing stable-ID target invalidation and the controller/ProjectService
+mutation path remain in force; no selector content or persistence behavior
+changes.
+
+The change introduces no public API, source file, dependency, CMake/qbs entry,
+Project format, persistence field, Provider or ProjectService contract,
+Project command, custom model role, production thread or timer, Core or
+ProjectExplorer hook, application-bootstrap change, controller/network
+transport, online state, scan, SDO execution, or hardware behavior. The
+Workbench path count remains 44 and the direct upstream Core patch count
+remains five. Qualification used only local/offline Mock state plus offscreen
+enabled/disabled product lifecycle runs. No visible main window, remote
+comparison, fetch, pull, merge, rebase, push, or publication occurred.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

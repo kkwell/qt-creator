@@ -1957,7 +1957,7 @@ void EtherCATWorkbenchTests::testTwinCatInsertDeviceWorkflow()
         add->click();
     });
     insertCommand->action()->trigger();
-    QVERIFY(dialogInspected);
+    QTRY_VERIFY(dialogInspected);
     QVERIFY(limitedSelectionBlocked);
     QVERIFY(latestRevisionDefault);
     QVERIFY(previousRevisionShown);
@@ -2012,7 +2012,7 @@ void EtherCATWorkbenchTests::testTwinCatInsertDeviceWorkflow()
         buttons->button(QDialogButtonBox::Cancel)->click();
     });
     insertCommand->action()->trigger();
-    QVERIFY(cancelInspected);
+    QTRY_VERIFY(cancelInspected);
     QCOMPARE(projectService->project(file.projectId)->slaves.size(), 2);
 
     WorkbenchNavigationWidget navigation(&controller);
@@ -2247,7 +2247,7 @@ void EtherCATWorkbenchTests::testInsertDeviceDialogTargetLifecycle()
             dialog->reject();
     });
     insertCommand->action()->trigger();
-    QVERIFY(dialogSeen);
+    QTRY_VERIFY(dialogSeen);
     QVERIFY(invalidationCompleted);
     QVERIFY(dialogRejected);
     if (targetInvalidation != "target-project-close")
@@ -2257,6 +2257,111 @@ void EtherCATWorkbenchTests::testInsertDeviceDialogTargetLifecycle()
         || targetInvalidation == "target-project-close") {
         QTRY_VERIFY(!insertCommand->action()->isEnabled());
     }
+}
+
+void EtherCATWorkbenchTests::testInsertDeviceDialogAsynchronousLifecycle()
+{
+    ::Core::ModeManager::activateMode(Constants::MODE_ID);
+    QTRY_COMPARE(::Core::ModeManager::currentModeId(), Utils::Id(Constants::MODE_ID));
+    QWidget *modeWidget = ::Core::ModeManager::currentMode()->widget();
+    QVERIFY(modeWidget);
+
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const TestProjectFile file = writeProjectWithSlave(
+        directory,
+        deviceSummaries(1).first(),
+        "insert-dialog-asynchronous.ecatproject",
+        "Insert Dialog Asynchronous");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QPointer<QDialog> dialog;
+    const auto projectCleanup = qScopeGuard([&] {
+        if (dialog)
+            dialog->reject();
+        controller.selectionService()->clear();
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QVERIFY_RESULT(projectService->activateProject(file.projectId));
+
+    WorkbenchNavigationWidget navigation(&controller);
+    navigation.resize(900, 600);
+    navigation.show();
+    navigation.activateWindow();
+    navigation.treeView()->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(navigation.isVisible());
+    QTRY_VERIFY(navigation.treeView()->hasFocus());
+    QTRY_COMPARE(::Core::ICore::currentContextWidget(), static_cast<QWidget *>(&navigation));
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    QTRY_COMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        file.masterId);
+
+    ::Core::Command *insertCommand = ::Core::ActionManager::command(
+        Constants::INSERT_DEVICE_ACTION_ID);
+    QVERIFY(insertCommand);
+    QTRY_VERIFY(insertCommand->action()->isEnabled());
+    const Data::ProjectSnapshot before = *projectService->project(file.projectId);
+
+    bool triggerReturned = false;
+    bool dialogObserved = false;
+    bool observerSawReturnedTrigger = false;
+    QTimer watchdog;
+    watchdog.setSingleShot(true);
+    connect(&watchdog, &QTimer::timeout, &watchdog, [&] {
+        if (QDialog *active = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+            active->reject();
+    });
+    watchdog.start(2000);
+    QTimer::singleShot(0, &controller, [&] {
+        QDialog *active = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!active || active->objectName() != "EtherCATEsiDeviceSelectionDialog")
+            return;
+        dialog = active;
+        dialogObserved = true;
+        observerSawReturnedTrigger = triggerReturned;
+        if (!triggerReturned)
+            active->reject();
+    });
+
+    insertCommand->action()->trigger();
+    triggerReturned = true;
+    QTRY_VERIFY_WITH_TIMEOUT(dialogObserved, 2000);
+    QVERIFY2(
+        observerSawReturnedTrigger,
+        "Add New Item must return before the ESI selection dialog processes events");
+
+    QVERIFY(dialog);
+    QVERIFY(dialog->testAttribute(Qt::WA_DeleteOnClose));
+    QCOMPARE(dialog->parentWidget(), modeWidget);
+    QTRY_COMPARE(QApplication::activeModalWidget(), dialog.data());
+
+    insertCommand->action()->trigger();
+    QCOMPARE(QApplication::activeModalWidget(), dialog.data());
+    int visibleInsertDialogs = 0;
+    for (QWidget *widget : QApplication::topLevelWidgets()) {
+        if (widget->isVisible() && widget->objectName() == "EtherCATEsiDeviceSelectionDialog")
+            ++visibleInsertDialogs;
+    }
+    QCOMPARE(visibleInsertDialogs, 1);
+
+    dialog->reject();
+    QTRY_VERIFY(dialog.isNull());
+    watchdog.stop();
+    QCOMPARE(*projectService->project(file.projectId), before);
 }
 
 void EtherCATWorkbenchTests::testEsiDeviceDragDropWorkflow()

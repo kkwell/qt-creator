@@ -24,6 +24,7 @@
 #include <utils/utilsicons.h>
 
 #include <QMenu>
+#include <QPointer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -71,6 +72,11 @@ public:
         ::Core::IContext::attach(this, ::Core::Context(Constants::CONTEXT_ID));
 
         connect(controller, &WorkbenchController::insertDeviceRequested, this, [this, controller] {
+            if (m_insertDeviceDialog) {
+                m_insertDeviceDialog->raise();
+                m_insertDeviceDialog->activateWindow();
+                return;
+            }
             const Data::NodeId masterId = controller->selectedOfflineMasterId();
             Core::DeviceRepositoryProvider *repository = controller->deviceRepository();
             Core::ProjectService *projectService = controller->projectService();
@@ -79,16 +85,19 @@ public:
             const Data::NodeId projectId = targetContext.projectId;
             if (masterId.isNull() || projectId.isNull() || !repository || !projectService)
                 return;
-            EsiDeviceSelectionDialog dialog(repository->devices(), this);
+            auto *dialog = new EsiDeviceSelectionDialog(repository->devices(), this);
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            m_insertDeviceDialog = dialog;
 
-            const auto rejectIfVisible = [&dialog] {
-                if (dialog.isVisible())
-                    dialog.reject();
+            const QPointer<EsiDeviceSelectionDialog> guardedDialog = dialog;
+            const auto rejectIfVisible = [guardedDialog] {
+                if (guardedDialog && guardedDialog->isVisible())
+                    guardedDialog->reject();
             };
             connect(
                 projectService,
                 &Core::ProjectService::projectAboutToBeRemoved,
-                &dialog,
+                dialog,
                 [projectId, rejectIfVisible](const Data::NodeId &removedProjectId) {
                     if (removedProjectId == projectId)
                         rejectIfVisible();
@@ -96,7 +105,7 @@ public:
             connect(
                 projectService,
                 &Core::ProjectService::activeProjectChanged,
-                &dialog,
+                dialog,
                 [projectId, rejectIfVisible](const Data::NodeId &, const Data::NodeId &currentId) {
                     if (currentId != projectId)
                         rejectIfVisible();
@@ -104,7 +113,7 @@ public:
             connect(
                 projectService,
                 &Core::ProjectService::projectChanged,
-                &dialog,
+                dialog,
                 [projectId, masterId, rejectIfVisible](const Data::ProjectSnapshot &project) {
                     if (project.id != projectId)
                         return;
@@ -119,17 +128,33 @@ public:
                               });
                     if (!masterStillAvailable)
                         rejectIfVisible();
+            });
+            const QPointer<WorkbenchController> guardedController = controller;
+            connect(
+                dialog,
+                &QDialog::finished,
+                this,
+                [this, dialog, guardedController, masterId](int resultCode) {
+                    const Data::NodeId selectedDeviceId = resultCode == QDialog::Accepted
+                                                              ? dialog->selectedDeviceId()
+                                                              : Data::NodeId();
+                    if (m_insertDeviceDialog == dialog)
+                        m_insertDeviceDialog.clear();
+                    if (resultCode != QDialog::Accepted || !guardedController)
+                        return;
+                    const Utils::Result<> result
+                        = guardedController->addDeviceToMaster(selectedDeviceId, masterId);
+                    if (!result) {
+                        ::Core::MessageManager::writeFlashing(
+                            Tr::tr("Cannot add the ESI device: %1").arg(result.error()));
+                    }
                 });
-            if (dialog.exec() != QDialog::Accepted)
-                return;
-            const Utils::Result<> result
-                = controller->addDeviceToMaster(dialog.selectedDeviceId(), masterId);
-            if (!result) {
-                ::Core::MessageManager::writeFlashing(
-                    Tr::tr("Cannot add the ESI device: %1").arg(result.error()));
-            }
+            dialog->open();
         });
     }
+
+private:
+    QPointer<EsiDeviceSelectionDialog> m_insertDeviceDialog;
 };
 
 WorkbenchMode::WorkbenchMode(WorkbenchController *controller, QObject *parent)
