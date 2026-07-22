@@ -1778,3 +1778,66 @@ No remote comparison, fetch, pull, merge, rebase, push, PR, or publication was
 performed. The supported source of truth remains the local `embed-labs`
 history. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-process-data-edit-feedback-001.seBJey`.
+
+## Local Startup edit-rejection feedback delta
+
+`ISSUE-WB-STARTUP-INLINE-EDIT-REJECTION-FEEDBACK-001` is a private Workbench
+correction on local baseline `79b654f5cd57116e42777bb2f09559b87bc98c52`.
+Invalid real-editor submissions in the Startup table now explain their exact
+local parse or complete-configuration error in the existing validation strip.
+This corrects the prior `Data=0G` path, which restored the accepted value but
+reported the unrelated even-digit error.
+
+The table model stores a private one-shot result. Real line, combo, spin, and
+checkbox delegate transactions consume it; rejected direct programmatic
+`setData()` publishes no page feedback or announcement. Valid direct writes
+retain the existing Project command path. Rejection preserves accepted model
+values, the complete Project snapshot, Undo/Redo, current cell, and model and
+Project notifications.
+
+The page reuses its existing `Utils::InfoLabel`, mirrors the error through its
+accessible description and both tooltips, and conditionally requests one
+Polite announcement. Selection, a successful same-cell edit, Undo/Redo,
+same-context refresh, and Project close restore or destroy the transient
+state. The modal New/Edit Startup dialog is not changed by this issue.
+
+The local source delta is limited to:
+
+- `src/plugins/ethercatworkbench/startuppage.cpp/.h`;
+- the existing Workbench test declaration and implementation; and
+- the four required evidence documents.
+
+There is no new file, public API or role, dependency, Project format or
+persistence field, Provider/ProjectService contract, Project command, direct
+upstream Core patch, Core or ProjectExplorer hook, application bootstrap,
+production thread or timer, network, ADS, scan, online state, CoE/SDO, PLC,
+controller, Zynq, or hardware behavior. CMake and qbs descriptions are
+unchanged; the existing direct Core patch count does not change.
+
+Failure-first retained both production Startup hashes, reproduced the wrong
+message through a real editor, and exited 1. Final focused and Startup-related
+tests passed at normal and 2x scale; four complete Workbench runs passed 83
+events each, and the six isolated EtherCAT suites passed 138 events. The Qt
+6.11.0 `WITH_TESTS=OFF` Workbench and complete product builds passed with
+exactly 16 plugin dylibs.
+
+Invisible enabled and explicit `-noload EtherCATWorkbench` product runs each
+stayed alive for 37 samples. Workbench mapped in 37/37 and 0/37 samples,
+respectively, and each ended with expected status 15. The fail-closed audit
+found zero residual process, new Embed Labs diagnostic report, or matching
+crash-service event. Fresh HOME/settings, offscreen Qt, disabled crash
+reporting, cleared DYLD variables, `-no-crashcheck`, and the process-local
+Touch Bar bypass kept main-program acceptance invisible; no visible/manual UI
+or VoiceOver inspection was performed.
+
+Qt's model, delegate, and announcement references are
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#setData>,
+<https://doc.qt.io/qt-6/qstyleditemdelegate.html#setModelData>, and
+<https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Beckhoff's
+Startup page is referenced only for ordered-request and fixed-item terminology
+at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.
+No remote comparison, fetch, pull, merge, rebase, push, PR, or publication was
+performed. The supported source of truth remains the local `embed-labs`
+history. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-startup-edit-feedback-001.QUiKKW`.

@@ -91,6 +91,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <utility>
 
 namespace EtherCAT::Workbench::Internal {
@@ -453,6 +454,25 @@ static void captureProcessDataAccessibleUpdate(QAccessibleEvent *event)
     if (s_previousProcessDataAccessibleUpdateHandler
         && s_previousProcessDataAccessibleUpdateHandler != &captureProcessDataAccessibleUpdate) {
         s_previousProcessDataAccessibleUpdateHandler(event);
+    }
+}
+
+static QPointer<QObject> s_startupAnnouncementObject;
+static QStringList s_startupAnnouncementMessages;
+static QList<QAccessible::AnnouncementPoliteness> s_startupAnnouncementPoliteness;
+static QAccessible::UpdateHandler s_previousStartupAccessibleUpdateHandler = nullptr;
+
+static void captureStartupAccessibleUpdate(QAccessibleEvent *event)
+{
+    if (event && event->type() == QAccessible::Announcement
+        && event->object() == s_startupAnnouncementObject) {
+        const auto announcement = static_cast<QAccessibleAnnouncementEvent *>(event);
+        s_startupAnnouncementMessages.append(announcement->message());
+        s_startupAnnouncementPoliteness.append(announcement->politeness());
+    }
+    if (s_previousStartupAccessibleUpdateHandler
+        && s_previousStartupAccessibleUpdateHandler != &captureStartupAccessibleUpdate) {
+        s_previousStartupAccessibleUpdateHandler(event);
     }
 }
 
@@ -14696,6 +14716,540 @@ void EtherCATWorkbenchTests::testStartupInlineDraftSurvivesNonConflictingRefresh
     QTRY_VERIFY(table.isNull());
 }
 
+void EtherCATWorkbenchTests::testStartupEditRejectionFeedback()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("startup-edit-feedback.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(deviceEsi()));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0x5678;
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(
+        directory, *device, "startup-edit-feedback.ecatproject", "Startup Edit Feedback");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    DetailsView details(&controller);
+    details.resize(1100, 720);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::STARTUP_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page);
+    QTRY_VERIFY(page->isVisible());
+    QTableView *table = page->findChild<QTableView *>("EtherCATStartupTable");
+    QPointer<QLabel> validation = page->findChild<QLabel *>("EtherCATStartupValidation");
+    QPushButton *defaults = page->findChild<QPushButton *>("EtherCATStartupRestoreDefaults");
+    QVERIFY(table);
+    QVERIFY(validation);
+    QVERIFY(defaults);
+    QPointer<QWidget> pageGuard = page;
+    QPointer<QTableView> tableGuard = table;
+
+    defaults->click();
+    QTRY_COMPARE(table->model()->rowCount(), 3);
+    const int enabledColumn = columnWithHeader(table->model(), "Enabled");
+    const int orderColumn = columnWithHeader(table->model(), "Order");
+    const int transitionColumn = columnWithHeader(table->model(), "Transition");
+    const int indexColumn = columnWithHeader(table->model(), "Index");
+    const int subindexColumn = columnWithHeader(table->model(), "Subindex");
+    const int typeColumn = columnWithHeader(table->model(), "Type");
+    const int dataColumn = columnWithHeader(table->model(), "Data");
+    const int commentColumn = columnWithHeader(table->model(), "Comment");
+    QVERIFY(enabledColumn >= 0);
+    QVERIFY(orderColumn >= 0);
+    QVERIFY(transitionColumn >= 0);
+    QVERIFY(indexColumn >= 0);
+    QVERIFY(subindexColumn >= 0);
+    QVERIFY(typeColumn >= 0);
+    QVERIFY(dataColumn >= 0);
+    QVERIFY(commentColumn >= 0);
+
+    constexpr int startupStableIdRole = Qt::UserRole + 1;
+    constexpr int startupDataTypeRole = Qt::UserRole + 2;
+    const Data::NodeId parameterId
+        = table->model()->index(0, 0).data(startupStableIdRole).value<Data::NodeId>();
+    QVERIFY(!parameterId.isNull());
+    const auto parameterIndex = [table, parameterId](int column) {
+        for (int row = 0; row < table->model()->rowCount(); ++row) {
+            const QModelIndex index = table->model()->index(row, column);
+            if (index.siblingAtColumn(0).data(startupStableIdRole).value<Data::NodeId>()
+                == parameterId) {
+                return index;
+            }
+        }
+        return QModelIndex();
+    };
+    const QModelIndex dataIndex = parameterIndex(dataColumn);
+    const QModelIndex transitionIndex = parameterIndex(transitionColumn);
+    const QModelIndex indexIndex = parameterIndex(indexColumn);
+    const QModelIndex commentIndex = parameterIndex(commentColumn);
+    QVERIFY(table->model()->flags(dataIndex) & Qt::ItemIsEditable);
+    QVERIFY(table->model()->flags(transitionIndex) & Qt::ItemIsEditable);
+    QVERIFY(table->model()->flags(indexIndex) & Qt::ItemIsEditable);
+    QVERIFY(table->model()->flags(commentIndex) & Qt::ItemIsEditable);
+    QCOMPARE(dataIndex.data(Qt::EditRole).toString(), QString("08"));
+    const QString acceptedValidation = validation->text();
+    QVERIFY(!acceptedValidation.isEmpty());
+    auto infoValidation = static_cast<Utils::InfoLabel *>(validation.data());
+    const Utils::InfoLabel::InfoType acceptedType = infoValidation->type();
+    const QString acceptedAccessibleDescription = validation->accessibleDescription();
+    const QString acceptedAdditionalToolTip = infoValidation->additionalToolTip();
+    const QString acceptedToolTip = validation->toolTip();
+    const auto verifyAcceptedFeedback = [&] {
+        QCOMPARE(infoValidation->type(), acceptedType);
+        QCOMPARE(validation->text(), acceptedValidation);
+        QCOMPARE(validation->accessibleDescription(), acceptedAccessibleDescription);
+        QCOMPARE(infoValidation->additionalToolTip(), acceptedAdditionalToolTip);
+        QCOMPARE(validation->toolTip(), acceptedToolTip);
+    };
+
+#if QT_CONFIG(accessibility)
+    s_startupAnnouncementObject = validation;
+    s_startupAnnouncementMessages.clear();
+    s_startupAnnouncementPoliteness.clear();
+    s_previousStartupAccessibleUpdateHandler
+        = QAccessible::installUpdateHandler(&captureStartupAccessibleUpdate);
+    const auto restoreAccessibleUpdateHandler = qScopeGuard([] {
+        const QAccessible::UpdateHandler previous
+            = std::exchange(s_previousStartupAccessibleUpdateHandler, nullptr);
+        QAccessible::installUpdateHandler(previous);
+        s_startupAnnouncementObject = nullptr;
+        s_startupAnnouncementMessages.clear();
+        s_startupAnnouncementPoliteness.clear();
+    });
+#endif
+
+    const Data::ProjectSnapshot beforeRejection = *projectService->project(file.projectId);
+    const bool canUndoBefore = projectService->canUndoProject(file.projectId);
+    const bool canRedoBefore = projectService->canRedoProject(file.projectId);
+    QSignalSpy projectChanges(projectService, &Core::ProjectService::projectChanged);
+    QSignalSpy dataChanges(table->model(), &QAbstractItemModel::dataChanged);
+
+    const auto openLineEditor = [table, transitionColumn](const QModelIndex &modelIndex) {
+        table->setCurrentIndex(modelIndex);
+        table->edit(modelIndex);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        if (modelIndex.column() == transitionColumn) {
+            QComboBox *comboBox
+                = table->viewport()->findChild<QComboBox *>(QString(), Qt::FindDirectChildrenOnly);
+            return QPointer<QLineEdit>(comboBox ? comboBox->lineEdit() : nullptr);
+        }
+        return QPointer<QLineEdit>(table->viewport()->findChild<QLineEdit *>(
+            QString(), Qt::FindDirectChildrenOnly));
+    };
+    const auto verifyUnchanged = [&] {
+        QCOMPARE(*projectService->project(file.projectId), beforeRejection);
+        QCOMPARE(projectService->canUndoProject(file.projectId), canUndoBefore);
+        QCOMPARE(projectService->canRedoProject(file.projectId), canRedoBefore);
+        QCOMPARE(projectChanges.count(), 0);
+        QCOMPARE(dataChanges.count(), 0);
+    };
+
+    struct RejectedInput
+    {
+        QModelIndex index;
+        QString input;
+        QString message;
+    };
+    const QList<RejectedInput> rejectedInputs = {
+        {dataIndex,
+         "0G",
+         "Change not applied. Startup request Data contains a non-hexadecimal character."},
+        {dataIndex,
+         "0",
+         "Change not applied. Startup request Data must contain an even number of hexadecimal "
+         "digits."},
+        {dataIndex,
+         "",
+         "Change not applied. Startup raw value must not be empty."},
+        {transitionIndex,
+         "<PS>",
+         "Change not applied. Angle brackets are reserved for fixed requests imported from ESI."},
+    };
+
+#if QT_CONFIG(accessibility)
+    int expectedAnnouncements = 0;
+#endif
+    for (const RejectedInput &attempt : rejectedInputs) {
+        const QVariant acceptedValue = attempt.index.data(Qt::EditRole);
+        QPointer<QLineEdit> editor = openLineEditor(attempt.index);
+        QTRY_VERIFY(editor);
+        editor->selectAll();
+        editor->setText(attempt.input);
+        QTest::keyClick(editor, Qt::Key_Return);
+        QTRY_VERIFY(editor.isNull());
+
+        QCOMPARE(attempt.index.data(Qt::EditRole), acceptedValue);
+        verifyUnchanged();
+        QCOMPARE(infoValidation->type(), Utils::InfoLabel::Error);
+        QCOMPARE(validation->text(), attempt.message);
+        QCOMPARE(validation->accessibleName(), QString("Startup edit feedback"));
+        QCOMPARE(validation->accessibleDescription(), attempt.message);
+        QCOMPARE(infoValidation->additionalToolTip(), attempt.message);
+        QCOMPARE(validation->toolTip(), attempt.message);
+#if QT_CONFIG(accessibility)
+        ++expectedAnnouncements;
+        QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+        QCOMPARE(s_startupAnnouncementMessages.last(), attempt.message);
+        QCOMPARE(
+            s_startupAnnouncementPoliteness.last(),
+            QAccessible::AnnouncementPoliteness::Polite);
+#endif
+
+        table->setCurrentIndex(commentIndex);
+        QTRY_COMPARE(validation->text(), acceptedValidation);
+        verifyAcceptedFeedback();
+#if QT_CONFIG(accessibility)
+        QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+    }
+
+    const QModelIndex orderIndex = parameterIndex(orderColumn);
+    table->setCurrentIndex(orderIndex);
+    table->edit(orderIndex);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QPointer<QSpinBox> orderEditor = table->viewport()->findChild<QSpinBox *>(
+        QString(), Qt::FindDirectChildrenOnly);
+    QTRY_VERIFY(orderEditor);
+    QVERIFY(orderEditor->minimum() < 0);
+    orderEditor->setValue(-1);
+    QTest::keyClick(orderEditor, Qt::Key_Return);
+    QTRY_VERIFY(orderEditor.isNull());
+    const QString orderRejection
+        = "Change not applied. Startup request Order must be a decimal or 0x-prefixed "
+          "hexadecimal integer from 0 to 2147483647.";
+    QCOMPARE(orderIndex.data(Qt::EditRole).toInt(), 0);
+    verifyUnchanged();
+    QCOMPARE(validation->text(), orderRejection);
+    QCOMPARE(infoValidation->type(), Utils::InfoLabel::Error);
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+    QCOMPARE(s_startupAnnouncementMessages.last(), orderRejection);
+#endif
+
+    table->setCurrentIndex(commentIndex);
+    QTRY_COMPARE(validation->text(), acceptedValidation);
+    verifyAcceptedFeedback();
+
+    const QModelIndex typeIndex = parameterIndex(typeColumn);
+    const int acceptedDataType = typeIndex.data(startupDataTypeRole).toInt();
+    table->setCurrentIndex(typeIndex);
+    table->edit(typeIndex);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QPointer<QComboBox> typeEditor = table->viewport()->findChild<QComboBox *>(
+        QString(), Qt::FindDirectChildrenOnly);
+    QTRY_VERIFY(typeEditor);
+    const int unsigned16Type
+        = typeEditor->findData(int(Data::EtherCATDataType::UnsignedInteger16));
+    QVERIFY(unsigned16Type >= 0);
+    typeEditor->setCurrentIndex(unsigned16Type);
+    QTest::keyClick(typeEditor, Qt::Key_Return);
+    QTRY_VERIFY(typeEditor.isNull());
+    const QString typeRejection
+        = "Change not applied. Startup raw value must contain exactly 2 byte(s).";
+    QCOMPARE(typeIndex.data(startupDataTypeRole).toInt(), acceptedDataType);
+    verifyUnchanged();
+    QCOMPARE(validation->text(), typeRejection);
+    QCOMPARE(infoValidation->type(), Utils::InfoLabel::Error);
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+    QCOMPARE(s_startupAnnouncementMessages.last(), typeRejection);
+#endif
+
+    table->setCurrentIndex(commentIndex);
+    QTRY_COMPARE(validation->text(), acceptedValidation);
+    verifyAcceptedFeedback();
+
+    table->setCurrentIndex(indexIndex);
+    table->edit(indexIndex);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QPointer<QSpinBox> indexEditor = table->viewport()->findChild<QSpinBox *>(
+        QString(), Qt::FindDirectChildrenOnly);
+    QTRY_VERIFY(indexEditor);
+    QVERIFY(indexEditor->maximum() > int(std::numeric_limits<quint16>::max()));
+    indexEditor->setValue(int(std::numeric_limits<quint16>::max()) + 1);
+    QTest::keyClick(indexEditor, Qt::Key_Return);
+    QTRY_VERIFY(indexEditor.isNull());
+    const QString indexRangeRejection
+        = "Change not applied. Startup request Index must be a decimal or 0x-prefixed "
+          "hexadecimal integer from 0 to 65535.";
+    QCOMPARE(indexIndex.data(Qt::EditRole).toUInt(), uint(0x6060));
+    verifyUnchanged();
+    QCOMPARE(validation->text(), indexRangeRejection);
+    QCOMPARE(infoValidation->type(), Utils::InfoLabel::Error);
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+    QCOMPARE(s_startupAnnouncementMessages.last(), indexRangeRejection);
+#endif
+
+    table->setCurrentIndex(commentIndex);
+    QTRY_COMPARE(validation->text(), acceptedValidation);
+    verifyAcceptedFeedback();
+
+    const QModelIndex subindexIndex = parameterIndex(subindexColumn);
+    table->setCurrentIndex(subindexIndex);
+    table->edit(subindexIndex);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QPointer<QSpinBox> subindexEditor = table->viewport()->findChild<QSpinBox *>(
+        QString(), Qt::FindDirectChildrenOnly);
+    QTRY_VERIFY(subindexEditor);
+    QVERIFY(subindexEditor->maximum() > int(std::numeric_limits<quint8>::max()));
+    subindexEditor->setValue(int(std::numeric_limits<quint8>::max()) + 1);
+    QTest::keyClick(subindexEditor, Qt::Key_Return);
+    QTRY_VERIFY(subindexEditor.isNull());
+    const QString subindexRangeRejection
+        = "Change not applied. Startup request Subindex must be a decimal or 0x-prefixed "
+          "hexadecimal integer from 0 to 255.";
+    QCOMPARE(subindexIndex.data(Qt::EditRole).toUInt(), uint(0));
+    verifyUnchanged();
+    QCOMPARE(validation->text(), subindexRangeRejection);
+    QCOMPARE(infoValidation->type(), Utils::InfoLabel::Error);
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+    QCOMPARE(s_startupAnnouncementMessages.last(), subindexRangeRejection);
+#endif
+
+    table->setCurrentIndex(commentIndex);
+    QTRY_COMPARE(validation->text(), acceptedValidation);
+    verifyAcceptedFeedback();
+
+    table->setCurrentIndex(indexIndex);
+    table->edit(indexIndex);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    indexEditor = table->viewport()->findChild<QSpinBox *>(
+        QString(), Qt::FindDirectChildrenOnly);
+    QTRY_VERIFY(indexEditor);
+    indexEditor->setValue(0);
+    QTest::keyClick(indexEditor, Qt::Key_Return);
+    QTRY_VERIFY(indexEditor.isNull());
+    const QString semanticRejection
+        = "Change not applied. Startup object index must be non-zero.";
+    QCOMPARE(indexIndex.data(Qt::EditRole).toUInt(), uint(0x6060));
+    verifyUnchanged();
+    QCOMPARE(validation->text(), semanticRejection);
+    QCOMPARE(infoValidation->type(), Utils::InfoLabel::Error);
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+    QCOMPARE(s_startupAnnouncementMessages.last(), semanticRejection);
+#endif
+
+    table->setCurrentIndex(commentIndex);
+    QTRY_COMPARE(validation->text(), acceptedValidation);
+    verifyAcceptedFeedback();
+    const QString validationBeforeDirectRejection = validation->text();
+    QVERIFY(!table->model()->setData(
+        parameterIndex(dataColumn), QString("0G"), Qt::EditRole));
+    QVERIFY(!table->model()->setData(
+        parameterIndex(transitionColumn), QString("<PS>"), Qt::EditRole));
+    QVERIFY(!table->model()->setData(
+        parameterIndex(indexColumn), QString("not-an-index"), Qt::EditRole));
+    QVERIFY(!table->model()->setData(
+        parameterIndex(commentColumn), Qt::Checked, Qt::CheckStateRole));
+    QCOMPARE(validation->text(), validationBeforeDirectRejection);
+    verifyAcceptedFeedback();
+    verifyUnchanged();
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+
+    QModelIndex currentDataIndex = parameterIndex(dataColumn);
+    QPointer<QLineEdit> editor = openLineEditor(currentDataIndex);
+    QTRY_VERIFY(editor);
+    editor->selectAll();
+    editor->setText("0G");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    const QString sameCellRejection
+        = "Change not applied. Startup request Data contains a non-hexadecimal character.";
+    QCOMPARE(validation->text(), sameCellRejection);
+    verifyUnchanged();
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+
+    editor = openLineEditor(currentDataIndex);
+    QTRY_VERIFY(editor);
+    editor->selectAll();
+    editor->setText("09");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QTRY_COMPARE(parameterIndex(dataColumn).data(Qt::EditRole).toString(), QString("09"));
+    const int changesAfterAcceptedEdit = projectChanges.count();
+    QVERIFY(changesAfterAcceptedEdit > 0);
+    QVERIFY(projectService->canUndoProject(file.projectId));
+    QTRY_COMPARE(validation->text(), acceptedValidation);
+    verifyAcceptedFeedback();
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_COMPARE(parameterIndex(dataColumn).data(Qt::EditRole).toString(), QString("08"));
+    QVERIFY_RESULT(projectService->redoProject(file.projectId));
+    QTRY_COMPARE(parameterIndex(dataColumn).data(Qt::EditRole).toString(), QString("09"));
+    const int changesAfterRedo = projectChanges.count();
+    QVERIFY(changesAfterRedo > changesAfterAcceptedEdit);
+
+    const Data::ProjectSnapshot afterRedo = *projectService->project(file.projectId);
+    const bool canUndoAfterRedo = projectService->canUndoProject(file.projectId);
+    const bool canRedoAfterRedo = projectService->canRedoProject(file.projectId);
+    const int dataChangesAfterRedo = dataChanges.count();
+    currentDataIndex = parameterIndex(dataColumn);
+    editor = openLineEditor(currentDataIndex);
+    QTRY_VERIFY(editor);
+    editor->selectAll();
+    editor->setText("0G");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    const QString finalRejection
+        = "Change not applied. Startup request Data contains a non-hexadecimal character.";
+    QCOMPARE(validation->text(), finalRejection);
+    QCOMPARE(*projectService->project(file.projectId), afterRedo);
+    QCOMPARE(projectService->canUndoProject(file.projectId), canUndoAfterRedo);
+    QCOMPARE(projectService->canRedoProject(file.projectId), canRedoAfterRedo);
+    QCOMPARE(projectChanges.count(), changesAfterRedo);
+    QCOMPARE(dataChanges.count(), dataChangesAfterRedo);
+    QCOMPARE(table->currentIndex(), currentDataIndex);
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_COMPARE(parameterIndex(dataColumn).data(Qt::EditRole).toString(), QString("08"));
+    QTRY_COMPARE(validation->text(), acceptedValidation);
+    verifyAcceptedFeedback();
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+    QVERIFY_RESULT(projectService->redoProject(file.projectId));
+    QTRY_COMPARE(parameterIndex(dataColumn).data(Qt::EditRole).toString(), QString("09"));
+    QTRY_COMPARE(validation->text(), acceptedValidation);
+    verifyAcceptedFeedback();
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+
+    QVERIFY_RESULT(projectService->renameProject(
+        file.projectId, QString::fromUtf8("Startup Edit Feedback / \u540c\u9879\u76ee\u5237\u65b0")));
+    QTRY_COMPARE(validation->text(), acceptedValidation);
+    verifyAcceptedFeedback();
+    QCOMPARE(details.currentContext().nodeId, file.slaveId);
+    QVERIFY(pageGuard);
+    QVERIFY(tableGuard);
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+
+    QVERIFY(table->model()->setData(
+        parameterIndex(enabledColumn), Qt::Unchecked, Qt::CheckStateRole));
+    QVERIFY(table->model()->setData(parameterIndex(dataColumn), QString(), Qt::EditRole));
+    QTRY_COMPARE(
+        parameterIndex(enabledColumn).data(Qt::CheckStateRole).toInt(), int(Qt::Unchecked));
+    QTRY_VERIFY(parameterIndex(dataColumn).data(Qt::EditRole).toString().isEmpty());
+    const Data::ProjectSnapshot disabledEmpty = *projectService->project(file.projectId);
+    const bool canUndoDisabledEmpty = projectService->canUndoProject(file.projectId);
+    const bool canRedoDisabledEmpty = projectService->canRedoProject(file.projectId);
+    const int changesBeforeCheckRejection = projectChanges.count();
+    const int dataChangesBeforeCheckRejection = dataChanges.count();
+    const QString validationBeforeDirectCheckRejection = validation->text();
+    const Utils::InfoLabel::InfoType typeBeforeDirectCheckRejection = infoValidation->type();
+    const QString descriptionBeforeDirectCheckRejection = validation->accessibleDescription();
+    const QString additionalToolTipBeforeDirectCheckRejection
+        = infoValidation->additionalToolTip();
+    const QString toolTipBeforeDirectCheckRejection = validation->toolTip();
+    QVERIFY(!table->model()->setData(
+        parameterIndex(enabledColumn), Qt::Checked, Qt::CheckStateRole));
+    QCOMPARE(validation->text(), validationBeforeDirectCheckRejection);
+    QCOMPARE(infoValidation->type(), typeBeforeDirectCheckRejection);
+    QCOMPARE(validation->accessibleDescription(), descriptionBeforeDirectCheckRejection);
+    QCOMPARE(
+        infoValidation->additionalToolTip(), additionalToolTipBeforeDirectCheckRejection);
+    QCOMPARE(validation->toolTip(), toolTipBeforeDirectCheckRejection);
+    QCOMPARE(*projectService->project(file.projectId), disabledEmpty);
+    QCOMPARE(projectChanges.count(), changesBeforeCheckRejection);
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+
+    const QModelIndex enabledIndex = parameterIndex(enabledColumn);
+    table->setCurrentIndex(enabledIndex);
+    table->setFocus(Qt::OtherFocusReason);
+    QTest::keyClick(table, Qt::Key_Space);
+    const QString checkRejection
+        = "Change not applied. Startup raw value must not be empty.";
+    QTRY_COMPARE(validation->text(), checkRejection);
+    QCOMPARE(infoValidation->type(), Utils::InfoLabel::Error);
+    QCOMPARE(validation->accessibleDescription(), checkRejection);
+    QCOMPARE(infoValidation->additionalToolTip(), checkRejection);
+    QCOMPARE(validation->toolTip(), checkRejection);
+    QCOMPARE(*projectService->project(file.projectId), disabledEmpty);
+    QCOMPARE(projectService->canUndoProject(file.projectId), canUndoDisabledEmpty);
+    QCOMPARE(projectService->canRedoProject(file.projectId), canRedoDisabledEmpty);
+    QCOMPARE(projectChanges.count(), changesBeforeCheckRejection);
+    QCOMPARE(dataChanges.count(), dataChangesBeforeCheckRejection);
+    QCOMPARE(parameterIndex(enabledColumn).data(Qt::CheckStateRole).toInt(), int(Qt::Unchecked));
+    QCOMPARE(table->currentIndex(), enabledIndex);
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+    QCOMPARE(s_startupAnnouncementMessages.last(), checkRejection);
+    QCOMPARE(
+        s_startupAnnouncementPoliteness.last(),
+        QAccessible::AnnouncementPoliteness::Polite);
+#endif
+
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QTRY_VERIFY(pageGuard.isNull());
+    QTRY_VERIFY(tableGuard.isNull());
+    QTRY_VERIFY(validation.isNull());
+    QCOMPARE(projectChanges.count(), changesBeforeCheckRejection);
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_startupAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+}
+
 void EtherCATWorkbenchTests::testEditableStartupWorkflow()
 {
     WorkbenchController controller;
@@ -14794,13 +15348,14 @@ void EtherCATWorkbenchTests::testEditableStartupWorkflow()
         Data::EtherCATDataType::UnsignedInteger8);
     const Utils::Result<> undoType = projectService->undoProject(file.projectId);
     QVERIFY_RESULT(undoType);
+    const QString validationBeforeDirectRejection = validation->text();
     QVERIFY(!table->model()->setData(
         table->model()->index(0, typeColumn), int(Data::EtherCATDataType::UnsignedInteger16)));
-    QVERIFY(validation->text().contains("not applied", Qt::CaseInsensitive));
+    QCOMPARE(validation->text(), validationBeforeDirectRejection);
     QVERIFY(!table->model()->setData(table->model()->index(0, dataColumn), QString()));
-    QVERIFY(validation->text().contains("not applied", Qt::CaseInsensitive));
+    QCOMPARE(validation->text(), validationBeforeDirectRejection);
     QVERIFY(!table->model()->setData(table->model()->index(0, transitionColumn), QString("<PS>")));
-    QVERIFY(validation->text().contains("not applied", Qt::CaseInsensitive));
+    QCOMPARE(validation->text(), validationBeforeDirectRejection);
 
     table->setCurrentIndex(table->model()->index(0, 0));
     moveDown->click();
@@ -14812,8 +15367,9 @@ void EtherCATWorkbenchTests::testEditableStartupWorkflow()
     const Utils::Result<> undoMove = projectService->undoProject(file.projectId);
     QVERIFY_RESULT(undoMove);
 
+    const QString validationBeforeDirectIndexRejection = validation->text();
     QVERIFY(!table->model()->setData(table->model()->index(0, indexColumn), QString("0x0000")));
-    QVERIFY(validation->text().contains("not applied", Qt::CaseInsensitive));
+    QCOMPARE(validation->text(), validationBeforeDirectIndexRejection);
     QCOMPARE(
         projectService->project(file.projectId)->slaves.first().startup.parameters.first().index,
         quint16(0x6060));

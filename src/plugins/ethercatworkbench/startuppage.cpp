@@ -11,6 +11,9 @@
 
 #include <QAbstractItemView>
 #include <QAbstractTableModel>
+#if QT_CONFIG(accessibility)
+#include <QAccessible>
+#endif
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
@@ -129,8 +132,11 @@ static bool parseUnsignedValue(const QVariant &value, quint64 maximum, quint64 *
     return true;
 }
 
-static std::optional<QByteArray> parseRawValue(const QVariant &value)
+static std::optional<QByteArray> parseRawValue(
+    const QVariant &value, QString *rejectionReason = nullptr)
 {
+    if (rejectionReason)
+        rejectionReason->clear();
     QString compact;
     const QString source = value.toString().trimmed();
     compact.reserve(source.size());
@@ -141,12 +147,28 @@ static std::optional<QByteArray> parseRawValue(const QVariant &value)
     }
     if (compact.startsWith("0x", Qt::CaseInsensitive))
         compact.remove(0, 2);
-    if (compact.isEmpty() || compact.size() % 2 != 0)
+    if (compact.isEmpty()) {
+        if (rejectionReason) {
+            *rejectionReason
+                = Tr::tr("Startup request Data must contain at least one hexadecimal byte.");
+        }
         return std::nullopt;
+    }
+    if (compact.size() % 2 != 0) {
+        if (rejectionReason) {
+            *rejectionReason = Tr::tr(
+                "Startup request Data must contain an even number of hexadecimal digits.");
+        }
+        return std::nullopt;
+    }
     static const QString hexadecimal = "0123456789abcdefABCDEF";
     if (std::any_of(compact.cbegin(), compact.cend(), [](QChar character) {
             return !hexadecimal.contains(character);
         })) {
+        if (rejectionReason) {
+            *rejectionReason
+                = Tr::tr("Startup request Data contains a non-hexadecimal character.");
+        }
         return std::nullopt;
     }
     return QByteArray::fromHex(compact.toLatin1());
@@ -319,10 +341,12 @@ public:
         const Data::StartupParameterConfiguration current = m_parameters.at(index.row());
         if (isFixed(current))
             return false;
-        if (role != Qt::EditRole && role != Qt::CheckStateRole
-            && !(role == DataTypeRole && index.column() == Type)) {
+        const bool checkStateEdit = role == Qt::CheckStateRole && index.column() == Enabled;
+        const bool dataTypeEdit = role == DataTypeRole && index.column() == Type;
+        if (role != Qt::EditRole && !checkStateEdit && !dataTypeEdit) {
             return false;
         }
+        m_lastEditRejection.clear();
 
         Data::StartupConfiguration candidate = m_configuration;
         const auto found = std::find_if(
@@ -332,6 +356,10 @@ public:
         if (found == candidate.parameters.end())
             return false;
 
+        const auto rejectUserInput = [this](const QString &reason) {
+            m_lastEditRejection = Tr::tr("Change not applied. %1").arg(reason);
+            return false;
+        };
         quint64 unsignedValue = 0;
         switch (index.column()) {
         case Enabled:
@@ -340,37 +368,36 @@ public:
             found->enabled = value.toInt() == Qt::Checked;
             break;
         case Order:
-            if (!parseUnsignedValue(value, std::numeric_limits<int>::max(), &unsignedValue))
-                return false;
+            if (!parseUnsignedValue(value, std::numeric_limits<int>::max(), &unsignedValue)) {
+                return rejectUserInput(
+                    Tr::tr("Startup request Order must be a decimal or 0x-prefixed hexadecimal "
+                           "integer from 0 to 2147483647."));
+            }
             found->order = int(unsignedValue);
             break;
         case Transition:
             found->transition = value.toString().trimmed();
             if (found->transition.startsWith('<') || found->transition.endsWith('>')) {
-                if (m_page) {
-                    m_page->showValidation(
-                        {{Data::ConfigurationIssueCode::MissingStartupTransition,
-                          Data::ConfigurationIssueSeverity::Error,
-                          current.id,
-                          "transition",
-                          Tr::tr(
-                              "Angle brackets are reserved for fixed requests imported from "
-                              "ESI.")}},
-                        Tr::tr("Change not applied."));
-                }
-                return false;
+                return rejectUserInput(Tr::tr(
+                    "Angle brackets are reserved for fixed requests imported from ESI."));
             }
             break;
         case Protocol:
             return false;
         case Index:
-            if (!parseUnsignedValue(value, std::numeric_limits<quint16>::max(), &unsignedValue))
-                return false;
+            if (!parseUnsignedValue(value, std::numeric_limits<quint16>::max(), &unsignedValue)) {
+                return rejectUserInput(
+                    Tr::tr("Startup request Index must be a decimal or 0x-prefixed hexadecimal "
+                           "integer from 0 to 65535."));
+            }
             found->index = quint16(unsignedValue);
             break;
         case Subindex:
-            if (!parseUnsignedValue(value, std::numeric_limits<quint8>::max(), &unsignedValue))
-                return false;
+            if (!parseUnsignedValue(value, std::numeric_limits<quint8>::max(), &unsignedValue)) {
+                return rejectUserInput(
+                    Tr::tr("Startup request Subindex must be a decimal or 0x-prefixed hexadecimal "
+                           "integer from 0 to 255."));
+            }
             found->subIndex = quint8(unsignedValue);
             break;
         case Type: {
@@ -378,7 +405,7 @@ public:
             const int typeValue = value.toInt(&ok);
             if (!ok || typeValue < int(Data::EtherCATDataType::Unknown)
                 || typeValue > int(Data::EtherCATDataType::OctetString)) {
-                return false;
+                return rejectUserInput(Tr::tr("Startup request Type is unavailable."));
             }
             found->dataType = Data::EtherCATDataType(typeValue);
             found->rawDataType = found->dataType == Data::EtherCATDataType::Unknown
@@ -391,19 +418,10 @@ public:
                 found->rawValue.clear();
                 break;
             }
-            const std::optional<QByteArray> rawValue = parseRawValue(value);
-            if (!rawValue) {
-                if (m_page) {
-                    m_page->showValidation(
-                        {{Data::ConfigurationIssueCode::InvalidStartupValueSize,
-                          Data::ConfigurationIssueSeverity::Error,
-                          current.id,
-                          "rawValue",
-                          Tr::tr("Startup raw value must contain an even number of hex digits.")}},
-                        Tr::tr("Change not applied."));
-                }
-                return false;
-            }
+            QString rejectionReason;
+            const std::optional<QByteArray> rawValue = parseRawValue(value, &rejectionReason);
+            if (!rawValue)
+                return rejectUserInput(rejectionReason);
             found->rawValue = *rawValue;
             break;
         }
@@ -413,8 +431,24 @@ public:
         default:
             return false;
         }
-        return m_page
-               && m_page->submitConfiguration(candidate, current.id, index.column());
+        QString rejection;
+        const bool accepted
+            = m_page
+              && m_page->submitConfiguration(
+                  candidate, current.id, index.column(), &rejection);
+        if (!accepted)
+            m_lastEditRejection = rejection;
+        return accepted;
+    }
+
+    void clearEditRejection()
+    {
+        m_lastEditRejection.clear();
+    }
+
+    QString takeEditRejection()
+    {
+        return std::exchange(m_lastEditRejection, {});
     }
 
     bool setConfiguration(
@@ -568,6 +602,7 @@ private:
     Data::StartupConfiguration m_configuration;
     QList<Data::StartupParameterConfiguration> m_parameters;
     bool m_editable = false;
+    QString m_lastEditRejection;
 };
 
 static bool sameInlineEditorAuthority(
@@ -598,13 +633,16 @@ static bool sameInlineEditorAuthority(
 }
 
 using EditorOpenedHandler = std::function<void(QWidget *, const QModelIndex &)>;
+using EditRejectedHandler = std::function<void(const QModelIndex &, const QString &, bool)>;
 
 class StartupItemDelegate : public QStyledItemDelegate
 {
 public:
-    StartupItemDelegate(EditorOpenedHandler editorOpened, QObject *parent)
+    StartupItemDelegate(
+        EditorOpenedHandler editorOpened, EditRejectedHandler editRejected, QObject *parent)
         : QStyledItemDelegate(parent)
         , m_editorOpened(std::move(editorOpened))
+        , m_editRejected(std::move(editRejected))
     {}
 
     QWidget *createEditor(
@@ -615,15 +653,46 @@ public:
         return editor;
     }
 
+    void setModelData(
+        QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const override
+    {
+        auto startupModel = static_cast<StartupTableModel *>(model);
+        startupModel->clearEditRejection();
+        QStyledItemDelegate::setModelData(editor, model, index);
+        notifyEditRejected(startupModel, index, true);
+    }
+
 protected:
+    bool editorEvent(
+        QEvent *event,
+        QAbstractItemModel *model,
+        const QStyleOptionViewItem &option,
+        const QModelIndex &index) override
+    {
+        auto startupModel = static_cast<StartupTableModel *>(model);
+        startupModel->clearEditRejection();
+        const bool handled = QStyledItemDelegate::editorEvent(event, model, option, index);
+        notifyEditRejected(startupModel, index, false);
+        return handled;
+    }
+
     void notifyEditorOpened(QWidget *editor, const QModelIndex &index) const
     {
         if (editor && m_editorOpened)
             m_editorOpened(editor, index);
     }
 
+    void notifyEditRejected(
+        StartupTableModel *model, const QModelIndex &index, bool inlineEditorSubmission) const
+    {
+        const QString rejection = model->takeEditRejection();
+        if (!rejection.isEmpty() && m_editRejected)
+            m_editRejected(index, rejection, inlineEditorSubmission);
+    }
+
 private:
     EditorOpenedHandler m_editorOpened;
+    EditRejectedHandler m_editRejected;
 };
 
 class DataTypeDelegate final : public StartupItemDelegate
@@ -649,8 +718,12 @@ public:
 
     void setModelData(QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const final
     {
-        if (auto comboBox = qobject_cast<QComboBox *>(editor))
+        auto startupModel = static_cast<StartupTableModel *>(model);
+        startupModel->clearEditRejection();
+        if (auto comboBox = qobject_cast<QComboBox *>(editor)) {
             model->setData(index, comboBox->currentData(), DataTypeRole);
+            notifyEditRejected(startupModel, index, true);
+        }
     }
 
     void updateEditorGeometry(
@@ -683,8 +756,12 @@ public:
 
     void setModelData(QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const final
     {
-        if (auto comboBox = qobject_cast<QComboBox *>(editor))
+        auto startupModel = static_cast<StartupTableModel *>(model);
+        startupModel->clearEditRejection();
+        if (auto comboBox = qobject_cast<QComboBox *>(editor)) {
             model->setData(index, comboBox->currentText().trimmed());
+            notifyEditRejected(startupModel, index, true);
+        }
     }
 
     void updateEditorGeometry(
@@ -869,6 +946,7 @@ StartupPage::StartupPage(WorkbenchController *controller, QWidget *parent)
     m_summary->setWordWrap(true);
     m_summary->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_validation->setObjectName("EtherCATStartupValidation");
+    m_validation->setAccessibleName(Tr::tr("Startup edit feedback"));
     m_validation->setElideMode(Qt::ElideNone);
     m_validation->setWordWrap(true);
     m_restoreDefaults->setObjectName("EtherCATStartupRestoreDefaults");
@@ -903,11 +981,21 @@ StartupPage::StartupPage(WorkbenchController *controller, QWidget *parent)
             trackInlineEditor(editor, *parameter, index.column());
         }
     };
-    m_table->setItemDelegate(new StartupItemDelegate(editorOpened, m_table));
+    const EditRejectedHandler editRejected = [this](
+                                                   const QModelIndex &index,
+                                                   const QString &message,
+                                                   bool inlineEditorSubmission) {
+        if (const Data::StartupParameterConfiguration *parameter
+            = m_model->parameterAt(index.row())) {
+            showEditRejection(parameter->id, index.column(), message, inlineEditorSubmission);
+        }
+    };
+    m_table->setItemDelegate(new StartupItemDelegate(editorOpened, editRejected, m_table));
     m_table->setItemDelegateForColumn(
-        StartupTableModel::Type, new DataTypeDelegate(editorOpened, m_table));
+        StartupTableModel::Type, new DataTypeDelegate(editorOpened, editRejected, m_table));
     m_table->setItemDelegateForColumn(
-        StartupTableModel::Transition, new TransitionDelegate(editorOpened, m_table));
+        StartupTableModel::Transition,
+        new TransitionDelegate(editorOpened, editRejected, m_table));
 
     auto headerLayout = new QHBoxLayout;
     headerLayout->setContentsMargins(QMargins());
@@ -951,6 +1039,14 @@ StartupPage::StartupPage(WorkbenchController *controller, QWidget *parent)
             if (!m_rebuilding)
                 m_selectedParameterId = current.data(StableIdRole).value<Data::NodeId>();
             updateButtonState();
+        });
+    connect(
+        m_table->selectionModel(),
+        &QItemSelectionModel::currentChanged,
+        this,
+        [this](const QModelIndex &current, const QModelIndex &previous) {
+            if (!m_rebuilding && current != previous)
+                clearInlineEditRejection();
         });
     connect(m_restoreDefaults, &QPushButton::clicked, this, [this] {
         if (!isEmpty(m_esiDefaults))
@@ -1132,18 +1228,37 @@ std::optional<Data::StartupConfiguration> StartupPage::currentConfiguration(
 bool StartupPage::submitConfiguration(
     const Data::StartupConfiguration &configuration,
     const Data::NodeId &inlineParameterId,
-    int inlineColumn)
+    int inlineColumn,
+    QString *inlineRejection)
 {
+    if (inlineRejection)
+        inlineRejection->clear();
     const QList<Data::ConfigurationIssue> issues = Data::validateStartupConfiguration(configuration);
     const bool hasErrors = std::any_of(issues.cbegin(), issues.cend(), [](const auto &issue) {
         return issue.severity == Data::ConfigurationIssueSeverity::Error;
     });
     if (hasErrors) {
-        showValidation(issues, Tr::tr("Change not applied."));
+        if (inlineRejection) {
+            const auto firstError = std::find_if(
+                issues.cbegin(), issues.cend(), [](const Data::ConfigurationIssue &issue) {
+                    return issue.severity == Data::ConfigurationIssueSeverity::Error;
+                });
+            *inlineRejection
+                = firstError == issues.cend()
+                      ? Tr::tr("Change not applied.")
+                      : Tr::tr("Change not applied. %1").arg(firstError->message);
+        } else {
+            showValidation(issues, Tr::tr("Change not applied."));
+        }
         return false;
     }
     if (!m_editable || !m_controller || !m_controller->projectService()) {
-        showValidation(issues, Tr::tr("Change not applied: this ESI catalogue page is read-only."));
+        const QString message
+            = Tr::tr("Change not applied: this ESI catalogue page is read-only.");
+        if (inlineRejection)
+            *inlineRejection = message;
+        else
+            showValidation(issues, message);
         return false;
     }
     const bool inlineEditorCommit
@@ -1168,7 +1283,11 @@ bool StartupPage::submitConfiguration(
         = m_controller->projectService()
               ->setStartupConfiguration(m_context.projectId, m_context.nodeId, configuration);
     if (!result) {
-        showValidation(issues, Tr::tr("Change not applied: %1").arg(result.error()));
+        const QString message = Tr::tr("Change not applied: %1").arg(result.error());
+        if (inlineRejection)
+            *inlineRejection = message;
+        else
+            showValidation(issues, message);
         return false;
     }
 
@@ -1199,6 +1318,40 @@ void StartupPage::trackInlineEditor(
         m_inlineEditorColumn = -1;
         m_inlineEditorMetadataDirty = false;
     });
+}
+
+void StartupPage::showEditRejection(
+    const Data::NodeId &parameterId,
+    int column,
+    const QString &message,
+    bool inlineEditorSubmission)
+{
+    if (inlineEditorSubmission
+        && (!m_inlineEditor || !m_inlineEditorAuthority
+            || m_inlineEditorAuthority->id != parameterId || m_inlineEditorColumn != column)) {
+        return;
+    }
+    if (!inlineEditorSubmission && (column != StartupTableModel::Enabled || !m_editable)) {
+        return;
+    }
+
+    m_inlineEditRejectionActive = true;
+    m_validation->setType(Utils::InfoLabel::Error);
+    m_validation->setText(message);
+    m_validation->setAccessibleDescription(message);
+    m_validation->setAdditionalToolTip(message);
+    m_validation->setToolTip(message);
+#if QT_CONFIG(accessibility)
+    QAccessibleAnnouncementEvent announcement(m_validation, message);
+    announcement.setPoliteness(QAccessible::AnnouncementPoliteness::Polite);
+    QAccessible::updateAccessibility(&announcement);
+#endif
+}
+
+void StartupPage::clearInlineEditRejection()
+{
+    if (m_inlineEditRejectionActive)
+        showValidation(Data::validateStartupConfiguration(m_configuration));
 }
 
 bool StartupPage::canPreserveInlineEditor(bool stableContext) const
@@ -1522,6 +1675,7 @@ void StartupPage::moveParameter(int distance)
 
 void StartupPage::showValidation(const QList<Data::ConfigurationIssue> &issues, const QString &prefix)
 {
+    m_inlineEditRejectionActive = false;
     int errorCount = 0;
     int warningCount = 0;
     QStringList details;
@@ -1607,6 +1761,8 @@ void StartupPage::showValidation(const QList<Data::ConfigurationIssue> &issues, 
             += Tr::tr("Startup configuration is valid. %n request(s).", nullptr, m_model->rowCount());
     }
     m_validation->setText(text);
+    m_validation->setAccessibleDescription(text);
+    m_validation->setAdditionalToolTip(details.join('\n'));
     m_validation->setToolTip(details.join('\n'));
 }
 

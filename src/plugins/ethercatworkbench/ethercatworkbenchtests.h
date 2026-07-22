@@ -81,6 +81,7 @@ private slots:
     void testStartupRepositoryEmptyState();
     void testStartupDialogProjectRefresh();
     void testStartupInlineDraftSurvivesNonConflictingRefresh();
+    void testStartupEditRejectionFeedback();
     void testEditableStartupWorkflow();
     void testDcRepositoryModePreview();
     void testDcRepositoryModeEmptyState();

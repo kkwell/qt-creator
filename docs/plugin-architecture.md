@@ -2548,3 +2548,66 @@ pass events. Workbench and Scan mapped in 37/37 enabled samples and 0/37
 explicit-disabled samples; crash-service events, new diagnostic reports, and
 residual processes were 0. Evidence is under
 `/private/tmp/embed-labs-wb-process-data-edit-feedback-001.seBJey`.
+
+## Workbench Startup edit-rejection boundary
+
+`ISSUE-WB-STARTUP-INLINE-EDIT-REJECTION-FEEDBACK-001` remains inside the
+private Startup page, table model, and delegates. `StartupTableModel`
+continues to parse a candidate and return the standard boolean `setData()`
+result. It now retains only a private one-shot rejection string; it does not
+own or manipulate a feedback widget.
+
+The standard, Transition, and Type delegates clear that slot before a real
+commit, invoke the existing model write, and consume the result synchronously.
+The Enabled checkbox uses the same transaction around
+`QStyledItemDelegate::editorEvent()`. This separates interaction authority
+from the model API: rejected direct programmatic writes publish no UI or
+announcement, while valid direct writes continue through the existing
+`StartupPage::submitConfiguration()` and
+`ProjectService::setStartupConfiguration()` command path.
+
+Local parse errors supply exact Data, Transition, numeric-range, and Type
+reasons. A parsed candidate still passes through
+`validateStartupConfiguration()` before Project submission, so domain errors
+such as empty enabled Data, a zero object Index, or a Type/raw-size mismatch
+remain owned by the existing data validator. That validation result is
+returned privately to the delegate without changing the public
+ProjectService result, snapshot, Undo/Redo contract, model roles, or
+persistence.
+
+The page owns presentation and lifetime. For line/combo/spin editors it
+matches stable request ID and column against the tracked editor authority; for
+the checkable Enabled column it accepts only the real delegate event path. It
+then updates the existing Startup validation `Utils::InfoLabel` and requests
+an optional Polite announcement. Selection change, successful submission,
+same-context rebuild, Undo/Redo, context teardown, and Project close reuse the
+normal validation renderer or destroy the page. No queued callback, worker,
+timer, or cross-plugin pointer is introduced.
+
+Qt's model, delegate, and announcement contracts are documented at
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#setData>,
+<https://doc.qt.io/qt-6/qstyleditemdelegate.html#setModelData>, and
+<https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Beckhoff's
+Startup reference at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>
+supplies ordered-request and fixed-item terminology only. It does not define
+the local delegate result channel or accessibility behavior.
+
+The boundary changes only `startuppage.cpp/.h`, the existing Workbench test
+declaration/implementation, and four documents. It adds no public type or
+exported virtual interface, model role, dependency, source file, Project
+format field,
+Project command, persistence, Provider/ProjectService contract, Core or
+ProjectExplorer hook, application bootstrap, production thread or timer,
+socket, network transport, controller protocol, or upstream integration
+surface. CMake and qbs descriptions remain unchanged. The modal New/Edit
+dialog is deliberately outside this table-inline boundary.
+
+Failure-first reproduced the incorrect rejection reason and exited 1. Final
+normal/2x focused and related tests, four complete Workbench runs, six
+isolated suites, the Qt 6.11.0 `WITH_TESTS=OFF` product build, and invisible
+enabled/disabled lifecycle all passed. The six suites totaled 138 pass events.
+Workbench mapped in 37/37 enabled samples and 0/37 explicit-disabled samples;
+crash-service events, new diagnostic reports, and residual processes were 0.
+Evidence is under
+`/private/tmp/embed-labs-wb-startup-edit-feedback-001.QUiKKW`.

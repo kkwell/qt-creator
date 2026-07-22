@@ -6408,3 +6408,110 @@ online state, CoE/SDO, PLC, controller, or hardware behavior. No CMake or qbs
 description changed, so qbs was not run. No visible/manual UI inspection,
 remote operation, fetch, pull, merge, rebase, push, PR, or publication was
 performed.
+
+## Startup inline-edit rejection feedback
+
+`ISSUE-WB-STARTUP-INLINE-EDIT-REJECTION-FEEDBACK-001`, based on local
+baseline `79b654f5cd57116e42777bb2f09559b87bc98c52`, explains a rejected
+Startup table edit in the existing validation strip. Previously, entering
+`0G` in the real Data editor restored `08` but incorrectly reported that the
+value needed an even number of hexadecimal digits. The private page now
+reports the reason produced by the actual rejected candidate:
+
+- Data distinguishes a non-hexadecimal character, an odd digit count, and an
+  empty value rejected by complete Startup validation;
+- Transition explains that angle brackets are reserved for fixed ESI
+  requests;
+- Order, Index, and Subindex report their accepted decimal or `0x`-prefixed
+  hexadecimal ranges;
+- Type changes report complete-configuration size mismatches;
+- a zero object Index reports the existing non-zero requirement; and
+- enabling a disabled request with empty Data reports the validation error.
+
+The table model retains only a private one-shot rejection string. The normal,
+Transition, and Type delegates consume it after a real `setModelData()`
+submission. The Enabled checkbox uses the same delegate boundary through
+`editorEvent()`. Rejected direct programmatic `setData()` calls remain
+presentation-silent and request no announcement; valid direct writes keep
+their existing Project and Undo/Redo path. Rejection preserves the accepted
+cell, complete Project snapshot, Undo/Redo availability, stable selection,
+`projectChanged`, and model `dataChanged` state.
+
+The existing Startup validation `Utils::InfoLabel` becomes an Error surface
+with stable accessible name `Startup edit feedback`. Its visible text,
+accessible description, normal tooltip, and additional tooltip agree. When
+Qt accessibility is enabled, each real rejection requests one Polite
+`QAccessibleAnnouncementEvent`.
+Changing cells, successfully resubmitting the same cell, a same-Project
+refresh, Undo/Redo, and Project close restore or destroy the transient state.
+The event request is automated offscreen evidence only; no manual VoiceOver,
+audible speech, or visible desktop inspection is claimed. The modal New/Edit
+`StartupParameterDialog` is outside this table-inline issue.
+
+Qt defines the model return contract at
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#setData>, the delegate commit
+hook at
+<https://doc.qt.io/qt-6/qstyleditemdelegate.html#setModelData>, and the
+optional announcement event at
+<https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Beckhoff's
+Startup page supplies ordered-request, field, and fixed-item terminology only:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.
+It does not define these local messages, delegate transaction, or
+accessibility behavior.
+
+Failure-first changed only the Workbench test declaration and implementation.
+Production `startuppage.cpp/.h` retained SHA-256 values
+`99902dbe8615dedc25380b8bbb7117ad54da9d092ec3e12bcf97afba57c5235f`
+and
+`01c85b28ca3b487f425c03380e4f1e6662574512a377c05344cd6157093e6eb6`.
+Initialization and cleanup passed, the exact real-editor message comparison
+failed, and the target exited 1.
+
+Final focused normal/2x runs passed 3 events each; Startup-related runs passed
+9 each. Two complete Workbench runs at each scale passed 83 events per run.
+Six isolated suites passed 138 events: Core 17, Project 12, Devices 8,
+Workbench 83, Scan 11, and Diagnostics 7; every target exited 0. Final
+SHA-256 values for `startuppage.cpp`, its header, Workbench tests, and the test
+header are
+`5d6bc7c41dfa8b3cef0925fba090d27960cdd44a876bb666c69ff390b894731e`,
+`2c47a50f70ac55ae3a709afe38e9ca2d63e310a6eaffb1ced9fa39463a9bfdc0`,
+`87d3c47b3f7bbf85fc1cdc724d70c4ffe62bb98cc9d333b9b41db1164bcd0fcc`,
+and
+`ab61a8eae20015b5a80d2bc832f0f27a1f05edc9d4ede201f1524f3d298bb28f`;
+their git blobs are `e7c4d58d6d8fb737363444a4daff4e78f0c9f069`,
+`7e7b56533ad09b3c2a70cc5423aa69f1e85c26f7`,
+`5cf94b7853ea7f710aeb9690666d4a37e9010fe2`, and
+`8e28aa00ce6d2cbbb71b74b20e788bd56610c3b2`.
+
+Qt 6.11.0 Release qualification used
+`qt-creator-build-ethercat-core-qt611`. The `WITH_TESTS=OFF` Workbench target
+and complete product passed in `qt-creator-build-ethercat-product-qt611` with
+exactly 16 plugin dylibs. Executable, product Workbench, and test Workbench
+SHA-256 values are
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`,
+`5dbc4a74f2730d496068f26806ef1c2ff53dd7a14bb1bbd224ec327db84b48aa`,
+and
+`a9c276d76b51e942e6d5fa5e4faed72f30e8406b89a0340abface59698ff147a`.
+
+Invisible enabled and explicit `-noload EtherCATWorkbench` product runs each
+stayed alive for 37/37 samples. Workbench mapped in 37/37 enabled samples and
+0/37 disabled samples; both ended by intentional passed-through SIGTERM with
+expected status 15. The 2026-07-23 06:23:25 to 06:25:48 +0800 audit found no
+residual process, new Embed Labs DiagnosticReports file, or matching
+ReportCrash, CrashReporter, or diagnosticd event. Fresh HOME/settings,
+offscreen Qt, disabled crash reporting, cleared inherited DYLD variables,
+`-no-crashcheck`, and the process-local Touch Bar bypass kept main-program
+acceptance invisible and non-interrupting. Pre/post lifecycle SHA-256, mtime,
+size, and Mach-O UUID manifests prove that the qualified executable and
+Workbench dylib stayed byte-identical to the final product artifacts.
+
+Evidence is under
+`/private/tmp/embed-labs-wb-startup-edit-feedback-001.QUiKKW`. This issue
+changes only private Startup implementation, the existing Workbench test
+declaration/implementation, and these four documents. It adds no public API
+or model role, source file, dependency, Project format or persistence field,
+Provider/ProjectService contract, Project command, Core or ProjectExplorer
+hook, application bootstrap, production thread or timer, network, ADS, scan,
+online state, CoE/SDO, PLC, controller, Zynq, or hardware behavior. No CMake
+or qbs description changed, so qbs was not run. No remote comparison, fetch,
+pull, merge, rebase, push, PR, or publication was performed.

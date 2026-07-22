@@ -3208,3 +3208,44 @@ local validation precedent is at
 <https://code.qt.io/cgit/qt-creator/qt-creator.git/tree/src/libs/utils/projectintropage.cpp?h=20.0#n193>.
 Beckhoff's Process Data page supplies PDO terminology only:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html>.
+
+## EtherCATWorkbench Startup edit-rejection feedback qualification
+
+`ISSUE-WB-STARTUP-INLINE-EDIT-REJECTION-FEEDBACK-001` is qualified from
+local baseline `79b654f5cd57116e42777bb2f09559b87bc98c52`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| User-visible defect | A real Startup Data `0G` submission restored `08` but incorrectly said that an even hexadecimal digit count was required |
+| Real-editor coverage | Data non-hex, odd-digit, and empty candidates; Transition angle brackets; Order, Index, and Subindex ranges; Type/raw-size mismatch; zero Index; and Enabled/empty-Data rejection are submitted through real editors or the real checkbox delegate event |
+| Delegate-only boundary | Normal, Transition, and Type `setModelData()` paths and Enabled `editorEvent()` consume a private one-shot model result; rejected direct programmatic `setData()` remains presentation-silent, while valid direct writes retain the Project path |
+| Rejection invariants | Accepted EditRole/CheckState values, complete Project snapshot, Undo/Redo availability, exact current cell, `projectChanged`, and model `dataChanged` remain unchanged |
+| Feedback/accessibility | Error type, stable accessible name, exact visible text, accessible description, and both tooltips are verified for each real rejection; when Qt accessibility is enabled, one Polite announcement request is also verified |
+| Clearing and teardown | Changing cells, successful same-cell submission, Undo/Redo, same-Project refresh, and Project close restore or destroy the full feedback surface without an extra announcement |
+| Deliberate exclusion | Modal New/Edit `StartupParameterDialog` feedback is outside this table-inline issue; no manual VoiceOver, audible speech, or visible desktop run is claimed |
+| Failure-first | Test-only changes retained production cpp/header SHA-256 `99902dbe8615dedc25380b8bbb7117ad54da9d092ec3e12bcf97afba57c5235f` and `01c85b28ca3b487f425c03380e4f1e6662574512a377c05344cd6157093e6eb6`; initialization/cleanup passed, the exact message assertion failed, and the target exited 1 |
+| Focused normal and 2x | Each final run passed 3 events, 0 failed, target status 0 |
+| Startup-related normal and 2x | Each final run passed 9 events, 0 failed, target status 0 |
+| Complete Workbench normal and 2x | Two final runs at each scale passed 83 events per run, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 83, Scan 11, Diagnostics 7; 138 passed, 0 failed, every target status 0 |
+| Final source SHA-256 | Startup cpp `5d6bc7c41dfa8b3cef0925fba090d27960cdd44a876bb666c69ff390b894731e`; header `2c47a50f70ac55ae3a709afe38e9ca2d63e310a6eaffb1ced9fa39463a9bfdc0`; tests `87d3c47b3f7bbf85fc1cdc724d70c4ffe62bb98cc9d333b9b41db1164bcd0fcc`; test header `ab61a8eae20015b5a80d2bc832f0f27a1f05edc9d4ede201f1524f3d298bb28f` |
+| Final git blobs | Startup cpp `e7c4d58d6d8fb737363444a4daff4e78f0c9f069`; header `7e7b56533ad09b3c2a70cc5423aa69f1e85c26f7`; tests `5cf94b7853ea7f710aeb9690666d4a37e9010fe2`; test header `8e28aa00ce6d2cbbb71b74b20e788bd56610c3b2` |
+| Qualified build | Qt 6.11.0 Release tests; `WITH_TESTS=OFF` Workbench target and full product passed with exactly 16 plugin dylibs |
+| Product hashes | Executable `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `5dbc4a74f2730d496068f26806ef1c2ff53dd7a14bb1bbd224ec327db84b48aa`; test Workbench `a9c276d76b51e942e6d5fa5e4faed72f30e8406b89a0340abface59698ff147a` |
+| Enabled/disabled lifecycle | Both invisible product runs stayed alive for 37/37 samples; Workbench mapped in 37 enabled and 0 explicit-disabled samples; both ended with expected passed-through SIGTERM status 15 |
+| Crash-dialog audit | From 2026-07-23 06:23:25–06:25:48 +0800, residual processes, new Embed Labs DiagnosticReports, and matching ReportCrash/CrashReporter/diagnosticd events were all 0 |
+| Final-artifact binding | Pre/post lifecycle SHA-256, mtime, size, and Mach-O UUID manifests are identical and bind both 37-sample runs to the listed final executable and Workbench dylib |
+| Invisible execution | Fresh HOME/settings, offscreen Qt, disabled crash reporting, cleared DYLD variables, `-no-crashcheck`, process-local Touch Bar bypass, and passed-through SIGTERM; the workflow was not deferred and no visible/manual UI inspection was run |
+| Mock/offline boundary | Mock Scan, Mock online-state, and Mock CoE regressions remain in scope; no physical interface, network, ADS, real scan, real online CoE/SDO, controller, PLC, Zynq, or hardware behavior was exercised or claimed |
+| Public/API/system boundary | Private Startup page/model/delegate only; no public API/role, source file, dependency, Project format, persistence, Provider/ProjectService contract, Project command, Core/ProjectExplorer hook, application bootstrap, or production thread/timer change |
+| Build descriptions | No CMake or qbs file changed, so qbs was not run |
+| Local-only policy | No remote comparison, fetch, pull, merge, rebase, push, PR, or publication was performed |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-startup-edit-feedback-001.QUiKKW`. Qt model,
+delegate, and announcement contracts are at
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#setData>,
+<https://doc.qt.io/qt-6/qstyleditemdelegate.html#setModelData>, and
+<https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Beckhoff's
+Startup page supplies ordered-request and fixed-item terminology only:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.

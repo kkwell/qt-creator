@@ -42,13 +42,20 @@ private:
     bool submitConfiguration(
         const Data::StartupConfiguration &configuration,
         const Data::NodeId &inlineParameterId = {},
-        int inlineColumn = -1);
+        int inlineColumn = -1,
+        QString *inlineRejection = nullptr);
     void rebuildModel(
         bool preserveInlineEditor = false, bool notifyPreservedColumn = false);
     void trackInlineEditor(
         QWidget *editor,
         const Data::StartupParameterConfiguration &parameter,
         int column);
+    void showEditRejection(
+        const Data::NodeId &parameterId,
+        int column,
+        const QString &message,
+        bool inlineEditorSubmission);
+    void clearInlineEditRejection();
     bool canPreserveInlineEditor(bool stableContext) const;
     void updateButtonState();
     void updateTablePresentation();
@@ -79,6 +86,7 @@ private:
     bool m_inlineEditorCommitInProgress = false;
     std::optional<Data::StartupParameterConfiguration> m_inlineEditorSubmittedAuthority;
     bool m_inlineEditorMetadataDirty = false;
+    bool m_inlineEditRejectionActive = false;
 
     QLabel *m_summary = nullptr;
     Utils::InfoLabel *m_validation = nullptr;
