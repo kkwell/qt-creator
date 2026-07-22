@@ -1621,3 +1621,50 @@ rebase, push, PR, or publication is part of this delta. No CMake or qbs
 description changed. The supported baseline remains the local `embed-labs`
 history. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-nav-blank-context-001.oYIrwR`.
+
+## Local General name-rejection feedback delta
+
+`ISSUE-WB-GENERAL-RENAME-REJECTION-FEEDBACK-001` is a private Workbench
+correction on local baseline
+`6d13931b6d595b4c710227dc0aa7fa0a4584c104`. Empty Project, offline Target,
+Master, and configured Slave name submissions still fail through the existing
+Workbench controller and Project-service paths and restore their authoritative
+values, but the active General page now presents the existing contextual error
+instead of relying only on General Messages.
+
+New input clears the page-owned error label, and a successful path remains
+clear; refresh, context change, Project close, and teardown clear or destroy
+it. The label mirrors its visible error through accessible description and
+tooltips and conditionally requests one polite accessibility announcement.
+This does not change Project validation, accepted values, Undo/Redo,
+selection, persistence, or any public service contract, and it does not claim
+manual VoiceOver or audible speech verification.
+
+The local delta changes only existing `generalpage.cpp/.h`, the Workbench test
+declaration/implementation, and four documents. It introduces no new source
+path, public API or model role, dependency, CMake/qbs entry, Project format or
+persistence field, Provider/ProjectService contract, Project command, direct
+upstream Core patch, Core or ProjectExplorer hook, application bootstrap,
+production thread or timer, network, ADS, scan, online state, CoE/SDO,
+controller, PLC, or hardware behavior.
+
+The authoritative red test kept both production files at the baseline hashes,
+failed on the absent page feedback, and exited 1. An initial typed-child compile
+failure and malformed test selector were superseded harness attempts. Focused
+and related normal/2x tests, four complete Workbench runs, and all six isolated
+suites passed; the isolated total is 132. A parallel Scan exit-handshake stall
+was superseded by its sequential seven-pass status-0 run.
+
+The `WITH_TESTS=OFF` Workbench and complete product builds passed with exactly
+16 plugin dylibs. Enabled and explicit-disabled invisible product runs each
+stayed alive for 37 samples, with Workbench mapped in 37 and 0. Both ended with
+expected status 15. A fail-closed system-log query and explicit before/after
+DiagnosticReports difference found no matching crash event, new Embed Labs
+report, or residual process.
+
+No visible/manual UI inspection, online/SDO/controller/network/hardware
+exercise, remote comparison, fetch, pull, merge, rebase, push, PR, or
+publication is part of this delta. No CMake or qbs description changed, so
+qbs was not run. The supported baseline remains the local `embed-labs`
+history. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-general-rename-feedback-001.M4aWr4`.

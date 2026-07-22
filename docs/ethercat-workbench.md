@@ -6053,3 +6053,135 @@ state, CoE/SDO, PLC, controller, or hardware behavior. No CMake or qbs
 description changed, so qbs was not run. The unrelated `WITH_TESTS=ON`
 all-target build was not rerun because the known EasyBoard
 `extensionmanager_test.h` blocker remains outside this issue.
+
+## General name rejection feedback
+
+`ISSUE-WB-GENERAL-RENAME-REJECTION-FEEDBACK-001`, based on local baseline
+`6d13931b6d595b4c710227dc0aa7fa0a4584c104`, makes rejected General-page
+name edits visible where they are made. Project, offline Target, Master, and
+configured Slave already rejected an empty name and restored the accepted
+value, but the reason was written only as a flashing General Messages entry.
+The Details page itself provided no explanation, so Return appeared to do
+nothing.
+
+The private `GeneralPage` now owns one error `Utils::InfoLabel` below its
+summary. A rejected Return still uses the existing Workbench controller and
+Project-service paths as the validation and mutation authorities. The page
+records the existing contextual error, reloads its authoritative context, and
+only then shows the feedback, so the reload cannot erase it. The accepted
+name, complete Project snapshot,
+Undo/Redo state, and stable selection remain unchanged. The four messages are:
+
+- `Cannot rename the EtherCAT project: Project name cannot be empty.`
+- `Cannot rename the offline target: EtherCAT target and master names cannot
+  be empty.`
+- `Cannot rename the EtherCAT master: EtherCAT target and master names cannot
+  be empty.`
+- `Cannot rename the offline slave: Offline slave name cannot be empty.`
+
+New user input clears the complete feedback state, and a successful path
+remains clear. Same-context refresh, context switch, Project close, or page
+destruction also clears or destroys it, so an error cannot leak to another
+object. The existing General Messages write remains for diagnostic
+continuity. No validation rule is duplicated in the page.
+
+The label has the stable accessible name `General name edit feedback`; its
+current error is also exposed through accessible description, normal tooltip,
+and additional tooltip. When Qt accessibility support is available, rejection
+requests one polite `QAccessibleAnnouncementEvent`. Qt defines that event as a
+request to assistive technology, not a guarantee of audible speech, at
+<https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. The QWidget
+accessible-description contract is at
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. No manual
+VoiceOver or audible-speech claim is made.
+
+Beckhoff documents the Project name on the Project tab at
+<https://infosys.beckhoff.com/content/1033/tc3_userinterface/3434440203.html>,
+the EtherCAT Master name reflected in the tree at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1569945995.html>, and
+the Slave General name at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1341899531.html>.
+These references anchor only familiar Project/Master/Slave General-page and
+tree terminology. The local offline Target and all rejection-feedback,
+validation, accessibility, and lifecycle behavior remain Embed Labs code.
+
+Failure-first changed only the Workbench test declaration and implementation.
+Production `generalpage.cpp` retained SHA-256
+`51195c26f5db3936f2e0ba0935d2564d3b8a0bf2ca95c86328de7d39e6ee16e6`
+and git blob `e2cce8dd0a1fe6f5837de15492ead898246bffb8`;
+`generalpage.h` retained SHA-256
+`93760569091e384acb8a68451b8c3ae8c2f6ce2f744bbcab700780bc1423aaca`
+and blob `051abe8c5e068d59351cdd8ea7ceba13607f2558`. The authoritative
+red run passed initialization and cleanup, failed because the page had no
+feedback widget, and exited 1.
+
+Two earlier harness attempts are not failure-first evidence: a typed
+`findChild<Utils::InfoLabel *>` did not compile because `InfoLabel` has no
+`Q_OBJECT`, and an incorrectly formed `-test` selector was parsed as a plugin
+name and exited 255. Both were superseded by the compiling object-name lookup
+and correct Workbench selector above. A first parallel isolation wrapper also
+used zsh's reserved `status` name and was replaced with `result`. Its first
+Scan retry emitted all seven pass events but its LLDB exit handshake stalled;
+only that qualification chain was terminated. The final sequential Scan run
+passed seven events and exited 0.
+
+The final integrated test uses real `QLineEdit` focus, key input, and Return
+for all four contexts. It verifies exact restored names and messages, zero
+Project change signal, complete Project snapshot equality, unchanged
+Undo/Redo and selection, visible error metadata, exactly one polite
+announcement, same-context clearing, edit clearing, a successful path that
+remains clear, context-switch clearing or destruction, and Project-close
+destruction. Focused normal and 2x runs passed 3 events each. The related
+General/context lifecycle group
+passed 10 events at each scale. Two complete Workbench runs at each scale
+passed 81 events per run. Six isolated suites passed 132 events: Core 17,
+Project 12, Devices 8, Workbench 81, Scan 7, and Diagnostics 7. Every
+authoritative target exited 0.
+
+Final SHA-256 values for `generalpage.cpp`, `generalpage.h`, the Workbench
+tests, and test header are
+`ec0c1b04f6600b7e220d2ba49f52211d32fc55e9419daee24453db43bb93bbb6`,
+`e2d7e95eb78f39e758afe5efe599627d1e48888bd877e85cd9abbd17936a0026`,
+`af57ecdbd2858beb8cb1d834627b8c8eaa655a67c0621f594b11a8fc27e78dbf`,
+and
+`4352a7df522ecbb2deb147ea15234070b025b7b310cc480807698a5abb08acbb`;
+their git blobs are `74b7a4e1daeb01026eb1eb696e4a46d5d7eb20dd`,
+`4c77773da4de1e45d5c81ae179ce4e9ce9a368bd`,
+`e431f9014d90eeba9c48b2e915ba502ad434b89e`, and
+`3839b41791da3d01e58482dde078e00811e88a03`.
+
+Qualification used Qt 6.11.0 Release in
+`qt-creator-build-ethercat-core-qt611`. The `WITH_TESTS=OFF` Workbench target
+and complete product build passed in
+`qt-creator-build-ethercat-product-qt611`, whose bundle contains exactly 16
+plugin dylibs. Executable, product Workbench, and test Workbench SHA-256 values
+are
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`,
+`cdc247778382d9ffa7ec655aa1538011d8184bae5ad9403450baa0109562f8e6`,
+and
+`98459d3f9c915105deef5080935ac481a56c31f4bd4d1185c1ee362697d9a1b2`.
+
+Enabled and explicit `-noload EtherCATWorkbench` product runs each remained
+alive for 37 of 37 samples; Workbench was mapped in 37 and 0 samples
+respectively. Both ended by intentional passed-through SIGTERM with expected
+status 15. Fresh HOME/settings, offscreen Qt, disabled crash reporting,
+`-no-crashcheck`, cleared inherited DYLD variables, and a process-local Touch
+Bar bypass kept acceptance invisible and non-interrupting. The disabled run's
+known non-fatal shared-memory initialization message did not affect any
+sample. The 2026-07-23 03:23:45 to 03:26:10 +0800 audit found zero residual
+qualification processes. A fail-closed repeat of the same system-log window
+verified query status 0 and its standard header, with zero matching crash-
+service events; readable before/after DiagnosticReports snapshots each had
+166 entries and their explicit difference contained no Embed Labs report.
+
+Authoritative evidence is under
+`/private/tmp/embed-labs-wb-general-rename-feedback-001.M4aWr4`. This issue
+changes only private General-page UI, its existing Workbench test declaration
+and implementation, and these four documents. It adds no public API or model
+role, source file, dependency, Project format or persistence field,
+Provider/ProjectService contract, Project command, Core or ProjectExplorer
+hook, application bootstrap, production thread or timer, network, ADS, scan,
+online state, CoE/SDO, PLC, controller, or hardware behavior. No visible or
+manual UI inspection, remote comparison, fetch, pull, merge, rebase, push, PR,
+or publication is part of this issue. No CMake or qbs description changed, so
+qbs was not run.

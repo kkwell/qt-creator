@@ -3082,3 +3082,44 @@ and current-index contracts are at
 selected Devices/EtherCAT device Add New Item context is referenced at
 <https://infosys.beckhoff.com/content/1033/xts_software/11342363403.html> and
 <https://infosys.beckhoff.com/content/1033/epioconfiguration/6519655307.html>.
+
+## EtherCATWorkbench General name-rejection feedback qualification
+
+`ISSUE-WB-GENERAL-RENAME-REJECTION-FEEDBACK-001` is qualified from local
+baseline `6d13931b6d595b4c710227dc0aa7fa0a4584c104`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| User-visible defect | Empty Project, offline Target, Master, and configured Slave name submissions restored the accepted value but explained the rejection only in General Messages, leaving the active Details page apparently unresponsive |
+| Authority and ordering | Existing Workbench controller and Project-service paths remain authoritative; the page retains the existing contextual error, restores authoritative context, then shows it in a private error `InfoLabel` |
+| Rejection invariants | All four accepted names, the complete Project snapshot, Undo/Redo availability, and stable selection remain unchanged; `projectChanged` remains zero |
+| Feedback lifecycle | New text clears the state and a successful path remains clear; same-context refresh, context switch, Project close, and page teardown clear or destroy visible text, accessible description, and normal/additional tooltip |
+| Accessibility | Stable accessible name, exact description/tooltips, and exactly one optional Polite announcement are verified per rejection; clearing and successful paths emit no extra announcement |
+| Failure-first | Production cpp/header retained SHA-256 `51195c26f5db3936f2e0ba0935d2564d3b8a0bf2ca95c86328de7d39e6ee16e6` and `93760569091e384acb8a68451b8c3ae8c2f6ce2f744bbcab700780bc1423aaca`; initialization/cleanup passed, the missing feedback assertion failed, target status was 1 |
+| Superseded harness attempts | A typed `findChild<InfoLabel *>` compile failure and malformed `-test` selector were setup errors, not red evidence; a zsh reserved-name wrapper was corrected; a parallel Scan exit-handshake stall was superseded by the final seven-pass status-0 sequential run |
+| Focused normal and 2x | Each authoritative run passed 3 events, 0 failed, target status 0 |
+| Related normal and 2x | Each authoritative run passed 10 events, 0 failed, target status 0 |
+| Complete Workbench normal and 2x | Two authoritative runs at each scale passed 81 events per run, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 81, Scan 7, Diagnostics 7; 132 passed, 0 failed, every authoritative target status 0 |
+| Final source SHA-256 | General cpp `ec0c1b04f6600b7e220d2ba49f52211d32fc55e9419daee24453db43bb93bbb6`; header `e2d7e95eb78f39e758afe5efe599627d1e48888bd877e85cd9abbd17936a0026`; tests `af57ecdbd2858beb8cb1d834627b8c8eaa655a67c0621f594b11a8fc27e78dbf`; test header `4352a7df522ecbb2deb147ea15234070b025b7b310cc480807698a5abb08acbb` |
+| Final git blobs | General cpp `74b7a4e1daeb01026eb1eb696e4a46d5d7eb20dd`; header `4c77773da4de1e45d5c81ae179ce4e9ce9a368bd`; tests `e431f9014d90eeba9c48b2e915ba502ad434b89e`; test header `3839b41791da3d01e58482dde078e00811e88a03` |
+| Qualified Qt and test build | Qt 6.11.0 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build and inventory | `WITH_TESTS=OFF` Workbench target and full product passed in `qt-creator-build-ethercat-product-qt611`; exactly 16 plugin dylibs |
+| Product hashes | Executable `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `cdc247778382d9ffa7ec655aa1538011d8184bae5ad9403450baa0109562f8e6`; test Workbench `98459d3f9c915105deef5080935ac481a56c31f4bd4d1185c1ee362697d9a1b2` |
+| Enabled/disabled lifecycle | Both invisible product runs stayed alive for 37/37 samples; Workbench mapped in 37 enabled and 0 disabled samples; each ended with expected passed-through SIGTERM status 15 |
+| Fail-closed crash audit | For 2026-07-23 03:23:45–03:26:10 +0800, log query status/header were explicitly validated, crash-service matches were 0, readable before/after DiagnosticReports lists were 166/166, explicit difference had 0 Embed Labs reports, and residual processes were 0 |
+| Invisible executable policy | Fresh HOME/settings, offscreen Qt, disabled crash reporting, `-no-crashcheck`, cleared DYLD variables, and process-local Touch Bar bypass; no visible/manual UI inspection |
+| Deliberate exclusions | No public API/role, Project format, Provider/ProjectService change, network, ADS, scan, online CoE/SDO, controller, PLC, or hardware behavior is claimed |
+| Local-only policy | No remote comparison, fetch, pull, merge, rebase, push, PR, or publication was performed |
+| CMake/qbs execution | Neither build description changed, so qbs was not run |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-general-rename-feedback-001.M4aWr4`. Qt's
+announcement and accessible-description contracts are at
+<https://doc.qt.io/qt-6/qaccessibleannouncementevent.html> and
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. Beckhoff's
+Project, Master, and Slave General-name pages are referenced only for
+terminology at
+<https://infosys.beckhoff.com/content/1033/tc3_userinterface/3434440203.html>,
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1569945995.html>, and
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1341899531.html>.

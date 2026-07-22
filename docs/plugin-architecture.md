@@ -2374,3 +2374,54 @@ alive for 37 samples, with Workbench loaded in every enabled sample and no
 disabled sample, and produced no new matching diagnostic report or crash
 service event. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-nav-blank-context-001.oYIrwR`.
+
+## Workbench General name-rejection feedback boundary
+
+`ISSUE-WB-GENERAL-RENAME-REJECTION-FEEDBACK-001`, based on local baseline
+`6d13931b6d595b4c710227dc0aa7fa0a4584c104`, remains inside the private
+`GeneralPage`. The existing Workbench controller and Project-service paths
+remain the validation and mutation authorities for Project, offline Target,
+Master, and configured Slave names. On rejection, the page retains the
+existing contextual error, reloads the authoritative
+context, and then publishes that exact error through its private
+`Utils::InfoLabel`; no page-local validator or public result type is added.
+
+Feedback lifetime is page-owned. User text input clears it and a successful
+path remains clear; same-context refresh, context switch, Project close, and
+teardown clear or destroy the full visible and accessible state. The accepted
+Project model, Undo stack, selection, persistence, and existing General
+Messages diagnostic path remain authoritative and unchanged. The label's
+accessible description and tooltip mirror its visible text, and an optional
+polite accessibility announcement is an event request only, not a manual
+VoiceOver or speech claim.
+
+Qt's announcement and accessible-description contracts are at
+<https://doc.qt.io/qt-6/qaccessibleannouncementevent.html> and
+<https://doc.qt.io/qt-6/qwidget.html#accessibleDescription-prop>. Beckhoff's
+Project, Master, and Slave General-name references are used only to anchor
+familiar hierarchy terminology; they do not define this local rejection UI.
+
+The boundary changes only `generalpage.cpp/.h`, the existing Workbench test
+declaration/implementation, and four documents. It adds no public type, model
+role, source file, dependency, CMake/qbs entry, Project format or persistence
+field, Provider/ProjectService contract, Project command, Core or
+ProjectExplorer hook, application bootstrap, production thread or timer,
+network, ADS, scan, online state, CoE/SDO, controller, PLC, or hardware
+behavior.
+
+The authoritative failure-first test kept both production General files at
+their baseline hashes, passed initialization and cleanup, failed on the absent
+feedback widget, and exited 1. A non-compiling typed child lookup and a wrong
+test-selector invocation were harness setup attempts and are explicitly
+superseded. Final normal/2x focused and related runs, four complete Workbench
+runs, and all six isolated EtherCAT suites passed; the isolated total is 132.
+The first parallel Scan exit handshake was superseded by a seven-event,
+status-0 sequential run.
+
+The `WITH_TESTS=OFF` Workbench and complete product builds passed with exactly
+16 plugin dylibs. Invisible enabled/disabled product runs stayed alive for all
+37 samples, mapped Workbench in 37/0 samples, and ended with expected status
+15. The fail-closed DiagnosticReports and crash-log audit found no new Embed
+Labs report, matching crash-service event, or residual process. No visible UI,
+remote operation, or hardware/online execution was used. Evidence is under
+`/private/tmp/embed-labs-wb-general-rename-feedback-001.M4aWr4`.

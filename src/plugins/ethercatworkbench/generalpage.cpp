@@ -11,8 +11,12 @@
 #include <coreplugin/icore.h>
 #include <coreplugin/messagemanager.h>
 
+#include <utils/infolabel.h>
 #include <utils/stylehelper.h>
 
+#if QT_CONFIG(accessibility)
+#include <QAccessible>
+#endif
 #include <QCheckBox>
 #include <QFormLayout>
 #include <QGridLayout>
@@ -97,6 +101,7 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     : QWidget(parent)
     , m_controller(controller)
     , m_summary(new QLabel(this))
+    , m_nameFeedback(new Utils::InfoLabel(this))
     , m_repositoryPage(
           new EsiRepositoryPage(controller ? controller->deviceRepository() : nullptr, this))
     , m_esiDevicePage(new EsiDeviceGeneralPage(this))
@@ -150,6 +155,11 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     m_summary->setObjectName("EtherCATWorkbenchPageSummary");
     m_summary->setWordWrap(true);
     m_summary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_nameFeedback->setObjectName("EtherCATGeneralNameFeedback");
+    m_nameFeedback->setElideMode(Qt::ElideNone);
+    m_nameFeedback->setWordWrap(true);
+    m_nameFeedback->setAccessibleName(Tr::tr("General name edit feedback"));
+    m_nameFeedback->hide();
 
     m_projectContent->setObjectName("EtherCATProjectGeneralContent");
     m_projectForm->setObjectName("EtherCATProjectGeneralForm");
@@ -444,6 +454,7 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
         Utils::StyleHelper::SpacingTokens::PaddingVM);
     layout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVM);
     layout->addWidget(m_summary);
+    layout->addWidget(m_nameFeedback);
     layout->addWidget(m_repositoryPage, 1);
     layout->addWidget(m_esiDevicePage, 1);
     layout->addWidget(m_projectContent, 1);
@@ -456,6 +467,9 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     connect(m_name, &QLineEdit::editingFinished, this, &GeneralPage::commitName);
     connect(m_targetName, &QLineEdit::editingFinished, this, &GeneralPage::commitTargetName);
     connect(m_masterName, &QLineEdit::editingFinished, this, &GeneralPage::commitMasterName);
+    for (QLineEdit *name : {m_projectName, m_name, m_targetName, m_masterName}) {
+        connect(name, &QLineEdit::textEdited, this, [this] { clearNameFeedback(); });
+    }
     if (m_controller) {
         connect(
             m_controller->treeModel(),
@@ -475,6 +489,7 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
 
 void GeneralPage::setContext(const Core::PropertyPageContext &context)
 {
+    clearNameFeedback();
     const std::optional<Data::OfflineSlaveConfiguration> offlineSlave
         = m_controller ? m_controller->treeModel()->offlineSlave(context.nodeId) : std::nullopt;
     const std::optional<Data::DeviceDescription> device =
@@ -794,6 +809,30 @@ void GeneralPage::addRow(const QStringList &values)
     m_tree->addTopLevelItem(item);
 }
 
+void GeneralPage::showNameFeedback(const QString &message)
+{
+    m_nameFeedback->setType(Utils::InfoLabel::Error);
+    m_nameFeedback->setText(message);
+    m_nameFeedback->setAccessibleDescription(message);
+    m_nameFeedback->setAdditionalToolTip(message);
+    m_nameFeedback->setToolTip(message);
+    m_nameFeedback->show();
+#if QT_CONFIG(accessibility)
+    QAccessibleAnnouncementEvent announcement(m_nameFeedback, message);
+    announcement.setPoliteness(QAccessible::AnnouncementPoliteness::Polite);
+    QAccessible::updateAccessibility(&announcement);
+#endif
+}
+
+void GeneralPage::clearNameFeedback()
+{
+    m_nameFeedback->clear();
+    m_nameFeedback->setAccessibleDescription({});
+    m_nameFeedback->setAdditionalToolTip({});
+    m_nameFeedback->setToolTip({});
+    m_nameFeedback->hide();
+}
+
 void GeneralPage::commitProjectName()
 {
     if (m_updating || !m_controller || m_context.nodeKind != Core::WorkbenchNodeKind::Project)
@@ -802,13 +841,17 @@ void GeneralPage::commitProjectName()
     m_projectName->setModified(false);
     const Utils::Result<> result
         = m_controller->renameProject(m_context.projectId, m_projectName->text());
-    if (!result) {
-        ::Core::MessageManager::writeFlashing(
-            Tr::tr("Cannot rename the EtherCAT project: %1").arg(result.error()));
-    }
+    const QString error = result
+                              ? QString()
+                              : Tr::tr("Cannot rename the EtherCAT project: %1")
+                                    .arg(result.error());
+    if (!error.isEmpty())
+        ::Core::MessageManager::writeFlashing(error);
     const Core::PropertyPageContext current = m_controller->treeModel()->contextForNodeId(
         m_context.nodeId);
     setContext(current.nodeKind == Core::WorkbenchNodeKind::None ? m_context : current);
+    if (!error.isEmpty())
+        showNameFeedback(error);
 }
 
 void GeneralPage::commitName()
@@ -821,13 +864,17 @@ void GeneralPage::commitName()
     m_name->setModified(false);
     const Utils::Result<> result
         = m_controller->renameOfflineSlave(m_context.projectId, m_context.nodeId, m_name->text());
-    if (!result) {
-        ::Core::MessageManager::writeFlashing(
-            Tr::tr("Cannot rename the offline slave: %1").arg(result.error()));
-    }
+    const QString error = result
+                              ? QString()
+                              : Tr::tr("Cannot rename the offline slave: %1")
+                                    .arg(result.error());
+    if (!error.isEmpty())
+        ::Core::MessageManager::writeFlashing(error);
     const Core::PropertyPageContext current = m_controller->treeModel()->contextForNodeId(
         m_context.nodeId);
     setContext(current.nodeKind == Core::WorkbenchNodeKind::None ? m_context : current);
+    if (!error.isEmpty())
+        showNameFeedback(error);
 }
 
 void GeneralPage::commitTargetName()
@@ -839,13 +886,17 @@ void GeneralPage::commitTargetName()
     const Utils::Result<> result
         = m_controller
               ->renameStructuralNode(m_context.projectId, m_context.nodeId, m_targetName->text());
-    if (!result) {
-        ::Core::MessageManager::writeFlashing(
-            Tr::tr("Cannot rename the offline target: %1").arg(result.error()));
-    }
+    const QString error = result
+                              ? QString()
+                              : Tr::tr("Cannot rename the offline target: %1")
+                                    .arg(result.error());
+    if (!error.isEmpty())
+        ::Core::MessageManager::writeFlashing(error);
     const Core::PropertyPageContext current = m_controller->treeModel()->contextForNodeId(
         m_context.nodeId);
     setContext(current.nodeKind == Core::WorkbenchNodeKind::None ? m_context : current);
+    if (!error.isEmpty())
+        showNameFeedback(error);
 }
 
 void GeneralPage::commitMasterName()
@@ -857,13 +908,17 @@ void GeneralPage::commitMasterName()
     const Utils::Result<> result
         = m_controller
               ->renameStructuralNode(m_context.projectId, m_context.nodeId, m_masterName->text());
-    if (!result) {
-        ::Core::MessageManager::writeFlashing(
-            Tr::tr("Cannot rename the EtherCAT master: %1").arg(result.error()));
-    }
+    const QString error = result
+                              ? QString()
+                              : Tr::tr("Cannot rename the EtherCAT master: %1")
+                                    .arg(result.error());
+    if (!error.isEmpty())
+        ::Core::MessageManager::writeFlashing(error);
     const Core::PropertyPageContext current = m_controller->treeModel()->contextForNodeId(
         m_context.nodeId);
     setContext(current.nodeKind == Core::WorkbenchNodeKind::None ? m_context : current);
+    if (!error.isEmpty())
+        showNameFeedback(error);
 }
 
 void GeneralPage::refreshMasterSummary()

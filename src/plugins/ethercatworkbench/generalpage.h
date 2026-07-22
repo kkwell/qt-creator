@@ -17,6 +17,10 @@ class QPushButton;
 class QTreeWidget;
 QT_END_NAMESPACE
 
+namespace Utils {
+class InfoLabel;
+}
+
 namespace EtherCAT::Workbench::Internal {
 
 class WorkbenchController;
@@ -36,6 +40,8 @@ private:
     QLineEdit *nameEditor(Core::WorkbenchNodeKind kind) const;
     void reset(const QString &summary, QLineEdit *preservedName = nullptr);
     void addRow(const QStringList &values);
+    void showNameFeedback(const QString &message);
+    void clearNameFeedback();
     void commitProjectName();
     void commitName();
     void commitTargetName();
@@ -45,6 +51,7 @@ private:
     QPointer<WorkbenchController> m_controller;
     Core::PropertyPageContext m_context;
     QLabel *m_summary;
+    Utils::InfoLabel *m_nameFeedback;
     EsiRepositoryPage *m_repositoryPage;
     EsiDeviceGeneralPage *m_esiDevicePage;
     QWidget *m_projectContent;

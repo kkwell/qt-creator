@@ -418,6 +418,25 @@ static Data::DeviceImportResult waitForJob(Core::DeviceImportJob *job)
 }
 
 #if QT_CONFIG(accessibility)
+static QPointer<QObject> s_generalAnnouncementObject;
+static QStringList s_generalAnnouncementMessages;
+static QList<QAccessible::AnnouncementPoliteness> s_generalAnnouncementPoliteness;
+static QAccessible::UpdateHandler s_previousGeneralAccessibleUpdateHandler = nullptr;
+
+static void captureGeneralAccessibleUpdate(QAccessibleEvent *event)
+{
+    if (event && event->type() == QAccessible::Announcement
+        && event->object() == s_generalAnnouncementObject) {
+        const auto announcement = static_cast<QAccessibleAnnouncementEvent *>(event);
+        s_generalAnnouncementMessages.append(announcement->message());
+        s_generalAnnouncementPoliteness.append(announcement->politeness());
+    }
+    if (s_previousGeneralAccessibleUpdateHandler
+        && s_previousGeneralAccessibleUpdateHandler != &captureGeneralAccessibleUpdate) {
+        s_previousGeneralAccessibleUpdateHandler(event);
+    }
+}
+
 static QPointer<QObject> s_coeAnnouncementObject;
 static QStringList s_coeAnnouncementMessages;
 static QList<QAccessible::AnnouncementPoliteness> s_coeAnnouncementPoliteness;
@@ -2804,6 +2823,232 @@ void EtherCATWorkbenchTests::testEditableConfiguredSlaveGeneralWorkflow()
     controller.selectionService()->clear();
     ProjectExplorer::ProjectManager::removeProject(opened.project());
     QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+void EtherCATWorkbenchTests::testGeneralRenameRejectionFeedback()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Data::DeviceSummary
+        device{Data::NodeId::create(), {2, 0x5678, 0x11}, "Mock Servo", "AX5000", "Drives", true};
+    const TestProjectFile file = writeProjectWithSlave(
+        directory, device, "general-rename-rejection.ecatproject", "Feedback Project");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.projectId);
+    DetailsView details(&controller);
+    details.resize(1100, 720);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+
+    struct RejectionCase
+    {
+        Data::NodeId nodeId;
+        QString editorName;
+        QString acceptedName;
+        QString errorText;
+    };
+    const QList<RejectionCase> rejectionCases{
+        {file.projectId,
+         "EtherCATProjectGeneralName",
+         "Feedback Project",
+         "Cannot rename the EtherCAT project: Project name cannot be empty."},
+        {file.targetId,
+         "EtherCATTargetGeneralName",
+         "Offline Controller",
+         "Cannot rename the offline target: EtherCAT target and master names cannot be empty."},
+        {file.masterId,
+         "EtherCATMasterGeneralName",
+         "EtherCAT Master",
+         "Cannot rename the EtherCAT master: EtherCAT target and master names cannot be empty."},
+        {file.slaveId,
+         "EtherCATGeneralName",
+         "Configured Servo",
+         "Cannot rename the offline slave: Offline slave name cannot be empty."},
+    };
+
+#if QT_CONFIG(accessibility)
+    s_generalAnnouncementMessages.clear();
+    s_generalAnnouncementPoliteness.clear();
+    s_previousGeneralAccessibleUpdateHandler
+        = QAccessible::installUpdateHandler(&captureGeneralAccessibleUpdate);
+    const auto restoreAccessibleHandler = qScopeGuard([] {
+        const QAccessible::UpdateHandler previous = s_previousGeneralAccessibleUpdateHandler;
+        s_previousGeneralAccessibleUpdateHandler = nullptr;
+        QAccessible::installUpdateHandler(previous);
+        s_generalAnnouncementObject = nullptr;
+        s_generalAnnouncementMessages.clear();
+        s_generalAnnouncementPoliteness.clear();
+    });
+#endif
+
+    for (const RejectionCase &rejection : rejectionCases) {
+        controller.selectionService()->setCurrentNodeId(rejection.nodeId);
+        QTRY_COMPARE(details.currentContext().nodeId, rejection.nodeId);
+        QWidget *page = details.findChild<QWidget *>(
+            "EtherCATWorkbenchPropertyPage_"
+            + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
+        QVERIFY(page);
+        QWidget *feedbackWidget = page->findChild<QWidget *>("EtherCATGeneralNameFeedback");
+        QVERIFY(feedbackWidget);
+        auto feedback = static_cast<Utils::InfoLabel *>(feedbackWidget);
+        QVERIFY(!feedback->isVisible());
+        QCOMPARE(feedback->accessibleName(), QString("General name edit feedback"));
+        QLineEdit *editor = page->findChild<QLineEdit *>(rejection.editorName);
+        QVERIFY(editor);
+        QCOMPARE(editor->text(), rejection.acceptedName);
+        QVERIFY(!editor->isReadOnly());
+
+        const Data::ProjectSnapshot before = *projectService->project(file.projectId);
+        const bool couldUndo = projectService->canUndoProject(file.projectId);
+        const bool couldRedo = projectService->canRedoProject(file.projectId);
+        QSignalSpy projectChanges(projectService, &Core::ProjectService::projectChanged);
+#if QT_CONFIG(accessibility)
+        s_generalAnnouncementObject = feedback;
+        const int announcementsBefore = s_generalAnnouncementMessages.size();
+#endif
+        editor->setFocus(Qt::OtherFocusReason);
+        QTRY_COMPARE(QApplication::focusWidget(), editor);
+        editor->selectAll();
+        QTest::keyClicks(editor, "   ");
+        QTest::keyClick(editor, Qt::Key_Return);
+        QTRY_COMPARE(editor->text(), rejection.acceptedName);
+        QCOMPARE(projectChanges.count(), 0);
+        QCOMPARE(*projectService->project(file.projectId), before);
+        QCOMPARE(projectService->canUndoProject(file.projectId), couldUndo);
+        QCOMPARE(projectService->canRedoProject(file.projectId), couldRedo);
+        QCOMPARE(controller.selectionService()->currentNodeId(), rejection.nodeId);
+        QTRY_VERIFY(feedback->isVisible());
+        QCOMPARE(feedback->type(), Utils::InfoLabel::Error);
+        QCOMPARE(feedback->text(), rejection.errorText);
+        QCOMPARE(feedback->accessibleDescription(), rejection.errorText);
+        QCOMPARE(feedback->additionalToolTip(), rejection.errorText);
+        QCOMPARE(feedback->toolTip(), rejection.errorText);
+#if QT_CONFIG(accessibility)
+        QCOMPARE(s_generalAnnouncementMessages.size(), announcementsBefore + 1);
+        QCOMPARE(s_generalAnnouncementMessages.last(), rejection.errorText);
+        QCOMPARE(
+            s_generalAnnouncementPoliteness.last(),
+            QAccessible::AnnouncementPoliteness::Polite);
+#endif
+    }
+
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
+    QVERIFY(page);
+    QWidget *feedbackWidget = page->findChild<QWidget *>("EtherCATGeneralNameFeedback");
+    auto feedback = static_cast<Utils::InfoLabel *>(feedbackWidget);
+    QLineEdit *name = page->findChild<QLineEdit *>("EtherCATGeneralName");
+    QVERIFY(feedback);
+    QVERIFY(name);
+    QVERIFY(feedback->isVisible());
+    auto generalPage = qobject_cast<GeneralPage *>(page);
+    QVERIFY(generalPage);
+#if QT_CONFIG(accessibility)
+    int announcementsBeforeClear = s_generalAnnouncementMessages.size();
+#endif
+    generalPage->setContext(details.currentContext());
+    QTRY_VERIFY(!feedback->isVisible());
+    QVERIFY(feedback->text().isEmpty());
+    QVERIFY(feedback->accessibleDescription().isEmpty());
+    QVERIFY(feedback->additionalToolTip().isEmpty());
+    QVERIFY(feedback->toolTip().isEmpty());
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_generalAnnouncementMessages.size(), announcementsBeforeClear);
+#endif
+
+    name->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), name);
+    name->selectAll();
+    QTest::keyClicks(name, "   ");
+    QTest::keyClick(name, Qt::Key_Return);
+    QTRY_VERIFY(feedback->isVisible());
+#if QT_CONFIG(accessibility)
+    const int announcementsAfterSecondRejection = s_generalAnnouncementMessages.size();
+#endif
+    name->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), name);
+    name->selectAll();
+    QTest::keyClicks(name, "Recovered Slave");
+    QTRY_VERIFY(!feedback->isVisible());
+    QVERIFY(feedback->text().isEmpty());
+    QVERIFY(feedback->accessibleDescription().isEmpty());
+    QVERIFY(feedback->additionalToolTip().isEmpty());
+    QVERIFY(feedback->toolTip().isEmpty());
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_generalAnnouncementMessages.size(), announcementsAfterSecondRejection);
+#endif
+    QTest::keyClick(name, Qt::Key_Return);
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().name, QString("Recovered Slave"));
+    QVERIFY(!feedback->isVisible());
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_generalAnnouncementMessages.size(), announcementsAfterSecondRejection);
+#endif
+
+    name->selectAll();
+    QTest::keyClicks(name, "   ");
+    QTest::keyClick(name, Qt::Key_Return);
+    QTRY_VERIFY(feedback->isVisible());
+    QPointer<QWidget> previousPage(page);
+    QPointer<QWidget> previousFeedback(feedbackWidget);
+#if QT_CONFIG(accessibility)
+    const int announcementsBeforeContextSwitch = s_generalAnnouncementMessages.size();
+#endif
+
+    controller.selectionService()->setCurrentNodeId(file.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.projectId);
+    QTRY_VERIFY(previousFeedback.isNull() || !previousFeedback->isVisible());
+    page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
+    QVERIFY(page);
+    feedbackWidget = page->findChild<QWidget *>("EtherCATGeneralNameFeedback");
+    QVERIFY(feedbackWidget);
+    feedback = static_cast<Utils::InfoLabel *>(feedbackWidget);
+    QVERIFY(!feedback->isVisible());
+    QVERIFY(feedback->text().isEmpty());
+    QVERIFY(feedback->accessibleDescription().isEmpty());
+    QVERIFY(feedback->additionalToolTip().isEmpty());
+    QVERIFY(feedback->toolTip().isEmpty());
+    QVERIFY(previousPage.isNull() || previousPage == page);
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_generalAnnouncementMessages.size(), announcementsBeforeContextSwitch);
+#endif
+
+    QLineEdit *projectName = page->findChild<QLineEdit *>("EtherCATProjectGeneralName");
+    QVERIFY(projectName);
+    projectName->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), projectName);
+    projectName->selectAll();
+    QTest::keyClicks(projectName, "   ");
+    QTest::keyClick(projectName, Qt::Key_Return);
+    QTRY_VERIFY(feedback->isVisible());
+    QPointer<QWidget> activeFeedback(feedbackWidget);
+    QPointer<QWidget> activePage(page);
+
+    controller.selectionService()->clear();
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(activeFeedback.isNull());
+    QTRY_VERIFY(activePage.isNull());
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
